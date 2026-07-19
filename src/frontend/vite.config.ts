@@ -11,4 +11,12 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    proxy: {
+      '/api': 'http://localhost:8080',
+      '/install.sh': 'http://localhost:8080',
+      '/dist': 'http://localhost:8080',
+      '/sub': 'http://localhost:8080',
+    },
+  },
 })

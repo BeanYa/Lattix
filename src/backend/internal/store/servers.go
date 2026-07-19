@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // ErrNotFound 表示查询的行不存在。
@@ -15,7 +16,28 @@ type Server struct {
 	ID          int64
 	Alias       string
 	Token       string // 长期凭证；创建时先存 bootstrap token，hello 认证后换发（§11）
+	LastSeenAt  *time.Time
 	XrayVersion string
+	CreatedAt   time.Time
+}
+
+// serverCols 是 Server 各字段对应的列清单。
+const serverCols = `id, alias, token, last_seen_at, xray_version, created_at`
+
+func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
+	var srv Server
+	var lastSeen sql.NullTime
+	var xrayVer sql.NullString
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &srv.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if lastSeen.Valid {
+		t := lastSeen.Time
+		srv.LastSeenAt = &t
+	}
+	srv.XrayVersion = xrayVer.String
+	return &srv, nil
 }
 
 // CreateServer 插入一台服务器，token 为一次性 bootstrap token（§11），返回服务器 id。
@@ -30,17 +52,46 @@ func (s *Store) CreateServer(ctx context.Context, alias, bootstrapToken string) 
 
 // ServerByToken 按 token（bootstrap 或长期）查找服务器。
 func (s *Store) ServerByToken(ctx context.Context, token string) (*Server, error) {
-	var srv Server
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, alias, token, COALESCE(xray_version, '') FROM servers WHERE token = ?`, token).
-		Scan(&srv.ID, &srv.Alias, &srv.Token, &srv.XrayVersion)
+	srv, err := scanServer(s.db.QueryRowContext(ctx,
+		`SELECT `+serverCols+` FROM servers WHERE token = ?`, token))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query server by token: %w", err)
 	}
-	return &srv, nil
+	return srv, nil
+}
+
+// ServerByID 按 id 查找服务器。
+func (s *Store) ServerByID(ctx context.Context, id int64) (*Server, error) {
+	srv, err := scanServer(s.db.QueryRowContext(ctx,
+		`SELECT `+serverCols+` FROM servers WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query server by id: %w", err)
+	}
+	return srv, nil
+}
+
+// ListServers 列出全部服务器（按 id 升序）。
+func (s *Store) ListServers(ctx context.Context) ([]Server, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+serverCols+` FROM servers ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("list servers: %w", err)
+	}
+	defer rows.Close()
+	var out []Server
+	for rows.Next() {
+		srv, err := scanServer(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan server: %w", err)
+		}
+		out = append(out, *srv)
+	}
+	return out, rows.Err()
 }
 
 // RotateServerToken 重写服务器 token：hello 认证成功后 bootstrap token 换发为长期凭证（§11）。
