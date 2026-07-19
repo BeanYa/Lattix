@@ -15,6 +15,7 @@ type serverDTO struct {
 	Online      bool       `json:"online"` // 由 WS 连接存在性推导（§5）
 	LastSeenAt  *time.Time `json:"last_seen_at"`
 	XrayVersion string     `json:"xray_version"`
+	Address     string     `json:"address"` // 公网地址（hello 记录，订阅用，§9）
 	CreatedAt   time.Time  `json:"created_at"`
 }
 
@@ -25,6 +26,7 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		Online:      s.req.IsOnline(srv.ID),
 		LastSeenAt:  srv.LastSeenAt,
 		XrayVersion: srv.XrayVersion,
+		Address:     srv.Address,
 		CreatedAt:   srv.CreatedAt,
 	}
 }

@@ -125,6 +125,36 @@ D="$(api "http://$ADDR/api/dashboard")"
 [[ "$(echo "$D" | py "(d['servers'], d['servers_online'], d['nodes'], d['nodes_active'], d['users'])")" == "(1, 1, 1, 1, 2)" ]] \
     && echo "OK: 仪表盘计数" || { echo "FAIL: dashboard: $D"; exit 1; }
 
+# --- 订阅（§9，公开端点）---
+SUB_TOKEN1="$(echo "$U1" | py "d['sub_token']")"
+SUB="$(curl -s "http://$ADDR/sub/$SUB_TOKEN1")"
+PUBKEY="$(api "http://$ADDR/api/nodes" | py "d[0]['realized_config']['public_key']")"
+SHORTID="$(api "http://$ADDR/api/nodes" | py "d[0]['realized_config']['short_id']")"
+echo "$SUB" | grep -q "name: dev01-vless-$NPORT" \
+    && echo "$SUB" | grep -q "type: vless" \
+    && echo "$SUB" | grep -q "uuid: $UUID1" \
+    && echo "$SUB" | grep -q "flow: xtls-rprx-vision" \
+    && echo "$SUB" | grep -q "public-key: $PUBKEY" \
+    && echo "$SUB" | grep -q "short-id: $SHORTID" \
+    && echo "$SUB" | grep -q "servername: www.microsoft.com" \
+    && echo "$SUB" | grep -q "udp: true" \
+    && echo "$SUB" | grep -q "type: select" \
+    && echo "$SUB" | grep -q "MATCH,PROXY" \
+    && echo "OK: 订阅 YAML 内容（命名/UUID/reality-opts/规则）" \
+    || { echo "FAIL: 订阅内容"; echo "$SUB"; exit 1; }
+if python3 -c 'import yaml' 2>/dev/null; then
+    echo "$SUB" | python3 -c "
+import sys, yaml
+c = yaml.safe_load(sys.stdin)
+p = c['proxies'][0]
+assert p['type'] == 'vless' and p['server'] and p['port'] > 0 and p['uuid'] and p['reality-opts']['public-key']
+assert c['proxy-groups'][0]['type'] == 'select' and p['name'] in c['proxy-groups'][0]['proxies']
+assert c['rules'] == ['MATCH,PROXY']
+" && echo "OK: YAML 结构解析校验" || { echo "FAIL: YAML 结构"; exit 1; }
+fi
+[[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/sub/nonexistent-token")" == "404" ]] \
+    && echo "OK: 未知 sub_token 返回 404" || { echo "FAIL: 未知 token"; exit 1; }
+
 # --- 登出 ---
 api -X POST "http://$ADDR/api/logout" >/dev/null
 [[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' "http://$ADDR/api/servers")" == "401" ]] \

@@ -67,6 +67,18 @@ func (s *Store) UserByID(ctx context.Context, id int64) (*User, error) {
 	return u, nil
 }
 
+// UserBySubToken 按 sub_token 查找用户（订阅端点，§9）。
+func (s *Store) UserBySubToken(ctx context.Context, subToken string) (*User, error) {
+	u, err := scanUser(s.db.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE sub_token = ?`, subToken))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query user by sub_token: %w", err)
+	}
+	return u, nil
+}
+
 // AllUserUUIDs 返回全量用户 UUID 列表（apply_node 一次性下发，§8）。
 func (s *Store) AllUserUUIDs(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT uuid FROM users ORDER BY id`)

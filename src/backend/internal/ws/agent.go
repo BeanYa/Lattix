@@ -3,6 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -44,7 +45,11 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	serverID, result, err := h.Auth.AuthenticateHello(r.Context(), hp)
+	remoteHost := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		remoteHost = host
+	}
+	serverID, result, err := h.Auth.AuthenticateHello(r.Context(), hp, remoteHost)
 	if err != nil {
 		log.Printf("ws: hello auth failed from %s: %v", r.RemoteAddr, err)
 		conn.WriteMessage(websocket.CloseMessage,

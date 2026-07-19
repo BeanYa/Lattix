@@ -17,11 +17,12 @@ const (
 	NodeStatusFailed   = "failed"
 )
 
-// Node 是 nodes 表的一行（§4）；ServerAlias 来自 servers 联表。
+// Node 是 nodes 表的一行（§4）；ServerAlias、ServerAddress 来自 servers 联表。
 type Node struct {
 	ID             int64
 	ServerID       int64
 	ServerAlias    string
+	ServerAddress  string // 服务器公网地址（订阅用，§9）
 	Protocol       string
 	Port           *int // nil = Agent 自动挑选空闲端口（§7）
 	ConfigTemplate json.RawMessage
@@ -31,14 +32,14 @@ type Node struct {
 	CreatedAt      time.Time
 }
 
-const nodeCols = `n.id, n.server_id, s.alias, n.protocol, n.port, n.config_template, n.realized_config, n.status, n.error, n.created_at`
+const nodeCols = `n.id, n.server_id, s.alias, s.address, n.protocol, n.port, n.config_template, n.realized_config, n.status, n.error, n.created_at`
 
 func scanNode(row interface{ Scan(...any) error }) (*Node, error) {
 	var n Node
 	var port sql.NullInt64
 	var tmpl string
 	var realized, nerr sql.NullString
-	err := row.Scan(&n.ID, &n.ServerID, &n.ServerAlias, &n.Protocol, &port, &tmpl, &realized, &n.Status, &nerr, &n.CreatedAt)
+	err := row.Scan(&n.ID, &n.ServerID, &n.ServerAlias, &n.ServerAddress, &n.Protocol, &port, &tmpl, &realized, &n.Status, &nerr, &n.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

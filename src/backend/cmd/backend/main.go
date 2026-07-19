@@ -12,6 +12,7 @@ import (
 	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/panel"
 	"lattix/backend/internal/store"
+	"lattix/backend/internal/sub"
 	"lattix/backend/internal/ws"
 )
 
@@ -63,19 +64,13 @@ func main() {
 	ps.RegisterRoutes(mux)
 
 	// 订阅（§9）：mihomo（Clash.Meta）格式 YAML。
-	mux.HandleFunc("GET /sub/{token}", notImplemented("subscription"))
+	mux.Handle("GET /sub/{token}", sub.New(st))
 
 	// Frontend SPA 构建产物（§3），客户端路由回退到 index.html。
 	mux.Handle("/", spaHandler(*staticDir))
 
 	log.Printf("lattix backend listening on %s (admin: %s)", *addr, *adminUser)
 	log.Fatal(http.ListenAndServe(*addr, mux))
-}
-
-func notImplemented(name string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		http.Error(w, name+": not implemented (MVP skeleton)", http.StatusNotImplemented)
-	}
 }
 
 // spaHandler 服务静态产物；路径不存在时回退 index.html（React SPA 客户端路由）。

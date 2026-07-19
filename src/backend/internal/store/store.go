@@ -4,6 +4,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -66,6 +67,13 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(Schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
+	}
+	// 轻量迁移：servers.address（订阅需要服务器公网地址 §9，agent 拨入时按 RemoteAddr 记录）。
+	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN address TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate servers.address: %w", err)
+		}
 	}
 	return &Store{db: db}, nil
 }

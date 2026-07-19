@@ -75,8 +75,8 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 }
 
 // AuthenticateHello 实现 ws.Authenticator：按 token 查找服务器，
-// 认证成功即换发长期凭证（原 token 无论 bootstrap 或长期均失效，§11）并更新遥测（§13）。
-func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayload) (int64, shared.HelloResult, error) {
+// 认证成功即换发长期凭证（原 token 无论 bootstrap 或长期均失效，§11）并更新遥测与地址（§9、§13）。
+func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayload, remoteAddr string) (int64, shared.HelloResult, error) {
 	srv, err := d.st.ServerByToken(ctx, p.Token)
 	if err != nil {
 		return 0, shared.HelloResult{}, fmt.Errorf("unknown token")
@@ -88,7 +88,7 @@ func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayloa
 	if err := d.st.RotateServerToken(ctx, srv.ID, newToken); err != nil {
 		return 0, shared.HelloResult{}, err
 	}
-	if err := d.st.TouchServer(ctx, srv.ID, p.XrayVersion); err != nil {
+	if err := d.st.TouchServer(ctx, srv.ID, p.XrayVersion, remoteAddr); err != nil {
 		log.Printf("dispatch: touch server %d: %v", srv.ID, err)
 	}
 	return srv.ID, shared.HelloResult{ServerID: srv.ID, Token: newToken}, nil

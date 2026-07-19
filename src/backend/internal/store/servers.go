@@ -18,17 +18,18 @@ type Server struct {
 	Token       string // 长期凭证；创建时先存 bootstrap token，hello 认证后换发（§11）
 	LastSeenAt  *time.Time
 	XrayVersion string
+	Address     string // 公网地址（hello 时按 WS RemoteAddr 记录，订阅用，§9）
 	CreatedAt   time.Time
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, address, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
 	var lastSeen sql.NullTime
 	var xrayVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &srv.Address, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -101,10 +102,10 @@ func (s *Store) RotateServerToken(ctx context.Context, id int64, newToken string
 	return err
 }
 
-// TouchServer 更新 last_seen_at 与 xray 版本（hello 携带，§13）。
-func (s *Store) TouchServer(ctx context.Context, id int64, xrayVersion string) error {
+// TouchServer 更新 last_seen_at、xray 版本（hello 携带，§13）与公网地址（RemoteAddr，§9）。
+func (s *Store) TouchServer(ctx context.Context, id int64, xrayVersion, address string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE servers SET last_seen_at = CURRENT_TIMESTAMP, xray_version = ? WHERE id = ?`,
-		xrayVersion, id)
+		`UPDATE servers SET last_seen_at = CURRENT_TIMESTAMP, xray_version = ?, address = ? WHERE id = ?`,
+		xrayVersion, address, id)
 	return err
 }

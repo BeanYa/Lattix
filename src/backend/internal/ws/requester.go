@@ -23,6 +23,7 @@ type Requester interface {
 
 // Authenticator 校验 hello 首连认证（§5）。由业务层（dispatcher）实现并注入 Hub。
 type Authenticator interface {
-	// AuthenticateHello 校验 hello 载荷；成功返回 serverID 与响应（含换发的长期凭证，§11）。
-	AuthenticateHello(ctx context.Context, p shared.HelloPayload) (serverID int64, result shared.HelloResult, err error)
+	// AuthenticateHello 校验 hello 载荷；remoteAddr 为 WS 对端 IP（服务器公网地址，§9）。
+	// 成功返回 serverID 与响应（含换发的长期凭证，§11）。
+	AuthenticateHello(ctx context.Context, p shared.HelloPayload, remoteAddr string) (serverID int64, result shared.HelloResult, err error)
 }
