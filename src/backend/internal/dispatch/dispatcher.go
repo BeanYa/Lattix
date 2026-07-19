@@ -122,18 +122,27 @@ func (d *Dispatcher) handleApplyResult(serverID int64, env shared.Envelope) {
 		if err := d.st.MarkCommandAcked(ctx, cmdID); err != nil {
 			log.Printf("dispatch: ack command %d: %v", cmdID, err)
 		}
-		if err := d.st.SetNodeActive(ctx, p.NodeID, realized); err != nil {
-			log.Printf("dispatch: node %d active: %v", p.NodeID, err)
+		// NodeID 0 表示非节点命令（add_user/remove_user 等），不触碰节点状态机。
+		if p.NodeID != 0 {
+			if err := d.st.SetNodeActive(ctx, p.NodeID, realized); err != nil {
+				log.Printf("dispatch: node %d active: %v", p.NodeID, err)
+			}
+			log.Printf("dispatch: server %d: node %d active (command %d)", serverID, p.NodeID, cmdID)
+		} else {
+			log.Printf("dispatch: server %d: command %d acked", serverID, cmdID)
 		}
-		log.Printf("dispatch: server %d: node %d active (command %d)", serverID, p.NodeID, cmdID)
 	} else {
 		if err := d.st.MarkCommandFailed(ctx, cmdID); err != nil {
 			log.Printf("dispatch: fail command %d: %v", cmdID, err)
 		}
-		if err := d.st.SetNodeFailed(ctx, p.NodeID, p.Error); err != nil {
-			log.Printf("dispatch: node %d failed: %v", p.NodeID, err)
+		if p.NodeID != 0 {
+			if err := d.st.SetNodeFailed(ctx, p.NodeID, p.Error); err != nil {
+				log.Printf("dispatch: node %d failed: %v", p.NodeID, err)
+			}
+			log.Printf("dispatch: server %d: node %d failed (command %d): %s", serverID, p.NodeID, cmdID, p.Error)
+		} else {
+			log.Printf("dispatch: server %d: command %d failed: %s", serverID, cmdID, p.Error)
 		}
-		log.Printf("dispatch: server %d: node %d failed (command %d): %s", serverID, p.NodeID, cmdID, p.Error)
 	}
 }
 

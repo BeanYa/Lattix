@@ -55,18 +55,20 @@ echo ">> agent reconnects with long-term token (from state file)"
 APID=$!
 sleep 2
 
-grep -q "recv apply_node" "$WORK/agent.log" \
+grep -q "apply_node" "$WORK/agent.log" \
     && echo "OK: 离线命令已补发" \
     || { echo "FAIL: 未收到补发命令"; cat "$WORK/agent.log" "$WORK/backend.log"; exit 1; }
 
 sleep 1
 CMD_STATUS="$(sql "SELECT status FROM commands WHERE id = 1")"
 [[ "$CMD_STATUS" == "failed" ]] \
-    && echo "OK: 命令状态已回写 failed（占位执行结果）" \
+    && echo "OK: 命令状态已回写 failed" \
     || { echo "FAIL: command status=$CMD_STATUS"; exit 1; }
 
-NODE_ROW="$(sql "SELECT status || '|' || error FROM nodes WHERE id = 1")"
-[[ "$NODE_ROW" == "failed|apply pipeline not implemented yet" ]] \
+NODE_ROW="$(sql "SELECT status || '|' || COALESCE(error, '') FROM nodes WHERE id = 1")"
+# 阶段 2 起 apply 走真实流水线（dev 环境无 /usr/local/bin/xray，必然失败），
+# 本脚本聚焦控制通道：只要求状态机推进到 failed 且带错误详情。
+[[ "$NODE_ROW" == failed\|?* ]] \
     && echo "OK: 节点状态机已回写 failed + error" \
     || { echo "FAIL: node=$NODE_ROW"; exit 1; }
 

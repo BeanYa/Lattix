@@ -10,12 +10,19 @@ const (
 )
 
 // 模板占位符（§7）：Agent 填值后原样写入，不存在任何"翻译层"。
+// 约定：PORT/CLIENTS 在模板中以带引号的字符串形式出现（如 "port": "{{PORT}}"、
+// "clients": "{{CLIENTS}}"），Agent 连引号一起替换为对应的 JSON 值；
+// PRIVATE_KEY/TAG 为纯字符串替换。
 const (
 	// PlaceholderPort 端口占位符；向导中端口留空时由 Agent 挑空闲端口并随 apply_result 上报。
 	PlaceholderPort = "{{PORT}}"
 	// PlaceholderRealityPrivateKey Reality 私钥占位符；由 Agent 执行 `xray x25519` 生成，
 	// 私钥不出服务器，public_key 随 apply_result 上报。
 	PlaceholderRealityPrivateKey = "{{PRIVATE_KEY}}"
+	// PlaceholderClients 用户列表占位符；Agent 以全量用户 UUID 生成 clients JSON 数组替换（§8）。
+	PlaceholderClients = "{{CLIENTS}}"
+	// PlaceholderTag inbound tag 占位符；Agent 固定替换为 "node_{nodeID}"（热操作与配置文件的关联键）。
+	PlaceholderTag = "{{TAG}}"
 )
 
 // VirtualConfig 是面板侧虚拟配置（nodes.config_template）：xray inbound JSON 模板 + 占位符。

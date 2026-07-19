@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"lattix/agent/internal/state"
+	"lattix/agent/internal/xray"
 	"lattix/shared"
 )
 
@@ -21,7 +22,13 @@ func main() {
 	panel := flag.String("panel", "ws://127.0.0.1:8080/api/agent/ws", "Backend WS 地址")
 	token := flag.String("token", "", "bootstrap token（§11）；state 文件已有长期凭证时忽略本参数")
 	statePath := flag.String("state", "/etc/lattix-agent.state.json", "长期凭证状态文件路径")
+	xrayBin := flag.String("xray-bin", "/usr/local/bin/xray", "xray 二进制路径")
+	xrayConfig := flag.String("xray-config", "/usr/local/etc/xray/config.json", "xray 配置文件路径（agent 独占管理，§6）")
+	xrayAPI := flag.String("xray-api", "127.0.0.1:10085", "xray gRPC API 地址")
+	xrayRunner := flag.String("xray-runner", "systemd", "xray 服务控制方式：systemd | exec（dev 联调）")
 	flag.Parse()
+
+	mgr := xray.NewManager(*xrayBin, *xrayConfig, *xrayAPI, xray.NewRunner(*xrayRunner, *xrayBin, *xrayConfig))
 
 	for {
 		st, err := state.Load(*statePath)
@@ -35,21 +42,22 @@ func main() {
 		if tok == "" {
 			log.Fatal("-token is required for first connect")
 		}
-		if err := run(*panel, tok, *statePath); err != nil {
+		if err := run(*panel, tok, *statePath, mgr); err != nil {
 			log.Printf("connection: %v (retrying in 5s)", err)
 			time.Sleep(5 * time.Second)
 		}
 	}
 }
 
-func run(panel, token, statePath string) error {
+func run(panel, token, statePath string, mgr *xray.Manager) error {
 	conn, _, err := websocket.DefaultDialer.Dial(panel, nil)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	// 首连认证（§5）：携带 token、agent 版本、xray 版本与运行状态。
+	// 首连认证（§5）：携带 token、agent 版本、xray 版本与运行状态（§13）。
+	xrayVer, xrayRunning := mgr.Version()
 	helloID := fmt.Sprintf("hello-%d", time.Now().UnixNano())
 	hello := shared.Envelope{
 		ID:   helloID,
@@ -57,7 +65,8 @@ func run(panel, token, statePath string) error {
 		Payload: mustJSON(shared.HelloPayload{
 			Token:        token,
 			AgentVersion: version,
-			// TODO(阶段 2): 采集 xray 版本与运行状态（§13）。
+			XrayVersion:  xrayVer,
+			XrayRunning:  xrayRunning,
 		}),
 	}
 	if err := conn.WriteJSON(hello); err != nil {
@@ -87,31 +96,67 @@ func run(panel, token, statePath string) error {
 		if err := conn.ReadJSON(&env); err != nil {
 			return err
 		}
-		handle(conn, env)
+		handle(conn, mgr, env)
 	}
 }
 
-// handle 按消息类型分发。apply 流水线与热操作在阶段 2 实现（§6）。
-func handle(conn *websocket.Conn, env shared.Envelope) {
+// handle 按消息类型分发：apply 流水线与热操作（§6），结果经 apply_result 上报（§5）。
+func handle(conn *websocket.Conn, mgr *xray.Manager, env shared.Envelope) {
 	switch env.Type {
-	case shared.TypeApplyNode, shared.TypeRemoveNode:
-		// 占位：回 failed 使面板节点状态机可推进（§6），阶段 2 替换为真实流水线。
-		var p struct {
-			NodeID int64 `json:"node_id"`
+	case shared.TypeApplyNode:
+		var p shared.ApplyNodePayload
+		if !parsePayload(env, &p) {
+			return
 		}
-		json.Unmarshal(env.Payload, &p)
-		log.Printf("recv %s id=%s node=%d (not implemented yet)", env.Type, env.ID, p.NodeID)
-		replyApplyResult(conn, env.ID, shared.ApplyResultPayload{
-			NodeID: p.NodeID,
-			OK:     false,
-			Error:  "apply pipeline not implemented yet",
-		})
-	case shared.TypeAddUser, shared.TypeRemoveUser:
-		// TODO(阶段 2)：xray gRPC 热操作（AlterInbound Add/RemoveUserOperation）。
-		log.Printf("recv %s id=%s (not implemented yet)", env.Type, env.ID)
+		log.Printf("apply_node id=%s node=%d users=%d", env.ID, p.NodeID, len(p.UserUUIDs))
+		realized, err := mgr.ApplyNode(p.NodeID, p.Config, p.UserUUIDs)
+		replyApplyResult(conn, env.ID, resultOf(p.NodeID, realized, err))
+
+	case shared.TypeRemoveNode:
+		var p shared.RemoveNodePayload
+		if !parsePayload(env, &p) {
+			return
+		}
+		log.Printf("remove_node id=%s node=%d", env.ID, p.NodeID)
+		err := mgr.RemoveNode(p.NodeID)
+		replyApplyResult(conn, env.ID, resultOf(p.NodeID, nil, err))
+
+	case shared.TypeAddUser:
+		var p shared.AddUserPayload
+		if !parsePayload(env, &p) {
+			return
+		}
+		log.Printf("add_user id=%s uuid=%s", env.ID, p.UUID)
+		err := mgr.AddUser(p.UUID)
+		replyApplyResult(conn, env.ID, resultOf(0, nil, err)) // NodeID 0 = 非节点命令
+
+	case shared.TypeRemoveUser:
+		var p shared.RemoveUserPayload
+		if !parsePayload(env, &p) {
+			return
+		}
+		log.Printf("remove_user id=%s uuid=%s", env.ID, p.UUID)
+		err := mgr.RemoveUser(p.UUID)
+		replyApplyResult(conn, env.ID, resultOf(0, nil, err))
+
 	default:
 		log.Printf("recv unknown type=%s id=%s", env.Type, env.ID)
 	}
+}
+
+func parsePayload(env shared.Envelope, v any) bool {
+	if err := json.Unmarshal(env.Payload, v); err != nil {
+		log.Printf("bad %s payload: %v", env.Type, err)
+		return false
+	}
+	return true
+}
+
+func resultOf(nodeID int64, realized *shared.RealizedConfig, err error) shared.ApplyResultPayload {
+	if err != nil {
+		return shared.ApplyResultPayload{NodeID: nodeID, OK: false, Error: err.Error()}
+	}
+	return shared.ApplyResultPayload{NodeID: nodeID, OK: true, RealizedConfig: realized}
 }
 
 // replyApplyResult 上报执行结果：与请求同 id 即响应帧（§5）。
