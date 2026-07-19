@@ -1,0 +1,7 @@
+go 1.26
+
+use (
+	./src/agent
+	./src/backend
+	./src/shared
+)

@@ -12,7 +12,7 @@
 
 # Frontend (bun / node)
 node_modules/
-Frontend/dist/
+src/frontend/dist/
 
 # SQLite
 *.db

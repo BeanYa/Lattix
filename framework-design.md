@@ -42,12 +42,12 @@
 ## 3. 仓库结构与技术栈
 
 ```
-Frontend/    # Vite + React + TypeScript + shadcn/ui，包管理器使用 bun
-Backend/     # Go：面板 HTTP API + Agent WS 端点 + SQLite
-Agent/       # Go：独立二进制，systemd 托管
-Shared/      # Go module：WS 消息结构体、虚拟配置类型，Backend/Agent 共用
+src/frontend/  # Vite + React + TypeScript + shadcn/ui，包管理器使用 bun
+src/backend/   # Go：面板 HTTP API + Agent WS 端点 + SQLite
+src/agent/     # Go：独立二进制，systemd 托管
+src/shared/    # Go module：WS 消息结构体、虚拟配置类型，backend/agent 共用
 scripts/
-  install.sh # Agent 引导安装脚本
+  install.sh   # Agent 引导安装脚本
 ```
 
 - 前端依赖安装与构建：`bun install` / `bun run build`，锁文件入库。
