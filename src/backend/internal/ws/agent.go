@@ -1,42 +1,104 @@
-// Package ws 实现 Agent 控制通道端点（设计文档 §5）：
-// Agent 携带服务器 token 拨出至 /api/agent/ws，Backend 永不主动外连 Agent。
 package ws
 
 import (
-	"database/sql"
+	"encoding/json"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 
 	"lattix/shared"
 )
 
+// helloTimeout 是等待首帧 hello 的超时。
+const helloTimeout = 10 * time.Second
+
 var upgrader = websocket.Upgrader{
 	// MVP 运行于本地/受信网络（§12）。
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// AgentHandler 返回 /api/agent/ws 的处理函数。在线/离线状态由 WS 连接是否存在直接推导（§5）。
-func AgentHandler(db *sql.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			log.Printf("ws upgrade: %v", err)
+// ServeHTTP 处理 GET /api/agent/ws：升级 → hello 认证（§5）→ 登记连接 → 读循环。
+func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("ws upgrade: %v", err)
+		return
+	}
+
+	// 首帧必须是 hello（带超时）：token（bootstrap 或长期）、agent/xray 版本与运行状态。
+	conn.SetReadDeadline(time.Now().Add(helloTimeout))
+	var hello shared.Envelope
+	if err := conn.ReadJSON(&hello); err != nil || hello.Type != shared.TypeHello {
+		log.Printf("ws: first frame is not hello: %v", err)
+		conn.Close()
+		return
+	}
+	conn.SetReadDeadline(time.Time{})
+
+	var hp shared.HelloPayload
+	if err := json.Unmarshal(hello.Payload, &hp); err != nil {
+		log.Printf("ws: bad hello payload: %v", err)
+		conn.Close()
+		return
+	}
+
+	serverID, result, err := h.Auth.AuthenticateHello(r.Context(), hp)
+	if err != nil {
+		log.Printf("ws: hello auth failed from %s: %v", r.RemoteAddr, err)
+		conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(4001, "authentication failed"))
+		conn.Close()
+		return
+	}
+
+	c := &agentConn{
+		serverID: serverID,
+		ws:       conn,
+		send:     make(chan shared.Envelope, sendBuffer),
+		done:     make(chan struct{}),
+	}
+	go c.writePump()
+
+	// 回 HelloResult（与请求同 type、同 id 即响应帧），必须先于任何补发命令到达 agent。
+	c.send <- shared.Envelope{
+		ID:      hello.ID,
+		Type:    shared.TypeHello,
+		Payload: mustJSON(result),
+	}
+	h.register(c)
+	log.Printf("agent connected: server=%d addr=%s xray=%s", serverID, r.RemoteAddr, hp.XrayVersion)
+
+	// 触发离线命令补发（§2）。
+	if h.OnConnect != nil {
+		h.OnConnect(serverID)
+	}
+
+	// 读循环：上抛业务信封直到断开。
+	defer func() {
+		h.unregister(c)
+		c.close()
+		log.Printf("agent disconnected: server=%d", serverID)
+	}()
+	for {
+		var env shared.Envelope
+		if err := conn.ReadJSON(&env); err != nil {
 			return
 		}
-		defer conn.Close()
-		log.Printf("agent connected: %s", r.RemoteAddr)
-
-		// TODO(MVP): hello 认证（bootstrap token 换发长期凭证，§5/§11）、在线状态登记、
-		// commands 表离线队列补发（§2）、消息分发与 apply_result 处理。
-		for {
-			var env shared.Envelope
-			if err := conn.ReadJSON(&env); err != nil {
-				log.Printf("agent disconnected: %v", err)
-				return
-			}
-			log.Printf("recv type=%s id=%s", env.Type, env.ID)
+		if h.OnMessage != nil {
+			h.OnMessage(serverID, env)
 		}
 	}
+}
+
+// 确保 Hub 满足 http.Handler。
+var _ http.Handler = (*Hub)(nil)
+
+func mustJSON(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }

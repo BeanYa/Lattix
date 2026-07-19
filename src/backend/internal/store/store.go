@@ -52,8 +52,13 @@ CREATE TABLE IF NOT EXISTS commands (
 );
 `
 
+// Store 封装 SQLite 数据访问。
+type Store struct {
+	db *sql.DB
+}
+
 // Open 打开 SQLite 数据库并确保表结构存在。
-func Open(path string) (*sql.DB, error) {
+func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -62,5 +67,8 @@ func Open(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
-	return db, nil
+	return &Store{db: db}, nil
 }
+
+// Close 关闭底层数据库连接。
+func (s *Store) Close() error { return s.db.Close() }

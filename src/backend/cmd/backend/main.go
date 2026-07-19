@@ -2,10 +2,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"net/http"
 
+	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/ws"
 )
@@ -16,16 +18,26 @@ func main() {
 	staticDir := flag.String("static", "src/frontend/dist", "frontend 构建产物目录（由 backend 直接托管，§3）")
 	flag.Parse()
 
-	db, err := store.Open(*dbPath)
+	st, err := store.Open(*dbPath)
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}
-	defer db.Close()
+	defer st.Close()
+
+	// 控制通道（§5）：hub 负责传输，dispatcher 负责命令生命周期与认证。
+	hub := ws.NewHub()
+	dispatcher := dispatch.New(st, hub)
+	hub.Auth = dispatcher
+	hub.OnConnect = func(serverID int64) {
+		// agent 重连后补发离线期间滞留的命令（§2）。
+		dispatcher.Flush(context.Background(), serverID)
+	}
+	hub.OnMessage = dispatcher.HandleMessage
 
 	mux := http.NewServeMux()
 
 	// Agent 控制通道（§5）。
-	mux.Handle("GET /api/agent/ws", ws.AgentHandler(db))
+	mux.Handle("GET /api/agent/ws", hub)
 
 	// 订阅（§9）：mihomo（Clash.Meta）格式 YAML。
 	mux.HandleFunc("GET /sub/{token}", notImplemented("subscription"))
