@@ -1,0 +1,23 @@
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Go
+*.exe
+*.test
+*.out
+/vendor/
+
+# Frontend (bun / node)
+node_modules/
+Frontend/dist/
+
+# SQLite
+*.db
+*.db-journal
+*.sqlite3
+
+# Env / secrets
+.env
