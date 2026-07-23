@@ -119,3 +119,9 @@ func (s *Store) SetNodeFailed(ctx context.Context, id int64, errMsg string) erro
 		`UPDATE nodes SET status = ?, error = ? WHERE id = ?`, NodeStatusFailed, errMsg, id)
 	return err
 }
+
+// DeleteNode 删除一个节点（remove_node 已由面板先行下发，§5）。
+func (s *Store) DeleteNode(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, id)
+	return err
+}

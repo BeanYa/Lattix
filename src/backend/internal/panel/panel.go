@@ -56,6 +56,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/nodes", s.requireAuth(s.handleListNodes))
 	mux.HandleFunc("POST /api/nodes", s.requireAuth(s.handleCreateNode))
 	mux.HandleFunc("POST /api/nodes/{id}/retry", s.requireAuth(s.handleRetryNode))
+	mux.HandleFunc("DELETE /api/nodes/{id}", s.requireAuth(s.handleDeleteNode))
 
 	mux.HandleFunc("GET /api/users", s.requireAuth(s.handleListUsers))
 	mux.HandleFunc("POST /api/users", s.requireAuth(s.handleCreateUser))

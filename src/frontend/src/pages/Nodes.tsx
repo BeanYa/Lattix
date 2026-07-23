@@ -53,8 +53,8 @@ export default function Nodes() {
   const [serverId, setServerId] = useState('')
   const [port, setPort] = useState('')
   const [shortId, setShortId] = useState('')
-  const [dest, setDest] = useState('www.microsoft.com:443')
-  const [serverNames, setServerNames] = useState('www.microsoft.com')
+  const [dest, setDest] = useState('dl.google.com:443')
+  const [serverNames, setServerNames] = useState('dl.google.com')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 
@@ -68,7 +68,11 @@ export default function Nodes() {
       .finally(() => setLoading(false))
   }, [])
 
-  useEffect(load, [load])
+  useEffect(() => {
+    load()
+    const timer = setInterval(load, 5000)
+    return () => clearInterval(timer)
+  }, [load])
 
   const onOpenChange = (next: boolean) => {
     setOpen(next)
@@ -76,8 +80,8 @@ export default function Nodes() {
       setServerId('')
       setPort('')
       setShortId('')
-      setDest('www.microsoft.com:443')
-      setServerNames('www.microsoft.com')
+      setDest('dl.google.com:443')
+      setServerNames('dl.google.com')
       setCreateError('')
     }
   }
@@ -128,6 +132,18 @@ export default function Nodes() {
       setError(errorMessage(err))
     } finally {
       setRetrying(null)
+    }
+  }
+
+  const onDelete = async (id: number) => {
+    if (!window.confirm('确定删除该节点？将同时从服务器上移除该 inbound。')) {
+      return
+    }
+    try {
+      await api.deleteNode(id)
+      load()
+    } catch (err) {
+      setError(errorMessage(err))
     }
   }
 
@@ -184,7 +200,7 @@ export default function Nodes() {
                     <TableCell className="max-w-64 truncate text-destructive" title={n.error ?? ''}>
                       {n.error || '-'}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="space-x-2">
                       {n.status === 'failed' && (
                         <Button
                           variant="outline"
@@ -195,6 +211,9 @@ export default function Nodes() {
                           {retrying === n.id ? '重试中…' : '重试'}
                         </Button>
                       )}
+                      <Button variant="outline" size="sm" onClick={() => onDelete(n.id)}>
+                        删除
+                      </Button>
                     </TableCell>
                   </TableRow>
                 )
@@ -254,7 +273,7 @@ export default function Nodes() {
                 id="dest"
                 value={dest}
                 onChange={(e) => setDest(e.target.value)}
-                placeholder="www.microsoft.com:443"
+                placeholder="dl.google.com:443"
               />
             </div>
             <div className="space-y-2">
@@ -263,7 +282,7 @@ export default function Nodes() {
                 id="serverNames"
                 value={serverNames}
                 onChange={(e) => setServerNames(e.target.value)}
-                placeholder="www.microsoft.com"
+                placeholder="dl.google.com"
               />
             </div>
             {createError && <p className="text-sm text-destructive">{createError}</p>}

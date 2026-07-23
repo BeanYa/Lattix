@@ -9,10 +9,15 @@ export default function Dashboard() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    api
-      .dashboard()
-      .then(setStats)
-      .catch((err) => setError(errorMessage(err)))
+    const load = () => {
+      api
+        .dashboard()
+        .then(setStats)
+        .catch((err) => setError(errorMessage(err)))
+    }
+    load()
+    const timer = setInterval(load, 5000)
+    return () => clearInterval(timer)
   }, [])
 
   if (error) {

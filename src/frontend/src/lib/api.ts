@@ -73,6 +73,7 @@ export const api = {
   createNode: (body: CreateNodeRequest) =>
     request<XrayNode>('/api/nodes', { method: 'POST', body: JSON.stringify(body) }),
   retryNode: (id: number) => request<XrayNode>(`/api/nodes/${id}/retry`, { method: 'POST' }),
+  deleteNode: (id: number) => request<void>(`/api/nodes/${id}`, { method: 'DELETE' }),
 
   users: () => request<SubUser[]>('/api/users'),
   createUser: (name: string) =>

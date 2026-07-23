@@ -121,6 +121,33 @@ func (s *Server) handleRetryNode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toNodeDTO(*n))
 }
 
+// handleDeleteNode 处理 DELETE /api/nodes/{id}：下发 remove_node（离线留队列补发）后删除记录。
+func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid node id")
+		return
+	}
+	n, err := s.st.NodeByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "节点不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if _, err := s.disp.Enqueue(r.Context(), n.ServerID, shared.TypeRemoveNode, shared.RemoveNodePayload{NodeID: n.ID}); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.st.DeleteNode(r.Context(), id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // applyNewNode 落库新节点并下发 apply_node，返回节点 id。
 func (s *Server) applyNewNode(r *http.Request, serverID int64, port *int, vc shared.VirtualConfig) (int64, error) {
 	vcJSON, err := json.Marshal(vc)
@@ -163,11 +190,11 @@ func buildVirtualConfig(req createNodeRequest) shared.VirtualConfig {
 	}
 	dest := req.Dest
 	if dest == "" {
-		dest = "www.microsoft.com:443"
+		dest = "dl.google.com:443"
 	}
 	serverNames := req.ServerNames
 	if len(serverNames) == 0 {
-		serverNames = []string{"www.microsoft.com"}
+		serverNames = []string{"dl.google.com"}
 	}
 	names, _ := json.Marshal(serverNames)
 	template := fmt.Sprintf(`{

@@ -136,7 +136,7 @@ echo "$SUB" | grep -q "name: dev01-vless-$NPORT" \
     && echo "$SUB" | grep -q "flow: xtls-rprx-vision" \
     && echo "$SUB" | grep -q "public-key: $PUBKEY" \
     && echo "$SUB" | grep -q "short-id: $SHORTID" \
-    && echo "$SUB" | grep -q "servername: www.microsoft.com" \
+    && echo "$SUB" | grep -q "servername: dl.google.com" \
     && echo "$SUB" | grep -q "udp: true" \
     && echo "$SUB" | grep -q "type: select" \
     && echo "$SUB" | grep -q "MATCH,PROXY" \
@@ -154,6 +154,15 @@ assert c['rules'] == ['MATCH,PROXY']
 fi
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/sub/nonexistent-token")" == "404" ]] \
     && echo "OK: 未知 sub_token 返回 404" || { echo "FAIL: 未知 token"; exit 1; }
+
+# --- 删除节点（remove_node 下发 + 记录删除）---
+[[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X DELETE "http://$ADDR/api/nodes/1")" == "204" ]]
+for i in $(seq 1 15); do ! grep -q 'node_1' "$XRAY_CONFIG" && break; sleep 1; done
+! grep -q 'node_1' "$XRAY_CONFIG" \
+    && echo "OK: 节点已删除（服务器 inbound 同步移除）" \
+    || { echo "FAIL: 删除节点"; tail -5 "$WORK/agent.log"; exit 1; }
+[[ "$(api "http://$ADDR/api/nodes" | py "len(d)")" == "0" ]] \
+    && echo "OK: 节点列表已清空" || { echo "FAIL: 节点列表"; exit 1; }
 
 # --- 登出 ---
 api -X POST "http://$ADDR/api/logout" >/dev/null

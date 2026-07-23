@@ -9,7 +9,9 @@
 set -euo pipefail
 
 # TODO: xray 版本应由面板配置项钉住并注入本脚本（§11），此处仅为占位缺省值。
-XRAY_VERSION="${XRAY_VERSION:-v25.3.6}"
+# 注意：低于 v26 的 xray 与新版客户端（xray 26 / 新 mihomo 内核）Reality 握手不兼容，
+# 且不支持 api.listen（gRPC 热操作通道），不要回退到 v25.x。
+XRAY_VERSION="${XRAY_VERSION:-v26.3.27}"
 
 AGENT_BIN="/usr/local/bin/lattix-agent"
 XRAY_BIN="/usr/local/bin/xray"

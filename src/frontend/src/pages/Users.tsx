@@ -48,7 +48,11 @@ export default function Users() {
       .finally(() => setLoading(false))
   }, [])
 
-  useEffect(load, [load])
+  useEffect(() => {
+    load()
+    const timer = setInterval(load, 5000)
+    return () => clearInterval(timer)
+  }, [load])
 
   const onOpenChange = (next: boolean) => {
     setOpen(next)

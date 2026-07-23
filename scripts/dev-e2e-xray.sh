@@ -80,9 +80,9 @@ TMPL='{
     "security": "reality",
     "realitySettings": {
       "show": false,
-      "dest": "www.microsoft.com:443",
+      "dest": "dl.google.com:443",
       "xver": 0,
-      "serverNames": ["www.microsoft.com"],
+      "serverNames": ["dl.google.com"],
       "privateKey": "{{PRIVATE_KEY}}",
       "shortIds": ["0123456789abcdef"]
     }
