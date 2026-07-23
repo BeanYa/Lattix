@@ -109,3 +109,22 @@ func (s *Store) TouchServer(ctx context.Context, id int64, xrayVersion, address 
 		xrayVersion, address, id)
 	return err
 }
+
+// DeleteServerCascade 删除服务器及其节点与命令记录（§10 删除服务器）。
+func (s *Store) DeleteServerCascade(ctx context.Context, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM commands WHERE server_id = ?`,
+		`DELETE FROM nodes WHERE server_id = ?`,
+		`DELETE FROM servers WHERE id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+			return fmt.Errorf("delete server cascade: %w", err)
+		}
+	}
+	return tx.Commit()
+}

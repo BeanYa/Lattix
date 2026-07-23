@@ -164,6 +164,32 @@ for i in $(seq 1 15); do ! grep -q 'node_1' "$XRAY_CONFIG" && break; sleep 1; do
 [[ "$(api "http://$ADDR/api/nodes" | py "len(d)")" == "0" ]] \
     && echo "OK: 节点列表已清空" || { echo "FAIL: 节点列表"; exit 1; }
 
+# --- 凭证刷新（未安装的服务器 → 换发 bootstrap token 并重取安装命令）---
+RESP2="$(api -X POST -d '{"alias":"test2"}' "http://$ADDR/api/servers")"
+OLD_BOOT="$(echo "$RESP2" | py "d['bootstrap_token']")"
+NEWID="$(echo "$RESP2" | py "d['server']['id']")"
+ROT="$(api -X POST "http://$ADDR/api/servers/$NEWID/rotate-token")"
+NEW_BOOT="$(echo "$ROT" | py "d['bootstrap_token']")"
+[[ "$NEW_BOOT" != "$OLD_BOOT" && "$(echo "$ROT" | py "d['install_command']")" == *"$NEW_BOOT" ]] \
+    && echo "OK: 凭证刷新换发 bootstrap token 并重取安装命令" \
+    || { echo "FAIL: 凭证刷新: $ROT"; exit 1; }
+
+# --- 删除离线服务器（仅删记录）---
+[[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X DELETE "http://$ADDR/api/servers/$NEWID")" == "204" ]]
+[[ "$(api "http://$ADDR/api/servers" | py "len(d)")" == "1" ]] \
+    && echo "OK: 离线服务器已删除" || { echo "FAIL: 删除离线服务器"; exit 1; }
+
+# --- 删除在线服务器（下发 uninstall，agent 自毁）---
+[[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X DELETE "http://$ADDR/api/servers/1")" == "204" ]]
+for _ in $(seq 1 10); do kill -0 $APID 2>/dev/null || break; sleep 1; done
+if kill -0 $APID 2>/dev/null; then
+    echo "FAIL: agent 未自毁"; exit 1
+else
+    echo "OK: 在线服务器删除，agent 已自卸载退出"
+fi
+[[ "$(api "http://$ADDR/api/servers" | py "len(d)")" == "0" ]] \
+    && echo "OK: 服务器级联删除（记录清空）" || { echo "FAIL: 级联删除"; exit 1; }
+
 # --- 登出 ---
 api -X POST "http://$ADDR/api/logout" >/dev/null
 [[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' "http://$ADDR/api/servers")" == "401" ]] \

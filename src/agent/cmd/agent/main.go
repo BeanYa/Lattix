@@ -139,6 +139,12 @@ func handle(conn *websocket.Conn, mgr *xray.Manager, env shared.Envelope) {
 		err := mgr.RemoveUser(p.UUID)
 		replyApplyResult(conn, env.ID, resultOf(0, nil, err))
 
+	case shared.TypeUninstall:
+		// 先回执再自毁：panel 删除服务器时下发（§10）。
+		log.Printf("uninstall id=%s", env.ID)
+		replyApplyResult(conn, env.ID, resultOf(0, nil, nil))
+		scheduleUninstall()
+
 	default:
 		log.Printf("recv unknown type=%s id=%s", env.Type, env.ID)
 	}

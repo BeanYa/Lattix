@@ -76,7 +76,7 @@ scripts/
 
 信封：JSON，`{id, type, payload}`，`id` 用于请求/响应关联。
 
-消息类型（MVP 仅六种）：
+消息类型：
 
 | type | 方向 | 说明 |
 |---|---|---|
@@ -86,6 +86,7 @@ scripts/
 | `add_user` | panel→agent | 向该服务器所有 inbound 热加入一个用户 |
 | `remove_user` | panel→agent | 从该服务器所有 inbound 热移除一个用户 |
 | `apply_result` | agent→panel | 上报执行结果：成功返回 realized_config，失败返回 error |
+| `uninstall` | panel→agent | 卸载 agent（含 install.sh 安装的 xray 与 systemd 服务）；agent 先回执再自毁 |
 
 在线/离线状态由 WS 连接是否存在直接推导，无周期心跳遥测。
 
@@ -137,14 +138,14 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 
 ## 10. 面板页面与 API
 
-页面：登录 / 仪表盘（服务器数、在线数、节点数、用户数）/ 服务器列表（"添加服务器"生成一行安装命令）/ 节点创建向导（选服务器 → VLESS+Reality 表单，端口可空 = 自动）/ 用户列表（创建用户 → 展示并复制订阅链接）。
+页面：登录 / 仪表盘（服务器数、在线数、节点数、用户数）/ 服务器列表（"添加服务器"生成一行安装命令；可删除服务器——在线 agent 收到 `uninstall` 自卸载，离线仅删记录；可刷新凭证重取安装命令——已安装的换发后旧凭证失效，未安装的换发新 bootstrap token）/ 节点创建向导（选服务器 → VLESS+Reality 表单，端口可空 = 自动）/ 用户列表（创建用户 → 展示并复制订阅链接）。
 
 管理 API 走 HTTP + session（账号密码登录）；Agent 通道走 token（§5）。
 
 ## 11. 服务器引导流程
 
 1. 面板"添加服务器"生成一次性 **bootstrap token** 与一行安装命令；
-2. `install.sh` 在被控机执行：按面板配置项钉住的 xray 版本从 GitHub release 下载安装 xray-core → 下载/安装 Agent 二进制 → 注册 systemd → 写入面板地址与 bootstrap token；
+2. `install.sh` 在被控机执行：按面板配置项钉住的 xray 版本从 GitHub release 下载安装 xray-core → 下载/安装 Agent 二进制 → 注册 systemd → 写入面板地址与 bootstrap token（重装时清除旧 state 文件，确保使用新 bootstrap token）；
 3. Agent 启动首连，以 bootstrap token 换发长期服务器 token。
 
 ## 12. 安全

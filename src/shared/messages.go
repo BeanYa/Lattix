@@ -11,7 +11,7 @@ type Envelope struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-// 消息类型（MVP 仅六种，§5）。
+// 消息类型（§5）。
 const (
 	TypeHello       = "hello"        // agent→panel 首连认证
 	TypeApplyNode   = "apply_node"   // panel→agent 下发节点
@@ -19,6 +19,7 @@ const (
 	TypeAddUser     = "add_user"     // panel→agent 热加入一个用户
 	TypeRemoveUser  = "remove_user"  // panel→agent 热移除一个用户
 	TypeApplyResult = "apply_result" // agent→panel 上报执行结果
+	TypeUninstall   = "uninstall"    // panel→agent 卸载 agent（先回执再自毁）
 )
 
 // HelloPayload 是 hello 的载荷：token（bootstrap 或长期）、agent 版本、

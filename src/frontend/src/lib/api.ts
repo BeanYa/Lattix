@@ -68,6 +68,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ alias }),
     }),
+  rotateServerToken: (id: number) =>
+    request<CreateServerResponse>(`/api/servers/${id}/rotate-token`, { method: 'POST' }),
+  deleteServer: (id: number) => request<void>(`/api/servers/${id}`, { method: 'DELETE' }),
 
   nodes: () => request<XrayNode[]>('/api/nodes'),
   createNode: (body: CreateNodeRequest) =>

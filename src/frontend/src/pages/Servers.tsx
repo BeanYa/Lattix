@@ -23,7 +23,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
-import type { CreateServerResponse, Server } from '@/lib/types'
+import type { Server } from '@/lib/types'
 
 function formatTime(t: string | null): string {
   return t ? new Date(t).toLocaleString() : '-'
@@ -38,7 +38,7 @@ export default function Servers() {
   const [alias, setAlias] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
-  const [created, setCreated] = useState<CreateServerResponse | null>(null)
+  const [cmdView, setCmdView] = useState<{ title: string; command: string } | null>(null)
 
   const load = useCallback(() => {
     api
@@ -59,7 +59,6 @@ export default function Servers() {
     if (!next) {
       setAlias('')
       setCreateError('')
-      setCreated(null)
     }
   }
 
@@ -69,12 +68,48 @@ export default function Servers() {
     setCreating(true)
     try {
       const res = await api.createServer(alias.trim())
-      setCreated(res)
+      onOpenChange(false)
+      setCmdView({ title: '服务器已创建，请在目标机器上执行安装命令', command: res.install_command })
       load()
     } catch (err) {
       setCreateError(errorMessage(err))
     } finally {
       setCreating(false)
+    }
+  }
+
+  // 未安装（从未上线）→ 重新获取安装命令；已安装 → 凭证刷新（旧凭证立即失效）。
+  const onRotateToken = async (s: Server) => {
+    const installed = s.last_seen_at !== null
+    if (
+      installed &&
+      !window.confirm('刷新后该服务器的旧凭证（含长期凭证）立即失效，agent 重连前需重新执行安装命令。继续？')
+    ) {
+      return
+    }
+    try {
+      const res = await api.rotateServerToken(s.id)
+      setCmdView({
+        title: installed ? '凭证已刷新，请重新执行安装命令' : '安装命令（bootstrap token 已刷新）',
+        command: res.install_command,
+      })
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  const onDelete = async (s: Server) => {
+    const tip = s.online
+      ? `确定删除服务器「${s.alias}」？将向 agent 发送卸载命令（agent 与其管理的 xray 一并移除）并删除记录。`
+      : `确定删除服务器「${s.alias}」？当前离线，仅删除记录；该机上的 agent 需手动清理。`
+    if (!window.confirm(tip)) {
+      return
+    }
+    try {
+      await api.deleteServer(s.id)
+      load()
+    } catch (err) {
+      setError(errorMessage(err))
     }
   }
 
@@ -99,18 +134,19 @@ export default function Servers() {
               <TableHead>xray 版本</TableHead>
               <TableHead>最近在线</TableHead>
               <TableHead>创建时间</TableHead>
+              <TableHead>操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground">
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
                   加载中…
                 </TableCell>
               </TableRow>
             ) : servers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground">
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
                   暂无服务器，点击右上角「添加服务器」开始
                 </TableCell>
               </TableRow>
@@ -132,6 +168,14 @@ export default function Servers() {
                   <TableCell>{s.xray_version ?? '-'}</TableCell>
                   <TableCell>{formatTime(s.last_seen_at)}</TableCell>
                   <TableCell>{formatTime(s.created_at)}</TableCell>
+                  <TableCell className="space-x-2">
+                    <Button variant="outline" size="sm" onClick={() => onRotateToken(s)}>
+                      {s.last_seen_at ? '凭证刷新' : '安装命令'}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => onDelete(s)}>
+                      删除
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))
             )}
@@ -143,43 +187,44 @@ export default function Servers() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>添加服务器</DialogTitle>
-            <DialogDescription>
-              {created ? '服务器已创建，请在目标机器上执行下面的安装命令。' : '输入别名创建服务器。'}
-            </DialogDescription>
+            <DialogDescription>输入别名创建服务器。</DialogDescription>
           </DialogHeader>
-          {created ? (
-            <div className="space-y-3">
-              <div className="space-y-2">
-                <Label>安装命令</Label>
-                <pre className="max-h-40 overflow-auto rounded-lg bg-muted p-3 text-xs break-all whitespace-pre-wrap">
-                  {created.install_command}
-                </pre>
-              </div>
-              <DialogFooter showCloseButton>
-                <CopyButton text={created.install_command} />
-              </DialogFooter>
+          <form onSubmit={onCreate} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="alias">别名</Label>
+              <Input
+                id="alias"
+                value={alias}
+                onChange={(e) => setAlias(e.target.value)}
+                placeholder="例如：hk-01"
+                required
+                autoFocus
+              />
             </div>
-          ) : (
-            <form onSubmit={onCreate} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="alias">别名</Label>
-                <Input
-                  id="alias"
-                  value={alias}
-                  onChange={(e) => setAlias(e.target.value)}
-                  placeholder="例如：hk-01"
-                  required
-                  autoFocus
-                />
-              </div>
-              {createError && <p className="text-sm text-destructive">{createError}</p>}
-              <DialogFooter>
-                <Button type="submit" disabled={creating || !alias.trim()}>
-                  {creating ? '创建中…' : '创建'}
-                </Button>
-              </DialogFooter>
-            </form>
-          )}
+            {createError && <p className="text-sm text-destructive">{createError}</p>}
+            <DialogFooter>
+              <Button type="submit" disabled={creating || !alias.trim()}>
+                {creating ? '创建中…' : '创建'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cmdView !== null} onOpenChange={(next) => !next && setCmdView(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>安装命令</DialogTitle>
+            <DialogDescription>{cmdView?.title}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <pre className="max-h-40 overflow-auto rounded-lg bg-muted p-3 text-xs break-all whitespace-pre-wrap">
+              {cmdView?.command}
+            </pre>
+          </div>
+          <DialogFooter showCloseButton>
+            <CopyButton text={cmdView?.command ?? ''} />
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

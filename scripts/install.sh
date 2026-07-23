@@ -77,6 +77,8 @@ cat > "$ENV_FILE" <<EOF
 LATTIX_PANEL_WS=${PANEL_WS}
 LATTIX_TOKEN=${BOOTSTRAP_TOKEN}
 EOF
+# 重装/换发凭证时清除旧长期凭证，确保 agent 使用新 bootstrap token（§11）。
+rm -f /etc/lattix-agent.state.json
 
 echo ">> registering systemd services"
 cat > /etc/systemd/system/xray.service <<'EOF'
