@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/netip"
 	"strconv"
 	"sync"
 
@@ -88,6 +89,11 @@ func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayloa
 	if err := d.st.RotateServerToken(ctx, srv.ID, newToken); err != nil {
 		return 0, shared.HelloResult{}, err
 	}
+	// 回环地址对客户端无意义（agent 与 panel 同机的 dev 场景）：
+	// 库里已有非回环地址（如管理员手动指定）时不被 RemoteAddr 覆盖（§9）。
+	if isLoopback(remoteAddr) && srv.Address != "" && !isLoopback(srv.Address) {
+		remoteAddr = srv.Address
+	}
 	if err := d.st.TouchServer(ctx, srv.ID, p.XrayVersion, remoteAddr); err != nil {
 		log.Printf("dispatch: touch server %d: %v", srv.ID, err)
 	}
@@ -164,4 +170,10 @@ func randomToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+// isLoopback 报告 IP 是否为回环地址。
+func isLoopback(ip string) bool {
+	addr, err := netip.ParseAddr(ip)
+	return err == nil && addr.IsLoopback()
 }
