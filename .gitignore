@@ -19,5 +19,9 @@ src/frontend/dist/
 *.db-journal
 *.sqlite3
 
+# 本地构建产物
+/lattix-backend
+/dist/
+
 # Env / secrets
 .env
