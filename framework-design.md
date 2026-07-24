@@ -38,6 +38,7 @@
 - **单通道**：Agent → Backend 一条 WebSocket 长连接承担全部双向通信。Backend 永不主动外连 Agent，Agent 不提供任何监听 API 端点。该形态同时兼容公网服务器与未来的 NAT 服务器。
 - **无 fallback 实现**：Backend 侧定义 `requester` 接口隔离"发送命令"与"具体传输"，MVP 只有 WebSocket 一个实现；gRPC/HTTP 等其他实现属后续迭代。
 - **离线排队**：Agent 离线期间，发往它的命令滞留于 `commands` 表，重连后补发。
+- **重发与死信**：重连时将该服务器 `sent` 未终态的命令重置为 `queued` 重新补发（幂等性由 Agent 各处理器保证）；`attempts` 超过上限（10 次）标记 `failed` 死信，不再重发。
 
 ## 3. 仓库结构与技术栈
 
@@ -59,15 +60,16 @@ scripts/
 
 | 表 | 字段（要点） |
 |---|---|
-| `servers` | id, alias, token(长期凭证), last_seen_at, xray_version, created_at |
+| `servers` | id, alias, address(公网地址), token(长期凭证), last_seen_at, xray_version, created_at |
 | `users` | id, name, uuid, sub_token, created_at |
 | `nodes` | id, server_id, protocol(vless), port, config_template(JSON), realized_config(JSON), status, error, created_at |
 | `commands` | id, server_id, type, payload(JSON), status(queued/sent/acked/failed), attempts, created_at, updated_at |
 
 说明：
 
-- `commands` 表同时充当**离线命令队列**与**操作日志**。
+- `commands` 表同时充当**离线命令队列**与**操作日志**（全部保留，不自动清理；重发/死信语义见 §2）。
 - `nodes.config_template` 是面板侧虚拟配置（含占位符）；`nodes.realized_config` 是 Agent 上报的实际生效值（端口、public_key、short_id 等）。
+- `servers.address` 是订阅中节点地址的唯一来源（§9）：**创建服务器时由管理员填写公网地址，agent 不校验**；留空则按 agent WS 拨入的 RemoteAddr 自动学习，一经写入不再被覆盖（地址变更由管理员修改）。
 - **无用户-节点关联表**：MVP 成员关系隐含为"全部用户 ∈ 全部节点"（见 §8）。
 
 ## 5. 控制通道协议
@@ -80,13 +82,13 @@ scripts/
 
 | type | 方向 | 说明 |
 |---|---|---|
-| `hello` | agent→panel | 首连认证：token、agent 版本、xray 版本、xray 运行状态；bootstrap token 在此换发长期凭证 |
+| `hello` | agent→panel | 首连认证：token、agent 版本、xray 版本、xray 运行状态；bootstrap token 在此换发长期凭证（以 `last_seen_at` 为空判定 bootstrap 状态；长期 token 一经换发**不再轮换**，agent 侧内存兜底防止落盘失败锁死） |
 | `apply_node` | panel→agent | 下发节点：虚拟配置模板 + 全量用户 UUID 列表 |
 | `remove_node` | panel→agent | 删除节点 |
 | `add_user` | panel→agent | 向该服务器所有 inbound 热加入一个用户 |
 | `remove_user` | panel→agent | 从该服务器所有 inbound 热移除一个用户 |
 | `apply_result` | agent→panel | 上报执行结果：成功返回 realized_config，失败返回 error |
-| `uninstall` | panel→agent | 卸载 agent（含 install.sh 安装的 xray 与 systemd 服务）；agent 先回执再自毁 |
+| `uninstall` | panel→agent | 卸载 agent：`purge_xray=true` 时连同 install.sh 安装的 xray 与配置一并清除，`false` 时仅移除 agent（xray 及节点继续运行）；agent 先回执再自毁 |
 
 在线/离线状态由 WS 连接是否存在直接推导，无周期心跳遥测。
 
@@ -97,12 +99,13 @@ scripts/
 Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 
 1. 填充模板占位符（见 §7）；
-2. 写入临时配置文件；
-3. `xray run -test -config <file>` 校验，失败则丢弃并上报 error；
-4. 落盘正式配置（Agent **独占管理** `/usr/local/etc/xray/config.json`）；
-5. 调 xray gRPC API 热操作（`AddInbound` / `AlterInbound` / `RemoveInbound`）；
-6. 热操作失败才 `systemctl restart xray`；
-7. 重启失败则恢复上一份可用配置、再次重启，并上报 failed。
+2. **dest 预检**：对模板 dest 做 TCP+TLS 可达性检查；不可达则按 `apply_node` 携带的白名单候选（`dest_candidates`，面板内置并随版本更新，尽量丰富）逐个尝试，全部失败则上报 error；
+3. 写入临时配置文件；
+4. `xray run -test -config <file>` 校验，失败则丢弃并上报 error；
+5. 落盘正式配置（Agent **独占管理** `/usr/local/etc/xray/config.json`）；
+6. 调 xray gRPC API 热操作（`AddInbound` / `AlterInbound` / `RemoveInbound`）；
+7. 热操作失败才 `systemctl restart xray`；
+8. 重启失败则恢复上一份可用配置、再次重启，并上报 failed。
 
 参考依据：3x-ui/x-ui 系通过 xray gRPC API 的 `AlterInbound`（AddUser/RemoveUserOperation）实现增删用户零重启；XrayR/V2bX 类商业化节点侧通过进程内重载 xray-core 达成同等效果。MVP 采用前者为主路径、重启为兜底。
 
@@ -116,7 +119,7 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 | Reality 密钥对 | **Agent** | 执行 `xray x25519` 生成，私钥不出服务器，public_key 随 `apply_result` 上报 |
 | short_id | 面板 | 随模板下发 |
 | 端口 | 两者皆可 | 向导中可指定（Agent 检查占用，冲突报错）或留空（Agent 挑空闲端口上报） |
-| dest / serverNames | 面板 | 向导表单，带默认值 |
+| dest / serverNames | 面板 | 向导表单（带默认值）；留空时由 Agent 按白名单预检自动选择（§6），选定值随 `apply_result` 上报 |
 
 ## 8. 用户-节点模型（扇出语义）
 
@@ -132,27 +135,30 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 `GET /sub/{sub_token}` → 返回 **mihomo（Clash.Meta）格式 YAML**。
 
 - 目标客户端：mihomo 内核系（Clash Verge / Clash Party / FlClash 等）。原版 Clash 不支持 VLESS+Reality，不在目标范围。
-- 内容：proxies 列表（每个节点一项，`type: vless`，嵌入**该用户自己的 UUID**、`flow`、`reality-opts: {public-key, short-id}`、`servername`、`udp: true`）+ 一个 `select` 类型 proxy-group + `MATCH` 规则。
+- 内容：proxies 列表（每个节点一项，`type: vless`，`server` 取 `servers.address`（§4），嵌入**该用户自己的 UUID**、`flow`、`reality-opts: {public-key, short-id}`、`servername`、`udp: true`）+ 一个 `select` 类型 proxy-group + `MATCH` 规则。
 - 节点命名：`{服务器别名}-vless-{端口}`，如 `tokyo01-vless-8443`。
 - `vless://` 分享链接集合格式属后续迭代（实现成本极低，随时可补）。
 
 ## 10. 面板页面与 API
 
-页面：登录 / 仪表盘（服务器数、在线数、节点数、用户数）/ 服务器列表（"添加服务器"生成一行安装命令；可删除服务器——在线 agent 收到 `uninstall` 自卸载，离线仅删记录；可刷新凭证重取安装命令——已安装的换发后旧凭证失效，未安装的换发新 bootstrap token）/ 节点创建向导（选服务器 → VLESS+Reality 表单，端口可空 = 自动）/ 用户列表（创建用户 → 展示并复制订阅链接）。
+页面：登录 / 仪表盘（服务器数、在线数、节点数、用户数）/ 服务器列表（"添加服务器"填写别名、**公网地址**（留空自动学习，§4）与 **xray 版本**（默认 `latest`，§11），生成一行安装命令；可删除服务器——在线 agent 收到 `uninstall` 自卸载，**删除时可选"仅 agent"或"连同 xray"**（§5），离线仅删记录；可刷新凭证重取安装命令——已安装的换发后旧凭证失效，未安装的换发新 bootstrap token）/ 节点创建向导（选服务器 → VLESS+Reality 表单，端口可空 = 自动）/ 用户列表（创建用户 → 展示并复制订阅链接）。
 
 管理 API 走 HTTP + session（账号密码登录）；Agent 通道走 token（§5）。
 
 ## 11. 服务器引导流程
 
-1. 面板"添加服务器"生成一次性 **bootstrap token** 与一行安装命令；
-2. `install.sh` 在被控机执行：按面板配置项钉住的 xray 版本从 GitHub release 下载安装 xray-core → 下载/安装 Agent 二进制 → 注册 systemd → 写入面板地址与 bootstrap token（重装时清除旧 state 文件，确保使用新 bootstrap token）；
-3. Agent 启动首连，以 bootstrap token 换发长期服务器 token。
+1. 面板"添加服务器"填写别名、公网地址与 **xray 版本**（默认 `latest`，也可指定具体版本），生成一次性 **bootstrap token** 与一行安装命令；
+2. `install.sh` 在被控机执行：按创建时指定的 xray 版本安装（`latest` 在执行时经 GitHub API 解析最新 release；**校验官方 release checksums**）→ 下载/安装 Agent 二进制（**按面板注入的 SHA256 校验**，明文 HTTP 下保证二进制不被中间人替换）→ 注册 systemd → 写入面板地址与 bootstrap token（重装时清除旧 state 文件，确保使用新 bootstrap token）；
+3. Agent 启动首连，以 bootstrap token 换发长期服务器 token；**实际安装的 xray 版本随 hello 上报，面板服务器列表展示实际版本号**。
+
+凭证刷新（§10）将 `last_seen_at` 重置为空，使服务器回到 bootstrap 状态，下次 hello 重新换发。
 
 ## 12. 安全
 
 - MVP 运行于本地/受信网络：**HTTP + token**，面板 TLS 进已知问题。
+- install 通道（install.sh、agent 二进制）明文传输，但**以 SHA256 校验保障完整性**（§11）：校验和由面板注入脚本，等价于把信任锚定在 install.sh 的投递路径上。
 - Reality 私钥永不出服务器（§7）。
-- Agent 能力面收敛：只执行 xray 配置落地、服务重启、状态上报，不接受任意命令。
+- Agent 能力面收敛：只执行 xray 配置落地、服务重启、状态上报、自卸载，不接受任意命令。
 
 ## 13. 遥测
 
