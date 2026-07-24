@@ -166,4 +166,21 @@ sleep 2
 NODE2="$(db "SELECT status || '|' || COALESCE(error, '') FROM nodes WHERE id=2")"
 [[ "$NODE2" == failed\|*校验* ]] && echo "OK: 非法模板被拒，错误详情已上报" || { echo "FAIL: node2=$NODE2"; cat "$WORK/agent.log"; exit 1; }
 
+echo ">> dest 不可达 → 白名单 fallback（§6 预检）"
+python3 - "$WORK/lattix.db" <<'PY'
+import json, sqlite3, sys
+tmpl = {"tag":"{{TAG}}","protocol":"vless","port":"{{PORT}}","settings":{"clients":"{{CLIENTS}}","decryption":"none"},"streamSettings":{"network":"tcp","security":"reality","realitySettings":{"show":False,"dest":"192.0.2.1:443","xver":0,"serverNames":["192.0.2.1"],"privateKey":"{{PRIVATE_KEY}}","shortIds":["0123456789abcdef"]}},"sniffing":{"enabled":True,"destOverride":["http","tls","quic"]}}
+con = sqlite3.connect(sys.argv[1])
+con.execute("INSERT INTO nodes (id, server_id, config_template, status) VALUES (3, 1, ?, 'applying')", (json.dumps(tmpl),))
+payload = {"node_id":3,"config":{"protocol":"vless","port":0,"template":tmpl},"user_uuids":[],"dest_candidates":["dl.google.com:443"]}
+cur = con.execute("INSERT INTO commands (server_id, type, payload) VALUES (1, 'apply_node', ?)", (json.dumps(payload),))
+con.commit(); print(cur.lastrowid)
+PY
+bounce_agent
+NODE3="$(db "SELECT status || '|' || COALESCE(realized_config,'') FROM nodes WHERE id=3")"
+for _ in $(seq 1 20); do [[ "$NODE3" == active\|* ]] && break; sleep 1; NODE3="$(db "SELECT status || '|' || COALESCE(realized_config,'') FROM nodes WHERE id=3")"; done
+[[ "$NODE3" == active\|*dl.google.com* ]] \
+    && echo "OK: dest 不可达时 fallback 到白名单候选" \
+    || { echo "FAIL: node3=$NODE3"; tail -5 "$WORK/agent.log" | grep -v "accepted tcp"; exit 1; }
+
 echo "E2E PASS"

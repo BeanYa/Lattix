@@ -164,7 +164,7 @@ func (s *Server) applyNewNode(r *http.Request, serverID int64, port *int, vc sha
 	return id, nil
 }
 
-// enqueueApply 节点进入 applying 并下发 apply_node（携带全量用户 UUID，§8）。
+// enqueueApply 节点进入 applying 并下发 apply_node（携带全量用户 UUID §8 与 dest 白名单 §6）。
 func (s *Server) enqueueApply(r *http.Request, serverID, nodeID int64, vc shared.VirtualConfig) error {
 	if err := s.st.SetNodeApplying(r.Context(), nodeID); err != nil {
 		return err
@@ -174,11 +174,30 @@ func (s *Server) enqueueApply(r *http.Request, serverID, nodeID int64, vc shared
 		return err
 	}
 	_, err = s.disp.Enqueue(r.Context(), serverID, shared.TypeApplyNode, shared.ApplyNodePayload{
-		NodeID:    nodeID,
-		Config:    vc,
-		UserUUIDs: uuids,
+		NodeID:         nodeID,
+		Config:         vc,
+		UserUUIDs:      uuids,
+		DestCandidates: destCandidates,
 	})
 	return err
+}
+
+// destCandidates 是面板内置的 dest 白名单（§6 预检 fallback），
+// 覆盖全球主要 CDN/大厂（TLS1.3 支持好、各地理位置可达性高），随版本更新。
+// 注意：www.microsoft.com 实测在部分网络下作 Reality dest 必失败且 xray 官方警示，不收录。
+var destCandidates = []string{
+	"dl.google.com:443",
+	"www.amazon.com:443",
+	"gateway.icloud.com:443",
+	"developer.apple.com:443",
+	"cdn.discord.com:443",
+	"www.cloudflare.com:443",
+	"github.com:443",
+	"www.samsung.com:443",
+	"www.tesla.com:443",
+	"www.bing.com:443",
+	"www.yahoo.com:443",
+	"slack.com:443",
 }
 
 // buildVirtualConfig 生成 VLESS+Reality 虚拟配置（§7 参数分工：UUID/short_id/dest/serverNames 面板，
