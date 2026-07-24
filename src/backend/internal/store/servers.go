@@ -19,17 +19,18 @@ type Server struct {
 	LastSeenAt  *time.Time
 	XrayVersion string
 	Address     string // 公网地址（hello 时按 WS RemoteAddr 记录，订阅用，§9）
+	ConfigDrift bool   // 配置漂移标志（§17，agent drift_report 驱动）
 	CreatedAt   time.Time
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, address, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, address, config_drift, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
 	var lastSeen sql.NullTime
 	var xrayVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &srv.Address, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &srv.Address, &srv.ConfigDrift, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -103,11 +104,33 @@ func (s *Store) RotateServerToken(ctx context.Context, id int64, newToken string
 	return err
 }
 
+// UpdateServerAddress 由管理员修改服务器公网地址（§4"地址变更由管理员修改"）；
+// 置空则下次 hello 时按 RemoteAddr 重新自动学习。
+func (s *Store) UpdateServerAddress(ctx context.Context, id int64, address string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE servers SET address = ? WHERE id = ?`, address, id)
+	return err
+}
+
 // TouchServer 更新 last_seen_at、xray 版本（hello 携带，§13）与公网地址（RemoteAddr，§9）。
 func (s *Store) TouchServer(ctx context.Context, id int64, xrayVersion, address string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE servers SET last_seen_at = CURRENT_TIMESTAMP, xray_version = ?, address = ? WHERE id = ?`,
 		xrayVersion, address, id)
+	return err
+}
+
+// UpdateServerVersion 仅更新 xray 版本（telemetry 周期携带，升级后据此刷新展示，§13）。
+func (s *Store) UpdateServerVersion(ctx context.Context, id int64, xrayVersion string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE servers SET xray_version = ? WHERE id = ?`, xrayVersion, id)
+	return err
+}
+
+// SetServerDrift 设置配置漂移标志（§17，agent drift_report 驱动）。
+func (s *Store) SetServerDrift(ctx context.Context, id int64, drifted bool) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE servers SET config_drift = ? WHERE id = ?`, drifted, id)
 	return err
 }
 
@@ -127,6 +150,7 @@ func (s *Store) DeleteServerCascade(ctx context.Context, id int64) error {
 	}
 	defer tx.Rollback()
 	for _, q := range []string{
+		`DELETE FROM user_nodes WHERE node_id IN (SELECT id FROM nodes WHERE server_id = ?)`,
 		`DELETE FROM commands WHERE server_id = ?`,
 		`DELETE FROM nodes WHERE server_id = ?`,
 		`DELETE FROM servers WHERE id = ?`,

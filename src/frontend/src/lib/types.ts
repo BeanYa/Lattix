@@ -6,6 +6,13 @@ export interface DashboardStats {
   users: number
 }
 
+export interface ServerMetrics {
+  load1: number
+  cpu_percent: number
+  mem_total: number
+  mem_used: number
+}
+
 export interface Server {
   id: number
   alias: string
@@ -13,6 +20,8 @@ export interface Server {
   last_seen_at: string | null
   xray_version: string | null
   address: string
+  config_drift: boolean
+  metrics: ServerMetrics | null
   created_at: string
 }
 
@@ -26,11 +35,23 @@ export type NodeStatus = 'pending' | 'applying' | 'active' | 'failed'
 
 export interface RealizedConfig {
   port: number
-  public_key: string
-  short_id: string
-  server_name: string
-  flow: string
-  fingerprint: string
+  public_key?: string
+  short_id?: string
+  server_name?: string
+  flow?: string
+  fingerprint?: string
+  network?: string
+  service_name?: string
+  path?: string
+  mode?: string
+  host?: string
+  method?: string
+  encryption?: string
+}
+
+export interface Traffic {
+  up: number
+  down: number
 }
 
 export interface XrayNode {
@@ -41,6 +62,7 @@ export interface XrayNode {
   port: number | null
   status: NodeStatus
   error: string | null
+  traffic: Traffic | null
   config_template: string
   realized_config: RealizedConfig | null
   created_at: string
@@ -48,10 +70,22 @@ export interface XrayNode {
 
 export interface CreateNodeRequest {
   server_id: number
+  protocol?: string
   port?: number
   short_id?: string
   dest?: string
   server_names?: string[]
+  fingerprint?: string
+  network?: string
+  service_name?: string
+  path?: string
+  mode?: string
+  host?: string
+  flow?: string
+  method?: string
+  encryption?: string
+  target_address?: string
+  target_port?: number
 }
 
 export interface SubUser {
@@ -60,5 +94,8 @@ export interface SubUser {
   uuid: string
   sub_token: string
   sub_url: string
+  sub_links_url: string
+  node_ids: number[]
+  traffic: Traffic | null
   created_at: string
 }

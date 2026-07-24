@@ -80,9 +80,11 @@ func (fc fullConfig) removeInbound(tag string) (fullConfig, bool) {
 	return nc, true
 }
 
-// mutateClients 在所有节点 inbound（tag 前缀 node_）的 settings.clients 中
-// 增删一个用户（§8），返回候选配置与受影响的 tag 列表。
-func (fc fullConfig) mutateClients(uuid string, add bool) (fullConfig, []string) {
+// mutateClients 在节点 inbound（tag 前缀 node_）的用户列表中增删一个用户（§8/§16）：
+// vless/vmess/trojan/ss 操作 settings.clients，socks/http 操作 settings.accounts，
+// dokodemo 无用户概念跳过。params 按 tag 提供各协议条目构造参数；
+// params 非 nil 时仅处理其中列出的 tag（§16 增量扇出），为 nil 时处理全部（旧版面板载荷）。
+func (fc fullConfig) mutateClients(uuid string, add bool, params map[string]shared.UserNodeParams) (fullConfig, []string) {
 	var changed []string
 	out := make([]json.RawMessage, 0, len(fc.inbounds()))
 	for _, raw := range fc.inbounds() {
@@ -91,8 +93,13 @@ func (fc fullConfig) mutateClients(uuid string, add bool) (fullConfig, []string)
 			out = append(out, raw)
 			continue
 		}
-		newRaw, ok := mutateInboundClients(raw, uuid, add)
-		if ok {
+		p, ok := params[tag]
+		if params != nil && !ok {
+			out = append(out, raw) // §16：未列出的节点不受影响
+			continue
+		}
+		newRaw, changedOne := mutateInboundUsers(raw, uuid, add, p)
+		if changedOne {
 			changed = append(changed, tag)
 			raw = newRaw
 		}
@@ -106,11 +113,23 @@ func (fc fullConfig) mutateClients(uuid string, add bool) (fullConfig, []string)
 	return nc, changed
 }
 
-// mutateInboundClients 修改单个 inbound 的 settings.clients；返回是否发生变更。
-func mutateInboundClients(raw json.RawMessage, uuid string, add bool) (json.RawMessage, bool) {
+// mutateInboundUsers 修改单个 inbound 的用户列表（clients 或 accounts）；返回是否发生变更。
+func mutateInboundUsers(raw json.RawMessage, uuid string, add bool, p shared.UserNodeParams) (json.RawMessage, bool) {
 	var ib map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &ib); err != nil {
 		return raw, false
+	}
+	var protocol string
+	_ = json.Unmarshal(ib["protocol"], &protocol)
+	if protocol == "" || protocol == shared.ProtocolDokodemo {
+		return raw, false
+	}
+	if p.Protocol == "" {
+		p.Protocol = protocol // payload 未携带（旧版本面板）时以 inbound 自身协议为准
+	}
+	key := "clients"
+	if protocol == shared.ProtocolSocks || protocol == shared.ProtocolHTTP {
+		key = "accounts"
 	}
 	settingsRaw, ok := ib["settings"]
 	if !ok {
@@ -120,21 +139,21 @@ func mutateInboundClients(raw json.RawMessage, uuid string, add bool) (json.RawM
 	if err := json.Unmarshal(settingsRaw, &settings); err != nil {
 		return raw, false
 	}
-	var clients []json.RawMessage
-	if c, ok := settings["clients"]; ok {
-		if err := json.Unmarshal(c, &clients); err != nil {
+	var list []json.RawMessage
+	if c, ok := settings[key]; ok {
+		if err := json.Unmarshal(c, &list); err != nil {
 			return raw, false
 		}
 	}
-	clients, changed := mutateClientList(clients, uuid, add)
+	list, changed := mutateUserList(list, p, settings, uuid, add)
 	if !changed {
 		return raw, false
 	}
-	c, err := json.Marshal(clients)
+	c, err := json.Marshal(list)
 	if err != nil {
 		return raw, false
 	}
-	settings["clients"] = c
+	settings[key] = c
 	s, err := json.Marshal(settings)
 	if err != nil {
 		return raw, false
@@ -147,31 +166,36 @@ func mutateInboundClients(raw json.RawMessage, uuid string, add bool) (json.RawM
 	return out, true
 }
 
-// mutateClientList 增删 clients 中 id 为 uuid 的条目（幂等）。
-// VLESS client 的 email 固定取 uuid（RemoveUserOperation 按 email 匹配，§6）。
-func mutateClientList(clients []json.RawMessage, uuid string, add bool) ([]json.RawMessage, bool) {
+// mutateUserList 增删用户列表中该 uuid 的条目（幂等）。
+// 匹配键：clients 条目按 email（与 RemoveUserOperation 一致），accounts 条目按 user。
+func mutateUserList(list []json.RawMessage, p shared.UserNodeParams, settings map[string]json.RawMessage, uuid string, add bool) ([]json.RawMessage, bool) {
 	idx := -1
-	for i, c := range clients {
-		var p struct {
-			ID string `json:"id"`
+	for i, c := range list {
+		var probe struct {
+			Email string `json:"email"`
+			User  string `json:"user"`
 		}
-		if json.Unmarshal(c, &p) == nil && p.ID == uuid {
+		if json.Unmarshal(c, &probe) == nil && (probe.Email == uuid || probe.User == uuid) {
 			idx = i
 			break
 		}
 	}
 	if add {
 		if idx >= 0 {
-			return clients, false
+			return list, false
 		}
-		entry, err := json.Marshal(map[string]string{"id": uuid, "flow": shared.FlowVision, "email": uuid})
+		method := p.Method
+		if method == "" && p.Protocol == shared.ProtocolShadowsocks {
+			_ = json.Unmarshal(settings["method"], &method) // 兜底取 inbound 顶层 method
+		}
+		entry, err := json.Marshal(clientEntry(p.Protocol, p.Flow, method, uuid))
 		if err != nil {
-			return clients, false
+			return list, false
 		}
-		return append(clients, entry), true
+		return append(list, entry), true
 	}
 	if idx < 0 {
-		return clients, false
+		return list, false
 	}
-	return append(clients[:idx], clients[idx+1:]...), true
+	return append(list[:idx], list[idx+1:]...), true
 }

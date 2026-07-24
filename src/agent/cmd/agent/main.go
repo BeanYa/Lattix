@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -26,9 +27,19 @@ func main() {
 	xrayConfig := flag.String("xray-config", "/usr/local/etc/xray/config.json", "xray 配置文件路径（agent 独占管理，§6）")
 	xrayAPI := flag.String("xray-api", "127.0.0.1:10085", "xray gRPC API 地址")
 	xrayRunner := flag.String("xray-runner", "systemd", "xray 服务控制方式：systemd | exec（dev 联调）")
+	releaseBase := flag.String("xray-release-base", "", "xray release 下载基址（默认官方 GitHub，可指向镜像，§18）")
+	telemetryInterval := flag.Duration("telemetry-interval", 60*time.Second, "遥测上报间隔（§13）")
+	driftInterval := flag.Duration("drift-interval", 15*time.Second, "配置漂移检测间隔（§17）")
 	flag.Parse()
 
 	mgr := xray.NewManager(*xrayBin, *xrayConfig, *xrayAPI, xray.NewRunner(*xrayRunner, *xrayBin, *xrayConfig))
+	if *releaseBase != "" {
+		mgr.SetReleaseBase(*releaseBase) // 镜像/代理下载源（§18）
+	}
+	// 旧版本生成的 config.json 补齐遥测配置（stats/policy/StatsService，§13）。
+	if err := mgr.EnsureTelemetryFeatures(); err != nil {
+		log.Printf("ensure telemetry features: %v (traffic stats may be unavailable)", err)
+	}
 
 	st, err := state.Load(*statePath)
 	if err != nil {
@@ -42,7 +53,7 @@ func main() {
 		log.Fatal("-token is required for first connect")
 	}
 	for {
-		newTok, err := run(*panel, tok, *statePath, mgr)
+		newTok, err := run(*panel, tok, *statePath, mgr, *telemetryInterval, *driftInterval)
 		if newTok != "" {
 			tok = newTok // 内存兜底：state 落盘失败时仍能凭内存中的 token 重连（§5）
 		}
@@ -53,13 +64,26 @@ func main() {
 	}
 }
 
+// safeConn 串行化 WS 写帧（业务回执与遥测协程并发写，gorilla 不允许并发写）。
+type safeConn struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+func (s *safeConn) writeJSON(v any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conn.WriteJSON(v)
+}
+
 // run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因。
-func run(panel, token, statePath string, mgr *xray.Manager) (string, error) {
+func run(panel, token, statePath string, mgr *xray.Manager, telemetryInterval, driftInterval time.Duration) (string, error) {
 	conn, _, err := websocket.DefaultDialer.Dial(panel, nil)
 	if err != nil {
 		return "", err
 	}
 	defer conn.Close()
+	sc := &safeConn{conn: conn}
 
 	// 首连认证（§5）：携带 token、agent 版本、xray 版本与运行状态（§13）。
 	xrayVer, xrayRunning := mgr.Version()
@@ -74,7 +98,7 @@ func run(panel, token, statePath string, mgr *xray.Manager) (string, error) {
 			XrayRunning:  xrayRunning,
 		}),
 	}
-	if err := conn.WriteJSON(hello); err != nil {
+	if err := sc.writeJSON(hello); err != nil {
 		return "", fmt.Errorf("send hello: %w", err)
 	}
 
@@ -96,17 +120,82 @@ func run(panel, token, statePath string, mgr *xray.Manager) (string, error) {
 	}
 	log.Printf("authenticated as server %d", hr.ServerID)
 
+	// 遥测循环（§13）：立即上报一帧（基线），随后按间隔上报；写失败即退出（连接已断）。
+	go func() {
+		t := newTelemetry(mgr)
+		send := func() bool {
+			env := shared.Envelope{
+				ID:      fmt.Sprintf("telemetry-%d", time.Now().UnixNano()),
+				Type:    shared.TypeTelemetry,
+				Payload: mustJSON(t.collect()),
+			}
+			if err := sc.writeJSON(env); err != nil {
+				logTelemetryError(err)
+				return false
+			}
+			return true
+		}
+		if !send() {
+			return
+		}
+		ticker := time.NewTicker(telemetryInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if !send() {
+				return
+			}
+		}
+	}()
+
+	// 配置漂移检测（§17 reconcile）：仅在状态变化时上报。
+	go func() {
+		drifted := false
+		check := func() bool {
+			d, err := mgr.ConfigDrift()
+			if err != nil {
+				log.Printf("drift check: %v", err)
+				return true
+			}
+			if d != drifted {
+				drifted = d
+				if d {
+					log.Printf("config drift detected: config.json 被外部修改")
+				}
+				env := shared.Envelope{
+					ID:      fmt.Sprintf("drift-%d", time.Now().UnixNano()),
+					Type:    shared.TypeDriftReport,
+					Payload: mustJSON(shared.DriftPayload{Drifted: d}),
+				}
+				if err := sc.writeJSON(env); err != nil {
+					log.Printf("drift report: %v", err)
+					return false
+				}
+			}
+			return true
+		}
+		if !check() {
+			return
+		}
+		ticker := time.NewTicker(driftInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			if !check() {
+				return
+			}
+		}
+	}()
+
 	for {
 		var env shared.Envelope
 		if err := conn.ReadJSON(&env); err != nil {
 			return hr.Token, err
 		}
-		handle(conn, mgr, env)
+		handle(sc, mgr, env)
 	}
 }
 
 // handle 按消息类型分发：apply 流水线与热操作（§6），结果经 apply_result 上报（§5）。
-func handle(conn *websocket.Conn, mgr *xray.Manager, env shared.Envelope) {
+func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope) {
 	switch env.Type {
 	case shared.TypeApplyNode:
 		var p shared.ApplyNodePayload
@@ -115,7 +204,7 @@ func handle(conn *websocket.Conn, mgr *xray.Manager, env shared.Envelope) {
 		}
 		log.Printf("apply_node id=%s node=%d users=%d", env.ID, p.NodeID, len(p.UserUUIDs))
 		realized, err := mgr.ApplyNode(p.NodeID, p.Config, p.UserUUIDs, p.DestCandidates)
-		replyApplyResult(conn, env.ID, resultOf(p.NodeID, realized, err))
+		replyApplyResult(sc, env.ID, resultOf(p.NodeID, realized, err))
 
 	case shared.TypeRemoveNode:
 		var p shared.RemoveNodePayload
@@ -124,7 +213,7 @@ func handle(conn *websocket.Conn, mgr *xray.Manager, env shared.Envelope) {
 		}
 		log.Printf("remove_node id=%s node=%d", env.ID, p.NodeID)
 		err := mgr.RemoveNode(p.NodeID)
-		replyApplyResult(conn, env.ID, resultOf(p.NodeID, nil, err))
+		replyApplyResult(sc, env.ID, resultOf(p.NodeID, nil, err))
 
 	case shared.TypeAddUser:
 		var p shared.AddUserPayload
@@ -132,8 +221,8 @@ func handle(conn *websocket.Conn, mgr *xray.Manager, env shared.Envelope) {
 			return
 		}
 		log.Printf("add_user id=%s uuid=%s", env.ID, p.UUID)
-		err := mgr.AddUser(p.UUID)
-		replyApplyResult(conn, env.ID, resultOf(0, nil, err)) // NodeID 0 = 非节点命令
+		err := mgr.AddUser(p.UUID, p.Nodes)
+		replyApplyResult(sc, env.ID, resultOf(0, nil, err)) // NodeID 0 = 非节点命令
 
 	case shared.TypeRemoveUser:
 		var p shared.RemoveUserPayload
@@ -141,8 +230,17 @@ func handle(conn *websocket.Conn, mgr *xray.Manager, env shared.Envelope) {
 			return
 		}
 		log.Printf("remove_user id=%s uuid=%s", env.ID, p.UUID)
-		err := mgr.RemoveUser(p.UUID)
-		replyApplyResult(conn, env.ID, resultOf(0, nil, err))
+		err := mgr.RemoveUser(p.UUID, p.Nodes)
+		replyApplyResult(sc, env.ID, resultOf(0, nil, err))
+
+	case shared.TypeUpgradeXray:
+		var p shared.UpgradeXrayPayload
+		if !parsePayload(env, &p) {
+			return
+		}
+		log.Printf("upgrade_xray id=%s version=%s", env.ID, p.Version)
+		err := mgr.UpgradeXray(p.Version)
+		replyApplyResult(sc, env.ID, resultOf(0, nil, err))
 
 	case shared.TypeUninstall:
 		// 先回执再自毁：panel 删除服务器时下发（§10）。
@@ -151,7 +249,7 @@ func handle(conn *websocket.Conn, mgr *xray.Manager, env shared.Envelope) {
 			return
 		}
 		log.Printf("uninstall id=%s purge_xray=%v", env.ID, p.PurgeXray)
-		replyApplyResult(conn, env.ID, resultOf(0, nil, nil))
+		replyApplyResult(sc, env.ID, resultOf(0, nil, nil))
 		scheduleUninstall(p.PurgeXray)
 
 	default:
@@ -175,9 +273,9 @@ func resultOf(nodeID int64, realized *shared.RealizedConfig, err error) shared.A
 }
 
 // replyApplyResult 上报执行结果：与请求同 id 即响应帧（§5）。
-func replyApplyResult(conn *websocket.Conn, reqID string, p shared.ApplyResultPayload) {
+func replyApplyResult(sc *safeConn, reqID string, p shared.ApplyResultPayload) {
 	env := shared.Envelope{ID: reqID, Type: shared.TypeApplyResult, Payload: mustJSON(p)}
-	if err := conn.WriteJSON(env); err != nil {
+	if err := sc.writeJSON(env); err != nil {
 		log.Printf("reply apply_result: %v", err)
 	}
 }

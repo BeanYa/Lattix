@@ -23,6 +23,7 @@ type Config struct {
 	AdminUser     string // 管理员账号（单管理员，§14 多管理员属后续迭代）
 	AdminPass     string // 管理员密码
 	PublicURL     string // 面板对外地址（生成安装命令/订阅链接）；空 = 从请求推断
+	Secure        bool   // 面板自身以 TLS 服务（自带证书或 ACME，§12）
 	DistDir       string // agent 二进制等发布产物目录（/dist/ 托管）
 	InstallScript string // install.sh 文件路径（/install.sh 托管）
 }
@@ -74,6 +75,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/servers", s.requireAuth(s.handleListServers))
 	mux.HandleFunc("POST /api/servers", s.requireAuth(s.handleCreateServer))
 	mux.HandleFunc("POST /api/servers/{id}/rotate-token", s.requireAuth(s.handleRotateToken))
+	mux.HandleFunc("POST /api/servers/{id}/repair", s.requireAuth(s.handleRepairServer))
+	mux.HandleFunc("POST /api/servers/{id}/upgrade", s.requireAuth(s.handleUpgradeXray))
+	mux.HandleFunc("PATCH /api/servers/{id}", s.requireAuth(s.handleUpdateServer))
 	mux.HandleFunc("DELETE /api/servers/{id}", s.requireAuth(s.handleDeleteServer))
 
 	mux.HandleFunc("GET /api/nodes", s.requireAuth(s.handleListNodes))
@@ -83,6 +87,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/users", s.requireAuth(s.handleListUsers))
 	mux.HandleFunc("POST /api/users", s.requireAuth(s.handleCreateUser))
+	mux.HandleFunc("PUT /api/users/{id}/nodes", s.requireAuth(s.handleSetUserNodes))
 	mux.HandleFunc("DELETE /api/users/{id}", s.requireAuth(s.handleDeleteUser))
 
 	mux.HandleFunc("GET /install.sh", s.handleInstallScript)
@@ -95,16 +100,23 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	w.Write(s.installScript)
 }
 
-// panelBase 返回面板对外地址：优先配置的 PublicURL，否则从请求推断（MVP 为 HTTP，§12）。
+// panelBase 返回面板对外地址：优先配置的 PublicURL，否则从请求推断。
+// HTTPS 判定：面板自身 TLS、直连 TLS，或反代经 X-Forwarded-Proto 声明（§12）。
 func (s *Server) panelBase(r *http.Request) string {
 	if s.cfg.PublicURL != "" {
 		return s.cfg.PublicURL
 	}
 	scheme := "http"
-	if r.TLS != nil {
+	if s.isSecure(r) {
 		scheme = "https"
 	}
 	return fmt.Sprintf("%s://%s", scheme, r.Host)
+}
+
+// isSecure 报告当前请求是否经 HTTPS 到达（含反代终止 TLS 的场景）。
+func (s *Server) isSecure(r *http.Request) bool {
+	return s.cfg.Secure || r.TLS != nil ||
+		strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

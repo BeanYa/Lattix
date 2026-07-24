@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# xray 版本升级管理端到端验收（设计文档 §18）：
+#   本地 release 镜像（zip + .dgst）→ 非法版本 failed 且二进制原样 →
+#   指定版本升级 acked、二进制替换、面板版本号经 telemetry 刷新。
+# 依赖：python3、curl、本机 xray 二进制（XRAY_BIN 可覆盖）。无需外网。
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORK="$(mktemp -d)"
+XRAY_BIN="${XRAY_BIN:-$HOME/.cache/lattix-dev/xray-core/xray}"
+[[ -x "$XRAY_BIN" ]] || { echo "xray 不存在: $XRAY_BIN"; exit 1; }
+
+ADDR="127.0.0.1:18107"
+API="127.0.0.1:14207"
+REL_ADDR="127.0.0.1:18200"
+BOOTSTRAP="bootstrap-upgrade-test"
+XRAY_CONFIG="$WORK/xray-config.json"
+TEST_XRAY="$WORK/xray" # agent 将替换该二进制，不碰系统原件
+JAR="$WORK/cookies.txt"
+VER_NUM="$(/usr/bin/env "$XRAY_BIN" version 2>/dev/null | head -1 | awk '{print $2}')"
+[[ -n "$VER_NUM" ]] || VER_NUM="26.3.27"
+REL_VER="v$VER_NUM"
+
+cleanup() {
+    kill ${BPID:-} ${APID:-} ${RELPID:-} 2>/dev/null || true
+    pkill -f "xray run -config $XRAY_CONFIG" 2>/dev/null || true
+    pkill -f "http.server 18200" 2>/dev/null || true
+    wait 2>/dev/null || true
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+echo ">> build & 搭建本地 release 镜像（$REL_VER）"
+(cd "$ROOT" && go build -o "$WORK/backend" ./src/backend/cmd/backend && go build -o "$WORK/agent" ./src/agent/cmd/agent)
+cp "$XRAY_BIN" "$TEST_XRAY"
+ORIG_SHA="$(sha256sum "$TEST_XRAY" | cut -d' ' -f1)"
+REL_DIR="$WORK/releases/$REL_VER"
+mkdir -p "$REL_DIR"
+python3 - "$TEST_XRAY" "$REL_DIR/Xray-linux-64.zip" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[2], "w") as z:
+    z.write(sys.argv[1], "xray")
+PY
+python3 - "$REL_DIR/Xray-linux-64.zip" "$REL_DIR/Xray-linux-64.zip.dgst" <<'PY'
+import hashlib, sys
+h = hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest()
+open(sys.argv[2], "w").write(f"SHA2-256= {h}\n")
+PY
+(cd "$WORK/releases" && exec python3 -m http.server 18200) >/dev/null 2>&1 &
+RELPID=$!
+
+db() { python3 - "$WORK/lattix.db" "$1" <<'PY'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+cur = con.execute(sys.argv[2])
+con.commit()
+for row in cur: print("|".join("" if c is None else str(c) for c in row))
+PY
+}
+
+api() {
+    local args=(-s -b "$JAR" -c "$JAR" -X "$1")
+    [[ -n "${3:-}" ]] && args+=(-H 'Content-Type: application/json' -d "$3")
+    curl "${args[@]}" "http://$ADDR$2"
+}
+
+wait_upgrade_cmd() {
+    for _ in $(seq 1 60); do
+        s="$(db "SELECT status FROM commands WHERE type='upgrade_xray' ORDER BY id DESC LIMIT 1")"
+        [[ "$s" == "$1" ]] && return 0
+        [[ "$s" == "acked" || "$s" == "failed" ]] && [[ "$s" != "$1" ]] && { echo "FAIL: 升级命令意外终态 $s（期望 $1）"; return 1; }
+        sleep 1
+    done
+    echo "FAIL: 升级命令超时未达 $1"; return 1
+}
+
+echo ">> start backend & agent（release 基址指向本地镜像）"
+"$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" >"$WORK/backend.log" 2>&1 &
+BPID=$!
+sleep 1
+db "INSERT INTO servers (alias, token) VALUES ('up01', '$BOOTSTRAP')" >/dev/null
+"$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "$BOOTSTRAP" -state "$WORK/agent.state.json" \
+    -xray-bin "$TEST_XRAY" -xray-config "$XRAY_CONFIG" -xray-api "$API" -xray-runner exec \
+    -xray-release-base "http://$REL_ADDR" -telemetry-interval 2s >"$WORK/agent.log" 2>&1 &
+APID=$!
+sleep 1.5
+api POST /api/login '{"username":"admin","password":"lattix-admin"}' >/dev/null
+
+echo ">> 建节点（使 xray 进入运行态）"
+NID="$(api POST /api/nodes '{"server_id":1,"protocol":"vless"}' | python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["id"])')"
+for _ in $(seq 1 40); do
+    [[ "$(db "SELECT status FROM nodes WHERE id=$NID")" == "active" ]] && break
+    sleep 0.5
+done
+[[ "$(db "SELECT status FROM nodes WHERE id=$NID")" == "active" ]] || { echo "FAIL: 节点未 active"; exit 1; }
+
+echo ">> 非法版本 → failed + 二进制原样"
+api POST /api/servers/1/upgrade '{"version":"v0.0.0-notexist"}' >/dev/null
+wait_upgrade_cmd failed && echo "OK: 非法版本命令 failed" || { grep "command.*failed" "$WORK/backend.log" | tail -2; exit 1; }
+[[ "$(sha256sum "$TEST_XRAY" | cut -d' ' -f1)" == "$ORIG_SHA" ]] \
+    && echo "OK: 二进制未被破坏" \
+    || { echo "FAIL: 二进制被意外改动"; exit 1; }
+
+echo ">> 指定版本升级 → acked + 重启生效"
+api POST /api/servers/1/upgrade "{\"version\":\"$REL_VER\"}" >/dev/null
+wait_upgrade_cmd acked && echo "OK: 升级命令 acked" || { grep "command.*failed" "$WORK/backend.log" | tail -2; tail -10 "$WORK/agent.log"; exit 1; }
+"$TEST_XRAY" version | head -1 | grep -q "$VER_NUM" \
+    && echo "OK: 新二进制可运行（$VER_NUM）" \
+    || { echo "FAIL: 替换后二进制异常"; exit 1; }
+[[ ! -f "$TEST_XRAY.bak" ]] && echo "OK: 升级成功后备份已清理" || { echo "FAIL: 备份残留"; exit 1; }
+
+DB_VER=""
+for _ in $(seq 1 20); do
+    DB_VER="$(db "SELECT xray_version FROM servers WHERE id=1")"
+    [[ "$DB_VER" == "$VER_NUM" ]] && break
+    sleep 1
+done
+[[ "$DB_VER" == "$VER_NUM" ]] \
+    && echo "OK: 面板版本号经 telemetry 刷新为 $DB_VER" \
+    || { echo "FAIL: 面板版本号未刷新（DB=$DB_VER）"; exit 1; }
+
+echo "E2E-UPGRADE PASS"

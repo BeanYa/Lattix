@@ -50,6 +50,12 @@ case "$(uname -m)" in
     *)       die "unsupported arch: $(uname -m)" ;;
 esac
 
+# 重装场景：先停掉运行中的服务，避免覆写运行中的二进制失败（ETXTBSY）；
+# 全新安装时该命令为空操作。
+if command -v systemctl >/dev/null; then
+    systemctl stop lattix-agent.service xray.service 2>/dev/null || true
+fi
+
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -68,17 +74,15 @@ echo ">> installing xray-core ${XRAY_VERSION}"
 curl -fsSL -o "$TMP_DIR/xray.zip" \
     "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}"
 
-# 校验官方 .dgst 中的 SHA2-256（§11）。
-if curl -fsSL -o "$TMP_DIR/xray.dgst" \
-    "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}.dgst"; then
-    EXPECTED="$(grep 'SHA2-256=' "$TMP_DIR/xray.dgst" | head -1 | cut -d' ' -f2)"
-    ACTUAL="$(sha256sum "$TMP_DIR/xray.zip" | cut -d' ' -f1)"
-    [[ -n "$EXPECTED" && "$EXPECTED" == "$ACTUAL" ]] \
-        || die "xray 包校验和不匹配（期望 ${EXPECTED:-<空>}，实际 $ACTUAL）"
-    echo ">> xray 包 SHA2-256 校验通过"
-else
-    echo ">> WARNING: 未获取到 .dgst 校验文件，跳过 xray 校验"
-fi
+# 校验官方 .dgst 中的 SHA2-256（§11）；获取不到校验文件时中止，不降级跳过。
+curl -fsSL -o "$TMP_DIR/xray.dgst" \
+    "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}.dgst" \
+    || die "未获取到 xray 官方 .dgst 校验文件，中止安装（§11 要求校验官方 checksums）"
+EXPECTED="$(grep 'SHA2-256=' "$TMP_DIR/xray.dgst" | head -1 | cut -d' ' -f2)"
+ACTUAL="$(sha256sum "$TMP_DIR/xray.zip" | cut -d' ' -f1)"
+[[ -n "$EXPECTED" && "$EXPECTED" == "$ACTUAL" ]] \
+    || die "xray 包校验和不匹配（期望 ${EXPECTED:-<空>}，实际 $ACTUAL）"
+echo ">> xray 包 SHA2-256 校验通过"
 unzip -o -q "$TMP_DIR/xray.zip" -d "$TMP_DIR/xray"
 install -m 0755 "$TMP_DIR/xray/xray" "$XRAY_BIN"
 

@@ -125,8 +125,64 @@ func (d *Dispatcher) HandleMessage(serverID int64, env shared.Envelope) {
 	switch env.Type {
 	case shared.TypeApplyResult:
 		d.handleApplyResult(serverID, env)
+	case shared.TypeTelemetry:
+		d.handleTelemetry(serverID, env)
+	case shared.TypeDriftReport:
+		d.handleDriftReport(serverID, env)
 	default:
 		log.Printf("dispatch: server %d: ignore message type=%s id=%s", serverID, env.Type, env.ID)
+	}
+}
+
+// handleTelemetry 落库周期遥测（§13）：xray 版本、主机指标、流量增量（仅统计）。
+func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
+	ctx := context.Background()
+	var p shared.TelemetryPayload
+	if err := json.Unmarshal(env.Payload, &p); err != nil {
+		log.Printf("dispatch: server %d: bad telemetry payload: %v", serverID, err)
+		return
+	}
+	if p.XrayVersion != "" {
+		if err := d.st.UpdateServerVersion(ctx, serverID, p.XrayVersion); err != nil {
+			log.Printf("dispatch: server %d: update xray version: %v", serverID, err)
+		}
+	}
+	if p.Host != nil {
+		if err := d.st.UpsertServerMetrics(ctx, serverID, p.Host.Load1, p.Host.CPUPercent, p.Host.MemTotal, p.Host.MemUsed); err != nil {
+			log.Printf("dispatch: server %d: upsert metrics: %v", serverID, err)
+		}
+	}
+	for _, td := range p.Traffic {
+		switch {
+		case td.Node != "":
+			var nodeID int64
+			if _, err := fmt.Sscanf(td.Node, "node_%d", &nodeID); err != nil || nodeID == 0 {
+				continue
+			}
+			if err := d.st.AddTraffic(ctx, nodeID, "", td.Up, td.Down); err != nil {
+				log.Printf("dispatch: server %d: add node traffic: %v", serverID, err)
+			}
+		case td.User != "":
+			if err := d.st.AddTraffic(ctx, 0, td.User, td.Up, td.Down); err != nil {
+				log.Printf("dispatch: server %d: add user traffic: %v", serverID, err)
+			}
+		}
+	}
+}
+
+// handleDriftReport 落库配置漂移状态（§17 reconcile，仅在变化时上报）。
+func (d *Dispatcher) handleDriftReport(serverID int64, env shared.Envelope) {
+	var p shared.DriftPayload
+	if err := json.Unmarshal(env.Payload, &p); err != nil {
+		log.Printf("dispatch: server %d: bad drift payload: %v", serverID, err)
+		return
+	}
+	if err := d.st.SetServerDrift(context.Background(), serverID, p.Drifted); err != nil {
+		log.Printf("dispatch: server %d: set drift: %v", serverID, err)
+		return
+	}
+	if p.Drifted {
+		log.Printf("dispatch: server %d: 配置漂移（外部修改），待管理员修复", serverID)
 	}
 }
 

@@ -74,6 +74,18 @@ export const api = {
     }),
   rotateServerToken: (id: number) =>
     request<CreateServerResponse>(`/api/servers/${id}/rotate-token`, { method: 'POST' }),
+  upgradeServer: (id: number, version: string) =>
+    request<{ command_id: number; version: string }>(`/api/servers/${id}/upgrade`, {
+      method: 'POST',
+      body: JSON.stringify({ version }),
+    }),
+  repairServer: (id: number) =>
+    request<{ reapplied: number }>(`/api/servers/${id}/repair`, { method: 'POST' }),
+  updateServerAddress: (id: number, address: string) =>
+    request<Server>(`/api/servers/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ address: address.trim() }),
+    }),
   deleteServer: (id: number, purge: 'xray' | 'agent') =>
     request<void>(`/api/servers/${id}?purge=${purge}`, { method: 'DELETE' }),
 
@@ -86,5 +98,10 @@ export const api = {
   users: () => request<SubUser[]>('/api/users'),
   createUser: (name: string) =>
     request<SubUser>('/api/users', { method: 'POST', body: JSON.stringify({ name }) }),
+  setUserNodes: (id: number, nodeIds: number[]) =>
+    request<{ node_ids: number[] }>(`/api/users/${id}/nodes`, {
+      method: 'PUT',
+      body: JSON.stringify({ node_ids: nodeIds }),
+    }),
   deleteUser: (id: number) => request<void>(`/api/users/${id}`, { method: 'DELETE' }),
 }

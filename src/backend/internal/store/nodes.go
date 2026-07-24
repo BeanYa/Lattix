@@ -56,10 +56,10 @@ func scanNode(row interface{ Scan(...any) error }) (*Node, error) {
 }
 
 // InsertNode 插入一个节点（pending），port 为 nil 表示 Agent 自动挑选空闲端口（§7）。
-func (s *Store) InsertNode(ctx context.Context, serverID int64, port *int, template json.RawMessage) (int64, error) {
+func (s *Store) InsertNode(ctx context.Context, serverID int64, protocol string, port *int, template json.RawMessage) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO nodes (server_id, port, config_template) VALUES (?, ?, ?)`,
-		serverID, port, string(template))
+		`INSERT INTO nodes (server_id, protocol, port, config_template) VALUES (?, ?, ?, ?)`,
+		serverID, protocol, port, string(template))
 	if err != nil {
 		return 0, fmt.Errorf("insert node: %w", err)
 	}
@@ -120,8 +120,20 @@ func (s *Store) SetNodeFailed(ctx context.Context, id int64, errMsg string) erro
 	return err
 }
 
-// DeleteNode 删除一个节点（remove_node 已由面板先行下发，§5）。
+// DeleteNode 删除一个节点（remove_node 已由面板先行下发，§5）；同时清理用户关联（§16）。
 func (s *Store) DeleteNode(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, id)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM user_nodes WHERE node_id = ?`,
+		`DELETE FROM nodes WHERE id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+			return fmt.Errorf("delete node: %w", err)
+		}
+	}
+	return tx.Commit()
 }

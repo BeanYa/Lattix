@@ -78,6 +78,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    s.signSession(req.Username, time.Now().Add(sessionTTL)),
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   s.isSecure(r), // HTTPS（含反代）下仅限加密通道回传
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(sessionTTL.Seconds()),
 	})

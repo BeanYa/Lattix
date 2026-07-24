@@ -3,11 +3,14 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/crypto/acme/autocert"
 
 	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/panel"
@@ -25,7 +28,22 @@ func main() {
 	publicURL := flag.String("public-url", "", "面板对外地址（生成安装命令/订阅链接），默认从请求推断")
 	distDir := flag.String("dist", "dist", "agent 二进制等发布产物目录（/dist/ 托管）")
 	installScript := flag.String("install-script", "scripts/install.sh", "install.sh 文件路径")
+	tlsCert := flag.String("tls-cert", "", "TLS 证书文件（自带证书，须与 -tls-key 同用，§12）")
+	tlsKey := flag.String("tls-key", "", "TLS 私钥文件")
+	acmeDomain := flag.String("tls-acme-domain", "", "ACME 自动证书域名（Let's Encrypt，TLS-ALPN-01，需 443 端口公网可达）")
+	acmeCache := flag.String("tls-acme-cache", "acme-cache", "ACME 证书缓存目录")
+	acmeEmail := flag.String("tls-acme-email", "", "ACME 账号邮箱（可选，过期通知用）")
 	flag.Parse()
+
+	useCert := *tlsCert != "" || *tlsKey != ""
+	useACME := *acmeDomain != ""
+	if useCert && (*tlsCert == "" || *tlsKey == "") {
+		log.Fatal("-tls-cert 与 -tls-key 须同时提供")
+	}
+	if useCert && useACME {
+		log.Fatal("-tls-cert/-tls-key 与 -tls-acme-domain 互斥")
+	}
+	secure := useCert || useACME
 
 	st, err := store.Open(*dbPath)
 	if err != nil {
@@ -38,8 +56,8 @@ func main() {
 	dispatcher := dispatch.New(st, hub)
 	hub.Auth = dispatcher
 	hub.OnConnect = func(serverID int64) {
-		// agent 重连后补发离线期间滞留的命令（§2）。
-		dispatcher.Flush(context.Background(), serverID)
+		// agent 重连后重置并补发离线期间滞留的命令（§2）。
+		dispatcher.OnAgentConnect(context.Background(), serverID)
 	}
 	hub.OnMessage = dispatcher.HandleMessage
 
@@ -48,6 +66,7 @@ func main() {
 		AdminUser:     *adminUser,
 		AdminPass:     *adminPass,
 		PublicURL:     *publicURL,
+		Secure:        secure,
 		DistDir:       *distDir,
 		InstallScript: *installScript,
 	})
@@ -63,14 +82,34 @@ func main() {
 	// 面板 API + install.sh / /dist/ 托管（§10、§11）。
 	ps.RegisterRoutes(mux)
 
-	// 订阅（§9）：mihomo（Clash.Meta）格式 YAML。
-	mux.Handle("GET /sub/{token}", sub.New(st))
+	// 订阅（§9）：mihomo（Clash.Meta）格式 YAML；/links 为分享链接集合（§14）。
+	subSrv := sub.New(st)
+	mux.Handle("GET /sub/{token}", subSrv)
+	mux.HandleFunc("GET /sub/{token}/links", subSrv.HandleLinks)
 
 	// Frontend SPA 构建产物（§3），客户端路由回退到 index.html。
 	mux.Handle("/", spaHandler(*staticDir))
 
-	log.Printf("lattix backend listening on %s (admin: %s)", *addr, *adminUser)
-	log.Fatal(http.ListenAndServe(*addr, mux))
+	srv := &http.Server{Addr: *addr, Handler: mux}
+	switch {
+	case useACME:
+		// ACME 自动证书（Let's Encrypt，TLS-ALPN-01：仅需 443 可达，无需 80 端口，§12）。
+		m := &autocert.Manager{
+			Cache:      autocert.DirCache(*acmeCache),
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(*acmeDomain),
+			Email:      *acmeEmail,
+		}
+		srv.TLSConfig = &tls.Config{GetCertificate: m.GetCertificate, MinVersion: tls.VersionTLS12}
+		log.Printf("lattix backend listening on %s (HTTPS ACME: %s, admin: %s)", *addr, *acmeDomain, *adminUser)
+		log.Fatal(srv.ListenAndServeTLS("", ""))
+	case useCert:
+		log.Printf("lattix backend listening on %s (HTTPS 自带证书, admin: %s)", *addr, *adminUser)
+		log.Fatal(srv.ListenAndServeTLS(*tlsCert, *tlsKey))
+	default:
+		log.Printf("lattix backend listening on %s (admin: %s)", *addr, *adminUser)
+		log.Fatal(srv.ListenAndServe())
+	}
 }
 
 // spaHandler 服务静态产物；路径不存在时回退 index.html（React SPA 客户端路由）。

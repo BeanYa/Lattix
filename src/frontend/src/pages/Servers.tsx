@@ -29,6 +29,15 @@ function formatTime(t: string | null): string {
   return t ? new Date(t).toLocaleString() : '-'
 }
 
+function formatMetrics(s: Server): string {
+  const m = s.metrics
+  if (!m) {
+    return '-'
+  }
+  const memPct = m.mem_total > 0 ? Math.round((m.mem_used / m.mem_total) * 100) : 0
+  return `L ${m.load1.toFixed(2)} · CPU ${Math.round(m.cpu_percent)}% · MEM ${memPct}%`
+}
+
 export default function Servers() {
   const [servers, setServers] = useState<Server[]>([])
   const [loading, setLoading] = useState(true)
@@ -43,6 +52,14 @@ export default function Servers() {
   const [cmdView, setCmdView] = useState<{ title: string; command: string } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Server | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [editTarget, setEditTarget] = useState<Server | null>(null)
+  const [editAddress, setEditAddress] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
+  const [editError, setEditError] = useState('')
+  const [upgradeTarget, setUpgradeTarget] = useState<Server | null>(null)
+  const [upgradeVersion, setUpgradeVersion] = useState('latest')
+  const [upgrading, setUpgrading] = useState(false)
+  const [upgradeError, setUpgradeError] = useState('')
 
   const load = useCallback(() => {
     api
@@ -104,6 +121,71 @@ export default function Servers() {
     }
   }
 
+  // 配置漂移修复（§17）：重放该服务器全部 active 节点，agent 重建配置后漂移标志自动清除。
+  const onRepair = async (s: Server) => {
+    if (!window.confirm(`确定修复「${s.alias}」的配置漂移？将按面板节点状态重建该机 xray 配置。`)) {
+      return
+    }
+    try {
+      const res = await api.repairServer(s.id)
+      setError('')
+      window.alert(`已下发 ${res.reapplied} 个节点的重放命令，漂移标志将在 agent 重建后自动清除。`)
+      load()
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  const onOpenEdit = (s: Server) => {
+    setEditTarget(s)
+    setEditAddress(s.address)
+    setEditError('')
+  }
+
+  const onUpdateAddress = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!editTarget) {
+      return
+    }
+    setEditError('')
+    setEditSaving(true)
+    try {
+      await api.updateServerAddress(editTarget.id, editAddress)
+      setEditTarget(null)
+      load()
+    } catch (err) {
+      setEditError(errorMessage(err))
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
+  // xray 版本升级（§18）：命令入队后由 agent 下载/校验/替换/重启，版本号经遥测自动刷新。
+  const onOpenUpgrade = (s: Server) => {
+    setUpgradeTarget(s)
+    setUpgradeVersion('latest')
+    setUpgradeError('')
+  }
+
+  const onUpgrade = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!upgradeTarget) {
+      return
+    }
+    setUpgradeError('')
+    setUpgrading(true)
+    try {
+      await api.upgradeServer(upgradeTarget.id, upgradeVersion.trim() || 'latest')
+      setUpgradeTarget(null)
+      window.alert('升级命令已下发。xray 版本号将在升级完成后自动刷新（失败可在命令日志排查）。')
+      load()
+    } catch (err) {
+      setUpgradeError(errorMessage(err))
+    } finally {
+      setUpgrading(false)
+    }
+  }
+
   const onDelete = async (purge: 'xray' | 'agent') => {
     if (!deleteTarget) {
       return
@@ -140,6 +222,7 @@ export default function Servers() {
               <TableHead>状态</TableHead>
               <TableHead>地址</TableHead>
               <TableHead>xray 版本</TableHead>
+              <TableHead>负载</TableHead>
               <TableHead>最近在线</TableHead>
               <TableHead>创建时间</TableHead>
               <TableHead>操作</TableHead>
@@ -148,13 +231,13 @@ export default function Servers() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   加载中…
                 </TableCell>
               </TableRow>
             ) : servers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   暂无服务器，点击右上角「添加服务器」开始
                 </TableCell>
               </TableRow>
@@ -172,12 +255,29 @@ export default function Servers() {
                         离线
                       </Badge>
                     )}
+                    {s.config_drift && (
+                      <Badge variant="outline" className="ml-1 border-amber-200 bg-amber-50 text-amber-700">
+                        配置漂移
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell>{s.address || '-'}</TableCell>
                   <TableCell>{s.xray_version ?? '-'}</TableCell>
+                  <TableCell className="text-xs whitespace-nowrap">{formatMetrics(s)}</TableCell>
                   <TableCell>{formatTime(s.last_seen_at)}</TableCell>
                   <TableCell>{formatTime(s.created_at)}</TableCell>
                   <TableCell className="space-x-2">
+                    {s.config_drift && (
+                      <Button variant="outline" size="sm" onClick={() => onRepair(s)}>
+                        修复漂移
+                      </Button>
+                    )}
+                    <Button variant="outline" size="sm" onClick={() => onOpenEdit(s)}>
+                      编辑地址
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => onOpenUpgrade(s)}>
+                      升级 xray
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => onRotateToken(s)}>
                       {s.last_seen_at ? '凭证刷新' : '安装命令'}
                     </Button>
@@ -252,6 +352,67 @@ export default function Servers() {
           <DialogFooter showCloseButton>
             <CopyButton text={cmdView?.command ?? ''} />
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editTarget !== null} onOpenChange={(next) => !next && setEditTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>编辑地址</DialogTitle>
+            <DialogDescription>
+              修改「{editTarget?.alias}」的公网地址，订阅中节点地址随之更新；留空则下次 agent
+              连接时按拨入地址重新自动学习。
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={onUpdateAddress} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="editAddress">公网地址</Label>
+              <Input
+                id="editAddress"
+                value={editAddress}
+                onChange={(e) => setEditAddress(e.target.value)}
+                placeholder="例如：1.2.3.4 或 hk-01.example.com"
+                autoFocus
+              />
+            </div>
+            {editError && <p className="text-sm text-destructive">{editError}</p>}
+            <DialogFooter>
+              <Button type="submit" disabled={editSaving}>
+                {editSaving ? '保存中…' : '保存'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={upgradeTarget !== null} onOpenChange={(next) => !next && setUpgradeTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>升级 xray</DialogTitle>
+            <DialogDescription>
+              将「{upgradeTarget?.alias}」的 xray 升级到指定版本（当前：
+              {upgradeTarget?.xray_version ?? '未知'}）。agent 将下载官方 release、
+              校验 SHA2-256 后替换并重启；失败自动回滚。
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={onUpgrade} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="upgradeVersion">目标版本</Label>
+              <Input
+                id="upgradeVersion"
+                value={upgradeVersion}
+                onChange={(e) => setUpgradeVersion(e.target.value)}
+                placeholder="latest 或具体版本号（如 v26.3.27）"
+                autoFocus
+              />
+            </div>
+            {upgradeError && <p className="text-sm text-destructive">{upgradeError}</p>}
+            <DialogFooter>
+              <Button type="submit" disabled={upgrading}>
+                {upgrading ? '下发中…' : '下发升级'}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

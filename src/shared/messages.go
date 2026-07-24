@@ -20,6 +20,9 @@ const (
 	TypeRemoveUser  = "remove_user"  // panel→agent 热移除一个用户
 	TypeApplyResult = "apply_result" // agent→panel 上报执行结果
 	TypeUninstall   = "uninstall"    // panel→agent 卸载 agent（先回执再自毁）
+	TypeUpgradeXray = "upgrade_xray" // panel→agent 升级 xray 版本（§18）
+	TypeTelemetry   = "telemetry"    // agent→panel 周期遥测（流量 + 主机指标，§13）
+	TypeDriftReport = "drift_report" // agent→panel 配置漂移状态变化（§17 reconcile）
 )
 
 // HelloPayload 是 hello 的载荷：token（bootstrap 或长期）、agent 版本、
@@ -52,13 +55,26 @@ type RemoveNodePayload struct {
 }
 
 // AddUserPayload 是 add_user 的载荷：向该服务器所有 inbound 热加入一个用户。
+// Nodes 携带该服务器各节点的用户条目参数（key 为 node tag，见 NodeTag），
+// Agent 据此构造各协议正确的 account（vless id+flow / vmess id / trojan password /
+// ss method+password / socks+http user+pass）；dokodemo 节点无用户概念，不在其中。
 type AddUserPayload struct {
-	UUID string `json:"uuid"`
+	UUID  string                    `json:"uuid"`
+	Nodes map[string]UserNodeParams `json:"nodes,omitempty"`
+}
+
+// UserNodeParams 描述一个节点的用户条目构造参数。
+type UserNodeParams struct {
+	Protocol string `json:"protocol"`
+	Flow     string `json:"flow,omitempty"`   // vless
+	Method   string `json:"method,omitempty"` // shadowsocks
 }
 
 // RemoveUserPayload 是 remove_user 的载荷：从该服务器所有 inbound 热移除一个用户。
+// Nodes 同 AddUserPayload：Agent 据此判断各 inbound 协议能否热删，不能则走重启兜底。
 type RemoveUserPayload struct {
-	UUID string `json:"uuid"`
+	UUID  string                    `json:"uuid"`
+	Nodes map[string]UserNodeParams `json:"nodes,omitempty"`
 }
 
 // UninstallPayload 是 uninstall 的载荷（§5）。
@@ -72,4 +88,42 @@ type ApplyResultPayload struct {
 	OK             bool            `json:"ok"`
 	RealizedConfig *RealizedConfig `json:"realized_config,omitempty"`
 	Error          string          `json:"error,omitempty"`
+}
+
+// TelemetryPayload 是 telemetry 的载荷（§13 遥测，周期上报，无需回执）：
+// xray 版本/运行状态（升级管理据此刷新展示）、主机指标、流量增量。
+type TelemetryPayload struct {
+	XrayVersion string         `json:"xray_version"`
+	XrayRunning bool           `json:"xray_running"`
+	Host        *HostMetrics   `json:"host,omitempty"`
+	Traffic     []TrafficDelta `json:"traffic,omitempty"`
+}
+
+// HostMetrics 是主机指标（/proc 采集）。
+type HostMetrics struct {
+	Load1      float64 `json:"load1"`       // 1 分钟负载
+	CPUPercent float64 `json:"cpu_percent"` // 采样区间 CPU 使用率（%）
+	MemTotal   uint64  `json:"mem_total"`   // 字节
+	MemUsed    uint64  `json:"mem_used"`    // 字节
+}
+
+// TrafficDelta 是一个计数器在采样区间内的流量增量（字节）。
+// Node 为 inbound tag（node_<id>，节点维度）；User 为用户 UUID（email，用户维度）。
+type TrafficDelta struct {
+	Node string `json:"node,omitempty"`
+	User string `json:"user,omitempty"`
+	Up   int64  `json:"up"`
+	Down int64  `json:"down"`
+}
+
+// DriftPayload 是 drift_report 的载荷（§17）：配置文件被外部修改时为 true，
+// 修复（重放 apply）或外部恢复后为 false，仅在状态变化时上报。
+type DriftPayload struct {
+	Drifted bool `json:"drifted"`
+}
+
+// UpgradeXrayPayload 是 upgrade_xray 的载荷（§18）：
+// version 为具体版本号（vX.Y.Z）或 latest（agent 执行时经 GitHub API 解析）。
+type UpgradeXrayPayload struct {
+	Version string `json:"version"`
 }

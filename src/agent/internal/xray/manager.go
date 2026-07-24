@@ -5,6 +5,8 @@ package xray
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,24 +22,37 @@ import (
 
 // Manager 管理一台服务器上的 xray：配置文件、热操作、服务重启。
 type Manager struct {
-	bin        string // xray 二进制路径
-	configPath string // config.json 路径（agent 独占管理，§6）
-	apiAddr    string // gRPC API 地址（同时决定骨架配置中 api inbound 的端口）
-	hot        *HotClient
-	runner     Runner
+	bin         string // xray 二进制路径
+	configPath  string // config.json 路径（agent 独占管理，§6）
+	apiAddr     string // gRPC API 地址（同时决定骨架配置中 api inbound 的端口）
+	hot         *HotClient
+	runner      Runner
+	releaseBase string // xray release 下载基址（§18，可指向镜像）
+
+	lastHash string // 最后一次由本 agent 落盘的配置哈希（§17 漂移检测基线）
+	drifted  bool   // 已检出外部漂移：下一次 loadConfig 以净化配置为基（§17）
 
 	mu sync.Mutex // 串行化一切配置变更，避免并发写坏 config.json
 }
 
+// defaultReleaseBase 是 xray 官方 release 下载基址。
+const defaultReleaseBase = "https://github.com/XTLS/Xray-core/releases/download"
+
 // NewManager 创建 xray 管理器。
 func NewManager(bin, configPath, apiAddr string, runner Runner) *Manager {
 	return &Manager{
-		bin:        bin,
-		configPath: configPath,
-		apiAddr:    apiAddr,
-		hot:        NewHotClient(apiAddr),
-		runner:     runner,
+		bin:         bin,
+		configPath:  configPath,
+		apiAddr:     apiAddr,
+		hot:         NewHotClient(apiAddr),
+		runner:      runner,
+		releaseBase: defaultReleaseBase,
 	}
+}
+
+// SetReleaseBase 覆盖 xray release 下载基址（§18 镜像/代理场景）。
+func (m *Manager) SetReleaseBase(base string) {
+	m.releaseBase = strings.TrimSuffix(base, "/")
 }
 
 // Version 返回 xray 版本与运行状态（hello 遥测，§13），尽力而为。
@@ -57,7 +72,7 @@ func (m *Manager) ApplyNode(nodeID int64, vc shared.VirtualConfig, userUUIDs, de
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	tag := nodeTag(nodeID)
+	tag := shared.NodeTag(nodeID)
 	// 1. 填充模板占位符（§7）+ dest 预检（§6 步骤 2）
 	inbound, realized, err := m.fillTemplate(tag, vc, userUUIDs, destCandidates)
 	if err != nil {
@@ -91,7 +106,7 @@ func (m *Manager) RemoveNode(nodeID int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	tag := nodeTag(nodeID)
+	tag := shared.NodeTag(nodeID)
 	cur, err := m.loadConfig()
 	if err != nil {
 		return err
@@ -114,17 +129,18 @@ func (m *Manager) RemoveNode(nodeID int64) error {
 	return nil
 }
 
-// AddUser 向该服务器所有节点 inbound 热加入一个用户（§5、§8）。
-func (m *Manager) AddUser(uuid string) error {
-	return m.mutateUser(uuid, true)
+// AddUser 向该服务器所有节点 inbound 热加入一个用户（§5、§8）；
+// params 按 tag 提供各协议条目构造参数（热操作不支持的协议自动回退重启）。
+func (m *Manager) AddUser(uuid string, params map[string]shared.UserNodeParams) error {
+	return m.mutateUser(uuid, true, params)
 }
 
 // RemoveUser 从该服务器所有节点 inbound 热移除一个用户（§5、§8）。
-func (m *Manager) RemoveUser(uuid string) error {
-	return m.mutateUser(uuid, false)
+func (m *Manager) RemoveUser(uuid string, params map[string]shared.UserNodeParams) error {
+	return m.mutateUser(uuid, false, params)
 }
 
-func (m *Manager) mutateUser(uuid string, add bool) error {
+func (m *Manager) mutateUser(uuid string, add bool, params map[string]shared.UserNodeParams) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -132,7 +148,7 @@ func (m *Manager) mutateUser(uuid string, add bool) error {
 	if err != nil {
 		return err
 	}
-	cand, tags := cur.mutateClients(uuid, add)
+	cand, tags := cur.mutateClients(uuid, add, params)
 	if len(tags) == 0 {
 		return nil // 无节点或用户已处于目标状态
 	}
@@ -146,9 +162,9 @@ func (m *Manager) mutateUser(uuid string, add bool) error {
 	for _, tag := range tags {
 		var err error
 		if add {
-			err = m.hot.AddUser(tag, uuid)
+			err = m.hot.AddUser(tag, params[tag], uuid)
 		} else {
-			err = m.hot.RemoveUser(tag, uuid)
+			err = m.hot.RemoveUser(tag, params[tag], uuid)
 		}
 		if err != nil {
 			log.Printf("xray: hot %s user on %s failed: %v (fallback to restart)", verb, tag, err)
@@ -198,14 +214,53 @@ func (m *Manager) commitConfig(cand fullConfig) error {
 			return err
 		}
 	}
-	return os.Rename(tmpPath, m.configPath)
+	if err := os.Rename(tmpPath, m.configPath); err != nil {
+		return err
+	}
+	m.lastHash = hashBytes(b) // §17 漂移检测基线
+	m.drifted = false         // 已按受管状态落盘，漂移视为修复
+	return nil
 }
 
-// restorePrev 恢复上一份可用配置（§6 步骤 7）。
+// ConfigDrift 检测配置文件是否被外部修改（§17 reconcile）：
+// 与最后一次由本 agent 落盘的哈希比对；首次调用以当前文件为基线
+// （agent 停机期间的外部改动无法区分，视为基线）；文件被删除视为漂移。
+func (m *Manager) ConfigDrift() (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	b, err := os.ReadFile(m.configPath)
+	if errors.Is(err, os.ErrNotExist) {
+		m.drifted = m.lastHash != "" // 文件被删除视为漂移
+		return m.drifted, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	h := hashBytes(b)
+	if m.lastHash == "" {
+		m.lastHash = h
+		return false, nil
+	}
+	m.drifted = h != m.lastHash
+	return m.drifted, nil
+}
+
+// hashBytes 计算配置内容的漂移检测哈希（§17）。
+func hashBytes(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// restorePrev 恢复上一份可用配置（§6 步骤 7）；同步漂移检测基线（§17），避免误报。
 func (m *Manager) restorePrev() {
 	if _, err := os.Stat(m.configPath + ".prev"); err == nil {
 		if err := os.Rename(m.configPath+".prev", m.configPath); err != nil {
 			log.Printf("xray: restore prev config: %v", err)
+			return
+		}
+		if b, err := os.ReadFile(m.configPath); err == nil {
+			m.lastHash = hashBytes(b)
 		}
 	}
 }
@@ -228,10 +283,24 @@ func (m *Manager) loadConfig() (fullConfig, error) {
 		}
 		return m.skeleton(), nil
 	}
+	if m.drifted {
+		// §17 漂移修复：以骨架 + 受管节点 inbound 为基，丢弃外部改动的其他内容。
+		san := m.skeleton()
+		var kept []json.RawMessage
+		for _, raw := range fc.inbounds() {
+			if strings.HasPrefix(inboundTag(raw), "node_") {
+				kept = append(kept, raw)
+			}
+		}
+		san.setInbounds(kept)
+		log.Printf("xray: 配置漂移修复，以净化配置为基（保留 %d 个节点 inbound）", len(kept))
+		return san, nil
+	}
 	return fc, nil
 }
 
-// skeleton 生成基础配置：api.listen 直接监听 gRPC（热操作通道）+ freedom outbound。
+// skeleton 生成基础配置：api.listen 直接监听 gRPC（热操作 + stats 查询通道）+ freedom outbound。
+// policy 开启 inbound/用户级流量统计（§13）；用户级要求 clients 带 level: 0（见 clientEntry）。
 func (m *Manager) skeleton() fullConfig {
 	var fc fullConfig
 	if err := json.Unmarshal([]byte(fmt.Sprintf(skeletonJSON, m.apiAddr)), &fc); err != nil {
@@ -242,10 +311,73 @@ func (m *Manager) skeleton() fullConfig {
 
 const skeletonJSON = `{
   "log": {"loglevel": "warning"},
-  "api": {"tag": "api", "listen": %q, "services": ["HandlerService"]},
+  "api": {"tag": "api", "listen": %q, "services": ["HandlerService", "StatsService"]},
   "stats": {},
+  "policy": {
+    "levels": {"0": {"statsUserUplink": true, "statsUserDownlink": true}},
+    "system": {"statsInboundUplink": true, "statsInboundDownlink": true}
+  },
   "inbounds": [],
   "outbounds": [{"protocol": "freedom", "tag": "direct"}]
 }`
 
-func nodeTag(nodeID int64) string { return fmt.Sprintf("node_%d", nodeID) }
+// QueryStats 拉取 xray 流量计数器（§13 遥测）。
+func (m *Manager) QueryStats() (map[string]int64, error) {
+	return m.hot.QueryStats()
+}
+
+// EnsureTelemetryFeatures 为旧版本生成的 config.json 补齐遥测所需的
+// stats/policy/StatsService 配置项（缺失则落盘并重启 xray 生效，尽力而为）。
+func (m *Manager) EnsureTelemetryFeatures() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cur, err := m.loadConfig()
+	if err != nil {
+		return err
+	}
+	cand := cur.clone()
+	changed := false
+	if _, ok := cand["stats"]; !ok {
+		cand["stats"] = json.RawMessage(`{}`)
+		changed = true
+	}
+	if _, ok := cand["policy"]; !ok {
+		cand["policy"] = json.RawMessage(`{
+  "levels": {"0": {"statsUserUplink": true, "statsUserDownlink": true}},
+  "system": {"statsInboundUplink": true, "statsInboundDownlink": true}
+}`)
+		changed = true
+	}
+	if raw, ok := cand["api"]; ok {
+		var api map[string]any
+		if err := json.Unmarshal(raw, &api); err == nil {
+			found := false
+			if services, ok := api["services"].([]any); ok {
+				for _, s := range services {
+					if s == "StatsService" {
+						found = true
+					}
+				}
+			}
+			if !found {
+				services, _ := api["services"].([]any)
+				api["services"] = append(services, "StatsService")
+				b, err := json.Marshal(api)
+				if err != nil {
+					return err
+				}
+				cand["api"] = b
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return nil
+	}
+	if err := m.commitConfig(cand); err != nil {
+		return err
+	}
+	// policy/services 变更需重启生效。
+	return m.runner.Restart(context.Background())
+}

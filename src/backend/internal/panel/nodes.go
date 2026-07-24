@@ -12,6 +12,12 @@ import (
 	"lattix/shared"
 )
 
+// trafficDTO 是流量合计的 API 表示（§13 仅统计）。
+type trafficDTO struct {
+	Up   int64 `json:"up"`
+	Down int64 `json:"down"`
+}
+
 // nodeDTO 是节点对象的 API 表示。
 type nodeDTO struct {
 	ID             int64           `json:"id"`
@@ -21,6 +27,7 @@ type nodeDTO struct {
 	Port           *int            `json:"port"` // null = Agent 自动挑选（§7）
 	Status         string          `json:"status"`
 	Error          string          `json:"error"`
+	Traffic        *trafficDTO     `json:"traffic"` // 节点流量合计（§13），无数据为 null
 	ConfigTemplate json.RawMessage `json:"config_template"`
 	RealizedConfig json.RawMessage `json:"realized_config"`
 	CreatedAt      time.Time       `json:"created_at"`
@@ -48,20 +55,138 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	traffic, err := s.st.TrafficByNode(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	out := make([]nodeDTO, 0, len(nodes))
 	for _, n := range nodes {
-		out = append(out, toNodeDTO(n))
+		dto := toNodeDTO(n)
+		if t, ok := traffic[n.ID]; ok {
+			dto.Traffic = &trafficDTO{Up: t.Up, Down: t.Down}
+		}
+		out = append(out, dto)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 // createNodeRequest 是节点创建向导的提交（§10）：端口可空 = 自动（§7）。
+// 各协议有效字段见设计文档"全协议向导"：reality 系（vless/vmess/trojan）使用
+// short_id/dest/server_names/fingerprint/network 及 grpc/xhttp 子选项；flow 仅 vless+tcp；
+// method 仅 shadowsocks；target_address/target_port 仅 dokodemo-door。
 type createNodeRequest struct {
-	ServerID    int64    `json:"server_id"`
-	Port        *int     `json:"port"`
-	ShortID     string   `json:"short_id"`     // 默认随机 8 字节 hex
-	Dest        string   `json:"dest"`         // 默认 www.microsoft.com:443
-	ServerNames []string `json:"server_names"` // 默认 [www.microsoft.com]
+	ServerID      int64    `json:"server_id"`
+	Protocol      string   `json:"protocol"`       // 默认 vless
+	Port          *int     `json:"port"`           // 留空 = Agent 自动挑选
+	ShortID       string   `json:"short_id"`       // 默认随机 8 字节 hex
+	Dest          string   `json:"dest"`           // 默认 dl.google.com:443
+	ServerNames   []string `json:"server_names"`   // 默认 [dl.google.com]
+	Fingerprint   string   `json:"fingerprint"`    // 默认 chrome
+	Network       string   `json:"network"`        // tcp（默认）/ grpc / xhttp
+	ServiceName   string   `json:"service_name"`   // grpc，默认 "grpc"
+	Path          string   `json:"path"`           // xhttp，默认 "/"
+	Mode          string   `json:"mode"`           // xhttp，默认 auto
+	Host          string   `json:"host"`           // xhttp，可空
+	Flow          string   `json:"flow"`           // vless 默认 xtls-rprx-vision（仅 tcp）
+	Encryption    string   `json:"encryption"`     // vless：VLESS Encryption 认证方式（x25519/mlkem768），与 flow 互斥
+	Method        string   `json:"method"`         // shadowsocks，默认 2022-blake3-aes-128-gcm
+	TargetAddress string   `json:"target_address"` // dokodemo-door 转发目标
+	TargetPort    *int     `json:"target_port"`
+}
+
+// normalize 填默认值并校验协议参数组合，返回用户可读的校验错误。
+func (req *createNodeRequest) normalize() error {
+	if req.Protocol == "" {
+		req.Protocol = shared.ProtocolVLESS
+	}
+	if !shared.ValidValue(req.Protocol, shared.Protocols) {
+		return fmt.Errorf("不支持的协议: %s", req.Protocol)
+	}
+
+	if shared.IsRealityProtocol(req.Protocol) {
+		if req.Network == "" {
+			req.Network = shared.NetworkTCP
+		}
+		if !shared.ValidValue(req.Network, shared.Networks) {
+			return fmt.Errorf("Reality 仅支持 tcp/grpc/xhttp 传输，不支持: %s", req.Network)
+		}
+		switch req.Network {
+		case shared.NetworkGRPC:
+			if req.ServiceName == "" {
+				req.ServiceName = "grpc"
+			}
+			req.Path, req.Mode, req.Host = "", "", ""
+		case shared.NetworkXHTTP:
+			if req.Path == "" {
+				req.Path = "/"
+			}
+			if req.Mode == "" {
+				req.Mode = "auto"
+			}
+			if !shared.ValidValue(req.Mode, shared.XHTTPModes) {
+				return fmt.Errorf("不支持的 xhttp mode: %s", req.Mode)
+			}
+			req.ServiceName = ""
+		default: // tcp
+			req.ServiceName, req.Path, req.Mode, req.Host = "", "", "", ""
+		}
+		if req.Fingerprint == "" {
+			req.Fingerprint = shared.FingerprintChrome
+		}
+		if !shared.ValidValue(req.Fingerprint, shared.Fingerprints) {
+			return fmt.Errorf("不支持的 uTLS 指纹: %s", req.Fingerprint)
+		}
+		if req.ShortID == "" {
+			req.ShortID = randomHex(8)
+		}
+		if req.Dest == "" {
+			req.Dest = "dl.google.com:443"
+		}
+		if len(req.ServerNames) == 0 {
+			req.ServerNames = []string{"dl.google.com"}
+		}
+	}
+
+	switch req.Protocol {
+	case shared.ProtocolVLESS:
+		// flow 语义：未填 + tcp → 默认 vision；显式 "none" → 无 flow；grpc/xhttp 必须无 flow。
+		if req.Flow == "" && req.Network == shared.NetworkTCP {
+			req.Flow = shared.FlowVision
+		}
+		if req.Flow == "none" {
+			req.Flow = ""
+		}
+		if req.Flow != "" && req.Flow != shared.FlowVision {
+			return fmt.Errorf("不支持的 flow: %s", req.Flow)
+		}
+		if req.Flow == shared.FlowVision && req.Network != shared.NetworkTCP {
+			return fmt.Errorf("flow=%s 仅适用于 tcp 传输（grpc/xhttp 请选择无 flow）", shared.FlowVision)
+		}
+		if req.Encryption != "" {
+			if !shared.ValidValue(req.Encryption, shared.VLessEncMethods) {
+				return fmt.Errorf("不支持的 VLESS Encryption 认证方式: %s", req.Encryption)
+			}
+			// vision + Encryption 允许组合（native 拼接），客户端字符串按 1-RTT 下发（§15）。
+		}
+	case shared.ProtocolVMess, shared.ProtocolTrojan:
+		req.Flow = ""
+	case shared.ProtocolShadowsocks:
+		if req.Method == "" {
+			req.Method = shared.SSMethod2022AES128GCM
+		}
+		if !shared.ValidValue(req.Method, shared.SSMethods) {
+			return fmt.Errorf("不支持的 shadowsocks 加密方式: %s", req.Method)
+		}
+	case shared.ProtocolDokodemo:
+		if req.TargetAddress == "" {
+			return fmt.Errorf("dokodemo-door 需要目标地址")
+		}
+		if req.TargetPort == nil || *req.TargetPort < 1 || *req.TargetPort > 65535 {
+			return fmt.Errorf("dokodemo-door 需要合法的目标端口（1-65535）")
+		}
+	}
+	return nil
 }
 
 // handleCreateNode 处理 POST /api/nodes：生成虚拟配置模板 → pending → 下发 apply_node（§8 全量用户）。
@@ -69,6 +194,10 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 	var req createNodeRequest
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := req.normalize(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if _, err := s.st.ServerByID(r.Context(), req.ServerID); err != nil {
@@ -125,7 +254,7 @@ func (s *Server) handleRetryNode(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid node id")
+		writeError(w, http.StatusBadRequest, "invalid server id")
 		return
 	}
 	n, err := s.st.NodeByID(r.Context(), id)
@@ -154,7 +283,7 @@ func (s *Server) applyNewNode(r *http.Request, serverID int64, port *int, vc sha
 	if err != nil {
 		return 0, err
 	}
-	id, err := s.st.InsertNode(r.Context(), serverID, port, vcJSON)
+	id, err := s.st.InsertNode(r.Context(), serverID, vc.Protocol, port, vcJSON)
 	if err != nil {
 		return 0, err
 	}
@@ -164,12 +293,12 @@ func (s *Server) applyNewNode(r *http.Request, serverID int64, port *int, vc sha
 	return id, nil
 }
 
-// enqueueApply 节点进入 applying 并下发 apply_node（携带全量用户 UUID §8 与 dest 白名单 §6）。
+// enqueueApply 节点进入 applying 并下发 apply_node（携带分配到该节点的用户 UUID §16 与 dest 白名单 §6）。
 func (s *Server) enqueueApply(r *http.Request, serverID, nodeID int64, vc shared.VirtualConfig) error {
 	if err := s.st.SetNodeApplying(r.Context(), nodeID); err != nil {
 		return err
 	}
-	uuids, err := s.st.AllUserUUIDs(r.Context())
+	uuids, err := s.st.NodeUserUUIDs(r.Context(), nodeID)
 	if err != nil {
 		return err
 	}
@@ -200,52 +329,103 @@ var destCandidates = []string{
 	"slack.com:443",
 }
 
-// buildVirtualConfig 生成 VLESS+Reality 虚拟配置（§7 参数分工：UUID/short_id/dest/serverNames 面板，
-// 密钥对与自动端口由 Agent 填占位符；flow/uTLS 固定，§1）。
+// buildVirtualConfig 生成虚拟配置（§7 参数分工：UUID/short_id/dest/serverNames 面板，
+// 密钥对与自动端口由 Agent 填占位符）。模板以 map 构造后序列化，
+// 占位符以字符串值形式嵌入（"{{PORT}}"/"{{CLIENTS}}"/"{{PRIVATE_KEY}}"/"{{TAG}}"）。
 func buildVirtualConfig(req createNodeRequest) shared.VirtualConfig {
-	shortID := req.ShortID
-	if shortID == "" {
-		shortID = randomHex(8)
+	settings := map[string]any{}
+	switch req.Protocol {
+	case shared.ProtocolVLESS:
+		settings["clients"] = shared.PlaceholderClients
+		if req.Encryption != "" {
+			// VLESS Encryption：decryption 由 Agent 执行 `xray vlessenc` 生成填入。
+			settings["decryption"] = shared.PlaceholderVLessDecryption
+		} else {
+			settings["decryption"] = "none"
+		}
+	case shared.ProtocolVMess, shared.ProtocolTrojan:
+		settings["clients"] = shared.PlaceholderClients
+	case shared.ProtocolShadowsocks:
+		settings["method"] = req.Method
+		settings["clients"] = shared.PlaceholderClients
+		settings["network"] = "tcp,udp"
+		if shared.Is2022Method(req.Method) {
+			// 2022-blake3 多用户：inbound 需要节点级 PSK（订阅按 "PSK:用户密钥" 拼接）。
+			psk, err := shared.GenerateSSKey(req.Method)
+			if err != nil {
+				panic(err) // crypto/rand 失败属致命异常，同 randomHex
+			}
+			settings["password"] = psk
+		}
+	case shared.ProtocolSocks:
+		settings["auth"] = "password"
+		settings["accounts"] = shared.PlaceholderClients
+		settings["udp"] = true
+	case shared.ProtocolHTTP:
+		settings["accounts"] = shared.PlaceholderClients
+	case shared.ProtocolDokodemo:
+		settings["address"] = req.TargetAddress
+		settings["port"] = *req.TargetPort
+		settings["network"] = "tcp,udp"
 	}
-	dest := req.Dest
-	if dest == "" {
-		dest = "dl.google.com:443"
+
+	inbound := map[string]any{
+		"tag":      shared.PlaceholderTag,
+		"protocol": req.Protocol,
+		"port":     shared.PlaceholderPort,
+		"settings": settings,
 	}
-	serverNames := req.ServerNames
-	if len(serverNames) == 0 {
-		serverNames = []string{"dl.google.com"}
+	if shared.IsRealityProtocol(req.Protocol) {
+		inbound["streamSettings"] = realityStreamSettings(req)
 	}
-	names, _ := json.Marshal(serverNames)
-	template := fmt.Sprintf(`{
-  "tag": %q,
-  "protocol": "vless",
-  "port": %q,
-  "settings": {
-    "clients": %q,
-    "decryption": "none"
-  },
-  "streamSettings": {
-    "network": "tcp",
-    "security": "reality",
-    "realitySettings": {
-      "show": false,
-      "dest": %q,
-      "xver": 0,
-      "serverNames": %s,
-      "privateKey": %q,
-      "shortIds": [%q]
-    }
-  },
-  "sniffing": {"enabled": true, "destOverride": ["http", "tls", "quic"]}
-}`, shared.PlaceholderTag, shared.PlaceholderPort, shared.PlaceholderClients,
-		dest, names, shared.PlaceholderRealityPrivateKey, shortID)
+	if req.Protocol != shared.ProtocolDokodemo {
+		inbound["sniffing"] = map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}}
+	}
+	template, _ := json.Marshal(inbound) // map 序列化不会失败
+
 	port := 0
 	if req.Port != nil {
 		port = *req.Port
 	}
 	return shared.VirtualConfig{
-		Protocol: shared.ProtocolVLESS,
-		Port:     port,
-		Template: json.RawMessage(template),
+		Protocol:    req.Protocol,
+		Port:        port,
+		Flow:        req.Flow,
+		Network:     req.Network,
+		ServiceName: req.ServiceName,
+		Path:        req.Path,
+		Mode:        req.Mode,
+		Host:        req.Host,
+		Method:      req.Method,
+		Fingerprint: req.Fingerprint,
+		Encryption:  req.Encryption,
+		Template:    json.RawMessage(template),
 	}
+}
+
+// realityStreamSettings 构造 reality 系协议共用的 streamSettings（Reality 仅支持 tcp/grpc/xhttp）。
+func realityStreamSettings(req createNodeRequest) map[string]any {
+	ss := map[string]any{
+		"network":  req.Network,
+		"security": "reality",
+		"realitySettings": map[string]any{
+			"show":        false,
+			"dest":        req.Dest,
+			"xver":        0,
+			"serverNames": req.ServerNames,
+			"privateKey":  shared.PlaceholderRealityPrivateKey,
+			"shortIds":    []string{req.ShortID},
+		},
+	}
+	switch req.Network {
+	case shared.NetworkGRPC:
+		ss["grpcSettings"] = map[string]any{"serviceName": req.ServiceName}
+	case shared.NetworkXHTTP:
+		x := map[string]any{"path": req.Path, "mode": req.Mode}
+		if req.Host != "" {
+			x["host"] = req.Host
+		}
+		ss["xhttpSettings"] = x
+	}
+	return ss
 }

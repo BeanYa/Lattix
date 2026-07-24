@@ -29,19 +29,41 @@ type clashRealityOpts struct {
 	ShortID   string `yaml:"short-id,omitempty"`
 }
 
+type clashGrpcOpts struct {
+	ServiceName string `yaml:"grpc-service-name"`
+}
+
+type clashXHTTPOpts struct {
+	Path string `yaml:"path,omitempty"`
+	Mode string `yaml:"mode,omitempty"`
+	Host string `yaml:"host,omitempty"`
+}
+
+// clashProxy 是 mihomo 代理项的并集结构：按协议填充相关字段（omitempty 裁剪）。
 type clashProxy struct {
-	Name              string           `yaml:"name"`
-	Type              string           `yaml:"type"`
-	Server            string           `yaml:"server"`
-	Port              int              `yaml:"port"`
-	UUID              string           `yaml:"uuid"`
-	Network           string           `yaml:"network"`
-	TLS               bool             `yaml:"tls"`
-	UDP               bool             `yaml:"udp"`
-	Flow              string           `yaml:"flow"`
-	Servername        string           `yaml:"servername,omitempty"`
-	RealityOpts       clashRealityOpts `yaml:"reality-opts"`
-	ClientFingerprint string           `yaml:"client-fingerprint"`
+	Name   string `yaml:"name"`
+	Type   string `yaml:"type"`
+	Server string `yaml:"server"`
+	Port   int    `yaml:"port"`
+
+	UUID     string `yaml:"uuid,omitempty"`     // vless / vmess
+	AlterID  *int   `yaml:"alterId,omitempty"`  // vmess（mihomo 客户端字段，服务端已废弃）
+	Cipher   string `yaml:"cipher,omitempty"`   // vmess=auto / ss=method
+	Password string `yaml:"password,omitempty"` // trojan / ss / socks / http
+	Username string `yaml:"username,omitempty"` // socks / http
+
+	Network    string `yaml:"network,omitempty"`
+	TLS        bool   `yaml:"tls,omitempty"`
+	Servername string `yaml:"servername,omitempty"` // vless / vmess
+	SNI        string `yaml:"sni,omitempty"`        // trojan
+	Flow       string `yaml:"flow,omitempty"`       // vless
+	Encryption string `yaml:"encryption,omitempty"` // vless（VLESS Encryption 客户端字符串）
+	UDP        bool   `yaml:"udp"`
+
+	RealityOpts       *clashRealityOpts `yaml:"reality-opts,omitempty"`
+	ClientFingerprint string            `yaml:"client-fingerprint,omitempty"`
+	GrpcOpts          *clashGrpcOpts    `yaml:"grpc-opts,omitempty"`
+	XhttpOpts         *clashXHTTPOpts   `yaml:"xhttp-opts,omitempty"`
 }
 
 type clashProxyGroup struct {
@@ -59,56 +81,66 @@ type clashConfig struct {
 // proxyGroupName 是 select 组名，MATCH 规则指向它。
 const proxyGroupName = "PROXY"
 
-// ServeHTTP 处理 GET /sub/{token}：按该用户自己的 UUID 为每个 active 节点生成一项 vless 代理（§9）。
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// assignedActiveNodes 返回订阅用户及其分配到的 active 节点（§16 公共查询）。
+func (s *Server) assignedActiveNodes(r *http.Request) (*store.User, []store.Node, error) {
 	user, err := s.st.UserBySubToken(r.Context(), r.PathValue("token"))
-	if errors.Is(err, store.ErrNotFound) {
-		http.Error(w, "subscription not found\n", http.StatusNotFound)
-		return
-	}
 	if err != nil {
-		http.Error(w, err.Error()+"\n", http.StatusInternalServerError)
-		return
+		return nil, nil, err
 	}
 	nodes, err := s.st.ListNodes(r.Context())
 	if err != nil {
-		http.Error(w, err.Error()+"\n", http.StatusInternalServerError)
+		return nil, nil, err
+	}
+	assigned, err := s.st.UserNodeIDs(r.Context(), user.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	allowed := make(map[int64]bool, len(assigned))
+	for _, id := range assigned {
+		allowed[id] = true
+	}
+	out := []store.Node{}
+	for _, n := range nodes {
+		if !allowed[n.ID] {
+			continue
+		}
+		if n.Status != store.NodeStatusActive || len(n.RealizedConfig) == 0 {
+			continue
+		}
+		out = append(out, n)
+	}
+	return user, out, nil
+}
+
+// ServeHTTP 处理 GET /sub/{token}：按该用户自己的 UUID 为每个 active 节点生成一项代理（§9）。
+// dokodemo-door 为端口转发，客户端无法作为代理消费，不进订阅。
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	user, nodes, err := s.assignedActiveNodes(r)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, store.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error()+"\n", status)
 		return
 	}
 
 	cfg := clashConfig{Proxies: []clashProxy{}}
 	names := []string{}
 	for _, n := range nodes {
-		if n.Status != store.NodeStatusActive || len(n.RealizedConfig) == 0 {
+		if n.Protocol == shared.ProtocolDokodemo {
 			continue
 		}
 		var rc shared.RealizedConfig
 		if err := json.Unmarshal(n.RealizedConfig, &rc); err != nil {
 			continue // 生效值损坏的节点跳过（异常留在 nodes 表）
 		}
-		if rc.Flow == "" {
-			rc.Flow = shared.FlowVision
+		p, err := buildProxy(n, rc, user.UUID)
+		if err != nil {
+			continue
 		}
-		if rc.Fingerprint == "" {
-			rc.Fingerprint = shared.FingerprintChrome
-		}
-		// 节点命名：{服务器别名}-vless-{端口}（§9）。
-		name := fmt.Sprintf("%s-vless-%d", n.ServerAlias, rc.Port)
-		cfg.Proxies = append(cfg.Proxies, clashProxy{
-			Name:              name,
-			Type:              "vless",
-			Server:            n.ServerAddress,
-			Port:              rc.Port,
-			UUID:              user.UUID, // 嵌入该用户自己的 UUID（§9）
-			Network:           "tcp",
-			TLS:               true,
-			UDP:               true,
-			Flow:              rc.Flow,
-			Servername:        rc.ServerName,
-			RealityOpts:       clashRealityOpts{PublicKey: rc.PublicKey, ShortID: rc.ShortID},
-			ClientFingerprint: rc.Fingerprint,
-		})
-		names = append(names, name)
+		cfg.Proxies = append(cfg.Proxies, p)
+		names = append(names, p.Name)
 	}
 	cfg.ProxyGroups = []clashProxyGroup{{Name: proxyGroupName, Type: "select", Proxies: names}}
 	cfg.Rules = []string{"MATCH," + proxyGroupName}
@@ -120,4 +152,82 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	w.Write(out)
+}
+
+// buildProxy 按节点协议构造 mihomo 代理项；uuid 为该订阅用户自己的 UUID（§8/§9）。
+// 节点命名：{服务器别名}-{协议}-{端口}。
+func buildProxy(n store.Node, rc shared.RealizedConfig, uuid string) (clashProxy, error) {
+	if rc.Port == 0 {
+		return clashProxy{}, fmt.Errorf("节点 %d 缺少生效端口", n.ID)
+	}
+	// 兼容存量 realized_config：缺省 network=tcp、fingerprint=chrome。
+	if rc.Network == "" {
+		rc.Network = shared.NetworkTCP
+	}
+	if rc.Fingerprint == "" {
+		rc.Fingerprint = shared.FingerprintChrome
+	}
+	p := clashProxy{
+		Name:   fmt.Sprintf("%s-%s-%d", n.ServerAlias, n.Protocol, rc.Port),
+		Type:   n.Protocol,
+		Server: n.ServerAddress,
+		Port:   rc.Port,
+		UDP:    true,
+	}
+	switch n.Protocol {
+	case shared.ProtocolVLESS:
+		p.UUID = uuid
+		p.Network = rc.Network
+		p.TLS = true
+		p.Servername = rc.ServerName
+		p.Flow = rc.Flow
+		p.Encryption = rc.Encryption
+		applyReality(&p, rc)
+	case shared.ProtocolVMess:
+		zero := 0
+		p.UUID = uuid
+		p.AlterID = &zero
+		p.Cipher = "auto"
+		p.Network = rc.Network
+		p.TLS = true
+		p.Servername = rc.ServerName
+		applyReality(&p, rc)
+	case shared.ProtocolTrojan:
+		p.Password = uuid
+		p.Network = rc.Network
+		p.SNI = rc.ServerName
+		applyReality(&p, rc)
+	case shared.ProtocolShadowsocks:
+		p.Type = "ss" // mihomo 类型名
+		p.Cipher = rc.Method
+		if shared.Is2022Method(rc.Method) {
+			// 2022-blake3 多用户：客户端密码为 "节点PSK:用户密钥"。
+			p.Password = rc.PSK + ":" + shared.SSUserPassword(uuid, rc.Method)
+		} else {
+			p.Password = shared.SSUserPassword(uuid, rc.Method)
+		}
+	case shared.ProtocolSocks:
+		p.Type = "socks5"
+		p.Username = uuid
+		p.Password = uuid
+	case shared.ProtocolHTTP:
+		p.Username = uuid
+		p.Password = uuid
+		p.UDP = false
+	default:
+		return clashProxy{}, fmt.Errorf("未知协议: %s", n.Protocol)
+	}
+	return p, nil
+}
+
+// applyReality 填充 reality 系协议共用的 TLS 指纹、reality-opts 与传输选项。
+func applyReality(p *clashProxy, rc shared.RealizedConfig) {
+	p.ClientFingerprint = rc.Fingerprint
+	p.RealityOpts = &clashRealityOpts{PublicKey: rc.PublicKey, ShortID: rc.ShortID}
+	switch rc.Network {
+	case shared.NetworkGRPC:
+		p.GrpcOpts = &clashGrpcOpts{ServiceName: rc.ServiceName}
+	case shared.NetworkXHTTP:
+		p.XhttpOpts = &clashXHTTPOpts{Path: rc.Path, Mode: rc.Mode, Host: rc.Host}
+	}
 }

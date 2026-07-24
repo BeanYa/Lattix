@@ -79,11 +79,92 @@ func (s *Store) UserBySubToken(ctx context.Context, subToken string) (*User, err
 	return u, nil
 }
 
-// AllUserUUIDs 返回全量用户 UUID 列表（apply_node 一次性下发，§8）。
-func (s *Store) AllUserUUIDs(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT uuid FROM users ORDER BY id`)
+// DeleteUser 删除一个用户（含其节点关联，§16）。
+func (s *Store) DeleteUser(ctx context.Context, id int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("list user uuids: %w", err)
+		return err
+	}
+	defer tx.Rollback()
+	for _, q := range []string{
+		`DELETE FROM user_nodes WHERE user_id = ?`,
+		`DELETE FROM users WHERE id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+			return fmt.Errorf("delete user: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// UserNodeIDs 返回用户分配到的节点 id 列表（§16）。
+func (s *Store) UserNodeIDs(ctx context.Context, userID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT node_id FROM user_nodes WHERE user_id = ? ORDER BY node_id`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list user nodes: %w", err)
+	}
+	defer rows.Close()
+	out := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan user node: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// SetUserNodes 整体替换用户的节点分配（§16），返回新增与移除的节点 id（供增量扇出）。
+func (s *Store) SetUserNodes(ctx context.Context, userID int64, nodeIDs []int64) (added, removed []int64, err error) {
+	cur, err := s.UserNodeIDs(ctx, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	want := map[int64]bool{}
+	for _, id := range nodeIDs {
+		want[id] = true
+	}
+	have := map[int64]bool{}
+	for _, id := range cur {
+		have[id] = true
+		if !want[id] {
+			removed = append(removed, id)
+		}
+	}
+	for _, id := range nodeIDs {
+		if !have[id] {
+			added = append(added, id)
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM user_nodes WHERE user_id = ?`, userID); err != nil {
+		return nil, nil, fmt.Errorf("reset user nodes: %w", err)
+	}
+	for _, id := range nodeIDs {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT OR IGNORE INTO user_nodes (user_id, node_id) VALUES (?, ?)`, userID, id); err != nil {
+			return nil, nil, fmt.Errorf("insert user node: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, nil, err
+	}
+	return added, removed, nil
+}
+
+// NodeUserUUIDs 返回分配到该节点的用户 UUID 列表（apply_node 下发，§16）。
+func (s *Store) NodeUserUUIDs(ctx context.Context, nodeID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT u.uuid FROM user_nodes un JOIN users u ON u.id = un.user_id
+		 WHERE un.node_id = ? ORDER BY u.id`, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("list node user uuids: %w", err)
 	}
 	defer rows.Close()
 	out := []string{}
@@ -95,10 +176,4 @@ func (s *Store) AllUserUUIDs(ctx context.Context) ([]string, error) {
 		out = append(out, u)
 	}
 	return out, rows.Err()
-}
-
-// DeleteUser 删除一个用户。
-func (s *Store) DeleteUser(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
-	return err
 }
