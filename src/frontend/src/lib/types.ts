@@ -12,6 +12,7 @@ export interface Server {
   online: boolean
   last_seen_at: string | null
   xray_version: string | null
+  address: string
   created_at: string
 }
 

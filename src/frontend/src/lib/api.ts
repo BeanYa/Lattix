@@ -63,14 +63,19 @@ export const api = {
   dashboard: () => request<DashboardStats>('/api/dashboard'),
 
   servers: () => request<Server[]>('/api/servers'),
-  createServer: (alias: string) =>
+  createServer: (alias: string, address?: string, xrayVersion?: string) =>
     request<CreateServerResponse>('/api/servers', {
       method: 'POST',
-      body: JSON.stringify({ alias }),
+      body: JSON.stringify({
+        alias,
+        ...(address?.trim() ? { address: address.trim() } : {}),
+        ...(xrayVersion?.trim() ? { xray_version: xrayVersion.trim() } : {}),
+      }),
     }),
   rotateServerToken: (id: number) =>
     request<CreateServerResponse>(`/api/servers/${id}/rotate-token`, { method: 'POST' }),
-  deleteServer: (id: number) => request<void>(`/api/servers/${id}`, { method: 'DELETE' }),
+  deleteServer: (id: number, purge: 'xray' | 'agent') =>
+    request<void>(`/api/servers/${id}?purge=${purge}`, { method: 'DELETE' }),
 
   nodes: () => request<XrayNode[]>('/api/nodes'),
   createNode: (body: CreateNodeRequest) =>

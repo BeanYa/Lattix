@@ -38,10 +38,12 @@ type HelloResult struct {
 }
 
 // ApplyNodePayload 是 apply_node 的载荷：虚拟配置模板 + 全量用户 UUID 列表（§8）。
+// DestCandidates 是面板内置的 dest 白名单（§6 预检 fallback，随版本更新，尽量丰富）。
 type ApplyNodePayload struct {
-	NodeID    int64         `json:"node_id"`
-	Config    VirtualConfig `json:"config"`
-	UserUUIDs []string      `json:"user_uuids"`
+	NodeID         int64         `json:"node_id"`
+	Config         VirtualConfig `json:"config"`
+	UserUUIDs      []string      `json:"user_uuids"`
+	DestCandidates []string      `json:"dest_candidates,omitempty"`
 }
 
 // RemoveNodePayload 是 remove_node 的载荷。
@@ -57,6 +59,11 @@ type AddUserPayload struct {
 // RemoveUserPayload 是 remove_user 的载荷：从该服务器所有 inbound 热移除一个用户。
 type RemoveUserPayload struct {
 	UUID string `json:"uuid"`
+}
+
+// UninstallPayload 是 uninstall 的载荷（§5）。
+type UninstallPayload struct {
+	PurgeXray bool `json:"purge_xray"` // true = 连同 install.sh 安装的 xray 与配置一并清除
 }
 
 // ApplyResultPayload 是 apply_result 的载荷：成功返回 RealizedConfig，失败返回 Error（§5）。

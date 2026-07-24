@@ -57,6 +57,14 @@ func (s *Store) QueuedCommands(ctx context.Context, serverID int64) ([]Command, 
 	return cmds, rows.Err()
 }
 
+// ResetSentCommands 重连时将 sent 未终态的命令重置为 queued 重新补发（§2 重发语义）。
+func (s *Store) ResetSentCommands(ctx context.Context, serverID int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE commands SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE server_id = ? AND status = ?`,
+		CommandStatusQueued, serverID, CommandStatusSent)
+	return err
+}
+
 // MarkCommandSent 标记命令已投递到连接（attempts +1）。
 func (s *Store) MarkCommandSent(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx,

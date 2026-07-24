@@ -42,9 +42,10 @@ func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 }
 
 // CreateServer 插入一台服务器，token 为一次性 bootstrap token（§11），返回服务器 id。
-func (s *Store) CreateServer(ctx context.Context, alias, bootstrapToken string) (int64, error) {
+// address 为管理员指定的公网地址（§4）；空串表示留待 hello 时按 RemoteAddr 自动学习。
+func (s *Store) CreateServer(ctx context.Context, alias, address, bootstrapToken string) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO servers (alias, token) VALUES (?, ?)`, alias, bootstrapToken)
+		`INSERT INTO servers (alias, address, token) VALUES (?, ?, ?)`, alias, address, bootstrapToken)
 	if err != nil {
 		return 0, fmt.Errorf("insert server: %w", err)
 	}
@@ -107,6 +108,14 @@ func (s *Store) TouchServer(ctx context.Context, id int64, xrayVersion, address 
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE servers SET last_seen_at = CURRENT_TIMESTAMP, xray_version = ?, address = ? WHERE id = ?`,
 		xrayVersion, address, id)
+	return err
+}
+
+// ResetServerBootstrap 换发 bootstrap token 并将服务器重置回 bootstrap 状态
+// （last_seen_at 置空，下次 hello 重新换发长期凭证，§5/§11）。
+func (s *Store) ResetServerBootstrap(ctx context.Context, id int64, newBootstrapToken string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE servers SET token = ?, last_seen_at = NULL WHERE id = ?`, newBootstrapToken, id)
 	return err
 }
 

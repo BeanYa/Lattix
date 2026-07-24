@@ -2,12 +2,16 @@
 package panel
 
 import (
+	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/store"
@@ -39,7 +43,24 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.Requester, cfg Confi
 	if err != nil {
 		return nil, fmt.Errorf("read install script: %w", err)
 	}
+	// 注入 dist 中 agent 二进制的 SHA256（明文 HTTP 下的完整性锚点，§11/§12）。
+	script = injectAgentSHA256(script, cfg.DistDir)
 	return &Server{st: st, disp: disp, req: req, cfg: cfg, installScript: script}, nil
+}
+
+// injectAgentSHA256 将 install.sh 中的 {{AGENT_SHA256_<ARCH>}} 占位符替换为
+// dist 目录下对应二进制的 SHA256；文件缺失时替换为 SKIP（install.sh 跳过校验）。
+func injectAgentSHA256(script []byte, distDir string) []byte {
+	for _, arch := range []string{"amd64", "arm64"} {
+		sum := "SKIP"
+		if b, err := os.ReadFile(filepath.Join(distDir, "lattix-agent-linux-"+arch)); err == nil {
+			h := sha256.Sum256(b)
+			sum = hex.EncodeToString(h[:])
+		}
+		script = bytes.ReplaceAll(script,
+			[]byte("{{AGENT_SHA256_"+strings.ToUpper(arch)+"}}"), []byte(sum))
+	}
+	return script
 }
 
 // RegisterRoutes 注册面板路由（管理 API 均需登录；install.sh 与 /dist/ 公开，§11 引导流程）。

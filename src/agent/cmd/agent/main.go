@@ -30,29 +30,34 @@ func main() {
 
 	mgr := xray.NewManager(*xrayBin, *xrayConfig, *xrayAPI, xray.NewRunner(*xrayRunner, *xrayBin, *xrayConfig))
 
+	st, err := state.Load(*statePath)
+	if err != nil {
+		log.Printf("load state: %v (ignored)", err)
+	}
+	tok := st.Token
+	if tok == "" {
+		tok = *token // 首连使用 bootstrap token（§11）
+	}
+	if tok == "" {
+		log.Fatal("-token is required for first connect")
+	}
 	for {
-		st, err := state.Load(*statePath)
+		newTok, err := run(*panel, tok, *statePath, mgr)
+		if newTok != "" {
+			tok = newTok // 内存兜底：state 落盘失败时仍能凭内存中的 token 重连（§5）
+		}
 		if err != nil {
-			log.Printf("load state: %v (ignored)", err)
-		}
-		tok := st.Token
-		if tok == "" {
-			tok = *token // 首连使用 bootstrap token（§11）
-		}
-		if tok == "" {
-			log.Fatal("-token is required for first connect")
-		}
-		if err := run(*panel, tok, *statePath, mgr); err != nil {
 			log.Printf("connection: %v (retrying in 5s)", err)
 			time.Sleep(5 * time.Second)
 		}
 	}
 }
 
-func run(panel, token, statePath string, mgr *xray.Manager) error {
+// run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因。
+func run(panel, token, statePath string, mgr *xray.Manager) (string, error) {
 	conn, _, err := websocket.DefaultDialer.Dial(panel, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer conn.Close()
 
@@ -70,31 +75,31 @@ func run(panel, token, statePath string, mgr *xray.Manager) error {
 		}),
 	}
 	if err := conn.WriteJSON(hello); err != nil {
-		return fmt.Errorf("send hello: %w", err)
+		return "", fmt.Errorf("send hello: %w", err)
 	}
 
 	// 第一帧必须是 hello 响应（panel 保证 HelloResult 先于任何补发命令到达）。
 	var resp shared.Envelope
 	if err := conn.ReadJSON(&resp); err != nil {
-		return fmt.Errorf("read hello response: %w", err)
+		return "", fmt.Errorf("read hello response: %w", err)
 	}
 	if resp.Type != shared.TypeHello || resp.ID != helloID {
-		return fmt.Errorf("unexpected first frame: type=%s id=%s", resp.Type, resp.ID)
+		return "", fmt.Errorf("unexpected first frame: type=%s id=%s", resp.Type, resp.ID)
 	}
 	var hr shared.HelloResult
 	if err := json.Unmarshal(resp.Payload, &hr); err != nil {
-		return fmt.Errorf("bad hello result: %w", err)
+		return "", fmt.Errorf("bad hello result: %w", err)
 	}
 	if err := state.Save(statePath, state.State{Token: hr.Token, ServerID: hr.ServerID}); err != nil {
-		// 保存失败本次连接仍可用，但重启后旧凭证已失效（panel 每次 hello 均换发）。
-		log.Printf("save state: %v (WARNING: next reconnect will fail auth)", err)
+		// 落盘失败由外层内存兜底（§5），但进程重启前未落盘将需凭证刷新。
+		log.Printf("save state: %v (WARNING: in-memory token will be used for reconnects)", err)
 	}
 	log.Printf("authenticated as server %d", hr.ServerID)
 
 	for {
 		var env shared.Envelope
 		if err := conn.ReadJSON(&env); err != nil {
-			return err
+			return hr.Token, err
 		}
 		handle(conn, mgr, env)
 	}
@@ -109,7 +114,7 @@ func handle(conn *websocket.Conn, mgr *xray.Manager, env shared.Envelope) {
 			return
 		}
 		log.Printf("apply_node id=%s node=%d users=%d", env.ID, p.NodeID, len(p.UserUUIDs))
-		realized, err := mgr.ApplyNode(p.NodeID, p.Config, p.UserUUIDs)
+		realized, err := mgr.ApplyNode(p.NodeID, p.Config, p.UserUUIDs, p.DestCandidates)
 		replyApplyResult(conn, env.ID, resultOf(p.NodeID, realized, err))
 
 	case shared.TypeRemoveNode:
@@ -141,9 +146,13 @@ func handle(conn *websocket.Conn, mgr *xray.Manager, env shared.Envelope) {
 
 	case shared.TypeUninstall:
 		// 先回执再自毁：panel 删除服务器时下发（§10）。
-		log.Printf("uninstall id=%s", env.ID)
+		var p shared.UninstallPayload
+		if !parsePayload(env, &p) {
+			return
+		}
+		log.Printf("uninstall id=%s purge_xray=%v", env.ID, p.PurgeXray)
 		replyApplyResult(conn, env.ID, resultOf(0, nil, nil))
-		scheduleUninstall()
+		scheduleUninstall(p.PurgeXray)
 
 	default:
 		log.Printf("recv unknown type=%s id=%s", env.Type, env.ID)

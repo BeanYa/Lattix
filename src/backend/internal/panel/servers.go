@@ -51,14 +51,19 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 // handleCreateServer 处理 POST /api/servers：生成一次性 bootstrap token 与一行安装命令（§11）。
 func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Alias string `json:"alias"`
+		Alias       string `json:"alias"`
+		Address     string `json:"address"`      // 公网地址，留空自动学习（§4）
+		XrayVersion string `json:"xray_version"` // 默认 latest（§11）
 	}
 	if err := readJSON(r, &req); err != nil || req.Alias == "" {
 		writeError(w, http.StatusBadRequest, "alias 不能为空")
 		return
 	}
+	if req.XrayVersion == "" {
+		req.XrayVersion = "latest"
+	}
 	bootstrap := randomHex(16)
-	id, err := s.st.CreateServer(r.Context(), req.Alias, bootstrap)
+	id, err := s.st.CreateServer(r.Context(), req.Alias, req.Address, bootstrap)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -72,14 +77,13 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"server":          s.toServerDTO(*srv),
 		"bootstrap_token": bootstrap,
-		"install_command": fmt.Sprintf(
-			"curl -fsSL %s/install.sh | bash -s -- --panel %s --token %s", base, base, bootstrap),
+		"install_command": installCommand(base, bootstrap, req.XrayVersion),
 	})
 }
 
 // handleRotateToken 处理 POST /api/servers/{id}/rotate-token：
-// 换发新 bootstrap token（旧凭证含长期 token 立即失效），并返回一行安装命令（§10）。
-// 未安装 agent 的服务器用于重新获取安装命令；已安装的用于凭证吊销更换。
+// 换发新 bootstrap token 并重置回 bootstrap 状态（旧凭证含长期 token 立即失效），
+// 返回一行安装命令（§10/§11）。
 func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -96,18 +100,25 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bootstrap := randomHex(16)
-	if err := s.st.RotateServerToken(r.Context(), srv.ID, bootstrap); err != nil {
+	if err := s.st.ResetServerBootstrap(r.Context(), srv.ID, bootstrap); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	base := s.panelBase(r)
 	srv.Token = bootstrap
+	srv.LastSeenAt = nil
 	writeJSON(w, http.StatusOK, map[string]any{
 		"server":          s.toServerDTO(*srv),
 		"bootstrap_token": bootstrap,
-		"install_command": fmt.Sprintf(
-			"curl -fsSL %s/install.sh | bash -s -- --panel %s --token %s", base, base, bootstrap),
+		"install_command": installCommand(base, bootstrap, "latest"),
 	})
+}
+
+// installCommand 生成一行安装命令（§11）：xray 版本随命令携带（latest 由 install.sh 解析）。
+func installCommand(base, token, xrayVersion string) string {
+	return fmt.Sprintf(
+		"curl -fsSL %s/install.sh | bash -s -- --panel %s --token %s --xray-version %s",
+		base, base, token, xrayVersion)
 }
 
 // handleDeleteServer 处理 DELETE /api/servers/{id}：
@@ -128,7 +139,9 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.req.IsOnline(id) {
-		if _, err := s.disp.Enqueue(r.Context(), id, shared.TypeUninstall, struct{}{}); err != nil {
+		// purge 参数：xray = 连同 xray 卸载（默认），agent = 仅卸载 agent（§5/§10）。
+		payload := shared.UninstallPayload{PurgeXray: r.URL.Query().Get("purge") != "agent"}
+		if _, err := s.disp.Enqueue(r.Context(), id, shared.TypeUninstall, payload); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

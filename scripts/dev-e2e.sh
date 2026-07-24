@@ -59,6 +59,11 @@ grep -q "apply_node" "$WORK/agent.log" \
     && echo "OK: 离线命令已补发" \
     || { echo "FAIL: 未收到补发命令"; cat "$WORK/agent.log" "$WORK/backend.log"; exit 1; }
 
+DB_TOKEN2="$(sql "SELECT token FROM servers WHERE id = 1")"
+[[ "$DB_TOKEN2" == "$LONG_TOKEN" ]] \
+    && echo "OK: 长期 token 未再轮换（仅 bootstrap 换发，§5）" \
+    || { echo "FAIL: token 被重复换发"; exit 1; }
+
 sleep 1
 CMD_STATUS="$(sql "SELECT status FROM commands WHERE id = 1")"
 [[ "$CMD_STATUS" == "failed" ]] \
@@ -71,5 +76,15 @@ NODE_ROW="$(sql "SELECT status || '|' || COALESCE(error, '') FROM nodes WHERE id
 [[ "$NODE_ROW" == failed\|?* ]] \
     && echo "OK: 节点状态机已回写 failed + error" \
     || { echo "FAIL: node=$NODE_ROW"; exit 1; }
+
+echo ">> sent 未终态命令重连重置重发（§2）"
+sql "INSERT INTO commands (server_id, type, payload, status) VALUES (1, 'add_user', '{\"uuid\":\"u9\"}', 'sent')" >/dev/null
+kill $APID; wait $APID 2>/dev/null || true
+"$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -state "$WORK/agent.state.json" >>"$WORK/agent.log" 2>&1 &
+APID=$!
+sleep 2
+grep -q "add_user" "$WORK/agent.log" \
+    && echo "OK: sent 命令已重置重发" \
+    || { echo "FAIL: sent 命令未重发"; cat "$WORK/agent.log"; exit 1; }
 
 echo "E2E PASS"

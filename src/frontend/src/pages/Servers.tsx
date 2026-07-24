@@ -36,9 +36,13 @@ export default function Servers() {
 
   const [open, setOpen] = useState(false)
   const [alias, setAlias] = useState('')
+  const [address, setAddress] = useState('')
+  const [xrayVersion, setXrayVersion] = useState('latest')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const [cmdView, setCmdView] = useState<{ title: string; command: string } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Server | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const load = useCallback(() => {
     api
@@ -58,6 +62,8 @@ export default function Servers() {
     setOpen(next)
     if (!next) {
       setAlias('')
+      setAddress('')
+      setXrayVersion('latest')
       setCreateError('')
     }
   }
@@ -67,7 +73,7 @@ export default function Servers() {
     setCreateError('')
     setCreating(true)
     try {
-      const res = await api.createServer(alias.trim())
+      const res = await api.createServer(alias.trim(), address, xrayVersion)
       onOpenChange(false)
       setCmdView({ title: '服务器已创建，请在目标机器上执行安装命令', command: res.install_command })
       load()
@@ -98,18 +104,19 @@ export default function Servers() {
     }
   }
 
-  const onDelete = async (s: Server) => {
-    const tip = s.online
-      ? `确定删除服务器「${s.alias}」？将向 agent 发送卸载命令（agent 与其管理的 xray 一并移除）并删除记录。`
-      : `确定删除服务器「${s.alias}」？当前离线，仅删除记录；该机上的 agent 需手动清理。`
-    if (!window.confirm(tip)) {
+  const onDelete = async (purge: 'xray' | 'agent') => {
+    if (!deleteTarget) {
       return
     }
+    setDeleting(true)
     try {
-      await api.deleteServer(s.id)
+      await api.deleteServer(deleteTarget.id, purge)
+      setDeleteTarget(null)
       load()
     } catch (err) {
       setError(errorMessage(err))
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -131,6 +138,7 @@ export default function Servers() {
             <TableRow>
               <TableHead>别名</TableHead>
               <TableHead>状态</TableHead>
+              <TableHead>地址</TableHead>
               <TableHead>xray 版本</TableHead>
               <TableHead>最近在线</TableHead>
               <TableHead>创建时间</TableHead>
@@ -140,13 +148,13 @@ export default function Servers() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   加载中…
                 </TableCell>
               </TableRow>
             ) : servers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   暂无服务器，点击右上角「添加服务器」开始
                 </TableCell>
               </TableRow>
@@ -165,6 +173,7 @@ export default function Servers() {
                       </Badge>
                     )}
                   </TableCell>
+                  <TableCell>{s.address || '-'}</TableCell>
                   <TableCell>{s.xray_version ?? '-'}</TableCell>
                   <TableCell>{formatTime(s.last_seen_at)}</TableCell>
                   <TableCell>{formatTime(s.created_at)}</TableCell>
@@ -172,7 +181,7 @@ export default function Servers() {
                     <Button variant="outline" size="sm" onClick={() => onRotateToken(s)}>
                       {s.last_seen_at ? '凭证刷新' : '安装命令'}
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => onDelete(s)}>
+                    <Button variant="outline" size="sm" onClick={() => setDeleteTarget(s)}>
                       删除
                     </Button>
                   </TableCell>
@@ -201,6 +210,24 @@ export default function Servers() {
                 autoFocus
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="address">公网地址</Label>
+              <Input
+                id="address"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="留空按 agent 拨入地址自动学习"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="xrayVersion">xray 版本</Label>
+              <Input
+                id="xrayVersion"
+                value={xrayVersion}
+                onChange={(e) => setXrayVersion(e.target.value)}
+                placeholder="latest 或具体版本号（如 v26.3.27）"
+              />
+            </div>
             {createError && <p className="text-sm text-destructive">{createError}</p>}
             <DialogFooter>
               <Button type="submit" disabled={creating || !alias.trim()}>
@@ -224,6 +251,35 @@ export default function Servers() {
           </div>
           <DialogFooter showCloseButton>
             <CopyButton text={cmdView?.command ?? ''} />
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteTarget !== null} onOpenChange={(next) => !next && setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>删除服务器</DialogTitle>
+            <DialogDescription>
+              {deleteTarget?.online
+                ? `确定删除「${deleteTarget.alias}」？将向 agent 发送卸载命令并删除记录，请选择卸载范围。`
+                : `确定删除「${deleteTarget?.alias}」？当前离线，仅删除记录；该机上的 agent 需手动清理。`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            {deleteTarget?.online ? (
+              <>
+                <Button variant="outline" disabled={deleting} onClick={() => onDelete('agent')}>
+                  仅卸载 agent
+                </Button>
+                <Button variant="destructive" disabled={deleting} onClick={() => onDelete('xray')}>
+                  连同 xray 卸载
+                </Button>
+              </>
+            ) : (
+              <Button variant="destructive" disabled={deleting} onClick={() => onDelete('xray')}>
+                删除记录
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

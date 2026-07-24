@@ -60,13 +60,15 @@ api -X POST -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PASS\"}" "http://$
     && echo "OK: /api/me" || { echo "FAIL: /api/me"; exit 1; }
 
 # --- 服务器 ---
-RESP="$(api -X POST -d '{"alias":"dev01"}' "http://$ADDR/api/servers")"
+RESP="$(api -X POST -d '{"alias":"dev01","address":"198.51.100.7","xray_version":"v26.3.27"}' "http://$ADDR/api/servers")"
 BOOTSTRAP="$(echo "$RESP" | py "d['bootstrap_token']")"
 INSTALL_CMD="$(echo "$RESP" | py "d['install_command']")"
-[[ "$INSTALL_CMD" == "curl -fsSL http://$ADDR/install.sh | bash -s -- --panel http://$ADDR --token $BOOTSTRAP" ]] \
-    && echo "OK: 安装命令格式正确" || { echo "FAIL: install_command=$INSTALL_CMD"; exit 1; }
+[[ "$INSTALL_CMD" == "curl -fsSL http://$ADDR/install.sh | bash -s -- --panel http://$ADDR --token $BOOTSTRAP --xray-version v26.3.27" ]] \
+    && echo "OK: 安装命令格式正确（含 xray 版本）" || { echo "FAIL: install_command=$INSTALL_CMD"; exit 1; }
 curl -s "http://$ADDR/install.sh" | grep -q "Lattix Agent 引导安装脚本" \
     && echo "OK: /install.sh 托管" || { echo "FAIL: /install.sh"; exit 1; }
+curl -s "http://$ADDR/install.sh" | grep -qE 'AGENT_SHA256_AMD64="[0-9a-f]{64}"' \
+    && echo "OK: install.sh 已注入 agent SHA256" || { echo "FAIL: SHA256 未注入"; exit 1; }
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/dist/lattix-agent-linux-amd64")" == "200" ]] \
     && echo "OK: /dist/ 二进制托管" || { echo "FAIL: /dist/"; exit 1; }
 [[ "$(api "http://$ADDR/api/servers" | py "d[0]['online']")" == "False" ]] \
@@ -76,6 +78,8 @@ start_agent "$BOOTSTRAP"
 SVR="$(api "http://$ADDR/api/servers")"
 [[ "$(echo "$SVR" | py "d[0]['online']")" == "True" && -n "$(echo "$SVR" | py "d[0]['xray_version']")" ]] \
     && echo "OK: 服务器上线（xray $(echo "$SVR" | py "d[0]['xray_version']")）" || { echo "FAIL: 上线: $SVR"; exit 1; }
+[[ "$(echo "$SVR" | py "d[0]['address']")" == "198.51.100.7" ]] \
+    && echo "OK: 管理员指定地址未被 RemoteAddr 覆盖（§4）" || { echo "FAIL: 地址被覆盖: $SVR"; exit 1; }
 
 # --- 用户（无节点时扇出，应空操作成功）---
 U1="$(api -X POST -d '{"name":"alice"}' "http://$ADDR/api/users")"
@@ -170,7 +174,7 @@ OLD_BOOT="$(echo "$RESP2" | py "d['bootstrap_token']")"
 NEWID="$(echo "$RESP2" | py "d['server']['id']")"
 ROT="$(api -X POST "http://$ADDR/api/servers/$NEWID/rotate-token")"
 NEW_BOOT="$(echo "$ROT" | py "d['bootstrap_token']")"
-[[ "$NEW_BOOT" != "$OLD_BOOT" && "$(echo "$ROT" | py "d['install_command']")" == *"$NEW_BOOT" ]] \
+[[ "$NEW_BOOT" != "$OLD_BOOT" ]] && echo "$ROT" | py "d['install_command']" | grep -q -- "--token $NEW_BOOT " \
     && echo "OK: 凭证刷新换发 bootstrap token 并重取安装命令" \
     || { echo "FAIL: 凭证刷新: $ROT"; exit 1; }
 
@@ -179,8 +183,8 @@ NEW_BOOT="$(echo "$ROT" | py "d['bootstrap_token']")"
 [[ "$(api "http://$ADDR/api/servers" | py "len(d)")" == "1" ]] \
     && echo "OK: 离线服务器已删除" || { echo "FAIL: 删除离线服务器"; exit 1; }
 
-# --- 删除在线服务器（下发 uninstall，agent 自毁）---
-[[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X DELETE "http://$ADDR/api/servers/1")" == "204" ]]
+# --- 删除在线服务器（下发 uninstall（仅 agent），agent 自毁）---
+[[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X DELETE "http://$ADDR/api/servers/1?purge=agent")" == "204" ]]
 for _ in $(seq 1 10); do kill -0 $APID 2>/dev/null || break; sleep 1; done
 if kill -0 $APID 2>/dev/null; then
     echo "FAIL: agent 未自毁"; exit 1

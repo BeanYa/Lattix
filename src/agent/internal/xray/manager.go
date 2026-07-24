@@ -53,13 +53,13 @@ func (m *Manager) Version() (string, bool) {
 }
 
 // ApplyNode 落地一个节点（§6 流水线），成功返回实际生效值（§7）。
-func (m *Manager) ApplyNode(nodeID int64, vc shared.VirtualConfig, userUUIDs []string) (*shared.RealizedConfig, error) {
+func (m *Manager) ApplyNode(nodeID int64, vc shared.VirtualConfig, userUUIDs, destCandidates []string) (*shared.RealizedConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	tag := nodeTag(nodeID)
-	// 1. 填充模板占位符（§7）
-	inbound, realized, err := m.fillTemplate(tag, vc, userUUIDs)
+	// 1. 填充模板占位符（§7）+ dest 预检（§6 步骤 2）
+	inbound, realized, err := m.fillTemplate(tag, vc, userUUIDs, destCandidates)
 	if err != nil {
 		return nil, err
 	}

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/netip"
 	"strconv"
 	"sync"
 
@@ -47,9 +46,11 @@ func (d *Dispatcher) Enqueue(ctx context.Context, serverID int64, typ string, pa
 	return id, nil
 }
 
+// maxCommandAttempts 是命令投递次数上限；超过即死信（failed，§2）。
+const maxCommandAttempts = 10
+
 // Flush 投递该服务器全部待发命令；agent 离线时停止并滞留（§2 离线排队）。
-// 已知限制（MVP）：命令投递到连接发送队列即标 sent，若连接在真正写出前断开，
-// 该命令不会重发（状态滞留 sent），属可接受窗口。
+// attempts 超过 maxCommandAttempts 的命令标记 failed（死信），不再重发。
 func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 	lock := d.serverLock(serverID)
 	lock.Lock()
@@ -61,6 +62,13 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 		return
 	}
 	for _, c := range cmds {
+		if c.Attempts >= maxCommandAttempts {
+			log.Printf("dispatch: command %d dead-lettered after %d attempts", c.ID, c.Attempts)
+			if err := d.st.MarkCommandFailed(ctx, c.ID); err != nil {
+				log.Printf("dispatch: dead-letter command %d: %v", c.ID, err)
+			}
+			continue
+		}
 		env := shared.Envelope{
 			ID:      strconv.FormatInt(c.ID, 10),
 			Type:    c.Type,
@@ -75,29 +83,41 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 	}
 }
 
-// AuthenticateHello 实现 ws.Authenticator：按 token 查找服务器，
-// 认证成功即换发长期凭证（原 token 无论 bootstrap 或长期均失效，§11）并更新遥测与地址（§9、§13）。
+// AuthenticateHello 实现 ws.Authenticator：按 token 查找服务器。
+// 仅 bootstrap 状态（last_seen_at 为空，§5/§11）时换发长期凭证；长期 token 稳定不轮换。
+// 管理员已指定地址（servers.address 非空）时不被 RemoteAddr 覆盖（§4/§9）。
 func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayload, remoteAddr string) (int64, shared.HelloResult, error) {
 	srv, err := d.st.ServerByToken(ctx, p.Token)
 	if err != nil {
 		return 0, shared.HelloResult{}, fmt.Errorf("unknown token")
 	}
-	newToken, err := randomToken()
-	if err != nil {
-		return 0, shared.HelloResult{}, err
+	token := srv.Token
+	if srv.LastSeenAt == nil {
+		// bootstrap 状态：换发长期凭证（bootstrap 失效）。
+		token, err = randomToken()
+		if err != nil {
+			return 0, shared.HelloResult{}, err
+		}
+		if err := d.st.RotateServerToken(ctx, srv.ID, token); err != nil {
+			return 0, shared.HelloResult{}, err
+		}
 	}
-	if err := d.st.RotateServerToken(ctx, srv.ID, newToken); err != nil {
-		return 0, shared.HelloResult{}, err
-	}
-	// 回环地址对客户端无意义（agent 与 panel 同机的 dev 场景）：
-	// 库里已有非回环地址（如管理员手动指定）时不被 RemoteAddr 覆盖（§9）。
-	if isLoopback(remoteAddr) && srv.Address != "" && !isLoopback(srv.Address) {
+	if srv.Address != "" {
 		remoteAddr = srv.Address
 	}
 	if err := d.st.TouchServer(ctx, srv.ID, p.XrayVersion, remoteAddr); err != nil {
 		log.Printf("dispatch: touch server %d: %v", srv.ID, err)
 	}
-	return srv.ID, shared.HelloResult{ServerID: srv.ID, Token: newToken}, nil
+	return srv.ID, shared.HelloResult{ServerID: srv.ID, Token: token}, nil
+}
+
+// OnAgentConnect 在 agent hello 认证完成后调用（ws.Hub.OnConnect）：
+// 重置 sent 未终态的命令为 queued（§2 重发语义）并补发全部滞留命令。
+func (d *Dispatcher) OnAgentConnect(ctx context.Context, serverID int64) {
+	if err := d.st.ResetSentCommands(ctx, serverID); err != nil {
+		log.Printf("dispatch: reset sent commands for server %d: %v", serverID, err)
+	}
+	d.Flush(ctx, serverID)
 }
 
 // HandleMessage 处理 agent 上行业务信封（注入 ws.Hub.OnMessage）。
@@ -170,10 +190,4 @@ func randomToken() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
-}
-
-// isLoopback 报告 IP 是否为回环地址。
-func isLoopback(ip string) bool {
-	addr, err := netip.ParseAddr(ip)
-	return err == nil && addr.IsLoopback()
 }
