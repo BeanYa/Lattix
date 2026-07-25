@@ -10,6 +10,7 @@ import (
 
 // User 是 users 表的一行（§4）：独立 UUID（跨服务器同一 UUID，§7）与独立 sub_token（§8）。
 // ExpiresAt 为到期时刻（NULL=长期）；Expired 是到期停权标记（sweeper 置位后已扇出 remove_user，§9）。
+// Disabled 是管理员显式停用标记（§16），与 Expired 正交：任一成立即为有效停权态。
 type User struct {
 	ID        int64
 	Name      string
@@ -17,6 +18,7 @@ type User struct {
 	SubToken  string
 	ExpiresAt *time.Time
 	Expired   bool
+	Disabled  bool
 	CreatedAt time.Time
 }
 
@@ -38,8 +40,8 @@ func (s *Store) InsertUser(ctx context.Context, name, uuid, subToken string, exp
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	var exp sql.NullInt64
-	var expired int
-	if err := row.Scan(&u.ID, &u.Name, &u.UUID, &u.SubToken, &exp, &expired, &u.CreatedAt); err != nil {
+	var expired, disabled int
+	if err := row.Scan(&u.ID, &u.Name, &u.UUID, &u.SubToken, &exp, &expired, &disabled, &u.CreatedAt); err != nil {
 		return nil, err
 	}
 	if exp.Valid {
@@ -47,10 +49,11 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 		u.ExpiresAt = &t
 	}
 	u.Expired = expired != 0
+	u.Disabled = disabled != 0
 	return &u, nil
 }
 
-const userCols = `id, name, uuid, sub_token, expires_at, expired, created_at`
+const userCols = `id, name, uuid, sub_token, expires_at, expired, disabled, created_at`
 
 // ListUsers 列出全部用户（按 id 升序）。
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
@@ -148,6 +151,22 @@ func (s *Store) SetUserExpired(ctx context.Context, id int64, expired bool) erro
 	return nil
 }
 
+// SetUserDisabled 更新用户的显式停用标记（§16）；扇出由调用方按有效停权态跃迁负责。
+func (s *Store) SetUserDisabled(ctx context.Context, id int64, disabled bool) error {
+	v := 0
+	if disabled {
+		v = 1
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET disabled = ? WHERE id = ?`, v, id)
+	if err != nil {
+		return fmt.Errorf("set user disabled: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetUserExpiry 修改/清除用户有效期（§9）：expiresAt 为 nil 表示长期。
 // 有效期被清除或延长到未来时清除停权标记（由调用方负责扇出 add_user 恢复）。
 func (s *Store) SetUserExpiry(ctx context.Context, id int64, expiresAt *time.Time, now time.Time) error {
@@ -234,11 +253,12 @@ func (s *Store) SetUserNodes(ctx context.Context, userID int64, nodeIDs []int64)
 }
 
 // NodeUserUUIDs 返回分配到该节点的用户 UUID 列表（apply_node 下发，§16）。
-// 已到期停权（expired=1）的用户不下发（§9）：恢复时由有效期扇出 add_user 补回。
+// 已到期停权（expired=1）或显式停用（disabled=1）的用户不下发（§9/§16）：
+// 恢复时由有效期/停用开关扇出 add_user 补回。
 func (s *Store) NodeUserUUIDs(ctx context.Context, nodeID int64) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT u.uuid FROM user_nodes un JOIN users u ON u.id = un.user_id
-		 WHERE un.node_id = ? AND u.expired = 0 ORDER BY u.id`, nodeID)
+		 WHERE un.node_id = ? AND u.expired = 0 AND u.disabled = 0 ORDER BY u.id`, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("list node user uuids: %w", err)
 	}

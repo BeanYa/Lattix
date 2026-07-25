@@ -74,7 +74,9 @@ api -X POST -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PASS\"}" "http://$
 RESP="$(api -X POST -d '{"alias":"dev01","address":"198.51.100.7","xray_version":"v26.3.27"}' "http://$ADDR/api/servers")"
 BOOTSTRAP="$(echo "$RESP" | py "d['bootstrap_token']")"
 INSTALL_CMD="$(echo "$RESP" | py "d['install_command']")"
-[[ "$INSTALL_CMD" == "curl -fsSL http://$ADDR/install.sh | bash -s -- --panel http://$ADDR --token $BOOTSTRAP --xray-version v26.3.27" ]] \
+# release 构建的面板（CI compat 用）生成 release 钉版命令（GitHub release URL），
+# dev 构建生成面板托管命令（http://$ADDR/install.sh）——两种形态均合法，断言共同结构。
+[[ "$INSTALL_CMD" == curl\ -fsSL\ *" | bash -s -- --panel http://$ADDR --token $BOOTSTRAP --xray-version v26.3.27" ]] \
     && echo "OK: 安装命令格式正确（含 xray 版本）" || { echo "FAIL: install_command=$INSTALL_CMD"; exit 1; }
 curl -s "http://$ADDR/install.sh" | grep -q "Lattix Agent 引导安装脚本" \
     && echo "OK: /install.sh 托管" || { echo "FAIL: /install.sh"; exit 1; }
@@ -155,13 +157,15 @@ SUB_TOKEN1="$(echo "$U1" | py "d['sub_token']")"
 SUB="$(curl -s "http://$ADDR/sub/$SUB_TOKEN1")"
 PUBKEY="$(api "http://$ADDR/api/nodes" | py "d[0]['realized_config']['public_key']")"
 SHORTID="$(api "http://$ADDR/api/nodes" | py "d[0]['realized_config']['short_id']")"
+# dest 预检不可达时 agent 会 fallback 到白名单候选（§6），servername 以 realized_config 为准
+SNAME="$(api "http://$ADDR/api/nodes" | py "d[0]['realized_config']['server_name']")"
 echo "$SUB" | grep -q "name: dev01-vless-$NPORT" \
     && echo "$SUB" | grep -q "type: vless" \
     && echo "$SUB" | grep -q "uuid: $UUID1" \
     && echo "$SUB" | grep -q "flow: xtls-rprx-vision" \
     && echo "$SUB" | grep -q "public-key: $PUBKEY" \
     && echo "$SUB" | grep -q "short-id: $SHORTID" \
-    && echo "$SUB" | grep -q "servername: dl.google.com" \
+    && echo "$SUB" | grep -q "servername: $SNAME" \
     && echo "$SUB" | grep -q "udp: true" \
     && echo "$SUB" | grep -q "type: select" \
     && echo "$SUB" | grep -q "MATCH,PROXY" \

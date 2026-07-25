@@ -20,7 +20,7 @@ var qrJS string
 
 // serveLanding 渲染订阅落地页（浏览器访问 GET /sub/{token}，§9）：token 即鉴权（无效 404，上游已处理）。
 // 内容：已用流量、有效期、节点数量、订阅地址与链接集合地址（带复制按钮）、
-// 订阅地址二维码、mihomo 系一键导入链接；已到期用户显示"已到期"状态。
+// 订阅地址二维码、mihomo 系一键导入链接；已到期用户显示"已到期"，被停用用户显示"已停用"（§16）。
 func (s *Server) serveLanding(w http.ResponseWriter, r *http.Request, user *store.User, nodes []store.Node) {
 	base := s.base(r)
 	subURL := fmt.Sprintf("%s/sub/%s", base, user.SubToken)
@@ -30,8 +30,14 @@ func (s *Server) serveLanding(w http.ResponseWriter, r *http.Request, user *stor
 
 	expiryText := "长期"
 	statusBadge := `<span class="badge ok">正常</span>`
-	if user.Expired {
-		statusBadge = `<span class="badge expired">已到期</span>`
+	if user.Disabled || user.Expired {
+		statusBadge = ""
+		if user.Disabled {
+			statusBadge += `<span class="badge expired">已停用</span>`
+		}
+		if user.Expired {
+			statusBadge += `<span class="badge expired">已到期</span>`
+		}
 	}
 	if user.ExpiresAt != nil {
 		expiryText = user.ExpiresAt.Local().Format("2006-01-02 15:04")
@@ -45,16 +51,19 @@ func (s *Server) serveLanding(w http.ResponseWriter, r *http.Request, user *stor
 	clashImport := fmt.Sprintf("clash://install-config?url=%s&name=%s", encSub, importName)
 	mihomoImport := fmt.Sprintf("mihomo://install-config?url=%s&name=%s", encSub, importName)
 
-	expiredNotice := ""
+	notice := ""
+	if user.Disabled {
+		notice += `<p class="notice">订阅已被管理员停用，节点不可用。如需恢复请联系管理员。</p>`
+	}
 	if user.Expired {
-		expiredNotice = `<p class="notice">订阅已到期，节点已停用。如需恢复请联系管理员延长有效期。</p>`
+		notice += `<p class="notice">订阅已到期，节点已停用。如需恢复请联系管理员延长有效期。</p>`
 	}
 
 	var b strings.Builder
 	b.WriteString(landingHead)
 	b.WriteString(`<div class="card"><div class="head"><h1>Lattix 订阅</h1>` + statusBadge + `</div>`)
 	b.WriteString(`<p class="user">` + html.EscapeString(user.Name) + `</p>`)
-	b.WriteString(expiredNotice)
+	b.WriteString(notice)
 	b.WriteString(`<div class="stats">`)
 	b.WriteString(`<div class="stat"><span class="k">已用流量</span><span class="v">↑ ` + humanizeBytes(t.Up) + `　↓ ` + humanizeBytes(t.Down) + `</span></div>`)
 	b.WriteString(`<div class="stat"><span class="k">有效期</span><span class="v">` + expiryText + `</span></div>`)

@@ -48,6 +48,12 @@ func (s *Server) sweepExpiredUsers(ctx context.Context) {
 			log.Printf("panel: expiry sweep: mark user %d expired: %v", u.ID, err)
 			continue
 		}
+		// 有效停权态（disabled OR expired，§16）：已显式停用的用户本就不在线，
+		// 到期只补记 expired 标记，不重复扇出 remove_user。
+		if u.Disabled {
+			log.Printf("panel: user %d (%s) 已到期，置 expired（已停用，跳过扇出）", u.ID, u.Name)
+			continue
+		}
 		assigned, err := s.st.UserNodeIDs(ctx, u.ID)
 		if err != nil {
 			log.Printf("panel: expiry sweep: user %d list nodes: %v", u.ID, err)

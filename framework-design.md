@@ -61,7 +61,7 @@ scripts/
 | 表 | 字段（要点） |
 |---|---|
 | `servers` | id, alias, address(公网地址), token(长期凭证), last_seen_at, xray_version, config_drift(§17), created_at |
-| `users` | id, name, uuid, sub_token, expires_at(可空，unix 秒，NULL=长期), expired(0/1 到期停权标记，§9), created_at |
+| `users` | id, name, uuid, sub_token, expires_at(可空，unix 秒，NULL=长期), expired(0/1 到期停权标记，§9), disabled(0/1 显式停用标记，§16), created_at |
 | `nodes` | id, server_id, protocol, port, config_template(JSON), realized_config(JSON), status, error, created_at |
 | `commands` | id, server_id, type, payload(JSON), status(queued/sent/acked/failed), attempts, created_at, updated_at |
 | `user_nodes` | user_id, node_id（§16 逐节点用户分配，默认全关） |
@@ -138,13 +138,13 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 
 ## 9. 订阅
 
-`GET /sub/{sub_token}` → 返回 **mihomo（Clash.Meta）格式 YAML**；请求 `Accept` 含 `text/html`（浏览器）时改为返回**订阅落地页**（自包含 HTML，不依赖前端构建产物与任何 CDN/外网资源，token 即鉴权，无效 404）：已用流量 ↑/↓、有效期（或"长期"）、节点数、YAML/links 订阅地址复制按钮、订阅地址二维码（内嵌 qrcode-generator，MIT）、mihomo 系一键导入（`clash://` / `mihomo://install-config?url=`）；已到期用户显示"已到期"。`GET /sub/{sub_token}/links`（§14）不分流。
+`GET /sub/{sub_token}` → 返回 **mihomo（Clash.Meta）格式 YAML**；请求 `Accept` 含 `text/html`（浏览器）时改为返回**订阅落地页**（自包含 HTML，不依赖前端构建产物与任何 CDN/外网资源，token 即鉴权，无效 404）：已用流量 ↑/↓、有效期（或"长期"）、节点数、YAML/links 订阅地址复制按钮、订阅地址二维码（内嵌 qrcode-generator，MIT）、mihomo 系一键导入（`clash://` / `mihomo://install-config?url=`）；已到期用户显示"已到期"，被停用用户显示"已停用"（§16）。`GET /sub/{sub_token}/links`（§14）不分流。
 
 - 目标客户端：mihomo 内核系（Clash Verge / Clash Party / FlClash 等）。原版 Clash 不支持 VLESS+Reality，不在目标范围。
 - 内容：proxies 列表（每个节点一项，`type: vless`，`server` 取 `servers.address`（§4），嵌入**该用户自己的 UUID**、`flow`、`reality-opts: {public-key, short-id}`、`servername`、`udp: true`）+ 一个 `select` 类型 proxy-group + `MATCH` 规则。
 - 节点命名：`{服务器别名}-vless-{端口}`，如 `tokyo01-vless-8443`。
 - **响应头**：`/sub/{token}` 与 `/sub/{token}/links` 均返回 `subscription-userinfo: upload=<bytes>; download=<bytes>[; expire=<unix秒>]`（upload/download 取 `traffic` 表用户维度 node_id=0 的跨服务器累计；仅设了有效期才带 expire；无流量配额故无 total）与 `profile-update-interval: 24`（客户端按天自动刷新）。
-- **用户有效期**：创建用户可带 `expires_at`（过去时间 → 400）；`PATCH /api/users/{id}` 修改/清除（null = 长期）；列表 DTO 带 `expires_at`/`expired`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `remove_user`（显式 nodes 载荷）；管理员延长/清除有效期（expired 1→0）→ 扇出 `add_user` 恢复。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`apply_node` 的 `NodeUserUUIDs` 不下发 expired 用户。
+- **用户有效期**：创建用户可带 `expires_at`（过去时间 → 400）；`PATCH /api/users/{id}` 修改/清除（null = 长期，过去时间同样 400——"借到期立即停权"由 §16 的 disabled 开关承担；省略的字段保持不变）；列表 DTO 带 `expires_at`/`expired`/`disabled`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `remove_user`（显式 nodes 载荷；已 disabled 的用户只补记标记不重复扇出）；管理员延长/清除有效期（expired 1→0）→ 扇出 `add_user` 恢复（disabled 用户除外，见 §16 有效停权态）。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`apply_node` 的 `NodeUserUUIDs` 不下发 expired/disabled 用户。
 - `vless://` 分享链接集合端点已实现：`GET /sub/{token}/links`（§14，仅含分配的 active 节点）。
 
 ## 10. 面板页面与 API
@@ -252,6 +252,11 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，`-telemetry-interval` �
 - **扇出语义**：apply_node 只携带分配到该节点的用户 UUID；分配变更按差量扇出
   add_user/remove_user（载荷仅含受影响节点）；删除用户仍向所有服务器幂等扇出 remove_user。
 - **订阅**：YAML 与 links 端点均只含分配到该用户的 active 节点。
+- **显式停用/启用开关**：`users.disabled`（`PATCH /api/users/{id}` 带 `disabled` 字段，
+  用户列表行内"停用/启用"按钮）。停用 → 对其已分配节点扇出 remove_user；启用 → 扇出 add_user 恢复。
+  disabled 与 expired（§9）正交，**有效停权态 = disabled OR expired**：add_user/remove_user 扇出只在
+  有效停权态跃迁时发生（已 expired 再 disable 不重复扇出；恢复需两者都解除）；有效停权态下
+  订阅 YAML/links proxies 为空、userinfo 头照常、落地页显示"已停用"，`NodeUserUUIDs` 不下发。
 - **迁移**：`PRAGMA user_version` 一次性为存量用户补全"全节点"关联，现有订阅不受影响。
 - Agent 侧无新增状态：`AddUserPayload.Nodes`（tag → 协议参数）驱动精确落点；
   载荷缺省 `Nodes` 时兼容旧语义（作用于全部节点）。

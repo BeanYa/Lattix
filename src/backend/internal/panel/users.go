@@ -28,6 +28,7 @@ type userDTO struct {
 	Traffic     *trafficDTO `json:"traffic"`       // 用户流量合计（§13），无数据为 null
 	ExpiresAt   *time.Time  `json:"expires_at"`    // 到期时刻（§9），null = 长期
 	Expired     bool        `json:"expired"`       // 已到期停权（sweeper 扇出 remove_user 后置位，§9）
+	Disabled    bool        `json:"disabled"`      // 管理员显式停用（§16），与 expired 正交
 	CreatedAt   time.Time   `json:"created_at"`
 }
 
@@ -42,6 +43,7 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 		NodeIDs:     nodeIDs,
 		ExpiresAt:   u.ExpiresAt,
 		Expired:     u.Expired,
+		Disabled:    u.Disabled,
 		CreatedAt:   u.CreatedAt,
 	}
 }
@@ -126,9 +128,12 @@ func parseExpiresAt(raw *string) (*time.Time, error) {
 	return &t, nil
 }
 
-// handleUpdateUser 处理 PATCH /api/users/{id}：修改/清除有效期（§9）。
-// 载荷 {"expires_at": "RFC3339" 或 null}；延长/清除使已停权用户恢复（expired 1→0），
-// 对其已分配节点扇出 add_user；设为过去时间则留给 sweeper 在下一周期停权。
+// handleUpdateUser 处理 PATCH /api/users/{id}：修改/清除有效期（§9）与显式停用/启用（§16）。
+// 载荷 {"expires_at": "RFC3339" 或 null, "disabled": bool}，省略的字段保持不变；
+// expires_at 传 null = 清除（长期）。与创建一致，expires_at 不允许设为过去时间（400）——
+// "借到期立即停权"由 disabled 开关承担。
+// 有效停权态 = disabled OR expired（§9/§16）：add_user/remove_user 扇出只在有效停权态
+// 跃迁时发生——已 expired 的用户再 disable（或反之）不重复扇出；恢复需两者都解除。
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -145,24 +150,54 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ExpiresAt *string `json:"expires_at"` // null/省略 = 清除（长期）
+		ExpiresAt json.RawMessage `json:"expires_at"` // 省略 = 不变；null = 清除（长期）
+		Disabled  *bool           `json:"disabled"`   // 省略 = 不变
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	expiresAt, err := parseExpiresAt(req.ExpiresAt)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
 	now := time.Now()
-	if err := s.st.SetUserExpiry(r.Context(), id, expiresAt, now); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
+	stoppedBefore := u.Disabled || u.Expired
+
+	expiryTouched := len(req.ExpiresAt) > 0
+	if expiryTouched {
+		var expiresAt *time.Time
+		if string(req.ExpiresAt) != "null" {
+			var raw string
+			if err := json.Unmarshal(req.ExpiresAt, &raw); err != nil {
+				writeError(w, http.StatusBadRequest, "expires_at 格式无效（需 RFC3339 或 null）")
+				return
+			}
+			t, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "expires_at 格式无效（需 RFC3339）")
+				return
+			}
+			expiresAt = &t
+		}
+		if expiresAt != nil && !expiresAt.After(now) {
+			writeError(w, http.StatusBadRequest, "expires_at 不能是过去的时间")
+			return
+		}
+		if err := s.st.SetUserExpiry(r.Context(), id, expiresAt, now); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
-	// 恢复已停权用户：对其全部分配节点扇出 add_user。
-	if u.Expired && (expiresAt == nil || expiresAt.After(now)) {
+
+	disabledAfter := u.Disabled
+	if req.Disabled != nil && *req.Disabled != u.Disabled {
+		if err := s.st.SetUserDisabled(r.Context(), id, *req.Disabled); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		disabledAfter = *req.Disabled
+	}
+
+	// 有效停权态跃迁才扇出（§9/§16）：expiry 被修改后只可能是未来/清除，expired 必已复位。
+	stoppedAfter := disabledAfter || (u.Expired && !expiryTouched)
+	if stoppedBefore != stoppedAfter {
 		nodes, err := s.st.ListNodes(r.Context())
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -173,8 +208,13 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		s.fanoutUserDiff(r.Context(), u.UUID, nodes, assigned, nil)
-		log.Printf("panel: user %d (%s) 有效期恢复，扇出 add_user (%d 节点)", id, u.Name, len(assigned))
+		if stoppedAfter {
+			s.fanoutUserDiff(r.Context(), u.UUID, nodes, nil, assigned)
+			log.Printf("panel: user %d (%s) 已停权，扇出 remove_user (%d 节点)", id, u.Name, len(assigned))
+		} else {
+			s.fanoutUserDiff(r.Context(), u.UUID, nodes, assigned, nil)
+			log.Printf("panel: user %d (%s) 已恢复，扇出 add_user (%d 节点)", id, u.Name, len(assigned))
+		}
 	}
 	updated, err := s.st.UserByID(r.Context(), id)
 	if err != nil {

@@ -142,8 +142,8 @@ func (s *Server) assignedActiveNodes(r *http.Request) (*store.User, []store.Node
 
 // ServeHTTP 处理 GET /sub/{token}：按该用户自己的 UUID 为每个 active 节点生成一项代理（§9）。
 // Accept 含 text/html（浏览器）时返回订阅落地页 HTML；否则返回 mihomo YAML。
-// 已到期停权（expired=1）的用户订阅照常返回但 proxies 为空——客户端显示到期而不是报错。
-// dokodemo-door 为端口转发，客户端无法作为代理消费，不进订阅。
+// 有效停权态（expired=1 或 disabled=1，§9/§16）的用户订阅照常返回但 proxies 为空——
+// 客户端显示到期/停用而不是报错。dokodemo-door 为端口转发，客户端无法作为代理消费，不进订阅。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	user, nodes, err := s.assignedActiveNodes(r)
 	if err != nil {
@@ -161,8 +161,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if user.Expired {
-		nodes = nil // 到期停权：proxies 为空（§9）
+	if user.Expired || user.Disabled {
+		nodes = nil // 有效停权态（§9/§16）：proxies 为空
 	}
 	cfg := clashConfig{Proxies: []clashProxy{}}
 	names := []string{}

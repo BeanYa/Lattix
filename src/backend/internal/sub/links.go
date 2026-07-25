@@ -16,7 +16,7 @@ import (
 // HandleLinks 处理 GET /sub/{token}/links（§14 `vless://` 链接订阅）：
 // 返回 base64 编码的换行分隔分享链接集合（vless/trojan/vmess/ss），
 // 仅含分配到该用户的 active 节点（§16）；dokodemo/socks/http 无标准分享链接，跳过。
-// 已到期停权（expired=1）的用户返回空集合（§9）；不做 Accept 分流（仅 YAML 端点分流落地页）。
+// 有效停权态（expired=1 或 disabled=1，§9/§16）的用户返回空集合；不做 Accept 分流（仅 YAML 端点分流落地页）。
 func (s *Server) HandleLinks(w http.ResponseWriter, r *http.Request) {
 	user, nodes, err := s.assignedActiveNodes(r)
 	if err != nil {
@@ -28,8 +28,8 @@ func (s *Server) HandleLinks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.setSubHeaders(w, r, user)
-	if user.Expired {
-		nodes = nil // 到期停权：链接集合为空（§9）
+	if user.Expired || user.Disabled {
+		nodes = nil // 有效停权态（§9/§16）：链接集合为空
 	}
 	links := []string{}
 	for _, n := range nodes {

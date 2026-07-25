@@ -114,6 +114,11 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ expires_at: expiresAt }),
     }),
+  setUserDisabled: (id: number, disabled: boolean) =>
+    request<SubUser>(`/api/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ disabled }),
+    }),
   setUserNodes: (id: number, nodeIds: number[]) =>
     request<{ node_ids: number[] }>(`/api/users/${id}/nodes`, {
       method: 'PUT',

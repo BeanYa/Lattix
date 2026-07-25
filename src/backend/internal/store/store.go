@@ -152,6 +152,14 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("migrate users.expired: %w", err)
 		}
 	}
+	// 轻量迁移：users.disabled（§16 显式停用开关，0/1，默认 0；与 expired 正交，
+	// 两者任一成立即停权）。
+	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate users.disabled: %w", err)
+		}
+	}
 	// 一次性迁移（PRAGMA user_version 0→1）：user_nodes 引入前，成员关系隐含为
 	// "全部用户 ∈ 全部节点"（§8）；为不破坏存量订阅，迁移时补全关联。
 	// 此后新建用户/节点默认全关（§16）。

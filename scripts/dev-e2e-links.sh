@@ -4,7 +4,8 @@
 #   /sub/{token}（mihomo YAML）回归。
 # 另覆盖 §9 订阅三件套：subscription-userinfo / profile-update-interval 响应头、
 #   订阅落地页 Accept 分流、用户有效期（到期停权 sweeper 扇出 remove_user、延长恢复 add_user、
-#   过期用户订阅/links 为空）。
+#   过期用户订阅/links 为空），以及 §16 显式停用/启用开关（disabled → remove_user 扇出、
+#   订阅/links 为空、落地页"已停用"、启用恢复、PATCH 过去有效期 400、disabled+expired 复合不重复扇出）。
 # 依赖：python3、curl、本机 xray 二进制（XRAY_BIN 可覆盖）。
 set -euo pipefail
 
@@ -192,5 +193,72 @@ HDRS3="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK2" | tr -d '\r')"
 grep -qi '^subscription-userinfo: upload=0; download=0$' <<<"$HDRS3" \
     && ! grep -qi 'expire=' <<<"$HDRS3" \
     && echo "OK: 长期用户 userinfo 头无 expire" || { echo "FAIL: 清除后 userinfo 头异常"; echo "$HDRS3"; exit 1; }
+
+# cmd_cnt <type> <uuid>：该用户某类命令的累计入队数（用于断言不重复扇出）。
+cmd_cnt() { db "SELECT COUNT(*) FROM commands WHERE type='$1' AND payload LIKE '%$2%'"; }
+
+echo ">> 显式停用：PATCH disabled → 扇出 remove_user，订阅/links 为空，落地页已停用（§16）"
+api PATCH /api/users/1 '{"disabled":true}' >/dev/null
+[[ "$(db "SELECT disabled FROM users WHERE id=1")" == "1" ]] \
+    && echo "OK: disabled=1 已置位" || { echo "FAIL: disabled 未置位"; exit 1; }
+api GET /api/users | grep -q '"disabled":true' \
+    && echo "OK: 用户列表 DTO 带 disabled" || { echo "FAIL: DTO 缺 disabled"; exit 1; }
+wait_clients "$N1" "$UUID1" absent && wait_clients "$N2" "$UUID1" absent \
+    && echo "OK: 停用扇出 remove_user 生效（两节点）"
+[[ -z "$(curl -s "http://$ADDR/sub/$TOK" | grep 'type: vless')" ]] \
+    && echo "OK: 停用用户 YAML proxies 为空" || { echo "FAIL: 停用订阅应为空"; exit 1; }
+[[ -z "$(curl -s "http://$ADDR/sub/$TOK/links")" ]] \
+    && echo "OK: 停用用户 links 为空" || { echo "FAIL: 停用 links 应为空"; exit 1; }
+HDRS4="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK")"
+grep -qi '^subscription-userinfo: upload=1234; download=5678' <<<"$HDRS4" \
+    && echo "OK: 停用用户 userinfo 头照常" || { echo "FAIL: 停用 userinfo 头异常"; echo "$HDRS4"; exit 1; }
+LAND3="$(curl -s -H 'Accept: text/html' "http://$ADDR/sub/$TOK")"
+grep -q '已停用' <<<"$LAND3" && echo "OK: 落地页显示已停用" || { echo "FAIL: 落地页缺已停用"; exit 1; }
+
+echo ">> PATCH 过去 expires_at → 400（借到期立即停权已由 disable 开关承担）"
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -H 'Content-Type: application/json' \
+    -X PATCH -d '{"expires_at":"2000-01-01T00:00:00Z"}' "http://$ADDR/api/users/1")"
+[[ "$CODE" == "400" ]] && echo "OK: PATCH 过去有效期被拒" || { echo "FAIL: 状态码 $CODE ≠ 400"; exit 1; }
+
+echo ">> 启用：PATCH disabled:false → 扇出 add_user 恢复"
+api PATCH /api/users/1 '{"disabled":false}' >/dev/null
+[[ "$(db "SELECT disabled FROM users WHERE id=1")" == "0" ]] \
+    && echo "OK: disabled 已清除" || { echo "FAIL: disabled 未清除"; exit 1; }
+wait_clients "$N1" "$UUID1" present && wait_clients "$N2" "$UUID1" present \
+    && echo "OK: 启用扇出 add_user 生效（两节点）"
+[[ "$(curl -s "http://$ADDR/sub/$TOK" | grep -c 'type: vless')" == "2" ]] \
+    && echo "OK: 启用后订阅含 2 节点" || { echo "FAIL: 启用后订阅异常"; exit 1; }
+
+echo ">> 复合场景：disabled + expired 不重复扇出（有效停权态跃迁才扇出）"
+api PATCH "/api/users/$UID2" '{"disabled":true}' >/dev/null
+wait_clients "$N1" "$UUID2" absent && echo "OK: 停用 u2 扇出 remove_user"
+R0="$(cmd_cnt remove_user "$UUID2")"; A0="$(cmd_cnt add_user "$UUID2")"
+FUTURE_EXP2="$(python3 -c 'import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(seconds=4)).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
+api PATCH "/api/users/$UID2" "{\"expires_at\":\"$FUTURE_EXP2\"}" >/dev/null
+for _ in $(seq 1 30); do
+    [[ "$(db "SELECT expired FROM users WHERE id=$UID2")" == "1" ]] && break
+    sleep 0.5
+done
+[[ "$(db "SELECT expired FROM users WHERE id=$UID2")" == "1" ]] \
+    && echo "OK: 停用中到期，sweeper 置 expired" || { echo "FAIL: sweeper 未置 expired"; exit 1; }
+sleep 2
+[[ "$(cmd_cnt remove_user "$UUID2")" == "$R0" ]] \
+    && echo "OK: 到期未重复扇出 remove_user" || { echo "FAIL: 重复扇出 remove_user"; exit 1; }
+api PATCH "/api/users/$UID2" '{"disabled":false}' >/dev/null
+[[ "$(db "SELECT disabled FROM users WHERE id=$UID2")" == "0" ]] \
+    || { echo "FAIL: disabled 未清除"; exit 1; }
+[[ -n "$(db "SELECT expires_at FROM users WHERE id=$UID2")" ]] \
+    && echo "OK: 省略 expires_at 的 PATCH 不改动有效期" || { echo "FAIL: 有效期被误清除"; exit 1; }
+sleep 2
+[[ "$(cmd_cnt add_user "$UUID2")" == "$A0" ]] \
+    && echo "OK: 仍 expired，解除停用不扇出 add_user" || { echo "FAIL: 误扇出 add_user"; exit 1; }
+[[ -z "$(clients_of "$N1" | grep -x "$UUID2")" ]] \
+    && echo "OK: 仍处于有效停权态，节点无该用户" || { echo "FAIL: 不应恢复下发"; exit 1; }
+api PATCH "/api/users/$UID2" '{"expires_at":null}' >/dev/null
+[[ "$(db "SELECT expired FROM users WHERE id=$UID2")" == "0" ]] \
+    || { echo "FAIL: expired 未清除"; exit 1; }
+wait_clients "$N1" "$UUID2" present && echo "OK: 双重解除后扇出 add_user 恢复"
+[[ "$(curl -s "http://$ADDR/sub/$TOK2" | grep -c 'type: vless')" == "1" ]] \
+    && echo "OK: 恢复后订阅含 1 节点" || { echo "FAIL: 恢复后订阅异常"; exit 1; }
 
 echo "E2E-LINKS PASS"

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { CalendarClockIcon, ExternalLinkIcon, PlusIcon, QrCodeIcon, Trash2Icon } from 'lucide-react'
+import { BanIcon, CalendarClockIcon, CircleCheckIcon, ExternalLinkIcon, PlusIcon, QrCodeIcon, Trash2Icon } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
 import { QRDialog } from '@/components/QRDialog'
@@ -56,6 +56,7 @@ export default function Users() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleting, setDeleting] = useState<number | null>(null)
+  const [toggling, setToggling] = useState<number | null>(null)
 
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
@@ -154,6 +155,18 @@ export default function Users() {
     }
   }
 
+  const onToggleDisabled = async (user: SubUser) => {
+    setToggling(user.id)
+    try {
+      await api.setUserDisabled(user.id, !user.disabled)
+      load()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setToggling(null)
+    }
+  }
+
   const onOpenAssign = (u: SubUser) => {
     setAssignTarget(u)
     setAssignSelection(u.node_ids)
@@ -225,6 +238,7 @@ export default function Users() {
                   <TableCell className="font-medium">
                     <div className="flex items-center gap-2">
                       {u.name}
+                      {u.disabled && <Badge variant="destructive">已停用</Badge>}
                       {u.expired && <Badge variant="destructive">已到期</Badge>}
                     </div>
                   </TableCell>
@@ -271,6 +285,16 @@ export default function Users() {
                     <Button variant="outline" size="sm" title="修改有效期" onClick={() => onOpenExpiry(u)}>
                       <CalendarClockIcon />
                       有效期
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      title={u.disabled ? '启用（恢复节点下发与订阅）' : '停用（立即停权，订阅节点清空）'}
+                      disabled={toggling === u.id}
+                      onClick={() => onToggleDisabled(u)}
+                    >
+                      {u.disabled ? <CircleCheckIcon /> : <BanIcon />}
+                      {toggling === u.id ? '处理中…' : u.disabled ? '启用' : '停用'}
                     </Button>
                     <Button
                       variant="destructive"

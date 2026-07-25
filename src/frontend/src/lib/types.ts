@@ -101,6 +101,7 @@ export interface SubUser {
   traffic: Traffic | null
   expires_at: string | null
   expired: boolean
+  disabled: boolean
   created_at: string
 }
 
