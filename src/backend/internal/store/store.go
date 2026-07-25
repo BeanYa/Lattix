@@ -70,6 +70,12 @@ CREATE TABLE IF NOT EXISTS server_metrics (
     updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 面板设置（§10 设置页）：key/value，DB 中的值优先于启动参数。
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- 流量累计（§13 仅统计）：节点维度（user_uuid=''）与用户维度（node_id=0）。
 CREATE TABLE IF NOT EXISTS traffic (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,6 +115,19 @@ func Open(path string) (*Store, error) {
 		if !strings.Contains(err.Error(), "duplicate column name") {
 			db.Close()
 			return nil, fmt.Errorf("migrate servers.config_drift: %w", err)
+		}
+	}
+	// 轻量迁移：servers.agent_version / agent_upgrade_needed（§18 兼容窗口与升级管理）。
+	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN agent_version TEXT`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate servers.agent_version: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN agent_upgrade_needed INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate servers.agent_upgrade_needed: %w", err)
 		}
 	}
 	// 一次性迁移（PRAGMA user_version 0→1）：user_nodes 引入前，成员关系隐含为

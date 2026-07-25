@@ -314,7 +314,15 @@ export default function Nodes() {
           <form onSubmit={onCreate} className="space-y-4">
             <div className="space-y-2">
               <Label>服务器</Label>
-              <Select value={serverId} onValueChange={(v) => setServerId(String(v))}>
+              <Select
+                value={serverId}
+                onValueChange={(v) => setServerId(String(v))}
+                // Base UI 关闭状态下 Trigger 文本由 items 解析，否则只显示原始 value（服务器 id）。
+                items={servers.map((s) => ({
+                  value: String(s.id),
+                  label: s.online ? s.alias : `${s.alias}（离线）`,
+                }))}
+              >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="选择服务器" />
                 </SelectTrigger>
@@ -413,7 +421,7 @@ export default function Nodes() {
                 {protocol === 'vless' && (
                   <div className="space-y-2">
                     <Label>VLESS Encryption（可与 flow 组合）</Label>
-                    <Select value={encryption} onValueChange={(v) => v !== null && setEncryption(v)}>
+                    <Select value={encryption} onValueChange={(v) => v !== null && setEncryption(v)} items={VLESS_ENCS}>
                       <SelectTrigger className="w-full">
                         <SelectValue />
                       </SelectTrigger>
@@ -430,7 +438,11 @@ export default function Nodes() {
                 {protocol === 'vless' && network === 'tcp' && (
                   <div className="space-y-2">
                     <Label>flow</Label>
-                    <Select value={flow} onValueChange={(v) => v && setFlow(v)}>
+                    <Select
+                      value={flow}
+                      onValueChange={(v) => v && setFlow(v)}
+                      items={FLOWS.map((f) => ({ value: f, label: f === 'none' ? '无' : f }))}
+                    >
                       <SelectTrigger className="w-full">
                         <SelectValue />
                       </SelectTrigger>

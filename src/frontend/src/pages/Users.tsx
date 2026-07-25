@@ -23,12 +23,9 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
-import { humanizeBytes } from '@/lib/format'
+import { formatDateTime, humanizeBytes } from '@/lib/format'
+import { useTimezone } from '@/lib/timezone'
 import type { SubUser, XrayNode } from '@/lib/types'
-
-function formatTime(t: string): string {
-  return new Date(t).toLocaleString()
-}
 
 function nodeLabel(n: XrayNode): string {
   const port = n.realized_config?.port ?? n.port ?? '自动'
@@ -36,6 +33,7 @@ function nodeLabel(n: XrayNode): string {
 }
 
 export default function Users() {
+  const { timezone } = useTimezone()
   const [users, setUsers] = useState<SubUser[]>([])
   const [nodes, setNodes] = useState<XrayNode[]>([])
   const [loading, setLoading] = useState(true)
@@ -201,7 +199,7 @@ export default function Users() {
                       </Button>
                     </div>
                   </TableCell>
-                  <TableCell>{formatTime(u.created_at)}</TableCell>
+                  <TableCell>{formatDateTime(u.created_at, timezone)}</TableCell>
                   <TableCell className="space-x-2">
                     <Button variant="outline" size="sm" onClick={() => onOpenAssign(u)}>
                       分配节点

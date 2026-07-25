@@ -23,11 +23,9 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
+import { formatDateTime } from '@/lib/format'
+import { useTimezone } from '@/lib/timezone'
 import type { Server } from '@/lib/types'
-
-function formatTime(t: string | null): string {
-  return t ? new Date(t).toLocaleString() : '-'
-}
 
 function formatMetrics(s: Server): string {
   const m = s.metrics
@@ -39,6 +37,7 @@ function formatMetrics(s: Server): string {
 }
 
 export default function Servers() {
+  const { timezone } = useTimezone()
   const [servers, setServers] = useState<Server[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -57,6 +56,7 @@ export default function Servers() {
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
   const [upgradeTarget, setUpgradeTarget] = useState<Server | null>(null)
+  const [upgradeKind, setUpgradeKind] = useState<'xray' | 'agent'>('xray')
   const [upgradeVersion, setUpgradeVersion] = useState('latest')
   const [upgrading, setUpgrading] = useState(false)
   const [upgradeError, setUpgradeError] = useState('')
@@ -160,9 +160,11 @@ export default function Servers() {
     }
   }
 
-  // xray 版本升级（§18）：命令入队后由 agent 下载/校验/替换/重启，版本号经遥测自动刷新。
-  const onOpenUpgrade = (s: Server) => {
+  // 版本升级（§18）：命令入队后由 agent 下载/校验/替换/重启，版本号经 hello/遥测自动刷新。
+  // kind=xray 升级 xray-core；kind=agent 升级 agent 自身（兼容窗口外的机器经此收敛）。
+  const onOpenUpgrade = (s: Server, kind: 'xray' | 'agent') => {
     setUpgradeTarget(s)
+    setUpgradeKind(kind)
     setUpgradeVersion('latest')
     setUpgradeError('')
   }
@@ -175,9 +177,18 @@ export default function Servers() {
     setUpgradeError('')
     setUpgrading(true)
     try {
-      await api.upgradeServer(upgradeTarget.id, upgradeVersion.trim() || 'latest')
+      const version = upgradeVersion.trim() || 'latest'
+      if (upgradeKind === 'agent') {
+        await api.upgradeAgent(upgradeTarget.id, version)
+      } else {
+        await api.upgradeServer(upgradeTarget.id, version)
+      }
       setUpgradeTarget(null)
-      window.alert('升级命令已下发。xray 版本号将在升级完成后自动刷新（失败可在命令日志排查）。')
+      window.alert(
+        upgradeKind === 'agent'
+          ? '升级命令已下发。agent 完成自替换后将自动重启重连，版本号随之刷新。'
+          : '升级命令已下发。xray 版本号将在升级完成后自动刷新（失败可在命令日志排查）。',
+      )
       load()
     } catch (err) {
       setUpgradeError(errorMessage(err))
@@ -260,12 +271,20 @@ export default function Servers() {
                         配置漂移
                       </Badge>
                     )}
+                    {s.upgrade_needed && (
+                      <Badge variant="outline" className="ml-1 border-amber-200 bg-amber-50 text-amber-700">
+                        agent 需升级
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell>{s.address || '-'}</TableCell>
-                  <TableCell>{s.xray_version ?? '-'}</TableCell>
+                  <TableCell className="text-xs whitespace-nowrap">
+                    <div>xray {s.xray_version ?? '-'}</div>
+                    <div className="text-muted-foreground">agent {s.agent_version ?? '-'}</div>
+                  </TableCell>
                   <TableCell className="text-xs whitespace-nowrap">{formatMetrics(s)}</TableCell>
-                  <TableCell>{formatTime(s.last_seen_at)}</TableCell>
-                  <TableCell>{formatTime(s.created_at)}</TableCell>
+                  <TableCell>{formatDateTime(s.last_seen_at, timezone)}</TableCell>
+                  <TableCell>{formatDateTime(s.created_at, timezone)}</TableCell>
                   <TableCell className="space-x-2">
                     {s.config_drift && (
                       <Button variant="outline" size="sm" onClick={() => onRepair(s)}>
@@ -275,8 +294,15 @@ export default function Servers() {
                     <Button variant="outline" size="sm" onClick={() => onOpenEdit(s)}>
                       编辑地址
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => onOpenUpgrade(s)}>
+                    <Button variant="outline" size="sm" onClick={() => onOpenUpgrade(s, 'xray')}>
                       升级 xray
+                    </Button>
+                    <Button
+                      variant={s.upgrade_needed ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => onOpenUpgrade(s, 'agent')}
+                    >
+                      升级 agent
                     </Button>
                     <Button variant="outline" size="sm" onClick={() => onRotateToken(s)}>
                       {s.last_seen_at ? '凭证刷新' : '安装命令'}
@@ -388,11 +414,22 @@ export default function Servers() {
       <Dialog open={upgradeTarget !== null} onOpenChange={(next) => !next && setUpgradeTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>升级 xray</DialogTitle>
+            <DialogTitle>升级 {upgradeKind === 'agent' ? 'agent' : 'xray'}</DialogTitle>
             <DialogDescription>
-              将「{upgradeTarget?.alias}」的 xray 升级到指定版本（当前：
-              {upgradeTarget?.xray_version ?? '未知'}）。agent 将下载官方 release、
-              校验 SHA2-256 后替换并重启；失败自动回滚。
+              {upgradeKind === 'agent' ? (
+                <>
+                  将「{upgradeTarget?.alias}」的 agent 升级到指定版本（当前：
+                  {upgradeTarget?.agent_version ?? '未知'}）。agent 将从 GitHub release
+                  下载二进制、校验 SHA256 后自替换并重启；该操作也用于收敛落后出兼容窗口的
+                  agent。
+                </>
+              ) : (
+                <>
+                  将「{upgradeTarget?.alias}」的 xray 升级到指定版本（当前：
+                  {upgradeTarget?.xray_version ?? '未知'}）。agent 将下载官方 release、
+                  校验 SHA2-256 后替换并重启；失败自动回滚。
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onUpgrade} className="space-y-4">

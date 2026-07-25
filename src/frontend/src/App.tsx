@@ -3,10 +3,12 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import Layout from '@/components/Layout'
 import { AuthProvider, useAuth } from '@/lib/auth'
+import { TimezoneProvider } from '@/lib/timezone'
 import Dashboard from '@/pages/Dashboard'
 import Login from '@/pages/Login'
 import Nodes from '@/pages/Nodes'
 import Servers from '@/pages/Servers'
+import Settings from '@/pages/Settings'
 import Users from '@/pages/Users'
 
 function RequireAuth({ children }: { children: ReactElement }) {
@@ -28,22 +30,25 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route
-            element={
-              <RequireAuth>
-                <Layout />
-              </RequireAuth>
-            }
-          >
-            <Route index element={<Dashboard />} />
-            <Route path="servers" element={<Servers />} />
-            <Route path="nodes" element={<Nodes />} />
-            <Route path="users" element={<Users />} />
-          </Route>
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <TimezoneProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route
+              element={
+                <RequireAuth>
+                  <Layout />
+                </RequireAuth>
+              }
+            >
+              <Route index element={<Dashboard />} />
+              <Route path="servers" element={<Servers />} />
+              <Route path="nodes" element={<Nodes />} />
+              <Route path="users" element={<Users />} />
+              <Route path="settings" element={<Settings />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </TimezoneProvider>
       </AuthProvider>
     </BrowserRouter>
   )

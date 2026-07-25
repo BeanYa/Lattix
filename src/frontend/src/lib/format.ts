@@ -12,3 +12,29 @@ export function humanizeBytes(n: number): string {
   }
   return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`
 }
+
+/** formatDateTime 按面板设置的全局时区格式化 RFC3339 时间；timezone 为空用浏览器本地。 */
+export function formatDateTime(t: string | null | undefined, timezone?: string): string {
+  if (!t) {
+    return '-'
+  }
+  const d = new Date(t)
+  if (Number.isNaN(d.getTime())) {
+    return '-'
+  }
+  try {
+    return new Intl.DateTimeFormat('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      ...(timezone ? { timeZone: timezone } : {}),
+    }).format(d)
+  } catch {
+    // 非法时区名时退回浏览器本地
+    return d.toLocaleString()
+  }
+}

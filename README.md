@@ -29,7 +29,7 @@ src/backend/   # Go：面板 HTTP API + Agent WS 端点 + SQLite
 src/agent/     # Go：独立二进制，systemd 托管
 src/shared/    # Go module：WS 消息结构体、虚拟配置类型，backend/agent 共用
 scripts/
-  install.sh          # Agent 引导安装脚本（由面板托管，注入二进制 SHA256）
+  install.sh          # Agent 引导安装脚本（release 钉版 / 面板托管双模式，均校验 SHA256）
   dev-e2e-*.sh        # 各功能端到端验收脚本
 ```
 
@@ -88,17 +88,49 @@ cd src/frontend && bun install && bun run build && cd ../..
 反代部署（docker + openresty/nginx 终止 TLS）时反代 `/`、`/api/agent/ws`（带 Upgrade 头）、
 `/sub`、`/install.sh`、`/dist`，并以 `-public-url https://域名` 或 `X-Forwarded-Proto` 告知面板。
 
+面板"设置"页可在线修改：对外地址与显示时区（立即生效）；TLS 模式 / 自带证书 PEM /
+ACME 域名（保存后重启进程生效）；管理员密码（bcrypt 落库，改密即全部会话失效）。
+设置页保存的值存于 SQLite `settings` 表并**优先于对应启动参数**，清除后恢复跟随启动参数。
+"设置 → 面板维护"提供一键重启（`POST /api/settings/restart`）：systemd 托管时退出后由
+systemd 拉起，否则自派生新进程接管（同参数同端口，等待旧进程释放端口）；面板版本更新
+替换二进制后也经此接口重启生效。
+
+TLS 另支持**域名路径模式**（`tls_mode=path`）：面板按域名从证书根目录读取
+`<tls-dir>/<域名>/fullchain.pem` 与 `privkey.pem`（certbot 风格，目录由 `-tls-dir`
+指定，默认 `certs`，启动时解析为绝对路径并显示在设置页）。外部 ACME（如安装脚本）
+申请/续期后直接写入该目录：保存设置时只填域名；续期替换文件后下一次 TLS 握手即
+自动加载新证书，**免重启**（加载失败时回退已缓存证书，握手不中断）。
+
 ### 安装 Agent（受控服务器）
 
-面板"添加服务器"生成一行安装命令，在受控机执行：
+面板"添加服务器"生成一行安装命令，在受控机执行。正式版本（release 构建）的命令
+钉到面板同版本的 GitHub release 资产，脚本与 agent 二进制天然同版：
 
 ```bash
-curl -fsSL http://<面板地址>/install.sh | bash -s -- \
+curl -fsSL https://github.com/BeanYa/Lattix/releases/download/v0.0.1/install.sh | bash -s -- \
   --panel http://<面板地址> --token <bootstrap token> --xray-version latest
 ```
 
-脚本完成：安装指定版本 xray（校验官方 .dgst）→ 安装 agent（校验面板注入的 SHA256）→
+dev 构建（无对应 release）回退面板托管模式：`curl -fsSL http://<面板地址>/install.sh | ...`。
+两种模式共用同一脚本：release 模式从 GitHub release 下载 agent 并校验 `checksums.txt`；
+面板托管模式从面板 `/dist` 下载并校验面板注入的 SHA256。
+
+脚本完成：安装指定版本 xray（校验官方 .dgst）→ 安装 agent（校验 SHA256）→
 注册 systemd → 首连换发长期凭证。重装自动先停旧服务并清除旧 state。
+
+### CI/CD 与版本兼容（§18）
+
+- **发版**：push `v*` tag 触发 `.github/workflows/release.yml`——构建前后端并注入版本
+  （`-ldflags -X main.version/-X main.githubRepo`）、stamp install.sh、生成 checksums.txt、
+  **新面板 × 上一 tag agent 兼容性 e2e 回归**后发布 GitHub Release。
+- **协议只增不改**：`src/shared/messages.go` 头注释载明演化规则，PR 由
+  `scripts/check-protocol-compat.sh`（protocol-check workflow）强制"协议行只增不减"；
+  agent 对未知命令回执 `unsupported command`，面板据此终态不重试。
+- **兼容窗口**：面板允许领先 agent 一个发布位次（v0.0.x 形态比 patch 差）。hello 握手时
+  判定：主版本不符拒绝连接；落后超窗口置 `upgrade_needed`——常规命令滞留，
+  仅放行 `upgrade_agent` / `uninstall`，UI 显示"agent 需升级"。
+- **agent 自升级**：服务器页"升级 agent"下发 `upgrade_agent`，agent 从 GitHub release
+  下载目标版本、校验 checksums.txt 后原子自替换并退出（systemd 拉起完成升级）。
 
 ## 开发
 

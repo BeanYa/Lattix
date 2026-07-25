@@ -17,9 +17,9 @@ const sessionTTL = 7 * 24 * time.Hour
 // sessionCookie 是会话 cookie 名。
 const sessionCookie = "lattix_session"
 
-// sessionSecret 由管理员密码派生（不加存储；改密码即全部会话失效）。
+// sessionSecret 由管理员凭证派生（不加存储；改密码即全部会话失效）。
 func (s *Server) sessionSecret() []byte {
-	sum := sha256.Sum256([]byte(s.cfg.AdminPass + "|lattix-session"))
+	sum := sha256.Sum256([]byte(s.credentialKey() + "|lattix-session"))
 	return sum[:]
 }
 
@@ -69,7 +69,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Username != s.cfg.AdminUser || req.Password != s.cfg.AdminPass {
+	if req.Username != s.cfg.AdminUser || !s.checkPassword(req.Password) {
 		writeError(w, http.StatusUnauthorized, "用户名或密码错误")
 		return
 	}

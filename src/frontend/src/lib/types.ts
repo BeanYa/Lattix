@@ -19,6 +19,8 @@ export interface Server {
   online: boolean
   last_seen_at: string | null
   xray_version: string | null
+  agent_version: string | null
+  upgrade_needed: boolean
   address: string
   config_drift: boolean
   metrics: ServerMetrics | null
@@ -98,4 +100,40 @@ export interface SubUser {
   node_ids: number[]
   traffic: Traffic | null
   created_at: string
+}
+
+export interface CertInfo {
+  common_name: string
+  dns_names: string[]
+  not_after: string
+  expired: boolean
+}
+
+export type TLSMode = '' | 'off' | 'cert' | 'acme' | 'path'
+
+export interface PanelSettings {
+  timezone: string
+  public_url: string
+  tls_mode: TLSMode
+  tls_cert: CertInfo | null
+  tls_key_set: boolean
+  tls_domain: string
+  tls_dir: string
+  acme_domain: string
+  acme_email: string
+  running_tls_mode: 'off' | 'cert' | 'acme' | 'path'
+  restart_required: boolean
+  admin_user: string
+  password_override: boolean
+}
+
+export interface UpdateSettingsRequest {
+  timezone: string
+  public_url: string
+  tls_mode: TLSMode
+  tls_cert_pem?: string
+  tls_key_pem?: string
+  tls_domain?: string
+  acme_domain: string
+  acme_email: string
 }

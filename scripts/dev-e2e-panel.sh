@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# 阶段 3 面板 API 端到端验收（实施计划 3.6，设计文档 §8/§10/§11）：
+# 阶段 3 面板 API 端到端验收（实施计划 3.6，设计文档 §8/§10/§11/§16）：
 #   登录会话 → 添加服务器（bootstrap token + 安装命令）→ install.sh//dist 托管 →
-#   agent 上线 → 建用户（无节点扇出）→ 建节点（全量用户随 apply 下发）→
-#   增删用户（零重启热操作）→ 离线扇出补发 → 仪表盘计数 → 登出拦截。
+#   agent 上线 → 建用户（无节点扇出）→ 建节点（§16 默认全关）→ 分配用户
+#   （差量扇出，零重启热操作）→ 增删用户 → 离线扇出补发 → 仪表盘计数 → 登出拦截。
 # 依赖：python3、本机 xray（默认 ~/.cache/lattix-dev/xray-core/xray，XRAY_BIN 可覆盖）。
 set -euo pipefail
 
@@ -26,7 +26,13 @@ cleanup() {
 trap cleanup EXIT
 
 echo ">> build"
-(cd "$ROOT" && go build -o "$WORK/backend" ./src/backend/cmd/backend && go build -o "$WORK/agent" ./src/agent/cmd/agent)
+if [[ -n "${PANEL_BIN:-}" && -n "${AGENT_BIN:-}" && -x "${PANEL_BIN:-}" && -x "${AGENT_BIN:-}" ]]; then
+    echo ">> 使用预构建二进制（PANEL_BIN=$PANEL_BIN AGENT_BIN=$AGENT_BIN）"
+    cp "$PANEL_BIN" "$WORK/backend"
+    cp "$AGENT_BIN" "$WORK/agent"
+else
+    (cd "$ROOT" && go build -o "$WORK/backend" ./src/backend/cmd/backend && go build -o "$WORK/agent" ./src/agent/cmd/agent)
+fi
 mkdir -p "$WORK/dist"
 cp "$WORK/agent" "$WORK/dist/lattix-agent-linux-amd64"
 
@@ -87,7 +93,7 @@ UUID1="$(echo "$U1" | py "d['uuid']")"
 [[ "$(echo "$U1" | py "d['sub_url']")" == "http://$ADDR/sub/"* ]] \
     && echo "OK: 创建用户 alice（订阅链接格式正确）" || { echo "FAIL: 创建用户: $U1"; exit 1; }
 
-# --- 节点（apply 携带全量用户）---
+# --- 节点（§16 默认全关：未分配的用户不随 apply 下发）---
 api -X POST -d '{"server_id":1}' "http://$ADDR/api/nodes" >/dev/null
 for _ in $(seq 1 30); do
     NSTATUS="$(api "http://$ADDR/api/nodes" | py "d[0]['status']")"
@@ -97,17 +103,25 @@ for _ in $(seq 1 30); do
 done
 [[ "$NSTATUS" == "active" ]] && echo "OK: 节点 active" || { echo "FAIL: 节点未生效（30s 超时）"; exit 1; }
 NPORT="$(api "http://$ADDR/api/nodes" | py "d[0]['realized_config']['port']")"
-grep -q "$UUID1" "$XRAY_CONFIG" \
-    && echo "OK: 全量用户已随 apply 下发（端口 $NPORT）" || { echo "FAIL: 节点配置缺 alice"; exit 1; }
+! grep -q "$UUID1" "$XRAY_CONFIG" \
+    && echo "OK: 默认全关，alice 未随 apply 下发（§16，端口 $NPORT）" || { echo "FAIL: 未分配用户被下发"; exit 1; }
 XPID="$(xray_pid)"; [[ -n "$XPID" ]] || { echo "FAIL: xray 未运行"; exit 1; }
+
+# --- 分配 alice 到节点（差量扇出 add_user，零重启热操作，§16）---
+ALICE_ID="$(echo "$U1" | py "d['id']")"
+api -X PUT -d '{"node_ids":[1]}' "http://$ADDR/api/users/$ALICE_ID/nodes" >/dev/null
+for _ in $(seq 1 10); do grep -q "$UUID1" "$XRAY_CONFIG" && break; sleep 1; done
+grep -q "$UUID1" "$XRAY_CONFIG" && [[ "$(xray_pid)" == "$XPID" ]] \
+    && echo "OK: alice 分配后热加入（xray 未重启）" || { echo "FAIL: alice 分配下发"; exit 1; }
 
 # --- 增删用户（零重启热操作）---
 U2="$(api -X POST -d '{"name":"bob"}' "http://$ADDR/api/users")"
 UUID2="$(echo "$U2" | py "d['uuid']")"
+BOB_ID="$(echo "$U2" | py "d['id']")"
+api -X PUT -d '{"node_ids":[1]}' "http://$ADDR/api/users/$BOB_ID/nodes" >/dev/null
 sleep 2
 grep -q "$UUID2" "$XRAY_CONFIG" && [[ "$(xray_pid)" == "$XPID" ]] \
-    && echo "OK: bob 热加入（xray 未重启）" || { echo "FAIL: bob 热加入"; exit 1; }
-BOB_ID="$(echo "$U2" | py "d['id']")"
+    && echo "OK: bob 分配后热加入（xray 未重启）" || { echo "FAIL: bob 热加入"; exit 1; }
 [[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X DELETE "http://$ADDR/api/users/$BOB_ID")" == "204" ]]
 sleep 2
 ! grep -q "$UUID2" "$XRAY_CONFIG" && [[ "$(xray_pid)" == "$XPID" ]] \
@@ -117,6 +131,8 @@ sleep 2
 kill $APID; wait $APID 2>/dev/null || true
 U3="$(api -X POST -d '{"name":"carol"}' "http://$ADDR/api/users")"
 UUID3="$(echo "$U3" | py "d['uuid']")"
+CAROL_ID="$(echo "$U3" | py "d['id']")"
+api -X PUT -d '{"node_ids":[1]}' "http://$ADDR/api/users/$CAROL_ID/nodes" >/dev/null
 sleep 1
 ! grep -q "$UUID3" "$XRAY_CONFIG" && echo "OK: 离线期间 carol 未下发（滞留队列）" || { echo "FAIL: 离线扇出"; exit 1; }
 start_agent

@@ -12,12 +12,16 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"lattix/agent/internal/selfupdate"
 	"lattix/agent/internal/state"
 	"lattix/agent/internal/xray"
 	"lattix/shared"
 )
 
-var version = "dev"
+var (
+	version    = "dev"
+	githubRepo = "BeanYa/Lattix"
+)
 
 func main() {
 	panel := flag.String("panel", "ws://127.0.0.1:8080/api/agent/ws", "Backend WS 地址")
@@ -30,7 +34,12 @@ func main() {
 	releaseBase := flag.String("xray-release-base", "", "xray release 下载基址（默认官方 GitHub，可指向镜像，§18）")
 	telemetryInterval := flag.Duration("telemetry-interval", 60*time.Second, "遥测上报间隔（§13）")
 	driftInterval := flag.Duration("drift-interval", 15*time.Second, "配置漂移检测间隔（§17）")
+	showVersion := flag.Bool("version", false, "打印版本并退出")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 
 	mgr := xray.NewManager(*xrayBin, *xrayConfig, *xrayAPI, xray.NewRunner(*xrayRunner, *xrayBin, *xrayConfig))
 	if *releaseBase != "" {
@@ -242,6 +251,21 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope) {
 		err := mgr.UpgradeXray(p.Version)
 		replyApplyResult(sc, env.ID, resultOf(0, nil, err))
 
+	case shared.TypeUpgradeAgent:
+		// 自升级（§18）：先完成下载校验与原子替换，回执后退出，由 systemd 拉起新二进制。
+		var p shared.UpgradeAgentPayload
+		if !parsePayload(env, &p) {
+			return
+		}
+		log.Printf("upgrade_agent id=%s version=%s", env.ID, p.Version)
+		upgraded, err := selfupdate.Apply(p.Version, p.ReleaseBase, version, githubRepo)
+		replyApplyResult(sc, env.ID, resultOf(0, nil, err))
+		if err != nil || !upgraded {
+			return // 失败或已是目标版本（幂等），无需重启
+		}
+		log.Printf("upgrade_agent: 二进制已替换，退出等待 systemd 拉起")
+		go exitAfter(time.Second)
+
 	case shared.TypeUninstall:
 		// 先回执再自毁：panel 删除服务器时下发（§10）。
 		var p shared.UninstallPayload
@@ -253,7 +277,10 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope) {
 		scheduleUninstall(p.PurgeXray)
 
 	default:
+		// 协议演化规则：不认识的命令显式回执失败（面板据此终态不重试），而非静默丢弃。
 		log.Printf("recv unknown type=%s id=%s", env.Type, env.ID)
+		replyApplyResult(sc, env.ID, resultOf(0, nil,
+			fmt.Errorf("%s: %s", shared.ErrUnsupportedPrefix, env.Type)))
 	}
 }
 

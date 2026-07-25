@@ -13,24 +13,26 @@ var ErrNotFound = errors.New("store: not found")
 
 // Server 是 servers 表的一行（§4）。
 type Server struct {
-	ID          int64
-	Alias       string
-	Token       string // 长期凭证；创建时先存 bootstrap token，hello 认证后换发（§11）
-	LastSeenAt  *time.Time
-	XrayVersion string
-	Address     string // 公网地址（hello 时按 WS RemoteAddr 记录，订阅用，§9）
-	ConfigDrift bool   // 配置漂移标志（§17，agent drift_report 驱动）
-	CreatedAt   time.Time
+	ID            int64
+	Alias         string
+	Token         string // 长期凭证；创建时先存 bootstrap token，hello 认证后换发（§11）
+	LastSeenAt    *time.Time
+	XrayVersion   string
+	AgentVersion  string // hello 上报的 agent 版本（§18 升级管理）
+	UpgradeNeeded bool   // agent 落后出兼容窗口：暂停常规命令下发，仅放行 upgrade_agent/uninstall
+	Address       string // 公网地址（hello 时按 WS RemoteAddr 记录，订阅用，§9）
+	ConfigDrift   bool   // 配置漂移标志（§17，agent drift_report 驱动）
+	CreatedAt     time.Time
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, address, config_drift, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, agent_upgrade_needed, address, config_drift, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
 	var lastSeen sql.NullTime
-	var xrayVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &srv.Address, &srv.ConfigDrift, &srv.CreatedAt)
+	var xrayVer, agentVer sql.NullString
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.UpgradeNeeded, &srv.Address, &srv.ConfigDrift, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -39,6 +41,7 @@ func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 		srv.LastSeenAt = &t
 	}
 	srv.XrayVersion = xrayVer.String
+	srv.AgentVersion = agentVer.String
 	return &srv, nil
 }
 
@@ -112,11 +115,19 @@ func (s *Store) UpdateServerAddress(ctx context.Context, id int64, address strin
 	return err
 }
 
-// TouchServer 更新 last_seen_at、xray 版本（hello 携带，§13）与公网地址（RemoteAddr，§9）。
-func (s *Store) TouchServer(ctx context.Context, id int64, xrayVersion, address string) error {
+// TouchServer 更新 last_seen_at、xray 版本与 agent 版本（hello 携带，§13）及公网地址（RemoteAddr，§9）。
+func (s *Store) TouchServer(ctx context.Context, id int64, xrayVersion, agentVersion, address string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE servers SET last_seen_at = CURRENT_TIMESTAMP, xray_version = ?, address = ? WHERE id = ?`,
-		xrayVersion, address, id)
+		`UPDATE servers SET last_seen_at = CURRENT_TIMESTAMP, xray_version = ?, agent_version = ?, address = ? WHERE id = ?`,
+		xrayVersion, agentVersion, address, id)
+	return err
+}
+
+// SetServerUpgradeNeeded 设置 agent 升级需求标志（兼容窗口外，§18）：
+// 置位期间 Flush 仅放行 upgrade_agent/uninstall。
+func (s *Store) SetServerUpgradeNeeded(ctx context.Context, id int64, needed bool) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE servers SET agent_upgrade_needed = ? WHERE id = ?`, needed, id)
 	return err
 }
 

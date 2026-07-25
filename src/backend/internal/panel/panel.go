@@ -20,12 +20,16 @@ import (
 
 // Config 是面板运行配置。
 type Config struct {
-	AdminUser     string // 管理员账号（单管理员，§14 多管理员属后续迭代）
-	AdminPass     string // 管理员密码
-	PublicURL     string // 面板对外地址（生成安装命令/订阅链接）；空 = 从请求推断
-	Secure        bool   // 面板自身以 TLS 服务（自带证书或 ACME，§12）
-	DistDir       string // agent 二进制等发布产物目录（/dist/ 托管）
-	InstallScript string // install.sh 文件路径（/install.sh 托管）
+	AdminUser     string     // 管理员账号（单管理员，§14 多管理员属后续迭代）
+	AdminPass     string     // 管理员密码（DB 设置页改密后被 bcrypt 哈希覆盖）
+	PublicURL     string     // 面板对外地址（生成安装命令/订阅链接）；空 = 从请求推断（DB 设置可覆盖）
+	Secure        bool       // 面板自身以 TLS 服务（自带证书或 ACME，§12）
+	RunningTLS    AppliedTLS // 当前进程实际生效的 TLS 快照（main 启动时确定，重启生效）
+	TLSDir        string     // 域名路径模式证书根目录（<tls-dir>/<域名>/fullchain.pem|privkey.pem）
+	Version       string     // 面板版本（构建注入）；dev 时安装命令回退面板托管模式
+	GitHubRepo    string     // GitHub 仓库（org/repo）：release 安装命令与 agent 升级下载基址
+	DistDir       string     // agent 二进制等发布产物目录（/dist/ 托管）
+	InstallScript string     // install.sh 文件路径（/install.sh 托管）
 }
 
 // Server 聚合面板 API 的依赖。
@@ -77,6 +81,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/servers/{id}/rotate-token", s.requireAuth(s.handleRotateToken))
 	mux.HandleFunc("POST /api/servers/{id}/repair", s.requireAuth(s.handleRepairServer))
 	mux.HandleFunc("POST /api/servers/{id}/upgrade", s.requireAuth(s.handleUpgradeXray))
+	mux.HandleFunc("POST /api/servers/{id}/upgrade-agent", s.requireAuth(s.handleUpgradeAgent))
 	mux.HandleFunc("PATCH /api/servers/{id}", s.requireAuth(s.handleUpdateServer))
 	mux.HandleFunc("DELETE /api/servers/{id}", s.requireAuth(s.handleDeleteServer))
 
@@ -90,6 +95,11 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/users/{id}/nodes", s.requireAuth(s.handleSetUserNodes))
 	mux.HandleFunc("DELETE /api/users/{id}", s.requireAuth(s.handleDeleteUser))
 
+	mux.HandleFunc("GET /api/settings", s.requireAuth(s.handleGetSettings))
+	mux.HandleFunc("PUT /api/settings", s.requireAuth(s.handleUpdateSettings))
+	mux.HandleFunc("PUT /api/settings/password", s.requireAuth(s.handleChangePassword))
+	mux.HandleFunc("POST /api/settings/restart", s.requireAuth(s.handleRestart))
+
 	mux.HandleFunc("GET /install.sh", s.handleInstallScript)
 	mux.Handle("GET /dist/", http.StripPrefix("/dist/", http.FileServer(http.Dir(s.cfg.DistDir))))
 }
@@ -100,9 +110,12 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	w.Write(s.installScript)
 }
 
-// panelBase 返回面板对外地址：优先配置的 PublicURL，否则从请求推断。
+// panelBase 返回面板对外地址：DB 设置（设置页）> 启动参数 PublicURL > 从请求推断。
 // HTTPS 判定：面板自身 TLS、直连 TLS，或反代经 X-Forwarded-Proto 声明（§12）。
 func (s *Server) panelBase(r *http.Request) string {
+	if v := s.getSetting(r.Context(), store.SettingPublicURL); v != "" {
+		return v
+	}
 	if s.cfg.PublicURL != "" {
 		return s.cfg.PublicURL
 	}

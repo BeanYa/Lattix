@@ -2,8 +2,10 @@ import type {
   CreateNodeRequest,
   CreateServerResponse,
   DashboardStats,
+  PanelSettings,
   Server,
   SubUser,
+  UpdateSettingsRequest,
   XrayNode,
 } from './types'
 
@@ -79,6 +81,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ version }),
     }),
+  upgradeAgent: (id: number, version: string) =>
+    request<{ command_id: number; version: string }>(`/api/servers/${id}/upgrade-agent`, {
+      method: 'POST',
+      body: JSON.stringify({ version }),
+    }),
   repairServer: (id: number) =>
     request<{ reapplied: number }>(`/api/servers/${id}/repair`, { method: 'POST' }),
   updateServerAddress: (id: number, address: string) =>
@@ -104,4 +111,15 @@ export const api = {
       body: JSON.stringify({ node_ids: nodeIds }),
     }),
   deleteUser: (id: number) => request<void>(`/api/users/${id}`, { method: 'DELETE' }),
+
+  settings: () => request<PanelSettings>('/api/settings'),
+  updateSettings: (body: UpdateSettingsRequest) =>
+    request<PanelSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(body) }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>('/api/settings/password', {
+      method: 'PUT',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
+  restartPanel: () =>
+    request<{ status: string }>('/api/settings/restart', { method: 'POST' }),
 }

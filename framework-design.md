@@ -154,7 +154,7 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 ## 11. 服务器引导流程
 
 1. 面板"添加服务器"填写别名、公网地址与 **xray 版本**（默认 `latest`，也可指定具体版本），生成一次性 **bootstrap token** 与一行安装命令；
-2. `install.sh` 在被控机执行：按创建时指定的 xray 版本安装（`latest` 在执行时经 GitHub API 解析最新 release；**校验官方 release checksums**）→ 下载/安装 Agent 二进制（**按面板注入的 SHA256 校验**，明文 HTTP 下保证二进制不被中间人替换）→ 注册 systemd → 写入面板地址与 bootstrap token（重装时清除旧 state 文件，确保使用新 bootstrap token）；
+2. `install.sh` 在被控机执行：按创建时指定的 xray 版本安装（`latest` 在执行时经 GitHub API 解析最新 release；**校验官方 release checksums**）→ 下载/安装 Agent 二进制 → 注册 systemd → 写入面板地址与 bootstrap token（重装时清除旧 state 文件，确保使用新 bootstrap token）。Agent 二进制两种获取方式：**release 钉版模式**（正式版本，install.sh 由 CI 烧入版本号，agent 与校验和取自同版本 GitHub release 资产，校验 `checksums.txt`）与**面板托管模式**（dev 构建，agent 从面板 `/dist` 下载，**按面板注入的 SHA256 校验**，明文 HTTP 下保证二进制不被中间人替换）；
 3. Agent 启动首连，以 bootstrap token 换发长期服务器 token；**实际安装的 xray 版本随 hello 上报，面板服务器列表展示实际版本号**。
 
 凭证刷新（§10）将 `last_seen_at` 重置为空，使服务器回到 bootstrap 状态，下次 hello 重新换发。
@@ -168,7 +168,7 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
     反代转发 `/`、`/api/agent/ws`（带 Upgrade 头）、`/sub`、`/install.sh`、`/dist`，
     并以 `-public-url https://域名` 或 `X-Forwarded-Proto: https` 告知面板生成 https 链接。
 - HTTPS（含反代）下会话 cookie 带 `Secure`；安装命令/订阅链接按上述推断生成 `https://`/`wss://`。
-- install 通道（install.sh、agent 二进制）在 HTTP 部署下明文传输，但**以 SHA256 校验保障完整性**（§11）：校验和由面板注入脚本，等价于把信任锚定在 install.sh 的投递路径上；HTTPS 部署下由 TLS 保障。
+- install 通道（install.sh、agent 二进制）的完整性由 **SHA256 校验**保障（§11）：release 钉版模式下信任锚定在 GitHub release 资产与 `checksums.txt`（HTTPS 投递）；面板托管模式在 HTTP 部署下明文传输，校验和由面板注入脚本，等价于把信任锚定在 install.sh 的投递路径上，HTTPS 部署下由 TLS 保障。
 - Reality 私钥永不出服务器（§7）；VLESS Encryption 的 decryption 私钥侧同理（§15）。
 - Agent 能力面收敛：只执行 xray 配置落地、服务重启、状态上报、自卸载，不接受任意命令。
 

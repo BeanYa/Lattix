@@ -22,13 +22,15 @@ type Dispatcher struct {
 	st  *store.Store
 	req ws.Requester
 
+	panelVersion string // 面板自身版本（构建注入），hello 兼容窗口判定用
+
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
 }
 
 // New 创建 Dispatcher。
-func New(st *store.Store, req ws.Requester) *Dispatcher {
-	return &Dispatcher{st: st, req: req, flushMu: make(map[int64]*sync.Mutex)}
+func New(st *store.Store, req ws.Requester, panelVersion string) *Dispatcher {
+	return &Dispatcher{st: st, req: req, panelVersion: panelVersion, flushMu: make(map[int64]*sync.Mutex)}
 }
 
 // Enqueue 将命令写入 commands 表（queued）并尽力立即投递；离线则滞留，待重连补发（§2）。
@@ -51,17 +53,26 @@ const maxCommandAttempts = 10
 
 // Flush 投递该服务器全部待发命令；agent 离线时停止并滞留（§2 离线排队）。
 // attempts 超过 maxCommandAttempts 的命令标记 failed（死信），不再重发。
+// agent 落后出兼容窗口（upgrade_needed）时仅放行 upgrade_agent / uninstall，
+// 其余命令滞留 queued，待 agent 升级后随正常 Flush 补发。
 func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 	lock := d.serverLock(serverID)
 	lock.Lock()
 	defer lock.Unlock()
 
+	upgradeOnly := false
+	if srv, err := d.st.ServerByID(ctx, serverID); err == nil && srv.UpgradeNeeded {
+		upgradeOnly = true
+	}
 	cmds, err := d.st.QueuedCommands(ctx, serverID)
 	if err != nil {
 		log.Printf("dispatch: flush server %d: %v", serverID, err)
 		return
 	}
 	for _, c := range cmds {
+		if upgradeOnly && c.Type != shared.TypeUpgradeAgent && c.Type != shared.TypeUninstall {
+			continue // 兼容窗口外：常规命令滞留，待 agent 升级后补发
+		}
 		if c.Attempts >= maxCommandAttempts {
 			log.Printf("dispatch: command %d dead-lettered after %d attempts", c.ID, c.Attempts)
 			if err := d.st.MarkCommandFailed(ctx, c.ID); err != nil {
@@ -91,6 +102,15 @@ func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayloa
 	if err != nil {
 		return 0, shared.HelloResult{}, fmt.Errorf("unknown token")
 	}
+	// 兼容窗口（§18）：主版本不一致拒绝连接；落后超窗口置 upgrade_needed 标志。
+	if reason, needed := evaluateAgentVersion(d.panelVersion, p.AgentVersion); reason != "" {
+		return 0, shared.HelloResult{}, fmt.Errorf("%s", reason)
+	} else if err := d.st.SetServerUpgradeNeeded(ctx, srv.ID, needed); err != nil {
+		log.Printf("dispatch: set upgrade_needed server %d: %v", srv.ID, err)
+	} else if needed {
+		log.Printf("dispatch: server %d agent %s 落后面板 %s 超出兼容窗口，仅放行升级/卸载命令",
+			srv.ID, p.AgentVersion, d.panelVersion)
+	}
 	token := srv.Token
 	if srv.LastSeenAt == nil {
 		// bootstrap 状态：换发长期凭证（bootstrap 失效）。
@@ -105,7 +125,7 @@ func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayloa
 	if srv.Address != "" {
 		remoteAddr = srv.Address
 	}
-	if err := d.st.TouchServer(ctx, srv.ID, p.XrayVersion, remoteAddr); err != nil {
+	if err := d.st.TouchServer(ctx, srv.ID, p.XrayVersion, p.AgentVersion, remoteAddr); err != nil {
 		log.Printf("dispatch: touch server %d: %v", srv.ID, err)
 	}
 	return srv.ID, shared.HelloResult{ServerID: srv.ID, Token: token}, nil

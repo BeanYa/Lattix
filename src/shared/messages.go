@@ -1,5 +1,12 @@
 // Package shared 定义 Backend 与 Agent 之间控制通道的协议类型（设计文档 §5），
 // 以及两端共用的虚拟配置类型（§7），保证协议两端类型一致。
+//
+// 协议演化规则（兼容窗口内硬性约束，CI 经 scripts/check-protocol-compat.sh 强制）：
+//   - 已有 TypeXxx 常量值不得修改；
+//   - 已有 struct 的已有字段/json tag 不得删除或修改，只允许新增字段（带 omitempty）；
+//   - 新语义走新字段或新消息类型（如 apply_node_v2），不改旧载荷语义；
+//   - 废弃字段标注 deprecated 但窗口期内保留；
+//   - 两端均不得使用 json.Decoder.DisallowUnknownFields（忽略未知字段是新旧互跑的基础）。
 package shared
 
 import "encoding/json"
@@ -13,16 +20,17 @@ type Envelope struct {
 
 // 消息类型（§5）。
 const (
-	TypeHello       = "hello"        // agent→panel 首连认证
-	TypeApplyNode   = "apply_node"   // panel→agent 下发节点
-	TypeRemoveNode  = "remove_node"  // panel→agent 删除节点
-	TypeAddUser     = "add_user"     // panel→agent 热加入一个用户
-	TypeRemoveUser  = "remove_user"  // panel→agent 热移除一个用户
-	TypeApplyResult = "apply_result" // agent→panel 上报执行结果
-	TypeUninstall   = "uninstall"    // panel→agent 卸载 agent（先回执再自毁）
-	TypeUpgradeXray = "upgrade_xray" // panel→agent 升级 xray 版本（§18）
-	TypeTelemetry   = "telemetry"    // agent→panel 周期遥测（流量 + 主机指标，§13）
-	TypeDriftReport = "drift_report" // agent→panel 配置漂移状态变化（§17 reconcile）
+	TypeHello        = "hello"         // agent→panel 首连认证
+	TypeApplyNode    = "apply_node"    // panel→agent 下发节点
+	TypeRemoveNode   = "remove_node"   // panel→agent 删除节点
+	TypeAddUser      = "add_user"      // panel→agent 热加入一个用户
+	TypeRemoveUser   = "remove_user"   // panel→agent 热移除一个用户
+	TypeApplyResult  = "apply_result"  // agent→panel 上报执行结果
+	TypeUninstall    = "uninstall"     // panel→agent 卸载 agent（先回执再自毁）
+	TypeUpgradeXray  = "upgrade_xray"  // panel→agent 升级 xray 版本（§18）
+	TypeUpgradeAgent = "upgrade_agent" // panel→agent 升级 agent 自身（下载校验后自替换，退出由 systemd 拉起）
+	TypeTelemetry    = "telemetry"     // agent→panel 周期遥测（流量 + 主机指标，§13）
+	TypeDriftReport  = "drift_report"  // agent→panel 配置漂移状态变化（§17 reconcile）
 )
 
 // HelloPayload 是 hello 的载荷：token（bootstrap 或长期）、agent 版本、
@@ -127,3 +135,16 @@ type DriftPayload struct {
 type UpgradeXrayPayload struct {
 	Version string `json:"version"`
 }
+
+// UpgradeAgentPayload 是 upgrade_agent 的载荷：
+// agent 从 ReleaseBase/<version>/ 下载 lattix-agent-linux-<arch> 与 checksums.txt，
+// 校验 SHA256 后原子替换自身二进制并退出（systemd 拉起即完成升级，§18）。
+// ReleaseBase 为空时 agent 使用构建时注入的默认仓库。
+type UpgradeAgentPayload struct {
+	Version     string `json:"version"`                // 目标版本 tag（vX.Y.Z）
+	ReleaseBase string `json:"release_base,omitempty"` // 形如 https://github.com/<org>/<repo>/releases/download
+}
+
+// ErrUnsupportedPrefix 是 agent 对不认识的命令类型回执的错误前缀（协议演化规则）：
+// 面板收到该前缀的失败即终态（命令 failed），不再重试——重试也不会变得被支持。
+const ErrUnsupportedPrefix = "unsupported command"
