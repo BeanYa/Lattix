@@ -188,14 +188,17 @@ jobs:
           echo ">> 上一 tag: $PREV_TAG"
           mkdir -p prev
           # 新格式（tarball）优先；旧格式（裸二进制）兜底——v0.0.3 之前的 release 只有裸二进制。
+          # 注意：多 -p 部分匹配时 gh 仍退出 0（只下到的 checksums.txt），故须再验文件存在。
           if gh release download "$PREV_TAG" \
-              -p 'lattix-agent-linux-amd64.tar.gz' -p 'checksums.txt' -D prev --clobber; then
+              -p 'lattix-agent-linux-amd64.tar.gz' -p 'checksums.txt' -D prev --clobber \
+              && [[ -f prev/lattix-agent-linux-amd64.tar.gz ]]; then
             (cd prev && grep 'lattix-agent-linux-amd64\.tar\.gz$' checksums.txt | sha256sum -c -)
             tar -C prev -xzf prev/lattix-agent-linux-amd64.tar.gz
             mv prev/lattix-agent/lattix-agent prev/lattix-agent-linux-amd64
             echo "skip=0" >> "$GITHUB_OUTPUT"
           elif gh release download "$PREV_TAG" \
-              -p 'lattix-agent-linux-amd64' -p 'checksums.txt' -D prev --clobber; then
+              -p 'lattix-agent-linux-amd64' -p 'checksums.txt' -D prev --clobber \
+              && [[ -f prev/lattix-agent-linux-amd64 ]]; then
             (cd prev && grep 'lattix-agent-linux-amd64$' checksums.txt | sha256sum -c -)
             echo "skip=0" >> "$GITHUB_OUTPUT"
           else
