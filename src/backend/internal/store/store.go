@@ -160,6 +160,21 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("migrate users.disabled: %w", err)
 		}
 	}
+	// 轻量迁移：servers.learned_addr / nic_addresses（§9 公网地址候选：
+	// learned_addr 为每次 hello 按 WS 对端（受信回环代理时取 XFF 首 IP）学习的拨入地址，
+	// nic_addresses 为 agent 上报的网卡非回环地址 JSON 数组）。
+	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN learned_addr TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate servers.learned_addr: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN nic_addresses TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate servers.nic_addresses: %w", err)
+		}
+	}
 	// 一次性迁移（PRAGMA user_version 0→1）：user_nodes 引入前，成员关系隐含为
 	// "全部用户 ∈ 全部节点"（§8）；为不破坏存量订阅，迁移时补全关联。
 	// 此后新建用户/节点默认全关（§16）。

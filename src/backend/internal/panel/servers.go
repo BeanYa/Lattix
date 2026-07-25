@@ -31,6 +31,8 @@ type serverDTO struct {
 	AgentVersion  string             `json:"agent_version"`  // hello 上报的 agent 版本
 	UpgradeNeeded bool               `json:"upgrade_needed"` // agent 落后出兼容窗口，需升级（§18）
 	Address       string             `json:"address"`        // 公网地址（hello 记录，订阅用，§9）
+	LearnedAddr   string             `json:"learned_addr"`   // 拨入学习地址（受信回环代理时取 XFF 首 IP，§9），编辑地址时的内置候选
+	NICAddresses  []string           `json:"nic_addresses"`  // agent 上报的网卡非回环地址（§9），编辑地址时的内置候选
 	ConfigDrift   bool               `json:"config_drift"`   // 配置漂移标志（§17）
 	MachineType   string             `json:"machine_type"`   // direct|nat（§21）
 	AllowedPorts  []shared.PortRange `json:"allowed_ports"`  // NAT 可用端口段（§21），空 = 无段（仅出口档/direct）
@@ -46,6 +48,15 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 	if ranges == nil {
 		ranges = []shared.PortRange{}
 	}
+	var nicAddrs []string
+	if srv.NICAddresses != "" {
+		if err := json.Unmarshal([]byte(srv.NICAddresses), &nicAddrs); err != nil {
+			nicAddrs = nil // 存储值损坏不阻断列表（异常留在 servers 表）
+		}
+	}
+	if nicAddrs == nil {
+		nicAddrs = []string{}
+	}
 	return serverDTO{
 		ID:            srv.ID,
 		Alias:         srv.Alias,
@@ -55,6 +66,8 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		AgentVersion:  srv.AgentVersion,
 		UpgradeNeeded: srv.UpgradeNeeded,
 		Address:       srv.Address,
+		LearnedAddr:   srv.LearnedAddr,
+		NICAddresses:  nicAddrs,
 		ConfigDrift:   srv.ConfigDrift,
 		MachineType:   srv.MachineType,
 		AllowedPorts:  ranges,

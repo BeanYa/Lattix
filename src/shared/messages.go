@@ -37,12 +37,15 @@ const (
 )
 
 // HelloPayload 是 hello 的载荷：token（bootstrap 或长期）、agent 版本、
-// xray 版本与运行状态（§5、§13）。
+// xray 版本与运行状态（§5、§13），以及本机网卡的非回环地址（§9 公网地址候选）。
 type HelloPayload struct {
 	Token        string `json:"token"`
 	AgentVersion string `json:"agent_version"`
 	XrayVersion  string `json:"xray_version"`
 	XrayRunning  bool   `json:"xray_running"`
+	// NICAddresses 是 agent 本机网卡的非回环 IP（v4/v6），面板据此提供公网地址候选；
+	// 旧版 agent 不上报（omitempty），面板兼容为空。
+	NICAddresses []string `json:"nic_addresses,omitempty"`
 }
 
 // HelloResult 是 panel 对 hello 的响应：bootstrap token 在此换发长期凭证（§11）。

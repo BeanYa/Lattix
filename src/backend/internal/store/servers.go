@@ -28,6 +28,8 @@ type Server struct {
 	AgentVersion  string // hello 上报的 agent 版本（§18 升级管理）
 	UpgradeNeeded bool   // agent 落后出兼容窗口：暂停常规命令下发，仅放行 upgrade_agent/uninstall
 	Address       string // 公网地址（hello 时按 WS RemoteAddr 记录，订阅用，§9）
+	LearnedAddr   string // 每次 hello 学习的拨入地址（受信回环代理时取 XFF 首 IP，§9），仅作候选不覆盖 Address
+	NICAddresses  string // agent 上报的网卡非回环地址 JSON 数组（§9 公网地址候选）；空串 = 无
 	ConfigDrift   bool   // 配置漂移标志（§17，agent drift_report 驱动）
 	MachineType   string // direct|nat（§21）
 	AllowedPorts  string // NAT 可用端口段 JSON（shared.PortRange 数组，§21）；空串 = 无段
@@ -35,13 +37,13 @@ type Server struct {
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, agent_upgrade_needed, address, config_drift, machine_type, allowed_ports, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, agent_upgrade_needed, address, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
 	var lastSeen sql.NullTime
 	var xrayVer, agentVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.UpgradeNeeded, &srv.Address, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.UpgradeNeeded, &srv.Address, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -133,11 +135,19 @@ func (s *Store) UpdateServerAllowedPorts(ctx context.Context, id int64, allowedP
 	return err
 }
 
-// TouchServer 更新 last_seen_at、xray 版本与 agent 版本（hello 携带，§13）及公网地址（RemoteAddr，§9）。
-func (s *Store) TouchServer(ctx context.Context, id int64, xrayVersion, agentVersion, address string) error {
+// TouchServer 更新 last_seen_at、xray 版本与 agent 版本（hello 携带，§13）及公网地址（§9）：
+// address 为生效公网地址（管理员已指定时与库中一致），learnedAddr 为本次拨入学习的地址，
+// nicAddrs 为 agent 上报的网卡非回环地址 JSON 数组（空串 = 本次未上报，保留旧值）。
+func (s *Store) TouchServer(ctx context.Context, id int64, xrayVersion, agentVersion, address, learnedAddr, nicAddrs string) error {
+	if nicAddrs == "" {
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE servers SET last_seen_at = CURRENT_TIMESTAMP, xray_version = ?, agent_version = ?, address = ?, learned_addr = ? WHERE id = ?`,
+			xrayVersion, agentVersion, address, learnedAddr, id)
+		return err
+	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE servers SET last_seen_at = CURRENT_TIMESTAMP, xray_version = ?, agent_version = ?, address = ? WHERE id = ?`,
-		xrayVersion, agentVersion, address, id)
+		`UPDATE servers SET last_seen_at = CURRENT_TIMESTAMP, xray_version = ?, agent_version = ?, address = ?, learned_addr = ?, nic_addresses = ? WHERE id = ?`,
+		xrayVersion, agentVersion, address, learnedAddr, nicAddrs, id)
 	return err
 }
 

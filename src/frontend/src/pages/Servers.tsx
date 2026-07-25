@@ -44,6 +44,11 @@ function formatMetrics(s: Server): string {
   return `L ${m.load1.toFixed(2)} · CPU ${Math.round(m.cpu_percent)}% · MEM ${memPct}%`
 }
 
+// 内置公网地址候选（§9）：拨入学习地址 + agent 上报的网卡非回环地址，去重。
+function addrCandidates(s: Server): string[] {
+  return [...new Set([s.learned_addr, ...s.nic_addresses].filter(Boolean))]
+}
+
 // 可用端口动态行（§21）：每行一个文本输入，支持 10000 / 10001-10010 / 20001-20010:10001-10010。
 function PortRowsEditor({
   rows,
@@ -122,6 +127,8 @@ export default function Servers() {
   const [deleting, setDeleting] = useState(false)
   const [editTarget, setEditTarget] = useState<Server | null>(null)
   const [editAddress, setEditAddress] = useState('')
+  const [editAddrMode, setEditAddrMode] = useState<'builtin' | 'custom'>('custom')
+  const [editAddrChoice, setEditAddrChoice] = useState('')
   const [editPortRows, setEditPortRows] = useState<string[]>([''])
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
@@ -236,6 +243,14 @@ export default function Servers() {
   const onOpenEdit = (s: Server) => {
     setEditTarget(s)
     setEditAddress(s.address)
+    const candidates = addrCandidates(s)
+    if (candidates.includes(s.address)) {
+      setEditAddrMode('builtin')
+      setEditAddrChoice(s.address)
+    } else {
+      setEditAddrMode('custom')
+      setEditAddrChoice(candidates[0] ?? '')
+    }
     setEditPortRows(
       s.allowed_ports.length > 0 ? s.allowed_ports.map(formatPortRange) : [''],
     )
@@ -248,8 +263,10 @@ export default function Servers() {
       return
     }
     setEditError('')
+    // 内置地址 = 候选下拉选中值；自定义 = 文本框输入。
+    const finalAddress = editAddrMode === 'builtin' ? editAddrChoice : editAddress.trim()
     const isNat = editTarget.machine_type === 'nat'
-    if (isNat && !editAddress.trim()) {
+    if (isNat && !finalAddress) {
       setEditError('NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）')
       return
     }
@@ -265,9 +282,9 @@ export default function Servers() {
     setEditSaving(true)
     try {
       if (isNat) {
-        await api.updateServerPorts(editTarget.id, editAddress, ranges)
+        await api.updateServerPorts(editTarget.id, finalAddress, ranges)
       } else {
-        await api.updateServerAddress(editTarget.id, editAddress)
+        await api.updateServerAddress(editTarget.id, finalAddress)
       }
       setEditTarget(null)
       load()
@@ -330,6 +347,8 @@ export default function Servers() {
       setDeleting(false)
     }
   }
+
+  const editCandidates = editTarget ? addrCandidates(editTarget) : []
 
   return (
     <div className="space-y-4">
@@ -555,21 +574,61 @@ export default function Servers() {
             <DialogDescription>
               {editTarget?.machine_type === 'nat'
                 ? `修改「${editTarget?.alias}」的公网地址与可用端口段（NAT 类型地址必填；端口段收窄时存量节点/链跳端口不得越界）。机器类型建后不可互转。`
-                : `修改「${editTarget?.alias}」的公网地址，订阅中节点地址随之更新；留空则下次 agent 连接时按拨入地址重新自动学习。`}
+                : `修改「${editTarget?.alias}」的公网地址，订阅中节点地址随之更新。内置地址来自 agent 上报的网卡地址与拨入学习地址；自定义留空则下次 agent 连接时按拨入地址重新自动学习。`}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onUpdateAddress} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="editAddress">
-                公网地址{editTarget?.machine_type === 'nat' ? '（必填）' : ''}
-              </Label>
-              <Input
-                id="editAddress"
-                value={editAddress}
-                onChange={(e) => setEditAddress(e.target.value)}
-                placeholder="例如：1.2.3.4 或 hk-01.example.com"
-                autoFocus
-              />
+              <Label>公网地址{editTarget?.machine_type === 'nat' ? '（必填）' : ''}</Label>
+              <Select
+                value={editAddrMode}
+                onValueChange={(v) => v && setEditAddrMode(v as 'builtin' | 'custom')}
+                items={[
+                  { value: 'builtin', label: '内置地址（agent 上报）' },
+                  { value: 'custom', label: '自定义' },
+                ]}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="builtin">内置地址（agent 上报）</SelectItem>
+                  <SelectItem value="custom">自定义</SelectItem>
+                </SelectContent>
+              </Select>
+              {editAddrMode === 'builtin' ? (
+                editCandidates.length > 0 ? (
+                  <Select
+                    value={editAddrChoice}
+                    onValueChange={(v) => v && setEditAddrChoice(v)}
+                    items={editCandidates.map((c) => ({ value: c, label: c }))}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {editCandidates.map((c) => (
+                        <SelectItem key={c} value={c}>
+                          {c}
+                          {c === editTarget?.learned_addr ? '（拨入学习）' : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    暂无内置地址候选：agent 尚未上报网卡地址（上线后自动收集），请改用自定义。
+                  </p>
+                )
+              ) : (
+                <Input
+                  id="editAddress"
+                  value={editAddress}
+                  onChange={(e) => setEditAddress(e.target.value)}
+                  placeholder="例如：1.2.3.4 或 hk-01.example.com"
+                  autoFocus
+                />
+              )}
             </div>
             {editTarget?.machine_type === 'nat' && (
               <div className="space-y-2">
@@ -583,7 +642,7 @@ export default function Servers() {
             )}
             {editError && <p className="text-sm text-destructive">{editError}</p>}
             <DialogFooter>
-              <Button type="submit" disabled={editSaving}>
+              <Button type="submit" disabled={editSaving || (editAddrMode === 'builtin' && !editAddrChoice)}>
                 {editSaving ? '保存中…' : '保存'}
               </Button>
             </DialogFooter>

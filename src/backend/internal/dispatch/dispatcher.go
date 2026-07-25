@@ -152,10 +152,18 @@ func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayloa
 			return 0, shared.HelloResult{}, err
 		}
 	}
+	learnedAddr := remoteAddr
 	if srv.Address != "" {
 		remoteAddr = srv.Address
 	}
-	if err := d.st.TouchServer(ctx, srv.ID, p.XrayVersion, p.AgentVersion, remoteAddr); err != nil {
+	// 网卡地址候选（§9）：agent 上报时持久化（旧版 agent 不上报则保留旧值）。
+	var nicAddrs string
+	if len(p.NICAddresses) > 0 {
+		if b, err := json.Marshal(p.NICAddresses); err == nil {
+			nicAddrs = string(b)
+		}
+	}
+	if err := d.st.TouchServer(ctx, srv.ID, p.XrayVersion, p.AgentVersion, remoteAddr, learnedAddr, nicAddrs); err != nil {
 		log.Printf("dispatch: touch server %d: %v", srv.ID, err)
 	}
 	return srv.ID, shared.HelloResult{ServerID: srv.ID, Token: token}, nil

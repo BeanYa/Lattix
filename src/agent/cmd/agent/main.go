@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"sync"
 	"time"
 
@@ -115,7 +116,8 @@ func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, tel
 		return err
 	})
 
-	// 首连认证（§5）：携带 token、agent 版本、xray 版本与运行状态（§13）。
+	// 首连认证（§5）：携带 token、agent 版本、xray 版本与运行状态（§13），
+	// 以及本机网卡的非回环地址（§9 公网地址候选，面板编辑地址时下拉可选）。
 	xrayVer, xrayRunning := mgr.Version()
 	helloID := fmt.Sprintf("hello-%d", time.Now().UnixNano())
 	hello := shared.Envelope{
@@ -126,6 +128,7 @@ func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, tel
 			AgentVersion: version,
 			XrayVersion:  xrayVer,
 			XrayRunning:  xrayRunning,
+			NICAddresses: nonLoopbackAddrs(),
 		}),
 	}
 	if err := sc.writeJSON(hello); err != nil {
@@ -386,4 +389,37 @@ func mustJSON(v any) json.RawMessage {
 		panic(err)
 	}
 	return b
+}
+
+// nonLoopbackAddrs 枚举本机网卡的非回环 IP（v4/v6，跳过 down 的接口），
+// 随 hello 上报作为面板公网地址候选（§9）。采集失败返回 nil，不阻断连接。
+func nonLoopbackAddrs() []string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			var ip net.IP
+			switch v := a.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() {
+				continue
+			}
+			out = append(out, ip.String())
+		}
+	}
+	return out
 }

@@ -33,6 +33,8 @@ export interface Server {
   agent_version: string | null
   upgrade_needed: boolean
   address: string
+  learned_addr: string
+  nic_addresses: string[]
   config_drift: boolean
   machine_type: MachineType
   allowed_ports: PortRange[]

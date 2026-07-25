@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -52,10 +53,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	remoteHost := r.RemoteAddr
-	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		remoteHost = host
-	}
+	remoteHost := clientIP(r)
 	serverID, result, err := h.Auth.AuthenticateHello(r.Context(), hp, remoteHost)
 	if err != nil {
 		log.Printf("ws: hello auth failed from %s: %v", r.RemoteAddr, err)
@@ -108,6 +106,24 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // 确保 Hub 满足 http.Handler。
 var _ http.Handler = (*Hub)(nil)
+
+// clientIP 取 WS 对端 IP（自动学习公网地址的依据，§9）。当对端是受信回环代理
+// （panel 前置本机 nginx/caddy 反代）时，改用 X-Forwarded-For 的首个 IP；
+// 非回环对端直连场景不信任该头，防止伪造。
+func clientIP(r *http.Request) string {
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = h
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if first, _, _ := strings.Cut(xff, ","); strings.TrimSpace(first) != "" {
+				return strings.TrimSpace(first)
+			}
+		}
+	}
+	return host
+}
 
 func mustJSON(v any) json.RawMessage {
 	b, err := json.Marshal(v)
