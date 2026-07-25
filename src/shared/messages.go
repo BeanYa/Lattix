@@ -31,6 +31,9 @@ const (
 	TypeUpgradeAgent = "upgrade_agent" // panel→agent 升级 agent 自身（下载校验后自替换，退出由 systemd 拉起）
 	TypeTelemetry    = "telemetry"     // agent→panel 周期遥测（流量 + 主机指标，§13）
 	TypeDriftReport  = "drift_report"  // agent→panel 配置漂移状态变化（§17 reconcile）
+
+	TypeApplyChainHop  = "apply_chain_hop"  // panel→agent 下发链跳配置件（portal/bridge/forward，§21）
+	TypeRemoveChainHop = "remove_chain_hop" // panel→agent 删除链跳配置件（删链逐跳反向下发，§21）
 )
 
 // HelloPayload 是 hello 的载荷：token（bootstrap 或长期）、agent 版本、
@@ -50,11 +53,13 @@ type HelloResult struct {
 
 // ApplyNodePayload 是 apply_node 的载荷：虚拟配置模板 + 全量用户 UUID 列表（§8）。
 // DestCandidates 是面板内置的 dest 白名单（§6 预检 fallback，随版本更新，尽量丰富）。
+// PortCandidates 是受限直连 NAT 机上节点端口的段内候选（§21，Port 为 0 时由 Agent 依次挑选）。
 type ApplyNodePayload struct {
 	NodeID         int64         `json:"node_id"`
 	Config         VirtualConfig `json:"config"`
 	UserUUIDs      []string      `json:"user_uuids"`
 	DestCandidates []string      `json:"dest_candidates,omitempty"`
+	PortCandidates []int         `json:"port_candidates,omitempty"`
 }
 
 // RemoveNodePayload 是 remove_node 的载荷。
@@ -92,11 +97,15 @@ type UninstallPayload struct {
 }
 
 // ApplyResultPayload 是 apply_result 的载荷：成功返回 RealizedConfig，失败返回 Error（§5）。
+// HopID/Kind 为链跳配置件（apply_chain_hop/remove_chain_hop）回执（§21）：
+// portal/forward 复用 RealizedConfig 的 port/public_key 字段上报生效值。
 type ApplyResultPayload struct {
 	NodeID         int64           `json:"node_id"`
 	OK             bool            `json:"ok"`
 	RealizedConfig *RealizedConfig `json:"realized_config,omitempty"`
 	Error          string          `json:"error,omitempty"`
+	HopID          int64           `json:"hop_id,omitempty"`
+	Kind           string          `json:"kind,omitempty"`
 }
 
 // TelemetryPayload 是 telemetry 的载荷（§13 遥测，周期上报，无需回执）：
@@ -144,6 +153,64 @@ type UpgradeXrayPayload struct {
 type UpgradeAgentPayload struct {
 	Version     string `json:"version"`                // 目标版本 tag（vX.Y.Z）
 	ReleaseBase string `json:"release_base,omitempty"` // 形如 https://github.com/<org>/<repo>/releases/download
+}
+
+// ApplyChainHopPayload 是 apply_chain_hop 的载荷（§21.1）：
+// 按 Kind 携带对应配置件规格，Agent 渲染并入受管 config.json。
+// DestCandidates 同 ApplyNodePayload（portal 的 Reality dest 预检白名单，§6）。
+type ApplyChainHopPayload struct {
+	ChainID        int64        `json:"chain_id"`
+	HopID          int64        `json:"hop_id"`
+	Kind           string       `json:"kind"` // portal|bridge|forward
+	Portal         *PortalSpec  `json:"portal,omitempty"`
+	Bridge         *BridgeSpec  `json:"bridge,omitempty"`
+	Forward        *ForwardSpec `json:"forward,omitempty"`
+	DestCandidates []string     `json:"dest_candidates,omitempty"`
+}
+
+// PortalSpec 是反向链上游机的配置件（§21.1）：
+// VLESS+Reality interconn inbound + reverse portal；密钥对由 Agent 生成随回执上报，
+// UUID/short_id 由面板下发，dest 走 §6 预检+白名单。
+type PortalSpec struct {
+	Tag            string   `json:"tag"`
+	TunnelDomain   string   `json:"tunnel_domain"`
+	Port           int      `json:"port"` // 0 = 自动（从 PortCandidates 挑空闲）
+	PortCandidates []int    `json:"port_candidates,omitempty"`
+	TunnelUUID     string   `json:"tunnel_uuid"`
+	ShortID        string   `json:"short_id"`
+	Dest           string   `json:"dest"`
+	ServerNames    []string `json:"server_names"`
+}
+
+// BridgeSpec 是反向链下游机（仅出口档 NAT）的配置件（§21.1）：
+// reverse bridge + VLESS+Reality interconn outbound + routing（bridge → freedom 拨回环业务 inbound）。
+// 凭证（公钥/端口/UUID/shortID/SNI）来自对应 portal 的回执与下发值。
+type BridgeSpec struct {
+	TunnelDomain  string `json:"tunnel_domain"`
+	PortalAddress string `json:"portal_address"`
+	PortalPort    int    `json:"portal_port"`
+	TunnelUUID    string `json:"tunnel_uuid"`
+	PublicKey     string `json:"public_key"`
+	ShortID       string `json:"short_id"`
+	ServerName    string `json:"server_name"`
+}
+
+// ForwardSpec 是入口/中间跳的配置件（§21.1）：dokodemo-door 透传 inbound + 路由。
+// 直连段：freedom 拨下一跳 TargetAddress:TargetPort（公网侧端口）；
+// 反向段：经 ViaTunnelDomain 走 reverse portal，目标为下一跳回环地址与监听端口。
+type ForwardSpec struct {
+	Tag             string `json:"tag"`
+	Port            int    `json:"port"` // 0 = 自动（从 PortCandidates 挑空闲）
+	PortCandidates  []int  `json:"port_candidates,omitempty"`
+	TargetAddress   string `json:"target_address"`
+	TargetPort      int    `json:"target_port"`
+	ViaTunnelDomain string `json:"via_tunnel_domain,omitempty"`
+}
+
+// RemoveChainHopPayload 是 remove_chain_hop 的载荷（§21.1）：删链逐跳反向下发。
+type RemoveChainHopPayload struct {
+	HopID int64  `json:"hop_id"`
+	Kind  string `json:"kind"` // portal|bridge|forward
 }
 
 // ErrUnsupportedPrefix 是 agent 对不认识的命令类型回执的错误前缀（协议演化规则）：

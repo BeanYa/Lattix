@@ -11,6 +11,13 @@ import (
 // ErrNotFound 表示查询的行不存在。
 var ErrNotFound = errors.New("store: not found")
 
+// 机器类型（§21 NAT 两档）：direct = 独立 IP；nat = NAT（allowed_ports 非空 = 受限直连，
+// 留空 = 仅出口档）。建后不允许互转。
+const (
+	MachineTypeDirect = "direct"
+	MachineTypeNAT    = "nat"
+)
+
 // Server 是 servers 表的一行（§4）。
 type Server struct {
 	ID            int64
@@ -22,17 +29,19 @@ type Server struct {
 	UpgradeNeeded bool   // agent 落后出兼容窗口：暂停常规命令下发，仅放行 upgrade_agent/uninstall
 	Address       string // 公网地址（hello 时按 WS RemoteAddr 记录，订阅用，§9）
 	ConfigDrift   bool   // 配置漂移标志（§17，agent drift_report 驱动）
+	MachineType   string // direct|nat（§21）
+	AllowedPorts  string // NAT 可用端口段 JSON（shared.PortRange 数组，§21）；空串 = 无段
 	CreatedAt     time.Time
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, agent_upgrade_needed, address, config_drift, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, agent_upgrade_needed, address, config_drift, machine_type, allowed_ports, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
 	var lastSeen sql.NullTime
 	var xrayVer, agentVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.UpgradeNeeded, &srv.Address, &srv.ConfigDrift, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.UpgradeNeeded, &srv.Address, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -46,10 +55,12 @@ func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 }
 
 // CreateServer 插入一台服务器，token 为一次性 bootstrap token（§11），返回服务器 id。
-// address 为管理员指定的公网地址（§4）；空串表示留待 hello 时按 RemoteAddr 自动学习。
-func (s *Store) CreateServer(ctx context.Context, alias, address, bootstrapToken string) (int64, error) {
+// address 为管理员指定的公网地址（§4）；空串表示留待 hello 时按 RemoteAddr 自动学习
+// （NAT 类型强制必填，由 panel 校验）。machineType/allowedPorts 为 NAT 元数据（§21，面板侧，不下发 agent）。
+func (s *Store) CreateServer(ctx context.Context, alias, address, bootstrapToken, machineType, allowedPorts string) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO servers (alias, address, token) VALUES (?, ?, ?)`, alias, address, bootstrapToken)
+		`INSERT INTO servers (alias, address, token, machine_type, allowed_ports) VALUES (?, ?, ?, ?, ?)`,
+		alias, address, bootstrapToken, machineType, allowedPorts)
 	if err != nil {
 		return 0, fmt.Errorf("insert server: %w", err)
 	}
@@ -108,10 +119,17 @@ func (s *Store) RotateServerToken(ctx context.Context, id int64, newToken string
 }
 
 // UpdateServerAddress 由管理员修改服务器公网地址（§4"地址变更由管理员修改"）；
-// 置空则下次 hello 时按 RemoteAddr 重新自动学习。
+// 置空则下次 hello 时按 RemoteAddr 重新自动学习（NAT 类型禁止置空，由 panel 校验）。
 func (s *Store) UpdateServerAddress(ctx context.Context, id int64, address string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE servers SET address = ? WHERE id = ?`, address, id)
+	return err
+}
+
+// UpdateServerAllowedPorts 修改 NAT 可用端口段（§21，JSON 串；收窄校验由 panel 负责）。
+func (s *Store) UpdateServerAllowedPorts(ctx context.Context, id int64, allowedPorts string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE servers SET allowed_ports = ? WHERE id = ?`, allowedPorts, id)
 	return err
 }
 
@@ -164,6 +182,9 @@ func (s *Store) DeleteServerCascade(ctx context.Context, id int64) error {
 		`DELETE FROM user_nodes WHERE node_id IN (SELECT id FROM nodes WHERE server_id = ?)`,
 		`DELETE FROM commands WHERE server_id = ?`,
 		`DELETE FROM nodes WHERE server_id = ?`,
+		// 链（§21）：删除该服务器的跳；不再有任何跳的链一并删除。
+		`DELETE FROM chain_hops WHERE server_id = ?`,
+		`DELETE FROM chains WHERE id NOT IN (SELECT DISTINCT chain_id FROM chain_hops)`,
 		`DELETE FROM servers WHERE id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {

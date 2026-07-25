@@ -200,13 +200,22 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if _, err := s.st.ServerByID(r.Context(), req.ServerID); err != nil {
+	srv, err := s.st.ServerByID(r.Context(), req.ServerID)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusBadRequest, "服务器不存在")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// 受限直连 NAT 机（allowed_ports 非空）：用户指定端口必须在段内（§21，400）；
+	// 留空则由 enqueueApply 把监听侧候选展开进 port_candidates 下发。
+	if req.Port != nil {
+		if err := checkPortInRanges(srv, *req.Port); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("端口 %d 不在该 NAT 服务器可用段内", *req.Port))
+			return
+		}
 	}
 	vc := buildVirtualConfig(req)
 	id, err := s.applyNewNode(r, req.ServerID, req.Port, vc)
@@ -294,6 +303,7 @@ func (s *Server) applyNewNode(r *http.Request, serverID int64, port *int, vc sha
 }
 
 // enqueueApply 节点进入 applying 并下发 apply_node（携带分配到该节点的用户 UUID §16 与 dest 白名单 §6）。
+// 受限直连 NAT 机（allowed_ports 非空）自动端口时把监听侧候选展开进 port_candidates（§21）。
 func (s *Server) enqueueApply(r *http.Request, serverID, nodeID int64, vc shared.VirtualConfig) error {
 	if err := s.st.SetNodeApplying(r.Context(), nodeID); err != nil {
 		return err
@@ -302,12 +312,20 @@ func (s *Server) enqueueApply(r *http.Request, serverID, nodeID int64, vc shared
 	if err != nil {
 		return err
 	}
-	_, err = s.disp.Enqueue(r.Context(), serverID, shared.TypeApplyNode, shared.ApplyNodePayload{
+	payload := shared.ApplyNodePayload{
 		NodeID:         nodeID,
 		Config:         vc,
 		UserUUIDs:      uuids,
 		DestCandidates: destCandidates,
-	})
+	}
+	if vc.Port == 0 {
+		if srv, err := s.st.ServerByID(r.Context(), serverID); err == nil {
+			if ranges, err := shared.ParsePortRanges(srv.AllowedPorts); err == nil && len(ranges) > 0 {
+				payload.PortCandidates = shared.ListenCandidates(ranges)
+			}
+		}
+	}
+	_, err = s.disp.Enqueue(r.Context(), serverID, shared.TypeApplyNode, payload)
 	return err
 }
 

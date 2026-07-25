@@ -32,12 +32,8 @@ func (s *Server) HandleLinks(w http.ResponseWriter, r *http.Request) {
 		nodes = nil // 有效停权态（§9/§16）：链接集合为空
 	}
 	links := []string{}
-	for _, n := range nodes {
-		var rc shared.RealizedConfig
-		if err := json.Unmarshal(n.RealizedConfig, &rc); err != nil {
-			continue
-		}
-		if link, ok := buildShareLink(n, rc, user.UUID); ok {
+	for _, it := range s.subscriptionItems(r, user, nodes) {
+		if link, ok := buildShareLink(it.node, it.rc, user.UUID); ok {
 			links = append(links, link)
 		}
 	}

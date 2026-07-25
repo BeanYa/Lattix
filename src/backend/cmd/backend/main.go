@@ -179,6 +179,8 @@ func main() {
 	hub.OnConnect = func(serverID int64) {
 		// agent 重连后重置并补发离线期间滞留的命令（§2）。
 		dispatcher.OnAgentConnect(context.Background(), serverID)
+		// 链 degraded 推导（§21.1）：重算受影响链，全部跳在线且跳 active 的恢复 active。
+		dispatcher.RecomputeChainsByServer(serverID)
 	}
 	hub.OnMessage = dispatcher.HandleMessage
 
@@ -187,6 +189,8 @@ func main() {
 	dispatcher.Alerter = notifier
 	hub.OnDisconnect = func(serverID int64) {
 		notifier.Notify(serverID, alert.EventServerOffline, "", "WS 连接断开，服务器离线")
+		// 链 degraded 推导（§21.1）：任一跳 server 离线 → degraded + chain_degraded 告警。
+		dispatcher.RecomputeChainsByServer(serverID)
 	}
 
 	// 面板管理 API（§10）。

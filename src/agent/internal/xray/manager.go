@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 
+	"lattix/agent/internal/state"
 	"lattix/shared"
 )
 
@@ -32,6 +33,8 @@ type Manager struct {
 
 	lastHash string // 最后一次由本 agent 落盘的配置哈希（§17 漂移检测基线）
 	drifted  bool   // 已检出外部漂移：下一次 loadConfig 以净化配置为基（§17）
+
+	chainPieces []state.ChainPiece // 链跳配置件落盘记录（§21.1，重启重建与重发幂等）
 
 	mu sync.Mutex // 串行化一切配置变更，避免并发写坏 config.json
 }
@@ -70,13 +73,14 @@ func (m *Manager) Version() (string, bool) {
 }
 
 // ApplyNode 落地一个节点（§6 流水线），成功返回实际生效值（§7）。
-func (m *Manager) ApplyNode(nodeID int64, vc shared.VirtualConfig, userUUIDs, destCandidates []string) (*shared.RealizedConfig, error) {
+// portCandidates 为受限直连 NAT 机的段内候选（§21，模板端口为 0 时按序挑选）。
+func (m *Manager) ApplyNode(nodeID int64, vc shared.VirtualConfig, userUUIDs, destCandidates []string, portCandidates []int) (*shared.RealizedConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	tag := shared.NodeTag(nodeID)
 	// 1. 填充模板占位符（§7）+ dest 预检（§6 步骤 2）
-	inbound, realized, err := m.fillTemplate(tag, vc, userUUIDs, destCandidates)
+	inbound, realized, err := m.fillTemplate(tag, vc, userUUIDs, destCandidates, portCandidates)
 	if err != nil {
 		return nil, err
 	}
@@ -281,10 +285,11 @@ func (m *Manager) restorePrev() {
 }
 
 // loadConfig 读取 config.json；不存在或损坏时以骨架重建（agent 独占管理，§6）。
+// 重建（缺失/损坏/漂移净化）均并入落盘的链 piece 记录（§21.1，与节点同等地位）。
 func (m *Manager) loadConfig() (fullConfig, error) {
 	b, err := os.ReadFile(m.configPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return m.skeleton(), nil
+		return m.mergePieces(m.skeleton()), nil
 	}
 	if err != nil {
 		return nil, err
@@ -296,10 +301,10 @@ func (m *Manager) loadConfig() (fullConfig, error) {
 		if rerr := os.Rename(m.configPath, broken); rerr != nil {
 			return nil, rerr
 		}
-		return m.skeleton(), nil
+		return m.mergePieces(m.skeleton()), nil
 	}
 	if m.drifted {
-		// §17 漂移修复：以骨架 + 受管节点 inbound 为基，丢弃外部改动的其他内容。
+		// §17 漂移修复：以骨架 + 受管节点 inbound + 链 piece 为基，丢弃外部改动的其他内容。
 		san := m.skeleton()
 		var kept []json.RawMessage
 		for _, raw := range fc.inbounds() {
@@ -309,7 +314,7 @@ func (m *Manager) loadConfig() (fullConfig, error) {
 		}
 		san.setInbounds(kept)
 		log.Printf("xray: 配置漂移修复，以净化配置为基（保留 %d 个节点 inbound）", len(kept))
-		return san, nil
+		return m.mergePieces(san), nil
 	}
 	return fc, nil
 }

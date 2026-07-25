@@ -21,6 +21,7 @@ const (
 	EventServerOffline = "server_offline" // WS 断开导致 online→offline（仅跃迁，重连不重复）
 	EventConfigDrift   = "config_drift"   // drift_report 上报漂移
 	EventNodeFailed    = "node_failed"    // apply 失败 / 死信导致节点置 failed
+	EventChainDegraded = "chain_degraded" // 链任一跳 server 离线导致 active→degraded（§21）
 )
 
 // debounceDefault 是默认防抖动窗口：同一服务器同一事件在该窗口内不重复发送。

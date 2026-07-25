@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { PlusIcon } from 'lucide-react'
+import { PlusIcon, XIcon } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
 import { Badge } from '@/components/ui/badge'
@@ -15,6 +15,13 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Table,
   TableBody,
   TableCell,
@@ -24,8 +31,9 @@ import {
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
+import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { useTimezone } from '@/lib/timezone'
-import type { Server } from '@/lib/types'
+import type { MachineType, PortRange, Server } from '@/lib/types'
 
 function formatMetrics(s: Server): string {
   const m = s.metrics
@@ -34,6 +42,65 @@ function formatMetrics(s: Server): string {
   }
   const memPct = m.mem_total > 0 ? Math.round((m.mem_used / m.mem_total) * 100) : 0
   return `L ${m.load1.toFixed(2)} · CPU ${Math.round(m.cpu_percent)}% · MEM ${memPct}%`
+}
+
+// 可用端口动态行（§21）：每行一个文本输入，支持 10000 / 10001-10010 / 20001-20010:10001-10010。
+function PortRowsEditor({
+  rows,
+  onChange,
+}: {
+  rows: string[]
+  onChange: (rows: string[]) => void
+}) {
+  const setRow = (i: number, value: string) => {
+    const next = rows.slice()
+    next[i] = value
+    onChange(next)
+  }
+  return (
+    <div className="space-y-2">
+      {rows.map((row, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <Input
+            value={row}
+            onChange={(e) => setRow(i, e.target.value)}
+            placeholder="10000 或 10001-10010 或 20001-20010:10001-10010"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={rows.length <= 1}
+            onClick={() => onChange(rows.filter((_, j) => j !== i))}
+          >
+            <XIcon />
+          </Button>
+        </div>
+      ))}
+      <Button type="button" variant="outline" size="sm" onClick={() => onChange([...rows, ''])}>
+        <PlusIcon />
+        添加端口段
+      </Button>
+    </div>
+  )
+}
+
+/** 解析并校验端口段文本行；全部留空返回空数组（仅出口档），非法返回错误文案。 */
+function parsePortRows(rows: string[]): { ranges: PortRange[] } | { error: string } {
+  const filled = rows.map((r) => r.trim()).filter(Boolean)
+  const ranges: PortRange[] = []
+  for (const row of filled) {
+    const r = parsePortRange(row)
+    if (!r) {
+      return { error: `端口段「${row}」格式非法：支持单端口 10000、范围 10001-10010、映射 20001-20010:10001-10010` }
+    }
+    ranges.push(r)
+  }
+  const err = validatePortRanges(ranges)
+  if (err) {
+    return { error: err }
+  }
+  return { ranges }
 }
 
 export default function Servers() {
@@ -46,6 +113,8 @@ export default function Servers() {
   const [alias, setAlias] = useState('')
   const [address, setAddress] = useState('')
   const [xrayVersion, setXrayVersion] = useState('latest')
+  const [machineType, setMachineType] = useState<MachineType>('direct')
+  const [portRows, setPortRows] = useState<string[]>([''])
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const [cmdView, setCmdView] = useState<{ title: string; command: string } | null>(null)
@@ -53,6 +122,7 @@ export default function Servers() {
   const [deleting, setDeleting] = useState(false)
   const [editTarget, setEditTarget] = useState<Server | null>(null)
   const [editAddress, setEditAddress] = useState('')
+  const [editPortRows, setEditPortRows] = useState<string[]>([''])
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
   const [upgradeTarget, setUpgradeTarget] = useState<Server | null>(null)
@@ -81,6 +151,8 @@ export default function Servers() {
       setAlias('')
       setAddress('')
       setXrayVersion('latest')
+      setMachineType('direct')
+      setPortRows([''])
       setCreateError('')
     }
   }
@@ -88,9 +160,34 @@ export default function Servers() {
   const onCreate = async (e: FormEvent) => {
     e.preventDefault()
     setCreateError('')
+    const body: {
+      alias: string
+      address?: string
+      xray_version?: string
+      machine_type: MachineType
+      allowed_ports?: PortRange[]
+    } = { alias: alias.trim(), machine_type: machineType }
+    if (address.trim()) {
+      body.address = address.trim()
+    }
+    if (xrayVersion.trim()) {
+      body.xray_version = xrayVersion.trim()
+    }
+    if (machineType === 'nat') {
+      if (!address.trim()) {
+        setCreateError('NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）')
+        return
+      }
+      const parsed = parsePortRows(portRows)
+      if ('error' in parsed) {
+        setCreateError(parsed.error)
+        return
+      }
+      body.allowed_ports = parsed.ranges
+    }
     setCreating(true)
     try {
-      const res = await api.createServer(alias.trim(), address, xrayVersion)
+      const res = await api.createServer(body)
       onOpenChange(false)
       setCmdView({ title: '服务器已创建，请在目标机器上执行安装命令', command: res.install_command })
       load()
@@ -139,6 +236,9 @@ export default function Servers() {
   const onOpenEdit = (s: Server) => {
     setEditTarget(s)
     setEditAddress(s.address)
+    setEditPortRows(
+      s.allowed_ports.length > 0 ? s.allowed_ports.map(formatPortRange) : [''],
+    )
     setEditError('')
   }
 
@@ -148,9 +248,27 @@ export default function Servers() {
       return
     }
     setEditError('')
+    const isNat = editTarget.machine_type === 'nat'
+    if (isNat && !editAddress.trim()) {
+      setEditError('NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）')
+      return
+    }
+    let ranges: PortRange[] = []
+    if (isNat) {
+      const parsed = parsePortRows(editPortRows)
+      if ('error' in parsed) {
+        setEditError(parsed.error)
+        return
+      }
+      ranges = parsed.ranges
+    }
     setEditSaving(true)
     try {
-      await api.updateServerAddress(editTarget.id, editAddress)
+      if (isNat) {
+        await api.updateServerPorts(editTarget.id, editAddress, ranges)
+      } else {
+        await api.updateServerAddress(editTarget.id, editAddress)
+      }
       setEditTarget(null)
       load()
     } catch (err) {
@@ -255,7 +373,22 @@ export default function Servers() {
             ) : (
               servers.map((s) => (
                 <TableRow key={s.id}>
-                  <TableCell className="font-medium">{s.alias}</TableCell>
+                  <TableCell className="font-medium">
+                    {s.alias}
+                    {s.machine_type === 'nat' && (
+                      <Badge
+                        variant="outline"
+                        className="ml-1 border-blue-200 bg-blue-50 text-blue-700"
+                        title={
+                          s.allowed_ports.length > 0
+                            ? `受限直连：${s.allowed_ports.map(formatPortRange).join('，')}`
+                            : '仅出口档（无可用端口段）'
+                        }
+                      >
+                        NAT{s.allowed_ports.length > 0 ? ` · ${s.allowed_ports.length} 段` : ' · 仅出口'}
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {s.online ? (
                       <Badge variant="outline" className="border-green-200 bg-green-50 text-green-700">
@@ -292,7 +425,7 @@ export default function Servers() {
                       </Button>
                     )}
                     <Button variant="outline" size="sm" onClick={() => onOpenEdit(s)}>
-                      编辑地址
+                      编辑
                     </Button>
                     <Button variant="outline" size="sm" onClick={() => onOpenUpgrade(s, 'xray')}>
                       升级 xray
@@ -337,14 +470,45 @@ export default function Servers() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="address">公网地址</Label>
+              <Label>机器类型</Label>
+              <Select
+                value={machineType}
+                onValueChange={(v) => v && setMachineType(v as MachineType)}
+                items={[
+                  { value: 'direct', label: '独立 IP（direct）' },
+                  { value: 'nat', label: 'NAT' },
+                ]}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="direct">独立 IP（direct）</SelectItem>
+                  <SelectItem value="nat">NAT</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="address">公网地址{machineType === 'nat' ? '（必填）' : ''}</Label>
               <Input
                 id="address"
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
-                placeholder="留空按 agent 拨入地址自动学习"
+                placeholder={
+                  machineType === 'nat' ? '共享公网 IP 或域名（由 IDC 提供）' : '留空按 agent 拨入地址自动学习'
+                }
               />
             </div>
+            {machineType === 'nat' && (
+              <div className="space-y-2">
+                <Label>可用端口</Label>
+                <PortRowsEditor rows={portRows} onChange={setPortRows} />
+                <p className="text-xs text-muted-foreground">
+                  每行一段：单端口 10000、范围 10001-10010、非 1:1 映射
+                  20001-20010:10001-10010（外部段:内部段）。全部留空 = 仅出口档（无入站能力）。
+                </p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label htmlFor="xrayVersion">xray 版本</Label>
               <Input
@@ -356,7 +520,10 @@ export default function Servers() {
             </div>
             {createError && <p className="text-sm text-destructive">{createError}</p>}
             <DialogFooter>
-              <Button type="submit" disabled={creating || !alias.trim()}>
+              <Button
+                type="submit"
+                disabled={creating || !alias.trim() || (machineType === 'nat' && !address.trim())}
+              >
                 {creating ? '创建中…' : '创建'}
               </Button>
             </DialogFooter>
@@ -384,15 +551,18 @@ export default function Servers() {
       <Dialog open={editTarget !== null} onOpenChange={(next) => !next && setEditTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>编辑地址</DialogTitle>
+            <DialogTitle>编辑服务器</DialogTitle>
             <DialogDescription>
-              修改「{editTarget?.alias}」的公网地址，订阅中节点地址随之更新；留空则下次 agent
-              连接时按拨入地址重新自动学习。
+              {editTarget?.machine_type === 'nat'
+                ? `修改「${editTarget?.alias}」的公网地址与可用端口段（NAT 类型地址必填；端口段收窄时存量节点/链跳端口不得越界）。机器类型建后不可互转。`
+                : `修改「${editTarget?.alias}」的公网地址，订阅中节点地址随之更新；留空则下次 agent 连接时按拨入地址重新自动学习。`}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onUpdateAddress} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="editAddress">公网地址</Label>
+              <Label htmlFor="editAddress">
+                公网地址{editTarget?.machine_type === 'nat' ? '（必填）' : ''}
+              </Label>
               <Input
                 id="editAddress"
                 value={editAddress}
@@ -401,6 +571,16 @@ export default function Servers() {
                 autoFocus
               />
             </div>
+            {editTarget?.machine_type === 'nat' && (
+              <div className="space-y-2">
+                <Label>可用端口</Label>
+                <PortRowsEditor rows={editPortRows} onChange={setEditPortRows} />
+                <p className="text-xs text-muted-foreground">
+                  每行一段：单端口 10000、范围 10001-10010、非 1:1 映射
+                  20001-20010:10001-10010（外部段:内部段）。全部留空 = 仅出口档（无入站能力）。
+                </p>
+              </div>
+            )}
             {editError && <p className="text-sm text-destructive">{editError}</p>}
             <DialogFooter>
               <Button type="submit" disabled={editSaving}>

@@ -69,6 +69,15 @@ func (r *ExecRunner) Restart(ctx context.Context) error {
 		r.cmd.Wait()
 		r.cmd = nil
 	}
+	// dev 联调善后：agent 自身重启后 r.cmd 为空，上一代 xray 孤儿仍在运行
+	// （占用 API/业务端口，新实例会 bind 失败），按配置路径清场并等待退出。
+	_ = exec.Command("pkill", "-9", "-f", "run -config "+r.configPath).Run()
+	for i := 0; i < 20; i++ {
+		if err := exec.Command("pgrep", "-f", "run -config "+r.configPath).Run(); err != nil {
+			break // 无匹配进程（pgrep 退出码 1）
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	cmd := exec.Command(r.bin, "run", "-config", r.configPath)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

@@ -166,15 +166,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := clashConfig{Proxies: []clashProxy{}}
 	names := []string{}
-	for _, n := range nodes {
-		if n.Protocol == shared.ProtocolDokodemo {
+	for _, it := range s.subscriptionItems(r, user, nodes) {
+		if it.node.Protocol == shared.ProtocolDokodemo {
 			continue
 		}
-		var rc shared.RealizedConfig
-		if err := json.Unmarshal(n.RealizedConfig, &rc); err != nil {
-			continue // 生效值损坏的节点跳过（异常留在 nodes 表）
-		}
-		p, err := buildProxy(n, rc, user.UUID)
+		p, err := buildProxy(it.node, it.rc, user.UUID)
 		if err != nil {
 			continue
 		}
@@ -191,6 +187,105 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	w.Write(out)
+}
+
+// proxyItem 是一个订阅条目的来源：节点行 + 生效值
+// （链条目已把别名/地址/端口替换为入口侧，§21；其余字段取出口 realized_config）。
+type proxyItem struct {
+	node store.Node
+	rc   shared.RealizedConfig
+}
+
+// subscriptionItems 汇总单机节点与链条目（§21 订阅）：
+//   - 链出口业务节点不再作为单机条目出现（只能经链入口消费）；
+//   - 链条目：server/port 取入口（非 1:1 映射时经端口段助手换算 public 端口），
+//     reality-opts/uuid/flow 等取出口节点 realized_config；命名沿用 {入口别名}-{协议}-{端口}；
+//   - 只含 active/degraded 链（failed/pending/applying 不出）；degraded 不剔除（客户端测速规避）；
+//   - 用户维度经 user_nodes 判出口节点分配（§16：UUID 只存在于出口 xray）。
+func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []store.Node) []proxyItem {
+	exitIDs, err := s.st.ChainExitNodeIDs(r.Context())
+	if err != nil {
+		exitIDs = map[int64]bool{} // 查询失败不阻断订阅
+	}
+	items := []proxyItem{}
+	for _, n := range nodes {
+		if exitIDs[n.ID] {
+			continue
+		}
+		var rc shared.RealizedConfig
+		if err := json.Unmarshal(n.RealizedConfig, &rc); err != nil {
+			continue // 生效值损坏的节点跳过（异常留在 nodes 表）
+		}
+		items = append(items, proxyItem{node: n, rc: rc})
+	}
+	assigned, err := s.st.UserNodeIDs(r.Context(), user.ID)
+	if err != nil {
+		return items
+	}
+	allowed := make(map[int64]bool, len(assigned))
+	for _, id := range assigned {
+		allowed[id] = true
+	}
+	chains, err := s.st.ListChains(r.Context())
+	if err != nil {
+		return items
+	}
+	for _, c := range chains {
+		if c.Status != store.ChainStatusActive && c.Status != store.ChainStatusDegraded {
+			continue
+		}
+		item, err := s.chainSubscriptionItem(r, c.ID, allowed)
+		if err != nil {
+			continue
+		}
+		items = append(items, *item)
+	}
+	return items
+}
+
+// chainSubscriptionItem 构造单条链的订阅条目；不满足输出条件返回错误（调用方跳过）。
+func (s *Server) chainSubscriptionItem(r *http.Request, chainID int64, allowed map[int64]bool) (*proxyItem, error) {
+	hops, err := s.st.ChainHops(r.Context(), chainID)
+	if err != nil {
+		return nil, err
+	}
+	if len(hops) < 2 {
+		return nil, fmt.Errorf("链 %d 跳数不足", chainID)
+	}
+	entry, exit := hops[0], hops[len(hops)-1]
+	if !allowed[exit.NodeID] {
+		return nil, fmt.Errorf("链 %d 出口节点未分配给该用户", chainID)
+	}
+	node, err := s.st.NodeByID(r.Context(), exit.NodeID)
+	if err != nil {
+		return nil, err
+	}
+	if node.Status != store.NodeStatusActive || len(node.RealizedConfig) == 0 {
+		return nil, fmt.Errorf("链 %d 出口节点 %d 未生效", chainID, exit.NodeID)
+	}
+	var rc shared.RealizedConfig
+	if err := json.Unmarshal(node.RealizedConfig, &rc); err != nil || rc.Port == 0 {
+		return nil, fmt.Errorf("链 %d 出口 realized_config 不可用", chainID)
+	}
+	entrySrv, err := s.st.ServerByID(r.Context(), entry.ServerID)
+	if err != nil {
+		return nil, err
+	}
+	if entrySrv.Address == "" || entry.ForwardPort == 0 {
+		return nil, fmt.Errorf("链 %d 入口地址/端口未就绪", chainID)
+	}
+	// 订阅端口取入口公网侧（非 1:1 映射时经端口段助手换算，§21）。
+	port := entry.ForwardPort
+	if ranges, err := shared.ParsePortRanges(entrySrv.AllowedPorts); err == nil && len(ranges) > 0 {
+		if pub, ok := shared.PublicPort(ranges, port); ok {
+			port = pub
+		}
+	}
+	entryNode := *node
+	entryNode.ServerAlias = entrySrv.Alias
+	entryNode.ServerAddress = entrySrv.Address
+	rc.Port = port
+	return &proxyItem{node: entryNode, rc: rc}, nil
 }
 
 // buildProxy 按节点协议构造 mihomo 代理项；uuid 为该订阅用户自己的 UUID（§8/§9）。

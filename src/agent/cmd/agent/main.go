@@ -55,6 +55,7 @@ func main() {
 	if err != nil {
 		log.Printf("load state: %v (ignored)", err)
 	}
+	mgr.SetChainPieces(st.ChainPieces) // 链 piece 落盘记录：重启重建 config.json 的依据（§21.1）
 	tok := st.Token
 	if tok == "" {
 		tok = *token // 首连使用 bootstrap token（§11）
@@ -63,7 +64,7 @@ func main() {
 		log.Fatal("-token is required for first connect")
 	}
 	for {
-		newTok, err := run(*panel, tok, *statePath, mgr, *telemetryInterval, *driftInterval)
+		newTok, err := run(*panel, tok, *statePath, mgr, &st, *telemetryInterval, *driftInterval)
 		if newTok != "" {
 			tok = newTok // 内存兜底：state 落盘失败时仍能凭内存中的 token 重连（§5）
 		}
@@ -94,7 +95,8 @@ func (s *safeConn) writeJSON(v any) error {
 }
 
 // run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因。
-func run(panel, token, statePath string, mgr *xray.Manager, telemetryInterval, driftInterval time.Duration) (string, error) {
+// st 为已加载的落盘状态：hello 换发后更新凭证字段并整体落盘（保留链 piece 记录）。
+func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, telemetryInterval, driftInterval time.Duration) (string, error) {
 	conn, _, err := websocket.DefaultDialer.Dial(panel, nil)
 	if err != nil {
 		return "", err
@@ -142,7 +144,8 @@ func run(panel, token, statePath string, mgr *xray.Manager, telemetryInterval, d
 	if err := json.Unmarshal(resp.Payload, &hr); err != nil {
 		return "", fmt.Errorf("bad hello result: %w", err)
 	}
-	if err := state.Save(statePath, state.State{Token: hr.Token, ServerID: hr.ServerID}); err != nil {
+	st.Token, st.ServerID = hr.Token, hr.ServerID
+	if err := state.Save(statePath, *st); err != nil {
 		// 落盘失败由外层内存兜底（§5），但进程重启前未落盘将需凭证刷新。
 		log.Printf("save state: %v (WARNING: in-memory token will be used for reconnects)", err)
 	}
@@ -219,12 +222,12 @@ func run(panel, token, statePath string, mgr *xray.Manager, telemetryInterval, d
 			return hr.Token, err
 		}
 		conn.SetReadDeadline(time.Now().Add(wsReadTimeout)) // 任何消息到达即续期
-		handle(sc, mgr, env)
+		handle(sc, mgr, env, statePath, st)
 	}
 }
 
 // handle 按消息类型分发：apply 流水线与热操作（§6），结果经 apply_result 上报（§5）。
-func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope) {
+func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath string, st *state.State) {
 	switch env.Type {
 	case shared.TypeApplyNode:
 		var p shared.ApplyNodePayload
@@ -232,8 +235,32 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope) {
 			return
 		}
 		log.Printf("apply_node id=%s node=%d users=%d", env.ID, p.NodeID, len(p.UserUUIDs))
-		realized, err := mgr.ApplyNode(p.NodeID, p.Config, p.UserUUIDs, p.DestCandidates)
+		realized, err := mgr.ApplyNode(p.NodeID, p.Config, p.UserUUIDs, p.DestCandidates, p.PortCandidates)
 		replyApplyResult(sc, env.ID, resultOf(p.NodeID, realized, err))
+
+	case shared.TypeApplyChainHop:
+		var p shared.ApplyChainHopPayload
+		if !parsePayload(env, &p) {
+			return
+		}
+		log.Printf("apply_chain_hop id=%s chain=%d hop=%d kind=%s", env.ID, p.ChainID, p.HopID, p.Kind)
+		realized, err := mgr.ApplyChainHop(p)
+		if err == nil {
+			persistChainPieces(statePath, st, mgr)
+		}
+		replyApplyResult(sc, env.ID, resultOfHop(p.HopID, p.Kind, realized, err))
+
+	case shared.TypeRemoveChainHop:
+		var p shared.RemoveChainHopPayload
+		if !parsePayload(env, &p) {
+			return
+		}
+		log.Printf("remove_chain_hop id=%s hop=%d kind=%s", env.ID, p.HopID, p.Kind)
+		err := mgr.RemoveChainHop(p.HopID, p.Kind)
+		if err == nil {
+			persistChainPieces(statePath, st, mgr)
+		}
+		replyApplyResult(sc, env.ID, resultOfHop(p.HopID, p.Kind, nil, err))
 
 	case shared.TypeRemoveNode:
 		var p shared.RemoveNodePayload
@@ -327,6 +354,22 @@ func resultOf(nodeID int64, realized *shared.RealizedConfig, err error) shared.A
 		return shared.ApplyResultPayload{NodeID: nodeID, OK: false, Error: err.Error()}
 	}
 	return shared.ApplyResultPayload{NodeID: nodeID, OK: true, RealizedConfig: realized}
+}
+
+// resultOfHop 构造链跳配置件回执（§21.1）：hop_id/kind 定位 piece，NodeID 恒 0。
+func resultOfHop(hopID int64, kind string, realized *shared.RealizedConfig, err error) shared.ApplyResultPayload {
+	if err != nil {
+		return shared.ApplyResultPayload{HopID: hopID, Kind: kind, OK: false, Error: err.Error()}
+	}
+	return shared.ApplyResultPayload{HopID: hopID, Kind: kind, OK: true, RealizedConfig: realized}
+}
+
+// persistChainPieces 把链 piece 记录随 state 落盘（重启重建 config.json 的依据，§21.1）。
+func persistChainPieces(statePath string, st *state.State, mgr *xray.Manager) {
+	st.ChainPieces = mgr.ChainPieces()
+	if err := state.Save(statePath, *st); err != nil {
+		log.Printf("save state (chain pieces): %v", err)
+	}
 }
 
 // replyApplyResult 上报执行结果：与请求同 id 即响应帧（§5）。

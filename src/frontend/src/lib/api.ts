@@ -1,9 +1,13 @@
 import type {
   AlertTestResult,
+  Chain,
+  CreateChainRequest,
   CreateNodeRequest,
   CreateServerResponse,
   DashboardStats,
+  MachineType,
   PanelSettings,
+  PortRange,
   Server,
   SubUser,
   UpdateSettingsRequest,
@@ -66,14 +70,16 @@ export const api = {
   dashboard: () => request<DashboardStats>('/api/dashboard'),
 
   servers: () => request<Server[]>('/api/servers'),
-  createServer: (alias: string, address?: string, xrayVersion?: string) =>
+  createServer: (body: {
+    alias: string
+    address?: string
+    xray_version?: string
+    machine_type?: MachineType
+    allowed_ports?: PortRange[]
+  }) =>
     request<CreateServerResponse>('/api/servers', {
       method: 'POST',
-      body: JSON.stringify({
-        alias,
-        ...(address?.trim() ? { address: address.trim() } : {}),
-        ...(xrayVersion?.trim() ? { xray_version: xrayVersion.trim() } : {}),
-      }),
+      body: JSON.stringify(body),
     }),
   rotateServerToken: (id: number) =>
     request<CreateServerResponse>(`/api/servers/${id}/rotate-token`, { method: 'POST' }),
@@ -94,8 +100,20 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ address: address.trim() }),
     }),
+  // 编辑 NAT 可用端口段（§21）：allowed_ports 整体替换；机器类型建后不可互转。
+  updateServerPorts: (id: number, address: string, allowedPorts: PortRange[]) =>
+    request<Server>(`/api/servers/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ address: address.trim(), allowed_ports: allowedPorts }),
+    }),
   deleteServer: (id: number, purge: 'xray' | 'agent') =>
     request<void>(`/api/servers/${id}?purge=${purge}`, { method: 'DELETE' }),
+
+  chains: () => request<Chain[]>('/api/chains'),
+  createChain: (body: CreateChainRequest) =>
+    request<Chain>('/api/chains', { method: 'POST', body: JSON.stringify(body) }),
+  retryChain: (id: number) => request<Chain>(`/api/chains/${id}/retry`, { method: 'POST' }),
+  deleteChain: (id: number) => request<void>(`/api/chains/${id}`, { method: 'DELETE' }),
 
   nodes: () => request<XrayNode[]>('/api/nodes'),
   createNode: (body: CreateNodeRequest) =>

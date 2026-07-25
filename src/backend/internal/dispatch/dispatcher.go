@@ -28,6 +28,10 @@ type Dispatcher struct {
 	// Alerter 事件告警（§19）：nil = 关闭；仅状态跃迁时调用，发送方自行防抖动。
 	Alerter *alert.Notifier
 
+	// DestCandidates 是面板内置的 dest 白名单（§6 预检 fallback）：链编排下发
+	// apply_node/portal 时携带（panel 初始化时注入，与单机节点同一份）。
+	DestCandidates []string
+
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
 }
@@ -91,6 +95,17 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 						log.Printf("dispatch: dead-letter node %d failed: %v", p.NodeID, err)
 					}
 					d.alertNodeFailed(serverID, p.NodeID, reason)
+					d.failChainByNode(ctx, p.NodeID, reason) // 链出口业务死信 → 链 failed 定位到跳（§21）
+				}
+			}
+			// apply_chain_hop 死信：跳置 failed，链 failed 定位到跳（§21）。
+			if c.Type == shared.TypeApplyChainHop {
+				var p shared.ApplyChainHopPayload
+				if err := json.Unmarshal(c.Payload, &p); err == nil && p.HopID != 0 {
+					reason := fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts)
+					if hop, err := d.st.ChainHopByID(ctx, p.HopID); err == nil {
+						d.failHop(ctx, hop, reason)
+					}
 				}
 			}
 			continue
@@ -258,6 +273,11 @@ func (d *Dispatcher) handleApplyResult(serverID int64, env shared.Envelope) {
 			log.Printf("dispatch: server %d: apply_result for command %d not in sent state, ignored", serverID, cmdID)
 			return
 		}
+		// 链跳配置件回执（§21）：路由到链编排器，不触碰节点状态机。
+		if p.HopID != 0 {
+			d.handleChainHopResult(serverID, p)
+			return
+		}
 		realized, _ := json.Marshal(p.RealizedConfig)
 		// NodeID 0 表示非节点命令（add_user/remove_user 等），不触碰节点状态机。
 		if p.NodeID != 0 {
@@ -265,6 +285,7 @@ func (d *Dispatcher) handleApplyResult(serverID int64, env shared.Envelope) {
 				log.Printf("dispatch: node %d active: %v", p.NodeID, err)
 			}
 			log.Printf("dispatch: server %d: node %d active (command %d)", serverID, p.NodeID, cmdID)
+			d.advanceChainByNode(ctx, p.NodeID) // 链出口业务就绪 → 推进链编排（§21 阶段 2 起）
 		} else {
 			log.Printf("dispatch: server %d: command %d acked", serverID, cmdID)
 		}
@@ -278,12 +299,18 @@ func (d *Dispatcher) handleApplyResult(serverID int64, env shared.Envelope) {
 			log.Printf("dispatch: server %d: apply_result for command %d not in sent state, ignored", serverID, cmdID)
 			return
 		}
+		// 链跳配置件回执（§21）：路由到链编排器（失败定位到跳，链置 failed）。
+		if p.HopID != 0 {
+			d.handleChainHopResult(serverID, p)
+			return
+		}
 		if p.NodeID != 0 {
 			if err := d.st.SetNodeFailed(ctx, p.NodeID, p.Error); err != nil {
 				log.Printf("dispatch: node %d failed: %v", p.NodeID, err)
 			}
 			log.Printf("dispatch: server %d: node %d failed (command %d): %s", serverID, p.NodeID, cmdID, p.Error)
 			d.alertNodeFailed(serverID, p.NodeID, p.Error)
+			d.failChainByNode(ctx, p.NodeID, p.Error) // 链出口业务失败 → 链 failed 定位到跳（§21）
 		} else {
 			log.Printf("dispatch: server %d: command %d failed: %s", serverID, cmdID, p.Error)
 		}

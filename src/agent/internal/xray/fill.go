@@ -18,9 +18,10 @@ import (
 const destCheckTimeout = 4 * time.Second
 
 // fillTemplate 填充模板占位符（§7）并做 dest 预检（§6 步骤 2）。
+// portCandidates 为受限直连 NAT 机的段内候选（§21，Port 为 0 时按序挑选）。
 // 返回填充后的 inbound JSON 与提取出的实际生效值（apply_result 上报用）。
-func (m *Manager) fillTemplate(tag string, vc shared.VirtualConfig, userUUIDs []string, destCandidates []string) (json.RawMessage, *shared.RealizedConfig, error) {
-	port, err := pickPort(vc.Port)
+func (m *Manager) fillTemplate(tag string, vc shared.VirtualConfig, userUUIDs []string, destCandidates []string, portCandidates []int) (json.RawMessage, *shared.RealizedConfig, error) {
+	port, err := pickPort(vc.Port, portCandidates)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -243,8 +244,10 @@ func hostOf(addr string) string {
 	return addr
 }
 
-// pickPort 确定监听端口（§7）：指定则检查占用（冲突报错），留空则挑空闲端口。
-func pickPort(preferred int) (int, error) {
+// pickPort 确定监听端口（§7）：指定则检查占用（冲突报错）；
+// 留空时若带 port_candidates（受限直连 NAT 机的段内候选，§21）按序挑空闲，
+// 候选全占用报错；无候选则挑随机空闲端口。
+func pickPort(preferred int, candidates []int) (int, error) {
 	if preferred != 0 {
 		l, err := net.Listen("tcp", fmt.Sprintf(":%d", preferred))
 		if err != nil {
@@ -252,6 +255,17 @@ func pickPort(preferred int) (int, error) {
 		}
 		l.Close()
 		return preferred, nil
+	}
+	for _, c := range candidates {
+		l, err := net.Listen("tcp", fmt.Sprintf(":%d", c))
+		if err != nil {
+			continue
+		}
+		l.Close()
+		return c, nil
+	}
+	if len(candidates) > 0 {
+		return 0, fmt.Errorf("候选端口全部被占用（%d 个）", len(candidates))
 	}
 	l, err := net.Listen("tcp", ":0")
 	if err != nil {

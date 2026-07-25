@@ -53,6 +53,8 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.Requester, cfg Confi
 	}
 	// 注入 dist 中 agent 二进制的 SHA256（明文 HTTP 下的完整性锚点，§11/§12）。
 	script = injectAgentSHA256(script, cfg.DistDir)
+	// 链编排器与单机节点共用同一份 dest 白名单（§6/§21）。
+	disp.DestCandidates = destCandidates
 	return &Server{st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, installScript: script}, nil
 }
 
@@ -97,6 +99,11 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/nodes", s.requireAuth(s.handleCreateNode))
 	mux.HandleFunc("POST /api/nodes/{id}/retry", s.requireAuth(s.handleRetryNode))
 	mux.HandleFunc("DELETE /api/nodes/{id}", s.requireAuth(s.handleDeleteNode))
+
+	mux.HandleFunc("GET /api/chains", s.requireAuth(s.handleListChains))
+	mux.HandleFunc("POST /api/chains", s.requireAuth(s.handleCreateChain))
+	mux.HandleFunc("POST /api/chains/{id}/retry", s.requireAuth(s.handleRetryChain))
+	mux.HandleFunc("DELETE /api/chains/{id}", s.requireAuth(s.handleDeleteChain))
 
 	mux.HandleFunc("GET /api/users", s.requireAuth(s.handleListUsers))
 	mux.HandleFunc("POST /api/users", s.requireAuth(s.handleCreateUser))

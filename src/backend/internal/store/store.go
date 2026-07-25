@@ -179,6 +179,51 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("bump user_version: %w", err)
 		}
 	}
+	// 一次性迁移（PRAGMA user_version 1→2）：代理链与 NAT 支持（§21）——
+	// servers 增加机器类型与 NAT 可用端口段元数据；新建链级状态机表 chains/chain_hops。
+	if version < 2 {
+		// ALTER 容忍 duplicate column（上次迁移中途失败后的重跑），CREATE 幂等。
+		for _, q := range []string{
+			`ALTER TABLE servers ADD COLUMN machine_type TEXT NOT NULL DEFAULT 'direct'`, // direct|nat
+			`ALTER TABLE servers ADD COLUMN allowed_ports TEXT NOT NULL DEFAULT ''`,      // JSON [{pub_start,pub_end,listen_start,listen_end}]，1:1 时 listen_* 省略
+		} {
+			if _, err := db.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+				db.Close()
+				return nil, fmt.Errorf("migrate servers nat columns: %w", err)
+			}
+		}
+		stmts := []string{
+			`CREATE TABLE IF NOT EXISTS chains (
+			    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			    status     TEXT    NOT NULL DEFAULT 'pending', -- pending/applying/active/degraded/failed
+			    error      TEXT    NOT NULL DEFAULT '',
+			    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`CREATE TABLE IF NOT EXISTS chain_hops (
+			    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+			    chain_id          INTEGER NOT NULL REFERENCES chains(id),
+			    seq               INTEGER NOT NULL,
+			    server_id         INTEGER NOT NULL REFERENCES servers(id),
+			    role              TEXT    NOT NULL,             -- entry/middle/exit
+			    node_id           INTEGER NOT NULL DEFAULT 0,   -- 仅出口跳：业务 nodes.id
+			    status            TEXT    NOT NULL DEFAULT 'pending', -- pending/applying/active/failed
+			    error             TEXT    NOT NULL DEFAULT '',
+			    forward_port      INTEGER NOT NULL DEFAULT 0,   -- entry 跳 = 订阅端口
+			    portal_port       INTEGER NOT NULL DEFAULT 0,
+			    portal_public_key TEXT    NOT NULL DEFAULT '',
+			    portal_server_name TEXT   NOT NULL DEFAULT '',  -- portal 回执的 Reality SNI（bridge spec 用）
+			    tunnel_uuid       TEXT    NOT NULL DEFAULT '',  -- 仅反向链 portal 所在跳（上游机）
+			    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`PRAGMA user_version = 2`,
+		}
+		for _, q := range stmts {
+			if _, err := db.Exec(q); err != nil {
+				db.Close()
+				return nil, fmt.Errorf("migrate chains (user_version 2): %w", err)
+			}
+		}
+	}
 	return &Store{db: db}, nil
 }
 

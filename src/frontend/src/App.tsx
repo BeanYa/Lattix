@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import Layout from '@/components/Layout'
 import { AuthProvider, useAuth } from '@/lib/auth'
 import { TimezoneProvider } from '@/lib/timezone'
+import Chains from '@/pages/Chains'
 import Dashboard from '@/pages/Dashboard'
 import Login from '@/pages/Login'
 import Nodes from '@/pages/Nodes'
@@ -43,6 +44,7 @@ export default function App() {
               <Route index element={<Dashboard />} />
               <Route path="servers" element={<Servers />} />
               <Route path="nodes" element={<Nodes />} />
+              <Route path="chains" element={<Chains />} />
               <Route path="users" element={<Users />} />
               <Route path="settings" element={<Settings />} />
             </Route>

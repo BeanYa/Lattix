@@ -23,20 +23,29 @@ type metricsDTO struct {
 
 // serverDTO 是服务器对象的 API 表示。
 type serverDTO struct {
-	ID            int64       `json:"id"`
-	Alias         string      `json:"alias"`
-	Online        bool        `json:"online"` // 由 WS 连接存在性推导（§5）
-	LastSeenAt    *time.Time  `json:"last_seen_at"`
-	XrayVersion   string      `json:"xray_version"`
-	AgentVersion  string      `json:"agent_version"`  // hello 上报的 agent 版本
-	UpgradeNeeded bool        `json:"upgrade_needed"` // agent 落后出兼容窗口，需升级（§18）
-	Address       string      `json:"address"`        // 公网地址（hello 记录，订阅用，§9）
-	ConfigDrift   bool        `json:"config_drift"`   // 配置漂移标志（§17）
-	Metrics       *metricsDTO `json:"metrics"`        // 主机遥测最新值（§13），无数据为 null
-	CreatedAt     time.Time   `json:"created_at"`
+	ID            int64              `json:"id"`
+	Alias         string             `json:"alias"`
+	Online        bool               `json:"online"` // 由 WS 连接存在性推导（§5）
+	LastSeenAt    *time.Time         `json:"last_seen_at"`
+	XrayVersion   string             `json:"xray_version"`
+	AgentVersion  string             `json:"agent_version"`  // hello 上报的 agent 版本
+	UpgradeNeeded bool               `json:"upgrade_needed"` // agent 落后出兼容窗口，需升级（§18）
+	Address       string             `json:"address"`        // 公网地址（hello 记录，订阅用，§9）
+	ConfigDrift   bool               `json:"config_drift"`   // 配置漂移标志（§17）
+	MachineType   string             `json:"machine_type"`   // direct|nat（§21）
+	AllowedPorts  []shared.PortRange `json:"allowed_ports"`  // NAT 可用端口段（§21），空 = 无段（仅出口档/direct）
+	Metrics       *metricsDTO        `json:"metrics"`        // 主机遥测最新值（§13），无数据为 null
+	CreatedAt     time.Time          `json:"created_at"`
 }
 
 func (s *Server) toServerDTO(srv store.Server) serverDTO {
+	ranges, err := shared.ParsePortRanges(srv.AllowedPorts)
+	if err != nil {
+		ranges = nil // 存储值损坏不阻断列表（异常留在 servers 表）
+	}
+	if ranges == nil {
+		ranges = []shared.PortRange{}
+	}
 	return serverDTO{
 		ID:            srv.ID,
 		Alias:         srv.Alias,
@@ -47,6 +56,8 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		UpgradeNeeded: srv.UpgradeNeeded,
 		Address:       srv.Address,
 		ConfigDrift:   srv.ConfigDrift,
+		MachineType:   srv.MachineType,
+		AllowedPorts:  ranges,
 		CreatedAt:     srv.CreatedAt,
 	}
 }
@@ -75,11 +86,15 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleCreateServer 处理 POST /api/servers：生成一次性 bootstrap token 与一行安装命令（§11）。
+// 机器类型与 NAT 可用端口段为面板侧元数据（§21，不下发到 agent，引导流程不变）：
+// NAT 类型 address 强制必填（共享 IP 由 IDC 提供，禁用自动学习）。
 func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Alias       string `json:"alias"`
-		Address     string `json:"address"`      // 公网地址，留空自动学习（§4）
-		XrayVersion string `json:"xray_version"` // 默认 latest（§11）
+		Alias        string             `json:"alias"`
+		Address      string             `json:"address"`       // 公网地址，留空自动学习（§4；NAT 必填）
+		XrayVersion  string             `json:"xray_version"`  // 默认 latest（§11）
+		MachineType  string             `json:"machine_type"`  // direct（默认）| nat（§21）
+		AllowedPorts []shared.PortRange `json:"allowed_ports"` // NAT 可用端口段（§21），留空 = 仅出口档
 	}
 	if err := readJSON(r, &req); err != nil || req.Alias == "" {
 		writeError(w, http.StatusBadRequest, "alias 不能为空")
@@ -88,8 +103,28 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	if req.XrayVersion == "" {
 		req.XrayVersion = "latest"
 	}
+	if req.MachineType == "" {
+		req.MachineType = store.MachineTypeDirect
+	}
+	if req.MachineType != store.MachineTypeDirect && req.MachineType != store.MachineTypeNAT {
+		writeError(w, http.StatusBadRequest, "machine_type 须为 direct 或 nat")
+		return
+	}
+	if err := shared.ValidatePortRanges(req.AllowedPorts); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.MachineType == store.MachineTypeNAT && req.Address == "" {
+		writeError(w, http.StatusBadRequest, "NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）")
+		return
+	}
+	allowedJSON, err := marshalPortRanges(req.AllowedPorts)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	bootstrap := randomHex(16)
-	id, err := s.st.CreateServer(r.Context(), req.Alias, req.Address, bootstrap)
+	id, err := s.st.CreateServer(r.Context(), req.Alias, req.Address, bootstrap, req.MachineType, allowedJSON)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -140,8 +175,10 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleUpdateServer 处理 PATCH /api/servers/{id}：管理员修改公网地址（§4/§9）。
-// 地址一经写入不再被 hello 覆盖；置空则下次 hello 按 RemoteAddr 重新自动学习。
+// handleUpdateServer 处理 PATCH /api/servers/{id}：管理员修改公网地址（§4/§9）与
+// NAT 可用端口段（§21）。地址一经写入不再被 hello 覆盖；置空则下次 hello 按 RemoteAddr
+// 重新自动学习（NAT 类型禁止置空）。机器类型建后不允许互转；端口段收窄时校验
+// 该 server 存量节点 realized 端口与链跳端口不越界，越界 400。
 func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -149,13 +186,16 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Address string `json:"address"`
+		Address      string              `json:"address"`
+		MachineType  string              `json:"machine_type"`  // 不允许互转：带不同值 → 400
+		AllowedPorts *[]shared.PortRange `json:"allowed_ports"` // 省略 = 不变；显式 null/数组 = 整体替换
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if _, err := s.st.ServerByID(r.Context(), id); err != nil {
+	srv, err := s.st.ServerByID(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "服务器不存在")
 			return
@@ -163,16 +203,92 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if req.MachineType != "" && req.MachineType != srv.MachineType {
+		writeError(w, http.StatusBadRequest, "机器类型建后不允许互转")
+		return
+	}
+	if srv.MachineType == store.MachineTypeNAT && req.Address == "" {
+		writeError(w, http.StatusBadRequest, "NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）")
+		return
+	}
+	if req.AllowedPorts != nil {
+		if err := shared.ValidatePortRanges(*req.AllowedPorts); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.checkPortsShrink(r, id, *req.AllowedPorts); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		allowedJSON, err := marshalPortRanges(*req.AllowedPorts)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err := s.st.UpdateServerAllowedPorts(r.Context(), id, allowedJSON); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	if err := s.st.UpdateServerAddress(r.Context(), id, req.Address); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	srv, err := s.st.ServerByID(r.Context(), id)
+	srv, err = s.st.ServerByID(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, s.toServerDTO(*srv))
+}
+
+// checkPortsShrink 校验端口段收窄后存量使用不越界（§21）：
+// 该 server 节点的指定/realized 端口与链跳 forward/portal 端口（监听侧）须仍在新段内。
+func (s *Server) checkPortsShrink(r *http.Request, serverID int64, ranges []shared.PortRange) error {
+	nodes, err := s.st.ListNodes(r.Context())
+	if err != nil {
+		return err
+	}
+	for _, n := range nodes {
+		if n.ServerID != serverID {
+			continue
+		}
+		if n.Port != nil && !shared.InListenRanges(ranges, *n.Port) {
+			return fmt.Errorf("端口段收窄后节点 %d 指定端口 %d 越界", n.ID, *n.Port)
+		}
+		if len(n.RealizedConfig) > 0 {
+			var rc shared.RealizedConfig
+			if err := json.Unmarshal(n.RealizedConfig, &rc); err == nil && rc.Port != 0 &&
+				!shared.InListenRanges(ranges, rc.Port) {
+				return fmt.Errorf("端口段收窄后节点 %d realized 端口 %d 越界", n.ID, rc.Port)
+			}
+		}
+	}
+	hops, err := s.st.ChainHopsByServerID(r.Context(), serverID)
+	if err != nil {
+		return err
+	}
+	for _, h := range hops {
+		if h.ForwardPort != 0 && !shared.InListenRanges(ranges, h.ForwardPort) {
+			return fmt.Errorf("端口段收窄后链跳 %d forward 端口 %d 越界", h.ID, h.ForwardPort)
+		}
+		if h.PortalPort != 0 && !shared.InListenRanges(ranges, h.PortalPort) {
+			return fmt.Errorf("端口段收窄后链跳 %d portal 端口 %d 越界", h.ID, h.PortalPort)
+		}
+	}
+	return nil
+}
+
+// marshalPortRanges 序列化端口段为存储值（空切片 → 空串）。
+func marshalPortRanges(ranges []shared.PortRange) (string, error) {
+	if len(ranges) == 0 {
+		return "", nil
+	}
+	b, err := json.Marshal(ranges)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // handleUpgradeXray 处理 POST /api/servers/{id}/upgrade（§18 版本升级管理）：

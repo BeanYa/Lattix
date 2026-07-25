@@ -13,6 +13,17 @@ export interface ServerMetrics {
   mem_used: number
 }
 
+// NAT 可用端口段的一项（§21）：外部段 [pub_start,pub_end] 映射到内部监听段；
+// listen_* 省略 = 1:1 映射。
+export interface PortRange {
+  pub_start: number
+  pub_end: number
+  listen_start?: number
+  listen_end?: number
+}
+
+export type MachineType = 'direct' | 'nat'
+
 export interface Server {
   id: number
   alias: string
@@ -23,6 +34,8 @@ export interface Server {
   upgrade_needed: boolean
   address: string
   config_drift: boolean
+  machine_type: MachineType
+  allowed_ports: PortRange[]
   metrics: ServerMetrics | null
   created_at: string
 }
@@ -88,6 +101,42 @@ export interface CreateNodeRequest {
   encryption?: string
   target_address?: string
   target_port?: number
+}
+
+export type ChainStatus = 'pending' | 'applying' | 'active' | 'degraded' | 'failed'
+export type ChainHopRole = 'entry' | 'middle' | 'exit'
+
+export interface ChainHop {
+  id: number
+  seq: number
+  server_id: number
+  server_alias: string
+  role: ChainHopRole
+  node_id: number
+  status: NodeStatus
+  error: string
+  forward_port: number // entry 跳 = 订阅端口（监听侧）
+  portal_port: number
+  portal_public_key?: string
+  tunnel_uuid?: string
+}
+
+export interface Chain {
+  id: number
+  status: ChainStatus
+  error: string // 失败时定位到跳
+  created_at: string
+  hops: ChainHop[] // 按 seq 升序：首位入口，末位出口
+}
+
+// 链路构图提交（§21）：依次入口 / 中间跳（0-2）/ 出口，出口携带业务节点协议表单，
+// 入口端口可空 = 自动。node.server_id 由后端按 exit.server_id 覆盖。
+export interface CreateChainRequest {
+  entry: { server_id: number }
+  middle: { server_id: number }[]
+  exit: { server_id: number }
+  entry_port?: number
+  node: Omit<CreateNodeRequest, 'server_id'>
 }
 
 export interface SubUser {
