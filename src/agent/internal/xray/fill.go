@@ -46,7 +46,12 @@ func (m *Manager) fillTemplate(tag string, vc shared.VirtualConfig, userUUIDs []
 		}
 		// vision 拼接 Encryption 时客户端须用 1-RTT 模式（§15）。
 		if vc.Flow != "" {
-			enc = strings.Replace(enc, ".0rtt.", ".1rtt.", 1)
+			fixed := strings.Replace(enc, ".0rtt.", ".1rtt.", 1)
+			if fixed == enc {
+				// xray vlessenc 输出格式变化会让替换静默失效，须显式失败而非产出不可用配置。
+				return nil, nil, fmt.Errorf("vision+Encryption 需 1-RTT，但 vlessenc 输出中未找到 .0rtt. 标记（xray 输出格式可能已变化）: %s", enc)
+			}
+			enc = fixed
 		}
 		encClient = enc
 		t = strings.ReplaceAll(t, shared.PlaceholderVLessDecryption, dec)

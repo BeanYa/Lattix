@@ -38,7 +38,7 @@
 - **单通道**：Agent → Backend 一条 WebSocket 长连接承担全部双向通信。Backend 永不主动外连 Agent，Agent 不提供任何监听 API 端点。该形态同时兼容公网服务器与未来的 NAT 服务器。
 - **无 fallback 实现**：Backend 侧定义 `requester` 接口隔离"发送命令"与"具体传输"，MVP 只有 WebSocket 一个实现；gRPC/HTTP 等其他实现属后续迭代。
 - **离线排队**：Agent 离线期间，发往它的命令滞留于 `commands` 表，重连后补发。
-- **重发与死信**：重连时将该服务器 `sent` 未终态的命令重置为 `queued` 重新补发（幂等性由 Agent 各处理器保证）；`attempts` 超过上限（10 次）标记 `failed` 死信，不再重发。
+- **重发与死信**：重连时将该服务器 `sent` 未终态的命令重置为 `queued` 重新补发（幂等性由 Agent 各处理器保证）；`attempts` 超过上限（10 次）标记 `failed` 死信，不再重发；`apply_node` 死信时对应节点同步置 `failed` 并记录原因（§6）。
 
 ## 3. 仓库结构与技术栈
 
@@ -61,7 +61,7 @@ scripts/
 | 表 | 字段（要点） |
 |---|---|
 | `servers` | id, alias, address(公网地址), token(长期凭证), last_seen_at, xray_version, config_drift(§17), created_at |
-| `users` | id, name, uuid, sub_token, created_at |
+| `users` | id, name, uuid, sub_token, expires_at(可空，unix 秒，NULL=长期), expired(0/1 到期停权标记，§9), created_at |
 | `nodes` | id, server_id, protocol, port, config_template(JSON), realized_config(JSON), status, error, created_at |
 | `commands` | id, server_id, type, payload(JSON), status(queued/sent/acked/failed), attempts, created_at, updated_at |
 | `user_nodes` | user_id, node_id（§16 逐节点用户分配，默认全关） |
@@ -88,15 +88,15 @@ scripts/
 | `hello` | agent→panel | 首连认证：token、agent 版本、xray 版本、xray 运行状态；bootstrap token 在此换发长期凭证（以 `last_seen_at` 为空判定 bootstrap 状态；长期 token 一经换发**不再轮换**，agent 侧内存兜底防止落盘失败锁死） |
 | `apply_node` | panel→agent | 下发节点：虚拟配置模板 + 分配到该节点的用户 UUID 列表（§16） |
 | `remove_node` | panel→agent | 删除节点 |
-| `add_user` | panel→agent | 向载荷指定节点的 inbound 热加入一个用户（`nodes` 参数携带各节点协议参数；缺省为全部节点，兼容旧载荷） |
-| `remove_user` | panel→agent | 从载荷指定节点的 inbound 热移除一个用户（同上） |
+| `add_user` | panel→agent | 向载荷指定节点的 inbound 热加入一个用户（`nodes` 参数携带各节点协议参数；必填，缺省/为空回执错误） |
+| `remove_user` | panel→agent | 从载荷指定节点的 inbound 热移除一个用户（`nodes` 必填，同 add_user） |
 | `apply_result` | agent→panel | 上报执行结果：成功返回 realized_config，失败返回 error |
 | `uninstall` | panel→agent | 卸载 agent：`purge_xray=true` 时连同 install.sh 安装的 xray 与配置一并清除，`false` 时仅移除 agent（xray 及节点继续运行）；agent 先回执再自毁 |
 | `upgrade_xray` | panel→agent | 升级 xray 到指定版本（§18）：下载官方 release 校验 .dgst 后替换重启，失败回滚 |
 | `telemetry` | agent→panel | 周期遥测（§13）：xray 版本/运行状态、主机指标、流量增量；无需回执 |
 | `drift_report` | agent→panel | 配置漂移状态变化（§17）：外部修改时 true，修复/恢复后 false |
 
-在线/离线状态由 WS 连接是否存在直接推导，无周期心跳。
+在线/离线状态由 WS 连接推导，连接存亡由应用层心跳判定：panel 每 30s 向 agent 发 WS ping，任一侧 90s 无任何字节（含 pong 等控制帧）即判连接死亡——panel 侧注销连接并按离线处理（显示离线 + sent 命令重置），agent 侧读循环报错退出后 5s 退避重连。半开 TCP 最长 90s 被识别，不会假在线。
 
 ## 6. 节点生命周期与 apply 流水线
 
@@ -138,12 +138,14 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 
 ## 9. 订阅
 
-`GET /sub/{sub_token}` → 返回 **mihomo（Clash.Meta）格式 YAML**。
+`GET /sub/{sub_token}` → 返回 **mihomo（Clash.Meta）格式 YAML**；请求 `Accept` 含 `text/html`（浏览器）时改为返回**订阅落地页**（自包含 HTML，不依赖前端构建产物与任何 CDN/外网资源，token 即鉴权，无效 404）：已用流量 ↑/↓、有效期（或"长期"）、节点数、YAML/links 订阅地址复制按钮、订阅地址二维码（内嵌 qrcode-generator，MIT）、mihomo 系一键导入（`clash://` / `mihomo://install-config?url=`）；已到期用户显示"已到期"。`GET /sub/{sub_token}/links`（§14）不分流。
 
 - 目标客户端：mihomo 内核系（Clash Verge / Clash Party / FlClash 等）。原版 Clash 不支持 VLESS+Reality，不在目标范围。
 - 内容：proxies 列表（每个节点一项，`type: vless`，`server` 取 `servers.address`（§4），嵌入**该用户自己的 UUID**、`flow`、`reality-opts: {public-key, short-id}`、`servername`、`udp: true`）+ 一个 `select` 类型 proxy-group + `MATCH` 规则。
 - 节点命名：`{服务器别名}-vless-{端口}`，如 `tokyo01-vless-8443`。
-- `vless://` 分享链接集合格式属后续迭代（实现成本极低，随时可补）。
+- **响应头**：`/sub/{token}` 与 `/sub/{token}/links` 均返回 `subscription-userinfo: upload=<bytes>; download=<bytes>[; expire=<unix秒>]`（upload/download 取 `traffic` 表用户维度 node_id=0 的跨服务器累计；仅设了有效期才带 expire；无流量配额故无 total）与 `profile-update-interval: 24`（客户端按天自动刷新）。
+- **用户有效期**：创建用户可带 `expires_at`（过去时间 → 400）；`PATCH /api/users/{id}` 修改/清除（null = 长期）；列表 DTO 带 `expires_at`/`expired`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `remove_user`（显式 nodes 载荷）；管理员延长/清除有效期（expired 1→0）→ 扇出 `add_user` 恢复。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`apply_node` 的 `NodeUserUUIDs` 不下发 expired 用户。
+- `vless://` 分享链接集合端点已实现：`GET /sub/{token}/links`（§14，仅含分配的 active 节点）。
 
 ## 10. 面板页面与 API
 
@@ -179,12 +181,13 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，`-telemetry-interval` �
 - **xray 版本与运行状态**：升级管理（§18）完成后据此刷新面板展示。
 - **主机指标**：/proc 采集 load1、CPU 使用率、内存总量/占用 → `server_metrics` 表（每服务器最新值）→ 服务器列表"负载"列。
 - **流量统计（仅统计，不做强制配额）**：骨架配置启用 xray stats（inbound 级 + 用户级 policy），
-  用户条目带 `level: 0`；Agent 经 gRPC StatsService 拉取计数器并按采样区间计算增量 →
+  用户条目带 `level: 0`；Agent 经 gRPC StatsService 拉取计数器并按采样区间计算增量
+  （连接建立后首帧仅建立采样基线、不上报流量，避免重连后把全量当增量重复计数）→
   `traffic` 表累计（节点与用户两个维度）→ 节点/用户列表"流量"列。
   旧版本生成的 config.json 由 Agent 启动时自动补齐 stats/policy 配置（缺失则落盘重启）。
   socks/http 的 accounts 无 email，仅覆盖节点维度。
 
-在线/离线仍由 WS 连接存在性直接推导，无周期心跳。
+在线/离线由 WS 连接推导，连接存亡由 §2 的应用层心跳判定（30s ping，90s 无流量判死）。
 
 ## 14. MVP 已知问题与后续迭代目标
 
@@ -199,6 +202,7 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，`-telemetry-interval` �
 | `vless://` 链接订阅 | ✅ 已实现：GET /sub/{token}/links 返回 base64 链接集合（vless/trojan/vmess/ss） |
 | 订阅二维码 | ✅ 已实现：用户列表扫码导入 |
 | xray 版本升级管理 | ✅ 已实现（见 §18） |
+| 事件告警与 SQLite 备份 | ✅ 已实现（见 §19）：Webhook + Telegram，VACUUM INTO 下载 |
 | 多管理员 / RBAC | 决策不做：单管理员符合规模假设 |
 | fallback 传输实现 | 决策不做：WS 通道全绿，无实际需求；requester 接口已隔离，需要时再实现 |
 | NAT / 中继链路 | 决策不做（明确排除） |
@@ -269,9 +273,34 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，`-telemetry-interval` �
 面板服务器列表"升级 xray"（`POST /api/servers/{id}/upgrade`，版本为 `latest` 或 `vX.Y.Z`）→
 `upgrade_xray` 命令下发（离线留队列补发）→ Agent：
 
-1. `latest` 经 GitHub API 解析（与 install.sh 同款）；
+1. `latest` 经 GitHub API 解析（与 install.sh 同款）；设置 `-xray-release-base` 镜像基址时跳过 API，直接走 release 的 `latest/download` 重定向约定下载，实际版本由步骤 3 校验与 telemetry 上报；
 2. 下载官方 release 包与 `.dgst`，校验 SHA2-256（获取不到校验文件即失败）；
 3. 备份旧二进制（`.bak`）→ 原子替换 → 重启 → 校验实际版本；任一步失败回滚并重启；
 4. 成功后新版本经 telemetry（§13）刷新面板展示。
 
 下载基址可用 `-xray-release-base` 指向镜像/代理（官方 GitHub 不可达的被控机场景）。
+
+## 19. 事件告警与备份（已实现，超出 MVP 范围）
+
+单人运维的离线通知与数据兜底。
+
+**事件告警**（设置页"告警"区块，三项全空 = 关闭）：
+
+- 触发仅状态跃迁，不周期重发：
+  - `server_offline`：WS 断开导致 online→offline（hub unregister 实际移除注册连接为唯一挂点；
+    被新连接顶替的旧连接注销不算，hello 重连不重复报）；
+  - `config_drift`：dispatcher 收到 `drift_report` true（§17）；
+  - `node_failed`：apply_result 失败或命令死信导致节点置 failed（§6）。
+- 通道（各自独立判定，异步发送不阻塞主路径，5s 超时，失败仅记日志）：
+  - Webhook：POST JSON `{"event","server","node","detail","time"}` 到 `alert_webhook_url`；
+  - Telegram：Bot API `sendMessage` 纯文本，需 `alert_telegram_bot_token` +
+    `alert_telegram_chat_id` 同时具备（token 与 tls key 同风格：不回显，仅给置位标记）。
+- 防抖动：同一服务器同一事件 5 分钟内不重复发（内存 map 记上次发送时间，重启清零可接受；
+  `LATTIX_ALERT_DEBOUNCE` 可覆盖窗口，dev/e2e 用）。
+- `POST /api/settings/alerts/test`：按已保存配置向两通道各发一条测试消息，返回各通道成败。
+- e2e 加速：`LATTIX_WS_PING_INTERVAL`（Go duration）覆盖 WS 心跳周期（pong 超时 = 3 倍），
+  参照 `LATTIX_EXPIRY_SWEEP_INTERVAL` 先例。
+
+**SQLite 备份**：`GET /api/backup`（session 鉴权）`VACUUM INTO` 到临时文件后以
+`lattix-backup-<YYYYMMDD-HHMMSS>.db` 附件返回，发送完成清理临时文件；单连接 +
+busy_timeout 下与并发读写安全共存，失败 500。设置页"面板维护"区块提供下载按钮。

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"sync"
 
+	"lattix/backend/internal/alert"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/ws"
 	"lattix/shared"
@@ -23,6 +24,9 @@ type Dispatcher struct {
 	req ws.Requester
 
 	panelVersion string // 面板自身版本（构建注入），hello 兼容窗口判定用
+
+	// Alerter 事件告警（§19）：nil = 关闭；仅状态跃迁时调用，发送方自行防抖动。
+	Alerter *alert.Notifier
 
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
@@ -75,8 +79,19 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 		}
 		if c.Attempts >= maxCommandAttempts {
 			log.Printf("dispatch: command %d dead-lettered after %d attempts", c.ID, c.Attempts)
-			if err := d.st.MarkCommandFailed(ctx, c.ID); err != nil {
+			if err := d.st.DeadLetterCommand(ctx, c.ID); err != nil {
 				log.Printf("dispatch: dead-letter command %d: %v", c.ID, err)
+			}
+			// apply_node 死信：节点不能永远卡 applying，置 failed 供管理员重试（§6）。
+			if c.Type == shared.TypeApplyNode {
+				var p shared.ApplyNodePayload
+				if err := json.Unmarshal(c.Payload, &p); err == nil && p.NodeID != 0 {
+					reason := fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts)
+					if err := d.st.SetNodeFailed(ctx, p.NodeID, reason); err != nil {
+						log.Printf("dispatch: dead-letter node %d failed: %v", p.NodeID, err)
+					}
+					d.alertNodeFailed(serverID, p.NodeID, reason)
+				}
 			}
 			continue
 		}
@@ -203,6 +218,9 @@ func (d *Dispatcher) handleDriftReport(serverID int64, env shared.Envelope) {
 	}
 	if p.Drifted {
 		log.Printf("dispatch: server %d: 配置漂移（外部修改），待管理员修复", serverID)
+		if d.Alerter != nil {
+			d.Alerter.Notify(serverID, alert.EventConfigDrift, "", "xray 配置被外部修改，待管理员修复")
+		}
 	}
 }
 
@@ -219,11 +237,28 @@ func (d *Dispatcher) handleApplyResult(serverID int64, env shared.Envelope) {
 		log.Printf("dispatch: server %d: bad apply_result id %q: %v", serverID, env.ID, err)
 		return
 	}
+	// 归属校验：只接受命令所属服务器的回执，防跨服务器伪造/串线（§5）。
+	cmd, err := d.st.CommandByID(ctx, cmdID)
+	if err != nil {
+		log.Printf("dispatch: server %d: apply_result for unknown command %d: %v", serverID, cmdID, err)
+		return
+	}
+	if cmd.ServerID != serverID {
+		log.Printf("dispatch: server %d: apply_result for command %d owned by server %d, ignored", serverID, cmdID, cmd.ServerID)
+		return
+	}
 	if p.OK {
-		realized, _ := json.Marshal(p.RealizedConfig)
-		if err := d.st.MarkCommandAcked(ctx, cmdID); err != nil {
+		// 仅 sent → acked；死信后迟到的 ack 不得翻回终态，也不得触碰节点状态机。
+		acked, err := d.st.MarkCommandAcked(ctx, cmdID)
+		if err != nil {
 			log.Printf("dispatch: ack command %d: %v", cmdID, err)
+			return
 		}
+		if !acked {
+			log.Printf("dispatch: server %d: apply_result for command %d not in sent state, ignored", serverID, cmdID)
+			return
+		}
+		realized, _ := json.Marshal(p.RealizedConfig)
 		// NodeID 0 表示非节点命令（add_user/remove_user 等），不触碰节点状态机。
 		if p.NodeID != 0 {
 			if err := d.st.SetNodeActive(ctx, p.NodeID, realized); err != nil {
@@ -234,18 +269,33 @@ func (d *Dispatcher) handleApplyResult(serverID int64, env shared.Envelope) {
 			log.Printf("dispatch: server %d: command %d acked", serverID, cmdID)
 		}
 	} else {
-		if err := d.st.MarkCommandFailed(ctx, cmdID); err != nil {
+		failed, err := d.st.MarkCommandFailed(ctx, cmdID)
+		if err != nil {
 			log.Printf("dispatch: fail command %d: %v", cmdID, err)
+			return
+		}
+		if !failed {
+			log.Printf("dispatch: server %d: apply_result for command %d not in sent state, ignored", serverID, cmdID)
+			return
 		}
 		if p.NodeID != 0 {
 			if err := d.st.SetNodeFailed(ctx, p.NodeID, p.Error); err != nil {
 				log.Printf("dispatch: node %d failed: %v", p.NodeID, err)
 			}
 			log.Printf("dispatch: server %d: node %d failed (command %d): %s", serverID, p.NodeID, cmdID, p.Error)
+			d.alertNodeFailed(serverID, p.NodeID, p.Error)
 		} else {
 			log.Printf("dispatch: server %d: command %d failed: %s", serverID, cmdID, p.Error)
 		}
 	}
+}
+
+// alertNodeFailed 上报节点置 failed 事件（§19）：apply_result 失败与死信两条路径共用。
+func (d *Dispatcher) alertNodeFailed(serverID, nodeID int64, reason string) {
+	if d.Alerter == nil {
+		return
+	}
+	d.Alerter.Notify(serverID, alert.EventNodeFailed, fmt.Sprintf("node_%d", nodeID), reason)
 }
 
 func (d *Dispatcher) serverLock(serverID int64) *sync.Mutex {

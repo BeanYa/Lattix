@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"lattix/backend/internal/alert"
 	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/ws"
@@ -20,24 +21,26 @@ import (
 
 // Config 是面板运行配置。
 type Config struct {
-	AdminUser     string     // 管理员账号（单管理员，§14 多管理员属后续迭代）
-	AdminPass     string     // 管理员密码（DB 设置页改密后被 bcrypt 哈希覆盖）
-	PublicURL     string     // 面板对外地址（生成安装命令/订阅链接）；空 = 从请求推断（DB 设置可覆盖）
-	Secure        bool       // 面板自身以 TLS 服务（自带证书或 ACME，§12）
-	RunningTLS    AppliedTLS // 当前进程实际生效的 TLS 快照（main 启动时确定，重启生效）
-	TLSDir        string     // 域名路径模式证书根目录（<tls-dir>/<域名>/fullchain.pem|privkey.pem）
-	Version       string     // 面板版本（构建注入）；dev 时安装命令回退面板托管模式
-	GitHubRepo    string     // GitHub 仓库（org/repo）：release 安装命令与 agent 升级下载基址
-	DistDir       string     // agent 二进制等发布产物目录（/dist/ 托管）
-	InstallScript string     // install.sh 文件路径（/install.sh 托管）
+	AdminUser     string          // 管理员账号（单管理员，§14 多管理员属后续迭代）
+	AdminPass     string          // 管理员密码（DB 设置页改密后被 bcrypt 哈希覆盖）
+	PublicURL     string          // 面板对外地址（生成安装命令/订阅链接）；空 = 从请求推断（DB 设置可覆盖）
+	Secure        bool            // 面板自身以 TLS 服务（自带证书或 ACME，§12）
+	RunningTLS    AppliedTLS      // 当前进程实际生效的 TLS 快照（main 启动时确定，重启生效）
+	TLSDir        string          // 域名路径模式证书根目录（<tls-dir>/<域名>/fullchain.pem|privkey.pem）
+	Version       string          // 面板版本（构建注入）；dev 时安装命令回退面板托管模式
+	GitHubRepo    string          // GitHub 仓库（org/repo）：release 安装命令与 agent 升级下载基址
+	DistDir       string          // agent 二进制等发布产物目录（/dist/ 托管）
+	InstallScript string          // install.sh 文件路径（/install.sh 托管）
+	Alerter       *alert.Notifier // 事件告警（§19）；nil = 关闭
 }
 
 // Server 聚合面板 API 的依赖。
 type Server struct {
-	st   *store.Store
-	disp *dispatch.Dispatcher
-	req  ws.Requester
-	cfg  Config
+	st      *store.Store
+	disp    *dispatch.Dispatcher
+	req     ws.Requester
+	cfg     Config
+	alerter *alert.Notifier
 
 	installScript []byte
 }
@@ -50,7 +53,7 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.Requester, cfg Confi
 	}
 	// 注入 dist 中 agent 二进制的 SHA256（明文 HTTP 下的完整性锚点，§11/§12）。
 	script = injectAgentSHA256(script, cfg.DistDir)
-	return &Server{st: st, disp: disp, req: req, cfg: cfg, installScript: script}, nil
+	return &Server{st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, installScript: script}, nil
 }
 
 // injectAgentSHA256 将 install.sh 中的 {{AGENT_SHA256_<ARCH>}} 占位符替换为
@@ -92,6 +95,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/users", s.requireAuth(s.handleListUsers))
 	mux.HandleFunc("POST /api/users", s.requireAuth(s.handleCreateUser))
+	mux.HandleFunc("PATCH /api/users/{id}", s.requireAuth(s.handleUpdateUser))
 	mux.HandleFunc("PUT /api/users/{id}/nodes", s.requireAuth(s.handleSetUserNodes))
 	mux.HandleFunc("DELETE /api/users/{id}", s.requireAuth(s.handleDeleteUser))
 
@@ -99,6 +103,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/settings", s.requireAuth(s.handleUpdateSettings))
 	mux.HandleFunc("PUT /api/settings/password", s.requireAuth(s.handleChangePassword))
 	mux.HandleFunc("POST /api/settings/restart", s.requireAuth(s.handleRestart))
+	mux.HandleFunc("POST /api/settings/alerts/test", s.requireAuth(s.handleTestAlerts))
+
+	mux.HandleFunc("GET /api/backup", s.requireAuth(s.handleBackup))
 
 	mux.HandleFunc("GET /install.sh", s.handleInstallScript)
 	mux.Handle("GET /dist/", http.StripPrefix("/dist/", http.FileServer(http.Dir(s.cfg.DistDir))))
@@ -109,6 +116,9 @@ func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(s.installScript)
 }
+
+// PanelBase 导出 panelBase，供订阅落地页生成绝对链接（与面板 DTO 同一判定链）。
+func (s *Server) PanelBase(r *http.Request) string { return s.panelBase(r) }
 
 // panelBase 返回面板对外地址：DB 设置（设置页）> 启动参数 PublicURL > 从请求推断。
 // HTTPS 判定：面板自身 TLS、直连 TLS，或反代经 X-Forwarded-Proto 声明（§12）。

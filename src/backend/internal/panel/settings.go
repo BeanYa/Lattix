@@ -82,23 +82,30 @@ type settingsDTO struct {
 	RestartRequired  bool         `json:"restart_required"` // TLS/ACME 保存值与运行态不一致
 	AdminUser        string       `json:"admin_user"`
 	PasswordOverride bool         `json:"password_override"` // 密码已被设置页覆盖（否则为启动参数）
+	// 事件告警（§19）：三项全空 = 告警关闭。bot token 不回显（与 tls_key 同风格），仅给置位标记。
+	AlertWebhookURL          string `json:"alert_webhook_url"`
+	AlertTelegramBotTokenSet bool   `json:"alert_telegram_bot_token_set"`
+	AlertTelegramChatID      string `json:"alert_telegram_chat_id"`
 }
 
 // handleGetSettings 处理 GET /api/settings。
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dto := settingsDTO{
-		Timezone:         s.getSetting(ctx, store.SettingTimezone),
-		PublicURL:        s.getSetting(ctx, store.SettingPublicURL),
-		TLSMode:          s.getSetting(ctx, store.SettingTLSMode),
-		TLSKeySet:        s.getSetting(ctx, store.SettingTLSKeyPEM) != "",
-		TLSDomain:        s.getSetting(ctx, store.SettingTLSDomain),
-		TLSDir:           s.cfg.TLSDir,
-		ACMEDomain:       s.getSetting(ctx, store.SettingACMEDomain),
-		ACMEEmail:        s.getSetting(ctx, store.SettingACMEEmail),
-		RunningTLSMode:   s.cfg.RunningTLS.Mode,
-		AdminUser:        s.cfg.AdminUser,
-		PasswordOverride: s.getSetting(ctx, store.SettingAdminPassBcrypt) != "",
+		Timezone:                 s.getSetting(ctx, store.SettingTimezone),
+		PublicURL:                s.getSetting(ctx, store.SettingPublicURL),
+		TLSMode:                  s.getSetting(ctx, store.SettingTLSMode),
+		TLSKeySet:                s.getSetting(ctx, store.SettingTLSKeyPEM) != "",
+		TLSDomain:                s.getSetting(ctx, store.SettingTLSDomain),
+		TLSDir:                   s.cfg.TLSDir,
+		ACMEDomain:               s.getSetting(ctx, store.SettingACMEDomain),
+		ACMEEmail:                s.getSetting(ctx, store.SettingACMEEmail),
+		RunningTLSMode:           s.cfg.RunningTLS.Mode,
+		AdminUser:                s.cfg.AdminUser,
+		PasswordOverride:         s.getSetting(ctx, store.SettingAdminPassBcrypt) != "",
+		AlertWebhookURL:          s.getSetting(ctx, store.SettingAlertWebhookURL),
+		AlertTelegramBotTokenSet: s.getSetting(ctx, store.SettingAlertTelegramBotToken) != "",
+		AlertTelegramChatID:      s.getSetting(ctx, store.SettingAlertTelegramChatID),
 	}
 	if certPEM := s.getSetting(ctx, store.SettingTLSCertPEM); certPEM != "" {
 		if cert, err := parseCertInfo(certPEM); err == nil {
@@ -153,6 +160,10 @@ type updateSettingsRequest struct {
 	TLSDomain  string `json:"tls_domain"` // path 模式域名
 	ACMEDomain string `json:"acme_domain"`
 	ACMEEmail  string `json:"acme_email"`
+	// 事件告警（§19）：webhook/chat_id 随表单覆盖（允许清空）；bot token 留空 = 保持已保存值。
+	AlertWebhookURL       string `json:"alert_webhook_url"`
+	AlertTelegramBotToken string `json:"alert_telegram_bot_token"`
+	AlertTelegramChatID   string `json:"alert_telegram_chat_id"`
 }
 
 // handleUpdateSettings 处理 PUT /api/settings：校验后落库。
@@ -187,6 +198,16 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusBadRequest, "无效的 TLS 模式")
 		return
+	}
+
+	// 告警 webhook（§19）：非空时须为 http(s) 地址。
+	req.AlertWebhookURL = strings.TrimSpace(req.AlertWebhookURL)
+	if req.AlertWebhookURL != "" {
+		u, err := url.Parse(req.AlertWebhookURL)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			writeError(w, http.StatusBadRequest, "告警 Webhook 地址须形如 http(s)://...")
+			return
+		}
 	}
 
 	// 证书/私钥：body 提供则校验并覆盖，留空保持已保存值。
@@ -291,6 +312,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !set(store.SettingACMEEmail, strings.TrimSpace(req.ACMEEmail)) {
+		return
+	}
+
+	// 事件告警（§19）：webhook/chat_id 随表单覆盖（允许清空）；bot token 留空保持不变。
+	if !set(store.SettingAlertWebhookURL, req.AlertWebhookURL) {
+		return
+	}
+	if !set(store.SettingAlertTelegramChatID, strings.TrimSpace(req.AlertTelegramChatID)) {
+		return
+	}
+	if t := strings.TrimSpace(req.AlertTelegramBotToken); t != "" && !set(store.SettingAlertTelegramBotToken, t) {
 		return
 	}
 

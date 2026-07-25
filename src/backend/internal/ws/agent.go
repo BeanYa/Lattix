@@ -38,6 +38,13 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadDeadline(time.Time{})
 
+	// 应用层心跳（§2）：读超时 pongTimeout，任何消息到达（含 pong）即续期；ping 由 writePump 周期发出。
+	conn.SetReadDeadline(time.Now().Add(h.pongTimeout))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(h.pongTimeout))
+		return nil
+	})
+
 	var hp shared.HelloPayload
 	if err := json.Unmarshal(hello.Payload, &hp); err != nil {
 		log.Printf("ws: bad hello payload: %v", err)
@@ -59,6 +66,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c := &agentConn{
+		hub:      h,
 		serverID: serverID,
 		ws:       conn,
 		send:     make(chan shared.Envelope, sendBuffer),
@@ -91,6 +99,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err := conn.ReadJSON(&env); err != nil {
 			return
 		}
+		conn.SetReadDeadline(time.Now().Add(h.pongTimeout)) // 任何消息到达即续期
 		if h.OnMessage != nil {
 			h.OnMessage(serverID, env)
 		}

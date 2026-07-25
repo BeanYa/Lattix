@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -104,4 +106,20 @@ func (s *Store) TrafficByUser(ctx context.Context) (map[string]TrafficTotals, er
 		out[uuid] = t
 	}
 	return out, rows.Err()
+}
+
+// UserTraffic 返回单个用户的流量合计（用户维度 node_id=0，各服务器上报已按 (0,uuid) 累计求和）；
+// 无数据时返回零值（订阅 subscription-userinfo 头，§9）。
+func (s *Store) UserTraffic(ctx context.Context, userUUID string) (TrafficTotals, error) {
+	var t TrafficTotals
+	err := s.db.QueryRowContext(ctx,
+		`SELECT up, down FROM traffic WHERE node_id = 0 AND user_uuid = ?`, userUUID).
+		Scan(&t.Up, &t.Down)
+	if errors.Is(err, sql.ErrNoRows) {
+		return TrafficTotals{}, nil
+	}
+	if err != nil {
+		return TrafficTotals{}, fmt.Errorf("query user traffic: %w", err)
+	}
+	return t, nil
 }

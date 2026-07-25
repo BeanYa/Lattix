@@ -1,5 +1,5 @@
 // Package sub 实现订阅端点（设计文档 §9）：
-// GET /sub/{sub_token} → mihomo（Clash.Meta）格式 YAML。
+// GET /sub/{sub_token} → mihomo（Clash.Meta）格式 YAML；浏览器（Accept 含 text/html）→ 落地页 HTML。
 package sub
 
 import (
@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -16,12 +17,39 @@ import (
 
 // Server 实现订阅端点。
 type Server struct {
-	st *store.Store
+	st   *store.Store
+	base func(*http.Request) string // 面板对外地址（落地页绝对链接，同 panel.PanelBase 判定链）
 }
 
-// New 创建订阅服务。
-func New(st *store.Store) *Server {
-	return &Server{st: st}
+// New 创建订阅服务；base 返回请求对应的面板对外地址（可为 nil，落地页退回请求推断）。
+func New(st *store.Store, base func(*http.Request) string) *Server {
+	if base == nil {
+		base = func(r *http.Request) string {
+			scheme := "http"
+			if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+				scheme = "https"
+			}
+			return fmt.Sprintf("%s://%s", scheme, r.Host)
+		}
+	}
+	return &Server{st: st, base: base}
+}
+
+// setSubHeaders 写订阅通用响应头（§9）：
+// subscription-userinfo（upload/download 取 traffic 表用户维度 node_id=0 的累计值；
+// 用户设了有效期才带 expire，unix 秒；项目无流量配额，无 total 字段）与
+// profile-update-interval（小时，客户端按天自动刷新订阅）。
+func (s *Server) setSubHeaders(w http.ResponseWriter, r *http.Request, user *store.User) {
+	t, err := s.st.UserTraffic(r.Context(), user.UUID)
+	if err != nil {
+		t = store.TrafficTotals{} // 统计查询失败不阻断订阅
+	}
+	v := fmt.Sprintf("upload=%d; download=%d", t.Up, t.Down)
+	if user.ExpiresAt != nil {
+		v += fmt.Sprintf("; expire=%d", user.ExpiresAt.Unix())
+	}
+	w.Header().Set("Subscription-Userinfo", v)
+	w.Header().Set("Profile-Update-Interval", "24")
 }
 
 type clashRealityOpts struct {
@@ -113,6 +141,8 @@ func (s *Server) assignedActiveNodes(r *http.Request) (*store.User, []store.Node
 }
 
 // ServeHTTP 处理 GET /sub/{token}：按该用户自己的 UUID 为每个 active 节点生成一项代理（§9）。
+// Accept 含 text/html（浏览器）时返回订阅落地页 HTML；否则返回 mihomo YAML。
+// 已到期停权（expired=1）的用户订阅照常返回但 proxies 为空——客户端显示到期而不是报错。
 // dokodemo-door 为端口转发，客户端无法作为代理消费，不进订阅。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	user, nodes, err := s.assignedActiveNodes(r)
@@ -124,7 +154,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error()+"\n", status)
 		return
 	}
+	s.setSubHeaders(w, r, user)
 
+	if strings.Contains(r.Header.Get("Accept"), "text/html") {
+		s.serveLanding(w, r, user, nodes)
+		return
+	}
+
+	if user.Expired {
+		nodes = nil // 到期停权：proxies 为空（§9）
+	}
 	cfg := clashConfig{Proxies: []clashProxy{}}
 	names := []string{}
 	for _, n := range nodes {

@@ -89,7 +89,7 @@ type createNodeRequest struct {
 	Mode          string   `json:"mode"`           // xhttp，默认 auto
 	Host          string   `json:"host"`           // xhttp，可空
 	Flow          string   `json:"flow"`           // vless 默认 xtls-rprx-vision（仅 tcp）
-	Encryption    string   `json:"encryption"`     // vless：VLESS Encryption 认证方式（x25519/mlkem768），与 flow 互斥
+	Encryption    string   `json:"encryption"`     // vless：VLESS Encryption 认证方式（x25519/mlkem768），可与 flow 组合（§15）
 	Method        string   `json:"method"`         // shadowsocks，默认 2022-blake3-aes-128-gcm
 	TargetAddress string   `json:"target_address"` // dokodemo-door 转发目标
 	TargetPort    *int     `json:"target_port"`

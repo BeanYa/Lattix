@@ -18,6 +18,8 @@ type Runner interface {
 	Restart(ctx context.Context) error
 	// IsRunning 报告 xray 是否在运行（遥测，§13）。
 	IsRunning(ctx context.Context) bool
+	// Stop 停止 xray（uninstall purge_xray 时调用，§5）。
+	Stop(ctx context.Context) error
 }
 
 // NewRunner 按 kind 创建 Runner：systemd（默认）| exec（dev）。
@@ -41,6 +43,11 @@ func (r *SystemdRunner) Restart(ctx context.Context) error {
 // IsRunning 实现 Runner。
 func (r *SystemdRunner) IsRunning(ctx context.Context) bool {
 	return exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", r.unit).Run() == nil
+}
+
+// Stop 实现 Runner。
+func (r *SystemdRunner) Stop(ctx context.Context) error {
+	return exec.CommandContext(ctx, "systemctl", "stop", r.unit).Run()
 }
 
 // ExecRunner 直接拉起 xray 子进程（dev 联调用，输出并入 agent 日志）。
@@ -86,4 +93,16 @@ func (r *ExecRunner) Restart(ctx context.Context) error {
 // IsRunning 实现 Runner。
 func (r *ExecRunner) IsRunning(context.Context) bool {
 	return r.running.Load()
+}
+
+// Stop 实现 Runner：杀掉 xray 子进程（未运行时为空操作）。
+func (r *ExecRunner) Stop(context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cmd != nil && r.cmd.Process != nil {
+		r.cmd.Process.Kill()
+		r.cmd.Wait()
+		r.cmd = nil
+	}
+	return nil
 }

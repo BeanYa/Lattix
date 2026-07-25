@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,20 +21,34 @@ import (
 const upgradeHTTPTimeout = 120 * time.Second
 
 // UpgradeXray 升级 xray 到指定版本（§18 版本升级管理）：
-// 解析 latest（GitHub API）→ 下载官方 release 包与 .dgst → 校验 SHA2-256 →
+// 解析 latest（GitHub API；设镜像基址时跳过 API 走 latest/download 约定）→
+// 下载 release 包与 .dgst → 校验 SHA2-256 →
 // 备份旧二进制（.bak）→ 原子替换 → 重启 → 校验实际版本；任一步失败回滚并重启。
 func (m *Manager) UpgradeXray(version string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	if version == "" || version == "latest" {
+		if m.mirrorBase {
+			// 镜像基址（-xray-release-base）：跳过 GitHub API（官方 API 不可达正是该参数的目标场景），
+			// 走 release 的 latest 重定向约定 {base}/latest/download/{asset}（镜像站同样支持）；
+			// 实际版本由升级后的版本校验与 telemetry 上报，无需 API 返回的版本号。
+			return m.upgradeXray("latest", "latest/download")
+		}
 		v, err := resolveLatestXrayVersion()
 		if err != nil {
 			return err
 		}
 		version = v
 	}
-	if !strings.HasPrefix(version, "v") {
+	return m.upgradeXray(version, version)
+}
+
+// upgradeXray 下载并替换 xray：dlRef 为下载 URL 中的版本段（显式版本号或 latest/download），
+// expectVer 为升级后期望版本（"latest" 时仅校验运行状态，不比对具体版本号）。
+func (m *Manager) upgradeXray(expectVer, dlRef string) error {
+	version := expectVer
+	if version != "latest" && !strings.HasPrefix(version, "v") {
 		return fmt.Errorf("版本号须形如 vX.Y.Z 或 latest: %s", version)
 	}
 
@@ -54,7 +69,7 @@ func (m *Manager) UpgradeXray(version string) error {
 	defer os.RemoveAll(tmp)
 
 	zipPath := filepath.Join(tmp, "xray.zip")
-	base := m.releaseBase + "/" + version
+	base := m.releaseBase + "/" + dlRef
 	if err := downloadFile(base+"/"+asset, zipPath); err != nil {
 		return fmt.Errorf("下载 xray 包失败: %w", err)
 	}
@@ -86,9 +101,9 @@ func (m *Manager) UpgradeXray(version string) error {
 		m.rollbackXray(backup)
 		return fmt.Errorf("重启 xray 失败(%v)，已回滚", err)
 	}
-	// 校验实际运行版本。
+	// 校验实际运行版本（latest 无 API 版本号可比，仅要求新二进制正常拉起）。
 	ver, running := m.Version()
-	if !running || !strings.Contains(ver, strings.TrimPrefix(version, "v")) {
+	if !running || (version != "latest" && !strings.Contains(ver, strings.TrimPrefix(version, "v"))) {
 		m.rollbackXray(backup)
 		return fmt.Errorf("升级后版本校验失败（期望 %s，实际 %s running=%v），已回滚", version, ver, running)
 	}
@@ -99,9 +114,12 @@ func (m *Manager) UpgradeXray(version string) error {
 // rollbackXray 从备份恢复旧二进制并尽力重启。
 func (m *Manager) rollbackXray(backup string) {
 	if err := copyFile(backup, m.bin, 0o755); err != nil {
+		log.Printf("xray rollback: 从 %s 恢复二进制失败: %v", backup, err)
 		return
 	}
-	_ = m.runner.Restart(context.Background())
+	if err := m.runner.Restart(context.Background()); err != nil {
+		log.Printf("xray rollback: 回滚后重启失败: %v", err)
+	}
 }
 
 // resolveLatestXrayVersion 经 GitHub API 解析最新 release tag（§11 同款逻辑）。

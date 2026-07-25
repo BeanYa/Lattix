@@ -82,8 +82,8 @@ func (fc fullConfig) removeInbound(tag string) (fullConfig, bool) {
 
 // mutateClients 在节点 inbound（tag 前缀 node_）的用户列表中增删一个用户（§8/§16）：
 // vless/vmess/trojan/ss 操作 settings.clients，socks/http 操作 settings.accounts，
-// dokodemo 无用户概念跳过。params 按 tag 提供各协议条目构造参数；
-// params 非 nil 时仅处理其中列出的 tag（§16 增量扇出），为 nil 时处理全部（旧版面板载荷）。
+// dokodemo 无用户概念跳过。params 按 tag 提供各协议条目构造参数，
+// 仅处理其中列出的 tag（§16 增量扇出；agent 入口已拒绝缺省 Nodes 的载荷）。
 func (fc fullConfig) mutateClients(uuid string, add bool, params map[string]shared.UserNodeParams) (fullConfig, []string) {
 	var changed []string
 	out := make([]json.RawMessage, 0, len(fc.inbounds()))
@@ -94,7 +94,7 @@ func (fc fullConfig) mutateClients(uuid string, add bool, params map[string]shar
 			continue
 		}
 		p, ok := params[tag]
-		if params != nil && !ok {
+		if !ok {
 			out = append(out, raw) // §16：未列出的节点不受影响
 			continue
 		}
@@ -125,7 +125,7 @@ func mutateInboundUsers(raw json.RawMessage, uuid string, add bool, p shared.Use
 		return raw, false
 	}
 	if p.Protocol == "" {
-		p.Protocol = protocol // payload 未携带（旧版本面板）时以 inbound 自身协议为准
+		p.Protocol = protocol // payload 未携带时以 inbound 自身协议为准（兜底）
 	}
 	key := "clients"
 	if protocol == shared.ProtocolSocks || protocol == shared.ProtocolHTTP {

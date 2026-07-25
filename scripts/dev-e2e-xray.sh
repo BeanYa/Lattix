@@ -127,8 +127,8 @@ PUBKEY="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1].split("|",1)[
 port_open "$PORT" && echo "OK: 节点 active，端口 $PORT 监听中，public_key 已上报" || { echo "FAIL: 端口 $PORT 未监听"; exit 1; }
 XPID="$(xray_pid)"; [[ -n "$XPID" ]] || { echo "FAIL: xray 未运行"; exit 1; }
 
-echo ">> add_user（零重启热操作）"
-CID2="$(enqueue add_user "{\"uuid\":\"$U3\"}")"
+echo ">> add_user（零重启热操作，nodes 显式携带目标节点）"
+CID2="$(enqueue add_user "{\"uuid\":\"$U3\",\"nodes\":{\"node_1\":{\"protocol\":\"vless\"}}}")"
 bounce_agent
 [[ "$(wait_cmd "$CID2")" == "acked" ]] || { echo "FAIL: add_user 未成功"; cat "$WORK/agent.log"; exit 1; }
 grep -q "$U3" "$XRAY_CONFIG" && [[ "$(xray_pid)" == "$XPID" ]] \
@@ -136,7 +136,7 @@ grep -q "$U3" "$XRAY_CONFIG" && [[ "$(xray_pid)" == "$XPID" ]] \
     || { echo "FAIL: add_user 校验（config 含用户=$(grep -c "$U3" "$XRAY_CONFIG" || true)，PID =$(xray_pid)）"; exit 1; }
 
 echo ">> remove_user（零重启热操作）"
-CID3="$(enqueue remove_user "{\"uuid\":\"$U3\"}")"
+CID3="$(enqueue remove_user "{\"uuid\":\"$U3\",\"nodes\":{\"node_1\":{\"protocol\":\"vless\"}}}")"
 bounce_agent
 [[ "$(wait_cmd "$CID3")" == "acked" ]] || { echo "FAIL: remove_user 未成功"; cat "$WORK/agent.log"; exit 1; }
 ! grep -q "$U3" "$XRAY_CONFIG" && [[ "$(xray_pid)" == "$XPID" ]] \
@@ -165,6 +165,27 @@ bounce_agent
 sleep 2
 NODE2="$(db "SELECT status || '|' || COALESCE(error, '') FROM nodes WHERE id=2")"
 [[ "$NODE2" == failed\|*校验* ]] && echo "OK: 非法模板被拒，错误详情已上报" || { echo "FAIL: node2=$NODE2"; cat "$WORK/agent.log"; exit 1; }
+
+echo ">> 修复条件后 POST /api/nodes/{id}/retry → 重新下发 active（§6 重试按钮）"
+python3 - "$WORK/lattix.db" "$TMPL" <<'PY'
+import json, sqlite3, sys
+vc = {"protocol": "vless", "port": 0, "template": json.loads(sys.argv[2])}
+con = sqlite3.connect(sys.argv[1])
+con.execute("UPDATE nodes SET config_template=? WHERE id=2", (json.dumps(vc),))
+con.commit()
+PY
+curl -s -c "$WORK/cookies.txt" -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"lattix-admin"}' "http://$ADDR/api/login" >/dev/null
+[[ "$(curl -s -b "$WORK/cookies.txt" -o /dev/null -w '%{http_code}' -X POST "http://$ADDR/api/nodes/2/retry")" == "200" ]] \
+    || { echo "FAIL: retry 接口非 200"; exit 1; }
+NODE2=""
+for _ in $(seq 1 30); do
+    NODE2="$(db "SELECT status FROM nodes WHERE id=2")"
+    [[ "$NODE2" == "active" || "$NODE2" == "failed" ]] && break
+    sleep 1
+done
+[[ "$NODE2" == "active" ]] && echo "OK: failed 节点修复条件后重试 active" \
+    || { echo "FAIL: 重试后 node2=$NODE2 $(db "SELECT COALESCE(error,'') FROM nodes WHERE id=2")"; tail -5 "$WORK/agent.log" | grep -v "accepted tcp"; exit 1; }
 
 echo ">> dest 不可达 → 白名单 fallback（§6 预检）"
 python3 - "$WORK/lattix.db" <<'PY'

@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/crypto/acme/autocert"
 
+	"lattix/backend/internal/alert"
 	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/panel"
 	"lattix/backend/internal/store"
@@ -157,6 +158,13 @@ func main() {
 	}
 	hub.OnMessage = dispatcher.HandleMessage
 
+	// 事件告警（§19）：offline 跃迁挂在 hub 注销路径；漂移/节点失败在 dispatcher 处理点。
+	notifier := alert.New(st)
+	dispatcher.Alerter = notifier
+	hub.OnDisconnect = func(serverID int64) {
+		notifier.Notify(serverID, alert.EventServerOffline, "", "WS 连接断开，服务器离线")
+	}
+
 	// 面板管理 API（§10）。
 	repo := githubRepo
 	if *ghRepo != "" {
@@ -173,10 +181,23 @@ func main() {
 		GitHubRepo:    repo,
 		DistDir:       *distDir,
 		InstallScript: *installScript,
+		Alerter:       notifier,
 	})
 	if err != nil {
 		log.Fatalf("panel: %v", err)
 	}
+
+	// 用户有效期 sweeper（§9）：到期置 expired 并扇出 remove_user。
+	// 默认 1 分钟周期；LATTIX_EXPIRY_SWEEP_INTERVAL（Go duration）可覆盖（dev/e2e 用）。
+	sweepInterval := time.Duration(0)
+	if v := os.Getenv("LATTIX_EXPIRY_SWEEP_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			log.Fatalf("LATTIX_EXPIRY_SWEEP_INTERVAL 无效: %v", err)
+		}
+		sweepInterval = d
+	}
+	go ps.RunExpirySweeper(ctx, sweepInterval)
 
 	mux := http.NewServeMux()
 
@@ -186,8 +207,8 @@ func main() {
 	// 面板 API + install.sh / /dist/ 托管（§10、§11）。
 	ps.RegisterRoutes(mux)
 
-	// 订阅（§9）：mihomo（Clash.Meta）格式 YAML；/links 为分享链接集合（§14）。
-	subSrv := sub.New(st)
+	// 订阅（§9）：mihomo（Clash.Meta）格式 YAML（浏览器访问为落地页）；/links 为分享链接集合（§14）。
+	subSrv := sub.New(st, ps.PanelBase)
 	mux.Handle("GET /sub/{token}", subSrv)
 	mux.HandleFunc("GET /sub/{token}/links", subSrv.HandleLinks)
 

@@ -30,7 +30,8 @@ func newFakeRelease(t *testing.T, version string, content []byte) (base string) 
 }
 
 func TestApplyReplacesExecutable(t *testing.T) {
-	content := []byte("new agent binary v0.0.9")
+	// 新二进制须能通过 -version 自检（shell 脚本即可执行并打印版本）。
+	content := []byte("#!/bin/sh\necho v0.0.9\n")
 	base := newFakeRelease(t, "v0.0.9", content)
 
 	upgraded, err := Apply("v0.0.9", base, "v0.0.2", "unused/repo")
@@ -82,6 +83,14 @@ func TestApplyRejectsMissingChecksums(t *testing.T) {
 	defer srv.Close()
 	if _, err := Apply("v0.0.9", srv.URL, "v0.0.2", "unused/repo"); err == nil {
 		t.Fatal("缺 checksums.txt 应报错")
+	}
+}
+
+func TestApplyRejectsBrokenBinary(t *testing.T) {
+	// 校验和通过但二进制不可执行（-version 自检失败）时应放弃替换。
+	base := newFakeRelease(t, "v0.0.9", []byte("not an executable"))
+	if _, err := Apply("v0.0.9", base, "v0.0.2", "unused/repo"); err == nil {
+		t.Fatal("新二进制自检失败应报错")
 	}
 }
 

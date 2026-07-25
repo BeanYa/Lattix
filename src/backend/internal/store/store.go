@@ -2,6 +2,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -95,10 +96,18 @@ type Store struct {
 
 // Open 打开 SQLite 数据库并确保表结构存在。
 func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path)
+	// 并发设置（§2）：单连接 + busy_timeout，避免 HTTP handler/遥测/Flush 并发写时偶发 database is locked。
+	dsn := path
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	dsn += sep + "_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(Schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
@@ -130,6 +139,19 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("migrate servers.agent_upgrade_needed: %w", err)
 		}
 	}
+	// 轻量迁移：users.expires_at / expired（§9 用户有效期：到期停权标记，unix 秒，NULL=长期）。
+	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN expires_at INTEGER`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate users.expires_at: %w", err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN expired INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate users.expired: %w", err)
+		}
+	}
 	// 一次性迁移（PRAGMA user_version 0→1）：user_nodes 引入前，成员关系隐含为
 	// "全部用户 ∈ 全部节点"（§8）；为不破坏存量订阅，迁移时补全关联。
 	// 此后新建用户/节点默认全关（§16）。
@@ -154,3 +176,12 @@ func Open(path string) (*Store, error) {
 
 // Close 关闭底层数据库连接。
 func (s *Store) Close() error { return s.db.Close() }
+
+// Backup 经 VACUUM INTO 导出一致性快照到 destPath（§19 备份下载）。
+// destPath 须不存在或为空文件；单连接 + busy_timeout 下与并发读写安全共存。
+func (s *Store) Backup(ctx context.Context, destPath string) error {
+	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, destPath); err != nil {
+		return fmt.Errorf("vacuum into: %w", err)
+	}
+	return nil
+}

@@ -4,9 +4,27 @@
 #   常规命令（apply_node）滞留、upgrade_agent 放行但旧 agent 回执 unsupported；
 #   换 v0.0.2 agent（窗口内）→ 滞留命令补发、节点 active；
 #   v1.0.0 agent（主版本不符）→ hello 被拒。
+# 前提：仓库须存在 commit 早于 HEAD 的版本 tag（其 agent 源码须真正"旧"）。
+# 若仅有的 tag 指向 HEAD（"旧版"实为当前代码，断言永不成立），输出 SKIP 原因并 exit 0。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# 挑选最早一个 commit 不同于 HEAD 的版本 tag 作为旧版源码；无则明确跳过。
+OLD_TAG=""
+HEAD_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+while IFS= read -r t; do
+    [[ -z "$t" ]] && continue
+    if [[ "$(git -C "$ROOT" rev-parse "$t^{commit}")" != "$HEAD_COMMIT" ]]; then
+        OLD_TAG="$t"
+        break
+    fi
+done < <(git -C "$ROOT" tag -l 'v*' --sort=v:refname)
+if [[ -z "$OLD_TAG" ]]; then
+    echo "SKIP: 无 commit 早于 HEAD 的版本 tag，无法构建真正的旧版 agent（现有 tag 均指向 HEAD）"
+    exit 0
+fi
+
 WORK="$(mktemp -d)"
 OLD="$WORK/oldsrc"
 ADDR="127.0.0.1:18160"
@@ -30,11 +48,11 @@ py() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 ok() { echo "OK: $1"; }
 fail() { echo "FAIL: $1"; exit 1; }
 
-echo ">> build：面板 v0.0.3 / 当前 agent v0.0.2 + v1.0.0 / 旧源码 agent v0.0.1"
+echo ">> build：面板 v0.0.3 / 当前 agent v0.0.2 + v1.0.0 / 旧源码 agent（$OLD_TAG 构建，标记 v0.0.1）"
 (cd "$ROOT" && go build -ldflags "-X main.version=v0.0.3" -o "$WORK/backend" ./src/backend/cmd/backend)
 (cd "$ROOT" && go build -ldflags "-X main.version=v0.0.2" -o "$WORK/agent-v002" ./src/agent/cmd/agent)
 (cd "$ROOT" && go build -ldflags "-X main.version=v1.0.0" -o "$WORK/agent-v100" ./src/agent/cmd/agent)
-git -C "$ROOT" worktree add "$OLD" v0.0.1 >/dev/null 2>&1
+git -C "$ROOT" worktree add "$OLD" "$OLD_TAG" >/dev/null 2>&1
 (cd "$OLD" && go build -ldflags "-X main.version=v0.0.1" -o "$WORK/agent-v001" ./src/agent/cmd/agent)
 mkdir -p "$WORK/dist"
 

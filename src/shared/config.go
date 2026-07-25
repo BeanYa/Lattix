@@ -48,7 +48,7 @@ const (
 )
 
 // VLESS Encryption 认证方式（xray `vlessenc` 生成 decryption/encryption 对，
-// 替代 "decryption": "none"）。与 flow vision 互斥。
+// 替代 "decryption": "none"）。可与 flow vision 组合（§15，组合时按 1-RTT 下发）。
 const (
 	VLessEncX25519   = "x25519"   // X25519 认证（非后量子）
 	VLessEncMLKEM768 = "mlkem768" // ML-KEM-768 认证（后量子，xray 推荐）

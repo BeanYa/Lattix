@@ -1,4 +1,5 @@
 import type {
+  AlertTestResult,
   CreateNodeRequest,
   CreateServerResponse,
   DashboardStats,
@@ -103,8 +104,16 @@ export const api = {
   deleteNode: (id: number) => request<void>(`/api/nodes/${id}`, { method: 'DELETE' }),
 
   users: () => request<SubUser[]>('/api/users'),
-  createUser: (name: string) =>
-    request<SubUser>('/api/users', { method: 'POST', body: JSON.stringify({ name }) }),
+  createUser: (name: string, expiresAt?: string | null) =>
+    request<SubUser>('/api/users', {
+      method: 'POST',
+      body: JSON.stringify({ name, ...(expiresAt ? { expires_at: expiresAt } : {}) }),
+    }),
+  updateUserExpiry: (id: number, expiresAt: string | null) =>
+    request<SubUser>(`/api/users/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ expires_at: expiresAt }),
+    }),
   setUserNodes: (id: number, nodeIds: number[]) =>
     request<{ node_ids: number[] }>(`/api/users/${id}/nodes`, {
       method: 'PUT',
@@ -122,4 +131,6 @@ export const api = {
     }),
   restartPanel: () =>
     request<{ status: string }>('/api/settings/restart', { method: 'POST' }),
+  testAlerts: () =>
+    request<AlertTestResult>('/api/settings/alerts/test', { method: 'POST' }),
 }

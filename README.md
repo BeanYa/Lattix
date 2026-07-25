@@ -50,11 +50,20 @@ scripts/
 - 用户凭证复用 UUID：vless id / trojan 密码 / ss 派生密钥 / socks+http 账密
 - 订阅：`GET /sub/{token}` mihomo（Clash.Meta）YAML；`GET /sub/{token}/links`
   base64 分享链接集合（vless/trojan/vmess/ss）；用户页二维码扫码导入
+- 订阅响应头 `subscription-userinfo`（已用上下行流量、到期时刻）与
+  `profile-update-interval: 24`，客户端自动展示用量并按天刷新
+- 用户有效期：创建/编辑可设到期时刻，到期自动停权（订阅保留但节点为空，
+  sweeper 扇出 remove_user），延长或清除有效期自动恢复（扇出 add_user）
+- 订阅落地页：浏览器打开 `GET /sub/{token}` 得到自包含页面（用量/有效期/节点数、
+  订阅地址复制、二维码、clash/mihomo 一键导入），不依赖任何外网资源
 
 **运维**
 
 - 流量统计（节点/用户双维度，xray stats 采集）与主机遥测（load/CPU/内存）
 - 配置漂移 reconcile：外部篡改 xray 配置自动检测上报，一键修复（重放节点）
+- 事件告警：服务器离线 / 配置漂移 / 节点失败（仅状态跃迁触发，同服务器同事件
+  5 分钟防抖），Webhook + Telegram Bot 双通道，设置页配置并可发测试消息
+- SQLite 备份：设置页"面板维护"一键下载（`GET /api/backup`，VACUUM INTO 一致性快照）
 - xray 版本升级管理：面板下发，agent 校验官方 .dgst 后原子替换，失败回滚
 - 离线命令队列：agent 离线期间命令滞留，重连补发；重发死信（10 次）
 - 服务器引导：一行安装命令（bootstrap token 换发长期凭证），卸载可选"仅 agent"/"连同 xray"
@@ -89,9 +98,11 @@ cd src/frontend && bun install && bun run build && cd ../..
 `/sub`、`/install.sh`、`/dist`，并以 `-public-url https://域名` 或 `X-Forwarded-Proto` 告知面板。
 
 面板"设置"页可在线修改：对外地址与显示时区（立即生效）；TLS 模式 / 自带证书 PEM /
-ACME 域名（保存后重启进程生效）；管理员密码（bcrypt 落库，改密即全部会话失效）。
+ACME 域名（保存后重启进程生效）；管理员密码（bcrypt 落库，改密即全部会话失效）；
+事件告警（Webhook 地址 / Telegram Bot token / chat_id，三项全空即关闭，可发测试消息）。
 设置页保存的值存于 SQLite `settings` 表并**优先于对应启动参数**，清除后恢复跟随启动参数。
-"设置 → 面板维护"提供一键重启（`POST /api/settings/restart`）：systemd 托管时退出后由
+"设置 → 面板维护"提供一键重启（`POST /api/settings/restart`）与 SQLite 备份下载
+（`GET /api/backup`）：systemd 托管时退出后由
 systemd 拉起，否则自派生新进程接管（同参数同端口，等待旧进程释放端口）；面板版本更新
 替换二进制后也经此接口重启生效。
 
@@ -148,7 +159,9 @@ XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-telemetry.sh  # 流量统计 +
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-reconcile.sh  # 配置漂移检测与修复
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-upgrade.sh    # xray 升级（本地镜像，无外网）
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-tls.sh        # 面板 TLS / wss
-XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-links.sh      # 分享链接订阅
+XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-links.sh      # 分享链接订阅 + userinfo 头/落地页/用户有效期
+XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-settings.sh   # 设置页 / 改密 / TLS 域名路径模式 / 自重启
+XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-alerts.sh     # 事件告警（webhook/防抖/三类事件）+ SQLite 备份下载
 ```
 
 Agent 常用参数：`-panel`（面板 WS 地址）、`-token`（bootstrap token）、`-xray-release-base`

@@ -48,6 +48,9 @@ open(sys.argv[2], "w").write(f"SHA2-256= {h}\n")
 PY
 (cd "$WORK/releases" && exec python3 -m http.server 18200) >/dev/null 2>&1 &
 RELPID=$!
+# 镜像同样提供 GitHub release 的 latest 重定向布局：{base}/latest/download/{asset}
+mkdir -p "$WORK/releases/latest/download"
+cp "$REL_DIR/Xray-linux-64.zip" "$REL_DIR/Xray-linux-64.zip.dgst" "$WORK/releases/latest/download/"
 
 db() { python3 - "$WORK/lattix.db" "$1" <<'PY'
 import sqlite3, sys
@@ -108,6 +111,13 @@ wait_upgrade_cmd acked && echo "OK: 升级命令 acked" || { grep "command.*fail
     && echo "OK: 新二进制可运行（$VER_NUM）" \
     || { echo "FAIL: 替换后二进制异常"; exit 1; }
 [[ ! -f "$TEST_XRAY.bak" ]] && echo "OK: 升级成功后备份已清理" || { echo "FAIL: 备份残留"; exit 1; }
+
+echo ">> latest 升级走镜像（不经 GitHub API）"
+api POST /api/servers/1/upgrade '{"version":"latest"}' >/dev/null
+wait_upgrade_cmd acked && echo "OK: latest 升级命令 acked（镜像）" || { tail -10 "$WORK/agent.log"; exit 1; }
+"$TEST_XRAY" version | head -1 | grep -q "$VER_NUM" \
+    && echo "OK: latest 升级后二进制可运行（$VER_NUM）" \
+    || { echo "FAIL: latest 替换后二进制异常"; exit 1; }
 
 DB_VER=""
 for _ in $(seq 1 20); do

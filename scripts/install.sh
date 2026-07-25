@@ -133,8 +133,10 @@ if [[ "$LATTIX_VERSION" != *"{{"* ]]; then
     install -m 0755 "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}" "$AGENT_BIN"
 else
     # 面板托管模式：从面板 dist 下载，校验面板注入的 SHA256（§11/§12）。
-    # TODO: Agent 二进制的托管路径由面板构建发布流程决定（§11）。
-    curl -fsSL -o "$AGENT_BIN" "${PANEL_URL}/dist/lattix-agent-linux-${AGENT_ARCH}"
+    # 与 release 模式一致：先落临时文件、校验通过后再安装到最终路径，
+    # 避免校验失败时坏二进制已写入 $AGENT_BIN。
+    curl -fsSL -o "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}" \
+        "${PANEL_URL}/dist/lattix-agent-linux-${AGENT_ARCH}"
 
     case "$AGENT_ARCH" in
         amd64) EXPECTED_AGENT="$AGENT_SHA256_AMD64" ;;
@@ -143,10 +145,11 @@ else
     if [[ "$EXPECTED_AGENT" == *"{{"* || "$EXPECTED_AGENT" == "SKIP" || -z "$EXPECTED_AGENT" ]]; then
         echo ">> WARNING: 面板未注入 agent 校验和，跳过校验"
     else
-        echo "$EXPECTED_AGENT  $AGENT_BIN" | sha256sum -c - >/dev/null \
+        echo "$EXPECTED_AGENT  $TMP_DIR/lattix-agent-linux-${AGENT_ARCH}" | sha256sum -c - >/dev/null \
             || die "agent 二进制 SHA256 校验失败（期望 $EXPECTED_AGENT）"
         echo ">> agent 二进制 SHA256 校验通过"
     fi
+    install -m 0755 "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}" "$AGENT_BIN"
 fi
 chmod 0755 "$AGENT_BIN"
 

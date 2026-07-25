@@ -28,6 +28,7 @@ type Manager struct {
 	hot         *HotClient
 	runner      Runner
 	releaseBase string // xray release 下载基址（§18，可指向镜像）
+	mirrorBase  bool   // releaseBase 为显式设置的镜像：latest 不经 GitHub API 解析（§18）
 
 	lastHash string // 最后一次由本 agent 落盘的配置哈希（§17 漂移检测基线）
 	drifted  bool   // 已检出外部漂移：下一次 loadConfig 以净化配置为基（§17）
@@ -53,6 +54,7 @@ func NewManager(bin, configPath, apiAddr string, runner Runner) *Manager {
 // SetReleaseBase 覆盖 xray release 下载基址（§18 镜像/代理场景）。
 func (m *Manager) SetReleaseBase(base string) {
 	m.releaseBase = strings.TrimSuffix(base, "/")
+	m.mirrorBase = true
 }
 
 // Version 返回 xray 版本与运行状态（hello 遥测，§13），尽力而为。
@@ -129,15 +131,28 @@ func (m *Manager) RemoveNode(nodeID int64) error {
 	return nil
 }
 
-// AddUser 向该服务器所有节点 inbound 热加入一个用户（§5、§8）；
+// AddUser 向 params 列出的节点 inbound 热加入一个用户（§5、§8、§16）；
 // params 按 tag 提供各协议条目构造参数（热操作不支持的协议自动回退重启）。
 func (m *Manager) AddUser(uuid string, params map[string]shared.UserNodeParams) error {
 	return m.mutateUser(uuid, true, params)
 }
 
-// RemoveUser 从该服务器所有节点 inbound 热移除一个用户（§5、§8）。
+// RemoveUser 从 params 列出的节点 inbound 热移除一个用户（§5、§8、§16）。
 func (m *Manager) RemoveUser(uuid string, params map[string]shared.UserNodeParams) error {
 	return m.mutateUser(uuid, false, params)
+}
+
+// PurgeXray 停止并移除 agent 管理的 xray（uninstall purge_xray=true，§5）：
+// 停止运行中的 xray 后删除二进制（含升级备份 .bak）与 config.json。
+func (m *Manager) PurgeXray() {
+	if err := m.runner.Stop(context.Background()); err != nil {
+		log.Printf("xray: purge stop: %v", err)
+	}
+	for _, p := range []string{m.bin, m.bin + ".bak", m.configPath} {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Printf("xray: purge remove %s: %v", p, err)
+		}
+	}
 }
 
 func (m *Manager) mutateUser(uuid string, add bool, params map[string]shared.UserNodeParams) error {

@@ -18,6 +18,11 @@ const (
 	SettingACMEDomain      = "acme_domain"       // ACME 自动证书域名（tls_mode=acme）
 	SettingACMEEmail       = "acme_email"        // ACME 账号邮箱（可选）
 	SettingAdminPassBcrypt = "admin_pass_bcrypt" // 管理员密码 bcrypt 哈希；空 = 使用 -admin-pass
+
+	// 事件告警（§19）：三项全空 = 告警关闭；webhook 单独可发，telegram 需 token+chat_id 同时具备。
+	SettingAlertWebhookURL       = "alert_webhook_url"        // Webhook 接收端（POST JSON）
+	SettingAlertTelegramBotToken = "alert_telegram_bot_token" // Telegram Bot token（不回显，仅置位标记）
+	SettingAlertTelegramChatID   = "alert_telegram_chat_id"   // Telegram 会话 ID
 )
 
 // GetSetting 读取一个设置；未设置返回空字符串（不视为错误）。

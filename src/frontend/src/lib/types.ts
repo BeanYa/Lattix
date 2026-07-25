@@ -99,6 +99,8 @@ export interface SubUser {
   sub_links_url: string
   node_ids: number[]
   traffic: Traffic | null
+  expires_at: string | null
+  expired: boolean
   created_at: string
 }
 
@@ -125,6 +127,9 @@ export interface PanelSettings {
   restart_required: boolean
   admin_user: string
   password_override: boolean
+  alert_webhook_url: string
+  alert_telegram_bot_token_set: boolean
+  alert_telegram_chat_id: string
 }
 
 export interface UpdateSettingsRequest {
@@ -136,4 +141,18 @@ export interface UpdateSettingsRequest {
   tls_domain?: string
   acme_domain: string
   acme_email: string
+  alert_webhook_url: string
+  alert_telegram_bot_token?: string
+  alert_telegram_chat_id: string
+}
+
+export interface AlertChannelResult {
+  configured: boolean
+  ok: boolean
+  error?: string
+}
+
+export interface AlertTestResult {
+  webhook: AlertChannelResult
+  telegram: AlertChannelResult
 }

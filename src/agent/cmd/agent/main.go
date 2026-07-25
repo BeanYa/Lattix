@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -79,6 +80,13 @@ type safeConn struct {
 	mu   sync.Mutex
 }
 
+// WS 应用层心跳（§2）：panel 每 30s 发 ping，任一侧 wsReadTimeout 内无任何字节
+// （含 ping/pong 控制帧）即判定连接死亡，读循环报错退出后由外层 5s 退避重连。
+const wsReadTimeout = 90 * time.Second
+
+// wsWriteTimeout 是 pong 应答等控制帧的单次写超时。
+const wsWriteTimeout = 10 * time.Second
+
 func (s *safeConn) writeJSON(v any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -93,6 +101,17 @@ func run(panel, token, statePath string, mgr *xray.Manager, telemetryInterval, d
 	}
 	defer conn.Close()
 	sc := &safeConn{conn: conn}
+
+	// 应用层心跳（§2）：读超时 90s，任何消息到达即续期；收到 ping 回 pong 并续期
+	// （gorilla 默认 handler 只回 pong 不续期，故显式设置；WriteControl 并发安全）。
+	conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+	conn.SetPingHandler(func(data string) error {
+		err := conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(wsWriteTimeout))
+		if err == nil {
+			conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+		}
+		return err
+	})
 
 	// 首连认证（§5）：携带 token、agent 版本、xray 版本与运行状态（§13）。
 	xrayVer, xrayRunning := mgr.Version()
@@ -199,6 +218,7 @@ func run(panel, token, statePath string, mgr *xray.Manager, telemetryInterval, d
 		if err := conn.ReadJSON(&env); err != nil {
 			return hr.Token, err
 		}
+		conn.SetReadDeadline(time.Now().Add(wsReadTimeout)) // 任何消息到达即续期
 		handle(sc, mgr, env)
 	}
 }
@@ -230,6 +250,11 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope) {
 			return
 		}
 		log.Printf("add_user id=%s uuid=%s", env.ID, p.UUID)
+		if len(p.Nodes) == 0 {
+			// §16 差量扇出后载荷必带目标节点；缺省 Nodes 的旧载荷不再兼容，显式回执错误。
+			replyApplyResult(sc, env.ID, resultOf(0, nil, errors.New("nodes field required")))
+			return
+		}
 		err := mgr.AddUser(p.UUID, p.Nodes)
 		replyApplyResult(sc, env.ID, resultOf(0, nil, err)) // NodeID 0 = 非节点命令
 
@@ -239,6 +264,11 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope) {
 			return
 		}
 		log.Printf("remove_user id=%s uuid=%s", env.ID, p.UUID)
+		if len(p.Nodes) == 0 {
+			// 同 add_user：缺省 Nodes 的旧载荷不再兼容，显式回执错误。
+			replyApplyResult(sc, env.ID, resultOf(0, nil, errors.New("nodes field required")))
+			return
+		}
 		err := mgr.RemoveUser(p.UUID, p.Nodes)
 		replyApplyResult(sc, env.ID, resultOf(0, nil, err))
 
@@ -274,7 +304,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope) {
 		}
 		log.Printf("uninstall id=%s purge_xray=%v", env.ID, p.PurgeXray)
 		replyApplyResult(sc, env.ID, resultOf(0, nil, nil))
-		scheduleUninstall(p.PurgeXray)
+		scheduleUninstall(p.PurgeXray, mgr)
 
 	default:
 		// 协议演化规则：不认识的命令显式回执失败（面板据此终态不重试），而非静默丢弃。

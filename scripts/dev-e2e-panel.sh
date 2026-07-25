@@ -2,7 +2,9 @@
 # 阶段 3 面板 API 端到端验收（实施计划 3.6，设计文档 §8/§10/§11/§16）：
 #   登录会话 → 添加服务器（bootstrap token + 安装命令）→ install.sh//dist 托管 →
 #   agent 上线 → 建用户（无节点扇出）→ 建节点（§16 默认全关）→ 分配用户
-#   （差量扇出，零重启热操作）→ 增删用户 → 离线扇出补发 → 仪表盘计数 → 登出拦截。
+#   （差量扇出，零重启热操作）→ 增删用户 → 离线扇出补发 → 仪表盘计数 → 登出拦截；
+#   另覆盖：编辑服务器地址（PATCH，订阅 server 字段联动）、
+#   purge=xray 卸载（xray 复制到临时副本全程隔离，系统 xray 不受影响）。
 # 依赖：python3、本机 xray（默认 ~/.cache/lattix-dev/xray-core/xray，XRAY_BIN 可覆盖）。
 set -euo pipefail
 
@@ -15,11 +17,14 @@ ADDR="127.0.0.1:18096"
 API_ADDR="127.0.0.1:14201"
 ADMIN_PASS="testpass123"
 XRAY_CONFIG="$WORK/xray-config.json"
+XRAY_CONFIG_PURGE="$WORK/xray-config-purge.json" # purge=xray 用例独立配置路径
+TEST_XRAY="$WORK/xray-purge-copy"                # purge=xray 用例的 xray 临时副本（不碰系统原件）
 JAR="$WORK/cookies.txt"
 
 cleanup() {
     kill ${BPID:-} ${APID:-} 2>/dev/null || true
     pkill -f "xray run -config $XRAY_CONFIG" 2>/dev/null || true
+    pkill -f "$TEST_XRAY run -config $XRAY_CONFIG_PURGE" 2>/dev/null || true
     wait 2>/dev/null || true
     rm -rf "$WORK"
 }
@@ -175,6 +180,14 @@ fi
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/sub/nonexistent-token")" == "404" ]] \
     && echo "OK: 未知 sub_token 返回 404" || { echo "FAIL: 未知 token"; exit 1; }
 
+# --- 编辑服务器地址（PATCH /api/servers/{id}）：订阅节点 server 字段随更新（§4/§9）---
+PATCH_RESP="$(api -X PATCH -d '{"address":"203.0.113.9"}' "http://$ADDR/api/servers/1")"
+[[ "$(echo "$PATCH_RESP" | py "d['address']")" == "203.0.113.9" ]] \
+    && echo "OK: 服务器地址已更新" || { echo "FAIL: PATCH 地址: $PATCH_RESP"; exit 1; }
+curl -s "http://$ADDR/sub/$SUB_TOKEN1" | grep -q "server: 203.0.113.9" \
+    && echo "OK: 订阅 YAML 节点 server 字段随地址更新" \
+    || { echo "FAIL: 订阅地址未更新"; curl -s "http://$ADDR/sub/$SUB_TOKEN1"; exit 1; }
+
 # --- 删除节点（remove_node 下发 + 记录删除）---
 [[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X DELETE "http://$ADDR/api/nodes/1")" == "204" ]]
 for i in $(seq 1 15); do ! grep -q 'node_1' "$XRAY_CONFIG" && break; sleep 1; done
@@ -209,6 +222,51 @@ else
 fi
 [[ "$(api "http://$ADDR/api/servers" | py "len(d)")" == "0" ]] \
     && echo "OK: 服务器级联删除（记录清空）" || { echo "FAIL: 级联删除"; exit 1; }
+
+# --- purge=xray 卸载（xray 复制到临时副本全程隔离，严禁触碰系统 xray）---
+# purge=xray 的 dev 语义（停止并移除其管理的 xray 副本）由 v0.0.2 引入；
+# release compat 回归（新面板 × 上一版 agent，版本不一致）时旧 agent 无此行为，跳过本段。
+AGENT_VER="$("$WORK/agent" -version 2>/dev/null || true)"
+PANEL_VER="$("$WORK/backend" -version 2>/dev/null || true)"
+if [[ -n "$AGENT_VER" && "$AGENT_VER" == "$PANEL_VER" ]]; then
+SRC_SHA="$(sha256sum "$XRAY_BIN" | cut -d' ' -f1)"
+cp "$XRAY_BIN" "$TEST_XRAY"
+RESP3="$(api -X POST -d '{"alias":"purge01"}' "http://$ADDR/api/servers")"
+PURGE_BOOT="$(echo "$RESP3" | py "d['bootstrap_token']")"
+PURGE_SID="$(echo "$RESP3" | py "d['server']['id']")"
+"$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "$PURGE_BOOT" -state "$WORK/agent2.state.json" \
+    -xray-bin "$TEST_XRAY" -xray-config "$XRAY_CONFIG_PURGE" -xray-api "127.0.0.1:14211" -xray-runner exec \
+    >"$WORK/agent2.log" 2>&1 &
+APID=$!
+sleep 2
+api -X POST -d "{\"server_id\":$PURGE_SID}" "http://$ADDR/api/nodes" >/dev/null
+for _ in $(seq 1 30); do
+    [[ "$(api "http://$ADDR/api/nodes" | py "d[0]['status']")" == "active" ]] && break
+    sleep 1
+done
+[[ "$(api "http://$ADDR/api/nodes" | py "d[0]['status']")" == "active" ]] \
+    || { echo "FAIL: purge 用例节点未 active: $(api "http://$ADDR/api/nodes" | py "d[0]['error']")"; tail -5 "$WORK/agent2.log"; exit 1; }
+pgrep -f "$TEST_XRAY run -config $XRAY_CONFIG_PURGE" >/dev/null \
+    && echo "OK: purge 用例 xray 由临时副本拉起" || { echo "FAIL: xray 未按临时副本运行"; exit 1; }
+[[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X DELETE "http://$ADDR/api/servers/$PURGE_SID?purge=xray")" == "204" ]]
+for _ in $(seq 1 15); do
+    kill -0 $APID 2>/dev/null || { [[ ! -e "$TEST_XRAY" ]] && break; }
+    sleep 1
+done
+if kill -0 $APID 2>/dev/null; then
+    echo "FAIL: purge=xray 后 agent 未退出"; exit 1
+fi
+[[ ! -e "$TEST_XRAY" && ! -e "$XRAY_CONFIG_PURGE" ]] \
+    && echo "OK: purge=xray 已移除 xray 临时副本与配置，agent 退出" \
+    || { echo "FAIL: purge=xray 未移除（bin=$(test -e "$TEST_XRAY" && echo 在 || echo 无) config=$(test -e "$XRAY_CONFIG_PURGE" && echo 在 || echo 无)）"; tail -5 "$WORK/agent2.log"; exit 1; }
+! pgrep -f "$TEST_XRAY run -config" >/dev/null \
+    && echo "OK: 临时副本 xray 进程已停止" || { echo "FAIL: 临时副本 xray 仍在运行"; exit 1; }
+[[ "$(sha256sum "$XRAY_BIN" | cut -d' ' -f1)" == "$SRC_SHA" ]] \
+    && echo "OK: 系统 xray（$XRAY_BIN）完好未受影响" \
+    || { echo "FAIL: 系统 xray 被改动"; exit 1; }
+else
+    echo ">> 版本不一致（panel=$PANEL_VER agent=$AGENT_VER），跳过 purge=xray 用例（compat 模式）"
+fi
 
 # --- 登出 ---
 api -X POST "http://$ADDR/api/logout" >/dev/null

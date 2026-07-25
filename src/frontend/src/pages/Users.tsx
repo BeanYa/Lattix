@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { PlusIcon, QrCodeIcon, Trash2Icon } from 'lucide-react'
+import { CalendarClockIcon, ExternalLinkIcon, PlusIcon, QrCodeIcon, Trash2Icon } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
 import { QRDialog } from '@/components/QRDialog'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -32,6 +33,22 @@ function nodeLabel(n: XrayNode): string {
   return `${n.server_alias} · ${n.protocol} · ${port}`
 }
 
+/** toLocalInput 把 RFC3339 时间转成 datetime-local 输入框所需的本地格式（yyyy-MM-ddTHH:mm）。 */
+function toLocalInput(t: string): string {
+  const d = new Date(t)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+/** localInputToRFC3339 把 datetime-local 值转成 RFC3339（UTC）；空串返回 null。 */
+function localInputToRFC3339(v: string): string | null {
+  if (!v) {
+    return null
+  }
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
+}
+
 export default function Users() {
   const { timezone } = useTimezone()
   const [users, setUsers] = useState<SubUser[]>([])
@@ -42,9 +59,15 @@ export default function Users() {
 
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
+  const [expiresAt, setExpiresAt] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const [created, setCreated] = useState<SubUser | null>(null)
+
+  const [expiryTarget, setExpiryTarget] = useState<SubUser | null>(null)
+  const [expiryValue, setExpiryValue] = useState('')
+  const [expirySaving, setExpirySaving] = useState(false)
+  const [expiryError, setExpiryError] = useState('')
 
   const [assignTarget, setAssignTarget] = useState<SubUser | null>(null)
   const [assignSelection, setAssignSelection] = useState<number[]>([])
@@ -72,6 +95,7 @@ export default function Users() {
     setOpen(next)
     if (!next) {
       setName('')
+      setExpiresAt('')
       setCreateError('')
       setCreated(null)
     }
@@ -82,13 +106,36 @@ export default function Users() {
     setCreateError('')
     setCreating(true)
     try {
-      const res = await api.createUser(name.trim())
+      const res = await api.createUser(name.trim(), localInputToRFC3339(expiresAt))
       setCreated(res)
       load()
     } catch (err) {
       setCreateError(errorMessage(err))
     } finally {
       setCreating(false)
+    }
+  }
+
+  const onOpenExpiry = (u: SubUser) => {
+    setExpiryTarget(u)
+    setExpiryValue(u.expires_at ? toLocalInput(u.expires_at) : '')
+    setExpiryError('')
+  }
+
+  const onSaveExpiry = async (clear: boolean) => {
+    if (!expiryTarget) {
+      return
+    }
+    setExpiryError('')
+    setExpirySaving(true)
+    try {
+      await api.updateUserExpiry(expiryTarget.id, clear ? null : localInputToRFC3339(expiryValue))
+      setExpiryTarget(null)
+      load()
+    } catch (err) {
+      setExpiryError(errorMessage(err))
+    } finally {
+      setExpirySaving(false)
     }
   }
 
@@ -153,6 +200,7 @@ export default function Users() {
               <TableHead>姓名</TableHead>
               <TableHead>节点</TableHead>
               <TableHead>流量</TableHead>
+              <TableHead>有效期</TableHead>
               <TableHead>订阅链接</TableHead>
               <TableHead>创建时间</TableHead>
               <TableHead>操作</TableHead>
@@ -161,20 +209,25 @@ export default function Users() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   加载中…
                 </TableCell>
               </TableRow>
             ) : users.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={7} className="text-center text-muted-foreground">
                   暂无用户
                 </TableCell>
               </TableRow>
             ) : (
               users.map((u) => (
                 <TableRow key={u.id}>
-                  <TableCell className="font-medium">{u.name}</TableCell>
+                  <TableCell className="font-medium">
+                    <div className="flex items-center gap-2">
+                      {u.name}
+                      {u.expired && <Badge variant="destructive">已到期</Badge>}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     {u.node_ids.length === 0 ? (
                       <span className="text-muted-foreground">未分配</span>
@@ -184,6 +237,9 @@ export default function Users() {
                   </TableCell>
                   <TableCell className="text-xs whitespace-nowrap">
                     {u.traffic ? `↑${humanizeBytes(u.traffic.up)} ↓${humanizeBytes(u.traffic.down)}` : '-'}
+                  </TableCell>
+                  <TableCell className="text-xs whitespace-nowrap">
+                    {u.expires_at ? formatDateTime(u.expires_at, timezone) : <span className="text-muted-foreground">长期</span>}
                   </TableCell>
                   <TableCell>
                     <div className="flex max-w-md items-center gap-2">
@@ -197,12 +253,24 @@ export default function Users() {
                       <Button variant="ghost" size="icon" title="订阅二维码" onClick={() => setQrText(u.sub_url)}>
                         <QrCodeIcon />
                       </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        title="打开订阅落地页（浏览器）"
+                        onClick={() => window.open(u.sub_url, '_blank', 'noopener')}
+                      >
+                        <ExternalLinkIcon />
+                      </Button>
                     </div>
                   </TableCell>
                   <TableCell>{formatDateTime(u.created_at, timezone)}</TableCell>
                   <TableCell className="space-x-2">
                     <Button variant="outline" size="sm" onClick={() => onOpenAssign(u)}>
                       分配节点
+                    </Button>
+                    <Button variant="outline" size="sm" title="修改有效期" onClick={() => onOpenExpiry(u)}>
+                      <CalendarClockIcon />
+                      有效期
                     </Button>
                     <Button
                       variant="destructive"
@@ -254,6 +322,15 @@ export default function Users() {
                   autoFocus
                 />
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="expires-at">有效期（可选，留空为长期）</Label>
+                <Input
+                  id="expires-at"
+                  type="datetime-local"
+                  value={expiresAt}
+                  onChange={(e) => setExpiresAt(e.target.value)}
+                />
+              </div>
               {createError && <p className="text-sm text-destructive">{createError}</p>}
               <DialogFooter>
                 <Button type="submit" disabled={creating || !name.trim()}>
@@ -265,6 +342,38 @@ export default function Users() {
         </DialogContent>
       </Dialog>
       <QRDialog text={qrText} open={qrText !== ''} onClose={() => setQrText('')} />
+
+      <Dialog open={expiryTarget !== null} onOpenChange={(next) => !next && setExpiryTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>修改有效期</DialogTitle>
+            <DialogDescription>
+              设置「{expiryTarget?.name}」的到期时刻；到期后自动停权（订阅保留但节点为空），
+              延长或清除有效期会恢复其节点。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="edit-expires-at">有效期（留空并保存即为长期）</Label>
+            <Input
+              id="edit-expires-at"
+              type="datetime-local"
+              value={expiryValue}
+              onChange={(e) => setExpiryValue(e.target.value)}
+            />
+          </div>
+          {expiryError && <p className="text-sm text-destructive">{expiryError}</p>}
+          <DialogFooter>
+            {expiryTarget?.expires_at && (
+              <Button variant="outline" disabled={expirySaving} onClick={() => onSaveExpiry(true)}>
+                清除有效期
+              </Button>
+            )}
+            <Button disabled={expirySaving} onClick={() => onSaveExpiry(false)}>
+              {expirySaving ? '保存中…' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={assignTarget !== null} onOpenChange={(next) => !next && setAssignTarget(null)}>
         <DialogContent className="max-h-[85vh] overflow-y-auto">

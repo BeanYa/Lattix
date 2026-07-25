@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -73,18 +75,50 @@ func (s *Store) MarkCommandSent(ctx context.Context, id int64) error {
 	return err
 }
 
-// MarkCommandAcked 标记命令已被对端确认执行成功。
-func (s *Store) MarkCommandAcked(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE commands SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		CommandStatusAcked, id)
-	return err
+// CommandByID 按 id 取命令（apply_result 归属校验用，§5）。
+func (s *Store) CommandByID(ctx context.Context, id int64) (*Command, error) {
+	var c Command
+	var payload string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, server_id, type, payload, status, attempts FROM commands WHERE id = ?`, id).
+		Scan(&c.ID, &c.ServerID, &c.Type, &payload, &c.Status, &c.Attempts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query command: %w", err)
+	}
+	c.Payload = json.RawMessage(payload)
+	return &c, nil
 }
 
-// MarkCommandFailed 标记命令执行失败。
-func (s *Store) MarkCommandFailed(ctx context.Context, id int64) error {
+// MarkCommandAcked 标记命令已被对端确认执行成功（仅 sent → acked，§4）。
+// 返回 false 表示命令不在 sent 状态（如已死信），迟到的回执不得翻回终态。
+func (s *Store) MarkCommandAcked(ctx context.Context, id int64) (bool, error) {
+	return s.transitionFromSent(ctx, id, CommandStatusAcked)
+}
+
+// MarkCommandFailed 标记命令执行失败（仅 sent → failed，§4）；返回值语义同 MarkCommandAcked。
+func (s *Store) MarkCommandFailed(ctx context.Context, id int64) (bool, error) {
+	return s.transitionFromSent(ctx, id, CommandStatusFailed)
+}
+
+// transitionFromSent 仅在 sent 状态下迁移命令至终态，返回是否实际迁移。
+func (s *Store) transitionFromSent(ctx context.Context, id int64, to string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE commands SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?`,
+		to, id, CommandStatusSent)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// DeadLetterCommand 将超过投递上限的命令终态化（queued/sent → failed，§2 死信）。
+func (s *Store) DeadLetterCommand(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE commands SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		CommandStatusFailed, id)
+		`UPDATE commands SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN (?, ?)`,
+		CommandStatusFailed, id, CommandStatusQueued, CommandStatusSent)
 	return err
 }

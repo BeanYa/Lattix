@@ -78,7 +78,7 @@ NODE_ROW="$(sql "SELECT status || '|' || COALESCE(error, '') FROM nodes WHERE id
     || { echo "FAIL: node=$NODE_ROW"; exit 1; }
 
 echo ">> sent 未终态命令重连重置重发（§2）"
-sql "INSERT INTO commands (server_id, type, payload, status) VALUES (1, 'add_user', '{\"uuid\":\"u9\"}', 'sent')" >/dev/null
+sql "INSERT INTO commands (server_id, type, payload, status) VALUES (1, 'add_user', '{\"uuid\":\"u9\",\"nodes\":{\"node_1\":{\"protocol\":\"vless\"}}}', 'sent')" >/dev/null
 kill $APID; wait $APID 2>/dev/null || true
 "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -state "$WORK/agent.state.json" >>"$WORK/agent.log" 2>&1 &
 APID=$!

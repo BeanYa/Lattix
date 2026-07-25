@@ -21,7 +21,7 @@ import {
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { useTimezone } from '@/lib/timezone'
-import type { PanelSettings } from '@/lib/types'
+import type { AlertTestResult, PanelSettings } from '@/lib/types'
 
 // 常用 IANA 时区（可直接输入其他名称，后端用 time.LoadLocation 校验）。
 const COMMON_TIMEZONES = [
@@ -81,6 +81,10 @@ export default function Settings() {
   const [tlsDomain, setTlsDomain] = useState('')
   const [acmeDomain, setAcmeDomain] = useState('')
   const [acmeEmail, setAcmeEmail] = useState('')
+  // 告警
+  const [alertWebhook, setAlertWebhook] = useState('')
+  const [alertBotToken, setAlertBotToken] = useState('')
+  const [alertChatID, setAlertChatID] = useState('')
   // 密码
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -93,6 +97,9 @@ export default function Settings() {
   const [error, setError] = useState('')
   const [passwordMessage, setPasswordMessage] = useState('')
   const [passwordError, setPasswordError] = useState('')
+  const [testingAlerts, setTestingAlerts] = useState(false)
+  const [alertTestResult, setAlertTestResult] = useState<AlertTestResult | null>(null)
+  const [alertTestError, setAlertTestError] = useState('')
 
   const certFileRef = useRef<HTMLInputElement>(null)
   const keyFileRef = useRef<HTMLInputElement>(null)
@@ -108,6 +115,8 @@ export default function Settings() {
         setTlsDomain(s.tls_domain)
         setAcmeDomain(s.acme_domain)
         setAcmeEmail(s.acme_email)
+        setAlertWebhook(s.alert_webhook_url)
+        setAlertChatID(s.alert_telegram_chat_id)
       })
       .catch((err) => setLoadError(errorMessage(err)))
   }, [])
@@ -137,6 +146,10 @@ export default function Settings() {
         tls_domain: tlsDomain.trim(),
         acme_domain: acmeDomain.trim(),
         acme_email: acmeEmail.trim(),
+        alert_webhook_url: alertWebhook.trim(),
+        alert_telegram_chat_id: alertChatID.trim(),
+        // bot token 留空 = 保持已保存值（后端语义，与 tls key 一致）
+        ...(alertBotToken.trim() ? { alert_telegram_bot_token: alertBotToken.trim() } : {}),
       })
       setSettings(s)
       setCertPEM('')
@@ -200,6 +213,19 @@ export default function Settings() {
     }
     setRestarting(false)
     setError('等待重启完成超时。若切换了 HTTP/HTTPS 或端口，请改用新地址访问面板。')
+  }
+
+  const onTestAlerts = async () => {
+    setTestingAlerts(true)
+    setAlertTestResult(null)
+    setAlertTestError('')
+    try {
+      setAlertTestResult(await api.testAlerts())
+    } catch (err) {
+      setAlertTestError(errorMessage(err))
+    } finally {
+      setTestingAlerts(false)
+    }
   }
 
   if (loadError) {
@@ -409,6 +435,69 @@ export default function Settings() {
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle>告警</CardTitle>
+            <CardDescription>
+              服务器离线、配置漂移、节点失败时推送通知（仅状态跃迁触发，同一服务器同一事件 5 分钟内不重复）。
+              三项全空 = 关闭；测试使用<strong>已保存</strong>的配置，请先保存。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="alertWebhook">Webhook 地址</Label>
+              <Input
+                id="alertWebhook"
+                value={alertWebhook}
+                onChange={(e) => setAlertWebhook(e.target.value)}
+                placeholder="https://example.com/hook，POST JSON"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="alertBotToken">Telegram Bot Token</Label>
+              <Input
+                id="alertBotToken"
+                type="password"
+                value={alertBotToken}
+                onChange={(e) => setAlertBotToken(e.target.value)}
+                placeholder={settings.alert_telegram_bot_token_set ? '已保存，留空保持不变' : 'BotFather 签发的 token'}
+                autoComplete="off"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="alertChatID">Telegram Chat ID</Label>
+              <Input
+                id="alertChatID"
+                value={alertChatID}
+                onChange={(e) => setAlertChatID(e.target.value)}
+                placeholder="与 bot 对话后由 getUpdates 获取"
+              />
+              <p className="text-xs text-muted-foreground">
+                Telegram 通道需 token 与 chat_id 同时具备才发送。
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Button type="button" variant="outline" size="sm" disabled={testingAlerts} onClick={onTestAlerts}>
+                {testingAlerts ? '发送中…' : '发送测试'}
+              </Button>
+              {alertTestError && <p className="text-sm text-destructive">{alertTestError}</p>}
+              {alertTestResult && (
+                <div className="space-y-1 text-sm">
+                  {(['webhook', 'telegram'] as const).map((ch) => {
+                    const r = alertTestResult[ch]
+                    return (
+                      <p key={ch} className={r.configured && r.ok ? 'text-green-700' : 'text-destructive'}>
+                        {ch === 'webhook' ? 'Webhook' : 'Telegram'}：
+                        {!r.configured ? '未配置' : r.ok ? '发送成功' : `发送失败${r.error ? `（${r.error}）` : ''}`}
+                      </p>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
         {error && <p className="text-sm text-destructive">{error}</p>}
         {message && <p className="text-sm text-green-700">{message}</p>}
         <Button type="submit" disabled={saving}>
@@ -474,10 +563,16 @@ export default function Settings() {
             systemd 托管时退出后由 systemd 自动拉起；否则面板自派生新进程接管（同参数、同端口）。
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-wrap items-center gap-2">
           <Button variant="outline" disabled={restarting} onClick={onRestart}>
             {restarting ? '重启中，请稍候…' : '重启面板'}
           </Button>
+          <Button variant="outline" onClick={() => (window.location.href = '/api/backup')}>
+            下载备份
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            备份为 SQLite 数据库快照（VACUUM INTO），可直接替换数据文件恢复。
+          </p>
         </CardContent>
       </Card>
     </div>

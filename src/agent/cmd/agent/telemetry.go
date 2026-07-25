@@ -17,6 +17,7 @@ type telemetry struct {
 	mgr *xray.Manager
 
 	lastStats               map[string]int64 // 计数器名 → 上次累计值
+	statsPrimed             bool             // 流量采样基线是否已建立
 	lastCPUIdle, lastCPUTot uint64
 	cpuPrimed               bool
 }
@@ -37,10 +38,16 @@ func (t *telemetry) collect() shared.TelemetryPayload {
 }
 
 // trafficDeltas 计算各计数器自上次采样以来的增量（xray 重启计数器清零时按全量计）。
+// 首次采样仅建立基线、不上报流量：否则 WS 重连（newTelemetry 重置 lastStats）会把
+// xray 启动以来的全量当增量重复上报，backend 累加导致重复计数（§13）。
 func (t *telemetry) trafficDeltas() []shared.TrafficDelta {
 	cur, err := t.mgr.QueryStats()
 	if err != nil {
 		return nil // xray 未运行或 stats 不可用，跳过本期
+	}
+	if !t.statsPrimed {
+		t.lastStats, t.statsPrimed = cur, true
+		return nil // 基线帧：只携带版本/主机指标
 	}
 	type key struct{ node, user string }
 	agg := map[key]*shared.TrafficDelta{}

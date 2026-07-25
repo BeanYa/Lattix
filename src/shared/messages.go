@@ -62,10 +62,11 @@ type RemoveNodePayload struct {
 	NodeID int64 `json:"node_id"`
 }
 
-// AddUserPayload 是 add_user 的载荷：向该服务器所有 inbound 热加入一个用户。
+// AddUserPayload 是 add_user 的载荷：向 Nodes 列出的节点 inbound 热加入一个用户。
 // Nodes 携带该服务器各节点的用户条目参数（key 为 node tag，见 NodeTag），
 // Agent 据此构造各协议正确的 account（vless id+flow / vmess id / trojan password /
 // ss method+password / socks+http user+pass）；dokodemo 节点无用户概念，不在其中。
+// Nodes 必填：缺失/为空时 Agent 回执错误（不做全量作用）。
 type AddUserPayload struct {
 	UUID  string                    `json:"uuid"`
 	Nodes map[string]UserNodeParams `json:"nodes,omitempty"`
@@ -78,8 +79,8 @@ type UserNodeParams struct {
 	Method   string `json:"method,omitempty"` // shadowsocks
 }
 
-// RemoveUserPayload 是 remove_user 的载荷：从该服务器所有 inbound 热移除一个用户。
-// Nodes 同 AddUserPayload：Agent 据此判断各 inbound 协议能否热删，不能则走重启兜底。
+// RemoveUserPayload 是 remove_user 的载荷：从 Nodes 列出的节点 inbound 热移除一个用户。
+// Nodes 同 AddUserPayload（必填，缺失/为空回执错误）：Agent 据此判断各 inbound 协议能否热删，不能则走重启兜底。
 type RemoveUserPayload struct {
 	UUID  string                    `json:"uuid"`
 	Nodes map[string]UserNodeParams `json:"nodes,omitempty"`

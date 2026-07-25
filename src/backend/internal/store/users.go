@@ -9,18 +9,26 @@ import (
 )
 
 // User 是 users 表的一行（§4）：独立 UUID（跨服务器同一 UUID，§7）与独立 sub_token（§8）。
+// ExpiresAt 为到期时刻（NULL=长期）；Expired 是到期停权标记（sweeper 置位后已扇出 remove_user，§9）。
 type User struct {
 	ID        int64
 	Name      string
 	UUID      string
 	SubToken  string
+	ExpiresAt *time.Time
+	Expired   bool
 	CreatedAt time.Time
 }
 
-// InsertUser 插入一个用户。
-func (s *Store) InsertUser(ctx context.Context, name, uuid, subToken string) (int64, error) {
+// InsertUser 插入一个用户；expiresAt 为 nil 表示长期有效。
+func (s *Store) InsertUser(ctx context.Context, name, uuid, subToken string, expiresAt *time.Time) (int64, error) {
+	var exp *int64
+	if expiresAt != nil {
+		v := expiresAt.Unix()
+		exp = &v
+	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO users (name, uuid, sub_token) VALUES (?, ?, ?)`, name, uuid, subToken)
+		`INSERT INTO users (name, uuid, sub_token, expires_at) VALUES (?, ?, ?, ?)`, name, uuid, subToken, exp)
 	if err != nil {
 		return 0, fmt.Errorf("insert user: %w", err)
 	}
@@ -29,13 +37,20 @@ func (s *Store) InsertUser(ctx context.Context, name, uuid, subToken string) (in
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
-	if err := row.Scan(&u.ID, &u.Name, &u.UUID, &u.SubToken, &u.CreatedAt); err != nil {
+	var exp sql.NullInt64
+	var expired int
+	if err := row.Scan(&u.ID, &u.Name, &u.UUID, &u.SubToken, &exp, &expired, &u.CreatedAt); err != nil {
 		return nil, err
 	}
+	if exp.Valid {
+		t := time.Unix(exp.Int64, 0)
+		u.ExpiresAt = &t
+	}
+	u.Expired = expired != 0
 	return &u, nil
 }
 
-const userCols = `id, name, uuid, sub_token, created_at`
+const userCols = `id, name, uuid, sub_token, expires_at, expired, created_at`
 
 // ListUsers 列出全部用户（按 id 升序）。
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
@@ -95,6 +110,66 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// ListExpiryDue 返回已到期但尚未停权（expired=0）的用户（§9 sweeper 扫描）。
+func (s *Store) ListExpiryDue(ctx context.Context, now time.Time) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+userCols+` FROM users
+		 WHERE expired = 0 AND expires_at IS NOT NULL AND expires_at <= ? ORDER BY id`, now.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("list expiry due users: %w", err)
+	}
+	defer rows.Close()
+	out := []User{}
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan expiry due user: %w", err)
+		}
+		out = append(out, *u)
+	}
+	return out, rows.Err()
+}
+
+// SetUserExpired 更新用户的到期停权标记（§9）。
+func (s *Store) SetUserExpired(ctx context.Context, id int64, expired bool) error {
+	v := 0
+	if expired {
+		v = 1
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET expired = ? WHERE id = ?`, v, id)
+	if err != nil {
+		return fmt.Errorf("set user expired: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetUserExpiry 修改/清除用户有效期（§9）：expiresAt 为 nil 表示长期。
+// 有效期被清除或延长到未来时清除停权标记（由调用方负责扇出 add_user 恢复）。
+func (s *Store) SetUserExpiry(ctx context.Context, id int64, expiresAt *time.Time, now time.Time) error {
+	var exp *int64
+	if expiresAt != nil {
+		v := expiresAt.Unix()
+		exp = &v
+	}
+	restore := 0
+	if expiresAt == nil || expiresAt.After(now) {
+		restore = 1
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE users SET expires_at = ?, expired = CASE WHEN ? = 1 THEN 0 ELSE expired END WHERE id = ?`,
+		exp, restore, id)
+	if err != nil {
+		return fmt.Errorf("set user expiry: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // UserNodeIDs 返回用户分配到的节点 id 列表（§16）。
@@ -159,10 +234,11 @@ func (s *Store) SetUserNodes(ctx context.Context, userID int64, nodeIDs []int64)
 }
 
 // NodeUserUUIDs 返回分配到该节点的用户 UUID 列表（apply_node 下发，§16）。
+// 已到期停权（expired=1）的用户不下发（§9）：恢复时由有效期扇出 add_user 补回。
 func (s *Store) NodeUserUUIDs(ctx context.Context, nodeID int64) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT u.uuid FROM user_nodes un JOIN users u ON u.id = un.user_id
-		 WHERE un.node_id = ? ORDER BY u.id`, nodeID)
+		 WHERE un.node_id = ? AND u.expired = 0 ORDER BY u.id`, nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("list node user uuids: %w", err)
 	}

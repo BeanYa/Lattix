@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -69,6 +70,16 @@ func Apply(version, releaseBase, currentVersion, defaultRepo string) (upgraded b
 	}
 	if err := verifySHA256(sumsPath, asset, binPath); err != nil {
 		return false, err
+	}
+
+	// 预检：新二进制须能运行并打印版本，否则放弃替换——
+	// 无运行时回滚，坏二进制会让 systemd 陷入崩溃循环。
+	if err := os.Chmod(binPath, 0o755); err != nil {
+		return false, fmt.Errorf("新 agent 二进制赋可执行权限失败: %w", err)
+	}
+	out, err := exec.Command(binPath, "-version").CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		return false, fmt.Errorf("新 agent 二进制自检失败(-version): %v: %s", err, strings.TrimSpace(string(out)))
 	}
 
 	exe, err := os.Executable()
