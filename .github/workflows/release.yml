@@ -3,7 +3,10 @@ name: release
 # tag v* 触发：构建前后端产物 → 上一版本 agent × 新面板兼容性回归 → 发布 GitHub Release。
 #
 # Release 资产（命名与 scripts/install.sh / 设计文档约定一致）：
-#   install.sh                          CI stamp 三个占位符后的引导安装脚本
+#   install.sh                          CI stamp 三个占位符后的 agent 引导安装脚本
+#   install-panel.sh                    CI stamp 后的面板一键安装脚本（§20）
+#   latx                                CI stamp 后的面板管理程序（§20，由 install-panel.sh 安装）
+#   latx-ag                             CI stamp 后的节点管理程序（§20，由 install.sh 安装）
 #   lattix-agent-linux-amd64 / -arm64   CGO_ENABLED=0 静态 agent 二进制
 #   lattix-panel-linux-amd64.tar.gz     backend 二进制 + frontend dist + scripts/ + README.md
 #   checksums.txt                       上述全部资产的 sha256sum（标准 `<hash>  <文件名>` 格式）
@@ -79,6 +82,20 @@ jobs:
             && { echo "FAIL: install.sh 占位符未替换"; exit 1; } || true
           # 注：AGENT_SHA256_* 占位符保留，属面板托管模式的注入点，不在此处替换。
 
+      - name: Stamp latx / latx-ag / install-panel.sh placeholders
+        run: |
+          cp scripts/latx.sh out/latx
+          cp scripts/latx-ag.sh out/latx-ag
+          cp scripts/install-panel.sh out/install-panel.sh
+          sed -i \
+            -e "s|{{LATTIX_VERSION}}|${GITHUB_REF_NAME}|g" \
+            -e "s|{{GITHUB_REPO}}|${{ github.repository }}|g" \
+            out/latx out/latx-ag out/install-panel.sh
+          grep -qE '(LATX_VERSION|LATX_AG_VERSION|LATTIX_VERSION)="\{\{' out/latx out/latx-ag out/install-panel.sh \
+            && { echo "FAIL: latx/latx-ag/install-panel.sh 占位符未替换"; exit 1; } || true
+          # 注：install.sh 的 AGENT_SHA256_* / LATX_AG_SHA256 占位符保留，
+          # 属面板托管模式的注入点，不在此处替换。
+
       - name: Pack panel tarball
         run: |
           mkdir -p out/panel/lattix-panel
@@ -94,6 +111,9 @@ jobs:
           cd out
           sha256sum \
             install.sh \
+            install-panel.sh \
+            latx \
+            latx-ag \
             lattix-agent-linux-amd64 \
             lattix-agent-linux-arm64 \
             lattix-panel-linux-amd64.tar.gz \
@@ -105,6 +125,9 @@ jobs:
           name: release-assets
           path: |
             out/install.sh
+            out/install-panel.sh
+            out/latx
+            out/latx-ag
             out/lattix-agent-linux-amd64
             out/lattix-agent-linux-arm64
             out/lattix-panel-linux-amd64.tar.gz
@@ -190,7 +213,7 @@ jobs:
 
       - name: Publish GitHub Release
         run: |
-          ASSETS="out/install.sh out/lattix-agent-linux-amd64 out/lattix-agent-linux-arm64 out/lattix-panel-linux-amd64.tar.gz out/checksums.txt"
+          ASSETS="out/install.sh out/install-panel.sh out/latx out/latx-ag out/lattix-agent-linux-amd64 out/lattix-agent-linux-arm64 out/lattix-panel-linux-amd64.tar.gz out/checksums.txt"
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" $ASSETS --clobber
           else

@@ -40,6 +40,8 @@ else
 fi
 mkdir -p "$WORK/dist"
 cp "$WORK/agent" "$WORK/dist/lattix-agent-linux-amd64"
+# latx-ag 摆 dist/，触发后端向 /install.sh 注入 LATX_AG_SHA256（§20）。
+cp "$ROOT/scripts/latx-ag.sh" "$WORK/dist/latx-ag"
 
 echo ">> start backend"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" -admin-pass "$ADMIN_PASS" \
@@ -82,6 +84,8 @@ curl -s "http://$ADDR/install.sh" | grep -q "Lattix Agent 引导安装脚本" \
     && echo "OK: /install.sh 托管" || { echo "FAIL: /install.sh"; exit 1; }
 curl -s "http://$ADDR/install.sh" | grep -qE 'AGENT_SHA256_AMD64="[0-9a-f]{64}"' \
     && echo "OK: install.sh 已注入 agent SHA256" || { echo "FAIL: SHA256 未注入"; exit 1; }
+curl -s "http://$ADDR/install.sh" | grep -qE 'LATX_AG_SHA256="[0-9a-f]{64}"' \
+    && echo "OK: install.sh 已注入 latx-ag SHA256" || { echo "FAIL: LATX_AG_SHA256 未注入"; exit 1; }
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/dist/lattix-agent-linux-amd64")" == "200" ]] \
     && echo "OK: /dist/ 二进制托管" || { echo "FAIL: /dist/"; exit 1; }
 [[ "$(api "http://$ADDR/api/servers" | py "d[0]['online']")" == "False" ]] \

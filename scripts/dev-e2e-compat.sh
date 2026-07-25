@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 兼容窗口端到端验证（§18）：
 #   面板 v0.0.3 × agent v0.0.1（旧源码构建）→ hello 通过但 upgrade_needed=true，
-#   常规命令（apply_node）滞留、upgrade_agent 放行但旧 agent 回执 unsupported；
+#   常规命令（apply_node）滞留、upgrade_agent 放行（断言旧 agent 收到，不论其有无 handler）；
 #   换 v0.0.2 agent（窗口内）→ 滞留命令补发、节点 active；
 #   v1.0.0 agent（主版本不符）→ hello 被拒。
 # 前提：仓库须存在 commit 早于 HEAD 的版本 tag（其 agent 源码须真正"旧"）。
@@ -90,10 +90,10 @@ NSTATUS="$(api "http://$ADDR/api/nodes" | py "d[0]['status']")"
 [[ "$(python3 -c "import json; print(len(json.load(open('$XRAY_CONFIG'))['inbounds']))" 2>/dev/null || echo 0)" == "0" ]] \
     && ok "xray 无 inbound（命令确未到达）" || fail "命令被下发"
 
-echo ">> 3. upgrade_agent 放行（旧 agent 收到但只会 log，无法回执——0.0.1 无 unsupported 回执机制）"
+echo ">> 3. upgrade_agent 放行（断言旧 agent 收到即可：无 handler 的更老版本记 recv unknown，v0.0.1 已有 handler 则记 upgrade_agent id=）"
 api -X POST -d '{"version":"v0.0.3"}' "http://$ADDR/api/servers/1/upgrade-agent" >/dev/null
 sleep 2
-grep -q "recv unknown type=upgrade_agent" "$WORK/agent.log" && ok "窗口外仅升级命令被放行" \
+grep -qE "recv unknown type=upgrade_agent|upgrade_agent id=" "$WORK/agent.log" && ok "窗口外仅升级命令被放行" \
     || { cat "$WORK/agent.log"; fail "旧 agent 未收到 upgrade_agent"; }
 stop_agent
 

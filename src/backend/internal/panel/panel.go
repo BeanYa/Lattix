@@ -56,17 +56,22 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.Requester, cfg Confi
 	return &Server{st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, installScript: script}, nil
 }
 
-// injectAgentSHA256 将 install.sh 中的 {{AGENT_SHA256_<ARCH>}} 占位符替换为
-// dist 目录下对应二进制的 SHA256；文件缺失时替换为 SKIP（install.sh 跳过校验）。
+// injectAgentSHA256 将 install.sh 中的 {{AGENT_SHA256_<ARCH>}} / {{LATX_AG_SHA256}}
+// 占位符替换为 dist 目录下对应文件的 SHA256；文件缺失时替换为 SKIP（install.sh 跳过校验）。
 func injectAgentSHA256(script []byte, distDir string) []byte {
-	for _, arch := range []string{"amd64", "arm64"} {
+	// 资产名 → 占位符：agent 两架构二进制 + latx-ag 节点管理程序（同等待遇，§20）。
+	assets := map[string]string{
+		"lattix-agent-linux-amd64": "{{AGENT_SHA256_AMD64}}",
+		"lattix-agent-linux-arm64": "{{AGENT_SHA256_ARM64}}",
+		"latx-ag":                  "{{LATX_AG_SHA256}}",
+	}
+	for file, placeholder := range assets {
 		sum := "SKIP"
-		if b, err := os.ReadFile(filepath.Join(distDir, "lattix-agent-linux-"+arch)); err == nil {
+		if b, err := os.ReadFile(filepath.Join(distDir, file)); err == nil {
 			h := sha256.Sum256(b)
 			sum = hex.EncodeToString(h[:])
 		}
-		script = bytes.ReplaceAll(script,
-			[]byte("{{AGENT_SHA256_"+strings.ToUpper(arch)+"}}"), []byte(sum))
+		script = bytes.ReplaceAll(script, []byte(placeholder), []byte(sum))
 	}
 	return script
 }

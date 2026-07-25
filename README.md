@@ -79,7 +79,34 @@ scripts/
 
 ## 快速开始
 
-### 构建与运行面板
+### 一键安装面板（linux/amd64，推荐）
+
+与 agent 安装一致走 release 钉版，脚本与全部资产经 `checksums.txt` 校验：
+
+```bash
+curl -fsSL https://github.com/BeanYa/Lattix/releases/download/v0.0.2/install-panel.sh | bash
+```
+
+脚本完成：下载面板 tarball / latx / latx-ag / agent 两架构二进制（校验 SHA256）→ 解压到
+`/usr/local/lattix-panel` → 安装 `latx` 到 `/usr/local/bin/latx` → 注册并启动
+systemd 服务 `lattix-panel`（`-addr :8080`，`LATX_ADDR` 可覆盖）→ 打印面板地址
+与默认账号 `admin` / `lattix-admin`（**生产必改**）。已安装时执行 = 同版本重装/升级
+（保留 DB）。
+
+安装后用 `latx` 运维面板：
+
+| 命令 | 说明 |
+| --- | --- |
+| `latx status` | 服务状态、监听端口、面板版本与地址 |
+| `latx start\|stop\|restart\|enable\|disable` | systemctl 包装 |
+| `latx log [-n N]` | 跟随面板日志（`-n N` 时不跟随） |
+| `latx update [version]` | 从 GitHub release 更新面板（默认 latest，仅 amd64） |
+| `latx acme <domain>` | 引导式申请 ACME 证书并切 HTTPS |
+| `latx reset-admin <newpass>` | 重置管理员密码（改密即全部会话失效） |
+| `latx uninstall [--purge-db]` | 卸载面板（默认保留 DB） |
+| `latx version` | latx 与面板版本 |
+
+### 手动构建与运行面板
 
 ```bash
 go build -o lattix-backend ./src/backend/cmd/backend
@@ -128,8 +155,21 @@ dev 构建（无对应 release）回退面板托管模式：`curl -fsSL http://<
 两种模式共用同一脚本：release 模式从 GitHub release 下载 agent 并校验 `checksums.txt`；
 面板托管模式从面板 `/dist` 下载并校验面板注入的 SHA256。
 
-脚本完成：安装指定版本 xray（校验官方 .dgst）→ 安装 agent（校验 SHA256）→
-注册 systemd → 首连换发长期凭证。重装自动先停旧服务并清除旧 state。
+脚本完成：安装指定版本 xray（校验官方 .dgst）→ 安装 agent 与 `latx-ag` 节点管理程序
+（校验 SHA256）→ 注册 systemd → 首连换发长期凭证。重装自动先停旧服务并清除旧 state。
+安装成功输出：面板地址、agent 服务状态、xray 版本与 `latx-ag` 运维提示块。
+
+安装后用 `latx-ag`（`/usr/local/bin/latx-ag`）运维本节点：
+
+| 命令 | 说明 |
+| --- | --- |
+| `latx-ag status` | agent/xray 服务状态、版本、面板地址、服务器 ID 与配置指纹 |
+| `latx-ag start\|stop\|restart\|enable\|disable` | systemctl 包装（unit `lattix-agent`） |
+| `latx-ag log [-n N]` / `latx-ag log-xray [-n N]` | 跟随 agent / xray 日志（`-n N` 时不跟随） |
+| `latx-ag update [version]` | 从 GitHub release 更新 agent（默认 latest，预检 `-version` 后停服替换） |
+| `latx-ag xray-update [version]` | 更新 xray（官方 .dgst 校验 SHA2-256，失败回滚 .bak；`XRAY_RELEASE_BASE` 可指向镜像） |
+| `latx-ag uninstall [--purge-xray]` | 卸载 agent（默认保留 xray 与节点运行；`--purge-xray` 连同 xray 删除） |
+| `latx-ag version` | latx-ag、agent 与 xray 版本 |
 
 ### CI/CD 与版本兼容（§18）
 
@@ -164,6 +204,8 @@ XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-tls.sh        # 面板 TLS / w
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-links.sh      # 分享链接订阅 + userinfo 头/落地页/用户有效期
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-settings.sh   # 设置页 / 改密 / TLS 域名路径模式 / 自重启
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-alerts.sh     # 事件告警（webhook/防抖/三类事件）+ SQLite 备份下载
+bash scripts/dev-e2e-install-panel.sh                           # 面板一键安装 + latx 管理程序（本地假 release，无外网）
+XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-install-agent.sh  # Agent 引导安装 + latx-ag（本地假 release，LATX_DEV=1）
 ```
 
 Agent 常用参数：`-panel`（面板 WS 地址）、`-token`（bootstrap token）、`-xray-release-base`

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/acme/autocert"
+	"golang.org/x/crypto/bcrypt"
 
 	"lattix/backend/internal/alert"
 	"lattix/backend/internal/dispatch"
@@ -64,7 +65,30 @@ func main() {
 	acmeDomain := flag.String("tls-acme-domain", "", "ACME 自动证书域名（Let's Encrypt，TLS-ALPN-01，需 443 端口公网可达）")
 	acmeCache := flag.String("tls-acme-cache", "acme-cache", "ACME 证书缓存目录")
 	acmeEmail := flag.String("tls-acme-email", "", "ACME 账号邮箱（可选，过期通知用）")
+	resetAdmin := flag.String("reset-admin", "", "重置管理员密码为指定值后退出（不启动面板）；bcrypt 落库覆盖启动参数，改密即全部会话失效（latx reset-admin 使用）")
 	flag.Parse()
+
+	// -reset-admin：与设置页改密同一代码路径（bcrypt 哈希写 settings，§10；
+	// 会话签名密钥派生自密码哈希，改密即全部会话失效）。面板运行中执行安全（busy_timeout）。
+	if *resetAdmin != "" {
+		if len(*resetAdmin) < 8 {
+			log.Fatal("新密码至少 8 位")
+		}
+		st, err := store.Open(*dbPath)
+		if err != nil {
+			log.Fatalf("store: %v", err)
+		}
+		defer st.Close()
+		hash, err := bcrypt.GenerateFromPassword([]byte(*resetAdmin), bcrypt.DefaultCost)
+		if err != nil {
+			log.Fatalf("bcrypt: %v", err)
+		}
+		if err := st.SetSetting(context.Background(), store.SettingAdminPassBcrypt, string(hash)); err != nil {
+			log.Fatalf("写入密码哈希: %v", err)
+		}
+		fmt.Println("管理员密码已重置（覆盖 -admin-pass 启动参数）；所有会话已失效，需重新登录。")
+		return
+	}
 
 	// 证书根目录统一按绝对路径处理（相对路径按启动时工作目录解析），避免
 	// 不同启动方式（nohup/systemd）工作目录不一致导致找不到证书；实际值经 API 展示在设置页。

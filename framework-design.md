@@ -309,3 +309,64 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，`-telemetry-interval` �
 **SQLite 备份**：`GET /api/backup`（session 鉴权）`VACUUM INTO` 到临时文件后以
 `lattix-backup-<YYYYMMDD-HHMMSS>.db` 附件返回，发送完成清理临时文件；单连接 +
 busy_timeout 下与并发读写安全共存，失败 500。设置页"面板维护"区块提供下载按钮。
+
+## 20. 面板侧引导与 latx 运维程序（已实现，超出 MVP 范围）
+
+面板自身的安装/运维与 agent 引导（§11）同形态：release 钉版脚本 + checksums 校验 +
+单文件 bash 管理程序。
+
+**一键安装**（`scripts/install-panel.sh`，CI stamp 后为 release 资产）：
+
+```bash
+curl -fsSL https://github.com/<repo>/releases/download/<ver>/install-panel.sh | bash
+```
+
+- 仅 linux/amd64（面板无 arm64 构建，明确报错）；目标版本解析：脚本参数 > CI 烧入版本 >
+  latest（执行时经 GitHub API 解析，`LATX_RELEASE_BASE` 可覆盖下载基址，e2e 用）。
+- 下载面板 tarball、`latx`、agent 引导 `install.sh`、agent 两架构二进制，逐一校验
+  release `checksums.txt`（获取不到即中止，与 §11 同规）；agent 二进制放
+  `<root>/dist/` 供面板托管模式回退（§11 面板托管模式）。
+- 解压到 `/usr/local/lattix-panel`（`LATX_ROOT` 覆盖）：`lattix-backend` +
+  `frontend-dist/` + `dist/` + `install.sh`（供 `/install.sh` 端点）；
+  注册 systemd unit `lattix-panel`（`Restart=always`，`-addr` 由 `LATX_ADDR` 覆盖，
+  默认 `:8080`），enable + start 后等待端口起来。
+- 成功输出三要素：面板地址（公网 IP 经 ifconfig.me 类服务探测，失败回退 `hostname -I`）、
+  默认账号 `admin / lattix-admin`（显式提示生产必改）、`latx` 运维提示。
+- 已安装时执行 = 同版本重装/升级：停服 → 替换 → 启服，**保留 DB**。
+- 无 systemd 或非 root 且 `LATX_DEV=1` 时降级：跳过 unit 注册，nohup 直接启动并打印
+  `[DEV]` 提示（dev-e2e-install-panel.sh 全程走此路径）。
+
+**latx**（`scripts/latx.sh`，CI stamp 后安装为 `/usr/local/bin/latx`）：全部函数化的
+单文件 bash 管理程序，子命令 `status`（服务状态/监听端口/面板版本/面板地址）、
+`start|stop|restart|enable|disable`（systemctl 包装，非 root 明确报错）、
+`log [-n N]`（journalctl，`-n` 不跟随）、`update [version]`（latest 经 GitHub API
+解析，下载 tarball + checksums.txt 校验后停服替换 `lattix-backend` 与 `frontend-dist`，
+启服并校验 `-version`；仅 amd64）、`acme <domain>`（登录 → PUT tls_mode=acme →
+POST restart → 等待恢复并验证 `https://<domain>` 可达，凭据 read -s 或
+`LATX_ADMIN_USER`/`LATX_ADMIN_PASS`）、`reset-admin <newpass>`（调
+`lattix-backend -reset-admin`，见下）、`uninstall [--purge-db]`（确认后停服删 unit
+与安装根目录，默认保留 DB 并提示路径）、`version`。unit 名 `LATX_UNIT`、
+面板地址 `LATX_PANEL_URL`（默认 `http://127.0.0.1:8080`）可覆盖。
+
+**latx-ag**（`scripts/latx-ag.sh`，CI stamp 后由 agent install.sh 安装为
+`/usr/local/bin/latx-ag`）：节点侧同款单文件 bash 管理程序。子命令 `status`
+（agent/xray 服务状态与版本、面板地址——读 install.sh 写入的 env 文件、state 中的
+服务器 ID、配置指纹；§17 漂移基线在 agent 内存中不落盘，故仅显示指纹）、
+`start|stop|restart|enable|disable`（systemctl 包装，unit `lattix-agent`，
+`LATX_AG_UNIT` 覆盖）、`log` / `log-xray`（journalctl，`-n N` 不跟随）、
+`update [version]`（latest 经 GitHub API 解析，下载 agent + checksums.txt 校验 →
+**预检**新二进制 `-version` → 停服替换 → 启服校验版本）、`xray-update [version]`
+（官方 .dgst 校验 SHA2-256，拿不到校验文件即失败，与 agent upgrade.go 同语义；
+备份 .bak → 替换 → 重启 → 版本校验，失败回滚；`XRAY_RELEASE_BASE` 对齐
+`-xray-release-base` 镜像语义）、`uninstall [--purge-xray]`（确认后卸载，清理清单与
+agent uninstall.go 对齐含 .bak；默认仅 agent，xray 与节点继续运行）、`version`。
+随 install.sh 双模式分发：release 钉版模式作 release 资产经 checksums.txt 校验；
+面板托管模式摆面板 `/dist`，后端向 install.sh 注入 `{{LATX_AG_SHA256}}`（与
+AGENT_SHA256_* 同 SKIP 语义），install-panel.sh 同步摆放。install.sh 成功输出
+面板地址 / agent 状态 / xray 版本与 latx-ag 运维提示块。`LATX_DEV=1` + `LATX_PREFIX`
+路径前缀提供与 install-panel.sh 同款的 DEV 降级（dev-e2e-install-agent.sh 走此路径）。
+
+**`-reset-admin` 启动参数**：`lattix-backend -reset-admin <newpass> -db <path>`
+与设置页改密同一代码路径（bcrypt 哈希写 `settings`，≥8 位校验，会话签名密钥派生自
+密码哈希故改密即全部会话失效，§10），写完输出提示即退出，不启动面板；
+面板运行中执行安全（busy_timeout）。
