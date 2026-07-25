@@ -167,6 +167,7 @@ cmd_update() {
     [[ "$GITHUB_REPO" != *"{{"* ]] || die "脚本未经 CI stamp（{{GITHUB_REPO}} 占位符未替换），无法定位 release"
     command -v curl >/dev/null      || die "curl is required"
     command -v sha256sum >/dev/null || die "sha256sum is required"
+    command -v tar >/dev/null       || die "tar is required"
     [[ -x "$AGENT_BIN" ]] || die "agent 未安装（$AGENT_BIN 不存在），请先运行 install.sh"
 
     local arch
@@ -191,24 +192,26 @@ cmd_update() {
     local tmp="$TMP_DIR"
 
     local base="https://github.com/${GITHUB_REPO}/releases/download/${version}"
-    curl -fsSL -o "$tmp/lattix-agent-linux-${arch}" "$base/lattix-agent-linux-${arch}" \
-        || die "下载失败：release ${version} 无 lattix-agent-linux-${arch}"
+    curl -fsSL -o "$tmp/lattix-agent-linux-${arch}.tar.gz" "$base/lattix-agent-linux-${arch}.tar.gz" \
+        || die "下载失败：release ${version} 无 lattix-agent-linux-${arch}.tar.gz"
     curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt" \
         || die "未获取到 release 校验文件 checksums.txt，中止更新"
-    (cd "$tmp" && grep "lattix-agent-linux-${arch}\$" checksums.txt | sha256sum -c - >/dev/null) \
-        || die "agent 二进制 SHA256 校验失败（release ${version} checksums.txt）"
-    echo ">> agent 二进制 SHA256 校验通过"
+    (cd "$tmp" && grep "lattix-agent-linux-${arch}\.tar\.gz\$" checksums.txt | sha256sum -c - >/dev/null) \
+        || die "agent 包 SHA256 校验失败（release ${version} checksums.txt）"
+    echo ">> agent 包 SHA256 校验通过"
+    tar -C "$tmp" -xzf "$tmp/lattix-agent-linux-${arch}.tar.gz"
+    [[ -f "$tmp/lattix-agent/lattix-agent" ]] || die "agent 包内容异常（缺 lattix-agent）"
 
     # 预检：新二进制可执行且 -version 正常输出，失败即放弃（不触碰在运安装）。
-    chmod 0755 "$tmp/lattix-agent-linux-${arch}"
+    chmod 0755 "$tmp/lattix-agent/lattix-agent"
     local new_version
-    new_version="$("$tmp/lattix-agent-linux-${arch}" -version 2>/dev/null)" \
+    new_version="$("$tmp/lattix-agent/lattix-agent" -version 2>/dev/null)" \
         || die "预检失败：新二进制 -version 执行异常，放弃更新"
     [[ "$new_version" == "$version" ]] \
         || die "预检失败：新二进制版本不符（期望 ${version}，实际 ${new_version}），放弃更新"
 
     systemctl stop "$UNIT"
-    install -m 0755 "$tmp/lattix-agent-linux-${arch}" "$AGENT_BIN"
+    install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
     systemctl start "$UNIT"
 
     local running_version; running_version="$(agent_version)"

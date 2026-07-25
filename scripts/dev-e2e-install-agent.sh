@@ -45,14 +45,18 @@ echo ">> build agent（真实构建产物注入版本）与 backend"
 
 echo ">> 摆假 release: $FAKE"
 mkdir -p "$FAKE"
-cp "$WORK/lattix-agent" "$FAKE/lattix-agent-linux-amd64"
 # latx-ag / install.sh stamp（模拟 CI release.yml 的 sed）
 sed -e "s|{{LATTIX_VERSION}}|$VERSION|g" -e "s|{{GITHUB_REPO}}|$REPO|g" \
-    "$ROOT/scripts/latx-ag.sh" > "$FAKE/latx-ag"
+    "$ROOT/scripts/latx-ag.sh" > "$WORK/latx-ag"
 sed -e "s|{{LATTIX_VERSION}}|$VERSION|g" -e "s|{{GITHUB_REPO}}|$REPO|g" \
     -e "s|{{DEFAULT_XRAY_VERSION}}|v26.3.27|g" \
     "$ROOT/scripts/install.sh" > "$FAKE/install.sh"
-(cd "$FAKE" && sha256sum lattix-agent-linux-amd64 latx-ag > checksums.txt)
+# agent 包：lattix-agent/（agent 二进制 + latx-ag，模拟 CI 打包）
+mkdir -p "$WORK/agent-pkg/lattix-agent"
+cp "$WORK/lattix-agent" "$WORK/agent-pkg/lattix-agent/lattix-agent"
+cp "$WORK/latx-ag" "$WORK/agent-pkg/lattix-agent/latx-ag"
+tar -C "$WORK/agent-pkg" -czf "$FAKE/lattix-agent-linux-amd64.tar.gz" lattix-agent
+(cd "$FAKE" && sha256sum lattix-agent-linux-amd64.tar.gz > checksums.txt)
 
 echo ">> start backend"
 mkdir -p "$WORK/dist"
@@ -81,15 +85,15 @@ latx_ag() {
 }
 
 echo ">> 用例 1: checksum 篡改应中止安装"
-cp "$FAKE/latx-ag" "$FAKE/latx-ag.bak"
-echo tampered >> "$FAKE/latx-ag"
+cp "$FAKE/lattix-agent-linux-amd64.tar.gz" "$FAKE/agent.tar.gz.bak"
+echo tampered >> "$FAKE/lattix-agent-linux-amd64.tar.gz"
 if run_install >"$WORK/tamper.log" 2>&1; then
-    echo "FAIL: 篡改的 latx-ag 未被 checksum 拦下"; exit 1
+    echo "FAIL: 篡改的 agent 包未被 checksum 拦下"; exit 1
 fi
-grep -q "latx-ag SHA256 校验失败" "$WORK/tamper.log" \
+grep -q "agent 包 SHA256 校验失败" "$WORK/tamper.log" \
     && echo "OK: 篡改资产被 checksums.txt 拦下" \
     || { echo "FAIL: 报错信息不符"; cat "$WORK/tamper.log"; exit 1; }
-mv "$FAKE/latx-ag.bak" "$FAKE/latx-ag"
+mv "$FAKE/agent.tar.gz.bak" "$FAKE/lattix-agent-linux-amd64.tar.gz"
 
 echo ">> 用例 2: 正常安装（LATX_DEV=1 降级；预置坏 state 验证重装清理，§11）"
 mkdir -p "$PREFIX/etc"

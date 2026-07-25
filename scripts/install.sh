@@ -6,7 +6,8 @@
 #
 # Agent 二进制有两种获取方式：
 #   1. release 钉版模式：本脚本由 CI 发版时烧入 LATTIX_VERSION / GITHUB_REPO /
-#      DEFAULT_XRAY_VERSION（见 .github/workflows/release.yml），agent / latx-ag 与校验和
+#      DEFAULT_XRAY_VERSION（见 .github/workflows/release.yml），agent 包
+#      lattix-agent-linux-<arch>.tar.gz（lattix-agent + latx-ag）与校验和
 #      均从 GitHub release 资产下载（checksums.txt 校验，获取不到即中止）。
 #   2. 面板托管模式：占位符未烧入（保留 "{{...}}"），agent / latx-ag 从面板 ${PANEL_URL}/dist
 #      下载，校验面板注入的 SHA256（明文 HTTP 下的完整性锚点，§12）。
@@ -156,23 +157,24 @@ EOF
 fi
 
 if [[ "$LATTIX_VERSION" != *"{{"* ]]; then
-    # release 钉版模式：从 GitHub release 下载 agent / latx-ag 与同 release 的
-    # checksums.txt 校验。LATX_RELEASE_BASE 可覆盖下载基址（e2e 本地模拟，支持 file://）。
+    # release 钉版模式：从 GitHub release 下载 agent 包（lattix-agent + latx-ag）
+    # 与同 release 的 checksums.txt 校验。LATX_RELEASE_BASE 可覆盖下载基址（e2e 本地模拟，支持 file://）。
+    command -v tar >/dev/null || die "tar is required"
     RELEASE_BASE="${LATX_RELEASE_BASE:-https://github.com/${GITHUB_REPO}/releases/download/${LATTIX_VERSION}}"
     echo ">> installing lattix-agent ${LATTIX_VERSION}"
-    curl -fsSL -o "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}" \
-        "${RELEASE_BASE}/lattix-agent-linux-${AGENT_ARCH}"
-    curl -fsSL -o "$TMP_DIR/latx-ag" "${RELEASE_BASE}/latx-ag" \
-        || die "下载失败：release ${LATTIX_VERSION} 无 latx-ag 资产"
+    curl -fsSL -o "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}.tar.gz" \
+        "${RELEASE_BASE}/lattix-agent-linux-${AGENT_ARCH}.tar.gz"
     # 校验文件获取不到即中止，不降级跳过。
     curl -fsSL -o "$TMP_DIR/checksums.txt" "${RELEASE_BASE}/checksums.txt" \
         || die "未获取到 release 校验文件 checksums.txt，中止安装"
-    (cd "$TMP_DIR" && grep "lattix-agent-linux-${AGENT_ARCH}\$" checksums.txt | sha256sum -c - >/dev/null) \
-        || die "agent 二进制 SHA256 校验失败（release ${LATTIX_VERSION} checksums.txt）"
-    echo ">> agent 二进制 SHA256 校验通过（release checksums.txt）"
-    (cd "$TMP_DIR" && grep "latx-ag\$" checksums.txt | sha256sum -c - >/dev/null) \
-        || die "latx-ag SHA256 校验失败（release ${LATTIX_VERSION} checksums.txt）"
-    echo ">> latx-ag SHA256 校验通过（release checksums.txt）"
+    (cd "$TMP_DIR" && grep "lattix-agent-linux-${AGENT_ARCH}\.tar\.gz\$" checksums.txt | sha256sum -c - >/dev/null) \
+        || die "agent 包 SHA256 校验失败（release ${LATTIX_VERSION} checksums.txt）"
+    echo ">> agent 包 SHA256 校验通过（release checksums.txt）"
+    tar -C "$TMP_DIR" -xzf "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}.tar.gz"
+    [[ -f "$TMP_DIR/lattix-agent/lattix-agent" && -f "$TMP_DIR/lattix-agent/latx-ag" ]] \
+        || die "agent 包内容异常（缺 lattix-agent 或 latx-ag）"
+    AGENT_SRC="$TMP_DIR/lattix-agent/lattix-agent"
+    LATX_AG_SRC="$TMP_DIR/lattix-agent/latx-ag"
 else
     # 面板托管模式：从面板 dist 下载，校验面板注入的 SHA256（§11/§12）。
     # 与 release 模式一致：先落临时文件、校验通过后再安装到最终路径，
@@ -202,9 +204,11 @@ else
             || die "latx-ag SHA256 校验失败（期望 $LATX_AG_SHA256）"
         echo ">> latx-ag SHA256 校验通过"
     fi
+    AGENT_SRC="$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}"
+    LATX_AG_SRC="$TMP_DIR/latx-ag"
 fi
-install -m 0755 "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}" "$AGENT_BIN"
-install -m 0755 "$TMP_DIR/latx-ag" "$LATX_AG_BIN"
+install -m 0755 "$AGENT_SRC" "$AGENT_BIN"
+install -m 0755 "$LATX_AG_SRC" "$LATX_AG_BIN"
 echo ">> latx-ag 已安装到 $LATX_AG_BIN"
 
 # http→ws / https→wss

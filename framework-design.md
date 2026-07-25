@@ -14,7 +14,7 @@
 
 参考 3x-ui / s-ui / miaomiaowuX 的交互模式，不做商业化。
 
-**规模假设**：服务器 1–30 台，管理员 1 人，实际用户 ≤ 50 人。所有服务器假设具备公网 IP 与完整公网访问能力（NAT 场景见 §14）。
+**规模假设**：服务器 1–30 台，管理员 1 人，实际用户 ≤ 50 人。所有服务器假设具备公网 IP 与完整公网访问能力；NAT 机器（共享 IP / 无入站）与代理链支持自 0.0.2 之后迭代实现，见 §21。
 
 **MVP 协议范围**：仅 VLESS + Reality，flow 固定 `xtls-rprx-vision`，uTLS 指纹固定 `chrome`。
 
@@ -35,7 +35,7 @@
 
 核心决策：
 
-- **单通道**：Agent → Backend 一条 WebSocket 长连接承担全部双向通信。Backend 永不主动外连 Agent，Agent 不提供任何监听 API 端点。该形态同时兼容公网服务器与未来的 NAT 服务器。
+- **单通道**：Agent → Backend 一条 WebSocket 长连接承担全部双向通信。Backend 永不主动外连 Agent，Agent 不提供任何监听 API 端点。该形态同时兼容公网服务器与 NAT 服务器（§21，自 0.0.2 之后迭代实现）。
 - **无 fallback 实现**：Backend 侧定义 `requester` 接口隔离"发送命令"与"具体传输"，MVP 只有 WebSocket 一个实现；gRPC/HTTP 等其他实现属后续迭代。
 - **离线排队**：Agent 离线期间，发往它的命令滞留于 `commands` 表，重连后补发。
 - **重发与死信**：重连时将该服务器 `sent` 未终态的命令重置为 `queued` 重新补发（幂等性由 Agent 各处理器保证）；`attempts` 超过上限（10 次）标记 `failed` 死信，不再重发；`apply_node` 死信时对应节点同步置 `failed` 并记录原因（§6）。
@@ -67,12 +67,13 @@ scripts/
 | `user_nodes` | user_id, node_id（§16 逐节点用户分配，默认全关） |
 | `server_metrics` | server_id, load1, cpu_percent, mem_total, mem_used, updated_at（§13 主机遥测最新值） |
 | `traffic` | node_id, user_uuid, up, down, updated_at（§13 流量累计：节点维度 user_uuid=''，用户维度 node_id=0） |
+| `chains` / `chain_hops` | （自 0.0.2 之后迭代实现，§21）链级状态机；逐跳 role（entry/middle/exit）与独立重试状态 |
 
 说明：
 
 - `commands` 表同时充当**离线命令队列**与**操作日志**（全部保留，不自动清理；重发/死信语义见 §2）。
 - `nodes.config_template` 是面板侧虚拟配置（含占位符）；`nodes.realized_config` 是 Agent 上报的实际生效值（端口、public_key、short_id 等）。
-- `servers.address` 是订阅中节点地址的唯一来源（§9）：**创建服务器时由管理员填写公网地址，agent 不校验**；留空则按 agent WS 拨入的 RemoteAddr 自动学习，一经写入不再被覆盖（地址变更由管理员修改，PATCH /api/servers/{id}）。
+- `servers.address` 是订阅中节点地址的唯一来源（§9）：**创建服务器时由管理员填写公网地址，agent 不校验**；留空则按 agent WS 拨入的 RemoteAddr 自动学习，一经写入不再被覆盖（地址变更由管理员修改，PATCH /api/servers/{id}）。自 0.0.2 之后迭代（§21）：`servers` 增加机器类型与 NAT 可用端口段元数据（含非 1:1 映射的 public_port），NAT 类型 address 强制必填、禁用自动学习；引入链后订阅地址改取链**入口**的 address。
 - 用户-节点关联（§16）：`user_nodes` 引入前成员关系隐含为"全部用户 ∈ 全部节点"（§8），经 `PRAGMA user_version` 一次性迁移补全存量关联；此后新建用户/节点默认全关。
 
 ## 5. 控制通道协议
@@ -100,7 +101,7 @@ scripts/
 
 ## 6. 节点生命周期与 apply 流水线
 
-节点状态机：`pending → applying → active | failed`。`failed` 携带错误详情，面板提供重试按钮。
+节点状态机：`pending → applying → active | failed`。`failed` 携带错误详情，面板提供重试按钮。（自 0.0.2 之后迭代：链场景的跨机编排、链级状态机与逐跳重试见 §21；本节流水线对链中每一跳仍然适用。）
 
 Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 
@@ -143,19 +144,20 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 - 目标客户端：mihomo 内核系（Clash Verge / Clash Party / FlClash 等）。原版 Clash 不支持 VLESS+Reality，不在目标范围。
 - 内容：proxies 列表（每个节点一项，`type: vless`，`server` 取 `servers.address`（§4），嵌入**该用户自己的 UUID**、`flow`、`reality-opts: {public-key, short-id}`、`servername`、`udp: true`）+ 一个 `select` 类型 proxy-group + `MATCH` 规则。
 - 节点命名：`{服务器别名}-vless-{端口}`，如 `tokyo01-vless-8443`。
+- **（自 0.0.2 之后迭代，§21）**：引入链后，proxies 条目的 `server`/端口取链**入口**的 address 与 public_port（非 1:1 映射时），public-key/short-id/UUID 取链**出口**；命名中的别名与端口取入口。链 degraded 不剔除入口条目，靠客户端测速规避。
 - **响应头**：`/sub/{token}` 与 `/sub/{token}/links` 均返回 `subscription-userinfo: upload=<bytes>; download=<bytes>[; expire=<unix秒>]`（upload/download 取 `traffic` 表用户维度 node_id=0 的跨服务器累计；仅设了有效期才带 expire；无流量配额故无 total）与 `profile-update-interval: 24`（客户端按天自动刷新）。
 - **用户有效期**：创建用户可带 `expires_at`（过去时间 → 400）；`PATCH /api/users/{id}` 修改/清除（null = 长期，过去时间同样 400——"借到期立即停权"由 §16 的 disabled 开关承担；省略的字段保持不变）；列表 DTO 带 `expires_at`/`expired`/`disabled`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `remove_user`（显式 nodes 载荷；已 disabled 的用户只补记标记不重复扇出）；管理员延长/清除有效期（expired 1→0）→ 扇出 `add_user` 恢复（disabled 用户除外，见 §16 有效停权态）。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`apply_node` 的 `NodeUserUUIDs` 不下发 expired/disabled 用户。
 - `vless://` 分享链接集合端点已实现：`GET /sub/{token}/links`（§14，仅含分配的 active 节点）。
 
 ## 10. 面板页面与 API
 
-页面：登录 / 仪表盘（服务器数、在线数、节点数、用户数）/ 服务器列表（"添加服务器"填写别名、**公网地址**（留空自动学习，§4）与 **xray 版本**（默认 `latest`，§11），生成一行安装命令；可删除服务器——在线 agent 收到 `uninstall` 自卸载，**删除时可选"仅 agent"或"连同 xray"**（§5），离线仅删记录；可刷新凭证重取安装命令——已安装的换发后旧凭证失效，未安装的换发新 bootstrap token）/ 节点创建向导（选服务器 → VLESS+Reality 表单，端口可空 = 自动）/ 用户列表（创建用户 → 展示并复制订阅链接）。
+页面：登录 / 仪表盘（服务器数、在线数、节点数、用户数）/ 服务器列表（"添加服务器"填写别名、**机器类型**（独立 IP / NAT，自 0.0.2 之后迭代，§21；选 NAT 出现"可用端口"多项填写，每项支持单端口与范围及非 1:1 映射，留空 = 仅出口档）、**公网地址**（留空自动学习，§4；NAT 类型强制必填）与 **xray 版本**（默认 `latest`，§11），生成一行安装命令；可删除服务器——在线 agent 收到 `uninstall` 自卸载，**删除时可选"仅 agent"或"连同 xray"**（§5），离线仅删记录；可刷新凭证重取安装命令——已安装的换发后旧凭证失效，未安装的换发新 bootstrap token）/ 节点创建向导（选服务器 → VLESS+Reality 表单，端口可空 = 自动；自 0.0.2 之后迭代支持链路构图：依次选择入口 / 中间跳（≤2）/ 出口，入口须有入站能力，出口任意，§21）/ 用户列表（创建用户 → 展示并复制订阅链接）。
 
 管理 API 走 HTTP + session（账号密码登录）；Agent 通道走 token（§5）。
 
 ## 11. 服务器引导流程
 
-1. 面板"添加服务器"填写别名、公网地址与 **xray 版本**（默认 `latest`，也可指定具体版本），生成一次性 **bootstrap token** 与一行安装命令；
+1. 面板"添加服务器"填写别名、公网地址与 **xray 版本**（默认 `latest`，也可指定具体版本），生成一次性 **bootstrap token** 与一行安装命令（自 0.0.2 之后迭代起另含机器类型与 NAT 可用端口段，§21；均为面板侧元数据，不下发到 agent，引导流程不变）；
 2. `install.sh` 在被控机执行：按创建时指定的 xray 版本安装（`latest` 在执行时经 GitHub API 解析最新 release；**校验官方 release checksums**）→ 下载/安装 Agent 二进制 → 注册 systemd → 写入面板地址与 bootstrap token（重装时清除旧 state 文件，确保使用新 bootstrap token）。Agent 二进制两种获取方式：**release 钉版模式**（正式版本，install.sh 由 CI 烧入版本号，agent 与校验和取自同版本 GitHub release 资产，校验 `checksums.txt`）与**面板托管模式**（dev 构建，agent 从面板 `/dist` 下载，**按面板注入的 SHA256 校验**，明文 HTTP 下保证二进制不被中间人替换）；
 3. Agent 启动首连，以 bootstrap token 换发长期服务器 token；**实际安装的 xray 版本随 hello 上报，面板服务器列表展示实际版本号**。
 
@@ -205,7 +207,7 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，`-telemetry-interval` �
 | 事件告警与 SQLite 备份 | ✅ 已实现（见 §19）：Webhook + Telegram，VACUUM INTO 下载 |
 | 多管理员 / RBAC | 决策不做：单管理员符合规模假设 |
 | fallback 传输实现 | 决策不做：WS 通道全绿，无实际需求；requester 接口已隔离，需要时再实现 |
-| NAT / 中继链路 | 决策不做（明确排除） |
+| NAT / 中继链路 | ✅ 已实现（v0.0.3，见 §21） |
 
 ## 15. 全协议向导（已实现，超出 MVP 范围）
 
@@ -251,6 +253,7 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，`-telemetry-interval` �
 
 - **扇出语义**：apply_node 只携带分配到该节点的用户 UUID；分配变更按差量扇出
   add_user/remove_user（载荷仅含受影响节点）；删除用户仍向所有服务器幂等扇出 remove_user。
+  （自 0.0.2 之后迭代，§21：引入链后 `user_nodes` 指向链的**出口**节点——UUID 只存在于出口 xray，入口/中间跳不接收用户扇出。）
 - **订阅**：YAML 与 links 端点均只含分配到该用户的 active 节点。
 - **显式停用/启用开关**：`users.disabled`（`PATCH /api/users/{id}` 带 `disabled` 字段，
   用户列表行内"停用/启用"按钮）。停用 → 对其已分配节点扇出 remove_user；启用 → 扇出 add_user 恢复。
@@ -323,8 +326,9 @@ curl -fsSL https://github.com/<repo>/releases/download/<ver>/install-panel.sh | 
 
 - 仅 linux/amd64（面板无 arm64 构建，明确报错）；目标版本解析：脚本参数 > CI 烧入版本 >
   latest（执行时经 GitHub API 解析，`LATX_RELEASE_BASE` 可覆盖下载基址，e2e 用）。
-- 下载面板 tarball、`latx`、agent 引导 `install.sh`、agent 两架构二进制，逐一校验
-  release `checksums.txt`（获取不到即中止，与 §11 同规）；agent 二进制放
+- 下载面板 tarball（前后端服务 + `latx` + agent 引导 `install.sh`）与 agent 两架构包
+  `lattix-agent-linux-<arch>.tar.gz`（agent + `latx-ag`），逐一校验 release
+  `checksums.txt`（获取不到即中止，与 §11 同规）；agent 包解出二进制放
   `<root>/dist/` 供面板托管模式回退（§11 面板托管模式）。
 - 解压到 `/usr/local/lattix-panel`（`LATX_ROOT` 覆盖）：`lattix-backend` +
   `frontend-dist/` + `dist/` + `install.sh`（供 `/install.sh` 端点）；
@@ -354,13 +358,15 @@ POST restart → 等待恢复并验证 `https://<domain>` 可达，凭据 read -
 服务器 ID、配置指纹；§17 漂移基线在 agent 内存中不落盘，故仅显示指纹）、
 `start|stop|restart|enable|disable`（systemctl 包装，unit `lattix-agent`，
 `LATX_AG_UNIT` 覆盖）、`log` / `log-xray`（journalctl，`-n N` 不跟随）、
-`update [version]`（latest 经 GitHub API 解析，下载 agent + checksums.txt 校验 →
+`update [version]`（latest 经 GitHub API 解析，下载 agent 包
+`lattix-agent-linux-<arch>.tar.gz` + checksums.txt 校验 → 解包 →
 **预检**新二进制 `-version` → 停服替换 → 启服校验版本）、`xray-update [version]`
 （官方 .dgst 校验 SHA2-256，拿不到校验文件即失败，与 agent upgrade.go 同语义；
 备份 .bak → 替换 → 重启 → 版本校验，失败回滚；`XRAY_RELEASE_BASE` 对齐
 `-xray-release-base` 镜像语义）、`uninstall [--purge-xray]`（确认后卸载，清理清单与
 agent uninstall.go 对齐含 .bak；默认仅 agent，xray 与节点继续运行）、`version`。
-随 install.sh 双模式分发：release 钉版模式作 release 资产经 checksums.txt 校验；
+随 install.sh 双模式分发：release 钉版模式打进 agent 包
+`lattix-agent-linux-<arch>.tar.gz` 经 checksums.txt 校验；
 面板托管模式摆面板 `/dist`，后端向 install.sh 注入 `{{LATX_AG_SHA256}}`（与
 AGENT_SHA256_* 同 SKIP 语义），install-panel.sh 同步摆放。install.sh 成功输出
 面板地址 / agent 状态 / xray 版本与 latx-ag 运维提示块。`LATX_DEV=1` + `LATX_PREFIX`
@@ -370,3 +376,127 @@ AGENT_SHA256_* 同 SKIP 语义），install-panel.sh 同步摆放。install.sh �
 与设置页改密同一代码路径（bcrypt 哈希写 `settings`，≥8 位校验，会话签名密钥派生自
 密码哈希故改密即全部会话失效，§10），写完输出提示即退出，不启动面板；
 面板运行中执行安全（busy_timeout）。
+
+## 21. 代理链与 NAT 支持（已实现，v0.0.3）
+
+推翻 §14 原"NAT / 中继链路不做"的决策。节点概念推广为**链**：`入口 → [中间跳...] → 出口 → Internet`，
+客户端仅见入口。存量单机节点视为长度 1 的链，模型统一。
+
+**能力边界**：
+
+- 链长上限 4 跳，同一服务器在一条链中不重复（O(n) 查重即环检测）。
+- 端到端加密下中间跳只做 TCP 拼接，3+ 跳的收益仅为路径混淆，故不开放任意长度。
+
+**数据平面**：
+
+- 每跳规则统一：下游有入站能力 → 直连转发（dokodemo-door 式纯 TCP 透传）；
+  下游无入站能力 → 下游以 xray reverse bridge 反向上来（bridge/portal 对）。
+- **端到端加密**：客户端代理协议（VLESS+Reality 等）在出口终止；入口/中间跳只见密文，
+  不持有用户 UUID，不需要用户列表。
+- **隧道口安全**：portal = 每跳独立的 VLESS+Reality inbound（不共享，吊销粒度细）；
+  密钥对由该跳 agent 生成、随 `apply_result` 上报，私钥不出服务器（沿用 §7 原则）。
+  无认证的隧道监听口会成为开放中继，明确禁止。
+- **面板纯控制面**：用户流量永不经过面板机器；B→C 链路中 C 直接对 B 建隧道，
+  面板只负责向各跳下发角色与参数。
+
+**NAT 机器两档**（添加服务器表单：机器类型 = 独立 IP / NAT）：
+
+| 档 | 条件 | 可任角色 | 说明 |
+|---|---|---|---|
+| 受限直连 | NAT + 可用端口非空 | 入口/中间/出口 | 共享公网 IP + IDC 映射端口段（NAT VPS 形态），零隧道开销 |
+| 仅出口 | NAT + 可用端口留空 | 出口 | 全 CGNAT 无入站，走 reverse |
+
+- **可用端口**：多项填写（默认一项，"+" 添加），每项支持单端口（`10000`）与范围
+  （`10001-10010`）；**支持非 1:1 映射**（外部段:内部段，默认 1:1）。
+  非 1:1 时 `realized_config` 区分 `listen_port` / `public_port`，订阅取 `public_port`。
+- NAT 类型 `servers.address` **强制必填**（共享 IP 由 IDC 提供），禁用 RemoteAddr 自动学习
+  （多出口/负载均衡 NAT 会学错地址，导致订阅静默失效）。
+- 端口段建后可改（PATCH /api/servers/{id}）：缩小区间时校验存量节点/跳不越界，越界拒绝；
+  机器类型建后不互转。
+
+**存储**：
+
+- 新表 `chains`（id, status, error, created_at…）承载链级状态机；
+  新表 `chain_hops`（chain_id, seq, node_id, role, hop 状态…）承载逐跳状态与独立重试，
+  role ∈ entry / middle / exit。
+- `user_nodes` 维持指向出口节点（UUID 只存在于出口 xray），无新用户关联表。
+- `traffic` 表结构不变：用户维度流量只在出口统计，中间跳只有节点级字节数，
+  面板展示不得把入口跳字节数当用户流量。
+
+**编排**：
+
+- 建链顺序倒置：出口先就绪，逐跳向外，入口最后生效（客户端永不见到半成品入口）；
+  删链反向，先拆入口。跨机部分失败 → 链置 failed 并定位到跳，重试只重放失败的跳。
+- 链任一跳服务器离线或隧道断开 → 链置 degraded，面板标出断点并经 §19 事件通道告警；
+  **订阅不剔除该入口**（客户端测速自然规避，恢复后自愈）。
+
+**agent 侧**：
+
+- 无全局 `-nat` 模式开关：角色（bridge+业务 inbound / portal+转发 / 转发）完全由
+  apply 载荷决定，控制通道、遥测、漂移 reconcile（§17）、xray 升级（§18）全部复用。
+- install.sh 与引导流程不变；机器类型与端口段是面板侧元数据，不下发到 agent。
+
+**订阅**：条目 = 入口的 `address:public_port` + 出口的 public_key/short_id/UUID；
+命名沿用 `{入口别名}-{协议}-{端口}`；links 端点（§9/§14）同构。
+
+**实施时待定的小项**（不阻塞设计）：portal 监听端口在有端口段的 NAT 机上同样从可用段分配；
+向导链路构图的详细校验规则（入口必须有入站能力，出口任意，中间跳至少一侧可达）。
+
+**PoC 结论（已验证，GO）**：`scripts/dev-poc-reverse.sh` 实证 reverse bridge/portal + 隧道 Reality +
+端到端 Reality 透传可行（链路通、portal 重启自愈、隧道口抗探测分流正常）。两个实测要点：
+Reality dest 不稳定（如 www.microsoft.com）会导致合法客户端握手一并失败，dest 白名单必须只收稳定目标
+（§6 destCandidates 已遵循，隧道 inbound 复用同一白名单）；反向通道注册存在启动竞态，
+bridge 首拨失败由 xray 自动重试兜底，编排层无需处理。
+
+### 21.1 实现契约（消息、存储、编排细节）
+
+**每跳的 xray 配置件**（piece，agent 按载荷渲染，全部并入受管 config.json）：
+
+| piece | 所在机 | 内容 |
+|---|---|---|
+| `forward` | 入口/中间跳 | dokodemo-door 透传 inbound（固定目标，无认证即无滥用面：攻击者只能弹到出口 Reality 口被分流）+ 路由（直连 → freedom 拨下一跳 `address:port`；反向 → reverse portal） |
+| `portal` | 反向链的上游机 | VLESS+Reality interconn inbound + reverse portal（密钥对 agent 生成上报，UUID/shortID 面板下发，dest 走 §6 预检+白名单） |
+| `bridge` | 反向链的下游机（仅出口档 NAT） | reverse bridge + VLESS+Reality interconn outbound + routing（bridge → freedom 拨回环业务 inbound） |
+| 业务 inbound | 出口 | 复用现有 `apply_node`（普通 nodes 行），监听不变 |
+
+**新消息类型**（协议演化规则：新语义走新类型）：
+
+- `apply_chain_hop`：`{chain_id, hop_id, kind: portal|bridge|forward, portal?, bridge?, forward?, dest_candidates?}`。
+  - PortalSpec `{tag, tunnel_domain, port(0=自动), port_candidates?, tunnel_uuid, short_id, dest, server_names}`
+  - BridgeSpec `{tunnel_domain, portal_address, portal_port, tunnel_uuid, public_key, short_id, server_name}`
+  - ForwardSpec `{tag, port, port_candidates?, target_address, target_port, via_tunnel_domain?}`
+- `remove_chain_hop`：`{hop_id, kind}`（删链逐跳反向下发）。
+- `apply_result` 增加 `hop_id`、`kind`（omitempty），portal/forward 复用 `realized_config.port/public_key` 回执。
+- `apply_node` 载荷增加 `port_candidates`（omitempty）：受限直连 NAT 机上节点端口从段内挑选。
+
+**tunnel_domain**：`c<chainID>h<hopID>.lx`，链内唯一，reverse 路由键。
+
+**建链编排**（panel 状态机，满足凭证依赖；每步成功回执后推进，失败定位到跳）：
+
+1. 出口业务 inbound（`apply_node`，可自动端口）→ realized 端口；
+2. 各反向链的 `portal`（由出口向入口方向逐个）→ 回执 pubkey/端口；
+3. 各反向链的 `bridge`（携带对应 portal 凭证）；
+4. 各 `forward`（由出口向入口方向；目标 = 下一跳 forward 端口或出口业务端口）；
+5. 全部跳 active → 链 active。任一失败 → 链 failed 定位到跳，重试只重放失败 piece。
+
+**存储 DDL**（PRAGMA user_version 迁移）：
+
+```sql
+ALTER TABLE servers ADD COLUMN machine_type TEXT NOT NULL DEFAULT 'direct'; -- direct|nat
+ALTER TABLE servers ADD COLUMN allowed_ports TEXT NOT NULL DEFAULT '';      -- JSON [{pub_start,pub_end,listen_start,listen_end}]，1:1 时 listen_* 省略
+CREATE TABLE chains (id INTEGER PRIMARY KEY AUTOINCREMENT, status TEXT NOT NULL DEFAULT 'pending',
+  error TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE chain_hops (id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chain_id INTEGER NOT NULL REFERENCES chains(id), seq INTEGER NOT NULL,
+  server_id INTEGER NOT NULL REFERENCES servers(id), role TEXT NOT NULL,
+  node_id INTEGER NOT NULL DEFAULT 0,           -- 仅出口跳：业务 nodes.id
+  status TEXT NOT NULL DEFAULT 'pending', error TEXT NOT NULL DEFAULT '',
+  forward_port INTEGER NOT NULL DEFAULT 0,      -- entry 跳 = 订阅端口
+  portal_port INTEGER NOT NULL DEFAULT 0, portal_public_key TEXT NOT NULL DEFAULT '',
+  portal_server_name TEXT NOT NULL DEFAULT '',  -- portal 回执的 Reality SNI（bridge spec 用）
+  tunnel_uuid TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
+-- 链状态：pending/applying/active/degraded/failed；跳状态：pending/applying/active/failed
+```
+
+**degraded 推导**：hub 注销/注册连接时重算——链任一跳 server 离线 → degraded + §19 告警
+（新事件 `chain_degraded`，防抖沿用）；全部跳 server 在线且跳均 active → active。

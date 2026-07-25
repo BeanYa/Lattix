@@ -2,14 +2,17 @@ name: release
 
 # tag v* 触发：构建前后端产物 → 上一版本 agent × 新面板兼容性回归 → 发布 GitHub Release。
 #
-# Release 资产（命名与 scripts/install.sh / 设计文档约定一致）：
-#   install.sh                          CI stamp 三个占位符后的 agent 引导安装脚本
-#   install-panel.sh                    CI stamp 后的面板一键安装脚本（§20）
-#   latx                                CI stamp 后的面板管理程序（§20，由 install-panel.sh 安装）
-#   latx-ag                             CI stamp 后的节点管理程序（§20，由 install.sh 安装）
-#   lattix-agent-linux-amd64 / -arm64   CGO_ENABLED=0 静态 agent 二进制
-#   lattix-panel-linux-amd64.tar.gz     backend 二进制 + frontend dist + scripts/ + README.md
-#   checksums.txt                       上述全部资产的 sha256sum（标准 `<hash>  <文件名>` 格式）
+# Release 资产（命名与 scripts/install.sh / 设计文档约定一致，统一 tarball 形态）：
+#   install.sh                             CI stamp 三个占位符后的 agent 引导安装脚本
+#   install-panel.sh                       CI stamp 后的面板一键安装脚本（§20）
+#   lattix-agent-linux-amd64.tar.gz        lattix-agent/（agent 二进制 + latx-ag 节点管理程序）
+#   lattix-agent-linux-arm64.tar.gz        同上
+#   lattix-panel-linux-amd64.tar.gz        lattix-panel/（backend + frontend dist + scripts/ +
+#                                          README.md + stamp 后 install.sh/latx）——前后端服务一包
+#   checksums.txt                          上述全部资产的 sha256sum（标准 `<hash>  <文件名>` 格式）
+#
+# latx / latx-ag 不单独作 release 资产：latx 随 panel tarball 分发，latx-ag 随 agent tarball
+# 分发。面板的 dist/ 托管目录由 install-panel.sh 从两个 agent tarball 解包摆放。
 #
 # 版本注入：-ldflags "-X main.version=<TAG> -X main.githubRepo=<GITHUB_REPOSITORY>"
 # 注入 backend 与 agent 的 main 包（二者均有 var version / var githubRepo）。
@@ -96,15 +99,26 @@ jobs:
           # 注：install.sh 的 AGENT_SHA256_* / LATX_AG_SHA256 占位符保留，
           # 属面板托管模式的注入点，不在此处替换。
 
-      - name: Pack panel tarball
+      - name: Pack agent bundles (agent + latx-ag)
+        run: |
+          for arch in amd64 arm64; do
+            mkdir -p "out/agent-$arch/lattix-agent"
+            cp "out/lattix-agent-linux-$arch" "out/agent-$arch/lattix-agent/lattix-agent"
+            cp out/latx-ag "out/agent-$arch/lattix-agent/latx-ag"
+            tar -C "out/agent-$arch" -czf "out/lattix-agent-linux-$arch.tar.gz" lattix-agent
+            tar -tzf "out/lattix-agent-linux-$arch.tar.gz"
+          done
+
+      - name: Pack panel tarball (backend + frontend + 运维脚本)
         run: |
           mkdir -p out/panel/lattix-panel
           cp out/lattix-backend out/panel/lattix-panel/lattix-backend
           cp -r src/frontend/dist out/panel/lattix-panel/frontend-dist
           cp -r scripts out/panel/lattix-panel/scripts
           cp README.md out/panel/lattix-panel/README.md
+          cp out/install.sh out/latx out/panel/lattix-panel/
           tar -C out/panel -czf out/lattix-panel-linux-amd64.tar.gz lattix-panel
-          tar -tzf out/lattix-panel-linux-amd64.tar.gz | head -5
+          tar -tzf out/lattix-panel-linux-amd64.tar.gz | head -8
 
       - name: Generate checksums.txt
         run: |
@@ -112,10 +126,8 @@ jobs:
           sha256sum \
             install.sh \
             install-panel.sh \
-            latx \
-            latx-ag \
-            lattix-agent-linux-amd64 \
-            lattix-agent-linux-arm64 \
+            lattix-agent-linux-amd64.tar.gz \
+            lattix-agent-linux-arm64.tar.gz \
             lattix-panel-linux-amd64.tar.gz \
             > checksums.txt
           cat checksums.txt
@@ -126,10 +138,8 @@ jobs:
           path: |
             out/install.sh
             out/install-panel.sh
-            out/latx
-            out/latx-ag
-            out/lattix-agent-linux-amd64
-            out/lattix-agent-linux-arm64
+            out/lattix-agent-linux-amd64.tar.gz
+            out/lattix-agent-linux-arm64.tar.gz
             out/lattix-panel-linux-amd64.tar.gz
             out/checksums.txt
             out/lattix-backend
@@ -177,7 +187,14 @@ jobs:
           fi
           echo ">> 上一 tag: $PREV_TAG"
           mkdir -p prev
+          # 新格式（tarball）优先；旧格式（裸二进制）兜底——v0.0.3 之前的 release 只有裸二进制。
           if gh release download "$PREV_TAG" \
+              -p 'lattix-agent-linux-amd64.tar.gz' -p 'checksums.txt' -D prev --clobber; then
+            (cd prev && grep 'lattix-agent-linux-amd64\.tar\.gz$' checksums.txt | sha256sum -c -)
+            tar -C prev -xzf prev/lattix-agent-linux-amd64.tar.gz
+            mv prev/lattix-agent/lattix-agent prev/lattix-agent-linux-amd64
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+          elif gh release download "$PREV_TAG" \
               -p 'lattix-agent-linux-amd64' -p 'checksums.txt' -D prev --clobber; then
             (cd prev && grep 'lattix-agent-linux-amd64$' checksums.txt | sha256sum -c -)
             echo "skip=0" >> "$GITHUB_OUTPUT"
@@ -213,10 +230,25 @@ jobs:
 
       - name: Publish GitHub Release
         run: |
-          ASSETS="out/install.sh out/install-panel.sh out/latx out/latx-ag out/lattix-agent-linux-amd64 out/lattix-agent-linux-arm64 out/lattix-panel-linux-amd64.tar.gz out/checksums.txt"
+          ASSETS="out/install.sh out/install-panel.sh out/lattix-agent-linux-amd64.tar.gz out/lattix-agent-linux-arm64.tar.gz out/lattix-panel-linux-amd64.tar.gz out/checksums.txt"
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" $ASSETS --clobber
           else
             gh release create "${GITHUB_REF_NAME}" \
               --title "${GITHUB_REF_NAME}" --generate-notes $ASSETS
+            # --generate-notes 只产出 changelog；前置一段安装说明让 release 页自足。
+            BODY="$(gh release view "${GITHUB_REF_NAME}" --json body -q .body)"
+            {
+              echo '## 安装'
+              echo
+              echo '面板（linux/amd64）：'
+              echo
+              echo '```bash'
+              echo "curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/install-panel.sh | bash"
+              echo '```'
+              echo
+              echo '节点（linux/amd64、arm64）：在面板「添加服务器」生成一行安装命令。'
+              echo
+              echo "$BODY"
+            } | gh release edit "${GITHUB_REF_NAME}" --notes-file -
           fi

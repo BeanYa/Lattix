@@ -29,26 +29,33 @@ echo ">> build backend（面板 tarball 用真实构建产物，注入版本）"
     -o "$WORK/lattix-backend" ./src/backend/cmd/backend)
 
 echo ">> 摆假 release: $FAKE"
-mkdir -p "$FAKE" "$WORK/pkg/lattix-panel/frontend-dist"
-cp "$WORK/lattix-backend" "$WORK/pkg/lattix-panel/lattix-backend"
-echo '<html>lattix e2e</html>' > "$WORK/pkg/lattix-panel/frontend-dist/index.html"
-tar -C "$WORK/pkg" -czf "$FAKE/lattix-panel-linux-amd64.tar.gz" lattix-panel
-# latx / install.sh / install-panel.sh stamp（模拟 CI release.yml 的 sed）
+mkdir -p "$FAKE"
+# latx / latx-ag / install.sh / install-panel.sh stamp（模拟 CI release.yml 的 sed）
 sed -e "s|{{LATTIX_VERSION}}|$VERSION|g" -e "s|{{GITHUB_REPO}}|$REPO|g" \
-    "$ROOT/scripts/latx.sh" > "$FAKE/latx"
+    "$ROOT/scripts/latx.sh" > "$WORK/latx"
 sed -e "s|{{LATTIX_VERSION}}|$VERSION|g" -e "s|{{GITHUB_REPO}}|$REPO|g" \
-    "$ROOT/scripts/latx-ag.sh" > "$FAKE/latx-ag"
+    "$ROOT/scripts/latx-ag.sh" > "$WORK/latx-ag"
 sed -e "s|{{LATTIX_VERSION}}|$VERSION|g" -e "s|{{GITHUB_REPO}}|$REPO|g" \
     -e "s|{{DEFAULT_XRAY_VERSION}}|v26.3.27|g" \
     "$ROOT/scripts/install.sh" > "$FAKE/install.sh"
 sed -e "s|{{LATTIX_VERSION}}|$VERSION|g" -e "s|{{GITHUB_REPO}}|$REPO|g" \
     "$ROOT/scripts/install-panel.sh" > "$FAKE/install-panel.sh"
-# 假 agent 二进制（本用例不执行，仅覆盖下载与 checksum 校验路径）
-echo "fake agent amd64" > "$FAKE/lattix-agent-linux-amd64"
-echo "fake agent arm64" > "$FAKE/lattix-agent-linux-arm64"
+# 面板 tarball：backend + frontend + stamp 后 install.sh/latx（模拟 CI 打包）
+mkdir -p "$WORK/pkg/lattix-panel/frontend-dist"
+cp "$WORK/lattix-backend" "$WORK/pkg/lattix-panel/lattix-backend"
+echo '<html>lattix e2e</html>' > "$WORK/pkg/lattix-panel/frontend-dist/index.html"
+cp "$FAKE/install.sh" "$WORK/latx" "$WORK/pkg/lattix-panel/"
+tar -C "$WORK/pkg" -czf "$FAKE/lattix-panel-linux-amd64.tar.gz" lattix-panel
+# agent 两架构包：lattix-agent/（假 agent 二进制 + latx-ag，本用例不执行，仅覆盖下载与校验路径）
+for arch in amd64 arm64; do
+    mkdir -p "$WORK/agent-pkg-$arch/lattix-agent"
+    echo "fake agent $arch" > "$WORK/agent-pkg-$arch/lattix-agent/lattix-agent"
+    cp "$WORK/latx-ag" "$WORK/agent-pkg-$arch/lattix-agent/latx-ag"
+    tar -C "$WORK/agent-pkg-$arch" -czf "$FAKE/lattix-agent-linux-$arch.tar.gz" lattix-agent
+done
 (cd "$FAKE" && sha256sum \
-    install.sh install-panel.sh latx latx-ag \
-    lattix-agent-linux-amd64 lattix-agent-linux-arm64 \
+    install.sh install-panel.sh \
+    lattix-agent-linux-amd64.tar.gz lattix-agent-linux-arm64.tar.gz \
     lattix-panel-linux-amd64.tar.gz > checksums.txt)
 
 run_install() {
@@ -63,15 +70,15 @@ latx() {
 }
 
 echo ">> 用例 1: checksum 篡改应中止安装"
-cp "$FAKE/latx" "$FAKE/latx.bak"
-echo tampered >> "$FAKE/latx"
+cp "$FAKE/lattix-panel-linux-amd64.tar.gz" "$FAKE/panel.tar.gz.bak"
+echo tampered >> "$FAKE/lattix-panel-linux-amd64.tar.gz"
 if run_install >"$WORK/tamper.log" 2>&1; then
-    echo "FAIL: 篡改的 latx 未被 checksum 拦下"; exit 1
+    echo "FAIL: 篡改的面板包未被 checksum 拦下"; exit 1
 fi
-grep -q "latx SHA256 校验失败" "$WORK/tamper.log" \
+grep -q "lattix-panel-linux-amd64.tar.gz SHA256 校验失败" "$WORK/tamper.log" \
     && echo "OK: 篡改资产被 checksums.txt 拦下" \
     || { echo "FAIL: 报错信息不符"; cat "$WORK/tamper.log"; exit 1; }
-mv "$FAKE/latx.bak" "$FAKE/latx"
+mv "$FAKE/panel.tar.gz.bak" "$FAKE/lattix-panel-linux-amd64.tar.gz"
 
 echo ">> 用例 2: 正常安装（LATX_DEV=1 降级，无 systemd）"
 run_install | tee "$WORK/install.log"
