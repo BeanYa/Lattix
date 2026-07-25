@@ -44,6 +44,14 @@ scripts/
 - VLESS Encryption（mlkem768 后量子 / x25519 认证），可与 vision 组合（1-RTT）
 - 节点状态机 `pending → applying → active | failed`，失败详情 + 重试
 
+**代理链与 NAT（§21，v0.0.3）**
+
+- 代理链：入口 → 中间跳(≤2) → 出口，上限 4 跳；端到端加密（客户端协议在出口终止，
+  入口/中间跳纯 TCP 透传只见密文），订阅只见入口
+- NAT 机器两档：受限直连（共享 IP + IDC 映射端口段，支持非 1:1 映射）与仅出口
+  （全 CGNAT，xray reverse bridge 反向上来）；隧道口为独立 VLESS+Reality inbound
+- 链级状态机 + 逐跳独立重试；跳离线自动 degraded（订阅不剔除，客户端测速规避）+ 告警
+
 **用户与订阅**
 
 - 逐节点用户分配（默认全关）：用户勾选节点，差量扇出，订阅只含分配节点
@@ -87,8 +95,9 @@ scripts/
 curl -fsSL https://github.com/BeanYa/Lattix/releases/download/v0.0.2/install-panel.sh | bash
 ```
 
-脚本完成：下载面板 tarball / latx / latx-ag / agent 两架构二进制（校验 SHA256）→ 解压到
-`/usr/local/lattix-panel` → 安装 `latx` 到 `/usr/local/bin/latx` → 注册并启动
+脚本完成：下载面板 tarball（前后端服务 + latx + install.sh）与 agent 两架构包
+（agent + latx-ag，全部校验 SHA256）→ 解压到 `/usr/local/lattix-panel`（agent 包解出
+二进制摆 `dist/` 托管）→ 安装 `latx` 到 `/usr/local/bin/latx` → 注册并启动
 systemd 服务 `lattix-panel`（`-addr :8080`，`LATX_ADDR` 可覆盖）→ 打印面板地址
 与默认账号 `admin` / `lattix-admin`（**生产必改**）。已安装时执行 = 同版本重装/升级
 （保留 DB）。
@@ -152,7 +161,8 @@ curl -fsSL https://github.com/BeanYa/Lattix/releases/download/v0.0.1/install.sh 
 ```
 
 dev 构建（无对应 release）回退面板托管模式：`curl -fsSL http://<面板地址>/install.sh | ...`。
-两种模式共用同一脚本：release 模式从 GitHub release 下载 agent 并校验 `checksums.txt`；
+两种模式共用同一脚本：release 模式从 GitHub release 下载 agent 包
+`lattix-agent-linux-<arch>.tar.gz`（agent + latx-ag）并校验 `checksums.txt`；
 面板托管模式从面板 `/dist` 下载并校验面板注入的 SHA256。
 
 脚本完成：安装指定版本 xray（校验官方 .dgst）→ 安装 agent 与 `latx-ag` 节点管理程序
@@ -174,8 +184,10 @@ dev 构建（无对应 release）回退面板托管模式：`curl -fsSL http://<
 ### CI/CD 与版本兼容（§18）
 
 - **发版**：push `v*` tag 触发 `.github/workflows/release.yml`——构建前后端并注入版本
-  （`-ldflags -X main.version/-X main.githubRepo`）、stamp install.sh、生成 checksums.txt、
-  **新面板 × 上一 tag agent 兼容性 e2e 回归**后发布 GitHub Release。
+  （`-ldflags -X main.version/-X main.githubRepo`）、stamp 脚本、打包统一形态的
+  tarball（agent 包：agent + latx-ag；panel 包：前后端服务 + install.sh/latx）、
+  生成 checksums.txt、**新面板 × 上一 tag agent 兼容性 e2e 回归**后发布 GitHub Release
+  （正文自动 changelog + 安装说明）。
 - **协议只增不改**：`src/shared/messages.go` 头注释载明演化规则，PR 由
   `scripts/check-protocol-compat.sh`（protocol-check workflow）强制"协议行只增不减"；
   agent 对未知命令回执 `unsupported command`，面板据此终态不重试。
@@ -204,6 +216,8 @@ XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-tls.sh        # 面板 TLS / w
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-links.sh      # 分享链接订阅 + userinfo 头/落地页/用户有效期
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-settings.sh   # 设置页 / 改密 / TLS 域名路径模式 / 自重启
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-alerts.sh     # 事件告警（webhook/防抖/三类事件）+ SQLite 备份下载
+XRAY_BIN=/usr/local/bin/xray bash scripts/dev-poc-reverse.sh    # xray reverse bridge/portal 可行性 PoC（§21）
+XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-chains.sh     # 代理链 + NAT：建链/真实流量/降级自愈/重试/拆链
 bash scripts/dev-e2e-install-panel.sh                           # 面板一键安装 + latx 管理程序（本地假 release，无外网）
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-install-agent.sh  # Agent 引导安装 + latx-ag（本地假 release，LATX_DEV=1）
 ```
@@ -225,4 +239,4 @@ Agent 常用参数：`-panel`（面板 WS 地址）、`-token`（bootstrap token
 | 流量仅统计无配额 | 超限不强制停用；配额决策见 framework-design.md §14 |
 | 漂移检测基线 | agent 停机期间的外部改动无法区分，以启动时文件为基线 |
 | xray 版本兼容 | 新版 xray-core 已移除 vmess alterId（服务端），mihomo 客户端订阅仍携带 `alterId: 0` |
-| 单管理员 | 多管理员/RBAC 决策不做；fallback 传输（gRPC/HTTP）与 NAT 中继明确不做 |
+| 单管理员 | 多管理员/RBAC 决策不做；fallback 传输（gRPC/HTTP）明确不做（NAT/中继已实现，见 §21） |
