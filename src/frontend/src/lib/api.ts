@@ -1,10 +1,13 @@
 import type {
   AlertTestResult,
   Chain,
+  CommandLog,
   CreateChainRequest,
   CreateNodeRequest,
   CreateServerResponse,
   DashboardStats,
+  EventCategory,
+  EventLogPage,
   MachineType,
   PanelSettings,
   PanelUpdateStatus,
@@ -95,6 +98,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ version }),
     }),
+  serverCommands: (id: number, limit = 50) =>
+    request<CommandLog[]>(`/api/servers/${id}/commands?limit=${limit}`),
   repairServer: (id: number) =>
     request<{ reapplied: number }>(`/api/servers/${id}/repair`, { method: 'POST' }),
   updateServerAddress: (id: number, address: string) =>
@@ -171,4 +176,24 @@ export const api = {
       body: JSON.stringify(version ? { version } : {}),
     }),
   panelUpdateStatus: () => request<PanelUpdateStatus>('/api/panel/update/status'),
+
+  // 日志审查（§log）：分类/服务器/操作员/关键字过滤 + 分页。
+  eventLog: (params: {
+    category?: EventCategory | ''
+    server_id?: number
+    operator?: string
+    q?: string
+    limit?: number
+    offset?: number
+  }) => {
+    const sp = new URLSearchParams()
+    if (params.category) sp.set('category', params.category)
+    if (params.server_id) sp.set('server_id', String(params.server_id))
+    if (params.operator) sp.set('operator', params.operator)
+    if (params.q) sp.set('q', params.q)
+    if (params.limit) sp.set('limit', String(params.limit))
+    if (params.offset) sp.set('offset', String(params.offset))
+    const qs = sp.toString()
+    return request<EventLogPage>('/api/event-log' + (qs ? `?${qs}` : ''))
+  },
 }

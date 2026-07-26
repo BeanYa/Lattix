@@ -137,6 +137,10 @@ export default function Servers() {
   const [upgradeVersion, setUpgradeVersion] = useState('latest')
   const [upgrading, setUpgrading] = useState(false)
   const [upgradeError, setUpgradeError] = useState('')
+  // 升级命令追踪：下发后轮询命令终态（acked/failed），替代旧版"alert 后即关闭"。
+  const [upgradeCmdId, setUpgradeCmdId] = useState<number | null>(null)
+  const [upgradeResult, setUpgradeResult] = useState<'pending' | 'success' | 'failed' | null>(null)
+  const [upgradeResultError, setUpgradeResultError] = useState('')
 
   const load = useCallback(() => {
     api
@@ -302,6 +306,9 @@ export default function Servers() {
     setUpgradeKind(kind)
     setUpgradeVersion('latest')
     setUpgradeError('')
+    setUpgradeCmdId(null)
+    setUpgradeResult(null)
+    setUpgradeResultError('')
   }
 
   const onUpgrade = async (e: FormEvent) => {
@@ -311,26 +318,71 @@ export default function Servers() {
     }
     setUpgradeError('')
     setUpgrading(true)
+    setUpgradeResult(null)
+    setUpgradeResultError('')
     try {
       const version = upgradeVersion.trim() || 'latest'
-      if (upgradeKind === 'agent') {
-        await api.upgradeAgent(upgradeTarget.id, version)
-      } else {
-        await api.upgradeServer(upgradeTarget.id, version)
-      }
-      setUpgradeTarget(null)
-      window.alert(
+      const res =
         upgradeKind === 'agent'
-          ? '升级命令已下发。agent 完成自替换后将自动重启重连，版本号随之刷新。'
-          : '升级命令已下发。xray 版本号将在升级完成后自动刷新（失败可在命令日志排查）。',
-      )
-      load()
+          ? await api.upgradeAgent(upgradeTarget.id, version)
+          : await api.upgradeServer(upgradeTarget.id, version)
+      // 下发成功：进入轮询模式（弹窗保留，显示命令执行进度直到终态）。
+      setUpgradeCmdId(res.command_id)
+      setUpgradeResult('pending')
     } catch (err) {
       setUpgradeError(errorMessage(err))
     } finally {
       setUpgrading(false)
     }
   }
+
+  // 升级命令轮询：下发后跟踪 command_id 终态（acked=成功 / failed=失败），
+  // 替代旧版"alert 后即关闭、失败无感知"。agent 升级成功后会退出重连，
+  // 命令可能停在 sent（agent 重启未回执），故设超时兜底提示。
+  useEffect(() => {
+    if (upgradeResult !== 'pending' || upgradeCmdId === null || !upgradeTarget) {
+      return
+    }
+    const serverId = upgradeTarget.id
+    const cmdId = upgradeCmdId
+    let stopped = false
+    const poll = async () => {
+      try {
+        const cmds = await api.serverCommands(serverId, 50)
+        if (stopped) {
+          return
+        }
+        const cmd = cmds.find((c) => c.id === cmdId)
+        if (!cmd) {
+          return // 命令尚未出现在日志，等下次轮询
+        }
+        if (cmd.status === 'acked') {
+          setUpgradeResult('success')
+          load() // 刷新服务器列表（版本号/在线状态）
+        } else if (cmd.status === 'failed') {
+          setUpgradeResult('failed')
+          setUpgradeResultError(cmd.error || '命令执行失败（详见命令日志）')
+        }
+        // queued/sent：继续轮询
+      } catch {
+        // 轮询本身的网络错误静默，下次重试
+      }
+    }
+    poll()
+    const interval = setInterval(poll, 3000)
+    // 90s 超时：agent 自升级成功会退出重连，可能来不及回执；提示用户自行核对版本。
+    const timeout = setTimeout(() => {
+      if (!stopped) {
+        setUpgradeResult(null)
+        setUpgradeResultError('未在超时内收到 agent 回执（agent 自升级会重启重连，请稍后核对版本或查看命令日志）')
+      }
+    }, 90000)
+    return () => {
+      stopped = true
+      clearInterval(interval)
+      clearTimeout(timeout)
+    }
+  }, [upgradeResult, upgradeCmdId, upgradeTarget])
 
   const onDelete = async (purge: 'xray' | 'agent') => {
     if (!deleteTarget) {
@@ -672,22 +724,68 @@ export default function Servers() {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onUpgrade} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="upgradeVersion">目标版本</Label>
-              <Input
-                id="upgradeVersion"
-                value={upgradeVersion}
-                onChange={(e) => setUpgradeVersion(e.target.value)}
-                placeholder="latest 或具体版本号（如 v26.3.27）"
-                autoFocus
-              />
-            </div>
-            {upgradeError && <p className="text-sm text-destructive">{upgradeError}</p>}
-            <DialogFooter>
-              <Button type="submit" disabled={upgrading}>
-                {upgrading ? '下发中…' : '下发升级'}
-              </Button>
-            </DialogFooter>
+            {upgradeResult === null && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="upgradeVersion">目标版本</Label>
+                  <Input
+                    id="upgradeVersion"
+                    value={upgradeVersion}
+                    onChange={(e) => setUpgradeVersion(e.target.value)}
+                    placeholder="latest 或具体版本号（如 v26.3.27）"
+                    autoFocus
+                  />
+                </div>
+                {upgradeError && <p className="text-sm text-destructive">{upgradeError}</p>}
+                <DialogFooter>
+                  <Button type="submit" disabled={upgrading}>
+                    {upgrading ? '下发中…' : '下发升级'}
+                  </Button>
+                </DialogFooter>
+              </>
+            )}
+            {upgradeResult === 'pending' && (
+              <div className="space-y-3">
+                <p className="text-sm">
+                  升级命令已下发（#{upgradeCmdId}），正在等待 agent 执行回执…
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  agent 自升级成功后会退出并由 systemd 拉起重连，可能需要数十秒。
+                </p>
+              </div>
+            )}
+            {upgradeResult === 'success' && (
+              <div className="space-y-3">
+                <p className="text-sm text-emerald-600">升级命令执行成功，版本号已刷新。</p>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setUpgradeTarget(null)}>
+                    关闭
+                  </Button>
+                </DialogFooter>
+              </div>
+            )}
+            {upgradeResult === 'failed' && (
+              <div className="space-y-3">
+                <p className="text-sm text-destructive">升级失败：</p>
+                <p className="text-sm text-destructive whitespace-pre-wrap">{upgradeResultError}</p>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setUpgradeTarget(null)}>
+                    关闭
+                  </Button>
+                </DialogFooter>
+              </div>
+            )}
+            {/* 超时兜底（upgradeResult 被清空但 upgradeResultError 非空） */}
+            {upgradeResult === null && upgradeResultError && (
+              <div className="space-y-3">
+                <p className="text-sm text-amber-600 whitespace-pre-wrap">{upgradeResultError}</p>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setUpgradeTarget(null)}>
+                    关闭
+                  </Button>
+                </DialogFooter>
+              </div>
+            )}
           </form>
         </DialogContent>
       </Dialog>

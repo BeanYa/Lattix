@@ -42,6 +42,17 @@ export interface Server {
   created_at: string
 }
 
+// 命令日志条目（GET /api/servers/{id}/commands，§4）。
+export interface CommandLog {
+  id: number
+  type: string
+  status: 'queued' | 'sent' | 'acked' | 'failed'
+  error?: string
+  attempts: number
+  created_at: string
+  updated_at: string
+}
+
 export interface CreateServerResponse {
   server: Server
   bootstrap_token: string
@@ -240,4 +251,25 @@ export interface PanelUpdateStatus {
   error?: string
   current_version: string
   target_version: string
+}
+
+// 事件日志（§log 日志审查页面）：统一时间线，汇聚 command/node/agent/admin 四类。
+export type EventCategory = 'command' | 'node' | 'agent' | 'admin'
+
+export interface EventLogEntry {
+  id: number
+  ts: string
+  category: EventCategory
+  action: string
+  server_id?: number
+  server?: string // alias，后端按 server_id 关联填充
+  node_id?: number
+  detail: string // JSON 串
+  operator?: string
+  ip?: string
+}
+
+export interface EventLogPage {
+  items: EventLogEntry[]
+  total: number
 }

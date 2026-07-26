@@ -4,6 +4,7 @@ import {
   LogOutIcon,
   NetworkIcon,
   RouteIcon,
+  ScrollTextIcon,
   ServerIcon,
   SettingsIcon,
   UsersIcon,
@@ -20,6 +21,7 @@ const navItems = [
   { to: '/nodes', label: '节点', icon: NetworkIcon, end: false },
   { to: '/chains', label: '链路', icon: RouteIcon, end: false },
   { to: '/users', label: '用户', icon: UsersIcon, end: false },
+  { to: '/event-log', label: '日志', icon: ScrollTextIcon, end: false },
   { to: '/settings', label: '设置', icon: SettingsIcon, end: false },
 ]
 

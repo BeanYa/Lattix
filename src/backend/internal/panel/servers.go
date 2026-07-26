@@ -148,6 +148,10 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	sid := srv.ID
+	s.audit(r, "server.create", &sid, nil, map[string]any{
+		"alias": req.Alias, "machine_type": req.MachineType, "address": req.Address,
+	})
 	base := s.panelBase(r)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"server":          s.toServerDTO(*srv),
@@ -179,6 +183,8 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	sid := srv.ID
+	s.audit(r, "server.rotate_token", &sid, nil, map[string]string{"alias": srv.Alias})
 	base := s.panelBase(r)
 	srv.Token = bootstrap
 	srv.LastSeenAt = nil
@@ -253,6 +259,10 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	sid := id
+	s.audit(r, "server.update", &sid, nil, map[string]any{
+		"address": req.Address, "allowed_ports_changed": req.AllowedPorts != nil,
+	})
 	writeJSON(w, http.StatusOK, s.toServerDTO(*srv))
 }
 
@@ -340,6 +350,8 @@ func (s *Server) handleUpgradeXray(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	sid := id
+	s.audit(r, "server.upgrade_xray", &sid, nil, map[string]any{"version": req.Version, "command": cmdID})
 	writeJSON(w, http.StatusOK, map[string]any{"command_id": cmdID, "version": req.Version})
 }
 
@@ -384,6 +396,8 @@ func (s *Server) handleUpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	sid := id
+	s.audit(r, "server.upgrade_agent", &sid, nil, map[string]any{"version": req.Version, "command": cmdID})
 	writeJSON(w, http.StatusOK, map[string]any{"command_id": cmdID, "version": req.Version})
 }
 
@@ -423,6 +437,8 @@ func (s *Server) handleRepairServer(w http.ResponseWriter, r *http.Request) {
 		}
 		reapplied++
 	}
+	sid := id
+	s.audit(r, "server.repair", &sid, nil, map[string]int{"reapplied": reapplied})
 	writeJSON(w, http.StatusOK, map[string]int{"reapplied": reapplied})
 }
 
@@ -454,7 +470,8 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid server id")
 		return
 	}
-	if _, err := s.st.ServerByID(r.Context(), id); err != nil {
+	srv, err := s.st.ServerByID(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "服务器不存在")
 			return
@@ -474,5 +491,10 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 级联删除后对象已不存在，审计行存 alias 快照留痕（§log）。
+	sid := id
+	s.audit(r, "server.delete", &sid, nil, map[string]any{
+		"alias": srv.Alias, "purge": r.URL.Query().Get("purge"),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }

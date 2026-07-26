@@ -298,7 +298,7 @@ func (d *Dispatcher) handleApplyResult(serverID int64, env shared.Envelope) {
 			log.Printf("dispatch: server %d: command %d acked", serverID, cmdID)
 		}
 	} else {
-		failed, err := d.st.MarkCommandFailed(ctx, cmdID)
+		failed, err := d.st.MarkCommandFailedWithError(ctx, cmdID, p.Error)
 		if err != nil {
 			log.Printf("dispatch: fail command %d: %v", cmdID, err)
 			return

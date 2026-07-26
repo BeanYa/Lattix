@@ -25,3 +25,7 @@ src/frontend/dist/
 
 # Env / secrets
 .env
+
+# Tooling artifacts
+.codegraph/
+.zcode/

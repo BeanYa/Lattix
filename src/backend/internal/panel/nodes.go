@@ -228,6 +228,10 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	srvID, nodeID := n.ServerID, n.ID
+	s.audit(r, "node.create", &srvID, &nodeID, map[string]any{
+		"protocol": n.Protocol, "port": n.Port,
+	})
 	writeJSON(w, http.StatusCreated, toNodeDTO(*n))
 }
 
@@ -256,6 +260,8 @@ func (s *Server) handleRetryNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	srvID, nodeID := n.ServerID, n.ID
+	s.audit(r, "node.retry", &srvID, &nodeID, nil)
 	writeJSON(w, http.StatusOK, toNodeDTO(*n))
 }
 
@@ -283,6 +289,11 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 删除后对象不存在，审计行存 protocol/port 快照留痕（§log）。
+	srvID, nodeID := n.ServerID, n.ID
+	s.audit(r, "node.delete", &srvID, &nodeID, map[string]any{
+		"protocol": n.Protocol, "port": n.Port,
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
 

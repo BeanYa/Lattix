@@ -192,6 +192,12 @@ func main() {
 	dispatcher.Alerter = notifier
 	hub.OnDisconnect = func(serverID int64) {
 		notifier.Notify(serverID, alert.EventServerOffline, "", "WS 连接断开，服务器离线")
+		// 事件日志（§log）：agent 离线跃迁，留痕便于事后排查掉线时间线。
+		sid := serverID
+		if err := st.RecordEvent(context.Background(), store.EventCategoryAgent, "agent.offline",
+			&sid, nil, "WS 连接断开，服务器离线", "", ""); err != nil {
+			log.Printf("main: record agent.offline event: %v", err)
+		}
 		// 链 degraded 推导（§21.1）：任一跳 server 离线 → degraded + chain_degraded 告警。
 		dispatcher.RecomputeChainsByServer(serverID)
 	}

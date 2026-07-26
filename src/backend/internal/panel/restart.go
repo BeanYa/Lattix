@@ -14,6 +14,8 @@ import (
 // handleRestart 处理 POST /api/settings/restart：应答后延迟重启面板进程。
 // 用于设置页 TLS 变更（重启生效项）与后续面板自更新：进程退出后监听按最新 DB 设置重建。
 func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
+	// 在进程重启前留痕（异步重启会终止当前进程，事后无法补记）。
+	s.audit(r, "admin.restart", nil, nil, nil)
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "restarting"})
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()

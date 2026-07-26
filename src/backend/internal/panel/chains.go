@@ -232,6 +232,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.audit(r, "chain.create", nil, nil, map[string]any{"chain_id": chainID, "hops": len(dto.Hops)})
 	writeJSON(w, http.StatusCreated, dto)
 }
 
@@ -260,6 +261,7 @@ func (s *Server) handleRetryChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.audit(r, "chain.retry", nil, nil, map[string]any{"chain_id": id})
 	writeJSON(w, http.StatusOK, dto)
 }
 
@@ -309,6 +311,7 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.audit(r, "chain.delete", nil, nil, map[string]any{"chain_id": id, "hops": len(hops)})
 	w.WriteHeader(http.StatusNoContent)
 }
 

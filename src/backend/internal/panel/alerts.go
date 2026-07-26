@@ -15,7 +15,9 @@ func (s *Server) handleTestAlerts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "告警模块未启用")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.alerter.Test(r.Context()))
+	result := s.alerter.Test(r.Context())
+	s.audit(r, "admin.test_alerts", nil, nil, result)
+	writeJSON(w, http.StatusOK, result)
 }
 
 // handleBackup 处理 GET /api/backup（§19）：VACUUM INTO 到临时文件后以附件返回，

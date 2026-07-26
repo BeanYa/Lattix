@@ -1,6 +1,9 @@
 package selfupdate
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"fmt"
 	"net/http"
@@ -11,15 +14,38 @@ import (
 	"testing"
 )
 
-// newFakeRelease 起一个本地 HTTP 服务，托管指定版本的 agent 资产与 checksums.txt。
+// makeAgentTarball 打包 release 形态的 agent tarball：lattix-agent/lattix-agent（内容 content）。
+func makeAgentTarball(t *testing.T, content []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gw)
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "lattix-agent/lattix-agent",
+		Mode:     0o755,
+		Size:     int64(len(content)),
+		Typeflag: tar.TypeReg,
+	}); err != nil {
+		t.Fatalf("tar header: %v", err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatalf("tar write: %v", err)
+	}
+	tw.Close()
+	gw.Close()
+	return buf.Bytes()
+}
+
+// newFakeRelease 起一个本地 HTTP 服务，托管指定版本的 agent tarball 资产与 checksums.txt。
 func newFakeRelease(t *testing.T, version string, content []byte) (base string) {
 	t.Helper()
-	asset := "lattix-agent-linux-" + runtime.GOARCH
-	sum := sha256.Sum256(content)
+	asset := "lattix-agent-linux-" + runtime.GOARCH + ".tar.gz"
+	tarball := makeAgentTarball(t, content)
+	sum := sha256.Sum256(tarball)
 	sums := fmt.Sprintf("%x  %s\n%x  %s\n", sum, asset, sum, "lattix-panel-linux-amd64.tar.gz")
 	mux := http.NewServeMux()
 	mux.HandleFunc("/"+version+"/"+asset, func(w http.ResponseWriter, r *http.Request) {
-		w.Write(content)
+		w.Write(tarball)
 	})
 	mux.HandleFunc("/"+version+"/checksums.txt", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(sums))
@@ -63,11 +89,12 @@ func TestApplyIdempotentSameVersion(t *testing.T) {
 }
 
 func TestApplyRejectsChecksumMismatch(t *testing.T) {
-	// 服务端给的期望值与文件内容不匹配。
-	asset := "lattix-agent-linux-" + runtime.GOARCH
+	// 服务端给的期望值与 tarball 内容不匹配。
+	asset := "lattix-agent-linux-" + runtime.GOARCH + ".tar.gz"
+	good := makeAgentTarball(t, []byte("good"))
 	sums := fmt.Sprintf("%x  %s\n", sha256.Sum256([]byte("other")), asset)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v0.0.9/"+asset, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("good")) })
+	mux.HandleFunc("/v0.0.9/"+asset, func(w http.ResponseWriter, r *http.Request) { w.Write(good) })
 	mux.HandleFunc("/v0.0.9/checksums.txt", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(sums)) })
 	srv := httptest.NewServer(mux)
 	defer srv.Close()

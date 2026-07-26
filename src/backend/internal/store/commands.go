@@ -17,13 +17,17 @@ const (
 )
 
 // Command 是 commands 表的一行；同时充当离线命令队列与操作日志（§4）。
+// CreatedAt/UpdatedAt 仅在 RecentCommands（命令日志）场景填充，其余查询不要求。
 type Command struct {
-	ID       int64
-	ServerID int64
-	Type     string
-	Payload  json.RawMessage
-	Status   string
-	Attempts int
+	ID        int64
+	ServerID  int64
+	Type      string
+	Payload   json.RawMessage
+	Status    string
+	Error     string
+	Attempts  int
+	CreatedAt string
+	UpdatedAt string
 }
 
 // EnqueueCommand 入队一条命令（queued），返回命令 id。
@@ -80,8 +84,8 @@ func (s *Store) CommandByID(ctx context.Context, id int64) (*Command, error) {
 	var c Command
 	var payload string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, server_id, type, payload, status, attempts FROM commands WHERE id = ?`, id).
-		Scan(&c.ID, &c.ServerID, &c.Type, &payload, &c.Status, &c.Attempts)
+		`SELECT id, server_id, type, payload, status, error, attempts FROM commands WHERE id = ?`, id).
+		Scan(&c.ID, &c.ServerID, &c.Type, &payload, &c.Status, &c.Error, &c.Attempts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -101,6 +105,46 @@ func (s *Store) MarkCommandAcked(ctx context.Context, id int64) (bool, error) {
 // MarkCommandFailed 标记命令执行失败（仅 sent → failed，§4）；返回值语义同 MarkCommandAcked。
 func (s *Store) MarkCommandFailed(ctx context.Context, id int64) (bool, error) {
 	return s.transitionFromSent(ctx, id, CommandStatusFailed)
+}
+
+// MarkCommandFailedWithError 标记命令失败并写入失败原因（仅 sent → failed）。
+// 失败原因来自 apply_result.error（agent 回执）或死信说明，供命令日志 API 展示。
+func (s *Store) MarkCommandFailedWithError(ctx context.Context, id int64, errMsg string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE commands SET status = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?`,
+		CommandStatusFailed, errMsg, id, CommandStatusSent)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// RecentCommands 取一台服务器最近 limit 条命令（操作日志，§4）。
+// 不返回 payload（可能含 token 等敏感字段）；按 id 降序（最新在前）。
+func (s *Store) RecentCommands(ctx context.Context, serverID int64, limit int) ([]Command, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, server_id, type, status, error, attempts, created_at, updated_at
+		 FROM commands WHERE server_id = ? ORDER BY id DESC LIMIT ?`, serverID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query recent commands: %w", err)
+	}
+	defer rows.Close()
+	var cmds []Command
+	for rows.Next() {
+		var c Command
+		var createdAt, updatedAt string
+		if err := rows.Scan(&c.ID, &c.ServerID, &c.Type, &c.Status, &c.Error, &c.Attempts, &createdAt, &updatedAt); err != nil {
+			return nil, fmt.Errorf("scan command: %w", err)
+		}
+		c.CreatedAt = createdAt
+		c.UpdatedAt = updatedAt
+		cmds = append(cmds, c)
+	}
+	return cmds, rows.Err()
 }
 
 // transitionFromSent 仅在 sent 状态下迁移命令至终态，返回是否实际迁移。

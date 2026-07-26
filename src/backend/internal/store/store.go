@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS commands (
     type       TEXT    NOT NULL,
     payload    TEXT    NOT NULL, -- JSON
     status     TEXT    NOT NULL DEFAULT 'queued', -- queued/sent/acked/failed
+    error      TEXT    NOT NULL DEFAULT '', -- 失败原因（apply_result.error / 死信说明）
     attempts   INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -87,6 +88,24 @@ CREATE TABLE IF NOT EXISTS traffic (
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (node_id, user_uuid)
 );
+
+-- 事件日志（日志审查页面，§log）：统一汇聚 command/node/agent/admin 四类信号成时间线，
+-- 用于排障（顺时间线看系统发生了什么）与操作记录（管理员操作历史可查）。
+-- 注意：commands 表是队列语义（queued/sent/acked/failed 状态机），不应混入审计字段；
+-- 这里独立成表，dispatcher 在命令 ack/failed 时同步复写一份。
+CREATE TABLE IF NOT EXISTS event_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    category   TEXT    NOT NULL,            -- command | node | agent | admin
+    action     TEXT    NOT NULL,            -- 语义动作：node.apply_failed / server.delete / agent.offline ...
+    server_id  INTEGER,                     -- 关联服务器（admin 类登录/改密等可空）
+    node_id    INTEGER,                     -- 关联节点（可空）
+    detail     TEXT    NOT NULL DEFAULT '', -- JSON：错误详情/命令类型/快照摘要
+    operator   TEXT    NOT NULL DEFAULT '', -- admin 类=管理员名；其它类空
+    ip         TEXT    NOT NULL DEFAULT ''  -- admin 类=来源 IP；agent 类=拨入地址
+);
+CREATE INDEX IF NOT EXISTS idx_event_log_ts ON event_log(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_event_log_category ON event_log(category);
 `
 
 // Store 封装 SQLite 数据访问。
@@ -173,6 +192,13 @@ func Open(path string) (*Store, error) {
 		if !strings.Contains(err.Error(), "duplicate column name") {
 			db.Close()
 			return nil, fmt.Errorf("migrate servers.nic_addresses: %w", err)
+		}
+	}
+	// 轻量迁移：commands.error（§4 命令日志暴露失败原因：apply_result.error / 死信说明）。
+	if _, err := db.Exec(`ALTER TABLE commands ADD COLUMN error TEXT NOT NULL DEFAULT ''`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate commands.error: %w", err)
 		}
 	}
 	// 一次性迁移（PRAGMA user_version 0→1）：user_nodes 引入前，成员关系隐含为

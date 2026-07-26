@@ -155,6 +155,9 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		s.fanoutUserDiff(r.Context(), created.UUID, nodes, added, nil)
 	}
+	s.audit(r, "user.create", nil, nil, map[string]any{
+		"user_id": created.ID, "name": created.Name, "node_count": len(nodeIDs),
+	})
 	writeJSON(w, http.StatusCreated, s.toUserDTO(r, *created, nodeIDs))
 }
 
@@ -268,6 +271,10 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.audit(r, "user.update", nil, nil, map[string]any{
+		"user_id": updated.ID, "name": updated.Name,
+		"expiry_touched": expiryTouched, "disabled_after": disabledAfter,
+	})
 	writeJSON(w, http.StatusOK, s.toUserDTO(r, *updated, nodeIDs))
 }
 
@@ -316,6 +323,10 @@ func (s *Server) handleSetUserNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.fanoutUserDiff(r.Context(), u.UUID, nodes, added, removed)
+	s.audit(r, "user.set_nodes", nil, nil, map[string]any{
+		"user_id": u.ID, "name": u.Name,
+		"added": len(added), "removed": len(removed),
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"node_ids": req.NodeIDs})
 }
 
@@ -374,6 +385,8 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 删除后对象不存在，审计行存 name 快照留痕（§log）。
+	s.audit(r, "user.delete", nil, nil, map[string]any{"user_id": u.ID, "name": u.Name})
 	w.WriteHeader(http.StatusNoContent)
 }
 

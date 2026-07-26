@@ -354,6 +354,10 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.audit(r, "settings.update", nil, nil, map[string]any{
+		"timezone": req.Timezone, "public_url": req.PublicURL,
+		"tls_mode": req.TLSMode, "resource_source": req.ResourceSource,
+	})
 	s.handleGetSettings(w, r)
 }
 
@@ -385,6 +389,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.audit(r, "admin.change_password", nil, nil, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 

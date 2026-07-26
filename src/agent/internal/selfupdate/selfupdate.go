@@ -4,6 +4,8 @@
 package selfupdate
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -52,7 +54,9 @@ func Apply(version, releaseBase, currentVersion, defaultRepo string) (upgraded b
 		return false, nil // 已是目标版本，幂等
 	}
 
-	asset := "lattix-agent-linux-" + runtime.GOARCH
+	// release 资产为 tarball（lattix-agent-linux-<arch>.tar.gz，内含
+	// lattix-agent/lattix-agent + latx-ag，与 install.sh §11 同构）。
+	asset := "lattix-agent-linux-" + runtime.GOARCH + ".tar.gz"
 	tmp, err := os.MkdirTemp("", "lattix-agent-upgrade-*")
 	if err != nil {
 		return false, err
@@ -60,16 +64,22 @@ func Apply(version, releaseBase, currentVersion, defaultRepo string) (upgraded b
 	defer os.RemoveAll(tmp)
 
 	rel := base + "/" + version
-	binPath := filepath.Join(tmp, asset)
-	if err := download(rel+"/"+asset, binPath); err != nil {
-		return false, fmt.Errorf("下载 agent 二进制失败: %w", err)
+	archivePath := filepath.Join(tmp, asset)
+	if err := download(rel+"/"+asset, archivePath); err != nil {
+		return false, fmt.Errorf("下载 agent 包失败: %w", err)
 	}
 	sumsPath := filepath.Join(tmp, "checksums.txt")
 	if err := download(rel+"/checksums.txt", sumsPath); err != nil {
 		return false, fmt.Errorf("未获取到 checksums.txt，中止升级: %w", err)
 	}
-	if err := verifySHA256(sumsPath, asset, binPath); err != nil {
+	if err := verifySHA256(sumsPath, asset, archivePath); err != nil {
 		return false, err
+	}
+
+	// 解包取出 agent 二进制（tarball 内 lattix-agent/lattix-agent）。
+	binPath := filepath.Join(tmp, "lattix-agent")
+	if err := extractAgentBinary(archivePath, binPath); err != nil {
+		return false, fmt.Errorf("解压 agent 包失败: %w", err)
 	}
 
 	// 预检：新二进制须能运行并打印版本，否则放弃替换——
@@ -171,6 +181,56 @@ func download(url, path string) error {
 	defer f.Close()
 	_, err = io.Copy(f, resp.Body)
 	return err
+}
+
+// extractAgentBinary 从 agent tarball（lattix-agent/lattix-agent + latx-ag）
+// 中解出 agent 二进制到 dest。路径限制在 tarball 预期结构内，防 tar slip。
+func extractAgentBinary(archivePath, dest string) error {
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	destAbs, err := filepath.Abs(dest)
+	if err != nil {
+		return err
+	}
+	destDir := filepath.Dir(destAbs)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return fmt.Errorf("tarball 中未找到 lattix-agent/lattix-agent")
+		}
+		if err != nil {
+			return err
+		}
+		// 仅取 agent 主二进制（lattix-agent/lattix-agent），忽略 latx-ag 等。
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		if strings.TrimPrefix(hdr.Name, "./") != "lattix-agent/lattix-agent" {
+			continue
+		}
+		p := destAbs
+		if !strings.HasPrefix(p, destDir+string(os.PathSeparator)) {
+			return fmt.Errorf("解包目标越界: %s", p)
+		}
+		out, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0o755)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(out, tr); err != nil {
+			out.Close()
+			return err
+		}
+		return out.Close()
+	}
 }
 
 // copyFile 复制文件并设置权限（先写临时文件再原子 rename）。
