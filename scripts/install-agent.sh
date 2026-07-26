@@ -25,6 +25,11 @@
 #   XRAY_BIN            本机 xray 二进制复制安装源：LATX_DEV=1 时必填；其余模式为跨模式覆盖——
 #                       显式设置且可执行时复制安装（e2e/运维用），未设置则正常下载（官方 .dgst 校验）
 #   LATX_AG_XRAY_API    DEV/user 模式 agent 的 -xray-api（默认 127.0.0.1:10085）
+#   LATX_BBR_SYSCTL     sysctl 命令覆盖（e2e 用）
+#   LATX_BBR_MODPROBE   modprobe 命令覆盖（e2e 用）
+#   LATX_BBR_CONFIG     BBR 持久化文件覆盖（e2e 用）
+#   LATX_BBR_TEST=1     DEV/非 root 下仍执行 BBR 流程（仅限配合上述覆盖进行 e2e）
+#   LATX_BBR_TEST_ONLY=1 仅执行 BBR 流程后退出（e2e 用）
 set -euo pipefail
 
 # ===== CI 发版烧入区（release.yml 在发版时 sed 替换以下三个占位符）=====
@@ -48,6 +53,114 @@ else
 fi
 
 die() { echo "install.sh: $*" >&2; exit 1; }
+
+BBR_WARNING=""
+BBR_SYSCTL="${LATX_BBR_SYSCTL:-sysctl}"
+BBR_MODPROBE="${LATX_BBR_MODPROBE:-modprobe}"
+BBR_CONFIG="${LATX_BBR_CONFIG:-/etc/sysctl.d/99-lattix-bbr.conf}"
+
+one_line() {
+    local value="$1"
+    value="${value//$'\r'/ }"
+    value="${value//$'\n'/; }"
+    printf '%s' "$value"
+}
+
+enable_bbr_best_effort() {
+    local current="" available="" detail="" config_dir="" config_tmp=""
+    BBR_WARNING=""
+
+    if ! command -v "$BBR_SYSCTL" >/dev/null 2>&1; then
+        BBR_WARNING="缺少 sysctl 命令"
+        return
+    fi
+
+    current="$("$BBR_SYSCTL" -n net.ipv4.tcp_congestion_control 2>/dev/null || true)"
+    if [[ "$current" == "bbr" ]]; then
+        return
+    fi
+
+    # DEV 默认不得修改开发宿主；测试可用隔离的 sysctl/config 替身显式放行。
+    if [[ "${LATX_DEV:-0}" == "1" && "${LATX_BBR_TEST:-0}" != "1" ]]; then
+        BBR_WARNING="LATX_DEV=1 开发模式未修改宿主机 sysctl"
+        return
+    fi
+    if [[ "$(id -u)" -ne 0 && "${LATX_BBR_TEST:-0}" != "1" ]]; then
+        BBR_WARNING="需要 root 权限修改 sysctl"
+        return
+    fi
+
+    if ! available="$("$BBR_SYSCTL" -n net.ipv4.tcp_available_congestion_control 2>&1)"; then
+        BBR_WARNING="无法读取可用拥塞算法：$(one_line "$available")"
+        return
+    fi
+    if ! grep -qw bbr <<<"$available"; then
+        if command -v "$BBR_MODPROBE" >/dev/null 2>&1; then
+            if ! detail="$("$BBR_MODPROBE" tcp_bbr 2>&1)"; then
+                detail="$(one_line "$detail")"
+            else
+                detail=""
+            fi
+        else
+            detail="缺少 modprobe 命令"
+        fi
+        if ! available="$("$BBR_SYSCTL" -n net.ipv4.tcp_available_congestion_control 2>&1)"; then
+            BBR_WARNING="加载 tcp_bbr 后仍无法读取可用拥塞算法：$(one_line "$available")"
+            return
+        fi
+        if ! grep -qw bbr <<<"$available"; then
+            BBR_WARNING="内核未提供 BBR${detail:+：$detail}"
+            return
+        fi
+    fi
+
+    # fq 对 BBR 有利，但虚拟网卡可能忽略或拒绝它；不参与最终成功判定。
+    "$BBR_SYSCTL" -w net.core.default_qdisc=fq >/dev/null 2>&1 || true
+    if ! detail="$("$BBR_SYSCTL" -w net.ipv4.tcp_congestion_control=bbr 2>&1)"; then
+        BBR_WARNING="sysctl 设置 BBR 被拒绝：$(one_line "$detail")"
+        return
+    fi
+    current="$("$BBR_SYSCTL" -n net.ipv4.tcp_congestion_control 2>/dev/null || true)"
+    if [[ "$current" != "bbr" ]]; then
+        BBR_WARNING="sysctl 返回成功但当前拥塞算法仍为 ${current:-未知}"
+        return
+    fi
+
+    # 只在本次确实启用 BBR 后写 Lattix 独立配置；已启用场景保持系统原配置不变。
+    config_dir="$(dirname "$BBR_CONFIG")"
+    if ! detail="$(mkdir -p "$config_dir" 2>&1)"; then
+        BBR_WARNING="BBR 已生效但无法创建持久化目录：$(one_line "$detail")"
+        return
+    fi
+    if ! config_tmp="$(mktemp "${BBR_CONFIG}.tmp.XXXXXX" 2>/dev/null)"; then
+        BBR_WARNING="BBR 已生效但无法创建持久化临时文件"
+        return
+    fi
+    if ! printf '%s\n' \
+        'net.core.default_qdisc=fq' \
+        'net.ipv4.tcp_congestion_control=bbr' >"$config_tmp"; then
+        rm -f "$config_tmp"
+        BBR_WARNING="BBR 已生效但无法写入持久化配置 $BBR_CONFIG"
+        return
+    fi
+    chmod 0644 "$config_tmp" 2>/dev/null || true
+    if ! detail="$(mv "$config_tmp" "$BBR_CONFIG" 2>&1)"; then
+        rm -f "$config_tmp"
+        BBR_WARNING="BBR 已生效但无法持久化到 $BBR_CONFIG：$(one_line "$detail")"
+    fi
+}
+
+print_bbr_warning() {
+    if [[ -n "$BBR_WARNING" ]]; then
+        echo "WARNING: TCP BBR 未完整启用：$BBR_WARNING" >&2
+    fi
+}
+
+if [[ "${LATX_BBR_TEST_ONLY:-0}" == "1" ]]; then
+    enable_bbr_best_effort
+    print_bbr_warning
+    exit 0
+fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -300,6 +413,10 @@ else
     fi
 fi
 
+# BBR 是机器级优化，放在 Agent 服务成功启动之后 best-effort 执行；任何失败只缓存原因，
+# 不改变安装退出码。WARNING 必须等全部成功输出结束后再打印。
+enable_bbr_best_effort
+
 # --- 成功输出 ---
 MODE_LABEL="systemd"
 USER_HINT=""
@@ -327,3 +444,4 @@ cat <<EOF
 ============================================================
 EOF
 echo ">> done. Agent 将以 bootstrap token 首连面板并换发长期凭证（§11）。"
+print_bbr_warning

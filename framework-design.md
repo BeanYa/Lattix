@@ -189,9 +189,17 @@ Location 允许自由输入作为兜底。后续可按国家拆分数据文件�
    Git tag 加载 `scripts/install-agent.sh`，后者按创建时指定的 xray 版本安装
    （`latest` 经 GitHub API 解析并校验官方 `.dgst`）→ 从同版本 GitHub Release
    下载并校验 `lattix-agent-linux-<arch>.tar.gz` → 安装 Agent/`latx-ag` →
-   写入面板地址与 bootstrap token。面板不托管安装脚本或二进制资源，也不提供资源源切换。
-   无 root（或无 systemd）时仍可进入用户态守护模式；重装清除旧 state，确保使用新的
-   bootstrap token；
+   best-effort 开启 TCP BBR → 写入面板地址与 bootstrap token。面板不托管安装脚本或
+   二进制资源，也不提供资源源切换。无 root（或无 systemd）时仍可进入用户态守护模式；
+   重装清除旧 state，确保使用新的 bootstrap token；
+   - BBR 已启用时不改系统配置；否则尝试加载 `tcp_bbr`，写入独立持久化文件
+     `/etc/sysctl.d/99-lattix-bbr.conf`，并以 `sysctl -w` 只即时设置
+     `net.core.default_qdisc=fq` 与 `net.ipv4.tcp_congestion_control=bbr`，不得执行
+     `sysctl --system`；
+   - `fq` 为 best-effort，最终只以 TCP 拥塞算法是否为 `bbr` 判定成功。Podman/LXC 不按
+     容器类型跳过，而按实际内核能力和权限尝试；安装器不自动调用 sudo；
+   - BBR 未生效或持久化失败不得中止安装。全部 Agent 安装输出完成后仅追加一行包含
+     具体失败原因的 `WARNING`；Agent 卸载不撤销机器级 BBR 配置；
 3. Agent 启动首连，以 bootstrap token 换发长期服务器 token；**实际安装的 xray 版本随 hello 上报，面板服务器列表展示实际版本号**。
 
 凭证刷新（§10）将 `last_seen_at` 重置为空，使服务器回到 bootstrap 状态，下次 hello 重新换发。
@@ -408,7 +416,9 @@ latx-ag 随 GitHub Release 的 agent 包 `lattix-agent-linux-<arch>.tar.gz` 分�
 统一经 checksums.txt 校验（§11）。
 install.sh 成功输出面板地址 / agent 状态 / xray 版本与 latx-ag 运维提示块。
 `LATX_DEV=1` + `LATX_PREFIX` 路径前缀提供与 install-panel.sh 同款的 DEV 降级
-（dev-e2e-install-agent.sh 走此路径）。
+（dev-e2e-install-agent.sh 走此路径）。`dev-test-install-agent-bbr.sh` 通过隔离的
+sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支持、容器拒绝 sysctl
+及单行原因 WARNING，不触碰测试宿主的真实网络参数。
 
 **`-reset-admin` 启动参数**：`lattix-backend -reset-admin <newpass> -db <path>`
 与设置页改密同一代码路径（bcrypt 哈希写 `settings`，≥8 位校验，会话签名密钥派生自

@@ -212,8 +212,18 @@ bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.s
 面板不再托管安装脚本或二进制资源，也没有下载源切换设置。
 
 脚本完成：安装指定版本 xray（校验官方 `.dgst`）→ 安装 agent 与 `latx-ag` 节点管理程序
-（校验 SHA256）→ 注册 systemd → 首连换发长期凭证。重装自动先停旧服务并清除旧 state。
-安装成功输出：面板地址、agent 服务状态、xray 版本与 `latx-ag` 运维提示块。
+（校验 SHA256）→ 注册 systemd → best-effort 开启 TCP BBR → 首连换发长期凭证。
+重装自动先停旧服务并清除旧 state。BBR 已启用时不改现有配置；否则尝试加载
+`tcp_bbr`，将 `net.core.default_qdisc=fq` 与
+`net.ipv4.tcp_congestion_control=bbr` 持久化到
+`/etc/sysctl.d/99-lattix-bbr.conf`，并只即时设置这两个参数。`fq` 设置失败不影响
+BBR 成功判定。
+
+BBR 是宿主内核能力。Podman/LXC 等容器按实际能力尝试：宿主未提供 BBR、容器未获
+sysctl 权限或安装以非 root 运行时都不会阻断 Agent 安装；脚本仅在 BBR 最终未生效或
+无法持久化时，于全部安装步骤完成后输出一行包含具体原因的 `WARNING`。安装成功输出
+还包括面板地址、agent 服务状态、xray 版本与 `latx-ag` 运维提示块。卸载 Agent 不撤销
+机器级 BBR 配置。
 
 安装后用 `latx-ag`（`/usr/local/bin/latx-ag`）运维本节点：
 
@@ -267,6 +277,7 @@ XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-chains.sh     # 代理链 + NA
 bash scripts/dev-e2e-install-panel.sh                           # 面板一键安装 + latx 管理程序（本地假 release，无外网）
 bash scripts/dev-e2e-install-entry.sh                           # 根安装入口参数/版本转发（无外网）
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-install-agent.sh  # Agent 引导安装 + latx-ag（本地假 release，LATX_DEV=1）
+bash scripts/dev-test-install-agent-bbr.sh                      # Agent 安装器 BBR 能力/权限/持久化隔离测试
 ```
 
 Agent 常用参数：`-panel`（面板 WS 地址）、`-token`（bootstrap token）、`-xray-release-base`
