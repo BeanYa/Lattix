@@ -6,6 +6,12 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/v9.8.7/scripts"
 
+if grep -Eq '\$\{[^}]+:-\{\{' \
+    "$repo_root/scripts/install-agent.sh" "$repo_root/scripts/install-panel.sh"; then
+    echo "installer placeholders must not be embedded in parameter defaults" >&2
+    exit 1
+fi
+
 for component in panel agent; do
     cat >"$work/v9.8.7/scripts/install-${component}.sh" <<'CHILD'
 #!/usr/bin/env bash

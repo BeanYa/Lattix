@@ -2,8 +2,10 @@
 # Lattix panel installer: native systemd or isolated Docker Compose deployment.
 set -euo pipefail
 
-GITHUB_REPO="${GITHUB_REPO:-{{GITHUB_REPO}}}"
-VERSION="${LATTIX_VERSION:-{{LATTIX_VERSION}}}"
+GITHUB_REPO="${GITHUB_REPO:-}"
+[[ -n "$GITHUB_REPO" ]] || GITHUB_REPO="{{GITHUB_REPO}}"
+VERSION="${LATTIX_VERSION:-}"
+[[ -n "$VERSION" ]] || VERSION="{{LATTIX_VERSION}}"
 MODE=""
 INSTALL_DOCKER=0
 BIND_ADDRESS=""
