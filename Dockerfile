@@ -12,6 +12,7 @@ ARG VERSION=dev
 ARG GITHUB_REPO=BeanYa/Lattix
 WORKDIR /src
 COPY go.work go.work.sum ./
+COPY src/agent/go.mod src/agent/go.mod
 COPY src/shared/ src/shared/
 COPY src/backend/ src/backend/
 COPY --from=frontend /src/frontend/dist/ src/backend/internal/web/dist/
