@@ -72,6 +72,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/servers/{id}/upgrade-agent", s.requireAuth(s.handleUpgradeAgent))
 	mux.HandleFunc("PATCH /api/servers/{id}", s.requireAuth(s.handleUpdateServer))
 	mux.HandleFunc("DELETE /api/servers/{id}", s.requireAuth(s.handleDeleteServer))
+	mux.HandleFunc("GET /api/servers/{id}/commands", s.requireAuth(s.handleListCommands))
 
 	mux.HandleFunc("GET /api/nodes", s.requireAuth(s.handleListNodes))
 	mux.HandleFunc("POST /api/nodes", s.requireAuth(s.handleCreateNode))
@@ -102,6 +103,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/panel/update/status", s.requireAuth(s.handlePanelUpdateStatus))
 
 	mux.HandleFunc("GET /api/backup", s.requireAuth(s.handleBackup))
+
+	mux.HandleFunc("GET /api/event-log", s.requireAuth(s.handleListEventLog))
 
 	mux.HandleFunc("GET /install.sh", s.handleInstallScript)
 	// /resource/ 托管 release 镜像（install.sh + agent 包 + checksums.txt，与 GitHub

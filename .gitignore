@@ -29,3 +29,6 @@ src/frontend/dist/
 # Tooling artifacts
 .codegraph/
 .zcode/
+
+# Build artifacts
+/backend
