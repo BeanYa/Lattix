@@ -79,10 +79,12 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 // handleCreateUser 处理 POST /api/users：生成 UUID 与 sub_token；可带 expires_at（RFC3339，§9）。
 // 新用户默认全关（§16）：不分配任何节点，不下发 add_user；
 // 管理员经 PUT /api/users/{id}/nodes 分配后才增量扇出。
+// 创建时可选带 server_ids 预选服务器（= 分配其下全部节点），省略则维持默认全关（§16）。
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name      string  `json:"name"`
 		ExpiresAt *string `json:"expires_at"` // RFC3339，省略/null = 长期
+		ServerIDs []int64 `json:"server_ids"` // 可选：预选服务器（= 分配其下全部节点，§16）
 	}
 	if err := readJSON(r, &req); err != nil || req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name 不能为空")
@@ -113,7 +115,47 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, s.toUserDTO(r, *created, []int64{}))
+
+	// 可选预选服务器（§16）：校验存在后分配其下全部节点并按差量扇出 add_user。
+	nodeIDs := []int64{}
+	if len(req.ServerIDs) > 0 {
+		servers, err := s.st.ListServers(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		validServers := map[int64]bool{}
+		for _, srv := range servers {
+			validServers[srv.ID] = true
+		}
+		for _, sid := range req.ServerIDs {
+			if !validServers[sid] {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("服务器 %d 不存在", sid))
+				return
+			}
+		}
+		nodes, err := s.st.ListNodes(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		wanted := map[int64]bool{}
+		for _, sid := range req.ServerIDs {
+			wanted[sid] = true
+		}
+		for _, n := range nodes {
+			if wanted[n.ServerID] {
+				nodeIDs = append(nodeIDs, n.ID)
+			}
+		}
+		added, _, err := s.st.SetUserNodes(r.Context(), id, nodeIDs)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.fanoutUserDiff(r.Context(), created.UUID, nodes, added, nil)
+	}
+	writeJSON(w, http.StatusCreated, s.toUserDTO(r, *created, nodeIDs))
 }
 
 // parseExpiresAt 解析 RFC3339 有效期；nil/空串 = 长期。

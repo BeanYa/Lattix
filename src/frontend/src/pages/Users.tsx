@@ -64,6 +64,7 @@ export default function Users() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const [created, setCreated] = useState<SubUser | null>(null)
+  const [createServerSel, setCreateServerSel] = useState<number[]>([])
 
   const [expiryTarget, setExpiryTarget] = useState<SubUser | null>(null)
   const [expiryValue, setExpiryValue] = useState('')
@@ -99,6 +100,21 @@ export default function Users() {
       setExpiresAt('')
       setCreateError('')
       setCreated(null)
+      setCreateServerSel([])
+    }
+  }
+
+  const onToggleCreateServer = (id: number, checked: boolean) => {
+    setCreateServerSel((cur) => (checked ? [...cur, id] : cur.filter((x) => x !== id)))
+  }
+
+  // 按 server_id 分组去重得到服务器列表（创建用户时预选，§16）。
+  const createServers: { id: number; label: string }[] = []
+  const seenServers = new Set<number>()
+  for (const n of nodes) {
+    if (!seenServers.has(n.server_id)) {
+      seenServers.add(n.server_id)
+      createServers.push({ id: n.server_id, label: n.server_alias || `服务器 #${n.server_id}` })
     }
   }
 
@@ -107,7 +123,7 @@ export default function Users() {
     setCreateError('')
     setCreating(true)
     try {
-      const res = await api.createUser(name.trim(), localInputToRFC3339(expiresAt))
+      const res = await api.createUser(name.trim(), localInputToRFC3339(expiresAt), createServerSel)
       setCreated(res)
       load()
     } catch (err) {
@@ -314,7 +330,7 @@ export default function Users() {
       </div>
 
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent>
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>创建用户</DialogTitle>
             <DialogDescription>
@@ -354,6 +370,24 @@ export default function Users() {
                   value={expiresAt}
                   onChange={(e) => setExpiresAt(e.target.value)}
                 />
+              </div>
+              <div className="space-y-2">
+                <Label>分配服务器（可选，勾选即分配其下全部节点）</Label>
+                {nodes.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">暂无节点，请先在「节点」页创建。</p>
+                ) : (
+                  createServers.map((srv) => (
+                    <label key={srv.id} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-primary"
+                        checked={createServerSel.includes(srv.id)}
+                        onChange={(e) => onToggleCreateServer(srv.id, e.target.checked)}
+                      />
+                      <span>{srv.label}</span>
+                    </label>
+                  ))
+                )}
               </div>
               {createError && <p className="text-sm text-destructive">{createError}</p>}
               <DialogFooter>

@@ -4,10 +4,11 @@
 #   → LATX_DEV=1 + LATX_PREFIX 无 systemd 降级安装（xray 由 XRAY_BIN 本机二进制复制安装）
 #   → latx-ag 随装 → checksum 篡改应中止 → 成功输出（面板地址/agent 状态/latx-ag 提示块）
 #   → 重装清旧 state（预置坏 state 仍能上线）→ agent 连上面板（online）
-#   → latx-ag version / status（DEV 进程检查）可用
-#   → --source panel：面板 /resource 镜像（-resource 指假 release 目录）下载安装并上线。
-# 依赖：python3、curl、本机 xray 二进制（XRAY_BIN 可覆盖；DEV 模式复制安装，不下载）。
-# 无需 systemd/root（全程 LATX_DEV=1）。
+#   → latx-ag version / status（进程检查）可用
+#   → --source panel：面板 /resource 镜像（-resource 指假 release 目录）下载安装并上线
+#   → user 用户态模式（LATX_USER_MODE=1 无 LATX_DEV）：守护脚本常驻 + latx-ag 用户态 start/stop。
+# 依赖：python3、curl、本机 xray 二进制（XRAY_BIN 可覆盖；DEV/user 模式复制安装，不下载）。
+# 无需 systemd/root（用例 1-5 全程 LATX_DEV=1；用例 6 为 user 用户态模式）。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,8 +32,13 @@ JAR="$WORK/cookies.txt"
 
 cleanup() {
     kill ${BPID:-} 2>/dev/null || true
+    pkill -f "$PREFIX/usr/local/bin/lattix-agent-run" 2>/dev/null || true
     pkill -f "$PREFIX/usr/local/bin/lattix-agent" 2>/dev/null || true
     pkill -f "$PREFIX/usr/local/bin/xray run" 2>/dev/null || true
+    # 用例 6 若向真实 crontab 注册了 @reboot 行，清理之（仅删指向本临时 PREFIX 的行）。
+    if command -v crontab >/dev/null && crontab -l 2>/dev/null | grep -qF "$PREFIX/usr/local/bin/lattix-agent-run"; then
+        crontab -l 2>/dev/null | { grep -vF "$PREFIX/usr/local/bin/lattix-agent-run" || true; } | crontab - || true
+    fi
     wait 2>/dev/null || true
     rm -rf "$WORK"
 }
@@ -135,7 +141,7 @@ VER_OUT="$(latx_ag version)"
 [[ "$VER_OUT" == *"latx-ag 版本: $VERSION"* && "$VER_OUT" == *"Agent 版本:   $VERSION"* && "$VER_OUT" == *"xray 版本:    Xray"* ]] \
     && echo "OK: latx-ag version（latx-ag/agent/xray 三版本）" || { echo "FAIL: version: $VER_OUT"; exit 1; }
 STATUS="$(latx_ag status)"
-echo "$STATUS" | grep -q "\[DEV\] 进程运行中" \
+echo "$STATUS" | grep -q "\[用户态\] 进程运行中" \
     && echo "OK: latx-ag status 进程检查" || { echo "FAIL: status: $STATUS"; exit 1; }
 echo "$STATUS" | grep -q "面板地址: ws://$ADDR/api/agent/ws" \
     && echo "OK: latx-ag status 面板地址" || { echo "FAIL: status 面板地址: $STATUS"; exit 1; }
@@ -166,5 +172,49 @@ done
 [[ "$ONLINE2" == "True" ]] \
     && echo "OK: panel 源安装的 agent 已上线（server 2）" \
     || { echo "FAIL: server 2 未上线"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
+
+echo ">> 用例 6: user 用户态模式（LATX_USER_MODE=1 无 LATX_DEV；守护脚本常驻 + latx-ag 用户态管理）"
+BOOTSTRAP3="$(api -X POST -d '{"alias":"e2e03"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
+[[ -n "$BOOTSTRAP3" ]] || { echo "FAIL: 第三台服务器 bootstrap token"; exit 1; }
+USER_OUT="$(LATX_USER_MODE=1 LATX_PREFIX="$PREFIX" LATX_RELEASE_BASE="file://$FAKE" \
+    XRAY_BIN="$XRAY_BIN" LATX_AG_XRAY_API="$API_ADDR" \
+    bash "$FAKE/install.sh" --panel "http://$ADDR" --token "$BOOTSTRAP3" --xray-version v26.3.27)"
+echo "$USER_OUT" | grep -q "\[user\]" \
+    && echo "OK: 安装输出含用户态模式提示" || { echo "FAIL: 缺用户态提示: $USER_OUT"; exit 1; }
+[[ -x "$PREFIX/usr/local/bin/lattix-agent-run" ]] \
+    && echo "OK: 守护脚本 lattix-agent-run 就位且可执行" || { echo "FAIL: 守护脚本缺失"; exit 1; }
+pgrep -f "$PREFIX/usr/local/bin/lattix-agent -panel" >/dev/null \
+    && echo "OK: user 模式 agent 进程运行中" \
+    || { echo "FAIL: agent 未运行"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
+ONLINE3=""
+for _ in $(seq 1 15); do
+    ONLINE3="$(api "http://$ADDR/api/servers" | py "d[2]['online']")"
+    [[ "$ONLINE3" == "True" ]] && break
+    sleep 1
+done
+[[ "$ONLINE3" == "True" ]] \
+    && echo "OK: user 模式安装的 agent 已上线（server 3）" \
+    || { echo "FAIL: server 3 未上线"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
+
+# latx-ag 用户态分支：不带 LATX_DEV（无 unit 文件自动判定），仅 LATX_PREFIX。
+latx_ag_user() { LATX_PREFIX="$PREFIX" bash "$PREFIX/usr/local/bin/latx-ag" "$@"; }
+USTATUS="$(latx_ag_user status)"
+echo "$USTATUS" | grep -q "\[用户态\] 进程运行中" \
+    && echo "OK: latx-ag status 用户态进程检查" || { echo "FAIL: status: $USTATUS"; exit 1; }
+echo "$USTATUS" | grep -q "面板地址: ws://$ADDR/api/agent/ws" \
+    && echo "OK: latx-ag status 面板地址" || { echo "FAIL: status 面板地址: $USTATUS"; exit 1; }
+latx_ag_user log -n 5 | grep -q "authenticated as server 3" \
+    && echo "OK: latx-ag log -n（用户态读日志文件）" \
+    || { echo "FAIL: latx-ag log"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
+latx_ag_user stop
+sleep 1
+if pgrep -f "$PREFIX/usr/local/bin/lattix-agent" >/dev/null; then
+    echo "FAIL: stop 后守护脚本/agent 进程仍在"; exit 1
+fi
+echo "OK: latx-ag stop 后守护脚本与 agent 进程消失"
+latx_ag_user start
+sleep 3
+pgrep -f "$PREFIX/usr/local/bin/lattix-agent -panel" >/dev/null \
+    && echo "OK: latx-ag start 后进程恢复" || { echo "FAIL: start 后进程未恢复"; exit 1; }
 
 echo "E2E PASS"

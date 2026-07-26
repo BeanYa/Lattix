@@ -5,15 +5,20 @@
 # 见 .github/workflows/release.yml）。全部功能函数化，子命令：
 #
 #   latx-ag status                  节点状态：agent/xray 服务、版本、面板地址、配置指纹
-#   latx-ag start|stop|restart      systemctl 包装（需 root）
-#   latx-ag enable|disable          systemctl 包装（需 root）
-#   latx-ag log [-n N]              journalctl -u lattix-agent -f（-n N 时不跟随）
+#   latx-ag start|stop|restart      systemctl 包装（systemd 模式需 root）；用户态模式管理守护脚本与进程
+#   latx-ag enable|disable          systemctl 包装（systemd 模式需 root）；用户态模式增删 crontab @reboot
+#   latx-ag log [-n N]              journalctl -u lattix-agent -f（-n N 时不跟随）；用户态读日志文件
 #   latx-ag log-xray [-n N]         journalctl -u xray -f（同上）
 #   latx-ag update [version]        从 GitHub release 更新 agent（默认 latest；预检 -version）
 #   latx-ag xray-update [version]   更新 xray（官方 .dgst 校验 SHA2-256，失败回滚 .bak）
 #   latx-ag uninstall [--purge-xray] [--yes]   卸载 agent（默认保留 xray 与节点运行）
 #   latx-ag version                 latx-ag 自身、agent 与 xray 版本
 #   latx-ag help                    本帮助
+#
+# 运行模式自动判断（无需 LATX_USER_MODE，该变量仅 install.sh 使用）：unit 文件
+# $LATX_PREFIX/etc/systemd/system/lattix-agent.service 存在且有 systemctl 时走 systemd；
+# 否则按用户态模式（install.sh user 模式安装：无 unit 文件，守护脚本 lattix-agent-run
+# 常驻；start/stop 直管进程，enable/disable 操作 crontab @reboot）。
 #
 # 环境变量覆盖（e2e/运维用）：
 #   LATX_PREFIX         路径前缀（默认空；设置后 /usr/local/bin、/etc 等全部加前缀）
@@ -24,7 +29,7 @@
 #   LATX_AG_XRAY_BIN    xray 二进制路径（默认 $LATX_PREFIX/usr/local/bin/xray）
 #   LATX_AG_STATE       agent state 文件（默认 $LATX_PREFIX/etc/lattix-agent.state.json）
 #   LATX_AG_ENV         agent env 文件（默认 $LATX_PREFIX/etc/lattix-agent.env，读面板地址）
-#   LATX_AG_LOG         DEV 模式日志文件（默认 $LATX_PREFIX/var/log/lattix-agent.log）
+#   LATX_AG_LOG         用户态/DEV 模式日志文件（默认 $LATX_PREFIX/var/log/lattix-agent.log）
 #   XRAY_RELEASE_BASE   xray release 下载基址（默认官方 GitHub，对齐 agent -xray-release-base）
 #   LATX_DEV=1          无 systemd 开发模式：status 降级为进程检查，log 读 LATX_AG_LOG
 set -euo pipefail
@@ -40,6 +45,8 @@ UNIT_FILE="$PREFIX/etc/systemd/system/${UNIT}.service"
 XRAY_UNIT_FILE="$PREFIX/etc/systemd/system/${XRAY_UNIT}.service"
 LATX_AG_BIN="${LATX_AG_BIN:-$PREFIX/usr/local/bin/latx-ag}"
 AGENT_BIN="${LATX_AG_AGENT_BIN:-$PREFIX/usr/local/bin/lattix-agent}"
+# 用户态守护脚本路径（install.sh user 模式生成），由 agent 安装目录推导。
+RUN_SCRIPT="$(dirname "$AGENT_BIN")/lattix-agent-run"
 XRAY_BIN="${LATX_AG_XRAY_BIN:-$PREFIX/usr/local/bin/xray}"
 XRAY_CONFIG_DIR="$PREFIX/usr/local/etc/xray"
 STATE_FILE="${LATX_AG_STATE:-$PREFIX/etc/lattix-agent.state.json}"
@@ -49,8 +56,9 @@ XRAY_RELEASE_BASE="${XRAY_RELEASE_BASE:-https://github.com/XTLS/Xray-core/releas
 
 die() { echo "latx-ag: $*" >&2; exit 1; }
 
-# use_systemd：非 DEV 模式且存在 systemctl 时走 systemd 管理。
-use_systemd() { [[ "${LATX_DEV:-0}" != "1" ]] && command -v systemctl >/dev/null; }
+# use_systemd：非 DEV 模式、unit 文件存在且有 systemctl 时走 systemd 管理；
+# 否则按用户态模式（无 unit 文件，install.sh user 模式安装）。
+use_systemd() { [[ "${LATX_DEV:-0}" != "1" && -f "$UNIT_FILE" ]] && command -v systemctl >/dev/null; }
 
 need_root() {
     [[ "$(id -u)" -eq 0 ]] || die "该操作需要 root 权限（systemctl 类命令），请用 sudo 执行"
@@ -72,7 +80,8 @@ xray_version() {
     fi
 }
 
-agent_pid() { pgrep -f "$AGENT_BIN" 2>/dev/null | head -1 || true; }
+# 仅匹配 agent 进程（带 -panel 参数），避免误中守护脚本 lattix-agent-run 的命令行。
+agent_pid() { pgrep -f "$AGENT_BIN -panel" 2>/dev/null | head -1 || true; }
 
 # 当前面板地址：从 install.sh 写入的 env 文件读 LATTIX_PANEL_WS。
 panel_addr() {
@@ -100,11 +109,11 @@ cmd_status() {
     else
         local pid; pid="$(agent_pid)"
         if [[ -n "$pid" ]]; then
-            echo "Agent 服务: [DEV] 进程运行中（pid $pid，无 systemd）"
+            echo "Agent 服务: [用户态] 进程运行中（pid $pid，无 systemd）"
         else
-            echo "Agent 服务: [DEV] 进程未运行（无 systemd）"
+            echo "Agent 服务: [用户态] 进程未运行（无 systemd）"
         fi
-        echo "xray 服务:  [DEV] 由 agent 托管（-xray-runner exec）"
+        echo "xray 服务:  [用户态] 由 agent 托管（-xray-runner exec）"
     fi
 
     echo "Agent 版本: $(agent_version)"
@@ -124,11 +133,46 @@ cmd_status() {
     fi
 }
 
+user_start() {
+    [[ -x "$RUN_SCRIPT" ]] || die "守护脚本不存在: $RUN_SCRIPT（请先运行 install.sh）"
+    nohup "$RUN_SCRIPT" >/dev/null 2>&1 &
+    echo ">> [用户态] 已启动守护脚本 $RUN_SCRIPT（脚本内 flock 防重复）"
+}
+
+user_stop() {
+    # 先停守护脚本（防其循环拉起），再停 agent。
+    pkill -f "$RUN_SCRIPT" 2>/dev/null || true
+    pkill -f "$AGENT_BIN" 2>/dev/null || true
+    echo ">> [用户态] 已停止守护脚本与 agent 进程"
+}
+
 cmd_svc() {
-    need_root
-    use_systemd || die "未检测到 systemd（LATX_DEV=1 开发模式下请直接管理进程）"
-    systemctl "$1" "$UNIT"
-    echo ">> systemctl $1 $UNIT 完成"
+    if use_systemd; then
+        need_root
+        systemctl "$1" "$UNIT"
+        echo ">> systemctl $1 $UNIT 完成"
+        return
+    fi
+    # 用户态模式（无 unit 文件）：直管守护脚本/进程与 crontab @reboot。
+    case "$1" in
+        start)   user_start ;;
+        stop)    user_stop ;;
+        restart) user_stop; sleep 1; user_start ;;
+        enable)
+            command -v crontab >/dev/null || die "未检测到 crontab，用户态模式不支持 enable"
+            if ! crontab -l 2>/dev/null | grep -qF "$RUN_SCRIPT"; then
+                (crontab -l 2>/dev/null || true; echo "@reboot $RUN_SCRIPT >>$LOG_FILE 2>&1 &") | crontab -
+            fi
+            echo ">> [用户态] 已注册 crontab @reboot 自启（$RUN_SCRIPT）"
+            ;;
+        disable)
+            command -v crontab >/dev/null || die "未检测到 crontab，用户态模式不支持 disable"
+            if crontab -l 2>/dev/null | grep -qF "$RUN_SCRIPT"; then
+                crontab -l 2>/dev/null | { grep -vF "$RUN_SCRIPT" || true; } | crontab -
+            fi
+            echo ">> [用户态] 已移除 crontab @reboot 自启"
+            ;;
+    esac
 }
 
 cmd_log() {
@@ -152,7 +196,7 @@ cmd_log() {
             journalctl -u "$unit" -n "${lines:-50}" --no-pager
         fi
     else
-        [[ -f "$LOG_FILE" ]] || die "[DEV] 日志文件不存在: $LOG_FILE"
+        [[ -f "$LOG_FILE" ]] || die "[用户态] 日志文件不存在: $LOG_FILE"
         if [[ "$follow" -eq 1 ]]; then
             tail -f ${lines:+-n "$lines"} "$LOG_FILE"
         else
@@ -162,8 +206,9 @@ cmd_log() {
 }
 
 cmd_update() {
-    need_root
-    use_systemd || die "未检测到 systemd，无法自动更新（LATX_DEV=1 开发模式请手动替换二进制）"
+    # root 仅 systemd 模式需要；user 模式由守护循环拉起新版，DEV 模式维持手动替换。
+    if use_systemd; then need_root; fi
+    [[ "${LATX_DEV:-0}" != "1" ]] || die "未检测到 systemd，无法自动更新（LATX_DEV=1 开发模式请手动替换二进制）"
     [[ "$GITHUB_REPO" != *"{{"* ]] || die "脚本未经 CI stamp（{{GITHUB_REPO}} 占位符未替换），无法定位 release"
     command -v curl >/dev/null      || die "curl is required"
     command -v sha256sum >/dev/null || die "sha256sum is required"
@@ -210,9 +255,16 @@ cmd_update() {
     [[ "$new_version" == "$version" ]] \
         || die "预检失败：新二进制版本不符（期望 ${version}，实际 ${new_version}），放弃更新"
 
-    systemctl stop "$UNIT"
-    install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
-    systemctl start "$UNIT"
+    if use_systemd; then
+        systemctl stop "$UNIT"
+        install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
+        systemctl start "$UNIT"
+    else
+        # 用户态：先停 agent 释放二进制占用（守护循环 5s 内拉起新版），再替换。
+        pkill -f "$AGENT_BIN -panel" 2>/dev/null || true
+        sleep 1
+        install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
+    fi
 
     local running_version; running_version="$(agent_version)"
     [[ "$running_version" == "$version" ]] \
@@ -221,8 +273,9 @@ cmd_update() {
 }
 
 cmd_xray_update() {
-    need_root
-    use_systemd || die "未检测到 systemd，无法自动更新（LATX_DEV=1 开发模式请手动替换二进制）"
+    # root 仅 systemd 模式需要；user 模式停 agent（守护循环连带重启 xray），DEV 模式维持手动替换。
+    if use_systemd; then need_root; fi
+    [[ "${LATX_DEV:-0}" != "1" ]] || die "未检测到 systemd，无法自动更新（LATX_DEV=1 开发模式请手动替换二进制）"
     command -v curl >/dev/null      || die "curl is required"
     command -v unzip >/dev/null     || die "unzip is required"
     command -v sha256sum >/dev/null || die "sha256sum is required"
@@ -274,17 +327,26 @@ cmd_xray_update() {
 
     # 备份 → 替换 → 重启 → 版本校验；失败回滚 .bak 并重启。
     cp -a "$XRAY_BIN" "$XRAY_BIN.bak"
-    install -m 0755 "$tmp/xray/xray" "$XRAY_BIN"
-    if ! systemctl restart "$XRAY_UNIT"; then
-        mv "$XRAY_BIN.bak" "$XRAY_BIN"
-        systemctl restart "$XRAY_UNIT" || true
-        die "重启 xray 失败，已回滚 .bak"
+    if use_systemd; then
+        install -m 0755 "$tmp/xray/xray" "$XRAY_BIN"
+        if ! systemctl restart "$XRAY_UNIT"; then
+            mv "$XRAY_BIN.bak" "$XRAY_BIN"
+            systemctl restart "$XRAY_UNIT" || true
+            die "重启 xray 失败，已回滚 .bak"
+        fi
+    else
+        # 用户态：xray 由 agent 以 exec runner 托管；先停 agent（连带停 xray）释放二进制
+        # 占用，替换后守护循环拉起 agent 并连带重启 xray（替代 systemctl restart）。
+        pkill -f "$AGENT_BIN -panel" 2>/dev/null || true
+        pkill -f "$XRAY_BIN run" 2>/dev/null || true
+        sleep 1
+        install -m 0755 "$tmp/xray/xray" "$XRAY_BIN"
     fi
     local ver
     ver="$("$XRAY_BIN" version 2>/dev/null | head -1 || true)"
     if [[ -z "$ver" ]] || { [[ "$version" != "latest" ]] && [[ "$ver" != *"${version#v}"* ]]; }; then
         mv "$XRAY_BIN.bak" "$XRAY_BIN"
-        systemctl restart "$XRAY_UNIT" || true
+        if use_systemd; then systemctl restart "$XRAY_UNIT" || true; fi
         die "升级后版本校验失败（期望 ${version}，实际 ${ver:-<无输出>}），已回滚 .bak"
     fi
     rm -f "$XRAY_BIN.bak"
@@ -322,14 +384,20 @@ cmd_uninstall() {
         systemctl daemon-reload
         echo ">> 已停止并移除 systemd 服务 $UNIT$([[ "$purge_xray" -eq 1 ]] && echo " 与 $XRAY_UNIT")"
     else
+        # 用户态：停守护脚本（防循环拉起）与 agent，移除 crontab @reboot 行。
+        pkill -f "$RUN_SCRIPT" 2>/dev/null || true
         pkill -f "$AGENT_BIN" 2>/dev/null || true
-        echo ">> [DEV] 已停止 agent 进程"
+        echo ">> [用户态] 已停止守护脚本与 agent 进程"
+        if command -v crontab >/dev/null && crontab -l 2>/dev/null | grep -qF "$RUN_SCRIPT"; then
+            crontab -l 2>/dev/null | { grep -vF "$RUN_SCRIPT" || true; } | crontab -
+            echo ">> [用户态] 已移除 crontab @reboot 自启"
+        fi
         if [[ "$purge_xray" -eq 1 ]]; then
             pkill -f "$XRAY_BIN run" 2>/dev/null || true
-            echo ">> [DEV] 已停止 xray 进程"
+            echo ">> [用户态] 已停止 xray 进程"
         fi
     fi
-    rm -f "$AGENT_BIN" "$AGENT_BIN.bak" "$ENV_FILE" "$STATE_FILE"
+    rm -f "$AGENT_BIN" "$AGENT_BIN.bak" "$RUN_SCRIPT" "$ENV_FILE" "$STATE_FILE"
     echo ">> 已删除 agent 二进制/env/state"
     if [[ "$purge_xray" -eq 1 ]]; then
         rm -f "$XRAY_BIN" "$XRAY_BIN.bak"

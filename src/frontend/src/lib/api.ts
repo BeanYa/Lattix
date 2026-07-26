@@ -122,10 +122,14 @@ export const api = {
   deleteNode: (id: number) => request<void>(`/api/nodes/${id}`, { method: 'DELETE' }),
 
   users: () => request<SubUser[]>('/api/users'),
-  createUser: (name: string, expiresAt?: string | null) =>
+  createUser: (name: string, expiresAt?: string | null, serverIds?: number[]) =>
     request<SubUser>('/api/users', {
       method: 'POST',
-      body: JSON.stringify({ name, ...(expiresAt ? { expires_at: expiresAt } : {}) }),
+      body: JSON.stringify({
+        name,
+        ...(expiresAt ? { expires_at: expiresAt } : {}),
+        ...(serverIds && serverIds.length ? { server_ids: serverIds } : {}),
+      }),
     }),
   updateUserExpiry: (id: number, expiresAt: string | null) =>
     request<SubUser>(`/api/users/${id}`, {

@@ -14,17 +14,24 @@
 #      与面板同版本；下载与校验流程和 github 源完全一致。
 #
 # 流程：解析/下载指定版本 xray-core（校验官方 .dgst SHA2-256）→ 下载/安装 Agent 二进制
-# 与 latx-ag 节点管理程序 → 注册 systemd → 写入面板地址与 bootstrap token（清除旧 state）。
+# 与 latx-ag 节点管理程序 → 注册 systemd（user 用户态模式改为守护脚本常驻，见下）→
+# 写入面板地址与 bootstrap token（清除旧 state）。
 # Agent 首连后以 bootstrap token 换发长期凭证。
 #
 # 环境变量覆盖（e2e/运维用）：
 #   LATX_SOURCE         同 --source（github|panel）；--source 参数优先
 #   LATX_RELEASE_BASE   下载基址覆盖（两种源均生效，e2e 本地模拟用，支持 file://）
-#   LATX_PREFIX         路径前缀（默认空；/usr/local/bin、/etc/systemd/system、state 等全部加前缀）
+#   LATX_PREFIX         路径前缀（默认空；/usr/local/bin、/etc/systemd/system、state 等全部加前缀；
+#                       user 模式且非 root 时默认 $HOME/.lattix）
 #   LATX_DEV=1          无 systemd/非 root 开发模式：跳过 unit 注册，nohup 直接启动 agent；
 #                       xray 不下载，由 XRAY_BIN 指定的本机二进制复制安装
-#   XRAY_BIN            LATX_DEV=1 时的本机 xray 二进制（复制安装源）
-#   LATX_AG_XRAY_API    DEV 模式 agent 的 -xray-api（默认 127.0.0.1:10085）
+#   LATX_USER_MODE=1    强制 user 用户态模式（root + systemd 机器亦可用）；无 root/无 systemd 且
+#                       未设 LATX_DEV 时自动落入（不再中止）：不注册 systemd，xray/agent 正常
+#                       下载校验，agent 由守护脚本 lattix-agent-run 常驻，crontab @reboot
+#                       best-effort 注册开机自启
+#   XRAY_BIN            本机 xray 二进制复制安装源：LATX_DEV=1 时必填；其余模式为跨模式覆盖——
+#                       显式设置且可执行时复制安装（e2e/运维用），未设置则正常下载（官方 .dgst 校验）
+#   LATX_AG_XRAY_API    DEV/user 模式 agent 的 -xray-api（默认 127.0.0.1:10085）
 set -euo pipefail
 
 # ===== CI 发版烧入区（release.yml 在发版时 sed 替换以下三个占位符）=====
@@ -37,17 +44,6 @@ DEFAULT_XRAY_VERSION="{{DEFAULT_XRAY_VERSION}}"
 # latest 解析失败时的回退钉住版本。
 FALLBACK_XRAY_VERSION="v26.3.27"
 
-PREFIX="${LATX_PREFIX:-}"
-BIN_DIR="$PREFIX/usr/local/bin"
-AGENT_BIN="$BIN_DIR/lattix-agent"
-LATX_AG_BIN="$BIN_DIR/latx-ag"
-XRAY_BIN_DST="$BIN_DIR/xray"
-XRAY_CONFIG_DIR="$PREFIX/usr/local/etc/xray"
-ENV_FILE="$PREFIX/etc/lattix-agent.env"
-STATE_FILE="$PREFIX/etc/lattix-agent.state.json"
-SYSTEMD_DIR="$PREFIX/etc/systemd/system"
-AGENT_LOG="$PREFIX/var/log/lattix-agent.log"
-XRAY_API="${LATX_AG_XRAY_API:-127.0.0.1:10085}"
 PANEL_URL=""
 BOOTSTRAP_TOKEN=""
 SOURCE="${LATX_SOURCE:-github}"
@@ -81,16 +77,43 @@ esac
 command -v curl      >/dev/null || die "curl is required"
 command -v sha256sum >/dev/null || die "sha256sum is required"
 
-# --- systemd / 权限检查：无 systemctl 或非 root 时需 LATX_DEV=1 进入开发降级模式 ---
+# --- 运行模式判定（三档）---
+# DEV：无 systemd/非 root 且 LATX_DEV=1（现有开发降级语义不变）；
+# systemd：root + systemctl 且未设 LATX_USER_MODE=1（现有行为不变）；
+# user：其余情况——非 root/无 systemd 自动落入（不再中止），root 可用 LATX_USER_MODE=1 强制。
 DEV_MODE=0
+USER_MODE=0
 if ! command -v systemctl >/dev/null || [[ "$(id -u)" -ne 0 ]]; then
     if [[ "${LATX_DEV:-0}" == "1" ]]; then
         DEV_MODE=1
         echo ">> [DEV] 无 systemd 或非 root，跳过 unit 注册，agent 将由 nohup 直接启动"
     else
-        die "需要 root 且系统使用 systemd（开发/测试环境可用 LATX_DEV=1 降级运行）"
+        USER_MODE=1
+        echo ">> [user] 无 root 或无 systemd，进入用户态模式：不注册 unit，agent 由守护脚本 lattix-agent-run 常驻"
     fi
+elif [[ "${LATX_USER_MODE:-0}" == "1" ]]; then
+    USER_MODE=1
+    echo ">> [user] LATX_USER_MODE=1，强制用户态模式：不注册 unit，agent 由守护脚本 lattix-agent-run 常驻"
 fi
+
+# 路径变量（在模式判定之后确定）：user 模式未显式指定 LATX_PREFIX 时，
+# 非 root 默认 $HOME/.lattix，root 默认系统路径（空前缀）。
+if [[ "$USER_MODE" -eq 1 && -z "${LATX_PREFIX:-}" && "$(id -u)" -ne 0 ]]; then
+    PREFIX="$HOME/.lattix"
+    echo ">> [user] LATX_PREFIX 未设置，安装到 $PREFIX"
+else
+    PREFIX="${LATX_PREFIX:-}"
+fi
+BIN_DIR="$PREFIX/usr/local/bin"
+AGENT_BIN="$BIN_DIR/lattix-agent"
+LATX_AG_BIN="$BIN_DIR/latx-ag"
+XRAY_BIN_DST="$BIN_DIR/xray"
+XRAY_CONFIG_DIR="$PREFIX/usr/local/etc/xray"
+ENV_FILE="$PREFIX/etc/lattix-agent.env"
+STATE_FILE="$PREFIX/etc/lattix-agent.state.json"
+SYSTEMD_DIR="$PREFIX/etc/systemd/system"
+AGENT_LOG="$PREFIX/var/log/lattix-agent.log"
+XRAY_API="${LATX_AG_XRAY_API:-127.0.0.1:10085}"
 
 PANEL_URL="${PANEL_URL%/}"
 case "$(uname -m)" in
@@ -101,9 +124,11 @@ esac
 
 # 重装场景：先停掉运行中的服务/进程，避免覆写运行中的二进制失败（ETXTBSY）；
 # 全新安装时该命令为空操作。
-if [[ "$DEV_MODE" -eq 0 ]]; then
+if [[ "$DEV_MODE" -eq 0 && "$USER_MODE" -eq 0 ]]; then
     systemctl stop lattix-agent.service xray.service 2>/dev/null || true
 else
+    # DEV/user：停守护脚本与 agent（user 模式先停守护，避免其循环拉起 agent）。
+    pkill -f "$BIN_DIR/lattix-agent-run" 2>/dev/null || true
     pkill -f "$AGENT_BIN" 2>/dev/null || true
 fi
 
@@ -116,6 +141,10 @@ if [[ "$DEV_MODE" -eq 1 ]]; then
     [[ -n "${XRAY_BIN:-}" && -x "${XRAY_BIN:-}" ]] \
         || die "[DEV] 需要 XRAY_BIN 指定本机 xray 二进制（复制安装源）"
     echo ">> [DEV] installing xray-core（复制本机 $XRAY_BIN）"
+    install -m 0755 "$XRAY_BIN" "$XRAY_BIN_DST"
+elif [[ -n "${XRAY_BIN:-}" && -x "${XRAY_BIN:-}" ]]; then
+    # XRAY_BIN 跨模式覆盖：非 DEV 模式显式指定可执行的本机二进制时同样复制安装（e2e/运维用）。
+    echo ">> installing xray-core（复制本机 $XRAY_BIN，XRAY_BIN 覆盖）"
     install -m 0755 "$XRAY_BIN" "$XRAY_BIN_DST"
 else
     # latest：执行时经 GitHub API 解析最新 release（§11）；失败回退钉住版本。
@@ -205,7 +234,7 @@ EOF
 # 重装/换发凭证时清除旧长期凭证，确保 agent 使用新 bootstrap token（§11）。
 rm -f "$STATE_FILE"
 
-if [[ "$DEV_MODE" -eq 0 ]]; then
+if [[ "$DEV_MODE" -eq 0 && "$USER_MODE" -eq 0 ]]; then
     echo ">> registering systemd services"
     cat > "$SYSTEMD_DIR/xray.service" <<EOF
 [Unit]
@@ -242,6 +271,45 @@ EOF
     systemctl enable --now xray.service
     systemctl enable --now lattix-agent.service
     AGENT_STATUS="$(systemctl is-active lattix-agent.service 2>/dev/null || echo unknown)"
+elif [[ "$USER_MODE" -eq 1 ]]; then
+    # user 用户态模式：不注册 systemd，生成守护脚本常驻（flock 防重复 + 退出后自动拉起，
+    # 替代 systemd Restart=always），并 best-effort 注册 crontab @reboot 开机自启。
+    echo ">> [user] 生成守护脚本 $BIN_DIR/lattix-agent-run（日志 $AGENT_LOG）"
+    mkdir -p "$(dirname "$AGENT_LOG")" "$PREFIX/var/run"
+    cat > "$BIN_DIR/lattix-agent-run" <<EOF
+#!/usr/bin/env bash
+# Lattix Agent 用户态守护脚本（install.sh 生成）：flock 防重复；agent 退出（崩溃/自升级）
+# 后 sleep 5 自动拉起，替代 systemd Restart=always；每次重启重新读取 env（token 轮换后即生效）。
+set -u
+exec 9>"$PREFIX/var/run/lattix-agent.lock"
+flock -n 9 || exit 0
+while true; do
+    set -a; . "$ENV_FILE"; set +a
+    "$AGENT_BIN" -panel "\$LATTIX_PANEL_WS" -token "\$LATTIX_TOKEN" -state "$STATE_FILE" \\
+        -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG_DIR/config.json" \\
+        -xray-api "$XRAY_API" -xray-runner exec >>"$AGENT_LOG" 2>&1
+    sleep 5
+done
+EOF
+    chmod 0755 "$BIN_DIR/lattix-agent-run"
+    nohup "$BIN_DIR/lattix-agent-run" >/dev/null 2>&1 &
+    sleep 1
+    if kill -0 $! 2>/dev/null; then
+        AGENT_STATUS="[user] 守护脚本运行中（pid $!）"
+    else
+        AGENT_STATUS="[user] 守护脚本未运行（日志见 $AGENT_LOG）"
+    fi
+    # best-effort 开机自启：crontab @reboot（先 grep 去重）；无 crontab 时提示手动启动。
+    if command -v crontab >/dev/null; then
+        if crontab -l 2>/dev/null | grep -qF "$BIN_DIR/lattix-agent-run"; then
+            echo ">> [user] crontab @reboot 自启已存在，跳过"
+        else
+            (crontab -l 2>/dev/null || true; echo "@reboot $BIN_DIR/lattix-agent-run >>$AGENT_LOG 2>&1 &") | crontab -
+            echo ">> [user] 已注册 crontab @reboot 开机自启（best-effort）"
+        fi
+    else
+        echo ">> [user] 未检测到 crontab，无法注册开机自启；重启后需手动运行 latx-ag start"
+    fi
 else
     echo ">> [DEV] nohup 启动 agent（日志 $AGENT_LOG）"
     mkdir -p "$(dirname "$AGENT_LOG")"
@@ -258,14 +326,25 @@ else
 fi
 
 # --- 成功输出 ---
+MODE_LABEL="systemd"
+USER_HINT=""
+if [[ "$DEV_MODE" -eq 1 ]]; then
+    MODE_LABEL="[DEV]"
+elif [[ "$USER_MODE" -eq 1 ]]; then
+    MODE_LABEL="[user] 用户态"
+    USER_HINT="
+  日志文件:  $AGENT_LOG
+  用户态启停: latx-ag start / stop"
+fi
 cat <<EOF
 
 ============================================================
   Lattix Agent 安装完成
 
   面板地址:  $PANEL_URL
+  运行模式:  $MODE_LABEL
   Agent 状态: $AGENT_STATUS
-  xray 版本:  $("$XRAY_BIN_DST" version 2>/dev/null | head -1 || echo unknown)
+  xray 版本:  $("$XRAY_BIN_DST" version 2>/dev/null | head -1 || echo unknown)$USER_HINT
 
   使用 latx-ag 命令运维本节点：
     latx-ag status / log / update / xray-update / uninstall

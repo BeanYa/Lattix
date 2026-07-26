@@ -158,7 +158,7 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 ## 11. 服务器引导流程
 
 1. 面板"添加服务器"填写别名、公网地址与 **xray 版本**（默认 `latest`，也可指定具体版本），生成一次性 **bootstrap token** 与一行安装命令（自 0.0.2 之后迭代起另含机器类型与 NAT 可用端口段，§21；均为面板侧元数据，不下发到 agent，引导流程不变）；
-2. `install.sh` 在被控机执行：按创建时指定的 xray 版本安装（`latest` 在执行时经 GitHub API 解析最新 release；**校验官方 release checksums**）→ 下载/安装 Agent 二进制 → 注册 systemd → 写入面板地址与 bootstrap token（重装时清除旧 state 文件，确保使用新 bootstrap token）。Agent 二进制统一为 release 钉版获取（agent 包 `lattix-agent-linux-<arch>.tar.gz` 与同目录 `checksums.txt` 校验，获取不到即中止），下载源由 `--source` 选择：**github**（默认，install.sh 由 CI 烧入版本号，agent 与校验和取自同版本 GitHub release 资产——脚本与二进制天然同版，老面板生成的命令不受后续发版影响）与 **panel**（从面板 `/resource` 镜像下载；镜像与 GitHub release 同布局——install.sh + agent 两架构包 + checksums.txt，由面板安装/更新时落地，与面板同版本，下载与校验流程和 github 源完全一致）。安装命令的脚本地址与 `--source` 由设置页"安装资源来源"决定（默认 github；dev 构建无 release 可钉，始终回退 panel 源）；
+2. `install.sh` 在被控机执行：按创建时指定的 xray 版本安装（`latest` 在执行时经 GitHub API 解析最新 release；**校验官方 release checksums**）→ 下载/安装 Agent 二进制 → 注册 systemd → 写入面板地址与 bootstrap token（重装时清除旧 state 文件，确保使用新 bootstrap token）。Agent 二进制统一为 release 钉版获取（agent 包 `lattix-agent-linux-<arch>.tar.gz` 与同目录 `checksums.txt` 校验，获取不到即中止），下载源由 `--source` 选择：**github**（默认，install.sh 由 CI 烧入版本号，agent 与校验和取自同版本 GitHub release 资产——脚本与二进制天然同版，老面板生成的命令不受后续发版影响）与 **panel**（从面板 `/resource` 镜像下载；镜像与 GitHub release 同布局——install.sh + agent 两架构包 + checksums.txt，由面板安装/更新时落地，与面板同版本，下载与校验流程和 github 源完全一致）。安装命令的脚本地址与 `--source` 由设置页"安装资源来源"决定（默认 github；dev 构建无 release 可钉，始终回退 panel 源）。无 root（或无 systemd）时 `install.sh` 自动落入 **user 用户态模式**（root 机器亦可用 `LATX_USER_MODE=1` 强制），不再中止：不注册 systemd，非 root 默认安装到 `$HOME/.lattix`（root 强制时默认系统路径），xray 与 agent 的下载/校验流程不变，agent 由生成的守护脚本 `lattix-agent-run` 常驻（flock 防重复，崩溃/自升级退出后 5s 自动拉起，替代 systemd `Restart=always`），并以 crontab `@reboot` best-effort 注册开机自启（无 crontab 时提示重启后手动 `latx-ag start`）；`latx-ag` 依 unit 文件是否存在自动切换用户态管理（start/stop 直管守护脚本与进程，enable/disable 增删 crontab 行）；
 3. Agent 启动首连，以 bootstrap token 换发长期服务器 token；**实际安装的 xray 版本随 hello 上报，面板服务器列表展示实际版本号**。
 
 凭证刷新（§10）将 `last_seen_at` 重置为空，使服务器回到 bootstrap 状态，下次 hello 重新换发。
@@ -253,6 +253,7 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，`-telemetry-interval` �
 
 替代 §8 的全对全隐含关系：`user_nodes` 关联表，**默认全关**——新建用户/节点无任何关联，
 管理员在用户列表"分配节点"对话框勾选（`PUT /api/users/{id}/nodes` 整体替换）。
+创建用户时可预选服务器（等于分配该服务器下全部节点），省略则维持默认全关。
 
 - **扇出语义**：apply_node 只携带分配到该节点的用户 UUID；分配变更按差量扇出
   add_user/remove_user（载荷仅含受影响节点）；删除用户仍向所有服务器幂等扇出 remove_user。
