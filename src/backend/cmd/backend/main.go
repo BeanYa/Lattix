@@ -32,6 +32,16 @@ var (
 	githubRepo = "BeanYa/Lattix"
 )
 
+// defaultTLSDir follows the account that runs the panel. A systemd root service
+// therefore uses /root/cert, while a user-run process uses that user's ~/cert.
+func defaultTLSDir() string {
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		return filepath.Join(home, "cert")
+	}
+	return "cert"
+}
+
 func main() {
 	// 自重启派生的新进程：等待旧进程退出释放监听端口后再启动（panel.restartSelf）。
 	if pidStr := os.Getenv("LATTIX_RESTART_WAIT_PID"); pidStr != "" {
@@ -64,7 +74,7 @@ func main() {
 	ghRepo := flag.String("github-repo", "", "GitHub 仓库（org/repo，生成 release 安装命令/升级下载基址）；空 = 构建注入值")
 	tlsCert := flag.String("tls-cert", "", "TLS 证书文件（自带证书，须与 -tls-key 同用，§12）")
 	tlsKey := flag.String("tls-key", "", "TLS 私钥文件")
-	tlsDir := flag.String("tls-dir", "certs", "域名路径模式证书根目录（<tls-dir>/<域名>/fullchain.pem|privkey.pem，外部 ACME 写入；启动时解析为绝对路径）")
+	tlsDir := flag.String("tls-dir", defaultTLSDir(), "域名路径模式证书根目录（默认 ~/cert；<tls-dir>/<域名>/fullchain.pem|privkey.pem，外部 ACME 写入）")
 	acmeDomain := flag.String("tls-acme-domain", "", "ACME 自动证书域名（Let's Encrypt，TLS-ALPN-01，需 443 端口公网可达）")
 	acmeCache := flag.String("tls-acme-cache", "acme-cache", "ACME 证书缓存目录")
 	acmeEmail := flag.String("tls-acme-email", "", "ACME 账号邮箱（可选，过期通知用）")

@@ -178,7 +178,8 @@ cat <<EOF
              ※ 生产环境请立即修改默认密码：
                latx reset-admin <新密码>，或登录后在设置页修改
 
-  运维命令:  latx status / log / update / acme / reset-admin / uninstall
+  运维菜单:  latx（English / 中文，默认 English）
+  运维命令:  latx status / log / update / cert / acme / bbr / reset-admin / uninstall
              latx -h 查看帮助
 ============================================================
 EOF

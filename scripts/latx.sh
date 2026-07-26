@@ -2,14 +2,17 @@
 # Lattix 面板管理程序（latx，设计文档 §20）。
 #
 # 由 install-panel.sh 安装为 /usr/local/bin/latx（CI 发版时烧入版本与仓库占位符，
-# 见 .github/workflows/release.yml）。全部功能函数化，子命令：
+# 见 .github/workflows/release.yml）。无参数运行进入交互式运维菜单，也可直接使用子命令：
 #
+#   latx                         打开交互式运维菜单
 #   latx status                  面板状态：服务/进程、监听端口、版本、面板地址
 #   latx start|stop|restart      systemctl 包装（需 root）
 #   latx enable|disable          systemctl 包装（需 root）
 #   latx log [-n N]              journalctl -u lattix-panel -f（-n N 时不跟随）
 #   latx update [version]        从 GitHub release 更新面板（默认 latest；仅 amd64）
 #   latx acme <domain>           引导式申请 ACME 证书并切 HTTPS（设置页 API，重启生效）
+#   latx cert <domain> [port]    用 acme.sh 申请证书到面板 ~/cert 目录并切 HTTPS
+#   latx bbr                     开启 BBR 拥塞控制（写入独立 sysctl 配置）
 #   latx reset-admin <newpass>   重置管理员密码（改密即全部会话失效）
 #   latx uninstall [--purge-db] [--yes]   卸载面板（默认保留 DB 并提示路径）
 #   latx version                 latx 自身版本与面板版本
@@ -20,7 +23,8 @@
 #   LATX_UNIT       systemd unit 名（默认 lattix-panel）
 #   LATX_BIN        latx 安装路径（默认 /usr/local/bin/latx，uninstall 时删除）
 #   LATX_PANEL_URL  面板本机地址（默认 http://127.0.0.1:8080，acme 用）
-#   LATX_ADMIN_USER / LATX_ADMIN_PASS   acme 登录凭据（缺省 read -s 提示）
+#   LATX_ADMIN_USER / LATX_ADMIN_PASS   acme/cert 登录凭据（缺省 read -s 提示）
+#   LATX_LANG       交互菜单语言（en|zh；未设置时启动选择，默认 en）
 #   LATX_DEV=1      无 systemd 开发模式：status 降级为进程检查，log 读 panel.log
 set -euo pipefail
 
@@ -54,6 +58,66 @@ panel_version() {
 }
 
 panel_pid() { pgrep -f "$BACKEND" 2>/dev/null | head -1 || true; }
+
+PANEL_SESSION_JAR=""
+
+panel_login() {
+    command -v curl >/dev/null    || die "curl is required"
+    command -v python3 >/dev/null || die "python3 is required"
+
+    local user="${LATX_ADMIN_USER:-admin}"
+    local pass="${LATX_ADMIN_PASS:-}"
+    if [[ -z "$pass" ]]; then
+        read -r -s -p "面板管理员密码（$user）: " pass || true; echo
+        [[ -n "$pass" ]] || die "密码不能为空（或用 LATX_ADMIN_PASS 环境变量传入）"
+    fi
+
+    PANEL_SESSION_JAR="$(mktemp)"
+    trap 'rm -f "$PANEL_SESSION_JAR"' EXIT
+
+    local body code
+    echo ">> 登录面板 $PANEL_URL"
+    body="$(python3 -c 'import json,sys; print(json.dumps({"username":sys.argv[1],"password":sys.argv[2]}))' "$user" "$pass")"
+    code="$(curl -s -o /dev/null -w '%{http_code}' -c "$PANEL_SESSION_JAR" \
+        -H 'Content-Type: application/json' -d "$body" "$PANEL_URL/api/login")"
+    [[ "$code" == "200" ]] || die "登录失败（HTTP $code），请检查面板地址与管理员凭据（LATX_PANEL_URL/LATX_ADMIN_USER/LATX_ADMIN_PASS）"
+}
+
+panel_save_tls() {
+    local mode="$1" domain="$2" field body code
+    case "$mode" in
+        acme) field="acme_domain" ;;
+        path) field="tls_domain" ;;
+        *) die "不支持的 TLS 模式: $mode" ;;
+    esac
+    body="$(python3 -c 'import json,sys; print(json.dumps({"tls_mode":sys.argv[1],sys.argv[2]:sys.argv[3]}))' \
+        "$mode" "$field" "$domain")"
+    code="$(curl -s -o /dev/null -w '%{http_code}' -b "$PANEL_SESSION_JAR" \
+        -H 'Content-Type: application/json' -X PUT -d "$body" "$PANEL_URL/api/settings")"
+    [[ "$code" == "200" ]] || die "保存 TLS 设置失败（HTTP $code）"
+}
+
+panel_restart() {
+    local code
+    code="$(curl -s -o /dev/null -w '%{http_code}' -b "$PANEL_SESSION_JAR" \
+        -X POST "$PANEL_URL/api/settings/restart")"
+    [[ "$code" == "202" ]] || die "重启请求失败（HTTP $code）"
+}
+
+wait_https() {
+    local domain="$1" port url i
+    port="$(python3 -c 'import sys; from urllib.parse import urlparse; print(urlparse(sys.argv[1]).port or 80)' "$PANEL_URL")"
+    if [[ "$port" == "443" ]]; then url="https://$domain"; else url="https://$domain:$port"; fi
+    echo ">> 等待面板恢复并验证 $url"
+    for i in $(seq 1 30); do
+        if curl -fsS --max-time 5 -o /dev/null "$url" 2>/dev/null; then
+            echo ">> done. HTTPS 已生效，面板地址：$url"
+            return 0
+        fi
+        sleep 3
+    done
+    die "验证超时：$url 不可达（确认域名已解析到本机、端口公网可达；日志见 latx log）"
+}
 
 # 从 systemd unit ExecStart 或进程 cmdline 解析 -addr（默认 :8080）。
 panel_addr() {
@@ -206,51 +270,94 @@ cmd_update() {
 
 cmd_acme() {
     local domain="${1:?用法: latx acme <domain>}"
-    command -v curl >/dev/null    || die "curl is required"
-    command -v python3 >/dev/null || die "python3 is required"
-
-    local user="${LATX_ADMIN_USER:-admin}"
-    local pass="${LATX_ADMIN_PASS:-}"
-    if [[ -z "$pass" ]]; then
-        read -r -s -p "面板管理员密码（$user）: " pass || true; echo
-        [[ -n "$pass" ]] || die "密码不能为空（或用 LATX_ADMIN_PASS 环境变量传入）"
-    fi
-
-    JAR_FILE="$(mktemp)"
-    trap 'rm -f "$JAR_FILE"' EXIT
-    local jar="$JAR_FILE"
-
-    echo ">> 登录面板 $PANEL_URL"
-    local body code
-    body="$(python3 -c 'import json,sys; print(json.dumps({"username":sys.argv[1],"password":sys.argv[2]}))' "$user" "$pass")"
-    code="$(curl -s -o /dev/null -w '%{http_code}' -c "$jar" -H 'Content-Type: application/json' \
-        -d "$body" "$PANEL_URL/api/login")"
-    [[ "$code" == "200" ]] || die "登录失败（HTTP $code），请检查面板地址与管理员凭据（LATX_PANEL_URL/LATX_ADMIN_USER/LATX_ADMIN_PASS）"
-
+    panel_login
     echo ">> 保存 ACME 设置（tls_mode=acme, acme_domain=$domain）"
-    body="$(python3 -c 'import json,sys; print(json.dumps({"tls_mode":"acme","acme_domain":sys.argv[1]}))' "$domain")"
-    code="$(curl -s -o /dev/null -w '%{http_code}' -b "$jar" -H 'Content-Type: application/json' \
-        -X PUT -d "$body" "$PANEL_URL/api/settings")"
-    [[ "$code" == "200" ]] || die "保存设置失败（HTTP $code）"
-
+    panel_save_tls acme "$domain"
     echo ">> 重启面板使 TLS 生效"
-    code="$(curl -s -o /dev/null -w '%{http_code}' -b "$jar" -X POST "$PANEL_URL/api/settings/restart")"
-    [[ "$code" == "202" ]] || die "重启请求失败（HTTP $code）"
+    panel_restart
+    wait_https "$domain"
+}
 
-    # ACME（TLS-ALPN-01）要求 443 公网可达；面板监听端口非 443 时按端口验证。
-    local port url
-    port="$(python3 -c 'import sys; from urllib.parse import urlparse; print(urlparse(sys.argv[1]).port or 80)' "$PANEL_URL")"
-    if [[ "$port" == "443" ]]; then url="https://$domain"; else url="https://$domain:$port"; fi
-    echo ">> 等待面板恢复并验证 $url（Let's Encrypt 首次签发可能需数十秒）"
-    local i
-    for i in $(seq 1 30); do
-        if curl -fsS --max-time 5 -o /dev/null "$url" 2>/dev/null; then
-            echo ">> done. ACME 证书已生效，面板地址：$url"
-            return 0
-        fi
-        sleep 3
-    done
-    die "验证超时：$url 不可达（确认域名已解析到本机且 $port 端口公网可达；证书签发日志见 latx log）"
+install_socat() {
+    command -v socat >/dev/null && return 0
+    [[ "$(id -u)" -eq 0 ]] || die "申请证书需要 socat；请先安装，或使用 sudo 执行 latx cert"
+    [[ -r /etc/os-release ]] || die "无法识别系统，请手动安装 socat"
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    case "${ID:-}" in
+        ubuntu|debian|armbian) apt-get update && apt-get install -y socat ;;
+        centos|rhel|almalinux|rocky|ol) yum install -y socat ;;
+        fedora) dnf install -y socat ;;
+        arch|manjaro) pacman -Sy --noconfirm socat ;;
+        *) die "暂不支持自动安装 socat（系统 ${ID:-unknown}），请手动安装后重试" ;;
+    esac
+}
+
+cmd_cert() {
+    local domain="${1:?用法: latx cert <domain> [http-port]}"
+    local http_port="${2:-80}"
+    [[ $# -le 2 ]] || die "用法: latx cert <domain> [http-port]"
+    [[ "$domain" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$ ]] \
+        || die "无效域名: $domain"
+    [[ "$http_port" =~ ^[0-9]+$ ]] && (( http_port >= 1 && http_port <= 65535 )) \
+        || die "无效 HTTP 验证端口: $http_port"
+
+    panel_login
+    local settings tls_dir cert_dir acme
+    settings="$(curl -fsS -b "$PANEL_SESSION_JAR" "$PANEL_URL/api/settings")" \
+        || die "读取面板设置失败"
+    tls_dir="$(printf '%s' "$settings" | python3 -c \
+        'import json,sys; print(json.load(sys.stdin).get("tls_dir", ""))')" \
+        || die "解析面板证书目录失败"
+    [[ -n "$tls_dir" && "$tls_dir" == /* ]] || die "面板返回的证书目录无效: $tls_dir"
+    cert_dir="$tls_dir/$domain"
+    mkdir -p "$cert_dir" 2>/dev/null \
+        || die "无法创建证书目录 $cert_dir；请以拥有该目录权限的用户执行"
+    [[ -w "$cert_dir" ]] || die "证书目录不可写: $cert_dir"
+
+    install_socat
+    acme="${HOME:?HOME 未设置}/.acme.sh/acme.sh"
+    if [[ ! -x "$acme" ]]; then
+        echo ">> 安装 acme.sh 到 $HOME/.acme.sh"
+        (cd "$HOME" && curl -fsSL https://get.acme.sh | sh) \
+            || die "acme.sh 安装失败"
+    fi
+    [[ -x "$acme" ]] || die "未找到可执行的 acme.sh: $acme"
+
+    echo ">> 申请 $domain 证书（HTTP standalone，端口 $http_port）"
+    "$acme" --set-default-ca --server letsencrypt
+    "$acme" --issue -d "$domain" --standalone --httpport "$http_port"
+    "$acme" --install-cert -d "$domain" \
+        --key-file "$cert_dir/privkey.pem" \
+        --fullchain-file "$cert_dir/fullchain.pem"
+    chmod 600 "$cert_dir/privkey.pem"
+    chmod 644 "$cert_dir/fullchain.pem"
+    "$acme" --upgrade --auto-upgrade
+
+    echo ">> 证书已写入 $cert_dir，保存域名路径 TLS 设置"
+    panel_save_tls path "$domain"
+    echo ">> 重启面板使 HTTPS 生效；后续续期证书将自动热加载"
+    panel_restart
+    wait_https "$domain"
+}
+
+cmd_bbr() {
+    need_root
+    command -v sysctl >/dev/null || die "sysctl is required"
+    if ! sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr; then
+        command -v modprobe >/dev/null && modprobe tcp_bbr 2>/dev/null || true
+    fi
+    sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr \
+        || die "当前内核不支持 BBR，请先升级到支持 BBR 的 Linux 内核"
+
+    local config="/etc/sysctl.d/99-lattix-bbr.conf"
+    printf '%s\n' \
+        'net.core.default_qdisc=fq' \
+        'net.ipv4.tcp_congestion_control=bbr' >"$config"
+    sysctl --system >/dev/null
+    [[ "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" == "bbr" ]] \
+        || die "BBR 配置已写入 $config，但未能立即生效"
+    echo ">> BBR 已开启（qdisc=fq，配置：$config）"
 }
 
 cmd_reset_admin() {
@@ -302,14 +409,170 @@ cmd_version() {
 
 cmd_help() { awk '/^set -euo pipefail/{exit} NR>1' "$0" | sed 's/^# \{0,1\}//'; }
 
+MENU_LANG="en"
+
+menu_phrase() {
+    if [[ "$MENU_LANG" == "zh" ]]; then
+        printf '%s' "$2"
+    else
+        printf '%s' "$1"
+    fi
+}
+
+select_menu_language() {
+    local choice="${LATX_LANG:-}"
+    case "$choice" in
+        zh|ZH|2) MENU_LANG="zh"; return ;;
+        en|EN|1) MENU_LANG="en"; return ;;
+        "") ;;
+        *) echo "Unsupported LATX_LANG: $choice; using English." >&2; MENU_LANG="en"; return ;;
+    esac
+
+    cat <<'EOF'
+Select language / 选择语言
+  1. English (default)
+  2. 中文
+EOF
+    read -r -p "Language [1]: " choice || true
+    case "$choice" in
+        2|zh|ZH) MENU_LANG="zh" ;;
+        *) MENU_LANG="en" ;;
+    esac
+}
+
+pause_menu() {
+    local unused
+    echo
+    read -r -p "$(menu_phrase "Press Enter to return to the main menu..." "按 Enter 返回主菜单...")" unused || true
+}
+
+show_menu() {
+    local choice domain port version newpass confirm_pass lines
+    select_menu_language
+    while true; do
+        [[ -t 1 ]] && clear || true
+        if [[ "$MENU_LANG" == "zh" ]]; then
+            cat <<'EOF'
+============================================================
+  Lattix 面板运维菜单
+============================================================
+  面板服务
+    1. 查看面板状态          2. 启动面板
+    3. 停止面板              4. 重启面板
+    5. 开启开机自启          6. 关闭开机自启
+    7. 查看最近日志
+
+  更新与网络
+    8. 更新面板              9. 开启 BBR
+
+  HTTPS 证书
+   10. 申请证书（acme.sh）  11. 使用面板内置 ACME
+
+  账户与维护
+   12. 重置管理员密码       13. 查看版本
+   14. 卸载面板
+
+    0. 退出
+============================================================
+EOF
+        else
+            cat <<'EOF'
+============================================================
+  Lattix Panel Operations
+============================================================
+  Panel Service
+    1. Show panel status       2. Start panel
+    3. Stop panel              4. Restart panel
+    5. Enable autostart        6. Disable autostart
+    7. Show recent logs
+
+  Updates and Network
+    8. Update panel            9. Enable BBR
+
+  HTTPS Certificates
+   10. Issue certificate (acme.sh)
+   11. Use built-in ACME
+
+  Account and Maintenance
+   12. Reset admin password   13. Show version
+   14. Uninstall panel
+
+    0. Exit
+============================================================
+EOF
+        fi
+        read -r -p "$(menu_phrase "Select [0-14]: " "请选择 [0-14]: ")" choice || { echo; return 0; }
+        case "$choice" in
+            0) return 0 ;;
+            1) cmd_status; pause_menu ;;
+            2) cmd_svc start; pause_menu ;;
+            3) cmd_svc stop; pause_menu ;;
+            4) cmd_svc restart; pause_menu ;;
+            5) cmd_svc enable; pause_menu ;;
+            6) cmd_svc disable; pause_menu ;;
+            7)
+                read -r -p "$(menu_phrase "Number of log lines [50]: " "显示最近多少行日志 [50]: ")" lines
+                cmd_log -n "${lines:-50}"
+                pause_menu
+                ;;
+            8)
+                read -r -p "$(menu_phrase "Target version [latest]: " "目标版本 [latest]: ")" version
+                cmd_update "${version:-latest}"
+                pause_menu
+                ;;
+            9)
+                read -r -p "$(menu_phrase \
+                    "Enable BBR? This writes a system sysctl configuration [y/N]: " \
+                    "确认开启 BBR？此操作会写入系统 sysctl 配置 [y/N]: ")" choice
+                if [[ "$choice" == "y" || "$choice" == "Y" ]]; then
+                    cmd_bbr
+                else
+                    menu_phrase "Cancelled" "已取消"; echo
+                fi
+                pause_menu
+                ;;
+            10)
+                read -r -p "$(menu_phrase "Certificate domain: " "证书域名: ")" domain
+                read -r -p "$(menu_phrase "HTTP validation port [80]: " "HTTP 验证端口 [80]: ")" port
+                cmd_cert "$domain" "${port:-80}"
+                pause_menu
+                ;;
+            11)
+                read -r -p "$(menu_phrase "Certificate domain: " "证书域名: ")" domain
+                cmd_acme "$domain"
+                pause_menu
+                ;;
+            12)
+                read -r -s -p "$(menu_phrase \
+                    "New admin password (at least 8 characters): " \
+                    "新的管理员密码（至少 8 位）: ")" newpass; echo
+                read -r -s -p "$(menu_phrase "Confirm new password: " "再次输入新密码: ")" confirm_pass; echo
+                [[ "$newpass" == "$confirm_pass" ]] \
+                    || die "$(menu_phrase "Passwords do not match" "两次输入的密码不一致")"
+                cmd_reset_admin "$newpass"
+                pause_menu
+                ;;
+            13) cmd_version; pause_menu ;;
+            14) cmd_uninstall; return 0 ;;
+            *) menu_phrase "Invalid option: $choice" "无效选项: $choice"; echo; pause_menu ;;
+        esac
+    done
+}
+
 main() {
-    local cmd="${1:-help}"; shift || true
+    if [[ $# -eq 0 ]]; then
+        show_menu
+        return
+    fi
+    local cmd="$1"; shift
     case "$cmd" in
         status)               cmd_status "$@" ;;
         start|stop|restart|enable|disable) cmd_svc "$cmd" ;;
         log)                  cmd_log "$@" ;;
         update)               cmd_update "$@" ;;
         acme)                 cmd_acme "$@" ;;
+        cert)                 cmd_cert "$@" ;;
+        bbr)                  cmd_bbr "$@" ;;
         reset-admin)          cmd_reset_admin "$@" ;;
         uninstall)            cmd_uninstall "$@" ;;
         version)              cmd_version ;;

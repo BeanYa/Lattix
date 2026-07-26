@@ -108,15 +108,19 @@ systemd 服务 `lattix-panel`（`-addr :8080`，`LATX_ADDR` 可覆盖）→ 打�
 与默认账号 `admin` / `lattix-admin`（**生产必改**）。已安装时执行 = 同版本重装/升级
 （保留 DB）。
 
-安装后用 `latx` 运维面板：
+安装后直接运行 `latx` 可选择 English / 中文交互式运维菜单（直接按 Enter 默认
+English）；也可使用子命令进行自动化运维。可用 `LATX_LANG=en|zh latx` 跳过语言选择：
 
 | 命令 | 说明 |
 | --- | --- |
+| `latx` | 选择语言并打开交互式运维菜单（默认 English） |
 | `latx status` | 服务状态、监听端口、面板版本与地址 |
 | `latx start\|stop\|restart\|enable\|disable` | systemctl 包装 |
 | `latx log [-n N]` | 跟随面板日志（`-n N` 时不跟随） |
 | `latx update [version]` | 从 GitHub release 更新面板（默认 latest，仅 amd64） |
-| `latx acme <domain>` | 引导式申请 ACME 证书并切 HTTPS |
+| `latx cert <domain> [port]` | 用 acme.sh 通过 HTTP standalone 申请证书，写入面板证书目录并切 HTTPS（默认验证端口 80） |
+| `latx acme <domain>` | 使用面板内置 ACME（TLS-ALPN-01）并切 HTTPS |
+| `latx bbr` | 开启 BBR 拥塞控制（需要 root） |
 | `latx reset-admin <newpass>` | 重置管理员密码（改密即全部会话失效） |
 | `latx uninstall [--purge-db]` | 卸载面板（默认保留 DB） |
 | `latx version` | latx 与面板版本 |
@@ -153,7 +157,8 @@ systemd 拉起，否则自派生新进程接管（同参数同端口，等待旧
 
 TLS 另支持**域名路径模式**（`tls_mode=path`）：面板按域名从证书根目录读取
 `<tls-dir>/<域名>/fullchain.pem` 与 `privkey.pem`（certbot 风格，目录由 `-tls-dir`
-指定，默认 `certs`，启动时解析为绝对路径并显示在设置页）。外部 ACME（如安装脚本）
+指定，默认当前面板进程用户的 `~/cert`，即 root 运行时为 `/root/cert`、普通用户运行时
+为该用户的主目录下 `cert`，并以绝对路径显示在设置页）。外部 ACME（如 `latx cert`）
 申请/续期后直接写入该目录：保存设置时只填域名；续期替换文件后下一次 TLS 握手即
 自动加载新证书，**免重启**（加载失败时回退已缓存证书，握手不中断）。
 

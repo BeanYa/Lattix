@@ -103,6 +103,10 @@ grep -q "admin / lattix-admin" "$WORK/install.log" \
     && echo "OK: 成功输出含默认账号提示" || { echo "FAIL: 成功输出缺默认账号"; exit 1; }
 grep -q "latx status" "$WORK/install.log" && grep -q "latx -h" "$WORK/install.log" \
     && echo "OK: 成功输出含 latx 运维提示" || { echo "FAIL: 成功输出缺 latx 提示"; exit 1; }
+grep -q "运维菜单:  latx（English / 中文，默认 English）" "$WORK/install.log" \
+    && echo "OK: 成功输出含 latx 交互菜单提示" || { echo "FAIL: 成功输出缺 latx 菜单提示"; exit 1; }
+grep -q "/ cert /" "$WORK/install.log" && grep -q "/ bbr /" "$WORK/install.log" \
+    && echo "OK: 成功输出含证书与 BBR 运维提示" || { echo "FAIL: 成功输出缺 cert/bbr 提示"; exit 1; }
 
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/")" == "200" ]] \
     && echo "OK: 面板 200" || { echo "FAIL: 面板未响应"; cat "$PANEL_ROOT/panel.log"; exit 1; }
@@ -110,6 +114,15 @@ grep -q "latx status" "$WORK/install.log" && grep -q "latx -h" "$WORK/install.lo
     && echo "OK: /resource/ 镜像托管可用" || { echo "FAIL: /resource/ 不可用"; exit 1; }
 curl -s "http://$ADDR/install.sh" | grep -q "LATTIX_VERSION=\"$VERSION\"" \
     && echo "OK: /install.sh 托管 resource 镜像（CI stamp 版）" || { echo "FAIL: /install.sh 不可用"; exit 1; }
+
+SETTINGS_JAR="$WORK/settings-cookies.txt"
+curl -s -c "$SETTINGS_JAR" -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"lattix-admin"}' "http://$ADDR/api/login" >/dev/null
+TLS_DIR="$(curl -s -b "$SETTINGS_JAR" "http://$ADDR/api/settings" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["tls_dir"])')"
+[[ "$TLS_DIR" == "$HOME/cert" ]] \
+    && echo "OK: 默认面板证书目录为当前用户 ~/cert" \
+    || { echo "FAIL: 默认证书目录应为 $HOME/cert，实际 $TLS_DIR"; exit 1; }
 
 echo ">> 用例 3: latx status / version（LATX_DEV=1 进程检查）"
 STATUS="$(latx status)"
@@ -122,6 +135,17 @@ echo "$STATUS" | grep -q "面板地址: http://.*:18081" \
 VER_OUT="$(latx version)"
 [[ "$VER_OUT" == *"latx 版本: $VERSION"* && "$VER_OUT" == *"面板版本: $VERSION"* ]] \
     && echo "OK: latx version（latx 与面板版本）" || { echo "FAIL: version: $VER_OUT"; exit 1; }
+MENU_EN_OUT="$(printf '\n13\n\n0\n' | latx)"
+[[ "$MENU_EN_OUT" == *"Select language / 选择语言"* && "$MENU_EN_OUT" == *"Lattix Panel Operations"* \
+    && "$MENU_EN_OUT" == *"Panel Service"* && "$MENU_EN_OUT" == *"HTTPS Certificates"* \
+    && "$MENU_EN_OUT" == *"$VERSION"* ]] \
+    && echo "OK: latx 语言选择默认进入英文菜单并可执行菜单项" \
+    || { echo "FAIL: latx 默认英文菜单: $MENU_EN_OUT"; exit 1; }
+MENU_ZH_OUT="$(printf '2\n13\n\n0\n' | latx)"
+[[ "$MENU_ZH_OUT" == *"Lattix 面板运维菜单"* && "$MENU_ZH_OUT" == *"面板服务"* \
+    && "$MENU_ZH_OUT" == *"HTTPS 证书"* && "$MENU_ZH_OUT" == *"$VERSION"* ]] \
+    && echo "OK: latx 可选择中文菜单并执行菜单项" \
+    || { echo "FAIL: latx 中文菜单: $MENU_ZH_OUT"; exit 1; }
 
 echo ">> 用例 4: latx reset-admin（改密即全部会话失效，§10）"
 JAR="$WORK/cookies.txt"
