@@ -29,7 +29,7 @@ src/backend/   # Go：面板 HTTP API + Agent WS 端点 + SQLite
 src/agent/     # Go：独立二进制，systemd 托管
 src/shared/    # Go module：WS 消息结构体、虚拟配置类型，backend/agent 共用
 scripts/
-  install.sh          # Agent 引导安装脚本（release 钉版 / 面板托管双模式，均校验 SHA256）
+  install.sh          # Agent 引导安装脚本（--source github|panel 双下载源，均校验 checksums.txt）
   dev-e2e-*.sh        # 各功能端到端验收脚本
 ```
 
@@ -95,9 +95,10 @@ scripts/
 curl -fsSL https://github.com/BeanYa/Lattix/releases/download/v0.0.2/install-panel.sh | bash
 ```
 
-脚本完成：下载面板 tarball（前后端服务 + latx + install.sh）与 agent 两架构包
-（agent + latx-ag，全部校验 SHA256）→ 解压到 `/usr/local/lattix-panel`（agent 包解出
-二进制摆 `dist/` 托管）→ 安装 `latx` 到 `/usr/local/bin/latx` → 注册并启动
+脚本完成：下载面板 tarball（前后端服务 + latx + install.sh）与 /resource 镜像资产
+（install.sh + agent 两架构包 + checksums.txt，与 GitHub release 同布局，全部校验
+SHA256）→ 解压到 `/usr/local/lattix-panel`（镜像摆 `resource/`，供面板托管资源选项
+经 `/resource/` 分发）→ 安装 `latx` 到 `/usr/local/bin/latx` → 注册并启动
 systemd 服务 `lattix-panel`（`-addr :8080`，`LATX_ADDR` 可覆盖）→ 打印面板地址
 与默认账号 `admin` / `lattix-admin`（**生产必改**）。已安装时执行 = 同版本重装/升级
 （保留 DB）。
@@ -133,9 +134,10 @@ cd src/frontend && bun install && bun run build && cd ../..
 
 默认账号 `admin` / `lattix-admin`（`-admin-user` / `-admin-pass` 修改，生产必改）。
 反代部署（docker + openresty/nginx 终止 TLS）时反代 `/`、`/api/agent/ws`（带 Upgrade 头）、
-`/sub`、`/install.sh`、`/dist`，并以 `-public-url https://域名` 或 `X-Forwarded-Proto` 告知面板。
+`/sub`、`/install.sh`、`/resource`，并以 `-public-url https://域名` 或 `X-Forwarded-Proto` 告知面板。
 
-面板"设置"页可在线修改：对外地址与显示时区（立即生效）；TLS 模式 / 自带证书 PEM /
+面板"设置"页可在线修改：对外地址与显示时区（立即生效）；安装资源来源（GitHub release
+钉版 / 面板托管 /resource 镜像）；TLS 模式 / 自带证书 PEM /
 ACME 域名（保存后重启进程生效）；管理员密码（bcrypt 落库，改密即全部会话失效）；
 事件告警（Webhook 地址 / Telegram Bot token / chat_id，三项全空即关闭，可发测试消息）。
 设置页保存的值存于 SQLite `settings` 表并**优先于对应启动参数**，清除后恢复跟随启动参数。
@@ -160,10 +162,19 @@ curl -fsSL https://github.com/BeanYa/Lattix/releases/download/v0.0.1/install.sh 
   --panel http://<面板地址> --token <bootstrap token> --xray-version latest
 ```
 
-dev 构建（无对应 release）回退面板托管模式：`curl -fsSL http://<面板地址>/install.sh | ...`。
-两种模式共用同一脚本：release 模式从 GitHub release 下载 agent 包
-`lattix-agent-linux-<arch>.tar.gz`（agent + latx-ag）并校验 `checksums.txt`；
-面板托管模式从面板 `/dist` 下载并校验面板注入的 SHA256。
+agent 二进制统一走 release 钉版：从 GitHub release 下载 agent 包
+`lattix-agent-linux-<arch>.tar.gz`（agent + latx-ag）并校验 `checksums.txt`。
+设置页开启"面板托管资源"后（或 dev 构建无 release 可钉时），命令改用面板
+`/resource` 镜像并加 `--source panel`：
+
+```bash
+curl -fsSL http://<面板地址>/resource/install.sh | bash -s -- \
+  --source panel --panel http://<面板地址> --token <bootstrap token> --xray-version latest
+```
+
+`/resource` 镜像与 GitHub release 同布局（install.sh + agent 两架构包 +
+checksums.txt），由 install-panel.sh / `latx update` 在面板安装与更新时落地，
+天然与面板同版本；两种源的下载与校验流程完全一致。
 
 脚本完成：安装指定版本 xray（校验官方 .dgst）→ 安装 agent 与 `latx-ag` 节点管理程序
 （校验 SHA256）→ 注册 systemd → 首连换发长期凭证。重装自动先停旧服务并清除旧 state。

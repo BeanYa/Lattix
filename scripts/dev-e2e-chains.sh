@@ -96,7 +96,7 @@ start_agent_c() {
 
 echo ">> start backend"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" -admin-pass "$ADMIN_PASS" \
-    -dist "$WORK/dist" -install-script "$ROOT/scripts/install.sh" -static "$WORK/none" \
+    -resource "$WORK/resource" -install-script "$ROOT/scripts/install.sh" -static "$WORK/none" \
     >"$WORK/backend.log" 2>&1 &
 BPID=$!
 sleep 1

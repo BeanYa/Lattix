@@ -4,20 +4,22 @@
 # 由面板"添加服务器"生成一行安装命令，形如：
 #   curl -fsSL <PANEL_URL>/install.sh | bash -s -- --panel <PANEL_URL> --token <BOOTSTRAP_TOKEN> --xray-version <latest|vX.Y.Z>
 #
-# Agent 二进制有两种获取方式：
-#   1. release 钉版模式：本脚本由 CI 发版时烧入 LATTIX_VERSION / GITHUB_REPO /
-#      DEFAULT_XRAY_VERSION（见 .github/workflows/release.yml），agent 包
-#      lattix-agent-linux-<arch>.tar.gz（lattix-agent + latx-ag）与校验和
-#      均从 GitHub release 资产下载（checksums.txt 校验，获取不到即中止）。
-#   2. 面板托管模式：占位符未烧入（保留 "{{...}}"），agent / latx-ag 从面板 ${PANEL_URL}/dist
-#      下载，校验面板注入的 SHA256（明文 HTTP 下的完整性锚点，§12）。
+# Agent 二进制统一为 release 钉版获取（lattix-agent-linux-<arch>.tar.gz = agent + latx-ag，
+# 与同目录 checksums.txt 校验，获取不到即中止），下载源由 --source 选择：
+#   1. github（默认）：从 GitHub release 资产下载。脚本由 CI 发版时烧入 LATTIX_VERSION /
+#      GITHUB_REPO / DEFAULT_XRAY_VERSION（见 .github/workflows/release.yml）——
+#      脚本与其安装的 agent 二进制天然同版，老面板生成的命令不受后续发版影响。
+#   2. panel：从面板 ${PANEL_URL}/resource 镜像下载。镜像与 GitHub release 同布局
+#      （install.sh + agent 两架构包 + checksums.txt），由面板安装/更新时落地，
+#      与面板同版本；下载与校验流程和 github 源完全一致。
 #
 # 流程：解析/下载指定版本 xray-core（校验官方 .dgst SHA2-256）→ 下载/安装 Agent 二进制
 # 与 latx-ag 节点管理程序 → 注册 systemd → 写入面板地址与 bootstrap token（清除旧 state）。
 # Agent 首连后以 bootstrap token 换发长期凭证。
 #
 # 环境变量覆盖（e2e/运维用）：
-#   LATX_RELEASE_BASE   release 钉版模式的下载基址覆盖（默认 GitHub release，e2e 本地模拟用，支持 file://）
+#   LATX_SOURCE         同 --source（github|panel）；--source 参数优先
+#   LATX_RELEASE_BASE   下载基址覆盖（两种源均生效，e2e 本地模拟用，支持 file://）
 #   LATX_PREFIX         路径前缀（默认空；/usr/local/bin、/etc/systemd/system、state 等全部加前缀）
 #   LATX_DEV=1          无 systemd/非 root 开发模式：跳过 unit 注册，nohup 直接启动 agent；
 #                       xray 不下载，由 XRAY_BIN 指定的本机二进制复制安装
@@ -26,7 +28,7 @@
 set -euo pipefail
 
 # ===== CI 发版烧入区（release.yml 在发版时 sed 替换以下三个占位符）=====
-# 占位符未被替换（含 "{{"）即"面板托管模式"；替换后进入"release 钉版模式"。
+# 占位符未被替换（含 "{{"）时 github 源不可用（无版本可钉），仅 --source panel 可用。
 LATTIX_VERSION="{{LATTIX_VERSION}}"
 GITHUB_REPO="{{GITHUB_REPO}}"
 # 烧入后作为 --xray-version / XRAY_VERSION 的默认值（仍可被显式覆盖）。
@@ -34,13 +36,6 @@ DEFAULT_XRAY_VERSION="{{DEFAULT_XRAY_VERSION}}"
 
 # latest 解析失败时的回退钉住版本。
 FALLBACK_XRAY_VERSION="v26.3.27"
-
-# 面板托管本脚本时注入的 agent 二进制 SHA256（明文 HTTP 下的完整性锚点，§12）；
-# 未注入（保留占位符或为 SKIP）时跳过校验。
-AGENT_SHA256_AMD64="{{AGENT_SHA256_AMD64}}"
-AGENT_SHA256_ARM64="{{AGENT_SHA256_ARM64}}"
-# latx-ag 节点管理程序与 agent 同等待遇：/dist 有 latx-ag 时注入其实际 SHA256。
-LATX_AG_SHA256="{{LATX_AG_SHA256}}"
 
 PREFIX="${LATX_PREFIX:-}"
 BIN_DIR="$PREFIX/usr/local/bin"
@@ -55,8 +50,9 @@ AGENT_LOG="$PREFIX/var/log/lattix-agent.log"
 XRAY_API="${LATX_AG_XRAY_API:-127.0.0.1:10085}"
 PANEL_URL=""
 BOOTSTRAP_TOKEN=""
-# xray 版本默认值：CI 烧入的 DEFAULT_XRAY_VERSION 优先（release 钉版模式）；
-# 占位符未替换时维持 latest（执行时经 GitHub API 解析）。--xray-version 参数与
+SOURCE="${LATX_SOURCE:-github}"
+# xray 版本默认值：CI 烧入的 DEFAULT_XRAY_VERSION 优先；占位符未替换时维持
+# latest（执行时经 GitHub API 解析）。--xray-version 参数与
 # XRAY_VERSION 环境变量始终可覆盖默认值。
 if [[ "$DEFAULT_XRAY_VERSION" != *"{{"* ]]; then
     XRAY_VERSION="${XRAY_VERSION:-$DEFAULT_XRAY_VERSION}"
@@ -71,12 +67,17 @@ while [[ $# -gt 0 ]]; do
         --panel)         PANEL_URL="${2:?--panel requires a value}"; shift 2 ;;
         --token)         BOOTSTRAP_TOKEN="${2:?--token requires a value}"; shift 2 ;;
         --xray-version)  XRAY_VERSION="${2:?--xray-version requires a value}"; shift 2 ;;
+        --source)        SOURCE="${2:?--source requires a value}"; shift 2 ;;
         *)               die "unknown argument: $1" ;;
     esac
 done
 
 [[ -n "$PANEL_URL" ]]       || die "--panel is required"
 [[ -n "$BOOTSTRAP_TOKEN" ]] || die "--token is required"
+case "$SOURCE" in
+    github|panel) ;;
+    *) die "--source 仅支持 github|panel（当前 $SOURCE）" ;;
+esac
 command -v curl      >/dev/null || die "curl is required"
 command -v sha256sum >/dev/null || die "sha256sum is required"
 
@@ -156,57 +157,38 @@ if [[ ! -f "$XRAY_CONFIG_DIR/config.json" ]]; then
 EOF
 fi
 
+# agent 包下载基址：github 源钉到 CI 烧入版本的 GitHub release；panel 源用面板
+# /resource 镜像（与 release 同布局，面板安装/更新时落地，与面板同版本）。
+# LATX_RELEASE_BASE 对两种源均可覆盖下载基址（e2e 本地模拟，支持 file://）。
+command -v tar >/dev/null || die "tar is required"
+case "$SOURCE" in
+    github)
+        [[ "$LATTIX_VERSION" != *"{{"* && "$GITHUB_REPO" != *"{{"* ]] \
+            || die "脚本未经 CI stamp（占位符未替换），github 源无版本可钉；请改用 GitHub release 资产、面板 /resource/install.sh，或 --source panel"
+        RELEASE_BASE="${LATX_RELEASE_BASE:-https://github.com/${GITHUB_REPO}/releases/download/${LATTIX_VERSION}}"
+        ;;
+    panel)
+        RELEASE_BASE="${LATX_RELEASE_BASE:-${PANEL_URL}/resource}"
+        ;;
+esac
 if [[ "$LATTIX_VERSION" != *"{{"* ]]; then
-    # release 钉版模式：从 GitHub release 下载 agent 包（lattix-agent + latx-ag）
-    # 与同 release 的 checksums.txt 校验。LATX_RELEASE_BASE 可覆盖下载基址（e2e 本地模拟，支持 file://）。
-    command -v tar >/dev/null || die "tar is required"
-    RELEASE_BASE="${LATX_RELEASE_BASE:-https://github.com/${GITHUB_REPO}/releases/download/${LATTIX_VERSION}}"
-    echo ">> installing lattix-agent ${LATTIX_VERSION}"
-    curl -fsSL -o "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}.tar.gz" \
-        "${RELEASE_BASE}/lattix-agent-linux-${AGENT_ARCH}.tar.gz"
-    # 校验文件获取不到即中止，不降级跳过。
-    curl -fsSL -o "$TMP_DIR/checksums.txt" "${RELEASE_BASE}/checksums.txt" \
-        || die "未获取到 release 校验文件 checksums.txt，中止安装"
-    (cd "$TMP_DIR" && grep "lattix-agent-linux-${AGENT_ARCH}\.tar\.gz\$" checksums.txt | sha256sum -c - >/dev/null) \
-        || die "agent 包 SHA256 校验失败（release ${LATTIX_VERSION} checksums.txt）"
-    echo ">> agent 包 SHA256 校验通过（release checksums.txt）"
-    tar -C "$TMP_DIR" -xzf "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}.tar.gz"
-    [[ -f "$TMP_DIR/lattix-agent/lattix-agent" && -f "$TMP_DIR/lattix-agent/latx-ag" ]] \
-        || die "agent 包内容异常（缺 lattix-agent 或 latx-ag）"
-    AGENT_SRC="$TMP_DIR/lattix-agent/lattix-agent"
-    LATX_AG_SRC="$TMP_DIR/lattix-agent/latx-ag"
+    echo ">> installing lattix-agent ${LATTIX_VERSION}（source: $SOURCE）"
 else
-    # 面板托管模式：从面板 dist 下载，校验面板注入的 SHA256（§11/§12）。
-    # 与 release 模式一致：先落临时文件、校验通过后再安装到最终路径，
-    # 避免校验失败时坏二进制已写入 $AGENT_BIN。
-    echo ">> installing lattix-agent（面板托管模式）"
-    curl -fsSL -o "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}" \
-        "${PANEL_URL}/dist/lattix-agent-linux-${AGENT_ARCH}"
-    curl -fsSL -o "$TMP_DIR/latx-ag" "${PANEL_URL}/dist/latx-ag" \
-        || die "下载失败：面板 ${PANEL_URL}/dist 无 latx-ag"
-
-    case "$AGENT_ARCH" in
-        amd64) EXPECTED_AGENT="$AGENT_SHA256_AMD64" ;;
-        arm64) EXPECTED_AGENT="$AGENT_SHA256_ARM64" ;;
-    esac
-    if [[ "$EXPECTED_AGENT" == *"{{"* || "$EXPECTED_AGENT" == "SKIP" || -z "$EXPECTED_AGENT" ]]; then
-        echo ">> WARNING: 面板未注入 agent 校验和，跳过校验"
-    else
-        echo "$EXPECTED_AGENT  $TMP_DIR/lattix-agent-linux-${AGENT_ARCH}" | sha256sum -c - >/dev/null \
-            || die "agent 二进制 SHA256 校验失败（期望 $EXPECTED_AGENT）"
-        echo ">> agent 二进制 SHA256 校验通过"
-    fi
-    # latx-ag 与 agent 同等待遇：SKIP 语义一致。
-    if [[ "$LATX_AG_SHA256" == *"{{"* || "$LATX_AG_SHA256" == "SKIP" || -z "$LATX_AG_SHA256" ]]; then
-        echo ">> WARNING: 面板未注入 latx-ag 校验和，跳过校验"
-    else
-        echo "$LATX_AG_SHA256  $TMP_DIR/latx-ag" | sha256sum -c - >/dev/null \
-            || die "latx-ag SHA256 校验失败（期望 $LATX_AG_SHA256）"
-        echo ">> latx-ag SHA256 校验通过"
-    fi
-    AGENT_SRC="$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}"
-    LATX_AG_SRC="$TMP_DIR/latx-ag"
+    echo ">> installing lattix-agent（source: $SOURCE）"
 fi
+curl -fsSL -o "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}.tar.gz" \
+    "${RELEASE_BASE}/lattix-agent-linux-${AGENT_ARCH}.tar.gz"
+# 校验文件获取不到即中止，不降级跳过。
+curl -fsSL -o "$TMP_DIR/checksums.txt" "${RELEASE_BASE}/checksums.txt" \
+    || die "未获取到校验文件 checksums.txt，中止安装"
+(cd "$TMP_DIR" && grep "lattix-agent-linux-${AGENT_ARCH}\.tar\.gz\$" checksums.txt | sha256sum -c - >/dev/null) \
+    || die "agent 包 SHA256 校验失败（checksums.txt）"
+echo ">> agent 包 SHA256 校验通过（checksums.txt）"
+tar -C "$TMP_DIR" -xzf "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}.tar.gz"
+[[ -f "$TMP_DIR/lattix-agent/lattix-agent" && -f "$TMP_DIR/lattix-agent/latx-ag" ]] \
+    || die "agent 包内容异常（缺 lattix-agent 或 latx-ag）"
+AGENT_SRC="$TMP_DIR/lattix-agent/lattix-agent"
+LATX_AG_SRC="$TMP_DIR/lattix-agent/latx-ag"
 install -m 0755 "$AGENT_SRC" "$AGENT_BIN"
 install -m 0755 "$LATX_AG_SRC" "$LATX_AG_BIN"
 echo ">> latx-ag 已安装到 $LATX_AG_BIN"

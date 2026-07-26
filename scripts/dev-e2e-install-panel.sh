@@ -87,13 +87,13 @@ run_install | tee "$WORK/install.log"
     && echo "OK: lattix-backend 就位" || { echo "FAIL: lattix-backend 缺失"; exit 1; }
 grep -q "lattix e2e" "$PANEL_ROOT/frontend-dist/index.html" \
     && echo "OK: frontend-dist 就位" || { echo "FAIL: frontend-dist 缺失"; exit 1; }
-[[ -x "$PANEL_ROOT/dist/lattix-agent-linux-amd64" && -x "$PANEL_ROOT/dist/lattix-agent-linux-arm64" ]] \
-    && echo "OK: dist/ 两架构 agent 就位" || { echo "FAIL: dist/ agent 缺失"; exit 1; }
-[[ -x "$PANEL_ROOT/dist/latx-ag" ]] \
-    && echo "OK: dist/ latx-ag 就位" || { echo "FAIL: dist/ latx-ag 缺失"; exit 1; }
-grep -q "Lattix Agent 引导安装脚本" "$PANEL_ROOT/install.sh" \
-    && grep -q "LATTIX_VERSION=\"$VERSION\"" "$PANEL_ROOT/install.sh" \
-    && echo "OK: install.sh（CI stamp 版）就位" || { echo "FAIL: install.sh 缺失或未 stamp"; exit 1; }
+[[ -f "$PANEL_ROOT/resource/install.sh" && -f "$PANEL_ROOT/resource/checksums.txt" ]] \
+    && echo "OK: resource/ install.sh 与 checksums.txt 就位" || { echo "FAIL: resource/ 脚本或校验和缺失"; exit 1; }
+[[ -f "$PANEL_ROOT/resource/lattix-agent-linux-amd64.tar.gz" && -f "$PANEL_ROOT/resource/lattix-agent-linux-arm64.tar.gz" ]] \
+    && echo "OK: resource/ 两架构 agent 包就位" || { echo "FAIL: resource/ agent 包缺失"; exit 1; }
+grep -q "Lattix Agent 引导安装脚本" "$PANEL_ROOT/resource/install.sh" \
+    && grep -q "LATTIX_VERSION=\"$VERSION\"" "$PANEL_ROOT/resource/install.sh" \
+    && echo "OK: resource/install.sh（CI stamp 版）就位" || { echo "FAIL: resource/install.sh 缺失或未 stamp"; exit 1; }
 [[ -x "$LATX_BIN" ]] \
     && echo "OK: latx 已安装" || { echo "FAIL: latx 未安装到 $LATX_BIN"; exit 1; }
 
@@ -106,10 +106,10 @@ grep -q "latx status" "$WORK/install.log" && grep -q "latx -h" "$WORK/install.lo
 
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/")" == "200" ]] \
     && echo "OK: 面板 200" || { echo "FAIL: 面板未响应"; cat "$PANEL_ROOT/panel.log"; exit 1; }
-[[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/dist/lattix-agent-linux-amd64")" == "200" ]] \
-    && echo "OK: /dist/ 托管可用" || { echo "FAIL: /dist/ 不可用"; exit 1; }
-curl -s "http://$ADDR/install.sh" | grep -q "Lattix Agent 引导安装脚本" \
-    && echo "OK: /install.sh 托管可用" || { echo "FAIL: /install.sh 不可用"; exit 1; }
+[[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/resource/lattix-agent-linux-amd64.tar.gz")" == "200" ]] \
+    && echo "OK: /resource/ 镜像托管可用" || { echo "FAIL: /resource/ 不可用"; exit 1; }
+curl -s "http://$ADDR/install.sh" | grep -q "LATTIX_VERSION=\"$VERSION\"" \
+    && echo "OK: /install.sh 托管 resource 镜像（CI stamp 版）" || { echo "FAIL: /install.sh 不可用"; exit 1; }
 
 echo ">> 用例 3: latx status / version（LATX_DEV=1 进程检查）"
 STATUS="$(latx status)"

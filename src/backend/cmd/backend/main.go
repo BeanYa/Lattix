@@ -26,7 +26,7 @@ import (
 )
 
 // 构建注入（CI release 经 -ldflags -X 覆盖）：面板版本与默认 GitHub 仓库。
-// version 为 dev 时安装命令回退面板托管模式（无对应 release 可钉）。
+// version 为 dev 时安装命令回退面板 /resource 托管源（无对应 release 可钉）。
 var (
 	version    = "dev"
 	githubRepo = "BeanYa/Lattix"
@@ -56,8 +56,11 @@ func main() {
 	adminUser := flag.String("admin-user", "admin", "管理员账号（单管理员，§10）")
 	adminPass := flag.String("admin-pass", "lattix-admin", "管理员密码（MVP 本地/受信网络，§12）")
 	publicURL := flag.String("public-url", "", "面板对外地址（生成安装命令/订阅链接），默认从请求推断")
-	distDir := flag.String("dist", "dist", "agent 二进制等发布产物目录（/dist/ 托管）")
-	installScript := flag.String("install-script", "scripts/install.sh", "install.sh 文件路径")
+	resourceDir := flag.String("resource", "resource", "release 镜像目录（install.sh + agent 包 + checksums.txt，/resource/ 托管，§11）")
+	// 已废弃：/dist 托管已移除（改为 /resource release 镜像）。保留该 flag 仅为兼容
+	// 旧版 install-panel.sh 生成的 systemd unit（升级后不致启动失败），值被忽略。
+	_ = flag.String("dist", "", "已废弃（no-op），改用 -resource")
+	installScript := flag.String("install-script", "scripts/install.sh", "install.sh 文件路径（/resource/install.sh 缺失时的 dev 回退）")
 	ghRepo := flag.String("github-repo", "", "GitHub 仓库（org/repo，生成 release 安装命令/升级下载基址）；空 = 构建注入值")
 	tlsCert := flag.String("tls-cert", "", "TLS 证书文件（自带证书，须与 -tls-key 同用，§12）")
 	tlsKey := flag.String("tls-key", "", "TLS 私钥文件")
@@ -207,7 +210,7 @@ func main() {
 		TLSDir:        tlsDirAbs,
 		Version:       version,
 		GitHubRepo:    repo,
-		DistDir:       *distDir,
+		ResourceDir:   *resourceDir,
 		InstallScript: *installScript,
 		Alerter:       notifier,
 	})
@@ -232,7 +235,7 @@ func main() {
 	// Agent 控制通道（§5）。
 	mux.Handle("GET /api/agent/ws", hub)
 
-	// 面板 API + install.sh / /dist/ 托管（§10、§11）。
+	// 面板 API + install.sh / /resource/ 托管（§10、§11）。
 	ps.RegisterRoutes(mux)
 
 	// 订阅（§9）：mihomo（Clash.Meta）格式 YAML（浏览器访问为落地页）；/links 为分享链接集合（§14）。

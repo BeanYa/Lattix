@@ -63,6 +63,12 @@ const RUNNING_MODE_LABEL: Record<string, string> = {
   path: 'HTTPS（域名路径）',
 }
 
+// agent 安装资源来源（§11）：github = 默认；panel = 面板 /resource 镜像。
+const RESOURCE_SOURCES: { value: 'github' | 'panel'; label: string }[] = [
+  { value: 'github', label: 'GitHub release（默认）' },
+  { value: 'panel', label: '面板托管（/resource 镜像）' },
+]
+
 const textareaClass =
   'w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 font-mono text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30'
 
@@ -74,6 +80,7 @@ export default function Settings() {
   // 基本设置
   const [publicURL, setPublicURL] = useState('')
   const [timezone, setTimezone] = useState('')
+  const [resourceSource, setResourceSource] = useState<'github' | 'panel'>('github')
   // TLS
   const [tlsMode, setTlsMode] = useState<TLSModeChoice>('flag')
   const [certPEM, setCertPEM] = useState('')
@@ -111,6 +118,7 @@ export default function Settings() {
         setSettings(s)
         setPublicURL(s.public_url)
         setTimezone(s.timezone)
+        setResourceSource(s.resource_source === 'panel' ? 'panel' : 'github')
         setTlsMode(s.tls_mode === '' ? 'flag' : s.tls_mode)
         setTlsDomain(s.tls_domain)
         setAcmeDomain(s.acme_domain)
@@ -139,6 +147,7 @@ export default function Settings() {
       const s = await api.updateSettings({
         timezone: timezone.trim(),
         public_url: publicURL.trim(),
+        resource_source: resourceSource,
         tls_mode: tlsMode === 'flag' ? '' : tlsMode,
         // 留空 = 保持已保存值不变（后端语义）
         ...(certPEM.trim() ? { tls_cert_pem: certPEM } : {}),
@@ -274,6 +283,32 @@ export default function Settings() {
               </datalist>
               <p className="text-xs text-muted-foreground">
                 IANA 时区名（如 Asia/Shanghai），全局生效：所有浏览器看到的面板时间一致。
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>安装资源来源</Label>
+              <Select
+                value={resourceSource}
+                onValueChange={(v) => v && setResourceSource(v as 'github' | 'panel')}
+                items={RESOURCE_SOURCES}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {RESOURCE_SOURCES.map((s) => (
+                    <SelectItem key={s.value} value={s.value}>
+                      {s.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                决定「添加服务器」生成的安装命令从哪里下载 install.sh 与 agent 二进制：
+                GitHub release 钉面板同版本（默认）；面板托管则由面板
+                <code className="rounded bg-muted px-1">/resource</code>
+                镜像分发（install.sh、agent 两架构包与 checksums.txt，
+                面板安装/更新时落地，与面板同版本，适合被控机访问 GitHub 受限的场景）。
               </p>
             </div>
           </CardContent>

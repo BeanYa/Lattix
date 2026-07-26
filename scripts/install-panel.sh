@@ -7,7 +7,8 @@
 #   curl -fsSL .../install-panel.sh | bash -s -- <version>   # 指定版本
 #
 # 流程：架构/OS 检查（仅 linux/amd64）→ 解析目标版本（参数 > CI 烧入 > latest 经 GitHub API）
-# → 下载面板 tarball（前后端 + latx + install.sh）与 agent 两架构包（dist/ 托管用，
+# → 下载面板 tarball（前后端 + latx + install.sh）与 /resource 镜像资产（install.sh +
+#   agent 两架构包 + checksums.txt，与 GitHub release 同布局，供面板托管资源选项使用，
 #   全部经 release checksums.txt 校验）
 # → 解压到安装根目录 → 安装 latx → 注册并启动 systemd 服务 → 打印面板地址与默认账号。
 # 已安装时执行 = 同版本重装/升级（停服 → 替换 → 启服，保留 DB）。
@@ -83,11 +84,13 @@ fi
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-# --- 下载面板包与 agent 两架构包（dist/ 托管用）并逐一校验 checksums.txt（获取不到即中止，不降级跳过）---
+# --- 下载面板包与 /resource 镜像资产（install.sh + agent 两架构包 + checksums.txt，
+#     与 GitHub release 同布局）并逐一校验 checksums.txt（获取不到即中止，不降级跳过）---
 ASSETS=(
     lattix-panel-linux-amd64.tar.gz
     lattix-agent-linux-amd64.tar.gz
     lattix-agent-linux-arm64.tar.gz
+    install.sh
 )
 for asset in "${ASSETS[@]}"; do
     curl -fsSL -o "$TMP_DIR/$asset" "$RELEASE_BASE/$asset" \
@@ -105,24 +108,19 @@ echo ">> 全部包 SHA256 校验通过（checksums.txt）"
 tar -C "$TMP_DIR" -xzf "$TMP_DIR/lattix-panel-linux-amd64.tar.gz"
 PKG="$TMP_DIR/lattix-panel"
 [[ -f "$PKG/lattix-backend" ]] || die "面板包内容异常（缺 lattix-backend）"
-# agent 包解到独立目录（两架构包内同为 lattix-agent/，避免互相覆盖）。
-for arch in amd64 arm64; do
-    mkdir -p "$TMP_DIR/agent-$arch"
-    tar -C "$TMP_DIR/agent-$arch" -xzf "$TMP_DIR/lattix-agent-linux-$arch.tar.gz"
-    [[ -f "$TMP_DIR/agent-$arch/lattix-agent/lattix-agent" && -f "$TMP_DIR/agent-$arch/lattix-agent/latx-ag" ]] \
-        || die "agent 包内容异常（lattix-agent-linux-$arch.tar.gz 缺 lattix-agent 或 latx-ag）"
-done
-mkdir -p "$INSTALL_ROOT/dist"
+# /resource 镜像（§11 面板托管资源）：与 GitHub release 同布局（install.sh + agent
+# 两架构包 + checksums.txt），面板经 /resource/ 端点托管；install.sh --source panel 的
+# 下载/校验流程与 GitHub 源完全一致。镜像随面板版本落地，天然与面板同版本。
+mkdir -p "$INSTALL_ROOT/resource"
 install -m 0755 "$PKG/lattix-backend" "$INSTALL_ROOT/lattix-backend"
 rm -rf "$INSTALL_ROOT/frontend-dist"
 cp -r "$PKG/frontend-dist" "$INSTALL_ROOT/frontend-dist"
-# install.sh（agent 引导脚本，CI stamp 版）放根目录，供面板 /install.sh 端点托管（§11）。
-install -m 0644 "$PKG/install.sh" "$INSTALL_ROOT/install.sh"
-# agent 两架构二进制放 dist/，供面板托管模式回退下载（/dist/ 端点，§11）；
-# latx-ag 节点管理程序同摆 dist/（面板据此向 install.sh 注入 LATX_AG_SHA256）。
-install -m 0755 "$TMP_DIR/agent-amd64/lattix-agent/lattix-agent" "$INSTALL_ROOT/dist/lattix-agent-linux-amd64"
-install -m 0755 "$TMP_DIR/agent-arm64/lattix-agent/lattix-agent" "$INSTALL_ROOT/dist/lattix-agent-linux-arm64"
-install -m 0755 "$TMP_DIR/agent-amd64/lattix-agent/latx-ag" "$INSTALL_ROOT/dist/latx-ag"
+install -m 0644 "$TMP_DIR/install.sh" "$INSTALL_ROOT/resource/install.sh"
+install -m 0644 "$TMP_DIR/checksums.txt" "$INSTALL_ROOT/resource/checksums.txt"
+install -m 0644 "$TMP_DIR/lattix-agent-linux-amd64.tar.gz" "$INSTALL_ROOT/resource/lattix-agent-linux-amd64.tar.gz"
+install -m 0644 "$TMP_DIR/lattix-agent-linux-arm64.tar.gz" "$INSTALL_ROOT/resource/lattix-agent-linux-arm64.tar.gz"
+# 清理旧版部署残留（/dist 托管与根目录 install.sh 已移除）。
+rm -rf "$INSTALL_ROOT/dist" "$INSTALL_ROOT/install.sh"
 
 # --- 安装 latx 面板管理程序 ---
 mkdir -p "$(dirname "$LATX_BIN")"
@@ -130,7 +128,7 @@ install -m 0755 "$PKG/latx" "$LATX_BIN"
 echo ">> latx 已安装到 $LATX_BIN"
 
 # --- 注册并启动服务 ---
-PANEL_ARGS="-addr $ADDR -db $INSTALL_ROOT/lattix.db -static $INSTALL_ROOT/frontend-dist -dist $INSTALL_ROOT/dist -install-script $INSTALL_ROOT/install.sh"
+PANEL_ARGS="-addr $ADDR -db $INSTALL_ROOT/lattix.db -static $INSTALL_ROOT/frontend-dist -resource $INSTALL_ROOT/resource"
 if [[ "$DEV_MODE" -eq 0 ]]; then
     echo ">> registering systemd service $UNIT"
     cat > "/etc/systemd/system/${UNIT}.service" <<EOF

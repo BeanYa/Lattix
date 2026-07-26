@@ -70,7 +70,7 @@ gen_pair() {
 echo ">> start backend（-public-url 启动参数回退值 + -tls-dir 证书根目录）"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" -admin-pass "$ADMIN_PASS" \
     -public-url "$PUBLIC_URL_FALLBACK" -tls-dir "$WORK/certs" \
-    -dist "$WORK/dist" -install-script "$ROOT/scripts/install.sh" -static "$WORK/none" \
+    -resource "$WORK/resource" -install-script "$ROOT/scripts/install.sh" -static "$WORK/none" \
     >"$WORK/backend.log" 2>&1 &
 BPID=$!
 sleep 1
@@ -83,8 +83,9 @@ G="$(api GET /api/settings)"
     && echo "OK: 设置基线（全空，跟随启动参数）" || { echo "FAIL: 基线: $G"; exit 1; }
 
 S1="$(api POST /api/servers '{"alias":"s1"}')"
-[[ "$(echo "$S1" | py "d['install_command']")" == "curl -fsSL $PUBLIC_URL_FALLBACK/install.sh | bash -s -- --panel $PUBLIC_URL_FALLBACK --token "* ]] \
-    && echo "OK: 未保存 public_url 时安装命令回退启动参数" || { echo "FAIL: install_command: $S1"; exit 1; }
+# dev 构建（version=dev）无 release 可钉：安装命令回退面板 /resource 托管源（--source panel）。
+[[ "$(echo "$S1" | py "d['install_command']")" == "curl -fsSL $PUBLIC_URL_FALLBACK/resource/install.sh | bash -s -- --source panel --panel $PUBLIC_URL_FALLBACK --token "* ]] \
+    && echo "OK: 未保存 public_url 时安装命令回退启动参数（dev 面板 /resource 托管源）" || { echo "FAIL: install_command: $S1"; exit 1; }
 
 echo ">> PUT 保存时区与对外地址"
 [[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{"timezone":"Mars/Olympus"}' "http://$ADDR/api/settings")" == "400" ]] \
@@ -95,18 +96,28 @@ G="$(api PUT /api/settings '{"timezone":"Asia/Shanghai","public_url":"https://pa
 [[ "$(echo "$G" | py "(d['timezone'], d['public_url'])")" == "('Asia/Shanghai', 'https://panel.example.com')" ]] \
     && echo "OK: 时区与对外地址已保存" || { echo "FAIL: 保存: $G"; exit 1; }
 S2="$(api POST /api/servers '{"alias":"s2"}')"
-[[ "$(echo "$S2" | py "d['install_command']")" == "curl -fsSL https://panel.example.com/install.sh | bash -s -- --panel https://panel.example.com --token "* ]] \
+[[ "$(echo "$S2" | py "d['install_command']")" == "curl -fsSL https://panel.example.com/resource/install.sh | bash -s -- --source panel --panel https://panel.example.com --token "* ]] \
     && echo "OK: 保存后安装命令使用对外地址" || { echo "FAIL: install_command: $S2"; exit 1; }
 U="$(api POST /api/users '{"name":"u1"}')"
 [[ "$(echo "$U" | py "d['sub_url']")" == "https://panel.example.com/sub/"* ]] \
     && echo "OK: 订阅链接使用对外地址" || { echo "FAIL: sub_url: $U"; exit 1; }
+
+echo ">> 安装资源来源（resource_source）：校验 + 保存 + 清除"
+[[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{"resource_source":"ftp"}' "http://$ADDR/api/settings")" == "400" ]] \
+    && echo "OK: 非法资源来源被拒" || { echo "FAIL: 非法资源来源未拒"; exit 1; }
+G="$(api PUT /api/settings '{"resource_source":"panel"}')"
+[[ "$(echo "$G" | py "d['resource_source']")" == "panel" ]] \
+    && echo "OK: resource_source=panel 已保存" || { echo "FAIL: resource_source 保存: $G"; exit 1; }
+G="$(api PUT /api/settings '{"resource_source":"github"}')"
+[[ -z "$(echo "$G" | py "d['resource_source']")" ]] \
+    && echo "OK: resource_source=github 恢复默认（设置删除）" || { echo "FAIL: resource_source 清除: $G"; exit 1; }
 
 echo ">> PUT 清除后回退启动参数"
 G="$(api PUT /api/settings '{"timezone":"","public_url":""}')"
 [[ "$(echo "$G" | py "(d['timezone'], d['public_url'])")" == "('', '')" ]] \
     && echo "OK: 设置已清除" || { echo "FAIL: 清除: $G"; exit 1; }
 S3="$(api POST /api/servers '{"alias":"s3"}')"
-[[ "$(echo "$S3" | py "d['install_command']")" == "curl -fsSL $PUBLIC_URL_FALLBACK/install.sh | bash -s -- --panel $PUBLIC_URL_FALLBACK --token "* ]] \
+[[ "$(echo "$S3" | py "d['install_command']")" == "curl -fsSL $PUBLIC_URL_FALLBACK/resource/install.sh | bash -s -- --source panel --panel $PUBLIC_URL_FALLBACK --token "* ]] \
     && echo "OK: 清除后安装命令回退启动参数" || { echo "FAIL: 回退: $S3"; exit 1; }
 
 # --- 管理员密码修改 ---

@@ -15,7 +15,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:8080',
       '/install.sh': 'http://localhost:8080',
-      '/dist': 'http://localhost:8080',
+      '/resource': 'http://localhost:8080',
       '/sub': 'http://localhost:8080',
     },
   },

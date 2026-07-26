@@ -170,8 +170,27 @@ cmd_update() {
     (cd "$tmp" && grep 'lattix-panel-linux-amd64.tar.gz$' checksums.txt | sha256sum -c - >/dev/null) \
         || die "面板包 SHA256 校验失败（release ${version} checksums.txt）"
     echo ">> 面板包 SHA256 校验通过"
+    # /resource 镜像同步刷新（§11 面板托管资源）：install.sh + agent 两架构包，
+    # 与 release 同布局，逐一校验（获取不到即中止，与安装同规）。
+    local res_assets=(install.sh lattix-agent-linux-amd64.tar.gz lattix-agent-linux-arm64.tar.gz)
+    local a
+    for a in "${res_assets[@]}"; do
+        curl -fsSL -o "$tmp/$a" "$base/$a" \
+            || die "下载失败：release ${version} 无 $a"
+        (cd "$tmp" && grep "${a}\$" checksums.txt | sha256sum -c - >/dev/null) \
+            || die "$a SHA256 校验失败（release ${version} checksums.txt）"
+    done
+    echo ">> resource 镜像资产 SHA256 校验通过"
     tar -C "$tmp" -xzf "$tmp/lattix-panel-linux-amd64.tar.gz"
     [[ -f "$tmp/lattix-panel/lattix-backend" ]] || die "面板包内容异常（缺 lattix-backend）"
+
+    mkdir -p "$INSTALL_ROOT/resource"
+    install -m 0644 "$tmp/install.sh" "$INSTALL_ROOT/resource/install.sh"
+    install -m 0644 "$tmp/checksums.txt" "$INSTALL_ROOT/resource/checksums.txt"
+    install -m 0644 "$tmp/lattix-agent-linux-amd64.tar.gz" "$INSTALL_ROOT/resource/lattix-agent-linux-amd64.tar.gz"
+    install -m 0644 "$tmp/lattix-agent-linux-arm64.tar.gz" "$INSTALL_ROOT/resource/lattix-agent-linux-arm64.tar.gz"
+    # 清理旧版部署残留（/dist 托管与根目录 install.sh 已移除）。
+    rm -rf "$INSTALL_ROOT/dist" "$INSTALL_ROOT/install.sh"
 
     systemctl stop "$UNIT"
     install -m 0755 "$tmp/lattix-panel/lattix-backend" "$BACKEND"

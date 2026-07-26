@@ -158,7 +158,7 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 ## 11. 服务器引导流程
 
 1. 面板"添加服务器"填写别名、公网地址与 **xray 版本**（默认 `latest`，也可指定具体版本），生成一次性 **bootstrap token** 与一行安装命令（自 0.0.2 之后迭代起另含机器类型与 NAT 可用端口段，§21；均为面板侧元数据，不下发到 agent，引导流程不变）；
-2. `install.sh` 在被控机执行：按创建时指定的 xray 版本安装（`latest` 在执行时经 GitHub API 解析最新 release；**校验官方 release checksums**）→ 下载/安装 Agent 二进制 → 注册 systemd → 写入面板地址与 bootstrap token（重装时清除旧 state 文件，确保使用新 bootstrap token）。Agent 二进制两种获取方式：**release 钉版模式**（正式版本，install.sh 由 CI 烧入版本号，agent 与校验和取自同版本 GitHub release 资产，校验 `checksums.txt`）与**面板托管模式**（dev 构建，agent 从面板 `/dist` 下载，**按面板注入的 SHA256 校验**，明文 HTTP 下保证二进制不被中间人替换）；
+2. `install.sh` 在被控机执行：按创建时指定的 xray 版本安装（`latest` 在执行时经 GitHub API 解析最新 release；**校验官方 release checksums**）→ 下载/安装 Agent 二进制 → 注册 systemd → 写入面板地址与 bootstrap token（重装时清除旧 state 文件，确保使用新 bootstrap token）。Agent 二进制统一为 release 钉版获取（agent 包 `lattix-agent-linux-<arch>.tar.gz` 与同目录 `checksums.txt` 校验，获取不到即中止），下载源由 `--source` 选择：**github**（默认，install.sh 由 CI 烧入版本号，agent 与校验和取自同版本 GitHub release 资产——脚本与二进制天然同版，老面板生成的命令不受后续发版影响）与 **panel**（从面板 `/resource` 镜像下载；镜像与 GitHub release 同布局——install.sh + agent 两架构包 + checksums.txt，由面板安装/更新时落地，与面板同版本，下载与校验流程和 github 源完全一致）。安装命令的脚本地址与 `--source` 由设置页"安装资源来源"决定（默认 github；dev 构建无 release 可钉，始终回退 panel 源）；
 3. Agent 启动首连，以 bootstrap token 换发长期服务器 token；**实际安装的 xray 版本随 hello 上报，面板服务器列表展示实际版本号**。
 
 凭证刷新（§10）将 `last_seen_at` 重置为空，使服务器回到 bootstrap 状态，下次 hello 重新换发。
@@ -169,10 +169,13 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
   - **自带证书**：`-tls-cert`/`-tls-key` 启动参数指定证书与私钥（须为受信 CA 签发，agent 走系统 CA 校验 wss）；
   - **ACME 自动证书**：`-tls-acme-domain`（Let's Encrypt，TLS-ALPN-01 挑战，仅需 443 公网可达，无需 80 端口），缓存目录 `-tls-acme-cache`；
   - **反向代理终止 TLS**（推荐生产形态，如 docker + openresty/nginx 管理证书）：面板保持 HTTP，
-    反代转发 `/`、`/api/agent/ws`（带 Upgrade 头）、`/sub`、`/install.sh`、`/dist`，
+    反代转发 `/`、`/api/agent/ws`（带 Upgrade 头）、`/sub`、`/install.sh`、`/resource`，
     并以 `-public-url https://域名` 或 `X-Forwarded-Proto: https` 告知面板生成 https 链接。
 - HTTPS（含反代）下会话 cookie 带 `Secure`；安装命令/订阅链接按上述推断生成 `https://`/`wss://`。
-- install 通道（install.sh、agent 二进制）的完整性由 **SHA256 校验**保障（§11）：release 钉版模式下信任锚定在 GitHub release 资产与 `checksums.txt`（HTTPS 投递）；面板托管模式在 HTTP 部署下明文传输，校验和由面板注入脚本，等价于把信任锚定在 install.sh 的投递路径上，HTTPS 部署下由 TLS 保障。
+- install 通道（install.sh、agent 二进制）的完整性由 **SHA256 校验**保障（§11）：两种下载源
+  统一校验下载基址的 `checksums.txt`（获取不到即中止）。github 源信任锚定在 GitHub release
+  资产（HTTPS 投递）；panel 源等价于把信任锚定在面板 `/resource` 的投递路径上，HTTP 明文部署下
+  需自评链路风险，HTTPS 部署下由 TLS 保障。
 - Reality 私钥永不出服务器（§7）；VLESS Encryption 的 decryption 私钥侧同理（§15）。
 - Agent 能力面收敛：只执行 xray 配置落地、服务重启、状态上报、自卸载，不接受任意命令。
 
@@ -326,12 +329,14 @@ curl -fsSL https://github.com/<repo>/releases/download/<ver>/install-panel.sh | 
 
 - 仅 linux/amd64（面板无 arm64 构建，明确报错）；目标版本解析：脚本参数 > CI 烧入版本 >
   latest（执行时经 GitHub API 解析，`LATX_RELEASE_BASE` 可覆盖下载基址，e2e 用）。
-- 下载面板 tarball（前后端服务 + `latx` + agent 引导 `install.sh`）与 agent 两架构包
-  `lattix-agent-linux-<arch>.tar.gz`（agent + `latx-ag`），逐一校验 release
-  `checksums.txt`（获取不到即中止，与 §11 同规）；agent 包解出二进制放
-  `<root>/dist/` 供面板托管模式回退（§11 面板托管模式）。
+- 下载面板 tarball（前后端服务 + `latx` + agent 引导 `install.sh`）与 `/resource`
+  镜像资产（`install.sh` + agent 两架构包 `lattix-agent-linux-<arch>.tar.gz` +
+  `checksums.txt`，与 GitHub release 同布局），逐一校验 release `checksums.txt`
+  （获取不到即中止，与 §11 同规）。
 - 解压到 `/usr/local/lattix-panel`（`LATX_ROOT` 覆盖）：`lattix-backend` +
-  `frontend-dist/` + `dist/` + `install.sh`（供 `/install.sh` 端点）；
+  `frontend-dist/` + `resource/`（release 镜像，供 `/resource/` 端点与
+  `/install.sh` 回退托管，§11 面板托管资源）；旧版 `dist/` 与根目录 `install.sh`
+  残留在安装/更新时清除。
   注册 systemd unit `lattix-panel`（`Restart=always`，`-addr` 由 `LATX_ADDR` 覆盖，
   默认 `:8080`），enable + start 后等待端口起来。
 - 成功输出三要素：面板地址（公网 IP 经 ifconfig.me 类服务探测，失败回退 `hostname -I`）、
@@ -345,7 +350,7 @@ curl -fsSL https://github.com/<repo>/releases/download/<ver>/install-panel.sh | 
 `start|stop|restart|enable|disable`（systemctl 包装，非 root 明确报错）、
 `log [-n N]`（journalctl，`-n` 不跟随）、`update [version]`（latest 经 GitHub API
 解析，下载 tarball + checksums.txt 校验后停服替换 `lattix-backend` 与 `frontend-dist`，
-启服并校验 `-version`；仅 amd64）、`acme <domain>`（登录 → PUT tls_mode=acme →
+同步刷新 `resource/` 镜像资产并校验，启服并校验 `-version`；仅 amd64）、`acme <domain>`（登录 → PUT tls_mode=acme →
 POST restart → 等待恢复并验证 `https://<domain>` 可达，凭据 read -s 或
 `LATX_ADMIN_USER`/`LATX_ADMIN_PASS`）、`reset-admin <newpass>`（调
 `lattix-backend -reset-admin`，见下）、`uninstall [--purge-db]`（确认后停服删 unit
@@ -365,12 +370,11 @@ POST restart → 等待恢复并验证 `https://<domain>` 可达，凭据 read -
 备份 .bak → 替换 → 重启 → 版本校验，失败回滚；`XRAY_RELEASE_BASE` 对齐
 `-xray-release-base` 镜像语义）、`uninstall [--purge-xray]`（确认后卸载，清理清单与
 agent uninstall.go 对齐含 .bak；默认仅 agent，xray 与节点继续运行）、`version`。
-随 install.sh 双模式分发：release 钉版模式打进 agent 包
-`lattix-agent-linux-<arch>.tar.gz` 经 checksums.txt 校验；
-面板托管模式摆面板 `/dist`，后端向 install.sh 注入 `{{LATX_AG_SHA256}}`（与
-AGENT_SHA256_* 同 SKIP 语义），install-panel.sh 同步摆放。install.sh 成功输出
-面板地址 / agent 状态 / xray 版本与 latx-ag 运维提示块。`LATX_DEV=1` + `LATX_PREFIX`
-路径前缀提供与 install-panel.sh 同款的 DEV 降级（dev-e2e-install-agent.sh 走此路径）。
+latx-ag 随 agent 包 `lattix-agent-linux-<arch>.tar.gz` 分发（github 源取自 GitHub
+release；panel 源取自面板 `/resource` 镜像），统一经 checksums.txt 校验（§11）。
+install.sh 成功输出面板地址 / agent 状态 / xray 版本与 latx-ag 运维提示块。
+`LATX_DEV=1` + `LATX_PREFIX` 路径前缀提供与 install-panel.sh 同款的 DEV 降级
+（dev-e2e-install-agent.sh 走此路径）。
 
 **`-reset-admin` 启动参数**：`lattix-backend -reset-admin <newpass> -db <path>`
 与设置页改密同一代码路径（bcrypt 哈希写 `settings`，≥8 位校验，会话签名密钥派生自

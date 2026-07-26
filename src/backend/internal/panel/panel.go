@@ -2,9 +2,7 @@
 package panel
 
 import (
-	"bytes"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -27,10 +25,10 @@ type Config struct {
 	Secure        bool            // 面板自身以 TLS 服务（自带证书或 ACME，§12）
 	RunningTLS    AppliedTLS      // 当前进程实际生效的 TLS 快照（main 启动时确定，重启生效）
 	TLSDir        string          // 域名路径模式证书根目录（<tls-dir>/<域名>/fullchain.pem|privkey.pem）
-	Version       string          // 面板版本（构建注入）；dev 时安装命令回退面板托管模式
+	Version       string          // 面板版本（构建注入）；dev 时安装命令回退面板 /resource 托管源
 	GitHubRepo    string          // GitHub 仓库（org/repo）：release 安装命令与 agent 升级下载基址
-	DistDir       string          // agent 二进制等发布产物目录（/dist/ 托管）
-	InstallScript string          // install.sh 文件路径（/install.sh 托管）
+	ResourceDir   string          // release 镜像目录（install.sh + agent 包 + checksums.txt，/resource/ 托管）
+	InstallScript string          // install.sh 文件路径（/resource/install.sh 缺失时的 dev 回退）
 	Alerter       *alert.Notifier // 事件告警（§19）；nil = 关闭
 }
 
@@ -42,43 +40,19 @@ type Server struct {
 	cfg     Config
 	alerter *alert.Notifier
 
-	installScript []byte
+	installScript []byte // dev 回退脚本（-install_script 指定的原始脚本，可能未 stamp）
 }
 
 // New 创建面板 API 服务。
 func New(st *store.Store, disp *dispatch.Dispatcher, req ws.Requester, cfg Config) (*Server, error) {
-	script, err := os.ReadFile(cfg.InstallScript)
-	if err != nil {
-		return nil, fmt.Errorf("read install script: %w", err)
-	}
-	// 注入 dist 中 agent 二进制的 SHA256（明文 HTTP 下的完整性锚点，§11/§12）。
-	script = injectAgentSHA256(script, cfg.DistDir)
+	// dev 回退脚本读取失败不致命（正式部署经 /resource/install.sh 托管）。
+	script, _ := os.ReadFile(cfg.InstallScript)
 	// 链编排器与单机节点共用同一份 dest 白名单（§6/§21）。
 	disp.DestCandidates = destCandidates
 	return &Server{st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, installScript: script}, nil
 }
 
-// injectAgentSHA256 将 install.sh 中的 {{AGENT_SHA256_<ARCH>}} / {{LATX_AG_SHA256}}
-// 占位符替换为 dist 目录下对应文件的 SHA256；文件缺失时替换为 SKIP（install.sh 跳过校验）。
-func injectAgentSHA256(script []byte, distDir string) []byte {
-	// 资产名 → 占位符：agent 两架构二进制 + latx-ag 节点管理程序（同等待遇，§20）。
-	assets := map[string]string{
-		"lattix-agent-linux-amd64": "{{AGENT_SHA256_AMD64}}",
-		"lattix-agent-linux-arm64": "{{AGENT_SHA256_ARM64}}",
-		"latx-ag":                  "{{LATX_AG_SHA256}}",
-	}
-	for file, placeholder := range assets {
-		sum := "SKIP"
-		if b, err := os.ReadFile(filepath.Join(distDir, file)); err == nil {
-			h := sha256.Sum256(b)
-			sum = hex.EncodeToString(h[:])
-		}
-		script = bytes.ReplaceAll(script, []byte(placeholder), []byte(sum))
-	}
-	return script
-}
-
-// RegisterRoutes 注册面板路由（管理 API 均需登录；install.sh 与 /dist/ 公开，§11 引导流程）。
+// RegisterRoutes 注册面板路由（管理 API 均需登录；install.sh 与 /resource/ 公开，§11 引导流程）。
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
@@ -120,13 +94,30 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/backup", s.requireAuth(s.handleBackup))
 
 	mux.HandleFunc("GET /install.sh", s.handleInstallScript)
-	mux.Handle("GET /dist/", http.StripPrefix("/dist/", http.FileServer(http.Dir(s.cfg.DistDir))))
+	// /resource/ 托管 release 镜像（install.sh + agent 包 + checksums.txt，与 GitHub
+	// release 同布局），由面板安装/更新时落地，供 install.sh --source panel 下载（§11）。
+	mux.Handle("GET /resource/", http.StripPrefix("/resource/", http.FileServer(http.Dir(s.cfg.ResourceDir))))
 }
 
 // handleInstallScript 提供 Agent 引导安装脚本（§11）；参数经一行命令的 --panel/--token 传入。
+// 优先托管 resource 镜像中的 CI stamp 版（与面板同版本）；缺失时回退 -install-script
+// 指定的原始脚本（dev 用，占位符未替换时仅 --source panel 可执行）。
 func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(s.installScript)
+	if p := filepath.Join(s.cfg.ResourceDir, "install.sh"); fileExists(p) {
+		http.ServeFile(w, r, p)
+		return
+	}
+	if len(s.installScript) > 0 {
+		w.Write(s.installScript)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func fileExists(p string) bool {
+	info, err := os.Stat(p)
+	return err == nil && !info.IsDir()
 }
 
 // PanelBase 导出 panelBase，供订阅落地页生成绝对链接（与面板 DTO 同一判定链）。

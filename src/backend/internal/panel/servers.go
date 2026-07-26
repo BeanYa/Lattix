@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -151,7 +152,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"server":          s.toServerDTO(*srv),
 		"bootstrap_token": bootstrap,
-		"install_command": s.installCommand(base, bootstrap, req.XrayVersion),
+		"install_command": s.installCommand(r.Context(), base, bootstrap, req.XrayVersion),
 	})
 }
 
@@ -184,7 +185,7 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"server":          s.toServerDTO(*srv),
 		"bootstrap_token": bootstrap,
-		"install_command": s.installCommand(base, bootstrap, "latest"),
+		"install_command": s.installCommand(r.Context(), base, bootstrap, "latest"),
 	})
 }
 
@@ -426,18 +427,22 @@ func (s *Server) handleRepairServer(w http.ResponseWriter, r *http.Request) {
 }
 
 // installCommand 生成一行安装命令（§11）：xray 版本随命令携带（latest 由 install.sh 解析）。
-// 正式版本（version 非 dev）时 install.sh 钉到面板同版本的 GitHub release 资产——
-// 脚本与其安装的 agent 二进制天然同版，老面板生成的命令不受后续发版影响（不可变性）；
-// dev 构建回退面板托管模式。
-func (s *Server) installCommand(base, token, xrayVersion string) string {
-	scriptURL := base + "/install.sh"
-	if s.cfg.Version != "" && s.cfg.Version != "dev" && s.cfg.GitHubRepo != "" {
-		scriptURL = fmt.Sprintf("https://github.com/%s/releases/download/%s/install.sh",
-			s.cfg.GitHubRepo, s.cfg.Version)
+// 默认 GitHub release 钉版：正式版本面板生成指向面板同版本 release 资产的命令——脚本与其
+// 安装的 agent 二进制天然同版，老面板生成的命令不受后续发版影响（不可变性）。
+// 设置页开启"面板托管资源"（resource_source=panel），或 dev 构建无 release 可钉时，
+// 改用面板 /resource 镜像（与 release 同布局，面板安装/更新时落地，与面板同版本），
+// 脚本以 --source panel 从面板下载 agent 包。
+func (s *Server) installCommand(ctx context.Context, base, token, xrayVersion string) string {
+	hosted := s.getSetting(ctx, store.SettingResourceSource) == ResourceSourcePanel ||
+		s.cfg.Version == "" || s.cfg.Version == "dev" || s.cfg.GitHubRepo == ""
+	if hosted {
+		return fmt.Sprintf(
+			"curl -fsSL %s/resource/install.sh | bash -s -- --source panel --panel %s --token %s --xray-version %s",
+			base, base, token, xrayVersion)
 	}
 	return fmt.Sprintf(
-		"curl -fsSL %s | bash -s -- --panel %s --token %s --xray-version %s",
-		scriptURL, base, token, xrayVersion)
+		"curl -fsSL https://github.com/%s/releases/download/%s/install.sh | bash -s -- --panel %s --token %s --xray-version %s",
+		s.cfg.GitHubRepo, s.cfg.Version, base, token, xrayVersion)
 }
 
 // handleDeleteServer 处理 DELETE /api/servers/{id}：

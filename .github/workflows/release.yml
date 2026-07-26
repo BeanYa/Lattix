@@ -12,7 +12,8 @@ name: release
 #   checksums.txt                          上述全部资产的 sha256sum（标准 `<hash>  <文件名>` 格式）
 #
 # latx / latx-ag 不单独作 release 资产：latx 随 panel tarball 分发，latx-ag 随 agent tarball
-# 分发。面板的 dist/ 托管目录由 install-panel.sh 从两个 agent tarball 解包摆放。
+# 分发。面板的 /resource 镜像（install.sh + agent 两架构包 + checksums.txt，与本 release
+# 同布局）由 install-panel.sh / latx update 在面板安装与更新时落地（§11 面板托管资源）。
 #
 # 版本注入：-ldflags "-X main.version=<TAG> -X main.githubRepo=<GITHUB_REPOSITORY>"
 # 注入 backend 与 agent 的 main 包（二者均有 var version / var githubRepo）。
@@ -83,7 +84,6 @@ jobs:
             out/install.sh
           grep -q 'LATTIX_VERSION="{{' out/install.sh \
             && { echo "FAIL: install.sh 占位符未替换"; exit 1; } || true
-          # 注：AGENT_SHA256_* 占位符保留，属面板托管模式的注入点，不在此处替换。
 
       - name: Stamp latx / latx-ag / install-panel.sh placeholders
         run: |
@@ -96,8 +96,6 @@ jobs:
             out/latx out/latx-ag out/install-panel.sh
           grep -qE '(LATX_VERSION|LATX_AG_VERSION|LATTIX_VERSION)="\{\{' out/latx out/latx-ag out/install-panel.sh \
             && { echo "FAIL: latx/latx-ag/install-panel.sh 占位符未替换"; exit 1; } || true
-          # 注：install.sh 的 AGENT_SHA256_* / LATX_AG_SHA256 占位符保留，
-          # 属面板托管模式的注入点，不在此处替换。
 
       - name: Pack agent bundles (agent + latx-ag)
         run: |

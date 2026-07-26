@@ -4,7 +4,8 @@
 #   → LATX_DEV=1 + LATX_PREFIX 无 systemd 降级安装（xray 由 XRAY_BIN 本机二进制复制安装）
 #   → latx-ag 随装 → checksum 篡改应中止 → 成功输出（面板地址/agent 状态/latx-ag 提示块）
 #   → 重装清旧 state（预置坏 state 仍能上线）→ agent 连上面板（online）
-#   → latx-ag version / status（DEV 进程检查）可用。
+#   → latx-ag version / status（DEV 进程检查）可用
+#   → --source panel：面板 /resource 镜像（-resource 指假 release 目录）下载安装并上线。
 # 依赖：python3、curl、本机 xray 二进制（XRAY_BIN 可覆盖；DEV 模式复制安装，不下载）。
 # 无需 systemd/root（全程 LATX_DEV=1）。
 set -euo pipefail
@@ -58,10 +59,9 @@ cp "$WORK/latx-ag" "$WORK/agent-pkg/lattix-agent/latx-ag"
 tar -C "$WORK/agent-pkg" -czf "$FAKE/lattix-agent-linux-amd64.tar.gz" lattix-agent
 (cd "$FAKE" && sha256sum lattix-agent-linux-amd64.tar.gz > checksums.txt)
 
-echo ">> start backend"
-mkdir -p "$WORK/dist"
+echo ">> start backend（-resource 指向假 release 目录，镜像 /resource 托管布局）"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" -admin-pass "$ADMIN_PASS" \
-    -dist "$WORK/dist" -install-script "$ROOT/scripts/install.sh" -static "$WORK/none" \
+    -resource "$FAKE" -install-script "$ROOT/scripts/install.sh" -static "$WORK/none" \
     >"$WORK/backend.log" 2>&1 &
 BPID=$!
 sleep 1
@@ -143,5 +143,28 @@ echo "$STATUS" | grep -q "服务器 ID: 1" \
     && echo "OK: latx-ag status 服务器 ID（state 文件）" || { echo "FAIL: status 服务器 ID: $STATUS"; exit 1; }
 latx_ag log -n 5 | grep -q "authenticated as server 1" \
     && echo "OK: latx-ag log -n（DEV 读日志文件）" || { echo "FAIL: latx-ag log"; exit 1; }
+
+echo ">> 用例 5: --source panel（面板 /resource 镜像下载，与 github 源同一下载/校验流程）"
+curl -s "http://$ADDR/install.sh" | grep -q "LATTIX_VERSION=\"$VERSION\"" \
+    && echo "OK: /install.sh 托管 resource 镜像（CI stamp 版）" || { echo "FAIL: /install.sh 未托管镜像脚本"; exit 1; }
+[[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/resource/lattix-agent-linux-amd64.tar.gz")" == "200" ]] \
+    && echo "OK: /resource/ 镜像托管可用" || { echo "FAIL: /resource/ 不可用"; exit 1; }
+BOOTSTRAP2="$(api -X POST -d '{"alias":"e2e02"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
+[[ -n "$BOOTSTRAP2" ]] || { echo "FAIL: 第二台服务器 bootstrap token"; exit 1; }
+PANEL_OUT="$(LATX_DEV=1 LATX_PREFIX="$PREFIX" XRAY_BIN="$XRAY_BIN" LATX_AG_XRAY_API="$API_ADDR" \
+    bash "$FAKE/install.sh" --source panel --panel "http://$ADDR" --token "$BOOTSTRAP2" --xray-version v26.3.27)"
+echo "$PANEL_OUT" | grep -q "installing lattix-agent $VERSION（source: panel）" \
+    && echo "OK: panel 源安装输出（钉版本 $VERSION）" || { echo "FAIL: panel 源输出: $PANEL_OUT"; exit 1; }
+echo "$PANEL_OUT" | grep -q "agent 包 SHA256 校验通过（checksums.txt）" \
+    && echo "OK: panel 源 checksums.txt 校验通过" || { echo "FAIL: panel 源校验: $PANEL_OUT"; exit 1; }
+ONLINE2=""
+for _ in $(seq 1 15); do
+    ONLINE2="$(api "http://$ADDR/api/servers" | py "d[1]['online']")"
+    [[ "$ONLINE2" == "True" ]] && break
+    sleep 1
+done
+[[ "$ONLINE2" == "True" ]] \
+    && echo "OK: panel 源安装的 agent 已上线（server 2）" \
+    || { echo "FAIL: server 2 未上线"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
 
 echo "E2E PASS"

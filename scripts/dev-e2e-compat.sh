@@ -54,11 +54,10 @@ echo ">> build：面板 v0.0.3 / 当前 agent v0.0.2 + v1.0.0 / 旧源码 agent�
 (cd "$ROOT" && go build -ldflags "-X main.version=v1.0.0" -o "$WORK/agent-v100" ./src/agent/cmd/agent)
 git -C "$ROOT" worktree add "$OLD" "$OLD_TAG" >/dev/null 2>&1
 (cd "$OLD" && go build -ldflags "-X main.version=v0.0.1" -o "$WORK/agent-v001" ./src/agent/cmd/agent)
-mkdir -p "$WORK/dist"
 
 echo ">> start backend (v0.0.3) + 登录 + 建服务器"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" -admin-pass "$ADMIN_PASS" \
-    -dist "$WORK/dist" -install-script "$ROOT/scripts/install.sh" -static "$WORK/none" \
+    -resource "$WORK/resource" -install-script "$ROOT/scripts/install.sh" -static "$WORK/none" \
     >"$WORK/backend.log" 2>&1 &
 BPID=$!
 sleep 1

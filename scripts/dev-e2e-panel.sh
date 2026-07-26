@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 阶段 3 面板 API 端到端验收（实施计划 3.6，设计文档 §8/§10/§11/§16）：
-#   登录会话 → 添加服务器（bootstrap token + 安装命令）→ install.sh//dist 托管 →
+#   登录会话 → 添加服务器（bootstrap token + 安装命令）→ install.sh//resource 托管 →
 #   agent 上线 → 建用户（无节点扇出）→ 建节点（§16 默认全关）→ 分配用户
 #   （差量扇出，零重启热操作）→ 增删用户 → 离线扇出补发 → 仪表盘计数 → 登出拦截；
 #   另覆盖：编辑服务器地址（PATCH，订阅 server 字段联动）、
@@ -38,14 +38,10 @@ if [[ -n "${PANEL_BIN:-}" && -n "${AGENT_BIN:-}" && -x "${PANEL_BIN:-}" && -x "$
 else
     (cd "$ROOT" && go build -o "$WORK/backend" ./src/backend/cmd/backend && go build -o "$WORK/agent" ./src/agent/cmd/agent)
 fi
-mkdir -p "$WORK/dist"
-cp "$WORK/agent" "$WORK/dist/lattix-agent-linux-amd64"
-# latx-ag 摆 dist/，触发后端向 /install.sh 注入 LATX_AG_SHA256（§20）。
-cp "$ROOT/scripts/latx-ag.sh" "$WORK/dist/latx-ag"
 
 echo ">> start backend"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" -admin-pass "$ADMIN_PASS" \
-    -dist "$WORK/dist" -install-script "$ROOT/scripts/install.sh" -static "$WORK/none" \
+    -resource "$WORK/resource" -install-script "$ROOT/scripts/install.sh" -static "$WORK/none" \
     >"$WORK/backend.log" 2>&1 &
 BPID=$!
 sleep 1
@@ -77,17 +73,13 @@ RESP="$(api -X POST -d '{"alias":"dev01","address":"198.51.100.7","xray_version"
 BOOTSTRAP="$(echo "$RESP" | py "d['bootstrap_token']")"
 INSTALL_CMD="$(echo "$RESP" | py "d['install_command']")"
 # release 构建的面板（CI compat 用）生成 release 钉版命令（GitHub release URL），
-# dev 构建生成面板托管命令（http://$ADDR/install.sh）——两种形态均合法，断言共同结构。
-[[ "$INSTALL_CMD" == curl\ -fsSL\ *" | bash -s -- --panel http://$ADDR --token $BOOTSTRAP --xray-version v26.3.27" ]] \
+# dev 构建生成面板 /resource 托管命令（--source panel）——两种形态均合法，断言共同结构。
+[[ "$INSTALL_CMD" == curl\ -fsSL\ *install.sh\ \|\ bash\ -s\ --\ *"--panel http://$ADDR --token $BOOTSTRAP --xray-version v26.3.27" ]] \
     && echo "OK: 安装命令格式正确（含 xray 版本）" || { echo "FAIL: install_command=$INSTALL_CMD"; exit 1; }
 curl -s "http://$ADDR/install.sh" | grep -q "Lattix Agent 引导安装脚本" \
-    && echo "OK: /install.sh 托管" || { echo "FAIL: /install.sh"; exit 1; }
-curl -s "http://$ADDR/install.sh" | grep -qE 'AGENT_SHA256_AMD64="[0-9a-f]{64}"' \
-    && echo "OK: install.sh 已注入 agent SHA256" || { echo "FAIL: SHA256 未注入"; exit 1; }
-curl -s "http://$ADDR/install.sh" | grep -qE 'LATX_AG_SHA256="[0-9a-f]{64}"' \
-    && echo "OK: install.sh 已注入 latx-ag SHA256" || { echo "FAIL: LATX_AG_SHA256 未注入"; exit 1; }
-[[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/dist/lattix-agent-linux-amd64")" == "200" ]] \
-    && echo "OK: /dist/ 二进制托管" || { echo "FAIL: /dist/"; exit 1; }
+    && echo "OK: /install.sh 托管（resource 缺失时回退 -install-script）" || { echo "FAIL: /install.sh"; exit 1; }
+[[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/resource/install.sh")" == "404" ]] \
+    && echo "OK: /resource/ 未落地时 404（dev 无镜像）" || { echo "FAIL: /resource/ 预期 404"; exit 1; }
 [[ "$(api "http://$ADDR/api/servers" | py "d[0]['online']")" == "False" ]] \
     && echo "OK: 服务器初始离线" || { echo "FAIL: 初始状态"; exit 1; }
 
