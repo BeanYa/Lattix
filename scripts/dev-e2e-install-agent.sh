@@ -121,6 +121,8 @@ grep -q "xray 版本:  Xray" "$WORK/install.log" \
 grep -q "latx-ag status / log / update / xray-update / uninstall" "$WORK/install.log" \
     && grep -q "latx-ag -h 查看帮助" "$WORK/install.log" \
     && echo "OK: 成功输出含 latx-ag 运维提示块" || { echo "FAIL: 成功输出缺 latx-ag 提示块"; exit 1; }
+! grep -q "§11" "$WORK/install.log" \
+    || { echo "FAIL: 安装完成提示不应包含设计文档章节标记"; exit 1; }
 
 echo ">> 用例 3: agent 连上面板（坏 state 已清除，bootstrap 换发长期凭证）"
 ONLINE=""

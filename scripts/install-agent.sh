@@ -446,5 +446,5 @@ cat <<EOF
     latx-ag -h 查看帮助
 ============================================================
 EOF
-echo ">> done. Agent 将以 bootstrap token 首连面板并换发长期凭证（§11）。"
+echo ">> done. Agent 将以 bootstrap token 首连面板并换发长期凭证。"
 print_bbr_warning
