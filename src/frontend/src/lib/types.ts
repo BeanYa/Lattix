@@ -38,6 +38,7 @@ export interface Server {
   config_drift: boolean
   machine_type: MachineType
   allowed_ports: PortRange[]
+  tags: string[]
   metrics: ServerMetrics | null
   created_at: string
 }
@@ -84,6 +85,7 @@ export interface Traffic {
 
 export interface XrayNode {
   id: number
+  name: string
   server_id: number
   server_alias: string
   protocol: string
@@ -97,6 +99,7 @@ export interface XrayNode {
 }
 
 export interface CreateNodeRequest {
+  name: string
   server_id: number
   protocol?: string
   port?: number
@@ -136,6 +139,7 @@ export interface ChainHop {
 
 export interface Chain {
   id: number
+  name: string
   status: ChainStatus
   error: string // 失败时定位到跳
   created_at: string
@@ -145,11 +149,12 @@ export interface Chain {
 // 链路构图提交（§21）：依次入口 / 中间跳（0-2）/ 出口，出口携带业务节点协议表单，
 // 入口端口可空 = 自动。node.server_id 由后端按 exit.server_id 覆盖。
 export interface CreateChainRequest {
+  name: string
   entry: { server_id: number }
   middle: { server_id: number }[]
   exit: { server_id: number }
   entry_port?: number
-  node: Omit<CreateNodeRequest, 'server_id'>
+  node: Omit<CreateNodeRequest, 'server_id' | 'name'>
 }
 
 export interface SubUser {

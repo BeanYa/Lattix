@@ -37,6 +37,7 @@ type serverDTO struct {
 	ConfigDrift   bool               `json:"config_drift"`   // 配置漂移标志（§17）
 	MachineType   string             `json:"machine_type"`   // direct|nat（§21）
 	AllowedPorts  []shared.PortRange `json:"allowed_ports"`  // NAT 可用端口段（§21），空 = 无段（仅出口档/direct）
+	Tags          []string           `json:"tags"`           // 管理标签；按顺序供名称模板 {{TAG_n}} 使用
 	Metrics       *metricsDTO        `json:"metrics"`        // 主机遥测最新值（§13），无数据为 null
 	CreatedAt     time.Time          `json:"created_at"`
 }
@@ -72,6 +73,7 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		ConfigDrift:   srv.ConfigDrift,
 		MachineType:   srv.MachineType,
 		AllowedPorts:  ranges,
+		Tags:          decodeServerTags(srv.Tags),
 		CreatedAt:     srv.CreatedAt,
 	}
 }
@@ -109,6 +111,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		XrayVersion  string             `json:"xray_version"`  // 默认 latest（§11）
 		MachineType  string             `json:"machine_type"`  // direct（默认）| nat（§21）
 		AllowedPorts []shared.PortRange `json:"allowed_ports"` // NAT 可用端口段（§21），留空 = 仅出口档
+		Tags         []string           `json:"tags"`
 	}
 	if err := readJSON(r, &req); err != nil || req.Alias == "" {
 		writeError(w, http.StatusBadRequest, "alias 不能为空")
@@ -137,8 +140,13 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	tagsJSON, err := encodeServerTags(req.Tags)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	bootstrap := randomHex(16)
-	id, err := s.st.CreateServer(r.Context(), req.Alias, req.Address, bootstrap, req.MachineType, allowedJSON)
+	id, err := s.st.CreateServer(r.Context(), req.Alias, req.Address, bootstrap, req.MachineType, allowedJSON, tagsJSON)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -150,7 +158,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	}
 	sid := srv.ID
 	s.audit(r, "server.create", &sid, nil, map[string]any{
-		"alias": req.Alias, "machine_type": req.MachineType, "address": req.Address,
+		"alias": req.Alias, "machine_type": req.MachineType, "address": req.Address, "tags": req.Tags,
 	})
 	base := s.panelBase(r)
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -209,6 +217,7 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		Address      string              `json:"address"`
 		MachineType  string              `json:"machine_type"`  // 不允许互转：带不同值 → 400
 		AllowedPorts *[]shared.PortRange `json:"allowed_ports"` // 省略 = 不变；显式 null/数组 = 整体替换
+		Tags         *[]string           `json:"tags"`          // 省略 = 不变；数组 = 整体替换
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -250,6 +259,17 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.Tags != nil {
+		tagsJSON, err := encodeServerTags(*req.Tags)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.st.UpdateServerTags(r.Context(), id, tagsJSON); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	if err := s.st.UpdateServerAddress(r.Context(), id, req.Address); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -261,7 +281,7 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	}
 	sid := id
 	s.audit(r, "server.update", &sid, nil, map[string]any{
-		"address": req.Address, "allowed_ports_changed": req.AllowedPorts != nil,
+		"address": req.Address, "allowed_ports_changed": req.AllowedPorts != nil, "tags_changed": req.Tags != nil,
 	})
 	writeJSON(w, http.StatusOK, s.toServerDTO(*srv))
 }

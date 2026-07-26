@@ -60,14 +60,14 @@ scripts/
 
 | 表 | 字段（要点） |
 |---|---|
-| `servers` | id, alias, address(公网地址), learned_addr(拨入学习地址), nic_addresses(agent 上报网卡地址 JSON), token(长期凭证), last_seen_at, xray_version, config_drift(§17), created_at |
+| `servers` | id, alias, address(公网地址), learned_addr(拨入学习地址), nic_addresses(agent 上报网卡地址 JSON), tags(有序标签 JSON，名称模板 `TAG_n` 来源), token(长期凭证), last_seen_at, xray_version, config_drift(§17), created_at |
 | `users` | id, name, uuid, sub_token, expires_at(可空，unix 秒，NULL=长期), expired(0/1 到期停权标记，§9), disabled(0/1 显式停用标记，§16), created_at |
-| `nodes` | id, server_id, protocol, port, config_template(JSON), realized_config(JSON), status, error, created_at |
+| `nodes` | id, name(解析后的管理/订阅名称), server_id, protocol, port, config_template(JSON), realized_config(JSON), status, error, created_at |
 | `commands` | id, server_id, type, payload(JSON), status(queued/sent/acked/failed), attempts, created_at, updated_at |
 | `user_nodes` | user_id, node_id（§16 逐节点用户分配，默认全关） |
 | `server_metrics` | server_id, load1, cpu_percent, mem_total, mem_used, updated_at（§13 主机遥测最新值） |
 | `traffic` | node_id, user_uuid, up, down, updated_at（§13 流量累计：节点维度 user_uuid=''，用户维度 node_id=0） |
-| `chains` / `chain_hops` | （自 0.0.2 之后迭代实现，§21）链级状态机；逐跳 role（entry/middle/exit）与独立重试状态 |
+| `chains` / `chain_hops` | chains 含 name(解析后的管理/订阅名称)；（自 0.0.2 之后迭代实现，§21）链级状态机；逐跳 role（entry/middle/exit）与独立重试状态 |
 
 说明：
 
@@ -143,7 +143,9 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 
 - 目标客户端：mihomo 内核系（Clash Verge / Clash Party / FlClash 等）。原版 Clash 不支持 VLESS+Reality，不在目标范围。
 - 内容：proxies 列表（每个节点一项，`type: vless`，`server` 取 `servers.address`（§4），嵌入**该用户自己的 UUID**、`flow`、`reality-opts: {public-key, short-id}`、`servername`、`udp: true`）+ 一个 `select` 类型 proxy-group + `MATCH` 规则。
-- 节点命名：`{服务器别名}-vless-{端口}`，如 `tokyo01-vless-8443`。
+- 节点/链路命名：创建时解析名称模板，支持 `LOCATION/SERVER/SERVER_ID/PROTOCOL/PORT/TAG_n`
+  （链路另支持 `ENTRY/ENTRY_ID/EXIT/EXIT_ID/HOPS`）；`TAG_n` 按服务器有序 Tag（链路取入口服务器）
+  从 1 开始。订阅优先使用解析后的名称；存量空名称回退 `{服务器别名}-{协议}-{端口}`。
 - **（自 0.0.2 之后迭代，§21）**：引入链后，proxies 条目的 `server`/端口取链**入口**的 address 与 public_port（非 1:1 映射时），public-key/short-id/UUID 取链**出口**；命名中的别名与端口取入口。链 degraded 不剔除入口条目，靠客户端测速规避。
 - **响应头**：`/sub/{token}` 与 `/sub/{token}/links` 均返回 `subscription-userinfo: upload=<bytes>; download=<bytes>[; expire=<unix秒>]`（upload/download 取 `traffic` 表用户维度 node_id=0 的跨服务器累计；仅设了有效期才带 expire；无流量配额故无 total）与 `profile-update-interval: 24`（客户端按天自动刷新）。
 - **用户有效期**：创建用户可带 `expires_at`（过去时间 → 400）；`PATCH /api/users/{id}` 修改/清除（null = 长期，过去时间同样 400——"借到期立即停权"由 §16 的 disabled 开关承担；省略的字段保持不变）；列表 DTO 带 `expires_at`/`expired`/`disabled`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `remove_user`（显式 nodes 载荷；已 disabled 的用户只补记标记不重复扇出）；管理员延长/清除有效期（expired 1→0）→ 扇出 `add_user` 恢复（disabled 用户除外，见 §16 有效停权态）。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`apply_node` 的 `NodeUserUUIDs` 不下发 expired/disabled 用户。
@@ -237,7 +239,8 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，`-telemetry-interval` �
 - **热操作**：add_user/remove_user 扇出载荷按服务器携带各节点协议参数（`AddUserPayload.Nodes`），
   Agent 按协议构造 account；ss/socks/http 热增删不支持时由既有"热操作失败 → 重启 → 回滚"流水线兜底。
 - **订阅**：按协议生成 mihomo 代理项（vless/vmess/trojan 带 reality-opts，ss/socks5/http 标准类型）；
-  节点命名 `{别名}-{协议}-{端口}`；dokodemo-door 为端口转发，不进订阅。
+  节点命名优先使用创建时解析的名称模板，存量空名称回退 `{别名}-{协议}-{端口}`；
+  dokodemo-door 为端口转发，不进订阅。
 
 已知问题（在 §14 表格基础上新增）：
 

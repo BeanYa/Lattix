@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { PlusIcon } from 'lucide-react'
 
+import { RealityDestPicker } from '@/components/RealityDestPicker'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -30,6 +31,8 @@ import {
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
 import { humanizeBytes } from '@/lib/format'
+import { DEFAULT_NODE_NAME_TEMPLATE, renderNameTemplate } from '@/lib/naming'
+import { DEFAULT_REALITY_DEST } from '@/lib/reality'
 import type { CreateNodeRequest, NodeStatus, Server, XrayNode } from '@/lib/types'
 
 const statusStyle: Record<NodeStatus, { label: string; className: string }> = {
@@ -67,10 +70,12 @@ export default function Nodes() {
   const [retrying, setRetrying] = useState<number | null>(null)
 
   const [open, setOpen] = useState(false)
+  const [name, setName] = useState(DEFAULT_NODE_NAME_TEMPLATE)
   const [serverId, setServerId] = useState('')
   const [protocol, setProtocol] = useState('vless')
   const [port, setPort] = useState('')
   const [shortId, setShortId] = useState('')
+  const [destPreset, setDestPreset] = useState(DEFAULT_REALITY_DEST)
   const [dest, setDest] = useState('dl.google.com:443')
   const [serverNames, setServerNames] = useState('dl.google.com')
   const [fingerprint, setFingerprint] = useState('chrome')
@@ -86,6 +91,14 @@ export default function Nodes() {
   const [createError, setCreateError] = useState('')
 
   const isReality = REALITY_PROTOCOLS.includes(protocol)
+  const selectedServer = servers.find((s) => String(s.id) === serverId)
+  const namePreview = renderNameTemplate(name, {
+    location: selectedServer?.alias ?? '?',
+    serverId: selectedServer?.id,
+    protocol,
+    port,
+    tags: selectedServer?.tags ?? [],
+  })
 
   const load = useCallback(() => {
     Promise.all([api.nodes(), api.servers()])
@@ -106,10 +119,12 @@ export default function Nodes() {
   const onOpenChange = (next: boolean) => {
     setOpen(next)
     if (!next) {
+      setName(DEFAULT_NODE_NAME_TEMPLATE)
       setServerId('')
       setProtocol('vless')
       setPort('')
       setShortId('')
+      setDestPreset(DEFAULT_REALITY_DEST)
       setDest('dl.google.com:443')
       setServerNames('dl.google.com')
       setFingerprint('chrome')
@@ -132,7 +147,12 @@ export default function Nodes() {
       setCreateError('请选择服务器')
       return
     }
-    const body: CreateNodeRequest = { server_id: server.id, protocol }
+    const trimmedName = name.trim()
+    if (!trimmedName) {
+      setCreateError('请输入节点名称')
+      return
+    }
+    const body: CreateNodeRequest = { name: trimmedName, server_id: server.id, protocol }
     if (port.trim()) {
       body.port = Number(port)
     }
@@ -201,7 +221,8 @@ export default function Nodes() {
   }
 
   const onDelete = async (id: number) => {
-    if (!window.confirm('确定删除该节点？将同时从服务器上移除该 inbound。')) {
+    const node = nodes.find((n) => n.id === id)
+    if (!window.confirm(`确定删除节点「${node?.name || `#${id}`}」？将同时从服务器上移除该 inbound。`)) {
       return
     }
     try {
@@ -228,6 +249,7 @@ export default function Nodes() {
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead>名称</TableHead>
               <TableHead>服务器</TableHead>
               <TableHead>协议</TableHead>
               <TableHead>端口</TableHead>
@@ -240,13 +262,13 @@ export default function Nodes() {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   加载中…
                 </TableCell>
               </TableRow>
             ) : nodes.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
+                <TableCell colSpan={8} className="text-center text-muted-foreground">
                   暂无节点
                 </TableCell>
               </TableRow>
@@ -255,6 +277,7 @@ export default function Nodes() {
                 const st = statusStyle[n.status] ?? statusStyle.pending
                 return (
                   <TableRow key={n.id}>
+                    <TableCell className="font-medium">{n.name || `节点 #${n.id}`}</TableCell>
                     <TableCell className="font-medium">{n.server_alias}</TableCell>
                     <TableCell>
                       {n.protocol}
@@ -312,6 +335,25 @@ export default function Nodes() {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onCreate} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="nodeName">节点名称模板</Label>
+              <Input
+                id="nodeName"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={200}
+                placeholder="{{LOCATION}}-{{PROTOCOL}}-inbound"
+                autoFocus
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                可用参数：{'{{LOCATION}}'}、{'{{SERVER}}'}、{'{{SERVER_ID}}'}、
+                {'{{PROTOCOL}}'}、{'{{PORT}}'}、{'{{TAG_1}}'}…；Tag 来自所选服务器。
+              </p>
+              <p className="text-xs">
+                预览：<span className="font-medium">{namePreview}</span>
+              </p>
+            </div>
             <div className="space-y-2">
               <Label>服务器</Label>
               <Select
@@ -480,24 +522,15 @@ export default function Nodes() {
                     placeholder="留空随机生成"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="dest">dest</Label>
-                  <Input
-                    id="dest"
-                    value={dest}
-                    onChange={(e) => setDest(e.target.value)}
-                    placeholder="dl.google.com:443"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="serverNames">serverNames（逗号分隔）</Label>
-                  <Input
-                    id="serverNames"
-                    value={serverNames}
-                    onChange={(e) => setServerNames(e.target.value)}
-                    placeholder="dl.google.com"
-                  />
-                </div>
+                <RealityDestPicker
+                  idPrefix="node"
+                  preset={destPreset}
+                  onPresetChange={setDestPreset}
+                  dest={dest}
+                  onDestChange={setDest}
+                  serverNames={serverNames}
+                  onServerNamesChange={setServerNames}
+                />
               </>
             )}
 
@@ -529,7 +562,7 @@ export default function Nodes() {
 
             {createError && <p className="text-sm text-destructive">{createError}</p>}
             <DialogFooter>
-              <Button type="submit" disabled={creating || !serverId}>
+              <Button type="submit" disabled={creating || !serverId || !name.trim()}>
                 {creating ? '创建中…' : '创建'}
               </Button>
             </DialogFooter>

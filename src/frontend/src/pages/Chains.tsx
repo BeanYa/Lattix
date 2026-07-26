@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { PlusIcon, XIcon } from 'lucide-react'
 
+import { RealityDestPicker } from '@/components/RealityDestPicker'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -22,6 +23,8 @@ import {
 } from '@/components/ui/select'
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
+import { DEFAULT_CHAIN_NAME_TEMPLATE, renderNameTemplate } from '@/lib/naming'
+import { DEFAULT_REALITY_DEST } from '@/lib/reality'
 import { useTimezone } from '@/lib/timezone'
 import type {
   Chain,
@@ -91,6 +94,7 @@ export default function Chains() {
   const [retrying, setRetrying] = useState<number | null>(null)
 
   const [open, setOpen] = useState(false)
+  const [name, setName] = useState(DEFAULT_CHAIN_NAME_TEMPLATE)
   const [entryId, setEntryId] = useState('')
   const [middleIds, setMiddleIds] = useState<string[]>([])
   const [exitId, setExitId] = useState('')
@@ -98,6 +102,7 @@ export default function Chains() {
   const [protocol, setProtocol] = useState('vless')
   const [port, setPort] = useState('')
   const [shortId, setShortId] = useState('')
+  const [destPreset, setDestPreset] = useState(DEFAULT_REALITY_DEST)
   const [dest, setDest] = useState('dl.google.com:443')
   const [serverNames, setServerNames] = useState('dl.google.com')
   const [fingerprint, setFingerprint] = useState('chrome')
@@ -111,6 +116,20 @@ export default function Chains() {
   const [createError, setCreateError] = useState('')
 
   const isReality = REALITY_PROTOCOLS.includes(protocol)
+  const selectedEntry = servers.find((s) => String(s.id) === entryId)
+  const selectedExit = servers.find((s) => String(s.id) === exitId)
+  const namePreview = renderNameTemplate(name, {
+    location: selectedEntry?.alias ?? '?',
+    serverId: selectedEntry?.id,
+    protocol,
+    port: entryPort,
+    entry: selectedEntry?.alias,
+    entryId: selectedEntry?.id,
+    exit: selectedExit?.alias,
+    exitId: selectedExit?.id,
+    hops: 2 + middleIds.length,
+    tags: selectedEntry?.tags ?? [],
+  })
 
   const load = useCallback(() => {
     Promise.all([api.chains(), api.servers()])
@@ -131,6 +150,7 @@ export default function Chains() {
   const onOpenChange = (next: boolean) => {
     setOpen(next)
     if (!next) {
+      setName(DEFAULT_CHAIN_NAME_TEMPLATE)
       setEntryId('')
       setMiddleIds([])
       setExitId('')
@@ -138,6 +158,7 @@ export default function Chains() {
       setProtocol('vless')
       setPort('')
       setShortId('')
+      setDestPreset(DEFAULT_REALITY_DEST)
       setDest('dl.google.com:443')
       setServerNames('dl.google.com')
       setFingerprint('chrome')
@@ -160,6 +181,11 @@ export default function Chains() {
   const onCreate = async (e: FormEvent) => {
     e.preventDefault()
     setCreateError('')
+    const trimmedName = name.trim()
+    if (!trimmedName) {
+      setCreateError('请输入链路名称')
+      return
+    }
     if (!entryId || !exitId || middleIds.some((m) => !m)) {
       setCreateError('请完整选择入口、中间跳与出口服务器')
       return
@@ -182,6 +208,7 @@ export default function Chains() {
       }
     }
     const body: CreateChainRequest = {
+      name: trimmedName,
       entry: { server_id: Number(entryId) },
       middle: middleIds.map((id) => ({ server_id: Number(id) })),
       exit: { server_id: Number(exitId) },
@@ -249,7 +276,8 @@ export default function Chains() {
   }
 
   const onDelete = async (id: number) => {
-    if (!window.confirm('确定删除该链路？将逐跳拆除转发/隧道并删除出口节点。')) {
+    const chain = chains.find((c) => c.id === id)
+    if (!window.confirm(`确定删除链路「${chain?.name || `#${id}`}」？将逐跳拆除转发/隧道并删除出口节点。`)) {
       return
     }
     try {
@@ -294,7 +322,8 @@ export default function Chains() {
               <div key={c.id} className="space-y-2 rounded-lg border p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium">链 #{c.id}</span>
+                    <span className="font-medium">{c.name || `链 #${c.id}`}</span>
+                    <span className="text-xs text-muted-foreground">#{c.id}</span>
                     <Badge variant="outline" className={st.className}>
                       {st.label}
                     </Badge>
@@ -381,6 +410,25 @@ export default function Chains() {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onCreate} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="chainName">链路名称模板</Label>
+              <Input
+                id="chainName"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                maxLength={200}
+                placeholder="{{ENTRY}}-{{EXIT}}-{{PROTOCOL}}-chain"
+                autoFocus
+                required
+              />
+              <p className="text-xs text-muted-foreground">
+                可用参数：{'{{LOCATION}}'}、{'{{ENTRY}}'}、{'{{EXIT}}'}、{'{{HOPS}}'}、
+                {'{{PROTOCOL}}'}、{'{{PORT}}'}、{'{{TAG_1}}'}…；Tag 来自入口服务器。
+              </p>
+              <p className="text-xs">
+                预览：<span className="font-medium">{namePreview}</span>
+              </p>
+            </div>
             <div className="space-y-2">
               <Label>入口服务器</Label>
               <Select
@@ -618,30 +666,21 @@ export default function Chains() {
                     placeholder="留空随机生成"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="dest">dest</Label>
-                  <Input
-                    id="dest"
-                    value={dest}
-                    onChange={(e) => setDest(e.target.value)}
-                    placeholder="dl.google.com:443"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="serverNames">serverNames（逗号分隔）</Label>
-                  <Input
-                    id="serverNames"
-                    value={serverNames}
-                    onChange={(e) => setServerNames(e.target.value)}
-                    placeholder="dl.google.com"
-                  />
-                </div>
+                <RealityDestPicker
+                  idPrefix="chain"
+                  preset={destPreset}
+                  onPresetChange={setDestPreset}
+                  dest={dest}
+                  onDestChange={setDest}
+                  serverNames={serverNames}
+                  onServerNamesChange={setServerNames}
+                />
               </>
             )}
 
             {createError && <p className="text-sm text-destructive">{createError}</p>}
             <DialogFooter>
-              <Button type="submit" disabled={creating || !entryId || !exitId}>
+              <Button type="submit" disabled={creating || !name.trim() || !entryId || !exitId}>
                 {creating ? '创建中…' : '创建'}
               </Button>
             </DialogFooter>

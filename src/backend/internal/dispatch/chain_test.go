@@ -86,7 +86,7 @@ func TestChainOrchestration(t *testing.T) {
 	defer st.Close()
 
 	mkServer := func(alias, addr, mtype, ports string) int64 {
-		id, err := st.CreateServer(ctx, alias, addr, "tok-"+alias, mtype, ports)
+		id, err := st.CreateServer(ctx, alias, addr, "tok-"+alias, mtype, ports, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -99,11 +99,11 @@ func TestChainOrchestration(t *testing.T) {
 
 	vc := shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)}
 	vcJSON, _ := json.Marshal(vc)
-	nodeID, err := st.InsertNode(ctx, exitID, shared.ProtocolVLESS, nil, vcJSON)
+	nodeID, err := st.InsertNode(ctx, "测试出口节点", exitID, shared.ProtocolVLESS, nil, vcJSON)
 	if err != nil {
 		t.Fatal(err)
 	}
-	chainID, err := st.InsertChain(ctx)
+	chainID, err := st.InsertChain(ctx, "测试链路")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,11 +235,11 @@ func TestChainHopResultFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	entryID, _ := st.CreateServer(ctx, "entry", "e.com", "tok1", store.MachineTypeDirect, "")
-	exitID, _ := st.CreateServer(ctx, "exit", "x.com", "tok2", store.MachineTypeNAT, "")
+	entryID, _ := st.CreateServer(ctx, "entry", "e.com", "tok1", store.MachineTypeDirect, "", "")
+	exitID, _ := st.CreateServer(ctx, "exit", "x.com", "tok2", store.MachineTypeNAT, "", "")
 	vcJSON, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
-	nodeID, _ := st.InsertNode(ctx, exitID, shared.ProtocolVLESS, nil, vcJSON)
-	chainID, _ := st.InsertChain(ctx)
+	nodeID, _ := st.InsertNode(ctx, "测试出口节点", exitID, shared.ProtocolVLESS, nil, vcJSON)
+	chainID, _ := st.InsertChain(ctx, "测试链路")
 	hop1, _ := st.InsertChainHop(ctx, chainID, 0, entryID, store.HopRoleEntry, 0, 0, "t-uuid")
 	st.InsertChainHop(ctx, chainID, 1, exitID, store.HopRoleExit, nodeID, 0, "")
 

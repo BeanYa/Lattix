@@ -33,17 +33,18 @@ type Server struct {
 	ConfigDrift   bool   // 配置漂移标志（§17，agent drift_report 驱动）
 	MachineType   string // direct|nat（§21）
 	AllowedPorts  string // NAT 可用端口段 JSON（shared.PortRange 数组，§21）；空串 = 无段
+	Tags          string // 管理标签 JSON 数组；名称模板 {{TAG_n}} 的来源
 	CreatedAt     time.Time
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, agent_upgrade_needed, address, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, agent_upgrade_needed, address, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
 	var lastSeen sql.NullTime
 	var xrayVer, agentVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.UpgradeNeeded, &srv.Address, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.UpgradeNeeded, &srv.Address, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -59,10 +60,10 @@ func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 // CreateServer 插入一台服务器，token 为一次性 bootstrap token（§11），返回服务器 id。
 // address 为管理员指定的公网地址（§4）；空串表示留待 hello 时按 RemoteAddr 自动学习
 // （NAT 类型强制必填，由 panel 校验）。machineType/allowedPorts 为 NAT 元数据（§21，面板侧，不下发 agent）。
-func (s *Store) CreateServer(ctx context.Context, alias, address, bootstrapToken, machineType, allowedPorts string) (int64, error) {
+func (s *Store) CreateServer(ctx context.Context, alias, address, bootstrapToken, machineType, allowedPorts, tags string) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO servers (alias, address, token, machine_type, allowed_ports) VALUES (?, ?, ?, ?, ?)`,
-		alias, address, bootstrapToken, machineType, allowedPorts)
+		`INSERT INTO servers (alias, address, token, machine_type, allowed_ports, tags) VALUES (?, ?, ?, ?, ?, ?)`,
+		alias, address, bootstrapToken, machineType, allowedPorts, tags)
 	if err != nil {
 		return 0, fmt.Errorf("insert server: %w", err)
 	}
@@ -132,6 +133,12 @@ func (s *Store) UpdateServerAddress(ctx context.Context, id int64, address strin
 func (s *Store) UpdateServerAllowedPorts(ctx context.Context, id int64, allowedPorts string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE servers SET allowed_ports = ? WHERE id = ?`, allowedPorts, id)
+	return err
+}
+
+// UpdateServerTags 整体替换服务器管理标签（JSON 字符串数组）。
+func (s *Store) UpdateServerTags(ctx context.Context, id int64, tags string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE servers SET tags = ? WHERE id = ?`, tags, id)
 	return err
 }
 

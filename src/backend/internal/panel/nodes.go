@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"lattix/backend/internal/store"
@@ -21,6 +22,7 @@ type trafficDTO struct {
 // nodeDTO 是节点对象的 API 表示。
 type nodeDTO struct {
 	ID             int64           `json:"id"`
+	Name           string          `json:"name"`
 	ServerID       int64           `json:"server_id"`
 	ServerAlias    string          `json:"server_alias"`
 	Protocol       string          `json:"protocol"`
@@ -36,6 +38,7 @@ type nodeDTO struct {
 func toNodeDTO(n store.Node) nodeDTO {
 	return nodeDTO{
 		ID:             n.ID,
+		Name:           n.Name,
 		ServerID:       n.ServerID,
 		ServerAlias:    n.ServerAlias,
 		Protocol:       n.Protocol,
@@ -76,6 +79,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 // short_id/dest/server_names/fingerprint/network 及 grpc/xhttp 子选项；flow 仅 vless+tcp；
 // method 仅 shadowsocks；target_address/target_port 仅 dokodemo-door。
 type createNodeRequest struct {
+	Name          string   `json:"name"`
 	ServerID      int64    `json:"server_id"`
 	Protocol      string   `json:"protocol"`       // 默认 vless
 	Port          *int     `json:"port"`           // 留空 = Agent 自动挑选
@@ -97,6 +101,7 @@ type createNodeRequest struct {
 
 // normalize 填默认值并校验协议参数组合，返回用户可读的校验错误。
 func (req *createNodeRequest) normalize() error {
+	req.Name = strings.TrimSpace(req.Name)
 	if req.Protocol == "" {
 		req.Protocol = shared.ProtocolVLESS
 	}
@@ -217,8 +222,20 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	name, err := resolveNameTemplate(req.Name, nameTemplateValues{
+		Location: srv.Alias,
+		ServerID: srv.ID,
+		Protocol: req.Protocol,
+		Port:     req.Port,
+		Tags:     decodeServerTags(srv.Tags),
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.Name = name
 	vc := buildVirtualConfig(req)
-	id, err := s.applyNewNode(r, req.ServerID, req.Port, vc)
+	id, err := s.applyNewNode(r, req.Name, req.ServerID, req.Port, vc)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -230,7 +247,7 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 	}
 	srvID, nodeID := n.ServerID, n.ID
 	s.audit(r, "node.create", &srvID, &nodeID, map[string]any{
-		"protocol": n.Protocol, "port": n.Port,
+		"name": n.Name, "protocol": n.Protocol, "port": n.Port,
 	})
 	writeJSON(w, http.StatusCreated, toNodeDTO(*n))
 }
@@ -298,12 +315,12 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 }
 
 // applyNewNode 落库新节点并下发 apply_node，返回节点 id。
-func (s *Server) applyNewNode(r *http.Request, serverID int64, port *int, vc shared.VirtualConfig) (int64, error) {
+func (s *Server) applyNewNode(r *http.Request, name string, serverID int64, port *int, vc shared.VirtualConfig) (int64, error) {
 	vcJSON, err := json.Marshal(vc)
 	if err != nil {
 		return 0, err
 	}
-	id, err := s.st.InsertNode(r.Context(), serverID, vc.Protocol, port, vcJSON)
+	id, err := s.st.InsertNode(r.Context(), name, serverID, vc.Protocol, port, vcJSON)
 	if err != nil {
 		return 0, err
 	}
@@ -341,21 +358,22 @@ func (s *Server) enqueueApply(r *http.Request, serverID, nodeID int64, vc shared
 }
 
 // destCandidates 是面板内置的 dest 白名单（§6 预检 fallback），
-// 覆盖全球主要 CDN/大厂（TLS1.3 支持好、各地理位置可达性高），随版本更新。
-// 注意：www.microsoft.com 实测在部分网络下作 Reality dest 必失败且 xray 官方警示，不收录。
+// 覆盖全球主要大厂网络（TLS1.3 支持好、各地理位置可达性高），随版本更新。
+// 注意：官方文档警告 CDN 目标可能使服务器被当作转发器滥用，因此不推荐 Cloudflare；
+// www.microsoft.com 的超大证书记录也会触发 Reality 握手限制，二者均不收录。
 var destCandidates = []string{
 	"dl.google.com:443",
 	"www.amazon.com:443",
 	"gateway.icloud.com:443",
 	"developer.apple.com:443",
 	"cdn.discord.com:443",
-	"www.cloudflare.com:443",
 	"github.com:443",
 	"www.samsung.com:443",
 	"www.tesla.com:443",
 	"www.bing.com:443",
 	"www.yahoo.com:443",
 	"slack.com:443",
+	"yandex.com:443",
 }
 
 // buildVirtualConfig 生成虚拟配置（§7 参数分工：UUID/short_id/dest/serverNames 面板，

@@ -42,6 +42,8 @@ scripts/
 - Reality 安全层，传输 tcp / XHTTP（gRPC 已废弃屏蔽）；dest 预检 + 白名单 fallback
 - VLESS 详细选项：flow（vision/无）、XHTTP path/mode/host、uTLS 指纹
 - VLESS Encryption（mlkem768 后量子 / x25519 认证），可与 vision 组合（1-RTT）
+- 节点/链路名称模板：支持 `{{LOCATION}}`、`{{PROTOCOL}}`、`{{TAG_1}}` 等内置参数，
+  创建前实时预览；服务器可在创建/编辑时维护有序 Tag
 - 节点状态机 `pending → applying → active | failed`，失败详情 + 重试
 
 **代理链与 NAT（§21，v0.0.3）**

@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS servers (
     last_seen_at DATETIME,
     xray_version TEXT,
     address      TEXT    NOT NULL DEFAULT '', -- 公网地址：管理员填写，留空按 agent 拨入 RemoteAddr 学习（§4/§9）
+    tags         TEXT    NOT NULL DEFAULT '', -- JSON 字符串数组；名称模板 {{TAG_n}} 的来源
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS nodes (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT    NOT NULL DEFAULT '',
     server_id       INTEGER NOT NULL REFERENCES servers(id),
     protocol        TEXT    NOT NULL DEFAULT 'vless',
     port            INTEGER, -- NULL = Agent 自动挑选空闲端口（§7）
@@ -236,6 +238,7 @@ func Open(path string) (*Store, error) {
 		stmts := []string{
 			`CREATE TABLE IF NOT EXISTS chains (
 			    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			    name       TEXT    NOT NULL DEFAULT '',
 			    status     TEXT    NOT NULL DEFAULT 'pending', -- pending/applying/active/degraded/failed
 			    error      TEXT    NOT NULL DEFAULT '',
 			    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -264,6 +267,25 @@ func Open(path string) (*Store, error) {
 				return nil, fmt.Errorf("migrate chains (user_version 2): %w", err)
 			}
 		}
+	}
+	// 轻量迁移：为节点与链路增加管理员可读名称。存量行保留空名称，并在展示/订阅时
+	// 回退到原有的自动命名，避免升级改变既有订阅。
+	for _, m := range []struct {
+		query string
+		label string
+	}{
+		{`ALTER TABLE nodes ADD COLUMN name TEXT NOT NULL DEFAULT ''`, "nodes.name"},
+		{`ALTER TABLE chains ADD COLUMN name TEXT NOT NULL DEFAULT ''`, "chains.name"},
+	} {
+		if _, err := db.Exec(m.query); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate %s: %w", m.label, err)
+		}
+	}
+	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN tags TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column name") {
+		db.Close()
+		return nil, fmt.Errorf("migrate servers.tags: %w", err)
 	}
 	return &Store{db: db}, nil
 }

@@ -81,6 +81,7 @@ export const api = {
     xray_version?: string
     machine_type?: MachineType
     allowed_ports?: PortRange[]
+    tags?: string[]
   }) =>
     request<CreateServerResponse>('/api/servers', {
       method: 'POST',
@@ -102,16 +103,16 @@ export const api = {
     request<CommandLog[]>(`/api/servers/${id}/commands?limit=${limit}`),
   repairServer: (id: number) =>
     request<{ reapplied: number }>(`/api/servers/${id}/repair`, { method: 'POST' }),
-  updateServerAddress: (id: number, address: string) =>
+  updateServerAddress: (id: number, address: string, tags: string[]) =>
     request<Server>(`/api/servers/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ address: address.trim() }),
+      body: JSON.stringify({ address: address.trim(), tags }),
     }),
   // 编辑 NAT 可用端口段（§21）：allowed_ports 整体替换；机器类型建后不可互转。
-  updateServerPorts: (id: number, address: string, allowedPorts: PortRange[]) =>
+  updateServerPorts: (id: number, address: string, allowedPorts: PortRange[], tags: string[]) =>
     request<Server>(`/api/servers/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ address: address.trim(), allowed_ports: allowedPorts }),
+      body: JSON.stringify({ address: address.trim(), allowed_ports: allowedPorts, tags }),
     }),
   deleteServer: (id: number, purge: 'xray' | 'agent') =>
     request<void>(`/api/servers/${id}?purge=${purge}`, { method: 'DELETE' }),

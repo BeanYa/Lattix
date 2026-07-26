@@ -124,5 +124,9 @@ func setTransportQuery(q url.Values, rc shared.RealizedConfig) {
 
 // shareName 是分享链接的节点名（与 mihomo 订阅一致，URL fragment 编码）。
 func shareName(n store.Node, rc shared.RealizedConfig) string {
-	return url.PathEscape(fmt.Sprintf("%s-%s-%d", n.ServerAlias, n.Protocol, rc.Port))
+	name := n.Name
+	if name == "" {
+		name = fmt.Sprintf("%s-%s-%d", n.ServerAlias, n.Protocol, rc.Port)
+	}
+	return url.PathEscape(name)
 }

@@ -37,6 +37,7 @@ const (
 // Chain 是 chains 表的一行（§21 链级状态机）。
 type Chain struct {
 	ID        int64
+	Name      string
 	Status    string
 	Error     string
 	CreatedAt time.Time
@@ -45,14 +46,14 @@ type Chain struct {
 // ChainHop 是 chain_hops 表的一行（§21 逐跳状态与独立重试）。
 // TunnelUUID 仅反向链 portal 所在跳（上游机）非空，同时充当该跳→下一跳为反向链的标记。
 type ChainHop struct {
-	ID              int64
-	ChainID         int64
-	Seq             int
-	ServerID        int64
-	Role            string
-	NodeID          int64 // 仅出口跳：业务 nodes.id
-	Status          string
-	Error           string
+	ID               int64
+	ChainID          int64
+	Seq              int
+	ServerID         int64
+	Role             string
+	NodeID           int64 // 仅出口跳：业务 nodes.id
+	Status           string
+	Error            string
 	ForwardPort      int // entry 跳 = 订阅端口（监听侧）
 	PortalPort       int
 	PortalPublicKey  string
@@ -61,11 +62,11 @@ type ChainHop struct {
 	CreatedAt        time.Time
 }
 
-const chainCols = `id, status, error, created_at`
+const chainCols = `id, name, status, error, created_at`
 
 func scanChain(row interface{ Scan(...any) error }) (*Chain, error) {
 	var c Chain
-	if err := row.Scan(&c.ID, &c.Status, &c.Error, &c.CreatedAt); err != nil {
+	if err := row.Scan(&c.ID, &c.Name, &c.Status, &c.Error, &c.CreatedAt); err != nil {
 		return nil, err
 	}
 	return &c, nil
@@ -97,8 +98,8 @@ func scanChainHops(rows *sql.Rows) ([]ChainHop, error) {
 }
 
 // InsertChain 插入一条链（pending），返回链 id。
-func (s *Store) InsertChain(ctx context.Context) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO chains DEFAULT VALUES`)
+func (s *Store) InsertChain(ctx context.Context, name string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO chains (name) VALUES (?)`, name)
 	if err != nil {
 		return 0, fmt.Errorf("insert chain: %w", err)
 	}

@@ -199,7 +199,7 @@ type proxyItem struct {
 // subscriptionItems 汇总单机节点与链条目（§21 订阅）：
 //   - 链出口业务节点不再作为单机条目出现（只能经链入口消费）；
 //   - 链条目：server/port 取入口（非 1:1 映射时经端口段助手换算 public 端口），
-//     reality-opts/uuid/flow 等取出口节点 realized_config；命名沿用 {入口别名}-{协议}-{端口}；
+//     reality-opts/uuid/flow 等取出口节点 realized_config；命名优先使用链路名称；
 //   - 只含 active/degraded 链（failed/pending/applying 不出）；degraded 不剔除（客户端测速规避）；
 //   - 用户维度经 user_nodes 判出口节点分配（§16：UUID 只存在于出口 xray）。
 func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []store.Node) []proxyItem {
@@ -234,7 +234,7 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 		if c.Status != store.ChainStatusActive && c.Status != store.ChainStatusDegraded {
 			continue
 		}
-		item, err := s.chainSubscriptionItem(r, c.ID, allowed)
+		item, err := s.chainSubscriptionItem(r, c, allowed)
 		if err != nil {
 			continue
 		}
@@ -244,7 +244,8 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 }
 
 // chainSubscriptionItem 构造单条链的订阅条目；不满足输出条件返回错误（调用方跳过）。
-func (s *Server) chainSubscriptionItem(r *http.Request, chainID int64, allowed map[int64]bool) (*proxyItem, error) {
+func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allowed map[int64]bool) (*proxyItem, error) {
+	chainID := chain.ID
 	hops, err := s.st.ChainHops(r.Context(), chainID)
 	if err != nil {
 		return nil, err
@@ -282,6 +283,7 @@ func (s *Server) chainSubscriptionItem(r *http.Request, chainID int64, allowed m
 		}
 	}
 	entryNode := *node
+	entryNode.Name = chain.Name
 	entryNode.ServerAlias = entrySrv.Alias
 	entryNode.ServerAddress = entrySrv.Address
 	rc.Port = port
@@ -289,7 +291,7 @@ func (s *Server) chainSubscriptionItem(r *http.Request, chainID int64, allowed m
 }
 
 // buildProxy 按节点协议构造 mihomo 代理项；uuid 为该订阅用户自己的 UUID（§8/§9）。
-// 节点命名：{服务器别名}-{协议}-{端口}。
+// 节点命名优先使用管理员设置名称；存量空名称回退到 {服务器别名}-{协议}-{端口}。
 func buildProxy(n store.Node, rc shared.RealizedConfig, uuid string) (clashProxy, error) {
 	if rc.Port == 0 {
 		return clashProxy{}, fmt.Errorf("节点 %d 缺少生效端口", n.ID)
@@ -301,8 +303,12 @@ func buildProxy(n store.Node, rc shared.RealizedConfig, uuid string) (clashProxy
 	if rc.Fingerprint == "" {
 		rc.Fingerprint = shared.FingerprintChrome
 	}
+	name := n.Name
+	if name == "" {
+		name = fmt.Sprintf("%s-%s-%d", n.ServerAlias, n.Protocol, rc.Port)
+	}
 	p := clashProxy{
-		Name:   fmt.Sprintf("%s-%s-%d", n.ServerAlias, n.Protocol, rc.Port),
+		Name:   name,
 		Type:   n.Protocol,
 		Server: n.ServerAddress,
 		Port:   rc.Port,

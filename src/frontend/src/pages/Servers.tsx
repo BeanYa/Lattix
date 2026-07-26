@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
+import { parseTagInput } from '@/lib/naming'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { useTimezone } from '@/lib/timezone'
 import type { MachineType, PortRange, Server } from '@/lib/types'
@@ -119,6 +120,7 @@ export default function Servers() {
   const [address, setAddress] = useState('')
   const [xrayVersion, setXrayVersion] = useState('latest')
   const [machineType, setMachineType] = useState<MachineType>('direct')
+  const [tags, setTags] = useState('')
   const [portRows, setPortRows] = useState<string[]>([''])
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
@@ -130,6 +132,7 @@ export default function Servers() {
   const [editAddrMode, setEditAddrMode] = useState<'builtin' | 'custom'>('custom')
   const [editAddrChoice, setEditAddrChoice] = useState('')
   const [editPortRows, setEditPortRows] = useState<string[]>([''])
+  const [editTags, setEditTags] = useState('')
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
   const [upgradeTarget, setUpgradeTarget] = useState<Server | null>(null)
@@ -163,6 +166,7 @@ export default function Servers() {
       setAddress('')
       setXrayVersion('latest')
       setMachineType('direct')
+      setTags('')
       setPortRows([''])
       setCreateError('')
     }
@@ -177,7 +181,9 @@ export default function Servers() {
       xray_version?: string
       machine_type: MachineType
       allowed_ports?: PortRange[]
+      tags?: string[]
     } = { alias: alias.trim(), machine_type: machineType }
+    body.tags = parseTagInput(tags)
     if (address.trim()) {
       body.address = address.trim()
     }
@@ -258,6 +264,7 @@ export default function Servers() {
     setEditPortRows(
       s.allowed_ports.length > 0 ? s.allowed_ports.map(formatPortRange) : [''],
     )
+    setEditTags(s.tags.join(', '))
     setEditError('')
   }
 
@@ -275,6 +282,7 @@ export default function Servers() {
       return
     }
     let ranges: PortRange[] = []
+    const nextTags = parseTagInput(editTags)
     if (isNat) {
       const parsed = parsePortRows(editPortRows)
       if ('error' in parsed) {
@@ -286,9 +294,9 @@ export default function Servers() {
     setEditSaving(true)
     try {
       if (isNat) {
-        await api.updateServerPorts(editTarget.id, finalAddress, ranges)
+        await api.updateServerPorts(editTarget.id, finalAddress, ranges, nextTags)
       } else {
-        await api.updateServerAddress(editTarget.id, finalAddress)
+        await api.updateServerAddress(editTarget.id, finalAddress, nextTags)
       }
       setEditTarget(null)
       load()
@@ -446,6 +454,11 @@ export default function Servers() {
                 <TableRow key={s.id}>
                   <TableCell className="font-medium">
                     {s.alias}
+                    {s.tags.map((tag) => (
+                      <Badge key={tag} variant="secondary" className="ml-1">
+                        {tag}
+                      </Badge>
+                    ))}
                     {s.machine_type === 'nat' && (
                       <Badge
                         variant="outline"
@@ -541,6 +554,18 @@ export default function Servers() {
               />
             </div>
             <div className="space-y-2">
+              <Label htmlFor="tags">标签（Tag）</Label>
+              <Input
+                id="tags"
+                value={tags}
+                onChange={(e) => setTags(e.target.value)}
+                placeholder="例如：日本, 主力, 移动优化"
+              />
+              <p className="text-xs text-muted-foreground">
+                逗号分隔，最多 10 个；名称模板可按顺序使用 {'{{TAG_1}}'}、{'{{TAG_2}}'}。
+              </p>
+            </div>
+            <div className="space-y-2">
               <Label>机器类型</Label>
               <Select
                 value={machineType}
@@ -630,6 +655,18 @@ export default function Servers() {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onUpdateAddress} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="editTags">标签（Tag）</Label>
+              <Input
+                id="editTags"
+                value={editTags}
+                onChange={(e) => setEditTags(e.target.value)}
+                placeholder="例如：日本, 主力, 移动优化"
+              />
+              <p className="text-xs text-muted-foreground">
+                逗号分隔；新建节点或链路时可通过 {'{{TAG_1}}'} 等参数引用。
+              </p>
+            </div>
             <div className="space-y-2">
               <Label>公网地址{editTarget?.machine_type === 'nat' ? '（必填）' : ''}</Label>
               <Select

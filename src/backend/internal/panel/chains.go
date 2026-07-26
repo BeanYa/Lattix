@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,6 +35,7 @@ type chainHopDTO struct {
 // chainDTO 是链对象的 API 表示（含逐跳状态，§21）。
 type chainDTO struct {
 	ID        int64         `json:"id"`
+	Name      string        `json:"name"`
 	Status    string        `json:"status"` // pending/applying/active/degraded/failed
 	Error     string        `json:"error"`  // 失败时定位到跳
 	CreatedAt time.Time     `json:"created_at"`
@@ -46,7 +48,7 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 	if err != nil {
 		return chainDTO{}, err
 	}
-	out := chainDTO{ID: c.ID, Status: c.Status, Error: c.Error, CreatedAt: c.CreatedAt, Hops: []chainHopDTO{}}
+	out := chainDTO{ID: c.ID, Name: c.Name, Status: c.Status, Error: c.Error, CreatedAt: c.CreatedAt, Hops: []chainHopDTO{}}
 	for _, h := range hops {
 		dto := chainHopDTO{
 			ID:              h.ID,
@@ -91,6 +93,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 // createChainRequest 是链路构图的提交（§10/§21）：依次入口 / 中间跳（0-2）/ 出口，
 // 出口携带业务节点的协议表单（复用建节点请求），入口端口可空 = 自动。
 type createChainRequest struct {
+	Name      string            `json:"name"`
 	Entry     chainHopRef       `json:"entry"`
 	Middle    []chainHopRef     `json:"middle"` // 0-2 个
 	Exit      chainHopRef       `json:"exit"`
@@ -110,11 +113,13 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	req.Name = strings.TrimSpace(req.Name)
 	if len(req.Middle) > 2 {
 		writeError(w, http.StatusBadRequest, "链长上限 4 跳（入口 + 中间跳 ≤2 + 出口）")
 		return
 	}
 	// 出口节点协议表单校验（dokodemo 为端口转发，无用户概念，不能作链出口）。
+	req.Node.Name = req.Name
 	req.Node.ServerID = req.Exit.ServerID
 	if err := req.Node.normalize(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -153,6 +158,24 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		servers = append(servers, srv)
 	}
 	entrySrv, exitSrv := servers[0], servers[len(servers)-1]
+	name, err := resolveNameTemplate(req.Name, nameTemplateValues{
+		Location: entrySrv.Alias,
+		ServerID: entrySrv.ID,
+		Protocol: req.Node.Protocol,
+		Port:     req.EntryPort,
+		Entry:    entrySrv.Alias,
+		EntryID:  entrySrv.ID,
+		Exit:     exitSrv.Alias,
+		ExitID:   exitSrv.ID,
+		Hops:     len(servers),
+		Tags:     decodeServerTags(entrySrv.Tags),
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.Name = name
+	req.Node.Name = name
 
 	// 入口端口：可空 = 自动；指定时须在入口机可用段内（NAT 受限直连），且 1-65535。
 	entryPort := 0
@@ -182,12 +205,12 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	nodeID, err := s.st.InsertNode(r.Context(), exitSrv.ID, vc.Protocol, req.Node.Port, vcJSON)
+	nodeID, err := s.st.InsertNode(r.Context(), req.Name, exitSrv.ID, vc.Protocol, req.Node.Port, vcJSON)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	chainID, err := s.st.InsertChain(r.Context())
+	chainID, err := s.st.InsertChain(r.Context(), req.Name)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -232,7 +255,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "chain.create", nil, nil, map[string]any{"chain_id": chainID, "hops": len(dto.Hops)})
+	s.audit(r, "chain.create", nil, nil, map[string]any{"chain_id": chainID, "name": req.Name, "hops": len(dto.Hops)})
 	writeJSON(w, http.StatusCreated, dto)
 }
 
