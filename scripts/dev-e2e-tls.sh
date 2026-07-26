@@ -103,7 +103,7 @@ JAR2="$WORK/cookies2.txt"
 curl -s -c "$JAR2" -H 'Content-Type: application/json' \
     -d '{"username":"admin","password":"lattix-admin"}' "http://$ADDR_HTTP/api/login" >/dev/null
 RES="$(curl -s -b "$JAR2" -H 'Content-Type: application/json' -H 'X-Forwarded-Proto: https' \
-    -d '{"alias":"px01"}' "http://$ADDR_HTTP/api/servers")"
+    -d '{"country_code":"US","location":"Test","alias":"px01"}' "http://$ADDR_HTTP/api/servers")"
 grep -q "https://" <<<"$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["install_command"])' "$RES")" \
     && echo "OK: 反代场景安装命令推断为 https" \
     || { echo "FAIL: X-Forwarded-Proto 未生效: $RES"; exit 1; }

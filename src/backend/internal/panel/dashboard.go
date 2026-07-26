@@ -6,12 +6,13 @@ import (
 	"lattix/backend/internal/store"
 )
 
-// dashboardDTO 是仪表盘统计（§10：服务器数、在线数、节点数、用户数）。
+// dashboardDTO 是仪表盘统计（§10：服务器数、在线数、产品层链路数、用户数）。
 type dashboardDTO struct {
 	Servers       int `json:"servers"`
 	ServersOnline int `json:"servers_online"`
-	Nodes         int `json:"nodes"`
-	NodesActive   int `json:"nodes_active"`
+	Links         int `json:"links"`
+	LinksActive   int `json:"links_active"`
+	LinksDegraded int `json:"links_degraded"`
 	Users         int `json:"users"`
 }
 
@@ -34,10 +35,32 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	d.Nodes = len(nodes)
+	chains, err := s.st.ListChains(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	exitIDs, err := s.st.ChainExitNodeIDs(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	d.Links = len(chains)
 	for _, n := range nodes {
+		if exitIDs[n.ID] {
+			continue
+		}
+		d.Links++
 		if n.Status == store.NodeStatusActive {
-			d.NodesActive++
+			d.LinksActive++
+		}
+	}
+	for _, chain := range chains {
+		if chain.Status == store.ChainStatusActive {
+			d.LinksActive++
+		}
+		if chain.Status == store.ChainStatusDegraded {
+			d.LinksDegraded++
 		}
 	}
 	users, err := s.st.ListUsers(r.Context())

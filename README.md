@@ -35,16 +35,19 @@ scripts/
 
 ## 功能
 
-**节点与协议**
+**链路与协议**
 
-- 节点向导：vless / socks / http / dokodemo-door（vmess / trojan / shadowsocks 与 gRPC
+- 统一链路页：创建时选择直连或中转；直连仅一台服务器，中转按入口 → 中转(≤2) → 出口展示
+- 直连支持 vless / socks / http / dokodemo-door，中转出口支持 vless / socks / http（vmess / trojan / shadowsocks 与 gRPC
   传输已被 xray 标记 deprecated，API 保留兼容但向导不再提供新建）
 - Reality 安全层，传输 tcp / XHTTP（gRPC 已废弃屏蔽）；dest 预检 + 白名单 fallback
 - VLESS 详细选项：flow（vision/无）、XHTTP path/mode/host、uTLS 指纹
 - VLESS Encryption（mlkem768 后量子 / x25519 认证），可与 vision 组合（1-RTT）
-- 节点/链路名称模板：支持 `{{LOCATION}}`、`{{PROTOCOL}}`、`{{TAG_1}}` 等内置参数，
-  创建前实时预览；服务器可在创建/编辑时维护有序 Tag
-- 节点状态机 `pending → applying → active | failed`，失败详情 + 重试
+- 链路名称模板：直连默认 `{{COUNTRY_FLAG}}{{LOCATION}}-Direct`，中转默认
+  `{{EXIT.COUNTRY_FLAG}}-Out`；支持 `ENTRY/EXIT/HOP[n]` 服务器对象属性、0 起始 Tag 索引、
+  光标补全、实时预览与前后端严格校验
+- 服务器创建/编辑维护标准 Country 与 Location；城市选择器辅助输入，仍允许自定义机房位置
+- 状态统一展示为部署中 / 正常 / 异常 / 降级，失败详情 + 重试链路
 
 **代理链与 NAT（§21，v0.0.3）**
 
@@ -56,7 +59,7 @@ scripts/
 
 **用户与订阅**
 
-- 逐节点用户分配（默认全关）：用户勾选节点，差量扇出，订阅只含分配节点
+- 逐链路用户分配（默认全关）：用户勾选直连/中转链路，底层继续按业务 node_id 差量扇出
 - 用户凭证复用 UUID：vless id / trojan 密码 / ss 派生密钥 / socks+http 账密
 - 订阅：`GET /sub/{token}` mihomo（Clash.Meta）YAML；`GET /sub/{token}/links`
   base64 分享链接集合（vless/trojan/vmess/ss）；用户页二维码扫码导入

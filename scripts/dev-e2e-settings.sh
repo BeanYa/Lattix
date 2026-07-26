@@ -82,7 +82,7 @@ G="$(api GET /api/settings)"
 [[ "$(echo "$G" | py "(d['timezone'], d['public_url'], d['tls_mode'], d['running_tls_mode'], d['restart_required'], d['password_override'])")" == "('', '', '', 'off', False, False)" ]] \
     && echo "OK: 设置基线（全空，跟随启动参数）" || { echo "FAIL: 基线: $G"; exit 1; }
 
-S1="$(api POST /api/servers '{"alias":"s1"}')"
+S1="$(api POST /api/servers '{"country_code":"US","location":"Test","alias":"s1"}')"
 # dev 构建（version=dev）无 release 可钉：安装命令回退面板 /resource 托管源（--source panel）。
 [[ "$(echo "$S1" | py "d['install_command']")" == "curl -fsSL $PUBLIC_URL_FALLBACK/resource/install.sh | bash -s -- --source panel --panel $PUBLIC_URL_FALLBACK --token "* ]] \
     && echo "OK: 未保存 public_url 时安装命令回退启动参数（dev 面板 /resource 托管源）" || { echo "FAIL: install_command: $S1"; exit 1; }
@@ -95,7 +95,7 @@ echo ">> PUT 保存时区与对外地址"
 G="$(api PUT /api/settings '{"timezone":"Asia/Shanghai","public_url":"https://panel.example.com"}')"
 [[ "$(echo "$G" | py "(d['timezone'], d['public_url'])")" == "('Asia/Shanghai', 'https://panel.example.com')" ]] \
     && echo "OK: 时区与对外地址已保存" || { echo "FAIL: 保存: $G"; exit 1; }
-S2="$(api POST /api/servers '{"alias":"s2"}')"
+S2="$(api POST /api/servers '{"country_code":"US","location":"Test","alias":"s2"}')"
 [[ "$(echo "$S2" | py "d['install_command']")" == "curl -fsSL https://panel.example.com/resource/install.sh | bash -s -- --source panel --panel https://panel.example.com --token "* ]] \
     && echo "OK: 保存后安装命令使用对外地址" || { echo "FAIL: install_command: $S2"; exit 1; }
 U="$(api POST /api/users '{"name":"u1"}')"
@@ -116,7 +116,7 @@ echo ">> PUT 清除后回退启动参数"
 G="$(api PUT /api/settings '{"timezone":"","public_url":""}')"
 [[ "$(echo "$G" | py "(d['timezone'], d['public_url'])")" == "('', '')" ]] \
     && echo "OK: 设置已清除" || { echo "FAIL: 清除: $G"; exit 1; }
-S3="$(api POST /api/servers '{"alias":"s3"}')"
+S3="$(api POST /api/servers '{"country_code":"US","location":"Test","alias":"s3"}')"
 [[ "$(echo "$S3" | py "d['install_command']")" == "curl -fsSL $PUBLIC_URL_FALLBACK/resource/install.sh | bash -s -- --source panel --panel $PUBLIC_URL_FALLBACK --token "* ]] \
     && echo "OK: 清除后安装命令回退启动参数" || { echo "FAIL: 回退: $S3"; exit 1; }
 
@@ -152,7 +152,7 @@ G="$(api PUT /api/settings "{\"tls_mode\":\"path\",\"tls_domain\":\"$TLS_DOMAIN\
     && echo "OK: tls_mode=path 已保存（restart_required=true，证书摘要就绪）" || { echo "FAIL: 保存 TLS: $G"; exit 1; }
 
 echo ">> POST /api/settings/restart 自重启 → 同端口 HTTPS 生效"
-BOOTSTRAP="$(api POST /api/servers '{"alias":"tls01"}' | py "d['bootstrap_token']")"
+BOOTSTRAP="$(api POST /api/servers '{"country_code":"US","location":"Test","alias":"tls01"}' | py "d['bootstrap_token']")"
 [[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X POST "http://$ADDR/api/settings/restart")" == "202" ]] \
     || { echo "FAIL: restart 接口非 202"; exit 1; }
 for _ in $(seq 1 40); do

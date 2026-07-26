@@ -60,7 +60,7 @@ scripts/
 
 | 表 | 字段（要点） |
 |---|---|
-| `servers` | id, alias, address(公网地址), learned_addr(拨入学习地址), nic_addresses(agent 上报网卡地址 JSON), tags(有序标签 JSON，名称模板 `TAG_n` 来源), token(长期凭证), last_seen_at, xray_version, config_drift(§17), created_at |
+| `servers` | id, alias, country_code(ISO 3166-1 alpha-2), location(城市/机房位置), address(公网地址), learned_addr(拨入学习地址), nic_addresses(agent 上报网卡地址 JSON), tags(有序标签 JSON，名称模板 `TAG[n]` 来源), token(长期凭证), last_seen_at, xray_version, config_drift(§17), created_at |
 | `users` | id, name, uuid, sub_token, expires_at(可空，unix 秒，NULL=长期), expired(0/1 到期停权标记，§9), disabled(0/1 显式停用标记，§16), created_at |
 | `nodes` | id, name(解析后的管理/订阅名称), server_id, protocol, port, config_template(JSON), realized_config(JSON), status, error, created_at |
 | `commands` | id, server_id, type, payload(JSON), status(queued/sent/acked/failed), attempts, created_at, updated_at |
@@ -73,6 +73,7 @@ scripts/
 
 - `commands` 表同时充当**离线命令队列**与**操作日志**（全部保留，不自动清理；重发/死信语义见 §2）。
 - `nodes.config_template` 是面板侧虚拟配置（含占位符）；`nodes.realized_config` 是 Agent 上报的实际生效值（端口、public_key、short_id 等）。
+- `servers.country_code` 与 `servers.location` 在创建/编辑服务器时必填；国家通过选择器写入标准两位代码，`COUNTRY` 与 `COUNTRY_FLAG` 由代码派生。Location 提供按国家过滤的本地城市建议，同时允许管理员填写机房区域等自由文本。
 - `servers.address` 是订阅中节点地址的唯一来源（§9）：**创建服务器时由管理员填写公网地址，agent 不校验**；留空则按 agent WS 拨入的对端 IP 自动学习（panel 前置本机回环反代时取 `X-Forwarded-For` 首个 IP，非回环对端不信任该头以防伪造），一经写入不再被覆盖（地址变更由管理员修改，PATCH /api/servers/{id}）。每次 hello 另将拨入学习地址写入 `learned_addr`、将 agent 上报的网卡非回环地址写入 `nic_addresses`，二者仅作面板"编辑地址"的内置候选（可选内置地址或自定义），不参与自动学习决策。自 0.0.2 之后迭代（§21）：`servers` 增加机器类型与 NAT 可用端口段元数据（含非 1:1 映射的 public_port），NAT 类型 address 强制必填、禁用自动学习；引入链后订阅地址改取链**入口**的 address。
 - 用户-节点关联（§16）：`user_nodes` 引入前成员关系隐含为"全部用户 ∈ 全部节点"（§8），经 `PRAGMA user_version` 一次性迁移补全存量关联；此后新建用户/节点默认全关。
 
@@ -143,9 +144,16 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 
 - 目标客户端：mihomo 内核系（Clash Verge / Clash Party / FlClash 等）。原版 Clash 不支持 VLESS+Reality，不在目标范围。
 - 内容：proxies 列表（每个节点一项，`type: vless`，`server` 取 `servers.address`（§4），嵌入**该用户自己的 UUID**、`flow`、`reality-opts: {public-key, short-id}`、`servername`、`udp: true`）+ 一个 `select` 类型 proxy-group + `MATCH` 规则。
-- 节点/链路命名：创建时解析名称模板，支持 `LOCATION/SERVER/SERVER_ID/PROTOCOL/PORT/TAG_n`
-  （链路另支持 `ENTRY/ENTRY_ID/EXIT/EXIT_ID/HOPS`）；`TAG_n` 按服务器有序 Tag（链路取入口服务器）
-  从 1 开始。订阅优先使用解析后的名称；存量空名称回退 `{服务器别名}-{协议}-{端口}`。
+- 链路命名在创建时解析并固化；服务器资料或自动端口后续变化不自动重命名。默认模板：
+  直连 `{{COUNTRY_FLAG}}{{LOCATION}}-Direct`，中转 `{{EXIT.COUNTRY_FLAG}}-Out`。
+- 全局变量 `ID/NAME/COUNTRY/COUNTRY_CODE/COUNTRY_FLAG/LOCATION/ADDRESS/TAG[n]` 取客户端实际连接的服务器：
+  直连为唯一服务器，中转为入口；另有 `PROTOCOL/PORT/HOPS`。`PORT` 选择自动端口时解析为 `auto`。
+- 拓扑对象 `ENTRY/EXIT/HOP[n]` 代表服务器，支持属性
+  `.ID/.NAME/.COUNTRY/.COUNTRY_CODE/.COUNTRY_FLAG/.LOCATION/.ADDRESS/.TAG[n]`；
+  `HOP[0] == ENTRY`，`HOP[最后] == EXIT`，数组索引从 0 开始。直连中三者均指唯一服务器。
+- 前端输入 `{{` 后提供光标感知的变量补全；前端即时预览，后端执行同一套最终校验。
+  未知变量/属性、非法或越界索引、缺失服务器资料、空结果和超长结果均拒绝创建并定位变量。
+  名称中使用自动 `PORT` 时仅提示其会解析为 `auto`，不阻止创建。
 - **（自 0.0.2 之后迭代，§21）**：引入链后，proxies 条目的 `server`/端口取链**入口**的 address 与 public_port（非 1:1 映射时），public-key/short-id/UUID 取链**出口**；命名中的别名与端口取入口。链 degraded 不剔除入口条目，靠客户端测速规避。
 - **响应头**：`/sub/{token}` 与 `/sub/{token}/links` 均返回 `subscription-userinfo: upload=<bytes>; download=<bytes>[; expire=<unix秒>]`（upload/download 取 `traffic` 表用户维度 node_id=0 的跨服务器累计；仅设了有效期才带 expire；无流量配额故无 total）与 `profile-update-interval: 24`（客户端按天自动刷新）。
 - **用户有效期**：创建用户可带 `expires_at`（过去时间 → 400）；`PATCH /api/users/{id}` 修改/清除（null = 长期，过去时间同样 400——"借到期立即停权"由 §16 的 disabled 开关承担；省略的字段保持不变）；列表 DTO 带 `expires_at`/`expired`/`disabled`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `remove_user`（显式 nodes 载荷；已 disabled 的用户只补记标记不重复扇出）；管理员延长/清除有效期（expired 1→0）→ 扇出 `add_user` 恢复（disabled 用户除外，见 §16 有效停权态）。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`apply_node` 的 `NodeUserUUIDs` 不下发 expired/disabled 用户。
@@ -153,9 +161,24 @@ Agent 收到 `apply_node` 后的落地流水线（顺序固定）：
 
 ## 10. 面板页面与 API
 
-页面：登录 / 仪表盘（服务器数、在线数、节点数、用户数）/ 服务器列表（"添加服务器"填写别名、**机器类型**（独立 IP / NAT，自 0.0.2 之后迭代，§21；选 NAT 出现"可用端口"多项填写，每项支持单端口与范围及非 1:1 映射，留空 = 仅出口档）、**公网地址**（留空自动学习，§4；NAT 类型强制必填）与 **xray 版本**（默认 `latest`，§11），生成一行安装命令；可删除服务器——在线 agent 收到 `uninstall` 自卸载，**删除时可选"仅 agent"或"连同 xray"**（§5），离线仅删记录；可刷新凭证重取安装命令——已安装的换发后旧凭证失效，未安装的换发新 bootstrap token）/ 节点创建向导（选服务器 → VLESS+Reality 表单，端口可空 = 自动；自 0.0.2 之后迭代支持链路构图：依次选择入口 / 中间跳（≤2）/ 出口，入口须有入站能力，出口任意，§21）/ 用户列表（创建用户 → 展示并复制订阅链接）。
+页面：登录 / 仪表盘（服务器数、在线数、链路数、正常/降级数、用户数）/ 服务器列表（创建和编辑时填写别名、Country、Location、机器类型、公网地址、NAT 可用端口、Tag 与 xray 版本）/ **链路页** / 用户列表。
 
-管理 API 走 HTTP + session（账号密码登录）；Agent 通道走 token（§5）。
+链路页是唯一的产品入口，不保留 `/nodes` 页面或重定向。创建时先选择：
+
+- **直连**：一台服务器即完整链路，拓扑卡片只显示 `直连 <服务器>:<端口>`，不标入口/出口。
+- **中转**：显示 `入口 → 中转（0-2 台）→ 出口`；原 role `middle` 的用户文案统一为“中转”。
+- 两类链路混排为同一种卡片，顶部统一显示名称、类型、整体状态、创建时间与业务流量；
+  中转内部出口业务 node 不作为直连重复展示。状态文案统一为部署中/正常/异常/降级。
+- 创建、重试与删除按钮统一使用“链路”语义；直连调用 node 流程，中转调用 chain 编排。
+- 直连支持 vless/socks/http/dokodemo-door；中转出口支持 vless/socks/http。
+- 用户页统一称“分配链路”，中转选择项内部仍映射其出口业务 `node_id`。
+
+管理 API 走 HTTP + session（账号密码登录）；Agent 通道走 token（§5）。产品层合并不新增第三套统一 API：
+直连继续使用 `/api/nodes`，中转继续使用 `/api/chains`，前端聚合展示。
+
+**已知问题**：离线城市建议来自 `country-state-city` 本地数据，按需加载后数据块约 8 MB
+（gzip 约 2.3 MB）；不影响首屏，但首次打开服务器国家/城市控件会产生额外加载。城市名称以数据集原文为主，
+Location 允许自由输入作为兜底。后续可按国家拆分数据文件以降低单次加载量。
 
 ## 11. 服务器引导流程
 
@@ -252,11 +275,11 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，`-telemetry-interval` �
 | xray 版本兼容 | 新版 xray-core 已移除 vmess alterId（服务端），mihomo 客户端订阅仍携带 `alterId: 0` |
 | fallbacks 等高级选项未开放 | vless/trojan 的 fallbacks、xhttp extra 参数等暂不支持 |
 
-## 16. 逐节点用户分配（已实现，超出 MVP 范围）
+## 16. 逐链路用户分配（底层仍为 user_nodes）
 
 替代 §8 的全对全隐含关系：`user_nodes` 关联表，**默认全关**——新建用户/节点无任何关联，
-管理员在用户列表"分配节点"对话框勾选（`PUT /api/users/{id}/nodes` 整体替换）。
-创建用户时可预选服务器（等于分配该服务器下全部节点），省略则维持默认全关。
+管理员在用户列表“分配链路”对话框勾选（`PUT /api/users/{id}/nodes` 整体替换）。
+创建用户时可直接预选链路对应的业务 `node_id`，省略则维持默认全关。
 
 - **扇出语义**：apply_node 只携带分配到该节点的用户 UUID；分配变更按差量扇出
   add_user/remove_user（载荷仅含受影响节点）；删除用户仍向所有服务器幂等扇出 remove_user。
@@ -387,8 +410,18 @@ install.sh 成功输出面板地址 / agent 状态 / xray 版本与 latx-ag 运�
 
 ## 21. 代理链与 NAT 支持（已实现，v0.0.3）
 
-推翻 §14 原"NAT / 中继链路不做"的决策。节点概念推广为**链**：`入口 → [中间跳...] → 出口 → Internet`，
-客户端仅见入口。存量单机节点视为长度 1 的链，模型统一。
+推翻 §14 原"NAT / 中继链路不做"的决策。产品概念统一为**链路**：
+直连是长度 1 的链路，中转是 `入口 → [中转...] → 出口 → Internet`，客户端仅见入口。
+
+**产品层统一、实现层暂不统一（防误解）**：
+
+- 用户只看到链路；“节点”仅表示服务器上的业务 inbound 或中转链路中的一跳。
+- 直连仍落在 `nodes` 表并使用 node 状态机/API；中转仍落在 `chains + chain_hops`，
+  出口业务配置仍复用一条 `nodes` 记录。此次不做数据库/API 的“一切皆 chain”重构。
+- 前端合并列表时排除所有 `chain_hops.node_id`，防止中转出口业务节点重复显示为直连。
+- `user_nodes`、流量统计、Agent 消息中的 node 仍是实现术语；用户分配中转链路时写入出口 `node_id`。
+- 仪表盘链路数 = 非链出口 nodes 数 + chains 数；中转流量取出口业务节点，逐跳流量不得相加。
+- 当前处于开发阶段，不提供旧 `/nodes` 页面兼容或重定向。
 
 **能力边界**：
 
@@ -426,7 +459,7 @@ install.sh 成功输出面板地址 / agent 状态 / xray 版本与 latx-ag 运�
 
 - 新表 `chains`（id, status, error, created_at…）承载链级状态机；
   新表 `chain_hops`（chain_id, seq, node_id, role, hop 状态…）承载逐跳状态与独立重试，
-  role ∈ entry / middle / exit。
+  role ∈ entry / middle / exit；其中 `middle` 的产品文案为“中转”。
 - `user_nodes` 维持指向出口节点（UUID 只存在于出口 xray），无新用户关联表。
 - `traffic` 表结构不变：用户维度流量只在出口统计，中间跳只有节点级字节数，
   面板展示不得把入口跳字节数当用户流量。

@@ -17,7 +17,7 @@ func TestServerTagsAndManagedNamesRoundTrip(t *testing.T) {
 	defer st.Close()
 
 	serverID, err := st.CreateServer(
-		ctx, "日本", "jp.example.com", "token", MachineTypeDirect, "", `["主力","移动"]`,
+		ctx, "日本", "jp.example.com", "token", MachineTypeDirect, "", `["主力","移动"]`, "JP", "Tokyo",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -28,6 +28,9 @@ func TestServerTagsAndManagedNamesRoundTrip(t *testing.T) {
 	}
 	if server.Tags != `["主力","移动"]` {
 		t.Fatalf("服务器 tags = %q", server.Tags)
+	}
+	if server.CountryCode != "JP" || server.Location != "Tokyo" {
+		t.Fatalf("服务器地理信息 = %s/%s", server.CountryCode, server.Location)
 	}
 
 	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})

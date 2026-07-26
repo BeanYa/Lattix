@@ -104,10 +104,10 @@ sleep 1
 api POST /api/login "{\"username\":\"admin\",\"password\":\"$ADMIN_PASS\"}" >/dev/null
 
 echo ">> 两台服务器：A（direct 入口）、C（NAT 仅出口档）"
-RA="$(api POST /api/servers '{"alias":"chain-a","address":"127.0.0.1"}')"
+RA="$(api POST /api/servers '{"country_code":"US","location":"Test","alias":"chain-a","address":"127.0.0.1"}')"
 AID="$(echo "$RA" | py "d['server']['id']")"
 BOOT_A="$(echo "$RA" | py "d['bootstrap_token']")"
-RC="$(api POST /api/servers '{"alias":"chain-c","address":"127.0.0.1","machine_type":"nat","allowed_ports":[]}')"
+RC="$(api POST /api/servers '{"country_code":"US","location":"Test","alias":"chain-c","address":"127.0.0.1","machine_type":"nat","allowed_ports":[]}')"
 CID="$(echo "$RC" | py "d['server']['id']")"
 BOOT_C="$(echo "$RC" | py "d['bootstrap_token']")"
 [[ "$(echo "$RC" | py "d['server']['machine_type']")" == "nat" && "$(echo "$RC" | py "d['server']['allowed_ports']")" == "[]" ]] \

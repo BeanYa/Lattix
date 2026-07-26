@@ -223,11 +223,9 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	name, err := resolveNameTemplate(req.Name, nameTemplateValues{
-		Location: srv.Alias,
-		ServerID: srv.ID,
 		Protocol: req.Protocol,
 		Port:     req.Port,
-		Tags:     decodeServerTags(srv.Tags),
+		Servers:  []nameTemplateServer{nameServer(srv)},
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

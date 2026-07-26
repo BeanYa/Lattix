@@ -82,6 +82,8 @@ export const api = {
     machine_type?: MachineType
     allowed_ports?: PortRange[]
     tags?: string[]
+    country_code: string
+    location: string
   }) =>
     request<CreateServerResponse>('/api/servers', {
       method: 'POST',
@@ -103,16 +105,40 @@ export const api = {
     request<CommandLog[]>(`/api/servers/${id}/commands?limit=${limit}`),
   repairServer: (id: number) =>
     request<{ reapplied: number }>(`/api/servers/${id}/repair`, { method: 'POST' }),
-  updateServerAddress: (id: number, address: string, tags: string[]) =>
+  updateServerAddress: (
+    id: number,
+    address: string,
+    tags: string[],
+    countryCode: string,
+    location: string,
+  ) =>
     request<Server>(`/api/servers/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ address: address.trim(), tags }),
+      body: JSON.stringify({
+        address: address.trim(),
+        tags,
+        country_code: countryCode,
+        location,
+      }),
     }),
   // 编辑 NAT 可用端口段（§21）：allowed_ports 整体替换；机器类型建后不可互转。
-  updateServerPorts: (id: number, address: string, allowedPorts: PortRange[], tags: string[]) =>
+  updateServerPorts: (
+    id: number,
+    address: string,
+    allowedPorts: PortRange[],
+    tags: string[],
+    countryCode: string,
+    location: string,
+  ) =>
     request<Server>(`/api/servers/${id}`, {
       method: 'PATCH',
-      body: JSON.stringify({ address: address.trim(), allowed_ports: allowedPorts, tags }),
+      body: JSON.stringify({
+        address: address.trim(),
+        allowed_ports: allowedPorts,
+        tags,
+        country_code: countryCode,
+        location,
+      }),
     }),
   deleteServer: (id: number, purge: 'xray' | 'agent') =>
     request<void>(`/api/servers/${id}?purge=${purge}`, { method: 'DELETE' }),
@@ -130,13 +156,13 @@ export const api = {
   deleteNode: (id: number) => request<void>(`/api/nodes/${id}`, { method: 'DELETE' }),
 
   users: () => request<SubUser[]>('/api/users'),
-  createUser: (name: string, expiresAt?: string | null, serverIds?: number[]) =>
+  createUser: (name: string, expiresAt?: string | null, nodeIds?: number[]) =>
     request<SubUser>('/api/users', {
       method: 'POST',
       body: JSON.stringify({
         name,
         ...(expiresAt ? { expires_at: expiresAt } : {}),
-        ...(serverIds && serverIds.length ? { server_ids: serverIds } : {}),
+        ...(nodeIds && nodeIds.length ? { node_ids: nodeIds } : {}),
       }),
     }),
   updateUserExpiry: (id: number, expiresAt: string | null) =>

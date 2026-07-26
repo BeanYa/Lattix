@@ -8,7 +8,6 @@ import Chains from '@/pages/Chains'
 import Dashboard from '@/pages/Dashboard'
 import EventLogPage from '@/pages/EventLog'
 import Login from '@/pages/Login'
-import Nodes from '@/pages/Nodes'
 import Servers from '@/pages/Servers'
 import Settings from '@/pages/Settings'
 import Users from '@/pages/Users'
@@ -44,7 +43,6 @@ export default function App() {
             >
               <Route index element={<Dashboard />} />
               <Route path="servers" element={<Servers />} />
-              <Route path="nodes" element={<Nodes />} />
               <Route path="chains" element={<Chains />} />
               <Route path="users" element={<Users />} />
               <Route path="event-log" element={<EventLogPage />} />

@@ -38,6 +38,8 @@ type serverDTO struct {
 	MachineType   string             `json:"machine_type"`   // direct|nat（§21）
 	AllowedPorts  []shared.PortRange `json:"allowed_ports"`  // NAT 可用端口段（§21），空 = 无段（仅出口档/direct）
 	Tags          []string           `json:"tags"`           // 管理标签；按顺序供名称模板 {{TAG_n}} 使用
+	CountryCode   string             `json:"country_code"`   // ISO 3166-1 alpha-2
+	Location      string             `json:"location"`       // 城市或机房位置
 	Metrics       *metricsDTO        `json:"metrics"`        // 主机遥测最新值（§13），无数据为 null
 	CreatedAt     time.Time          `json:"created_at"`
 }
@@ -74,6 +76,8 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		MachineType:   srv.MachineType,
 		AllowedPorts:  ranges,
 		Tags:          decodeServerTags(srv.Tags),
+		CountryCode:   srv.CountryCode,
+		Location:      srv.Location,
 		CreatedAt:     srv.CreatedAt,
 	}
 }
@@ -112,6 +116,8 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		MachineType  string             `json:"machine_type"`  // direct（默认）| nat（§21）
 		AllowedPorts []shared.PortRange `json:"allowed_ports"` // NAT 可用端口段（§21），留空 = 仅出口档
 		Tags         []string           `json:"tags"`
+		CountryCode  string             `json:"country_code"`
+		Location     string             `json:"location"`
 	}
 	if err := readJSON(r, &req); err != nil || req.Alias == "" {
 		writeError(w, http.StatusBadRequest, "alias 不能为空")
@@ -119,6 +125,11 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.XrayVersion == "" {
 		req.XrayVersion = "latest"
+	}
+	countryCode, location, err := normalizeServerGeography(req.CountryCode, req.Location)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if req.MachineType == "" {
 		req.MachineType = store.MachineTypeDirect
@@ -146,7 +157,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bootstrap := randomHex(16)
-	id, err := s.st.CreateServer(r.Context(), req.Alias, req.Address, bootstrap, req.MachineType, allowedJSON, tagsJSON)
+	id, err := s.st.CreateServer(r.Context(), req.Alias, req.Address, bootstrap, req.MachineType, allowedJSON, tagsJSON, countryCode, location)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -159,6 +170,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	sid := srv.ID
 	s.audit(r, "server.create", &sid, nil, map[string]any{
 		"alias": req.Alias, "machine_type": req.MachineType, "address": req.Address, "tags": req.Tags,
+		"country_code": countryCode, "location": location,
 	})
 	base := s.panelBase(r)
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -218,6 +230,8 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		MachineType  string              `json:"machine_type"`  // 不允许互转：带不同值 → 400
 		AllowedPorts *[]shared.PortRange `json:"allowed_ports"` // 省略 = 不变；显式 null/数组 = 整体替换
 		Tags         *[]string           `json:"tags"`          // 省略 = 不变；数组 = 整体替换
+		CountryCode  *string             `json:"country_code"`  // 省略 = 不变
+		Location     *string             `json:"location"`      // 省略 = 不变
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -239,6 +253,18 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	if srv.MachineType == store.MachineTypeNAT && req.Address == "" {
 		writeError(w, http.StatusBadRequest, "NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）")
 		return
+	}
+	countryCode, location := srv.CountryCode, srv.Location
+	if req.CountryCode != nil || req.Location != nil {
+		if req.CountryCode == nil || req.Location == nil {
+			writeError(w, http.StatusBadRequest, "country_code 与 location 须同时提供")
+			return
+		}
+		countryCode, location, err = normalizeServerGeography(*req.CountryCode, *req.Location)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if req.AllowedPorts != nil {
 		if err := shared.ValidatePortRanges(*req.AllowedPorts); err != nil {
@@ -274,6 +300,10 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if err := s.st.UpdateServerGeography(r.Context(), id, countryCode, location); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	srv, err = s.st.ServerByID(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -282,6 +312,7 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	sid := id
 	s.audit(r, "server.update", &sid, nil, map[string]any{
 		"address": req.Address, "allowed_ports_changed": req.AllowedPorts != nil, "tags_changed": req.Tags != nil,
+		"country_code": countryCode, "location": location,
 	})
 	writeJSON(w, http.StatusOK, s.toServerDTO(*srv))
 }

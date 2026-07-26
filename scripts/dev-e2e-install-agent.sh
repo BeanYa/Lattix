@@ -77,7 +77,7 @@ py() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
 
 api -X POST -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PASS\"}" "http://$ADDR/api/login" | grep -q '"admin"' \
     && echo "OK: 登录成功" || { echo "FAIL: 登录"; exit 1; }
-BOOTSTRAP="$(api -X POST -d '{"alias":"e2e01"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
+BOOTSTRAP="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"e2e01"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
 [[ -n "$BOOTSTRAP" ]] && echo "OK: 添加服务器取得 bootstrap token" || { echo "FAIL: bootstrap token"; exit 1; }
 
 run_install() {
@@ -155,7 +155,7 @@ curl -s "http://$ADDR/install.sh" | grep -q "LATTIX_VERSION=\"$VERSION\"" \
     && echo "OK: /install.sh 托管 resource 镜像（CI stamp 版）" || { echo "FAIL: /install.sh 未托管镜像脚本"; exit 1; }
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/resource/lattix-agent-linux-amd64.tar.gz")" == "200" ]] \
     && echo "OK: /resource/ 镜像托管可用" || { echo "FAIL: /resource/ 不可用"; exit 1; }
-BOOTSTRAP2="$(api -X POST -d '{"alias":"e2e02"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
+BOOTSTRAP2="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"e2e02"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
 [[ -n "$BOOTSTRAP2" ]] || { echo "FAIL: 第二台服务器 bootstrap token"; exit 1; }
 PANEL_OUT="$(LATX_DEV=1 LATX_PREFIX="$PREFIX" XRAY_BIN="$XRAY_BIN" LATX_AG_XRAY_API="$API_ADDR" \
     bash "$FAKE/install.sh" --source panel --panel "http://$ADDR" --token "$BOOTSTRAP2" --xray-version v26.3.27)"
@@ -174,7 +174,7 @@ done
     || { echo "FAIL: server 2 未上线"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
 
 echo ">> 用例 6: user 用户态模式（LATX_USER_MODE=1 无 LATX_DEV；守护脚本常驻 + latx-ag 用户态管理）"
-BOOTSTRAP3="$(api -X POST -d '{"alias":"e2e03"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
+BOOTSTRAP3="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"e2e03"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
 [[ -n "$BOOTSTRAP3" ]] || { echo "FAIL: 第三台服务器 bootstrap token"; exit 1; }
 USER_OUT="$(LATX_USER_MODE=1 LATX_PREFIX="$PREFIX" LATX_RELEASE_BASE="file://$FAKE" \
     XRAY_BIN="$XRAY_BIN" LATX_AG_XRAY_API="$API_ADDR" \

@@ -62,7 +62,7 @@ echo ">> start backend (v0.0.3) + 登录 + 建服务器"
 BPID=$!
 sleep 1
 api -X POST -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PASS\"}" "http://$ADDR/api/login" >/dev/null
-TOKEN="$(api -X POST -d '{"alias":"compat"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
+TOKEN="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"compat"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
 
 start_agent() { # $1=binary
     "$1" -panel "ws://$ADDR/api/agent/ws" -state "$WORK/agent.state.json" \

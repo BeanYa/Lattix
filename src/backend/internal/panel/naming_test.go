@@ -4,45 +4,57 @@ import "testing"
 
 func TestResolveNodeNameTemplate(t *testing.T) {
 	port := 8443
-	got, err := resolveNameTemplate("{{LOCATION}}-{{PROTOCOL}}-{{TAG_1}}-{{PORT}}", nameTemplateValues{
-		Location: "日本",
-		ServerID: 7,
+	got, err := resolveNameTemplate("{{COUNTRY_FLAG}}{{LOCATION}}-{{TAG[0]}}-{{PORT}}", nameTemplateValues{
 		Protocol: "vless",
 		Port:     &port,
-		Tags:     []string{"inbound"},
+		Servers: []nameTemplateServer{{
+			ID: 7, Name: "JP Hyper", CountryCode: "JP", Location: "Tokyo", Tags: []string{"inbound"},
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "日本-vless-inbound-8443"; got != want {
+	if want := "🇯🇵Tokyo-inbound-8443"; got != want {
 		t.Fatalf("解析结果 = %q，期望 %q", got, want)
 	}
 }
 
 func TestResolveChainNameTemplate(t *testing.T) {
-	got, err := resolveNameTemplate("{{ENTRY}}→{{EXIT}}-{{PROTOCOL}}-{{HOPS}}跳", nameTemplateValues{
-		Location: "美国",
-		ServerID: 1,
+	got, err := resolveNameTemplate("{{ENTRY.NAME}}→{{HOP[1].LOCATION}}→{{EXIT.COUNTRY_FLAG}}-{{HOPS}}跳", nameTemplateValues{
 		Protocol: "vless",
-		Entry:    "美国",
-		EntryID:  1,
-		Exit:     "日本",
-		ExitID:   2,
-		Hops:     2,
+		Servers: []nameTemplateServer{
+			{ID: 1, Name: "US Entry", CountryCode: "US", Location: "Los Angeles"},
+			{ID: 2, Name: "JP Exit", CountryCode: "JP", Location: "Tokyo"},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "美国→日本-vless-2跳"; got != want {
+	if want := "US Entry→Tokyo→🇯🇵-2跳"; got != want {
 		t.Fatalf("解析结果 = %q，期望 %q", got, want)
 	}
 }
 
 func TestResolveNameTemplateRejectsUnknownAndMissingTag(t *testing.T) {
-	values := nameTemplateValues{Location: "日本", Protocol: "vless"}
-	for _, tmpl := range []string{"{{UNKNOWN}}", "{{TAG_1}}"} {
+	values := nameTemplateValues{Protocol: "vless", Servers: []nameTemplateServer{{
+		ID: 1, Name: "JP", CountryCode: "JP", Location: "Tokyo",
+	}}}
+	for _, tmpl := range []string{"{{UNKNOWN}}", "{{TAG[0]}}", "{{ENTRY.UNKNOWN}}", "{{HOP[1].NAME}}"} {
 		if _, err := resolveNameTemplate(tmpl, values); err == nil {
 			t.Fatalf("模板 %q 应解析失败", tmpl)
 		}
+	}
+}
+
+func TestResolveDirectEntryExitAliases(t *testing.T) {
+	values := nameTemplateValues{Servers: []nameTemplateServer{{
+		ID: 7, Name: "only", CountryCode: "SG", Location: "Singapore",
+	}}}
+	got, err := resolveNameTemplate("{{ENTRY.NAME}}={{EXIT.NAME}}={{HOP[0].NAME}}", values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "only=only=only" {
+		t.Fatalf("解析结果 = %q", got)
 	}
 }

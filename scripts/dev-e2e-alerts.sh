@@ -123,7 +123,7 @@ wait_hook '"event": *"test"' 10 && echo "OK: 接收端收到测试消息"
 
 # --- server_offline（仅跃迁）+ 防抖动 ---
 echo ">> 建服务器并拉起 agent"
-BOOTSTRAP="$(api POST /api/servers '{"alias":"alert01"}' | py "d['bootstrap_token']")"
+BOOTSTRAP="$(api POST /api/servers '{"country_code":"US","location":"Test","alias":"alert01"}' | py "d['bootstrap_token']")"
 "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "$BOOTSTRAP" -state "$STATE" \
     -xray-bin "$XRAY_BIN" -xray-config "$XRAY_CONFIG" -xray-api "$API" -xray-runner exec \
     -drift-interval 1s >"$WORK/agent.log" 2>&1 &

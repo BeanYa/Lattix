@@ -30,7 +30,11 @@ export default function Dashboard() {
   const cards = [
     { title: '服务器总数', value: stats.servers, desc: `在线 ${stats.servers_online} 台` },
     { title: '在线服务器', value: stats.servers_online, desc: `共 ${stats.servers} 台` },
-    { title: '节点', value: stats.nodes, desc: `已生效 ${stats.nodes_active} 个` },
+    {
+      title: '链路',
+      value: stats.links,
+      desc: `正常 ${stats.links_active} 条${stats.links_degraded ? ` · 降级 ${stats.links_degraded} 条` : ''}`,
+    },
     { title: '用户', value: stats.users, desc: '订阅用户总数' },
   ]
 

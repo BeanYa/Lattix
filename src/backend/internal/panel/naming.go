@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"lattix/backend/internal/store"
 )
 
 const (
@@ -15,21 +17,39 @@ const (
 	maxNameTags          = 10
 )
 
-var nameVariablePattern = regexp.MustCompile(`\{\{\s*([A-Z][A-Z0-9_]*)\s*\}\}`)
+var (
+	nameVariablePattern = regexp.MustCompile(`\{\{\s*([^{}]+?)\s*\}\}`)
+	simpleNameKeyPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	scopedNameKeyPattern = regexp.MustCompile(`^(ENTRY|EXIT|HOP\[(\d+)\])\.([A-Z][A-Z0-9_]*)(?:\[(\d+)\])?$`)
+	globalTagPattern     = regexp.MustCompile(`^TAG\[(\d+)\]$`)
+)
 
-// nameTemplateValues 是创建节点/链路时可用于名称模板的内置参数。
-// LOCATION/SERVER 对节点指所在服务器，对链路指入口服务器。
+type nameTemplateServer struct {
+	ID          int64
+	Name        string
+	CountryCode string
+	Location    string
+	Address     string
+	Tags        []string
+}
+
+func nameServer(srv *store.Server) nameTemplateServer {
+	return nameTemplateServer{
+		ID:          srv.ID,
+		Name:        srv.Alias,
+		CountryCode: srv.CountryCode,
+		Location:    srv.Location,
+		Address:     srv.Address,
+		Tags:        decodeServerTags(srv.Tags),
+	}
+}
+
+// nameTemplateValues 是创建直连/中转链路时可用于名称模板的上下文。
+// Servers 按客户端到 Internet 的顺序排列；Servers[0] 是全局服务器变量的默认上下文。
 type nameTemplateValues struct {
-	Location string
-	ServerID int64
 	Protocol string
 	Port     *int
-	Entry    string
-	EntryID  int64
-	Exit     string
-	ExitID   int64
-	Hops     int
-	Tags     []string
+	Servers  []nameTemplateServer
 }
 
 // resolveNameTemplate 将名称模板解析成最终管理名称。空模板用于兼容旧 API，
@@ -42,13 +62,13 @@ func resolveNameTemplate(tmpl string, values nameTemplateValues) (string, error)
 	if utf8.RuneCountInString(tmpl) > maxNameTemplateRunes {
 		return "", fmt.Errorf("名称模板不能超过 %d 个字符", maxNameTemplateRunes)
 	}
-	if strings.Contains(tmpl, "{{") && !nameVariablePattern.MatchString(tmpl) {
+	if strings.Count(tmpl, "{{") != strings.Count(tmpl, "}}") {
 		return "", fmt.Errorf("名称模板包含无效参数格式")
 	}
-
-	tags, err := normalizeNameTags(values.Tags)
-	if err != nil {
-		return "", err
+	for _, server := range values.Servers {
+		if _, err := normalizeNameTags(server.Tags); err != nil {
+			return "", err
+		}
 	}
 	var resolveErr error
 	result := nameVariablePattern.ReplaceAllStringFunc(tmpl, func(token string) string {
@@ -56,63 +76,13 @@ func resolveNameTemplate(tmpl string, values nameTemplateValues) (string, error)
 			return ""
 		}
 		match := nameVariablePattern.FindStringSubmatch(token)
-		key := match[1]
-		switch key {
-		case "LOCATION", "SERVER":
-			return values.Location
-		case "SERVER_ID":
-			return strconv.FormatInt(values.ServerID, 10)
-		case "PROTOCOL":
-			return values.Protocol
-		case "PORT":
-			if values.Port == nil {
-				return "auto"
-			}
-			return strconv.Itoa(*values.Port)
-		case "ENTRY":
-			if values.Entry == "" {
-				resolveErr = fmt.Errorf("参数 {{ENTRY}} 仅适用于链路名称")
-				return ""
-			}
-			return values.Entry
-		case "ENTRY_ID":
-			if values.EntryID == 0 {
-				resolveErr = fmt.Errorf("参数 {{ENTRY_ID}} 仅适用于链路名称")
-				return ""
-			}
-			return strconv.FormatInt(values.EntryID, 10)
-		case "EXIT":
-			if values.Exit == "" {
-				resolveErr = fmt.Errorf("参数 {{EXIT}} 仅适用于链路名称")
-				return ""
-			}
-			return values.Exit
-		case "EXIT_ID":
-			if values.ExitID == 0 {
-				resolveErr = fmt.Errorf("参数 {{EXIT_ID}} 仅适用于链路名称")
-				return ""
-			}
-			return strconv.FormatInt(values.ExitID, 10)
-		case "HOPS":
-			if values.Hops == 0 {
-				resolveErr = fmt.Errorf("参数 {{HOPS}} 仅适用于链路名称")
-				return ""
-			}
-			return strconv.Itoa(values.Hops)
-		default:
-			if strings.HasPrefix(key, "TAG_") {
-				index, parseErr := strconv.Atoi(strings.TrimPrefix(key, "TAG_"))
-				if parseErr == nil && index >= 1 {
-					if index > len(tags) {
-						resolveErr = fmt.Errorf("参数 {{%s}} 缺少对应的自定义标签", key)
-						return ""
-					}
-					return tags[index-1]
-				}
-			}
-			resolveErr = fmt.Errorf("不支持的名称参数 {{%s}}", key)
+		key := strings.TrimSpace(match[1])
+		value, err := resolveNameVariable(key, values)
+		if err != nil {
+			resolveErr = err
 			return ""
 		}
+		return value
 	})
 	if resolveErr != nil {
 		return "", resolveErr
@@ -128,6 +98,106 @@ func resolveNameTemplate(tmpl string, values nameTemplateValues) (string, error)
 		return "", fmt.Errorf("名称解析结果不能超过 %d 个字符", maxResolvedNameRunes)
 	}
 	return result, nil
+}
+
+func resolveNameVariable(key string, values nameTemplateValues) (string, error) {
+	if len(values.Servers) == 0 {
+		return "", fmt.Errorf("名称模板缺少服务器上下文")
+	}
+	global := values.Servers[0]
+	if match := globalTagPattern.FindStringSubmatch(key); match != nil {
+		index, _ := strconv.Atoi(match[1])
+		return resolveServerTag(global, index, key)
+	}
+	if match := scopedNameKeyPattern.FindStringSubmatch(key); match != nil {
+		serverIndex := 0
+		switch match[1] {
+		case "ENTRY":
+			serverIndex = 0
+		case "EXIT":
+			serverIndex = len(values.Servers) - 1
+		default:
+			serverIndex, _ = strconv.Atoi(match[2])
+		}
+		if serverIndex < 0 || serverIndex >= len(values.Servers) {
+			return "", fmt.Errorf("参数 {{%s}} 数组越界：当前链路共 %d 跳", key, len(values.Servers))
+		}
+		server := values.Servers[serverIndex]
+		if match[3] == "TAG" {
+			if match[4] == "" {
+				return "", fmt.Errorf("参数 {{%s}} 缺少标签索引", key)
+			}
+			tagIndex, _ := strconv.Atoi(match[4])
+			return resolveServerTag(server, tagIndex, key)
+		}
+		if match[4] != "" {
+			return "", fmt.Errorf("参数 {{%s}} 的属性不支持数组索引", key)
+		}
+		return resolveServerAttribute(server, match[3], key)
+	}
+	if !simpleNameKeyPattern.MatchString(key) {
+		return "", fmt.Errorf("名称模板包含无效参数 {{%s}}", key)
+	}
+	switch key {
+	case "PROTOCOL":
+		return values.Protocol, nil
+	case "PORT":
+		if values.Port == nil {
+			return "auto", nil
+		}
+		return strconv.Itoa(*values.Port), nil
+	case "HOPS":
+		return strconv.Itoa(len(values.Servers)), nil
+	case "ENTRY":
+		return values.Servers[0].Name, nil
+	case "EXIT":
+		return values.Servers[len(values.Servers)-1].Name, nil
+	case "SERVER":
+		return global.Name, nil
+	case "SERVER_ID":
+		return strconv.FormatInt(global.ID, 10), nil
+	case "NAME", "ID", "COUNTRY", "COUNTRY_CODE", "COUNTRY_FLAG", "LOCATION", "ADDRESS":
+		return resolveServerAttribute(global, key, key)
+	default:
+		return "", fmt.Errorf("不支持的名称参数 {{%s}}", key)
+	}
+}
+
+func resolveServerAttribute(server nameTemplateServer, attribute, key string) (string, error) {
+	var value string
+	switch attribute {
+	case "ID":
+		value = strconv.FormatInt(server.ID, 10)
+	case "NAME":
+		value = server.Name
+	case "COUNTRY":
+		value = countryName(server.CountryCode)
+	case "COUNTRY_CODE":
+		value = server.CountryCode
+	case "COUNTRY_FLAG":
+		value = countryFlag(server.CountryCode)
+	case "LOCATION":
+		value = server.Location
+	case "ADDRESS":
+		value = server.Address
+	default:
+		return "", fmt.Errorf("参数 {{%s}} 的属性不存在", key)
+	}
+	if value == "" {
+		return "", fmt.Errorf("参数 {{%s}} 缺少对应的服务器资料", key)
+	}
+	return value, nil
+}
+
+func resolveServerTag(server nameTemplateServer, index int, key string) (string, error) {
+	tags, err := normalizeNameTags(server.Tags)
+	if err != nil {
+		return "", err
+	}
+	if index < 0 || index >= len(tags) {
+		return "", fmt.Errorf("参数 {{%s}} 数组越界：当前服务器共 %d 个标签", key, len(tags))
+	}
+	return tags[index], nil
 }
 
 func normalizeNameTags(tags []string) ([]string, error) {

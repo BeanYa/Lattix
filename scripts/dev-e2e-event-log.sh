@@ -69,7 +69,7 @@ ADMIN_LOG="$(api "http://$ADDR/api/event-log?category=admin")"
     && echo "OK: login 事件 operator=admin" || { echo "FAIL: operator"; exit 1; }
 
 # --- 建服务器 → server.create ---
-SRV_RESP="$(api -X POST -d '{"alias":"dev01","address":"198.51.100.7","xray_version":"v26.3.27"}' "http://$ADDR/api/servers")"
+SRV_RESP="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"dev01","address":"198.51.100.7","xray_version":"v26.3.27"}' "http://$ADDR/api/servers")"
 BOOTSTRAP="$(echo "$SRV_RESP" | py "d['bootstrap_token']")"
 SRV_LOG="$(api "http://$ADDR/api/event-log?category=admin")"
 [[ "$(echo "$SRV_LOG" | py "[e for e in d['items'] if e['action']=='server.create'][0]['server']")" == "dev01" ]] \

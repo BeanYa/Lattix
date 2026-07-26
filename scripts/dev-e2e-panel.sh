@@ -69,7 +69,7 @@ api -X POST -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PASS\"}" "http://$
     && echo "OK: /api/me" || { echo "FAIL: /api/me"; exit 1; }
 
 # --- 服务器 ---
-RESP="$(api -X POST -d '{"alias":"dev01","address":"198.51.100.7","xray_version":"v26.3.27"}' "http://$ADDR/api/servers")"
+RESP="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"dev01","address":"198.51.100.7","xray_version":"v26.3.27"}' "http://$ADDR/api/servers")"
 BOOTSTRAP="$(echo "$RESP" | py "d['bootstrap_token']")"
 INSTALL_CMD="$(echo "$RESP" | py "d['install_command']")"
 # release 构建的面板（CI compat 用）生成 release 钉版命令（GitHub release URL），
@@ -145,7 +145,7 @@ grep -q "$UUID3" "$XRAY_CONFIG" \
 
 # --- 仪表盘 ---
 D="$(api "http://$ADDR/api/dashboard")"
-[[ "$(echo "$D" | py "(d['servers'], d['servers_online'], d['nodes'], d['nodes_active'], d['users'])")" == "(1, 1, 1, 1, 2)" ]] \
+[[ "$(echo "$D" | py "(d['servers'], d['servers_online'], d['links'], d['links_active'], d['users'])")" == "(1, 1, 1, 1, 2)" ]] \
     && echo "OK: 仪表盘计数" || { echo "FAIL: dashboard: $D"; exit 1; }
 
 # --- 订阅（§9，公开端点）---
@@ -198,7 +198,7 @@ for i in $(seq 1 15); do ! grep -q 'node_1' "$XRAY_CONFIG" && break; sleep 1; do
     && echo "OK: 节点列表已清空" || { echo "FAIL: 节点列表"; exit 1; }
 
 # --- 凭证刷新（未安装的服务器 → 换发 bootstrap token 并重取安装命令）---
-RESP2="$(api -X POST -d '{"alias":"test2"}' "http://$ADDR/api/servers")"
+RESP2="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"test2"}' "http://$ADDR/api/servers")"
 OLD_BOOT="$(echo "$RESP2" | py "d['bootstrap_token']")"
 NEWID="$(echo "$RESP2" | py "d['server']['id']")"
 ROT="$(api -X POST "http://$ADDR/api/servers/$NEWID/rotate-token")"
@@ -231,7 +231,7 @@ PANEL_VER="$("$WORK/backend" -version 2>/dev/null || true)"
 if [[ -n "$AGENT_VER" && "$AGENT_VER" == "$PANEL_VER" ]]; then
 SRC_SHA="$(sha256sum "$XRAY_BIN" | cut -d' ' -f1)"
 cp "$XRAY_BIN" "$TEST_XRAY"
-RESP3="$(api -X POST -d '{"alias":"purge01"}' "http://$ADDR/api/servers")"
+RESP3="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"purge01"}' "http://$ADDR/api/servers")"
 PURGE_BOOT="$(echo "$RESP3" | py "d['bootstrap_token']")"
 PURGE_SID="$(echo "$RESP3" | py "d['server']['id']")"
 "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "$PURGE_BOOT" -state "$WORK/agent2.state.json" \

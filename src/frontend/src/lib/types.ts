@@ -1,8 +1,9 @@
 export interface DashboardStats {
   servers: number
   servers_online: number
-  nodes: number
-  nodes_active: number
+  links: number
+  links_active: number
+  links_degraded: number
   users: number
 }
 
@@ -39,6 +40,8 @@ export interface Server {
   machine_type: MachineType
   allowed_ports: PortRange[]
   tags: string[]
+  country_code: string
+  location: string
   metrics: ServerMetrics | null
   created_at: string
 }

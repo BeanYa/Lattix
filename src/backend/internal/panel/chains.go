@@ -158,17 +158,14 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		servers = append(servers, srv)
 	}
 	entrySrv, exitSrv := servers[0], servers[len(servers)-1]
+	nameServers := make([]nameTemplateServer, 0, len(servers))
+	for _, srv := range servers {
+		nameServers = append(nameServers, nameServer(srv))
+	}
 	name, err := resolveNameTemplate(req.Name, nameTemplateValues{
-		Location: entrySrv.Alias,
-		ServerID: entrySrv.ID,
 		Protocol: req.Node.Protocol,
 		Port:     req.EntryPort,
-		Entry:    entrySrv.Alias,
-		EntryID:  entrySrv.ID,
-		Exit:     exitSrv.Alias,
-		ExitID:   exitSrv.ID,
-		Hops:     len(servers),
-		Tags:     decodeServerTags(entrySrv.Tags),
+		Servers:  nameServers,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS servers (
     xray_version TEXT,
     address      TEXT    NOT NULL DEFAULT '', -- 公网地址：管理员填写，留空按 agent 拨入 RemoteAddr 学习（§4/§9）
     tags         TEXT    NOT NULL DEFAULT '', -- JSON 字符串数组；名称模板 {{TAG_n}} 的来源
+    country_code TEXT    NOT NULL DEFAULT '', -- ISO 3166-1 alpha-2；名称模板国家/国旗来源
+    location     TEXT    NOT NULL DEFAULT '', -- 管理员填写的城市/机房位置
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -286,6 +288,18 @@ func Open(path string) (*Store, error) {
 		!strings.Contains(err.Error(), "duplicate column name") {
 		db.Close()
 		return nil, fmt.Errorf("migrate servers.tags: %w", err)
+	}
+	for _, m := range []struct {
+		query string
+		label string
+	}{
+		{`ALTER TABLE servers ADD COLUMN country_code TEXT NOT NULL DEFAULT ''`, "servers.country_code"},
+		{`ALTER TABLE servers ADD COLUMN location TEXT NOT NULL DEFAULT ''`, "servers.location"},
+	} {
+		if _, err := db.Exec(m.query); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+			db.Close()
+			return nil, fmt.Errorf("migrate %s: %w", m.label, err)
+		}
 	}
 	return &Store{db: db}, nil
 }

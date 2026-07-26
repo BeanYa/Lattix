@@ -33,17 +33,17 @@ import type { EventCategory, EventLogEntry, Server } from '@/lib/types'
 
 const PAGE_SIZE = 50
 
-// 类别 → Badge 配色（与 Nodes 页状态色风格一致）。
+// 底层 category 仍保留 node；产品层统一展示为链路。
 const categoryStyle: Record<EventCategory, { label: string; className: string }> = {
   command: { label: '命令', className: 'border-blue-200 bg-blue-50 text-blue-700' },
-  node: { label: '节点', className: 'border-purple-200 bg-purple-50 text-purple-700' },
+  node: { label: '链路', className: 'border-purple-200 bg-purple-50 text-purple-700' },
   agent: { label: 'Agent', className: 'border-cyan-200 bg-cyan-50 text-cyan-700' },
   admin: { label: '操作', className: 'border-amber-200 bg-amber-50 text-amber-700' },
 }
 
 const CATEGORY_OPTIONS: { value: EventCategory; label: string }[] = [
   { value: 'command', label: '命令' },
-  { value: 'node', label: '节点' },
+  { value: 'node', label: '链路' },
   { value: 'agent', label: 'Agent' },
   { value: 'admin', label: '操作' },
 ]
@@ -56,6 +56,20 @@ function prettyDetail(detail: string): string {
   } catch {
     return detail
   }
+}
+
+function actionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    'node.create': '创建直连链路',
+    'node.retry': '重试直连链路',
+    'node.delete': '删除直连链路',
+    'node.apply_failed': '直连链路异常',
+    'chain.create': '创建中转链路',
+    'chain.retry': '重试中转链路',
+    'chain.delete': '删除中转链路',
+    'chain.degraded': '中转链路降级',
+  }
+  return labels[action] ?? action
 }
 
 export default function EventLogPage() {
@@ -263,7 +277,7 @@ export default function EventLogPage() {
                         {cs.label}
                       </Badge>
                     </TableCell>
-                    <TableCell className="font-medium">{e.action}</TableCell>
+                    <TableCell className="font-medium">{actionLabel(e.action)}</TableCell>
                     <TableCell className="text-sm">{e.server || '-'}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {e.operator || e.ip || '-'}
@@ -307,7 +321,7 @@ export default function EventLogPage() {
       <Dialog open={!!detailEntry} onOpenChange={(o) => !o && setDetailEntry(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{detailEntry?.action}</DialogTitle>
+            <DialogTitle>{detailEntry ? actionLabel(detailEntry.action) : ''}</DialogTitle>
             <DialogDescription>
               {detailEntry && formatDateTime(detailEntry.ts, timezone)}
               {detailEntry?.server ? ` · ${detailEntry.server}` : ''}

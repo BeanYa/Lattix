@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { PlusIcon, XIcon } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -31,6 +32,7 @@ import {
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
+import { countryFlag, loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { parseTagInput } from '@/lib/naming'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { useTimezone } from '@/lib/timezone'
@@ -121,6 +123,10 @@ export default function Servers() {
   const [xrayVersion, setXrayVersion] = useState('latest')
   const [machineType, setMachineType] = useState<MachineType>('direct')
   const [tags, setTags] = useState('')
+  const [countryCode, setCountryCode] = useState('')
+  const [location, setLocation] = useState('')
+  const [countryOptions, setCountryOptions] = useState<CountryOption[]>([])
+  const [cities, setCities] = useState<string[]>([])
   const [portRows, setPortRows] = useState<string[]>([''])
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
@@ -133,6 +139,9 @@ export default function Servers() {
   const [editAddrChoice, setEditAddrChoice] = useState('')
   const [editPortRows, setEditPortRows] = useState<string[]>([''])
   const [editTags, setEditTags] = useState('')
+  const [editCountryCode, setEditCountryCode] = useState('')
+  const [editLocation, setEditLocation] = useState('')
+  const [editCities, setEditCities] = useState<string[]>([])
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
   const [upgradeTarget, setUpgradeTarget] = useState<Server | null>(null)
@@ -159,6 +168,37 @@ export default function Servers() {
     return () => clearInterval(timer)
   }, [load])
 
+  useEffect(() => {
+    if (!open && !editTarget) return
+    loadCountries().then(setCountryOptions).catch(() => setCountryOptions([]))
+  }, [open, editTarget])
+
+  useEffect(() => {
+    if (!countryCode) {
+      setCities([])
+      return
+    }
+    loadCities(countryCode).then(setCities).catch(() => setCities([]))
+  }, [countryCode])
+
+  useEffect(() => {
+    if (!editCountryCode) {
+      setEditCities([])
+      return
+    }
+    loadCities(editCountryCode).then(setEditCities).catch(() => setEditCities([]))
+  }, [editCountryCode])
+
+  const citySuggestions = useMemo(() => {
+    const query = location.trim().toLocaleLowerCase()
+    return cities.filter((city) => !query || city.toLocaleLowerCase().includes(query)).slice(0, 30)
+  }, [cities, location])
+
+  const editCitySuggestions = useMemo(() => {
+    const query = editLocation.trim().toLocaleLowerCase()
+    return editCities.filter((city) => !query || city.toLocaleLowerCase().includes(query)).slice(0, 30)
+  }, [editCities, editLocation])
+
   const onOpenChange = (next: boolean) => {
     setOpen(next)
     if (!next) {
@@ -167,6 +207,8 @@ export default function Servers() {
       setXrayVersion('latest')
       setMachineType('direct')
       setTags('')
+      setCountryCode('')
+      setLocation('')
       setPortRows([''])
       setCreateError('')
     }
@@ -182,7 +224,14 @@ export default function Servers() {
       machine_type: MachineType
       allowed_ports?: PortRange[]
       tags?: string[]
-    } = { alias: alias.trim(), machine_type: machineType }
+      country_code: string
+      location: string
+    } = {
+      alias: alias.trim(),
+      machine_type: machineType,
+      country_code: countryCode,
+      location: location.trim(),
+    }
     body.tags = parseTagInput(tags)
     if (address.trim()) {
       body.address = address.trim()
@@ -265,6 +314,8 @@ export default function Servers() {
       s.allowed_ports.length > 0 ? s.allowed_ports.map(formatPortRange) : [''],
     )
     setEditTags(s.tags.join(', '))
+    setEditCountryCode(s.country_code)
+    setEditLocation(s.location)
     setEditError('')
   }
 
@@ -283,6 +334,10 @@ export default function Servers() {
     }
     let ranges: PortRange[] = []
     const nextTags = parseTagInput(editTags)
+    if (!editCountryCode || !editLocation.trim()) {
+      setEditError('国家和地区不能为空')
+      return
+    }
     if (isNat) {
       const parsed = parsePortRows(editPortRows)
       if ('error' in parsed) {
@@ -294,9 +349,22 @@ export default function Servers() {
     setEditSaving(true)
     try {
       if (isNat) {
-        await api.updateServerPorts(editTarget.id, finalAddress, ranges, nextTags)
+        await api.updateServerPorts(
+          editTarget.id,
+          finalAddress,
+          ranges,
+          nextTags,
+          editCountryCode,
+          editLocation.trim(),
+        )
       } else {
-        await api.updateServerAddress(editTarget.id, finalAddress, nextTags)
+        await api.updateServerAddress(
+          editTarget.id,
+          finalAddress,
+          nextTags,
+          editCountryCode,
+          editLocation.trim(),
+        )
       }
       setEditTarget(null)
       load()
@@ -390,7 +458,7 @@ export default function Servers() {
       clearInterval(interval)
       clearTimeout(timeout)
     }
-  }, [upgradeResult, upgradeCmdId, upgradeTarget])
+  }, [load, upgradeResult, upgradeCmdId, upgradeTarget])
 
   const onDelete = async (purge: 'xray' | 'agent') => {
     if (!deleteTarget) {
@@ -453,7 +521,10 @@ export default function Servers() {
               servers.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell className="font-medium">
-                    {s.alias}
+                    <div>{s.alias}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {countryFlag(s.country_code)} {s.location || '未设置地区'}
+                    </div>
                     {s.tags.map((tag) => (
                       <Badge key={tag} variant="secondary" className="ml-1">
                         {tag}
@@ -553,6 +624,54 @@ export default function Servers() {
                 autoFocus
               />
             </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>国家</Label>
+                <Select
+                  value={countryCode}
+                  onValueChange={(value) => {
+                    if (!value) return
+                    setCountryCode(value)
+                    setLocation('')
+                  }}
+                  items={countryOptions.map((country) => ({
+                    value: country.code,
+                    label: `${country.flag} ${country.label}`,
+                  }))}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="选择国家" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {countryOptions.map((country) => (
+                        <SelectItem key={country.code} value={country.code}>
+                          {country.flag} {country.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="location">地区</Label>
+                <Input
+                  id="location"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="选择城市或输入机房位置"
+                  list="server-location-options"
+                  maxLength={100}
+                  required
+                />
+                <datalist id="server-location-options">
+                  {citySuggestions.map((city) => (
+                    <option key={city} value={city} />
+                  ))}
+                </datalist>
+                <p className="text-xs text-muted-foreground">城市列表仅作辅助，也可填写自定义机房区域。</p>
+              </div>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="tags">标签（Tag）</Label>
               <Input
@@ -562,7 +681,7 @@ export default function Servers() {
                 placeholder="例如：日本, 主力, 移动优化"
               />
               <p className="text-xs text-muted-foreground">
-                逗号分隔，最多 10 个；名称模板可按顺序使用 {'{{TAG_1}}'}、{'{{TAG_2}}'}。
+                逗号分隔，最多 10 个；名称模板可按顺序使用 {'{{TAG[0]}}'}、{'{{TAG[1]}}'}。
               </p>
             </div>
             <div className="space-y-2">
@@ -618,7 +737,13 @@ export default function Servers() {
             <DialogFooter>
               <Button
                 type="submit"
-                disabled={creating || !alias.trim() || (machineType === 'nat' && !address.trim())}
+                disabled={
+                  creating ||
+                  !alias.trim() ||
+                  !countryCode ||
+                  !location.trim() ||
+                  (machineType === 'nat' && !address.trim())
+                }
               >
                 {creating ? '创建中…' : '创建'}
               </Button>
@@ -655,6 +780,53 @@ export default function Servers() {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onUpdateAddress} className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>国家</Label>
+                <Select
+                  value={editCountryCode}
+                  onValueChange={(value) => {
+                    if (!value) return
+                    setEditCountryCode(value)
+                    setEditLocation('')
+                  }}
+                  items={countryOptions.map((country) => ({
+                    value: country.code,
+                    label: `${country.flag} ${country.label}`,
+                  }))}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="选择国家" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {countryOptions.map((country) => (
+                        <SelectItem key={country.code} value={country.code}>
+                          {country.flag} {country.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="editLocation">地区</Label>
+                <Input
+                  id="editLocation"
+                  value={editLocation}
+                  onChange={(e) => setEditLocation(e.target.value)}
+                  placeholder="选择城市或输入机房位置"
+                  list="edit-server-location-options"
+                  maxLength={100}
+                  required
+                />
+                <datalist id="edit-server-location-options">
+                  {editCitySuggestions.map((city) => (
+                    <option key={city} value={city} />
+                  ))}
+                </datalist>
+              </div>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="editTags">标签（Tag）</Label>
               <Input
@@ -664,7 +836,7 @@ export default function Servers() {
                 placeholder="例如：日本, 主力, 移动优化"
               />
               <p className="text-xs text-muted-foreground">
-                逗号分隔；新建节点或链路时可通过 {'{{TAG_1}}'} 等参数引用。
+                逗号分隔；新建链路时可通过 {'{{TAG[0]}}'} 等参数引用。
               </p>
             </div>
             <div className="space-y-2">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { BanIcon, CalendarClockIcon, CircleCheckIcon, ExternalLinkIcon, PlusIcon, QrCodeIcon, Trash2Icon } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
@@ -25,13 +25,9 @@ import {
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
+import { buildLinkOptions } from '@/lib/links'
 import { useTimezone } from '@/lib/timezone'
-import type { SubUser, XrayNode } from '@/lib/types'
-
-function nodeLabel(n: XrayNode): string {
-  const port = n.realized_config?.port ?? n.port ?? '自动'
-  return `${n.server_alias} · ${n.protocol} · ${port}`
-}
+import type { Chain, SubUser, XrayNode } from '@/lib/types'
 
 /** toLocalInput 把 RFC3339 时间转成 datetime-local 输入框所需的本地格式（yyyy-MM-ddTHH:mm）。 */
 function toLocalInput(t: string): string {
@@ -53,6 +49,7 @@ export default function Users() {
   const { timezone } = useTimezone()
   const [users, setUsers] = useState<SubUser[]>([])
   const [nodes, setNodes] = useState<XrayNode[]>([])
+  const [chains, setChains] = useState<Chain[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleting, setDeleting] = useState<number | null>(null)
@@ -64,7 +61,7 @@ export default function Users() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const [created, setCreated] = useState<SubUser | null>(null)
-  const [createServerSel, setCreateServerSel] = useState<number[]>([])
+  const [createLinkSel, setCreateLinkSel] = useState<number[]>([])
 
   const [expiryTarget, setExpiryTarget] = useState<SubUser | null>(null)
   const [expiryValue, setExpiryValue] = useState('')
@@ -78,10 +75,11 @@ export default function Users() {
   const [qrText, setQrText] = useState('')
 
   const load = useCallback(() => {
-    Promise.all([api.users(), api.nodes()])
-      .then(([u, n]) => {
+    Promise.all([api.users(), api.nodes(), api.chains()])
+      .then(([u, n, c]) => {
         setUsers(u)
         setNodes(n)
+        setChains(c)
       })
       .catch((err) => setError(errorMessage(err)))
       .finally(() => setLoading(false))
@@ -100,30 +98,22 @@ export default function Users() {
       setExpiresAt('')
       setCreateError('')
       setCreated(null)
-      setCreateServerSel([])
+      setCreateLinkSel([])
     }
   }
 
-  const onToggleCreateServer = (id: number, checked: boolean) => {
-    setCreateServerSel((cur) => (checked ? [...cur, id] : cur.filter((x) => x !== id)))
+  const onToggleCreateLink = (id: number, checked: boolean) => {
+    setCreateLinkSel((cur) => (checked ? [...cur, id] : cur.filter((x) => x !== id)))
   }
 
-  // 按 server_id 分组去重得到服务器列表（创建用户时预选，§16）。
-  const createServers: { id: number; label: string }[] = []
-  const seenServers = new Set<number>()
-  for (const n of nodes) {
-    if (!seenServers.has(n.server_id)) {
-      seenServers.add(n.server_id)
-      createServers.push({ id: n.server_id, label: n.server_alias || `服务器 #${n.server_id}` })
-    }
-  }
+  const linkOptions = useMemo(() => buildLinkOptions(nodes, chains), [chains, nodes])
 
   const onCreate = async (e: FormEvent) => {
     e.preventDefault()
     setCreateError('')
     setCreating(true)
     try {
-      const res = await api.createUser(name.trim(), localInputToRFC3339(expiresAt), createServerSel)
+      const res = await api.createUser(name.trim(), localInputToRFC3339(expiresAt), createLinkSel)
       setCreated(res)
       load()
     } catch (err) {
@@ -227,7 +217,7 @@ export default function Users() {
           <TableHeader>
             <TableRow>
               <TableHead>姓名</TableHead>
-              <TableHead>节点</TableHead>
+              <TableHead>链路</TableHead>
               <TableHead>流量</TableHead>
               <TableHead>有效期</TableHead>
               <TableHead>订阅链接</TableHead>
@@ -262,7 +252,7 @@ export default function Users() {
                     {u.node_ids.length === 0 ? (
                       <span className="text-muted-foreground">未分配</span>
                     ) : (
-                      `${u.node_ids.length} / ${nodes.length}`
+                      `${u.node_ids.filter((id) => linkOptions.some((link) => link.nodeId === id)).length} / ${linkOptions.length}`
                     )}
                   </TableCell>
                   <TableCell className="text-xs whitespace-nowrap">
@@ -296,7 +286,7 @@ export default function Users() {
                   <TableCell>{formatDateTime(u.created_at, timezone)}</TableCell>
                   <TableCell className="space-x-2">
                     <Button variant="outline" size="sm" onClick={() => onOpenAssign(u)}>
-                      分配节点
+                      分配链路
                     </Button>
                     <Button variant="outline" size="sm" title="修改有效期" onClick={() => onOpenExpiry(u)}>
                       <CalendarClockIcon />
@@ -305,7 +295,7 @@ export default function Users() {
                     <Button
                       variant="outline"
                       size="sm"
-                      title={u.disabled ? '启用（恢复节点下发与订阅）' : '停用（立即停权，订阅节点清空）'}
+                      title={u.disabled ? '启用（恢复链路下发与订阅）' : '停用（立即停权，订阅链路清空）'}
                       disabled={toggling === u.id}
                       onClick={() => onToggleDisabled(u)}
                     >
@@ -372,19 +362,21 @@ export default function Users() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>分配服务器（可选，勾选即分配其下全部节点）</Label>
-                {nodes.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">暂无节点，请先在「节点」页创建。</p>
+                <Label>分配链路（可选）</Label>
+                {linkOptions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">暂无链路，请先在「链路」页创建。</p>
                 ) : (
-                  createServers.map((srv) => (
-                    <label key={srv.id} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
+                  linkOptions.map((link) => (
+                    <label key={link.nodeId} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
                       <input
                         type="checkbox"
                         className="size-4 accent-primary"
-                        checked={createServerSel.includes(srv.id)}
-                        onChange={(e) => onToggleCreateServer(srv.id, e.target.checked)}
+                        checked={createLinkSel.includes(link.nodeId)}
+                        onChange={(e) => onToggleCreateLink(link.nodeId, e.target.checked)}
                       />
-                      <span>{srv.label}</span>
+                      <Badge variant="secondary">{link.type === 'direct' ? '直连' : '中转'}</Badge>
+                      <span>{link.name}</span>
+                      <span className="text-xs text-muted-foreground">{link.detail}</span>
                     </label>
                   ))
                 )}
@@ -406,8 +398,8 @@ export default function Users() {
           <DialogHeader>
             <DialogTitle>修改有效期</DialogTitle>
             <DialogDescription>
-              设置「{expiryTarget?.name}」的到期时刻；到期后自动停权（订阅保留但节点为空），
-              延长或清除有效期会恢复其节点。
+              设置「{expiryTarget?.name}」的到期时刻；到期后自动停权（订阅保留但链路为空），
+              延长或清除有效期会恢复其链路。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -436,27 +428,29 @@ export default function Users() {
       <Dialog open={assignTarget !== null} onOpenChange={(next) => !next && setAssignTarget(null)}>
         <DialogContent className="max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>分配节点</DialogTitle>
+            <DialogTitle>分配链路</DialogTitle>
             <DialogDescription>
-              勾选「{assignTarget?.name}」可使用的节点；未勾选的节点不会出现在其订阅中，
+              勾选「{assignTarget?.name}」可使用的链路；未勾选的链路不会出现在其订阅中，
               保存后即时下发变更（默认全关，§16）。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            {nodes.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无节点，请先在「节点」页创建。</p>
+            {linkOptions.length === 0 ? (
+              <p className="text-sm text-muted-foreground">暂无链路，请先在「链路」页创建。</p>
             ) : (
-              nodes.map((n) => (
-                <label key={n.id} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
+              linkOptions.map((link) => (
+                <label key={link.nodeId} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
                   <input
                     type="checkbox"
                     className="size-4 accent-primary"
-                    checked={assignSelection.includes(n.id)}
-                    onChange={(e) => onToggleNode(n.id, e.target.checked)}
+                    checked={assignSelection.includes(link.nodeId)}
+                    onChange={(e) => onToggleNode(link.nodeId, e.target.checked)}
                   />
-                  <span>{nodeLabel(n)}</span>
-                  {n.status !== 'active' && (
-                    <span className="text-xs text-muted-foreground">（{n.status}）</span>
+                  <Badge variant="secondary">{link.type === 'direct' ? '直连' : '中转'}</Badge>
+                  <span>{link.name}</span>
+                  <span className="text-xs text-muted-foreground">{link.detail}</span>
+                  {link.status !== 'active' && (
+                    <span className="text-xs text-muted-foreground">（{link.status}）</span>
                   )}
                 </label>
               ))
