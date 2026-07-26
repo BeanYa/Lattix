@@ -20,13 +20,6 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Test
-        run: |
-          bash -n install.sh
-          find scripts -maxdepth 1 -name '*.sh' -exec bash -n {} +
-          bash scripts/dev-e2e-install-entry.sh
-          go test ./src/backend/... ./src/agent/... ./src/shared/...
-
       - name: Build embedded frontend
         working-directory: src/frontend
         run: |
@@ -35,6 +28,13 @@ jobs:
           rm -rf ../backend/internal/web/dist
           mkdir -p ../backend/internal/web/dist
           cp -a dist/. ../backend/internal/web/dist/
+
+      - name: Test
+        run: |
+          bash -n install.sh
+          find scripts -maxdepth 1 -name '*.sh' -exec bash -n {} +
+          bash scripts/dev-e2e-install-entry.sh
+          go test ./src/backend/... ./src/agent/... ./src/shared/...
 
       - name: Build panel and agent
         run: |
