@@ -178,6 +178,7 @@ export interface PanelSettings {
   running_tls_mode: 'off' | 'cert' | 'acme' | 'path'
   restart_required: boolean
   admin_user: string
+  panel_version: string
   password_override: boolean
   alert_webhook_url: string
   alert_telegram_bot_token_set: boolean
@@ -209,4 +210,34 @@ export interface AlertChannelResult {
 export interface AlertTestResult {
   webhook: AlertChannelResult
   telegram: AlertChannelResult
+}
+
+// 面板自更新（GitHub release 钉版）：版本检测结果与更新进度快照。
+export interface PanelVersionInfo {
+  current: string
+  latest: string
+  update_available: boolean
+  can_update: boolean
+  message?: string
+}
+
+export type PanelUpdateStage =
+  | ''
+  | 'check'
+  | 'download'
+  | 'verify'
+  | 'extract'
+  | 'apply'
+  | 'restart'
+  | 'done'
+  | 'failed'
+
+export interface PanelUpdateStatus {
+  running: boolean
+  stage: PanelUpdateStage
+  percent: number
+  message: string
+  error?: string
+  current_version: string
+  target_version: string
 }

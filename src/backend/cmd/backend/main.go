@@ -201,6 +201,11 @@ func main() {
 	if *ghRepo != "" {
 		repo = *ghRepo
 	}
+	// 前端产物目录按绝对路径处理（与 tls-dir 同理），面板自更新整体替换该目录。
+	staticDirAbs, err := filepath.Abs(*staticDir)
+	if err != nil {
+		log.Fatalf("static dir: %v", err)
+	}
 	ps, err := panel.New(st, dispatcher, hub, panel.Config{
 		AdminUser:     *adminUser,
 		AdminPass:     *adminPass,
@@ -210,6 +215,7 @@ func main() {
 		TLSDir:        tlsDirAbs,
 		Version:       version,
 		GitHubRepo:    repo,
+		StaticDir:     staticDirAbs,
 		ResourceDir:   *resourceDir,
 		InstallScript: *installScript,
 		Alerter:       notifier,

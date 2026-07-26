@@ -21,7 +21,7 @@ import {
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { useTimezone } from '@/lib/timezone'
-import type { AlertTestResult, PanelSettings } from '@/lib/types'
+import type { AlertTestResult, PanelSettings, PanelVersionInfo } from '@/lib/types'
 
 // 常用 IANA 时区（可直接输入其他名称，后端用 time.LoadLocation 校验）。
 const COMMON_TIMEZONES = [
@@ -107,6 +107,11 @@ export default function Settings() {
   const [testingAlerts, setTestingAlerts] = useState(false)
   const [alertTestResult, setAlertTestResult] = useState<AlertTestResult | null>(null)
   const [alertTestError, setAlertTestError] = useState('')
+  // 面板更新
+  const [versionInfo, setVersionInfo] = useState<PanelVersionInfo | null>(null)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [startingUpdate, setStartingUpdate] = useState(false)
+  const [updateError, setUpdateError] = useState('')
 
   const certFileRef = useRef<HTMLInputElement>(null)
   const keyFileRef = useRef<HTMLInputElement>(null)
@@ -234,6 +239,41 @@ export default function Settings() {
       setAlertTestError(errorMessage(err))
     } finally {
       setTestingAlerts(false)
+    }
+  }
+
+  // 检查面板更新（以 GitHub release 最新版本为标准）。
+  const onCheckUpdate = async () => {
+    setCheckingUpdate(true)
+    setUpdateError('')
+    try {
+      setVersionInfo(await api.panelVersion())
+    } catch (err) {
+      setVersionInfo(null)
+      setUpdateError(errorMessage(err))
+    } finally {
+      setCheckingUpdate(false)
+    }
+  }
+
+  // 启动面板自更新：后续进度由全局 UpdateOverlay 接管（锁定操作 + 进度可视化）。
+  const onStartUpdate = async () => {
+    const target = versionInfo?.latest ?? '最新版本'
+    if (
+      !window.confirm(
+        `确定将面板更新到 ${target}？\n更新期间面板操作将被锁定，完成后自动重启（短暂不可用）。`,
+      )
+    ) {
+      return
+    }
+    setStartingUpdate(true)
+    setUpdateError('')
+    try {
+      await api.startPanelUpdate()
+    } catch (err) {
+      setUpdateError(errorMessage(err))
+    } finally {
+      setStartingUpdate(false)
     }
   }
 
@@ -587,6 +627,50 @@ export default function Settings() {
               {savingPassword ? '修改中…' : '修改密码'}
             </Button>
           </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>面板更新</CardTitle>
+          <CardDescription>
+            以 GitHub release 最新版本为标准检测更新；更新过程中面板操作将被锁定，
+            下载/校验/解压/替换进度实时可见，完成后自动重启生效。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted-foreground">当前版本</span>
+            <Badge variant="secondary">{settings.panel_version}</Badge>
+            {versionInfo && versionInfo.latest && (
+              <>
+                <span className="text-muted-foreground">最新版本</span>
+                <Badge variant={versionInfo.update_available ? 'default' : 'outline'}>
+                  {versionInfo.latest}
+                </Badge>
+              </>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              disabled={checkingUpdate || startingUpdate}
+              onClick={onCheckUpdate}
+            >
+              {checkingUpdate ? '检查中…' : '检查更新'}
+            </Button>
+            {versionInfo?.update_available && (
+              <Button disabled={startingUpdate} onClick={onStartUpdate}>
+                {startingUpdate ? '启动中…' : `更新到 ${versionInfo.latest}`}
+              </Button>
+            )}
+          </div>
+          {updateError && <p className="text-sm text-destructive">{updateError}</p>}
+          {versionInfo && !versionInfo.update_available && !updateError && (
+            <p className="text-sm text-muted-foreground">
+              {versionInfo.message || '已是最新版本'}
+            </p>
+          )}
         </CardContent>
       </Card>
 

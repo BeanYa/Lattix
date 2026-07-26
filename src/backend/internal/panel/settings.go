@@ -84,6 +84,7 @@ type settingsDTO struct {
 	RunningTLSMode   string       `json:"running_tls_mode"` // 当前进程实际监听模式
 	RestartRequired  bool         `json:"restart_required"` // TLS/ACME 保存值与运行态不一致
 	AdminUser        string       `json:"admin_user"`
+	PanelVersion     string       `json:"panel_version"` // 当前面板版本（构建注入）
 	PasswordOverride bool         `json:"password_override"` // 密码已被设置页覆盖（否则为启动参数）
 	// 事件告警（§19）：三项全空 = 告警关闭。bot token 不回显（与 tls_key 同风格），仅给置位标记。
 	AlertWebhookURL          string `json:"alert_webhook_url"`
@@ -107,6 +108,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		ACMEEmail:                s.getSetting(ctx, store.SettingACMEEmail),
 		RunningTLSMode:           s.cfg.RunningTLS.Mode,
 		AdminUser:                s.cfg.AdminUser,
+		PanelVersion:             s.cfg.Version,
 		PasswordOverride:         s.getSetting(ctx, store.SettingAdminPassBcrypt) != "",
 		AlertWebhookURL:          s.getSetting(ctx, store.SettingAlertWebhookURL),
 		AlertTelegramBotTokenSet: s.getSetting(ctx, store.SettingAlertTelegramBotToken) != "",

@@ -26,7 +26,8 @@ type Config struct {
 	RunningTLS    AppliedTLS      // 当前进程实际生效的 TLS 快照（main 启动时确定，重启生效）
 	TLSDir        string          // 域名路径模式证书根目录（<tls-dir>/<域名>/fullchain.pem|privkey.pem）
 	Version       string          // 面板版本（构建注入）；dev 时安装命令回退面板 /resource 托管源
-	GitHubRepo    string          // GitHub 仓库（org/repo）：release 安装命令与 agent 升级下载基址
+	GitHubRepo    string          // GitHub 仓库（org/repo）：release 安装命令、面板自更新与 agent 升级下载基址
+	StaticDir     string          // frontend 构建产物目录（面板自更新时整体替换）
 	ResourceDir   string          // release 镜像目录（install.sh + agent 包 + checksums.txt，/resource/ 托管）
 	InstallScript string          // install.sh 文件路径（/resource/install.sh 缺失时的 dev 回退）
 	Alerter       *alert.Notifier // 事件告警（§19）；nil = 关闭
@@ -39,6 +40,7 @@ type Server struct {
 	req     ws.Requester
 	cfg     Config
 	alerter *alert.Notifier
+	upd     *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
 
 	installScript []byte // dev 回退脚本（-install_script 指定的原始脚本，可能未 stamp）
 }
@@ -49,7 +51,9 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.Requester, cfg Confi
 	script, _ := os.ReadFile(cfg.InstallScript)
 	// 链编排器与单机节点共用同一份 dest 白名单（§6/§21）。
 	disp.DestCandidates = destCandidates
-	return &Server{st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, installScript: script}, nil
+	s := &Server{st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, installScript: script}
+	s.upd = newPanelUpdater(s)
+	return s, nil
 }
 
 // RegisterRoutes 注册面板路由（管理 API 均需登录；install.sh 与 /resource/ 公开，§11 引导流程）。
@@ -90,6 +94,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/settings/password", s.requireAuth(s.handleChangePassword))
 	mux.HandleFunc("POST /api/settings/restart", s.requireAuth(s.handleRestart))
 	mux.HandleFunc("POST /api/settings/alerts/test", s.requireAuth(s.handleTestAlerts))
+
+	// 面板自更新（GitHub release 钉版）：版本检测 + 异步更新（进度轮询），
+	// 更新进行中 requireAuth 拒绝其余 API（423，见 auth.go 守卫）。
+	mux.HandleFunc("GET /api/panel/version", s.requireAuth(s.handlePanelVersion))
+	mux.HandleFunc("POST /api/panel/update", s.requireAuth(s.handlePanelUpdateStart))
+	mux.HandleFunc("GET /api/panel/update/status", s.requireAuth(s.handlePanelUpdateStatus))
 
 	mux.HandleFunc("GET /api/backup", s.requireAuth(s.handleBackup))
 

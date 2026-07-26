@@ -7,6 +7,8 @@ import type {
   DashboardStats,
   MachineType,
   PanelSettings,
+  PanelUpdateStatus,
+  PanelVersionInfo,
   PortRange,
   Server,
   SubUser,
@@ -160,4 +162,13 @@ export const api = {
     request<{ status: string }>('/api/settings/restart', { method: 'POST' }),
   testAlerts: () =>
     request<AlertTestResult>('/api/settings/alerts/test', { method: 'POST' }),
+
+  // 面板自更新（GitHub release 钉版）：检测 → 异步更新（进度轮询）→ 自重启。
+  panelVersion: () => request<PanelVersionInfo>('/api/panel/version'),
+  startPanelUpdate: (version?: string) =>
+    request<PanelUpdateStatus>('/api/panel/update', {
+      method: 'POST',
+      body: JSON.stringify(version ? { version } : {}),
+    }),
+  panelUpdateStatus: () => request<PanelUpdateStatus>('/api/panel/update/status'),
 }

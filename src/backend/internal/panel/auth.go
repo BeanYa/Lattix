@@ -113,10 +113,17 @@ func (s *Server) currentUser(r *http.Request) (string, bool) {
 }
 
 // requireAuth 是会话校验中间件。
+// 面板自更新进行中拒绝其余 API 操作（423 Locked），防止用户在二进制/前端
+// 切换窗口内继续改动；仅放行更新进度轮询与登录态探活（前端等待重启用）。
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := s.currentUser(r); !ok {
 			writeError(w, http.StatusUnauthorized, "未登录或会话已过期")
+			return
+		}
+		if s.upd != nil && s.upd.running() &&
+			r.URL.Path != "/api/panel/update/status" && r.URL.Path != "/api/me" {
+			writeError(w, http.StatusLocked, "面板更新进行中，请稍候")
 			return
 		}
 		next(w, r)

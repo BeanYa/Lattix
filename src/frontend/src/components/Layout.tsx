@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import UpdateOverlay from '@/components/UpdateOverlay'
 import { useAuth } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 
@@ -68,6 +69,7 @@ export default function Layout() {
       <main className="min-w-0 flex-1 overflow-auto p-6">
         <Outlet />
       </main>
+      <UpdateOverlay />
     </div>
   )
 }
