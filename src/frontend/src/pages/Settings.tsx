@@ -74,6 +74,7 @@ const textareaClass =
 
 export default function Settings() {
   const { refresh: refreshTimezone } = useTimezone()
+  const accessProtocol = window.location.protocol === 'https:' ? 'HTTPS' : 'HTTP'
   const [settings, setSettings] = useState<PanelSettings | null>(null)
   const [loadError, setLoadError] = useState('')
 
@@ -358,7 +359,11 @@ export default function Settings() {
           <CardHeader>
             <CardTitle>面板证书（TLS）</CardTitle>
             <CardDescription>
-              当前运行：
+              当前访问：
+              <Badge variant="outline" className="mx-1">
+                {accessProtocol}
+              </Badge>
+              ；面板监听：
               <Badge variant="outline" className="mx-1">
                 {RUNNING_MODE_LABEL[settings.running_tls_mode] ?? settings.running_tls_mode}
               </Badge>
@@ -368,7 +373,7 @@ export default function Settings() {
           <CardContent className="space-y-4">
             {settings.restart_required && (
               <div className="flex items-center justify-between gap-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-700">
-                <span>已保存的 TLS 设置与当前运行不一致，重启面板进程后生效。</span>
+                <span>已保存的 TLS 设置与面板当前监听模式不一致，重启面板进程后生效。</span>
                 <Button type="button" variant="outline" size="sm" disabled={restarting} onClick={onRestart}>
                   {restarting ? '重启中…' : '立即重启'}
                 </Button>
