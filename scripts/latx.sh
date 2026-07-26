@@ -9,9 +9,9 @@
 #   latx start|stop|restart      systemctl 包装（需 root）
 #   latx enable|disable          systemctl 包装（需 root）
 #   latx log [-n N]              journalctl -u lattix-panel -f（-n N 时不跟随）
-#   latx update [version]        从 GitHub release 更新面板（默认 latest；仅 amd64）
+#   latx update [version]        从 GitHub release 更新面板（默认 latest）
 #   latx acme <domain>           引导式申请 ACME 证书并切 HTTPS（设置页 API，重启生效）
-#   latx cert <domain> [port]    用 acme.sh 申请证书到面板 ~/cert 目录并切 HTTPS
+#   latx cert <domain> [port]    用 acme.sh 申请证书到面板 data/certs 目录并切 HTTPS
 #   latx bbr                     开启 BBR 拥塞控制（写入独立 sysctl 配置）
 #   latx reset-admin <newpass>   重置管理员密码（改密即全部会话失效）
 #   latx uninstall [--purge-db] [--yes]   卸载面板（默认保留 DB 并提示路径）
@@ -37,7 +37,7 @@ UNIT="${LATX_UNIT:-lattix-panel}"
 UNIT_FILE="/etc/systemd/system/${UNIT}.service"
 LATX_BIN="${LATX_BIN:-/usr/local/bin/latx}"
 BACKEND="$INSTALL_ROOT/lattix-backend"
-DB_PATH="$INSTALL_ROOT/lattix.db"
+DB_PATH="$INSTALL_ROOT/data/lattix.db"
 PANEL_URL="${LATX_PANEL_URL:-http://127.0.0.1:8080}"
 
 die() { echo "latx: $*" >&2; exit 1; }
@@ -204,7 +204,12 @@ cmd_log() {
 }
 
 cmd_update() {
-    [[ "$(uname -m)" == "x86_64" ]] || die "面板仅有 linux/amd64 构建，当前架构 $(uname -m) 不支持"
+    local arch
+    case "$(uname -m)" in
+        x86_64) arch="amd64" ;;
+        aarch64) arch="arm64" ;;
+        *) die "不支持的面板架构: $(uname -m)" ;;
+    esac
     need_root
     use_systemd || die "未检测到 systemd，无法自动更新（LATX_DEV=1 开发模式请手动替换二进制）"
     [[ "$GITHUB_REPO" != *"{{"* ]] || die "脚本未经 CI stamp（{{GITHUB_REPO}} 占位符未替换），无法定位 release"
@@ -227,39 +232,19 @@ cmd_update() {
     local tmp="$TMP_DIR"
 
     local base="https://github.com/${GITHUB_REPO}/releases/download/${version}"
-    curl -fsSL -o "$tmp/lattix-panel-linux-amd64.tar.gz" "$base/lattix-panel-linux-amd64.tar.gz" \
-        || die "下载失败：release ${version} 无 lattix-panel-linux-amd64.tar.gz"
+    local asset="lattix-panel-linux-${arch}.tar.gz"
+    curl -fsSL -o "$tmp/$asset" "$base/$asset" \
+        || die "下载失败：release ${version} 无 $asset"
     curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt" \
         || die "未获取到 release 校验文件 checksums.txt，中止更新"
-    (cd "$tmp" && grep 'lattix-panel-linux-amd64.tar.gz$' checksums.txt | sha256sum -c - >/dev/null) \
+    (cd "$tmp" && grep "lattix-panel-linux-${arch}.tar.gz$" checksums.txt | sha256sum -c - >/dev/null) \
         || die "面板包 SHA256 校验失败（release ${version} checksums.txt）"
     echo ">> 面板包 SHA256 校验通过"
-    # /resource 镜像同步刷新（§11 面板托管资源）：install.sh + agent 两架构包，
-    # 与 release 同布局，逐一校验（获取不到即中止，与安装同规）。
-    local res_assets=(install.sh lattix-agent-linux-amd64.tar.gz lattix-agent-linux-arm64.tar.gz)
-    local a
-    for a in "${res_assets[@]}"; do
-        curl -fsSL -o "$tmp/$a" "$base/$a" \
-            || die "下载失败：release ${version} 无 $a"
-        (cd "$tmp" && grep "${a}\$" checksums.txt | sha256sum -c - >/dev/null) \
-            || die "$a SHA256 校验失败（release ${version} checksums.txt）"
-    done
-    echo ">> resource 镜像资产 SHA256 校验通过"
-    tar -C "$tmp" -xzf "$tmp/lattix-panel-linux-amd64.tar.gz"
+    tar -C "$tmp" -xzf "$tmp/$asset"
     [[ -f "$tmp/lattix-panel/lattix-backend" ]] || die "面板包内容异常（缺 lattix-backend）"
-
-    mkdir -p "$INSTALL_ROOT/resource"
-    install -m 0644 "$tmp/install.sh" "$INSTALL_ROOT/resource/install.sh"
-    install -m 0644 "$tmp/checksums.txt" "$INSTALL_ROOT/resource/checksums.txt"
-    install -m 0644 "$tmp/lattix-agent-linux-amd64.tar.gz" "$INSTALL_ROOT/resource/lattix-agent-linux-amd64.tar.gz"
-    install -m 0644 "$tmp/lattix-agent-linux-arm64.tar.gz" "$INSTALL_ROOT/resource/lattix-agent-linux-arm64.tar.gz"
-    # 清理旧版部署残留（/dist 托管与根目录 install.sh 已移除）。
-    rm -rf "$INSTALL_ROOT/dist" "$INSTALL_ROOT/install.sh"
 
     systemctl stop "$UNIT"
     install -m 0755 "$tmp/lattix-panel/lattix-backend" "$BACKEND"
-    rm -rf "$INSTALL_ROOT/frontend-dist"
-    cp -r "$tmp/lattix-panel/frontend-dist" "$INSTALL_ROOT/frontend-dist"
     systemctl start "$UNIT"
 
     local new_version; new_version="$(panel_version)"

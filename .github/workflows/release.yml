@@ -1,30 +1,12 @@
 name: release
 
-# tag v* 触发：构建前后端产物 → 上一版本 agent × 新面板兼容性回归 → 发布 GitHub Release。
-#
-# Release 资产（命名与 scripts/install.sh / 设计文档约定一致，统一 tarball 形态）：
-#   install.sh                             CI stamp 三个占位符后的 agent 引导安装脚本
-#   install-panel.sh                       CI stamp 后的面板一键安装脚本（§20）
-#   lattix-agent-linux-amd64.tar.gz        lattix-agent/（agent 二进制 + latx-ag 节点管理程序）
-#   lattix-agent-linux-arm64.tar.gz        同上
-#   lattix-panel-linux-amd64.tar.gz        lattix-panel/（backend + frontend dist + scripts/ +
-#                                          README.md + stamp 后 install.sh/latx）——前后端服务一包
-#   checksums.txt                          上述全部资产的 sha256sum（标准 `<hash>  <文件名>` 格式）
-#
-# latx / latx-ag 不单独作 release 资产：latx 随 panel tarball 分发，latx-ag 随 agent tarball
-# 分发。面板的 /resource 镜像（install.sh + agent 两架构包 + checksums.txt，与本 release
-# 同布局）由 install-panel.sh / latx update 在面板安装与更新时落地（§11 面板托管资源）。
-#
-# 版本注入：-ldflags "-X main.version=<TAG> -X main.githubRepo=<GITHUB_REPOSITORY>"
-# 注入 backend 与 agent 的 main 包（二者均有 var version / var githubRepo）。
-
 on:
   push:
     tags:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -38,95 +20,69 @@ jobs:
 
       - uses: oven-sh/setup-bun@v2
 
-      - name: Build frontend
+      - name: Test
+        run: |
+          bash -n install.sh
+          find scripts -maxdepth 1 -name '*.sh' -exec bash -n {} +
+          bash scripts/dev-e2e-install-entry.sh
+          go test ./src/backend/... ./src/agent/... ./src/shared/...
+
+      - name: Build embedded frontend
         working-directory: src/frontend
         run: |
-          bun install
+          bun install --frozen-lockfile
           bun run build
+          rm -rf ../backend/internal/web/dist
+          mkdir -p ../backend/internal/web/dist
+          cp -a dist/. ../backend/internal/web/dist/
 
-      - name: Build agent (linux/amd64, linux/arm64)
+      - name: Build panel and agent
         run: |
-          LDFLAGS="-s -w -X main.version=${GITHUB_REF_NAME} -X main.githubRepo=${{ github.repository }}"
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "$LDFLAGS" \
-            -o out/lattix-agent-linux-amd64 ./src/agent/cmd/agent
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "$LDFLAGS" \
-            -o out/lattix-agent-linux-arm64 ./src/agent/cmd/agent
-
-      - name: Build backend (linux/amd64)
-        run: |
-          go build -trimpath \
-            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME} -X main.githubRepo=${{ github.repository }}" \
-            -o out/lattix-backend ./src/backend/cmd/backend
+          mkdir -p out
+          LDFLAGS="-s -w -X main.version=${GITHUB_REF_NAME} -X main.githubRepo=${GITHUB_REPOSITORY}"
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "$LDFLAGS" \
+              -o "out/lattix-backend-linux-$arch" ./src/backend/cmd/backend
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "$LDFLAGS" \
+              -o "out/lattix-agent-linux-$arch" ./src/agent/cmd/agent
+          done
 
       - name: Version consistency check
         run: |
-          BV="$(./out/lattix-backend -version)"
-          AV="$(./out/lattix-agent-linux-amd64 -version)"
-          echo "backend=${BV} agent=${AV} tag=${GITHUB_REF_NAME}"
-          [[ "$BV" == "${GITHUB_REF_NAME}" && "$AV" == "${GITHUB_REF_NAME}" ]] \
-            || { echo "FAIL: -version 输出与 tag 不一致"; exit 1; }
+          chmod +x out/lattix-backend-linux-amd64 out/lattix-agent-linux-amd64
+          test "$(out/lattix-backend-linux-amd64 -version)" = "${GITHUB_REF_NAME}"
+          test "$(out/lattix-agent-linux-amd64 -version)" = "${GITHUB_REF_NAME}"
 
-      - name: Resolve latest Xray-core tag
-        id: xray
-        run: |
-          TAG="$(curl -fsSL https://api.github.com/repos/XTLS/Xray-core/releases/latest \
-            | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4)"
-          [[ -n "$TAG" ]] || { echo "FAIL: 无法解析 XTLS/Xray-core latest tag"; exit 1; }
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Stamp install.sh placeholders
-        run: |
-          cp scripts/install.sh out/install.sh
-          sed -i \
-            -e "s|{{LATTIX_VERSION}}|${GITHUB_REF_NAME}|g" \
-            -e "s|{{GITHUB_REPO}}|${{ github.repository }}|g" \
-            -e "s|{{DEFAULT_XRAY_VERSION}}|${{ steps.xray.outputs.tag }}|g" \
-            out/install.sh
-          grep -q 'LATTIX_VERSION="{{' out/install.sh \
-            && { echo "FAIL: install.sh 占位符未替换"; exit 1; } || true
-
-      - name: Stamp latx / latx-ag / install-panel.sh placeholders
+      - name: Stamp management scripts
         run: |
           cp scripts/latx.sh out/latx
           cp scripts/latx-ag.sh out/latx-ag
-          cp scripts/install-panel.sh out/install-panel.sh
           sed -i \
             -e "s|{{LATTIX_VERSION}}|${GITHUB_REF_NAME}|g" \
-            -e "s|{{GITHUB_REPO}}|${{ github.repository }}|g" \
-            out/latx out/latx-ag out/install-panel.sh
-          grep -qE '(LATX_VERSION|LATX_AG_VERSION|LATTIX_VERSION)="\{\{' out/latx out/latx-ag out/install-panel.sh \
-            && { echo "FAIL: latx/latx-ag/install-panel.sh 占位符未替换"; exit 1; } || true
+            -e "s|{{GITHUB_REPO}}|${GITHUB_REPOSITORY}|g" \
+            out/latx out/latx-ag
 
-      - name: Pack agent bundles (agent + latx-ag)
+      - name: Pack release bundles
         run: |
           for arch in amd64 arm64; do
-            mkdir -p "out/agent-$arch/lattix-agent"
+            mkdir -p "out/panel-$arch/lattix-panel" "out/agent-$arch/lattix-agent"
+            cp "out/lattix-backend-linux-$arch" "out/panel-$arch/lattix-panel/lattix-backend"
+            cp out/latx "out/panel-$arch/lattix-panel/latx"
+            tar -C "out/panel-$arch" -czf "out/lattix-panel-linux-$arch.tar.gz" lattix-panel
+
             cp "out/lattix-agent-linux-$arch" "out/agent-$arch/lattix-agent/lattix-agent"
             cp out/latx-ag "out/agent-$arch/lattix-agent/latx-ag"
             tar -C "out/agent-$arch" -czf "out/lattix-agent-linux-$arch.tar.gz" lattix-agent
-            tar -tzf "out/lattix-agent-linux-$arch.tar.gz"
           done
 
-      - name: Pack panel tarball (backend + frontend + 运维脚本)
+      - name: Generate checksums
+        working-directory: out
         run: |
-          mkdir -p out/panel/lattix-panel
-          cp out/lattix-backend out/panel/lattix-panel/lattix-backend
-          cp -r src/frontend/dist out/panel/lattix-panel/frontend-dist
-          cp -r scripts out/panel/lattix-panel/scripts
-          cp README.md out/panel/lattix-panel/README.md
-          cp out/install.sh out/latx out/panel/lattix-panel/
-          tar -C out/panel -czf out/lattix-panel-linux-amd64.tar.gz lattix-panel
-          tar -tzf out/lattix-panel-linux-amd64.tar.gz | head -8
-
-      - name: Generate checksums.txt
-        run: |
-          cd out
           sha256sum \
-            install.sh \
-            install-panel.sh \
+            lattix-panel-linux-amd64.tar.gz \
+            lattix-panel-linux-arm64.tar.gz \
             lattix-agent-linux-amd64.tar.gz \
             lattix-agent-linux-arm64.tar.gz \
-            lattix-panel-linux-amd64.tar.gz \
             > checksums.txt
           cat checksums.txt
 
@@ -134,18 +90,15 @@ jobs:
         with:
           name: release-assets
           path: |
-            out/install.sh
-            out/install-panel.sh
+            out/lattix-panel-linux-amd64.tar.gz
+            out/lattix-panel-linux-arm64.tar.gz
             out/lattix-agent-linux-amd64.tar.gz
             out/lattix-agent-linux-arm64.tar.gz
-            out/lattix-panel-linux-amd64.tar.gz
+            out/lattix-backend-linux-amd64
             out/checksums.txt
-            out/lattix-backend
           retention-days: 7
 
   compat:
-    # 兼容性回归：新 backend × 上一 release 的 agent 跑面板 e2e，
-    # 验证协议只增不减（老 agent 能被新面板正常管理）。
     needs: build
     runs-on: ubuntu-latest
     env:
@@ -164,29 +117,25 @@ jobs:
           name: release-assets
           path: out
 
-      - name: Install xray-core (e2e dependency)
+      - name: Install xray-core
         run: |
           TAG="$(curl -fsSL https://api.github.com/repos/XTLS/Xray-core/releases/latest \
             | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4)"
-          [[ -n "$TAG" ]] || { echo "FAIL: 无法解析 XTLS/Xray-core latest tag"; exit 1; }
+          test -n "$TAG"
           curl -fsSL -o /tmp/xray.zip \
             "https://github.com/XTLS/Xray-core/releases/download/${TAG}/Xray-linux-64.zip"
-          unzip -o -q /tmp/xray.zip -d /tmp/xray
+          unzip -oq /tmp/xray.zip -d /tmp/xray
           chmod +x /tmp/xray/xray
 
       - name: Download previous release agent
-        id: prev
+        id: previous
         run: |
           PREV_TAG="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
           if [[ -z "$PREV_TAG" ]]; then
             echo "skip=1" >> "$GITHUB_OUTPUT"
-            echo ">> 无上一 tag（首个 release），跳过 compat"
             exit 0
           fi
-          echo ">> 上一 tag: $PREV_TAG"
           mkdir -p prev
-          # 新格式（tarball）优先；旧格式（裸二进制）兜底——v0.0.3 之前的 release 只有裸二进制。
-          # 注意：多 -p 部分匹配时 gh 仍退出 0（只下到的 checksums.txt），故须再验文件存在。
           if gh release download "$PREV_TAG" \
               -p 'lattix-agent-linux-amd64.tar.gz' -p 'checksums.txt' -D prev --clobber \
               && [[ -f prev/lattix-agent-linux-amd64.tar.gz ]]; then
@@ -194,32 +143,64 @@ jobs:
             tar -C prev -xzf prev/lattix-agent-linux-amd64.tar.gz
             mv prev/lattix-agent/lattix-agent prev/lattix-agent-linux-amd64
             echo "skip=0" >> "$GITHUB_OUTPUT"
-          elif gh release download "$PREV_TAG" \
-              -p 'lattix-agent-linux-amd64' -p 'checksums.txt' -D prev --clobber \
-              && [[ -f prev/lattix-agent-linux-amd64 ]]; then
-            (cd prev && grep 'lattix-agent-linux-amd64$' checksums.txt | sha256sum -c -)
-            echo "skip=0" >> "$GITHUB_OUTPUT"
           else
             echo "skip=1" >> "$GITHUB_OUTPUT"
-            echo ">> $PREV_TAG 无 lattix-agent 资产（引入本流程前的 release），跳过 compat"
           fi
 
-      - name: Compat e2e (new panel × previous agent)
-        if: steps.prev.outputs.skip != '1'
+      - name: Compatibility e2e
+        if: steps.previous.outputs.skip != '1'
         run: |
-          chmod +x out/lattix-backend prev/lattix-agent-linux-amd64
-          PANEL_BIN="$PWD/out/lattix-backend" \
+          chmod +x out/lattix-backend-linux-amd64 prev/lattix-agent-linux-amd64
+          PANEL_BIN="$PWD/out/lattix-backend-linux-amd64" \
           AGENT_BIN="$PWD/prev/lattix-agent-linux-amd64" \
           XRAY_BIN=/tmp/xray/xray \
             bash scripts/dev-e2e-panel.sh
 
-  release:
+  image:
     needs: [build, compat]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish multi-architecture image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            GITHUB_REPO=${{ github.repository }}
+          tags: |
+            ghcr.io/beanya/lattix:${{ github.ref_name }}
+            ghcr.io/beanya/lattix:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Verify published manifest
+        run: docker buildx imagetools inspect "ghcr.io/beanya/lattix:${GITHUB_REF_NAME}"
+
+  release:
+    needs: [build, compat, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      # --generate-notes 需要 git 仓库（提交日志），checkout 不可省。
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -231,25 +212,16 @@ jobs:
 
       - name: Publish GitHub Release
         run: |
-          ASSETS="out/install.sh out/install-panel.sh out/lattix-agent-linux-amd64.tar.gz out/lattix-agent-linux-arm64.tar.gz out/lattix-panel-linux-amd64.tar.gz out/checksums.txt"
+          ASSETS=(
+            out/lattix-panel-linux-amd64.tar.gz
+            out/lattix-panel-linux-arm64.tar.gz
+            out/lattix-agent-linux-amd64.tar.gz
+            out/lattix-agent-linux-arm64.tar.gz
+            out/checksums.txt
+          )
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" $ASSETS --clobber
+            gh release upload "${GITHUB_REF_NAME}" "${ASSETS[@]}" --clobber
           else
             gh release create "${GITHUB_REF_NAME}" \
-              --title "${GITHUB_REF_NAME}" --generate-notes $ASSETS
-            # --generate-notes 只产出 changelog；前置一段安装说明让 release 页自足。
-            BODY="$(gh release view "${GITHUB_REF_NAME}" --json body -q .body)"
-            {
-              echo '## 安装'
-              echo
-              echo '面板（linux/amd64）：'
-              echo
-              echo '```bash'
-              echo "curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/install-panel.sh | bash"
-              echo '```'
-              echo
-              echo '节点（linux/amd64、arm64）：在面板「添加服务器」生成一行安装命令。'
-              echo
-              echo "$BODY"
-            } | gh release edit "${GITHUB_REF_NAME}" --notes-file -
+              --title "${GITHUB_REF_NAME}" --generate-notes "${ASSETS[@]}"
           fi

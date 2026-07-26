@@ -6,11 +6,13 @@ import (
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,11 +24,11 @@ import (
 	"lattix/backend/internal/panel"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
+	panelweb "lattix/backend/internal/web"
 	"lattix/backend/internal/ws"
 )
 
 // 构建注入（CI release 经 -ldflags -X 覆盖）：面板版本与默认 GitHub 仓库。
-// version 为 dev 时安装命令回退面板 /resource 托管源（无对应 release 可钉）。
 var (
 	version    = "dev"
 	githubRepo = "BeanYa/Lattix"
@@ -40,6 +42,13 @@ func defaultTLSDir() string {
 		return filepath.Join(home, "cert")
 	}
 	return "cert"
+}
+
+func envOr(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }
 
 func main() {
@@ -61,22 +70,17 @@ func main() {
 	}
 
 	addr := flag.String("addr", ":8080", "HTTP 监听地址")
-	dbPath := flag.String("db", "lattix.db", "SQLite 数据库文件路径")
-	staticDir := flag.String("static", "src/frontend/dist", "frontend 构建产物目录（由 backend 直接托管，§3）")
-	adminUser := flag.String("admin-user", "admin", "管理员账号（单管理员，§10）")
-	adminPass := flag.String("admin-pass", "lattix-admin", "管理员密码（MVP 本地/受信网络，§12）")
-	publicURL := flag.String("public-url", "", "面板对外地址（生成安装命令/订阅链接），默认从请求推断")
-	resourceDir := flag.String("resource", "resource", "release 镜像目录（install.sh + agent 包 + checksums.txt，/resource/ 托管，§11）")
-	// 已废弃：/dist 托管已移除（改为 /resource release 镜像）。保留该 flag 仅为兼容
-	// 旧版 install-panel.sh 生成的 systemd unit（升级后不致启动失败），值被忽略。
-	_ = flag.String("dist", "", "已废弃（no-op），改用 -resource")
-	installScript := flag.String("install-script", "scripts/install.sh", "install.sh 文件路径（/resource/install.sh 缺失时的 dev 回退）")
+	dbPath := flag.String("db", envOr("LATTIX_DB", "lattix.db"), "SQLite 数据库文件路径")
+	staticDir := flag.String("static", envOr("LATTIX_STATIC", ""), "frontend 构建产物覆盖目录（空 = 使用二进制内嵌前端）")
+	adminUser := flag.String("admin-user", envOr("LATTIX_ADMIN_USER", "admin"), "管理员账号（单管理员，§10）")
+	adminPass := flag.String("admin-pass", envOr("LATTIX_ADMIN_PASS", "lattix-admin"), "管理员密码（MVP 本地/受信网络，§12）")
+	publicURL := flag.String("public-url", envOr("LATTIX_PUBLIC_URL", ""), "面板对外地址（生成安装命令/订阅链接），默认从请求推断")
 	ghRepo := flag.String("github-repo", "", "GitHub 仓库（org/repo，生成 release 安装命令/升级下载基址）；空 = 构建注入值")
 	tlsCert := flag.String("tls-cert", "", "TLS 证书文件（自带证书，须与 -tls-key 同用，§12）")
 	tlsKey := flag.String("tls-key", "", "TLS 私钥文件")
-	tlsDir := flag.String("tls-dir", defaultTLSDir(), "域名路径模式证书根目录（默认 ~/cert；<tls-dir>/<域名>/fullchain.pem|privkey.pem，外部 ACME 写入）")
+	tlsDir := flag.String("tls-dir", envOr("LATTIX_TLS_DIR", defaultTLSDir()), "域名路径模式证书根目录（默认 ~/cert；<tls-dir>/<域名>/fullchain.pem|privkey.pem，外部 ACME 写入）")
 	acmeDomain := flag.String("tls-acme-domain", "", "ACME 自动证书域名（Let's Encrypt，TLS-ALPN-01，需 443 端口公网可达）")
-	acmeCache := flag.String("tls-acme-cache", "acme-cache", "ACME 证书缓存目录")
+	acmeCache := flag.String("tls-acme-cache", envOr("LATTIX_ACME_CACHE", "acme-cache"), "ACME 证书缓存目录")
 	acmeEmail := flag.String("tls-acme-email", "", "ACME 账号邮箱（可选，过期通知用）")
 	resetAdmin := flag.String("reset-admin", "", "重置管理员密码为指定值后退出（不启动面板）；bcrypt 落库覆盖启动参数，改密即全部会话失效（latx reset-admin 使用）")
 	flag.Parse()
@@ -217,24 +221,16 @@ func main() {
 	if *ghRepo != "" {
 		repo = *ghRepo
 	}
-	// 前端产物目录按绝对路径处理（与 tls-dir 同理），面板自更新整体替换该目录。
-	staticDirAbs, err := filepath.Abs(*staticDir)
-	if err != nil {
-		log.Fatalf("static dir: %v", err)
-	}
 	ps, err := panel.New(st, dispatcher, hub, panel.Config{
-		AdminUser:     *adminUser,
-		AdminPass:     *adminPass,
-		PublicURL:     *publicURL,
-		Secure:        secure,
-		RunningTLS:    applied,
-		TLSDir:        tlsDirAbs,
-		Version:       version,
-		GitHubRepo:    repo,
-		StaticDir:     staticDirAbs,
-		ResourceDir:   *resourceDir,
-		InstallScript: *installScript,
-		Alerter:       notifier,
+		AdminUser:  *adminUser,
+		AdminPass:  *adminPass,
+		PublicURL:  *publicURL,
+		Secure:     secure,
+		RunningTLS: applied,
+		TLSDir:     tlsDirAbs,
+		Version:    version,
+		GitHubRepo: repo,
+		Alerter:    notifier,
 	})
 	if err != nil {
 		log.Fatalf("panel: %v", err)
@@ -257,7 +253,7 @@ func main() {
 	// Agent 控制通道（§5）。
 	mux.Handle("GET /api/agent/ws", hub)
 
-	// 面板 API + install.sh / /resource/ 托管（§10、§11）。
+	// 面板 API（§10、§11）。
 	ps.RegisterRoutes(mux)
 
 	// 订阅（§9）：mihomo（Clash.Meta）格式 YAML（浏览器访问为落地页）；/links 为分享链接集合（§14）。
@@ -266,7 +262,11 @@ func main() {
 	mux.HandleFunc("GET /sub/{token}/links", subSrv.HandleLinks)
 
 	// Frontend SPA 构建产物（§3），客户端路由回退到 index.html。
-	mux.Handle("/", spaHandler(*staticDir))
+	frontendFS := panelweb.Dist()
+	if *staticDir != "" {
+		frontendFS = os.DirFS(*staticDir)
+	}
+	mux.Handle("/", spaHandler(frontendFS))
 
 	srv := &http.Server{Addr: *addr, Handler: mux}
 	switch applied.Mode {
@@ -297,14 +297,22 @@ func main() {
 }
 
 // spaHandler 服务静态产物；路径不存在时回退 index.html（React SPA 客户端路由）。
-func spaHandler(dir string) http.Handler {
-	fs := http.FileServer(http.Dir(dir))
+func spaHandler(content fs.FS) http.Handler {
+	files := http.FileServerFS(content)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := filepath.Join(dir, filepath.Clean(r.URL.Path))
-		if info, err := os.Stat(p); err == nil && !info.IsDir() {
-			fs.ServeHTTP(w, r)
+		name := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(r.URL.Path)), "/")
+		if name != "." && name != "" {
+			if info, err := fs.Stat(content, name); err == nil && !info.IsDir() {
+				files.ServeHTTP(w, r)
+				return
+			}
+		}
+		index, err := fs.ReadFile(content, "index.html")
+		if err != nil {
+			http.Error(w, "frontend is not embedded; run the frontend build first or use -static", http.StatusServiceUnavailable)
 			return
 		}
-		http.ServeFile(w, r, filepath.Join(dir, "index.html"))
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(index)
 	})
 }

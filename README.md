@@ -29,8 +29,10 @@ src/backend/   # Go：面板 HTTP API + Agent WS 端点 + SQLite
 src/agent/     # Go：独立二进制，systemd 托管
 src/shared/    # Go module：WS 消息结构体、虚拟配置类型，backend/agent 共用
 scripts/
-  install.sh          # Agent 引导安装脚本（--source github|panel 双下载源，均校验 checksums.txt）
+  install-panel.sh    # 面板原生/Docker 安装实现，由根 install.sh 按 tag 加载
+  install-agent.sh    # Agent 安装实现，由根 install.sh 按 tag 加载
   dev-e2e-*.sh        # 各功能端到端验收脚本
+install.sh            # 面向用户的统一安装入口
 ```
 
 ## 功能
@@ -92,21 +94,46 @@ scripts/
 
 ## 快速开始
 
-### 一键安装面板（linux/amd64，推荐）
+> Docker/安装入口重构中的最终部署约定与限制见
+> [KNOWN_ISSUES.md](KNOWN_ISSUES.md)。其中包括容器内页面更新与镜像版本的关系、
+> 反向代理/ACME 端口要求、证书目录映射及宿主机运维边界。
 
-与 agent 安装一致走 release 钉版，脚本与全部资产经 `checksums.txt` 校验：
+### 统一安装入口
+
+项目根目录的 `install.sh` 是唯一面向用户的一键安装入口。无参数执行进入交互向导；
+自动化场景使用 `panel` 或 `agent` 子命令，`--version` 省略时默认解析最新稳定 Release：
 
 ```bash
-curl -fsSL https://github.com/BeanYa/Lattix/releases/download/v0.0.2/install-panel.sh | bash
+bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh)
+
+# 非交互示例
+bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
+  panel --mode docker
+bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
+  panel --mode native
 ```
 
-脚本完成：下载面板 tarball（前后端服务 + latx + install.sh）与 /resource 镜像资产
-（install.sh + agent 两架构包 + checksums.txt，与 GitHub release 同布局，全部校验
-SHA256）→ 解压到 `/usr/local/lattix-panel`（镜像摆 `resource/`，供面板托管资源选项
-经 `/resource/` 分发）→ 安装 `latx` 到 `/usr/local/bin/latx` → 注册并启动
-systemd 服务 `lattix-panel`（`-addr :8080`，`LATX_ADDR` 可覆盖）→ 打印面板地址
-与默认账号 `admin` / `lattix-admin`（**生产必改**）。已安装时执行 = 同版本重装/升级
-（保留 DB）。
+根入口解析版本后，从对应 Git tag 加载 `scripts/install-panel.sh` 或
+`scripts/install-agent.sh`，确保安装逻辑与 Release 产物同版。安装脚本不再作为
+GitHub Release 资产重复发布。
+
+Docker 模式由 `/opt/lattix-panel/compose.yaml` 与
+`/opt/lattix-panel/config/.env` 管理，数据持久化在
+`/opt/lattix-panel/data/`。镜像内只有一个 Go 面板进程：前端编译产物嵌入
+`lattix-backend`，不包含 Nginx。默认绑定宿主机 `127.0.0.1:8080`，适合由
+宿主机 Nginx/OpenResty 终止 TLS；也可在 `.env` 中改为公网绑定。
+
+### 面板安装模式
+
+Docker Compose 是交互向导中的推荐模式，支持 `linux/amd64` 和 `linux/arm64`。安装器
+写入 `/opt/lattix-panel/compose.yaml`、`config/.env` 与 `data/`，然后从
+`ghcr.io/beanya/lattix:<版本>` 创建非 root 容器。除非交互确认或显式传入
+`--install-docker`，安装器不会改动宿主机服务。管理员密码默认生成 8 位随机大小写字母；
+重装时遵循“命令行参数 > 已有 `.env` > 随机生成”，可直接编辑 `.env`。
+
+原生模式下载并校验当前架构的 Release tarball，安装到
+`/usr/local/lattix-panel`，注册 `lattix-panel.service`，并提供宿主机命令 `latx`。
+原生重装保留 SQLite、证书、ACME 缓存和已有管理员凭据。
 
 安装后直接运行 `latx` 可选择 English / 中文交互式运维菜单（直接按 Enter 默认
 English）；也可使用子命令进行自动化运维。可用 `LATX_LANG=en|zh latx` 跳过语言选择：
@@ -117,7 +144,7 @@ English）；也可使用子命令进行自动化运维。可用 `LATX_LANG=en|z
 | `latx status` | 服务状态、监听端口、面板版本与地址 |
 | `latx start\|stop\|restart\|enable\|disable` | systemctl 包装 |
 | `latx log [-n N]` | 跟随面板日志（`-n N` 时不跟随） |
-| `latx update [version]` | 从 GitHub release 更新面板（默认 latest，仅 amd64） |
+| `latx update [version]` | 从 GitHub Release 更新面板（默认 latest，amd64/arm64） |
 | `latx cert <domain> [port]` | 用 acme.sh 通过 HTTP standalone 申请证书，写入面板证书目录并切 HTTPS（默认验证端口 80） |
 | `latx acme <domain>` | 使用面板内置 ACME（TLS-ALPN-01）并切 HTTPS |
 | `latx bbr` | 开启 BBR 拥塞控制（需要 root） |
@@ -128,8 +155,14 @@ English）；也可使用子命令进行自动化运维。可用 `LATX_LANG=en|z
 ### 手动构建与运行面板
 
 ```bash
+cd src/frontend
+bun install --frozen-lockfile
+bun run build
+rm -rf ../backend/internal/web/dist
+mkdir -p ../backend/internal/web/dist
+cp -a dist/. ../backend/internal/web/dist/
+cd ../..
 go build -o lattix-backend ./src/backend/cmd/backend
-cd src/frontend && bun install && bun run build && cd ../..
 
 # HTTP（本地/受信网络或反代后端）
 ./lattix-backend -addr :8080
@@ -141,52 +174,44 @@ cd src/frontend && bun install && bun run build && cd ../..
 ./lattix-backend -addr :443 -tls-acme-domain panel.example.com
 ```
 
-默认账号 `admin` / `lattix-admin`（`-admin-user` / `-admin-pass` 修改，生产必改）。
-反代部署（docker + openresty/nginx 终止 TLS）时反代 `/`、`/api/agent/ws`（带 Upgrade 头）、
-`/sub`、`/install.sh`、`/resource`，并以 `-public-url https://域名` 或 `X-Forwarded-Proto` 告知面板。
+默认账号由启动参数或环境变量决定（安装器会生成密码）。
+宿主机 Nginx/OpenResty 终止 TLS 时，只需把站点整体反代到默认的
+`127.0.0.1:8080`，并为 `/api/agent/ws` 转发 Upgrade/Connection 头，同时转发
+`Host`、`X-Forwarded-Proto` 和 `X-Forwarded-For`。容器内没有 Nginx，Go 进程直接
+提供 SPA、API、WebSocket 和订阅内容。
 
-面板"设置"页可在线修改：对外地址与显示时区（立即生效）；安装资源来源（GitHub release
-钉版 / 面板托管 /resource 镜像）；TLS 模式 / 自带证书 PEM /
+面板"设置"页可在线修改：对外地址与显示时区（立即生效）；TLS 模式 / 自带证书 PEM /
 ACME 域名（保存后重启进程生效）；管理员密码（bcrypt 落库，改密即全部会话失效）；
 事件告警（Webhook 地址 / Telegram Bot token / chat_id，三项全空即关闭，可发测试消息）。
 设置页保存的值存于 SQLite `settings` 表并**优先于对应启动参数**，清除后恢复跟随启动参数。
 "设置 → 面板维护"提供一键重启（`POST /api/settings/restart`）与 SQLite 备份下载
 （`GET /api/backup`）：systemd 托管时退出后由
-systemd 拉起，否则自派生新进程接管（同参数同端口，等待旧进程释放端口）；面板版本更新
-替换二进制后也经此接口重启生效。
+systemd 拉起；Docker 模式则由进程退出触发 Compose 的 `restart: unless-stopped`，
+从同一容器内已替换的二进制启动。非托管开发模式才自派生新进程接管。
 
 TLS 另支持**域名路径模式**（`tls_mode=path`）：面板按域名从证书根目录读取
 `<tls-dir>/<域名>/fullchain.pem` 与 `privkey.pem`（certbot 风格，目录由 `-tls-dir`
-指定，默认当前面板进程用户的 `~/cert`，即 root 运行时为 `/root/cert`、普通用户运行时
-为该用户的主目录下 `cert`，并以绝对路径显示在设置页）。外部 ACME（如 `latx cert`）
+指定；安装器统一设置为数据目录下的 `certs`，Docker 容器内为 `/data/certs`，
+宿主机对应 `/opt/lattix-panel/data/certs`）。外部 ACME（如 `latx cert`）
 申请/续期后直接写入该目录：保存设置时只填域名；续期替换文件后下一次 TLS 握手即
 自动加载新证书，**免重启**（加载失败时回退已缓存证书，握手不中断）。
 
 ### 安装 Agent（受控服务器）
 
 面板"添加服务器"生成一行安装命令，在受控机执行。正式版本（release 构建）的命令
-钉到面板同版本的 GitHub release 资产，脚本与 agent 二进制天然同版：
+通过根安装器钉到面板当前版本，安装实现与 agent 二进制天然同版：
 
 ```bash
-curl -fsSL https://github.com/BeanYa/Lattix/releases/download/v0.0.1/install.sh | bash -s -- \
-  --panel http://<面板地址> --token <bootstrap token> --xray-version latest
+bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
+  agent --version v0.0.1 --panel https://<面板地址> \
+  --token <bootstrap token> --xray-version latest
 ```
 
-agent 二进制统一走 release 钉版：从 GitHub release 下载 agent 包
-`lattix-agent-linux-<arch>.tar.gz`（agent + latx-ag）并校验 `checksums.txt`。
-设置页开启"面板托管资源"后（或 dev 构建无 release 可钉时），命令改用面板
-`/resource` 镜像并加 `--source panel`：
+根入口从对应 Git tag 加载 `scripts/install-agent.sh`；脚本从同版本 GitHub Release
+下载 `lattix-agent-linux-<arch>.tar.gz`（agent + latx-ag）并校验 `checksums.txt`。
+面板不再托管安装脚本或二进制资源，也没有下载源切换设置。
 
-```bash
-curl -fsSL http://<面板地址>/resource/install.sh | bash -s -- \
-  --source panel --panel http://<面板地址> --token <bootstrap token> --xray-version latest
-```
-
-`/resource` 镜像与 GitHub release 同布局（install.sh + agent 两架构包 +
-checksums.txt），由 install-panel.sh / `latx update` 在面板安装与更新时落地，
-天然与面板同版本；两种源的下载与校验流程完全一致。
-
-脚本完成：安装指定版本 xray（校验官方 .dgst）→ 安装 agent 与 `latx-ag` 节点管理程序
+脚本完成：安装指定版本 xray（校验官方 `.dgst`）→ 安装 agent 与 `latx-ag` 节点管理程序
 （校验 SHA256）→ 注册 systemd → 首连换发长期凭证。重装自动先停旧服务并清除旧 state。
 安装成功输出：面板地址、agent 服务状态、xray 版本与 `latx-ag` 运维提示块。
 
@@ -205,10 +230,10 @@ checksums.txt），由 install-panel.sh / `latx update` 在面板安装与更新
 ### CI/CD 与版本兼容（§18）
 
 - **发版**：push `v*` tag 触发 `.github/workflows/release.yml`——构建前后端并注入版本
-  （`-ldflags -X main.version/-X main.githubRepo`）、stamp 脚本、打包统一形态的
-  tarball（agent 包：agent + latx-ag；panel 包：前后端服务 + install.sh/latx）、
-  生成 checksums.txt、**新面板 × 上一 tag agent 兼容性 e2e 回归**后发布 GitHub Release
-  （正文自动 changelog + 安装说明）。
+  （前端嵌入单个 Go 面板二进制）、打包 amd64/arm64 的 panel 与 agent tarball、
+  生成 `checksums.txt`，并执行**新面板 × 上一 tag agent 兼容性 e2e 回归**。通过后
+  先发布 `ghcr.io/beanya/lattix:<version>` 与 `latest` 多架构镜像，再发布
+  GitHub Release。Release 不重复附带安装脚本。
 - **协议只增不改**：`src/shared/messages.go` 头注释载明演化规则，PR 由
   `scripts/check-protocol-compat.sh`（protocol-check workflow）强制"协议行只增不减"；
   agent 对未知命令回执 `unsupported command`，面板据此终态不重试。
@@ -240,6 +265,7 @@ XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-alerts.sh     # 事件告警�
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-poc-reverse.sh    # xray reverse bridge/portal 可行性 PoC（§21）
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-chains.sh     # 代理链 + NAT：建链/真实流量/降级自愈/重试/拆链
 bash scripts/dev-e2e-install-panel.sh                           # 面板一键安装 + latx 管理程序（本地假 release，无外网）
+bash scripts/dev-e2e-install-entry.sh                           # 根安装入口参数/版本转发（无外网）
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-install-agent.sh  # Agent 引导安装 + latx-ag（本地假 release，LATX_DEV=1）
 ```
 
@@ -261,3 +287,5 @@ Agent 常用参数：`-panel`（面板 WS 地址）、`-token`（bootstrap token
 | 漂移检测基线 | agent 停机期间的外部改动无法区分，以启动时文件为基线 |
 | xray 版本兼容 | 新版 xray-core 已移除 vmess alterId（服务端），mihomo 客户端订阅仍携带 `alterId: 0` |
 | 单管理员 | 多管理员/RBAC 决策不做；fallback 传输（gRPC/HTTP）明确不做（NAT/中继已实现，见 §21） |
+
+部署与更新边界见 [KNOWN_ISSUES.md](KNOWN_ISSUES.md)。

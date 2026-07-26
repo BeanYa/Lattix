@@ -30,13 +30,17 @@ func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 }
 
 // restartSelf 重启当前进程：
-//   - systemd 托管（INVOCATION_ID 存在）：直接退出，由 systemd Restart= 拉起；
+//   - systemd 或 Docker 托管：直接退出，由 Restart= / restart policy 拉起；
 //   - 否则自派生一个脱离会话的新进程（同二进制同参数），随后退出。
 //     新进程经 LATTIX_RESTART_WAIT_PID 等待本进程退出释放端口后再启动（见 main）。
 //
 // 二进制在运行期间被替换（面板更新场景）时，os.Executable 会带 " (deleted)" 后缀，
 // 去掉后执行原路径，即拿到更新后的二进制。
 func restartSelf() error {
+	if os.Getenv("LATTIX_DEPLOY_MODE") == "docker" {
+		log.Printf("restart: Docker 托管，退出等待容器 restart policy 拉起")
+		os.Exit(0)
+	}
 	if os.Getenv("INVOCATION_ID") != "" {
 		log.Printf("restart: systemd 托管，退出等待拉起")
 		os.Exit(0)
@@ -46,6 +50,14 @@ func restartSelf() error {
 		return err
 	}
 	exe = strings.TrimSuffix(exe, " (deleted)")
+	// Atomic self-update renames the running inode to <binary>.bak before putting
+	// the new binary at the original path. /proc/self/exe therefore resolves to
+	// the backup name until this process exits; restart the original path.
+	if strings.HasSuffix(exe, ".bak") {
+		if current := strings.TrimSuffix(exe, ".bak"); fileExists(current) {
+			exe = current
+		}
+	}
 	cmd := exec.Command(exe, os.Args[1:]...)
 	cmd.Env = append(os.Environ(), "LATTIX_RESTART_WAIT_PID="+strconv.Itoa(os.Getpid()))
 	if wd, err := os.Getwd(); err == nil {

@@ -26,9 +26,6 @@ const (
 	TLSModePath = "path" // 域名路径模式：<tls-dir>/<域名>/fullchain.pem|privkey.pem，热加载免重启续期
 )
 
-// agent 安装资源来源（SettingResourceSource 取值；空 = GitHub release 钉版，默认）。
-const ResourceSourcePanel = "panel" // 面板 /resource 镜像（install.sh 与 agent 包经面板分发）
-
 // AppliedTLS 是当前进程实际生效的 TLS 配置快照（可能来自 DB 设置或启动参数），
 // 用于与设置页保存的待生效值对比，得出 restart_required。
 type AppliedTLS struct {
@@ -84,14 +81,12 @@ type settingsDTO struct {
 	RunningTLSMode   string       `json:"running_tls_mode"` // 当前进程实际监听模式
 	RestartRequired  bool         `json:"restart_required"` // TLS/ACME 保存值与运行态不一致
 	AdminUser        string       `json:"admin_user"`
-	PanelVersion     string       `json:"panel_version"` // 当前面板版本（构建注入）
+	PanelVersion     string       `json:"panel_version"`     // 当前面板版本（构建注入）
 	PasswordOverride bool         `json:"password_override"` // 密码已被设置页覆盖（否则为启动参数）
 	// 事件告警（§19）：三项全空 = 告警关闭。bot token 不回显（与 tls_key 同风格），仅给置位标记。
 	AlertWebhookURL          string `json:"alert_webhook_url"`
 	AlertTelegramBotTokenSet bool   `json:"alert_telegram_bot_token_set"`
 	AlertTelegramChatID      string `json:"alert_telegram_chat_id"`
-	// agent 安装资源来源：panel = 面板 /resource 镜像；空 = GitHub release 钉版（默认）。
-	ResourceSource string `json:"resource_source"`
 }
 
 // handleGetSettings 处理 GET /api/settings。
@@ -113,7 +108,6 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		AlertWebhookURL:          s.getSetting(ctx, store.SettingAlertWebhookURL),
 		AlertTelegramBotTokenSet: s.getSetting(ctx, store.SettingAlertTelegramBotToken) != "",
 		AlertTelegramChatID:      s.getSetting(ctx, store.SettingAlertTelegramChatID),
-		ResourceSource:           s.getSetting(ctx, store.SettingResourceSource),
 	}
 	if certPEM := s.getSetting(ctx, store.SettingTLSCertPEM); certPEM != "" {
 		if cert, err := parseCertInfo(certPEM); err == nil {
@@ -172,8 +166,6 @@ type updateSettingsRequest struct {
 	AlertWebhookURL       string `json:"alert_webhook_url"`
 	AlertTelegramBotToken string `json:"alert_telegram_bot_token"`
 	AlertTelegramChatID   string `json:"alert_telegram_chat_id"`
-	// agent 安装资源来源：""|github = GitHub release 钉版（默认）；panel = 面板 /resource 镜像。
-	ResourceSource string `json:"resource_source"`
 }
 
 // handleUpdateSettings 处理 PUT /api/settings：校验后落库。
@@ -218,15 +210,6 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "告警 Webhook 地址须形如 http(s)://...")
 			return
 		}
-	}
-
-	// 安装资源来源（§11）：github 为空值语义（默认），panel 走面板 /resource 镜像。
-	req.ResourceSource = strings.TrimSpace(req.ResourceSource)
-	switch req.ResourceSource {
-	case "", "github", ResourceSourcePanel:
-	default:
-		writeError(w, http.StatusBadRequest, "无效的安装资源来源（仅支持 github|panel）")
-		return
 	}
 
 	// 证书/私钥：body 提供则校验并覆盖，留空保持已保存值。
@@ -345,18 +328,9 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 安装资源来源：panel 落库；github/空 = 删除设置（恢复默认 GitHub 钉版）。
-	if req.ResourceSource == ResourceSourcePanel {
-		if !set(store.SettingResourceSource, ResourceSourcePanel) {
-			return
-		}
-	} else if !del(store.SettingResourceSource) {
-		return
-	}
-
 	s.audit(r, "settings.update", nil, nil, map[string]any{
 		"timezone": req.Timezone, "public_url": req.PublicURL,
-		"tls_mode": req.TLSMode, "resource_source": req.ResourceSource,
+		"tls_mode": req.TLSMode,
 	})
 	s.handleGetSettings(w, r)
 }

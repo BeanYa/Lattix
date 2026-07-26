@@ -202,7 +202,6 @@ export interface PanelSettings {
   alert_webhook_url: string
   alert_telegram_bot_token_set: boolean
   alert_telegram_chat_id: string
-  resource_source: '' | 'panel'
 }
 
 export interface UpdateSettingsRequest {
@@ -217,7 +216,6 @@ export interface UpdateSettingsRequest {
   alert_webhook_url: string
   alert_telegram_bot_token?: string
   alert_telegram_chat_id: string
-  resource_source: '' | 'github' | 'panel'
 }
 
 export interface AlertChannelResult {

@@ -2,7 +2,7 @@
 # 面板自更新端到端验收：本地 release 镜像（模拟 GitHub release 布局）→
 # GET /api/panel/version 检出更新 → POST /api/panel/update 异步更新
 # （下载/校验/解压/替换进度轮询）→ 更新中其余 API 被 423 锁定 →
-# 自重启后面板版本切换为新版、前端产物与 /resource 镜像已替换。无需外网。
+# 自重启后面板单二进制切换为新版。无需外网。
 # 依赖：python3、curl、go。覆盖：UPDATE_ADDR / MIRROR_PORT。
 set -euo pipefail
 
@@ -35,31 +35,22 @@ mkdir -p "$WORK/root"
 
 echo ">> 搭建本地 release 镜像（$NEW_VER，与 GitHub release 同布局）"
 REL="$WORK/releases/$NEW_VER"
-mkdir -p "$REL/pkg/lattix-panel/frontend-dist"
+mkdir -p "$REL/pkg/lattix-panel"
 cp "$WORK/lattix-backend-new" "$REL/pkg/lattix-panel/lattix-backend"
-echo "<html>new frontend $NEW_VER</html>" > "$REL/pkg/lattix-panel/frontend-dist/index.html"
 # 面板包垫到 ~64MB：本地镜像下载极快，保证轮询能观察到 download 阶段与进度百分比。
 head -c 67108864 /dev/urandom > "$REL/pkg/lattix-panel/pad.bin"
 tar -C "$REL/pkg" -czf "$REL/lattix-panel-linux-amd64.tar.gz" lattix-panel
-cp "$ROOT/scripts/install.sh" "$REL/install.sh"
-# resource 镜像资产（内容任意，校验只过 checksums.txt）
-for arch in amd64 arm64; do
-    mkdir -p "$REL/agent-$arch/lattix-agent"
-    echo "dummy agent $arch" > "$REL/agent-$arch/lattix-agent/lattix-agent"
-    tar -C "$REL/agent-$arch" -czf "$REL/lattix-agent-linux-$arch.tar.gz" lattix-agent
-done
-(cd "$REL" && sha256sum lattix-panel-linux-amd64.tar.gz install.sh \
-    lattix-agent-linux-amd64.tar.gz lattix-agent-linux-arm64.tar.gz > checksums.txt)
+(cd "$REL" && sha256sum lattix-panel-linux-amd64.tar.gz > checksums.txt)
 echo "$NEW_VER" > "$WORK/releases/latest.txt"
 (cd "$WORK/releases" && exec python3 -m http.server "$MIRROR_PORT") >/dev/null 2>&1 &
 MIRRORPID=$!
 
 echo ">> 启动旧版面板（$OLD_VER，LATTIX_RELEASE_BASE 指向本地镜像）"
-mkdir -p "$WORK/root/frontend-dist" "$WORK/root/resource"
+mkdir -p "$WORK/root/frontend-dist"
 echo "<html>old frontend $OLD_VER</html>" > "$WORK/root/frontend-dist/index.html"
 LATX_RELEASE_BASE="http://127.0.0.1:$MIRROR_PORT" \
     "$WORK/root/lattix-backend" -addr "$ADDR" -db "$WORK/root/lattix.db" \
-    -static "$WORK/root/frontend-dist" -resource "$WORK/root/resource" \
+    -static "$WORK/root/frontend-dist" \
     >"$WORK/panel.log" 2>&1 &
 BPID=$!
 for _ in $(seq 1 30); do
@@ -100,6 +91,10 @@ for _ in $(seq 1 200); do
         LOCK_VERIFIED=1
         echo ">> 更新中其余 API 已锁定（423）"
     fi
+    # 重启后的新进程持有全新的内存状态机，stage 为空属于预期恢复状态。
+    if echo "$ST" | grep -q '"running":false' && echo "$ST" | grep -q '"stage":""'; then
+        break
+    fi
     echo "$ST" | grep -q '"running":false' && { echo "FAIL: 更新意外终止: $ST"; exit 1; }
     sleep 0.1
 done
@@ -119,10 +114,6 @@ echo ">> 校验新版本与文件替换"
 echo "   $VER_JSON"
 echo "$VER_JSON" | grep -q "\"current\":\"$NEW_VER\"" || { echo "FAIL: 重启后版本未切换到 $NEW_VER"; exit 1; }
 echo "$VER_JSON" | grep -q '"update_available":false' || { echo "FAIL: 重启后仍提示有更新"; exit 1; }
-grep -q "$NEW_VER" "$WORK/root/frontend-dist/index.html" || { echo "FAIL: 前端产物未替换"; exit 1; }
-for f in install.sh checksums.txt lattix-agent-linux-amd64.tar.gz lattix-agent-linux-arm64.tar.gz; do
-    [[ -f "$WORK/root/resource/$f" ]] || { echo "FAIL: /resource 镜像缺 $f"; exit 1; }
-done
 [[ -f "$WORK/root/lattix-backend.bak" ]] || { echo "FAIL: 旧二进制未备份"; exit 1; }
 
 echo ">> 重复触发更新应幂等（已是最新，done 不重启）"

@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"lattix/backend/internal/alert"
@@ -19,18 +17,15 @@ import (
 
 // Config 是面板运行配置。
 type Config struct {
-	AdminUser     string          // 管理员账号（单管理员，§14 多管理员属后续迭代）
-	AdminPass     string          // 管理员密码（DB 设置页改密后被 bcrypt 哈希覆盖）
-	PublicURL     string          // 面板对外地址（生成安装命令/订阅链接）；空 = 从请求推断（DB 设置可覆盖）
-	Secure        bool            // 面板自身以 TLS 服务（自带证书或 ACME，§12）
-	RunningTLS    AppliedTLS      // 当前进程实际生效的 TLS 快照（main 启动时确定，重启生效）
-	TLSDir        string          // 域名路径模式证书根目录（<tls-dir>/<域名>/fullchain.pem|privkey.pem）
-	Version       string          // 面板版本（构建注入）；dev 时安装命令回退面板 /resource 托管源
-	GitHubRepo    string          // GitHub 仓库（org/repo）：release 安装命令、面板自更新与 agent 升级下载基址
-	StaticDir     string          // frontend 构建产物目录（面板自更新时整体替换）
-	ResourceDir   string          // release 镜像目录（install.sh + agent 包 + checksums.txt，/resource/ 托管）
-	InstallScript string          // install.sh 文件路径（/resource/install.sh 缺失时的 dev 回退）
-	Alerter       *alert.Notifier // 事件告警（§19）；nil = 关闭
+	AdminUser  string          // 管理员账号（单管理员，§14 多管理员属后续迭代）
+	AdminPass  string          // 管理员密码（DB 设置页改密后被 bcrypt 哈希覆盖）
+	PublicURL  string          // 面板对外地址（生成安装命令/订阅链接）；空 = 从请求推断（DB 设置可覆盖）
+	Secure     bool            // 面板自身以 TLS 服务（自带证书或 ACME，§12）
+	RunningTLS AppliedTLS      // 当前进程实际生效的 TLS 快照（main 启动时确定，重启生效）
+	TLSDir     string          // 域名路径模式证书根目录（<tls-dir>/<域名>/fullchain.pem|privkey.pem）
+	Version    string          // 面板版本（构建注入）
+	GitHubRepo string          // GitHub 仓库（org/repo）：release 安装命令、面板自更新与 agent 升级下载基址
+	Alerter    *alert.Notifier // 事件告警（§19）；nil = 关闭
 }
 
 // Server 聚合面板 API 的依赖。
@@ -41,22 +36,18 @@ type Server struct {
 	cfg     Config
 	alerter *alert.Notifier
 	upd     *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
-
-	installScript []byte // dev 回退脚本（-install_script 指定的原始脚本，可能未 stamp）
 }
 
 // New 创建面板 API 服务。
 func New(st *store.Store, disp *dispatch.Dispatcher, req ws.Requester, cfg Config) (*Server, error) {
-	// dev 回退脚本读取失败不致命（正式部署经 /resource/install.sh 托管）。
-	script, _ := os.ReadFile(cfg.InstallScript)
 	// 链编排器与单机节点共用同一份 dest 白名单（§6/§21）。
 	disp.DestCandidates = destCandidates
-	s := &Server{st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, installScript: script}
+	s := &Server{st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter}
 	s.upd = newPanelUpdater(s)
 	return s, nil
 }
 
-// RegisterRoutes 注册面板路由（管理 API 均需登录；install.sh 与 /resource/ 公开，§11 引导流程）。
+// RegisterRoutes 注册面板路由（管理 API 均需登录）。
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/logout", s.handleLogout)
@@ -106,31 +97,6 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/event-log", s.requireAuth(s.handleListEventLog))
 
-	mux.HandleFunc("GET /install.sh", s.handleInstallScript)
-	// /resource/ 托管 release 镜像（install.sh + agent 包 + checksums.txt，与 GitHub
-	// release 同布局），由面板安装/更新时落地，供 install.sh --source panel 下载（§11）。
-	mux.Handle("GET /resource/", http.StripPrefix("/resource/", http.FileServer(http.Dir(s.cfg.ResourceDir))))
-}
-
-// handleInstallScript 提供 Agent 引导安装脚本（§11）；参数经一行命令的 --panel/--token 传入。
-// 优先托管 resource 镜像中的 CI stamp 版（与面板同版本）；缺失时回退 -install-script
-// 指定的原始脚本（dev 用，占位符未替换时仅 --source panel 可执行）。
-func (s *Server) handleInstallScript(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	if p := filepath.Join(s.cfg.ResourceDir, "install.sh"); fileExists(p) {
-		http.ServeFile(w, r, p)
-		return
-	}
-	if len(s.installScript) > 0 {
-		w.Write(s.installScript)
-		return
-	}
-	http.NotFound(w, r)
-}
-
-func fileExists(p string) bool {
-	info, err := os.Stat(p)
-	return err == nil && !info.IsDir()
 }
 
 // PanelBase 导出 panelBase，供订阅落地页生成绝对链接（与面板 DTO 同一判定链）。

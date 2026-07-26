@@ -1,0 +1,11 @@
+.git
+.github
+.codegraph
+.zcode
+dist
+lattix.db
+node_modules
+src/frontend/node_modules
+src/frontend/dist
+*.db
+*.log

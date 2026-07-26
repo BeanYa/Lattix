@@ -1,8 +1,7 @@
 package panel
 
-// 面板自更新：以 GitHub release 最新版本为标准检测更新，下载面板包与 /resource
-// 镜像资产（与 install-panel.sh 同布局、同 checksums.txt 校验规约），解压校验后
-// 替换二进制与前端产物，最后经 restartSelf 自重启完成切换。
+// 面板自更新：以 GitHub release 最新版本为标准检测更新，下载当前架构的单二进制
+// 面板包，按 checksums.txt 校验后原子替换自身，最后经 restartSelf 重启完成切换。
 //
 // 进度经 GET /api/panel/update/status 轮询（阶段 + 百分比）；更新进行中
 // requireAuth 拒绝其余 API 操作（423），防止用户在切换窗口内继续改动。
@@ -25,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -33,25 +33,23 @@ import (
 // 更新阶段（panelUpdateStatus.Stage 取值）。
 const (
 	updStageCheck    = "check"    // 解析目标版本
-	updStageDownload = "download" // 下载面板包与 resource 镜像资产
+	updStageDownload = "download" // 下载面板包
 	updStageVerify   = "verify"   // checksums.txt SHA256 校验
 	updStageExtract  = "extract"  // 解压面板包
-	updStageApply    = "apply"    // 替换二进制/前端产物/resource 镜像
+	updStageApply    = "apply"    // 原子替换单二进制
 	updStageRestart  = "restart"  // 自重启切换
 	updStageDone     = "done"     // 完成（目标版本与当前一致时无需重启）
 	updStageFailed   = "failed"
 )
 
-// 更新需下载的 release 资产（与 scripts/latx.sh cmd_update 一致）：
-// 面板包 + /resource 镜像（install.sh + agent 两架构包），全部经 checksums.txt 校验。
-var updAssets = []string{
-	"lattix-panel-linux-amd64.tar.gz",
-	"install.sh",
-	"lattix-agent-linux-amd64.tar.gz",
-	"lattix-agent-linux-arm64.tar.gz",
+func currentPanelTarball() (string, error) {
+	switch runtime.GOARCH {
+	case "amd64", "arm64":
+		return "lattix-panel-linux-" + runtime.GOARCH + ".tar.gz", nil
+	default:
+		return "", fmt.Errorf("不支持的更新架构: %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
 }
-
-const panelTarball = "lattix-panel-linux-amd64.tar.gz"
 
 // panelUpdateStatus 是 GET /api/panel/update/status 的响应（更新进度快照）。
 type panelUpdateStatus struct {
@@ -276,6 +274,13 @@ func (u *panelUpdater) run() {
 	}
 
 	base := s.releaseBase() + "/" + target
+	panelTarball, err := currentPanelTarball()
+	if err != nil {
+		os.RemoveAll(work)
+		u.fail(err)
+		return
+	}
+	assets := []string{panelTarball}
 
 	// --- download：先 checksums.txt（校验依据，获取不到即中止），再逐一资产带进度下载 ---
 	u.setStage(updStageDownload, 0, "下载 checksums.txt")
@@ -285,14 +290,14 @@ func (u *panelUpdater) run() {
 		u.fail(fmt.Errorf("未获取到 release 校验文件 checksums.txt，中止更新: %w", err))
 		return
 	}
-	for i, asset := range updAssets {
-		basePct := (i + 1) * 100 / (len(updAssets) + 1) // checksums 占一份
-		msg := fmt.Sprintf("下载 %s（%d/%d）", asset, i+1, len(updAssets))
+	for i, asset := range assets {
+		basePct := (i + 1) * 100 / (len(assets) + 1) // checksums 占一份
+		msg := fmt.Sprintf("下载 %s（%d/%d）", asset, i+1, len(assets))
 		u.setStage(updStageDownload, basePct, msg)
 		onProgress := func(frac float64) {
 			p := basePct
 			if frac >= 0 {
-				p = basePct - 100/(len(updAssets)+1) + int(frac*float64(100/(len(updAssets)+1)))
+				p = basePct - 100/(len(assets)+1) + int(frac*float64(100/(len(assets)+1)))
 			}
 			u.mu.Lock()
 			u.st.Percent = p
@@ -308,7 +313,7 @@ func (u *panelUpdater) run() {
 
 	// --- verify：全部资产过 checksums.txt（与安装脚本同规，不降级跳过）---
 	u.setStage(updStageVerify, 50, "SHA256 校验更新包")
-	for _, asset := range updAssets {
+	for _, asset := range assets {
 		if err := verifyAsset(sumsPath, asset, filepath.Join(work, asset)); err != nil {
 			os.RemoveAll(work)
 			u.fail(err)
@@ -333,7 +338,7 @@ func (u *panelUpdater) run() {
 	}
 	u.setStage(updStageExtract, 100, "解压完成")
 
-	// --- apply：预检新二进制 → 替换二进制/前端产物/resource 镜像 ---
+	// --- apply：预检新二进制 → 原子替换当前二进制 ---
 	u.setStage(updStageApply, 10, "预检新版本二进制")
 	if err := os.Chmod(newBin, 0o755); err != nil {
 		os.RemoveAll(work)
@@ -349,39 +354,11 @@ func (u *panelUpdater) run() {
 		return
 	}
 
-	u.setStage(updStageApply, 40, "替换面板二进制")
-	if err := copyFile(exe, exe+".bak", 0o755); err != nil {
-		os.RemoveAll(work)
-		u.fail(fmt.Errorf("备份旧二进制失败: %w", err))
-		return
-	}
-	if err := copyFile(newBin, exe, 0o755); err != nil {
+	u.setStage(updStageApply, 60, "原子替换面板二进制")
+	if err := replaceExecutable(newBin, exe); err != nil {
 		os.RemoveAll(work)
 		u.fail(fmt.Errorf("替换面板二进制失败: %w", err))
 		return
-	}
-
-	u.setStage(updStageApply, 60, "替换前端产物")
-	if fi, err := os.Stat(filepath.Join(pkg, "frontend-dist")); err == nil && fi.IsDir() {
-		if err := replaceDir(filepath.Join(pkg, "frontend-dist"), s.cfg.StaticDir); err != nil {
-			os.RemoveAll(work)
-			u.fail(fmt.Errorf("替换前端产物失败: %w", err))
-			return
-		}
-	}
-
-	u.setStage(updStageApply, 80, "刷新 /resource 镜像")
-	if s.cfg.ResourceDir != "" {
-		if err := os.MkdirAll(s.cfg.ResourceDir, 0o755); err == nil {
-			for _, f := range []string{"install.sh", "checksums.txt",
-				"lattix-agent-linux-amd64.tar.gz", "lattix-agent-linux-arm64.tar.gz"} {
-				if err := copyFile(filepath.Join(work, f), filepath.Join(s.cfg.ResourceDir, f), 0o644); err != nil {
-					os.RemoveAll(work)
-					u.fail(fmt.Errorf("刷新 /resource 镜像失败: %w", err))
-					return
-				}
-			}
-		}
 	}
 	u.setStage(updStageApply, 100, "文件替换完成")
 	os.RemoveAll(work) // restart 会 os.Exit，defer 清理不会执行，提前清理
@@ -530,6 +507,32 @@ func untargz(archive, dest string) error {
 			}
 		}
 	}
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// replaceExecutable keeps the old executable as .bak and swaps the new file
+// into place with same-filesystem renames. This works for both systemd and a
+// Docker container writable layer while the old inode is still executing.
+func replaceExecutable(src, dest string) error {
+	next := dest + ".new"
+	backup := dest + ".bak"
+	if err := copyFile(src, next, 0o755); err != nil {
+		return err
+	}
+	_ = os.Remove(backup)
+	if err := os.Rename(dest, backup); err != nil {
+		_ = os.Remove(next)
+		return fmt.Errorf("备份当前二进制失败: %w", err)
+	}
+	if err := os.Rename(next, dest); err != nil {
+		_ = os.Rename(backup, dest)
+		return fmt.Errorf("安装新二进制失败: %w", err)
+	}
+	return nil
 }
 
 // copyFile 复制文件并设置权限（先写临时文件再原子 rename）。

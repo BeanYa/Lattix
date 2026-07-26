@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Agent 引导安装（install.sh）与 latx-ag 节点管理程序端到端验收（设计文档 §11/§20）：
+# Agent 引导安装（install-agent.sh）与 latx-ag 节点管理程序端到端验收（设计文档 §11/§20）：
 #   真实 go build 的 agent + 本地 file:// 假 release（LATX_RELEASE_BASE 覆盖下载基址）
 #   → LATX_DEV=1 + LATX_PREFIX 无 systemd 降级安装（xray 由 XRAY_BIN 本机二进制复制安装）
 #   → latx-ag 随装 → checksum 篡改应中止 → 成功输出（面板地址/agent 状态/latx-ag 提示块）
 #   → 重装清旧 state（预置坏 state 仍能上线）→ agent 连上面板（online）
 #   → latx-ag version / status（进程检查）可用
-#   → --source panel：面板 /resource 镜像（-resource 指假 release 目录）下载安装并上线
 #   → user 用户态模式（LATX_USER_MODE=1 无 LATX_DEV）：守护脚本常驻 + latx-ag 用户态 start/stop。
 # 依赖：python3、curl、本机 xray 二进制（XRAY_BIN 可覆盖；DEV/user 模式复制安装，不下载）。
 # 无需 systemd/root（用例 1-5 全程 LATX_DEV=1；用例 6 为 user 用户态模式）。
@@ -52,12 +51,12 @@ echo ">> build agent（真实构建产物注入版本）与 backend"
 
 echo ">> 摆假 release: $FAKE"
 mkdir -p "$FAKE"
-# latx-ag / install.sh stamp（模拟 CI release.yml 的 sed）
+# latx-ag / install-agent.sh stamp
 sed -e "s|{{LATTIX_VERSION}}|$VERSION|g" -e "s|{{GITHUB_REPO}}|$REPO|g" \
     "$ROOT/scripts/latx-ag.sh" > "$WORK/latx-ag"
 sed -e "s|{{LATTIX_VERSION}}|$VERSION|g" -e "s|{{GITHUB_REPO}}|$REPO|g" \
     -e "s|{{DEFAULT_XRAY_VERSION}}|v26.3.27|g" \
-    "$ROOT/scripts/install.sh" > "$FAKE/install.sh"
+    "$ROOT/scripts/install-agent.sh" > "$FAKE/install-agent.sh"
 # agent 包：lattix-agent/（agent 二进制 + latx-ag，模拟 CI 打包）
 mkdir -p "$WORK/agent-pkg/lattix-agent"
 cp "$WORK/lattix-agent" "$WORK/agent-pkg/lattix-agent/lattix-agent"
@@ -65,9 +64,9 @@ cp "$WORK/latx-ag" "$WORK/agent-pkg/lattix-agent/latx-ag"
 tar -C "$WORK/agent-pkg" -czf "$FAKE/lattix-agent-linux-amd64.tar.gz" lattix-agent
 (cd "$FAKE" && sha256sum lattix-agent-linux-amd64.tar.gz > checksums.txt)
 
-echo ">> start backend（-resource 指向假 release 目录，镜像 /resource 托管布局）"
+echo ">> start backend"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" -admin-pass "$ADMIN_PASS" \
-    -resource "$FAKE" -install-script "$ROOT/scripts/install.sh" -static "$WORK/none" \
+    -static "$WORK/none" \
     >"$WORK/backend.log" 2>&1 &
 BPID=$!
 sleep 1
@@ -83,7 +82,7 @@ BOOTSTRAP="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"e2e
 run_install() {
     LATX_DEV=1 LATX_PREFIX="$PREFIX" LATX_RELEASE_BASE="file://$FAKE" \
     XRAY_BIN="$XRAY_BIN" LATX_AG_XRAY_API="$API_ADDR" \
-        bash "$FAKE/install.sh" --panel "http://$ADDR" --token "$BOOTSTRAP" --xray-version v26.3.27
+        bash "$FAKE/install-agent.sh" --version "$VERSION" --panel "http://$ADDR" --token "$BOOTSTRAP" --xray-version v26.3.27
 }
 
 latx_ag() {
@@ -150,35 +149,12 @@ echo "$STATUS" | grep -q "服务器 ID: 1" \
 latx_ag log -n 5 | grep -q "authenticated as server 1" \
     && echo "OK: latx-ag log -n（DEV 读日志文件）" || { echo "FAIL: latx-ag log"; exit 1; }
 
-echo ">> 用例 5: --source panel（面板 /resource 镜像下载，与 github 源同一下载/校验流程）"
-curl -s "http://$ADDR/install.sh" | grep -q "LATTIX_VERSION=\"$VERSION\"" \
-    && echo "OK: /install.sh 托管 resource 镜像（CI stamp 版）" || { echo "FAIL: /install.sh 未托管镜像脚本"; exit 1; }
-[[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/resource/lattix-agent-linux-amd64.tar.gz")" == "200" ]] \
-    && echo "OK: /resource/ 镜像托管可用" || { echo "FAIL: /resource/ 不可用"; exit 1; }
-BOOTSTRAP2="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"e2e02"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
-[[ -n "$BOOTSTRAP2" ]] || { echo "FAIL: 第二台服务器 bootstrap token"; exit 1; }
-PANEL_OUT="$(LATX_DEV=1 LATX_PREFIX="$PREFIX" XRAY_BIN="$XRAY_BIN" LATX_AG_XRAY_API="$API_ADDR" \
-    bash "$FAKE/install.sh" --source panel --panel "http://$ADDR" --token "$BOOTSTRAP2" --xray-version v26.3.27)"
-echo "$PANEL_OUT" | grep -q "installing lattix-agent $VERSION（source: panel）" \
-    && echo "OK: panel 源安装输出（钉版本 $VERSION）" || { echo "FAIL: panel 源输出: $PANEL_OUT"; exit 1; }
-echo "$PANEL_OUT" | grep -q "agent 包 SHA256 校验通过（checksums.txt）" \
-    && echo "OK: panel 源 checksums.txt 校验通过" || { echo "FAIL: panel 源校验: $PANEL_OUT"; exit 1; }
-ONLINE2=""
-for _ in $(seq 1 15); do
-    ONLINE2="$(api "http://$ADDR/api/servers" | py "d[1]['online']")"
-    [[ "$ONLINE2" == "True" ]] && break
-    sleep 1
-done
-[[ "$ONLINE2" == "True" ]] \
-    && echo "OK: panel 源安装的 agent 已上线（server 2）" \
-    || { echo "FAIL: server 2 未上线"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
-
-echo ">> 用例 6: user 用户态模式（LATX_USER_MODE=1 无 LATX_DEV；守护脚本常驻 + latx-ag 用户态管理）"
-BOOTSTRAP3="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"e2e03"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
-[[ -n "$BOOTSTRAP3" ]] || { echo "FAIL: 第三台服务器 bootstrap token"; exit 1; }
+echo ">> 用例 5: user 用户态模式（LATX_USER_MODE=1 无 LATX_DEV；守护脚本常驻 + latx-ag 用户态管理）"
+BOOTSTRAP3="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"e2e02"}' "http://$ADDR/api/servers" | py "d['bootstrap_token']")"
+[[ -n "$BOOTSTRAP3" ]] || { echo "FAIL: 第二台服务器 bootstrap token"; exit 1; }
 USER_OUT="$(LATX_USER_MODE=1 LATX_PREFIX="$PREFIX" LATX_RELEASE_BASE="file://$FAKE" \
     XRAY_BIN="$XRAY_BIN" LATX_AG_XRAY_API="$API_ADDR" \
-    bash "$FAKE/install.sh" --panel "http://$ADDR" --token "$BOOTSTRAP3" --xray-version v26.3.27)"
+    bash "$FAKE/install-agent.sh" --version "$VERSION" --panel "http://$ADDR" --token "$BOOTSTRAP3" --xray-version v26.3.27)"
 echo "$USER_OUT" | grep -q "\[user\]" \
     && echo "OK: 安装输出含用户态模式提示" || { echo "FAIL: 缺用户态提示: $USER_OUT"; exit 1; }
 [[ -x "$PREFIX/usr/local/bin/lattix-agent-run" ]] \
@@ -188,13 +164,13 @@ pgrep -f "$PREFIX/usr/local/bin/lattix-agent -panel" >/dev/null \
     || { echo "FAIL: agent 未运行"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
 ONLINE3=""
 for _ in $(seq 1 15); do
-    ONLINE3="$(api "http://$ADDR/api/servers" | py "d[2]['online']")"
+    ONLINE3="$(api "http://$ADDR/api/servers" | py "d[1]['online']")"
     [[ "$ONLINE3" == "True" ]] && break
     sleep 1
 done
 [[ "$ONLINE3" == "True" ]] \
-    && echo "OK: user 模式安装的 agent 已上线（server 3）" \
-    || { echo "FAIL: server 3 未上线"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
+    && echo "OK: user 模式安装的 agent 已上线（server 2）" \
+    || { echo "FAIL: server 2 未上线"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
 
 # latx-ag 用户态分支：不带 LATX_DEV（无 unit 文件自动判定），仅 LATX_PREFIX。
 latx_ag_user() { LATX_PREFIX="$PREFIX" bash "$PREFIX/usr/local/bin/latx-ag" "$@"; }
@@ -203,7 +179,7 @@ echo "$USTATUS" | grep -q "\[用户态\] 进程运行中" \
     && echo "OK: latx-ag status 用户态进程检查" || { echo "FAIL: status: $USTATUS"; exit 1; }
 echo "$USTATUS" | grep -q "面板地址: ws://$ADDR/api/agent/ws" \
     && echo "OK: latx-ag status 面板地址" || { echo "FAIL: status 面板地址: $USTATUS"; exit 1; }
-latx_ag_user log -n 5 | grep -q "authenticated as server 3" \
+latx_ag_user log -n 5 | grep -q "authenticated as server 2" \
     && echo "OK: latx-ag log -n（用户态读日志文件）" \
     || { echo "FAIL: latx-ag log"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
 latx_ag_user stop

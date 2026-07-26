@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
 # Lattix Agent 引导安装脚本（设计文档 §11）。
 #
-# 由面板"添加服务器"生成一行安装命令，形如：
-#   curl -fsSL <PANEL_URL>/install.sh | bash -s -- --panel <PANEL_URL> --token <BOOTSTRAP_TOKEN> --xray-version <latest|vX.Y.Z>
+# 由根 install.sh 或面板"添加服务器"命令调用，形如：
+#   install-agent.sh --version vX.Y.Z --panel <PANEL_URL> --token <BOOTSTRAP_TOKEN>
 #
 # Agent 二进制统一为 release 钉版获取（lattix-agent-linux-<arch>.tar.gz = agent + latx-ag，
-# 与同目录 checksums.txt 校验，获取不到即中止），下载源由 --source 选择：
-#   1. github（默认）：从 GitHub release 资产下载。脚本由 CI 发版时烧入 LATTIX_VERSION /
-#      GITHUB_REPO / DEFAULT_XRAY_VERSION（见 .github/workflows/release.yml）——
-#      脚本与其安装的 agent 二进制天然同版，老面板生成的命令不受后续发版影响。
-#   2. panel：从面板 ${PANEL_URL}/resource 镜像下载。镜像与 GitHub release 同布局
-#      （install.sh + agent 两架构包 + checksums.txt），由面板安装/更新时落地，
-#      与面板同版本；下载与校验流程和 github 源完全一致。
+# 与同目录 checksums.txt 校验，获取不到即中止），统一从 GitHub Release 下载。
 #
 # 流程：解析/下载指定版本 xray-core（校验官方 .dgst SHA2-256）→ 下载/安装 Agent 二进制
 # 与 latx-ag 节点管理程序 → 注册 systemd（user 用户态模式改为守护脚本常驻，见下）→
@@ -19,8 +13,7 @@
 # Agent 首连后以 bootstrap token 换发长期凭证。
 #
 # 环境变量覆盖（e2e/运维用）：
-#   LATX_SOURCE         同 --source（github|panel）；--source 参数优先
-#   LATX_RELEASE_BASE   下载基址覆盖（两种源均生效，e2e 本地模拟用，支持 file://）
+#   LATX_RELEASE_BASE   下载基址覆盖（e2e 本地模拟用，支持 file://）
 #   LATX_PREFIX         路径前缀（默认空；/usr/local/bin、/etc/systemd/system、state 等全部加前缀；
 #                       user 模式且非 root 时默认 $HOME/.lattix）
 #   LATX_DEV=1          无 systemd/非 root 开发模式：跳过 unit 注册，nohup 直接启动 agent；
@@ -35,18 +28,16 @@
 set -euo pipefail
 
 # ===== CI 发版烧入区（release.yml 在发版时 sed 替换以下三个占位符）=====
-# 占位符未被替换（含 "{{"）时 github 源不可用（无版本可钉），仅 --source panel 可用。
-LATTIX_VERSION="{{LATTIX_VERSION}}"
-GITHUB_REPO="{{GITHUB_REPO}}"
+LATTIX_VERSION="${LATTIX_VERSION:-{{LATTIX_VERSION}}}"
+GITHUB_REPO="${GITHUB_REPO:-{{GITHUB_REPO}}}"
 # 烧入后作为 --xray-version / XRAY_VERSION 的默认值（仍可被显式覆盖）。
-DEFAULT_XRAY_VERSION="{{DEFAULT_XRAY_VERSION}}"
+DEFAULT_XRAY_VERSION="${DEFAULT_XRAY_VERSION:-{{DEFAULT_XRAY_VERSION}}}"
 
 # latest 解析失败时的回退钉住版本。
 FALLBACK_XRAY_VERSION="v26.3.27"
 
 PANEL_URL=""
 BOOTSTRAP_TOKEN=""
-SOURCE="${LATX_SOURCE:-github}"
 # xray 版本默认值：CI 烧入的 DEFAULT_XRAY_VERSION 优先；占位符未替换时维持
 # latest（执行时经 GitHub API 解析）。--xray-version 参数与
 # XRAY_VERSION 环境变量始终可覆盖默认值。
@@ -62,18 +53,16 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --panel)         PANEL_URL="${2:?--panel requires a value}"; shift 2 ;;
         --token)         BOOTSTRAP_TOKEN="${2:?--token requires a value}"; shift 2 ;;
+        --version)       LATTIX_VERSION="${2:?--version requires a value}"; shift 2 ;;
         --xray-version)  XRAY_VERSION="${2:?--xray-version requires a value}"; shift 2 ;;
-        --source)        SOURCE="${2:?--source requires a value}"; shift 2 ;;
         *)               die "unknown argument: $1" ;;
     esac
 done
 
 [[ -n "$PANEL_URL" ]]       || die "--panel is required"
 [[ -n "$BOOTSTRAP_TOKEN" ]] || die "--token is required"
-case "$SOURCE" in
-    github|panel) ;;
-    *) die "--source 仅支持 github|panel（当前 $SOURCE）" ;;
-esac
+[[ "$LATTIX_VERSION" != *"{{"* ]] || die "--version is required"
+[[ "$GITHUB_REPO" != *"{{"* ]] || die "GITHUB_REPO 未配置"
 command -v curl      >/dev/null || die "curl is required"
 command -v sha256sum >/dev/null || die "sha256sum is required"
 
@@ -186,25 +175,11 @@ if [[ ! -f "$XRAY_CONFIG_DIR/config.json" ]]; then
 EOF
 fi
 
-# agent 包下载基址：github 源钉到 CI 烧入版本的 GitHub release；panel 源用面板
-# /resource 镜像（与 release 同布局，面板安装/更新时落地，与面板同版本）。
-# LATX_RELEASE_BASE 对两种源均可覆盖下载基址（e2e 本地模拟，支持 file://）。
+# agent 包下载基址：钉到目标版本的 GitHub Release。
+# LATX_RELEASE_BASE 可覆盖下载基址（e2e 本地模拟，支持 file://）。
 command -v tar >/dev/null || die "tar is required"
-case "$SOURCE" in
-    github)
-        [[ "$LATTIX_VERSION" != *"{{"* && "$GITHUB_REPO" != *"{{"* ]] \
-            || die "脚本未经 CI stamp（占位符未替换），github 源无版本可钉；请改用 GitHub release 资产、面板 /resource/install.sh，或 --source panel"
-        RELEASE_BASE="${LATX_RELEASE_BASE:-https://github.com/${GITHUB_REPO}/releases/download/${LATTIX_VERSION}}"
-        ;;
-    panel)
-        RELEASE_BASE="${LATX_RELEASE_BASE:-${PANEL_URL}/resource}"
-        ;;
-esac
-if [[ "$LATTIX_VERSION" != *"{{"* ]]; then
-    echo ">> installing lattix-agent ${LATTIX_VERSION}（source: $SOURCE）"
-else
-    echo ">> installing lattix-agent（source: $SOURCE）"
-fi
+RELEASE_BASE="${LATX_RELEASE_BASE:-https://github.com/${GITHUB_REPO}/releases/download/${LATTIX_VERSION}}"
+echo ">> installing lattix-agent ${LATTIX_VERSION}（source: GitHub）"
 curl -fsSL -o "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}.tar.gz" \
     "${RELEASE_BASE}/lattix-agent-linux-${AGENT_ARCH}.tar.gz"
 # 校验文件获取不到即中止，不降级跳过。

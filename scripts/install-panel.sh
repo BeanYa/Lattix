@@ -1,185 +1,292 @@
 #!/usr/bin/env bash
-# Lattix 面板一键安装脚本（设计文档 §20）。
-#
-# 与 agent install.sh 一致走 release 钉版（CI 发版时烧入 LATTIX_VERSION / GITHUB_REPO，
-# 见 .github/workflows/release.yml）：
-#   curl -fsSL https://github.com/<repo>/releases/download/<ver>/install-panel.sh | bash
-#   curl -fsSL .../install-panel.sh | bash -s -- <version>   # 指定版本
-#
-# 流程：架构/OS 检查（仅 linux/amd64）→ 解析目标版本（参数 > CI 烧入 > latest 经 GitHub API）
-# → 下载面板 tarball（前后端 + latx + install.sh）与 /resource 镜像资产（install.sh +
-#   agent 两架构包 + checksums.txt，与 GitHub release 同布局，供面板托管资源选项使用，
-#   全部经 release checksums.txt 校验）
-# → 解压到安装根目录 → 安装 latx → 注册并启动 systemd 服务 → 打印面板地址与默认账号。
-# 已安装时执行 = 同版本重装/升级（停服 → 替换 → 启服，保留 DB）。
-#
-# 环境变量覆盖（e2e/运维用）：
-#   LATX_ROOT          安装根目录（默认 /usr/local/lattix-panel）
-#   LATX_UNIT          systemd unit 名（默认 lattix-panel）
-#   LATX_ADDR          面板监听地址（默认 :8080，写入 unit ExecStart -addr）
-#   LATX_BIN           latx 安装路径（默认 /usr/local/bin/latx）
-#   LATX_RELEASE_BASE 下载基址覆盖（默认 GitHub release，e2e 本地模拟用，支持 file://）
-#   LATX_DEV=1         无 systemd/非 root 开发模式：跳过 unit 注册，nohup 直接启动
+# Lattix panel installer: native systemd or isolated Docker Compose deployment.
 set -euo pipefail
 
-# ===== CI 发版烧入区（release.yml 在发版时 sed 替换以下两个占位符）=====
-LATTIX_VERSION="{{LATTIX_VERSION}}"
-GITHUB_REPO="{{GITHUB_REPO}}"
-
-INSTALL_ROOT="${LATX_ROOT:-/usr/local/lattix-panel}"
-UNIT="${LATX_UNIT:-lattix-panel}"
-ADDR="${LATX_ADDR:-:8080}"
-LATX_BIN="${LATX_BIN:-/usr/local/bin/latx}"
+GITHUB_REPO="${GITHUB_REPO:-{{GITHUB_REPO}}}"
+VERSION="${LATTIX_VERSION:-{{LATTIX_VERSION}}}"
+MODE=""
+INSTALL_DOCKER=0
+BIND_ADDRESS=""
+PORT=""
+ADMIN_USER=""
+ADMIN_PASS=""
+PUBLIC_URL=""
 
 die() { echo "install-panel.sh: $*" >&2; exit 1; }
 
-# --- 架构/OS 检查（面板仅有 linux/amd64 构建）---
-[[ "$(uname -s)" == "Linux" ]] || die "仅支持 Linux（当前 $(uname -s)）"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --mode)           MODE="${2:?--mode requires native|docker}"; shift 2 ;;
+        --version)        VERSION="${2:?--version requires a value}"; shift 2 ;;
+        --install-docker) INSTALL_DOCKER=1; shift ;;
+        --bind)           BIND_ADDRESS="${2:?--bind requires an address}"; shift 2 ;;
+        --port)           PORT="${2:?--port requires a value}"; shift 2 ;;
+        --admin-user)     ADMIN_USER="${2:?--admin-user requires a value}"; shift 2 ;;
+        --admin-pass)     ADMIN_PASS="${2:?--admin-pass requires a value}"; shift 2 ;;
+        --public-url)     PUBLIC_URL="${2:?--public-url requires a value}"; shift 2 ;;
+        *)                die "unknown argument: $1" ;;
+    esac
+done
+
+case "$MODE" in
+    native|docker) ;;
+    "") die "--mode native|docker is required" ;;
+    *) die "unsupported mode: $MODE" ;;
+esac
+[[ "$VERSION" != *"{{"* && "$VERSION" == v* ]] || die "--version vX.Y.Z is required"
+[[ "$GITHUB_REPO" != *"{{"* ]] || die "GITHUB_REPO is not configured"
+[[ "$(uname -s)" == "Linux" ]] || die "only Linux is supported"
+
 case "$(uname -m)" in
-    x86_64) ;;
-    aarch64) die "面板无 linux/arm64 构建（仅 agent 提供 arm64），请在 amd64 机器上部署面板" ;;
-    *)       die "unsupported arch: $(uname -m)（面板仅有 linux/amd64 构建）" ;;
+    x86_64)  ARCH="amd64" ;;
+    aarch64) ARCH="arm64" ;;
+    *)       die "unsupported architecture: $(uname -m)" ;;
 esac
 
-command -v curl      >/dev/null || die "curl is required"
-command -v sha256sum >/dev/null || die "sha256sum is required"
-command -v tar       >/dev/null || die "tar is required"
+random_password() {
+    local value=""
+    while [[ ${#value} -lt 8 ]]; do
+        value+="$(LC_ALL=C tr -dc 'A-Za-z' </dev/urandom | head -c 8 || true)"
+    done
+    printf '%s' "${value:0:8}"
+}
 
-# --- systemd / 权限检查：无 systemctl 或非 root 时需 LATX_DEV=1 进入开发降级模式 ---
-DEV_MODE=0
-if ! command -v systemctl >/dev/null || [[ "$(id -u)" -ne 0 ]]; then
+need_root() {
+    if [[ "$(id -u)" -eq 0 ]]; then
+        ROOT=()
+    elif command -v sudo >/dev/null; then
+        ROOT=(sudo)
+    else
+        die "root or sudo is required"
+    fi
+}
+
+docker_cmd() {
+    if docker info >/dev/null 2>&1; then
+        docker "$@"
+    elif command -v sudo >/dev/null && sudo docker info >/dev/null 2>&1; then
+        sudo docker "$@"
+    else
+        die "cannot access Docker daemon"
+    fi
+}
+
+install_docker_engine() {
+    need_root
+    command -v curl >/dev/null || die "curl is required to install Docker"
+    local installer
+    installer="$(mktemp)"
+    trap 'rm -f "$installer"' RETURN
+    curl -fsSL https://get.docker.com -o "$installer"
+    "${ROOT[@]}" sh "$installer"
+    "${ROOT[@]}" systemctl enable --now docker
+}
+
+ensure_docker() {
+    if command -v docker >/dev/null && docker_cmd compose version >/dev/null 2>&1; then
+        return
+    fi
+    if [[ "$INSTALL_DOCKER" -eq 1 ]]; then
+        install_docker_engine
+    elif [[ -t 0 ]]; then
+        read -r -p "未检测到 Docker Engine + Compose，是否由安装器安装？[y/N] " answer
+        [[ "$answer" =~ ^[Yy]$ ]] || die "Docker is required"
+        install_docker_engine
+    else
+        die "Docker Engine + Compose is required; pass --install-docker to install it"
+    fi
+    docker_cmd compose version >/dev/null 2>&1 || die "Docker Compose plugin installation failed"
+}
+
+env_value() {
+    local file="$1" key="$2"
+    [[ -f "$file" ]] || return 0
+    local value
+    value="$(sed -n "s/^${key}=//p" "$file" | tail -1)"
+    printf '%s' "${value//\$\$/\$}"
+}
+
+env_escape() {
+    local value="$1"
+    printf '%s' "${value//\$/\$\$}"
+}
+
+write_env() {
+    local file="$1"
+    local old_user old_pass old_bind old_port old_public
+    old_user="$(env_value "$file" LATTIX_ADMIN_USER)"
+    old_pass="$(env_value "$file" LATTIX_ADMIN_PASS)"
+    old_bind="$(env_value "$file" LATTIX_BIND)"
+    old_port="$(env_value "$file" LATTIX_PORT)"
+    old_public="$(env_value "$file" LATTIX_PUBLIC_URL)"
+
+    ADMIN_USER="${ADMIN_USER:-${old_user:-admin}}"
+    ADMIN_PASS="${ADMIN_PASS:-${old_pass:-$(random_password)}}"
+    BIND_ADDRESS="${BIND_ADDRESS:-${old_bind:-127.0.0.1}}"
+    PORT="${PORT:-${old_port:-8080}}"
+    PUBLIC_URL="${PUBLIC_URL:-$old_public}"
+
+    [[ "$ADMIN_USER" != *$'\n'* && "$ADMIN_PASS" != *$'\n'* ]] || die "credentials cannot contain newlines"
+    [[ "$PORT" =~ ^[0-9]+$ && "$PORT" -ge 1 && "$PORT" -le 65535 ]] || die "invalid port: $PORT"
+
+    local tmp="${file}.new"
+    cat >"$tmp" <<EOF
+LATTIX_VERSION=$VERSION
+LATTIX_BIND=$(env_escape "$BIND_ADDRESS")
+LATTIX_PORT=$PORT
+LATTIX_ADMIN_USER=$(env_escape "$ADMIN_USER")
+LATTIX_ADMIN_PASS=$(env_escape "$ADMIN_PASS")
+LATTIX_PUBLIC_URL=$(env_escape "$PUBLIC_URL")
+LATTIX_TIMEZONE=Asia/Shanghai
+LATTIX_DEPLOY_MODE=docker
+LATTIX_DB=/data/lattix.db
+LATTIX_TLS_DIR=/data/certs
+LATTIX_ACME_CACHE=/data/acme-cache
+EOF
+    chmod 0600 "$tmp"
+    mv "$tmp" "$file"
+}
+
+install_docker_mode() {
+    ensure_docker
+    need_root
+    local root="${LATX_DOCKER_ROOT:-/opt/lattix-panel}"
+    "${ROOT[@]}" install -d -m 0755 "$root" "$root/config"
+    "${ROOT[@]}" install -d -m 0750 -o 10001 -g 10001 \
+        "$root/data" "$root/data/certs" "$root/data/acme-cache"
+
+    local work
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' RETURN
+    if [[ -f "$root/config/.env" ]]; then
+        "${ROOT[@]}" cp "$root/config/.env" "$work/.env"
+        "${ROOT[@]}" chown "$(id -u):$(id -g)" "$work/.env"
+    fi
+    write_env "$work/.env"
+    cat >"$work/compose.yaml" <<'YAML'
+services:
+  lattix:
+    image: ghcr.io/beanya/lattix:${LATTIX_VERSION}
+    container_name: lattix-panel
+    restart: unless-stopped
+    env_file:
+      - config/.env
+    ports:
+      - "${LATTIX_BIND:-127.0.0.1}:${LATTIX_PORT:-8080}:8080"
+    volumes:
+      - ./data:/data
+YAML
+    "${ROOT[@]}" install -m 0600 "$work/.env" "$root/config/.env"
+    "${ROOT[@]}" install -m 0644 "$work/compose.yaml" "$root/compose.yaml"
+
+    docker_cmd compose --project-directory "$root" --env-file "$root/config/.env" pull
+    docker_cmd compose --project-directory "$root" --env-file "$root/config/.env" up -d
+    echo
+    echo "Lattix Docker 面板安装完成：$VERSION"
+    echo "访问地址: ${PUBLIC_URL:-http://${BIND_ADDRESS}:${PORT}}"
+    echo "管理员:   $ADMIN_USER"
+    echo "初始密码: $ADMIN_PASS"
+    echo "配置目录: $root"
+}
+
+install_native_mode() {
     if [[ "${LATX_DEV:-0}" == "1" ]]; then
-        DEV_MODE=1
-        echo ">> [DEV] 无 systemd 或非 root，跳过 unit 注册，面板将由 nohup 直接启动"
+        ROOT=()
     else
-        die "需要 root 且系统使用 systemd（开发/测试环境可用 LATX_DEV=1 降级运行）"
+        need_root
     fi
-fi
+    command -v curl >/dev/null || die "curl is required"
+    command -v sha256sum >/dev/null || die "sha256sum is required"
+    command -v tar >/dev/null || die "tar is required"
 
-# --- 解析目标版本：参数 > CI 烧入 >（自定义下载基址时 dev，否则 latest 经 GitHub API）---
-VERSION="${1:-}"
-if [[ -z "$VERSION" ]]; then
-    if [[ "$LATTIX_VERSION" != *"{{"* ]]; then
-        VERSION="$LATTIX_VERSION"
-    elif [[ -n "${LATX_RELEASE_BASE:-}" ]]; then
-        VERSION="dev"
+    local root="${LATX_ROOT:-/usr/local/lattix-panel}"
+    local unit="${LATX_UNIT:-lattix-panel}"
+    local config="$root/config.env"
+    local release="${LATX_RELEASE_BASE:-https://github.com/${GITHUB_REPO}/releases/download/${VERSION}}"
+    local asset="lattix-panel-linux-${ARCH}.tar.gz"
+    local work
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' RETURN
+    curl -fsSL "$release/$asset" -o "$work/$asset"
+    curl -fsSL "$release/checksums.txt" -o "$work/checksums.txt"
+    (cd "$work" && grep " ${asset}$" checksums.txt | sha256sum -c - >/dev/null) \
+        || die "$asset SHA256 verification failed"
+    tar -C "$work" -xzf "$work/$asset"
+
+    ADMIN_USER="${ADMIN_USER:-$(env_value "$config" LATTIX_ADMIN_USER)}"
+    ADMIN_PASS="${ADMIN_PASS:-$(env_value "$config" LATTIX_ADMIN_PASS)}"
+    PUBLIC_URL="${PUBLIC_URL:-$(env_value "$config" LATTIX_PUBLIC_URL)}"
+    ADMIN_USER="${ADMIN_USER:-admin}"
+    ADMIN_PASS="${ADMIN_PASS:-$(random_password)}"
+    PORT="${PORT:-8080}"
+    BIND_ADDRESS="${BIND_ADDRESS:-0.0.0.0}"
+    [[ "$ADMIN_USER" != *$'\n'* && "$ADMIN_PASS" != *$'\n'* ]] || die "credentials cannot contain newlines"
+    [[ "$PORT" =~ ^[0-9]+$ && "$PORT" -ge 1 && "$PORT" -le 65535 ]] || die "invalid port: $PORT"
+    if [[ "${LATX_DEV:-0}" == "1" ]]; then
+        pkill -f "^${root}/lattix-backend([[:space:]]|$)" >/dev/null 2>&1 || true
     else
-        echo ">> resolving latest lattix version"
-        VERSION="$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
-            | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4)" || true
-        [[ -n "$VERSION" ]] || die "latest 解析失败（GitHub API 不可达？），请显式指定版本：bash -s -- <version>"
+        "${ROOT[@]}" systemctl stop "$unit" >/dev/null 2>&1 || true
     fi
-fi
-RELEASE_BASE="${LATX_RELEASE_BASE:-https://github.com/${GITHUB_REPO}/releases/download/${VERSION}}"
-echo ">> installing lattix panel ${VERSION}"
-
-# 重装/升级场景：先停掉运行中的服务，避免覆写运行中的二进制失败（ETXTBSY）；
-# 全新安装时为空操作。
-if [[ "$DEV_MODE" -eq 0 ]]; then
-    systemctl stop "$UNIT" 2>/dev/null || true
-else
-    pkill -f "$INSTALL_ROOT/lattix-backend" 2>/dev/null || true
-fi
-
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-
-# --- 下载面板包与 /resource 镜像资产（install.sh + agent 两架构包 + checksums.txt，
-#     与 GitHub release 同布局）并逐一校验 checksums.txt（获取不到即中止，不降级跳过）---
-ASSETS=(
-    lattix-panel-linux-amd64.tar.gz
-    lattix-agent-linux-amd64.tar.gz
-    lattix-agent-linux-arm64.tar.gz
-    install.sh
-)
-for asset in "${ASSETS[@]}"; do
-    curl -fsSL -o "$TMP_DIR/$asset" "$RELEASE_BASE/$asset" \
-        || die "下载失败：$RELEASE_BASE/$asset"
-done
-curl -fsSL -o "$TMP_DIR/checksums.txt" "$RELEASE_BASE/checksums.txt" \
-    || die "未获取到 release 校验文件 checksums.txt，中止安装"
-for asset in "${ASSETS[@]}"; do
-    (cd "$TMP_DIR" && grep "${asset}\$" checksums.txt | sha256sum -c - >/dev/null) \
-        || die "$asset SHA256 校验失败（checksums.txt）"
-done
-echo ">> 全部包 SHA256 校验通过（checksums.txt）"
-
-# --- 解压安装到根目录（保留既有 DB）---
-tar -C "$TMP_DIR" -xzf "$TMP_DIR/lattix-panel-linux-amd64.tar.gz"
-PKG="$TMP_DIR/lattix-panel"
-[[ -f "$PKG/lattix-backend" ]] || die "面板包内容异常（缺 lattix-backend）"
-# /resource 镜像（§11 面板托管资源）：与 GitHub release 同布局（install.sh + agent
-# 两架构包 + checksums.txt），面板经 /resource/ 端点托管；install.sh --source panel 的
-# 下载/校验流程与 GitHub 源完全一致。镜像随面板版本落地，天然与面板同版本。
-mkdir -p "$INSTALL_ROOT/resource"
-install -m 0755 "$PKG/lattix-backend" "$INSTALL_ROOT/lattix-backend"
-rm -rf "$INSTALL_ROOT/frontend-dist"
-cp -r "$PKG/frontend-dist" "$INSTALL_ROOT/frontend-dist"
-install -m 0644 "$TMP_DIR/install.sh" "$INSTALL_ROOT/resource/install.sh"
-install -m 0644 "$TMP_DIR/checksums.txt" "$INSTALL_ROOT/resource/checksums.txt"
-install -m 0644 "$TMP_DIR/lattix-agent-linux-amd64.tar.gz" "$INSTALL_ROOT/resource/lattix-agent-linux-amd64.tar.gz"
-install -m 0644 "$TMP_DIR/lattix-agent-linux-arm64.tar.gz" "$INSTALL_ROOT/resource/lattix-agent-linux-arm64.tar.gz"
-# 清理旧版部署残留（/dist 托管与根目录 install.sh 已移除）。
-rm -rf "$INSTALL_ROOT/dist" "$INSTALL_ROOT/install.sh"
-
-# --- 安装 latx 面板管理程序 ---
-mkdir -p "$(dirname "$LATX_BIN")"
-install -m 0755 "$PKG/latx" "$LATX_BIN"
-echo ">> latx 已安装到 $LATX_BIN"
-
-# --- 注册并启动服务 ---
-PANEL_ARGS="-addr $ADDR -db $INSTALL_ROOT/lattix.db -static $INSTALL_ROOT/frontend-dist -resource $INSTALL_ROOT/resource"
-if [[ "$DEV_MODE" -eq 0 ]]; then
-    echo ">> registering systemd service $UNIT"
-    cat > "/etc/systemd/system/${UNIT}.service" <<EOF
+    "${ROOT[@]}" install -d -m 0755 "$root" "$root/data" "$root/data/certs" "$root/data/acme-cache"
+    "${ROOT[@]}" install -m 0755 "$work/lattix-panel/lattix-backend" "$root/lattix-backend"
+    local latx_bin="${LATX_BIN:-/usr/local/bin/latx}"
+    "${ROOT[@]}" install -d -m 0755 "$(dirname "$latx_bin")"
+    "${ROOT[@]}" install -m 0755 "$work/lattix-panel/latx" "$latx_bin"
+    "${ROOT[@]}" install -m 0600 /dev/null "$config"
+    "${ROOT[@]}" tee "$config" >/dev/null <<EOF
+LATTIX_ADMIN_USER=$ADMIN_USER
+LATTIX_ADMIN_PASS=$ADMIN_PASS
+LATTIX_PUBLIC_URL=$PUBLIC_URL
+LATTIX_DEPLOY_MODE=native
+LATTIX_DB=$root/data/lattix.db
+LATTIX_TLS_DIR=$root/data/certs
+LATTIX_ACME_CACHE=$root/data/acme-cache
+EOF
+    if [[ "${LATX_DEV:-0}" == "1" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$config"
+        set +a
+        nohup "$root/lattix-backend" -addr "$BIND_ADDRESS:$PORT" >"$root/panel.log" 2>&1 &
+    else
+        "${ROOT[@]}" tee "/etc/systemd/system/${unit}.service" >/dev/null <<EOF
 [Unit]
 Description=Lattix Panel
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=$INSTALL_ROOT/lattix-backend $PANEL_ARGS
+EnvironmentFile=$config
+ExecStart=$root/lattix-backend -addr $BIND_ADDRESS:$PORT
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOF
-    systemctl daemon-reload
-    systemctl enable "$UNIT" >/dev/null 2>&1 || true
-    systemctl restart "$UNIT"
+        "${ROOT[@]}" systemctl daemon-reload
+        "${ROOT[@]}" systemctl enable --now "$unit"
+    fi
+    local probe_host="$BIND_ADDRESS"
+    [[ "$probe_host" == "0.0.0.0" || "$probe_host" == "::" ]] && probe_host="127.0.0.1"
+    local ready=0
+    for _ in $(seq 1 30); do
+        if curl -fsS --max-time 2 "http://${probe_host}:${PORT}/" >/dev/null 2>&1; then
+            ready=1
+            break
+        fi
+        sleep 1
+    done
+    [[ "$ready" -eq 1 ]] || die "panel did not become ready on ${probe_host}:${PORT}"
+    echo
+    echo "Lattix 原生面板安装完成：$VERSION"
+    echo "访问地址: ${PUBLIC_URL:-http://${BIND_ADDRESS}:${PORT}}"
+    echo "管理员:   $ADMIN_USER"
+    echo "初始密码: $ADMIN_PASS"
+}
+
+if [[ "$MODE" == "docker" ]]; then
+    install_docker_mode
 else
-    echo ">> [DEV] nohup 启动面板（日志 $INSTALL_ROOT/panel.log）"
-    nohup "$INSTALL_ROOT/lattix-backend" $PANEL_ARGS >"$INSTALL_ROOT/panel.log" 2>&1 &
+    install_native_mode
 fi
-
-# --- 等待端口起来 ---
-PORT="${ADDR##*:}"
-for _ in $(seq 1 30); do
-    CODE="$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:${PORT}/" 2>/dev/null || true)"
-    [[ -n "$CODE" && "$CODE" != "000" ]] && break
-    sleep 1
-done
-[[ -n "${CODE:-}" && "$CODE" != "000" ]] \
-    || die "面板未在 30s 内起来（端口 $PORT）；日志：journalctl -u $UNIT（或 $INSTALL_ROOT/panel.log）"
-
-# --- 成功输出 ---
-PUBLIC_IP="$(curl -s --max-time 5 ifconfig.me 2>/dev/null | tr -d '[:space:]' || true)"
-if [[ -z "$PUBLIC_IP" ]]; then
-    PUBLIC_IP="$(hostname -I 2>/dev/null | awk '{print $1}' | grep . || echo "127.0.0.1")"
-fi
-cat <<EOF
-
-============================================================
-  Lattix 面板安装完成（${VERSION}）
-
-  面板地址:  http://${PUBLIC_IP}:${PORT}
-  默认账号:  admin / lattix-admin
-             ※ 生产环境请立即修改默认密码：
-               latx reset-admin <新密码>，或登录后在设置页修改
-
-  运维菜单:  latx（English / 中文，默认 English）
-  运维命令:  latx status / log / update / cert / acme / bbr / reset-admin / uninstall
-             latx -h 查看帮助
-============================================================
-EOF

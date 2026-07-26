@@ -57,7 +57,7 @@ git -C "$ROOT" worktree add "$OLD" "$OLD_TAG" >/dev/null 2>&1
 
 echo ">> start backend (v0.0.3) + 登录 + 建服务器"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" -admin-pass "$ADMIN_PASS" \
-    -resource "$WORK/resource" -install-script "$ROOT/scripts/install.sh" -static "$WORK/none" \
+    -static "$WORK/none" \
     >"$WORK/backend.log" 2>&1 &
 BPID=$!
 sleep 1

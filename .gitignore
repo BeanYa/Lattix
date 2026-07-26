@@ -13,6 +13,8 @@
 # Frontend (bun / node)
 node_modules/
 src/frontend/dist/
+src/backend/internal/web/dist/*
+!src/backend/internal/web/dist/.gitkeep
 
 # SQLite
 *.db
