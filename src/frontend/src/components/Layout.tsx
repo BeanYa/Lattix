@@ -13,6 +13,7 @@ import {
 
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import LattixMark from '@/components/LattixMark'
 import UpdateOverlay from '@/components/UpdateOverlay'
 import { useAuth } from '@/lib/auth'
 import { useRequestState } from '@/lib/request-state'
@@ -48,7 +49,10 @@ export default function Layout() {
         />
       ) : null}
       <header className="flex h-14 shrink-0 items-center justify-between border-b bg-sidebar px-4 md:hidden">
-        <span className="text-lg font-semibold">Lattix</span>
+        <span className="flex items-center gap-2 text-lg font-semibold">
+          <LattixMark className="size-7 text-foreground" />
+          Lattix
+        </span>
         <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
           <SheetTrigger
             render={<Button variant="ghost" size="icon" aria-label="打开导航菜单" />}
@@ -56,7 +60,10 @@ export default function Layout() {
             <MenuIcon />
           </SheetTrigger>
           <SheetContent side="left" className="w-64 p-0" showCloseButton={false}>
-            <SheetTitle className="border-b px-5 py-4 text-lg">Lattix</SheetTitle>
+            <SheetTitle className="flex items-center gap-2 border-b px-5 py-4 text-lg">
+              <LattixMark className="size-7 text-foreground" />
+              Lattix
+            </SheetTitle>
             <nav className="flex-1 space-y-1 p-3">
               {navItems.map((item) => (
                 <NavLink
@@ -90,7 +97,10 @@ export default function Layout() {
       </header>
       <aside className="hidden w-56 shrink-0 flex-col border-r bg-sidebar md:flex">
         <div className="border-b px-5 py-4">
-          <span className="text-lg font-semibold">Lattix</span>
+          <span className="flex items-center gap-2 text-lg font-semibold">
+            <LattixMark className="size-7 text-foreground" />
+            Lattix
+          </span>
         </div>
         <nav className="flex-1 space-y-1 p-3">
           {navItems.map((item) => (

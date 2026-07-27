@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import LattixMark from '@/components/LattixMark'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -34,8 +35,13 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle className="text-xl">Lattix 管理面板</CardTitle>
-          <CardDescription>请使用管理员账号登录</CardDescription>
+          <div className="flex items-center gap-3">
+            <LattixMark className="size-10 shrink-0 text-foreground" />
+            <div>
+              <CardTitle className="text-xl">Lattix 管理面板</CardTitle>
+              <CardDescription className="mt-1">请使用管理员账号登录</CardDescription>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           <form onSubmit={onSubmit} className="space-y-4">

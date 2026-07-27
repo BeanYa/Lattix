@@ -61,7 +61,7 @@ func (s *Server) serveLanding(w http.ResponseWriter, r *http.Request, user *stor
 
 	var b strings.Builder
 	b.WriteString(landingHead)
-	b.WriteString(`<div class="card"><div class="head"><h1>Lattix 订阅</h1>` + statusBadge + `</div>`)
+	b.WriteString(`<div class="card"><div class="head"><div class="brand">` + lattixMarkSVG + `<h1>Lattix 订阅</h1></div>` + statusBadge + `</div>`)
 	b.WriteString(`<p class="user">` + html.EscapeString(user.Name) + `</p>`)
 	b.WriteString(notice)
 	b.WriteString(`<div class="stats">`)
@@ -110,6 +110,17 @@ function legacyCopy(text) {
 	w.Write([]byte(b.String()))
 }
 
+const lattixMarkSVG = `<svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
+<g fill="none" stroke="#6437f2" stroke-linecap="round" stroke-linejoin="round" stroke-width="7">
+<path d="M11 11v42h42"/><path d="m11 53 42-42"/>
+<path d="M11 11h9c3 0 5 2 5 5v3c0 3 1 5 4 8l3 5 5 3c3 3 5 4 8 4h3c3 0 5 2 5 5v9"/>
+</g>
+<g fill="none" stroke="currentColor" stroke-width="5">
+<circle cx="11" cy="11" r="7"/><circle cx="53" cy="11" r="7"/><circle cx="11" cy="53" r="7"/>
+</g>
+<circle cx="53" cy="53" r="7" fill="none" stroke="#06d5e8" stroke-width="5"/>
+</svg>`
+
 // jsString 输出安全的 JS 字符串字面量（订阅地址只含 URL 安全字符，防御性转义引号与反斜杠）。
 func jsString(s string) string {
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `<`, `\<`, `>`, `\>`, `&`, `\u0026`)
@@ -148,6 +159,8 @@ body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI",
 .card { background: #1a2132; border: 1px solid #2a3350; border-radius: 14px;
   padding: 24px; width: 100%; max-width: 560px; }
 .head { display: flex; align-items: center; justify-content: space-between; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.logo { width: 34px; height: 34px; flex: none; color: #e6e9f0; }
 h1 { font-size: 20px; }
 .user { color: #9aa4c0; margin-top: 4px; font-size: 14px; }
 .badge { font-size: 12px; padding: 3px 10px; border-radius: 999px; }
