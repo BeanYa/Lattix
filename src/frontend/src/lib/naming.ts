@@ -8,6 +8,7 @@ export interface NameTemplateContext {
   servers: Server[]
   protocol: string
   port?: string
+  hopIndexes?: number[]
 }
 
 export interface NameTemplateResult {
@@ -150,14 +151,14 @@ export function getTemplateSuggestions(
     'SERVER_ID',
     'PROTOCOL',
     'PORT',
-    'HOPS',
     ...context.servers[0]?.tags.map((_, index) => `TAG[${index}]`) ?? [],
   ]
+  const hopIndexes = new Set(context.hopIndexes ?? [])
   const scopedItems = context.servers.flatMap((server, index) => {
     const scopes = [
       ...(index === 0 ? ['ENTRY'] : []),
       ...(index === context.servers.length - 1 ? ['EXIT'] : []),
-      `HOP[${index}]`,
+      ...(hopIndexes.has(index) ? [`HOP[${index}]`] : []),
     ]
     return scopes.flatMap((scope) => [
       ...serverAttributes.map((attribute) => `${scope}.${attribute}`),

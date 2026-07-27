@@ -51,8 +51,12 @@ function textWidth(value: string): number {
   )
 }
 
+function templateKeyLabel(value: string): string {
+  return value.replace(/^HOP\[(\d+)\]/, 'HOP_$1')
+}
+
 function tokenLabel(value: string): string {
-  return value.slice(2, -2).trim()
+  return templateKeyLabel(value.slice(2, -2).trim())
 }
 
 export function NameTemplateInput({
@@ -147,7 +151,7 @@ export function NameTemplateInput({
         aria-multiline="false"
         aria-invalid={Boolean(result.error)}
         className={cn(
-          'flex min-h-8 w-full cursor-text flex-wrap items-center gap-1 rounded-lg border border-input bg-transparent px-2 py-1 text-sm transition-colors outline-none focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50',
+          'flex min-h-8 w-full cursor-text flex-wrap items-center gap-1 rounded-lg border border-input bg-transparent px-1 py-1 text-sm transition-colors outline-none focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50',
           result.error && 'border-destructive ring-3 ring-destructive/20',
         )}
         onClick={(event) => {
@@ -160,7 +164,7 @@ export function NameTemplateInput({
               key={`${part.start}-${part.value}`}
               data-template-token
               data-template-value={part.value}
-              className="inline-flex h-6 shrink-0 items-center gap-0.5 rounded-md border border-primary/20 bg-primary/10 pl-2 pr-1 font-mono text-xs text-primary"
+              className="inline-flex h-6 shrink-0 items-center gap-0.5 rounded-md border border-primary/20 bg-primary/10 pl-1.5 pr-1 font-mono text-xs text-primary"
             >
               {tokenLabel(part.value)}
               <button
@@ -183,10 +187,24 @@ export function NameTemplateInput({
               placeholder={isEmpty ? placeholder : undefined}
               autoFocus={index === 0}
               className={cn(
-                'h-6 max-w-full bg-transparent px-0.5 text-base leading-6 outline-none placeholder:text-muted-foreground md:text-sm',
-                parts.length === 1 ? 'min-w-0 flex-1' : 'min-w-[2ch] shrink-0',
+                'h-6 max-w-full bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground md:text-sm',
+                parts.length === 1
+                  ? 'min-w-0 flex-1 px-0.5'
+                  : part.value
+                    ? 'min-w-[1ch] shrink-0 px-0.5'
+                    : cn('min-w-0 shrink-0 px-0', index === 0 && '-mr-1'),
               )}
-              style={parts.length === 1 ? undefined : { width: `${textWidth(part.value) + 1}ch` }}
+              style={
+                parts.length === 1
+                  ? undefined
+                  : {
+                      width: part.value
+                        ? `calc(${textWidth(part.value)}ch + 4px)`
+                        : index === 0
+                          ? '0'
+                          : '2px',
+                    }
+              }
               onFocus={(event) => {
                 setFocused(true)
                 setCursor(part.start + (event.currentTarget.selectionStart ?? part.value.length))
@@ -266,7 +284,7 @@ export function NameTemplateInput({
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => choose(item)}
             >
-              {item}
+              {templateKeyLabel(item)}
             </Button>
           ))}
         </div>

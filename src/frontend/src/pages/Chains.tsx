@@ -143,18 +143,22 @@ export default function Chains() {
   const isReality = REALITY_PROTOCOLS.includes(protocol)
   const selectedEntry = servers.find((s) => String(s.id) === entryId)
   const selectedExit = servers.find((s) => String(s.id) === exitId)
+  const selectedMiddleServers = middleIds.flatMap((id) => {
+    const server = servers.find((candidate) => String(candidate.id) === id)
+    return server ? [server] : []
+  })
   const topologyServers = [
     ...(selectedEntry ? [selectedEntry] : []),
-    ...middleIds.flatMap((id) => {
-      const server = servers.find((candidate) => String(candidate.id) === id)
-      return server ? [server] : []
-    }),
+    ...selectedMiddleServers,
     ...(chainType === 'relay' && selectedExit ? [selectedExit] : []),
   ]
+  const hopIndexes =
+    chainType === 'relay' ? selectedMiddleServers.map((_, index) => index + 1) : []
   const strictNameResult = validateNameTemplate(name, {
     servers: topologyServers,
     protocol,
     port: entryPort,
+    hopIndexes,
   })
 
   const load = useCallback(() => {
@@ -604,13 +608,14 @@ export default function Chains() {
                 id="chain-name-template"
                 value={name}
                 onChange={setName}
-                context={{ servers: topologyServers, protocol, port: entryPort }}
+                context={{ servers: topologyServers, protocol, port: entryPort, hopIndexes }}
                 allowEmpty
                 placeholder="留空自动生成 Chain #xxxx"
                 emptyHint="留空将在创建时自动生成 Chain #xxxx（4 位随机大小写字母）"
               />
               <p className="text-xs text-muted-foreground">
-                输入 {'{{'} 后可选择变量；服务器属性支持 ENTRY、EXIT 与 HOP[n]，索引从 0 开始。
+                输入 {'{{'} 后可选择变量；中转节点显示为 HOP_1/HOP_2，对应模板中的
+                HOP[1]/HOP[2]。
               </p>
             </div>
             <div className="space-y-2">
