@@ -137,8 +137,41 @@ jobs:
           XRAY_BIN=/tmp/xray/xray \
             bash scripts/dev-e2e-panel.sh
 
-  image:
+  release:
     needs: [build, e2e]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: out
+
+      - name: Publish GitHub Release
+        run: |
+          ASSETS=(
+            out/lattix-panel-linux-amd64.tar.gz
+            out/lattix-panel-linux-arm64.tar.gz
+            out/lattix-agent-linux-amd64.tar.gz
+            out/lattix-agent-linux-arm64.tar.gz
+            out/checksums.txt
+          )
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${ASSETS[@]}" --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" --generate-notes "${ASSETS[@]}"
+          fi
+
+  image:
+    needs: [build, e2e, release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -173,36 +206,3 @@ jobs:
 
       - name: Verify published manifest
         run: docker buildx imagetools inspect "ghcr.io/beanya/lattix:${GITHUB_REF_NAME}"
-
-  release:
-    needs: [build, e2e, image]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-assets
-          path: out
-
-      - name: Publish GitHub Release
-        run: |
-          ASSETS=(
-            out/lattix-panel-linux-amd64.tar.gz
-            out/lattix-panel-linux-arm64.tar.gz
-            out/lattix-agent-linux-amd64.tar.gz
-            out/lattix-agent-linux-arm64.tar.gz
-            out/checksums.txt
-          )
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" "${ASSETS[@]}" --clobber
-          else
-            gh release create "${GITHUB_REF_NAME}" \
-              --title "${GITHUB_REF_NAME}" --generate-notes "${ASSETS[@]}"
-          fi
