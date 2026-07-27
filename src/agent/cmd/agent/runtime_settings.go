@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"math/rand"
 	"sync"
 	"time"
@@ -95,9 +96,6 @@ func reconnectDelay(settings shared.AgentSettings, failures int, closeCode int) 
 	if closeCode == websocket.CloseServiceRestart {
 		return time.Duration(200+rand.Intn(301)) * time.Millisecond
 	}
-	if closeCode == 4001 {
-		return 5 * time.Minute
-	}
 	if settings.Reconnect.Mode == shared.ReconnectModeLimited &&
 		failures > settings.Reconnect.MaxRetries {
 		return 5 * time.Minute
@@ -114,8 +112,13 @@ func reconnectDelay(settings shared.AgentSettings, failures int, closeCode int) 
 	return time.Duration(float64(delay) * factor)
 }
 
+func authenticationRejected(err error) bool {
+	return websocketCloseCode(err) == 4001
+}
+
 func websocketCloseCode(err error) int {
-	if closeErr, ok := err.(*websocket.CloseError); ok {
+	var closeErr *websocket.CloseError
+	if errors.As(err, &closeErr) {
 		return closeErr.Code
 	}
 	return 0

@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -69,12 +72,29 @@ func main() {
 			failures++
 		}
 		if err != nil {
+			if authenticationRejected(err) {
+				log.Printf("connection: 面板明确拒绝当前凭证（面板可能已重建或凭证已替换）；已停止自动重试，请使用新面板安装命令重新绑定后重启 Agent")
+				waitForShutdown()
+				return
+			}
 			settings, _, _, _ := runtime.snapshot()
 			delay := reconnectDelay(settings, failures, websocketCloseCode(err))
 			log.Printf("connection: %v (retrying in %s)", err, delay.Round(time.Millisecond))
 			time.Sleep(delay)
 		}
 	}
+}
+
+// waitForShutdown keeps the managed process alive after an explicit credential
+// rejection. This prevents systemd Restart=always and the user-mode watchdog
+// from turning a terminal authentication result into an infinite retry loop.
+// A reinstall/restart supplies a new bootstrap credential and terminates this
+// process through SIGTERM/SIGINT.
+func waitForShutdown() {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+	signal.Stop(stop)
 }
 
 // safeConn 串行化 WS 写帧（业务回执与遥测协程并发写，gorilla 不允许并发写）。

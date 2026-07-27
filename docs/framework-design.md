@@ -109,7 +109,7 @@ install.sh           # 唯一面向用户的统一安装入口
 | `telemetry.report` | agent→panel | 周期遥测（§13）：xray 版本/运行状态、主机指标、流量增量；无需回执 |
 | `config.drift` | agent→panel | 配置漂移状态变化（§17）：外部修改时 true，修复/恢复后 false |
 
-在线/离线状态由 WS 连接推导，连接存亡由应用层心跳判定：panel 每 30s 向 agent 发 WS ping，任一侧 90s 无任何字节（含 pong 等控制帧）即判连接死亡。Agent 使用面板统一配置的指数退避策略重连；面板计划重启以 WS 1012 通知 Agent 走 200–500ms 快速重试，认证失败 4001 则进入 5 分钟低频探测。完整语义见[优雅停机与 Agent 设置同步设计](graceful-shutdown-agent-settings-design.md)。
+在线/离线状态由 WS 连接推导，连接存亡由应用层心跳判定：panel 每 30s 向 agent 发 WS ping，任一侧 90s 无任何字节（含 pong 等控制帧）即判连接死亡。Agent 使用面板统一配置的指数退避策略重连；面板计划重启以 WS 1012 通知 Agent 走 200–500ms 快速重试。网络不可达、超时或无响应可永久低频探测；面板在线且以 4001 明确拒绝凭证时，Agent 标记面板可能已重建或凭证已替换并停止连接尝试，等待管理员使用新安装命令重新绑定。完整语义见[优雅停机与 Agent 设置同步设计](graceful-shutdown-agent-settings-design.md)。
 
 ## 6. 节点生命周期与 apply 流水线
 
@@ -215,7 +215,8 @@ Location 允许自由输入作为兜底。后续可按国家拆分数据文件�
 3. Agent 启动首连，以 bootstrap token 换发长期服务器 token；**实际安装的 xray 版本随 hello 上报，面板服务器列表展示实际版本号**。
 
 凭证刷新（§10）立即递增 credential epoch、撤销旧 token 并以 WS 4001 关闭现有连接。
-管理员必须执行新的安装命令；同面板刷新保留 Xray 配置，跨面板仅在新面板认证成功后清理旧受管状态。
+Agent 收到该明确拒绝后停止自动连接；管理员必须执行新的安装命令。同面板刷新保留 Xray
+配置，跨面板仅在新面板认证成功后清理旧受管状态。
 
 ## 12. 安全
 

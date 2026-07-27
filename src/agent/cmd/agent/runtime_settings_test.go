@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -33,12 +34,22 @@ func TestReconnectDelaySpecialCases(t *testing.T) {
 	if serviceRestart < 200*time.Millisecond || serviceRestart > 500*time.Millisecond {
 		t.Fatalf("1012 delay = %s", serviceRestart)
 	}
-	if got := reconnectDelay(settings, 1, 4001); got != 5*time.Minute {
-		t.Fatalf("auth delay = %s", got)
-	}
 	settings.Reconnect.Mode = shared.ReconnectModeLimited
 	settings.Reconnect.MaxRetries = 2
 	if got := reconnectDelay(settings, 3, 0); got != 5*time.Minute {
 		t.Fatalf("limited probe delay = %s", got)
+	}
+}
+
+func TestAuthenticationRejectedStopsWrappedCloseError(t *testing.T) {
+	err := fmt.Errorf("read hello response: %w", &websocket.CloseError{
+		Code: 4001,
+		Text: "authentication failed",
+	})
+	if !authenticationRejected(err) {
+		t.Fatal("wrapped 4001 close must stop reconnecting")
+	}
+	if authenticationRejected(fmt.Errorf("network timeout")) {
+		t.Fatal("network errors must remain retryable")
 	}
 }
