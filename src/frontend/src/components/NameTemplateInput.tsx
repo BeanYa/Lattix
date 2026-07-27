@@ -68,13 +68,17 @@ export function NameTemplateInput({
   const [cursor, setCursor] = useState(value.length)
   const [suggestionIndex, setSuggestionIndex] = useState(0)
   const [dismissed, setDismissed] = useState(false)
+  const [focused, setFocused] = useState(false)
   const parts = splitTemplate(value)
   const isEmpty = !value.trim()
   const result =
     allowEmpty && isEmpty ? { preview: '', error: '' } : evaluateNameTemplate(value, context)
   const suggestions = getTemplateSuggestions(value, cursor, context)
-  const visibleSuggestions = dismissed ? null : suggestions
-  const suggestionKey = suggestions?.items.join('|') ?? ''
+  const defaultSuggestions = getTemplateSuggestions('{{', 2, context)
+  const visibleSuggestions = dismissed
+    ? null
+    : suggestions ?? (focused ? defaultSuggestions : null)
+  const suggestionKey = `${suggestions ? 'filter' : 'all'}:${visibleSuggestions?.items.join('|') ?? ''}`
 
   useEffect(() => {
     setSuggestionIndex(0)
@@ -113,7 +117,11 @@ export function NameTemplateInput({
 
   const choose = (item: string) => {
     if (!visibleSuggestions) return
-    replaceRange(visibleSuggestions.start, cursor, `${item}}}`)
+    if (suggestions) {
+      replaceRange(visibleSuggestions.start, cursor, `${item}}}`)
+    } else {
+      replaceRange(cursor, cursor, `{{${item}}}`)
+    }
   }
 
   const removeToken = (part: TemplatePart) => {
@@ -174,8 +182,16 @@ export function NameTemplateInput({
               value={part.value}
               placeholder={isEmpty ? placeholder : undefined}
               autoFocus={index === 0}
-              className="h-6 min-w-[1ch] max-w-full bg-transparent px-0.5 outline-none placeholder:text-muted-foreground"
-              style={{ width: `${textWidth(part.value)}ch` }}
+              className={cn(
+                'h-6 max-w-full bg-transparent px-0.5 text-base leading-6 outline-none placeholder:text-muted-foreground md:text-sm',
+                parts.length === 1 ? 'min-w-0 flex-1' : 'min-w-[2ch] shrink-0',
+              )}
+              style={parts.length === 1 ? undefined : { width: `${textWidth(part.value) + 1}ch` }}
+              onFocus={(event) => {
+                setFocused(true)
+                setCursor(part.start + (event.currentTarget.selectionStart ?? part.value.length))
+              }}
+              onBlur={() => setFocused(false)}
               onChange={(event) => {
                 const replacement = event.target.value
                 const next = `${value.slice(0, part.start)}${replacement}${value.slice(part.end)}`
