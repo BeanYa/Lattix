@@ -218,10 +218,21 @@ type TelemetryPayload struct {
 
 // HostMetrics 是主机指标（/proc 采集）。
 type HostMetrics struct {
-	Load1      float64 `json:"load1"`       // 1 分钟负载
-	CPUPercent float64 `json:"cpu_percent"` // 采样区间 CPU 使用率（%）
-	MemTotal   uint64  `json:"mem_total"`   // 字节
-	MemUsed    uint64  `json:"mem_used"`    // 字节
+	Load1            float64  `json:"load1"`                       // 1 分钟负载
+	Load5            float64  `json:"load5"`                       // 5 分钟负载
+	Load15           float64  `json:"load15"`                      // 15 分钟负载
+	CPUPercent       *float64 `json:"cpu_percent,omitempty"`       // 采样区间 CPU 使用率（%）
+	MemTotal         uint64   `json:"mem_total"`                   // 字节
+	MemUsed          uint64   `json:"mem_used"`                    // 字节
+	DiskTotal        uint64   `json:"disk_total"`                  // 根文件系统字节
+	DiskUsed         uint64   `json:"disk_used"`                   // 根文件系统字节
+	NetworkInterface string   `json:"network_interface,omitempty"` // 默认路由出口网卡
+	NetworkTXBytes   uint64   `json:"network_tx_bytes"`            // 开机以来上传字节
+	NetworkRXBytes   uint64   `json:"network_rx_bytes"`            // 开机以来下载字节
+	NetworkTXBPS     *float64 `json:"network_tx_bps,omitempty"`    // 采样区间上传速率
+	NetworkRXBPS     *float64 `json:"network_rx_bps,omitempty"`    // 采样区间下载速率
+	UptimeSeconds    uint64   `json:"uptime_seconds"`
+	LatencyMS        *float64 `json:"latency_ms,omitempty"` // 最近 3 次 WebSocket RTT 中位数
 }
 
 // TrafficDelta 是一个计数器在采样区间内的流量增量（字节）。

@@ -98,7 +98,7 @@ start_agent() {
 
 echo ">> start webhook 接收端 + backend（心跳覆盖 2s）"
 python3 "$WORK/hook_receiver.py" "$HOOKS" "${HOOK##*:}" & HPID=$!
-LATTIX_WS_PING_INTERVAL=2s "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" \
+"$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" \
     >"$WORK/backend.log" 2>&1 &
 BPID=$!
 sleep 1

@@ -9,9 +9,26 @@ export interface DashboardStats {
 
 export interface ServerMetrics {
   load1: number
-  cpu_percent: number
+  load5: number
+  load15: number
+  cpu_percent: number | null
   mem_total: number
   mem_used: number
+  disk_total: number
+  disk_used: number
+  network_interface: string
+  network_tx_bytes: number
+  network_rx_bytes: number
+  network_tx_bps: number | null
+  network_rx_bps: number | null
+  uptime_seconds: number
+  latency_ms: number | null
+  updated_at: string
+}
+
+export interface ServerMetricSeries {
+  server_id: number
+  samples: ServerMetrics[]
 }
 
 // NAT 可用端口段的一项（§21）：外部段 [pub_start,pub_end] 映射到内部监听段；

@@ -5,48 +5,174 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // ServerMetrics 是 server_metrics 表的一行（§13 主机遥测最新值）。
 type ServerMetrics struct {
-	Load1      float64
-	CPUPercent float64
-	MemTotal   uint64
-	MemUsed    uint64
-	UpdatedAt  string
+	ServerID         int64
+	Load1            float64
+	Load5            float64
+	Load15           float64
+	CPUPercent       *float64
+	MemTotal         uint64
+	MemUsed          uint64
+	DiskTotal        uint64
+	DiskUsed         uint64
+	NetworkInterface string
+	NetworkTXBytes   uint64
+	NetworkRXBytes   uint64
+	NetworkTXBPS     *float64
+	NetworkRXBPS     *float64
+	UptimeSeconds    uint64
+	LatencyMS        *float64
+	UpdatedAt        string
 }
 
-// UpsertServerMetrics 写入服务器最新主机指标（telemetry 上报驱动）。
-func (s *Store) UpsertServerMetrics(ctx context.Context, serverID int64, load1, cpuPercent float64, memTotal, memUsed uint64) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO server_metrics (server_id, load1, cpu_percent, mem_total, mem_used, updated_at)
-		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+const metricColumns = `server_id, load1, load5, load15, cpu_percent,
+	mem_total, mem_used, disk_total, disk_used, network_interface,
+	network_tx_bytes, network_rx_bytes, network_tx_bps, network_rx_bps,
+	uptime_seconds, latency_ms`
+
+func metricArgs(serverID int64, m ServerMetrics) []any {
+	return []any{
+		serverID, m.Load1, m.Load5, m.Load15, m.CPUPercent,
+		m.MemTotal, m.MemUsed, m.DiskTotal, m.DiskUsed, m.NetworkInterface,
+		m.NetworkTXBytes, m.NetworkRXBytes, m.NetworkTXBPS, m.NetworkRXBPS,
+		m.UptimeSeconds, m.LatencyMS,
+	}
+}
+
+// SaveServerMetrics 原子更新最新值并插入历史样本（telemetry 上报驱动）。
+func (s *Store) SaveServerMetrics(ctx context.Context, serverID int64, m ServerMetrics) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin server metrics: %w", err)
+	}
+	defer tx.Rollback()
+	args := metricArgs(serverID, m)
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO server_metrics (`+metricColumns+`, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT (server_id) DO UPDATE SET
-		   load1 = excluded.load1, cpu_percent = excluded.cpu_percent,
-		   mem_total = excluded.mem_total, mem_used = excluded.mem_used,
+		   load1 = excluded.load1, load5 = excluded.load5, load15 = excluded.load15,
+		   cpu_percent = excluded.cpu_percent, mem_total = excluded.mem_total,
+		   mem_used = excluded.mem_used, disk_total = excluded.disk_total,
+		   disk_used = excluded.disk_used, network_interface = excluded.network_interface,
+		   network_tx_bytes = excluded.network_tx_bytes,
+		   network_rx_bytes = excluded.network_rx_bytes,
+		   network_tx_bps = excluded.network_tx_bps,
+		   network_rx_bps = excluded.network_rx_bps,
+		   uptime_seconds = excluded.uptime_seconds, latency_ms = excluded.latency_ms,
 		   updated_at = excluded.updated_at`,
-		serverID, load1, cpuPercent, memTotal, memUsed)
-	return err
+		args...)
+	if err != nil {
+		return fmt.Errorf("upsert server metrics: %w", err)
+	}
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO server_metric_history (`+metricColumns+`, sampled_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		args...)
+	if err != nil {
+		return fmt.Errorf("insert server metric history: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit server metrics: %w", err)
+	}
+	return nil
 }
 
 // ServerMetricsMap 返回 server_id → 主机指标（面板列表联查）。
 func (s *Store) ServerMetricsMap(ctx context.Context) (map[int64]ServerMetrics, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT server_id, load1, cpu_percent, mem_total, mem_used, updated_at FROM server_metrics`)
+		`SELECT `+metricColumns+`, updated_at FROM server_metrics`)
 	if err != nil {
 		return nil, fmt.Errorf("list server metrics: %w", err)
 	}
 	defer rows.Close()
 	out := map[int64]ServerMetrics{}
 	for rows.Next() {
-		var id int64
 		var m ServerMetrics
-		if err := rows.Scan(&id, &m.Load1, &m.CPUPercent, &m.MemTotal, &m.MemUsed, &m.UpdatedAt); err != nil {
+		if err := scanServerMetrics(rows, &m); err != nil {
 			return nil, fmt.Errorf("scan server metrics: %w", err)
 		}
-		out[id] = m
+		out[m.ServerID] = m
 	}
 	return out, rows.Err()
+}
+
+type metricScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanServerMetrics(scanner metricScanner, m *ServerMetrics) error {
+	return scanner.Scan(
+		&m.ServerID, &m.Load1, &m.Load5, &m.Load15, &m.CPUPercent,
+		&m.MemTotal, &m.MemUsed, &m.DiskTotal, &m.DiskUsed, &m.NetworkInterface,
+		&m.NetworkTXBytes, &m.NetworkRXBytes, &m.NetworkTXBPS, &m.NetworkRXBPS,
+		&m.UptimeSeconds, &m.LatencyMS, &m.UpdatedAt,
+	)
+}
+
+// RecentServerMetricSamples 返回每台服务器最近 limit 个样本，按时间升序。
+func (s *Store) RecentServerMetricSamples(ctx context.Context, limit int) (map[int64][]ServerMetrics, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT `+metricColumns+`, sampled_at
+		FROM (
+			SELECT `+metricColumns+`, sampled_at,
+			       ROW_NUMBER() OVER (
+			         PARTITION BY server_id ORDER BY sampled_at DESC, id DESC
+			       ) AS sample_rank
+			FROM server_metric_history
+		)
+		WHERE sample_rank <= ?
+		ORDER BY server_id, sampled_at`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("recent server metric samples: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64][]ServerMetrics)
+	for rows.Next() {
+		var m ServerMetrics
+		if err := scanServerMetrics(rows, &m); err != nil {
+			return nil, fmt.Errorf("scan recent server metric sample: %w", err)
+		}
+		out[m.ServerID] = append(out[m.ServerID], m)
+	}
+	return out, rows.Err()
+}
+
+// ServerMetricHistory 返回指定服务器最近 hours 小时的样本，按时间升序。
+func (s *Store) ServerMetricHistory(ctx context.Context, serverID int64, hours int) ([]ServerMetrics, error) {
+	since := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+metricColumns+`, sampled_at
+		 FROM server_metric_history
+		 WHERE server_id = ? AND sampled_at >= ?
+		 ORDER BY sampled_at, id`, serverID, since)
+	if err != nil {
+		return nil, fmt.Errorf("server metric history: %w", err)
+	}
+	defer rows.Close()
+	var out []ServerMetrics
+	for rows.Next() {
+		var m ServerMetrics
+		if err := scanServerMetrics(rows, &m); err != nil {
+			return nil, fmt.Errorf("scan server metric history: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteExpiredServerMetricHistory(ctx context.Context, retention time.Duration) (int64, error) {
+	cutoff := time.Now().UTC().Add(-retention)
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM server_metric_history WHERE sampled_at < ?`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("delete expired server metric history: %w", err)
+	}
+	return result.RowsAffected()
 }
 
 // AddTraffic 累加流量（telemetry 增量上报驱动，§13 仅统计）。

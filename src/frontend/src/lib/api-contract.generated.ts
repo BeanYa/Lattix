@@ -32,6 +32,8 @@ export const rpcOperations = {
   authMe: { method: 'GET', path: '/api/auth/me' },
   dashboardGet: { method: 'GET', path: '/api/dashboard/get' },
   serverList: { method: 'GET', path: '/api/server/list' },
+  serverListMetricSamples: { method: 'GET', path: '/api/server/list-metric-samples' },
+  serverGetMetricHistory: { method: 'GET', path: '/api/server/get-metric-history' },
   serverListCommands: { method: 'GET', path: '/api/server/list-commands' },
   serverCreate: { method: 'POST', path: '/api/server/create' },
   serverUpdate: { method: 'POST', path: '/api/server/update' },

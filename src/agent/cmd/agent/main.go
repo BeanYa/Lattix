@@ -103,8 +103,8 @@ type safeConn struct {
 	mu   sync.Mutex
 }
 
-// WS 应用层心跳（§2）：panel 每 30s 发 ping，任一侧 wsReadTimeout 内无任何字节
-// （含 ping/pong 控制帧）即判定连接死亡，读循环报错退出后由外层策略退避重连。
+// WS 应用层心跳（§2）：Agent 每 30s 发 Ping，Panel 回 Pong；任一侧
+// wsReadTimeout 内无任何字节即判定连接死亡并由外层策略退避重连。
 const wsReadTimeout = 90 * time.Second
 
 // wsWriteTimeout 是 pong 应答等控制帧的单次写超时。
@@ -114,6 +114,12 @@ func (s *safeConn) writeJSON(v any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.conn.WriteJSON(v)
+}
+
+func (s *safeConn) writeControl(messageType int, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conn.WriteControl(messageType, data, time.Now().Add(wsWriteTimeout))
 }
 
 // run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因。
@@ -128,16 +134,8 @@ func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *st
 	defer close(done)
 	sc := &safeConn{conn: conn}
 
-	// 应用层心跳（§2）：读超时 90s，任何消息到达即续期；收到 ping 回 pong 并续期
-	// （gorilla 默认 handler 只回 pong 不续期，故显式设置；WriteControl 并发安全）。
+	// Agent 主动发 Ping，Panel 回 Pong；同一组控制帧同时承担保活和延迟测量。
 	conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
-	conn.SetPingHandler(func(data string) error {
-		err := conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(wsWriteTimeout))
-		if err == nil {
-			conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
-		}
-		return err
-	})
 
 	// 首连认证（§5）：携带 token、agent 版本、xray 版本与运行状态（§13），
 	// 以及本机网卡的非回环地址（§9 公网地址候选，面板编辑地址时下拉可选）。
@@ -201,9 +199,48 @@ func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *st
 	}
 	sendSettingsSync(sc, runtime)
 
-	// 遥测循环（§13）：立即上报一帧（基线），随后按间隔上报；写失败即退出（连接已断）。
+	latency := newLatencyTracker()
+	conn.SetPongHandler(func(data string) error {
+		conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+		return latency.handlePong(data)
+	})
+
+	// 认证后立即完成一次延迟初始化；随后每 30s 复用 Ping/Pong 保活和测量。
 	go func() {
-		t := newTelemetry(mgr)
+		if err := latency.sendProbe(sc); err != nil {
+			log.Printf("latency probe: %v", err)
+			_ = conn.Close()
+			return
+		}
+		if err := latency.waitInitial(done); err != nil {
+			log.Printf("latency probe: %v", err)
+			_ = conn.Close()
+			return
+		}
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := latency.sendProbe(sc); err != nil {
+					log.Printf("latency probe: %v", err)
+					_ = conn.Close()
+					return
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	// 首帧遥测等待初始化延迟成功，随后按间隔上报；写失败即退出（连接已断）。
+	go func() {
+		select {
+		case <-latency.ready:
+		case <-done:
+			return
+		}
+		t := newTelemetry(mgr, latency.medianMS)
 		send := func() bool {
 			messageID := shared.NewMessageID()
 			env := shared.Envelope{

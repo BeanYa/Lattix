@@ -69,7 +69,8 @@ install.sh           # 唯一面向用户的统一安装入口
 | `nodes` | id, name(解析后的管理/订阅名称), server_id, protocol, port, config_template(JSON), realized_config(JSON), status, error, created_at |
 | `commands` | id, request_id, trace_id, server_id, type, data(JSON), status(queued/sent/acked/failed), error, attempts, created_at, updated_at |
 | `user_nodes` | user_id, node_id（§16 逐节点用户分配，默认全关） |
-| `server_metrics` | server_id, load1, cpu_percent, mem_total, mem_used, updated_at（§13 主机遥测最新值） |
+| `server_metrics` | server_id, load1/load5/load15, cpu_percent, mem/disk 用量、默认出口网卡速率/累计量、uptime、latency_ms、updated_at（§13 主机遥测最新值） |
+| `server_metric_history` | 与 `server_metrics` 同口径的 24 小时时序样本；按服务器与采样时间索引（§13） |
 | `traffic` | node_id, user_uuid, up, down, updated_at（§13 流量累计：节点维度 user_uuid=''，用户维度 node_id=0） |
 | `chains` / `chain_hops` | chains 含 name(解析后的管理/订阅名称)；（自 0.0.2 之后迭代实现，§21）链级状态机；逐跳 role（entry/middle/exit）与独立重试状态 |
 
@@ -109,7 +110,7 @@ install.sh           # 唯一面向用户的统一安装入口
 | `telemetry.report` | agent→panel | 周期遥测（§13）：xray 版本/运行状态、主机指标、流量增量；无需回执 |
 | `config.drift` | agent→panel | 配置漂移状态变化（§17）：外部修改时 true，修复/恢复后 false |
 
-在线/离线状态由 WS 连接推导，连接存亡由应用层心跳判定：panel 每 30s 向 agent 发 WS ping，任一侧 90s 无任何字节（含 pong 等控制帧）即判连接死亡。Agent 使用面板统一配置的指数退避策略重连；面板计划重启以 WS 1012 通知 Agent 走 200–500ms 快速重试。网络不可达、超时或无响应可永久低频探测；面板在线且以 4001 明确拒绝凭证时，Agent 标记面板可能已重建或凭证已替换并停止连接尝试，等待管理员使用新安装命令重新绑定。完整语义见[优雅停机与 Agent 设置同步设计](graceful-shutdown-agent-settings-design.md)。
+在线/离线状态由 WS 连接推导，连接存亡由应用层心跳判定：agent 每 30s 向 panel 发 WS Ping，panel 原样 Pong；Agent 同时计算最近 3 次 RTT 中位数。首次注册和每次重连认证后立即探测，10s 无 Pong 即断开重连；任一侧 90s 无任何字节（含控制帧）即判连接死亡。Agent 使用面板统一配置的指数退避策略重连；面板计划重启以 WS 1012 通知 Agent 走 200–500ms 快速重试。网络不可达、超时或无响应可永久低频探测；面板在线且以 4001 明确拒绝凭证时，Agent 标记面板可能已重建或凭证已替换并停止连接尝试，等待管理员使用新安装命令重新绑定。完整语义见[优雅停机与 Agent 设置同步设计](graceful-shutdown-agent-settings-design.md)。
 
 ## 6. 节点生命周期与 apply 流水线
 
@@ -237,7 +238,7 @@ Agent 收到该明确拒绝后停止自动连接；管理员必须执行新的�
 Agent 以 `telemetry` 消息周期上报（默认 60s，由面板 Agent 设置统一调整）：
 
 - **xray 版本与运行状态**：升级管理（§18）完成后据此刷新面板展示。
-- **主机指标**：/proc 采集 load1、CPU 使用率、内存总量/占用 → `server_metrics` 表（每服务器最新值）→ 服务器列表"负载"列。
+- **主机指标**：采集 CPU、1/5/15 分钟负载、内存、根文件系统、系统 uptime、默认路由出口网卡实时速率与开机累计量，以及 Agent→Panel WebSocket RTT。`server_metrics` 保存最新值，`server_metric_history` 保留最近 24 小时；服务器卡片展示核心摘要，详情抽屉展示完整信息和趋势。主机网卡流量与下述 Xray 业务流量完全独立。
 - **流量统计（仅统计，不做强制配额）**：骨架配置启用 xray stats（inbound 级 + 用户级 policy），
   用户条目带 `level: 0`；Agent 经 gRPC StatsService 拉取计数器并按采样区间计算增量
   （连接建立后首帧仅建立采样基线、不上报流量，避免重连后把全量当增量重复计数）→
@@ -245,7 +246,7 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，由面板 Agent 设置�
   Agent 启动时确保 config.json 含 stats/policy 配置（缺失则落盘重启）。
   socks/http 的 accounts 无 email，仅覆盖节点维度。
 
-在线/离线由 WS 连接推导，连接存亡由 §2 的应用层心跳判定（30s ping，90s 无流量判死）。
+在线/离线由 WS 连接推导，连接存亡由 §2 的 Agent 主动心跳判定（30s Ping，90s 无流量判死）。
 
 ## 14. MVP 已知问题与后续迭代目标
 
@@ -360,8 +361,6 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，由面板 Agent 设置�
 - 防抖动：同一服务器同一事件 5 分钟内不重复发（内存 map 记上次发送时间，重启清零可接受；
   `LATTIX_ALERT_DEBOUNCE` 可覆盖窗口，dev/e2e 用）。
 - `POST /api/setting/test-alerts`：按已保存配置向两通道各发一条测试消息，返回各通道成败。
-- e2e 加速：`LATTIX_WS_PING_INTERVAL`（Go duration）覆盖 WS 心跳周期（pong 超时 = 3 倍），
-  参照 `LATTIX_EXPIRY_SWEEP_INTERVAL` 先例。
 
 **SQLite 备份**：`GET /api/backup/download`（session 鉴权）`VACUUM INTO` 到临时文件后以
 `lattix-backup-<YYYYMMDD-HHMMSS>.db` 附件返回，发送完成清理临时文件；单连接 +

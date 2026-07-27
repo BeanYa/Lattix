@@ -231,6 +231,8 @@ func (s *Store) DeleteServerCascade(ctx context.Context, id int64) error {
 		// 链（§21）：删除该服务器的跳；不再有任何跳的链一并删除。
 		`DELETE FROM chain_hops WHERE server_id = ?`,
 		`DELETE FROM chains WHERE id NOT IN (SELECT DISTINCT chain_id FROM chain_hops)`,
+		`DELETE FROM server_metric_history WHERE server_id = ?`,
+		`DELETE FROM server_metrics WHERE server_id = ?`,
 		`DELETE FROM servers WHERE id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {

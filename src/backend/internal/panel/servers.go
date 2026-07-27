@@ -15,10 +15,22 @@ import (
 
 // metricsDTO 是主机指标的 API 表示（§13）。
 type metricsDTO struct {
-	Load1      float64 `json:"load1"`
-	CPUPercent float64 `json:"cpu_percent"`
-	MemTotal   uint64  `json:"mem_total"`
-	MemUsed    uint64  `json:"mem_used"`
+	Load1            float64  `json:"load1"`
+	Load5            float64  `json:"load5"`
+	Load15           float64  `json:"load15"`
+	CPUPercent       *float64 `json:"cpu_percent"`
+	MemTotal         uint64   `json:"mem_total"`
+	MemUsed          uint64   `json:"mem_used"`
+	DiskTotal        uint64   `json:"disk_total"`
+	DiskUsed         uint64   `json:"disk_used"`
+	NetworkInterface string   `json:"network_interface"`
+	NetworkTXBytes   uint64   `json:"network_tx_bytes"`
+	NetworkRXBytes   uint64   `json:"network_rx_bytes"`
+	NetworkTXBPS     *float64 `json:"network_tx_bps"`
+	NetworkRXBPS     *float64 `json:"network_rx_bps"`
+	UptimeSeconds    uint64   `json:"uptime_seconds"`
+	LatencyMS        *float64 `json:"latency_ms"`
+	UpdatedAt        string   `json:"updated_at"`
 }
 
 // serverDTO 是服务器对象的 API 表示。
@@ -115,7 +127,8 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 	for _, srv := range servers {
 		dto := s.toServerDTO(srv)
 		if m, ok := metrics[srv.ID]; ok {
-			dto.Metrics = &metricsDTO{Load1: m.Load1, CPUPercent: m.CPUPercent, MemTotal: m.MemTotal, MemUsed: m.MemUsed}
+			value := toMetricsDTO(m)
+			dto.Metrics = &value
 		}
 		out = append(out, dto)
 	}

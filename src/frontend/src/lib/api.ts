@@ -17,6 +17,8 @@ import type {
   PortRange,
   RequestLogPage,
   Server,
+  ServerMetrics,
+  ServerMetricSeries,
   SubUser,
   UpdateSettingsRequest,
   XrayNode,
@@ -66,6 +68,17 @@ export const api = {
   dashboard: () => requester.get<DashboardStats>('/api/dashboard/get'),
 
   servers: () => requester.get<Server[]>('/api/server/list'),
+  serverMetricSamples: (limit = 30) =>
+    requester.get<ServerMetricSeries[]>('/api/server/list-metric-samples', { limit }, {
+      display: 'silent',
+    }),
+  serverMetricHistory: (serverId: number, hours = 24) =>
+    requester.get<ServerMetrics[]>('/api/server/get-metric-history', {
+      server_id: serverId,
+      hours,
+    }, {
+      display: 'silent',
+    }),
   createServer: (body: {
     alias: string
     address?: string

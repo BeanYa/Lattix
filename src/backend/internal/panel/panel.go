@@ -114,6 +114,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodGet, "/api/dashboard/get", polledRead, s.handleDashboard)
 
 	s.registerRPC(mux, http.MethodGet, "/api/server/list", polledRead, s.handleListServers)
+	s.registerRPC(mux, http.MethodGet, "/api/server/list-metric-samples",
+		rpcRouteOptions{Auth: true, LogPolicy: logging.LogNone, AllowedQuery: []string{"limit"}},
+		s.handleListMetricSamples)
+	s.registerRPC(mux, http.MethodGet, "/api/server/get-metric-history",
+		rpcRouteOptions{Auth: true, LogPolicy: logging.LogNone, AllowedQuery: []string{"server_id", "hours"}},
+		s.handleGetMetricHistory)
 	s.registerRPC(mux, http.MethodGet, "/api/server/list-commands",
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"server_id", "limit"}},
 		s.handleListCommands)

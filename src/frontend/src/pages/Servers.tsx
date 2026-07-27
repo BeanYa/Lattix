@@ -3,9 +3,8 @@ import { PlusIcon, XIcon } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
 import { CountryCombobox } from '@/components/CountryCombobox'
-import { CountryFlag } from '@/components/CountryFlag'
+import { ServerMonitorGrid } from '@/components/ServerMonitor'
 import { TagInput } from '@/components/TagInput'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -24,31 +23,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
-import { formatDateTime } from '@/lib/format'
 import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { useTimezone } from '@/lib/timezone'
-import type { MachineType, PortRange, Server } from '@/lib/types'
+import type { MachineType, PortRange, Server, ServerMetricSeries } from '@/lib/types'
 
 const DEPENDENCIES_COMMAND = 'apk add --no-cache bash curl ca-certificates unzip util-linux'
-
-function formatMetrics(s: Server): string {
-  const m = s.metrics
-  if (!m) {
-    return '-'
-  }
-  const memPct = m.mem_total > 0 ? Math.round((m.mem_used / m.mem_total) * 100) : 0
-  return `L ${m.load1.toFixed(2)} · CPU ${Math.round(m.cpu_percent)}% · MEM ${memPct}%`
-}
 
 // 内置公网地址候选（§9）：拨入学习地址 + agent 上报的网卡非回环地址，去重。
 function addrCandidates(s: Server): string[] {
@@ -117,6 +98,7 @@ function parsePortRows(rows: string[]): { ranges: PortRange[] } | { error: strin
 export default function Servers() {
   const { timezone } = useTimezone()
   const [servers, setServers] = useState<Server[]>([])
+  const [metricSamples, setMetricSamples] = useState<ServerMetricSeries[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -170,6 +152,25 @@ export default function Servers() {
     const timer = setInterval(load, 5000)
     return () => clearInterval(timer)
   }, [load])
+
+  useEffect(() => {
+    let active = true
+    const loadSamples = () => {
+      api.serverMetricSamples()
+        .then((result) => {
+          if (active) setMetricSamples(result)
+        })
+        .catch(() => {
+          if (active) setMetricSamples([])
+        })
+    }
+    loadSamples()
+    const timer = setInterval(loadSamples, 60000)
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [])
 
   useEffect(() => {
     if (!open && !editTarget) return
@@ -493,142 +494,17 @@ export default function Servers() {
 
       {error && <p className="text-sm text-destructive">加载失败：{error}</p>}
 
-      <div className="rounded-lg border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>别名</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>地址</TableHead>
-              <TableHead>xray 版本</TableHead>
-              <TableHead>负载</TableHead>
-              <TableHead>最近在线</TableHead>
-              <TableHead>创建时间</TableHead>
-              <TableHead>操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={8} className="text-center text-muted-foreground">
-                  加载中…
-                </TableCell>
-              </TableRow>
-            ) : servers.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={8} className="text-center text-muted-foreground">
-                  暂无服务器，点击右上角「添加服务器」开始
-                </TableCell>
-              </TableRow>
-            ) : (
-              servers.map((s) => (
-                <TableRow key={s.id}>
-                  <TableCell className="font-medium">
-                    <div>{s.alias}</div>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <CountryFlag code={s.country_code} />
-                      <span>{s.location || '未设置地区'}</span>
-                    </div>
-                    {s.tags.map((tag) => (
-                      <Badge key={tag} variant="secondary" className="ml-1">
-                        {tag}
-                      </Badge>
-                    ))}
-                    {s.machine_type === 'nat' && (
-                      <Badge
-                        variant="outline"
-                        className="ml-1 border-blue-200 bg-blue-50 text-blue-700"
-                        title={
-                          s.allowed_ports.length > 0
-                            ? `受限直连：${s.allowed_ports.map(formatPortRange).join('，')}`
-                            : '仅出口档（无可用端口段）'
-                        }
-                      >
-                        NAT{s.allowed_ports.length > 0 ? ` · ${s.allowed_ports.length} 段` : ' · 仅出口'}
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {s.online ? (
-                      <Badge variant="outline" className="border-green-200 bg-green-50 text-green-700">
-                        在线
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="border-gray-200 bg-gray-50 text-gray-500">
-                        离线
-                      </Badge>
-                    )}
-                    {s.config_drift && (
-                      <Badge variant="outline" className="ml-1 border-amber-200 bg-amber-50 text-amber-700">
-                        配置漂移
-                      </Badge>
-                    )}
-                    {s.agent_settings_status === 'synced' ? (
-                      <Badge
-                        variant="secondary"
-                        className="ml-1"
-                        title={`Agent 设置 revision ${s.agent_settings_revision}`}
-                      >
-                        设置已同步
-                      </Badge>
-                    ) : s.agent_settings_status === 'failed' ? (
-                      <Badge
-                        variant="destructive"
-                        className="ml-1"
-                        title={s.agent_settings_error}
-                      >
-                        设置失败
-                      </Badge>
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className="ml-1"
-                        title={`Agent ${s.agent_settings_revision} / 面板 ${s.agent_settings_desired_revision}`}
-                      >
-                        设置待同步
-                      </Badge>
-                    )}
-                  </TableCell>
-                  <TableCell>{s.address || '-'}</TableCell>
-                  <TableCell className="text-xs whitespace-nowrap">
-                    <div>xray {s.xray_version ?? '-'}</div>
-                    <div className="text-muted-foreground">agent {s.agent_version ?? '-'}</div>
-                  </TableCell>
-                  <TableCell className="text-xs whitespace-nowrap">{formatMetrics(s)}</TableCell>
-                  <TableCell>{formatDateTime(s.last_seen_at, timezone)}</TableCell>
-                  <TableCell>{formatDateTime(s.created_at, timezone)}</TableCell>
-                  <TableCell className="space-x-2">
-                    {s.config_drift && (
-                      <Button variant="outline" size="sm" onClick={() => onRepair(s)}>
-                        修复漂移
-                      </Button>
-                    )}
-                    <Button variant="outline" size="sm" onClick={() => onOpenEdit(s)}>
-                      编辑
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => onOpenUpgrade(s, 'xray')}>
-                      升级 xray
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onOpenUpgrade(s, 'agent')}
-                    >
-                      升级 agent
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => onRotateToken(s)}>
-                      {s.last_seen_at ? '凭证刷新' : '安装命令'}
-                    </Button>
-                    <Button variant="outline" size="sm" onClick={() => setDeleteTarget(s)}>
-                      删除
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      <ServerMonitorGrid
+        servers={servers}
+        samples={metricSamples}
+        loading={loading}
+        timezone={timezone}
+        onEdit={onOpenEdit}
+        onRepair={onRepair}
+        onRotateToken={onRotateToken}
+        onUpgrade={onOpenUpgrade}
+        onDelete={setDeleteTarget}
+      />
 
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent>

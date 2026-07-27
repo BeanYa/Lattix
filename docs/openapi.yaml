@@ -34,6 +34,23 @@ paths:
     get:
       operationId: serverList
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/list-metric-samples:
+    get:
+      operationId: serverListMetricSamples
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 60, default: 30}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/get-metric-history:
+    get:
+      operationId: serverGetMetricHistory
+      parameters:
+        - {$ref: '#/components/parameters/ServerID'}
+        - name: hours
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 24, default: 24}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
   /api/server/list-commands:
     get:
       operationId: serverListCommands

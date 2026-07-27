@@ -94,13 +94,47 @@ CREATE TABLE IF NOT EXISTS user_nodes (
 
 -- 主机遥测（§13）：每服务器一行，最新值。
 CREATE TABLE IF NOT EXISTS server_metrics (
-    server_id   INTEGER PRIMARY KEY REFERENCES servers(id),
-    load1       REAL    NOT NULL DEFAULT 0,
-    cpu_percent REAL    NOT NULL DEFAULT 0,
-    mem_total   INTEGER NOT NULL DEFAULT 0,
-    mem_used    INTEGER NOT NULL DEFAULT 0,
-    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    server_id          INTEGER PRIMARY KEY REFERENCES servers(id),
+    load1              REAL    NOT NULL DEFAULT 0,
+    load5              REAL    NOT NULL DEFAULT 0,
+    load15             REAL    NOT NULL DEFAULT 0,
+    cpu_percent        REAL,
+    mem_total          INTEGER NOT NULL DEFAULT 0,
+    mem_used           INTEGER NOT NULL DEFAULT 0,
+    disk_total         INTEGER NOT NULL DEFAULT 0,
+    disk_used          INTEGER NOT NULL DEFAULT 0,
+    network_interface  TEXT    NOT NULL DEFAULT '',
+    network_tx_bytes   INTEGER NOT NULL DEFAULT 0,
+    network_rx_bytes   INTEGER NOT NULL DEFAULT 0,
+    network_tx_bps     REAL,
+    network_rx_bps     REAL,
+    uptime_seconds     INTEGER NOT NULL DEFAULT 0,
+    latency_ms         REAL,
+    updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS server_metric_history (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id          INTEGER NOT NULL REFERENCES servers(id),
+    load1              REAL    NOT NULL DEFAULT 0,
+    load5              REAL    NOT NULL DEFAULT 0,
+    load15             REAL    NOT NULL DEFAULT 0,
+    cpu_percent        REAL,
+    mem_total          INTEGER NOT NULL DEFAULT 0,
+    mem_used           INTEGER NOT NULL DEFAULT 0,
+    disk_total         INTEGER NOT NULL DEFAULT 0,
+    disk_used          INTEGER NOT NULL DEFAULT 0,
+    network_interface  TEXT    NOT NULL DEFAULT '',
+    network_tx_bytes   INTEGER NOT NULL DEFAULT 0,
+    network_rx_bytes   INTEGER NOT NULL DEFAULT 0,
+    network_tx_bps     REAL,
+    network_rx_bps     REAL,
+    uptime_seconds     INTEGER NOT NULL DEFAULT 0,
+    latency_ms         REAL,
+    sampled_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_server_metric_history_server_sampled
+    ON server_metric_history(server_id, sampled_at);
 
 -- 面板设置（§10 设置页）：key/value，DB 中的值优先于启动参数。
 CREATE TABLE IF NOT EXISTS settings (

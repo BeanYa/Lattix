@@ -55,9 +55,13 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadDeadline(time.Time{})
 
-	// 应用层心跳（§2）：读超时 pongTimeout，任何消息到达（含 pong）即续期；ping 由 writePump 周期发出。
+	// Agent 主动发送 Ping；Panel 原样 Pong，并以收到的控制帧续期读超时。
 	conn.SetReadDeadline(time.Now().Add(h.pongTimeout))
-	conn.SetPongHandler(func(string) error {
+	conn.SetPingHandler(func(data string) error {
+		err := conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(writeTimeout))
+		if err != nil {
+			return err
+		}
 		conn.SetReadDeadline(time.Now().Add(h.pongTimeout))
 		return nil
 	})

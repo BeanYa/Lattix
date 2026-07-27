@@ -338,7 +338,16 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 		}
 	}
 	if p.Host != nil {
-		if err := d.st.UpsertServerMetrics(ctx, serverID, p.Host.Load1, p.Host.CPUPercent, p.Host.MemTotal, p.Host.MemUsed); err != nil {
+		metrics := store.ServerMetrics{
+			Load1: p.Host.Load1, Load5: p.Host.Load5, Load15: p.Host.Load15,
+			CPUPercent: p.Host.CPUPercent, MemTotal: p.Host.MemTotal, MemUsed: p.Host.MemUsed,
+			DiskTotal: p.Host.DiskTotal, DiskUsed: p.Host.DiskUsed,
+			NetworkInterface: p.Host.NetworkInterface,
+			NetworkTXBytes:   p.Host.NetworkTXBytes, NetworkRXBytes: p.Host.NetworkRXBytes,
+			NetworkTXBPS: p.Host.NetworkTXBPS, NetworkRXBPS: p.Host.NetworkRXBPS,
+			UptimeSeconds: p.Host.UptimeSeconds, LatencyMS: p.Host.LatencyMS,
+		}
+		if err := d.st.SaveServerMetrics(ctx, serverID, metrics); err != nil {
 			log.Printf("dispatch: server %d: upsert metrics: %v", serverID, err)
 		}
 	}
