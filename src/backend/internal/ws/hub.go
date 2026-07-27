@@ -32,6 +32,12 @@ type Hub struct {
 	Auth Authenticator
 	// OnConnect 在 hello 认证完成、连接登记后调用（用于触发离线命令补发，§2）。
 	OnConnect func(serverID int64)
+	// OnOnline 在服务器从无连接变为有连接时调用。已有连接被新连接顶替时不触发，
+	// 与 OnDisconnect 共同表示真实的 offline↔online 状态跃迁。
+	OnOnline func(serverID int64)
+	// OnReconnect 在服务器已有连接被新的认证连接替换时调用。此时服务器始终在线，
+	// 单独留痕而不伪造 offline→online 状态跃迁。
+	OnReconnect func(serverID int64)
 	// OnMessage 上抛认证后收到的所有业务信封（apply_result 等）。
 	OnMessage func(serverID int64, env shared.Envelope)
 	// OnDisconnect 在 online→offline 跃迁时调用（连接从注册表实际移除；
@@ -89,13 +95,28 @@ func (h *Hub) Send(_ context.Context, serverID int64, env shared.Envelope) error
 }
 
 // register 登记连接；同一服务器已有旧连接时踢掉旧的（重连场景）。
-func (h *Hub) register(c *agentConn) {
+// 返回值表示服务器是否发生 offline→online 跃迁。
+func (h *Hub) register(c *agentConn) bool {
 	h.mu.Lock()
-	if old, ok := h.conns[c.serverID]; ok && old != c {
+	old, wasOnline := h.conns[c.serverID]
+	if wasOnline && old != c {
 		old.close()
 	}
 	h.conns[c.serverID] = c
 	h.mu.Unlock()
+	return !wasOnline
+}
+
+func (h *Hub) notifyConnectionEstablished(serverID int64, becameOnline bool) {
+	if becameOnline {
+		if h.OnOnline != nil {
+			h.OnOnline(serverID)
+		}
+		return
+	}
+	if h.OnReconnect != nil {
+		h.OnReconnect(serverID)
+	}
 }
 
 // unregister 注销连接（仅当注册表里的仍是同一连接，避免误删重连后的新连接）。

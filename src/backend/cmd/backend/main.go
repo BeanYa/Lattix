@@ -199,6 +199,22 @@ func main() {
 		// 链 degraded 推导（§21.1）：重算受影响链，全部跳在线且跳 active 的恢复 active。
 		dispatcher.RecomputeChainsByServer(serverID)
 	}
+	hub.OnOnline = func(serverID int64) {
+		// 事件日志（§log）：agent 上线跃迁，与 agent.offline 共同形成完整连接时间线。
+		sid := serverID
+		if err := st.RecordEvent(context.Background(), store.EventCategoryAgent, "agent.online",
+			&sid, nil, "WS 连接建立，服务器在线", "", ""); err != nil {
+			log.Printf("main: record agent.online event: %v", err)
+		}
+	}
+	hub.OnReconnect = func(serverID int64) {
+		// 旧连接被新的认证连接替换时服务器始终在线，单独记录重连而非伪造上线跃迁。
+		sid := serverID
+		if err := st.RecordEvent(context.Background(), store.EventCategoryAgent, "agent.reconnected",
+			&sid, nil, "新的 WS 连接替换原连接，服务器保持在线", "", ""); err != nil {
+			log.Printf("main: record agent.reconnected event: %v", err)
+		}
+	}
 	hub.OnMessage = dispatcher.HandleMessage
 
 	// 事件告警（§19）：offline 跃迁挂在 hub 注销路径；漂移/节点失败在 dispatcher 处理点。

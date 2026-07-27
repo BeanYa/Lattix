@@ -78,13 +78,14 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Type:    shared.TypeHello,
 		Payload: mustJSON(result),
 	}
-	h.register(c)
+	becameOnline := h.register(c)
 	log.Printf("agent connected: server=%d addr=%s xray=%s", serverID, r.RemoteAddr, hp.XrayVersion)
 
 	// 触发离线命令补发（§2）。
 	if h.OnConnect != nil {
 		h.OnConnect(serverID)
 	}
+	h.notifyConnectionEstablished(serverID, becameOnline)
 
 	// 读循环：上抛业务信封直到断开。
 	defer func() {
