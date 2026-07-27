@@ -5,6 +5,7 @@ WORKDIR /src/frontend
 COPY src/frontend/package.json src/frontend/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY src/frontend/ ./
+COPY docs/openapi.yaml /docs/openapi.yaml
 RUN bun run build
 
 FROM golang:1.26-alpine AS backend
