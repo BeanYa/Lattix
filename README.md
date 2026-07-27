@@ -1,5 +1,7 @@
 # Lattix
 
+## 项目概况
+
 多服务器 xray 代理管理面板：主控面板（Backend）统一管理多台受控服务器（Agent），
 可视化创建代理节点，按用户生成订阅。
 
@@ -7,6 +9,86 @@
 - 虚拟配置模板下发，Agent 落地为 xray 实际配置并上报生效值
 - 节点创建/删除、用户增删全部零重启热操作（xray gRPC API），重启兜底 + 失败回滚
 - 参考 3x-ui / s-ui 的交互模式，不做商业化
+
+## 快速开始
+
+面板支持 `linux/amd64` 与 `linux/arm64`，安装时需要 `root` 或 `sudo`，并需要
+`curl`。推荐使用 Docker Compose；若希望直接由 systemd 托管，也可选择原生安装。
+
+### 交互式安装（推荐）
+
+在目标 Linux 服务器执行：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh)
+```
+
+依次选择“安装面板”和安装模式。安装完成后，终端会输出访问地址、管理员账号和随机
+初始密码。Docker 模式默认只监听 `127.0.0.1:8080`，需通过 Nginx/OpenResty 反向代理
+对外提供服务；原生模式默认监听 `0.0.0.0:8080`。
+
+### 非交互式安装
+
+```bash
+# Docker Compose（推荐；主机需已有 Docker Engine 与 Compose 插件）
+bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
+  panel --mode docker
+
+# Docker Compose，并在缺少 Docker 时自动安装
+bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
+  panel --mode docker --install-docker
+
+# 原生二进制 + systemd
+bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
+  panel --mode native
+```
+
+不传 `--version` 时安装最新稳定 Release；如需固定版本，追加
+`--version vX.Y.Z`。统一入口会从该版本对应的 Git tag 加载安装实现，并校验下载的
+Release 文件，避免脚本与程序版本不一致。
+
+### 脚本选项
+
+| 选项 | 是否必需 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `--mode docker\|native` | 是 | 无 | 选择 Docker Compose 或原生 systemd 安装 |
+| `--version vX.Y.Z` | 否 | 最新稳定版 | 安装指定 Release |
+| `--install-docker` | 否 | 关闭 | Docker 缺失时通过 `get.docker.com` 安装并启动；仅 Docker 模式有效 |
+| `--bind <地址>` | 否 | Docker: `127.0.0.1`；原生: `0.0.0.0` | 面板监听地址 |
+| `--port <端口>` | 否 | `8080` | 面板监听端口，范围 `1–65535` |
+| `--admin-user <用户名>` | 否 | `admin` | 初始管理员用户名 |
+| `--admin-pass <密码>` | 否 | 随机 8 位字母 | 初始管理员密码；生产环境建议显式设置强密码 |
+| `--public-url <URL>` | 否 | 空 | 面板对外访问地址，反向代理或公网地址与监听地址不同时应设置 |
+
+例如：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
+  panel --mode docker --version v0.0.3 \
+  --bind 127.0.0.1 --port 8080 \
+  --admin-user admin --admin-pass 'change-this-password' \
+  --public-url https://panel.example.com
+```
+
+### Docker 与原生安装的区别
+
+| | Docker Compose（推荐） | 原生二进制 + systemd |
+| --- | --- | --- |
+| 运行方式 | GHCR 镜像，非 root 容器 | Release 二进制，systemd 服务 |
+| 前置条件 | Docker Engine + Compose 插件 | systemd、`curl`、`tar`、`sha256sum` |
+| 默认监听 | `127.0.0.1:8080` | `0.0.0.0:8080` |
+| 安装位置 | `/opt/lattix-panel/` | `/usr/local/lattix-panel/` |
+| 持久数据 | `/opt/lattix-panel/data/` | `/usr/local/lattix-panel/data/` |
+| 配置文件 | `/opt/lattix-panel/config/.env` | `/usr/local/lattix-panel/config.env` |
+| 主机运维命令 | 使用 `docker compose` | 提供 `latx` |
+| 对宿主机的改动 | 创建目录并启动容器；只有明确同意时才安装 Docker | 安装二进制、`latx` 并注册 systemd unit |
+
+重复安装时两种模式都会保留数据。Docker 模式还会沿用已有 `.env` 中的监听、端口、
+账号、密码和对外地址，命令行参数优先；原生模式保留数据、证书、ACME 缓存以及已有
+账号、密码和对外地址，监听地址与端口未指定时恢复默认值。
+
+更完整的反向代理、ACME、证书路径、更新行为和部署限制见
+[部署边界](docs/KNOWN_ISSUES.md)。
 
 ## 架构
 
@@ -92,50 +174,11 @@ install.sh            # 面向用户的统一安装入口
 - install 通道以 SHA256 校验保障完整性；Reality/VLESS Encryption 私钥不出服务器
 - Agent 能力面收敛：只执行配置落地、重启、上报、自卸载、升级，不接受任意命令
 
-## 快速开始
+## 使用与运维
 
-> Docker/安装入口重构中的最终部署约定与限制见
-> [KNOWN_ISSUES.md](KNOWN_ISSUES.md)。其中包括容器内页面更新与镜像版本的关系、
-> 反向代理/ACME 端口要求、证书目录映射及宿主机运维边界。
+### 原生面板运维
 
-### 统一安装入口
-
-项目根目录的 `install.sh` 是唯一面向用户的一键安装入口。无参数执行进入交互向导；
-自动化场景使用 `panel` 或 `agent` 子命令，`--version` 省略时默认解析最新稳定 Release：
-
-```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh)
-
-# 非交互示例
-bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
-  panel --mode docker
-bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
-  panel --mode native
-```
-
-根入口解析版本后，从对应 Git tag 加载 `scripts/install-panel.sh` 或
-`scripts/install-agent.sh`，确保安装逻辑与 Release 产物同版。安装脚本不再作为
-GitHub Release 资产重复发布。
-
-Docker 模式由 `/opt/lattix-panel/compose.yaml` 与
-`/opt/lattix-panel/config/.env` 管理，数据持久化在
-`/opt/lattix-panel/data/`。镜像内只有一个 Go 面板进程：前端编译产物嵌入
-`lattix-backend`，不包含 Nginx。默认绑定宿主机 `127.0.0.1:8080`，适合由
-宿主机 Nginx/OpenResty 终止 TLS；也可在 `.env` 中改为公网绑定。
-
-### 面板安装模式
-
-Docker Compose 是交互向导中的推荐模式，支持 `linux/amd64` 和 `linux/arm64`。安装器
-写入 `/opt/lattix-panel/compose.yaml`、`config/.env` 与 `data/`，然后从
-`ghcr.io/beanya/lattix:<版本>` 创建非 root 容器。除非交互确认或显式传入
-`--install-docker`，安装器不会改动宿主机服务。管理员密码默认生成 8 位随机大小写字母；
-重装时遵循“命令行参数 > 已有 `.env` > 随机生成”，可直接编辑 `.env`。
-
-原生模式下载并校验当前架构的 Release tarball，安装到
-`/usr/local/lattix-panel`，注册 `lattix-panel.service`，并提供宿主机命令 `latx`。
-原生重装保留 SQLite、证书、ACME 缓存和已有管理员凭据。
-
-安装后直接运行 `latx` 可选择 English / 中文交互式运维菜单（直接按 Enter 默认
+原生安装后直接运行 `latx` 可选择 English / 中文交互式运维菜单（直接按 Enter 默认
 English）；也可使用子命令进行自动化运维。可用 `LATX_LANG=en|zh latx` 跳过语言选择：
 
 | 命令 | 说明 |
@@ -283,7 +326,8 @@ bash scripts/dev-test-install-agent-bbr.sh                      # Agent 安装�
 Agent 常用参数：`-panel`（面板 WS 地址）、`-token`（bootstrap token）、`-xray-release-base`
 （xray 下载镜像源）、`-telemetry-interval` / `-drift-interval`（遥测/漂移检测间隔）。
 
-详细设计见 [framework-design.md](framework-design.md)。
+详细设计见 [docs/framework-design.md](docs/framework-design.md)，前端开发命令见
+[docs/frontend.md](docs/frontend.md)。
 
 ## 已知问题
 
@@ -294,9 +338,9 @@ Agent 常用参数：`-panel`（面板 WS 地址）、`-token`（bootstrap token
 | ss 无 Reality | 仅 AEAD 加密；且 ss 已被 xray 标记 deprecated，向导不再提供新建 |
 | ws/h2/kcp/httpupgrade 不开放 | 与 Reality 不兼容（xray 官方仅 tcp/gRPC/XHTTP；gRPC 亦已 deprecated 被屏蔽） |
 | fallbacks 等高级选项未开放 | vless/trojan 的 fallbacks、xhttp extra 参数等暂不支持 |
-| 流量仅统计无配额 | 超限不强制停用；配额决策见 framework-design.md §14 |
+| 流量仅统计无配额 | 超限不强制停用；配额决策见 [设计文档 §14](docs/framework-design.md#14-mvp-已知问题与后续迭代目标) |
 | 漂移检测基线 | agent 停机期间的外部改动无法区分，以启动时文件为基线 |
 | xray 版本兼容 | 新版 xray-core 已移除 vmess alterId（服务端），mihomo 客户端订阅仍携带 `alterId: 0` |
 | 单管理员 | 多管理员/RBAC 决策不做；fallback 传输（gRPC/HTTP）明确不做（NAT/中继已实现，见 §21） |
 
-部署与更新边界见 [KNOWN_ISSUES.md](KNOWN_ISSUES.md)。
+部署与更新边界见 [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md)。
