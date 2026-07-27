@@ -73,7 +73,8 @@ install.sh           # 唯一面向用户的统一安装入口
 
 说明：
 
-- `commands` 表同时充当**离线命令队列**与**操作日志**（全部保留，不自动清理；重发/死信语义见 §2）。
+- `commands` 表充当**离线命令队列**并保留命令生命周期；面板操作日志与 API 请求日志
+  使用独立存储、容量和查询接口，详见 [日志系统设计](logging-design.md)。
 - `nodes.config_template` 是面板侧虚拟配置（含占位符）；`nodes.realized_config` 是 Agent 上报的实际生效值（端口、public_key、short_id 等）。
 - `servers.country_code` 与 `servers.location` 在创建/编辑服务器时必填；国家通过选择器写入标准两位代码，`COUNTRY` 与 `COUNTRY_FLAG` 由代码派生。Location 提供按国家过滤的本地城市建议，同时允许管理员填写机房区域等自由文本。
 - `servers.address` 是订阅中节点地址的唯一来源（§9）：**创建服务器时由管理员填写公网地址，agent 不校验**；留空则按 agent WS 拨入的对端 IP 自动学习（panel 前置本机回环反代时取 `X-Forwarded-For` 首个 IP，非回环对端不信任该头以防伪造），一经写入不再被覆盖（地址变更由管理员修改，PATCH /api/servers/{id}）。每次 hello 另将拨入学习地址写入 `learned_addr`、将 agent 上报的网卡非回环地址写入 `nic_addresses`，二者仅作面板"编辑地址"的内置候选（可选内置地址或自定义），不参与自动学习决策。自 0.0.2 之后迭代（§21）：`servers` 增加机器类型与 NAT 可用端口段元数据（含非 1:1 映射的 public_port），NAT 类型 address 强制必填、禁用自动学习；引入链后订阅地址改取链**入口**的 address。
