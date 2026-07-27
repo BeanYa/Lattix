@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import UpdateOverlay from '@/components/UpdateOverlay'
 import { useAuth } from '@/lib/auth'
+import { useRequestState } from '@/lib/request-state'
 import { cn } from '@/lib/utils'
 
 const navItems = [
@@ -25,6 +26,7 @@ const navItems = [
 
 export default function Layout() {
   const { username, logout } = useAuth()
+  const { foregroundPendingCount } = useRequestState()
   const navigate = useNavigate()
 
   const onLogout = async () => {
@@ -34,6 +36,13 @@ export default function Layout() {
 
   return (
     <div className="flex min-h-screen">
+      {foregroundPendingCount > 0 ? (
+        <div
+          role="status"
+          aria-label="请求处理中"
+          className="fixed inset-x-0 top-0 z-50 h-0.5 animate-pulse bg-primary"
+        />
+      ) : null}
       <aside className="flex w-56 shrink-0 flex-col border-r bg-sidebar">
         <div className="border-b px-5 py-4">
           <span className="text-lg font-semibold">Lattix</span>

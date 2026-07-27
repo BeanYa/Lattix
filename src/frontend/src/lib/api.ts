@@ -1,3 +1,4 @@
+import { requester, RequestError } from './requester'
 import type {
   AlertTestResult,
   Chain,
@@ -7,9 +8,9 @@ import type {
   CreateServerResponse,
   DashboardStats,
   LogSeverity,
+  MachineType,
   OperationCategory,
   OperationLogPage,
-  MachineType,
   PanelSettings,
   PanelUpdateStatus,
   PanelVersionInfo,
@@ -21,62 +22,50 @@ import type {
   XrayNode,
 } from './types'
 
-export class ApiError extends Error {
-  status: number
+export { RequestError as ApiError }
 
-  constructor(status: number, message: string) {
-    super(message)
-    this.status = status
-  }
-}
-
-let onUnauthorized: (() => void) | null = null
-
-/** 注册 401 回调（会话过期时清空登录态，路由守卫会自动跳登录页） */
 export function setOnUnauthorized(fn: (() => void) | null) {
-  onUnauthorized = fn
-}
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    credentials: 'include',
-    ...init,
-    headers: {
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  })
-  if (res.status === 401) {
-    onUnauthorized?.()
-    const data = (await res.json().catch(() => null)) as { error?: string } | null
-    throw new ApiError(401, data?.error ?? '未登录或会话已过期')
-  }
-  if (res.status === 204) {
-    return undefined as T
-  }
-  const data = (await res.json().catch(() => null)) as ({ error?: string } & T) | null
-  if (!res.ok) {
-    throw new ApiError(res.status, data?.error ?? `请求失败（${res.status}）`)
-  }
-  return data as T
+  requester.setUnauthorizedHandler(
+    fn
+      ? () => {
+          requester.setCSRFToken(null)
+          fn()
+        }
+      : null,
+  )
 }
 
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : '操作失败，请重试'
 }
 
+interface AuthSession {
+  username: string
+  csrf_token: string
+}
+
 export const api = {
-  login: (username: string, password: string) =>
-    request<{ username: string }>('/api/login', {
-      method: 'POST',
-      body: JSON.stringify({ username, password }),
-    }),
-  logout: () => request<void>('/api/logout', { method: 'POST' }),
-  me: () => request<{ username: string }>('/api/me'),
+  login: async (username: string, password: string) => {
+    const result = await requester.post<AuthSession>('/api/auth/login', { username, password })
+    requester.setCSRFToken(result.csrf_token)
+    return result
+  },
+  logout: async () => {
+    try {
+      return await requester.post<void>('/api/auth/logout', {})
+    } finally {
+      requester.setCSRFToken(null)
+    }
+  },
+  me: async () => {
+    const result = await requester.get<AuthSession>('/api/auth/me')
+    requester.setCSRFToken(result.csrf_token)
+    return result
+  },
 
-  dashboard: () => request<DashboardStats>('/api/dashboard'),
+  dashboard: () => requester.get<DashboardStats>('/api/dashboard/get'),
 
-  servers: () => request<Server[]>('/api/servers'),
+  servers: () => requester.get<Server[]>('/api/server/list'),
   createServer: (body: {
     alias: string
     address?: string
@@ -86,125 +75,116 @@ export const api = {
     tags?: string[]
     country_code: string
     location: string
-  }) =>
-    request<CreateServerResponse>('/api/servers', {
-      method: 'POST',
-      body: JSON.stringify(body),
+  }) => requester.post<CreateServerResponse>('/api/server/create', body),
+  rotateServerToken: (serverId: number) =>
+    requester.post<CreateServerResponse>('/api/server/rotate-token', { server_id: serverId }),
+  upgradeServer: (serverId: number, version: string) =>
+    requester.post<{ command_id: number; version: string }>('/api/server/upgrade-xray', {
+      server_id: serverId,
+      version,
     }),
-  rotateServerToken: (id: number) =>
-    request<CreateServerResponse>(`/api/servers/${id}/rotate-token`, { method: 'POST' }),
-  upgradeServer: (id: number, version: string) =>
-    request<{ command_id: number; version: string }>(`/api/servers/${id}/upgrade`, {
-      method: 'POST',
-      body: JSON.stringify({ version }),
+  upgradeAgent: (serverId: number, version: string) =>
+    requester.post<{ command_id: number; version: string }>('/api/server/upgrade-agent', {
+      server_id: serverId,
+      version,
     }),
-  upgradeAgent: (id: number, version: string) =>
-    request<{ command_id: number; version: string }>(`/api/servers/${id}/upgrade-agent`, {
-      method: 'POST',
-      body: JSON.stringify({ version }),
+  serverCommands: (serverId: number, limit = 50) =>
+    requester.get<CommandLog[]>('/api/server/list-commands', {
+      server_id: serverId,
+      limit,
     }),
-  serverCommands: (id: number, limit = 50) =>
-    request<CommandLog[]>(`/api/servers/${id}/commands?limit=${limit}`),
-  repairServer: (id: number) =>
-    request<{ reapplied: number }>(`/api/servers/${id}/repair`, { method: 'POST' }),
+  repairServer: (serverId: number) =>
+    requester.post<{ reapplied: number }>('/api/server/repair', { server_id: serverId }),
   updateServerAddress: (
-    id: number,
+    serverId: number,
     address: string,
     tags: string[],
     countryCode: string,
     location: string,
   ) =>
-    request<Server>(`/api/servers/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        address: address.trim(),
-        tags,
-        country_code: countryCode,
-        location,
-      }),
+    requester.post<Server>('/api/server/update', {
+      server_id: serverId,
+      address: address.trim(),
+      tags,
+      country_code: countryCode,
+      location,
     }),
-  // 编辑 NAT 可用端口段（§21）：allowed_ports 整体替换；机器类型建后不可互转。
   updateServerPorts: (
-    id: number,
+    serverId: number,
     address: string,
     allowedPorts: PortRange[],
     tags: string[],
     countryCode: string,
     location: string,
   ) =>
-    request<Server>(`/api/servers/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        address: address.trim(),
-        allowed_ports: allowedPorts,
-        tags,
-        country_code: countryCode,
-        location,
-      }),
+    requester.post<Server>('/api/server/update', {
+      server_id: serverId,
+      address: address.trim(),
+      allowed_ports: allowedPorts,
+      tags,
+      country_code: countryCode,
+      location,
     }),
-  deleteServer: (id: number, purge: 'xray' | 'agent') =>
-    request<void>(`/api/servers/${id}?purge=${purge}`, { method: 'DELETE' }),
+  deleteServer: (serverId: number, purge: 'xray' | 'agent') =>
+    requester.post<void>('/api/server/delete', { server_id: serverId, purge }),
 
-  chains: () => request<Chain[]>('/api/chains'),
-  createChain: (body: CreateChainRequest) =>
-    request<Chain>('/api/chains', { method: 'POST', body: JSON.stringify(body) }),
-  retryChain: (id: number) => request<Chain>(`/api/chains/${id}/retry`, { method: 'POST' }),
-  deleteChain: (id: number) => request<void>(`/api/chains/${id}`, { method: 'DELETE' }),
+  chains: () => requester.get<Chain[]>('/api/chain/list'),
+  createChain: (body: CreateChainRequest) => requester.post<Chain>('/api/chain/create', body),
+  retryChain: (chainId: number) =>
+    requester.post<Chain>('/api/chain/retry', { chain_id: chainId }),
+  deleteChain: (chainId: number) =>
+    requester.post<void>('/api/chain/delete', { chain_id: chainId }),
 
-  nodes: () => request<XrayNode[]>('/api/nodes'),
-  createNode: (body: CreateNodeRequest) =>
-    request<XrayNode>('/api/nodes', { method: 'POST', body: JSON.stringify(body) }),
-  retryNode: (id: number) => request<XrayNode>(`/api/nodes/${id}/retry`, { method: 'POST' }),
-  deleteNode: (id: number) => request<void>(`/api/nodes/${id}`, { method: 'DELETE' }),
+  nodes: () => requester.get<XrayNode[]>('/api/node/list'),
+  createNode: (body: CreateNodeRequest) => requester.post<XrayNode>('/api/node/create', body),
+  retryNode: (nodeId: number) =>
+    requester.post<XrayNode>('/api/node/retry', { node_id: nodeId }),
+  deleteNode: (nodeId: number) =>
+    requester.post<void>('/api/node/delete', { node_id: nodeId }),
 
-  users: () => request<SubUser[]>('/api/users'),
+  users: () => requester.get<SubUser[]>('/api/user/list'),
   createUser: (name: string, expiresAt?: string | null, nodeIds?: number[]) =>
-    request<SubUser>('/api/users', {
-      method: 'POST',
-      body: JSON.stringify({
-        name,
-        ...(expiresAt ? { expires_at: expiresAt } : {}),
-        ...(nodeIds && nodeIds.length ? { node_ids: nodeIds } : {}),
-      }),
+    requester.post<SubUser>('/api/user/create', {
+      name,
+      ...(expiresAt ? { expires_at: expiresAt } : {}),
+      ...(nodeIds && nodeIds.length ? { node_ids: nodeIds } : {}),
     }),
-  updateUserExpiry: (id: number, expiresAt: string | null) =>
-    request<SubUser>(`/api/users/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ expires_at: expiresAt }),
+  updateUserExpiry: (userId: number, expiresAt: string | null) =>
+    requester.post<SubUser>('/api/user/update', {
+      user_id: userId,
+      expires_at: expiresAt,
     }),
-  setUserDisabled: (id: number, disabled: boolean) =>
-    request<SubUser>(`/api/users/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ disabled }),
+  setUserDisabled: (userId: number, disabled: boolean) =>
+    requester.post<SubUser>('/api/user/update', { user_id: userId, disabled }),
+  setUserNodes: (userId: number, nodeIds: number[]) =>
+    requester.post<{ node_ids: number[] }>('/api/user/set-nodes', {
+      user_id: userId,
+      node_ids: nodeIds,
     }),
-  setUserNodes: (id: number, nodeIds: number[]) =>
-    request<{ node_ids: number[] }>(`/api/users/${id}/nodes`, {
-      method: 'PUT',
-      body: JSON.stringify({ node_ids: nodeIds }),
-    }),
-  deleteUser: (id: number) => request<void>(`/api/users/${id}`, { method: 'DELETE' }),
+  deleteUser: (userId: number) =>
+    requester.post<void>('/api/user/delete', { user_id: userId }),
 
-  settings: () => request<PanelSettings>('/api/settings'),
+  settings: () => requester.get<PanelSettings>('/api/setting/get'),
   updateSettings: (body: UpdateSettingsRequest) =>
-    request<PanelSettings>('/api/settings', { method: 'PUT', body: JSON.stringify(body) }),
-  changePassword: (currentPassword: string, newPassword: string) =>
-    request<void>('/api/settings/password', {
-      method: 'PUT',
-      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
-    }),
-  restartPanel: () =>
-    request<{ status: string }>('/api/settings/restart', { method: 'POST' }),
-  testAlerts: () =>
-    request<AlertTestResult>('/api/settings/alerts/test', { method: 'POST' }),
+    requester.post<PanelSettings>('/api/setting/update', body),
+  changePassword: async (currentPassword: string, newPassword: string) => {
+    const result = await requester.post<void>('/api/setting/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    })
+    requester.setCSRFToken(null)
+    return result
+  },
+  restartPanel: () => requester.post<{ status: string }>('/api/panel/restart', {}),
+  testAlerts: () => requester.post<AlertTestResult>('/api/setting/test-alerts', {}),
 
-  // 面板自更新（GitHub release 钉版）：检测 → 异步更新（进度轮询）→ 自重启。
-  panelVersion: () => request<PanelVersionInfo>('/api/panel/version'),
+  panelVersion: () => requester.get<PanelVersionInfo>('/api/panel/get-version'),
   startPanelUpdate: (version?: string) =>
-    request<PanelUpdateStatus>('/api/panel/update', {
-      method: 'POST',
-      body: JSON.stringify(version ? { version } : {}),
+    requester.post<PanelUpdateStatus>('/api/panel/start-update', version ? { version } : {}),
+  panelUpdateStatus: () =>
+    requester.get<PanelUpdateStatus>('/api/panel/get-update-status', undefined, {
+      display: 'silent',
     }),
-  panelUpdateStatus: () => request<PanelUpdateStatus>('/api/panel/update/status'),
 
   operationLogs: (params: {
     severity?: LogSeverity | ''
@@ -216,22 +196,33 @@ export const api = {
     to?: string
     limit?: number
     offset?: number
-  }) => {
-    const sp = new URLSearchParams()
-    if (params.severity) sp.set('severity', params.severity)
-    if (params.category) sp.set('category', params.category)
-    if (params.server_id) sp.set('server_id', String(params.server_id))
-    if (params.operator) sp.set('operator', params.operator)
-    if (params.q) sp.set('q', params.q)
-    if (params.from) sp.set('from', params.from)
-    if (params.to) sp.set('to', params.to)
-    if (params.limit) sp.set('limit', String(params.limit))
-    if (params.offset) sp.set('offset', String(params.offset))
-    const qs = sp.toString()
-    return request<OperationLogPage>('/api/logs/operations' + (qs ? `?${qs}` : ''))
-  },
-  clearOperationLogs: () => request<void>('/api/logs/operations', { method: 'DELETE' }),
+  }) =>
+    requester.get<OperationLogPage>(
+      '/api/log/list-operations',
+      {
+        severity: params.severity || undefined,
+        category: params.category || undefined,
+        server_id: params.server_id,
+        operator: params.operator || undefined,
+        q: params.q || undefined,
+        from: params.from || undefined,
+        to: params.to || undefined,
+        limit: params.limit,
+        offset: params.offset,
+      },
+      { display: 'silent' },
+    ),
+  clearOperationLogs: () => requester.post<void>('/api/log/clear-operations', {}),
   requestLogs: (limit: 10 | 30 | 50 | 100) =>
-    request<RequestLogPage>(`/api/logs/requests?limit=${limit}`),
-  clearRequestLogs: () => request<void>('/api/logs/requests', { method: 'DELETE' }),
+    requester.get<RequestLogPage>(
+      '/api/log/list-requests',
+      { limit },
+      { display: 'silent' },
+    ),
+  clearRequestLogs: () => requester.post<void>('/api/log/clear-requests', {}),
+  downloadBackup: () => requester.download('/api/backup/download'),
+}
+
+export function isRequestError(error: unknown): error is RequestError {
+  return error instanceof RequestError
 }

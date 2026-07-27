@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"lattix/backend/internal/sub"
 	panelweb "lattix/backend/internal/web"
 	"lattix/backend/internal/ws"
+	"lattix/shared"
 )
 
 // 构建注入（CI release 经 -ldflags -X 覆盖）：面板版本与默认 GitHub 仓库。
@@ -230,9 +232,20 @@ func main() {
 
 	// 控制通道（§5）：hub 负责传输，dispatcher 负责命令生命周期与认证。
 	hub := ws.NewHub()
-	dispatcher := dispatch.New(st, hub, version)
+	dispatcher := dispatch.New(st, hub)
 	dispatcher.OperationLog = opLog
+	dispatcher.RequestLog = reqLog
 	hub.Auth = dispatcher
+	hub.OnProtocolError = func(serverID int64, requestID, traceID, rpcType, message string) {
+		attributes := map[string]string{}
+		if serverID != 0 {
+			attributes["server_id"] = strconv.FormatInt(serverID, 10)
+		}
+		logging.LogWebSocketRPC(reqLog, logging.RequestEntry{
+			RequestID: requestID, TraceID: traceID, RPCType: rpcType,
+			RPCCode: shared.CodeInvalidArgument, ErrorSummary: message, Attributes: attributes,
+		})
+	}
 	hub.OnConnect = func(serverID int64) {
 		// agent 重连后重置并补发离线期间滞留的命令（§2）。
 		dispatcher.OnAgentConnect(context.Background(), serverID)
@@ -326,9 +339,59 @@ func main() {
 
 	// Agent 控制通道（§5）。
 	mux.Handle("GET /api/agent/ws", hub)
+	mux.HandleFunc("/api/agent/ws", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	})
 
 	// 面板 API（§10、§11）。
 	ps.RegisterRoutes(mux)
+
+	// 独立存活/就绪检查，不使用业务 RPC 信封，也不进入高频请求日志。
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	ready := true
+	var readyMu sync.Mutex
+	recordReadyTransition := func(next bool, cause error) {
+		readyMu.Lock()
+		if ready == next {
+			readyMu.Unlock()
+			return
+		}
+		ready = next
+		readyMu.Unlock()
+		action := "panel.ready"
+		severity := logging.SeverityInfo
+		detail := map[string]string{}
+		if !next {
+			action = "panel.not_ready"
+			severity = logging.SeverityError
+			detail["cause"] = cause.Error()
+		}
+		traceID := shared.NewMessageID()
+		if err := opLog.Record(context.Background(), logging.OperationEvent{
+			Severity: severity, Category: logging.CategoryPanel, Action: action,
+			RequestID: traceID, TraceID: traceID, Detail: detail,
+		}); err != nil {
+			log.Printf("readyz: record transition: %v", err)
+		}
+	}
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+		defer cancel()
+		if err := st.Ping(ctx); err != nil {
+			recordReadyTransition(false, err)
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		recordReadyTransition(true, nil)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready\n"))
+	})
 
 	// 订阅（§9）：mihomo（Clash.Meta）格式 YAML（浏览器访问为落地页）；/links 为分享链接集合（§14）。
 	subSrv := sub.New(st, ps.PanelBase)
@@ -336,6 +399,10 @@ func main() {
 	mux.HandleFunc("GET /sub/{token}/links", subSrv.HandleLinks)
 
 	// Frontend SPA 构建产物（§3），客户端路由回退到 index.html。
+	// 未注册的 /api/* 必须保持协议层 404，不能落入 SPA 的 index.html。
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "API route not found", http.StatusNotFound)
+	})
 	frontendFS := panelweb.Dist()
 	if *staticDir != "" {
 		frontendFS = os.DirFS(*staticDir)
@@ -344,7 +411,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           logging.RequestMiddleware(reqLog, ps.Operator, mux),
+		Handler:           logging.RequestMiddleware(reqLog, ps.Operator, ps.LogPolicy, mux),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 	var serve func() error

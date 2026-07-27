@@ -32,7 +32,6 @@ export interface Server {
   last_seen_at: string | null
   xray_version: string | null
   agent_version: string | null
-  upgrade_needed: boolean
   address: string
   learned_addr: string
   nic_addresses: string[]
@@ -46,9 +45,11 @@ export interface Server {
   created_at: string
 }
 
-// 命令日志条目（GET /api/servers/{id}/commands，§4）。
+// 命令日志条目（GET /api/server/list-commands，§4）。
 export interface CommandLog {
   id: number
+  request_id: string
+  trace_id: string
   type: string
   status: 'queued' | 'sent' | 'acked' | 'failed'
   error?: string
@@ -293,6 +294,7 @@ export interface OperationLogEntry {
   operator?: string
   ip?: string
   request_id?: string
+  trace_id?: string
 }
 
 export interface OperationLogPage {
@@ -303,18 +305,23 @@ export interface OperationLogPage {
 export interface RequestLogEntry {
   timestamp: string
   request_id: string
+  trace_id: string
   severity: LogSeverity
-  method: string
-  path: string
-  route: string
-  params?: Record<string, string>
-  status: number
+  transport: 'http' | 'websocket'
+  method?: string
+  path?: string
+  route?: string
+  rpc_type?: string
+  attributes?: Record<string, string>
+  http_status?: number
+  rpc_code?: string
   duration_ms: number
   response_bytes: number
   operator?: string
   ip?: string
   user_agent?: string
   error_summary?: string
+  idempotency_replayed?: boolean
 }
 
 export interface RequestLogStatus {

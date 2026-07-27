@@ -20,9 +20,11 @@ const (
 // CreatedAt/UpdatedAt 仅在 RecentCommands（命令日志）场景填充，其余查询不要求。
 type Command struct {
 	ID        int64
+	RequestID string
+	TraceID   string
 	ServerID  int64
 	Type      string
-	Payload   json.RawMessage
+	Data      json.RawMessage
 	Status    string
 	Error     string
 	Attempts  int
@@ -31,10 +33,16 @@ type Command struct {
 }
 
 // EnqueueCommand 入队一条命令（queued），返回命令 id。
-func (s *Store) EnqueueCommand(ctx context.Context, serverID int64, typ string, payload json.RawMessage) (int64, error) {
+func (s *Store) EnqueueCommand(
+	ctx context.Context,
+	requestID, traceID string,
+	serverID int64,
+	typ string,
+	data json.RawMessage,
+) (int64, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO commands (server_id, type, payload) VALUES (?, ?, ?)`,
-		serverID, typ, string(payload))
+		`INSERT INTO commands (request_id, trace_id, server_id, type, data) VALUES (?, ?, ?, ?, ?)`,
+		requestID, traceID, serverID, typ, string(data))
 	if err != nil {
 		return 0, fmt.Errorf("enqueue command: %w", err)
 	}
@@ -44,7 +52,7 @@ func (s *Store) EnqueueCommand(ctx context.Context, serverID int64, typ string, 
 // QueuedCommands 取一台服务器全部待发命令（按 id 升序）。
 func (s *Store) QueuedCommands(ctx context.Context, serverID int64) ([]Command, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, server_id, type, payload, status, attempts FROM commands
+		`SELECT id, request_id, trace_id, server_id, type, data, status, attempts FROM commands
 		 WHERE server_id = ? AND status = ? ORDER BY id`, serverID, CommandStatusQueued)
 	if err != nil {
 		return nil, fmt.Errorf("query queued commands: %w", err)
@@ -53,11 +61,13 @@ func (s *Store) QueuedCommands(ctx context.Context, serverID int64) ([]Command, 
 	var cmds []Command
 	for rows.Next() {
 		var c Command
-		var payload string
-		if err := rows.Scan(&c.ID, &c.ServerID, &c.Type, &payload, &c.Status, &c.Attempts); err != nil {
+		var data string
+		if err := rows.Scan(
+			&c.ID, &c.RequestID, &c.TraceID, &c.ServerID, &c.Type, &data, &c.Status, &c.Attempts,
+		); err != nil {
 			return nil, fmt.Errorf("scan command: %w", err)
 		}
-		c.Payload = json.RawMessage(payload)
+		c.Data = json.RawMessage(data)
 		cmds = append(cmds, c)
 	}
 	return cmds, rows.Err()
@@ -79,20 +89,24 @@ func (s *Store) MarkCommandSent(ctx context.Context, id int64) error {
 	return err
 }
 
-// CommandByID 按 id 取命令（apply_result 归属校验用，§5）。
-func (s *Store) CommandByID(ctx context.Context, id int64) (*Command, error) {
+// CommandByRequestID 按 WS request_id 取命令（响应归属校验用）。
+func (s *Store) CommandByRequestID(ctx context.Context, requestID string) (*Command, error) {
 	var c Command
-	var payload string
+	var data string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, server_id, type, payload, status, error, attempts FROM commands WHERE id = ?`, id).
-		Scan(&c.ID, &c.ServerID, &c.Type, &payload, &c.Status, &c.Error, &c.Attempts)
+		`SELECT id, request_id, trace_id, server_id, type, data, status, error, attempts, updated_at
+		 FROM commands WHERE request_id = ?`, requestID).
+		Scan(
+			&c.ID, &c.RequestID, &c.TraceID, &c.ServerID, &c.Type, &data,
+			&c.Status, &c.Error, &c.Attempts, &c.UpdatedAt,
+		)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query command: %w", err)
 	}
-	c.Payload = json.RawMessage(payload)
+	c.Data = json.RawMessage(data)
 	return &c, nil
 }
 
@@ -127,7 +141,7 @@ func (s *Store) RecentCommands(ctx context.Context, serverID int64, limit int) (
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, server_id, type, status, error, attempts, created_at, updated_at
+		`SELECT id, request_id, trace_id, server_id, type, status, error, attempts, created_at, updated_at
 		 FROM commands WHERE server_id = ? ORDER BY id DESC LIMIT ?`, serverID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query recent commands: %w", err)
@@ -137,7 +151,10 @@ func (s *Store) RecentCommands(ctx context.Context, serverID int64, limit int) (
 	for rows.Next() {
 		var c Command
 		var createdAt, updatedAt string
-		if err := rows.Scan(&c.ID, &c.ServerID, &c.Type, &c.Status, &c.Error, &c.Attempts, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(
+			&c.ID, &c.RequestID, &c.TraceID, &c.ServerID, &c.Type,
+			&c.Status, &c.Error, &c.Attempts, &createdAt, &updatedAt,
+		); err != nil {
 			return nil, fmt.Errorf("scan command: %w", err)
 		}
 		c.CreatedAt = createdAt

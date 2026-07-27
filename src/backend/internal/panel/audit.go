@@ -27,6 +27,7 @@ func (s *Server) audit(r *http.Request, action string, serverID, nodeID *int64, 
 		Operator:  operator,
 		IP:        logging.ClientIP(r),
 		RequestID: logging.RequestID(r.Context()),
+		TraceID:   logging.TraceID(r.Context()),
 	}); err != nil {
 		log.Printf("panel: audit %s: %v", action, err)
 	}

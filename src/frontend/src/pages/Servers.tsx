@@ -559,11 +559,6 @@ export default function Servers() {
                         配置漂移
                       </Badge>
                     )}
-                    {s.upgrade_needed && (
-                      <Badge variant="outline" className="ml-1 border-amber-200 bg-amber-50 text-amber-700">
-                        agent 需升级
-                      </Badge>
-                    )}
                   </TableCell>
                   <TableCell>{s.address || '-'}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap">
@@ -586,7 +581,7 @@ export default function Servers() {
                       升级 xray
                     </Button>
                     <Button
-                      variant={s.upgrade_needed ? 'default' : 'outline'}
+                      variant="outline"
                       size="sm"
                       onClick={() => onOpenUpgrade(s, 'agent')}
                     >

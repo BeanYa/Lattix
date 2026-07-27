@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/generate-api-types.mjs --check && tsc -b && vite build",
+    "generate:api": "node scripts/generate-api-types.mjs",
+    "check:api": "node scripts/generate-api-types.mjs --check",
     "lint": "oxlint",
     "preview": "vite preview"
   },

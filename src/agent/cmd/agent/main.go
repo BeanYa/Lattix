@@ -4,7 +4,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -47,7 +46,7 @@ func main() {
 	if *releaseBase != "" {
 		mgr.SetReleaseBase(*releaseBase) // 镜像/代理下载源（§18）
 	}
-	// 旧版本生成的 config.json 补齐遥测配置（stats/policy/StatsService，§13）。
+	// 确保当前协议要求的遥测配置存在（stats/policy/StatsService，§13）。
 	if err := mgr.EnsureTelemetryFeatures(); err != nil {
 		log.Printf("ensure telemetry features: %v (traffic stats may be unavailable)", err)
 	}
@@ -119,11 +118,13 @@ func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, tel
 	// 首连认证（§5）：携带 token、agent 版本、xray 版本与运行状态（§13），
 	// 以及本机网卡的非回环地址（§9 公网地址候选，面板编辑地址时下拉可选）。
 	xrayVer, xrayRunning := mgr.Version()
-	helloID := fmt.Sprintf("hello-%d", time.Now().UnixNano())
+	helloID := shared.NewMessageID()
 	hello := shared.Envelope{
-		ID:   helloID,
-		Type: shared.TypeHello,
-		Payload: mustJSON(shared.HelloPayload{
+		Kind:      shared.KindRequest,
+		Type:      shared.TypeHello,
+		RequestID: helloID,
+		TraceID:   helloID,
+		Data: mustJSON(shared.HelloPayload{
 			Token:        token,
 			AgentVersion: version,
 			XrayVersion:  xrayVer,
@@ -140,11 +141,15 @@ func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, tel
 	if err := conn.ReadJSON(&resp); err != nil {
 		return "", fmt.Errorf("read hello response: %w", err)
 	}
-	if resp.Type != shared.TypeHello || resp.ID != helloID {
-		return "", fmt.Errorf("unexpected first frame: type=%s id=%s", resp.Type, resp.ID)
+	if resp.Kind != shared.KindResponse || resp.Type != shared.TypeHello || resp.RequestID != helloID {
+		return "", fmt.Errorf("unexpected first frame: kind=%s type=%s request_id=%s",
+			resp.Kind, resp.Type, resp.RequestID)
+	}
+	if resp.Code != shared.CodeOK {
+		return "", fmt.Errorf("hello failed: %s: %s", resp.Code, resp.Message)
 	}
 	var hr shared.HelloResult
-	if err := json.Unmarshal(resp.Payload, &hr); err != nil {
+	if err := json.Unmarshal(resp.Data, &hr); err != nil {
 		return "", fmt.Errorf("bad hello result: %w", err)
 	}
 	st.Token, st.ServerID = hr.Token, hr.ServerID
@@ -158,10 +163,13 @@ func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, tel
 	go func() {
 		t := newTelemetry(mgr)
 		send := func() bool {
+			messageID := shared.NewMessageID()
 			env := shared.Envelope{
-				ID:      fmt.Sprintf("telemetry-%d", time.Now().UnixNano()),
-				Type:    shared.TypeTelemetry,
-				Payload: mustJSON(t.collect()),
+				Kind:      shared.KindEvent,
+				Type:      shared.TypeTelemetry,
+				RequestID: messageID,
+				TraceID:   messageID,
+				Data:      mustJSON(t.collect()),
 			}
 			if err := sc.writeJSON(env); err != nil {
 				logTelemetryError(err)
@@ -195,10 +203,13 @@ func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, tel
 				if d {
 					log.Printf("config drift detected: config.json 被外部修改")
 				}
+				messageID := shared.NewMessageID()
 				env := shared.Envelope{
-					ID:      fmt.Sprintf("drift-%d", time.Now().UnixNano()),
-					Type:    shared.TypeDriftReport,
-					Payload: mustJSON(shared.DriftPayload{Drifted: d}),
+					Kind:      shared.KindEvent,
+					Type:      shared.TypeDriftReport,
+					RequestID: messageID,
+					TraceID:   messageID,
+					Data:      mustJSON(shared.DriftPayload{Drifted: d}),
 				}
 				if err := sc.writeJSON(env); err != nil {
 					log.Printf("drift report: %v", err)
@@ -229,97 +240,99 @@ func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, tel
 	}
 }
 
-// handle 按消息类型分发：apply 流水线与热操作（§6），结果经 apply_result 上报（§5）。
+// handle 按消息类型分发：命令响应沿用请求的 type/request_id/trace_id。
 func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath string, st *state.State) {
+	if env.Kind != shared.KindRequest {
+		log.Printf("ignore non-request message kind=%s type=%s request_id=%s", env.Kind, env.Type, env.RequestID)
+		return
+	}
 	switch env.Type {
 	case shared.TypeApplyNode:
 		var p shared.ApplyNodePayload
-		if !parsePayload(env, &p) {
+		if !parseData(sc, env, &p) {
 			return
 		}
-		log.Printf("apply_node id=%s node=%d users=%d", env.ID, p.NodeID, len(p.UserUUIDs))
+		log.Printf("node.apply request_id=%s node=%d users=%d", env.RequestID, p.NodeID, len(p.UserUUIDs))
 		realized, err := mgr.ApplyNode(p.NodeID, p.Config, p.UserUUIDs, p.DestCandidates, p.PortCandidates)
-		replyApplyResult(sc, env.ID, resultOf(p.NodeID, realized, err))
+		replyResult(sc, env, resultOf(p.NodeID, realized), err)
 
 	case shared.TypeApplyChainHop:
 		var p shared.ApplyChainHopPayload
-		if !parsePayload(env, &p) {
+		if !parseData(sc, env, &p) {
 			return
 		}
-		log.Printf("apply_chain_hop id=%s chain=%d hop=%d kind=%s", env.ID, p.ChainID, p.HopID, p.Kind)
+		log.Printf("chain-hop.apply request_id=%s chain=%d hop=%d kind=%s", env.RequestID, p.ChainID, p.HopID, p.Kind)
 		realized, err := mgr.ApplyChainHop(p)
 		if err == nil {
 			persistChainPieces(statePath, st, mgr)
 		}
-		replyApplyResult(sc, env.ID, resultOfHop(p.HopID, p.Kind, realized, err))
+		replyResult(sc, env, resultOfHop(p.HopID, p.Kind, realized), err)
 
 	case shared.TypeRemoveChainHop:
 		var p shared.RemoveChainHopPayload
-		if !parsePayload(env, &p) {
+		if !parseData(sc, env, &p) {
 			return
 		}
-		log.Printf("remove_chain_hop id=%s hop=%d kind=%s", env.ID, p.HopID, p.Kind)
+		log.Printf("chain-hop.remove request_id=%s hop=%d kind=%s", env.RequestID, p.HopID, p.Kind)
 		err := mgr.RemoveChainHop(p.HopID, p.Kind)
 		if err == nil {
 			persistChainPieces(statePath, st, mgr)
 		}
-		replyApplyResult(sc, env.ID, resultOfHop(p.HopID, p.Kind, nil, err))
+		replyResult(sc, env, resultOfHop(p.HopID, p.Kind, nil), err)
 
 	case shared.TypeRemoveNode:
 		var p shared.RemoveNodePayload
-		if !parsePayload(env, &p) {
+		if !parseData(sc, env, &p) {
 			return
 		}
-		log.Printf("remove_node id=%s node=%d", env.ID, p.NodeID)
+		log.Printf("node.remove request_id=%s node=%d", env.RequestID, p.NodeID)
 		err := mgr.RemoveNode(p.NodeID)
-		replyApplyResult(sc, env.ID, resultOf(p.NodeID, nil, err))
+		replyResult(sc, env, resultOf(p.NodeID, nil), err)
 
 	case shared.TypeAddUser:
 		var p shared.AddUserPayload
-		if !parsePayload(env, &p) {
+		if !parseData(sc, env, &p) {
 			return
 		}
-		log.Printf("add_user id=%s uuid=%s", env.ID, p.UUID)
+		log.Printf("user.add request_id=%s uuid=%s", env.RequestID, p.UUID)
 		if len(p.Nodes) == 0 {
-			// §16 差量扇出后载荷必带目标节点；缺省 Nodes 的旧载荷不再兼容，显式回执错误。
-			replyApplyResult(sc, env.ID, resultOf(0, nil, errors.New("nodes field required")))
+			replyCode(sc, env, shared.CodeInvalidArgument, "nodes field required", resultOf(0, nil))
 			return
 		}
 		err := mgr.AddUser(p.UUID, p.Nodes)
-		replyApplyResult(sc, env.ID, resultOf(0, nil, err)) // NodeID 0 = 非节点命令
+		replyResult(sc, env, resultOf(0, nil), err) // NodeID 0 = 非节点命令
 
 	case shared.TypeRemoveUser:
 		var p shared.RemoveUserPayload
-		if !parsePayload(env, &p) {
+		if !parseData(sc, env, &p) {
 			return
 		}
-		log.Printf("remove_user id=%s uuid=%s", env.ID, p.UUID)
+		log.Printf("user.remove request_id=%s uuid=%s", env.RequestID, p.UUID)
 		if len(p.Nodes) == 0 {
-			// 同 add_user：缺省 Nodes 的旧载荷不再兼容，显式回执错误。
-			replyApplyResult(sc, env.ID, resultOf(0, nil, errors.New("nodes field required")))
+			replyCode(sc, env, shared.CodeInvalidArgument, "nodes field required", resultOf(0, nil))
 			return
 		}
 		err := mgr.RemoveUser(p.UUID, p.Nodes)
-		replyApplyResult(sc, env.ID, resultOf(0, nil, err))
+		replyResult(sc, env, resultOf(0, nil), err)
 
 	case shared.TypeUpgradeXray:
 		var p shared.UpgradeXrayPayload
-		if !parsePayload(env, &p) {
+		if !parseData(sc, env, &p) {
 			return
 		}
-		log.Printf("upgrade_xray id=%s version=%s", env.ID, p.Version)
+		log.Printf("xray.upgrade request_id=%s version=%s", env.RequestID, p.Version)
 		err := mgr.UpgradeXray(p.Version)
-		replyApplyResult(sc, env.ID, resultOf(0, nil, err))
+		replyResult(sc, env, resultOf(0, nil), err)
 
 	case shared.TypeUpgradeAgent:
 		// 自升级（§18）：先完成下载校验与原子替换，回执后退出，由 systemd 拉起新二进制。
 		var p shared.UpgradeAgentPayload
-		if !parsePayload(env, &p) {
+		if !parseData(sc, env, &p) {
 			return
 		}
-		log.Printf("upgrade_agent id=%s version=%s", env.ID, p.Version)
+		log.Printf("agent.upgrade request_id=%s version=%s", env.RequestID, p.Version)
 		upgraded, err := selfupdate.Apply(p.Version, p.ReleaseBase, version, githubRepo)
-		replyApplyResult(sc, env.ID, resultOf(0, nil, err))
+		replyResult(sc, env, resultOf(0, nil), err)
 		if err != nil || !upgraded {
 			return // 失败或已是目标版本（幂等），无需重启
 		}
@@ -329,42 +342,35 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath stri
 	case shared.TypeUninstall:
 		// 先回执再自毁：panel 删除服务器时下发（§10）。
 		var p shared.UninstallPayload
-		if !parsePayload(env, &p) {
+		if !parseData(sc, env, &p) {
 			return
 		}
-		log.Printf("uninstall id=%s purge_xray=%v", env.ID, p.PurgeXray)
-		replyApplyResult(sc, env.ID, resultOf(0, nil, nil))
+		log.Printf("agent.uninstall request_id=%s purge_xray=%v", env.RequestID, p.PurgeXray)
+		replyResult(sc, env, resultOf(0, nil), nil)
 		scheduleUninstall(p.PurgeXray, mgr)
 
 	default:
-		// 协议演化规则：不认识的命令显式回执失败（面板据此终态不重试），而非静默丢弃。
-		log.Printf("recv unknown type=%s id=%s", env.Type, env.ID)
-		replyApplyResult(sc, env.ID, resultOf(0, nil,
-			fmt.Errorf("%s: %s", shared.ErrUnsupportedPrefix, env.Type)))
+		log.Printf("recv unknown type=%s request_id=%s", env.Type, env.RequestID)
+		replyCode(sc, env, shared.CodeUnsupportedAction, "unsupported action", nil)
 	}
 }
 
-func parsePayload(env shared.Envelope, v any) bool {
-	if err := json.Unmarshal(env.Payload, v); err != nil {
-		log.Printf("bad %s payload: %v", env.Type, err)
+func parseData(sc *safeConn, env shared.Envelope, v any) bool {
+	if err := json.Unmarshal(env.Data, v); err != nil {
+		log.Printf("bad %s data: %v", env.Type, err)
+		replyCode(sc, env, shared.CodeInvalidArgument, "invalid message data", nil)
 		return false
 	}
 	return true
 }
 
-func resultOf(nodeID int64, realized *shared.RealizedConfig, err error) shared.ApplyResultPayload {
-	if err != nil {
-		return shared.ApplyResultPayload{NodeID: nodeID, OK: false, Error: err.Error()}
-	}
-	return shared.ApplyResultPayload{NodeID: nodeID, OK: true, RealizedConfig: realized}
+func resultOf(nodeID int64, realized *shared.RealizedConfig) shared.ApplyResultPayload {
+	return shared.ApplyResultPayload{NodeID: nodeID, RealizedConfig: realized}
 }
 
 // resultOfHop 构造链跳配置件回执（§21.1）：hop_id/kind 定位 piece，NodeID 恒 0。
-func resultOfHop(hopID int64, kind string, realized *shared.RealizedConfig, err error) shared.ApplyResultPayload {
-	if err != nil {
-		return shared.ApplyResultPayload{HopID: hopID, Kind: kind, OK: false, Error: err.Error()}
-	}
-	return shared.ApplyResultPayload{HopID: hopID, Kind: kind, OK: true, RealizedConfig: realized}
+func resultOfHop(hopID int64, kind string, realized *shared.RealizedConfig) shared.ApplyResultPayload {
+	return shared.ApplyResultPayload{HopID: hopID, Kind: kind, RealizedConfig: realized}
 }
 
 // persistChainPieces 把链 piece 记录随 state 落盘（重启重建 config.json 的依据，§21.1）。
@@ -375,11 +381,26 @@ func persistChainPieces(statePath string, st *state.State, mgr *xray.Manager) {
 	}
 }
 
-// replyApplyResult 上报执行结果：与请求同 id 即响应帧（§5）。
-func replyApplyResult(sc *safeConn, reqID string, p shared.ApplyResultPayload) {
-	env := shared.Envelope{ID: reqID, Type: shared.TypeApplyResult, Payload: mustJSON(p)}
+func replyResult(sc *safeConn, request shared.Envelope, data any, err error) {
+	if err != nil {
+		replyCode(sc, request, shared.CodeInternalError, err.Error(), data)
+		return
+	}
+	replyCode(sc, request, shared.CodeOK, "", data)
+}
+
+func replyCode(sc *safeConn, request shared.Envelope, code, message string, data any) {
+	env := shared.Envelope{
+		Kind:      shared.KindResponse,
+		Type:      request.Type,
+		RequestID: request.RequestID,
+		TraceID:   request.TraceID,
+		Code:      code,
+		Message:   message,
+		Data:      mustJSON(data),
+	}
 	if err := sc.writeJSON(env); err != nil {
-		log.Printf("reply apply_result: %v", err)
+		log.Printf("reply %s: %v", request.Type, err)
 	}
 }
 

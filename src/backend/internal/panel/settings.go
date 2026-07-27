@@ -198,7 +198,7 @@ type updateSettingsRequest struct {
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req updateSettingsRequest
 	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	ctx := r.Context()
@@ -435,7 +435,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		NewPassword     string `json:"new_password"`
 	}
 	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if !s.checkPassword(req.CurrentPassword) {
@@ -456,7 +456,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "auth.password_changed", nil, nil, map[string]string{"password": "已变更"})
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, nil)
 }
 
 // checkPassword 校验登录密码：DB 中有 bcrypt 哈希则以其为准，否则比对启动参数。

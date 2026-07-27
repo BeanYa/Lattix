@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS operation_log (
     detail      TEXT NOT NULL DEFAULT '',
     operator    TEXT NOT NULL DEFAULT '',
     ip          TEXT NOT NULL DEFAULT '',
-    request_id  TEXT NOT NULL DEFAULT ''
+    request_id  TEXT NOT NULL DEFAULT '',
+    trace_id    TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_operation_log_ts ON operation_log(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_operation_log_severity ON operation_log(severity);
@@ -79,6 +80,7 @@ type OperationEntry struct {
 	Operator  string
 	IP        string
 	RequestID string
+	TraceID   string
 }
 
 type OperationEvent struct {
@@ -91,6 +93,7 @@ type OperationEvent struct {
 	Operator  string
 	IP        string
 	RequestID string
+	TraceID   string
 }
 
 type OperationFilter struct {
@@ -153,6 +156,7 @@ func (s *OperationStore) Record(ctx context.Context, event OperationEvent) error
 		Operator:  event.Operator,
 		IP:        event.IP,
 		RequestID: event.RequestID,
+		TraceID:   event.TraceID,
 	}
 	if entry.Severity == "" {
 		entry.Severity = SeverityInfo
@@ -192,7 +196,7 @@ func (s *OperationStore) List(ctx context.Context, filter OperationFilter, limit
 	queryArgs := append(append([]any{}, args...), limit, offset)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, event_id, ts, severity, category, action, server_id, node_id,
-		       detail, operator, ip, request_id
+		       detail, operator, ip, request_id, trace_id
 		FROM operation_log WHERE 1=1`+where+`
 		ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?`, queryArgs...)
 	if err != nil {
@@ -206,7 +210,7 @@ func (s *OperationStore) List(ctx context.Context, filter OperationFilter, limit
 		var serverID, nodeID sql.NullInt64
 		if err := rows.Scan(&item.ID, &item.EventID, &ts, &item.Severity, &item.Category,
 			&item.Action, &serverID, &nodeID, &item.Detail, &item.Operator, &item.IP,
-			&item.RequestID); err != nil {
+			&item.RequestID, &item.TraceID); err != nil {
 			return nil, 0, fmt.Errorf("scan operation log: %w", err)
 		}
 		item.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
@@ -238,6 +242,7 @@ func (s *OperationStore) Clear(ctx context.Context, actor OperationEvent) error 
 		Operator:  actor.Operator,
 		IP:        actor.IP,
 		RequestID: actor.RequestID,
+		TraceID:   actor.TraceID,
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -352,11 +357,11 @@ func insertOperation(ctx context.Context, exec interface {
 	_, err := exec.ExecContext(ctx, `
 		INSERT INTO operation_log (
 			event_id, ts, severity, category, action, server_id, node_id,
-			detail, operator, ip, request_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			detail, operator, ip, request_id, trace_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		entry.EventID, entry.Timestamp.Format(time.RFC3339Nano), entry.Severity,
 		entry.Category, entry.Action, entry.ServerID, entry.NodeID, entry.Detail,
-		entry.Operator, entry.IP, entry.RequestID)
+		entry.Operator, entry.IP, entry.RequestID, entry.TraceID)
 	if err != nil {
 		return fmt.Errorf("insert operation log: %w", err)
 	}

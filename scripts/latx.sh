@@ -60,6 +60,7 @@ panel_version() {
 panel_pid() { pgrep -f "$BACKEND" 2>/dev/null | head -1 || true; }
 
 PANEL_SESSION_JAR=""
+PANEL_CSRF=""
 
 panel_login() {
     command -v curl >/dev/null    || die "curl is required"
@@ -75,16 +76,22 @@ panel_login() {
     PANEL_SESSION_JAR="$(mktemp)"
     trap 'rm -f "$PANEL_SESSION_JAR"' EXIT
 
-    local body code
+    local body response
     echo ">> 登录面板 $PANEL_URL"
     body="$(python3 -c 'import json,sys; print(json.dumps({"username":sys.argv[1],"password":sys.argv[2]}))' "$user" "$pass")"
-    code="$(curl -s -o /dev/null -w '%{http_code}' -c "$PANEL_SESSION_JAR" \
-        -H 'Content-Type: application/json' -d "$body" "$PANEL_URL/api/login")"
-    [[ "$code" == "200" ]] || die "登录失败（HTTP $code），请检查面板地址与管理员凭据（LATX_PANEL_URL/LATX_ADMIN_USER/LATX_ADMIN_PASS）"
+    response="$(curl -fsS -c "$PANEL_SESSION_JAR" -H "Origin: $PANEL_URL" \
+        -H 'Content-Type: application/json' -d "$body" "$PANEL_URL/api/auth/login")" \
+        || die "登录请求失败，请检查面板地址"
+    PANEL_CSRF="$(printf '%s' "$response" | python3 -c '
+import json,sys
+r=json.load(sys.stdin)
+if r.get("code") != "OK": raise SystemExit(r.get("message") or r.get("code"))
+print(r["data"]["csrf_token"])
+')" || die "登录失败，请检查管理员凭据"
 }
 
 panel_save_tls() {
-    local mode="$1" domain="$2" field body code
+    local mode="$1" domain="$2" field body response
     case "$mode" in
         acme) field="acme_domain" ;;
         path) field="tls_domain" ;;
@@ -92,16 +99,22 @@ panel_save_tls() {
     esac
     body="$(python3 -c 'import json,sys; print(json.dumps({"tls_mode":sys.argv[1],sys.argv[2]:sys.argv[3]}))' \
         "$mode" "$field" "$domain")"
-    code="$(curl -s -o /dev/null -w '%{http_code}' -b "$PANEL_SESSION_JAR" \
-        -H 'Content-Type: application/json' -X PUT -d "$body" "$PANEL_URL/api/settings")"
-    [[ "$code" == "200" ]] || die "保存 TLS 设置失败（HTTP $code）"
+    response="$(curl -fsS -b "$PANEL_SESSION_JAR" -H "Origin: $PANEL_URL" \
+        -H "X-CSRF-Token: $PANEL_CSRF" -H "Idempotency-Key: $(openssl rand -hex 16)" \
+        -H 'Content-Type: application/json' -X POST -d "$body" "$PANEL_URL/api/setting/update")" \
+        || die "保存 TLS 设置请求失败"
+    [[ "$(printf '%s' "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("code",""))')" == "OK" ]] \
+        || die "保存 TLS 设置失败"
 }
 
 panel_restart() {
-    local code
-    code="$(curl -s -o /dev/null -w '%{http_code}' -b "$PANEL_SESSION_JAR" \
-        -X POST "$PANEL_URL/api/settings/restart")"
-    [[ "$code" == "202" ]] || die "重启请求失败（HTTP $code）"
+    local response
+    response="$(curl -fsS -b "$PANEL_SESSION_JAR" -H "Origin: $PANEL_URL" \
+        -H "X-CSRF-Token: $PANEL_CSRF" -H "Idempotency-Key: $(openssl rand -hex 16)" \
+        -H 'Content-Type: application/json' -X POST -d '{}' "$PANEL_URL/api/panel/restart")" \
+        || die "重启请求失败"
+    [[ "$(printf '%s' "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("code",""))')" == "ACCEPTED" ]] \
+        || die "重启请求失败"
 }
 
 wait_https() {
@@ -289,10 +302,10 @@ cmd_cert() {
 
     panel_login
     local settings tls_dir cert_dir acme
-    settings="$(curl -fsS -b "$PANEL_SESSION_JAR" "$PANEL_URL/api/settings")" \
+    settings="$(curl -fsS -b "$PANEL_SESSION_JAR" "$PANEL_URL/api/setting/get")" \
         || die "读取面板设置失败"
     tls_dir="$(printf '%s' "$settings" | python3 -c \
-        'import json,sys; print(json.load(sys.stdin).get("tls_dir", ""))')" \
+        'import json,sys; print(json.load(sys.stdin).get("data", {}).get("tls_dir", ""))')" \
         || die "解析面板证书目录失败"
     [[ -n "$tls_dir" && "$tls_dir" == /* ]] || die "面板返回的证书目录无效: $tls_dir"
     cert_dir="$tls_dir/$domain"

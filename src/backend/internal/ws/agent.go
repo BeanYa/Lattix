@@ -1,7 +1,10 @@
 package ws
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -35,8 +38,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 首帧必须是 hello（带超时）：token（bootstrap 或长期）、agent/xray 版本与运行状态。
 	conn.SetReadDeadline(time.Now().Add(helloTimeout))
 	var hello shared.Envelope
-	if err := conn.ReadJSON(&hello); err != nil || hello.Type != shared.TypeHello {
+	if err := readEnvelope(conn, &hello); err != nil ||
+		hello.Kind != shared.KindRequest || hello.Type != shared.TypeHello {
 		log.Printf("ws: first frame is not hello: %v", err)
+		h.protocolError(0, hello, "first frame must be agent.hello")
+		_ = conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(4002, "invalid protocol message"), time.Now().Add(writeTimeout))
 		conn.Close()
 		return
 	}
@@ -50,8 +57,11 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 
 	var hp shared.HelloPayload
-	if err := json.Unmarshal(hello.Payload, &hp); err != nil {
-		log.Printf("ws: bad hello payload: %v", err)
+	if err := strictUnmarshal(hello.Data, &hp); err != nil {
+		log.Printf("ws: bad hello data: %v", err)
+		h.protocolError(0, hello, "invalid agent.hello data")
+		_ = conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(4002, "invalid hello data"), time.Now().Add(writeTimeout))
 		conn.Close()
 		return
 	}
@@ -77,9 +87,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 回 HelloResult（与请求同 type、同 id 即响应帧），必须先于任何补发命令到达 agent。
 	c.send <- shared.Envelope{
-		ID:      hello.ID,
-		Type:    shared.TypeHello,
-		Payload: mustJSON(result),
+		Kind:      shared.KindResponse,
+		Type:      shared.TypeHello,
+		RequestID: hello.RequestID,
+		TraceID:   hello.TraceID,
+		Code:      shared.CodeOK,
+		Data:      mustJSON(result),
 	}
 	becameOnline := h.register(c)
 	log.Printf("agent connected: server=%d addr=%s xray=%s", serverID, r.RemoteAddr, hp.XrayVersion)
@@ -98,7 +111,11 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 	for {
 		var env shared.Envelope
-		if err := conn.ReadJSON(&env); err != nil {
+		if err := readEnvelope(conn, &env); err != nil {
+			log.Printf("ws: server %d invalid message: %v", serverID, err)
+			h.protocolError(serverID, env, "invalid protocol message")
+			_ = conn.WriteControl(websocket.CloseMessage,
+				websocket.FormatCloseMessage(4002, "invalid protocol message"), time.Now().Add(writeTimeout))
 			return
 		}
 		conn.SetReadDeadline(time.Now().Add(h.pongTimeout)) // 任何消息到达即续期
@@ -106,6 +123,50 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.OnMessage(serverID, env)
 		}
 	}
+}
+
+func (h *Hub) protocolError(serverID int64, env shared.Envelope, message string) {
+	if h.OnProtocolError == nil {
+		return
+	}
+	requestID := env.RequestID
+	if !shared.ValidMessageID(requestID) {
+		requestID = shared.NewMessageID()
+	}
+	traceID := env.TraceID
+	if !shared.ValidMessageID(traceID) {
+		traceID = requestID
+	}
+	h.OnProtocolError(serverID, requestID, traceID, env.Type, message)
+}
+
+func readEnvelope(conn *websocket.Conn, target *shared.Envelope) error {
+	messageType, data, err := conn.ReadMessage()
+	if err != nil {
+		return err
+	}
+	if messageType != websocket.TextMessage {
+		return errors.New("message must be a JSON text frame")
+	}
+	if err := strictUnmarshal(data, target); err != nil {
+		return err
+	}
+	return target.Validate()
+}
+
+func strictUnmarshal(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
 }
 
 // 确保 Hub 满足 http.Handler。

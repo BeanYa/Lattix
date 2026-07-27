@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"lattix/backend/internal/logging"
+	external "lattix/shared/requester"
 )
 
 // 更新阶段（panelUpdateStatus.Stage 取值）。
@@ -165,8 +166,9 @@ func (s *Server) handlePanelUpdateStart(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		Version string `json:"version"`
 	}
-	if r.Body != nil {
-		_ = readJSON(r, &req) // 空 body 合法（默认 latest）
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
 	}
 	u := s.upd
 	u.mu.Lock()
@@ -402,58 +404,19 @@ func (u *panelUpdater) run() {
 
 // httpGet 拉取 URL 全部内容（小文件：API 响应/latest.txt），非 200 报错。
 func httpGet(url string) (string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(url)
-	if err != nil {
-		return "", err
+	client := external.ExternalFileRequester{
+		Doer: &http.Client{Timeout: 30 * time.Second},
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s: HTTP %s", url, resp.Status)
-	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	return string(b), err
+	return client.GetText(context.Background(), url, 1<<20)
 }
 
 // downloadFile 下载 URL 到本地文件；onProgress 回调进度比例（0~1，Content-Length
 // 未知时不回调比例、由调用方按阶段估算）。整体 10 分钟超时。
 func downloadFile(url, path string, onProgress func(frac float64)) error {
-	client := &http.Client{Timeout: 10 * time.Minute}
-	resp, err := client.Get(url)
-	if err != nil {
-		return err
+	client := external.ExternalFileRequester{
+		Doer: &http.Client{Timeout: 10 * time.Minute},
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: HTTP %s", url, resp.Status)
-	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	total := resp.ContentLength
-	buf := make([]byte, 64*1024)
-	var done int64
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			if _, werr := f.Write(buf[:n]); werr != nil {
-				return werr
-			}
-			done += int64(n)
-			if onProgress != nil && total > 0 {
-				onProgress(float64(done) / float64(total))
-			}
-		}
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-	}
+	return client.Download(context.Background(), url, path, onProgress)
 }
 
 // verifyAsset 在 checksums.txt（sha256sum 标准格式）中查 asset 的期望值并校验文件。

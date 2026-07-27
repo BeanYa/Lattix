@@ -2,18 +2,23 @@
 package panel
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
+	"sync"
 
 	"lattix/backend/internal/alert"
 	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/ws"
+	"lattix/shared"
 )
 
 // Config 是面板运行配置。
@@ -37,21 +42,25 @@ type Config struct {
 type Server struct {
 	st      *store.Store
 	disp    *dispatch.Dispatcher
-	req     ws.Requester
+	req     ws.AgentRequester
 	cfg     Config
 	alerter *alert.Notifier
 	upd     *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
 	opLog   *logging.OperationStore
 	reqLog  *logging.RequestLog
+
+	routePolicies map[string]logging.LogPolicy
+	idempotencyMu sync.Mutex
 }
 
 // New 创建面板 API 服务。
-func New(st *store.Store, disp *dispatch.Dispatcher, req ws.Requester, cfg Config) (*Server, error) {
+func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg Config) (*Server, error) {
 	// 链编排器与单机节点共用同一份 dest 白名单（§6/§21）。
 	disp.DestCandidates = destCandidates
 	s := &Server{
 		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
+		routePolicies: make(map[string]logging.LogPolicy),
 	}
 	s.upd = newPanelUpdater(s)
 	return s, nil
@@ -59,57 +68,97 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.Requester, cfg Confi
 
 // RegisterRoutes 注册面板路由（管理 API 均需登录）。
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/login", s.handleLogin)
-	mux.HandleFunc("POST /api/logout", s.handleLogout)
-	mux.HandleFunc("GET /api/me", s.requireAuth(s.handleMe))
+	read := rpcRouteOptions{Auth: true}
+	polledRead := rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly}
+	write := rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true}
 
-	mux.HandleFunc("GET /api/dashboard", s.requireAuth(s.handleDashboard))
+	s.registerRPC(mux, http.MethodPost, "/api/auth/login",
+		rpcRouteOptions{SameOrigin: true}, s.handleLogin)
+	s.registerRPC(mux, http.MethodPost, "/api/auth/logout",
+		rpcRouteOptions{Auth: true, CSRF: true}, s.handleLogout)
+	s.registerRPC(mux, http.MethodGet, "/api/auth/me",
+		rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly}, s.handleMe)
 
-	mux.HandleFunc("GET /api/servers", s.requireAuth(s.handleListServers))
-	mux.HandleFunc("POST /api/servers", s.requireAuth(s.handleCreateServer))
-	mux.HandleFunc("POST /api/servers/{id}/rotate-token", s.requireAuth(s.handleRotateToken))
-	mux.HandleFunc("POST /api/servers/{id}/repair", s.requireAuth(s.handleRepairServer))
-	mux.HandleFunc("POST /api/servers/{id}/upgrade", s.requireAuth(s.handleUpgradeXray))
-	mux.HandleFunc("POST /api/servers/{id}/upgrade-agent", s.requireAuth(s.handleUpgradeAgent))
-	mux.HandleFunc("PATCH /api/servers/{id}", s.requireAuth(s.handleUpdateServer))
-	mux.HandleFunc("DELETE /api/servers/{id}", s.requireAuth(s.handleDeleteServer))
-	mux.HandleFunc("GET /api/servers/{id}/commands", s.requireAuth(s.handleListCommands))
+	s.registerRPC(mux, http.MethodGet, "/api/dashboard/get", polledRead, s.handleDashboard)
 
-	mux.HandleFunc("GET /api/nodes", s.requireAuth(s.handleListNodes))
-	mux.HandleFunc("POST /api/nodes", s.requireAuth(s.handleCreateNode))
-	mux.HandleFunc("POST /api/nodes/{id}/retry", s.requireAuth(s.handleRetryNode))
-	mux.HandleFunc("DELETE /api/nodes/{id}", s.requireAuth(s.handleDeleteNode))
+	s.registerRPC(mux, http.MethodGet, "/api/server/list", polledRead, s.handleListServers)
+	s.registerRPC(mux, http.MethodGet, "/api/server/list-commands",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"server_id", "limit"}},
+		s.handleListCommands)
+	s.registerRPC(mux, http.MethodPost, "/api/server/create", write, s.handleCreateServer)
+	s.registerRPC(mux, http.MethodPost, "/api/server/update",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id"}},
+		s.handleUpdateServer)
+	s.registerRPC(mux, http.MethodPost, "/api/server/delete",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id"}},
+		s.handleDeleteServer)
+	s.registerRPC(mux, http.MethodPost, "/api/server/rotate-token",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id"}},
+		s.handleRotateToken)
+	s.registerRPC(mux, http.MethodPost, "/api/server/repair",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id"}},
+		s.handleRepairServer)
+	s.registerRPC(mux, http.MethodPost, "/api/server/upgrade-xray",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id", "version"}},
+		s.handleUpgradeXray)
+	s.registerRPC(mux, http.MethodPost, "/api/server/upgrade-agent",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id", "version"}},
+		s.handleUpgradeAgent)
 
-	mux.HandleFunc("GET /api/chains", s.requireAuth(s.handleListChains))
-	mux.HandleFunc("POST /api/chains", s.requireAuth(s.handleCreateChain))
-	mux.HandleFunc("POST /api/chains/{id}/retry", s.requireAuth(s.handleRetryChain))
-	mux.HandleFunc("DELETE /api/chains/{id}", s.requireAuth(s.handleDeleteChain))
+	s.registerRPC(mux, http.MethodGet, "/api/node/list", read, s.handleListNodes)
+	s.registerRPC(mux, http.MethodPost, "/api/node/create", write, s.handleCreateNode)
+	s.registerRPC(mux, http.MethodPost, "/api/node/retry",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"node_id"}},
+		s.handleRetryNode)
+	s.registerRPC(mux, http.MethodPost, "/api/node/delete",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"node_id"}},
+		s.handleDeleteNode)
 
-	mux.HandleFunc("GET /api/users", s.requireAuth(s.handleListUsers))
-	mux.HandleFunc("POST /api/users", s.requireAuth(s.handleCreateUser))
-	mux.HandleFunc("PATCH /api/users/{id}", s.requireAuth(s.handleUpdateUser))
-	mux.HandleFunc("PUT /api/users/{id}/nodes", s.requireAuth(s.handleSetUserNodes))
-	mux.HandleFunc("DELETE /api/users/{id}", s.requireAuth(s.handleDeleteUser))
+	s.registerRPC(mux, http.MethodGet, "/api/chain/list", polledRead, s.handleListChains)
+	s.registerRPC(mux, http.MethodPost, "/api/chain/create", write, s.handleCreateChain)
+	s.registerRPC(mux, http.MethodPost, "/api/chain/retry",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"chain_id"}},
+		s.handleRetryChain)
+	s.registerRPC(mux, http.MethodPost, "/api/chain/delete",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"chain_id"}},
+		s.handleDeleteChain)
 
-	mux.HandleFunc("GET /api/settings", s.requireAuth(s.handleGetSettings))
-	mux.HandleFunc("PUT /api/settings", s.requireAuth(s.handleUpdateSettings))
-	mux.HandleFunc("PUT /api/settings/password", s.requireAuth(s.handleChangePassword))
-	mux.HandleFunc("POST /api/settings/restart", s.requireAuth(s.handleRestart))
-	mux.HandleFunc("POST /api/settings/alerts/test", s.requireAuth(s.handleTestAlerts))
+	s.registerRPC(mux, http.MethodGet, "/api/user/list", polledRead, s.handleListUsers)
+	s.registerRPC(mux, http.MethodPost, "/api/user/create", write, s.handleCreateUser)
+	s.registerRPC(mux, http.MethodPost, "/api/user/update",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
+		s.handleUpdateUser)
+	s.registerRPC(mux, http.MethodPost, "/api/user/set-nodes",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
+		s.handleSetUserNodes)
+	s.registerRPC(mux, http.MethodPost, "/api/user/delete",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
+		s.handleDeleteUser)
 
-	// 面板自更新（GitHub release 钉版）：版本检测 + 异步更新（进度轮询），
-	// 更新进行中 requireAuth 拒绝其余 API（423，见 auth.go 守卫）。
-	mux.HandleFunc("GET /api/panel/version", s.requireAuth(s.handlePanelVersion))
-	mux.HandleFunc("POST /api/panel/update", s.requireAuth(s.handlePanelUpdateStart))
-	mux.HandleFunc("GET /api/panel/update/status", s.requireAuth(s.handlePanelUpdateStatus))
+	s.registerRPC(mux, http.MethodGet, "/api/setting/get", read, s.handleGetSettings)
+	s.registerRPC(mux, http.MethodPost, "/api/setting/update", write, s.handleUpdateSettings)
+	s.registerRPC(mux, http.MethodPost, "/api/setting/change-password",
+		rpcRouteOptions{Auth: true, CSRF: true}, s.handleChangePassword)
+	s.registerRPC(mux, http.MethodPost, "/api/setting/test-alerts", write, s.handleTestAlerts)
 
-	mux.HandleFunc("GET /api/backup", s.requireAuth(s.handleBackup))
+	s.registerRPC(mux, http.MethodPost, "/api/panel/restart", write, s.handleRestart)
+	s.registerRPC(mux, http.MethodGet, "/api/panel/get-version", read, s.handlePanelVersion)
+	s.registerRPC(mux, http.MethodPost, "/api/panel/start-update", write, s.handlePanelUpdateStart)
+	s.registerRPC(mux, http.MethodGet, "/api/panel/get-update-status",
+		rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly}, s.handlePanelUpdateStatus)
 
-	mux.HandleFunc("GET /api/logs/operations", s.requireAuth(s.handleListOperationLog))
-	mux.HandleFunc("DELETE /api/logs/operations", s.requireAuth(s.handleClearOperationLog))
-	mux.HandleFunc("GET /api/logs/requests", s.requireAuth(s.handleListRequestLog))
-	mux.HandleFunc("DELETE /api/logs/requests", s.requireAuth(s.handleClearRequestLog))
+	s.registerRPC(mux, http.MethodGet, "/api/backup/download", read, s.handleBackup)
 
+	logRead := rpcRouteOptions{
+		Auth: true, LogPolicy: logging.LogNone,
+		AllowedQuery: []string{"severity", "category", "server_id", "operator", "q", "from", "to", "limit", "offset"},
+	}
+	s.registerRPC(mux, http.MethodGet, "/api/log/list-operations", logRead, s.handleListOperationLog)
+	s.registerRPC(mux, http.MethodGet, "/api/log/list-requests",
+		rpcRouteOptions{Auth: true, LogPolicy: logging.LogNone, AllowedQuery: []string{"limit"}},
+		s.handleListRequestLog)
+	s.registerRPC(mux, http.MethodPost, "/api/log/clear-operations", write, s.handleClearOperationLog)
+	s.registerRPC(mux, http.MethodPost, "/api/log/clear-requests", write, s.handleClearRequestLog)
 }
 
 // Operator 返回当前请求对应的管理员名称，供外层请求日志中间件记录。
@@ -143,18 +192,111 @@ func (s *Server) isSecure(r *http.Request) bool {
 		strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
-func writeJSON(w http.ResponseWriter, code int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(v)
+type rpcResponse struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Data      any    `json:"data"`
+	RequestID string `json:"request_id"`
+	TraceID   string `json:"trace_id"`
 }
 
-func writeError(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, map[string]string{"error": msg})
+type rpcResponseWriter interface {
+	SetRPCOutcome(code, safeMessage string)
+	RPCIDs() (requestID, traceID string)
+}
+
+func writeJSON(w http.ResponseWriter, legacyCode int, data any) {
+	code := shared.CodeOK
+	if legacyCode == http.StatusAccepted {
+		code = shared.CodeAccepted
+	}
+	writeRPC(w, code, "", data)
+}
+
+func writeRPC(w http.ResponseWriter, code, message string, data any) {
+	requestID, traceID := "", ""
+	if rw, ok := w.(rpcResponseWriter); ok {
+		rw.SetRPCOutcome(code, message)
+		requestID, traceID = rw.RPCIDs()
+	}
+	if requestID == "" {
+		requestID = shared.NewMessageID()
+	}
+	if traceID == "" {
+		traceID = requestID
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(rpcResponse{
+		Code: code, Message: message, Data: data, RequestID: requestID, TraceID: traceID,
+	})
+}
+
+func writeError(w http.ResponseWriter, legacyCode int, msg string) {
+	writeRPC(w, rpcCodeForLegacyStatus(legacyCode), msg, nil)
 }
 
 func readJSON(r *http.Request, v any) error {
-	return json.NewDecoder(r.Body).Decode(v)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func writeProtocolError(w http.ResponseWriter, status int, message string) {
+	requestID, traceID := "", ""
+	if rw, ok := w.(rpcResponseWriter); ok {
+		requestID, traceID = rw.RPCIDs()
+	}
+	w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(rpcResponse{
+		Code:      fmt.Sprintf("HTTP_%d", status),
+		Message:   message,
+		Data:      nil,
+		RequestID: requestID,
+		TraceID:   traceID,
+	})
+}
+
+func rpcCodeForLegacyStatus(status int) string {
+	switch status {
+	case http.StatusUnauthorized:
+		return shared.CodeAuthRequired
+	case http.StatusForbidden:
+		return shared.CodeAuthInvalidCredentials
+	case http.StatusNotFound:
+		return shared.CodeNotFound
+	case http.StatusConflict:
+		return shared.CodeConflict
+	case http.StatusLocked:
+		return shared.CodeOperationLocked
+	case http.StatusBadGateway:
+		return shared.CodeUpstreamError
+	case http.StatusServiceUnavailable:
+		return shared.CodeServiceUnavailable
+	case http.StatusInternalServerError:
+		return shared.CodeInternalError
+	default:
+		return shared.CodeInvalidArgument
+	}
+}
+
+func decodeStrictJSON(data []byte, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	return nil
 }
 
 // randomHex 生成 n 字节随机十六进制串（bootstrap token、sub_token、short_id 等）。

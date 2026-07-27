@@ -9,8 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"strconv"
 	"sync"
+	"time"
 
 	"lattix/backend/internal/alert"
 	"lattix/backend/internal/logging"
@@ -22,13 +22,12 @@ import (
 // Dispatcher 串联 store 与 Requester。
 type Dispatcher struct {
 	st  *store.Store
-	req ws.Requester
-
-	panelVersion string // 面板自身版本（构建注入），hello 兼容窗口判定用
+	req ws.AgentRequester
 
 	// Alerter 事件告警（§19）：nil = 关闭；仅状态跃迁时调用，发送方自行防抖动。
 	Alerter      *alert.Notifier
 	OperationLog *logging.OperationStore
+	RequestLog   *logging.RequestLog
 
 	// DestCandidates 是面板内置的 dest 白名单（§6 预检 fallback）：链编排下发
 	// apply_node/portal 时携带（panel 初始化时注入，与单机节点同一份）。
@@ -39,18 +38,22 @@ type Dispatcher struct {
 }
 
 // New 创建 Dispatcher。
-func New(st *store.Store, req ws.Requester, panelVersion string) *Dispatcher {
-	return &Dispatcher{st: st, req: req, panelVersion: panelVersion, flushMu: make(map[int64]*sync.Mutex)}
+func New(st *store.Store, req ws.AgentRequester) *Dispatcher {
+	return &Dispatcher{st: st, req: req, flushMu: make(map[int64]*sync.Mutex)}
 }
 
 // Enqueue 将命令写入 commands 表（queued）并尽力立即投递；离线则滞留，待重连补发（§2）。
-// Envelope.ID 即 commands.id（字符串化），用于请求/响应关联。
 func (d *Dispatcher) Enqueue(ctx context.Context, serverID int64, typ string, payload any) (int64, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return 0, fmt.Errorf("marshal payload: %w", err)
 	}
-	id, err := d.st.EnqueueCommand(ctx, serverID, typ, raw)
+	requestID := shared.NewMessageID()
+	traceID := logging.TraceID(ctx)
+	if traceID == "" {
+		traceID = shared.NewMessageID()
+	}
+	id, err := d.st.EnqueueCommand(ctx, requestID, traceID, serverID, typ, raw)
 	if err != nil {
 		return 0, err
 	}
@@ -63,26 +66,17 @@ const maxCommandAttempts = 10
 
 // Flush 投递该服务器全部待发命令；agent 离线时停止并滞留（§2 离线排队）。
 // attempts 超过 maxCommandAttempts 的命令标记 failed（死信），不再重发。
-// agent 落后出兼容窗口（upgrade_needed）时仅放行 upgrade_agent / uninstall，
-// 其余命令滞留 queued，待 agent 升级后随正常 Flush 补发。
 func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 	lock := d.serverLock(serverID)
 	lock.Lock()
 	defer lock.Unlock()
 
-	upgradeOnly := false
-	if srv, err := d.st.ServerByID(ctx, serverID); err == nil && srv.UpgradeNeeded {
-		upgradeOnly = true
-	}
 	cmds, err := d.st.QueuedCommands(ctx, serverID)
 	if err != nil {
 		log.Printf("dispatch: flush server %d: %v", serverID, err)
 		return
 	}
 	for _, c := range cmds {
-		if upgradeOnly && c.Type != shared.TypeUpgradeAgent && c.Type != shared.TypeUninstall {
-			continue // 兼容窗口外：常规命令滞留，待 agent 升级后补发
-		}
 		if c.Attempts >= maxCommandAttempts {
 			log.Printf("dispatch: command %d dead-lettered after %d attempts", c.ID, c.Attempts)
 			if err := d.st.DeadLetterCommand(ctx, c.ID); err != nil {
@@ -96,7 +90,7 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 			// apply_node 死信：节点不能永远卡 applying，置 failed 供管理员重试（§6）。
 			if c.Type == shared.TypeApplyNode {
 				var p shared.ApplyNodePayload
-				if err := json.Unmarshal(c.Payload, &p); err == nil && p.NodeID != 0 {
+				if err := json.Unmarshal(c.Data, &p); err == nil && p.NodeID != 0 {
 					reason := fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts)
 					if err := d.st.SetNodeFailed(ctx, p.NodeID, reason); err != nil {
 						log.Printf("dispatch: dead-letter node %d failed: %v", p.NodeID, err)
@@ -108,7 +102,7 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 			// apply_chain_hop 死信：跳置 failed，链 failed 定位到跳（§21）。
 			if c.Type == shared.TypeApplyChainHop {
 				var p shared.ApplyChainHopPayload
-				if err := json.Unmarshal(c.Payload, &p); err == nil && p.HopID != 0 {
+				if err := json.Unmarshal(c.Data, &p); err == nil && p.HopID != 0 {
 					reason := fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts)
 					if hop, err := d.st.ChainHopByID(ctx, p.HopID); err == nil {
 						d.failHop(ctx, hop, reason)
@@ -118,9 +112,11 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 			continue
 		}
 		env := shared.Envelope{
-			ID:      strconv.FormatInt(c.ID, 10),
-			Type:    c.Type,
-			Payload: c.Payload,
+			Kind:      shared.KindRequest,
+			Type:      c.Type,
+			RequestID: c.RequestID,
+			TraceID:   c.TraceID,
+			Data:      c.Data,
 		}
 		if err := d.req.Send(ctx, serverID, env); err != nil {
 			return // 离线：剩余命令滞留 queued，待重连补发
@@ -139,15 +135,6 @@ func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayloa
 	if err != nil {
 		return 0, shared.HelloResult{}, fmt.Errorf("unknown token")
 	}
-	// 兼容窗口（§18）：主版本不一致拒绝连接；落后超窗口置 upgrade_needed 标志。
-	if reason, needed := evaluateAgentVersion(d.panelVersion, p.AgentVersion); reason != "" {
-		return 0, shared.HelloResult{}, fmt.Errorf("%s", reason)
-	} else if err := d.st.SetServerUpgradeNeeded(ctx, srv.ID, needed); err != nil {
-		log.Printf("dispatch: set upgrade_needed server %d: %v", srv.ID, err)
-	} else if needed {
-		log.Printf("dispatch: server %d agent %s 落后面板 %s 超出兼容窗口，仅放行升级/卸载命令",
-			srv.ID, p.AgentVersion, d.panelVersion)
-	}
 	token := srv.Token
 	if srv.LastSeenAt == nil {
 		// bootstrap 状态：换发长期凭证（bootstrap 失效）。
@@ -163,7 +150,7 @@ func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayloa
 	if srv.Address != "" {
 		remoteAddr = srv.Address
 	}
-	// 网卡地址候选（§9）：agent 上报时持久化（旧版 agent 不上报则保留旧值）。
+	// 网卡地址候选（§9）：agent 上报非空列表时持久化。
 	var nicAddrs string
 	if len(p.NICAddresses) > 0 {
 		if b, err := json.Marshal(p.NICAddresses); err == nil {
@@ -187,15 +174,22 @@ func (d *Dispatcher) OnAgentConnect(ctx context.Context, serverID int64) {
 
 // HandleMessage 处理 agent 上行业务信封（注入 ws.Hub.OnMessage）。
 func (d *Dispatcher) HandleMessage(serverID int64, env shared.Envelope) {
-	switch env.Type {
-	case shared.TypeApplyResult:
-		d.handleApplyResult(serverID, env)
-	case shared.TypeTelemetry:
-		d.handleTelemetry(serverID, env)
-	case shared.TypeDriftReport:
-		d.handleDriftReport(serverID, env)
+	switch env.Kind {
+	case shared.KindResponse:
+		d.handleCommandResponse(serverID, env)
+	case shared.KindEvent:
+		switch env.Type {
+		case shared.TypeTelemetry:
+			d.handleTelemetry(serverID, env)
+		case shared.TypeDriftReport:
+			d.handleDriftReport(serverID, env)
+		default:
+			log.Printf("dispatch: server %d: ignore event type=%s request_id=%s",
+				serverID, env.Type, env.RequestID)
+		}
 	default:
-		log.Printf("dispatch: server %d: ignore message type=%s id=%s", serverID, env.Type, env.ID)
+		log.Printf("dispatch: server %d: ignore kind=%s type=%s request_id=%s",
+			serverID, env.Kind, env.Type, env.RequestID)
 	}
 }
 
@@ -203,8 +197,8 @@ func (d *Dispatcher) HandleMessage(serverID int64, env shared.Envelope) {
 func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 	ctx := context.Background()
 	var p shared.TelemetryPayload
-	if err := json.Unmarshal(env.Payload, &p); err != nil {
-		log.Printf("dispatch: server %d: bad telemetry payload: %v", serverID, err)
+	if err := json.Unmarshal(env.Data, &p); err != nil {
+		log.Printf("dispatch: server %d: bad telemetry data: %v", serverID, err)
 		return
 	}
 	if p.XrayVersion != "" {
@@ -238,8 +232,8 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 // handleDriftReport 落库配置漂移状态（§17 reconcile，仅在变化时上报）。
 func (d *Dispatcher) handleDriftReport(serverID int64, env shared.Envelope) {
 	var p shared.DriftPayload
-	if err := json.Unmarshal(env.Payload, &p); err != nil {
-		log.Printf("dispatch: server %d: bad drift payload: %v", serverID, err)
+	if err := json.Unmarshal(env.Data, &p); err != nil {
+		log.Printf("dispatch: server %d: bad drift data: %v", serverID, err)
 		return
 	}
 	if err := d.st.SetServerDrift(context.Background(), serverID, p.Drifted); err != nil {
@@ -254,40 +248,43 @@ func (d *Dispatcher) handleDriftReport(serverID int64, env shared.Envelope) {
 		d.recordOperation(logging.OperationEvent{
 			Severity: logging.SeverityWarning, Category: logging.CategoryServer,
 			Action: "server.config_drift_detected", ServerID: &serverID,
-			Detail: "xray 配置被外部修改，待管理员修复",
+			Detail:    "xray 配置被外部修改，待管理员修复",
+			RequestID: env.RequestID, TraceID: env.TraceID,
 		})
 	} else {
 		d.recordOperation(logging.OperationEvent{
 			Severity: logging.SeverityInfo, Category: logging.CategoryServer,
 			Action: "server.config_drift_cleared", ServerID: &serverID,
+			RequestID: env.RequestID, TraceID: env.TraceID,
 		})
 	}
 }
 
-// handleApplyResult 回写命令状态与节点状态机（§6）：成功 acked/active，失败 failed。
-func (d *Dispatcher) handleApplyResult(serverID int64, env shared.Envelope) {
+// handleCommandResponse 回写命令状态与节点状态机：成功 acked/active，失败 failed。
+func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) {
 	ctx := context.Background()
 	var p shared.ApplyResultPayload
-	if err := json.Unmarshal(env.Payload, &p); err != nil {
-		log.Printf("dispatch: server %d: bad apply_result payload: %v", serverID, err)
-		return
-	}
-	cmdID, err := strconv.ParseInt(env.ID, 10, 64)
-	if err != nil {
-		log.Printf("dispatch: server %d: bad apply_result id %q: %v", serverID, env.ID, err)
+	if err := json.Unmarshal(env.Data, &p); err != nil {
+		log.Printf("dispatch: server %d: bad response data: %v", serverID, err)
 		return
 	}
 	// 归属校验：只接受命令所属服务器的回执，防跨服务器伪造/串线（§5）。
-	cmd, err := d.st.CommandByID(ctx, cmdID)
+	cmd, err := d.st.CommandByRequestID(ctx, env.RequestID)
 	if err != nil {
-		log.Printf("dispatch: server %d: apply_result for unknown command %d: %v", serverID, cmdID, err)
+		log.Printf("dispatch: server %d: response for unknown request %s: %v", serverID, env.RequestID, err)
 		return
 	}
+	cmdID := cmd.ID
 	if cmd.ServerID != serverID {
-		log.Printf("dispatch: server %d: apply_result for command %d owned by server %d, ignored", serverID, cmdID, cmd.ServerID)
+		log.Printf("dispatch: server %d: response for command %d owned by server %d, ignored", serverID, cmdID, cmd.ServerID)
 		return
 	}
-	if p.OK {
+	if env.Type != cmd.Type || env.TraceID != cmd.TraceID {
+		log.Printf("dispatch: server %d: response correlation mismatch command=%d", serverID, cmdID)
+		return
+	}
+	d.logWebSocketRPC(serverID, *cmd, env)
+	if env.Code == shared.CodeOK || env.Code == shared.CodeAccepted {
 		// 仅 sent → acked；死信后迟到的 ack 不得翻回终态，也不得触碰节点状态机。
 		acked, err := d.st.MarkCommandAcked(ctx, cmdID)
 		if err != nil {
@@ -295,17 +292,18 @@ func (d *Dispatcher) handleApplyResult(serverID int64, env shared.Envelope) {
 			return
 		}
 		if !acked {
-			log.Printf("dispatch: server %d: apply_result for command %d not in sent state, ignored", serverID, cmdID)
+			log.Printf("dispatch: server %d: response for command %d not in sent state, ignored", serverID, cmdID)
 			return
 		}
 		d.recordOperation(logging.OperationEvent{
 			Severity: logging.SeverityInfo, Category: logging.CategoryCommand,
 			Action: "command.succeeded", ServerID: &serverID, NodeID: optionalID(p.NodeID),
-			Detail: map[string]any{"command_id": cmdID, "type": cmd.Type, "hop_id": p.HopID},
+			Detail:    map[string]any{"command_id": cmdID, "type": cmd.Type, "hop_id": p.HopID},
+			RequestID: env.RequestID, TraceID: env.TraceID,
 		})
 		// 链跳配置件回执（§21）：路由到链编排器，不触碰节点状态机。
 		if p.HopID != 0 {
-			d.handleChainHopResult(serverID, p)
+			d.handleChainHopResult(serverID, p, "")
 			return
 		}
 		realized, _ := json.Marshal(p.RealizedConfig)
@@ -320,36 +318,65 @@ func (d *Dispatcher) handleApplyResult(serverID int64, env shared.Envelope) {
 			log.Printf("dispatch: server %d: command %d acked", serverID, cmdID)
 		}
 	} else {
-		failed, err := d.st.MarkCommandFailedWithError(ctx, cmdID, p.Error)
+		errorMessage := env.Message
+		if errorMessage == "" {
+			errorMessage = env.Code
+		}
+		failed, err := d.st.MarkCommandFailedWithError(ctx, cmdID, errorMessage)
 		if err != nil {
 			log.Printf("dispatch: fail command %d: %v", cmdID, err)
 			return
 		}
 		if !failed {
-			log.Printf("dispatch: server %d: apply_result for command %d not in sent state, ignored", serverID, cmdID)
+			log.Printf("dispatch: server %d: response for command %d not in sent state, ignored", serverID, cmdID)
 			return
 		}
 		d.recordOperation(logging.OperationEvent{
 			Severity: logging.SeverityError, Category: logging.CategoryCommand,
 			Action: "command.failed", ServerID: &serverID, NodeID: optionalID(p.NodeID),
-			Detail: map[string]any{"command_id": cmdID, "type": cmd.Type, "hop_id": p.HopID, "error": p.Error},
+			Detail:    map[string]any{"command_id": cmdID, "type": cmd.Type, "hop_id": p.HopID, "error": errorMessage},
+			RequestID: env.RequestID, TraceID: env.TraceID,
 		})
 		// 链跳配置件回执（§21）：路由到链编排器（失败定位到跳，链置 failed）。
 		if p.HopID != 0 {
-			d.handleChainHopResult(serverID, p)
+			d.handleChainHopResult(serverID, p, errorMessage)
 			return
 		}
 		if p.NodeID != 0 {
-			if err := d.st.SetNodeFailed(ctx, p.NodeID, p.Error); err != nil {
+			if err := d.st.SetNodeFailed(ctx, p.NodeID, errorMessage); err != nil {
 				log.Printf("dispatch: node %d failed: %v", p.NodeID, err)
 			}
-			log.Printf("dispatch: server %d: node %d failed (command %d): %s", serverID, p.NodeID, cmdID, p.Error)
-			d.alertNodeFailed(serverID, p.NodeID, p.Error)
-			d.failChainByNode(ctx, p.NodeID, p.Error) // 链出口业务失败 → 链 failed 定位到跳（§21）
+			log.Printf("dispatch: server %d: node %d failed (command %d): %s", serverID, p.NodeID, cmdID, errorMessage)
+			d.alertNodeFailed(serverID, p.NodeID, errorMessage)
+			d.failChainByNode(ctx, p.NodeID, errorMessage) // 链出口业务失败 → 链 failed 定位到跳（§21）
 		} else {
-			log.Printf("dispatch: server %d: command %d failed: %s", serverID, cmdID, p.Error)
+			log.Printf("dispatch: server %d: command %d failed: %s", serverID, cmdID, errorMessage)
 		}
 	}
+}
+
+func (d *Dispatcher) logWebSocketRPC(serverID int64, cmd store.Command, env shared.Envelope) {
+	if d.RequestLog == nil {
+		return
+	}
+	duration := int64(0)
+	if cmd.UpdatedAt != "" {
+		if sentAt, err := time.Parse("2006-01-02 15:04:05", cmd.UpdatedAt); err == nil {
+			duration = time.Since(sentAt).Milliseconds()
+		}
+	}
+	logging.LogWebSocketRPC(d.RequestLog, logging.RequestEntry{
+		RequestID:  env.RequestID,
+		TraceID:    env.TraceID,
+		RPCType:    env.Type,
+		RPCCode:    env.Code,
+		DurationMS: duration,
+		Attributes: map[string]string{
+			"server_id":  fmt.Sprintf("%d", serverID),
+			"command_id": fmt.Sprintf("%d", cmd.ID),
+		},
+		ErrorSummary: env.Message,
+	})
 }
 
 // alertNodeFailed 上报节点置 failed 事件（§19）：apply_result 失败与死信两条路径共用。

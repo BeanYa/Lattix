@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -110,7 +109,7 @@ type chainHopRef struct {
 func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	var req createChainRequest
 	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -258,8 +257,15 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 
 // handleRetryChain 处理 POST /api/chains/{id}/retry：只重放失败 piece（§21）。
 func (s *Server) handleRetryChain(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	var req struct {
+		ChainID int64 `json:"chain_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.ChainID
+	if id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid chain id")
 		return
 	}
@@ -288,8 +294,15 @@ func (s *Server) handleRetryChain(w http.ResponseWriter, r *http.Request) {
 // handleDeleteChain 处理 DELETE /api/chains/{id}：反向拆链（§21）——
 // 入口→出口逐跳下发 remove_chain_hop（离线留队列补发），出口业务节点走现有删除流程，最后删行。
 func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	var req struct {
+		ChainID int64 `json:"chain_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.ChainID
+	if id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid chain id")
 		return
 	}
@@ -332,7 +345,7 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "chain.delete", nil, nil, map[string]any{"chain_id": id, "hops": len(hops)})
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, nil)
 }
 
 // inboundCapable 报告服务器是否有入站能力（§21：direct 或 NAT 受限直连）。

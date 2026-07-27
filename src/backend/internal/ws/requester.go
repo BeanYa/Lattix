@@ -12,9 +12,8 @@ import (
 // ErrOffline 表示目标服务器当前不在线（无 WS 连接，§5 在线状态由连接存在性推导）。
 var ErrOffline = errors.New("ws: agent offline")
 
-// Requester 隔离"发送命令"与"具体传输"（§2）。MVP 仅 WebSocket 一个实现（Hub），
-// gRPC/HTTP 等其他实现属后续迭代。
-type Requester interface {
+// AgentRequester 描述 Backend 通过 WebSocket 向 Agent 发起 RPC 的能力。
+type AgentRequester interface {
 	// Send 向指定服务器投递一个信封；不在线时返回 ErrOffline。
 	Send(ctx context.Context, serverID int64, env shared.Envelope) error
 	// IsOnline 报告服务器当前是否有活跃连接。

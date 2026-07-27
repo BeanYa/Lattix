@@ -22,20 +22,25 @@ const (
 )
 
 type RequestEntry struct {
-	Timestamp     time.Time         `json:"timestamp"`
-	RequestID     string            `json:"request_id"`
-	Severity      Severity          `json:"severity"`
-	Method        string            `json:"method"`
-	Path          string            `json:"path"`
-	Route         string            `json:"route"`
-	Params        map[string]string `json:"params,omitempty"`
-	Status        int               `json:"status"`
-	DurationMS    int64             `json:"duration_ms"`
-	ResponseBytes int64             `json:"response_bytes"`
-	Operator      string            `json:"operator,omitempty"`
-	IP            string            `json:"ip,omitempty"`
-	UserAgent     string            `json:"user_agent,omitempty"`
-	ErrorSummary  string            `json:"error_summary,omitempty"`
+	Timestamp           time.Time         `json:"timestamp"`
+	RequestID           string            `json:"request_id"`
+	TraceID             string            `json:"trace_id"`
+	Severity            Severity          `json:"severity"`
+	Transport           string            `json:"transport"`
+	Method              string            `json:"method,omitempty"`
+	Path                string            `json:"path,omitempty"`
+	Route               string            `json:"route,omitempty"`
+	RPCType             string            `json:"rpc_type,omitempty"`
+	Attributes          map[string]string `json:"attributes,omitempty"`
+	HTTPStatus          int               `json:"http_status,omitempty"`
+	RPCCode             string            `json:"rpc_code,omitempty"`
+	DurationMS          int64             `json:"duration_ms"`
+	ResponseBytes       int64             `json:"response_bytes"`
+	Operator            string            `json:"operator,omitempty"`
+	IP                  string            `json:"ip,omitempty"`
+	UserAgent           string            `json:"user_agent,omitempty"`
+	ErrorSummary        string            `json:"error_summary,omitempty"`
+	IdempotencyReplayed bool              `json:"idempotency_replayed,omitempty"`
 }
 
 type RequestLogStatus struct {

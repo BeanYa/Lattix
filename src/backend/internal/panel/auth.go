@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"lattix/backend/internal/logging"
+	"lattix/shared"
 )
 
 // sessionTTL 是登录会话有效期。
@@ -69,7 +71,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Password string `json:"password"`
 	}
 	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Username != s.cfg.AdminUser || !s.checkPassword(req.Password) {
@@ -77,15 +79,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			Severity: logging.SeverityWarning, Category: logging.CategoryAuth,
 			Action: "auth.login_failed", Detail: map[string]string{"username": req.Username},
 			Operator: req.Username, IP: logging.ClientIP(r), RequestID: logging.RequestID(r.Context()),
+			TraceID: logging.TraceID(r.Context()),
 		}); err != nil {
 			log.Printf("panel: record login_failed event: %v", err)
 		}
-		writeError(w, http.StatusUnauthorized, "用户名或密码错误")
+		writeRPC(w, shared.CodeAuthInvalidCredentials, "用户名或密码错误", nil)
 		return
 	}
+	sessionValue := s.signSession(req.Username, time.Now().Add(sessionTTL))
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
-		Value:    s.signSession(req.Username, time.Now().Add(sessionTTL)),
+		Value:    sessionValue,
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   s.isSecure(r), // HTTPS（含反代）下仅限加密通道回传
@@ -95,14 +99,21 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err := s.recordOperation(r.Context(), logging.OperationEvent{
 		Severity: logging.SeverityInfo, Category: logging.CategoryAuth, Action: "auth.login",
 		Operator: req.Username, IP: logging.ClientIP(r), RequestID: logging.RequestID(r.Context()),
+		TraceID: logging.TraceID(r.Context()),
 	}); err != nil {
 		log.Printf("panel: record login event: %v", err)
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"username": req.Username})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"username": req.Username, "csrf_token": s.csrfForSession(sessionValue),
+	})
 }
 
 // handleLogout 处理 POST /api/logout：清除会话 cookie。
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if err := readJSON(r, &struct{}{}); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 	s.audit(r, "auth.logout", nil, nil, nil)
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
@@ -111,13 +122,16 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		MaxAge:   -1,
 	})
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, nil)
 }
 
 // handleMe 处理 GET /api/me：返回当前登录用户（前端判定登录态）。
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, _ := s.currentUser(r)
-	writeJSON(w, http.StatusOK, map[string]string{"username": user})
+	cookie, _ := r.Cookie(sessionCookie)
+	writeJSON(w, http.StatusOK, map[string]string{
+		"username": user, "csrf_token": s.csrfForSession(cookie.Value),
+	})
 }
 
 // currentUser 从请求 cookie 解析当前用户。
@@ -135,12 +149,54 @@ func (s *Server) currentUser(r *http.Request) (string, bool) {
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := s.currentUser(r); !ok {
-			writeError(w, http.StatusUnauthorized, "未登录或会话已过期")
+			writeRPC(w, shared.CodeAuthRequired, "未登录或会话已过期", nil)
 			return
 		}
 		if s.upd != nil && s.upd.running() &&
-			r.URL.Path != "/api/panel/update/status" && r.URL.Path != "/api/me" {
-			writeError(w, http.StatusLocked, "面板更新进行中，请稍候")
+			r.URL.Path != "/api/panel/get-update-status" && r.URL.Path != "/api/auth/me" {
+			writeRPC(w, shared.CodeUpdateInProgress, "面板更新进行中，请稍候", nil)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (s *Server) csrfForSession(sessionValue string) string {
+	mac := hmac.New(sha256.New, s.sessionSecret())
+	_, _ = mac.Write([]byte("csrf|" + sessionValue))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (s *Server) requireCSRF(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(sessionCookie)
+		if err != nil {
+			writeRPC(w, shared.CodeAuthRequired, "未登录或会话已过期", nil)
+			return
+		}
+		expected := s.csrfForSession(cookie.Value)
+		actual := r.Header.Get("X-CSRF-Token")
+		if actual == "" || !hmac.Equal([]byte(expected), []byte(actual)) {
+			writeRPC(w, shared.CodeAuthRequired, "CSRF token 无效", nil)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (s *Server) requireSameOrigin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		raw := r.Header.Get("Origin")
+		if raw == "" {
+			raw = r.Referer()
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Host == "" || !strings.EqualFold(parsed.Host, r.Host) {
+			writeRPC(w, shared.CodeAuthRequired, "请求来源校验失败", nil)
+			return
+		}
+		if s.isSecure(r) && parsed.Scheme != "https" {
+			writeRPC(w, shared.CodeAuthRequired, "请求来源校验失败", nil)
 			return
 		}
 		next(w, r)

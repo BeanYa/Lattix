@@ -19,7 +19,13 @@ CREATE TABLE IF NOT EXISTS servers (
     token        TEXT    NOT NULL UNIQUE, -- 长期凭证
     last_seen_at DATETIME,
     xray_version TEXT,
+    config_drift INTEGER NOT NULL DEFAULT 0,
+    agent_version TEXT,
     address      TEXT    NOT NULL DEFAULT '', -- 公网地址：管理员填写，留空按 agent 拨入 RemoteAddr 学习（§4/§9）
+    learned_addr TEXT    NOT NULL DEFAULT '',
+    nic_addresses TEXT   NOT NULL DEFAULT '', -- JSON 字符串数组
+    machine_type TEXT    NOT NULL DEFAULT 'direct', -- direct|nat
+    allowed_ports TEXT   NOT NULL DEFAULT '', -- JSON NAT 端口映射范围
     tags         TEXT    NOT NULL DEFAULT '', -- JSON 字符串数组；名称模板 {{TAG_n}} 的来源
     country_code TEXT    NOT NULL DEFAULT '', -- ISO 3166-1 alpha-2；名称模板国家/国旗来源
     location     TEXT    NOT NULL DEFAULT '', -- 管理员填写的城市/机房位置
@@ -31,6 +37,9 @@ CREATE TABLE IF NOT EXISTS users (
     name       TEXT    NOT NULL,
     uuid       TEXT    NOT NULL UNIQUE, -- 同一用户跨所有服务器使用同一 UUID（§7）
     sub_token  TEXT    NOT NULL UNIQUE,
+    expires_at INTEGER,
+    expired    INTEGER NOT NULL DEFAULT 0,
+    disabled   INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -48,16 +57,29 @@ CREATE TABLE IF NOT EXISTS nodes (
 );
 
 CREATE TABLE IF NOT EXISTS commands (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    server_id  INTEGER NOT NULL REFERENCES servers(id),
-    type       TEXT    NOT NULL,
-    payload    TEXT    NOT NULL, -- JSON
-    status     TEXT    NOT NULL DEFAULT 'queued', -- queued/sent/acked/failed
-    error      TEXT    NOT NULL DEFAULT '', -- 失败原因（apply_result.error / 死信说明）
-    attempts   INTEGER NOT NULL DEFAULT 0,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id  TEXT    NOT NULL UNIQUE,
+    trace_id    TEXT    NOT NULL,
+    server_id   INTEGER NOT NULL REFERENCES servers(id),
+    type        TEXT    NOT NULL,
+    data        TEXT    NOT NULL, -- JSON
+    status      TEXT    NOT NULL DEFAULT 'queued', -- queued/sent/acked/failed
+    error       TEXT    NOT NULL DEFAULT '',
+    attempts    INTEGER NOT NULL DEFAULT 0,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS rpc_idempotency (
+    operator      TEXT NOT NULL,
+    route         TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_hash  TEXT NOT NULL,
+    response_json TEXT NOT NULL,
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (operator, route, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_rpc_idempotency_created_at ON rpc_idempotency(created_at);
 
 -- 用户-节点关联（§16 逐节点用户分配，默认全关）：无关联即无访问权。
 CREATE TABLE IF NOT EXISTS user_nodes (
@@ -93,11 +115,40 @@ CREATE TABLE IF NOT EXISTS traffic (
     UNIQUE (node_id, user_uuid)
 );
 
+CREATE TABLE IF NOT EXISTS chains (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL DEFAULT '',
+    status     TEXT    NOT NULL DEFAULT 'pending',
+    error      TEXT    NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS chain_hops (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain_id           INTEGER NOT NULL REFERENCES chains(id),
+    seq                INTEGER NOT NULL,
+    server_id          INTEGER NOT NULL REFERENCES servers(id),
+    role               TEXT    NOT NULL,
+    node_id            INTEGER NOT NULL DEFAULT 0,
+    status             TEXT    NOT NULL DEFAULT 'pending',
+    error              TEXT    NOT NULL DEFAULT '',
+    forward_port       INTEGER NOT NULL DEFAULT 0,
+    portal_port        INTEGER NOT NULL DEFAULT 0,
+    portal_public_key  TEXT    NOT NULL DEFAULT '',
+    portal_server_name TEXT    NOT NULL DEFAULT '',
+    tunnel_uuid        TEXT    NOT NULL DEFAULT '',
+    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 `
 
 // Store 封装 SQLite 数据访问。
 type Store struct {
 	db *sql.DB
+}
+
+func (s *Store) Ping(ctx context.Context) error {
+	return s.db.PingContext(ctx)
 }
 
 // Open 打开 SQLite 数据库并确保表结构存在。
@@ -117,172 +168,6 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(Schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
-	}
-	// 轻量迁移：servers.address（订阅需要服务器公网地址 §9，agent 拨入时按 RemoteAddr 记录）。
-	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN address TEXT NOT NULL DEFAULT ''`); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, fmt.Errorf("migrate servers.address: %w", err)
-		}
-	}
-	// 轻量迁移：servers.config_drift（§17 配置漂移标志，agent 上报驱动）。
-	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN config_drift INTEGER NOT NULL DEFAULT 0`); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, fmt.Errorf("migrate servers.config_drift: %w", err)
-		}
-	}
-	// 轻量迁移：servers.agent_version / agent_upgrade_needed（§18 兼容窗口与升级管理）。
-	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN agent_version TEXT`); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, fmt.Errorf("migrate servers.agent_version: %w", err)
-		}
-	}
-	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN agent_upgrade_needed INTEGER NOT NULL DEFAULT 0`); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, fmt.Errorf("migrate servers.agent_upgrade_needed: %w", err)
-		}
-	}
-	// 轻量迁移：users.expires_at / expired（§9 用户有效期：到期停权标记，unix 秒，NULL=长期）。
-	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN expires_at INTEGER`); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, fmt.Errorf("migrate users.expires_at: %w", err)
-		}
-	}
-	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN expired INTEGER NOT NULL DEFAULT 0`); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, fmt.Errorf("migrate users.expired: %w", err)
-		}
-	}
-	// 轻量迁移：users.disabled（§16 显式停用开关，0/1，默认 0；与 expired 正交，
-	// 两者任一成立即停权）。
-	if _, err := db.Exec(`ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0`); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, fmt.Errorf("migrate users.disabled: %w", err)
-		}
-	}
-	// 轻量迁移：servers.learned_addr / nic_addresses（§9 公网地址候选：
-	// learned_addr 为每次 hello 按 WS 对端（受信回环代理时取 XFF 首 IP）学习的拨入地址，
-	// nic_addresses 为 agent 上报的网卡非回环地址 JSON 数组）。
-	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN learned_addr TEXT NOT NULL DEFAULT ''`); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, fmt.Errorf("migrate servers.learned_addr: %w", err)
-		}
-	}
-	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN nic_addresses TEXT NOT NULL DEFAULT ''`); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, fmt.Errorf("migrate servers.nic_addresses: %w", err)
-		}
-	}
-	// 轻量迁移：commands.error（§4 命令日志暴露失败原因：apply_result.error / 死信说明）。
-	if _, err := db.Exec(`ALTER TABLE commands ADD COLUMN error TEXT NOT NULL DEFAULT ''`); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, fmt.Errorf("migrate commands.error: %w", err)
-		}
-	}
-	// 一次性迁移（PRAGMA user_version 0→1）：user_nodes 引入前，成员关系隐含为
-	// "全部用户 ∈ 全部节点"（§8）；为不破坏存量订阅，迁移时补全关联。
-	// 此后新建用户/节点默认全关（§16）。
-	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("read user_version: %w", err)
-	}
-	if version < 1 {
-		if _, err := db.Exec(`INSERT OR IGNORE INTO user_nodes (user_id, node_id)
-			SELECT u.id, n.id FROM users u CROSS JOIN nodes n`); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("migrate user_nodes: %w", err)
-		}
-		if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("bump user_version: %w", err)
-		}
-	}
-	// 一次性迁移（PRAGMA user_version 1→2）：代理链与 NAT 支持（§21）——
-	// servers 增加机器类型与 NAT 可用端口段元数据；新建链级状态机表 chains/chain_hops。
-	if version < 2 {
-		// ALTER 容忍 duplicate column（上次迁移中途失败后的重跑），CREATE 幂等。
-		for _, q := range []string{
-			`ALTER TABLE servers ADD COLUMN machine_type TEXT NOT NULL DEFAULT 'direct'`, // direct|nat
-			`ALTER TABLE servers ADD COLUMN allowed_ports TEXT NOT NULL DEFAULT ''`,      // JSON [{pub_start,pub_end,listen_start,listen_end}]，1:1 时 listen_* 省略
-		} {
-			if _, err := db.Exec(q); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-				db.Close()
-				return nil, fmt.Errorf("migrate servers nat columns: %w", err)
-			}
-		}
-		stmts := []string{
-			`CREATE TABLE IF NOT EXISTS chains (
-			    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			    name       TEXT    NOT NULL DEFAULT '',
-			    status     TEXT    NOT NULL DEFAULT 'pending', -- pending/applying/active/degraded/failed
-			    error      TEXT    NOT NULL DEFAULT '',
-			    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			`CREATE TABLE IF NOT EXISTS chain_hops (
-			    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-			    chain_id          INTEGER NOT NULL REFERENCES chains(id),
-			    seq               INTEGER NOT NULL,
-			    server_id         INTEGER NOT NULL REFERENCES servers(id),
-			    role              TEXT    NOT NULL,             -- entry/middle/exit
-			    node_id           INTEGER NOT NULL DEFAULT 0,   -- 仅出口跳：业务 nodes.id
-			    status            TEXT    NOT NULL DEFAULT 'pending', -- pending/applying/active/failed
-			    error             TEXT    NOT NULL DEFAULT '',
-			    forward_port      INTEGER NOT NULL DEFAULT 0,   -- entry 跳 = 订阅端口
-			    portal_port       INTEGER NOT NULL DEFAULT 0,
-			    portal_public_key TEXT    NOT NULL DEFAULT '',
-			    portal_server_name TEXT   NOT NULL DEFAULT '',  -- portal 回执的 Reality SNI（bridge spec 用）
-			    tunnel_uuid       TEXT    NOT NULL DEFAULT '',  -- 仅反向链 portal 所在跳（上游机）
-			    created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			`PRAGMA user_version = 2`,
-		}
-		for _, q := range stmts {
-			if _, err := db.Exec(q); err != nil {
-				db.Close()
-				return nil, fmt.Errorf("migrate chains (user_version 2): %w", err)
-			}
-		}
-	}
-	// 轻量迁移：为节点与链路增加管理员可读名称。存量行保留空名称，并在展示/订阅时
-	// 回退到原有的自动命名，避免升级改变既有订阅。
-	for _, m := range []struct {
-		query string
-		label string
-	}{
-		{`ALTER TABLE nodes ADD COLUMN name TEXT NOT NULL DEFAULT ''`, "nodes.name"},
-		{`ALTER TABLE chains ADD COLUMN name TEXT NOT NULL DEFAULT ''`, "chains.name"},
-	} {
-		if _, err := db.Exec(m.query); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, fmt.Errorf("migrate %s: %w", m.label, err)
-		}
-	}
-	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN tags TEXT NOT NULL DEFAULT ''`); err != nil &&
-		!strings.Contains(err.Error(), "duplicate column name") {
-		db.Close()
-		return nil, fmt.Errorf("migrate servers.tags: %w", err)
-	}
-	for _, m := range []struct {
-		query string
-		label string
-	}{
-		{`ALTER TABLE servers ADD COLUMN country_code TEXT NOT NULL DEFAULT ''`, "servers.country_code"},
-		{`ALTER TABLE servers ADD COLUMN location TEXT NOT NULL DEFAULT ''`, "servers.location"},
-	} {
-		if _, err := db.Exec(m.query); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-			db.Close()
-			return nil, fmt.Errorf("migrate %s: %w", m.label, err)
-		}
 	}
 	return &Store{db: db}, nil
 }

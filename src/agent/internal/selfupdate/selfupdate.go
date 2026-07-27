@@ -6,9 +6,9 @@ package selfupdate
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +18,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	external "lattix/shared/requester"
 )
 
 const httpTimeout = 120 * time.Second
@@ -113,19 +115,14 @@ func Apply(version, releaseBase, currentVersion, defaultRepo string) (upgraded b
 
 // resolveLatest 经 GitHub API 解析最新 release tag。
 func resolveLatest(apiRepos string) (string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get(apiRepos + "/releases/latest")
-	if err != nil {
-		return "", fmt.Errorf("解析 latest 失败: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("解析 latest 失败: GitHub API 返回 %s", resp.Status)
-	}
 	var rel struct {
 		TagName string `json:"tag_name"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil || rel.TagName == "" {
+	client := external.ExternalJSONRequester{Doer: &http.Client{Timeout: 30 * time.Second}}
+	if err := client.GetJSON(context.Background(), apiRepos+"/releases/latest", &rel); err != nil {
+		return "", fmt.Errorf("解析 latest 失败: %w", err)
+	}
+	if rel.TagName == "" {
 		return "", fmt.Errorf("解析 latest 失败: 无法读取 tag_name")
 	}
 	return rel.TagName, nil
@@ -165,22 +162,8 @@ func verifySHA256(sumsPath, asset, filePath string) error {
 
 // download 下载 URL 到本地文件。
 func download(url, path string) error {
-	client := &http.Client{Timeout: httpTimeout}
-	resp, err := client.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: HTTP %s", url, resp.Status)
-	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
-	return err
+	client := external.ExternalFileRequester{Doer: &http.Client{Timeout: httpTimeout}}
+	return client.Download(context.Background(), url, path, nil)
 }
 
 // extractAgentBinary 从 agent tarball（lattix-agent/lattix-agent + latx-ag）

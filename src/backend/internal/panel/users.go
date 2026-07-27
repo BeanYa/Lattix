@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -86,7 +85,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt *string `json:"expires_at"` // RFC3339，省略/null = 长期
 		NodeIDs   []int64 `json:"node_ids"`   // 可选：预选链路对应的业务节点
 	}
-	if err := readJSON(r, &req); err != nil || req.Name == "" {
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Name == "" {
 		writeError(w, http.StatusBadRequest, "name 不能为空")
 		return
 	}
@@ -171,8 +174,17 @@ func parseExpiresAt(raw *string) (*time.Time, error) {
 // 有效停权态 = disabled OR expired（§9/§16）：add_user/remove_user 扇出只在有效停权态
 // 跃迁时发生——已 expired 的用户再 disable（或反之）不重复扇出；恢复需两者都解除。
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	var req struct {
+		UserID    int64           `json:"user_id"`
+		ExpiresAt json.RawMessage `json:"expires_at"` // 省略 = 不变；null = 清除（长期）
+		Disabled  *bool           `json:"disabled"`   // 省略 = 不变
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.UserID
+	if id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
@@ -183,14 +195,6 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	var req struct {
-		ExpiresAt json.RawMessage `json:"expires_at"` // 省略 = 不变；null = 清除（长期）
-		Disabled  *bool           `json:"disabled"`   // 省略 = 不变
-	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	now := time.Now()
@@ -283,8 +287,16 @@ func logTime(value *time.Time) any {
 // handleSetUserNodes 处理 PUT /api/users/{id}/nodes：整体替换用户的节点分配（§16），
 // 按差量向相关服务器扇出 add_user / remove_user（载荷仅含受影响的节点）。
 func (s *Server) handleSetUserNodes(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	var req struct {
+		UserID  int64   `json:"user_id"`
+		NodeIDs []int64 `json:"node_ids"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.UserID
+	if id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
@@ -295,13 +307,6 @@ func (s *Server) handleSetUserNodes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	var req struct {
-		NodeIDs []int64 `json:"node_ids"`
-	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	nodes, err := s.st.ListNodes(r.Context())
@@ -375,8 +380,15 @@ func (s *Server) fanoutUserDiff(ctx context.Context, uuid string, nodes []store.
 
 // handleDeleteUser 处理 DELETE /api/users/{id}：扇出 remove_user 后删除（§8）。
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	var req struct {
+		UserID int64 `json:"user_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.UserID
+	if id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid user id")
 		return
 	}
@@ -396,7 +408,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	// 删除后对象不存在，审计行存 name 快照留痕（§log）。
 	s.audit(r, "user.delete", nil, nil, map[string]any{"user_id": u.ID, "name": u.Name})
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, nil)
 }
 
 // nodeParamsByServer 按服务器分组节点的用户条目参数（dokodemo 节点无用户概念，排除）。

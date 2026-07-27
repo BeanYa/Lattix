@@ -98,15 +98,11 @@ jobs:
             out/checksums.txt
           retention-days: 7
 
-  compat:
+  e2e:
     needs: build
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -127,37 +123,22 @@ jobs:
           unzip -oq /tmp/xray.zip -d /tmp/xray
           chmod +x /tmp/xray/xray
 
-      - name: Download previous release agent
-        id: previous
+      - name: Extract current agent
         run: |
-          PREV_TAG="$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || true)"
-          if [[ -z "$PREV_TAG" ]]; then
-            echo "skip=1" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          mkdir -p prev
-          if gh release download "$PREV_TAG" \
-              -p 'lattix-agent-linux-amd64.tar.gz' -p 'checksums.txt' -D prev --clobber \
-              && [[ -f prev/lattix-agent-linux-amd64.tar.gz ]]; then
-            (cd prev && grep 'lattix-agent-linux-amd64\.tar\.gz$' checksums.txt | sha256sum -c -)
-            tar -C prev -xzf prev/lattix-agent-linux-amd64.tar.gz
-            mv prev/lattix-agent/lattix-agent prev/lattix-agent-linux-amd64
-            echo "skip=0" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=1" >> "$GITHUB_OUTPUT"
-          fi
+          mkdir -p current
+          tar -C current -xzf out/lattix-agent-linux-amd64.tar.gz
+          mv current/lattix-agent/lattix-agent current/lattix-agent-linux-amd64
 
-      - name: Compatibility e2e
-        if: steps.previous.outputs.skip != '1'
+      - name: Current protocol e2e
         run: |
-          chmod +x out/lattix-backend-linux-amd64 prev/lattix-agent-linux-amd64
+          chmod +x out/lattix-backend-linux-amd64 current/lattix-agent-linux-amd64
           PANEL_BIN="$PWD/out/lattix-backend-linux-amd64" \
-          AGENT_BIN="$PWD/prev/lattix-agent-linux-amd64" \
+          AGENT_BIN="$PWD/current/lattix-agent-linux-amd64" \
           XRAY_BIN=/tmp/xray/xray \
             bash scripts/dev-e2e-panel.sh
 
   image:
-    needs: [build, compat]
+    needs: [build, e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: read

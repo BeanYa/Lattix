@@ -1,0 +1,285 @@
+openapi: 3.1.0
+info:
+  title: Lattix Panel RPC API
+  version: 1.0.0
+  description: |
+    Lattix 自有管理 RPC。命中并完成协议解析后，业务结果由响应 body
+    的 code 表达，HTTP 状态为 200。订阅、文件成功响应、WebSocket
+    Upgrade、健康检查和第三方 HTTP 不使用此业务信封。
+servers:
+  - url: /
+security:
+  - sessionCookie: []
+paths:
+  /api/auth/login:
+    post:
+      operationId: authLogin
+      security: []
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/auth/logout:
+    post:
+      operationId: authLogout
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/auth/me:
+    get:
+      operationId: authMe
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/dashboard/get:
+    get:
+      operationId: dashboardGet
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/list:
+    get:
+      operationId: serverList
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/list-commands:
+    get:
+      operationId: serverListCommands
+      parameters:
+        - {$ref: '#/components/parameters/ServerID'}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 200}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/create:
+    post:
+      operationId: serverCreate
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/update:
+    post:
+      operationId: serverUpdate
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/delete:
+    post:
+      operationId: serverDelete
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/rotate-token:
+    post:
+      operationId: serverRotateToken
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/repair:
+    post:
+      operationId: serverRepair
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/upgrade-xray:
+    post:
+      operationId: serverUpgradeXray
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/upgrade-agent:
+    post:
+      operationId: serverUpgradeAgent
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/node/list:
+    get:
+      operationId: nodeList
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/node/create:
+    post:
+      operationId: nodeCreate
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/node/retry:
+    post:
+      operationId: nodeRetry
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/node/delete:
+    post:
+      operationId: nodeDelete
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/chain/list:
+    get:
+      operationId: chainList
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/chain/create:
+    post:
+      operationId: chainCreate
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/chain/retry:
+    post:
+      operationId: chainRetry
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/chain/delete:
+    post:
+      operationId: chainDelete
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/user/list:
+    get:
+      operationId: userList
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/user/create:
+    post:
+      operationId: userCreate
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/user/update:
+    post:
+      operationId: userUpdate
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/user/set-nodes:
+    post:
+      operationId: userSetNodes
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/user/delete:
+    post:
+      operationId: userDelete
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/setting/get:
+    get:
+      operationId: settingGet
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/setting/update:
+    post:
+      operationId: settingUpdate
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/setting/change-password:
+    post:
+      operationId: settingChangePassword
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/setting/test-alerts:
+    post:
+      operationId: settingTestAlerts
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/panel/restart:
+    post:
+      operationId: panelRestart
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/panel/get-version:
+    get:
+      operationId: panelGetVersion
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/panel/start-update:
+    post:
+      operationId: panelStartUpdate
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/panel/get-update-status:
+    get:
+      operationId: panelGetUpdateStatus
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/backup/download:
+    get:
+      operationId: backupDownload
+      responses:
+        '200':
+          description: SQLite attachment or RPC error envelope
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+            application/json:
+              schema: {$ref: '#/components/schemas/RPCEnvelope'}
+  /api/log/list-operations:
+    get:
+      operationId: logListOperations
+      parameters:
+        - {name: severity, in: query, schema: {type: string}}
+        - {name: category, in: query, schema: {type: string}}
+        - {name: server_id, in: query, schema: {type: integer}}
+        - {name: operator, in: query, schema: {type: string}}
+        - {name: q, in: query, schema: {type: string}}
+        - {name: from, in: query, schema: {type: string}}
+        - {name: to, in: query, schema: {type: string}}
+        - {name: limit, in: query, schema: {type: integer}}
+        - {name: offset, in: query, schema: {type: integer}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/log/clear-operations:
+    post:
+      operationId: logClearOperations
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/log/list-requests:
+    get:
+      operationId: logListRequests
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, enum: [10, 30, 50, 100], default: 30}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/log/clear-requests:
+    post:
+      operationId: logClearRequests
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: lattix_session
+  parameters:
+    ServerID:
+      name: server_id
+      in: query
+      required: true
+      schema: {type: integer, minimum: 1}
+  requestBodies:
+    RPCBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+  responses:
+    RPCResponse:
+      description: Completed Lattix RPC; inspect body code for business outcome.
+      headers:
+        X-Request-ID:
+          schema: {$ref: '#/components/schemas/MessageID'}
+        X-Trace-ID:
+          schema: {$ref: '#/components/schemas/MessageID'}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/RPCEnvelope'}
+  schemas:
+    MessageID:
+      type: string
+      pattern: '^[0-9a-f]{32}$'
+    RPCCode:
+      type: string
+      enum:
+        - OK
+        - ACCEPTED
+        - AUTH_REQUIRED
+        - AUTH_INVALID_CREDENTIALS
+        - INVALID_ARGUMENT
+        - NOT_FOUND
+        - CONFLICT
+        - OPERATION_LOCKED
+        - UNSUPPORTED_ACTION
+        - INTERNAL_ERROR
+        - UPSTREAM_ERROR
+        - SERVICE_UNAVAILABLE
+        - SERVER_OFFLINE
+        - PORT_OUT_OF_RANGE
+        - UPDATE_IN_PROGRESS
+    RPCEnvelope:
+      type: object
+      additionalProperties: false
+      required: [code, message, data, request_id, trace_id]
+      properties:
+        code: {$ref: '#/components/schemas/RPCCode'}
+        message: {type: string}
+        data: {}
+        request_id: {$ref: '#/components/schemas/MessageID'}
+        trace_id: {$ref: '#/components/schemas/MessageID'}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +14,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	external "lattix/shared/requester"
 )
 
 // upgradeHTTPTimeout 是升级相关单次 HTTP 请求的超时。
@@ -124,19 +125,15 @@ func (m *Manager) rollbackXray(backup string) {
 
 // resolveLatestXrayVersion 经 GitHub API 解析最新 release tag（§11 同款逻辑）。
 func resolveLatestXrayVersion() (string, error) {
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Get("https://api.github.com/repos/XTLS/Xray-core/releases/latest")
-	if err != nil {
-		return "", fmt.Errorf("解析 latest 失败: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("解析 latest 失败: GitHub API 返回 %s", resp.Status)
-	}
 	var rel struct {
 		TagName string `json:"tag_name"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil || rel.TagName == "" {
+	client := external.ExternalJSONRequester{Doer: &http.Client{Timeout: 30 * time.Second}}
+	if err := client.GetJSON(context.Background(),
+		"https://api.github.com/repos/XTLS/Xray-core/releases/latest", &rel); err != nil {
+		return "", fmt.Errorf("解析 latest 失败: %w", err)
+	}
+	if rel.TagName == "" {
 		return "", fmt.Errorf("解析 latest 失败: 无法读取 tag_name")
 	}
 	return rel.TagName, nil
@@ -144,22 +141,8 @@ func resolveLatestXrayVersion() (string, error) {
 
 // downloadFile 下载 URL 到本地文件。
 func downloadFile(url, path string) error {
-	client := &http.Client{Timeout: upgradeHTTPTimeout}
-	resp, err := client.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: HTTP %s", url, resp.Status)
-	}
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = io.Copy(f, resp.Body)
-	return err
+	client := external.ExternalFileRequester{Doer: &http.Client{Timeout: upgradeHTTPTimeout}}
+	return client.Download(context.Background(), url, path, nil)
 }
 
 // verifyDgst 校验 .dgst 中的 SHA2-256 与文件实际值一致。

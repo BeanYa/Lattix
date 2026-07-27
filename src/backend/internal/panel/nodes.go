@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -198,7 +197,7 @@ func (req *createNodeRequest) normalize() error {
 func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 	var req createNodeRequest
 	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if err := req.normalize(); err != nil {
@@ -252,8 +251,15 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 
 // handleRetryNode 处理 POST /api/nodes/{id}/retry：failed 节点重新下发（§6 重试按钮）。
 func (s *Server) handleRetryNode(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	var req struct {
+		NodeID int64 `json:"node_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.NodeID
+	if id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
@@ -282,9 +288,16 @@ func (s *Server) handleRetryNode(w http.ResponseWriter, r *http.Request) {
 
 // handleDeleteNode 处理 DELETE /api/nodes/{id}：下发 remove_node（离线留队列补发）后删除记录。
 func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid server id")
+	var req struct {
+		NodeID int64 `json:"node_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.NodeID
+	if id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid node id")
 		return
 	}
 	n, err := s.st.NodeByID(r.Context(), id)
@@ -309,7 +322,7 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	s.audit(r, "node.delete", &srvID, &nodeID, map[string]any{
 		"protocol": n.Protocol, "port": n.Port,
 	})
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, nil)
 }
 
 // applyNewNode 落库新节点并下发 apply_node，返回节点 id。

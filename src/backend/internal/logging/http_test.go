@@ -47,16 +47,21 @@ func TestRequestMiddlewareRecordsMetadataAndExcludesLogReader(t *testing.T) {
 	mux.HandleFunc("GET /api/test/{id}", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "missing", http.StatusNotFound)
 	})
-	mux.HandleFunc("GET /api/logs/requests", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /api/log/list-requests", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := RequestMiddleware(log, func(*http.Request) string { return "admin" }, mux)
+	handler := RequestMiddleware(log, func(*http.Request) string { return "admin" }, func(r *http.Request) LogPolicy {
+		if r.URL.Path == "/api/log/list-requests" {
+			return LogNone
+		}
+		return LogFull
+	}, mux)
 
 	request := httptest.NewRequest(http.MethodGet, "/api/test/7?token=secret", nil)
 	request.RemoteAddr = "198.51.100.8:1234"
 	request.Header.Set("X-Forwarded-For", "203.0.113.1")
 	handler.ServeHTTP(httptest.NewRecorder(), request)
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/logs/requests", nil))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/log/list-requests", nil))
 
 	items, _, err := log.Tail(context.Background(), 10)
 	if err != nil {
@@ -66,14 +71,14 @@ func TestRequestMiddlewareRecordsMetadataAndExcludesLogReader(t *testing.T) {
 		t.Fatalf("logged %d requests, want 1", len(items))
 	}
 	entry := items[0]
-	if entry.Status != http.StatusNotFound || entry.Severity != SeverityWarning {
-		t.Fatalf("status/severity = %d/%s", entry.Status, entry.Severity)
+	if entry.HTTPStatus != http.StatusNotFound || entry.Severity != SeverityWarning {
+		t.Fatalf("status/severity = %d/%s", entry.HTTPStatus, entry.Severity)
 	}
-	if entry.Route != "/api/test/{id}" || entry.Params["path.id"] != "7" {
-		t.Fatalf("route/params = %q/%v", entry.Route, entry.Params)
+	if entry.Route != "/api/test/{id}" || entry.Attributes["path.id"] != "7" {
+		t.Fatalf("route/attributes = %q/%v", entry.Route, entry.Attributes)
 	}
-	if entry.Params["query.token"] != "[REDACTED]" {
-		t.Fatalf("token = %q", entry.Params["query.token"])
+	if entry.Attributes["query.token"] != "[REDACTED]" {
+		t.Fatalf("token = %q", entry.Attributes["query.token"])
 	}
 	if entry.IP != "198.51.100.8" {
 		t.Fatalf("spoofed forwarded IP was trusted: %q", entry.IP)

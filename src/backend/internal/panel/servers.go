@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -23,24 +22,23 @@ type metricsDTO struct {
 
 // serverDTO 是服务器对象的 API 表示。
 type serverDTO struct {
-	ID            int64              `json:"id"`
-	Alias         string             `json:"alias"`
-	Online        bool               `json:"online"` // 由 WS 连接存在性推导（§5）
-	LastSeenAt    *time.Time         `json:"last_seen_at"`
-	XrayVersion   string             `json:"xray_version"`
-	AgentVersion  string             `json:"agent_version"`  // hello 上报的 agent 版本
-	UpgradeNeeded bool               `json:"upgrade_needed"` // agent 落后出兼容窗口，需升级（§18）
-	Address       string             `json:"address"`        // 公网地址（hello 记录，订阅用，§9）
-	LearnedAddr   string             `json:"learned_addr"`   // 拨入学习地址（受信回环代理时取 XFF 首 IP，§9），编辑地址时的内置候选
-	NICAddresses  []string           `json:"nic_addresses"`  // agent 上报的网卡非回环地址（§9），编辑地址时的内置候选
-	ConfigDrift   bool               `json:"config_drift"`   // 配置漂移标志（§17）
-	MachineType   string             `json:"machine_type"`   // direct|nat（§21）
-	AllowedPorts  []shared.PortRange `json:"allowed_ports"`  // NAT 可用端口段（§21），空 = 无段（仅出口档/direct）
-	Tags          []string           `json:"tags"`           // 管理标签；按顺序供名称模板 {{TAG_n}} 使用
-	CountryCode   string             `json:"country_code"`   // ISO 3166-1 alpha-2
-	Location      string             `json:"location"`       // 城市或机房位置
-	Metrics       *metricsDTO        `json:"metrics"`        // 主机遥测最新值（§13），无数据为 null
-	CreatedAt     time.Time          `json:"created_at"`
+	ID           int64              `json:"id"`
+	Alias        string             `json:"alias"`
+	Online       bool               `json:"online"` // 由 WS 连接存在性推导（§5）
+	LastSeenAt   *time.Time         `json:"last_seen_at"`
+	XrayVersion  string             `json:"xray_version"`
+	AgentVersion string             `json:"agent_version"` // hello 上报的 agent 版本
+	Address      string             `json:"address"`       // 公网地址（hello 记录，订阅用，§9）
+	LearnedAddr  string             `json:"learned_addr"`  // 拨入学习地址（受信回环代理时取 XFF 首 IP，§9），编辑地址时的内置候选
+	NICAddresses []string           `json:"nic_addresses"` // agent 上报的网卡非回环地址（§9），编辑地址时的内置候选
+	ConfigDrift  bool               `json:"config_drift"`  // 配置漂移标志（§17）
+	MachineType  string             `json:"machine_type"`  // direct|nat（§21）
+	AllowedPorts []shared.PortRange `json:"allowed_ports"` // NAT 可用端口段（§21），空 = 无段（仅出口档/direct）
+	Tags         []string           `json:"tags"`          // 管理标签；按顺序供名称模板 {{TAG_n}} 使用
+	CountryCode  string             `json:"country_code"`  // ISO 3166-1 alpha-2
+	Location     string             `json:"location"`      // 城市或机房位置
+	Metrics      *metricsDTO        `json:"metrics"`       // 主机遥测最新值（§13），无数据为 null
+	CreatedAt    time.Time          `json:"created_at"`
 }
 
 func (s *Server) toServerDTO(srv store.Server) serverDTO {
@@ -61,23 +59,22 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		nicAddrs = []string{}
 	}
 	return serverDTO{
-		ID:            srv.ID,
-		Alias:         srv.Alias,
-		Online:        s.req.IsOnline(srv.ID),
-		LastSeenAt:    srv.LastSeenAt,
-		XrayVersion:   srv.XrayVersion,
-		AgentVersion:  srv.AgentVersion,
-		UpgradeNeeded: srv.UpgradeNeeded,
-		Address:       srv.Address,
-		LearnedAddr:   srv.LearnedAddr,
-		NICAddresses:  nicAddrs,
-		ConfigDrift:   srv.ConfigDrift,
-		MachineType:   srv.MachineType,
-		AllowedPorts:  ranges,
-		Tags:          decodeServerTags(srv.Tags),
-		CountryCode:   srv.CountryCode,
-		Location:      srv.Location,
-		CreatedAt:     srv.CreatedAt,
+		ID:           srv.ID,
+		Alias:        srv.Alias,
+		Online:       s.req.IsOnline(srv.ID),
+		LastSeenAt:   srv.LastSeenAt,
+		XrayVersion:  srv.XrayVersion,
+		AgentVersion: srv.AgentVersion,
+		Address:      srv.Address,
+		LearnedAddr:  srv.LearnedAddr,
+		NICAddresses: nicAddrs,
+		ConfigDrift:  srv.ConfigDrift,
+		MachineType:  srv.MachineType,
+		AllowedPorts: ranges,
+		Tags:         decodeServerTags(srv.Tags),
+		CountryCode:  srv.CountryCode,
+		Location:     srv.Location,
+		CreatedAt:    srv.CreatedAt,
 	}
 }
 
@@ -118,7 +115,11 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		CountryCode  string             `json:"country_code"`
 		Location     string             `json:"location"`
 	}
-	if err := readJSON(r, &req); err != nil || req.Alias == "" {
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Alias == "" {
 		writeError(w, http.StatusBadRequest, "alias 不能为空")
 		return
 	}
@@ -183,8 +184,15 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 // 换发新 bootstrap token 并重置回 bootstrap 状态（旧凭证含长期 token 立即失效），
 // 返回一行安装命令（§10/§11）。
 func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	var req struct {
+		ServerID int64 `json:"server_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.ServerID
+	if id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid server id")
 		return
 	}
@@ -219,12 +227,8 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 // 重新自动学习（NAT 类型禁止置空）。机器类型建后不允许互转；端口段收窄时校验
 // 该 server 存量节点 realized 端口与链跳端口不越界，越界 400。
 func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid server id")
-		return
-	}
 	var req struct {
+		ServerID     int64               `json:"server_id"`
 		Address      string              `json:"address"`
 		MachineType  string              `json:"machine_type"`  // 不允许互转：带不同值 → 400
 		AllowedPorts *[]shared.PortRange `json:"allowed_ports"` // 省略 = 不变；显式 null/数组 = 整体替换
@@ -233,7 +237,12 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		Location     *string             `json:"location"`      // 省略 = 不变
 	}
 	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.ServerID
+	if id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid server id")
 		return
 	}
 	srv, err := s.st.ServerByID(r.Context(), id)
@@ -379,8 +388,16 @@ func marshalPortRanges(ranges []shared.PortRange) (string, error) {
 // handleUpgradeXray 处理 POST /api/servers/{id}/upgrade（§18 版本升级管理）：
 // 下发 upgrade_xray 命令（离线服务器留队列补发），agent 完成后经 telemetry 刷新版本号。
 func (s *Server) handleUpgradeXray(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	var req struct {
+		ServerID int64  `json:"server_id"`
+		Version  string `json:"version"` // vX.Y.Z 或 latest（默认）
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.ServerID
+	if id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid server id")
 		return
 	}
@@ -390,13 +407,6 @@ func (s *Server) handleUpgradeXray(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	var req struct {
-		Version string `json:"version"` // vX.Y.Z 或 latest（默认）
-	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Version == "" {
@@ -419,10 +429,17 @@ func (s *Server) handleUpgradeXray(w http.ResponseWriter, r *http.Request) {
 // handleUpgradeAgent 处理 POST /api/servers/{id}/upgrade-agent（§18 版本升级管理）：
 // 下发 upgrade_agent 命令，agent 从 GitHub release 下载对应版本二进制，
 // 校验 checksums.txt 后原子自替换并退出（systemd 拉起即完成升级）。
-// 兼容窗口外（upgrade_needed）的服务器经此命令收敛回窗口内。
 func (s *Server) handleUpgradeAgent(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	var req struct {
+		ServerID int64  `json:"server_id"`
+		Version  string `json:"version"` // vX.Y.Z 或 latest（默认）
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.ServerID
+	if id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid server id")
 		return
 	}
@@ -432,13 +449,6 @@ func (s *Server) handleUpgradeAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	var req struct {
-		Version string `json:"version"` // vX.Y.Z 或 latest（默认）
-	}
-	if err := readJSON(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Version == "" {
@@ -465,8 +475,15 @@ func (s *Server) handleUpgradeAgent(w http.ResponseWriter, r *http.Request) {
 // handleRepairServer 处理 POST /api/servers/{id}/repair（§17 配置漂移修复）：
 // 重放该服务器全部 active 节点的 apply_node，agent 据此重建配置并清除漂移标志。
 func (s *Server) handleRepairServer(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	var req struct {
+		ServerID int64 `json:"server_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.ServerID
+	if id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid server id")
 		return
 	}
@@ -519,9 +536,24 @@ func (s *Server) installCommand(base, token, xrayVersion string) string {
 // 在线则先下发 uninstall 命令（agent 自卸载），随后级联删除记录（§10）。
 // 离线服务器仅删除记录（agent 需手动清理）。
 func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
+	var req struct {
+		ServerID int64  `json:"server_id"`
+		Purge    string `json:"purge"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.ServerID
+	if id <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid server id")
+		return
+	}
+	if req.Purge == "" {
+		req.Purge = "xray"
+	}
+	if req.Purge != "xray" && req.Purge != "agent" {
+		writeError(w, http.StatusBadRequest, "purge 须为 xray 或 agent")
 		return
 	}
 	srv, err := s.st.ServerByID(r.Context(), id)
@@ -535,7 +567,7 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.req.IsOnline(id) {
 		// purge 参数：xray = 连同 xray 卸载（默认），agent = 仅卸载 agent（§5/§10）。
-		payload := shared.UninstallPayload{PurgeXray: r.URL.Query().Get("purge") != "agent"}
+		payload := shared.UninstallPayload{PurgeXray: req.Purge != "agent"}
 		if _, err := s.disp.Enqueue(r.Context(), id, shared.TypeUninstall, payload); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -548,7 +580,7 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 	// 级联删除后对象已不存在，审计行存 alias 快照留痕（§log）。
 	sid := id
 	s.audit(r, "server.delete", &sid, nil, map[string]any{
-		"alias": srv.Alias, "purge": r.URL.Query().Get("purge"),
+		"alias": srv.Alias, "purge": req.Purge,
 	})
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, nil)
 }

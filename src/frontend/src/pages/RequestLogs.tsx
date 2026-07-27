@@ -34,7 +34,7 @@ import { useTimezone } from '@/lib/timezone'
 import type { LogSeverity, RequestLogEntry, RequestLogStatus } from '@/lib/types'
 
 const REFRESH_VALUES = REFRESH_OPTIONS.map((option) => option.value)
-const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+const METHODS = ['GET', 'POST', 'WS']
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -90,16 +90,20 @@ export default function RequestLogs() {
     const needle = query.trim().toLowerCase()
     return items.filter((entry) => {
       if (severity && entry.severity !== severity) return false
-      if (method && entry.method !== method) return false
+      const displayMethod = entry.transport === 'websocket' ? 'WS' : entry.method
+      if (method && displayMethod !== method) return false
       if (!needle) return true
       return [
         entry.path,
         entry.route,
+        entry.rpc_type,
+        entry.rpc_code,
         entry.operator,
         entry.ip,
         entry.request_id,
+        entry.trace_id,
         entry.error_summary,
-        JSON.stringify(entry.params ?? {}),
+        JSON.stringify(entry.attributes ?? {}),
       ].some((value) => value?.toLowerCase().includes(needle))
     })
   }, [items, method, query, severity])
@@ -192,8 +196,8 @@ export default function RequestLogs() {
               <TableHead>时间</TableHead>
               <TableHead>程度</TableHead>
               <TableHead>方法</TableHead>
-              <TableHead>状态</TableHead>
-              <TableHead>路径</TableHead>
+              <TableHead>结果</TableHead>
+              <TableHead>路径 / 动作</TableHead>
               <TableHead>耗时</TableHead>
               <TableHead>来源</TableHead>
               <TableHead>参数 / 错误</TableHead>
@@ -208,18 +212,26 @@ export default function RequestLogs() {
               <TableRow key={entry.request_id}>
                 <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(entry.timestamp, timezone)}</TableCell>
                 <TableCell><Badge variant={severityVariant(entry.severity)}>{entry.severity}</Badge></TableCell>
-                <TableCell className="font-mono text-xs">{entry.method}</TableCell>
-                <TableCell><Badge variant={entry.status >= 500 ? 'destructive' : 'outline'}>{entry.status}</Badge></TableCell>
+                <TableCell className="font-mono text-xs">{entry.transport === 'websocket' ? 'WS' : entry.method}</TableCell>
+                <TableCell>
+                  <Badge variant={entry.severity === 'error' ? 'destructive' : 'outline'}>
+                    {entry.rpc_code || entry.http_status || '-'}
+                  </Badge>
+                </TableCell>
                 <TableCell>
                   <div className="flex max-w-80 flex-col gap-1">
-                    <span className="truncate text-sm" title={entry.path}>{entry.path}</span>
-                    <span className="truncate font-mono text-xs text-muted-foreground" title={entry.route}>{entry.route}</span>
+                    <span className="truncate text-sm" title={entry.path || entry.rpc_type}>
+                      {entry.path || entry.rpc_type}
+                    </span>
+                    <span className="truncate font-mono text-xs text-muted-foreground" title={entry.route || entry.trace_id}>
+                      {entry.route || `trace ${entry.trace_id}`}
+                    </span>
                   </div>
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-xs">{entry.duration_ms} ms</TableCell>
                 <TableCell className="text-xs text-muted-foreground">{entry.operator || entry.ip || '-'}{entry.operator && entry.ip ? ` · ${entry.ip}` : ''}</TableCell>
-                <TableCell className="max-w-72 truncate font-mono text-xs text-muted-foreground" title={entry.error_summary || JSON.stringify(entry.params ?? {})}>
-                  {entry.error_summary || (entry.params ? JSON.stringify(entry.params) : '-')}
+                <TableCell className="max-w-72 truncate font-mono text-xs text-muted-foreground" title={entry.error_summary || JSON.stringify(entry.attributes ?? {})}>
+                  {entry.error_summary || (entry.attributes ? JSON.stringify(entry.attributes) : '-')}
                 </TableCell>
               </TableRow>
             ))}

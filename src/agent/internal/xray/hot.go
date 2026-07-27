@@ -111,8 +111,7 @@ func (c *HotClient) RemoveUser(tag string, p shared.UserNodeParams, uuid string)
 }
 
 func (c *HotClient) alterUser(tag string, p shared.UserNodeParams, uuid string, add bool) error {
-	// p.Protocol 为空 = 旧版本面板载荷，按 vless 处理（MVP 仅有 vless）。
-	if p.Protocol != "" && p.Protocol != shared.ProtocolVLESS &&
+	if p.Protocol != shared.ProtocolVLESS &&
 		p.Protocol != shared.ProtocolVMess && p.Protocol != shared.ProtocolTrojan {
 		return fmt.Errorf("协议 %s 不支持热操作用户", p.Protocol)
 	}

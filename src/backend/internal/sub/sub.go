@@ -291,12 +291,12 @@ func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allow
 }
 
 // buildProxy 按节点协议构造 mihomo 代理项；uuid 为该订阅用户自己的 UUID（§8/§9）。
-// 节点命名优先使用管理员设置名称；存量空名称回退到 {服务器别名}-{协议}-{端口}。
+// 节点命名优先使用管理员设置名称；名称为空时回退到 {服务器别名}-{协议}-{端口}。
 func buildProxy(n store.Node, rc shared.RealizedConfig, uuid string) (clashProxy, error) {
 	if rc.Port == 0 {
 		return clashProxy{}, fmt.Errorf("节点 %d 缺少生效端口", n.ID)
 	}
-	// 兼容存量 realized_config：缺省 network=tcp、fingerprint=chrome。
+	// 对当前协议允许省略的默认字段做归一化。
 	if rc.Network == "" {
 		rc.Network = shared.NetworkTCP
 	}

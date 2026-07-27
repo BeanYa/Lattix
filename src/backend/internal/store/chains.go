@@ -264,7 +264,8 @@ func (s *Store) ChainExitNodeIDs(ctx context.Context) (map[int64]bool, error) {
 // CommandsByType 列出指定类型的全部命令（链编排器从 commands 表推导 piece 进度用，§21.1）。
 func (s *Store) CommandsByType(ctx context.Context, typ string) ([]Command, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, server_id, type, payload, status, attempts FROM commands WHERE type = ? ORDER BY id`, typ)
+		`SELECT id, request_id, trace_id, server_id, type, data, status, attempts
+		 FROM commands WHERE type = ? ORDER BY id`, typ)
 	if err != nil {
 		return nil, fmt.Errorf("list commands by type: %w", err)
 	}
@@ -272,11 +273,13 @@ func (s *Store) CommandsByType(ctx context.Context, typ string) ([]Command, erro
 	out := []Command{}
 	for rows.Next() {
 		var c Command
-		var payload string
-		if err := rows.Scan(&c.ID, &c.ServerID, &c.Type, &payload, &c.Status, &c.Attempts); err != nil {
+		var data string
+		if err := rows.Scan(
+			&c.ID, &c.RequestID, &c.TraceID, &c.ServerID, &c.Type, &data, &c.Status, &c.Attempts,
+		); err != nil {
 			return nil, fmt.Errorf("scan command: %w", err)
 		}
-		c.Payload = json.RawMessage(payload)
+		c.Data = json.RawMessage(data)
 		out = append(out, c)
 	}
 	return out, rows.Err()

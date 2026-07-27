@@ -71,7 +71,7 @@ func ackHop(t *testing.T, st *store.Store, d *Dispatcher, serverID, hopID int64,
 	if ok, err := st.MarkCommandAcked(context.Background(), c.ID); err != nil || !ok {
 		t.Fatalf("ack 命令 %d: %v ok=%v", c.ID, err, ok)
 	}
-	d.handleChainHopResult(serverID, shared.ApplyResultPayload{HopID: hopID, Kind: kind, OK: true, RealizedConfig: rc})
+	d.handleChainHopResult(serverID, shared.ApplyResultPayload{HopID: hopID, Kind: kind, RealizedConfig: rc}, "")
 }
 
 // TestChainOrchestration 覆盖 §21.1 五阶段编排与 degraded 推导：
@@ -112,7 +112,7 @@ func TestChainOrchestration(t *testing.T) {
 	hop3, _ := st.InsertChainHop(ctx, chainID, 2, exitID, store.HopRoleExit, nodeID, 0, "")
 
 	req := &fakeRequester{online: map[int64]bool{entryID: true, midID: true, exitID: true}}
-	d := New(st, req, "dev")
+	d := New(st, req)
 	d.DestCandidates = []string{"dl.google.com:443"}
 
 	// 阶段 1：出口业务 apply_node（仅出口档无端口段 → 无 port_candidates）。
@@ -121,7 +121,7 @@ func TestChainOrchestration(t *testing.T) {
 	}
 	c := lastHopCommand(t, st, shared.TypeApplyNode, exitID)
 	var anp shared.ApplyNodePayload
-	if err := json.Unmarshal(c.Payload, &anp); err != nil {
+	if err := json.Unmarshal(c.Data, &anp); err != nil {
 		t.Fatal(err)
 	}
 	if anp.NodeID != nodeID || len(anp.PortCandidates) != 0 {
@@ -139,7 +139,7 @@ func TestChainOrchestration(t *testing.T) {
 	// 阶段 2：portal 在 mid（反向链上游机），端口候选 = 监听侧段，tunnel_domain=c<chain>h<hop2>.lx。
 	pc := lastHopCommand(t, st, shared.TypeApplyChainHop, midID)
 	var portal shared.ApplyChainHopPayload
-	if err := json.Unmarshal(pc.Payload, &portal); err != nil {
+	if err := json.Unmarshal(pc.Data, &portal); err != nil {
 		t.Fatal(err)
 	}
 	if portal.Kind != shared.HopKindPortal || portal.Portal == nil {
@@ -157,7 +157,7 @@ func TestChainOrchestration(t *testing.T) {
 	// 阶段 3：bridge 在 exit，携带 portal 回执（公网侧端口 30001→20001、实际 SNI）与派生 short_id。
 	bc := lastHopCommand(t, st, shared.TypeApplyChainHop, exitID)
 	var bridge shared.ApplyChainHopPayload
-	if err := json.Unmarshal(bc.Payload, &bridge); err != nil {
+	if err := json.Unmarshal(bc.Data, &bridge); err != nil {
 		t.Fatal(err)
 	}
 	if bridge.Kind != shared.HopKindBridge || bridge.Bridge == nil {
@@ -173,7 +173,7 @@ func TestChainOrchestration(t *testing.T) {
 	// 阶段 4a：mid 的 forward —— 反向目标 127.0.0.1:出口业务端口 + via_tunnel_domain。
 	mc := lastHopCommand(t, st, shared.TypeApplyChainHop, midID)
 	var fwdMid shared.ApplyChainHopPayload
-	if err := json.Unmarshal(mc.Payload, &fwdMid); err != nil {
+	if err := json.Unmarshal(mc.Data, &fwdMid); err != nil {
 		t.Fatal(err)
 	}
 	if fwdMid.Kind != shared.HopKindForward || fwdMid.Forward == nil {
@@ -189,7 +189,7 @@ func TestChainOrchestration(t *testing.T) {
 	// 阶段 4b：entry 的 forward —— 直连目标 mid 公网地址：公网端口（30002→20002），用户指定端口 18443。
 	ec := lastHopCommand(t, st, shared.TypeApplyChainHop, entryID)
 	var fwdEntry shared.ApplyChainHopPayload
-	if err := json.Unmarshal(ec.Payload, &fwdEntry); err != nil {
+	if err := json.Unmarshal(ec.Data, &fwdEntry); err != nil {
 		t.Fatal(err)
 	}
 	fe := fwdEntry.Forward
@@ -244,7 +244,7 @@ func TestChainHopResultFailure(t *testing.T) {
 	st.InsertChainHop(ctx, chainID, 1, exitID, store.HopRoleExit, nodeID, 0, "")
 
 	req := &fakeRequester{online: map[int64]bool{entryID: true, exitID: true}}
-	d := New(st, req, "dev")
+	d := New(st, req)
 	d.DestCandidates = []string{"dl.google.com:443"}
 	if err := d.StartChain(ctx, chainID); err != nil {
 		t.Fatal(err)
@@ -257,7 +257,7 @@ func TestChainHopResultFailure(t *testing.T) {
 	if ok, _ := st.MarkCommandFailed(ctx, c.ID); !ok {
 		t.Fatalf("命令 %d 置 failed 失败", c.ID)
 	}
-	d.handleChainHopResult(entryID, shared.ApplyResultPayload{HopID: hop1, Kind: shared.HopKindPortal, OK: false, Error: "boom"})
+	d.handleChainHopResult(entryID, shared.ApplyResultPayload{HopID: hop1, Kind: shared.HopKindPortal}, "boom")
 	chain, _ := st.ChainByID(ctx, chainID)
 	if chain.Status != store.ChainStatusFailed {
 		t.Fatalf("链状态 %s，期望 failed", chain.Status)

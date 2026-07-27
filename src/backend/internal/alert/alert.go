@@ -3,9 +3,7 @@
 package alert
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"lattix/backend/internal/store"
+	external "lattix/shared/requester"
 )
 
 // 告警事件类型（webhook JSON 的 event 字段）。
@@ -32,9 +31,9 @@ const sendTimeout = 5 * time.Second
 
 // Notifier 读取 settings 表配置并发送告警；内存 map 记上次发送时间做防抖动（重启清零可接受）。
 type Notifier struct {
-	st       *store.Store
-	client   *http.Client
-	debounce time.Duration
+	st        *store.Store
+	requester external.WebhookRequester
+	debounce  time.Duration
 
 	mu       sync.Mutex
 	lastSent map[string]time.Time // key: "<serverID>|<event>"
@@ -51,8 +50,10 @@ func New(st *store.Store) *Notifier {
 		debounce = d
 	}
 	return &Notifier{
-		st:       st,
-		client:   &http.Client{Timeout: sendTimeout},
+		st: st,
+		requester: external.ExternalWebhookRequester{
+			Doer: &http.Client{Timeout: sendTimeout},
+		},
 		debounce: debounce,
 		lastSent: make(map[string]time.Time),
 	}
@@ -193,35 +194,12 @@ func (n *Notifier) Test(ctx context.Context) map[string]ChannelResult {
 
 // sendWebhook POST JSON 载荷到 webhook 接收端；非 2xx 视为失败。
 func (n *Notifier) sendWebhook(url string, p payload) error {
-	body, err := json.Marshal(p)
-	if err != nil {
-		return err
-	}
-	resp, err := n.client.Post(url, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	return nil
+	return n.requester.PostJSON(context.Background(), url, p)
 }
 
 // sendTelegram 经 Bot API sendMessage 发送纯文本。
 func (n *Notifier) sendTelegram(token, chatID, text string) error {
-	body, err := json.Marshal(map[string]string{"chat_id": chatID, "text": text})
-	if err != nil {
-		return err
-	}
-	resp, err := n.client.Post(
-		"https://api.telegram.org/bot"+token+"/sendMessage", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	return nil
+	return n.requester.PostJSON(context.Background(),
+		"https://api.telegram.org/bot"+token+"/sendMessage",
+		map[string]string{"chat_id": chatID, "text": text})
 }

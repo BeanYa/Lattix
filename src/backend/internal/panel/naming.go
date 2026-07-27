@@ -18,7 +18,7 @@ const (
 )
 
 var (
-	nameVariablePattern = regexp.MustCompile(`\{\{\s*([^{}]+?)\s*\}\}`)
+	nameVariablePattern  = regexp.MustCompile(`\{\{\s*([^{}]+?)\s*\}\}`)
 	simpleNameKeyPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 	scopedNameKeyPattern = regexp.MustCompile(`^(ENTRY|EXIT|HOP\[(\d+)\])\.([A-Z][A-Z0-9_]*)(?:\[(\d+)\])?$`)
 	globalTagPattern     = regexp.MustCompile(`^TAG\[(\d+)\]$`)
@@ -52,8 +52,7 @@ type nameTemplateValues struct {
 	Servers  []nameTemplateServer
 }
 
-// resolveNameTemplate 将名称模板解析成最终管理名称。空模板用于兼容旧 API，
-// 由展示/订阅层继续采用历史自动命名。
+// resolveNameTemplate 将名称模板解析成最终管理名称。空模板使用自动命名。
 func resolveNameTemplate(tmpl string, values nameTemplateValues) (string, error) {
 	tmpl = strings.TrimSpace(tmpl)
 	if tmpl == "" {

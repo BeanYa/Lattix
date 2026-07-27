@@ -1,40 +1,135 @@
-// Package shared 定义 Backend 与 Agent 之间控制通道的协议类型（设计文档 §5），
-// 以及两端共用的虚拟配置类型（§7），保证协议两端类型一致。
-//
-// 协议演化规则（兼容窗口内硬性约束，CI 经 scripts/check-protocol-compat.sh 强制）：
-//   - 已有 TypeXxx 常量值不得修改；
-//   - 已有 struct 的已有字段/json tag 不得删除或修改，只允许新增字段（带 omitempty）；
-//   - 新语义走新字段或新消息类型（如 apply_node_v2），不改旧载荷语义；
-//   - 废弃字段标注 deprecated 但窗口期内保留；
-//   - 两端均不得使用 json.Decoder.DisallowUnknownFields（忽略未知字段是新旧互跑的基础）。
+// Package shared 定义 Backend 与 Agent 之间控制通道的协议类型，
+// 以及两端共用的虚拟配置类型，保证协议两端类型一致。
 package shared
 
-import "encoding/json"
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+)
 
-// Envelope 是控制通道的统一消息信封，ID 用于请求/响应关联（§5）。
+// Envelope 是控制通道的统一 RPC 消息信封。
 type Envelope struct {
-	ID      string          `json:"id"`
-	Type    string          `json:"type"`
-	Payload json.RawMessage `json:"payload"`
+	Kind      string          `json:"kind"`
+	Type      string          `json:"type"`
+	RequestID string          `json:"request_id"`
+	TraceID   string          `json:"trace_id"`
+	Code      string          `json:"code,omitempty"`
+	Message   string          `json:"message,omitempty"`
+	Data      json.RawMessage `json:"data"`
 }
 
-// 消息类型（§5）。
-const (
-	TypeHello        = "hello"         // agent→panel 首连认证
-	TypeApplyNode    = "apply_node"    // panel→agent 下发节点
-	TypeRemoveNode   = "remove_node"   // panel→agent 删除节点
-	TypeAddUser      = "add_user"      // panel→agent 热加入一个用户
-	TypeRemoveUser   = "remove_user"   // panel→agent 热移除一个用户
-	TypeApplyResult  = "apply_result"  // agent→panel 上报执行结果
-	TypeUninstall    = "uninstall"     // panel→agent 卸载 agent（先回执再自毁）
-	TypeUpgradeXray  = "upgrade_xray"  // panel→agent 升级 xray 版本（§18）
-	TypeUpgradeAgent = "upgrade_agent" // panel→agent 升级 agent 自身（下载校验后自替换，退出由 systemd 拉起）
-	TypeTelemetry    = "telemetry"     // agent→panel 周期遥测（流量 + 主机指标，§13）
-	TypeDriftReport  = "drift_report"  // agent→panel 配置漂移状态变化（§17 reconcile）
+// MarshalJSON guarantees that responses always carry code and message, while
+// requests/events omit both response-only fields.
+func (e Envelope) MarshalJSON() ([]byte, error) {
+	type base struct {
+		Kind      string          `json:"kind"`
+		Type      string          `json:"type"`
+		RequestID string          `json:"request_id"`
+		TraceID   string          `json:"trace_id"`
+		Data      json.RawMessage `json:"data"`
+	}
+	value := base{
+		Kind: e.Kind, Type: e.Type, RequestID: e.RequestID, TraceID: e.TraceID, Data: e.Data,
+	}
+	if e.Kind != KindResponse {
+		return json.Marshal(value)
+	}
+	return json.Marshal(struct {
+		base
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}{base: value, Code: e.Code, Message: e.Message})
+}
 
-	TypeApplyChainHop  = "apply_chain_hop"  // panel→agent 下发链跳配置件（portal/bridge/forward，§21）
-	TypeRemoveChainHop = "remove_chain_hop" // panel→agent 删除链跳配置件（删链逐跳反向下发，§21）
+const (
+	KindRequest  = "request"
+	KindResponse = "response"
+	KindEvent    = "event"
 )
+
+// RPC 业务结果码。HTTP 与 WebSocket 共用同一语义。
+const (
+	CodeOK                     = "OK"
+	CodeAccepted               = "ACCEPTED"
+	CodeAuthRequired           = "AUTH_REQUIRED"
+	CodeAuthInvalidCredentials = "AUTH_INVALID_CREDENTIALS"
+	CodeInvalidArgument        = "INVALID_ARGUMENT"
+	CodeNotFound               = "NOT_FOUND"
+	CodeConflict               = "CONFLICT"
+	CodeOperationLocked        = "OPERATION_LOCKED"
+	CodeUnsupportedAction      = "UNSUPPORTED_ACTION"
+	CodeInternalError          = "INTERNAL_ERROR"
+	CodeUpstreamError          = "UPSTREAM_ERROR"
+	CodeServiceUnavailable     = "SERVICE_UNAVAILABLE"
+	CodeServerOffline          = "SERVER_OFFLINE"
+	CodePortOutOfRange         = "PORT_OUT_OF_RANGE"
+	CodeUpdateInProgress       = "UPDATE_IN_PROGRESS"
+)
+
+// 消息类型使用 domain.action，响应沿用对应请求的 Type。
+const (
+	TypeHello          = "agent.hello"
+	TypeApplyNode      = "node.apply"
+	TypeRemoveNode     = "node.remove"
+	TypeAddUser        = "user.add"
+	TypeRemoveUser     = "user.remove"
+	TypeUninstall      = "agent.uninstall"
+	TypeUpgradeXray    = "xray.upgrade"
+	TypeUpgradeAgent   = "agent.upgrade"
+	TypeTelemetry      = "telemetry.report"
+	TypeDriftReport    = "config.drift"
+	TypeApplyChainHop  = "chain-hop.apply"
+	TypeRemoveChainHop = "chain-hop.remove"
+)
+
+// NewMessageID 返回用于 request_id/trace_id 的 32 位小写十六进制随机值。
+func NewMessageID() string {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		panic(err)
+	}
+	return hex.EncodeToString(value[:])
+}
+
+// ValidMessageID 校验 request_id/trace_id 的固定格式。
+func ValidMessageID(value string) bool {
+	if len(value) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+// Validate 校验与具体动作 data 无关的 WS 信封结构。
+func (e Envelope) Validate() error {
+	switch e.Kind {
+	case KindRequest, KindResponse, KindEvent:
+	default:
+		return fmt.Errorf("invalid kind %q", e.Kind)
+	}
+	if e.Type == "" {
+		return errors.New("type is required")
+	}
+	if !ValidMessageID(e.RequestID) {
+		return errors.New("invalid request_id")
+	}
+	if !ValidMessageID(e.TraceID) {
+		return errors.New("invalid trace_id")
+	}
+	if len(e.Data) == 0 || !json.Valid(e.Data) {
+		return errors.New("data must be valid JSON")
+	}
+	if e.Kind == KindResponse && e.Code == "" {
+		return errors.New("response code is required")
+	}
+	if e.Kind != KindResponse && (e.Code != "" || e.Message != "") {
+		return errors.New("request/event cannot contain code or message")
+	}
+	return nil
+}
 
 // HelloPayload 是 hello 的载荷：token（bootstrap 或长期）、agent 版本、
 // xray 版本与运行状态（§5、§13），以及本机网卡的非回环地址（§9 公网地址候选）。
@@ -44,7 +139,7 @@ type HelloPayload struct {
 	XrayVersion  string `json:"xray_version"`
 	XrayRunning  bool   `json:"xray_running"`
 	// NICAddresses 是 agent 本机网卡的非回环 IP（v4/v6），面板据此提供公网地址候选；
-	// 旧版 agent 不上报（omitempty），面板兼容为空。
+	// 未发现可用地址时为空。
 	NICAddresses []string `json:"nic_addresses,omitempty"`
 }
 
@@ -99,14 +194,12 @@ type UninstallPayload struct {
 	PurgeXray bool `json:"purge_xray"` // true = 连同 install.sh 安装的 xray 与配置一并清除
 }
 
-// ApplyResultPayload 是 apply_result 的载荷：成功返回 RealizedConfig，失败返回 Error（§5）。
+// ApplyResultPayload 是命令 response 的 data；失败原因由信封 code/message 表达。
 // HopID/Kind 为链跳配置件（apply_chain_hop/remove_chain_hop）回执（§21）：
 // portal/forward 复用 RealizedConfig 的 port/public_key 字段上报生效值。
 type ApplyResultPayload struct {
 	NodeID         int64           `json:"node_id"`
-	OK             bool            `json:"ok"`
 	RealizedConfig *RealizedConfig `json:"realized_config,omitempty"`
-	Error          string          `json:"error,omitempty"`
 	HopID          int64           `json:"hop_id,omitempty"`
 	Kind           string          `json:"kind,omitempty"`
 }
@@ -215,7 +308,3 @@ type RemoveChainHopPayload struct {
 	HopID int64  `json:"hop_id"`
 	Kind  string `json:"kind"` // portal|bridge|forward
 }
-
-// ErrUnsupportedPrefix 是 agent 对不认识的命令类型回执的错误前缀（协议演化规则）：
-// 面板收到该前缀的失败即终态（命令 failed），不再重试——重试也不会变得被支持。
-const ErrUnsupportedPrefix = "unsupported command"

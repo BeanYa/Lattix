@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lattix.dev/schema/ws-protocol.schema.json",
+  "title": "Lattix Panel-Agent WebSocket RPC envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "type", "request_id", "trace_id", "data"],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": ["request", "response", "event"]
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*$",
+      "description": "domain.action; unknown valid actions receive UNSUPPORTED_ACTION"
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "code": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*$"
+    },
+    "message": {"type": "string"},
+    "data": {}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {"kind": {"const": "response"}},
+        "required": ["kind"]
+      },
+      "then": {"required": ["code", "message"]}
+    },
+    {
+      "if": {
+        "properties": {"kind": {"enum": ["request", "event"]}},
+        "required": ["kind"]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            {"required": ["code"]},
+            {"required": ["message"]}
+          ]
+        }
+      }
+    }
+  ]
+}

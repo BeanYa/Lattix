@@ -22,6 +22,7 @@ type operationLogDTO struct {
 	Operator  string           `json:"operator,omitempty"`
 	IP        string           `json:"ip,omitempty"`
 	RequestID string           `json:"request_id,omitempty"`
+	TraceID   string           `json:"trace_id,omitempty"`
 }
 
 type operationLogPage struct {
@@ -72,7 +73,7 @@ func (s *Server) handleListOperationLog(w http.ResponseWriter, r *http.Request) 
 			ID: item.ID, EventID: item.EventID, Timestamp: item.Timestamp.Format(time.RFC3339Nano),
 			Severity: item.Severity, Category: item.Category, Action: item.Action,
 			ServerID: item.ServerID, NodeID: item.NodeID, Detail: item.Detail,
-			Operator: item.Operator, IP: item.IP, RequestID: item.RequestID,
+			Operator: item.Operator, IP: item.IP, RequestID: item.RequestID, TraceID: item.TraceID,
 		}
 		if item.ServerID != nil {
 			dto.Server = aliasByID[*item.ServerID]
@@ -97,6 +98,10 @@ func (s *Server) handleListRequestLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClearOperationLog(w http.ResponseWriter, r *http.Request) {
+	if err := readJSON(r, &struct{}{}); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 	if s.opLog == nil {
 		writeError(w, http.StatusServiceUnavailable, "操作日志未启用")
 		return
@@ -105,15 +110,20 @@ func (s *Server) handleClearOperationLog(w http.ResponseWriter, r *http.Request)
 	_, total, _ := s.opLog.List(r.Context(), logging.OperationFilter{}, 1, 0)
 	if err := s.opLog.Clear(r.Context(), logging.OperationEvent{
 		Operator: operator, IP: logging.ClientIP(r), RequestID: logging.RequestID(r.Context()),
-		Detail: map[string]int{"removed": total},
+		TraceID: logging.TraceID(r.Context()),
+		Detail:  map[string]int{"removed": total},
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, nil)
 }
 
 func (s *Server) handleClearRequestLog(w http.ResponseWriter, r *http.Request) {
+	if err := readJSON(r, &struct{}{}); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 	if s.reqLog == nil {
 		writeError(w, http.StatusServiceUnavailable, "请求日志未启用")
 		return
@@ -127,5 +137,5 @@ func (s *Server) handleClearRequestLog(w http.ResponseWriter, r *http.Request) {
 		"removed_bytes": status.UsageBytes,
 		"segments":      status.SegmentCount,
 	})
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, nil)
 }

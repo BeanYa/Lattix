@@ -17,12 +17,12 @@ func TestRequestLogAppendsAndReadsNewestWindow(t *testing.T) {
 
 	for i := 0; i < 35; i++ {
 		log.Append(RequestEntry{
-			Timestamp: time.Unix(int64(i), 0),
-			RequestID: newID(),
-			Severity:  SeverityInfo,
-			Method:    "GET",
-			Path:      "/api/test",
-			Status:    200,
+			Timestamp:  time.Unix(int64(i), 0),
+			RequestID:  newID(),
+			Severity:   SeverityInfo,
+			Method:     "GET",
+			Path:       "/api/test",
+			HTTPStatus: 200,
 		})
 	}
 	items, _, err := log.Tail(context.Background(), 30)
@@ -46,7 +46,7 @@ func TestRequestLogClear(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer log.Close(context.Background())
-	log.Append(RequestEntry{Timestamp: time.Now(), RequestID: newID(), Method: "GET", Status: 200})
+	log.Append(RequestEntry{Timestamp: time.Now(), RequestID: newID(), Method: "GET", HTTPStatus: 200})
 	if _, _, err := log.Tail(context.Background(), 10); err != nil {
 		t.Fatal(err)
 	}
@@ -71,12 +71,12 @@ func TestRequestLogRotatesWithinConfiguredLimit(t *testing.T) {
 
 	for i := 0; i < 3000; i++ {
 		log.Append(RequestEntry{
-			Timestamp: time.Unix(int64(i), 0),
-			RequestID: newID(),
-			Severity:  SeverityInfo,
-			Method:    "GET",
-			Path:      "/api/" + strings.Repeat("x", 480),
-			Status:    200,
+			Timestamp:  time.Unix(int64(i), 0),
+			RequestID:  newID(),
+			Severity:   SeverityInfo,
+			Method:     "GET",
+			Path:       "/api/" + strings.Repeat("x", 480),
+			HTTPStatus: 200,
 		})
 	}
 	// Status is serialized behind all queued append commands, so it also waits

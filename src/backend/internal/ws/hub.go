@@ -27,7 +27,7 @@ const (
 // sendBuffer 是每连接发送队列长度。MVP 命令量极小，写满即视为慢连接并断开（重连后补发）。
 const sendBuffer = 256
 
-// Hub 是 agent 连接的注册表，同时实现 Requester（§2 WS 传输实现）。
+// Hub 是 agent 连接的注册表，同时实现 AgentRequester（§2 WS 传输实现）。
 type Hub struct {
 	// Auth 校验 hello（由 dispatcher 实现，注入）。
 	Auth Authenticator
@@ -43,6 +43,8 @@ type Hub struct {
 	OnReconnect func(serverID int64)
 	// OnMessage 上抛认证后收到的所有业务信封（apply_result 等）。
 	OnMessage func(serverID int64, env shared.Envelope)
+	// OnProtocolError 只记录无正常业务响应的 WS 协议错误；遥测和 ping/pong 不调用。
+	OnProtocolError func(serverID int64, requestID, traceID, rpcType, message string)
 	// OnDisconnect 在 online→offline 跃迁时调用（连接从注册表实际移除；
 	// 被新连接顶替的旧连接注销不触发，hello 重连不重复报，§19 告警挂点）。
 	OnDisconnect func(serverID int64)

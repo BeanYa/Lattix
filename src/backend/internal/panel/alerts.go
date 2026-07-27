@@ -11,6 +11,10 @@ import (
 // handleTestAlerts 处理 POST /api/settings/alerts/test（§19）：
 // 按当前已保存的告警配置向两通道各发一条测试消息，返回各通道成败。
 func (s *Server) handleTestAlerts(w http.ResponseWriter, r *http.Request) {
+	if err := readJSON(r, &struct{}{}); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 	if s.alerter == nil {
 		writeError(w, http.StatusServiceUnavailable, "告警模块未启用")
 		return

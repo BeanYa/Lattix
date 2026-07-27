@@ -713,7 +713,10 @@ export default function Settings() {
           <Button variant="outline" disabled={restarting} onClick={onRestart}>
             {restarting ? '重启中，请稍候…' : '重启面板'}
           </Button>
-          <Button variant="outline" onClick={() => (window.location.href = '/api/backup')}>
+              <Button
+                variant="outline"
+                onClick={() => void api.downloadBackup().catch((err) => setError(errorMessage(err)))}
+              >
             下载备份
           </Button>
           <p className="text-xs text-muted-foreground">

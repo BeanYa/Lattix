@@ -346,8 +346,8 @@ func (m *Manager) QueryStats() (map[string]int64, error) {
 	return m.hot.QueryStats()
 }
 
-// EnsureTelemetryFeatures 为旧版本生成的 config.json 补齐遥测所需的
-// stats/policy/StatsService 配置项（缺失则落盘并重启 xray 生效，尽力而为）。
+// EnsureTelemetryFeatures 确保当前配置包含遥测所需的
+// stats/policy/StatsService（缺失则落盘并重启 xray 生效，尽力而为）。
 func (m *Manager) EnsureTelemetryFeatures() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"lattix/shared"
 )
 
 const (
@@ -28,30 +30,52 @@ var (
 
 type OperatorFunc func(*http.Request) string
 
-func RequestMiddleware(log *RequestLog, operator OperatorFunc, next http.Handler) http.Handler {
+type LogPolicy string
+
+const (
+	LogFull         LogPolicy = "full"
+	LogFailuresOnly LogPolicy = "failures_only"
+	LogNone         LogPolicy = "none"
+)
+
+type LogPolicyFunc func(*http.Request) LogPolicy
+
+func RequestMiddleware(log *RequestLog, operator OperatorFunc, policy LogPolicyFunc, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := validOrNewID(r.Header.Get("X-Request-ID"))
+		traceID := validOrNewID(r.Header.Get("X-Trace-ID"))
+		if r.Header.Get("X-Trace-ID") == "" {
+			traceID = requestID
+		}
+		r = WithRequestMeta(r, requestID, traceID)
+		w.Header().Set("X-Request-ID", requestID)
+		w.Header().Set("X-Trace-ID", traceID)
+
 		if !shouldLogRequest(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		requestID := newID()
-		r = WithRequestID(r, requestID)
-		w.Header().Set("X-Request-ID", requestID)
-		recorder := &responseRecorder{ResponseWriter: w}
+		recorder := &responseRecorder{ResponseWriter: w, request: r}
 		started := time.Now()
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				if recorder.status == 0 {
 					http.Error(recorder, "internal server error", http.StatusInternalServerError)
 				}
-				log.Append(buildRequestEntry(r, recorder, started, operator, fmt.Sprint(recovered)))
+				entry := buildRequestEntry(r, recorder, started, operator, fmt.Sprint(recovered))
+				if shouldAppend(policyFor(policy, r), entry) {
+					log.Append(entry)
+				}
 				return
 			}
 			// 成功的 WebSocket 升级由 LogWebSocketUpgrade 在握手完成时立即记录。
 			if r.URL.Path == "/api/agent/ws" && (recorder.status == 0 || recorder.status == http.StatusSwitchingProtocols) {
 				return
 			}
-			log.Append(buildRequestEntry(r, recorder, started, operator, ""))
+			entry := buildRequestEntry(r, recorder, started, operator, "")
+			if shouldAppend(policyFor(policy, r), entry) {
+				log.Append(entry)
+			}
 		}()
 		next.ServeHTTP(recorder, r)
 	})
@@ -61,12 +85,14 @@ func LogWebSocketUpgrade(log *RequestLog, r *http.Request, operator OperatorFunc
 	entry := RequestEntry{
 		Timestamp:     time.Now().UTC(),
 		RequestID:     RequestID(r.Context()),
+		TraceID:       TraceID(r.Context()),
 		Severity:      SeverityInfo,
+		Transport:     "http",
 		Method:        r.Method,
 		Path:          safePath(r),
 		Route:         routePattern(r),
-		Params:        safeParameters(r),
-		Status:        http.StatusSwitchingProtocols,
+		Attributes:    safeParameters(r),
+		HTTPStatus:    http.StatusSwitchingProtocols,
 		DurationMS:    0,
 		ResponseBytes: 0,
 		IP:            ClientIP(r),
@@ -84,31 +110,40 @@ func buildRequestEntry(r *http.Request, recorder *responseRecorder, started time
 		status = http.StatusOK
 	}
 	duration := time.Since(started)
-	severity := SeverityInfo
-	switch {
-	case status >= 500 || panicSummary != "":
-		severity = SeverityError
-	case status >= 400 || duration > 2*time.Second:
-		severity = SeverityWarning
+	meta := requestMeta(r.Context())
+	rpcCode, safeMessage := "", ""
+	idempotencyReplayed := false
+	attributes := safeParameters(r)
+	if meta != nil {
+		rpcCode, safeMessage = meta.RPCCode, meta.SafeMessage
+		idempotencyReplayed = meta.IdempotencyReplayed
+		attributes = mergeAttributes(attributes, meta.Attributes)
 	}
+	severity := requestSeverity(status, rpcCode, duration, panicSummary != "")
 	errorSummary := panicSummary
-	if errorSummary == "" && status >= 400 {
+	if errorSummary == "" && rpcCode != "" && rpcCode != shared.CodeOK && rpcCode != shared.CodeAccepted {
+		errorSummary = safeMessage
+	} else if errorSummary == "" && status >= 400 {
 		errorSummary = responseError(recorder.capture)
 	}
 	entry := RequestEntry{
-		Timestamp:     time.Now().UTC(),
-		RequestID:     RequestID(r.Context()),
-		Severity:      severity,
-		Method:        r.Method,
-		Path:          safePath(r),
-		Route:         routePattern(r),
-		Params:        safeParameters(r),
-		Status:        status,
-		DurationMS:    duration.Milliseconds(),
-		ResponseBytes: recorder.bytes,
-		IP:            ClientIP(r),
-		UserAgent:     truncate(r.UserAgent(), maxParameterValue),
-		ErrorSummary:  truncate(errorSummary, maxParameterValue),
+		Timestamp:           time.Now().UTC(),
+		RequestID:           RequestID(r.Context()),
+		TraceID:             TraceID(r.Context()),
+		Severity:            severity,
+		Transport:           "http",
+		Method:              r.Method,
+		Path:                safePath(r),
+		Route:               routePattern(r),
+		Attributes:          attributes,
+		HTTPStatus:          status,
+		RPCCode:             rpcCode,
+		DurationMS:          duration.Milliseconds(),
+		ResponseBytes:       recorder.bytes,
+		IP:                  ClientIP(r),
+		UserAgent:           truncate(r.UserAgent(), maxParameterValue),
+		ErrorSummary:        truncate(errorSummary, maxParameterValue),
+		IdempotencyReplayed: idempotencyReplayed,
 	}
 	if operator != nil {
 		entry.Operator = operator(r)
@@ -116,10 +151,79 @@ func buildRequestEntry(r *http.Request, recorder *responseRecorder, started time
 	return entry
 }
 
-func shouldLogRequest(r *http.Request) bool {
-	if r.Method == http.MethodGet && r.URL.Path == "/api/logs/requests" {
-		return false
+// LogWebSocketRPC 记录一条已完成的命令型 WS RPC。高频 event 由调用方的
+// LogPolicy 在进入此函数前过滤。
+func LogWebSocketRPC(log *RequestLog, entry RequestEntry) {
+	entry.Timestamp = time.Now().UTC()
+	entry.Transport = "websocket"
+	entry.Severity = requestSeverity(0, entry.RPCCode, time.Duration(entry.DurationMS)*time.Millisecond, false)
+	if entry.RPCCode != shared.CodeOK && entry.RPCCode != shared.CodeAccepted {
+		entry.ErrorSummary = truncate(entry.ErrorSummary, maxParameterValue)
 	}
+	log.Append(entry)
+}
+
+func requestSeverity(status int, rpcCode string, duration time.Duration, panicked bool) Severity {
+	if panicked || status >= 500 || rpcCode == shared.CodeInternalError ||
+		rpcCode == shared.CodeUpstreamError || rpcCode == shared.CodeServiceUnavailable {
+		return SeverityError
+	}
+	if status >= 400 || duration > 2*time.Second {
+		return SeverityWarning
+	}
+	switch rpcCode {
+	case shared.CodeAuthRequired, shared.CodeAuthInvalidCredentials, shared.CodeInvalidArgument,
+		shared.CodeNotFound, shared.CodeConflict, shared.CodeOperationLocked,
+		shared.CodeUnsupportedAction, shared.CodeServerOffline, shared.CodePortOutOfRange,
+		shared.CodeUpdateInProgress:
+		return SeverityWarning
+	default:
+		return SeverityInfo
+	}
+}
+
+func policyFor(resolve LogPolicyFunc, r *http.Request) LogPolicy {
+	if resolve == nil {
+		return LogFull
+	}
+	if policy := resolve(r); policy != "" {
+		return policy
+	}
+	return LogFull
+}
+
+func shouldAppend(policy LogPolicy, entry RequestEntry) bool {
+	switch policy {
+	case LogNone:
+		return false
+	case LogFailuresOnly:
+		return entry.Severity != SeverityInfo
+	default:
+		return true
+	}
+}
+
+func validOrNewID(value string) string {
+	if shared.ValidMessageID(value) {
+		return value
+	}
+	return newID()
+}
+
+func mergeAttributes(left, right map[string]string) map[string]string {
+	if len(right) == 0 {
+		return left
+	}
+	if left == nil {
+		left = make(map[string]string, len(right))
+	}
+	for key, value := range right {
+		left[key] = value
+	}
+	return left
+}
+
+func shouldLogRequest(r *http.Request) bool {
 	return strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/sub/")
 }
 
@@ -222,9 +326,22 @@ func truncate(value string, max int) string {
 
 type responseRecorder struct {
 	http.ResponseWriter
+	request *http.Request
 	status  int
 	bytes   int64
 	capture []byte
+}
+
+func (w *responseRecorder) SetRPCOutcome(code, safeMessage string) {
+	SetRPCOutcome(w.request.Context(), code, safeMessage)
+}
+
+func (w *responseRecorder) SetIdempotencyReplayed(replayed bool) {
+	SetIdempotencyReplayed(w.request.Context(), replayed)
+}
+
+func (w *responseRecorder) RPCIDs() (string, string) {
+	return RequestID(w.request.Context()), TraceID(w.request.Context())
 }
 
 func (w *responseRecorder) WriteHeader(status int) {

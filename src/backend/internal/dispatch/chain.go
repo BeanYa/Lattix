@@ -282,7 +282,7 @@ func (d *Dispatcher) enqueueHop(ctx context.Context, chainID int64, hop store.Ch
 // handleChainHopResult 处理链跳配置件回执（§21.1，apply_result 带 hop_id 时由 handleApplyResult 路由至此）：
 // portal/forward 回执的 realized port/public_key 写回 chain_hops 并推进编排；
 // 失败定位到跳并置链 failed。remove_chain_hop 的回执到达时跳行已删（删链流程），仅记日志。
-func (d *Dispatcher) handleChainHopResult(serverID int64, p shared.ApplyResultPayload) {
+func (d *Dispatcher) handleChainHopResult(serverID int64, p shared.ApplyResultPayload, responseError string) {
 	ctx := context.Background()
 	hop, err := d.st.ChainHopByID(ctx, p.HopID)
 	if err != nil {
@@ -293,8 +293,8 @@ func (d *Dispatcher) handleChainHopResult(serverID int64, p shared.ApplyResultPa
 		log.Printf("dispatch: server %d: apply_result hop %d 属于 server %d，忽略", serverID, p.HopID, hop.ServerID)
 		return
 	}
-	if !p.OK {
-		d.failHop(ctx, hop, fmt.Sprintf("%s: %s", p.Kind, p.Error))
+	if responseError != "" {
+		d.failHop(ctx, hop, fmt.Sprintf("%s: %s", p.Kind, responseError))
 		return
 	}
 	switch p.Kind {
@@ -477,7 +477,7 @@ func (d *Dispatcher) chainPieces(ctx context.Context, chainID int64) (map[string
 	m := map[string]string{}
 	for _, c := range cmds {
 		var p shared.ApplyChainHopPayload
-		if err := json.Unmarshal(c.Payload, &p); err != nil || p.ChainID != chainID || p.HopID == 0 {
+		if err := json.Unmarshal(c.Data, &p); err != nil || p.ChainID != chainID || p.HopID == 0 {
 			continue
 		}
 		m[pieceKey(p.HopID, p.Kind)] = c.Status

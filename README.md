@@ -150,8 +150,8 @@ install.sh            # 面向用户的统一安装入口
 - 订阅响应头 `subscription-userinfo`（已用上下行流量、到期时刻）与
   `profile-update-interval: 24`，客户端自动展示用量并按天刷新
 - 用户有效期：创建/编辑可设到期时刻，到期自动停权（订阅保留但节点为空，
-  sweeper 扇出 remove_user），延长或清除有效期自动恢复（扇出 add_user）
-- 用户停用/启用开关：停用立即停权（扇出 remove_user、订阅节点清空、落地页显示"已停用"），
+  sweeper 扇出 user.remove），延长或清除有效期自动恢复（扇出 user.add）
+- 用户停用/启用开关：停用立即停权（扇出 user.remove、订阅节点清空、落地页显示"已停用"），
   启用恢复；与到期停权正交，两者都解除才恢复且不会重复扇出
 - 订阅落地页：浏览器打开 `GET /sub/{token}` 得到自包含页面（用量/有效期/节点数、
   订阅地址复制、二维码、clash/mihomo 一键导入），不依赖任何外网资源
@@ -162,7 +162,7 @@ install.sh            # 面向用户的统一安装入口
 - 配置漂移 reconcile：外部篡改 xray 配置自动检测上报，一键修复（重放节点）
 - 事件告警：服务器离线 / 配置漂移 / 节点失败（仅状态跃迁触发，同服务器同事件
   5 分钟防抖），Webhook + Telegram Bot 双通道，设置页配置并可发测试消息
-- SQLite 备份：设置页"面板维护"一键下载（`GET /api/backup`，VACUUM INTO 一致性快照）
+- SQLite 备份：设置页"面板维护"一键下载（`GET /api/backup/download`，VACUUM INTO 一致性快照）
 - xray 版本升级管理：面板下发，agent 校验官方 .dgst 后原子替换，失败回滚
 - 离线命令队列：agent 离线期间命令滞留，重连补发；重发死信（10 次）
 - 服务器引导：一行安装命令（bootstrap token 换发长期凭证），卸载可选"仅 agent"/"连同 xray"
@@ -227,8 +227,8 @@ go build -o lattix-backend ./src/backend/cmd/backend
 ACME 域名（保存后重启进程生效）；管理员密码（bcrypt 落库，改密即全部会话失效）；
 事件告警（Webhook 地址 / Telegram Bot token / chat_id，三项全空即关闭，可发测试消息）。
 设置页保存的值存于 SQLite `settings` 表并**优先于对应启动参数**，清除后恢复跟随启动参数。
-"设置 → 面板维护"提供一键重启（`POST /api/settings/restart`）与 SQLite 备份下载
-（`GET /api/backup`）：systemd 托管时退出后由
+"设置 → 面板维护"提供一键重启（`POST /api/panel/restart`）与 SQLite 备份下载
+（`GET /api/backup/download`）：systemd 托管时退出后由
 systemd 拉起；Docker 模式则由进程退出触发 Compose 的 `restart: unless-stopped`，
 从同一容器内已替换的二进制启动。非托管开发模式才自派生新进程接管。
 
@@ -280,20 +280,16 @@ sysctl 权限或安装以非 root 运行时都不会阻断 Agent 安装；脚本
 | `latx-ag uninstall [--purge-xray]` | 卸载 agent（默认保留 xray 与节点运行；`--purge-xray` 连同 xray 删除） |
 | `latx-ag version` | latx-ag、agent 与 xray 版本 |
 
-### CI/CD 与版本兼容（§18）
+### CI/CD 与版本发布（§18）
 
 - **发版**：push `v*` tag 触发 `.github/workflows/release.yml`——构建前后端并注入版本
   （前端嵌入单个 Go 面板二进制）、打包 amd64/arm64 的 panel 与 agent tarball、
-  生成 `checksums.txt`，并执行**新面板 × 上一 tag agent 兼容性 e2e 回归**。通过后
+  生成 `checksums.txt`，并执行**当前面板 × 当前 Agent 协议 e2e 回归**。通过后
   先发布 `ghcr.io/beanya/lattix:<version>` 与 `latest` 多架构镜像，再发布
   GitHub Release。Release 不重复附带安装脚本。
-- **协议只增不改**：`src/shared/messages.go` 头注释载明演化规则，PR 由
-  `scripts/check-protocol-compat.sh`（protocol-check workflow）强制"协议行只增不减"；
-  agent 对未知命令回执 `unsupported command`，面板据此终态不重试。
-- **兼容窗口**：面板允许领先 agent 一个发布位次（v0.0.x 形态比 patch 差）。hello 握手时
-  判定：主版本不符拒绝连接；落后超窗口置 `upgrade_needed`——常规命令滞留，
-  仅放行 `upgrade_agent` / `uninstall`，UI 显示"agent 需升级"。
-- **agent 自升级**：服务器页"升级 agent"下发 `upgrade_agent`，agent 从 GitHub release
+- **协议同步发布**：Panel、Frontend、Agent 和数据库结构按同一版本全新安装，不维护旧
+  HTTP/WS/数据库兼容窗口；Agent 对格式有效但未知的动作返回 `UNSUPPORTED_ACTION`。
+- **agent 自升级**：服务器页"升级 agent"下发 `agent.upgrade`，agent 从 GitHub release
   下载目标版本、校验 checksums.txt 后原子自替换并退出（systemd 拉起完成升级）。
 
 ## 开发
