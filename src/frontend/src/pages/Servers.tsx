@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import { PlusIcon, XIcon } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
+import { CountryCombobox } from '@/components/CountryCombobox'
+import { CountryFlag } from '@/components/CountryFlag'
 import { TagInput } from '@/components/TagInput'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -18,7 +20,6 @@ import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -33,7 +34,7 @@ import {
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
-import { countryFlag, loadCities, loadCountries, type CountryOption } from '@/lib/geography'
+import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { useTimezone } from '@/lib/timezone'
 import type { MachineType, PortRange, Server } from '@/lib/types'
@@ -524,8 +525,9 @@ export default function Servers() {
                 <TableRow key={s.id}>
                   <TableCell className="font-medium">
                     <div>{s.alias}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {countryFlag(s.country_code)} {s.location || '未设置地区'}
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <CountryFlag code={s.country_code} />
+                      <span>{s.location || '未设置地区'}</span>
                     </div>
                     {s.tags.map((tag) => (
                       <Badge key={tag} variant="secondary" className="ml-1">
@@ -648,32 +650,16 @@ export default function Servers() {
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>国家</Label>
-                <Select
+                <Label htmlFor="country">国家</Label>
+                <CountryCombobox
+                  id="country"
                   value={countryCode}
+                  options={countryOptions}
                   onValueChange={(value) => {
-                    if (!value) return
                     setCountryCode(value)
                     setLocation('')
                   }}
-                  items={countryOptions.map((country) => ({
-                    value: country.code,
-                    label: `${country.flag} ${country.label}`,
-                  }))}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="选择国家" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {countryOptions.map((country) => (
-                        <SelectItem key={country.code} value={country.code}>
-                          {country.flag} {country.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="location">地区</Label>
@@ -814,32 +800,16 @@ export default function Servers() {
           <form onSubmit={onUpdateAddress} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>国家</Label>
-                <Select
+                <Label htmlFor="edit-country">国家</Label>
+                <CountryCombobox
+                  id="edit-country"
                   value={editCountryCode}
+                  options={countryOptions}
                   onValueChange={(value) => {
-                    if (!value) return
                     setEditCountryCode(value)
                     setEditLocation('')
                   }}
-                  items={countryOptions.map((country) => ({
-                    value: country.code,
-                    label: `${country.flag} ${country.label}`,
-                  }))}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="选择国家" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {countryOptions.map((country) => (
-                        <SelectItem key={country.code} value={country.code}>
-                          {country.flag} {country.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="editLocation">地区</Label>

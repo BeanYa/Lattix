@@ -1,7 +1,7 @@
 export interface CountryOption {
   code: string
   label: string
-  flag: string
+  name: string
 }
 
 const countryNames = new Intl.DisplayNames(['zh-CN'], { type: 'region' })
@@ -20,7 +20,7 @@ export async function loadCountries(): Promise<CountryOption[]> {
     .map((country) => ({
       code: country.isoCode,
       label: countryNames.of(country.isoCode) ?? country.name,
-      flag: country.flag || countryFlag(country.isoCode),
+      name: country.name,
     }))
     .toSorted((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
 }
