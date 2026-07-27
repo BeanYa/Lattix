@@ -27,14 +27,13 @@ var (
 func main() {
 	panel := flag.String("panel", "ws://127.0.0.1:8080/api/agent/ws", "Backend WS 地址")
 	token := flag.String("token", "", "bootstrap token（§11）；state 文件已有长期凭证时忽略本参数")
-	statePath := flag.String("state", "/etc/lattix-agent.state.json", "长期凭证状态文件路径")
-	xrayBin := flag.String("xray-bin", "/usr/local/bin/xray", "xray 二进制路径")
-	xrayConfig := flag.String("xray-config", "/usr/local/etc/xray/config.json", "xray 配置文件路径（agent 独占管理，§6）")
+	statePath := flag.String("state", "/opt/lattix-agent/data/state.json", "长期凭证状态文件路径")
+	settingsPath := flag.String("settings", "/opt/lattix-agent/data/settings.json", "面板同步设置文件路径")
+	xrayBin := flag.String("xray-bin", "/opt/lattix-agent/bin/xray", "xray 二进制路径")
+	xrayConfig := flag.String("xray-config", "/opt/lattix-agent/config/xray.json", "xray 配置文件路径（agent 独占管理，§6）")
 	xrayAPI := flag.String("xray-api", "127.0.0.1:10085", "xray gRPC API 地址")
 	xrayRunner := flag.String("xray-runner", "systemd", "xray 服务控制方式：systemd | exec（dev 联调）")
 	releaseBase := flag.String("xray-release-base", "", "xray release 下载基址（默认官方 GitHub，可指向镜像，§18）")
-	telemetryInterval := flag.Duration("telemetry-interval", 60*time.Second, "遥测上报间隔（§13）")
-	driftInterval := flag.Duration("drift-interval", 15*time.Second, "配置漂移检测间隔（§17）")
 	showVersion := flag.Bool("version", false, "打印版本并退出")
 	flag.Parse()
 	if *showVersion {
@@ -46,31 +45,34 @@ func main() {
 	if *releaseBase != "" {
 		mgr.SetReleaseBase(*releaseBase) // 镜像/代理下载源（§18）
 	}
-	// 确保当前协议要求的遥测配置存在（stats/policy/StatsService，§13）。
-	if err := mgr.EnsureTelemetryFeatures(); err != nil {
-		log.Printf("ensure telemetry features: %v (traffic stats may be unavailable)", err)
-	}
-
 	st, err := state.Load(*statePath)
 	if err != nil {
 		log.Printf("load state: %v (ignored)", err)
 	}
 	mgr.SetChainPieces(st.ChainPieces) // 链 piece 落盘记录：重启重建 config.json 的依据（§21.1）
-	tok := st.Token
-	if tok == "" {
-		tok = *token // 首连使用 bootstrap token（§11）
+	document, err := state.LoadSettings(*settingsPath)
+	if err != nil {
+		log.Printf("load settings: %v (using defaults)", err)
 	}
+	runtime := newRuntimeSettings(document)
+	tok := selectInitialToken(st.Token, *token)
 	if tok == "" {
 		log.Fatal("-token is required for first connect")
 	}
+	failures := 0
 	for {
-		newTok, err := run(*panel, tok, *statePath, mgr, &st, *telemetryInterval, *driftInterval)
+		newTok, err := run(*panel, tok, *statePath, *settingsPath, mgr, &st, runtime)
 		if newTok != "" {
 			tok = newTok // 内存兜底：state 落盘失败时仍能凭内存中的 token 重连（§5）
+			failures = 0
+		} else {
+			failures++
 		}
 		if err != nil {
-			log.Printf("connection: %v (retrying in 5s)", err)
-			time.Sleep(5 * time.Second)
+			settings, _, _, _ := runtime.snapshot()
+			delay := reconnectDelay(settings, failures, websocketCloseCode(err))
+			log.Printf("connection: %v (retrying in %s)", err, delay.Round(time.Millisecond))
+			time.Sleep(delay)
 		}
 	}
 }
@@ -82,7 +84,7 @@ type safeConn struct {
 }
 
 // WS 应用层心跳（§2）：panel 每 30s 发 ping，任一侧 wsReadTimeout 内无任何字节
-// （含 ping/pong 控制帧）即判定连接死亡，读循环报错退出后由外层 5s 退避重连。
+// （含 ping/pong 控制帧）即判定连接死亡，读循环报错退出后由外层策略退避重连。
 const wsReadTimeout = 90 * time.Second
 
 // wsWriteTimeout 是 pong 应答等控制帧的单次写超时。
@@ -96,12 +98,14 @@ func (s *safeConn) writeJSON(v any) error {
 
 // run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因。
 // st 为已加载的落盘状态：hello 换发后更新凭证字段并整体落盘（保留链 piece 记录）。
-func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, telemetryInterval, driftInterval time.Duration) (string, error) {
+func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *state.State, runtime *runtimeSettings) (string, error) {
 	conn, _, err := websocket.DefaultDialer.Dial(panel, nil)
 	if err != nil {
 		return "", err
 	}
 	defer conn.Close()
+	done := make(chan struct{})
+	defer close(done)
 	sc := &safeConn{conn: conn}
 
 	// 应用层心跳（§2）：读超时 90s，任何消息到达即续期；收到 ping 回 pong 并续期
@@ -129,6 +133,7 @@ func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, tel
 			AgentVersion: version,
 			XrayVersion:  xrayVer,
 			XrayRunning:  xrayRunning,
+			Reconnect:    st.ServerID != 0 && st.Token == token,
 			NICAddresses: nonLoopbackAddrs(),
 		}),
 	}
@@ -152,12 +157,29 @@ func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, tel
 	if err := json.Unmarshal(resp.Data, &hr); err != nil {
 		return "", fmt.Errorf("bad hello result: %w", err)
 	}
+	credential, err := shared.ParseCredential(hr.Token)
+	if err != nil {
+		return "", fmt.Errorf("bad issued credential: %w", err)
+	}
+	crossPanelRebind := st.PanelInstanceID != "" && st.PanelInstanceID != credential.PanelInstanceID
+	if crossPanelRebind {
+		if err := mgr.ResetForPanelRebind(); err != nil {
+			return "", fmt.Errorf("reset previous panel configuration: %w", err)
+		}
+		*st = state.State{}
+		runtime.resetForPanelRebind()
+	}
 	st.Token, st.ServerID = hr.Token, hr.ServerID
+	st.PanelInstanceID, st.CredentialEpoch = credential.PanelInstanceID, credential.Epoch
 	if err := state.Save(statePath, *st); err != nil {
 		// 落盘失败由外层内存兜底（§5），但进程重启前未落盘将需凭证刷新。
 		log.Printf("save state: %v (WARNING: in-memory token will be used for reconnects)", err)
 	}
 	log.Printf("authenticated as server %d", hr.ServerID)
+	if err := mgr.EnsureTelemetryFeatures(); err != nil {
+		log.Printf("ensure telemetry features: %v (traffic stats may be unavailable)", err)
+	}
+	sendSettingsSync(sc, runtime)
 
 	// 遥测循环（§13）：立即上报一帧（基线），随后按间隔上报；写失败即退出（连接已断）。
 	go func() {
@@ -180,9 +202,12 @@ func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, tel
 		if !send() {
 			return
 		}
-		ticker := time.NewTicker(telemetryInterval)
-		defer ticker.Stop()
-		for range ticker.C {
+		for {
+			if !runtime.waitInterval(done, func(settings shared.AgentSettings) time.Duration {
+				return time.Duration(settings.Telemetry.IntervalSeconds) * time.Second
+			}) {
+				return
+			}
 			if !send() {
 				return
 			}
@@ -221,10 +246,31 @@ func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, tel
 		if !check() {
 			return
 		}
-		ticker := time.NewTicker(driftInterval)
-		defer ticker.Stop()
-		for range ticker.C {
+		for {
+			if !runtime.waitInterval(done, func(settings shared.AgentSettings) time.Duration {
+				return time.Duration(settings.DriftDetection.IntervalSeconds) * time.Second
+			}) {
+				return
+			}
 			if !check() {
+				return
+			}
+		}
+	}()
+
+	go func() {
+		for {
+			// Periodic pull is the recovery path for a lost changed hint.
+			timer := time.NewTimer(time.Duration(48+time.Now().UnixNano()%25) * time.Second)
+			select {
+			case <-timer.C:
+			case <-done:
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return
+			}
+			if err := sendSettingsSync(sc, runtime); err != nil {
 				return
 			}
 		}
@@ -236,12 +282,22 @@ func run(panel, token, statePath string, mgr *xray.Manager, st *state.State, tel
 			return hr.Token, err
 		}
 		conn.SetReadDeadline(time.Now().Add(wsReadTimeout)) // 任何消息到达即续期
-		handle(sc, mgr, env, statePath, st)
+		handle(sc, mgr, env, statePath, settingsPath, st, runtime)
 	}
 }
 
 // handle 按消息类型分发：命令响应沿用请求的 type/request_id/trace_id。
-func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath string, st *state.State) {
+func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, settingsPath string, st *state.State, runtime *runtimeSettings) {
+	if env.Kind == shared.KindResponse && env.Type == shared.TypeSettingsSync {
+		handleSettingsSyncResponse(sc, env, settingsPath, runtime)
+		return
+	}
+	if env.Kind == shared.KindEvent && env.Type == shared.TypeSettingsChanged {
+		if err := sendSettingsSync(sc, runtime); err != nil {
+			log.Printf("settings changed pull: %v", err)
+		}
+		return
+	}
 	if env.Kind != shared.KindRequest {
 		log.Printf("ignore non-request message kind=%s type=%s request_id=%s", env.Kind, env.Type, env.RequestID)
 		return
@@ -352,6 +408,55 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath stri
 	default:
 		log.Printf("recv unknown type=%s request_id=%s", env.Type, env.RequestID)
 		replyCode(sc, env, shared.CodeUnsupportedAction, "unsupported action", nil)
+	}
+}
+
+func sendSettingsSync(sc *safeConn, runtime *runtimeSettings) error {
+	_, panelID, revision, applyError := runtime.snapshot()
+	id := shared.NewMessageID()
+	return sc.writeJSON(shared.Envelope{
+		Kind: shared.KindRequest, Type: shared.TypeSettingsSync,
+		RequestID: id, TraceID: id,
+		Data: mustJSON(shared.AgentSettingsSyncPayload{
+			PanelInstanceID: panelID,
+			AppliedRevision: revision,
+			LastApplyError:  applyError,
+		}),
+	})
+}
+
+func handleSettingsSyncResponse(sc *safeConn, env shared.Envelope, settingsPath string, runtime *runtimeSettings) {
+	if env.Code != shared.CodeOK {
+		runtime.fail(env.Message)
+		log.Printf("settings sync failed: %s: %s", env.Code, env.Message)
+		return
+	}
+	var result shared.AgentSettingsSyncResult
+	if err := json.Unmarshal(env.Data, &result); err != nil {
+		runtime.fail("invalid settings sync response")
+		return
+	}
+	if !result.Changed {
+		return
+	}
+	if result.Settings == nil {
+		runtime.fail("settings sync response omitted settings")
+		return
+	}
+	if err := result.Settings.Validate(); err != nil {
+		runtime.fail(err.Error())
+		log.Printf("reject panel settings: %v", err)
+		return
+	}
+	if err := state.SaveSettings(settingsPath, *result.Settings); err != nil {
+		runtime.fail(err.Error())
+		log.Printf("save panel settings: %v", err)
+		return
+	}
+	runtime.apply(*result.Settings)
+	log.Printf("applied agent settings revision=%d", result.Settings.Agent.Revision)
+	if err := sendSettingsSync(sc, runtime); err != nil {
+		log.Printf("confirm agent settings revision: %v", err)
 	}
 }
 

@@ -52,8 +52,10 @@ type Hub struct {
 	pingInterval time.Duration
 	pongTimeout  time.Duration
 
-	mu    sync.RWMutex
-	conns map[int64]*agentConn
+	mu       sync.RWMutex
+	conns    map[int64]*agentConn
+	draining bool
+	wg       sync.WaitGroup
 }
 
 // NewHub 创建连接注册表。LATTIX_WS_PING_INTERVAL（Go duration）可覆盖心跳周期
@@ -63,9 +65,10 @@ func NewHub() *Hub {
 	if v := os.Getenv("LATTIX_WS_PING_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
-			log.Fatalf("LATTIX_WS_PING_INTERVAL 无效: %v", err)
+			log.Printf("LATTIX_WS_PING_INTERVAL invalid, using %s: %v", ping, err)
+		} else {
+			ping = d
 		}
-		ping = d
 	}
 	return &Hub{conns: make(map[int64]*agentConn), pingInterval: ping, pongTimeout: ping * pongFactor}
 }
@@ -79,10 +82,14 @@ func (h *Hub) IsOnline(serverID int64) bool {
 }
 
 // Send 实现 Requester：投递到连接的发送队列（由 writePump 串行写出）。
-func (h *Hub) Send(_ context.Context, serverID int64, env shared.Envelope) error {
+func (h *Hub) Send(ctx context.Context, serverID int64, env shared.Envelope) error {
 	h.mu.RLock()
 	c, ok := h.conns[serverID]
+	draining := h.draining
 	h.mu.RUnlock()
+	if draining {
+		return ErrDraining
+	}
 	if !ok {
 		return ErrOffline
 	}
@@ -91,6 +98,8 @@ func (h *Hub) Send(_ context.Context, serverID int64, env shared.Envelope) error
 		return nil
 	case <-c.done:
 		return ErrOffline
+	case <-ctx.Done():
+		return ctx.Err()
 	default:
 		// 发送队列满：慢连接，断开（ queued 命令会在重连后补发）。
 		log.Printf("ws: server %d send buffer full, closing connection", serverID)
@@ -99,21 +108,74 @@ func (h *Hub) Send(_ context.Context, serverID int64, env shared.Envelope) error
 	}
 }
 
+// BeginDrain rejects new work and closes all persistent Agent WebSockets with
+// RFC 6455 code 1012 so Agents can use their fast service-restart retry path.
+func (h *Hub) BeginDrain() {
+	h.mu.Lock()
+	if h.draining {
+		h.mu.Unlock()
+		return
+	}
+	h.draining = true
+	conns := make([]*agentConn, 0, len(h.conns))
+	for _, conn := range h.conns {
+		conns = append(conns, conn)
+	}
+	h.mu.Unlock()
+	for _, conn := range conns {
+		conn.closeWithCode(websocket.CloseServiceRestart, "service restart")
+	}
+}
+
+func (h *Hub) Wait(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		h.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (h *Hub) IsDraining() bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.draining
+}
+
+// CloseAgent revokes one live connection, for example after token rotation.
+func (h *Hub) CloseAgent(serverID int64, code int, reason string) {
+	h.mu.RLock()
+	conn := h.conns[serverID]
+	h.mu.RUnlock()
+	if conn != nil {
+		conn.closeWithCode(code, reason)
+	}
+}
+
 // register 登记连接；同一服务器已有旧连接时踢掉旧的（重连场景）。
 // 返回值表示服务器是否发生 offline→online 跃迁。
-func (h *Hub) register(c *agentConn) bool {
+func (h *Hub) register(c *agentConn) (becameOnline, accepted bool) {
 	h.mu.Lock()
+	if h.draining {
+		h.mu.Unlock()
+		return false, false
+	}
 	old, wasOnline := h.conns[c.serverID]
 	if wasOnline && old != c {
 		old.close()
 	}
 	h.conns[c.serverID] = c
 	h.mu.Unlock()
-	return !wasOnline
+	return !wasOnline, true
 }
 
-func (h *Hub) notifyConnectionEstablished(serverID int64, becameOnline bool) {
-	if becameOnline {
+func (h *Hub) notifyConnectionEstablished(serverID int64, becameOnline, reconnectHint bool) {
+	if becameOnline && !reconnectHint {
 		if h.OnOnline != nil {
 			h.OnOnline(serverID)
 		}
@@ -133,7 +195,7 @@ func (h *Hub) unregister(c *agentConn) {
 		delete(h.conns, c.serverID)
 	}
 	h.mu.Unlock()
-	if transition && h.OnDisconnect != nil {
+	if transition && !h.IsDraining() && h.OnDisconnect != nil {
 		h.OnDisconnect(c.serverID)
 	}
 }
@@ -152,6 +214,17 @@ func (c *agentConn) close() {
 	c.once.Do(func() {
 		close(c.done)
 		c.ws.Close()
+	})
+}
+
+func (c *agentConn) closeWithCode(code int, reason string) {
+	c.once.Do(func() {
+		close(c.done)
+		if c.ws != nil {
+			_ = c.ws.WriteControl(websocket.CloseMessage,
+				websocket.FormatCloseMessage(code, reason), time.Now().Add(writeTimeout))
+			_ = c.ws.Close()
+		}
 	})
 }
 

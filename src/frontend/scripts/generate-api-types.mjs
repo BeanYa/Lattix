@@ -6,7 +6,7 @@ const sourcePath = resolve(root, '../../docs/openapi.yaml')
 const outputPath = resolve(root, 'src/lib/api-contract.generated.ts')
 const source = await readFile(sourcePath, 'utf8')
 
-const codeSection = source.match(/    RPCCode:\n([\s\S]*?)    RPCEnvelope:/)?.[1]
+const codeSection = source.match(/    RPCCode:\r?\n([\s\S]*?)    RPCEnvelope:/)?.[1]
 if (!codeSection) throw new Error('OpenAPI RPCCode schema was not found')
 const codes = [...codeSection.matchAll(/^        - ([A-Z][A-Z0-9_]*)$/gm)].map((match) => match[1])
 if (codes.length === 0) throw new Error('OpenAPI RPCCode enum is empty')
@@ -55,7 +55,7 @@ ${operations.map(([id, method, path]) => `  ${id}: { method: '${method}', path: 
 
 if (process.argv.includes('--check')) {
   const existing = await readFile(outputPath, 'utf8').catch(() => '')
-  if (existing !== generated) {
+  if (existing.replace(/\r\n/g, '\n') !== generated) {
     console.error('Generated API types are stale. Run: bun run generate:api')
     process.exitCode = 1
   }

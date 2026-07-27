@@ -1,7 +1,7 @@
 package panel
 
 // 面板自更新：以 GitHub release 最新版本为标准检测更新，下载当前架构的单二进制
-// 面板包，按 checksums.txt 校验后原子替换自身，最后经 restartSelf 重启完成切换。
+// 面板包，按 checksums.txt 校验后原子替换自身，最后向进程生命周期所有者登记重启。
 //
 // 进度经 GET /api/panel/update/status 轮询（阶段 + 百分比）；更新进行中
 // requireAuth 拒绝其余 API 操作（423），防止用户在切换窗口内继续改动。
@@ -81,6 +81,7 @@ type panelUpdater struct {
 	mu  sync.Mutex
 	st  panelUpdateStatus
 	ver panelVersionInfo // 最近一次检测结果缓存（status 之外给 version 端点复用）
+	wg  sync.WaitGroup
 }
 
 func newPanelUpdater(s *Server) *panelUpdater {
@@ -99,9 +100,9 @@ func (s *Server) releaseBase() string {
 }
 
 // resolveLatest 解析最新 release tag：镜像基址读 <base>/latest.txt，否则走 GitHub API。
-func (s *Server) resolveLatest() (string, error) {
+func (s *Server) resolveLatest(ctx context.Context) (string, error) {
 	if b := os.Getenv("LATX_RELEASE_BASE"); strings.TrimSpace(b) != "" {
-		body, err := httpGet(s.releaseBase() + "/latest.txt")
+		body, err := httpGet(ctx, s.releaseBase()+"/latest.txt")
 		if err != nil {
 			return "", fmt.Errorf("解析 latest 失败（镜像 latest.txt）: %w", err)
 		}
@@ -114,7 +115,7 @@ func (s *Server) resolveLatest() (string, error) {
 	if s.cfg.GitHubRepo == "" {
 		return "", errors.New("未配置 GitHub 仓库，无法解析 latest")
 	}
-	body, err := httpGet("https://api.github.com/repos/" + s.cfg.GitHubRepo + "/releases/latest")
+	body, err := httpGet(ctx, "https://api.github.com/repos/"+s.cfg.GitHubRepo+"/releases/latest")
 	if err != nil {
 		return "", fmt.Errorf("解析 latest 失败: %w", err)
 	}
@@ -140,7 +141,7 @@ func (s *Server) handlePanelVersion(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, info)
 		return
 	}
-	latest, err := s.resolveLatest()
+	latest, err := s.resolveLatest(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -190,7 +191,11 @@ func (s *Server) handlePanelUpdateStart(w http.ResponseWriter, r *http.Request) 
 		"current_version": s.cfg.Version,
 		"target_version":  strings.TrimSpace(req.Version),
 	})
-	go u.run()
+	u.wg.Add(1)
+	go func() {
+		defer u.wg.Done()
+		u.run(s.cfg.LifecycleContext)
+	}()
 	writeJSON(w, http.StatusAccepted, u.snapshot())
 }
 
@@ -240,14 +245,14 @@ func (u *panelUpdater) fail(err error) {
 
 // run 执行更新流程：check → download → verify → extract → apply → restart。
 // 失败时停留在 failed 状态（面板保持旧版本运行），成功则进程退出完成切换。
-func (u *panelUpdater) run() {
+func (u *panelUpdater) run(ctx context.Context) {
 	s := u.s
 	st := u.snapshot()
 
 	// --- check：解析目标版本 ---
 	target := st.TargetVersion
 	if target == "" || target == "latest" {
-		v, err := s.resolveLatest()
+		v, err := s.resolveLatest(ctx)
 		if err != nil {
 			u.fail(err)
 			return
@@ -307,7 +312,7 @@ func (u *panelUpdater) run() {
 	// --- download：先 checksums.txt（校验依据，获取不到即中止），再逐一资产带进度下载 ---
 	u.setStage(updStageDownload, 0, "下载 checksums.txt")
 	sumsPath := filepath.Join(work, "checksums.txt")
-	if err := downloadFile(base+"/checksums.txt", sumsPath, nil); err != nil {
+	if err := downloadFile(ctx, base+"/checksums.txt", sumsPath, nil); err != nil {
 		os.RemoveAll(work)
 		u.fail(fmt.Errorf("未获取到 release 校验文件 checksums.txt，中止更新: %w", err))
 		return
@@ -325,7 +330,7 @@ func (u *panelUpdater) run() {
 			u.st.Percent = p
 			u.mu.Unlock()
 		}
-		if err := downloadFile(base+"/"+asset, filepath.Join(work, asset), onProgress); err != nil {
+		if err := downloadFile(ctx, base+"/"+asset, filepath.Join(work, asset), onProgress); err != nil {
 			os.RemoveAll(work)
 			u.fail(fmt.Errorf("下载失败 %s/%s: %w", base, asset, err))
 			return
@@ -359,6 +364,11 @@ func (u *panelUpdater) run() {
 		return
 	}
 	u.setStage(updStageExtract, 100, "解压完成")
+	if err := ctx.Err(); err != nil {
+		os.RemoveAll(work)
+		u.fail(fmt.Errorf("更新已取消: %w", err))
+		return
+	}
 
 	// --- apply：预检新二进制 → 原子替换当前二进制 ---
 	u.setStage(updStageApply, 10, "预检新版本二进制")
@@ -389,34 +399,34 @@ func (u *panelUpdater) run() {
 	}); err != nil {
 		log.Printf("panel update: record success: %v", err)
 	}
-	os.RemoveAll(work) // restart 会 os.Exit，defer 清理不会执行，提前清理
+	os.RemoveAll(work) // apply 已完成，重启意图登记前主动清理临时资产
 
 	// --- restart：自重启切换到新版本（systemd 拉起或自派生，见 restartSelf）---
 	u.setStage(updStageRestart, 100, "重启面板完成切换…")
-	// 留出窗口让前端轮询到 restart 状态后再退出进程。
-	time.Sleep(1500 * time.Millisecond)
 	if s.cfg.RequestRestart == nil {
 		u.fail(errors.New("重启回调未配置"))
 		return
 	}
-	s.cfg.RequestRestart("update")
+	if err := s.cfg.RequestRestart("update"); err != nil {
+		u.fail(err)
+	}
 }
 
 // httpGet 拉取 URL 全部内容（小文件：API 响应/latest.txt），非 200 报错。
-func httpGet(url string) (string, error) {
+func httpGet(ctx context.Context, url string) (string, error) {
 	client := external.ExternalFileRequester{
 		Doer: &http.Client{Timeout: 30 * time.Second},
 	}
-	return client.GetText(context.Background(), url, 1<<20)
+	return client.GetText(ctx, url, 1<<20)
 }
 
 // downloadFile 下载 URL 到本地文件；onProgress 回调进度比例（0~1，Content-Length
 // 未知时不回调比例、由调用方按阶段估算）。整体 10 分钟超时。
-func downloadFile(url, path string, onProgress func(frac float64)) error {
+func downloadFile(ctx context.Context, url, path string, onProgress func(frac float64)) error {
 	client := external.ExternalFileRequester{
 		Doer: &http.Client{Timeout: 10 * time.Minute},
 	}
-	return client.Download(context.Background(), url, path, onProgress)
+	return client.Download(ctx, url, path, onProgress)
 }
 
 // verifyAsset 在 checksums.txt（sha256sum 标准格式）中查 asset 的期望值并校验文件。

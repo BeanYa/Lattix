@@ -71,18 +71,20 @@ const (
 
 // 消息类型使用 domain.action，响应沿用对应请求的 Type。
 const (
-	TypeHello          = "agent.hello"
-	TypeApplyNode      = "node.apply"
-	TypeRemoveNode     = "node.remove"
-	TypeAddUser        = "user.add"
-	TypeRemoveUser     = "user.remove"
-	TypeUninstall      = "agent.uninstall"
-	TypeUpgradeXray    = "xray.upgrade"
-	TypeUpgradeAgent   = "agent.upgrade"
-	TypeTelemetry      = "telemetry.report"
-	TypeDriftReport    = "config.drift"
-	TypeApplyChainHop  = "chain-hop.apply"
-	TypeRemoveChainHop = "chain-hop.remove"
+	TypeHello           = "agent.hello"
+	TypeSettingsSync    = "agent.settings.sync"
+	TypeSettingsChanged = "agent.settings.changed"
+	TypeApplyNode       = "node.apply"
+	TypeRemoveNode      = "node.remove"
+	TypeAddUser         = "user.add"
+	TypeRemoveUser      = "user.remove"
+	TypeUninstall       = "agent.uninstall"
+	TypeUpgradeXray     = "xray.upgrade"
+	TypeUpgradeAgent    = "agent.upgrade"
+	TypeTelemetry       = "telemetry.report"
+	TypeDriftReport     = "config.drift"
+	TypeApplyChainHop   = "chain-hop.apply"
+	TypeRemoveChainHop  = "chain-hop.remove"
 )
 
 // NewMessageID 返回用于 request_id/trace_id 的 32 位小写十六进制随机值。
@@ -138,6 +140,7 @@ type HelloPayload struct {
 	AgentVersion string `json:"agent_version"`
 	XrayVersion  string `json:"xray_version"`
 	XrayRunning  bool   `json:"xray_running"`
+	Reconnect    bool   `json:"reconnect,omitempty"`
 	// NICAddresses 是 agent 本机网卡的非回环 IP（v4/v6），面板据此提供公网地址候选；
 	// 未发现可用地址时为空。
 	NICAddresses []string `json:"nic_addresses,omitempty"`

@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -57,21 +58,16 @@ func envOr(key, fallback string) string {
 }
 
 func main() {
-	// 自重启派生的新进程：等待旧进程退出释放监听端口后再启动（panel.restartSelf）。
-	if pidStr := os.Getenv("LATTIX_RESTART_WAIT_PID"); pidStr != "" {
-		if pid, err := strconv.Atoi(pidStr); err == nil {
-			deadline := time.Now().Add(15 * time.Second)
-			for time.Now().Before(deadline) {
-				if err := syscall.Kill(pid, 0); err != nil {
-					break
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
-		}
+	if err := run(); err != nil {
+		log.Printf("lattix backend: %v", err)
+		os.Exit(1)
 	}
+}
+
+func run() error {
 	if len(os.Args) > 1 && os.Args[1] == "-version" {
 		fmt.Println(version)
-		return
+		return nil
 	}
 
 	addr := flag.String("addr", ":8080", "HTTP 监听地址")
@@ -95,33 +91,33 @@ func main() {
 	// 会话签名密钥派生自密码哈希，改密即全部会话失效）。面板运行中执行安全（busy_timeout）。
 	if *resetAdmin != "" {
 		if len(*resetAdmin) < 8 {
-			log.Fatal("新密码至少 8 位")
+			return errors.New("新密码至少 8 位")
 		}
 		st, err := store.Open(*dbPath)
 		if err != nil {
-			log.Fatalf("store: %v", err)
+			return fmt.Errorf("store: %w", err)
 		}
 		defer st.Close()
 		hash, err := bcrypt.GenerateFromPassword([]byte(*resetAdmin), bcrypt.DefaultCost)
 		if err != nil {
-			log.Fatalf("bcrypt: %v", err)
+			return fmt.Errorf("bcrypt: %w", err)
 		}
 		if err := st.SetSetting(context.Background(), store.SettingAdminPassBcrypt, string(hash)); err != nil {
-			log.Fatalf("写入密码哈希: %v", err)
+			return fmt.Errorf("写入密码哈希: %w", err)
 		}
 		fmt.Println("管理员密码已重置（覆盖 -admin-pass 启动参数）；所有会话已失效，需重新登录。")
-		return
+		return nil
 	}
 
 	// 证书根目录统一按绝对路径处理（相对路径按启动时工作目录解析），避免
 	// 不同启动方式（nohup/systemd）工作目录不一致导致找不到证书；实际值经 API 展示在设置页。
 	tlsDirAbs, err := filepath.Abs(*tlsDir)
 	if err != nil {
-		log.Fatalf("tls-dir: %v", err)
+		return fmt.Errorf("tls-dir: %w", err)
 	}
 	dbPathAbs, err := filepath.Abs(*dbPath)
 	if err != nil {
-		log.Fatalf("db: %v", err)
+		return fmt.Errorf("db: %w", err)
 	}
 	logDirValue := *logDir
 	if logDirValue == "" {
@@ -129,12 +125,12 @@ func main() {
 	}
 	logDirAbs, err := filepath.Abs(logDirValue)
 	if err != nil {
-		log.Fatalf("log-dir: %v", err)
+		return fmt.Errorf("log-dir: %w", err)
 	}
 
 	st, err := store.Open(*dbPath)
 	if err != nil {
-		log.Fatalf("store: %v", err)
+		return fmt.Errorf("store: %w", err)
 	}
 	defer st.Close()
 
@@ -142,13 +138,21 @@ func main() {
 	requestLogMB := settingInt(st, store.SettingRequestLogMaxMB, 10)
 	opLog, err := logging.OpenOperationStore(filepath.Join(logDirAbs, "operation.db"), operationLimit)
 	if err != nil {
-		log.Fatalf("operation log: %v", err)
+		return fmt.Errorf("operation log: %w", err)
 	}
 	defer opLog.Close()
 	reqLog, err := logging.OpenRequestLog(filepath.Join(logDirAbs, "requests"), int64(requestLogMB)<<20)
 	if err != nil {
-		log.Fatalf("request log: %v", err)
+		return fmt.Errorf("request log: %w", err)
 	}
+	requestLogClosed := false
+	defer func() {
+		if !requestLogClosed {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = reqLog.Close(ctx)
+		}
+	}()
 	reqLog.SetDropReporter(func(count uint64, reason string) {
 		if err := opLog.Record(context.Background(), logging.OperationEvent{
 			Severity: logging.SeverityError, Category: logging.CategoryLog,
@@ -178,7 +182,7 @@ func main() {
 	case panel.TLSModeCert:
 		kp, err := tls.X509KeyPair([]byte(dbCertPEM), []byte(dbKeyPEM))
 		if err != nil {
-			log.Fatalf("设置页保存的证书/私钥不可用: %v", err)
+			return fmt.Errorf("设置页保存的证书/私钥不可用: %w", err)
 		}
 		keyPair = &kp
 		applied = panel.AppliedTLS{Mode: panel.TLSModeCert, CertPEM: dbCertPEM, KeyPEM: dbKeyPEM}
@@ -186,13 +190,13 @@ func main() {
 		// 域名路径模式：证书由外部 ACME（安装脚本）写入 <tls-dir>/<域名>/，
 		// GetCertificate 按 mtime 热加载，续期替换文件免重启。
 		if !panel.ValidTLSDomain(dbTLSDomain) {
-			log.Fatalf("设置页 tls_mode=path 但域名无效: %q", dbTLSDomain)
+			return fmt.Errorf("设置页 tls_mode=path 但域名无效: %q", dbTLSDomain)
 		}
 		dirCertGetter = panel.NewDirCertGetter(tlsDirAbs, dbTLSDomain)
 		applied = panel.AppliedTLS{Mode: panel.TLSModePath, Domain: dbTLSDomain}
 	case panel.TLSModeACME:
 		if dbACMEDomain == "" {
-			log.Fatal("设置页 tls_mode=acme 但 acme_domain 为空")
+			return errors.New("设置页 tls_mode=acme 但 acme_domain 为空")
 		}
 		*acmeDomain = dbACMEDomain
 		if dbACMEEmail != "" {
@@ -204,10 +208,10 @@ func main() {
 		useCert := *tlsCert != "" || *tlsKey != ""
 		useACME := *acmeDomain != ""
 		if useCert && (*tlsCert == "" || *tlsKey == "") {
-			log.Fatal("-tls-cert 与 -tls-key 须同时提供")
+			return errors.New("-tls-cert 与 -tls-key 须同时提供")
 		}
 		if useCert && useACME {
-			log.Fatal("-tls-cert/-tls-key 与 -tls-acme-domain 互斥")
+			return errors.New("-tls-cert/-tls-key 与 -tls-acme-domain 互斥")
 		}
 		switch {
 		case useACME:
@@ -215,7 +219,7 @@ func main() {
 		case useCert:
 			kp, err := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
 			if err != nil {
-				log.Fatalf("load tls key pair: %v", err)
+				return fmt.Errorf("load tls key pair: %w", err)
 			}
 			keyPair = &kp
 			certPEM, _ := os.ReadFile(*tlsCert)
@@ -223,7 +227,7 @@ func main() {
 			applied = panel.AppliedTLS{Mode: panel.TLSModeCert, CertPEM: string(certPEM), KeyPEM: string(keyPEM)}
 		}
 	default:
-		log.Fatalf("未知的 tls_mode 设置: %q", dbTLSMode)
+		return fmt.Errorf("未知的 tls_mode 设置: %q", dbTLSMode)
 	}
 	secure := applied.Mode != panel.TLSModeOff
 	if err := opLog.StartRun(context.Background(), version); err != nil {
@@ -274,6 +278,14 @@ func main() {
 
 	// 事件告警（§19）：offline 跃迁挂在 hub 注销路径；漂移/节点失败在 dispatcher 处理点。
 	notifier := alert.New(st)
+	notifierClosed := false
+	defer func() {
+		if !notifierClosed {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = notifier.Close(ctx)
+		}
+	}()
 	dispatcher.Alerter = notifier
 	hub.OnDisconnect = func(serverID int64) {
 		notifier.Notify(serverID, alert.EventServerOffline, "", "WS 连接断开，服务器离线")
@@ -294,28 +306,37 @@ func main() {
 		repo = *ghRepo
 	}
 	restartCh := make(chan string, 1)
+	var restartMu sync.Mutex
+	restartRequested := false
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
 	ps, err := panel.New(st, dispatcher, hub, panel.Config{
-		AdminUser:    *adminUser,
-		AdminPass:    *adminPass,
-		PublicURL:    *publicURL,
-		Secure:       secure,
-		RunningTLS:   applied,
-		TLSDir:       tlsDirAbs,
-		Version:      version,
-		GitHubRepo:   repo,
-		Alerter:      notifier,
-		OperationLog: opLog,
-		RequestLog:   reqLog,
-		LogDir:       logDirAbs,
-		RequestRestart: func(reason string) {
-			select {
-			case restartCh <- reason:
-			default:
+		AdminUser:        *adminUser,
+		AdminPass:        *adminPass,
+		PublicURL:        *publicURL,
+		Secure:           secure,
+		RunningTLS:       applied,
+		TLSDir:           tlsDirAbs,
+		Version:          version,
+		GitHubRepo:       repo,
+		Alerter:          notifier,
+		OperationLog:     opLog,
+		RequestLog:       reqLog,
+		LogDir:           logDirAbs,
+		LifecycleContext: runCtx,
+		RequestRestart: func(reason string) error {
+			restartMu.Lock()
+			defer restartMu.Unlock()
+			if restartRequested {
+				return errors.New("restart already requested")
 			}
+			restartRequested = true
+			restartCh <- reason
+			return nil
 		},
 	})
 	if err != nil {
-		log.Fatalf("panel: %v", err)
+		return fmt.Errorf("panel: %w", err)
 	}
 	hub.OnUpgrade = func(r *http.Request) {
 		logging.LogWebSocketUpgrade(reqLog, r, ps.Operator)
@@ -327,13 +348,11 @@ func main() {
 	if v := os.Getenv("LATTIX_EXPIRY_SWEEP_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
-			log.Fatalf("LATTIX_EXPIRY_SWEEP_INTERVAL 无效: %v", err)
+			return fmt.Errorf("LATTIX_EXPIRY_SWEEP_INTERVAL 无效: %w", err)
 		}
 		sweepInterval = d
 	}
-	runCtx, cancelRun := context.WithCancel(context.Background())
-	defer cancelRun()
-	go ps.RunExpirySweeper(runCtx, sweepInterval)
+	ps.StartExpirySweeper(runCtx, sweepInterval)
 
 	mux := http.NewServeMux()
 
@@ -380,6 +399,10 @@ func main() {
 		}
 	}
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		if hub.IsDraining() {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
 		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 		defer cancel()
 		if err := st.Ping(ctx); err != nil {
@@ -411,7 +434,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           logging.RequestMiddleware(reqLog, ps.Operator, ps.LogPolicy, mux),
+		Handler:           drainMiddleware(hub, logging.RequestMiddleware(reqLog, ps.Operator, ps.LogPolicy, mux)),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 	var serve func() error
@@ -443,12 +466,13 @@ func main() {
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- serve() }()
-	signals := make(chan os.Signal, 1)
+	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
 
 	reason := ""
 	shouldRestart := false
+	var runErr error
 	select {
 	case sig := <-signals:
 		reason = "signal:" + sig.String()
@@ -457,6 +481,7 @@ func main() {
 	case err := <-serveErr:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			reason = "server_error"
+			runErr = err
 			_ = opLog.Record(context.Background(), logging.OperationEvent{
 				Severity: logging.SeverityError, Category: logging.CategoryPanel,
 				Action: "panel.server_failed", Detail: map[string]string{"error": err.Error()},
@@ -467,9 +492,19 @@ func main() {
 		}
 	}
 
+	hub.BeginDrain()
 	cancelRun()
-	shutdownDeadline := time.Now().Add(5 * time.Second)
-	serverCtx, cancelServer := context.WithDeadline(context.Background(), shutdownDeadline.Add(-time.Second))
+	shutdownDeadline := time.Now().Add(10 * time.Second)
+	serverCtx, cancelServer := context.WithDeadline(context.Background(), shutdownDeadline.Add(-2*time.Second))
+	go func() {
+		select {
+		case sig := <-signals:
+			log.Printf("second signal %s: forcing HTTP close", sig)
+			cancelServer()
+			_ = srv.Close()
+		case <-serverCtx.Done():
+		}
+	}()
 	if err := srv.Shutdown(serverCtx); err != nil {
 		log.Printf("server shutdown: %v", err)
 	}
@@ -479,21 +514,47 @@ func main() {
 	// 关停阶段不再从请求日志反向写操作日志，确保 panel.stopped 是最后一条
 	// 生命周期记录，并优先清除运行标记，避免队列排空超时被误判为异常退出。
 	reqLog.SetDropReporter(nil)
+	if err := hub.Wait(logCtx); err != nil {
+		log.Printf("main: wait agent connections: %v", err)
+	}
+	if err := ps.WaitBackground(logCtx); err != nil {
+		log.Printf("main: wait background tasks: %v", err)
+	}
+	if err := notifier.Close(logCtx); err != nil {
+		log.Printf("main: close alert notifier: %v", err)
+	}
+	notifierClosed = true
 	if err := opLog.StopRun(logCtx, reason); err != nil {
 		log.Printf("main: record panel stop: %v", err)
 	}
 	if err := reqLog.Close(logCtx); err != nil {
 		log.Printf("main: close request log: %v", err)
 	}
+	requestLogClosed = true
 	if shouldRestart {
-		if err := panel.RestartSelf(); err != nil {
-			log.Printf("restart: %v", err)
-			_ = opLog.Record(context.Background(), logging.OperationEvent{
-				Severity: logging.SeverityError, Category: logging.CategoryPanel,
-				Action: "panel.restart_failed", Detail: map[string]string{"error": err.Error()},
-			})
-		}
+		log.Printf("restart requested: exiting for process supervisor (%s)", reason)
 	}
+	return runErr
+}
+
+func drainMiddleware(hub *ws.Hub, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if hub.IsDraining() && strings.HasPrefix(r.URL.Path, "/api/") &&
+			r.URL.Path != "/api/agent/ws" {
+			requestID := shared.NewMessageID()
+			traceID := requestID
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Set("X-Request-ID", requestID)
+			w.Header().Set("X-Trace-ID", traceID)
+			w.WriteHeader(http.StatusOK)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": shared.CodeServiceUnavailable, "message": "panel is restarting",
+				"data": nil, "request_id": requestID, "trace_id": traceID,
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // spaHandler 服务静态产物；路径不存在时回退 index.html（React SPA 客户端路由）。

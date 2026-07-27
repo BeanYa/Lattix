@@ -13,8 +13,8 @@ import (
 
 // installAgentPath 是 install.sh 的 agent 安装路径（§11）；只有从该路径运行的
 // agent 才允许执行 systemd 卸载脚本——dev/测试运行的 agent 即使宿主机装有
-// lattix-agent.service，也绝不可触碰真实安装（/usr/local/bin、systemd 单元）。
-const installAgentPath = "/usr/local/bin/lattix-agent"
+// lattix-agent.service，也绝不可触碰真实安装（/opt/lattix-agent、systemd 单元）。
+const installAgentPath = "/opt/lattix-agent/bin/lattix-agent"
 
 // scheduleUninstall 自我卸载（§5 uninstall）：调用方已先行回执，此处延迟自毁。
 // install.sh 安装的（运行于 installAgentPath）：purgeXray=true 时连同 xray 与配置
@@ -61,9 +61,8 @@ sleep 2
 systemctl disable --now lattix-agent.service
 systemctl disable --now xray.service
 rm -f /etc/systemd/system/lattix-agent.service /etc/systemd/system/xray.service
-rm -f /usr/local/bin/lattix-agent /usr/local/bin/lattix-agent.bak /usr/local/bin/xray /usr/local/bin/xray.bak
-rm -f /etc/lattix-agent.env /etc/lattix-agent.state.json
-rm -rf /usr/local/etc/xray
+rm -f /usr/local/bin/latx-ag
+rm -rf /opt/lattix-agent
 systemctl daemon-reload
 `
 
@@ -72,7 +71,9 @@ const uninstallAgentOnlyScript = `
 sleep 2
 systemctl disable --now lattix-agent.service
 rm -f /etc/systemd/system/lattix-agent.service
-rm -f /usr/local/bin/lattix-agent /usr/local/bin/lattix-agent.bak
-rm -f /etc/lattix-agent.env /etc/lattix-agent.state.json
+rm -f /usr/local/bin/latx-ag
+rm -f /opt/lattix-agent/bin/lattix-agent /opt/lattix-agent/bin/lattix-agent.bak /opt/lattix-agent/bin/latx-ag
+rm -f /opt/lattix-agent/config/agent.env
+rm -f /opt/lattix-agent/data/state.json /opt/lattix-agent/data/settings.json
 systemctl daemon-reload
 `

@@ -26,6 +26,12 @@ var upgrader = websocket.Upgrader{
 
 // ServeHTTP 处理 GET /api/agent/ws：升级 → hello 认证（§5）→ 登记连接 → 读循环。
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.wg.Add(1)
+	defer h.wg.Done()
+	if h.IsDraining() {
+		http.Error(w, "service restarting", http.StatusServiceUnavailable)
+		return
+	}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("ws upgrade: %v", err)
@@ -94,20 +100,26 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Code:      shared.CodeOK,
 		Data:      mustJSON(result),
 	}
-	becameOnline := h.register(c)
+	becameOnline, accepted := h.register(c)
+	if !accepted {
+		c.closeWithCode(websocket.CloseServiceRestart, "service restart")
+		return
+	}
 	log.Printf("agent connected: server=%d addr=%s xray=%s", serverID, r.RemoteAddr, hp.XrayVersion)
 
 	// 触发离线命令补发（§2）。
 	if h.OnConnect != nil {
 		h.OnConnect(serverID)
 	}
-	h.notifyConnectionEstablished(serverID, becameOnline)
+	h.notifyConnectionEstablished(serverID, becameOnline, hp.Reconnect)
 
 	// 读循环：上抛业务信封直到断开。
 	defer func() {
 		h.unregister(c)
 		c.close()
-		log.Printf("agent disconnected: server=%d", serverID)
+		if !h.IsDraining() {
+			log.Printf("agent disconnected: server=%d", serverID)
+		}
 	}()
 	for {
 		var env shared.Envelope

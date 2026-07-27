@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"lattix/shared"
 )
 
 // ErrNotFound 表示查询的行不存在。
@@ -20,32 +22,36 @@ const (
 
 // Server 是 servers 表的一行（§4）。
 type Server struct {
-	ID           int64
-	Alias        string
-	Token        string // 长期凭证；创建时先存 bootstrap token，hello 认证后换发（§11）
-	LastSeenAt   *time.Time
-	XrayVersion  string
-	AgentVersion string // hello 上报的 agent 版本（§18 升级管理）
-	Address      string // 公网地址（hello 时按 WS RemoteAddr 记录，订阅用，§9）
-	LearnedAddr  string // 每次 hello 学习的拨入地址（受信回环代理时取 XFF 首 IP，§9），仅作候选不覆盖 Address
-	NICAddresses string // agent 上报的网卡非回环地址 JSON 数组（§9 公网地址候选）；空串 = 无
-	ConfigDrift  bool   // 配置漂移标志（§17，agent drift_report 驱动）
-	MachineType  string // direct|nat（§21）
-	AllowedPorts string // NAT 可用端口段 JSON（shared.PortRange 数组，§21）；空串 = 无段
-	Tags         string // 管理标签 JSON 数组；名称模板 {{TAG_n}} 的来源
-	CountryCode  string // ISO 3166-1 alpha-2；管理员在服务器资料中选择
-	Location     string // 城市或机房位置；管理员填写
-	CreatedAt    time.Time
+	ID                      int64
+	Alias                   string
+	Token                   string // 长期凭证；创建时先存 bootstrap token，hello 认证后换发（§11）
+	LastSeenAt              *time.Time
+	XrayVersion             string
+	AgentVersion            string // hello 上报的 agent 版本（§18 升级管理）
+	Address                 string // 公网地址（hello 时按 WS RemoteAddr 记录，订阅用，§9）
+	LearnedAddr             string // 每次 hello 学习的拨入地址（受信回环代理时取 XFF 首 IP，§9），仅作候选不覆盖 Address
+	NICAddresses            string // agent 上报的网卡非回环地址 JSON 数组（§9 公网地址候选）；空串 = 无
+	ConfigDrift             bool   // 配置漂移标志（§17，agent drift_report 驱动）
+	MachineType             string // direct|nat（§21）
+	AllowedPorts            string // NAT 可用端口段 JSON（shared.PortRange 数组，§21）；空串 = 无段
+	Tags                    string // 管理标签 JSON 数组；名称模板 {{TAG_n}} 的来源
+	CountryCode             string // ISO 3166-1 alpha-2；管理员在服务器资料中选择
+	Location                string // 城市或机房位置；管理员填写
+	CredentialEpoch         int64
+	AgentSettingsRevision   int64
+	AgentSettingsError      string
+	AgentSettingsReportedAt *time.Time
+	CreatedAt               time.Time
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, credential_epoch, agent_settings_revision, agent_settings_error, agent_settings_reported_at, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
-	var lastSeen sql.NullTime
+	var lastSeen, settingsReported sql.NullTime
 	var xrayVer, agentVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.CredentialEpoch, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -55,6 +61,10 @@ func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	}
 	srv.XrayVersion = xrayVer.String
 	srv.AgentVersion = agentVer.String
+	if settingsReported.Valid {
+		t := settingsReported.Time
+		srv.AgentSettingsReportedAt = &t
+	}
 	return &srv, nil
 }
 
@@ -62,9 +72,13 @@ func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 // address 为管理员指定的公网地址（§4）；空串表示留待 hello 时按 RemoteAddr 自动学习
 // （NAT 类型强制必填，由 panel 校验）。machineType/allowedPorts 为 NAT 元数据（§21，面板侧，不下发 agent）。
 func (s *Store) CreateServer(ctx context.Context, alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location string) (int64, error) {
+	epoch := int64(1)
+	if credential, err := shared.ParseCredential(bootstrapToken); err == nil {
+		epoch = credential.Epoch
+	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO servers (alias, address, token, machine_type, allowed_ports, tags, country_code, location) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location)
+		`INSERT INTO servers (alias, address, token, machine_type, allowed_ports, tags, country_code, location, credential_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location, epoch)
 	if err != nil {
 		return 0, fmt.Errorf("insert server: %w", err)
 	}
@@ -183,8 +197,23 @@ func (s *Store) SetServerDrift(ctx context.Context, id int64, drifted bool) erro
 // ResetServerBootstrap 换发 bootstrap token 并将服务器重置回 bootstrap 状态
 // （last_seen_at 置空，下次 hello 重新换发长期凭证，§5/§11）。
 func (s *Store) ResetServerBootstrap(ctx context.Context, id int64, newBootstrapToken string) error {
+	credential, err := shared.ParseCredential(newBootstrapToken)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE servers SET token = ?, credential_epoch = ?, last_seen_at = NULL WHERE id = ?`,
+		newBootstrapToken, credential.Epoch, id)
+	return err
+}
+
+// ReportAgentSettings records the last revision the Agent says it has applied.
+// Synchronization status is derived by comparing this value to global desired.
+func (s *Store) ReportAgentSettings(ctx context.Context, id, revision int64, applyError string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE servers SET token = ?, last_seen_at = NULL WHERE id = ?`, newBootstrapToken, id)
+		`UPDATE servers
+		 SET agent_settings_revision = ?, agent_settings_error = ?, agent_settings_reported_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`, revision, applyError, id)
 	return err
 }
 

@@ -9,13 +9,13 @@
 #
 # 流程：解析/下载指定版本 xray-core（校验官方 .dgst SHA2-256）→ 下载/安装 Agent 二进制
 # 与 latx-ag 节点管理程序 → 注册 systemd（user 用户态模式改为守护脚本常驻，见下）→
-# 写入面板地址与 bootstrap token（清除旧 state）。
+# 写入面板地址与 bootstrap token（保留旧 state，认证成功后由 Agent 判断重绑）。
 # Agent 首连后以 bootstrap token 换发长期凭证。
 #
 # 环境变量覆盖（e2e/运维用）：
 #   LATX_RELEASE_BASE   下载基址覆盖（e2e 本地模拟用，支持 file://）
-#   LATX_PREFIX         路径前缀（默认空；/usr/local/bin、/etc/systemd/system、state 等全部加前缀；
-#                       user 模式且非 root 时默认 $HOME/.lattix）
+#   LATX_PREFIX         路径前缀（默认空；应用根为 /opt/lattix-agent；
+#                       user 模式且非 root 时使用 $HOME/.lattix-agent）
 #   LATX_DEV=1          无 systemd/非 root 开发模式：跳过 unit 注册，nohup 直接启动 agent；
 #                       xray 不下载，由 XRAY_BIN 指定的本机二进制复制安装
 #   LATX_USER_MODE=1    强制 user 用户态模式（root + systemd 机器亦可用）；无 root/无 systemd 且
@@ -202,22 +202,29 @@ elif [[ "${LATX_USER_MODE:-0}" == "1" ]]; then
 fi
 
 # 路径变量（在模式判定之后确定）：user 模式未显式指定 LATX_PREFIX 时，
-# 非 root 默认 $HOME/.lattix，root 默认系统路径（空前缀）。
+# 非 root 默认 $HOME/.lattix-agent，root 默认 /opt/lattix-agent。
 if [[ "$USER_MODE" -eq 1 && -z "${LATX_PREFIX:-}" && "$(id -u)" -ne 0 ]]; then
-    PREFIX="$HOME/.lattix"
-    echo ">> [user] LATX_PREFIX 未设置，安装到 $PREFIX"
+    PREFIX=""
+    APP_ROOT="$HOME/.lattix-agent"
+    echo ">> [user] LATX_PREFIX 未设置，安装到 $APP_ROOT"
 else
     PREFIX="${LATX_PREFIX:-}"
+    APP_ROOT="$PREFIX/opt/lattix-agent"
 fi
-BIN_DIR="$PREFIX/usr/local/bin"
+BIN_DIR="$APP_ROOT/bin"
 AGENT_BIN="$BIN_DIR/lattix-agent"
 LATX_AG_BIN="$BIN_DIR/latx-ag"
 XRAY_BIN_DST="$BIN_DIR/xray"
-XRAY_CONFIG_DIR="$PREFIX/usr/local/etc/xray"
-ENV_FILE="$PREFIX/etc/lattix-agent.env"
-STATE_FILE="$PREFIX/etc/lattix-agent.state.json"
+CONFIG_DIR="$APP_ROOT/config"
+DATA_DIR="$APP_ROOT/data"
+LOG_DIR="$APP_ROOT/logs"
+XRAY_CONFIG="$CONFIG_DIR/xray.json"
+ENV_FILE="$CONFIG_DIR/agent.env"
+STATE_FILE="$DATA_DIR/state.json"
+SETTINGS_FILE="$DATA_DIR/settings.json"
 SYSTEMD_DIR="$PREFIX/etc/systemd/system"
-AGENT_LOG="$PREFIX/var/log/lattix-agent.log"
+AGENT_LOG="$LOG_DIR/agent.log"
+LATX_AG_LINK="$PREFIX/usr/local/bin/latx-ag"
 XRAY_API="${LATX_AG_XRAY_API:-127.0.0.1:10085}"
 
 PANEL_URL="${PANEL_URL%/}"
@@ -237,7 +244,7 @@ else
     pkill -f "$AGENT_BIN" 2>/dev/null || true
 fi
 
-mkdir -p "$BIN_DIR" "$XRAY_CONFIG_DIR" "$(dirname "$ENV_FILE")"
+mkdir -p "$BIN_DIR" "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -282,8 +289,8 @@ else
 fi
 
 # Agent 独占管理该配置文件（§6）；仅在不存在时写入占位配置。
-if [[ ! -f "$XRAY_CONFIG_DIR/config.json" ]]; then
-    cat > "$XRAY_CONFIG_DIR/config.json" <<'EOF'
+if [[ ! -f "$XRAY_CONFIG" ]]; then
+    cat > "$XRAY_CONFIG" <<'EOF'
 {
   "inbounds": [],
   "outbounds": [{ "protocol": "freedom", "tag": "direct" }]
@@ -312,6 +319,10 @@ LATX_AG_SRC="$TMP_DIR/lattix-agent/latx-ag"
 install -m 0755 "$AGENT_SRC" "$AGENT_BIN"
 install -m 0755 "$LATX_AG_SRC" "$LATX_AG_BIN"
 echo ">> latx-ag 已安装到 $LATX_AG_BIN"
+if [[ "$USER_MODE" -eq 0 || "$(id -u)" -eq 0 ]]; then
+    mkdir -p "$(dirname "$LATX_AG_LINK")"
+    ln -sfn "$LATX_AG_BIN" "$LATX_AG_LINK"
+fi
 
 # http→ws / https→wss
 PANEL_WS="$(echo "$PANEL_URL" | sed -e 's|^https://|wss://|' -e 's|^http://|ws://|')/api/agent/ws"
@@ -322,8 +333,8 @@ cat > "$ENV_FILE" <<EOF
 LATTIX_PANEL_WS=${PANEL_WS}
 LATTIX_TOKEN=${BOOTSTRAP_TOKEN}
 EOF
-# 重装/换发凭证时清除旧长期凭证，确保 agent 使用新 bootstrap token（§11）。
-rm -f "$STATE_FILE"
+# 保留 state/settings；Agent 根据 token 内 panel instance/epoch 选择凭证，并且只在
+# 新面板认证成功后清理旧面板的受管配置。
 
 if [[ "$DEV_MODE" -eq 0 && "$USER_MODE" -eq 0 ]]; then
     echo ">> registering systemd services"
@@ -334,7 +345,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=$XRAY_BIN_DST run -config $XRAY_CONFIG_DIR/config.json
+ExecStart=$XRAY_BIN_DST run -config $XRAY_CONFIG
 Restart=on-failure
 RestartSec=5
 
@@ -347,12 +358,14 @@ EOF
 Description=Lattix Agent
 After=network-online.target xray.service
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
 
 [Service]
 EnvironmentFile=$ENV_FILE
-ExecStart=$AGENT_BIN -panel "\${LATTIX_PANEL_WS}" -token "\${LATTIX_TOKEN}"
+ExecStart=$AGENT_BIN -panel "\${LATTIX_PANEL_WS}" -token "\${LATTIX_TOKEN}" -state "$STATE_FILE" -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG"
 Restart=always
-RestartSec=5
+RestartSec=1
 
 [Install]
 WantedBy=multi-user.target
@@ -366,20 +379,20 @@ elif [[ "$USER_MODE" -eq 1 ]]; then
     # user 用户态模式：不注册 systemd，生成守护脚本常驻（flock 防重复 + 退出后自动拉起，
     # 替代 systemd Restart=always），并 best-effort 注册 crontab @reboot 开机自启。
     echo ">> [user] 生成守护脚本 $BIN_DIR/lattix-agent-run（日志 $AGENT_LOG）"
-    mkdir -p "$(dirname "$AGENT_LOG")" "$PREFIX/var/run"
+    mkdir -p "$(dirname "$AGENT_LOG")" "$DATA_DIR"
     cat > "$BIN_DIR/lattix-agent-run" <<EOF
 #!/usr/bin/env bash
 # Lattix Agent 用户态守护脚本（install.sh 生成）：flock 防重复；agent 退出（崩溃/自升级）
-# 后 sleep 5 自动拉起，替代 systemd Restart=always；每次重启重新读取 env（token 轮换后即生效）。
+# 后 sleep 1 自动拉起，替代 systemd Restart=always；每次重启重新读取 env（token 轮换后即生效）。
 set -u
-exec 9>"$PREFIX/var/run/lattix-agent.lock"
+exec 9>"$DATA_DIR/lattix-agent.lock"
 flock -n 9 || exit 0
 while true; do
     set -a; . "$ENV_FILE"; set +a
     "$AGENT_BIN" -panel "\$LATTIX_PANEL_WS" -token "\$LATTIX_TOKEN" -state "$STATE_FILE" \\
-        -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG_DIR/config.json" \\
+        -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG" \\
         -xray-api "$XRAY_API" -xray-runner exec >>"$AGENT_LOG" 2>&1
-    sleep 5
+    sleep 1
 done
 EOF
     chmod 0755 "$BIN_DIR/lattix-agent-run"
@@ -405,7 +418,7 @@ else
     echo ">> [DEV] nohup 启动 agent（日志 $AGENT_LOG）"
     mkdir -p "$(dirname "$AGENT_LOG")"
     nohup "$AGENT_BIN" -panel "$PANEL_WS" -token "$BOOTSTRAP_TOKEN" -state "$STATE_FILE" \
-        -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG_DIR/config.json" \
+        -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG" \
         -xray-api "$XRAY_API" -xray-runner exec \
         >"$AGENT_LOG" 2>&1 &
     sleep 1

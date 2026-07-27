@@ -60,6 +60,26 @@ func (m *Manager) SetReleaseBase(base string) {
 	m.mirrorBase = true
 }
 
+// ResetForPanelRebind removes configuration owned by the previous panel only
+// after the new panel has authenticated successfully. A best-effort backup is
+// retained beside the old file for manual recovery.
+func (m *Manager) ResetForPanelRebind() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, err := os.Stat(m.configPath); err == nil {
+		backup := m.configPath + ".rebind-backup"
+		if err := os.Rename(m.configPath, backup); err != nil {
+			return fmt.Errorf("backup old xray config: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	m.chainPieces = nil
+	m.lastHash = ""
+	m.drifted = false
+	return nil
+}
+
 // Version 返回 xray 版本与运行状态（hello 遥测，§13），尽力而为。
 func (m *Manager) Version() (string, bool) {
 	out, err := exec.Command(m.bin, "version").Output()

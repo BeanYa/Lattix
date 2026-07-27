@@ -256,7 +256,10 @@ bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.s
 
 脚本完成：安装指定版本 xray（校验官方 `.dgst`）→ 安装 agent 与 `latx-ag` 节点管理程序
 （校验 SHA256）→ 注册 systemd → best-effort 开启 TCP BBR → 首连换发长期凭证。
-重装自动先停旧服务并清除旧 state。BBR 已启用时不改现有配置；否则尝试加载
+system 模式文件集中在 `/opt/lattix-agent/{bin,config,data,logs}`，并创建
+`/usr/local/bin/latx-ag` 软链接；用户模式使用 `~/.lattix-agent/`。
+重装自动先停旧服务并保留 state/settings，由 token 中的面板身份与 epoch 安全选择凭证。
+BBR 已启用时不改现有配置；否则尝试加载
 `tcp_bbr`，将 `net.core.default_qdisc=fq` 与
 `net.ipv4.tcp_congestion_control=bbr` 持久化到
 `/etc/sysctl.d/99-lattix-bbr.conf`，并只即时设置这两个参数。`fq` 设置失败不影响
@@ -319,8 +322,9 @@ XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-install-agent.sh  # Agent 引�
 bash scripts/dev-test-install-agent-bbr.sh                      # Agent 安装器 BBR 能力/权限/持久化隔离测试
 ```
 
-Agent 常用参数：`-panel`（面板 WS 地址）、`-token`（bootstrap token）、`-xray-release-base`
-（xray 下载镜像源）、`-telemetry-interval` / `-drift-interval`（遥测/漂移检测间隔）。
+Agent 常用参数：`-panel`（固定面板 WS 地址）、`-token`（bootstrap token）、
+`-state` / `-settings`（本地状态与面板同步设置）及 `-xray-release-base`（xray 下载镜像源）。
+重连、遥测与漂移检测间隔由面板“设置 → Agent”统一下发。
 
 详细设计见 [docs/framework-design.md](docs/framework-design.md)，前端开发命令见
 [docs/frontend.md](docs/frontend.md)。

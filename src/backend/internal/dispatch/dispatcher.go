@@ -4,11 +4,11 @@ package dispatch
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +32,8 @@ type Dispatcher struct {
 	// DestCandidates 是面板内置的 dest 白名单（§6 预检 fallback）：链编排下发
 	// apply_node/portal 时携带（panel 初始化时注入，与单机节点同一份）。
 	DestCandidates []string
+	PanelVersion   string
+	PanelPublicURL string
 
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
@@ -138,7 +140,15 @@ func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayloa
 	token := srv.Token
 	if srv.LastSeenAt == nil {
 		// bootstrap 状态：换发长期凭证（bootstrap 失效）。
-		token, err = randomToken()
+		credential, parseErr := shared.ParseCredential(srv.Token)
+		if parseErr != nil {
+			return 0, shared.HelloResult{}, fmt.Errorf("invalid stored credential")
+		}
+		panelID, idErr := d.st.PanelInstanceID(ctx)
+		if idErr != nil || credential.PanelInstanceID != panelID {
+			return 0, shared.HelloResult{}, fmt.Errorf("credential belongs to a different panel")
+		}
+		token, err = shared.NewCredential(panelID, credential.Epoch)
 		if err != nil {
 			return 0, shared.HelloResult{}, err
 		}
@@ -177,6 +187,14 @@ func (d *Dispatcher) HandleMessage(serverID int64, env shared.Envelope) {
 	switch env.Kind {
 	case shared.KindResponse:
 		d.handleCommandResponse(serverID, env)
+	case shared.KindRequest:
+		switch env.Type {
+		case shared.TypeSettingsSync:
+			d.handleAgentSettingsSync(serverID, env)
+		default:
+			log.Printf("dispatch: server %d: ignore request type=%s request_id=%s",
+				serverID, env.Type, env.RequestID)
+		}
 	case shared.KindEvent:
 		switch env.Type {
 		case shared.TypeTelemetry:
@@ -191,6 +209,119 @@ func (d *Dispatcher) HandleMessage(serverID int64, env shared.Envelope) {
 		log.Printf("dispatch: server %d: ignore kind=%s type=%s request_id=%s",
 			serverID, env.Kind, env.Type, env.RequestID)
 	}
+}
+
+func (d *Dispatcher) handleAgentSettingsSync(serverID int64, env shared.Envelope) {
+	ctx := context.Background()
+	var payload shared.AgentSettingsSyncPayload
+	if err := json.Unmarshal(env.Data, &payload); err != nil {
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInvalidArgument, "invalid settings sync payload", nil)
+		return
+	}
+	if len(payload.LastApplyError) > 512 {
+		payload.LastApplyError = payload.LastApplyError[:512]
+	}
+	if err := d.st.ReportAgentSettings(ctx, serverID, payload.AppliedRevision, payload.LastApplyError); err != nil {
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, "failed to record settings status", nil)
+		return
+	}
+	settings, err := d.st.AgentSettings(ctx)
+	if err != nil {
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, "failed to load settings", nil)
+		return
+	}
+	panelID, err := d.st.PanelInstanceID(ctx)
+	if err != nil {
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, "failed to load panel identity", nil)
+		return
+	}
+	changed := payload.PanelInstanceID != panelID ||
+		payload.AppliedRevision != settings.Revision ||
+		payload.LastApplyError != ""
+	result := shared.AgentSettingsSyncResult{Changed: changed}
+	if changed {
+		doc := shared.AgentSettingsDocument{
+			SchemaVersion: shared.AgentSettingsSchemaVersion,
+			Panel: shared.PanelMetadata{
+				InstanceID: panelID,
+				Version:    d.PanelVersion,
+				PublicURL:  d.panelPublicURL(ctx),
+				WSURL:      panelWSURL(d.panelPublicURL(ctx)),
+			},
+			Agent: settings,
+		}
+		result.Settings = &doc
+	}
+	d.replyAgentRequest(ctx, serverID, env, shared.CodeOK, "", result)
+}
+
+func (d *Dispatcher) replyAgentRequest(ctx context.Context, serverID int64, request shared.Envelope, code, message string, data any) {
+	if data == nil {
+		data = struct{}{}
+	}
+	response := shared.Envelope{
+		Kind: shared.KindResponse, Type: request.Type,
+		RequestID: request.RequestID, TraceID: request.TraceID,
+		Code: code, Message: message, Data: marshalMessageData(data),
+	}
+	if err := d.req.Send(ctx, serverID, response); err != nil {
+		log.Printf("dispatch: server %d: send %s response: %v", serverID, request.Type, err)
+	}
+}
+
+func (d *Dispatcher) panelPublicURL(ctx context.Context) string {
+	if value, err := d.st.GetSetting(ctx, store.SettingPublicURL); err == nil && value != "" {
+		return strings.TrimRight(value, "/")
+	}
+	return strings.TrimRight(d.PanelPublicURL, "/")
+}
+
+func panelWSURL(publicURL string) string {
+	u, err := url.Parse(publicURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	if u.Scheme == "https" {
+		u.Scheme = "wss"
+	} else {
+		u.Scheme = "ws"
+	}
+	u.Path = "/api/agent/ws"
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
+}
+
+// NotifyAgentSettingsChanged is best effort. Agents also pull after hello and
+// periodically, so losing this hint cannot leave them permanently stale.
+func (d *Dispatcher) NotifyAgentSettingsChanged(ctx context.Context, revision int64) {
+	servers, err := d.st.ListServers(ctx)
+	if err != nil {
+		log.Printf("dispatch: list agents for settings notification: %v", err)
+		return
+	}
+	for _, server := range servers {
+		if !d.req.IsOnline(server.ID) {
+			continue
+		}
+		id := shared.NewMessageID()
+		env := shared.Envelope{
+			Kind: shared.KindEvent, Type: shared.TypeSettingsChanged,
+			RequestID: id, TraceID: id,
+			Data: marshalMessageData(shared.AgentSettingsChangedPayload{Revision: revision}),
+		}
+		if err := d.req.Send(ctx, server.ID, env); err != nil {
+			log.Printf("dispatch: notify server %d settings revision %d: %v", server.ID, revision, err)
+		}
+	}
+}
+
+func marshalMessageData(value any) json.RawMessage {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return raw
 }
 
 // handleTelemetry 落库周期遥测（§13）：xray 版本、主机指标、流量增量（仅统计）。
@@ -412,13 +543,4 @@ func optionalID(value int64) *int64 {
 		return nil
 	}
 	return &value
-}
-
-// randomToken 生成 32 字节随机十六进制凭证。
-func randomToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
 }

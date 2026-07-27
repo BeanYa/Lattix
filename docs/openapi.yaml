@@ -147,7 +147,11 @@ paths:
   /api/setting/update:
     post:
       operationId: settingUpdate
-      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SettingUpdateRequest'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
   /api/setting/change-password:
     post:
@@ -255,6 +259,40 @@ components:
     MessageID:
       type: string
       pattern: '^[0-9a-f]{32}$'
+    AgentSettings:
+      type: object
+      additionalProperties: false
+      required: [revision, reconnect, telemetry, drift_detection]
+      properties:
+        revision:
+          type: integer
+          minimum: 1
+          description: Read-only to clients; panel increments it when saving.
+        reconnect:
+          type: object
+          additionalProperties: false
+          required: [mode, max_retries]
+          properties:
+            mode: {type: string, enum: [infinite, limited], default: infinite}
+            max_retries: {type: integer, minimum: 1, maximum: 100, default: 10}
+        telemetry:
+          type: object
+          additionalProperties: false
+          required: [interval_seconds]
+          properties:
+            interval_seconds: {type: integer, minimum: 10, maximum: 3600, default: 60}
+        drift_detection:
+          type: object
+          additionalProperties: false
+          required: [interval_seconds]
+          properties:
+            interval_seconds: {type: integer, minimum: 5, maximum: 3600, default: 15}
+    SettingUpdateRequest:
+      type: object
+      description: Existing panel fields plus the complete global Agent settings object.
+      additionalProperties: true
+      properties:
+        agent: {$ref: '#/components/schemas/AgentSettings'}
     RPCCode:
       type: string
       enum:

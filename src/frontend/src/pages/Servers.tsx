@@ -559,6 +559,31 @@ export default function Servers() {
                         配置漂移
                       </Badge>
                     )}
+                    {s.agent_settings_status === 'synced' ? (
+                      <Badge
+                        variant="secondary"
+                        className="ml-1"
+                        title={`Agent 设置 revision ${s.agent_settings_revision}`}
+                      >
+                        设置已同步
+                      </Badge>
+                    ) : s.agent_settings_status === 'failed' ? (
+                      <Badge
+                        variant="destructive"
+                        className="ml-1"
+                        title={s.agent_settings_error}
+                      >
+                        设置失败
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="ml-1"
+                        title={`Agent ${s.agent_settings_revision} / 面板 ${s.agent_settings_desired_revision}`}
+                      >
+                        设置待同步
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell>{s.address || '-'}</TableCell>
                   <TableCell className="text-xs whitespace-nowrap">

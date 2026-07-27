@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -94,6 +95,11 @@ export default function Settings() {
   // 日志
   const [operationLogLimit, setOperationLogLimit] = useState(1000)
   const [requestLogMaxMB, setRequestLogMaxMB] = useState(10)
+  // Agent（面板统一下发）
+  const [reconnectMode, setReconnectMode] = useState<'infinite' | 'limited'>('infinite')
+  const [reconnectMaxRetries, setReconnectMaxRetries] = useState(10)
+  const [telemetrySeconds, setTelemetrySeconds] = useState(60)
+  const [driftSeconds, setDriftSeconds] = useState(15)
   // 密码
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -133,6 +139,10 @@ export default function Settings() {
         setAlertChatID(s.alert_telegram_chat_id)
         setOperationLogLimit(s.operation_log_limit)
         setRequestLogMaxMB(s.request_log_max_mb)
+        setReconnectMode(s.agent.reconnect.mode)
+        setReconnectMaxRetries(s.agent.reconnect.max_retries)
+        setTelemetrySeconds(s.agent.telemetry.interval_seconds)
+        setDriftSeconds(s.agent.drift_detection.interval_seconds)
       })
       .catch((err) => setLoadError(errorMessage(err)))
   }, [])
@@ -166,6 +176,15 @@ export default function Settings() {
         alert_telegram_chat_id: alertChatID.trim(),
         operation_log_limit: operationLogLimit,
         request_log_max_mb: requestLogMaxMB,
+        agent: {
+          revision: settings?.agent.revision ?? 1,
+          reconnect: {
+            mode: reconnectMode,
+            max_retries: reconnectMaxRetries,
+          },
+          telemetry: { interval_seconds: telemetrySeconds },
+          drift_detection: { interval_seconds: driftSeconds },
+        },
         // bot token 留空 = 保持已保存值（后端语义，与 tls key 一致）
         ...(alertBotToken.trim() ? { alert_telegram_bot_token: alertBotToken.trim() } : {}),
       })
@@ -293,6 +312,79 @@ export default function Settings() {
       <h1 className="text-xl font-semibold">设置</h1>
 
       <form onSubmit={onSave} className="space-y-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>Agent</CardTitle>
+            <CardDescription>
+              所有 Agent 使用同一份设置。保存后 revision 自动递增，在线 Agent 会立即拉取，离线 Agent 在重连后同步。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label>重连策略</Label>
+              <Select
+                value={reconnectMode}
+                onValueChange={(value) => value && setReconnectMode(value as 'infinite' | 'limited')}
+                items={[
+                  { value: 'infinite', label: '无限重试（默认）' },
+                  { value: 'limited', label: '限制快速重试次数' },
+                ]}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="infinite">无限重试（默认）</SelectItem>
+                    <SelectItem value="limited">限制快速重试次数</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                两种策略均使用指数退避。限制次数耗尽或认证失败后，Agent 仍会每 5 分钟低频探测，不会永久停止。
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="reconnectMaxRetries">最大快速重试次数</Label>
+              <Input
+                id="reconnectMaxRetries"
+                type="number"
+                min={1}
+                max={100}
+                disabled={reconnectMode === 'infinite'}
+                value={reconnectMaxRetries}
+                onChange={(event) => setReconnectMaxRetries(Number(event.target.value))}
+              />
+              <p className="text-xs text-muted-foreground">范围 1–100；无限重试模式会保存但忽略该值。</p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="telemetrySeconds">遥测间隔（秒）</Label>
+                <Input
+                  id="telemetrySeconds"
+                  type="number"
+                  min={10}
+                  max={3600}
+                  value={telemetrySeconds}
+                  onChange={(event) => setTelemetrySeconds(Number(event.target.value))}
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="driftSeconds">配置漂移检测（秒）</Label>
+                <Input
+                  id="driftSeconds"
+                  type="number"
+                  min={5}
+                  max={3600}
+                  value={driftSeconds}
+                  onChange={(event) => setDriftSeconds(Number(event.target.value))}
+                />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">当前期望 revision：{settings.agent.revision}</p>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardHeader>
             <CardTitle>基本设置</CardTitle>

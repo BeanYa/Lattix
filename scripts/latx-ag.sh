@@ -25,11 +25,11 @@
 #   LATX_AG_UNIT        agent systemd unit 名（默认 lattix-agent）
 #   LATX_AG_XRAY_UNIT   xray systemd unit 名（默认 xray）
 #   LATX_AG_BIN         latx-ag 安装路径（默认 $LATX_PREFIX/usr/local/bin/latx-ag，uninstall 时删除）
-#   LATX_AG_AGENT_BIN   agent 二进制路径（默认 $LATX_PREFIX/usr/local/bin/lattix-agent）
-#   LATX_AG_XRAY_BIN    xray 二进制路径（默认 $LATX_PREFIX/usr/local/bin/xray）
-#   LATX_AG_STATE       agent state 文件（默认 $LATX_PREFIX/etc/lattix-agent.state.json）
-#   LATX_AG_ENV         agent env 文件（默认 $LATX_PREFIX/etc/lattix-agent.env，读面板地址）
-#   LATX_AG_LOG         用户态/DEV 模式日志文件（默认 $LATX_PREFIX/var/log/lattix-agent.log）
+#   LATX_AG_AGENT_BIN   agent 二进制路径（默认 /opt/lattix-agent/bin/lattix-agent）
+#   LATX_AG_XRAY_BIN    xray 二进制路径（默认 /opt/lattix-agent/bin/xray）
+#   LATX_AG_STATE       agent state 文件（默认 /opt/lattix-agent/data/state.json）
+#   LATX_AG_ENV         agent env 文件（默认 /opt/lattix-agent/config/agent.env，读面板地址）
+#   LATX_AG_LOG         用户态/DEV 模式日志文件（默认 /opt/lattix-agent/logs/agent.log）
 #   XRAY_RELEASE_BASE   xray release 下载基址（默认官方 GitHub，对齐 agent -xray-release-base）
 #   LATX_DEV=1          无 systemd 开发模式：status 降级为进程检查，log 读 LATX_AG_LOG
 set -euo pipefail
@@ -39,19 +39,33 @@ LATX_AG_VERSION="{{LATTIX_VERSION}}"
 GITHUB_REPO="{{GITHUB_REPO}}"
 
 PREFIX="${LATX_PREFIX:-}"
+if [[ -n "$PREFIX" ]]; then
+    APP_ROOT="$PREFIX/opt/lattix-agent"
+elif [[ "$(id -u)" -eq 0 ]]; then
+    APP_ROOT="/opt/lattix-agent"
+else
+    APP_ROOT="$HOME/.lattix-agent"
+fi
 UNIT="${LATX_AG_UNIT:-lattix-agent}"
 XRAY_UNIT="${LATX_AG_XRAY_UNIT:-xray}"
 UNIT_FILE="$PREFIX/etc/systemd/system/${UNIT}.service"
 XRAY_UNIT_FILE="$PREFIX/etc/systemd/system/${XRAY_UNIT}.service"
-LATX_AG_BIN="${LATX_AG_BIN:-$PREFIX/usr/local/bin/latx-ag}"
-AGENT_BIN="${LATX_AG_AGENT_BIN:-$PREFIX/usr/local/bin/lattix-agent}"
+if [[ -z "$PREFIX" && "$(id -u)" -ne 0 ]]; then
+    LATX_AG_DEFAULT="$APP_ROOT/bin/latx-ag"
+else
+    LATX_AG_DEFAULT="$PREFIX/usr/local/bin/latx-ag"
+fi
+LATX_AG_BIN="${LATX_AG_BIN:-$LATX_AG_DEFAULT}"
+LATX_AG_APP_BIN="$APP_ROOT/bin/latx-ag"
+AGENT_BIN="${LATX_AG_AGENT_BIN:-$APP_ROOT/bin/lattix-agent}"
 # 用户态守护脚本路径（install.sh user 模式生成），由 agent 安装目录推导。
 RUN_SCRIPT="$(dirname "$AGENT_BIN")/lattix-agent-run"
-XRAY_BIN="${LATX_AG_XRAY_BIN:-$PREFIX/usr/local/bin/xray}"
-XRAY_CONFIG_DIR="$PREFIX/usr/local/etc/xray"
-STATE_FILE="${LATX_AG_STATE:-$PREFIX/etc/lattix-agent.state.json}"
-ENV_FILE="${LATX_AG_ENV:-$PREFIX/etc/lattix-agent.env}"
-LOG_FILE="${LATX_AG_LOG:-$PREFIX/var/log/lattix-agent.log}"
+XRAY_BIN="${LATX_AG_XRAY_BIN:-$APP_ROOT/bin/xray}"
+XRAY_CONFIG="$APP_ROOT/config/xray.json"
+STATE_FILE="${LATX_AG_STATE:-$APP_ROOT/data/state.json}"
+SETTINGS_FILE="$APP_ROOT/data/settings.json"
+ENV_FILE="${LATX_AG_ENV:-$APP_ROOT/config/agent.env}"
+LOG_FILE="${LATX_AG_LOG:-$APP_ROOT/logs/agent.log}"
 XRAY_RELEASE_BASE="${XRAY_RELEASE_BASE:-https://github.com/XTLS/Xray-core/releases/download}"
 
 die() { echo "latx-ag: $*" >&2; exit 1; }
@@ -126,9 +140,9 @@ cmd_status() {
     [[ -n "$sid" ]] && echo "服务器 ID: $sid"
 
     # §17 漂移基线由运行中的 agent 内存维护（不落盘），此处仅给出当前配置指纹。
-    if [[ -r "$XRAY_CONFIG_DIR/config.json" ]] && command -v sha256sum >/dev/null; then
+    if [[ -r "$XRAY_CONFIG" ]] && command -v sha256sum >/dev/null; then
         local fp
-        fp="$(sha256sum "$XRAY_CONFIG_DIR/config.json" 2>/dev/null | cut -c1-12 || true)"
+        fp="$(sha256sum "$XRAY_CONFIG" 2>/dev/null | cut -c1-12 || true)"
         [[ -n "$fp" ]] && echo "配置指纹: sha256:$fp（漂移基线在 agent 内存中，§17）"
     fi
 }
@@ -260,7 +274,7 @@ cmd_update() {
         install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
         systemctl start "$UNIT"
     else
-        # 用户态：先停 agent 释放二进制占用（守护循环 5s 内拉起新版），再替换。
+        # 用户态：先停 agent 释放二进制占用（守护循环约 1s 拉起新版），再替换。
         pkill -f "$AGENT_BIN -panel" 2>/dev/null || true
         sleep 1
         install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
@@ -397,16 +411,16 @@ cmd_uninstall() {
             echo ">> [用户态] 已停止 xray 进程"
         fi
     fi
-    rm -f "$AGENT_BIN" "$AGENT_BIN.bak" "$RUN_SCRIPT" "$ENV_FILE" "$STATE_FILE"
+    rm -f "$AGENT_BIN" "$AGENT_BIN.bak" "$RUN_SCRIPT" "$ENV_FILE" "$STATE_FILE" "$SETTINGS_FILE"
     echo ">> 已删除 agent 二进制/env/state"
     if [[ "$purge_xray" -eq 1 ]]; then
         rm -f "$XRAY_BIN" "$XRAY_BIN.bak"
-        rm -rf "$XRAY_CONFIG_DIR"
-        echo ">> 已删除 xray 二进制与配置 $XRAY_CONFIG_DIR"
+        rm -f "$XRAY_CONFIG" "$XRAY_CONFIG.rebind-backup"
+        echo ">> 已删除 xray 二进制与配置 $XRAY_CONFIG"
     else
         echo ">> 保留 xray（$XRAY_BIN）与其配置，节点继续运行"
     fi
-    rm -f "$LATX_AG_BIN"
+    rm -f "$LATX_AG_BIN" "$LATX_AG_APP_BIN"
     echo ">> done. Lattix Agent 已卸载。"
 }
 

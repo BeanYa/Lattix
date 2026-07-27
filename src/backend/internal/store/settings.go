@@ -3,8 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+
+	"lattix/shared"
 )
 
 // 面板设置键（§10 设置页）。DB 中有值即优先于对应启动参数，重启后由 main 读取生效。
@@ -24,6 +27,8 @@ const (
 	SettingAlertTelegramChatID   = "alert_telegram_chat_id"   // Telegram 会话 ID
 	SettingOperationLogLimit     = "operation_log_limit"      // 操作日志最多保留条数，默认 1000
 	SettingRequestLogMaxMB       = "request_log_max_mb"       // 请求日志 JSONL 总容量 MiB，默认 10
+	SettingPanelInstanceID       = "panel_instance_id"
+	SettingAgentSettings         = "agent_settings"
 )
 
 // GetSetting 读取一个设置；未设置返回空字符串（不视为错误）。
@@ -57,4 +62,97 @@ func (s *Store) DeleteSetting(ctx context.Context, key string) error {
 		return fmt.Errorf("delete setting %s: %w", key, err)
 	}
 	return nil
+}
+
+// PanelInstanceID returns the stable identity of this logical panel. Database
+// backup/restore retains it; a fresh database creates a new identity.
+func (s *Store) PanelInstanceID(ctx context.Context) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var value string
+	err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, SettingPanelInstanceID).Scan(&value)
+	if err == nil {
+		return value, tx.Commit()
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("get panel instance id: %w", err)
+	}
+	value, err = shared.NewPanelInstanceID()
+	if err != nil {
+		return "", fmt.Errorf("create panel instance id: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)`, SettingPanelInstanceID, value); err != nil {
+		return "", fmt.Errorf("save panel instance id: %w", err)
+	}
+	return value, tx.Commit()
+}
+
+// AgentSettings returns the global desired Agent settings, creating defaults
+// on first use.
+func (s *Store) AgentSettings(ctx context.Context) (shared.AgentSettings, error) {
+	raw, err := s.GetSetting(ctx, SettingAgentSettings)
+	if err != nil {
+		return shared.AgentSettings{}, err
+	}
+	if raw == "" {
+		defaults := shared.DefaultAgentSettings()
+		if err := s.saveAgentSettings(ctx, defaults); err != nil {
+			return shared.AgentSettings{}, err
+		}
+		return defaults, nil
+	}
+	var settings shared.AgentSettings
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		return shared.AgentSettings{}, fmt.Errorf("decode agent settings: %w", err)
+	}
+	if err := settings.Validate(); err != nil {
+		return shared.AgentSettings{}, fmt.Errorf("validate stored agent settings: %w", err)
+	}
+	return settings, nil
+}
+
+// UpdateAgentSettings replaces the desired object and increments its revision
+// in the same database transaction.
+func (s *Store) UpdateAgentSettings(ctx context.Context, desired shared.AgentSettings) (shared.AgentSettings, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return shared.AgentSettings{}, err
+	}
+	defer tx.Rollback()
+	current := shared.DefaultAgentSettings()
+	var raw string
+	err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, SettingAgentSettings).Scan(&raw)
+	if err == nil {
+		if err := json.Unmarshal([]byte(raw), &current); err != nil {
+			return shared.AgentSettings{}, fmt.Errorf("decode agent settings: %w", err)
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return shared.AgentSettings{}, fmt.Errorf("get agent settings: %w", err)
+	}
+	desired.Revision = current.Revision + 1
+	if err := desired.Validate(); err != nil {
+		return shared.AgentSettings{}, err
+	}
+	encoded, err := json.Marshal(desired)
+	if err != nil {
+		return shared.AgentSettings{}, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO settings (key, value) VALUES (?, ?)
+		 ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+		SettingAgentSettings, string(encoded)); err != nil {
+		return shared.AgentSettings{}, fmt.Errorf("save agent settings: %w", err)
+	}
+	return desired, tx.Commit()
+}
+
+func (s *Store) saveAgentSettings(ctx context.Context, settings shared.AgentSettings) error {
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return err
+	}
+	return s.SetSetting(ctx, SettingAgentSettings, string(raw))
 }

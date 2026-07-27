@@ -37,6 +37,9 @@ type Notifier struct {
 
 	mu       sync.Mutex
 	lastSent map[string]time.Time // key: "<serverID>|<event>"
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
 }
 
 // New 创建 Notifier。LATTIX_ALERT_DEBOUNCE（Go duration）可覆盖防抖动窗口（dev/e2e 用）。
@@ -45,10 +48,12 @@ func New(st *store.Store) *Notifier {
 	if v := os.Getenv("LATTIX_ALERT_DEBOUNCE"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {
-			log.Fatalf("LATTIX_ALERT_DEBOUNCE 无效: %v", err)
+			log.Printf("LATTIX_ALERT_DEBOUNCE invalid, using %s: %v", debounce, err)
+		} else {
+			debounce = d
 		}
-		debounce = d
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Notifier{
 		st: st,
 		requester: external.ExternalWebhookRequester{
@@ -56,6 +61,8 @@ func New(st *store.Store) *Notifier {
 		},
 		debounce: debounce,
 		lastSent: make(map[string]time.Time),
+		ctx:      ctx,
+		cancel:   cancel,
 	}
 }
 
@@ -98,7 +105,7 @@ type payload struct {
 // Notify 上报一次状态跃迁事件：防抖动命中则丢弃；否则异步发送到各已配置通道。
 // server/node 为空字符串表示该维度不适用。失败仅记日志，绝不阻塞调用方主路径。
 func (n *Notifier) Notify(serverID int64, event, node, detail string) {
-	ctx := context.Background()
+	ctx := n.ctx
 	cfg := n.loadConfig(ctx)
 	if !cfg.enabled() {
 		return
@@ -117,7 +124,11 @@ func (n *Notifier) Notify(serverID int64, event, node, detail string) {
 		Detail: detail,
 		Time:   time.Now().Format(time.RFC3339),
 	}
-	go n.send(cfg, p)
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		n.send(n.ctx, cfg, p)
+	}()
 }
 
 // allow 实现防抖动：窗口内同 key 已发过则返回 false。
@@ -144,13 +155,13 @@ func (p payload) text() string {
 }
 
 // send 同步发送到各已配置通道（webhook / telegram 各自独立判定），返回每通道错误。
-func (n *Notifier) send(cfg config, p payload) map[string]error {
+func (n *Notifier) send(ctx context.Context, cfg config, p payload) map[string]error {
 	errs := make(map[string]error)
 	if cfg.webhookURL != "" {
-		errs["webhook"] = n.sendWebhook(cfg.webhookURL, p)
+		errs["webhook"] = n.sendWebhook(ctx, cfg.webhookURL, p)
 	}
 	if cfg.tgToken != "" && cfg.tgChatID != "" {
-		errs["telegram"] = n.sendTelegram(cfg.tgToken, cfg.tgChatID, p.text())
+		errs["telegram"] = n.sendTelegram(ctx, cfg.tgToken, cfg.tgChatID, p.text())
 	}
 	for ch, err := range errs {
 		if err != nil {
@@ -181,7 +192,7 @@ func (n *Notifier) Test(ctx context.Context) map[string]ChannelResult {
 		"webhook":  {Configured: cfg.webhookURL != ""},
 		"telegram": {Configured: cfg.tgToken != "" && cfg.tgChatID != ""},
 	}
-	for ch, err := range n.send(cfg, p) {
+	for ch, err := range n.send(ctx, cfg, p) {
 		r := res[ch]
 		r.OK = err == nil
 		if err != nil {
@@ -193,13 +204,30 @@ func (n *Notifier) Test(ctx context.Context) map[string]ChannelResult {
 }
 
 // sendWebhook POST JSON 载荷到 webhook 接收端；非 2xx 视为失败。
-func (n *Notifier) sendWebhook(url string, p payload) error {
-	return n.requester.PostJSON(context.Background(), url, p)
+func (n *Notifier) sendWebhook(ctx context.Context, url string, p payload) error {
+	return n.requester.PostJSON(ctx, url, p)
 }
 
 // sendTelegram 经 Bot API sendMessage 发送纯文本。
-func (n *Notifier) sendTelegram(token, chatID, text string) error {
-	return n.requester.PostJSON(context.Background(),
+func (n *Notifier) sendTelegram(ctx context.Context, token, chatID, text string) error {
+	return n.requester.PostJSON(ctx,
 		"https://api.telegram.org/bot"+token+"/sendMessage",
 		map[string]string{"chat_id": chatID, "text": text})
+}
+
+// Close cancels in-flight alert delivery and waits within the caller's
+// shutdown budget.
+func (n *Notifier) Close(ctx context.Context) error {
+	n.cancel()
+	done := make(chan struct{})
+	go func() {
+		n.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }

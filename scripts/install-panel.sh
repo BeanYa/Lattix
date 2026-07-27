@@ -256,12 +256,16 @@ EOF
 Description=Lattix Panel
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 EnvironmentFile=$config
 ExecStart=$root/lattix-backend -addr $BIND_ADDRESS:$PORT
 Restart=always
-RestartSec=5
+RestartSec=1
+TimeoutStopSec=15
+KillSignal=SIGTERM
 
 [Install]
 WantedBy=multi-user.target

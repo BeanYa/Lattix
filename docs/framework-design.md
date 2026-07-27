@@ -96,6 +96,8 @@ install.sh           # 唯一面向用户的统一安装入口
 | type | 方向 | 说明 |
 |---|---|---|
 | `agent.hello` | agent→panel | 首连认证：token、agent 版本、xray 版本、xray 运行状态、本机网卡非回环地址 `nic_addresses`（§4 公网地址候选）；bootstrap token 在此换发长期凭证（以 `last_seen_at` 为空判定 bootstrap 状态；长期 token 一经换发**不再轮换**，agent 侧内存兜底防止落盘失败锁死） |
+| `agent.settings.sync` | agent→panel | hello 后、设置提示后及在线期间周期拉取全局 Agent 设置；请求携带已应用 revision，响应按需返回完整统一设置文档 |
+| `agent.settings.changed` | panel→agent | 在线设置变更提示；仅触发 Agent 立即 pull，不承载配置本身 |
 | `node.apply` | panel→agent | 下发节点：虚拟配置模板 + 分配到该节点的用户 UUID 列表（§16） |
 | `node.remove` | panel→agent | 删除节点 |
 | `user.add` | panel→agent | 向载荷指定节点的 inbound 热加入一个用户（`nodes` 参数携带各节点协议参数；必填，缺省/为空回执错误） |
@@ -107,7 +109,7 @@ install.sh           # 唯一面向用户的统一安装入口
 | `telemetry.report` | agent→panel | 周期遥测（§13）：xray 版本/运行状态、主机指标、流量增量；无需回执 |
 | `config.drift` | agent→panel | 配置漂移状态变化（§17）：外部修改时 true，修复/恢复后 false |
 
-在线/离线状态由 WS 连接推导，连接存亡由应用层心跳判定：panel 每 30s 向 agent 发 WS ping，任一侧 90s 无任何字节（含 pong 等控制帧）即判连接死亡——panel 侧注销连接并按离线处理（显示离线 + sent 命令重置），agent 侧读循环报错退出后 5s 退避重连。半开 TCP 最长 90s 被识别，不会假在线。
+在线/离线状态由 WS 连接推导，连接存亡由应用层心跳判定：panel 每 30s 向 agent 发 WS ping，任一侧 90s 无任何字节（含 pong 等控制帧）即判连接死亡。Agent 使用面板统一配置的指数退避策略重连；面板计划重启以 WS 1012 通知 Agent 走 200–500ms 快速重试，认证失败 4001 则进入 5 分钟低频探测。完整语义见[优雅停机与 Agent 设置同步设计](graceful-shutdown-agent-settings-design.md)。
 
 ## 6. 节点生命周期与 apply 流水线
 
@@ -119,7 +121,8 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
 2. **dest 预检**：对模板 dest 做 TCP+TLS 可达性检查；不可达则按 `node.apply` 携带的白名单候选（`dest_candidates`，面板内置并随版本更新，尽量丰富）逐个尝试，全部失败则上报 error；
 3. 写入临时配置文件；
 4. `xray run -test -config <file>` 校验，失败则丢弃并上报 error；
-5. 落盘正式配置（Agent **独占管理** `/usr/local/etc/xray/config.json`）；
+5. 落盘正式配置（Agent **独占管理** `/opt/lattix-agent/config/xray.json`；
+   用户模式对应 `~/.lattix-agent/config/xray.json`）；
 6. 调 xray gRPC API 热操作（`AddInbound` / `AlterInbound` / `RemoveInbound`）；
 7. 热操作失败才 `systemctl restart xray`；
 8. 重启失败则恢复上一份可用配置、再次重启，并上报 failed。
@@ -197,8 +200,10 @@ Location 允许自由输入作为兜底。后续可按国家拆分数据文件�
    （`latest` 经 GitHub API 解析并校验官方 `.dgst`）→ 从同版本 GitHub Release
    下载并校验 `lattix-agent-linux-<arch>.tar.gz` → 安装 Agent/`latx-ag` →
    best-effort 开启 TCP BBR → 写入面板地址与 bootstrap token。面板不托管安装脚本或
-   二进制资源，也不提供资源源切换。无 root（或无 systemd）时仍可进入用户态守护模式；
-   重装清除旧 state，确保使用新的 bootstrap token；
+   二进制资源，也不提供资源源切换。无 root（或无 systemd）时仍可进入用户态守护模式。
+   system 模式文件集中在 `/opt/lattix-agent/{bin,config,data,logs}`，用户模式集中在
+   `~/.lattix-agent/{bin,config,data,logs}`。重装保留 state/settings，由结构化 token 的
+   panel instance ID 与 credential epoch 决定使用长期 token 或新 bootstrap；
    - BBR 已启用时不改系统配置；否则尝试加载 `tcp_bbr`，写入独立持久化文件
      `/etc/sysctl.d/99-lattix-bbr.conf`，并以 `sysctl -w` 只即时设置
      `net.core.default_qdisc=fq` 与 `net.ipv4.tcp_congestion_control=bbr`，不得执行
@@ -209,7 +214,8 @@ Location 允许自由输入作为兜底。后续可按国家拆分数据文件�
      具体失败原因的 `WARNING`；Agent 卸载不撤销机器级 BBR 配置；
 3. Agent 启动首连，以 bootstrap token 换发长期服务器 token；**实际安装的 xray 版本随 hello 上报，面板服务器列表展示实际版本号**。
 
-凭证刷新（§10）将 `last_seen_at` 重置为空，使服务器回到 bootstrap 状态，下次 hello 重新换发。
+凭证刷新（§10）立即递增 credential epoch、撤销旧 token 并以 WS 4001 关闭现有连接。
+管理员必须执行新的安装命令；同面板刷新保留 Xray 配置，跨面板仅在新面板认证成功后清理旧受管状态。
 
 ## 12. 安全
 
@@ -227,7 +233,7 @@ Location 允许自由输入作为兜底。后续可按国家拆分数据文件�
 
 ## 13. 遥测（已实现）
 
-Agent 以 `telemetry` 消息周期上报（默认 60s，`-telemetry-interval` 可调）：
+Agent 以 `telemetry` 消息周期上报（默认 60s，由面板 Agent 设置统一调整）：
 
 - **xray 版本与运行状态**：升级管理（§18）完成后据此刷新面板展示。
 - **主机指标**：/proc 采集 load1、CPU 使用率、内存总量/占用 → `server_metrics` 表（每服务器最新值）→ 服务器列表"负载"列。
@@ -315,7 +321,7 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，`-telemetry-interval` �
 
 检测上报 + 管理员修复：
 
-- Agent 每次落盘记录配置哈希，周期比对（默认 15s，`-drift-interval` 可调）；
+- Agent 每次落盘记录配置哈希，按面板 Agent 设置中的间隔周期比对（默认 15s）；
   外部篡改/删除即上报 `config.drift`（仅状态变化时），回滚路径同步基线避免误报。
 - 面板置 `servers.config_drift` 标志，服务器列表显示"配置漂移"徽章与"修复漂移"按钮。
 - 修复 = `POST /api/server/repair` 重放该服务器全部 active 节点；

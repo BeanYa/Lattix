@@ -41,6 +41,11 @@ export interface Server {
   tags: string[]
   country_code: string
   location: string
+  agent_settings_status: 'synced' | 'pending' | 'failed'
+  agent_settings_revision: number
+  agent_settings_desired_revision: number
+  agent_settings_error: string
+  agent_settings_reported_at: string | null
   metrics: ServerMetrics | null
   created_at: string
 }
@@ -185,6 +190,20 @@ export interface CertInfo {
 
 export type TLSMode = '' | 'off' | 'cert' | 'acme' | 'path'
 
+export interface AgentSettings {
+  revision: number
+  reconnect: {
+    mode: 'infinite' | 'limited'
+    max_retries: number
+  }
+  telemetry: {
+    interval_seconds: number
+  }
+  drift_detection: {
+    interval_seconds: number
+  }
+}
+
 export interface PanelSettings {
   timezone: string
   public_url: string
@@ -209,6 +228,7 @@ export interface PanelSettings {
   request_log_usage_bytes: number
   request_log_dropped: number
   backup_includes_logs: boolean
+  agent: AgentSettings
 }
 
 export interface UpdateSettingsRequest {
@@ -225,6 +245,7 @@ export interface UpdateSettingsRequest {
   alert_telegram_chat_id: string
   operation_log_limit: number
   request_log_max_mb: number
+  agent: AgentSettings
 }
 
 export interface AlertChannelResult {

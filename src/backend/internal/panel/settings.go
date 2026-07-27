@@ -19,6 +19,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"lattix/backend/internal/store"
+	"lattix/shared"
 )
 
 // 面板 TLS 监听模式（main 启动时确定，DB 设置优先于启动参数，重启生效）。
@@ -87,15 +88,16 @@ type settingsDTO struct {
 	PanelVersion     string       `json:"panel_version"`     // 当前面板版本（构建注入）
 	PasswordOverride bool         `json:"password_override"` // 密码已被设置页覆盖（否则为启动参数）
 	// 事件告警（§19）：三项全空 = 告警关闭。bot token 不回显（与 tls_key 同风格），仅给置位标记。
-	AlertWebhookURL          string `json:"alert_webhook_url"`
-	AlertTelegramBotTokenSet bool   `json:"alert_telegram_bot_token_set"`
-	AlertTelegramChatID      string `json:"alert_telegram_chat_id"`
-	OperationLogLimit        int    `json:"operation_log_limit"`
-	RequestLogMaxMB          int    `json:"request_log_max_mb"`
-	LogDir                   string `json:"log_dir"`
-	RequestLogUsageBytes     int64  `json:"request_log_usage_bytes"`
-	RequestLogDropped        uint64 `json:"request_log_dropped"`
-	BackupIncludesLogs       bool   `json:"backup_includes_logs"`
+	AlertWebhookURL          string               `json:"alert_webhook_url"`
+	AlertTelegramBotTokenSet bool                 `json:"alert_telegram_bot_token_set"`
+	AlertTelegramChatID      string               `json:"alert_telegram_chat_id"`
+	OperationLogLimit        int                  `json:"operation_log_limit"`
+	RequestLogMaxMB          int                  `json:"request_log_max_mb"`
+	LogDir                   string               `json:"log_dir"`
+	RequestLogUsageBytes     int64                `json:"request_log_usage_bytes"`
+	RequestLogDropped        uint64               `json:"request_log_dropped"`
+	BackupIncludesLogs       bool                 `json:"backup_includes_logs"`
+	Agent                    shared.AgentSettings `json:"agent"`
 }
 
 // handleGetSettings 处理 GET /api/settings。
@@ -122,6 +124,12 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		LogDir:                   s.cfg.LogDir,
 		BackupIncludesLogs:       false,
 	}
+	agentSettings, err := s.st.AgentSettings(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	dto.Agent = agentSettings
 	if s.opLog != nil {
 		dto.OperationLogLimit = s.opLog.MaxEntries()
 	}
@@ -186,11 +194,12 @@ type updateSettingsRequest struct {
 	ACMEDomain string `json:"acme_domain"`
 	ACMEEmail  string `json:"acme_email"`
 	// 事件告警（§19）：webhook/chat_id 随表单覆盖（允许清空）；bot token 留空 = 保持已保存值。
-	AlertWebhookURL       string `json:"alert_webhook_url"`
-	AlertTelegramBotToken string `json:"alert_telegram_bot_token"`
-	AlertTelegramChatID   string `json:"alert_telegram_chat_id"`
-	OperationLogLimit     int    `json:"operation_log_limit"`
-	RequestLogMaxMB       int    `json:"request_log_max_mb"`
+	AlertWebhookURL       string                `json:"alert_webhook_url"`
+	AlertTelegramBotToken string                `json:"alert_telegram_bot_token"`
+	AlertTelegramChatID   string                `json:"alert_telegram_chat_id"`
+	OperationLogLimit     int                   `json:"operation_log_limit"`
+	RequestLogMaxMB       int                   `json:"request_log_max_mb"`
+	Agent                 *shared.AgentSettings `json:"agent"`
 }
 
 // handleUpdateSettings 处理 PUT /api/settings：校验后落库。
@@ -230,6 +239,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if req.RequestLogMaxMB < 1 || req.RequestLogMaxMB > 1024 {
 		writeError(w, http.StatusBadRequest, "请求日志缓存须为 1–1024 MB")
 		return
+	}
+	if req.Agent != nil {
+		// The panel owns revision assignment; clients edit only the values.
+		req.Agent.Revision = 1
+		if err := req.Agent.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	req.Timezone = strings.TrimSpace(req.Timezone)
@@ -397,6 +414,16 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			log.Printf("panel: apply request log retention: %v", err)
 		}
 	}
+	var updatedAgent *shared.AgentSettings
+	if req.Agent != nil {
+		settings, err := s.st.UpdateAgentSettings(ctx, *req.Agent)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		updatedAgent = &settings
+		s.disp.NotifyAgentSettingsChanged(ctx, settings.Revision)
+	}
 
 	after := map[string]any{
 		"timezone": req.Timezone, "public_url": req.PublicURL, "tls_mode": req.TLSMode,
@@ -423,6 +450,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(changes) > 0 {
 		s.audit(r, "settings.updated", nil, nil, changes)
+	}
+	if updatedAgent != nil {
+		s.audit(r, "agent.settings.updated", nil, nil, map[string]any{
+			"revision":        updatedAgent.Revision,
+			"reconnect":       updatedAgent.Reconnect,
+			"telemetry":       updatedAgent.Telemetry,
+			"drift_detection": updatedAgent.DriftDetection,
+		})
 	}
 	s.handleGetSettings(w, r)
 }

@@ -7,13 +7,17 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"lattix/shared"
 )
 
 // State 是 agent 落盘的本地状态。
 type State struct {
-	Token       string       `json:"token"`     // 长期服务器 token（hello 换发）
-	ServerID    int64        `json:"server_id"` // 面板分配的服务器 id
-	ChainPieces []ChainPiece `json:"chain_pieces,omitempty"`
+	Token           string       `json:"token"`     // 长期服务器 token（hello 换发）
+	ServerID        int64        `json:"server_id"` // 面板分配的服务器 id
+	PanelInstanceID string       `json:"panel_instance_id"`
+	CredentialEpoch int64        `json:"credential_epoch"`
+	ChainPieces     []ChainPiece `json:"chain_pieces,omitempty"`
 }
 
 // ChainPiece 是一个链跳配置件（§21.1 piece）的落盘记录：
@@ -21,7 +25,7 @@ type State struct {
 // Port/PrivateKey/PublicKey 供重发幂等复用（端口与公钥不变，下游 bridge 凭证不失效）。
 type ChainPiece struct {
 	HopID      int64             `json:"hop_id"`
-	Kind       string            `json:"kind"` // portal|bridge|forward
+	Kind       string            `json:"kind"`                  // portal|bridge|forward
 	Port       int               `json:"port,omitempty"`        // portal/forward：已分配端口
 	PrivateKey string            `json:"private_key,omitempty"` // portal：Reality 私钥（不出本机）
 	PublicKey  string            `json:"public_key,omitempty"`  // portal：对应公钥（回执值）
@@ -53,6 +57,42 @@ func Load(path string) (State, error) {
 // Save 原子写入状态文件（tmp + rename，0600）。
 func Save(path string, st State) error {
 	b, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func LoadSettings(path string) (shared.AgentSettingsDocument, error) {
+	var settings shared.AgentSettingsDocument
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return settings, nil
+	}
+	if err != nil {
+		return settings, err
+	}
+	if err := json.Unmarshal(b, &settings); err != nil {
+		return settings, err
+	}
+	if err := settings.Validate(); err != nil {
+		return shared.AgentSettingsDocument{}, err
+	}
+	return settings, nil
+}
+
+func SaveSettings(path string, settings shared.AgentSettingsDocument) error {
+	if err := settings.Validate(); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return err
 	}

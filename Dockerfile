@@ -34,6 +34,7 @@ ENV LATTIX_DEPLOY_MODE=docker \
     LATTIX_TLS_DIR=/data/certs \
     LATTIX_ACME_CACHE=/data/acme-cache
 EXPOSE 8080
+STOPSIGNAL SIGTERM
 LABEL org.opencontainers.image.source="https://github.com/BeanYa/Lattix" \
       org.opencontainers.image.description="Lattix panel" \
       org.opencontainers.image.version="${VERSION}"

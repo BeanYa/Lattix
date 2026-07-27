@@ -3,6 +3,7 @@ package panel
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"lattix/backend/internal/alert"
 	"lattix/backend/internal/dispatch"
@@ -23,19 +25,20 @@ import (
 
 // Config 是面板运行配置。
 type Config struct {
-	AdminUser      string          // 管理员账号（单管理员，§14 多管理员属后续迭代）
-	AdminPass      string          // 管理员密码（DB 设置页改密后被 bcrypt 哈希覆盖）
-	PublicURL      string          // 面板对外地址（生成安装命令/订阅链接）；空 = 从请求推断（DB 设置可覆盖）
-	Secure         bool            // 面板自身以 TLS 服务（自带证书或 ACME，§12）
-	RunningTLS     AppliedTLS      // 当前进程实际生效的 TLS 快照（main 启动时确定，重启生效）
-	TLSDir         string          // 域名路径模式证书根目录（<tls-dir>/<域名>/fullchain.pem|privkey.pem）
-	Version        string          // 面板版本（构建注入）
-	GitHubRepo     string          // GitHub 仓库（org/repo）：release 安装命令、面板自更新与 agent 升级下载基址
-	Alerter        *alert.Notifier // 事件告警（§19）；nil = 关闭
-	OperationLog   *logging.OperationStore
-	RequestLog     *logging.RequestLog
-	LogDir         string
-	RequestRestart func(reason string)
+	AdminUser        string          // 管理员账号（单管理员，§14 多管理员属后续迭代）
+	AdminPass        string          // 管理员密码（DB 设置页改密后被 bcrypt 哈希覆盖）
+	PublicURL        string          // 面板对外地址（生成安装命令/订阅链接）；空 = 从请求推断（DB 设置可覆盖）
+	Secure           bool            // 面板自身以 TLS 服务（自带证书或 ACME，§12）
+	RunningTLS       AppliedTLS      // 当前进程实际生效的 TLS 快照（main 启动时确定，重启生效）
+	TLSDir           string          // 域名路径模式证书根目录（<tls-dir>/<域名>/fullchain.pem|privkey.pem）
+	Version          string          // 面板版本（构建注入）
+	GitHubRepo       string          // GitHub 仓库（org/repo）：release 安装命令、面板自更新与 agent 升级下载基址
+	Alerter          *alert.Notifier // 事件告警（§19）；nil = 关闭
+	OperationLog     *logging.OperationStore
+	RequestLog       *logging.RequestLog
+	LogDir           string
+	RequestRestart   func(reason string) error
+	LifecycleContext context.Context
 }
 
 // Server 聚合面板 API 的依赖。
@@ -51,12 +54,41 @@ type Server struct {
 
 	routePolicies map[string]logging.LogPolicy
 	idempotencyMu sync.Mutex
+	tasks         sync.WaitGroup
+}
+
+func (s *Server) StartExpirySweeper(ctx context.Context, interval time.Duration) {
+	s.tasks.Add(1)
+	go func() {
+		defer s.tasks.Done()
+		s.RunExpirySweeper(ctx, interval)
+	}()
+}
+
+func (s *Server) WaitBackground(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		s.tasks.Wait()
+		s.upd.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // New 创建面板 API 服务。
 func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg Config) (*Server, error) {
+	if cfg.LifecycleContext == nil {
+		cfg.LifecycleContext = context.Background()
+	}
 	// 链编排器与单机节点共用同一份 dest 白名单（§6/§21）。
 	disp.DestCandidates = destCandidates
+	disp.PanelVersion = cfg.Version
+	disp.PanelPublicURL = cfg.PublicURL
 	s := &Server{
 		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,

@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,23 +23,28 @@ type metricsDTO struct {
 
 // serverDTO 是服务器对象的 API 表示。
 type serverDTO struct {
-	ID           int64              `json:"id"`
-	Alias        string             `json:"alias"`
-	Online       bool               `json:"online"` // 由 WS 连接存在性推导（§5）
-	LastSeenAt   *time.Time         `json:"last_seen_at"`
-	XrayVersion  string             `json:"xray_version"`
-	AgentVersion string             `json:"agent_version"` // hello 上报的 agent 版本
-	Address      string             `json:"address"`       // 公网地址（hello 记录，订阅用，§9）
-	LearnedAddr  string             `json:"learned_addr"`  // 拨入学习地址（受信回环代理时取 XFF 首 IP，§9），编辑地址时的内置候选
-	NICAddresses []string           `json:"nic_addresses"` // agent 上报的网卡非回环地址（§9），编辑地址时的内置候选
-	ConfigDrift  bool               `json:"config_drift"`  // 配置漂移标志（§17）
-	MachineType  string             `json:"machine_type"`  // direct|nat（§21）
-	AllowedPorts []shared.PortRange `json:"allowed_ports"` // NAT 可用端口段（§21），空 = 无段（仅出口档/direct）
-	Tags         []string           `json:"tags"`          // 管理标签；按顺序供名称模板 {{TAG_n}} 使用
-	CountryCode  string             `json:"country_code"`  // ISO 3166-1 alpha-2
-	Location     string             `json:"location"`      // 城市或机房位置
-	Metrics      *metricsDTO        `json:"metrics"`       // 主机遥测最新值（§13），无数据为 null
-	CreatedAt    time.Time          `json:"created_at"`
+	ID                           int64              `json:"id"`
+	Alias                        string             `json:"alias"`
+	Online                       bool               `json:"online"` // 由 WS 连接存在性推导（§5）
+	LastSeenAt                   *time.Time         `json:"last_seen_at"`
+	XrayVersion                  string             `json:"xray_version"`
+	AgentVersion                 string             `json:"agent_version"` // hello 上报的 agent 版本
+	Address                      string             `json:"address"`       // 公网地址（hello 记录，订阅用，§9）
+	LearnedAddr                  string             `json:"learned_addr"`  // 拨入学习地址（受信回环代理时取 XFF 首 IP，§9），编辑地址时的内置候选
+	NICAddresses                 []string           `json:"nic_addresses"` // agent 上报的网卡非回环地址（§9），编辑地址时的内置候选
+	ConfigDrift                  bool               `json:"config_drift"`  // 配置漂移标志（§17）
+	MachineType                  string             `json:"machine_type"`  // direct|nat（§21）
+	AllowedPorts                 []shared.PortRange `json:"allowed_ports"` // NAT 可用端口段（§21），空 = 无段（仅出口档/direct）
+	Tags                         []string           `json:"tags"`          // 管理标签；按顺序供名称模板 {{TAG_n}} 使用
+	CountryCode                  string             `json:"country_code"`  // ISO 3166-1 alpha-2
+	Location                     string             `json:"location"`      // 城市或机房位置
+	AgentSettingsStatus          string             `json:"agent_settings_status"`
+	AgentSettingsRevision        int64              `json:"agent_settings_revision"`
+	AgentSettingsDesiredRevision int64              `json:"agent_settings_desired_revision"`
+	AgentSettingsError           string             `json:"agent_settings_error"`
+	AgentSettingsReportedAt      *time.Time         `json:"agent_settings_reported_at"`
+	Metrics                      *metricsDTO        `json:"metrics"` // 主机遥测最新值（§13），无数据为 null
+	CreatedAt                    time.Time          `json:"created_at"`
 }
 
 func (s *Server) toServerDTO(srv store.Server) serverDTO {
@@ -58,23 +64,38 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 	if nicAddrs == nil {
 		nicAddrs = []string{}
 	}
+	desiredRevision := int64(0)
+	if desired, err := s.st.AgentSettings(context.Background()); err == nil {
+		desiredRevision = desired.Revision
+	}
+	settingsStatus := "pending"
+	if srv.AgentSettingsError != "" {
+		settingsStatus = "failed"
+	} else if srv.AgentSettingsReportedAt != nil && srv.AgentSettingsRevision == desiredRevision {
+		settingsStatus = "synced"
+	}
 	return serverDTO{
-		ID:           srv.ID,
-		Alias:        srv.Alias,
-		Online:       s.req.IsOnline(srv.ID),
-		LastSeenAt:   srv.LastSeenAt,
-		XrayVersion:  srv.XrayVersion,
-		AgentVersion: srv.AgentVersion,
-		Address:      srv.Address,
-		LearnedAddr:  srv.LearnedAddr,
-		NICAddresses: nicAddrs,
-		ConfigDrift:  srv.ConfigDrift,
-		MachineType:  srv.MachineType,
-		AllowedPorts: ranges,
-		Tags:         decodeServerTags(srv.Tags),
-		CountryCode:  srv.CountryCode,
-		Location:     srv.Location,
-		CreatedAt:    srv.CreatedAt,
+		ID:                           srv.ID,
+		Alias:                        srv.Alias,
+		Online:                       s.req.IsOnline(srv.ID),
+		LastSeenAt:                   srv.LastSeenAt,
+		XrayVersion:                  srv.XrayVersion,
+		AgentVersion:                 srv.AgentVersion,
+		Address:                      srv.Address,
+		LearnedAddr:                  srv.LearnedAddr,
+		NICAddresses:                 nicAddrs,
+		ConfigDrift:                  srv.ConfigDrift,
+		MachineType:                  srv.MachineType,
+		AllowedPorts:                 ranges,
+		Tags:                         decodeServerTags(srv.Tags),
+		CountryCode:                  srv.CountryCode,
+		Location:                     srv.Location,
+		AgentSettingsStatus:          settingsStatus,
+		AgentSettingsRevision:        srv.AgentSettingsRevision,
+		AgentSettingsDesiredRevision: desiredRevision,
+		AgentSettingsError:           srv.AgentSettingsError,
+		AgentSettingsReportedAt:      srv.AgentSettingsReportedAt,
+		CreatedAt:                    srv.CreatedAt,
 	}
 }
 
@@ -156,7 +177,16 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	bootstrap := randomHex(16)
+	panelID, err := s.st.PanelInstanceID(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	bootstrap, err := shared.NewCredential(panelID, 1)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	id, err := s.st.CreateServer(r.Context(), req.Alias, req.Address, bootstrap, req.MachineType, allowedJSON, tagsJSON, countryCode, location)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -205,10 +235,24 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	bootstrap := randomHex(16)
+	panelID, err := s.st.PanelInstanceID(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	bootstrap, err := shared.NewCredential(panelID, srv.CredentialEpoch+1)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := s.st.ResetServerBootstrap(r.Context(), srv.ID, bootstrap); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if closer, ok := s.req.(interface {
+		CloseAgent(serverID int64, code int, reason string)
+	}); ok {
+		closer.CloseAgent(srv.ID, 4001, "credential revoked")
 	}
 	sid := srv.ID
 	s.audit(r, "server.rotate_token", &sid, nil, map[string]string{"alias": srv.Alias})

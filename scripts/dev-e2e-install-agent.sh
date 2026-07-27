@@ -31,12 +31,12 @@ JAR="$WORK/cookies.txt"
 
 cleanup() {
     kill ${BPID:-} 2>/dev/null || true
-    pkill -f "$PREFIX/usr/local/bin/lattix-agent-run" 2>/dev/null || true
-    pkill -f "$PREFIX/usr/local/bin/lattix-agent" 2>/dev/null || true
-    pkill -f "$PREFIX/usr/local/bin/xray run" 2>/dev/null || true
+    pkill -f "$PREFIX/opt/lattix-agent/bin/lattix-agent-run" 2>/dev/null || true
+    pkill -f "$PREFIX/opt/lattix-agent/bin/lattix-agent" 2>/dev/null || true
+    pkill -f "$PREFIX/opt/lattix-agent/bin/xray run" 2>/dev/null || true
     # 用例 6 若向真实 crontab 注册了 @reboot 行，清理之（仅删指向本临时 PREFIX 的行）。
-    if command -v crontab >/dev/null && crontab -l 2>/dev/null | grep -qF "$PREFIX/usr/local/bin/lattix-agent-run"; then
-        crontab -l 2>/dev/null | { grep -vF "$PREFIX/usr/local/bin/lattix-agent-run" || true; } | crontab - || true
+    if command -v crontab >/dev/null && crontab -l 2>/dev/null | grep -qF "$PREFIX/opt/lattix-agent/bin/lattix-agent-run"; then
+        crontab -l 2>/dev/null | { grep -vF "$PREFIX/opt/lattix-agent/bin/lattix-agent-run" || true; } | crontab - || true
     fi
     wait 2>/dev/null || true
     rm -rf "$WORK"
@@ -86,7 +86,7 @@ run_install() {
 }
 
 latx_ag() {
-    LATX_DEV=1 LATX_PREFIX="$PREFIX" bash "$PREFIX/usr/local/bin/latx-ag" "$@"
+    LATX_DEV=1 LATX_PREFIX="$PREFIX" bash "$PREFIX/opt/lattix-agent/bin/latx-ag" "$@"
 }
 
 echo ">> 用例 1: checksum 篡改应中止安装"
@@ -100,16 +100,16 @@ grep -q "agent 包 SHA256 校验失败" "$WORK/tamper.log" \
     || { echo "FAIL: 报错信息不符"; cat "$WORK/tamper.log"; exit 1; }
 mv "$FAKE/agent.tar.gz.bak" "$FAKE/lattix-agent-linux-amd64.tar.gz"
 
-echo ">> 用例 2: 正常安装（LATX_DEV=1 降级；预置坏 state 验证重装清理，§11）"
-mkdir -p "$PREFIX/etc"
-echo '{"token":"bogus-long-term-token","server_id":999}' > "$PREFIX/etc/lattix-agent.state.json"
+echo ">> 用例 2: 正常安装（LATX_DEV=1 降级；预置坏 state 验证新 bootstrap 优先，§11）"
+mkdir -p "$PREFIX/opt/lattix-agent/data"
+echo '{"token":"bogus-long-term-token","server_id":999}' > "$PREFIX/opt/lattix-agent/data/state.json"
 run_install | tee "$WORK/install.log"
 
-[[ -x "$PREFIX/usr/local/bin/lattix-agent" ]] \
+[[ -x "$PREFIX/opt/lattix-agent/bin/lattix-agent" ]] \
     && echo "OK: lattix-agent 就位" || { echo "FAIL: lattix-agent 缺失"; exit 1; }
-[[ -x "$PREFIX/usr/local/bin/latx-ag" ]] \
+[[ -x "$PREFIX/opt/lattix-agent/bin/latx-ag" ]] \
     && echo "OK: latx-ag 随装就位" || { echo "FAIL: latx-ag 未安装"; exit 1; }
-[[ -x "$PREFIX/usr/local/bin/xray" ]] \
+[[ -x "$PREFIX/opt/lattix-agent/bin/xray" ]] \
     && echo "OK: xray 复制安装就位" || { echo "FAIL: xray 缺失"; exit 1; }
 
 grep -q "面板地址:  http://$ADDR" "$WORK/install.log" \
@@ -133,9 +133,9 @@ for _ in $(seq 1 15); do
 done
 [[ "$ONLINE" == "True" ]] \
     && echo "OK: agent 已上线（旧坏 state 被清除）" \
-    || { echo "FAIL: agent 未上线"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
-grep -q '"server_id": 1' "$PREFIX/etc/lattix-agent.state.json" \
-    && echo "OK: state 已换发为真实服务器凭证" || { echo "FAIL: state 未换发"; cat "$PREFIX/etc/lattix-agent.state.json"; exit 1; }
+    || { echo "FAIL: agent 未上线"; tail -10 "$PREFIX/opt/lattix-agent/logs/agent.log"; exit 1; }
+grep -q '"server_id": 1' "$PREFIX/opt/lattix-agent/data/state.json" \
+    && echo "OK: state 已换发为真实服务器凭证" || { echo "FAIL: state 未换发"; cat "$PREFIX/opt/lattix-agent/data/state.json"; exit 1; }
 
 echo ">> 用例 4: latx-ag version / status（LATX_DEV=1 进程检查）"
 VER_OUT="$(latx_ag version)"
@@ -159,11 +159,11 @@ USER_OUT="$(LATX_USER_MODE=1 LATX_PREFIX="$PREFIX" LATX_RELEASE_BASE="file://$FA
     bash "$FAKE/install-agent.sh" --version "$VERSION" --panel "http://$ADDR" --token "$BOOTSTRAP3" --xray-version v26.3.27)"
 echo "$USER_OUT" | grep -q "\[user\]" \
     && echo "OK: 安装输出含用户态模式提示" || { echo "FAIL: 缺用户态提示: $USER_OUT"; exit 1; }
-[[ -x "$PREFIX/usr/local/bin/lattix-agent-run" ]] \
+[[ -x "$PREFIX/opt/lattix-agent/bin/lattix-agent-run" ]] \
     && echo "OK: 守护脚本 lattix-agent-run 就位且可执行" || { echo "FAIL: 守护脚本缺失"; exit 1; }
-pgrep -f "$PREFIX/usr/local/bin/lattix-agent -panel" >/dev/null \
+pgrep -f "$PREFIX/opt/lattix-agent/bin/lattix-agent -panel" >/dev/null \
     && echo "OK: user 模式 agent 进程运行中" \
-    || { echo "FAIL: agent 未运行"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
+    || { echo "FAIL: agent 未运行"; tail -10 "$PREFIX/opt/lattix-agent/logs/agent.log"; exit 1; }
 ONLINE3=""
 for _ in $(seq 1 15); do
     ONLINE3="$(api "http://$ADDR/api/servers" | py "d[1]['online']")"
@@ -172,10 +172,10 @@ for _ in $(seq 1 15); do
 done
 [[ "$ONLINE3" == "True" ]] \
     && echo "OK: user 模式安装的 agent 已上线（server 2）" \
-    || { echo "FAIL: server 2 未上线"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
+    || { echo "FAIL: server 2 未上线"; tail -10 "$PREFIX/opt/lattix-agent/logs/agent.log"; exit 1; }
 
 # latx-ag 用户态分支：不带 LATX_DEV（无 unit 文件自动判定），仅 LATX_PREFIX。
-latx_ag_user() { LATX_PREFIX="$PREFIX" bash "$PREFIX/usr/local/bin/latx-ag" "$@"; }
+latx_ag_user() { LATX_PREFIX="$PREFIX" bash "$PREFIX/opt/lattix-agent/bin/latx-ag" "$@"; }
 USTATUS="$(latx_ag_user status)"
 echo "$USTATUS" | grep -q "\[用户态\] 进程运行中" \
     && echo "OK: latx-ag status 用户态进程检查" || { echo "FAIL: status: $USTATUS"; exit 1; }
@@ -183,16 +183,16 @@ echo "$USTATUS" | grep -q "面板地址: ws://$ADDR/api/agent/ws" \
     && echo "OK: latx-ag status 面板地址" || { echo "FAIL: status 面板地址: $USTATUS"; exit 1; }
 latx_ag_user log -n 5 | grep -q "authenticated as server 2" \
     && echo "OK: latx-ag log -n（用户态读日志文件）" \
-    || { echo "FAIL: latx-ag log"; tail -10 "$PREFIX/var/log/lattix-agent.log"; exit 1; }
+    || { echo "FAIL: latx-ag log"; tail -10 "$PREFIX/opt/lattix-agent/logs/agent.log"; exit 1; }
 latx_ag_user stop
 sleep 1
-if pgrep -f "$PREFIX/usr/local/bin/lattix-agent" >/dev/null; then
+if pgrep -f "$PREFIX/opt/lattix-agent/bin/lattix-agent" >/dev/null; then
     echo "FAIL: stop 后守护脚本/agent 进程仍在"; exit 1
 fi
 echo "OK: latx-ag stop 后守护脚本与 agent 进程消失"
 latx_ag_user start
 sleep 3
-pgrep -f "$PREFIX/usr/local/bin/lattix-agent -panel" >/dev/null \
+pgrep -f "$PREFIX/opt/lattix-agent/bin/lattix-agent -panel" >/dev/null \
     && echo "OK: latx-ag start 后进程恢复" || { echo "FAIL: start 后进程未恢复"; exit 1; }
 
 echo "E2E PASS"

@@ -3,6 +3,57 @@
   "$id": "https://lattix.dev/schema/ws-protocol.schema.json",
   "title": "Lattix Panel-Agent WebSocket RPC envelope",
   "type": "object",
+  "$defs": {
+    "agentSettings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "reconnect", "telemetry", "drift_detection"],
+      "properties": {
+        "revision": {"type": "integer", "minimum": 1},
+        "reconnect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "max_retries"],
+          "properties": {
+            "mode": {"enum": ["infinite", "limited"]},
+            "max_retries": {"type": "integer", "minimum": 1, "maximum": 100}
+          }
+        },
+        "telemetry": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interval_seconds"],
+          "properties": {"interval_seconds": {"type": "integer", "minimum": 10, "maximum": 3600}}
+        },
+        "drift_detection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interval_seconds"],
+          "properties": {"interval_seconds": {"type": "integer", "minimum": 5, "maximum": 3600}}
+        }
+      }
+    },
+    "settingsDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "panel", "agent"],
+      "properties": {
+        "schema_version": {"const": 1},
+        "panel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["instance_id", "version", "public_url", "ws_url"],
+          "properties": {
+            "instance_id": {"type": "string", "pattern": "^p_[0-9a-f]{32}$"},
+            "version": {"type": "string"},
+            "public_url": {"type": "string"},
+            "ws_url": {"type": "string"}
+          }
+        },
+        "agent": {"$ref": "#/$defs/agentSettings"}
+      }
+    }
+  },
   "additionalProperties": false,
   "required": ["kind", "type", "request_id", "trace_id", "data"],
   "properties": {
@@ -12,8 +63,8 @@
     },
     "type": {
       "type": "string",
-      "pattern": "^[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*$",
-      "description": "domain.action; unknown valid actions receive UNSUPPORTED_ACTION"
+      "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)+$",
+      "description": "hierarchical domain.action; unknown valid actions receive UNSUPPORTED_ACTION"
     },
     "request_id": {
       "type": "string",
@@ -49,6 +100,70 @@
             {"required": ["code"]},
             {"required": ["message"]}
           ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {"const": "request"},
+          "type": {"const": "agent.settings.sync"}
+        },
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["panel_instance_id", "applied_revision"],
+            "properties": {
+              "panel_instance_id": {"type": "string"},
+              "applied_revision": {"type": "integer", "minimum": 0},
+              "last_apply_error": {"type": "string", "maxLength": 512}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {"const": "response"},
+          "type": {"const": "agent.settings.sync"}
+        },
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["changed"],
+            "properties": {
+              "changed": {"type": "boolean"},
+              "settings": {"$ref": "#/$defs/settingsDocument"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {"const": "event"},
+          "type": {"const": "agent.settings.changed"}
+        },
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["revision"],
+            "properties": {"revision": {"type": "integer", "minimum": 1}}
+          }
         }
       }
     }

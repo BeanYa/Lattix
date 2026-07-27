@@ -73,6 +73,9 @@ HTTP 状态码只表达 HTTP、路由、协议解析和进程是否成功完成�
 - panic 表示 RPC 未能完成，使用 500；
 - `/readyz` 未就绪使用 503。
 
+面板进入优雅关停 drain 后，已经命中管理 RPC 的请求仍遵循上述规则：
+`HTTP 200 + SERVICE_UNAVAILABLE`；WebSocket Upgrade 和 `/readyz` 使用 HTTP 503。
+
 JSON 合法但字段缺失、值越界或业务约束不满足，返回
 `HTTP 200 + INVALID_ARGUMENT`。
 
@@ -92,6 +95,9 @@ JSON 合法但字段缺失、值越界或业务约束不满足，返回
 
 无返回数据时 `data` 为 `null`，不返回 204。异步操作快速返回
 `ACCEPTED`，随后通过 GET 查询状态。
+`POST /api/setting/update` 在期望设置及新 revision 已提交后返回 `OK`；Agent 的后续
+pull/apply 不改变该调用的业务结果。`POST /api/panel/restart` 在同步登记重启意图后返回
+`ACCEPTED`，并发请求返回 `OPERATION_LOCKED`。
 
 稳定基础业务码：
 
@@ -332,6 +338,8 @@ chain-hop.remove
 xray.upgrade
 agent.upgrade
 agent.uninstall
+agent.settings.sync
+agent.settings.changed
 telemetry.report
 config.drift
 ```
@@ -341,7 +349,7 @@ config.drift
 - 后缀 `z` 是基础设施中常见的约定写法，用来降低与业务路由或资源名冲突的概率，
   本身没有额外协议语义；
 - `/healthz` 只报告进程可响应 HTTP；
-- `/readyz` 检查 Backend 初始化与业务 SQLite 可用性；
+- `/readyz` 检查 Backend 初始化与业务 SQLite 可用性；进入 drain 后立即返回 503；
 - 健康检查不依赖 Agent 在线、GitHub 或其他外部服务；
 - 部署、安装和反向代理使用 `/readyz`；
 - 成功健康轮询不写请求日志，ready 状态变化写操作日志。

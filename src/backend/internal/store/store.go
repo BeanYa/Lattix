@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS servers (
     tags         TEXT    NOT NULL DEFAULT '', -- JSON 字符串数组；名称模板 {{TAG_n}} 的来源
     country_code TEXT    NOT NULL DEFAULT '', -- ISO 3166-1 alpha-2；名称模板国家/国旗来源
     location     TEXT    NOT NULL DEFAULT '', -- 管理员填写的城市/机房位置
+    credential_epoch INTEGER NOT NULL DEFAULT 1,
+    agent_settings_revision INTEGER NOT NULL DEFAULT 0,
+    agent_settings_error TEXT NOT NULL DEFAULT '',
+    agent_settings_reported_at DATETIME,
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
