@@ -262,11 +262,22 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "user.update", nil, nil, map[string]any{
-		"user_id": updated.ID, "name": updated.Name,
-		"expiry_touched": expiryTouched, "disabled_after": disabledAfter,
-	})
+	changes := changedValues(
+		map[string]any{"expires_at": logTime(u.ExpiresAt), "disabled": u.Disabled},
+		map[string]any{"expires_at": logTime(updated.ExpiresAt), "disabled": updated.Disabled},
+	)
+	if len(changes) > 0 {
+		changes["user"] = map[string]any{"id": updated.ID, "name": updated.Name}
+		s.audit(r, "user.updated", nil, nil, changes)
+	}
 	writeJSON(w, http.StatusOK, s.toUserDTO(r, *updated, nodeIDs))
+}
+
+func logTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339)
 }
 
 // handleSetUserNodes 处理 PUT /api/users/{id}/nodes：整体替换用户的节点分配（§16），
@@ -308,16 +319,23 @@ func (s *Server) handleSetUserNodes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	beforeNodeIDs, err := s.st.UserNodeIDs(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	added, removed, err := s.st.SetUserNodes(r.Context(), id, req.NodeIDs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.fanoutUserDiff(r.Context(), u.UUID, nodes, added, removed)
-	s.audit(r, "user.set_nodes", nil, nil, map[string]any{
-		"user_id": u.ID, "name": u.Name,
-		"added": len(added), "removed": len(removed),
-	})
+	if len(added) > 0 || len(removed) > 0 {
+		s.audit(r, "user.nodes_updated", nil, nil, map[string]any{
+			"user":     map[string]any{"id": u.ID, "name": u.Name},
+			"node_ids": map[string]any{"before": beforeNodeIDs, "after": req.NodeIDs},
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"node_ids": req.NodeIDs})
 }
 

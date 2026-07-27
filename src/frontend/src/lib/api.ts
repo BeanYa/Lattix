@@ -6,13 +6,15 @@ import type {
   CreateNodeRequest,
   CreateServerResponse,
   DashboardStats,
-  EventCategory,
-  EventLogPage,
+  LogSeverity,
+  OperationCategory,
+  OperationLogPage,
   MachineType,
   PanelSettings,
   PanelUpdateStatus,
   PanelVersionInfo,
   PortRange,
+  RequestLogPage,
   Server,
   SubUser,
   UpdateSettingsRequest,
@@ -204,23 +206,32 @@ export const api = {
     }),
   panelUpdateStatus: () => request<PanelUpdateStatus>('/api/panel/update/status'),
 
-  // 日志审查（§log）：分类/服务器/操作员/关键字过滤 + 分页。
-  eventLog: (params: {
-    category?: EventCategory | ''
+  operationLogs: (params: {
+    severity?: LogSeverity | ''
+    category?: OperationCategory | ''
     server_id?: number
     operator?: string
     q?: string
+    from?: string
+    to?: string
     limit?: number
     offset?: number
   }) => {
     const sp = new URLSearchParams()
+    if (params.severity) sp.set('severity', params.severity)
     if (params.category) sp.set('category', params.category)
     if (params.server_id) sp.set('server_id', String(params.server_id))
     if (params.operator) sp.set('operator', params.operator)
     if (params.q) sp.set('q', params.q)
+    if (params.from) sp.set('from', params.from)
+    if (params.to) sp.set('to', params.to)
     if (params.limit) sp.set('limit', String(params.limit))
     if (params.offset) sp.set('offset', String(params.offset))
     const qs = sp.toString()
-    return request<EventLogPage>('/api/event-log' + (qs ? `?${qs}` : ''))
+    return request<OperationLogPage>('/api/logs/operations' + (qs ? `?${qs}` : ''))
   },
+  clearOperationLogs: () => request<void>('/api/logs/operations', { method: 'DELETE' }),
+  requestLogs: (limit: 10 | 30 | 50 | 100) =>
+    request<RequestLogPage>(`/api/logs/requests?limit=${limit}`),
+  clearRequestLogs: () => request<void>('/api/logs/requests', { method: 'DELETE' }),
 }

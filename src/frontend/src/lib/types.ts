@@ -202,6 +202,12 @@ export interface PanelSettings {
   alert_webhook_url: string
   alert_telegram_bot_token_set: boolean
   alert_telegram_chat_id: string
+  operation_log_limit: number
+  request_log_max_mb: number
+  log_dir: string
+  request_log_usage_bytes: number
+  request_log_dropped: number
+  backup_includes_logs: boolean
 }
 
 export interface UpdateSettingsRequest {
@@ -216,6 +222,8 @@ export interface UpdateSettingsRequest {
   alert_webhook_url: string
   alert_telegram_bot_token?: string
   alert_telegram_chat_id: string
+  operation_log_limit: number
+  request_log_max_mb: number
 }
 
 export interface AlertChannelResult {
@@ -259,23 +267,65 @@ export interface PanelUpdateStatus {
   target_version: string
 }
 
-// 事件日志（§log 日志审查页面）：统一时间线，汇聚 command/node/agent/admin 四类。
-export type EventCategory = 'command' | 'node' | 'agent' | 'admin'
+export type LogSeverity = 'info' | 'warning' | 'error'
+export type OperationCategory =
+  | 'server'
+  | 'chain'
+  | 'user'
+  | 'settings'
+  | 'panel'
+  | 'agent'
+  | 'command'
+  | 'auth'
+  | 'log'
 
-export interface EventLogEntry {
+export interface OperationLogEntry {
   id: number
-  ts: string
-  category: EventCategory
+  event_id: string
+  timestamp: string
+  severity: LogSeverity
+  category: OperationCategory
   action: string
   server_id?: number
-  server?: string // alias，后端按 server_id 关联填充
+  server?: string
   node_id?: number
-  detail: string // JSON 串
+  detail: string
   operator?: string
   ip?: string
+  request_id?: string
 }
 
-export interface EventLogPage {
-  items: EventLogEntry[]
+export interface OperationLogPage {
+  items: OperationLogEntry[]
   total: number
+}
+
+export interface RequestLogEntry {
+  timestamp: string
+  request_id: string
+  severity: LogSeverity
+  method: string
+  path: string
+  route: string
+  params?: Record<string, string>
+  status: number
+  duration_ms: number
+  response_bytes: number
+  operator?: string
+  ip?: string
+  user_agent?: string
+  error_summary?: string
+}
+
+export interface RequestLogStatus {
+  usage_bytes: number
+  max_bytes: number
+  dropped: number
+  directory: string
+  segment_count: number
+}
+
+export interface RequestLogPage {
+  items: RequestLogEntry[]
+  status: RequestLogStatus
 }

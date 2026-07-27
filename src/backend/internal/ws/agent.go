@@ -28,6 +28,9 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("ws upgrade: %v", err)
 		return
 	}
+	if h.OnUpgrade != nil {
+		h.OnUpgrade(r)
+	}
 
 	// 首帧必须是 hello（带超时）：token（bootstrap 或长期）、agent/xray 版本与运行状态。
 	conn.SetReadDeadline(time.Now().Add(helloTimeout))

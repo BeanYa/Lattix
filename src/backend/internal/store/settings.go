@@ -22,6 +22,8 @@ const (
 	SettingAlertWebhookURL       = "alert_webhook_url"        // Webhook 接收端（POST JSON）
 	SettingAlertTelegramBotToken = "alert_telegram_bot_token" // Telegram Bot token（不回显，仅置位标记）
 	SettingAlertTelegramChatID   = "alert_telegram_chat_id"   // Telegram 会话 ID
+	SettingOperationLogLimit     = "operation_log_limit"      // 操作日志最多保留条数，默认 1000
+	SettingRequestLogMaxMB       = "request_log_max_mb"       // 请求日志 JSONL 总容量 MiB，默认 10
 )
 
 // GetSetting 读取一个设置；未设置返回空字符串（不视为错误）。

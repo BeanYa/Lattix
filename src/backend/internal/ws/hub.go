@@ -3,6 +3,7 @@ package ws
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -30,6 +31,8 @@ const sendBuffer = 256
 type Hub struct {
 	// Auth 校验 hello（由 dispatcher 实现，注入）。
 	Auth Authenticator
+	// OnUpgrade 在 HTTP 成功升级为 WebSocket 后立即调用，用于请求日志记录 101 握手。
+	OnUpgrade func(r *http.Request)
 	// OnConnect 在 hello 认证完成、连接登记后调用（用于触发离线命令补发，§2）。
 	OnConnect func(serverID int64)
 	// OnOnline 在服务器从无连接变为有连接时调用。已有连接被新连接顶替时不触发，

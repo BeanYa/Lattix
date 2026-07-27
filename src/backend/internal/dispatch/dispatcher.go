@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"lattix/backend/internal/alert"
+	"lattix/backend/internal/logging"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/ws"
 	"lattix/shared"
@@ -26,7 +27,8 @@ type Dispatcher struct {
 	panelVersion string // 面板自身版本（构建注入），hello 兼容窗口判定用
 
 	// Alerter 事件告警（§19）：nil = 关闭；仅状态跃迁时调用，发送方自行防抖动。
-	Alerter *alert.Notifier
+	Alerter      *alert.Notifier
+	OperationLog *logging.OperationStore
 
 	// DestCandidates 是面板内置的 dest 白名单（§6 预检 fallback）：链编排下发
 	// apply_node/portal 时携带（panel 初始化时注入，与单机节点同一份）。
@@ -86,6 +88,11 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 			if err := d.st.DeadLetterCommand(ctx, c.ID); err != nil {
 				log.Printf("dispatch: dead-letter command %d: %v", c.ID, err)
 			}
+			d.recordOperation(logging.OperationEvent{
+				Severity: logging.SeverityError, Category: logging.CategoryCommand,
+				Action: "command.dead_lettered", ServerID: &serverID,
+				Detail: map[string]any{"command_id": c.ID, "type": c.Type, "attempts": c.Attempts},
+			})
 			// apply_node 死信：节点不能永远卡 applying，置 failed 供管理员重试（§6）。
 			if c.Type == shared.TypeApplyNode {
 				var p shared.ApplyNodePayload
@@ -244,6 +251,16 @@ func (d *Dispatcher) handleDriftReport(serverID int64, env shared.Envelope) {
 		if d.Alerter != nil {
 			d.Alerter.Notify(serverID, alert.EventConfigDrift, "", "xray 配置被外部修改，待管理员修复")
 		}
+		d.recordOperation(logging.OperationEvent{
+			Severity: logging.SeverityWarning, Category: logging.CategoryServer,
+			Action: "server.config_drift_detected", ServerID: &serverID,
+			Detail: "xray 配置被外部修改，待管理员修复",
+		})
+	} else {
+		d.recordOperation(logging.OperationEvent{
+			Severity: logging.SeverityInfo, Category: logging.CategoryServer,
+			Action: "server.config_drift_cleared", ServerID: &serverID,
+		})
 	}
 }
 
@@ -281,6 +298,11 @@ func (d *Dispatcher) handleApplyResult(serverID int64, env shared.Envelope) {
 			log.Printf("dispatch: server %d: apply_result for command %d not in sent state, ignored", serverID, cmdID)
 			return
 		}
+		d.recordOperation(logging.OperationEvent{
+			Severity: logging.SeverityInfo, Category: logging.CategoryCommand,
+			Action: "command.succeeded", ServerID: &serverID, NodeID: optionalID(p.NodeID),
+			Detail: map[string]any{"command_id": cmdID, "type": cmd.Type, "hop_id": p.HopID},
+		})
 		// 链跳配置件回执（§21）：路由到链编排器，不触碰节点状态机。
 		if p.HopID != 0 {
 			d.handleChainHopResult(serverID, p)
@@ -307,6 +329,11 @@ func (d *Dispatcher) handleApplyResult(serverID int64, env shared.Envelope) {
 			log.Printf("dispatch: server %d: apply_result for command %d not in sent state, ignored", serverID, cmdID)
 			return
 		}
+		d.recordOperation(logging.OperationEvent{
+			Severity: logging.SeverityError, Category: logging.CategoryCommand,
+			Action: "command.failed", ServerID: &serverID, NodeID: optionalID(p.NodeID),
+			Detail: map[string]any{"command_id": cmdID, "type": cmd.Type, "hop_id": p.HopID, "error": p.Error},
+		})
 		// 链跳配置件回执（§21）：路由到链编排器（失败定位到跳，链置 failed）。
 		if p.HopID != 0 {
 			d.handleChainHopResult(serverID, p)
@@ -342,6 +369,22 @@ func (d *Dispatcher) serverLock(serverID int64) *sync.Mutex {
 		d.flushMu[serverID] = l
 	}
 	return l
+}
+
+func (d *Dispatcher) recordOperation(event logging.OperationEvent) {
+	if d.OperationLog == nil {
+		return
+	}
+	if err := d.OperationLog.Record(context.Background(), event); err != nil {
+		log.Printf("dispatch: record operation %s: %v", event.Action, err)
+	}
+}
+
+func optionalID(value int64) *int64 {
+	if value == 0 {
+		return nil
+	}
+	return &value
 }
 
 // randomToken 生成 32 字节随机十六进制凭证。

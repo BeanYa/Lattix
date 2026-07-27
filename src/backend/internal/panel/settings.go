@@ -7,9 +7,12 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -87,6 +90,12 @@ type settingsDTO struct {
 	AlertWebhookURL          string `json:"alert_webhook_url"`
 	AlertTelegramBotTokenSet bool   `json:"alert_telegram_bot_token_set"`
 	AlertTelegramChatID      string `json:"alert_telegram_chat_id"`
+	OperationLogLimit        int    `json:"operation_log_limit"`
+	RequestLogMaxMB          int    `json:"request_log_max_mb"`
+	LogDir                   string `json:"log_dir"`
+	RequestLogUsageBytes     int64  `json:"request_log_usage_bytes"`
+	RequestLogDropped        uint64 `json:"request_log_dropped"`
+	BackupIncludesLogs       bool   `json:"backup_includes_logs"`
 }
 
 // handleGetSettings 处理 GET /api/settings。
@@ -108,6 +117,20 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		AlertWebhookURL:          s.getSetting(ctx, store.SettingAlertWebhookURL),
 		AlertTelegramBotTokenSet: s.getSetting(ctx, store.SettingAlertTelegramBotToken) != "",
 		AlertTelegramChatID:      s.getSetting(ctx, store.SettingAlertTelegramChatID),
+		OperationLogLimit:        settingInt(s.getSetting(ctx, store.SettingOperationLogLimit), 1000),
+		RequestLogMaxMB:          settingInt(s.getSetting(ctx, store.SettingRequestLogMaxMB), 10),
+		LogDir:                   s.cfg.LogDir,
+		BackupIncludesLogs:       false,
+	}
+	if s.opLog != nil {
+		dto.OperationLogLimit = s.opLog.MaxEntries()
+	}
+	if s.reqLog != nil {
+		if status, err := s.reqLog.Status(ctx); err == nil {
+			dto.RequestLogUsageBytes = status.UsageBytes
+			dto.RequestLogDropped = status.Dropped
+			dto.RequestLogMaxMB = int(status.MaxBytes >> 20)
+		}
 	}
 	if certPEM := s.getSetting(ctx, store.SettingTLSCertPEM); certPEM != "" {
 		if cert, err := parseCertInfo(certPEM); err == nil {
@@ -166,6 +189,8 @@ type updateSettingsRequest struct {
 	AlertWebhookURL       string `json:"alert_webhook_url"`
 	AlertTelegramBotToken string `json:"alert_telegram_bot_token"`
 	AlertTelegramChatID   string `json:"alert_telegram_chat_id"`
+	OperationLogLimit     int    `json:"operation_log_limit"`
+	RequestLogMaxMB       int    `json:"request_log_max_mb"`
 }
 
 // handleUpdateSettings 处理 PUT /api/settings：校验后落库。
@@ -177,6 +202,35 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	beforeWebhookURL := s.getSetting(ctx, store.SettingAlertWebhookURL)
+	before := map[string]any{
+		"timezone":                     s.getSetting(ctx, store.SettingTimezone),
+		"public_url":                   s.getSetting(ctx, store.SettingPublicURL),
+		"tls_mode":                     s.getSetting(ctx, store.SettingTLSMode),
+		"tls_domain":                   s.getSetting(ctx, store.SettingTLSDomain),
+		"acme_domain":                  s.getSetting(ctx, store.SettingACMEDomain),
+		"acme_email":                   s.getSetting(ctx, store.SettingACMEEmail),
+		"alert_webhook_set":            beforeWebhookURL != "",
+		"alert_telegram_chat_id":       s.getSetting(ctx, store.SettingAlertTelegramChatID),
+		"alert_telegram_bot_token_set": s.getSetting(ctx, store.SettingAlertTelegramBotToken) != "",
+		"operation_log_limit":          settingInt(s.getSetting(ctx, store.SettingOperationLogLimit), 1000),
+		"request_log_max_mb":           settingInt(s.getSetting(ctx, store.SettingRequestLogMaxMB), 10),
+	}
+
+	if req.OperationLogLimit == 0 {
+		req.OperationLogLimit = 1000
+	}
+	if req.OperationLogLimit < 100 || req.OperationLogLimit > 100000 {
+		writeError(w, http.StatusBadRequest, "操作日志保留条数须为 100–100000")
+		return
+	}
+	if req.RequestLogMaxMB == 0 {
+		req.RequestLogMaxMB = 10
+	}
+	if req.RequestLogMaxMB < 1 || req.RequestLogMaxMB > 1024 {
+		writeError(w, http.StatusBadRequest, "请求日志缓存须为 1–1024 MB")
+		return
+	}
 
 	req.Timezone = strings.TrimSpace(req.Timezone)
 	if req.Timezone != "" {
@@ -327,11 +381,49 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if t := strings.TrimSpace(req.AlertTelegramBotToken); t != "" && !set(store.SettingAlertTelegramBotToken, t) {
 		return
 	}
+	if !set(store.SettingOperationLogLimit, strconv.Itoa(req.OperationLogLimit)) {
+		return
+	}
+	if !set(store.SettingRequestLogMaxMB, strconv.Itoa(req.RequestLogMaxMB)) {
+		return
+	}
+	if s.opLog != nil {
+		if err := s.opLog.SetMaxEntries(ctx, req.OperationLogLimit); err != nil {
+			log.Printf("panel: apply operation log retention: %v", err)
+		}
+	}
+	if s.reqLog != nil {
+		if err := s.reqLog.SetMaxBytes(ctx, int64(req.RequestLogMaxMB)<<20); err != nil {
+			log.Printf("panel: apply request log retention: %v", err)
+		}
+	}
 
-	s.audit(r, "settings.update", nil, nil, map[string]any{
-		"timezone": req.Timezone, "public_url": req.PublicURL,
-		"tls_mode": req.TLSMode,
-	})
+	after := map[string]any{
+		"timezone": req.Timezone, "public_url": req.PublicURL, "tls_mode": req.TLSMode,
+		"tls_domain": tlsDomain, "acme_domain": acmeDomain, "acme_email": strings.TrimSpace(req.ACMEEmail),
+		"alert_webhook_set":            req.AlertWebhookURL != "",
+		"alert_telegram_chat_id":       strings.TrimSpace(req.AlertTelegramChatID),
+		"alert_telegram_bot_token_set": before["alert_telegram_bot_token_set"].(bool) || strings.TrimSpace(req.AlertTelegramBotToken) != "",
+		"operation_log_limit":          req.OperationLogLimit, "request_log_max_mb": req.RequestLogMaxMB,
+	}
+	if req.TLSCertPEM != "" {
+		after["tls_certificate"] = "已变更"
+	}
+	if req.TLSKeyPEM != "" {
+		after["tls_private_key"] = "已变更"
+	}
+	changes := changedValues(before, after)
+	// URL 可能在 query 中携带签名，token 也属于凭证；只记录“发生变更”，
+	// 避免两个非空值互换时漏记，同时绝不把原值写入日志。
+	if req.AlertWebhookURL != beforeWebhookURL {
+		changes["alert_webhook_url"] = "已变更"
+	}
+	if strings.TrimSpace(req.AlertTelegramBotToken) != "" {
+		changes["alert_telegram_bot_token"] = "已变更"
+	}
+	if len(changes) > 0 {
+		s.audit(r, "settings.updated", nil, nil, changes)
+	}
 	s.handleGetSettings(w, r)
 }
 
@@ -363,7 +455,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.audit(r, "admin.change_password", nil, nil, nil)
+	s.audit(r, "auth.password_changed", nil, nil, map[string]string{"password": "已变更"})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -397,4 +489,23 @@ func firstNonEmpty(v, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func settingInt(raw string, fallback int) int {
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func changedValues(before, after map[string]any) map[string]any {
+	changes := map[string]any{}
+	for key, afterValue := range after {
+		beforeValue := before[key]
+		if !reflect.DeepEqual(beforeValue, afterValue) {
+			changes[key] = map[string]any{"before": beforeValue, "after": afterValue}
+		}
+	}
+	return changes
 }

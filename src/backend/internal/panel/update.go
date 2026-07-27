@@ -13,6 +13,7 @@ package panel
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -28,6 +29,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"lattix/backend/internal/logging"
 )
 
 // 更新阶段（panelUpdateStatus.Stage 取值）。
@@ -181,6 +184,10 @@ func (s *Server) handlePanelUpdateStart(w http.ResponseWriter, r *http.Request) 
 	}
 	u.mu.Unlock()
 
+	s.audit(r, "panel.update_started", nil, nil, map[string]any{
+		"current_version": s.cfg.Version,
+		"target_version":  strings.TrimSpace(req.Version),
+	})
 	go u.run()
 	writeJSON(w, http.StatusAccepted, u.snapshot())
 }
@@ -218,8 +225,15 @@ func (u *panelUpdater) fail(err error) {
 	u.st.Stage = updStageFailed
 	u.st.Error = err.Error()
 	u.st.Message = "更新失败"
+	target := u.st.TargetVersion
 	u.mu.Unlock()
 	log.Printf("panel update: failed: %v", err)
+	if logErr := u.s.recordOperation(context.Background(), logging.OperationEvent{
+		Severity: logging.SeverityError, Category: logging.CategoryPanel, Action: "panel.update_failed",
+		Detail: map[string]any{"error": err.Error(), "target_version": target},
+	}); logErr != nil {
+		log.Printf("panel update: record failure: %v", logErr)
+	}
 }
 
 // run 执行更新流程：check → download → verify → extract → apply → restart。
@@ -252,6 +266,12 @@ func (u *panelUpdater) run() {
 		u.st.Percent = 100
 		u.st.Message = "已是最新版本，无需更新"
 		u.mu.Unlock()
+		if err := s.recordOperation(context.Background(), logging.OperationEvent{
+			Severity: logging.SeverityInfo, Category: logging.CategoryPanel, Action: "panel.update_skipped",
+			Detail: map[string]string{"version": target, "reason": "already_current"},
+		}); err != nil {
+			log.Printf("panel update: record skipped update: %v", err)
+		}
 		return
 	}
 	u.setStage(updStageCheck, 100, "目标版本 "+target)
@@ -361,15 +381,23 @@ func (u *panelUpdater) run() {
 		return
 	}
 	u.setStage(updStageApply, 100, "文件替换完成")
+	if err := s.recordOperation(context.Background(), logging.OperationEvent{
+		Severity: logging.SeverityInfo, Category: logging.CategoryPanel, Action: "panel.update_succeeded",
+		Detail: map[string]string{"from": st.CurrentVersion, "to": target},
+	}); err != nil {
+		log.Printf("panel update: record success: %v", err)
+	}
 	os.RemoveAll(work) // restart 会 os.Exit，defer 清理不会执行，提前清理
 
 	// --- restart：自重启切换到新版本（systemd 拉起或自派生，见 restartSelf）---
 	u.setStage(updStageRestart, 100, "重启面板完成切换…")
 	// 留出窗口让前端轮询到 restart 状态后再退出进程。
 	time.Sleep(1500 * time.Millisecond)
-	if err := restartSelf(); err != nil {
-		u.fail(fmt.Errorf("重启失败: %w", err))
+	if s.cfg.RequestRestart == nil {
+		u.fail(errors.New("重启回调未配置"))
+		return
 	}
+	s.cfg.RequestRestart("update")
 }
 
 // httpGet 拉取 URL 全部内容（小文件：API 响应/latest.txt），非 200 报错。

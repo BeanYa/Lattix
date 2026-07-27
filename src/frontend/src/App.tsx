@@ -6,8 +6,10 @@ import { AuthProvider, useAuth } from '@/lib/auth'
 import { TimezoneProvider } from '@/lib/timezone'
 import Chains from '@/pages/Chains'
 import Dashboard from '@/pages/Dashboard'
-import EventLogPage from '@/pages/EventLog'
 import Login from '@/pages/Login'
+import LogsLayout from '@/pages/LogsLayout'
+import OperationLogs from '@/pages/OperationLogs'
+import RequestLogs from '@/pages/RequestLogs'
 import Servers from '@/pages/Servers'
 import Settings from '@/pages/Settings'
 import Users from '@/pages/Users'
@@ -45,7 +47,11 @@ export default function App() {
               <Route path="servers" element={<Servers />} />
               <Route path="chains" element={<Chains />} />
               <Route path="users" element={<Users />} />
-              <Route path="event-log" element={<EventLogPage />} />
+              <Route path="logs" element={<LogsLayout />}>
+                <Route index element={<Navigate to="operations" replace />} />
+                <Route path="operations" element={<OperationLogs />} />
+                <Route path="requests" element={<RequestLogs />} />
+              </Route>
               <Route path="settings" element={<Settings />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

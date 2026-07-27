@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"lattix/backend/internal/store"
+	"lattix/backend/internal/logging"
 )
 
 // sessionTTL 是登录会话有效期。
@@ -73,9 +73,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Username != s.cfg.AdminUser || !s.checkPassword(req.Password) {
-		// 登录失败留痕（排查爆破）：直接写库，不走 audit()（无会话）。
-		if err := s.st.RecordEvent(r.Context(), store.EventCategoryAdmin, "admin.login_failed",
-			nil, nil, map[string]string{"username": req.Username}, req.Username, clientIP(r)); err != nil {
+		if err := s.recordOperation(r.Context(), logging.OperationEvent{
+			Severity: logging.SeverityWarning, Category: logging.CategoryAuth,
+			Action: "auth.login_failed", Detail: map[string]string{"username": req.Username},
+			Operator: req.Username, IP: logging.ClientIP(r), RequestID: logging.RequestID(r.Context()),
+		}); err != nil {
 			log.Printf("panel: record login_failed event: %v", err)
 		}
 		writeError(w, http.StatusUnauthorized, "用户名或密码错误")
@@ -90,9 +92,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(sessionTTL.Seconds()),
 	})
-	// 登录成功留痕：cookie 已签发，但 audit() 经 currentUser 取 operator 同此用户名，直接用更直观。
-	if err := s.st.RecordEvent(r.Context(), store.EventCategoryAdmin, "admin.login",
-		nil, nil, nil, req.Username, clientIP(r)); err != nil {
+	if err := s.recordOperation(r.Context(), logging.OperationEvent{
+		Severity: logging.SeverityInfo, Category: logging.CategoryAuth, Action: "auth.login",
+		Operator: req.Username, IP: logging.ClientIP(r), RequestID: logging.RequestID(r.Context()),
+	}); err != nil {
 		log.Printf("panel: record login event: %v", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"username": req.Username})
@@ -100,6 +103,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 // handleLogout 处理 POST /api/logout：清除会话 cookie。
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	s.audit(r, "auth.logout", nil, nil, nil)
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    "",

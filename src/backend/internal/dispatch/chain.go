@@ -10,6 +10,7 @@ import (
 	"net"
 
 	"lattix/backend/internal/alert"
+	"lattix/backend/internal/logging"
 	"lattix/backend/internal/store"
 	"lattix/shared"
 )
@@ -340,6 +341,10 @@ func (d *Dispatcher) failChain(ctx context.Context, chainID int64, hop *store.Ch
 		log.Printf("dispatch: chain %d failed: %v", chainID, err)
 	}
 	log.Printf("dispatch: chain %d failed: %s", chainID, locate)
+	d.recordOperation(logging.OperationEvent{
+		Severity: logging.SeverityError, Category: logging.CategoryChain, Action: "chain.failed",
+		ServerID: &hop.ServerID, Detail: map[string]any{"chain_id": chainID, "hop_id": hop.ID, "error": locate},
+	})
 }
 
 // advanceChainByNode 出口业务节点 apply 成功后推进所属链编排（阶段 2 起）；非链出口节点直接返回。
@@ -409,6 +414,10 @@ func (d *Dispatcher) recomputeChain(ctx context.Context, chainID int64) {
 					log.Printf("dispatch: chain %d degraded: %v", chainID, err)
 				}
 				log.Printf("dispatch: chain %d degraded: %s", chainID, detail)
+				d.recordOperation(logging.OperationEvent{
+					Severity: logging.SeverityWarning, Category: logging.CategoryChain, Action: "chain.degraded",
+					ServerID: &hops[i].ServerID, Detail: map[string]any{"chain_id": chainID, "hop_id": hops[i].ID, "reason": detail},
+				})
 				if d.Alerter != nil {
 					d.Alerter.Notify(hops[i].ServerID, alert.EventChainDegraded, fmt.Sprintf("chain_%d", chainID), detail)
 				}
@@ -426,6 +435,10 @@ func (d *Dispatcher) recomputeChain(ctx context.Context, chainID int64) {
 			log.Printf("dispatch: chain %d 恢复 active: %v", chainID, err)
 		}
 		log.Printf("dispatch: chain %d 恢复 active", chainID)
+		d.recordOperation(logging.OperationEvent{
+			Severity: logging.SeverityInfo, Category: logging.CategoryChain, Action: "chain.recovered",
+			Detail: map[string]any{"chain_id": chainID},
+		})
 	}
 }
 

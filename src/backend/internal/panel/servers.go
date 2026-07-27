@@ -249,6 +249,7 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "机器类型建后不允许互转")
 		return
 	}
+	beforeDTO := s.toServerDTO(*srv)
 	if srv.MachineType == store.MachineTypeNAT && req.Address == "" {
 		writeError(w, http.StatusBadRequest, "NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）")
 		return
@@ -309,11 +310,21 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sid := id
-	s.audit(r, "server.update", &sid, nil, map[string]any{
-		"address": req.Address, "allowed_ports_changed": req.AllowedPorts != nil, "tags_changed": req.Tags != nil,
-		"country_code": countryCode, "location": location,
-	})
-	writeJSON(w, http.StatusOK, s.toServerDTO(*srv))
+	afterDTO := s.toServerDTO(*srv)
+	changes := changedValues(
+		map[string]any{
+			"address": beforeDTO.Address, "allowed_ports": beforeDTO.AllowedPorts,
+			"tags": beforeDTO.Tags, "country_code": beforeDTO.CountryCode, "location": beforeDTO.Location,
+		},
+		map[string]any{
+			"address": afterDTO.Address, "allowed_ports": afterDTO.AllowedPorts,
+			"tags": afterDTO.Tags, "country_code": afterDTO.CountryCode, "location": afterDTO.Location,
+		},
+	)
+	if len(changes) > 0 {
+		s.audit(r, "server.updated", &sid, nil, changes)
+	}
+	writeJSON(w, http.StatusOK, afterDTO)
 }
 
 // checkPortsShrink 校验端口段收窄后存量使用不越界（§21）：

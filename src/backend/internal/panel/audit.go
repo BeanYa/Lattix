@@ -1,14 +1,15 @@
 package panel
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
 
-	"lattix/backend/internal/store"
+	"lattix/backend/internal/logging"
 )
 
-// audit 记录一条 admin 类事件日志（§log）。
+// audit 记录一条操作日志。
 // 在写操作成功路径上调用（失败路径已 writeError 提前返回）；审计写入失败仅记日志，
 // 不阻断业务——审计是旁路，不应让记日志失败回滚已成功的业务操作。
 //
@@ -16,31 +17,61 @@ import (
 // serverID/nodeID 为 nil 表示无关联对象；detail 任意值（map/struct/string）会 json.Marshal。
 func (s *Server) audit(r *http.Request, action string, serverID, nodeID *int64, detail any) {
 	operator, _ := s.currentUser(r)
-	if err := s.st.RecordEvent(r.Context(), store.EventCategoryAdmin, action,
-		serverID, nodeID, detail, operator, clientIP(r)); err != nil {
+	if err := s.recordOperation(r.Context(), logging.OperationEvent{
+		Severity:  severityForAction(action),
+		Category:  categoryForAction(action),
+		Action:    action,
+		ServerID:  serverID,
+		NodeID:    nodeID,
+		Detail:    detail,
+		Operator:  operator,
+		IP:        logging.ClientIP(r),
+		RequestID: logging.RequestID(r.Context()),
+	}); err != nil {
 		log.Printf("panel: audit %s: %v", action, err)
 	}
 }
 
-// clientIP 取请求来源 IP：优先 X-Forwarded-For 首 IP（受信回环反代场景，§9），
-// 否则回退 RemoteAddr（去除端口）。
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if idx := strings.IndexByte(xff, ','); idx >= 0 {
-			return strings.TrimSpace(xff[:idx])
-		}
-		return strings.TrimSpace(xff)
+func (s *Server) recordOperation(ctx context.Context, event logging.OperationEvent) error {
+	if s.opLog == nil {
+		return nil
 	}
-	host := r.RemoteAddr
-	if i := strings.LastIndexByte(host, ':'); i >= 0 {
-		// 去除端口（IPv6 形如 [::1]:port 也兼容）。
-		if strings.HasPrefix(host, "[") {
-			if j := strings.LastIndexByte(host, ']'); j >= 0 {
-				return host[1:j]
-			}
-		} else {
-			return host[:i]
-		}
+	return s.opLog.Record(ctx, event)
+}
+
+func categoryForAction(action string) logging.Category {
+	switch {
+	case strings.HasPrefix(action, "server."):
+		return logging.CategoryServer
+	case strings.HasPrefix(action, "chain."), strings.HasPrefix(action, "node."):
+		return logging.CategoryChain
+	case strings.HasPrefix(action, "user."):
+		return logging.CategoryUser
+	case strings.HasPrefix(action, "settings."):
+		return logging.CategorySettings
+	case strings.HasPrefix(action, "panel."), strings.HasPrefix(action, "admin.restart"):
+		return logging.CategoryPanel
+	case strings.HasPrefix(action, "agent."):
+		return logging.CategoryAgent
+	case strings.HasPrefix(action, "command."):
+		return logging.CategoryCommand
+	case strings.HasPrefix(action, "auth."), strings.HasPrefix(action, "admin.login"),
+		strings.HasPrefix(action, "admin.logout"), strings.HasPrefix(action, "admin.change_password"):
+		return logging.CategoryAuth
+	default:
+		return logging.CategoryLog
 	}
-	return host
+}
+
+func severityForAction(action string) logging.Severity {
+	switch {
+	case strings.Contains(action, "failed"), strings.Contains(action, "error"):
+		return logging.SeverityError
+	case strings.Contains(action, "offline"), strings.Contains(action, "degraded"),
+		strings.Contains(action, "drift"), strings.Contains(action, "login_failed"),
+		strings.Contains(action, "restart"), strings.Contains(action, "update_started"):
+		return logging.SeverityWarning
+	default:
+		return logging.SeverityInfo
+	}
 }

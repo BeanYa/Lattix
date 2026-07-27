@@ -4,12 +4,14 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,6 +23,7 @@ import (
 
 	"lattix/backend/internal/alert"
 	"lattix/backend/internal/dispatch"
+	"lattix/backend/internal/logging"
 	"lattix/backend/internal/panel"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
@@ -71,6 +74,7 @@ func main() {
 
 	addr := flag.String("addr", ":8080", "HTTP 监听地址")
 	dbPath := flag.String("db", envOr("LATTIX_DB", "lattix.db"), "SQLite 数据库文件路径")
+	logDir := flag.String("log-dir", envOr("LATTIX_LOG_DIR", ""), "日志目录；空 = 数据库同级 logs/")
 	staticDir := flag.String("static", envOr("LATTIX_STATIC", ""), "frontend 构建产物覆盖目录（空 = 使用二进制内嵌前端）")
 	adminUser := flag.String("admin-user", envOr("LATTIX_ADMIN_USER", "admin"), "管理员账号（单管理员，§10）")
 	adminPass := flag.String("admin-pass", envOr("LATTIX_ADMIN_PASS", "lattix-admin"), "管理员密码（MVP 本地/受信网络，§12）")
@@ -113,12 +117,44 @@ func main() {
 	if err != nil {
 		log.Fatalf("tls-dir: %v", err)
 	}
+	dbPathAbs, err := filepath.Abs(*dbPath)
+	if err != nil {
+		log.Fatalf("db: %v", err)
+	}
+	logDirValue := *logDir
+	if logDirValue == "" {
+		logDirValue = filepath.Join(filepath.Dir(dbPathAbs), "logs")
+	}
+	logDirAbs, err := filepath.Abs(logDirValue)
+	if err != nil {
+		log.Fatalf("log-dir: %v", err)
+	}
 
 	st, err := store.Open(*dbPath)
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}
 	defer st.Close()
+
+	operationLimit := settingInt(st, store.SettingOperationLogLimit, 1000)
+	requestLogMB := settingInt(st, store.SettingRequestLogMaxMB, 10)
+	opLog, err := logging.OpenOperationStore(filepath.Join(logDirAbs, "operation.db"), operationLimit)
+	if err != nil {
+		log.Fatalf("operation log: %v", err)
+	}
+	defer opLog.Close()
+	reqLog, err := logging.OpenRequestLog(filepath.Join(logDirAbs, "requests"), int64(requestLogMB)<<20)
+	if err != nil {
+		log.Fatalf("request log: %v", err)
+	}
+	reqLog.SetDropReporter(func(count uint64, reason string) {
+		if err := opLog.Record(context.Background(), logging.OperationEvent{
+			Severity: logging.SeverityError, Category: logging.CategoryLog,
+			Action: "request_log.dropped", Detail: map[string]any{"count": count, "reason": reason},
+		}); err != nil {
+			log.Printf("main: record dropped request logs: %v", err)
+		}
+	})
 
 	// TLS 生效解析（§10 设置页）：DB 保存的 tls_mode 优先于启动参数，重启生效。
 	// tls_mode 未设置（空）时完全跟随启动参数。
@@ -188,10 +224,14 @@ func main() {
 		log.Fatalf("未知的 tls_mode 设置: %q", dbTLSMode)
 	}
 	secure := applied.Mode != panel.TLSModeOff
+	if err := opLog.StartRun(context.Background(), version); err != nil {
+		log.Printf("main: record panel start: %v", err)
+	}
 
 	// 控制通道（§5）：hub 负责传输，dispatcher 负责命令生命周期与认证。
 	hub := ws.NewHub()
 	dispatcher := dispatch.New(st, hub, version)
+	dispatcher.OperationLog = opLog
 	hub.Auth = dispatcher
 	hub.OnConnect = func(serverID int64) {
 		// agent 重连后重置并补发离线期间滞留的命令（§2）。
@@ -200,18 +240,20 @@ func main() {
 		dispatcher.RecomputeChainsByServer(serverID)
 	}
 	hub.OnOnline = func(serverID int64) {
-		// 事件日志（§log）：agent 上线跃迁，与 agent.offline 共同形成完整连接时间线。
 		sid := serverID
-		if err := st.RecordEvent(context.Background(), store.EventCategoryAgent, "agent.online",
-			&sid, nil, "WS 连接建立，服务器在线", "", ""); err != nil {
+		if err := opLog.Record(context.Background(), logging.OperationEvent{
+			Severity: logging.SeverityInfo, Category: logging.CategoryAgent, Action: "agent.online",
+			ServerID: &sid, Detail: "WS 连接建立，服务器在线",
+		}); err != nil {
 			log.Printf("main: record agent.online event: %v", err)
 		}
 	}
 	hub.OnReconnect = func(serverID int64) {
-		// 旧连接被新的认证连接替换时服务器始终在线，单独记录重连而非伪造上线跃迁。
 		sid := serverID
-		if err := st.RecordEvent(context.Background(), store.EventCategoryAgent, "agent.reconnected",
-			&sid, nil, "新的 WS 连接替换原连接，服务器保持在线", "", ""); err != nil {
+		if err := opLog.Record(context.Background(), logging.OperationEvent{
+			Severity: logging.SeverityInfo, Category: logging.CategoryAgent, Action: "agent.reconnected",
+			ServerID: &sid, Detail: "新的 WS 连接替换原连接，服务器保持在线",
+		}); err != nil {
 			log.Printf("main: record agent.reconnected event: %v", err)
 		}
 	}
@@ -222,10 +264,11 @@ func main() {
 	dispatcher.Alerter = notifier
 	hub.OnDisconnect = func(serverID int64) {
 		notifier.Notify(serverID, alert.EventServerOffline, "", "WS 连接断开，服务器离线")
-		// 事件日志（§log）：agent 离线跃迁，留痕便于事后排查掉线时间线。
 		sid := serverID
-		if err := st.RecordEvent(context.Background(), store.EventCategoryAgent, "agent.offline",
-			&sid, nil, "WS 连接断开，服务器离线", "", ""); err != nil {
+		if err := opLog.Record(context.Background(), logging.OperationEvent{
+			Severity: logging.SeverityWarning, Category: logging.CategoryAgent, Action: "agent.offline",
+			ServerID: &sid, Detail: "WS 连接断开，服务器离线",
+		}); err != nil {
 			log.Printf("main: record agent.offline event: %v", err)
 		}
 		// 链 degraded 推导（§21.1）：任一跳 server 离线 → degraded + chain_degraded 告警。
@@ -237,19 +280,32 @@ func main() {
 	if *ghRepo != "" {
 		repo = *ghRepo
 	}
+	restartCh := make(chan string, 1)
 	ps, err := panel.New(st, dispatcher, hub, panel.Config{
-		AdminUser:  *adminUser,
-		AdminPass:  *adminPass,
-		PublicURL:  *publicURL,
-		Secure:     secure,
-		RunningTLS: applied,
-		TLSDir:     tlsDirAbs,
-		Version:    version,
-		GitHubRepo: repo,
-		Alerter:    notifier,
+		AdminUser:    *adminUser,
+		AdminPass:    *adminPass,
+		PublicURL:    *publicURL,
+		Secure:       secure,
+		RunningTLS:   applied,
+		TLSDir:       tlsDirAbs,
+		Version:      version,
+		GitHubRepo:   repo,
+		Alerter:      notifier,
+		OperationLog: opLog,
+		RequestLog:   reqLog,
+		LogDir:       logDirAbs,
+		RequestRestart: func(reason string) {
+			select {
+			case restartCh <- reason:
+			default:
+			}
+		},
 	})
 	if err != nil {
 		log.Fatalf("panel: %v", err)
+	}
+	hub.OnUpgrade = func(r *http.Request) {
+		logging.LogWebSocketUpgrade(reqLog, r, ps.Operator)
 	}
 
 	// 用户有效期 sweeper（§9）：到期置 expired 并扇出 remove_user。
@@ -262,7 +318,9 @@ func main() {
 		}
 		sweepInterval = d
 	}
-	go ps.RunExpirySweeper(ctx, sweepInterval)
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	go ps.RunExpirySweeper(runCtx, sweepInterval)
 
 	mux := http.NewServeMux()
 
@@ -284,7 +342,12 @@ func main() {
 	}
 	mux.Handle("/", spaHandler(frontendFS))
 
-	srv := &http.Server{Addr: *addr, Handler: mux}
+	srv := &http.Server{
+		Addr:              *addr,
+		Handler:           logging.RequestMiddleware(reqLog, ps.Operator, mux),
+		ReadHeaderTimeout: 15 * time.Second,
+	}
+	var serve func() error
 	switch applied.Mode {
 	case panel.TLSModeACME:
 		// ACME 自动证书（Let's Encrypt，TLS-ALPN-01：仅需 443 可达，无需 80 端口，§12）。
@@ -296,19 +359,73 @@ func main() {
 		}
 		srv.TLSConfig = &tls.Config{GetCertificate: m.GetCertificate, MinVersion: tls.VersionTLS12}
 		log.Printf("lattix backend listening on %s (HTTPS ACME: %s, admin: %s)", *addr, *acmeDomain, *adminUser)
-		log.Fatal(srv.ListenAndServeTLS("", ""))
+		serve = func() error { return srv.ListenAndServeTLS("", "") }
 	case panel.TLSModeCert:
 		srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{*keyPair}, MinVersion: tls.VersionTLS12}
 		log.Printf("lattix backend listening on %s (HTTPS 自带证书, admin: %s)", *addr, *adminUser)
-		log.Fatal(srv.ListenAndServeTLS("", ""))
+		serve = func() error { return srv.ListenAndServeTLS("", "") }
 	case panel.TLSModePath:
 		// 域名路径模式：GetCertificate 按文件 mtime 热加载（外部 ACME 续期免重启）。
 		srv.TLSConfig = &tls.Config{GetCertificate: dirCertGetter, MinVersion: tls.VersionTLS12}
 		log.Printf("lattix backend listening on %s (HTTPS 域名路径: %s, admin: %s)", *addr, applied.Domain, *adminUser)
-		log.Fatal(srv.ListenAndServeTLS("", ""))
+		serve = func() error { return srv.ListenAndServeTLS("", "") }
 	default:
 		log.Printf("lattix backend listening on %s (admin: %s)", *addr, *adminUser)
-		log.Fatal(srv.ListenAndServe())
+		serve = srv.ListenAndServe
+	}
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- serve() }()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
+	reason := ""
+	shouldRestart := false
+	select {
+	case sig := <-signals:
+		reason = "signal:" + sig.String()
+	case reason = <-restartCh:
+		shouldRestart = true
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			reason = "server_error"
+			_ = opLog.Record(context.Background(), logging.OperationEvent{
+				Severity: logging.SeverityError, Category: logging.CategoryPanel,
+				Action: "panel.server_failed", Detail: map[string]string{"error": err.Error()},
+			})
+			log.Printf("server: %v", err)
+		} else {
+			reason = "server_closed"
+		}
+	}
+
+	cancelRun()
+	shutdownDeadline := time.Now().Add(5 * time.Second)
+	serverCtx, cancelServer := context.WithDeadline(context.Background(), shutdownDeadline.Add(-time.Second))
+	if err := srv.Shutdown(serverCtx); err != nil {
+		log.Printf("server shutdown: %v", err)
+	}
+	cancelServer()
+	logCtx, cancelLogs := context.WithDeadline(context.Background(), shutdownDeadline)
+	defer cancelLogs()
+	// 关停阶段不再从请求日志反向写操作日志，确保 panel.stopped 是最后一条
+	// 生命周期记录，并优先清除运行标记，避免队列排空超时被误判为异常退出。
+	reqLog.SetDropReporter(nil)
+	if err := opLog.StopRun(logCtx, reason); err != nil {
+		log.Printf("main: record panel stop: %v", err)
+	}
+	if err := reqLog.Close(logCtx); err != nil {
+		log.Printf("main: close request log: %v", err)
+	}
+	if shouldRestart {
+		if err := panel.RestartSelf(); err != nil {
+			log.Printf("restart: %v", err)
+			_ = opLog.Record(context.Background(), logging.OperationEvent{
+				Severity: logging.SeverityError, Category: logging.CategoryPanel,
+				Action: "panel.restart_failed", Detail: map[string]string{"error": err.Error()},
+			})
+		}
 	}
 }
 
@@ -331,4 +448,16 @@ func spaHandler(content fs.FS) http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(index)
 	})
+}
+
+func settingInt(st *store.Store, key string, fallback int) int {
+	raw, err := st.GetSetting(context.Background(), key)
+	if err != nil || raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return value
 }

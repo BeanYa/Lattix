@@ -66,6 +66,11 @@ const RUNNING_MODE_LABEL: Record<string, string> = {
 const textareaClass =
   'w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 font-mono text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30'
 
+function formatBytes(bytes: number) {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
 export default function Settings() {
   const { refresh: refreshTimezone } = useTimezone()
   const accessProtocol = window.location.protocol === 'https:' ? 'HTTPS' : 'HTTP'
@@ -86,6 +91,9 @@ export default function Settings() {
   const [alertWebhook, setAlertWebhook] = useState('')
   const [alertBotToken, setAlertBotToken] = useState('')
   const [alertChatID, setAlertChatID] = useState('')
+  // 日志
+  const [operationLogLimit, setOperationLogLimit] = useState(1000)
+  const [requestLogMaxMB, setRequestLogMaxMB] = useState(10)
   // 密码
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -123,6 +131,8 @@ export default function Settings() {
         setAcmeEmail(s.acme_email)
         setAlertWebhook(s.alert_webhook_url)
         setAlertChatID(s.alert_telegram_chat_id)
+        setOperationLogLimit(s.operation_log_limit)
+        setRequestLogMaxMB(s.request_log_max_mb)
       })
       .catch((err) => setLoadError(errorMessage(err)))
   }, [])
@@ -154,6 +164,8 @@ export default function Settings() {
         acme_email: acmeEmail.trim(),
         alert_webhook_url: alertWebhook.trim(),
         alert_telegram_chat_id: alertChatID.trim(),
+        operation_log_limit: operationLogLimit,
+        request_log_max_mb: requestLogMaxMB,
         // bot token 留空 = 保持已保存值（后端语义，与 tls key 一致）
         ...(alertBotToken.trim() ? { alert_telegram_bot_token: alertBotToken.trim() } : {}),
       })
@@ -315,6 +327,50 @@ export default function Settings() {
               </datalist>
               <p className="text-xs text-muted-foreground">
                 IANA 时区名（如 Asia/Shanghai），全局生效：所有浏览器看到的面板时间一致。
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>日志缓存</CardTitle>
+            <CardDescription>
+              操作日志与业务数据隔离存储；请求日志按行追加到分段 JSONL 文件。
+              修改后立即清理超出限制的最旧记录。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="operationLogLimit">操作日志保留条数</Label>
+              <Input
+                id="operationLogLimit"
+                type="number"
+                min={100}
+                max={100000}
+                value={operationLogLimit}
+                onChange={(event) => setOperationLogLimit(Number(event.target.value))}
+              />
+              <p className="text-xs text-muted-foreground">
+                范围 100–100000，默认 1000 条；超过后按时间删除最旧记录。
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="requestLogMaxMB">请求日志缓存（MB）</Label>
+              <Input
+                id="requestLogMaxMB"
+                type="number"
+                min={1}
+                max={1024}
+                value={requestLogMaxMB}
+                onChange={(event) => setRequestLogMaxMB(Number(event.target.value))}
+              />
+              <p className="text-xs text-muted-foreground">
+                范围 1–1024 MB，默认 10 MB；当前占用 {formatBytes(settings.request_log_usage_bytes)}，
+                分段文件位于 <code className="rounded bg-muted px-1">{settings.log_dir}</code>。
+                {settings.request_log_dropped > 0
+                  ? ` 极端负载下累计丢弃 ${settings.request_log_dropped} 条。`
+                  : ''}
               </p>
             </div>
           </CardContent>
@@ -661,7 +717,8 @@ export default function Settings() {
             下载备份
           </Button>
           <p className="text-xs text-muted-foreground">
-            备份为 SQLite 数据库快照（VACUUM INTO），可直接替换数据文件恢复。
+            备份为业务 SQLite 数据库快照（VACUUM INTO），可直接替换数据文件恢复；
+            <strong>不包含操作日志和请求日志</strong>。
           </p>
         </CardContent>
       </Card>

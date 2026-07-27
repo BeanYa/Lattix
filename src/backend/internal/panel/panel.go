@@ -11,21 +11,26 @@ import (
 
 	"lattix/backend/internal/alert"
 	"lattix/backend/internal/dispatch"
+	"lattix/backend/internal/logging"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/ws"
 )
 
 // Config 是面板运行配置。
 type Config struct {
-	AdminUser  string          // 管理员账号（单管理员，§14 多管理员属后续迭代）
-	AdminPass  string          // 管理员密码（DB 设置页改密后被 bcrypt 哈希覆盖）
-	PublicURL  string          // 面板对外地址（生成安装命令/订阅链接）；空 = 从请求推断（DB 设置可覆盖）
-	Secure     bool            // 面板自身以 TLS 服务（自带证书或 ACME，§12）
-	RunningTLS AppliedTLS      // 当前进程实际生效的 TLS 快照（main 启动时确定，重启生效）
-	TLSDir     string          // 域名路径模式证书根目录（<tls-dir>/<域名>/fullchain.pem|privkey.pem）
-	Version    string          // 面板版本（构建注入）
-	GitHubRepo string          // GitHub 仓库（org/repo）：release 安装命令、面板自更新与 agent 升级下载基址
-	Alerter    *alert.Notifier // 事件告警（§19）；nil = 关闭
+	AdminUser      string          // 管理员账号（单管理员，§14 多管理员属后续迭代）
+	AdminPass      string          // 管理员密码（DB 设置页改密后被 bcrypt 哈希覆盖）
+	PublicURL      string          // 面板对外地址（生成安装命令/订阅链接）；空 = 从请求推断（DB 设置可覆盖）
+	Secure         bool            // 面板自身以 TLS 服务（自带证书或 ACME，§12）
+	RunningTLS     AppliedTLS      // 当前进程实际生效的 TLS 快照（main 启动时确定，重启生效）
+	TLSDir         string          // 域名路径模式证书根目录（<tls-dir>/<域名>/fullchain.pem|privkey.pem）
+	Version        string          // 面板版本（构建注入）
+	GitHubRepo     string          // GitHub 仓库（org/repo）：release 安装命令、面板自更新与 agent 升级下载基址
+	Alerter        *alert.Notifier // 事件告警（§19）；nil = 关闭
+	OperationLog   *logging.OperationStore
+	RequestLog     *logging.RequestLog
+	LogDir         string
+	RequestRestart func(reason string)
 }
 
 // Server 聚合面板 API 的依赖。
@@ -36,13 +41,18 @@ type Server struct {
 	cfg     Config
 	alerter *alert.Notifier
 	upd     *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
+	opLog   *logging.OperationStore
+	reqLog  *logging.RequestLog
 }
 
 // New 创建面板 API 服务。
 func New(st *store.Store, disp *dispatch.Dispatcher, req ws.Requester, cfg Config) (*Server, error) {
 	// 链编排器与单机节点共用同一份 dest 白名单（§6/§21）。
 	disp.DestCandidates = destCandidates
-	s := &Server{st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter}
+	s := &Server{
+		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter,
+		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
+	}
 	s.upd = newPanelUpdater(s)
 	return s, nil
 }
@@ -95,8 +105,17 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/backup", s.requireAuth(s.handleBackup))
 
-	mux.HandleFunc("GET /api/event-log", s.requireAuth(s.handleListEventLog))
+	mux.HandleFunc("GET /api/logs/operations", s.requireAuth(s.handleListOperationLog))
+	mux.HandleFunc("DELETE /api/logs/operations", s.requireAuth(s.handleClearOperationLog))
+	mux.HandleFunc("GET /api/logs/requests", s.requireAuth(s.handleListRequestLog))
+	mux.HandleFunc("DELETE /api/logs/requests", s.requireAuth(s.handleClearRequestLog))
 
+}
+
+// Operator 返回当前请求对应的管理员名称，供外层请求日志中间件记录。
+func (s *Server) Operator(r *http.Request) string {
+	operator, _ := s.currentUser(r)
+	return operator
 }
 
 // PanelBase 导出 panelBase，供订阅落地页生成绝对链接（与面板 DTO 同一判定链）。
