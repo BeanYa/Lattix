@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import { PlusIcon, XIcon } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
+import { TagInput } from '@/components/TagInput'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -33,7 +34,6 @@ import {
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { countryFlag, loadCities, loadCountries, type CountryOption } from '@/lib/geography'
-import { parseTagInput } from '@/lib/naming'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { useTimezone } from '@/lib/timezone'
 import type { MachineType, PortRange, Server } from '@/lib/types'
@@ -122,7 +122,7 @@ export default function Servers() {
   const [address, setAddress] = useState('')
   const [xrayVersion, setXrayVersion] = useState('latest')
   const [machineType, setMachineType] = useState<MachineType>('direct')
-  const [tags, setTags] = useState('')
+  const [tags, setTags] = useState<string[]>([])
   const [countryCode, setCountryCode] = useState('')
   const [location, setLocation] = useState('')
   const [countryOptions, setCountryOptions] = useState<CountryOption[]>([])
@@ -138,7 +138,7 @@ export default function Servers() {
   const [editAddrMode, setEditAddrMode] = useState<'builtin' | 'custom'>('custom')
   const [editAddrChoice, setEditAddrChoice] = useState('')
   const [editPortRows, setEditPortRows] = useState<string[]>([''])
-  const [editTags, setEditTags] = useState('')
+  const [editTags, setEditTags] = useState<string[]>([])
   const [editCountryCode, setEditCountryCode] = useState('')
   const [editLocation, setEditLocation] = useState('')
   const [editCities, setEditCities] = useState<string[]>([])
@@ -206,7 +206,7 @@ export default function Servers() {
       setAddress('')
       setXrayVersion('latest')
       setMachineType('direct')
-      setTags('')
+      setTags([])
       setCountryCode('')
       setLocation('')
       setPortRows([''])
@@ -232,7 +232,7 @@ export default function Servers() {
       country_code: countryCode,
       location: location.trim(),
     }
-    body.tags = parseTagInput(tags)
+    body.tags = tags
     if (address.trim()) {
       body.address = address.trim()
     }
@@ -313,7 +313,7 @@ export default function Servers() {
     setEditPortRows(
       s.allowed_ports.length > 0 ? s.allowed_ports.map(formatPortRange) : [''],
     )
-    setEditTags(s.tags.join(', '))
+    setEditTags(s.tags)
     setEditCountryCode(s.country_code)
     setEditLocation(s.location)
     setEditError('')
@@ -333,7 +333,7 @@ export default function Servers() {
       return
     }
     let ranges: PortRange[] = []
-    const nextTags = parseTagInput(editTags)
+    const nextTags = editTags
     if (!editCountryCode || !editLocation.trim()) {
       setEditError('国家和地区不能为空')
       return
@@ -674,14 +674,14 @@ export default function Servers() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="tags">标签（Tag）</Label>
-              <Input
+              <TagInput
                 id="tags"
                 value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                placeholder="例如：日本, 主力, 移动优化"
+                onChange={setTags}
+                placeholder="输入标签后按回车"
               />
               <p className="text-xs text-muted-foreground">
-                逗号分隔，最多 10 个；名称模板可按顺序使用 {'{{TAG[0]}}'}、{'{{TAG[1]}}'}。
+                回车或逗号确认，最多 10 个；名称模板可按顺序使用 {'{{TAG[0]}}'}、{'{{TAG[1]}}'}。
               </p>
             </div>
             <div className="space-y-2">
@@ -829,14 +829,14 @@ export default function Servers() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="editTags">标签（Tag）</Label>
-              <Input
+              <TagInput
                 id="editTags"
                 value={editTags}
-                onChange={(e) => setEditTags(e.target.value)}
-                placeholder="例如：日本, 主力, 移动优化"
+                onChange={setEditTags}
+                placeholder="输入标签后按回车"
               />
               <p className="text-xs text-muted-foreground">
-                逗号分隔；新建链路时可通过 {'{{TAG[0]}}'} 等参数引用。
+                回车或逗号确认；新建链路时可通过 {'{{TAG[0]}}'} 等参数引用。
               </p>
             </div>
             <div className="space-y-2">

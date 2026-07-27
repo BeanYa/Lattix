@@ -33,11 +33,7 @@ import {
 } from '@/components/ui/select'
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
-import {
-  DEFAULT_DIRECT_NAME_TEMPLATE,
-  DEFAULT_RELAY_NAME_TEMPLATE,
-  validateNameTemplate,
-} from '@/lib/naming'
+import { validateNameTemplate } from '@/lib/naming'
 import { DEFAULT_REALITY_DEST } from '@/lib/reality'
 import { useTimezone } from '@/lib/timezone'
 import type {
@@ -102,6 +98,14 @@ function serverLabel(s: Server): string {
   return tags.length > 0 ? `${s.alias}（${tags.join('，')}）` : s.alias
 }
 
+const chainNameAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+
+function randomChainName(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(4))
+  const suffix = [...bytes].map((byte) => chainNameAlphabet[byte % chainNameAlphabet.length]).join('')
+  return `Chain #${suffix}`
+}
+
 export default function Chains() {
   const { timezone } = useTimezone()
   const [chains, setChains] = useState<Chain[]>([])
@@ -113,8 +117,7 @@ export default function Chains() {
 
   const [open, setOpen] = useState(false)
   const [chainType, setChainType] = useState<'direct' | 'relay'>('direct')
-  const [name, setName] = useState(DEFAULT_DIRECT_NAME_TEMPLATE)
-  const [nameDirty, setNameDirty] = useState(false)
+  const [name, setName] = useState('')
   const [entryId, setEntryId] = useState('')
   const [middleIds, setMiddleIds] = useState<string[]>([])
   const [exitId, setExitId] = useState('')
@@ -175,8 +178,7 @@ export default function Chains() {
     setOpen(next)
     if (!next) {
       setChainType('direct')
-      setName(DEFAULT_DIRECT_NAME_TEMPLATE)
-      setNameDirty(false)
+      setName('')
       setEntryId('')
       setMiddleIds([])
       setExitId('')
@@ -208,9 +210,6 @@ export default function Chains() {
     if (value === 'relay' && protocol === 'dokodemo-door') {
       setProtocol('vless')
     }
-    if (!nameDirty) {
-      setName(value === 'direct' ? DEFAULT_DIRECT_NAME_TEMPLATE : DEFAULT_RELAY_NAME_TEMPLATE)
-    }
   }
 
   const setMiddle = (i: number, value: string) => {
@@ -222,12 +221,8 @@ export default function Chains() {
   const onCreate = async (e: FormEvent) => {
     e.preventDefault()
     setCreateError('')
-    const trimmedName = name.trim()
-    if (!trimmedName) {
-      setCreateError('请输入链路名称')
-      return
-    }
-    if (strictNameResult.error) {
+    const resolvedName = name.trim() || randomChainName()
+    if (name.trim() && strictNameResult.error) {
       setCreateError(strictNameResult.error)
       return
     }
@@ -258,7 +253,7 @@ export default function Chains() {
       }
     }
     const nodeBody: CreateNodeRequest = {
-      name: trimmedName,
+      name: resolvedName,
       server_id: Number(chainType === 'direct' ? entryId : exitId),
       protocol,
     }
@@ -310,7 +305,7 @@ export default function Chains() {
         await api.createNode(nodeBody)
       } else {
         const body: CreateChainRequest = {
-          name: trimmedName,
+          name: resolvedName,
           entry: { server_id: Number(entryId) },
           middle: middleIds.map((id) => ({ server_id: Number(id) })),
           exit: { server_id: Number(exitId) },
@@ -608,11 +603,11 @@ export default function Chains() {
               <NameTemplateInput
                 id="chain-name-template"
                 value={name}
-                onChange={(value) => {
-                  setName(value)
-                  setNameDirty(true)
-                }}
+                onChange={setName}
                 context={{ servers: topologyServers, protocol, port: entryPort }}
+                allowEmpty
+                placeholder="留空自动生成 Chain #xxxx"
+                emptyHint="留空将在创建时自动生成 Chain #xxxx（4 位随机大小写字母）"
               />
               <p className="text-xs text-muted-foreground">
                 输入 {'{{'} 后可选择变量；服务器属性支持 ENTRY、EXIT 与 HOP[n]，索引从 0 开始。
@@ -905,8 +900,7 @@ export default function Chains() {
                 type="submit"
                 disabled={
                   creating ||
-                  !name.trim() ||
-                  Boolean(strictNameResult.error) ||
+                  Boolean(name.trim() && strictNameResult.error) ||
                   !entryId ||
                   (chainType === 'relay' && !exitId)
                 }
