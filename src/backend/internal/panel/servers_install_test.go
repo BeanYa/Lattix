@@ -9,8 +9,8 @@ func TestInstallCommandUsesUnifiedGitHubEntrypoint(t *testing.T) {
 	server := &Server{cfg: Config{GitHubRepo: "BeanYa/Lattix", Version: "v1.2.3"}}
 	command := server.installCommand("https://panel.example.com", "bootstrap", "latest")
 	for _, want := range []string{
-		"https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh",
-		") agent --version v1.2.3",
+		"curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh",
+		"| bash -s -- agent --version v1.2.3",
 		"--panel https://panel.example.com",
 		"--token bootstrap",
 		"--xray-version latest",

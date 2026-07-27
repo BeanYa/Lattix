@@ -1,7 +1,5 @@
 # Lattix
 
-## 项目概况
-
 多服务器 xray 代理管理面板：主控面板（Backend）统一管理多台受控服务器（Agent），
 可视化创建代理节点，按用户生成订阅。
 
@@ -20,7 +18,7 @@
 在目标 Linux 服务器执行：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh)
+curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh | bash
 ```
 
 依次选择“安装面板”和安装模式。安装完成后，终端会输出访问地址、管理员账号和随机
@@ -31,16 +29,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.s
 
 ```bash
 # Docker Compose（推荐；主机需已有 Docker Engine 与 Compose 插件）
-bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
-  panel --mode docker
+curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
+  bash -s -- panel --mode docker
 
 # Docker Compose，并在缺少 Docker 时自动安装
-bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
-  panel --mode docker --install-docker
+curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
+  bash -s -- panel --mode docker --install-docker
 
 # 原生二进制 + systemd
-bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
-  panel --mode native
+curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
+  bash -s -- panel --mode native
 ```
 
 不传 `--version` 时安装最新稳定 Release；如需固定版本，追加
@@ -63,8 +61,8 @@ Release 文件，避免脚本与程序版本不一致。
 例如：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
-  panel --mode docker --version v0.0.3 \
+curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
+  bash -s -- panel --mode docker --version v0.0.3 \
   --bind 127.0.0.1 --port 8080 \
   --admin-user admin --admin-pass 'change-this-password' \
   --public-url https://panel.example.com
@@ -162,10 +160,13 @@ install.sh            # 面向用户的统一安装入口
 - 配置漂移 reconcile：外部篡改 xray 配置自动检测上报，一键修复（重放节点）
 - 事件告警：服务器离线 / 配置漂移 / 节点失败（仅状态跃迁触发，同服务器同事件
   5 分钟防抖），Webhook + Telegram Bot 双通道，设置页配置并可发测试消息
+- 操作日志与请求日志：操作审计使用独立 SQLite，请求记录使用分段 JSONL；支持过滤、
+  独立容量限制和清空，敏感凭证不落日志，业务 SQLite 备份不包含日志
 - SQLite 备份：设置页"面板维护"一键下载（`GET /api/backup/download`，VACUUM INTO 一致性快照）
 - xray 版本升级管理：面板下发，agent 校验官方 .dgst 后原子替换，失败回滚
 - 离线命令队列：agent 离线期间命令滞留，重连补发；重发死信（10 次）
 - 服务器引导：一行安装命令（bootstrap token 换发长期凭证），卸载可选"仅 agent"/"连同 xray"
+- 计划重启优雅排空：面板以 WS 1012 通知 Agent 快速重连，不产生误离线告警或链路降级
 
 **安全**
 
@@ -225,8 +226,12 @@ go build -o lattix-backend ./src/backend/cmd/backend
 
 面板"设置"页可在线修改：对外地址与显示时区（立即生效）；TLS 模式 / 自带证书 PEM /
 ACME 域名（保存后重启进程生效）；管理员密码（bcrypt 落库，改密即全部会话失效）；
-事件告警（Webhook 地址 / Telegram Bot token / chat_id，三项全空即关闭，可发测试消息）。
+事件告警（Webhook 地址 / Telegram Bot token / chat_id，三项全空即关闭，可发测试消息）；
+操作日志保留条数与请求日志容量；全局 Agent 重连策略、遥测上报间隔和配置漂移检测间隔。
 设置页保存的值存于 SQLite `settings` 表并**优先于对应启动参数**，清除后恢复跟随启动参数。
+Agent 设置使用递增 revision 同步：在线 Agent 保存后立即拉取，离线 Agent 重连后同步；
+默认持续指数退避重连、每 60 秒上报遥测、每 15 秒检测配置漂移。业务 SQLite 备份
+**不包含**独立存储的操作日志和请求日志。
 "设置 → 面板维护"提供一键重启（`POST /api/panel/restart`）与 SQLite 备份下载
 （`GET /api/backup/download`）：systemd 托管时退出后由
 systemd 拉起；Docker 模式则由进程退出触发 Compose 的 `restart: unless-stopped`，
@@ -245,9 +250,9 @@ TLS 另支持**域名路径模式**（`tls_mode=path`）：面板按域名从证
 通过根安装器钉到面板当前版本，安装实现与 agent 二进制天然同版：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh) \
-  agent --version v0.0.1 --panel https://<面板地址> \
-  --token <bootstrap token> --xray-version latest
+curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
+  bash -s -- agent --version v0.0.1 --panel https://panel.example.com \
+  --token BOOTSTRAP_TOKEN --xray-version latest
 ```
 
 根入口从对应 Git tag 加载 `scripts/install-agent.sh`；脚本从同版本 GitHub Release
@@ -314,6 +319,9 @@ XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-tls.sh        # 面板 TLS / w
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-links.sh      # 分享链接订阅 + userinfo 头/落地页/用户有效期
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-settings.sh   # 设置页 / 改密 / TLS 域名路径模式 / 自重启
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-alerts.sh     # 事件告警（webhook/防抖/三类事件）+ SQLite 备份下载
+XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-event-log.sh  # 操作日志 / 请求日志 / 容量与清空
+XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-panel-update.sh # 面板更新状态机与原子替换
+XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-panel.sh      # 当前 Panel × Agent RPC 协议回归
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-poc-reverse.sh    # xray reverse bridge/portal 可行性 PoC（§21）
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev-e2e-chains.sh     # 代理链 + NAT：建链/真实流量/降级自愈/重试/拆链
 bash scripts/dev-e2e-install-panel.sh                           # 面板一键安装 + latx 管理程序（本地假 release，无外网）

@@ -83,7 +83,7 @@ G="$(api GET /api/settings)"
     && echo "OK: 设置基线（全空，跟随启动参数）" || { echo "FAIL: 基线: $G"; exit 1; }
 
 S1="$(api POST /api/servers '{"country_code":"US","location":"Test","alias":"s1"}')"
-printf '%s' "$(echo "$S1" | py "d['install_command']")" | grep -Fq -- "install.sh) agent --panel $PUBLIC_URL_FALLBACK --token " \
+printf '%s' "$(echo "$S1" | py "d['install_command']")" | grep -Fq -- "install.sh | bash -s -- agent --panel $PUBLIC_URL_FALLBACK --token " \
     && echo "OK: 未保存 public_url 时 GitHub 安装命令使用启动参数" || { echo "FAIL: install_command: $S1"; exit 1; }
 
 echo ">> PUT 保存时区与对外地址"
@@ -95,7 +95,7 @@ G="$(api PUT /api/settings '{"timezone":"Asia/Shanghai","public_url":"https://pa
 [[ "$(echo "$G" | py "(d['timezone'], d['public_url'])")" == "('Asia/Shanghai', 'https://panel.example.com')" ]] \
     && echo "OK: 时区与对外地址已保存" || { echo "FAIL: 保存: $G"; exit 1; }
 S2="$(api POST /api/servers '{"country_code":"US","location":"Test","alias":"s2"}')"
-printf '%s' "$(echo "$S2" | py "d['install_command']")" | grep -Fq -- "install.sh) agent --panel https://panel.example.com --token " \
+printf '%s' "$(echo "$S2" | py "d['install_command']")" | grep -Fq -- "install.sh | bash -s -- agent --panel https://panel.example.com --token " \
     && echo "OK: 保存后安装命令使用对外地址" || { echo "FAIL: install_command: $S2"; exit 1; }
 U="$(api POST /api/users '{"name":"u1"}')"
 [[ "$(echo "$U" | py "d['sub_url']")" == "https://panel.example.com/sub/"* ]] \
@@ -106,7 +106,7 @@ G="$(api PUT /api/settings '{"timezone":"","public_url":""}')"
 [[ "$(echo "$G" | py "(d['timezone'], d['public_url'])")" == "('', '')" ]] \
     && echo "OK: 设置已清除" || { echo "FAIL: 清除: $G"; exit 1; }
 S3="$(api POST /api/servers '{"country_code":"US","location":"Test","alias":"s3"}')"
-printf '%s' "$(echo "$S3" | py "d['install_command']")" | grep -Fq -- "install.sh) agent --panel $PUBLIC_URL_FALLBACK --token " \
+printf '%s' "$(echo "$S3" | py "d['install_command']")" | grep -Fq -- "install.sh | bash -s -- agent --panel $PUBLIC_URL_FALLBACK --token " \
     && echo "OK: 清除后安装命令回退启动参数" || { echo "FAIL: 回退: $S3"; exit 1; }
 
 # --- 管理员密码修改 ---

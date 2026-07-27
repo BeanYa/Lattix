@@ -572,7 +572,7 @@ func (s *Server) installCommand(base, token, xrayVersion string) string {
 		versionArg = " --version " + s.cfg.Version
 	}
 	return fmt.Sprintf(
-		"bash <(curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh) agent%s --panel %s --token %s --xray-version %s",
+		"curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | bash -s -- agent%s --panel %s --token %s --xray-version %s",
 		s.cfg.GitHubRepo, versionArg, base, token, xrayVersion)
 }
 

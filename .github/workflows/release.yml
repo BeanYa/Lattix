@@ -175,7 +175,7 @@ jobs:
         run: docker buildx imagetools inspect "ghcr.io/beanya/lattix:${GITHUB_REF_NAME}"
 
   release:
-    needs: [build, compat, image]
+    needs: [build, e2e, image]
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -38,6 +38,8 @@ import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports
 import { useTimezone } from '@/lib/timezone'
 import type { MachineType, PortRange, Server } from '@/lib/types'
 
+const DEPENDENCIES_COMMAND = 'apk add --no-cache bash curl ca-certificates unzip util-linux'
+
 function formatMetrics(s: Server): string {
   const m = s.metrics
   if (!m) {
@@ -779,6 +781,16 @@ export default function Servers() {
             <DialogDescription>{cmdView?.title}</DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">bash/curl 等依赖安装（按需执行）</p>
+              <CopyButton text={DEPENDENCIES_COMMAND} />
+            </div>
+            <pre className="overflow-auto rounded-lg bg-muted p-3 text-xs break-all whitespace-pre-wrap">
+              {DEPENDENCIES_COMMAND}
+            </pre>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Agent 安装命令</p>
             <pre className="max-h-40 overflow-auto rounded-lg bg-muted p-3 text-xs break-all whitespace-pre-wrap">
               {cmdView?.command}
             </pre>
