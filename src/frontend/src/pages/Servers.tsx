@@ -667,7 +667,7 @@ export default function Servers() {
             </pre>
           </div>
           <DialogFooter showCloseButton>
-            <CopyButton text={cmdView?.command ?? ''} />
+            <CopyButton text={cmdView?.command ?? ''} size="default" />
           </DialogFooter>
         </DialogContent>
       </Dialog>

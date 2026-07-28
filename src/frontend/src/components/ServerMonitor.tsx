@@ -3,6 +3,7 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   EllipsisIcon,
+  Globe2Icon,
   PencilIcon,
   RefreshCwIcon,
   RotateCcwKeyIcon,
@@ -225,6 +226,7 @@ function ServerCard({
   onOpen: () => void
 }) {
   const metrics = server.metrics
+  const publicAddress = server.address || server.learned_addr
   const memoryPercent = metrics ? percent(metrics.mem_used, metrics.mem_total) : 0
   const diskPercent = metrics ? percent(metrics.disk_used, metrics.disk_total) : 0
   const cpuPercent = metrics?.cpu_percent ?? null
@@ -250,9 +252,19 @@ function ServerCard({
           <span className={cn('size-2 shrink-0 rounded-full bg-muted-foreground', server.online && 'bg-success')} />
           <span className="truncate">{server.alias}</span>
         </CardTitle>
-        <CardDescription className="flex items-center gap-2 text-xs">
-          <CountryFlag code={server.country_code} />
-          <span className="truncate">{server.location || server.country_code || '未设置地区'}</span>
+        <CardDescription className="flex min-w-0 flex-col gap-1 text-xs">
+          <span className="flex min-w-0 items-center gap-2">
+            <CountryFlag code={server.country_code} />
+            <span className="truncate">{server.location || server.country_code || '未设置地区'}</span>
+          </span>
+          <span
+            className="flex min-w-0 items-center gap-1.5 font-mono text-[11px]"
+            title={publicAddress || '公网地址待学习'}
+            aria-label={`公网地址 ${publicAddress || '待学习'}`}
+          >
+            <Globe2Icon className="size-3 shrink-0" />
+            <span className="truncate">{publicAddress || '公网地址待学习'}</span>
+          </span>
         </CardDescription>
         <CardAction>
           <ServerActions server={server} {...actions} />

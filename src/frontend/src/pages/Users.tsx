@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { BanIcon, CalendarClockIcon, CircleCheckIcon, ExternalLinkIcon, PlusIcon, QrCodeIcon, Trash2Icon } from 'lucide-react'
+import {
+  BanIcon,
+  CalendarClockIcon,
+  CircleCheckIcon,
+  ExternalLinkIcon,
+  PlusIcon,
+  QrCodeIcon,
+  Trash2Icon,
+  UsersIcon,
+} from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
 import { QRDialog } from '@/components/QRDialog'
@@ -212,7 +221,13 @@ export default function Users() {
 
       {error && <p className="text-sm text-destructive">{error}</p>}
 
-      <div className="rounded-lg border">
+      {!loading && users.length === 0 ? (
+        <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed text-center">
+          <UsersIcon className="size-8 text-muted-foreground" />
+          <p className="mt-3 text-sm text-muted-foreground">暂无用户，点击右上角“创建用户”开始</p>
+        </div>
+      ) : null}
+      <div className={!loading && users.length === 0 ? 'hidden' : 'rounded-lg border'}>
         <Table>
           <TableHeader>
             <TableRow>
@@ -230,12 +245,6 @@ export default function Users() {
               <TableRow>
                 <TableCell colSpan={7} className="text-center text-muted-foreground">
                   加载中…
-                </TableCell>
-              </TableRow>
-            ) : users.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
-                  暂无用户
                 </TableCell>
               </TableRow>
             ) : (

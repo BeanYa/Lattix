@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { PlusIcon, XIcon } from 'lucide-react'
+import { PlusIcon, RouteIcon, XIcon } from 'lucide-react'
 
 import { NameTemplateInput } from '@/components/NameTemplateInput'
 import { RealityDestPicker } from '@/components/RealityDestPicker'
@@ -417,8 +417,9 @@ export default function Chains() {
             加载中…
           </div>
         ) : entries.length === 0 ? (
-          <div className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
-            暂无链路，点击右上角「创建链路」开始
+          <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed text-center">
+            <RouteIcon className="size-8 text-muted-foreground" />
+            <p className="mt-3 text-sm text-muted-foreground">暂无链路，点击右上角“创建链路”开始</p>
           </div>
         ) : (
           entries.map((entry) => {
