@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -20,14 +19,6 @@ const (
 	releaseKindXray  = "xray"
 )
 
-// inspectionSchedule supports fixed intervals and calendar-aligned checks.
-// At is used by day/month/year schedules and is interpreted in the panel timezone.
-type inspectionSchedule struct {
-	Every int    `json:"every"`
-	Unit  string `json:"unit"` // minute|hour|day|month|year
-	At    string `json:"at,omitempty"`
-}
-
 type releaseInspectionSettings struct {
 	Agent inspectionSchedule `json:"agent"`
 	Xray  inspectionSchedule `json:"xray"`
@@ -36,23 +27,6 @@ type releaseInspectionSettings struct {
 func defaultReleaseInspectionSettings() releaseInspectionSettings {
 	daily := inspectionSchedule{Every: 1, Unit: "day", At: "03:00"}
 	return releaseInspectionSettings{Agent: daily, Xray: daily}
-}
-
-func (s inspectionSchedule) validate() error {
-	if s.Every < 1 || s.Every > 10000 {
-		return errors.New("巡检间隔须为 1-10000")
-	}
-	switch s.Unit {
-	case "minute", "hour":
-		return nil
-	case "day", "month", "year":
-		if _, err := time.Parse("15:04", s.At); err != nil {
-			return errors.New("巡检执行时间须形如 HH:MM")
-		}
-		return nil
-	default:
-		return errors.New("巡检频率单位须为 minute、hour、day、month 或 year")
-	}
 }
 
 type releaseCache struct {
@@ -73,11 +47,10 @@ type releaseCatalog struct {
 	client  *http.Client
 	apiBase string
 
-	mu      sync.Mutex
-	cache   map[string]releaseCache
-	errors  map[string]string
-	loaded  map[string]bool
-	changed chan struct{}
+	mu     sync.Mutex
+	cache  map[string]releaseCache
+	errors map[string]string
+	loaded map[string]bool
 }
 
 func newReleaseCatalog(s *Server) *releaseCatalog {
@@ -88,7 +61,7 @@ func newReleaseCatalog(s *Server) *releaseCatalog {
 	return &releaseCatalog{
 		s: s, client: &http.Client{Timeout: 30 * time.Second}, apiBase: base,
 		cache: make(map[string]releaseCache), errors: make(map[string]string),
-		loaded: make(map[string]bool), changed: make(chan struct{}, 1),
+		loaded: make(map[string]bool),
 	}
 }
 
@@ -231,49 +204,6 @@ func (s *Server) releaseInspectionSettings(ctx context.Context) releaseInspectio
 	return settings
 }
 
-func (c *releaseCatalog) notifyScheduleChanged() {
-	select {
-	case c.changed <- struct{}{}:
-	default:
-	}
-}
-
-func (c *releaseCatalog) run(ctx context.Context) {
-	for _, kind := range []string{releaseKindAgent, releaseKindXray} {
-		if err := c.refresh(ctx, kind); err != nil {
-			log.Printf("panel: %s release inspection: %v", kind, err)
-		}
-	}
-	last := map[string]time.Time{releaseKindAgent: time.Now(), releaseKindXray: time.Now()}
-	for {
-		settings := c.s.releaseInspectionSettings(ctx)
-		next := map[string]time.Time{
-			releaseKindAgent: settings.Agent.next(last[releaseKindAgent], c.s.inspectionLocation(ctx)),
-			releaseKindXray:  settings.Xray.next(last[releaseKindXray], c.s.inspectionLocation(ctx)),
-		}
-		kind := releaseKindAgent
-		if next[releaseKindXray].Before(next[kind]) {
-			kind = releaseKindXray
-		}
-		timer := time.NewTimer(time.Until(next[kind]))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-c.changed:
-			if !timer.Stop() {
-				<-timer.C
-			}
-			last[releaseKindAgent], last[releaseKindXray] = time.Now(), time.Now()
-		case <-timer.C:
-			if err := c.refresh(ctx, kind); err != nil {
-				log.Printf("panel: %s release inspection: %v", kind, err)
-			}
-			last[kind] = time.Now()
-		}
-	}
-}
-
 func (s *Server) inspectionLocation(ctx context.Context) *time.Location {
 	name := s.getSetting(ctx, store.SettingTimezone)
 	if name != "" {
@@ -282,29 +212,6 @@ func (s *Server) inspectionLocation(ctx context.Context) *time.Location {
 		}
 	}
 	return time.Local
-}
-
-func (s inspectionSchedule) next(after time.Time, loc *time.Location) time.Time {
-	after = after.In(loc)
-	switch s.Unit {
-	case "minute":
-		return after.Add(time.Duration(s.Every) * time.Minute)
-	case "hour":
-		return after.Add(time.Duration(s.Every) * time.Hour)
-	}
-	parsed, _ := time.Parse("15:04", s.At)
-	candidate := time.Date(after.Year(), after.Month(), after.Day(), parsed.Hour(), parsed.Minute(), 0, 0, loc)
-	if candidate.After(after) {
-		return candidate
-	}
-	switch s.Unit {
-	case "month":
-		return candidate.AddDate(0, s.Every, 0)
-	case "year":
-		return candidate.AddDate(s.Every, 0, 0)
-	default:
-		return candidate.AddDate(0, 0, s.Every)
-	}
 }
 
 func (s *Server) handleListReleaseVersions(w http.ResponseWriter, r *http.Request) {

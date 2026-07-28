@@ -32,6 +32,10 @@ const (
 	SettingReleaseInspection     = "release_inspection"
 	SettingAgentReleaseCache     = "agent_release_cache"
 	SettingXrayReleaseCache      = "xray_release_cache"
+	SettingBillingInspection     = "billing_inspection"
+	SettingExchangeInspection    = "exchange_rate_inspection"
+	SettingReportingCurrency     = "reporting_currency"
+	SettingExchangeRateCache     = "exchange_rate_cache"
 )
 
 // GetSetting 读取一个设置；未设置返回空字符串（不视为错误）。

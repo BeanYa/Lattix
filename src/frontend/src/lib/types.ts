@@ -42,6 +42,73 @@ export interface PortRange {
 
 export type MachineType = 'direct' | 'nat'
 
+export interface Provider {
+  id: number
+  name: string
+  website_url: string
+}
+
+export type BillingStatus = 'disabled' | 'active' | 'due_today' | 'assumed_valid' | 'expired'
+export type IntervalUnit = 'day' | 'month' | 'year'
+export type TrafficAccountingMode = 'outbound' | 'bidirectional' | 'max'
+
+export interface ConvertedCost {
+  amount_minor: number
+  currency: string
+  rate_date: string
+  source: 'identity' | 'frankfurter' | 'custom_anchor'
+  anchor_currency?: string
+}
+
+export interface BillingProfile {
+  enabled: boolean
+  provider: Provider | null
+  amount_minor: number
+  currency: string
+  service_started_on: string
+  interval_count: number
+  interval_unit: IntervalUnit
+  next_renewal_on: string
+  status: BillingStatus
+  assumed_valid_through: string
+  status_changed_at: string
+  public_converted?: ConvertedCost
+  custom_converted?: ConvertedCost
+}
+
+export interface TrafficPlan {
+  quota_bytes: number | null
+  accounting_mode: TrafficAccountingMode
+  reset_anchor_on: string
+  reset_count: number
+  reset_unit: IntervalUnit
+  period_started_on: string
+  next_reset_on: string
+  tx_bytes: number
+  rx_bytes: number
+  used_bytes: number
+  complete: boolean
+}
+
+export interface BillingInput {
+  enabled: boolean
+  provider_id: number
+  amount_minor: number
+  currency: string
+  service_started_on: string
+  interval_count: number
+  interval_unit: IntervalUnit
+  next_renewal_on: string
+}
+
+export interface TrafficPlanInput {
+  quota_bytes: number | null
+  accounting_mode: TrafficAccountingMode
+  reset_anchor_on: string
+  reset_count: number
+  reset_unit: IntervalUnit
+}
+
 export interface Server {
   id: number
   alias: string
@@ -64,6 +131,8 @@ export interface Server {
   agent_settings_error: string
   agent_settings_reported_at: string | null
   metrics: ServerMetrics | null
+  billing: BillingProfile
+  traffic_plan: TrafficPlan
   created_at: string
 }
 
@@ -234,6 +303,31 @@ export interface ReleaseInspectionSettings {
   xray: InspectionSchedule
 }
 
+export interface ExchangeRate {
+  base_currency: string
+  quote_currency: string
+  rate: string
+  rate_date: string
+  source: string
+  fetched_at: string
+}
+
+export interface CustomExchangeRate {
+  id: number
+  source_currency: string
+  source_amount: string
+  target_currency: string
+  target_amount: string
+  enabled: boolean
+  updated_at: string
+}
+
+export interface ExchangeRateSettings {
+  reporting_currency: string
+  rates: ExchangeRate[]
+  custom_rates: CustomExchangeRate[]
+}
+
 export interface ReleaseVersions {
   kind: 'agent' | 'xray'
   versions: string[]
@@ -268,6 +362,9 @@ export interface PanelSettings {
   backup_includes_logs: boolean
   agent: AgentSettings
   release_inspection: ReleaseInspectionSettings
+  billing_inspection: InspectionSchedule
+  exchange_rate_inspection: InspectionSchedule
+  reporting_currency: string
 }
 
 export interface UpdateSettingsRequest {
@@ -286,6 +383,9 @@ export interface UpdateSettingsRequest {
   request_log_max_mb: number
   agent: AgentSettings
   release_inspection: ReleaseInspectionSettings
+  billing_inspection: InspectionSchedule
+  exchange_rate_inspection: InspectionSchedule
+  reporting_currency: string
 }
 
 export interface AlertChannelResult {

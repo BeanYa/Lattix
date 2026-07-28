@@ -71,6 +71,12 @@ install.sh           # 唯一面向用户的统一安装入口
 | `user_nodes` | user_id, node_id（§16 逐节点用户分配，默认全关） |
 | `server_metrics` | server_id, load1/load5/load15, cpu_percent, mem/disk 用量、默认出口网卡速率/累计量、uptime、latency_ms、updated_at（§13 主机遥测最新值） |
 | `server_metric_history` | 与 `server_metrics` 同口径的 24 小时时序样本；按服务器与采样时间索引（§13） |
+| `providers` | id, name（大小写不敏感唯一）, website_url, created_at, updated_at |
+| `server_billing` | server_id, enabled, provider_id, amount_minor（原币种最小单位整数）, currency（ISO 4217）, service_started_on, interval_count + interval_unit, next_renewal_on, status, assumed_valid_through, last_inspected_on |
+| `server_traffic_plans` | server_id, quota_bytes（NULL=无限）, accounting_mode（outbound/bidirectional/max）, reset_anchor_on, reset_count + reset_unit, tracking_started_on |
+| `server_network_usage_daily` | server_id, usage_date, tx_bytes, rx_bytes（主机网卡累计计数器按日增量） |
+| `exchange_rates` | base_currency, quote_currency, rate（十进制字符串）, rate_date, source, fetched_at（Frankfurter 持久化缓存） |
+| `custom_exchange_rates` | source_currency（唯一）+ source_amount, target_currency（保存时的展示币种）+ target_amount, enabled；至少一侧金额为 1，每个目标币种仅一个启用锚点 |
 | `traffic` | node_id, user_uuid, up, down, updated_at（§13 流量累计：节点维度 user_uuid=''，用户维度 node_id=0） |
 | `chains` / `chain_hops` | chains 含 name(解析后的管理/订阅名称)；（自 0.0.2 之后迭代实现，§21）链级状态机；逐跳 role（entry/middle/exit）与独立重试状态 |
 
@@ -82,6 +88,7 @@ install.sh           # 唯一面向用户的统一安装入口
 - `servers.country_code` 与 `servers.location` 在创建/编辑服务器时必填；国家通过选择器写入标准两位代码，`COUNTRY` 与 `COUNTRY_FLAG` 由代码派生。Location 提供按国家过滤的本地城市建议，同时允许管理员填写机房区域等自由文本。
 - `servers.address` 是订阅中节点地址的唯一来源（§9）：**创建服务器时由管理员填写公网地址，agent 不校验**；留空则按 agent WS 拨入的对端 IP 自动学习（panel 前置本机回环反代时取 `X-Forwarded-For` 首个 IP，非回环对端不信任该头以防伪造），一经写入不再被覆盖（地址变更由管理员通过 `POST /api/server/update` 修改）。每次 hello 另将拨入学习地址写入 `learned_addr`、将 agent 上报的网卡非回环地址写入 `nic_addresses`，二者仅作面板"编辑地址"的内置候选（可选内置地址或自定义），不参与自动学习决策。`servers` 同时保存机器类型与 NAT 可用端口段元数据（含非 1:1 映射的 public_port），NAT 类型 address 强制必填、禁用自动学习；引入链后订阅地址改取链**入口**的 address。
 - 用户-节点关联（§16）：全新数据库中的新建用户和节点默认不关联，由管理员显式分配；不提供旧数据库迁移逻辑。
+- 服务器费用、生命周期状态机、流量额度、汇率换算及后端公共定时任务器的完整契约见[后端调度与服务器计费设计](billing-scheduler-design.md)。费用原价和币种分列保存；关闭“统计计费”仅排除费用逻辑和状态展示，不删除资料。流量计划始终独立生效，默认无限额度。
 
 ## 5. 控制通道协议
 

@@ -9,26 +9,6 @@ import (
 // expirySweepIntervalDefault 是到期用户扫描的默认周期（§9）。
 const expirySweepIntervalDefault = time.Minute
 
-// RunExpirySweeper 后台扫描到期用户：expires_at 已过且 expired=0 → 置 expired=1
-// 并对其已分配节点所在服务器扇出 remove_user（显式 nodes 载荷，§9）。
-// interval 传 0 用默认值；启动即先扫一次。阻塞运行，由调用方 go 启动。
-func (s *Server) RunExpirySweeper(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		interval = expirySweepIntervalDefault
-	}
-	s.sweepExpiredUsers(ctx)
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			s.sweepExpiredUsers(ctx)
-		}
-	}
-}
-
 func (s *Server) sweepExpiredUsers(ctx context.Context) {
 	due, err := s.st.ListExpiryDue(ctx, time.Now())
 	if err != nil {

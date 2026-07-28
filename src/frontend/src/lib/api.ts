@@ -1,6 +1,7 @@
 import { requester, RequestError } from './requester'
 import type {
   AlertTestResult,
+  BillingInput,
   Chain,
   CommandLog,
   CreateChainRequest,
@@ -9,6 +10,7 @@ import type {
   DashboardStats,
   LogSeverity,
   MachineType,
+  Provider,
   OperationCategory,
   OperationLogPage,
   PanelSettings,
@@ -20,6 +22,9 @@ import type {
   Server,
   ServerMetrics,
   ServerMetricSeries,
+  TrafficPlanInput,
+  CustomExchangeRate,
+  ExchangeRateSettings,
   SubUser,
   UpdateSettingsRequest,
   XrayNode,
@@ -89,6 +94,8 @@ export const api = {
     tags?: string[]
     country_code: string
     location: string
+    billing?: BillingInput
+    traffic_plan?: TrafficPlanInput
   }) => requester.post<CreateServerResponse>('/api/server/create', body),
   rotateServerToken: (serverId: number) =>
     requester.post<CreateServerResponse>('/api/server/rotate-token', { server_id: serverId }),
@@ -118,6 +125,8 @@ export const api = {
     tags: string[],
     countryCode: string,
     location: string,
+    billing?: BillingInput,
+    trafficPlan?: TrafficPlanInput,
   ) =>
     requester.post<Server>('/api/server/update', {
       server_id: serverId,
@@ -126,6 +135,8 @@ export const api = {
       tags,
       country_code: countryCode,
       location,
+      billing,
+      traffic_plan: trafficPlan,
     }),
   updateServerPorts: (
     serverId: number,
@@ -135,6 +146,8 @@ export const api = {
     tags: string[],
     countryCode: string,
     location: string,
+    billing?: BillingInput,
+    trafficPlan?: TrafficPlanInput,
   ) =>
     requester.post<Server>('/api/server/update', {
       server_id: serverId,
@@ -144,9 +157,27 @@ export const api = {
       tags,
       country_code: countryCode,
       location,
+      billing,
+      traffic_plan: trafficPlan,
     }),
   deleteServer: (serverId: number, purge: 'xray' | 'agent') =>
     requester.post<void>('/api/server/delete', { server_id: serverId, purge }),
+  confirmServerRenewal: (serverId: number, nextRenewalOn: string) =>
+    requester.post<{ status: string; next_renewal_on: string }>('/api/server/confirm-renewal', {
+      server_id: serverId,
+      next_renewal_on: nextRenewalOn,
+    }),
+  providers: () => requester.get<Provider[]>('/api/provider/list'),
+  createProvider: (name: string, websiteUrl: string) =>
+    requester.post<Provider>('/api/provider/create', { name, website_url: websiteUrl }),
+  updateProvider: (id: number, name: string, websiteUrl: string) =>
+    requester.post<Provider>('/api/provider/update', { id, name, website_url: websiteUrl }),
+  deleteProvider: (id: number) => requester.post<void>('/api/provider/delete', { id }),
+  exchangeRates: () => requester.get<ExchangeRateSettings>('/api/exchange-rate/list'),
+  refreshExchangeRates: () => requester.post<ExchangeRateSettings>('/api/exchange-rate/refresh', {}),
+  saveCustomExchangeRate: (rate: Omit<CustomExchangeRate, 'updated_at'>) =>
+    requester.post<CustomExchangeRate>('/api/exchange-rate/save-custom', rate),
+  deleteCustomExchangeRate: (id: number) => requester.post<void>('/api/exchange-rate/delete-custom', { id }),
 
   chains: () => requester.get<Chain[]>('/api/chain/list'),
   createChain: (body: CreateChainRequest) => requester.post<Chain>('/api/chain/create', body),

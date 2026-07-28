@@ -3,7 +3,6 @@ package panel
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"sort"
 	"strconv"
@@ -99,28 +98,7 @@ func (s *Server) handleGetMetricHistory(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) StartMetricHistorySweeper(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		interval = time.Hour
-	}
-	s.tasks.Add(1)
-	go func() {
-		defer s.tasks.Done()
-		cleanup := func() {
-			if _, err := s.st.DeleteExpiredServerMetricHistory(ctx, metricHistoryRetention); err != nil {
-				log.Printf("metric history cleanup: %v", err)
-			}
-		}
-		cleanup()
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				cleanup()
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+func (s *Server) cleanupMetricHistory(ctx context.Context) error {
+	_, err := s.st.DeleteExpiredServerMetricHistory(ctx, metricHistoryRetention)
+	return err
 }

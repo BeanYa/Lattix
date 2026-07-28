@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { PlusIcon, XIcon } from 'lucide-react'
+import { Building2Icon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
 import { CountryCombobox } from '@/components/CountryCombobox'
@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Separator } from '@/components/ui/separator'
 import {
   Select,
   SelectContent,
@@ -29,9 +30,99 @@ import { formatDateTime } from '@/lib/format'
 import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { useTimezone } from '@/lib/timezone'
-import type { MachineType, PortRange, ReleaseVersions, Server, ServerMetricSeries } from '@/lib/types'
+import type { BillingInput, IntervalUnit, MachineType, PortRange, Provider, ReleaseVersions, Server, ServerMetricSeries, TrafficAccountingMode, TrafficPlanInput } from '@/lib/types'
 
 const DEPENDENCIES_COMMAND = 'apk add --no-cache bash curl ca-certificates unzip util-linux'
+const CURRENCIES = ['CNY', 'USD', 'EUR', 'CAD', 'HKD', 'JPY', 'AUD', 'GBP', 'SGD', 'CHF']
+
+interface BillingFormState {
+  enabled: boolean
+  providerId: string
+  amount: string
+  currency: string
+  startedOn: string
+  intervalCount: number
+  intervalUnit: IntervalUnit
+  renewalOn: string
+}
+
+interface TrafficFormState {
+  limited: boolean
+  quota: string
+  quotaUnit: 'GB' | 'TB'
+  accountingMode: TrafficAccountingMode
+  anchorOn: string
+  resetCount: number
+  resetUnit: IntervalUnit
+}
+
+function localDate() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+function addInterval(date: string, count: number, unit: IntervalUnit) {
+  const value = new Date(`${date}T00:00:00`)
+  if (unit === 'day') value.setDate(value.getDate() + count)
+  if (unit === 'month') value.setMonth(value.getMonth() + count)
+  if (unit === 'year') value.setFullYear(value.getFullYear() + count)
+  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+}
+
+function defaultBilling(): BillingFormState {
+  const today = localDate()
+  return { enabled: false, providerId: '', amount: '', currency: 'CNY', startedOn: today, intervalCount: 1, intervalUnit: 'month', renewalOn: addInterval(today, 1, 'month') }
+}
+
+function defaultTraffic(): TrafficFormState {
+  return { limited: false, quota: '1000', quotaUnit: 'GB', accountingMode: 'outbound', anchorOn: localDate(), resetCount: 1, resetUnit: 'month' }
+}
+
+function billingPayload(value: BillingFormState): BillingInput {
+  const digits = ['JPY', 'KRW', 'ISK'].includes(value.currency) ? 0 : 2
+  return { enabled: value.enabled, provider_id: Number(value.providerId || 0), amount_minor: Math.round(Number(value.amount || 0) * 10 ** digits), currency: value.currency, service_started_on: value.startedOn, interval_count: value.intervalCount, interval_unit: value.intervalUnit, next_renewal_on: value.renewalOn }
+}
+
+function trafficPayload(value: TrafficFormState): TrafficPlanInput {
+  return { quota_bytes: value.limited ? Math.round(Number(value.quota) * (value.quotaUnit === 'TB' ? 1e12 : 1e9)) : null, accounting_mode: value.accountingMode, reset_anchor_on: value.anchorOn, reset_count: value.resetCount, reset_unit: value.resetUnit }
+}
+
+function BillingTrafficFields({ billing, setBilling, traffic, setTraffic, providers, onManageProviders }: {
+  billing: BillingFormState
+  setBilling: (value: BillingFormState) => void
+  traffic: TrafficFormState
+  setTraffic: (value: TrafficFormState) => void
+  providers: Provider[]
+  onManageProviders: () => void
+}) {
+  return (
+    <div className="space-y-5">
+      <Separator />
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium">流量额度</h3>
+          <p className="text-xs text-muted-foreground">十进制换算：1 GB = 10^9 bytes，1 TB = 1000 GB</p>
+        </div>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={traffic.limited} onChange={(e) => setTraffic({ ...traffic, limited: e.target.checked })} />有限额度</label>
+        {traffic.limited ? <div className="grid grid-cols-[1fr_110px] gap-2"><Input type="number" min="0.01" step="0.01" value={traffic.quota} onChange={(e) => setTraffic({ ...traffic, quota: e.target.value })} /><Select value={traffic.quotaUnit} onValueChange={(v) => v && setTraffic({ ...traffic, quotaUnit: v as 'GB' | 'TB' })} items={[{ value: 'GB', label: 'GB' }, { value: 'TB', label: 'TB' }]}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="GB">GB</SelectItem><SelectItem value="TB">TB</SelectItem></SelectContent></Select></div> : null}
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-2"><Label>计流方式</Label><Select value={traffic.accountingMode} onValueChange={(v) => v && setTraffic({ ...traffic, accountingMode: v as TrafficAccountingMode })} items={[{ value: 'outbound', label: '仅出站' }, { value: 'bidirectional', label: '入站 + 出站' }, { value: 'max', label: '取较大方向' }]}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="outbound">仅出站</SelectItem><SelectItem value="bidirectional">入站 + 出站</SelectItem><SelectItem value="max">取较大方向</SelectItem></SelectContent></Select></div>
+          <div className="space-y-2"><Label>重置锚点</Label><Input type="date" value={traffic.anchorOn} onChange={(e) => setTraffic({ ...traffic, anchorOn: e.target.value })} /></div>
+        </div>
+      </section>
+      <Separator />
+      <section className="space-y-3">
+        <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={billing.enabled} onChange={(e) => setBilling({ ...billing, enabled: e.target.checked })} />统计计费</label>
+        {billing.enabled ? <>
+          <div className="grid grid-cols-[1fr_auto] items-end gap-2"><div className="space-y-2"><Label>服务商</Label><Select value={billing.providerId} onValueChange={(v) => v && setBilling({ ...billing, providerId: v })} items={providers.map((p) => ({ value: String(p.id), label: p.name }))}><SelectTrigger><SelectValue placeholder="选择服务商" /></SelectTrigger><SelectContent>{providers.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}</SelectContent></Select></div><Button type="button" variant="outline" size="icon" title="管理服务商" onClick={onManageProviders}><Building2Icon /></Button></div>
+          <div className="grid grid-cols-[1fr_110px] gap-2"><div className="space-y-2"><Label>每周期实付金额</Label><Input type="number" min="0" step="0.01" value={billing.amount} onChange={(e) => setBilling({ ...billing, amount: e.target.value })} /></div><div className="space-y-2"><Label>币种</Label><Select value={billing.currency} onValueChange={(v) => v && setBilling({ ...billing, currency: v })} items={CURRENCIES.map((c) => ({ value: c, label: c }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div></div>
+          <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label>开通日期</Label><Input type="date" max={localDate()} value={billing.startedOn} onChange={(e) => setBilling({ ...billing, startedOn: e.target.value, renewalOn: addInterval(e.target.value, billing.intervalCount, billing.intervalUnit) })} /></div><div className="space-y-2"><Label>下次续费日</Label><Input type="date" value={billing.renewalOn} onChange={(e) => setBilling({ ...billing, renewalOn: e.target.value })} /></div></div>
+          <div className="grid grid-cols-[1fr_140px] gap-2"><div className="space-y-2"><Label>计费周期</Label><Input type="number" min="1" value={billing.intervalCount} onChange={(e) => setBilling({ ...billing, intervalCount: Number(e.target.value) })} /></div><div className="space-y-2"><Label>单位</Label><Select value={billing.intervalUnit} onValueChange={(v) => v && setBilling({ ...billing, intervalUnit: v as IntervalUnit })} items={[{ value: 'day', label: '天' }, { value: 'month', label: '月' }, { value: 'year', label: '年' }]}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="day">天</SelectItem><SelectItem value="month">月</SelectItem><SelectItem value="year">年</SelectItem></SelectContent></Select></div></div>
+        </> : null}
+      </section>
+    </div>
+  )
+}
 
 // 内置公网地址候选（§9）：拨入学习地址 + agent 上报的网卡非回环地址，去重。
 function addrCandidates(s: Server): string[] {
@@ -104,6 +195,14 @@ export default function Servers() {
   const [metricSamples, setMetricSamples] = useState<ServerMetricSeries[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [providers, setProviders] = useState<Provider[]>([])
+  const [providerManagerOpen, setProviderManagerOpen] = useState(false)
+  const [providerEditID, setProviderEditID] = useState<number | null>(null)
+  const [providerName, setProviderName] = useState('')
+  const [providerWebsite, setProviderWebsite] = useState('')
+  const [providerError, setProviderError] = useState('')
+  const [billing, setBilling] = useState<BillingFormState>(defaultBilling)
+  const [traffic, setTraffic] = useState<TrafficFormState>(defaultTraffic)
 
   const [open, setOpen] = useState(false)
   const [alias, setAlias] = useState('')
@@ -133,6 +232,11 @@ export default function Servers() {
   const [editCities, setEditCities] = useState<string[]>([])
   const [editSaving, setEditSaving] = useState(false)
   const [editError, setEditError] = useState('')
+  const [editBilling, setEditBilling] = useState<BillingFormState>(defaultBilling)
+  const [editTraffic, setEditTraffic] = useState<TrafficFormState>(defaultTraffic)
+  const [renewTarget, setRenewTarget] = useState<Server | null>(null)
+  const [renewalOn, setRenewalOn] = useState('')
+  const [renewing, setRenewing] = useState(false)
   const [upgradeTarget, setUpgradeTarget] = useState<Server | null>(null)
   const [upgradeKind, setUpgradeKind] = useState<'xray' | 'agent'>('xray')
   const [upgradeVersion, setUpgradeVersion] = useState('latest')
@@ -154,11 +258,15 @@ export default function Servers() {
       .finally(() => setLoading(false))
   }, [])
 
+  const loadProviders = useCallback(() => api.providers().then(setProviders).catch(() => setProviders([])), [])
+
   useEffect(() => {
     load()
     const timer = setInterval(load, 5000)
     return () => clearInterval(timer)
   }, [load])
+
+  useEffect(() => { loadProviders() }, [loadProviders])
 
   useEffect(() => {
     let active = true
@@ -221,6 +329,8 @@ export default function Servers() {
       setCountryCode('')
       setLocation('')
       setPortRows([''])
+      setBilling(defaultBilling())
+      setTraffic(defaultTraffic())
       setCreateError('')
     }
   }
@@ -237,11 +347,15 @@ export default function Servers() {
       tags?: string[]
       country_code: string
       location: string
+      billing: BillingInput
+      traffic_plan: TrafficPlanInput
     } = {
       alias: alias.trim(),
       machine_type: machineType,
       country_code: countryCode,
       location: location.trim(),
+      billing: billingPayload(billing),
+      traffic_plan: trafficPayload(traffic),
     }
     body.tags = tags
     if (address.trim()) {
@@ -340,6 +454,11 @@ export default function Servers() {
     setEditTags(s.tags)
     setEditCountryCode(s.country_code)
     setEditLocation(s.location)
+    const divisor = ['JPY', 'KRW', 'ISK'].includes(s.billing.currency) ? 1 : 100
+    setEditBilling({ enabled: s.billing.enabled, providerId: s.billing.provider ? String(s.billing.provider.id) : '', amount: String(s.billing.amount_minor / divisor), currency: s.billing.currency || 'CNY', startedOn: s.billing.service_started_on || localDate(), intervalCount: s.billing.interval_count || 1, intervalUnit: s.billing.interval_unit || 'month', renewalOn: s.billing.next_renewal_on || addInterval(localDate(), 1, 'month') })
+    const quota = s.traffic_plan.quota_bytes
+    const quotaUnit: 'GB' | 'TB' = quota !== null && quota >= 1e12 ? 'TB' : 'GB'
+    setEditTraffic({ limited: quota !== null, quota: quota === null ? '1000' : String(quota / (quotaUnit === 'TB' ? 1e12 : 1e9)), quotaUnit, accountingMode: s.traffic_plan.accounting_mode, anchorOn: s.traffic_plan.reset_anchor_on || localDate(), resetCount: s.traffic_plan.reset_count || 1, resetUnit: s.traffic_plan.reset_unit || 'month' })
     setEditError('')
   }
 
@@ -386,6 +505,8 @@ export default function Servers() {
           nextTags,
           editCountryCode,
           editLocation.trim(),
+          billingPayload(editBilling),
+          trafficPayload(editTraffic),
         )
       } else {
         await api.updateServerAddress(
@@ -395,6 +516,8 @@ export default function Servers() {
           nextTags,
           editCountryCode,
           editLocation.trim(),
+          billingPayload(editBilling),
+          trafficPayload(editTraffic),
         )
       }
       setEditTarget(null)
@@ -522,6 +645,36 @@ export default function Servers() {
 
   const editCandidates = editTarget ? addrCandidates(editTarget) : []
 
+  const saveProvider = async (event: FormEvent) => {
+    event.preventDefault()
+    setProviderError('')
+    try {
+      if (providerEditID) await api.updateProvider(providerEditID, providerName, providerWebsite)
+      else await api.createProvider(providerName, providerWebsite)
+      setProviderEditID(null); setProviderName(''); setProviderWebsite('')
+      await loadProviders()
+    } catch (err) { setProviderError(errorMessage(err)) }
+  }
+
+  const removeProvider = async (provider: Provider) => {
+    if (!(await confirm({ title: '删除服务商', description: `确定删除「${provider.name}」？已被服务器使用时无法删除。`, confirmLabel: '删除', destructive: true }))) return
+    try { await api.deleteProvider(provider.id); await loadProviders() } catch (err) { setProviderError(errorMessage(err)) }
+  }
+
+  const openRenewal = (server: Server) => {
+    setRenewTarget(server)
+    setRenewalOn(addInterval(localDate(), server.billing.interval_count, server.billing.interval_unit))
+  }
+
+  const confirmRenewal = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!renewTarget) return
+    setRenewing(true)
+    try { await api.confirmServerRenewal(renewTarget.id, renewalOn); setRenewTarget(null); load() }
+    catch (err) { setError(errorMessage(err)) }
+    finally { setRenewing(false) }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -543,11 +696,12 @@ export default function Servers() {
         onRepair={onRepair}
         onRotateToken={onRotateToken}
         onUpgrade={onOpenUpgrade}
+        onRenew={openRenewal}
         onDelete={setDeleteTarget}
       />
 
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>添加服务器</DialogTitle>
             <DialogDescription>输入别名创建服务器。</DialogDescription>
@@ -656,6 +810,7 @@ export default function Servers() {
                 placeholder="latest 或具体版本号（如 v26.3.27）"
               />
             </div>
+            <BillingTrafficFields billing={billing} setBilling={setBilling} traffic={traffic} setTraffic={setTraffic} providers={providers} onManageProviders={() => setProviderManagerOpen(true)} />
             {createError && <p className="text-sm text-destructive">{createError}</p>}
             <DialogFooter>
               <Button
@@ -702,7 +857,7 @@ export default function Servers() {
       </Dialog>
 
       <Dialog open={editTarget !== null} onOpenChange={(next) => !next && setEditTarget(null)}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>编辑服务器</DialogTitle>
             <DialogDescription>
@@ -826,6 +981,7 @@ export default function Servers() {
                 </p>
               </div>
             )}
+            <BillingTrafficFields billing={editBilling} setBilling={setEditBilling} traffic={editTraffic} setTraffic={setEditTraffic} providers={providers} onManageProviders={() => setProviderManagerOpen(true)} />
             {editError && <p className="text-sm text-destructive">{editError}</p>}
             <DialogFooter>
               <Button
@@ -978,6 +1134,30 @@ export default function Servers() {
               </Button>
             )}
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={providerManagerOpen} onOpenChange={setProviderManagerOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>服务商管理</DialogTitle><DialogDescription>服务器列表中仅显示服务商名称，官网用于快捷打开控制台。</DialogDescription></DialogHeader>
+          <form onSubmit={saveProvider} className="space-y-3">
+            <div className="space-y-2"><Label>服务商名称</Label><Input value={providerName} onChange={(e) => setProviderName(e.target.value)} required maxLength={100} /></div>
+            <div className="space-y-2"><Label>官网地址</Label><Input type="url" value={providerWebsite} onChange={(e) => setProviderWebsite(e.target.value)} placeholder="https://provider.example" /></div>
+            {providerError ? <p className="text-sm text-destructive">{providerError}</p> : null}
+            <DialogFooter><Button type="submit">{providerEditID ? '保存修改' : '添加服务商'}</Button></DialogFooter>
+          </form>
+          <Separator />
+          <div className="max-h-56 space-y-2 overflow-y-auto">
+            {providers.map((provider) => <div key={provider.id} className="flex items-center justify-between gap-3 border-b py-2 last:border-0"><div className="min-w-0"><p className="truncate text-sm font-medium">{provider.name}</p><p className="truncate text-xs text-muted-foreground">{provider.website_url || '未配置官网'}</p></div><div className="flex gap-1"><Button type="button" variant="ghost" size="icon" title="编辑服务商" onClick={() => { setProviderEditID(provider.id); setProviderName(provider.name); setProviderWebsite(provider.website_url) }}><PencilIcon /></Button><Button type="button" variant="ghost" size="icon" title="删除服务商" onClick={() => removeProvider(provider)}><Trash2Icon /></Button></div></div>)}
+            {providers.length === 0 ? <p className="py-6 text-center text-sm text-muted-foreground">暂无服务商</p> : null}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={renewTarget !== null} onOpenChange={(next) => !next && setRenewTarget(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>续费确认</DialogTitle><DialogDescription>确认「{renewTarget?.alias}」已经续费，并设置新的下次续费日。</DialogDescription></DialogHeader>
+          <form onSubmit={confirmRenewal} className="space-y-4"><div className="space-y-2"><Label>下次续费日</Label><Input type="date" min={addInterval(localDate(), 1, 'day')} value={renewalOn} onChange={(e) => setRenewalOn(e.target.value)} required /></div><DialogFooter><Button type="submit" disabled={renewing}>{renewing ? '确认中…' : '确认续费'}</Button></DialogFooter></form>
         </DialogContent>
       </Dialog>
     </div>

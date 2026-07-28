@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+	CalendarCheckIcon,
   EllipsisIcon,
+	ExternalLinkIcon,
   Globe2Icon,
   PencilIcon,
   RefreshCwIcon,
@@ -13,6 +15,7 @@ import {
 } from 'lucide-react'
 
 import { CountryFlag } from '@/components/CountryFlag'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -45,7 +48,7 @@ import { api } from '@/lib/api'
 import { formatByteRate, formatDateTime, humanizeBytes } from '@/lib/format'
 import { formatPortRange } from '@/lib/ports'
 import { cn } from '@/lib/utils'
-import type { Server, ServerMetrics, ServerMetricSeries } from '@/lib/types'
+import type { ConvertedCost, Server, ServerMetrics, ServerMetricSeries } from '@/lib/types'
 
 type Health = 'normal' | 'warning' | 'critical'
 
@@ -58,7 +61,86 @@ interface ServerMonitorProps {
   onRepair: (server: Server) => void
   onRotateToken: (server: Server) => void
   onUpgrade: (server: Server, kind: 'xray' | 'agent') => void
+  onRenew: (server: Server) => void
   onDelete: (server: Server) => void
+}
+
+function formatTrafficBytes(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000
+    unit += 1
+  }
+  return `${value.toLocaleString(undefined, { maximumFractionDigits: value >= 100 ? 0 : 2 })} ${units[unit]}`
+}
+
+const billingStatusLabel = {
+  active: '有效',
+  due_today: '今日到期',
+  assumed_valid: '推定有效',
+  expired: '已过期',
+} as const
+
+function convertedRateLabel(cost: ConvertedCost): string {
+  const label = cost.source === 'identity'
+    ? '无需换算'
+    : cost.source === 'custom_anchor'
+      ? `自定义锚点 ${cost.anchor_currency ?? ''}`.trim()
+      : 'Frankfurter'
+  return cost.rate_date ? `${label} · ${cost.rate_date}` : label
+}
+
+function formatConvertedCost(cost: ConvertedCost): string {
+  const divisor = ['JPY', 'KRW', 'ISK'].includes(cost.currency) ? 1 : 100
+  return `${(cost.amount_minor / divisor).toLocaleString()} ${cost.currency}`
+}
+
+function TrafficSegmentBar({ ratio, complete, unlimited }: { ratio: number; complete: boolean; unlimited: boolean }) {
+  const segments = 24
+  const clamped = Math.min(100, Math.max(0, ratio))
+  const filled = unlimited || clamped === 0 ? 0 : Math.ceil((clamped / 100) * segments)
+  const fillClass = !complete
+    ? 'bg-muted-foreground'
+    : clamped >= 80
+      ? 'bg-destructive'
+      : clamped >= 60
+        ? 'bg-warning'
+        : 'bg-success'
+  return (
+    <div
+      className="grid h-2 grid-cols-[repeat(24,minmax(0,1fr))] gap-[2px]"
+      role="progressbar"
+      aria-label="流量额度使用率"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={unlimited ? 0 : Math.round(clamped)}
+    >
+      {Array.from({ length: segments }).map((_, index) => (
+        <span key={index} className={cn('h-2 bg-muted', index < filled && fillClass)} />
+      ))}
+    </div>
+  )
+}
+
+function TrafficUsage({ server }: { server: Server }) {
+  const traffic = server.traffic_plan
+  const ratio = traffic.quota_bytes ? (traffic.used_bytes / traffic.quota_bytes) * 100 : 0
+  const alert = traffic.complete && ratio >= 60
+  return (
+    <div className="space-y-1.5" aria-label="本周期流量">
+      <div className="flex items-center justify-between gap-3 text-xs tabular-nums">
+        <span className={cn('font-medium', alert && (ratio >= 80 ? 'text-destructive' : 'text-warning'))}>{formatTrafficBytes(traffic.used_bytes)}</span>
+        <span className="text-muted-foreground">
+          {traffic.quota_bytes === null ? '无限额度' : formatTrafficBytes(traffic.quota_bytes)}
+          <span className="ml-1">· {traffic.next_reset_on} 重置</span>
+        </span>
+      </div>
+      <TrafficSegmentBar ratio={ratio} complete={traffic.complete} unlimited={traffic.quota_bytes === null} />
+      {!traffic.complete ? <span className="text-[11px] text-muted-foreground">本周期数据不完整</span> : null}
+    </div>
+  )
 }
 
 function percent(used: number, total: number): number {
@@ -159,6 +241,7 @@ function ServerActions({
   onRepair,
   onRotateToken,
   onUpgrade,
+  onRenew,
   onDelete,
 }: Omit<ServerMonitorProps, 'servers' | 'samples' | 'loading' | 'timezone'> & {
   server: Server
@@ -202,6 +285,20 @@ function ServerActions({
             <RotateCcwKeyIcon />
             {server.last_seen_at ? '刷新凭证' : '查看安装命令'}
           </DropdownMenuItem>
+          {server.billing.enabled && ['due_today', 'assumed_valid', 'expired'].includes(server.billing.status) ? (
+            <DropdownMenuItem onClick={() => onRenew(server)}>
+              <CalendarCheckIcon />
+              续费确认
+            </DropdownMenuItem>
+          ) : null}
+          {server.billing.provider?.website_url ? (
+            <DropdownMenuItem
+              onClick={() => window.open(server.billing.provider?.website_url, '_blank', 'noopener,noreferrer')}
+            >
+              <ExternalLinkIcon />
+              打开服务商官网
+            </DropdownMenuItem>
+          ) : null}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
@@ -257,6 +354,14 @@ function ServerCard({
             <CountryFlag code={server.country_code} />
             <span className="truncate">{server.location || server.country_code || '未设置地区'}</span>
           </span>
+          {server.billing.enabled && server.billing.status in billingStatusLabel ? (
+            <Badge
+              variant={server.billing.status === 'expired' ? 'destructive' : 'outline'}
+              className="mt-1 w-fit"
+            >
+              {billingStatusLabel[server.billing.status as keyof typeof billingStatusLabel]}
+            </Badge>
+          ) : null}
           <span
             className="flex min-w-0 items-center gap-1.5 font-mono text-[11px]"
             title={publicAddress || '公网地址待学习'}
@@ -319,14 +424,20 @@ function ServerCard({
                 <LatencyStrip samples={samples} />
               </div>
             </div>
+            <Separator />
+            <TrafficUsage server={server} />
           </>
         ) : (
-          <div className="flex min-h-48 flex-col items-center justify-center gap-2 text-center">
-            <ServerCogIcon className="size-6 text-muted-foreground" />
-            <span className="text-sm text-muted-foreground">
-              {server.online ? '等待 Agent 首次遥测' : '服务器尚未连接'}
-            </span>
-          </div>
+          <>
+            <div className="flex min-h-28 flex-col items-center justify-center gap-2 text-center">
+              <ServerCogIcon className="size-6 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">
+                {server.online ? '等待 Agent 首次遥测' : '服务器尚未连接'}
+              </span>
+            </div>
+            <Separator />
+            <TrafficUsage server={server} />
+          </>
         )}
       </CardContent>
     </Card>
@@ -618,15 +729,60 @@ function DetailSheet({
                 <dd className="mt-1">{server.config_drift ? '配置漂移' : '正常'}</dd>
               </div>
               <div>
+                <dt className="text-xs text-muted-foreground">流量额度</dt>
+                <dd className="mt-1">{server.traffic_plan.quota_bytes === null ? '无限' : formatTrafficBytes(server.traffic_plan.quota_bytes)}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-muted-foreground">本周期流量</dt>
+                <dd className="mt-1">{formatTrafficBytes(server.traffic_plan.used_bytes)} · {server.traffic_plan.accounting_mode === 'bidirectional' ? '双向合计' : server.traffic_plan.accounting_mode === 'max' ? '取较大方向' : '仅出站'}</dd>
+              </div>
+              {server.billing.enabled ? (
+                <>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">服务商</dt>
+                    <dd className="mt-1">{server.billing.provider?.name ?? '-'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">费用</dt>
+                    <dd className="mt-1 tabular-nums">{(server.billing.amount_minor / (['JPY', 'KRW', 'ISK'].includes(server.billing.currency) ? 1 : 100)).toLocaleString()} {server.billing.currency} / {server.billing.interval_count} {server.billing.interval_unit === 'day' ? '天' : server.billing.interval_unit === 'year' ? '年' : '月'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-xs text-muted-foreground">下次续费</dt>
+                    <dd className="mt-1">{server.billing.next_renewal_on}</dd>
+                  </div>
+                </>
+              ) : null}
+              <div>
                 <dt className="text-xs text-muted-foreground">Agent 设置</dt>
                 <dd className="mt-1">
                   {server.agent_settings_status === 'synced'
                     ? '已同步'
                     : server.agent_settings_status === 'failed'
                       ? '同步失败'
-                      : '待同步'}
+                  : '待同步'}
                 </dd>
               </div>
+              {server.billing.enabled && server.billing.public_converted ? (
+                <div className="col-span-2 mt-1 border-t pt-3">
+                  <dt className="text-xs font-medium text-muted-foreground">费用折算</dt>
+                  <dd className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <div>
+                      <span className="block text-xs text-muted-foreground">公共汇率结果</span>
+                      <span className="mt-0.5 block tabular-nums">
+                        {formatConvertedCost(server.billing.public_converted)} · {convertedRateLabel(server.billing.public_converted)}
+                      </span>
+                    </div>
+                    {server.billing.custom_converted ? (
+                      <div>
+                        <span className="block text-xs text-muted-foreground">自定义汇率结果</span>
+                        <span className="mt-0.5 block tabular-nums">
+                          {formatConvertedCost(server.billing.custom_converted)} · {convertedRateLabel(server.billing.custom_converted)}
+                        </span>
+                      </div>
+                    ) : null}
+                  </dd>
+                </div>
+              ) : null}
             </dl>
             <Separator />
             {loading && history.length === 0 ? (
@@ -724,6 +880,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
             onRepair={props.onRepair}
             onRotateToken={props.onRotateToken}
             onUpgrade={props.onUpgrade}
+            onRenew={props.onRenew}
             onDelete={props.onDelete}
           />
         ))}

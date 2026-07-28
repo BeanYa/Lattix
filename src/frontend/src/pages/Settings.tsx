@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { PlusIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -23,7 +24,7 @@ import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
 import { useTimezone } from '@/lib/timezone'
-import type { AlertTestResult, InspectionUnit, PanelSettings, PanelVersionInfo } from '@/lib/types'
+import type { AlertTestResult, ExchangeRateSettings, InspectionUnit, PanelSettings, PanelVersionInfo } from '@/lib/types'
 
 // 常用 IANA 时区（可直接输入其他名称，后端用 time.LoadLocation 校验）。
 const COMMON_TIMEZONES = [
@@ -72,6 +73,7 @@ const INSPECTION_UNITS: { value: InspectionUnit; label: string }[] = [
   { value: 'month', label: '月' },
   { value: 'year', label: '年' },
 ]
+const CURRENCIES = ['CNY', 'USD', 'EUR', 'CAD', 'HKD', 'JPY', 'AUD', 'GBP', 'SGD', 'CHF']
 
 const textareaClass =
   'w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 font-mono text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30'
@@ -116,6 +118,15 @@ export default function Settings() {
   const [xrayInspectionEvery, setXrayInspectionEvery] = useState(1)
   const [xrayInspectionUnit, setXrayInspectionUnit] = useState<InspectionUnit>('day')
   const [xrayInspectionAt, setXrayInspectionAt] = useState('03:00')
+  const [billingInspectionAt, setBillingInspectionAt] = useState('00:05')
+  const [exchangeInspectionAt, setExchangeInspectionAt] = useState('02:30')
+  const [reportingCurrency, setReportingCurrency] = useState('CNY')
+  const [exchangeData, setExchangeData] = useState<ExchangeRateSettings | null>(null)
+  const [customSource, setCustomSource] = useState('')
+  const [customSourceAmount, setCustomSourceAmount] = useState('1')
+  const [customTargetAmount, setCustomTargetAmount] = useState('')
+  const [customBaseSide, setCustomBaseSide] = useState<'source' | 'target'>('source')
+  const [refreshingRates, setRefreshingRates] = useState(false)
   // 密码
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -165,9 +176,14 @@ export default function Settings() {
         setXrayInspectionEvery(s.release_inspection.xray.every)
         setXrayInspectionUnit(s.release_inspection.xray.unit)
         setXrayInspectionAt(s.release_inspection.xray.at ?? '03:00')
+        setBillingInspectionAt(s.billing_inspection.at ?? '00:05')
+        setExchangeInspectionAt(s.exchange_rate_inspection.at ?? '02:30')
+        setReportingCurrency(s.reporting_currency)
       })
       .catch((err) => setLoadError(errorMessage(err)))
   }, [])
+
+  useEffect(() => { api.exchangeRates().then(setExchangeData).catch(() => {}) }, [])
 
   const readFileInto = (file: File | undefined, setter: (v: string) => void) => {
     if (!file) {
@@ -223,10 +239,14 @@ export default function Settings() {
               : { at: xrayInspectionAt }),
           },
         },
+        billing_inspection: { every: 1, unit: 'day', at: billingInspectionAt },
+        exchange_rate_inspection: { every: 1, unit: 'day', at: exchangeInspectionAt },
+        reporting_currency: reportingCurrency,
         // bot token 留空 = 保持已保存值（后端语义，与 tls key 一致）
         ...(alertBotToken.trim() ? { alert_telegram_bot_token: alertBotToken.trim() } : {}),
       })
       setSettings(s)
+      setExchangeData(await api.exchangeRates())
       setCertPEM('')
       setKeyPEM('')
       refreshTimezone()
@@ -240,6 +260,35 @@ export default function Settings() {
     } finally {
       setSaving(false)
     }
+  }
+
+  const refreshRates = async () => {
+    setRefreshingRates(true)
+    try { setExchangeData(await api.refreshExchangeRates()) } catch (err) { setError(errorMessage(err)) }
+    finally { setRefreshingRates(false) }
+  }
+
+  const addCustomRate = async () => {
+    try {
+      await api.saveCustomExchangeRate({ id: 0, source_currency: customSource, source_amount: customSourceAmount, target_currency: reportingCurrency, target_amount: customTargetAmount, enabled: true })
+      setExchangeData(await api.exchangeRates())
+      setCustomSource('')
+      setCustomSourceAmount(customBaseSide === 'source' ? '1' : '')
+      setCustomTargetAmount('')
+    } catch (err) { setError(errorMessage(err)) }
+  }
+
+  const changeCustomBaseSide = (side: 'source' | 'target') => {
+    setCustomBaseSide(side)
+    setCustomSourceAmount(side === 'source' ? '1' : '')
+    setCustomTargetAmount(side === 'target' ? '1' : '')
+  }
+
+  const setCustomRateEnabled = async (rate: ExchangeRateSettings['custom_rates'][number], enabled: boolean) => {
+    try {
+      await api.saveCustomExchangeRate({ ...rate, enabled })
+      setExchangeData(await api.exchangeRates())
+    } catch (err) { setError(errorMessage(err)) }
   }
 
   const onChangePassword = async (e: FormEvent) => {
@@ -350,6 +399,17 @@ export default function Settings() {
   if (!settings) {
     return <p className="text-sm text-muted-foreground">加载中…</p>
   }
+
+  const configuredSources = new Set((exchangeData?.custom_rates ?? []).map((rate) => rate.source_currency))
+  const customSourceOptions = CURRENCIES.filter((currency) => currency !== reportingCurrency && !configuredSources.has(currency))
+  const reportingCurrencyPending = reportingCurrency !== settings.reporting_currency
+  const customRateReady = Boolean(
+    customSource
+      && customSourceAmount
+      && customTargetAmount
+      && (Number(customSourceAmount) === 1 || Number(customTargetAmount) === 1)
+      && !reportingCurrencyPending,
+  )
 
   return (
     <div className="max-w-2xl space-y-4">
@@ -521,6 +581,80 @@ export default function Settings() {
                 )}
               </div>
               <p className="text-xs text-muted-foreground">默认每天 03:00 巡检一次。</p>
+            </div>
+            <div className="grid gap-4 border-t pt-5 sm:grid-cols-2">
+              <div className="space-y-2"><Label htmlFor="billingInspectionAt">计费状态巡检</Label><Input id="billingInspectionAt" type="time" value={billingInspectionAt} onChange={(e) => setBillingInspectionAt(e.target.value)} /><p className="text-xs text-muted-foreground">每日执行并驱动服务器计费状态机。</p></div>
+              <div className="space-y-2"><Label htmlFor="exchangeInspectionAt">汇率刷新</Label><Input id="exchangeInspectionAt" type="time" value={exchangeInspectionAt} onChange={(e) => setExchangeInspectionAt(e.target.value)} /><p className="text-xs text-muted-foreground">每日从 Frankfurter 更新持久化缓存。</p></div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle>费用换算</CardTitle><CardDescription>服务器保留原价和原币种，汇总及详情按统计币种折算。</CardDescription></CardHeader>
+          <CardContent className="space-y-5">
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+              <div className="space-y-2">
+                <Label>统计币种</Label>
+                <Select value={reportingCurrency} onValueChange={(v) => v && setReportingCurrency(v)} items={CURRENCIES.map((c) => ({ value: c, label: c }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <Button type="button" variant="outline" className="self-end" disabled={refreshingRates} onClick={refreshRates}>
+                <RefreshCwIcon className={refreshingRates ? 'animate-spin' : ''} />
+                {refreshingRates ? '刷新中…' : '立即刷新汇率'}
+              </Button>
+            </div>
+            <div className="space-y-3 border-t pt-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label>自定义汇率</Label>
+                <div className="flex rounded-md border p-0.5">
+                  <Button type="button" size="xs" variant={customBaseSide === 'source' ? 'secondary' : 'ghost'} onClick={() => changeCustomBaseSide('source')}>源币种 = 1</Button>
+                  <Button type="button" size="xs" variant={customBaseSide === 'target' ? 'secondary' : 'ghost'} onClick={() => changeCustomBaseSide('target')}>展示币种 = 1</Button>
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+                <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-2">
+                  <Input type="number" min="0" step="any" placeholder="金额" readOnly={customBaseSide === 'source'} value={customSourceAmount} onChange={(e) => setCustomSourceAmount(e.target.value)} aria-label="源币种金额" />
+                  <Select value={customSource} onValueChange={(v) => v && setCustomSource(v)} items={customSourceOptions.map((c) => ({ value: c, label: c }))}>
+                    <SelectTrigger aria-label="源币种"><SelectValue placeholder="币种" /></SelectTrigger>
+                    <SelectContent>{customSourceOptions.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+                <span className="text-center text-lg font-medium text-muted-foreground">:</span>
+                <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-2">
+                  <Input type="number" min="0" step="any" placeholder="金额" readOnly={customBaseSide === 'target'} value={customTargetAmount} onChange={(e) => setCustomTargetAmount(e.target.value)} aria-label="展示币种金额" />
+                  <div className="flex h-8 items-center rounded-lg border border-input bg-muted/40 px-2.5 text-sm font-medium" aria-label="展示币种">{reportingCurrency}</div>
+                </div>
+              </div>
+              <Button type="button" variant="outline" disabled={!customRateReady} onClick={addCustomRate}>
+                <PlusIcon />保存并启用
+              </Button>
+              {reportingCurrencyPending ? <p className="text-xs text-warning">展示币种已修改，请先保存设置再添加自定义汇率。</p> : null}
+              <p className="text-xs leading-5 text-muted-foreground">
+                两侧必须有一侧为 1。以 1 USD : 7 CNY 为例：USD 直接按该汇率换算；CAD、EUR、JPY 等先按 Frankfurter 换成 USD，再按自定义汇率换成 CNY；原价为 CNY 的费用保持不变。切换展示币种不会删除记录，仅目标币种匹配当前展示币种的启用项参与自定义结果。费用详情同时显示公共汇率与自定义汇率结果。
+              </p>
+            </div>
+            <div className="space-y-2 border-t pt-4">
+              {(exchangeData?.custom_rates ?? []).map((rate) => (
+                <div key={rate.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 last:border-b-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm tabular-nums">{rate.source_amount} {rate.source_currency} : {rate.target_amount} {rate.target_currency}</span>
+                    <Badge variant={rate.enabled && rate.target_currency === reportingCurrency ? 'secondary' : 'outline'}>
+                      {rate.enabled && rate.target_currency === reportingCurrency ? '当前使用' : rate.enabled ? `目标为 ${rate.target_currency}，未应用` : '已停用'}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button type="button" variant={rate.enabled ? 'secondary' : 'outline'} size="sm" onClick={() => setCustomRateEnabled(rate, !rate.enabled)}>
+                      {rate.enabled ? '停用' : '启用'}
+                    </Button>
+                    <Button type="button" variant="ghost" size="icon-sm" aria-label="删除自定义汇率" onClick={async () => { await api.deleteCustomExchangeRate(rate.id); setExchangeData(await api.exchangeRates()) }}>
+                      <Trash2Icon />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              <p className="text-xs text-muted-foreground">公开汇率日期：{exchangeData?.rates[0]?.rate_date || '暂无缓存'}</p>
             </div>
           </CardContent>
         </Card>

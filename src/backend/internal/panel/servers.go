@@ -56,6 +56,8 @@ type serverDTO struct {
 	AgentSettingsError           string             `json:"agent_settings_error"`
 	AgentSettingsReportedAt      *time.Time         `json:"agent_settings_reported_at"`
 	Metrics                      *metricsDTO        `json:"metrics"` // 主机遥测最新值（§13），无数据为 null
+	Billing                      *billingDTO        `json:"billing"`
+	TrafficPlan                  trafficPlanDTO     `json:"traffic_plan"`
 	CreatedAt                    time.Time          `json:"created_at"`
 }
 
@@ -111,6 +113,18 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 	}
 }
 
+func (s *Server) toServerDTOWithPlans(ctx context.Context, srv store.Server) (serverDTO, error) {
+	dto := s.toServerDTO(srv)
+	billing, err := s.st.ServerBillingMap(ctx)
+	if err != nil { return dto, err }
+	plans, err := s.st.ServerTrafficPlanMap(ctx)
+	if err != nil { return dto, err }
+	providers, err := s.st.ListProviders(ctx)
+	if err != nil { return dto, err }
+	if err := s.enrichServerBilling(ctx, &dto, billing, plans, providerMap(providers)); err != nil { return dto, err }
+	return dto, nil
+}
+
 // handleListServers 处理 GET /api/servers。
 func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 	servers, err := s.st.ListServers(r.Context())
@@ -123,12 +137,32 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	billing, err := s.st.ServerBillingMap(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	plans, err := s.st.ServerTrafficPlanMap(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	providerItems, err := s.st.ListProviders(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	providers := providerMap(providerItems)
 	out := make([]serverDTO, 0, len(servers))
 	for _, srv := range servers {
 		dto := s.toServerDTO(srv)
 		if m, ok := metrics[srv.ID]; ok {
 			value := toMetricsDTO(m)
 			dto.Metrics = &value
+		}
+		if err := s.enrichServerBilling(r.Context(), &dto, billing, plans, providers); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
 		}
 		out = append(out, dto)
 	}
@@ -148,6 +182,8 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		Tags         []string           `json:"tags"`
 		CountryCode  string             `json:"country_code"`
 		Location     string             `json:"location"`
+		Billing      *billingInput      `json:"billing"`
+		TrafficPlan  *trafficPlanInput  `json:"traffic_plan"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -180,6 +216,18 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）")
 		return
 	}
+	if req.Billing != nil {
+		if _, err := validateBillingInput(r.Context(), s.st, *req.Billing, s.billingDefaultDate(r.Context())); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if req.TrafficPlan != nil {
+		if err := validateTrafficInput(*req.TrafficPlan); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	allowedJSON, err := marshalPortRanges(req.AllowedPorts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -205,6 +253,15 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	traffic := req.TrafficPlan
+	if traffic == nil {
+		today := s.billingDefaultDate(r.Context())
+		traffic = &trafficPlanInput{AccountingMode: "outbound", ResetAnchorOn: today, ResetCount: 1, ResetUnit: "month"}
+	}
+	if err := s.saveServerPlans(r.Context(), id, req.Billing, traffic); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	srv, err := s.st.ServerByID(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -216,8 +273,10 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		"country_code": countryCode, "location": location,
 	})
 	base := s.panelBase(r)
+	createdDTO, err := s.toServerDTOWithPlans(r.Context(), *srv)
+	if err != nil { writeError(w, http.StatusInternalServerError, err.Error()); return }
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"server":          s.toServerDTO(*srv),
+		"server":          createdDTO,
 		"bootstrap_token": bootstrap,
 		"install_command": s.installCommand(base, bootstrap, req.XrayVersion),
 	})
@@ -272,8 +331,10 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 	base := s.panelBase(r)
 	srv.Token = bootstrap
 	srv.LastSeenAt = nil
+	rotatedDTO, err := s.toServerDTOWithPlans(r.Context(), *srv)
+	if err != nil { writeError(w, http.StatusInternalServerError, err.Error()); return }
 	writeJSON(w, http.StatusOK, map[string]any{
-		"server":          s.toServerDTO(*srv),
+		"server":          rotatedDTO,
 		"bootstrap_token": bootstrap,
 		"install_command": s.installCommand(base, bootstrap, "latest"),
 	})
@@ -293,6 +354,8 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		Tags         *[]string           `json:"tags"`          // 省略 = 不变；数组 = 整体替换
 		CountryCode  *string             `json:"country_code"`  // 省略 = 不变
 		Location     *string             `json:"location"`      // 省略 = 不变
+		Billing      *billingInput       `json:"billing"`
+		TrafficPlan  *trafficPlanInput   `json:"traffic_plan"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -315,6 +378,18 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	if req.MachineType != "" && req.MachineType != srv.MachineType {
 		writeError(w, http.StatusBadRequest, "机器类型建后不允许互转")
 		return
+	}
+	if req.Billing != nil {
+		if _, err := validateBillingInput(r.Context(), s.st, *req.Billing, s.billingDefaultDate(r.Context())); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if req.TrafficPlan != nil {
+		if err := validateTrafficInput(*req.TrafficPlan); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	beforeDTO := s.toServerDTO(*srv)
 	alias := srv.Alias
@@ -387,13 +462,18 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if err := s.saveServerPlans(r.Context(), id, req.Billing, req.TrafficPlan); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	srv, err = s.st.ServerByID(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	sid := id
-	afterDTO := s.toServerDTO(*srv)
+	afterDTO, err := s.toServerDTOWithPlans(r.Context(), *srv)
+	if err != nil { writeError(w, http.StatusInternalServerError, err.Error()); return }
 	changes := changedValues(
 		map[string]any{
 			"alias": beforeDTO.Alias, "address": beforeDTO.Address, "allowed_ports": beforeDTO.AllowedPorts,

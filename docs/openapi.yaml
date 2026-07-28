@@ -70,6 +70,15 @@ paths:
       operationId: serverUpdate
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/confirm-renewal:
+    post:
+      operationId: serverConfirmRenewal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ConfirmRenewalRequest'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
   /api/server/delete:
     post:
       operationId: serverDelete
@@ -103,6 +112,48 @@ paths:
           in: query
           required: true
           schema: {type: string, enum: [agent, xray]}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/provider/list:
+    get:
+      operationId: providerList
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/provider/create:
+    post:
+      operationId: providerCreate
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/provider/update:
+    post:
+      operationId: providerUpdate
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/provider/delete:
+    post:
+      operationId: providerDelete
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/exchange-rate/list:
+    get:
+      operationId: exchangeRateList
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/exchange-rate/refresh:
+    post:
+      operationId: exchangeRateRefresh
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/exchange-rate/save-custom:
+    post:
+      operationId: exchangeRateSaveCustom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CustomExchangeRate'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/exchange-rate/delete-custom:
+    post:
+      operationId: exchangeRateDeleteCustom
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
   /api/node/list:
     get:
@@ -320,6 +371,74 @@ components:
       properties:
         agent: {$ref: '#/components/schemas/AgentSettings'}
         release_inspection: {$ref: '#/components/schemas/ReleaseInspectionSettings'}
+        billing_inspection: {$ref: '#/components/schemas/InspectionSchedule'}
+        exchange_rate_inspection: {$ref: '#/components/schemas/InspectionSchedule'}
+        reporting_currency: {$ref: '#/components/schemas/Currency'}
+    Currency:
+      type: string
+      description: Supported ISO 4217 currency code.
+      enum: [AUD, BRL, CAD, CHF, CNY, CZK, DKK, EUR, GBP, HKD, HUF, IDR, ILS, INR, ISK, JPY, KRW, MXN, MYR, NOK, NZD, PHP, PLN, RON, SEK, SGD, THB, TRY, USD, ZAR]
+    BillingInput:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: {type: boolean, default: false}
+        provider_id: {type: integer, minimum: 1}
+        amount_minor: {type: integer, minimum: 0, description: Original price in the currency's minor unit.}
+        currency: {$ref: '#/components/schemas/Currency'}
+        service_started_on: {type: string, format: date}
+        interval_count: {type: integer, minimum: 1, maximum: 10000}
+        interval_unit: {type: string, enum: [day, month, year]}
+        next_renewal_on: {type: string, format: date}
+    ConvertedCost:
+      type: object
+      additionalProperties: false
+      required: [amount_minor, currency, rate_date, source]
+      properties:
+        amount_minor: {type: integer, description: Converted value in the reporting currency's minor unit.}
+        currency: {$ref: '#/components/schemas/Currency'}
+        rate_date: {type: string, description: Public cache date; empty for an identity conversion.}
+        source: {type: string, enum: [identity, frankfurter, custom_anchor]}
+        anchor_currency: {type: string, description: Present for custom_anchor results.}
+    BillingProfile:
+      type: object
+      description: Server billing data. Public conversion is always attempted; custom conversion is present only when an enabled anchor target matches the reporting currency.
+      properties:
+        enabled: {type: boolean}
+        amount_minor: {type: integer}
+        currency: {$ref: '#/components/schemas/Currency'}
+        public_converted: {$ref: '#/components/schemas/ConvertedCost'}
+        custom_converted: {$ref: '#/components/schemas/ConvertedCost'}
+    TrafficPlanInput:
+      type: object
+      additionalProperties: false
+      required: [quota_bytes, accounting_mode, reset_anchor_on, reset_count, reset_unit]
+      properties:
+        quota_bytes: {type: [integer, 'null'], minimum: 1, description: Decimal bytes; null means unlimited.}
+        accounting_mode: {type: string, enum: [outbound, bidirectional, max]}
+        reset_anchor_on: {type: string, format: date}
+        reset_count: {type: integer, minimum: 1, maximum: 10000}
+        reset_unit: {type: string, enum: [day, month, year]}
+    ConfirmRenewalRequest:
+      type: object
+      additionalProperties: false
+      required: [server_id, next_renewal_on]
+      properties:
+        server_id: {type: integer, minimum: 1}
+        next_renewal_on: {type: string, format: date, description: Must be later than today in the panel timezone.}
+    CustomExchangeRate:
+      type: object
+      description: Source currency is unique. On create, target_currency is overwritten with the panel reporting currency. At least one amount must equal 1. A rate is applied only while enabled and its target matches the current reporting currency.
+      additionalProperties: false
+      required: [id, source_currency, source_amount, target_currency, target_amount, enabled]
+      properties:
+        id: {type: integer, minimum: 0, description: Zero creates a new rate; a positive ID updates it.}
+        source_currency: {$ref: '#/components/schemas/Currency'}
+        source_amount: {type: string, pattern: '^[0-9]+(?:\\.[0-9]+)?$', description: Source-side major-unit amount; this or target_amount must equal 1.}
+        target_currency: {$ref: '#/components/schemas/Currency'}
+        target_amount: {type: string, pattern: '^[0-9]+(?:\\.[0-9]+)?$', description: Reporting-currency major-unit amount; this or source_amount must equal 1.}
+        enabled: {type: boolean}
     InspectionSchedule:
       type: object
       additionalProperties: false

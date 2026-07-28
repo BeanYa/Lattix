@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -45,11 +46,21 @@ func metricArgs(serverID int64, m ServerMetrics) []any {
 
 // SaveServerMetrics 原子更新最新值并插入历史样本（telemetry 上报驱动）。
 func (s *Store) SaveServerMetrics(ctx context.Context, serverID int64, m ServerMetrics) error {
+	loc := time.Local
+	if name, err := s.GetSetting(ctx, SettingTimezone); err == nil && name != "" {
+		if configured, loadErr := time.LoadLocation(name); loadErr == nil {
+			loc = configured
+		}
+	}
+	usageDate := time.Now().In(loc).Format("2006-01-02")
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin server metrics: %w", err)
 	}
 	defer tx.Rollback()
+	var previous ServerMetrics
+	previousErr := scanServerMetrics(tx.QueryRowContext(ctx,
+		`SELECT `+metricColumns+`, updated_at FROM server_metrics WHERE server_id = ?`, serverID), &previous)
 	args := metricArgs(serverID, m)
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO server_metrics (`+metricColumns+`, updated_at)
@@ -75,6 +86,19 @@ func (s *Store) SaveServerMetrics(ctx context.Context, serverID int64, m ServerM
 		args...)
 	if err != nil {
 		return fmt.Errorf("insert server metric history: %w", err)
+	}
+	if previousErr == nil && previous.NetworkInterface != "" && previous.NetworkInterface == m.NetworkInterface &&
+		m.UptimeSeconds >= previous.UptimeSeconds && m.NetworkTXBytes >= previous.NetworkTXBytes && m.NetworkRXBytes >= previous.NetworkRXBytes {
+		txDelta, rxDelta := m.NetworkTXBytes-previous.NetworkTXBytes, m.NetworkRXBytes-previous.NetworkRXBytes
+		if txDelta <= math.MaxInt64 && rxDelta <= math.MaxInt64 {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO server_network_usage_daily (server_id, usage_date, tx_bytes, rx_bytes)
+				VALUES (?, ?, ?, ?) ON CONFLICT(server_id, usage_date) DO UPDATE SET
+				tx_bytes=tx_bytes+excluded.tx_bytes, rx_bytes=rx_bytes+excluded.rx_bytes`, serverID, usageDate, int64(txDelta), int64(rxDelta)); err != nil {
+				return fmt.Errorf("record server network usage: %w", err)
+			}
+		}
+	} else if previousErr != nil && !errors.Is(previousErr, sql.ErrNoRows) {
+		return fmt.Errorf("read previous server metrics: %w", previousErr)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit server metrics: %w", err)

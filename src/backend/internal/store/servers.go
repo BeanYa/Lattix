@@ -251,6 +251,9 @@ func (s *Store) DeleteServerCascade(ctx context.Context, id int64) error {
 		`DELETE FROM chains WHERE id NOT IN (SELECT DISTINCT chain_id FROM chain_hops)`,
 		`DELETE FROM server_metric_history WHERE server_id = ?`,
 		`DELETE FROM server_metrics WHERE server_id = ?`,
+		`DELETE FROM server_network_usage_daily WHERE server_id = ?`,
+		`DELETE FROM server_traffic_plans WHERE server_id = ?`,
+		`DELETE FROM server_billing WHERE server_id = ?`,
 		`DELETE FROM servers WHERE id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {

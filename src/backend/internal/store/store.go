@@ -37,6 +37,71 @@ CREATE TABLE IF NOT EXISTS servers (
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS providers (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    website_url TEXT NOT NULL DEFAULT '',
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS server_billing (
+    server_id                 INTEGER PRIMARY KEY REFERENCES servers(id),
+    enabled                   INTEGER NOT NULL DEFAULT 0,
+    provider_id               INTEGER REFERENCES providers(id),
+    amount_minor              INTEGER NOT NULL DEFAULT 0,
+    currency                  TEXT NOT NULL DEFAULT 'CNY',
+    service_started_on        TEXT NOT NULL DEFAULT '',
+    interval_count            INTEGER NOT NULL DEFAULT 1,
+    interval_unit             TEXT NOT NULL DEFAULT 'month',
+    next_renewal_on           TEXT NOT NULL DEFAULT '',
+    status                    TEXT NOT NULL DEFAULT 'disabled',
+    assumed_valid_through     TEXT NOT NULL DEFAULT '',
+    last_inspected_on         TEXT NOT NULL DEFAULT '',
+    status_changed_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS server_traffic_plans (
+    server_id          INTEGER PRIMARY KEY REFERENCES servers(id),
+    quota_bytes        INTEGER,
+    accounting_mode    TEXT NOT NULL DEFAULT 'outbound',
+    reset_anchor_on    TEXT NOT NULL,
+    reset_count        INTEGER NOT NULL DEFAULT 1,
+    reset_unit         TEXT NOT NULL DEFAULT 'month',
+    tracking_started_on TEXT NOT NULL,
+    updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS server_network_usage_daily (
+    server_id   INTEGER NOT NULL REFERENCES servers(id),
+    usage_date  TEXT NOT NULL,
+    tx_bytes    INTEGER NOT NULL DEFAULT 0,
+    rx_bytes    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (server_id, usage_date)
+);
+
+CREATE TABLE IF NOT EXISTS exchange_rates (
+    base_currency  TEXT NOT NULL,
+    quote_currency TEXT NOT NULL,
+    rate           TEXT NOT NULL,
+    rate_date      TEXT NOT NULL,
+    source         TEXT NOT NULL,
+    fetched_at     DATETIME NOT NULL,
+    PRIMARY KEY (base_currency, quote_currency)
+);
+
+CREATE TABLE IF NOT EXISTS custom_exchange_rates (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_currency TEXT NOT NULL,
+    source_amount   TEXT NOT NULL,
+    target_currency TEXT NOT NULL,
+    target_amount   TEXT NOT NULL,
+    enabled         INTEGER NOT NULL DEFAULT 0,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (source_currency, target_currency)
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT    NOT NULL,
@@ -208,11 +273,40 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	if err := migrateCustomExchangeRates(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate custom exchange rates: %w", err)
+	}
+	if _, err := db.Exec(`INSERT OR IGNORE INTO server_traffic_plans
+		(server_id, quota_bytes, accounting_mode, reset_anchor_on, reset_count, reset_unit, tracking_started_on)
+		SELECT id, NULL, 'outbound', date('now'), 1, 'month', date('now') FROM servers`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("init server traffic plans: %w", err)
+	}
 	if err := migrateServerAddressMode(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate server address mode: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+func migrateCustomExchangeRates(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// The latest row wins when upgrading a pre-release database that allowed
+	// multiple destinations for one source currency.
+	if _, err := tx.Exec(`DELETE FROM custom_exchange_rates
+		WHERE id NOT IN (SELECT MAX(id) FROM custom_exchange_rates GROUP BY source_currency)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_exchange_rates_source
+		ON custom_exchange_rates(source_currency)`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func migrateServerAddressMode(db *sql.DB) error {

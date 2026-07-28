@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -43,35 +44,28 @@ type Config struct {
 
 // Server 聚合面板 API 的依赖。
 type Server struct {
-	st       *store.Store
-	disp     *dispatch.Dispatcher
-	req      ws.AgentRequester
-	cfg      Config
-	alerter  *alert.Notifier
-	upd      *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
-	releases *releaseCatalog
-	opLog    *logging.OperationStore
-	reqLog   *logging.RequestLog
+	st        *store.Store
+	disp      *dispatch.Dispatcher
+	req       ws.AgentRequester
+	cfg       Config
+	alerter   *alert.Notifier
+	upd       *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
+	releases  *releaseCatalog
+	exchange  *exchangeCatalog
+	scheduler *taskScheduler
+	opLog     *logging.OperationStore
+	reqLog    *logging.RequestLog
 
 	routePolicies map[string]logging.LogPolicy
 	idempotencyMu sync.Mutex
 	tasks         sync.WaitGroup
 }
 
-func (s *Server) StartExpirySweeper(ctx context.Context, interval time.Duration) {
+func (s *Server) StartBackgroundTasks(ctx context.Context) {
 	s.tasks.Add(1)
 	go func() {
 		defer s.tasks.Done()
-		s.RunExpirySweeper(ctx, interval)
-	}()
-}
-
-// StartReleaseInspector starts the persisted GitHub release cache refresher.
-func (s *Server) StartReleaseInspector(ctx context.Context) {
-	s.tasks.Add(1)
-	go func() {
-		defer s.tasks.Done()
-		s.releases.run(ctx)
+		s.scheduler.run(ctx)
 	}()
 }
 
@@ -106,7 +100,53 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 	}
 	s.upd = newPanelUpdater(s)
 	s.releases = newReleaseCatalog(s)
+	s.exchange = newExchangeCatalog(s)
+	s.scheduler = newTaskScheduler(s.inspectionLocation)
+	s.registerCoreTasks()
 	return s, nil
+}
+
+func (s *Server) registerCoreTasks() {
+	expiryInterval := expirySweepIntervalDefault
+	if value := os.Getenv("LATTIX_EXPIRY_SWEEP_INTERVAL"); value != "" {
+		if parsed, err := time.ParseDuration(value); err == nil && parsed > 0 {
+			expiryInterval = parsed
+		}
+	}
+	s.scheduler.register(scheduledTask{
+		name: "user.expiry", runOnStart: true, timeout: time.Minute,
+		trigger: func(context.Context) taskTrigger { return intervalTrigger(expiryInterval) },
+		run:     func(ctx context.Context) error { s.sweepExpiredUsers(ctx); return nil },
+	})
+	s.scheduler.register(scheduledTask{
+		name: "metrics.retention", runOnStart: true, timeout: time.Minute,
+		trigger: func(context.Context) taskTrigger { return intervalTrigger(time.Hour) },
+		run:     s.cleanupMetricHistory,
+	})
+	for _, kind := range []string{releaseKindAgent, releaseKindXray} {
+		kind := kind
+		s.scheduler.register(scheduledTask{
+			name: "release." + kind, runOnStart: true, timeout: 45 * time.Second,
+			trigger: func(ctx context.Context) taskTrigger {
+				settings := s.releaseInspectionSettings(ctx)
+				if kind == releaseKindAgent {
+					return settings.Agent
+				}
+				return settings.Xray
+			},
+			run: func(ctx context.Context) error { return s.releases.refresh(ctx, kind) },
+		})
+	}
+	s.scheduler.register(scheduledTask{
+		name: "billing.lifecycle", runOnStart: true, timeout: time.Minute,
+		trigger: func(ctx context.Context) taskTrigger { return s.billingInspectionSchedule(ctx) },
+		run:     s.inspectBilling,
+	})
+	s.scheduler.register(scheduledTask{
+		name: "exchange_rates.refresh", runOnStart: true, timeout: 45 * time.Second,
+		trigger: func(ctx context.Context) taskTrigger { return s.exchangeInspectionSchedule(ctx) },
+		run:     s.exchange.refresh,
+	})
 }
 
 // RegisterRoutes 注册面板路由（管理 API 均需登录）。
@@ -153,6 +193,15 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/server/upgrade-agent",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id", "version"}},
 		s.handleUpgradeAgent)
+	s.registerRPC(mux, http.MethodPost, "/api/server/confirm-renewal", write, s.handleConfirmRenewal)
+	s.registerRPC(mux, http.MethodGet, "/api/provider/list", read, s.handleListProviders)
+	s.registerRPC(mux, http.MethodPost, "/api/provider/create", write, s.handleCreateProvider)
+	s.registerRPC(mux, http.MethodPost, "/api/provider/update", write, s.handleUpdateProvider)
+	s.registerRPC(mux, http.MethodPost, "/api/provider/delete", write, s.handleDeleteProvider)
+	s.registerRPC(mux, http.MethodGet, "/api/exchange-rate/list", read, s.handleExchangeRates)
+	s.registerRPC(mux, http.MethodPost, "/api/exchange-rate/refresh", write, s.handleRefreshExchangeRates)
+	s.registerRPC(mux, http.MethodPost, "/api/exchange-rate/save-custom", write, s.handleSaveCustomExchangeRate)
+	s.registerRPC(mux, http.MethodPost, "/api/exchange-rate/delete-custom", write, s.handleDeleteCustomExchangeRate)
 	s.registerRPC(mux, http.MethodGet, "/api/server/list-release-versions",
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"kind"}}, s.handleListReleaseVersions)
 

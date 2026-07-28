@@ -100,6 +100,9 @@ type settingsDTO struct {
 	BackupIncludesLogs       bool                      `json:"backup_includes_logs"`
 	Agent                    shared.AgentSettings      `json:"agent"`
 	ReleaseInspection        releaseInspectionSettings `json:"release_inspection"`
+	BillingInspection        inspectionSchedule        `json:"billing_inspection"`
+	ExchangeInspection       inspectionSchedule        `json:"exchange_rate_inspection"`
+	ReportingCurrency        string                    `json:"reporting_currency"`
 }
 
 // handleGetSettings 处理 GET /api/settings。
@@ -126,6 +129,9 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		LogDir:                   s.cfg.LogDir,
 		BackupIncludesLogs:       false,
 		ReleaseInspection:        s.releaseInspectionSettings(ctx),
+		BillingInspection:        s.billingInspectionSchedule(ctx),
+		ExchangeInspection:       s.exchangeInspectionSchedule(ctx),
+		ReportingCurrency:        firstNonEmpty(s.getSetting(ctx, store.SettingReportingCurrency), "CNY"),
 	}
 	agentSettings, err := s.st.AgentSettings(ctx)
 	if err != nil {
@@ -204,6 +210,9 @@ type updateSettingsRequest struct {
 	RequestLogMaxMB       int                        `json:"request_log_max_mb"`
 	Agent                 *shared.AgentSettings      `json:"agent"`
 	ReleaseInspection     *releaseInspectionSettings `json:"release_inspection"`
+	BillingInspection     *inspectionSchedule        `json:"billing_inspection"`
+	ExchangeInspection    *inspectionSchedule        `json:"exchange_rate_inspection"`
+	ReportingCurrency     string                     `json:"reporting_currency"`
 }
 
 // handleUpdateSettings 处理 PUT /api/settings：校验后落库。
@@ -229,6 +238,9 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"operation_log_limit":          settingInt(s.getSetting(ctx, store.SettingOperationLogLimit), 1000),
 		"request_log_max_mb":           settingInt(s.getSetting(ctx, store.SettingRequestLogMaxMB), 10),
 		"release_inspection":           s.releaseInspectionSettings(ctx),
+		"billing_inspection":           s.billingInspectionSchedule(ctx),
+		"exchange_rate_inspection":     s.exchangeInspectionSchedule(ctx),
+		"reporting_currency":           firstNonEmpty(s.getSetting(ctx, store.SettingReportingCurrency), "CNY"),
 	}
 
 	if req.OperationLogLimit == 0 {
@@ -262,6 +274,20 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "xray release "+err.Error())
 			return
 		}
+	}
+	for label, schedule := range map[string]*inspectionSchedule{"计费巡检": req.BillingInspection, "汇率刷新": req.ExchangeInspection} {
+		if schedule != nil && (schedule.Unit != "day" || schedule.Every != 1 || schedule.validate() != nil) {
+			writeError(w, http.StatusBadRequest, label+"仅支持每天指定时间执行")
+			return
+		}
+	}
+	req.ReportingCurrency = strings.ToUpper(strings.TrimSpace(req.ReportingCurrency))
+	if req.ReportingCurrency == "" {
+		req.ReportingCurrency = "CNY"
+	}
+	if !supportedCurrencies[req.ReportingCurrency] {
+		writeError(w, http.StatusBadRequest, "不支持的统计币种")
+		return
 	}
 
 	req.Timezone = strings.TrimSpace(req.Timezone)
@@ -427,7 +453,31 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
-		s.releases.notifyScheduleChanged()
+		s.scheduler.notifyChanged()
+	}
+	if req.BillingInspection != nil {
+		raw, err := json.Marshal(req.BillingInspection)
+		if err != nil || !set(store.SettingBillingInspection, string(raw)) {
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
+	}
+	if req.ExchangeInspection != nil {
+		raw, err := json.Marshal(req.ExchangeInspection)
+		if err != nil || !set(store.SettingExchangeInspection, string(raw)) {
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
+	}
+	if !set(store.SettingReportingCurrency, req.ReportingCurrency) {
+		return
+	}
+	if req.BillingInspection != nil || req.ExchangeInspection != nil {
+		s.scheduler.notifyChanged()
 	}
 	if s.opLog != nil {
 		if err := s.opLog.SetMaxEntries(ctx, req.OperationLogLimit); err != nil {
@@ -458,9 +508,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"alert_telegram_bot_token_set": before["alert_telegram_bot_token_set"].(bool) || strings.TrimSpace(req.AlertTelegramBotToken) != "",
 		"operation_log_limit":          req.OperationLogLimit, "request_log_max_mb": req.RequestLogMaxMB,
 		"release_inspection": before["release_inspection"],
+		"billing_inspection": before["billing_inspection"], "exchange_rate_inspection": before["exchange_rate_inspection"],
+		"reporting_currency": req.ReportingCurrency,
 	}
 	if req.ReleaseInspection != nil {
 		after["release_inspection"] = *req.ReleaseInspection
+	}
+	if req.BillingInspection != nil {
+		after["billing_inspection"] = *req.BillingInspection
+	}
+	if req.ExchangeInspection != nil {
+		after["exchange_rate_inspection"] = *req.ExchangeInspection
 	}
 	if req.TLSCertPEM != "" {
 		after["tls_certificate"] = "已变更"

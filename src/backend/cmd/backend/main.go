@@ -342,19 +342,7 @@ func run() error {
 		logging.LogWebSocketUpgrade(reqLog, r, ps.Operator)
 	}
 
-	// 用户有效期 sweeper（§9）：到期置 expired 并扇出 remove_user。
-	// 默认 1 分钟周期；LATTIX_EXPIRY_SWEEP_INTERVAL（Go duration）可覆盖（dev/e2e 用）。
-	sweepInterval := time.Duration(0)
-	if v := os.Getenv("LATTIX_EXPIRY_SWEEP_INTERVAL"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return fmt.Errorf("LATTIX_EXPIRY_SWEEP_INTERVAL 无效: %w", err)
-		}
-		sweepInterval = d
-	}
-	ps.StartExpirySweeper(runCtx, sweepInterval)
-	ps.StartMetricHistorySweeper(runCtx, time.Hour)
-	ps.StartReleaseInspector(runCtx)
+	ps.StartBackgroundTasks(runCtx)
 
 	mux := http.NewServeMux()
 
