@@ -35,16 +35,20 @@ run_child() {
 }
 
 wizard() {
-    [[ -t 0 ]] || die "no arguments require an interactive terminal; use panel|agent"
+    # With `curl ... | bash`, stdin carries this script rather than terminal input.
+    # Read selections from the controlling terminal so the documented wizard works.
+    if ! { exec 3<>/dev/tty; } 2>/dev/null; then
+        die "no arguments require an interactive terminal; use panel|agent"
+    fi
     echo "Lattix 安装向导"
     echo "  1) 安装面板"
     echo "  2) 安装 Agent"
-    read -r -p "请选择 [1-2]: " choice
+    read -r -u 3 -p "请选择 [1-2]: " choice
     case "$choice" in
         1)
             echo "  1) Docker Compose（推荐）"
             echo "  2) 原生二进制 + systemd"
-            read -r -p "请选择面板模式 [1-2]: " mode
+            read -r -u 3 -p "请选择面板模式 [1-2]: " mode
             case "$mode" in
                 1) set -- panel --mode docker ;;
                 2) set -- panel --mode native ;;
@@ -53,13 +57,14 @@ wizard() {
             ;;
         2)
             local panel token xray
-            read -r -p "面板地址: " panel
-            read -r -p "Bootstrap token: " token
-            read -r -p "Xray 版本 [latest]: " xray
+            read -r -u 3 -p "面板地址: " panel
+            read -r -u 3 -p "Bootstrap token: " token
+            read -r -u 3 -p "Xray 版本 [latest]: " xray
             set -- agent --panel "$panel" --token "$token" --xray-version "${xray:-latest}"
             ;;
         *) die "invalid component selection" ;;
     esac
+    exec 3>&-
     dispatch "$@"
 }
 
