@@ -22,11 +22,39 @@ export default function UpdateOverlay() {
   const [status, setStatus] = useState<PanelUpdateStatus | null>(null)
   // 本会话内观察到的更新：running→终态（done/failed）时展示结果，直到用户关闭。
   const [result, setResult] = useState<PanelUpdateStatus | null>(null)
+  const [reloadSeconds, setReloadSeconds] = useState(5)
   const wasRunning = useRef(false)
+  const lastRunningStatus = useRef<PanelUpdateStatus | null>(null)
 
   useEffect(() => {
     let stopped = false
     let timer: ReturnType<typeof setTimeout>
+
+    const finishSuccess = (completion: PanelUpdateStatus) => {
+      wasRunning.current = false
+      setStatus(null)
+      setReloadSeconds(5)
+      setResult({
+        ...completion,
+        running: false,
+        stage: 'done',
+        percent: 100,
+        message: '更新完成，新版本已生效。',
+      })
+    }
+
+    const finishInterrupted = (current: PanelUpdateStatus) => {
+      const previous = lastRunningStatus.current
+      wasRunning.current = false
+      setStatus(null)
+      setResult({
+        ...(previous ?? current),
+        running: false,
+        stage: 'failed',
+        message: '更新中断',
+        error: `面板已恢复，但当前版本 ${current.current_version || '未知'} 与目标版本 ${previous?.target_version || '未知'} 不一致。`,
+      })
+    }
 
     const poll = async () => {
       try {
@@ -34,32 +62,59 @@ export default function UpdateOverlay() {
         if (stopped) return
         if (s.running) {
           wasRunning.current = true
+          lastRunningStatus.current = s
           setStatus(s)
           if (s.stage === 'restart') {
             // 面板即将退出：停止状态轮询，改为等待面板恢复后整页刷新。
             waitComeback()
             return
           }
-        } else if (wasRunning.current && (s.stage === 'done' || s.stage === 'failed')) {
-          wasRunning.current = false
-          setStatus(null)
-          setResult(s)
+        } else if (wasRunning.current) {
+          if (s.stage === 'done') {
+            finishSuccess(s)
+            return
+          }
+          if (s.stage === 'failed') {
+            wasRunning.current = false
+            setStatus(null)
+            setResult(s)
+            return
+          }
+
+          // 更新进程可能在两次轮询之间完成重启，新进程的内存状态为空。
+          // 用新进程报告的当前版本收口，避免界面永久停在重启前的旧进度。
+          const previous = lastRunningStatus.current
+          if (previous?.target_version && s.current_version === previous.target_version) {
+            finishSuccess(previous)
+            return
+          }
+
+          finishInterrupted(s)
           return
         }
       } catch {
         // 面板重启窗口内请求失败属预期，继续轮询
       }
-      if (!stopped) timer = setTimeout(poll, 1500)
+      if (!stopped) timer = setTimeout(poll, 300)
     }
 
-    // 等待面板重启恢复：探活成功后整页刷新（新版本前后端同时就位）。
+    // 等待面板重启恢复：新进程版本就位后进入完成倒计时。
     const waitComeback = async () => {
       const deadline = Date.now() + 90_000
       while (!stopped && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 2000))
         try {
           await api.me()
-          window.location.reload()
+          const recovered = await api.panelUpdateStatus()
+          if (stopped) return
+          const previous = lastRunningStatus.current
+          if (previous?.target_version && recovered.current_version === previous.target_version) {
+            finishSuccess(previous)
+            return
+          }
+          // 重启请求已发出但旧进程尚未退出，继续等待。
+          if (recovered.running && recovered.stage === 'restart') continue
+          finishInterrupted(recovered)
           return
         } catch {
           // 尚未恢复，继续等
@@ -78,6 +133,22 @@ export default function UpdateOverlay() {
       clearTimeout(timer)
     }
   }, [])
+
+  const updateDone = result?.stage === 'done'
+  useEffect(() => {
+    if (!updateDone) return
+    let seconds = 5
+    const timer = window.setInterval(() => {
+      seconds -= 1
+      if (seconds <= 0) {
+        window.clearInterval(timer)
+        window.location.reload()
+        return
+      }
+      setReloadSeconds(seconds)
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [updateDone])
 
   const active = status ?? result
   if (!active || (!active.running && !result)) return null
@@ -155,9 +226,12 @@ export default function UpdateOverlay() {
 
         {done && (
           <>
-            <p className="mb-4 text-sm text-muted-foreground">{active.message}</p>
+            <p className="mb-2 text-sm text-muted-foreground">{active.message}</p>
+            <p className="mb-4 text-xs text-muted-foreground">
+              {reloadSeconds} 秒后将自动刷新页面。
+            </p>
             <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
-              刷新页面
+              立即刷新
             </Button>
           </>
         )}
