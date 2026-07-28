@@ -18,30 +18,6 @@ interface GlobeTopologyProps {
   chains: Chain[]
 }
 
-const DEMO_SERVERS: TopologyPoint[] = [
-  { id: -101, alias: '东京 / NRT', location: 'Tokyo', lat: 35.68, lng: 139.69, online: true, positioned: true },
-  { id: -102, alias: '新加坡 / SIN', location: 'Singapore', lat: 1.35, lng: 103.82, online: true, positioned: true },
-  { id: -103, alias: '悉尼 / SYD', location: 'Sydney', lat: -33.87, lng: 151.21, online: true, positioned: true },
-  { id: -104, alias: '法兰克福 / FRA', location: 'Frankfurt', lat: 50.11, lng: 8.68, online: true, positioned: true },
-  { id: -105, alias: '旧金山 / SFO', location: 'San Francisco', lat: 37.77, lng: -122.42, online: true, positioned: true },
-  { id: -106, alias: '圣保罗 / GRU', location: 'Sao Paulo', lat: -23.55, lng: -46.63, online: false, positioned: true },
-  { id: -107, alias: '约翰内斯堡 / JNB', location: 'Johannesburg', lat: -26.2, lng: 28.05, online: true, positioned: true },
-]
-
-const DEMO_LINKS: Array<{
-  id: string
-  startId: number
-  endId: number
-  status: Chain['status']
-}> = [
-  { id: 'demo:apac:0', startId: -101, endId: -102, status: 'active' },
-  { id: 'demo:apac:1', startId: -102, endId: -103, status: 'active' },
-  { id: 'demo:global:0', startId: -105, endId: -101, status: 'active' },
-  { id: 'demo:global:1', startId: -101, endId: -104, status: 'active' },
-  { id: 'demo:south:0', startId: -106, endId: -107, status: 'degraded' },
-  { id: 'demo:south:1', startId: -107, endId: -102, status: 'degraded' },
-]
-
 let geographyModule: Promise<typeof import('country-state-city')> | null = null
 const coordinateCache = new Map<string, { lat: number; lng: number } | null>()
 
@@ -136,30 +112,12 @@ function buildLinks(chains: Chain[], points: TopologyPoint[]): EarthLink[] {
   })
 }
 
-function buildDemoLinks(points: TopologyPoint[]): EarthLink[] {
-  const pointsById = new Map(points.map((point) => [point.id, point]))
-
-  return DEMO_LINKS.flatMap((definition) => {
-    const start = pointsById.get(definition.startId)
-    const end = pointsById.get(definition.endId)
-    if (!start || !end) return []
-    return [{
-      id: definition.id,
-      startLat: start.lat,
-      startLng: start.lng,
-      endLat: end.lat,
-      endLng: end.lng,
-      status: definition.status,
-    }]
-  })
-}
-
 export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
   const [points, setPoints] = useState<TopologyPoint[]>([])
 
   useEffect(() => {
     if (servers.length === 0) {
-      setPoints(DEMO_SERVERS)
+      setPoints([])
       return
     }
 
@@ -196,10 +154,7 @@ export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
     })),
     [points],
   )
-  const links = useMemo(
-    () => (servers.length === 0 ? buildDemoLinks(points) : buildLinks(chains, points)),
-    [chains, points, servers.length],
-  )
+  const links = useMemo(() => buildLinks(chains, points), [chains, points])
   const unresolvedCount = points.filter((point) => !point.positioned).length
 
   return (
