@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS servers (
     config_drift INTEGER NOT NULL DEFAULT 0,
     agent_version TEXT,
     address      TEXT    NOT NULL DEFAULT '', -- 公网地址：管理员填写，留空按 agent 拨入 RemoteAddr 学习（§4/§9）
+    address_mode TEXT    NOT NULL DEFAULT 'auto', -- auto|manual；自动地址可在每次 hello 时重新学习
     learned_addr TEXT    NOT NULL DEFAULT '',
     nic_addresses TEXT   NOT NULL DEFAULT '', -- JSON 字符串数组
     machine_type TEXT    NOT NULL DEFAULT 'direct', -- direct|nat
@@ -207,7 +208,46 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	if err := migrateServerAddressMode(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate server address mode: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+func migrateServerAddressMode(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(servers)`)
+	if err != nil {
+		return err
+	}
+	hasColumn := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, primaryKey int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "address_mode" {
+			hasColumn = true
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if hasColumn {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN address_mode TEXT NOT NULL DEFAULT 'auto'`); err != nil {
+		return err
+	}
+	// Before address_mode existed, an address equal to the last learned peer was
+	// produced by automatic learning. Other non-empty values were administrator supplied.
+	_, err = db.Exec(`UPDATE servers SET address_mode = CASE
+		WHEN address = '' OR address = learned_addr THEN 'auto' ELSE 'manual' END`)
+	return err
 }
 
 // Close 关闭底层数据库连接。

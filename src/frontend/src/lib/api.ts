@@ -110,6 +110,7 @@ export const api = {
     requester.post<{ reapplied: number }>('/api/server/repair', { server_id: serverId }),
   updateServerAddress: (
     serverId: number,
+    alias: string,
     address: string,
     tags: string[],
     countryCode: string,
@@ -117,6 +118,7 @@ export const api = {
   ) =>
     requester.post<Server>('/api/server/update', {
       server_id: serverId,
+      alias: alias.trim(),
       address: address.trim(),
       tags,
       country_code: countryCode,
@@ -124,6 +126,7 @@ export const api = {
     }),
   updateServerPorts: (
     serverId: number,
+    alias: string,
     address: string,
     allowedPorts: PortRange[],
     tags: string[],
@@ -132,6 +135,7 @@ export const api = {
   ) =>
     requester.post<Server>('/api/server/update', {
       server_id: serverId,
+      alias: alias.trim(),
       address: address.trim(),
       allowed_ports: allowedPorts,
       tags,

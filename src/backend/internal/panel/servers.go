@@ -42,7 +42,7 @@ type serverDTO struct {
 	XrayVersion                  string             `json:"xray_version"`
 	AgentVersion                 string             `json:"agent_version"` // hello 上报的 agent 版本
 	Address                      string             `json:"address"`       // 公网地址（hello 记录，订阅用，§9）
-	LearnedAddr                  string             `json:"learned_addr"`  // 拨入学习地址（受信回环代理时取 XFF 首 IP，§9），编辑地址时的内置候选
+	LearnedAddr                  string             `json:"learned_addr"`  // 拨入学习公网地址（容器网关回退到 agent 公网网卡，§9）
 	NICAddresses                 []string           `json:"nic_addresses"` // agent 上报的网卡非回环地址（§9），编辑地址时的内置候选
 	ConfigDrift                  bool               `json:"config_drift"`  // 配置漂移标志（§17）
 	MachineType                  string             `json:"machine_type"`  // direct|nat（§21）
@@ -286,6 +286,7 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ServerID     int64               `json:"server_id"`
+		Alias        *string             `json:"alias"` // 省略 = 不变
 		Address      string              `json:"address"`
 		MachineType  string              `json:"machine_type"`  // 不允许互转：带不同值 → 400
 		AllowedPorts *[]shared.PortRange `json:"allowed_ports"` // 省略 = 不变；显式 null/数组 = 整体替换
@@ -316,6 +317,18 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	beforeDTO := s.toServerDTO(*srv)
+	alias := srv.Alias
+	if req.Alias != nil {
+		alias = strings.TrimSpace(*req.Alias)
+		if alias == "" {
+			writeError(w, http.StatusBadRequest, "alias 不能为空")
+			return
+		}
+		if len([]rune(alias)) > 100 {
+			writeError(w, http.StatusBadRequest, "alias 最多 100 个字符")
+			return
+		}
+	}
 	if srv.MachineType == store.MachineTypeNAT && req.Address == "" {
 		writeError(w, http.StatusBadRequest, "NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）")
 		return
@@ -362,6 +375,10 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := s.st.UpdateServerAlias(r.Context(), id, alias); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := s.st.UpdateServerAddress(r.Context(), id, req.Address); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -379,11 +396,11 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	afterDTO := s.toServerDTO(*srv)
 	changes := changedValues(
 		map[string]any{
-			"address": beforeDTO.Address, "allowed_ports": beforeDTO.AllowedPorts,
+			"alias": beforeDTO.Alias, "address": beforeDTO.Address, "allowed_ports": beforeDTO.AllowedPorts,
 			"tags": beforeDTO.Tags, "country_code": beforeDTO.CountryCode, "location": beforeDTO.Location,
 		},
 		map[string]any{
-			"address": afterDTO.Address, "allowed_ports": afterDTO.AllowedPorts,
+			"alias": afterDTO.Alias, "address": afterDTO.Address, "allowed_ports": afterDTO.AllowedPorts,
 			"tags": afterDTO.Tags, "country_code": afterDTO.CountryCode, "location": afterDTO.Location,
 		},
 	)

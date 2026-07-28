@@ -119,6 +119,7 @@ export default function Servers() {
   const [deleteTarget, setDeleteTarget] = useState<Server | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [editTarget, setEditTarget] = useState<Server | null>(null)
+  const [editAlias, setEditAlias] = useState('')
   const [editAddress, setEditAddress] = useState('')
   const [editAddrMode, setEditAddrMode] = useState<'builtin' | 'custom'>('custom')
   const [editAddrChoice, setEditAddrChoice] = useState('')
@@ -305,6 +306,7 @@ export default function Servers() {
 
   const onOpenEdit = (s: Server) => {
     setEditTarget(s)
+    setEditAlias(s.alias)
     setEditAddress(s.address)
     const candidates = addrCandidates(s)
     if (candidates.includes(s.address)) {
@@ -329,6 +331,11 @@ export default function Servers() {
       return
     }
     setEditError('')
+    const finalAlias = editAlias.trim()
+    if (!finalAlias) {
+      setEditError('名称不能为空')
+      return
+    }
     // 内置地址 = 候选下拉选中值；自定义 = 文本框输入。
     const finalAddress = editAddrMode === 'builtin' ? editAddrChoice : editAddress.trim()
     const isNat = editTarget.machine_type === 'nat'
@@ -355,6 +362,7 @@ export default function Servers() {
       if (isNat) {
         await api.updateServerPorts(
           editTarget.id,
+          finalAlias,
           finalAddress,
           ranges,
           nextTags,
@@ -364,6 +372,7 @@ export default function Servers() {
       } else {
         await api.updateServerAddress(
           editTarget.id,
+          finalAlias,
           finalAddress,
           nextTags,
           editCountryCode,
@@ -674,6 +683,16 @@ export default function Servers() {
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={onUpdateAddress} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="editAlias">名称</Label>
+              <Input
+                id="editAlias"
+                value={editAlias}
+                onChange={(e) => setEditAlias(e.target.value)}
+                maxLength={100}
+                required
+              />
+            </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="edit-country">国家</Label>
@@ -781,7 +800,10 @@ export default function Servers() {
             )}
             {editError && <p className="text-sm text-destructive">{editError}</p>}
             <DialogFooter>
-              <Button type="submit" disabled={editSaving || (editAddrMode === 'builtin' && !editAddrChoice)}>
+              <Button
+                type="submit"
+                disabled={editSaving || !editAlias.trim() || (editAddrMode === 'builtin' && !editAddrChoice)}
+              >
                 {editSaving ? '保存中…' : '保存'}
               </Button>
             </DialogFooter>

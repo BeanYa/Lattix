@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/url"
 	"strings"
 	"sync"
@@ -131,7 +132,7 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 
 // AuthenticateHello 实现 ws.Authenticator：按 token 查找服务器。
 // 仅 bootstrap 状态（last_seen_at 为空，§5/§11）时换发长期凭证；长期 token 稳定不轮换。
-// 管理员已指定地址（servers.address 非空）时不被 RemoteAddr 覆盖（§4/§9）。
+// 管理员已指定地址（address_mode=manual）时不被自动学习覆盖（§4/§9）。
 func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayload, remoteAddr string) (int64, shared.HelloResult, error) {
 	srv, err := d.st.ServerByToken(ctx, p.Token)
 	if err != nil {
@@ -156,9 +157,11 @@ func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayloa
 			return 0, shared.HelloResult{}, err
 		}
 	}
-	learnedAddr := remoteAddr
-	if srv.Address != "" {
+	learnedAddr := preferredAgentAddress(remoteAddr, p.NICAddresses)
+	if srv.AddressMode == store.AddressModeManual {
 		remoteAddr = srv.Address
+	} else {
+		remoteAddr = learnedAddr
 	}
 	// 网卡地址候选（§9）：agent 上报非空列表时持久化。
 	var nicAddrs string
@@ -171,6 +174,41 @@ func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayloa
 		log.Printf("dispatch: touch server %d: %v", srv.ID, err)
 	}
 	return srv.ID, shared.HelloResult{ServerID: srv.ID, Token: token}, nil
+}
+
+// preferredAgentAddress keeps a publicly routable socket peer when available.
+// Some container managers SNAT published connections to the bridge gateway; in
+// that case the agent's reported public NIC is a better subscription address.
+func preferredAgentAddress(remoteAddr string, nicAddresses []string) string {
+	if isPublicAgentIP(remoteAddr) {
+		return remoteAddr
+	}
+	var publicIPv6 string
+	for _, candidate := range nicAddresses {
+		if !isPublicAgentIP(candidate) {
+			continue
+		}
+		if ip := net.ParseIP(candidate); ip != nil && ip.To4() != nil {
+			return candidate
+		}
+		if publicIPv6 == "" {
+			publicIPv6 = candidate
+		}
+	}
+	if publicIPv6 != "" {
+		return publicIPv6
+	}
+	return remoteAddr
+}
+
+func isPublicAgentIP(value string) bool {
+	ip := net.ParseIP(value)
+	if ip == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return false
+	}
+	// RFC 6598 shared address space is not publicly routable.
+	_, sharedRange, _ := net.ParseCIDR("100.64.0.0/10")
+	return !sharedRange.Contains(ip)
 }
 
 // OnAgentConnect 在 agent hello 认证完成后调用（ws.Hub.OnConnect）：

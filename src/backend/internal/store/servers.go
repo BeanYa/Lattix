@@ -18,6 +18,8 @@ var ErrNotFound = errors.New("store: not found")
 const (
 	MachineTypeDirect = "direct"
 	MachineTypeNAT    = "nat"
+	AddressModeAuto   = "auto"
+	AddressModeManual = "manual"
 )
 
 // Server 是 servers 表的一行（§4）。
@@ -29,7 +31,8 @@ type Server struct {
 	XrayVersion             string
 	AgentVersion            string // hello 上报的 agent 版本（§18 升级管理）
 	Address                 string // 公网地址（hello 时按 WS RemoteAddr 记录，订阅用，§9）
-	LearnedAddr             string // 每次 hello 学习的拨入地址（受信回环代理时取 XFF 首 IP，§9），仅作候选不覆盖 Address
+	AddressMode             string // auto|manual；manual 地址不被后续 hello 覆盖
+	LearnedAddr             string // 每次 hello 学习的公网地址；容器网关对端回退到 agent 公网网卡（§9）
 	NICAddresses            string // agent 上报的网卡非回环地址 JSON 数组（§9 公网地址候选）；空串 = 无
 	ConfigDrift             bool   // 配置漂移标志（§17，agent drift_report 驱动）
 	MachineType             string // direct|nat（§21）
@@ -45,13 +48,13 @@ type Server struct {
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, credential_epoch, agent_settings_revision, agent_settings_error, agent_settings_reported_at, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, credential_epoch, agent_settings_revision, agent_settings_error, agent_settings_reported_at, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
 	var lastSeen, settingsReported sql.NullTime
 	var xrayVer, agentVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.CredentialEpoch, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.CredentialEpoch, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -76,9 +79,13 @@ func (s *Store) CreateServer(ctx context.Context, alias, address, bootstrapToken
 	if credential, err := shared.ParseCredential(bootstrapToken); err == nil {
 		epoch = credential.Epoch
 	}
+	addressMode := AddressModeAuto
+	if address != "" {
+		addressMode = AddressModeManual
+	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO servers (alias, address, token, machine_type, allowed_ports, tags, country_code, location, credential_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location, epoch)
+		`INSERT INTO servers (alias, address, address_mode, token, machine_type, allowed_ports, tags, country_code, location, credential_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		alias, address, addressMode, bootstrapToken, machineType, allowedPorts, tags, countryCode, location, epoch)
 	if err != nil {
 		return 0, fmt.Errorf("insert server: %w", err)
 	}
@@ -137,10 +144,21 @@ func (s *Store) RotateServerToken(ctx context.Context, id int64, newToken string
 }
 
 // UpdateServerAddress 由管理员修改服务器公网地址（§4"地址变更由管理员修改"）；
-// 置空则下次 hello 时按 RemoteAddr 重新自动学习（NAT 类型禁止置空，由 panel 校验）。
+// 非空切换为手工模式，置空切换为自动模式并在下次 hello 重新学习
+// （NAT 类型禁止置空，由 panel 校验）。
 func (s *Store) UpdateServerAddress(ctx context.Context, id int64, address string) error {
+	mode := AddressModeManual
+	if address == "" {
+		mode = AddressModeAuto
+	}
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE servers SET address = ? WHERE id = ?`, address, id)
+		`UPDATE servers SET address = ?, address_mode = ? WHERE id = ?`, address, mode, id)
+	return err
+}
+
+// UpdateServerAlias modifies the administrator-facing server name.
+func (s *Store) UpdateServerAlias(ctx context.Context, id int64, alias string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE servers SET alias = ? WHERE id = ?`, alias, id)
 	return err
 }
 
