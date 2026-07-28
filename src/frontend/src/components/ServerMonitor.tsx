@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -339,21 +339,56 @@ interface ChartSeries {
   values: Array<number | null>
 }
 
-function TrendChart({ title, unit, series }: { title: string; unit: string; series: ChartSeries[] }) {
+function TrendChart({
+  title,
+  unit,
+  series,
+  timestamps,
+  timezone,
+}: {
+  title: string
+  unit: string
+  series: ChartSeries[]
+  timestamps: string[]
+  timezone?: string
+}) {
+  const chartRef = useRef<SVGSVGElement>(null)
+  const [activePoint, setActivePoint] = useState<{ index: number; y: number } | null>(null)
   const values = series.flatMap((item) => item.values.filter((value): value is number => value !== null))
   const max = Math.max(1, ...values)
   const width = 480
   const height = 96
+  const sampleCount = Math.max(timestamps.length, ...series.map((item) => item.values.length))
+  const pointX = (index: number) => (sampleCount <= 1 ? 0 : (index / (sampleCount - 1)) * width)
+  const pointY = (value: number) => height - (value / max) * (height - 8) - 4
   const points = (items: Array<number | null>) =>
     items
       .map((value, index) => {
         if (value === null) return null
-        const x = items.length <= 1 ? 0 : (index / (items.length - 1)) * width
-        const y = height - (value / max) * (height - 8) - 4
+        const x = pointX(index)
+        const y = pointY(value)
         return `${x.toFixed(1)},${y.toFixed(1)}`
       })
       .filter(Boolean)
       .join(' ')
+  const updateActivePoint = (clientX: number, clientY: number) => {
+    const bounds = chartRef.current?.getBoundingClientRect()
+    if (!bounds || sampleCount === 0) return
+    const xRatio = Math.min(1, Math.max(0, (clientX - bounds.left) / bounds.width))
+    const yRatio = Math.min(1, Math.max(0, (clientY - bounds.top) / bounds.height))
+    setActivePoint({ index: Math.round(xRatio * (sampleCount - 1)), y: yRatio * height })
+  }
+  const moveActivePoint = (offset: number) => {
+    if (sampleCount === 0) return
+    setActivePoint((current) => ({
+      index: Math.min(sampleCount - 1, Math.max(0, (current?.index ?? sampleCount - 1) + offset)),
+      y: current?.y ?? height / 2,
+    }))
+  }
+  const formatValue = (value: number | null | undefined) => {
+    if (value === null || value === undefined) return '--'
+    return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${unit}`
+  }
   return (
     <section className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-3">
@@ -374,9 +409,26 @@ function TrendChart({ title, unit, series }: { title: string; unit: string; seri
           ))}
         </div>
       </div>
-      <div className="rounded-lg border bg-muted/20 p-2">
+      <div className="relative rounded-lg border bg-muted/20 p-2">
         {values.length > 1 ? (
-          <svg viewBox={`0 0 ${width} ${height}`} className="h-24 w-full" role="img" aria-label={`${title}趋势`}>
+          <svg
+            ref={chartRef}
+            viewBox={`0 0 ${width} ${height}`}
+            className="h-24 w-full touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            role="img"
+            aria-label={`${title}趋势，使用左右方向键查看采样数据`}
+            tabIndex={0}
+            onPointerMove={(event) => updateActivePoint(event.clientX, event.clientY)}
+            onPointerLeave={() => setActivePoint(null)}
+            onFocus={() => setActivePoint({ index: sampleCount - 1, y: height / 2 })}
+            onBlur={() => setActivePoint(null)}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                event.preventDefault()
+                moveActivePoint(event.key === 'ArrowLeft' ? -1 : 1)
+              }
+            }}
+          >
             <path d={`M 0 ${height - 1} H ${width}`} stroke="var(--border)" fill="none" />
             {series.map((item) => (
               <polyline
@@ -393,10 +445,73 @@ function TrendChart({ title, unit, series }: { title: string; unit: string; seri
                 )}
               />
             ))}
+            {activePoint ? (
+              <>
+                <line
+                  x1={pointX(activePoint.index)}
+                  x2={pointX(activePoint.index)}
+                  y1={0}
+                  y2={height}
+                  stroke="var(--muted-foreground)"
+                  strokeWidth="1"
+                  strokeDasharray="3 3"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <line
+                  x1={0}
+                  x2={width}
+                  y1={activePoint.y}
+                  y2={activePoint.y}
+                  stroke="var(--muted-foreground)"
+                  strokeWidth="1"
+                  strokeDasharray="3 3"
+                  vectorEffect="non-scaling-stroke"
+                />
+                {series.map((item) => {
+                  const value = item.values[activePoint.index]
+                  if (value === null || value === undefined) return null
+                  return (
+                    <circle
+                      key={item.label}
+                      cx={pointX(activePoint.index)}
+                      cy={pointY(value)}
+                      r="3"
+                      fill="var(--background)"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      vectorEffect="non-scaling-stroke"
+                      className={cn(
+                        item.color === 'success' && 'text-success',
+                        item.color === 'info' && 'text-info',
+                        item.color === 'warning' && 'text-warning',
+                      )}
+                    />
+                  )
+                })}
+              </>
+            ) : null}
           </svg>
         ) : (
           <div className="flex h-24 items-center justify-center text-xs text-muted-foreground">暂无趋势数据</div>
         )}
+        {activePoint ? (
+          <div
+            className={cn(
+              'pointer-events-none absolute top-2 z-10 min-w-32 rounded-md border bg-popover px-2.5 py-2 text-xs text-popover-foreground shadow-md',
+              activePoint.index < sampleCount / 2 ? 'right-2' : 'left-2',
+            )}
+          >
+            <div className="mb-1 whitespace-nowrap text-muted-foreground">
+              {formatDateTime(timestamps[activePoint.index], timezone)}
+            </div>
+            {series.map((item) => (
+              <div key={item.label} className="flex items-center justify-between gap-4 tabular-nums">
+                <span>{item.label}</span>
+                <span className="font-medium">{formatValue(item.values[activePoint.index])}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
       <span className="text-right text-xs text-muted-foreground">{unit}</span>
     </section>
@@ -439,6 +554,7 @@ function DetailSheet({
   const tx = history.map((sample) => sample.network_tx_bps)
   const rx = history.map((sample) => sample.network_rx_bps)
   const latency = history.map((sample) => sample.latency_ms)
+  const timestamps = history.map((sample) => sample.updated_at)
   const metrics = server?.metrics
 
   return (
@@ -521,9 +637,27 @@ function DetailSheet({
               </div>
             ) : (
               <div className="flex flex-col gap-5">
-                <TrendChart title="CPU 使用率" unit="%" series={[{ label: 'CPU', color: 'success', values: cpu }]} />
-                <TrendChart title="内存使用率" unit="%" series={[{ label: '内存', color: 'success', values: memory }]} />
-                <TrendChart title="磁盘使用率" unit="%" series={[{ label: '磁盘', color: 'warning', values: disk }]} />
+                <TrendChart
+                  title="CPU 使用率"
+                  unit="%"
+                  series={[{ label: 'CPU', color: 'success', values: cpu }]}
+                  timestamps={timestamps}
+                  timezone={timezone}
+                />
+                <TrendChart
+                  title="内存使用率"
+                  unit="%"
+                  series={[{ label: '内存', color: 'success', values: memory }]}
+                  timestamps={timestamps}
+                  timezone={timezone}
+                />
+                <TrendChart
+                  title="磁盘使用率"
+                  unit="%"
+                  series={[{ label: '磁盘', color: 'warning', values: disk }]}
+                  timestamps={timestamps}
+                  timezone={timezone}
+                />
                 <TrendChart
                   title="网络速率"
                   unit="B/s"
@@ -531,11 +665,15 @@ function DetailSheet({
                     { label: '上传', color: 'success', values: tx },
                     { label: '下载', color: 'info', values: rx },
                   ]}
+                  timestamps={timestamps}
+                  timezone={timezone}
                 />
                 <TrendChart
                   title="Agent 延迟"
                   unit="ms"
                   series={[{ label: '延迟', color: 'info', values: latency }]}
+                  timestamps={timestamps}
+                  timezone={timezone}
                 />
               </div>
             )}
