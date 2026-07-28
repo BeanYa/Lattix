@@ -16,6 +16,7 @@ import type {
   PanelVersionInfo,
   PortRange,
   RequestLogPage,
+  ReleaseVersions,
   Server,
   ServerMetrics,
   ServerMetricSeries,
@@ -101,6 +102,8 @@ export const api = {
       server_id: serverId,
       version,
     }),
+  releaseVersions: (kind: 'agent' | 'xray') =>
+    requester.get<ReleaseVersions>('/api/server/list-release-versions', { kind }),
   serverCommands: (serverId: number, limit = 50) =>
     requester.get<CommandLog[]>('/api/server/list-commands', {
       server_id: serverId,

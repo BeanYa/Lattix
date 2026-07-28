@@ -354,6 +354,7 @@ func run() error {
 	}
 	ps.StartExpirySweeper(runCtx, sweepInterval)
 	ps.StartMetricHistorySweeper(runCtx, time.Hour)
+	ps.StartReleaseInspector(runCtx)
 
 	mux := http.NewServeMux()
 

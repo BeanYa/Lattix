@@ -29,6 +29,9 @@ const (
 	SettingRequestLogMaxMB       = "request_log_max_mb"       // 请求日志 JSONL 总容量 MiB，默认 10
 	SettingPanelInstanceID       = "panel_instance_id"
 	SettingAgentSettings         = "agent_settings"
+	SettingReleaseInspection     = "release_inspection"
+	SettingAgentReleaseCache     = "agent_release_cache"
+	SettingXrayReleaseCache      = "xray_release_cache"
 )
 
 // GetSetting 读取一个设置；未设置返回空字符串（不视为错误）。

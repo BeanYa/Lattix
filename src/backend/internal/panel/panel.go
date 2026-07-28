@@ -43,14 +43,15 @@ type Config struct {
 
 // Server 聚合面板 API 的依赖。
 type Server struct {
-	st      *store.Store
-	disp    *dispatch.Dispatcher
-	req     ws.AgentRequester
-	cfg     Config
-	alerter *alert.Notifier
-	upd     *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
-	opLog   *logging.OperationStore
-	reqLog  *logging.RequestLog
+	st       *store.Store
+	disp     *dispatch.Dispatcher
+	req      ws.AgentRequester
+	cfg      Config
+	alerter  *alert.Notifier
+	upd      *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
+	releases *releaseCatalog
+	opLog    *logging.OperationStore
+	reqLog   *logging.RequestLog
 
 	routePolicies map[string]logging.LogPolicy
 	idempotencyMu sync.Mutex
@@ -62,6 +63,15 @@ func (s *Server) StartExpirySweeper(ctx context.Context, interval time.Duration)
 	go func() {
 		defer s.tasks.Done()
 		s.RunExpirySweeper(ctx, interval)
+	}()
+}
+
+// StartReleaseInspector starts the persisted GitHub release cache refresher.
+func (s *Server) StartReleaseInspector(ctx context.Context) {
+	s.tasks.Add(1)
+	go func() {
+		defer s.tasks.Done()
+		s.releases.run(ctx)
 	}()
 }
 
@@ -95,6 +105,7 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 		routePolicies: make(map[string]logging.LogPolicy),
 	}
 	s.upd = newPanelUpdater(s)
+	s.releases = newReleaseCatalog(s)
 	return s, nil
 }
 
@@ -142,6 +153,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/server/upgrade-agent",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id", "version"}},
 		s.handleUpgradeAgent)
+	s.registerRPC(mux, http.MethodGet, "/api/server/list-release-versions",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"kind"}}, s.handleListReleaseVersions)
 
 	s.registerRPC(mux, http.MethodGet, "/api/node/list", read, s.handleListNodes)
 	s.registerRPC(mux, http.MethodPost, "/api/node/create", write, s.handleCreateNode)

@@ -95,6 +95,15 @@ paths:
       operationId: serverUpgradeAgent
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/server/list-release-versions:
+    get:
+      operationId: serverListReleaseVersions
+      parameters:
+        - name: kind
+          in: query
+          required: true
+          schema: {type: string, enum: [agent, xray]}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
   /api/node/list:
     get:
       operationId: nodeList
@@ -310,6 +319,22 @@ components:
       additionalProperties: true
       properties:
         agent: {$ref: '#/components/schemas/AgentSettings'}
+        release_inspection: {$ref: '#/components/schemas/ReleaseInspectionSettings'}
+    InspectionSchedule:
+      type: object
+      additionalProperties: false
+      required: [every, unit]
+      properties:
+        every: {type: integer, minimum: 1, maximum: 10000}
+        unit: {type: string, enum: [minute, hour, day, month, year]}
+        at: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
+    ReleaseInspectionSettings:
+      type: object
+      additionalProperties: false
+      required: [agent, xray]
+      properties:
+        agent: {$ref: '#/components/schemas/InspectionSchedule'}
+        xray: {$ref: '#/components/schemas/InspectionSchedule'}
     RPCCode:
       type: string
       enum:

@@ -23,7 +23,7 @@ import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
 import { useTimezone } from '@/lib/timezone'
-import type { AlertTestResult, PanelSettings, PanelVersionInfo } from '@/lib/types'
+import type { AlertTestResult, InspectionUnit, PanelSettings, PanelVersionInfo } from '@/lib/types'
 
 // 常用 IANA 时区（可直接输入其他名称，后端用 time.LoadLocation 校验）。
 const COMMON_TIMEZONES = [
@@ -65,6 +65,14 @@ const RUNNING_MODE_LABEL: Record<string, string> = {
   path: 'HTTPS（域名路径）',
 }
 
+const INSPECTION_UNITS: { value: InspectionUnit; label: string }[] = [
+  { value: 'minute', label: '分钟' },
+  { value: 'hour', label: '小时' },
+  { value: 'day', label: '天' },
+  { value: 'month', label: '月' },
+  { value: 'year', label: '年' },
+]
+
 const textareaClass =
   'w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 font-mono text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30'
 
@@ -102,6 +110,12 @@ export default function Settings() {
   const [reconnectMaxRetries, setReconnectMaxRetries] = useState(10)
   const [telemetrySeconds, setTelemetrySeconds] = useState(60)
   const [driftSeconds, setDriftSeconds] = useState(15)
+  const [agentInspectionEvery, setAgentInspectionEvery] = useState(1)
+  const [agentInspectionUnit, setAgentInspectionUnit] = useState<InspectionUnit>('day')
+  const [agentInspectionAt, setAgentInspectionAt] = useState('03:00')
+  const [xrayInspectionEvery, setXrayInspectionEvery] = useState(1)
+  const [xrayInspectionUnit, setXrayInspectionUnit] = useState<InspectionUnit>('day')
+  const [xrayInspectionAt, setXrayInspectionAt] = useState('03:00')
   // 密码
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -145,6 +159,12 @@ export default function Settings() {
         setReconnectMaxRetries(s.agent.reconnect.max_retries)
         setTelemetrySeconds(s.agent.telemetry.interval_seconds)
         setDriftSeconds(s.agent.drift_detection.interval_seconds)
+        setAgentInspectionEvery(s.release_inspection.agent.every)
+        setAgentInspectionUnit(s.release_inspection.agent.unit)
+        setAgentInspectionAt(s.release_inspection.agent.at ?? '03:00')
+        setXrayInspectionEvery(s.release_inspection.xray.every)
+        setXrayInspectionUnit(s.release_inspection.xray.unit)
+        setXrayInspectionAt(s.release_inspection.xray.at ?? '03:00')
       })
       .catch((err) => setLoadError(errorMessage(err)))
   }, [])
@@ -186,6 +206,22 @@ export default function Settings() {
           },
           telemetry: { interval_seconds: telemetrySeconds },
           drift_detection: { interval_seconds: driftSeconds },
+        },
+        release_inspection: {
+          agent: {
+            every: agentInspectionEvery,
+            unit: agentInspectionUnit,
+            ...(agentInspectionUnit === 'minute' || agentInspectionUnit === 'hour'
+              ? {}
+              : { at: agentInspectionAt }),
+          },
+          xray: {
+            every: xrayInspectionEvery,
+            unit: xrayInspectionUnit,
+            ...(xrayInspectionUnit === 'minute' || xrayInspectionUnit === 'hour'
+              ? {}
+              : { at: xrayInspectionAt }),
+          },
         },
         // bot token 留空 = 保持已保存值（后端语义，与 tls key 一致）
         ...(alertBotToken.trim() ? { alert_telegram_bot_token: alertBotToken.trim() } : {}),
@@ -390,6 +426,102 @@ export default function Settings() {
               </div>
             </div>
             <p className="text-xs text-muted-foreground">当前期望 revision：{settings.agent.revision}</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>巡检任务</CardTitle>
+            <CardDescription>
+              定期从 GitHub 更新升级弹窗使用的 release 版本缓存。GitHub 暂时不可用时继续使用最近一次成功缓存。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="space-y-3">
+              <Label>Agent 版本</Label>
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
+                <div className="space-y-2">
+                  <Label htmlFor="agentInspectionEvery" className="text-xs text-muted-foreground">每隔</Label>
+                  <Input
+                    id="agentInspectionEvery"
+                    type="number"
+                    min={1}
+                    max={10000}
+                    value={agentInspectionEvery}
+                    onChange={(event) => setAgentInspectionEvery(Number(event.target.value))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">单位</Label>
+                  <Select
+                    value={agentInspectionUnit}
+                    onValueChange={(value) => value && setAgentInspectionUnit(value as InspectionUnit)}
+                    items={INSPECTION_UNITS}
+                  >
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {INSPECTION_UNITS.map((unit) => (
+                        <SelectItem key={unit.value} value={unit.value}>{unit.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {agentInspectionUnit !== 'minute' && agentInspectionUnit !== 'hour' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="agentInspectionAt" className="text-xs text-muted-foreground">执行时间</Label>
+                    <Input
+                      id="agentInspectionAt"
+                      type="time"
+                      value={agentInspectionAt}
+                      onChange={(event) => setAgentInspectionAt(event.target.value)}
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="space-y-3 border-t pt-5">
+              <Label>xray 版本</Label>
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
+                <div className="space-y-2">
+                  <Label htmlFor="xrayInspectionEvery" className="text-xs text-muted-foreground">每隔</Label>
+                  <Input
+                    id="xrayInspectionEvery"
+                    type="number"
+                    min={1}
+                    max={10000}
+                    value={xrayInspectionEvery}
+                    onChange={(event) => setXrayInspectionEvery(Number(event.target.value))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">单位</Label>
+                  <Select
+                    value={xrayInspectionUnit}
+                    onValueChange={(value) => value && setXrayInspectionUnit(value as InspectionUnit)}
+                    items={INSPECTION_UNITS}
+                  >
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {INSPECTION_UNITS.map((unit) => (
+                        <SelectItem key={unit.value} value={unit.value}>{unit.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {xrayInspectionUnit !== 'minute' && xrayInspectionUnit !== 'hour' && (
+                  <div className="space-y-2">
+                    <Label htmlFor="xrayInspectionAt" className="text-xs text-muted-foreground">执行时间</Label>
+                    <Input
+                      id="xrayInspectionAt"
+                      type="time"
+                      value={xrayInspectionAt}
+                      onChange={(event) => setXrayInspectionAt(event.target.value)}
+                    />
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">默认每天 03:00 巡检一次。</p>
+            </div>
           </CardContent>
         </Card>
 

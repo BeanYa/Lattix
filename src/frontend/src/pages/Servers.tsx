@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { PlusIcon, XIcon } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
@@ -25,10 +25,11 @@ import {
 } from '@/components/ui/select'
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
+import { formatDateTime } from '@/lib/format'
 import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { useTimezone } from '@/lib/timezone'
-import type { MachineType, PortRange, Server, ServerMetricSeries } from '@/lib/types'
+import type { MachineType, PortRange, ReleaseVersions, Server, ServerMetricSeries } from '@/lib/types'
 
 const DEPENDENCIES_COMMAND = 'apk add --no-cache bash curl ca-certificates unzip util-linux'
 
@@ -135,6 +136,9 @@ export default function Servers() {
   const [upgradeTarget, setUpgradeTarget] = useState<Server | null>(null)
   const [upgradeKind, setUpgradeKind] = useState<'xray' | 'agent'>('xray')
   const [upgradeVersion, setUpgradeVersion] = useState('latest')
+  const [upgradeVersions, setUpgradeVersions] = useState<ReleaseVersions | null>(null)
+  const [upgradeVersionsLoading, setUpgradeVersionsLoading] = useState(false)
+  const upgradeVersionsRequest = useRef(0)
   const [upgrading, setUpgrading] = useState(false)
   const [upgradeError, setUpgradeError] = useState('')
   // 升级命令追踪：下发后轮询命令终态（acked/failed），替代旧版"alert 后即关闭"。
@@ -405,13 +409,26 @@ export default function Servers() {
   // 版本升级（§18）：命令入队后由 agent 下载/校验/替换/重启，版本号经 hello/遥测自动刷新。
   // kind=xray 升级 xray-core；kind=agent 升级 agent 自身（兼容窗口外的机器经此收敛）。
   const onOpenUpgrade = (s: Server, kind: 'xray' | 'agent') => {
+    const requestID = ++upgradeVersionsRequest.current
     setUpgradeTarget(s)
     setUpgradeKind(kind)
     setUpgradeVersion('latest')
+    setUpgradeVersions(null)
+    setUpgradeVersionsLoading(true)
     setUpgradeError('')
     setUpgradeCmdId(null)
     setUpgradeResult(null)
     setUpgradeResultError('')
+    api.releaseVersions(kind)
+      .then((versions) => {
+        if (upgradeVersionsRequest.current === requestID) setUpgradeVersions(versions)
+      })
+      .catch((err) => {
+        if (upgradeVersionsRequest.current === requestID) setUpgradeError(errorMessage(err))
+      })
+      .finally(() => {
+        if (upgradeVersionsRequest.current === requestID) setUpgradeVersionsLoading(false)
+      })
   }
 
   const onUpgrade = async (e: FormEvent) => {
@@ -822,7 +839,15 @@ export default function Servers() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={upgradeTarget !== null} onOpenChange={(next) => !next && setUpgradeTarget(null)}>
+      <Dialog
+        open={upgradeTarget !== null}
+        onOpenChange={(next) => {
+          if (!next) {
+            upgradeVersionsRequest.current++
+            setUpgradeTarget(null)
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>升级 {upgradeKind === 'agent' ? 'agent' : 'xray'}</DialogTitle>
@@ -848,17 +873,34 @@ export default function Servers() {
               <>
                 <div className="space-y-2">
                   <Label htmlFor="upgradeVersion">目标版本</Label>
-                  <Input
-                    id="upgradeVersion"
+                  <Select
                     value={upgradeVersion}
-                    onChange={(e) => setUpgradeVersion(e.target.value)}
-                    placeholder="latest 或具体版本号（如 v26.3.27）"
-                    autoFocus
-                  />
+                    onValueChange={(value) => value && setUpgradeVersion(value)}
+                    items={(upgradeVersions?.versions ?? ['latest']).map((version) => ({
+                      value: version,
+                      label: version,
+                    }))}
+                    disabled={upgradeVersionsLoading}
+                  >
+                    <SelectTrigger id="upgradeVersion" className="w-full" autoFocus>
+                      <SelectValue placeholder={upgradeVersionsLoading ? '正在获取版本…' : '选择版本'} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(upgradeVersions?.versions ?? ['latest']).map((version) => (
+                        <SelectItem key={version} value={version}>{version}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {upgradeVersions && (
+                    <p className="text-xs text-muted-foreground">
+                      缓存更新于 {formatDateTime(upgradeVersions.fetched_at, timezone)}
+                      {upgradeVersions.stale ? `；${upgradeVersions.message ?? '本次更新失败，正在使用缓存'}` : ''}
+                    </p>
+                  )}
                 </div>
                 {upgradeError && <p className="text-sm text-destructive">{upgradeError}</p>}
                 <DialogFooter>
-                  <Button type="submit" disabled={upgrading}>
+                  <Button type="submit" disabled={upgrading || upgradeVersionsLoading}>
                     {upgrading ? '下发中…' : '下发升级'}
                   </Button>
                 </DialogFooter>

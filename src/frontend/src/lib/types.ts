@@ -221,6 +221,27 @@ export interface AgentSettings {
   }
 }
 
+export type InspectionUnit = 'minute' | 'hour' | 'day' | 'month' | 'year'
+
+export interface InspectionSchedule {
+  every: number
+  unit: InspectionUnit
+  at?: string
+}
+
+export interface ReleaseInspectionSettings {
+  agent: InspectionSchedule
+  xray: InspectionSchedule
+}
+
+export interface ReleaseVersions {
+  kind: 'agent' | 'xray'
+  versions: string[]
+  fetched_at: string
+  stale: boolean
+  message?: string
+}
+
 export interface PanelSettings {
   timezone: string
   public_url: string
@@ -246,6 +267,7 @@ export interface PanelSettings {
   request_log_dropped: number
   backup_includes_logs: boolean
   agent: AgentSettings
+  release_inspection: ReleaseInspectionSettings
 }
 
 export interface UpdateSettingsRequest {
@@ -263,6 +285,7 @@ export interface UpdateSettingsRequest {
   operation_log_limit: number
   request_log_max_mb: number
   agent: AgentSettings
+  release_inspection: ReleaseInspectionSettings
 }
 
 export interface AlertChannelResult {

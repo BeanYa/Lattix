@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -88,16 +89,17 @@ type settingsDTO struct {
 	PanelVersion     string       `json:"panel_version"`     // 当前面板版本（构建注入）
 	PasswordOverride bool         `json:"password_override"` // 密码已被设置页覆盖（否则为启动参数）
 	// 事件告警（§19）：三项全空 = 告警关闭。bot token 不回显（与 tls_key 同风格），仅给置位标记。
-	AlertWebhookURL          string               `json:"alert_webhook_url"`
-	AlertTelegramBotTokenSet bool                 `json:"alert_telegram_bot_token_set"`
-	AlertTelegramChatID      string               `json:"alert_telegram_chat_id"`
-	OperationLogLimit        int                  `json:"operation_log_limit"`
-	RequestLogMaxMB          int                  `json:"request_log_max_mb"`
-	LogDir                   string               `json:"log_dir"`
-	RequestLogUsageBytes     int64                `json:"request_log_usage_bytes"`
-	RequestLogDropped        uint64               `json:"request_log_dropped"`
-	BackupIncludesLogs       bool                 `json:"backup_includes_logs"`
-	Agent                    shared.AgentSettings `json:"agent"`
+	AlertWebhookURL          string                    `json:"alert_webhook_url"`
+	AlertTelegramBotTokenSet bool                      `json:"alert_telegram_bot_token_set"`
+	AlertTelegramChatID      string                    `json:"alert_telegram_chat_id"`
+	OperationLogLimit        int                       `json:"operation_log_limit"`
+	RequestLogMaxMB          int                       `json:"request_log_max_mb"`
+	LogDir                   string                    `json:"log_dir"`
+	RequestLogUsageBytes     int64                     `json:"request_log_usage_bytes"`
+	RequestLogDropped        uint64                    `json:"request_log_dropped"`
+	BackupIncludesLogs       bool                      `json:"backup_includes_logs"`
+	Agent                    shared.AgentSettings      `json:"agent"`
+	ReleaseInspection        releaseInspectionSettings `json:"release_inspection"`
 }
 
 // handleGetSettings 处理 GET /api/settings。
@@ -123,6 +125,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		RequestLogMaxMB:          settingInt(s.getSetting(ctx, store.SettingRequestLogMaxMB), 10),
 		LogDir:                   s.cfg.LogDir,
 		BackupIncludesLogs:       false,
+		ReleaseInspection:        s.releaseInspectionSettings(ctx),
 	}
 	agentSettings, err := s.st.AgentSettings(ctx)
 	if err != nil {
@@ -194,12 +197,13 @@ type updateSettingsRequest struct {
 	ACMEDomain string `json:"acme_domain"`
 	ACMEEmail  string `json:"acme_email"`
 	// 事件告警（§19）：webhook/chat_id 随表单覆盖（允许清空）；bot token 留空 = 保持已保存值。
-	AlertWebhookURL       string                `json:"alert_webhook_url"`
-	AlertTelegramBotToken string                `json:"alert_telegram_bot_token"`
-	AlertTelegramChatID   string                `json:"alert_telegram_chat_id"`
-	OperationLogLimit     int                   `json:"operation_log_limit"`
-	RequestLogMaxMB       int                   `json:"request_log_max_mb"`
-	Agent                 *shared.AgentSettings `json:"agent"`
+	AlertWebhookURL       string                     `json:"alert_webhook_url"`
+	AlertTelegramBotToken string                     `json:"alert_telegram_bot_token"`
+	AlertTelegramChatID   string                     `json:"alert_telegram_chat_id"`
+	OperationLogLimit     int                        `json:"operation_log_limit"`
+	RequestLogMaxMB       int                        `json:"request_log_max_mb"`
+	Agent                 *shared.AgentSettings      `json:"agent"`
+	ReleaseInspection     *releaseInspectionSettings `json:"release_inspection"`
 }
 
 // handleUpdateSettings 处理 PUT /api/settings：校验后落库。
@@ -224,6 +228,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"alert_telegram_bot_token_set": s.getSetting(ctx, store.SettingAlertTelegramBotToken) != "",
 		"operation_log_limit":          settingInt(s.getSetting(ctx, store.SettingOperationLogLimit), 1000),
 		"request_log_max_mb":           settingInt(s.getSetting(ctx, store.SettingRequestLogMaxMB), 10),
+		"release_inspection":           s.releaseInspectionSettings(ctx),
 	}
 
 	if req.OperationLogLimit == 0 {
@@ -245,6 +250,16 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		req.Agent.Revision = 1
 		if err := req.Agent.Validate(); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if req.ReleaseInspection != nil {
+		if err := req.ReleaseInspection.Agent.validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "agent release "+err.Error())
+			return
+		}
+		if err := req.ReleaseInspection.Xray.validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "xray release "+err.Error())
 			return
 		}
 	}
@@ -404,6 +419,16 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if !set(store.SettingRequestLogMaxMB, strconv.Itoa(req.RequestLogMaxMB)) {
 		return
 	}
+	if req.ReleaseInspection != nil {
+		raw, err := json.Marshal(req.ReleaseInspection)
+		if err != nil || !set(store.SettingReleaseInspection, string(raw)) {
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+			}
+			return
+		}
+		s.releases.notifyScheduleChanged()
+	}
 	if s.opLog != nil {
 		if err := s.opLog.SetMaxEntries(ctx, req.OperationLogLimit); err != nil {
 			log.Printf("panel: apply operation log retention: %v", err)
@@ -432,6 +457,10 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"alert_telegram_chat_id":       strings.TrimSpace(req.AlertTelegramChatID),
 		"alert_telegram_bot_token_set": before["alert_telegram_bot_token_set"].(bool) || strings.TrimSpace(req.AlertTelegramBotToken) != "",
 		"operation_log_limit":          req.OperationLogLimit, "request_log_max_mb": req.RequestLogMaxMB,
+		"release_inspection": before["release_inspection"],
+	}
+	if req.ReleaseInspection != nil {
+		after["release_inspection"] = *req.ReleaseInspection
 	}
 	if req.TLSCertPEM != "" {
 		after["tls_certificate"] = "已变更"

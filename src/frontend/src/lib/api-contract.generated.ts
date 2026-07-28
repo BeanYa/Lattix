@@ -42,6 +42,7 @@ export const rpcOperations = {
   serverRepair: { method: 'POST', path: '/api/server/repair' },
   serverUpgradeXray: { method: 'POST', path: '/api/server/upgrade-xray' },
   serverUpgradeAgent: { method: 'POST', path: '/api/server/upgrade-agent' },
+  serverListReleaseVersions: { method: 'GET', path: '/api/server/list-release-versions' },
   nodeList: { method: 'GET', path: '/api/node/list' },
   nodeCreate: { method: 'POST', path: '/api/node/create' },
   nodeRetry: { method: 'POST', path: '/api/node/retry' },
