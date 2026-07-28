@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
 import Layout from '@/components/Layout'
 import { AuthProvider, useAuth } from '@/lib/auth'
+import { ThemeProvider } from '@/lib/theme'
 import { TimezoneProvider } from '@/lib/timezone'
 import Chains from '@/pages/Chains'
 import Dashboard from '@/pages/Dashboard'
@@ -18,8 +19,11 @@ function RequireAuth({ children }: { children: ReactElement }) {
   const { username, loading } = useAuth()
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
-        加载中…
+      <div className="flex min-h-[100dvh] items-center justify-center bg-background p-4">
+        <div className="game-panel flex items-center gap-3 px-5 py-4 text-sm text-muted-foreground">
+          <span className="size-3 animate-pulse rounded-sm bg-primary" />
+          正在连接控制面板…
+        </div>
       </div>
     )
   }
@@ -32,32 +36,34 @@ function RequireAuth({ children }: { children: ReactElement }) {
 export default function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <TimezoneProvider>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route
-              element={
-                <RequireAuth>
-                  <Layout />
-                </RequireAuth>
-              }
-            >
-              <Route index element={<Dashboard />} />
-              <Route path="servers" element={<Servers />} />
-              <Route path="chains" element={<Chains />} />
-              <Route path="users" element={<Users />} />
-              <Route path="logs" element={<LogsLayout />}>
-                <Route index element={<Navigate to="operations" replace />} />
-                <Route path="operations" element={<OperationLogs />} />
-                <Route path="requests" element={<RequestLogs />} />
+      <ThemeProvider>
+        <AuthProvider>
+          <TimezoneProvider>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route
+                element={
+                  <RequireAuth>
+                    <Layout />
+                  </RequireAuth>
+                }
+              >
+                <Route index element={<Dashboard />} />
+                <Route path="servers" element={<Servers />} />
+                <Route path="chains" element={<Chains />} />
+                <Route path="users" element={<Users />} />
+                <Route path="logs" element={<LogsLayout />}>
+                  <Route index element={<Navigate to="operations" replace />} />
+                  <Route path="operations" element={<OperationLogs />} />
+                  <Route path="requests" element={<RequestLogs />} />
+                </Route>
+                <Route path="settings" element={<Settings />} />
               </Route>
-              <Route path="settings" element={<Settings />} />
-            </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </TimezoneProvider>
-      </AuthProvider>
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </TimezoneProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </BrowserRouter>
   )
 }
