@@ -384,7 +384,7 @@ while true; do
     set -a; . "$ENV_FILE"; set +a
     "$AGENT_BIN" -panel "\$LATTIX_PANEL_WS" -token "\$LATTIX_TOKEN" -state "$STATE_FILE" \\
         -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG" \\
-        -xray-api "$XRAY_API" -xray-runner exec >>"$AGENT_LOG" 2>&1
+        -xray-api "$XRAY_API" -xray-runner exec 9>&- >>"$AGENT_LOG" 2>&1
     sleep 1
 done
 EOF
