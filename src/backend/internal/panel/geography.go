@@ -24,9 +24,6 @@ func normalizeServerGeography(countryCode, location string) (string, string, err
 	if region.String() != countryCode || countryCode == "ZZ" {
 		return "", "", fmt.Errorf("country_code 须为有效的 ISO 3166-1 两位代码")
 	}
-	if location == "" {
-		return "", "", fmt.Errorf("location 不能为空")
-	}
 	if utf8.RuneCountInString(location) > maxServerLocationRunes {
 		return "", "", fmt.Errorf("location 不能超过 %d 个字符", maxServerLocationRunes)
 	}

@@ -345,8 +345,8 @@ export default function Servers() {
     }
     let ranges: PortRange[] = []
     const nextTags = editTags
-    if (!editCountryCode || !editLocation.trim()) {
-      setEditError('国家和地区不能为空')
+    if (!editCountryCode) {
+      setEditError('国家/地区不能为空')
       return
     }
     if (isNat) {
@@ -533,9 +533,9 @@ export default function Servers() {
                 autoFocus
               />
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="country">国家</Label>
+                <Label htmlFor="country">国家/地区</Label>
                 <CountryCombobox
                   id="country"
                   value={countryCode}
@@ -547,7 +547,7 @@ export default function Servers() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="location">地区</Label>
+                <Label htmlFor="location">地区/城市</Label>
                 <Input
                   id="location"
                   value={location}
@@ -555,7 +555,6 @@ export default function Servers() {
                   placeholder="选择城市或输入机房位置"
                   list="server-location-options"
                   maxLength={100}
-                  required
                 />
                 <datalist id="server-location-options">
                   {citySuggestions.map((city) => (
@@ -634,7 +633,6 @@ export default function Servers() {
                   creating ||
                   !alias.trim() ||
                   !countryCode ||
-                  !location.trim() ||
                   (machineType === 'nat' && !address.trim())
                 }
               >
@@ -693,9 +691,9 @@ export default function Servers() {
                 required
               />
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="edit-country">国家</Label>
+                <Label htmlFor="edit-country">国家/地区</Label>
                 <CountryCombobox
                   id="edit-country"
                   value={editCountryCode}
@@ -707,7 +705,7 @@ export default function Servers() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="editLocation">地区</Label>
+                <Label htmlFor="editLocation">地区/城市</Label>
                 <Input
                   id="editLocation"
                   value={editLocation}
@@ -715,7 +713,6 @@ export default function Servers() {
                   placeholder="选择城市或输入机房位置"
                   list="edit-server-location-options"
                   maxLength={100}
-                  required
                 />
                 <datalist id="edit-server-location-options">
                   {editCitySuggestions.map((city) => (

@@ -25,10 +25,19 @@ func TestNormalizeServerGeographyRejectsMissingOrUnknown(t *testing.T) {
 	}{
 		{"", "Tokyo"},
 		{"ZZ", "Unknown"},
-		{"JP", ""},
 	} {
 		if _, _, err := normalizeServerGeography(tc.code, tc.location); err == nil {
 			t.Fatalf("%q/%q 应校验失败", tc.code, tc.location)
 		}
+	}
+}
+
+func TestNormalizeServerGeographyAllowsEmptyLocation(t *testing.T) {
+	code, location, err := normalizeServerGeography(" cn ", "   ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != "CN" || location != "" {
+		t.Fatalf("normalize = %q/%q", code, location)
 	}
 }
