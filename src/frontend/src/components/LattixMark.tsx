@@ -8,23 +8,30 @@ export default function LattixMark(props: SVGProps<SVGSVGElement>) {
       focusable="false"
       {...props}
     >
-      <g
-        fill="none"
-        stroke="#6437f2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="7"
-      >
-        <path d="M11 11v42h42" />
-        <path d="m11 53 42-42" />
-        <path d="M11 11h9c3 0 5 2 5 5v3c0 3 1 5 4 8l3 5 5 3c3 3 5 4 8 4h3c3 0 5 2 5 5v9" />
+      <g stroke="#292638" strokeLinejoin="miter" strokeWidth="4">
+        <path d="M6 27V6h21v9H15v12Z" fill="#f0c959" />
+        <path d="M37 6h21v21h-9V15H37Z" fill="#68d7c8" />
+        <path d="M6 37h9v12h12v9H6Z" fill="#68d7c8" />
+        <path d="M49 37h9v21H37v-9h12Z" fill="#f0c959" />
       </g>
-      <g fill="none" stroke="currentColor" strokeWidth="5">
-        <circle cx="11" cy="11" r="7" />
-        <circle cx="53" cy="11" r="7" />
-        <circle cx="11" cy="53" r="7" />
-      </g>
-      <circle cx="53" cy="53" r="7" fill="none" stroke="#06d5e8" strokeWidth="5" />
+      <rect
+        x="22"
+        y="22"
+        width="20"
+        height="20"
+        rx="2"
+        fill="#292638"
+        transform="rotate(45 32 32)"
+      />
+      <rect
+        x="28"
+        y="28"
+        width="8"
+        height="8"
+        rx="1"
+        fill="#f8f7ff"
+        transform="rotate(45 32 32)"
+      />
     </svg>
   )
 }

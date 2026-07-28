@@ -323,7 +323,7 @@ export default function OperationLogs() {
       </div>
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>{total > 0 ? `第 ${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} 条` : ''}</span>
+        <span>{total > 0 ? `第 ${offset + 1}-${Math.min(offset + PAGE_SIZE, total)} 条` : ''}</span>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>上一页</Button>
           <Button variant="outline" size="sm" disabled={offset + PAGE_SIZE >= total} onClick={() => setOffset(offset + PAGE_SIZE)}>下一页</Button>

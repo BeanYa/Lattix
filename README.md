@@ -104,7 +104,7 @@ curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
 ```
 
 ```
-src/frontend/  # Vite + React + TypeScript + shadcn/ui（包管理器 bun）
+src/frontend/  # Vite + React + TypeScript + shadcn/ui + Three.js（包管理器 bun）
 src/backend/   # Go：面板 HTTP API + Agent WS 端点 + SQLite
 src/agent/     # Go：独立二进制，systemd 托管
 src/shared/    # Go module：WS 消息结构体、虚拟配置类型，backend/agent 共用
@@ -116,6 +116,13 @@ install.sh            # 面向用户的统一安装入口
 ```
 
 ## 功能
+
+**管理界面**
+
+- 像素游戏风格的响应式管理面板，使用本地打包的中文像素字体，不依赖外部字体 CDN
+- 仪表盘提供可旋转的 low-poly 地球链路拓扑，根据服务器地理位置显示节点、状态和独立动画链路
+- 地球节点支持地平线淡入淡出，云层独立运动并在拖动时保留惯性
+- 支持浅色/深色模式切换并持久化用户选择，桌面端和移动端均提供切换入口
 
 **链路与协议**
 

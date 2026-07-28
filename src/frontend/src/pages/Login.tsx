@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { RouteIcon, ServerIcon, UsersIcon } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 import LattixMark from '@/components/LattixMark'
@@ -32,48 +33,72 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
+    <div className="grid min-h-[100dvh] place-items-center bg-background p-4 md:p-8">
+      <div className="grid w-full max-w-5xl overflow-hidden rounded-lg border-2 border-border bg-card shadow-[0_8px_0_rgb(57_53_72/0.16)] lg:grid-cols-[1.1fr_0.9fr]">
+        <section className="relative hidden min-h-[620px] overflow-hidden border-r-2 border-border bg-[var(--pastel-blue)] p-10 lg:flex lg:flex-col lg:justify-between">
           <div className="flex items-center gap-3">
-            <LattixMark className="size-10 shrink-0 text-foreground" />
+            <LattixMark className="size-12 shrink-0" />
             <div>
-              <CardTitle className="text-xl">Lattix 管理面板</CardTitle>
-              <CardDescription className="mt-1">请使用管理员账号登录</CardDescription>
+              <strong className="block text-lg font-normal tracking-normal" aria-label="Lattix">LATTIX</strong>
+              <span className="text-xs text-muted-foreground">网络控制中心</span>
             </div>
           </div>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={onSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="username">用户名</Label>
-              <Input
-                id="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoComplete="username"
-                required
-                autoFocus
-              />
+          <div className="relative z-10">
+            <h1 className="max-w-md text-4xl font-extrabold leading-tight">让节点、链路和用户清晰可见。</h1>
+            <p className="mt-5 max-w-md text-base leading-7 text-muted-foreground">从一个友好、可靠的控制面板管理整个网络。</p>
+          </div>
+          <div className="relative h-48" aria-hidden="true">
+            <div className="absolute inset-x-0 bottom-0 h-24 rounded-t-[50%] bg-[var(--pastel-green)]" />
+            <div className="absolute bottom-12 left-[12%] grid size-20 place-items-center rounded-lg border-2 bg-[#ffd6a4] shadow-[0_5px_0_rgb(57_53_72/0.18)]">
+              <ServerIcon className="size-9" />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">密码</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                required
-              />
+            <div className="absolute bottom-6 left-1/2 grid size-24 -translate-x-1/2 place-items-center rounded-lg border-2 bg-[#ffaaa4] shadow-[0_5px_0_rgb(57_53_72/0.18)]">
+              <RouteIcon className="size-10" />
             </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting ? '登录中…' : '登录'}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+            <div className="absolute bottom-14 right-[10%] grid size-20 place-items-center rounded-lg border-2 bg-[#c9c5ff] shadow-[0_5px_0_rgb(57_53_72/0.18)]">
+              <UsersIcon className="size-8" />
+            </div>
+          </div>
+        </section>
+        <Card className="w-full rounded-none border-0 py-0 shadow-none ring-0">
+          <CardHeader className="border-b px-7 py-8 md:px-10">
+            <CardTitle className="text-2xl font-extrabold">欢迎回来</CardTitle>
+            <CardDescription className="mt-1">登录 Lattix 管理面板</CardDescription>
+          </CardHeader>
+          <CardContent className="px-7 py-8 md:px-10 md:py-10">
+            <form onSubmit={onSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="username">用户名</Label>
+                <Input
+                  id="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoComplete="username"
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">密码</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  required
+                />
+              </div>
+              {error && (
+                <p className="rounded-lg border border-destructive bg-destructive/5 p-3 text-sm text-destructive">{error}</p>
+              )}
+              <Button type="submit" size="lg" className="mt-2 w-full" disabled={submitting}>
+                {submitting ? '登录中…' : '登录'}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }

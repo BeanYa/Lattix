@@ -355,7 +355,7 @@ export default function Settings() {
                 value={reconnectMaxRetries}
                 onChange={(event) => setReconnectMaxRetries(Number(event.target.value))}
               />
-              <p className="text-xs text-muted-foreground">范围 1–100；无限重试模式会保存但忽略该值。</p>
+              <p className="text-xs text-muted-foreground">范围 1-100；无限重试模式会保存但忽略该值。</p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-2">
@@ -444,7 +444,7 @@ export default function Settings() {
                 onChange={(event) => setOperationLogLimit(Number(event.target.value))}
               />
               <p className="text-xs text-muted-foreground">
-                范围 100–100000，默认 1000 条；超过后按时间删除最旧记录。
+                范围 100-100000，默认 1000 条；超过后按时间删除最旧记录。
               </p>
             </div>
             <div className="flex flex-col gap-2">
@@ -458,7 +458,7 @@ export default function Settings() {
                 onChange={(event) => setRequestLogMaxMB(Number(event.target.value))}
               />
               <p className="text-xs text-muted-foreground">
-                范围 1–1024 MB，默认 10 MB；当前占用 {formatBytes(settings.request_log_usage_bytes)}，
+                范围 1-1024 MB，默认 10 MB；当前占用 {formatBytes(settings.request_log_usage_bytes)}，
                 分段文件位于 <code className="rounded bg-muted px-1">{settings.log_dir}</code>。
                 {settings.request_log_dropped > 0
                   ? ` 极端负载下累计丢弃 ${settings.request_log_dropped} 条。`
