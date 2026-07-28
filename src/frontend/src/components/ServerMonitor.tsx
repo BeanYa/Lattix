@@ -130,9 +130,6 @@ function LatencyStrip({ samples }: { samples: ServerMetrics[] }) {
   const padded = Array.from({ length: Math.max(0, 30 - values.length) })
   return (
     <div className="grid h-3 grid-cols-[repeat(30,minmax(0,1fr))] gap-px" aria-label="最近 30 次延迟趋势">
-      {padded.map((_, index) => (
-        <span key={`empty-${index}`} className="rounded-[1px] bg-muted" />
-      ))}
       {values.map((sample, index) => {
         const latency = sample.latency_ms
         const state = latency === null ? null : health(latency, 100, 300)
@@ -149,6 +146,9 @@ function LatencyStrip({ samples }: { samples: ServerMetrics[] }) {
           />
         )
       })}
+      {padded.map((_, index) => (
+        <span key={`empty-${index}`} className="rounded-[1px] bg-muted" />
+      ))}
     </div>
   )
 }
@@ -309,7 +309,7 @@ function ServerCard({
             <Separator />
             <div className="grid grid-cols-[88px_1fr] items-end gap-3">
               <div className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">Agent 延迟</span>
+                <span className="text-xs text-muted-foreground">延迟</span>
                 <span className="text-base font-semibold tabular-nums">
                   {latency === null ? '--' : `${Math.round(latency)} ms`}
                 </span>
@@ -377,15 +377,20 @@ function TrendChart({ title, unit, series }: { title: string; unit: string; seri
       <div className="rounded-lg border bg-muted/20 p-2">
         {values.length > 1 ? (
           <svg viewBox={`0 0 ${width} ${height}`} className="h-24 w-full" role="img" aria-label={`${title}趋势`}>
-            <path d={`M 0 ${height - 1} H ${width}`} stroke="var(--color-border)" fill="none" />
+            <path d={`M 0 ${height - 1} H ${width}`} stroke="var(--border)" fill="none" />
             {series.map((item) => (
               <polyline
                 key={item.label}
                 points={points(item.values)}
                 fill="none"
-                stroke={`var(--color-${item.color})`}
+                stroke="currentColor"
                 strokeWidth="2"
                 vectorEffect="non-scaling-stroke"
+                className={cn(
+                  item.color === 'success' && 'text-success',
+                  item.color === 'info' && 'text-info',
+                  item.color === 'warning' && 'text-warning',
+                )}
               />
             ))}
           </svg>
