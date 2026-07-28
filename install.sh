@@ -34,35 +34,67 @@ run_child() {
     fi
 }
 
+read_masked() {
+    local prompt="$1" char
+    REPLY=""
+    printf '%s' "$prompt" >&3
+    while IFS= read -r -s -n 1 -u 3 char; do
+        if [[ -z "$char" ]]; then
+            break
+        fi
+        case "$char" in
+            $'\b'|$'\177')
+                if [[ -n "$REPLY" ]]; then
+                    REPLY="${REPLY%?}"
+                    printf '\b \b' >&3
+                fi
+                ;;
+            *)
+                REPLY+="$char"
+                printf '*' >&3
+                ;;
+        esac
+    done
+    printf '\n' >&3
+}
+
+prompt_panel_settings() {
+    local default_bind="$1" default_dir="$2"
+    local bind port admin_user admin_pass config_dir
+    PANEL_OPTIONS=()
+    read -r -u 3 -p "部署地址 [$default_bind]: " bind
+    read -r -u 3 -p "部署端口 [8080]: " port
+    read -r -u 3 -p "管理员账号 [admin]: " admin_user
+    read_masked "管理员密码 [留空则随机生成]: "
+    admin_pass="$REPLY"
+    read -r -u 3 -p "配置目录 [$default_dir]: " config_dir
+    [[ -z "$bind" ]] || PANEL_OPTIONS+=(--bind "$bind")
+    [[ -z "$port" ]] || PANEL_OPTIONS+=(--port "$port")
+    [[ -z "$admin_user" ]] || PANEL_OPTIONS+=(--admin-user "$admin_user")
+    [[ -z "$admin_pass" ]] || PANEL_OPTIONS+=(--admin-pass "$admin_pass")
+    [[ -z "$config_dir" ]] || PANEL_OPTIONS+=(--config-dir "$config_dir")
+}
+
 wizard() {
     # With `curl ... | bash`, stdin carries this script rather than terminal input.
     # Read selections from the controlling terminal so the documented wizard works.
     if ! { exec 3<>/dev/tty; } 2>/dev/null; then
-        die "no arguments require an interactive terminal; use panel|agent"
+        die "no arguments require an interactive terminal; use panel --mode docker|native"
     fi
-    echo "Lattix 安装向导"
-    echo "  1) 安装面板"
-    echo "  2) 安装 Agent"
-    read -r -u 3 -p "请选择 [1-2]: " choice
-    case "$choice" in
+    echo "Lattix 面板安装向导"
+    echo "  1) Docker Compose（推荐）"
+    echo "  2) 原生二进制 + systemd"
+    read -r -u 3 -p "请选择面板模式 [1-2]: " mode
+    case "$mode" in
         1)
-            echo "  1) Docker Compose（推荐）"
-            echo "  2) 原生二进制 + systemd"
-            read -r -u 3 -p "请选择面板模式 [1-2]: " mode
-            case "$mode" in
-                1) set -- panel --mode docker ;;
-                2) set -- panel --mode native ;;
-                *) die "invalid mode selection" ;;
-            esac
+            prompt_panel_settings 127.0.0.1 /opt/lattix-panel
+            set -- panel --mode docker "${PANEL_OPTIONS[@]}"
             ;;
         2)
-            local panel token xray
-            read -r -u 3 -p "面板地址: " panel
-            read -r -u 3 -p "Bootstrap token: " token
-            read -r -u 3 -p "Xray 版本 [latest]: " xray
-            set -- agent --panel "$panel" --token "$token" --xray-version "${xray:-latest}"
+            prompt_panel_settings 0.0.0.0 /usr/local/lattix-panel
+            set -- panel --mode native "${PANEL_OPTIONS[@]}"
             ;;
-        *) die "invalid component selection" ;;
+        *) die "invalid mode selection" ;;
     esac
     exec 3>&-
     dispatch "$@"
@@ -74,7 +106,7 @@ dispatch() {
     shift
     case "$component" in
         panel|agent) ;;
-        *) die "usage: install.sh panel|agent [options]" ;;
+        *) die "usage: install.sh panel [options]" ;;
     esac
 
     local version="" arg
@@ -91,7 +123,7 @@ dispatch() {
                 shift
                 if [[ "$arg" == --* && "$arg" != "--install-docker" && ${#forwarded[@]} -gt 0 ]]; then
                     case "$arg" in
-                        --mode|--bind|--port|--admin-user|--admin-pass|--public-url|--xray-version|--panel|--token)
+                        --mode|--bind|--port|--admin-user|--admin-pass|--public-url|--config-dir|--xray-version|--panel|--token)
                             [[ $# -gt 0 ]] || die "$arg requires a value"
                             forwarded+=("$1")
                             shift

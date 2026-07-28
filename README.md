@@ -21,8 +21,9 @@
 curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh | bash
 ```
 
-依次选择“安装面板”和安装模式。安装完成后，终端会输出访问地址、管理员账号和随机
-初始密码。Docker 模式默认只监听 `127.0.0.1:8080`，需通过 Nginx/OpenResty 反向代理
+选择面板安装模式后，可继续设置部署地址、端口、管理员账号密码和配置目录，直接回车则
+采用对应模式的默认值。安装完成后，终端会输出访问地址和管理员凭据。Docker
+模式默认只监听 `127.0.0.1:8080`，需通过 Nginx/OpenResty 反向代理
 对外提供服务；原生模式默认监听 `0.0.0.0:8080`。
 
 ### 非交互式安装
@@ -57,6 +58,7 @@ Release 文件，避免脚本与程序版本不一致。
 | `--admin-user <用户名>` | 否 | `admin` | 初始管理员用户名 |
 | `--admin-pass <密码>` | 否 | 随机 8 位字母 | 初始管理员密码；生产环境建议显式设置强密码 |
 | `--public-url <URL>` | 否 | 空 | 面板对外访问地址，反向代理或公网地址与监听地址不同时应设置 |
+| `--config-dir <绝对路径>` | 否 | Docker: `/opt/lattix-panel`；原生: `/usr/local/lattix-panel` | Compose/程序、配置和持久数据的宿主机目录；路径不能包含空白 |
 
 例如：
 
@@ -65,6 +67,7 @@ curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
   bash -s -- panel --mode docker --version v0.0.3 \
   --bind 127.0.0.1 --port 8080 \
   --admin-user admin --admin-pass 'change-this-password' \
+  --config-dir /opt/lattix-panel \
   --public-url https://panel.example.com
 ```
 
@@ -253,14 +256,10 @@ TLS 另支持**域名路径模式**（`tls_mode=path`）：面板按域名从证
 
 ### 安装 Agent（受控服务器）
 
-面板"添加服务器"生成一行安装命令，在受控机执行。正式版本（release 构建）的命令
-通过根安装器钉到面板当前版本，安装实现与 agent 二进制天然同版：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
-  bash -s -- agent --version v0.0.1 --panel https://panel.example.com \
-  --token BOOTSTRAP_TOKEN --xray-version latest
-```
+Agent 不提供用户自行触发的安装入口。请在面板"添加服务器"后，将面板生成的完整安装
+命令原样放到受控机执行；不要手工拼装命令或复用其他服务器的命令。正式版本
+（release 构建）的下发命令通过根安装器钉到面板当前版本，安装实现与 agent 二进制
+天然同版。
 
 根入口从对应 Git tag 加载 `scripts/install-agent.sh`；脚本从同版本 GitHub Release
 下载 `lattix-agent-linux-<arch>.tar.gz`（agent + latx-ag）并校验 `checksums.txt`。

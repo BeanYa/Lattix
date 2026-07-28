@@ -371,12 +371,15 @@ busy_timeout 下与并发读写安全共存，失败 500。设置页"面板维�
 面板自身的安装/运维与 agent 引导（§11）同形态：release 钉版脚本 + checksums 校验 +
 单文件 bash 管理程序。
 
-**统一安装入口**：用户只执行仓库根 `install.sh`。无参数时进入面板/Agent 与
-Docker/原生模式向导；自动化使用 `panel|agent` 子命令。版本默认取最新稳定 Release，
-显式 `--version` 可钉版。根入口再从对应 Git tag 加载
+**统一安装入口**：用户只执行仓库根 `install.sh`。无参数时直接进入面板的
+Docker/原生模式向导；面板自动化安装使用 `panel` 子命令。`agent` 子命令仅供面板
+"添加服务器"生成的安装命令调用，不作为用户自行触发的安装入口。版本默认取最新稳定
+Release，显式 `--version` 可钉版。根入口再从对应 Git tag 加载
 `scripts/install-panel.sh` 或 `scripts/install-agent.sh`；安装脚本不作为 Release 资产。
 
-**Docker 模式**：
+**安装参数**：Docker 与原生模式的交互向导均允许设置部署地址/端口、管理员账号密码和
+配置目录，各项留空时采用对应模式的默认值（重装时优先复用已有配置）。非交互安装使用
+对应参数，其中 `--config-dir` 指定 Compose/程序、配置和持久数据所在的宿主机根目录。
 
 - 发布 `linux/amd64`、`linux/arm64` 的公开 GHCR 镜像
   `ghcr.io/beanya/lattix:<version>`，同时更新 `latest`；镜像为非 root 单进程，
@@ -392,7 +395,8 @@ Docker/原生模式向导；自动化使用 `panel|agent` 子命令。版本默�
   页面更新不访问 Docker Socket。
 
 **原生模式**：下载并校验当前架构的 panel tarball（单个嵌入前端的
-`lattix-backend` + `latx`），安装到 `/usr/local/lattix-panel` 并注册 systemd。
+`lattix-backend` + `latx`），默认安装到 `/usr/local/lattix-panel`（可由
+`--config-dir` 覆盖）并注册 systemd。
 重装先停服，保留 DB、证书、ACME 缓存和管理员配置，再替换二进制并启动。
 `LATX_DEV=1` 保留给本地 e2e 的无 systemd 路径。
 

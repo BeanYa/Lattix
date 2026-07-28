@@ -13,6 +13,7 @@ PORT=""
 ADMIN_USER=""
 ADMIN_PASS=""
 PUBLIC_URL=""
+CONFIG_DIR=""
 
 die() { echo "install-panel.sh: $*" >&2; exit 1; }
 
@@ -26,6 +27,7 @@ while [[ $# -gt 0 ]]; do
         --admin-user)     ADMIN_USER="${2:?--admin-user requires a value}"; shift 2 ;;
         --admin-pass)     ADMIN_PASS="${2:?--admin-pass requires a value}"; shift 2 ;;
         --public-url)     PUBLIC_URL="${2:?--public-url requires a value}"; shift 2 ;;
+        --config-dir)     CONFIG_DIR="${2:?--config-dir requires a value}"; shift 2 ;;
         *)                die "unknown argument: $1" ;;
     esac
 done
@@ -35,6 +37,10 @@ case "$MODE" in
     "") die "--mode native|docker is required" ;;
     *) die "unsupported mode: $MODE" ;;
 esac
+if [[ -n "$CONFIG_DIR" ]]; then
+    [[ "$CONFIG_DIR" == /* && "$CONFIG_DIR" != "/" && "$CONFIG_DIR" != *[[:space:]]* ]] \
+        || die "--config-dir must be an absolute directory without whitespace and other than /"
+fi
 [[ "$VERSION" != *"{{"* && "$VERSION" == v* ]] || die "--version vX.Y.Z is required"
 [[ "$GITHUB_REPO" != *"{{"* ]] || die "GITHUB_REPO is not configured"
 [[ "$(uname -s)" == "Linux" ]] || die "only Linux is supported"
@@ -150,9 +156,9 @@ EOF
 }
 
 install_docker_mode() {
+    local root="${CONFIG_DIR:-${LATX_DOCKER_ROOT:-/opt/lattix-panel}}"
     ensure_docker
     need_root
-    local root="${LATX_DOCKER_ROOT:-/opt/lattix-panel}"
     "${ROOT[@]}" install -d -m 0755 "$root" "$root/config"
     "${ROOT[@]}" install -d -m 0750 -o 10001 -g 10001 \
         "$root/data" "$root/data/certs" "$root/data/acme-cache"
@@ -201,7 +207,7 @@ install_native_mode() {
     command -v sha256sum >/dev/null || die "sha256sum is required"
     command -v tar >/dev/null || die "tar is required"
 
-    local root="${LATX_ROOT:-/usr/local/lattix-panel}"
+    local root="${CONFIG_DIR:-${LATX_ROOT:-/usr/local/lattix-panel}}"
     local unit="${LATX_UNIT:-lattix-panel}"
     local config="$root/config.env"
     local release="${LATX_RELEASE_BASE:-https://github.com/${GITHUB_REPO}/releases/download/${VERSION}}"
@@ -233,7 +239,16 @@ install_native_mode() {
     "${ROOT[@]}" install -m 0755 "$work/lattix-panel/lattix-backend" "$root/lattix-backend"
     local latx_bin="${LATX_BIN:-/usr/local/bin/latx}"
     "${ROOT[@]}" install -d -m 0755 "$(dirname "$latx_bin")"
-    "${ROOT[@]}" install -m 0755 "$work/lattix-panel/latx" "$latx_bin"
+    "${ROOT[@]}" install -m 0755 "$work/lattix-panel/latx" "$root/latx"
+    local quoted_root quoted_bin quoted_latx
+    printf -v quoted_root '%q' "$root"
+    printf -v quoted_bin '%q' "$latx_bin"
+    printf -v quoted_latx '%q' "$root/latx"
+    "${ROOT[@]}" tee "$latx_bin" >/dev/null <<EOF
+#!/usr/bin/env bash
+LATX_ROOT=$quoted_root LATX_BIN=$quoted_bin exec $quoted_latx "\$@"
+EOF
+    "${ROOT[@]}" chmod 0755 "$latx_bin"
     "${ROOT[@]}" install -m 0600 /dev/null "$config"
     "${ROOT[@]}" tee "$config" >/dev/null <<EOF
 LATTIX_ADMIN_USER=$ADMIN_USER
@@ -289,6 +304,7 @@ EOF
     echo "访问地址: ${PUBLIC_URL:-http://${BIND_ADDRESS}:${PORT}}"
     echo "管理员:   $ADMIN_USER"
     echo "初始密码: $ADMIN_PASS"
+    echo "配置目录: $root"
 }
 
 if [[ "$MODE" == "docker" ]]; then
