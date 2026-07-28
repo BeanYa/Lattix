@@ -13,6 +13,11 @@ export function humanizeBytes(n: number): string {
   return `${v.toFixed(v >= 100 ? 0 : 1)} ${units[i]}`
 }
 
+/** formatByteRate formats a nullable bytes-per-second sample. */
+export function formatByteRate(value: number | null): string {
+  return value === null ? '--' : `${humanizeBytes(Math.round(value))}/s`
+}
+
 /** formatDateTime 按面板设置的全局时区格式化 RFC3339 时间；timezone 为空用浏览器本地。 */
 export function formatDateTime(t: string | null | undefined, timezone?: string): string {
   if (!t) {

@@ -11,6 +11,9 @@ interface TopologyPoint {
   lng: number
   online: boolean
   positioned: boolean
+  countryCode: string
+  uploadRate: number | null
+  downloadRate: number | null
 }
 
 interface GlobeTopologyProps {
@@ -87,6 +90,9 @@ async function locateServers(servers: Server[]): Promise<TopologyPoint[]> {
       lng: baseLng + Math.cos(angle) * radius,
       online: server.online,
       positioned,
+      countryCode,
+      uploadRate: server.metrics?.network_tx_bps ?? null,
+      downloadRate: server.metrics?.network_rx_bps ?? null,
     }
   })
 }
@@ -136,6 +142,9 @@ export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
           lng: ((server.id * 137.508) % 340) - 170,
           online: server.online,
           positioned: false,
+          countryCode: server.country_code.trim().toUpperCase(),
+          uploadRate: server.metrics?.network_tx_bps ?? null,
+          downloadRate: server.metrics?.network_rx_bps ?? null,
         })))
       })
     return () => {
@@ -151,6 +160,10 @@ export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
       lat: point.lat,
       lng: point.lng,
       status: point.positioned ? (point.online ? 'online' : 'offline') : 'warning',
+      online: point.online,
+      countryCode: point.countryCode,
+      uploadRate: point.uploadRate,
+      downloadRate: point.downloadRate,
     })),
     [points],
   )

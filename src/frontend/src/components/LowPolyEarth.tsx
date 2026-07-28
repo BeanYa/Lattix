@@ -4,6 +4,8 @@ import type { FeatureCollection, Position } from 'geojson'
 import type { GlobeMethods } from 'react-globe.gl'
 import type { BufferGeometry, Material, Object3D } from 'three'
 
+import { formatByteRate } from '@/lib/format'
+
 const Globe = lazy(() => import('react-globe.gl'))
 
 const AXIAL_TILT_DEGREES = 36
@@ -34,6 +36,10 @@ export interface EarthNode {
   lat: number
   lng: number
   status: EarthNodeStatus
+  online?: boolean
+  countryCode?: string
+  uploadRate?: number | null
+  downloadRate?: number | null
 }
 
 export interface EarthLink {
@@ -174,19 +180,39 @@ function createNodeElement(item: object) {
 
   const badge = document.createElement('div')
   badge.className = 'earth-node-badge'
-  badge.style.display = 'flex'
-  badge.style.alignItems = 'center'
-  badge.style.gap = '6px'
-  badge.style.padding = '5px 8px'
+  badge.style.display = 'grid'
+  badge.style.gap = '4px'
+  badge.style.padding = '6px 8px'
   badge.style.borderRadius = '6px'
   badge.style.fontFamily = "'Fusion Pixel 10px Proportional SC', 'Microsoft YaHei', sans-serif"
   badge.style.fontSize = '12px'
   badge.style.fontWeight = '400'
   badge.style.fontSynthesis = 'none'
   badge.style.letterSpacing = '0'
-  badge.style.lineHeight = '1.1'
+  badge.style.lineHeight = '1.15'
   badge.style.whiteSpace = 'nowrap'
   badge.style.transform = `rotate(-${AXIAL_TILT_DEGREES}deg)`
+
+  const header = document.createElement('div')
+  header.style.display = 'flex'
+  header.style.alignItems = 'center'
+  header.style.gap = '6px'
+
+  const normalizedCountryCode = node.countryCode?.trim().toLowerCase() ?? ''
+  if (/^[a-z]{2}$/.test(normalizedCountryCode)) {
+    const flag = document.createElement('span')
+    flag.className = `fi fi-${normalizedCountryCode}`
+    flag.style.width = '16px'
+    flag.style.flex = '0 0 16px'
+    flag.style.borderRadius = '2px'
+    header.append(flag)
+  }
+
+  const label = document.createElement('span')
+  label.textContent = node.label
+  label.style.maxWidth = '128px'
+  label.style.overflow = 'hidden'
+  label.style.textOverflow = 'ellipsis'
 
   const status = document.createElement('span')
   status.style.width = '7px'
@@ -196,11 +222,27 @@ function createNodeElement(item: object) {
   status.style.background = node.status === 'warning'
     ? '#e3b83d'
     : node.status === 'online' ? '#54cf98' : '#ff7771'
+  status.style.marginLeft = 'auto'
 
-  const label = document.createElement('span')
-  label.textContent = node.label
+  header.append(label, status)
 
-  badge.append(status, label)
+  const rates = document.createElement('div')
+  rates.className = 'earth-node-rates'
+  rates.style.display = 'grid'
+  rates.style.gap = '2px'
+  rates.style.fontVariantNumeric = 'tabular-nums'
+
+  const addRate = (direction: 'upload' | 'download', value: number | null | undefined) => {
+    const row = document.createElement('span')
+    row.className = `earth-node-rate earth-node-rate-${direction}`
+    const arrow = direction === 'upload' ? '↑' : '↓'
+    row.textContent = `${arrow} ${node.online === false ? '--' : formatByteRate(value ?? null)}`
+    rates.append(row)
+  }
+  addRate('upload', node.uploadRate)
+  addRate('download', node.downloadRate)
+
+  badge.append(header, rates)
   root.append(badge)
   return root
 }

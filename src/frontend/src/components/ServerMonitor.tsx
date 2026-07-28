@@ -41,7 +41,7 @@ import {
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api } from '@/lib/api'
-import { formatDateTime, humanizeBytes } from '@/lib/format'
+import { formatByteRate, formatDateTime, humanizeBytes } from '@/lib/format'
 import { formatPortRange } from '@/lib/ports'
 import { cn } from '@/lib/utils'
 import type { Server, ServerMetrics, ServerMetricSeries } from '@/lib/types'
@@ -77,10 +77,6 @@ function healthIndicatorClass(value: number, warning = 80, critical = 90): strin
     state === 'warning' && '[&_[data-slot=progress-indicator]]:bg-warning',
     state === 'critical' && '[&_[data-slot=progress-indicator]]:bg-destructive',
   )
-}
-
-function formatRate(value: number | null): string {
-  return value === null ? '--' : `${humanizeBytes(Math.round(value))}/s`
 }
 
 function formatUptime(seconds: number): string {
@@ -289,11 +285,11 @@ function ServerCard({
                 <div className="flex min-w-0 items-center gap-3 text-xs tabular-nums">
                   <span className="flex min-w-0 items-center gap-1 truncate text-success">
                     <ArrowUpIcon className="size-3" />
-                    {formatRate(metrics.network_tx_bps)}
+                    {formatByteRate(metrics.network_tx_bps)}
                   </span>
                   <span className="flex min-w-0 items-center gap-1 truncate text-info">
                     <ArrowDownIcon className="size-3" />
-                    {formatRate(metrics.network_rx_bps)}
+                    {formatByteRate(metrics.network_rx_bps)}
                   </span>
                 </div>
               </div>

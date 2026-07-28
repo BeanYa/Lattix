@@ -215,6 +215,16 @@
     box-shadow: 0 2px 0 color-mix(in srgb, var(--border) 18%, transparent);
     color: var(--card-foreground);
   }
+  .earth-node-rates {
+    border-top: 1px solid color-mix(in srgb, var(--border) 24%, transparent);
+    padding-top: 4px;
+  }
+  .earth-node-rate-upload {
+    color: #30b97c;
+  }
+  .earth-node-rate-download {
+    color: #4386ed;
+  }
 }
 
 @media (prefers-reduced-motion: no-preference) {
