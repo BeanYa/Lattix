@@ -88,7 +88,6 @@ export const api = {
   createServer: (body: {
     alias: string
     address?: string
-    xray_version?: string
     machine_type?: MachineType
     allowed_ports?: PortRange[]
     tags?: string[]

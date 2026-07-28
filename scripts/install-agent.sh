@@ -3,6 +3,7 @@
 #
 # 由根 install.sh 或面板"添加服务器"命令调用，形如：
 #   install-agent.sh --version vX.Y.Z --panel <PANEL_URL> --token <BOOTSTRAP_TOKEN>
+#                    [--xray-version latest|vX.Y.Z]
 #
 # Agent 二进制统一为 release 钉版获取（lattix-agent-linux-<arch>.tar.gz = agent + latx-ag，
 # 与同目录 checksums.txt 校验，获取不到即中止），统一从 GitHub Release 下载。
@@ -24,6 +25,7 @@
 #                       best-effort 注册开机自启
 #   XRAY_BIN            本机 xray 二进制复制安装源：LATX_DEV=1 时必填；其余模式为跨模式覆盖——
 #                       显式设置且可执行时复制安装（e2e/运维用），未设置则正常下载（官方 .dgst 校验）
+#   XRAY_VERSION        xray 版本覆盖（默认 latest；也可用 --xray-version 覆盖）
 #   LATX_AG_XRAY_API    DEV/user 模式 agent 的 -xray-api（默认 127.0.0.1:10085）
 #   LATX_BBR_SYSCTL     sysctl 命令覆盖（e2e 用）
 #   LATX_BBR_MODPROBE   modprobe 命令覆盖（e2e 用）
@@ -32,28 +34,19 @@
 #   LATX_BBR_TEST_ONLY=1 仅执行 BBR 流程后退出（e2e 用）
 set -euo pipefail
 
-# ===== CI 发版烧入区（release.yml 在发版时 sed 替换以下三个占位符）=====
+# ===== CI 发版烧入区（release.yml 在发版时 sed 替换以下占位符）=====
 LATTIX_VERSION="${LATTIX_VERSION:-}"
 [[ -n "$LATTIX_VERSION" ]] || LATTIX_VERSION="{{LATTIX_VERSION}}"
 GITHUB_REPO="${GITHUB_REPO:-}"
 [[ -n "$GITHUB_REPO" ]] || GITHUB_REPO="{{GITHUB_REPO}}"
-# 烧入后作为 --xray-version / XRAY_VERSION 的默认值（仍可被显式覆盖）。
-DEFAULT_XRAY_VERSION="${DEFAULT_XRAY_VERSION:-}"
-[[ -n "$DEFAULT_XRAY_VERSION" ]] || DEFAULT_XRAY_VERSION="{{DEFAULT_XRAY_VERSION}}"
 
 # latest 解析失败时的回退钉住版本。
 FALLBACK_XRAY_VERSION="v26.3.27"
 
 PANEL_URL=""
 BOOTSTRAP_TOKEN=""
-# xray 版本默认值：CI 烧入的 DEFAULT_XRAY_VERSION 优先；占位符未替换时维持
-# latest（执行时经 GitHub API 解析）。--xray-version 参数与
-# XRAY_VERSION 环境变量始终可覆盖默认值。
-if [[ "$DEFAULT_XRAY_VERSION" != *"{{"* ]]; then
-    XRAY_VERSION="${XRAY_VERSION:-$DEFAULT_XRAY_VERSION}"
-else
-    XRAY_VERSION="${XRAY_VERSION:-latest}"
-fi
+# 省略 --xray-version 时解析最新 release；环境变量和 CLI 参数均可覆盖。
+XRAY_VERSION="${XRAY_VERSION:-latest}"
 
 die() { echo "install.sh: $*" >&2; exit 1; }
 

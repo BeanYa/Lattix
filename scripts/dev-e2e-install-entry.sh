@@ -11,6 +11,8 @@ if grep -Eq '\$\{[^}]+:-\{\{' \
     echo "installer placeholders must not be embedded in parameter defaults" >&2
     exit 1
 fi
+grep -Fq 'XRAY_VERSION="${XRAY_VERSION:-latest}"' "$repo_root/scripts/install-agent.sh" \
+    || { echo "agent installer must default XRAY_VERSION to latest" >&2; exit 1; }
 
 for component in panel agent; do
     cat >"$work/v9.8.7/scripts/install-${component}.sh" <<'CHILD'
@@ -42,9 +44,9 @@ diff -u <(printf '%s\n' --version v9.8.7 --mode docker --port 9090) "$work/panel
 LATX_TEST_OUTPUT="$work/agent.args" \
 LATX_RAW_BASE="file://$work" \
     bash "$repo_root/install.sh" agent --version v9.8.7 \
-        --panel https://panel.example.com --token bootstrap --xray-version latest
+        --panel https://panel.example.com --token bootstrap
 diff -u <(printf '%s\n' --version v9.8.7 --panel https://panel.example.com \
-    --token bootstrap --xray-version latest) "$work/agent.args"
+    --token bootstrap) "$work/agent.args"
 
 # The recommended interactive command pipes the installer into bash, so its
 # stdin is not a TTY. Verify the panel-only wizard reads from /dev/tty.

@@ -207,7 +207,6 @@ export default function Servers() {
   const [open, setOpen] = useState(false)
   const [alias, setAlias] = useState('')
   const [address, setAddress] = useState('')
-  const [xrayVersion, setXrayVersion] = useState('latest')
   const [machineType, setMachineType] = useState<MachineType>('direct')
   const [tags, setTags] = useState<string[]>([])
   const [countryCode, setCountryCode] = useState('')
@@ -323,7 +322,6 @@ export default function Servers() {
     if (!next) {
       setAlias('')
       setAddress('')
-      setXrayVersion('latest')
       setMachineType('direct')
       setTags([])
       setCountryCode('')
@@ -341,7 +339,6 @@ export default function Servers() {
     const body: {
       alias: string
       address?: string
-      xray_version?: string
       machine_type: MachineType
       allowed_ports?: PortRange[]
       tags?: string[]
@@ -360,9 +357,6 @@ export default function Servers() {
     body.tags = tags
     if (address.trim()) {
       body.address = address.trim()
-    }
-    if (xrayVersion.trim()) {
-      body.xray_version = xrayVersion.trim()
     }
     if (machineType === 'nat') {
       if (!address.trim()) {
@@ -801,15 +795,6 @@ export default function Servers() {
                 </p>
               </div>
             )}
-            <div className="space-y-2">
-              <Label htmlFor="xrayVersion">xray 版本</Label>
-              <Input
-                id="xrayVersion"
-                value={xrayVersion}
-                onChange={(e) => setXrayVersion(e.target.value)}
-                placeholder="latest 或具体版本号（如 v26.3.27）"
-              />
-            </div>
             <BillingTrafficFields billing={billing} setBilling={setBilling} traffic={traffic} setTraffic={setTraffic} providers={providers} onManageProviders={() => setProviderManagerOpen(true)} />
             {createError && <p className="text-sm text-destructive">{createError}</p>}
             <DialogFooter>

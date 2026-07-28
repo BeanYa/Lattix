@@ -176,7 +176,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Alias        string             `json:"alias"`
 		Address      string             `json:"address"`       // 公网地址，留空自动学习（§4；NAT 必填）
-		XrayVersion  string             `json:"xray_version"`  // 默认 latest（§11）
+		XrayVersion  string             `json:"xray_version"`  // 兼容旧客户端；安装脚本默认 latest
 		MachineType  string             `json:"machine_type"`  // direct（默认）| nat（§21）
 		AllowedPorts []shared.PortRange `json:"allowed_ports"` // NAT 可用端口段（§21），留空 = 仅出口档
 		Tags         []string           `json:"tags"`
@@ -192,9 +192,6 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	if req.Alias == "" {
 		writeError(w, http.StatusBadRequest, "alias 不能为空")
 		return
-	}
-	if req.XrayVersion == "" {
-		req.XrayVersion = "latest"
 	}
 	countryCode, location, err := normalizeServerGeography(req.CountryCode, req.Location)
 	if err != nil {
@@ -278,7 +275,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"server":          createdDTO,
 		"bootstrap_token": bootstrap,
-		"install_command": s.installCommand(base, bootstrap, req.XrayVersion),
+		"install_command": s.installCommand(base, bootstrap),
 	})
 }
 
@@ -336,7 +333,7 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"server":          rotatedDTO,
 		"bootstrap_token": bootstrap,
-		"install_command": s.installCommand(base, bootstrap, "latest"),
+		"install_command": s.installCommand(base, bootstrap),
 	})
 }
 
@@ -675,15 +672,15 @@ func (s *Server) handleRepairServer(w http.ResponseWriter, r *http.Request) {
 }
 
 // installCommand 通过仓库根安装入口安装 Agent。Release 面板显式钉住自身版本；
-// dev 构建省略版本，由入口解析 latest。入口再从目标 tag 加载 install-agent.sh。
-func (s *Server) installCommand(base, token, xrayVersion string) string {
+// dev 构建省略版本，由入口解析 latest。xray 版本由 Agent 安装脚本默认解析 latest。
+func (s *Server) installCommand(base, token string) string {
 	versionArg := ""
 	if s.cfg.Version != "" && s.cfg.Version != "dev" {
 		versionArg = " --version " + s.cfg.Version
 	}
 	return fmt.Sprintf(
-		"curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | bash -s -- agent%s --panel %s --token %s --xray-version %s",
-		s.cfg.GitHubRepo, versionArg, base, token, xrayVersion)
+		"curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | bash -s -- agent%s --panel %s --token %s",
+		s.cfg.GitHubRepo, versionArg, base, token)
 }
 
 // handleDeleteServer 处理 DELETE /api/servers/{id}：

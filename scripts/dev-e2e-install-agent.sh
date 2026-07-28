@@ -55,7 +55,6 @@ mkdir -p "$FAKE"
 sed -e "s|{{LATTIX_VERSION}}|$VERSION|g" -e "s|{{GITHUB_REPO}}|$REPO|g" \
     "$ROOT/scripts/latx-ag.sh" > "$WORK/latx-ag"
 sed -e "s|{{LATTIX_VERSION}}|$VERSION|g" -e "s|{{GITHUB_REPO}}|$REPO|g" \
-    -e "s|{{DEFAULT_XRAY_VERSION}}|v26.3.27|g" \
     "$ROOT/scripts/install-agent.sh" > "$FAKE/install-agent.sh"
 # agent 包：lattix-agent/（agent 二进制 + latx-ag，模拟 CI 打包）
 mkdir -p "$WORK/agent-pkg/lattix-agent"
@@ -82,7 +81,7 @@ BOOTSTRAP="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"e2e
 run_install() {
     LATX_DEV=1 LATX_PREFIX="$PREFIX" LATX_RELEASE_BASE="file://$FAKE" \
     XRAY_BIN="$XRAY_BIN" LATX_AG_XRAY_API="$API_ADDR" \
-        bash "$FAKE/install-agent.sh" --version "$VERSION" --panel "http://$ADDR" --token "$BOOTSTRAP" --xray-version v26.3.27
+        bash "$FAKE/install-agent.sh" --version "$VERSION" --panel "http://$ADDR" --token "$BOOTSTRAP"
 }
 
 latx_ag() {
@@ -156,7 +155,7 @@ BOOTSTRAP3="$(api -X POST -d '{"country_code":"US","location":"Test","alias":"e2
 [[ -n "$BOOTSTRAP3" ]] || { echo "FAIL: 第二台服务器 bootstrap token"; exit 1; }
 USER_OUT="$(LATX_USER_MODE=1 LATX_PREFIX="$PREFIX" LATX_RELEASE_BASE="file://$FAKE" \
     XRAY_BIN="$XRAY_BIN" LATX_AG_XRAY_API="$API_ADDR" \
-    bash "$FAKE/install-agent.sh" --version "$VERSION" --panel "http://$ADDR" --token "$BOOTSTRAP3" --xray-version v26.3.27)"
+    bash "$FAKE/install-agent.sh" --version "$VERSION" --panel "http://$ADDR" --token "$BOOTSTRAP3")"
 echo "$USER_OUT" | grep -q "\[user\]" \
     && echo "OK: 安装输出含用户态模式提示" || { echo "FAIL: 缺用户态提示: $USER_OUT"; exit 1; }
 [[ -x "$PREFIX/opt/lattix-agent/bin/lattix-agent-run" ]] \
