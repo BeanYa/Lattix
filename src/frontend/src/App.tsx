@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 
+import { AppDialogProvider } from '@/components/AppDialogProvider'
 import Layout from '@/components/Layout'
 import { AuthProvider, useAuth } from '@/lib/auth'
 import { ThemeProvider } from '@/lib/theme'
@@ -37,9 +38,10 @@ export default function App() {
   return (
     <BrowserRouter>
       <ThemeProvider>
-        <AuthProvider>
-          <TimezoneProvider>
-            <Routes>
+        <AppDialogProvider>
+          <AuthProvider>
+            <TimezoneProvider>
+              <Routes>
               <Route path="/login" element={<Login />} />
               <Route
                 element={
@@ -60,9 +62,10 @@ export default function App() {
                 <Route path="settings" element={<Settings />} />
               </Route>
               <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </TimezoneProvider>
-        </AuthProvider>
+              </Routes>
+            </TimezoneProvider>
+          </AuthProvider>
+        </AppDialogProvider>
       </ThemeProvider>
     </BrowserRouter>
   )

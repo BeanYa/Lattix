@@ -33,6 +33,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
+import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { buildLinkOptions } from '@/lib/links'
 import { useTimezone } from '@/lib/timezone'
@@ -56,6 +57,7 @@ function localInputToRFC3339(v: string): string | null {
 
 export default function Users() {
   const { timezone } = useTimezone()
+  const { confirm } = useAppDialog()
   const [users, setUsers] = useState<SubUser[]>([])
   const [nodes, setNodes] = useState<XrayNode[]>([])
   const [chains, setChains] = useState<Chain[]>([])
@@ -156,7 +158,12 @@ export default function Users() {
   }
 
   const onDelete = async (user: SubUser) => {
-    if (!window.confirm(`确认删除用户「${user.name}」？删除后其订阅链接将失效。`)) {
+    if (!(await confirm({
+      title: '删除用户',
+      description: `确认删除用户「${user.name}」？删除后其订阅链接将失效。`,
+      confirmLabel: '删除用户',
+      destructive: true,
+    }))) {
       return
     }
     setDeleting(user.id)

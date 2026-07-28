@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { api, errorMessage } from '@/lib/api'
+import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { validateNameTemplate } from '@/lib/naming'
 import { DEFAULT_REALITY_DEST } from '@/lib/reality'
@@ -108,6 +109,7 @@ function randomChainName(): string {
 
 export default function Chains() {
   const { timezone } = useTimezone()
+  const { confirm } = useAppDialog()
   const [chains, setChains] = useState<Chain[]>([])
   const [nodes, setNodes] = useState<XrayNode[]>([])
   const [servers, setServers] = useState<Server[]>([])
@@ -353,7 +355,12 @@ export default function Chains() {
 
   const onDelete = async (id: number) => {
     const chain = chains.find((c) => c.id === id)
-    if (!window.confirm(`确定删除链路「${chain?.name || `#${id}`}」？将逐跳拆除转发/隧道并删除出口节点。`)) {
+    if (!(await confirm({
+      title: '删除链路',
+      description: `确定删除链路「${chain?.name || `#${id}`}」？将逐跳拆除转发/隧道并删除出口节点。`,
+      confirmLabel: '删除链路',
+      destructive: true,
+    }))) {
       return
     }
     try {
@@ -366,7 +373,12 @@ export default function Chains() {
 
   const onDeleteDirect = async (id: number) => {
     const node = nodes.find((candidate) => candidate.id === id)
-    if (!window.confirm(`确定删除直连链路「${node?.name || `#${id}`}」？将从服务器移除业务入站。`)) {
+    if (!(await confirm({
+      title: '删除直连链路',
+      description: `确定删除直连链路「${node?.name || `#${id}`}」？将从服务器移除业务入站。`,
+      confirmLabel: '删除链路',
+      destructive: true,
+    }))) {
       return
     }
     try {

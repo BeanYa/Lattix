@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { api, errorMessage } from '@/lib/api'
+import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
 import { useTimezone } from '@/lib/timezone'
 import type { AlertTestResult, PanelSettings, PanelVersionInfo } from '@/lib/types'
@@ -74,6 +75,7 @@ function formatBytes(bytes: number) {
 
 export default function Settings() {
   const { refresh: refreshTimezone } = useTimezone()
+  const { confirm } = useAppDialog()
   const accessProtocol = window.location.protocol === 'https:' ? 'HTTPS' : 'HTTP'
   const [settings, setSettings] = useState<PanelSettings | null>(null)
   const [loadError, setLoadError] = useState('')
@@ -227,7 +229,11 @@ export default function Settings() {
   }
 
   const onRestart = async () => {
-    if (!window.confirm('确定重启面板进程？重启期间面板短暂不可用（数秒）。')) {
+    if (!(await confirm({
+      title: '重启面板',
+      description: '确定重启面板进程？重启期间面板会短暂不可用（数秒）。',
+      confirmLabel: '重启面板',
+    }))) {
       return
     }
     setRestarting(true)
@@ -283,9 +289,11 @@ export default function Settings() {
   const onStartUpdate = async () => {
     const target = versionInfo?.latest ?? '最新版本'
     if (
-      !window.confirm(
-        `确定将面板更新到 ${target}？\n更新期间面板操作将被锁定，完成后自动重启（短暂不可用）。`,
-      )
+      !(await confirm({
+        title: `更新到 ${target}`,
+        description: '更新期间面板操作将被锁定，完成后自动重启（短暂不可用）。',
+        confirmLabel: '开始更新',
+      }))
     ) {
       return
     }

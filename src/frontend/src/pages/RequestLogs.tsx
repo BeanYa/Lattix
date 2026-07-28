@@ -22,6 +22,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
+import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
 import {
   REFRESH_OPTIONS,
@@ -48,6 +49,7 @@ function severityVariant(severity: LogSeverity) {
 
 export default function RequestLogs() {
   const { timezone } = useTimezone()
+  const { confirm } = useAppDialog()
   const [items, setItems] = useState<RequestLogEntry[]>([])
   const [status, setStatus] = useState<RequestLogStatus | null>(null)
   const [loading, setLoading] = useState(true)
@@ -109,7 +111,12 @@ export default function RequestLogs() {
   }, [items, method, query, severity])
 
   const clearLogs = async () => {
-    if (!window.confirm('确定清空请求日志？本次清空请求会成为新的第一条请求记录。')) return
+    if (!(await confirm({
+      title: '清空请求日志',
+      description: '确定清空请求日志？本次清空请求会成为新的第一条请求记录。',
+      confirmLabel: '清空日志',
+      destructive: true,
+    }))) return
     try {
       await api.clearRequestLogs()
       await load()

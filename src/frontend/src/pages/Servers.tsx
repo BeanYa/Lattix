@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { api, errorMessage } from '@/lib/api'
+import { useAppDialog } from '@/lib/app-dialog'
 import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { useTimezone } from '@/lib/timezone'
@@ -97,6 +98,7 @@ function parsePortRows(rows: string[]): { ranges: PortRange[] } | { error: strin
 
 export default function Servers() {
   const { timezone } = useTimezone()
+  const { confirm, notify } = useAppDialog()
   const [servers, setServers] = useState<Server[]>([])
   const [metricSamples, setMetricSamples] = useState<ServerMetricSeries[]>([])
   const [loading, setLoading] = useState(true)
@@ -274,7 +276,12 @@ export default function Servers() {
     const installed = s.last_seen_at !== null
     if (
       installed &&
-      !window.confirm('刷新后该服务器的旧凭证（含长期凭证）立即失效，agent 重连前需重新执行安装命令。继续？')
+      !(await confirm({
+        title: '刷新服务器凭证',
+        description: '刷新后该服务器的旧凭证（含长期凭证）立即失效，agent 重连前需重新执行安装命令。',
+        confirmLabel: '刷新凭证',
+        destructive: true,
+      }))
     ) {
       return
     }
@@ -291,13 +298,20 @@ export default function Servers() {
 
   // 配置漂移修复（§17）：重放该服务器全部 active 节点，agent 重建配置后漂移标志自动清除。
   const onRepair = async (s: Server) => {
-    if (!window.confirm(`确定修复「${s.alias}」的配置漂移？将按面板节点状态重建该机 xray 配置。`)) {
+    if (!(await confirm({
+      title: '修复配置漂移',
+      description: `确定修复「${s.alias}」的配置漂移？将按面板节点状态重建该机 xray 配置。`,
+      confirmLabel: '开始修复',
+    }))) {
       return
     }
     try {
       const res = await api.repairServer(s.id)
       setError('')
-      window.alert(`已下发 ${res.reapplied} 个节点的重放命令，漂移标志将在 agent 重建后自动清除。`)
+      await notify({
+        title: '修复命令已下发',
+        description: `已下发 ${res.reapplied} 个节点的重放命令，漂移标志将在 agent 重建后自动清除。`,
+      })
       load()
     } catch (err) {
       setError(errorMessage(err))

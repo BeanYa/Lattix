@@ -29,6 +29,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
+import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
 import {
   REFRESH_OPTIONS,
@@ -85,6 +86,7 @@ function toRFC3339(value: string): string | undefined {
 
 export default function OperationLogs() {
   const { timezone } = useTimezone()
+  const { confirm } = useAppDialog()
   const [items, setItems] = useState<OperationLogEntry[]>([])
   const [total, setTotal] = useState(0)
   const [servers, setServers] = useState<Server[]>([])
@@ -163,7 +165,12 @@ export default function OperationLogs() {
   }
 
   const clearLogs = async () => {
-    if (!window.confirm('确定清空操作日志？清空操作本身会作为新的第一条记录保留。')) return
+    if (!(await confirm({
+      title: '清空操作日志',
+      description: '确定清空操作日志？清空操作本身会作为新的第一条记录保留。',
+      confirmLabel: '清空日志',
+      destructive: true,
+    }))) return
     try {
       await api.clearOperationLogs()
       setOffset(0)
