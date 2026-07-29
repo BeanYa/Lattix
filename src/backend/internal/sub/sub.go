@@ -1,8 +1,9 @@
 // Package sub 实现订阅端点（设计文档 §9）：
-// GET /sub/{sub_token} → mihomo（Clash.Meta）格式 YAML；浏览器（Accept 含 text/html）→ 落地页 HTML。
+// GET /sub/{sub_token} → 按 UA / ?format= 返回多格式订阅内容；浏览器→ SPA 落地页。
 package sub
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,12 +18,14 @@ import (
 
 // Server 实现订阅端点。
 type Server struct {
-	st   *store.Store
-	base func(*http.Request) string // 面板对外地址（落地页绝对链接，同 panel.PanelBase 判定链）
+	st      *store.Store
+	base    func(*http.Request) string // 面板对外地址（落地页绝对链接，同 panel.PanelBase 判定链）
+	spaHTML []byte                     // 内嵌前端 index.html（浏览器访问时返回 SPA 壳）
 }
 
 // New 创建订阅服务；base 返回请求对应的面板对外地址（可为 nil，落地页退回请求推断）。
-func New(st *store.Store, base func(*http.Request) string) *Server {
+// spaHTML 为前端构建产物的 index.html 内容（浏览器访问时返回 SPA 壳）。
+func New(st *store.Store, base func(*http.Request) string, spaHTML []byte) *Server {
 	if base == nil {
 		base = func(r *http.Request) string {
 			scheme := "http"
@@ -32,24 +35,30 @@ func New(st *store.Store, base func(*http.Request) string) *Server {
 			return fmt.Sprintf("%s://%s", scheme, r.Host)
 		}
 	}
-	return &Server{st: st, base: base}
+	return &Server{st: st, base: base, spaHTML: spaHTML}
 }
 
 // setSubHeaders 写订阅通用响应头（§9）：
-// subscription-userinfo（upload/download 取 traffic 表用户维度 node_id=0 的累计值；
-// 用户设了有效期才带 expire，unix 秒；项目无流量配额，无 total 字段）与
-// profile-update-interval（小时，客户端按天自动刷新订阅）。
+// subscription-userinfo（upload/download/total/expire）与 profile-update-interval。
 func (s *Server) setSubHeaders(w http.ResponseWriter, r *http.Request, user *store.User) {
 	t, err := s.st.UserTraffic(r.Context(), user.UUID)
 	if err != nil {
 		t = store.TrafficTotals{} // 统计查询失败不阻断订阅
 	}
 	v := fmt.Sprintf("upload=%d; download=%d", t.Up, t.Down)
+	if user.TrafficLimit > 0 {
+		v += fmt.Sprintf("; total=%d", user.TrafficLimit)
+	}
 	if user.ExpiresAt != nil {
 		v += fmt.Sprintf("; expire=%d", user.ExpiresAt.Unix())
 	}
 	w.Header().Set("Subscription-Userinfo", v)
-	w.Header().Set("Profile-Update-Interval", "24")
+	// 更新间隔：优先用户级，否则全局设置，默认 24h。
+	interval := "24"
+	if global, _ := s.st.GetSetting(r.Context(), store.SettingSubUpdateInterval); global != "" {
+		interval = global
+	}
+	w.Header().Set("Profile-Update-Interval", interval)
 }
 
 type clashRealityOpts struct {
@@ -140,10 +149,9 @@ func (s *Server) assignedActiveNodes(r *http.Request) (*store.User, []store.Node
 	return user, out, nil
 }
 
-// ServeHTTP 处理 GET /sub/{token}：按该用户自己的 UUID 为每个 active 节点生成一项代理（§9）。
-// Accept 含 text/html（浏览器）时返回订阅落地页 HTML；否则返回 mihomo YAML。
-// 有效停权态（expired=1 或 disabled=1，§9/§16）的用户订阅照常返回但 proxies 为空——
-// 客户端显示到期/停用而不是报错。dokodemo-door 为端口转发，客户端无法作为代理消费，不进订阅。
+// ServeHTTP 处理 GET /sub/{token}：按 UA / ?format= 返回对应格式订阅内容；
+// 浏览器（Accept 含 text/html 且无 ?format=）返回 SPA 壳（index.html）。
+// 有效停权态（expired=1 或 disabled=1）的用户订阅照常返回但节点为空。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	user, nodes, err := s.assignedActiveNodes(r)
 	if err != nil {
@@ -156,20 +164,57 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setSubHeaders(w, r, user)
 
-	if strings.Contains(r.Header.Get("Accept"), "text/html") {
-		s.serveLanding(w, r, user, nodes)
+	// 确定输出格式：?format= 参数优先 > UA 识别 > 默认 links。
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = detectFormat(r)
+	}
+
+	// 浏览器访问（无 format 参数 + Accept 含 text/html）→ SPA 落地页。
+	if format == "browser" {
+		s.serveSPA(w)
 		return
 	}
 
 	if user.Expired || user.Disabled {
-		nodes = nil // 有效停权态（§9/§16）：proxies 为空
+		nodes = nil // 有效停权态：节点为空
 	}
+	items := s.subscriptionItems(r, user, nodes)
+	// 过滤 dokodemo-door（端口转发，客户端无法消费）。
+	filtered := make([]proxyItem, 0, len(items))
+	for _, it := range items {
+		if it.node.Protocol != shared.ProtocolDokodemo {
+			filtered = append(filtered, it)
+		}
+	}
+
+	switch format {
+	case "clash":
+		s.serveClash(w, r, user, filtered)
+	case "singbox":
+		s.serveSingbox(w, r, user, filtered)
+	case "quanx":
+		s.serveQuanX(w, r, user, filtered)
+	default: // "links" 及未知格式
+		s.serveLinks(w, r, user, filtered)
+	}
+}
+
+// serveSPA 返回内嵌的 index.html（SPA 壳），前端 React Router 匹配 /sub/:token 渲染落地页。
+func (s *Server) serveSPA(w http.ResponseWriter) {
+	if len(s.spaHTML) == 0 {
+		http.Error(w, "frontend not embedded\n", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(s.spaHTML)
+}
+
+// serveClash 输出 mihomo（Clash.Meta）YAML。
+func (s *Server) serveClash(w http.ResponseWriter, r *http.Request, user *store.User, items []proxyItem) {
 	cfg := clashConfig{Proxies: []clashProxy{}}
 	names := []string{}
-	for _, it := range s.subscriptionItems(r, user, nodes) {
-		if it.node.Protocol == shared.ProtocolDokodemo {
-			continue
-		}
+	for _, it := range items {
 		p, err := buildProxy(it.node, it.rc, user.UUID)
 		if err != nil {
 			continue
@@ -187,6 +232,59 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
 	w.Write(out)
+}
+
+// serveLinks 输出 base64 编码的分享链接集合（vless:// 等）。
+func (s *Server) serveLinks(w http.ResponseWriter, r *http.Request, user *store.User, items []proxyItem) {
+	links := []string{}
+	for _, it := range items {
+		if link, ok := buildShareLink(it.node, it.rc, user.UUID); ok {
+			links = append(links, link)
+		}
+	}
+	body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(body + "\n"))
+}
+
+// detectFormat 根据 User-Agent 识别客户端类型，返回格式标识。
+// 浏览器（Accept 含 text/html）返回 "browser"；未识别返回 "links"。
+func detectFormat(r *http.Request) string {
+	ua := r.UserAgent()
+	// 浏览器检测：Accept 含 text/html 且 UA 含 Mozilla。
+	if strings.Contains(r.Header.Get("Accept"), "text/html") && strings.Contains(ua, "Mozilla") {
+		return "browser"
+	}
+	uaLower := strings.ToLower(ua)
+	switch {
+	// sing-box 系
+	case strings.Contains(uaLower, "sing-box"), strings.Contains(uaLower, "sfi"),
+		strings.Contains(uaLower, "sfa"), strings.Contains(uaLower, "sfm"):
+		return "singbox"
+	// Quantumult X
+	case strings.Contains(uaLower, "quantumult"):
+		return "quanx"
+	// Clash 系（Clash Verge / mihomo / Stash / Surfboard / Loon / Egern / FlClash）
+	case strings.Contains(uaLower, "clash"), strings.Contains(uaLower, "mihomo"),
+		strings.Contains(uaLower, "stash"), strings.Contains(uaLower, "surfboard"),
+		strings.Contains(uaLower, "loon"), strings.Contains(uaLower, "egern"),
+		strings.Contains(uaLower, "flclash"):
+		return "clash"
+	// Shadowrocket / v2rayNG / NekoBox → links
+	case strings.Contains(uaLower, "shadowrocket"), strings.Contains(uaLower, "v2ray"),
+		strings.Contains(uaLower, "nekobox"), strings.Contains(uaLower, "v2box"):
+		return "links"
+	default:
+		return "links"
+	}
+}
+
+// nodeName 返回节点显示名（管理员设置名称 > 回退 {ServerAlias}-{Protocol}-{Port}）。
+func nodeName(n store.Node, rc shared.RealizedConfig) string {
+	if n.Name != "" {
+		return n.Name
+	}
+	return fmt.Sprintf("%s-%s-%d", n.ServerAlias, n.Protocol, rc.Port)
 }
 
 // proxyItem 是一个订阅条目的来源：节点行 + 生效值
@@ -311,10 +409,7 @@ func buildProxy(n store.Node, rc shared.RealizedConfig, uuid string) (clashProxy
 	if rc.Fingerprint == "" {
 		rc.Fingerprint = shared.FingerprintChrome
 	}
-	name := n.Name
-	if name == "" {
-		name = fmt.Sprintf("%s-%s-%d", n.ServerAlias, n.Protocol, rc.Port)
-	}
+	name := nodeName(n, rc)
 	p := clashProxy{
 		Name:   name,
 		Type:   n.Protocol,

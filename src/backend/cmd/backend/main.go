@@ -431,20 +431,28 @@ func run() error {
 		_, _ = w.Write([]byte("ready\n"))
 	})
 
-	// 订阅（§9）：mihomo（Clash.Meta）格式 YAML（浏览器访问为落地页）；/links 为分享链接集合（§14）。
-	subSrv := sub.New(st, ps.PanelBase)
+	// 订阅（§9）：统一端点，按 UA / ?format= 返回多格式订阅内容；浏览器访问返回 SPA 落地页。
+	frontendFS := panelweb.Dist()
+	if *staticDir != "" {
+		frontendFS = os.DirFS(*staticDir)
+	}
+	var spaHTML []byte
+	if idx, err := fs.ReadFile(frontendFS, "index.html"); err == nil {
+		spaHTML = idx
+	}
+	subSrv := sub.New(st, ps.PanelBase, spaHTML)
 	mux.Handle("GET /sub/{token}", subSrv)
-	mux.HandleFunc("GET /sub/{token}/links", subSrv.HandleLinks)
+
+	// 订阅公开 API（仅凭 token 鉴权，无需管理员登录）。
+	mux.HandleFunc("GET /api/sub/{token}/info", subSrv.HandleSubInfo)
+	mux.HandleFunc("GET /api/sub/{token}/clients", subSrv.HandleSubClients)
+	mux.HandleFunc("GET /api/sub/{token}/history", subSrv.HandleSubHistory)
 
 	// Frontend SPA 构建产物（§3），客户端路由回退到 index.html。
 	// 未注册的 /api/* 必须保持协议层 404，不能落入 SPA 的 index.html。
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
 		panel.WriteProtocolError(w, http.StatusNotFound, "API route not found")
 	})
-	frontendFS := panelweb.Dist()
-	if *staticDir != "" {
-		frontendFS = os.DirFS(*staticDir)
-	}
 	mux.Handle("/", spaHandler(frontendFS))
 
 	srv := newHTTPServer(*addr,

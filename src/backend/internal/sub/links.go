@@ -3,44 +3,12 @@ package sub
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
-	"strings"
 
 	"lattix/backend/internal/store"
 	"lattix/shared"
 )
-
-// HandleLinks 处理 GET /sub/{token}/links（§14 `vless://` 链接订阅）：
-// 返回 base64 编码的换行分隔分享链接集合（vless/trojan/vmess/ss），
-// 仅含分配到该用户的 active 节点（§16）；dokodemo/socks/http 无标准分享链接，跳过。
-// 有效停权态（expired=1 或 disabled=1，§9/§16）的用户返回空集合；不做 Accept 分流（仅 YAML 端点分流落地页）。
-func (s *Server) HandleLinks(w http.ResponseWriter, r *http.Request) {
-	user, nodes, err := s.assignedActiveNodes(r)
-	if err != nil {
-		status := http.StatusInternalServerError
-		if errors.Is(err, store.ErrNotFound) {
-			status = http.StatusNotFound
-		}
-		http.Error(w, err.Error()+"\n", status)
-		return
-	}
-	s.setSubHeaders(w, r, user)
-	if user.Expired || user.Disabled {
-		nodes = nil // 有效停权态（§9/§16）：链接集合为空
-	}
-	links := []string{}
-	for _, it := range s.subscriptionItems(r, user, nodes) {
-		if link, ok := buildShareLink(it.node, it.rc, user.UUID); ok {
-			links = append(links, link)
-		}
-	}
-	body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte(body + "\n"))
-}
 
 // buildShareLink 按协议构造分享链接；不支持的协议返回 false。
 func buildShareLink(n store.Node, rc shared.RealizedConfig, uuid string) (string, bool) {
@@ -122,11 +90,7 @@ func setTransportQuery(q url.Values, rc shared.RealizedConfig) {
 	}
 }
 
-// shareName 是分享链接的节点名（与 mihomo 订阅一致，URL fragment 编码）。
+// shareName 是分享链接的节点名（URL fragment 编码）。
 func shareName(n store.Node, rc shared.RealizedConfig) string {
-	name := n.Name
-	if name == "" {
-		name = fmt.Sprintf("%s-%s-%d", n.ServerAlias, n.Protocol, rc.Port)
-	}
-	return url.PathEscape(name)
+	return url.PathEscape(nodeName(n, rc))
 }

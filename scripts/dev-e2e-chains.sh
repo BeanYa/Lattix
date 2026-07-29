@@ -156,7 +156,7 @@ EXIT_FLOW="$(echo "$NODE_JSON" | py "d['realized_config'].get('flow') or ''")"
 EXIT_PORT="$(echo "$NODE_JSON" | py "d['realized_config']['port']")"
 
 echo ">> 订阅断言（入口地址:端口 + 出口密钥/UUID）"
-SUB="$(curl -s "http://$ADDR/sub/$SUB_TOKEN")"
+SUB="$(curl -s "http://$ADDR/sub/$SUB_TOKEN?format=clash")"
 echo "$SUB" | grep -q "name: chain-a-vless-$ENTRY_PORT" \
     && echo "$SUB" | grep -q "server: 127.0.0.1" \
     && echo "$SUB" | grep -q "port: $ENTRY_PORT" \
@@ -168,7 +168,7 @@ echo "$SUB" | grep -q "name: chain-a-vless-$ENTRY_PORT" \
 [[ "$(echo "$SUB" | grep -cE '^[[:space:]]*- name: chain-')" == "1" && "$(echo "$SUB" | grep -c "chain-c-vless")" == "0" ]] \
     && echo "OK: 出口节点不作为单机条目出现" \
     || { echo "FAIL: 出口节点泄漏为单机条目"; echo "$SUB"; exit 1; }
-LINKS="$(curl -s "http://$ADDR/sub/$SUB_TOKEN/links" | base64 -d)"
+LINKS="$(curl -s "http://$ADDR/sub/$SUB_TOKEN?format=links" | base64 -d)"
 echo "$LINKS" | grep -q "^vless://$UUID1@127.0.0.1:$ENTRY_PORT" \
     && echo "$LINKS" | grep -q "pbk=$EXIT_PUB" \
     && echo "OK: links 端点同构（vless:// 入口地址:端口 + 出口公钥）" \

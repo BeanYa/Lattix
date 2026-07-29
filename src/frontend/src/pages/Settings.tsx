@@ -168,6 +168,15 @@ export default function Settings() {
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [startingUpdate, setStartingUpdate] = useState(false)
   const [updateError, setUpdateError] = useState('')
+  // 订阅设置
+  const [subTitle, setSubTitle] = useState('')
+  const [subAnnouncement, setSubAnnouncement] = useState('')
+  const [subCustomCSS, setSubCustomCSS] = useState('')
+  const [subUpdateInterval, setSubUpdateInterval] = useState(24)
+  const [subHistoryKeep, setSubHistoryKeep] = useState(6)
+  const [savingSub, setSavingSub] = useState(false)
+  const [subMessage, setSubMessage] = useState('')
+  const [subError, setSubError] = useState('')
 
   const certFileRef = useRef<HTMLInputElement>(null)
   const keyFileRef = useRef<HTMLInputElement>(null)
@@ -206,6 +215,36 @@ export default function Settings() {
   }, [])
 
   useEffect(() => { api.exchangeRates().then(setExchangeData).catch(() => {}) }, [])
+
+  useEffect(() => {
+    api.subSettings().then((s) => {
+      setSubTitle(s.title)
+      setSubAnnouncement(s.announcement)
+      setSubCustomCSS(s.custom_css)
+      setSubUpdateInterval(s.update_interval)
+      setSubHistoryKeep(s.traffic_history_keep)
+    }).catch(() => {})
+  }, [])
+
+  const onSaveSub = async () => {
+    setSavingSub(true)
+    setSubError('')
+    setSubMessage('')
+    try {
+      await api.updateSubSettings({
+        title: subTitle,
+        announcement: subAnnouncement,
+        custom_css: subCustomCSS,
+        update_interval: subUpdateInterval,
+        traffic_history_keep: subHistoryKeep,
+      })
+      setSubMessage('已保存。')
+    } catch (err) {
+      setSubError(errorMessage(err))
+    } finally {
+      setSavingSub(false)
+    }
+  }
 
   const readFileInto = (file: File | undefined, setter: (v: string) => void) => {
     if (!file) {
@@ -810,6 +849,70 @@ export default function Settings() {
                 placeholder="Asia/Shanghai"
                 required
               />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>订阅</CardTitle>
+            <CardDescription>
+              订阅落地页全局配置。用户级覆盖在用户编辑页设置。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col gap-2">
+              <Label>落地页标题</Label>
+              <Input value={subTitle} onChange={e => setSubTitle(e.target.value)} placeholder="Lattix 订阅" />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>公告（Markdown）</Label>
+              <textarea
+                className={textareaClass}
+                rows={4}
+                value={subAnnouncement}
+                onChange={e => setSubAnnouncement(e.target.value)}
+                placeholder="支持 Markdown 格式，留空则不显示公告区域"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>自定义 CSS</Label>
+              <textarea
+                className={textareaClass}
+                rows={3}
+                value={subCustomCSS}
+                onChange={e => setSubCustomCSS(e.target.value)}
+                placeholder="注入到订阅落地页的额外样式"
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-2">
+                <Label>默认更新间隔（小时）</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={720}
+                  value={subUpdateInterval}
+                  onChange={e => setSubUpdateInterval(Number(e.target.value) || 24)}
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label>流量历史保留周期数</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={subHistoryKeep}
+                  onChange={e => setSubHistoryKeep(Number(e.target.value) || 6)}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button type="button" disabled={savingSub} onClick={onSaveSub}>
+                {savingSub ? '保存中…' : '保存订阅设置'}
+              </Button>
+              {subMessage && <span className="text-sm text-emerald-600">{subMessage}</span>}
+              {subError && <span className="text-sm text-destructive">{subError}</span>}
             </div>
           </CardContent>
         </Card>

@@ -133,7 +133,7 @@ start_client "$R2" "$UUID" && echo "OK: vision+Encryption 数据通路（curl ht
 start_client "$R3" "$UUID" && echo "OK: vless vision 数据通路（对照组）" || exit 1
 
 echo ">> 订阅校验"
-SUB="$(curl -s "http://$ADDR/sub/$SUB_TOKEN")"
+SUB="$(curl -s "http://$ADDR/sub/$SUB_TOKEN?format=clash")"
 grep -q "encryption: mlkem768x25519plus." <<<"$SUB" \
     && echo "OK: 订阅含 encryption 字段" \
     || { echo "FAIL: 订阅缺少 encryption 字段"; echo "$SUB"; exit 1; }

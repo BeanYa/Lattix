@@ -339,6 +339,10 @@ export interface SubUser {
   expires_at: string | null
   expired: boolean
   disabled: boolean
+  traffic_limit: number
+  traffic_reset_day: number
+  sub_title: string
+  sub_announcement: string
   created_at: string
 }
 
@@ -458,6 +462,14 @@ export interface UpdateSettingsRequest {
   billing_inspection: InspectionSchedule
   exchange_rate_inspection: InspectionSchedule
   reporting_currency: string
+}
+
+export interface SubSettings {
+  title: string
+  announcement: string
+  custom_css: string
+  update_interval: number
+  traffic_history_keep: number
 }
 
 export interface AlertChannelResult {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,33 +18,41 @@ import (
 
 // userDTO 是用户对象的 API 表示。
 type userDTO struct {
-	ID          int64       `json:"id"`
-	Name        string      `json:"name"`
-	UUID        string      `json:"uuid"`
-	SubToken    string      `json:"sub_token"`
-	SubURL      string      `json:"sub_url"`       // mihomo YAML 订阅链接（§9，浏览器打开为落地页）
-	SubLinksURL string      `json:"sub_links_url"` // 分享链接集合订阅（§14）
-	NodeIDs     []int64     `json:"node_ids"`      // 分配到的节点（§16，默认全关）
-	Traffic     *trafficDTO `json:"traffic"`       // 用户流量合计（§13），无数据为 null
-	ExpiresAt   *time.Time  `json:"expires_at"`    // 到期时刻（§9），null = 长期
-	Expired     bool        `json:"expired"`       // 已到期停权（sweeper 扇出 remove_user 后置位，§9）
-	Disabled    bool        `json:"disabled"`      // 管理员显式停用（§16），与 expired 正交
-	CreatedAt   time.Time   `json:"created_at"`
+	ID              int64       `json:"id"`
+	Name            string      `json:"name"`
+	UUID            string      `json:"uuid"`
+	SubToken        string      `json:"sub_token"`
+	SubURL          string      `json:"sub_url"`
+	SubLinksURL     string      `json:"sub_links_url"`
+	NodeIDs         []int64     `json:"node_ids"`
+	Traffic         *trafficDTO `json:"traffic"`
+	ExpiresAt       *time.Time  `json:"expires_at"`
+	Expired         bool        `json:"expired"`
+	Disabled        bool        `json:"disabled"`
+	TrafficLimit    int64       `json:"traffic_limit"`
+	TrafficResetDay int         `json:"traffic_reset_day"`
+	SubTitle        string      `json:"sub_title"`
+	SubAnnouncement string      `json:"sub_announcement"`
+	CreatedAt       time.Time   `json:"created_at"`
 }
 
 func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userDTO {
 	return userDTO{
-		ID:          u.ID,
-		Name:        u.Name,
-		UUID:        u.UUID,
-		SubToken:    u.SubToken,
-		SubURL:      fmt.Sprintf("%s/sub/%s", s.panelBase(r), u.SubToken),
-		SubLinksURL: fmt.Sprintf("%s/sub/%s/links", s.panelBase(r), u.SubToken),
-		NodeIDs:     nodeIDs,
-		ExpiresAt:   u.ExpiresAt,
-		Expired:     u.Expired,
-		Disabled:    u.Disabled,
-		CreatedAt:   u.CreatedAt,
+		ID:              u.ID,
+		Name:            u.Name,
+		UUID:            u.UUID,
+		SubToken:        u.SubToken,
+		SubURL:          fmt.Sprintf("%s/sub/%s", s.panelBase(r), u.SubToken),
+		SubLinksURL:     fmt.Sprintf("%s/sub/%s?format=links", s.panelBase(r), u.SubToken),
+		NodeIDs:         nodeIDs,
+		ExpiresAt:       u.ExpiresAt,
+		Expired:         u.Expired,
+		Disabled:        u.Disabled,
+		TrafficLimit:    u.TrafficLimit,
+		TrafficResetDay: u.TrafficResetDay,
+		SubTitle:        u.SubTitle,
+		SubAnnouncement: u.SubAnnouncement,
+		CreatedAt:       u.CreatedAt,
 	}
 }
 
@@ -457,4 +466,69 @@ func (s *Server) fanoutRemoveUser(r *http.Request, uuid string) {
 			log.Printf("panel: fanout remove_user user=%s server=%d: %v", uuid, srv.ID, err)
 		}
 	}
+}
+
+// handleUpdateUserSubSettings 处理 POST /api/user/sub-settings：更新用户级订阅配置。
+func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID          int64  `json:"user_id"`
+		TrafficLimit    int64  `json:"traffic_limit"`     // 字节，0=不限
+		TrafficResetDay int    `json:"traffic_reset_day"` // 0=创建日，1-28
+		SubTitle        string `json:"sub_title"`
+		SubAnnouncement string `json:"sub_announcement"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.UserID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	if req.TrafficLimit < 0 {
+		req.TrafficLimit = 0
+	}
+	if req.TrafficResetDay < 0 || req.TrafficResetDay > 28 {
+		writeError(w, http.StatusBadRequest, "重置日须为 0–28（0=创建日）")
+		return
+	}
+	if err := s.st.SetUserSubSettings(r.Context(), req.UserID, req.TrafficLimit, req.TrafficResetDay, req.SubTitle, req.SubAnnouncement); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "用户不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.audit(r, "user.sub_settings.updated", nil, nil, map[string]any{
+		"user_id":           req.UserID,
+		"traffic_limit":     req.TrafficLimit,
+		"traffic_reset_day": req.TrafficResetDay,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handleUserTrafficHistory 处理 GET /api/user/traffic-history?user_id=N。
+func (s *Server) handleUserTrafficHistory(w http.ResponseWriter, r *http.Request) {
+	idParam := r.URL.Query().Get("user_id")
+	id, err := strconv.ParseInt(idParam, 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid user_id")
+		return
+	}
+	u, err := s.st.UserByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "用户不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	history, err := s.st.ListUserTrafficHistory(r.Context(), u.UUID, 12)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, history)
 }

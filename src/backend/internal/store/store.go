@@ -121,6 +121,10 @@ CREATE TABLE IF NOT EXISTS users (
     expires_at INTEGER,
     expired    INTEGER NOT NULL DEFAULT 0,
     disabled   INTEGER NOT NULL DEFAULT 0,
+    traffic_limit     INTEGER NOT NULL DEFAULT 0, -- 流量配额（字节），0=不限
+    traffic_reset_day INTEGER NOT NULL DEFAULT 0, -- 每月重置日（day-of-month，0=创建日，max 28）
+    sub_title         TEXT    NOT NULL DEFAULT '', -- 订阅落地页标题覆盖（空=用全局）
+    sub_announcement  TEXT    NOT NULL DEFAULT '', -- 订阅公告覆盖（Markdown，空=用全局）
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -220,15 +224,30 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- 流量累计（§13 仅统计）：节点维度（user_uuid=''）与用户维度（node_id=0）。
+-- period_start 标记当期起始（ISO8601），sweeper 周期重置时归档到 traffic_history 后清零。
 CREATE TABLE IF NOT EXISTS traffic (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    node_id    INTEGER NOT NULL DEFAULT 0,
-    user_uuid  TEXT    NOT NULL DEFAULT '',
-    up         INTEGER NOT NULL DEFAULT 0,
-    down       INTEGER NOT NULL DEFAULT 0,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id      INTEGER NOT NULL DEFAULT 0,
+    user_uuid    TEXT    NOT NULL DEFAULT '',
+    up           INTEGER NOT NULL DEFAULT 0,
+    down         INTEGER NOT NULL DEFAULT 0,
+    period_start TEXT    NOT NULL DEFAULT '',
+    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (node_id, user_uuid)
 );
+
+-- 流量历史归档（审计用）：sweeper 重置时从 traffic 表归档。
+CREATE TABLE IF NOT EXISTS traffic_history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    node_id      INTEGER NOT NULL,
+    user_uuid    TEXT    NOT NULL,
+    up           INTEGER NOT NULL DEFAULT 0,
+    down         INTEGER NOT NULL DEFAULT 0,
+    period_start TEXT    NOT NULL,
+    period_end   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_traffic_history_user
+    ON traffic_history(user_uuid, period_start);
 
 CREATE TABLE IF NOT EXISTS chains (
     id                       INTEGER PRIMARY KEY AUTOINCREMENT,

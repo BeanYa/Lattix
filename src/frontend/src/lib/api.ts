@@ -25,6 +25,7 @@ import type {
   Server,
   ServerMetrics,
   ServerMetricSeries,
+  SubSettings,
   TrafficPlanInput,
   CustomExchangeRate,
   ExchangeRateSettings,
@@ -225,6 +226,17 @@ export const api = {
     }),
   deleteUser: (userId: number) =>
     requester.post<void>('/api/user/delete', { user_id: userId }),
+  updateUserSubSettings: (body: {
+    user_id: number
+    traffic_limit: number
+    traffic_reset_day: number
+    sub_title: string
+    sub_announcement: string
+  }) => requester.post<void>('/api/user/sub-settings', body),
+  userTrafficHistory: (userId: number) =>
+    requester.get<Array<{ period_start: string; up: number; down: number }>>(
+      '/api/user/traffic-history', { user_id: userId },
+    ),
 
   settings: () => requester.get<PanelSettings>('/api/setting/get'),
   updateSettings: (body: UpdateSettingsRequest) =>
@@ -242,6 +254,9 @@ export const api = {
     display: 'silent',
   }),
   testAlerts: () => requester.post<AlertTestResult>('/api/setting/test-alerts', {}),
+  subSettings: () => requester.get<SubSettings>('/api/setting/sub'),
+  updateSubSettings: (body: SubSettings) =>
+    requester.post<SubSettings>('/api/setting/sub', body),
 
   panelVersion: () => requester.get<PanelVersionInfo>('/api/panel/get-version'),
   startPanelUpdate: (version?: string) =>
