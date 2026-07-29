@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lattix 面板管理程序（latx，设计文档 §20）。
+# Lattix 面板交互式管理程序（latx）。
 #
 # 由 install-panel.sh 安装为 /usr/local/bin/latx（CI 发版时烧入版本与仓库占位符，
 # 见 .github/workflows/release.yml）。无参数运行进入交互式运维菜单，也可直接使用子命令：
@@ -226,8 +226,9 @@ cmd_update() {
     need_root
     use_systemd || die "未检测到 systemd，无法自动更新（LATX_DEV=1 开发模式请手动替换二进制）"
     [[ "$GITHUB_REPO" != *"{{"* ]] || die "脚本未经 CI stamp（{{GITHUB_REPO}} 占位符未替换），无法定位 release"
-    command -v curl >/dev/null      || die "curl is required"
-    command -v sha256sum >/dev/null || die "sha256sum is required"
+	command -v curl >/dev/null      || die "curl is required"
+	command -v sha256sum >/dev/null || die "sha256sum is required"
+	command -v tar >/dev/null       || die "tar is required"
     [[ -x "$BACKEND" ]] || die "面板未安装（$BACKEND 不存在），请先运行 install-panel.sh"
 
     local version="${1:-latest}"
@@ -254,16 +255,37 @@ cmd_update() {
         || die "面板包 SHA256 校验失败（release ${version} checksums.txt）"
     echo ">> 面板包 SHA256 校验通过"
     tar -C "$tmp" -xzf "$tmp/$asset"
-    [[ -f "$tmp/lattix-panel/lattix-backend" ]] || die "面板包内容异常（缺 lattix-backend）"
+	[[ -f "$tmp/lattix-panel/lattix-backend" && -f "$tmp/lattix-panel/latx" ]] \
+		|| die "面板包内容异常（缺 lattix-backend 或 latx）"
+	chmod 0755 "$tmp/lattix-panel/lattix-backend" "$tmp/lattix-panel/latx"
+	local packaged_version packaged_cli_version
+	packaged_version="$("$tmp/lattix-panel/lattix-backend" -version 2>/dev/null)" \
+		|| die "预检失败：新面板二进制无法运行"
+	[[ "$packaged_version" == "$version" ]] \
+		|| die "预检失败：新面板版本不符（期望 ${version}，实际 ${packaged_version}）"
+	packaged_cli_version="$(LATX_ROOT="$tmp/lattix-panel" "$tmp/lattix-panel/latx" version 2>/dev/null \
+		| sed -n 's/^latx 版本: //p' | head -1)"
+	[[ "$packaged_cli_version" == "$version" ]] \
+		|| die "预检失败：新 latx 版本不符（期望 ${version}，实际 ${packaged_cli_version:-unknown}）"
 
-    systemctl stop "$UNIT"
-    install -m 0755 "$tmp/lattix-panel/lattix-backend" "$BACKEND"
-    systemctl start "$UNIT"
+	systemctl stop "$UNIT"
+	install -m 0755 "$tmp/lattix-panel/lattix-backend" "$BACKEND"
+	install -m 0755 "$tmp/lattix-panel/latx" "$INSTALL_ROOT/latx"
+	systemctl start "$UNIT"
 
-    local new_version; new_version="$(panel_version)"
-    [[ "$new_version" == "$version" ]] \
-        || die "更新后版本校验失败（期望 ${version}，实际 ${new_version}）"
-    echo ">> done. 面板已更新至 ${new_version}（latx status 查看状态）"
+	local new_version ready=0
+	new_version="$(panel_version)"
+	[[ "$new_version" == "$version" ]] \
+		|| die "更新后版本校验失败（期望 ${version}，实际 ${new_version}）"
+	for _ in $(seq 1 30); do
+		if systemctl is-active --quiet "$UNIT" && curl -fsS --max-time 2 "$PANEL_URL/readyz" >/dev/null 2>&1; then
+			ready=1
+			break
+		fi
+		sleep 1
+	done
+	[[ "$ready" -eq 1 ]] || die "面板已替换为 ${new_version}，但服务未在 30 秒内恢复就绪（请运行 latx status 和 latx log -n 100）"
+	echo ">> done. 面板与 latx 已更新至 ${new_version}；Agent 会自动重连。"
 }
 
 cmd_acme() {

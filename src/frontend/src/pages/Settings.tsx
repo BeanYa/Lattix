@@ -722,10 +722,10 @@ export default function Settings() {
         </Card>
 
         <Dialog open={publicRatesOpen} onOpenChange={setPublicRatesOpen}>
-          <DialogContent className="max-h-[85vh] sm:max-w-3xl">
+          <DialogContent className="max-h-[85vh] sm:max-w-4xl">
             <DialogHeader>
               <DialogTitle>公开汇率</DialogTitle>
-              <DialogDescription>Frankfurter 公开汇率缓存，基准币种为 EUR。</DialogDescription>
+              <DialogDescription>Frankfurter 公开汇率缓存，拉取 EUR / USD / CNY / JPY / CAD 五种基准。</DialogDescription>
             </DialogHeader>
             {loadingPublicRates ? (
               <LoadingState />
@@ -736,6 +736,7 @@ export default function Settings() {
                 <Table>
                   <TableHeader className="sticky top-0 z-10 bg-popover">
                     <TableRow>
+                      <TableHead>基准币种</TableHead>
                       <TableHead>报价币种</TableHead>
                       <TableHead>公开汇率</TableHead>
                       <TableHead>汇率日期</TableHead>
@@ -746,6 +747,7 @@ export default function Settings() {
                   <TableBody>
                     {exchangeData.rates.map((rate) => (
                       <TableRow key={`${rate.base_currency}-${rate.quote_currency}`}>
+                        <TableCell className="font-medium">{rate.base_currency}</TableCell>
                         <TableCell className="font-medium">{rate.quote_currency}</TableCell>
                         <TableCell className="tabular-nums">1 {rate.base_currency} = {rate.rate} {rate.quote_currency}</TableCell>
                         <TableCell>{rate.rate_date}</TableCell>

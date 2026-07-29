@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -62,13 +63,31 @@ func main() {
 	}
 	runtime := newRuntimeSettings(document)
 	panelRuntime := newPanelStateTracker(st.PanelObservation)
+	connectionPath := filepath.Join(filepath.Dir(*statePath), "connection.json")
+	saveConnectionStatus := func(connected bool, connectionErr error) {
+		message := ""
+		if connectionErr != nil {
+			message = connectionErr.Error()
+			if len(message) > 512 {
+				message = message[:512]
+			}
+		}
+		if err := state.SaveConnectionStatus(connectionPath, state.ConnectionStatus{
+			Connected: connected, Panel: *panel, ServerID: st.ServerID,
+			AgentVersion: version, PID: os.Getpid(), ChangedAt: time.Now().UTC(), LastError: message,
+		}); err != nil {
+			log.Printf("save connection status: %v", err)
+		}
+	}
+	saveConnectionStatus(false, nil)
 	tok := selectInitialToken(st.Token, *token)
 	if tok == "" {
 		log.Fatal("-token is required for first connect")
 	}
 	failures := 0
 	for {
-		newTok, err := run(*panel, tok, *statePath, *settingsPath, mgr, &st, runtime, panelRuntime)
+		newTok, err := run(*panel, tok, *statePath, *settingsPath, connectionPath, mgr, &st, runtime, panelRuntime)
+		saveConnectionStatus(false, err)
 		if newTok != "" {
 			tok = newTok // 内存兜底：state 落盘失败时仍能凭内存中的 token 重连（§5）
 			failures = 0
@@ -140,7 +159,7 @@ func (s *safeConn) writeControl(messageType int, data []byte) error {
 
 // run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因。
 // st 为已加载的落盘状态：session.open 换发后更新凭证字段并整体落盘（保留链 piece 记录）。
-func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *state.State, runtime *runtimeSettings, panelRuntime *panelStateTracker) (string, error) {
+func run(panel, token, statePath, settingsPath, connectionPath string, mgr *xray.Manager, st *state.State, runtime *runtimeSettings, panelRuntime *panelStateTracker) (string, error) {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+token)
 	conn, response, err := websocket.DefaultDialer.Dial(panel, header)
@@ -257,6 +276,12 @@ func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *st
 	}
 	if err := markSessionReady(sc, conn, opened.SessionID, panelRuntime, statePath, st, latency); err != nil {
 		return newToken, err
+	}
+	if err := state.SaveConnectionStatus(connectionPath, state.ConnectionStatus{
+		Connected: true, Panel: panel, ServerID: opened.ServerID,
+		AgentVersion: version, PID: os.Getpid(), ChangedAt: time.Now().UTC(),
+	}); err != nil {
+		log.Printf("save connected status: %v", err)
 	}
 	sendSettingsSync(sc, runtime)
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Lattix 节点侧管理程序（latx-ag，设计文档 §20）。
+# Lattix 节点侧交互式管理程序（latx-ag）。
 #
 # 由 agent install.sh 安装为 /usr/local/bin/latx-ag（CI 发版时烧入版本与仓库占位符，
-# 见 .github/workflows/release.yml）。全部功能函数化，子命令：
+# 见 .github/workflows/release.yml）。无参数运行进入交互菜单，也可直接使用子命令：
 #
+#   latx-ag                         打开交互式运维菜单
 #   latx-ag status                  节点状态：agent/xray 服务、版本、面板地址、配置指纹
 #   latx-ag start|stop|restart      systemctl 包装（systemd 模式需 root）；用户态模式管理守护脚本与进程
 #   latx-ag enable|disable          systemctl 包装（systemd 模式需 root）；用户态模式增删 crontab @reboot
@@ -28,9 +29,11 @@
 #   LATX_AG_AGENT_BIN   agent 二进制路径（默认 /opt/lattix-agent/bin/lattix-agent）
 #   LATX_AG_XRAY_BIN    xray 二进制路径（默认 /opt/lattix-agent/bin/xray）
 #   LATX_AG_STATE       agent state 文件（默认 /opt/lattix-agent/data/state.json）
+#   LATX_AG_CONNECTION  agent 实时面板连接快照（默认 /opt/lattix-agent/data/connection.json）
 #   LATX_AG_ENV         agent env 文件（默认 /opt/lattix-agent/config/agent.env，读面板地址）
 #   LATX_AG_LOG         用户态/DEV 模式日志文件（默认 /opt/lattix-agent/logs/agent.log）
 #   XRAY_RELEASE_BASE   xray release 下载基址（默认官方 GitHub，对齐 agent -xray-release-base）
+#   LATX_LANG           交互菜单语言（en|zh；未设置时启动选择，默认 en）
 #   LATX_DEV=1          无 systemd 开发模式：status 降级为进程检查，log 读 LATX_AG_LOG
 set -euo pipefail
 
@@ -63,6 +66,7 @@ RUN_SCRIPT="$(dirname "$AGENT_BIN")/lattix-agent-run"
 XRAY_BIN="${LATX_AG_XRAY_BIN:-$APP_ROOT/bin/xray}"
 XRAY_CONFIG="$APP_ROOT/config/xray.json"
 STATE_FILE="${LATX_AG_STATE:-$APP_ROOT/data/state.json}"
+CONNECTION_FILE="${LATX_AG_CONNECTION:-$APP_ROOT/data/connection.json}"
 SETTINGS_FILE="$APP_ROOT/data/settings.json"
 ENV_FILE="${LATX_AG_ENV:-$APP_ROOT/config/agent.env}"
 LOG_FILE="${LATX_AG_LOG:-$APP_ROOT/logs/agent.log}"
@@ -112,17 +116,22 @@ server_id() {
 }
 
 cmd_status() {
-    if use_systemd; then
-        local active enabled xactive xenabled
+	local agent_running=0 running_pid=""
+	if use_systemd; then
+		local active enabled xactive xenabled
         active="$(systemctl is-active "$UNIT" 2>/dev/null || true)"
         enabled="$(systemctl is-enabled "$UNIT" 2>/dev/null || true)"
         xactive="$(systemctl is-active "$XRAY_UNIT" 2>/dev/null || true)"
-        xenabled="$(systemctl is-enabled "$XRAY_UNIT" 2>/dev/null || true)"
+		xenabled="$(systemctl is-enabled "$XRAY_UNIT" 2>/dev/null || true)"
+		running_pid="$(systemctl show -p MainPID --value "$UNIT" 2>/dev/null || true)"
+		[[ "$active" == "active" && "$running_pid" =~ ^[1-9][0-9]*$ ]] && agent_running=1
         echo "Agent 服务: ${active:-unknown}（${enabled:-unknown}）"
         echo "xray 服务:  ${xactive:-unknown}（${xenabled:-unknown}）"
     else
-        local pid; pid="$(agent_pid)"
-        if [[ -n "$pid" ]]; then
+		local pid; pid="$(agent_pid)"
+		if [[ -n "$pid" ]]; then
+			agent_running=1
+			running_pid="$pid"
             echo "Agent 服务: [用户态] 进程运行中（pid $pid，无 systemd）"
         else
             echo "Agent 服务: [用户态] 进程未运行（无 systemd）"
@@ -134,17 +143,33 @@ cmd_status() {
     echo "xray 版本:  $(xray_version)"
 
     local panel sid
-    panel="$(panel_addr)"
-    [[ -n "$panel" ]] && echo "面板地址: $panel" || echo "面板地址: unknown（$ENV_FILE 不存在/不可读或无 LATTIX_PANEL_WS）"
+	panel="$(panel_addr)"
+	[[ -n "$panel" ]] && echo "面板地址: $panel" || echo "面板地址: unknown（$ENV_FILE 不存在/不可读或无 LATTIX_PANEL_WS）"
     sid="$(server_id)"
     [[ -n "$sid" ]] && echo "服务器 ID: $sid"
 
-    # §17 漂移基线由运行中的 agent 内存维护（不落盘），此处仅给出当前配置指纹。
-    if [[ -r "$XRAY_CONFIG" ]] && command -v sha256sum >/dev/null; then
+	local snapshot_pid="" connected_at=""
+	if [[ -r "$CONNECTION_FILE" ]]; then
+		snapshot_pid="$(sed -n 's/^[[:space:]]*"pid": \([0-9][0-9]*\),*$/\1/p' "$CONNECTION_FILE" | head -1)"
+		connected_at="$(sed -n 's/^[[:space:]]*"changed_at": "\([^"]*\)",*$/\1/p' "$CONNECTION_FILE" | head -1)"
+	fi
+	if [[ "$agent_running" -ne 1 ]]; then
+		echo "面板连接: 未连接（Agent 服务未运行）"
+	elif [[ -r "$CONNECTION_FILE" ]] && grep -q '"connected": true' "$CONNECTION_FILE" \
+		&& [[ -n "$snapshot_pid" && "$snapshot_pid" == "$running_pid" ]]; then
+		echo "面板连接: 已连接${connected_at:+（建立于 $connected_at）}"
+	elif [[ -r "$STATE_FILE" ]] && grep -q '"auth_rejected": true' "$STATE_FILE"; then
+		echo "面板连接: 未连接（凭证已被面板拒绝，请重新绑定 Agent）"
+	else
+		echo "面板连接: 未连接（Agent 正在重试，详情请查看 latx-ag log -n 100）"
+	fi
+
+	# 显示当前配置摘要；完整配置一致性由 agent 持续监测并向面板报告。
+	if [[ -r "$XRAY_CONFIG" ]] && command -v sha256sum >/dev/null; then
         local fp
         fp="$(sha256sum "$XRAY_CONFIG" 2>/dev/null | cut -c1-12 || true)"
-        [[ -n "$fp" ]] && echo "配置指纹: sha256:$fp（漂移基线在 agent 内存中，§17）"
-    fi
+		[[ -n "$fp" ]] && echo "配置指纹: sha256:$fp（agent 持续监测外部改动）"
+	fi
 }
 
 user_start() {
@@ -259,31 +284,67 @@ cmd_update() {
         || die "agent 包 SHA256 校验失败（release ${version} checksums.txt）"
     echo ">> agent 包 SHA256 校验通过"
     tar -C "$tmp" -xzf "$tmp/lattix-agent-linux-${arch}.tar.gz"
-    [[ -f "$tmp/lattix-agent/lattix-agent" ]] || die "agent 包内容异常（缺 lattix-agent）"
+	[[ -f "$tmp/lattix-agent/lattix-agent" && -f "$tmp/lattix-agent/latx-ag" ]] \
+		|| die "agent 包内容异常（缺 lattix-agent 或 latx-ag）"
 
     # 预检：新二进制可执行且 -version 正常输出，失败即放弃（不触碰在运安装）。
-    chmod 0755 "$tmp/lattix-agent/lattix-agent"
-    local new_version
+	chmod 0755 "$tmp/lattix-agent/lattix-agent" "$tmp/lattix-agent/latx-ag"
+	local new_version new_cli_version
     new_version="$("$tmp/lattix-agent/lattix-agent" -version 2>/dev/null)" \
         || die "预检失败：新二进制 -version 执行异常，放弃更新"
-    [[ "$new_version" == "$version" ]] \
-        || die "预检失败：新二进制版本不符（期望 ${version}，实际 ${new_version}），放弃更新"
+	[[ "$new_version" == "$version" ]] \
+		|| die "预检失败：新二进制版本不符（期望 ${version}，实际 ${new_version}），放弃更新"
+	new_cli_version="$(LATX_AG_AGENT_BIN="$tmp/lattix-agent/lattix-agent" \
+		"$tmp/lattix-agent/latx-ag" version 2>/dev/null | sed -n 's/^latx-ag 版本: //p' | head -1)"
+	[[ "$new_cli_version" == "$version" ]] \
+		|| die "预检失败：新 latx-ag 版本不符（期望 ${version}，实际 ${new_cli_version:-unknown}），放弃更新"
 
-    if use_systemd; then
-        systemctl stop "$UNIT"
-        install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
-        systemctl start "$UNIT"
-    else
+	if use_systemd; then
+		systemctl stop "$UNIT"
+		install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
+		install -m 0755 "$tmp/lattix-agent/latx-ag" "$LATX_AG_APP_BIN"
+		if [[ "$LATX_AG_BIN" != "$LATX_AG_APP_BIN" && ! -L "$LATX_AG_BIN" ]]; then
+			install -m 0755 "$tmp/lattix-agent/latx-ag" "$LATX_AG_BIN"
+		fi
+		systemctl start "$UNIT"
+	else
         # 用户态：先停 agent 释放二进制占用（守护循环约 1s 拉起新版），再替换。
         pkill -f "$AGENT_BIN -panel" 2>/dev/null || true
-        sleep 1
-        install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
-    fi
+		sleep 1
+		install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
+		install -m 0755 "$tmp/lattix-agent/latx-ag" "$LATX_AG_APP_BIN"
+		if [[ "$LATX_AG_BIN" != "$LATX_AG_APP_BIN" && ! -L "$LATX_AG_BIN" ]]; then
+			install -m 0755 "$tmp/lattix-agent/latx-ag" "$LATX_AG_BIN"
+		fi
+	fi
 
-    local running_version; running_version="$(agent_version)"
-    [[ "$running_version" == "$version" ]] \
-        || die "更新后版本校验失败（期望 ${version}，实际 ${running_version}）"
-    echo ">> done. agent 已更新至 ${running_version}（latx-ag status 查看状态）"
+	local running_version connected=0
+	for _ in $(seq 1 30); do
+		running_version="$(agent_version)"
+		if [[ "$running_version" == "$version" ]]; then
+			local live_pid="$(agent_pid)" snapshot_pid=""
+			if use_systemd; then
+				live_pid="$(systemctl show -p MainPID --value "$UNIT" 2>/dev/null || true)"
+			fi
+			if [[ -r "$CONNECTION_FILE" ]]; then
+				snapshot_pid="$(sed -n 's/^[[:space:]]*"pid": \([0-9][0-9]*\),*$/\1/p' "$CONNECTION_FILE" | head -1)"
+			fi
+			if [[ -n "$live_pid" && "$snapshot_pid" == "$live_pid" ]] && grep -q '"connected": true' "$CONNECTION_FILE" 2>/dev/null; then
+				connected=1
+				break
+			fi
+		fi
+		sleep 1
+	done
+	running_version="$(agent_version)"
+	[[ "$running_version" == "$version" ]] \
+		|| die "更新后版本校验失败（期望 ${version}，实际 ${running_version}）"
+	echo ">> done. agent 与 latx-ag 已更新至 ${running_version}"
+	if [[ "$connected" -eq 1 ]]; then
+		echo ">> 面板连接已恢复"
+	else
+		echo ">> WARNING: Agent 已更新并运行，但 30 秒内未确认面板连接；请运行 latx-ag status 和 latx-ag log -n 100" >&2
+	fi
 }
 
 cmd_xray_update() {
@@ -411,7 +472,7 @@ cmd_uninstall() {
             echo ">> [用户态] 已停止 xray 进程"
         fi
     fi
-    rm -f "$AGENT_BIN" "$AGENT_BIN.bak" "$RUN_SCRIPT" "$ENV_FILE" "$STATE_FILE" "$SETTINGS_FILE"
+	rm -f "$AGENT_BIN" "$AGENT_BIN.bak" "$RUN_SCRIPT" "$ENV_FILE" "$STATE_FILE" "$SETTINGS_FILE" "$CONNECTION_FILE"
     echo ">> 已删除 agent 二进制/env/state"
     if [[ "$purge_xray" -eq 1 ]]; then
         rm -f "$XRAY_BIN" "$XRAY_BIN.bak"
@@ -432,8 +493,123 @@ cmd_version() {
 
 cmd_help() { awk '/^set -euo pipefail/{exit} NR>1' "$0" | sed 's/^# \{0,1\}//'; }
 
+MENU_LANG="en"
+
+menu_phrase() {
+	if [[ "$MENU_LANG" == "zh" ]]; then
+		printf '%s' "$2"
+	else
+		printf '%s' "$1"
+	fi
+}
+
+select_menu_language() {
+	local choice="${LATX_LANG:-}"
+	case "$choice" in
+		zh|ZH|2) MENU_LANG="zh"; return ;;
+		en|EN|1) MENU_LANG="en"; return ;;
+		"") ;;
+		*) echo "Unsupported LATX_LANG: $choice; using English." >&2; return ;;
+	esac
+	cat <<'EOF'
+Select language / 选择语言
+  1. English (default)
+  2. 中文
+EOF
+	read -r -p "Language [1]: " choice || true
+	[[ "$choice" == "2" || "$choice" == "zh" || "$choice" == "ZH" ]] && MENU_LANG="zh"
+}
+
+pause_menu() {
+	local unused
+	echo
+	read -r -p "$(menu_phrase "Press Enter to return to the main menu..." "按 Enter 返回主菜单...")" unused || true
+}
+
+show_menu() {
+	local choice lines version purge
+	select_menu_language
+	while true; do
+		[[ -t 1 ]] && clear || true
+		if [[ "$MENU_LANG" == "zh" ]]; then
+			cat <<'EOF'
+============================================================
+  Lattix Agent 运维菜单
+============================================================
+  Agent 服务
+    1. 查看节点状态          2. 启动 Agent
+    3. 停止 Agent             4. 重启 Agent
+    5. 开启开机自启          6. 关闭开机自启
+
+  日志与版本
+    7. 查看 Agent 日志        8. 查看 xray 日志
+    9. 查看版本
+
+  更新与维护
+   10. 更新 Agent            11. 更新 xray
+   12. 卸载 Agent
+
+    0. 退出
+============================================================
+EOF
+		else
+			cat <<'EOF'
+============================================================
+  Lattix Agent Operations
+============================================================
+  Agent Service
+    1. Show node status        2. Start Agent
+    3. Stop Agent              4. Restart Agent
+    5. Enable autostart        6. Disable autostart
+
+  Logs and Versions
+    7. Show Agent logs         8. Show xray logs
+    9. Show versions
+
+  Updates and Maintenance
+   10. Update Agent           11. Update xray
+   12. Uninstall Agent
+
+    0. Exit
+============================================================
+EOF
+		fi
+		read -r -p "$(menu_phrase "Select [0-12]: " "请选择 [0-12]: ")" choice || { echo; return 0; }
+		case "$choice" in
+			0) return 0 ;;
+			1) cmd_status; pause_menu ;;
+			2) cmd_svc start; pause_menu ;;
+			3) cmd_svc stop; pause_menu ;;
+			4) cmd_svc restart; pause_menu ;;
+			5) cmd_svc enable; pause_menu ;;
+			6) cmd_svc disable; pause_menu ;;
+			7|8)
+				read -r -p "$(menu_phrase "Number of log lines [50]: " "显示最近多少行日志 [50]: ")" lines
+				if [[ "$choice" == "7" ]]; then cmd_log "$UNIT" -n "${lines:-50}"; else cmd_log "$XRAY_UNIT" -n "${lines:-50}"; fi
+				pause_menu
+				;;
+			9) cmd_version; pause_menu ;;
+			10|11)
+				read -r -p "$(menu_phrase "Target version [latest]: " "目标版本 [latest]: ")" version
+				if [[ "$choice" == "10" ]]; then cmd_update "${version:-latest}"; else cmd_xray_update "${version:-latest}"; fi
+				pause_menu
+				;;
+			12)
+				read -r -p "$(menu_phrase "Also remove xray and interrupt node traffic? [y/N]: " "同时删除 xray 并中断节点流量？[y/N]: ")" purge
+				if [[ "$purge" == "y" || "$purge" == "Y" ]]; then cmd_uninstall --purge-xray; else cmd_uninstall; fi
+				return 0
+				;;
+			*) menu_phrase "Invalid option: $choice" "无效选项: $choice"; echo; pause_menu ;;
+		esac
+	done
+}
+
 main() {
-    local cmd="${1:-help}"; shift || true
+	if [[ $# -eq 0 ]]; then
+		show_menu
+		return
+	fi
+	local cmd="$1"; shift
     case "$cmd" in
         status)               cmd_status "$@" ;;
         start|stop|restart|enable|disable) cmd_svc "$cmd" ;;

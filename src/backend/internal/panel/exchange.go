@@ -28,18 +28,36 @@ func newExchangeCatalog(s *Server) *exchangeCatalog {
 	return &exchangeCatalog{s: s, client: &http.Client{Timeout: 30 * time.Second}, apiBase: base}
 }
 
+// pivotBases 是需要拉取的基准货币列表；EUR 始终排在首位，convertCosts 使用 EUR 行做交叉汇率。
+var pivotBases = []string{"EUR", "USD", "CNY", "JPY", "CAD"}
+
 func (c *exchangeCatalog) refresh(ctx context.Context) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiBase+"/latest?from=EUR", nil)
+	var all []store.ExchangeRate
+	for _, base := range pivotBases {
+		rates, err := c.fetchBase(ctx, base)
+		if err != nil {
+			return err
+		}
+		all = append(all, rates...)
+	}
+	if len(all) == 0 {
+		return errors.New("Frankfurter 未返回支持的汇率")
+	}
+	return c.s.st.ReplaceExchangeRates(ctx, all)
+}
+
+func (c *exchangeCatalog) fetchBase(ctx context.Context, base string) ([]store.ExchangeRate, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiBase+"/latest?from="+base, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("拉取 Frankfurter 汇率失败: %w", err)
+		return nil, fmt.Errorf("拉取 Frankfurter 汇率失败 (%s): %w", base, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("拉取 Frankfurter 汇率失败: HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("拉取 Frankfurter 汇率失败 (%s): HTTP %d", base, resp.StatusCode)
 	}
 	var payload struct {
 		Base  string                 `json:"base"`
@@ -49,20 +67,17 @@ func (c *exchangeCatalog) refresh(ctx context.Context) error {
 	decoder := json.NewDecoder(resp.Body)
 	decoder.UseNumber()
 	if err := decoder.Decode(&payload); err != nil {
-		return err
+		return nil, err
 	}
-	payload.Rates["EUR"] = json.Number("1")
+	payload.Rates[base] = json.Number("1")
 	now := time.Now().UTC().Format(time.RFC3339)
 	rates := make([]store.ExchangeRate, 0, len(payload.Rates))
 	for currency, rate := range payload.Rates {
 		if supportedCurrencies[currency] {
-			rates = append(rates, store.ExchangeRate{BaseCurrency: "EUR", QuoteCurrency: currency, Rate: rate.String(), RateDate: payload.Date, Source: "frankfurter", FetchedAt: now})
+			rates = append(rates, store.ExchangeRate{BaseCurrency: base, QuoteCurrency: currency, Rate: rate.String(), RateDate: payload.Date, Source: "frankfurter", FetchedAt: now})
 		}
 	}
-	if len(rates) == 0 {
-		return errors.New("Frankfurter 未返回支持的汇率")
-	}
-	return c.s.st.ReplaceExchangeRates(ctx, rates)
+	return rates, nil
 }
 
 func (s *Server) exchangeInspectionSchedule(ctx context.Context) inspectionSchedule {
@@ -121,6 +136,15 @@ func convertedAmount(amountMinor int64, source, target string, rate *big.Rat, ra
 	return &convertedCost{AmountMinor: roundRat(targetMinor), Currency: target, RateDate: rateDate, Source: rateSource}
 }
 
+func isPivotBase(currency string) bool {
+	for _, b := range pivotBases {
+		if b == currency {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) convertCosts(ctx context.Context, amountMinor int64, source string) (public, custom *convertedCost, err error) {
 	target := strings.ToUpper(s.getSetting(ctx, store.SettingReportingCurrency))
 	if target == "" {
@@ -130,9 +154,17 @@ func (s *Server) convertCosts(ctx context.Context, amountMinor int64, source str
 	if err != nil {
 		return nil, nil, err
 	}
+	// 统计币种命中公开汇率基准时直接使用该基准的汇率表；否则回退到 EUR 交叉汇率。
+	pivot := "EUR"
+	if isPivotBase(target) {
+		pivot = target
+	}
 	rates := map[string]*big.Rat{}
 	rateDate := ""
 	for _, row := range rows {
+		if row.BaseCurrency != pivot {
+			continue
+		}
 		value, ok := new(big.Rat).SetString(row.Rate)
 		if ok {
 			rates[row.QuoteCurrency] = value
@@ -141,6 +173,13 @@ func (s *Server) convertCosts(ctx context.Context, amountMinor int64, source str
 	}
 	if source == target {
 		public = &convertedCost{AmountMinor: amountMinor, Currency: target, Source: "identity"}
+	} else if pivot == target {
+		// 基准即目标：1 target = rates[source] source → source→target 汇率 = 1/rates[source]
+		if r, ok := rates[source]; ok && r.Sign() > 0 {
+			public = convertedAmount(amountMinor, source, target, new(big.Rat).Inv(r), rateDate, "frankfurter")
+		} else {
+			return nil, nil, errors.New("缺少可用公共汇率")
+		}
 	} else if rate, ok := publicRate(rates, source, target); ok {
 		public = convertedAmount(amountMinor, source, target, rate, rateDate, "frankfurter")
 	} else {

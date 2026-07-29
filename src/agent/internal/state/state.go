@@ -7,9 +7,21 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	"lattix/shared"
 )
+
+// ConnectionStatus is a credential-free runtime snapshot consumed by latx-ag.
+type ConnectionStatus struct {
+	Connected    bool      `json:"connected"`
+	Panel        string    `json:"panel"`
+	ServerID     int64     `json:"server_id,omitempty"`
+	AgentVersion string    `json:"agent_version"`
+	PID          int       `json:"pid"`
+	ChangedAt    time.Time `json:"changed_at"`
+	LastError    string    `json:"last_error,omitempty"`
+}
 
 // State 是 agent 落盘的本地状态。
 type State struct {
@@ -59,6 +71,21 @@ func Load(path string) (State, error) {
 // Save 原子写入状态文件（tmp + rename，0600）。
 func Save(path string, st State) error {
 	b, err := json.MarshalIndent(st, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func SaveConnectionStatus(path string, status ConnectionStatus) error {
+	b, err := json.MarshalIndent(status, "", "  ")
 	if err != nil {
 		return err
 	}

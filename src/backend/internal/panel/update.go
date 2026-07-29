@@ -371,9 +371,10 @@ func (u *panelUpdater) run(ctx context.Context) {
 	}
 	pkg := filepath.Join(work, "lattix-panel")
 	newBin := filepath.Join(pkg, "lattix-backend")
-	if !fileExists(newBin) {
+	newCLI := filepath.Join(pkg, "latx")
+	if !fileExists(newBin) || !fileExists(newCLI) {
 		os.RemoveAll(work)
-		u.fail(errors.New("面板包内容异常（缺 lattix-backend）"))
+		u.fail(errors.New("面板包内容异常（缺 lattix-backend 或 latx）"))
 		return
 	}
 	u.setStage(updStageExtract, 100, "解压完成")
@@ -398,9 +399,34 @@ func (u *panelUpdater) run(ctx context.Context) {
 		u.fail(fmt.Errorf("新二进制自检失败（期望 %s，实际 %q）: %v", target, v, err))
 		return
 	}
+	if err := os.Chmod(newCLI, 0o755); err != nil {
+		os.RemoveAll(work)
+		u.fail(fmt.Errorf("新 latx 赋可执行权限失败: %w", err))
+		return
+	}
+	cliCheck := exec.Command(newCLI, "version")
+	cliCheck.Env = append(os.Environ(), "LATX_ROOT="+pkg)
+	cliOut, cliErr := cliCheck.CombinedOutput()
+	if line := firstLine(string(cliOut)); cliErr != nil || line != "latx 版本: "+target {
+		os.RemoveAll(work)
+		u.fail(fmt.Errorf("新 latx 自检失败（期望 %s，实际 %q）: %v", target, line, cliErr))
+		return
+	}
 
-	u.setStage(updStageApply, 60, "原子替换面板二进制")
+	u.setStage(updStageApply, 60, "原子替换面板与管理命令")
+	cliTarget := filepath.Join(filepath.Dir(exe), "latx")
+	cliReplaced := fileExists(cliTarget)
+	if cliReplaced {
+		if err := replaceExecutable(newCLI, cliTarget); err != nil {
+			os.RemoveAll(work)
+			u.fail(fmt.Errorf("替换 latx 失败: %w", err))
+			return
+		}
+	}
 	if err := replaceExecutable(newBin, exe); err != nil {
+		if cliReplaced {
+			_ = restoreExecutable(cliTarget)
+		}
 		os.RemoveAll(work)
 		u.fail(fmt.Errorf("替换面板二进制失败: %w", err))
 		return
@@ -423,6 +449,13 @@ func (u *panelUpdater) run(ctx context.Context) {
 	if err := s.cfg.RequestRestart("update"); err != nil {
 		u.fail(err)
 	}
+}
+
+func firstLine(value string) string {
+	if line, _, ok := strings.Cut(strings.TrimSpace(value), "\n"); ok {
+		return strings.TrimSpace(line)
+	}
+	return strings.TrimSpace(value)
 }
 
 // httpGet 拉取 URL 全部内容（小文件：API 响应/latest.txt），非 200 报错。
@@ -546,6 +579,24 @@ func replaceExecutable(src, dest string) error {
 		_ = os.Rename(backup, dest)
 		return fmt.Errorf("安装新二进制失败: %w", err)
 	}
+	return nil
+}
+
+func restoreExecutable(dest string) error {
+	backup := dest + ".bak"
+	if !fileExists(backup) {
+		return nil
+	}
+	failed := dest + ".failed"
+	_ = os.Remove(failed)
+	if err := os.Rename(dest, failed); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Rename(backup, dest); err != nil {
+		_ = os.Rename(failed, dest)
+		return err
+	}
+	_ = os.Remove(failed)
 	return nil
 }
 

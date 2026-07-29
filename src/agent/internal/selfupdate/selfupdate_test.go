@@ -14,22 +14,25 @@ import (
 	"testing"
 )
 
-// makeAgentTarball 打包 release 形态的 agent tarball：lattix-agent/lattix-agent（内容 content）。
+// makeAgentTarball 打包 release 形态的 agent 与 latx-ag 两件套。
 func makeAgentTarball(t *testing.T, content []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
-	if err := tw.WriteHeader(&tar.Header{
-		Name:     "lattix-agent/lattix-agent",
-		Mode:     0o755,
-		Size:     int64(len(content)),
-		Typeflag: tar.TypeReg,
-	}); err != nil {
-		t.Fatalf("tar header: %v", err)
+	files := map[string][]byte{
+		"lattix-agent/lattix-agent": content,
+		"lattix-agent/latx-ag":      []byte("#!/bin/sh\necho 'latx-ag 版本: v0.0.9'\n"),
 	}
-	if _, err := tw.Write(content); err != nil {
-		t.Fatalf("tar write: %v", err)
+	for name, body := range files {
+		if err := tw.WriteHeader(&tar.Header{
+			Name: name, Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg,
+		}); err != nil {
+			t.Fatalf("tar header: %v", err)
+		}
+		if _, err := tw.Write(body); err != nil {
+			t.Fatalf("tar write: %v", err)
+		}
 	}
 	tw.Close()
 	gw.Close()
@@ -60,14 +63,19 @@ func TestApplyReplacesExecutable(t *testing.T) {
 	content := []byte("#!/bin/sh\necho v0.0.9\n")
 	base := newFakeRelease(t, "v0.0.9", content)
 
-	upgraded, err := Apply("v0.0.9", base, "v0.0.2", "unused/repo")
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "lattix-agent")
+	cli := filepath.Join(dir, "latx-ag")
+	os.WriteFile(exe, []byte("old agent"), 0o755)
+	os.WriteFile(cli, []byte("old cli"), 0o755)
+
+	upgraded, err := applyTo("v0.0.9", base, "v0.0.2", "unused/repo", exe)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	if !upgraded {
 		t.Fatal("expected upgraded=true")
 	}
-	exe, _ := os.Executable()
 	got, err := os.ReadFile(exe)
 	if err != nil {
 		t.Fatalf("read replaced exe: %v", err)
@@ -78,11 +86,18 @@ func TestApplyReplacesExecutable(t *testing.T) {
 	if _, err := os.Stat(exe + ".bak"); err != nil {
 		t.Fatal("未生成 .bak 备份")
 	}
+	cliBody, err := os.ReadFile(cli)
+	if err != nil || !bytes.Contains(cliBody, []byte("latx-ag 版本: v0.0.9")) {
+		t.Fatalf("latx-ag 未随 agent 更新: %q, %v", cliBody, err)
+	}
+	if old, err := os.ReadFile(cli + ".bak"); err != nil || string(old) != "old cli" {
+		t.Fatalf("latx-ag 备份异常: %q, %v", old, err)
+	}
 }
 
 func TestApplyIdempotentSameVersion(t *testing.T) {
 	base := newFakeRelease(t, "v0.0.2", []byte("x"))
-	upgraded, err := Apply("v0.0.2", base, "v0.0.2", "unused/repo")
+	upgraded, err := applyTo("v0.0.2", base, "v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent"))
 	if err != nil || upgraded {
 		t.Fatalf("同版本应幂等返回 (false, nil)，实际 (%v, %v)", upgraded, err)
 	}
@@ -99,7 +114,7 @@ func TestApplyRejectsChecksumMismatch(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	if _, err := Apply("v0.0.9", srv.URL, "v0.0.2", "unused/repo"); err == nil {
+	if _, err := applyTo("v0.0.9", srv.URL, "v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent")); err == nil {
 		t.Fatal("校验和不匹配应报错")
 	}
 }
@@ -108,7 +123,7 @@ func TestApplyRejectsMissingChecksums(t *testing.T) {
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	if _, err := Apply("v0.0.9", srv.URL, "v0.0.2", "unused/repo"); err == nil {
+	if _, err := applyTo("v0.0.9", srv.URL, "v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent")); err == nil {
 		t.Fatal("缺 checksums.txt 应报错")
 	}
 }
@@ -116,7 +131,7 @@ func TestApplyRejectsMissingChecksums(t *testing.T) {
 func TestApplyRejectsBrokenBinary(t *testing.T) {
 	// 校验和通过但二进制不可执行（-version 自检失败）时应放弃替换。
 	base := newFakeRelease(t, "v0.0.9", []byte("not an executable"))
-	if _, err := Apply("v0.0.9", base, "v0.0.2", "unused/repo"); err == nil {
+	if _, err := applyTo("v0.0.9", base, "v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent")); err == nil {
 		t.Fatal("新二进制自检失败应报错")
 	}
 }

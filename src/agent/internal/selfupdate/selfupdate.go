@@ -1,6 +1,6 @@
 // Package selfupdate 实现 agent 自升级（§18 upgrade_agent 命令）：
 // 从 GitHub release 下载目标版本二进制与 checksums.txt，校验 SHA256 后
-// 原子替换自身二进制；调用方回执后退出进程，由 systemd 拉起即完成升级。
+// 原子替换自身二进制与同包的 latx-ag；调用方回执后退出进程，由服务管理器拉起新版。
 package selfupdate
 
 import (
@@ -29,6 +29,19 @@ const httpTimeout = 120 * time.Second
 // 返回 upgraded=true 表示二进制已替换，调用方回执后应退出进程（systemd 拉起完成切换）；
 // 目标版本与当前一致时返回 upgraded=false（幂等，无需重启）。
 func Apply(version, releaseBase, currentVersion, defaultRepo string) (upgraded bool, err error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return false, err
+	}
+	exe = strings.TrimSuffix(exe, " (deleted)")
+	exe, err = filepath.Abs(exe)
+	if err != nil {
+		return false, err
+	}
+	return applyTo(version, releaseBase, currentVersion, defaultRepo, exe)
+}
+
+func applyTo(version, releaseBase, currentVersion, defaultRepo, executable string) (upgraded bool, err error) {
 	base := releaseBase
 	repo := defaultRepo
 	if base == "" {
@@ -78,9 +91,10 @@ func Apply(version, releaseBase, currentVersion, defaultRepo string) (upgraded b
 		return false, err
 	}
 
-	// 解包取出 agent 二进制（tarball 内 lattix-agent/lattix-agent）。
+	// 解包取出 agent 与管理命令；两者必须来自同一个已校验发布包。
 	binPath := filepath.Join(tmp, "lattix-agent")
-	if err := extractAgentBinary(archivePath, binPath); err != nil {
+	cliPath := filepath.Join(tmp, "latx-ag")
+	if err := extractAgentBundle(archivePath, binPath, cliPath); err != nil {
 		return false, fmt.Errorf("解压 agent 包失败: %w", err)
 	}
 
@@ -93,21 +107,40 @@ func Apply(version, releaseBase, currentVersion, defaultRepo string) (upgraded b
 	if err != nil || strings.TrimSpace(string(out)) == "" {
 		return false, fmt.Errorf("新 agent 二进制自检失败(-version): %v: %s", err, strings.TrimSpace(string(out)))
 	}
+	if got := strings.TrimSpace(string(out)); got != version {
+		return false, fmt.Errorf("新 agent 二进制版本不符（期望 %s，实际 %s）", version, got)
+	}
+	if err := os.Chmod(cliPath, 0o755); err != nil {
+		return false, fmt.Errorf("新 latx-ag 赋可执行权限失败: %w", err)
+	}
 
-	exe, err := os.Executable()
-	if err != nil {
-		return false, err
-	}
-	exe = strings.TrimSuffix(exe, " (deleted)") // 运行期间二进制被替换过
-	if exe, err = filepath.Abs(exe); err != nil {
-		return false, err
-	}
-	// 备份并原子替换（运行中的进程持有旧 inode，退出后由 systemd 拉起新二进制）。
-	backup := exe + ".bak"
-	if err := copyFile(exe, backup, 0o755); err != nil {
+	// 先备份两件套，再替换管理命令和 agent。任一步失败都恢复到同一旧版本。
+	agentBackup := executable + ".bak"
+	cliTarget := filepath.Join(filepath.Dir(executable), "latx-ag")
+	cliBackup := cliTarget + ".bak"
+	if err := copyFile(executable, agentBackup, 0o755); err != nil {
 		return false, fmt.Errorf("备份旧 agent 失败: %w", err)
 	}
-	if err := copyFile(binPath, exe, 0o755); err != nil {
+	cliExisted := true
+	if err := copyFile(cliTarget, cliBackup, 0o755); err != nil {
+		if !os.IsNotExist(err) {
+			return false, fmt.Errorf("备份旧 latx-ag 失败: %w", err)
+		}
+		cliExisted = false
+	}
+	rollbackCLI := func() {
+		if cliExisted {
+			_ = copyFile(cliBackup, cliTarget, 0o755)
+		} else {
+			_ = os.Remove(cliTarget)
+		}
+	}
+	if err := copyFile(cliPath, cliTarget, 0o755); err != nil {
+		return false, fmt.Errorf("替换 latx-ag 失败: %w", err)
+	}
+	if err := copyFile(binPath, executable, 0o755); err != nil {
+		rollbackCLI()
+		_ = copyFile(agentBackup, executable, 0o755)
 		return false, fmt.Errorf("替换 agent 二进制失败: %w", err)
 	}
 	return true, nil
@@ -166,9 +199,8 @@ func download(url, path string) error {
 	return client.Download(context.Background(), url, path, nil)
 }
 
-// extractAgentBinary 从 agent tarball（lattix-agent/lattix-agent + latx-ag）
-// 中解出 agent 二进制到 dest。路径限制在 tarball 预期结构内，防 tar slip。
-func extractAgentBinary(archivePath, dest string) error {
+// extractAgentBundle 从发布包中提取 agent 与 latx-ag，忽略其他条目。
+func extractAgentBundle(archivePath, agentDest, cliDest string) error {
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -180,29 +212,35 @@ func extractAgentBinary(archivePath, dest string) error {
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
-	destAbs, err := filepath.Abs(dest)
-	if err != nil {
-		return err
+	targets := map[string]string{
+		"lattix-agent/lattix-agent": agentDest,
+		"lattix-agent/latx-ag":      cliDest,
 	}
-	destDir := filepath.Dir(destAbs)
+	found := make(map[string]bool, len(targets))
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			return fmt.Errorf("tarball 中未找到 lattix-agent/lattix-agent")
+			for name := range targets {
+				if !found[name] {
+					return fmt.Errorf("tarball 中未找到 %s", name)
+				}
+			}
+			return nil
 		}
 		if err != nil {
 			return err
 		}
-		// 仅取 agent 主二进制（lattix-agent/lattix-agent），忽略 latx-ag 等。
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		if strings.TrimPrefix(hdr.Name, "./") != "lattix-agent/lattix-agent" {
+		name := strings.TrimPrefix(hdr.Name, "./")
+		dest, ok := targets[name]
+		if !ok {
 			continue
 		}
-		p := destAbs
-		if !strings.HasPrefix(p, destDir+string(os.PathSeparator)) {
-			return fmt.Errorf("解包目标越界: %s", p)
+		p, err := filepath.Abs(dest)
+		if err != nil {
+			return err
 		}
 		out, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode)&0o755)
 		if err != nil {
@@ -212,7 +250,10 @@ func extractAgentBinary(archivePath, dest string) error {
 			out.Close()
 			return err
 		}
-		return out.Close()
+		if err := out.Close(); err != nil {
+			return err
+		}
+		found[name] = true
 	}
 }
 

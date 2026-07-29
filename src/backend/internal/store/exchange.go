@@ -44,7 +44,7 @@ func (s *Store) ReplaceExchangeRates(ctx context.Context, rates []ExchangeRate) 
 }
 
 func (s *Store) ExchangeRates(ctx context.Context) ([]ExchangeRate, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT base_currency, quote_currency, rate, rate_date, source, fetched_at FROM exchange_rates ORDER BY quote_currency`)
+	rows, err := s.db.QueryContext(ctx, `SELECT base_currency, quote_currency, rate, rate_date, source, fetched_at FROM exchange_rates ORDER BY base_currency, quote_currency`)
 	if err != nil {
 		return nil, err
 	}

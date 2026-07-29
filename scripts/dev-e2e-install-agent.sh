@@ -140,11 +140,11 @@ grep -q "latx-ag status / log / update / xray-update / uninstall" "$WORK/install
 echo ">> 用例 3: agent 连上面板（坏 state 已清除，bootstrap 换发长期凭证）"
 ONLINE=""
 for _ in $(seq 1 15); do
-    ONLINE="$(api "http://$ADDR/api/server/list" | py "d[0]['online']")"
-    [[ "$ONLINE" == "True" ]] && break
+    ONLINE="$(api "http://$ADDR/api/server/list" | py "d[0]['connection_state']")"
+    [[ "$ONLINE" == "online" ]] && break
     sleep 1
 done
-[[ "$ONLINE" == "True" ]] \
+[[ "$ONLINE" == "online" ]] \
     && echo "OK: agent 已上线（旧坏 state 被清除）" \
     || { echo "FAIL: agent 未上线"; tail -10 "$PREFIX/opt/lattix-agent/logs/agent.log"; exit 1; }
 grep -q '"server_id": 1' "$PREFIX/opt/lattix-agent/data/state.json" \
@@ -161,6 +161,14 @@ echo "$STATUS" | grep -q "面板地址: ws://$ADDR/api/agent/ws" \
     && echo "OK: latx-ag status 面板地址" || { echo "FAIL: status 面板地址: $STATUS"; exit 1; }
 echo "$STATUS" | grep -q "服务器 ID: 1" \
     && echo "OK: latx-ag status 服务器 ID（state 文件）" || { echo "FAIL: status 服务器 ID: $STATUS"; exit 1; }
+echo "$STATUS" | grep -q "面板连接: 已连接" \
+    && echo "OK: latx-ag status 显示实时面板连接" || { echo "FAIL: status 面板连接: $STATUS"; exit 1; }
+! echo "$STATUS" | grep -q '§17' \
+    || { echo "FAIL: status 不应显示文档章节标记: $STATUS"; exit 1; }
+MENU_OUT="$(printf '0\n' | LATX_LANG=zh LATX_DEV=1 LATX_PREFIX="$PREFIX" \
+    bash "$PREFIX/opt/lattix-agent/bin/latx-ag")"
+echo "$MENU_OUT" | grep -q "Lattix Agent 运维菜单" \
+    && echo "OK: latx-ag 无参数进入交互菜单" || { echo "FAIL: 交互菜单: $MENU_OUT"; exit 1; }
 latx_ag log -n 50 | grep -q "authenticated as server 1" \
     && echo "OK: latx-ag log -n（DEV 读日志文件）" || { echo "FAIL: latx-ag log"; exit 1; }
 
@@ -179,11 +187,11 @@ pgrep -f "$USER_PREFIX/opt/lattix-agent/bin/lattix-agent -panel" >/dev/null \
     || { echo "FAIL: agent 未运行"; tail -10 "$USER_PREFIX/opt/lattix-agent/logs/agent.log"; exit 1; }
 ONLINE3=""
 for _ in $(seq 1 15); do
-    ONLINE3="$(api "http://$ADDR/api/server/list" | py "d[1]['online']")"
-    [[ "$ONLINE3" == "True" ]] && break
+    ONLINE3="$(api "http://$ADDR/api/server/list" | py "d[1]['connection_state']")"
+    [[ "$ONLINE3" == "online" ]] && break
     sleep 1
 done
-[[ "$ONLINE3" == "True" ]] \
+[[ "$ONLINE3" == "online" ]] \
     && echo "OK: user 模式安装的 agent 已上线（server 2）" \
     || { echo "FAIL: server 2 未上线"; tail -10 "$USER_PREFIX/opt/lattix-agent/logs/agent.log"; exit 1; }
 
@@ -194,6 +202,8 @@ echo "$USTATUS" | grep -q "\[用户态\] 进程运行中" \
     && echo "OK: latx-ag status 用户态进程检查" || { echo "FAIL: status: $USTATUS"; exit 1; }
 echo "$USTATUS" | grep -q "面板地址: ws://$ADDR/api/agent/ws" \
     && echo "OK: latx-ag status 面板地址" || { echo "FAIL: status 面板地址: $USTATUS"; exit 1; }
+echo "$USTATUS" | grep -q "面板连接: 已连接" \
+    && echo "OK: 用户态 status 显示实时面板连接" || { echo "FAIL: 用户态面板连接: $USTATUS"; exit 1; }
 latx_ag_user log -n 50 | grep -q "authenticated as server 2" \
     && echo "OK: latx-ag log -n（用户态读日志文件）" \
     || { echo "FAIL: latx-ag log"; tail -10 "$USER_PREFIX/opt/lattix-agent/logs/agent.log"; exit 1; }
