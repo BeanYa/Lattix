@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { PlusIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
+import { PlusIcon, RefreshCwIcon, SearchIcon, Trash2Icon } from 'lucide-react'
 
 import { LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { Badge } from '@/components/ui/badge'
@@ -11,6 +11,13 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -21,6 +28,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
@@ -129,6 +144,9 @@ export default function Settings() {
   const [customTargetAmount, setCustomTargetAmount] = useState('')
   const [customBaseSide, setCustomBaseSide] = useState<'source' | 'target'>('source')
   const [refreshingRates, setRefreshingRates] = useState(false)
+  const [publicRatesOpen, setPublicRatesOpen] = useState(false)
+  const [loadingPublicRates, setLoadingPublicRates] = useState(false)
+  const [publicRatesError, setPublicRatesError] = useState('')
   const [deletingCustomRateID, setDeletingCustomRateID] = useState<number | null>(null)
   // 密码
   const [currentPassword, setCurrentPassword] = useState('')
@@ -271,6 +289,19 @@ export default function Settings() {
     setRefreshingRates(true)
     try { setExchangeData(await api.refreshExchangeRates()) } catch (err) { setError(errorMessage(err)) }
     finally { setRefreshingRates(false) }
+  }
+
+  const showPublicRates = async () => {
+    setPublicRatesOpen(true)
+    setLoadingPublicRates(true)
+    setPublicRatesError('')
+    try {
+      setExchangeData(await api.exchangeRates())
+    } catch (err) {
+      setPublicRatesError(errorMessage(err))
+    } finally {
+      setLoadingPublicRates(false)
+    }
   }
 
   const addCustomRate = async () => {
@@ -610,7 +641,7 @@ export default function Settings() {
         <Card>
           <CardHeader><CardTitle>费用换算</CardTitle><CardDescription>服务器保留原价和原币种，汇总及详情按统计币种折算。</CardDescription></CardHeader>
           <CardContent className="space-y-5">
-            <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
               <div className="space-y-2">
                 <Label>统计币种</Label>
                 <Select value={reportingCurrency} onValueChange={(v) => v && setReportingCurrency(v)} items={CURRENCIES.map((c) => ({ value: c, label: c }))}>
@@ -618,10 +649,16 @@ export default function Settings() {
                   <SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
-              <Button type="button" variant="outline" className="self-end" disabled={refreshingRates} onClick={refreshRates}>
-                <RefreshCwIcon className={refreshingRates ? 'animate-spin' : ''} />
-                {refreshingRates ? '刷新中…' : '立即刷新汇率'}
-              </Button>
+              <div className="flex flex-wrap gap-2 self-end">
+                <Button type="button" variant="outline" onClick={() => void showPublicRates()}>
+                  <SearchIcon />
+                  公开汇率查询
+                </Button>
+                <Button type="button" variant="outline" disabled={refreshingRates} onClick={refreshRates}>
+                  <RefreshCwIcon className={refreshingRates ? 'animate-spin' : ''} />
+                  {refreshingRates ? '刷新中…' : '立即刷新汇率'}
+                </Button>
+              </div>
             </div>
             <div className="space-y-3 border-t pt-5">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -683,6 +720,47 @@ export default function Settings() {
             </div>
           </CardContent>
         </Card>
+
+        <Dialog open={publicRatesOpen} onOpenChange={setPublicRatesOpen}>
+          <DialogContent className="max-h-[85vh] sm:max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>公开汇率</DialogTitle>
+              <DialogDescription>Frankfurter 公开汇率缓存，基准币种为 EUR。</DialogDescription>
+            </DialogHeader>
+            {loadingPublicRates ? (
+              <LoadingState />
+            ) : publicRatesError ? (
+              <Notice tone="danger">{publicRatesError}</Notice>
+            ) : exchangeData?.rates.length ? (
+              <div className="max-h-[60vh] overflow-auto rounded-lg border">
+                <Table>
+                  <TableHeader className="sticky top-0 z-10 bg-popover">
+                    <TableRow>
+                      <TableHead>报价币种</TableHead>
+                      <TableHead>公开汇率</TableHead>
+                      <TableHead>汇率日期</TableHead>
+                      <TableHead>抓取时间</TableHead>
+                      <TableHead>来源</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {exchangeData.rates.map((rate) => (
+                      <TableRow key={`${rate.base_currency}-${rate.quote_currency}`}>
+                        <TableCell className="font-medium">{rate.quote_currency}</TableCell>
+                        <TableCell className="tabular-nums">1 {rate.base_currency} = {rate.rate} {rate.quote_currency}</TableCell>
+                        <TableCell>{rate.rate_date}</TableCell>
+                        <TableCell>{formatDateTime(rate.fetched_at, timezone)}</TableCell>
+                        <TableCell className="capitalize">{rate.source}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            ) : (
+              <p className="py-8 text-center text-sm text-muted-foreground">暂无公开汇率缓存，请先刷新汇率。</p>
+            )}
+          </DialogContent>
+        </Dialog>
 
         <Card>
           <CardHeader>
