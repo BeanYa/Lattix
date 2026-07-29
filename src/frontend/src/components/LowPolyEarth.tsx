@@ -11,9 +11,9 @@ const Globe = lazy(() => import('react-globe.gl'))
 const AXIAL_TILT_DEGREES = 36
 const INITIAL_LONGITUDE = 105
 const SELF_ROTATION_RADIANS_PER_SECOND = 0.12
+const CLOUD_VOLUME_SCALE = 1.8
 const CLOUD_DRAG_FOLLOW = 0.58
-const CLOUD_INERTIA_DAMPING = 3.6
-const CLOUD_RETURN_STRENGTH = 4.2
+const CLOUD_CATCH_UP_STRENGTH = 3.6
 const CLOUD_MAX_OFFSET_RADIANS = 0.26
 const LAND_CURVATURE_RESOLUTION = 12
 const LAND_SIMPLIFICATION_TOLERANCE = 0.4
@@ -61,11 +61,6 @@ export interface LowPolyEarthProps {
 interface AnimatedEarthLink extends EarthLink {
   dashPhase: number
   dashDuration: number
-}
-
-interface EarthCloudModel {
-  driftLayer: Object3D
-  phase: number
 }
 
 const cloudLocations = [
@@ -177,6 +172,7 @@ function createNodeElement(item: object) {
   root.style.filter = 'blur(12px)'
   root.style.transition = 'opacity 500ms ease, filter 500ms ease'
   root.style.willChange = 'opacity, filter'
+  root.style.zIndex = '100'
 
   const badge = document.createElement('div')
   badge.className = 'earth-node-badge'
@@ -257,11 +253,6 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const longitudeRef = useRef(INITIAL_LONGITUDE)
   const latitudeRef = useRef(20)
-  const cloudModelsRef = useRef<EarthCloudModel[]>([])
-  const cloudYawOffsetRef = useRef(0)
-  const cloudPitchOffsetRef = useRef(0)
-  const cloudYawVelocityRef = useRef(0)
-  const cloudPitchVelocityRef = useRef(0)
   const animatedLinkCacheRef = useRef(new Map<string, AnimatedEarthLink>())
   const [size, setSize] = useState({ width: 760, height: 520 })
   const [landFeatures, setLandFeatures] = useState<object[]>([])
@@ -370,16 +361,15 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
       nextCloudLayer.name = 'independent-cloud-layer'
       nextCloudLayer.rotation.order = 'YXZ'
       const cloudForward = new Vector3(0, 0, 1)
-      const nextClouds = cloudLocations.map((location, index) => {
+      cloudLocations.forEach((location) => {
         const anchor = new Group()
-        const driftLayer = new Group()
+        anchor.scale.setScalar(CLOUD_VOLUME_SCALE)
         const position = globePosition(location.lat, location.lng, 0.09)
         anchor.position.set(position.x, position.y, position.z)
         anchor.quaternion.setFromUnitVectors(
           cloudForward,
           new Vector3(position.x, position.y, position.z).normalize(),
         )
-        anchor.add(driftLayer)
         nextCloudLayer.add(anchor)
         const blobs = [
           { x: -5, y: -0.4, z: 0, sx: 1.05, sy: 0.64, sz: 0.58 },
@@ -392,16 +382,14 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
           const mesh = new Mesh(cloudGeometry, cloudMaterial)
           mesh.position.set(blob.x, blob.y, blob.z)
           mesh.scale.set(blob.sx * location.scale, blob.sy * location.scale, blob.sz * location.scale)
-          driftLayer.add(mesh)
+          anchor.add(mesh)
         })
-        return { driftLayer, phase: index * 1.37 }
       })
 
       if (active) {
         setOceanMesh(nextOceanMesh)
         setLandCapMaterial(capMaterial)
         setLandSideMaterial(sideMaterial)
-        cloudModelsRef.current = nextClouds
         setCloudLayer(nextCloudLayer)
       } else {
         material.dispose()
@@ -415,7 +403,6 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
 
     return () => {
       active = false
-      cloudModelsRef.current = []
       material?.dispose()
       oceanGeometry?.dispose()
       capMaterial?.dispose()
@@ -487,74 +474,75 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
 
   useEffect(() => {
     let frame = 0
-    let previousTime = performance.now()
-    const rotateGlobe = (time: number) => {
-      const elapsedSeconds = Math.min(time - previousTime, 50) / 1000
-      previousTime = time
-      const globe = globeRef.current
-      if (!globe) {
-        frame = requestAnimationFrame(rotateGlobe)
-        return
+    let cancelled = false
+    import('three').then(({ Quaternion, Vector3 }) => {
+      if (cancelled) return
+      let previousTime = performance.now()
+      const identity = new Quaternion()
+      const cameraDelta = new Quaternion()
+      const followedDelta = new Quaternion()
+      const cappedOffset = new Quaternion()
+      const previousOrientation = new Quaternion()
+      const currentOrientation = new Quaternion()
+      const yaw = new Quaternion()
+      const pitch = new Quaternion()
+      const worldUp = new Vector3(0, 1, 0)
+      const worldRight = new Vector3(1, 0, 0)
+
+      const setCameraOrientation = (target: InstanceType<typeof Quaternion>, lat: number, lng: number) => {
+        yaw.setFromAxisAngle(worldUp, lng * (Math.PI / 180))
+        pitch.setFromAxisAngle(worldRight, -lat * (Math.PI / 180))
+        target.copy(yaw).multiply(pitch)
       }
 
-      const pointOfView = globe.pointOfView()
-      if (!reducedMotion) {
-        const elapsedDegrees = elapsedSeconds * SELF_ROTATION_RADIANS_PER_SECOND * (180 / Math.PI)
-        const longitudeInteraction = normalizeLongitudeDelta(pointOfView.lng - longitudeRef.current)
-        const latitudeInteraction = pointOfView.lat - latitudeRef.current
-        const longitudeInteractionRadians = longitudeInteraction * (Math.PI / 180)
-        const latitudeInteractionRadians = latitudeInteraction * (Math.PI / 180)
-
-        // Manual camera motion pushes the independent cloud layer, then a damped spring restores alignment.
-        if (Math.abs(longitudeInteractionRadians) > 0.00001) {
-          cloudYawOffsetRef.current += longitudeInteractionRadians * CLOUD_DRAG_FOLLOW
-          cloudYawVelocityRef.current += (longitudeInteractionRadians / Math.max(elapsedSeconds, 0.001)) * 0.16
-        }
-        if (Math.abs(latitudeInteractionRadians) > 0.00001) {
-          cloudPitchOffsetRef.current -= latitudeInteractionRadians * CLOUD_DRAG_FOLLOW
-          cloudPitchVelocityRef.current -= (latitudeInteractionRadians / Math.max(elapsedSeconds, 0.001)) * 0.16
+      const rotateGlobe = (time: number) => {
+        const elapsedSeconds = Math.min(time - previousTime, 50) / 1000
+        previousTime = time
+        const globe = globeRef.current
+        if (!globe) {
+          frame = requestAnimationFrame(rotateGlobe)
+          return
         }
 
-        cloudYawVelocityRef.current += -cloudYawOffsetRef.current * CLOUD_RETURN_STRENGTH * elapsedSeconds
-        cloudPitchVelocityRef.current += -cloudPitchOffsetRef.current * CLOUD_RETURN_STRENGTH * elapsedSeconds
-        const inertiaDecay = Math.exp(-CLOUD_INERTIA_DAMPING * elapsedSeconds)
-        cloudYawVelocityRef.current *= inertiaDecay
-        cloudPitchVelocityRef.current *= inertiaDecay
-        cloudYawOffsetRef.current = Math.max(
-          -CLOUD_MAX_OFFSET_RADIANS,
-          Math.min(CLOUD_MAX_OFFSET_RADIANS, cloudYawOffsetRef.current + cloudYawVelocityRef.current * elapsedSeconds),
-        )
-        cloudPitchOffsetRef.current = Math.max(
-          -CLOUD_MAX_OFFSET_RADIANS,
-          Math.min(CLOUD_MAX_OFFSET_RADIANS, cloudPitchOffsetRef.current + cloudPitchVelocityRef.current * elapsedSeconds),
-        )
+        const pointOfView = globe.pointOfView()
+        if (!reducedMotion) {
+          const elapsedDegrees = elapsedSeconds * SELF_ROTATION_RADIANS_PER_SECOND * (180 / Math.PI)
+          const longitudeInteraction = normalizeLongitudeDelta(pointOfView.lng - longitudeRef.current)
+          const latitudeInteraction = pointOfView.lat - latitudeRef.current
 
-        if (cloudLayer) {
-          cloudLayer.rotation.y = cloudYawOffsetRef.current
-          cloudLayer.rotation.x = cloudPitchOffsetRef.current
+          if (cloudLayer && (Math.abs(longitudeInteraction) > 0.00001 || Math.abs(latitudeInteraction) > 0.00001)) {
+            setCameraOrientation(previousOrientation, latitudeRef.current, longitudeRef.current)
+            setCameraOrientation(currentOrientation, pointOfView.lat, pointOfView.lng)
+            cameraDelta.copy(currentOrientation).multiply(previousOrientation.invert())
+            followedDelta.copy(identity).slerp(cameraDelta, CLOUD_DRAG_FOLLOW)
+            cloudLayer.quaternion.premultiply(followedDelta).normalize()
+          }
+
+          if (cloudLayer) {
+            cloudLayer.quaternion.slerp(identity, 1 - Math.exp(-CLOUD_CATCH_UP_STRENGTH * elapsedSeconds))
+            const offsetAngle = cloudLayer.quaternion.angleTo(identity)
+            if (offsetAngle > CLOUD_MAX_OFFSET_RADIANS) {
+              cappedOffset.copy(cloudLayer.quaternion)
+              cloudLayer.quaternion.copy(identity).slerp(cappedOffset, CLOUD_MAX_OFFSET_RADIANS / offsetAngle)
+            }
+          }
+
+          longitudeRef.current = ((pointOfView.lng + elapsedDegrees + 180) % 360) - 180
+          latitudeRef.current = pointOfView.lat
+          globe.pointOfView({ ...pointOfView, lng: longitudeRef.current }, 0)
+        } else {
+          longitudeRef.current = pointOfView.lng
+          latitudeRef.current = pointOfView.lat
+          if (cloudLayer) cloudLayer.quaternion.identity()
         }
-
-        longitudeRef.current = ((pointOfView.lng + elapsedDegrees + 180) % 360) - 180
-        latitudeRef.current = pointOfView.lat
-        cloudModelsRef.current.forEach((cloud) => {
-          cloud.driftLayer.position.x = Math.sin(time / 3600 + cloud.phase) * 0.7
-          cloud.driftLayer.position.y = Math.cos(time / 4200 + cloud.phase) * 0.35
-          cloud.driftLayer.rotation.z = Math.sin(time / 5200 + cloud.phase) * 0.035
-        })
-        globe.pointOfView({ ...pointOfView, lng: longitudeRef.current }, 0)
-      } else {
-        longitudeRef.current = pointOfView.lng
-        latitudeRef.current = pointOfView.lat
-        cloudYawOffsetRef.current = 0
-        cloudPitchOffsetRef.current = 0
-        cloudYawVelocityRef.current = 0
-        cloudPitchVelocityRef.current = 0
-        if (cloudLayer) cloudLayer.rotation.set(0, 0, 0)
+        frame = requestAnimationFrame(rotateGlobe)
       }
       frame = requestAnimationFrame(rotateGlobe)
+    })
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(frame)
     }
-    frame = requestAnimationFrame(rotateGlobe)
-    return () => cancelAnimationFrame(frame)
   }, [cloudLayer, reducedMotion])
 
   return (
