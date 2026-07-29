@@ -191,7 +191,7 @@ export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
       />
 
       <div className="pointer-events-none absolute left-4 top-4 grid gap-2 text-xs font-semibold sm:left-5 sm:top-5">
-        <span className="w-fit rounded-lg border bg-card/90 px-3 py-2 shadow-[0_3px_0_rgb(57_53_72/0.16)]">
+        <span className="w-fit rounded-lg border bg-card/90 px-3 py-2 shadow-[0_3px_0_var(--shadow-color)]">
           节点 {nodes.length} · 链路 {links.length}
         </span>
         {unresolvedCount > 0 && (
@@ -202,8 +202,8 @@ export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
       </div>
 
       <div className="pointer-events-none absolute bottom-4 right-4 flex flex-wrap justify-end gap-2 text-[11px] font-semibold sm:bottom-5 sm:right-5">
-        <span className="inline-flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5"><i className="size-2 rounded-full bg-[#7ce5b2]" />在线</span>
-        <span className="inline-flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5"><i className="size-2 rounded-full bg-[#ff8d87]" />离线</span>
+        <span className="inline-flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5"><i className="size-2 rounded-full bg-[var(--status-online)]" />在线</span>
+        <span className="inline-flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5"><i className="size-2 rounded-full bg-[var(--status-offline)]" />离线</span>
       </div>
     </div>
   )

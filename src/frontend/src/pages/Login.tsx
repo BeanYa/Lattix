@@ -3,6 +3,7 @@ import { RouteIcon, ServerIcon, UsersIcon } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 import LattixMark from '@/components/LattixMark'
+import ThemeToggle from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -33,8 +34,9 @@ export default function Login() {
   }
 
   return (
-    <div className="grid min-h-[100dvh] place-items-center bg-background p-4 md:p-8">
-      <div className="grid w-full max-w-5xl overflow-hidden rounded-lg border-2 border-border bg-card shadow-[0_8px_0_rgb(57_53_72/0.16)] lg:grid-cols-[1.1fr_0.9fr]">
+    <div className="relative grid min-h-[100dvh] place-items-center bg-background p-4 md:p-8">
+      <ThemeToggle className="absolute right-4 top-4 bg-card text-foreground hover:bg-accent hover:text-accent-foreground md:right-8 md:top-8" />
+      <div className="grid w-full max-w-5xl overflow-hidden rounded-lg border-2 border-border bg-card shadow-[0_8px_0_var(--shadow-color)] lg:grid-cols-[1.1fr_0.9fr]">
         <section className="relative hidden min-h-[620px] overflow-hidden border-r-2 border-border bg-[var(--pastel-blue)] p-10 lg:flex lg:flex-col lg:justify-between">
           <div className="flex items-center gap-3">
             <LattixMark className="size-12 shrink-0" />
@@ -49,13 +51,13 @@ export default function Login() {
           </div>
           <div className="relative h-48" aria-hidden="true">
             <div className="absolute inset-x-0 bottom-0 h-24 rounded-t-[50%] bg-[var(--pastel-green)]" />
-            <div className="absolute bottom-12 left-[12%] grid size-20 place-items-center rounded-lg border-2 bg-[#ffd6a4] shadow-[0_5px_0_rgb(57_53_72/0.18)]">
+            <div className="absolute bottom-12 left-[12%] grid size-20 place-items-center rounded-lg border-2 bg-[var(--brand-yellow)] shadow-[0_5px_0_var(--shadow-color)]">
               <ServerIcon className="size-9" />
             </div>
-            <div className="absolute bottom-6 left-1/2 grid size-24 -translate-x-1/2 place-items-center rounded-lg border-2 bg-[#ffaaa4] shadow-[0_5px_0_rgb(57_53_72/0.18)]">
+            <div className="absolute bottom-6 left-1/2 grid size-24 -translate-x-1/2 place-items-center rounded-lg border-2 bg-[var(--brand-coral)] shadow-[0_5px_0_var(--shadow-color)]">
               <RouteIcon className="size-10" />
             </div>
-            <div className="absolute bottom-14 right-[10%] grid size-20 place-items-center rounded-lg border-2 bg-[#c9c5ff] shadow-[0_5px_0_rgb(57_53_72/0.18)]">
+            <div className="absolute bottom-14 right-[10%] grid size-20 place-items-center rounded-lg border-2 bg-[var(--brand-lilac)] shadow-[0_5px_0_var(--shadow-color)]">
               <UsersIcon className="size-8" />
             </div>
           </div>

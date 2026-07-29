@@ -54,83 +54,103 @@
 }
 
 :root {
-    --background: #f7f7fb;
-    --foreground: #292638;
-    --card: #ffffff;
-    --card-foreground: #292638;
-    --popover: #ffffff;
-    --popover-foreground: #292638;
-    --primary: #6757db;
+    --background: #f5f6fa;
+    --foreground: #292b42;
+    --card: #fffefe;
+    --card-foreground: #292b42;
+    --popover: #fffefe;
+    --popover-foreground: #292b42;
+    --primary: #5f5cdb;
     --primary-foreground: #ffffff;
-    --secondary: #efedf9;
-    --secondary-foreground: #322d52;
-    --muted: #f0f1f5;
-    --muted-foreground: #716d7d;
-    --accent: #ece9ff;
-    --accent-foreground: #40368d;
-    --destructive: #d84b59;
-    --success: #2f9977;
-    --warning: #b27b13;
-    --info: #586dd8;
-    --border: #393548;
-    --input: #aaa6b4;
-    --ring: #6757db;
-    --chart-1: #6757db;
-    --chart-2: #5bbd9f;
-    --chart-3: #f0c959;
-    --chart-4: #ec827d;
-    --chart-5: #7ea3dc;
+    --secondary: #ebeaf8;
+    --secondary-foreground: #353653;
+    --muted: #eceef4;
+    --muted-foreground: #686a7c;
+    --accent: #e6e5ff;
+    --accent-foreground: #3f3c91;
+    --destructive: #c94f59;
+    --success: #278466;
+    --warning: #9b6a0c;
+    --info: #4d66c9;
+    --border: #414359;
+    --input: #a3a6b7;
+    --ring: #5f5cdb;
+    --chart-1: #5f5cdb;
+    --chart-2: #48aa88;
+    --chart-3: #e6bc45;
+    --chart-4: #e17872;
+    --chart-5: #6994d1;
     --radius: 0.5rem;
-    --sidebar: #45405f;
-    --sidebar-foreground: #f8f7ff;
-    --sidebar-primary: #f0c959;
-    --sidebar-primary-foreground: #292638;
-    --sidebar-accent: #5c557b;
+    --sidebar: #282b52;
+    --sidebar-foreground: #f7f7ff;
+    --sidebar-primary: #ffe173;
+    --sidebar-primary-foreground: #292b42;
+    --sidebar-accent: #5f5cdb;
     --sidebar-accent-foreground: #ffffff;
-    --sidebar-border: #302c43;
-    --sidebar-ring: #f0c959;
-    --pastel-yellow: #fff4c7;
-    --pastel-mint: #dff6ed;
-    --pastel-coral: #ffe6e3;
-    --pastel-blue: #e2efff;
-    --pastel-green: #def0d5;
+    --sidebar-border: #42466f;
+    --sidebar-ring: #ffe173;
+    --pastel-yellow: #fff0b8;
+    --pastel-mint: #d5f0e2;
+    --pastel-coral: #f9ddd7;
+    --pastel-blue: #d9eafb;
+    --pastel-green: #d9edcf;
+    --brand-ink: #292b42;
+    --brand-yellow: #ffe173;
+    --brand-mint: #66cbb7;
+    --brand-coral: #f2a291;
+    --brand-lilac: #b9b4ff;
+    --status-online: #42b88c;
+    --status-offline: #e97872;
+    --rate-upload: #278f69;
+    --rate-download: #3e72c7;
+    --shadow-color: rgb(41 43 66 / 0.14);
 }
 
 .dark {
-    --background: #201e2a;
-    --foreground: #f7f5ff;
-    --card: #2a2738;
-    --card-foreground: #f7f5ff;
-    --popover: #2a2738;
-    --popover-foreground: #f7f5ff;
-    --primary: #a99dff;
-    --primary-foreground: #201e2a;
-    --secondary: #39354a;
-    --secondary-foreground: #f7f5ff;
-    --muted: #39354a;
-    --muted-foreground: #bbb6ca;
-    --accent: #4b4565;
+    --background: #181a27;
+    --foreground: #f4f4fb;
+    --card: #232638;
+    --card-foreground: #f4f4fb;
+    --popover: #272a3e;
+    --popover-foreground: #f4f4fb;
+    --primary: #9692ff;
+    --primary-foreground: #181a27;
+    --secondary: #303348;
+    --secondary-foreground: #f4f4fb;
+    --muted: #2e3144;
+    --muted-foreground: #b8bacb;
+    --accent: #393d68;
     --accent-foreground: #ffffff;
-    --destructive: #f07882;
-    --success: #72d5b1;
-    --warning: #f0c959;
-    --info: #9db3ff;
-    --border: #aaa3bd;
-    --input: #777188;
-    --ring: #a99dff;
-    --sidebar: #171620;
-    --sidebar-foreground: #f8f7ff;
-    --sidebar-primary: #f0c959;
-    --sidebar-primary-foreground: #292638;
-    --sidebar-accent: #353149;
+    --destructive: #f1848b;
+    --success: #69d0aa;
+    --warning: #f0c75e;
+    --info: #91a8f6;
+    --border: #60647b;
+    --input: #51556c;
+    --ring: #9692ff;
+    --sidebar: #111426;
+    --sidebar-foreground: #f5f5ff;
+    --sidebar-primary: #f1ce63;
+    --sidebar-primary-foreground: #202237;
+    --sidebar-accent: #363b72;
     --sidebar-accent-foreground: #ffffff;
-    --sidebar-border: #777188;
-    --sidebar-ring: #f0c959;
-    --pastel-yellow: #494128;
-    --pastel-mint: #25453d;
-    --pastel-coral: #4a3037;
-    --pastel-blue: #2d3d55;
-    --pastel-green: #34472f;
+    --sidebar-border: #303557;
+    --sidebar-ring: #f1ce63;
+    --pastel-yellow: #4b442b;
+    --pastel-mint: #24473e;
+    --pastel-coral: #4d3338;
+    --pastel-blue: #2c405a;
+    --pastel-green: #33462f;
+    --brand-ink: #292b42;
+    --brand-yellow: #f1ce63;
+    --brand-mint: #58bda9;
+    --brand-coral: #df8e80;
+    --brand-lilac: #9792ef;
+    --status-online: #69d0aa;
+    --status-offline: #f1848b;
+    --rate-upload: #72d5b1;
+    --rate-download: #91a8f6;
+    --shadow-color: rgb(5 7 18 / 0.34);
 }
 
 @layer base {
@@ -143,6 +163,7 @@
   }
   html {
     @apply font-sans;
+    scroll-behavior: smooth;
   }
   ::selection {
     color: var(--primary-foreground);
@@ -176,12 +197,12 @@
 @layer components {
   [data-slot="card"] {
     border: 1.5px solid var(--border);
-    box-shadow: 0 3px 0 rgb(57 53 72 / 0.12);
+    box-shadow: 0 3px 0 var(--shadow-color);
   }
   [data-slot="button"] {
     border-color: var(--border);
     border-width: 1.5px;
-    box-shadow: 0 2px 0 rgb(57 53 72 / 0.18);
+    box-shadow: 0 2px 0 var(--shadow-color);
   }
   [data-slot="button"]:active:not(:disabled) {
     box-shadow: none;
@@ -204,20 +225,20 @@
   [data-slot="select-content"],
   [data-slot="dropdown-menu-content"] {
     border: 1.5px solid var(--border);
-    box-shadow: 0 8px 0 rgb(57 53 72 / 0.16);
+    box-shadow: 0 8px 0 var(--shadow-color);
   }
   .game-panel {
     border: 1.5px solid var(--border);
     border-radius: var(--radius);
     background: var(--card);
-    box-shadow: 0 3px 0 rgb(57 53 72 / 0.12);
+    box-shadow: 0 3px 0 var(--shadow-color);
   }
   .status-tile {
     transition: transform 180ms ease, box-shadow 180ms ease;
   }
   .status-tile:hover {
     transform: translateY(-2px);
-    box-shadow: 0 5px 0 rgb(57 53 72 / 0.16);
+    box-shadow: 0 5px 0 var(--shadow-color);
   }
   .earth-node-badge {
     border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
@@ -230,10 +251,10 @@
     padding-top: 4px;
   }
   .earth-node-rate-upload {
-    color: #30b97c;
+    color: var(--rate-upload);
   }
   .earth-node-rate-download {
-    color: #4386ed;
+    color: var(--rate-download);
   }
 }
 
