@@ -93,6 +93,9 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 	disp.DestCandidates = destCandidates
 	disp.PanelVersion = cfg.Version
 	disp.PanelPublicURL = cfg.PublicURL
+	if cfg.GitHubRepo != "" {
+		disp.AgentReleaseBase = "https://github.com/" + cfg.GitHubRepo + "/releases/download"
+	}
 	s := &Server{
 		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
@@ -216,12 +219,19 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 	s.registerRPC(mux, http.MethodGet, "/api/chain/list", polledRead, s.handleListChains)
 	s.registerRPC(mux, http.MethodPost, "/api/chain/create", write, s.handleCreateChain)
+	s.registerRPC(mux, http.MethodPost, "/api/chain/edit", write, s.handleEditChain)
+	s.registerRPC(mux, http.MethodPost, "/api/chain/force-publish", write, s.handleForcePublishChain)
 	s.registerRPC(mux, http.MethodPost, "/api/chain/retry",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"chain_id"}},
 		s.handleRetryChain)
 	s.registerRPC(mux, http.MethodPost, "/api/chain/delete",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"chain_id"}},
 		s.handleDeleteChain)
+	s.registerRPC(mux, http.MethodPost, "/api/chain/set-traffic-multiplier", write, s.handleSetChainTrafficMultiplier)
+	s.registerRPC(mux, http.MethodPost, "/api/chain/reset-traffic", write, s.handleResetChainTraffic)
+	s.registerRPC(mux, http.MethodGet, "/api/chain/get-traffic-history",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"chain_id", "hop_id", "days"}},
+		s.handleGetChainTrafficHistory)
 
 	s.registerRPC(mux, http.MethodGet, "/api/user/list", polledRead, s.handleListUsers)
 	s.registerRPC(mux, http.MethodPost, "/api/user/create", write, s.handleCreateUser)

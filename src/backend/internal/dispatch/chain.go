@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 
 	"lattix/backend/internal/alert"
 	"lattix/backend/internal/logging"
@@ -35,6 +36,31 @@ func (d *Dispatcher) StartChain(ctx context.Context, chainID int64) error {
 	return nil
 }
 
+// ResumeChains reconstructs orchestration progress from persisted revisions,
+// tasks, and commands. It closes the crash window between acknowledging one
+// piece and enqueueing the next, and resumes cleanup not queued before exit.
+func (d *Dispatcher) ResumeChains(ctx context.Context) error {
+	chains, err := d.st.ListChains(ctx)
+	if err != nil {
+		return err
+	}
+	for _, chain := range chains {
+		if chain.PublishedRevisionID != 0 {
+			if revision, err := d.st.PublishedChainRevision(ctx, chain.ID); err == nil {
+				d.enqueueCleanupTasks(ctx, revision)
+			}
+		}
+		if chain.DesiredRevisionID == 0 {
+			continue
+		}
+		switch chain.Status {
+		case store.ChainStatusApplying, store.ChainStatusWaitingForAgent, store.ChainStatusActiveUnconfirmed:
+			d.advanceChain(ctx, chain.ID)
+		}
+	}
+	return nil
+}
+
 // RetryChain 重试失败链（§21 只重放失败 piece）：失败跳复位 pending，链回到 applying 后继续编排。
 // 已完成的 piece（portal 回执列 / acked 命令）不会重发。
 func (d *Dispatcher) RetryChain(ctx context.Context, chainID int64) error {
@@ -42,8 +68,16 @@ func (d *Dispatcher) RetryChain(ctx context.Context, chainID int64) error {
 	if err != nil {
 		return err
 	}
-	if chain.Status != store.ChainStatusFailed {
+	if chain.Status != store.ChainStatusFailed && chain.Status != store.ChainStatusActiveFailed {
 		return fmt.Errorf("仅 failed 状态的链可重试（当前 %s）", chain.Status)
+	}
+	if revision, err := d.st.DesiredChainRevision(ctx, chainID); err == nil {
+		if err := d.st.ResetFailedRevisionTasks(ctx, revision.ID); err != nil {
+			return err
+		}
+		if err := d.st.SetChainRevisionStatus(ctx, revision.ID, store.RevisionStatusApplying, ""); err != nil {
+			return err
+		}
 	}
 	hops, err := d.st.ChainHops(ctx, chainID)
 	if err != nil {
@@ -71,18 +105,38 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		log.Printf("dispatch: chain %d: %v", chainID, err)
 		return
 	}
-	if chain.Status != store.ChainStatusApplying {
+	if chain.Status != store.ChainStatusApplying && chain.Status != store.ChainStatusActiveUnconfirmed {
 		return // 仅编排中的链可推进（failed 等重试，active/degraded 已完成编排）
 	}
 	hops, err := d.st.ChainHops(ctx, chainID)
-	if err != nil || len(hops) < 2 {
+	if err != nil || len(hops) < 1 {
 		log.Printf("dispatch: chain %d hops: %v", chainID, err)
 		return
 	}
-	pieces, err := d.chainPieces(ctx, chainID)
+	revisionID := int64(0)
+	if revision, revisionErr := d.st.DesiredChainRevision(ctx, chainID); revisionErr == nil {
+		revisionID = revision.ID
+	}
+	pieces, err := d.chainPieces(ctx, chainID, revisionID)
 	if err != nil {
 		log.Printf("dispatch: chain %d pieces: %v", chainID, err)
 		return
+	}
+	if revisionID != 0 {
+		if revision, revisionErr := d.st.ChainRevisionByID(ctx, revisionID); revisionErr == nil {
+			applyKeys := map[string]bool{}
+			for _, key := range revision.Snapshot.ApplyKeys {
+				applyKeys[key] = true
+			}
+			for _, hop := range revision.Snapshot.Hops {
+				for _, kind := range []string{RevisionPieceForward, RevisionPiecePortal, RevisionPieceBridge} {
+					key := revisionPieceKey(kind, hop.HopID)
+					if !applyKeys[key] {
+						pieces[key] = store.CommandStatusAcked
+					}
+				}
+			}
+		}
 	}
 	servers := map[int64]*store.Server{}
 	for i := range hops {
@@ -115,6 +169,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			return
 		}
 		payload := shared.ApplyNodePayload{
+			RevisionID:     revisionID,
 			NodeID:         node.ID,
 			Config:         vc,
 			UserUUIDs:      uuids,
@@ -127,9 +182,17 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			log.Printf("dispatch: chain %d node %d applying: %v", chainID, node.ID, err)
 			return
 		}
-		if _, err := d.Enqueue(ctx, exit.ServerID, shared.TypeApplyNode, payload); err != nil {
+		var commandID int64
+		if revisionID != 0 {
+			commandID, err = d.enqueueRevisionTask(ctx, exit.ServerID, shared.TypeApplyNode, payload,
+				revisionID, revisionPieceKey(RevisionPieceService, node.ID))
+		} else {
+			commandID, err = d.Enqueue(ctx, exit.ServerID, shared.TypeApplyNode, payload)
+		}
+		if err != nil {
 			log.Printf("dispatch: chain %d enqueue apply_node: %v", chainID, err)
 		}
+		_ = commandID
 		return
 	case store.NodeStatusApplying:
 		return // 等待回执
@@ -137,6 +200,24 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	var rc shared.RealizedConfig
 	if err := json.Unmarshal(node.RealizedConfig, &rc); err != nil || rc.Port == 0 {
 		log.Printf("dispatch: chain %d: 出口节点 %d realized_config 不可用: %v", chainID, node.ID, err)
+		return
+	}
+	if len(hops) == 1 {
+		if hops[0].ForwardPort != rc.Port {
+			if err := d.st.SetChainHopForwardPort(ctx, hops[0].ID, rc.Port); err != nil {
+				log.Printf("dispatch: chain %d single-hop port: %v", chainID, err)
+				return
+			}
+		}
+		if hops[0].Status != store.HopStatusActive {
+			if err := d.st.SetChainHopStatus(ctx, hops[0].ID, store.HopStatusActive, ""); err != nil {
+				return
+			}
+		}
+		if err := d.st.SetChainStatus(ctx, chainID, store.ChainStatusActive, ""); err != nil {
+			log.Printf("dispatch: chain %d active: %v", chainID, err)
+		}
+		d.publishDesiredRevision(ctx, chainID, hops, *node)
 		return
 	}
 
@@ -159,8 +240,9 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			Dest:           d.portalDest(),
 			ServerNames:    []string{destHost(d.portalDest())},
 		}
-		d.enqueueHop(ctx, chainID, up, shared.HopKindPortal, shared.ApplyChainHopPayload{
+		d.enqueueHop(ctx, chainID, revisionID, up, shared.HopKindPortal, shared.ApplyChainHopPayload{
 			ChainID:        chainID,
+			RevisionID:     revisionID,
 			HopID:          up.ID,
 			Kind:           shared.HopKindPortal,
 			Portal:         spec,
@@ -192,11 +274,12 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			ShortID:       tunnelShortID(up.TunnelUUID),
 			ServerName:    serverName, // portal 回执的实际 SNI（dest 预检可能 fallback）
 		}
-		d.enqueueHop(ctx, chainID, down, shared.HopKindBridge, shared.ApplyChainHopPayload{
-			ChainID: chainID,
-			HopID:   down.ID,
-			Kind:    shared.HopKindBridge,
-			Bridge:  spec,
+		d.enqueueHop(ctx, chainID, revisionID, down, shared.HopKindBridge, shared.ApplyChainHopPayload{
+			ChainID:    chainID,
+			RevisionID: revisionID,
+			HopID:      down.ID,
+			Kind:       shared.HopKindBridge,
+			Bridge:     spec,
 		})
 		return
 	}
@@ -242,11 +325,12 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 				spec.TargetPort = publicPortOf(servers[next.ServerID], next.ForwardPort)
 			}
 		}
-		d.enqueueHop(ctx, chainID, hop, shared.HopKindForward, shared.ApplyChainHopPayload{
-			ChainID: chainID,
-			HopID:   hop.ID,
-			Kind:    shared.HopKindForward,
-			Forward: spec,
+		d.enqueueHop(ctx, chainID, revisionID, hop, shared.HopKindForward, shared.ApplyChainHopPayload{
+			ChainID:    chainID,
+			RevisionID: revisionID,
+			HopID:      hop.ID,
+			Kind:       shared.HopKindForward,
+			Forward:    spec,
 		})
 		return
 	}
@@ -265,16 +349,239 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		return
 	}
 	log.Printf("dispatch: chain %d active（%d 跳）", chainID, len(hops))
+	d.publishDesiredRevision(ctx, chainID, hops, *node)
 	d.recomputeChain(ctx, chainID)
 }
 
+func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, hops []store.ChainHop, node store.Node) {
+	revision, err := d.st.DesiredChainRevision(ctx, chainID)
+	if err != nil {
+		return
+	}
+	revision.Snapshot.ServiceRealized = append(json.RawMessage(nil), node.RealizedConfig...)
+	byID := make(map[int64]store.ChainHop, len(hops))
+	for _, hop := range hops {
+		byID[hop.ID] = hop
+	}
+	for i := range revision.Snapshot.Hops {
+		if hop, ok := byID[revision.Snapshot.Hops[i].HopID]; ok {
+			revision.Snapshot.Hops[i].ForwardPort = hop.ForwardPort
+			revision.Snapshot.Hops[i].PortalPort = hop.PortalPort
+			revision.Snapshot.Hops[i].PortalPublicKey = hop.PortalPublicKey
+			revision.Snapshot.Hops[i].PortalServerName = hop.PortalServerName
+		}
+	}
+	if err := d.st.UpdateChainRevision(ctx, revision.ID, store.RevisionStatusActive, "", revision.Snapshot); err != nil {
+		log.Printf("dispatch: chain %d revision snapshot: %v", chainID, err)
+		return
+	}
+	previous, _ := d.st.PublishedChainRevision(ctx, chainID)
+	if err := d.st.PublishChainRevision(ctx, revision.ID, false); err != nil {
+		log.Printf("dispatch: chain %d publish revision: %v", chainID, err)
+		return
+	}
+	d.cleanupPublishedRevision(ctx, previous, revision)
+}
+
+func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) error {
+	revision, err := d.st.DesiredChainRevision(ctx, chainID)
+	if err != nil {
+		return err
+	}
+	if target := strings.TrimSpace(d.PanelVersion); target != "" && target != "dev" {
+		tasks, err := d.st.RevisionTasks(ctx, revision.ID)
+		if err != nil {
+			return err
+		}
+		for _, task := range tasks {
+			if task.Phase != "apply" || task.Status == store.RevisionTaskAcked {
+				continue
+			}
+			server, err := d.st.ServerByID(ctx, task.ServerID)
+			if err != nil {
+				return fmt.Errorf("强制发布失败：任务服务器 %d 不存在", task.ServerID)
+			}
+			if server.AgentVersion != target {
+				return fmt.Errorf("强制发布失败：服务器 %s 的 Agent 版本为 %q，须先同步到 Panel 版本 %s",
+					server.Alias, server.AgentVersion, target)
+			}
+		}
+	}
+	previous, _ := d.st.PublishedChainRevision(ctx, chainID)
+	if len(revision.Snapshot.ServiceRealized) == 0 {
+		var source json.RawMessage
+		if node, err := d.st.NodeByID(ctx, revision.Snapshot.ServiceNodeID); err == nil && len(node.RealizedConfig) > 0 {
+			source = node.RealizedConfig
+		} else if previous != nil {
+			source = previous.Snapshot.ServiceRealized
+		}
+		if len(source) == 0 {
+			return fmt.Errorf("强制发布失败：出口 Agent 尚未产生可用于订阅的生效参数")
+		}
+		realized, err := forcedServiceRealized(revision.Snapshot.ServiceConfig, source)
+		if err != nil {
+			return err
+		}
+		revision.Snapshot.ServiceRealized = realized
+	}
+	if hops, err := d.st.ChainHops(ctx, chainID); err == nil {
+		byID := make(map[int64]store.ChainHop, len(hops))
+		for _, hop := range hops {
+			byID[hop.ID] = hop
+		}
+		for i := range revision.Snapshot.Hops {
+			if hop, ok := byID[revision.Snapshot.Hops[i].HopID]; ok {
+				if hop.ForwardPort != 0 {
+					revision.Snapshot.Hops[i].ForwardPort = hop.ForwardPort
+				}
+				revision.Snapshot.Hops[i].PortalPort = hop.PortalPort
+				revision.Snapshot.Hops[i].PortalPublicKey = hop.PortalPublicKey
+				revision.Snapshot.Hops[i].PortalServerName = hop.PortalServerName
+			}
+		}
+	}
+	if len(revision.Snapshot.Hops) == 1 && revision.Snapshot.Hops[0].ForwardPort == 0 {
+		var realized shared.RealizedConfig
+		if json.Unmarshal(revision.Snapshot.ServiceRealized, &realized) == nil {
+			revision.Snapshot.Hops[0].ForwardPort = realized.Port
+		}
+	}
+	if len(revision.Snapshot.Hops) == 0 || revision.Snapshot.Hops[0].ForwardPort == 0 {
+		return fmt.Errorf("强制发布失败：入口 Agent 尚未确认可用于订阅的监听端口；请指定固定入口端口或等待 Agent 在线")
+	}
+	if err := d.st.UpdateChainRevision(ctx, revision.ID, store.RevisionStatusActiveUnconfirmed, "", revision.Snapshot); err != nil {
+		return err
+	}
+	if err := d.st.PublishChainRevision(ctx, revision.ID, true); err != nil {
+		return err
+	}
+	d.cleanupPublishedRevision(ctx, previous, revision)
+	d.advanceChain(context.Background(), chainID)
+	return nil
+}
+
+func forcedServiceRealized(serviceConfig, previousRealized json.RawMessage) (json.RawMessage, error) {
+	var virtual shared.VirtualConfig
+	if err := json.Unmarshal(serviceConfig, &virtual); err != nil {
+		return nil, fmt.Errorf("强制发布失败：出口协议配置损坏")
+	}
+	var realized shared.RealizedConfig
+	if err := json.Unmarshal(previousRealized, &realized); err != nil || realized.Port == 0 {
+		return nil, fmt.Errorf("强制发布失败：没有可复用的出口生效端口")
+	}
+	if virtual.Port != 0 {
+		realized.Port = virtual.Port
+	}
+	realized.Flow = virtual.Flow
+	realized.Network = virtual.Network
+	realized.ServiceName = virtual.ServiceName
+	realized.Path = virtual.Path
+	realized.Mode = virtual.Mode
+	realized.Host = virtual.Host
+	realized.Method = virtual.Method
+	realized.Fingerprint = virtual.Fingerprint
+	if shared.IsRealityProtocol(virtual.Protocol) && realized.PublicKey == "" {
+		return nil, fmt.Errorf("强制发布失败：新 Reality 配置尚无 Agent 生成的 public_key，请等待出口 Agent 在线")
+	}
+	if virtual.Encryption != "" && realized.Encryption == "" {
+		return nil, fmt.Errorf("强制发布失败：VLESS Encryption 尚无 Agent 生成的客户端参数，请等待出口 Agent 在线")
+	}
+	if virtual.Protocol == shared.ProtocolShadowsocks && shared.Is2022Method(virtual.Method) && realized.PSK == "" {
+		return nil, fmt.Errorf("强制发布失败：Shadowsocks 2022 尚无 Agent 生成的 PSK，请等待出口 Agent 在线")
+	}
+	raw, err := json.Marshal(realized)
+	if err != nil {
+		return nil, err
+	}
+	return raw, nil
+}
+
+func (d *Dispatcher) cleanupPublishedRevision(ctx context.Context, previous, current *store.ChainRevision) {
+	if previous == nil || current == nil || previous.ID == current.ID {
+		return
+	}
+	d.enqueueCleanupTasks(ctx, current)
+}
+
+func (d *Dispatcher) enqueueCleanupTasks(ctx context.Context, current *store.ChainRevision) {
+	tasks, err := d.st.RevisionTasks(ctx, current.ID)
+	if err != nil {
+		log.Printf("dispatch: revision %d cleanup tasks: %v", current.ID, err)
+		return
+	}
+	for _, task := range tasks {
+		if task.Phase != "cleanup" || task.Status != store.RevisionTaskPending {
+			continue
+		}
+		var commandID int64
+		if task.Kind == RevisionPieceService {
+			commandID, err = d.enqueueRevisionTask(ctx, task.ServerID, shared.TypeRemoveNode,
+				shared.RemoveNodePayload{NodeID: task.HopID}, current.ID, task.TaskKey)
+		} else {
+			commandID, err = d.enqueueRevisionTask(ctx, task.ServerID, shared.TypeRemoveChainHop,
+				shared.RemoveChainHopPayload{HopID: task.HopID, Kind: task.Kind}, current.ID, task.TaskKey)
+		}
+		if err != nil {
+			log.Printf("dispatch: revision %d enqueue cleanup %s: %v", current.ID, task.TaskKey, err)
+			continue
+		}
+		_ = commandID
+	}
+	d.refreshCleanupStatus(ctx, current.ID)
+}
+
+func (d *Dispatcher) refreshCleanupStatus(ctx context.Context, revisionID int64) {
+	revision, err := d.st.ChainRevisionByID(ctx, revisionID)
+	if err != nil {
+		return
+	}
+	tasks, err := d.st.RevisionTasks(ctx, revisionID)
+	if err != nil {
+		return
+	}
+	hasCleanup, complete := false, true
+	for _, task := range tasks {
+		if task.Phase != "cleanup" {
+			continue
+		}
+		hasCleanup = true
+		if task.Status != store.RevisionTaskAcked && task.Status != store.RevisionTaskAbandoned {
+			complete = false
+		}
+	}
+	if !hasCleanup {
+		return
+	}
+	chain, err := d.st.ChainByID(ctx, revision.ChainID)
+	if err != nil || chain.DesiredRevisionID != 0 {
+		return
+	}
+	if !complete {
+		if chain.Status == store.ChainStatusActive || chain.Status == store.ChainStatusDegraded {
+			_ = d.st.SetChainStatus(ctx, chain.ID, store.ChainStatusCleanupPending, "旧 revision 配置等待清理")
+		}
+		return
+	}
+	if chain.Status == store.ChainStatusCleanupPending {
+		_ = d.st.SetChainStatus(ctx, chain.ID, store.ChainStatusActive, "")
+		d.recomputeChain(ctx, chain.ID)
+	}
+}
+
 // enqueueHop 跳进入 applying 并下发 apply_chain_hop（离线留 commands 队列补发，§2）。
-func (d *Dispatcher) enqueueHop(ctx context.Context, chainID int64, hop store.ChainHop, kind string, payload shared.ApplyChainHopPayload) {
+func (d *Dispatcher) enqueueHop(ctx context.Context, chainID, revisionID int64, hop store.ChainHop, kind string, payload shared.ApplyChainHopPayload) {
 	if err := d.st.SetChainHopStatus(ctx, hop.ID, store.HopStatusApplying, ""); err != nil {
 		log.Printf("dispatch: chain %d hop %d applying: %v", chainID, hop.ID, err)
 		return
 	}
-	if _, err := d.Enqueue(ctx, hop.ServerID, shared.TypeApplyChainHop, payload); err != nil {
+	var err error
+	if revisionID != 0 {
+		_, err = d.enqueueRevisionTask(ctx, hop.ServerID, shared.TypeApplyChainHop, payload,
+			revisionID, revisionPieceKey(kind, hop.ID))
+	} else {
+		_, err = d.Enqueue(ctx, hop.ServerID, shared.TypeApplyChainHop, payload)
+	}
+	if err != nil {
 		log.Printf("dispatch: chain %d hop %d enqueue %s: %v", chainID, hop.ID, kind, err)
 	}
 }
@@ -337,7 +644,18 @@ func (d *Dispatcher) failHop(ctx context.Context, hop *store.ChainHop, errMsg st
 // failChain 置链 failed 并把错误定位到跳（§21：跨机部分失败 → 链 failed 定位到跳）。
 func (d *Dispatcher) failChain(ctx context.Context, chainID int64, hop *store.ChainHop, errMsg string) {
 	locate := fmt.Sprintf("跳 %d（%s，server %d）: %s", hop.ID, hop.Role, hop.ServerID, errMsg)
-	if err := d.st.SetChainStatus(ctx, chainID, store.ChainStatusFailed, locate); err != nil {
+	status := store.ChainStatusFailed
+	if chain, err := d.st.ChainByID(ctx, chainID); err == nil && chain.PublishedRevisionID != 0 {
+		status = store.ChainStatusActiveFailed
+	}
+	if revision, err := d.st.DesiredChainRevision(ctx, chainID); err == nil {
+		revisionStatus := store.RevisionStatusFailed
+		if revision.Forced {
+			revisionStatus = store.RevisionStatusActiveFailed
+		}
+		_ = d.st.SetChainRevisionStatus(ctx, revision.ID, revisionStatus, locate)
+	}
+	if err := d.st.SetChainStatus(ctx, chainID, status, locate); err != nil {
 		log.Printf("dispatch: chain %d failed: %v", chainID, err)
 	}
 	log.Printf("dispatch: chain %d failed: %s", chainID, locate)
@@ -364,7 +682,8 @@ func (d *Dispatcher) failChainByNode(ctx context.Context, nodeID int64, reason s
 		return
 	}
 	chain, err := d.st.ChainByID(ctx, hop.ChainID)
-	if err != nil || (chain.Status != store.ChainStatusApplying && chain.Status != store.ChainStatusPending) {
+	if err != nil || (chain.Status != store.ChainStatusApplying && chain.Status != store.ChainStatusPending &&
+		chain.Status != store.ChainStatusActiveUnconfirmed) {
 		return
 	}
 	if err := d.st.SetChainHopStatus(ctx, hop.ID, store.HopStatusFailed, reason); err != nil {
@@ -469,7 +788,7 @@ func pieceInFlight(pieces map[string]string, hopID int64, kind string) bool {
 }
 
 // chainPieces 从 commands 表推导该链各 piece 最新命令状态（按 id 升序后者覆盖前者）。
-func (d *Dispatcher) chainPieces(ctx context.Context, chainID int64) (map[string]string, error) {
+func (d *Dispatcher) chainPieces(ctx context.Context, chainID, revisionID int64) (map[string]string, error) {
 	cmds, err := d.st.CommandsByType(ctx, shared.TypeApplyChainHop)
 	if err != nil {
 		return nil, err
@@ -477,7 +796,7 @@ func (d *Dispatcher) chainPieces(ctx context.Context, chainID int64) (map[string
 	m := map[string]string{}
 	for _, c := range cmds {
 		var p shared.ApplyChainHopPayload
-		if err := json.Unmarshal(c.Data, &p); err != nil || p.ChainID != chainID || p.HopID == 0 {
+		if err := json.Unmarshal(c.Data, &p); err != nil || p.ChainID != chainID || p.HopID == 0 || p.RevisionID != revisionID {
 			continue
 		}
 		m[pieceKey(p.HopID, p.Kind)] = c.Status

@@ -35,7 +35,7 @@ export function RealityDestPicker({
         <Label htmlFor={`${idPrefix}-dest-preset`}>Reality 伪装站点</Label>
         <select
           id={`${idPrefix}-dest-preset`}
-          className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
           value={preset}
           onChange={(event) => selectPreset(event.target.value)}
         >

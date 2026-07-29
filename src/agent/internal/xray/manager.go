@@ -92,6 +92,17 @@ func (m *Manager) Version() (string, bool) {
 	return ver, m.runner.IsRunning(context.Background())
 }
 
+// StatsInstanceID identifies the current Xray process for absolute traffic
+// counters. It remains stable across Agent/Panel reconnects and changes after
+// Xray restarts.
+func (m *Manager) StatsInstanceID() string {
+	provider, ok := m.runner.(interface{ InstanceID(context.Context) string })
+	if !ok || provider == nil {
+		return ""
+	}
+	return provider.InstanceID(context.Background())
+}
+
 // ApplyNode 落地一个节点（§6 流水线），成功返回实际生效值（§7）。
 // portCandidates 为受限直连 NAT 机的段内候选（§21，模板端口为 0 时按序挑选）。
 func (m *Manager) ApplyNode(nodeID int64, vc shared.VirtualConfig, userUUIDs, destCandidates []string, portCandidates []int) (*shared.RealizedConfig, error) {

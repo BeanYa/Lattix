@@ -166,8 +166,13 @@ POST /api/node/delete
 
 GET  /api/chain/list
 POST /api/chain/create
+POST /api/chain/edit
+POST /api/chain/force-publish
 POST /api/chain/retry
 POST /api/chain/delete
+POST /api/chain/set-traffic-multiplier
+POST /api/chain/reset-traffic
+GET  /api/chain/get-traffic-history?chain_id={id}&hop_id={id|0}&days={1..730}
 
 GET  /api/user/list
 POST /api/user/create

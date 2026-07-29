@@ -15,12 +15,10 @@ import (
 )
 
 // telemetry 采集周期遥测（§13）：xray 版本/运行状态、主机指标（/proc）、
-// xray 流量计数器增量（节点维度 inbound>>>tag 与用户维度 user>>>email）。
+// xray 绝对流量计数器（出口 node、每跳 forward 与用户维度）。
 type telemetry struct {
 	mgr *xray.Manager
 
-	lastStats               map[string]int64 // 计数器名 → 上次累计值
-	statsPrimed             bool             // 流量采样基线是否已建立
 	lastCPUIdle, lastCPUTot uint64
 	cpuPrimed               bool
 	lastNetworkInterface    string
@@ -31,43 +29,37 @@ type telemetry struct {
 }
 
 func newTelemetry(mgr *xray.Manager, latency func() *float64) *telemetry {
-	return &telemetry{mgr: mgr, lastStats: map[string]int64{}, latency: latency}
+	return &telemetry{mgr: mgr, latency: latency}
 }
 
 // collect 组装一帧遥测载荷。
 func (t *telemetry) collect() shared.TelemetryPayload {
 	ver, running := t.mgr.Version()
 	return shared.TelemetryPayload{
-		XrayVersion: ver,
-		XrayRunning: running,
-		Host:        t.hostMetrics(),
-		Traffic:     t.trafficDeltas(),
+		XrayVersion:    ver,
+		XrayRunning:    running,
+		XrayInstanceID: t.mgr.StatsInstanceID(),
+		Host:           t.hostMetrics(),
+		Traffic:        t.trafficCounters(),
 	}
 }
 
-// trafficDeltas 计算各计数器自上次采样以来的增量（xray 重启计数器清零时按全量计）。
-// 首次采样仅建立基线、不上报流量：否则 WS 重连（newTelemetry 重置 lastStats）会把
-// xray 启动以来的全量当增量重复上报，backend 累加导致重复计数（§13）。
-func (t *telemetry) trafficDeltas() []shared.TrafficDelta {
+func (t *telemetry) trafficCounters() []shared.TrafficCounter {
 	cur, err := t.mgr.QueryStats()
 	if err != nil {
-		return nil // xray 未运行或 stats 不可用，跳过本期
+		return nil
 	}
-	if !t.statsPrimed {
-		t.lastStats, t.statsPrimed = cur, true
-		return nil // 基线帧：只携带版本/主机指标
+	return aggregateTrafficCounters(cur)
+}
+
+func aggregateTrafficCounters(cur map[string]int64) []shared.TrafficCounter {
+	type key struct {
+		nodeID int64
+		hopID  int64
+		user   string
 	}
-	type key struct{ node, user string }
-	agg := map[key]*shared.TrafficDelta{}
+	agg := map[key]*shared.TrafficCounter{}
 	for name, v := range cur {
-		delta := v - t.lastStats[name]
-		if delta < 0 {
-			delta = v // 计数器随 xray 重启清零
-		}
-		if delta == 0 {
-			continue
-		}
-		// 计数器名形如 "inbound>>>node_3>>>traffic>>>uplink" / "user>>>uuid>>>traffic>>>downlink"。
 		parts := strings.Split(name, ">>>")
 		if len(parts) != 4 || parts[2] != "traffic" {
 			continue
@@ -75,31 +67,35 @@ func (t *telemetry) trafficDeltas() []shared.TrafficDelta {
 		k := key{}
 		switch parts[0] {
 		case "inbound":
-			if !strings.HasPrefix(parts[1], "node_") {
-				continue // api 等非节点 inbound
+			switch {
+			case strings.HasPrefix(parts[1], "node_"):
+				k.nodeID, _ = strconv.ParseInt(strings.TrimPrefix(parts[1], "node_"), 10, 64)
+			case strings.HasPrefix(parts[1], "chain_forward_"):
+				k.hopID, _ = strconv.ParseInt(strings.TrimPrefix(parts[1], "chain_forward_"), 10, 64)
 			}
-			k.node = parts[1]
+			if k.nodeID <= 0 && k.hopID <= 0 {
+				continue
+			}
 		case "user":
 			k.user = parts[1]
 		default:
 			continue
 		}
-		td := agg[k]
-		if td == nil {
-			td = &shared.TrafficDelta{Node: k.node, User: k.user}
-			agg[k] = td
+		counter := agg[k]
+		if counter == nil {
+			counter = &shared.TrafficCounter{NodeID: k.nodeID, HopID: k.hopID, User: k.user}
+			agg[k] = counter
 		}
 		switch parts[3] {
 		case "uplink":
-			td.Up += delta
+			counter.Up += v
 		case "downlink":
-			td.Down += delta
+			counter.Down += v
 		}
 	}
-	t.lastStats = cur
-	out := make([]shared.TrafficDelta, 0, len(agg))
-	for _, td := range agg {
-		out = append(out, *td)
+	out := make([]shared.TrafficCounter, 0, len(agg))
+	for _, counter := range agg {
+		out = append(out, *counter)
 	}
 	return out
 }

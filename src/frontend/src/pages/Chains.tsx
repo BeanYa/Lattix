@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { PlusIcon, RouteIcon, XIcon } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { BarChart3Icon, PencilIcon, PlusIcon, RotateCcwIcon, RouteIcon, SendIcon, XIcon } from 'lucide-react'
 
 import { NameTemplateInput } from '@/components/NameTemplateInput'
 import { RealityDestPicker } from '@/components/RealityDestPicker'
@@ -26,7 +26,6 @@ import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
@@ -41,8 +40,10 @@ import type {
   Chain,
   ChainHopRole,
   ChainStatus,
+  ChainTrafficBucket,
   CreateChainRequest,
   CreateNodeRequest,
+  EditChainRequest,
   NodeStatus,
   Server,
   XrayNode,
@@ -54,6 +55,11 @@ const chainStatusStyle: Record<ChainStatus, { label: string; className: string }
   failed: { label: '异常', className: 'border-red-200 bg-red-50 text-red-700' },
   pending: { label: '部署中', className: 'border-gray-200 bg-gray-50 text-gray-500' },
   degraded: { label: '降级', className: 'border-amber-200 bg-amber-50 text-amber-700' },
+  waiting_for_agent: { label: '等待 Agent', className: 'border-amber-200 bg-amber-50 text-amber-700' },
+  active_unconfirmed: { label: '已强制发布', className: 'border-blue-200 bg-blue-50 text-blue-700' },
+  active_failed: { label: '发布后失败', className: 'border-red-200 bg-red-50 text-red-700' },
+  cleanup_pending: { label: '等待清理', className: 'border-amber-200 bg-amber-50 text-amber-700' },
+  invalid: { label: '已失效', className: 'border-red-200 bg-red-50 text-red-700' },
 }
 
 const hopStatusStyle: Record<NodeStatus, { label: string; className: string }> = {
@@ -107,6 +113,205 @@ function randomChainName(): string {
   return `Chain #${suffix}`
 }
 
+function TrafficHistoryChart({
+  buckets,
+  range,
+}: {
+  buckets: Array<ChainTrafficBucket & { date: string }>
+  range: 'day' | 'month'
+}) {
+  const chartRef = useRef<SVGSVGElement>(null)
+  const [activePoint, setActivePoint] = useState<{ index: number; y: number } | null>(null)
+  const width = 680
+  const height = 280
+  const plot = { left: 48, right: 16, top: 16, bottom: 38 }
+  const plotWidth = width - plot.left - plot.right
+  const plotHeight = height - plot.top - plot.bottom
+  const peak = Math.max(
+    1,
+    ...buckets.flatMap((bucket) => [bucket.effective_up, bucket.effective_down]),
+  )
+  const xAt = (index: number) =>
+    plot.left + (buckets.length <= 1 ? plotWidth / 2 : (index / (buckets.length - 1)) * plotWidth)
+  const yAt = (value: number) => plot.top + (1 - value / peak) * plotHeight
+  const points = (key: 'effective_up' | 'effective_down') =>
+    buckets.map((bucket, index) => `${xAt(index).toFixed(1)},${yAt(bucket[key]).toFixed(1)}`).join(' ')
+  const tickStep = Math.max(1, Math.ceil((buckets.length - 1) / 6))
+  const xTicks = buckets
+    .map((bucket, index) => ({ bucket, index }))
+    .filter(({ index }) => index === 0 || index === buckets.length - 1 || index % tickStep === 0)
+  const labelDate = (date: string) => (range === 'day' ? date.slice(5) : date)
+  const setPointFromPointer = (clientX: number, clientY: number) => {
+    const bounds = chartRef.current?.getBoundingClientRect()
+    if (!bounds || buckets.length === 0) return
+    const svgX = ((clientX - bounds.left) / bounds.width) * width
+    const svgY = ((clientY - bounds.top) / bounds.height) * height
+    const ratio = Math.min(1, Math.max(0, (svgX - plot.left) / plotWidth))
+    setActivePoint({
+      index: Math.round(ratio * (buckets.length - 1)),
+      y: Math.min(plot.top + plotHeight, Math.max(plot.top, svgY)),
+    })
+  }
+  const moveActivePoint = (offset: number) => {
+    setActivePoint((current) => ({
+      index: Math.min(buckets.length - 1, Math.max(0, (current?.index ?? buckets.length - 1) + offset)),
+      y: current?.y ?? plot.top + plotHeight / 2,
+    }))
+  }
+  const activeBucket = activePoint ? buckets[activePoint.index] : null
+
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span className="text-muted-foreground">相对用量（当前视图峰值 = 100%）</span>
+        <div className="flex items-center gap-4 text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span className="size-2 rounded-full bg-success" />上传
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="size-2 rounded-full bg-info" />下载
+          </span>
+        </div>
+      </div>
+      <div className="relative rounded-md border bg-muted/20 p-2">
+        <svg
+          ref={chartRef}
+          viewBox={`0 0 ${width} ${height}`}
+          className="h-auto min-h-56 w-full touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          role="img"
+          aria-label="链路上传和下载流量趋势，使用左右方向键查看日期数据"
+          tabIndex={0}
+          onPointerMove={(event) => setPointFromPointer(event.clientX, event.clientY)}
+          onPointerLeave={() => setActivePoint(null)}
+          onFocus={() => setActivePoint({ index: buckets.length - 1, y: plot.top + plotHeight / 2 })}
+          onBlur={() => setActivePoint(null)}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+              event.preventDefault()
+              moveActivePoint(event.key === 'ArrowLeft' ? -1 : 1)
+            }
+          }}
+        >
+          {[0, 25, 50, 75, 100].map((percent) => {
+            const y = plot.top + (1 - percent / 100) * plotHeight
+            return (
+              <g key={percent}>
+                <line
+                  x1={plot.left}
+                  x2={plot.left + plotWidth}
+                  y1={y}
+                  y2={y}
+                  stroke="var(--border)"
+                  strokeWidth="1"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <text
+                  x={plot.left - 8}
+                  y={y + 4}
+                  textAnchor="end"
+                  fill="var(--muted-foreground)"
+                  fontSize="11"
+                >
+                  {percent}%
+                </text>
+              </g>
+            )
+          })}
+          {xTicks.map(({ bucket, index }) => (
+            <text
+              key={`${bucket.date}-${index}`}
+              x={xAt(index)}
+              y={height - 10}
+              textAnchor={index === 0 ? 'start' : index === buckets.length - 1 ? 'end' : 'middle'}
+              fill="var(--muted-foreground)"
+              fontSize="11"
+            >
+              {labelDate(bucket.date)}
+            </text>
+          ))}
+          <polyline
+            points={points('effective_up')}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            vectorEffect="non-scaling-stroke"
+            className="text-success"
+          />
+          <polyline
+            points={points('effective_down')}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            vectorEffect="non-scaling-stroke"
+            className="text-info"
+          />
+          {activePoint && activeBucket ? (
+            <>
+              <line
+                x1={xAt(activePoint.index)}
+                x2={xAt(activePoint.index)}
+                y1={plot.top}
+                y2={plot.top + plotHeight}
+                stroke="var(--muted-foreground)"
+                strokeWidth="1"
+                strokeDasharray="3 3"
+                vectorEffect="non-scaling-stroke"
+              />
+              <line
+                x1={plot.left}
+                x2={plot.left + plotWidth}
+                y1={activePoint.y}
+                y2={activePoint.y}
+                stroke="var(--muted-foreground)"
+                strokeWidth="1"
+                strokeDasharray="3 3"
+                vectorEffect="non-scaling-stroke"
+              />
+              <circle
+                cx={xAt(activePoint.index)}
+                cy={yAt(activeBucket.effective_up)}
+                r="4"
+                fill="var(--background)"
+                stroke="currentColor"
+                strokeWidth="2"
+                vectorEffect="non-scaling-stroke"
+                className="text-success"
+              />
+              <circle
+                cx={xAt(activePoint.index)}
+                cy={yAt(activeBucket.effective_down)}
+                r="4"
+                fill="var(--background)"
+                stroke="currentColor"
+                strokeWidth="2"
+                vectorEffect="non-scaling-stroke"
+                className="text-info"
+              />
+            </>
+          ) : null}
+        </svg>
+        {activeBucket && activePoint ? (
+          <div
+            className={`pointer-events-none absolute top-3 z-10 min-w-48 rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md ${
+              activePoint.index < buckets.length / 2 ? 'right-3' : 'left-14'
+            }`}
+          >
+            <div className="mb-1.5 font-medium">{activeBucket.date}</div>
+            <div className="flex justify-between gap-6 tabular-nums">
+              <span className="text-muted-foreground">上传</span>
+              <span>{humanizeBytes(activeBucket.effective_up)}</span>
+            </div>
+            <div className="flex justify-between gap-6 tabular-nums">
+              <span className="text-muted-foreground">下载</span>
+              <span>{humanizeBytes(activeBucket.effective_down)}</span>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
 export default function Chains() {
   const { timezone } = useTimezone()
   const { confirm } = useAppDialog()
@@ -116,6 +321,12 @@ export default function Chains() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [retrying, setRetrying] = useState<string | null>(null)
+  const [editingChainId, setEditingChainId] = useState<number | null>(null)
+  const [trafficChain, setTrafficChain] = useState<Chain | null>(null)
+  const [trafficHopId, setTrafficHopId] = useState(0)
+  const [trafficRange, setTrafficRange] = useState<'day' | 'month'>('day')
+  const [trafficHistory, setTrafficHistory] = useState<ChainTrafficBucket[]>([])
+  const [trafficLoading, setTrafficLoading] = useState(false)
 
   const [open, setOpen] = useState(false)
   const [chainType, setChainType] = useState<'direct' | 'relay'>('direct')
@@ -138,7 +349,8 @@ export default function Chains() {
   const [flow, setFlow] = useState('xtls-rprx-vision')
   const [encryption, setEncryption] = useState('none')
   const [targetAddress, setTargetAddress] = useState('')
-  const [targetPort, setTargetPort] = useState('')
+	const [targetPort, setTargetPort] = useState('')
+	const [trafficMultiplier, setTrafficMultiplier] = useState('1.000')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 
@@ -183,6 +395,7 @@ export default function Chains() {
   const onOpenChange = (next: boolean) => {
     setOpen(next)
     if (!next) {
+      setEditingChainId(null)
       setChainType('direct')
       setName('')
       setEntryId('')
@@ -203,9 +416,52 @@ export default function Chains() {
       setFlow('xtls-rprx-vision')
       setEncryption('none')
       setTargetAddress('')
-      setTargetPort('')
+		setTargetPort('')
+		setTrafficMultiplier('1.000')
       setCreateError('')
     }
+  }
+
+  const openEdit = (chain: Chain) => {
+    const service = nodes.find((node) => node.id === chain.service_node_id)
+    if (!service && !chain.service_config) {
+      setError('链路出口配置不存在')
+      return
+    }
+    setEditingChainId(chain.id)
+    setChainType(chain.hops.length === 1 ? 'direct' : 'relay')
+    setName(chain.name)
+    setEntryId(String(chain.hops[0]?.server_id ?? ''))
+    setMiddleIds(chain.hops.slice(1, -1).map((hop) => String(hop.server_id)))
+    setExitId(chain.hops.length > 1 ? String(chain.hops.at(-1)?.server_id ?? '') : '')
+    setEntryPort(chain.hops[0]?.forward_port ? String(chain.hops[0].forward_port) : '')
+    setTrafficMultiplier(chain.traffic_multiplier || '1.000')
+    try {
+      const rawVirtual: unknown = service?.config_template ?? chain.service_config
+      const virtual = (typeof rawVirtual === 'string' ? JSON.parse(rawVirtual) : rawVirtual) as Record<string, any>
+      const template = typeof virtual.template === 'string' ? JSON.parse(virtual.template) : virtual.template
+      const reality = template?.streamSettings?.realitySettings ?? {}
+      const settings = template?.settings ?? {}
+      setProtocol(String(virtual.protocol ?? service?.protocol ?? 'vless'))
+      setPort(virtual.port ? String(virtual.port) : '')
+      setNetwork(String(virtual.network || 'tcp'))
+      setFingerprint(String(virtual.fingerprint || 'chrome'))
+      setFlow(String(virtual.flow || 'none'))
+      setEncryption(String(virtual.encryption || 'none'))
+      setPath(String(virtual.path || '/'))
+      setMode(String(virtual.mode || 'auto'))
+      setHost(String(virtual.host || ''))
+      setShortId(String(reality.shortIds?.[0] || ''))
+      setDest(String(reality.dest || 'dl.google.com:443'))
+      setServerNames(Array.isArray(reality.serverNames) ? reality.serverNames.join(',') : 'dl.google.com')
+      setTargetAddress(String(settings.address || ''))
+      setTargetPort(settings.port ? String(settings.port) : '')
+    } catch {
+      setError('链路出口配置无法解析')
+      return
+    }
+    setCreateError('')
+    setOpen(true)
   }
 
   const onTypeChange = (value: string | null) => {
@@ -224,7 +480,7 @@ export default function Chains() {
     setMiddleIds(next)
   }
 
-  const onCreate = async (e: FormEvent) => {
+  const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setCreateError('')
     const resolvedName = name.trim() || randomChainName()
@@ -233,7 +489,7 @@ export default function Chains() {
       return
     }
     if (!entryId) {
-      setCreateError('请选择直连服务器')
+      setCreateError('请选择入口服务器')
       return
     }
     if (chainType === 'relay' && (!exitId || middleIds.some((m) => !m))) {
@@ -307,19 +563,29 @@ export default function Chains() {
     }
     setCreating(true)
     try {
-      if (chainType === 'direct') {
-        await api.createNode(nodeBody)
-      } else {
-        const body: CreateChainRequest = {
-          name: resolvedName,
-          entry: { server_id: Number(entryId) },
-          middle: middleIds.map((id) => ({ server_id: Number(id) })),
-          exit: { server_id: Number(exitId) },
-          node: nodeBody,
-        }
-        if (entryPort.trim()) body.entry_port = Number(entryPort)
-        await api.createChain(body)
-      }
+		if (editingChainId !== null) {
+			const body: EditChainRequest = {
+				chain_id: editingChainId,
+				name: resolvedName,
+				hops: hopIds.map((id) => ({ server_id: Number(id) })),
+				node: nodeBody,
+				traffic_multiplier: trafficMultiplier,
+			}
+			if (entryPort.trim()) body.entry_port = Number(entryPort)
+			await api.editChain(body)
+		} else {
+			const body: CreateChainRequest = {
+				name: resolvedName,
+				hops: hopIds.map((id) => ({ server_id: Number(id) })),
+				entry: { server_id: Number(entryId) },
+				middle: middleIds.map((id) => ({ server_id: Number(id) })),
+				exit: { server_id: Number(chainType === 'direct' ? entryId : exitId) },
+				node: nodeBody,
+				traffic_multiplier: trafficMultiplier,
+			}
+			if (entryPort.trim()) body.entry_port = Number(entryPort)
+			await api.createChain(body)
+		}
       onOpenChange(false)
       load()
     } catch (err) {
@@ -327,6 +593,54 @@ export default function Chains() {
     } finally {
       setCreating(false)
     }
+  }
+
+  const onForcePublish = async (chain: Chain) => {
+    if (!(await confirm({
+      title: '强制发布未确认配置',
+      description: `链路「${chain.name}」将立即更新订阅，离线 Agent 的任务继续排队。此操作不会自动回滚。`,
+      confirmLabel: '强制发布',
+      destructive: true,
+    }))) return
+    try {
+      await api.forcePublishChain(chain.id)
+      load()
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  const onResetTraffic = async (chain: Chain) => {
+    if (!(await confirm({
+      title: '重置流量统计',
+      description: `重置链路「${chain.name}」及各跳当前显示的累计流量？历史原始计数不会回写 Agent。`,
+      confirmLabel: '重置',
+      destructive: true,
+    }))) return
+    try {
+      await api.resetChainTraffic(chain.id)
+      load()
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
+  const loadTrafficHistory = useCallback(async (chain: Chain, hopId: number, range: 'day' | 'month') => {
+    setTrafficLoading(true)
+    try {
+      setTrafficHistory((await api.chainTrafficHistory(chain.id, hopId, range === 'day' ? 30 : 365)) ?? [])
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setTrafficLoading(false)
+    }
+  }, [])
+
+  const openTraffic = (chain: Chain) => {
+    setTrafficChain(chain)
+    setTrafficHopId(0)
+    setTrafficRange('day')
+    void loadTrafficHistory(chain, 0, 'day')
   }
 
   const onRetry = async (id: number) => {
@@ -393,7 +707,6 @@ export default function Chains() {
     servers.find((s) => s.id === id)?.online ?? false
 
   const serverSelectItems = servers.map((s) => ({ value: String(s.id), label: serverLabel(s) }))
-  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
   const relayExitNodeIds = useMemo(
     () => new Set(chains.flatMap((chain) => chain.hops.filter((hop) => hop.role === 'exit').map((hop) => hop.node_id))),
     [chains],
@@ -410,7 +723,30 @@ export default function Chains() {
       ].toSorted((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [chains, directNodes],
   )
-
+  const displayedTrafficHistory = useMemo(() => {
+    const normalized = trafficHistory.map((bucket) => ({
+      ...bucket,
+      date: bucket.date ?? bucket.Date ?? '',
+    }))
+    if (trafficRange === 'day') return normalized
+    const months = new Map<string, ChainTrafficBucket & { date: string }>()
+    for (const bucket of normalized) {
+      const month = bucket.date.slice(0, 7)
+      const current = months.get(month) ?? {
+        date: month,
+        raw_up: 0,
+        raw_down: 0,
+        effective_up: 0,
+        effective_down: 0,
+      }
+      current.raw_up += bucket.raw_up
+      current.raw_down += bucket.raw_down
+      current.effective_up += bucket.effective_up
+      current.effective_down += bucket.effective_down
+      months.set(month, current)
+    }
+    return [...months.values()]
+  }, [trafficHistory, trafficRange])
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -442,7 +778,7 @@ export default function Chains() {
               const displayPort = node.realized_config?.port ?? node.port
               return (
                 <Card key={`direct-${node.id}`} size="sm">
-                  <CardHeader>
+                  <CardHeader className="has-data-[slot=card-action]:grid-cols-1 sm:has-data-[slot=card-action]:grid-cols-[1fr_auto]">
                     <CardTitle className="flex flex-wrap items-center gap-2">
                       <span>{node.name || `直连 #${node.id}`}</span>
                       <Badge variant="secondary">直连</Badge>
@@ -456,8 +792,8 @@ export default function Chains() {
                         ? ` · ↑ ${humanizeBytes(node.traffic.up)} / ↓ ${humanizeBytes(node.traffic.down)}`
                         : ''}
                     </CardDescription>
-                    <CardAction>
-                      <div className="flex gap-2">
+                    <CardAction className="col-start-1 row-start-3 row-span-1 justify-self-start sm:col-start-2 sm:row-start-1 sm:row-span-2 sm:justify-self-end">
+                      <div className="flex max-w-full flex-wrap gap-2 sm:justify-end">
                         {node.status === 'failed' ? (
                           <Button
                             variant="outline"
@@ -494,30 +830,33 @@ export default function Chains() {
             const c = entry.chain
             const st = chainStatusStyle[c.status] ?? chainStatusStyle.pending
             const hasFailedHop = c.hops.some((h) => h.status === 'failed')
-            const exitNodeId = c.hops.find((hop) => hop.role === 'exit')?.node_id
-            const traffic = exitNodeId ? nodeById.get(exitNodeId)?.traffic : null
+            const isDirect = c.hops.length === 1
+            const pendingTasks = c.revision_tasks.filter((task) => task.status === 'pending' || task.status === 'queued')
             return (
               <Card key={`relay-${c.id}`} size="sm">
-                <CardHeader>
+                <CardHeader className="has-data-[slot=card-action]:grid-cols-1 sm:has-data-[slot=card-action]:grid-cols-[1fr_auto]">
                   <CardTitle className="flex flex-wrap items-center gap-2">
                     <span>{c.name || `中转 #${c.id}`}</span>
-                    <Badge variant="secondary">中转</Badge>
+                    <Badge variant="secondary">{isDirect ? '直连' : '中转'}</Badge>
                     <Badge variant="outline" className={st.className}>
                       {st.label}
                     </Badge>
                     {c.status === 'degraded' ? (
-                      <span className="text-xs text-amber-700">存在离线跳，恢复后自愈</span>
+                      <span className="text-xs text-amber-700">Agent 离线，已发布链路仍保留</span>
+                    ) : null}
+                    {c.revision_forced ? (
+                      <span className="text-xs text-blue-700">订阅已发布，配置等待 Agent 确认</span>
                     ) : null}
                   </CardTitle>
                   <CardDescription>
                     {formatDateTime(c.created_at, timezone)}
-                    {traffic
-                      ? ` · ↑ ${humanizeBytes(traffic.up)} / ↓ ${humanizeBytes(traffic.down)}`
+                    {c.traffic
+                      ? ` · ↑ ${humanizeBytes(c.traffic.effective_up)} / ↓ ${humanizeBytes(c.traffic.effective_down)} · ×${c.traffic_multiplier}`
                       : ''}
                   </CardDescription>
-                  <CardAction>
-                    <div className="flex gap-2">
-                      {c.status === 'failed' || hasFailedHop ? (
+                  <CardAction className="col-start-1 row-start-3 row-span-1 justify-self-start sm:col-start-2 sm:row-start-1 sm:row-span-2 sm:justify-self-end">
+                    <div className="flex max-w-full flex-wrap gap-2 sm:justify-end">
+                      {c.status === 'failed' || c.status === 'active_failed' || hasFailedHop ? (
                         <Button
                           variant="outline"
                           size="sm"
@@ -527,6 +866,27 @@ export default function Chains() {
                           {retrying === `relay-${c.id}` ? '重试中…' : '重试链路'}
                         </Button>
                       ) : null}
+                      {c.desired_revision_id !== 0 ? (
+                        <Button variant="outline" size="sm" onClick={() => onForcePublish(c)}>
+                          <SendIcon />
+                          强制发布
+                        </Button>
+                      ) : null}
+                      <Button variant="outline" size="icon-sm" title="流量历史" onClick={() => openTraffic(c)}>
+                        <BarChart3Icon />
+                      </Button>
+                      <Button variant="outline" size="icon-sm" title="重置流量" onClick={() => onResetTraffic(c)}>
+                        <RotateCcwIcon />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="icon-sm"
+                        title="编辑链路"
+                        disabled={c.desired_revision_id !== 0}
+                        onClick={() => openEdit(c)}
+                      >
+                        <PencilIcon />
+                      </Button>
                       <Button variant="outline" size="sm" onClick={() => onDelete(c.id)}>
                         删除链路
                       </Button>
@@ -554,7 +914,7 @@ export default function Chains() {
                           <Badge variant="outline" className={hst.className}>
                             {hst.label}
                           </Badge>
-                          {(c.status === 'degraded' || c.status === 'failed') && offline ? (
+                          {offline ? (
                             <Badge
                               variant="outline"
                               className="border-amber-200 bg-amber-50 text-amber-700"
@@ -567,6 +927,12 @@ export default function Chains() {
                     )
                   })}
                   </div>
+                {pendingTasks.length > 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    {pendingTasks.filter((task) => task.phase === 'apply').length} 个部署任务、
+                    {pendingTasks.filter((task) => task.phase === 'cleanup').length} 个清理任务在队列中
+                  </p>
+                ) : null}
                 {c.hops.some((h) => h.error) ? (
                   <div className="flex flex-col gap-1 text-xs text-destructive">
                     {c.hops
@@ -588,32 +954,45 @@ export default function Chains() {
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>创建链路</DialogTitle>
+            <DialogTitle>{editingChainId === null ? '创建链路' : '编辑链路'}</DialogTitle>
             <DialogDescription>
-              直连只包含一台服务器；中转依次选择入口 → 中转（0-2 个）→ 出口，客户端仅见入口。
+              {editingChainId === null
+                ? '直连只包含一台服务器；中转依次选择入口 → 中转（0-2 个）→ 出口，客户端仅见入口。'
+                : '修改将按出口到入口依次部署，已发布订阅在新 revision 完成前保持不变。'}
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={onCreate} className="space-y-4">
+          <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label>链路类型</Label>
-              <Select
-                value={chainType}
-                onValueChange={onTypeChange}
-                items={[
-                  { value: 'direct', label: '直连' },
-                  { value: 'relay', label: '中转' },
-                ]}
+              <Label id="chain-type-label">链路类型</Label>
+              <div
+                role="radiogroup"
+                aria-labelledby="chain-type-label"
+                className="grid grid-cols-2 gap-2"
               >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="direct">直连</SelectItem>
-                    <SelectItem value="relay">中转</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+                {([
+                  ['direct', '直连'],
+                  ['relay', '中转'],
+                ] as const).map(([value, label]) => (
+                  <label
+                    key={value}
+                    className={`flex h-9 cursor-pointer items-center justify-center rounded-md border-2 text-sm transition-colors focus-within:ring-3 focus-within:ring-ring/50 ${
+                      chainType === value
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-input bg-card text-foreground hover:bg-accent hover:text-accent-foreground'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="chain-type"
+                      value={value}
+                      checked={chainType === value}
+                      onChange={(event) => onTypeChange(event.target.value)}
+                      className="sr-only"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="chain-name-template">链路名称模板</Label>
@@ -912,6 +1291,20 @@ export default function Chains() {
               </>
             ) : null}
 
+            <div className="space-y-2">
+              <Label htmlFor="chain-traffic-multiplier">流量倍率</Label>
+              <Input
+                id="chain-traffic-multiplier"
+                type="number"
+                min="0.001"
+                max="1000"
+                step="0.001"
+                value={trafficMultiplier}
+                onChange={(event) => setTrafficMultiplier(event.target.value)}
+                required
+              />
+            </div>
+
             {createError && <p className="text-sm text-destructive">{createError}</p>}
             <DialogFooter>
               <Button
@@ -923,10 +1316,74 @@ export default function Chains() {
                   (chainType === 'relay' && !exitId)
                 }
               >
-                {creating ? '创建中…' : '创建'}
+                {creating ? (editingChainId === null ? '创建中…' : '保存中…') : (editingChainId === null ? '创建' : '保存修改')}
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={trafficChain !== null} onOpenChange={(next) => !next && setTrafficChain(null)}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{trafficChain?.name} · 流量历史</DialogTitle>
+          </DialogHeader>
+          {trafficChain ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                <div className="flex rounded-md border p-0.5">
+                  {(['day', 'month'] as const).map((range) => (
+                    <Button
+                      key={range}
+                      type="button"
+                      size="sm"
+                      variant={trafficRange === range ? 'secondary' : 'ghost'}
+                      onClick={() => {
+                        setTrafficRange(range)
+                        void loadTrafficHistory(trafficChain, trafficHopId, range)
+                      }}
+                    >
+                      {range === 'day' ? '日' : '月'}
+                    </Button>
+                  ))}
+                </div>
+                <Select
+                  value={String(trafficHopId)}
+                  items={[
+                    { value: '0', label: '链路（出口权威）' },
+                    ...trafficChain.hops.map((hop) => ({
+                      value: String(hop.id),
+                      label: `${roleLabel[hop.role]} · ${hop.server_alias || `Server #${hop.server_id}`}`,
+                    })),
+                  ]}
+                  onValueChange={(value) => {
+                    const hopId = Number(value)
+                    setTrafficHopId(hopId)
+                    void loadTrafficHistory(trafficChain, hopId, trafficRange)
+                  }}
+                >
+                  <SelectTrigger className="w-48">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">链路（出口权威）</SelectItem>
+                    {trafficChain.hops.map((hop) => (
+                      <SelectItem key={hop.id} value={String(hop.id)}>
+                        {roleLabel[hop.role]} · {hop.server_alias || `Server #${hop.server_id}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {trafficLoading ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">加载中…</p>
+              ) : displayedTrafficHistory.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">暂无流量记录</p>
+              ) : (
+                <TrafficHistoryChart buckets={displayedTrafficHistory} range={trafficRange} />
+              )}
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>

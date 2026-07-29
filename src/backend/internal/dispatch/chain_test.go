@@ -74,6 +74,38 @@ func ackHop(t *testing.T, st *store.Store, d *Dispatcher, serverID, hopID int64,
 	d.handleChainHopResult(serverID, shared.ApplyResultPayload{HopID: hopID, Kind: kind, RealizedConfig: rc}, "")
 }
 
+func TestSingleHopChainBecomesActiveAfterServiceApply(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, "direct", "direct.test", "token", store.MachineTypeDirect, "", "", "US", "Test")
+	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
+	nodeID, _ := st.InsertNode(ctx, "direct", serverID, shared.ProtocolVLESS, nil, config)
+	chainID, _ := st.InsertChain(ctx, "direct")
+	hopID, _ := st.InsertChainHop(ctx, chainID, 0, serverID, store.HopRoleExit, nodeID, 0, "")
+	req := &fakeRequester{online: map[int64]bool{serverID: true}}
+	d := New(st, req)
+	if err := d.StartChain(ctx, chainID); err != nil {
+		t.Fatal(err)
+	}
+	realized, _ := json.Marshal(&shared.RealizedConfig{Port: 443})
+	if err := st.SetNodeActive(ctx, nodeID, realized); err != nil {
+		t.Fatal(err)
+	}
+	d.advanceChainByNode(ctx, nodeID)
+	chain, _ := st.ChainByID(ctx, chainID)
+	if chain.Status != store.ChainStatusActive {
+		t.Fatalf("chain status = %s", chain.Status)
+	}
+	hop, _ := st.ChainHopByID(ctx, hopID)
+	if hop.Status != store.HopStatusActive || hop.ForwardPort != 443 {
+		t.Fatalf("hop = %+v", hop)
+	}
+}
+
 // TestChainOrchestration 覆盖 §21.1 五阶段编排与 degraded 推导：
 // 拓扑 entry(direct) → mid(NAT 受限直连，20000-20009→30000-30009) → exit(NAT 仅出口档)；
 // 链路 1→2 直连、2→3 反向（portal 在 mid、bridge 在 exit）。

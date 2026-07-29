@@ -67,7 +67,7 @@ install.sh           # 唯一面向用户的统一安装入口
 | `servers` | id, alias, country_code(ISO 3166-1 alpha-2), location(城市/机房位置), address(公网地址), learned_addr(拨入学习地址), nic_addresses(agent 上报网卡地址 JSON), tags(有序标签 JSON，名称模板 `TAG[n]` 来源), token(长期凭证), last_seen_at, xray_version, config_drift(§17), created_at |
 | `users` | id, name, uuid, sub_token, expires_at(可空，unix 秒，NULL=长期), expired(0/1 到期停权标记，§9), disabled(0/1 显式停用标记，§16), created_at |
 | `nodes` | id, name(解析后的管理/订阅名称), server_id, protocol, port, config_template(JSON), realized_config(JSON), status, error, created_at |
-| `commands` | id, request_id, trace_id, server_id, type, data(JSON), status(queued/sent/acked/failed), error, attempts, created_at, updated_at |
+| `commands` | id, request_id, trace_id, server_id, type, data(JSON), status(queued/sent/acked/failed/abandoned), error, attempts, created_at, updated_at |
 | `user_nodes` | user_id, node_id（§16 逐节点用户分配，默认全关） |
 | `server_metrics` | server_id, load1/load5/load15, cpu_percent, mem/disk 用量、默认出口网卡速率/累计量、uptime、latency_ms、updated_at（§13 主机遥测最新值） |
 | `server_metric_history` | 与 `server_metrics` 同口径的 24 小时时序样本；按服务器与采样时间索引（§13） |
@@ -78,7 +78,12 @@ install.sh           # 唯一面向用户的统一安装入口
 | `exchange_rates` | base_currency, quote_currency, rate（十进制字符串）, rate_date, source, fetched_at（Frankfurter 持久化缓存） |
 | `custom_exchange_rates` | source_currency（唯一）+ source_amount, target_currency（保存时的展示币种）+ target_amount, enabled；至少一侧金额为 1，每个目标币种仅一个启用锚点 |
 | `traffic` | node_id, user_uuid, up, down, updated_at（§13 流量累计：节点维度 user_uuid=''，用户维度 node_id=0） |
-| `chains` / `chain_hops` | chains 含 name(解析后的管理/订阅名称)；（自 0.0.2 之后迭代实现，§21）链级状态机；逐跳 role（entry/middle/exit）与独立重试状态 |
+| `chains` | 稳定 chain/service identity、published/desired revision、倍率、发布状态与软删除时间 |
+| `chain_hops` / `chain_hop_identities` | 当前期望工作拓扑与不会复用的稳定 hop identity |
+| `chain_revisions` / `chain_revision_tasks` | 不可变拓扑快照及 apply/cleanup 任务状态机；任务关联离线命令队列 |
+| `traffic_cursors` | Agent Xray 实例绝对计数器游标，用于幂等补差 |
+| `chain_traffic_totals` / `chain_traffic_daily` | 链与逐跳 raw/effective 累计、倍率余数及按 revision/统计时区的日桶 |
+| `chain_traffic_baselines` / `chain_multiplier_events` | 流量重置 checkpoint 与倍率分段审计 |
 
 说明：
 
@@ -247,11 +252,13 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，由面板 Agent 设置�
 - **xray 版本与运行状态**：升级管理（§18）完成后据此刷新面板展示。
 - **主机指标**：采集 CPU、1/5/15 分钟负载、内存、根文件系统、系统 uptime、默认路由出口网卡实时速率与开机累计量，以及 Agent→Panel WebSocket RTT。`server_metrics` 保存最新值，`server_metric_history` 保留最近 24 小时；服务器卡片展示核心摘要，详情抽屉展示完整信息和趋势。主机网卡流量与下述 Xray 业务流量完全独立。
 - **流量统计（仅统计，不做强制配额）**：骨架配置启用 xray stats（inbound 级 + 用户级 policy），
-  用户条目带 `level: 0`；Agent 经 gRPC StatsService 拉取计数器并按采样区间计算增量
-  （连接建立后首帧仅建立采样基线、不上报流量，避免重连后把全量当增量重复计数）→
-  `traffic` 表累计（节点与用户两个维度）→ 节点/用户列表"流量"列。
+  用户条目带 `level: 0`；Agent 经 gRPC StatsService 拉取包含 `xray_instance_id` 的进程级绝对计数器，
+  Backend 持久化游标并计算增量。相同实例重连可补齐丢帧和控制通道离线期间的累计量，重复快照
+  增量为零；实例变化按新计数器起点处理。增量写入 `traffic`（节点与用户维度）以及链路/逐跳统计。
   Agent 启动时确保 config.json 含 stats/policy 配置（缺失则落盘重启）。
-  socks/http 的 accounts 无 email，仅覆盖节点维度。
+  socks/http 的 accounts 无 email，仅覆盖节点维度。出口 service inbound 是链路权威流量；入口和
+  中间 hop 分别用于对账和展示。离线补差的 Xray 重启丢失窗口、日桶归属及倍率边界见
+  [链路 Revision 与流量统计设计](chain-revisions-traffic-design.md#控制通道离线时的补报)。
 
 在线/离线由 WS 连接推导，连接存亡由 §2 的 Agent 主动心跳判定（30s Ping，90s 无流量判死）。
 
@@ -450,15 +457,14 @@ sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支�
 推翻 §14 原"NAT / 中继链路不做"的决策。产品概念统一为**链路**：
 直连是长度 1 的链路，中转是 `入口 → [中转...] → 出口 → Internet`，客户端仅见入口。
 
-**产品层统一、实现层暂不统一（防误解）**：
+**产品与实现统一**：
 
-- 用户只看到链路；“节点”仅表示服务器上的业务 inbound 或中转链路中的一跳。
-- 直连仍落在 `nodes` 表并使用 node 状态机/API；中转仍落在 `chains + chain_hops`，
-  出口业务配置仍复用一条 `nodes` 记录。此次不做数据库/API 的“一切皆 chain”重构。
-- 前端合并列表时排除所有 `chain_hops.node_id`，防止中转出口业务节点重复显示为直连。
-- `user_nodes`、流量统计、Agent 消息中的 node 仍是实现术语；用户分配中转链路时写入出口 `node_id`。
-- 仪表盘链路数 = 非链出口 nodes 数 + chains 数；中转流量取出口业务节点，逐跳流量不得相加。
-- 当前处于开发阶段，不提供旧 `/nodes` 页面兼容或重定向。
+- 所有代理入口均落为 `chains`；直连是 1 跳 revision，中转是 2～4 跳 revision。
+- 每条 chain 保留稳定的出口业务 `service_node_id`，`user_nodes`、订阅 UUID 和权威流量均绑定该身份。
+- 创建和编辑共用一套 chain API、revision planner 与任务状态机，不再维护直连 node/中转 chain 两套流程。
+- 逐跳流量仅用于展示，链路总流量始终以出口 service inbound 为准，各跳不得相加。
+- revision、离线发布、删除、流量倍率和日/月统计的完整契约见
+  [链路 Revision 与流量统计设计](chain-revisions-traffic-design.md)。
 
 **能力边界**：
 
@@ -494,19 +500,22 @@ sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支�
 
 **存储**：
 
-- 新表 `chains`（id, status, error, created_at…）承载链级状态机；
-  新表 `chain_hops`（chain_id, seq, node_id, role, hop 状态…）承载逐跳状态与独立重试，
-  role ∈ entry / middle / exit；其中 `middle` 的产品文案为“中转”。
-- `user_nodes` 维持指向出口节点（UUID 只存在于出口 xray），无新用户关联表。
-- `traffic` 表结构不变：用户维度流量只在出口统计，中间跳只有节点级字节数，
-  面板展示不得把入口跳字节数当用户流量。
+- `chains` 保存稳定链路和 `service_node_id`，分别引用 published/desired revision；
+  `chain_hops` 保存当前期望拓扑，`chain_hop_identities` 保证 hop ID 删除后不复用。
+- `chain_revisions` 保存不可变快照，`chain_revision_tasks` 保存从出口到入口的 apply 和后续 cleanup
+  状态；任务通过 `commands` 队列投递并支持重启续跑。
+- `user_nodes` 维持指向稳定的出口 service node（UUID 只存在于出口 Xray），无新用户关联表。
+- Agent 上报带 Xray 实例标识的绝对计数器快照；出口 service inbound 是链路权威流量，
+  入口用于准确对账，中间跳仅展示。后端保存倍率分段累计和每日桶，月度由每日桶汇总。
 
 **编排**：
 
-- 建链顺序倒置：出口先就绪，逐跳向外，入口最后生效（客户端永不见到半成品入口）；
-  删链反向，先拆入口。跨机部分失败 → 链置 failed 并定位到跳，重试只重放失败的跳。
-- 链任一跳服务器离线或隧道断开 → 链置 degraded，面板标出断点并经 §19 事件通道告警；
-  **订阅不剔除该入口**（客户端测速自然规避，恢复后自愈）。
+- 创建和编辑均由不可变 revision 驱动：出口向入口计算依赖并部署，入口最后切换，随后立即清理旧
+  revision。无法证明配置等价时保守重建受影响范围。
+- Agent 离线仅代表控制通道不可达，已部署数据面继续运行。普通编辑等待必须修改的离线 Agent；
+  管理员可强制发布未确认 revision。已发布 active 链任一 hop 离线时推导为 `degraded`，但不退出
+  订阅；服务器删除才使引用链路 `invalid` 并退出订阅。状态重算当前由 Agent 连接状态跃迁触发，
+  Panel 重启后从未重新连接的存量 Agent 存在启动期未重算边界，详见链路设计文档。
 
 **agent 侧**：
 

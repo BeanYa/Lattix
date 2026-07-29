@@ -10,10 +10,11 @@ import (
 
 // 命令状态（§4）：queued → sent → acked | failed。
 const (
-	CommandStatusQueued = "queued"
-	CommandStatusSent   = "sent"
-	CommandStatusAcked  = "acked"
-	CommandStatusFailed = "failed"
+	CommandStatusQueued    = "queued"
+	CommandStatusSent      = "sent"
+	CommandStatusAcked     = "acked"
+	CommandStatusFailed    = "failed"
+	CommandStatusAbandoned = "abandoned"
 )
 
 // Command 是 commands 表的一行；同时充当离线命令队列与操作日志（§4）。

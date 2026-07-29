@@ -341,7 +341,8 @@ Agent 常用参数：`-panel`（固定面板 WS 地址）、`-token`（bootstrap
 `-state` / `-settings`（本地状态与面板同步设置）及 `-xray-release-base`（xray 下载镜像源）。
 重连、遥测与漂移检测间隔由面板“设置 → Agent”统一下发。
 
-详细设计见 [docs/framework-design.md](docs/framework-design.md)，前端开发命令见
+详细设计见 [docs/framework-design.md](docs/framework-design.md)，链路编辑、离线 revision 与流量口径见
+[docs/chain-revisions-traffic-design.md](docs/chain-revisions-traffic-design.md)，前端开发命令见
 [docs/frontend.md](docs/frontend.md)。
 
 ## 已知问题

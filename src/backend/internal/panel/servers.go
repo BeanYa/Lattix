@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/store"
 	"lattix/shared"
 )
@@ -116,12 +117,20 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 func (s *Server) toServerDTOWithPlans(ctx context.Context, srv store.Server) (serverDTO, error) {
 	dto := s.toServerDTO(srv)
 	billing, err := s.st.ServerBillingMap(ctx)
-	if err != nil { return dto, err }
+	if err != nil {
+		return dto, err
+	}
 	plans, err := s.st.ServerTrafficPlanMap(ctx)
-	if err != nil { return dto, err }
+	if err != nil {
+		return dto, err
+	}
 	providers, err := s.st.ListProviders(ctx)
-	if err != nil { return dto, err }
-	if err := s.enrichServerBilling(ctx, &dto, billing, plans, providerMap(providers)); err != nil { return dto, err }
+	if err != nil {
+		return dto, err
+	}
+	if err := s.enrichServerBilling(ctx, &dto, billing, plans, providerMap(providers)); err != nil {
+		return dto, err
+	}
 	return dto, nil
 }
 
@@ -271,7 +280,10 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	})
 	base := s.panelBase(r)
 	createdDTO, err := s.toServerDTOWithPlans(r.Context(), *srv)
-	if err != nil { writeError(w, http.StatusInternalServerError, err.Error()); return }
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"server":          createdDTO,
 		"bootstrap_token": bootstrap,
@@ -329,7 +341,10 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 	srv.Token = bootstrap
 	srv.LastSeenAt = nil
 	rotatedDTO, err := s.toServerDTOWithPlans(r.Context(), *srv)
-	if err != nil { writeError(w, http.StatusInternalServerError, err.Error()); return }
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"server":          rotatedDTO,
 		"bootstrap_token": bootstrap,
@@ -470,7 +485,10 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	}
 	sid := id
 	afterDTO, err := s.toServerDTOWithPlans(r.Context(), *srv)
-	if err != nil { writeError(w, http.StatusInternalServerError, err.Error()); return }
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	changes := changedValues(
 		map[string]any{
 			"alias": beforeDTO.Alias, "address": beforeDTO.Address, "allowed_ports": beforeDTO.AllowedPorts,
@@ -716,6 +734,55 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	affected, err := s.st.ChainsReferencingServer(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, chain := range affected {
+		revisions, err := s.st.ChainDeploymentRevisions(r.Context(), chain.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		reason := fmt.Sprintf("服务器 %d（%s）已删除，链路失效", id, srv.Alias)
+		if err := s.st.InvalidateChainForServerDeletion(r.Context(), chain.ID, id, reason); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		seen := map[string]bool{}
+		for _, revision := range revisions {
+			hops := revisionSnapshotHops(revision)
+			for i, hop := range hops {
+				if hop.ServerID == id {
+					continue
+				}
+				for _, kind := range dispatch.ChainHopPieces(hops, i) {
+					key := fmt.Sprintf("%d/%d/%s", hop.ServerID, hop.ID, kind)
+					if seen[key] {
+						continue
+					}
+					seen[key] = true
+					if _, err := s.disp.Enqueue(r.Context(), hop.ServerID, shared.TypeRemoveChainHop,
+						shared.RemoveChainHopPayload{HopID: hop.ID, Kind: kind}); err != nil {
+						writeError(w, http.StatusInternalServerError, err.Error())
+						return
+					}
+				}
+			}
+			if revision.Snapshot.ServiceServerID != id {
+				key := fmt.Sprintf("node/%d/%d", revision.Snapshot.ServiceServerID, revision.Snapshot.ServiceNodeID)
+				if !seen[key] {
+					seen[key] = true
+					if _, err := s.disp.Enqueue(r.Context(), revision.Snapshot.ServiceServerID, shared.TypeRemoveNode,
+						shared.RemoveNodePayload{NodeID: revision.Snapshot.ServiceNodeID}); err != nil {
+						writeError(w, http.StatusInternalServerError, err.Error())
+						return
+					}
+				}
+			}
+		}
+	}
 	if s.req.IsOnline(id) {
 		// purge 参数：xray = 连同 xray 卸载（默认），agent = 仅卸载 agent（§5/§10）。
 		payload := shared.UninstallPayload{PurgeXray: req.Purge != "agent"}
@@ -734,4 +801,17 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 		"alias": srv.Alias, "purge": req.Purge,
 	})
 	writeJSON(w, http.StatusOK, nil)
+}
+
+func revisionSnapshotHops(revision store.ChainRevision) []store.ChainHop {
+	hops := make([]store.ChainHop, 0, len(revision.Snapshot.Hops))
+	for i, hop := range revision.Snapshot.Hops {
+		nodeID := int64(0)
+		if i == len(revision.Snapshot.Hops)-1 {
+			nodeID = revision.Snapshot.ServiceNodeID
+		}
+		hops = append(hops, store.ChainHop{ID: hop.HopID, ChainID: revision.ChainID, Seq: i,
+			ServerID: hop.ServerID, Role: hop.Role, NodeID: nodeID, TunnelUUID: hop.TunnelUUID})
+	}
+	return hops
 }

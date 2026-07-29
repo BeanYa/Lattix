@@ -5,6 +5,8 @@ import type {
   Chain,
   CommandLog,
   CreateChainRequest,
+  EditChainRequest,
+  ChainTrafficBucket,
   CreateNodeRequest,
   CreateServerResponse,
   DashboardStats,
@@ -180,6 +182,13 @@ export const api = {
 
   chains: () => requester.get<Chain[]>('/api/chain/list'),
   createChain: (body: CreateChainRequest) => requester.post<Chain>('/api/chain/create', body),
+  editChain: (body: EditChainRequest) => requester.post<Chain>('/api/chain/edit', body),
+  forcePublishChain: (chainId: number) =>
+    requester.post<Chain>('/api/chain/force-publish', { chain_id: chainId }),
+  resetChainTraffic: (chainId: number) =>
+    requester.post<void>('/api/chain/reset-traffic', { chain_id: chainId }),
+  chainTrafficHistory: (chainId: number, hopId = 0, days = 30) =>
+    requester.get<ChainTrafficBucket[]>(`/api/chain/get-traffic-history?chain_id=${chainId}&hop_id=${hopId}&days=${days}`),
   retryChain: (chainId: number) =>
     requester.post<Chain>('/api/chain/retry', { chain_id: chainId }),
   deleteChain: (chainId: number) =>
