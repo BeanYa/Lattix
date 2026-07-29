@@ -120,12 +120,13 @@ jobs:
           path: out
 
       - name: Install xray-core
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="$(curl -fsSL https://api.github.com/repos/XTLS/Xray-core/releases/latest \
-            | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4)"
+          TAG="$(gh api repos/XTLS/Xray-core/releases/latest --jq '.tag_name')"
           test -n "$TAG"
-          curl -fsSL -o /tmp/xray.zip \
-            "https://github.com/XTLS/Xray-core/releases/download/${TAG}/Xray-linux-64.zip"
+          gh release download "$TAG" --repo XTLS/Xray-core \
+            --pattern Xray-linux-64.zip --output /tmp/xray.zip
           unzip -oq /tmp/xray.zip -d /tmp/xray
           chmod +x /tmp/xray/xray
 
