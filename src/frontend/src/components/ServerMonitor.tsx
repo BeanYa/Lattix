@@ -6,6 +6,7 @@ import {
   EllipsisIcon,
 	ExternalLinkIcon,
   Globe2Icon,
+  Maximize2Icon,
   PencilIcon,
   RefreshCwIcon,
   RotateCcwKeyIcon,
@@ -34,6 +35,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
 import {
@@ -461,15 +468,18 @@ function TrendChart({
   series,
   timestamps,
   timezone,
+  expanded = false,
 }: {
   title: string
   unit: string
   series: ChartSeries[]
   timestamps: string[]
   timezone?: string
+  expanded?: boolean
 }) {
   const chartRef = useRef<SVGSVGElement>(null)
   const [activePoint, setActivePoint] = useState<{ index: number; y: number } | null>(null)
+  const [dialogOpen, setDialogOpen] = useState(false)
   const values = series.flatMap((item) => item.values.filter((value): value is number => value !== null))
   const max = Math.max(1, ...values)
   const width = 480
@@ -507,22 +517,35 @@ function TrendChart({
   }
   return (
     <section className="flex flex-col gap-2">
-      <div className="flex items-center justify-between gap-3">
+      <div className={cn('flex items-center justify-between gap-3', expanded && 'pr-10')}>
         <h3 className="text-sm font-medium">{title}</h3>
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          {series.map((item) => (
-            <span key={item.label} className="flex items-center gap-1">
-              <span
-                className={cn(
-                  'size-2 rounded-full',
-                  item.color === 'success' && 'bg-success',
-                  item.color === 'info' && 'bg-info',
-                  item.color === 'warning' && 'bg-warning',
-                )}
-              />
-              {item.label}
-            </span>
-          ))}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            {series.map((item) => (
+              <span key={item.label} className="flex items-center gap-1">
+                <span
+                  className={cn(
+                    'size-2 rounded-full',
+                    item.color === 'success' && 'bg-success',
+                    item.color === 'info' && 'bg-info',
+                    item.color === 'warning' && 'bg-warning',
+                  )}
+                />
+                {item.label}
+              </span>
+            ))}
+          </div>
+          {!expanded ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`放大${title}图表`}
+              title={`放大${title}图表`}
+              onClick={() => setDialogOpen(true)}
+            >
+              <Maximize2Icon />
+            </Button>
+          ) : null}
         </div>
       </div>
       <div className="relative rounded-lg border bg-muted/20 p-2">
@@ -530,7 +553,10 @@ function TrendChart({
           <svg
             ref={chartRef}
             viewBox={`0 0 ${width} ${height}`}
-            className="h-24 w-full touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className={cn(
+              'w-full touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring',
+              expanded ? 'h-[min(65vh,32rem)]' : 'h-24',
+            )}
             role="img"
             aria-label={`${title}趋势，使用左右方向键查看采样数据`}
             tabIndex={0}
@@ -630,6 +656,22 @@ function TrendChart({
         ) : null}
       </div>
       <span className="text-right text-xs text-muted-foreground">{unit}</span>
+      {!expanded ? (
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <DialogContent className="w-[calc(100%-2rem)] max-w-5xl p-5 sm:max-w-5xl">
+            <DialogTitle className="sr-only">{title}</DialogTitle>
+            <DialogDescription className="sr-only">{title}最近 24 小时趋势</DialogDescription>
+            <TrendChart
+              title={title}
+              unit={unit}
+              series={series}
+              timestamps={timestamps}
+              timezone={timezone}
+              expanded
+            />
+          </DialogContent>
+        </Dialog>
+      ) : null}
     </section>
   )
 }
@@ -667,8 +709,8 @@ function DetailSheet({
   const cpu = history.map((sample) => sample.cpu_percent)
   const memory = history.map((sample) => percent(sample.mem_used, sample.mem_total))
   const disk = history.map((sample) => percent(sample.disk_used, sample.disk_total))
-  const tx = history.map((sample) => sample.network_tx_bps)
-  const rx = history.map((sample) => sample.network_rx_bps)
+  const tx = history.map((sample) => sample.network_tx_bps === null ? null : sample.network_tx_bps / 1024)
+  const rx = history.map((sample) => sample.network_rx_bps === null ? null : sample.network_rx_bps / 1024)
   const latency = history.map((sample) => sample.latency_ms)
   const timestamps = history.map((sample) => sample.updated_at)
   const metrics = server?.metrics
@@ -821,7 +863,7 @@ function DetailSheet({
                 />
                 <TrendChart
                   title="网络速率"
-                  unit="B/s"
+                  unit="KB/s"
                   series={[
                     { label: '上传', color: 'success', values: tx },
                     { label: '下载', color: 'info', values: rx },
