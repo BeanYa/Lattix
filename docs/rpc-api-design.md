@@ -4,8 +4,9 @@
 中间件以及 Panel ↔ Agent WebSocket 协议的最终契约。
 
 当前项目处于全新开发阶段。本次协议为破坏性替换：不保留旧 RESTful
-路由、旧响应结构、旧 WebSocket 信封、旧数据库结构或兼容迁移逻辑。
-Panel、Frontend、Agent 和业务数据库均按新版本重新安装、初始化。
+路由、旧响应结构或旧 WebSocket 信封。Panel、Frontend 和 Agent 应同步发布；
+业务数据库由 Panel 启动时依据 `PRAGMA user_version` 自动执行事务化结构迁移，
+无需随版本重新安装。
 
 ## 1. 协议边界
 

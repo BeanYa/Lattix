@@ -301,8 +301,9 @@ sysctl 权限或安装以非 root 运行时都不会阻断 Agent 安装；脚本
   生成 `checksums.txt`，并执行**当前面板 × 当前 Agent 协议 e2e 回归**。通过后
   先发布 `ghcr.io/beanya/lattix:<version>` 与 `latest` 多架构镜像，再发布
   GitHub Release。Release 不重复附带安装脚本。
-- **协议同步发布**：Panel、Frontend、Agent 和数据库结构按同一版本全新安装，不维护旧
-  HTTP/WS/数据库兼容窗口；Agent 对格式有效但未知的动作返回 `UNSUPPORTED_ACTION`。
+- **协议同步发布**：Panel、Frontend 和 Agent 按同一版本发布，不维护旧 HTTP/WS 协议
+  兼容窗口；Agent 对格式有效但未知的动作返回 `UNSUPPORTED_ACTION`。业务数据库在新面板
+  启动、对外提供服务前自动执行一次事务化结构迁移，迁移失败会回滚并阻止面板启动。
 - **agent 自升级**：服务器页"升级 agent"下发 `agent.upgrade`，agent 从 GitHub release
   下载目标版本、校验 checksums.txt 后原子自替换并退出（systemd 拉起完成升级）。
 

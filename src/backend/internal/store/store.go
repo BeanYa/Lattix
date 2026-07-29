@@ -269,79 +269,11 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(Schema); err != nil {
+	if err := initializeSchema(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
-	}
-	if err := migrateCustomExchangeRates(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate custom exchange rates: %w", err)
-	}
-	if _, err := db.Exec(`INSERT OR IGNORE INTO server_traffic_plans
-		(server_id, quota_bytes, accounting_mode, reset_anchor_on, reset_count, reset_unit, tracking_started_on)
-		SELECT id, NULL, 'outbound', date('now'), 1, 'month', date('now') FROM servers`); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("init server traffic plans: %w", err)
-	}
-	if err := migrateServerAddressMode(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate server address mode: %w", err)
+		return nil, fmt.Errorf("init/migrate schema: %w", err)
 	}
 	return &Store{db: db}, nil
-}
-
-func migrateCustomExchangeRates(db *sql.DB) error {
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	// The latest row wins when upgrading a pre-release database that allowed
-	// multiple destinations for one source currency.
-	if _, err := tx.Exec(`DELETE FROM custom_exchange_rates
-		WHERE id NOT IN (SELECT MAX(id) FROM custom_exchange_rates GROUP BY source_currency)`); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_exchange_rates_source
-		ON custom_exchange_rates(source_currency)`); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func migrateServerAddressMode(db *sql.DB) error {
-	rows, err := db.Query(`PRAGMA table_info(servers)`)
-	if err != nil {
-		return err
-	}
-	hasColumn := false
-	for rows.Next() {
-		var cid int
-		var name, typ string
-		var notNull, primaryKey int
-		var defaultValue sql.NullString
-		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &primaryKey); err != nil {
-			rows.Close()
-			return err
-		}
-		if name == "address_mode" {
-			hasColumn = true
-		}
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if hasColumn {
-		return nil
-	}
-	if _, err := db.Exec(`ALTER TABLE servers ADD COLUMN address_mode TEXT NOT NULL DEFAULT 'auto'`); err != nil {
-		return err
-	}
-	// Before address_mode existed, an address equal to the last learned peer was
-	// produced by automatic learning. Other non-empty values were administrator supplied.
-	_, err = db.Exec(`UPDATE servers SET address_mode = CASE
-		WHEN address = '' OR address = learned_addr THEN 'auto' ELSE 'manual' END`)
-	return err
 }
 
 // Close 关闭底层数据库连接。
