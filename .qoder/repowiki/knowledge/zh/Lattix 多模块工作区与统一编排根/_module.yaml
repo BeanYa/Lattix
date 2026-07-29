@@ -1,0 +1,16 @@
+schema_version: 1
+module_path: ""
+title: Lattix 多模块工作区与统一编排根
+scope:
+    - Dockerfile
+    - go.work
+    - go.work.sum
+    - install.sh
+    - skills-lock.json
+    - .dockerignore
+    - .gitignore
+    - AGENTS.md
+    - README.md
+source_files: []
+depends_on: []
+related_to: []

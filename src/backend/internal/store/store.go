@@ -125,6 +125,8 @@ CREATE TABLE IF NOT EXISTS users (
     traffic_reset_day INTEGER NOT NULL DEFAULT 0, -- 每月重置日（day-of-month，0=创建日，max 28）
     sub_title         TEXT    NOT NULL DEFAULT '', -- 订阅落地页标题覆盖（空=用全局）
     sub_announcement  TEXT    NOT NULL DEFAULT '', -- 订阅公告覆盖（Markdown，空=用全局）
+    plan_name         TEXT    NOT NULL DEFAULT '', -- 套餐名（subscription-userinfo plan_name，空=用全局）
+    app_url           TEXT    NOT NULL DEFAULT '', -- 客户端跳转链接（subscription-userinfo app_url，空=用全局）
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

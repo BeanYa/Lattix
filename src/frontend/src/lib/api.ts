@@ -232,6 +232,8 @@ export const api = {
     traffic_reset_day: number
     sub_title: string
     sub_announcement: string
+    plan_name: string
+    app_url: string
   }) => requester.post<void>('/api/user/sub-settings', body),
   userTrafficHistory: (userId: number) =>
     requester.get<Array<{ period_start: string; up: number; down: number }>>(
@@ -259,8 +261,11 @@ export const api = {
     requester.post<SubSettings>('/api/setting/sub', body),
 
   panelVersion: () => requester.get<PanelVersionInfo>('/api/panel/get-version'),
-  startPanelUpdate: (version?: string) =>
-    requester.post<PanelUpdateStatus>('/api/panel/start-update', version ? { version } : {}),
+  startPanelUpdate: (version?: string, force?: boolean) =>
+    requester.post<PanelUpdateStatus>('/api/panel/start-update', {
+      ...(version ? { version } : {}),
+      ...(force ? { force: true } : {}),
+    }),
   panelUpdateStatus: () =>
     requester.get<PanelUpdateStatus>('/api/panel/get-update-status', undefined, {
       display: 'silent',

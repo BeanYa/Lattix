@@ -1,0 +1,44 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: main
+nodes_managed: true
+exported_at: "2026-07-29T20:14:46Z"
+modules:
+    "":
+        dir_name: Lattix 多模块工作区与统一编排根
+        title: Lattix 多模块工作区与统一编排根
+        scope:
+            - Dockerfile
+            - go.work
+            - go.work.sum
+            - install.sh
+            - skills-lock.json
+            - .dockerignore
+            - .gitignore
+            - AGENTS.md
+            - README.md
+        source_files: []
+        children:
+            - docs
+            - scripts
+        depends_on: []
+        related_to: []
+    docs:
+        dir_name: Lattix 项目设计文档与协议规范
+        title: Lattix 项目设计文档与协议规范
+        scope:
+            - docs/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    scripts:
+        dir_name: Lattix 安装、运维与 E2E 验收脚本集
+        title: Lattix 安装、运维与 E2E 验收脚本集
+        scope:
+            - scripts/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []

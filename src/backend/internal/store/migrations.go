@@ -112,6 +112,8 @@ func migrateSchema(tx *sql.Tx) error {
 			{"traffic_reset_day", "INTEGER NOT NULL DEFAULT 0"},
 			{"sub_title", "TEXT NOT NULL DEFAULT ''"},
 			{"sub_announcement", "TEXT NOT NULL DEFAULT ''"},
+			{"plan_name", "TEXT NOT NULL DEFAULT ''"},
+			{"app_url", "TEXT NOT NULL DEFAULT ''"},
 		},
 		"traffic": {
 			{"period_start", "TEXT NOT NULL DEFAULT ''"},

@@ -15,6 +15,8 @@ type subSettingsDTO struct {
 	CustomCSS          string `json:"custom_css"`
 	UpdateInterval     int    `json:"update_interval"`      // 小时
 	TrafficHistoryKeep int    `json:"traffic_history_keep"` // 保留周期数
+	PlanName           string `json:"plan_name"`            // 默认套餐名
+	AppURL             string `json:"app_url"`              // 默认客户端跳转链接
 }
 
 // handleGetSubSettings 处理 GET /api/setting/sub。
@@ -26,6 +28,8 @@ func (s *Server) handleGetSubSettings(w http.ResponseWriter, r *http.Request) {
 		CustomCSS:          s.getSetting(ctx, store.SettingSubCustomCSS),
 		UpdateInterval:     settingInt(s.getSetting(ctx, store.SettingSubUpdateInterval), 24),
 		TrafficHistoryKeep: settingInt(s.getSetting(ctx, store.SettingTrafficHistoryKeep), 6),
+		PlanName:           s.getSetting(ctx, store.SettingSubPlanName),
+		AppURL:             s.getSetting(ctx, store.SettingSubAppURL),
 	}
 	writeJSON(w, http.StatusOK, dto)
 }
@@ -37,6 +41,8 @@ type updateSubSettingsRequest struct {
 	CustomCSS          string `json:"custom_css"`
 	UpdateInterval     int    `json:"update_interval"`
 	TrafficHistoryKeep int    `json:"traffic_history_keep"`
+	PlanName           string `json:"plan_name"`
+	AppURL             string `json:"app_url"`
 }
 
 // handleUpdateSubSettings 处理 POST /api/setting/sub。
@@ -66,6 +72,8 @@ func (s *Server) handleUpdateSubSettings(w http.ResponseWriter, r *http.Request)
 		{Key: store.SettingSubCustomCSS, Value: req.CustomCSS},
 		{Key: store.SettingSubUpdateInterval, Value: strconv.Itoa(req.UpdateInterval)},
 		{Key: store.SettingTrafficHistoryKeep, Value: strconv.Itoa(req.TrafficHistoryKeep)},
+		{Key: store.SettingSubPlanName, Value: strings.TrimSpace(req.PlanName)},
+		{Key: store.SettingSubAppURL, Value: strings.TrimSpace(req.AppURL)},
 	}
 	if _, err := s.st.ApplySettings(ctx, mutations, nil); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

@@ -342,9 +342,32 @@ paths:
         - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/user/sub-settings:
+    post:
+      operationId: userSubSettings
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/user/traffic-history:
+    get:
+      operationId: userTrafficHistory
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/setting/get:
     get:
       operationId: settingGet
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/setting/sub:
+    get:
+      operationId: settingSubGet
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+    post:
+      operationId: settingSubUpdate
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/setting/update:
     post:

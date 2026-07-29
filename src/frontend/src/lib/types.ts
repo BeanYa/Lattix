@@ -343,6 +343,8 @@ export interface SubUser {
   traffic_reset_day: number
   sub_title: string
   sub_announcement: string
+  plan_name: string
+  app_url: string
   created_at: string
 }
 
@@ -470,6 +472,8 @@ export interface SubSettings {
   custom_css: string
   update_interval: number
   traffic_history_keep: number
+  plan_name: string
+  app_url: string
 }
 
 export interface AlertChannelResult {

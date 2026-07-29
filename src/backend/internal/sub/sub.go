@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -39,7 +40,7 @@ func New(st *store.Store, base func(*http.Request) string, spaHTML []byte) *Serv
 }
 
 // setSubHeaders 写订阅通用响应头（§9）：
-// subscription-userinfo（upload/download/total/expire）与 profile-update-interval。
+// subscription-userinfo（upload/download/total/expire/reset_day/plan_name/app_url）与 profile-update-interval。
 func (s *Server) setSubHeaders(w http.ResponseWriter, r *http.Request, user *store.User) {
 	t, err := s.st.UserTraffic(r.Context(), user.UUID)
 	if err != nil {
@@ -48,9 +49,26 @@ func (s *Server) setSubHeaders(w http.ResponseWriter, r *http.Request, user *sto
 	v := fmt.Sprintf("upload=%d; download=%d", t.Up, t.Down)
 	if user.TrafficLimit > 0 {
 		v += fmt.Sprintf("; total=%d", user.TrafficLimit)
+		v += fmt.Sprintf("; reset_day=%d", daysUntilReset(user, time.Now()))
 	}
 	if user.ExpiresAt != nil {
 		v += fmt.Sprintf("; expire=%d", user.ExpiresAt.Unix())
+	}
+	// 套餐名：用户级 > 全局设置。
+	planName := user.PlanName
+	if planName == "" {
+		planName, _ = s.st.GetSetting(r.Context(), store.SettingSubPlanName)
+	}
+	if planName != "" {
+		v += "; plan_name=" + planName
+	}
+	// 客户端跳转链接：用户级 > 全局设置。
+	appURL := user.AppURL
+	if appURL == "" {
+		appURL, _ = s.st.GetSetting(r.Context(), store.SettingSubAppURL)
+	}
+	if appURL != "" {
+		v += "; app_url=" + appURL
 	}
 	w.Header().Set("Subscription-Userinfo", v)
 	// 更新间隔：优先用户级，否则全局设置，默认 24h。
@@ -59,6 +77,24 @@ func (s *Server) setSubHeaders(w http.ResponseWriter, r *http.Request, user *sto
 		interval = global
 	}
 	w.Header().Set("Profile-Update-Interval", interval)
+}
+
+// daysUntilReset 计算距下次流量重置的天数（与 sweeper 重置语义一致：
+// reset_day=0 取创建日，>28 截断为 28；当天已过重置时刻则计入下月）。
+func daysUntilReset(user *store.User, now time.Time) int {
+	resetDay := user.TrafficResetDay
+	if resetDay == 0 {
+		resetDay = user.CreatedAt.Day()
+	}
+	if resetDay > 28 {
+		resetDay = 28
+	}
+	next := time.Date(now.Year(), now.Month(), resetDay, 0, 0, 0, 0, now.Location())
+	if !next.After(now) {
+		next = next.AddDate(0, 1, 0)
+	}
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return int(next.Sub(today).Hours() / 24)
 }
 
 type clashRealityOpts struct {

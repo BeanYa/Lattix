@@ -60,6 +60,7 @@ type Server struct {
 	reqLog    *logging.RequestLog
 
 	routePolicies map[string]logging.LogPolicy
+	methodFallbacks map[string]bool // 已注册 405 回退路由的裸路径（同路径多方法时避免重复注册）
 	idempotencyMu sync.Mutex
 	authOnce      sync.Once
 	loginAttempts *loginLimiter
@@ -106,6 +107,7 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
 		routePolicies: make(map[string]logging.LogPolicy),
+		methodFallbacks: make(map[string]bool),
 	}
 	s.upd = newPanelUpdater(s)
 	s.releases = newReleaseCatalog(s)

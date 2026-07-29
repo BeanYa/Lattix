@@ -65,10 +65,17 @@ func (s *Server) registerRPC(
 		wrapped = validateRPCQuery(options.AllowedQuery, wrapped)
 	}
 	mux.HandleFunc(pattern, wrapped)
-	mux.HandleFunc(path, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Allow", method)
-		writeProtocolError(w, http.StatusMethodNotAllowed, "method not allowed")
-	})
+	// 同一路径可能注册多个方法（如 GET/POST /api/setting/sub）：裸路径 405 回退只注册一次。
+	if s.methodFallbacks == nil {
+		s.methodFallbacks = map[string]bool{}
+	}
+	if !s.methodFallbacks[path] {
+		s.methodFallbacks[path] = true
+		mux.HandleFunc(path, func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Allow", method)
+			writeProtocolError(w, http.StatusMethodNotAllowed, "method not allowed")
+		})
+	}
 }
 
 // LogPolicy 返回服务端路由注册时声明的请求日志策略。

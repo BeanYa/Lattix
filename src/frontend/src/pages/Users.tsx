@@ -95,6 +95,8 @@ export default function Users() {
   const [subResetDay, setSubResetDay] = useState('0')
   const [subTitleOverride, setSubTitleOverride] = useState('')
   const [subAnnouncementOverride, setSubAnnouncementOverride] = useState('')
+  const [subPlanName, setSubPlanName] = useState('')
+  const [subAppURL, setSubAppURL] = useState('')
   const [subSaving, setSubSaving] = useState(false)
   const [subErr, setSubErr] = useState('')
   // 流量历史对话框
@@ -262,6 +264,8 @@ export default function Users() {
     setSubResetDay(String(u.traffic_reset_day))
     setSubTitleOverride(u.sub_title)
     setSubAnnouncementOverride(u.sub_announcement)
+    setSubPlanName(u.plan_name)
+    setSubAppURL(u.app_url)
     setSubErr('')
   }
 
@@ -277,6 +281,8 @@ export default function Users() {
         traffic_reset_day: Number(subResetDay) || 0,
         sub_title: subTitleOverride,
         sub_announcement: subAnnouncementOverride,
+        plan_name: subPlanName,
+        app_url: subAppURL,
       })
       setSubTarget(null)
       load()
@@ -622,6 +628,26 @@ export default function Users() {
                 onChange={e => setSubAnnouncementOverride(e.target.value)}
                 placeholder="留空跟随全局"
               />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>套餐名</Label>
+                <Input
+                  value={subPlanName}
+                  onChange={e => setSubPlanName(e.target.value)}
+                  placeholder="留空跟随全局"
+                />
+                <p className="text-xs text-muted-foreground">客户端 hover 流量信息时显示</p>
+              </div>
+              <div className="space-y-2">
+                <Label>跳转链接</Label>
+                <Input
+                  value={subAppURL}
+                  onChange={e => setSubAppURL(e.target.value)}
+                  placeholder="留空跟随全局"
+                />
+                <p className="text-xs text-muted-foreground">客户端流量卡片可点击跳转的按钮</p>
+              </div>
             </div>
           </div>
           {subErr && <p className="text-sm text-destructive">{subErr}</p>}

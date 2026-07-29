@@ -23,6 +23,8 @@ type User struct {
 	TrafficResetDay int    // 每月重置日（day-of-month，0=创建日，max 28）
 	SubTitle        string // 订阅落地页标题覆盖
 	SubAnnouncement string // 订阅公告覆盖（Markdown）
+	PlanName        string // 套餐名（subscription-userinfo plan_name，空=用全局）
+	AppURL          string // 客户端跳转链接（subscription-userinfo app_url，空=用全局）
 	CreatedAt       time.Time
 }
 
@@ -46,7 +48,7 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var exp sql.NullInt64
 	var expired, disabled int
 	if err := row.Scan(&u.ID, &u.Name, &u.UUID, &u.SubToken, &exp, &expired, &disabled,
-		&u.TrafficLimit, &u.TrafficResetDay, &u.SubTitle, &u.SubAnnouncement, &u.CreatedAt); err != nil {
+		&u.TrafficLimit, &u.TrafficResetDay, &u.SubTitle, &u.SubAnnouncement, &u.PlanName, &u.AppURL, &u.CreatedAt); err != nil {
 		return nil, err
 	}
 	if exp.Valid {
@@ -58,7 +60,7 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	return &u, nil
 }
 
-const userCols = `id, name, uuid, sub_token, expires_at, expired, disabled, traffic_limit, traffic_reset_day, sub_title, sub_announcement, created_at`
+const userCols = `id, name, uuid, sub_token, expires_at, expired, disabled, traffic_limit, traffic_reset_day, sub_title, sub_announcement, plan_name, app_url, created_at`
 
 // ListUsers 列出全部用户（按 id 升序）。
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
@@ -196,11 +198,11 @@ func (s *Store) SetUserExpiry(ctx context.Context, id int64, expiresAt *time.Tim
 	return nil
 }
 
-// SetUserSubSettings 更新用户级订阅设置（流量配额/重置日/落地页覆盖）。
-func (s *Store) SetUserSubSettings(ctx context.Context, id int64, trafficLimit int64, resetDay int, subTitle, subAnnouncement string) error {
+// SetUserSubSettings 更新用户级订阅设置（流量配额/重置日/落地页覆盖/套餐名/跳转链接）。
+func (s *Store) SetUserSubSettings(ctx context.Context, id int64, trafficLimit int64, resetDay int, subTitle, subAnnouncement, planName, appURL string) error {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE users SET traffic_limit = ?, traffic_reset_day = ?, sub_title = ?, sub_announcement = ? WHERE id = ?`,
-		trafficLimit, resetDay, subTitle, subAnnouncement, id)
+		`UPDATE users SET traffic_limit = ?, traffic_reset_day = ?, sub_title = ?, sub_announcement = ?, plan_name = ?, app_url = ? WHERE id = ?`,
+		trafficLimit, resetDay, subTitle, subAnnouncement, planName, appURL, id)
 	if err != nil {
 		return fmt.Errorf("set user sub settings: %w", err)
 	}

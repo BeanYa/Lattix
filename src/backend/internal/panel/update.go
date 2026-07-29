@@ -78,11 +78,12 @@ type panelVersionInfo struct {
 
 // panelUpdater 持有更新状态机；同时只允许一个更新流程。
 type panelUpdater struct {
-	s   *Server
-	mu  sync.Mutex
-	st  panelUpdateStatus
-	ver panelVersionInfo // 最近一次检测结果缓存（status 之外给 version 端点复用）
-	wg  sync.WaitGroup
+	s     *Server
+	mu    sync.Mutex
+	st    panelUpdateStatus
+	ver   panelVersionInfo // 最近一次检测结果缓存（status 之外给 version 端点复用）
+	force bool             // 强制更新：即使版本号相同也执行覆盖安装
+	wg    sync.WaitGroup
 }
 
 func newPanelUpdater(s *Server) *panelUpdater {
@@ -159,7 +160,8 @@ func (s *Server) handlePanelVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePanelUpdateStart 处理 POST /api/panel/update：启动自更新（异步）。
-// body 可指定 {"version":"vX.Y.Z"}，缺省更新到 latest。
+// body 可指定 {"version":"vX.Y.Z","force":true}，缺省更新到 latest。
+// force=true 时即使版本号相同也执行覆盖安装。
 func (s *Server) handlePanelUpdateStart(w http.ResponseWriter, r *http.Request) {
 	if !s.canUpdate() {
 		writeError(w, http.StatusBadRequest, "dev 构建无对应 release，无法自更新")
@@ -167,6 +169,7 @@ func (s *Server) handlePanelUpdateStart(w http.ResponseWriter, r *http.Request) 
 	}
 	var req struct {
 		Version string `json:"version"`
+		Force   bool   `json:"force"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -179,6 +182,7 @@ func (s *Server) handlePanelUpdateStart(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusConflict, "面板更新已在进行中")
 		return
 	}
+	u.force = req.Force
 	u.st = panelUpdateStatus{
 		Running:        true,
 		Stage:          updStageCheck,
@@ -201,6 +205,7 @@ func (s *Server) handlePanelUpdateStart(w http.ResponseWriter, r *http.Request) 
 	s.audit(r, "panel.update_started", nil, nil, map[string]any{
 		"current_version": s.cfg.Version,
 		"target_version":  strings.TrimSpace(req.Version),
+		"force":           req.Force,
 	})
 	u.wg.Add(1)
 	go func() {
@@ -278,7 +283,10 @@ func (u *panelUpdater) run(ctx context.Context) {
 	u.mu.Lock()
 	u.st.TargetVersion = target
 	u.mu.Unlock()
-	if target == st.CurrentVersion {
+	u.mu.Lock()
+	forceUpdate := u.force
+	u.mu.Unlock()
+	if target == st.CurrentVersion && !forceUpdate {
 		u.mu.Lock()
 		u.st.Running = false
 		u.st.Stage = updStageDone

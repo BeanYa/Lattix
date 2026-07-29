@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,8 @@ type userDTO struct {
 	TrafficResetDay int         `json:"traffic_reset_day"`
 	SubTitle        string      `json:"sub_title"`
 	SubAnnouncement string      `json:"sub_announcement"`
+	PlanName        string      `json:"plan_name"`
+	AppURL          string      `json:"app_url"`
 	CreatedAt       time.Time   `json:"created_at"`
 }
 
@@ -52,6 +55,8 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 		TrafficResetDay: u.TrafficResetDay,
 		SubTitle:        u.SubTitle,
 		SubAnnouncement: u.SubAnnouncement,
+		PlanName:        u.PlanName,
+		AppURL:          u.AppURL,
 		CreatedAt:       u.CreatedAt,
 	}
 }
@@ -476,6 +481,8 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 		TrafficResetDay int    `json:"traffic_reset_day"` // 0=创建日，1-28
 		SubTitle        string `json:"sub_title"`
 		SubAnnouncement string `json:"sub_announcement"`
+		PlanName        string `json:"plan_name"` // 套餐名（空=用全局）
+		AppURL          string `json:"app_url"`   // 客户端跳转链接（空=用全局）
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -492,7 +499,7 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "重置日须为 0–28（0=创建日）")
 		return
 	}
-	if err := s.st.SetUserSubSettings(r.Context(), req.UserID, req.TrafficLimit, req.TrafficResetDay, req.SubTitle, req.SubAnnouncement); err != nil {
+	if err := s.st.SetUserSubSettings(r.Context(), req.UserID, req.TrafficLimit, req.TrafficResetDay, req.SubTitle, req.SubAnnouncement, strings.TrimSpace(req.PlanName), strings.TrimSpace(req.AppURL)); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "用户不存在")
 			return
