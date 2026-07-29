@@ -376,8 +376,9 @@ export default function Chains() {
     hopIndexes,
   })
 
-  const load = useCallback(() => {
-    Promise.all([api.chains(), api.nodes(), api.servers()])
+  const load = useCallback((silent = false) => {
+    const options = silent ? { display: 'silent' as const } : undefined
+    Promise.all([api.chains(options), api.nodes(options), api.servers(options)])
       .then(([c, n, s]) => {
         setChains(c)
         setNodes(n)
@@ -389,7 +390,7 @@ export default function Chains() {
 
   useEffect(() => {
     load()
-    const timer = setInterval(load, 5000)
+    const timer = setInterval(() => load(true), 5000)
     return () => clearInterval(timer)
   }, [load])
 

@@ -85,8 +85,9 @@ export default function Users() {
   const [assignError, setAssignError] = useState('')
   const [qrText, setQrText] = useState('')
 
-  const load = useCallback(() => {
-    Promise.all([api.users(), api.nodes(), api.chains()])
+  const load = useCallback((silent = false) => {
+    const options = silent ? { display: 'silent' as const } : undefined
+    Promise.all([api.users(options), api.nodes(options), api.chains(options)])
       .then(([u, n, c]) => {
         setUsers(u)
         setNodes(n)
@@ -98,7 +99,7 @@ export default function Users() {
 
   useEffect(() => {
     load()
-    const timer = setInterval(load, 5000)
+    const timer = setInterval(() => load(true), 5000)
     return () => clearInterval(timer)
   }, [load])
 

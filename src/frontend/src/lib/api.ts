@@ -1,4 +1,4 @@
-import { requester, RequestError } from './requester'
+import { requester, RequestError, type RequestOptions } from './requester'
 import type {
   AlertTestResult,
   BillingInput,
@@ -74,9 +74,9 @@ export const api = {
     return result
   },
 
-  dashboard: () => requester.get<DashboardStats>('/api/dashboard/get'),
+  dashboard: (options?: RequestOptions) => requester.get<DashboardStats>('/api/dashboard/get', undefined, options),
 
-  servers: () => requester.get<Server[]>('/api/server/list'),
+  servers: (options?: RequestOptions) => requester.get<Server[]>('/api/server/list', undefined, options),
   serverMetricSamples: (limit = 30) =>
     requester.get<ServerMetricSeries[]>('/api/server/list-metric-samples', { limit }, {
       display: 'silent',
@@ -113,11 +113,11 @@ export const api = {
     }),
   releaseVersions: (kind: 'agent' | 'xray') =>
     requester.get<ReleaseVersions>('/api/server/list-release-versions', { kind }),
-  serverCommands: (serverId: number, limit = 50) =>
+  serverCommands: (serverId: number, limit = 50, options?: RequestOptions) =>
     requester.get<CommandLog[]>('/api/server/list-commands', {
       server_id: serverId,
       limit,
-    }),
+    }, options),
   repairServer: (serverId: number) =>
     requester.post<{ reapplied: number }>('/api/server/repair', { server_id: serverId }),
   updateServerAddress: (
@@ -181,7 +181,7 @@ export const api = {
     requester.post<CustomExchangeRate>('/api/exchange-rate/save-custom', rate),
   deleteCustomExchangeRate: (id: number) => requester.post<void>('/api/exchange-rate/delete-custom', { id }),
 
-  chains: () => requester.get<Chain[]>('/api/chain/list'),
+  chains: (options?: RequestOptions) => requester.get<Chain[]>('/api/chain/list', undefined, options),
   createChain: (body: CreateChainRequest) => requester.post<Chain>('/api/chain/create', body),
   editChain: (body: EditChainRequest) => requester.post<Chain>('/api/chain/edit', body),
   forcePublishChain: (chainId: number) =>
@@ -195,14 +195,14 @@ export const api = {
   deleteChain: (chainId: number) =>
     requester.post<void>('/api/chain/delete', { chain_id: chainId }),
 
-  nodes: () => requester.get<XrayNode[]>('/api/node/list'),
+  nodes: (options?: RequestOptions) => requester.get<XrayNode[]>('/api/node/list', undefined, options),
   createNode: (body: CreateNodeRequest) => requester.post<XrayNode>('/api/node/create', body),
   retryNode: (nodeId: number) =>
     requester.post<XrayNode>('/api/node/retry', { node_id: nodeId }),
   deleteNode: (nodeId: number) =>
     requester.post<void>('/api/node/delete', { node_id: nodeId }),
 
-  users: () => requester.get<SubUser[]>('/api/user/list'),
+  users: (options?: RequestOptions) => requester.get<SubUser[]>('/api/user/list', undefined, options),
   createUser: (name: string, expiresAt?: string | null, nodeIds?: number[]) =>
     requester.post<SubUser>('/api/user/create', {
       name,

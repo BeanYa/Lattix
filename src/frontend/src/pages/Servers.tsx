@@ -250,9 +250,9 @@ export default function Servers() {
   const [upgradeResult, setUpgradeResult] = useState<'pending' | 'success' | 'failed' | null>(null)
   const [upgradeResultError, setUpgradeResultError] = useState('')
 
-  const load = useCallback(() => {
+  const load = useCallback((silent = false) => {
     api
-      .servers()
+      .servers(silent ? { display: 'silent' } : undefined)
       .then(setServers)
       .catch((err) => setError(errorMessage(err)))
       .finally(() => setLoading(false))
@@ -262,7 +262,7 @@ export default function Servers() {
 
   useEffect(() => {
     load()
-    const timer = setInterval(load, 5000)
+    const timer = setInterval(() => load(true), 5000)
     return () => clearInterval(timer)
   }, [load])
 
@@ -586,7 +586,7 @@ export default function Servers() {
     let stopped = false
     const poll = async () => {
       try {
-        const cmds = await api.serverCommands(serverId, 50)
+        const cmds = await api.serverCommands(serverId, 50, { display: 'silent' })
         if (stopped) {
           return
         }

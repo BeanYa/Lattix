@@ -18,8 +18,9 @@ export default function Dashboard() {
   const [error, setError] = useState('')
 
   useEffect(() => {
-    const load = () => {
-      Promise.all([api.dashboard(), api.servers(), api.chains()])
+    const load = (silent = false) => {
+      const options = silent ? { display: 'silent' as const } : undefined
+      Promise.all([api.dashboard(options), api.servers(options), api.chains(options)])
         .then(([dashboardStats, serverList, chainList]) => {
           setStats(dashboardStats)
           setServers(serverList)
@@ -29,7 +30,7 @@ export default function Dashboard() {
         .catch((err) => setError(errorMessage(err)))
     }
     load()
-    const timer = setInterval(load, 5000)
+    const timer = setInterval(() => load(true), 5000)
     return () => clearInterval(timer)
   }, [])
 
