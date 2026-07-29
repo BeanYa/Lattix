@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboardIcon,
@@ -16,8 +16,10 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/s
 import LattixMark from '@/components/LattixMark'
 import ThemeToggle from '@/components/ThemeToggle'
 import UpdateOverlay from '@/components/UpdateOverlay'
+import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useRequestState } from '@/lib/request-state'
+import type { PanelLifecycleSnapshot, PanelLifecycleState } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 const navItems = [
@@ -29,11 +31,63 @@ const navItems = [
   { to: '/settings', label: '设置', icon: SettingsIcon, end: false },
 ]
 
+const panelStatePresentation: Record<PanelLifecycleState, { label: string; dot: string }> = {
+  startup: { label: '启动中', dot: 'bg-primary' },
+  active: { label: '正常', dot: 'bg-success' },
+  updating: { label: '更新中', dot: 'bg-warning' },
+  faulted: { label: '故障', dot: 'bg-destructive' },
+}
+
+function PanelStateIndicator({ snapshot, compact = false }: {
+  snapshot: PanelLifecycleSnapshot | null
+  compact?: boolean
+}) {
+  const presentation = snapshot
+    ? panelStatePresentation[snapshot.state]
+    : { label: '不可用', dot: 'bg-muted-foreground' }
+  const title = snapshot?.fault
+    ? `Panel ${presentation.label}: ${snapshot.fault}`
+    : `Panel ${presentation.label}`
+
+  return (
+    <div
+      role="status"
+      title={title}
+      className={cn(
+        'flex items-center gap-2 text-xs text-sidebar-foreground/70',
+        compact && 'flex-col gap-1 text-[10px]',
+      )}
+    >
+      <span className={cn('size-2 shrink-0 rounded-full', presentation.dot, snapshot?.state === 'updating' && 'animate-pulse')} />
+      <span className="truncate">{presentation.label}</span>
+    </div>
+  )
+}
+
 export default function Layout() {
   const { username, logout } = useAuth()
   const { foregroundPendingCount } = useRequestState()
   const navigate = useNavigate()
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [panelState, setPanelState] = useState<PanelLifecycleSnapshot | null>(null)
+
+  useEffect(() => {
+    let active = true
+    const refresh = async () => {
+      try {
+        const snapshot = await api.panelState()
+        if (active) setPanelState(snapshot)
+      } catch {
+        if (active) setPanelState(null)
+      }
+    }
+    void refresh()
+    const timer = window.setInterval(refresh, 5000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [])
 
   const onLogout = async () => {
     await logout()
@@ -55,6 +109,7 @@ export default function Layout() {
           <span aria-label="Lattix">LATTIX</span>
         </span>
         <div className="flex items-center gap-1">
+          <PanelStateIndicator snapshot={panelState} />
           <ThemeToggle className="text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
           <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
             <SheetTrigger render={<Button variant="ghost" size="icon" aria-label="打开导航菜单" />}>
@@ -117,6 +172,9 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
+        <div className="border-t border-sidebar-border py-3">
+          <PanelStateIndicator snapshot={panelState} compact />
+        </div>
         <div className="border-t border-sidebar-border p-2">
           <ThemeToggle className="mb-2 w-full text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
           <div className="mb-2 grid place-items-center">

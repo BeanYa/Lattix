@@ -75,6 +75,7 @@ export const rpcOperations = {
   settingChangePassword: { method: 'POST', path: '/api/setting/change-password' },
   settingTestAlerts: { method: 'POST', path: '/api/setting/test-alerts' },
   panelRestart: { method: 'POST', path: '/api/panel/restart' },
+  panelState: { method: 'GET', path: '/api/panel/state' },
   panelGetVersion: { method: 'GET', path: '/api/panel/get-version' },
   panelStartUpdate: { method: 'POST', path: '/api/panel/start-update' },
   panelGetUpdateStatus: { method: 'GET', path: '/api/panel/get-update-status' },

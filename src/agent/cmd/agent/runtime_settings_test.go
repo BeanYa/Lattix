@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"testing"
 	"time"
 
@@ -41,15 +45,77 @@ func TestReconnectDelaySpecialCases(t *testing.T) {
 	}
 }
 
-func TestAuthenticationRejectedStopsWrappedCloseError(t *testing.T) {
-	err := fmt.Errorf("read hello response: %w", &websocket.CloseError{
+func TestAuthenticationRejectedRequiresSentinel(t *testing.T) {
+	err := fmt.Errorf("dial panel: %w", errAuthenticationRejected)
+	if !authenticationRejected(err) {
+		t.Fatal("wrapped explicit rejection must stop reconnecting")
+	}
+	closeErr := fmt.Errorf("read session response: %w", &websocket.CloseError{
 		Code: 4001,
 		Text: "authentication failed",
 	})
-	if !authenticationRejected(err) {
-		t.Fatal("wrapped 4001 close must stop reconnecting")
+	if authenticationRejected(closeErr) {
+		t.Fatal("an untrusted websocket close must remain retryable")
 	}
 	if authenticationRejected(fmt.Errorf("network timeout")) {
 		t.Fatal("network errors must remain retryable")
+	}
+}
+
+func TestExplicitAuthenticationRejectionRequiresTrustedRPCBody(t *testing.T) {
+	id := shared.NewMessageID()
+	body, err := json.Marshal(shared.Envelope{
+		Kind: shared.KindResponse, Type: shared.TypeSessionOpen,
+		RequestID: id, TraceID: id, Code: shared.CodeAuthInvalidCredentials,
+		Data: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     http.Header{"X-Lattix-Protocol": []string{"1"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+	if !explicitAuthenticationRejection(response) {
+		t.Fatal("trusted structured 403 must be terminal")
+	}
+
+	untrusted := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+	if explicitAuthenticationRejection(untrusted) {
+		t.Fatal("proxy-style 403 without protocol header must remain retryable")
+	}
+}
+
+func TestLifecycleRetryDelayUsesBoundedPanelHint(t *testing.T) {
+	observed := shared.PanelLifecycleSnapshot{
+		State:       shared.PanelStateFaulted,
+		RetryPolicy: shared.RetryPolicy{MinMS: 30000, MaxMS: 90000},
+	}
+	for i := 0; i < 20; i++ {
+		got := lifecycleRetryDelay(observed, time.Second)
+		if got < 30*time.Second || got > 90*time.Second {
+			t.Fatalf("hinted delay = %s", got)
+		}
+	}
+}
+
+func TestPanelUnavailableUsesLowFrequencyRetry(t *testing.T) {
+	response := &http.Response{
+		StatusCode: http.StatusServiceUnavailable,
+		Body:       io.NopCloser(bytes.NewReader([]byte("proxy unavailable"))),
+	}
+	if !panelTemporarilyUnavailable(response) {
+		t.Fatal("503 must be treated as temporary panel unavailability")
+	}
+	for i := 0; i < 20; i++ {
+		got := unavailableRetryDelay()
+		if got < 30*time.Second || got > 90*time.Second {
+			t.Fatalf("unavailable delay = %s", got)
+		}
 	}
 }

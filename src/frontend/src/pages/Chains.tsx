@@ -35,6 +35,7 @@ import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { validateNameTemplate } from '@/lib/naming'
 import { DEFAULT_REALITY_DEST } from '@/lib/reality'
+import { isServerOnline } from '@/lib/server-state'
 import { useTimezone } from '@/lib/timezone'
 import type {
   Chain,
@@ -96,7 +97,7 @@ function inboundCapable(s: Server): boolean {
 
 function serverLabel(s: Server): string {
   const tags: string[] = []
-  if (!s.online) {
+	if (!isServerOnline(s)) {
     tags.push('离线')
   }
   if (!inboundCapable(s)) {
@@ -704,7 +705,7 @@ export default function Chains() {
   }
 
   const serverOnline = (id: number): boolean =>
-    servers.find((s) => s.id === id)?.online ?? false
+		isServerOnline(servers.find((s) => s.id === id))
 
   const serverSelectItems = servers.map((s) => ({ value: String(s.id), label: serverLabel(s) }))
   const relayExitNodeIds = useMemo(
@@ -820,7 +821,7 @@ export default function Chains() {
                         <Badge variant="outline" className={st.className}>
                           {st.label}
                         </Badge>
-                        {server && !server.online ? <Badge variant="outline">离线</Badge> : null}
+						{server && !isServerOnline(server) ? <Badge variant="outline">离线</Badge> : null}
                       </span>
                     </div>
                   </CardContent>

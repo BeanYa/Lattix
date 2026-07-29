@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/store"
+	"lattix/backend/internal/ws"
 	"lattix/shared"
 )
 
@@ -38,11 +40,18 @@ type metricsDTO struct {
 type serverDTO struct {
 	ID                           int64              `json:"id"`
 	Alias                        string             `json:"alias"`
-	Online                       bool               `json:"online"` // 由 WS 连接存在性推导（§5）
+	ConnectionState              string             `json:"connection_state"`
+	SessionID                    string             `json:"session_id,omitempty"`
+	SessionKind                  string             `json:"session_kind,omitempty"`
+	LastConnectedAt              *time.Time         `json:"last_connected_at"`
+	LastDisconnectedAt           *time.Time         `json:"last_disconnected_at"`
+	LastReconnectedAt            *time.Time         `json:"last_reconnected_at"`
+	ReconnectCount               int64              `json:"reconnect_count"`
+	LastDisconnectReason         string             `json:"last_disconnect_reason"`
 	LastSeenAt                   *time.Time         `json:"last_seen_at"`
 	XrayVersion                  string             `json:"xray_version"`
-	AgentVersion                 string             `json:"agent_version"` // hello 上报的 agent 版本
-	Address                      string             `json:"address"`       // 公网地址（hello 记录，订阅用，§9）
+	AgentVersion                 string             `json:"agent_version"` // session.open 上报的 agent 版本
+	Address                      string             `json:"address"`       // 公网地址（session.open 记录，订阅用，§9）
 	LearnedAddr                  string             `json:"learned_addr"`  // 拨入学习公网地址（容器网关回退到 agent 公网网卡，§9）
 	NICAddresses                 []string           `json:"nic_addresses"` // agent 上报的网卡非回环地址（§9），编辑地址时的内置候选
 	ConfigDrift                  bool               `json:"config_drift"`  // 配置漂移标志（§17）
@@ -89,10 +98,28 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 	} else if srv.AgentSettingsReportedAt != nil && srv.AgentSettingsRevision == desiredRevision {
 		settingsStatus = "synced"
 	}
+	connection := ws.ConnectionSnapshot{State: shared.ConnectionStateNeverConnected}
+	if srv.LastConnectedAt != nil {
+		connection.State = shared.ConnectionStateOffline
+	}
+	if reader, ok := s.req.(interface {
+		ConnectionState(int64, bool) ws.ConnectionSnapshot
+	}); ok {
+		connection = reader.ConnectionState(srv.ID, srv.LastConnectedAt != nil)
+	} else if s.req.IsOnline(srv.ID) {
+		connection.State = shared.ConnectionStateOnline
+	}
 	return serverDTO{
 		ID:                           srv.ID,
 		Alias:                        srv.Alias,
-		Online:                       s.req.IsOnline(srv.ID),
+		ConnectionState:              connection.State,
+		SessionID:                    connection.SessionID,
+		SessionKind:                  connection.SessionKind,
+		LastConnectedAt:              srv.LastConnectedAt,
+		LastDisconnectedAt:           srv.LastDisconnectedAt,
+		LastReconnectedAt:            srv.LastReconnectedAt,
+		ReconnectCount:               srv.ReconnectCount,
+		LastDisconnectReason:         srv.LastDisconnectReason,
 		LastSeenAt:                   srv.LastSeenAt,
 		XrayVersion:                  srv.XrayVersion,
 		AgentVersion:                 srv.AgentVersion,
@@ -353,7 +380,7 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleUpdateServer 处理 PATCH /api/servers/{id}：管理员修改公网地址（§4/§9）与
-// NAT 可用端口段（§21）。地址一经写入不再被 hello 覆盖；置空则下次 hello 按 RemoteAddr
+// NAT 可用端口段（§21）。地址一经写入不再被 session.open 覆盖；置空则下次 session.open 按 RemoteAddr
 // 重新自动学习（NAT 类型禁止置空）。机器类型建后不允许互转；端口段收窄时校验
 // 该 server 存量节点 realized 端口与链跳端口不越界，越界 400。
 func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
@@ -783,22 +810,33 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	uninstallAcked := false
+	uninstallAttempts := 0
 	if s.req.IsOnline(id) {
 		// purge 参数：xray = 连同 xray 卸载（默认），agent = 仅卸载 agent（§5/§10）。
 		payload := shared.UninstallPayload{PurgeXray: req.Purge != "agent"}
-		if _, err := s.disp.Enqueue(r.Context(), id, shared.TypeUninstall, payload); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
+		uninstallCtx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		uninstallAcked, uninstallAttempts, err = s.disp.UninstallWithRetry(uninstallCtx, id, payload)
+		cancel()
+		if err != nil {
+			// Deletion remains authoritative when the delivery session disappears.
+			log.Printf("panel: server %d uninstall delivery: %v", id, err)
 		}
 	}
-	if err := s.st.DeleteServerCascade(r.Context(), id); err != nil {
+	if err := s.st.DeleteServerCascade(context.Background(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if forgetter, ok := s.req.(interface {
+		ForgetAgent(int64, int, string)
+	}); ok {
+		forgetter.ForgetAgent(id, 1008, "credentials revoked")
 	}
 	// 级联删除后对象已不存在，审计行存 alias 快照留痕（§log）。
 	sid := id
 	s.audit(r, "server.delete", &sid, nil, map[string]any{
 		"alias": srv.Alias, "purge": req.Purge,
+		"uninstall_acked": uninstallAcked, "uninstall_attempts": uninstallAttempts,
 	})
 	writeJSON(w, http.StatusOK, nil)
 }

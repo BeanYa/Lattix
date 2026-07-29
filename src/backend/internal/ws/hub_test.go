@@ -3,7 +3,9 @@ package ws
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
+	"time"
 
 	"lattix/shared"
 )
@@ -40,6 +42,68 @@ func TestBeginDrainRejectsSendAndSuppressesDisconnect(t *testing.T) {
 	h.unregister(conn)
 	if disconnected {
 		t.Fatal("planned drain must suppress offline transition callback")
+	}
+}
+
+type fixedLifecycle struct {
+	snapshot shared.PanelLifecycleSnapshot
+}
+
+func (f fixedLifecycle) Snapshot() shared.PanelLifecycleSnapshot { return f.snapshot }
+
+func TestStartupBlocksBusinessCommandsButAllowsControlMessages(t *testing.T) {
+	h := NewHub()
+	h.Lifecycle = fixedLifecycle{snapshot: shared.PanelLifecycleSnapshot{State: shared.PanelStateStartup}}
+	conn := inertAgentConn(7)
+	conn.send = make(chan shared.Envelope, 2)
+	conn.done = make(chan struct{})
+	h.register(conn)
+
+	business := shared.Envelope{Kind: shared.KindRequest, Type: shared.TypeApplyNode}
+	if err := h.Send(context.Background(), 7, business); !errors.Is(err, ErrPanelNotActive) {
+		t.Fatalf("business send error = %v, want ErrPanelNotActive", err)
+	}
+	control := shared.Envelope{Kind: shared.KindRequest, Type: shared.TypeLifecycleChanged}
+	if err := h.Send(context.Background(), 7, control); err != nil {
+		t.Fatalf("control send error = %v", err)
+	}
+}
+
+func TestSyncLifecycleWaitsForACKAndReportsTimeout(t *testing.T) {
+	h := NewHub()
+	acked := inertAgentConn(7)
+	acked.send = make(chan shared.Envelope, 1)
+	acked.done = make(chan struct{})
+	acked.lifecycleAcks = make(map[string]chan struct{})
+	missing := inertAgentConn(8)
+	missing.send = make(chan shared.Envelope, 1)
+	missing.done = make(chan struct{})
+	missing.lifecycleAcks = make(map[string]chan struct{})
+	h.register(acked)
+	h.register(missing)
+	go func() {
+		envelope := <-acked.send
+		acked.resolveLifecycleAck(envelope.RequestID)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	got := h.SyncLifecycle(ctx, shared.PanelLifecycleSnapshot{State: shared.PanelStateUpdating})
+	if !reflect.DeepEqual(got, []int64{8}) {
+		t.Fatalf("missing ACKs = %v, want [8]", got)
+	}
+}
+
+func TestForgetAgentRemovesConnectionSnapshot(t *testing.T) {
+	h := NewHub()
+	connection := inertAgentConn(7)
+	h.register(connection)
+	h.ForgetAgent(7, 1008, "deleted")
+	if h.IsOnline(7) {
+		t.Fatal("forgotten Agent must not remain online")
+	}
+	if _, exists := h.states[7]; exists {
+		t.Fatal("forgotten Agent must not retain a connection snapshot")
 	}
 }
 

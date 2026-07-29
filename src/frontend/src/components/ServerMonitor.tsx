@@ -54,6 +54,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { api } from '@/lib/api'
 import { formatByteRate, formatDateTime, humanizeBytes } from '@/lib/format'
 import { formatPortRange } from '@/lib/ports'
+import { isServerOnline, serverConnectionLabel } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
 import type { ConvertedCost, Server, ServerMetrics, ServerMetricSeries } from '@/lib/types'
 
@@ -349,7 +350,7 @@ function ServerCard({
       aria-label={`查看 ${server.alias} 监控详情`}
       className={cn(
         'cursor-pointer transition-[box-shadow,opacity] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        !server.online && 'opacity-60',
+        !isServerOnline(server) && 'opacity-60',
       )}
       onClick={onOpen}
       onKeyDown={(event) => {
@@ -358,8 +359,11 @@ function ServerCard({
     >
       <CardHeader className="border-b">
         <CardTitle className="flex min-w-0 items-center gap-2">
-          <span className={cn('size-2 shrink-0 rounded-full bg-muted-foreground', server.online && 'bg-success')} />
+          <span className={cn('size-2 shrink-0 rounded-full bg-muted-foreground', isServerOnline(server) && 'bg-success')} />
           <span className="truncate">{server.alias}</span>
+          <Badge variant="outline" className="ml-auto shrink-0 text-[10px] font-normal">
+            {serverConnectionLabel(server.connection_state)}
+          </Badge>
         </CardTitle>
         <CardDescription className="flex min-w-0 flex-col gap-1 text-xs">
           <span className="flex min-w-0 items-center gap-2">
@@ -444,7 +448,7 @@ function ServerCard({
             <div className="flex min-h-28 flex-col items-center justify-center gap-2 text-center">
               <ServerCogIcon className="size-6 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">
-                {server.online ? '等待 Agent 首次遥测' : '服务器尚未连接'}
+				{isServerOnline(server) ? '等待 Agent 首次遥测' : serverConnectionLabel(server.connection_state)}
               </span>
             </div>
             <Separator />
@@ -720,7 +724,7 @@ function DetailSheet({
       <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
         <SheetHeader className="border-b">
           <SheetTitle className="flex items-center gap-2">
-            <span className={cn('size-2 rounded-full bg-muted-foreground', server?.online && 'bg-success')} />
+            <span className={cn('size-2 rounded-full bg-muted-foreground', isServerOnline(server) && 'bg-success')} />
             {server?.alias ?? '服务器详情'}
           </SheetTitle>
           <SheetDescription>主机信息与最近 24 小时探针指标</SheetDescription>

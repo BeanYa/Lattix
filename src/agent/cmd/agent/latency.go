@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/binary"
-	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -11,8 +10,9 @@ import (
 )
 
 const (
-	heartbeatInterval   = 30 * time.Second
-	initialProbeTimeout = 10 * time.Second
+	heartbeatInterval      = 30 * time.Second
+	probeKindLiveness byte = 1
+	probeKindLatency  byte = 2
 )
 
 type latencyTracker struct {
@@ -22,17 +22,23 @@ type latencyTracker struct {
 	samples []float64
 	ready   chan struct{}
 	once    sync.Once
+	enabled bool
 }
 
 func newLatencyTracker() *latencyTracker {
 	return &latencyTracker{
 		pending: make(map[uint64]time.Time),
 		ready:   make(chan struct{}),
+		enabled: true,
 	}
 }
 
 func (t *latencyTracker) sendProbe(conn *safeConn) error {
 	t.mu.Lock()
+	if !t.enabled {
+		t.mu.Unlock()
+		return nil
+	}
 	t.next++
 	sequence := t.next
 	t.pending[sequence] = time.Now()
@@ -43,8 +49,9 @@ func (t *latencyTracker) sendProbe(conn *safeConn) error {
 	}
 	t.mu.Unlock()
 
-	var payload [8]byte
-	binary.BigEndian.PutUint64(payload[:], sequence)
+	var payload [9]byte
+	payload[0] = probeKindLatency
+	binary.BigEndian.PutUint64(payload[1:], sequence)
 	if err := conn.writeControl(websocket.PingMessage, payload[:]); err != nil {
 		t.mu.Lock()
 		delete(t.pending, sequence)
@@ -56,13 +63,13 @@ func (t *latencyTracker) sendProbe(conn *safeConn) error {
 
 func (t *latencyTracker) handlePong(payload string) error {
 	data := []byte(payload)
-	if len(data) != 8 {
+	if len(data) != 9 || data[0] != probeKindLatency {
 		return nil
 	}
-	sequence := binary.BigEndian.Uint64(data)
+	sequence := binary.BigEndian.Uint64(data[1:])
 	t.mu.Lock()
 	sentAt, ok := t.pending[sequence]
-	if ok {
+	if ok && t.enabled {
 		delete(t.pending, sequence)
 		value := float64(time.Since(sentAt).Microseconds()) / 1000
 		t.samples = append(t.samples, value)
@@ -80,7 +87,7 @@ func (t *latencyTracker) handlePong(payload string) error {
 func (t *latencyTracker) medianMS() *float64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if len(t.samples) == 0 {
+	if !t.enabled || len(t.samples) == 0 {
 		return nil
 	}
 	values := append([]float64(nil), t.samples...)
@@ -89,15 +96,18 @@ func (t *latencyTracker) medianMS() *float64 {
 	return &value
 }
 
-func (t *latencyTracker) waitInitial(done <-chan struct{}) error {
-	timer := time.NewTimer(initialProbeTimeout)
-	defer timer.Stop()
-	select {
-	case <-t.ready:
-		return nil
-	case <-timer.C:
-		return errors.New("initial latency probe timed out")
-	case <-done:
-		return errors.New("connection closed during initial latency probe")
+func (t *latencyTracker) setEnabled(enabled bool) {
+	t.mu.Lock()
+	t.enabled = enabled
+	if !enabled {
+		clear(t.pending)
 	}
+	t.mu.Unlock()
+}
+
+func sendLiveness(conn *safeConn) error {
+	var payload [9]byte
+	payload[0] = probeKindLiveness
+	binary.BigEndian.PutUint64(payload[1:], uint64(time.Now().UnixNano()))
+	return conn.writeControl(websocket.PingMessage, payload[:])
 }

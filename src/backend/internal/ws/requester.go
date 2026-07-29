@@ -12,6 +12,8 @@ import (
 // ErrOffline 表示目标服务器当前不在线（无 WS 连接，§5 在线状态由连接存在性推导）。
 var ErrOffline = errors.New("ws: agent offline")
 var ErrDraining = errors.New("ws: hub draining")
+var ErrPanelNotActive = errors.New("ws: panel not active")
+var ErrAuthentication = errors.New("ws: authentication failed")
 
 // AgentRequester 描述 Backend 通过 WebSocket 向 Agent 发起 RPC 的能力。
 type AgentRequester interface {
@@ -21,9 +23,20 @@ type AgentRequester interface {
 	IsOnline(serverID int64) bool
 }
 
-// Authenticator 校验 hello 首连认证（§5）。由业务层（dispatcher）实现并注入 Hub。
+type AuthResult struct {
+	ServerID  int64
+	Reconnect bool
+}
+
+type OpenSessionResult struct {
+	IssuedToken string
+	ExchangeID  string
+}
+
+// Authenticator validates the HTTP Upgrade credential and completes the
+// application session after the WebSocket has been established.
 type Authenticator interface {
-	// AuthenticateHello 校验 hello 载荷；remoteAddr 为 WS 对端 IP（容器部署时可能是网桥网关，§9）。
-	// 成功返回 serverID 与响应（含换发的长期凭证，§11）。
-	AuthenticateHello(ctx context.Context, p shared.HelloPayload, remoteAddr string) (serverID int64, result shared.HelloResult, err error)
+	AuthenticateToken(ctx context.Context, token string) (AuthResult, error)
+	OpenSession(ctx context.Context, auth AuthResult, p shared.SessionOpenPayload, remoteAddr string) (OpenSessionResult, error)
+	CommitCredential(ctx context.Context, serverID int64, exchangeID string) error
 }

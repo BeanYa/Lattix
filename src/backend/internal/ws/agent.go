@@ -16,38 +16,80 @@ import (
 	"lattix/shared"
 )
 
-// helloTimeout 是等待首帧 hello 的超时。
-const helloTimeout = 10 * time.Second
+const (
+	sessionOpenTimeout = 10 * time.Second
+	protocolHeader     = "X-Lattix-Protocol"
+	protocolVersion    = "1"
+)
 
 var upgrader = websocket.Upgrader{
 	// MVP 运行于本地/受信网络（§12）。
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// ServeHTTP 处理 GET /api/agent/ws：升级 → hello 认证（§5）→ 登记连接 → 读循环。
+// ServeHTTP authenticates the HTTP Upgrade, initializes one application
+// session, then registers it for business RPC delivery after session.ready.
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.wg.Add(1)
 	defer h.wg.Done()
 	if h.IsDraining() {
-		http.Error(w, "service restarting", http.StatusServiceUnavailable)
+		writeHandshakeError(w, http.StatusServiceUnavailable, shared.CodeServiceUnavailable, "panel is restarting")
 		return
 	}
-	conn, err := upgrader.Upgrade(w, r, nil)
+	panelState := h.lifecycleSnapshot()
+	if panelState.State == shared.PanelStateFaulted {
+		writeHandshakeError(w, http.StatusServiceUnavailable, shared.CodeServiceUnavailable, "panel is unavailable")
+		return
+	}
+	token, ok := bearerToken(r.Header.Get("Authorization"))
+	if !ok {
+		writeHandshakeError(w, http.StatusForbidden, shared.CodeAuthInvalidCredentials, "authentication failed")
+		return
+	}
+	auth, err := h.Auth.AuthenticateToken(r.Context(), token)
+	if err != nil {
+		if errors.Is(err, ErrAuthentication) {
+			writeHandshakeError(w, http.StatusForbidden, shared.CodeAuthInvalidCredentials, "authentication failed")
+		} else {
+			log.Printf("ws auth unavailable from %s: %v", r.RemoteAddr, err)
+			writeHandshakeError(w, http.StatusServiceUnavailable, shared.CodeServiceUnavailable, "panel is unavailable")
+		}
+		return
+	}
+	sessionKind := shared.SessionKindInitial
+	connectionState := shared.ConnectionStateConnecting
+	if auth.Reconnect {
+		sessionKind = shared.SessionKindReconnect
+		connectionState = shared.ConnectionStateReconnecting
+	}
+	sessionID := shared.NewMessageID()
+	h.setConnectionState(auth.ServerID, connectionState, sessionID, sessionKind)
+	responseHeaders := http.Header{}
+	responseHeaders.Set(protocolHeader, protocolVersion)
+	conn, err := upgrader.Upgrade(w, r, responseHeaders)
 	if err != nil {
 		log.Printf("ws upgrade: %v", err)
+		h.setConnectionState(auth.ServerID, disconnectedState(auth.Reconnect), "", sessionKind)
 		return
 	}
 	if h.OnUpgrade != nil {
 		h.OnUpgrade(r)
 	}
 
-	// 首帧必须是 hello（带超时）：token（bootstrap 或长期）、agent/xray 版本与运行状态。
-	conn.SetReadDeadline(time.Now().Add(helloTimeout))
-	var hello shared.Envelope
-	if err := readEnvelope(conn, &hello); err != nil ||
-		hello.Kind != shared.KindRequest || hello.Type != shared.TypeHello {
-		log.Printf("ws: first frame is not hello: %v", err)
-		h.protocolError(0, hello, "first frame must be agent.hello")
+	registered := false
+	defer func() {
+		if !registered {
+			h.setConnectionState(auth.ServerID, disconnectedState(auth.Reconnect), "", sessionKind)
+		}
+	}()
+
+	// The first application frame opens the authenticated session.
+	conn.SetReadDeadline(time.Now().Add(sessionOpenTimeout))
+	var open shared.Envelope
+	if err := readEnvelope(conn, &open); err != nil ||
+		open.Kind != shared.KindRequest || open.Type != shared.TypeSessionOpen {
+		log.Printf("ws: first frame is not session.open: %v", err)
+		h.protocolError(auth.ServerID, open, "first frame must be agent.session.open")
 		_ = conn.WriteControl(websocket.CloseMessage,
 			websocket.FormatCloseMessage(4002, "invalid protocol message"), time.Now().Add(writeTimeout))
 		conn.Close()
@@ -66,78 +108,177 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 
-	var hp shared.HelloPayload
-	if err := strictUnmarshal(hello.Data, &hp); err != nil {
-		log.Printf("ws: bad hello data: %v", err)
-		h.protocolError(0, hello, "invalid agent.hello data")
+	var payload shared.SessionOpenPayload
+	if err := strictUnmarshal(open.Data, &payload); err != nil || payload.ProtocolVersion != 1 {
+		log.Printf("ws: bad session.open data: %v", err)
+		h.protocolError(auth.ServerID, open, "invalid agent.session.open data")
 		_ = conn.WriteControl(websocket.CloseMessage,
-			websocket.FormatCloseMessage(4002, "invalid hello data"), time.Now().Add(writeTimeout))
+			websocket.FormatCloseMessage(4002, "invalid session data"), time.Now().Add(writeTimeout))
 		conn.Close()
 		return
 	}
-
 	remoteHost := clientIP(r)
-	serverID, result, err := h.Auth.AuthenticateHello(r.Context(), hp, remoteHost)
+	openResult, err := h.Auth.OpenSession(r.Context(), auth, payload, remoteHost)
 	if err != nil {
-		log.Printf("ws: hello auth failed from %s: %v", r.RemoteAddr, err)
-		conn.WriteMessage(websocket.CloseMessage,
-			websocket.FormatCloseMessage(4001, "authentication failed"))
+		log.Printf("ws: open session failed from %s: %v", r.RemoteAddr, err)
+		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(1013, "session unavailable"))
 		conn.Close()
 		return
 	}
 
 	c := &agentConn{
-		hub:      h,
-		serverID: serverID,
-		ws:       conn,
-		send:     make(chan shared.Envelope, sendBuffer),
-		done:     make(chan struct{}),
+		hub:           h,
+		serverID:      auth.ServerID,
+		sessionID:     sessionID,
+		sessionKind:   sessionKind,
+		ws:            conn,
+		send:          make(chan shared.Envelope, sendBuffer),
+		done:          make(chan struct{}),
+		lifecycleAcks: make(map[string]chan struct{}),
 	}
 	go c.writePump()
 
-	// 回 HelloResult（与请求同 type、同 id 即响应帧），必须先于任何补发命令到达 agent。
+	result := shared.SessionOpenResult{
+		ServerID: auth.ServerID, SessionID: sessionID, SessionKind: sessionKind,
+		IssuedToken: openResult.IssuedToken, CredentialExchangeID: openResult.ExchangeID,
+		PanelState: panelState,
+	}
 	c.send <- shared.Envelope{
 		Kind:      shared.KindResponse,
-		Type:      shared.TypeHello,
-		RequestID: hello.RequestID,
-		TraceID:   hello.TraceID,
+		Type:      shared.TypeSessionOpen,
+		RequestID: open.RequestID,
+		TraceID:   open.TraceID,
 		Code:      shared.CodeOK,
 		Data:      mustJSON(result),
 	}
+
+	// Only credential.commit and session.ready are accepted before registration.
+	for !registered {
+		var env shared.Envelope
+		if err := readEnvelope(conn, &env); err != nil {
+			c.close()
+			return
+		}
+		conn.SetReadDeadline(time.Now().Add(h.pongTimeout))
+		if env.Kind != shared.KindRequest {
+			replyDirect(c, env, shared.CodeUnsupportedAction, "session is not ready", nil)
+			continue
+		}
+		switch env.Type {
+		case shared.TypeCredentialCommit:
+			var commit shared.CredentialCommitPayload
+			if err := strictUnmarshal(env.Data, &commit); err != nil || commit.ExchangeID == "" {
+				replyDirect(c, env, shared.CodeInvalidArgument, "invalid credential commit", nil)
+				continue
+			}
+			if err := h.Auth.CommitCredential(r.Context(), auth.ServerID, commit.ExchangeID); err != nil {
+				replyDirect(c, env, shared.CodeConflict, err.Error(), nil)
+				continue
+			}
+			replyDirect(c, env, shared.CodeOK, "", struct{}{})
+		case shared.TypeSessionReady:
+			var ready shared.SessionReadyPayload
+			if err := strictUnmarshal(env.Data, &ready); err != nil || ready.SessionID != sessionID {
+				replyDirect(c, env, shared.CodeInvalidArgument, "invalid session ready", nil)
+				continue
+			}
+			current := h.lifecycleSnapshot()
+			if ready.Lifecycle != current.Version() {
+				replyDirect(c, env, shared.CodeConflict, "lifecycle changed", current)
+				continue
+			}
+			replyDirect(c, env, shared.CodeOK, "", struct{}{})
+			registered = true
+		default:
+			replyDirect(c, env, shared.CodeUnsupportedAction, "session is not ready", nil)
+		}
+	}
+
 	becameOnline, accepted := h.register(c)
 	if !accepted {
 		c.closeWithCode(websocket.CloseServiceRestart, "service restart")
 		return
 	}
-	log.Printf("agent connected: server=%d addr=%s xray=%s", serverID, r.RemoteAddr, hp.XrayVersion)
+	log.Printf("agent connected: server=%d session=%s kind=%s addr=%s xray=%s",
+		auth.ServerID, sessionID, sessionKind, r.RemoteAddr, payload.XrayVersion)
 
 	// 触发离线命令补发（§2）。
 	if h.OnConnect != nil {
-		h.OnConnect(serverID)
+		h.OnConnect(auth.ServerID)
 	}
-	h.notifyConnectionEstablished(serverID, becameOnline, hp.Reconnect)
+	h.notifyConnectionEstablished(auth.ServerID, becameOnline, auth.Reconnect)
 
 	// 读循环：上抛业务信封直到断开。
 	defer func() {
 		h.unregister(c)
 		c.close()
 		if !h.IsDraining() {
-			log.Printf("agent disconnected: server=%d", serverID)
+			log.Printf("agent disconnected: server=%d", auth.ServerID)
 		}
 	}()
 	for {
 		var env shared.Envelope
 		if err := readEnvelope(conn, &env); err != nil {
-			log.Printf("ws: server %d invalid message: %v", serverID, err)
-			h.protocolError(serverID, env, "invalid protocol message")
+			log.Printf("ws: server %d invalid message: %v", auth.ServerID, err)
+			h.protocolError(auth.ServerID, env, "invalid protocol message")
 			_ = conn.WriteControl(websocket.CloseMessage,
 				websocket.FormatCloseMessage(4002, "invalid protocol message"), time.Now().Add(writeTimeout))
 			return
 		}
 		conn.SetReadDeadline(time.Now().Add(h.pongTimeout)) // 任何消息到达即续期
-		if h.OnMessage != nil {
-			h.OnMessage(serverID, env)
+		if env.Kind == shared.KindResponse && env.Type == shared.TypeLifecycleChanged &&
+			env.Code == shared.CodeOK && c.resolveLifecycleAck(env.RequestID) {
+			continue
 		}
+		if h.OnMessage != nil {
+			h.OnMessage(auth.ServerID, env)
+		}
+	}
+}
+
+func disconnectedState(reconnect bool) string {
+	if reconnect {
+		return shared.ConnectionStateOffline
+	}
+	return shared.ConnectionStateNeverConnected
+}
+
+func (h *Hub) lifecycleSnapshot() shared.PanelLifecycleSnapshot {
+	if h.Lifecycle == nil {
+		return shared.PanelLifecycleSnapshot{State: shared.PanelStateActive}
+	}
+	return h.Lifecycle.Snapshot()
+}
+
+func bearerToken(value string) (string, bool) {
+	const prefix = "Bearer "
+	if !strings.HasPrefix(value, prefix) {
+		return "", false
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(value, prefix))
+	return token, token != ""
+}
+
+func writeHandshakeError(w http.ResponseWriter, status int, code, message string) {
+	id := shared.NewMessageID()
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set(protocolHeader, protocolVersion)
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(shared.Envelope{
+		Kind: shared.KindResponse, Type: shared.TypeSessionOpen,
+		RequestID: id, TraceID: id, Code: code, Message: message,
+		Data: json.RawMessage(`{}`),
+	})
+}
+
+func replyDirect(c *agentConn, request shared.Envelope, code, message string, data any) {
+	if data == nil {
+		data = struct{}{}
+	}
+	c.send <- shared.Envelope{
+		Kind: shared.KindResponse, Type: request.Type,
+		RequestID: request.RequestID, TraceID: request.TraceID,
+		Code: code, Message: message, Data: mustJSON(data),
 	}
 }
 

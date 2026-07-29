@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import LowPolyEarth, { type EarthLink, type EarthNode } from '@/components/LowPolyEarth'
+import { isServerOnline } from '@/lib/server-state'
 import type { Chain, Server } from '@/lib/types'
 
 interface TopologyPoint {
@@ -88,7 +89,7 @@ async function locateServers(servers: Server[]): Promise<TopologyPoint[]> {
       location: server.location || countryCode || '位置待补全',
       lat: Math.max(-82, Math.min(82, baseLat + Math.sin(angle) * radius)),
       lng: baseLng + Math.cos(angle) * radius,
-      online: server.online,
+		online: isServerOnline(server),
       positioned,
       countryCode,
       uploadRate: server.metrics?.network_tx_bps ?? null,
@@ -150,7 +151,7 @@ export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
           location: server.location || server.country_code || '位置待补全',
           lat: -68 + (server.id % 3) * 4,
           lng: ((server.id * 137.508) % 340) - 170,
-          online: server.online,
+			online: isServerOnline(server),
           positioned: false,
           countryCode: server.country_code.trim().toUpperCase(),
           uploadRate: server.metrics?.network_tx_bps ?? null,

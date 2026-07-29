@@ -23,11 +23,12 @@ const sendBuffer = 256
 
 // Hub 是 agent 连接的注册表，同时实现 AgentRequester（§2 WS 传输实现）。
 type Hub struct {
-	// Auth 校验 hello（由 dispatcher 实现，注入）。
-	Auth Authenticator
+	// Auth 校验 Upgrade 凭据并打开 session（由 dispatcher 实现，注入）。
+	Auth      Authenticator
+	Lifecycle LifecycleProvider
 	// OnUpgrade 在 HTTP 成功升级为 WebSocket 后立即调用，用于请求日志记录 101 握手。
 	OnUpgrade func(r *http.Request)
-	// OnConnect 在 hello 认证完成、连接登记后调用（用于触发离线命令补发，§2）。
+	// OnConnect 在 session.ready 完成、连接登记后调用（用于触发离线命令补发，§2）。
 	OnConnect func(serverID int64)
 	// OnOnline 在服务器从无连接变为有连接时调用。已有连接被新连接顶替时不触发，
 	// 与 OnDisconnect 共同表示真实的 offline↔online 状态跃迁。
@@ -40,19 +41,61 @@ type Hub struct {
 	// OnProtocolError 只记录无正常业务响应的 WS 协议错误；遥测和 ping/pong 不调用。
 	OnProtocolError func(serverID int64, requestID, traceID, rpcType, message string)
 	// OnDisconnect 在 online→offline 跃迁时调用（连接从注册表实际移除；
-	// 被新连接顶替的旧连接注销不触发，hello 重连不重复报，§19 告警挂点）。
+	// 被新连接顶替的旧连接注销不触发，session 重连不重复报，§19 告警挂点）。
 	OnDisconnect func(serverID int64)
 
 	pongTimeout time.Duration
 
 	mu       sync.RWMutex
 	conns    map[int64]*agentConn
+	states   map[int64]ConnectionSnapshot
 	draining bool
 	wg       sync.WaitGroup
 }
 
 func NewHub() *Hub {
-	return &Hub{conns: make(map[int64]*agentConn), pongTimeout: pongTimeoutDefault}
+	return &Hub{
+		conns:       make(map[int64]*agentConn),
+		states:      make(map[int64]ConnectionSnapshot),
+		pongTimeout: pongTimeoutDefault,
+	}
+}
+
+type LifecycleProvider interface {
+	Snapshot() shared.PanelLifecycleSnapshot
+}
+
+type ConnectionSnapshot struct {
+	State       string    `json:"state"`
+	SessionID   string    `json:"session_id,omitempty"`
+	SessionKind string    `json:"session_kind,omitempty"`
+	ChangedAt   time.Time `json:"changed_at"`
+}
+
+func (h *Hub) ConnectionState(serverID int64, everConnected bool) ConnectionSnapshot {
+	h.mu.RLock()
+	state, ok := h.states[serverID]
+	_, online := h.conns[serverID]
+	h.mu.RUnlock()
+	if ok {
+		return state
+	}
+	value := shared.ConnectionStateNeverConnected
+	if everConnected {
+		value = shared.ConnectionStateOffline
+	}
+	if online {
+		value = shared.ConnectionStateOnline
+	}
+	return ConnectionSnapshot{State: value}
+}
+
+func (h *Hub) setConnectionState(serverID int64, state, sessionID, sessionKind string) {
+	h.mu.Lock()
+	h.states[serverID] = ConnectionSnapshot{
+		State: state, SessionID: sessionID, SessionKind: sessionKind, ChangedAt: time.Now().UTC(),
+	}
+	h.mu.Unlock()
 }
 
 // IsOnline 实现 Requester。
@@ -72,6 +115,10 @@ func (h *Hub) Send(ctx context.Context, serverID int64, env shared.Envelope) err
 	if draining {
 		return ErrDraining
 	}
+	if lifecycle := h.lifecycleSnapshot(); (lifecycle.State == shared.PanelStateStartup || lifecycle.State == shared.PanelStateFaulted) &&
+		isBusinessCommand(env) {
+		return ErrPanelNotActive
+	}
 	if !ok {
 		return ErrOffline
 	}
@@ -87,6 +134,21 @@ func (h *Hub) Send(ctx context.Context, serverID int64, env shared.Envelope) err
 		log.Printf("ws: server %d send buffer full, closing connection", serverID)
 		c.close()
 		return ErrOffline
+	}
+}
+
+func isBusinessCommand(env shared.Envelope) bool {
+	if env.Kind != shared.KindRequest {
+		return false
+	}
+	switch env.Type {
+	case shared.TypeApplyNode, shared.TypeRemoveNode,
+		shared.TypeApplyChainHop, shared.TypeRemoveChainHop,
+		shared.TypeAddUser, shared.TypeRemoveUser,
+		shared.TypeUninstall, shared.TypeUpgradeXray, shared.TypeUpgradeAgent:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -139,6 +201,31 @@ func (h *Hub) CloseAgent(serverID int64, code int, reason string) {
 	}
 }
 
+// ForgetAgent closes any live session and removes all in-memory connection
+// state for a server whose authoritative database record has been deleted.
+func (h *Hub) ForgetAgent(serverID int64, code int, reason string) {
+	h.mu.Lock()
+	connection := h.conns[serverID]
+	delete(h.conns, serverID)
+	delete(h.states, serverID)
+	h.mu.Unlock()
+	if connection != nil {
+		connection.closeWithCode(code, reason)
+	}
+}
+
+func (h *Hub) CloseAllAgents(code int, reason string) {
+	h.mu.RLock()
+	connections := make([]*agentConn, 0, len(h.conns))
+	for _, connection := range h.conns {
+		connections = append(connections, connection)
+	}
+	h.mu.RUnlock()
+	for _, connection := range connections {
+		connection.closeWithCode(code, reason)
+	}
+}
+
 // register 登记连接；同一服务器已有旧连接时踢掉旧的（重连场景）。
 // 返回值表示服务器是否发生 offline→online 跃迁。
 func (h *Hub) register(c *agentConn) (becameOnline, accepted bool) {
@@ -152,6 +239,10 @@ func (h *Hub) register(c *agentConn) (becameOnline, accepted bool) {
 		old.close()
 	}
 	h.conns[c.serverID] = c
+	h.states[c.serverID] = ConnectionSnapshot{
+		State: shared.ConnectionStateOnline, SessionID: c.sessionID,
+		SessionKind: c.sessionKind, ChangedAt: time.Now().UTC(),
+	}
 	h.mu.Unlock()
 	return !wasOnline, true
 }
@@ -175,6 +266,10 @@ func (h *Hub) unregister(c *agentConn) {
 	transition := h.conns[c.serverID] == c
 	if transition {
 		delete(h.conns, c.serverID)
+		h.states[c.serverID] = ConnectionSnapshot{
+			State: shared.ConnectionStateOffline, SessionKind: c.sessionKind,
+			ChangedAt: time.Now().UTC(),
+		}
 	}
 	h.mu.Unlock()
 	if transition && !h.IsDraining() && h.OnDisconnect != nil {
@@ -184,12 +279,84 @@ func (h *Hub) unregister(c *agentConn) {
 
 // agentConn 是一条 agent WS 连接：读在 ServeHTTP 读循环，写在 writePump（gorilla 不允许并发写）。
 type agentConn struct {
-	hub      *Hub
-	serverID int64
-	ws       *websocket.Conn
-	send     chan shared.Envelope
-	done     chan struct{}
-	once     sync.Once
+	hub           *Hub
+	serverID      int64
+	sessionID     string
+	sessionKind   string
+	ws            *websocket.Conn
+	send          chan shared.Envelope
+	done          chan struct{}
+	once          sync.Once
+	ackMu         sync.Mutex
+	lifecycleAcks map[string]chan struct{}
+}
+
+func (c *agentConn) registerLifecycleAck(requestID string) <-chan struct{} {
+	c.ackMu.Lock()
+	defer c.ackMu.Unlock()
+	ch := make(chan struct{})
+	c.lifecycleAcks[requestID] = ch
+	return ch
+}
+
+func (c *agentConn) resolveLifecycleAck(requestID string) bool {
+	c.ackMu.Lock()
+	ch, ok := c.lifecycleAcks[requestID]
+	if ok {
+		delete(c.lifecycleAcks, requestID)
+		close(ch)
+	}
+	c.ackMu.Unlock()
+	return ok
+}
+
+func (c *agentConn) removeLifecycleAck(requestID string) {
+	c.ackMu.Lock()
+	delete(c.lifecycleAcks, requestID)
+	c.ackMu.Unlock()
+}
+
+// SyncLifecycle sends a lifecycle request to every currently online Agent and
+// waits until all acknowledgements arrive or the context expires.
+func (h *Hub) SyncLifecycle(ctx context.Context, snapshot shared.PanelLifecycleSnapshot) []int64 {
+	h.mu.RLock()
+	conns := make([]*agentConn, 0, len(h.conns))
+	for _, conn := range h.conns {
+		conns = append(conns, conn)
+	}
+	h.mu.RUnlock()
+	type pending struct {
+		serverID  int64
+		requestID string
+		conn      *agentConn
+		ack       <-chan struct{}
+	}
+	waits := make([]pending, 0, len(conns))
+	for _, conn := range conns {
+		id := shared.NewMessageID()
+		ack := conn.registerLifecycleAck(id)
+		env := shared.Envelope{
+			Kind: shared.KindRequest, Type: shared.TypeLifecycleChanged,
+			RequestID: id, TraceID: id,
+			Data: mustJSON(shared.LifecycleChangedPayload{PanelState: snapshot}),
+		}
+		if err := h.Send(ctx, conn.serverID, env); err != nil {
+			conn.removeLifecycleAck(id)
+			continue
+		}
+		waits = append(waits, pending{conn.serverID, id, conn, ack})
+	}
+	missing := make([]int64, 0)
+	for _, wait := range waits {
+		select {
+		case <-wait.ack:
+		case <-wait.conn.done:
+		case <-ctx.Done():
+			wait.conn.removeLifecycleAck(wait.requestID)
+			missing = append(missing, wait.serverID)
+		}
+	}
+	return missing
 }
 
 func (c *agentConn) close() {
@@ -217,6 +384,7 @@ func (c *agentConn) writePump() {
 		case env := <-c.send:
 			c.ws.SetWriteDeadline(time.Now().Add(writeTimeout))
 			if err := c.ws.WriteJSON(env); err != nil {
+				c.close()
 				return
 			}
 		case <-c.done:

@@ -167,6 +167,8 @@ install.sh            # 面向用户的统一安装入口
 **运维**
 
 - 流量统计（节点/用户双维度，xray stats 采集）与服务器探针（CPU/负载/内存/磁盘/默认出口网卡/uptime/Agent→Panel 延迟，24 小时历史）
+- Panel 生命周期与 Agent 连接状态分离：启动、更新或运行时故障不会被误判为普通离线或凭据失效；
+  Agent 重连过程和鉴权拒绝可独立观测
 - 配置漂移 reconcile：外部篡改 xray 配置自动检测上报，一键修复（重放节点）
 - 事件告警：服务器离线 / 配置漂移 / 节点失败（仅状态跃迁触发，同服务器同事件
   5 分钟防抖），Webhook + Telegram Bot 双通道，设置页配置并可发测试消息
@@ -246,6 +248,26 @@ Agent 设置使用递增 revision 同步：在线 Agent 保存后立即拉取，
 （`GET /api/backup/download`）：systemd 托管时退出后由
 systemd 拉起；Docker 模式则由进程退出触发 Compose 的 `restart: unless-stopped`，
 从同一容器内已替换的二进制启动。非托管开发模式才自派生新进程接管。
+
+### Panel 生命周期与 Agent 连接
+
+Panel 维护全局 `startup | active | updating | faulted` 生命周期，Agent 在此基础上独立维护
+`never_connected | connecting | reconnecting | online | offline | auth_rejected` 连接状态。
+`startup` 等待初始化完成，`active` 正常提供服务，`updating` 仅协调更新期间需要暂停的动作，
+`faulted` 表示关键运行时错误并等待恢复。Panel 恢复后 Agent 通过低频重试重新连接，无回滚状态。
+
+Agent 通过 HTTP Upgrade 的 Bearer 凭据鉴权。bootstrap token 只用于首次接入，并通过
+`agent.session.open` / `agent.credential.commit` 两阶段换发长期凭据；后续重连沿用长期凭据。
+可信且结构完整的 HTTP 403 会进入 `auth_rejected`，HTTP 503 或普通网络错误按暂时故障重试。
+
+Panel 进入 `updating` 时暂停 Agent→Panel 延迟探测并清理待完成探针，但保留最近 3 个完成样本；
+回到 `active` 后，各 Agent 在 0–30 秒内随机恢复探测，并继续向原窗口追加数据。liveness 保活
+始终独立运行，延迟探测超时不会关闭 WebSocket。删除服务器时，Panel 使用同一请求 ID 尽力
+投递卸载命令，最多尝试 10 次（100ms 指数退避，单次上限 10 秒）；收到回执或耗尽次数后删除
+数据并使凭据失效。
+
+完整状态转换、生命周期版本、会话握手与异常处理见
+[Panel 生命周期与 Agent 连接状态机](docs/panel-lifecycle-state-machine-design.md)。
 
 TLS 另支持**域名路径模式**（`tls_mode=path`）：面板按域名从证书根目录读取
 `<tls-dir>/<域名>/fullchain.pem` 与 `privkey.pem`（certbot 风格，目录由 `-tls-dir`
@@ -341,7 +363,9 @@ Agent 常用参数：`-panel`（固定面板 WS 地址）、`-token`（bootstrap
 `-state` / `-settings`（本地状态与面板同步设置）及 `-xray-release-base`（xray 下载镜像源）。
 重连、遥测与漂移检测间隔由面板“设置 → Agent”统一下发。
 
-详细设计见 [docs/framework-design.md](docs/framework-design.md)，链路编辑、离线 revision 与流量口径见
+详细设计见 [docs/framework-design.md](docs/framework-design.md)，Panel 与 Agent 状态机见
+[docs/panel-lifecycle-state-machine-design.md](docs/panel-lifecycle-state-machine-design.md)，链路编辑、
+离线 revision 与流量口径见
 [docs/chain-revisions-traffic-design.md](docs/chain-revisions-traffic-design.md)，前端开发命令见
 [docs/frontend.md](docs/frontend.md)。
 

@@ -91,7 +91,7 @@ install.sh           # 唯一面向用户的统一安装入口
   使用独立存储、容量和查询接口，详见 [日志系统设计](logging-design.md)。
 - `nodes.config_template` 是面板侧虚拟配置（含占位符）；`nodes.realized_config` 是 Agent 上报的实际生效值（端口、public_key、short_id 等）。
 - `servers.country_code` 与 `servers.location` 在创建/编辑服务器时必填；国家通过选择器写入标准两位代码，`COUNTRY` 与 `COUNTRY_FLAG` 由代码派生。Location 提供按国家过滤的本地城市建议，同时允许管理员填写机房区域等自由文本。
-- `servers.address` 是订阅中节点地址的唯一来源（§9）：**创建服务器时由管理员填写公网地址，agent 不校验**；留空则按 agent WS 拨入的对端 IP 自动学习（panel 前置本机回环反代时取 `X-Forwarded-For` 首个 IP，非回环对端不信任该头以防伪造），一经写入不再被覆盖（地址变更由管理员通过 `POST /api/server/update` 修改）。每次 hello 另将拨入学习地址写入 `learned_addr`、将 agent 上报的网卡非回环地址写入 `nic_addresses`，二者仅作面板"编辑地址"的内置候选（可选内置地址或自定义），不参与自动学习决策。`servers` 同时保存机器类型与 NAT 可用端口段元数据（含非 1:1 映射的 public_port），NAT 类型 address 强制必填、禁用自动学习；引入链后订阅地址改取链**入口**的 address。
+- `servers.address` 是订阅中节点地址的唯一来源（§9）：**创建服务器时由管理员填写公网地址，agent 不校验**；留空则按 agent WS 拨入的对端 IP 自动学习（panel 前置本机回环反代时取 `X-Forwarded-For` 首个 IP，非回环对端不信任该头以防伪造），一经写入不再被覆盖（地址变更由管理员通过 `POST /api/server/update` 修改）。每次 `agent.session.open` 另将拨入学习地址写入 `learned_addr`、将 agent 上报的网卡非回环地址写入 `nic_addresses`，二者仅作面板"编辑地址"的内置候选（可选内置地址或自定义），不参与自动学习决策。`servers` 同时保存机器类型与 NAT 可用端口段元数据（含非 1:1 映射的 public_port），NAT 类型 address 强制必填、禁用自动学习；引入链后订阅地址改取链**入口**的 address。
 - 用户-节点关联（§16）：全新数据库中的新建用户和节点默认不关联，由管理员显式分配；结构迁移不会隐式补全或改变现有关联。
 - 服务器费用、生命周期状态机、流量额度、汇率换算及后端公共定时任务器的完整契约见[后端调度与服务器计费设计](billing-scheduler-design.md)。费用原价和币种分列保存；关闭“统计计费”仅排除费用逻辑和状态展示，不删除资料。流量计划始终独立生效，默认无限额度。
 
@@ -108,8 +108,11 @@ install.sh           # 唯一面向用户的统一安装入口
 
 | type | 方向 | 说明 |
 |---|---|---|
-| `agent.hello` | agent→panel | 首连认证：token、agent 版本、xray 版本、xray 运行状态、本机网卡非回环地址 `nic_addresses`（§4 公网地址候选）；bootstrap token 在此换发长期凭证（以 `last_seen_at` 为空判定 bootstrap 状态；长期 token 一经换发**不再轮换**，agent 侧内存兜底防止落盘失败锁死） |
-| `agent.settings.sync` | agent→panel | hello 后、设置提示后及在线期间周期拉取全局 Agent 设置；请求携带已应用 revision，响应按需返回完整统一设置文档 |
+| `agent.session.open` | agent→panel | 每条已鉴权 WS 的会话初始化：agent/xray 版本、运行状态、网卡地址与上次生命周期观测；首次 bootstrap 在两阶段事务中换发长期凭据，普通重连不轮换 token |
+| `agent.session.ready` | agent→panel | Agent 已应用生命周期快照且首次 liveness 成功，Panel 据此完成 connecting/reconnecting → online |
+| `agent.credential.commit` | agent→panel | Agent 已原子保存首次换发的长期凭据，Panel 据此使 bootstrap 失效 |
+| `panel.lifecycle.changed` | panel→agent | 带回执的 Panel 生命周期同步；更新开始前以有界 ACK 屏障确认 Agent 已暂停延迟探测 |
+| `agent.settings.sync` | agent→panel | session ready 后、设置提示后及在线期间周期拉取全局 Agent 设置；请求携带已应用 revision，响应按需返回完整统一设置文档 |
 | `agent.settings.changed` | panel→agent | 在线设置变更提示；仅触发 Agent 立即 pull，不承载配置本身 |
 | `node.apply` | panel→agent | 下发节点：虚拟配置模板 + 分配到该节点的用户 UUID 列表（§16） |
 | `node.remove` | panel→agent | 删除节点 |
@@ -122,7 +125,7 @@ install.sh           # 唯一面向用户的统一安装入口
 | `telemetry.report` | agent→panel | 周期遥测（§13）：xray 版本/运行状态、主机指标、流量增量；无需回执 |
 | `config.drift` | agent→panel | 配置漂移状态变化（§17）：外部修改时 true，修复/恢复后 false |
 
-在线/离线状态由 WS 连接推导，连接存亡由应用层心跳判定：agent 每 30s 向 panel 发 WS Ping，panel 原样 Pong；Agent 同时计算最近 3 次 RTT 中位数。首次注册和每次重连认证后立即探测，10s 无 Pong 即断开重连；任一侧 90s 无任何字节（含控制帧）即判连接死亡。Agent 使用面板统一配置的指数退避策略重连；面板计划重启以 WS 1012 通知 Agent 走 200–500ms 快速重试。网络不可达、超时或无响应可永久低频探测；面板在线且以 4001 明确拒绝凭证时，Agent 标记面板可能已重建或凭证已替换并停止连接尝试，等待管理员使用新安装命令重新绑定。完整语义见[优雅停机与 Agent 设置同步设计](graceful-shutdown-agent-settings-design.md)。
+Panel 生命周期为 `startup|active|updating|faulted`；每个 Agent 的连接状态为 `never_connected|connecting|reconnecting|online|offline|auth_rejected`。HTTP Upgrade 使用 Bearer token，明确鉴权失败返回 HTTP 403 与结构化 RPC body，暂时不可用返回 503。liveness 与 latency probe 分离：liveness 维持连接，latency 只在 active 测量且失败不再断开 WS。完整语义见 [Panel 生命周期与 Agent 连接状态机](panel-lifecycle-state-machine-design.md)。
 
 ## 6. 节点生命周期与 apply 流水线
 
@@ -225,7 +228,7 @@ Location 允许自由输入作为兜底。后续可按国家拆分数据文件�
      容器类型跳过，而按实际内核能力和权限尝试；安装器不自动调用 sudo；
    - BBR 未生效或持久化失败不得中止安装。全部 Agent 安装输出完成后仅追加一行包含
      具体失败原因的 `WARNING`；Agent 卸载不撤销机器级 BBR 配置；
-3. Agent 启动首连，以 bootstrap token 换发长期服务器 token；**实际安装的 xray 版本随 hello 上报，面板服务器列表展示实际版本号**。
+3. Agent 启动首连，以 bootstrap token 换发长期服务器 token；**实际安装的 xray 版本随 `agent.session.open` 上报，面板服务器列表展示实际版本号**。
 
 凭证刷新（§10）立即递增 credential epoch、撤销旧 token 并以 WS 4001 关闭现有连接。
 Agent 收到该明确拒绝后停止自动连接；管理员必须执行新的安装命令。同面板刷新保留 Xray
@@ -365,7 +368,7 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，由面板 Agent 设置�
 
 - 触发仅状态跃迁，不周期重发：
   - `server_offline`：WS 断开导致 online→offline（hub unregister 实际移除注册连接为唯一挂点；
-    被新连接顶替的旧连接注销不算，hello 重连不重复报）；
+    被新连接顶替的旧连接注销不算，session 重连不重复报）；
   - `config_drift`：dispatcher 收到 `config.drift` true（§17）；
   - `node_failed`：RPC response 失败或命令死信导致节点置 failed（§6）。
 - 通道（各自独立判定，异步发送不阻塞主路径，5s 超时，失败仅记日志）：

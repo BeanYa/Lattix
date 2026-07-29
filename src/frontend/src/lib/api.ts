@@ -16,6 +16,7 @@ import type {
   OperationCategory,
   OperationLogPage,
   PanelSettings,
+  PanelLifecycleSnapshot,
   PanelUpdateStatus,
   PanelVersionInfo,
   PortRange,
@@ -235,6 +236,9 @@ export const api = {
     return result
   },
   restartPanel: () => requester.post<{ status: string }>('/api/panel/restart', {}),
+  panelState: () => requester.get<PanelLifecycleSnapshot>('/api/panel/state', undefined, {
+    display: 'silent',
+  }),
   testAlerts: () => requester.post<AlertTestResult>('/api/setting/test-alerts', {}),
 
   panelVersion: () => requester.get<PanelVersionInfo>('/api/panel/get-version'),

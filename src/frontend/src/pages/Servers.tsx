@@ -29,6 +29,7 @@ import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
 import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
+import { isServerOnline } from '@/lib/server-state'
 import { useTimezone } from '@/lib/timezone'
 import type { BillingInput, IntervalUnit, MachineType, PortRange, Provider, ReleaseVersions, Server, ServerMetricSeries, TrafficAccountingMode, TrafficPlanInput } from '@/lib/types'
 
@@ -1098,13 +1099,13 @@ export default function Servers() {
           <DialogHeader>
             <DialogTitle>删除服务器</DialogTitle>
             <DialogDescription>
-              {deleteTarget?.online
+              {deleteTarget && isServerOnline(deleteTarget)
                 ? `确定删除「${deleteTarget.alias}」？将向 agent 发送卸载命令并删除记录，请选择卸载范围。`
-                : `确定删除「${deleteTarget?.alias}」？当前离线，仅删除记录；该机上的 agent 需手动清理。`}
+                : `确定删除「${deleteTarget?.alias}」？当前无可投递会话，仅删除记录；该机上的 agent 需手动清理。`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            {deleteTarget?.online ? (
+            {deleteTarget && isServerOnline(deleteTarget) ? (
               <>
                 <Button variant="outline" disabled={deleting} onClick={() => onDelete('agent')}>
                   仅卸载 agent

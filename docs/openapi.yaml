@@ -275,6 +275,10 @@ paths:
       operationId: panelRestart
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/panel/state:
+    get:
+      operationId: panelState
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
   /api/panel/get-version:
     get:
       operationId: panelGetVersion

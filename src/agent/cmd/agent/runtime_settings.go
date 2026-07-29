@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"math/rand"
+	"net/http"
 	"sync"
 	"time"
 
@@ -10,6 +13,9 @@ import (
 
 	"lattix/shared"
 )
+
+var errAuthenticationRejected = errors.New("panel rejected credentials")
+var errPanelUnavailable = errors.New("panel temporarily unavailable")
 
 type runtimeSettings struct {
 	mu              sync.RWMutex
@@ -113,7 +119,60 @@ func reconnectDelay(settings shared.AgentSettings, failures int, closeCode int) 
 }
 
 func authenticationRejected(err error) bool {
-	return websocketCloseCode(err) == 4001
+	return errors.Is(err, errAuthenticationRejected)
+}
+
+func explicitAuthenticationRejection(response *http.Response) bool {
+	if response == nil || response.Body == nil {
+		return false
+	}
+	if response.StatusCode != http.StatusForbidden || response.Header.Get("X-Lattix-Protocol") != "1" {
+		return false
+	}
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	var envelope shared.Envelope
+	if err := decoder.Decode(&envelope); err != nil || envelope.Validate() != nil {
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return false
+	}
+	return envelope.Kind == shared.KindResponse &&
+		envelope.Type == shared.TypeSessionOpen &&
+		envelope.Code == shared.CodeAuthInvalidCredentials
+}
+
+func panelTemporarilyUnavailable(response *http.Response) bool {
+	if response == nil || response.StatusCode != http.StatusServiceUnavailable {
+		return false
+	}
+	return true
+}
+
+func unavailableRetryDelay() time.Duration {
+	return 30*time.Second + time.Duration(rand.Int63n(int64(60*time.Second)+1))
+}
+
+func lifecycleRetryDelay(observed shared.PanelLifecycleSnapshot, fallback time.Duration) time.Duration {
+	if observed.State != shared.PanelStateUpdating && observed.State != shared.PanelStateFaulted {
+		return fallback
+	}
+	minDelay := time.Duration(observed.RetryPolicy.MinMS) * time.Millisecond
+	maxDelay := time.Duration(observed.RetryPolicy.MaxMS) * time.Millisecond
+	if minDelay < time.Second {
+		minDelay = time.Second
+	}
+	if maxDelay > 5*time.Minute {
+		maxDelay = 5 * time.Minute
+	}
+	if maxDelay < minDelay {
+		return fallback
+	}
+	if maxDelay == minDelay {
+		return minDelay
+	}
+	return minDelay + time.Duration(rand.Int63n(int64(maxDelay-minDelay)+1))
 }
 
 func websocketCloseCode(err error) int {

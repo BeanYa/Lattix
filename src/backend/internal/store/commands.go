@@ -85,8 +85,9 @@ func (s *Store) ResetSentCommands(ctx context.Context, serverID int64) error {
 // MarkCommandSent 标记命令已投递到连接（attempts +1）。
 func (s *Store) MarkCommandSent(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE commands SET status = ?, attempts = attempts + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-		CommandStatusSent, id)
+		`UPDATE commands SET status = ?, attempts = attempts + 1, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND status IN (?, ?)`,
+		CommandStatusSent, id, CommandStatusQueued, CommandStatusSent)
 	return err
 }
 
