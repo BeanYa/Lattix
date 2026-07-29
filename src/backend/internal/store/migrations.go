@@ -8,7 +8,7 @@ import (
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
-const schemaVersion = 4
+const schemaVersion = 5
 
 type columnMigration struct {
 	name       string
@@ -64,6 +64,14 @@ func migrateSchema(tx *sql.Tx) error {
 		{"country_code", "TEXT NOT NULL DEFAULT ''"},
 		{"location", "TEXT NOT NULL DEFAULT ''"},
 		{"credential_epoch", "INTEGER NOT NULL DEFAULT 1"},
+		{"credential_committed", "INTEGER NOT NULL DEFAULT 0"},
+		{"credential_pending_token", "TEXT NOT NULL DEFAULT ''"},
+		{"credential_exchange_id", "TEXT NOT NULL DEFAULT ''"},
+		{"last_connected_at", "DATETIME"},
+		{"last_disconnected_at", "DATETIME"},
+		{"last_reconnected_at", "DATETIME"},
+		{"reconnect_count", "INTEGER NOT NULL DEFAULT 0"},
+		{"last_disconnect_reason", "TEXT NOT NULL DEFAULT ''"},
 		{"agent_settings_revision", "INTEGER NOT NULL DEFAULT 0"},
 		{"agent_settings_error", "TEXT NOT NULL DEFAULT ''"},
 		{"agent_settings_reported_at", "DATETIME"},
@@ -78,6 +86,20 @@ func migrateSchema(tx *sql.Tx) error {
 		if _, err := tx.Exec(`UPDATE servers SET address_mode = CASE
 			WHEN address = '' OR address = learned_addr THEN 'auto' ELSE 'manual' END`); err != nil {
 			return fmt.Errorf("backfill servers.address_mode: %w", err)
+		}
+	}
+	if serversAdded["credential_committed"] {
+		columns, err := tableColumns(tx, "servers")
+		if err != nil {
+			return err
+		}
+		backfill := `UPDATE servers SET credential_committed = 1`
+		if columns["last_seen_at"] {
+			backfill = `UPDATE servers SET credential_committed = CASE
+				WHEN last_seen_at IS NULL THEN 0 ELSE 1 END`
+		}
+		if _, err := tx.Exec(backfill); err != nil {
+			return fmt.Errorf("backfill servers.credential_committed: %w", err)
 		}
 	}
 

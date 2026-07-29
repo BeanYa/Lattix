@@ -1,8 +1,12 @@
 package ws
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"lattix/shared"
 )
 
 // clientIP（§9）：直连取 RemoteAddr 的 host；受信回环代理取 XFF 首个 IP；
@@ -32,5 +36,29 @@ func TestClientIP(t *testing.T) {
 				t.Errorf("clientIP(%q, xff=%q) = %q, want %q", c.remoteAddr, c.xff, got, c.want)
 			}
 		})
+	}
+}
+
+func TestHandshakeAuthenticationErrorIsStructuredRPCResponse(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeHandshakeError(recorder, http.StatusForbidden, shared.CodeAuthInvalidCredentials, "authentication failed")
+	response := recorder.Result()
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d", response.StatusCode)
+	}
+	if got := response.Header.Get(protocolHeader); got != protocolVersion {
+		t.Fatalf("protocol header = %q", got)
+	}
+	var envelope shared.Envelope
+	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		t.Fatal(err)
+	}
+	if err := envelope.Validate(); err != nil {
+		t.Fatalf("invalid envelope: %v", err)
+	}
+	if envelope.Kind != shared.KindResponse || envelope.Type != shared.TypeSessionOpen ||
+		envelope.Code != shared.CodeAuthInvalidCredentials {
+		t.Fatalf("unexpected envelope: %#v", envelope)
 	}
 }

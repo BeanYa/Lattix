@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"lattix/backend/internal/logging"
+	"lattix/shared"
 	external "lattix/shared/requester"
 )
 
@@ -186,6 +187,16 @@ func (s *Server) handlePanelUpdateStart(w http.ResponseWriter, r *http.Request) 
 		TargetVersion:  strings.TrimSpace(req.Version),
 	}
 	u.mu.Unlock()
+	barrierCtx, cancelBarrier := context.WithTimeout(r.Context(), 5*time.Second)
+	_, lifecycleErr := s.transitionLifecycle(barrierCtx, shared.PanelStateUpdating, "", true)
+	cancelBarrier()
+	if lifecycleErr != nil {
+		u.mu.Lock()
+		u.st.Running = false
+		u.mu.Unlock()
+		writeError(w, http.StatusInternalServerError, lifecycleErr.Error())
+		return
+	}
 
 	s.audit(r, "panel.update_started", nil, nil, map[string]any{
 		"current_version": s.cfg.Version,
@@ -234,6 +245,7 @@ func (u *panelUpdater) fail(err error) {
 	u.st.Message = "更新失败"
 	target := u.st.TargetVersion
 	u.mu.Unlock()
+	_, _ = u.s.transitionLifecycle(context.Background(), shared.PanelStateActive, "", false)
 	log.Printf("panel update: failed: %v", err)
 	if logErr := u.s.recordOperation(context.Background(), logging.OperationEvent{
 		Severity: logging.SeverityError, Category: logging.CategoryPanel, Action: "panel.update_failed",
@@ -273,6 +285,7 @@ func (u *panelUpdater) run(ctx context.Context) {
 		u.st.Percent = 100
 		u.st.Message = "已是最新版本，无需更新"
 		u.mu.Unlock()
+		_, _ = s.transitionLifecycle(context.Background(), shared.PanelStateActive, "", false)
 		if err := s.recordOperation(context.Background(), logging.OperationEvent{
 			Severity: logging.SeverityInfo, Category: logging.CategoryPanel, Action: "panel.update_skipped",
 			Detail: map[string]string{"version": target, "reason": "already_current"},

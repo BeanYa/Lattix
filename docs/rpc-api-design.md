@@ -334,7 +334,10 @@ Agent 主动事件：
 初始动作包括：
 
 ```text
-agent.hello
+agent.session.open
+agent.session.ready
+agent.credential.commit
+panel.lifecycle.changed
 node.apply
 node.remove
 user.add

@@ -18,6 +18,7 @@ import (
 
 	"lattix/backend/internal/alert"
 	"lattix/backend/internal/dispatch"
+	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/ws"
@@ -40,6 +41,7 @@ type Config struct {
 	LogDir           string
 	RequestRestart   func(reason string) error
 	LifecycleContext context.Context
+	Lifecycle        *lifecycle.Manager
 }
 
 // Server 聚合面板 API 的依赖。
@@ -47,6 +49,7 @@ type Server struct {
 	st        *store.Store
 	disp      *dispatch.Dispatcher
 	req       ws.AgentRequester
+	lifecycle *lifecycle.Manager
 	cfg       Config
 	alerter   *alert.Notifier
 	upd       *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
@@ -97,7 +100,7 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 		disp.AgentReleaseBase = "https://github.com/" + cfg.GitHubRepo + "/releases/download"
 	}
 	s := &Server{
-		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter,
+		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
 		routePolicies: make(map[string]logging.LogPolicy),
 	}
@@ -252,6 +255,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/setting/test-alerts", write, s.handleTestAlerts)
 
 	s.registerRPC(mux, http.MethodPost, "/api/panel/restart", write, s.handleRestart)
+	s.registerRPC(mux, http.MethodGet, "/api/panel/state", read, s.handlePanelState)
 	s.registerRPC(mux, http.MethodGet, "/api/panel/get-version", read, s.handlePanelVersion)
 	s.registerRPC(mux, http.MethodPost, "/api/panel/start-update", write, s.handlePanelUpdateStart)
 	s.registerRPC(mux, http.MethodGet, "/api/panel/get-update-status",

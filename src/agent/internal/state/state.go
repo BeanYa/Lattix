@@ -1,4 +1,4 @@
-// Package state 管理 agent 本地状态：hello 换发的长期凭证（设计文档 §11）
+// Package state 管理 agent 本地状态：session.open 换发的长期凭证（设计文档 §11）
 // 与链跳配置件记录（§21.1，重启重建 config.json 与重发幂等的依据）。
 package state
 
@@ -13,11 +13,13 @@ import (
 
 // State 是 agent 落盘的本地状态。
 type State struct {
-	Token           string       `json:"token"`     // 长期服务器 token（hello 换发）
-	ServerID        int64        `json:"server_id"` // 面板分配的服务器 id
-	PanelInstanceID string       `json:"panel_instance_id"`
-	CredentialEpoch int64        `json:"credential_epoch"`
-	ChainPieces     []ChainPiece `json:"chain_pieces,omitempty"`
+	Token            string                         `json:"token"`     // 长期服务器 token（session.open 换发）
+	ServerID         int64                          `json:"server_id"` // 面板分配的服务器 id
+	PanelInstanceID  string                         `json:"panel_instance_id"`
+	CredentialEpoch  int64                          `json:"credential_epoch"`
+	PanelObservation *shared.PanelLifecycleSnapshot `json:"panel_observation,omitempty"`
+	AuthRejected     bool                           `json:"auth_rejected,omitempty"`
+	ChainPieces      []ChainPiece                   `json:"chain_pieces,omitempty"`
 }
 
 // ChainPiece 是一个链跳配置件（§21.1 piece）的落盘记录：

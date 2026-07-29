@@ -53,6 +53,38 @@
         "agent": {"$ref": "#/$defs/agentSettings"}
       }
     },
+    "lifecycleVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["epoch", "revision"],
+      "properties": {
+        "epoch": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "revision": {"type": "integer", "minimum": 1}
+      }
+    },
+    "panelLifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["panel_instance_id", "state", "epoch", "revision", "entered_at", "retry_policy", "latency_resume_window_ms"],
+      "properties": {
+        "panel_instance_id": {"type": "string", "pattern": "^p_[0-9a-f]{32}$"},
+        "state": {"enum": ["startup", "active", "updating", "faulted"]},
+        "epoch": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "revision": {"type": "integer", "minimum": 1},
+        "entered_at": {"type": "string", "format": "date-time"},
+        "fault": {"type": "string"},
+        "retry_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min_ms", "max_ms"],
+          "properties": {
+            "min_ms": {"type": "integer", "minimum": 0},
+            "max_ms": {"type": "integer", "minimum": 0}
+          }
+        },
+        "latency_resume_window_ms": {"type": "integer", "minimum": 0}
+      }
+    },
     "trafficCounter": {
       "type": "object",
       "additionalProperties": false,
@@ -99,6 +131,103 @@
     "data": {}
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {"kind": {"const": "request"}, "type": {"const": "agent.session.open"}},
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["protocol_version", "agent_version", "xray_version", "xray_running"],
+            "properties": {
+              "protocol_version": {"const": 1},
+              "agent_version": {"type": "string"},
+              "xray_version": {"type": "string"},
+              "xray_running": {"type": "boolean"},
+              "nic_addresses": {"type": "array", "items": {"type": "string"}},
+              "last_lifecycle": {"$ref": "#/$defs/lifecycleVersion"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "response"}, "type": {"const": "agent.session.open"}, "code": {"const": "OK"}},
+        "required": ["kind", "type", "code"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["server_id", "session_id", "session_kind", "panel_state"],
+            "properties": {
+              "server_id": {"type": "integer", "minimum": 1},
+              "session_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "session_kind": {"enum": ["initial", "reconnect"]},
+              "issued_token": {"type": "string"},
+              "credential_exchange_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "panel_state": {"$ref": "#/$defs/panelLifecycle"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "request"}, "type": {"const": "agent.credential.commit"}},
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["exchange_id"],
+            "properties": {"exchange_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "request"}, "type": {"const": "agent.session.ready"}},
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["session_id", "lifecycle"],
+            "properties": {
+              "session_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "lifecycle": {"$ref": "#/$defs/lifecycleVersion"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "request"}, "type": {"const": "panel.lifecycle.changed"}},
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["panel_state"],
+            "properties": {"panel_state": {"$ref": "#/$defs/panelLifecycle"}}
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {"kind": {"const": "response"}},

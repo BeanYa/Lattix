@@ -80,7 +80,7 @@ func (m *Manager) ResetForPanelRebind() error {
 	return nil
 }
 
-// Version 返回 xray 版本与运行状态（hello 遥测，§13），尽力而为。
+// Version 返回 xray 版本与运行状态（session.open 遥测，§13），尽力而为。
 func (m *Manager) Version() (string, bool) {
 	out, err := exec.Command(m.bin, "version").Output()
 	ver := ""

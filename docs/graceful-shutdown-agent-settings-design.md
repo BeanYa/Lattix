@@ -41,12 +41,14 @@ HTTP 优雅等待并强制关闭连接。
 - `infinite`：默认。持续使用指数退避重连。
 - `limited`：执行 `max_retries` 次快速重试；耗尽后每 5 分钟探测一次，永不永久停机。
 
-普通重连从 500ms 开始，倍率 2，上限 30 秒，抖动 ±20%。成功完成 hello 后重置失败计数。
-收到 WS `1012` 时首次等待 200–500ms。网络不可达、超时、无响应和其他未得到面板明确
-认证结论的错误均可永久重试；`limited` 模式耗尽快速重试后保持每 5 分钟一次的低频探测。
+普通重连从 500ms 开始，倍率 2，上限 30 秒，抖动 ±20%。成功完成 `agent.session.open` 后重置失败计数。
+收到 WS `1012` 时按最近一次 Panel 生命周期给出的有界提示重试。网络不可达、超时、无响应
+和其他未得到面板明确认证结论的错误均可永久重试；`limited` 模式耗尽快速重试后保持每
+5 分钟一次的低频探测。
 
-面板已完成 WebSocket 协议握手并以关闭码 `4001` 明确拒绝凭证时，Agent 记录“面板可能已
-重建或凭证已替换”，停止全部连接尝试并保持进程等待关停。保持进程而非直接退出，是为了
+面板在 HTTP Upgrade 前完成 Bearer token 鉴权，并以 HTTP 403、合法 RPC body 和
+`X-Lattix-Protocol` 标记明确拒绝凭证时，Agent 记录“面板可能已重建或凭证已替换”，停止
+全部连接尝试并保持进程等待关停。保持进程而非直接退出，是为了
 避免 systemd `Restart=always` 或用户态守护脚本把终止性认证结果变成无限重启。管理员取得
 新面板 bootstrap 凭证后重新执行安装命令或重启 Agent，才重新建立认证关系。
 
@@ -89,7 +91,7 @@ Panel、Agent 和前端直接使用同一数据结构：
 
 1. 管理员保存 Agent 设置；面板整体替换 `agent` 对象并在同一事务中递增 revision。
 2. 面板向在线 Agent 尽力发送 `agent.settings.changed` 提示。
-3. Agent 在 hello 后立即、收到提示时立即、以及在线期间约每 60 秒发送
+3. Agent 在 `agent.session.open` 后立即、收到提示时立即、以及在线期间约每 60 秒发送
    `agent.settings.sync`，携带 panel instance ID、已成功应用 revision 和最近一次安全错误。
 4. revision 和面板实例均一致且无错误时，面板返回 `changed=false` 并标记同步。
 5. 不一致时面板返回完整文档；Agent 完整校验、原子写入 `settings.json`、整体应用

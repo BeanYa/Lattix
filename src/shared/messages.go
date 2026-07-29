@@ -71,20 +71,23 @@ const (
 
 // 消息类型使用 domain.action，响应沿用对应请求的 Type。
 const (
-	TypeHello           = "agent.hello"
-	TypeSettingsSync    = "agent.settings.sync"
-	TypeSettingsChanged = "agent.settings.changed"
-	TypeApplyNode       = "node.apply"
-	TypeRemoveNode      = "node.remove"
-	TypeAddUser         = "user.add"
-	TypeRemoveUser      = "user.remove"
-	TypeUninstall       = "agent.uninstall"
-	TypeUpgradeXray     = "xray.upgrade"
-	TypeUpgradeAgent    = "agent.upgrade"
-	TypeTelemetry       = "telemetry.report"
-	TypeDriftReport     = "config.drift"
-	TypeApplyChainHop   = "chain-hop.apply"
-	TypeRemoveChainHop  = "chain-hop.remove"
+	TypeSessionOpen      = "agent.session.open"
+	TypeSessionReady     = "agent.session.ready"
+	TypeCredentialCommit = "agent.credential.commit"
+	TypeLifecycleChanged = "panel.lifecycle.changed"
+	TypeSettingsSync     = "agent.settings.sync"
+	TypeSettingsChanged  = "agent.settings.changed"
+	TypeApplyNode        = "node.apply"
+	TypeRemoveNode       = "node.remove"
+	TypeAddUser          = "user.add"
+	TypeRemoveUser       = "user.remove"
+	TypeUninstall        = "agent.uninstall"
+	TypeUpgradeXray      = "xray.upgrade"
+	TypeUpgradeAgent     = "agent.upgrade"
+	TypeTelemetry        = "telemetry.report"
+	TypeDriftReport      = "config.drift"
+	TypeApplyChainHop    = "chain-hop.apply"
+	TypeRemoveChainHop   = "chain-hop.remove"
 )
 
 // NewMessageID 返回用于 request_id/trace_id 的 32 位小写十六进制随机值。
@@ -131,25 +134,6 @@ func (e Envelope) Validate() error {
 		return errors.New("request/event cannot contain code or message")
 	}
 	return nil
-}
-
-// HelloPayload 是 hello 的载荷：token（bootstrap 或长期）、agent 版本、
-// xray 版本与运行状态（§5、§13），以及本机网卡的非回环地址（§9 公网地址候选）。
-type HelloPayload struct {
-	Token        string `json:"token"`
-	AgentVersion string `json:"agent_version"`
-	XrayVersion  string `json:"xray_version"`
-	XrayRunning  bool   `json:"xray_running"`
-	Reconnect    bool   `json:"reconnect,omitempty"`
-	// NICAddresses 是 agent 本机网卡的非回环 IP（v4/v6），面板据此提供公网地址候选；
-	// 未发现可用地址时为空。
-	NICAddresses []string `json:"nic_addresses,omitempty"`
-}
-
-// HelloResult 是 panel 对 hello 的响应：bootstrap token 在此换发长期凭证（§11）。
-type HelloResult struct {
-	ServerID int64  `json:"server_id"`
-	Token    string `json:"token"` // 长期服务器 token
 }
 
 // ApplyNodePayload 是 apply_node 的载荷：虚拟配置模板 + 全量用户 UUID 列表（§8）。

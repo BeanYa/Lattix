@@ -26,13 +26,13 @@ const (
 type Server struct {
 	ID                      int64
 	Alias                   string
-	Token                   string // 长期凭证；创建时先存 bootstrap token，hello 认证后换发（§11）
+	Token                   string // 长期凭证；创建时先存 bootstrap token，session.open 后换发（§11）
 	LastSeenAt              *time.Time
 	XrayVersion             string
-	AgentVersion            string // hello 上报的 agent 版本（§18 升级管理）
-	Address                 string // 公网地址（hello 时按 WS RemoteAddr 记录，订阅用，§9）
-	AddressMode             string // auto|manual；manual 地址不被后续 hello 覆盖
-	LearnedAddr             string // 每次 hello 学习的公网地址；容器网关对端回退到 agent 公网网卡（§9）
+	AgentVersion            string // session.open 上报的 agent 版本（§18 升级管理）
+	Address                 string // 公网地址（session.open 时按 WS RemoteAddr 记录，订阅用，§9）
+	AddressMode             string // auto|manual；manual 地址不被后续 session.open 覆盖
+	LearnedAddr             string // 每次 session.open 学习的公网地址；容器网关对端回退到 agent 公网网卡（§9）
 	NICAddresses            string // agent 上报的网卡非回环地址 JSON 数组（§9 公网地址候选）；空串 = 无
 	ConfigDrift             bool   // 配置漂移标志（§17，agent drift_report 驱动）
 	MachineType             string // direct|nat（§21）
@@ -41,6 +41,14 @@ type Server struct {
 	CountryCode             string // ISO 3166-1 alpha-2；管理员在服务器资料中选择
 	Location                string // 城市或机房位置；管理员填写
 	CredentialEpoch         int64
+	CredentialCommitted     bool
+	CredentialPendingToken  string
+	CredentialExchangeID    string
+	LastConnectedAt         *time.Time
+	LastDisconnectedAt      *time.Time
+	LastReconnectedAt       *time.Time
+	ReconnectCount          int64
+	LastDisconnectReason    string
 	AgentSettingsRevision   int64
 	AgentSettingsError      string
 	AgentSettingsReportedAt *time.Time
@@ -48,19 +56,31 @@ type Server struct {
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, credential_epoch, agent_settings_revision, agent_settings_error, agent_settings_reported_at, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, credential_epoch, credential_committed, credential_pending_token, credential_exchange_id, last_connected_at, last_disconnected_at, last_reconnected_at, reconnect_count, last_disconnect_reason, agent_settings_revision, agent_settings_error, agent_settings_reported_at, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
-	var lastSeen, settingsReported sql.NullTime
+	var lastSeen, lastConnected, lastDisconnected, lastReconnected, settingsReported sql.NullTime
 	var xrayVer, agentVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.CredentialEpoch, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.CredentialEpoch, &srv.CredentialCommitted, &srv.CredentialPendingToken, &srv.CredentialExchangeID, &lastConnected, &lastDisconnected, &lastReconnected, &srv.ReconnectCount, &srv.LastDisconnectReason, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	if lastSeen.Valid {
 		t := lastSeen.Time
 		srv.LastSeenAt = &t
+	}
+	if lastConnected.Valid {
+		t := lastConnected.Time
+		srv.LastConnectedAt = &t
+	}
+	if lastDisconnected.Valid {
+		t := lastDisconnected.Time
+		srv.LastDisconnectedAt = &t
+	}
+	if lastReconnected.Valid {
+		t := lastReconnected.Time
+		srv.LastReconnectedAt = &t
 	}
 	srv.XrayVersion = xrayVer.String
 	srv.AgentVersion = agentVer.String
@@ -72,7 +92,7 @@ func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 }
 
 // CreateServer 插入一台服务器，token 为一次性 bootstrap token（§11），返回服务器 id。
-// address 为管理员指定的公网地址（§4）；空串表示留待 hello 时按 RemoteAddr 自动学习
+// address 为管理员指定的公网地址（§4）；空串表示留待 session.open 时按 RemoteAddr 自动学习
 // （NAT 类型强制必填，由 panel 校验）。machineType/allowedPorts 为 NAT 元数据（§21，面板侧，不下发 agent）。
 func (s *Store) CreateServer(ctx context.Context, alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location string) (int64, error) {
 	epoch := int64(1)
@@ -95,7 +115,7 @@ func (s *Store) CreateServer(ctx context.Context, alias, address, bootstrapToken
 // ServerByToken 按 token（bootstrap 或长期）查找服务器。
 func (s *Store) ServerByToken(ctx context.Context, token string) (*Server, error) {
 	srv, err := scanServer(s.db.QueryRowContext(ctx,
-		`SELECT `+serverCols+` FROM servers WHERE token = ?`, token))
+		`SELECT `+serverCols+` FROM servers WHERE token = ? OR credential_pending_token = ?`, token, token))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -103,6 +123,50 @@ func (s *Store) ServerByToken(ctx context.Context, token string) (*Server, error
 		return nil, fmt.Errorf("query server by token: %w", err)
 	}
 	return srv, nil
+}
+
+func (s *Store) SetPendingCredential(ctx context.Context, id int64, token, exchangeID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE servers
+		SET credential_pending_token = ?, credential_exchange_id = ?
+		WHERE id = ? AND credential_committed = 0 AND credential_pending_token = ''`,
+		token, exchangeID, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *Store) CommitPendingCredential(ctx context.Context, id int64, exchangeID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE servers
+		SET token = credential_pending_token, credential_pending_token = '',
+			credential_exchange_id = '', credential_committed = 1
+		WHERE id = ? AND credential_committed = 0 AND credential_exchange_id = ?
+			AND credential_pending_token != ''`, id, exchangeID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *Store) RecordServerConnected(ctx context.Context, id int64, reconnect bool) error {
+	if reconnect {
+		_, err := s.db.ExecContext(ctx, `UPDATE servers SET
+			last_connected_at = CURRENT_TIMESTAMP,
+			last_reconnected_at = CURRENT_TIMESTAMP,
+			reconnect_count = reconnect_count + 1 WHERE id = ?`, id)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE servers SET last_connected_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	return err
+}
+
+func (s *Store) RecordServerDisconnected(ctx context.Context, id int64, reason string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE servers SET
+		last_disconnected_at = CURRENT_TIMESTAMP, last_disconnect_reason = ? WHERE id = ?`, reason, id)
+	return err
 }
 
 // ServerByID 按 id 查找服务器。
@@ -136,15 +200,16 @@ func (s *Store) ListServers(ctx context.Context) ([]Server, error) {
 	return out, rows.Err()
 }
 
-// RotateServerToken 重写服务器 token：hello 认证成功后 bootstrap token 换发为长期凭证（§11）。
+// RotateServerToken 重写服务器 token：session.open 成功后 bootstrap token 换发为长期凭证（§11）。
 func (s *Store) RotateServerToken(ctx context.Context, id int64, newToken string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE servers SET token = ? WHERE id = ?`, newToken, id)
+		`UPDATE servers SET token = ?, credential_committed = 0,
+			credential_pending_token = '', credential_exchange_id = '' WHERE id = ?`, newToken, id)
 	return err
 }
 
 // UpdateServerAddress 由管理员修改服务器公网地址（§4"地址变更由管理员修改"）；
-// 非空切换为手工模式，置空切换为自动模式并在下次 hello 重新学习
+// 非空切换为手工模式，置空切换为自动模式并在下次 session.open 重新学习
 // （NAT 类型禁止置空，由 panel 校验）。
 func (s *Store) UpdateServerAddress(ctx context.Context, id int64, address string) error {
 	mode := AddressModeManual
@@ -182,7 +247,7 @@ func (s *Store) UpdateServerGeography(ctx context.Context, id int64, countryCode
 	return err
 }
 
-// TouchServer 更新 last_seen_at、xray 版本与 agent 版本（hello 携带，§13）及公网地址（§9）：
+// TouchServer 更新 last_seen_at、xray 版本与 agent 版本（session.open 携带，§13）及公网地址（§9）：
 // address 为生效公网地址（管理员已指定时与库中一致），learnedAddr 为本次拨入学习的地址，
 // nicAddrs 为 agent 上报的网卡非回环地址 JSON 数组（空串 = 本次未上报，保留旧值）。
 func (s *Store) TouchServer(ctx context.Context, id int64, xrayVersion, agentVersion, address, learnedAddr, nicAddrs string) error {
@@ -213,14 +278,15 @@ func (s *Store) SetServerDrift(ctx context.Context, id int64, drifted bool) erro
 }
 
 // ResetServerBootstrap 换发 bootstrap token 并将服务器重置回 bootstrap 状态
-// （last_seen_at 置空，下次 hello 重新换发长期凭证，§5/§11）。
+// （last_seen_at 置空，下次 session.open 重新换发长期凭证，§5/§11）。
 func (s *Store) ResetServerBootstrap(ctx context.Context, id int64, newBootstrapToken string) error {
 	credential, err := shared.ParseCredential(newBootstrapToken)
 	if err != nil {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE servers SET token = ?, credential_epoch = ?, last_seen_at = NULL WHERE id = ?`,
+		`UPDATE servers SET token = ?, credential_epoch = ?, last_seen_at = NULL,
+			credential_committed = 0, credential_pending_token = '', credential_exchange_id = '' WHERE id = ?`,
 		newBootstrapToken, credential.Epoch, id)
 	return err
 }

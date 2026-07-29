@@ -41,6 +41,14 @@ export interface PortRange {
 }
 
 export type MachineType = 'direct' | 'nat'
+export type ServerConnectionState =
+  | 'never_connected'
+  | 'connecting'
+  | 'reconnecting'
+  | 'online'
+  | 'offline'
+  | 'auth_rejected'
+export type AgentSessionKind = 'initial' | 'reconnect'
 
 export interface Provider {
   id: number
@@ -112,7 +120,14 @@ export interface TrafficPlanInput {
 export interface Server {
   id: number
   alias: string
-  online: boolean
+  connection_state: ServerConnectionState
+  session_id?: string
+  session_kind?: AgentSessionKind
+  last_connected_at: string | null
+  last_disconnected_at: string | null
+  last_reconnected_at: string | null
+  reconnect_count: number
+  last_disconnect_reason: string
   last_seen_at: string | null
   xray_version: string | null
   agent_version: string | null
@@ -483,6 +498,22 @@ export interface PanelUpdateStatus {
   error?: string
   current_version: string
   target_version: string
+}
+
+export type PanelLifecycleState = 'startup' | 'active' | 'updating' | 'faulted'
+
+export interface PanelLifecycleSnapshot {
+  panel_instance_id: string
+  state: PanelLifecycleState
+  epoch: string
+  revision: number
+  entered_at: string
+  fault?: string
+  retry_policy: {
+    min_ms: number
+    max_ms: number
+  }
+  latency_resume_window_ms: number
 }
 
 export type LogSeverity = 'info' | 'warning' | 'error'

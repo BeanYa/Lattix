@@ -4,10 +4,13 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -58,13 +61,14 @@ func main() {
 		log.Printf("load settings: %v (using defaults)", err)
 	}
 	runtime := newRuntimeSettings(document)
+	panelRuntime := newPanelStateTracker(st.PanelObservation)
 	tok := selectInitialToken(st.Token, *token)
 	if tok == "" {
 		log.Fatal("-token is required for first connect")
 	}
 	failures := 0
 	for {
-		newTok, err := run(*panel, tok, *statePath, *settingsPath, mgr, &st, runtime)
+		newTok, err := run(*panel, tok, *statePath, *settingsPath, mgr, &st, runtime, panelRuntime)
 		if newTok != "" {
 			tok = newTok // 内存兜底：state 落盘失败时仍能凭内存中的 token 重连（§5）
 			failures = 0
@@ -73,12 +77,20 @@ func main() {
 		}
 		if err != nil {
 			if authenticationRejected(err) {
+				st.AuthRejected = true
+				_ = state.Save(*statePath, st)
 				log.Printf("connection: 面板明确拒绝当前凭证（面板可能已重建或凭证已替换）；已停止自动重试，请使用新面板安装命令重新绑定后重启 Agent")
 				waitForShutdown()
 				return
 			}
 			settings, _, _, _ := runtime.snapshot()
 			delay := reconnectDelay(settings, failures, websocketCloseCode(err))
+			if errors.Is(err, errPanelUnavailable) {
+				delay = unavailableRetryDelay()
+			}
+			if observed, _ := panelRuntime.snapshot(); observed.RetryPolicy.MinMS > 0 {
+				delay = lifecycleRetryDelay(observed, delay)
+			}
 			log.Printf("connection: %v (retrying in %s)", err, delay.Round(time.Millisecond))
 			time.Sleep(delay)
 		}
@@ -123,10 +135,21 @@ func (s *safeConn) writeControl(messageType int, data []byte) error {
 }
 
 // run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因。
-// st 为已加载的落盘状态：hello 换发后更新凭证字段并整体落盘（保留链 piece 记录）。
-func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *state.State, runtime *runtimeSettings) (string, error) {
-	conn, _, err := websocket.DefaultDialer.Dial(panel, nil)
+// st 为已加载的落盘状态：session.open 换发后更新凭证字段并整体落盘（保留链 piece 记录）。
+func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *state.State, runtime *runtimeSettings, panelRuntime *panelStateTracker) (string, error) {
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+token)
+	conn, response, err := websocket.DefaultDialer.Dial(panel, header)
 	if err != nil {
+		if response != nil && response.Body != nil {
+			defer response.Body.Close()
+		}
+		if explicitAuthenticationRejection(response) {
+			return "", errAuthenticationRejected
+		}
+		if panelTemporarilyUnavailable(response) {
+			return "", errPanelUnavailable
+		}
 		return "", err
 	}
 	defer conn.Close()
@@ -137,45 +160,51 @@ func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *st
 	// Agent 主动发 Ping，Panel 回 Pong；同一组控制帧同时承担保活和延迟测量。
 	conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 
-	// 首连认证（§5）：携带 token、agent 版本、xray 版本与运行状态（§13），
-	// 以及本机网卡的非回环地址（§9 公网地址候选，面板编辑地址时下拉可选）。
+	// Every authenticated WebSocket starts with an application session open.
 	xrayVer, xrayRunning := mgr.Version()
-	helloID := shared.NewMessageID()
-	hello := shared.Envelope{
+	openID := shared.NewMessageID()
+	open := shared.Envelope{
 		Kind:      shared.KindRequest,
-		Type:      shared.TypeHello,
-		RequestID: helloID,
-		TraceID:   helloID,
-		Data: mustJSON(shared.HelloPayload{
-			Token:        token,
-			AgentVersion: version,
-			XrayVersion:  xrayVer,
-			XrayRunning:  xrayRunning,
-			Reconnect:    st.ServerID != 0 && st.Token == token,
-			NICAddresses: nonLoopbackAddrs(),
+		Type:      shared.TypeSessionOpen,
+		RequestID: openID,
+		TraceID:   openID,
+		Data: mustJSON(shared.SessionOpenPayload{
+			ProtocolVersion: 1,
+			AgentVersion:    version,
+			XrayVersion:     xrayVer,
+			XrayRunning:     xrayRunning,
+			NICAddresses:    nonLoopbackAddrs(),
+			LastLifecycle:   lifecycleVersion(st.PanelObservation),
 		}),
 	}
-	if err := sc.writeJSON(hello); err != nil {
-		return "", fmt.Errorf("send hello: %w", err)
+	if err := sc.writeJSON(open); err != nil {
+		return "", fmt.Errorf("send session open: %w", err)
 	}
 
-	// 第一帧必须是 hello 响应（panel 保证 HelloResult 先于任何补发命令到达）。
+	// The first response carries the complete lifecycle snapshot.
 	var resp shared.Envelope
 	if err := conn.ReadJSON(&resp); err != nil {
-		return "", fmt.Errorf("read hello response: %w", err)
+		return "", fmt.Errorf("read session open response: %w", err)
 	}
-	if resp.Kind != shared.KindResponse || resp.Type != shared.TypeHello || resp.RequestID != helloID {
+	if err := resp.Validate(); err != nil {
+		return "", fmt.Errorf("invalid session open response: %w", err)
+	}
+	if resp.Kind != shared.KindResponse || resp.Type != shared.TypeSessionOpen || resp.RequestID != openID {
 		return "", fmt.Errorf("unexpected first frame: kind=%s type=%s request_id=%s",
 			resp.Kind, resp.Type, resp.RequestID)
 	}
 	if resp.Code != shared.CodeOK {
-		return "", fmt.Errorf("hello failed: %s: %s", resp.Code, resp.Message)
+		return "", fmt.Errorf("session open failed: %s: %s", resp.Code, resp.Message)
 	}
-	var hr shared.HelloResult
-	if err := json.Unmarshal(resp.Data, &hr); err != nil {
-		return "", fmt.Errorf("bad hello result: %w", err)
+	var opened shared.SessionOpenResult
+	if err := json.Unmarshal(resp.Data, &opened); err != nil {
+		return "", fmt.Errorf("bad session open result: %w", err)
 	}
-	credential, err := shared.ParseCredential(hr.Token)
+	newToken := token
+	if opened.IssuedToken != "" {
+		newToken = opened.IssuedToken
+	}
+	credential, err := shared.ParseCredential(newToken)
 	if err != nil {
 		return "", fmt.Errorf("bad issued credential: %w", err)
 	}
@@ -187,43 +216,55 @@ func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *st
 		*st = state.State{}
 		runtime.resetForPanelRebind()
 	}
-	st.Token, st.ServerID = hr.Token, hr.ServerID
-	st.PanelInstanceID, st.CredentialEpoch = credential.PanelInstanceID, credential.Epoch
-	if err := state.Save(statePath, *st); err != nil {
-		// 落盘失败由外层内存兜底（§5），但进程重启前未落盘将需凭证刷新。
-		log.Printf("save state: %v (WARNING: in-memory token will be used for reconnects)", err)
+	if opened.PanelState.PanelInstanceID != credential.PanelInstanceID ||
+		!panelRuntime.apply(opened.PanelState, true) {
+		return "", fmt.Errorf("invalid panel lifecycle snapshot")
 	}
-	log.Printf("authenticated as server %d", hr.ServerID)
+	st.Token, st.ServerID = newToken, opened.ServerID
+	st.PanelInstanceID, st.CredentialEpoch = credential.PanelInstanceID, credential.Epoch
+	st.PanelObservation = &opened.PanelState
+	st.AuthRejected = false
+	saved := state.Save(statePath, *st) == nil
+	if !saved {
+		// 落盘失败由外层内存兜底（§5），但进程重启前未落盘将需凭证刷新。
+		log.Printf("save state: failed (WARNING: in-memory token will be used for reconnects)")
+	}
+	log.Printf("authenticated as server %d session=%s kind=%s", opened.ServerID, opened.SessionID, opened.SessionKind)
 	if err := mgr.EnsureTelemetryFeatures(); err != nil {
 		log.Printf("ensure telemetry features: %v (traffic stats may be unavailable)", err)
 	}
-	sendSettingsSync(sc, runtime)
-
 	latency := newLatencyTracker()
+	latency.setEnabled(opened.PanelState.State == shared.PanelStateActive)
 	conn.SetPongHandler(func(data string) error {
 		conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 		return latency.handlePong(data)
 	})
+	if opened.CredentialExchangeID != "" && saved {
+		if err := exchangeCredential(sc, conn, opened.CredentialExchangeID); err != nil {
+			return newToken, err
+		}
+	}
+	// A lightweight keepalive proves the new session in both directions. It is
+	// deliberately excluded from latency samples.
+	time.Sleep(time.Duration(rand.Intn(1001)) * time.Millisecond)
+	if err := sendLiveness(sc); err != nil {
+		return newToken, fmt.Errorf("initial liveness: %w", err)
+	}
+	if err := markSessionReady(sc, conn, opened.SessionID, panelRuntime, statePath, st, latency); err != nil {
+		return newToken, err
+	}
+	sendSettingsSync(sc, runtime)
 
-	// 认证后立即完成一次延迟初始化；随后每 30s 复用 Ping/Pong 保活和测量。
+	// Liveness remains active in every connected lifecycle state.
 	go func() {
-		if err := latency.sendProbe(sc); err != nil {
-			log.Printf("latency probe: %v", err)
-			_ = conn.Close()
-			return
-		}
-		if err := latency.waitInitial(done); err != nil {
-			log.Printf("latency probe: %v", err)
-			_ = conn.Close()
-			return
-		}
+		time.Sleep(time.Duration(rand.Int63n(int64(heartbeatInterval))))
 		ticker := time.NewTicker(heartbeatInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				if err := latency.sendProbe(sc); err != nil {
-					log.Printf("latency probe: %v", err)
+				if err := sendLiveness(sc); err != nil {
+					log.Printf("liveness: %v", err)
 					_ = conn.Close()
 					return
 				}
@@ -232,14 +273,10 @@ func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *st
 			}
 		}
 	}()
+	go runLatencyProbes(done, conn, sc, latency, panelRuntime)
 
-	// 首帧遥测等待初始化延迟成功，随后按间隔上报；写失败即退出（连接已断）。
+	// Telemetry does not wait for a latency sample.
 	go func() {
-		select {
-		case <-latency.ready:
-		case <-done:
-			return
-		}
 		t := newTelemetry(mgr, latency.medianMS)
 		send := func() bool {
 			messageID := shared.NewMessageID()
@@ -336,15 +373,175 @@ func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *st
 	for {
 		var env shared.Envelope
 		if err := conn.ReadJSON(&env); err != nil {
-			return hr.Token, err
+			return newToken, err
 		}
 		conn.SetReadDeadline(time.Now().Add(wsReadTimeout)) // 任何消息到达即续期
-		handle(sc, mgr, env, statePath, settingsPath, st, runtime)
+		handle(sc, mgr, env, statePath, settingsPath, st, runtime, panelRuntime, latency)
+	}
+}
+
+func lifecycleVersion(snapshot *shared.PanelLifecycleSnapshot) *shared.LifecycleVersion {
+	if snapshot == nil || snapshot.Epoch == "" || snapshot.Revision == 0 {
+		return nil
+	}
+	version := snapshot.Version()
+	return &version
+}
+
+func exchangeCredential(sc *safeConn, conn *websocket.Conn, exchangeID string) error {
+	id := shared.NewMessageID()
+	request := shared.Envelope{
+		Kind: shared.KindRequest, Type: shared.TypeCredentialCommit,
+		RequestID: id, TraceID: id,
+		Data: mustJSON(shared.CredentialCommitPayload{ExchangeID: exchangeID}),
+	}
+	if err := sc.writeJSON(request); err != nil {
+		return fmt.Errorf("send credential commit: %w", err)
+	}
+	response, err := readExpectedResponse(conn, shared.TypeCredentialCommit, id)
+	if err != nil {
+		return fmt.Errorf("credential commit: %w", err)
+	}
+	if response.Code != shared.CodeOK {
+		return fmt.Errorf("credential commit failed: %s: %s", response.Code, response.Message)
+	}
+	return nil
+}
+
+func markSessionReady(sc *safeConn, conn *websocket.Conn, sessionID string,
+	panelRuntime *panelStateTracker, statePath string, st *state.State, latency *latencyTracker) error {
+	for attempts := 0; attempts < 3; attempts++ {
+		observed, _ := panelRuntime.snapshot()
+		id := shared.NewMessageID()
+		request := shared.Envelope{
+			Kind: shared.KindRequest, Type: shared.TypeSessionReady,
+			RequestID: id, TraceID: id,
+			Data: mustJSON(shared.SessionReadyPayload{
+				SessionID: sessionID, Lifecycle: observed.Version(),
+			}),
+		}
+		if err := sc.writeJSON(request); err != nil {
+			return fmt.Errorf("send session ready: %w", err)
+		}
+		response, err := readExpectedResponse(conn, shared.TypeSessionReady, id)
+		if err != nil {
+			return fmt.Errorf("session ready: %w", err)
+		}
+		if response.Code == shared.CodeOK {
+			return nil
+		}
+		if response.Code != shared.CodeConflict {
+			return fmt.Errorf("session ready failed: %s: %s", response.Code, response.Message)
+		}
+		var current shared.PanelLifecycleSnapshot
+		if err := json.Unmarshal(response.Data, &current); err != nil ||
+			current.PanelInstanceID != st.PanelInstanceID || !panelRuntime.apply(current, false) {
+			return fmt.Errorf("session ready returned invalid lifecycle")
+		}
+		latency.setEnabled(current.State == shared.PanelStateActive)
+		st.PanelObservation = &current
+		if err := state.Save(statePath, *st); err != nil {
+			log.Printf("save panel lifecycle: %v", err)
+		}
+	}
+	return fmt.Errorf("session ready lifecycle changed repeatedly")
+}
+
+func readExpectedResponse(conn *websocket.Conn, typ, requestID string) (shared.Envelope, error) {
+	var response shared.Envelope
+	if err := conn.ReadJSON(&response); err != nil {
+		return response, err
+	}
+	if err := response.Validate(); err != nil {
+		return response, err
+	}
+	if response.Kind != shared.KindResponse || response.Type != typ || response.RequestID != requestID {
+		return response, fmt.Errorf("unexpected response: kind=%s type=%s request_id=%s",
+			response.Kind, response.Type, response.RequestID)
+	}
+	return response, nil
+}
+
+func runLatencyProbes(done <-chan struct{}, conn *websocket.Conn, sc *safeConn,
+	latency *latencyTracker, panelRuntime *panelStateTracker) {
+	for {
+		observed, changed := panelRuntime.snapshot()
+		if observed.State != shared.PanelStateActive {
+			select {
+			case <-changed:
+				continue
+			case <-done:
+				return
+			}
+		}
+
+		resumeWindow := time.Duration(observed.LatencyResumeWindowMS) * time.Millisecond
+		if resumeWindow < 5*time.Second {
+			resumeWindow = 5 * time.Second
+		}
+		if resumeWindow > 5*time.Minute {
+			resumeWindow = 5 * time.Minute
+		}
+		resume := time.NewTimer(time.Duration(rand.Int63n(int64(resumeWindow) + 1)))
+		select {
+		case <-resume.C:
+		case <-changed:
+			if !resume.Stop() {
+				<-resume.C
+			}
+			continue
+		case <-done:
+			if !resume.Stop() {
+				<-resume.C
+			}
+			return
+		}
+		if err := latency.sendProbe(sc); err != nil {
+			log.Printf("latency probe: %v", err)
+			_ = conn.Close()
+			return
+		}
+
+		ticker := time.NewTicker(heartbeatInterval)
+		selectLoop := true
+		for selectLoop {
+			select {
+			case <-ticker.C:
+				if err := latency.sendProbe(sc); err != nil {
+					log.Printf("latency probe: %v", err)
+					_ = conn.Close()
+					ticker.Stop()
+					return
+				}
+			case <-changed:
+				ticker.Stop()
+				selectLoop = false
+			case <-done:
+				ticker.Stop()
+				return
+			}
+		}
 	}
 }
 
 // handle 按消息类型分发：命令响应沿用请求的 type/request_id/trace_id。
-func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, settingsPath string, st *state.State, runtime *runtimeSettings) {
+func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, settingsPath string, st *state.State, runtime *runtimeSettings, panelRuntime *panelStateTracker, latency *latencyTracker) {
+	if env.Kind == shared.KindRequest && env.Type == shared.TypeLifecycleChanged {
+		var payload shared.LifecycleChangedPayload
+		if err := json.Unmarshal(env.Data, &payload); err != nil ||
+			payload.PanelState.PanelInstanceID != st.PanelInstanceID ||
+			!panelRuntime.apply(payload.PanelState, false) {
+			replyCode(sc, env, shared.CodeInvalidArgument, "invalid lifecycle snapshot", nil)
+			return
+		}
+		latency.setEnabled(payload.PanelState.State == shared.PanelStateActive)
+		st.PanelObservation = &payload.PanelState
+		if err := state.Save(statePath, *st); err != nil {
+			log.Printf("save panel lifecycle: %v", err)
+		}
+		replyCode(sc, env, shared.CodeOK, "", struct{}{})
+		return
+	}
 	if env.Kind == shared.KindResponse && env.Type == shared.TypeSettingsSync {
 		handleSettingsSyncResponse(sc, env, settingsPath, runtime)
 		return
@@ -575,7 +772,7 @@ func mustJSON(v any) json.RawMessage {
 }
 
 // nonLoopbackAddrs 枚举本机网卡的非回环 IP（v4/v6，跳过 down 的接口），
-// 随 hello 上报作为面板公网地址候选（§9）。采集失败返回 nil，不阻断连接。
+// 随 session.open 上报作为面板公网地址候选（§9）。采集失败返回 nil，不阻断连接。
 func nonLoopbackAddrs() []string {
 	ifaces, err := net.Interfaces()
 	if err != nil {

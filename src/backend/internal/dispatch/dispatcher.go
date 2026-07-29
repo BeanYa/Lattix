@@ -1,5 +1,5 @@
 // Package dispatch 负责命令生命周期（§2、§4）：入队 commands 表、经 Requester 投递、
-// 按响应回写命令与节点状态机；并实现 hello 认证（bootstrap token 换发长期凭证，§11）。
+// 按响应回写命令与节点状态机；并实现 session 认证（bootstrap token 换发长期凭证，§11）。
 package dispatch
 
 import (
@@ -64,6 +64,84 @@ func (d *Dispatcher) Enqueue(ctx context.Context, serverID int64, typ string, pa
 	}
 	d.Flush(ctx, serverID)
 	return id, nil
+}
+
+const (
+	uninstallMaxAttempts = 10
+	uninstallRetryBase   = 100 * time.Millisecond
+	uninstallRetryCap    = 10 * time.Second
+)
+
+// UninstallWithRetry makes one best-effort uninstall RPC with a bounded retry
+// budget. Every delivery reuses the same request ID so the Agent can handle it
+// idempotently; Panel deletion remains authoritative even when no ACK arrives.
+func (d *Dispatcher) UninstallWithRetry(ctx context.Context, serverID int64, payload shared.UninstallPayload) (bool, int, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return false, 0, fmt.Errorf("marshal uninstall payload: %w", err)
+	}
+	requestID := shared.NewMessageID()
+	traceID := logging.TraceID(ctx)
+	if traceID == "" {
+		traceID = shared.NewMessageID()
+	}
+	commandID, err := d.st.EnqueueCommand(ctx, requestID, traceID, serverID, shared.TypeUninstall, raw)
+	if err != nil {
+		return false, 0, err
+	}
+	envelope := shared.Envelope{
+		Kind: shared.KindRequest, Type: shared.TypeUninstall,
+		RequestID: requestID, TraceID: traceID, Data: raw,
+	}
+
+	for attempt := 1; attempt <= uninstallMaxAttempts; attempt++ {
+		if err := d.st.MarkCommandSent(ctx, commandID); err != nil {
+			return false, attempt - 1, err
+		}
+		_ = d.req.Send(ctx, serverID, envelope)
+		acked, err := d.waitForCommandACK(ctx, requestID, uninstallRetryDelay(attempt))
+		if err != nil {
+			return false, attempt, err
+		}
+		if acked {
+			return true, attempt, nil
+		}
+	}
+	return false, uninstallMaxAttempts, nil
+}
+
+func (d *Dispatcher) waitForCommandACK(ctx context.Context, requestID string, timeout time.Duration) (bool, error) {
+	deadline := time.NewTimer(timeout)
+	poll := time.NewTicker(25 * time.Millisecond)
+	defer deadline.Stop()
+	defer poll.Stop()
+	for {
+		command, err := d.st.CommandByRequestID(ctx, requestID)
+		if err != nil {
+			return false, err
+		}
+		if command.Status == store.CommandStatusAcked {
+			return true, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-deadline.C:
+			return false, nil
+		case <-poll.C:
+		}
+	}
+}
+
+func uninstallRetryDelay(attempt int) time.Duration {
+	delay := uninstallRetryBase
+	for i := 1; i < attempt && delay < uninstallRetryCap; i++ {
+		delay *= 2
+	}
+	if delay > uninstallRetryCap {
+		return uninstallRetryCap
+	}
+	return delay
 }
 
 func (d *Dispatcher) enqueueRevisionTask(ctx context.Context, serverID int64, typ string, payload any,
@@ -170,32 +248,64 @@ func isExactAgentUpgrade(command store.Command, version string) bool {
 	return json.Unmarshal(command.Data, &payload) == nil && payload.Version == version
 }
 
-// AuthenticateHello 实现 ws.Authenticator：按 token 查找服务器。
-// 仅 bootstrap 状态（last_seen_at 为空，§5/§11）时换发长期凭证；长期 token 稳定不轮换。
-// 管理员已指定地址（address_mode=manual）时不被自动学习覆盖（§4/§9）。
-func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayload, remoteAddr string) (int64, shared.HelloResult, error) {
-	srv, err := d.st.ServerByToken(ctx, p.Token)
-	if err != nil {
-		return 0, shared.HelloResult{}, fmt.Errorf("unknown token")
+func (d *Dispatcher) AuthenticateToken(ctx context.Context, token string) (ws.AuthResult, error) {
+	srv, err := d.st.ServerByToken(ctx, token)
+	if errors.Is(err, store.ErrNotFound) {
+		return ws.AuthResult{}, ws.ErrAuthentication
 	}
-	token := srv.Token
-	if srv.LastSeenAt == nil {
-		// bootstrap 状态：换发长期凭证（bootstrap 失效）。
-		credential, parseErr := shared.ParseCredential(srv.Token)
-		if parseErr != nil {
-			return 0, shared.HelloResult{}, fmt.Errorf("invalid stored credential")
+	if err != nil {
+		return ws.AuthResult{}, err
+	}
+	credential, err := shared.ParseCredential(token)
+	if err != nil {
+		return ws.AuthResult{}, ws.ErrAuthentication
+	}
+	panelID, err := d.st.PanelInstanceID(ctx)
+	if err != nil {
+		return ws.AuthResult{}, err
+	}
+	if credential.PanelInstanceID != panelID {
+		return ws.AuthResult{}, ws.ErrAuthentication
+	}
+	return ws.AuthResult{ServerID: srv.ID, Reconnect: srv.LastConnectedAt != nil}, nil
+}
+
+// OpenSession records the current Agent capabilities and prepares an
+// idempotent bootstrap-to-long-term credential exchange when required.
+func (d *Dispatcher) OpenSession(ctx context.Context, auth ws.AuthResult, p shared.SessionOpenPayload, remoteAddr string) (ws.OpenSessionResult, error) {
+	srv, err := d.st.ServerByID(ctx, auth.ServerID)
+	if err != nil {
+		return ws.OpenSessionResult{}, err
+	}
+	result := ws.OpenSessionResult{}
+	if !srv.CredentialCommitted {
+		if srv.CredentialPendingToken == "" {
+			credential, parseErr := shared.ParseCredential(srv.Token)
+			if parseErr != nil {
+				return result, fmt.Errorf("invalid stored credential")
+			}
+			panelID, idErr := d.st.PanelInstanceID(ctx)
+			if idErr != nil {
+				return result, idErr
+			}
+			if credential.PanelInstanceID != panelID {
+				return result, ws.ErrAuthentication
+			}
+			pending, createErr := shared.NewCredential(panelID, credential.Epoch)
+			if createErr != nil {
+				return result, createErr
+			}
+			exchangeID := shared.NewMessageID()
+			if _, setErr := d.st.SetPendingCredential(ctx, srv.ID, pending, exchangeID); setErr != nil {
+				return result, setErr
+			}
+			srv, err = d.st.ServerByID(ctx, srv.ID)
+			if err != nil {
+				return result, err
+			}
 		}
-		panelID, idErr := d.st.PanelInstanceID(ctx)
-		if idErr != nil || credential.PanelInstanceID != panelID {
-			return 0, shared.HelloResult{}, fmt.Errorf("credential belongs to a different panel")
-		}
-		token, err = shared.NewCredential(panelID, credential.Epoch)
-		if err != nil {
-			return 0, shared.HelloResult{}, err
-		}
-		if err := d.st.RotateServerToken(ctx, srv.ID, token); err != nil {
-			return 0, shared.HelloResult{}, err
-		}
+		result.IssuedToken = srv.CredentialPendingToken
+		result.ExchangeID = srv.CredentialExchangeID
 	}
 	learnedAddr := preferredAgentAddress(remoteAddr, p.NICAddresses)
 	if srv.AddressMode == store.AddressModeManual {
@@ -214,7 +324,18 @@ func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayloa
 		log.Printf("dispatch: touch server %d: %v", srv.ID, err)
 	}
 	d.ensureAgentVersion(ctx, srv.ID, p.AgentVersion)
-	return srv.ID, shared.HelloResult{ServerID: srv.ID, Token: token}, nil
+	return result, nil
+}
+
+func (d *Dispatcher) CommitCredential(ctx context.Context, serverID int64, exchangeID string) error {
+	committed, err := d.st.CommitPendingCredential(ctx, serverID, exchangeID)
+	if err != nil {
+		return err
+	}
+	if !committed {
+		return fmt.Errorf("credential exchange is no longer pending")
+	}
+	return nil
 }
 
 func (d *Dispatcher) ensureAgentVersion(ctx context.Context, serverID int64, reported string) {
@@ -278,7 +399,7 @@ func isPublicAgentIP(value string) bool {
 	return !sharedRange.Contains(ip)
 }
 
-// OnAgentConnect 在 agent hello 认证完成后调用（ws.Hub.OnConnect）：
+// OnAgentConnect 在 agent session.ready 完成后调用（ws.Hub.OnConnect）：
 // 重置 sent 未终态的命令为 queued（§2 重发语义）并补发全部滞留命令。
 func (d *Dispatcher) OnAgentConnect(ctx context.Context, serverID int64) {
 	if err := d.st.ResetSentCommands(ctx, serverID); err != nil {
@@ -397,7 +518,7 @@ func panelWSURL(publicURL string) string {
 	return u.String()
 }
 
-// NotifyAgentSettingsChanged is best effort. Agents also pull after hello and
+// NotifyAgentSettingsChanged is best effort. Agents also pull after session.open and
 // periodically, so losing this hint cannot leave them permanently stale.
 func (d *Dispatcher) NotifyAgentSettingsChanged(ctx context.Context, revision int64) {
 	servers, err := d.st.ListServers(ctx)

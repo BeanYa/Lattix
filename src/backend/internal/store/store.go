@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS servers (
     config_drift INTEGER NOT NULL DEFAULT 0,
     agent_version TEXT,
     address      TEXT    NOT NULL DEFAULT '', -- 公网地址：管理员填写，留空按 agent 拨入 RemoteAddr 学习（§4/§9）
-    address_mode TEXT    NOT NULL DEFAULT 'auto', -- auto|manual；自动地址可在每次 hello 时重新学习
+    address_mode TEXT    NOT NULL DEFAULT 'auto', -- auto|manual；自动地址可在每次 session.open 时重新学习
     learned_addr TEXT    NOT NULL DEFAULT '',
     nic_addresses TEXT   NOT NULL DEFAULT '', -- JSON 字符串数组
     machine_type TEXT    NOT NULL DEFAULT 'direct', -- direct|nat
@@ -31,6 +31,14 @@ CREATE TABLE IF NOT EXISTS servers (
     country_code TEXT    NOT NULL DEFAULT '', -- ISO 3166-1 alpha-2；名称模板国家/国旗来源
     location     TEXT    NOT NULL DEFAULT '', -- 管理员填写的城市/机房位置
     credential_epoch INTEGER NOT NULL DEFAULT 1,
+    credential_committed INTEGER NOT NULL DEFAULT 0,
+    credential_pending_token TEXT NOT NULL DEFAULT '',
+    credential_exchange_id TEXT NOT NULL DEFAULT '',
+    last_connected_at DATETIME,
+    last_disconnected_at DATETIME,
+    last_reconnected_at DATETIME,
+    reconnect_count INTEGER NOT NULL DEFAULT 0,
+    last_disconnect_reason TEXT NOT NULL DEFAULT '',
     agent_settings_revision INTEGER NOT NULL DEFAULT 0,
     agent_settings_error TEXT NOT NULL DEFAULT '',
     agent_settings_reported_at DATETIME,

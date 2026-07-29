@@ -20,11 +20,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/crypto/bcrypt"
 
 	"lattix/backend/internal/alert"
 	"lattix/backend/internal/dispatch"
+	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/panel"
 	"lattix/backend/internal/store"
@@ -133,6 +135,11 @@ func run() error {
 		return fmt.Errorf("store: %w", err)
 	}
 	defer st.Close()
+	panelInstanceID, err := st.PanelInstanceID(context.Background())
+	if err != nil {
+		return fmt.Errorf("panel identity: %w", err)
+	}
+	lifecycleManager := lifecycle.New(panelInstanceID)
 
 	operationLimit := settingInt(st, store.SettingOperationLogLimit, 1000)
 	requestLogMB := settingInt(st, store.SettingRequestLogMaxMB, 10)
@@ -236,6 +243,7 @@ func run() error {
 
 	// 控制通道（§5）：hub 负责传输，dispatcher 负责命令生命周期与认证。
 	hub := ws.NewHub()
+	hub.Lifecycle = lifecycleManager
 	dispatcher := dispatch.New(st, hub)
 	dispatcher.OperationLog = opLog
 	dispatcher.RequestLog = reqLog
@@ -257,6 +265,9 @@ func run() error {
 		dispatcher.RecomputeChainsByServer(serverID)
 	}
 	hub.OnOnline = func(serverID int64) {
+		if err := st.RecordServerConnected(context.Background(), serverID, false); err != nil {
+			log.Printf("main: record server connected: %v", err)
+		}
 		sid := serverID
 		if err := opLog.Record(context.Background(), logging.OperationEvent{
 			Severity: logging.SeverityInfo, Category: logging.CategoryAgent, Action: "agent.online",
@@ -266,6 +277,9 @@ func run() error {
 		}
 	}
 	hub.OnReconnect = func(serverID int64) {
+		if err := st.RecordServerConnected(context.Background(), serverID, true); err != nil {
+			log.Printf("main: record server reconnected: %v", err)
+		}
 		sid := serverID
 		if err := opLog.Record(context.Background(), logging.OperationEvent{
 			Severity: logging.SeverityInfo, Category: logging.CategoryAgent, Action: "agent.reconnected",
@@ -275,10 +289,6 @@ func run() error {
 		}
 	}
 	hub.OnMessage = dispatcher.HandleMessage
-	if err := dispatcher.ResumeChains(context.Background()); err != nil {
-		log.Printf("main: resume chain revisions: %v", err)
-	}
-
 	// 事件告警（§19）：offline 跃迁挂在 hub 注销路径；漂移/节点失败在 dispatcher 处理点。
 	notifier := alert.New(st)
 	notifierClosed := false
@@ -291,6 +301,9 @@ func run() error {
 	}()
 	dispatcher.Alerter = notifier
 	hub.OnDisconnect = func(serverID int64) {
+		if err := st.RecordServerDisconnected(context.Background(), serverID, "connection closed"); err != nil {
+			log.Printf("main: record server disconnected: %v", err)
+		}
 		notifier.Notify(serverID, alert.EventServerOffline, "", "WS 连接断开，服务器离线")
 		sid := serverID
 		if err := opLog.Record(context.Background(), logging.OperationEvent{
@@ -327,6 +340,7 @@ func run() error {
 		RequestLog:       reqLog,
 		LogDir:           logDirAbs,
 		LifecycleContext: runCtx,
+		Lifecycle:        lifecycleManager,
 		RequestRestart: func(reason string) error {
 			restartMu.Lock()
 			defer restartMu.Unlock()
@@ -392,7 +406,7 @@ func run() error {
 		}
 	}
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		if hub.IsDraining() {
+		if hub.IsDraining() || lifecycleManager.Snapshot().State != shared.PanelStateActive {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
@@ -459,6 +473,28 @@ func run() error {
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- serve() }()
+	if err := dispatcher.ResumeChains(context.Background()); err != nil {
+		log.Printf("main: resume chain revisions: %v", err)
+		faulted, _, _ := lifecycleManager.Transition(shared.PanelStateFaulted, "control plane initialization failed")
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		hub.SyncLifecycle(ctx, faulted)
+		cancel()
+		hub.CloseAllAgents(websocket.CloseTryAgainLater, "panel faulted")
+	} else {
+		active, _, _ := lifecycleManager.Transition(shared.PanelStateActive, "")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		hub.SyncLifecycle(ctx, active)
+		cancel()
+		if servers, listErr := st.ListServers(context.Background()); listErr == nil {
+			for _, server := range servers {
+				if hub.IsOnline(server.ID) {
+					dispatcher.Flush(context.Background(), server.ID)
+				}
+			}
+		} else {
+			log.Printf("main: flush startup command queues: %v", listErr)
+		}
+	}
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
