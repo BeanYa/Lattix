@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   BanIcon,
   CalendarClockIcon,
@@ -85,23 +85,46 @@ export default function Users() {
   const [assignSaving, setAssignSaving] = useState(false)
   const [assignError, setAssignError] = useState('')
   const [qrText, setQrText] = useState('')
+  const loadRequest = useRef(0)
 
-  const load = useCallback((silent = false) => {
-    const options = silent ? { display: 'silent' as const } : undefined
-    Promise.all([api.users(options), api.nodes(options), api.chains(options)])
-      .then(([u, n, c]) => {
-        setUsers(u)
-        setNodes(n)
-        setChains(c)
-      })
-      .catch((err) => setError(errorMessage(err)))
-      .finally(() => setLoading(false))
+  const load = useCallback(async (silent = false, signal?: AbortSignal) => {
+    const request = ++loadRequest.current
+    const options = signal
+      ? { signal, ...(silent ? { display: 'silent' as const } : {}) }
+      : silent ? { display: 'silent' as const } : undefined
+    try {
+      const [nextUsers, nextNodes, nextChains] = await Promise.all([
+        api.users(options),
+        api.nodes(options),
+        api.chains(options),
+      ])
+      if (signal?.aborted || request !== loadRequest.current) return
+      setUsers(nextUsers)
+      setNodes(nextNodes)
+      setChains(nextChains)
+    } catch (err) {
+      if (signal?.aborted || request !== loadRequest.current) return
+      setError(errorMessage(err))
+    } finally {
+      if (!signal?.aborted && request === loadRequest.current) setLoading(false)
+    }
   }, [])
 
   useEffect(() => {
-    load()
-    const timer = setInterval(() => load(true), 5000)
-    return () => clearInterval(timer)
+    const controller = new AbortController()
+    let stopped = false
+    let timer: number | undefined
+    const poll = async (initial: boolean) => {
+      await load(!initial, controller.signal)
+      if (!stopped) timer = window.setTimeout(() => void poll(false), 5000)
+    }
+    void poll(true)
+    return () => {
+      stopped = true
+      loadRequest.current += 1
+      controller.abort()
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
   }, [load])
 
   const onOpenChange = (next: boolean) => {

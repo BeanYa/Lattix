@@ -95,6 +95,10 @@ func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 // address 为管理员指定的公网地址（§4）；空串表示留待 session.open 时按 RemoteAddr 自动学习
 // （NAT 类型强制必填，由 panel 校验）。machineType/allowedPorts 为 NAT 元数据（§21，面板侧，不下发 agent）。
 func (s *Store) CreateServer(ctx context.Context, alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location string) (int64, error) {
+	return s.createServer(ctx, s.db, alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location)
+}
+
+func (s *Store) createServer(ctx context.Context, exec contextExecer, alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location string) (int64, error) {
 	epoch := int64(1)
 	if credential, err := shared.ParseCredential(bootstrapToken); err == nil {
 		epoch = credential.Epoch
@@ -103,13 +107,46 @@ func (s *Store) CreateServer(ctx context.Context, alias, address, bootstrapToken
 	if address != "" {
 		addressMode = AddressModeManual
 	}
-	res, err := s.db.ExecContext(ctx,
+	res, err := exec.ExecContext(ctx,
 		`INSERT INTO servers (alias, address, address_mode, token, machine_type, allowed_ports, tags, country_code, location, credential_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		alias, address, addressMode, bootstrapToken, machineType, allowedPorts, tags, countryCode, location, epoch)
 	if err != nil {
 		return 0, fmt.Errorf("insert server: %w", err)
 	}
 	return res.LastInsertId()
+}
+
+// CreateServerWithPlans makes the server and its initial accounting policies
+// visible together. Callers never observe a server missing its default plan.
+func (s *Store) CreateServerWithPlans(
+	ctx context.Context,
+	alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location string,
+	billing *ServerBilling,
+	traffic ServerTrafficPlan,
+) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin server creation: %w", err)
+	}
+	defer tx.Rollback()
+	id, err := s.createServer(ctx, tx, alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location)
+	if err != nil {
+		return 0, err
+	}
+	if billing != nil {
+		billing.ServerID = id
+		if err := upsertServerBilling(ctx, tx, *billing); err != nil {
+			return 0, fmt.Errorf("save initial server billing: %w", err)
+		}
+	}
+	traffic.ServerID = id
+	if err := upsertServerTrafficPlan(ctx, tx, traffic); err != nil {
+		return 0, fmt.Errorf("save initial server traffic plan: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit server creation: %w", err)
+	}
+	return id, nil
 }
 
 // ServerByToken 按 token（bootstrap 或长期）查找服务器。

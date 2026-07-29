@@ -249,17 +249,28 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）")
 		return
 	}
+	today := s.billingDefaultDate(r.Context())
+	var billing *store.ServerBilling
 	if req.Billing != nil {
-		if _, err := validateBillingInput(r.Context(), s.st, *req.Billing, s.billingDefaultDate(r.Context())); err != nil {
+		validated, err := validateBillingInput(r.Context(), s.st, *req.Billing, today)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		billing = &validated
 	}
-	if req.TrafficPlan != nil {
-		if err := validateTrafficInput(*req.TrafficPlan); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
+	trafficInput := req.TrafficPlan
+	if trafficInput == nil {
+		trafficInput = &trafficPlanInput{AccountingMode: "outbound", ResetAnchorOn: today, ResetCount: 1, ResetUnit: "month"}
+	}
+	if err := validateTrafficInput(*trafficInput); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	traffic := store.ServerTrafficPlan{
+		QuotaBytes: trafficInput.QuotaBytes, AccountingMode: trafficInput.AccountingMode,
+		ResetAnchorOn: trafficInput.ResetAnchorOn, ResetCount: trafficInput.ResetCount,
+		ResetUnit: trafficInput.ResetUnit, TrackingStartedOn: today,
 	}
 	allowedJSON, err := marshalPortRanges(req.AllowedPorts)
 	if err != nil {
@@ -281,17 +292,9 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	id, err := s.st.CreateServer(r.Context(), req.Alias, req.Address, bootstrap, req.MachineType, allowedJSON, tagsJSON, countryCode, location)
+	id, err := s.st.CreateServerWithPlans(r.Context(), req.Alias, req.Address, bootstrap, req.MachineType,
+		allowedJSON, tagsJSON, countryCode, location, billing, traffic)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	traffic := req.TrafficPlan
-	if traffic == nil {
-		today := s.billingDefaultDate(r.Context())
-		traffic = &trafficPlanInput{AccountingMode: "outbound", ResetAnchorOn: today, ResetCount: 1, ResetUnit: "month"}
-	}
-	if err := s.saveServerPlans(r.Context(), id, req.Billing, traffic); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

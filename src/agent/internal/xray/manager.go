@@ -71,6 +71,9 @@ func (m *Manager) ResetForPanelRebind() error {
 		if err := os.Rename(m.configPath, backup); err != nil {
 			return fmt.Errorf("backup old xray config: %w", err)
 		}
+		if err := os.Chmod(backup, 0o600); err != nil {
+			return fmt.Errorf("secure old xray config backup: %w", err)
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -237,7 +240,7 @@ func (m *Manager) commitConfig(cand fullConfig) error {
 		return err
 	}
 	dir := filepath.Dir(m.configPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, ".config-*.json")
@@ -250,7 +253,10 @@ func (m *Manager) commitConfig(cand fullConfig) error {
 		os.Remove(tmpPath)
 		return err
 	}
-	tmp.Close()
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
 
 	// 校验失败则丢弃（§6 步骤 3）。
 	if out, err := exec.Command(m.bin, "run", "-test", "-config", tmpPath).CombinedOutput(); err != nil {
@@ -259,12 +265,20 @@ func (m *Manager) commitConfig(cand fullConfig) error {
 	}
 	// 备份上一份可用配置（回滚用，§6 步骤 7）。
 	if prev, err := os.ReadFile(m.configPath); err == nil {
-		if err := os.WriteFile(m.configPath+".prev", prev, 0o644); err != nil {
+		prevPath := m.configPath + ".prev"
+		if err := os.WriteFile(prevPath, prev, 0o600); err != nil {
+			os.Remove(tmpPath)
+			return err
+		}
+		if err := os.Chmod(prevPath, 0o600); err != nil {
 			os.Remove(tmpPath)
 			return err
 		}
 	}
 	if err := os.Rename(tmpPath, m.configPath); err != nil {
+		return err
+	}
+	if err := os.Chmod(m.configPath, 0o600); err != nil {
 		return err
 	}
 	m.lastHash = hashBytes(b) // §17 漂移检测基线
@@ -309,6 +323,10 @@ func (m *Manager) restorePrev() {
 			log.Printf("xray: restore prev config: %v", err)
 			return
 		}
+		if err := os.Chmod(m.configPath, 0o600); err != nil {
+			log.Printf("xray: secure restored config: %v", err)
+			return
+		}
 		if b, err := os.ReadFile(m.configPath); err == nil {
 			m.lastHash = hashBytes(b)
 		}
@@ -325,11 +343,17 @@ func (m *Manager) loadConfig() (fullConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := os.Chmod(m.configPath, 0o600); err != nil {
+		return nil, fmt.Errorf("secure xray config permissions: %w", err)
+	}
 	var fc fullConfig
 	if err := json.Unmarshal(b, &fc); err != nil {
 		broken := m.configPath + ".broken"
 		log.Printf("xray: config corrupted, backup to %s and rebuild skeleton", broken)
 		if rerr := os.Rename(m.configPath, broken); rerr != nil {
+			return nil, rerr
+		}
+		if rerr := os.Chmod(broken, 0o600); rerr != nil {
 			return nil, rerr
 		}
 		return m.mergePieces(m.skeleton()), nil

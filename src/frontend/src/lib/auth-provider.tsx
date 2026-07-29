@@ -1,15 +1,7 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
 import { api, setOnUnauthorized } from './api'
-
-interface AuthState {
-  username: string | null
-  loading: boolean
-  login: (username: string, password: string) => Promise<void>
-  logout: () => Promise<void>
-}
-
-const AuthContext = createContext<AuthState | null>(null)
+import { AuthContext } from './auth-context'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [username, setUsername] = useState<string | null>(null)
@@ -19,19 +11,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setOnUnauthorized(() => setUsername(null))
     api
       .me()
-      .then((u) => setUsername(u.username))
+      .then((user) => setUsername(user.username))
       .catch(() => {})
       .finally(() => setLoading(false))
     return () => setOnUnauthorized(null)
   }, [])
 
   const login = async (name: string, password: string) => {
-    const res = await api.login(name, password)
-    setUsername(res.username)
+    const response = await api.login(name, password)
+    setUsername(response.username)
   }
 
   const logout = async () => {
-    await api.logout().catch(() => {})
+    await api.logout()
     setUsername(null)
   }
 
@@ -40,12 +32,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
     </AuthContext.Provider>
   )
-}
-
-export function useAuth(): AuthState {
-  const ctx = useContext(AuthContext)
-  if (!ctx) {
-    throw new Error('useAuth 必须在 AuthProvider 内使用')
-  }
-  return ctx
 }

@@ -1,9 +1,11 @@
 package panel
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -23,45 +25,57 @@ const sessionTTL = 7 * 24 * time.Hour
 const sessionCookie = "lattix_session"
 
 // sessionSecret 由管理员凭证派生（不加存储；改密码即全部会话失效）。
-func (s *Server) sessionSecret() []byte {
-	sum := sha256.Sum256([]byte(s.credentialKey() + "|lattix-session"))
+func (s *Server) sessionSecret(ctx context.Context) ([]byte, error) {
+	credential, err := s.credentialKey(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return sessionSecretForCredential(credential), nil
+}
+
+func sessionSecretForCredential(credential string) []byte {
+	sum := sha256.Sum256([]byte(credential + "|lattix-session"))
 	return sum[:]
 }
 
 // signSession 生成签名会话值：base64url(user|exp).base64url(hmac)。
-func (s *Server) signSession(user string, exp time.Time) string {
+func signSession(user string, exp time.Time, secret []byte) string {
 	payload := fmt.Sprintf("%s|%d", user, exp.Unix())
-	mac := hmac.New(sha256.New, s.sessionSecret())
+	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte(payload))
 	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." +
 		base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
 // verifySession 校验签名会话值，返回用户名。
-func (s *Server) verifySession(value string) (string, bool) {
+func (s *Server) verifySession(ctx context.Context, value string) (string, bool, error) {
 	parts := strings.Split(value, ".")
 	if len(parts) != 2 {
-		return "", false
+		return "", false, nil
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
 	if err != nil {
-		return "", false
+		return "", false, nil
 	}
-	mac := hmac.New(sha256.New, s.sessionSecret())
+	secret, err := s.sessionSecret(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	mac := hmac.New(sha256.New, secret)
 	mac.Write(payload)
 	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(expected), []byte(parts[1])) {
-		return "", false
+		return "", false, nil
 	}
 	user, expStr, ok := strings.Cut(string(payload), "|")
 	if !ok {
-		return "", false
+		return "", false, nil
 	}
 	exp, err := strconv.ParseInt(expStr, 10, 64)
 	if err != nil || time.Now().Unix() > exp {
-		return "", false
+		return "", false, nil
 	}
-	return user, true
+	return user, true, nil
 }
 
 // handleLogin 处理 POST /api/login：账号密码登录（§10），签发会话 cookie。
@@ -74,7 +88,22 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Username != s.cfg.AdminUser || !s.checkPassword(req.Password) {
+	ip := logging.ClientIP(r)
+	if retry, blocked := s.loginLimiter().retryAfter(ip); blocked {
+		writeLoginRateLimit(w, retry)
+		return
+	}
+	passwordOK, credential, authErr := s.authenticatePassword(r.Context(), req.Password)
+	if authErr != nil {
+		if errors.Is(authErr, errBcryptBusy) {
+			writeLoginRateLimit(w, time.Second)
+			return
+		}
+		log.Printf("panel: login credential lookup request_id=%s: %v", logging.RequestID(r.Context()), authErr)
+		writeRPC(w, shared.CodeServiceUnavailable, "登录服务暂时不可用", nil)
+		return
+	}
+	if !hmac.Equal([]byte(req.Username), []byte(s.cfg.AdminUser)) || !passwordOK {
 		if err := s.recordOperation(r.Context(), logging.OperationEvent{
 			Severity: logging.SeverityWarning, Category: logging.CategoryAuth,
 			Action: "auth.login_failed", Detail: map[string]string{"username": req.Username},
@@ -83,10 +112,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			log.Printf("panel: record login_failed event: %v", err)
 		}
+		if retry, blocked := s.loginLimiter().recordFailure(ip); blocked {
+			writeLoginRateLimit(w, retry)
+			return
+		}
 		writeRPC(w, shared.CodeAuthInvalidCredentials, "用户名或密码错误", nil)
 		return
 	}
-	sessionValue := s.signSession(req.Username, time.Now().Add(sessionTTL))
+	s.loginLimiter().recordSuccess(ip)
+	secret := sessionSecretForCredential(credential)
+	sessionValue := signSession(req.Username, time.Now().Add(sessionTTL), secret)
+	csrfToken := csrfForSessionSecret(sessionValue, secret)
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    sessionValue,
@@ -104,7 +140,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		log.Printf("panel: record login event: %v", err)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"username": req.Username, "csrf_token": s.csrfForSession(sessionValue),
+		"username": req.Username, "csrf_token": csrfToken,
 	})
 }
 
@@ -128,9 +164,19 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 // handleMe 处理 GET /api/me：返回当前登录用户（前端判定登录态）。
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	user, _ := s.currentUser(r)
-	cookie, _ := r.Cookie(sessionCookie)
+	cookie, err := r.Cookie(sessionCookie)
+	if err != nil {
+		writeRPC(w, shared.CodeAuthRequired, "未登录或会话已过期", nil)
+		return
+	}
+	csrfToken, err := s.csrfForSession(r.Context(), cookie.Value)
+	if err != nil {
+		log.Printf("panel: create csrf request_id=%s: %v", logging.RequestID(r.Context()), err)
+		writeRPC(w, shared.CodeServiceUnavailable, "认证服务暂时不可用", nil)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"username": user, "csrf_token": s.csrfForSession(cookie.Value),
+		"username": user, "csrf_token": csrfToken,
 	})
 }
 
@@ -140,7 +186,12 @@ func (s *Server) currentUser(r *http.Request) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return s.verifySession(c.Value)
+	user, ok, err := s.verifySession(r.Context(), c.Value)
+	if err != nil {
+		log.Printf("panel: verify session request_id=%s: %v", logging.RequestID(r.Context()), err)
+		return "", false
+	}
+	return user, ok
 }
 
 // requireAuth 是会话校验中间件。
@@ -161,8 +212,16 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (s *Server) csrfForSession(sessionValue string) string {
-	mac := hmac.New(sha256.New, s.sessionSecret())
+func (s *Server) csrfForSession(ctx context.Context, sessionValue string) (string, error) {
+	secret, err := s.sessionSecret(ctx)
+	if err != nil {
+		return "", err
+	}
+	return csrfForSessionSecret(sessionValue, secret), nil
+}
+
+func csrfForSessionSecret(sessionValue string, secret []byte) string {
+	mac := hmac.New(sha256.New, secret)
 	_, _ = mac.Write([]byte("csrf|" + sessionValue))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
@@ -174,7 +233,12 @@ func (s *Server) requireCSRF(next http.HandlerFunc) http.HandlerFunc {
 			writeRPC(w, shared.CodeAuthRequired, "未登录或会话已过期", nil)
 			return
 		}
-		expected := s.csrfForSession(cookie.Value)
+		expected, err := s.csrfForSession(r.Context(), cookie.Value)
+		if err != nil {
+			log.Printf("panel: verify csrf request_id=%s: %v", logging.RequestID(r.Context()), err)
+			writeRPC(w, shared.CodeServiceUnavailable, "认证服务暂时不可用", nil)
+			return
+		}
 		actual := r.Header.Get("X-CSRF-Token")
 		if actual == "" || !hmac.Equal([]byte(expected), []byte(actual)) {
 			writeRPC(w, shared.CodeAuthRequired, "CSRF token 无效", nil)

@@ -6,13 +6,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+
+	"lattix/backend/internal/store"
 )
 
 const (
-	RevisionPieceService = "service"
-	RevisionPieceForward = "forward"
-	RevisionPiecePortal  = "portal"
-	RevisionPieceBridge  = "bridge"
+	RevisionPieceService = store.RevisionPieceService
+	RevisionPieceForward = store.RevisionPieceForward
+	RevisionPiecePortal  = store.RevisionPiecePortal
+	RevisionPieceBridge  = store.RevisionPieceBridge
 )
 
 // RevisionTopology is the planner input. Hops are ordered entry to exit.

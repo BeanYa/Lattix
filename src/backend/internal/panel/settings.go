@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -66,7 +67,7 @@ func parseCertInfo(certPEM string) (*x509.Certificate, error) {
 func toCertInfoDTO(c *x509.Certificate) certInfoDTO {
 	return certInfoDTO{
 		CommonName: c.Subject.CommonName,
-		DNSNames:   c.DNSNames,
+		DNSNames:   append([]string{}, c.DNSNames...),
 		NotAfter:   c.NotAfter.Format(time.RFC3339),
 		Expired:    time.Now().After(c.NotAfter),
 	}
@@ -387,111 +388,89 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	set := func(key, value string) bool {
-		if err := s.st.SetSetting(ctx, key, value); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return false
-		}
-		return true
+	mutations := make([]store.SettingMutation, 0, 20)
+	set := func(key, value string) {
+		mutations = append(mutations, store.SettingMutation{Key: key, Value: value})
 	}
-	del := func(key string) bool {
-		if err := s.st.DeleteSetting(ctx, key); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return false
-		}
-		return true
+	del := func(key string) {
+		mutations = append(mutations, store.SettingMutation{Key: key, Delete: true})
 	}
 
 	if req.Timezone == "" {
-		if !del(store.SettingTimezone) {
-			return
-		}
-	} else if !set(store.SettingTimezone, req.Timezone) {
-		return
+		del(store.SettingTimezone)
+	} else {
+		set(store.SettingTimezone, req.Timezone)
 	}
-	if !set(store.SettingTrafficTimezone, req.TrafficTimezone) {
-		return
-	}
+	set(store.SettingTrafficTimezone, req.TrafficTimezone)
 	if req.PublicURL == "" {
-		if !del(store.SettingPublicURL) {
-			return
-		}
-	} else if !set(store.SettingPublicURL, req.PublicURL) {
-		return
+		del(store.SettingPublicURL)
+	} else {
+		set(store.SettingPublicURL, req.PublicURL)
 	}
 
 	if req.TLSMode == "" {
-		if !del(store.SettingTLSMode) {
-			return
-		}
-	} else if !set(store.SettingTLSMode, req.TLSMode) {
-		return
+		del(store.SettingTLSMode)
+	} else {
+		set(store.SettingTLSMode, req.TLSMode)
 	}
-	if req.TLSCertPEM != "" && !set(store.SettingTLSCertPEM, req.TLSCertPEM) {
-		return
+	if req.TLSCertPEM != "" {
+		set(store.SettingTLSCertPEM, req.TLSCertPEM)
 	}
-	if req.TLSKeyPEM != "" && !set(store.SettingTLSKeyPEM, req.TLSKeyPEM) {
-		return
+	if req.TLSKeyPEM != "" {
+		set(store.SettingTLSKeyPEM, req.TLSKeyPEM)
 	}
 	// 域名仅在非空时覆盖（避免误清空）；邮箱随表单覆盖（允许清空）。
-	if strings.TrimSpace(req.TLSDomain) != "" && !set(store.SettingTLSDomain, strings.TrimSpace(req.TLSDomain)) {
-		return
+	if strings.TrimSpace(req.TLSDomain) != "" {
+		set(store.SettingTLSDomain, strings.TrimSpace(req.TLSDomain))
 	}
-	if strings.TrimSpace(req.ACMEDomain) != "" && !set(store.SettingACMEDomain, strings.TrimSpace(req.ACMEDomain)) {
-		return
+	if strings.TrimSpace(req.ACMEDomain) != "" {
+		set(store.SettingACMEDomain, strings.TrimSpace(req.ACMEDomain))
 	}
-	if !set(store.SettingACMEEmail, strings.TrimSpace(req.ACMEEmail)) {
-		return
-	}
+	set(store.SettingACMEEmail, strings.TrimSpace(req.ACMEEmail))
 
 	// 事件告警（§19）：webhook/chat_id 随表单覆盖（允许清空）；bot token 留空保持不变。
-	if !set(store.SettingAlertWebhookURL, req.AlertWebhookURL) {
-		return
+	set(store.SettingAlertWebhookURL, req.AlertWebhookURL)
+	set(store.SettingAlertTelegramChatID, strings.TrimSpace(req.AlertTelegramChatID))
+	if t := strings.TrimSpace(req.AlertTelegramBotToken); t != "" {
+		set(store.SettingAlertTelegramBotToken, t)
 	}
-	if !set(store.SettingAlertTelegramChatID, strings.TrimSpace(req.AlertTelegramChatID)) {
-		return
-	}
-	if t := strings.TrimSpace(req.AlertTelegramBotToken); t != "" && !set(store.SettingAlertTelegramBotToken, t) {
-		return
-	}
-	if !set(store.SettingOperationLogLimit, strconv.Itoa(req.OperationLogLimit)) {
-		return
-	}
-	if !set(store.SettingRequestLogMaxMB, strconv.Itoa(req.RequestLogMaxMB)) {
-		return
-	}
+	set(store.SettingOperationLogLimit, strconv.Itoa(req.OperationLogLimit))
+	set(store.SettingRequestLogMaxMB, strconv.Itoa(req.RequestLogMaxMB))
+	releaseInspectionChanged := req.ReleaseInspection != nil
+	billingInspectionChanged := req.BillingInspection != nil
+	exchangeInspectionChanged := req.ExchangeInspection != nil
 	if req.ReleaseInspection != nil {
 		raw, err := json.Marshal(req.ReleaseInspection)
-		if err != nil || !set(store.SettingReleaseInspection, string(raw)) {
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-			}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		s.scheduler.notifyChanged()
+		set(store.SettingReleaseInspection, string(raw))
 	}
 	if req.BillingInspection != nil {
 		raw, err := json.Marshal(req.BillingInspection)
-		if err != nil || !set(store.SettingBillingInspection, string(raw)) {
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-			}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		set(store.SettingBillingInspection, string(raw))
 	}
 	if req.ExchangeInspection != nil {
 		raw, err := json.Marshal(req.ExchangeInspection)
-		if err != nil || !set(store.SettingExchangeInspection, string(raw)) {
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-			}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		set(store.SettingExchangeInspection, string(raw))
 	}
-	if !set(store.SettingReportingCurrency, req.ReportingCurrency) {
+	set(store.SettingReportingCurrency, req.ReportingCurrency)
+
+	updatedAgent, err := s.st.ApplySettings(ctx, mutations, req.Agent)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if req.BillingInspection != nil || req.ExchangeInspection != nil {
+	if releaseInspectionChanged || billingInspectionChanged || exchangeInspectionChanged {
 		s.scheduler.notifyChanged()
 	}
 	if s.opLog != nil {
@@ -504,15 +483,8 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			log.Printf("panel: apply request log retention: %v", err)
 		}
 	}
-	var updatedAgent *shared.AgentSettings
-	if req.Agent != nil {
-		settings, err := s.st.UpdateAgentSettings(ctx, *req.Agent)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		updatedAgent = &settings
-		s.disp.NotifyAgentSettingsChanged(ctx, settings.Revision)
+	if updatedAgent != nil {
+		s.disp.NotifyAgentSettingsChanged(ctx, updatedAgent.Revision)
 	}
 
 	after := map[string]any{
@@ -576,7 +548,17 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if !s.checkPassword(req.CurrentPassword) {
+	passwordOK, err := s.checkPassword(r.Context(), req.CurrentPassword)
+	if err != nil {
+		if errors.Is(err, errBcryptBusy) {
+			writeLoginRateLimit(w, time.Second)
+			return
+		}
+		log.Printf("panel: verify current password: %v", err)
+		writeRPC(w, shared.CodeServiceUnavailable, "认证服务暂时不可用", nil)
+		return
+	}
+	if !passwordOK {
 		writeError(w, http.StatusForbidden, "当前密码错误")
 		return
 	}
@@ -584,9 +566,14 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "新密码至少 8 位")
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	hash, err := s.generatePasswordHash(req.NewPassword)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		if errors.Is(err, errBcryptBusy) {
+			writeLoginRateLimit(w, time.Second)
+			return
+		}
+		log.Printf("panel: hash new admin password: %v", err)
+		writeRPC(w, shared.CodeServiceUnavailable, "认证服务暂时不可用", nil)
 		return
 	}
 	if err := s.st.SetSetting(r.Context(), store.SettingAdminPassBcrypt, string(hash)); err != nil {
@@ -598,19 +585,49 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkPassword 校验登录密码：DB 中有 bcrypt 哈希则以其为准，否则比对启动参数。
-func (s *Server) checkPassword(pw string) bool {
-	if h := s.getSetting(context.Background(), store.SettingAdminPassBcrypt); h != "" {
-		return bcrypt.CompareHashAndPassword([]byte(h), []byte(pw)) == nil
+func (s *Server) checkPassword(ctx context.Context, pw string) (bool, error) {
+	ok, _, err := s.authenticatePassword(ctx, pw)
+	return ok, err
+}
+
+// authenticatePassword returns the exact credential snapshot that was
+// verified. Login must sign with this snapshot so a concurrent password change
+// cannot turn an old-password check into a session signed by the new password.
+func (s *Server) authenticatePassword(ctx context.Context, pw string) (bool, string, error) {
+	h, err := s.st.GetSetting(ctx, store.SettingAdminPassBcrypt)
+	if err != nil {
+		return false, "", fmt.Errorf("read admin password hash: %w", err)
 	}
-	return pw == s.cfg.AdminPass
+	if h != "" {
+		if !s.acquireBcryptSlot() {
+			return false, "", errBcryptBusy
+		}
+		defer s.releaseBcryptSlot()
+		err := bcrypt.CompareHashAndPassword([]byte(h), []byte(pw))
+		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+			return false, "", nil
+		}
+		if err != nil {
+			return false, "", fmt.Errorf("compare admin password hash: %w", err)
+		}
+		return true, h, nil
+	}
+	if subtle.ConstantTimeCompare([]byte(pw), []byte(s.cfg.AdminPass)) != 1 {
+		return false, "", nil
+	}
+	return true, s.cfg.AdminPass, nil
 }
 
 // credentialKey 是会话签名密钥的派生源（改密即换源，全部会话失效）。
-func (s *Server) credentialKey() string {
-	if h := s.getSetting(context.Background(), store.SettingAdminPassBcrypt); h != "" {
-		return h
+func (s *Server) credentialKey(ctx context.Context) (string, error) {
+	h, err := s.st.GetSetting(ctx, store.SettingAdminPassBcrypt)
+	if err != nil {
+		return "", fmt.Errorf("read session credential: %w", err)
 	}
-	return s.cfg.AdminPass
+	if h != "" {
+		return h, nil
+	}
+	return s.cfg.AdminPass, nil
 }
 
 // getSetting 读取设置，出错按未设置处理（设置为非关键路径，降级到启动参数）。

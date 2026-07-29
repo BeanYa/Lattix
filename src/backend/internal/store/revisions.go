@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -25,6 +27,13 @@ const (
 	RevisionTaskAcked     = "acked"
 	RevisionTaskFailed    = "failed"
 	RevisionTaskAbandoned = "abandoned"
+)
+
+const (
+	RevisionPieceService = "service"
+	RevisionPieceForward = "forward"
+	RevisionPiecePortal  = "portal"
+	RevisionPieceBridge  = "bridge"
 )
 
 type ChainRevisionHop struct {
@@ -74,6 +83,182 @@ type ChainRevisionTask struct {
 	Status     string
 	CommandID  int64
 	Error      string
+}
+
+type InitialChainHop struct {
+	ServerID    int64
+	Role        string
+	Transport   string
+	ForwardPort int
+	TunnelUUID  string
+}
+
+type InitialChainDeployment struct {
+	Name                   string
+	ServiceServerID        int64
+	ServiceProtocol        string
+	ServicePort            *int
+	ServiceConfig          json.RawMessage
+	TrafficMultiplierMilli int
+	Hops                   []InitialChainHop
+}
+
+type InitialChainDeploymentResult struct {
+	ChainID    int64
+	NodeID     int64
+	RevisionID int64
+	Hops       []ChainRevisionHop
+	ApplyKeys  []string
+}
+
+// CreateInitialChainDeployment persists a new chain and its complete first
+// deployment plan atomically. No scheduler-visible aggregate exists until all
+// revision tasks have been stored successfully.
+func (s *Store) CreateInitialChainDeployment(
+	ctx context.Context,
+	input InitialChainDeployment,
+) (InitialChainDeploymentResult, error) {
+	var out InitialChainDeploymentResult
+	if len(input.Hops) == 0 {
+		return out, errors.New("initial chain deployment requires at least one hop")
+	}
+	if input.Hops[len(input.Hops)-1].TunnelUUID != "" {
+		return out, errors.New("initial chain exit hop cannot open a tunnel to a missing downstream hop")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return out, fmt.Errorf("begin initial chain deployment: %w", err)
+	}
+	defer tx.Rollback()
+
+	nodeResult, err := tx.ExecContext(ctx,
+		`INSERT INTO nodes (name, server_id, protocol, port, config_template) VALUES (?, ?, ?, ?, ?)`,
+		input.Name, input.ServiceServerID, input.ServiceProtocol, input.ServicePort, string(input.ServiceConfig))
+	if err != nil {
+		return out, fmt.Errorf("insert initial chain service node: %w", err)
+	}
+	out.NodeID, err = nodeResult.LastInsertId()
+	if err != nil {
+		return out, fmt.Errorf("read initial chain service node id: %w", err)
+	}
+
+	chainResult, err := tx.ExecContext(ctx,
+		`INSERT INTO chains (name, service_node_id, traffic_multiplier_milli) VALUES (?, ?, ?)`,
+		input.Name, out.NodeID, input.TrafficMultiplierMilli)
+	if err != nil {
+		return out, fmt.Errorf("insert initial chain: %w", err)
+	}
+	out.ChainID, err = chainResult.LastInsertId()
+	if err != nil {
+		return out, fmt.Errorf("read initial chain id: %w", err)
+	}
+
+	out.Hops = make([]ChainRevisionHop, 0, len(input.Hops))
+	for seq, hop := range input.Hops {
+		nodeID := int64(0)
+		if seq == len(input.Hops)-1 {
+			nodeID = out.NodeID
+		}
+		hopResult, err := tx.ExecContext(ctx,
+			`INSERT INTO chain_hops (chain_id, seq, server_id, role, node_id, forward_port, tunnel_uuid)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			out.ChainID, seq, hop.ServerID, hop.Role, nodeID, hop.ForwardPort, hop.TunnelUUID)
+		if err != nil {
+			return out, fmt.Errorf("insert initial chain hop %d: %w", seq, err)
+		}
+		hopID, err := hopResult.LastInsertId()
+		if err != nil {
+			return out, fmt.Errorf("read initial chain hop %d id: %w", seq, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO chain_hop_identities (id, chain_id, server_id) VALUES (?, ?, ?)`,
+			hopID, out.ChainID, hop.ServerID); err != nil {
+			return out, fmt.Errorf("insert initial chain hop %d identity: %w", seq, err)
+		}
+		out.Hops = append(out.Hops, ChainRevisionHop{
+			HopID: hopID, ServerID: hop.ServerID, Role: hop.Role, Transport: hop.Transport,
+			ForwardPort: hop.ForwardPort, TunnelUUID: hop.TunnelUUID,
+		})
+	}
+
+	out.ApplyKeys = []string{fmt.Sprintf("%s/%d", RevisionPieceService, out.NodeID)}
+	for i, hop := range out.Hops {
+		if i < len(out.Hops)-1 {
+			out.ApplyKeys = append(out.ApplyKeys, fmt.Sprintf("%s/%d", RevisionPieceForward, hop.HopID))
+		}
+		if hop.TunnelUUID != "" {
+			out.ApplyKeys = append(out.ApplyKeys,
+				fmt.Sprintf("%s/%d", RevisionPiecePortal, hop.HopID),
+				fmt.Sprintf("%s/%d", RevisionPieceBridge, out.Hops[i+1].HopID))
+		}
+	}
+
+	snapshot := ChainRevisionSnapshot{
+		Name: input.Name, ServiceNodeID: out.NodeID, ServiceServerID: input.ServiceServerID,
+		ServiceConfig: input.ServiceConfig, TrafficMultiplierMilli: input.TrafficMultiplierMilli,
+		Hops: out.Hops, ApplyKeys: out.ApplyKeys,
+	}
+	rawSnapshot, err := json.Marshal(snapshot)
+	if err != nil {
+		return out, fmt.Errorf("encode initial chain revision: %w", err)
+	}
+	revisionResult, err := tx.ExecContext(ctx,
+		`INSERT INTO chain_revisions (chain_id, revision_no, snapshot) VALUES (?, 1, ?)`,
+		out.ChainID, string(rawSnapshot))
+	if err != nil {
+		return out, fmt.Errorf("insert initial chain revision: %w", err)
+	}
+	out.RevisionID, err = revisionResult.LastInsertId()
+	if err != nil {
+		return out, fmt.Errorf("read initial chain revision id: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE chains SET desired_revision_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		out.RevisionID, out.ChainID); err != nil {
+		return out, fmt.Errorf("link initial chain revision: %w", err)
+	}
+
+	serverByHopID := make(map[int64]int64, len(out.Hops))
+	for _, hop := range out.Hops {
+		serverByHopID[hop.HopID] = hop.ServerID
+	}
+	for _, key := range out.ApplyKeys {
+		kind, rawID, ok := strings.Cut(key, "/")
+		if !ok {
+			return out, fmt.Errorf("invalid initial chain task key %q", key)
+		}
+		pieceID, err := strconv.ParseInt(rawID, 10, 64)
+		if err != nil {
+			return out, fmt.Errorf("invalid initial chain task key %q: %w", key, err)
+		}
+		var serverID int64
+		switch kind {
+		case RevisionPieceService:
+			if pieceID != out.NodeID {
+				return out, fmt.Errorf("initial chain service task %q has an invalid node", key)
+			}
+			serverID = input.ServiceServerID
+		case RevisionPieceForward, RevisionPiecePortal, RevisionPieceBridge:
+			var found bool
+			serverID, found = serverByHopID[pieceID]
+			if !found {
+				return out, fmt.Errorf("initial chain task %q has no hop server", key)
+			}
+		default:
+			return out, fmt.Errorf("initial chain task %q has an invalid kind", key)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO chain_revision_tasks
+			(revision_id, task_key, phase, action, kind, hop_id, server_id, status)
+			VALUES (?, ?, 'apply', 'apply', ?, ?, ?, ?)`,
+			out.RevisionID, key, kind, pieceID, serverID, RevisionTaskPending); err != nil {
+			return out, fmt.Errorf("insert initial chain task %q: %w", key, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return out, fmt.Errorf("commit initial chain deployment: %w", err)
+	}
+	return out, nil
 }
 
 func (s *Store) CreateHopIdentity(ctx context.Context, chainID, serverID int64) (int64, error) {

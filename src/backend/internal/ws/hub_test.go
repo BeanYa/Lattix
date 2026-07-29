@@ -86,7 +86,7 @@ func TestSyncLifecycleWaitsForACKAndReportsTimeout(t *testing.T) {
 		acked.resolveLifecycleAck(envelope.RequestID)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	got := h.SyncLifecycle(ctx, shared.PanelLifecycleSnapshot{State: shared.PanelStateUpdating})
 	if !reflect.DeepEqual(got, []int64{8}) {

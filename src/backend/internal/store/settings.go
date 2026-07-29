@@ -39,6 +39,12 @@ const (
 	SettingTrafficTimezone       = "traffic_timezone"
 )
 
+type SettingMutation struct {
+	Key    string
+	Value  string
+	Delete bool
+}
+
 // GetSetting 读取一个设置；未设置返回空字符串（不视为错误）。
 func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
 	var v string
@@ -107,10 +113,19 @@ func (s *Store) AgentSettings(ctx context.Context) (shared.AgentSettings, error)
 	}
 	if raw == "" {
 		defaults := shared.DefaultAgentSettings()
-		if err := s.saveAgentSettings(ctx, defaults); err != nil {
+		encoded, err := json.Marshal(defaults)
+		if err != nil {
 			return shared.AgentSettings{}, err
 		}
-		return defaults, nil
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE settings.value = ''`,
+			SettingAgentSettings, string(encoded)); err != nil {
+			return shared.AgentSettings{}, err
+		}
+		raw, err = s.GetSetting(ctx, SettingAgentSettings)
+		if err != nil {
+			return shared.AgentSettings{}, err
+		}
 	}
 	var settings shared.AgentSettings
 	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
@@ -125,42 +140,75 @@ func (s *Store) AgentSettings(ctx context.Context) (shared.AgentSettings, error)
 // UpdateAgentSettings replaces the desired object and increments its revision
 // in the same database transaction.
 func (s *Store) UpdateAgentSettings(ctx context.Context, desired shared.AgentSettings) (shared.AgentSettings, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
+	updated, err := s.ApplySettings(ctx, nil, &desired)
 	if err != nil {
 		return shared.AgentSettings{}, err
 	}
+	return *updated, nil
+}
+
+// ApplySettings persists one settings form submission and an optional Agent
+// settings revision as a single transaction.
+func (s *Store) ApplySettings(
+	ctx context.Context,
+	mutations []SettingMutation,
+	desiredAgent *shared.AgentSettings,
+) (*shared.AgentSettings, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
 	defer tx.Rollback()
+	for _, mutation := range mutations {
+		if mutation.Key == "" {
+			return nil, errors.New("setting key is empty")
+		}
+		if mutation.Delete {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, mutation.Key); err != nil {
+				return nil, fmt.Errorf("delete setting %s: %w", mutation.Key, err)
+			}
+			continue
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO settings (key, value) VALUES (?, ?)
+			 ON CONFLICT (key) DO UPDATE SET value = excluded.value`, mutation.Key, mutation.Value); err != nil {
+			return nil, fmt.Errorf("set setting %s: %w", mutation.Key, err)
+		}
+	}
+	if desiredAgent == nil {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+
 	current := shared.DefaultAgentSettings()
 	var raw string
 	err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, SettingAgentSettings).Scan(&raw)
 	if err == nil {
 		if err := json.Unmarshal([]byte(raw), &current); err != nil {
-			return shared.AgentSettings{}, fmt.Errorf("decode agent settings: %w", err)
+			return nil, fmt.Errorf("decode agent settings: %w", err)
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
-		return shared.AgentSettings{}, fmt.Errorf("get agent settings: %w", err)
+		return nil, fmt.Errorf("get agent settings: %w", err)
 	}
-	desired.Revision = current.Revision + 1
-	if err := desired.Validate(); err != nil {
-		return shared.AgentSettings{}, err
+	updated := *desiredAgent
+	updated.Revision = current.Revision + 1
+	if err := updated.Validate(); err != nil {
+		return nil, err
 	}
-	encoded, err := json.Marshal(desired)
+	encoded, err := json.Marshal(updated)
 	if err != nil {
-		return shared.AgentSettings{}, err
+		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO settings (key, value) VALUES (?, ?)
 		 ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
 		SettingAgentSettings, string(encoded)); err != nil {
-		return shared.AgentSettings{}, fmt.Errorf("save agent settings: %w", err)
+		return nil, fmt.Errorf("save agent settings: %w", err)
 	}
-	return desired, tx.Commit()
-}
-
-func (s *Store) saveAgentSettings(ctx context.Context, settings shared.AgentSettings) error {
-	raw, err := json.Marshal(settings)
-	if err != nil {
-		return err
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
-	return s.SetSetting(ctx, SettingAgentSettings, string(raw))
+	return &updated, nil
 }

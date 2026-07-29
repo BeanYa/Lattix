@@ -61,6 +61,9 @@ type Server struct {
 
 	routePolicies map[string]logging.LogPolicy
 	idempotencyMu sync.Mutex
+	authOnce      sync.Once
+	loginAttempts *loginLimiter
+	bcryptSlots   chan struct{}
 	tasks         sync.WaitGroup
 }
 
@@ -370,6 +373,12 @@ func writeProtocolError(w http.ResponseWriter, status int, message string) {
 	if rw, ok := w.(rpcResponseWriter); ok {
 		requestID, traceID = rw.RPCIDs()
 	}
+	if requestID == "" {
+		requestID = shared.NewMessageID()
+	}
+	if traceID == "" {
+		traceID = requestID
+	}
 	w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(rpcResponse{
@@ -379,6 +388,11 @@ func writeProtocolError(w http.ResponseWriter, status int, message string) {
 		RequestID: requestID,
 		TraceID:   traceID,
 	})
+}
+
+// WriteProtocolError writes the protocol envelope used by API fallbacks outside Server routes.
+func WriteProtocolError(w http.ResponseWriter, status int, message string) {
+	writeProtocolError(w, status, message)
 }
 
 func rpcCodeForLegacyStatus(status int) string {

@@ -42,6 +42,14 @@ var (
 	githubRepo = "BeanYa/Lattix"
 )
 
+const (
+	httpReadHeaderTimeout = 15 * time.Second
+	httpReadTimeout       = 30 * time.Second
+	httpWriteTimeout      = 2 * time.Minute
+	httpIdleTimeout       = 2 * time.Minute
+	httpMaxHeaderBytes    = 1 << 20
+)
+
 // defaultTLSDir follows the account that runs the panel. A systemd root service
 // therefore uses /root/cert, while a user-run process uses that user's ~/cert.
 func defaultTLSDir() string {
@@ -431,7 +439,7 @@ func run() error {
 	// Frontend SPA 构建产物（§3），客户端路由回退到 index.html。
 	// 未注册的 /api/* 必须保持协议层 404，不能落入 SPA 的 index.html。
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "API route not found", http.StatusNotFound)
+		panel.WriteProtocolError(w, http.StatusNotFound, "API route not found")
 	})
 	frontendFS := panelweb.Dist()
 	if *staticDir != "" {
@@ -439,11 +447,8 @@ func run() error {
 	}
 	mux.Handle("/", spaHandler(frontendFS))
 
-	srv := &http.Server{
-		Addr:              *addr,
-		Handler:           drainMiddleware(hub, logging.RequestMiddleware(reqLog, ps.Operator, ps.LogPolicy, mux)),
-		ReadHeaderTimeout: 15 * time.Second,
-	}
+	srv := newHTTPServer(*addr,
+		drainMiddleware(hub, logging.RequestMiddleware(reqLog, ps.Operator, ps.LogPolicy, mux)))
 	var serve func() error
 	switch applied.Mode {
 	case panel.TLSModeACME:
@@ -564,6 +569,18 @@ func run() error {
 		log.Printf("restart requested: exiting for process supervisor (%s)", reason)
 	}
 	return runErr
+}
+
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
+		IdleTimeout:       httpIdleTimeout,
+		MaxHeaderBytes:    httpMaxHeaderBytes,
+	}
 }
 
 func drainMiddleware(hub *ws.Hub, next http.Handler) http.Handler {

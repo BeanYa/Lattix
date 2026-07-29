@@ -12,6 +12,8 @@ type IdempotencyRecord struct {
 	ResponseJSON string
 }
 
+var ErrIdempotencyReservationExists = errors.New("idempotency reservation already exists")
+
 func (s *Store) IdempotencyRecord(
 	ctx context.Context,
 	operator, route, key string,
@@ -32,18 +34,61 @@ func (s *Store) IdempotencyRecord(
 	return &record, nil
 }
 
-func (s *Store) SaveIdempotencyRecord(
+func (s *Store) ReserveIdempotencyRecord(
+	ctx context.Context,
+	operator, route, key, requestHash string,
+) error {
+	result, err := s.db.ExecContext(ctx, `
+			INSERT INTO rpc_idempotency (
+				operator, route, idempotency_key, request_hash, response_json
+			) VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT(operator, route, idempotency_key) DO NOTHING`,
+		operator, route, key, requestHash, "",
+	)
+	if err != nil {
+		return fmt.Errorf("reserve idempotency record: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("reserve idempotency record: %w", err)
+	}
+	if rows != 1 {
+		return ErrIdempotencyReservationExists
+	}
+	return nil
+}
+
+func (s *Store) CompleteIdempotencyRecord(
 	ctx context.Context,
 	operator, route, key, requestHash, responseJSON string,
 ) error {
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO rpc_idempotency (
-			operator, route, idempotency_key, request_hash, response_json
-		) VALUES (?, ?, ?, ?, ?)`,
-		operator, route, key, requestHash, responseJSON,
-	)
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE rpc_idempotency SET response_json = ?
+		WHERE operator = ? AND route = ? AND idempotency_key = ?
+			AND request_hash = ? AND response_json = ''`,
+		responseJSON, operator, route, key, requestHash)
 	if err != nil {
-		return fmt.Errorf("save idempotency record: %w", err)
+		return fmt.Errorf("complete idempotency record: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("complete idempotency record: %w", err)
+	}
+	if rows != 1 {
+		return errors.New("complete idempotency record: reservation is missing or already complete")
+	}
+	return nil
+}
+
+func (s *Store) DeleteIdempotencyReservation(
+	ctx context.Context,
+	operator, route, key, requestHash string,
+) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM rpc_idempotency
+		WHERE operator = ? AND route = ? AND idempotency_key = ?
+			AND request_hash = ? AND response_json = ''`, operator, route, key, requestHash)
+	if err != nil {
+		return fmt.Errorf("delete idempotency reservation: %w", err)
 	}
 	return nil
 }

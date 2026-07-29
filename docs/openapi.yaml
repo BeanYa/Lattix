@@ -14,26 +14,37 @@ paths:
   /api/auth/login:
     post:
       operationId: authLogin
+      description: |
+        Browser login requires a same-origin `Origin` header, or a same-origin
+        `Referer` when `Origin` is absent. The source host must match the HTTP
+        `Host`; requests received over HTTPS must also use an HTTPS source URL.
       security: []
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses:
+        '200': {$ref: '#/components/responses/RPCResponse'}
+        '429': {$ref: '#/components/responses/RateLimitErrorResponse'}
+        default: {$ref: '#/components/responses/ProtocolErrorResponse'}
   /api/auth/logout:
     post:
       operationId: authLogout
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses:
+        '200': {$ref: '#/components/responses/RPCResponse'}
+        default: {$ref: '#/components/responses/ProtocolErrorResponse'}
   /api/auth/me:
     get:
       operationId: authMe
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/dashboard/get:
     get:
       operationId: dashboardGet
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/list:
     get:
       operationId: serverList
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/list-metric-samples:
     get:
       operationId: serverListMetricSamples
@@ -41,7 +52,7 @@ paths:
         - name: limit
           in: query
           schema: {type: integer, minimum: 1, maximum: 60, default: 30}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/get-metric-history:
     get:
       operationId: serverGetMetricHistory
@@ -50,7 +61,7 @@ paths:
         - name: hours
           in: query
           schema: {type: integer, minimum: 1, maximum: 24, default: 24}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/list-commands:
     get:
       operationId: serverListCommands
@@ -59,51 +70,75 @@ paths:
         - name: limit
           in: query
           schema: {type: integer, minimum: 1, maximum: 200}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/create:
     post:
       operationId: serverCreate
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/update:
     post:
       operationId: serverUpdate
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/confirm-renewal:
     post:
       operationId: serverConfirmRenewal
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/ConfirmRenewalRequest'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/delete:
     post:
       operationId: serverDelete
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/rotate-token:
     post:
       operationId: serverRotateToken
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/repair:
     post:
       operationId: serverRepair
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/upgrade-xray:
     post:
       operationId: serverUpgradeXray
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/upgrade-agent:
     post:
       operationId: serverUpgradeAgent
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/list-release-versions:
     get:
       operationId: serverListReleaseVersions
@@ -112,99 +147,141 @@ paths:
           in: query
           required: true
           schema: {type: string, enum: [agent, xray]}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/provider/list:
     get:
       operationId: providerList
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/provider/create:
     post:
       operationId: providerCreate
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/provider/update:
     post:
       operationId: providerUpdate
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/provider/delete:
     post:
       operationId: providerDelete
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/exchange-rate/list:
     get:
       operationId: exchangeRateList
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/exchange-rate/refresh:
     post:
       operationId: exchangeRateRefresh
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/exchange-rate/save-custom:
     post:
       operationId: exchangeRateSaveCustom
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/CustomExchangeRate'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/exchange-rate/delete-custom:
     post:
       operationId: exchangeRateDeleteCustom
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/node/list:
     get:
       operationId: nodeList
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/node/create:
     post:
       operationId: nodeCreate
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/node/retry:
     post:
       operationId: nodeRetry
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/node/delete:
     post:
       operationId: nodeDelete
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/list:
     get:
       operationId: chainList
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/create:
     post:
       operationId: chainCreate
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/edit:
     post:
       operationId: chainEdit
       description: Creates a desired revision for ordered 1-4 hop topology and deploys changed pieces exit-to-entry.
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/force-publish:
     post:
       operationId: chainForcePublish
       description: Immediately promotes the desired revision as unconfirmed; queued Agent tasks continue without rollback.
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/set-traffic-multiplier:
     post:
       operationId: chainSetTrafficMultiplier
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/reset-traffic:
     post:
       operationId: chainResetTraffic
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/get-traffic-history:
     get:
       operationId: chainGetTrafficHistory
@@ -212,86 +289,121 @@ paths:
         - {name: chain_id, in: query, required: true, schema: {type: integer, minimum: 1}}
         - {name: hop_id, in: query, schema: {type: integer, minimum: 0, default: 0}}
         - {name: days, in: query, schema: {type: integer, minimum: 1, maximum: 730, default: 30}}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/retry:
     post:
       operationId: chainRetry
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/delete:
     post:
       operationId: chainDelete
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/user/list:
     get:
       operationId: userList
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/user/create:
     post:
       operationId: userCreate
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/user/update:
     post:
       operationId: userUpdate
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/user/set-nodes:
     post:
       operationId: userSetNodes
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/user/delete:
     post:
       operationId: userDelete
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/setting/get:
     get:
       operationId: settingGet
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/setting/update:
     post:
       operationId: settingUpdate
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/SettingUpdateRequest'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/setting/change-password:
     post:
       operationId: settingChangePassword
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses:
+        '200': {$ref: '#/components/responses/RPCResponse'}
+        '429': {$ref: '#/components/responses/RateLimitErrorResponse'}
+        default: {$ref: '#/components/responses/ProtocolErrorResponse'}
   /api/setting/test-alerts:
     post:
       operationId: settingTestAlerts
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/panel/restart:
     post:
       operationId: panelRestart
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/panel/state:
     get:
       operationId: panelState
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/panel/get-version:
     get:
       operationId: panelGetVersion
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/panel/start-update:
     post:
       operationId: panelStartUpdate
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/panel/get-update-status:
     get:
       operationId: panelGetUpdateStatus
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/backup/download:
     get:
       operationId: backupDownload
@@ -303,6 +415,7 @@ paths:
               schema: {type: string, format: binary}
             application/json:
               schema: {$ref: '#/components/schemas/RPCEnvelope'}
+        default: {$ref: '#/components/responses/ProtocolErrorResponse'}
   /api/log/list-operations:
     get:
       operationId: logListOperations
@@ -316,12 +429,15 @@ paths:
         - {name: to, in: query, schema: {type: string}}
         - {name: limit, in: query, schema: {type: integer}}
         - {name: offset, in: query, schema: {type: integer}}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/log/clear-operations:
     post:
       operationId: logClearOperations
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/log/list-requests:
     get:
       operationId: logListRequests
@@ -329,12 +445,15 @@ paths:
         - name: limit
           in: query
           schema: {type: integer, enum: [10, 30, 50, 100], default: 30}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/log/clear-requests:
     post:
       operationId: logClearRequests
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
 components:
   securitySchemes:
     sessionCookie:
@@ -347,6 +466,22 @@ components:
       in: query
       required: true
       schema: {type: integer, minimum: 1}
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Session-bound token returned by `/api/auth/login` and `/api/auth/me`.
+      schema: {type: string, minLength: 1}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Client-generated key scoped to the authenticated operator and RPC route.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:-]+$'
   requestBodies:
     RPCBody:
       required: true
@@ -366,10 +501,67 @@ components:
       content:
         application/json:
           schema: {$ref: '#/components/schemas/RPCEnvelope'}
+    ProtocolErrorResponse:
+      description: Protocol-layer HTTP 400, 404, 405, 413, 415, or 429 response.
+      headers:
+        X-Request-ID:
+          schema: {$ref: '#/components/schemas/MessageID'}
+        X-Trace-ID:
+          schema: {$ref: '#/components/schemas/MessageID'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/ProtocolError'}
+    RateLimitErrorResponse:
+      description: Request rejected by a bounded authentication workload or login rate limiter.
+      headers:
+        Retry-After:
+          description: Whole seconds before the client should retry.
+          schema: {type: integer, minimum: 1}
+        X-Request-ID:
+          schema: {$ref: '#/components/schemas/MessageID'}
+        X-Trace-ID:
+          schema: {$ref: '#/components/schemas/MessageID'}
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/ProtocolError'}
   schemas:
     MessageID:
       type: string
       pattern: '^[0-9a-f]{32}$'
+    CertInfo:
+      type: object
+      additionalProperties: false
+      required: [common_name, dns_names, not_after, expired]
+      properties:
+        common_name: {type: string}
+        dns_names:
+          type: array
+          items: {type: string}
+          default: []
+        not_after: {type: string, format: date-time}
+        expired: {type: boolean}
+    VirtualConfig:
+      type: object
+      additionalProperties: false
+      required: [protocol, template]
+      properties:
+        protocol: {type: string}
+        port: {type: integer, minimum: 1, maximum: 65535}
+        flow: {type: string}
+        network: {type: string}
+        service_name: {type: string}
+        path: {type: string}
+        mode: {type: string}
+        host: {type: string}
+        method: {type: string}
+        fingerprint: {type: string}
+        encryption: {type: string}
+        template:
+          type: object
+          additionalProperties: true
+    CommandStatus:
+      type: string
+      enum: [queued, sent, acked, failed, abandoned]
     AgentSettings:
       type: object
       additionalProperties: false
@@ -510,12 +702,30 @@ components:
         - SERVER_OFFLINE
         - PORT_OUT_OF_RANGE
         - UPDATE_IN_PROGRESS
+    ProtocolCode:
+      type: string
+      pattern: '^HTTP_[1-5][0-9]{2}$'
+    ProtocolError:
+      type: object
+      additionalProperties: false
+      required: [code, message, data, request_id, trace_id]
+      properties:
+        code:
+          type: string
+          enum: [HTTP_400, HTTP_404, HTTP_405, HTTP_413, HTTP_415, HTTP_429]
+        message: {type: string}
+        data: {type: 'null'}
+        request_id: {$ref: '#/components/schemas/MessageID'}
+        trace_id: {$ref: '#/components/schemas/MessageID'}
     RPCEnvelope:
       type: object
       additionalProperties: false
       required: [code, message, data, request_id, trace_id]
       properties:
-        code: {$ref: '#/components/schemas/RPCCode'}
+        code:
+          oneOf:
+            - {$ref: '#/components/schemas/RPCCode'}
+            - {$ref: '#/components/schemas/ProtocolCode'}
         message: {type: string}
         data: {}
         request_id: {$ref: '#/components/schemas/MessageID'}

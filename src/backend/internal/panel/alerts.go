@@ -34,8 +34,14 @@ func (s *Server) handleTestAlerts(w http.ResponseWriter, r *http.Request) {
 // handleBackup 处理 GET /api/backup（§19）：VACUUM INTO 到临时文件后以附件返回，
 // 发送完成异步清理临时文件；失败 500。
 func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
-	tmp := filepath.Join(os.TempDir(), fmt.Sprintf("lattix-backup-%d.db", time.Now().UnixNano()))
-	defer os.Remove(tmp) // 响应写出后清理临时文件
+	tmpDir, err := os.MkdirTemp("", "lattix-backup-*")
+	if err != nil {
+		s.audit(r, "panel.backup_failed", nil, nil, map[string]string{"error": err.Error()})
+		writeError(w, http.StatusInternalServerError, "创建备份临时目录失败")
+		return
+	}
+	defer os.RemoveAll(tmpDir) // 响应写出后清理仅当前进程可访问的临时目录
+	tmp := filepath.Join(tmpDir, "backup.db")
 	if err := s.st.Backup(r.Context(), tmp); err != nil {
 		s.audit(r, "panel.backup_failed", nil, nil, map[string]string{"error": err.Error()})
 		writeError(w, http.StatusInternalServerError, "备份失败: "+err.Error())

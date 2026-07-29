@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -210,10 +211,28 @@ func (n *Notifier) sendWebhook(ctx context.Context, url string, p payload) error
 
 // sendTelegram 经 Bot API sendMessage 发送纯文本。
 func (n *Notifier) sendTelegram(ctx context.Context, token, chatID, text string) error {
-	return n.requester.PostJSON(ctx,
+	err := n.requester.PostJSON(ctx,
 		"https://api.telegram.org/bot"+token+"/sendMessage",
 		map[string]string{"chat_id": chatID, "text": text})
+	if err == nil {
+		return nil
+	}
+	return &secretRedactedError{cause: err, secret: token}
 }
+
+type secretRedactedError struct {
+	cause  error
+	secret string
+}
+
+func (e *secretRedactedError) Error() string {
+	if e.secret == "" {
+		return e.cause.Error()
+	}
+	return strings.ReplaceAll(e.cause.Error(), e.secret, "[REDACTED]")
+}
+
+func (e *secretRedactedError) Unwrap() error { return e.cause }
 
 // Close cancels in-flight alert delivery and waits within the caller's
 // shutdown budget.

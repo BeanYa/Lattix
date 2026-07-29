@@ -18,6 +18,20 @@ func TestDefaultTLSDirUsesCurrentHome(t *testing.T) {
 	}
 }
 
+func TestHTTPServerHasResourceLimits(t *testing.T) {
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	srv := newHTTPServer(":8080", handler)
+	if srv.ReadHeaderTimeout != httpReadHeaderTimeout || srv.ReadTimeout != httpReadTimeout {
+		t.Fatalf("read timeouts = (%s, %s)", srv.ReadHeaderTimeout, srv.ReadTimeout)
+	}
+	if srv.WriteTimeout != httpWriteTimeout || srv.IdleTimeout != httpIdleTimeout {
+		t.Fatalf("write/idle timeouts = (%s, %s)", srv.WriteTimeout, srv.IdleTimeout)
+	}
+	if srv.MaxHeaderBytes != httpMaxHeaderBytes {
+		t.Fatalf("MaxHeaderBytes = %d, want %d", srv.MaxHeaderBytes, httpMaxHeaderBytes)
+	}
+}
+
 func TestSPAHandlerServesAssetAndFallsBackToIndex(t *testing.T) {
 	content := fstest.MapFS{
 		"index.html":       &fstest.MapFile{Data: []byte("<main>Lattix</main>")},

@@ -1,18 +1,7 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
+import { RequestStateContext } from './request-state-context'
 import { requester, type RequestError, type RequestLifecycleEvent } from './requester'
-
-interface RequestState {
-  pendingCount: number
-  foregroundPendingCount: number
-  lastTransportError: RequestError | null
-}
-
-const RequestStateContext = createContext<RequestState>({
-  pendingCount: 0,
-  foregroundPendingCount: 0,
-  lastTransportError: null,
-})
 
 export function RequestStateProvider({ children }: { children: ReactNode }) {
   const [active, setActive] = useState<Map<string, RequestLifecycleEvent>>(new Map())
@@ -51,8 +40,3 @@ export function RequestStateProvider({ children }: { children: ReactNode }) {
 
   return <RequestStateContext.Provider value={value}>{children}</RequestStateContext.Provider>
 }
-
-export function useRequestState(): RequestState {
-  return useContext(RequestStateContext)
-}
-

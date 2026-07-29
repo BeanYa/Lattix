@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import LowPolyEarth, { type EarthLink, type EarthNode } from '@/components/LowPolyEarth'
+import { loadGeographyCoordinates } from '@/lib/geography'
 import { isServerOnline } from '@/lib/server-state'
 import type { Chain, Server } from '@/lib/types'
 
@@ -22,13 +23,7 @@ interface GlobeTopologyProps {
   chains: Chain[]
 }
 
-let geographyModule: Promise<typeof import('country-state-city')> | null = null
 const coordinateCache = new Map<string, { lat: number; lng: number } | null>()
-
-function loadGeography() {
-  geographyModule ??= import('country-state-city')
-  return geographyModule
-}
 
 function normalizePlace(value: string) {
   return value.trim().toLocaleLowerCase().replace(/[\s_-]+/g, '')
@@ -41,8 +36,7 @@ function finiteCoordinate(value: string | null | undefined) {
 }
 
 async function locateServers(servers: Server[]): Promise<TopologyPoint[]> {
-  const { City, Country } = await loadGeography()
-  const citiesByCountry = new Map<string, ReturnType<typeof City.getCitiesOfCountry>>()
+  const { citiesByCountry, countriesByCode } = await loadGeographyCoordinates()
   const duplicateLocations = new Map<string, number>()
 
   return servers.map((server) => {
@@ -58,16 +52,12 @@ async function locateServers(servers: Server[]): Promise<TopologyPoint[]> {
         lat = cached?.lat ?? null
         lng = cached?.lng ?? null
       } else {
-        let cities = citiesByCountry.get(countryCode)
-        if (!cities) {
-          cities = City.getCitiesOfCountry(countryCode)
-          citiesByCountry.set(countryCode, cities)
-        }
+        const cities = citiesByCountry.get(countryCode) ?? []
         const city = cities?.find((candidate) => {
           const candidateName = normalizePlace(candidate.name)
           return candidateName === place || (place.length > 2 && candidateName.includes(place))
         })
-        const country = Country.getCountryByCode(countryCode)
+        const country = countriesByCode.get(countryCode)
         lat = finiteCoordinate(city?.latitude) ?? finiteCoordinate(country?.latitude)
         lng = finiteCoordinate(city?.longitude) ?? finiteCoordinate(country?.longitude)
         coordinateCache.set(coordinateKey, lat !== null && lng !== null ? { lat, lng } : null)

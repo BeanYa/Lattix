@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Link, useLocation } from 'wouter'
 import {
   LayoutDashboardIcon,
   LogOutIcon,
@@ -16,19 +16,19 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/s
 import LattixMark from '@/components/LattixMark'
 import ThemeToggle from '@/components/ThemeToggle'
 import UpdateOverlay from '@/components/UpdateOverlay'
-import { api } from '@/lib/api'
+import { api, errorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useRequestState } from '@/lib/request-state'
 import type { PanelLifecycleSnapshot, PanelLifecycleState } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 const navItems = [
-  { to: '/', label: '仪表盘', icon: LayoutDashboardIcon, end: true },
-  { to: '/servers', label: '服务器', icon: ServerIcon, end: false },
-  { to: '/chains', label: '链路', icon: RouteIcon, end: false },
-  { to: '/users', label: '用户', icon: UsersIcon, end: false },
-  { to: '/logs/operations', label: '日志', icon: ScrollTextIcon, end: false },
-  { to: '/settings', label: '设置', icon: SettingsIcon, end: false },
+  { to: '/', activePrefix: '/', label: '仪表盘', icon: LayoutDashboardIcon, end: true },
+  { to: '/servers', activePrefix: '/servers', label: '服务器', icon: ServerIcon, end: false },
+  { to: '/chains', activePrefix: '/chains', label: '链路', icon: RouteIcon, end: false },
+  { to: '/users', activePrefix: '/users', label: '用户', icon: UsersIcon, end: false },
+  { to: '/logs/operations', activePrefix: '/logs', label: '日志', icon: ScrollTextIcon, end: false },
+  { to: '/settings', activePrefix: '/settings', label: '设置', icon: SettingsIcon, end: false },
 ]
 
 const panelStatePresentation: Record<PanelLifecycleState, { label: string; dot: string }> = {
@@ -64,12 +64,14 @@ function PanelStateIndicator({ snapshot, compact = false }: {
   )
 }
 
-export default function Layout() {
+export default function Layout({ children }: { children: ReactNode }) {
   const { username, logout } = useAuth()
   const { foregroundPendingCount } = useRequestState()
-  const navigate = useNavigate()
+  const [location, navigate] = useLocation()
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [panelState, setPanelState] = useState<PanelLifecycleSnapshot | null>(null)
+  const [loggingOut, setLoggingOut] = useState(false)
+  const [logoutError, setLogoutError] = useState('')
 
   useEffect(() => {
     let active = true
@@ -90,8 +92,17 @@ export default function Layout() {
   }, [])
 
   const onLogout = async () => {
-    await logout()
-    navigate('/login', { replace: true })
+    setLoggingOut(true)
+    setLogoutError('')
+    try {
+      await logout()
+      navigate('/login', { replace: true })
+    } catch (error) {
+      setMobileNavOpen(false)
+      setLogoutError(errorMessage(error))
+    } finally {
+      setLoggingOut(false)
+    }
   }
 
   return (
@@ -121,29 +132,35 @@ export default function Layout() {
                 <span aria-label="Lattix">LATTIX</span>
               </SheetTitle>
               <nav className="flex-1 space-y-1 p-3">
-                {navItems.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    end={item.end}
-                    onClick={() => setMobileNavOpen(false)}
-                    className={({ isActive }) =>
-                      cn(
+                {navItems.map((item) => {
+                  const isActive = item.end ? location === item.to : location.startsWith(item.activePrefix)
+                  return (
+                    <Link
+                      key={item.to}
+                      href={item.to}
+                      onClick={() => setMobileNavOpen(false)}
+                      className={cn(
                         'flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-sm text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
                         isActive && 'border-sidebar-foreground/25 bg-sidebar-accent font-semibold text-sidebar-accent-foreground',
-                      )
-                    }
-                  >
-                    <item.icon className="size-4" />
-                    {item.label}
-                  </NavLink>
-                ))}
+                      )}
+                    >
+                      <item.icon className="size-4" />
+                      {item.label}
+                    </Link>
+                  )
+                })}
               </nav>
               <div className="flex items-center justify-between gap-2 border-t border-sidebar-border p-3">
                 <span className="truncate text-sm" title={username ?? ''}>{username}</span>
-                <Button variant="ghost" size="sm" onClick={onLogout} className="text-sidebar-foreground hover:bg-sidebar-accent">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onLogout}
+                  disabled={loggingOut}
+                  className="text-sidebar-foreground hover:bg-sidebar-accent"
+                >
                   <LogOutIcon />
-                  登出
+                  {loggingOut ? '登出中…' : '登出'}
                 </Button>
               </div>
             </SheetContent>
@@ -155,22 +172,22 @@ export default function Layout() {
           <LattixMark className="size-11" />
         </div>
         <nav className="flex-1 space-y-2 px-2 py-4">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                cn(
+          {navItems.map((item) => {
+            const isActive = item.end ? location === item.to : location.startsWith(item.activePrefix)
+            return (
+              <Link
+                key={item.to}
+                href={item.to}
+                className={cn(
                   'relative flex flex-col items-center gap-1.5 rounded-lg border border-transparent px-2 py-2.5 text-xs text-sidebar-foreground/65 transition-[color,background-color,transform] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:translate-y-px',
                   isActive && 'border-sidebar-foreground/20 bg-sidebar-accent font-semibold text-sidebar-accent-foreground before:absolute before:-left-2 before:top-2 before:bottom-2 before:w-1 before:rounded-r-full before:bg-sidebar-primary',
-                )
-              }
-            >
-              <item.icon className="size-5" strokeWidth={1.8} />
-              {item.label}
-            </NavLink>
-          ))}
+                )}
+              >
+                <item.icon className="size-5" strokeWidth={1.8} />
+                {item.label}
+              </Link>
+            )
+          })}
         </nav>
         <div className="border-t border-sidebar-border py-3">
           <PanelStateIndicator snapshot={panelState} compact />
@@ -187,6 +204,7 @@ export default function Layout() {
             size="sm"
             className="w-full text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
             onClick={onLogout}
+            disabled={loggingOut}
             aria-label={`${username ?? ''} 登出`}
           >
             <LogOutIcon />
@@ -194,8 +212,16 @@ export default function Layout() {
         </div>
       </aside>
       <main className="min-w-0 flex-1 overflow-auto p-4 md:p-6 lg:p-8">
+        {logoutError ? (
+          <div
+            role="alert"
+            className="mx-auto mb-4 w-full max-w-[1480px] rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+          >
+            登出失败：{logoutError}
+          </div>
+        ) : null}
         <div className="page-enter mx-auto w-full max-w-[1480px]">
-          <Outlet />
+          {children}
         </div>
       </main>
       <UpdateOverlay />

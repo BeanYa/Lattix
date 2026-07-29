@@ -250,21 +250,42 @@ export default function Servers() {
   const [upgradeCmdId, setUpgradeCmdId] = useState<number | null>(null)
   const [upgradeResult, setUpgradeResult] = useState<'pending' | 'success' | 'failed' | null>(null)
   const [upgradeResultError, setUpgradeResultError] = useState('')
+  const serverListRequest = useRef(0)
 
-  const load = useCallback((silent = false) => {
-    api
-      .servers(silent ? { display: 'silent' } : undefined)
-      .then(setServers)
-      .catch((err) => setError(errorMessage(err)))
-      .finally(() => setLoading(false))
+  const load = useCallback(async (silent = false, signal?: AbortSignal) => {
+    const request = ++serverListRequest.current
+    const options = signal
+      ? { signal, ...(silent ? { display: 'silent' as const } : {}) }
+      : silent ? { display: 'silent' as const } : undefined
+    try {
+      const nextServers = await api.servers(options)
+      if (signal?.aborted || request !== serverListRequest.current) return
+      setServers(nextServers)
+    } catch (err) {
+      if (signal?.aborted || request !== serverListRequest.current) return
+      setError(errorMessage(err))
+    } finally {
+      if (!signal?.aborted && request === serverListRequest.current) setLoading(false)
+    }
   }, [])
 
   const loadProviders = useCallback(() => api.providers().then(setProviders).catch(() => setProviders([])), [])
 
   useEffect(() => {
-    load()
-    const timer = setInterval(() => load(true), 5000)
-    return () => clearInterval(timer)
+    const controller = new AbortController()
+    let stopped = false
+    let timer: number | undefined
+    const poll = async (initial: boolean) => {
+      await load(!initial, controller.signal)
+      if (!stopped) timer = window.setTimeout(() => void poll(false), 5000)
+    }
+    void poll(true)
+    return () => {
+      stopped = true
+      serverListRequest.current += 1
+      controller.abort()
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
   }, [load])
 
   useEffect(() => { loadProviders() }, [loadProviders])

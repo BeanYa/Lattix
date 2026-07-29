@@ -2,6 +2,7 @@ package logging
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -37,6 +38,26 @@ func TestRequestLogAppendsAndReadsNewestWindow(t *testing.T) {
 	}
 	if got := items[29].Timestamp.Unix(); got != 5 {
 		t.Fatalf("oldest timestamp = %d, want 5", got)
+	}
+}
+
+func TestRequestLogCanceledCloseStillStopsWriter(t *testing.T) {
+	log, err := OpenRequestLog(filepath.Join(t.TempDir(), "requests"), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := log.Close(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("Close returned %v", err)
+	}
+	select {
+	case <-log.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request log writer did not stop after canceled Close")
+	}
+	if err := log.Close(context.Background()); err != nil {
+		t.Fatalf("subsequent Close returned %v", err)
 	}
 }
 

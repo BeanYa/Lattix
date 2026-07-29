@@ -122,6 +122,10 @@ const wsReadTimeout = 90 * time.Second
 // wsWriteTimeout 是 pong 应答等控制帧的单次写超时。
 const wsWriteTimeout = 10 * time.Second
 
+// maxWSMessageBytes bounds a single control-plane envelope in either
+// direction. Normal configuration and telemetry messages are far smaller.
+const maxWSMessageBytes = 1 << 20
+
 func (s *safeConn) writeJSON(v any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -153,6 +157,7 @@ func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *st
 		return "", err
 	}
 	defer conn.Close()
+	conn.SetReadLimit(maxWSMessageBytes)
 	done := make(chan struct{})
 	defer close(done)
 	sc := &safeConn{conn: conn}

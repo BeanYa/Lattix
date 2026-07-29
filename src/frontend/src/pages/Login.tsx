@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { RouteIcon, ServerIcon, UsersIcon } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation } from 'wouter'
 
 import LattixMark from '@/components/LattixMark'
 import { Notice } from '@/components/PagePrimitives'
@@ -14,7 +14,7 @@ import { useAuth } from '@/lib/auth'
 
 export default function Login() {
   const { login } = useAuth()
-  const navigate = useNavigate()
+  const [, navigate] = useLocation()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')

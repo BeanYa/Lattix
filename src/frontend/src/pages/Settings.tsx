@@ -129,6 +129,7 @@ export default function Settings() {
   const [customTargetAmount, setCustomTargetAmount] = useState('')
   const [customBaseSide, setCustomBaseSide] = useState<'source' | 'target'>('source')
   const [refreshingRates, setRefreshingRates] = useState(false)
+  const [deletingCustomRateID, setDeletingCustomRateID] = useState<number | null>(null)
   // 密码
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -400,6 +401,19 @@ export default function Settings() {
   if (loadError) {
     return <Page className="page-shell-narrow"><Notice tone="danger">{loadError}</Notice></Page>
   }
+
+  const deleteCustomRate = async (id: number) => {
+    setDeletingCustomRateID(id)
+    setError('')
+    try {
+      await api.deleteCustomExchangeRate(id)
+      setExchangeData(await api.exchangeRates())
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setDeletingCustomRateID(null)
+    }
+  }
   if (!settings) {
     return <Page className="page-shell-narrow"><LoadingState /></Page>
   }
@@ -652,7 +666,14 @@ export default function Settings() {
                     <Button type="button" variant={rate.enabled ? 'secondary' : 'outline'} size="sm" onClick={() => setCustomRateEnabled(rate, !rate.enabled)}>
                       {rate.enabled ? '停用' : '启用'}
                     </Button>
-                    <Button type="button" variant="ghost" size="icon-sm" aria-label="删除自定义汇率" onClick={async () => { await api.deleteCustomExchangeRate(rate.id); setExchangeData(await api.exchangeRates()) }}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="删除自定义汇率"
+                      disabled={deletingCustomRateID === rate.id}
+                      onClick={() => void deleteCustomRate(rate.id)}
+                    >
                       <Trash2Icon />
                     </Button>
                   </div>
@@ -806,8 +827,8 @@ export default function Settings() {
                 {settings.tls_cert && (
                   <p className="text-xs text-muted-foreground">
                     已保存证书：CN={settings.tls_cert.common_name || '-'}
-                    {settings.tls_cert.dns_names.length > 0 &&
-                      `，SAN=${settings.tls_cert.dns_names.join(', ')}`}
+                    {(settings.tls_cert.dns_names ?? []).length > 0 &&
+                      `，SAN=${(settings.tls_cert.dns_names ?? []).join(', ')}`}
                     ，到期 {formatDateTime(settings.tls_cert.not_after)}
                     {settings.tls_cert.expired && <span className="text-destructive">（已过期）</span>}
                     {settings.tls_key_set && '；私钥已保存'}
@@ -884,8 +905,8 @@ export default function Settings() {
                 {settings.tls_cert && (
                   <p className="text-xs text-muted-foreground">
                     目录内当前证书：CN={settings.tls_cert.common_name || '-'}
-                    {settings.tls_cert.dns_names.length > 0 &&
-                      `，SAN=${settings.tls_cert.dns_names.join(', ')}`}
+                    {(settings.tls_cert.dns_names ?? []).length > 0 &&
+                      `，SAN=${(settings.tls_cert.dns_names ?? []).join(', ')}`}
                     ，到期 {formatDateTime(settings.tls_cert.not_after)}
                     {settings.tls_cert.expired && <span className="text-destructive">（已过期）</span>}
                   </p>

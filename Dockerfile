@@ -8,7 +8,7 @@ COPY src/frontend/ ./
 COPY docs/openapi.yaml /docs/openapi.yaml
 RUN bun run build
 
-FROM golang:1.26-alpine AS backend
+FROM golang:1.26.5-alpine AS backend
 ARG VERSION=dev
 ARG GITHUB_REPO=BeanYa/Lattix
 WORKDIR /src

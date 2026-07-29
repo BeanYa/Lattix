@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -72,6 +73,8 @@ type RequestLog struct {
 	commands       chan requestCommand
 	done           chan struct{}
 	closed         atomic.Bool
+	closeOnce      sync.Once
+	closeErr       error
 	dropped        atomic.Uint64
 	pendingDropped atomic.Uint64
 	reporter       atomic.Pointer[func(uint64, string)]
@@ -155,22 +158,27 @@ func (l *RequestLog) Status(ctx context.Context) (RequestLogStatus, error) {
 }
 
 func (l *RequestLog) Close(ctx context.Context) error {
-	if !l.closed.CompareAndSwap(false, true) {
-		return nil
-	}
-	result, err := l.call(ctx, requestCommand{close: true})
-	if err != nil {
-		return err
-	}
+	l.closeOnce.Do(func() {
+		l.closed.Store(true)
+		go func() {
+			select {
+			case l.commands <- requestCommand{close: true}:
+			case <-l.done:
+			}
+		}()
+	})
 	select {
 	case <-l.done:
-		return result.err
+		return l.closeErr
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 }
 
 func (l *RequestLog) call(ctx context.Context, command requestCommand) (requestResult, error) {
+	if l.closed.Load() {
+		return requestResult{}, errors.New("request log is closed")
+	}
 	command.resp = make(chan requestResult, 1)
 	select {
 	case l.commands <- command:
@@ -223,7 +231,10 @@ func (w *requestWriter) run() {
 			if w.file != nil {
 				result.err = w.file.Close()
 			}
-			command.resp <- result
+			w.owner.closeErr = result.err
+			if command.resp != nil {
+				command.resp <- result
+			}
 			return
 		}
 		if command.resp != nil {

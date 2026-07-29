@@ -91,3 +91,33 @@ func TestOpenMigratesLegacyServerAddressMode(t *testing.T) {
 		}
 	}
 }
+
+func TestCreateServerWithPlansRollsBackTogether(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "server-create.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.db.Exec(`CREATE TRIGGER fail_initial_traffic
+		BEFORE INSERT ON server_traffic_plans
+		BEGIN SELECT RAISE(ABORT, 'forced traffic failure'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = st.CreateServerWithPlans(ctx, "partial", "", "token", MachineTypeDirect,
+		"", "", "US", "", nil, ServerTrafficPlan{
+			AccountingMode: "outbound", ResetAnchorOn: "2026-01-01", ResetCount: 1,
+			ResetUnit: "month", TrackingStartedOn: "2026-01-01",
+		})
+	if err == nil {
+		t.Fatal("expected initial traffic plan insert to fail")
+	}
+	servers, err := st.ListServers(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 0 {
+		t.Fatalf("failed aggregate transaction left %d servers", len(servers))
+	}
+}

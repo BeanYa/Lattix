@@ -49,6 +49,10 @@ type ServerTrafficPlan struct {
 	TrackingStartedOn string
 }
 
+type contextExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
 func (s *Store) ListProviders(ctx context.Context) ([]Provider, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, name, website_url FROM providers ORDER BY name COLLATE NOCASE`)
 	if err != nil {
@@ -127,7 +131,11 @@ func (s *Store) ServerBillingMap(ctx context.Context) (map[int64]ServerBilling, 
 }
 
 func (s *Store) UpsertServerBilling(ctx context.Context, b ServerBilling) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO server_billing
+	return upsertServerBilling(ctx, s.db, b)
+}
+
+func upsertServerBilling(ctx context.Context, exec contextExecer, b ServerBilling) error {
+	_, err := exec.ExecContext(ctx, `INSERT INTO server_billing
 		(server_id, enabled, provider_id, amount_minor, currency, service_started_on, interval_count, interval_unit, next_renewal_on, status, assumed_valid_through, last_inspected_on)
 		VALUES (?, ?, NULLIF(?, 0), ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(server_id) DO UPDATE SET enabled=excluded.enabled, provider_id=excluded.provider_id,
@@ -165,7 +173,11 @@ func (s *Store) ServerTrafficPlanMap(ctx context.Context) (map[int64]ServerTraff
 }
 
 func (s *Store) UpsertServerTrafficPlan(ctx context.Context, p ServerTrafficPlan) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO server_traffic_plans
+	return upsertServerTrafficPlan(ctx, s.db, p)
+}
+
+func upsertServerTrafficPlan(ctx context.Context, exec contextExecer, p ServerTrafficPlan) error {
+	_, err := exec.ExecContext(ctx, `INSERT INTO server_traffic_plans
 		(server_id, quota_bytes, accounting_mode, reset_anchor_on, reset_count, reset_unit, tracking_started_on)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(server_id) DO UPDATE SET quota_bytes=excluded.quota_bytes, accounting_mode=excluded.accounting_mode,

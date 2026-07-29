@@ -237,7 +237,8 @@ else
     pkill -f "$AGENT_BIN" 2>/dev/null || true
 fi
 
-mkdir -p "$BIN_DIR" "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR"
+install -d -m 0755 "$BIN_DIR" "$LOG_DIR"
+install -d -m 0700 "$CONFIG_DIR" "$DATA_DIR"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -338,6 +339,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+UMask=0077
 ExecStart=$XRAY_BIN_DST run -config $XRAY_CONFIG
 Restart=on-failure
 RestartSec=5
@@ -355,6 +357,7 @@ StartLimitIntervalSec=60
 StartLimitBurst=10
 
 [Service]
+UMask=0077
 EnvironmentFile=$ENV_FILE
 ExecStart=$AGENT_BIN -panel "\${LATTIX_PANEL_WS}" -token "\${LATTIX_TOKEN}" -state "$STATE_FILE" -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG"
 Restart=always

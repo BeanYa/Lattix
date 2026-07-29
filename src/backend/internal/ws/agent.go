@@ -20,6 +20,7 @@ const (
 	sessionOpenTimeout = 10 * time.Second
 	protocolHeader     = "X-Lattix-Protocol"
 	protocolVersion    = "1"
+	maxMessageBytes    = 1 << 20
 )
 
 var upgrader = websocket.Upgrader{
@@ -72,6 +73,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.setConnectionState(auth.ServerID, disconnectedState(auth.Reconnect), "", sessionKind)
 		return
 	}
+	conn.SetReadLimit(maxMessageBytes)
 	if h.OnUpgrade != nil {
 		h.OnUpgrade(r)
 	}

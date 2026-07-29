@@ -4,7 +4,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"net/url"
+	"os"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -363,6 +366,9 @@ func (s *Store) Ping(ctx context.Context) error {
 
 // Open 打开 SQLite 数据库并确保表结构存在。
 func Open(path string) (*Store, error) {
+	if err := secureDatabaseFile(path); err != nil {
+		return nil, err
+	}
 	// 并发设置（§2）：单连接 + busy_timeout，避免 HTTP handler/遥测/Flush 并发写时偶发 database is locked。
 	dsn := path
 	sep := "?"
@@ -382,14 +388,106 @@ func Open(path string) (*Store, error) {
 	return &Store{db: db}, nil
 }
 
+// secureDatabaseFile ensures credentials and private keys stored in SQLite are
+// never left world-readable. In-memory DSNs do not have a backing file.
+func secureDatabaseFile(dsn string) error {
+	path, ok, err := sqliteFilePath(dsn)
+	if err != nil || !ok {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		f, createErr := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+		if createErr != nil {
+			return fmt.Errorf("create sqlite database: %w", createErr)
+		}
+		if closeErr := f.Close(); closeErr != nil {
+			return fmt.Errorf("close new sqlite database: %w", closeErr)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect sqlite database: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("sqlite database path must be a regular file: %s", path)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("secure sqlite database permissions: %w", err)
+	}
+	return nil
+}
+
+func sqliteFilePath(dsn string) (string, bool, error) {
+	base, query, _ := strings.Cut(dsn, "?")
+	if base == ":memory:" || base == "file::memory:" {
+		return "", false, nil
+	}
+	if strings.HasPrefix(base, "file:") {
+		values, err := url.ParseQuery(query)
+		if err != nil {
+			return "", false, fmt.Errorf("parse sqlite DSN: %w", err)
+		}
+		if values.Get("mode") == "memory" {
+			return "", false, nil
+		}
+		base, err = url.PathUnescape(strings.TrimPrefix(base, "file:"))
+		if err != nil {
+			return "", false, fmt.Errorf("parse sqlite file path: %w", err)
+		}
+	}
+	if base == "" {
+		return "", false, errors.New("sqlite database path is empty")
+	}
+	return base, true, nil
+}
+
 // Close 关闭底层数据库连接。
 func (s *Store) Close() error { return s.db.Close() }
 
 // Backup 经 VACUUM INTO 导出一致性快照到 destPath（§19 备份下载）。
 // destPath 须不存在或为空文件；单连接 + busy_timeout 下与并发读写安全共存。
 func (s *Store) Backup(ctx context.Context, destPath string) error {
+	created, err := prepareBackupFile(destPath)
+	if err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, destPath); err != nil {
+		if created {
+			_ = os.Remove(destPath)
+		}
 		return fmt.Errorf("vacuum into: %w", err)
 	}
+	if err := os.Chmod(destPath, 0o600); err != nil {
+		return fmt.Errorf("secure backup permissions: %w", err)
+	}
 	return nil
+}
+
+func prepareBackupFile(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		f, createErr := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if createErr != nil {
+			return false, fmt.Errorf("create backup file: %w", createErr)
+		}
+		if closeErr := f.Close(); closeErr != nil {
+			_ = os.Remove(path)
+			return false, fmt.Errorf("close new backup file: %w", closeErr)
+		}
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect backup file: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return false, fmt.Errorf("backup path must be a regular file: %s", path)
+	}
+	if info.Size() != 0 {
+		return false, fmt.Errorf("backup file must be empty: %s", path)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return false, fmt.Errorf("secure backup permissions: %w", err)
+	}
+	return false, nil
 }

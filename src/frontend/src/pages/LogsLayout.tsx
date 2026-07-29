@@ -1,12 +1,12 @@
-import { Outlet, useLocation, useNavigate } from 'react-router-dom'
+import type { ReactNode } from 'react'
+import { useLocation } from 'wouter'
 
 import { Page, PageHeader } from '@/components/PagePrimitives'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
-export default function LogsLayout() {
-  const location = useLocation()
-  const navigate = useNavigate()
-  const active = location.pathname.endsWith('/requests') ? 'requests' : 'operations'
+export default function LogsLayout({ children }: { children: ReactNode }) {
+  const [location, navigate] = useLocation()
+  const active = location.endsWith('/requests') ? 'requests' : 'operations'
 
   return (
     <Page>
@@ -21,7 +21,7 @@ export default function LogsLayout() {
           <TabsTrigger value="requests">请求日志</TabsTrigger>
         </TabsList>
         <TabsContent value={active}>
-          <Outlet />
+          {children}
         </TabsContent>
       </Tabs>
     </Page>

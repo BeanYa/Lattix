@@ -11,16 +11,27 @@ import {
 
 // QRDialog 展示内容的二维码（订阅链接移动端扫码导入，§14）。
 export function QRDialog({ text, open, onClose }: { text: string; open: boolean; onClose: () => void }) {
-  const [dataURL, setDataURL] = useState('')
+  const [generated, setGenerated] = useState<{ text: string; dataURL: string } | null>(null)
 
   useEffect(() => {
+    let cancelled = false
     if (!open || !text) {
+      setGenerated(null)
       return
     }
     QRCode.toDataURL(text, { margin: 2, width: 320 })
-      .then(setDataURL)
-      .catch(() => setDataURL(''))
+      .then((dataURL) => {
+        if (!cancelled) setGenerated({ text, dataURL })
+      })
+      .catch(() => {
+        if (!cancelled) setGenerated(null)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [open, text])
+
+  const dataURL = generated?.text === text ? generated.dataURL : ''
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>

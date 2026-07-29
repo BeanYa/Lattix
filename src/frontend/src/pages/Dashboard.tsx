@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import {
   RouteIcon,
   ServerIcon,
@@ -6,34 +6,58 @@ import {
   WifiIcon,
 } from 'lucide-react'
 
-import GlobeTopology from '@/components/GlobeTopology'
 import { Notice } from '@/components/PagePrimitives'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { api, errorMessage } from '@/lib/api'
 import type { Chain, DashboardStats, Server } from '@/lib/types'
+
+const GlobeTopology = lazy(() => import('@/components/GlobeTopology'))
 
 export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [servers, setServers] = useState<Server[]>([])
   const [chains, setChains] = useState<Chain[]>([])
   const [error, setError] = useState('')
+  const loadRequest = useRef(0)
+
+  const load = useCallback(async (silent = false, signal?: AbortSignal) => {
+    const request = ++loadRequest.current
+    const options = signal
+      ? { signal, ...(silent ? { display: 'silent' as const } : {}) }
+      : silent ? { display: 'silent' as const } : undefined
+    try {
+      const [dashboardStats, serverList, chainList] = await Promise.all([
+        api.dashboard(options),
+        api.servers(options),
+        api.chains(options),
+      ])
+      if (signal?.aborted || request !== loadRequest.current) return
+      setStats(dashboardStats)
+      setServers(serverList)
+      setChains(chainList)
+      setError('')
+    } catch (err) {
+      if (signal?.aborted || request !== loadRequest.current) return
+      setError(errorMessage(err))
+    }
+  }, [])
 
   useEffect(() => {
-    const load = (silent = false) => {
-      const options = silent ? { display: 'silent' as const } : undefined
-      Promise.all([api.dashboard(options), api.servers(options), api.chains(options)])
-        .then(([dashboardStats, serverList, chainList]) => {
-          setStats(dashboardStats)
-          setServers(serverList)
-          setChains(chainList)
-          setError('')
-        })
-        .catch((err) => setError(errorMessage(err)))
+    const controller = new AbortController()
+    let stopped = false
+    let timer: number | undefined
+    const poll = async (initial: boolean) => {
+      await load(!initial, controller.signal)
+      if (!stopped) timer = window.setTimeout(() => void poll(false), 5000)
     }
-    load()
-    const timer = setInterval(() => load(true), 5000)
-    return () => clearInterval(timer)
-  }, [])
+    void poll(true)
+    return () => {
+      stopped = true
+      loadRequest.current += 1
+      controller.abort()
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  }, [load])
 
   if (error) {
     return (
@@ -133,7 +157,19 @@ export default function Dashboard() {
             </div>
             <span className="rounded-full border bg-card/80 px-3 py-1.5 text-xs font-semibold">5 秒刷新</span>
           </div>
-          <GlobeTopology servers={servers} chains={chains} />
+          <Suspense
+            fallback={(
+              <div
+                className="grid min-h-[430px] place-items-center bg-transparent sm:min-h-[520px]"
+                role="status"
+              >
+                <span className="size-4 animate-pulse rounded-sm bg-primary" />
+                <span className="sr-only">正在加载链路拓扑</span>
+              </div>
+            )}
+          >
+            <GlobeTopology servers={servers} chains={chains} />
+          </Suspense>
         </section>
 
         <div className="grid content-start gap-5">

@@ -235,7 +235,8 @@ install_native_mode() {
     else
         "${ROOT[@]}" systemctl stop "$unit" >/dev/null 2>&1 || true
     fi
-    "${ROOT[@]}" install -d -m 0755 "$root" "$root/data" "$root/data/certs" "$root/data/acme-cache"
+    "${ROOT[@]}" install -d -m 0755 "$root"
+    "${ROOT[@]}" install -d -m 0700 "$root/data" "$root/data/certs" "$root/data/acme-cache"
     "${ROOT[@]}" install -m 0755 "$work/lattix-panel/lattix-backend" "$root/lattix-backend"
     local latx_bin="${LATX_BIN:-/usr/local/bin/latx}"
     "${ROOT[@]}" install -d -m 0755 "$(dirname "$latx_bin")"
@@ -275,6 +276,7 @@ StartLimitIntervalSec=60
 StartLimitBurst=5
 
 [Service]
+UMask=0077
 EnvironmentFile=$config
 ExecStart=$root/lattix-backend -addr $BIND_ADDRESS:$PORT
 Restart=always

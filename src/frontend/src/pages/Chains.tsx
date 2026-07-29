@@ -116,6 +116,19 @@ function randomChainName(): string {
   return `Chain #${suffix}`
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function parseConfigRecord(value: unknown): Record<string, unknown> {
+  const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value
+  const record = asRecord(parsed)
+  if (!record) throw new Error('config is not an object')
+  return record
+}
+
 function TrafficHistoryChart({
   buckets,
   range,
@@ -330,6 +343,7 @@ export default function Chains() {
   const [trafficRange, setTrafficRange] = useState<'day' | 'month'>('day')
   const [trafficHistory, setTrafficHistory] = useState<ChainTrafficBucket[]>([])
   const [trafficLoading, setTrafficLoading] = useState(false)
+  const loadRequest = useRef(0)
 
   const [open, setOpen] = useState(false)
   const [chainType, setChainType] = useState<'direct' | 'relay'>('direct')
@@ -378,52 +392,82 @@ export default function Chains() {
     hopIndexes,
   })
 
-  const load = useCallback((silent = false) => {
-    const options = silent ? { display: 'silent' as const } : undefined
-    Promise.all([api.chains(options), api.nodes(options), api.servers(options)])
-      .then(([c, n, s]) => {
-        setChains(c)
-        setNodes(n)
-        setServers(s)
-      })
-      .catch((err) => setError(errorMessage(err)))
-      .finally(() => setLoading(false))
+  const load = useCallback(async (silent = false, signal?: AbortSignal) => {
+    const request = ++loadRequest.current
+    const options = signal
+      ? { signal, ...(silent ? { display: 'silent' as const } : {}) }
+      : silent ? { display: 'silent' as const } : undefined
+    try {
+      const [nextChains, nextNodes, nextServers] = await Promise.all([
+        api.chains(options),
+        api.nodes(options),
+        api.servers(options),
+      ])
+      if (signal?.aborted || request !== loadRequest.current) return
+      setChains(nextChains)
+      setNodes(nextNodes)
+      setServers(nextServers)
+    } catch (err) {
+      if (signal?.aborted || request !== loadRequest.current) return
+      setError(errorMessage(err))
+    } finally {
+      if (!signal?.aborted && request === loadRequest.current) setLoading(false)
+    }
   }, [])
 
   useEffect(() => {
-    load()
-    const timer = setInterval(() => load(true), 5000)
-    return () => clearInterval(timer)
+    const controller = new AbortController()
+    let stopped = false
+    let timer: number | undefined
+    const poll = async (initial: boolean) => {
+      await load(!initial, controller.signal)
+      if (!stopped) timer = window.setTimeout(() => void poll(false), 5000)
+    }
+    void poll(true)
+    return () => {
+      stopped = true
+      loadRequest.current += 1
+      controller.abort()
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
   }, [load])
+
+  const resetChainForm = () => {
+    setEditingChainId(null)
+    setChainType('direct')
+    setName('')
+    setEntryId('')
+    setMiddleIds([])
+    setExitId('')
+    setEntryPort('')
+    setProtocol('vless')
+    setPort('')
+    setShortId('')
+    setDestPreset(DEFAULT_REALITY_DEST)
+    setDest('dl.google.com:443')
+    setServerNames('dl.google.com')
+    setFingerprint('chrome')
+    setNetwork('tcp')
+    setPath('/')
+    setMode('auto')
+    setHost('')
+    setFlow('xtls-rprx-vision')
+    setEncryption('none')
+    setTargetAddress('')
+		setTargetPort('')
+		setTrafficMultiplier('1.000')
+    setCreateError('')
+  }
+
+  const openCreate = () => {
+    resetChainForm()
+    setError('')
+    setOpen(true)
+  }
 
   const onOpenChange = (next: boolean) => {
     setOpen(next)
-    if (!next) {
-      setEditingChainId(null)
-      setChainType('direct')
-      setName('')
-      setEntryId('')
-      setMiddleIds([])
-      setExitId('')
-      setEntryPort('')
-      setProtocol('vless')
-      setPort('')
-      setShortId('')
-      setDestPreset(DEFAULT_REALITY_DEST)
-      setDest('dl.google.com:443')
-      setServerNames('dl.google.com')
-      setFingerprint('chrome')
-      setNetwork('tcp')
-      setPath('/')
-      setMode('auto')
-      setHost('')
-      setFlow('xtls-rprx-vision')
-      setEncryption('none')
-      setTargetAddress('')
-		setTargetPort('')
-		setTrafficMultiplier('1.000')
-      setCreateError('')
-    }
+    if (!next) resetChainForm()
   }
 
   const openEdit = (chain: Chain) => {
@@ -432,6 +476,25 @@ export default function Chains() {
       setError('链路出口配置不存在')
       return
     }
+    let virtual: Record<string, unknown>
+    let reality: Record<string, unknown>
+    let settings: Record<string, unknown>
+    try {
+      const rawVirtual: unknown = service?.config_template ?? chain.service_config
+      virtual = parseConfigRecord(rawVirtual)
+      const template = virtual.template === undefined ? {} : parseConfigRecord(virtual.template)
+      const streamSettings = asRecord(template.streamSettings) ?? {}
+      reality = asRecord(streamSettings.realitySettings) ?? {}
+      settings = asRecord(template.settings) ?? {}
+    } catch {
+      setError('链路出口配置无法解析')
+      return
+    }
+
+    const shortIds = Array.isArray(reality.shortIds) ? reality.shortIds : []
+    const configuredServerNames = Array.isArray(reality.serverNames)
+      ? reality.serverNames.filter((value): value is string => typeof value === 'string')
+      : []
     setEditingChainId(chain.id)
     setChainType(chain.hops.length === 1 ? 'direct' : 'relay')
     setName(chain.name)
@@ -440,31 +503,22 @@ export default function Chains() {
     setExitId(chain.hops.length > 1 ? String(chain.hops.at(-1)?.server_id ?? '') : '')
     setEntryPort(chain.hops[0]?.forward_port ? String(chain.hops[0].forward_port) : '')
     setTrafficMultiplier(chain.traffic_multiplier || '1.000')
-    try {
-      const rawVirtual: unknown = service?.config_template ?? chain.service_config
-      const virtual = (typeof rawVirtual === 'string' ? JSON.parse(rawVirtual) : rawVirtual) as Record<string, any>
-      const template = typeof virtual.template === 'string' ? JSON.parse(virtual.template) : virtual.template
-      const reality = template?.streamSettings?.realitySettings ?? {}
-      const settings = template?.settings ?? {}
-      setProtocol(String(virtual.protocol ?? service?.protocol ?? 'vless'))
-      setPort(virtual.port ? String(virtual.port) : '')
-      setNetwork(String(virtual.network || 'tcp'))
-      setFingerprint(String(virtual.fingerprint || 'chrome'))
-      setFlow(String(virtual.flow || 'none'))
-      setEncryption(String(virtual.encryption || 'none'))
-      setPath(String(virtual.path || '/'))
-      setMode(String(virtual.mode || 'auto'))
-      setHost(String(virtual.host || ''))
-      setShortId(String(reality.shortIds?.[0] || ''))
-      setDest(String(reality.dest || 'dl.google.com:443'))
-      setServerNames(Array.isArray(reality.serverNames) ? reality.serverNames.join(',') : 'dl.google.com')
-      setTargetAddress(String(settings.address || ''))
-      setTargetPort(settings.port ? String(settings.port) : '')
-    } catch {
-      setError('链路出口配置无法解析')
-      return
-    }
+    setProtocol(String(virtual.protocol ?? service?.protocol ?? 'vless'))
+    setPort(virtual.port ? String(virtual.port) : '')
+    setNetwork(String(virtual.network || 'tcp'))
+    setFingerprint(String(virtual.fingerprint || 'chrome'))
+    setFlow(String(virtual.flow || 'none'))
+    setEncryption(String(virtual.encryption || 'none'))
+    setPath(String(virtual.path || '/'))
+    setMode(String(virtual.mode || 'auto'))
+    setHost(String(virtual.host || ''))
+    setShortId(typeof shortIds[0] === 'string' ? shortIds[0] : '')
+    setDest(String(reality.dest || 'dl.google.com:443'))
+    setServerNames(configuredServerNames.length > 0 ? configuredServerNames.join(',') : 'dl.google.com')
+    setTargetAddress(String(settings.address || ''))
+    setTargetPort(settings.port ? String(settings.port) : '')
     setCreateError('')
+    setError('')
     setOpen(true)
   }
 
@@ -756,7 +810,7 @@ export default function Chains() {
       <PageHeader
         title="链路"
         actions={(
-          <Button onClick={() => setOpen(true)}>
+          <Button onClick={openCreate}>
             <PlusIcon />
             创建链路
           </Button>

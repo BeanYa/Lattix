@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 )
 
 // HTTPDoer is the shared transport seam used by all external requesters.
@@ -46,7 +48,7 @@ func (r ExternalJSONRequester) GetJSON(ctx context.Context, url string, dst any)
 		return err
 	}
 	if err := json.NewDecoder(resp.Body).Decode(dst); err != nil {
-		return fmt.Errorf("%s: decode JSON: %w", url, err)
+		return fmt.Errorf("%s: decode JSON: %w", redactedDestination(url), err)
 	}
 	return nil
 }
@@ -79,10 +81,10 @@ func (r ExternalFileRequester) GetText(ctx context.Context, url string, maxBytes
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
-		return "", fmt.Errorf("%s: read body: %w", url, err)
+		return "", fmt.Errorf("%s: read body: %w", redactedDestination(url), err)
 	}
 	if int64(len(body)) > maxBytes {
-		return "", fmt.Errorf("%s: response exceeds %d bytes", url, maxBytes)
+		return "", fmt.Errorf("%s: response exceeds %d bytes", redactedDestination(url), maxBytes)
 	}
 	return string(body), nil
 }
@@ -130,25 +132,67 @@ func do(
 	ctx context.Context, client HTTPDoer, method, url, contentType string, body io.Reader,
 ) (*http.Response, error) {
 	if client == nil {
-		return nil, fmt.Errorf("%s: external HTTP client is nil", url)
+		return nil, fmt.Errorf("%s: external HTTP client is nil", redactedDestination(url))
 	}
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
-		return nil, fmt.Errorf("%s: build request: %w", url, err)
+		return nil, wrapExternalURLError(url, "build request", err)
 	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%s: request: %w", url, err)
+		return nil, wrapExternalURLError(url, "request", err)
 	}
 	return resp, nil
 }
 
 func require2xx(url string, resp *http.Response) error {
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("%s: HTTP %s", url, resp.Status)
+		return fmt.Errorf("%s: HTTP %s", redactedDestination(url), resp.Status)
 	}
 	return nil
+}
+
+type redactedExternalError struct {
+	message string
+	cause   error
+}
+
+func (e *redactedExternalError) Error() string { return e.message }
+func (e *redactedExternalError) Unwrap() error { return e.cause }
+
+func wrapExternalURLError(rawURL, operation string, err error) error {
+	destination := redactedDestination(rawURL)
+	message := err.Error()
+	for _, candidate := range equivalentURLStrings(rawURL) {
+		if candidate == "" {
+			continue
+		}
+		message = strings.ReplaceAll(message, candidate, destination)
+	}
+	return &redactedExternalError{
+		message: fmt.Sprintf("%s: %s: %s", destination, operation, message),
+		cause:   err,
+	}
+}
+
+// redactedDestination intentionally retains only the origin. Webhook and bot
+// endpoints commonly place credentials in userinfo, path segments, or query
+// parameters, so retaining a "cleaned" path is not generally safe.
+func redactedDestination(rawURL string) string {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "[redacted URL]"
+	}
+	return parsed.Scheme + "://" + parsed.Host
+}
+
+func equivalentURLStrings(rawURL string) []string {
+	values := []string{rawURL}
+	if parsed, err := url.Parse(rawURL); err == nil {
+		values = append(values, parsed.String(), parsed.Redacted())
+	}
+	return values
 }

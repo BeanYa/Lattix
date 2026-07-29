@@ -174,32 +174,48 @@ func (s *Server) requireIdempotency(route string, next http.HandlerFunc) http.Ha
 		s.idempotencyMu.Lock()
 		defer s.idempotencyMu.Unlock()
 
-		record, err := s.st.IdempotencyRecord(r.Context(), operator, route, key)
-		switch {
-		case err == nil:
-			if record.RequestHash != requestHash {
-				writeRPC(w, shared.CodeConflict, "Idempotency-Key was already used with a different request", nil)
+		for {
+			record, err := s.st.IdempotencyRecord(r.Context(), operator, route, key)
+			switch {
+			case err == nil:
+				if record.RequestHash != requestHash {
+					writeRPC(w, shared.CodeConflict, "Idempotency-Key was already used with a different request", nil)
+					return
+				}
+				if record.ResponseJSON == "" {
+					writeRPC(w, shared.CodeOperationLocked,
+						"the previous operation outcome is unknown; do not repeat it automatically", nil)
+					return
+				}
+				var cached cachedRPCResponse
+				if json.Unmarshal([]byte(record.ResponseJSON), &cached) != nil {
+					writeRPC(w, shared.CodeInternalError, "stored idempotency result is invalid", nil)
+					return
+				}
+				if replayWriter, ok := w.(interface{ SetIdempotencyReplayed(bool) }); ok {
+					replayWriter.SetIdempotencyReplayed(true)
+				}
+				writeRPC(w, cached.Code, cached.Message, cached.Data)
+				return
+			case !errors.Is(err, store.ErrNotFound):
+				writeRPC(w, shared.CodeInternalError, "failed to read idempotency state", nil)
 				return
 			}
-			var cached cachedRPCResponse
-			if json.Unmarshal([]byte(record.ResponseJSON), &cached) != nil {
-				writeRPC(w, shared.CodeInternalError, "stored idempotency result is invalid", nil)
+			err = s.st.ReserveIdempotencyRecord(r.Context(), operator, route, key, requestHash)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, store.ErrIdempotencyReservationExists) {
+				writeRPC(w, shared.CodeInternalError, "failed to reserve idempotency state", nil)
 				return
 			}
-			if replayWriter, ok := w.(interface{ SetIdempotencyReplayed(bool) }); ok {
-				replayWriter.SetIdempotencyReplayed(true)
-			}
-			writeRPC(w, cached.Code, cached.Message, cached.Data)
-			return
-		case !errors.Is(err, store.ErrNotFound):
-			writeRPC(w, shared.CodeInternalError, "failed to read idempotency state", nil)
-			return
 		}
 
 		capture := newRPCCapture(w)
 		next(capture, r)
 
 		if capture.status != http.StatusOK {
+			_ = s.st.DeleteIdempotencyReservation(r.Context(), operator, route, key, requestHash)
 			capture.flushTo(w)
 			return
 		}
@@ -214,7 +230,7 @@ func (s *Server) requireIdempotency(route string, next http.HandlerFunc) http.Ha
 		}
 		cached := cachedRPCResponse{Code: response.Code, Message: response.Message, Data: response.Data}
 		encoded, _ := json.Marshal(cached)
-		if err := s.st.SaveIdempotencyRecord(
+		if err := s.st.CompleteIdempotencyRecord(
 			r.Context(), operator, route, key, requestHash, string(encoded),
 		); err != nil {
 			writeRPC(w, shared.CodeInternalError, "failed to persist idempotency result", nil)

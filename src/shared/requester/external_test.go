@@ -2,10 +2,12 @@ package requester
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -53,5 +55,32 @@ func TestExternalRequestersUseUpstreamHTTPSemantics(t *testing.T) {
 		context.Background(), server.URL+"/failure", struct{}{},
 	); err == nil {
 		t.Fatal("upstream non-2xx status was accepted")
+	}
+}
+
+type failingExternalDoer struct{}
+
+func (failingExternalDoer) Do(req *http.Request) (*http.Response, error) {
+	return nil, errors.New("dial failed for " + req.URL.String())
+}
+
+func TestExternalRequesterRedactsSecretsFromErrors(t *testing.T) {
+	rawURL := "https://alice:password@example.com/bot-secret/sendMessage?token=query-secret#fragment-secret"
+	err := (ExternalWebhookRequester{Doer: failingExternalDoer{}}).PostJSON(
+		context.Background(), rawURL, struct{}{},
+	)
+	if err == nil {
+		t.Fatal("PostJSON unexpectedly succeeded")
+	}
+	message := err.Error()
+	for _, secret := range []string{
+		"alice", "password", "bot-secret", "query-secret", "fragment-secret",
+	} {
+		if strings.Contains(message, secret) {
+			t.Fatalf("error leaked %q: %s", secret, message)
+		}
+	}
+	if !strings.Contains(message, "https://example.com") {
+		t.Fatalf("error omitted safe destination context: %s", message)
 	}
 }

@@ -1,4 +1,9 @@
-import type { RPCCode, RPCEnvelope } from './api-contract.generated'
+import {
+  isRPCCode,
+  type RPCCode,
+  type RPCEnvelope,
+  type RPCPathByMethod,
+} from './api-contract.generated'
 
 export type { RPCCode, RPCEnvelope } from './api-contract.generated'
 
@@ -82,7 +87,7 @@ export class Requester {
   }
 
   get<T>(
-    path: string,
+    path: RPCPathByMethod<'GET'>,
     query?: Record<string, string | number | boolean | undefined>,
     options?: RequestOptions,
   ): Promise<T> {
@@ -94,11 +99,11 @@ export class Requester {
     return this.execute<T>('GET', path + suffix, undefined, options, 2)
   }
 
-  post<T>(path: string, body: object = {}, options?: RequestOptions): Promise<T> {
+  post<T>(path: RPCPathByMethod<'POST'>, body: object = {}, options?: RequestOptions): Promise<T> {
     return this.execute<T>('POST', path, body, options, 1)
   }
 
-  async download(path: string, options?: RequestOptions): Promise<void> {
+  async download(path: RPCPathByMethod<'GET'>, options?: RequestOptions): Promise<void> {
     const traceId = options?.traceId ?? newRequestId()
     const requestId = newRequestId()
     const display = options?.display ?? 'foreground'
@@ -116,7 +121,9 @@ export class Requester {
       const contentType = response.headers.get('Content-Type') ?? ''
       if (contentType.includes('json')) {
         const envelope = await parseEnvelope<never>(response, requestId, traceId)
-        throw businessError(envelope, response.status)
+        const error = businessError(envelope, response.status)
+        if (error.code === 'AUTH_REQUIRED') this.unauthorizedHandler?.()
+        throw error
       }
       if (!response.ok) {
         throw new RequestError({
@@ -235,25 +242,45 @@ async function parseEnvelope<T>(
       traceId: response.headers.get('X-Trace-ID') ?? fallbackTraceId,
     })
   }
+  if (!isRecord(value)) {
+    throw invalidEnvelope(response.status, fallbackRequestId, fallbackTraceId)
+  }
+  const { code, message, data, request_id: requestId, trace_id: traceId } = value
   if (
-    !value ||
-    typeof value !== 'object' ||
-    typeof (value as RPCEnvelope<T>).code !== 'string' ||
-    typeof (value as RPCEnvelope<T>).message !== 'string' ||
-    !isMessageId((value as RPCEnvelope<T>).request_id) ||
-    !isMessageId((value as RPCEnvelope<T>).trace_id) ||
+    !(isRPCCode(code) || isProtocolCode(code)) ||
+    typeof message !== 'string' ||
+    !isMessageId(requestId) ||
+    !isMessageId(traceId) ||
     !('data' in value)
   ) {
-    throw new RequestError({
-      kind: 'protocol',
-      code: 'INVALID_RESPONSE',
-      message: '服务端响应不符合 RPC 信封',
-      httpStatus: response.status,
-      requestId: fallbackRequestId,
-      traceId: fallbackTraceId,
-    })
+    throw invalidEnvelope(response.status, fallbackRequestId, fallbackTraceId)
   }
-  return value as RPCEnvelope<T>
+  return {
+    code,
+    message,
+    data: data as T,
+    request_id: requestId,
+    trace_id: traceId,
+  }
+}
+
+function invalidEnvelope(httpStatus: number, requestId: string, traceId: string): RequestError {
+  return new RequestError({
+    kind: 'protocol',
+    code: 'INVALID_RESPONSE',
+    message: '服务端响应不符合 RPC 信封',
+    httpStatus,
+    requestId,
+    traceId,
+  })
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isProtocolCode(value: unknown): value is `HTTP_${number}` {
+  return typeof value === 'string' && /^HTTP_[1-5]\d{2}$/.test(value)
 }
 
 function isMessageId(value: unknown): value is string {
@@ -262,7 +289,7 @@ function isMessageId(value: unknown): value is string {
 
 function businessError<T>(envelope: RPCEnvelope<T>, httpStatus: number): RequestError {
   return new RequestError({
-    kind: 'business',
+    kind: isRPCCode(envelope.code) ? 'business' : 'protocol',
     code: envelope.code,
     message: envelope.message || envelope.code,
     httpStatus,
@@ -293,13 +320,17 @@ function normalizeError(error: unknown, requestId: string, traceId: string): Req
 
 function combinedSignal(parent: AbortSignal | undefined, timeoutMs: number) {
   const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
-  const abort = () => controller.abort()
-  parent?.addEventListener('abort', abort, { once: true })
+  const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs)
+  const abort = () => controller.abort(parent?.reason)
+  if (parent?.aborted) {
+    abort()
+  } else {
+    parent?.addEventListener('abort', abort, { once: true })
+  }
   return {
     signal: controller.signal,
     cleanup: () => {
-      window.clearTimeout(timeout)
+      globalThis.clearTimeout(timeout)
       parent?.removeEventListener('abort', abort)
     },
   }

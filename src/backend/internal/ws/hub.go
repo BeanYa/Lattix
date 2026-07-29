@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -346,16 +347,33 @@ func (h *Hub) SyncLifecycle(ctx context.Context, snapshot shared.PanelLifecycleS
 		}
 		waits = append(waits, pending{conn.serverID, id, conn, ack})
 	}
-	missing := make([]int64, 0)
+	type result struct {
+		serverID int64
+		missing  bool
+	}
+	results := make(chan result, len(waits))
 	for _, wait := range waits {
-		select {
-		case <-wait.ack:
-		case <-wait.conn.done:
-		case <-ctx.Done():
-			wait.conn.removeLifecycleAck(wait.requestID)
-			missing = append(missing, wait.serverID)
+		go func(wait pending) {
+			select {
+			case <-wait.ack:
+				results <- result{serverID: wait.serverID}
+			case <-wait.conn.done:
+				wait.conn.removeLifecycleAck(wait.requestID)
+				results <- result{serverID: wait.serverID}
+			case <-ctx.Done():
+				wait.conn.removeLifecycleAck(wait.requestID)
+				results <- result{serverID: wait.serverID, missing: true}
+			}
+		}(wait)
+	}
+	missing := make([]int64, 0, len(waits))
+	for range waits {
+		result := <-results
+		if result.missing {
+			missing = append(missing, result.serverID)
 		}
 	}
+	slices.Sort(missing)
 	return missing
 }
 

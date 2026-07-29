@@ -62,11 +62,9 @@ export const api = {
     return result
   },
   logout: async () => {
-    try {
-      return await requester.post<void>('/api/auth/logout', {})
-    } finally {
-      requester.setCSRFToken(null)
-    }
+    const result = await requester.post<void>('/api/auth/logout', {})
+    requester.setCSRFToken(null)
+    return result
   },
   me: async () => {
     const result = await requester.get<AuthSession>('/api/auth/me')
@@ -189,7 +187,11 @@ export const api = {
   resetChainTraffic: (chainId: number) =>
     requester.post<void>('/api/chain/reset-traffic', { chain_id: chainId }),
   chainTrafficHistory: (chainId: number, hopId = 0, days = 30) =>
-    requester.get<ChainTrafficBucket[]>(`/api/chain/get-traffic-history?chain_id=${chainId}&hop_id=${hopId}&days=${days}`),
+    requester.get<ChainTrafficBucket[]>('/api/chain/get-traffic-history', {
+      chain_id: chainId,
+      hop_id: hopId,
+      days,
+    }),
   retryChain: (chainId: number) =>
     requester.post<Chain>('/api/chain/retry', { chain_id: chainId }),
   deleteChain: (chainId: number) =>

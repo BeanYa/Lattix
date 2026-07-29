@@ -301,34 +301,14 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 落库：出口业务节点（pending，由编排器阶段 1 下发）+ chains/chain_hops 行。
+	// Build the complete initial deployment before exposing it to the scheduler.
 	vc := buildVirtualConfig(req.Node)
 	vcJSON, err := json.Marshal(vc)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	nodeID, err := s.st.InsertNode(r.Context(), req.Name, exitSrv.ID, vc.Protocol, req.Node.Port, vcJSON)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	chainID, err := s.st.InsertChain(r.Context(), req.Name)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := s.st.SetChainServiceNode(r.Context(), chainID, nodeID); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if trafficMultiplierMilli != 1000 {
-		if err := s.st.SetChainTrafficMultiplier(r.Context(), chainID, trafficMultiplierMilli); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	}
-	revisionHops := make([]store.ChainRevisionHop, 0, len(servers))
+	initialHops := make([]store.InitialChainHop, 0, len(servers))
 	plaintext := req.Node.Protocol == shared.ProtocolSocks || req.Node.Protocol == shared.ProtocolHTTP
 	for i, srv := range servers {
 		role := store.HopRoleMiddle
@@ -338,10 +318,6 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			role = store.HopRoleEntry
 		} else if i == len(servers)-1 {
 			role = store.HopRoleExit
-		}
-		hopNodeID := int64(0)
-		if role == store.HopRoleExit {
-			hopNodeID = nodeID
 		}
 		hopForwardPort := 0
 		if role == store.HopRoleEntry || len(servers) == 1 {
@@ -357,52 +333,26 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		if transport == "reverse" || transport == "encrypted" {
 			tunnelUUID = uuid.NewString()
 		}
-		hopID, err := s.st.InsertChainHop(r.Context(), chainID, i, srv.ID, role, hopNodeID, hopForwardPort, tunnelUUID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		revisionHops = append(revisionHops, store.ChainRevisionHop{HopID: hopID, ServerID: srv.ID, Role: role,
-			Transport:   transport,
-			ForwardPort: hopForwardPort, TunnelUUID: tunnelUUID})
+		initialHops = append(initialHops, store.InitialChainHop{
+			ServerID: srv.ID, Role: role, Transport: transport,
+			ForwardPort: hopForwardPort, TunnelUUID: tunnelUUID,
+		})
 	}
-	applyKeys := []string{fmt.Sprintf("service/%d", nodeID)}
-	for i, hop := range revisionHops {
-		if i < len(revisionHops)-1 {
-			applyKeys = append(applyKeys, fmt.Sprintf("forward/%d", hop.HopID))
-		}
-		if hop.TunnelUUID != "" {
-			applyKeys = append(applyKeys, fmt.Sprintf("portal/%d", hop.HopID))
-			applyKeys = append(applyKeys, fmt.Sprintf("bridge/%d", revisionHops[i+1].HopID))
-		}
-	}
-	revision, err := s.st.CreateChainRevision(r.Context(), chainID, store.ChainRevisionSnapshot{
-		Name: req.Name, ServiceNodeID: nodeID, ServiceServerID: exitSrv.ID, ServiceConfig: vcJSON,
-		TrafficMultiplierMilli: trafficMultiplierMilli, Hops: revisionHops, ApplyKeys: applyKeys,
+	deployment, err := s.st.CreateInitialChainDeployment(r.Context(), store.InitialChainDeployment{
+		Name: req.Name, ServiceServerID: exitSrv.ID, ServiceProtocol: vc.Protocol,
+		ServicePort: req.Node.Port, ServiceConfig: vcJSON,
+		TrafficMultiplierMilli: trafficMultiplierMilli, Hops: initialHops,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	for _, key := range applyKeys {
-		kind, id := splitRevisionPieceKey(key)
-		serverID := exitSrv.ID
-		if kind != dispatch.RevisionPieceService {
-			for _, hop := range revisionHops {
-				if hop.HopID == id {
-					serverID = hop.ServerID
-					break
-				}
-			}
-		}
-		_, _ = s.st.AddRevisionTask(r.Context(), store.ChainRevisionTask{RevisionID: revision.ID,
-			TaskKey: key, Phase: "apply", Action: "apply", Kind: kind, HopID: id, ServerID: serverID})
-	}
-	for _, task := range applyKeys {
+	chainID := deployment.ChainID
+	for _, task := range deployment.ApplyKeys {
 		_, id := splitRevisionPieceKey(task)
 		serverID := exitSrv.ID
 		if !strings.HasPrefix(task, dispatch.RevisionPieceService+"/") {
-			for _, hop := range revisionHops {
+			for _, hop := range deployment.Hops {
 				if hop.HopID == id {
 					serverID = hop.ServerID
 					break
@@ -410,7 +360,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !s.req.IsOnline(serverID) {
-			_ = s.st.SetChainRevisionStatus(r.Context(), revision.ID, store.RevisionStatusWaitingForAgent, "")
+			_ = s.st.SetChainRevisionStatus(r.Context(), deployment.RevisionID, store.RevisionStatusWaitingForAgent, "")
 			break
 		}
 	}

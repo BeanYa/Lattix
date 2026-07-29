@@ -1,3 +1,5 @@
+import type { components } from './api-contract.generated'
+
 export interface DashboardStats {
   servers: number
   servers_online: number
@@ -152,12 +154,14 @@ export interface Server {
 }
 
 // 命令日志条目（GET /api/server/list-commands，§4）。
+export type CommandStatus = components['schemas']['CommandStatus']
+
 export interface CommandLog {
   id: number
   request_id: string
   trace_id: string
   type: string
-  status: 'queued' | 'sent' | 'acked' | 'failed'
+  status: CommandStatus
   error?: string
   attempts: number
   created_at: string
@@ -193,6 +197,8 @@ export interface Traffic {
   down: number
 }
 
+export type VirtualConfig = components['schemas']['VirtualConfig']
+
 export interface XrayNode {
   id: number
   name: string
@@ -203,7 +209,7 @@ export interface XrayNode {
   status: NodeStatus
   error: string | null
   traffic: Traffic | null
-  config_template: string
+  config_template: VirtualConfig
   realized_config: RealizedConfig | null
   created_at: string
 }
@@ -296,7 +302,7 @@ export interface Chain {
   revision_status?: string
   revision_forced: boolean
   revision_tasks: ChainRevisionTask[]
-  service_config?: Record<string, unknown>
+  service_config?: VirtualConfig
 }
 
 // 链路构图提交（§21）：依次入口 / 中间跳（0-2）/ 出口，出口携带业务节点协议表单，
@@ -336,12 +342,7 @@ export interface SubUser {
   created_at: string
 }
 
-export interface CertInfo {
-  common_name: string
-  dns_names: string[]
-  not_after: string
-  expired: boolean
-}
+export type CertInfo = components['schemas']['CertInfo']
 
 export type TLSMode = '' | 'off' | 'cert' | 'acme' | 'path'
 
