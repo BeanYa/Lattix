@@ -52,6 +52,23 @@
         },
         "agent": {"$ref": "#/$defs/agentSettings"}
       }
+    },
+    "trafficCounter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["up", "down"],
+      "properties": {
+        "node_id": {"type": "integer", "minimum": 1},
+        "hop_id": {"type": "integer", "minimum": 1},
+        "user": {"type": "string"},
+        "up": {"type": "integer", "minimum": 0},
+        "down": {"type": "integer", "minimum": 0}
+      },
+      "oneOf": [
+        {"required": ["node_id"]},
+        {"required": ["hop_id"]},
+        {"required": ["user"]}
+      ]
     }
   },
   "additionalProperties": false,
@@ -163,6 +180,44 @@
             "additionalProperties": false,
             "required": ["revision"],
             "properties": {"revision": {"type": "integer", "minimum": 1}}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "event"}, "type": {"const": "telemetry.report"}},
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["xray_instance_id", "traffic"],
+            "properties": {
+              "xray_instance_id": {"type": "string", "minLength": 1},
+              "traffic": {"type": "array", "items": {"$ref": "#/$defs/trafficCounter"}}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "request"}, "type": {"const": "chain-hop.apply"}},
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["chain_id", "revision_id", "hop_id", "kind"],
+            "properties": {
+              "chain_id": {"type": "integer", "minimum": 1},
+              "revision_id": {"type": "integer", "minimum": 1},
+              "hop_id": {"type": "integer", "minimum": 1},
+              "kind": {"enum": ["portal", "bridge", "forward"]}
+            }
           }
         }
       }

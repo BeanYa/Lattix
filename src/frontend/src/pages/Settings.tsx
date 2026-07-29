@@ -93,6 +93,7 @@ export default function Settings() {
   // 基本设置
   const [publicURL, setPublicURL] = useState('')
   const [timezone, setTimezone] = useState('')
+  const [trafficTimezone, setTrafficTimezone] = useState('Asia/Shanghai')
   // TLS
   const [tlsMode, setTlsMode] = useState<TLSModeChoice>('flag')
   const [certPEM, setCertPEM] = useState('')
@@ -158,6 +159,7 @@ export default function Settings() {
         setSettings(s)
         setPublicURL(s.public_url)
         setTimezone(s.timezone)
+        setTrafficTimezone(s.traffic_timezone)
         setTlsMode(s.tls_mode === '' ? 'flag' : s.tls_mode)
         setTlsDomain(s.tls_domain)
         setAcmeDomain(s.acme_domain)
@@ -202,6 +204,7 @@ export default function Settings() {
     try {
       const s = await api.updateSettings({
         timezone: timezone.trim(),
+        traffic_timezone: trafficTimezone.trim(),
         public_url: publicURL.trim(),
         tls_mode: tlsMode === 'flag' ? '' : tlsMode,
         // 留空 = 保持已保存值不变（后端语义）
@@ -694,6 +697,17 @@ export default function Settings() {
               <p className="text-xs text-muted-foreground">
                 IANA 时区名（如 Asia/Shanghai），全局生效：所有浏览器看到的面板时间一致。
               </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="trafficTimezone">流量统计时区</Label>
+              <Input
+                id="trafficTimezone"
+                list="timezone-list"
+                value={trafficTimezone}
+                onChange={(e) => setTrafficTimezone(e.target.value)}
+                placeholder="Asia/Shanghai"
+                required
+              />
             </div>
           </CardContent>
         </Card>

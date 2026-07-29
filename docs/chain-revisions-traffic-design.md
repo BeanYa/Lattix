@@ -1,0 +1,172 @@
+# 链路 Revision 与流量统计设计
+
+## 目标与边界
+
+Lattix 是控制面，用户流量不经过 Panel。所有代理入口统一建模为 `chain`：直连是 1 跳，
+中转是 2～4 跳；客户端只连接入口服务器，出口和内部传输细节对客户端透明。
+
+本阶段只支持安装了 Lattix Agent 的受控服务器，不引入外部订阅节点、动态路由、负载均衡、
+限速或流量配额。Panel 与 Agent 使用完全相同的发布版本，不维护跨版本命令兼容层。
+
+## 稳定身份与 Revision
+
+- `chain_id` 是链路的稳定身份。
+- 每条链拥有稳定的 `service_node_id`，用户授权、订阅 UUID、链路权威流量均绑定它。
+- `chain_revisions` 保存包含有序 hop 的不可变目标快照；chain 分别引用当前发布 revision 和待部署 revision。
+- revision 快照保存 1～4 个有序受控服务器。保留的 hop 沿用稳定 `hop_id`；删除后重加
+  同一服务器视为新 hop。
+- 删除的 hop、revision 和 chain 只做归档，不删除流量或任务审计历史。
+
+直连和中转不再走两套产品模型或 API。现阶段没有需要兼容的存量数据，可以直接迁移为统一
+chain 模型；底层 service node 仍可复用已有 Xray 业务 inbound 与 `user_nodes` 关联能力。
+
+## 编辑范围
+
+编辑器与创建器使用同一份表单，支持：
+
+- 修改名称；
+- 对 1～4 台服务器进行添加、删除、替换和重排；
+- 修改用户可见入口端口；
+- 修改链级代理协议及完整协议参数；
+- 修改流量倍率。
+
+同一服务器不能在一条链内重复。服务器地址、NAT 端口范围和标签仍在服务器管理中修改。
+内部 transport 由 planner 自动选择，不开放逐跳手工配置。
+
+## 差分 Planner
+
+Planner 从出口向入口构造规范化 spec，并对规范化 JSON 求 hash。只有自身 spec 及全部下游依赖
+均相同的 piece 才可复用；无法证明等价、realized 数据缺失或配置漂移时，保守重建受影响范围。
+
+部署遵循 make-before-break：
+
+1. 持久化 desired revision 和幂等任务图；
+2. 从出口向入口部署新增或变化的 service、portal、bridge、forward piece；
+3. 入口最后切换；
+4. 提升 published revision；
+5. 立即清理旧 revision 不再引用的 piece。
+
+不设客户端迁移宽限期。协议或端口无法并存时允许最终切换发生一次短暂 Xray reload。完整重建
+也必须遵守上述顺序，不能先拆旧链。
+
+每个任务使用稳定幂等键 `chain_id/revision_id/hop_id/piece/action`。编辑任务描述依赖和阶段；已有
+Agent command 队列负责投递、重试与回执。Panel 重启后从数据库继续未完成任务，同一 chain 同时
+只允许一个编辑。
+
+## 状态与离线语义
+
+Panel 的 Agent 在线状态只表示 Agent→Panel 控制通道可达，不代表服务器对客户端或相邻跳不可达。
+已经落盘的 Xray 数据面在 Panel 或控制通道断开时继续工作。
+
+链路发布状态包括：
+
+- `applying`：正在部署；
+- `waiting_for_agent`：目标 revision 需要修改的 Agent 不可达；
+- `active`：目标配置均已确认；
+- `active_unconfirmed`：管理员强制发布了未确认配置；
+- `active_failed`：强制发布后的任务执行失败；
+- `cleanup_pending`：新 revision 已生效，旧配置仍待清理；
+- `invalid`：引用的服务器已被删除；
+- `deleted`：链路已软删除。
+
+普通创建或编辑遇到必须修改的离线 Agent 时不发布，任务保持队列状态；完全未变化的已部署 hop
+可以直接复用。管理员可以执行“强制发布”：立即更新订阅、抛弃旧 revision 并开始 cleanup，未确认
+命令继续排队。强制发布是不可自动回滚的单向操作；失败后只能重试或再次编辑。
+
+被目标拓扑删除的离线服务器不阻塞发布，其 cleanup 命令排队。若仍留在目标拓扑的前驱服务器需要
+修改下一跳且当前离线，普通发布必须等待，除非管理员强制发布。
+
+已发布的 `active` 链在任意入口、中间跳或出口 Agent 断开时推导为 `degraded`；这只表示控制面
+无法确认该跳，不撤销订阅，也不推断数据面已经中断。全部 Agent 恢复在线且 hop 均为 `active` 后
+恢复为 `active`。当前重算由 Agent connect/disconnect 事件触发；Panel 重启后始终未重新连接的
+存量 Agent 不会产生事件，因此持久化为 `active` 的链可能暂时仍显示正常，直到相关 Agent 发生一次
+连接状态跃迁。该启动期全量重算属于后续修复项。
+
+## 删除语义
+
+删除服务器时先找出引用它的 active/desired revision：
+
+1. 相关链路立即标记 `invalid` 并从订阅移除；
+2. 取消未发布 revision；
+3. 向其余服务器发送相关 cleanup；
+4. 发给被删除服务器的 queued 命令标记 `abandoned`，迟到回执忽略；
+5. 撤销 Agent 凭证并删除服务器。
+
+失效链路保留，可通过替换缺失 hop 重新发布。删除 chain 时立即退出订阅并清理配置，但 chain、
+revision、流量和任务历史均软删除保留。
+
+## 内部传输
+
+- 客户端协议已经端到端加密时使用直接 L4 转发；
+- SOCKS/HTTP 等明文协议用于多跳时，内部段自动加密；
+- 下游无入站能力时使用 Reality reverse portal/bridge；
+- 链路详情展示 planner 选择的 `direct`、`encrypted` 或 `reverse`，但用户不能逐跳修改。
+
+## 流量口径
+
+Agent 上报 Xray 计数器绝对快照，而不是未确认的区间增量。每帧携带 `xray_instance_id` 和绝对值；
+Backend 持久化每个实例/计数器的最后值并在事务内计算增量。重复快照增量为零，丢帧由下一帧补差，
+Xray 重启通过新 instance 区分。
+
+- 出口 service inbound 是链路总流量的唯一权威来源；
+- 入口 forward inbound 保证准确，用于与出口对账；
+- 中间 hop 只用于展示，不作计费准确性承诺；
+- portal、bridge 和内部 outbound 不计入 hop 业务流量；
+- 上下行始终以客户端视角定义，各 hop 流量不得相加。
+
+### 控制通道离线时的补报
+
+Agent→Panel 控制通道断开不会停止 Xray 绝对计数器。只要 Xray 实例未重启，Agent 重连后的首帧
+与 Backend 持久化游标补差，可以一次性补齐断线期间的累计量：
+
+- 仅入口或中间 hop Agent 离线时，对应 hop 展示暂停；出口仍在线则链路权威总量继续更新；
+- 出口 Agent 离线时，链路权威总量暂停更新，出口重连后补差；
+- 所有 Agent 离线时所有展示暂停，仍以出口重连后的 service inbound 补差为链路总量。
+
+当前实现不是计费级离线流水，存在以下明确边界：
+
+- 离线期间 Xray 重启会改变 `xray_instance_id`；新实例从零累计，旧实例最后一次上报之后的流量
+  无法恢复，因为 Agent 不持久化带序号的本地流量流水；
+- 补差只有 Backend 接收时间，没有离线期间的分段采样时间，整段增量归入重连当天的日桶；累计
+  总量可补齐，但跨日/月曲线无法还原真实日期分布；
+- 若离线期间链路倍率改变，补报增量按重连时匹配到的当前 published revision 与倍率入账，不能按
+  离线期间的历史倍率拆分。
+
+若后续需要计费级准确性，Agent 必须持久化包含实例、计数器、采样区间、revision/倍率和单调序号的
+增量流水，Backend 按序号幂等回放；本阶段保持绝对计数器补差，不引入该复杂度。
+
+流量倍率属于 chain，默认 `1.000`，范围 `0.001～1000.000`，最多三位小数。API 和数据库使用十进制
+字符串/千分整数，不使用二进制浮点累计。倍率从修改时刻起作用于新增流量，不追溯历史；后端同时
+保留 raw 与倍率后流量，跨 telemetry 保存取整余数。
+
+## 日/月统计与重置
+
+- 原始采样时间使用 UTC；新增独立 `traffic_timezone`，默认 `Asia/Shanghai`；
+- 只持久化每日桶，包含 raw/effective 上下行、chain、hop、revision 和统计时区；
+- 月统计由每日桶动态汇总；日桶长期保留；
+- 链路详情提供按日 30/90/365 天和按月 12/24 月视图；
+- 删除 hop 的数据只在历史 revision 中展示。
+
+“重置流量”创建 checkpoint：链路和当前各 hop 的累计展示从该时刻归零，但不删除 Xray 计数器、
+每日桶或自然日/月历史。支持单链和全部链路重置，不支持单 hop 重置。
+
+## 订阅发布
+
+订阅只输出 published revision。普通编辑在新入口得到确认前继续输出最后一个 confirmed revision；
+全新 chain 在确认前不进入默认订阅。强制发布会立即改为输出 unconfirmed revision。内部 hop 变化且
+入口参数不变时，用户链接保持不变；入口服务器、端口或协议变化后，客户端需刷新稳定的订阅 URL。
+
+## Panel / Agent 版本同步
+
+Panel 更新后向所有在线 Agent 下发同步到相同版本的更新命令；离线 Agent 重连后立即同步。版本不一致
+期间已有数据面继续运行，revision 命令可以入队但不得投递。强制发布不能绕过版本不一致。更新失败
+显示 `version_sync_failed` 并允许重试；Panel 更新不等待永久离线 Agent。
+
+## 验收测试
+
+- Planner：增删、替换、重排、协议变化、正向/反向变化、完整重建回退；
+- 状态机：正常编辑、离线等待、重启续跑、强制发布、迟到回执、失败、cleanup、服务器删除；
+- Agent：revision piece 共存、幂等、入口最后切换、清理与 Xray 回滚；
+- 流量：绝对值去重、丢帧补差、实例切换、倍率分段、跨日/月、时区和 reset；
+- API/前端：预览、提交、强制发布、重试、删除、流量查询、类型检查和生产构建；
+- CI 使用 fake Agent 完成编排集成测试，真实多机网络/Xray 保留手工验收脚本。

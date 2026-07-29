@@ -106,13 +106,23 @@ function buildLinks(chains: Chain[], points: TopologyPoint[]): EarthLink[] {
       const start = pointsByServer.get(hops[index].server_id)
       const end = pointsByServer.get(hop.server_id)
       if (!start || !end) return []
+      const status: EarthLink['status'] = (() => {
+        switch (chain.status) {
+          case 'active_unconfirmed': return 'active'
+          case 'waiting_for_agent':
+          case 'cleanup_pending': return 'applying'
+          case 'active_failed':
+          case 'invalid': return 'failed'
+          default: return chain.status
+        }
+      })()
       return [{
         id: `${chain.id}:${index}`,
         startLat: start.lat,
         startLng: start.lng,
         endLat: end.lat,
         endLng: end.lng,
-        status: chain.status,
+        status,
       }]
     })
   })

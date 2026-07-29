@@ -156,6 +156,7 @@ type HelloResult struct {
 // DestCandidates 是面板内置的 dest 白名单（§6 预检 fallback，随版本更新，尽量丰富）。
 // PortCandidates 是受限直连 NAT 机上节点端口的段内候选（§21，Port 为 0 时由 Agent 依次挑选）。
 type ApplyNodePayload struct {
+	RevisionID     int64         `json:"revision_id,omitempty"`
 	NodeID         int64         `json:"node_id"`
 	Config         VirtualConfig `json:"config"`
 	UserUUIDs      []string      `json:"user_uuids"`
@@ -210,10 +211,11 @@ type ApplyResultPayload struct {
 // TelemetryPayload 是 telemetry 的载荷（§13 遥测，周期上报，无需回执）：
 // xray 版本/运行状态（升级管理据此刷新展示）、主机指标、流量增量。
 type TelemetryPayload struct {
-	XrayVersion string         `json:"xray_version"`
-	XrayRunning bool           `json:"xray_running"`
-	Host        *HostMetrics   `json:"host,omitempty"`
-	Traffic     []TrafficDelta `json:"traffic,omitempty"`
+	XrayVersion    string           `json:"xray_version"`
+	XrayRunning    bool             `json:"xray_running"`
+	XrayInstanceID string           `json:"xray_instance_id,omitempty"`
+	Host           *HostMetrics     `json:"host,omitempty"`
+	Traffic        []TrafficCounter `json:"traffic,omitempty"`
 }
 
 // HostMetrics 是主机指标（/proc 采集）。
@@ -235,13 +237,14 @@ type HostMetrics struct {
 	LatencyMS        *float64 `json:"latency_ms,omitempty"` // 最近 3 次 WebSocket RTT 中位数
 }
 
-// TrafficDelta 是一个计数器在采样区间内的流量增量（字节）。
-// Node 为 inbound tag（node_<id>，节点维度）；User 为用户 UUID（email，用户维度）。
-type TrafficDelta struct {
-	Node string `json:"node,omitempty"`
-	User string `json:"user,omitempty"`
-	Up   int64  `json:"up"`
-	Down int64  `json:"down"`
+// TrafficCounter 是一个 Xray 实例自启动以来的绝对业务流量计数器（字节）。
+// Backend 持久化游标并计算增量，因而 WS 丢帧可由下一帧补齐且重发天然幂等。
+type TrafficCounter struct {
+	NodeID int64  `json:"node_id,omitempty"`
+	HopID  int64  `json:"hop_id,omitempty"`
+	User   string `json:"user,omitempty"`
+	Up     int64  `json:"up"`
+	Down   int64  `json:"down"`
 }
 
 // DriftPayload 是 drift_report 的载荷（§17）：配置文件被外部修改时为 true，
@@ -270,6 +273,7 @@ type UpgradeAgentPayload struct {
 // DestCandidates 同 ApplyNodePayload（portal 的 Reality dest 预检白名单，§6）。
 type ApplyChainHopPayload struct {
 	ChainID        int64        `json:"chain_id"`
+	RevisionID     int64        `json:"revision_id,omitempty"`
 	HopID          int64        `json:"hop_id"`
 	Kind           string       `json:"kind"` // portal|bridge|forward
 	Portal         *PortalSpec  `json:"portal,omitempty"`

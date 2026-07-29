@@ -275,6 +275,9 @@ func run() error {
 		}
 	}
 	hub.OnMessage = dispatcher.HandleMessage
+	if err := dispatcher.ResumeChains(context.Background()); err != nil {
+		log.Printf("main: resume chain revisions: %v", err)
+	}
 
 	// 事件告警（§19）：offline 跃迁挂在 hub 注销路径；漂移/节点失败在 dispatcher 处理点。
 	notifier := alert.New(st)

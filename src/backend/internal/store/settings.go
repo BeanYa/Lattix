@@ -36,6 +36,7 @@ const (
 	SettingExchangeInspection    = "exchange_rate_inspection"
 	SettingReportingCurrency     = "reporting_currency"
 	SettingExchangeRateCache     = "exchange_rate_cache"
+	SettingTrafficTimezone       = "traffic_timezone"
 )
 
 // GetSetting 读取一个设置；未设置返回空字符串（不视为错误）。

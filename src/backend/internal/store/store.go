@@ -220,11 +220,17 @@ CREATE TABLE IF NOT EXISTS traffic (
 );
 
 CREATE TABLE IF NOT EXISTS chains (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    name       TEXT    NOT NULL DEFAULT '',
-    status     TEXT    NOT NULL DEFAULT 'pending',
-    error      TEXT    NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id                       INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                     TEXT    NOT NULL DEFAULT '',
+    service_node_id          INTEGER NOT NULL DEFAULT 0,
+    published_revision_id    INTEGER NOT NULL DEFAULT 0,
+    desired_revision_id      INTEGER NOT NULL DEFAULT 0,
+    traffic_multiplier_milli INTEGER NOT NULL DEFAULT 1000,
+    status                   TEXT    NOT NULL DEFAULT 'pending',
+    error                    TEXT    NOT NULL DEFAULT '',
+    deleted_at               DATETIME,
+    created_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS chain_hops (
@@ -242,6 +248,98 @@ CREATE TABLE IF NOT EXISTS chain_hops (
     portal_server_name TEXT    NOT NULL DEFAULT '',
     tunnel_uuid        TEXT    NOT NULL DEFAULT '',
     created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS traffic_cursors (
+    server_id    INTEGER NOT NULL REFERENCES servers(id),
+    counter_key  TEXT    NOT NULL,
+    instance_id  TEXT    NOT NULL,
+    up           INTEGER NOT NULL DEFAULT 0,
+    down         INTEGER NOT NULL DEFAULT 0,
+    updated_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (server_id, counter_key)
+);
+
+CREATE TABLE IF NOT EXISTS chain_traffic_totals (
+    chain_id        INTEGER NOT NULL REFERENCES chains(id),
+    hop_id          INTEGER NOT NULL DEFAULT 0,
+    raw_up          INTEGER NOT NULL DEFAULT 0,
+    raw_down        INTEGER NOT NULL DEFAULT 0,
+    effective_up    INTEGER NOT NULL DEFAULT 0,
+    effective_down  INTEGER NOT NULL DEFAULT 0,
+    remainder_up    INTEGER NOT NULL DEFAULT 0,
+    remainder_down  INTEGER NOT NULL DEFAULT 0,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chain_id, hop_id)
+);
+
+CREATE TABLE IF NOT EXISTS chain_traffic_baselines (
+    chain_id       INTEGER NOT NULL REFERENCES chains(id),
+    hop_id         INTEGER NOT NULL DEFAULT 0,
+    raw_up         INTEGER NOT NULL DEFAULT 0,
+    raw_down       INTEGER NOT NULL DEFAULT 0,
+    effective_up   INTEGER NOT NULL DEFAULT 0,
+    effective_down INTEGER NOT NULL DEFAULT 0,
+    reset_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chain_id, hop_id)
+);
+
+CREATE TABLE IF NOT EXISTS chain_traffic_daily (
+    chain_id       INTEGER NOT NULL REFERENCES chains(id),
+    hop_id         INTEGER NOT NULL DEFAULT 0,
+    revision_id    INTEGER NOT NULL DEFAULT 0,
+    usage_date     TEXT    NOT NULL,
+    timezone       TEXT    NOT NULL,
+    raw_up         INTEGER NOT NULL DEFAULT 0,
+    raw_down       INTEGER NOT NULL DEFAULT 0,
+    effective_up   INTEGER NOT NULL DEFAULT 0,
+    effective_down INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (chain_id, hop_id, revision_id, usage_date, timezone)
+);
+
+CREATE TABLE IF NOT EXISTS chain_multiplier_events (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain_id         INTEGER NOT NULL REFERENCES chains(id),
+    multiplier_milli INTEGER NOT NULL,
+    effective_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS chain_revisions (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain_id      INTEGER NOT NULL REFERENCES chains(id),
+    revision_no   INTEGER NOT NULL,
+    status        TEXT    NOT NULL DEFAULT 'applying',
+    forced        INTEGER NOT NULL DEFAULT 0,
+    snapshot      TEXT    NOT NULL,
+    error         TEXT    NOT NULL DEFAULT '',
+    created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    published_at  DATETIME,
+    UNIQUE (chain_id, revision_no)
+);
+
+CREATE TABLE IF NOT EXISTS chain_revision_tasks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    revision_id INTEGER NOT NULL REFERENCES chain_revisions(id),
+    task_key    TEXT    NOT NULL,
+    phase       TEXT    NOT NULL,
+    action      TEXT    NOT NULL,
+    kind        TEXT    NOT NULL,
+    hop_id      INTEGER NOT NULL DEFAULT 0,
+    server_id   INTEGER NOT NULL DEFAULT 0,
+    status      TEXT    NOT NULL DEFAULT 'pending',
+    command_id  INTEGER NOT NULL DEFAULT 0,
+    error       TEXT    NOT NULL DEFAULT '',
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (revision_id, task_key)
+);
+
+CREATE TABLE IF NOT EXISTS chain_hop_identities (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain_id    INTEGER NOT NULL REFERENCES chains(id),
+    server_id   INTEGER NOT NULL,
+    archived_at DATETIME,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 `

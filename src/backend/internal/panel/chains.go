@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,28 +18,56 @@ import (
 
 // chainHopDTO 是链跳对象的 API 表示（§21）。
 type chainHopDTO struct {
-	ID              int64  `json:"id"`
-	Seq             int    `json:"seq"`
-	ServerID        int64  `json:"server_id"`
-	ServerAlias     string `json:"server_alias"`
-	Role            string `json:"role"` // entry/middle/exit
-	NodeID          int64  `json:"node_id"`
-	Status          string `json:"status"` // pending/applying/active/failed
-	Error           string `json:"error"`
-	ForwardPort     int    `json:"forward_port"` // entry 跳 = 订阅端口（监听侧）
-	PortalPort      int    `json:"portal_port"`
-	PortalPublicKey string `json:"portal_public_key,omitempty"`
-	TunnelUUID      string `json:"tunnel_uuid,omitempty"`
+	ID              int64            `json:"id"`
+	Seq             int              `json:"seq"`
+	ServerID        int64            `json:"server_id"`
+	ServerAlias     string           `json:"server_alias"`
+	Role            string           `json:"role"` // entry/middle/exit
+	NodeID          int64            `json:"node_id"`
+	Status          string           `json:"status"` // pending/applying/active/failed
+	Error           string           `json:"error"`
+	ForwardPort     int              `json:"forward_port"` // entry 跳 = 订阅端口（监听侧）
+	PortalPort      int              `json:"portal_port"`
+	PortalPublicKey string           `json:"portal_public_key,omitempty"`
+	TunnelUUID      string           `json:"tunnel_uuid,omitempty"`
+	Traffic         *chainTrafficDTO `json:"traffic,omitempty"`
+}
+
+type chainTrafficDTO struct {
+	RawUp         int64 `json:"raw_up"`
+	RawDown       int64 `json:"raw_down"`
+	EffectiveUp   int64 `json:"effective_up"`
+	EffectiveDown int64 `json:"effective_down"`
+}
+
+type chainRevisionTaskDTO struct {
+	Key      string `json:"key"`
+	Phase    string `json:"phase"`
+	Action   string `json:"action"`
+	Kind     string `json:"kind"`
+	HopID    int64  `json:"hop_id"`
+	ServerID int64  `json:"server_id"`
+	Status   string `json:"status"`
+	Error    string `json:"error"`
 }
 
 // chainDTO 是链对象的 API 表示（含逐跳状态，§21）。
 type chainDTO struct {
-	ID        int64         `json:"id"`
-	Name      string        `json:"name"`
-	Status    string        `json:"status"` // pending/applying/active/degraded/failed
-	Error     string        `json:"error"`  // 失败时定位到跳
-	CreatedAt time.Time     `json:"created_at"`
-	Hops      []chainHopDTO `json:"hops"`
+	ID                  int64                  `json:"id"`
+	Name                string                 `json:"name"`
+	Status              string                 `json:"status"` // pending/applying/active/degraded/failed
+	Error               string                 `json:"error"`  // 失败时定位到跳
+	CreatedAt           time.Time              `json:"created_at"`
+	Hops                []chainHopDTO          `json:"hops"`
+	ServiceNodeID       int64                  `json:"service_node_id"`
+	TrafficMultiplier   string                 `json:"traffic_multiplier"`
+	Traffic             *chainTrafficDTO       `json:"traffic,omitempty"`
+	PublishedRevisionID int64                  `json:"published_revision_id"`
+	DesiredRevisionID   int64                  `json:"desired_revision_id"`
+	RevisionStatus      string                 `json:"revision_status,omitempty"`
+	RevisionForced      bool                   `json:"revision_forced"`
+	RevisionTasks       []chainRevisionTaskDTO `json:"revision_tasks"`
+	ServiceConfig       json.RawMessage        `json:"service_config,omitempty"`
 }
 
 // toChainDTO 组装链 DTO（跳按 seq 升序：首位入口，末位出口）。
@@ -47,7 +76,56 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 	if err != nil {
 		return chainDTO{}, err
 	}
-	out := chainDTO{ID: c.ID, Name: c.Name, Status: c.Status, Error: c.Error, CreatedAt: c.CreatedAt, Hops: []chainHopDTO{}}
+	out := chainDTO{ID: c.ID, Name: c.Name, Status: c.Status, Error: c.Error, CreatedAt: c.CreatedAt,
+		ServiceNodeID: c.ServiceNodeID, TrafficMultiplier: formatTrafficMultiplier(c.TrafficMultiplierMilli),
+		PublishedRevisionID: c.PublishedRevisionID, DesiredRevisionID: c.DesiredRevisionID,
+		Hops: []chainHopDTO{}, RevisionTasks: []chainRevisionTaskDTO{}}
+	revisionID := c.PublishedRevisionID
+	if c.DesiredRevisionID != 0 {
+		revisionID = c.DesiredRevisionID
+	}
+	if revisionID != 0 {
+		if revision, err := s.st.ChainRevisionByID(r.Context(), revisionID); err == nil {
+			out.RevisionStatus = revision.Status
+			out.RevisionForced = revision.Forced
+			out.ServiceConfig = append(json.RawMessage(nil), revision.Snapshot.ServiceConfig...)
+			tasks, err := s.st.RevisionTasks(r.Context(), revisionID)
+			if err != nil {
+				return chainDTO{}, err
+			}
+			for _, task := range tasks {
+				out.RevisionTasks = append(out.RevisionTasks, chainRevisionTaskDTO{Key: task.TaskKey,
+					Phase: task.Phase, Action: task.Action, Kind: task.Kind, HopID: task.HopID,
+					ServerID: task.ServerID, Status: task.Status, Error: task.Error})
+			}
+		}
+	}
+	if len(hops) == 0 && c.PublishedRevisionID != 0 {
+		if revision, err := s.st.PublishedChainRevision(r.Context(), c.ID); err == nil {
+			for seq, hop := range revision.Snapshot.Hops {
+				nodeID := int64(0)
+				if seq == len(revision.Snapshot.Hops)-1 {
+					nodeID = revision.Snapshot.ServiceNodeID
+				}
+				hops = append(hops, store.ChainHop{ID: hop.HopID, ChainID: c.ID, Seq: seq,
+					ServerID: hop.ServerID, Role: hop.Role, NodeID: nodeID, ForwardPort: hop.ForwardPort,
+					PortalPort: hop.PortalPort, PortalPublicKey: hop.PortalPublicKey,
+					PortalServerName: hop.PortalServerName, TunnelUUID: hop.TunnelUUID})
+			}
+		}
+	}
+	totals, err := s.st.ChainTrafficTotals(r.Context(), c.ID)
+	if err != nil {
+		return chainDTO{}, err
+	}
+	trafficByHop := map[int64]chainTrafficDTO{}
+	for _, total := range totals {
+		trafficByHop[total.HopID] = chainTrafficDTO{RawUp: total.RawUp, RawDown: total.RawDown,
+			EffectiveUp: total.EffectiveUp, EffectiveDown: total.EffectiveDown}
+	}
+	if total, ok := trafficByHop[0]; ok {
+		out.Traffic = &total
+	}
 	for _, h := range hops {
 		dto := chainHopDTO{
 			ID:              h.ID,
@@ -61,6 +139,9 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 			PortalPort:      h.PortalPort,
 			PortalPublicKey: h.PortalPublicKey,
 			TunnelUUID:      h.TunnelUUID,
+		}
+		if traffic, ok := trafficByHop[h.ID]; ok {
+			dto.Traffic = &traffic
 		}
 		if srv, err := s.st.ServerByID(r.Context(), h.ServerID); err == nil {
 			dto.ServerAlias = srv.Alias
@@ -92,16 +173,27 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 // createChainRequest 是链路构图的提交（§10/§21）：依次入口 / 中间跳（0-2）/ 出口，
 // 出口携带业务节点的协议表单（复用建节点请求），入口端口可空 = 自动。
 type createChainRequest struct {
-	Name      string            `json:"name"`
-	Entry     chainHopRef       `json:"entry"`
-	Middle    []chainHopRef     `json:"middle"` // 0-2 个
-	Exit      chainHopRef       `json:"exit"`
-	EntryPort *int              `json:"entry_port"` // 留空 = 自动；须在入口机可用段内
-	Node      createNodeRequest `json:"node"`       // 出口业务节点表单（server_id 忽略，取 exit.server_id）
+	Name              string            `json:"name"`
+	Hops              []chainHopRef     `json:"hops,omitempty"`
+	Entry             chainHopRef       `json:"entry"`
+	Middle            []chainHopRef     `json:"middle"` // 0-2 个
+	Exit              chainHopRef       `json:"exit"`
+	EntryPort         *int              `json:"entry_port"` // 留空 = 自动；须在入口机可用段内
+	Node              createNodeRequest `json:"node"`       // 出口业务节点表单（server_id 忽略，取 exit.server_id）
+	TrafficMultiplier string            `json:"traffic_multiplier"`
 }
 
 type chainHopRef struct {
 	ServerID int64 `json:"server_id"`
+}
+
+type editChainRequest struct {
+	ChainID           int64             `json:"chain_id"`
+	Name              string            `json:"name"`
+	Hops              []chainHopRef     `json:"hops"`
+	EntryPort         *int              `json:"entry_port"`
+	Node              createNodeRequest `json:"node"`
+	TrafficMultiplier string            `json:"traffic_multiplier"`
 }
 
 // handleCreateChain 处理 POST /api/chains：构图校验 → 落库出口业务节点（pending）+
@@ -113,25 +205,33 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	if len(req.Middle) > 2 {
-		writeError(w, http.StatusBadRequest, "链长上限 4 跳（入口 + 中间跳 ≤2 + 出口）")
+	trafficMultiplierMilli, err := parseTrafficMultiplier(req.TrafficMultiplier)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	refs := req.Hops
+	if len(refs) == 0 {
+		refs = append(append([]chainHopRef{req.Entry}, req.Middle...), req.Exit)
+	}
+	if len(refs) < 1 || len(refs) > 4 {
+		writeError(w, http.StatusBadRequest, "链路须包含 1-4 台服务器")
 		return
 	}
 	// 出口节点协议表单校验（dokodemo 为端口转发，无用户概念，不能作链出口）。
 	req.Node.Name = req.Name
-	req.Node.ServerID = req.Exit.ServerID
+	req.Node.ServerID = refs[len(refs)-1].ServerID
 	if err := req.Node.normalize(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.Node.Protocol == shared.ProtocolDokodemo {
+	if len(refs) > 1 && req.Node.Protocol == shared.ProtocolDokodemo {
 		writeError(w, http.StatusBadRequest, "dokodemo-door 不能作为链出口节点")
 		return
 	}
 
 	// 逐跳加载服务器并校验：同 server 不重复（O(n) 查重即环检测）；
 	// 入口与中间跳必须有入站能力（direct 或 allowed_ports 非空），出口任意（§21）。
-	refs := append(append([]chainHopRef{req.Entry}, req.Middle...), req.Exit)
 	servers := make([]*store.Server, 0, len(refs))
 	seen := map[int64]bool{}
 	for i, ref := range refs {
@@ -186,6 +286,13 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		}
 		entryPort = *req.EntryPort
 	}
+	if len(refs) == 1 {
+		if req.EntryPort != nil {
+			req.Node.Port = req.EntryPort
+		} else if req.Node.Port != nil {
+			entryPort = *req.Node.Port
+		}
+	}
 	// 出口节点端口：受限直连 NAT 机上用户指定端口必须在段内（自动端口由编排器携带候选展开）。
 	if req.Node.Port != nil {
 		if err := checkPortInRanges(exitSrv, *req.Node.Port); err != nil {
@@ -211,9 +318,23 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if err := s.st.SetChainServiceNode(r.Context(), chainID, nodeID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if trafficMultiplierMilli != 1000 {
+		if err := s.st.SetChainTrafficMultiplier(r.Context(), chainID, trafficMultiplierMilli); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	revisionHops := make([]store.ChainRevisionHop, 0, len(servers))
+	plaintext := req.Node.Protocol == shared.ProtocolSocks || req.Node.Protocol == shared.ProtocolHTTP
 	for i, srv := range servers {
 		role := store.HopRoleMiddle
-		if i == 0 {
+		if len(servers) == 1 {
+			role = store.HopRoleExit
+		} else if i == 0 {
 			role = store.HopRoleEntry
 		} else if i == len(servers)-1 {
 			role = store.HopRoleExit
@@ -223,18 +344,74 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			hopNodeID = nodeID
 		}
 		hopForwardPort := 0
-		if role == store.HopRoleEntry {
+		if role == store.HopRoleEntry || len(servers) == 1 {
 			hopForwardPort = entryPort
 		}
 		// 反向链标记（§21.1）：下游无入站能力（nat 且 allowed_ports 空）→ 本跳为 portal 所在上游机，
 		// 预生成 tunnel_uuid（面板下发；short_id 由编排器确定性派生）。
+		transport := ""
+		if i < len(servers)-1 {
+			transport = transportForServers(servers[i+1], plaintext)
+		}
 		tunnelUUID := ""
-		if i < len(servers)-1 && !inboundCapable(servers[i+1]) {
+		if transport == "reverse" || transport == "encrypted" {
 			tunnelUUID = uuid.NewString()
 		}
-		if _, err := s.st.InsertChainHop(r.Context(), chainID, i, srv.ID, role, hopNodeID, hopForwardPort, tunnelUUID); err != nil {
+		hopID, err := s.st.InsertChainHop(r.Context(), chainID, i, srv.ID, role, hopNodeID, hopForwardPort, tunnelUUID)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
+		}
+		revisionHops = append(revisionHops, store.ChainRevisionHop{HopID: hopID, ServerID: srv.ID, Role: role,
+			Transport:   transport,
+			ForwardPort: hopForwardPort, TunnelUUID: tunnelUUID})
+	}
+	applyKeys := []string{fmt.Sprintf("service/%d", nodeID)}
+	for i, hop := range revisionHops {
+		if i < len(revisionHops)-1 {
+			applyKeys = append(applyKeys, fmt.Sprintf("forward/%d", hop.HopID))
+		}
+		if hop.TunnelUUID != "" {
+			applyKeys = append(applyKeys, fmt.Sprintf("portal/%d", hop.HopID))
+			applyKeys = append(applyKeys, fmt.Sprintf("bridge/%d", revisionHops[i+1].HopID))
+		}
+	}
+	revision, err := s.st.CreateChainRevision(r.Context(), chainID, store.ChainRevisionSnapshot{
+		Name: req.Name, ServiceNodeID: nodeID, ServiceServerID: exitSrv.ID, ServiceConfig: vcJSON,
+		TrafficMultiplierMilli: trafficMultiplierMilli, Hops: revisionHops, ApplyKeys: applyKeys,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, key := range applyKeys {
+		kind, id := splitRevisionPieceKey(key)
+		serverID := exitSrv.ID
+		if kind != dispatch.RevisionPieceService {
+			for _, hop := range revisionHops {
+				if hop.HopID == id {
+					serverID = hop.ServerID
+					break
+				}
+			}
+		}
+		_, _ = s.st.AddRevisionTask(r.Context(), store.ChainRevisionTask{RevisionID: revision.ID,
+			TaskKey: key, Phase: "apply", Action: "apply", Kind: kind, HopID: id, ServerID: serverID})
+	}
+	for _, task := range applyKeys {
+		_, id := splitRevisionPieceKey(task)
+		serverID := exitSrv.ID
+		if !strings.HasPrefix(task, dispatch.RevisionPieceService+"/") {
+			for _, hop := range revisionHops {
+				if hop.HopID == id {
+					serverID = hop.ServerID
+					break
+				}
+			}
+		}
+		if !s.req.IsOnline(serverID) {
+			_ = s.st.SetChainRevisionStatus(r.Context(), revision.ID, store.RevisionStatusWaitingForAgent, "")
+			break
 		}
 	}
 	if err := s.disp.StartChain(r.Context(), chainID); err != nil {
@@ -253,6 +430,358 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "chain.create", nil, nil, map[string]any{"chain_id": chainID, "name": req.Name, "hops": len(dto.Hops)})
 	writeJSON(w, http.StatusCreated, dto)
+}
+
+func splitRevisionPieceKey(key string) (string, int64) {
+	kind, value, _ := strings.Cut(key, "/")
+	id, _ := strconv.ParseInt(value, 10, 64)
+	return kind, id
+}
+
+func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
+	var req editChainRequest
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	chain, err := s.st.ChainByID(r.Context(), req.ChainID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "链路不存在")
+		return
+	}
+	if chain.DesiredRevisionID != 0 {
+		writeError(w, http.StatusConflict, "链路已有部署中的编辑")
+		return
+	}
+	current, err := s.st.PublishedChainRevision(r.Context(), chain.ID)
+	if err != nil {
+		writeError(w, http.StatusConflict, "链路尚无已发布 revision")
+		return
+	}
+	if len(req.Hops) < 1 || len(req.Hops) > 4 {
+		writeError(w, http.StatusBadRequest, "链路须包含 1-4 台服务器")
+		return
+	}
+	multiplier, err := parseTrafficMultiplier(req.TrafficMultiplier)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	servers := make([]*store.Server, 0, len(req.Hops))
+	seen := map[int64]bool{}
+	for i, ref := range req.Hops {
+		if seen[ref.ServerID] {
+			writeError(w, http.StatusBadRequest, "同一服务器在一条链中不重复")
+			return
+		}
+		seen[ref.ServerID] = true
+		server, err := s.st.ServerByID(r.Context(), ref.ServerID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("服务器 %d 不存在", ref.ServerID))
+			return
+		}
+		if i < len(req.Hops)-1 && !inboundCapable(server) {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("服务器 %s 无入站能力", server.Alias))
+			return
+		}
+		servers = append(servers, server)
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Node.Name = req.Name
+	req.Node.ServerID = servers[len(servers)-1].ID
+	if err := req.Node.normalize(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(servers) > 1 && req.Node.Protocol == shared.ProtocolDokodemo {
+		writeError(w, http.StatusBadRequest, "dokodemo-door 不能作为中转链出口")
+		return
+	}
+	if req.EntryPort != nil {
+		if *req.EntryPort < 1 || *req.EntryPort > 65535 || checkPortInRanges(servers[0], *req.EntryPort) != nil {
+			writeError(w, http.StatusBadRequest, "入口端口不在可用范围内")
+			return
+		}
+	}
+	if len(servers) == 1 && req.EntryPort != nil {
+		req.Node.Port = req.EntryPort
+	}
+	vc := buildVirtualConfig(req.Node)
+	serviceConfig, err := json.Marshal(vc)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	oldByServer := map[int64]store.ChainRevisionHop{}
+	for _, hop := range current.Snapshot.Hops {
+		oldByServer[hop.ServerID] = hop
+	}
+	desiredHops := make([]store.ChainRevisionHop, 0, len(servers))
+	for i, server := range servers {
+		hop, ok := oldByServer[server.ID]
+		if !ok {
+			hopID, err := s.st.NextChainHopID(r.Context(), chain.ID, server.ID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			hop = store.ChainRevisionHop{HopID: hopID, ServerID: server.ID}
+		}
+		hop.Role = store.HopRoleMiddle
+		if len(servers) == 1 || i == len(servers)-1 {
+			hop.Role = store.HopRoleExit
+		} else if i == 0 {
+			hop.Role = store.HopRoleEntry
+		}
+		if i == 0 && req.EntryPort != nil {
+			hop.ForwardPort = *req.EntryPort
+		}
+		desiredHops = append(desiredHops, hop)
+	}
+	plaintext := req.Node.Protocol == shared.ProtocolSocks || req.Node.Protocol == shared.ProtocolHTTP
+	for i := 0; i+1 < len(desiredHops); i++ {
+		transport := "direct"
+		if !inboundCapable(servers[i+1]) {
+			transport = "reverse"
+		} else if plaintext {
+			transport = "encrypted"
+		}
+		old := desiredHops[i]
+		if old.Transport != transport || old.TunnelUUID == "" && transport != "direct" {
+			desiredHops[i].PortalPort = 0
+			desiredHops[i].PortalPublicKey = ""
+			desiredHops[i].PortalServerName = ""
+		}
+		desiredHops[i].Transport = transport
+		if transport == "direct" {
+			desiredHops[i].TunnelUUID = ""
+		} else if desiredHops[i].TunnelUUID == "" {
+			desiredHops[i].TunnelUUID = uuid.NewString()
+		}
+	}
+	desired := store.ChainRevisionSnapshot{Name: req.Name, ServiceNodeID: current.Snapshot.ServiceNodeID,
+		ServiceServerID: servers[len(servers)-1].ID, ServiceConfig: serviceConfig,
+		TrafficMultiplierMilli: multiplier, Hops: desiredHops}
+	currentPlanTopology := revisionTopology(1, current.Snapshot)
+	desiredPlanTopology := revisionTopology(2, desired)
+	plan, err := dispatch.PlanRevision(currentPlanTopology, desiredPlanTopology)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	for _, piece := range plan.Apply {
+		desired.ApplyKeys = append(desired.ApplyKeys, piece.Key)
+	}
+	serviceChanged := false
+	for _, key := range desired.ApplyKeys {
+		if key == fmt.Sprintf("service/%d", desired.ServiceNodeID) {
+			serviceChanged = true
+		}
+	}
+	if !serviceChanged {
+		desired.ServiceRealized = append(json.RawMessage(nil), current.Snapshot.ServiceRealized...)
+	}
+	revision, err := s.st.CreateChainRevision(r.Context(), chain.ID, desired)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, piece := range plan.Apply {
+		_, _ = s.st.AddRevisionTask(r.Context(), store.ChainRevisionTask{RevisionID: revision.ID,
+			TaskKey: piece.Key, Phase: "apply", Action: "apply", Kind: piece.Kind,
+			HopID: piece.HopID, ServerID: piece.ServerID})
+	}
+	for _, piece := range plan.Cleanup {
+		_, _ = s.st.AddRevisionTask(r.Context(), store.ChainRevisionTask{RevisionID: revision.ID,
+			TaskKey: "cleanup/" + piece.Key, Phase: "cleanup", Action: "remove", Kind: piece.Kind,
+			HopID: piece.HopID, ServerID: piece.ServerID})
+	}
+	if current.Snapshot.ServiceServerID != desired.ServiceServerID {
+		_, _ = s.st.AddRevisionTask(r.Context(), store.ChainRevisionTask{RevisionID: revision.ID,
+			TaskKey: fmt.Sprintf("cleanup/service/%d", desired.ServiceNodeID), Phase: "cleanup", Action: "remove",
+			Kind: dispatch.RevisionPieceService, HopID: desired.ServiceNodeID, ServerID: current.Snapshot.ServiceServerID})
+	}
+	var nodePort *int
+	if vc.Port != 0 {
+		value := vc.Port
+		nodePort = &value
+	}
+	if err := s.st.ReplaceWorkingChainTopology(r.Context(), revision, vc.Protocol, nodePort, serviceChanged); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	offline := false
+	for _, piece := range plan.Apply {
+		if !s.req.IsOnline(piece.ServerID) {
+			offline = true
+			break
+		}
+	}
+	if offline {
+		_ = s.st.SetChainRevisionStatus(r.Context(), revision.ID, store.RevisionStatusWaitingForAgent, "")
+	}
+	if err := s.disp.StartChain(r.Context(), chain.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	chain, _ = s.st.ChainByID(r.Context(), chain.ID)
+	dto, err := s.toChainDTO(r, *chain)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, dto)
+}
+
+func revisionTopology(revisionID int64, snapshot store.ChainRevisionSnapshot) dispatch.RevisionTopology {
+	hops := make([]dispatch.RevisionHopSpec, 0, len(snapshot.Hops))
+	for _, hop := range snapshot.Hops {
+		settings, _ := json.Marshal(map[string]any{"tunnel_uuid": hop.TunnelUUID})
+		hops = append(hops, dispatch.RevisionHopSpec{HopID: hop.HopID, ServerID: hop.ServerID,
+			Transport: hop.Transport, ListenPort: hop.ForwardPort, Settings: settings})
+	}
+	return dispatch.RevisionTopology{RevisionID: revisionID, ServiceID: snapshot.ServiceNodeID,
+		Service: snapshot.ServiceConfig, Hops: hops}
+}
+
+func (s *Server) handleForcePublishChain(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ChainID int64 `json:"chain_id"`
+	}
+	if err := readJSON(r, &req); err != nil || req.ChainID <= 0 {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.disp.ForcePublishRevision(r.Context(), req.ChainID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	chain, _ := s.st.ChainByID(r.Context(), req.ChainID)
+	dto, err := s.toChainDTO(r, *chain)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, dto)
+}
+
+func transportForServers(next *store.Server, plaintext bool) string {
+	if !inboundCapable(next) {
+		return "reverse"
+	}
+	if plaintext {
+		return "encrypted"
+	}
+	return "direct"
+}
+
+func parseTrafficMultiplier(value string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 1000, nil
+	}
+	parts := strings.Split(value, ".")
+	if len(parts) > 2 || parts[0] == "" {
+		return 0, fmt.Errorf("流量倍率格式无效")
+	}
+	whole, err := strconv.Atoi(parts[0])
+	if err != nil || whole < 0 {
+		return 0, fmt.Errorf("流量倍率格式无效")
+	}
+	fraction := ""
+	if len(parts) == 2 {
+		fraction = parts[1]
+	}
+	if len(fraction) > 3 {
+		return 0, fmt.Errorf("流量倍率最多三位小数")
+	}
+	for len(fraction) < 3 {
+		fraction += "0"
+	}
+	fractionValue := 0
+	if fraction != "" {
+		fractionValue, err = strconv.Atoi(fraction)
+		if err != nil {
+			return 0, fmt.Errorf("流量倍率格式无效")
+		}
+	}
+	milli := whole*1000 + fractionValue
+	if milli < 1 || milli > 1_000_000 {
+		return 0, fmt.Errorf("流量倍率须为 0.001-1000.000")
+	}
+	return milli, nil
+}
+
+func formatTrafficMultiplier(milli int) string {
+	if milli == 0 {
+		milli = 1000
+	}
+	return fmt.Sprintf("%d.%03d", milli/1000, milli%1000)
+}
+
+func (s *Server) handleSetChainTrafficMultiplier(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ChainID    int64  `json:"chain_id"`
+		Multiplier string `json:"traffic_multiplier"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	milli, err := parseTrafficMultiplier(req.Multiplier)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if _, err := s.st.ChainByID(r.Context(), req.ChainID); err != nil {
+		writeError(w, http.StatusNotFound, "链路不存在")
+		return
+	}
+	if err := s.st.SetChainTrafficMultiplier(r.Context(), req.ChainID, milli); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"traffic_multiplier": formatTrafficMultiplier(milli)})
+}
+
+func (s *Server) handleResetChainTraffic(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ChainID int64 `json:"chain_id"`
+	}
+	if err := readJSON(r, &req); err != nil || req.ChainID <= 0 {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := s.st.ResetChainTraffic(r.Context(), req.ChainID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, nil)
+}
+
+func (s *Server) handleGetChainTrafficHistory(w http.ResponseWriter, r *http.Request) {
+	chainID, err := strconv.ParseInt(r.URL.Query().Get("chain_id"), 10, 64)
+	if err != nil || chainID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid chain id")
+		return
+	}
+	hopID, _ := strconv.ParseInt(r.URL.Query().Get("hop_id"), 10, 64)
+	days := 30
+	if value := r.URL.Query().Get("days"); value != "" {
+		days, err = strconv.Atoi(value)
+		if err != nil || days < 1 || days > 730 {
+			writeError(w, http.StatusBadRequest, "days must be between 1 and 730")
+			return
+		}
+	}
+	_, location := s.st.TrafficLocation(r.Context())
+	since := time.Now().In(location).AddDate(0, 0, -days+1).Format("2006-01-02")
+	buckets, err := s.st.ChainTrafficDaily(r.Context(), chainID, hopID, since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, buckets)
 }
 
 // handleRetryChain 处理 POST /api/chains/{id}/retry：只重放失败 piece（§21）。
@@ -318,6 +847,11 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if len(hops) == 0 {
+		if revision, err := s.st.PublishedChainRevision(r.Context(), id); err == nil {
+			hops = revisionSnapshotHops(*revision)
+		}
 	}
 	for i, h := range hops {
 		for _, kind := range dispatch.ChainHopPieces(hops, i) {

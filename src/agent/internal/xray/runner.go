@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,6 +50,18 @@ func (r *SystemdRunner) IsRunning(ctx context.Context) bool {
 // Stop 实现 Runner。
 func (r *SystemdRunner) Stop(ctx context.Context) error {
 	return exec.CommandContext(ctx, "systemctl", "stop", r.unit).Run()
+}
+
+func (r *SystemdRunner) InstanceID(ctx context.Context) string {
+	out, err := exec.CommandContext(ctx, "systemctl", "show", "--property=MainPID", "--value", r.unit).Output()
+	if err != nil {
+		return ""
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid <= 0 {
+		return ""
+	}
+	return processInstanceID(pid)
 }
 
 // ExecRunner 直接拉起 xray 子进程（dev 联调用，输出并入 agent 日志）。
@@ -114,4 +128,31 @@ func (r *ExecRunner) Stop(context.Context) error {
 		r.cmd = nil
 	}
 	return nil
+}
+
+func (r *ExecRunner) InstanceID(context.Context) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cmd == nil || r.cmd.Process == nil {
+		return ""
+	}
+	return processInstanceID(r.cmd.Process.Pid)
+}
+
+func processInstanceID(pid int) string {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return ""
+	}
+	// comm is parenthesized and may contain spaces. Fields after the closing
+	// parenthesis start at proc field 3; starttime is field 22.
+	close := strings.LastIndexByte(string(raw), ')')
+	if close < 0 {
+		return ""
+	}
+	fields := strings.Fields(string(raw)[close+1:])
+	if len(fields) <= 19 {
+		return ""
+	}
+	return fmt.Sprintf("%d:%s", pid, fields[19])
 }

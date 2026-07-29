@@ -130,6 +130,9 @@ func TestOpenMigratesLegacySchemaAndPreservesData(t *testing.T) {
 	}
 	assertColumns(t, st.db, "servers", "credential_epoch", "agent_settings_revision", "agent_settings_error", "agent_settings_reported_at", "address_mode")
 	assertColumns(t, st.db, "server_metrics", "load5", "load15", "disk_total", "network_interface", "latency_ms")
+	assertColumns(t, st.db, "chains", "service_node_id", "published_revision_id", "desired_revision_id", "traffic_multiplier_milli", "deleted_at", "updated_at")
+	assertColumns(t, st.db, "chain_traffic_daily", "revision_id", "timezone", "effective_up", "effective_down")
+	assertColumns(t, st.db, "chain_revision_tasks", "phase", "action", "kind", "command_id")
 	if err := st.SaveServerMetrics(context.Background(), 1, ServerMetrics{}); err != nil {
 		t.Fatalf("write nullable metrics after migration: %v", err)
 	}

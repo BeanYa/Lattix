@@ -243,12 +243,14 @@ func (s *Store) DeleteServerCascade(ctx context.Context, id int64) error {
 	}
 	defer tx.Rollback()
 	for _, q := range []string{
-		`DELETE FROM user_nodes WHERE node_id IN (SELECT id FROM nodes WHERE server_id = ?)`,
+		`DELETE FROM user_nodes WHERE node_id IN (SELECT id FROM nodes WHERE server_id = ?
+			AND id NOT IN (SELECT service_node_id FROM chains WHERE deleted_at IS NULL))`,
 		`DELETE FROM commands WHERE server_id = ?`,
-		`DELETE FROM nodes WHERE server_id = ?`,
-		// 链（§21）：删除该服务器的跳；不再有任何跳的链一并删除。
+		`DELETE FROM nodes WHERE server_id = ?
+			AND id NOT IN (SELECT service_node_id FROM chains WHERE deleted_at IS NULL)`,
+		// 受影响链已先标记 invalid；这里只清除残余工作引用，revision 快照保留历史。
 		`DELETE FROM chain_hops WHERE server_id = ?`,
-		`DELETE FROM chains WHERE id NOT IN (SELECT DISTINCT chain_id FROM chain_hops)`,
+		`DELETE FROM traffic_cursors WHERE server_id = ?`,
 		`DELETE FROM server_metric_history WHERE server_id = ?`,
 		`DELETE FROM server_metrics WHERE server_id = ?`,
 		`DELETE FROM server_network_usage_daily WHERE server_id = ?`,

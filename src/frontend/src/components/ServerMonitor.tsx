@@ -100,14 +100,16 @@ function formatConvertedCost(cost: ConvertedCost): string {
 function TrafficSegmentBar({ ratio, complete, unlimited }: { ratio: number; complete: boolean; unlimited: boolean }) {
   const segments = 24
   const clamped = Math.min(100, Math.max(0, ratio))
-  const filled = unlimited || clamped === 0 ? 0 : Math.ceil((clamped / 100) * segments)
-  const fillClass = !complete
-    ? 'bg-muted-foreground'
-    : clamped >= 80
-      ? 'bg-destructive'
-      : clamped >= 60
-        ? 'bg-warning'
-        : 'bg-success'
+  const filled = unlimited ? segments : clamped === 0 ? 0 : Math.ceil((clamped / 100) * segments)
+  const fillClass = unlimited
+    ? 'bg-success'
+    : !complete
+      ? 'bg-muted-foreground'
+      : clamped >= 80
+        ? 'bg-destructive'
+        : clamped >= 60
+          ? 'bg-warning'
+          : 'bg-success'
   return (
     <div
       className="grid h-2 grid-cols-[repeat(24,minmax(0,1fr))] gap-[2px]"
@@ -115,7 +117,8 @@ function TrafficSegmentBar({ ratio, complete, unlimited }: { ratio: number; comp
       aria-label="流量额度使用率"
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-valuenow={unlimited ? 0 : Math.round(clamped)}
+      aria-valuenow={unlimited ? undefined : Math.round(clamped)}
+      aria-valuetext={unlimited ? '无限额度' : undefined}
     >
       {Array.from({ length: segments }).map((_, index) => (
         <span key={index} className={cn('h-2 bg-muted', index < filled && fillClass)} />
@@ -133,7 +136,9 @@ function TrafficUsage({ server }: { server: Server }) {
       <div className="flex items-center justify-between gap-3 text-xs tabular-nums">
         <span className={cn('font-medium', alert && (ratio >= 80 ? 'text-destructive' : 'text-warning'))}>{formatTrafficBytes(traffic.used_bytes)}</span>
         <span className="text-muted-foreground">
-          {traffic.quota_bytes === null ? '无限额度' : formatTrafficBytes(traffic.quota_bytes)}
+          <span aria-label={traffic.quota_bytes === null ? '无限额度' : undefined}>
+            {traffic.quota_bytes === null ? '∞' : formatTrafficBytes(traffic.quota_bytes)}
+          </span>
           <span className="ml-1">· {traffic.next_reset_on} 重置</span>
         </span>
       </div>

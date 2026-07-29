@@ -74,13 +74,14 @@ func toCertInfoDTO(c *x509.Certificate) certInfoDTO {
 
 // settingsDTO 是 GET /api/settings 的响应：保存值 + 运行态 + 是否需要重启。
 type settingsDTO struct {
-	Timezone         string       `json:"timezone"`    // IANA 时区；空 = 浏览器本地
-	PublicURL        string       `json:"public_url"`  // 空 = 从请求推断
-	TLSMode          string       `json:"tls_mode"`    // 保存的待生效模式；空 = 跟随启动参数
-	TLSCert          *certInfoDTO `json:"tls_cert"`    // 保存的证书摘要（cert 为 PEM，path 为目录文件）
-	TLSKeySet        bool         `json:"tls_key_set"` // 已保存私钥
-	TLSDomain        string       `json:"tls_domain"`  // path 模式域名
-	TLSDir           string       `json:"tls_dir"`     // 证书根目录（绝对路径，path 模式）
+	Timezone         string       `json:"timezone"`         // IANA 时区；空 = 浏览器本地
+	TrafficTimezone  string       `json:"traffic_timezone"` // 流量日/月桶边界使用的 IANA 时区
+	PublicURL        string       `json:"public_url"`       // 空 = 从请求推断
+	TLSMode          string       `json:"tls_mode"`         // 保存的待生效模式；空 = 跟随启动参数
+	TLSCert          *certInfoDTO `json:"tls_cert"`         // 保存的证书摘要（cert 为 PEM，path 为目录文件）
+	TLSKeySet        bool         `json:"tls_key_set"`      // 已保存私钥
+	TLSDomain        string       `json:"tls_domain"`       // path 模式域名
+	TLSDir           string       `json:"tls_dir"`          // 证书根目录（绝对路径，path 模式）
 	ACMEDomain       string       `json:"acme_domain"`
 	ACMEEmail        string       `json:"acme_email"`
 	RunningTLSMode   string       `json:"running_tls_mode"` // 当前进程实际监听模式
@@ -110,6 +111,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dto := settingsDTO{
 		Timezone:                 s.getSetting(ctx, store.SettingTimezone),
+		TrafficTimezone:          firstNonEmpty(s.getSetting(ctx, store.SettingTrafficTimezone), store.DefaultTrafficTimezone),
 		PublicURL:                s.getSetting(ctx, store.SettingPublicURL),
 		TLSMode:                  s.getSetting(ctx, store.SettingTLSMode),
 		TLSKeySet:                s.getSetting(ctx, store.SettingTLSKeyPEM) != "",
@@ -194,14 +196,15 @@ func (s *Server) tlsRestartRequired(ctx context.Context, mode, acmeDomain, acmeE
 // updateSettingsRequest 是 PUT /api/settings 的请求体。
 // TLS 段整体保存、重启生效；cert/key 留空表示保持已保存值不变。
 type updateSettingsRequest struct {
-	Timezone   string `json:"timezone"`
-	PublicURL  string `json:"public_url"`
-	TLSMode    string `json:"tls_mode"` // ""=跟随启动参数 off|cert|acme|path
-	TLSCertPEM string `json:"tls_cert_pem"`
-	TLSKeyPEM  string `json:"tls_key_pem"`
-	TLSDomain  string `json:"tls_domain"` // path 模式域名
-	ACMEDomain string `json:"acme_domain"`
-	ACMEEmail  string `json:"acme_email"`
+	Timezone        string `json:"timezone"`
+	TrafficTimezone string `json:"traffic_timezone"`
+	PublicURL       string `json:"public_url"`
+	TLSMode         string `json:"tls_mode"` // ""=跟随启动参数 off|cert|acme|path
+	TLSCertPEM      string `json:"tls_cert_pem"`
+	TLSKeyPEM       string `json:"tls_key_pem"`
+	TLSDomain       string `json:"tls_domain"` // path 模式域名
+	ACMEDomain      string `json:"acme_domain"`
+	ACMEEmail       string `json:"acme_email"`
 	// 事件告警（§19）：webhook/chat_id 随表单覆盖（允许清空）；bot token 留空 = 保持已保存值。
 	AlertWebhookURL       string                     `json:"alert_webhook_url"`
 	AlertTelegramBotToken string                     `json:"alert_telegram_bot_token"`
@@ -227,6 +230,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	beforeWebhookURL := s.getSetting(ctx, store.SettingAlertWebhookURL)
 	before := map[string]any{
 		"timezone":                     s.getSetting(ctx, store.SettingTimezone),
+		"traffic_timezone":             firstNonEmpty(s.getSetting(ctx, store.SettingTrafficTimezone), store.DefaultTrafficTimezone),
 		"public_url":                   s.getSetting(ctx, store.SettingPublicURL),
 		"tls_mode":                     s.getSetting(ctx, store.SettingTLSMode),
 		"tls_domain":                   s.getSetting(ctx, store.SettingTLSDomain),
@@ -296,6 +300,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "无效的时区（须为 IANA 名称，如 Asia/Shanghai）")
 			return
 		}
+	}
+	req.TrafficTimezone = strings.TrimSpace(req.TrafficTimezone)
+	if req.TrafficTimezone == "" {
+		req.TrafficTimezone = store.DefaultTrafficTimezone
+	}
+	if _, err := time.LoadLocation(req.TrafficTimezone); err != nil {
+		writeError(w, http.StatusBadRequest, "无效的流量统计时区（须为 IANA 名称，如 Asia/Shanghai）")
+		return
 	}
 
 	req.PublicURL = strings.TrimRight(strings.TrimSpace(req.PublicURL), "/")
@@ -395,6 +407,9 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if !set(store.SettingTimezone, req.Timezone) {
+		return
+	}
+	if !set(store.SettingTrafficTimezone, req.TrafficTimezone) {
 		return
 	}
 	if req.PublicURL == "" {
@@ -501,7 +516,8 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	after := map[string]any{
-		"timezone": req.Timezone, "public_url": req.PublicURL, "tls_mode": req.TLSMode,
+		"timezone": req.Timezone, "traffic_timezone": req.TrafficTimezone,
+		"public_url": req.PublicURL, "tls_mode": req.TLSMode,
 		"tls_domain": tlsDomain, "acme_domain": acmeDomain, "acme_email": strings.TrimSpace(req.ACMEEmail),
 		"alert_webhook_set":            req.AlertWebhookURL != "",
 		"alert_telegram_chat_id":       strings.TrimSpace(req.AlertTelegramChatID),

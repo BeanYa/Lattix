@@ -231,7 +231,10 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 		return items
 	}
 	for _, c := range chains {
-		if c.Status != store.ChainStatusActive && c.Status != store.ChainStatusDegraded {
+		// A published snapshot remains the subscription authority while a newer
+		// revision is applying or has failed. Agent reachability is control-plane
+		// state and must not withdraw an otherwise usable data-plane endpoint.
+		if c.PublishedRevisionID == 0 || c.Status == store.ChainStatusInvalid || c.Status == store.ChainStatusDeleted {
 			continue
 		}
 		item, err := s.chainSubscriptionItem(r, c, allowed)
@@ -246,26 +249,28 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 // chainSubscriptionItem 构造单条链的订阅条目；不满足输出条件返回错误（调用方跳过）。
 func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allowed map[int64]bool) (*proxyItem, error) {
 	chainID := chain.ID
-	hops, err := s.st.ChainHops(r.Context(), chainID)
+	revision, err := s.st.PublishedChainRevision(r.Context(), chainID)
 	if err != nil {
 		return nil, err
 	}
-	if len(hops) < 2 {
+	snapshot := revision.Snapshot
+	if len(snapshot.Hops) < 1 {
 		return nil, fmt.Errorf("链 %d 跳数不足", chainID)
 	}
-	entry, exit := hops[0], hops[len(hops)-1]
-	if !allowed[exit.NodeID] {
+	entry := snapshot.Hops[0]
+	if !allowed[snapshot.ServiceNodeID] {
 		return nil, fmt.Errorf("链 %d 出口节点未分配给该用户", chainID)
 	}
-	node, err := s.st.NodeByID(r.Context(), exit.NodeID)
+	node, err := s.st.NodeByID(r.Context(), snapshot.ServiceNodeID)
 	if err != nil {
 		return nil, err
 	}
-	if node.Status != store.NodeStatusActive || len(node.RealizedConfig) == 0 {
-		return nil, fmt.Errorf("链 %d 出口节点 %d 未生效", chainID, exit.NodeID)
+	var virtual shared.VirtualConfig
+	if err := json.Unmarshal(snapshot.ServiceConfig, &virtual); err != nil || virtual.Protocol == "" {
+		return nil, fmt.Errorf("链 %d 已发布协议配置不可用", chainID)
 	}
 	var rc shared.RealizedConfig
-	if err := json.Unmarshal(node.RealizedConfig, &rc); err != nil || rc.Port == 0 {
+	if err := json.Unmarshal(snapshot.ServiceRealized, &rc); err != nil || rc.Port == 0 {
 		return nil, fmt.Errorf("链 %d 出口 realized_config 不可用", chainID)
 	}
 	entrySrv, err := s.st.ServerByID(r.Context(), entry.ServerID)
@@ -283,7 +288,10 @@ func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allow
 		}
 	}
 	entryNode := *node
-	entryNode.Name = chain.Name
+	entryNode.Name = snapshot.Name
+	entryNode.Protocol = virtual.Protocol
+	entryNode.ConfigTemplate = append(json.RawMessage(nil), snapshot.ServiceConfig...)
+	entryNode.RealizedConfig = append(json.RawMessage(nil), snapshot.ServiceRealized...)
 	entryNode.ServerAlias = entrySrv.Alias
 	entryNode.ServerAddress = entrySrv.Address
 	rc.Port = port

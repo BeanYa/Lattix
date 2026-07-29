@@ -148,6 +148,13 @@
     color: var(--primary-foreground);
     background: var(--primary);
   }
+  select option {
+    color: var(--popover-foreground);
+    background: var(--popover);
+  }
+  .dark select {
+    color-scheme: dark;
+  }
   h1, h2, h3, h4,
   nav,
   button,
@@ -184,6 +191,9 @@
   [data-slot="select-trigger"] {
     border-width: 1.5px;
     background: var(--card);
+  }
+  [data-slot="input"]:not(:disabled) {
+    cursor: text;
   }
   [data-slot="table-container"] {
     border-radius: var(--radius);

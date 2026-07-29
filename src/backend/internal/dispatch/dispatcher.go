@@ -5,6 +5,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -32,9 +33,10 @@ type Dispatcher struct {
 
 	// DestCandidates 是面板内置的 dest 白名单（§6 预检 fallback）：链编排下发
 	// apply_node/portal 时携带（panel 初始化时注入，与单机节点同一份）。
-	DestCandidates []string
-	PanelVersion   string
-	PanelPublicURL string
+	DestCandidates   []string
+	PanelVersion     string
+	PanelPublicURL   string
+	AgentReleaseBase string
 
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
@@ -64,6 +66,25 @@ func (d *Dispatcher) Enqueue(ctx context.Context, serverID int64, typ string, pa
 	return id, nil
 }
 
+func (d *Dispatcher) enqueueRevisionTask(ctx context.Context, serverID int64, typ string, payload any,
+	revisionID int64, taskKey string) (int64, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return 0, fmt.Errorf("marshal payload: %w", err)
+	}
+	requestID := shared.NewMessageID()
+	traceID := logging.TraceID(ctx)
+	if traceID == "" {
+		traceID = shared.NewMessageID()
+	}
+	id, err := d.st.EnqueueRevisionTaskCommand(ctx, requestID, traceID, serverID, typ, raw, revisionID, taskKey)
+	if err != nil {
+		return 0, err
+	}
+	d.Flush(ctx, serverID)
+	return id, nil
+}
+
 // maxCommandAttempts 是命令投递次数上限；超过即死信（failed，§2）。
 const maxCommandAttempts = 10
 
@@ -79,12 +100,23 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 		log.Printf("dispatch: flush server %d: %v", serverID, err)
 		return
 	}
+	versionMismatch := false
+	if target := strings.TrimSpace(d.PanelVersion); target != "" && target != "dev" {
+		if server, err := d.st.ServerByID(ctx, serverID); err == nil {
+			versionMismatch = server.AgentVersion != target
+		}
+	}
 	for _, c := range cmds {
+		if versionMismatch && !isExactAgentUpgrade(c, d.PanelVersion) {
+			continue
+		}
 		if c.Attempts >= maxCommandAttempts {
 			log.Printf("dispatch: command %d dead-lettered after %d attempts", c.ID, c.Attempts)
 			if err := d.st.DeadLetterCommand(ctx, c.ID); err != nil {
 				log.Printf("dispatch: dead-letter command %d: %v", c.ID, err)
 			}
+			d.setRevisionTaskResult(ctx, c.ID, false,
+				fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts))
 			d.recordOperation(logging.OperationEvent{
 				Severity: logging.SeverityError, Category: logging.CategoryCommand,
 				Action: "command.dead_lettered", ServerID: &serverID,
@@ -130,6 +162,14 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 	}
 }
 
+func isExactAgentUpgrade(command store.Command, version string) bool {
+	if command.Type != shared.TypeUpgradeAgent {
+		return false
+	}
+	var payload shared.UpgradeAgentPayload
+	return json.Unmarshal(command.Data, &payload) == nil && payload.Version == version
+}
+
 // AuthenticateHello 实现 ws.Authenticator：按 token 查找服务器。
 // 仅 bootstrap 状态（last_seen_at 为空，§5/§11）时换发长期凭证；长期 token 稳定不轮换。
 // 管理员已指定地址（address_mode=manual）时不被自动学习覆盖（§4/§9）。
@@ -173,7 +213,34 @@ func (d *Dispatcher) AuthenticateHello(ctx context.Context, p shared.HelloPayloa
 	if err := d.st.TouchServer(ctx, srv.ID, p.XrayVersion, p.AgentVersion, remoteAddr, learnedAddr, nicAddrs); err != nil {
 		log.Printf("dispatch: touch server %d: %v", srv.ID, err)
 	}
+	d.ensureAgentVersion(ctx, srv.ID, p.AgentVersion)
 	return srv.ID, shared.HelloResult{ServerID: srv.ID, Token: token}, nil
+}
+
+func (d *Dispatcher) ensureAgentVersion(ctx context.Context, serverID int64, reported string) {
+	target := strings.TrimSpace(d.PanelVersion)
+	if target == "" || target == "dev" || reported == target {
+		return
+	}
+	commands, err := d.st.CommandsByType(ctx, shared.TypeUpgradeAgent)
+	if err != nil {
+		log.Printf("dispatch: server %d inspect agent version commands: %v", serverID, err)
+		return
+	}
+	for _, command := range commands {
+		if command.ServerID != serverID || (command.Status != store.CommandStatusQueued && command.Status != store.CommandStatusSent) {
+			continue
+		}
+		var payload shared.UpgradeAgentPayload
+		if json.Unmarshal(command.Data, &payload) == nil && payload.Version == target {
+			return
+		}
+	}
+	if _, err := d.Enqueue(ctx, serverID, shared.TypeUpgradeAgent, shared.UpgradeAgentPayload{
+		Version: target, ReleaseBase: d.AgentReleaseBase,
+	}); err != nil {
+		log.Printf("dispatch: server %d enqueue agent synchronization to %s: %v", serverID, target, err)
+	}
 }
 
 // preferredAgentAddress keeps a publicly routable socket peer when available.
@@ -389,20 +456,16 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 			log.Printf("dispatch: server %d: upsert metrics: %v", serverID, err)
 		}
 	}
-	for _, td := range p.Traffic {
-		switch {
-		case td.Node != "":
-			var nodeID int64
-			if _, err := fmt.Sscanf(td.Node, "node_%d", &nodeID); err != nil || nodeID == 0 {
-				continue
-			}
-			if err := d.st.AddTraffic(ctx, nodeID, "", td.Up, td.Down); err != nil {
-				log.Printf("dispatch: server %d: add node traffic: %v", serverID, err)
-			}
-		case td.User != "":
-			if err := d.st.AddTraffic(ctx, 0, td.User, td.Up, td.Down); err != nil {
-				log.Printf("dispatch: server %d: add user traffic: %v", serverID, err)
-			}
+	if len(p.Traffic) > 0 {
+		counters := make([]store.TrafficCounterSnapshot, 0, len(p.Traffic))
+		for _, counter := range p.Traffic {
+			counters = append(counters, store.TrafficCounterSnapshot{
+				NodeID: counter.NodeID, HopID: counter.HopID, User: counter.User,
+				Up: counter.Up, Down: counter.Down,
+			})
+		}
+		if err := d.st.ApplyTrafficSnapshot(ctx, serverID, p.XrayInstanceID, counters, time.Now().UTC()); err != nil {
+			log.Printf("dispatch: server %d: apply traffic snapshot: %v", serverID, err)
 		}
 	}
 }
@@ -473,12 +536,18 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			log.Printf("dispatch: server %d: response for command %d not in sent state, ignored", serverID, cmdID)
 			return
 		}
+		d.setRevisionTaskResult(ctx, cmdID, true, "")
 		d.recordOperation(logging.OperationEvent{
 			Severity: logging.SeverityInfo, Category: logging.CategoryCommand,
 			Action: "command.succeeded", ServerID: &serverID, NodeID: optionalID(p.NodeID),
 			Detail:    map[string]any{"command_id": cmdID, "type": cmd.Type, "hop_id": p.HopID},
 			RequestID: env.RequestID, TraceID: env.TraceID,
 		})
+		// 清理命令只更新命令/修订任务，不得触碰当前工作拓扑的节点状态。
+		if cmd.Type == shared.TypeRemoveChainHop || cmd.Type == shared.TypeRemoveNode {
+			log.Printf("dispatch: server %d: cleanup command %d acked", serverID, cmdID)
+			return
+		}
 		// 链跳配置件回执（§21）：路由到链编排器，不触碰节点状态机。
 		if p.HopID != 0 {
 			d.handleChainHopResult(serverID, p, "")
@@ -509,12 +578,18 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			log.Printf("dispatch: server %d: response for command %d not in sent state, ignored", serverID, cmdID)
 			return
 		}
+		d.setRevisionTaskResult(ctx, cmdID, false, errorMessage)
 		d.recordOperation(logging.OperationEvent{
 			Severity: logging.SeverityError, Category: logging.CategoryCommand,
 			Action: "command.failed", ServerID: &serverID, NodeID: optionalID(p.NodeID),
 			Detail:    map[string]any{"command_id": cmdID, "type": cmd.Type, "hop_id": p.HopID, "error": errorMessage},
 			RequestID: env.RequestID, TraceID: env.TraceID,
 		})
+		// 清理失败保留任务记录，不能让已发布的数据面 revision 回滚或失效。
+		if cmd.Type == shared.TypeRemoveChainHop || cmd.Type == shared.TypeRemoveNode {
+			log.Printf("dispatch: server %d: cleanup command %d failed: %s", serverID, cmdID, errorMessage)
+			return
+		}
 		// 链跳配置件回执（§21）：路由到链编排器（失败定位到跳，链置 failed）。
 		if p.HopID != 0 {
 			d.handleChainHopResult(serverID, p, errorMessage)
@@ -530,6 +605,24 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 		} else {
 			log.Printf("dispatch: server %d: command %d failed: %s", serverID, cmdID, errorMessage)
 		}
+	}
+}
+
+func (d *Dispatcher) setRevisionTaskResult(ctx context.Context, commandID int64, success bool, errorMessage string) {
+	task, err := d.st.RevisionTaskByCommandID(ctx, commandID)
+	if errors.Is(err, store.ErrNotFound) {
+		return
+	}
+	if err != nil {
+		log.Printf("dispatch: lookup revision task for command %d: %v", commandID, err)
+		return
+	}
+	if err := d.st.SetRevisionTaskResult(ctx, task.ID, success, errorMessage); err != nil {
+		log.Printf("dispatch: update revision task %d: %v", task.ID, err)
+		return
+	}
+	if task.Phase == "cleanup" {
+		d.refreshCleanupStatus(ctx, task.RevisionID)
 	}
 }
 

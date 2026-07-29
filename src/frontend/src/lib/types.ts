@@ -214,7 +214,17 @@ export interface CreateNodeRequest {
   target_port?: number
 }
 
-export type ChainStatus = 'pending' | 'applying' | 'active' | 'degraded' | 'failed'
+export type ChainStatus =
+  | 'pending'
+  | 'applying'
+  | 'active'
+  | 'degraded'
+  | 'failed'
+  | 'waiting_for_agent'
+  | 'active_unconfirmed'
+  | 'active_failed'
+  | 'cleanup_pending'
+  | 'invalid'
 export type ChainHopRole = 'entry' | 'middle' | 'exit'
 
 export interface ChainHop {
@@ -230,6 +240,30 @@ export interface ChainHop {
   portal_port: number
   portal_public_key?: string
   tunnel_uuid?: string
+  traffic?: ChainTraffic
+}
+
+export interface ChainTraffic {
+  raw_up: number
+  raw_down: number
+  effective_up: number
+  effective_down: number
+}
+
+export interface ChainTrafficBucket extends ChainTraffic {
+  Date?: string
+  date?: string
+}
+
+export interface ChainRevisionTask {
+  key: string
+  phase: 'apply' | 'cleanup'
+  action: string
+  kind: string
+  hop_id: number
+  server_id: number
+  status: 'pending' | 'queued' | 'acked' | 'failed' | 'abandoned'
+  error: string
 }
 
 export interface Chain {
@@ -239,17 +273,37 @@ export interface Chain {
   error: string // 失败时定位到跳
   created_at: string
   hops: ChainHop[] // 按 seq 升序：首位入口，末位出口
+  service_node_id: number
+  traffic_multiplier: string
+  traffic?: ChainTraffic
+  published_revision_id: number
+  desired_revision_id: number
+  revision_status?: string
+  revision_forced: boolean
+  revision_tasks: ChainRevisionTask[]
+  service_config?: Record<string, unknown>
 }
 
 // 链路构图提交（§21）：依次入口 / 中间跳（0-2）/ 出口，出口携带业务节点协议表单，
 // 入口端口可空 = 自动。node.server_id 由后端按 exit.server_id 覆盖。
 export interface CreateChainRequest {
-  name: string
+	name: string
+	hops?: { server_id: number }[]
   entry: { server_id: number }
   middle: { server_id: number }[]
   exit: { server_id: number }
   entry_port?: number
+	node: Omit<CreateNodeRequest, 'server_id' | 'name'>
+	traffic_multiplier?: string
+}
+
+export interface EditChainRequest {
+  chain_id: number
+  name: string
+  hops: { server_id: number }[]
+  entry_port?: number
   node: Omit<CreateNodeRequest, 'server_id' | 'name'>
+  traffic_multiplier: string
 }
 
 export interface SubUser {
@@ -338,6 +392,7 @@ export interface ReleaseVersions {
 
 export interface PanelSettings {
   timezone: string
+  traffic_timezone: string
   public_url: string
   tls_mode: TLSMode
   tls_cert: CertInfo | null
@@ -369,6 +424,7 @@ export interface PanelSettings {
 
 export interface UpdateSettingsRequest {
   timezone: string
+  traffic_timezone: string
   public_url: string
   tls_mode: TLSMode
   tls_cert_pem?: string

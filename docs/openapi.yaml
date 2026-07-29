@@ -183,6 +183,36 @@ paths:
       operationId: chainCreate
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/chain/edit:
+    post:
+      operationId: chainEdit
+      description: Creates a desired revision for ordered 1-4 hop topology and deploys changed pieces exit-to-entry.
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/chain/force-publish:
+    post:
+      operationId: chainForcePublish
+      description: Immediately promotes the desired revision as unconfirmed; queued Agent tasks continue without rollback.
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/chain/set-traffic-multiplier:
+    post:
+      operationId: chainSetTrafficMultiplier
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/chain/reset-traffic:
+    post:
+      operationId: chainResetTraffic
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
+  /api/chain/get-traffic-history:
+    get:
+      operationId: chainGetTrafficHistory
+      parameters:
+        - {name: chain_id, in: query, required: true, schema: {type: integer, minimum: 1}}
+        - {name: hop_id, in: query, schema: {type: integer, minimum: 0, default: 0}}
+        - {name: days, in: query, schema: {type: integer, minimum: 1, maximum: 730, default: 30}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}}
   /api/chain/retry:
     post:
       operationId: chainRetry
@@ -369,6 +399,10 @@ components:
       description: Existing panel fields plus the complete global Agent settings object.
       additionalProperties: true
       properties:
+        traffic_timezone:
+          type: string
+          default: Asia/Shanghai
+          description: IANA timezone used for chain traffic day/month bucket boundaries.
         agent: {$ref: '#/components/schemas/AgentSettings'}
         release_inspection: {$ref: '#/components/schemas/ReleaseInspectionSettings'}
         billing_inspection: {$ref: '#/components/schemas/InspectionSchedule'}
