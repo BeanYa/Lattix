@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCwIcon, Trash2Icon } from 'lucide-react'
 
+import { Notice, Surface } from '@/components/PagePrimitives'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -215,7 +216,7 @@ export default function OperationLogs() {
         </div>
       </div>
 
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error ? <Notice tone="danger">{error}</Notice> : null}
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
@@ -292,7 +293,7 @@ export default function OperationLogs() {
         <Button variant="ghost" size="sm" onClick={resetFilters}>重置</Button>
       </div>
 
-      <div className="rounded-lg border">
+      <Surface>
         <Table>
           <TableHeader>
             <TableRow>
@@ -327,7 +328,7 @@ export default function OperationLogs() {
             })}
           </TableBody>
         </Table>
-      </div>
+      </Surface>
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>{total > 0 ? `第 ${offset + 1}-${Math.min(offset + PAGE_SIZE, total)} 条` : ''}</span>

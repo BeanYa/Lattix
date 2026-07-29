@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { BarChart3Icon, PencilIcon, PlusIcon, RotateCcwIcon, RouteIcon, SendIcon, XIcon } from 'lucide-react'
 
 import { NameTemplateInput } from '@/components/NameTemplateInput'
+import { EmptyState, LoadingState, Notice, Page, PageHeader, type FeedbackTone } from '@/components/PagePrimitives'
 import { RealityDestPicker } from '@/components/RealityDestPicker'
+import { StatusBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -50,24 +52,24 @@ import type {
   XrayNode,
 } from '@/lib/types'
 
-const chainStatusStyle: Record<ChainStatus, { label: string; className: string }> = {
-  active: { label: '正常', className: 'border-green-200 bg-green-50 text-green-700' },
-  applying: { label: '部署中', className: 'border-yellow-200 bg-yellow-50 text-yellow-700' },
-  failed: { label: '异常', className: 'border-red-200 bg-red-50 text-red-700' },
-  pending: { label: '部署中', className: 'border-gray-200 bg-gray-50 text-gray-500' },
-  degraded: { label: '降级', className: 'border-amber-200 bg-amber-50 text-amber-700' },
-  waiting_for_agent: { label: '等待 Agent', className: 'border-amber-200 bg-amber-50 text-amber-700' },
-  active_unconfirmed: { label: '已强制发布', className: 'border-blue-200 bg-blue-50 text-blue-700' },
-  active_failed: { label: '发布后失败', className: 'border-red-200 bg-red-50 text-red-700' },
-  cleanup_pending: { label: '等待清理', className: 'border-amber-200 bg-amber-50 text-amber-700' },
-  invalid: { label: '已失效', className: 'border-red-200 bg-red-50 text-red-700' },
+const chainStatusStyle: Record<ChainStatus, { label: string; tone: FeedbackTone }> = {
+  active: { label: '正常', tone: 'success' },
+  applying: { label: '部署中', tone: 'warning' },
+  failed: { label: '异常', tone: 'danger' },
+  pending: { label: '部署中', tone: 'neutral' },
+  degraded: { label: '降级', tone: 'warning' },
+  waiting_for_agent: { label: '等待 Agent', tone: 'warning' },
+  active_unconfirmed: { label: '已强制发布', tone: 'info' },
+  active_failed: { label: '发布后失败', tone: 'danger' },
+  cleanup_pending: { label: '等待清理', tone: 'warning' },
+  invalid: { label: '已失效', tone: 'danger' },
 }
 
-const hopStatusStyle: Record<NodeStatus, { label: string; className: string }> = {
-  active: { label: '正常', className: 'border-green-200 bg-green-50 text-green-700' },
-  applying: { label: '部署中', className: 'border-yellow-200 bg-yellow-50 text-yellow-700' },
-  failed: { label: '异常', className: 'border-red-200 bg-red-50 text-red-700' },
-  pending: { label: '部署中', className: 'border-gray-200 bg-gray-50 text-gray-500' },
+const hopStatusStyle: Record<NodeStatus, { label: string; tone: FeedbackTone }> = {
+  active: { label: '正常', tone: 'success' },
+  applying: { label: '部署中', tone: 'warning' },
+  failed: { label: '异常', tone: 'danger' },
+  pending: { label: '部署中', tone: 'neutral' },
 }
 
 const roleLabel: Record<ChainHopRole, string> = {
@@ -750,27 +752,28 @@ export default function Chains() {
     return [...months.values()]
   }, [trafficHistory, trafficRange])
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">链路</h1>
-        <Button onClick={() => setOpen(true)}>
-          <PlusIcon />
-          创建链路
-        </Button>
-      </div>
+    <Page>
+      <PageHeader
+        title="链路"
+        actions={(
+          <Button onClick={() => setOpen(true)}>
+            <PlusIcon />
+            创建链路
+          </Button>
+        )}
+      />
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <Notice tone="danger">{error}</Notice>}
 
       <div className="flex flex-col gap-3">
         {loading ? (
-          <div className="rounded-lg border p-6 text-center text-sm text-muted-foreground">
-            加载中…
-          </div>
+          <LoadingState />
         ) : entries.length === 0 ? (
-          <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed text-center">
-            <RouteIcon className="size-8 text-muted-foreground" />
-            <p className="mt-3 text-sm text-muted-foreground">暂无链路，点击右上角“创建链路”开始</p>
-          </div>
+          <EmptyState
+            icon={<RouteIcon />}
+            title="暂无链路"
+            description="点击上方“创建链路”开始"
+          />
         ) : (
           entries.map((entry) => {
             if (entry.type === 'direct') {
@@ -784,9 +787,9 @@ export default function Chains() {
                     <CardTitle className="flex flex-wrap items-center gap-2">
                       <span>{node.name || `直连 #${node.id}`}</span>
                       <Badge variant="secondary">直连</Badge>
-                      <Badge variant="outline" className={st.className}>
+                      <StatusBadge tone={st.tone}>
                         {st.label}
-                      </Badge>
+                      </StatusBadge>
                     </CardTitle>
                     <CardDescription>
                       {formatDateTime(node.created_at, timezone)}
@@ -819,10 +822,10 @@ export default function Chains() {
                         <span className="text-muted-foreground">直连</span>
                         <span className="font-medium">{node.server_alias}</span>
                         {displayPort ? <span className="text-muted-foreground">:{displayPort}</span> : null}
-                        <Badge variant="outline" className={st.className}>
+                        <StatusBadge tone={st.tone}>
                           {st.label}
-                        </Badge>
-						{server && !isServerOnline(server) ? <Badge variant="outline">离线</Badge> : null}
+                        </StatusBadge>
+						{server && !isServerOnline(server) ? <StatusBadge tone="warning">离线</StatusBadge> : null}
                       </span>
                     </div>
                   </CardContent>
@@ -840,14 +843,14 @@ export default function Chains() {
                   <CardTitle className="flex flex-wrap items-center gap-2">
                     <span>{c.name || `中转 #${c.id}`}</span>
                     <Badge variant="secondary">{isDirect ? '直连' : '中转'}</Badge>
-                    <Badge variant="outline" className={st.className}>
+                    <StatusBadge tone={st.tone}>
                       {st.label}
-                    </Badge>
+                    </StatusBadge>
                     {c.status === 'degraded' ? (
-                      <span className="text-xs text-amber-700">Agent 离线，已发布链路仍保留</span>
+                      <span className="text-xs text-warning">Agent 离线，已发布链路仍保留</span>
                     ) : null}
                     {c.revision_forced ? (
-                      <span className="text-xs text-blue-700">订阅已发布，配置等待 Agent 确认</span>
+                      <span className="text-xs text-info">订阅已发布，配置等待 Agent 确认</span>
                     ) : null}
                   </CardTitle>
                   <CardDescription>
@@ -913,16 +916,13 @@ export default function Chains() {
                           {h.role === 'entry' && h.forward_port !== 0 ? (
                             <span className="text-muted-foreground">:{h.forward_port}</span>
                           ) : null}
-                          <Badge variant="outline" className={hst.className}>
+                          <StatusBadge tone={hst.tone}>
                             {hst.label}
-                          </Badge>
+                          </StatusBadge>
                           {offline ? (
-                            <Badge
-                              variant="outline"
-                              className="border-amber-200 bg-amber-50 text-amber-700"
-                            >
+                            <StatusBadge tone="warning">
                               离线
-                            </Badge>
+                            </StatusBadge>
                           ) : null}
                         </span>
                       </span>
@@ -1388,6 +1388,6 @@ export default function Chains() {
           ) : null}
         </DialogContent>
       </Dialog>
-    </div>
+    </Page>
   )
 }

@@ -3,6 +3,7 @@ import { Building2Icon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from 'lucide-r
 
 import { CopyButton } from '@/components/CopyButton'
 import { CountryCombobox } from '@/components/CountryCombobox'
+import { Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { ServerMonitorGrid } from '@/components/ServerMonitor'
 import { TagInput } from '@/components/TagInput'
 import { Button } from '@/components/ui/button'
@@ -671,16 +672,18 @@ export default function Servers() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">服务器</h1>
-        <Button onClick={() => setOpen(true)}>
-          <PlusIcon />
-          添加服务器
-        </Button>
-      </div>
+    <Page>
+      <PageHeader
+        title="服务器"
+        actions={(
+          <Button onClick={() => setOpen(true)}>
+            <PlusIcon />
+            添加服务器
+          </Button>
+        )}
+      />
 
-      {error && <p className="text-sm text-destructive">加载失败：{error}</p>}
+      {error && <Notice tone="danger" title="加载失败">{error}</Notice>}
 
       <ServerMonitorGrid
         servers={servers}
@@ -1060,7 +1063,7 @@ export default function Servers() {
             )}
             {upgradeResult === 'success' && (
               <div className="space-y-3">
-                <p className="text-sm text-emerald-600">升级命令执行成功，版本号已刷新。</p>
+                <p className="text-sm text-success">升级命令执行成功，版本号已刷新。</p>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setUpgradeTarget(null)}>
                     关闭
@@ -1082,7 +1085,7 @@ export default function Servers() {
             {/* 超时兜底（upgradeResult 被清空但 upgradeResultError 非空） */}
             {upgradeResult === null && upgradeResultError && (
               <div className="space-y-3">
-                <p className="text-sm text-amber-600 whitespace-pre-wrap">{upgradeResultError}</p>
+                <p className="text-sm text-warning whitespace-pre-wrap">{upgradeResultError}</p>
                 <DialogFooter>
                   <Button variant="outline" onClick={() => setUpgradeTarget(null)}>
                     关闭
@@ -1146,6 +1149,6 @@ export default function Servers() {
           <form onSubmit={confirmRenewal} className="space-y-4"><div className="space-y-2"><Label>下次续费日</Label><Input type="date" min={addInterval(localDate(), 1, 'day')} value={renewalOn} onChange={(e) => setRenewalOn(e.target.value)} required /></div><DialogFooter><Button type="submit" disabled={renewing}>{renewing ? '确认中…' : '确认续费'}</Button></DialogFooter></form>
         </DialogContent>
       </Dialog>
-    </div>
+    </Page>
   )
 }

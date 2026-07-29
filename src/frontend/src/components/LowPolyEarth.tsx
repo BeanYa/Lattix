@@ -5,6 +5,8 @@ import type { GlobeMethods } from 'react-globe.gl'
 import type { BufferGeometry, Material, Object3D } from 'three'
 
 import { formatByteRate } from '@/lib/format'
+import { useTheme } from '@/lib/theme-context'
+import { DEFAULT_EARTH_PALETTE, readEarthPalette, type EarthPalette } from '@/lib/visual-theme'
 
 const Globe = lazy(() => import('react-globe.gl'))
 
@@ -156,14 +158,14 @@ function closeSouthPolarPolygons(collection: FeatureCollection): FeatureCollecti
   }
 }
 
-function linkColor(link: AnimatedEarthLink) {
-  if (link.status === 'active') return '#f7ffb2'
-  if (link.status === 'degraded') return '#ffbf3f'
-  if (link.status === 'failed') return '#ff7771'
-  return '#d8d2ff'
+function linkColor(link: AnimatedEarthLink, palette: EarthPalette) {
+  if (link.status === 'active') return palette.linkActive
+  if (link.status === 'degraded') return palette.linkDegraded
+  if (link.status === 'failed') return palette.linkFailed
+  return palette.linkPending
 }
 
-function createNodeElement(item: object) {
+function createNodeElement(item: object, palette: EarthPalette) {
   const node = item as EarthNode
   const root = document.createElement('div')
   root.setAttribute('aria-hidden', 'true')
@@ -216,8 +218,8 @@ function createNodeElement(item: object) {
   status.style.flex = '0 0 7px'
   status.style.borderRadius = '999px'
   status.style.background = node.status === 'warning'
-    ? '#e3b83d'
-    : node.status === 'online' ? '#54cf98' : '#ff7771'
+    ? palette.nodeWarning
+    : node.status === 'online' ? palette.nodeOnline : palette.nodeOffline
   status.style.marginLeft = 'auto'
 
   header.append(label, status)
@@ -249,6 +251,7 @@ function updateNodeVisibility(element: HTMLElement, isVisible: boolean) {
 }
 
 export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }: LowPolyEarthProps) {
+  const { theme } = useTheme()
   const containerRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
   const longitudeRef = useRef(INITIAL_LONGITUDE)
@@ -261,6 +264,11 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
   const [landSideMaterial, setLandSideMaterial] = useState<Material | undefined>(undefined)
   const [cloudLayer, setCloudLayer] = useState<Object3D | undefined>(undefined)
   const [reducedMotion, setReducedMotion] = useState(false)
+  const [palette, setPalette] = useState<EarthPalette>(DEFAULT_EARTH_PALETTE)
+
+  useEffect(() => {
+    setPalette(readEarthPalette())
+  }, [theme])
 
   useEffect(() => {
     const container = containerRef.current
@@ -315,8 +323,8 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
 
     import('three').then(({ Color, DodecahedronGeometry, Float32BufferAttribute, Group, IcosahedronGeometry, Mesh, MeshLambertMaterial, MeshToonMaterial, Vector3 }) => {
       material = new MeshLambertMaterial({
-        color: '#ffffff',
-        emissive: '#075a80',
+        color: palette.oceanColor,
+        emissive: palette.oceanEmissive,
         emissiveIntensity: 0.1,
         flatShading: true,
         vertexColors: true,
@@ -329,7 +337,11 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
         const facetIndex = vertexIndex / 3
         const noise = Math.sin((facetIndex + 1) * 12.9898) * 43758.5453
         const shade = noise - Math.floor(noise)
-        facetColor.setHSL(0.535 + shade * 0.012, 0.74, 0.48 + shade * 0.055)
+        facetColor.setHSL(
+          palette.oceanHue + shade * 0.012,
+          palette.oceanSaturation,
+          palette.oceanLightness + shade * 0.055,
+        )
         for (let corner = 0; corner < 3; corner += 1) {
           oceanColors.push(facetColor.r, facetColor.g, facetColor.b)
         }
@@ -339,19 +351,19 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
       nextOceanMesh.name = 'low-poly-ocean'
 
       capMaterial = new MeshLambertMaterial({
-        color: '#a7ec35',
-        emissive: '#284d17',
+        color: palette.land,
+        emissive: palette.landEmissive,
         emissiveIntensity: 0.08,
         flatShading: true,
       })
       sideMaterial = new MeshLambertMaterial({
-        color: '#55a927',
-        emissive: '#193d13',
+        color: palette.landSide,
+        emissive: palette.landSideEmissive,
         emissiveIntensity: 0.06,
         flatShading: true,
       })
       cloudMaterial = new MeshToonMaterial({
-        color: '#fffbe6',
+        color: palette.cloud,
         transparent: true,
         opacity: 0.82,
         depthWrite: false,
@@ -410,7 +422,7 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
       cloudMaterial?.dispose()
       cloudGeometry?.dispose()
     }
-  }, [])
+  }, [palette])
 
   const animatedLinks = useMemo<AnimatedEarthLink[]>(() => {
     const cache = animatedLinkCacheRef.current
@@ -553,7 +565,7 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
     >
       <div className="absolute inset-0 flex items-center justify-center">
         <div style={{ transform: `rotate(${AXIAL_TILT_DEGREES}deg)` }}>
-          <Suspense fallback={<div className="size-64 rounded-full border-2 border-primary/40 bg-primary/20 shadow-[inset_-24px_-18px_0_rgb(74_64_112/0.12)] sm:size-80" aria-label="地球模型载入中" />}>
+          <Suspense fallback={<div className="size-64 rounded-full border-2 border-primary/40 bg-primary/20 shadow-[inset_-24px_-18px_0_var(--shadow-color)] sm:size-80" aria-label="地球模型载入中" />}>
             <Globe
               ref={globeRef}
               width={size.width}
@@ -561,7 +573,7 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
               backgroundColor="rgba(0,0,0,0)"
               showGlobe={false}
               showAtmosphere
-              atmosphereColor="#a9efff"
+              atmosphereColor={palette.atmosphere}
               atmosphereAltitude={0.1}
               polygonsData={landFeatures}
               polygonCapMaterial={landCapMaterial}
@@ -577,8 +589,8 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
               pointLng={(item) => (item as EarthNode).lng}
               pointColor={(item) => {
                 const node = item as EarthNode
-                if (node.status === 'warning') return '#ffd45f'
-                return node.status === 'online' ? '#7ce5b2' : '#ff8d87'
+                if (node.status === 'warning') return palette.nodeWarning
+                return node.status === 'online' ? palette.nodeOnline : palette.nodeOffline
               }}
               pointAltitude={0.025}
               pointRadius={0.34}
@@ -588,7 +600,7 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
               htmlLat={(item) => (item as EarthNode).lat}
               htmlLng={(item) => (item as EarthNode).lng}
               htmlAltitude={0.065}
-              htmlElement={createNodeElement}
+              htmlElement={(item: object) => createNodeElement(item, palette)}
               htmlElementVisibilityModifier={updateNodeVisibility}
               htmlTransitionDuration={500}
               arcsData={animatedLinks}
@@ -596,7 +608,7 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
               arcStartLng={(item) => (item as EarthLink).startLng}
               arcEndLat={(item) => (item as EarthLink).endLat}
               arcEndLng={(item) => (item as EarthLink).endLng}
-              arcColor={(item: object) => linkColor(item as AnimatedEarthLink)}
+              arcColor={(item: object) => linkColor(item as AnimatedEarthLink, palette)}
               arcAltitudeAutoScale={0.42}
               arcStroke={2.35}
               arcCircularResolution={4}
@@ -611,7 +623,7 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
               ringsData={reducedMotion ? [] : nodes.filter((node) => node.status === 'online')}
               ringLat={(item) => (item as EarthNode).lat}
               ringLng={(item) => (item as EarthNode).lng}
-              ringColor={(_item: object) => ['#d9f47d', 'rgba(217,244,125,0)']}
+              ringColor={(_item: object) => [palette.ring, 'rgba(0,0,0,0)']}
               ringMaxRadius={2.2}
               ringPropagationSpeed={1.2}
               ringRepeatPeriod={1500}

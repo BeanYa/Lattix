@@ -29,7 +29,7 @@ export default function LattixMark(props: SVGProps<SVGSVGElement>) {
         width="8"
         height="8"
         rx="1"
-        fill="#f8f7ff"
+        fill="var(--sidebar-foreground)"
         transform="rotate(45 32 32)"
       />
     </svg>

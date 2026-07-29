@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
+import { EmptyState, Notice, Page, PageHeader, Surface } from '@/components/PagePrimitives'
 import { QRDialog } from '@/components/QRDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -218,24 +219,27 @@ export default function Users() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">用户</h1>
-        <Button onClick={() => setOpen(true)}>
-          <PlusIcon />
-          创建用户
-        </Button>
-      </div>
+    <Page>
+      <PageHeader
+        title="用户"
+        actions={(
+          <Button onClick={() => setOpen(true)}>
+            <PlusIcon />
+            创建用户
+          </Button>
+        )}
+      />
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <Notice tone="danger">{error}</Notice>}
 
       {!loading && users.length === 0 ? (
-        <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed text-center">
-          <UsersIcon className="size-8 text-muted-foreground" />
-          <p className="mt-3 text-sm text-muted-foreground">暂无用户，点击右上角“创建用户”开始</p>
-        </div>
+        <EmptyState
+          icon={<UsersIcon />}
+          title="暂无用户"
+          description="点击上方“创建用户”开始"
+        />
       ) : null}
-      <div className={!loading && users.length === 0 ? 'hidden' : 'rounded-lg border'}>
+      <Surface className={!loading && users.length === 0 ? 'hidden' : undefined}>
         <Table>
           <TableHeader>
             <TableRow>
@@ -334,7 +338,7 @@ export default function Users() {
             )}
           </TableBody>
         </Table>
-      </div>
+      </Surface>
 
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-h-[85vh] overflow-y-auto">
@@ -481,6 +485,6 @@ export default function Users() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </Page>
   )
 }

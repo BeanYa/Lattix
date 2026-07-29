@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { RefreshCwIcon, Trash2Icon } from 'lucide-react'
 
+import { Notice, Surface } from '@/components/PagePrimitives'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -167,7 +168,7 @@ export default function RequestLogs() {
         </div>
       </div>
 
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error ? <Notice tone="danger">{error}</Notice> : null}
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
@@ -196,7 +197,7 @@ export default function RequestLogs() {
         </div>
       </div>
 
-      <div className="rounded-lg border">
+      <Surface>
         <Table>
           <TableHeader>
             <TableRow>
@@ -244,7 +245,7 @@ export default function RequestLogs() {
             ))}
           </TableBody>
         </Table>
-      </div>
+      </Surface>
       <p className="text-xs text-muted-foreground">筛选仅作用于当前显示窗口，不扫描全部请求日志文件。</p>
     </div>
   )

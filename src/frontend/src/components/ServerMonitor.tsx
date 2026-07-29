@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 
 import { CountryFlag } from '@/components/CountryFlag'
+import { EmptyState } from '@/components/PagePrimitives'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -911,10 +912,10 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
 
   if (props.servers.length === 0) {
     return (
-      <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed text-center">
-        <ServerCogIcon className="size-8 text-muted-foreground" />
-        <p className="mt-3 text-sm text-muted-foreground">暂无服务器，点击右上角“添加服务器”开始</p>
-      </div>
+      <EmptyState
+        icon={<ServerCogIcon />}
+        description="暂无服务器，点击右上角“添加服务器”开始"
+      />
     )
   }
 

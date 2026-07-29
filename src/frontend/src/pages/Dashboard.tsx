@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 
 import GlobeTopology from '@/components/GlobeTopology'
+import { Notice } from '@/components/PagePrimitives'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { api, errorMessage } from '@/lib/api'
 import type { Chain, DashboardStats, Server } from '@/lib/types'
@@ -36,10 +37,9 @@ export default function Dashboard() {
 
   if (error) {
     return (
-      <div className="game-panel max-w-xl border-destructive bg-destructive/5 p-5 text-sm text-destructive">
-        <strong className="mb-1 block">控制面板连接失败</strong>
+      <Notice tone="danger" title="控制面板连接失败" className="max-w-xl">
         {error}
-      </div>
+      </Notice>
     )
   }
   if (!stats) {

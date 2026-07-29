@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { PlusIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
 
+import { LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -397,10 +398,10 @@ export default function Settings() {
   }
 
   if (loadError) {
-    return <p className="text-sm text-destructive">{loadError}</p>
+    return <Page className="page-shell-narrow"><Notice tone="danger">{loadError}</Notice></Page>
   }
   if (!settings) {
-    return <p className="text-sm text-muted-foreground">加载中…</p>
+    return <Page className="page-shell-narrow"><LoadingState /></Page>
   }
 
   const configuredSources = new Set((exchangeData?.custom_rates ?? []).map((rate) => rate.source_currency))
@@ -415,8 +416,8 @@ export default function Settings() {
   )
 
   return (
-    <div className="max-w-2xl space-y-4">
-      <h1 className="text-xl font-semibold">设置</h1>
+    <Page className="page-shell-narrow">
+      <PageHeader title="设置" />
 
       <form onSubmit={onSave} className="space-y-4">
         <Card>
@@ -773,12 +774,16 @@ export default function Settings() {
           </CardHeader>
           <CardContent className="space-y-4">
             {settings.restart_required && (
-              <div className="flex items-center justify-between gap-2 rounded-lg border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-700">
-                <span>已保存的 TLS 设置与面板当前监听模式不一致，重启面板进程后生效。</span>
-                <Button type="button" variant="outline" size="sm" disabled={restarting} onClick={onRestart}>
-                  {restarting ? '重启中…' : '立即重启'}
-                </Button>
-              </div>
+              <Notice
+                tone="warning"
+                actions={(
+                  <Button type="button" variant="outline" size="sm" disabled={restarting} onClick={onRestart}>
+                    {restarting ? '重启中…' : '立即重启'}
+                  </Button>
+                )}
+              >
+                已保存的 TLS 设置与面板当前监听模式不一致，重启面板进程后生效。
+              </Notice>
             )}
             <div className="space-y-2">
               <Label>TLS 模式</Label>
@@ -967,7 +972,7 @@ export default function Settings() {
                   {(['webhook', 'telegram'] as const).map((ch) => {
                     const r = alertTestResult[ch]
                     return (
-                      <p key={ch} className={r.configured && r.ok ? 'text-green-700' : 'text-destructive'}>
+                      <p key={ch} className={r.configured && r.ok ? 'text-success' : 'text-destructive'}>
                         {ch === 'webhook' ? 'Webhook' : 'Telegram'}：
                         {!r.configured ? '未配置' : r.ok ? '发送成功' : `发送失败${r.error ? `（${r.error}）` : ''}`}
                       </p>
@@ -980,7 +985,7 @@ export default function Settings() {
         </Card>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
-        {message && <p className="text-sm text-green-700">{message}</p>}
+        {message && <p className="text-sm text-success">{message}</p>}
         <Button type="submit" disabled={saving}>
           {saving ? '保存中…' : '保存设置'}
         </Button>
@@ -1028,7 +1033,7 @@ export default function Settings() {
               />
             </div>
             {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
-            {passwordMessage && <p className="text-sm text-green-700">{passwordMessage}</p>}
+            {passwordMessage && <p className="text-sm text-success">{passwordMessage}</p>}
             <Button type="submit" disabled={savingPassword || !currentPassword || !newPassword}>
               {savingPassword ? '修改中…' : '修改密码'}
             </Button>
@@ -1105,6 +1110,6 @@ export default function Settings() {
           </p>
         </CardContent>
       </Card>
-    </div>
+    </Page>
   )
 }

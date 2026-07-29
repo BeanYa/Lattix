@@ -54,7 +54,7 @@ function PanelStateIndicator({ snapshot, compact = false }: {
       role="status"
       title={title}
       className={cn(
-        'flex items-center gap-2 text-xs text-sidebar-foreground/70',
+        'flex items-center gap-2 font-heading text-xs text-sidebar-foreground/70 [font-synthesis:none]',
         compact && 'flex-col gap-1 text-[10px]',
       )}
     >

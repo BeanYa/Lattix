@@ -164,7 +164,7 @@ export default function UpdateOverlay() {
           {failed ? (
             <XCircleIcon className="size-5 text-destructive" />
           ) : done ? (
-            <CheckCircle2Icon className="size-5 text-green-600" />
+            <CheckCircle2Icon className="size-5 text-success" />
           ) : (
             <Loader2Icon className="size-5 animate-spin text-primary" />
           )}
@@ -194,7 +194,7 @@ export default function UpdateOverlay() {
               {STAGES.map((s, i) => (
                 <li key={s.key} className="flex items-center gap-2 text-sm">
                   {i < currentIdx ? (
-                    <CheckCircle2Icon className="size-4 text-green-600" />
+                    <CheckCircle2Icon className="size-4 text-success" />
                   ) : i === currentIdx ? (
                     <Loader2Icon className="size-4 animate-spin text-primary" />
                   ) : (

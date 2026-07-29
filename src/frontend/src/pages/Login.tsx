@@ -3,6 +3,7 @@ import { RouteIcon, ServerIcon, UsersIcon } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 import LattixMark from '@/components/LattixMark'
+import { Notice } from '@/components/PagePrimitives'
 import ThemeToggle from '@/components/ThemeToggle'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -92,7 +93,7 @@ export default function Login() {
                 />
               </div>
               {error && (
-                <p className="rounded-lg border border-destructive bg-destructive/5 p-3 text-sm text-destructive">{error}</p>
+                <Notice tone="danger">{error}</Notice>
               )}
               <Button type="submit" size="lg" className="mt-2 w-full" disabled={submitting}>
                 {submitting ? '登录中…' : '登录'}
