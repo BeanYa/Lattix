@@ -108,11 +108,11 @@ if [[ -x "$XRAY_BIN" ]]; then
     APID=$!
 
     for _ in $(seq 1 30); do
-        online="$(rpc_data GET /api/server/list | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["online"])')"
-        [[ "$online" == "True" ]] && break
+        connection_state="$(rpc_data GET /api/server/list | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["connection_state"])')"
+        [[ "$connection_state" == "online" ]] && break
         sleep 1
     done
-    [[ "$online" == "True" ]]
+    [[ "$connection_state" == "online" ]]
 
     rpc_data POST /api/node/create '{"server_id":1,"protocol":"vless"}' >/dev/null
     for _ in $(seq 1 45); do
