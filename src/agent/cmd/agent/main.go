@@ -162,7 +162,7 @@ func run(panel, token, statePath, settingsPath string, mgr *xray.Manager, st *st
 	defer close(done)
 	sc := &safeConn{conn: conn}
 
-	// Agent 主动发 Ping，Panel 回 Pong；同一组控制帧同时承担保活和延迟测量。
+	// 独立的 liveness Ping 负责保活；latency Ping 只在 active 生命周期采样。
 	conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 
 	// Every authenticated WebSocket starts with an application session open.

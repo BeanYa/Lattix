@@ -64,7 +64,7 @@ Release 文件，避免脚本与程序版本不一致。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
-  bash -s -- panel --mode docker --version v0.0.3 \
+  bash -s -- panel --mode docker \
   --bind 127.0.0.1 --port 8080 \
   --admin-user admin --admin-pass 'change-this-password' \
   --config-dir /opt/lattix-panel \

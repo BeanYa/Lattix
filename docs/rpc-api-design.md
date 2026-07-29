@@ -71,6 +71,8 @@ HTTP 状态码只表达 HTTP、路由、协议解析和进程是否成功完成�
 - JSON 语法损坏或信封结构错误使用 400；
 - body 超限使用 413；
 - Content-Type 不支持使用 415；
+- 登录限流或登录、改密的认证工作负载达到上限时使用 429，并返回 `Retry-After`；
+  body 为 `application/problem+json`，协议码为 `HTTP_429`；
 - panic 表示 RPC 未能完成，使用 500；
 - `/readyz` 未就绪使用 503。
 

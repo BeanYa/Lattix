@@ -124,7 +124,9 @@ Agent 同时看到安装命令 bootstrap 与本地长期 token 时：
 - panel ID 不同：使用安装命令 bootstrap，进入跨面板重新绑定。
 
 `rotate-token` 表示立即撤销：面板递增 epoch、替换数据库 token，并以 WS `4001` 关闭旧连接。
-旧 Agent 进入低频探测，直到管理员运行新安装命令。同面板 rotate 保留 Xray 配置和设置。
+旧 Agent 重连时收到带 `X-Lattix-Protocol` 标记和合法 RPC body 的 HTTP 403 后进入
+`auth_rejected` 并停止自动重试，直到管理员运行新安装命令并重启 Agent。同面板 rotate
+保留 Xray 配置和设置。
 
 跨面板重新绑定必须先由新面板认证成功，然后才备份并移除旧面板管理的 Xray 配置、链配置件、
 旧 settings 和旧身份。认证失败不得清理旧配置。
