@@ -4,8 +4,10 @@ import {
   CalendarClockIcon,
   CircleCheckIcon,
   ExternalLinkIcon,
+  HistoryIcon,
   PlusIcon,
   QrCodeIcon,
+  Settings2Icon,
   Trash2Icon,
   UsersIcon,
 } from 'lucide-react'
@@ -86,6 +88,19 @@ export default function Users() {
   const [assignError, setAssignError] = useState('')
   const [qrText, setQrText] = useState('')
   const loadRequest = useRef(0)
+
+  // 用户订阅设置对话框
+  const [subTarget, setSubTarget] = useState<SubUser | null>(null)
+  const [subTrafficLimit, setSubTrafficLimit] = useState('')
+  const [subResetDay, setSubResetDay] = useState('0')
+  const [subTitleOverride, setSubTitleOverride] = useState('')
+  const [subAnnouncementOverride, setSubAnnouncementOverride] = useState('')
+  const [subSaving, setSubSaving] = useState(false)
+  const [subErr, setSubErr] = useState('')
+  // 流量历史对话框
+  const [historyTarget, setHistoryTarget] = useState<SubUser | null>(null)
+  const [historyData, setHistoryData] = useState<Array<{ period_start: string; up: number; down: number }>>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
 
   const load = useCallback(async (silent = false, signal?: AbortSignal) => {
     const request = ++loadRequest.current
@@ -241,6 +256,50 @@ export default function Users() {
     }
   }
 
+  const onOpenSubSettings = (u: SubUser) => {
+    setSubTarget(u)
+    setSubTrafficLimit(u.traffic_limit > 0 ? String(Math.round(u.traffic_limit / 1073741824)) : '')
+    setSubResetDay(String(u.traffic_reset_day))
+    setSubTitleOverride(u.sub_title)
+    setSubAnnouncementOverride(u.sub_announcement)
+    setSubErr('')
+  }
+
+  const onSaveSubSettings = async () => {
+    if (!subTarget) return
+    setSubErr('')
+    setSubSaving(true)
+    try {
+      const limitGB = Number(subTrafficLimit) || 0
+      await api.updateUserSubSettings({
+        user_id: subTarget.id,
+        traffic_limit: limitGB > 0 ? limitGB * 1073741824 : 0,
+        traffic_reset_day: Number(subResetDay) || 0,
+        sub_title: subTitleOverride,
+        sub_announcement: subAnnouncementOverride,
+      })
+      setSubTarget(null)
+      load()
+    } catch (err) {
+      setSubErr(errorMessage(err))
+    } finally {
+      setSubSaving(false)
+    }
+  }
+
+  const onOpenHistory = async (u: SubUser) => {
+    setHistoryTarget(u)
+    setHistoryLoading(true)
+    setHistoryData([])
+    try {
+      setHistoryData(await api.userTrafficHistory(u.id))
+    } catch {
+      // ignore
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
   return (
     <Page>
       <PageHeader
@@ -331,6 +390,12 @@ export default function Users() {
                   <TableCell className="space-x-2">
                     <Button variant="outline" size="sm" onClick={() => onOpenAssign(u)}>
                       分配链路
+                    </Button>
+                    <Button variant="outline" size="sm" title="订阅设置" onClick={() => onOpenSubSettings(u)}>
+                      <Settings2Icon />
+                    </Button>
+                    <Button variant="outline" size="sm" title="流量历史" onClick={() => onOpenHistory(u)}>
+                      <HistoryIcon />
                     </Button>
                     <Button variant="outline" size="sm" title="修改有效期" onClick={() => onOpenExpiry(u)}>
                       <CalendarClockIcon />
@@ -506,6 +571,102 @@ export default function Users() {
               {assignSaving ? '保存中…' : '保存'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={subTarget !== null} onOpenChange={(next) => !next && setSubTarget(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>订阅设置</DialogTitle>
+            <DialogDescription>
+              「{subTarget?.name}」的流量配额与落地页覆盖。留空则跟随全局设置。
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>流量配额（GB/周期，0=不限）</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={subTrafficLimit}
+                  onChange={e => setSubTrafficLimit(e.target.value)}
+                  placeholder="0"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>重置日（0=创建日，1-28）</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={28}
+                  value={subResetDay}
+                  onChange={e => setSubResetDay(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>落地页标题覆盖</Label>
+              <Input
+                value={subTitleOverride}
+                onChange={e => setSubTitleOverride(e.target.value)}
+                placeholder="留空跟随全局"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>公告覆盖（Markdown）</Label>
+              <textarea
+                className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 font-mono text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                rows={3}
+                value={subAnnouncementOverride}
+                onChange={e => setSubAnnouncementOverride(e.target.value)}
+                placeholder="留空跟随全局"
+              />
+            </div>
+          </div>
+          {subErr && <p className="text-sm text-destructive">{subErr}</p>}
+          <DialogFooter>
+            <Button disabled={subSaving} onClick={onSaveSubSettings}>
+              {subSaving ? '保存中…' : '保存'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={historyTarget !== null} onOpenChange={(next) => !next && setHistoryTarget(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>流量历史</DialogTitle>
+            <DialogDescription>
+              「{historyTarget?.name}」的周期流量归档记录。
+            </DialogDescription>
+          </DialogHeader>
+          {historyLoading ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">加载中…</p>
+          ) : historyData.length === 0 ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">暂无历史记录</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>周期开始</TableHead>
+                  <TableHead>上行</TableHead>
+                  <TableHead>下行</TableHead>
+                  <TableHead>合计</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {historyData.map(h => (
+                  <TableRow key={h.period_start}>
+                    <TableCell className="text-xs">{h.period_start || '-'}</TableCell>
+                    <TableCell className="text-xs">{humanizeBytes(h.up)}</TableCell>
+                    <TableCell className="text-xs">{humanizeBytes(h.down)}</TableCell>
+                    <TableCell className="text-xs">{humanizeBytes(h.up + h.down)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </DialogContent>
       </Dialog>
     </Page>

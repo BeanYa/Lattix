@@ -12,14 +12,18 @@ import (
 // ExpiresAt 为到期时刻（NULL=长期）；Expired 是到期停权标记（sweeper 置位后已扇出 remove_user，§9）。
 // Disabled 是管理员显式停用标记（§16），与 Expired 正交：任一成立即为有效停权态。
 type User struct {
-	ID        int64
-	Name      string
-	UUID      string
-	SubToken  string
-	ExpiresAt *time.Time
-	Expired   bool
-	Disabled  bool
-	CreatedAt time.Time
+	ID              int64
+	Name            string
+	UUID            string
+	SubToken        string
+	ExpiresAt       *time.Time
+	Expired         bool
+	Disabled        bool
+	TrafficLimit    int64  // 流量配额（字节），0=不限
+	TrafficResetDay int    // 每月重置日（day-of-month，0=创建日，max 28）
+	SubTitle        string // 订阅落地页标题覆盖
+	SubAnnouncement string // 订阅公告覆盖（Markdown）
+	CreatedAt       time.Time
 }
 
 // InsertUser 插入一个用户；expiresAt 为 nil 表示长期有效。
@@ -41,7 +45,8 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	var exp sql.NullInt64
 	var expired, disabled int
-	if err := row.Scan(&u.ID, &u.Name, &u.UUID, &u.SubToken, &exp, &expired, &disabled, &u.CreatedAt); err != nil {
+	if err := row.Scan(&u.ID, &u.Name, &u.UUID, &u.SubToken, &exp, &expired, &disabled,
+		&u.TrafficLimit, &u.TrafficResetDay, &u.SubTitle, &u.SubAnnouncement, &u.CreatedAt); err != nil {
 		return nil, err
 	}
 	if exp.Valid {
@@ -53,7 +58,7 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	return &u, nil
 }
 
-const userCols = `id, name, uuid, sub_token, expires_at, expired, disabled, created_at`
+const userCols = `id, name, uuid, sub_token, expires_at, expired, disabled, traffic_limit, traffic_reset_day, sub_title, sub_announcement, created_at`
 
 // ListUsers 列出全部用户（按 id 升序）。
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
@@ -184,6 +189,20 @@ func (s *Store) SetUserExpiry(ctx context.Context, id int64, expiresAt *time.Tim
 		exp, restore, id)
 	if err != nil {
 		return fmt.Errorf("set user expiry: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetUserSubSettings 更新用户级订阅设置（流量配额/重置日/落地页覆盖）。
+func (s *Store) SetUserSubSettings(ctx context.Context, id int64, trafficLimit int64, resetDay int, subTitle, subAnnouncement string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE users SET traffic_limit = ?, traffic_reset_day = ?, sub_title = ?, sub_announcement = ? WHERE id = ?`,
+		trafficLimit, resetDay, subTitle, subAnnouncement, id)
+	if err != nil {
+		return fmt.Errorf("set user sub settings: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound

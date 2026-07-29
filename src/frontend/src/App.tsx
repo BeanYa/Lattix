@@ -16,6 +16,7 @@ const RequestLogs = lazy(() => import('@/pages/RequestLogs'))
 const Servers = lazy(() => import('@/pages/Servers'))
 const Settings = lazy(() => import('@/pages/Settings'))
 const Users = lazy(() => import('@/pages/Users'))
+const Subscription = lazy(() => import('@/pages/Subscription'))
 
 function SuspendedRoute({ children, fullPage = false }: {
   children: ReactElement
@@ -108,6 +109,9 @@ export default function App() {
               <Switch>
                 <Route path="/login">
                   <SuspendedRoute fullPage><Login /></SuspendedRoute>
+                </Route>
+                <Route path="/sub/:token">
+                  <SuspendedRoute fullPage><Subscription /></SuspendedRoute>
                 </Route>
                 <Route><ProtectedRoutes /></Route>
               </Switch>

@@ -66,7 +66,7 @@ wait_clients() {
     echo "FAIL: 节点 $1 用户 $2 未达 $3 状态"; return 1
 }
 
-sub_count() { curl -s "http://$ADDR/sub/$1" | grep -c 'server: ' || true; }
+sub_count() { curl -s "http://$ADDR/sub/$1?format=clash" | grep -c 'server: ' || true; }
 
 echo ">> start backend & agent"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" >"$WORK/backend.log" 2>&1 &

@@ -156,6 +156,11 @@ func (s *Server) registerCoreTasks() {
 		trigger: func(ctx context.Context) taskTrigger { return s.exchangeInspectionSchedule(ctx) },
 		run:     s.exchange.refresh,
 	})
+	s.scheduler.register(scheduledTask{
+		name: "traffic.reset", runOnStart: true, timeout: time.Minute,
+		trigger: func(context.Context) taskTrigger { return intervalTrigger(expiryInterval) },
+		run:     s.sweepTrafficReset,
+	})
 }
 
 // RegisterRoutes 注册面板路由（管理 API 均需登录）。
@@ -250,12 +255,20 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/user/delete",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
 		s.handleDeleteUser)
+	s.registerRPC(mux, http.MethodPost, "/api/user/sub-settings",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
+		s.handleUpdateUserSubSettings)
+	s.registerRPC(mux, http.MethodGet, "/api/user/traffic-history",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"user_id"}},
+		s.handleUserTrafficHistory)
 
 	s.registerRPC(mux, http.MethodGet, "/api/setting/get", read, s.handleGetSettings)
 	s.registerRPC(mux, http.MethodPost, "/api/setting/update", write, s.handleUpdateSettings)
 	s.registerRPC(mux, http.MethodPost, "/api/setting/change-password",
 		rpcRouteOptions{Auth: true, CSRF: true}, s.handleChangePassword)
 	s.registerRPC(mux, http.MethodPost, "/api/setting/test-alerts", write, s.handleTestAlerts)
+	s.registerRPC(mux, http.MethodGet, "/api/setting/sub", read, s.handleGetSubSettings)
+	s.registerRPC(mux, http.MethodPost, "/api/setting/sub", write, s.handleUpdateSubSettings)
 
 	s.registerRPC(mux, http.MethodPost, "/api/panel/restart", write, s.handleRestart)
 	s.registerRPC(mux, http.MethodGet, "/api/panel/state", read, s.handlePanelState)

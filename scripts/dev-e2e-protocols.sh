@@ -143,7 +143,7 @@ U2_COUNT="$(grep -c "$UUID2" "$XRAY_CONFIG" || true)"
 echo "   socks/http accounts 含新用户 OK"
 
 echo ">> 订阅校验"
-SUB="$(curl -s "http://$ADDR/sub/$SUB_TOKEN")"
+SUB="$(curl -s "http://$ADDR/sub/$SUB_TOKEN?format=clash")"
 check() { grep -q "$1" <<<"$SUB" || { echo "FAIL: 订阅缺少 $1"; echo "$SUB"; exit 1; }; }
 check "type: vless"
 check "type: vmess"

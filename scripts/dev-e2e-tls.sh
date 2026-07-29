@@ -91,7 +91,7 @@ SUB_TOKEN="$(db "SELECT sub_token FROM users LIMIT 1")"
 UID_ROW="$(db "SELECT id FROM users LIMIT 1")"
 api PUT "/api/users/$UID_ROW/nodes" "{\"node_ids\":[$ID]}" >/dev/null
 sleep 2
-curl -s --cacert "$WORK/ca.pem" "https://$ADDR/sub/$SUB_TOKEN" | grep -q "type: vless" \
+curl -s --cacert "$WORK/ca.pem" "https://$ADDR/sub/$SUB_TOKEN?format=clash" | grep -q "type: vless" \
     && echo "OK: HTTPS 订阅可取" \
     || { echo "FAIL: HTTPS 订阅异常"; exit 1; }
 

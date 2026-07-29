@@ -100,8 +100,8 @@ wait_active "$N1"; wait_active "$N2"
 api PUT "/api/users/1/nodes" "{\"node_ids\":[$N1,$N2]}" >/dev/null
 sleep 1
 
-echo ">> /sub/{token}/links 校验"
-LINKS="$(curl -s "http://$ADDR/sub/$TOK/links" | python3 -c 'import base64,sys;print(base64.b64decode(sys.stdin.read()).decode())')"
+echo ">> /sub/{token}?format=links 校验"
+LINKS="$(curl -s "http://$ADDR/sub/$TOK?format=links" | python3 -c 'import base64,sys;print(base64.b64decode(sys.stdin.read()).decode())')"
 L1="$(grep -c '^vless://' <<<"$LINKS")"
 [[ "$L1" == "2" ]] && echo "OK: 2 条 vless 链接" || { echo "FAIL: 链接数 $L1 ≠ 2"; echo "$LINKS"; exit 1; }
 grep -q 'security=reality' <<<"$LINKS" && grep -q 'pbk=' <<<"$LINKS" && grep -q 'sid=' <<<"$LINKS" \
@@ -113,35 +113,30 @@ grep -q 'encryption=mlkem768x25519plus.' <<<"$LINKS" \
     && echo "OK: 加密节点 encryption 客户端字符串" || { echo "FAIL: 缺 encryption 字符串"; echo "$LINKS"; exit 1; }
 grep -q '#lk01-vless-' <<<"$LINKS" && echo "OK: 节点命名 fragment" || { echo "FAIL: 命名异常"; echo "$LINKS"; exit 1; }
 
-echo ">> /sub/{token}（mihomo YAML）回归"
-SUB="$(curl -s "http://$ADDR/sub/$TOK")"
+echo ">> /sub/{token}?format=clash（mihomo YAML）回归"
+SUB="$(curl -s "http://$ADDR/sub/$TOK?format=clash")"
 [[ "$(grep -c 'type: vless' <<<"$SUB")" == "2" ]] \
     && echo "OK: YAML 订阅正常" || { echo "FAIL: YAML 订阅异常"; echo "$SUB"; exit 1; }
 
 echo ">> subscription-userinfo / profile-update-interval 响应头（§9）"
-db "INSERT INTO traffic (node_id, user_uuid, up, down) VALUES (0, '$UUID1', 1234, 5678)" >/dev/null
-HDRS="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK")"
+db "INSERT INTO traffic (node_id, user_uuid, up, down, period_start) VALUES (0, '$UUID1', 1234, 5678, '')" >/dev/null
+HDRS="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK?format=clash")"
 grep -qi '^subscription-userinfo: upload=1234; download=5678' <<<"$HDRS" \
     && echo "OK: YAML 端点 userinfo 头（无 expire）" || { echo "FAIL: userinfo 头异常"; echo "$HDRS"; exit 1; }
 grep -qi '^profile-update-interval: 24' <<<"$HDRS" \
     && echo "OK: profile-update-interval" || { echo "FAIL: 缺 profile-update-interval"; exit 1; }
-HDRS_L="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK/links")"
+HDRS_L="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK?format=links")"
 grep -qi '^subscription-userinfo: upload=1234; download=5678' <<<"$HDRS_L" \
     && grep -qi '^profile-update-interval: 24' <<<"$HDRS_L" \
     && echo "OK: links 端点同样带 userinfo 头" || { echo "FAIL: links userinfo 头异常"; echo "$HDRS_L"; exit 1; }
 
-echo ">> 订阅落地页 Accept 分流（§9）"
-LAND="$(curl -s -H 'Accept: text/html,application/xhtml+xml' "http://$ADDR/sub/$TOK")"
-for kw in 'Lattix 订阅' '已用流量' '长期' "/sub/$TOK" "/sub/$TOK/links" 'clash://install-config?url=' 'mihomo://install-config?url='; do
-    grep -qF "$kw" <<<"$LAND" || { echo "FAIL: 落地页缺少 $kw"; exit 1; }
-done
-grep -q 'qrcode' <<<"$LAND" && echo "OK: 落地页内容齐全（含内嵌二维码库）" || { echo "FAIL: 落地页缺二维码"; exit 1; }
+echo ">> 订阅落地页 SPA 分流（§9）"
+LAND="$(curl -s -H 'Accept: text/html,application/xhtml+xml' -H 'User-Agent: Mozilla/5.0' "http://$ADDR/sub/$TOK")"
+grep -q '<div id="root"' <<<"$LAND" \
+    && echo "OK: 浏览器 UA 返回 SPA index.html" || { echo "FAIL: 落地页未返回 SPA"; echo "$LAND" | head -5; exit 1; }
 grep -q 'type: vless' <<<"$LAND" && { echo "FAIL: 落地页不应是 YAML"; exit 1; }
-L2="$(curl -s -H 'Accept: text/html' "http://$ADDR/sub/$TOK/links" | python3 -c 'import base64,sys;print(base64.b64decode(sys.stdin.read()).decode())')"
-[[ "$(grep -c '^vless://' <<<"$L2")" == "2" ]] \
-    && echo "OK: /links 不做 Accept 分流" || { echo "FAIL: /links 被分流成落地页"; echo "$L2"; exit 1; }
-CODE="$(curl -s -o /dev/null -w '%{http_code}' -H 'Accept: text/html' "http://$ADDR/sub/deadbeef")"
-[[ "$CODE" == "404" ]] && echo "OK: 无效 token 落地页 404" || { echo "FAIL: 无效 token 状态码 $CODE"; exit 1; }
+CODE="$(curl -s -o /dev/null -w '%{http_code}' -H 'Accept: text/html' -H 'User-Agent: Mozilla/5.0' "http://$ADDR/sub/deadbeef")"
+[[ "$CODE" == "404" ]] && echo "OK: 无效 token 404" || { echo "FAIL: 无效 token 状态码 $CODE"; exit 1; }
 
 echo ">> 有效期：创建在过去 → 400"
 CODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -H 'Content-Type: application/json' \
@@ -157,7 +152,7 @@ TOK2="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["sub_token"])'
 EXPIRE2="$(python3 -c 'import json,sys,datetime;print(int(datetime.datetime.fromisoformat(json.loads(sys.argv[1])["expires_at"].replace("Z","+00:00")).timestamp()))' "$U2")"
 api PUT "/api/users/$UID2/nodes" "{\"node_ids\":[$N1]}" >/dev/null
 wait_clients "$N1" "$UUID2" present && echo "OK: 到期前用户已下发"
-[[ "$(curl -s "http://$ADDR/sub/$TOK2" | grep -c 'type: vless')" == "1" ]] \
+[[ "$(curl -s "http://$ADDR/sub/$TOK2?format=clash" | grep -c 'type: vless')" == "1" ]] \
     && echo "OK: 到期前订阅含 1 节点" || { echo "FAIL: 到期前订阅异常"; exit 1; }
 for _ in $(seq 1 30); do
     [[ "$(db "SELECT expired FROM users WHERE id=$UID2")" == "1" ]] && break
@@ -166,15 +161,15 @@ done
 [[ "$(db "SELECT expired FROM users WHERE id=$UID2")" == "1" ]] \
     && echo "OK: sweeper 已置 expired=1" || { echo "FAIL: sweeper 未停权"; exit 1; }
 wait_clients "$N1" "$UUID2" absent && echo "OK: 到期扇出 remove_user 生效"
-[[ -z "$(curl -s "http://$ADDR/sub/$TOK2" | grep 'type: vless')" ]] \
+[[ -z "$(curl -s "http://$ADDR/sub/$TOK2?format=clash" | grep 'type: vless')" ]] \
     && echo "OK: 过期用户 YAML proxies 为空" || { echo "FAIL: 过期订阅应为空"; exit 1; }
-[[ -z "$(curl -s "http://$ADDR/sub/$TOK2/links")" ]] \
+[[ -z "$(curl -s "http://$ADDR/sub/$TOK2?format=links")" ]] \
     && echo "OK: 过期用户 links 为空" || { echo "FAIL: 过期 links 应为空"; exit 1; }
-HDRS2="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK2")"
+HDRS2="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK2?format=clash")"
 grep -qi "^subscription-userinfo: upload=0; download=0; expire=$EXPIRE2" <<<"$HDRS2" \
     && echo "OK: 过期用户 userinfo 头保留 expire" || { echo "FAIL: 过期 userinfo 头异常"; echo "$HDRS2"; exit 1; }
-LAND2="$(curl -s -H 'Accept: text/html' "http://$ADDR/sub/$TOK2")"
-grep -q '已到期' <<<"$LAND2" && echo "OK: 落地页显示已到期" || { echo "FAIL: 落地页缺已到期"; exit 1; }
+LAND2="$(curl -s -H 'Accept: text/html' -H 'User-Agent: Mozilla/5.0' "http://$ADDR/sub/$TOK2")"
+grep -q '<div id="root"' <<<"$LAND2" && echo "OK: 过期用户落地页返回 SPA" || { echo "FAIL: 过期用户落地页异常"; exit 1; }
 
 echo ">> 延长有效期：expired 1→0 并扇出 add_user 恢复"
 FUTURE1H="$(python3 -c 'import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
@@ -182,14 +177,14 @@ api PATCH "/api/users/$UID2" "{\"expires_at\":\"$FUTURE1H\"}" >/dev/null
 [[ "$(db "SELECT expired FROM users WHERE id=$UID2")" == "0" ]] \
     && echo "OK: expired 已清除" || { echo "FAIL: expired 未清除"; exit 1; }
 wait_clients "$N1" "$UUID2" present && echo "OK: 恢复扇出 add_user 生效"
-[[ "$(curl -s "http://$ADDR/sub/$TOK2" | grep -c 'type: vless')" == "1" ]] \
+[[ "$(curl -s "http://$ADDR/sub/$TOK2?format=clash" | grep -c 'type: vless')" == "1" ]] \
     && echo "OK: 恢复后订阅含 1 节点" || { echo "FAIL: 恢复后订阅异常"; exit 1; }
 
 echo ">> 清除有效期（PATCH null → 长期）"
 api PATCH "/api/users/$UID2" '{"expires_at":null}' >/dev/null
 [[ "$(db "SELECT expires_at FROM users WHERE id=$UID2")" == "" ]] \
     && echo "OK: expires_at 已清除" || { echo "FAIL: expires_at 未清除"; exit 1; }
-HDRS3="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK2" | tr -d '\r')"
+HDRS3="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK2?format=clash" | tr -d '\r')"
 grep -qi '^subscription-userinfo: upload=0; download=0$' <<<"$HDRS3" \
     && ! grep -qi 'expire=' <<<"$HDRS3" \
     && echo "OK: 长期用户 userinfo 头无 expire" || { echo "FAIL: 清除后 userinfo 头异常"; echo "$HDRS3"; exit 1; }
@@ -205,15 +200,15 @@ api GET /api/users | grep -q '"disabled":true' \
     && echo "OK: 用户列表 DTO 带 disabled" || { echo "FAIL: DTO 缺 disabled"; exit 1; }
 wait_clients "$N1" "$UUID1" absent && wait_clients "$N2" "$UUID1" absent \
     && echo "OK: 停用扇出 remove_user 生效（两节点）"
-[[ -z "$(curl -s "http://$ADDR/sub/$TOK" | grep 'type: vless')" ]] \
+[[ -z "$(curl -s "http://$ADDR/sub/$TOK?format=clash" | grep 'type: vless')" ]] \
     && echo "OK: 停用用户 YAML proxies 为空" || { echo "FAIL: 停用订阅应为空"; exit 1; }
-[[ -z "$(curl -s "http://$ADDR/sub/$TOK/links")" ]] \
+[[ -z "$(curl -s "http://$ADDR/sub/$TOK?format=links")" ]] \
     && echo "OK: 停用用户 links 为空" || { echo "FAIL: 停用 links 应为空"; exit 1; }
-HDRS4="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK")"
+HDRS4="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK?format=clash")"
 grep -qi '^subscription-userinfo: upload=1234; download=5678' <<<"$HDRS4" \
     && echo "OK: 停用用户 userinfo 头照常" || { echo "FAIL: 停用 userinfo 头异常"; echo "$HDRS4"; exit 1; }
-LAND3="$(curl -s -H 'Accept: text/html' "http://$ADDR/sub/$TOK")"
-grep -q '已停用' <<<"$LAND3" && echo "OK: 落地页显示已停用" || { echo "FAIL: 落地页缺已停用"; exit 1; }
+LAND3="$(curl -s -H 'Accept: text/html' -H 'User-Agent: Mozilla/5.0' "http://$ADDR/sub/$TOK")"
+grep -q '<div id="root"' <<<"$LAND3" && echo "OK: 停用用户落地页返回 SPA" || { echo "FAIL: 停用用户落地页异常"; exit 1; }
 
 echo ">> PATCH 过去 expires_at → 400（借到期立即停权已由 disable 开关承担）"
 CODE="$(curl -s -o /dev/null -w '%{http_code}' -b "$JAR" -H 'Content-Type: application/json' \
@@ -226,7 +221,7 @@ api PATCH /api/users/1 '{"disabled":false}' >/dev/null
     && echo "OK: disabled 已清除" || { echo "FAIL: disabled 未清除"; exit 1; }
 wait_clients "$N1" "$UUID1" present && wait_clients "$N2" "$UUID1" present \
     && echo "OK: 启用扇出 add_user 生效（两节点）"
-[[ "$(curl -s "http://$ADDR/sub/$TOK" | grep -c 'type: vless')" == "2" ]] \
+[[ "$(curl -s "http://$ADDR/sub/$TOK?format=clash" | grep -c 'type: vless')" == "2" ]] \
     && echo "OK: 启用后订阅含 2 节点" || { echo "FAIL: 启用后订阅异常"; exit 1; }
 
 echo ">> 复合场景：disabled + expired 不重复扇出（有效停权态跃迁才扇出）"
@@ -258,7 +253,7 @@ api PATCH "/api/users/$UID2" '{"expires_at":null}' >/dev/null
 [[ "$(db "SELECT expired FROM users WHERE id=$UID2")" == "0" ]] \
     || { echo "FAIL: expired 未清除"; exit 1; }
 wait_clients "$N1" "$UUID2" present && echo "OK: 双重解除后扇出 add_user 恢复"
-[[ "$(curl -s "http://$ADDR/sub/$TOK2" | grep -c 'type: vless')" == "1" ]] \
+[[ "$(curl -s "http://$ADDR/sub/$TOK2?format=clash" | grep -c 'type: vless')" == "1" ]] \
     && echo "OK: 恢复后订阅含 1 节点" || { echo "FAIL: 恢复后订阅异常"; exit 1; }
 
 echo "E2E-LINKS PASS"
