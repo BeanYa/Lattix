@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "source": {
+    "repository": "https://github.com/ibsgss/TcpQuality",
+    "commit": "a1423e634e81b71ac468150265804f3efdc59a78",
+    "note": "Self-maintained direct public university domains replacing private helper targets; one target per mainland provincial division"
+  },
+  "targets": [
+    {"province":"北京","label":"北京大学","host":"www.pku.edu.cn"},
+    {"province":"天津","label":"天津大学","host":"www.tju.edu.cn"},
+    {"province":"河北","label":"河北大学","host":"www.hbu.edu.cn"},
+    {"province":"山西","label":"山西大学","host":"www.sxu.edu.cn"},
+    {"province":"内蒙古","label":"内蒙古大学","host":"www.imu.edu.cn"},
+    {"province":"辽宁","label":"大连理工大学","host":"www.dlut.edu.cn"},
+    {"province":"吉林","label":"吉林大学","host":"www.jlu.edu.cn"},
+    {"province":"黑龙江","label":"哈尔滨工业大学","host":"www.hit.edu.cn"},
+    {"province":"上海","label":"上海交通大学","host":"www.sjtu.edu.cn"},
+    {"province":"江苏","label":"南京大学","host":"www.nju.edu.cn"},
+    {"province":"浙江","label":"浙江大学","host":"www.zju.edu.cn"},
+    {"province":"安徽","label":"中国科学技术大学","host":"www.ustc.edu.cn"},
+    {"province":"福建","label":"厦门大学","host":"www.xmu.edu.cn"},
+    {"province":"江西","label":"南昌大学","host":"www.ncu.edu.cn"},
+    {"province":"山东","label":"山东大学","host":"www.sdu.edu.cn"},
+    {"province":"河南","label":"郑州大学","host":"www.zzu.edu.cn"},
+    {"province":"湖北","label":"武汉大学","host":"www.whu.edu.cn"},
+    {"province":"湖南","label":"湖南大学","host":"www.hnu.edu.cn"},
+    {"province":"广东","label":"中山大学","host":"www.sysu.edu.cn"},
+    {"province":"广西","label":"广西师范大学","host":"www.gxnu.edu.cn"},
+    {"province":"海南","label":"海南大学","host":"www.hainanu.edu.cn"},
+    {"province":"重庆","label":"重庆大学","host":"www.cqu.edu.cn"},
+    {"province":"四川","label":"四川大学","host":"www.scu.edu.cn"},
+    {"province":"贵州","label":"贵州大学","host":"www.gzu.edu.cn"},
+    {"province":"云南","label":"云南大学","host":"www.ynu.edu.cn"},
+    {"province":"西藏","label":"西藏大学","host":"www.utibet.edu.cn"},
+    {"province":"陕西","label":"西安交通大学","host":"www.xjtu.edu.cn"},
+    {"province":"甘肃","label":"兰州大学","host":"www.lzu.edu.cn"},
+    {"province":"青海","label":"青海大学","host":"www.qhu.edu.cn"},
+    {"province":"宁夏","label":"宁夏大学","host":"www.nxu.edu.cn"},
+    {"province":"新疆","label":"新疆大学","host":"www.xju.edu.cn"}
+  ]
+}

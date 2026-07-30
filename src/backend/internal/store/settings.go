@@ -37,6 +37,7 @@ const (
 	SettingReportingCurrency     = "reporting_currency"
 	SettingExchangeRateCache     = "exchange_rate_cache"
 	SettingCDNNodeCatalog        = "cdn_node_catalog"
+	SettingCDNNodeCatalogStatus  = "cdn_node_catalog_status"
 	SettingTrafficTimezone       = "traffic_timezone"
 	// 订阅系统全局配置（§9 落地页/多格式输出）。
 	SettingSubTitle           = "sub_title"                 // 订阅页默认标题

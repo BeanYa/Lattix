@@ -153,6 +153,111 @@ export interface Server {
   created_at: string
 }
 
+export type ServerTestCategory =
+  | 'ip_quality'
+  | 'tcp_ipv4'
+  | 'tcp_ipv6'
+  | 'large_packet_ipv4'
+  | 'cernet_ipv4'
+  | 'cernet2_ipv6'
+  | 'return_route_ipv4'
+  | 'return_route_ipv6'
+  | 'international'
+  | 'speed'
+
+export type ServerTestTaskStatus =
+  | 'queued'
+  | 'accepted'
+  | 'running'
+  | 'succeeded'
+  | 'completed_with_errors'
+  | 'failed'
+
+export interface ServerTestCategoryProgress {
+  category: ServerTestCategory
+  status: string
+  completed: number
+  total: number
+  message?: string
+}
+
+export interface ServerTestProgress {
+  schema_version: number
+  task_id: string
+  generation: number
+  sequence: number
+  status: ServerTestTaskStatus
+  phase: string
+  completed: number
+  total: number
+  message?: string
+  categories: ServerTestCategoryProgress[]
+}
+
+export interface ServerTestEnvironment {
+  probe_method: string
+  degraded: boolean
+  degraded_reason?: string
+  sandbox: string
+  sandbox_reason?: string
+  privileges: string
+}
+
+export interface ServerTestCategoryResult {
+  category: ServerTestCategory
+  status: string
+  summary?: Record<string, unknown>
+  items?: Array<Record<string, unknown>>
+  error_code?: string
+  error_message?: string
+}
+
+export interface ServerTestReport {
+  schema_version: number
+  task_id: string
+  generation: number
+  status: ServerTestTaskStatus
+  started_at: string
+  completed_at: string
+  agent_version: string
+  catalog_version: string
+  environment: ServerTestEnvironment
+  categories: ServerTestCategoryResult[]
+  error_code?: string
+  error_message?: string
+}
+
+export interface ServerTestTask {
+  server_id: number
+  task_id: string
+  generation: number
+  status: ServerTestTaskStatus
+  categories: ServerTestCategory[]
+  catalog_version: string
+  catalog_hashes: Record<string, string>
+  progress?: ServerTestProgress
+  result?: ServerTestReport
+  error_code?: string
+  error_message?: string
+  agent_version?: string
+  created_at: string
+  accepted_at?: string
+  started_at?: string
+  completed_at?: string
+  updated_at: string
+}
+
+export interface ServerTestCatalogStatus {
+  available: boolean
+  refreshing: boolean
+  source_url: string
+  fetched_at?: string
+  catalog_sha256?: string
+  last_attempt_at: string
+  last_error?: string
+  last_error_at?: string
+}
+
 // 命令日志条目（GET /api/server/list-commands，§4）。
 export type CommandStatus = components['schemas']['CommandStatus']
 

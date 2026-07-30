@@ -3,6 +3,8 @@ package cdncatalog
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +15,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"text/scanner"
 	"time"
 	"unicode"
@@ -22,62 +23,78 @@ import (
 const (
 	DefaultSourceURL = "https://lf3-ips.zstaticcdn.com/nodes_data.js"
 	SchemaVersion    = 1
-	StatusNormal     = "Normal"
-	StatusFailed     = "Failed"
+	ParserVersion    = "zstatic-node-data-v2"
 
 	maxSourceBytes = 2 << 20
-	lookupWorkers  = 16
 	targetSuffix   = ".ip.zstaticcdn.com"
+	provincePort   = 80
 	cityPort       = 443
-	dnsCheckDelay  = 250 * time.Millisecond
 )
 
-var catalogNotes = []string{
-	"host/port 是检测脚本使用的公开节点入口。",
-	"target 是维护侧真实节点，用于同步 DNS 或排查。",
-	"Cloudflare DNS 记录必须 DNS only，不能开启代理。",
+type SourceMetadata struct {
+	URL           string    `json:"url"`
+	FetchedAt     time.Time `json:"fetched_at"`
+	ParserVersion string    `json:"parser_version"`
+	SourceSHA256  string    `json:"source_sha256"`
+	CatalogSHA256 string    `json:"catalog_sha256"`
 }
 
-type Resolver interface {
-	LookupIP(context.Context, string, string) ([]net.IP, error)
+type Endpoint struct {
+	Label         string  `json:"label"`
+	Host          string  `json:"host"`
+	Port          int     `json:"port"`
+	AddressFamily string  `json:"address_family"`
+	Backup        *Backup `json:"backup,omitempty"`
 }
 
 type Backup struct {
-	Port   int    `json:"port"`
-	Target string `json:"target"`
-	IP     string `json:"ip"`
-	Status string `json:"status"`
+	Label         string `json:"label"`
+	Host          string `json:"host"`
+	Port          int    `json:"port"`
+	AddressFamily string `json:"address_family"`
 }
 
-type Node struct {
-	Type         string  `json:"type"`
-	Province     string  `json:"province"`
-	ProvinceCode string  `json:"provinceCode"`
-	ISP          string  `json:"isp"`
-	ISPCode      string  `json:"ispCode"`
-	IPVersion    int     `json:"ipVersion"`
-	Port         int     `json:"port"`
-	Target       string  `json:"target"`
-	Backup       *Backup `json:"backup,omitempty"`
-	IP           string  `json:"ip"`
-	Status       string  `json:"status"`
+type ProtocolEndpoints struct {
+	IPv4      Endpoint `json:"ipv4"`
+	IPv6      Endpoint `json:"ipv6"`
+	DualStack Endpoint `json:"dualstack"`
+}
+
+type CarrierEndpoints struct {
+	Telecom ProtocolEndpoints `json:"telecom"`
+	Unicom  ProtocolEndpoints `json:"unicom"`
+	Mobile  ProtocolEndpoints `json:"mobile"`
+}
+
+type Province struct {
+	Name     string           `json:"name"`
+	Code     string           `json:"code"`
+	Carriers CarrierEndpoints `json:"carriers"`
+}
+
+type CityEndpoint struct {
+	Province     string `json:"province"`
+	ProvinceCode string `json:"province_code"`
+	City         string `json:"city"`
+	Carrier      string `json:"carrier"`
+	CarrierCode  string `json:"carrier_code"`
+	Label        string `json:"label"`
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+}
+
+type Counts struct {
+	Provinces       int `json:"provinces"`
+	ProvinceTargets int `json:"province_targets"`
+	CityIPv4Targets int `json:"city_ipv4_targets"`
 }
 
 type Document struct {
-	Version     int       `json:"version"`
-	GeneratedAt time.Time `json:"generatedAt"`
-	Notes       []string  `json:"notes"`
-	CDN         []Node    `json:"cdn"`
-}
-
-type DNSMismatch struct {
-	Role        string   `json:"role"`
-	Province    string   `json:"province"`
-	ISP         string   `json:"isp"`
-	Target      string   `json:"target"`
-	ExpectedIP  string   `json:"expectedIp"`
-	ResolvedIPs []string `json:"resolvedIps"`
-	Error       string   `json:"error,omitempty"`
+	Version   int            `json:"version"`
+	Source    SourceMetadata `json:"source"`
+	Counts    Counts         `json:"counts"`
+	Provinces []Province     `json:"provinces"`
+	Cities    []CityEndpoint `json:"cities"`
 }
 
 type sourceDocument struct {
@@ -103,26 +120,31 @@ var carriers = []carrier{
 	{Name: "移动", Code: "cm", Key: "mobile"},
 }
 
-// Fetch downloads Zstatic CDN's public node catalog and turns it into the
-// stable document consumed by panel inspections. Remote JavaScript is parsed
-// as a restricted object literal and is never executed.
-func Fetch(
-	ctx context.Context,
-	client *http.Client,
-	resolver Resolver,
-	sourceURL string,
-	now time.Time,
-) (Document, error) {
+var cityNames = map[string]string{
+	"ankang": "安康", "changchun": "长春", "changsha": "长沙", "chengdu": "成都",
+	"chenzhou": "郴州", "dongguan": "东莞", "fuzhou": "福州", "guangzhou": "广州",
+	"guiyang": "贵阳", "haikou": "海口", "hangzhou": "杭州", "hefei": "合肥",
+	"huaihua": "怀化", "huhehaote": "呼和浩特", "jieyang": "揭阳", "jinan": "济南",
+	"langfang": "廊坊", "lanzhou": "兰州", "lasa": "拉萨", "liaoyang": "辽阳",
+	"luoyang": "洛阳", "nanjing": "南京", "nanping": "南平", "ningbo": "宁波",
+	"ningde": "宁德", "qingdao": "青岛", "qingyang": "庆阳", "shenzhen": "深圳",
+	"suzhou": "苏州", "taiyuan": "太原", "taizhou": "台州", "weinan": "渭南",
+	"wuhan": "武汉", "wuhu": "芜湖", "wulumuqi": "乌鲁木齐", "wuxi": "无锡",
+	"xiamen": "厦门", "xian": "西安", "xianyang": "咸阳", "xiangyang": "襄阳",
+	"xiaogan": "孝感", "xiongan": "雄安", "yichang": "宜昌", "yongzhou": "永州",
+	"zhengzhou": "郑州", "zhenjiang": "镇江", "zhongwei": "中卫", "zhuzhou": "株洲",
+}
+
+// Fetch downloads the public Zstatic node data, parses it as a restricted
+// JavaScript object literal, and atomically returns a complete catalog. It does
+// not resolve or connect to any node; those checks belong to the Agent run.
+func Fetch(ctx context.Context, client *http.Client, sourceURL string, now time.Time) (Document, error) {
 	if client == nil {
 		return Document{}, errors.New("cdn catalog HTTP client is nil")
-	}
-	if resolver == nil {
-		return Document{}, errors.New("cdn catalog DNS resolver is nil")
 	}
 	if strings.TrimSpace(sourceURL) == "" {
 		return Document{}, errors.New("cdn catalog source URL is empty")
 	}
-
 	requestURL, err := url.Parse(sourceURL)
 	if err != nil {
 		return Document{}, fmt.Errorf("parse CDN catalog source URL: %w", err)
@@ -156,166 +178,177 @@ func Fetch(
 	if len(body) > maxSourceBytes {
 		return Document{}, fmt.Errorf("CDN catalog exceeds %d bytes", maxSourceBytes)
 	}
-
 	source, err := parseSource(body)
 	if err != nil {
 		return Document{}, fmt.Errorf("parse CDN catalog: %w", err)
 	}
-	nodes, targets, err := buildNodes(source)
+	document, err := buildDocument(source)
 	if err != nil {
 		return Document{}, err
 	}
-	ips, err := resolveTargets(ctx, resolver, targets)
-	if err != nil {
-		return Document{}, err
+	sourceSum := sha256.Sum256(body)
+	document.Version = SchemaVersion
+	document.Source = SourceMetadata{
+		URL: sourceURL, FetchedAt: now.UTC(), ParserVersion: ParserVersion,
+		SourceSHA256: hex.EncodeToString(sourceSum[:]),
 	}
-	for i := range nodes {
-		nodes[i].IP = ips[nodes[i].Target]
-		if nodes[i].Backup != nil {
-			nodes[i].Backup.IP = ips[nodes[i].Backup.Target]
+	normalized, err := json.Marshal(struct {
+		Version   int            `json:"version"`
+		Counts    Counts         `json:"counts"`
+		Provinces []Province     `json:"provinces"`
+		Cities    []CityEndpoint `json:"cities"`
+	}{document.Version, document.Counts, document.Provinces, document.Cities})
+	if err != nil {
+		return Document{}, fmt.Errorf("hash CDN catalog: %w", err)
+	}
+	catalogSum := sha256.Sum256(normalized)
+	document.Source.CatalogSHA256 = hex.EncodeToString(catalogSum[:])
+	return document, nil
+}
+
+func buildDocument(source sourceDocument) (Document, error) {
+	if len(source.ProvinceBaseData) == 0 {
+		return Document{}, errors.New("CDN catalog contains no province nodes")
+	}
+	provinceNames := make(map[string]string, len(source.ProvinceBaseData))
+	for _, item := range source.ProvinceBaseData {
+		if strings.TrimSpace(item.Province) == "" {
+			return Document{}, errors.New("CDN catalog contains a province without a name")
+		}
+		for _, carrier := range carriers {
+			_, _, code, err := parseProvinceEndpoint(item.Carriers[carrier.Key], carrier.Code)
+			if err != nil {
+				return Document{}, fmt.Errorf("%s%s: %w", item.Province, carrier.Name, err)
+			}
+			if previous := provinceNames[code]; previous != "" && previous != item.Province {
+				return Document{}, fmt.Errorf("province code %s is used by %s and %s", code, previous, item.Province)
+			}
+			provinceNames[code] = item.Province
 		}
 	}
+
+	cities, backups, err := buildCities(source, provinceNames)
+	if err != nil {
+		return Document{}, err
+	}
+	provinces := make([]Province, 0, len(source.ProvinceBaseData))
+	for _, item := range source.ProvinceBaseData {
+		var province Province
+		province.Name = item.Province
+		for _, carrier := range carriers {
+			host, _, code, err := parseProvinceEndpoint(item.Carriers[carrier.Key], carrier.Code)
+			if err != nil {
+				return Document{}, fmt.Errorf("%s%s: %w", item.Province, carrier.Name, err)
+			}
+			province.Code = code
+			endpoints := buildProtocolEndpoints(item.Province, carrier, host, backups[code+":"+carrier.Code])
+			switch carrier.Key {
+			case "telecom":
+				province.Carriers.Telecom = endpoints
+			case "unicom":
+				province.Carriers.Unicom = endpoints
+			case "mobile":
+				province.Carriers.Mobile = endpoints
+			}
+		}
+		provinces = append(provinces, province)
+	}
 	return Document{
-		Version: SchemaVersion, GeneratedAt: now.UTC(),
-		Notes: append([]string(nil), catalogNotes...), CDN: nodes,
+		Counts:    Counts{Provinces: len(provinces), ProvinceTargets: len(provinces) * 9, CityIPv4Targets: len(cities)},
+		Provinces: provinces, Cities: cities,
 	}, nil
 }
 
-// CheckDNS independently and sequentially resolves every stored primary and
-// backup target. It only updates Status; stored targets, IPs and timestamps are
-// left unchanged. Per-target DNS failures are returned as mismatches rather
-// than aborting the remaining low-rate checks.
-func CheckDNS(ctx context.Context, resolver Resolver, document *Document) ([]DNSMismatch, error) {
-	return checkDNS(ctx, resolver, document, dnsCheckDelay)
+func buildProtocolEndpoints(province string, carrier carrier, ipv4Host string, city *CityEndpoint) ProtocolEndpoints {
+	baseLabel := province + carrier.Name
+	ipv6Host := strings.Replace(ipv4Host, "-v4"+targetSuffix, "-v6"+targetSuffix, 1)
+	dualHost := strings.Replace(ipv4Host, "-v4"+targetSuffix, "-dualstack"+targetSuffix, 1)
+	ipv4 := Endpoint{Label: baseLabel, Host: ipv4Host, Port: provincePort, AddressFamily: "ipv4"}
+	if city != nil {
+		ipv4.Backup = &Backup{Label: city.Label, Host: city.Host, Port: city.Port, AddressFamily: "ipv4"}
+	}
+	return ProtocolEndpoints{
+		IPv4: ipv4,
+		IPv6: Endpoint{
+			Label: baseLabel, Host: ipv6Host, Port: provincePort, AddressFamily: "ipv6",
+			Backup: &Backup{Label: baseLabel, Host: dualHost, Port: provincePort, AddressFamily: "ipv6"},
+		},
+		DualStack: Endpoint{Label: baseLabel, Host: dualHost, Port: provincePort, AddressFamily: "dualstack"},
+	}
 }
 
-func checkDNS(ctx context.Context, resolver Resolver, document *Document, delay time.Duration) ([]DNSMismatch, error) {
-	if resolver == nil {
-		return nil, errors.New("cdn catalog DNS resolver is nil")
-	}
-	if document == nil {
-		return nil, errors.New("CDN catalog document is nil")
-	}
-	if document.Version != SchemaVersion {
-		return nil, fmt.Errorf("unsupported CDN catalog version %d", document.Version)
-	}
-	if len(document.CDN) == 0 {
-		return nil, errors.New("CDN catalog contains no nodes")
-	}
-
-	targetSet := make(map[string]struct{})
-	for _, node := range document.CDN {
-		if ip := net.ParseIP(node.IP); ip == nil || ip.To4() == nil {
-			return nil, fmt.Errorf("invalid stored IPv4 address %q for %s", node.IP, node.Target)
-		}
-		targetSet[node.Target] = struct{}{}
-		if node.Backup != nil {
-			if ip := net.ParseIP(node.Backup.IP); ip == nil || ip.To4() == nil {
-				return nil, fmt.Errorf("invalid stored IPv4 address %q for %s", node.Backup.IP, node.Backup.Target)
-			}
-			targetSet[node.Backup.Target] = struct{}{}
-		}
-	}
-	targets := make([]string, 0, len(targetSet))
-	for target := range targetSet {
-		targets = append(targets, target)
-	}
-	sort.Strings(targets)
-	resolved, err := lookupTargetsSlowly(ctx, resolver, targets, delay)
-	if err != nil {
-		return nil, err
-	}
-
-	var mismatches []DNSMismatch
-	for i := range document.CDN {
-		node := &document.CDN[i]
-		node.Status = StatusNormal
-		observation := resolved[node.Target]
-		if observation.err != nil || !containsIP(observation.ips, node.IP) {
-			node.Status = StatusFailed
-			mismatches = append(mismatches, DNSMismatch{
-				Role: "primary", Province: node.Province, ISP: node.ISP,
-				Target: node.Target, ExpectedIP: node.IP, ResolvedIPs: observation.ips,
-				Error: errorText(observation.err),
-			})
-		}
-		if node.Backup != nil {
-			node.Backup.Status = StatusNormal
-			observation = resolved[node.Backup.Target]
-			if observation.err != nil || !containsIP(observation.ips, node.Backup.IP) {
-				node.Backup.Status = StatusFailed
-				mismatches = append(mismatches, DNSMismatch{
-					Role: "backup", Province: node.Province, ISP: node.ISP,
-					Target: node.Backup.Target, ExpectedIP: node.Backup.IP, ResolvedIPs: observation.ips,
-					Error: errorText(observation.err),
-				})
-			}
-		}
-	}
-	return mismatches, nil
-}
-
-func buildNodes(source sourceDocument) ([]Node, []string, error) {
-	if len(source.ProvinceBaseData) == 0 {
-		return nil, nil, errors.New("CDN catalog contains no province nodes")
-	}
-	cityKeys := append([]string(nil), source.CityKeyList...)
-	extraKeys := make([]string, 0, len(source.ExtraCityMeta))
+func buildCities(source sourceDocument, provinceNames map[string]string) ([]CityEndpoint, map[string]*CityEndpoint, error) {
+	keys := append([]string(nil), source.CityKeyList...)
 	for key := range source.ExtraCityMeta {
-		extraKeys = append(extraKeys, key)
+		keys = append(keys, key)
 	}
-	sort.Strings(extraKeys)
-	cityKeys = append(cityKeys, extraKeys...)
-
-	backups := make(map[string]string)
-	for _, key := range cityKeys {
-		provinceCode, ispCode, ok := cityCodes(key)
-		if !ok {
+	seen := make(map[string]struct{}, len(keys))
+	var cities []CityEndpoint
+	for _, rawKey := range keys {
+		key := strings.ToLower(strings.TrimSpace(rawKey))
+		if _, exists := seen[key]; exists {
 			continue
 		}
-		group := provinceCode + ":" + ispCode
-		if _, exists := backups[group]; !exists {
-			backups[group] = strings.ToLower(key) + targetSuffix
+		seen[key] = struct{}{}
+		provinceCode, cityCode, carrierCode, ok := cityCodes(key)
+		if !ok {
+			return nil, nil, fmt.Errorf("invalid city node key %q", rawKey)
+		}
+		province := provinceNames[provinceCode]
+		if province == "" {
+			return nil, nil, fmt.Errorf("city node %q has unknown province %q", rawKey, provinceCode)
+		}
+		carrierName := carrierName(carrierCode)
+		city := cityNames[cityCode]
+		if metadata := compactLocationName(source.ExtraCityMeta[rawKey]); metadata != "" {
+			city = strings.TrimPrefix(metadata, province+"省")
+			city = strings.TrimPrefix(city, province)
+			city = strings.TrimSuffix(strings.TrimSuffix(city, "市"), "地区")
+		}
+		if city == "" {
+			city = cityCode
+		}
+		cities = append(cities, CityEndpoint{
+			Province: province, ProvinceCode: provinceCode, City: city,
+			Carrier: carrierName, CarrierCode: carrierCode,
+			Label: province + city + carrierName,
+			Host:  key + targetSuffix, Port: cityPort,
+		})
+	}
+	sort.Slice(cities, func(i, j int) bool { return cities[i].Host < cities[j].Host })
+	backups := make(map[string]*CityEndpoint)
+	for i := range cities {
+		group := cities[i].ProvinceCode + ":" + cities[i].CarrierCode
+		if backups[group] == nil {
+			backups[group] = &cities[i]
 		}
 	}
-
-	nodes := make([]Node, 0, len(source.ProvinceBaseData)*len(carriers))
-	targetSet := make(map[string]struct{})
-	for _, province := range source.ProvinceBaseData {
-		if strings.TrimSpace(province.Province) == "" {
-			return nil, nil, errors.New("CDN catalog contains a province without a name")
-		}
-		for _, carrier := range carriers {
-			endpoint := strings.TrimSpace(province.Carriers[carrier.Key])
-			target, port, provinceCode, err := parseProvinceEndpoint(endpoint, carrier.Code)
-			if err != nil {
-				return nil, nil, fmt.Errorf("%s%s: %w", province.Province, carrier.Name, err)
-			}
-			node := Node{
-				Type: "cdn", Province: province.Province, ProvinceCode: provinceCode,
-				ISP: carrier.Name, ISPCode: carrier.Code, IPVersion: 4,
-				Port: port, Target: target, Status: StatusNormal,
-			}
-			targetSet[target] = struct{}{}
-			if backupTarget := backups[provinceCode+":"+carrier.Code]; backupTarget != "" {
-				node.Backup = &Backup{
-					Port: cityPort, Target: backupTarget, Status: StatusNormal,
-				}
-				targetSet[backupTarget] = struct{}{}
-			}
-			nodes = append(nodes, node)
-		}
-	}
-	targets := make([]string, 0, len(targetSet))
-	for target := range targetSet {
-		targets = append(targets, target)
-	}
-	sort.Strings(targets)
-	return nodes, targets, nil
+	return cities, backups, nil
 }
 
-func parseProvinceEndpoint(endpoint, expectedISP string) (target string, port int, provinceCode string, err error) {
-	target, rawPort, err := net.SplitHostPort(endpoint)
+func carrierName(code string) string {
+	for _, carrier := range carriers {
+		if carrier.Code == code {
+			return carrier.Name
+		}
+	}
+	return code
+}
+
+func compactLocationName(value string) string {
+	value = strings.TrimSpace(value)
+	for _, replacement := range [][2]string{
+		{"广西壮族自治区", "广西"}, {"内蒙古自治区", "内蒙古"}, {"宁夏回族自治区", "宁夏"},
+		{"新疆维吾尔自治区", "新疆"}, {"西藏自治区", "西藏"},
+	} {
+		value = strings.Replace(value, replacement[0], replacement[1], 1)
+	}
+	value = strings.TrimSuffix(strings.TrimSuffix(value, "节点"), "市")
+	return value
+}
+
+func parseProvinceEndpoint(endpoint, expectedCarrier string) (target string, port int, provinceCode string, err error) {
+	target, rawPort, err := net.SplitHostPort(strings.TrimSpace(endpoint))
 	if err != nil {
 		return "", 0, "", fmt.Errorf("invalid endpoint %q: %w", endpoint, err)
 	}
@@ -323,185 +356,31 @@ func parseProvinceEndpoint(endpoint, expectedISP string) (target string, port in
 	if !strings.HasSuffix(target, targetSuffix) {
 		return "", 0, "", fmt.Errorf("target %q is outside zstaticcdn.com", target)
 	}
-	prefix := strings.TrimSuffix(target, targetSuffix)
-	parts := strings.Split(prefix, "-")
-	if len(parts) != 3 || parts[1] != expectedISP || parts[2] != "v4" || len(parts[0]) != 2 {
+	parts := strings.Split(strings.TrimSuffix(target, targetSuffix), "-")
+	if len(parts) != 3 || parts[1] != expectedCarrier || parts[2] != "v4" || len(parts[0]) != 2 {
 		return "", 0, "", fmt.Errorf("unexpected province target %q", target)
 	}
 	port, err = strconv.Atoi(rawPort)
-	if err != nil || port < 1 || port > 65535 {
-		return "", 0, "", fmt.Errorf("invalid endpoint port %q", rawPort)
+	if err != nil || port != provincePort {
+		return "", 0, "", fmt.Errorf("province endpoint must use port %d", provincePort)
 	}
 	return target, port, parts[0], nil
 }
 
-func cityCodes(key string) (provinceCode, ispCode string, ok bool) {
+func cityCodes(key string) (provinceCode, cityCode, carrierCode string, ok bool) {
 	parts := strings.Split(strings.ToLower(strings.TrimSpace(key)), "-")
 	if len(parts) < 4 || len(parts[0]) != 2 || parts[len(parts)-1] != "v4" {
-		return "", "", false
+		return "", "", "", false
 	}
-	ispCode = parts[len(parts)-2]
-	if ispCode != "cm" && ispCode != "cu" && ispCode != "ct" {
-		return "", "", false
+	carrierCode = parts[len(parts)-2]
+	if carrierCode != "cm" && carrierCode != "cu" && carrierCode != "ct" {
+		return "", "", "", false
 	}
-	if len(parts[1:len(parts)-2]) == 0 {
-		return "", "", false
+	cityCode = strings.Join(parts[1:len(parts)-2], "-")
+	if cityCode == "" {
+		return "", "", "", false
 	}
-	return parts[0], ispCode, true
-}
-
-func resolveTargets(ctx context.Context, resolver Resolver, targets []string) (map[string]string, error) {
-	addresses, err := lookupTargets(ctx, resolver, targets)
-	if err != nil {
-		return nil, err
-	}
-	resolved := make(map[string]string, len(addresses))
-	for target, values := range addresses {
-		resolved[target] = values[0]
-	}
-	return resolved, nil
-}
-
-func lookupTargets(ctx context.Context, resolver Resolver, targets []string) (map[string][]string, error) {
-	type result struct {
-		target string
-		ips    []string
-		err    error
-	}
-	jobs := make(chan string, len(targets))
-	results := make(chan result, len(targets))
-	for _, target := range targets {
-		jobs <- target
-	}
-	close(jobs)
-
-	workers := lookupWorkers
-	if len(targets) < workers {
-		workers = len(targets)
-	}
-	var wg sync.WaitGroup
-	wg.Add(workers)
-	for range workers {
-		go func() {
-			defer wg.Done()
-			for target := range jobs {
-				addresses, err := resolver.LookupIP(ctx, "ip4", target)
-				if err != nil {
-					results <- result{target: target, err: err}
-					continue
-				}
-				valueSet := make(map[string]struct{}, len(addresses))
-				for _, address := range addresses {
-					if ip := address.To4(); ip != nil {
-						valueSet[ip.String()] = struct{}{}
-					}
-				}
-				values := make([]string, 0, len(valueSet))
-				for value := range valueSet {
-					values = append(values, value)
-				}
-				sort.Strings(values)
-				if len(values) == 0 {
-					results <- result{target: target, err: errors.New("no IPv4 address")}
-					continue
-				}
-				results <- result{target: target, ips: values}
-			}
-		}()
-	}
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	resolved := make(map[string][]string, len(targets))
-	errorsByTarget := make(map[string]error)
-	for result := range results {
-		if result.err != nil {
-			errorsByTarget[result.target] = result.err
-			continue
-		}
-		resolved[result.target] = result.ips
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if len(errorsByTarget) > 0 {
-		failed := make([]string, 0, len(errorsByTarget))
-		for target := range errorsByTarget {
-			failed = append(failed, target)
-		}
-		sort.Strings(failed)
-		target := failed[0]
-		return nil, fmt.Errorf("resolve CDN target %s: %w", target, errorsByTarget[target])
-	}
-	return resolved, nil
-}
-
-type dnsObservation struct {
-	ips []string
-	err error
-}
-
-func lookupTargetsSlowly(
-	ctx context.Context,
-	resolver Resolver,
-	targets []string,
-	delay time.Duration,
-) (map[string]dnsObservation, error) {
-	resolved := make(map[string]dnsObservation, len(targets))
-	for index, target := range targets {
-		if index > 0 && delay > 0 {
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return nil, ctx.Err()
-			case <-timer.C:
-			}
-		}
-		addresses, err := resolver.LookupIP(ctx, "ip4", target)
-		if err != nil {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, ctxErr
-			}
-			resolved[target] = dnsObservation{err: err}
-			continue
-		}
-		valueSet := make(map[string]struct{}, len(addresses))
-		for _, address := range addresses {
-			if ip := address.To4(); ip != nil {
-				valueSet[ip.String()] = struct{}{}
-			}
-		}
-		values := make([]string, 0, len(valueSet))
-		for value := range valueSet {
-			values = append(values, value)
-		}
-		sort.Strings(values)
-		if len(values) == 0 {
-			resolved[target] = dnsObservation{err: errors.New("no IPv4 address")}
-			continue
-		}
-		resolved[target] = dnsObservation{ips: values}
-	}
-	return resolved, nil
-}
-
-func containsIP(addresses []string, expected string) bool {
-	for _, address := range addresses {
-		if address == expected {
-			return true
-		}
-	}
-	return false
-}
-
-func errorText(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
+	return parts[0], cityCode, carrierCode, true
 }
 
 func parseSource(source []byte) (sourceDocument, error) {
@@ -557,10 +436,7 @@ func newLiteralParser(source []byte) *literalParser {
 	return p
 }
 
-func (p *literalParser) next() {
-	p.token = p.scanner.Scan()
-	p.text = p.scanner.TokenText()
-}
+func (p *literalParser) next() { p.token, p.text = p.scanner.Scan(), p.scanner.TokenText() }
 
 func (p *literalParser) expect(token rune) error {
 	if p.token != token {
@@ -652,9 +528,6 @@ func (p *literalParser) parseObject(depth int) (map[string]any, error) {
 		if err := p.expect(','); err != nil {
 			return nil, err
 		}
-		if p.token == '}' {
-			break
-		}
 	}
 	p.next()
 	return value, nil
@@ -674,9 +547,6 @@ func (p *literalParser) parseArray(depth int) ([]any, error) {
 		}
 		if err := p.expect(','); err != nil {
 			return nil, err
-		}
-		if p.token == ']' {
-			break
 		}
 	}
 	p.next()
