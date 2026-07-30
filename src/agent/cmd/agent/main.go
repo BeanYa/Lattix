@@ -307,7 +307,7 @@ func run(panel, token, statePath, settingsPath, connectionPath string, mgr *xray
 
 	// Telemetry does not wait for a latency sample.
 	go func() {
-		t := newTelemetry(mgr, latency.medianMS)
+		t := newTelemetry(mgr, latency.snapshot)
 		send := func() bool {
 			messageID := shared.NewMessageID()
 			env := shared.Envelope{

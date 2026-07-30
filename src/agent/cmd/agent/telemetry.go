@@ -25,10 +25,10 @@ type telemetry struct {
 	lastNetworkTX           uint64
 	lastNetworkRX           uint64
 	lastNetworkAt           time.Time
-	latency                 func() *float64
+	latency                 func() (*float64, bool)
 }
 
-func newTelemetry(mgr *xray.Manager, latency func() *float64) *telemetry {
+func newTelemetry(mgr *xray.Manager, latency func() (*float64, bool)) *telemetry {
 	return &telemetry{mgr: mgr, latency: latency}
 }
 
@@ -149,7 +149,9 @@ func (t *telemetry) hostMetrics() *shared.HostMetrics {
 	}
 	t.collectNetwork(m)
 	if t.latency != nil {
-		m.LatencyMS = t.latency()
+		latency, active := t.latency()
+		m.LatencyMS = latency
+		m.LatencyProbeActive = &active
 	}
 	return m
 }

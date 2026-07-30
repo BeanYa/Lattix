@@ -37,6 +37,7 @@ type Dispatcher struct {
 	PanelVersion     string
 	PanelPublicURL   string
 	AgentReleaseBase string
+	PanelLifecycle   func() shared.PanelLifecycleSnapshot
 
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
@@ -564,6 +565,7 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 		}
 	}
 	if p.Host != nil {
+		latencyProbeActive := d.latencyProbeActive(p.Host.LatencyProbeActive)
 		metrics := store.ServerMetrics{
 			Load1: p.Host.Load1, Load5: p.Host.Load5, Load15: p.Host.Load15,
 			CPUPercent: p.Host.CPUPercent, MemTotal: p.Host.MemTotal, MemUsed: p.Host.MemUsed,
@@ -573,7 +575,7 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 			NetworkTXBPS: p.Host.NetworkTXBPS, NetworkRXBPS: p.Host.NetworkRXBPS,
 			UptimeSeconds: p.Host.UptimeSeconds, LatencyMS: p.Host.LatencyMS,
 		}
-		if err := d.st.SaveServerMetrics(ctx, serverID, metrics); err != nil {
+		if err := d.st.SaveServerMetrics(ctx, serverID, metrics, latencyProbeActive); err != nil {
 			log.Printf("dispatch: server %d: upsert metrics: %v", serverID, err)
 		}
 	}
@@ -589,6 +591,13 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 			log.Printf("dispatch: server %d: apply traffic snapshot: %v", serverID, err)
 		}
 	}
+}
+
+func (d *Dispatcher) latencyProbeActive(reported *bool) bool {
+	if d.PanelLifecycle != nil && d.PanelLifecycle().State != shared.PanelStateActive {
+		return false
+	}
+	return reported == nil || *reported
 }
 
 // handleDriftReport 落库配置漂移状态（§17 reconcile，仅在变化时上报）。

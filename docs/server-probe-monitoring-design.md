@@ -20,7 +20,7 @@
 
 Agent 是唯一的 Ping 发起方，但连接保活与延迟测量使用不同类型的控制帧。每条已鉴权连接先发送一次独立的 liveness Ping，再通过 `agent.session.ready` 完成会话就绪；之后 liveness 在随机错峰后每 30 秒发送。收到任何数据帧或控制帧都会续期读期限，连续 90 秒没有收到任何字节才判定连接失效并进入重连流程。
 
-latency Ping 仅在 Panel 生命周期为 `active` 时启用：进入或恢复 `active` 后在 0–30 秒内随机错峰，随后每 30 秒采样一次，最近三次有效 RTT 的中位数作为当前延迟。进入 `startup`、`updating` 或 `faulted` 时清理待完成探针但保留已有样本；恢复后继续向原窗口追加。latency Pong 超时不会关闭 WebSocket，遥测也不等待延迟样本；尚无有效样本或探针暂停时上报空值。
+latency Ping 仅在 Panel 生命周期为 `active` 时启用：进入或恢复 `active` 后在 0–30 秒内随机错峰，随后每 30 秒采样一次，最近三次有效 RTT 的中位数作为当前延迟。单次 Pong 超过 10 秒视为超时，当前延迟置空直到下一次有效 Pong，但不会关闭 WebSocket。进入 `startup`、`updating` 或 `faulted` 时清理待完成探针但保留已有样本；恢复后继续向原窗口追加。遥测不等待延迟样本；尚无有效样本、探测超时或探针暂停时上报空值，并通过 `latency_probe_active` 区分“已接受但无结果”和“生命周期暂停”。
 
 latency Ping 载荷使用类型字节和单调递增的 64 位序号。Agent 本地保存序号与发送时刻；Pong 只负责回显，Panel 与 Agent 不比较系统时钟。liveness 使用独立类型字节，因此不会进入延迟样本。
 
@@ -57,12 +57,13 @@ IPv4 默认路由优先使用 `/proc/net/route`，没有可用 IPv4 默认路由
 - `network_tx_bps/network_rx_bps`（可空）
 - `uptime_seconds`
 - `latency_ms`（可空）
+- `latency_probe_active`（可空布尔；缺省表示旧 Agent，Panel 按启用处理）
 
 Panel 使用收到遥测的服务端时间作为采样时间，避免 Agent 系统时钟偏差。
 
 ## 5. 存储与保留
 
-`server_metrics` 每台服务器保留最新值，供服务器列表快速读取。新增 `server_metric_history` 保存时间序列，字段与最新指标一致，并包含 `server_id`、`sampled_at`。
+`server_metrics` 每台服务器保留最新值，供服务器列表快速读取。`server_metric_history` 保存时间序列，并额外记录 `latency_probe_active`、`server_id`、`sampled_at`。Panel 结合自身当前生命周期和 Agent 标记确定该字段，任一方暂停即为 false，因此旧 Agent 在 Panel 更新期间也不会误入队列。最近延迟队列只排除 `latency_probe_active=false` 的生命周期暂停包；启用状态下 `latency_ms=null` 的超时包仍保留为连通性参考。
 
 每帧主机遥测在同一事务内更新最新值并插入历史。历史表按 `(server_id, sampled_at)` 建索引，后台每小时清理 24 小时以前的数据。删除服务器时同步删除最新指标与历史指标。
 
@@ -81,7 +82,7 @@ Panel 使用收到遥测的服务端时间作为采样时间，避免 Agent 系�
 - 超宽屏四列，宽屏三列，中屏两列，窄屏一列；
 - 卡片顶部显示在线状态、名称、地区、异常徽标和更多操作菜单；
 - 主体只显示 CPU/负载、内存、磁盘、实时上下行速率和延迟；
-- 底部显示延迟最近 30 个样本的迷你趋势；
+- 底部显示最近 30 个已接受延迟探测包的迷你趋势，超时显示空槽，生命周期暂停包不入列；
 - 点击卡片打开右侧抽屉，移动端抽屉全屏；
 - 抽屉展示默认网卡、累计收发量、运行时间、最近采样时间、Agent/Xray
   版本、地址等基础信息，以及 24 小时 CPU、内存、磁盘、网络与延迟趋势。

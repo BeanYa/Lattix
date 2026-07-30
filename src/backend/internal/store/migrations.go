@@ -141,6 +141,9 @@ func migrateSchema(tx *sql.Tx) error {
 			{"uptime_seconds", "INTEGER NOT NULL DEFAULT 0"},
 			{"latency_ms", "REAL"},
 		},
+		"server_metric_history": {
+			{"latency_probe_active", "INTEGER NOT NULL DEFAULT 1"},
+		},
 	} {
 		if _, err := ensureColumns(tx, table, columns); err != nil {
 			return err

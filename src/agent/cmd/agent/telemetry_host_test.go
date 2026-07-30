@@ -23,3 +23,21 @@ func TestLinuxHostSourcesAvailable(t *testing.T) {
 		t.Fatalf("uptime = %d ok %v", uptime, ok)
 	}
 }
+
+func TestHostMetricsReportsLatencyProbeState(t *testing.T) {
+	latency := 42.0
+	active := (&telemetry{latency: func() (*float64, bool) {
+		return &latency, true
+	}}).hostMetrics()
+	if active.LatencyProbeActive == nil || !*active.LatencyProbeActive ||
+		active.LatencyMS == nil || *active.LatencyMS != latency {
+		t.Fatalf("active latency state = value %v, active %v", active.LatencyMS, active.LatencyProbeActive)
+	}
+
+	paused := (&telemetry{latency: func() (*float64, bool) {
+		return nil, false
+	}}).hostMetrics()
+	if paused.LatencyProbeActive == nil || *paused.LatencyProbeActive || paused.LatencyMS != nil {
+		t.Fatalf("paused latency state = value %v, active %v", paused.LatencyMS, paused.LatencyProbeActive)
+	}
+}

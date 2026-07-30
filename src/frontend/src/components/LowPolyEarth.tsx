@@ -49,6 +49,7 @@ export interface EarthNode {
   id: string | number
   label: string
   description?: string
+  clusterKey?: string
   lat: number
   lng: number
   status: EarthNodeStatus
@@ -77,6 +78,10 @@ export interface LowPolyEarthProps {
 interface AnimatedEarthLink extends EarthLink {
   dashPhase: number
   dashDuration: number
+}
+
+interface EarthNodeLabel extends EarthNode {
+  members: EarthNode[]
 }
 
 const cloudLocations = [
@@ -179,8 +184,20 @@ function linkColor(link: AnimatedEarthLink, palette: EarthPalette) {
   return palette.linkPending
 }
 
+function clusterNodeLabels(nodes: EarthNode[]): EarthNodeLabel[] {
+  const groups = new Map<string, EarthNode[]>()
+  nodes.forEach((node) => {
+    const key = node.clusterKey ?? `node:${node.id}`
+    const members = groups.get(key)
+    if (members) members.push(node)
+    else groups.set(key, [node])
+  })
+  return Array.from(groups.values(), (members) => ({ ...members[0], members }))
+}
+
 function createNodeElement(item: object, palette: EarthPalette) {
-  const node = item as EarthNode
+  const node = item as EarthNodeLabel
+  const members = node.members ?? [node]
   const root = document.createElement('div')
   root.setAttribute('aria-hidden', 'true')
   root.style.pointerEvents = 'none'
@@ -190,78 +207,128 @@ function createNodeElement(item: object, palette: EarthPalette) {
   root.style.willChange = 'opacity, filter'
   root.style.zIndex = '100'
 
-  const badge = document.createElement('div')
-  badge.className = 'earth-node-badge'
-  badge.style.display = 'grid'
-  badge.style.gap = '4px'
-  badge.style.padding = '6px 8px'
-  badge.style.borderRadius = '6px'
-  badge.style.fontFamily = "'Fusion Pixel 10px Proportional SC', 'Microsoft YaHei', sans-serif"
-  badge.style.fontSize = '12px'
-  badge.style.fontWeight = '400'
-  badge.style.fontSynthesis = 'none'
-  badge.style.letterSpacing = '0'
-  badge.style.lineHeight = '1.15'
-  badge.style.whiteSpace = 'nowrap'
-  badge.style.transform = `rotate(-${AXIAL_TILT_DEGREES}deg)`
+  root.style.display = 'grid'
+  root.style.gap = '4px'
+  root.style.transform = `rotate(-${AXIAL_TILT_DEGREES}deg)`
 
-  const header = document.createElement('div')
-  header.style.display = 'flex'
-  header.style.alignItems = 'center'
-  header.style.gap = '6px'
+  const createBadge = (member: EarthNode) => {
+    const badge = document.createElement('div')
+    badge.className = 'earth-node-badge'
+    badge.style.display = 'grid'
+    badge.style.gap = '4px'
+    badge.style.padding = '6px 8px'
+    badge.style.borderRadius = '6px'
+    badge.style.fontFamily = "'Fusion Pixel 10px Proportional SC', 'Microsoft YaHei', sans-serif"
+    badge.style.fontSize = '12px'
+    badge.style.fontWeight = '400'
+    badge.style.fontSynthesis = 'none'
+    badge.style.letterSpacing = '0'
+    badge.style.lineHeight = '1.15'
+    badge.style.whiteSpace = 'nowrap'
 
-  const normalizedCountryCode = node.countryCode?.trim().toLowerCase() ?? ''
-  if (/^[a-z]{2}$/.test(normalizedCountryCode)) {
-    const flag = document.createElement('span')
-    flag.className = `fi fi-${normalizedCountryCode}`
-    flag.style.width = '16px'
-    flag.style.flex = '0 0 16px'
-    flag.style.borderRadius = '2px'
-    header.append(flag)
+    const header = document.createElement('div')
+    header.style.display = 'flex'
+    header.style.alignItems = 'center'
+    header.style.gap = '6px'
+
+    const normalizedCountryCode = member.countryCode?.trim().toLowerCase() ?? ''
+    if (/^[a-z]{2}$/.test(normalizedCountryCode)) {
+      const flag = document.createElement('span')
+      flag.className = `fi fi-${normalizedCountryCode}`
+      flag.style.width = '16px'
+      flag.style.flex = '0 0 16px'
+      flag.style.borderRadius = '2px'
+      header.append(flag)
+    }
+
+    const label = document.createElement('span')
+    label.textContent = member.label
+    label.style.maxWidth = '128px'
+    label.style.overflow = 'hidden'
+    label.style.textOverflow = 'ellipsis'
+
+    const status = document.createElement('span')
+    status.style.width = '7px'
+    status.style.height = '7px'
+    status.style.flex = '0 0 7px'
+    status.style.borderRadius = '999px'
+    status.style.background = member.status === 'warning'
+      ? palette.nodeWarning
+      : member.status === 'online' ? palette.nodeOnline : palette.nodeOffline
+    status.style.marginLeft = 'auto'
+
+    header.append(label, status)
+
+    const rates = document.createElement('div')
+    rates.className = 'earth-node-rates'
+    rates.style.display = 'grid'
+    rates.style.gap = '2px'
+    rates.style.fontVariantNumeric = 'tabular-nums'
+
+    const addRate = (direction: 'upload' | 'download', value: number | null | undefined) => {
+      const row = document.createElement('span')
+      row.className = `earth-node-rate earth-node-rate-${direction}`
+      const arrow = direction === 'upload' ? '↑' : '↓'
+      row.textContent = `${arrow} ${member.online === false ? '--' : formatByteRate(value ?? null)}`
+      rates.append(row)
+    }
+    addRate('upload', member.uploadRate)
+    addRate('download', member.downloadRate)
+
+    badge.append(header, rates)
+    return { badge, header }
   }
 
-  const label = document.createElement('span')
-  label.textContent = node.label
-  label.style.maxWidth = '128px'
-  label.style.overflow = 'hidden'
-  label.style.textOverflow = 'ellipsis'
+  const hiddenBadges: HTMLElement[] = []
+  const first = createBadge(members[0])
+  root.append(first.badge)
 
-  const status = document.createElement('span')
-  status.style.width = '7px'
-  status.style.height = '7px'
-  status.style.flex = '0 0 7px'
-  status.style.borderRadius = '999px'
-  status.style.background = node.status === 'warning'
-    ? palette.nodeWarning
-    : node.status === 'online' ? palette.nodeOnline : palette.nodeOffline
-  status.style.marginLeft = 'auto'
+  if (members.length > 1) {
+    root.dataset.interactive = 'true'
+    root.removeAttribute('aria-hidden')
 
-  header.append(label, status)
+    const toggle = document.createElement('button')
+    toggle.type = 'button'
+    toggle.className = 'earth-node-cluster-toggle'
+    toggle.style.pointerEvents = 'auto'
+    first.header.insertBefore(toggle, first.header.lastElementChild)
 
-  const rates = document.createElement('div')
-  rates.className = 'earth-node-rates'
-  rates.style.display = 'grid'
-  rates.style.gap = '2px'
-  rates.style.fontVariantNumeric = 'tabular-nums'
+    members.slice(1).forEach((member) => {
+      const { badge } = createBadge(member)
+      badge.style.display = 'none'
+      badge.setAttribute('aria-hidden', 'true')
+      hiddenBadges.push(badge)
+      root.append(badge)
+    })
 
-  const addRate = (direction: 'upload' | 'download', value: number | null | undefined) => {
-    const row = document.createElement('span')
-    row.className = `earth-node-rate earth-node-rate-${direction}`
-    const arrow = direction === 'upload' ? '↑' : '↓'
-    row.textContent = `${arrow} ${node.online === false ? '--' : formatByteRate(value ?? null)}`
-    rates.append(row)
+    let expanded = false
+    const updateExpansion = () => {
+      hiddenBadges.forEach((badge) => {
+        badge.style.display = expanded ? 'grid' : 'none'
+        badge.setAttribute('aria-hidden', String(!expanded))
+      })
+      toggle.textContent = expanded ? '-' : `+${members.length - 1}`
+      toggle.setAttribute('aria-expanded', String(expanded))
+      toggle.setAttribute('aria-label', expanded ? '收起同地服务器' : `展开另外 ${members.length - 1} 台同地服务器`)
+    }
+    toggle.addEventListener('click', (event) => {
+      event.stopPropagation()
+      expanded = !expanded
+      updateExpansion()
+    })
+    updateExpansion()
   }
-  addRate('upload', node.uploadRate)
-  addRate('download', node.downloadRate)
 
-  badge.append(header, rates)
-  root.append(badge)
   return root
 }
 
 function updateNodeVisibility(element: HTMLElement, isVisible: boolean) {
   element.style.opacity = isVisible ? '1' : '0'
   element.style.filter = isVisible ? 'blur(0)' : 'blur(12px)'
+  if (element.dataset.interactive === 'true') {
+    element.inert = !isVisible
+    element.setAttribute('aria-hidden', String(!isVisible))
+  }
 }
 
 export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }: LowPolyEarthProps) {
@@ -460,6 +527,7 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
     })
     return nextLinks
   }, [links])
+  const nodeLabels = useMemo(() => clusterNodeLabels(nodes), [nodes])
   const customObjects = useMemo(
     () => [oceanMesh, cloudLayer].filter((item): item is Object3D => item !== undefined),
     [cloudLayer, oceanMesh],
@@ -610,9 +678,9 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
               pointRadius={0.34}
               pointResolution={10}
               pointsTransitionDuration={500}
-              htmlElementsData={nodes}
-              htmlLat={(item) => (item as EarthNode).lat}
-              htmlLng={(item) => (item as EarthNode).lng}
+              htmlElementsData={nodeLabels}
+              htmlLat={(item) => (item as EarthNodeLabel).lat}
+              htmlLng={(item) => (item as EarthNodeLabel).lng}
               htmlAltitude={0.065}
               htmlElement={(item: object) => createNodeElement(item, palette)}
               htmlElementVisibilityModifier={updateNodeVisibility}

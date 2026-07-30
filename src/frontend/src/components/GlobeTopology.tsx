@@ -9,6 +9,7 @@ interface TopologyPoint {
   id: number
   alias: string
   location: string
+  locationKey: string
   lat: number
   lng: number
   online: boolean
@@ -77,6 +78,7 @@ async function locateServers(servers: Server[]): Promise<TopologyPoint[]> {
       id: server.id,
       alias: server.alias,
       location: server.location || countryCode || '位置待补全',
+      locationKey,
       lat: Math.max(-82, Math.min(82, baseLat + Math.sin(angle) * radius)),
       lng: baseLng + Math.cos(angle) * radius,
 		online: isServerOnline(server),
@@ -139,6 +141,7 @@ export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
           id: server.id,
           alias: server.alias,
           location: server.location || server.country_code || '位置待补全',
+          locationKey: `fallback:${server.id}`,
           lat: -68 + (server.id % 3) * 4,
           lng: ((server.id * 137.508) % 340) - 170,
 			online: isServerOnline(server),
@@ -158,6 +161,7 @@ export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
       id: point.id,
       label: point.alias,
       description: `${point.location}，${point.online ? '在线' : '离线'}`,
+      clusterKey: point.locationKey,
       lat: point.lat,
       lng: point.lng,
       status: point.positioned ? (point.online ? 'online' : 'offline') : 'warning',

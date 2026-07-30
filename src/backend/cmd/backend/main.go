@@ -255,6 +255,7 @@ func run() error {
 	dispatcher := dispatch.New(st, hub)
 	dispatcher.OperationLog = opLog
 	dispatcher.RequestLog = reqLog
+	dispatcher.PanelLifecycle = lifecycleManager.Snapshot
 	hub.Auth = dispatcher
 	hub.OnProtocolError = func(serverID int64, requestID, traceID, rpcType, message string) {
 		attributes := map[string]string{}

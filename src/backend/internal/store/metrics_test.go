@@ -26,7 +26,7 @@ func TestSaveAndReadServerMetrics(t *testing.T) {
 		NetworkTXBPS: &txRate, NetworkRXBPS: &rxRate,
 		UptimeSeconds: 3600, LatencyMS: &latency,
 	}
-	if err := st.SaveServerMetrics(ctx, serverID, metric); err != nil {
+	if err := st.SaveServerMetrics(ctx, serverID, metric, true); err != nil {
 		t.Fatal(err)
 	}
 	latest, err := st.ServerMetricsMap(ctx)
@@ -54,6 +54,59 @@ func TestSaveAndReadServerMetrics(t *testing.T) {
 	}
 }
 
+func TestRecentServerMetricSamplesSkipsPausedProbeAndKeepsTimeout(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	serverID, err := st.CreateServer(ctx, "probe", "", "token", MachineTypeDirect, "", "", "HK", "Hong Kong")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	packets := []struct {
+		latency *float64
+		active  bool
+	}{
+		{latency: float64Ptr(10), active: true},
+		{latency: nil, active: false},
+		{latency: nil, active: true},
+		{latency: float64Ptr(20), active: true},
+	}
+	for _, packet := range packets {
+		if err := st.SaveServerMetrics(ctx, serverID, ServerMetrics{LatencyMS: packet.latency}, packet.active); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	recent, err := st.RecentServerMetricSamples(ctx, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	samples := recent[serverID]
+	if len(samples) != 3 {
+		t.Fatalf("recent sample count = %d, want 3", len(samples))
+	}
+	latencies := map[float64]bool{}
+	timeouts := 0
+	for _, sample := range samples {
+		if sample.LatencyMS == nil {
+			timeouts++
+			continue
+		}
+		latencies[*sample.LatencyMS] = true
+	}
+	if timeouts != 1 || !latencies[10] || !latencies[20] {
+		t.Fatalf("recent samples = latencies %v, timeouts %d; want 10, 20 and one timeout", latencies, timeouts)
+	}
+}
+
+func float64Ptr(value float64) *float64 {
+	return &value
+}
+
 func TestDeleteExpiredServerMetricHistory(t *testing.T) {
 	st, err := Open(":memory:")
 	if err != nil {
@@ -65,7 +118,7 @@ func TestDeleteExpiredServerMetricHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SaveServerMetrics(ctx, serverID, ServerMetrics{}); err != nil {
+	if err := st.SaveServerMetrics(ctx, serverID, ServerMetrics{}, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.db.ExecContext(ctx,

@@ -214,6 +214,7 @@ CREATE TABLE IF NOT EXISTS server_metric_history (
     network_rx_bps     REAL,
     uptime_seconds     INTEGER NOT NULL DEFAULT 0,
     latency_ms         REAL,
+    latency_probe_active INTEGER NOT NULL DEFAULT 1,
     sampled_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_server_metric_history_server_sampled

@@ -2,21 +2,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownIcon,
   ArrowUpIcon,
-	CalendarCheckIcon,
+  CalendarCheckIcon,
+  CircleCheckIcon,
   EllipsisIcon,
-	ExternalLinkIcon,
+  ExternalLinkIcon,
   Globe2Icon,
+  LoaderCircleIcon,
   Maximize2Icon,
   PencilIcon,
   RefreshCwIcon,
   RotateCcwKeyIcon,
   ServerCogIcon,
   Trash2Icon,
+  WifiOffIcon,
   WrenchIcon,
 } from 'lucide-react'
 
 import { CountryFlag } from '@/components/CountryFlag'
 import { EmptyState } from '@/components/PagePrimitives'
+import { StatusBadge } from '@/components/StatusBadge'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -57,7 +61,7 @@ import { formatByteRate, formatDateTime, humanizeBytes } from '@/lib/format'
 import { formatPortRange } from '@/lib/ports'
 import { isServerOnline, serverConnectionLabel } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
-import type { ConvertedCost, Server, ServerMetrics, ServerMetricSeries } from '@/lib/types'
+import type { ConvertedCost, Server, ServerConnectionState, ServerMetrics, ServerMetricSeries } from '@/lib/types'
 
 type Health = 'normal' | 'warning' | 'critical'
 
@@ -91,6 +95,23 @@ const billingStatusLabel = {
   assumed_valid: '推定有效',
   expired: '已过期',
 } as const
+
+function serverConnectionNotice(state: ServerConnectionState): string {
+  switch (state) {
+    case 'never_connected':
+      return 'Agent 尚未连接'
+    case 'connecting':
+      return '正在建立 Agent 连接'
+    case 'reconnecting':
+      return '正在重新连接 Agent'
+    case 'offline':
+      return 'Agent 连接已中断'
+    case 'auth_rejected':
+      return 'Agent 凭据验证失败'
+    case 'online':
+      return ''
+  }
+}
 
 function convertedRateLabel(cost: ConvertedCost): string {
   const label = cost.source === 'identity'
@@ -337,6 +358,8 @@ function ServerCard({
   onOpen: () => void
 }) {
   const metrics = server.metrics
+  const online = isServerOnline(server)
+  const transitioning = server.connection_state === 'connecting' || server.connection_state === 'reconnecting'
   const publicAddress = server.address || server.learned_addr
   const memoryPercent = metrics ? percent(metrics.mem_used, metrics.mem_total) : 0
   const diskPercent = metrics ? percent(metrics.disk_used, metrics.disk_total) : 0
@@ -348,23 +371,52 @@ function ServerCard({
       size="sm"
       role="button"
       tabIndex={0}
-      aria-label={`查看 ${server.alias} 监控详情`}
+      aria-label={`查看 ${server.alias} 监控详情，${serverConnectionLabel(server.connection_state)}`}
       className={cn(
-        'cursor-pointer transition-[box-shadow,opacity] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        !isServerOnline(server) && 'opacity-60',
+        'relative cursor-pointer transition-[box-shadow,background-color] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        transitioning && 'bg-warning/[0.04]',
+        !online && !transitioning && 'bg-destructive/[0.04]',
       )}
       onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') onOpen()
       }}
     >
-      <CardHeader className="border-b">
+      {!online ? (
+        <span
+          aria-hidden="true"
+          className={cn(
+            'absolute inset-y-0 left-0 z-10 w-1',
+            transitioning ? 'bg-warning' : 'bg-destructive',
+          )}
+        />
+      ) : null}
+      <CardHeader className={cn('border-b', !online && (transitioning ? 'border-warning/30' : 'border-destructive/30'))}>
         <CardTitle className="flex min-w-0 items-center gap-2">
-          <span className={cn('size-2 shrink-0 rounded-full bg-muted-foreground', isServerOnline(server) && 'bg-success')} />
+          <span
+            className={cn(
+              'flex size-5 shrink-0 items-center justify-center rounded-md',
+              online && 'bg-success/15 text-success',
+              transitioning && 'bg-warning/15 text-warning',
+              !online && !transitioning && 'bg-destructive/15 text-destructive',
+            )}
+            aria-hidden="true"
+          >
+            {online ? (
+              <CircleCheckIcon className="size-3.5" />
+            ) : transitioning ? (
+              <LoaderCircleIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
+            ) : (
+              <WifiOffIcon className="size-3.5" />
+            )}
+          </span>
           <span className="truncate">{server.alias}</span>
-          <Badge variant="outline" className="ml-auto shrink-0 text-[10px] font-normal">
+          <StatusBadge
+            tone={online ? 'success' : transitioning ? 'warning' : 'danger'}
+            className="ml-auto shrink-0 text-[10px] font-normal"
+          >
             {serverConnectionLabel(server.connection_state)}
-          </Badge>
+          </StatusBadge>
         </CardTitle>
         <CardDescription className="flex min-w-0 flex-col gap-1 text-xs">
           <span className="flex min-w-0 items-center gap-2">
@@ -393,6 +445,24 @@ function ServerCard({
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
+        {!online ? (
+          <div
+            className={cn(
+              '-mx-3 -mt-3 flex min-h-9 items-center gap-2 border-b px-3 py-2 text-xs',
+              transitioning
+                ? 'border-warning/25 bg-warning/10 text-warning'
+                : 'border-destructive/25 bg-destructive/10 text-destructive',
+            )}
+          >
+            {transitioning ? (
+              <LoaderCircleIcon className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+            ) : (
+              <WifiOffIcon className="size-3.5 shrink-0" />
+            )}
+            <span className="font-medium">{serverConnectionNotice(server.connection_state)}</span>
+            {metrics ? <span className="ml-auto text-[11px] text-muted-foreground">以下为上次遥测</span> : null}
+          </div>
+        ) : null}
         {metrics ? (
           <>
             <div className="grid grid-cols-2 gap-x-4 gap-y-3">

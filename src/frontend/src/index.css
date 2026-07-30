@@ -1059,6 +1059,26 @@
     box-shadow: 0 2px 0 color-mix(in srgb, var(--border) 18%, transparent);
     color: var(--card-foreground);
   }
+  .earth-node-cluster-toggle {
+    min-width: 1.5rem;
+    border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--muted) 82%, transparent);
+    padding: 1px 5px;
+    color: var(--muted-foreground);
+    font: inherit;
+    line-height: 1.2;
+    cursor: pointer;
+  }
+  .earth-node-cluster-toggle:hover,
+  .earth-node-cluster-toggle:focus-visible {
+    border-color: var(--primary);
+    color: var(--foreground);
+  }
+  .earth-node-cluster-toggle:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--primary) 72%, transparent);
+    outline-offset: 2px;
+  }
   .earth-node-rates {
     border-top: 1px solid color-mix(in srgb, var(--border) 24%, transparent);
     padding-top: 4px;

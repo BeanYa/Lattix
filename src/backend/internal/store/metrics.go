@@ -45,7 +45,7 @@ func metricArgs(serverID int64, m ServerMetrics) []any {
 }
 
 // SaveServerMetrics 原子更新最新值并插入历史样本（telemetry 上报驱动）。
-func (s *Store) SaveServerMetrics(ctx context.Context, serverID int64, m ServerMetrics) error {
+func (s *Store) SaveServerMetrics(ctx context.Context, serverID int64, m ServerMetrics, latencyProbeActive bool) error {
 	loc := time.Local
 	if name, err := s.GetSetting(ctx, SettingTimezone); err == nil && name != "" {
 		if configured, loadErr := time.LoadLocation(name); loadErr == nil {
@@ -80,10 +80,11 @@ func (s *Store) SaveServerMetrics(ctx context.Context, serverID int64, m ServerM
 	if err != nil {
 		return fmt.Errorf("upsert server metrics: %w", err)
 	}
+	historyArgs := append(args, latencyProbeActive)
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO server_metric_history (`+metricColumns+`, sampled_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-		args...)
+		`INSERT INTO server_metric_history (`+metricColumns+`, latency_probe_active, sampled_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		historyArgs...)
 	if err != nil {
 		return fmt.Errorf("insert server metric history: %w", err)
 	}
@@ -138,7 +139,8 @@ func scanServerMetrics(scanner metricScanner, m *ServerMetrics) error {
 	)
 }
 
-// RecentServerMetricSamples 返回每台服务器最近 limit 个样本，按时间升序。
+// RecentServerMetricSamples 返回每台服务器最近 limit 个已接受的延迟探测包，按时间升序。
+// 生命周期暂停的包不占用趋势图名额；已接受但超时的 NULL 样本保留为连通性参考。
 func (s *Store) RecentServerMetricSamples(ctx context.Context, limit int) (map[int64][]ServerMetrics, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+metricColumns+`, sampled_at
@@ -148,6 +150,7 @@ func (s *Store) RecentServerMetricSamples(ctx context.Context, limit int) (map[i
 			         PARTITION BY server_id ORDER BY sampled_at DESC, id DESC
 			       ) AS sample_rank
 			FROM server_metric_history
+			WHERE latency_probe_active = 1
 		)
 		WHERE sample_rank <= ?
 		ORDER BY server_id, sampled_at`, limit)

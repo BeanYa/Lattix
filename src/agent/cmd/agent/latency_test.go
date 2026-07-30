@@ -35,6 +35,32 @@ func TestLatencyTrackerPongInitializesAndRecords(t *testing.T) {
 	}
 }
 
+func TestLatencyTrackerTimeoutReportsActiveMissingSample(t *testing.T) {
+	tracker := newLatencyTracker()
+	tracker.samples = []float64{20}
+	tracker.pending[7] = time.Now().Add(-latencyProbeTimeout - time.Millisecond)
+
+	value, active := tracker.snapshot()
+	if !active || value != nil {
+		t.Fatalf("timed out snapshot = (%v, %v), want nil and active", value, active)
+	}
+	if len(tracker.pending) != 0 {
+		t.Fatal("timed out probe must be removed from pending probes")
+	}
+
+	tracker.pending[8] = time.Now().Add(-40 * time.Millisecond)
+	var payload [9]byte
+	payload[0] = probeKindLatency
+	binary.BigEndian.PutUint64(payload[1:], 8)
+	if err := tracker.handlePong(string(payload[:])); err != nil {
+		t.Fatal(err)
+	}
+	value, active = tracker.snapshot()
+	if !active || value == nil {
+		t.Fatalf("recovered snapshot = (%v, %v), want a value and active", value, active)
+	}
+}
+
 func TestLatencyTrackerPauseRetainsSamplesAndIgnoresLatePong(t *testing.T) {
 	tracker := newLatencyTracker()
 	tracker.samples = []float64{12, 20, 30}
@@ -42,6 +68,9 @@ func TestLatencyTrackerPauseRetainsSamplesAndIgnoresLatePong(t *testing.T) {
 	tracker.setEnabled(false)
 	if len(tracker.pending) != 0 {
 		t.Fatal("pause must clear pending probes")
+	}
+	if _, active := tracker.snapshot(); active {
+		t.Fatal("paused tracker must report latency probes as inactive")
 	}
 	if got := tracker.medianMS(); got != nil {
 		t.Fatalf("paused median = %v, want nil", got)
@@ -53,7 +82,8 @@ func TestLatencyTrackerPauseRetainsSamplesAndIgnoresLatePong(t *testing.T) {
 		t.Fatal(err)
 	}
 	tracker.setEnabled(true)
-	if got := tracker.medianMS(); got == nil || *got != 20 {
-		t.Fatalf("resumed median = %v, want retained median 20", got)
+	got, active := tracker.snapshot()
+	if !active || got == nil || *got != 20 {
+		t.Fatalf("resumed snapshot = (%v, %v), want retained median 20 and active", got, active)
 	}
 }
