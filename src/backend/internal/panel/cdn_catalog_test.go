@@ -3,7 +3,6 @@ package panel
 import (
 	"context"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -25,37 +24,24 @@ const panelCDNSource = `window.nodeData = {
   extraCityNodeMeta: {},
 };`
 
-type panelCDNResolver map[string][]net.IP
-
-func (r panelCDNResolver) LookupIP(_ context.Context, _ string, host string) ([]net.IP, error) {
-	addresses, ok := r[host]
-	if !ok {
-		return nil, &net.DNSError{Err: "not found", Name: host, IsNotFound: true}
-	}
-	return addresses, nil
-}
-
-func TestCDNCatalogRefreshPersistsAndInspectionDetectsMismatch(t *testing.T) {
+func TestCDNCatalogRefreshPersistsWithoutDNSAndPreservesLastGoodOnFailure(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "panel.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
+	fail := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if fail {
+			http.Error(w, "upstream unavailable", http.StatusBadGateway)
+			return
+		}
 		_, _ = w.Write([]byte(panelCDNSource))
 	}))
 	t.Cleanup(server.Close)
-	resolver := panelCDNResolver{
-		"he-ct-v4.ip.zstaticcdn.com":         {net.ParseIP("219.148.62.1")},
-		"he-xiongan-ct-v4.ip.zstaticcdn.com": {net.ParseIP("144.7.111.241")},
-		"he-cu-v4.ip.zstaticcdn.com":         {net.ParseIP("110.249.198.60")},
-		"he-cm-v4.ip.zstaticcdn.com":         {net.ParseIP("111.62.113.1")},
-	}
 	panel := &Server{st: st}
-	catalog := &cdnCatalog{
-		s: panel, client: server.Client(), resolver: resolver, sourceURL: server.URL,
-		now: func() time.Time { return time.Date(2026, time.July, 30, 13, 15, 25, 0, time.UTC) },
-	}
+	now := time.Date(2026, time.July, 30, 13, 15, 25, 0, time.UTC)
+	catalog := &cdnCatalog{s: panel, client: server.Client(), sourceURL: server.URL, now: func() time.Time { return now }}
 	if err := catalog.refreshZstaticCDNCatalog(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -67,34 +53,30 @@ func TestCDNCatalogRefreshPersistsAndInspectionDetectsMismatch(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &document); err != nil {
 		t.Fatal(err)
 	}
-	if len(document.CDN) != 3 || len(document.Notes) != 3 {
+	if len(document.Provinces) != 1 || document.Counts.ProvinceTargets != 9 {
 		t.Fatalf("unexpected persisted catalog: %+v", document)
 	}
-	if err := catalog.inspectZstaticCDNDNS(context.Background()); err != nil {
-		t.Fatalf("unchanged DNS inspection failed: %v", err)
+	status, err := catalog.status(context.Background())
+	if err != nil || !status.Available || status.CatalogSHA256 == "" || status.LastError != "" {
+		t.Fatalf("unexpected catalog status: status=%+v err=%v", status, err)
 	}
-	resolver["he-xiongan-ct-v4.ip.zstaticcdn.com"] = []net.IP{net.ParseIP("144.7.111.242")}
-	if err := catalog.inspectZstaticCDNDNS(context.Background()); err == nil || !strings.Contains(err.Error(), "backup") {
-		t.Fatalf("inspection error = %v, want backup mismatch", err)
+
+	fail = true
+	now = now.Add(time.Hour)
+	if err := catalog.refreshZstaticCDNCatalog(context.Background()); err == nil || !strings.Contains(err.Error(), "HTTP 502") {
+		t.Fatalf("refresh error = %v, want exact upstream failure", err)
 	}
-	raw, err = st.GetSetting(context.Background(), store.SettingCDNNodeCatalog)
-	if err != nil {
-		t.Fatal(err)
+	afterFailure, err := st.GetSetting(context.Background(), store.SettingCDNNodeCatalog)
+	if err != nil || afterFailure != raw {
+		t.Fatalf("last good catalog changed: err=%v equal=%v", err, afterFailure == raw)
 	}
-	if err := json.Unmarshal([]byte(raw), &document); err != nil {
-		t.Fatal(err)
-	}
-	if document.CDN[0].Status != cdncatalog.StatusNormal || document.CDN[0].Backup.Status != cdncatalog.StatusFailed {
-		t.Fatalf("inspection did not persist status-only result: %+v", document.CDN[0])
-	}
-	if document.CDN[0].IP != "219.148.62.1" || document.CDN[0].Backup.IP != "144.7.111.241" ||
-		document.GeneratedAt != time.Date(2026, time.July, 30, 13, 15, 25, 0, time.UTC) {
-		t.Fatalf("inspection changed immutable snapshot data: %+v", document)
+	status, err = catalog.status(context.Background())
+	if err != nil || !status.Available || !strings.Contains(status.LastError, "HTTP 502") || status.LastErrorAt == nil {
+		t.Fatalf("failure status: status=%+v err=%v", status, err)
 	}
 }
 
-func TestCoreTasksRegisterCDNRefreshAndDNSInspectionSeparately(t *testing.T) {
-	t.Setenv("LATTIX_CDN_DNS_INSPECTION_INTERVAL", "5m")
+func TestCoreTasksRegisterBackgroundCDNRefreshWithoutDNSInspection(t *testing.T) {
 	panel := &Server{
 		releases:  &releaseCatalog{},
 		exchange:  &exchangeCatalog{},
@@ -104,15 +86,10 @@ func TestCoreTasksRegisterCDNRefreshAndDNSInspectionSeparately(t *testing.T) {
 	panel.registerCoreTasks()
 	tasks := panel.scheduler.snapshot()
 	refresh, found := tasks["cdn.catalog.refresh"]
-	if !found || !refresh.runOnStart {
+	if !found || refresh.runOnStart {
 		t.Fatalf("catalog refresh task = %+v, found=%v", refresh, found)
 	}
-	inspection, found := tasks["cdn.dns.inspect"]
-	if !found || inspection.runOnStart {
-		t.Fatalf("DNS inspection task = %+v, found=%v", inspection, found)
-	}
-	now := time.Date(2026, time.July, 30, 0, 0, 0, 0, time.UTC)
-	if got := inspection.trigger(context.Background()).next(now, time.UTC); !got.Equal(now.Add(24 * time.Hour)) {
-		t.Fatalf("next DNS inspection = %s, want minimum-safe default %s", got, now.Add(24*time.Hour))
+	if _, found := tasks["cdn.dns.inspect"]; found {
+		t.Fatal("DNS inspection task must not be registered")
 	}
 }

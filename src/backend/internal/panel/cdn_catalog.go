@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -17,14 +16,11 @@ import (
 
 const (
 	cdnCatalogRefreshIntervalDefault = 6 * time.Hour
-	cdnDNSInspectionIntervalDefault  = 24 * time.Hour
-	cdnDNSInspectionIntervalMinimum  = time.Hour
 )
 
 type cdnCatalog struct {
 	s         *Server
 	client    *http.Client
-	resolver  cdncatalog.Resolver
 	sourceURL string
 	now       func() time.Time
 	mu        sync.Mutex
@@ -36,19 +32,32 @@ func newCDNCatalog(s *Server) *cdnCatalog {
 		sourceURL = cdncatalog.DefaultSourceURL
 	}
 	return &cdnCatalog{
-		s: s, client: &http.Client{Timeout: 30 * time.Second}, resolver: net.DefaultResolver,
+		s: s, client: &http.Client{Timeout: 30 * time.Second},
 		sourceURL: sourceURL, now: time.Now,
 	}
 }
 
+type cdnCatalogStatus struct {
+	Available     bool       `json:"available"`
+	Refreshing    bool       `json:"refreshing"`
+	SourceURL     string     `json:"source_url"`
+	FetchedAt     *time.Time `json:"fetched_at,omitempty"`
+	CatalogSHA256 string     `json:"catalog_sha256,omitempty"`
+	LastAttemptAt time.Time  `json:"last_attempt_at"`
+	LastError     string     `json:"last_error,omitempty"`
+	LastErrorAt   *time.Time `json:"last_error_at,omitempty"`
+}
+
 // refreshZstaticCDNCatalog is the fixed panel refresh function used by the
-// scheduler. Persistence happens only after the complete source and every DNS
-// address have been validated, preserving the last good catalog on failure.
+// scheduler. Persistence happens only after the complete source has parsed and
+// validated, preserving the last good catalog on download or parse failure.
 func (c *cdnCatalog) refreshZstaticCDNCatalog(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	document, err := cdncatalog.Fetch(ctx, c.client, c.resolver, c.sourceURL, c.now())
+	now := c.now().UTC()
+	document, err := cdncatalog.Fetch(ctx, c.client, c.sourceURL, now)
 	if err != nil {
+		c.recordStatus(ctx, now, err)
 		return err
 	}
 	encoded, err := json.MarshalIndent(document, "", "  ")
@@ -56,49 +65,57 @@ func (c *cdnCatalog) refreshZstaticCDNCatalog(ctx context.Context) error {
 		return fmt.Errorf("encode CDN catalog: %w", err)
 	}
 	if err := c.s.st.SetSetting(ctx, store.SettingCDNNodeCatalog, string(encoded)); err != nil {
+		c.recordStatus(ctx, now, err)
 		return fmt.Errorf("save CDN catalog: %w", err)
 	}
+	c.recordStatus(ctx, now, nil)
 	return nil
 }
 
-// inspectZstaticCDNDNS is intentionally separate from catalog refresh: it
-// compares current DNS answers with the last successful stored snapshot.
-func (c *cdnCatalog) inspectZstaticCDNDNS(ctx context.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *cdnCatalog) status(ctx context.Context) (cdnCatalogStatus, error) {
+	status := cdnCatalogStatus{SourceURL: c.sourceURL}
+	if raw, err := c.s.st.GetSetting(ctx, store.SettingCDNNodeCatalogStatus); err != nil {
+		return status, err
+	} else if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &status); err != nil {
+			return status, fmt.Errorf("decode CDN catalog status: %w", err)
+		}
+	}
 	raw, err := c.s.st.GetSetting(ctx, store.SettingCDNNodeCatalog)
 	if err != nil {
-		return fmt.Errorf("load CDN catalog: %w", err)
+		return status, fmt.Errorf("load CDN catalog: %w", err)
 	}
 	if raw == "" {
-		return fmt.Errorf("CDN catalog has not been generated")
+		status.Available = false
+		return status, nil
 	}
 	var document cdncatalog.Document
 	if err := json.Unmarshal([]byte(raw), &document); err != nil {
-		return fmt.Errorf("decode CDN catalog: %w", err)
+		status.Available = false
+		status.LastError = "decode cached CDN catalog: " + err.Error()
+		return status, nil
 	}
-	mismatches, err := cdncatalog.CheckDNS(ctx, c.resolver, &document)
-	if err != nil {
-		return err
+	status.Available = document.Version == cdncatalog.SchemaVersion && len(document.Provinces) > 0
+	status.FetchedAt = &document.Source.FetchedAt
+	status.CatalogSHA256 = document.Source.CatalogSHA256
+	return status, nil
+}
+
+func (c *cdnCatalog) recordStatus(ctx context.Context, attemptedAt time.Time, refreshErr error) {
+	status, _ := c.status(ctx)
+	status.SourceURL = c.sourceURL
+	status.LastAttemptAt = attemptedAt
+	status.Refreshing = false
+	if refreshErr != nil {
+		status.LastError = refreshErr.Error()
+		status.LastErrorAt = &attemptedAt
+	} else {
+		status.LastError = ""
+		status.LastErrorAt = nil
+		status.Available = true
 	}
-	encoded, err := json.MarshalIndent(document, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode inspected CDN catalog: %w", err)
+	encoded, err := json.Marshal(status)
+	if err == nil {
+		_ = c.s.st.SetSetting(ctx, store.SettingCDNNodeCatalogStatus, string(encoded))
 	}
-	if err := c.s.st.SetSetting(ctx, store.SettingCDNNodeCatalog, string(encoded)); err != nil {
-		return fmt.Errorf("save inspected CDN catalog: %w", err)
-	}
-	if len(mismatches) == 0 {
-		return nil
-	}
-	first := mismatches[0]
-	detail := "resolved=" + strings.Join(first.ResolvedIPs, ",")
-	if first.Error != "" {
-		detail = "error=" + first.Error
-	}
-	return fmt.Errorf(
-		"CDN DNS mismatch count=%d: %s %s %s target=%s stored=%s %s",
-		len(mismatches), first.Province, first.ISP, first.Role, first.Target,
-		first.ExpectedIP, detail,
-	)
 }

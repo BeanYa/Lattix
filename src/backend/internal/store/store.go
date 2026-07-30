@@ -157,6 +157,41 @@ CREATE TABLE IF NOT EXISTS commands (
     updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 每台服务器仅保留最新一次原子测试任务与最终报告。进度是易失的，
+-- 由 Panel 进程内存维护；generation 决定迟到结果是否可覆盖。
+CREATE TABLE IF NOT EXISTS server_test_tasks (
+    server_id       INTEGER PRIMARY KEY REFERENCES servers(id),
+    task_id         TEXT    NOT NULL UNIQUE,
+    generation      INTEGER NOT NULL,
+    request_id      TEXT    NOT NULL UNIQUE,
+    status          TEXT    NOT NULL DEFAULT 'queued',
+    categories      TEXT    NOT NULL, -- JSON string array
+    catalog_version TEXT    NOT NULL,
+    catalog_hashes  TEXT    NOT NULL, -- JSON object
+    result_json     TEXT,
+    result_sha256   TEXT    NOT NULL DEFAULT '',
+    error_code      TEXT    NOT NULL DEFAULT '',
+    error_message   TEXT    NOT NULL DEFAULT '',
+    agent_version   TEXT    NOT NULL DEFAULT '',
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    accepted_at     DATETIME,
+    started_at      DATETIME,
+    completed_at    DATETIME,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS server_test_result_chunks (
+    server_id   INTEGER NOT NULL REFERENCES servers(id),
+    task_id     TEXT    NOT NULL,
+    generation  INTEGER NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    chunk_count INTEGER NOT NULL,
+    manifest    TEXT,
+    data        BLOB NOT NULL,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (server_id, task_id, generation, chunk_index)
+);
+
 CREATE TABLE IF NOT EXISTS rpc_idempotency (
     operator      TEXT NOT NULL,
     route         TEXT NOT NULL,

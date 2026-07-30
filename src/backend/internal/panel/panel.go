@@ -167,20 +167,9 @@ func (s *Server) registerCoreTasks() {
 		}
 	}
 	s.scheduler.register(scheduledTask{
-		name: "cdn.catalog.refresh", runOnStart: true, timeout: 2 * time.Minute,
+		name: "cdn.catalog.refresh", timeout: 2 * time.Minute,
 		trigger: func(context.Context) taskTrigger { return intervalTrigger(cdnRefreshInterval) },
 		run:     s.cdn.refreshZstaticCDNCatalog,
-	})
-	cdnDNSInspectionInterval := cdnDNSInspectionIntervalDefault
-	if value := os.Getenv("LATTIX_CDN_DNS_INSPECTION_INTERVAL"); value != "" {
-		if parsed, err := time.ParseDuration(value); err == nil && parsed >= cdnDNSInspectionIntervalMinimum {
-			cdnDNSInspectionInterval = parsed
-		}
-	}
-	s.scheduler.register(scheduledTask{
-		name: "cdn.dns.inspect", timeout: 2 * time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(cdnDNSInspectionInterval) },
-		run:     s.cdn.inspectZstaticCDNDNS,
 	})
 	s.scheduler.register(scheduledTask{
 		name: "traffic.reset", runOnStart: true, timeout: time.Minute,
@@ -214,6 +203,13 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodGet, "/api/server/list-commands",
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"server_id", "limit"}},
 		s.handleListCommands)
+	s.registerRPC(mux, http.MethodGet, "/api/server/get-test",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"server_id"}}, s.handleGetServerTest)
+	s.registerRPC(mux, http.MethodPost, "/api/server/run-test",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id"}},
+		s.handleRunServerTest)
+	s.registerRPC(mux, http.MethodGet, "/api/server-test/catalog-status", read, s.handleCDNCatalogStatus)
+	s.registerRPC(mux, http.MethodPost, "/api/server-test/refresh-catalog", write, s.handleRefreshCDNCatalog)
 	s.registerRPC(mux, http.MethodPost, "/api/server/create", write, s.handleCreateServer)
 	s.registerRPC(mux, http.MethodPost, "/api/server/update",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id"}},

@@ -41,11 +41,47 @@ type Dispatcher struct {
 
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
+
+	testProgressMu sync.RWMutex
+	testProgress   map[int64]shared.ServerTestProgressPayload
 }
 
 // New 创建 Dispatcher。
 func New(st *store.Store, req ws.AgentRequester) *Dispatcher {
-	return &Dispatcher{st: st, req: req, flushMu: make(map[int64]*sync.Mutex)}
+	return &Dispatcher{
+		st: st, req: req, flushMu: make(map[int64]*sync.Mutex),
+		testProgress: make(map[int64]shared.ServerTestProgressPayload),
+	}
+}
+
+func (d *Dispatcher) EnqueueServerTest(
+	ctx context.Context,
+	serverID int64,
+	categories []shared.ServerTestCategory,
+	catalog shared.ServerTestCatalogSnapshot,
+) (*store.ServerTestTask, error) {
+	traceID := logging.TraceID(ctx)
+	task, _, err := d.st.EnqueueServerTest(ctx, serverID, traceID, categories, catalog)
+	if err != nil {
+		return nil, err
+	}
+	d.testProgressMu.Lock()
+	delete(d.testProgress, serverID)
+	d.testProgressMu.Unlock()
+	d.Flush(ctx, serverID)
+	return task, nil
+}
+
+func (d *Dispatcher) ServerTestProgress(serverID int64) *shared.ServerTestProgressPayload {
+	d.testProgressMu.RLock()
+	defer d.testProgressMu.RUnlock()
+	progress, ok := d.testProgress[serverID]
+	if !ok {
+		return nil
+	}
+	copy := progress
+	copy.Categories = append([]shared.ServerTestCategoryProgress(nil), progress.Categories...)
+	return &copy
 }
 
 // Enqueue 将命令写入 commands 表（queued）并尽力立即投递；离线则滞留，待重连补发（§2）。
@@ -418,6 +454,8 @@ func (d *Dispatcher) HandleMessage(serverID int64, env shared.Envelope) {
 		switch env.Type {
 		case shared.TypeSettingsSync:
 			d.handleAgentSettingsSync(serverID, env)
+		case shared.TypeServerTestResult:
+			d.handleServerTestResult(serverID, env)
 		default:
 			log.Printf("dispatch: server %d: ignore request type=%s request_id=%s",
 				serverID, env.Type, env.RequestID)
@@ -428,6 +466,8 @@ func (d *Dispatcher) HandleMessage(serverID int64, env shared.Envelope) {
 			d.handleTelemetry(serverID, env)
 		case shared.TypeDriftReport:
 			d.handleDriftReport(serverID, env)
+		case shared.TypeServerTestProgress:
+			d.handleServerTestProgress(serverID, env)
 		default:
 			log.Printf("dispatch: server %d: ignore event type=%s request_id=%s",
 				serverID, env.Type, env.RequestID)
@@ -436,6 +476,49 @@ func (d *Dispatcher) HandleMessage(serverID int64, env shared.Envelope) {
 		log.Printf("dispatch: server %d: ignore kind=%s type=%s request_id=%s",
 			serverID, env.Kind, env.Type, env.RequestID)
 	}
+}
+
+func (d *Dispatcher) handleServerTestProgress(serverID int64, env shared.Envelope) {
+	var progress shared.ServerTestProgressPayload
+	if err := json.Unmarshal(env.Data, &progress); err != nil || progress.SchemaVersion != shared.ServerTestSchemaVersion ||
+		!shared.ValidMessageID(progress.TaskID) || progress.Generation < 1 || progress.Sequence == 0 ||
+		(progress.Status != shared.ServerTestAccepted && progress.Status != shared.ServerTestRunning) {
+		log.Printf("dispatch: server %d: invalid server test progress", serverID)
+		return
+	}
+	task, err := d.st.ServerTestByServerID(context.Background(), serverID)
+	if err != nil || task.TaskID != progress.TaskID || task.Generation != progress.Generation || task.Status.Terminal() {
+		return
+	}
+	d.testProgressMu.Lock()
+	previous, exists := d.testProgress[serverID]
+	if !exists || previous.TaskID != progress.TaskID || progress.Sequence > previous.Sequence {
+		d.testProgress[serverID] = progress
+	}
+	d.testProgressMu.Unlock()
+	if _, err := d.st.UpdateServerTestState(context.Background(), serverID, progress.TaskID, progress.Generation, progress.Status); err != nil {
+		log.Printf("dispatch: server %d: persist server test state: %v", serverID, err)
+	}
+}
+
+func (d *Dispatcher) handleServerTestResult(serverID int64, env shared.Envelope) {
+	ctx := context.Background()
+	var chunk shared.ServerTestResultChunkPayload
+	if err := json.Unmarshal(env.Data, &chunk); err != nil {
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInvalidArgument, "invalid server test result chunk", nil)
+		return
+	}
+	outcome, err := d.st.SaveServerTestResultChunk(ctx, serverID, chunk)
+	if err != nil {
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInvalidArgument, err.Error(), nil)
+		return
+	}
+	if outcome == store.ServerTestChunkComplete || outcome == store.ServerTestChunkSuperseded {
+		d.testProgressMu.Lock()
+		delete(d.testProgress, serverID)
+		d.testProgressMu.Unlock()
+	}
+	d.replyAgentRequest(ctx, serverID, env, shared.CodeOK, "", shared.ServerTestResultACK{Status: string(outcome)})
 }
 
 func (d *Dispatcher) handleAgentSettingsSync(serverID int64, env shared.Envelope) {
@@ -666,6 +749,15 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			log.Printf("dispatch: server %d: response for command %d not in sent state, ignored", serverID, cmdID)
 			return
 		}
+		if cmd.Type == shared.TypeServerTestRun {
+			var testPayload shared.ServerTestRunPayload
+			if err := json.Unmarshal(cmd.Data, &testPayload); err == nil {
+				if _, err := d.st.UpdateServerTestState(ctx, serverID, testPayload.TaskID, testPayload.Generation, shared.ServerTestAccepted); err != nil {
+					log.Printf("dispatch: server %d: accept server test: %v", serverID, err)
+				}
+			}
+			return
+		}
 		d.setRevisionTaskResult(ctx, cmdID, true, "")
 		d.recordOperation(logging.OperationEvent{
 			Severity: logging.SeverityInfo, Category: logging.CategoryCommand,
@@ -706,6 +798,18 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 		}
 		if !failed {
 			log.Printf("dispatch: server %d: response for command %d not in sent state, ignored", serverID, cmdID)
+			return
+		}
+		if cmd.Type == shared.TypeServerTestRun {
+			var testPayload shared.ServerTestRunPayload
+			if err := json.Unmarshal(cmd.Data, &testPayload); err == nil {
+				if err := d.st.FailServerTestCommand(ctx, serverID, testPayload.TaskID, testPayload.Generation, env.Code, errorMessage); err != nil {
+					log.Printf("dispatch: server %d: fail server test command: %v", serverID, err)
+				}
+			}
+			d.testProgressMu.Lock()
+			delete(d.testProgress, serverID)
+			d.testProgressMu.Unlock()
 			return
 		}
 		d.setRevisionTaskResult(ctx, cmdID, false, errorMessage)
