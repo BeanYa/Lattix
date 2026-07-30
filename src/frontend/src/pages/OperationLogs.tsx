@@ -33,8 +33,10 @@ import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
 import {
+  OPERATION_PAGE_SIZE_OPTIONS,
   REFRESH_OPTIONS,
   useStoredNumber,
+  type OperationPageSize,
   type RefreshSeconds,
 } from '@/lib/log-preferences'
 import { useTimezone } from '@/lib/timezone'
@@ -45,7 +47,6 @@ import type {
   Server,
 } from '@/lib/types'
 
-const PAGE_SIZE = 10
 const REFRESH_VALUES = REFRESH_OPTIONS.map((option) => option.value)
 const CATEGORY_OPTIONS: { value: OperationCategory; label: string }[] = [
   { value: 'server', label: '服务器' },
@@ -103,6 +104,11 @@ export default function OperationLogs() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [filters, setFilters] = useState({ operator: '', query: '', from: '', to: '' })
+  const [pageSize, setPageSize] = useStoredNumber<OperationPageSize>(
+    'lattix.logs.operations.page-size.v1',
+    10,
+    OPERATION_PAGE_SIZE_OPTIONS,
+  )
   const [refreshSeconds, setRefreshSeconds] = useStoredNumber<RefreshSeconds>(
     'lattix.logs.operations.refresh.v1',
     0,
@@ -120,7 +126,7 @@ export default function OperationLogs() {
         q: filters.query || undefined,
         from: toRFC3339(filters.from),
         to: toRFC3339(filters.to),
-        limit: PAGE_SIZE,
+        limit: pageSize,
         offset,
       })
       .then((page) => {
@@ -129,7 +135,7 @@ export default function OperationLogs() {
       })
       .catch((err) => setError(errorMessage(err)))
       .finally(() => setLoading(false))
-  }, [category, filters, offset, serverId, severity])
+  }, [category, filters, offset, pageSize, serverId, severity])
 
   useEffect(() => {
     api.servers().then(setServers).catch(() => {})
@@ -186,6 +192,26 @@ export default function OperationLogs() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="text-sm text-muted-foreground">共 {total} 条</span>
         <div className="flex items-center gap-2">
+          <Label htmlFor="operation-page-size" className="text-xs">每页</Label>
+          <Select
+            value={String(pageSize)}
+            onValueChange={(value) => {
+              setPageSize(Number(value) as OperationPageSize)
+              setOffset(0)
+            }}
+            items={OPERATION_PAGE_SIZE_OPTIONS.map((value) => ({ value: String(value), label: `${value} 条` }))}
+          >
+            <SelectTrigger id="operation-page-size" className="w-24">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {OPERATION_PAGE_SIZE_OPTIONS.map((value) => (
+                  <SelectItem key={value} value={String(value)}>{value} 条</SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
           <Label htmlFor="operation-refresh" className="text-xs">刷新</Label>
           <Select
             value={String(refreshSeconds)}
@@ -331,10 +357,10 @@ export default function OperationLogs() {
       </Surface>
 
       <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>{total > 0 ? `第 ${offset + 1}-${Math.min(offset + PAGE_SIZE, total)} 条` : ''}</span>
+        <span>{total > 0 ? `第 ${offset + 1}-${Math.min(offset + pageSize, total)} 条` : ''}</span>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>上一页</Button>
-          <Button variant="outline" size="sm" disabled={offset + PAGE_SIZE >= total} onClick={() => setOffset(offset + PAGE_SIZE)}>下一页</Button>
+          <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - pageSize))}>上一页</Button>
+          <Button variant="outline" size="sm" disabled={offset + pageSize >= total} onClick={() => setOffset(offset + pageSize)}>下一页</Button>
         </div>
       </div>
 
