@@ -694,6 +694,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/sub-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["userSubSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/traffic-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["userTrafficHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/setting/get": {
         parameters: {
             query?: never;
@@ -704,6 +736,22 @@ export interface paths {
         get: operations["settingGet"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/setting/sub": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["settingSubGet"];
+        put?: never;
+        post: operations["settingSubUpdate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1867,6 +1915,37 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    userSubSettings: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    userTrafficHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     settingGet: {
         parameters: {
             query?: never;
@@ -1875,6 +1954,37 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    settingSubGet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    settingSubUpdate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
         responses: {
             200: components["responses"]["RPCResponse"];
             default: components["responses"]["ProtocolErrorResponse"];
@@ -2172,7 +2282,11 @@ export const rpcOperations = {
   userUpdate: { method: 'POST', path: '/api/user/update' },
   userSetNodes: { method: 'POST', path: '/api/user/set-nodes' },
   userDelete: { method: 'POST', path: '/api/user/delete' },
+  userSubSettings: { method: 'POST', path: '/api/user/sub-settings' },
+  userTrafficHistory: { method: 'GET', path: '/api/user/traffic-history' },
   settingGet: { method: 'GET', path: '/api/setting/get' },
+  settingSubGet: { method: 'GET', path: '/api/setting/sub' },
+  settingSubUpdate: { method: 'POST', path: '/api/setting/sub' },
   settingUpdate: { method: 'POST', path: '/api/setting/update' },
   settingChangePassword: { method: 'POST', path: '/api/setting/change-password' },
   settingTestAlerts: { method: 'POST', path: '/api/setting/test-alerts' },
