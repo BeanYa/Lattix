@@ -36,15 +36,16 @@ const (
 	SettingExchangeInspection    = "exchange_rate_inspection"
 	SettingReportingCurrency     = "reporting_currency"
 	SettingExchangeRateCache     = "exchange_rate_cache"
+	SettingCDNNodeCatalog        = "cdn_node_catalog"
 	SettingTrafficTimezone       = "traffic_timezone"
 	// 订阅系统全局配置（§9 落地页/多格式输出）。
-	SettingSubTitle              = "sub_title"               // 订阅页默认标题
-	SettingSubAnnouncement       = "sub_announcement"        // 全局公告（Markdown）
-	SettingSubCustomCSS          = "sub_custom_css"          // 自定义 CSS
-	SettingSubUpdateInterval     = "sub_update_interval"     // 默认更新间隔（小时）
-	SettingSubPlanName           = "sub_plan_name"           // 默认套餐名（subscription-userinfo plan_name）
-	SettingSubAppURL             = "sub_app_url"             // 默认客户端跳转链接（subscription-userinfo app_url）
-	SettingTrafficHistoryKeep    = "traffic_history_retention" // 历史保留周期数
+	SettingSubTitle           = "sub_title"                 // 订阅页默认标题
+	SettingSubAnnouncement    = "sub_announcement"          // 全局公告（Markdown）
+	SettingSubCustomCSS       = "sub_custom_css"            // 自定义 CSS
+	SettingSubUpdateInterval  = "sub_update_interval"       // 默认更新间隔（小时）
+	SettingSubPlanName        = "sub_plan_name"             // 默认套餐名（subscription-userinfo plan_name）
+	SettingSubAppURL          = "sub_app_url"               // 默认客户端跳转链接（subscription-userinfo app_url）
+	SettingTrafficHistoryKeep = "traffic_history_retention" // 历史保留周期数
 )
 
 type SettingMutation struct {

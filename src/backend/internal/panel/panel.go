@@ -55,17 +55,18 @@ type Server struct {
 	upd       *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
 	releases  *releaseCatalog
 	exchange  *exchangeCatalog
+	cdn       *cdnCatalog
 	scheduler *taskScheduler
 	opLog     *logging.OperationStore
 	reqLog    *logging.RequestLog
 
-	routePolicies map[string]logging.LogPolicy
+	routePolicies   map[string]logging.LogPolicy
 	methodFallbacks map[string]bool // 已注册 405 回退路由的裸路径（同路径多方法时避免重复注册）
-	idempotencyMu sync.Mutex
-	authOnce      sync.Once
-	loginAttempts *loginLimiter
-	bcryptSlots   chan struct{}
-	tasks         sync.WaitGroup
+	idempotencyMu   sync.Mutex
+	authOnce        sync.Once
+	loginAttempts   *loginLimiter
+	bcryptSlots     chan struct{}
+	tasks           sync.WaitGroup
 }
 
 func (s *Server) StartBackgroundTasks(ctx context.Context) {
@@ -106,12 +107,13 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 	s := &Server{
 		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
-		routePolicies: make(map[string]logging.LogPolicy),
+		routePolicies:   make(map[string]logging.LogPolicy),
 		methodFallbacks: make(map[string]bool),
 	}
 	s.upd = newPanelUpdater(s)
 	s.releases = newReleaseCatalog(s)
 	s.exchange = newExchangeCatalog(s)
+	s.cdn = newCDNCatalog(s)
 	s.scheduler = newTaskScheduler(s.inspectionLocation)
 	s.registerCoreTasks()
 	return s, nil
@@ -157,6 +159,28 @@ func (s *Server) registerCoreTasks() {
 		name: "exchange_rates.refresh", runOnStart: true, timeout: 45 * time.Second,
 		trigger: func(ctx context.Context) taskTrigger { return s.exchangeInspectionSchedule(ctx) },
 		run:     s.exchange.refresh,
+	})
+	cdnRefreshInterval := cdnCatalogRefreshIntervalDefault
+	if value := os.Getenv("LATTIX_CDN_REFRESH_INTERVAL"); value != "" {
+		if parsed, err := time.ParseDuration(value); err == nil && parsed > 0 {
+			cdnRefreshInterval = parsed
+		}
+	}
+	s.scheduler.register(scheduledTask{
+		name: "cdn.catalog.refresh", runOnStart: true, timeout: 2 * time.Minute,
+		trigger: func(context.Context) taskTrigger { return intervalTrigger(cdnRefreshInterval) },
+		run:     s.cdn.refreshZstaticCDNCatalog,
+	})
+	cdnDNSInspectionInterval := cdnDNSInspectionIntervalDefault
+	if value := os.Getenv("LATTIX_CDN_DNS_INSPECTION_INTERVAL"); value != "" {
+		if parsed, err := time.ParseDuration(value); err == nil && parsed >= cdnDNSInspectionIntervalMinimum {
+			cdnDNSInspectionInterval = parsed
+		}
+	}
+	s.scheduler.register(scheduledTask{
+		name: "cdn.dns.inspect", timeout: 2 * time.Minute,
+		trigger: func(context.Context) taskTrigger { return intervalTrigger(cdnDNSInspectionInterval) },
+		run:     s.cdn.inspectZstaticCDNDNS,
 	})
 	s.scheduler.register(scheduledTask{
 		name: "traffic.reset", runOnStart: true, timeout: time.Minute,
