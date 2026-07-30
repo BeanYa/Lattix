@@ -20,12 +20,31 @@ type User struct {
 	Expired         bool
 	Disabled        bool
 	TrafficLimit    int64  // 流量配额（字节），0=不限
-	TrafficResetDay int    // 每月重置日（day-of-month，0=创建日，max 28）
+	TrafficResetDay int    // 每月重置日（day-of-month，0=创建日，1-31）
 	SubTitle        string // 订阅落地页标题覆盖
 	SubAnnouncement string // 订阅公告覆盖（Markdown）
 	PlanName        string // 套餐名（subscription-userinfo plan_name，空=用全局）
 	AppURL          string // 客户端跳转链接（subscription-userinfo app_url，空=用全局）
 	CreatedAt       time.Time
+}
+
+// TrafficResetAt returns this user's reset boundary for a calendar month.
+// A day absent from that month resolves to its last day (for example, 31 -> February 28/29).
+func (u User) TrafficResetAt(year int, month time.Month, loc *time.Location) time.Time {
+	day := u.TrafficResetDay
+	if day == 0 {
+		day = u.CreatedAt.Day()
+	}
+	if day < 1 {
+		day = 1
+	} else if day > 31 {
+		day = 31
+	}
+	lastDay := time.Date(year, month+1, 0, 0, 0, 0, 0, loc).Day()
+	if day > lastDay {
+		day = lastDay
+	}
+	return time.Date(year, month, day, 0, 0, 0, 0, loc)
 }
 
 // InsertUser 插入一个用户；expiresAt 为 nil 表示长期有效。

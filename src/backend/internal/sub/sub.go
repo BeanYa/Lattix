@@ -80,18 +80,16 @@ func (s *Server) setSubHeaders(w http.ResponseWriter, r *http.Request, user *sto
 }
 
 // daysUntilReset 计算距下次流量重置的天数（与 sweeper 重置语义一致：
-// reset_day=0 取创建日，>28 截断为 28；当天已过重置时刻则计入下月）。
+// reset_day=0 取创建日，月份缺少配置日期时取月末；当天已过重置时刻则计入下月）。
 func daysUntilReset(user *store.User, now time.Time) int {
-	resetDay := user.TrafficResetDay
-	if resetDay == 0 {
-		resetDay = user.CreatedAt.Day()
-	}
-	if resetDay > 28 {
-		resetDay = 28
-	}
-	next := time.Date(now.Year(), now.Month(), resetDay, 0, 0, 0, 0, now.Location())
+	next := user.TrafficResetAt(now.Year(), now.Month(), now.Location())
 	if !next.After(now) {
-		next = next.AddDate(0, 1, 0)
+		year, month := now.Year(), now.Month()+1
+		if month > time.December {
+			year++
+			month = time.January
+		}
+		next = user.TrafficResetAt(year, month, now.Location())
 	}
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	return int(next.Sub(today).Hours() / 24)

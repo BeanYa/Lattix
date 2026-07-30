@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS users (
     expired    INTEGER NOT NULL DEFAULT 0,
     disabled   INTEGER NOT NULL DEFAULT 0,
     traffic_limit     INTEGER NOT NULL DEFAULT 0, -- 流量配额（字节），0=不限
-    traffic_reset_day INTEGER NOT NULL DEFAULT 0, -- 每月重置日（day-of-month，0=创建日，max 28）
+    traffic_reset_day INTEGER NOT NULL DEFAULT 0, -- 每月重置日（day-of-month，0=创建日，1-31）
     sub_title         TEXT    NOT NULL DEFAULT '', -- 订阅落地页标题覆盖（空=用全局）
     sub_announcement  TEXT    NOT NULL DEFAULT '', -- 订阅公告覆盖（Markdown，空=用全局）
     plan_name         TEXT    NOT NULL DEFAULT '', -- 套餐名（subscription-userinfo plan_name，空=用全局）

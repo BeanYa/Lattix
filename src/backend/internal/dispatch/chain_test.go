@@ -86,6 +86,15 @@ func TestSingleHopChainBecomesActiveAfterServiceApply(t *testing.T) {
 	nodeID, _ := st.InsertNode(ctx, "direct", serverID, shared.ProtocolVLESS, nil, config)
 	chainID, _ := st.InsertChain(ctx, "direct")
 	hopID, _ := st.InsertChainHop(ctx, chainID, 0, serverID, store.HopRoleExit, nodeID, 0, "")
+	if _, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{
+		Name: "direct", ServiceNodeID: nodeID, ServiceServerID: serverID,
+		ServiceConfig: config, TrafficMultiplierMilli: 1000,
+		Hops: []store.ChainRevisionHop{{
+			HopID: hopID, ServerID: serverID, Role: store.HopRoleExit,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	req := &fakeRequester{online: map[int64]bool{serverID: true}}
 	d := New(st, req)
 	if err := d.StartChain(ctx, chainID); err != nil {
@@ -103,6 +112,13 @@ func TestSingleHopChainBecomesActiveAfterServiceApply(t *testing.T) {
 	hop, _ := st.ChainHopByID(ctx, hopID)
 	if hop.Status != store.HopStatusActive || hop.ForwardPort != 443 {
 		t.Fatalf("hop = %+v", hop)
+	}
+	published, err := st.PublishedChainRevision(ctx, chainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(published.Snapshot.Hops) != 1 || published.Snapshot.Hops[0].ForwardPort != 443 {
+		t.Fatalf("published single-hop snapshot = %+v", published.Snapshot.Hops)
 	}
 }
 

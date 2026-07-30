@@ -208,6 +208,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 				log.Printf("dispatch: chain %d single-hop port: %v", chainID, err)
 				return
 			}
+			hops[0].ForwardPort = rc.Port
 		}
 		if hops[0].Status != store.HopStatusActive {
 			if err := d.st.SetChainHopStatus(ctx, hops[0].ID, store.HopStatusActive, ""); err != nil {

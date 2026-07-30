@@ -85,9 +85,8 @@ func (s *Store) PruneTrafficHistory(ctx context.Context, userUUID string, keep i
 	return nil
 }
 
-// UsersDueForTrafficReset 返回今天应执行流量重置的用户列表：
-// 当期 period_start 的月份 ≠ 当前月 且 今天 >= reset_day。
-// reset_day=0 时取用户创建日的 day-of-month。
+// UsersDueForTrafficReset returns users whose current period predates the latest
+// reset boundary. This also catches up a boundary missed while the panel was offline.
 func (s *Store) UsersDueForTrafficReset(ctx context.Context, now time.Time) ([]User, error) {
 	// 查询所有有流量记录的用户，判断是否需要重置。
 	// 简化实现：查所有用户，在 Go 侧判断。用户量小（自用/小团队），可接受。
@@ -97,18 +96,16 @@ func (s *Store) UsersDueForTrafficReset(ctx context.Context, now time.Time) ([]U
 	}
 	var due []User
 	for _, u := range users {
-		resetDay := u.TrafficResetDay
-		if resetDay == 0 {
-			resetDay = u.CreatedAt.Day()
+		boundary := u.TrafficResetAt(now.Year(), now.Month(), now.Location())
+		if boundary.After(now) {
+			year, month := now.Year(), now.Month()-1
+			if month < time.January {
+				year--
+				month = time.December
+			}
+			boundary = u.TrafficResetAt(year, month, now.Location())
 		}
-		if resetDay > 28 {
-			resetDay = 28
-		}
-		if now.Day() < resetDay {
-			continue
-		}
-		// 检查该用户当期 period_start 是否在本月之前。
-		needs, err := s.userNeedsReset(ctx, u.UUID, now)
+		needs, err := s.userNeedsReset(ctx, u.UUID, boundary)
 		if err != nil {
 			continue
 		}
@@ -119,8 +116,9 @@ func (s *Store) UsersDueForTrafficReset(ctx context.Context, now time.Time) ([]U
 	return due, nil
 }
 
-// userNeedsReset 判断用户流量是否需要重置：当期 period_start 的年月 < 当前年月。
-func (s *Store) userNeedsReset(ctx context.Context, userUUID string, now time.Time) (bool, error) {
+// userNeedsReset reports whether the current accounting period started before
+// the latest reset boundary.
+func (s *Store) userNeedsReset(ctx context.Context, userUUID string, boundary time.Time) (bool, error) {
 	var periodStart string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT period_start FROM traffic WHERE user_uuid = ? AND node_id = 0`, userUUID).
@@ -137,11 +135,5 @@ func (s *Store) userNeedsReset(ctx context.Context, userUUID string, now time.Ti
 	if err != nil {
 		return true, nil // 解析失败 → 重置以修复
 	}
-	// 比较年月：period_start 的年月 < 当前年月 → 需要重置
-	psYear, psMonth, _ := ps.Date()
-	nowYear, nowMonth, _ := now.Date()
-	if psYear < nowYear || (psYear == nowYear && psMonth < nowMonth) {
-		return true, nil
-	}
-	return false, nil
+	return ps.Before(boundary), nil
 }

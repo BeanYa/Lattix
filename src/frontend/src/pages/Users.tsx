@@ -28,6 +28,13 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Table,
   TableBody,
   TableCell,
@@ -40,7 +47,55 @@ import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { buildLinkOptions } from '@/lib/links'
 import { useTimezone } from '@/lib/timezone'
-import type { Chain, SubUser, XrayNode } from '@/lib/types'
+import {
+  formatTrafficLimit,
+  parseTrafficLimit,
+  parseTrafficResetDay,
+  TRAFFIC_UNITS,
+  type TrafficUnit,
+} from '@/lib/user-subscription'
+import type { Chain, SubUser } from '@/lib/types'
+
+function TrafficLimitInput({
+  value,
+  unit,
+  onValueChange,
+  onUnitChange,
+  placeholder = '流量配额',
+}: {
+  value: string
+  unit: TrafficUnit
+  onValueChange: (value: string) => void
+  onUnitChange: (unit: TrafficUnit) => void
+  placeholder?: string
+}) {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_4.5rem] gap-2">
+      <Input
+        type="number"
+        min={0}
+        step="any"
+        value={value}
+        onChange={(event) => onValueChange(event.target.value)}
+        placeholder={placeholder}
+      />
+      <Select
+        value={unit}
+        onValueChange={(next) => next && onUnitChange(next as TrafficUnit)}
+        items={TRAFFIC_UNITS}
+      >
+        <SelectTrigger className="w-full" aria-label="流量配额单位">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {TRAFFIC_UNITS.map((option) => (
+            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
 
 /** toLocalInput 把 RFC3339 时间转成 datetime-local 输入框所需的本地格式（yyyy-MM-ddTHH:mm）。 */
 function toLocalInput(t: string): string {
@@ -62,7 +117,6 @@ export default function Users() {
   const { timezone } = useTimezone()
   const { confirm } = useAppDialog()
   const [users, setUsers] = useState<SubUser[]>([])
-  const [nodes, setNodes] = useState<XrayNode[]>([])
   const [chains, setChains] = useState<Chain[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -77,7 +131,8 @@ export default function Users() {
   const [created, setCreated] = useState<SubUser | null>(null)
   const [createLinkSel, setCreateLinkSel] = useState<number[]>([])
   const [createTrafficLimit, setCreateTrafficLimit] = useState('')
-  const [createResetDay, setCreateResetDay] = useState('0')
+  const [createTrafficUnit, setCreateTrafficUnit] = useState<TrafficUnit>('GB')
+  const [createResetDay, setCreateResetDay] = useState('')
   const [createPlanName, setCreatePlanName] = useState('')
   const [createAppURL, setCreateAppURL] = useState('')
 
@@ -96,7 +151,8 @@ export default function Users() {
   // 用户订阅设置对话框
   const [subTarget, setSubTarget] = useState<SubUser | null>(null)
   const [subTrafficLimit, setSubTrafficLimit] = useState('')
-  const [subResetDay, setSubResetDay] = useState('0')
+  const [subTrafficUnit, setSubTrafficUnit] = useState<TrafficUnit>('GB')
+  const [subResetDay, setSubResetDay] = useState('')
   const [subTitleOverride, setSubTitleOverride] = useState('')
   const [subAnnouncementOverride, setSubAnnouncementOverride] = useState('')
   const [subPlanName, setSubPlanName] = useState('')
@@ -114,14 +170,12 @@ export default function Users() {
       ? { signal, ...(silent ? { display: 'silent' as const } : {}) }
       : silent ? { display: 'silent' as const } : undefined
     try {
-      const [nextUsers, nextNodes, nextChains] = await Promise.all([
+      const [nextUsers, nextChains] = await Promise.all([
         api.users(options),
-        api.nodes(options),
         api.chains(options),
       ])
       if (signal?.aborted || request !== loadRequest.current) return
       setUsers(nextUsers)
-      setNodes(nextNodes)
       setChains(nextChains)
     } catch (err) {
       if (signal?.aborted || request !== loadRequest.current) return
@@ -157,7 +211,8 @@ export default function Users() {
       setCreated(null)
       setCreateLinkSel([])
       setCreateTrafficLimit('')
-      setCreateResetDay('0')
+      setCreateTrafficUnit('GB')
+      setCreateResetDay('')
       setCreatePlanName('')
       setCreateAppURL('')
     }
@@ -167,25 +222,25 @@ export default function Users() {
     setCreateLinkSel((cur) => (checked ? [...cur, id] : cur.filter((x) => x !== id)))
   }
 
-  const linkOptions = useMemo(() => buildLinkOptions(nodes, chains), [chains, nodes])
+  const linkOptions = useMemo(() => buildLinkOptions(chains), [chains])
 
   const onCreate = async (e: FormEvent) => {
     e.preventDefault()
     setCreateError('')
     setCreating(true)
     try {
-      const limitGB = Number(createTrafficLimit) || 0
-      const resetDay = Number(createResetDay) || 0
+      const trafficLimit = parseTrafficLimit(createTrafficLimit, createTrafficUnit)
+      const resetDay = parseTrafficResetDay(createResetDay)
       const planName = createPlanName.trim()
       const appURL = createAppURL.trim()
-      const hasSub = limitGB > 0 || resetDay > 0 || planName !== '' || appURL !== ''
+      const hasSub = trafficLimit > 0 || resetDay > 0 || planName !== '' || appURL !== ''
       const res = await api.createUser(
         name.trim(),
         localInputToRFC3339(expiresAt),
         createLinkSel,
         hasSub
           ? {
-              traffic_limit: limitGB > 0 ? limitGB * 1073741824 : 0,
+              traffic_limit: trafficLimit,
               traffic_reset_day: resetDay,
               plan_name: planName,
               app_url: appURL,
@@ -284,9 +339,11 @@ export default function Users() {
   }
 
   const onOpenSubSettings = (u: SubUser) => {
+    const trafficLimit = formatTrafficLimit(u.traffic_limit)
     setSubTarget(u)
-    setSubTrafficLimit(u.traffic_limit > 0 ? String(Math.round(u.traffic_limit / 1073741824)) : '')
-    setSubResetDay(String(u.traffic_reset_day))
+    setSubTrafficLimit(trafficLimit.value)
+    setSubTrafficUnit(trafficLimit.unit)
+    setSubResetDay(u.traffic_reset_day > 0 ? String(u.traffic_reset_day) : '')
     setSubTitleOverride(u.sub_title)
     setSubAnnouncementOverride(u.sub_announcement)
     setSubPlanName(u.plan_name)
@@ -299,11 +356,12 @@ export default function Users() {
     setSubErr('')
     setSubSaving(true)
     try {
-      const limitGB = Number(subTrafficLimit) || 0
+      const trafficLimit = parseTrafficLimit(subTrafficLimit, subTrafficUnit)
+      const resetDay = parseTrafficResetDay(subResetDay)
       await api.updateUserSubSettings({
         user_id: subTarget.id,
-        traffic_limit: limitGB > 0 ? limitGB * 1073741824 : 0,
-        traffic_reset_day: Number(subResetDay) || 0,
+        traffic_limit: trafficLimit,
+        traffic_reset_day: resetDay,
         sub_title: subTitleOverride,
         sub_announcement: subAnnouncementOverride,
         plan_name: subPlanName,
@@ -525,22 +583,22 @@ export default function Users() {
                 <Label>订阅设置（可选，留空跟随全局）</Label>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
-                    <Input
-                      type="number"
-                      min={0}
+                    <TrafficLimitInput
                       value={createTrafficLimit}
-                      onChange={e => setCreateTrafficLimit(e.target.value)}
-                      placeholder="流量配额 GB/周期，0=不限"
+                      unit={createTrafficUnit}
+                      onValueChange={setCreateTrafficLimit}
+                      onUnitChange={setCreateTrafficUnit}
                     />
                   </div>
                   <div className="space-y-1">
                     <Input
                       type="number"
-                      min={0}
-                      max={28}
+                      min={1}
+                      max={31}
+                      step={1}
                       value={createResetDay}
                       onChange={e => setCreateResetDay(e.target.value)}
-                      placeholder="重置日，0=创建日"
+                      placeholder="重置日（留空=创建日）"
                     />
                   </div>
                   <div className="space-y-1">
@@ -652,25 +710,26 @@ export default function Users() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid items-end gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>流量配额（GB/周期，0=不限）</Label>
-                <Input
-                  type="number"
-                  min={0}
+                <Label>流量配额（留空为不限）</Label>
+                <TrafficLimitInput
                   value={subTrafficLimit}
-                  onChange={e => setSubTrafficLimit(e.target.value)}
-                  placeholder="0"
+                  unit={subTrafficUnit}
+                  onValueChange={setSubTrafficLimit}
+                  onUnitChange={setSubTrafficUnit}
                 />
               </div>
               <div className="space-y-2">
-                <Label>重置日（0=创建日，1-28）</Label>
+                <Label>重置日（1–31，留空为创建日）</Label>
                 <Input
                   type="number"
-                  min={0}
-                  max={28}
+                  min={1}
+                  max={31}
+                  step={1}
                   value={subResetDay}
                   onChange={e => setSubResetDay(e.target.value)}
+                  placeholder="创建日"
                 />
               </div>
             </div>

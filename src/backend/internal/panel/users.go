@@ -121,6 +121,13 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "expires_at 不能是过去的时间")
 		return
 	}
+	if req.TrafficLimit < 0 {
+		req.TrafficLimit = 0
+	}
+	if err := validateTrafficResetDay(req.TrafficResetDay); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	u := store.User{
 		Name:     req.Name,
 		UUID:     uuid.NewString(),
@@ -140,13 +147,6 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	// 可选订阅设置：任一项非默认时写入（用户级覆盖全局）。
 	if req.TrafficLimit != 0 || req.TrafficResetDay != 0 || req.PlanName != "" || req.AppURL != "" {
-		if req.TrafficLimit < 0 {
-			req.TrafficLimit = 0
-		}
-		if req.TrafficResetDay < 0 || req.TrafficResetDay > 28 {
-			writeError(w, http.StatusBadRequest, "重置日须为 0–28（0=创建日）")
-			return
-		}
 		if err := s.st.SetUserSubSettings(r.Context(), id, req.TrafficLimit, req.TrafficResetDay, "", "", strings.TrimSpace(req.PlanName), strings.TrimSpace(req.AppURL)); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -191,6 +191,13 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		"user_id": created.ID, "name": created.Name, "node_count": len(nodeIDs),
 	})
 	writeJSON(w, http.StatusCreated, s.toUserDTO(r, *created, nodeIDs))
+}
+
+func validateTrafficResetDay(day int) error {
+	if day < 0 || day > 31 {
+		return errors.New("重置日须为 0 或 1–31（0=创建日）")
+	}
+	return nil
 }
 
 // parseExpiresAt 解析 RFC3339 有效期；nil/空串 = 长期。
@@ -502,7 +509,7 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 	var req struct {
 		UserID          int64  `json:"user_id"`
 		TrafficLimit    int64  `json:"traffic_limit"`     // 字节，0=不限
-		TrafficResetDay int    `json:"traffic_reset_day"` // 0=创建日，1-28
+		TrafficResetDay int    `json:"traffic_reset_day"` // 0=创建日，1-31
 		SubTitle        string `json:"sub_title"`
 		SubAnnouncement string `json:"sub_announcement"`
 		PlanName        string `json:"plan_name"` // 套餐名（空=用全局）
@@ -519,8 +526,8 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 	if req.TrafficLimit < 0 {
 		req.TrafficLimit = 0
 	}
-	if req.TrafficResetDay < 0 || req.TrafficResetDay > 28 {
-		writeError(w, http.StatusBadRequest, "重置日须为 0–28（0=创建日）")
+	if err := validateTrafficResetDay(req.TrafficResetDay); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := s.st.SetUserSubSettings(r.Context(), req.UserID, req.TrafficLimit, req.TrafficResetDay, req.SubTitle, req.SubAnnouncement, strings.TrimSpace(req.PlanName), strings.TrimSpace(req.AppURL)); err != nil {
