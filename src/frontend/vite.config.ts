@@ -6,32 +6,6 @@ import path from 'path'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  build: {
-    rolldownOptions: {
-      output: {
-        codeSplitting: {
-          includeDependenciesRecursively: false,
-          minSize: 20_000,
-          groups: [
-            {
-              name: 'three',
-              test: /node_modules[\\/]three[\\/]/,
-              priority: 2,
-              // Three.js contains internal cycles that must stay in one execution unit.
-              includeDependenciesRecursively: true,
-            },
-            {
-              name: 'globe',
-              test:
-                /node_modules[\\/](?:@tweenjs[\\/]tween\.js|accessor-fn|d3-[^\\/]+|data-bind-mapper|float-tooltip|frame-ticker|globe\.gl|h3-js|index-array-by|kapsule|polished|react-globe\.gl|react-kapsule|three-[^\\/]+|tinycolor2)[\\/]/,
-              priority: 1,
-              maxSize: 400_000,
-            },
-          ],
-        },
-      },
-    },
-  },
   resolve: {
     alias: [
       { find: '@', replacement: path.resolve(__dirname, './src') },

@@ -2,7 +2,21 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import simplify from '@turf/simplify'
 import type { FeatureCollection, Position } from 'geojson'
 import type { GlobeMethods } from 'react-globe.gl'
-import type { BufferGeometry, Material, Object3D } from 'three'
+import {
+  Color,
+  DodecahedronGeometry,
+  Float32BufferAttribute,
+  Group,
+  IcosahedronGeometry,
+  Mesh,
+  MeshLambertMaterial,
+  MeshToonMaterial,
+  Quaternion,
+  Vector3,
+  type BufferGeometry,
+  type Material,
+  type Object3D,
+} from 'three'
 
 import { formatByteRate } from '@/lib/format'
 import { useTheme } from '@/lib/theme-context'
@@ -321,7 +335,7 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
     let cloudMaterial: Material | undefined
     let cloudGeometry: BufferGeometry | undefined
 
-    import('three').then(({ Color, DodecahedronGeometry, Float32BufferAttribute, Group, IcosahedronGeometry, Mesh, MeshLambertMaterial, MeshToonMaterial, Vector3 }) => {
+    Promise.resolve().then(() => {
       material = new MeshLambertMaterial({
         color: palette.oceanColor,
         emissive: palette.oceanEmissive,
@@ -487,7 +501,7 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
   useEffect(() => {
     let frame = 0
     let cancelled = false
-    import('three').then(({ Quaternion, Vector3 }) => {
+    Promise.resolve().then(() => {
       if (cancelled) return
       let previousTime = performance.now()
       const identity = new Quaternion()
