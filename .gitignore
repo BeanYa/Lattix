@@ -31,6 +31,7 @@ src/backend/internal/web/dist/*
 # Tooling artifacts
 .codegraph/
 .zcode/
+/.qoder/
 /.worktree/
 
 # Build artifacts
