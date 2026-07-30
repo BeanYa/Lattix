@@ -17,6 +17,16 @@ CONFIG_DIR=""
 
 die() { echo "install-panel.sh: $*" >&2; exit 1; }
 
+download_file() {
+    local label="$1" url="$2" destination="$3"
+    echo ">> 正在下载 $label"
+    if ! curl --fail --location --show-error --progress-bar \
+        --output "$destination" "$url"; then
+        return 1
+    fi
+    echo ">> $label 下载完成"
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --mode)           MODE="${2:?--mode requires native|docker}"; shift 2 ;;
@@ -85,7 +95,9 @@ install_docker_engine() {
     local installer
     installer="$(mktemp)"
     trap 'rm -f "$installer"' RETURN
-    curl -fsSL https://get.docker.com -o "$installer"
+    download_file "Docker Engine 安装脚本" https://get.docker.com "$installer" \
+        || die "Docker Engine 安装脚本下载失败"
+    echo ">> 正在安装 Docker Engine，包管理器会持续显示依赖下载进度"
     "${ROOT[@]}" sh "$installer"
     "${ROOT[@]}" systemctl enable --now docker
 }
@@ -187,7 +199,10 @@ YAML
     "${ROOT[@]}" install -m 0600 "$work/.env" "$root/config/.env"
     "${ROOT[@]}" install -m 0644 "$work/compose.yaml" "$root/compose.yaml"
 
+    echo ">> 正在拉取 Lattix Docker 镜像"
     docker_cmd compose --project-directory "$root" --env-file "$root/config/.env" pull
+    echo ">> Docker 镜像拉取完成"
+    echo ">> 正在启动 Lattix Docker 服务"
     docker_cmd compose --project-directory "$root" --env-file "$root/config/.env" up -d
     echo
     echo "Lattix Docker 面板安装完成：$VERSION"
@@ -215,8 +230,10 @@ install_native_mode() {
     local work
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' RETURN
-    curl -fsSL "$release/$asset" -o "$work/$asset"
-    curl -fsSL "$release/checksums.txt" -o "$work/checksums.txt"
+    download_file "Lattix Panel ${VERSION}" "$release/$asset" "$work/$asset" \
+        || die "$asset download failed"
+    download_file "Panel 校验文件" "$release/checksums.txt" "$work/checksums.txt" \
+        || die "checksums.txt download failed"
     (cd "$work" && grep " ${asset}$" checksums.txt | sha256sum -c - >/dev/null) \
         || die "$asset SHA256 verification failed"
     tar -C "$work" -xzf "$work/$asset"

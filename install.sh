@@ -8,6 +8,17 @@ RAW_BASE="${LATX_RAW_BASE:-https://raw.githubusercontent.com/${GITHUB_REPO}}"
 
 die() { echo "install.sh: $*" >&2; exit 1; }
 
+download_file() {
+    local label="$1" url="$2" destination="$3"
+    command -v curl >/dev/null || die "curl is required"
+    echo ">> 正在下载 $label"
+    if ! curl --fail --location --show-error --progress-bar \
+        --output "$destination" "$url"; then
+        return 1
+    fi
+    echo ">> $label 下载完成"
+}
+
 resolve_latest() {
     command -v curl >/dev/null || die "curl is required"
     curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" \
@@ -20,7 +31,7 @@ run_child() {
     local child="install-${component}.sh" tmp
     tmp="$(mktemp)"
     trap 'rm -f "$tmp"' RETURN
-    curl -fsSL "${RAW_BASE}/${version}/scripts/${child}" -o "$tmp" \
+    download_file "$child" "${RAW_BASE}/${version}/scripts/${child}" "$tmp" \
         || die "failed to load ${child} from tag ${version}"
     chmod 0755 "$tmp"
     if GITHUB_REPO="$GITHUB_REPO" "$tmp" --version "$version" "$@"; then

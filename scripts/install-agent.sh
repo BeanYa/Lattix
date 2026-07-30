@@ -50,6 +50,16 @@ XRAY_VERSION="${XRAY_VERSION:-latest}"
 
 die() { echo "install.sh: $*" >&2; exit 1; }
 
+download_file() {
+    local label="$1" url="$2" destination="$3"
+    echo ">> 正在下载 $label"
+    if ! curl --fail --location --show-error --progress-bar \
+        --output "$destination" "$url"; then
+        return 1
+    fi
+    echo ">> $label 下载完成"
+}
+
 BBR_WARNING=""
 BBR_SYSCTL="${LATX_BBR_SYSCTL:-sysctl}"
 BBR_MODPROBE="${LATX_BBR_MODPROBE:-modprobe}"
@@ -297,12 +307,14 @@ else
 
     command -v unzip >/dev/null || die "unzip is required"
     echo ">> installing xray-core ${XRAY_VERSION}"
-    curl -fsSL -o "$TMP_DIR/xray.zip" \
-        "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}"
+    download_file "xray-core ${XRAY_VERSION}" \
+        "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}" \
+        "$TMP_DIR/xray.zip" || die "xray-core 下载失败"
 
     # 校验官方 .dgst 中的 SHA2-256（§11）；获取不到校验文件时中止，不降级跳过。
-    curl -fsSL -o "$TMP_DIR/xray.dgst" \
+    download_file "xray-core 校验文件" \
         "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}.dgst" \
+        "$TMP_DIR/xray.dgst" \
         || die "未获取到 xray 官方 .dgst 校验文件，中止安装（§11 要求校验官方 checksums）"
     EXPECTED="$(grep 'SHA2-256=' "$TMP_DIR/xray.dgst" | head -1 | cut -d' ' -f2)"
     ACTUAL="$(sha256sum "$TMP_DIR/xray.zip" | cut -d' ' -f1)"
@@ -328,10 +340,12 @@ fi
 command -v tar >/dev/null || die "tar is required"
 RELEASE_BASE="${LATX_RELEASE_BASE:-https://github.com/${GITHUB_REPO}/releases/download/${LATTIX_VERSION}}"
 echo ">> installing lattix-agent ${LATTIX_VERSION}（source: GitHub）"
-curl -fsSL -o "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}.tar.gz" \
-    "${RELEASE_BASE}/lattix-agent-linux-${AGENT_ARCH}.tar.gz"
+download_file "lattix-agent ${LATTIX_VERSION}" \
+    "${RELEASE_BASE}/lattix-agent-linux-${AGENT_ARCH}.tar.gz" \
+    "$TMP_DIR/lattix-agent-linux-${AGENT_ARCH}.tar.gz" \
+    || die "agent 包下载失败"
 # 校验文件获取不到即中止，不降级跳过。
-curl -fsSL -o "$TMP_DIR/checksums.txt" "${RELEASE_BASE}/checksums.txt" \
+download_file "agent 校验文件" "${RELEASE_BASE}/checksums.txt" "$TMP_DIR/checksums.txt" \
     || die "未获取到校验文件 checksums.txt，中止安装"
 (cd "$TMP_DIR" && grep "lattix-agent-linux-${AGENT_ARCH}\.tar\.gz\$" checksums.txt | sha256sum -c - >/dev/null) \
     || die "agent 包 SHA256 校验失败（checksums.txt）"

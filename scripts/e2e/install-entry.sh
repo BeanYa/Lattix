@@ -38,15 +38,21 @@ chmod +x "$work/bin/curl"
 
 LATX_TEST_OUTPUT="$work/panel.args" \
 LATX_RAW_BASE="file://$work" \
-    bash "$repo_root/install.sh" panel --version v9.8.7 --mode docker --port 9090
+    bash "$repo_root/install.sh" panel --version v9.8.7 --mode docker --port 9090 \
+    >"$work/panel.log" 2>&1
 diff -u <(printf '%s\n' --version v9.8.7 --mode docker --port 9090) "$work/panel.args"
+grep -Fq '>> 正在下载 install-panel.sh' "$work/panel.log" \
+    || { echo "panel child installer download progress is missing" >&2; exit 1; }
 
 LATX_TEST_OUTPUT="$work/agent.args" \
 LATX_RAW_BASE="file://$work" \
     bash "$repo_root/install.sh" agent --version v9.8.7 \
-        --panel https://panel.example.com --token bootstrap
+        --panel https://panel.example.com --token bootstrap \
+        >"$work/agent.log" 2>&1
 diff -u <(printf '%s\n' --version v9.8.7 --panel https://panel.example.com \
     --token bootstrap) "$work/agent.args"
+grep -Fq '>> 正在下载 install-agent.sh' "$work/agent.log" \
+    || { echo "agent child installer download progress is missing" >&2; exit 1; }
 
 # The recommended interactive command pipes the installer into bash, so its
 # stdin is not a TTY. Verify the panel-only wizard reads from /dev/tty.

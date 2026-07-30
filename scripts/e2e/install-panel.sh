@@ -86,6 +86,9 @@ run_install | tee "$WORK/install.log"
 
 grep -q "访问地址: http://127.0.0.1:18081" "$WORK/install.log" \
     && echo "OK: 成功输出含面板地址" || { echo "FAIL: 成功输出缺面板地址"; cat "$WORK/install.log"; exit 1; }
+grep -q ">> 正在下载 Lattix Panel $VERSION" "$WORK/install.log" \
+    && echo "OK: panel 依赖下载前显示进度提示" \
+    || { echo "FAIL: panel 下载提示缺失"; cat "$WORK/install.log"; exit 1; }
 grep -q "管理员:   admin" "$WORK/install.log" && grep -q "初始密码: lattix-admin" "$WORK/install.log" \
     && echo "OK: 成功输出含默认账号提示" || { echo "FAIL: 成功输出缺默认账号"; exit 1; }
 

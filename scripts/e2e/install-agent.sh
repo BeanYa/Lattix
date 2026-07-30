@@ -128,6 +128,9 @@ run_install | tee "$WORK/install.log"
 
 grep -q "面板地址:  http://$ADDR" "$WORK/install.log" \
     && echo "OK: 成功输出含面板地址" || { echo "FAIL: 成功输出缺面板地址"; cat "$WORK/install.log"; exit 1; }
+grep -q ">> 正在下载 lattix-agent $VERSION" "$WORK/install.log" \
+    && echo "OK: agent 依赖下载前显示进度提示" \
+    || { echo "FAIL: agent 下载提示缺失"; cat "$WORK/install.log"; exit 1; }
 grep -q "Agent 状态: \[DEV\] 进程运行中" "$WORK/install.log" \
     && echo "OK: 成功输出含 agent 状态" || { echo "FAIL: 成功输出缺 agent 状态"; cat "$WORK/install.log"; exit 1; }
 grep -q "Agent 版本: $VERSION" "$WORK/install.log" \
