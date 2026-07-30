@@ -45,8 +45,8 @@ jobs:
       - name: Test
         run: |
           bash -n install.sh
-          find scripts -maxdepth 1 -name '*.sh' -exec bash -n {} +
-          bash scripts/dev-e2e-install-entry.sh
+          find scripts -name '*.sh' -exec bash -n {} +
+          bash scripts/e2e/install-entry.sh
           go test ./src/backend/... ./src/agent/... ./src/shared/...
 
       - name: Build panel and agent
@@ -152,7 +152,7 @@ jobs:
           PANEL_BIN="$PWD/out/lattix-backend-linux-amd64" \
           AGENT_BIN="$PWD/current/lattix-agent-linux-amd64" \
           XRAY_BIN=/tmp/xray/xray \
-            bash scripts/dev-e2e-panel.sh
+            bash scripts/e2e/panel.sh
 
   release:
     needs: [build, e2e]

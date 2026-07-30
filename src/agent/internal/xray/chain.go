@@ -1,5 +1,5 @@
 // 链跳配置件（§21.1 piece）渲染与生命周期：portal/bridge/forward 三种角色
-// 按载荷渲染并入受管 config.json（配置形状对照 scripts/dev-poc-reverse.sh 的 PoC）。
+// 按载荷渲染并入受管 config.json（配置形状对照 scripts/dev/poc-reverse.sh 的 PoC）。
 // piece 涉及 reverse/routing 顶层段，无法走 gRPC 热操作——一律走
 // "落盘 → xray -test → systemctl restart → 失败回滚上一份"的兜底流水线（§6）。
 package xray

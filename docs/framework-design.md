@@ -446,7 +446,7 @@ latx-ag 随 GitHub Release 的 agent 包 `lattix-agent-linux-<arch>.tar.gz` 分�
 统一经 checksums.txt 校验（§11）。
 install.sh 成功输出面板地址 / agent 状态 / xray 版本与 latx-ag 运维提示块。
 `LATX_DEV=1` + `LATX_PREFIX` 路径前缀提供与 install-panel.sh 同款的 DEV 降级
-（dev-e2e-install-agent.sh 走此路径）。`dev-test-install-agent-bbr.sh` 通过隔离的
+（e2e/install-agent.sh 走此路径）。`dev/test-install-agent-bbr.sh` 通过隔离的
 sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支持、容器拒绝 sysctl
 及单行原因 WARNING，不触碰测试宿主的真实网络参数。
 
@@ -532,7 +532,7 @@ sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支�
 **实施时待定的小项**（不阻塞设计）：portal 监听端口在有端口段的 NAT 机上同样从可用段分配；
 向导链路构图的详细校验规则（入口必须有入站能力，出口任意，中间跳至少一侧可达）。
 
-**PoC 结论（已验证，GO）**：`scripts/dev-poc-reverse.sh` 实证 reverse bridge/portal + 隧道 Reality +
+**PoC 结论（已验证，GO）**：`scripts/dev/poc-reverse.sh` 实证 reverse bridge/portal + 隧道 Reality +
 端到端 Reality 透传可行（链路通、portal 重启自愈、隧道口抗探测分流正常）。两个实测要点：
 Reality dest 不稳定（如 www.microsoft.com）会导致合法客户端握手一并失败，dest 白名单必须只收稳定目标
 （§6 destCandidates 已遵循，隧道 inbound 复用同一白名单）；反向通道注册存在启动竞态，

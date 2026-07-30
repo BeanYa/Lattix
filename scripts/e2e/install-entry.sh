@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/v9.8.7/scripts"
@@ -75,4 +75,4 @@ diff -u <(printf '%s\n' --version v9.8.7 --mode native --bind 192.0.2.10 \
     --port 7070 --admin-user operator --admin-pass secret-pass \
     --config-dir /srv/lattix-native) "$work/wizard-native.args"
 
-echo "dev-e2e-install-entry: PASS"
+echo "e2e/install-entry: PASS"

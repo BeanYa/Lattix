@@ -3,7 +3,7 @@
 # only the current protocol; fresh installs do not carry a compatibility matrix.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 ADDR="127.0.0.1:18096"
 ADMIN_PASS="testpass123"

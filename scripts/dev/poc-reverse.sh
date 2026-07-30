@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dev-poc-reverse.sh — §21 链式中转 Phase 0 PoC：xray reverse bridge/portal 验证。
+# poc-reverse.sh — §21 链式中转 Phase 0 PoC：xray reverse bridge/portal 验证。
 #
 # 拓扑（全部在本机回环模拟）：
 #   client(socks:11080) → [B 机 portal] entry dokodemo:11002 → reverse 隧道(Reality :11001)

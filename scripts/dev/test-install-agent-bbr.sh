@@ -3,7 +3,7 @@
 # 不读取或修改宿主机网络参数。
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -95,4 +95,4 @@ OUT="$(LATX_TEST_BBR_DENY=1 run_bbr)"
 [[ "$OUT" == "WARNING: TCP BBR 未完整启用：sysctl 设置 BBR 被拒绝：permission denied; inside container" ]] \
     || { echo "FAIL: sysctl WARNING 原因不符: $OUT"; exit 1; }
 
-echo "dev-test-install-agent-bbr: PASS"
+echo "dev/test-install-agent-bbr: PASS"

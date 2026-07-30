@@ -8,7 +8,7 @@
 # 依赖：python3、curl、tar；无需 systemd/root（全程 LATX_DEV=1）。
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 FAKE="$WORK/fake-release"
 PANEL_ROOT="$WORK/panel"

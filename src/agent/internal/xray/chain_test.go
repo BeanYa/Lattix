@@ -10,7 +10,7 @@ import (
 	"lattix/shared"
 )
 
-// 以下渲染形状对照 scripts/dev-poc-reverse.sh（已验证 GO 的 PoC）逐字段断言。
+// 以下渲染形状对照 scripts/dev/poc-reverse.sh（已验证 GO 的 PoC）逐字段断言。
 
 func mustUnmarshal(t *testing.T, raw json.RawMessage) map[string]any {
 	t.Helper()

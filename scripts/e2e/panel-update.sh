@@ -6,7 +6,7 @@
 # 依赖：python3、curl、go。覆盖：UPDATE_ADDR / MIRROR_PORT。
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 OLD_VER="v0.0.1"
 NEW_VER="v0.0.2"

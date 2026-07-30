@@ -13,12 +13,12 @@
 # 依赖：python3、curl、openssl、本机 xray 二进制（XRAY_BIN 可覆盖）。
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 XRAY_BIN="${XRAY_BIN:-$HOME/.cache/lattix-dev/xray-core/xray}"
 [[ -x "$XRAY_BIN" ]] || { echo "xray 不存在: $XRAY_BIN"; exit 1; }
 # VLESS Encryption 需带 vlessenc 子命令的 xray（§15）；缺失时退化为第二个普通节点，
-# 跳过 encryption 客户端字符串断言（专用数据通路由 dev-e2e-vlessenc.sh 覆盖）。
+# 跳过 encryption 客户端字符串断言（专用数据通路由 e2e/vlessenc.sh 覆盖）。
 HAS_VLESSENC=true
 "$XRAY_BIN" vlessenc >/dev/null 2>&1 || HAS_VLESSENC=false
 

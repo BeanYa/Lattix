@@ -10,7 +10,7 @@
 # 无需 systemd/root（用例 1-5 全程 LATX_DEV=1；用例 6 为 user 用户态模式）。
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 FAKE="$WORK/fake-release"
 PREFIX="$WORK/prefix"

@@ -2,10 +2,10 @@
 # 阶段 1 控制通道端到端验收（实施计划 1.6，设计文档 §2/§5/§11）：
 #   hello 认证换发长期凭证 → 离线命令滞留 queued → 重连补发 → apply_result 回写状态机。
 # 管理 API 均为 RPC 信封：写操作需 Idempotency-Key 与 X-CSRF-Token。
-# 用法：scripts/dev-e2e.sh（依赖 python3 操作 sqlite）
+# 用法：scripts/e2e/control-channel.sh（依赖 python3 操作 sqlite）
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'kill ${BPID:-} ${APID:-} 2>/dev/null; wait 2>/dev/null; rm -rf "$WORK"' EXIT
 
