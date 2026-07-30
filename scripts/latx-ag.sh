@@ -92,7 +92,10 @@ agent_version() {
 
 xray_version() {
     if [[ -x "$XRAY_BIN" ]]; then
-        "$XRAY_BIN" version 2>/dev/null | head -1 || echo "unknown"
+        local output
+        output="$("$XRAY_BIN" version 2>/dev/null || true)"
+        output="${output%%$'\n'*}"
+        echo "${output:-unknown}"
     else
         echo "not installed"
     fi
@@ -175,7 +178,7 @@ cmd_status() {
 user_start() {
     [[ -x "$RUN_SCRIPT" ]] || die "守护脚本不存在: $RUN_SCRIPT（请先运行 install.sh）"
     nohup "$RUN_SCRIPT" >/dev/null 2>&1 &
-    echo ">> [用户态] 已启动守护脚本 $RUN_SCRIPT（脚本内 flock 防重复）"
+    echo ">> [用户态] 已启动守护脚本 $RUN_SCRIPT（脚本内防重复）"
 }
 
 user_stop() {
@@ -517,7 +520,11 @@ Select language / 选择语言
   2. 中文
 EOF
 	read -r -p "Language [1]: " choice || true
-	[[ "$choice" == "2" || "$choice" == "zh" || "$choice" == "ZH" ]] && MENU_LANG="zh"
+	if [[ "$choice" == "2" || "$choice" == "zh" || "$choice" == "ZH" ]]; then
+		MENU_LANG="zh"
+	else
+		MENU_LANG="en"
+	fi
 }
 
 pause_menu() {

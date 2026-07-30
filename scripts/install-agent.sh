@@ -321,6 +321,12 @@ fi
 # http→ws / https→wss
 PANEL_WS="$(echo "$PANEL_URL" | sed -e 's|^https://|wss://|' -e 's|^http://|ws://|')/api/agent/ws"
 
+process_pid() {
+    local pattern="$1"
+    command -v pgrep >/dev/null 2>&1 || return 0
+    pgrep -f "$pattern" 2>/dev/null | sed -n '1p' || true
+}
+
 echo ">> writing $ENV_FILE"
 install -m 0600 /dev/null "$ENV_FILE"
 cat > "$ENV_FILE" <<EOF
@@ -370,34 +376,102 @@ EOF
     systemctl daemon-reload
     systemctl enable --now xray.service
     systemctl enable --now lattix-agent.service
-    AGENT_STATUS="$(systemctl is-active lattix-agent.service 2>/dev/null || echo unknown)"
+    AGENT_ACTIVE="$(systemctl is-active lattix-agent.service 2>/dev/null || true)"
+    AGENT_PID="$(systemctl show -p MainPID --value lattix-agent.service 2>/dev/null || true)"
+    XRAY_ACTIVE="$(systemctl is-active xray.service 2>/dev/null || true)"
+    XRAY_PID="$(systemctl show -p MainPID --value xray.service 2>/dev/null || true)"
+    if [[ "$AGENT_ACTIVE" == "active" && "$AGENT_PID" =~ ^[1-9][0-9]*$ ]]; then
+        AGENT_STATUS="运行中（systemd active，pid $AGENT_PID）"
+    else
+        AGENT_STATUS="未运行（systemd ${AGENT_ACTIVE:-unknown}）"
+    fi
+    if [[ "$XRAY_ACTIVE" == "active" && "$XRAY_PID" =~ ^[1-9][0-9]*$ ]]; then
+        XRAY_STATUS="运行中（systemd active，pid $XRAY_PID）"
+    else
+        XRAY_STATUS="未运行（systemd ${XRAY_ACTIVE:-unknown}）"
+    fi
 elif [[ "$USER_MODE" -eq 1 ]]; then
-    # user 用户态模式：不注册 systemd，生成守护脚本常驻（flock 防重复 + 退出后自动拉起，
-    # 替代 systemd Restart=always），并 best-effort 注册 crontab @reboot 开机自启。
+    # user 用户态模式：不注册 systemd，生成守护脚本常驻（优先用 flock 防重复，精简系统
+    # 无 flock 时退到可回收的 mkdir 锁；agent 退出后自动拉起），并 best-effort 注册
+    # crontab @reboot 开机自启。
     echo ">> [user] 生成守护脚本 $BIN_DIR/lattix-agent-run（日志 $AGENT_LOG）"
     mkdir -p "$(dirname "$AGENT_LOG")" "$DATA_DIR"
     cat > "$BIN_DIR/lattix-agent-run" <<EOF
 #!/usr/bin/env bash
-# Lattix Agent 用户态守护脚本（install.sh 生成）：flock 防重复；agent 退出（崩溃/自升级）
+# Lattix Agent 用户态守护脚本（install.sh 生成）：防重复运行；agent 退出（崩溃/自升级）
 # 后 sleep 1 自动拉起，替代 systemd Restart=always；每次重启重新读取 env（token 轮换后即生效）。
 set -u
-exec 9>"$DATA_DIR/lattix-agent.lock"
-flock -n 9 || exit 0
+exec >>"$AGENT_LOG" 2>&1
+
+LOCK_KIND=""
+LOCK_DIR="$DATA_DIR/lattix-agent.lock.d"
+
+lock_owner_alive() {
+    local owner="\$1"
+    [[ "\$owner" =~ ^[1-9][0-9]*\$ ]] || return 1
+    kill -0 "\$owner" 2>/dev/null || return 1
+    [[ ! -r "/proc/\$owner/cmdline" ]] || grep -aqF "$BIN_DIR/lattix-agent-run" "/proc/\$owner/cmdline"
+}
+
+cleanup_lock() {
+    if [[ "\$LOCK_KIND" == "mkdir" ]]; then
+        rm -f "\$LOCK_DIR/pid"
+        rmdir "\$LOCK_DIR" 2>/dev/null || true
+    fi
+}
+trap cleanup_lock EXIT
+trap 'exit 0' INT TERM
+
+if command -v flock >/dev/null 2>&1; then
+    exec 9>"$DATA_DIR/lattix-agent.lock"
+    flock -n 9 || exit 0
+    LOCK_KIND="flock"
+else
+    # mkdir 在本地文件系统上原子创建；PID 校验与原子 rename 负责回收崩溃/断电遗留锁。
+    while ! mkdir "\$LOCK_DIR" 2>/dev/null; do
+        owner="\$(cat "\$LOCK_DIR/pid" 2>/dev/null || true)"
+        lock_owner_alive "\$owner" && exit 0
+        # 给刚创建目录、尚未来得及写 PID 的并发启动者一次完成初始化的机会。
+        sleep 1
+        owner="\$(cat "\$LOCK_DIR/pid" 2>/dev/null || true)"
+        lock_owner_alive "\$owner" && exit 0
+        stale="\${LOCK_DIR}.stale.\$\$"
+        if mv "\$LOCK_DIR" "\$stale" 2>/dev/null; then
+            rm -f "\$stale/pid"
+            rmdir "\$stale" 2>/dev/null || true
+        fi
+    done
+    printf '%s\n' "\$\$" >"\$LOCK_DIR/pid"
+    LOCK_KIND="mkdir"
+    echo "lattix-agent-run: flock 不可用，已使用 mkdir 兼容锁"
+fi
 while true; do
     set -a; . "$ENV_FILE"; set +a
     "$AGENT_BIN" -panel "\$LATTIX_PANEL_WS" -token "\$LATTIX_TOKEN" -state "$STATE_FILE" \\
         -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG" \\
-        -xray-api "$XRAY_API" -xray-runner exec 9>&- >>"$AGENT_LOG" 2>&1
+        -xray-api "$XRAY_API" -xray-runner exec 9>&-
     sleep 1
 done
 EOF
     chmod 0755 "$BIN_DIR/lattix-agent-run"
     nohup "$BIN_DIR/lattix-agent-run" >/dev/null 2>&1 &
+    RUNNER_PID=$!
     sleep 1
-    if kill -0 $! 2>/dev/null; then
-        AGENT_STATUS="[user] 守护脚本运行中（pid $!）"
+    AGENT_PID="$(process_pid "$AGENT_BIN -panel")"
+    XRAY_PID="$(process_pid "$XRAY_BIN_DST run -config $XRAY_CONFIG")"
+    if [[ -n "$AGENT_PID" ]]; then
+        AGENT_STATUS="[user] 进程运行中（pid $AGENT_PID，守护 pid $RUNNER_PID）"
+    elif kill -0 "$RUNNER_PID" 2>/dev/null; then
+        AGENT_STATUS="[user] 进程未运行（守护脚本 pid $RUNNER_PID 正在重试；日志见 $AGENT_LOG）"
     else
         AGENT_STATUS="[user] 守护脚本未运行（日志见 $AGENT_LOG）"
+        echo ">> [user] 守护脚本启动失败，最近日志：" >&2
+        tail -n 20 "$AGENT_LOG" >&2 || true
+    fi
+    if [[ -n "$XRAY_PID" ]]; then
+        XRAY_STATUS="[user] 进程运行中（pid $XRAY_PID，由 Agent 托管）"
+    else
+        XRAY_STATUS="[user] 进程未运行（由 Agent 托管，等待可运行配置）"
     fi
     # best-effort 开机自启：crontab @reboot（先 grep 去重）；无 crontab 时提示手动启动。
     if command -v crontab >/dev/null; then
@@ -417,11 +491,18 @@ else
         -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG" \
         -xray-api "$XRAY_API" -xray-runner exec \
         >"$AGENT_LOG" 2>&1 &
+    AGENT_PID=$!
     sleep 1
-    if kill -0 $! 2>/dev/null; then
-        AGENT_STATUS="[DEV] 进程运行中（pid $!）"
+    XRAY_PID="$(process_pid "$XRAY_BIN_DST run -config $XRAY_CONFIG")"
+    if kill -0 "$AGENT_PID" 2>/dev/null; then
+        AGENT_STATUS="[DEV] 进程运行中（pid $AGENT_PID）"
     else
         AGENT_STATUS="[DEV] 进程未运行（日志见 $AGENT_LOG）"
+    fi
+    if [[ -n "$XRAY_PID" ]]; then
+        XRAY_STATUS="[DEV] 进程运行中（pid $XRAY_PID，由 Agent 托管）"
+    else
+        XRAY_STATUS="[DEV] 进程未运行（由 Agent 托管，等待可运行配置）"
     fi
 fi
 
@@ -440,6 +521,12 @@ elif [[ "$USER_MODE" -eq 1 ]]; then
   日志文件:  $AGENT_LOG
   用户态启停: latx-ag start / stop"
 fi
+AGENT_VERSION_DISPLAY="$("$AGENT_BIN" -version 2>/dev/null || true)"
+AGENT_VERSION_DISPLAY="${AGENT_VERSION_DISPLAY%%$'\n'*}"
+[[ -n "$AGENT_VERSION_DISPLAY" ]] || AGENT_VERSION_DISPLAY="unknown"
+XRAY_VERSION_DISPLAY="$("$XRAY_BIN_DST" version 2>/dev/null || true)"
+XRAY_VERSION_DISPLAY="${XRAY_VERSION_DISPLAY%%$'\n'*}"
+[[ -n "$XRAY_VERSION_DISPLAY" ]] || XRAY_VERSION_DISPLAY="unknown"
 cat <<EOF
 
 ============================================================
@@ -448,7 +535,9 @@ cat <<EOF
   面板地址:  $PANEL_URL
   运行模式:  $MODE_LABEL
   Agent 状态: $AGENT_STATUS
-  xray 版本:  $("$XRAY_BIN_DST" version 2>/dev/null | head -1 || echo unknown)$USER_HINT
+  Agent 版本: $AGENT_VERSION_DISPLAY
+  xray 状态:  $XRAY_STATUS
+  xray 版本:  $XRAY_VERSION_DISPLAY$USER_HINT
 
   使用 latx-ag 命令运维本节点：
     latx-ag status / log / update / xray-update / uninstall

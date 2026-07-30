@@ -5,9 +5,10 @@
 #   → latx-ag 随装 → checksum 篡改应中止 → 成功输出（面板地址/agent 状态/latx-ag 提示块）
 #   → 重装清旧 state（预置坏 state 仍能上线）→ agent 连上面板（online）
 #   → latx-ag version / status（进程检查）可用
-#   → user 用户态模式（LATX_USER_MODE=1 无 LATX_DEV）：守护脚本常驻 + latx-ag 用户态 start/stop。
+#   → user 用户态模式（LATX_USER_MODE=1 无 LATX_DEV）：守护脚本常驻 + latx-ag 用户态 start/stop
+#   → PATH 中无 flock 时使用 mkdir 兼容锁启动。
 # 依赖：python3、curl、本机 xray 二进制（XRAY_BIN 可覆盖；DEV/user 模式复制安装，不下载）。
-# 无需 systemd/root（用例 1-5 全程 LATX_DEV=1；用例 6 为 user 用户态模式）。
+# 无需 systemd/root（用例 1-4 使用 LATX_DEV=1；用例 5-7 为 user 用户态模式）。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -129,8 +130,14 @@ grep -q "面板地址:  http://$ADDR" "$WORK/install.log" \
     && echo "OK: 成功输出含面板地址" || { echo "FAIL: 成功输出缺面板地址"; cat "$WORK/install.log"; exit 1; }
 grep -q "Agent 状态: \[DEV\] 进程运行中" "$WORK/install.log" \
     && echo "OK: 成功输出含 agent 状态" || { echo "FAIL: 成功输出缺 agent 状态"; cat "$WORK/install.log"; exit 1; }
+grep -q "Agent 版本: $VERSION" "$WORK/install.log" \
+    && echo "OK: 成功输出含 agent 版本" || { echo "FAIL: 成功输出缺 agent 版本"; cat "$WORK/install.log"; exit 1; }
+grep -q "xray 状态:  \[DEV\] 进程" "$WORK/install.log" \
+    && echo "OK: 成功输出含 xray 运行状态" || { echo "FAIL: 成功输出缺 xray 状态"; cat "$WORK/install.log"; exit 1; }
 grep -q "xray 版本:  Xray" "$WORK/install.log" \
     && echo "OK: 成功输出含 xray 版本" || { echo "FAIL: 成功输出缺 xray 版本"; exit 1; }
+! grep -qx "unknown" "$WORK/install.log" \
+    || { echo "FAIL: xray 版本输出包含多余 unknown"; cat "$WORK/install.log"; exit 1; }
 grep -q "latx-ag status / log / update / xray-update / uninstall" "$WORK/install.log" \
     && grep -q "latx-ag -h 查看帮助" "$WORK/install.log" \
     && echo "OK: 成功输出含 latx-ag 运维提示块" || { echo "FAIL: 成功输出缺 latx-ag 提示块"; exit 1; }
@@ -154,6 +161,8 @@ echo ">> 用例 4: latx-ag version / status（LATX_DEV=1 进程检查）"
 VER_OUT="$(latx_ag version)"
 [[ "$VER_OUT" == *"latx-ag 版本: $VERSION"* && "$VER_OUT" == *"Agent 版本:   $VERSION"* && "$VER_OUT" == *"xray 版本:    Xray"* ]] \
     && echo "OK: latx-ag version（latx-ag/agent/xray 三版本）" || { echo "FAIL: version: $VER_OUT"; exit 1; }
+[[ "$VER_OUT" != *$'\nunknown'* ]] \
+    && echo "OK: latx-ag xray 版本无多余 unknown" || { echo "FAIL: version 含多余 unknown: $VER_OUT"; exit 1; }
 STATUS="$(latx_ag status)"
 echo "$STATUS" | grep -q "\[用户态\] 进程运行中" \
     && echo "OK: latx-ag status 进程检查" || { echo "FAIL: status: $STATUS"; exit 1; }
@@ -169,6 +178,16 @@ MENU_OUT="$(printf '0\n' | LATX_LANG=zh LATX_DEV=1 LATX_PREFIX="$PREFIX" \
     bash "$PREFIX/opt/lattix-agent/bin/latx-ag")"
 echo "$MENU_OUT" | grep -q "Lattix Agent 运维菜单" \
     && echo "OK: latx-ag 无参数进入交互菜单" || { echo "FAIL: 交互菜单: $MENU_OUT"; exit 1; }
+MENU_EN_OUT="$(printf '1\n0\n' | LATX_LANG= LATX_DEV=1 LATX_PREFIX="$PREFIX" \
+    bash "$PREFIX/opt/lattix-agent/bin/latx-ag")"
+echo "$MENU_EN_OUT" | grep -q "Lattix Agent Operations" \
+    && echo "OK: latx-ag 选择 English 后进入主菜单" \
+    || { echo "FAIL: English 语言选择后退出: $MENU_EN_OUT"; exit 1; }
+MENU_ZH_OUT="$(printf '2\n0\n' | LATX_LANG= LATX_DEV=1 LATX_PREFIX="$PREFIX" \
+    bash "$PREFIX/opt/lattix-agent/bin/latx-ag")"
+echo "$MENU_ZH_OUT" | grep -q "Lattix Agent 运维菜单" \
+    && echo "OK: latx-ag 选择中文后进入主菜单" \
+    || { echo "FAIL: 中文语言选择后退出: $MENU_ZH_OUT"; exit 1; }
 latx_ag log -n 50 | grep -q "authenticated as server 1" \
     && echo "OK: latx-ag log -n（DEV 读日志文件）" || { echo "FAIL: latx-ag log"; exit 1; }
 
@@ -180,6 +199,10 @@ USER_OUT="$(LATX_USER_MODE=1 LATX_PREFIX="$USER_PREFIX" LATX_RELEASE_BASE="file:
     bash "$FAKE/install-agent.sh" --version "$VERSION" --panel "http://$ADDR" --token "$BOOTSTRAP3")"
 echo "$USER_OUT" | grep -q "\[user\]" \
     && echo "OK: 安装输出含用户态模式提示" || { echo "FAIL: 缺用户态提示: $USER_OUT"; exit 1; }
+echo "$USER_OUT" | grep -q "Agent 状态: \[user\] 进程运行中" \
+    && echo "OK: user 安装摘要含 agent 实际运行状态" || { echo "FAIL: 缺 agent 实际状态: $USER_OUT"; exit 1; }
+echo "$USER_OUT" | grep -q "xray 状态:  \[user\] 进程" \
+    && echo "OK: user 安装摘要含 xray 实际运行状态" || { echo "FAIL: 缺 xray 实际状态: $USER_OUT"; exit 1; }
 [[ -x "$USER_PREFIX/opt/lattix-agent/bin/lattix-agent-run" ]] \
     && echo "OK: 守护脚本 lattix-agent-run 就位且可执行" || { echo "FAIL: 守护脚本缺失"; exit 1; }
 pgrep -f "$USER_PREFIX/opt/lattix-agent/bin/lattix-agent -panel" >/dev/null \
@@ -213,6 +236,36 @@ if pgrep -f "$USER_PREFIX/opt/lattix-agent/bin/lattix-agent" >/dev/null; then
     echo "FAIL: stop 后守护脚本/agent 进程仍在"; exit 1
 fi
 echo "OK: latx-ag stop 后守护脚本与 agent 进程消失"
+
+echo ">> 用例 6: user 用户态守护脚本在无 flock 的精简系统上仍可启动"
+NO_FLOCK_BIN="$WORK/no-flock-bin"
+mkdir -p "$NO_FLOCK_BIN"
+for command_name in bash cat grep mkdir mv pgrep pkill rm rmdir sleep; do
+    ln -s "$(command -v "$command_name")" "$NO_FLOCK_BIN/$command_name"
+done
+PATH="$NO_FLOCK_BIN" "$USER_PREFIX/opt/lattix-agent/bin/lattix-agent-run" &
+NO_FLOCK_RUNNER_PID=$!
+STARTED=""
+for _ in $(seq 1 10); do
+    if pgrep -f "$USER_PREFIX/opt/lattix-agent/bin/lattix-agent -panel" >/dev/null; then
+        STARTED=1
+        break
+    fi
+    sleep 1
+done
+[[ -n "$STARTED" ]] \
+    && echo "OK: 无 flock 时 mkdir 兼容锁成功启动 agent" || {
+        echo "FAIL: 无 flock 时 agent 未启动"
+        tail -20 "$USER_PREFIX/opt/lattix-agent/logs/agent.log" || true
+        exit 1
+    }
+grep -q "flock 不可用，已使用 mkdir 兼容锁" "$USER_PREFIX/opt/lattix-agent/logs/agent.log" \
+    && echo "OK: 守护器记录 mkdir 兼容锁诊断" \
+    || { echo "FAIL: 缺少无 flock 兼容锁诊断"; exit 1; }
+latx_ag_user stop
+wait "$NO_FLOCK_RUNNER_PID" 2>/dev/null || true
+
+echo ">> 用例 7: latx-ag start 恢复用户态进程"
 latx_ag_user start
 STARTED=""
 for _ in $(seq 1 10); do
