@@ -19,14 +19,16 @@ const (
 type cdnCatalog struct {
 	s         *Server
 	client    *http.Client
+	clientErr error
 	sourceURL string
 	now       func() time.Time
 	mu        sync.Mutex
 }
 
 func newCDNCatalog(s *Server) *cdnCatalog {
+	client, err := cdncatalog.NewHTTPClient(30 * time.Second)
 	return &cdnCatalog{
-		s: s, client: &http.Client{Timeout: 30 * time.Second},
+		s: s, client: client, clientErr: err,
 		sourceURL: cdncatalog.DefaultSourceURL, now: time.Now,
 	}
 }
@@ -49,6 +51,11 @@ func (c *cdnCatalog) refreshZstaticCDNCatalog(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now().UTC()
+	if c.clientErr != nil {
+		err := fmt.Errorf("initialize CDN catalog HTTP client: %w", c.clientErr)
+		c.recordStatus(ctx, now, err)
+		return err
+	}
 	document, err := cdncatalog.Fetch(ctx, c.client, c.sourceURL, now)
 	if err != nil {
 		c.recordStatus(ctx, now, err)

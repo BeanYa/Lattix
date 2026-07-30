@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -73,6 +74,32 @@ func TestCDNCatalogRefreshPersistsWithoutDNSAndPreservesLastGoodOnFailure(t *tes
 	status, err = catalog.status(context.Background())
 	if err != nil || !status.Available || !strings.Contains(status.LastError, "HTTP 502") || status.LastErrorAt == nil {
 		t.Fatalf("failure status: status=%+v err=%v", status, err)
+	}
+}
+
+func TestCDNCatalogClientInitializationFailureIsReported(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "panel.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	panel := &Server{st: st}
+	now := time.Date(2026, time.July, 31, 1, 2, 3, 0, time.UTC)
+	catalog := &cdnCatalog{
+		s: panel, clientErr: errors.New("invalid embedded root"),
+		sourceURL: cdncatalog.DefaultSourceURL, now: func() time.Time { return now },
+	}
+	refreshErr := catalog.refreshZstaticCDNCatalog(context.Background())
+	if refreshErr == nil || !strings.Contains(refreshErr.Error(), "invalid embedded root") {
+		t.Fatalf("refresh error = %v", refreshErr)
+	}
+	status, err := catalog.status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Available || status.LastErrorAt == nil ||
+		!strings.Contains(status.LastError, "initialize CDN catalog HTTP client") {
+		t.Fatalf("unexpected catalog status: %+v", status)
 	}
 }
 
