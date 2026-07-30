@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
 	"lattix/backend/internal/cdncatalog"
 	"lattix/backend/internal/store"
+	"lattix/backend/internal/testcatalog"
 	"lattix/shared"
 )
 
@@ -172,6 +174,10 @@ func (s *Server) serverTestCatalogSnapshot(ctx context.Context, categories []sha
 		selected[category] = true
 	}
 	var targets []shared.ServerTestTarget
+	staticCatalog, err := testcatalog.Load()
+	if err != nil {
+		return shared.ServerTestCatalogSnapshot{}, fmt.Errorf("加载静态测试目录失败：%w", err)
+	}
 	for _, province := range document.Provinces {
 		for carrierKey, endpoints := range map[string]cdncatalog.ProtocolEndpoints{
 			"telecom": province.Carriers.Telecom,
@@ -187,11 +193,70 @@ func (s *Server) serverTestCatalogSnapshot(ctx context.Context, categories []sha
 			if selected[shared.ServerTestLargePacketIPv4] {
 				targets = append(targets, catalogEndpointTarget(shared.ServerTestLargePacketIPv4, province, carrierKey, endpoints.IPv4))
 			}
+			if selected[shared.ServerTestReturnRouteIPv4] {
+				targets = append(targets, catalogEndpointTarget(shared.ServerTestReturnRouteIPv4, province, carrierKey, endpoints.IPv4))
+			}
+			if selected[shared.ServerTestReturnRouteIPv6] {
+				targets = append(targets, catalogEndpointTarget(shared.ServerTestReturnRouteIPv6, province, carrierKey, endpoints.IPv6))
+			}
 		}
 	}
+	if selected[shared.ServerTestCERNETIPv4] || selected[shared.ServerTestCERNET2IPv6] {
+		for index, target := range staticCatalog.Education {
+			if selected[shared.ServerTestCERNETIPv4] {
+				targets = append(targets, shared.ServerTestTarget{
+					ID: fmt.Sprintf("cernet:%02d", index+1), Category: shared.ServerTestCERNETIPv4,
+					Label: target.Province + "教育网", Province: target.Province,
+					AddressFamily: shared.ServerTestIPv4, Host: target.Host, Port: 443, Source: "education",
+				})
+			}
+			if selected[shared.ServerTestCERNET2IPv6] {
+				targets = append(targets, shared.ServerTestTarget{
+					ID: fmt.Sprintf("cernet2:%02d", index+1), Category: shared.ServerTestCERNET2IPv6,
+					Label: target.Province + "CERNET2", Province: target.Province,
+					AddressFamily: shared.ServerTestIPv6, Host: target.Host, Port: 443, Source: "education",
+				})
+			}
+		}
+	}
+	if selected[shared.ServerTestInternational] {
+		for index, target := range staticCatalog.International {
+			targets = append(targets, shared.ServerTestTarget{
+				ID: fmt.Sprintf("international:%02d", index+1), Category: shared.ServerTestInternational,
+				Label: target.Label, AddressFamily: shared.ServerTestIPv4,
+				Host: target.Host, Port: 443, Source: "international",
+			})
+		}
+	}
+	if selected[shared.ServerTestSpeed] {
+		for _, target := range staticCatalog.Speed {
+			family := shared.ServerTestIPv4
+			if target.Family == "ipv6" {
+				family = shared.ServerTestIPv6
+			}
+			targets = append(targets, shared.ServerTestTarget{
+				ID: "speed:" + target.ID, Category: shared.ServerTestSpeed, Label: target.Label,
+				AddressFamily: family, Host: target.Host, Port: 443, SNI: target.SNI, Source: "speed",
+				Path: target.Path, UploadPath: target.UploadPath,
+			})
+		}
+	}
+	hashes := map[string]string{"zstatic": document.Source.CatalogSHA256}
+	versionParts := []string{"zstatic-v1:" + document.Source.CatalogSHA256[:12]}
+	for name, selectedCatalog := range map[string]bool{
+		"education":     selected[shared.ServerTestCERNETIPv4] || selected[shared.ServerTestCERNET2IPv6],
+		"international": selected[shared.ServerTestInternational],
+		"speed":         selected[shared.ServerTestSpeed],
+	} {
+		if selectedCatalog {
+			hashes[name] = staticCatalog.Hashes[name]
+			versionParts = append(versionParts, name+":"+staticCatalog.Hashes[name][:12])
+		}
+	}
+	sort.Strings(versionParts)
 	return shared.ServerTestCatalogSnapshot{
-		Version: "zstatic-v1:" + document.Source.CatalogSHA256[:12],
-		Hashes:  map[string]string{"zstatic": document.Source.CatalogSHA256},
+		Version: strings.Join(versionParts, "+"),
+		Hashes:  hashes,
 		Targets: targets,
 	}, nil
 }

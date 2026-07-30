@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "source": {
+    "repository": "https://github.com/ibsgss/TcpQuality",
+    "commit": "a1423e634e81b71ac468150265804f3efdc59a78",
+    "note": "Official service endpoints only; no tosutil binary, embedded credentials, private helper, or hosts-file changes"
+  },
+  "targets": [
+    {"id":"beijing-telecom","label":"北京电信","host":"tos-cn-beijing.volces.com","sni":"tos-cn-beijing.volces.com"},
+    {"id":"beijing-unicom","label":"北京联通","host":"tos-cn-beijing.volces.com","sni":"tos-cn-beijing.volces.com"},
+    {"id":"beijing-mobile","label":"北京移动","host":"tos-cn-beijing.volces.com","sni":"tos-cn-beijing.volces.com"},
+    {"id":"shanghai-telecom","label":"上海电信","host":"tos-cn-shanghai.volces.com","sni":"tos-cn-shanghai.volces.com"},
+    {"id":"shanghai-unicom","label":"上海联通","host":"tos-cn-shanghai.volces.com","sni":"tos-cn-shanghai.volces.com"},
+    {"id":"shanghai-mobile","label":"上海移动","host":"tos-cn-shanghai.volces.com","sni":"tos-cn-shanghai.volces.com"},
+    {"id":"guangdong-telecom","label":"广东电信","host":"tos-cn-guangzhou.volces.com","sni":"tos-cn-guangzhou.volces.com"},
+    {"id":"guangdong-unicom","label":"广东联通","host":"tos-cn-guangzhou.volces.com","sni":"tos-cn-guangzhou.volces.com"},
+    {"id":"guangdong-mobile","label":"广东移动","host":"tos-cn-guangzhou.volces.com","sni":"tos-cn-guangzhou.volces.com"},
+    {"id":"apple-ipv4","label":"Apple CDN IPv4","host":"mensura.cdn-apple.com","sni":"mensura.cdn-apple.com","path":"/api/v1/gm/large","upload_path":"/api/v1/gm/slurp","family":"ipv4"},
+    {"id":"apple-ipv6","label":"Apple CDN IPv6","host":"mensura.cdn-apple.com","sni":"mensura.cdn-apple.com","path":"/api/v1/gm/large","upload_path":"/api/v1/gm/slurp","family":"ipv6"}
+  ]
+}

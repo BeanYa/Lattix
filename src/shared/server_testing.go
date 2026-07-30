@@ -100,6 +100,8 @@ type ServerTestTarget struct {
 	Host          string                  `json:"host"`
 	Port          int                     `json:"port"`
 	SNI           string                  `json:"sni,omitempty"`
+	Path          string                  `json:"path,omitempty"`
+	UploadPath    string                  `json:"upload_path,omitempty"`
 	Backup        *ServerTestTarget       `json:"backup,omitempty"`
 	Source        string                  `json:"source"`
 }

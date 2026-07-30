@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -21,6 +22,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"lattix/agent/internal/selfupdate"
+	"lattix/agent/internal/servertest"
 	"lattix/agent/internal/state"
 	"lattix/agent/internal/xray"
 	"lattix/shared"
@@ -42,7 +44,15 @@ func main() {
 	xrayRunner := flag.String("xray-runner", "systemd", "xray 服务控制方式：systemd | exec（dev 联调）")
 	releaseBase := flag.String("xray-release-base", "", "xray release 下载基址（默认官方 GitHub，可指向镜像，§18）")
 	showVersion := flag.Bool("version", false, "打印版本并退出")
+	serverTestWorker := flag.Bool("server-test-worker", false, "run the internal server test worker")
 	flag.Parse()
+	if *serverTestWorker {
+		if err := servertest.WorkerMain(os.Stdin, os.Stdout); err != nil {
+			log.Printf("server test worker: %v", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if *showVersion {
 		fmt.Println(version)
 		return
@@ -63,6 +73,21 @@ func main() {
 	}
 	runtime := newRuntimeSettings(document)
 	panelRuntime := newPanelStateTracker(st.PanelObservation)
+	testManager, err := servertest.NewManager(filepath.Dir(*statePath), version)
+	if err != nil {
+		log.Fatalf("load server test task: %v", err)
+	}
+	commandQueue, err := newPersistentCommandQueue(
+		filepath.Join(filepath.Dir(*statePath), "command-queue.json"),
+		func(envelope shared.Envelope) {
+			if envelope.Type == shared.TypeServerTestRun {
+				_ = testManager.WaitExecution(context.Background())
+			}
+		},
+	)
+	if err != nil {
+		log.Fatalf("load command queue: %v", err)
+	}
 	connectionPath := filepath.Join(filepath.Dir(*statePath), "connection.json")
 	saveConnectionStatus := func(connected bool, connectionErr error) {
 		message := ""
@@ -86,7 +111,7 @@ func main() {
 	}
 	failures := 0
 	for {
-		newTok, err := run(*panel, tok, *statePath, *settingsPath, connectionPath, mgr, &st, runtime, panelRuntime)
+		newTok, err := run(*panel, tok, *statePath, *settingsPath, connectionPath, mgr, &st, runtime, panelRuntime, testManager, commandQueue)
 		saveConnectionStatus(false, err)
 		if newTok != "" {
 			tok = newTok // 内存兜底：state 落盘失败时仍能凭内存中的 token 重连（§5）
@@ -159,7 +184,7 @@ func (s *safeConn) writeControl(messageType int, data []byte) error {
 
 // run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因。
 // st 为已加载的落盘状态：session.open 换发后更新凭证字段并整体落盘（保留链 piece 记录）。
-func run(panel, token, statePath, settingsPath, connectionPath string, mgr *xray.Manager, st *state.State, runtime *runtimeSettings, panelRuntime *panelStateTracker) (string, error) {
+func run(panel, token, statePath, settingsPath, connectionPath string, mgr *xray.Manager, st *state.State, runtime *runtimeSettings, panelRuntime *panelStateTracker, testManager *servertest.Manager, commandQueue *persistentCommandQueue) (string, error) {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+token)
 	conn, response, err := websocket.DefaultDialer.Dial(panel, header)
@@ -277,6 +302,12 @@ func run(panel, token, statePath, settingsPath, connectionPath string, mgr *xray
 	if err := markSessionReady(sc, conn, opened.SessionID, panelRuntime, statePath, st, latency); err != nil {
 		return newToken, err
 	}
+	testManager.Attach(func(envelope shared.Envelope) error { return sc.writeJSON(envelope) })
+	defer testManager.Detach()
+	queueAttachment := commandQueue.Attach(func(envelope shared.Envelope) {
+		handle(sc, mgr, envelope, statePath, settingsPath, st, runtime, panelRuntime, latency, testManager, nil)
+	})
+	defer commandQueue.Detach(queueAttachment)
 	if err := state.SaveConnectionStatus(connectionPath, state.ConnectionStatus{
 		Connected: true, Panel: panel, ServerID: opened.ServerID,
 		AgentVersion: version, PID: os.Getpid(), ChangedAt: time.Now().UTC(),
@@ -406,7 +437,7 @@ func run(panel, token, statePath, settingsPath, connectionPath string, mgr *xray
 			return newToken, err
 		}
 		conn.SetReadDeadline(time.Now().Add(wsReadTimeout)) // 任何消息到达即续期
-		handle(sc, mgr, env, statePath, settingsPath, st, runtime, panelRuntime, latency)
+		handle(sc, mgr, env, statePath, settingsPath, st, runtime, panelRuntime, latency, testManager, commandQueue)
 	}
 }
 
@@ -555,7 +586,7 @@ func runLatencyProbes(done <-chan struct{}, conn *websocket.Conn, sc *safeConn,
 }
 
 // handle 按消息类型分发：命令响应沿用请求的 type/request_id/trace_id。
-func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, settingsPath string, st *state.State, runtime *runtimeSettings, panelRuntime *panelStateTracker, latency *latencyTracker) {
+func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, settingsPath string, st *state.State, runtime *runtimeSettings, panelRuntime *panelStateTracker, latency *latencyTracker, testManager *servertest.Manager, commandQueue *persistentCommandQueue) {
 	if env.Kind == shared.KindRequest && env.Type == shared.TypeLifecycleChanged {
 		var payload shared.LifecycleChangedPayload
 		if err := json.Unmarshal(env.Data, &payload); err != nil ||
@@ -576,9 +607,18 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		handleSettingsSyncResponse(sc, env, settingsPath, runtime)
 		return
 	}
+	if env.Kind == shared.KindResponse && testManager.HandleResponse(env) {
+		return
+	}
 	if env.Kind == shared.KindEvent && env.Type == shared.TypeSettingsChanged {
 		if err := sendSettingsSync(sc, runtime); err != nil {
 			log.Printf("settings changed pull: %v", err)
+		}
+		return
+	}
+	if env.Kind == shared.KindRequest && commandQueue != nil {
+		if err := commandQueue.Submit(env); err != nil {
+			replyCode(sc, env, shared.CodeInternalError, err.Error(), struct{}{})
 		}
 		return
 	}
@@ -587,6 +627,22 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		return
 	}
 	switch env.Type {
+	case shared.TypeServerTestRun:
+		var p shared.ServerTestRunPayload
+		if !parseData(sc, env, &p) {
+			return
+		}
+		if err := p.Validate(); err != nil {
+			replyCode(sc, env, shared.CodeInvalidArgument, err.Error(), struct{}{})
+			return
+		}
+		if err := testManager.Accept(p); err != nil {
+			replyCode(sc, env, shared.CodeConflict, err.Error(), struct{}{})
+			return
+		}
+		log.Printf("server-test.run request_id=%s task=%s generation=%d categories=%d", env.RequestID, p.TaskID, p.Generation, len(p.Categories))
+		replyCode(sc, env, shared.CodeAccepted, "", struct{}{})
+
 	case shared.TypeApplyNode:
 		var p shared.ApplyNodePayload
 		if !parseData(sc, env, &p) {
