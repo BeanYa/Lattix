@@ -132,6 +132,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/server/get-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["serverGetTest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/server/run-test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["serverRunTest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/server-test/catalog-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["serverTestCatalogStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/server-test/refresh-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["serverTestRefreshCatalog"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/server/create": {
         parameters: {
             query?: never;
@@ -1306,6 +1370,70 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    serverGetTest: {
+        parameters: {
+            query: {
+                server_id: components["parameters"]["ServerID"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    serverRunTest: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    serverTestCatalogStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    serverTestRefreshCatalog: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     serverCreate: {
         parameters: {
             query?: never;
@@ -2247,6 +2375,10 @@ export const rpcOperations = {
   serverListMetricSamples: { method: 'GET', path: '/api/server/list-metric-samples' },
   serverGetMetricHistory: { method: 'GET', path: '/api/server/get-metric-history' },
   serverListCommands: { method: 'GET', path: '/api/server/list-commands' },
+  serverGetTest: { method: 'GET', path: '/api/server/get-test' },
+  serverRunTest: { method: 'POST', path: '/api/server/run-test' },
+  serverTestCatalogStatus: { method: 'GET', path: '/api/server-test/catalog-status' },
+  serverTestRefreshCatalog: { method: 'POST', path: '/api/server-test/refresh-catalog' },
   serverCreate: { method: 'POST', path: '/api/server/create' },
   serverUpdate: { method: 'POST', path: '/api/server/update' },
   serverConfirmRenewal: { method: 'POST', path: '/api/server/confirm-renewal' },

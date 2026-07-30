@@ -25,6 +25,9 @@ import type {
   Server,
   ServerMetrics,
   ServerMetricSeries,
+  ServerTestCatalogStatus,
+  ServerTestCategory,
+  ServerTestTask,
   SubSettings,
   TrafficPlanInput,
   CustomExchangeRate,
@@ -87,6 +90,14 @@ export const api = {
     }, {
       display: 'silent',
     }),
+  serverTest: (serverId: number, options?: RequestOptions) =>
+    requester.get<ServerTestTask | null>('/api/server/get-test', { server_id: serverId }, options),
+  runServerTest: (serverId: number, categories: ServerTestCategory[]) =>
+    requester.post<ServerTestTask>('/api/server/run-test', { server_id: serverId, categories }),
+  serverTestCatalogStatus: (options?: RequestOptions) =>
+    requester.get<ServerTestCatalogStatus>('/api/server-test/catalog-status', undefined, options),
+  refreshServerTestCatalog: () =>
+    requester.post<ServerTestCatalogStatus>('/api/server-test/refresh-catalog', {}),
   createServer: (body: {
     alias: string
     address?: string

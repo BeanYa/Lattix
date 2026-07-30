@@ -21,6 +21,7 @@ import {
 import { CountryFlag } from '@/components/CountryFlag'
 import { EmptyState } from '@/components/PagePrimitives'
 import { StatusBadge } from '@/components/StatusBadge'
+import { ServerTestPanel } from '@/components/ServerTestPanel'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -955,6 +956,8 @@ function DetailSheet({
                 />
               </div>
             )}
+            <Separator />
+            <ServerTestPanel server={server} active={open} timezone={timezone} />
           </div>
         ) : null}
       </SheetContent>
