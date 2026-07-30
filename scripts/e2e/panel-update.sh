@@ -53,6 +53,15 @@ tar -C "$REL/pkg" -czf "$REL/lattix-panel-linux-amd64.tar.gz" lattix-panel
 echo "$NEW_VER" > "$WORK/releases/latest.txt"
 (cd "$WORK/releases" && exec python3 -m http.server "$MIRROR_PORT") >/dev/null 2>&1 &
 MIRRORPID=$!
+MIRROR_READY=0
+for _ in $(seq 1 30); do
+    if curl -fsS --max-time 1 "http://127.0.0.1:$MIRROR_PORT/latest.txt" >/dev/null 2>&1; then
+        MIRROR_READY=1
+        break
+    fi
+    sleep 0.1
+done
+[[ "$MIRROR_READY" -eq 1 ]] || { echo "FAIL: 本地 release 镜像未就绪"; exit 1; }
 
 echo ">> 启动旧版面板（$OLD_VER，LATTIX_RELEASE_BASE 指向本地镜像）"
 mkdir -p "$WORK/root/frontend-dist"

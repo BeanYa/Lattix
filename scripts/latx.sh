@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Lattix 面板交互式管理程序（latx）。
 #
 # 由 install-panel.sh 安装为 /usr/local/bin/latx（CI 发版时烧入版本与仓库占位符，
@@ -26,7 +26,6 @@
 #   LATX_ADMIN_USER / LATX_ADMIN_PASS   acme/cert 登录凭据（缺省 read -s 提示）
 #   LATX_LANG       交互菜单语言（en|zh；未设置时启动选择，默认 en）
 #   LATX_DEV=1      无 systemd 开发模式：status 降级为进程检查，log 读 panel.log
-set -euo pipefail
 
 # ===== CI 发版烧入区（release.yml 在发版时 sed 替换以下两个占位符）=====
 LATX_VERSION="{{LATTIX_VERSION}}"
@@ -39,6 +38,28 @@ LATX_BIN="${LATX_BIN:-/usr/local/bin/latx}"
 BACKEND="$INSTALL_ROOT/lattix-backend"
 DB_PATH="$INSTALL_ROOT/data/lattix.db"
 PANEL_URL="${LATX_PANEL_URL:-http://127.0.0.1:8080}"
+
+# Release 包会在最小 Docker 镜像中执行 `latx version` 预检。该路径只用 POSIX sh，
+# 其余运维命令仍交给 Bash，以保留数组、[[ ]] 等完整功能。
+if [ "${1:-}" = "version" ] && [ -z "${BASH_VERSION:-}" ]; then
+    echo "latx 版本: $LATX_VERSION"
+    if [ -x "$BACKEND" ]; then
+        panel_ver="$("$BACKEND" -version 2>/dev/null || printf '%s\n' unknown)"
+    else
+        panel_ver="not installed"
+    fi
+    echo "面板版本: $panel_ver"
+    exit 0
+fi
+if [ -z "${BASH_VERSION:-}" ]; then
+    if command -v bash >/dev/null 2>&1; then
+        exec bash "$0" "$@"
+    fi
+    echo "latx: 此命令需要 bash" >&2
+    exit 127
+fi
+
+set -euo pipefail
 
 die() { echo "latx: $*" >&2; exit 1; }
 
@@ -427,7 +448,7 @@ cmd_version() {
     echo "面板版本: $(panel_version)"
 }
 
-cmd_help() { awk '/^set -euo pipefail/{exit} NR>1' "$0" | sed 's/^# \{0,1\}//'; }
+cmd_help() { awk 'NR == 1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "$0"; }
 
 MENU_LANG="en"
 

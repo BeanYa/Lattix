@@ -407,23 +407,26 @@ func (u *panelUpdater) run(ctx context.Context) {
 		u.fail(fmt.Errorf("新二进制自检失败（期望 %s，实际 %q）: %v", target, v, err))
 		return
 	}
-	if err := os.Chmod(newCLI, 0o755); err != nil {
-		os.RemoveAll(work)
-		u.fail(fmt.Errorf("新 latx 赋可执行权限失败: %w", err))
-		return
-	}
-	cliCheck := exec.Command(newCLI, "version")
-	cliCheck.Env = append(os.Environ(), "LATX_ROOT="+pkg)
-	cliOut, cliErr := cliCheck.CombinedOutput()
-	if line := firstLine(string(cliOut)); cliErr != nil || line != "latx 版本: "+target {
-		os.RemoveAll(work)
-		u.fail(fmt.Errorf("新 latx 自检失败（期望 %s，实际 %q）: %v", target, line, cliErr))
-		return
+	manageCLI := panelCLIManaged()
+	if manageCLI {
+		if err := os.Chmod(newCLI, 0o755); err != nil {
+			os.RemoveAll(work)
+			u.fail(fmt.Errorf("新 latx 赋可执行权限失败: %w", err))
+			return
+		}
+		cliCheck := exec.Command(newCLI, "version")
+		cliCheck.Env = append(os.Environ(), "LATX_ROOT="+pkg)
+		cliOut, cliErr := cliCheck.CombinedOutput()
+		if line := firstLine(string(cliOut)); cliErr != nil || line != "latx 版本: "+target {
+			os.RemoveAll(work)
+			u.fail(fmt.Errorf("新 latx 自检失败（期望 %s，实际 %q）: %v", target, line, cliErr))
+			return
+		}
 	}
 
 	u.setStage(updStageApply, 60, "原子替换面板与管理命令")
 	cliTarget := filepath.Join(filepath.Dir(exe), "latx")
-	cliReplaced := fileExists(cliTarget)
+	cliReplaced := manageCLI && fileExists(cliTarget)
 	if cliReplaced {
 		if err := replaceExecutable(newCLI, cliTarget); err != nil {
 			os.RemoveAll(work)
@@ -457,6 +460,10 @@ func (u *panelUpdater) run(ctx context.Context) {
 	if err := s.cfg.RequestRestart("update"); err != nil {
 		u.fail(err)
 	}
+}
+
+func panelCLIManaged() bool {
+	return !strings.EqualFold(strings.TrimSpace(os.Getenv("LATTIX_DEPLOY_MODE")), "docker")
 }
 
 func firstLine(value string) string {
