@@ -727,6 +727,38 @@ export default function Servers() {
           </DialogHeader>
           <form onSubmit={onCreate} className="space-y-4">
             <div className="space-y-2">
+              <Label id="server-type-label">服务器类型</Label>
+              <div
+                role="radiogroup"
+                aria-labelledby="server-type-label"
+                className="grid grid-cols-2 gap-2"
+              >
+                {([
+                  ['direct', '独立 IP'],
+                  ['nat', 'NAT'],
+                ] as const).map(([value, label]) => (
+                  <label
+                    key={value}
+                    className={`flex h-9 cursor-pointer items-center justify-center rounded-md border-2 text-sm transition-colors focus-within:ring-3 focus-within:ring-ring/50 ${
+                      machineType === value
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-input bg-card text-foreground hover:bg-accent hover:text-accent-foreground'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="server-type"
+                      value={value}
+                      checked={machineType === value}
+                      onChange={(event) => setMachineType(event.target.value as MachineType)}
+                      className="sr-only"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="alias">别名</Label>
               <Input
                 id="alias"
@@ -779,25 +811,6 @@ export default function Servers() {
               <p className="text-xs text-muted-foreground">
                 回车或逗号确认，最多 10 个；名称模板可按顺序使用 {'{{TAG[0]}}'}、{'{{TAG[1]}}'}。
               </p>
-            </div>
-            <div className="space-y-2">
-              <Label>机器类型</Label>
-              <Select
-                value={machineType}
-                onValueChange={(v) => v && setMachineType(v as MachineType)}
-                items={[
-                  { value: 'direct', label: '独立 IP（direct）' },
-                  { value: 'nat', label: 'NAT' },
-                ]}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="direct">独立 IP（direct）</SelectItem>
-                  <SelectItem value="nat">NAT</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
             <div className="space-y-2">
               <Label htmlFor="address">公网地址{machineType === 'nat' ? '（必填）' : ''}</Label>
