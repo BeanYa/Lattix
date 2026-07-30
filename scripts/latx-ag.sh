@@ -103,6 +103,16 @@ xray_version() {
 
 # 仅匹配 agent 进程（带 -panel 参数），避免误中守护脚本 lattix-agent-run 的命令行。
 agent_pid() { pgrep -f "$AGENT_BIN -panel" 2>/dev/null | head -1 || true; }
+runner_pid() { pgrep -f "$RUN_SCRIPT" 2>/dev/null | head -1 || true; }
+
+wait_user_processes_stopped() {
+    local attempt
+    for ((attempt = 0; attempt < 50; attempt++)); do
+        [[ -z "$(runner_pid)" && -z "$(agent_pid)" ]] && return 0
+        sleep 0.1
+    done
+    return 1
+}
 
 # 当前面板地址：从 install.sh 写入的 env 文件读 LATTIX_PANEL_WS。
 panel_addr() {
@@ -182,9 +192,15 @@ user_start() {
 }
 
 user_stop() {
-    # 先停守护脚本（防其循环拉起），再停 agent。
+    # 先停守护脚本（防其循环拉起），再停 agent；等待守护脚本释放单实例锁。
     pkill -f "$RUN_SCRIPT" 2>/dev/null || true
-    pkill -f "$AGENT_BIN" 2>/dev/null || true
+    pkill -f "$AGENT_BIN -panel" 2>/dev/null || true
+    if ! wait_user_processes_stopped; then
+        echo ">> [用户态] 进程未及时退出，正在强制清理" >&2
+        pkill -9 -f "$RUN_SCRIPT" 2>/dev/null || true
+        pkill -9 -f "$AGENT_BIN -panel" 2>/dev/null || true
+        wait_user_processes_stopped || die "无法停止守护脚本或 agent 进程"
+    fi
     echo ">> [用户态] 已停止守护脚本与 agent 进程"
 }
 
@@ -199,7 +215,7 @@ cmd_svc() {
     case "$1" in
         start)   user_start ;;
         stop)    user_stop ;;
-        restart) user_stop; sleep 1; user_start ;;
+        restart) user_stop; user_start ;;
         enable)
             command -v crontab >/dev/null || die "未检测到 crontab，用户态模式不支持 enable"
             if ! crontab -l 2>/dev/null | grep -qF "$RUN_SCRIPT"; then

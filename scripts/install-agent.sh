@@ -207,6 +207,7 @@ fi
 BIN_DIR="$APP_ROOT/bin"
 AGENT_BIN="$BIN_DIR/lattix-agent"
 LATX_AG_BIN="$BIN_DIR/latx-ag"
+RUN_SCRIPT="$BIN_DIR/lattix-agent-run"
 XRAY_BIN_DST="$BIN_DIR/xray"
 CONFIG_DIR="$APP_ROOT/config"
 DATA_DIR="$APP_ROOT/data"
@@ -219,6 +220,37 @@ SYSTEMD_DIR="$PREFIX/etc/systemd/system"
 AGENT_LOG="$LOG_DIR/agent.log"
 LATX_AG_LINK="$PREFIX/usr/local/bin/latx-ag"
 XRAY_API="${LATX_AG_XRAY_API:-127.0.0.1:10085}"
+
+process_pid() {
+    local pattern="$1"
+    command -v pgrep >/dev/null 2>&1 || return 0
+    pgrep -f "$pattern" 2>/dev/null | sed -n '1p' || true
+}
+
+wait_user_processes_stopped() {
+    local attempt
+    for ((attempt = 0; attempt < 50; attempt++)); do
+        if [[ -z "$(process_pid "$RUN_SCRIPT")" && -z "$(process_pid "$AGENT_BIN -panel")" ]]; then
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
+}
+
+stop_user_processes() {
+    # Bash defers the runner's TERM trap while it waits for the agent child. Wait for both
+    # processes so a replacement runner cannot lose the singleton-lock race during reinstall.
+    pkill -f "$RUN_SCRIPT" 2>/dev/null || true
+    pkill -f "$AGENT_BIN -panel" 2>/dev/null || true
+    if wait_user_processes_stopped; then
+        return
+    fi
+    echo ">> [user] 旧守护进程未及时退出，正在强制清理" >&2
+    pkill -9 -f "$RUN_SCRIPT" 2>/dev/null || true
+    pkill -9 -f "$AGENT_BIN -panel" 2>/dev/null || true
+    wait_user_processes_stopped || die "无法停止旧的用户态 agent/守护进程，请手动检查后重试"
+}
 
 PANEL_URL="${PANEL_URL%/}"
 case "$(uname -m)" in
@@ -233,8 +265,7 @@ if [[ "$DEV_MODE" -eq 0 && "$USER_MODE" -eq 0 ]]; then
     systemctl stop lattix-agent.service xray.service 2>/dev/null || true
 else
     # DEV/user：停守护脚本与 agent（user 模式先停守护，避免其循环拉起 agent）。
-    pkill -f "$BIN_DIR/lattix-agent-run" 2>/dev/null || true
-    pkill -f "$AGENT_BIN" 2>/dev/null || true
+    stop_user_processes
 fi
 
 install -d -m 0755 "$BIN_DIR" "$LOG_DIR"
@@ -321,12 +352,6 @@ fi
 # http→ws / https→wss
 PANEL_WS="$(echo "$PANEL_URL" | sed -e 's|^https://|wss://|' -e 's|^http://|ws://|')/api/agent/ws"
 
-process_pid() {
-    local pattern="$1"
-    command -v pgrep >/dev/null 2>&1 || return 0
-    pgrep -f "$pattern" 2>/dev/null | sed -n '1p' || true
-}
-
 echo ">> writing $ENV_FILE"
 install -m 0600 /dev/null "$ENV_FILE"
 cat > "$ENV_FILE" <<EOF
@@ -394,9 +419,9 @@ elif [[ "$USER_MODE" -eq 1 ]]; then
     # user 用户态模式：不注册 systemd，生成守护脚本常驻（优先用 flock 防重复，精简系统
     # 无 flock 时退到可回收的 mkdir 锁；agent 退出后自动拉起），并 best-effort 注册
     # crontab @reboot 开机自启。
-    echo ">> [user] 生成守护脚本 $BIN_DIR/lattix-agent-run（日志 $AGENT_LOG）"
+    echo ">> [user] 生成守护脚本 $RUN_SCRIPT（日志 $AGENT_LOG）"
     mkdir -p "$(dirname "$AGENT_LOG")" "$DATA_DIR"
-    cat > "$BIN_DIR/lattix-agent-run" <<EOF
+    cat > "$RUN_SCRIPT" <<EOF
 #!/usr/bin/env bash
 # Lattix Agent 用户态守护脚本（install.sh 生成）：防重复运行；agent 退出（崩溃/自升级）
 # 后 sleep 1 自动拉起，替代 systemd Restart=always；每次重启重新读取 env（token 轮换后即生效）。
@@ -453,11 +478,20 @@ while true; do
     sleep 1
 done
 EOF
-    chmod 0755 "$BIN_DIR/lattix-agent-run"
-    nohup "$BIN_DIR/lattix-agent-run" >/dev/null 2>&1 &
+    chmod 0755 "$RUN_SCRIPT"
+    nohup "$RUN_SCRIPT" >/dev/null 2>&1 &
     RUNNER_PID=$!
-    sleep 1
-    AGENT_PID="$(process_pid "$AGENT_BIN -panel")"
+    AGENT_PID=""
+    for ((attempt = 0; attempt < 50; attempt++)); do
+        AGENT_PID="$(process_pid "$AGENT_BIN -panel")"
+        [[ -n "$AGENT_PID" ]] && break
+        if ! kill -0 "$RUNNER_PID" 2>/dev/null; then
+            # A concurrent start can make this process exit after another healthy runner won the lock.
+            RUNNER_PID="$(process_pid "$RUN_SCRIPT")"
+            [[ -n "$RUNNER_PID" ]] || break
+        fi
+        sleep 0.1
+    done
     XRAY_PID="$(process_pid "$XRAY_BIN_DST run -config $XRAY_CONFIG")"
     if [[ -n "$AGENT_PID" ]]; then
         AGENT_STATUS="[user] 进程运行中（pid $AGENT_PID，守护 pid $RUNNER_PID）"
@@ -475,10 +509,10 @@ EOF
     fi
     # best-effort 开机自启：crontab @reboot（先 grep 去重）；无 crontab 时提示手动启动。
     if command -v crontab >/dev/null; then
-        if crontab -l 2>/dev/null | grep -qF "$BIN_DIR/lattix-agent-run"; then
+        if crontab -l 2>/dev/null | grep -qF "$RUN_SCRIPT"; then
             echo ">> [user] crontab @reboot 自启已存在，跳过"
         else
-            (crontab -l 2>/dev/null || true; echo "@reboot $BIN_DIR/lattix-agent-run >>$AGENT_LOG 2>&1 &") | crontab -
+            (crontab -l 2>/dev/null || true; echo "@reboot $RUN_SCRIPT >>$AGENT_LOG 2>&1 &") | crontab -
             echo ">> [user] 已注册 crontab @reboot 开机自启（best-effort）"
         fi
     else

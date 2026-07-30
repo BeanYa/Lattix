@@ -230,6 +230,20 @@ echo "$USTATUS" | grep -q "面板连接: 已连接" \
 latx_ag_user log -n 50 | grep -q "authenticated as server 2" \
     && echo "OK: latx-ag log -n（用户态读日志文件）" \
     || { echo "FAIL: latx-ag log"; tail -10 "$USER_PREFIX/opt/lattix-agent/logs/agent.log"; exit 1; }
+
+echo ">> 用例 5b: user 模式重装会等待旧守护进程释放单实例锁"
+OLD_AGENT_PID="$(pgrep -f "$USER_PREFIX/opt/lattix-agent/bin/lattix-agent -panel" | head -1)"
+kill -STOP "$OLD_AGENT_PID"
+USER_REINSTALL_OUT="$(LATX_USER_MODE=1 LATX_PREFIX="$USER_PREFIX" LATX_RELEASE_BASE="file://$FAKE" \
+    XRAY_BIN="$XRAY_BIN" LATX_AG_XRAY_API="$USER_API_ADDR" \
+    bash "$FAKE/install-agent.sh" --version "$VERSION" --panel "http://$ADDR" --token "$BOOTSTRAP3" 2>&1)"
+echo "$USER_REINSTALL_OUT" | grep -q "旧守护进程未及时退出，正在强制清理" \
+    && echo "OK: 重装超时后清理未响应的旧进程" \
+    || { echo "FAIL: 未触发旧进程超时清理: $USER_REINSTALL_OUT"; exit 1; }
+echo "$USER_REINSTALL_OUT" | grep -q "Agent 状态: \[user\] 进程运行中" \
+    && echo "OK: user 重装后新守护进程与 agent 正常运行" \
+    || { echo "FAIL: user 重装后 agent 未运行: $USER_REINSTALL_OUT"; exit 1; }
+
 latx_ag_user stop
 sleep 1
 if pgrep -f "$USER_PREFIX/opt/lattix-agent/bin/lattix-agent" >/dev/null; then
