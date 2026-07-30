@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -27,13 +25,9 @@ type cdnCatalog struct {
 }
 
 func newCDNCatalog(s *Server) *cdnCatalog {
-	sourceURL := strings.TrimSpace(os.Getenv("LATX_ZSTATICCDN_SOURCE_URL"))
-	if sourceURL == "" {
-		sourceURL = cdncatalog.DefaultSourceURL
-	}
 	return &cdnCatalog{
 		s: s, client: &http.Client{Timeout: 30 * time.Second},
-		sourceURL: sourceURL, now: time.Now,
+		sourceURL: cdncatalog.DefaultSourceURL, now: time.Now,
 	}
 }
 

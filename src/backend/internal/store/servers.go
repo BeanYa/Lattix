@@ -348,6 +348,8 @@ func (s *Store) DeleteServerCascade(ctx context.Context, id int64) error {
 	for _, q := range []string{
 		`DELETE FROM user_nodes WHERE node_id IN (SELECT id FROM nodes WHERE server_id = ?
 			AND id NOT IN (SELECT service_node_id FROM chains WHERE deleted_at IS NULL))`,
+		`DELETE FROM server_test_result_chunks WHERE server_id = ?`,
+		`DELETE FROM server_test_tasks WHERE server_id = ?`,
 		`DELETE FROM commands WHERE server_id = ?`,
 		`DELETE FROM nodes WHERE server_id = ?
 			AND id NOT IN (SELECT service_node_id FROM chains WHERE deleted_at IS NULL)`,

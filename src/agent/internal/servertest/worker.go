@@ -124,9 +124,7 @@ func runWorkerProcess(
 	cmd := exec.CommandContext(ctx, executable, "--server-test-worker")
 	cmd.Dir = tempDir
 	cmd.Stdin = strings.NewReader(string(input))
-	if cloneFlags != 0 {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: cloneFlags}
-	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: cloneFlags, Pdeathsig: syscall.SIGKILL}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return shared.ServerTestReport{}, "", err

@@ -3,6 +3,7 @@ package main
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"lattix/shared"
 )
@@ -12,6 +13,49 @@ func queuedEnvelope(commandType string) shared.Envelope {
 	return shared.Envelope{
 		Kind: shared.KindRequest, Type: commandType,
 		RequestID: id, TraceID: id, Data: []byte(`{}`),
+	}
+}
+
+func TestPersistentCommandQueueDoesNotAdvanceUntilAfterCompletes(t *testing.T) {
+	release := make(chan struct{})
+	executed := make(chan string, 2)
+	queue, err := newPersistentCommandQueue(filepath.Join(t.TempDir(), "commands.json"), func(envelope shared.Envelope) {
+		if envelope.Type == shared.TypeServerTestRun {
+			<-release
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue.Attach(func(envelope shared.Envelope) { executed <- envelope.Type })
+	if err := queue.Submit(queuedEnvelope(shared.TypeServerTestRun)); err != nil {
+		t.Fatal(err)
+	}
+	if got := receiveCommand(t, executed); got != shared.TypeServerTestRun {
+		t.Fatalf("first command = %q, want server test", got)
+	}
+	if err := queue.Submit(queuedEnvelope(shared.TypeUpgradeAgent)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-executed:
+		t.Fatalf("command %q advanced before test delivery completed", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if got := receiveCommand(t, executed); got != shared.TypeUpgradeAgent {
+		t.Fatalf("second command = %q, want Agent upgrade", got)
+	}
+}
+
+func receiveCommand(t *testing.T, commands <-chan string) string {
+	t.Helper()
+	select {
+	case command := <-commands:
+		return command
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for command execution")
+		return ""
 	}
 }
 

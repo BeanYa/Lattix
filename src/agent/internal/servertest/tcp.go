@@ -83,6 +83,11 @@ sendJobs:
 	}
 	close(jobs)
 	wg.Wait()
+	for index := range results {
+		if results[index].ID == "" {
+			results[index] = interruptedTCPTarget(targets[index], ctx.Err())
+		}
+	}
 	items := make([]map[string]any, 0, len(results))
 	failed := 0
 	for _, result := range results {
@@ -119,7 +124,7 @@ func runTCPTarget(parent context.Context, target shared.ServerTestTarget, probeC
 	result := tcpTargetResult{
 		ID: target.ID, Label: target.Label, Carrier: target.Carrier, Province: target.Province,
 		AddressFamily: string(target.AddressFamily), ProbeMethod: "tcp_connect", Degraded: true,
-		Sent: probeCount, Selected: "primary",
+		Selected: "primary",
 	}
 	ctx, cancel := context.WithTimeout(parent, targetTimeout)
 	defer cancel()
@@ -160,6 +165,7 @@ func runTCPTarget(parent context.Context, target shared.ServerTestTarget, probeC
 			if ctx.Err() != nil {
 				break
 			}
+			result.Sent++
 			response, rtt, err := raw.Probe(0, time.Second)
 			if err != nil {
 				result.ErrorCode, result.ErrorMessage = "raw_probe_failed", err.Error()
@@ -170,7 +176,7 @@ func runTCPTarget(parent context.Context, target shared.ServerTestTarget, probeC
 				samples = append(samples, float64(rtt.Microseconds())/1000)
 			}
 		}
-		applyProbeSamples(&result, probeCount, samples)
+		applyProbeSamples(&result, result.Sent, samples)
 		if responses["syn_ack"] > 0 && responses["rst"] > 0 {
 			result.ResponseType = "syn_ack,rst"
 		} else if responses["syn_ack"] > 0 {
@@ -192,6 +198,7 @@ func runTCPTarget(parent context.Context, target shared.ServerTestTarget, probeC
 		if ctx.Err() != nil {
 			break
 		}
+		result.Sent++
 		started := time.Now()
 		conn, err := (&net.Dialer{Timeout: connectTimeout}).DialContext(ctx, networkForFamily(selected.AddressFamily), net.JoinHostPort(address.String(), fmt.Sprint(selected.Port)))
 		if err != nil {
@@ -200,14 +207,25 @@ func runTCPTarget(parent context.Context, target shared.ServerTestTarget, probeC
 		_ = conn.Close()
 		samples = append(samples, float64(time.Since(started).Microseconds())/1000)
 	}
-	applyProbeSamples(&result, probeCount, samples)
+	applyProbeSamples(&result, result.Sent, samples)
 	result.ResponseType = "connected"
 	return result
 }
 
 func applyProbeSamples(result *tcpTargetResult, probeCount int, samples []float64) {
 	result.Received = len(samples)
+	if probeCount <= 0 {
+		if result.ErrorCode == "" {
+			result.ErrorCode = "probe_not_run"
+			result.ErrorMessage = "the measurement window ended before a probe could be sent"
+		}
+		return
+	}
 	result.LossPercent = float64(probeCount-len(samples)) * 100 / float64(probeCount)
+	if len(samples) == 0 && result.ErrorCode == "" {
+		result.ErrorCode = "probe_no_response"
+		result.ErrorMessage = "the target returned no responses during the measurement window"
+	}
 	if len(samples) > 0 {
 		sort.Float64s(samples)
 		minimum, maximum := samples[0], samples[len(samples)-1]
@@ -217,6 +235,18 @@ func applyProbeSamples(result *tcpTargetResult, probeCount int, samples []float6
 		}
 		average := total / float64(len(samples))
 		result.RTTMinMS, result.RTTAvgMS, result.RTTMaxMS = &minimum, &average, &maximum
+	}
+}
+
+func interruptedTCPTarget(target shared.ServerTestTarget, cause error) tcpTargetResult {
+	message := "the target was not executed before the task stopped"
+	if cause != nil {
+		message += ": " + cause.Error()
+	}
+	return tcpTargetResult{
+		ID: target.ID, Label: target.Label, Carrier: target.Carrier, Province: target.Province,
+		AddressFamily: string(target.AddressFamily), ProbeMethod: "not_run", Degraded: true,
+		Selected: "primary", ErrorCode: "task_interrupted", ErrorMessage: message,
 	}
 }
 

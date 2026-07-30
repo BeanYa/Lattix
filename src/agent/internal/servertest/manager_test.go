@@ -2,6 +2,7 @@ package servertest
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"io"
 	"net/netip"
@@ -22,6 +23,47 @@ func testPayload() shared.ServerTestRunPayload {
 			Version: "test-v1",
 			Hashes:  map[string]string{"zstatic": "0000000000000000000000000000000000000000000000000000000000000000"},
 		},
+	}
+}
+
+func TestManagerCompletedMarkerPreventsRecoveredCommandRerun(t *testing.T) {
+	directory := t.TempDir()
+	payload := testPayload()
+	manager, err := NewManager(directory, "v0.0.9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.mu.Lock()
+	manager.idle = make(chan struct{})
+	manager.journal = &taskJournal{
+		Version: 1, State: "result_pending", Payload: payload,
+		Manifest: &shared.ServerTestResultManifest{}, UpdatedAt: time.Now().UTC(),
+	}
+	if err := manager.saveJournalLocked(); err != nil {
+		manager.mu.Unlock()
+		t.Fatal(err)
+	}
+	manager.mu.Unlock()
+	if err := manager.completeLocal(payload.TaskID, payload.Generation); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := NewManager(directory, "v0.0.9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Busy() {
+		t.Fatal("completed marker reported a busy manager")
+	}
+	if err := recovered.WaitIdle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := recovered.Accept(payload); err != nil {
+		t.Fatalf("recovered duplicate command was not accepted idempotently: %v", err)
+	}
+	recovered.mu.Lock()
+	defer recovered.mu.Unlock()
+	if recovered.journal == nil || recovered.journal.State != "completed" {
+		t.Fatalf("duplicate command changed completed marker: %+v", recovered.journal)
 	}
 }
 

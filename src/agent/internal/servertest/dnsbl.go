@@ -106,7 +106,7 @@ func classifyDNSBL(provider string, answers []string, err error) dnsblEntry {
 			return entry
 		}
 		entry.Status = "unknown"
-		entry.Error = err.Error()
+		entry.Error = safeDNSError(err)
 		return entry
 	}
 	if len(answers) == 0 {
@@ -122,6 +122,25 @@ func classifyDNSBL(provider string, answers []string, err error) dnsblEntry {
 		}
 	}
 	return entry
+}
+
+func safeDNSError(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "DNS lookup timed out"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "DNS lookup was canceled"
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		if dnsErr.IsTimeout {
+			return "DNS lookup timed out"
+		}
+		if dnsErr.IsTemporary {
+			return "temporary DNS lookup failure"
+		}
+	}
+	return "DNS lookup failed"
 }
 
 func summarizeDNSBL(entries []dnsblEntry) map[string]any {

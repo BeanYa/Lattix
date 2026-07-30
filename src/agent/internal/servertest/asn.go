@@ -23,7 +23,7 @@ func runASNEnrichmentWithLookup(parent context.Context, address netip.Addr, look
 	defer cancel()
 	originRecords, err := lookup(ctx, cymruOriginQuery(address))
 	if err != nil {
-		return map[string]any{"status": "unavailable", "error_code": "asn_lookup_failed", "error_message": redactProviderError(err, address).Error()}
+		return map[string]any{"status": "unavailable", "error_code": "asn_lookup_failed", "error_message": safeDNSError(err)}
 	}
 	origin, ok := parseCymruOrigin(originRecords)
 	if !ok {
@@ -36,7 +36,7 @@ func runASNEnrichmentWithLookup(parent context.Context, address netip.Addr, look
 	nameRecords, nameErr := lookup(ctx, fmt.Sprintf("AS%d.asn.cymru.com", origin.asn))
 	if nameErr != nil {
 		result["name_status"] = "unavailable"
-		result["name_error"] = redactProviderError(nameErr, address).Error()
+		result["name_error"] = safeDNSError(nameErr)
 		return result
 	}
 	if name, ok := parseCymruName(nameRecords); ok {

@@ -225,7 +225,10 @@ func (s *Store) SaveServerTestResultChunk(ctx context.Context, serverID int64, p
 	defer tx.Rollback()
 	var currentTaskID string
 	var currentGeneration int64
-	if err := tx.QueryRowContext(ctx, `SELECT task_id, generation FROM server_test_tasks WHERE server_id = ?`, serverID).Scan(&currentTaskID, &currentGeneration); err != nil {
+	var currentStatus shared.ServerTestTaskStatus
+	var currentSHA256 string
+	if err := tx.QueryRowContext(ctx, `SELECT task_id, generation, status, result_sha256 FROM server_test_tasks WHERE server_id = ?`, serverID).
+		Scan(&currentTaskID, &currentGeneration, &currentStatus, &currentSHA256); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ServerTestChunkSuperseded, nil
 		}
@@ -233,6 +236,12 @@ func (s *Store) SaveServerTestResultChunk(ctx context.Context, serverID int64, p
 	}
 	if currentTaskID != payload.TaskID || currentGeneration != payload.Generation {
 		return ServerTestChunkSuperseded, nil
+	}
+	if currentStatus.Terminal() {
+		if payload.Index == 0 && payload.Manifest != nil && payload.Manifest.SHA256 == currentSHA256 {
+			return ServerTestChunkComplete, nil
+		}
+		return "", errors.New("server test already has an authoritative terminal result")
 	}
 	var manifestJSON any
 	chunkCount := 0

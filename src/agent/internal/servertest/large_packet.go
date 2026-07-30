@@ -94,6 +94,11 @@ sendLargeJobs:
 	}
 	close(jobs)
 	wg.Wait()
+	for index := range results {
+		if results[index].ID == "" {
+			results[index] = interruptedTCPTarget(targets[index], ctx.Err())
+		}
+	}
 	items := make([]map[string]any, 0, len(results))
 	failed := 0
 	for _, result := range results {
@@ -133,7 +138,7 @@ sendLargeJobs:
 func runLargePacketTarget(parent context.Context, target shared.ServerTestTarget) tcpTargetResult {
 	result := tcpTargetResult{
 		ID: target.ID, Label: target.Label, Carrier: target.Carrier, Province: target.Province,
-		AddressFamily: string(target.AddressFamily), ProbeMethod: "raw_syn", Sent: len(largePacketSizes), Selected: "primary",
+		AddressFamily: string(target.AddressFamily), ProbeMethod: "raw_syn", Selected: "primary",
 	}
 	ctx, cancel := context.WithTimeout(parent, targetTimeout)
 	defer cancel()
@@ -155,6 +160,10 @@ func runLargePacketTarget(parent context.Context, target shared.ServerTestTarget
 	var samples []float64
 	responses := make(map[string]int)
 	for _, size := range largePacketSizes {
+		if ctx.Err() != nil {
+			break
+		}
+		result.Sent++
 		response, rtt, probeErr := prober.Probe(size, time.Second)
 		if probeErr != nil {
 			result.ErrorCode, result.ErrorMessage = "raw_probe_failed", probeErr.Error()
@@ -165,7 +174,7 @@ func runLargePacketTarget(parent context.Context, target shared.ServerTestTarget
 			samples = append(samples, float64(rtt.Microseconds())/1000)
 		}
 	}
-	applyProbeSamples(&result, len(largePacketSizes), samples)
+	applyProbeSamples(&result, result.Sent, samples)
 	if responses["syn_ack"] > 0 {
 		result.ResponseType = "syn_ack"
 	} else if responses["rst"] > 0 {

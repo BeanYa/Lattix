@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"lattix/shared"
@@ -76,6 +77,19 @@ func TestServerTestLatestGenerationAndValidatedChunkPublish(t *testing.T) {
 	if err != nil || stored.Result == nil || stored.Status != shared.ServerTestSucceeded || stored.ResultSHA256 != manifest.SHA256 {
 		t.Fatalf("stored result=%+v err=%v", stored, err)
 	}
+	outcome, err = st.SaveServerTestResultChunk(ctx, serverID, shared.ServerTestResultChunkPayload{
+		Manifest: &manifest, TaskID: task.TaskID, Generation: task.Generation, Index: 0, Data: compressed.Bytes(),
+	})
+	if err != nil || outcome != ServerTestChunkComplete {
+		t.Fatalf("idempotent terminal publish outcome=%q err=%v", outcome, err)
+	}
+	conflicting := manifest
+	conflicting.SHA256 = strings.Repeat("1", 64)
+	if _, err := st.SaveServerTestResultChunk(ctx, serverID, shared.ServerTestResultChunkPayload{
+		Manifest: &conflicting, TaskID: task.TaskID, Generation: task.Generation, Index: 0, Data: compressed.Bytes(),
+	}); err == nil {
+		t.Fatal("conflicting terminal report replaced the authoritative result")
+	}
 
 	next, _, err := st.EnqueueServerTest(ctx, serverID, "", []shared.ServerTestCategory{shared.ServerTestTCPIPv4}, catalog)
 	if err != nil || next.Generation != 2 || next.Result != nil {
@@ -86,5 +100,48 @@ func TestServerTestLatestGenerationAndValidatedChunkPublish(t *testing.T) {
 	})
 	if err != nil || outcome != ServerTestChunkSuperseded {
 		t.Fatalf("stale outcome=%q err=%v", outcome, err)
+	}
+}
+
+func TestDeleteServerCascadeRemovesServerTestState(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	serverID, err := st.CreateServer(ctx, "test", "", "token", MachineTypeDirect, "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := shared.ServerTestCatalogSnapshot{
+		Version: "test-v1",
+		Hashes:  map[string]string{"zstatic": "0000000000000000000000000000000000000000000000000000000000000000"},
+	}
+	task, _, err := st.EnqueueServerTest(ctx, serverID, "", []shared.ServerTestCategory{shared.ServerTestIPQuality}, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := shared.ServerTestResultManifest{
+		SchemaVersion: shared.ServerTestSchemaVersion, TaskID: task.TaskID, Generation: task.Generation,
+		Status: shared.ServerTestSucceeded, AgentVersion: "v0.0.9", CatalogVersion: catalog.Version,
+		UncompressedSize: 1, CompressedSize: 2, SHA256: strings.Repeat("0", 64), ChunkCount: 2,
+	}
+	if outcome, err := st.SaveServerTestResultChunk(ctx, serverID, shared.ServerTestResultChunkPayload{
+		Manifest: &manifest, TaskID: task.TaskID, Generation: task.Generation, Index: 0, Data: []byte{0},
+	}); err != nil || outcome != ServerTestChunkAccepted {
+		t.Fatalf("save partial result outcome=%q err=%v", outcome, err)
+	}
+	if err := st.DeleteServerCascade(ctx, serverID); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"server_test_tasks", "server_test_result_chunks"} {
+		var count int
+		if err := st.db.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE server_id = ?`, serverID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("%s retained %d rows", table, count)
+		}
 	}
 }

@@ -84,7 +84,7 @@ func (r *Runner) Run(parent context.Context, payload shared.ServerTestRunPayload
 		state.Message = result.ErrorMessage
 		states[category] = state
 		report.Categories = append(report.Categories, result)
-		if result.ErrorCode != "" || result.Status == "unavailable" || result.Status == "failed" {
+		if result.ErrorCode != "" || result.Status == "limited" || result.Status == "unavailable" || result.Status == "failed" {
 			if report.Status == shared.ServerTestSucceeded {
 				report.Status = shared.ServerTestCompletedWithErrors
 			}

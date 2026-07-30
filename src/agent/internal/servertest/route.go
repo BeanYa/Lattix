@@ -63,6 +63,19 @@ sendRouteJobs:
 	}
 	close(jobs)
 	wg.Wait()
+	for index := range results {
+		if results[index].ID == "" {
+			message := "the target was not executed before the task stopped"
+			if ctx.Err() != nil {
+				message += ": " + ctx.Err().Error()
+			}
+			results[index] = routeTargetResult{
+				ID: targets[index].ID, Label: targets[index].Label, Carrier: targets[index].Carrier,
+				Province: targets[index].Province, AddressFamily: string(targets[index].AddressFamily),
+				ProbeMethod: "not_run", Degraded: true, ErrorCode: "task_interrupted", ErrorMessage: message,
+			}
+		}
+	}
 	items := make([]map[string]any, 0, len(results))
 	failed := 0
 	for _, result := range results {

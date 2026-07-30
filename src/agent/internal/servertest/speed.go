@@ -16,6 +16,7 @@ import (
 
 const (
 	speedProbeDuration = 15 * time.Second
+	speedDownloadLimit = int64(768 << 20)
 	speedUploadLimit   = int64(2 << 30)
 )
 
@@ -81,7 +82,7 @@ func (r *Runner) runSpeed(parent context.Context, category shared.ServerTestCate
 		Summary: map[string]any{
 			"targets": len(targets), "available_targets": available, "failed_targets": failed,
 			"unavailable_targets": unavailable, "probe_seconds": int(speedProbeDuration.Seconds()),
-			"apple_upload_limit_bytes": speedUploadLimit,
+			"apple_download_limit_bytes": speedDownloadLimit, "apple_upload_limit_bytes": speedUploadLimit,
 		},
 		Items: items,
 	}
@@ -156,11 +157,13 @@ func speedDownload(parent context.Context, client *http.Client, endpoint string)
 	if err != nil {
 		return 0, 0, time.Since(started).Milliseconds(), 0, speedError(err)
 	}
-	bytesRead, readErr := io.Copy(io.Discard, response.Body)
+	bytesRead, readErr := io.Copy(io.Discard, io.LimitReader(response.Body, speedDownloadLimit))
 	_ = response.Body.Close()
 	duration := time.Since(started)
 	message := ""
-	if readErr != nil && bytesRead == 0 {
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		message = fmt.Sprintf("download returned HTTP %d", response.StatusCode)
+	} else if readErr != nil && bytesRead == 0 {
 		message = speedError(readErr)
 	}
 	return speedMbps(bytesRead, duration), bytesRead, duration.Milliseconds(), response.StatusCode, message
@@ -190,7 +193,11 @@ func speedUpload(parent context.Context, client *http.Client, endpoint string) (
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64<<10))
 	_ = response.Body.Close()
-	return speedMbps(bytesSent, duration), bytesSent, duration.Milliseconds(), response.StatusCode, ""
+	message := ""
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		message = fmt.Sprintf("upload returned HTTP %d", response.StatusCode)
+	}
+	return speedMbps(bytesSent, duration), bytesSent, duration.Milliseconds(), response.StatusCode, message
 }
 
 func setAppleSpeedHeaders(request *http.Request) {

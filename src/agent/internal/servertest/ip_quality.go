@@ -37,18 +37,20 @@ func (r *Runner) runIPQuality(parent context.Context, category shared.ServerTest
 	families := []shared.ServerTestAddressFamily{shared.ServerTestIPv4, shared.ServerTestIPv6}
 	items := make([]map[string]any, 0, len(families))
 	available := 0
+	limited := false
 	for index, family := range families {
 		item := runIPFamilyQuality(ctx, family)
 		items = append(items, item)
 		if item["status"] == "available" || item["status"] == "limited" {
 			available++
 		}
+		limited = limited || item["status"] == "limited"
 		update(index+1, len(families), string(family))
 	}
 	status := "available"
 	if available == 0 {
 		status = "unavailable"
-	} else if available != len(families) {
+	} else if limited || available != len(families) {
 		status = "limited"
 	}
 	return shared.ServerTestCategoryResult{

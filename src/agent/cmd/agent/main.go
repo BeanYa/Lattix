@@ -81,7 +81,7 @@ func main() {
 		filepath.Join(filepath.Dir(*statePath), "command-queue.json"),
 		func(envelope shared.Envelope) {
 			if envelope.Type == shared.TypeServerTestRun {
-				_ = testManager.WaitExecution(context.Background())
+				_ = testManager.WaitIdle(context.Background())
 			}
 		},
 	)

@@ -21,7 +21,7 @@ type Sender func(shared.Envelope) error
 
 type taskJournal struct {
 	Version   int                              `json:"version"`
-	State     string                           `json:"state"` // running|result_pending
+	State     string                           `json:"state"` // running|result_pending|completed
 	BootID    string                           `json:"boot_id"`
 	Payload   shared.ServerTestRunPayload      `json:"payload"`
 	Manifest  *shared.ServerTestResultManifest `json:"manifest,omitempty"`
@@ -57,7 +57,10 @@ func NewManager(dataDir, agentVersion string) (*Manager, error) {
 	if err := manager.load(); err != nil {
 		return nil, err
 	}
-	if manager.journal == nil {
+	if manager.journal == nil || manager.journal.State == "completed" {
+		if manager.journal != nil {
+			_ = os.Remove(manager.resultPath)
+		}
 		close(manager.idle)
 		manager.executionDone = make(chan struct{})
 		close(manager.executionDone)
@@ -85,8 +88,12 @@ func (m *Manager) Accept(payload shared.ServerTestRunPayload) error {
 			m.mu.Unlock()
 			return nil
 		}
-		m.mu.Unlock()
-		return errors.New("another server test is already running or awaiting delivery")
+		if m.journal.State == "completed" {
+			m.journal = nil
+		} else {
+			m.mu.Unlock()
+			return errors.New("another server test is already running or awaiting delivery")
+		}
 	}
 	m.idle = make(chan struct{})
 	m.executionDone = make(chan struct{})
@@ -107,7 +114,7 @@ func (m *Manager) Accept(payload shared.ServerTestRunPayload) error {
 func (m *Manager) Busy() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.journal != nil
+	return m.journal != nil && m.journal.State != "completed"
 }
 
 func (m *Manager) WaitIdle(ctx context.Context) error {
@@ -372,15 +379,20 @@ func (m *Manager) completeLocal(taskID string, generation int64) error {
 	if m.journal == nil || m.journal.Payload.TaskID != taskID || m.journal.Payload.Generation != generation {
 		return nil
 	}
+	if m.journal.State == "completed" {
+		return nil
+	}
+	m.journal.State = "completed"
+	m.journal.Manifest = nil
+	m.journal.UpdatedAt = time.Now().UTC()
+	if err := m.saveJournalLocked(); err != nil {
+		return err
+	}
+	m.progress = nil
+	close(m.idle)
 	if err := os.Remove(m.resultPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.Remove(m.journalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	m.journal = nil
-	m.progress = nil
-	close(m.idle)
 	return nil
 }
 
@@ -394,7 +406,7 @@ func (m *Manager) load() error {
 	}
 	var journal taskJournal
 	if err := json.Unmarshal(raw, &journal); err != nil || journal.Version != 1 || journal.Payload.Validate() != nil ||
-		(journal.State != "running" && journal.State != "result_pending") {
+		(journal.State != "running" && journal.State != "result_pending" && journal.State != "completed") {
 		return fmt.Errorf("invalid server test journal: %w", err)
 	}
 	if journal.State == "result_pending" && journal.Manifest == nil {

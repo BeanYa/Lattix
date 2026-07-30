@@ -50,14 +50,17 @@ func TestRunDNSBLSummaryDoesNotExposeAddress(t *testing.T) {
 		case strings.HasSuffix(host, "b.example"):
 			return nil, &net.DNSError{Err: "no such host", IsNotFound: true}
 		default:
-			return nil, errors.New("REFUSED")
+			return nil, &net.DNSError{Err: "server misbehaving", Name: host, Server: "192.0.2.53:53"}
 		}
 	})
 	if result["status"] != "listed" || result["blacklisted"] != 1 || result["clean"] != 1 || result["unknown"] != 1 {
 		t.Fatalf("unexpected summary: %#v", result)
 	}
-	if strings.Contains(strings.ReplaceAll(strings.TrimSpace(toJSON(t, result)), "\\u002e", "."), "203.0.113.9") {
-		t.Fatal("report exposed tested address")
+	encoded := strings.ReplaceAll(strings.TrimSpace(toJSON(t, result)), "\\u002e", ".")
+	for _, private := range []string{"203.0.113.9", "9.113.0.203", "192.0.2.53"} {
+		if strings.Contains(encoded, private) {
+			t.Fatalf("report exposed DNS query detail %q", private)
+		}
 	}
 }
 

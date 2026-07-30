@@ -218,6 +218,12 @@ function IPQualityReport({ category }: { category: ServerTestCategoryResult }) {
         const dnsbl = asRecord(family.dnsbl)
         const network = asRecord(family.network)
         const asn = asRecord(network.asn)
+        const streaming = asRecords(family.streaming)
+        const dnsErrorCounts = new Map<string, number>()
+        for (const entry of asRecords(dnsbl.errors)) {
+          const reason = text(entry.error, 'DNS lookup failed')
+          dnsErrorCounts.set(reason, (dnsErrorCounts.get(reason) ?? 0) + 1)
+        }
         return (
           <section key={text(family.address_family, String(index))} className="space-y-3 border-t pt-4 first:border-0 first:pt-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -225,15 +231,18 @@ function IPQualityReport({ category }: { category: ServerTestCategoryResult }) {
               <Badge variant={statusBadge(text(family.status))}>{statusLabel(text(family.status))}</Badge>
               <span className="text-xs text-muted-foreground">{text(network.country)} · {asn.asn ? `AS${text(asn.asn)} ${text(asn.name, '')}` : statusLabel(text(asn.status))}</span>
             </div>
+            <ErrorNotice code={text(asn.error_code, '')} message={text(asn.error_message, '')} />
             <ProviderTable providers={asRecords(family.providers)} />
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="border p-3">
                 <div className="mb-2 flex items-center justify-between"><span className="text-xs font-medium">DNSBL</span><Badge variant={statusBadge(text(dnsbl.status))}>{statusLabel(text(dnsbl.status))}</Badge></div>
                 <div className="text-xs text-muted-foreground">有效 {text(dnsbl.checked, '0')} · 黑名单 {text(dnsbl.blacklisted, '0')} · 标记 {text(dnsbl.marked, '0')} · 未知 {text(dnsbl.unknown, '0')}</div>
+                {dnsErrorCounts.size ? <div className="mt-2 space-y-1 text-xs text-destructive">{Array.from(dnsErrorCounts).map(([reason, count]) => <div key={reason} className="break-words">{reason} · {count} 项</div>)}</div> : null}
               </div>
               <div className="border p-3">
                 <div className="mb-2 text-xs font-medium">流媒体与 AI</div>
-                <div className="flex flex-wrap gap-1.5">{asRecords(family.streaming).map((service) => <Badge key={text(service.name)} variant={statusBadge(text(service.status))}>{text(service.name)} · {statusLabel(text(service.status))}</Badge>)}</div>
+                <div className="flex flex-wrap gap-1.5">{streaming.map((service) => <Badge key={text(service.name)} variant={statusBadge(text(service.status))}>{text(service.name)} · {statusLabel(text(service.status))}</Badge>)}</div>
+                {streaming.some((service) => service.error) ? <div className="mt-2 space-y-1 text-xs text-destructive">{streaming.filter((service) => service.error).map((service) => <div key={text(service.name)} className="break-words">{text(service.name)} · {text(service.error)}</div>)}</div> : null}
               </div>
             </div>
             <ErrorNotice code={text(family.error_code, '')} message={text(family.error_message, '')} />
