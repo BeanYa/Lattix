@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # 逐节点用户分配端到端验收（设计文档 §16，默认全关）：
-#   新建用户/节点默认无关联（订阅为空、inbounds 无用户）→ PUT 分配后增量 add_user →
-#   订阅仅含分配节点 → 取消分配后 remove_user → 存量库迁移（隐含全对全补全关联）。
-# 依赖：python3、curl、本机 xray 二进制（XRAY_BIN 可覆盖）。
+#   新建用户/节点默认无关联（订阅为空、inbounds 无用户）→ 分配后增量 add_user →
+#   订阅仅含分配节点 → 取消分配后 remove_user → 存量库迁移（默认全关，不做全对全补全）。
+# 管理 API 均为 RPC 信封（feat(api)! 后无 REST 端点）：写操作需 Idempotency-Key 与
+#   X-CSRF-Token；业务错误 HTTP 200 + code=INVALID_ARGUMENT 等，协议错误才用 HTTP 状态码。
+# 依赖：python3、curl、openssl、本机 xray 二进制（XRAY_BIN 可覆盖）。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,12 +14,12 @@ XRAY_BIN="${XRAY_BIN:-$HOME/.cache/lattix-dev/xray-core/xray}"
 
 ADDR="127.0.0.1:18103"
 API="127.0.0.1:14204"
-BOOTSTRAP="bootstrap-usernodes-test"
 XRAY_CONFIG="$WORK/xray-config.json"
 JAR="$WORK/cookies.txt"
+CSRF=""
 
 cleanup() {
-    kill ${BPID:-} ${APID:-} 2>/dev/null || true
+    kill ${BPID:-} ${APID:-} ${OLDPID:-} 2>/dev/null || true
     pkill -f "xray run -config $XRAY_CONFIG" 2>/dev/null || true
     wait 2>/dev/null || true
     rm -rf "$WORK"
@@ -36,10 +38,27 @@ for row in cur: print("|".join("" if c is None else str(c) for c in row))
 PY
 }
 
-api() {
-    local args=(-s -b "$JAR" -c "$JAR" -X "$1")
-    [[ -n "${3:-}" ]] && args+=(-H 'Content-Type: application/json' -d "$3")
-    curl "${args[@]}" "http://$ADDR$2"
+# rpc_raw <method> <path> [body]：RPC 请求（POST 自动附随机 Idempotency-Key 与 CSRF 令牌）。
+rpc_raw() {
+    local method="$1" path="$2" body="${3:-}"
+    local args=(-sS -b "$JAR" -c "$JAR" -X "$method" -H "Origin: http://$ADDR")
+    if [[ "$method" == "POST" ]]; then
+        [[ -n "$body" ]] || body='{}'
+        args+=(-H 'Content-Type: application/json' -H "Idempotency-Key: $(openssl rand -hex 16)" -d "$body")
+        [[ -z "$CSRF" ]] || args+=(-H "X-CSRF-Token: $CSRF")
+    fi
+    curl "${args[@]}" "http://$ADDR$path"
+}
+
+# rpc_data：解包 RPC 信封输出 data（code 非 OK/ACCEPTED 立即失败）。
+rpc_data() {
+    rpc_raw "$@" | python3 -c '
+import json,sys
+value=json.load(sys.stdin)
+if value["code"] not in ("OK","ACCEPTED"):
+    raise SystemExit(f"RPC failed: {value}")
+print(json.dumps(value["data"], separators=(",",":")))
+'
 }
 
 # clients_of <node-id>：输出该节点 inbound 的 clients email 列表。
@@ -68,11 +87,20 @@ wait_clients() {
 
 sub_count() { curl -s "http://$ADDR/sub/$1?format=clash" | grep -c 'server: ' || true; }
 
-echo ">> start backend & agent"
+echo ">> start backend"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" >"$WORK/backend.log" 2>&1 &
 BPID=$!
-sleep 1
-db "INSERT INTO servers (alias, token) VALUES ('un01', '$BOOTSTRAP')" >/dev/null
+for _ in $(seq 1 30); do curl -fsS "http://$ADDR/readyz" >/dev/null 2>&1 && break; sleep 0.2; done
+
+echo ">> 登录（签发会话 + CSRF 令牌）"
+LOGIN="$(rpc_data POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')"
+CSRF="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["csrf_token"])' "$LOGIN")"
+[[ -n "$CSRF" ]] || { echo "FAIL: 未取到 CSRF 令牌"; exit 1; }
+
+echo ">> 创建服务器 un01 并启动 agent（bootstrap 凭证由面板签发，ltx1 格式）"
+SRV="$(rpc_data POST /api/server/create '{"country_code":"US","location":"Test","alias":"un01","address":"127.0.0.1"}')"
+BOOTSTRAP="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["bootstrap_token"])' "$SRV")"
+[[ -n "$BOOTSTRAP" ]] || { echo "FAIL: 未取到 bootstrap 凭证"; exit 1; }
 "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "$BOOTSTRAP" -state "$WORK/agent.state.json" \
     -xray-bin "$XRAY_BIN" -xray-config "$XRAY_CONFIG" -xray-api "$API" -xray-runner exec \
     >"$WORK/agent.log" 2>&1 &
@@ -80,14 +108,15 @@ APID=$!
 sleep 1.5
 
 echo ">> 2 用户 + 2 节点（默认全关）"
-api POST /api/login '{"username":"admin","password":"lattix-admin"}' >/dev/null
-U1="$(api POST /api/users '{"name":"u1"}')"; U2="$(api POST /api/users '{"name":"u2"}')"
+U1="$(rpc_data POST /api/user/create '{"name":"u1"}')"; U2="$(rpc_data POST /api/user/create '{"name":"u2"}')"
+UID1="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["id"])' "$U1")"
+UID2="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["id"])' "$U2")"
 UUID1="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["uuid"])' "$U1")"
 UUID2="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["uuid"])' "$U2")"
 TOK1="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["sub_token"])' "$U1")"
 TOK2="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["sub_token"])' "$U2")"
-N1="$(api POST /api/nodes '{"server_id":1,"protocol":"vless"}' | python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["id"])')"
-N2="$(api POST /api/nodes '{"server_id":1,"protocol":"vless"}' | python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["id"])')"
+N1="$(rpc_data POST /api/node/create '{"server_id":1,"protocol":"vless"}' | python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["id"])')"
+N2="$(rpc_data POST /api/node/create '{"server_id":1,"protocol":"vless"}' | python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["id"])')"
 for _ in $(seq 1 40); do
     a="$(db "SELECT count(*) FROM nodes WHERE status='active'")"
     [[ "$a" == "2" ]] && break
@@ -102,24 +131,24 @@ done
     || { echo "FAIL: 新节点不应带用户"; exit 1; }
 
 echo ">> u1 分配节点 $N1"
-api PUT "/api/users/1/nodes" "{\"node_ids\":[$N1]}" >/dev/null
+rpc_data POST /api/user/set-nodes "{\"user_id\":$UID1,\"node_ids\":[$N1]}" >/dev/null
 wait_clients "$N1" "$UUID1" present && echo "OK: 增量 add_user 仅落到分配的节点"
 [[ -z "$(clients_of "$N2")" ]] || { echo "FAIL: 未分配节点 $N2 不应有 u1"; exit 1; }
 [[ "$(sub_count "$TOK1")" == "1" ]] && echo "OK: u1 订阅含 1 个节点" || { echo "FAIL: u1 订阅数异常"; exit 1; }
 
 echo ">> u2 分配节点 $N1,$N2"
-api PUT "/api/users/2/nodes" "{\"node_ids\":[$N1,$N2]}" >/dev/null
+rpc_data POST /api/user/set-nodes "{\"user_id\":$UID2,\"node_ids\":[$N1,$N2]}" >/dev/null
 wait_clients "$N1" "$UUID2" present
 wait_clients "$N2" "$UUID2" present
 [[ "$(sub_count "$TOK2")" == "2" ]] && echo "OK: u2 订阅含 2 个节点" || { echo "FAIL: u2 订阅数异常"; exit 1; }
 
 echo ">> u1 取消全部分配"
-api PUT "/api/users/1/nodes" '{"node_ids":[]}' >/dev/null
+rpc_data POST /api/user/set-nodes "{\"user_id\":$UID1,\"node_ids\":[]}" >/dev/null
 wait_clients "$N1" "$UUID1" absent && echo "OK: 取消分配后 remove_user 生效"
 [[ "$(sub_count "$TOK1")" == "0" ]] && echo "OK: u1 订阅回到空" || { echo "FAIL: u1 订阅应为空"; exit 1; }
 [[ "$(sub_count "$TOK2")" == "2" ]] || { echo "FAIL: u2 不应受影响"; exit 1; }
 
-echo ">> 存量库迁移（隐含全对全 → 补全 user_nodes）"
+echo ">> 存量库迁移（§16 默认全关：建表即可，不做隐含全对全补全）"
 python3 - "$WORK/old.db" <<'PY'
 import sqlite3, sys
 con = sqlite3.connect(sys.argv[1])
@@ -145,6 +174,12 @@ OLDPID=$!
 sleep 1.5
 kill $OLDPID 2>/dev/null || true
 PAIRS="$(python3 -c 'import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute("SELECT count(*) FROM user_nodes").fetchone()[0])' "$WORK/old.db")"
-[[ "$PAIRS" == "6" ]] && echo "OK: 存量 2 用户 × 3 节点关联已补全" || { echo "FAIL: 迁移后关联数 $PAIRS ≠ 6"; exit 1; }
+[[ "$PAIRS" == "0" ]] \
+    && echo "OK: 存量用户默认全关（user_nodes 为空，§16）" \
+    || { echo "FAIL: user_nodes 应为空，实际 $PAIRS 条"; exit 1; }
+COLS="$(python3 -c 'import sqlite3,sys;print(",".join(r[1] for r in sqlite3.connect(sys.argv[1]).execute("PRAGMA table_info(commands)")))' "$WORK/old.db")"
+grep -q 'data' <<<"$COLS" && ! grep -q 'payload' <<<"$COLS" \
+    && echo "OK: commands 表已迁移至新 schema（payload→data）" \
+    || { echo "FAIL: commands schema 异常: $COLS"; exit 1; }
 
 echo "E2E-USERNODES PASS"

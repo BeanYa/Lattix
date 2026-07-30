@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # 事件告警与 SQLite 备份端到端验收（设计文档 §19）：
-#   设置页保存告警三键（bot token 不回显仅置位）→ alerts/test 两通道结果（本地 webhook 成功 /
+#   设置页保存告警三键（bot token 不回显仅置位）→ setting/test-alerts 两通道结果（本地 webhook 成功 /
 #   假 telegram token 失败）→ 杀 agent 收到 server_offline（仅跃迁）→ 5 分钟内第二次离线防抖不重发 →
 #   外部篡改配置收到 config_drift → 占用端口建节点失败收到 node_failed →
-#   GET /api/backup 下载 200 + Content-Disposition + 合法 SQLite（头字节 + integrity_check）。
-# 依赖：python3、curl、本机 xray 二进制（XRAY_BIN 可覆盖）。
+#   GET /api/backup/download 200 + Content-Disposition + 合法 SQLite（头字节 + integrity_check）。
+# 管理 API 均为 RPC 信封（feat(api)! 后无 REST 端点）：写操作需 Idempotency-Key 与
+#   X-CSRF-Token；业务错误 HTTP 200 + code=INVALID_ARGUMENT 等，协议错误才用 HTTP 状态码。
+# 依赖：python3、curl、openssl、本机 xray 二进制（XRAY_BIN 可覆盖）。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -20,6 +22,7 @@ XRAY_CONFIG="$WORK/xray-config.json"
 JAR="$WORK/cookies.txt"
 HOOKS="$WORK/hooks.log"
 STATE="$WORK/agent.state.json"
+CSRF=""
 
 cleanup() {
     kill ${BPID:-} ${APID:-} ${HPID:-} ${BUSYPID:-} 2>/dev/null || true
@@ -70,11 +73,35 @@ for row in cur: print("|".join("" if c is None else str(c) for c in row))
 PY
 }
 py() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)"; }
-api() {
-    local args=(-s -b "$JAR" -c "$JAR" -X "$1")
-    [[ -n "${3:-}" ]] && args+=(-H 'Content-Type: application/json' -d "$3")
-    curl "${args[@]}" "http://$ADDR$2"
+
+# rpc_raw <method> <path> [body]：RPC 请求（POST 自动附随机 Idempotency-Key 与 CSRF 令牌）。
+rpc_raw() {
+    local method="$1" path="$2" body="${3:-}"
+    local args=(-sS -b "$JAR" -c "$JAR" -X "$method" -H "Origin: http://$ADDR")
+    if [[ "$method" == "POST" ]]; then
+        [[ -n "$body" ]] || body='{}'
+        args+=(-H 'Content-Type: application/json' -H "Idempotency-Key: $(openssl rand -hex 16)" -d "$body")
+        [[ -z "$CSRF" ]] || args+=(-H "X-CSRF-Token: $CSRF")
+    fi
+    curl "${args[@]}" "http://$ADDR$path"
 }
+
+# rpc_data：解包 RPC 信封输出 data（code 非 OK/ACCEPTED 立即失败）。
+rpc_data() {
+    rpc_raw "$@" | python3 -c '
+import json,sys
+value=json.load(sys.stdin)
+if value["code"] not in ("OK","ACCEPTED"):
+    raise SystemExit(f"RPC failed: {value}")
+print(json.dumps(value["data"], separators=(",",":")))
+'
+}
+
+# rpc_code：输出 RPC 信封 code（用于业务错误断言）。
+rpc_code() {
+    rpc_raw "$@" | python3 -c 'import json,sys;print(json.load(sys.stdin)["code"])'
+}
+
 # wait_hook <pattern> <loops>：等待 hooks.log 出现匹配行。
 wait_hook() {
     for _ in $(seq 1 "${2:-40}"); do
@@ -85,9 +112,10 @@ wait_hook() {
 }
 hook_count() { [[ -f "$HOOKS" ]] && grep -c "$1" "$HOOKS" || echo 0; }
 start_agent() {
-    "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "ignored-after-first" -state "$STATE" \
+    : > "$WORK/agent.log" # truncate old log so grep waits for this auth
+    "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "" -state "$STATE" \
         -xray-bin "$XRAY_BIN" -xray-config "$XRAY_CONFIG" -xray-api "$API" -xray-runner exec \
-        -drift-interval 1s >>"$WORK/agent.log" 2>&1 &
+        >>"$WORK/agent.log" 2>&1 &
     APID=$!
     for _ in $(seq 1 30); do
         grep -q "authenticated as server" "$WORK/agent.log" && return 0
@@ -96,25 +124,29 @@ start_agent() {
     echo "FAIL: agent 未认证"; cat "$WORK/agent.log"; return 1
 }
 
-echo ">> start webhook 接收端 + backend（心跳覆盖 2s）"
+echo ">> start webhook 接收端 + backend"
 python3 "$WORK/hook_receiver.py" "$HOOKS" "${HOOK##*:}" & HPID=$!
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" \
     >"$WORK/backend.log" 2>&1 &
 BPID=$!
-sleep 1
-api POST /api/login '{"username":"admin","password":"lattix-admin"}' >/dev/null
+for _ in $(seq 1 30); do curl -fsS "http://$ADDR/readyz" >/dev/null 2>&1 && break; sleep 0.2; done
+
+echo ">> 登录（签发会话 + CSRF 令牌）"
+LOGIN="$(rpc_data POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')"
+CSRF="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["csrf_token"])' "$LOGIN")"
+[[ -n "$CSRF" ]] || { echo "FAIL: 未取到 CSRF 令牌"; exit 1; }
 
 # --- 告警设置保存 / 回显 ---
-echo ">> PUT 告警三键并回显"
-G="$(api PUT /api/settings '{"alert_webhook_url":"http://'$HOOK'/hook","alert_telegram_bot_token":"123456:fake-token","alert_telegram_chat_id":"-1001"}')"
+echo ">> POST /api/setting/update 告警三键并回显"
+G="$(rpc_data POST /api/setting/update '{"alert_webhook_url":"http://'$HOOK'/hook","alert_telegram_bot_token":"123456:fake-token","alert_telegram_chat_id":"-1001"}')"
 [[ "$(echo "$G" | py "(d['alert_webhook_url'], d['alert_telegram_bot_token_set'], d['alert_telegram_chat_id'])")" == "('http://$HOOK/hook', True, '-1001')" ]] \
     && echo "OK: 告警设置已保存（bot token 置位不回显）" || { echo "FAIL: 保存: $G"; exit 1; }
-[[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{"alert_webhook_url":"ftp://x"}' "http://$ADDR/api/settings")" == "400" ]] \
-    && echo "OK: 非法 webhook 地址被拒（400）" || { echo "FAIL: 非法 webhook 未拒"; exit 1; }
+[[ "$(rpc_code POST /api/setting/update '{"alert_webhook_url":"ftp://x"}')" == "INVALID_ARGUMENT" ]] \
+    && echo "OK: 非法 webhook 地址被拒（INVALID_ARGUMENT）" || { echo "FAIL: 非法 webhook 未拒"; exit 1; }
 
-# --- alerts/test：两通道结果 ---
-echo ">> POST /api/settings/alerts/test"
-R="$(api POST /api/settings/alerts/test)"
+# --- setting/test-alerts：两通道结果 ---
+echo ">> POST /api/setting/test-alerts"
+R="$(rpc_data POST /api/setting/test-alerts)"
 [[ "$(echo "$R" | py "(d['webhook']['configured'], d['webhook']['ok'])")" == "(True, True)" ]] \
     && echo "OK: webhook 测试发送成功" || { echo "FAIL: webhook 测试: $R"; exit 1; }
 [[ "$(echo "$R" | py "(d['telegram']['configured'], d['telegram']['ok'])")" == "(True, False)" ]] \
@@ -123,10 +155,10 @@ wait_hook '"event": *"test"' 10 && echo "OK: 接收端收到测试消息"
 
 # --- server_offline（仅跃迁）+ 防抖动 ---
 echo ">> 建服务器并拉起 agent"
-BOOTSTRAP="$(api POST /api/servers '{"country_code":"US","location":"Test","alias":"alert01"}' | py "d['bootstrap_token']")"
+BOOTSTRAP="$(rpc_data POST /api/server/create '{"country_code":"US","location":"Test","alias":"alert01"}' | py "d['bootstrap_token']")"
 "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "$BOOTSTRAP" -state "$STATE" \
     -xray-bin "$XRAY_BIN" -xray-config "$XRAY_CONFIG" -xray-api "$API" -xray-runner exec \
-    -drift-interval 1s >"$WORK/agent.log" 2>&1 &
+    >"$WORK/agent.log" 2>&1 &
 APID=$!
 sleep 2
 grep -q "authenticated as server" "$WORK/agent.log" || { echo "FAIL: agent 首连"; cat "$WORK/agent.log"; exit 1; }
@@ -147,7 +179,7 @@ sleep 4
 # --- config_drift ---
 echo ">> 重连 → 外部篡改配置 → config_drift 告警"
 start_agent
-NID="$(api POST /api/nodes '{"server_id":1,"protocol":"vless"}' | py "d['id']")"
+NID="$(rpc_data POST /api/node/create '{"server_id":1,"protocol":"vless"}' | py "d['id']")"
 for _ in $(seq 1 40); do
     [[ "$(db "SELECT status FROM nodes WHERE id=$NID")" == "active" ]] && break
     sleep 0.5
@@ -166,7 +198,7 @@ wait_hook '"event": *"config_drift"' && echo "OK: 收到 config_drift"
 echo ">> 占用端口建节点 → node_failed 告警"
 python3 "$WORK/busy_listener.py" "$BUSY_PORT" & BUSYPID=$!
 sleep 0.5
-NID2="$(api POST /api/nodes "{\"server_id\":1,\"protocol\":\"vless\",\"port\":$BUSY_PORT}" | py "d['id']")"
+NID2="$(rpc_data POST /api/node/create "{\"server_id\":1,\"protocol\":\"vless\",\"port\":$BUSY_PORT}" | py "d['id']")"
 for _ in $(seq 1 40); do
     [[ "$(db "SELECT status FROM nodes WHERE id=$NID2")" == "failed" ]] && break
     sleep 0.5
@@ -175,11 +207,11 @@ done
     || { echo "FAIL: 节点未 failed: $(db "SELECT status FROM nodes WHERE id=$NID2")"; exit 1; }
 wait_hook "\"event\": *\"node_failed\".*\"node\": *\"node_$NID2\"" && echo "OK: 收到 node_failed（含节点标识）"
 
-# --- GET /api/backup ---
+# --- GET /api/backup/download ---
 echo ">> 备份下载"
-[[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/api/backup")" == "401" ]] \
-    && echo "OK: 未登录访问备份被拒（401）" || { echo "FAIL: 备份未鉴权"; exit 1; }
-CODE="$(curl -s -b "$JAR" -D "$WORK/headers.txt" -o "$WORK/backup.db" -w '%{http_code}' "http://$ADDR/api/backup")"
+[[ "$(curl -s "http://$ADDR/api/backup/download" | python3 -c 'import json,sys;print(json.load(sys.stdin)["code"])')" == "AUTH_REQUIRED" ]] \
+    && echo "OK: 未登录访问备份被拒（AUTH_REQUIRED）" || { echo "FAIL: 备份未鉴权"; exit 1; }
+CODE="$(curl -s -b "$JAR" -D "$WORK/headers.txt" -o "$WORK/backup.db" -w '%{http_code}' "http://$ADDR/api/backup/download")"
 [[ "$CODE" == "200" ]] || { echo "FAIL: 备份下载 $CODE"; exit 1; }
 grep -i '^content-disposition: attachment; filename="lattix-backup-[0-9]\{8\}-[0-9]\{6\}\.db"' "$WORK/headers.txt" >/dev/null \
     && echo "OK: Content-Disposition 附件名正确" || { echo "FAIL: 附件名:"; cat "$WORK/headers.txt"; exit 1; }

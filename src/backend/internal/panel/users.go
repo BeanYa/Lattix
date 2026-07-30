@@ -98,6 +98,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Name      string  `json:"name"`
 		ExpiresAt *string `json:"expires_at"` // RFC3339，省略/null = 长期
 		NodeIDs   []int64 `json:"node_ids"`   // 可选：预选链路对应的业务节点
+		// 可选订阅设置（省略保持默认；用户级覆盖全局，§9）。
+		TrafficLimit    int64  `json:"traffic_limit"`
+		TrafficResetDay int    `json:"traffic_reset_day"`
+		PlanName        string `json:"plan_name"`
+		AppURL          string `json:"app_url"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -131,6 +136,25 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	// 可选订阅设置：任一项非默认时写入（用户级覆盖全局）。
+	if req.TrafficLimit != 0 || req.TrafficResetDay != 0 || req.PlanName != "" || req.AppURL != "" {
+		if req.TrafficLimit < 0 {
+			req.TrafficLimit = 0
+		}
+		if req.TrafficResetDay < 0 || req.TrafficResetDay > 28 {
+			writeError(w, http.StatusBadRequest, "重置日须为 0–28（0=创建日）")
+			return
+		}
+		if err := s.st.SetUserSubSettings(r.Context(), id, req.TrafficLimit, req.TrafficResetDay, "", "", strings.TrimSpace(req.PlanName), strings.TrimSpace(req.AppURL)); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		created.TrafficLimit = req.TrafficLimit
+		created.TrafficResetDay = req.TrafficResetDay
+		created.PlanName = strings.TrimSpace(req.PlanName)
+		created.AppURL = strings.TrimSpace(req.AppURL)
 	}
 
 	// 可选预选链路（§16）：校验底层业务节点存在后按差量扇出 add_user。

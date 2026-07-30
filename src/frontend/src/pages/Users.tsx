@@ -76,6 +76,10 @@ export default function Users() {
   const [createError, setCreateError] = useState('')
   const [created, setCreated] = useState<SubUser | null>(null)
   const [createLinkSel, setCreateLinkSel] = useState<number[]>([])
+  const [createTrafficLimit, setCreateTrafficLimit] = useState('')
+  const [createResetDay, setCreateResetDay] = useState('0')
+  const [createPlanName, setCreatePlanName] = useState('')
+  const [createAppURL, setCreateAppURL] = useState('')
 
   const [expiryTarget, setExpiryTarget] = useState<SubUser | null>(null)
   const [expiryValue, setExpiryValue] = useState('')
@@ -152,6 +156,10 @@ export default function Users() {
       setCreateError('')
       setCreated(null)
       setCreateLinkSel([])
+      setCreateTrafficLimit('')
+      setCreateResetDay('0')
+      setCreatePlanName('')
+      setCreateAppURL('')
     }
   }
 
@@ -166,7 +174,24 @@ export default function Users() {
     setCreateError('')
     setCreating(true)
     try {
-      const res = await api.createUser(name.trim(), localInputToRFC3339(expiresAt), createLinkSel)
+      const limitGB = Number(createTrafficLimit) || 0
+      const resetDay = Number(createResetDay) || 0
+      const planName = createPlanName.trim()
+      const appURL = createAppURL.trim()
+      const hasSub = limitGB > 0 || resetDay > 0 || planName !== '' || appURL !== ''
+      const res = await api.createUser(
+        name.trim(),
+        localInputToRFC3339(expiresAt),
+        createLinkSel,
+        hasSub
+          ? {
+              traffic_limit: limitGB > 0 ? limitGB * 1073741824 : 0,
+              traffic_reset_day: resetDay,
+              plan_name: planName,
+              app_url: appURL,
+            }
+          : undefined,
+      )
       setCreated(res)
       load()
     } catch (err) {
@@ -495,6 +520,44 @@ export default function Users() {
                     </label>
                   ))
                 )}
+              </div>
+              <div className="space-y-2">
+                <Label>订阅设置（可选，留空跟随全局）</Label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <Input
+                      type="number"
+                      min={0}
+                      value={createTrafficLimit}
+                      onChange={e => setCreateTrafficLimit(e.target.value)}
+                      placeholder="流量配额 GB/周期，0=不限"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Input
+                      type="number"
+                      min={0}
+                      max={28}
+                      value={createResetDay}
+                      onChange={e => setCreateResetDay(e.target.value)}
+                      placeholder="重置日，0=创建日"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Input
+                      value={createPlanName}
+                      onChange={e => setCreatePlanName(e.target.value)}
+                      placeholder="套餐名，如 VIP1"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Input
+                      value={createAppURL}
+                      onChange={e => setCreateAppURL(e.target.value)}
+                      placeholder="客户端跳转链接"
+                    />
+                  </div>
+                </div>
               </div>
               {createError && <p className="text-sm text-destructive">{createError}</p>}
               <DialogFooter>

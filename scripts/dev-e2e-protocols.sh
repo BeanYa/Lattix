@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # 全协议向导端到端验收（设计文档 §15）：
-#   经面板 HTTP API 创建 7 种协议节点 → 全部 active + realized_config 正确 →
+#   经面板 RPC API 创建 7 种协议节点 → 全部 active + realized_config 正确 →
 #   订阅 YAML 各协议字段正确（dokodemo 不进订阅）→ 创建用户触发多协议 add_user 扇出。
-# 依赖：python3、本机 xray 二进制（XRAY_BIN 可覆盖）、可访问 dest 预检域名。
+# 管理 API 均为 RPC 信封：写操作需 Idempotency-Key 与 X-CSRF-Token。
+# 依赖：python3、curl、openssl、本机 xray 二进制（XRAY_BIN 可覆盖）、可访问 dest 预检域名。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,9 +13,9 @@ XRAY_BIN="${XRAY_BIN:-$HOME/.cache/lattix-dev/xray-core/xray}"
 
 ADDR="127.0.0.1:18099"
 API="127.0.0.1:14201"
-BOOTSTRAP="bootstrap-proto-test"
 XRAY_CONFIG="$WORK/xray-config.json"
 JAR="$WORK/cookies.txt"
+CSRF=""
 
 cleanup() {
     kill ${BPID:-} ${APID:-} 2>/dev/null || true
@@ -36,10 +37,27 @@ for row in cur: print("|".join("" if c is None else str(c) for c in row))
 PY
 }
 
-api() { # <method> <path> [json-body]
-    local args=(-s -b "$JAR" -c "$JAR" -X "$1")
-    [[ -n "${3:-}" ]] && args+=(-H 'Content-Type: application/json' -d "$3")
-    curl "${args[@]}" "http://$ADDR$2"
+# rpc_raw <method> <path> [body]
+rpc_raw() {
+    local method="$1" path="$2" body="${3:-}"
+    local args=(-sS -b "$JAR" -c "$JAR" -X "$method" -H "Origin: http://$ADDR")
+    if [[ "$method" == "POST" ]]; then
+        [[ -n "$body" ]] || body='{}'
+        args+=(-H 'Content-Type: application/json' -H "Idempotency-Key: $(openssl rand -hex 16)" -d "$body")
+        [[ -z "$CSRF" ]] || args+=(-H "X-CSRF-Token: $CSRF")
+    fi
+    curl "${args[@]}" "http://$ADDR$path"
+}
+
+# rpc_data：解包 RPC 信封输出 data。
+rpc_data() {
+    rpc_raw "$@" | python3 -c '
+import json,sys
+value=json.load(sys.stdin)
+if value["code"] not in ("OK","ACCEPTED"):
+    raise SystemExit(f"RPC failed: {value}")
+print(json.dumps(value["data"], separators=(",",":")))
+'
 }
 
 port_open() { python3 -c "import socket,sys; s=socket.socket(); sys.exit(0 if s.connect_ex(('127.0.0.1', int(sys.argv[1])))==0 else 1)" "$1"; }
@@ -61,7 +79,7 @@ wait_node() {
 # create_node <json-body>：创建节点并等待 active，输出 realized_config。
 create_node() {
     local res id out
-    res="$(api POST /api/nodes "$1")"
+    res="$(rpc_data POST /api/node/create "$1")"
     id="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["id"])' "$res" 2>/dev/null)" \
         || { echo "FAIL: 创建节点响应异常: $res"; exit 1; }
     out="$(wait_node "$id")"
@@ -76,20 +94,27 @@ check_port() { # <realized-json>
     echo "   端口 $p OK"
 }
 
-echo ">> start backend & agent"
+echo ">> start backend"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" >"$WORK/backend.log" 2>&1 &
 BPID=$!
-sleep 1
-db "INSERT INTO servers (alias, token) VALUES ('proto01', '$BOOTSTRAP')" >/dev/null
+for _ in $(seq 1 30); do curl -fsS "http://$ADDR/readyz" >/dev/null 2>&1 && break; sleep 0.2; done
+
+echo ">> 登录 + 建服务器 + 拉起 agent"
+LOGIN="$(rpc_data POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')"
+CSRF="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["csrf_token"])' "$LOGIN")"
+[[ -n "$CSRF" ]] || { echo "FAIL: 未取到 CSRF 令牌"; exit 1; }
+SRV="$(rpc_data POST /api/server/create '{"country_code":"US","location":"Test","alias":"proto01","address":"127.0.0.1"}')"
+BOOTSTRAP="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["bootstrap_token"])' "$SRV")"
 "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "$BOOTSTRAP" -state "$WORK/agent.state.json" \
+    -settings "$WORK/agent.settings.json" \
     -xray-bin "$XRAY_BIN" -xray-config "$XRAY_CONFIG" -xray-api "$API" -xray-runner exec \
     >"$WORK/agent.log" 2>&1 &
 APID=$!
-sleep 1.5
+sleep 2
+grep -q "authenticated as server" "$WORK/agent.log" || { echo "FAIL: agent 未认证"; cat "$WORK/agent.log"; exit 1; }
 
-echo ">> login & create user"
-api POST /api/login '{"username":"admin","password":"lattix-admin"}' >/dev/null
-USER_RES="$(api POST /api/users '{"name":"u1"}')"
+echo ">> create user u1"
+USER_RES="$(rpc_data POST /api/user/create '{"name":"u1"}')"
 SUB_TOKEN="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["sub_token"])' "$USER_RES")"
 
 echo ">> vless tcp vision"
@@ -130,13 +155,16 @@ echo ">> dokodemo-door"
 R="$(create_node '{"server_id":1,"protocol":"dokodemo-door","target_address":"127.0.0.1","target_port":18099}')" && check_port "$R"
 
 echo ">> 分配全部非 dokodemo 节点给 u1（§16 默认全关，需显式分配）"
-api PUT "/api/users/1/nodes" "{\"node_ids\":[$(db "SELECT group_concat(id) FROM nodes WHERE protocol != 'dokodemo-door'")]}" >/dev/null
+NODE_IDS="$(db "SELECT group_concat(id) FROM nodes WHERE protocol != 'dokodemo-door'")"
+rpc_data POST /api/user/set-nodes "{\"user_id\":1,\"node_ids\":[$NODE_IDS]}" >/dev/null
 sleep 3
 
 echo ">> 新建用户 u2 并分配 socks/http 节点 → 多协议 add_user 扇出"
-U2="$(api POST /api/users '{"name":"u2"}')"
+U2="$(rpc_data POST /api/user/create '{"name":"u2"}')"
 UUID2="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["uuid"])' "$U2")"
-api PUT "/api/users/2/nodes" "{\"node_ids\":[$(db "SELECT group_concat(id) FROM nodes WHERE protocol IN ('socks','http')")]}" >/dev/null
+U2_ID="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["id"])' "$U2")"
+NODE_IDS2="$(db "SELECT group_concat(id) FROM nodes WHERE protocol IN ('socks','http')")"
+rpc_data POST /api/user/set-nodes "{\"user_id\":$U2_ID,\"node_ids\":[$NODE_IDS2]}" >/dev/null
 sleep 3
 U2_COUNT="$(grep -c "$UUID2" "$XRAY_CONFIG" || true)"
 [[ "$U2_COUNT" -ge 2 ]] || { echo "FAIL: socks/http accounts 未见 u2（出现 $U2_COUNT 次）"; tail -5 "$WORK/agent.log"; exit 1; }

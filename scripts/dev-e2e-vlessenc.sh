@@ -3,7 +3,8 @@
 #   创建 vless+encryption(mlkem768) 与普通 vless vision 节点 →
 #   本机起第二个 xray 作客户端（reality + encryption 参数取自 realized_config）→
 #   curl 经 socks 代理访问外网验证真实数据通路；订阅 YAML 校验 encryption 字段。
-# 依赖：python3、curl、本机 xray 二进制（XRAY_BIN 可覆盖）、外网可达。
+# 管理 API 均为 RPC 信封：写操作需 Idempotency-Key 与 X-CSRF-Token。
+# 依赖：python3、curl、openssl、本机 xray 二进制（XRAY_BIN 可覆盖）、外网可达。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,11 +14,11 @@ XRAY_BIN="${XRAY_BIN:-$HOME/.cache/lattix-dev/xray-core/xray}"
 
 ADDR="127.0.0.1:18100"
 API="127.0.0.1:14202"
-BOOTSTRAP="bootstrap-vlessenc-test"
 XRAY_CONFIG="$WORK/xray-config.json"
 CLIENT_CONFIG="$WORK/client-config.json"
 CLIENT_SOCKS=11081
 JAR="$WORK/cookies.txt"
+CSRF=""
 
 cleanup() {
     kill ${BPID:-} ${APID:-} 2>/dev/null || true
@@ -40,10 +41,27 @@ for row in cur: print("|".join("" if c is None else str(c) for c in row))
 PY
 }
 
-api() {
-    local args=(-s -b "$JAR" -c "$JAR" -X "$1")
-    [[ -n "${3:-}" ]] && args+=(-H 'Content-Type: application/json' -d "$3")
-    curl "${args[@]}" "http://$ADDR$2"
+# rpc_raw <method> <path> [body]
+rpc_raw() {
+    local method="$1" path="$2" body="${3:-}"
+    local args=(-sS -b "$JAR" -c "$JAR" -X "$method" -H "Origin: http://$ADDR")
+    if [[ "$method" == "POST" ]]; then
+        [[ -n "$body" ]] || body='{}'
+        args+=(-H 'Content-Type: application/json' -H "Idempotency-Key: $(openssl rand -hex 16)" -d "$body")
+        [[ -z "$CSRF" ]] || args+=(-H "X-CSRF-Token: $CSRF")
+    fi
+    curl "${args[@]}" "http://$ADDR$path"
+}
+
+# rpc_data：解包 RPC 信封输出 data。
+rpc_data() {
+    rpc_raw "$@" | python3 -c '
+import json,sys
+value=json.load(sys.stdin)
+if value["code"] not in ("OK","ACCEPTED"):
+    raise SystemExit(f"RPC failed: {value}")
+print(json.dumps(value["data"], separators=(",",":")))
+'
 }
 
 wait_node() {
@@ -58,12 +76,12 @@ wait_node() {
     echo "FAIL: 节点 $1 超时未 active"; return 1
 }
 
-# start_client <realized-json> <uuid>：按 realized 起 xray 客户端并 curl 验证数据通路。
+# start_client <realized-json> <uuid>
 start_client() {
     python3 - "$1" "$2" "$CLIENT_CONFIG" "$CLIENT_SOCKS" <<'PY'
 import json, sys
 rc, uuid, path, socks = json.loads(sys.argv[1]), sys.argv[2], sys.argv[3], int(sys.argv[4])
-user = {"id": uuid, "encryption": rc.get("encryption") or "none"}  # 新版 xray 客户端要求显式 encryption
+user = {"id": uuid, "encryption": rc.get("encryption") or "none"}
 if rc.get("flow"):
     user["flow"] = rc["flow"]
 cfg = {
@@ -88,44 +106,52 @@ PY
     [[ "$code" == "200" ]] || { echo "FAIL: 数据通路不通（HTTP $code）"; tail -8 "$WORK/agent.log"; tail -3 "$WORK/client.log"; return 1; }
 }
 
-echo ">> start backend & agent"
+echo ">> start backend"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" >"$WORK/backend.log" 2>&1 &
 BPID=$!
-sleep 1
-db "INSERT INTO servers (alias, token) VALUES ('enc01', '$BOOTSTRAP')" >/dev/null
+for _ in $(seq 1 30); do curl -fsS "http://$ADDR/readyz" >/dev/null 2>&1 && break; sleep 0.2; done
+
+echo ">> 登录 + 建服务器 + 拉起 agent"
+LOGIN="$(rpc_data POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')"
+CSRF="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["csrf_token"])' "$LOGIN")"
+[[ -n "$CSRF" ]] || { echo "FAIL: 未取到 CSRF 令牌"; exit 1; }
+SRV="$(rpc_data POST /api/server/create '{"country_code":"US","location":"Test","alias":"enc01","address":"127.0.0.1"}')"
+BOOTSTRAP="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["bootstrap_token"])' "$SRV")"
 "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "$BOOTSTRAP" -state "$WORK/agent.state.json" \
+    -settings "$WORK/agent.settings.json" \
     -xray-bin "$XRAY_BIN" -xray-config "$XRAY_CONFIG" -xray-api "$API" -xray-runner exec \
     >"$WORK/agent.log" 2>&1 &
 APID=$!
-sleep 1.5
+sleep 2
+grep -q "authenticated as server" "$WORK/agent.log" || { echo "FAIL: agent 未认证"; cat "$WORK/agent.log"; exit 1; }
 
-echo ">> login & create user"
-api POST /api/login '{"username":"admin","password":"lattix-admin"}' >/dev/null
-USER_RES="$(api POST /api/users '{"name":"u1"}')"
+echo ">> create user"
+USER_RES="$(rpc_data POST /api/user/create '{"name":"u1"}')"
 UUID="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["uuid"])' "$USER_RES")"
+USER_ID="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["id"])' "$USER_RES")"
 SUB_TOKEN="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["sub_token"])' "$USER_RES")"
 
 echo ">> vless + VLESS Encryption（mlkem768 后量子）"
-ID1="$(api POST /api/nodes '{"server_id":1,"protocol":"vless","encryption":"mlkem768","flow":"none"}' \
+ID1="$(rpc_data POST /api/node/create '{"server_id":1,"protocol":"vless","encryption":"mlkem768","flow":"none"}' \
     | python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["id"])')"
 R1="$(wait_node "$ID1")" || { echo "$R1"; tail -5 "$WORK/agent.log"; exit 1; }
 python3 -c 'import json,sys; rc=json.loads(sys.argv[1]); assert rc["encryption"].startswith("mlkem768x25519plus."), rc["encryption"]' "$R1"
 echo "   节点 active，encryption 客户端字符串已上报"
 
 echo ">> vless + VLESS Encryption + vision 组合（§15 native 拼接，1-RTT）"
-ID2="$(api POST /api/nodes '{"server_id":1,"protocol":"vless","encryption":"mlkem768","flow":"xtls-rprx-vision"}' \
+ID2="$(rpc_data POST /api/node/create '{"server_id":1,"protocol":"vless","encryption":"mlkem768","flow":"xtls-rprx-vision"}' \
     | python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["id"])')"
 R2="$(wait_node "$ID2")" || { echo "$R2"; tail -5 "$WORK/agent.log"; exit 1; }
 python3 -c 'import json,sys; rc=json.loads(sys.argv[1]); assert ".1rtt." in rc["encryption"] and rc["flow"]=="xtls-rprx-vision", rc' "$R2" \
     && echo "OK: 组合节点 active，客户端字符串为 1-RTT"
 
 echo ">> 普通 vless vision（对照组）"
-ID3="$(api POST /api/nodes '{"server_id":1,"protocol":"vless"}' \
+ID3="$(rpc_data POST /api/node/create '{"server_id":1,"protocol":"vless"}' \
     | python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["id"])')"
 R3="$(wait_node "$ID3")" || { tail -5 "$WORK/agent.log"; exit 1; }
 
-echo ">> 分配全部节点给用户（§16 默认全关，需显式分配）"
-api PUT "/api/users/1/nodes" "{\"node_ids\":[$ID1,$ID2,$ID3]}" >/dev/null
+echo ">> 分配全部节点给用户"
+rpc_data POST /api/user/set-nodes "{\"user_id\":$USER_ID,\"node_ids\":[$ID1,$ID2,$ID3]}" >/dev/null
 sleep 2 # 等 add_user 落配置
 
 start_client "$R1" "$UUID" && echo "OK: VLESS Encryption 数据通路（curl https://example.com → 200）" || exit 1

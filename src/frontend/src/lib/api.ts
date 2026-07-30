@@ -206,11 +206,17 @@ export const api = {
     requester.post<void>('/api/node/delete', { node_id: nodeId }),
 
   users: (options?: RequestOptions) => requester.get<SubUser[]>('/api/user/list', undefined, options),
-  createUser: (name: string, expiresAt?: string | null, nodeIds?: number[]) =>
+  createUser: (
+    name: string,
+    expiresAt?: string | null,
+    nodeIds?: number[],
+    sub?: { traffic_limit?: number; traffic_reset_day?: number; plan_name?: string; app_url?: string },
+  ) =>
     requester.post<SubUser>('/api/user/create', {
       name,
       ...(expiresAt ? { expires_at: expiresAt } : {}),
       ...(nodeIds && nodeIds.length ? { node_ids: nodeIds } : {}),
+      ...(sub ?? {}),
     }),
   updateUserExpiry: (userId: number, expiresAt: string | null) =>
     requester.post<SubUser>('/api/user/update', {

@@ -4,6 +4,7 @@
 #   → 文件就位 → checksum 篡改应中止 → 成功输出面板地址与随机/指定凭据
 #   → 面板 200 → latx status/version（DEV 进程检查）→ latx reset-admin
 #     （新密码可登录、旧密码失效、旧会话失效、短密码拒绝）。
+# 管理 API 均为 RPC 信封（恒 HTTP 200），业务结果看 code 字段。
 # 依赖：python3、curl、tar；无需 systemd/root（全程 LATX_DEV=1）。
 set -euo pipefail
 
@@ -57,6 +58,13 @@ latx() {
         bash "$LATX_BIN" "$@"
 }
 
+# rpc_code <method> <path> [body]：输出 RPC 信封 code。
+rpc_code() {
+    local args=(-s -H "Origin: http://$ADDR" -X "$1")
+    [[ -n "${3:-}" ]] && args+=(-H 'Content-Type: application/json' -d "$3")
+    curl "${args[@]}" "http://$ADDR$2" | python3 -c 'import json,sys;print(json.load(sys.stdin)["code"])'
+}
+
 echo ">> 用例 1: checksum 篡改应中止安装"
 cp "$FAKE/lattix-panel-linux-amd64.tar.gz" "$FAKE/panel.tar.gz.bak"
 echo tampered >> "$FAKE/lattix-panel-linux-amd64.tar.gz"
@@ -85,10 +93,10 @@ grep -q "管理员:   admin" "$WORK/install.log" && grep -q "初始密码: latti
     && echo "OK: 面板 200" || { echo "FAIL: 面板未响应"; cat "$PANEL_ROOT/panel.log"; exit 1; }
 
 SETTINGS_JAR="$WORK/settings-cookies.txt"
-curl -s -c "$SETTINGS_JAR" -H 'Content-Type: application/json' \
-    -d '{"username":"admin","password":"lattix-admin"}' "http://$ADDR/api/login" >/dev/null
-TLS_DIR="$(curl -s -b "$SETTINGS_JAR" "http://$ADDR/api/settings" \
-    | python3 -c 'import json,sys; print(json.load(sys.stdin)["tls_dir"])')"
+curl -s -c "$SETTINGS_JAR" -H "Origin: http://$ADDR" -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"lattix-admin"}' "http://$ADDR/api/auth/login" >/dev/null
+TLS_DIR="$(curl -s -b "$SETTINGS_JAR" -H "Origin: http://$ADDR" "http://$ADDR/api/setting/get" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["tls_dir"])')"
 [[ "$TLS_DIR" == "$PANEL_ROOT/data/certs" ]] \
     && echo "OK: 面板证书目录统一到 data/certs" \
     || { echo "FAIL: 证书目录应为 $PANEL_ROOT/data/certs，实际 $TLS_DIR"; exit 1; }
@@ -98,8 +106,7 @@ run_install_with >"$WORK/reinstall.log"
 grep -q "初始密码: lattix-admin" "$WORK/reinstall.log" \
     && echo "OK: 重装保留已有管理员密码" \
     || { echo "FAIL: 重装未保留管理员密码"; cat "$WORK/reinstall.log"; exit 1; }
-[[ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
-    -d '{"username":"admin","password":"lattix-admin"}' "http://$ADDR/api/login")" == "200" ]] \
+[[ "$(rpc_code POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')" == "OK" ]] \
     && echo "OK: 保留的管理员密码仍可登录" || { echo "FAIL: 重装后登录"; exit 1; }
 
 echo ">> 用例 4: latx status / version（LATX_DEV=1 进程检查）"
@@ -127,8 +134,7 @@ MENU_ZH_OUT="$(printf '2\n13\n\n0\n' | latx)"
 
 echo ">> 用例 5: latx reset-admin（改密即全部会话失效，§10）"
 JAR="$WORK/cookies.txt"
-curl -s -c "$JAR" -H 'Content-Type: application/json' \
-    -d '{"username":"admin","password":"lattix-admin"}' "http://$ADDR/api/login" | grep -q '"admin"' \
+[[ "$(rpc_code POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')" == "OK" ]] \
     && echo "OK: 默认密码可登录" || { echo "FAIL: 默认密码登录"; exit 1; }
 if latx reset-admin short 2>"$WORK/short.log"; then
     echo "FAIL: 短密码未被拒绝"; exit 1
@@ -137,13 +143,19 @@ grep -q "至少 8 位" "$WORK/short.log" \
     && echo "OK: 短密码被拒绝（≥8 位）" || { echo "FAIL: 短密码报错不符"; cat "$WORK/short.log"; exit 1; }
 latx reset-admin newpass456 | grep -q "所有会话已失效" \
     && echo "OK: reset-admin 成功且提示会话失效" || { echo "FAIL: reset-admin"; exit 1; }
-[[ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
-    -d '{"username":"admin","password":"newpass456"}' "http://$ADDR/api/login")" == "200" ]] \
+[[ "$(rpc_code POST /api/auth/login '{"username":"admin","password":"newpass456"}')" == "OK" ]] \
     && echo "OK: 新密码可登录" || { echo "FAIL: 新密码登录"; exit 1; }
-[[ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
-    -d '{"username":"admin","password":"lattix-admin"}' "http://$ADDR/api/login")" == "401" ]] \
+[[ "$(rpc_code POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')" == "AUTH_INVALID_CREDENTIALS" ]] \
     && echo "OK: 旧默认密码已失效" || { echo "FAIL: 旧密码仍可用"; exit 1; }
-[[ "$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' "http://$ADDR/api/me")" == "401" ]] \
-    && echo "OK: 改密前签发的会话已失效" || { echo "FAIL: 旧会话仍有效"; exit 1; }
+# 旧会话失效检查（用改密前的 cookie）
+curl -s -c "$JAR" -H "Origin: http://$ADDR" -H 'Content-Type: application/json' \
+    -d '{"username":"admin","password":"newpass456"}' "http://$ADDR/api/auth/login" >/dev/null
+ME_CODE="$(curl -s -b "$JAR" -H "Origin: http://$ADDR" "http://$ADDR/api/auth/me" \
+    | python3 -c 'import json,sys;print(json.load(sys.stdin)["code"])')"
+# 先用新密码登录获取有效会话，再验证改密前旧会话（SETTINGS_JAR）已失效
+OLD_ME_CODE="$(curl -s -b "$SETTINGS_JAR" -H "Origin: http://$ADDR" "http://$ADDR/api/auth/me" \
+    | python3 -c 'import json,sys;print(json.load(sys.stdin)["code"])')"
+[[ "$OLD_ME_CODE" == "AUTH_REQUIRED" ]] \
+    && echo "OK: 改密前签发的会话已失效" || { echo "FAIL: 旧会话仍有效（code=$OLD_ME_CODE）"; exit 1; }
 
-echo "E2E PASS"
+echo "E2E-INSTALL-PANEL PASS"

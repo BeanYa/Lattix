@@ -168,6 +168,17 @@ export default function Settings() {
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [startingUpdate, setStartingUpdate] = useState(false)
   const [updateError, setUpdateError] = useState('')
+  // 订阅设置
+  const [subTitle, setSubTitle] = useState('')
+  const [subAnnouncement, setSubAnnouncement] = useState('')
+  const [subCustomCSS, setSubCustomCSS] = useState('')
+  const [subUpdateInterval, setSubUpdateInterval] = useState(24)
+  const [subHistoryKeep, setSubHistoryKeep] = useState(6)
+  const [subPlanName, setSubPlanName] = useState('')
+  const [subAppURL, setSubAppURL] = useState('')
+  const [savingSub, setSavingSub] = useState(false)
+  const [subMessage, setSubMessage] = useState('')
+  const [subError, setSubError] = useState('')
 
   const certFileRef = useRef<HTMLInputElement>(null)
   const keyFileRef = useRef<HTMLInputElement>(null)
@@ -206,6 +217,40 @@ export default function Settings() {
   }, [])
 
   useEffect(() => { api.exchangeRates().then(setExchangeData).catch(() => {}) }, [])
+
+  useEffect(() => {
+    api.subSettings().then((s) => {
+      setSubTitle(s.title)
+      setSubAnnouncement(s.announcement)
+      setSubCustomCSS(s.custom_css)
+      setSubUpdateInterval(s.update_interval)
+      setSubHistoryKeep(s.traffic_history_keep)
+      setSubPlanName(s.plan_name)
+      setSubAppURL(s.app_url)
+    }).catch(() => {})
+  }, [])
+
+  const onSaveSub = async () => {
+    setSavingSub(true)
+    setSubError('')
+    setSubMessage('')
+    try {
+      await api.updateSubSettings({
+        title: subTitle,
+        announcement: subAnnouncement,
+        custom_css: subCustomCSS,
+        update_interval: subUpdateInterval,
+        traffic_history_keep: subHistoryKeep,
+        plan_name: subPlanName,
+        app_url: subAppURL,
+      })
+      setSubMessage('已保存。')
+    } catch (err) {
+      setSubError(errorMessage(err))
+    } finally {
+      setSavingSub(false)
+    }
+  }
 
   const readFileInto = (file: File | undefined, setter: (v: string) => void) => {
     if (!file) {
@@ -834,6 +879,88 @@ export default function Settings() {
                 placeholder="Asia/Shanghai"
                 required
               />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>订阅</CardTitle>
+            <CardDescription>
+              订阅落地页与客户端流量信息全局配置。用户级覆盖在用户页“订阅设置”中配置。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col gap-2">
+              <Label>落地页标题</Label>
+              <Input value={subTitle} onChange={e => setSubTitle(e.target.value)} placeholder="Lattix 订阅" />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>公告（Markdown）</Label>
+              <textarea
+                className={textareaClass}
+                rows={4}
+                value={subAnnouncement}
+                onChange={e => setSubAnnouncement(e.target.value)}
+                placeholder="支持 Markdown 格式，留空则不显示公告区域"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>自定义 CSS</Label>
+              <textarea
+                className={textareaClass}
+                rows={3}
+                value={subCustomCSS}
+                onChange={e => setSubCustomCSS(e.target.value)}
+                placeholder="注入到订阅落地页的额外样式"
+              />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-2">
+                <Label>默认更新间隔（小时）</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={720}
+                  value={subUpdateInterval}
+                  onChange={e => setSubUpdateInterval(Number(e.target.value) || 24)}
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label>流量历史保留周期数</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={subHistoryKeep}
+                  onChange={e => setSubHistoryKeep(Number(e.target.value) || 6)}
+                />
+              </div>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-2">
+                <Label>默认套餐名</Label>
+                <Input
+                  value={subPlanName}
+                  onChange={e => setSubPlanName(e.target.value)}
+                  placeholder="如 VIP1，客户端 hover 流量信息时显示"
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label>默认跳转链接</Label>
+                <Input
+                  value={subAppURL}
+                  onChange={e => setSubAppURL(e.target.value)}
+                  placeholder="客户端流量卡片可点击跳转的按钮 URL"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button type="button" disabled={savingSub} onClick={onSaveSub}>
+                {savingSub ? '保存中…' : '保存订阅设置'}
+              </Button>
+              {subMessage && <span className="text-sm text-emerald-600">{subMessage}</span>}
+              {subError && <span className="text-sm text-destructive">{subError}</span>}
             </div>
           </CardContent>
         </Card>
