@@ -36,7 +36,7 @@ import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { validateNameTemplate } from '@/lib/naming'
-import { DEFAULT_REALITY_DEST } from '@/lib/reality'
+import { DEFAULT_REALITY_DEST, inferRealityDestPreset } from '@/lib/reality'
 import { isServerOnline } from '@/lib/server-state'
 import { useTimezone } from '@/lib/timezone'
 import type {
@@ -495,6 +495,10 @@ export default function Chains() {
     const configuredServerNames = Array.isArray(reality.serverNames)
       ? reality.serverNames.filter((value): value is string => typeof value === 'string')
       : []
+    const configuredDest = String(reality.dest || `${DEFAULT_REALITY_DEST}:443`)
+    const effectiveServerNames = configuredServerNames.length > 0
+      ? configuredServerNames
+      : [DEFAULT_REALITY_DEST]
     setEditingChainId(chain.id)
     setChainType(chain.hops.length === 1 ? 'direct' : 'relay')
     setName(chain.name)
@@ -513,8 +517,9 @@ export default function Chains() {
     setMode(String(virtual.mode || 'auto'))
     setHost(String(virtual.host || ''))
     setShortId(typeof shortIds[0] === 'string' ? shortIds[0] : '')
-    setDest(String(reality.dest || 'dl.google.com:443'))
-    setServerNames(configuredServerNames.length > 0 ? configuredServerNames.join(',') : 'dl.google.com')
+    setDestPreset(inferRealityDestPreset(configuredDest, effectiveServerNames))
+    setDest(configuredDest)
+    setServerNames(effectiveServerNames.join(','))
     setTargetAddress(String(settings.address || ''))
     setTargetPort(settings.port ? String(settings.port) : '')
     setCreateError('')

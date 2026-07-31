@@ -17,3 +17,12 @@ export const REALITY_DEST_OPTIONS = [
   { domain: 'slack.com', label: 'Slack' },
   { domain: 'yandex.com', label: 'Yandex' },
 ] as const
+
+export function inferRealityDestPreset(dest: string, serverNames: readonly string[]): string {
+  const option = REALITY_DEST_OPTIONS.find(({ domain }) => (
+    dest === `${domain}:443`
+    && serverNames.length === 1
+    && serverNames[0] === domain
+  ))
+  return option?.domain ?? CUSTOM_REALITY_DEST
+}
