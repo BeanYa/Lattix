@@ -325,10 +325,17 @@ else
     install -m 0755 "$TMP_DIR/xray/xray" "$XRAY_BIN_DST"
 fi
 
-# Agent 独占管理该配置文件（§6）；仅在不存在时写入占位配置。
+# Agent 独占管理该配置文件（§6）；仅在不存在时写入完整基础配置。
 if [[ ! -f "$XRAY_CONFIG" ]]; then
-    cat > "$XRAY_CONFIG" <<'EOF'
+    cat > "$XRAY_CONFIG" <<EOF
 {
+  "log": {"loglevel": "warning"},
+  "api": {"tag": "api", "listen": "$XRAY_API", "services": ["HandlerService", "StatsService"]},
+  "stats": {},
+  "policy": {
+    "levels": {"0": {"statsUserUplink": true, "statsUserDownlink": true}},
+    "system": {"statsInboundUplink": true, "statsInboundDownlink": true}
+  },
   "inbounds": [],
   "outbounds": [{ "protocol": "freedom", "tag": "direct" }]
 }

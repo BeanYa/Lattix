@@ -417,35 +417,15 @@ func (m *Manager) EnsureTelemetryFeatures() error {
 		cand["stats"] = json.RawMessage(`{}`)
 		changed = true
 	}
-	if _, ok := cand["policy"]; !ok {
-		cand["policy"] = json.RawMessage(`{
-  "levels": {"0": {"statsUserUplink": true, "statsUserDownlink": true}},
-  "system": {"statsInboundUplink": true, "statsInboundDownlink": true}
-}`)
+	policy, policyChanged := ensureStatsPolicy(cand["policy"])
+	if policyChanged {
+		cand["policy"] = policy
 		changed = true
 	}
-	if raw, ok := cand["api"]; ok {
-		var api map[string]any
-		if err := json.Unmarshal(raw, &api); err == nil {
-			found := false
-			if services, ok := api["services"].([]any); ok {
-				for _, s := range services {
-					if s == "StatsService" {
-						found = true
-					}
-				}
-			}
-			if !found {
-				services, _ := api["services"].([]any)
-				api["services"] = append(services, "StatsService")
-				b, err := json.Marshal(api)
-				if err != nil {
-					return err
-				}
-				cand["api"] = b
-				changed = true
-			}
-		}
+	api, apiChanged := ensureStatsAPI(cand["api"], m.apiAddr)
+	if apiChanged {
+		cand["api"] = api
+		changed = true
 	}
 	if !changed {
 		return nil
@@ -455,4 +435,89 @@ func (m *Manager) EnsureTelemetryFeatures() error {
 	}
 	// policy/services 变更需重启生效。
 	return m.runner.Restart(context.Background())
+}
+
+func ensureStatsPolicy(raw json.RawMessage) (json.RawMessage, bool) {
+	policy := map[string]any{}
+	changed := len(raw) == 0 || json.Unmarshal(raw, &policy) != nil
+	if policy == nil {
+		policy = map[string]any{}
+		changed = true
+	}
+	levels, ok := policy["levels"].(map[string]any)
+	if !ok {
+		levels = map[string]any{}
+		policy["levels"] = levels
+		changed = true
+	}
+	level, ok := levels["0"].(map[string]any)
+	if !ok {
+		level = map[string]any{}
+		levels["0"] = level
+		changed = true
+	}
+	for _, key := range []string{"statsUserUplink", "statsUserDownlink"} {
+		if enabled, ok := level[key].(bool); !ok || !enabled {
+			level[key] = true
+			changed = true
+		}
+	}
+	system, ok := policy["system"].(map[string]any)
+	if !ok {
+		system = map[string]any{}
+		policy["system"] = system
+		changed = true
+	}
+	for _, key := range []string{"statsInboundUplink", "statsInboundDownlink"} {
+		if enabled, ok := system[key].(bool); !ok || !enabled {
+			system[key] = true
+			changed = true
+		}
+	}
+	if !changed {
+		return raw, false
+	}
+	encoded, _ := json.Marshal(policy)
+	return encoded, true
+}
+
+func ensureStatsAPI(raw json.RawMessage, listen string) (json.RawMessage, bool) {
+	api := map[string]any{}
+	changed := len(raw) == 0 || json.Unmarshal(raw, &api) != nil
+	if api == nil {
+		api = map[string]any{}
+		changed = true
+	}
+	if tag, ok := api["tag"].(string); !ok || tag == "" {
+		api["tag"] = "api"
+		changed = true
+	}
+	if current, ok := api["listen"].(string); !ok || current != listen {
+		api["listen"] = listen
+		changed = true
+	}
+	services, ok := api["services"].([]any)
+	if !ok {
+		services = nil
+		changed = true
+	}
+	for _, required := range []string{"HandlerService", "StatsService"} {
+		found := false
+		for _, service := range services {
+			if service == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			services = append(services, required)
+			changed = true
+		}
+	}
+	if !changed {
+		return raw, false
+	}
+	api["services"] = services
+	encoded, _ := json.Marshal(api)
+	return encoded, true
 }
