@@ -10,7 +10,6 @@ import (
 	"net"
 	"strings"
 
-	"lattix/backend/internal/alert"
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/store"
 	"lattix/shared"
@@ -29,7 +28,7 @@ import (
 
 // StartChain 启动建链编排（panel 建链落库后调用）：链置 applying 并推进第一步。
 func (d *Dispatcher) StartChain(ctx context.Context, chainID int64) error {
-	if err := d.st.SetChainStatus(ctx, chainID, store.ChainStatusApplying, ""); err != nil {
+	if err := d.fsm.Transition(ctx, chainID, store.ChainStatusApplying, "建链编排启动"); err != nil {
 		return err
 	}
 	d.advanceChain(context.Background(), chainID)
@@ -90,7 +89,7 @@ func (d *Dispatcher) RetryChain(ctx context.Context, chainID int64) error {
 			}
 		}
 	}
-	if err := d.st.SetChainStatus(ctx, chainID, store.ChainStatusApplying, ""); err != nil {
+	if err := d.fsm.Transition(ctx, chainID, store.ChainStatusApplying, "重试编排"); err != nil {
 		return err
 	}
 	d.advanceChain(context.Background(), chainID)
@@ -163,7 +162,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 				return
 			}
 		}
-		if err := d.st.SetChainStatus(ctx, chainID, store.ChainStatusActive, ""); err != nil {
+		if err := d.fsm.Transition(ctx, chainID, store.ChainStatusActive, "单跳共享端点编排完成"); err != nil {
 			return
 		}
 		d.publishDesiredRevision(ctx, chainID, hops, *node)
@@ -229,7 +228,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 				return
 			}
 		}
-		if err := d.st.SetChainStatus(ctx, chainID, store.ChainStatusActive, ""); err != nil {
+		if err := d.fsm.Transition(ctx, chainID, store.ChainStatusActive, "单跳编排完成"); err != nil {
 			log.Printf("dispatch: chain %d active: %v", chainID, err)
 		}
 		d.publishDesiredRevision(ctx, chainID, hops, *node)
@@ -362,7 +361,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			}
 		}
 	}
-	if err := d.st.SetChainStatus(ctx, chainID, store.ChainStatusActive, ""); err != nil {
+	if err := d.fsm.Transition(ctx, chainID, store.ChainStatusActive, "编排完成"); err != nil {
 		log.Printf("dispatch: chain %d active: %v", chainID, err)
 		return
 	}
@@ -612,12 +611,12 @@ func (d *Dispatcher) refreshCleanupStatus(ctx context.Context, revisionID int64)
 	}
 	if !complete {
 		if chain.Status == store.ChainStatusActive || chain.Status == store.ChainStatusDegraded {
-			_ = d.st.SetChainStatus(ctx, chain.ID, store.ChainStatusCleanupPending, "旧 revision 配置等待清理")
+			_ = d.fsm.Transition(ctx, chain.ID, store.ChainStatusCleanupPending, "旧 revision 配置等待清理")
 		}
 		return
 	}
 	if chain.Status == store.ChainStatusCleanupPending {
-		_ = d.st.SetChainStatus(ctx, chain.ID, store.ChainStatusActive, "")
+		_ = d.fsm.Transition(ctx, chain.ID, store.ChainStatusActive, "清理完成")
 		d.recomputeChain(ctx, chain.ID)
 	}
 }
@@ -709,7 +708,7 @@ func (d *Dispatcher) failChain(ctx context.Context, chainID int64, hop *store.Ch
 		}
 		_ = d.st.SetChainRevisionStatus(ctx, revision.ID, revisionStatus, locate)
 	}
-	if err := d.st.SetChainStatus(ctx, chainID, status, locate); err != nil {
+	if err := d.fsm.Transition(ctx, chainID, status, locate); err != nil {
 		log.Printf("dispatch: chain %d failed: %v", chainID, err)
 	}
 	log.Printf("dispatch: chain %d failed: %s", chainID, locate)
@@ -762,85 +761,13 @@ func (d *Dispatcher) RecomputeChainsByServer(serverID int64) {
 			continue
 		}
 		seen[h.ChainID] = true
-		d.recomputeChain(ctx, h.ChainID)
+		d.fsm.Evaluate(ctx, h.ChainID)
 	}
 }
 
-// recomputeChain 推导单条链 active ↔ degraded（pending/applying/failed 不参与）。
-// 判定条件：全部跳 server 在线 + 共享端点（若有）已 active；任一不满足则 degraded。
+// recomputeChain 委托给链路状态机的条件评估（保留方法签名兼容内部调用点）。
 func (d *Dispatcher) recomputeChain(ctx context.Context, chainID int64) {
-	chain, err := d.st.ChainByID(ctx, chainID)
-	if err != nil {
-		return
-	}
-	if chain.Status != store.ChainStatusActive && chain.Status != store.ChainStatusDegraded {
-		return
-	}
-	hops, err := d.st.ChainHops(ctx, chainID)
-	if err != nil {
-		return
-	}
-	for i := range hops {
-		if !d.req.IsOnline(hops[i].ServerID) {
-			if chain.Status == store.ChainStatusActive {
-				detail := fmt.Sprintf("跳 %d（%s，server %d）离线", hops[i].ID, hops[i].Role, hops[i].ServerID)
-				if err := d.st.SetChainStatus(ctx, chainID, store.ChainStatusDegraded, detail); err != nil {
-					log.Printf("dispatch: chain %d degraded: %v", chainID, err)
-				}
-				log.Printf("dispatch: chain %d degraded: %s", chainID, detail)
-				d.recordOperation(logging.OperationEvent{
-					Severity: logging.SeverityWarning, Category: logging.CategoryChain, Action: "chain.degraded",
-					ServerID: &hops[i].ServerID, Detail: map[string]any{"chain_id": chainID, "hop_id": hops[i].ID, "reason": detail},
-				})
-				if d.Alerter != nil {
-					d.Alerter.Notify(hops[i].ServerID, alert.EventChainDegraded, fmt.Sprintf("chain_%d", chainID), detail)
-				}
-			}
-			return
-		}
-	}
-	// 共享端点就绪检查：链使用共享入口但端点未 active 时，链不可用于订阅。
-	if chain.EndpointID != 0 {
-		endpoint, err := d.st.SharedEndpointByID(ctx, chain.EndpointID)
-		if err != nil || endpoint.Status != store.EndpointStatusActive {
-			if chain.Status == store.ChainStatusActive {
-				detail := fmt.Sprintf("共享入口（endpoint %d）尚未生效", chain.EndpointID)
-				if endpoint != nil && endpoint.Status == store.EndpointStatusFailed {
-					detail = fmt.Sprintf("共享入口（endpoint %d）部署失败: %s", chain.EndpointID, endpoint.Error)
-				}
-				if err := d.st.SetChainStatus(ctx, chainID, store.ChainStatusDegraded, detail); err != nil {
-					log.Printf("dispatch: chain %d degraded (endpoint): %v", chainID, err)
-				}
-				log.Printf("dispatch: chain %d degraded: %s", chainID, detail)
-				d.recordOperation(logging.OperationEvent{
-					Severity: logging.SeverityWarning, Category: logging.CategoryChain, Action: "chain.degraded",
-					Detail: map[string]any{"chain_id": chainID, "endpoint_id": chain.EndpointID, "reason": detail},
-				})
-			}
-			// 自动重试：端点服务器在线时立即重新下发部署命令（覆盖死信/命令丢失场景）。
-			if endpoint != nil && d.req.IsOnline(endpoint.ServerID) {
-				if err := d.ReconcileSharedEndpoint(ctx, chain.EndpointID); err != nil {
-					log.Printf("dispatch: chain %d auto-reconcile endpoint %d: %v", chainID, chain.EndpointID, err)
-				}
-			}
-			return
-		}
-	}
-	if chain.Status == store.ChainStatusDegraded {
-		for i := range hops {
-			if hops[i].Status != store.HopStatusActive {
-				return
-			}
-		}
-		if err := d.st.SetChainStatus(ctx, chainID, store.ChainStatusActive, ""); err != nil {
-			log.Printf("dispatch: chain %d 恢复 active: %v", chainID, err)
-		}
-		log.Printf("dispatch: chain %d 恢复 active", chainID)
-		d.recordOperation(logging.OperationEvent{
-			Severity: logging.SeverityInfo, Category: logging.CategoryChain, Action: "chain.recovered",
-			Detail: map[string]any{"chain_id": chainID},
-		})
-	}
+	d.fsm.Evaluate(ctx, chainID)
 }
 
 // ChainHopPieces 返回一个跳的配置件 kind 列表（panel 删链逐跳反向下发 remove_chain_hop 用，§21.1）：

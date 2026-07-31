@@ -791,7 +791,7 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reason := fmt.Sprintf("服务器 %d（%s）已删除，链路失效", id, srv.Alias)
-		if err := s.st.InvalidateChainForServerDeletion(r.Context(), chain.ID, id, reason); err != nil {
+		if err := s.disp.InvalidateChainForServerDeletion(r.Context(), chain.ID, id, reason); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}

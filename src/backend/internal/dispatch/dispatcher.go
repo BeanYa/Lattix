@@ -25,6 +25,7 @@ import (
 type Dispatcher struct {
 	st  *store.Store
 	req ws.AgentRequester
+	fsm *chainFSM // 链路状态机：所有链状态变更的唯一入口
 
 	// Alerter 事件告警（§19）：nil = 关闭；仅状态跃迁时调用，发送方自行防抖动。
 	Alerter      *alert.Notifier
@@ -51,10 +52,12 @@ type Dispatcher struct {
 
 // New 创建 Dispatcher。
 func New(st *store.Store, req ws.AgentRequester) *Dispatcher {
-	return &Dispatcher{
+	d := &Dispatcher{
 		st: st, req: req, flushMu: make(map[int64]*sync.Mutex),
 		testProgress: make(map[int64]shared.ServerTestProgressPayload),
 	}
+	d.fsm = &chainFSM{d: d}
+	return d
 }
 
 func (d *Dispatcher) EnqueueServerTest(
@@ -467,7 +470,8 @@ func isPublicAgentIP(value string) bool {
 
 // OnAgentConnect 在 agent session.ready 完成后调用（ws.Hub.OnConnect）：
 // 重置 sent 未终态的命令为 queued（§2 重发语义）并补发全部滞留命令；
-// 同时自愈该服务器上未 active 的共享端点（重新下发 apply_shared_endpoint）。
+// 同时自愈该服务器上未 active 的共享端点（重新下发 apply_shared_endpoint）；
+// 恢复该服务器上处于编排中的链（覆盖 Agent 离线期间编排停滞场景）。
 func (d *Dispatcher) OnAgentConnect(ctx context.Context, serverID int64) {
 	if err := d.st.ResetSentCommands(ctx, serverID); err != nil {
 		log.Printf("dispatch: reset sent commands for server %d: %v", serverID, err)
@@ -484,6 +488,8 @@ func (d *Dispatcher) OnAgentConnect(ctx context.Context, serverID int64) {
 			log.Printf("dispatch: reconcile shared endpoint %d on connect: %v", ep.ID, err)
 		}
 	}
+	// 恢复编排：该服务器上 applying/waiting_for_agent/active_unconfirmed 的链重新推进。
+	d.fsm.ResumeChainsByServer(ctx, serverID)
 }
 
 // ReconcileStaleEndpoints 周期性自愈：遍历所有未 active 的共享端点，对服务器在线的重新下发部署命令。
@@ -511,6 +517,12 @@ func (d *Dispatcher) ReconcileStaleEndpoints(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// InvalidateChainForServerDeletion 服务器删除时级联失效链（§10，经 FSM 校验转换合法性）。
+// 由 panel.handleDeleteServer 调用，替代直接调用 store 方法。
+func (d *Dispatcher) InvalidateChainForServerDeletion(ctx context.Context, chainID, serverID int64, reason string) error {
+	return d.fsm.InvalidateForServerDeletion(ctx, chainID, serverID, reason)
 }
 
 // HandleMessage 处理 agent 上行业务信封（注入 ws.Hub.OnMessage）。
