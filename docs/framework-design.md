@@ -4,6 +4,8 @@
 > 不在 MVP 中做任何为其预留的实现，除非本文明确说明（如 requester 接口）。
 > HTTP RPC、Requester 与 Agent WS 的协议细节以
 > [RPC API、Requester 与 Agent 通道设计](rpc-api-design.md) 为准。
+> 服务器测试的目录、原子任务、隔离、权限降级与结果协议以
+> [服务器测试设计与实现契约](server-testing-design.md) 为准。
 
 ## 1. 项目目标
 

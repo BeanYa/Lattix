@@ -271,6 +271,15 @@ Panel 进入 `updating` 时暂停 Agent→Panel 延迟探测并清理待完成�
 完整状态转换、生命周期版本、会话握手与异常处理见
 [Panel 生命周期与 Agent 连接状态机](docs/panel-lifecycle-state-machine-design.md)。
 
+### 服务器测试
+
+服务器详情页支持由管理员选择 IP 质量、TCP/大包、教育网、国际连通、IPv4/IPv6 回程与
+单线程测速，整组选择作为一个 Agent 原子任务执行。Panel 维护测试目录并只保存每台服务器
+最近一次结果；Agent 独立运行、尽力上报进度，并在断线期间持久保存权威最终报告。NAT 机型
+默认只选择 IP 质量，其他分类需确认可能不可用和流量风险后再运行。完整的数据源、权限降级、
+隔离、队列、重启恢复与结果协议见
+[服务器测试设计与实现契约](docs/server-testing-design.md)。
+
 TLS 另支持**域名路径模式**（`tls_mode=path`）：面板按域名从证书根目录读取
 `<tls-dir>/<域名>/fullchain.pem` 与 `privkey.pem`（certbot 风格，目录由 `-tls-dir`
 指定；安装器统一设置为数据目录下的 `certs`，Docker 容器内为 `/data/certs`，
