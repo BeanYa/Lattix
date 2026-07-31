@@ -466,12 +466,51 @@ func isPublicAgentIP(value string) bool {
 }
 
 // OnAgentConnect 在 agent session.ready 完成后调用（ws.Hub.OnConnect）：
-// 重置 sent 未终态的命令为 queued（§2 重发语义）并补发全部滞留命令。
+// 重置 sent 未终态的命令为 queued（§2 重发语义）并补发全部滞留命令；
+// 同时自愈该服务器上未 active 的共享端点（重新下发 apply_shared_endpoint）。
 func (d *Dispatcher) OnAgentConnect(ctx context.Context, serverID int64) {
 	if err := d.st.ResetSentCommands(ctx, serverID); err != nil {
 		log.Printf("dispatch: reset sent commands for server %d: %v", serverID, err)
 	}
 	d.Flush(ctx, serverID)
+	// 自愈：服务器上有未生效的共享端点时重新 reconcile（覆盖命令丢失/死信场景）。
+	endpoints, err := d.st.NonActiveEndpointsByServer(ctx, serverID)
+	if err != nil {
+		log.Printf("dispatch: list non-active endpoints for server %d: %v", serverID, err)
+		return
+	}
+	for _, ep := range endpoints {
+		if err := d.ReconcileSharedEndpoint(ctx, ep.ID); err != nil {
+			log.Printf("dispatch: reconcile shared endpoint %d on connect: %v", ep.ID, err)
+		}
+	}
+}
+
+// ReconcileStaleEndpoints 周期性自愈：遍历所有未 active 的共享端点，对服务器在线的重新下发部署命令。
+// 覆盖命令死信、命令丢失、服务器短暂离线后恢复等场景。由 main.go 定时调用。
+func (d *Dispatcher) ReconcileStaleEndpoints(ctx context.Context) {
+	servers, err := d.st.ListServers(ctx)
+	if err != nil {
+		log.Printf("dispatch: reconcile stale endpoints: list servers: %v", err)
+		return
+	}
+	for _, srv := range servers {
+		if !d.req.IsOnline(srv.ID) {
+			continue
+		}
+		endpoints, err := d.st.NonActiveEndpointsByServer(ctx, srv.ID)
+		if err != nil {
+			log.Printf("dispatch: reconcile stale endpoints server %d: %v", srv.ID, err)
+			continue
+		}
+		for _, ep := range endpoints {
+			if err := d.ReconcileSharedEndpoint(ctx, ep.ID); err != nil {
+				log.Printf("dispatch: reconcile stale endpoint %d: %v", ep.ID, err)
+			} else {
+				log.Printf("dispatch: reconcile stale endpoint %d (server %d, status %s)", ep.ID, srv.ID, ep.Status)
+			}
+		}
+	}
 }
 
 // HandleMessage 处理 agent 上行业务信封（注入 ws.Hub.OnMessage）。
@@ -809,9 +848,17 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			realized, _ := json.Marshal(p.RealizedConfig)
 			if err := d.st.SetSharedEndpointActive(ctx, p.EndpointID, realized); err != nil {
 				log.Printf("dispatch: shared endpoint %d active: %v", p.EndpointID, err)
-			} else if d.OnEndpointPublished != nil {
-				if err := d.OnEndpointPublished(ctx, p.EndpointID); err != nil {
-					log.Printf("dispatch: enqueue subscriptions for shared endpoint %d: %v", p.EndpointID, err)
+			} else {
+				// 端点生效 → 重算使用该端点的链（degraded → active 恢复）。
+				if chainIDs, err := d.st.ChainIDsByEndpoint(ctx, p.EndpointID); err == nil {
+					for _, cid := range chainIDs {
+						d.recomputeChain(ctx, cid)
+					}
+				}
+				if d.OnEndpointPublished != nil {
+					if err := d.OnEndpointPublished(ctx, p.EndpointID); err != nil {
+						log.Printf("dispatch: enqueue subscriptions for shared endpoint %d: %v", p.EndpointID, err)
+					}
 				}
 			}
 			return

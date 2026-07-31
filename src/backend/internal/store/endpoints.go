@@ -304,6 +304,45 @@ func (s *Store) SetUserChains(ctx context.Context, userID int64, chainIDs []int6
 	return added, removed, nil
 }
 
+// NonActiveEndpointsByServer 返回指定服务器上状态非 active 的共享端点（自愈补发用）。
+func (s *Store) NonActiveEndpointsByServer(ctx context.Context, serverID int64) ([]SharedEndpoint, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+endpointCols+` FROM shared_endpoints WHERE server_id=? AND status<>?`, serverID, EndpointStatusActive)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var endpoints []SharedEndpoint
+	for rows.Next() {
+		ep, err := scanEndpoint(rows)
+		if err != nil {
+			return nil, err
+		}
+		endpoints = append(endpoints, *ep)
+	}
+	return endpoints, rows.Err()
+}
+
+// ChainIDsByEndpoint 返回使用指定共享端点的链 ID 列表（端点→链状态联动用）。
+func (s *Store) ChainIDsByEndpoint(ctx context.Context, endpointID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM chains WHERE endpoint_id=? AND status IN (?, ?)`,
+		endpointID, ChainStatusActive, ChainStatusDegraded)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *Store) SharedEndpointIDsForAssignments(assignments ...[]UserChainAssignment) []int64 {
 	set := map[int64]bool{}
 	for _, list := range assignments {

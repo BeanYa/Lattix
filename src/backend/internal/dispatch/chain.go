@@ -415,6 +415,8 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 		if err := d.ReconcileSharedEndpoint(ctx, revision.Snapshot.EndpointID); err != nil {
 			log.Printf("dispatch: chain %d shared endpoint %d: %v", chainID, revision.Snapshot.EndpointID, err)
 		}
+		// 端点刚置 applying，立即重算链状态（若端点未 active 则链进入 degraded，待 ack 后恢复）。
+		d.recomputeChain(ctx, chainID)
 	}
 }
 
@@ -765,6 +767,7 @@ func (d *Dispatcher) RecomputeChainsByServer(serverID int64) {
 }
 
 // recomputeChain 推导单条链 active ↔ degraded（pending/applying/failed 不参与）。
+// 判定条件：全部跳 server 在线 + 共享端点（若有）已 active；任一不满足则 degraded。
 func (d *Dispatcher) recomputeChain(ctx context.Context, chainID int64) {
 	chain, err := d.st.ChainByID(ctx, chainID)
 	if err != nil {
@@ -791,6 +794,33 @@ func (d *Dispatcher) recomputeChain(ctx context.Context, chainID int64) {
 				})
 				if d.Alerter != nil {
 					d.Alerter.Notify(hops[i].ServerID, alert.EventChainDegraded, fmt.Sprintf("chain_%d", chainID), detail)
+				}
+			}
+			return
+		}
+	}
+	// 共享端点就绪检查：链使用共享入口但端点未 active 时，链不可用于订阅。
+	if chain.EndpointID != 0 {
+		endpoint, err := d.st.SharedEndpointByID(ctx, chain.EndpointID)
+		if err != nil || endpoint.Status != store.EndpointStatusActive {
+			if chain.Status == store.ChainStatusActive {
+				detail := fmt.Sprintf("共享入口（endpoint %d）尚未生效", chain.EndpointID)
+				if endpoint != nil && endpoint.Status == store.EndpointStatusFailed {
+					detail = fmt.Sprintf("共享入口（endpoint %d）部署失败: %s", chain.EndpointID, endpoint.Error)
+				}
+				if err := d.st.SetChainStatus(ctx, chainID, store.ChainStatusDegraded, detail); err != nil {
+					log.Printf("dispatch: chain %d degraded (endpoint): %v", chainID, err)
+				}
+				log.Printf("dispatch: chain %d degraded: %s", chainID, detail)
+				d.recordOperation(logging.OperationEvent{
+					Severity: logging.SeverityWarning, Category: logging.CategoryChain, Action: "chain.degraded",
+					Detail: map[string]any{"chain_id": chainID, "endpoint_id": chain.EndpointID, "reason": detail},
+				})
+			}
+			// 自动重试：端点服务器在线时立即重新下发部署命令（覆盖死信/命令丢失场景）。
+			if endpoint != nil && d.req.IsOnline(endpoint.ServerID) {
+				if err := d.ReconcileSharedEndpoint(ctx, chain.EndpointID); err != nil {
+					log.Printf("dispatch: chain %d auto-reconcile endpoint %d: %v", chainID, chain.EndpointID, err)
 				}
 			}
 			return
