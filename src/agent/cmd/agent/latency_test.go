@@ -35,6 +35,21 @@ func TestLatencyTrackerPongInitializesAndRecords(t *testing.T) {
 	}
 }
 
+func TestLatencyTrackerWarmupIsNotReportedAsTimeout(t *testing.T) {
+	tracker := newLatencyTracker()
+
+	value, active := tracker.snapshot()
+	if active || value != nil {
+		t.Fatalf("warm-up snapshot = (%v, %v), want nil and inactive", value, active)
+	}
+
+	tracker.pending[7] = time.Now().Add(-latencyProbeTimeout - time.Millisecond)
+	value, active = tracker.snapshot()
+	if !active || value != nil {
+		t.Fatalf("timed out snapshot = (%v, %v), want nil and active", value, active)
+	}
+}
+
 func TestLatencyTrackerTimeoutReportsActiveMissingSample(t *testing.T) {
 	tracker := newLatencyTracker()
 	tracker.samples = []float64{20}

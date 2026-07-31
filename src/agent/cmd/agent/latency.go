@@ -104,6 +104,12 @@ func (t *latencyTracker) snapshot() (*float64, bool) {
 		return nil, false
 	}
 	t.expirePendingLocked(time.Now())
+	// A fresh session reports telemetry before its first staggered probe. Keep
+	// that warm-up packet out of latency history; only an observed timeout is a
+	// meaningful active probe with no value.
+	if t.lastOutcomeSequence == 0 && len(t.samples) == 0 {
+		return nil, false
+	}
 	if t.lastOutcomeTimedOut {
 		return nil, true
 	}

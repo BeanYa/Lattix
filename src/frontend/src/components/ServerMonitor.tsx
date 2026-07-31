@@ -243,30 +243,103 @@ function MetricBlock({
   )
 }
 
-function LatencyStrip({ samples }: { samples: ServerMetrics[] }) {
+function LatencyStrip({ samples, timezone }: { samples: ServerMetrics[]; timezone?: string }) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const values = samples.slice(-30)
-  const padded = Array.from({ length: Math.max(0, 30 - values.length) })
+  const cells: Array<ServerMetrics | null> = [
+    ...values,
+    ...Array.from<null>({ length: Math.max(0, 30 - values.length) }).fill(null),
+  ]
   return (
-    <div className="grid h-3 grid-cols-[repeat(30,minmax(0,1fr))] gap-px" aria-label="最近 30 次延迟趋势">
-      {values.map((sample, index) => {
-        const latency = sample.latency_ms
-        const state = latency === null ? null : health(latency, 100, 300)
+    <div
+      className="relative grid h-3 grid-cols-[repeat(30,minmax(0,1fr))] gap-px overflow-visible rounded-[2px] outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      role="group"
+      tabIndex={0}
+      aria-label="最近 30 次延迟趋势，使用左右方向键查看采样数据"
+      onMouseLeave={(event) => {
+        if (document.activeElement !== event.currentTarget) setActiveIndex(null)
+      }}
+      onFocus={() => setActiveIndex((current) => current ?? cells.length - 1)}
+      onBlur={() => setActiveIndex(null)}
+      onKeyDown={(event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+        event.preventDefault()
+        event.stopPropagation()
+        const direction = event.key === 'ArrowLeft' ? -1 : 1
+        setActiveIndex((current) => Math.min(cells.length - 1, Math.max(0, (current ?? cells.length - 1) + direction)))
+      }}
+    >
+      {cells.map((sample, index) => {
+        const latency = sample?.latency_ms ?? null
+        const latencyValue = latency ?? 0
+        const missing = sample === null
+        const timedOut = !missing && latency === null
+        const state = missing || timedOut ? null : health(latencyValue, 100, 300)
+        const distance = activeIndex === null ? Number.POSITIVE_INFINITY : Math.abs(activeIndex - index)
+        const label = missing
+          ? '无数据'
+          : timedOut
+            ? '探测超时'
+            : `${Math.round(latencyValue)} 毫秒`
         return (
           <span
-            key={`${sample.updated_at}-${index}`}
-            title={latency === null ? '无数据' : `${Math.round(latency)} ms`}
+            key={sample ? `${sample.updated_at}-${index}` : `empty-${index}`}
+            role="img"
+            aria-label={label}
+            onMouseEnter={() => setActiveIndex(index)}
             className={cn(
-              'rounded-[1px] bg-muted',
-              state === 'normal' && 'bg-success',
-              state === 'warning' && 'bg-warning',
-              state === 'critical' && 'bg-destructive',
+              'group relative h-3 min-w-0 rounded-[1px] outline-none',
+              distance === 0 && 'z-30',
+              distance === 1 && 'z-20',
+              distance === 2 && 'z-10',
             )}
-          />
+          >
+            {activeIndex === index ? (
+              <span
+                role="tooltip"
+                className={cn(
+                  'pointer-events-none absolute bottom-[calc(100%+10px)] z-50 min-w-28 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1.5 text-popover-foreground shadow-lg',
+                  index < 3
+                    ? 'left-0'
+                    : index >= cells.length - 3
+                      ? 'right-0'
+                      : 'left-1/2 -translate-x-1/2',
+                )}
+              >
+                <span className="flex items-center gap-1.5 text-xs font-semibold tabular-nums">
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      'size-1.5 shrink-0 rounded-full bg-muted-foreground',
+                      timedOut && 'bg-destructive',
+                      state === 'normal' && 'bg-success',
+                      state === 'warning' && 'bg-warning',
+                      state === 'critical' && 'bg-destructive',
+                    )}
+                  />
+                  {missing ? '无数据' : timedOut ? '探测超时' : `${Math.round(latencyValue)} ms`}
+                </span>
+                <span className="mt-0.5 block text-[10px] text-muted-foreground tabular-nums">
+                  {sample ? formatDateTime(sample.updated_at, timezone) : '尚无采样记录'}
+                </span>
+              </span>
+            ) : null}
+            <span
+              aria-hidden="true"
+              className={cn(
+                'absolute inset-0 origin-bottom rounded-[1px] bg-muted transition-[transform,box-shadow] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none',
+                timedOut && 'bg-destructive',
+                state === 'normal' && 'bg-success',
+                state === 'warning' && 'bg-warning',
+                state === 'critical' && 'bg-destructive',
+                distance === 0 && '-translate-y-1 scale-x-[1.45] scale-y-[1.8] ring-1 ring-background shadow-md',
+                distance === 1 && '-translate-y-0.5 scale-x-[1.2] scale-y-[1.4]',
+                distance === 2 && 'scale-x-[1.08] scale-y-[1.15]',
+              )}
+            />
+          </span>
         )
       })}
-      {padded.map((_, index) => (
-        <span key={`empty-${index}`} className="rounded-[1px] bg-muted" />
-      ))}
     </div>
   )
 }
@@ -351,11 +424,13 @@ function ServerActions({
 function ServerCard({
   server,
   samples,
+  timezone,
   onOpen,
   ...actions
 }: Omit<ServerMonitorProps, 'servers' | 'samples' | 'loading' | 'timezone'> & {
   server: Server
   samples: ServerMetrics[]
+  timezone?: string
   onOpen: () => void
 }) {
   const metrics = server.metrics
@@ -509,7 +584,7 @@ function ServerCard({
               </div>
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground">最近 30 次</span>
-                <LatencyStrip samples={samples} />
+                <LatencyStrip samples={samples} timezone={timezone} />
               </div>
             </div>
             <Separator />
@@ -1000,6 +1075,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
             key={server.id}
             server={server}
             samples={samplesByServer.get(server.id) ?? []}
+            timezone={props.timezone}
             onOpen={() => setSelectedID(server.id)}
             onEdit={props.onEdit}
             onRepair={props.onRepair}
