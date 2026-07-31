@@ -1,5 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { BarChart3Icon, PencilIcon, PlusIcon, RotateCcwIcon, RouteIcon, SendIcon, XIcon } from 'lucide-react'
+import {
+  ArrowDownIcon,
+  ArrowRightIcon,
+  ArrowUpIcon,
+  BarChart3Icon,
+  CircleCheckIcon,
+  Clock3Icon,
+  LoaderCircleIcon,
+  PencilIcon,
+  PlusIcon,
+  RotateCcwIcon,
+  RouteIcon,
+  SendIcon,
+  TriangleAlertIcon,
+  XIcon,
+} from 'lucide-react'
 
 import { NameTemplateInput } from '@/components/NameTemplateInput'
 import { EmptyState, LoadingState, Notice, Page, PageHeader, type FeedbackTone } from '@/components/PagePrimitives'
@@ -39,6 +54,7 @@ import { validateNameTemplate } from '@/lib/naming'
 import { DEFAULT_REALITY_DEST, inferRealityDestPreset } from '@/lib/reality'
 import { isServerOnline } from '@/lib/server-state'
 import { useTimezone } from '@/lib/timezone'
+import { cn } from '@/lib/utils'
 import type {
   Chain,
   ChainHopRole,
@@ -70,6 +86,79 @@ const hopStatusStyle: Record<NodeStatus, { label: string; tone: FeedbackTone }> 
   applying: { label: '部署中', tone: 'warning' },
   failed: { label: '异常', tone: 'danger' },
   pending: { label: '部署中', tone: 'neutral' },
+}
+
+const statusSurfaceStyle: Record<FeedbackTone, string> = {
+  success: 'border-success/30 bg-success/10 text-success',
+  warning: 'border-warning/30 bg-warning/10 text-warning',
+  danger: 'border-destructive/30 bg-destructive/10 text-destructive',
+  info: 'border-info/30 bg-info/10 text-info',
+  neutral: 'border-border bg-muted/60 text-muted-foreground',
+}
+
+function ChainStateMark({ tone, label }: { tone: FeedbackTone; label: string }) {
+  const loading = ['部署中', '等待 Agent', '等待清理'].includes(label)
+  const Icon = tone === 'success' || tone === 'info'
+    ? CircleCheckIcon
+    : loading
+      ? LoaderCircleIcon
+      : TriangleAlertIcon
+  return (
+    <span
+      className={cn(
+        'flex size-8 shrink-0 items-center justify-center rounded-md border',
+        statusSurfaceStyle[tone],
+      )}
+      title={label}
+      aria-label={label}
+    >
+      <Icon className={cn('size-4', loading && 'animate-spin motion-reduce:animate-none')} />
+    </span>
+  )
+}
+
+function TrafficSummary({
+  up,
+  down,
+  rawUp,
+  rawDown,
+  multiplier,
+}: {
+  up?: number
+  down?: number
+  rawUp?: number
+  rawDown?: number
+  multiplier?: string
+}) {
+  const hasTraffic = up !== undefined && down !== undefined
+  const adjusted = hasTraffic && rawUp !== undefined && rawDown !== undefined && (rawUp !== up || rawDown !== down)
+  return (
+    <div className="grid grid-cols-2 gap-4 border-t pt-3 lg:border-t-0 lg:border-l lg:pl-4 lg:pt-0" aria-label="累计流量">
+      <div className="min-w-0">
+        <span className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+          <ArrowUpIcon className="size-3 text-success" />
+          累计上传
+        </span>
+        <strong className="mt-1 block truncate text-base font-semibold tabular-nums text-success">
+          {hasTraffic ? humanizeBytes(up ?? 0) : '--'}
+        </strong>
+        {adjusted ? <span className="text-[10px] text-muted-foreground">原始 {humanizeBytes(rawUp ?? 0)}</span> : null}
+      </div>
+      <div className="min-w-0">
+        <span className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
+          <ArrowDownIcon className="size-3 text-info" />
+          累计下载
+        </span>
+        <strong className="mt-1 block truncate text-base font-semibold tabular-nums text-info">
+          {hasTraffic ? humanizeBytes(down ?? 0) : '--'}
+        </strong>
+        {adjusted ? <span className="text-[10px] text-muted-foreground">原始 {humanizeBytes(rawDown ?? 0)}</span> : null}
+      </div>
+      {multiplier ? (
+        <span className="col-span-2 text-[10px] text-muted-foreground">流量倍率 x{multiplier}</span>
+      ) : null}
+    </div>
+  )
 }
 
 const roleLabel: Record<ChainHopRole, string> = {
@@ -841,20 +930,30 @@ export default function Chains() {
               const server = servers.find((candidate) => candidate.id === node.server_id)
               const displayPort = node.realized_config?.port ?? node.port
               return (
-                <Card key={`direct-${node.id}`} size="sm">
-                  <CardHeader className="has-data-[slot=card-action]:grid-cols-1 sm:has-data-[slot=card-action]:grid-cols-[1fr_auto]">
-                    <CardTitle className="flex flex-wrap items-center gap-2">
-                      <span>{node.name || `直连 #${node.id}`}</span>
+                <Card
+                  key={`direct-${node.id}`}
+                  size="sm"
+                  className={cn(
+                    'relative border-l-2',
+                    st.tone === 'success' && 'border-l-success/70',
+                    st.tone === 'warning' && 'border-l-warning/70',
+                    st.tone === 'danger' && 'border-l-destructive/70',
+                    st.tone === 'neutral' && 'border-l-muted-foreground/50',
+                  )}
+                >
+                  <CardHeader className="border-b has-data-[slot=card-action]:grid-cols-1 sm:has-data-[slot=card-action]:grid-cols-[1fr_auto]">
+                    <CardTitle className="flex min-w-0 flex-wrap items-center gap-2">
+                      <ChainStateMark tone={st.tone} label={st.label} />
+                      <span className="truncate">{node.name || `直连 #${node.id}`}</span>
+                      <span className="font-mono text-[10px] font-normal text-muted-foreground">#{node.id}</span>
                       <Badge variant="secondary">直连</Badge>
                       <StatusBadge tone={st.tone}>
                         {st.label}
                       </StatusBadge>
                     </CardTitle>
-                    <CardDescription>
-                      {formatDateTime(node.created_at, timezone)}
-                      {node.traffic
-                        ? ` · ↑ ${humanizeBytes(node.traffic.up)} / ↓ ${humanizeBytes(node.traffic.down)}`
-                        : ''}
+                    <CardDescription className="flex items-center gap-1.5 pl-10 text-xs">
+                      <Clock3Icon className="size-3" />
+                      创建于 {formatDateTime(node.created_at, timezone)}
                     </CardDescription>
                     <CardAction className="col-start-1 row-start-3 row-span-1 justify-self-start sm:col-start-2 sm:row-start-1 sm:row-span-2 sm:justify-self-end">
                       <div className="flex max-w-full flex-wrap gap-2 sm:justify-end">
@@ -874,19 +973,20 @@ export default function Chains() {
                       </div>
                     </CardAction>
                   </CardHeader>
-                  <CardContent>
-                    {node.error ? <p className="mb-2 text-sm text-destructive">{node.error}</p> : null}
-                    <div className="flex flex-wrap items-center gap-1 text-sm">
-                      <span className="inline-flex items-center gap-1 rounded-md border px-2 py-1">
-                        <span className="text-muted-foreground">直连</span>
-                        <span className="font-medium">{node.server_alias}</span>
+                  <CardContent className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px] lg:items-center">
+                    {node.error ? <p className="text-sm text-destructive lg:col-span-2">{node.error}</p> : null}
+                    <div className="flex min-w-0 items-center gap-3 py-1 text-sm">
+                      <span className={cn('size-2 shrink-0 rounded-full', server && isServerOnline(server) ? 'bg-success' : 'bg-warning')} />
+                      <div className="min-w-0">
+                        <span className="block text-[11px] text-muted-foreground">直连服务器</span>
+                        <span className="block truncate font-medium">{node.server_alias}</span>
                         {displayPort ? <span className="text-muted-foreground">:{displayPort}</span> : null}
-                        <StatusBadge tone={st.tone}>
-                          {st.label}
-                        </StatusBadge>
-						{server && !isServerOnline(server) ? <StatusBadge tone="warning">离线</StatusBadge> : null}
-                      </span>
+                      </div>
+                      <StatusBadge tone={server ? (isServerOnline(server) ? 'success' : 'warning') : 'neutral'} className="ml-auto shrink-0">
+                        {server ? (isServerOnline(server) ? 'Agent 在线' : 'Agent 离线') : 'Agent 未知'}
+                      </StatusBadge>
                     </div>
+                    <TrafficSummary up={node.traffic?.up} down={node.traffic?.down} />
                   </CardContent>
                 </Card>
               )
@@ -897,10 +997,23 @@ export default function Chains() {
             const isDirect = c.hops.length === 1
             const pendingTasks = c.revision_tasks.filter((task) => task.status === 'pending' || task.status === 'queued')
             return (
-              <Card key={`relay-${c.id}`} size="sm">
-                <CardHeader className="has-data-[slot=card-action]:grid-cols-1 sm:has-data-[slot=card-action]:grid-cols-[1fr_auto]">
-                  <CardTitle className="flex flex-wrap items-center gap-2">
-                    <span>{c.name || `中转 #${c.id}`}</span>
+              <Card
+                key={`relay-${c.id}`}
+                size="sm"
+                className={cn(
+                  'relative border-l-2',
+                  st.tone === 'success' && 'border-l-success/70',
+                  st.tone === 'warning' && 'border-l-warning/70',
+                  st.tone === 'danger' && 'border-l-destructive/70',
+                  st.tone === 'info' && 'border-l-info/70',
+                  st.tone === 'neutral' && 'border-l-muted-foreground/50',
+                )}
+              >
+                <CardHeader className="border-b has-data-[slot=card-action]:grid-cols-1 sm:has-data-[slot=card-action]:grid-cols-[1fr_auto]">
+                  <CardTitle className="flex min-w-0 flex-wrap items-center gap-2">
+                    <ChainStateMark tone={st.tone} label={st.label} />
+                    <span className="truncate">{c.name || `中转 #${c.id}`}</span>
+                    <span className="font-mono text-[10px] font-normal text-muted-foreground">#{c.id}</span>
                     <Badge variant="secondary">{isDirect ? '直连' : '中转'}</Badge>
                     <StatusBadge tone={st.tone}>
                       {st.label}
@@ -912,11 +1025,9 @@ export default function Chains() {
                       <span className="text-xs text-info">订阅已发布，配置等待 Agent 确认</span>
                     ) : null}
                   </CardTitle>
-                  <CardDescription>
-                    {formatDateTime(c.created_at, timezone)}
-                    {c.traffic
-                      ? ` · ↑ ${humanizeBytes(c.traffic.effective_up)} / ↓ ${humanizeBytes(c.traffic.effective_down)} · ×${c.traffic_multiplier}`
-                      : ''}
+                  <CardDescription className="flex items-center gap-1.5 pl-10 text-xs">
+                    <Clock3Icon className="size-3" />
+                    创建于 {formatDateTime(c.created_at, timezone)}
                   </CardDescription>
                   <CardAction className="col-start-1 row-start-3 row-span-1 justify-self-start sm:col-start-2 sm:row-start-1 sm:row-span-2 sm:justify-self-end">
                     <div className="flex max-w-full flex-wrap gap-2 sm:justify-end">
@@ -957,36 +1068,53 @@ export default function Chains() {
                     </div>
                   </CardAction>
                 </CardHeader>
-                <CardContent className="flex flex-col gap-2">
+                <CardContent className="flex flex-col gap-3">
                   {c.error ? <p className="text-sm text-destructive">{c.error}</p> : null}
-                  <div className="flex flex-wrap items-center gap-1 text-sm">
-                  {c.hops.map((h, i) => {
-                    const hst = hopStatusStyle[h.status] ?? hopStatusStyle.pending
-                    const offline = !serverOnline(h.server_id)
-                    return (
-                      <span key={h.id} className="flex items-center gap-1">
-                        {i > 0 ? <span className="text-muted-foreground">→</span> : null}
-                        <span
-                          className="inline-flex items-center gap-1 rounded-md border px-2 py-1"
-                          title={h.error || undefined}
-                        >
-                          <span className="text-muted-foreground">{roleLabel[h.role]}</span>
-                          <span className="font-medium">{h.server_alias}</span>
-                          {h.role === 'entry' && h.forward_port !== 0 ? (
-                            <span className="text-muted-foreground">:{h.forward_port}</span>
-                          ) : null}
-                          <StatusBadge tone={hst.tone}>
-                            {hst.label}
-                          </StatusBadge>
-                          {offline ? (
-                            <StatusBadge tone="warning">
-                              离线
-                            </StatusBadge>
-                          ) : null}
-                        </span>
-                      </span>
-                    )
-                  })}
+                  <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px] lg:items-center">
+                    <div className="min-w-0 overflow-x-auto pb-1">
+                      <div className="flex flex-col items-stretch text-sm sm:min-w-max sm:flex-row sm:items-center">
+                        {c.hops.map((h, i) => {
+                          const hst = hopStatusStyle[h.status] ?? hopStatusStyle.pending
+                          const offline = !serverOnline(h.server_id)
+                          return (
+                            <div key={h.id} className="flex flex-col items-start sm:flex-row sm:items-center" title={h.error || undefined}>
+                              {i > 0 ? (
+                                <span className="my-1 ml-[3px] flex h-5 flex-col items-center text-muted-foreground sm:mx-3 sm:my-0 sm:ml-0 sm:h-auto sm:flex-row" aria-hidden="true">
+                                  <span className="h-4 w-px bg-border sm:h-px sm:w-5" />
+                                  <ArrowDownIcon className="-mt-1 size-3 sm:hidden" />
+                                  <ArrowRightIcon className="-ml-1 hidden size-3 sm:block" />
+                                </span>
+                              ) : null}
+                              <div className="min-w-0 py-1 sm:min-w-36">
+                                <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                                  <span className={cn(
+                                    'size-1.5 rounded-full',
+                                    offline && 'bg-warning',
+                                    !offline && hst.tone === 'success' && 'bg-success',
+                                    !offline && hst.tone === 'danger' && 'bg-destructive',
+                                    !offline && hst.tone !== 'success' && hst.tone !== 'danger' && 'bg-warning',
+                                  )} />
+                                  {roleLabel[h.role]} · {hst.label}
+                                </span>
+                                <strong className="mt-0.5 block max-w-48 truncate font-medium">{h.server_alias}</strong>
+                                <span className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground tabular-nums">
+                                  {h.role === 'entry' && h.forward_port !== 0 ? <span>端口 {h.forward_port}</span> : null}
+                                  <span className={offline ? 'text-warning' : 'text-success'}>{offline ? 'Agent 离线' : 'Agent 在线'}</span>
+                                  {h.traffic ? <span>↑ {humanizeBytes(h.traffic.effective_up)} · ↓ {humanizeBytes(h.traffic.effective_down)}</span> : null}
+                                </span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    <TrafficSummary
+                      up={c.traffic?.effective_up}
+                      down={c.traffic?.effective_down}
+                      rawUp={c.traffic?.raw_up}
+                      rawDown={c.traffic?.raw_down}
+                      multiplier={c.traffic_multiplier}
+                    />
                   </div>
                 {pendingTasks.length > 0 ? (
                   <p className="text-xs text-muted-foreground">

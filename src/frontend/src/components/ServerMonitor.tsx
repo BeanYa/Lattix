@@ -20,7 +20,6 @@ import {
 
 import { CountryFlag } from '@/components/CountryFlag'
 import { EmptyState } from '@/components/PagePrimitives'
-import { StatusBadge } from '@/components/StatusBadge'
 import { ServerTestPanel } from '@/components/ServerTestPanel'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -449,37 +448,29 @@ function ServerCard({
       tabIndex={0}
       aria-label={`查看 ${server.alias} 监控详情，${serverConnectionLabel(server.connection_state)}`}
       className={cn(
-        'relative cursor-pointer transition-[box-shadow,background-color] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        transitioning && 'bg-warning/[0.04]',
-        !online && !transitioning && 'bg-destructive/[0.04]',
+        'relative cursor-pointer border-t-2 transition-[box-shadow,background-color] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        online && 'border-t-success/70 bg-success/[0.025]',
+        transitioning && 'border-t-warning/70 bg-warning/[0.04]',
+        !online && !transitioning && 'border-t-destructive/70 bg-destructive/[0.04]',
       )}
       onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') onOpen()
       }}
     >
-      {!online ? (
-        <span
-          aria-hidden="true"
-          className={cn(
-            'absolute inset-y-0 left-0 z-10 w-1',
-            transitioning ? 'bg-warning' : 'bg-destructive',
-          )}
-        />
-      ) : null}
       <CardHeader className={cn('border-b', !online && (transitioning ? 'border-warning/30' : 'border-destructive/30'))}>
         <CardTitle className="flex min-w-0 items-center gap-2">
           <span
             className={cn(
-              'flex size-5 shrink-0 items-center justify-center rounded-md',
-              online && 'bg-success/15 text-success',
-              transitioning && 'bg-warning/15 text-warning',
-              !online && !transitioning && 'bg-destructive/15 text-destructive',
+              'flex size-7 shrink-0 items-center justify-center rounded-md border',
+              online && 'border-success/30 bg-success/15 text-success',
+              transitioning && 'border-warning/30 bg-warning/15 text-warning',
+              !online && !transitioning && 'border-destructive/30 bg-destructive/15 text-destructive',
             )}
             aria-hidden="true"
           >
             {online ? (
-              <CircleCheckIcon className="size-3.5" />
+              <CircleCheckIcon className="size-4" />
             ) : transitioning ? (
               <LoaderCircleIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
             ) : (
@@ -487,12 +478,17 @@ function ServerCard({
             )}
           </span>
           <span className="truncate">{server.alias}</span>
-          <StatusBadge
-            tone={online ? 'success' : transitioning ? 'warning' : 'danger'}
-            className="ml-auto shrink-0 text-[10px] font-normal"
+          <span
+            className={cn(
+              'ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs font-semibold',
+              online && 'border-success/30 bg-success/10 text-success',
+              transitioning && 'border-warning/30 bg-warning/10 text-warning',
+              !online && !transitioning && 'border-destructive/30 bg-destructive/10 text-destructive',
+            )}
           >
-            {serverConnectionLabel(server.connection_state)}
-          </StatusBadge>
+            <span className={cn('size-1.5 rounded-full', online ? 'bg-success' : transitioning ? 'bg-warning' : 'bg-destructive')} />
+            Agent {serverConnectionLabel(server.connection_state)}
+          </span>
         </CardTitle>
         <CardDescription className="flex min-w-0 flex-col gap-1 text-xs">
           <span className="flex min-w-0 items-center gap-2">
@@ -521,24 +517,39 @@ function ServerCard({
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        {!online ? (
-          <div
-            className={cn(
-              '-mx-3 -mt-3 flex min-h-9 items-center gap-2 border-b px-3 py-2 text-xs',
-              transitioning
-                ? 'border-warning/25 bg-warning/10 text-warning'
-                : 'border-destructive/25 bg-destructive/10 text-destructive',
-            )}
-          >
-            {transitioning ? (
-              <LoaderCircleIcon className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+        <div
+          className={cn(
+            '-mx-3 -mt-3 flex min-h-11 items-center gap-2.5 border-b px-3 py-2 text-xs',
+            online && 'border-success/20 bg-success/[0.07] text-success',
+            transitioning && 'border-warning/25 bg-warning/10 text-warning',
+            !online && !transitioning && 'border-destructive/25 bg-destructive/10 text-destructive',
+          )}
+        >
+          <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background/50">
+            {online ? (
+              <CircleCheckIcon className="size-3.5" />
+            ) : transitioning ? (
+              <LoaderCircleIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
             ) : (
-              <WifiOffIcon className="size-3.5 shrink-0" />
+              <WifiOffIcon className="size-3.5" />
             )}
-            <span className="font-medium">{serverConnectionNotice(server.connection_state)}</span>
-            {metrics ? <span className="ml-auto text-[11px] text-muted-foreground">以下为上次遥测</span> : null}
-          </div>
-        ) : null}
+          </span>
+          <span className="min-w-0">
+            <strong className="block font-semibold">
+              {online ? 'Agent 连接正常' : serverConnectionNotice(server.connection_state)}
+            </strong>
+            <span className="block truncate text-[10px] text-muted-foreground tabular-nums">
+              {online
+                ? metrics
+                  ? `已运行 ${formatUptime(metrics.uptime_seconds)} · 遥测 ${formatDateTime(metrics.updated_at, timezone)}`
+                  : '连接已建立，等待首次遥测'
+                : metrics
+                  ? `上次遥测 ${formatDateTime(metrics.updated_at, timezone)}`
+                  : '暂无可用遥测'}
+            </span>
+          </span>
+          {!online && metrics ? <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">历史数据</span> : null}
+        </div>
         {metrics ? (
           <>
             <div className="grid grid-cols-2 gap-x-4 gap-y-3">
