@@ -804,7 +804,10 @@ func (s *Server) handleRegenerateUserSubscription(w http.ResponseWriter, r *http
 	s.audit(r, "user.subscription.regenerated", nil, nil, map[string]any{
 		"user_id": req.UserID, "revision": result.Revision,
 	})
-	writeJSON(w, http.StatusOK, result.SubscriptionSnapshotStatus)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": result.Status, "error": result.Error, "revision": result.Revision,
+		"source_label": result.SourceLabel, "generated_at": result.GeneratedAt, "warnings": result.Warnings,
+	})
 }
 
 func (s *Server) handleUserSubscriptionPreview(w http.ResponseWriter, r *http.Request) {
@@ -832,7 +835,7 @@ func (s *Server) handleUserSubscriptionPreview(w http.ResponseWriter, r *http.Re
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"format": format, "revision": file.Revision, "content_type": file.ContentType,
-		"content": string(file.Content), "generated_at": file.GeneratedAt,
+		"content": string(file.Content), "generated_at": file.GeneratedAt, "warnings": file.Warnings,
 	})
 }
 

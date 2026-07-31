@@ -8,7 +8,7 @@ import (
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
-const schemaVersion = 9
+const schemaVersion = 10
 
 type columnMigration struct {
 	name       string
@@ -145,6 +145,9 @@ func migrateSchema(tx *sql.Tx) error {
 		},
 		"server_metric_history": {
 			{"latency_probe_active", "INTEGER NOT NULL DEFAULT 1"},
+		},
+		"subscription_snapshots": {
+			{"warnings", "TEXT NOT NULL DEFAULT ''"},
 		},
 	} {
 		if _, err := ensureColumns(tx, table, columns); err != nil {

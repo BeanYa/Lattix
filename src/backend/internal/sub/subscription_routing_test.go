@@ -326,7 +326,7 @@ func TestPublicSubscriptionAndRuleEndpointsReadSnapshotsOnly(t *testing.T) {
 	version := strings.Repeat("b", 64)
 	_, err = st.PublishSubscriptionSnapshot(ctx, userID, "test", "source", map[string]store.SubscriptionFile{
 		"clash": {Format: "clash", ContentType: "text/yaml", Content: []byte("proxies: []\n")},
-	}, []store.SubscriptionRuleFile{{Name: "sample", Format: "mihomo", SourceSHA256: version, ContentType: "text/yaml", Content: []byte("payload: []\n")}})
+	}, []store.SubscriptionRuleFile{{Name: "sample", Format: "mihomo", SourceSHA256: version, ContentType: "text/yaml", Content: []byte("payload: []\n")}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

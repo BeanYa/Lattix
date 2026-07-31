@@ -61,6 +61,7 @@ type SubscriptionFile struct {
 	Format      string
 	ContentType string
 	Content     []byte
+	Warnings    []string
 	GeneratedAt time.Time
 }
 
@@ -158,20 +159,29 @@ func (s *Store) PublishSubscriptionSnapshot(
 	sourceLabel, sourceSHA string,
 	files map[string]SubscriptionFile,
 	rules []SubscriptionRuleFile,
+	warnings []string,
 ) (SubscriptionSnapshotStatus, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return SubscriptionSnapshotStatus{}, err
 	}
 	defer tx.Rollback()
+	warningsJSON := ""
+	if len(warnings) > 0 {
+		encoded, err := json.Marshal(warnings)
+		if err != nil {
+			return SubscriptionSnapshotStatus{}, err
+		}
+		warningsJSON = string(encoded)
+	}
 	var revision int64
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(revision), 0) + 1 FROM subscription_snapshots WHERE user_id = ?`, userID).Scan(&revision); err != nil {
 		return SubscriptionSnapshotStatus{}, err
 	}
 	res, err := tx.ExecContext(ctx, `INSERT INTO subscription_snapshots
-		(user_id, revision, source_label, source_sha256) VALUES (?, ?, ?, ?)`,
-		userID, revision, sourceLabel, sourceSHA)
+		(user_id, revision, source_label, source_sha256, warnings) VALUES (?, ?, ?, ?, ?)`,
+		userID, revision, sourceLabel, sourceSHA, warningsJSON)
 	if err != nil {
 		return SubscriptionSnapshotStatus{}, fmt.Errorf("insert subscription snapshot: %w", err)
 	}
@@ -250,17 +260,21 @@ func (s *Store) SubscriptionRuleFile(
 
 func (s *Store) PublishedSubscriptionFile(ctx context.Context, userID int64, format string) (SubscriptionFile, error) {
 	var file SubscriptionFile
+	var warningsJSON string
 	err := s.db.QueryRowContext(ctx, `SELECT f.snapshot_id, sn.revision, f.format, f.content_type,
-		f.content, sn.generated_at FROM published_subscription_snapshots p
+		f.content, COALESCE(sn.warnings, ''), sn.generated_at FROM published_subscription_snapshots p
 		JOIN subscription_snapshots sn ON sn.id = p.snapshot_id
 		JOIN subscription_files f ON f.snapshot_id = sn.id
 		WHERE p.user_id = ? AND f.format = ?`, userID, format).Scan(
-		&file.SnapshotID, &file.Revision, &file.Format, &file.ContentType, &file.Content, &file.GeneratedAt)
+		&file.SnapshotID, &file.Revision, &file.Format, &file.ContentType, &file.Content, &warningsJSON, &file.GeneratedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SubscriptionFile{}, ErrNotFound
 	}
 	if err != nil {
 		return SubscriptionFile{}, fmt.Errorf("query published subscription file: %w", err)
+	}
+	if warningsJSON != "" {
+		_ = json.Unmarshal([]byte(warningsJSON), &file.Warnings)
 	}
 	return file, nil
 }

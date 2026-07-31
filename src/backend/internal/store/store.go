@@ -294,6 +294,7 @@ CREATE TABLE IF NOT EXISTS subscription_snapshots (
     revision      INTEGER NOT NULL,
     source_label  TEXT NOT NULL,
     source_sha256 TEXT NOT NULL,
+    warnings      TEXT NOT NULL DEFAULT '',
     generated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (user_id, revision)
 );

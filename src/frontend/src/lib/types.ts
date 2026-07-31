@@ -482,6 +482,7 @@ export interface SubscriptionSnapshotStatus {
   revision: number
   source_label?: string
   generated_at?: string
+  warnings?: string[]
 }
 
 export type SubscriptionPreviewFormat = 'clash' | 'singbox' | 'quanx' | 'quanx-config' | 'links'
@@ -492,6 +493,7 @@ export interface SubscriptionPreview {
   content_type: string
   content: string
   generated_at: string
+  warnings?: string[]
 }
 
 export interface SubscriptionRuleCategory {

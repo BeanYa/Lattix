@@ -177,11 +177,44 @@ type clashRuleProvider struct {
 	Interval int    `yaml:"interval"`
 }
 
+// clashDNS 是订阅内置的 fake-ip DNS 配置，使订阅在客户端开箱即用。
+type clashDNS struct {
+	Enable            bool                  `yaml:"enable"`
+	IPv6              bool                  `yaml:"ipv6"`
+	EnhancedMode      string                `yaml:"enhanced-mode"`
+	FakeIPRange       string                `yaml:"fake-ip-range,omitempty"`
+	FakeIPFilter      []string              `yaml:"fake-ip-filter,omitempty"`
+	DefaultNameserver []string              `yaml:"default-nameserver,omitempty"`
+	Nameserver        []string              `yaml:"nameserver,omitempty"`
+	Fallback          []string              `yaml:"fallback,omitempty"`
+	FallbackFilter    *clashDNSFallbackFilter `yaml:"fallback-filter,omitempty"`
+}
+
+type clashDNSFallbackFilter struct {
+	GeoIP     bool   `yaml:"geoip"`
+	GeoIPCode string `yaml:"geoip-code,omitempty"`
+}
+
+// clashGeoxURL 指向 MetaCubeX/meta-rules-dat 的地理数据源，
+// 配合 geodata-mode 使 GEOSITE/GEOIP 规则生效。
+type clashGeoxURL struct {
+	Geoip   string `yaml:"geoip,omitempty"`
+	Geosite string `yaml:"geosite,omitempty"`
+	MMDB    string `yaml:"mmdb,omitempty"`
+	ASN     string `yaml:"asn,omitempty"`
+}
+
 type clashConfig struct {
-	Proxies       []clashProxy                 `yaml:"proxies"`
-	ProxyGroups   []clashProxyGroup            `yaml:"proxy-groups"`
-	RuleProviders map[string]clashRuleProvider `yaml:"rule-providers,omitempty"`
-	Rules         []string                     `yaml:"rules"`
+	DNS               *clashDNS                    `yaml:"dns,omitempty"`
+	GeodataMode       bool                         `yaml:"geodata-mode,omitempty"`
+	GeoAutoUpdate     bool                         `yaml:"geo-auto-update,omitempty"`
+	GeodataLoader     string                       `yaml:"geodata-loader,omitempty"`
+	GeoUpdateInterval int                          `yaml:"geo-update-interval,omitempty"`
+	GeoXURL           *clashGeoxURL                `yaml:"geox-url,omitempty"`
+	Proxies           []clashProxy                 `yaml:"proxies"`
+	ProxyGroups       []clashProxyGroup            `yaml:"proxy-groups"`
+	RuleProviders     map[string]clashRuleProvider `yaml:"rule-providers,omitempty"`
+	Rules             []string                     `yaml:"rules"`
 }
 
 // proxyGroupName 是 select 组名，MATCH 规则指向它。
@@ -413,10 +446,11 @@ type proxyItem struct {
 //     reality-opts/uuid/flow 等取出口节点 realized_config；命名优先使用链路名称；
 //   - 只含 active/degraded 链（failed/pending/applying 不出）；degraded 不剔除（客户端测速规避）；
 //   - 用户维度经 user_nodes 判出口节点分配（§16：UUID 只存在于出口 xray）。
-func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []store.Node) []proxyItem {
+func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []store.Node) ([]proxyItem, []string) {
 	if user.Expired || user.Disabled {
-		return nil
+		return nil, nil
 	}
+	var warnings []string
 	exitIDs, err := s.st.ChainExitNodeIDs(r.Context())
 	if err != nil {
 		exitIDs = map[int64]bool{} // 查询失败不阻断订阅
@@ -434,7 +468,7 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 	}
 	assigned, err := s.st.UserNodeIDs(r.Context(), user.ID)
 	if err != nil {
-		return items
+		return items, warnings
 	}
 	allowed := make(map[int64]bool, len(assigned))
 	for _, id := range assigned {
@@ -442,7 +476,7 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 	}
 	chainAssignments, err := s.st.UserChainAssignments(r.Context(), user.ID)
 	if err != nil {
-		return items
+		return items, warnings
 	}
 	assignmentByChain := make(map[int64]store.UserChainAssignment, len(chainAssignments))
 	for _, assignment := range chainAssignments {
@@ -450,13 +484,16 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 	}
 	chains, err := s.st.ListChains(r.Context())
 	if err != nil {
-		return items
+		return items, warnings
 	}
 	for _, c := range chains {
 		// A published snapshot remains the subscription authority while a newer
 		// revision is applying or has failed. Agent reachability is control-plane
 		// state and must not withdraw an otherwise usable data-plane endpoint.
 		if c.PublishedRevisionID == 0 || c.Status == store.ChainStatusInvalid || c.Status == store.ChainStatusDeleted {
+			if _, hasAssignment := assignmentByChain[c.ID]; hasAssignment {
+				warnings = append(warnings, fmt.Sprintf("链路「%s」已分配但未发布有效修订，未纳入订阅", chainDisplayName(c)))
+			}
 			continue
 		}
 		assignment, hasAssignment := assignmentByChain[c.ID]
@@ -465,11 +502,22 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 		}
 		item, err := s.chainSubscriptionItem(r, c, allowed, assignment)
 		if err != nil {
+			if hasAssignment {
+				warnings = append(warnings, fmt.Sprintf("链路「%s」未纳入订阅：%v", chainDisplayName(c), err))
+			}
 			continue
 		}
 		items = append(items, *item)
 	}
-	return items
+	return items, warnings
+}
+
+// chainDisplayName 返回链路显示名（名称为空时回退到 ID）。
+func chainDisplayName(c store.Chain) string {
+	if c.Name != "" {
+		return c.Name
+	}
+	return fmt.Sprintf("#%d", c.ID)
 }
 
 // chainSubscriptionItem 构造单条链的订阅条目；不满足输出条件返回错误（调用方跳过）。

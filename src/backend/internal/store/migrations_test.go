@@ -136,7 +136,7 @@ func TestOpenMigratesLegacySchemaAndPreservesData(t *testing.T) {
 	assertColumns(t, st.db, "chain_revision_tasks", "phase", "action", "kind", "command_id")
 	assertColumns(t, st.db, "subscription_templates", "content_sha256", "last_attempt_at", "last_error")
 	assertColumns(t, st.db, "subscription_template_rules", "template_sha256", "source_url", "content_sha256")
-	assertColumns(t, st.db, "subscription_snapshots", "revision", "source_sha256", "generated_at")
+	assertColumns(t, st.db, "subscription_snapshots", "revision", "source_sha256", "generated_at", "warnings")
 	assertColumns(t, st.db, "subscription_rule_files", "name", "format", "source_sha256", "content")
 	if err := st.SaveServerMetrics(context.Background(), 1, ServerMetrics{}, true); err != nil {
 		t.Fatalf("write nullable metrics after migration: %v", err)

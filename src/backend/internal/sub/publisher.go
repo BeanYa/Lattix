@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http/httptest"
 	"sort"
 	"strings"
@@ -22,7 +23,8 @@ var subscriptionFormats = []string{"clash", "singbox", "quanx", "quanx-config", 
 
 type PublishResult struct {
 	store.SubscriptionSnapshotStatus
-	Files map[string][]byte `json:"files,omitempty"`
+	Files    map[string][]byte `json:"files,omitempty"`
+	Warnings []string          `json:"warnings,omitempty"`
 }
 
 func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) (PublishResult, error) {
@@ -41,16 +43,21 @@ func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) 
 	if err != nil {
 		return s.publishFailure(ctx, userID, err)
 	}
-	items, err := s.itemsForUser(ctx, user)
+	items, chainWarnings, err := s.itemsForUser(ctx, user)
 	if err != nil {
 		return PublishResult{}, err
 	}
 	if user.Expired || user.Disabled {
 		items = nil
 	}
-	nodes, err := s.compileNodes(ctx, items, user.UUID)
+	nodes, compileWarnings, err := s.compileNodes(ctx, items, user.UUID)
 	if err != nil {
 		return PublishResult{}, err
+	}
+	warnings := append(append([]string{}, chainWarnings...), compileWarnings...)
+	if len(warnings) > 0 {
+		log.Printf("sub: publish user %d (%s): %d item(s) skipped: %s",
+			user.ID, user.Name, len(warnings), strings.Join(warnings, "; "))
 	}
 	expandPolicy(&policy, nodes)
 	cachedRules, err := s.cachedTemplateRules(ctx, template, policy)
@@ -138,11 +145,11 @@ func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) 
 		sourceSHA = contentSHA(sourceSHA + "\n" + format + ":" + template.ContentSHA256)
 	}
 
-	status, err := s.st.PublishSubscriptionSnapshot(ctx, userID, sourceLabel, sourceSHA, files, ruleFiles)
+	status, err := s.st.PublishSubscriptionSnapshot(ctx, userID, sourceLabel, sourceSHA, files, ruleFiles, warnings)
 	if err != nil {
 		return s.publishFailure(ctx, userID, err)
 	}
-	return PublishResult{SubscriptionSnapshotStatus: status, Files: visible}, nil
+	return PublishResult{SubscriptionSnapshotStatus: status, Files: visible, Warnings: warnings}, nil
 }
 
 func (s *Server) publishFailure(ctx context.Context, userID int64, err error) (PublishResult, error) {
@@ -178,15 +185,15 @@ func (s *Server) resolvePolicy(ctx context.Context, profile store.SubscriptionPr
 	}
 }
 
-func (s *Server) itemsForUser(ctx context.Context, user *store.User) ([]proxyItem, error) {
+func (s *Server) itemsForUser(ctx context.Context, user *store.User) ([]proxyItem, []string, error) {
 	r := httptest.NewRequest("GET", "http://lattix.invalid/sub/compile", nil).WithContext(ctx)
 	nodes, err := s.st.ListNodes(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	assigned, err := s.st.UserNodeIDs(ctx, user.ID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	allowed := make(map[int64]bool, len(assigned))
 	for _, id := range assigned {
@@ -198,7 +205,8 @@ func (s *Server) itemsForUser(ctx context.Context, user *store.User) ([]proxyIte
 			active = append(active, node)
 		}
 	}
-	return s.subscriptionItems(r, user, active), nil
+	items, warnings := s.subscriptionItems(r, user, active)
+	return items, warnings, nil
 }
 
 type compiledNode struct {
@@ -209,8 +217,9 @@ type compiledNode struct {
 	QuanX       string
 }
 
-func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid string) ([]compiledNode, error) {
+func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid string) ([]compiledNode, []string, error) {
 	out := make([]compiledNode, 0, len(items))
+	var warnings []string
 	for _, item := range items {
 		credential := item.credential
 		if credential == "" {
@@ -218,10 +227,12 @@ func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid strin
 		}
 		clash, err := buildProxy(item.node, item.rc, credential)
 		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("节点「%s」构造 clash 代理失败：%v", item.node.Name, err))
 			continue
 		}
 		singbox, err := buildSbOutbound(item.node, item.rc, credential)
 		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("节点「%s」构造 sing-box 出站失败：%v", item.node.Name, err))
 			continue
 		}
 		country := ""
@@ -233,7 +244,7 @@ func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid strin
 			QuanX: buildQuanXLine(item.node, item.rc, credential),
 		})
 	}
-	return out, nil
+	return out, warnings, nil
 }
 
 func expandPolicy(policy *portablePolicy, nodes []compiledNode) {
@@ -302,6 +313,7 @@ func uniqueStrings(values []string) []string {
 
 func renderMihomo(policy portablePolicy, nodes []compiledNode) ([]byte, error) {
 	config := clashConfig{Proxies: []clashProxy{}, RuleProviders: map[string]clashRuleProvider{}}
+	config.DNS = defaultClashDNS()
 	for _, node := range nodes {
 		config.Proxies = append(config.Proxies, node.Clash)
 	}
@@ -311,8 +323,12 @@ func renderMihomo(policy portablePolicy, nodes []compiledNode) ([]byte, error) {
 			URL: group.URL, Interval: group.Interval, Tolerance: group.Tolerance,
 		})
 	}
+	needsGeodata := false
 	for _, rule := range policy.Rules {
 		config.Rules = append(config.Rules, fmt.Sprintf("%s,%s,%s", rule.Kind, rule.Value, rule.Outbound))
+		if rule.Kind == "GEOSITE" || rule.Kind == "GEOIP" {
+			needsGeodata = true
+		}
 	}
 	for _, remote := range policy.RemoteRule {
 		config.RuleProviders[remote.Name] = clashRuleProvider{
@@ -322,11 +338,42 @@ func renderMihomo(policy portablePolicy, nodes []compiledNode) ([]byte, error) {
 		config.Rules = append(config.Rules, "RULE-SET,"+remote.Name+","+remote.Outbound)
 	}
 	config.Rules = append(config.Rules, "MATCH,"+policy.Final)
+	if needsGeodata {
+		config.GeodataMode = true
+		config.GeoAutoUpdate = true
+		config.GeodataLoader = "standard"
+		config.GeoUpdateInterval = 24
+		config.GeoXURL = &clashGeoxURL{
+			Geoip:   "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-lite.dat",
+			Geosite: "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geosite.dat",
+			MMDB:    "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/geoip-lite.mmdb",
+			ASN:     "https://github.com/MetaCubeX/meta-rules-dat/releases/download/latest/GeoLite2-ASN.mmdb",
+		}
+	}
 	body, err := yaml.Marshal(config)
 	if err != nil {
 		return nil, err
 	}
 	return append([]byte("# Generated by Lattix. Template source and license are recorded in the panel.\n"), body...), nil
+}
+
+// defaultClashDNS 返回内置 fake-ip DNS 配置，使 GEOSITE/GEOIP 与 RULE-SET 规则
+// 在客户端无需额外配置即可生效。
+func defaultClashDNS() *clashDNS {
+	return &clashDNS{
+		Enable:       true,
+		IPv6:         false,
+		EnhancedMode: "fake-ip",
+		FakeIPRange:  "198.18.0.1/16",
+		FakeIPFilter: []string{
+			"*.lan", "*.localdomain", "*.example", "*.invalid", "*.local",
+			"*.home.arpa", "time.*.com", "ntp.*.com", "+.pool.ntp.org", "+.mcdn.bilivideo.cn",
+		},
+		DefaultNameserver: []string{"223.5.5.5", "119.29.29.29"},
+		Nameserver:        []string{"https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"},
+		Fallback:          []string{"https://dns.cloudflare.com/dns-query", "https://dns.google/dns-query", "tls://8.8.4.4:853"},
+		FallbackFilter:    &clashDNSFallbackFilter{GeoIP: true, GeoIPCode: "CN"},
+	}
 }
 
 func renderSingbox(policy portablePolicy, nodes []compiledNode) ([]byte, error) {

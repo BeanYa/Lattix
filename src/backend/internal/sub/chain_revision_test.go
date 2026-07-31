@@ -76,7 +76,7 @@ func TestSubscriptionUsesPublishedRevisionWhileEditApplies(t *testing.T) {
 	if item.node.ServerAddress != "old.example.com" || item.rc.Port != 10001 || item.rc.PublicKey != "published-key" {
 		t.Fatalf("subscription endpoint/config = address %q realized %+v", item.node.ServerAddress, item.rc)
 	}
-	compiled, err := New(st, nil, nil).compileNodes(ctx, []proxyItem{*item}, "11111111-1111-1111-1111-111111111111")
+	compiled, _, err := New(st, nil, nil).compileNodes(ctx, []proxyItem{*item}, "11111111-1111-1111-1111-111111111111")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,14 +124,14 @@ func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	user, _ := st.UserByID(ctx, userID)
-	items := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/sub", nil), user, nil)
+	items, _ := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/sub", nil), user, nil)
 	if len(items) != 1 || items[0].credential != added[0].AccessUUID || items[0].credential == user.UUID {
 		t.Fatalf("subscription credential = %+v", items)
 	}
 	if items[0].node.ServerAddress != "entry.example.com" || items[0].node.ServerID != exitID {
 		t.Fatalf("shared subscription endpoint = address %q region server %d", items[0].node.ServerAddress, items[0].node.ServerID)
 	}
-	compiled, err := New(st, nil, nil).compileNodes(ctx, items, user.UUID)
+	compiled, _, err := New(st, nil, nil).compileNodes(ctx, items, user.UUID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	disabled, _ := st.UserByID(ctx, userID)
-	if items := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/sub", nil), disabled, nil); len(items) != 0 {
+	if items, _ := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/sub", nil), disabled, nil); len(items) != 0 {
 		t.Fatalf("disabled user subscription contains %d items", len(items))
 	}
 }

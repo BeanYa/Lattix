@@ -910,6 +910,15 @@ export default function Users() {
             </Select>
             {previewData ? <CopyButton text={previewData.content} /> : null}
           </div>
+          {previewData?.warnings && previewData.warnings.length > 0 ? (
+            <Notice tone="warning" title="部分条目未纳入本次订阅">
+              <ul className="list-disc space-y-1 pl-4">
+                {previewData.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </Notice>
+          ) : null}
           {previewLoading ? (
             <p className="flex h-80 items-center justify-center text-sm text-muted-foreground">加载中…</p>
           ) : previewError ? (

@@ -22,7 +22,7 @@ func TestSubscriptionSnapshotPublicationIsAtomic(t *testing.T) {
 	}
 	first, err := st.PublishSubscriptionSnapshot(ctx, userID, "first", "source-1", formats, []SubscriptionRuleFile{{
 		Name: "remote-1", Format: "mihomo", SourceSHA256: "rule-version", ContentType: "text/yaml", Content: []byte("payload: []\n"),
-	}})
+	}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestSubscriptionSnapshotPublicationIsAtomic(t *testing.T) {
 	_, err = st.PublishSubscriptionSnapshot(ctx, userID, "broken", "source-2", formats, []SubscriptionRuleFile{
 		{Name: "duplicate", Format: "mihomo", SourceSHA256: "v2", ContentType: "text/yaml", Content: []byte("one")},
 		{Name: "duplicate", Format: "mihomo", SourceSHA256: "v2", ContentType: "text/yaml", Content: []byte("two")},
-	})
+	}, nil)
 	if err == nil {
 		t.Fatal("publication with duplicate rule unexpectedly succeeded")
 	}
