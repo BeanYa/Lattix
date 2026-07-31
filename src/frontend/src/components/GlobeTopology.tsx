@@ -148,19 +148,21 @@ export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
   }, [servers])
 
   const nodes = useMemo<EarthNode[]>(
-    () => points.map((point) => ({
-      id: point.id,
-      label: point.alias,
-      description: `${point.location}，${point.online ? '在线' : '离线'}`,
-      clusterKey: point.locationKey,
-      lat: point.lat,
-      lng: point.lng,
-      status: point.positioned ? (point.online ? 'online' : 'offline') : 'warning',
-      online: point.online,
-      countryCode: point.countryCode,
-      uploadRate: point.uploadRate,
-      downloadRate: point.downloadRate,
-    })),
+    () => points
+      .filter((point) => point.positioned)
+      .map((point) => ({
+        id: point.id,
+        label: point.alias,
+        description: `${point.location}，${point.online ? '在线' : '离线'}`,
+        clusterKey: point.locationKey,
+        lat: point.lat,
+        lng: point.lng,
+        status: (point.online ? 'online' : 'offline') as EarthNode['status'],
+        online: point.online,
+        countryCode: point.countryCode,
+        uploadRate: point.uploadRate,
+        downloadRate: point.downloadRate,
+      })),
     [points],
   )
   const links = useMemo(() => buildLinks(chains, points), [chains, points])

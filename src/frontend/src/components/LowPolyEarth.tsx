@@ -196,6 +196,9 @@ function clusterNodeLabels(nodes: EarthNode[]): EarthNodeLabel[] {
 function createNodeElement(item: object, palette: EarthPalette) {
   const node = item as EarthNodeLabel
   const members = node.members ?? [node]
+
+  // Outer root: CSS2DRenderer will overwrite its style.transform for positioning.
+  // Keep it free of any custom transform so positioning works correctly.
   const root = document.createElement('div')
   root.setAttribute('aria-hidden', 'true')
   root.style.pointerEvents = 'none'
@@ -205,9 +208,13 @@ function createNodeElement(item: object, palette: EarthPalette) {
   root.style.willChange = 'opacity, filter'
   root.style.zIndex = '100'
 
-  root.style.display = 'grid'
-  root.style.gap = '4px'
-  root.style.transform = `rotate(-${AXIAL_TILT_DEGREES}deg)`
+  // Inner content: counter-rotate the parent wrapper's axial tilt so labels
+  // always appear vertically upright regardless of globe orientation.
+  const content = document.createElement('div')
+  content.style.display = 'grid'
+  content.style.gap = '4px'
+  content.style.transform = `rotate(-${AXIAL_TILT_DEGREES}deg)`
+  root.append(content)
 
   const createBadge = (member: EarthNode) => {
     const badge = document.createElement('div')
@@ -279,7 +286,7 @@ function createNodeElement(item: object, palette: EarthPalette) {
 
   const hiddenBadges: HTMLElement[] = []
   const first = createBadge(members[0])
-  root.append(first.badge)
+  content.append(first.badge)
 
   if (members.length > 1) {
     root.dataset.interactive = 'true'
@@ -296,7 +303,7 @@ function createNodeElement(item: object, palette: EarthPalette) {
       badge.style.display = 'none'
       badge.setAttribute('aria-hidden', 'true')
       hiddenBadges.push(badge)
-      root.append(badge)
+      content.append(badge)
     })
 
     let expanded = false
