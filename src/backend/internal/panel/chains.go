@@ -911,6 +911,11 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	affectedUsers, err := s.st.SubscriptionUserIDsForChain(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	hops, err := s.st.ChainHops(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -950,6 +955,9 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 		if err := s.disp.ReconcileSharedEndpoint(r.Context(), chain.EndpointID); err != nil {
 			log.Printf("panel: reconcile shared endpoint %d after chain delete: %v", chain.EndpointID, err)
 		}
+	}
+	if s.subscriptions != nil {
+		s.subscriptions.EnqueueUsers(affectedUsers, s.panelBase(r))
 	}
 	s.audit(r, "chain.delete", nil, nil, map[string]any{"chain_id": id, "hops": len(hops)})
 	writeJSON(w, http.StatusOK, nil)

@@ -368,8 +368,6 @@ func run() error {
 		logging.LogWebSocketUpgrade(reqLog, r, ps.Operator)
 	}
 
-	ps.StartBackgroundTasks(runCtx)
-
 	mux := http.NewServeMux()
 
 	// Agent 控制通道（§5）。
@@ -442,7 +440,10 @@ func run() error {
 		spaHTML = idx
 	}
 	subSrv := sub.New(st, ps.PanelBase, spaHTML)
+	ps.SetSubscriptionService(subSrv)
+	ps.StartBackgroundTasks(runCtx)
 	mux.Handle("GET /sub/{token}", subSrv)
+	mux.HandleFunc("GET /sub/{token}/rules/{version}/{format}/{name}", subSrv.ServeRuleHTTP)
 
 	// 订阅公开 API（仅凭 token 鉴权，无需管理员登录）。
 	mux.HandleFunc("GET /api/sub/{token}/info", subSrv.HandleSubInfo)

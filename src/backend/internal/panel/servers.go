@@ -531,8 +531,22 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	)
 	if len(changes) > 0 {
 		s.audit(r, "server.updated", &sid, nil, changes)
+		if s.subscriptions != nil && subscriptionRelevantServerChange(changes) {
+			if err := s.subscriptions.EnqueueUsersForServer(r.Context(), id, s.panelBase(r)); err != nil {
+				log.Printf("panel: enqueue subscriptions for server %d: %v", id, err)
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, afterDTO)
+}
+
+func subscriptionRelevantServerChange(changes map[string]any) bool {
+	for _, key := range []string{"alias", "address", "tags", "country_code", "location"} {
+		if _, ok := changes[key]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // checkPortsShrink 校验端口段收窄后存量使用不越界（§21）：

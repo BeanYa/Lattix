@@ -3,18 +3,24 @@
 package sub
 
 import (
+	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"lattix/backend/internal/store"
 	"lattix/shared"
+	external "lattix/shared/requester"
 )
 
 // Server 实现订阅端点。
@@ -22,6 +28,17 @@ type Server struct {
 	st      *store.Store
 	base    func(*http.Request) string // 面板对外地址（落地页绝对链接，同 panel.PanelBase 判定链）
 	spaHTML []byte                     // 内嵌前端 index.html（浏览器访问时返回 SPA 壳）
+	files   external.FileRequester
+	refresh sync.Mutex
+	publish sync.Mutex
+
+	queueMu   sync.Mutex
+	queued    map[int64]string
+	queueWake chan struct{}
+	queueWG   sync.WaitGroup
+	startOnce sync.Once
+	baseMu    sync.RWMutex
+	lastBase  string
 }
 
 // New 创建订阅服务；base 返回请求对应的面板对外地址（可为 nil，落地页退回请求推断）。
@@ -36,7 +53,13 @@ func New(st *store.Store, base func(*http.Request) string, spaHTML []byte) *Serv
 			return fmt.Sprintf("%s://%s", scheme, r.Host)
 		}
 	}
-	return &Server{st: st, base: base, spaHTML: spaHTML}
+	server := &Server{
+		st: st, base: base, spaHTML: spaHTML,
+		files:  external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Second}},
+		queued: make(map[int64]string), queueWake: make(chan struct{}, 1),
+	}
+	server.ensureBuiltInTemplateSources(context.Background())
+	return server
 }
 
 // setSubHeaders 写订阅通用响应头（§9）：
@@ -138,15 +161,27 @@ type clashProxy struct {
 }
 
 type clashProxyGroup struct {
-	Name    string   `yaml:"name"`
-	Type    string   `yaml:"type"`
-	Proxies []string `yaml:"proxies"`
+	Name      string   `yaml:"name"`
+	Type      string   `yaml:"type"`
+	Proxies   []string `yaml:"proxies"`
+	URL       string   `yaml:"url,omitempty"`
+	Interval  int      `yaml:"interval,omitempty"`
+	Tolerance int      `yaml:"tolerance,omitempty"`
+}
+
+type clashRuleProvider struct {
+	Type     string `yaml:"type"`
+	Behavior string `yaml:"behavior"`
+	URL      string `yaml:"url"`
+	Path     string `yaml:"path"`
+	Interval int    `yaml:"interval"`
 }
 
 type clashConfig struct {
-	Proxies     []clashProxy      `yaml:"proxies"`
-	ProxyGroups []clashProxyGroup `yaml:"proxy-groups"`
-	Rules       []string          `yaml:"rules"`
+	Proxies       []clashProxy                 `yaml:"proxies"`
+	ProxyGroups   []clashProxyGroup            `yaml:"proxy-groups"`
+	RuleProviders map[string]clashRuleProvider `yaml:"rule-providers,omitempty"`
+	Rules         []string                     `yaml:"rules"`
 }
 
 // proxyGroupName 是 select 组名，MATCH 规则指向它。
@@ -187,7 +222,7 @@ func (s *Server) assignedActiveNodes(r *http.Request) (*store.User, []store.Node
 // 浏览器（Accept 含 text/html 且无 ?format=）返回 SPA 壳（index.html）。
 // 有效停权态（expired=1 或 disabled=1）的用户订阅照常返回但节点为空。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	user, nodes, err := s.assignedActiveNodes(r)
+	user, err := s.st.UserBySubToken(r.Context(), r.PathValue("token"))
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
@@ -198,40 +233,75 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setSubHeaders(w, r, user)
 
-	// 确定输出格式：?format= 参数优先 > UA 识别 > 默认 links。
 	format := r.URL.Query().Get("format")
 	if format == "" {
 		format = detectFormat(r)
 	}
-
-	// 浏览器访问（无 format 参数 + Accept 含 text/html）→ SPA 落地页。
 	if format == "browser" {
 		s.serveSPA(w)
 		return
 	}
-
-	if user.Expired || user.Disabled {
-		nodes = nil // 有效停权态：节点为空
+	if format != "clash" && format != "singbox" && format != "quanx" && format != "quanx-config" && format != "links" {
+		format = "links"
 	}
-	items := s.subscriptionItems(r, user, nodes)
-	// 过滤 dokodemo-door（端口转发，客户端无法消费）。
-	filtered := make([]proxyItem, 0, len(items))
-	for _, it := range items {
-		if it.node.Protocol != shared.ProtocolDokodemo {
-			filtered = append(filtered, it)
+	file, err := s.st.PublishedSubscriptionFile(r.Context(), user.ID, format)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			w.Header().Set("Retry-After", "30")
+			http.Error(w, "subscription snapshot has not been published\n", http.StatusServiceUnavailable)
+			return
 		}
+		http.Error(w, err.Error()+"\n", http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", file.ContentType)
+	w.Header().Set("X-Lattix-Subscription-Revision", strconv.FormatInt(file.Revision, 10))
+	w.Header().Set("Last-Modified", file.GeneratedAt.UTC().Format(http.TimeFormat))
+	sum := sha256.Sum256(file.Content)
+	w.Header().Set("ETag", `"`+hex.EncodeToString(sum[:])+`"`)
+	_, _ = w.Write(file.Content)
+}
 
-	switch format {
-	case "clash":
-		s.serveClash(w, r, user, filtered)
-	case "singbox":
-		s.serveSingbox(w, r, user, filtered)
-	case "quanx":
-		s.serveQuanX(w, r, user, filtered)
-	default: // "links" 及未知格式
-		s.serveLinks(w, r, user, filtered)
+// ServeRuleHTTP serves an immutable, client-native rule artifact pinned by its
+// source hash. Access is scoped by the same subscription token as the config.
+func (s *Server) ServeRuleHTTP(w http.ResponseWriter, r *http.Request) {
+	user, err := s.st.UserBySubToken(r.Context(), r.PathValue("token"))
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, store.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error()+"\n", status)
+		return
 	}
+	version := r.PathValue("version")
+	format := r.PathValue("format")
+	name := r.PathValue("name")
+	if len(version) != 64 || !validHex(version) ||
+		(format != "mihomo" && format != "singbox" && format != "quanx") || !safeTemplateID.MatchString(name) {
+		http.Error(w, "invalid rule artifact path\n", http.StatusBadRequest)
+		return
+	}
+	file, err := s.st.SubscriptionRuleFile(r.Context(), user.ID, version, format, name)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, store.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, err.Error()+"\n", status)
+		return
+	}
+	w.Header().Set("Content-Type", file.ContentType)
+	w.Header().Set("X-Lattix-Subscription-Revision", strconv.FormatInt(file.Revision, 10))
+	w.Header().Set("Last-Modified", file.GeneratedAt.UTC().Format(http.TimeFormat))
+	w.Header().Set("ETag", `"`+version+`-`+format+`"`)
+	w.Header().Set("Cache-Control", "private, max-age=21600, immutable")
+	_, _ = w.Write(file.Content)
+}
+
+func validHex(value string) bool {
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 // serveSPA 返回内嵌的 index.html（SPA 壳），前端 React Router 匹配 /sub/:token 渲染落地页。
@@ -440,7 +510,7 @@ func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allow
 		}
 		rc.Port = port
 		entryNode := store.Node{ID: snapshot.ServiceNodeID, Name: snapshot.Name,
-			ServerID: endpoint.ServerID, ServerAlias: entrySrv.Alias, ServerAddress: entrySrv.Address,
+			ServerID: snapshot.ServiceServerID, ServerAlias: entrySrv.Alias, ServerAddress: entrySrv.Address,
 			Protocol: shared.ProtocolVLESS, ConfigTemplate: endpoint.ConfigTemplate,
 			RealizedConfig: endpoint.RealizedConfig, Status: store.NodeStatusActive}
 		return &proxyItem{node: entryNode, rc: rc, credential: assignment.AccessUUID}, nil

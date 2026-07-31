@@ -4,6 +4,7 @@ import {
   LayoutDashboardIcon,
   LogOutIcon,
   MenuIcon,
+  FileCode2Icon,
   RouteIcon,
   ScrollTextIcon,
   ServerIcon,
@@ -27,6 +28,7 @@ const navItems = [
   { to: '/servers', activePrefix: '/servers', label: '服务器', icon: ServerIcon, end: false },
   { to: '/chains', activePrefix: '/chains', label: '链路', icon: RouteIcon, end: false },
   { to: '/users', activePrefix: '/users', label: '用户', icon: UsersIcon, end: false },
+  { to: '/subscription-templates', activePrefix: '/subscription-templates', label: '订阅模板', icon: FileCode2Icon, end: false },
   { to: '/logs/operations', activePrefix: '/logs', label: '日志', icon: ScrollTextIcon, end: false },
   { to: '/settings', activePrefix: '/settings', label: '设置', icon: SettingsIcon, end: false },
 ]

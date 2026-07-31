@@ -33,11 +33,14 @@ type Dispatcher struct {
 
 	// DestCandidates 是面板内置的 dest 白名单（§6 预检 fallback）：链编排下发
 	// apply_node/portal 时携带（panel 初始化时注入，与单机节点同一份）。
-	DestCandidates   []string
-	PanelVersion     string
-	PanelPublicURL   string
-	AgentReleaseBase string
-	PanelLifecycle   func() shared.PanelLifecycleSnapshot
+	DestCandidates      []string
+	PanelVersion        string
+	PanelPublicURL      string
+	AgentReleaseBase    string
+	PanelLifecycle      func() shared.PanelLifecycleSnapshot
+	OnNodePublished     func(context.Context, int64) error
+	OnChainPublished    func(context.Context, int64) error
+	OnEndpointPublished func(context.Context, int64) error
 
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
@@ -806,6 +809,10 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			realized, _ := json.Marshal(p.RealizedConfig)
 			if err := d.st.SetSharedEndpointActive(ctx, p.EndpointID, realized); err != nil {
 				log.Printf("dispatch: shared endpoint %d active: %v", p.EndpointID, err)
+			} else if d.OnEndpointPublished != nil {
+				if err := d.OnEndpointPublished(ctx, p.EndpointID); err != nil {
+					log.Printf("dispatch: enqueue subscriptions for shared endpoint %d: %v", p.EndpointID, err)
+				}
 			}
 			return
 		}
@@ -814,6 +821,10 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 		if p.NodeID != 0 {
 			if err := d.st.SetNodeActive(ctx, p.NodeID, realized); err != nil {
 				log.Printf("dispatch: node %d active: %v", p.NodeID, err)
+			} else if d.OnNodePublished != nil {
+				if err := d.OnNodePublished(ctx, p.NodeID); err != nil {
+					log.Printf("dispatch: enqueue subscriptions for node %d: %v", p.NodeID, err)
+				}
 			}
 			log.Printf("dispatch: server %d: node %d active (command %d)", serverID, p.NodeID, cmdID)
 			d.advanceChainByNode(ctx, p.NodeID) // 链出口业务就绪 → 推进链编排（§21 阶段 2 起）

@@ -178,12 +178,10 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
 
 ## 9. 订阅
 
-`GET /sub/{sub_token}` → 返回 **mihomo（Clash.Meta）格式 YAML**；请求 `Accept` 含 `text/html`（浏览器）时改为返回**订阅落地页**（自包含 HTML，不依赖前端构建产物与任何 CDN/外网资源，token 即鉴权，无效 404）：已用流量 ↑/↓、有效期（或"长期"）、节点数、YAML/links 订阅地址复制按钮、订阅地址二维码（内嵌 qrcode-generator，MIT）、mihomo 系一键导入（`clash://` / `mihomo://install-config?url=`）；已到期用户显示"已到期"，被停用用户显示"已停用"（§16）。`GET /sub/{sub_token}/links`（§14）不分流。
+`GET /sub/{sub_token}` 按 User-Agent 或 `format` 返回 Mihomo、sing-box、Quantumult X 节点、Quantumult X 完整配置或 base64 分享链接。请求 `Accept` 含 `text/html`（浏览器）时返回订阅落地页。生成、模板缓存、规则制品和原子发布的完整约定见 [订阅分流与模板](subscription-routing-design.md)。
 
-- 目标客户端：mihomo 内核系（Clash Verge / Clash Party / FlClash 等）。原版 Clash 不支持 VLESS+Reality，不在目标范围。
-- 内容：proxies 列表（每条已分配链一项，`type: vless`，`server` 取入口 `servers.address`，端口和
-  Reality 参数取共享 Endpoint，UUID 取该链 assignment 的 `access_uuid`）+ 一个 `select` 类型
-  proxy-group + `MATCH` 规则。独立节点仍使用 `users.uuid`。
+- 目标客户端：Mihomo 内核系、sing-box 和 Quantumult X。原版 Clash 不支持 VLESS+Reality，不在目标范围。
+- 内容：Lattix 节点、用户凭据和链路端点填入用户选择的分流策略；共享 Endpoint 的连接地址和端口取入口，凭据取该链 assignment 的 `access_uuid`，地区归属取出口。Mihomo、sing-box 与 Quantumult X 使用各自结构化渲染器，不做订阅格式互转；独立节点仍使用 `users.uuid`。
 - 链路命名在创建时解析并固化；服务器资料或自动端口后续变化不自动重命名。默认模板：
   直连 `{{COUNTRY_FLAG}}{{LOCATION}}-Direct`，中转 `{{EXIT.COUNTRY_FLAG}}-Out`。
 - 全局变量 `ID/NAME/COUNTRY/COUNTRY_CODE/COUNTRY_FLAG/LOCATION/ADDRESS/TAG[n]` 取客户端实际连接的服务器：
@@ -195,9 +193,9 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
   未知变量/属性、非法或越界索引、缺失服务器资料、空结果和超长结果均拒绝创建并定位变量。
   名称中使用自动 `PORT` 时仅提示其会解析为 `auto`，不阻止创建。
 - **（自 0.0.2 之后迭代，§21）**：引入链后，proxies 条目的 `server`/端口取链**入口**的 address 与 public_port（非 1:1 映射时），public-key/short-id/UUID 取链**出口**；命名中的别名与端口取入口。链 degraded 不剔除入口条目，靠客户端测速规避。
-- **响应头**：`/sub/{token}` 与 `/sub/{token}/links` 均返回 `subscription-userinfo: upload=<bytes>; download=<bytes>[; expire=<unix秒>]`（upload/download 取 `traffic` 表用户维度 node_id=0 的跨服务器累计；仅设了有效期才带 expire；无流量配额故无 total）与 `profile-update-interval: 24`（客户端按天自动刷新）。
+- **响应头**：`/sub/{token}` 的所有文件格式返回 `subscription-userinfo`，包含 upload、download 以及可选 total、expire、reset_day、plan_name、app_url；同时返回 `profile-update-interval`。
 - **用户有效期**：创建或更新用户可带 `expires_at`；过去时间返回 `HTTP 200 + INVALID_ARGUMENT`。`POST /api/user/update` 可修改或清除（null = 长期；省略字段保持不变）。列表 DTO 带 `expires_at`/`expired`/`disabled`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `user.remove`（显式 nodes 载荷；已 disabled 的用户只补记标记不重复扇出）；管理员延长/清除有效期（expired 1→0）→ 扇出 `user.add` 恢复（disabled 用户除外，见 §16 有效停权态）。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`node.apply` 的 `NodeUserUUIDs` 不下发 expired/disabled 用户。
-- `vless://` 分享链接集合端点已实现：`GET /sub/{token}/links`（§14，仅含分配的 active 节点）。
+- 分享链接集合已实现：`GET /sub/{token}?format=links`（§14，仅含分配的 active 节点）。
 
 ## 10. 面板页面与 API
 
@@ -287,7 +285,7 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，由面板 Agent 设置�
 | 主机遥测 | ✅ 已实现（见 §13） |
 | 逐节点用户分配 | ✅ 已实现（见 §16）：默认全关，用户勾选节点 |
 | 全协议向导 | ✅ 已实现（见 §15）：xray 全部 inbound 协议 |
-| `vless://` 链接订阅 | ✅ 已实现：GET /sub/{token}/links 返回 base64 链接集合（vless/trojan/vmess/ss） |
+| `vless://` 链接订阅 | ✅ 已实现：GET /sub/{token}?format=links 返回 base64 链接集合（vless/trojan/vmess/ss） |
 | 订阅二维码 | ✅ 已实现：用户列表扫码导入 |
 | xray 版本升级管理 | ✅ 已实现（见 §18） |
 | 事件告警与 SQLite 备份 | ✅ 已实现（见 §19）：Webhook + Telegram，VACUUM INTO 下载 |

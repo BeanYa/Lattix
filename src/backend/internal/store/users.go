@@ -132,6 +132,11 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	defer tx.Rollback()
 	for _, q := range []string{
 		`DELETE FROM user_chain_assignments WHERE user_id = ?`,
+		`DELETE FROM subscription_rule_files WHERE snapshot_id IN (SELECT id FROM subscription_snapshots WHERE user_id = ?)`,
+		`DELETE FROM subscription_files WHERE snapshot_id IN (SELECT id FROM subscription_snapshots WHERE user_id = ?)`,
+		`DELETE FROM published_subscription_snapshots WHERE user_id = ?`,
+		`DELETE FROM subscription_snapshots WHERE user_id = ?`,
+		`DELETE FROM user_subscription_profiles WHERE user_id = ?`,
 		`DELETE FROM user_nodes WHERE user_id = ?`,
 		`DELETE FROM users WHERE id = ?`,
 	} {

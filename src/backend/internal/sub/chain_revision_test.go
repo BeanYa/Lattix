@@ -2,8 +2,10 @@ package sub
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"lattix/backend/internal/store"
@@ -20,7 +22,7 @@ func TestSubscriptionUsesPublishedRevisionWhileEditApplies(t *testing.T) {
 
 	entryID, _ := st.CreateServer(ctx, "published-entry", "old.example.com", "tok-entry", store.MachineTypeDirect, "", "", "US", "")
 	desiredEntryID, _ := st.CreateServer(ctx, "desired-entry", "new.example.com", "tok-new", store.MachineTypeDirect, "", "", "US", "")
-	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "tok-exit", store.MachineTypeDirect, "", "", "US", "")
+	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "tok-exit", store.MachineTypeDirect, "", "", "JP", "")
 
 	publishedConfig, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Network: shared.NetworkTCP, Template: json.RawMessage(`{}`)})
 	desiredConfig, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolSocks, Template: json.RawMessage(`{}`)})
@@ -74,6 +76,13 @@ func TestSubscriptionUsesPublishedRevisionWhileEditApplies(t *testing.T) {
 	if item.node.ServerAddress != "old.example.com" || item.rc.Port != 10001 || item.rc.PublicKey != "published-key" {
 		t.Fatalf("subscription endpoint/config = address %q realized %+v", item.node.ServerAddress, item.rc)
 	}
+	compiled, err := New(st, nil, nil).compileNodes(ctx, []proxyItem{*item}, "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compiled) != 1 || compiled[0].CountryCode != "JP" {
+		t.Fatalf("compiled chain region = %+v, want exit country JP", compiled)
+	}
 }
 
 func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
@@ -83,9 +92,10 @@ func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "entry", "entry.example.com", "token", store.MachineTypeDirect, "", "", "US", "")
+	entryID, _ := st.CreateServer(ctx, "entry", "entry.example.com", "token-entry", store.MachineTypeDirect, "", "", "US", "")
+	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "token-exit", store.MachineTypeDirect, "", "", "JP", "")
 	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
-	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
+	endpoint, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 443, "profile", config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,10 +104,13 @@ func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	deployment, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
-		Name: "shared", ServiceServerID: serverID, ServiceProtocol: shared.ProtocolVLESS,
+		Name: "shared", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolVLESS,
 		ServiceConfig: config, EndpointID: endpoint.ID, ServiceUUID: "service",
 		TrafficMultiplierMilli: 1000,
-		Hops:                   []store.InitialChainHop{{ServerID: serverID, Role: store.HopRoleExit}},
+		Hops: []store.InitialChainHop{
+			{ServerID: entryID, Role: store.HopRoleEntry},
+			{ServerID: exitID, Role: store.HopRoleExit},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -114,6 +127,39 @@ func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
 	items := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/sub", nil), user, nil)
 	if len(items) != 1 || items[0].credential != added[0].AccessUUID || items[0].credential == user.UUID {
 		t.Fatalf("subscription credential = %+v", items)
+	}
+	if items[0].node.ServerAddress != "entry.example.com" || items[0].node.ServerID != exitID {
+		t.Fatalf("shared subscription endpoint = address %q region server %d", items[0].node.ServerAddress, items[0].node.ServerID)
+	}
+	compiled, err := New(st, nil, nil).compileNodes(ctx, items, user.UUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compiled) != 1 || compiled[0].CountryCode != "JP" ||
+		compiled[0].Clash.UUID != added[0].AccessUUID || compiled[0].Singbox.UUID != added[0].AccessUUID ||
+		!strings.Contains(compiled[0].QuanX, added[0].AccessUUID) {
+		t.Fatalf("compiled shared endpoint = %+v", compiled)
+	}
+	links, err := renderLinks(items, user.UUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(links)))
+	if err != nil || !strings.Contains(string(decoded), added[0].AccessUUID) {
+		t.Fatalf("shared links credential = %q, err %v", decoded, err)
+	}
+	for label, lookup := range map[string]func(context.Context) ([]int64, error){
+		"chain": func(ctx context.Context) ([]int64, error) {
+			return st.SubscriptionUserIDsForChain(ctx, deployment.ChainID)
+		},
+		"endpoint": func(ctx context.Context) ([]int64, error) { return st.SubscriptionUserIDsForEndpoint(ctx, endpoint.ID) },
+		"entry":    func(ctx context.Context) ([]int64, error) { return st.SubscriptionUserIDsForServer(ctx, entryID) },
+		"exit":     func(ctx context.Context) ([]int64, error) { return st.SubscriptionUserIDsForServer(ctx, exitID) },
+	} {
+		ids, err := lookup(ctx)
+		if err != nil || len(ids) != 1 || ids[0] != userID {
+			t.Fatalf("%s affected users = %v, err %v", label, ids, err)
+		}
 	}
 	if err := st.SetUserDisabled(ctx, userID, true); err != nil {
 		t.Fatal(err)

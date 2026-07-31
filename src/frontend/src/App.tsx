@@ -17,6 +17,7 @@ const Servers = lazy(() => import('@/pages/Servers'))
 const Settings = lazy(() => import('@/pages/Settings'))
 const Users = lazy(() => import('@/pages/Users'))
 const Subscription = lazy(() => import('@/pages/Subscription'))
+const SubscriptionTemplates = lazy(() => import('@/pages/SubscriptionTemplates'))
 
 function SuspendedRoute({ children, fullPage = false }: {
   children: ReactElement
@@ -76,6 +77,9 @@ function ProtectedRoutes() {
             </Route>
             <Route path="/users">
               <SuspendedRoute><Users /></SuspendedRoute>
+            </Route>
+            <Route path="/subscription-templates">
+              <SuspendedRoute><SubscriptionTemplates /></SuspendedRoute>
             </Route>
             <Route path="/logs/operations">
               <SuspendedRoute><LogsLayout><OperationLogs /></LogsLayout></SuspendedRoute>
