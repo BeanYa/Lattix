@@ -71,23 +71,25 @@ const (
 
 // 消息类型使用 domain.action，响应沿用对应请求的 Type。
 const (
-	TypeSessionOpen      = "agent.session.open"
-	TypeSessionReady     = "agent.session.ready"
-	TypeCredentialCommit = "agent.credential.commit"
-	TypeLifecycleChanged = "panel.lifecycle.changed"
-	TypeSettingsSync     = "agent.settings.sync"
-	TypeSettingsChanged  = "agent.settings.changed"
-	TypeApplyNode        = "node.apply"
-	TypeRemoveNode       = "node.remove"
-	TypeAddUser          = "user.add"
-	TypeRemoveUser       = "user.remove"
-	TypeUninstall        = "agent.uninstall"
-	TypeUpgradeXray      = "xray.upgrade"
-	TypeUpgradeAgent     = "agent.upgrade"
-	TypeTelemetry        = "telemetry.report"
-	TypeDriftReport      = "config.drift"
-	TypeApplyChainHop    = "chain-hop.apply"
-	TypeRemoveChainHop   = "chain-hop.remove"
+	TypeSessionOpen          = "agent.session.open"
+	TypeSessionReady         = "agent.session.ready"
+	TypeCredentialCommit     = "agent.credential.commit"
+	TypeLifecycleChanged     = "panel.lifecycle.changed"
+	TypeSettingsSync         = "agent.settings.sync"
+	TypeSettingsChanged      = "agent.settings.changed"
+	TypeApplyNode            = "node.apply"
+	TypeRemoveNode           = "node.remove"
+	TypeAddUser              = "user.add"
+	TypeRemoveUser           = "user.remove"
+	TypeUninstall            = "agent.uninstall"
+	TypeUpgradeXray          = "xray.upgrade"
+	TypeUpgradeAgent         = "agent.upgrade"
+	TypeTelemetry            = "telemetry.report"
+	TypeDriftReport          = "config.drift"
+	TypeApplyChainHop        = "chain-hop.apply"
+	TypeRemoveChainHop       = "chain-hop.remove"
+	TypeApplySharedEndpoint  = "shared-endpoint.apply"
+	TypeRemoveSharedEndpoint = "shared-endpoint.remove"
 )
 
 // NewMessageID 返回用于 request_id/trace_id 的 32 位小写十六进制随机值。
@@ -187,9 +189,36 @@ type UninstallPayload struct {
 // portal/forward 复用 RealizedConfig 的 port/public_key 字段上报生效值。
 type ApplyResultPayload struct {
 	NodeID         int64           `json:"node_id"`
+	EndpointID     int64           `json:"endpoint_id,omitempty"`
 	RealizedConfig *RealizedConfig `json:"realized_config,omitempty"`
 	HopID          int64           `json:"hop_id,omitempty"`
 	Kind           string          `json:"kind,omitempty"`
+}
+
+// ApplySharedEndpointPayload replaces the complete managed state of one
+// server-level VLESS+REALITY listener. Routes are grouped by chain while
+// Clients retain assignment-level identities for quota accounting.
+type ApplySharedEndpointPayload struct {
+	EndpointID     int64                 `json:"endpoint_id"`
+	Config         VirtualConfig         `json:"config"`
+	Clients        []ClientCredential    `json:"clients"`
+	Routes         []SharedEndpointRoute `json:"routes"`
+	DestCandidates []string              `json:"dest_candidates,omitempty"`
+	PortCandidates []int                 `json:"port_candidates,omitempty"`
+}
+
+type SharedEndpointRoute struct {
+	ChainID       int64          `json:"chain_id"`
+	Users         []string       `json:"users"`
+	Direct        bool           `json:"direct,omitempty"`
+	TargetAddress string         `json:"target_address,omitempty"`
+	TargetPort    int            `json:"target_port,omitempty"`
+	TunnelUUID    string         `json:"tunnel_uuid,omitempty"`
+	Target        RealizedConfig `json:"target,omitempty"`
+}
+
+type RemoveSharedEndpointPayload struct {
+	EndpointID int64 `json:"endpoint_id"`
 }
 
 // TelemetryPayload 是 telemetry 的载荷（§13 遥测，周期上报，无需回执）：
@@ -225,11 +254,12 @@ type HostMetrics struct {
 // TrafficCounter 是一个 Xray 实例自启动以来的绝对业务流量计数器（字节）。
 // Backend 持久化游标并计算增量，因而 WS 丢帧可由下一帧补齐且重发天然幂等。
 type TrafficCounter struct {
-	NodeID int64  `json:"node_id,omitempty"`
-	HopID  int64  `json:"hop_id,omitempty"`
-	User   string `json:"user,omitempty"`
-	Up     int64  `json:"up"`
-	Down   int64  `json:"down"`
+	NodeID     int64  `json:"node_id,omitempty"`
+	EndpointID int64  `json:"endpoint_id,omitempty"`
+	HopID      int64  `json:"hop_id,omitempty"`
+	User       string `json:"user,omitempty"`
+	Up         int64  `json:"up"`
+	Down       int64  `json:"down"`
 }
 
 // DriftPayload 是 drift_report 的载荷（§17）：配置文件被外部修改时为 true，
@@ -305,6 +335,7 @@ type ForwardSpec struct {
 	TargetAddress   string `json:"target_address"`
 	TargetPort      int    `json:"target_port"`
 	ViaTunnelDomain string `json:"via_tunnel_domain,omitempty"`
+	LocalOnly       bool   `json:"local_only,omitempty"`
 }
 
 // RemoveChainHopPayload 是 remove_chain_hop 的载荷（§21.1）：删链逐跳反向下发。

@@ -114,8 +114,10 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		return
 	}
 	revisionID := int64(0)
+	endpointID := chain.EndpointID
 	if revision, revisionErr := d.st.DesiredChainRevision(ctx, chainID); revisionErr == nil {
 		revisionID = revision.ID
+		endpointID = revision.Snapshot.EndpointID
 	}
 	pieces, err := d.chainPieces(ctx, chainID, revisionID)
 	if err != nil {
@@ -153,6 +155,18 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	node, err := d.st.NodeByID(ctx, exit.NodeID)
 	if err != nil {
 		log.Printf("dispatch: chain %d exit node %d: %v", chainID, exit.NodeID, err)
+		return
+	}
+	if endpointID != 0 && len(hops) == 1 {
+		if hops[0].Status != store.HopStatusActive {
+			if err := d.st.SetChainHopStatus(ctx, hops[0].ID, store.HopStatusActive, ""); err != nil {
+				return
+			}
+		}
+		if err := d.st.SetChainStatus(ctx, chainID, store.ChainStatusActive, ""); err != nil {
+			return
+		}
+		d.publishDesiredRevision(ctx, chainID, hops, *node)
 		return
 	}
 	switch node.Status {
@@ -300,7 +314,10 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			Tag:  shared.ChainForwardTag(hop.ID),
 			Port: hop.ForwardPort, // 0 = 自动（用户未指定的入口/中间跳）
 		}
-		if spec.Port == 0 {
+		if i == 0 && endpointID != 0 {
+			spec.LocalOnly = true
+		}
+		if spec.Port == 0 && !spec.LocalOnly {
 			spec.PortCandidates = listenCandidatesOf(servers[hop.ServerID])
 		}
 		reverse := hop.TunnelUUID != "" // 本跳 → 下一跳为反向链
@@ -382,6 +399,18 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 		return
 	}
 	d.cleanupPublishedRevision(ctx, previous, revision)
+	if previous != nil && previous.Snapshot.EndpointID != 0 &&
+		previous.Snapshot.EndpointID != revision.Snapshot.EndpointID {
+		if err := d.ReconcileSharedEndpoint(ctx, previous.Snapshot.EndpointID); err != nil {
+			log.Printf("dispatch: chain %d previous shared endpoint %d: %v",
+				chainID, previous.Snapshot.EndpointID, err)
+		}
+	}
+	if revision.Snapshot.EndpointID != 0 {
+		if err := d.ReconcileSharedEndpoint(ctx, revision.Snapshot.EndpointID); err != nil {
+			log.Printf("dispatch: chain %d shared endpoint %d: %v", chainID, revision.Snapshot.EndpointID, err)
+		}
+	}
 }
 
 func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) error {
@@ -409,7 +438,8 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 		}
 	}
 	previous, _ := d.st.PublishedChainRevision(ctx, chainID)
-	if len(revision.Snapshot.ServiceRealized) == 0 {
+	directShared := revision.Snapshot.EndpointID != 0 && len(revision.Snapshot.Hops) == 1
+	if len(revision.Snapshot.ServiceRealized) == 0 && !directShared {
 		var source json.RawMessage
 		if node, err := d.st.NodeByID(ctx, revision.Snapshot.ServiceNodeID); err == nil && len(node.RealizedConfig) > 0 {
 			source = node.RealizedConfig
@@ -447,7 +477,7 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 			revision.Snapshot.Hops[0].ForwardPort = realized.Port
 		}
 	}
-	if len(revision.Snapshot.Hops) == 0 || revision.Snapshot.Hops[0].ForwardPort == 0 {
+	if len(revision.Snapshot.Hops) == 0 || revision.Snapshot.Hops[0].ForwardPort == 0 && !directShared {
 		return fmt.Errorf("强制发布失败：入口 Agent 尚未确认可用于订阅的监听端口；请指定固定入口端口或等待 Agent 在线")
 	}
 	if err := d.st.UpdateChainRevision(ctx, revision.ID, store.RevisionStatusActiveUnconfirmed, "", revision.Snapshot); err != nil {
@@ -457,6 +487,17 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 		return err
 	}
 	d.cleanupPublishedRevision(ctx, previous, revision)
+	if previous != nil && previous.Snapshot.EndpointID != 0 &&
+		previous.Snapshot.EndpointID != revision.Snapshot.EndpointID {
+		if err := d.ReconcileSharedEndpoint(ctx, previous.Snapshot.EndpointID); err != nil {
+			return err
+		}
+	}
+	if revision.Snapshot.EndpointID != 0 {
+		if err := d.ReconcileSharedEndpoint(ctx, revision.Snapshot.EndpointID); err != nil {
+			return err
+		}
+	}
 	d.advanceChain(context.Background(), chainID)
 	return nil
 }

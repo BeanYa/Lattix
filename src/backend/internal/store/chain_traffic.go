@@ -4,19 +4,22 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
 const DefaultTrafficTimezone = "Asia/Shanghai"
 
 type TrafficCounterSnapshot struct {
-	NodeID int64
-	HopID  int64
-	User   string
-	Up     int64
-	Down   int64
+	NodeID     int64
+	EndpointID int64
+	HopID      int64
+	User       string
+	Up         int64
+	Down       int64
 }
 
 type ChainTraffic struct {
@@ -63,7 +66,34 @@ func (s *Store) ApplyTrafficSnapshot(ctx context.Context, serverID int64, instan
 			continue
 		}
 		if counter.User != "" {
-			if err := addTrafficTx(tx, 0, counter.User, up, down); err != nil {
+			if strings.HasPrefix(counter.User, "tunnel:") {
+				continue
+			}
+			userUUID, chainID, revisionID, multiplier, access, err := accessTrafficOwner(tx, serverID, counter.User)
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if !access {
+				userUUID = counter.User
+			}
+			if err := addTrafficTx(tx, 0, userUUID, up, down); err != nil {
+				return err
+			}
+			if access {
+				if err := addChainTrafficTx(tx, chainID, 0, revisionID, multiplier, up, down, usageDate, timezone); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+		if counter.EndpointID != 0 {
+			if _, err := tx.Exec(`INSERT INTO endpoint_traffic_totals (endpoint_id, up, down, updated_at)
+				VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(endpoint_id) DO UPDATE SET
+				up=up+excluded.up, down=down+excluded.down, updated_at=excluded.updated_at`,
+				counter.EndpointID, up, down); err != nil {
 				return err
 			}
 			continue
@@ -72,15 +102,17 @@ func (s *Store) ApplyTrafficSnapshot(ctx context.Context, serverID int64, instan
 			if err := addTrafficTx(tx, counter.NodeID, "", up, down); err != nil {
 				return err
 			}
-			chainID, exitHopID, revisionID, multiplier, err := publishedChainForCounter(tx, serverID, counter.NodeID, 0)
+			chainID, exitHopID, revisionID, multiplier, sharedEntry, err := publishedChainForCounter(tx, serverID, counter.NodeID, 0)
 			if err != nil {
 				if err == sql.ErrNoRows {
 					continue
 				}
 				return err
 			}
-			if err := addChainTrafficTx(tx, chainID, 0, revisionID, multiplier, up, down, usageDate, timezone); err != nil {
-				return err
+			if !sharedEntry {
+				if err := addChainTrafficTx(tx, chainID, 0, revisionID, multiplier, up, down, usageDate, timezone); err != nil {
+					return err
+				}
 			}
 			if exitHopID != 0 {
 				if err := addChainTrafficTx(tx, chainID, exitHopID, revisionID, multiplier, up, down, usageDate, timezone); err != nil {
@@ -89,7 +121,7 @@ func (s *Store) ApplyTrafficSnapshot(ctx context.Context, serverID int64, instan
 			}
 			continue
 		}
-		chainID, _, revisionID, multiplier, err := publishedChainForCounter(tx, serverID, 0, counter.HopID)
+		chainID, _, revisionID, multiplier, _, err := publishedChainForCounter(tx, serverID, 0, counter.HopID)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				continue
@@ -109,6 +141,8 @@ func trafficCounterKey(counter TrafficCounterSnapshot) string {
 		return "node:" + strconv.FormatInt(counter.NodeID, 10)
 	case counter.HopID > 0:
 		return "hop:" + strconv.FormatInt(counter.HopID, 10)
+	case counter.EndpointID > 0:
+		return "endpoint:" + strconv.FormatInt(counter.EndpointID, 10)
 	case counter.User != "":
 		return "user:" + counter.User
 	default:
@@ -147,7 +181,7 @@ func addTrafficTx(tx *sql.Tx, nodeID int64, user string, up, down int64) error {
 	return err
 }
 
-func publishedChainForCounter(tx *sql.Tx, serverID, nodeID, hopID int64) (chainID, exitHopID, revisionID int64, multiplier int, err error) {
+func publishedChainForCounter(tx *sql.Tx, serverID, nodeID, hopID int64) (chainID, exitHopID, revisionID int64, multiplier int, sharedEntry bool, err error) {
 	query := `SELECT c.id, c.published_revision_id, c.traffic_multiplier_milli, r.snapshot FROM chains c
 		JOIN chain_revisions r ON r.id=c.published_revision_id
 		WHERE c.deleted_at IS NULL`
@@ -159,7 +193,7 @@ func publishedChainForCounter(tx *sql.Tx, serverID, nodeID, hopID int64) (chainI
 	query += ` ORDER BY c.id`
 	rows, err := tx.Query(query, args...)
 	if err != nil {
-		return 0, 0, 0, 0, err
+		return 0, 0, 0, 0, false, err
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -168,7 +202,7 @@ func publishedChainForCounter(tx *sql.Tx, serverID, nodeID, hopID int64) (chainI
 		var milli int
 		var raw string
 		if err := rows.Scan(&id, &publishedID, &milli, &raw); err != nil {
-			return 0, 0, 0, 0, err
+			return 0, 0, 0, 0, false, err
 		}
 		var snapshot ChainRevisionSnapshot
 		if err := json.Unmarshal([]byte(raw), &snapshot); err != nil || len(snapshot.Hops) == 0 {
@@ -176,20 +210,37 @@ func publishedChainForCounter(tx *sql.Tx, serverID, nodeID, hopID int64) (chainI
 		}
 		exit := snapshot.Hops[len(snapshot.Hops)-1]
 		if nodeID != 0 && snapshot.ServiceNodeID == nodeID && snapshot.ServiceServerID == serverID {
-			return id, exit.HopID, publishedID, milli, nil
+			return id, exit.HopID, publishedID, milli, snapshot.EndpointID != 0, nil
 		}
 		if hopID != 0 {
 			for _, hop := range snapshot.Hops {
 				if hop.HopID == hopID && hop.ServerID == serverID {
-					return id, exit.HopID, publishedID, milli, nil
+					return id, exit.HopID, publishedID, milli, snapshot.EndpointID != 0, nil
 				}
 			}
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return 0, 0, 0, 0, err
+		return 0, 0, 0, 0, false, err
 	}
-	return 0, 0, 0, 0, sql.ErrNoRows
+	return 0, 0, 0, 0, false, sql.ErrNoRows
+}
+
+func accessTrafficOwner(tx *sql.Tx, serverID int64, identity string) (userUUID string,
+	chainID, revisionID int64, multiplier int, access bool, err error) {
+	if !strings.HasPrefix(identity, "access:") {
+		return "", 0, 0, 0, false, nil
+	}
+	assignmentID, parseErr := strconv.ParseInt(strings.TrimPrefix(identity, "access:"), 10, 64)
+	if parseErr != nil || assignmentID <= 0 {
+		return "", 0, 0, 0, false, sql.ErrNoRows
+	}
+	err = tx.QueryRow(`SELECT u.uuid, c.id, c.published_revision_id, c.traffic_multiplier_milli
+		FROM user_chain_assignments a JOIN users u ON u.id=a.user_id
+		JOIN chains c ON c.id=a.chain_id JOIN shared_endpoints e ON e.id=c.endpoint_id
+		WHERE a.id=? AND e.server_id=? AND c.published_revision_id!=0 AND c.deleted_at IS NULL`,
+		assignmentID, serverID).Scan(&userUUID, &chainID, &revisionID, &multiplier)
+	return userUUID, chainID, revisionID, multiplier, err == nil, err
 }
 
 func addChainTrafficTx(tx *sql.Tx, chainID, hopID, revisionID int64, multiplier int, up, down int64, usageDate, timezone string) error {

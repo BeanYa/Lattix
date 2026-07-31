@@ -1,7 +1,7 @@
 import type { Chain } from '@/lib/types'
 
 export interface LinkOption {
-  nodeId: number
+	chainId: number
   name: string
   type: 'direct' | 'relay'
   detail: string
@@ -13,7 +13,7 @@ export function buildLinkOptions(chains: Chain[]): LinkOption[] {
     if (!chain.service_node_id || chain.hops.length === 0) return []
     const type: LinkOption['type'] = chain.hops.length === 1 ? 'direct' : 'relay'
     return [{
-      nodeId: chain.service_node_id,
+			chainId: chain.id,
       name: chain.name || `${type === 'direct' ? '直连' : '中转'} #${chain.id}`,
       type,
       detail: chain.hops.map((hop) => hop.server_alias).join(' → '),

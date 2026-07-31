@@ -1,9 +1,11 @@
 package panel
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -60,6 +62,10 @@ type chainDTO struct {
 	CreatedAt           time.Time              `json:"created_at"`
 	Hops                []chainHopDTO          `json:"hops"`
 	ServiceNodeID       int64                  `json:"service_node_id"`
+	EndpointID          int64                  `json:"endpoint_id"`
+	EntryPort           int                    `json:"entry_port"`
+	EndpointStatus      string                 `json:"endpoint_status,omitempty"`
+	EndpointError       string                 `json:"endpoint_error,omitempty"`
 	TrafficMultiplier   string                 `json:"traffic_multiplier"`
 	Traffic             *chainTrafficDTO       `json:"traffic,omitempty"`
 	PublishedRevisionID int64                  `json:"published_revision_id"`
@@ -78,6 +84,7 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 	}
 	out := chainDTO{ID: c.ID, Name: c.Name, Status: c.Status, Error: c.Error, CreatedAt: c.CreatedAt,
 		ServiceNodeID: c.ServiceNodeID, TrafficMultiplier: formatTrafficMultiplier(c.TrafficMultiplierMilli),
+		EndpointID:          c.EndpointID,
 		PublishedRevisionID: c.PublishedRevisionID, DesiredRevisionID: c.DesiredRevisionID,
 		Hops: []chainHopDTO{}, RevisionTasks: []chainRevisionTaskDTO{}}
 	revisionID := c.PublishedRevisionID
@@ -86,6 +93,9 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 	}
 	if revisionID != 0 {
 		if revision, err := s.st.ChainRevisionByID(r.Context(), revisionID); err == nil {
+			if revision.Snapshot.EndpointID != 0 {
+				out.EndpointID = revision.Snapshot.EndpointID
+			}
 			out.RevisionStatus = revision.Status
 			out.RevisionForced = revision.Forced
 			out.ServiceConfig = append(json.RawMessage(nil), revision.Snapshot.ServiceConfig...)
@@ -98,6 +108,13 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 					Phase: task.Phase, Action: task.Action, Kind: task.Kind, HopID: task.HopID,
 					ServerID: task.ServerID, Status: task.Status, Error: task.Error})
 			}
+		}
+	}
+	if out.EndpointID != 0 {
+		if endpoint, err := s.st.SharedEndpointByID(r.Context(), out.EndpointID); err == nil {
+			out.EntryPort = endpoint.Port
+			out.EndpointStatus = endpoint.Status
+			out.EndpointError = endpoint.Error
 		}
 	}
 	if len(hops) == 0 && c.PublishedRevisionID != 0 {
@@ -147,6 +164,9 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 			dto.ServerAlias = srv.Alias
 		}
 		out.Hops = append(out.Hops, dto)
+	}
+	if out.EntryPort == 0 && len(out.Hops) > 0 {
+		out.EntryPort = out.Hops[0].ForwardPort
 	}
 	return out, nil
 }
@@ -303,6 +323,41 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 
 	// Build the complete initial deployment before exposing it to the scheduler.
 	vc := buildVirtualConfig(req.Node)
+	endpointID := int64(0)
+	serviceUUID := ""
+	if vc.Protocol == shared.ProtocolVLESS {
+		endpointConfig := vc
+		endpointConfig.Port = entryPort
+		endpointConfig.StaticClients = nil
+		endpointJSON, err := json.Marshal(endpointConfig)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		profile := endpointConfig
+		profile.Port = 0
+		profileJSON, _ := json.Marshal(profile)
+		profileHash := fmt.Sprintf("%x", sha256.Sum256(profileJSON))
+		endpoint, _, err := s.st.EnsureSharedEndpoint(r.Context(), entrySrv.ID, vc.Protocol,
+			entryPort, profileHash, endpointJSON)
+		if err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, store.ErrEndpointConflict) {
+				status = http.StatusConflict
+			}
+			writeError(w, status, err.Error())
+			return
+		}
+		endpointID = endpoint.ID
+		serviceUUID = uuid.NewString()
+		vc.StaticClients = []shared.ClientCredential{{ID: serviceUUID, Email: "tunnel:" + serviceUUID}}
+		// A one-hop shared chain exits directly from the endpoint and does not
+		// need a second public listener on the same server.
+		if len(servers) == 1 {
+			vc.Port = 0
+			req.Node.Port = nil
+		}
+	}
 	vcJSON, err := json.Marshal(vc)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -320,7 +375,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			role = store.HopRoleExit
 		}
 		hopForwardPort := 0
-		if role == store.HopRoleEntry || len(servers) == 1 {
+		if (role == store.HopRoleEntry || len(servers) == 1) && endpointID == 0 {
 			hopForwardPort = entryPort
 		}
 		// 反向链标记（§21.1）：下游无入站能力（nat 且 allowed_ports 空）→ 本跳为 portal 所在上游机，
@@ -340,7 +395,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	}
 	deployment, err := s.st.CreateInitialChainDeployment(r.Context(), store.InitialChainDeployment{
 		Name: req.Name, ServiceServerID: exitSrv.ID, ServiceProtocol: vc.Protocol,
-		ServicePort: req.Node.Port, ServiceConfig: vcJSON,
+		ServicePort: req.Node.Port, ServiceConfig: vcJSON, EndpointID: endpointID, ServiceUUID: serviceUUID,
 		TrafficMultiplierMilli: trafficMultiplierMilli, Hops: initialHops,
 	})
 	if err != nil {
@@ -472,6 +527,45 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		req.Node.Port = req.EntryPort
 	}
 	vc := buildVirtualConfig(req.Node)
+	endpointID := int64(0)
+	serviceUUID := current.Snapshot.ServiceUUID
+	if vc.Protocol == shared.ProtocolVLESS && current.Snapshot.EndpointID != 0 {
+		if serviceUUID == "" {
+			serviceUUID = uuid.NewString()
+		}
+		endpointPort := 0
+		if req.EntryPort != nil {
+			endpointPort = *req.EntryPort
+		}
+		endpointConfig := vc
+		endpointConfig.Port = endpointPort
+		endpointJSON, _ := json.Marshal(endpointConfig)
+		profile := endpointConfig
+		profile.Port = 0
+		profileJSON, _ := json.Marshal(profile)
+		profileHash := fmt.Sprintf("%x", sha256.Sum256(profileJSON))
+		if req.EntryPort == nil && len(current.Snapshot.Hops) > 0 &&
+			current.Snapshot.Hops[0].ServerID == servers[0].ID {
+			if currentEndpoint, err := s.st.SharedEndpointByID(r.Context(), current.Snapshot.EndpointID); err == nil &&
+				currentEndpoint.ProfileHash == profileHash {
+				endpointID = currentEndpoint.ID
+			}
+		}
+		if endpointID == 0 {
+			endpoint, _, err := s.st.EnsureSharedEndpoint(r.Context(), servers[0].ID,
+				vc.Protocol, endpointPort, profileHash, endpointJSON)
+			if err != nil {
+				writeError(w, http.StatusConflict, err.Error())
+				return
+			}
+			endpointID = endpoint.ID
+		}
+		vc.StaticClients = []shared.ClientCredential{{ID: serviceUUID, Email: "tunnel:" + serviceUUID}}
+		if len(servers) == 1 {
+			vc.Port = 0
+			req.Node.Port = nil
+		}
+	}
 	serviceConfig, err := json.Marshal(vc)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -498,8 +592,11 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		} else if i == 0 {
 			hop.Role = store.HopRoleEntry
 		}
-		if i == 0 && req.EntryPort != nil {
+		if i == 0 && req.EntryPort != nil && endpointID == 0 {
 			hop.ForwardPort = *req.EntryPort
+		}
+		if i == 0 && endpointID != 0 {
+			hop.ForwardPort = 0
 		}
 		desiredHops = append(desiredHops, hop)
 	}
@@ -526,6 +623,7 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	}
 	desired := store.ChainRevisionSnapshot{Name: req.Name, ServiceNodeID: current.Snapshot.ServiceNodeID,
 		ServiceServerID: servers[len(servers)-1].ID, ServiceConfig: serviceConfig,
+		EndpointID: endpointID, ServiceUUID: serviceUUID,
 		TrafficMultiplierMilli: multiplier, Hops: desiredHops}
 	currentPlanTopology := revisionTopology(1, current.Snapshot)
 	desiredPlanTopology := revisionTopology(2, desired)
@@ -600,13 +698,17 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 
 func revisionTopology(revisionID int64, snapshot store.ChainRevisionSnapshot) dispatch.RevisionTopology {
 	hops := make([]dispatch.RevisionHopSpec, 0, len(snapshot.Hops))
-	for _, hop := range snapshot.Hops {
-		settings, _ := json.Marshal(map[string]any{"tunnel_uuid": hop.TunnelUUID})
+	for index, hop := range snapshot.Hops {
+		settings, _ := json.Marshal(map[string]any{
+			"tunnel_uuid": hop.TunnelUUID,
+			"local_only":  index == 0 && snapshot.EndpointID != 0,
+		})
 		hops = append(hops, dispatch.RevisionHopSpec{HopID: hop.HopID, ServerID: hop.ServerID,
 			Transport: hop.Transport, ListenPort: hop.ForwardPort, Settings: settings})
 	}
 	return dispatch.RevisionTopology{RevisionID: revisionID, ServiceID: snapshot.ServiceNodeID,
-		Service: snapshot.ServiceConfig, Hops: hops}
+		Service: snapshot.ServiceConfig, Hops: hops,
+		DirectShared: snapshot.EndpointID != 0 && len(snapshot.Hops) == 1}
 }
 
 func (s *Server) handleForcePublishChain(w http.ResponseWriter, r *http.Request) {
@@ -800,7 +902,8 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid chain id")
 		return
 	}
-	if _, err := s.st.ChainByID(r.Context(), id); err != nil {
+	chain, err := s.st.ChainByID(r.Context(), id)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "链不存在")
 			return
@@ -842,6 +945,11 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 	if err := s.st.DeleteChain(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if chain.EndpointID != 0 {
+		if err := s.disp.ReconcileSharedEndpoint(r.Context(), chain.EndpointID); err != nil {
+			log.Printf("panel: reconcile shared endpoint %d after chain delete: %v", chain.EndpointID, err)
+		}
 	}
 	s.audit(r, "chain.delete", nil, nil, map[string]any{"chain_id": id, "hops": len(hops)})
 	writeJSON(w, http.StatusOK, nil)

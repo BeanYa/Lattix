@@ -664,6 +664,30 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		replyResult(sc, env, resultOfHop(p.HopID, p.Kind, realized), err)
 
+	case shared.TypeApplySharedEndpoint:
+		var p shared.ApplySharedEndpointPayload
+		if !parseData(sc, env, &p) {
+			return
+		}
+		log.Printf("shared-endpoint.apply request_id=%s endpoint=%d clients=%d routes=%d",
+			env.RequestID, p.EndpointID, len(p.Clients), len(p.Routes))
+		realized, err := mgr.ApplySharedEndpoint(p)
+		if err == nil {
+			persistChainPieces(statePath, st, mgr)
+		}
+		replyResult(sc, env, resultOfEndpoint(p.EndpointID, realized), err)
+
+	case shared.TypeRemoveSharedEndpoint:
+		var p shared.RemoveSharedEndpointPayload
+		if !parseData(sc, env, &p) {
+			return
+		}
+		err := mgr.RemoveSharedEndpoint(p.EndpointID)
+		if err == nil {
+			persistChainPieces(statePath, st, mgr)
+		}
+		replyResult(sc, env, resultOfEndpoint(p.EndpointID, nil), err)
+
 	case shared.TypeRemoveChainHop:
 		var p shared.RemoveChainHopPayload
 		if !parseData(sc, env, &p) {
@@ -811,6 +835,10 @@ func parseData(sc *safeConn, env shared.Envelope, v any) bool {
 
 func resultOf(nodeID int64, realized *shared.RealizedConfig) shared.ApplyResultPayload {
 	return shared.ApplyResultPayload{NodeID: nodeID, RealizedConfig: realized}
+}
+
+func resultOfEndpoint(endpointID int64, realized *shared.RealizedConfig) shared.ApplyResultPayload {
+	return shared.ApplyResultPayload{EndpointID: endpointID, RealizedConfig: realized}
 }
 
 // resultOfHop 构造链跳配置件回执（§21.1）：hop_id/kind 定位 piece，NodeID 恒 0。

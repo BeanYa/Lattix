@@ -5,20 +5,34 @@
 Lattix 是控制面，用户流量不经过 Panel。所有代理入口统一建模为 `chain`：直连是 1 跳，
 中转是 2～4 跳；客户端只连接入口服务器，出口和内部传输细节对客户端透明。
 
-本阶段只支持安装了 Lattix Agent 的受控服务器，不引入外部订阅节点、动态路由、负载均衡、
-限速或流量配额。Panel 与 Agent 使用完全相同的发布版本，不维护跨版本命令兼容层。
+本阶段只支持安装了 Lattix Agent 的受控服务器，不引入外部订阅节点、动态路由、负载均衡或
+商业化用户分组。Panel 与 Agent 使用完全相同的发布版本，不维护跨版本命令兼容层。
 
 ## 稳定身份与 Revision
 
 - `chain_id` 是链路的稳定身份。
-- 每条链拥有稳定的 `service_node_id`，用户授权、订阅 UUID、链路权威流量均绑定它。
+- 每条链拥有稳定的 `service_node_id` 和内部 `service_uuid`；它们只用于链内 transport，不是业务用户。
+- 用户授权绑定 `user_chain_assignments`。每个用户/链 assignment 拥有独立 `access_uuid`，因此同一
+  用户可以同时使用多个共享同一 `IP:port` 的链，并被入口准确分流。
+- `shared_endpoints` 是服务器级 VLESS+REALITY 监听。兼容 profile 复用同一端口和 Reality 密钥；
+  已被不兼容受管监听占用的端口返回冲突，未受管进程占用由 Agent bind probe 检出。
 - `chain_revisions` 保存包含有序 hop 的不可变目标快照；chain 分别引用当前发布 revision 和待部署 revision。
 - revision 快照保存 1～4 个有序受控服务器。保留的 hop 沿用稳定 `hop_id`；删除后重加
   同一服务器视为新 hop。
 - 删除的 hop、revision 和 chain 只做归档，不删除流量或任务审计历史。
 
-直连和中转不再走两套产品模型或 API。现阶段没有需要兼容的存量数据，可以直接迁移为统一
-chain 模型；底层 service node 仍可复用已有 Xray 业务 inbound 与 `user_nodes` 关联能力。
+直连和中转不再走两套产品模型或 API。新建 VLESS 链默认使用共享 Endpoint；历史 `user_nodes`
+和独立节点订阅继续兼容，编辑历史链不会隐式迁移数据面。
+
+## 共享入口与端口策略
+
+- `443` 只是独立 IP 服务器自动选端口时的首选。若被未受管进程占用，Agent 自动选择其他空闲端口；
+  管理员显式指定端口时，冲突必须报错，不静默改端口。
+- NAT 服务器只从 `allowed_ports` 选择监听端口，不越过运营商映射范围。多个兼容链复用一个 Endpoint，
+  因而只消耗一个公网映射端口。
+- 共享入口后，每条链原有的 entry forward 改为 `127.0.0.1` 内部监听，不再占用 NAT 公网端口。
+- Endpoint routing 按 chain 聚合：一条 chain 一条路由规则，规则的 `user` 数组包含该链全部 active
+  assignment identity；规则数量是 O(chains)，客户端条目数量是 O(assignments)。
 
 ## 编辑范围
 
@@ -42,9 +56,10 @@ Planner 从出口向入口构造规范化 spec，并对规范化 JSON 求 hash�
 
 1. 持久化 desired revision 和幂等任务图；
 2. 从出口向入口部署新增或变化的 service、portal、bridge、forward piece；
-3. 入口最后切换；
+3. 入口内部 forward 最后切换；
 4. 提升 published revision；
-5. 立即清理旧 revision 不再引用的 piece。
+5. 以完整期望状态 reconcile 共享 Endpoint（clients + 按链聚合 routes）；
+6. 立即清理旧 revision 不再引用的 piece。
 
 不设客户端迁移宽限期。协议或端口无法并存时允许最终切换发生一次短暂 Xray reload。完整重建
 也必须遵守上述顺序，不能先拆旧链。
@@ -97,7 +112,8 @@ revision、流量和任务历史均软删除保留。
 
 ## 内部传输
 
-- 客户端协议已经端到端加密时使用直接 L4 转发；
+- 用户 VLESS+REALITY 在共享入口终止；多跳链由入口使用内部 `service_uuid` 重新建立到出口 service 的
+  VLESS+REALITY 连接，已有 forward/portal/bridge 仅承载该内部连接；
 - SOCKS/HTTP 等明文协议用于多跳时，内部段自动加密；
 - 下游无入站能力时使用 Reality reverse portal/bridge；
 - 链路详情展示 planner 选择的 `direct`、`encrypted` 或 `reverse`，但用户不能逐跳修改。
@@ -108,8 +124,10 @@ Agent 上报 Xray 计数器绝对快照，而不是未确认的区间增量。�
 Backend 持久化每个实例/计数器的最后值并在事务内计算增量。重复快照增量为零，丢帧由下一帧补差，
 Xray 重启通过新 instance 区分。
 
-- 出口 service inbound 是链路总流量的唯一权威来源；
-- 入口 forward inbound 保证准确，用于与出口对账；
+- 共享 Endpoint 的 `access:<assignment_id>` 用户计数器是用户流量和链路总流量的唯一权威来源；
+- 用户总量按 assignment 反查真实 `user_id` 后累计；链路总量按 assignment 的 `chain_id` 累计；
+- `tunnel:<service_uuid>` 永不进入用户配额，出口 service 与 hop 计数只用于服务器/链路运维对账；
+- 历史非共享链仍以出口 service inbound 为链路总量权威；
 - 中间 hop 只用于展示，不作计费准确性承诺；
 - portal、bridge 和内部 outbound 不计入 hop 业务流量；
 - 上下行始终以客户端视角定义，各 hop 流量不得相加。
@@ -119,9 +137,9 @@ Xray 重启通过新 instance 区分。
 Agent→Panel 控制通道断开不会停止 Xray 绝对计数器。只要 Xray 实例未重启，Agent 重连后的首帧
 与 Backend 持久化游标补差，可以一次性补齐断线期间的累计量：
 
-- 仅入口或中间 hop Agent 离线时，对应 hop 展示暂停；出口仍在线则链路权威总量继续更新；
-- 出口 Agent 离线时，链路权威总量暂停更新，出口重连后补差；
-- 所有 Agent 离线时所有展示暂停，仍以出口重连后的 service inbound 补差为链路总量。
+- 共享入口 Agent 离线时，用户/链路权威总量暂停，重连后由入口绝对计数器补差；
+- 中间或出口 Agent 离线时，用户/链路权威总量仍由入口补差，相关 hop/server 运维展示暂停；
+- 所有 Agent 离线时所有展示暂停，以各自重连后的绝对计数器补差。
 
 当前实现不是计费级离线流水，存在以下明确边界：
 
@@ -155,6 +173,7 @@ Agent→Panel 控制通道断开不会停止 Xray 绝对计数器。只要 Xray 
 订阅只输出 published revision。普通编辑在新入口得到确认前继续输出最后一个 confirmed revision；
 全新 chain 在确认前不进入默认订阅。强制发布会立即改为输出 unconfirmed revision。内部 hop 变化且
 入口参数不变时，用户链接保持不变；入口服务器、端口或协议变化后，客户端需刷新稳定的订阅 URL。
+同一真实用户在每条链的订阅 UUID 都来自对应 assignment，而不是全局 `users.uuid`。
 
 ## Panel / Agent 版本同步
 

@@ -594,7 +594,7 @@ export default function Chains() {
     setEntryId(String(chain.hops[0]?.server_id ?? ''))
     setMiddleIds(chain.hops.slice(1, -1).map((hop) => String(hop.server_id)))
     setExitId(chain.hops.length > 1 ? String(chain.hops.at(-1)?.server_id ?? '') : '')
-    setEntryPort(chain.hops[0]?.forward_port ? String(chain.hops[0].forward_port) : '')
+		setEntryPort(chain.entry_port ? String(chain.entry_port) : '')
     setTrafficMultiplier(chain.traffic_multiplier || '1.000')
     setProtocol(String(virtual.protocol ?? service?.protocol ?? 'vless'))
     setPort(virtual.port ? String(virtual.port) : '')
@@ -1098,7 +1098,7 @@ export default function Chains() {
                                 </span>
                                 <strong className="mt-0.5 block max-w-48 truncate font-medium">{h.server_alias}</strong>
                                 <span className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground tabular-nums">
-                                  {h.role === 'entry' && h.forward_port !== 0 ? <span>端口 {h.forward_port}</span> : null}
+									{h.role === 'entry' && c.entry_port !== 0 ? <span>端口 {c.entry_port}</span> : null}
                                   <span className={offline ? 'text-warning' : 'text-success'}>{offline ? 'Agent 离线' : 'Agent 在线'}</span>
                                   {h.traffic ? <span>↑ {humanizeBytes(h.traffic.effective_up)} · ↓ {humanizeBytes(h.traffic.effective_down)}</span> : null}
                                 </span>

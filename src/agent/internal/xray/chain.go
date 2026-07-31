@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"lattix/agent/internal/state"
 	"lattix/shared"
@@ -351,8 +352,12 @@ func (m *Manager) renderForward(p shared.ApplyChainHopPayload, cur fullConfig) (
 // renderForwardInbound 渲染 forward 的 dokodemo-door 透传 inbound（对照 PoC entry inbound；
 // 监听 0.0.0.0：固定目标无滥用面，§21.1）。
 func renderForwardInbound(spec *shared.ForwardSpec, tag string, port int) map[string]any {
+	listen := "0.0.0.0"
+	if spec.LocalOnly {
+		listen = "127.0.0.1"
+	}
 	return map[string]any{
-		"tag": tag, "listen": "0.0.0.0", "port": port, "protocol": "dokodemo-door",
+		"tag": tag, "listen": listen, "port": port, "protocol": "dokodemo-door",
 		"settings": map[string]any{
 			"address": spec.TargetAddress, "port": spec.TargetPort, "network": "tcp",
 		},
@@ -533,6 +538,8 @@ func chainPieceTags(hopID int64, kind string) (inboundTags, outboundTags map[str
 	outboundTags = map[string]bool{}
 	reverseTags = map[string]bool{}
 	switch kind {
+	case sharedEndpointPieceKind:
+		inboundTags[sharedEndpointTag(hopID)] = true
 	case shared.HopKindPortal:
 		inboundTags[shared.ChainPortalTag(hopID)] = true
 		reverseKey = "portals"
@@ -574,7 +581,7 @@ func removeChainPieceItems(fc fullConfig, hopID int64, kind string) (fullConfig,
 			Tag string `json:"tag"`
 		}
 		json.Unmarshal(raw, &p)
-		if outboundTags[p.Tag] {
+		if outboundTags[p.Tag] || kind == sharedEndpointPieceKind && strings.HasPrefix(p.Tag, sharedEndpointRoutePrefix(hopID)) {
 			changed = true
 			continue
 		}
@@ -652,6 +659,11 @@ func applyChainPiece(fc fullConfig, rec state.ChainPiece) fullConfig {
 			}
 		}
 		out = append(out, rec.Outbound)
+		nc.setOutbounds(out)
+	}
+	if len(rec.Outbounds) > 0 {
+		out := append([]json.RawMessage(nil), nc.outbounds()...)
+		out = append(out, rec.Outbounds...)
 		nc.setOutbounds(out)
 	}
 	if len(rec.Reverse) > 0 {

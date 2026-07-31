@@ -75,3 +75,51 @@ func TestSubscriptionUsesPublishedRevisionWhileEditApplies(t *testing.T) {
 		t.Fatalf("subscription endpoint/config = address %q realized %+v", item.node.ServerAddress, item.rc)
 	}
 }
+
+func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, "entry", "entry.example.com", "token", store.MachineTypeDirect, "", "", "US", "")
+	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
+	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	realized := json.RawMessage(`{"port":443,"network":"tcp","public_key":"key","short_id":"short","server_name":"example.com"}`)
+	if err := st.SetSharedEndpointActive(ctx, endpoint.ID, realized); err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+		Name: "shared", ServiceServerID: serverID, ServiceProtocol: shared.ProtocolVLESS,
+		ServiceConfig: config, EndpointID: endpoint.ID, ServiceUUID: "service",
+		TrafficMultiplierMilli: 1000,
+		Hops:                   []store.InitialChainHop{{ServerID: serverID, Role: store.HopRoleExit}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PublishChainRevision(ctx, deployment.RevisionID, false); err != nil {
+		t.Fatal(err)
+	}
+	userID, _ := st.InsertUser(ctx, "user", "global-user-uuid", "sub", nil)
+	added, _, err := st.SetUserChains(ctx, userID, []int64{deployment.ChainID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, _ := st.UserByID(ctx, userID)
+	items := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/sub", nil), user, nil)
+	if len(items) != 1 || items[0].credential != added[0].AccessUUID || items[0].credential == user.UUID {
+		t.Fatalf("subscription credential = %+v", items)
+	}
+	if err := st.SetUserDisabled(ctx, userID, true); err != nil {
+		t.Fatal(err)
+	}
+	disabled, _ := st.UserByID(ctx, userID)
+	if items := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/sub", nil), disabled, nil); len(items) != 0 {
+		t.Fatalf("disabled user subscription contains %d items", len(items))
+	}
+}

@@ -14,7 +14,7 @@
 1. 管理员在面板通过可视化向导填写某协议在 xray 上的完整配置，生成一份**虚拟配置**；
 2. 虚拟配置经控制通道下发到目标服务器的 Agent；
 3. Agent 将虚拟配置落地为 xray 实际配置并生效，上报实际配置结果；
-4. 面板统一管理所有服务器生成的代理节点（inbound），按节点为用户生成订阅链接。
+4. 面板统一管理链路、服务器级共享入口和用户链路分配，按 assignment 生成订阅凭证。
 
 参考 3x-ui / s-ui / miaomiaowuX 的交互模式，不做商业化。
 
@@ -71,6 +71,8 @@ install.sh           # 唯一面向用户的统一安装入口
 | `nodes` | id, name(解析后的管理/订阅名称), server_id, protocol, port, config_template(JSON), realized_config(JSON), status, error, created_at |
 | `commands` | id, request_id, trace_id, server_id, type, data(JSON), status(queued/sent/acked/failed/abandoned), error, attempts, created_at, updated_at |
 | `user_nodes` | user_id, node_id（§16 逐节点用户分配，默认全关） |
+| `shared_endpoints` | server_id, protocol, port, profile_hash, config_template/realized_config, status；兼容链共享一个 VLESS+REALITY 监听 |
+| `user_chain_assignments` | user_id, chain_id, access_uuid；真实用户与链的直接多对多分配 |
 | `server_metrics` | server_id, load1/load5/load15, cpu_percent, mem/disk 用量、默认出口网卡速率/累计量、uptime、latency_ms、updated_at（§13 主机遥测最新值） |
 | `server_metric_history` | 与 `server_metrics` 同口径的 24 小时时序样本；按服务器与采样时间索引（§13） |
 | `providers` | id, name（大小写不敏感唯一）, website_url, created_at, updated_at |
@@ -80,12 +82,13 @@ install.sh           # 唯一面向用户的统一安装入口
 | `exchange_rates` | base_currency, quote_currency, rate（十进制字符串）, rate_date, source, fetched_at（Frankfurter 持久化缓存） |
 | `custom_exchange_rates` | source_currency（唯一）+ source_amount, target_currency（保存时的展示币种）+ target_amount, enabled；至少一侧金额为 1，每个目标币种仅一个启用锚点 |
 | `traffic` | node_id, user_uuid, up, down, updated_at（§13 流量累计：节点维度 user_uuid=''，用户维度 node_id=0） |
-| `chains` | 稳定 chain/service identity、published/desired revision、倍率、发布状态与软删除时间 |
+| `chains` | 稳定 chain/service/endpoint identity、published/desired revision、倍率、发布状态与软删除时间 |
 | `chain_hops` / `chain_hop_identities` | 当前期望工作拓扑与不会复用的稳定 hop identity |
 | `chain_revisions` / `chain_revision_tasks` | 不可变拓扑快照及 apply/cleanup 任务状态机；任务关联离线命令队列 |
 | `traffic_cursors` | Agent Xray 实例绝对计数器游标，用于幂等补差 |
 | `chain_traffic_totals` / `chain_traffic_daily` | 链与逐跳 raw/effective 累计、倍率余数及按 revision/统计时区的日桶 |
 | `chain_traffic_baselines` / `chain_multiplier_events` | 流量重置 checkpoint 与倍率分段审计 |
+| `endpoint_traffic_totals` | 共享入口 inbound 的运维流量累计；用户/链权威流量另按 assignment identity 入账 |
 
 说明：
 
@@ -117,6 +120,8 @@ install.sh           # 唯一面向用户的统一安装入口
 | `agent.settings.sync` | agent→panel | session ready 后、设置提示后及在线期间周期拉取全局 Agent 设置；请求携带已应用 revision，响应按需返回完整统一设置文档 |
 | `agent.settings.changed` | panel→agent | 在线设置变更提示；仅触发 Agent 立即 pull，不承载配置本身 |
 | `node.apply` | panel→agent | 下发节点：虚拟配置模板 + 分配到该节点的用户 UUID 列表（§16） |
+| `shared-endpoint.apply` | panel→agent | 完整替换服务器级共享入口：assignment clients + 按 chain 聚合的 routes；重发复用端口与 Reality 密钥 |
+| `shared-endpoint.remove` | panel→agent | 显式删除共享入口配置件；当前常驻复用策略不自动触发 |
 | `node.remove` | panel→agent | 删除节点 |
 | `user.add` | panel→agent | 向载荷指定节点的 inbound 热加入一个用户（`nodes` 参数携带各节点协议参数；必填，缺省/为空回执错误） |
 | `user.remove` | panel→agent | 从载荷指定节点的 inbound 热移除一个用户（`nodes` 必填，同 user.add） |
@@ -153,27 +158,32 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
 
 | 参数 | 生成方 | 说明 |
 |---|---|---|
-| 用户 UUID | 面板 | 同一用户跨所有服务器使用同一 UUID（VLESS client `id` 必填） |
+| 独立节点用户 UUID | 面板 | 历史/独立节点继续使用 `users.uuid` |
+| 链路访问 UUID | 面板 | 每个 user-chain assignment 独立 `access_uuid`；Xray email 为 `access:<assignment_id>` |
+| 内部隧道 UUID | 面板 | `service_uuid` 只认证入口到出口的内部连接；Xray email 为 `tunnel:<service_uuid>` |
 | Reality 密钥对 | **Agent** | 执行 `xray x25519` 生成，私钥不出服务器，public_key 随 `RPC response` 上报 |
 | short_id | 面板 | 随模板下发 |
 | 端口 | 两者皆可 | 向导中可指定（Agent 检查占用，冲突报错）或留空（Agent 挑空闲端口上报） |
 | dest / serverNames | 面板 | 向导表单（带默认值）；留空时由 Agent 按白名单预检自动选择（§6），选定值随 `RPC response` 上报 |
 
-## 8. 用户-节点模型（扇出语义）
+## 8. 用户、链路与凭证
 
-- 单管理员；多用户，每个用户一个独立 UUID、一个独立 `sub_token`。
-- MVP：每个用户是**每个节点**的 client（隐含全对全关系）。
-  - 新建节点 → `node.apply` 携带当前全量用户列表一次性下发；
-  - 新建用户 → 向所有在线服务器 `user.add` 扇出，离线服务器留 `commands` 队列补发；
-  - 删除用户 → `user.remove` 扇出。
-- 逐节点的用户分配（n 个链接 ↔ 不定个节点）属后续迭代。
+- `users` 只表示真实业务用户、订阅 token、有效期和配额，不创建“虚拟业务用户”。
+- `user_chain_assignments` 直接表达用户可用的链。一个用户可同时使用多条链，一条链可供多个用户使用。
+- 每个 assignment 生成并稳定保留一个 `access_uuid`。同一用户的多条链即使共享同一入口 `IP:port`，
+  Xray 仍可按 email identity 分流并统计到具体用户和链。
+- 用户停权、恢复、删除或修改链分配时，Panel 对受影响 Endpoint 发送完整 reconcile。路由规则按 chain
+  聚合，而不是每个 assignment 一条规则。
+- `user_nodes`、`user.add`、`user.remove` 只保留给历史/独立节点兼容，不承载新链路授权。
 
 ## 9. 订阅
 
 `GET /sub/{sub_token}` → 返回 **mihomo（Clash.Meta）格式 YAML**；请求 `Accept` 含 `text/html`（浏览器）时改为返回**订阅落地页**（自包含 HTML，不依赖前端构建产物与任何 CDN/外网资源，token 即鉴权，无效 404）：已用流量 ↑/↓、有效期（或"长期"）、节点数、YAML/links 订阅地址复制按钮、订阅地址二维码（内嵌 qrcode-generator，MIT）、mihomo 系一键导入（`clash://` / `mihomo://install-config?url=`）；已到期用户显示"已到期"，被停用用户显示"已停用"（§16）。`GET /sub/{sub_token}/links`（§14）不分流。
 
 - 目标客户端：mihomo 内核系（Clash Verge / Clash Party / FlClash 等）。原版 Clash 不支持 VLESS+Reality，不在目标范围。
-- 内容：proxies 列表（每个节点一项，`type: vless`，`server` 取 `servers.address`（§4），嵌入**该用户自己的 UUID**、`flow`、`reality-opts: {public-key, short-id}`、`servername`、`udp: true`）+ 一个 `select` 类型 proxy-group + `MATCH` 规则。
+- 内容：proxies 列表（每条已分配链一项，`type: vless`，`server` 取入口 `servers.address`，端口和
+  Reality 参数取共享 Endpoint，UUID 取该链 assignment 的 `access_uuid`）+ 一个 `select` 类型
+  proxy-group + `MATCH` 规则。独立节点仍使用 `users.uuid`。
 - 链路命名在创建时解析并固化；服务器资料或自动端口后续变化不自动重命名。默认模板：
   直连 `{{COUNTRY_FLAG}}{{LOCATION}}-Direct`，中转 `{{EXIT.COUNTRY_FLAG}}-Out`。
 - 全局变量 `ID/NAME/COUNTRY/COUNTRY_CODE/COUNTRY_FLAG/LOCATION/ADDRESS/TAG[n]` 取客户端实际连接的服务器：
@@ -465,9 +475,11 @@ sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支�
 **产品与实现统一**：
 
 - 所有代理入口均落为 `chains`；直连是 1 跳 revision，中转是 2～4 跳 revision。
-- 每条 chain 保留稳定的出口业务 `service_node_id`，`user_nodes`、订阅 UUID 和权威流量均绑定该身份。
+- 每条 chain 保留内部 `service_node_id/service_uuid`，并引用入口服务器级 `shared_endpoint`。
+- 用户授权由 `user_chain_assignments` 表达；订阅使用 assignment 的 `access_uuid`，不再把业务用户
+  UUID 下发到出口 service。
 - 创建和编辑共用一套 chain API、revision planner 与任务状态机，不再维护直连 node/中转 chain 两套流程。
-- 逐跳流量仅用于展示，链路总流量始终以出口 service inbound 为准，各跳不得相加。
+- 逐跳流量仅用于展示；共享链的用户与链路总量以入口 `access:*` 计数为准，各跳不得相加。
 - revision、离线发布、删除、流量倍率和日/月统计的完整契约见
   [链路 Revision 与流量统计设计](chain-revisions-traffic-design.md)。
 
@@ -480,8 +492,8 @@ sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支�
 
 - 每跳规则统一：下游有入站能力 → 直连转发（dokodemo-door 式纯 TCP 透传）；
   下游无入站能力 → 下游以 xray reverse bridge 反向上来（bridge/portal 对）。
-- **端到端加密**：客户端代理协议（VLESS+Reality 等）在出口终止；入口/中间跳只见密文，
-  不持有用户 UUID，不需要用户列表。
+- **共享入口终止**：客户端 VLESS+Reality 在入口 Endpoint 终止，入口按 assignment identity 选择 chain；
+  多跳时再用 chain 的 `service_uuid` 建立到出口的内部 VLESS+Reality 连接。
 - **隧道口安全**：portal = 每跳独立的 VLESS+Reality inbound（不共享，吊销粒度细）；
   密钥对由该跳 agent 生成、随 `RPC response` 上报，私钥不出服务器（沿用 §7 原则）。
   无认证的隧道监听口会成为开放中继，明确禁止。
@@ -505,13 +517,14 @@ sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支�
 
 **存储**：
 
-- `chains` 保存稳定链路和 `service_node_id`，分别引用 published/desired revision；
+- `chains` 保存稳定链路、`service_node_id/service_uuid` 和 `endpoint_id`，分别引用 published/desired revision；
   `chain_hops` 保存当前期望拓扑，`chain_hop_identities` 保证 hop ID 删除后不复用。
 - `chain_revisions` 保存不可变快照，`chain_revision_tasks` 保存从出口到入口的 apply 和后续 cleanup
   状态；任务通过 `commands` 队列投递并支持重启续跑。
-- `user_nodes` 维持指向稳定的出口 service node（UUID 只存在于出口 Xray），无新用户关联表。
-- Agent 上报带 Xray 实例标识的绝对计数器快照；出口 service inbound 是链路权威流量，
-  入口用于准确对账，中间跳仅展示。后端保存倍率分段累计和每日桶，月度由每日桶汇总。
+- `shared_endpoints` 与 `user_chain_assignments` 分别保存可复用监听和 assignment 凭证；`user_nodes`
+  仅兼容独立节点。
+- Agent 上报带 Xray 实例标识的绝对计数器快照；`access:<assignment_id>` 同时归属真实用户和 chain，
+  `tunnel:<service_uuid>` 不进入用户配额。后端保存倍率分段累计和每日桶，月度由每日桶汇总。
 
 **编排**：
 
@@ -528,8 +541,12 @@ sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支�
   apply 载荷决定，控制通道、遥测、漂移 reconcile（§17）、xray 升级（§18）全部复用。
 - install.sh 与引导流程不变；机器类型与端口段是面板侧元数据，不下发到 agent。
 
-**订阅**：条目 = 入口的 `address:public_port` + 出口的 public_key/short_id/UUID；
+**订阅**：条目 = 入口 Endpoint 的 `address:public_port` + Endpoint 的 public_key/short_id + assignment `access_uuid`；
 命名沿用 `{入口别名}-{协议}-{端口}`；links 端点（§9/§14）同构。
+
+**端口复用**：443 仅为独立 IP 入口自动选择时的首选，不是强制值；被占用时自动端口可回退。
+管理员显式端口不回退。相同 server/port 上兼容 profile 复用既有 Endpoint，不兼容受管监听报冲突。
+NAT 入口只从可用段挑选，所有共享链的 entry forward 改为 loopback 内部口，不再消耗公网映射。
 
 **实施时待定的小项**（不阻塞设计）：portal 监听端口在有端口段的 NAT 机上同样从可用段分配；
 向导链路构图的详细校验规则（入口必须有入站能力，出口任意，中间跳至少一侧可达）。
@@ -550,6 +567,7 @@ bridge 首拨失败由 xray 自动重试兜底，编排层无需处理。
 | `portal` | 反向链的上游机 | VLESS+Reality interconn inbound + reverse portal（密钥对 agent 生成上报，UUID/shortID 面板下发，dest 走 §6 预检+白名单） |
 | `bridge` | 反向链的下游机（仅出口档 NAT） | reverse bridge + VLESS+Reality interconn outbound + routing（bridge → freedom 拨回环业务 inbound） |
 | 业务 inbound | 出口 | 复用现有 `node.apply`（普通 nodes 行），监听不变 |
+| shared endpoint | 入口 | VLESS+Reality inbound + assignment clients + 按 chain 聚合的 routing；入口 forward 为 `127.0.0.1` 内部口 |
 
 **新消息类型**（协议演化规则：新语义走新类型）：
 
@@ -558,6 +576,9 @@ bridge 首拨失败由 xray 自动重试兜底，编排层无需处理。
   - BridgeSpec `{tunnel_domain, portal_address, portal_port, tunnel_uuid, public_key, short_id, server_name}`
   - ForwardSpec `{tag, port, port_candidates?, target_address, target_port, via_tunnel_domain?}`
 - `chain-hop.remove`：`{hop_id, kind}`（删链逐跳反向下发）。
+- `shared-endpoint.apply`：`{endpoint_id, config, clients, routes, dest_candidates?, port_candidates?}`；
+  完整期望状态替换，assignment 变更不改变已实现端口和 Reality 密钥。
+- `shared-endpoint.remove`：`{endpoint_id}`。
 - `RPC response` 增加 `hop_id`、`kind`（omitempty），portal/forward 复用 `realized_config.port/public_key` 回执。
 - `node.apply` 载荷增加 `port_candidates`（omitempty）：受限直连 NAT 机上节点端口从段内挑选。
 
@@ -565,11 +586,12 @@ bridge 首拨失败由 xray 自动重试兜底，编排层无需处理。
 
 **建链编排**（panel 状态机，满足凭证依赖；每步成功回执后推进，失败定位到跳）：
 
-1. 出口业务 inbound（`node.apply`，可自动端口）→ realized 端口；
+1. 多跳链先部署出口内部业务 inbound（`node.apply`，只含 `tunnel:*` client）→ realized 端口；
 2. 各反向链的 `portal`（由出口向入口方向逐个）→ 回执 pubkey/端口；
 3. 各反向链的 `bridge`（携带对应 portal 凭证）；
-4. 各 `forward`（由出口向入口方向；目标 = 下一跳 forward 端口或出口业务端口）；
-5. 全部跳 active → 链 active。任一失败 → 链 failed 定位到跳，重试只重放失败 piece。
+4. 各 `forward`（由出口向入口方向；共享入口的 entry forward 只监听 loopback）；
+5. 发布 revision 后完整 reconcile shared Endpoint；Endpoint active 后订阅输出该链。
+任一链内 piece 失败 → 链 failed 定位到跳，重试只重放失败 piece；Endpoint 失败单独保留错误与重试状态。
 
 **存储 DDL**（全新安装基线；存量库由面板启动迁移到该结构）：
 

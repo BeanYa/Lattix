@@ -171,18 +171,27 @@ const (
 // Flow/Network/ServiceName/Path/Mode/Host/Method 为协议参数，
 // Agent 据此构造用户条目并随 realized_config 回显（订阅生成依赖）。
 type VirtualConfig struct {
-	Protocol    string          `json:"protocol"`       // vless/vmess/trojan/shadowsocks/socks/http/dokodemo
-	Port        int             `json:"port,omitempty"` // 0 = Agent 自动挑选空闲端口
-	Flow        string          `json:"flow,omitempty"` // vless：xtls-rprx-vision 或空（仅 tcp）
-	Network     string          `json:"network,omitempty"`
-	ServiceName string          `json:"service_name,omitempty"` // grpc
-	Path        string          `json:"path,omitempty"`         // xhttp
-	Mode        string          `json:"mode,omitempty"`         // xhttp
-	Host        string          `json:"host,omitempty"`         // xhttp
-	Method      string          `json:"method,omitempty"`       // shadowsocks
-	Fingerprint string          `json:"fingerprint,omitempty"`  // 客户端 uTLS 指纹（订阅侧参数，Agent 回显）
-	Encryption  string          `json:"encryption,omitempty"`   // vless：VLESS Encryption 认证方式（x25519/mlkem768）
-	Template    json.RawMessage `json:"template"`               // xray inbound JSON 模板，含占位符
+	Protocol      string             `json:"protocol"`       // vless/vmess/trojan/shadowsocks/socks/http/dokodemo
+	Port          int                `json:"port,omitempty"` // 0 = Agent 自动挑选空闲端口
+	Flow          string             `json:"flow,omitempty"` // vless：xtls-rprx-vision 或空（仅 tcp）
+	Network       string             `json:"network,omitempty"`
+	ServiceName   string             `json:"service_name,omitempty"`   // grpc
+	Path          string             `json:"path,omitempty"`           // xhttp
+	Mode          string             `json:"mode,omitempty"`           // xhttp
+	Host          string             `json:"host,omitempty"`           // xhttp
+	Method        string             `json:"method,omitempty"`         // shadowsocks
+	Fingerprint   string             `json:"fingerprint,omitempty"`    // 客户端 uTLS 指纹（订阅侧参数，Agent 回显）
+	Encryption    string             `json:"encryption,omitempty"`     // vless：VLESS Encryption 认证方式（x25519/mlkem768）
+	StaticClients []ClientCredential `json:"static_clients,omitempty"` // 技术隧道身份，不属于业务用户
+	Template      json.RawMessage    `json:"template"`                 // xray inbound JSON 模板，含占位符
+}
+
+// ClientCredential separates the protocol credential from the Xray stats
+// identity. Business access uses access:<assignment_id>; internal transport
+// uses tunnel:<route_id>, so neither needs a synthetic business user.
+type ClientCredential struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
 }
 
 // RealizedConfig 是 Agent 上报的实际生效值（nodes.realized_config），

@@ -64,7 +64,13 @@ func (m *Manager) fillTemplate(tag string, vc shared.VirtualConfig, userUUIDs []
 	t = strings.ReplaceAll(t, shared.PlaceholderPort, strconv.Itoa(port))
 	t = strings.ReplaceAll(t, shared.PlaceholderTag, tag)
 	if strings.Contains(t, shared.PlaceholderClients) {
-		clients := make([]map[string]any, 0, len(userUUIDs))
+		clients := make([]map[string]any, 0, len(userUUIDs)+len(vc.StaticClients))
+		for _, credential := range vc.StaticClients {
+			if credential.ID == "" {
+				continue
+			}
+			clients = append(clients, clientCredentialEntry(vc.Protocol, vc.Flow, vc.Method, credential))
+		}
 		for _, u := range userUUIDs {
 			clients = append(clients, clientEntry(vc.Protocol, vc.Flow, vc.Method, u))
 		}
@@ -145,21 +151,29 @@ func (m *Manager) fillTemplate(tag string, vc shared.VirtualConfig, userUUIDs []
 // email 与 vless 的 RemoveUserOperation 匹配键一致；socks/http 的 accounts 以 user 为匹配键。
 // clients 带 level: 0 以启用用户级流量统计（§13，policy levels["0"]）。
 func clientEntry(protocol, flow, method, uuid string) map[string]any {
+	return clientCredentialEntry(protocol, flow, method, shared.ClientCredential{ID: uuid, Email: uuid})
+}
+
+func clientCredentialEntry(protocol, flow, method string, credential shared.ClientCredential) map[string]any {
+	email := credential.Email
+	if email == "" {
+		email = credential.ID
+	}
 	switch protocol {
 	case shared.ProtocolVMess:
-		return map[string]any{"id": uuid, "email": uuid, "level": 0} // 新版 xray 已移除 alterId
+		return map[string]any{"id": credential.ID, "email": email, "level": 0} // 新版 xray 已移除 alterId
 	case shared.ProtocolTrojan:
-		return map[string]any{"password": uuid, "email": uuid, "level": 0}
+		return map[string]any{"password": credential.ID, "email": email, "level": 0}
 	case shared.ProtocolShadowsocks:
 		if shared.Is2022Method(method) {
 			// 2022-blake3 多用户：clients 不带 method，password 为定长 base64 密钥。
-			return map[string]any{"password": shared.SSUserPassword(uuid, method), "email": uuid, "level": 0}
+			return map[string]any{"password": shared.SSUserPassword(credential.ID, method), "email": email, "level": 0}
 		}
-		return map[string]any{"method": method, "password": uuid, "email": uuid, "level": 0}
+		return map[string]any{"method": method, "password": credential.ID, "email": email, "level": 0}
 	case shared.ProtocolSocks, shared.ProtocolHTTP:
-		return map[string]any{"user": uuid, "pass": uuid}
+		return map[string]any{"user": credential.ID, "pass": credential.ID}
 	default: // vless
-		e := map[string]any{"id": uuid, "email": uuid, "level": 0}
+		e := map[string]any{"id": credential.ID, "email": email, "level": 0}
 		if flow != "" {
 			e["flow"] = flow
 		}

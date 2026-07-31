@@ -14,7 +14,11 @@ import (
 func (s *Server) serveQuanX(w http.ResponseWriter, r *http.Request, user *store.User, items []proxyItem) {
 	var lines []string
 	for _, it := range items {
-		line := buildQuanXLine(it.node, it.rc, user.UUID)
+		credential := it.credential
+		if credential == "" {
+			credential = user.UUID
+		}
+		line := buildQuanXLine(it.node, it.rc, credential)
 		if line != "" {
 			lines = append(lines, line)
 		}

@@ -40,6 +40,9 @@ func (s *Server) sweepExpiredUsers(ctx context.Context) {
 			continue
 		}
 		s.fanoutUserDiff(ctx, u.UUID, nodes, nil, assigned)
+		if assignments, err := s.st.UserChainAssignments(ctx, u.ID); err == nil {
+			s.reconcileAssignmentEndpoints(ctx, assignments, nil)
+		}
 		log.Printf("panel: user %d (%s) 已到期，置 expired 并扇出 remove_user（%d 节点）", u.ID, u.Name, len(assigned))
 	}
 }

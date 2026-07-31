@@ -19,28 +19,37 @@ import (
 
 // userDTO 是用户对象的 API 表示。
 type userDTO struct {
-	ID              int64       `json:"id"`
-	Name            string      `json:"name"`
-	UUID            string      `json:"uuid"`
-	SubToken        string      `json:"sub_token"`
-	SubURL          string      `json:"sub_url"`
-	SubLinksURL     string      `json:"sub_links_url"`
-	NodeIDs         []int64     `json:"node_ids"`
-	Traffic         *trafficDTO `json:"traffic"`
-	ExpiresAt       *time.Time  `json:"expires_at"`
-	Expired         bool        `json:"expired"`
-	Disabled        bool        `json:"disabled"`
-	TrafficLimit    int64       `json:"traffic_limit"`
-	TrafficResetDay int         `json:"traffic_reset_day"`
-	SubTitle        string      `json:"sub_title"`
-	SubAnnouncement string      `json:"sub_announcement"`
-	PlanName        string      `json:"plan_name"`
-	AppURL          string      `json:"app_url"`
-	CreatedAt       time.Time   `json:"created_at"`
+	ID               int64                    `json:"id"`
+	Name             string                   `json:"name"`
+	UUID             string                   `json:"uuid"`
+	SubToken         string                   `json:"sub_token"`
+	SubURL           string                   `json:"sub_url"`
+	SubLinksURL      string                   `json:"sub_links_url"`
+	NodeIDs          []int64                  `json:"node_ids"`
+	ChainIDs         []int64                  `json:"chain_ids"`
+	ChainAssignments []userChainAssignmentDTO `json:"chain_assignments"`
+	Traffic          *trafficDTO              `json:"traffic"`
+	ExpiresAt        *time.Time               `json:"expires_at"`
+	Expired          bool                     `json:"expired"`
+	Disabled         bool                     `json:"disabled"`
+	TrafficLimit     int64                    `json:"traffic_limit"`
+	TrafficResetDay  int                      `json:"traffic_reset_day"`
+	SubTitle         string                   `json:"sub_title"`
+	SubAnnouncement  string                   `json:"sub_announcement"`
+	PlanName         string                   `json:"plan_name"`
+	AppURL           string                   `json:"app_url"`
+	CreatedAt        time.Time                `json:"created_at"`
+}
+
+type userChainAssignmentDTO struct {
+	ID         int64  `json:"id"`
+	ChainID    int64  `json:"chain_id"`
+	EndpointID int64  `json:"endpoint_id"`
+	AccessUUID string `json:"access_uuid"`
 }
 
 func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userDTO {
-	return userDTO{
+	dto := userDTO{
 		ID:              u.ID,
 		Name:            u.Name,
 		UUID:            u.UUID,
@@ -59,6 +68,22 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 		AppURL:          u.AppURL,
 		CreatedAt:       u.CreatedAt,
 	}
+	if assignments, err := s.st.UserChainAssignments(r.Context(), u.ID); err == nil {
+		for _, assignment := range assignments {
+			dto.ChainIDs = append(dto.ChainIDs, assignment.ChainID)
+			dto.ChainAssignments = append(dto.ChainAssignments, userChainAssignmentDTO{
+				ID: assignment.ID, ChainID: assignment.ChainID, EndpointID: assignment.EndpointID,
+				AccessUUID: assignment.AccessUUID,
+			})
+		}
+	}
+	if dto.ChainIDs == nil {
+		dto.ChainIDs = []int64{}
+	}
+	if dto.ChainAssignments == nil {
+		dto.ChainAssignments = []userChainAssignmentDTO{}
+	}
+	return dto
 }
 
 // handleListUsers 处理 GET /api/users。
@@ -98,6 +123,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		Name      string  `json:"name"`
 		ExpiresAt *string `json:"expires_at"` // RFC3339，省略/null = 长期
 		NodeIDs   []int64 `json:"node_ids"`   // 可选：预选链路对应的业务节点
+		ChainIDs  []int64 `json:"chain_ids"`
 		// 可选订阅设置（省略保持默认；用户级覆盖全局，§9）。
 		TrafficLimit    int64  `json:"traffic_limit"`
 		TrafficResetDay int    `json:"traffic_reset_day"`
@@ -125,6 +151,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		req.TrafficLimit = 0
 	}
 	if err := validateTrafficResetDay(req.TrafficResetDay); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.st.ValidateAssignableChains(r.Context(), req.ChainIDs); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -186,6 +216,14 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.fanoutUserDiff(r.Context(), created.UUID, nodes, added, nil)
+	}
+	if len(req.ChainIDs) > 0 {
+		added, _, err := s.st.SetUserChains(r.Context(), id, req.ChainIDs)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s.reconcileAssignmentEndpoints(r.Context(), added, nil)
 	}
 	s.audit(r, "user.create", nil, nil, map[string]any{
 		"user_id": created.ID, "name": created.Name, "node_count": len(nodeIDs),
@@ -300,6 +338,9 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			s.fanoutUserDiff(r.Context(), u.UUID, nodes, assigned, nil)
 			log.Printf("panel: user %d (%s) 已恢复，扇出 add_user (%d 节点)", id, u.Name, len(assigned))
 		}
+		if assignments, err := s.st.UserChainAssignments(r.Context(), id); err == nil {
+			s.reconcileAssignmentEndpoints(r.Context(), assignments, nil)
+		}
 	}
 	updated, err := s.st.UserByID(r.Context(), id)
 	if err != nil {
@@ -333,8 +374,9 @@ func logTime(value *time.Time) any {
 // 按差量向相关服务器扇出 add_user / remove_user（载荷仅含受影响的节点）。
 func (s *Server) handleSetUserNodes(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserID  int64   `json:"user_id"`
-		NodeIDs []int64 `json:"node_ids"`
+		UserID   int64   `json:"user_id"`
+		NodeIDs  []int64 `json:"node_ids"`
+		ChainIDs []int64 `json:"chain_ids"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -369,6 +411,10 @@ func (s *Server) handleSetUserNodes(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := s.st.ValidateAssignableChains(r.Context(), req.ChainIDs); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	beforeNodeIDs, err := s.st.UserNodeIDs(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -380,13 +426,27 @@ func (s *Server) handleSetUserNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.fanoutUserDiff(r.Context(), u.UUID, nodes, added, removed)
+	addedChains, removedChains, err := s.st.SetUserChains(r.Context(), id, req.ChainIDs)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.reconcileAssignmentEndpoints(r.Context(), addedChains, removedChains)
 	if len(added) > 0 || len(removed) > 0 {
 		s.audit(r, "user.nodes_updated", nil, nil, map[string]any{
 			"user":     map[string]any{"id": u.ID, "name": u.Name},
 			"node_ids": map[string]any{"before": beforeNodeIDs, "after": req.NodeIDs},
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"node_ids": req.NodeIDs})
+	writeJSON(w, http.StatusOK, map[string]any{"node_ids": req.NodeIDs, "chain_ids": req.ChainIDs})
+}
+
+func (s *Server) reconcileAssignmentEndpoints(ctx context.Context, groups ...[]store.UserChainAssignment) {
+	for _, endpointID := range s.st.SharedEndpointIDsForAssignments(groups...) {
+		if err := s.disp.ReconcileSharedEndpoint(ctx, endpointID); err != nil {
+			log.Printf("panel: reconcile shared endpoint %d: %v", endpointID, err)
+		}
+	}
 }
 
 // fanoutUserDiff 按分配差量扇出：新增节点 → add_user（仅含这些节点），
@@ -446,11 +506,13 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	assignments, _ := s.st.UserChainAssignments(r.Context(), id)
 	s.fanoutRemoveUser(r, u.UUID)
 	if err := s.st.DeleteUser(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.reconcileAssignmentEndpoints(r.Context(), assignments, nil)
 	// 删除后对象不存在，审计行存 name 快照留痕（§log）。
 	s.audit(r, "user.delete", nil, nil, map[string]any{"user_id": u.ID, "name": u.Name})
 	writeJSON(w, http.StatusOK, nil)

@@ -249,7 +249,11 @@ func (s *Server) serveClash(w http.ResponseWriter, r *http.Request, user *store.
 	cfg := clashConfig{Proxies: []clashProxy{}}
 	names := []string{}
 	for _, it := range items {
-		p, err := buildProxy(it.node, it.rc, user.UUID)
+		credential := it.credential
+		if credential == "" {
+			credential = user.UUID
+		}
+		p, err := buildProxy(it.node, it.rc, credential)
 		if err != nil {
 			continue
 		}
@@ -272,7 +276,11 @@ func (s *Server) serveClash(w http.ResponseWriter, r *http.Request, user *store.
 func (s *Server) serveLinks(w http.ResponseWriter, r *http.Request, user *store.User, items []proxyItem) {
 	links := []string{}
 	for _, it := range items {
-		if link, ok := buildShareLink(it.node, it.rc, user.UUID); ok {
+		credential := it.credential
+		if credential == "" {
+			credential = user.UUID
+		}
+		if link, ok := buildShareLink(it.node, it.rc, credential); ok {
 			links = append(links, link)
 		}
 	}
@@ -324,8 +332,9 @@ func nodeName(n store.Node, rc shared.RealizedConfig) string {
 // proxyItem 是一个订阅条目的来源：节点行 + 生效值
 // （链条目已把别名/地址/端口替换为入口侧，§21；其余字段取出口 realized_config）。
 type proxyItem struct {
-	node store.Node
-	rc   shared.RealizedConfig
+	node       store.Node
+	rc         shared.RealizedConfig
+	credential string
 }
 
 // subscriptionItems 汇总单机节点与链条目（§21 订阅）：
@@ -335,6 +344,9 @@ type proxyItem struct {
 //   - 只含 active/degraded 链（failed/pending/applying 不出）；degraded 不剔除（客户端测速规避）；
 //   - 用户维度经 user_nodes 判出口节点分配（§16：UUID 只存在于出口 xray）。
 func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []store.Node) []proxyItem {
+	if user.Expired || user.Disabled {
+		return nil
+	}
 	exitIDs, err := s.st.ChainExitNodeIDs(r.Context())
 	if err != nil {
 		exitIDs = map[int64]bool{} // 查询失败不阻断订阅
@@ -358,6 +370,14 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 	for _, id := range assigned {
 		allowed[id] = true
 	}
+	chainAssignments, err := s.st.UserChainAssignments(r.Context(), user.ID)
+	if err != nil {
+		return items
+	}
+	assignmentByChain := make(map[int64]store.UserChainAssignment, len(chainAssignments))
+	for _, assignment := range chainAssignments {
+		assignmentByChain[assignment.ChainID] = assignment
+	}
 	chains, err := s.st.ListChains(r.Context())
 	if err != nil {
 		return items
@@ -369,7 +389,11 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 		if c.PublishedRevisionID == 0 || c.Status == store.ChainStatusInvalid || c.Status == store.ChainStatusDeleted {
 			continue
 		}
-		item, err := s.chainSubscriptionItem(r, c, allowed)
+		assignment, hasAssignment := assignmentByChain[c.ID]
+		if c.EndpointID != 0 && !hasAssignment {
+			continue
+		}
+		item, err := s.chainSubscriptionItem(r, c, allowed, assignment)
 		if err != nil {
 			continue
 		}
@@ -379,7 +403,12 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 }
 
 // chainSubscriptionItem 构造单条链的订阅条目；不满足输出条件返回错误（调用方跳过）。
-func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allowed map[int64]bool) (*proxyItem, error) {
+func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allowed map[int64]bool,
+	assignments ...store.UserChainAssignment) (*proxyItem, error) {
+	assignment := store.UserChainAssignment{}
+	if len(assignments) > 0 {
+		assignment = assignments[0]
+	}
 	chainID := chain.ID
 	revision, err := s.st.PublishedChainRevision(r.Context(), chainID)
 	if err != nil {
@@ -390,6 +419,32 @@ func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allow
 		return nil, fmt.Errorf("链 %d 跳数不足", chainID)
 	}
 	entry := snapshot.Hops[0]
+	if snapshot.EndpointID != 0 {
+		endpoint, err := s.st.SharedEndpointByID(r.Context(), snapshot.EndpointID)
+		if err != nil || endpoint.Status != store.EndpointStatusActive || len(endpoint.RealizedConfig) == 0 {
+			return nil, fmt.Errorf("链 %d 共享入口尚未生效", chainID)
+		}
+		var rc shared.RealizedConfig
+		if err := json.Unmarshal(endpoint.RealizedConfig, &rc); err != nil || rc.Port == 0 {
+			return nil, fmt.Errorf("链 %d 共享入口 realized_config 不可用", chainID)
+		}
+		entrySrv, err := s.st.ServerByID(r.Context(), endpoint.ServerID)
+		if err != nil || entrySrv.Address == "" {
+			return nil, fmt.Errorf("链 %d 入口地址不可用", chainID)
+		}
+		port := rc.Port
+		if ranges, err := shared.ParsePortRanges(entrySrv.AllowedPorts); err == nil && len(ranges) > 0 {
+			if public, ok := shared.PublicPort(ranges, port); ok {
+				port = public
+			}
+		}
+		rc.Port = port
+		entryNode := store.Node{ID: snapshot.ServiceNodeID, Name: snapshot.Name,
+			ServerID: endpoint.ServerID, ServerAlias: entrySrv.Alias, ServerAddress: entrySrv.Address,
+			Protocol: shared.ProtocolVLESS, ConfigTemplate: endpoint.ConfigTemplate,
+			RealizedConfig: endpoint.RealizedConfig, Status: store.NodeStatusActive}
+		return &proxyItem{node: entryNode, rc: rc, credential: assignment.AccessUUID}, nil
+	}
 	if !allowed[snapshot.ServiceNodeID] {
 		return nil, fmt.Errorf("链 %d 出口节点未分配给该用户", chainID)
 	}

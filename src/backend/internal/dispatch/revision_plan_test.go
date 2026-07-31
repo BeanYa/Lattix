@@ -67,6 +67,18 @@ func TestPlanRevisionValidatesTopology(t *testing.T) {
 	}
 }
 
+func TestPlanRevisionDirectSharedOmitsService(t *testing.T) {
+	desired := topology(2, `{"protocol":"vless"}`, hop(10, 20))
+	desired.DirectShared = true
+	plan, err := PlanRevision(RevisionTopology{}, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Apply) != 0 || len(plan.Reuse) != 0 || len(plan.Cleanup) != 0 {
+		t.Fatalf("direct shared plan contains service work: %+v", plan)
+	}
+}
+
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

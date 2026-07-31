@@ -210,6 +210,37 @@ CREATE TABLE IF NOT EXISTS user_nodes (
     PRIMARY KEY (user_id, node_id)
 );
 
+-- Server-level managed listener. Chains with a compatible profile share one
+-- row and one public port; port=0 means the Agent has not realized it yet.
+CREATE TABLE IF NOT EXISTS shared_endpoints (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id       INTEGER NOT NULL REFERENCES servers(id),
+    protocol        TEXT    NOT NULL DEFAULT 'vless',
+    port            INTEGER NOT NULL DEFAULT 0,
+    profile_hash    TEXT    NOT NULL,
+    config_template TEXT    NOT NULL,
+    realized_config TEXT,
+    status          TEXT    NOT NULL DEFAULT 'pending',
+    error           TEXT    NOT NULL DEFAULT '',
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_shared_endpoints_server_port
+    ON shared_endpoints(server_id, port);
+CREATE INDEX IF NOT EXISTS idx_shared_endpoints_server_profile
+    ON shared_endpoints(server_id, profile_hash);
+
+-- A real user can consume many chains concurrently. access_uuid is the
+-- assignment credential installed on the shared entry endpoint.
+CREATE TABLE IF NOT EXISTS user_chain_assignments (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    chain_id    INTEGER NOT NULL REFERENCES chains(id),
+    access_uuid TEXT    NOT NULL UNIQUE,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, chain_id)
+);
+
 -- 主机遥测（§13）：每服务器一行，最新值。
 CREATE TABLE IF NOT EXISTS server_metrics (
     server_id          INTEGER PRIMARY KEY REFERENCES servers(id),
@@ -291,6 +322,8 @@ CREATE TABLE IF NOT EXISTS chains (
     id                       INTEGER PRIMARY KEY AUTOINCREMENT,
     name                     TEXT    NOT NULL DEFAULT '',
     service_node_id          INTEGER NOT NULL DEFAULT 0,
+    endpoint_id              INTEGER NOT NULL DEFAULT 0,
+    service_uuid             TEXT    NOT NULL DEFAULT '',
     published_revision_id    INTEGER NOT NULL DEFAULT 0,
     desired_revision_id      INTEGER NOT NULL DEFAULT 0,
     traffic_multiplier_milli INTEGER NOT NULL DEFAULT 1000,
@@ -299,6 +332,13 @@ CREATE TABLE IF NOT EXISTS chains (
     deleted_at               DATETIME,
     created_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at               DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS endpoint_traffic_totals (
+    endpoint_id INTEGER PRIMARY KEY REFERENCES shared_endpoints(id),
+    up          INTEGER NOT NULL DEFAULT 0,
+    down        INTEGER NOT NULL DEFAULT 0,
+    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS chain_hops (

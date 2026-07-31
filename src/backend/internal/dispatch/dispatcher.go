@@ -268,6 +268,13 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 					d.failChainByNode(ctx, p.NodeID, reason) // 链出口业务死信 → 链 failed 定位到跳（§21）
 				}
 			}
+			if c.Type == shared.TypeApplySharedEndpoint {
+				var p shared.ApplySharedEndpointPayload
+				if json.Unmarshal(c.Data, &p) == nil && p.EndpointID != 0 {
+					_ = d.st.SetSharedEndpointFailed(ctx, p.EndpointID,
+						fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts))
+				}
+			}
 			// apply_chain_hop 死信：跳置 failed，链 failed 定位到跳（§21）。
 			if c.Type == shared.TypeApplyChainHop {
 				var p shared.ApplyChainHopPayload
@@ -685,7 +692,7 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 		counters := make([]store.TrafficCounterSnapshot, 0, len(p.Traffic))
 		for _, counter := range p.Traffic {
 			counters = append(counters, store.TrafficCounterSnapshot{
-				NodeID: counter.NodeID, HopID: counter.HopID, User: counter.User,
+				NodeID: counter.NodeID, EndpointID: counter.EndpointID, HopID: counter.HopID, User: counter.User,
 				Up: counter.Up, Down: counter.Down,
 			})
 		}
@@ -785,13 +792,21 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			RequestID: env.RequestID, TraceID: env.TraceID,
 		})
 		// 清理命令只更新命令/修订任务，不得触碰当前工作拓扑的节点状态。
-		if cmd.Type == shared.TypeRemoveChainHop || cmd.Type == shared.TypeRemoveNode {
+		if cmd.Type == shared.TypeRemoveChainHop || cmd.Type == shared.TypeRemoveNode ||
+			cmd.Type == shared.TypeRemoveSharedEndpoint {
 			log.Printf("dispatch: server %d: cleanup command %d acked", serverID, cmdID)
 			return
 		}
 		// 链跳配置件回执（§21）：路由到链编排器，不触碰节点状态机。
 		if p.HopID != 0 {
 			d.handleChainHopResult(serverID, p, "")
+			return
+		}
+		if p.EndpointID != 0 {
+			realized, _ := json.Marshal(p.RealizedConfig)
+			if err := d.st.SetSharedEndpointActive(ctx, p.EndpointID, realized); err != nil {
+				log.Printf("dispatch: shared endpoint %d active: %v", p.EndpointID, err)
+			}
 			return
 		}
 		realized, _ := json.Marshal(p.RealizedConfig)
@@ -839,13 +854,18 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			RequestID: env.RequestID, TraceID: env.TraceID,
 		})
 		// 清理失败保留任务记录，不能让已发布的数据面 revision 回滚或失效。
-		if cmd.Type == shared.TypeRemoveChainHop || cmd.Type == shared.TypeRemoveNode {
+		if cmd.Type == shared.TypeRemoveChainHop || cmd.Type == shared.TypeRemoveNode ||
+			cmd.Type == shared.TypeRemoveSharedEndpoint {
 			log.Printf("dispatch: server %d: cleanup command %d failed: %s", serverID, cmdID, errorMessage)
 			return
 		}
 		// 链跳配置件回执（§21）：路由到链编排器（失败定位到跳，链置 failed）。
 		if p.HopID != 0 {
 			d.handleChainHopResult(serverID, p, errorMessage)
+			return
+		}
+		if p.EndpointID != 0 {
+			_ = d.st.SetSharedEndpointFailed(ctx, p.EndpointID, errorMessage)
 			return
 		}
 		if p.NodeID != 0 {

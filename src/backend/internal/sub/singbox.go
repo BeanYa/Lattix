@@ -23,10 +23,10 @@ type sbUTLS struct {
 }
 
 type sbTLS struct {
-	Enabled     bool          `json:"enabled"`
-	ServerName  string        `json:"server_name,omitempty"`
-	Reality     *sbTLSReality `json:"reality,omitempty"`
-	UTLS        *sbUTLS       `json:"utls,omitempty"`
+	Enabled    bool          `json:"enabled"`
+	ServerName string        `json:"server_name,omitempty"`
+	Reality    *sbTLSReality `json:"reality,omitempty"`
+	UTLS       *sbUTLS       `json:"utls,omitempty"`
 }
 
 type sbTransport struct {
@@ -38,18 +38,18 @@ type sbTransport struct {
 }
 
 type sbOutbound struct {
-	Type        string       `json:"type"`
-	Tag         string       `json:"tag"`
-	Server      string       `json:"server,omitempty"`
-	ServerPort  int          `json:"server_port,omitempty"`
-	UUID        string       `json:"uuid,omitempty"`
-	Flow        string       `json:"flow,omitempty"`
-	Encryption  string       `json:"encryption,omitempty"`
-	Password    string       `json:"password,omitempty"`
-	Method      string       `json:"method,omitempty"` // shadowsocks
-	TLS         *sbTLS       `json:"tls,omitempty"`
-	Transport   *sbTransport `json:"transport,omitempty"`
-	Outbounds   []string     `json:"outbounds,omitempty"` // selector
+	Type       string       `json:"type"`
+	Tag        string       `json:"tag"`
+	Server     string       `json:"server,omitempty"`
+	ServerPort int          `json:"server_port,omitempty"`
+	UUID       string       `json:"uuid,omitempty"`
+	Flow       string       `json:"flow,omitempty"`
+	Encryption string       `json:"encryption,omitempty"`
+	Password   string       `json:"password,omitempty"`
+	Method     string       `json:"method,omitempty"` // shadowsocks
+	TLS        *sbTLS       `json:"tls,omitempty"`
+	Transport  *sbTransport `json:"transport,omitempty"`
+	Outbounds  []string     `json:"outbounds,omitempty"` // selector
 }
 
 type sbRoute struct {
@@ -69,7 +69,11 @@ func (s *Server) serveSingbox(w http.ResponseWriter, r *http.Request, user *stor
 	}
 	tags := []string{}
 	for _, it := range items {
-		ob, err := buildSbOutbound(it.node, it.rc, user.UUID)
+		credential := it.credential
+		if credential == "" {
+			credential = user.UUID
+		}
+		ob, err := buildSbOutbound(it.node, it.rc, credential)
 		if err != nil {
 			continue
 		}

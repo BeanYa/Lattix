@@ -312,8 +312,8 @@ export default function Users() {
   }
 
   const onOpenAssign = (u: SubUser) => {
-    setAssignTarget(u)
-    setAssignSelection(u.node_ids)
+		setAssignTarget(u)
+		setAssignSelection(u.chain_ids)
     setAssignError('')
   }
 
@@ -328,7 +328,7 @@ export default function Users() {
     setAssignError('')
     setAssignSaving(true)
     try {
-      await api.setUserNodes(assignTarget.id, assignSelection)
+			await api.setUserAssignments(assignTarget.id, assignTarget.node_ids, assignSelection)
       setAssignTarget(null)
       load()
     } catch (err) {
@@ -441,10 +441,10 @@ export default function Users() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    {u.node_ids.length === 0 ? (
+					{u.chain_ids.length === 0 ? (
                       <span className="text-muted-foreground">未分配</span>
                     ) : (
-                      `${u.node_ids.filter((id) => linkOptions.some((link) => link.nodeId === id)).length} / ${linkOptions.length}`
+						`${u.chain_ids.filter((id) => linkOptions.some((link) => link.chainId === id)).length} / ${linkOptions.length}`
                     )}
                   </TableCell>
                   <TableCell className="text-xs whitespace-nowrap">
@@ -565,12 +565,12 @@ export default function Users() {
                   <p className="text-sm text-muted-foreground">暂无链路，请先在「链路」页创建。</p>
                 ) : (
                   linkOptions.map((link) => (
-                    <label key={link.nodeId} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
+					<label key={link.chainId} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
                       <input
                         type="checkbox"
                         className="size-4 accent-primary"
-                        checked={createLinkSel.includes(link.nodeId)}
-                        onChange={(e) => onToggleCreateLink(link.nodeId, e.target.checked)}
+						checked={createLinkSel.includes(link.chainId)}
+						onChange={(e) => onToggleCreateLink(link.chainId, e.target.checked)}
                       />
                       <Badge variant="secondary">{link.type === 'direct' ? '直连' : '中转'}</Badge>
                       <span>{link.name}</span>
@@ -675,12 +675,12 @@ export default function Users() {
               <p className="text-sm text-muted-foreground">暂无链路，请先在「链路」页创建。</p>
             ) : (
               linkOptions.map((link) => (
-                <label key={link.nodeId} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
+				<label key={link.chainId} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
                   <input
                     type="checkbox"
                     className="size-4 accent-primary"
-                    checked={assignSelection.includes(link.nodeId)}
-                    onChange={(e) => onToggleNode(link.nodeId, e.target.checked)}
+					checked={assignSelection.includes(link.chainId)}
+					onChange={(e) => onToggleNode(link.chainId, e.target.checked)}
                   />
                   <Badge variant="secondary">{link.type === 'direct' ? '直连' : '中转'}</Badge>
                   <span>{link.name}</span>

@@ -45,6 +45,7 @@ type ChainPiece struct {
 	PublicKey  string            `json:"public_key,omitempty"`  // portal：对应公钥（回执值）
 	Inbound    json.RawMessage   `json:"inbound,omitempty"`     // portal/forward 的 inbound
 	Outbound   json.RawMessage   `json:"outbound,omitempty"`    // bridge 的 interconn outbound
+	Outbounds  []json.RawMessage `json:"outbounds,omitempty"`   // shared endpoint 的逐链 outbound
 	Reverse    json.RawMessage   `json:"reverse,omitempty"`     // reverse.portals/bridges 条目
 	Rules      []json.RawMessage `json:"rules,omitempty"`       // routing 规则
 }

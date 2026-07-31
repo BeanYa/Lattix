@@ -25,8 +25,10 @@ function chain(id: number, serviceNodeId: number, hops: ChainHop[]): Chain {
     status: 'active',
     error: '',
     created_at: '',
-    hops,
-    service_node_id: serviceNodeId,
+		hops,
+		service_node_id: serviceNodeId,
+		endpoint_id: 0,
+		entry_port: hops[0]?.forward_port ?? 0,
     traffic_multiplier: '1.000',
     published_revision_id: 1,
     desired_revision_id: 1,
@@ -43,7 +45,7 @@ describe('buildLinkOptions', () => {
 
     expect(options).toEqual([
       expect.objectContaining({
-        nodeId: 10,
+			chainId: 1,
         name: '直连 #1',
         type: 'direct',
         detail: 'Server 1',
@@ -58,7 +60,7 @@ describe('buildLinkOptions', () => {
 
     expect(options).toEqual([
       expect.objectContaining({
-        nodeId: 20,
+			chainId: 2,
         name: '中转 #2',
         type: 'relay',
         detail: 'Server 1 → Server 2',

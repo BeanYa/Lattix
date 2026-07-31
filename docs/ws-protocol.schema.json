@@ -91,6 +91,7 @@
       "required": ["up", "down"],
       "properties": {
         "node_id": {"type": "integer", "minimum": 1},
+        "endpoint_id": {"type": "integer", "minimum": 1},
         "hop_id": {"type": "integer", "minimum": 1},
         "user": {"type": "string"},
         "up": {"type": "integer", "minimum": 0},
@@ -98,6 +99,7 @@
       },
       "oneOf": [
         {"required": ["node_id"]},
+        {"required": ["endpoint_id"]},
         {"required": ["hop_id"]},
         {"required": ["user"]}
       ]
@@ -131,6 +133,52 @@
     "data": {}
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {"kind": {"const": "request"}, "type": {"const": "shared-endpoint.apply"}},
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["endpoint_id", "config", "clients", "routes"],
+            "properties": {
+              "endpoint_id": {"type": "integer", "minimum": 1},
+              "config": {"type": "object"},
+              "clients": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "email"],
+                  "properties": {"id": {"type": "string"}, "email": {"type": "string", "pattern": "^access:[1-9][0-9]*$"}}
+                }
+              },
+              "routes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["chain_id", "users"],
+                  "properties": {
+                    "chain_id": {"type": "integer", "minimum": 1},
+                    "users": {"type": "array", "items": {"type": "string"}},
+                    "direct": {"type": "boolean"},
+                    "target_address": {"type": "string"},
+                    "target_port": {"type": "integer", "minimum": 1},
+                    "tunnel_uuid": {"type": "string"},
+                    "target": {"type": "object"}
+                  }
+                }
+              },
+              "dest_candidates": {"type": "array", "items": {"type": "string"}},
+              "port_candidates": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}}
+            }
+          }
+        }
+      }
+    },
     {
       "if": {
         "properties": {"kind": {"const": "request"}, "type": {"const": "agent.session.open"}},

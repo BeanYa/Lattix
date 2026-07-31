@@ -220,13 +220,13 @@ export const api = {
   createUser: (
     name: string,
     expiresAt?: string | null,
-    nodeIds?: number[],
+    chainIds?: number[],
     sub?: { traffic_limit?: number; traffic_reset_day?: number; plan_name?: string; app_url?: string },
   ) =>
     requester.post<SubUser>('/api/user/create', {
       name,
       ...(expiresAt ? { expires_at: expiresAt } : {}),
-      ...(nodeIds && nodeIds.length ? { node_ids: nodeIds } : {}),
+      ...(chainIds && chainIds.length ? { chain_ids: chainIds } : {}),
       ...(sub ?? {}),
     }),
   updateUserExpiry: (userId: number, expiresAt: string | null) =>
@@ -236,11 +236,12 @@ export const api = {
     }),
   setUserDisabled: (userId: number, disabled: boolean) =>
     requester.post<SubUser>('/api/user/update', { user_id: userId, disabled }),
-  setUserNodes: (userId: number, nodeIds: number[]) =>
-    requester.post<{ node_ids: number[] }>('/api/user/set-nodes', {
-      user_id: userId,
-      node_ids: nodeIds,
-    }),
+  setUserAssignments: (userId: number, nodeIds: number[], chainIds: number[]) =>
+		requester.post<{ node_ids: number[]; chain_ids: number[] }>('/api/user/set-nodes', {
+			user_id: userId,
+			node_ids: nodeIds,
+			chain_ids: chainIds,
+		}),
   deleteUser: (userId: number) =>
     requester.post<void>('/api/user/delete', { user_id: userId }),
   updateUserSubSettings: (body: {

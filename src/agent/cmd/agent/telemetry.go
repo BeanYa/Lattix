@@ -54,9 +54,10 @@ func (t *telemetry) trafficCounters() []shared.TrafficCounter {
 
 func aggregateTrafficCounters(cur map[string]int64) []shared.TrafficCounter {
 	type key struct {
-		nodeID int64
-		hopID  int64
-		user   string
+		nodeID     int64
+		endpointID int64
+		hopID      int64
+		user       string
 	}
 	agg := map[key]*shared.TrafficCounter{}
 	for name, v := range cur {
@@ -72,8 +73,10 @@ func aggregateTrafficCounters(cur map[string]int64) []shared.TrafficCounter {
 				k.nodeID, _ = strconv.ParseInt(strings.TrimPrefix(parts[1], "node_"), 10, 64)
 			case strings.HasPrefix(parts[1], "chain_forward_"):
 				k.hopID, _ = strconv.ParseInt(strings.TrimPrefix(parts[1], "chain_forward_"), 10, 64)
+			case strings.HasPrefix(parts[1], "shared_endpoint_"):
+				k.endpointID, _ = strconv.ParseInt(strings.TrimPrefix(parts[1], "shared_endpoint_"), 10, 64)
 			}
-			if k.nodeID <= 0 && k.hopID <= 0 {
+			if k.nodeID <= 0 && k.hopID <= 0 && k.endpointID <= 0 {
 				continue
 			}
 		case "user":
@@ -83,7 +86,7 @@ func aggregateTrafficCounters(cur map[string]int64) []shared.TrafficCounter {
 		}
 		counter := agg[k]
 		if counter == nil {
-			counter = &shared.TrafficCounter{NodeID: k.nodeID, HopID: k.hopID, User: k.user}
+			counter = &shared.TrafficCounter{NodeID: k.nodeID, EndpointID: k.endpointID, HopID: k.hopID, User: k.user}
 			agg[k] = counter
 		}
 		switch parts[3] {

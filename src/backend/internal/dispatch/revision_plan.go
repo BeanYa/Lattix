@@ -24,6 +24,9 @@ type RevisionTopology struct {
 	ServiceID  int64
 	Service    json.RawMessage
 	Hops       []RevisionHopSpec
+	// DirectShared means the shared endpoint is also the one-hop exit. There
+	// is no separate service listener to deploy in that topology.
+	DirectShared bool
 }
 
 type RevisionHopSpec struct {
@@ -103,6 +106,9 @@ func validateTopology(topology RevisionTopology) error {
 	if len(topology.Hops) < 1 || len(topology.Hops) > 4 {
 		return fmt.Errorf("chain must contain between 1 and 4 hops")
 	}
+	if topology.DirectShared && len(topology.Hops) != 1 {
+		return fmt.Errorf("direct shared topology must contain exactly one hop")
+	}
 	seenHop := map[int64]bool{}
 	seenServer := map[int64]bool{}
 	for _, hop := range topology.Hops {
@@ -129,6 +135,9 @@ func validateTopology(topology RevisionTopology) error {
 func materializeRevision(topology RevisionTopology) ([]RevisionPiece, error) {
 	if err := validateTopology(topology); err != nil {
 		return nil, err
+	}
+	if topology.DirectShared {
+		return []RevisionPiece{}, nil
 	}
 	pieces := make([]RevisionPiece, 0, len(topology.Hops)*3+1)
 	exit := topology.Hops[len(topology.Hops)-1]

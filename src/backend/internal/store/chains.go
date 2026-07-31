@@ -45,6 +45,8 @@ type Chain struct {
 	ID                     int64
 	Name                   string
 	ServiceNodeID          int64
+	EndpointID             int64
+	ServiceUUID            string
 	PublishedRevisionID    int64
 	DesiredRevisionID      int64
 	TrafficMultiplierMilli int
@@ -72,12 +74,13 @@ type ChainHop struct {
 	CreatedAt        time.Time
 }
 
-const chainCols = `id, name, service_node_id, published_revision_id, desired_revision_id,
+const chainCols = `id, name, service_node_id, endpoint_id, service_uuid, published_revision_id, desired_revision_id,
 	traffic_multiplier_milli, status, error, created_at`
 
 func scanChain(row interface{ Scan(...any) error }) (*Chain, error) {
 	var c Chain
-	if err := row.Scan(&c.ID, &c.Name, &c.ServiceNodeID, &c.PublishedRevisionID, &c.DesiredRevisionID,
+	if err := row.Scan(&c.ID, &c.Name, &c.ServiceNodeID, &c.EndpointID, &c.ServiceUUID,
+		&c.PublishedRevisionID, &c.DesiredRevisionID,
 		&c.TrafficMultiplierMilli, &c.Status, &c.Error, &c.CreatedAt); err != nil {
 		return nil, err
 	}

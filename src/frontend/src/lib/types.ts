@@ -400,6 +400,10 @@ export interface Chain {
   created_at: string
   hops: ChainHop[] // 按 seq 升序：首位入口，末位出口
   service_node_id: number
+  endpoint_id: number
+  entry_port: number
+  endpoint_status?: NodeStatus
+  endpoint_error?: string
   traffic_multiplier: string
   traffic?: ChainTraffic
   published_revision_id: number
@@ -440,6 +444,13 @@ export interface SubUser {
   sub_url: string
   sub_links_url: string
   node_ids: number[]
+  chain_ids: number[]
+  chain_assignments: Array<{
+    id: number
+    chain_id: number
+    endpoint_id: number
+    access_uuid: string
+  }>
   traffic: Traffic | null
   expires_at: string | null
   expired: boolean
