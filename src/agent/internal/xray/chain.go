@@ -359,16 +359,17 @@ func renderForwardInbound(spec *shared.ForwardSpec, tag string, port int) map[st
 	}
 }
 
-// pickChainPort 挑选链 piece 监听端口：spec 指定则校验占用；否则优先复用
-// 已记录的端口（重发幂等），被占用再从候选段挑空闲（§21）。
+// pickChainPort 挑选链 piece 监听端口：同一 piece 复用自己已记录的端口；
+// 新的指定端口校验占用，未指定且无记录时从候选段挑空闲端口（§21）。
 func pickChainPort(preferred int, candidates []int, prev *state.ChainPiece) (int, error) {
 	if preferred != 0 {
+		if prev != nil && prev.Port == preferred {
+			return preferred, nil
+		}
 		return pickPort(preferred, nil)
 	}
 	if prev != nil && prev.Port != 0 {
-		if p, err := pickPort(prev.Port, nil); err == nil {
-			return p, nil
-		} // 已分配端口被占用：按候选重新挑选
+		return prev.Port, nil
 	}
 	return pickPort(0, candidates)
 }

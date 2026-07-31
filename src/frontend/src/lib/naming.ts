@@ -46,7 +46,12 @@ function resolveToken(key: string, context: NameTemplateContext): string {
   if (servers.length === 0) throw new Error('请先完成服务器拓扑选择')
   const global = servers[0]
   const globalTag = key.match(/^TAG\[(\d+)\]$/)
-  if (globalTag) return serverTag(global, Number(globalTag[1]), key)
+  if (globalTag) {
+    if (servers.length > 1) {
+      throw new Error(`参数 {{${key}}} 在多跳链路中必须使用 ENTRY、EXIT 或 HOP[n] 作用域`)
+    }
+    return serverTag(global, Number(globalTag[1]), key)
+  }
 
   const scoped = key.match(/^(ENTRY|EXIT|HOP\[(\d+)\])\.([A-Z][A-Z0-9_]*)(?:\[(\d+)\])?$/)
   if (scoped) {
@@ -81,15 +86,24 @@ function resolveToken(key: string, context: NameTemplateContext): string {
       return servers[servers.length - 1].alias
     case 'SERVER':
     case 'NAME':
+      if (servers.length > 1) {
+        throw new Error(`参数 {{${key}}} 在多跳链路中必须使用 ENTRY、EXIT 或 HOP[n] 作用域`)
+      }
       return global.alias
     case 'SERVER_ID':
     case 'ID':
+      if (servers.length > 1) {
+        throw new Error(`参数 {{${key}}} 在多跳链路中必须使用 ENTRY、EXIT 或 HOP[n] 作用域`)
+      }
       return String(global.id)
     case 'COUNTRY':
     case 'COUNTRY_CODE':
     case 'COUNTRY_FLAG':
     case 'LOCATION':
     case 'ADDRESS':
+      if (servers.length > 1) {
+        throw new Error(`参数 {{${key}}} 在多跳链路中必须使用 ENTRY、EXIT 或 HOP[n] 作用域`)
+      }
       return serverAttribute(global, key, key)
     default:
       throw new Error(`不支持的名称参数 {{${key}}}`)
@@ -145,15 +159,22 @@ export function getTemplateSuggestions(
   const open = template.lastIndexOf('{{', cursor)
   if (open < 0 || template.lastIndexOf('}}', cursor) > open) return null
   const fragment = template.slice(open + 2, cursor).trimStart().toUpperCase()
-  const globalItems = [
-    ...serverAttributes,
-    'SERVER',
-    'SERVER_ID',
-    'PROTOCOL',
-    'PORT',
-    ...context.servers[0]?.tags.map((_, index) => `TAG[${index}]`) ?? [],
-  ]
-  const hopIndexes = new Set(context.hopIndexes ?? [])
+  const globalItems = context.servers.length > 1
+    ? ['PROTOCOL', 'PORT', 'HOPS']
+    : [
+        ...serverAttributes,
+        'SERVER',
+        'SERVER_ID',
+        'PROTOCOL',
+        'PORT',
+        'HOPS',
+        ...context.servers[0]?.tags.map((_, index) => `TAG[${index}]`) ?? [],
+      ]
+  const hopIndexes = new Set(
+    context.servers.length > 1
+      ? context.servers.map((_, index) => index)
+      : context.hopIndexes ?? [],
+  )
   const scopedItems = context.servers.flatMap((server, index) => {
     const scopes = [
       ...(index === 0 ? ['ENTRY'] : []),

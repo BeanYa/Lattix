@@ -45,7 +45,7 @@ func nameServer(srv *store.Server) nameTemplateServer {
 }
 
 // nameTemplateValues 是创建直连/中转链路时可用于名称模板的上下文。
-// Servers 按客户端到 Internet 的顺序排列；Servers[0] 是全局服务器变量的默认上下文。
+// Servers 按客户端到 Internet 的顺序排列；无作用域服务器变量仅用于单跳链路。
 type nameTemplateValues struct {
 	Protocol string
 	Port     *int
@@ -105,6 +105,9 @@ func resolveNameVariable(key string, values nameTemplateValues) (string, error) 
 	}
 	global := values.Servers[0]
 	if match := globalTagPattern.FindStringSubmatch(key); match != nil {
+		if len(values.Servers) > 1 {
+			return "", fmt.Errorf("参数 {{%s}} 在多跳链路中必须使用 ENTRY、EXIT 或 HOP[n] 作用域", key)
+		}
 		index, _ := strconv.Atoi(match[1])
 		return resolveServerTag(global, index, key)
 	}
@@ -152,10 +155,19 @@ func resolveNameVariable(key string, values nameTemplateValues) (string, error) 
 	case "EXIT":
 		return values.Servers[len(values.Servers)-1].Name, nil
 	case "SERVER":
+		if len(values.Servers) > 1 {
+			return "", fmt.Errorf("参数 {{%s}} 在多跳链路中必须使用 ENTRY、EXIT 或 HOP[n] 作用域", key)
+		}
 		return global.Name, nil
 	case "SERVER_ID":
+		if len(values.Servers) > 1 {
+			return "", fmt.Errorf("参数 {{%s}} 在多跳链路中必须使用 ENTRY、EXIT 或 HOP[n] 作用域", key)
+		}
 		return strconv.FormatInt(global.ID, 10), nil
 	case "NAME", "ID", "COUNTRY", "COUNTRY_CODE", "COUNTRY_FLAG", "LOCATION", "ADDRESS":
+		if len(values.Servers) > 1 {
+			return "", fmt.Errorf("参数 {{%s}} 在多跳链路中必须使用 ENTRY、EXIT 或 HOP[n] 作用域", key)
+		}
 		return resolveServerAttribute(global, key, key)
 	default:
 		return "", fmt.Errorf("不支持的名称参数 {{%s}}", key)

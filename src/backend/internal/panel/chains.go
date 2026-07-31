@@ -447,6 +447,21 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "dokodemo-door 不能作为中转链出口")
 		return
 	}
+	nameServers := make([]nameTemplateServer, 0, len(servers))
+	for _, server := range servers {
+		nameServers = append(nameServers, nameServer(server))
+	}
+	name, err := resolveNameTemplate(req.Name, nameTemplateValues{
+		Protocol: req.Node.Protocol,
+		Port:     req.EntryPort,
+		Servers:  nameServers,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	req.Name = name
+	req.Node.Name = name
 	if req.EntryPort != nil {
 		if *req.EntryPort < 1 || *req.EntryPort > 65535 || checkPortInRanges(servers[0], *req.EntryPort) != nil {
 			writeError(w, http.StatusBadRequest, "入口端口不在可用范围内")

@@ -75,7 +75,7 @@ func TestEditChainRemovesMiddleAndPlansOnlyAffectedPieces(t *testing.T) {
 	requester := &chainEditRequester{online: map[int64]bool{aID: true, bID: true, cID: true}}
 	dispatcher := dispatch.New(st, requester)
 	serverAPI := &Server{st: st, disp: dispatcher, req: requester}
-	body, _ := json.Marshal(editChainRequest{ChainID: chainID, Name: "chain",
+	body, _ := json.Marshal(editChainRequest{ChainID: chainID, Name: "{{ENTRY.COUNTRY_FLAG}}-{{EXIT.COUNTRY_CODE}}",
 		Hops: []chainHopRef{{ServerID: aID}, {ServerID: cID}}, EntryPort: func() *int { value := 1000; return &value }(),
 		Node: nodeRequest, TrafficMultiplier: "1.000"})
 	req := httptest.NewRequest("POST", "/api/chain/edit", bytes.NewReader(body))
@@ -88,6 +88,9 @@ func TestEditChainRemovesMiddleAndPlansOnlyAffectedPieces(t *testing.T) {
 	desired, err := st.DesiredChainRevision(ctx, chainID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if desired.Snapshot.Name != "🇺🇸-US" {
+		t.Fatalf("revision name = %q, want %q", desired.Snapshot.Name, "🇺🇸-US")
 	}
 	tasks, _ := st.RevisionTasks(ctx, desired.ID)
 	byKey := map[string]store.ChainRevisionTask{}

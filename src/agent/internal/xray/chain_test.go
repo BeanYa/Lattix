@@ -251,6 +251,23 @@ func TestPickChainPort(t *testing.T) {
 	}
 }
 
+func TestPickChainPortReusesPortOwnedByExistingPiece(t *testing.T) {
+	port, err := pickPort(0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener := listenOn(t, port)
+	defer listener.Close()
+	previous := &state.ChainPiece{HopID: 7, Kind: shared.HopKindForward, Port: port}
+
+	if got, err := pickChainPort(port, nil, previous); err != nil || got != port {
+		t.Fatalf("显式复用已有配置件端口 = %d, %v；期望 %d", got, err, port)
+	}
+	if got, err := pickChainPort(0, nil, previous); err != nil || got != port {
+		t.Fatalf("自动复用已有配置件端口 = %d, %v；期望 %d", got, err, port)
+	}
+}
+
 func listenOn(t *testing.T, port int) net.Listener {
 	t.Helper()
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))

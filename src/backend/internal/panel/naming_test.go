@@ -20,7 +20,7 @@ func TestResolveNodeNameTemplate(t *testing.T) {
 }
 
 func TestResolveChainNameTemplate(t *testing.T) {
-	got, err := resolveNameTemplate("{{ENTRY.NAME}}→{{HOP[1].LOCATION}}→{{EXIT.COUNTRY_FLAG}}-{{HOPS}}跳", nameTemplateValues{
+	got, err := resolveNameTemplate("{{ENTRY.NAME}}→{{HOP[1].COUNTRY_FLAG}}{{HOP[1].LOCATION}}→{{EXIT.COUNTRY_FLAG}}-{{HOPS}}跳", nameTemplateValues{
 		Protocol: "vless",
 		Servers: []nameTemplateServer{
 			{ID: 1, Name: "US Entry", CountryCode: "US", Location: "Los Angeles"},
@@ -30,8 +30,23 @@ func TestResolveChainNameTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "US Entry→Tokyo→🇯🇵-2跳"; got != want {
+	if want := "US Entry→🇯🇵Tokyo→🇯🇵-2跳"; got != want {
 		t.Fatalf("解析结果 = %q，期望 %q", got, want)
+	}
+}
+
+func TestResolveChainNameTemplateRequiresServerScope(t *testing.T) {
+	values := nameTemplateValues{Protocol: "vless", Servers: []nameTemplateServer{
+		{ID: 1, Name: "US Entry", CountryCode: "US", Location: "Los Angeles", Tags: []string{"entry"}},
+		{ID: 2, Name: "JP Exit", CountryCode: "JP", Location: "Tokyo"},
+	}}
+	for _, tmpl := range []string{
+		"{{SERVER}}", "{{SERVER_ID}}", "{{NAME}}", "{{ID}}", "{{COUNTRY}}",
+		"{{COUNTRY_CODE}}", "{{COUNTRY_FLAG}}", "{{LOCATION}}", "{{ADDRESS}}", "{{TAG[0]}}",
+	} {
+		if _, err := resolveNameTemplate(tmpl, values); err == nil {
+			t.Fatalf("多跳模板 %q 的无作用域服务器变量应解析失败", tmpl)
+		}
 	}
 }
 
