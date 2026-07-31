@@ -23,6 +23,7 @@ function envelope(code: string, data: unknown = null, message = '') {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -166,5 +167,31 @@ describe('Requester', () => {
       kind: 'cancelled',
       code: 'REQUEST_CANCELLED',
     })
+  })
+
+  it('retries a timed-out GET after a short recovery delay', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (fetchMock.mock.calls.length > 1) {
+        return Promise.resolve(jsonResponse(envelope('OK', { username: 'admin' })))
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        if (!signal) throw new Error('missing request signal')
+        signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const request = new Requester().get<{ username: string }>('/api/auth/me', undefined, {
+      timeoutMs: 100,
+      traceId: TRACE_ID,
+    })
+
+    await vi.advanceTimersByTimeAsync(100)
+    await vi.advanceTimersByTimeAsync(500)
+
+    await expect(request).resolves.toEqual({ username: 'admin' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

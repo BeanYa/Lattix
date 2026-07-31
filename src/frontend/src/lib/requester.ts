@@ -13,6 +13,7 @@ export type RequestErrorCode =
   | `HTTP_${number}`
   | 'INVALID_RESPONSE'
   | 'REQUEST_CANCELLED'
+  | 'REQUEST_TIMEOUT'
   | 'NETWORK_UNREACHABLE'
 
 export class RequestError extends Error {
@@ -61,6 +62,8 @@ export interface RequestOptions {
 type LifecycleListener = (event: RequestLifecycleEvent) => void
 
 const ID_BYTES = 16
+const GET_MAX_ATTEMPTS = 3
+const GET_RETRY_DELAYS_MS = [500, 1_500] as const
 
 export function newRequestId(): string {
   const bytes = new Uint8Array(ID_BYTES)
@@ -96,7 +99,7 @@ export class Requester {
       if (value !== undefined) search.set(key, String(value))
     }
     const suffix = search.size ? `?${search.toString()}` : ''
-    return this.execute<T>('GET', path + suffix, undefined, options, 2)
+    return this.execute<T>('GET', path + suffix, undefined, options, GET_MAX_ATTEMPTS)
   }
 
   post<T>(path: RPCPathByMethod<'POST'>, body: object = {}, options?: RequestOptions): Promise<T> {
@@ -110,7 +113,10 @@ export class Requester {
     const lifecycle = { requestId, traceId, method: 'DOWNLOAD' as const, path, display }
     this.emit({ phase: 'start', ...lifecycle })
     let requestError: RequestError | undefined
-    const { signal, cleanup } = combinedSignal(options?.signal, options?.timeoutMs ?? 30_000)
+    const { signal, cleanup, abortSource } = combinedSignal(
+      options?.signal,
+      options?.timeoutMs ?? 30_000,
+    )
     try {
       const response = await fetch(path, {
         method: 'GET',
@@ -146,7 +152,7 @@ export class Requester {
       anchor.click()
       URL.revokeObjectURL(url)
     } catch (error) {
-      requestError = normalizeError(error, requestId, traceId)
+      requestError = normalizeError(error, requestId, traceId, abortSource())
       throw requestError
     } finally {
       cleanup()
@@ -170,7 +176,10 @@ export class Requester {
       const requestId = newRequestId()
       const lifecycle = { requestId, traceId, method, path, display }
       this.emit({ phase: 'start', ...lifecycle })
-      const { signal, cleanup } = combinedSignal(options?.signal, options?.timeoutMs ?? 15_000)
+      const { signal, cleanup, abortSource } = combinedSignal(
+        options?.signal,
+        options?.timeoutMs ?? 15_000,
+      )
       try {
         const headers: Record<string, string> = {
           'X-Request-ID': requestId,
@@ -209,10 +218,14 @@ export class Requester {
         return envelope.data
       } catch (error) {
         cleanup()
-        lastError = normalizeError(error, requestId, traceId)
+        lastError = normalizeError(error, requestId, traceId, abortSource())
         this.emit({ phase: 'finish', ...lifecycle, error: lastError })
         if (attempt + 1 >= maxAttempts || lastError.kind !== 'transport') {
           throw lastError
+        }
+        const retryDelay = GET_RETRY_DELAYS_MS[Math.min(attempt, GET_RETRY_DELAYS_MS.length - 1)]
+        if (!(await waitForRetry(retryDelay, options?.signal))) {
+          throw cancelledError(requestId, traceId)
         }
       }
     }
@@ -298,16 +311,26 @@ function businessError<T>(envelope: RPCEnvelope<T>, httpStatus: number): Request
   })
 }
 
-function normalizeError(error: unknown, requestId: string, traceId: string): RequestError {
+type AbortSource = 'parent' | 'timeout' | null
+
+function normalizeError(
+  error: unknown,
+  requestId: string,
+  traceId: string,
+  abortSource: AbortSource = null,
+): RequestError {
   if (error instanceof RequestError) return error
-  if (error instanceof DOMException && error.name === 'AbortError') {
+  if (abortSource === 'timeout') {
     return new RequestError({
-      kind: 'cancelled',
-      code: 'REQUEST_CANCELLED',
-      message: '请求已取消或超时',
+      kind: 'transport',
+      code: 'REQUEST_TIMEOUT',
+      message: '请求超时',
       requestId,
       traceId,
     })
+  }
+  if (abortSource === 'parent' || (error instanceof DOMException && error.name === 'AbortError')) {
+    return cancelledError(requestId, traceId)
   }
   return new RequestError({
     kind: 'transport',
@@ -318,10 +341,27 @@ function normalizeError(error: unknown, requestId: string, traceId: string): Req
   })
 }
 
+function cancelledError(requestId: string, traceId: string): RequestError {
+  return new RequestError({
+    kind: 'cancelled',
+    code: 'REQUEST_CANCELLED',
+    message: '请求已取消',
+    requestId,
+    traceId,
+  })
+}
+
 function combinedSignal(parent: AbortSignal | undefined, timeoutMs: number) {
   const controller = new AbortController()
-  const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs)
-  const abort = () => controller.abort(parent?.reason)
+  let source: AbortSource = null
+  const timeout = globalThis.setTimeout(() => {
+    if (source === null) source = 'timeout'
+    controller.abort()
+  }, timeoutMs)
+  const abort = () => {
+    if (source === null) source = 'parent'
+    controller.abort(parent?.reason)
+  }
   if (parent?.aborted) {
     abort()
   } else {
@@ -329,11 +369,26 @@ function combinedSignal(parent: AbortSignal | undefined, timeoutMs: number) {
   }
   return {
     signal: controller.signal,
+    abortSource: () => source,
     cleanup: () => {
       globalThis.clearTimeout(timeout)
       parent?.removeEventListener('abort', abort)
     },
   }
+}
+
+function waitForRetry(delayMs: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return Promise.resolve(false)
+  return new Promise((resolve) => {
+    const finish = (ready: boolean) => {
+      globalThis.clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      resolve(ready)
+    }
+    const timer = globalThis.setTimeout(() => finish(true), delayMs)
+    const onAbort = () => finish(false)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 export const requester = new Requester()
