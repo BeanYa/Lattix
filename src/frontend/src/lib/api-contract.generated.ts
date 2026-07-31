@@ -737,7 +737,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * @description 原子语义上的期望分配。node_ids 保留独立节点兼容；chain_ids 是用户与链的直接多对多分配。
+         * @description 完整替换期望分配。node_ids 保留独立节点兼容；chain_ids 是用户与链的直接多对多分配。
          *     未变化的链分配保留 access_uuid，新增分配生成新凭证并重算共享入口。
          */
         post: operations["userSetNodes"];
