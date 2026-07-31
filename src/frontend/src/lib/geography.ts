@@ -33,6 +33,18 @@ export interface GeographyCoordinates {
   countriesByCode: ReadonlyMap<string, GeographyCountry>
 }
 
+export interface GeographyLocationRequest {
+  key: string
+  countryCode: string
+  location: string
+}
+
+export interface GeographyLocationResult {
+  key: string
+  lat: number | null
+  lng: number | null
+}
+
 const countryNames = new Intl.DisplayNames(['zh-CN'], { type: 'region' })
 let citiesByCountryPromise: Promise<Map<string, GeographyCity[]>> | null = null
 let countriesPromise: Promise<GeographyCountry[]> | null = null
@@ -115,4 +127,42 @@ export async function loadGeographyCoordinates(): Promise<GeographyCoordinates> 
     citiesByCountry,
     countriesByCode: new Map(countries.map((country) => [country.isoCode, country])),
   }
+}
+
+export function resolveGeographyLocations(
+  requests: GeographyLocationRequest[],
+  signal?: AbortSignal,
+): Promise<GeographyLocationResult[]> {
+  if (requests.length === 0) return Promise.resolve([])
+
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./geography-coordinates.worker.ts', import.meta.url), {
+      type: 'module',
+    })
+
+    const cleanup = () => {
+      signal?.removeEventListener('abort', handleAbort)
+      worker.terminate()
+    }
+    const handleAbort = () => {
+      cleanup()
+      reject(new DOMException('Geography lookup aborted', 'AbortError'))
+    }
+
+    worker.onmessage = (event: MessageEvent<GeographyLocationResult[]>) => {
+      cleanup()
+      resolve(event.data)
+    }
+    worker.onerror = () => {
+      cleanup()
+      reject(new Error('Unable to resolve geography coordinates'))
+    }
+
+    if (signal?.aborted) {
+      handleAbort()
+      return
+    }
+    signal?.addEventListener('abort', handleAbort, { once: true })
+    worker.postMessage(requests)
+  })
 }

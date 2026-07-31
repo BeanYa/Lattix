@@ -11,7 +11,8 @@ import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/ca
 import { api, errorMessage } from '@/lib/api'
 import type { Chain, DashboardStats, Server } from '@/lib/types'
 
-const GlobeTopology = lazy(() => import('@/components/GlobeTopology'))
+const loadGlobeTopology = () => import('@/components/GlobeTopology')
+const GlobeTopology = lazy(loadGlobeTopology)
 
 export default function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
@@ -43,6 +44,7 @@ export default function Dashboard() {
   }, [])
 
   useEffect(() => {
+    void loadGlobeTopology().catch(() => {})
     const controller = new AbortController()
     let stopped = false
     let timer: number | undefined

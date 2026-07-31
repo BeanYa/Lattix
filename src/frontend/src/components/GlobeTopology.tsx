@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { startTransition, useEffect, useMemo, useState } from 'react'
 
 import LowPolyEarth, { type EarthLink, type EarthNode } from '@/components/LowPolyEarth'
-import { loadGeographyCoordinates } from '@/lib/geography'
+import {
+  resolveGeographyLocations,
+  type GeographyLocationResult,
+} from '@/lib/geography'
 import { isServerOnline } from '@/lib/server-state'
 import type { Chain, Server } from '@/lib/types'
 
@@ -30,40 +33,19 @@ function normalizePlace(value: string) {
   return value.trim().toLocaleLowerCase().replace(/[\s_-]+/g, '')
 }
 
-function finiteCoordinate(value: string | null | undefined) {
-  if (value == null || value.trim() === '') return null
-  const coordinate = Number(value)
-  return Number.isFinite(coordinate) ? coordinate : null
-}
-
-async function locateServers(servers: Server[]): Promise<TopologyPoint[]> {
-  const { citiesByCountry, countriesByCode } = await loadGeographyCoordinates()
+function positionServers(
+  servers: Server[],
+  resolvedCoordinates: ReadonlyMap<string, GeographyLocationResult>,
+): TopologyPoint[] {
   const duplicateLocations = new Map<string, number>()
 
   return servers.map((server) => {
     const countryCode = server.country_code.trim().toUpperCase()
-    const place = normalizePlace(server.location)
-    let lat: number | null = null
-    let lng: number | null = null
-
-    if (countryCode) {
-      const coordinateKey = `${countryCode}:${place}`
-      if (coordinateCache.has(coordinateKey)) {
-        const cached = coordinateCache.get(coordinateKey)
-        lat = cached?.lat ?? null
-        lng = cached?.lng ?? null
-      } else {
-        const cities = citiesByCountry.get(countryCode) ?? []
-        const city = cities?.find((candidate) => {
-          const candidateName = normalizePlace(candidate.name)
-          return candidateName === place || (place.length > 2 && candidateName.includes(place))
-        })
-        const country = countriesByCode.get(countryCode)
-        lat = finiteCoordinate(city?.latitude) ?? finiteCoordinate(country?.latitude)
-        lng = finiteCoordinate(city?.longitude) ?? finiteCoordinate(country?.longitude)
-        coordinateCache.set(coordinateKey, lat !== null && lng !== null ? { lat, lng } : null)
-      }
-    }
+    const coordinateKey = `${countryCode}:${normalizePlace(server.location)}`
+    const resolved = resolvedCoordinates.get(coordinateKey)
+    const cached = coordinateCache.get(coordinateKey)
+    const lat = resolved?.lat ?? cached?.lat ?? null
+    const lng = resolved?.lng ?? cached?.lng ?? null
 
     const positioned = lat !== null && lng !== null
     const baseLat = lat ?? -68 + (server.id % 3) * 4
@@ -81,7 +63,7 @@ async function locateServers(servers: Server[]): Promise<TopologyPoint[]> {
       locationKey,
       lat: Math.max(-82, Math.min(82, baseLat + Math.sin(angle) * radius)),
       lng: baseLng + Math.cos(angle) * radius,
-		online: isServerOnline(server),
+      online: isServerOnline(server),
       positioned,
       countryCode,
       uploadRate: server.metrics?.network_tx_bps ?? null,
@@ -130,30 +112,39 @@ export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
       return
     }
 
-    let active = true
-    locateServers(servers)
-      .then((nextPoints) => {
-        if (active) setPoints(nextPoints)
+    const cachedCoordinates = new Map<string, GeographyLocationResult>()
+    const missingRequests = new Map<string, { key: string; countryCode: string; location: string }>()
+    servers.forEach((server) => {
+      const countryCode = server.country_code.trim().toUpperCase()
+      const key = `${countryCode}:${normalizePlace(server.location)}`
+      const cached = coordinateCache.get(key)
+      if (coordinateCache.has(key)) {
+        cachedCoordinates.set(key, { key, lat: cached?.lat ?? null, lng: cached?.lng ?? null })
+      } else if (countryCode) {
+        missingRequests.set(key, { key, countryCode, location: server.location })
+      }
+    })
+
+    setPoints(positionServers(servers, cachedCoordinates))
+    if (missingRequests.size === 0) return
+
+    const controller = new AbortController()
+    resolveGeographyLocations([...missingRequests.values()], controller.signal)
+      .then((results) => {
+        const resolvedCoordinates = new Map(cachedCoordinates)
+        results.forEach((result) => {
+          coordinateCache.set(
+            result.key,
+            result.lat !== null && result.lng !== null ? { lat: result.lat, lng: result.lng } : null,
+          )
+          resolvedCoordinates.set(result.key, result)
+        })
+        startTransition(() => setPoints(positionServers(servers, resolvedCoordinates)))
       })
-      .catch(() => {
-        if (!active) return
-        setPoints(servers.map((server) => ({
-          id: server.id,
-          alias: server.alias,
-          location: server.location || server.country_code || '位置待补全',
-          locationKey: `fallback:${server.id}`,
-          lat: -68 + (server.id % 3) * 4,
-          lng: ((server.id * 137.508) % 340) - 170,
-			online: isServerOnline(server),
-          positioned: false,
-          countryCode: server.country_code.trim().toUpperCase(),
-          uploadRate: server.metrics?.network_tx_bps ?? null,
-          downloadRate: server.metrics?.network_rx_bps ?? null,
-        })))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return
       })
-    return () => {
-      active = false
-    }
+    return () => controller.abort()
   }, [servers])
 
   const nodes = useMemo<EarthNode[]>(

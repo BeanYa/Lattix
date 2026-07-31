@@ -1,7 +1,7 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import simplify from '@turf/simplify'
 import type { FeatureCollection, Position } from 'geojson'
-import type { GlobeMethods } from 'react-globe.gl'
+import Globe, { type GlobeMethods } from 'react-globe.gl'
 import {
   Color,
   DodecahedronGeometry,
@@ -21,8 +21,6 @@ import {
 import { formatByteRate } from '@/lib/format'
 import { useTheme } from '@/lib/theme-context'
 import { DEFAULT_EARTH_PALETTE, readEarthPalette, type EarthPalette } from '@/lib/visual-theme'
-
-const Globe = lazy(() => import('react-globe.gl'))
 
 const AXIAL_TILT_DEGREES = 36
 const INITIAL_LONGITUDE = 105
@@ -346,6 +344,9 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
   const [cloudLayer, setCloudLayer] = useState<Object3D | undefined>(undefined)
   const [reducedMotion, setReducedMotion] = useState(false)
   const [palette, setPalette] = useState<EarthPalette>(DEFAULT_EARTH_PALETTE)
+  const [landSettled, setLandSettled] = useState(false)
+  const [globeReady, setGlobeReady] = useState(false)
+  const [visualReady, setVisualReady] = useState(false)
 
   useEffect(() => {
     setPalette(readEarthPalette())
@@ -385,10 +386,12 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
           mutate: false,
         })
         setLandFeatures(closeSouthPolarPolygons(simplified).features)
+        setLandSettled(true)
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return
         setLandFeatures([])
+        setLandSettled(true)
       })
     return () => controller.abort()
   }, [])
@@ -554,19 +557,40 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
   }, [size.width])
 
   useEffect(() => {
-    let frame = 0
-    const initializeControls = () => {
-      if (!globeRef.current) {
-        frame = requestAnimationFrame(initializeControls)
-        return
-      }
-      configureGlobe()
-    }
-    frame = requestAnimationFrame(initializeControls)
-    return () => cancelAnimationFrame(frame)
-  }, [configureGlobe, oceanMesh])
+    if (globeReady) configureGlobe()
+  }, [configureGlobe, globeReady])
+
+  const handleGlobeReady = useCallback(() => {
+    configureGlobe()
+    setGlobeReady(true)
+  }, [configureGlobe])
+
+  const assetsReady = globeReady
+    && landSettled
+    && oceanMesh !== undefined
+    && landCapMaterial !== undefined
+    && landSideMaterial !== undefined
+    && cloudLayer !== undefined
 
   useEffect(() => {
+    if (!assetsReady) {
+      setVisualReady(false)
+      return
+    }
+
+    let firstFrame = 0
+    let secondFrame = 0
+    firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => setVisualReady(true))
+    })
+    return () => {
+      cancelAnimationFrame(firstFrame)
+      cancelAnimationFrame(secondFrame)
+    }
+  }, [assetsReady])
+
+  useEffect(() => {
+    if (!globeReady) return
     let frame = 0
     let cancelled = false
     Promise.resolve().then(() => {
@@ -637,82 +661,92 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
       cancelled = true
       cancelAnimationFrame(frame)
     }
-  }, [cloudLayer, reducedMotion])
+  }, [cloudLayer, globeReady, reducedMotion])
 
   return (
     <div
       ref={containerRef}
       className={`relative min-h-[430px] overflow-hidden sm:min-h-[520px] ${className}`}
       aria-label={ariaLabel ?? `地球拓扑，共 ${nodes.length} 个节点，${links.length} 条连接`}
+      aria-busy={!visualReady}
     >
       <div className="absolute inset-0 flex items-center justify-center">
-        <div style={{ transform: `rotate(${AXIAL_TILT_DEGREES}deg)` }}>
-          <Suspense fallback={<div className="size-64 rounded-full border-2 border-primary/40 bg-primary/20 shadow-[inset_-24px_-18px_0_var(--shadow-color)] sm:size-80" aria-label="地球模型载入中" />}>
-            <Globe
-              ref={globeRef}
-              width={size.width}
-              height={size.height}
-              backgroundColor="rgba(0,0,0,0)"
-              showGlobe={false}
-              showAtmosphere
-              atmosphereColor={palette.atmosphere}
-              atmosphereAltitude={0.1}
-              polygonsData={landFeatures}
-              polygonCapMaterial={landCapMaterial}
-              polygonSideMaterial={landSideMaterial}
-              polygonStrokeColor={() => null}
-              polygonAltitude={0.018}
-              polygonCapCurvatureResolution={LAND_CURVATURE_RESOLUTION}
-              polygonsTransitionDuration={0}
-              customLayerData={customObjects}
-              customThreeObject={(item) => item as Object3D}
-              pointsData={nodes}
-              pointLat={(item) => (item as EarthNode).lat}
-              pointLng={(item) => (item as EarthNode).lng}
-              pointColor={(item) => {
-                const node = item as EarthNode
-                if (node.status === 'warning') return palette.nodeWarning
-                return node.status === 'online' ? palette.nodeOnline : palette.nodeOffline
-              }}
-              pointAltitude={0.025}
-              pointRadius={0.34}
-              pointResolution={10}
-              pointsTransitionDuration={500}
-              htmlElementsData={nodeLabels}
-              htmlLat={(item) => (item as EarthNodeLabel).lat}
-              htmlLng={(item) => (item as EarthNodeLabel).lng}
-              htmlAltitude={0.065}
-              htmlElement={(item: object) => createNodeElement(item, palette)}
-              htmlElementVisibilityModifier={updateNodeVisibility}
-              htmlTransitionDuration={500}
-              arcsData={animatedLinks}
-              arcStartLat={(item) => (item as EarthLink).startLat}
-              arcStartLng={(item) => (item as EarthLink).startLng}
-              arcEndLat={(item) => (item as EarthLink).endLat}
-              arcEndLng={(item) => (item as EarthLink).endLng}
-              arcColor={(item: object) => linkColor(item as AnimatedEarthLink, palette)}
-              arcAltitudeAutoScale={0.42}
-              arcStroke={2.35}
-              arcCircularResolution={4}
-              arcDashLength={LINK_DASH_LENGTH}
-              arcDashGap={LINK_DASH_GAP}
-              arcDashInitialGap={(item: object) => ((item as AnimatedEarthLink).dashPhase)}
-              arcDashAnimateTime={(item: object) => {
-                const link = item as AnimatedEarthLink
-                return reducedMotion ? 0 : link.dashDuration
-              }}
-              arcsTransitionDuration={0}
-              ringsData={reducedMotion ? [] : nodes.filter((node) => node.status === 'online')}
-              ringLat={(item) => (item as EarthNode).lat}
-              ringLng={(item) => (item as EarthNode).lng}
-              ringColor={(_item: object) => [palette.ring, 'rgba(0,0,0,0)']}
-              ringMaxRadius={2.2}
-              ringPropagationSpeed={1.2}
-              ringRepeatPeriod={1500}
-              onGlobeReady={configureGlobe}
-            />
-          </Suspense>
+        <div
+          className={`transition-opacity duration-500 motion-reduce:transition-none ${visualReady ? 'opacity-100' : 'opacity-0'}`}
+          style={{ transform: `rotate(${AXIAL_TILT_DEGREES}deg)` }}
+        >
+          <Globe
+            ref={globeRef}
+            width={size.width}
+            height={size.height}
+            backgroundColor="rgba(0,0,0,0)"
+            showGlobe={false}
+            showAtmosphere
+            atmosphereColor={palette.atmosphere}
+            atmosphereAltitude={0.1}
+            polygonsData={landFeatures}
+            polygonCapMaterial={landCapMaterial}
+            polygonSideMaterial={landSideMaterial}
+            polygonStrokeColor={() => null}
+            polygonAltitude={0.018}
+            polygonCapCurvatureResolution={LAND_CURVATURE_RESOLUTION}
+            polygonsTransitionDuration={0}
+            customLayerData={customObjects}
+            customThreeObject={(item) => item as Object3D}
+            pointsData={nodes}
+            pointLat={(item) => (item as EarthNode).lat}
+            pointLng={(item) => (item as EarthNode).lng}
+            pointColor={(item) => {
+              const node = item as EarthNode
+              if (node.status === 'warning') return palette.nodeWarning
+              return node.status === 'online' ? palette.nodeOnline : palette.nodeOffline
+            }}
+            pointAltitude={0.025}
+            pointRadius={0.34}
+            pointResolution={10}
+            pointsTransitionDuration={500}
+            htmlElementsData={nodeLabels}
+            htmlLat={(item) => (item as EarthNodeLabel).lat}
+            htmlLng={(item) => (item as EarthNodeLabel).lng}
+            htmlAltitude={0.065}
+            htmlElement={(item: object) => createNodeElement(item, palette)}
+            htmlElementVisibilityModifier={updateNodeVisibility}
+            htmlTransitionDuration={500}
+            arcsData={animatedLinks}
+            arcStartLat={(item) => (item as EarthLink).startLat}
+            arcStartLng={(item) => (item as EarthLink).startLng}
+            arcEndLat={(item) => (item as EarthLink).endLat}
+            arcEndLng={(item) => (item as EarthLink).endLng}
+            arcColor={(item: object) => linkColor(item as AnimatedEarthLink, palette)}
+            arcAltitudeAutoScale={0.42}
+            arcStroke={2.35}
+            arcCircularResolution={4}
+            arcDashLength={LINK_DASH_LENGTH}
+            arcDashGap={LINK_DASH_GAP}
+            arcDashInitialGap={(item: object) => ((item as AnimatedEarthLink).dashPhase)}
+            arcDashAnimateTime={(item: object) => {
+              const link = item as AnimatedEarthLink
+              return reducedMotion ? 0 : link.dashDuration
+            }}
+            arcsTransitionDuration={0}
+            ringsData={reducedMotion ? [] : nodes.filter((node) => node.status === 'online')}
+            ringLat={(item) => (item as EarthNode).lat}
+            ringLng={(item) => (item as EarthNode).lng}
+            ringColor={(_item: object) => [palette.ring, 'rgba(0,0,0,0)']}
+            ringMaxRadius={2.2}
+            ringPropagationSpeed={1.2}
+            ringRepeatPeriod={1500}
+            onGlobeReady={handleGlobeReady}
+          />
         </div>
+      </div>
+
+      <div
+        className={`pointer-events-none absolute inset-0 grid place-items-center transition-opacity duration-300 motion-reduce:transition-none ${visualReady ? 'opacity-0' : 'opacity-100'}`}
+        role="status"
+        aria-label="正在初始化地球拓扑"
+      >
+        <span className="size-52 animate-pulse rounded-full border-2 border-primary/35 bg-muted/70 shadow-[inset_-18px_-14px_0_var(--shadow-color)] motion-reduce:animate-none sm:size-64" />
       </div>
 
       <ul className="sr-only">
