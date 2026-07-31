@@ -69,7 +69,7 @@ func TestApplyReplacesExecutable(t *testing.T) {
 	os.WriteFile(exe, []byte("old agent"), 0o755)
 	os.WriteFile(cli, []byte("old cli"), 0o755)
 
-	upgraded, err := applyTo("v0.0.9", base, "v0.0.2", "unused/repo", exe)
+	upgraded, err := applyTo("v0.0.9", base, "v0.0.2", "unused/repo", exe, false)
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -97,9 +97,35 @@ func TestApplyReplacesExecutable(t *testing.T) {
 
 func TestApplyIdempotentSameVersion(t *testing.T) {
 	base := newFakeRelease(t, "v0.0.2", []byte("x"))
-	upgraded, err := applyTo("v0.0.2", base, "v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent"))
+	upgraded, err := applyTo("v0.0.2", base, "v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent"), false)
 	if err != nil || upgraded {
 		t.Fatalf("同版本应幂等返回 (false, nil)，实际 (%v, %v)", upgraded, err)
+	}
+}
+
+func TestApplyForceReplacesSameVersion(t *testing.T) {
+	content := []byte("#!/bin/sh\necho v0.0.2\n")
+	base := newFakeRelease(t, "v0.0.2", content)
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "lattix-agent")
+	cli := filepath.Join(dir, "latx-ag")
+	if err := os.WriteFile(exe, []byte("old same-version agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cli, []byte("old cli"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	upgraded, err := applyTo("v0.0.2", base, "v0.0.2", "unused/repo", exe, true)
+	if err != nil {
+		t.Fatalf("force Apply: %v", err)
+	}
+	if !upgraded {
+		t.Fatal("同版本 force=true 应执行覆盖安装")
+	}
+	got, err := os.ReadFile(exe)
+	if err != nil || string(got) != string(content) {
+		t.Fatalf("强制更新后 agent 内容异常: %q, %v", got, err)
 	}
 }
 
@@ -114,7 +140,7 @@ func TestApplyRejectsChecksumMismatch(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	if _, err := applyTo("v0.0.9", srv.URL, "v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent")); err == nil {
+	if _, err := applyTo("v0.0.9", srv.URL, "v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent"), false); err == nil {
 		t.Fatal("校验和不匹配应报错")
 	}
 }
@@ -123,7 +149,7 @@ func TestApplyRejectsMissingChecksums(t *testing.T) {
 	mux := http.NewServeMux()
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
-	if _, err := applyTo("v0.0.9", srv.URL, "v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent")); err == nil {
+	if _, err := applyTo("v0.0.9", srv.URL, "v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent"), false); err == nil {
 		t.Fatal("缺 checksums.txt 应报错")
 	}
 }
@@ -131,7 +157,7 @@ func TestApplyRejectsMissingChecksums(t *testing.T) {
 func TestApplyRejectsBrokenBinary(t *testing.T) {
 	// 校验和通过但二进制不可执行（-version 自检失败）时应放弃替换。
 	base := newFakeRelease(t, "v0.0.9", []byte("not an executable"))
-	if _, err := applyTo("v0.0.9", base, "v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent")); err == nil {
+	if _, err := applyTo("v0.0.9", base, "v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent"), false); err == nil {
 		t.Fatal("新二进制自检失败应报错")
 	}
 }

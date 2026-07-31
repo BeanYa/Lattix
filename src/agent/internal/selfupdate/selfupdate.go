@@ -27,8 +27,8 @@ const httpTimeout = 120 * time.Second
 // Apply 将 agent 自身升级到 version（vX.Y.Z 或 latest，latest 经 GitHub API 解析）。
 // releaseBase 形如 https://github.com/<org>/<repo>/releases/download；空时用 defaultRepo。
 // 返回 upgraded=true 表示二进制已替换，调用方回执后应退出进程（systemd 拉起完成切换）；
-// 目标版本与当前一致时返回 upgraded=false（幂等，无需重启）。
-func Apply(version, releaseBase, currentVersion, defaultRepo string) (upgraded bool, err error) {
+// 目标版本与当前一致且 force=false 时返回 upgraded=false（幂等，无需重启）。
+func Apply(version, releaseBase, currentVersion, defaultRepo string, force bool) (upgraded bool, err error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return false, err
@@ -38,10 +38,10 @@ func Apply(version, releaseBase, currentVersion, defaultRepo string) (upgraded b
 	if err != nil {
 		return false, err
 	}
-	return applyTo(version, releaseBase, currentVersion, defaultRepo, exe)
+	return applyTo(version, releaseBase, currentVersion, defaultRepo, exe, force)
 }
 
-func applyTo(version, releaseBase, currentVersion, defaultRepo, executable string) (upgraded bool, err error) {
+func applyTo(version, releaseBase, currentVersion, defaultRepo, executable string, force bool) (upgraded bool, err error) {
 	base := releaseBase
 	repo := defaultRepo
 	if base == "" {
@@ -65,7 +65,7 @@ func applyTo(version, releaseBase, currentVersion, defaultRepo, executable strin
 	if !strings.HasPrefix(version, "v") {
 		return false, fmt.Errorf("版本号须形如 vX.Y.Z 或 latest: %s", version)
 	}
-	if version == currentVersion {
+	if version == currentVersion && !force {
 		return false, nil // 已是目标版本，幂等
 	}
 

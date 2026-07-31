@@ -480,7 +480,7 @@ export default function Settings() {
     if (
       !(await confirm({
         title: '强制覆盖安装',
-        description: `当前版本号没有更新，是否强制覆盖安装？\n将重新下载并安装 GitHub Release 的 ${target} 版本。\n更新期间面板操作将被锁定，完成后自动重启。`,
+        description: `当前版本号没有更新，是否强制覆盖安装？\n将重新下载并安装 GitHub Release 的 ${target} 版本，同时向全部 Agent 下发强制更新。\n更新期间面板操作将被锁定，面板和 Agent 将依次重启并重新连接。`,
         confirmLabel: '强制更新',
         destructive: true,
       }))

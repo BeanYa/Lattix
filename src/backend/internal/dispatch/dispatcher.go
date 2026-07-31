@@ -103,6 +103,25 @@ func (d *Dispatcher) Enqueue(ctx context.Context, serverID int64, typ string, pa
 	return id, nil
 }
 
+// EnqueueAgentUpgradeAll 为所有已登记服务器入队 agent 自升级命令。
+// 命令沿用持久化队列语义，离线 agent 会在重连后收到。
+func (d *Dispatcher) EnqueueAgentUpgradeAll(ctx context.Context, version, releaseBase string, force bool) (int, error) {
+	servers, err := d.st.ListServers(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("list servers for agent upgrade: %w", err)
+	}
+	queued := 0
+	for _, server := range servers {
+		if _, err := d.Enqueue(ctx, server.ID, shared.TypeUpgradeAgent, shared.UpgradeAgentPayload{
+			Version: version, ReleaseBase: releaseBase, Force: force,
+		}); err != nil {
+			return queued, fmt.Errorf("enqueue agent upgrade for server %d: %w", server.ID, err)
+		}
+		queued++
+	}
+	return queued, nil
+}
+
 const (
 	uninstallMaxAttempts = 10
 	uninstallRetryBase   = 100 * time.Millisecond

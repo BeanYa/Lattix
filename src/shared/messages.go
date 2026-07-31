@@ -251,6 +251,7 @@ type UpgradeXrayPayload struct {
 type UpgradeAgentPayload struct {
 	Version     string `json:"version"`                // 目标版本 tag（vX.Y.Z）
 	ReleaseBase string `json:"release_base,omitempty"` // 形如 https://github.com/<org>/<repo>/releases/download
+	Force       bool   `json:"force,omitempty"`        // true 时即使目标版本与当前版本相同也覆盖安装
 }
 
 // ApplyChainHopPayload 是 apply_chain_hop 的载荷（§21.1）：

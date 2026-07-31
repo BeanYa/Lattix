@@ -726,8 +726,8 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		if !parseData(sc, env, &p) {
 			return
 		}
-		log.Printf("agent.upgrade request_id=%s version=%s", env.RequestID, p.Version)
-		upgraded, err := selfupdate.Apply(p.Version, p.ReleaseBase, version, githubRepo)
+		log.Printf("agent.upgrade request_id=%s version=%s force=%v", env.RequestID, p.Version, p.Force)
+		upgraded, err := selfupdate.Apply(p.Version, p.ReleaseBase, version, githubRepo, p.Force)
 		replyResult(sc, env, resultOf(0, nil), err)
 		if err != nil || !upgraded {
 			return // 失败或已是目标版本（幂等），无需重启

@@ -423,6 +423,21 @@ func (u *panelUpdater) run(ctx context.Context) {
 			return
 		}
 	}
+	if forceUpdate {
+		u.setStage(updStageApply, 40, "下发 Agent 集群强制更新")
+		queued, err := s.disp.EnqueueAgentUpgradeAll(ctx, target, s.releaseBase(), true)
+		if err != nil {
+			os.RemoveAll(work)
+			u.fail(fmt.Errorf("下发 Agent 集群强制更新失败（已入队 %d 台）: %w", queued, err))
+			return
+		}
+		if err := s.recordOperation(context.Background(), logging.OperationEvent{
+			Severity: logging.SeverityInfo, Category: logging.CategoryAgent, Action: "agent.cluster_force_update_enqueued",
+			Detail: map[string]any{"version": target, "servers": queued, "force": true},
+		}); err != nil {
+			log.Printf("panel update: record agent cluster force update: %v", err)
+		}
+	}
 
 	u.setStage(updStageApply, 60, "原子替换面板与管理命令")
 	cliTarget := filepath.Join(filepath.Dir(exe), "latx")

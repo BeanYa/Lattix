@@ -632,6 +632,7 @@ func (s *Server) handleUpgradeAgent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ServerID int64  `json:"server_id"`
 		Version  string `json:"version"` // vX.Y.Z 或 latest（默认）
+		Force    bool   `json:"force"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -657,7 +658,7 @@ func (s *Server) handleUpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "版本号须形如 vX.Y.Z 或 latest")
 		return
 	}
-	payload := shared.UpgradeAgentPayload{Version: req.Version}
+	payload := shared.UpgradeAgentPayload{Version: req.Version, Force: req.Force}
 	if s.cfg.GitHubRepo != "" {
 		payload.ReleaseBase = "https://github.com/" + s.cfg.GitHubRepo + "/releases/download"
 	}
@@ -667,8 +668,8 @@ func (s *Server) handleUpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sid := id
-	s.audit(r, "server.upgrade_agent", &sid, nil, map[string]any{"version": req.Version, "command": cmdID})
-	writeJSON(w, http.StatusOK, map[string]any{"command_id": cmdID, "version": req.Version})
+	s.audit(r, "server.upgrade_agent", &sid, nil, map[string]any{"version": req.Version, "force": req.Force, "command": cmdID})
+	writeJSON(w, http.StatusOK, map[string]any{"command_id": cmdID, "version": req.Version, "force": req.Force})
 }
 
 // handleRepairServer 处理 POST /api/servers/{id}/repair（§17 配置漂移修复）：
