@@ -450,7 +450,63 @@ export interface SubUser {
   sub_announcement: string
   plan_name: string
   app_url: string
+  routing: SubscriptionRoutingProfile
+  subscription_snapshot: SubscriptionSnapshotStatus
   created_at: string
+}
+
+export interface SubscriptionRoutingProfile {
+  mode: 'suggested' | 'template'
+  preset: 'minimal' | 'balanced' | 'comprehensive'
+  categories: string[]
+  portable_template_id: string
+  mihomo_template_id: string
+  singbox_template_id: string
+  quanx_template_id: string
+}
+
+export interface SubscriptionSnapshotStatus {
+  status: 'missing' | 'pending' | 'ready' | 'error'
+  error?: string
+  revision: number
+  source_label?: string
+  generated_at?: string
+}
+
+export type SubscriptionPreviewFormat = 'clash' | 'singbox' | 'quanx' | 'quanx-config' | 'links'
+
+export interface SubscriptionPreview {
+  format: SubscriptionPreviewFormat
+  revision: number
+  content_type: string
+  content: string
+  generated_at: string
+}
+
+export interface SubscriptionRuleCategory {
+  id: string
+  label: string
+  icon: string
+  default: string
+  in_minimal: boolean
+  in_balanced: boolean
+}
+
+export interface SubscriptionTemplate {
+  id: string
+  name: string
+  kind: 'portable' | 'acl4ssr' | 'mihomo' | 'singbox' | 'quanx'
+  origin: 'local' | 'github'
+  source_url: string
+  content?: string
+  content_sha256: string
+  license: string
+  readonly: boolean
+  fetched_at?: string
+  last_attempt_at?: string
+  last_error?: string
+  created_at: string
+  updated_at: string
 }
 
 export type CertInfo = components['schemas']['CertInfo']

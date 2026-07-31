@@ -21,6 +21,7 @@ import (
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/store"
+	"lattix/backend/internal/sub"
 	"lattix/backend/internal/ws"
 	"lattix/shared"
 )
@@ -46,19 +47,20 @@ type Config struct {
 
 // Server 聚合面板 API 的依赖。
 type Server struct {
-	st        *store.Store
-	disp      *dispatch.Dispatcher
-	req       ws.AgentRequester
-	lifecycle *lifecycle.Manager
-	cfg       Config
-	alerter   *alert.Notifier
-	upd       *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
-	releases  *releaseCatalog
-	exchange  *exchangeCatalog
-	cdn       *cdnCatalog
-	scheduler *taskScheduler
-	opLog     *logging.OperationStore
-	reqLog    *logging.RequestLog
+	st            *store.Store
+	disp          *dispatch.Dispatcher
+	req           ws.AgentRequester
+	lifecycle     *lifecycle.Manager
+	cfg           Config
+	alerter       *alert.Notifier
+	upd           *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
+	releases      *releaseCatalog
+	exchange      *exchangeCatalog
+	cdn           *cdnCatalog
+	subscriptions *sub.Server
+	scheduler     *taskScheduler
+	opLog         *logging.OperationStore
+	reqLog        *logging.RequestLog
 
 	routePolicies   map[string]logging.LogPolicy
 	methodFallbacks map[string]bool // 已注册 405 回退路由的裸路径（同路径多方法时避免重复注册）
@@ -69,7 +71,23 @@ type Server struct {
 	tasks           sync.WaitGroup
 }
 
+// SetSubscriptionService wires the snapshot compiler after PanelBase is
+// available and before background tasks or HTTP serving start.
+func (s *Server) SetSubscriptionService(service *sub.Server) {
+	s.subscriptions = service
+	s.disp.OnNodePublished = service.EnqueueUsersForNode
+	s.disp.OnChainPublished = service.EnqueueUsersForChain
+	s.scheduler.register(scheduledTask{
+		name: "subscription.templates.refresh", runOnStart: true, timeout: 10 * time.Minute,
+		trigger: func(context.Context) taskTrigger { return intervalTrigger(6 * time.Hour) },
+		run:     func(ctx context.Context) error { return service.RefreshTemplates(ctx, "") },
+	})
+}
+
 func (s *Server) StartBackgroundTasks(ctx context.Context) {
+	if s.subscriptions != nil {
+		s.subscriptions.StartRegenerator(ctx)
+	}
 	s.tasks.Add(1)
 	go func() {
 		defer s.tasks.Done()
@@ -86,6 +104,9 @@ func (s *Server) WaitBackground(ctx context.Context) error {
 	}()
 	select {
 	case <-done:
+		if s.subscriptions != nil {
+			return s.subscriptions.WaitRegenerator(ctx)
+		}
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
@@ -283,6 +304,19 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodGet, "/api/user/traffic-history",
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"user_id"}},
 		s.handleUserTrafficHistory)
+	s.registerRPC(mux, http.MethodPost, "/api/user/regenerate-subscription",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
+		s.handleRegenerateUserSubscription)
+	s.registerRPC(mux, http.MethodGet, "/api/user/subscription-preview",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"user_id", "format"}},
+		s.handleUserSubscriptionPreview)
+
+	s.registerRPC(mux, http.MethodGet, "/api/subscription/categories", read, s.handleSubscriptionCategories)
+	s.registerRPC(mux, http.MethodGet, "/api/subscription/templates", read, s.handleSubscriptionTemplates)
+	s.registerRPC(mux, http.MethodPost, "/api/subscription/template/save", write, s.handleSaveSubscriptionTemplate)
+	s.registerRPC(mux, http.MethodPost, "/api/subscription/template/clone", write, s.handleCloneSubscriptionTemplate)
+	s.registerRPC(mux, http.MethodPost, "/api/subscription/template/delete", write, s.handleDeleteSubscriptionTemplate)
+	s.registerRPC(mux, http.MethodPost, "/api/subscription/template/refresh", write, s.handleRefreshSubscriptionTemplates)
 
 	s.registerRPC(mux, http.MethodGet, "/api/setting/get", read, s.handleGetSettings)
 	s.registerRPC(mux, http.MethodPost, "/api/setting/update", write, s.handleUpdateSettings)

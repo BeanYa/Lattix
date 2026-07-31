@@ -38,6 +38,8 @@ type Dispatcher struct {
 	PanelPublicURL   string
 	AgentReleaseBase string
 	PanelLifecycle   func() shared.PanelLifecycleSnapshot
+	OnNodePublished  func(context.Context, int64) error
+	OnChainPublished func(context.Context, int64) error
 
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
@@ -799,6 +801,10 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 		if p.NodeID != 0 {
 			if err := d.st.SetNodeActive(ctx, p.NodeID, realized); err != nil {
 				log.Printf("dispatch: node %d active: %v", p.NodeID, err)
+			} else if d.OnNodePublished != nil {
+				if err := d.OnNodePublished(ctx, p.NodeID); err != nil {
+					log.Printf("dispatch: enqueue subscriptions for node %d: %v", p.NodeID, err)
+				}
 			}
 			log.Printf("dispatch: server %d: node %d active (command %d)", serverID, p.NodeID, cmdID)
 			d.advanceChainByNode(ctx, p.NodeID) // 链出口业务就绪 → 推进链编排（§21 阶段 2 起）

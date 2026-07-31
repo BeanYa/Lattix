@@ -309,6 +309,11 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	affectedUsers, err := s.st.SubscriptionUserIDsForNode(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if _, err := s.disp.Enqueue(r.Context(), n.ServerID, shared.TypeRemoveNode, shared.RemoveNodePayload{NodeID: n.ID}); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -316,6 +321,9 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	if err := s.st.DeleteNode(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if s.subscriptions != nil {
+		s.subscriptions.EnqueueUsers(affectedUsers, s.panelBase(r))
 	}
 	// 删除后对象不存在，审计行存 protocol/port 快照留痕（§log）。
 	srvID, nodeID := n.ServerID, n.ID

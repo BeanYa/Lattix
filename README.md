@@ -155,8 +155,12 @@ install.sh            # 面向用户的统一安装入口
 
 - 逐链路用户分配（默认全关）：用户勾选直连/中转链路，底层继续按业务 node_id 差量扇出
 - 用户凭证复用 UUID：vless id / trojan 密码 / ss 派生密钥 / socks+http 账密
-- 订阅：`GET /sub/{token}` mihomo（Clash.Meta）YAML；`GET /sub/{token}/links`
-  base64 分享链接集合（vless/trojan/vmess/ss）；用户页二维码扫码导入
+- 订阅：`GET /sub/{token}` 按 UA 或 `format` 返回 Mihomo、sing-box、Quantumult X、
+  Quantumult X 完整配置或 base64 分享链接；浏览器仍返回订阅落地页
+- 订阅分流：内置 Minimal/Balanced/Comprehensive 与分类勾选，支持 Lattix 中立 YAML、
+  ACL4SSR 社区模板和客户端原生覆盖；模板/规则缓存与用户发布快照相互隔离
+- 用户订阅文件预生成并原子缓存，公开地址只读 published revision；模板页支持未填充预览，
+  用户页支持实际发布结果预览和手动重新生成。详见 [订阅分流与模板](docs/subscription-routing-design.md)
 - 订阅响应头 `subscription-userinfo`（已用上下行流量、到期时刻）与
   `profile-update-interval: 24`，客户端自动展示用量并按天刷新
 - 用户有效期：创建/编辑可设到期时刻，到期自动停权（订阅保留但节点为空，

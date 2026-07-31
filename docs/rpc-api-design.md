@@ -19,7 +19,7 @@
 以下端点或调用遵循各自协议，不套用管理 RPC 的成功响应信封：
 
 - `GET /sub/{token}`；
-- `GET /sub/{token}/links`；
+- `GET /sub/{token}/rules/{version}/{format}/{name}`；
 - `GET /api/backup/download` 的成功文件响应；
 - `GET /api/agent/ws` 的 HTTP Upgrade；
 - SPA 静态资源；
@@ -181,6 +181,16 @@ POST /api/user/create
 POST /api/user/update
 POST /api/user/set-nodes
 POST /api/user/delete
+POST /api/user/sub-settings
+POST /api/user/regenerate-subscription
+GET  /api/user/subscription-preview
+
+GET  /api/subscription/categories
+GET  /api/subscription/templates
+POST /api/subscription/template/save
+POST /api/subscription/template/clone
+POST /api/subscription/template/delete
+POST /api/subscription/template/refresh
 
 GET  /api/setting/get
 POST /api/setting/update
@@ -205,7 +215,7 @@ POST /api/log/clear-requests
 ```text
 GET /api/agent/ws
 GET /sub/{token}
-GET /sub/{token}/links
+GET /sub/{token}/rules/{version}/{format}/{name}
 GET /healthz
 GET /readyz
 ```

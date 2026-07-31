@@ -14,33 +14,36 @@ import (
 	"github.com/google/uuid"
 
 	"lattix/backend/internal/store"
+	"lattix/backend/internal/sub"
 	"lattix/shared"
 )
 
 // userDTO 是用户对象的 API 表示。
 type userDTO struct {
-	ID              int64       `json:"id"`
-	Name            string      `json:"name"`
-	UUID            string      `json:"uuid"`
-	SubToken        string      `json:"sub_token"`
-	SubURL          string      `json:"sub_url"`
-	SubLinksURL     string      `json:"sub_links_url"`
-	NodeIDs         []int64     `json:"node_ids"`
-	Traffic         *trafficDTO `json:"traffic"`
-	ExpiresAt       *time.Time  `json:"expires_at"`
-	Expired         bool        `json:"expired"`
-	Disabled        bool        `json:"disabled"`
-	TrafficLimit    int64       `json:"traffic_limit"`
-	TrafficResetDay int         `json:"traffic_reset_day"`
-	SubTitle        string      `json:"sub_title"`
-	SubAnnouncement string      `json:"sub_announcement"`
-	PlanName        string      `json:"plan_name"`
-	AppURL          string      `json:"app_url"`
-	CreatedAt       time.Time   `json:"created_at"`
+	ID                   int64                            `json:"id"`
+	Name                 string                           `json:"name"`
+	UUID                 string                           `json:"uuid"`
+	SubToken             string                           `json:"sub_token"`
+	SubURL               string                           `json:"sub_url"`
+	SubLinksURL          string                           `json:"sub_links_url"`
+	NodeIDs              []int64                          `json:"node_ids"`
+	Traffic              *trafficDTO                      `json:"traffic"`
+	ExpiresAt            *time.Time                       `json:"expires_at"`
+	Expired              bool                             `json:"expired"`
+	Disabled             bool                             `json:"disabled"`
+	TrafficLimit         int64                            `json:"traffic_limit"`
+	TrafficResetDay      int                              `json:"traffic_reset_day"`
+	SubTitle             string                           `json:"sub_title"`
+	SubAnnouncement      string                           `json:"sub_announcement"`
+	PlanName             string                           `json:"plan_name"`
+	AppURL               string                           `json:"app_url"`
+	Routing              subscriptionProfileDTO           `json:"routing"`
+	SubscriptionSnapshot store.SubscriptionSnapshotStatus `json:"subscription_snapshot"`
+	CreatedAt            time.Time                        `json:"created_at"`
 }
 
 func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userDTO {
-	return userDTO{
+	dto := userDTO{
 		ID:              u.ID,
 		Name:            u.Name,
 		UUID:            u.UUID,
@@ -59,6 +62,119 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 		AppURL:          u.AppURL,
 		CreatedAt:       u.CreatedAt,
 	}
+	if profile, err := s.st.UserSubscriptionProfile(r.Context(), u.ID); err == nil {
+		dto.Routing = subscriptionProfileToDTO(profile)
+	}
+	if snapshot, err := s.st.SubscriptionSnapshotStatus(r.Context(), u.ID); err == nil {
+		dto.SubscriptionSnapshot = snapshot
+	}
+	return dto
+}
+
+type subscriptionProfileInput struct {
+	Mode               string   `json:"mode"`
+	Preset             string   `json:"preset"`
+	Categories         []string `json:"categories"`
+	PortableTemplateID string   `json:"portable_template_id"`
+	MihomoTemplateID   string   `json:"mihomo_template_id"`
+	SingboxTemplateID  string   `json:"singbox_template_id"`
+	QuanXTemplateID    string   `json:"quanx_template_id"`
+}
+
+type subscriptionProfileDTO struct {
+	Mode               string   `json:"mode"`
+	Preset             string   `json:"preset"`
+	Categories         []string `json:"categories"`
+	PortableTemplateID string   `json:"portable_template_id"`
+	MihomoTemplateID   string   `json:"mihomo_template_id"`
+	SingboxTemplateID  string   `json:"singbox_template_id"`
+	QuanXTemplateID    string   `json:"quanx_template_id"`
+}
+
+func subscriptionProfileToDTO(profile store.SubscriptionProfile) subscriptionProfileDTO {
+	var categories []string
+	_ = json.Unmarshal([]byte(profile.CategoriesJSON), &categories)
+	return subscriptionProfileDTO{
+		Mode: profile.Mode, Preset: profile.Preset, Categories: categories,
+		PortableTemplateID: profile.PortableTemplateID, MihomoTemplateID: profile.MihomoTemplateID,
+		SingboxTemplateID: profile.SingboxTemplateID, QuanXTemplateID: profile.QuanXTemplateID,
+	}
+}
+
+func profileFromInput(userID int64, input *subscriptionProfileInput) (store.SubscriptionProfile, error) {
+	profile := store.SubscriptionProfile{
+		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
+		GenerationStatus: store.SubscriptionGenerationPending,
+	}
+	categories := append([]string(nil), store.DefaultBalancedCategories...)
+	if input != nil {
+		profile.Mode = strings.TrimSpace(input.Mode)
+		profile.Preset = strings.TrimSpace(input.Preset)
+		categories = input.Categories
+		profile.PortableTemplateID = strings.TrimSpace(input.PortableTemplateID)
+		profile.MihomoTemplateID = strings.TrimSpace(input.MihomoTemplateID)
+		profile.SingboxTemplateID = strings.TrimSpace(input.SingboxTemplateID)
+		profile.QuanXTemplateID = strings.TrimSpace(input.QuanXTemplateID)
+	}
+	if profile.Mode == "" {
+		profile.Mode = store.SubscriptionModeSuggested
+	}
+	if profile.Preset == "" {
+		profile.Preset = "balanced"
+	}
+	if profile.Mode != store.SubscriptionModeSuggested && profile.Mode != store.SubscriptionModeTemplate {
+		return store.SubscriptionProfile{}, errors.New("订阅规则模式无效")
+	}
+	if profile.Mode == store.SubscriptionModeTemplate && profile.PortableTemplateID == "" {
+		return store.SubscriptionProfile{}, errors.New("自定义模板模式须选择中立或 ACL4SSR 模板")
+	}
+	if profile.Preset != "minimal" && profile.Preset != "balanced" && profile.Preset != "comprehensive" {
+		return store.SubscriptionProfile{}, errors.New("订阅规则预设无效")
+	}
+	knownCategories := map[string]bool{}
+	for _, category := range sub.Categories() {
+		knownCategories[category.ID] = true
+	}
+	for _, category := range categories {
+		if !knownCategories[category] {
+			return store.SubscriptionProfile{}, fmt.Errorf("未知订阅规则分类 %q", category)
+		}
+	}
+	raw, err := json.Marshal(categories)
+	if err != nil {
+		return store.SubscriptionProfile{}, err
+	}
+	profile.CategoriesJSON = string(raw)
+	return profile, nil
+}
+
+func (s *Server) validateSubscriptionProfileTemplates(ctx context.Context, profile store.SubscriptionProfile) error {
+	selections := []struct {
+		id    string
+		kinds map[string]bool
+	}{
+		{profile.PortableTemplateID, map[string]bool{"portable": true, "acl4ssr": true}},
+		{profile.MihomoTemplateID, map[string]bool{"mihomo": true}},
+		{profile.SingboxTemplateID, map[string]bool{"singbox": true}},
+		{profile.QuanXTemplateID, map[string]bool{"quanx": true}},
+	}
+	for _, selection := range selections {
+		id, kinds := selection.id, selection.kinds
+		if id == "" {
+			continue
+		}
+		template, err := s.st.SubscriptionTemplateByID(ctx, id)
+		if err != nil {
+			return fmt.Errorf("订阅模板 %q 不存在", id)
+		}
+		if !kinds[template.Kind] {
+			return fmt.Errorf("订阅模板 %q 类型不匹配", template.Name)
+		}
+		if strings.TrimSpace(template.Content) == "" {
+			return fmt.Errorf("订阅模板 %q 尚无有效缓存", template.Name)
+		}
+	}
+	return nil
 }
 
 // handleListUsers 处理 GET /api/users。
@@ -99,10 +215,11 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt *string `json:"expires_at"` // RFC3339，省略/null = 长期
 		NodeIDs   []int64 `json:"node_ids"`   // 可选：预选链路对应的业务节点
 		// 可选订阅设置（省略保持默认；用户级覆盖全局，§9）。
-		TrafficLimit    int64  `json:"traffic_limit"`
-		TrafficResetDay int    `json:"traffic_reset_day"`
-		PlanName        string `json:"plan_name"`
-		AppURL          string `json:"app_url"`
+		TrafficLimit    int64                     `json:"traffic_limit"`
+		TrafficResetDay int                       `json:"traffic_reset_day"`
+		PlanName        string                    `json:"plan_name"`
+		AppURL          string                    `json:"app_url"`
+		Routing         *subscriptionProfileInput `json:"routing"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -141,6 +258,22 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	created, err := s.st.UserByID(r.Context(), id)
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	profile, err := profileFromInput(id, req.Routing)
+	if err != nil {
+		_ = s.st.DeleteUser(r.Context(), id)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.validateSubscriptionProfileTemplates(r.Context(), profile); err != nil {
+		_ = s.st.DeleteUser(r.Context(), id)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.st.SaveUserSubscriptionProfile(r.Context(), profile); err != nil {
+		_ = s.st.DeleteUser(r.Context(), id)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -186,6 +319,12 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.fanoutUserDiff(r.Context(), created.UUID, nodes, added, nil)
+	}
+	if s.subscriptions != nil {
+		if _, err := s.subscriptions.PublishUser(r.Context(), id, s.panelBase(r)); err != nil {
+			writeError(w, http.StatusBadRequest, "生成订阅失败: "+err.Error())
+			return
+		}
 	}
 	s.audit(r, "user.create", nil, nil, map[string]any{
 		"user_id": created.ID, "name": created.Name, "node_count": len(nodeIDs),
@@ -306,6 +445,12 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if s.subscriptions != nil && stoppedBefore != stoppedAfter {
+		if _, err := s.subscriptions.PublishUser(r.Context(), id, s.panelBase(r)); err != nil {
+			writeError(w, http.StatusInternalServerError, "重新生成订阅失败: "+err.Error())
+			return
+		}
+	}
 	nodeIDs, err := s.st.UserNodeIDs(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -380,6 +525,12 @@ func (s *Server) handleSetUserNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.fanoutUserDiff(r.Context(), u.UUID, nodes, added, removed)
+	if s.subscriptions != nil {
+		if _, err := s.subscriptions.PublishUser(r.Context(), id, s.panelBase(r)); err != nil {
+			writeError(w, http.StatusInternalServerError, "重新生成订阅失败: "+err.Error())
+			return
+		}
+	}
 	if len(added) > 0 || len(removed) > 0 {
 		s.audit(r, "user.nodes_updated", nil, nil, map[string]any{
 			"user":     map[string]any{"id": u.ID, "name": u.Name},
@@ -507,13 +658,14 @@ func (s *Server) fanoutRemoveUser(r *http.Request, uuid string) {
 // handleUpdateUserSubSettings 处理 POST /api/user/sub-settings：更新用户级订阅配置。
 func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserID          int64  `json:"user_id"`
-		TrafficLimit    int64  `json:"traffic_limit"`     // 字节，0=不限
-		TrafficResetDay int    `json:"traffic_reset_day"` // 0=创建日，1-31
-		SubTitle        string `json:"sub_title"`
-		SubAnnouncement string `json:"sub_announcement"`
-		PlanName        string `json:"plan_name"` // 套餐名（空=用全局）
-		AppURL          string `json:"app_url"`   // 客户端跳转链接（空=用全局）
+		UserID          int64                     `json:"user_id"`
+		TrafficLimit    int64                     `json:"traffic_limit"`     // 字节，0=不限
+		TrafficResetDay int                       `json:"traffic_reset_day"` // 0=创建日，1-31
+		SubTitle        string                    `json:"sub_title"`
+		SubAnnouncement string                    `json:"sub_announcement"`
+		PlanName        string                    `json:"plan_name"` // 套餐名（空=用全局）
+		AppURL          string                    `json:"app_url"`   // 客户端跳转链接（空=用全局）
+		Routing         *subscriptionProfileInput `json:"routing"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -530,6 +682,19 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	var routingProfile *store.SubscriptionProfile
+	if req.Routing != nil {
+		profile, err := profileFromInput(req.UserID, req.Routing)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.validateSubscriptionProfileTemplates(r.Context(), profile); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		routingProfile = &profile
+	}
 	if err := s.st.SetUserSubSettings(r.Context(), req.UserID, req.TrafficLimit, req.TrafficResetDay, req.SubTitle, req.SubAnnouncement, strings.TrimSpace(req.PlanName), strings.TrimSpace(req.AppURL)); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "用户不存在")
@@ -538,12 +703,76 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if routingProfile != nil {
+		if err := s.st.SaveUserSubscriptionProfile(r.Context(), *routingProfile); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if s.subscriptions != nil {
+		if _, err := s.subscriptions.PublishUser(r.Context(), req.UserID, s.panelBase(r)); err != nil {
+			writeError(w, http.StatusBadRequest, "生成订阅失败: "+err.Error())
+			return
+		}
+	}
 	s.audit(r, "user.sub_settings.updated", nil, nil, map[string]any{
 		"user_id":           req.UserID,
 		"traffic_limit":     req.TrafficLimit,
 		"traffic_reset_day": req.TrafficResetDay,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleRegenerateUserSubscription(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID int64 `json:"user_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.UserID <= 0 || s.subscriptions == nil {
+		writeError(w, http.StatusBadRequest, "invalid user id or subscription service unavailable")
+		return
+	}
+	result, err := s.subscriptions.PublishUser(r.Context(), req.UserID, s.panelBase(r))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.audit(r, "user.subscription.regenerated", nil, nil, map[string]any{
+		"user_id": req.UserID, "revision": result.Revision,
+	})
+	writeJSON(w, http.StatusOK, result.SubscriptionSnapshotStatus)
+}
+
+func (s *Server) handleUserSubscriptionPreview(w http.ResponseWriter, r *http.Request) {
+	userID, err := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
+	if err != nil || userID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid user_id")
+		return
+	}
+	format := r.URL.Query().Get("format")
+	if format != "clash" && format != "singbox" && format != "quanx" && format != "quanx-config" && format != "links" {
+		writeError(w, http.StatusBadRequest, "invalid subscription format")
+		return
+	}
+	file, err := s.st.PublishedSubscriptionFile(r.Context(), userID, format)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, store.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	s.audit(r, "user.subscription.previewed", nil, nil, map[string]any{
+		"user_id": userID, "format": format, "revision": file.Revision,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"format": format, "revision": file.Revision, "content_type": file.ContentType,
+		"content": string(file.Content), "generated_at": file.GeneratedAt,
+	})
 }
 
 // handleUserTrafficHistory 处理 GET /api/user/traffic-history?user_id=N。

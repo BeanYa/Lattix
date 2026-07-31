@@ -4,9 +4,11 @@ import {
   CalendarClockIcon,
   CircleCheckIcon,
   ExternalLinkIcon,
+  EyeIcon,
   HistoryIcon,
   PlusIcon,
   QrCodeIcon,
+  RefreshCwIcon,
   Settings2Icon,
   Trash2Icon,
   UsersIcon,
@@ -15,6 +17,7 @@ import {
 import { CopyButton } from '@/components/CopyButton'
 import { EmptyState, Notice, Page, PageHeader, Surface } from '@/components/PagePrimitives'
 import { QRDialog } from '@/components/QRDialog'
+import { SubscriptionRoutingFields } from '@/components/SubscriptionRoutingFields'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -46,6 +49,7 @@ import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { buildLinkOptions } from '@/lib/links'
+import { defaultSubscriptionRouting } from '@/lib/subscription-routing'
 import { useTimezone } from '@/lib/timezone'
 import {
   formatTrafficLimit,
@@ -54,7 +58,15 @@ import {
   TRAFFIC_UNITS,
   type TrafficUnit,
 } from '@/lib/user-subscription'
-import type { Chain, SubUser } from '@/lib/types'
+import type {
+  Chain,
+  SubUser,
+  SubscriptionRoutingProfile,
+  SubscriptionPreview,
+  SubscriptionPreviewFormat,
+  SubscriptionRuleCategory,
+  SubscriptionTemplate,
+} from '@/lib/types'
 
 function TrafficLimitInput({
   value,
@@ -118,6 +130,8 @@ export default function Users() {
   const { confirm } = useAppDialog()
   const [users, setUsers] = useState<SubUser[]>([])
   const [chains, setChains] = useState<Chain[]>([])
+  const [ruleCategories, setRuleCategories] = useState<SubscriptionRuleCategory[]>([])
+  const [templates, setTemplates] = useState<SubscriptionTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleting, setDeleting] = useState<number | null>(null)
@@ -135,6 +149,7 @@ export default function Users() {
   const [createResetDay, setCreateResetDay] = useState('')
   const [createPlanName, setCreatePlanName] = useState('')
   const [createAppURL, setCreateAppURL] = useState('')
+  const [createRouting, setCreateRouting] = useState<SubscriptionRoutingProfile>(defaultSubscriptionRouting)
 
   const [expiryTarget, setExpiryTarget] = useState<SubUser | null>(null)
   const [expiryValue, setExpiryValue] = useState('')
@@ -159,6 +174,13 @@ export default function Users() {
   const [subAppURL, setSubAppURL] = useState('')
   const [subSaving, setSubSaving] = useState(false)
   const [subErr, setSubErr] = useState('')
+  const [subRouting, setSubRouting] = useState<SubscriptionRoutingProfile>(defaultSubscriptionRouting)
+  const [regenerating, setRegenerating] = useState<number | null>(null)
+  const [previewTarget, setPreviewTarget] = useState<SubUser | null>(null)
+  const [previewFormat, setPreviewFormat] = useState<SubscriptionPreviewFormat>('clash')
+  const [previewData, setPreviewData] = useState<SubscriptionPreview | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState('')
   // 流量历史对话框
   const [historyTarget, setHistoryTarget] = useState<SubUser | null>(null)
   const [historyData, setHistoryData] = useState<Array<{ period_start: string; up: number; down: number }>>([])
@@ -170,13 +192,17 @@ export default function Users() {
       ? { signal, ...(silent ? { display: 'silent' as const } : {}) }
       : silent ? { display: 'silent' as const } : undefined
     try {
-      const [nextUsers, nextChains] = await Promise.all([
+      const [nextUsers, nextChains, nextCategories, nextTemplates] = await Promise.all([
         api.users(options),
         api.chains(options),
+        api.subscriptionCategories(),
+        api.subscriptionTemplates(),
       ])
       if (signal?.aborted || request !== loadRequest.current) return
       setUsers(nextUsers)
       setChains(nextChains)
+      setRuleCategories(nextCategories)
+      setTemplates(nextTemplates)
     } catch (err) {
       if (signal?.aborted || request !== loadRequest.current) return
       setError(errorMessage(err))
@@ -215,6 +241,7 @@ export default function Users() {
       setCreateResetDay('')
       setCreatePlanName('')
       setCreateAppURL('')
+      setCreateRouting(defaultSubscriptionRouting)
     }
   }
 
@@ -233,19 +260,17 @@ export default function Users() {
       const resetDay = parseTrafficResetDay(createResetDay)
       const planName = createPlanName.trim()
       const appURL = createAppURL.trim()
-      const hasSub = trafficLimit > 0 || resetDay > 0 || planName !== '' || appURL !== ''
       const res = await api.createUser(
         name.trim(),
         localInputToRFC3339(expiresAt),
         createLinkSel,
-        hasSub
-          ? {
-              traffic_limit: trafficLimit,
-              traffic_reset_day: resetDay,
-              plan_name: planName,
-              app_url: appURL,
-            }
-          : undefined,
+        {
+          traffic_limit: trafficLimit,
+          traffic_reset_day: resetDay,
+          plan_name: planName,
+          app_url: appURL,
+          routing: createRouting,
+        },
       )
       setCreated(res)
       load()
@@ -348,6 +373,7 @@ export default function Users() {
     setSubAnnouncementOverride(u.sub_announcement)
     setSubPlanName(u.plan_name)
     setSubAppURL(u.app_url)
+    setSubRouting(u.routing)
     setSubErr('')
   }
 
@@ -366,6 +392,7 @@ export default function Users() {
         sub_announcement: subAnnouncementOverride,
         plan_name: subPlanName,
         app_url: subAppURL,
+        routing: subRouting,
       })
       setSubTarget(null)
       load()
@@ -374,6 +401,44 @@ export default function Users() {
     } finally {
       setSubSaving(false)
     }
+  }
+
+  const onRegenerate = async (user: SubUser) => {
+    setRegenerating(user.id)
+    setError('')
+    try {
+      await api.regenerateUserSubscription(user.id)
+      load()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setRegenerating(null)
+    }
+  }
+
+  const loadSubscriptionPreview = async (user: SubUser, format: SubscriptionPreviewFormat) => {
+    setPreviewLoading(true)
+    setPreviewError('')
+    try {
+      setPreviewData(await api.userSubscriptionPreview(user.id, format))
+    } catch (err) {
+      setPreviewData(null)
+      setPreviewError(errorMessage(err))
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const onOpenPreview = (user: SubUser) => {
+    setPreviewTarget(user)
+    setPreviewFormat('clash')
+    setPreviewData(null)
+    void loadSubscriptionPreview(user, 'clash')
+  }
+
+  const onPreviewFormatChange = (format: SubscriptionPreviewFormat) => {
+    setPreviewFormat(format)
+    if (previewTarget) void loadSubscriptionPreview(previewTarget, format)
   }
 
   const onOpenHistory = async (u: SubUser) => {
@@ -438,6 +503,11 @@ export default function Users() {
                       {u.name}
                       {u.disabled && <Badge variant="destructive">已停用</Badge>}
                       {u.expired && <Badge variant="destructive">已到期</Badge>}
+                      {u.subscription_snapshot.status === 'ready' ? (
+                        <Badge variant="secondary">订阅 r{u.subscription_snapshot.revision}</Badge>
+                      ) : (
+                        <Badge variant="destructive" title={u.subscription_snapshot.error}>订阅异常</Badge>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell>
@@ -483,6 +553,18 @@ export default function Users() {
                     <Button variant="outline" size="sm" title="订阅设置" onClick={() => onOpenSubSettings(u)}>
                       <Settings2Icon />
                     </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      title="重新生成全部订阅格式"
+                      disabled={regenerating === u.id}
+                      onClick={() => onRegenerate(u)}
+                    >
+                      <RefreshCwIcon className={regenerating === u.id ? 'animate-spin' : undefined} />
+                    </Button>
+                    <Button variant="outline" size="sm" title="结果预览" onClick={() => onOpenPreview(u)}>
+                      <EyeIcon />
+                    </Button>
                     <Button variant="outline" size="sm" title="流量历史" onClick={() => onOpenHistory(u)}>
                       <HistoryIcon />
                     </Button>
@@ -518,7 +600,7 @@ export default function Users() {
       </Surface>
 
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-h-[85vh] sm:max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>创建用户</DialogTitle>
             <DialogDescription>
@@ -617,6 +699,12 @@ export default function Users() {
                   </div>
                 </div>
               </div>
+              <SubscriptionRoutingFields
+                value={createRouting}
+                onChange={setCreateRouting}
+                categories={ruleCategories}
+                templates={templates}
+              />
               {createError && <p className="text-sm text-destructive">{createError}</p>}
               <DialogFooter>
                 <Button type="submit" disabled={creating || !name.trim()}>
@@ -702,11 +790,11 @@ export default function Users() {
       </Dialog>
 
       <Dialog open={subTarget !== null} onOpenChange={(next) => !next && setSubTarget(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-h-[90vh] sm:max-w-5xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>订阅设置</DialogTitle>
             <DialogDescription>
-              「{subTarget?.name}」的流量配额与落地页覆盖。留空则跟随全局设置。
+              「{subTarget?.name}」的落地页、分流策略与发布订阅快照。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -771,6 +859,12 @@ export default function Users() {
                 <p className="text-xs text-muted-foreground">客户端流量卡片可点击跳转的按钮</p>
               </div>
             </div>
+            <SubscriptionRoutingFields
+              value={subRouting}
+              onChange={setSubRouting}
+              categories={ruleCategories}
+              templates={templates}
+            />
           </div>
           {subErr && <p className="text-sm text-destructive">{subErr}</p>}
           <DialogFooter>
@@ -778,6 +872,53 @@ export default function Users() {
               {subSaving ? '保存中…' : '保存'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={previewTarget !== null}
+        onOpenChange={(next) => {
+          if (!next) {
+            setPreviewTarget(null)
+            setPreviewData(null)
+            setPreviewError('')
+          }
+        }}
+      >
+        <DialogContent className="max-h-[90vh] sm:max-w-5xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>订阅结果预览</DialogTitle>
+            <DialogDescription>
+              「{previewTarget?.name}」已发布快照 r{previewData?.revision ?? previewTarget?.subscription_snapshot.revision ?? 0}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center justify-between gap-3">
+            <Select
+              value={previewFormat}
+              onValueChange={(value) => value && onPreviewFormatChange(value as SubscriptionPreviewFormat)}
+            >
+              <SelectTrigger className="w-48" aria-label="订阅格式">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="clash">Mihomo YAML</SelectItem>
+                <SelectItem value="singbox">sing-box JSON</SelectItem>
+                <SelectItem value="quanx">Quantumult X 节点</SelectItem>
+                <SelectItem value="quanx-config">Quantumult X 配置</SelectItem>
+                <SelectItem value="links">Base64 分享链接</SelectItem>
+              </SelectContent>
+            </Select>
+            {previewData ? <CopyButton text={previewData.content} /> : null}
+          </div>
+          {previewLoading ? (
+            <p className="flex h-80 items-center justify-center text-sm text-muted-foreground">加载中…</p>
+          ) : previewError ? (
+            <Notice tone="danger">{previewError}</Notice>
+          ) : (
+            <pre className="h-[min(65vh,42rem)] overflow-auto border bg-muted/40 p-4 font-mono text-xs leading-5 whitespace-pre">
+              {previewData?.content ?? ''}
+            </pre>
+          )}
         </DialogContent>
       </Dialog>
 

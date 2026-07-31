@@ -381,6 +381,11 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 		log.Printf("dispatch: chain %d publish revision: %v", chainID, err)
 		return
 	}
+	if d.OnChainPublished != nil {
+		if err := d.OnChainPublished(ctx, chainID); err != nil {
+			log.Printf("dispatch: enqueue subscriptions for chain %d: %v", chainID, err)
+		}
+	}
 	d.cleanupPublishedRevision(ctx, previous, revision)
 }
 
@@ -455,6 +460,11 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 	}
 	if err := d.st.PublishChainRevision(ctx, revision.ID, true); err != nil {
 		return err
+	}
+	if d.OnChainPublished != nil {
+		if err := d.OnChainPublished(ctx, chainID); err != nil {
+			log.Printf("dispatch: enqueue subscriptions for chain %d: %v", chainID, err)
+		}
 	}
 	d.cleanupPublishedRevision(ctx, previous, revision)
 	d.advanceChain(context.Background(), chainID)

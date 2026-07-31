@@ -29,6 +29,12 @@ import type {
   ServerTestCategory,
   ServerTestTask,
   SubSettings,
+  SubscriptionRoutingProfile,
+  SubscriptionPreview,
+  SubscriptionPreviewFormat,
+  SubscriptionRuleCategory,
+  SubscriptionSnapshotStatus,
+  SubscriptionTemplate,
   TrafficPlanInput,
   CustomExchangeRate,
   ExchangeRateSettings,
@@ -221,7 +227,7 @@ export const api = {
     name: string,
     expiresAt?: string | null,
     nodeIds?: number[],
-    sub?: { traffic_limit?: number; traffic_reset_day?: number; plan_name?: string; app_url?: string },
+    sub?: { traffic_limit?: number; traffic_reset_day?: number; plan_name?: string; app_url?: string; routing?: SubscriptionRoutingProfile },
   ) =>
     requester.post<SubUser>('/api/user/create', {
       name,
@@ -251,7 +257,30 @@ export const api = {
     sub_announcement: string
     plan_name: string
     app_url: string
+    routing: SubscriptionRoutingProfile
   }) => requester.post<void>('/api/user/sub-settings', body),
+  regenerateUserSubscription: (userId: number) =>
+    requester.post<SubscriptionSnapshotStatus>('/api/user/regenerate-subscription', { user_id: userId }),
+  userSubscriptionPreview: (userId: number, format: SubscriptionPreviewFormat) =>
+    requester.get<SubscriptionPreview>('/api/user/subscription-preview', { user_id: userId, format }),
+  subscriptionCategories: () =>
+    requester.get<SubscriptionRuleCategory[]>('/api/subscription/categories'),
+  subscriptionTemplates: () =>
+    requester.get<SubscriptionTemplate[]>('/api/subscription/templates'),
+  saveSubscriptionTemplate: (body: {
+    id?: string
+    name: string
+    kind: SubscriptionTemplate['kind']
+    source_url?: string
+    content?: string
+    license?: string
+  }) => requester.post<SubscriptionTemplate>('/api/subscription/template/save', body),
+  cloneSubscriptionTemplate: (id: string, name?: string) =>
+    requester.post<SubscriptionTemplate>('/api/subscription/template/clone', { id, name: name ?? '' }),
+  deleteSubscriptionTemplate: (id: string) =>
+    requester.post<void>('/api/subscription/template/delete', { id }),
+  refreshSubscriptionTemplates: (id = '') =>
+    requester.post<SubscriptionTemplate[]>('/api/subscription/template/refresh', { id }),
   userTrafficHistory: (userId: number) =>
     requester.get<Array<{ period_start: string; up: number; down: number }>>(
       '/api/user/traffic-history', { user_id: userId },

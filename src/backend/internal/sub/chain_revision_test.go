@@ -20,7 +20,7 @@ func TestSubscriptionUsesPublishedRevisionWhileEditApplies(t *testing.T) {
 
 	entryID, _ := st.CreateServer(ctx, "published-entry", "old.example.com", "tok-entry", store.MachineTypeDirect, "", "", "US", "")
 	desiredEntryID, _ := st.CreateServer(ctx, "desired-entry", "new.example.com", "tok-new", store.MachineTypeDirect, "", "", "US", "")
-	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "tok-exit", store.MachineTypeDirect, "", "", "US", "")
+	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "tok-exit", store.MachineTypeDirect, "", "", "JP", "")
 
 	publishedConfig, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Network: shared.NetworkTCP, Template: json.RawMessage(`{}`)})
 	desiredConfig, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolSocks, Template: json.RawMessage(`{}`)})
@@ -73,5 +73,12 @@ func TestSubscriptionUsesPublishedRevisionWhileEditApplies(t *testing.T) {
 	}
 	if item.node.ServerAddress != "old.example.com" || item.rc.Port != 10001 || item.rc.PublicKey != "published-key" {
 		t.Fatalf("subscription endpoint/config = address %q realized %+v", item.node.ServerAddress, item.rc)
+	}
+	compiled, err := New(st, nil, nil).compileNodes(ctx, []proxyItem{*item}, "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compiled) != 1 || compiled[0].CountryCode != "JP" {
+		t.Fatalf("compiled chain region = %+v, want exit country JP", compiled)
 	}
 }

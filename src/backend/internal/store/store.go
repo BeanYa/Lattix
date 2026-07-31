@@ -210,6 +210,91 @@ CREATE TABLE IF NOT EXISTS user_nodes (
     PRIMARY KEY (user_id, node_id)
 );
 
+-- Subscription templates are cached independently from published user files.
+-- Refreshing a GitHub source updates this table only; user snapshots remain immutable.
+CREATE TABLE IF NOT EXISTS subscription_templates (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    kind            TEXT NOT NULL, -- portable|acl4ssr|mihomo|singbox|quanx
+    origin          TEXT NOT NULL, -- local|github
+    source_url      TEXT NOT NULL DEFAULT '',
+    content         TEXT NOT NULL,
+    content_sha256  TEXT NOT NULL,
+    license         TEXT NOT NULL DEFAULT '',
+    readonly        INTEGER NOT NULL DEFAULT 0,
+    fetched_at      DATETIME,
+    last_attempt_at DATETIME,
+    last_error      TEXT NOT NULL DEFAULT '',
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Remote rule sources referenced by a template are refreshed and committed with
+-- the template cache. A failed refresh leaves the last complete cache usable.
+CREATE TABLE IF NOT EXISTS subscription_template_rules (
+    template_id     TEXT NOT NULL REFERENCES subscription_templates(id),
+    template_sha256 TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    source_url      TEXT NOT NULL,
+    content         BLOB NOT NULL,
+    content_sha256  TEXT NOT NULL,
+    PRIMARY KEY (template_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS user_subscription_profiles (
+    user_id             INTEGER PRIMARY KEY REFERENCES users(id),
+    mode                TEXT NOT NULL DEFAULT 'suggested', -- suggested|template
+    preset              TEXT NOT NULL DEFAULT 'balanced',
+    categories          TEXT NOT NULL DEFAULT '[]', -- JSON string array
+    portable_template_id TEXT NOT NULL DEFAULT '',
+    mihomo_template_id  TEXT NOT NULL DEFAULT '',
+    singbox_template_id TEXT NOT NULL DEFAULT '',
+    quanx_template_id   TEXT NOT NULL DEFAULT '',
+    generation_status   TEXT NOT NULL DEFAULT 'missing', -- missing|pending|ready|error
+    generation_error    TEXT NOT NULL DEFAULT '',
+    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Every generation creates a complete immutable set of files. A single pointer
+-- switch publishes all formats atomically.
+CREATE TABLE IF NOT EXISTS subscription_snapshots (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       INTEGER NOT NULL REFERENCES users(id),
+    revision      INTEGER NOT NULL,
+    source_label  TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL,
+    generated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (user_id, revision)
+);
+
+CREATE TABLE IF NOT EXISTS subscription_files (
+    snapshot_id  INTEGER NOT NULL REFERENCES subscription_snapshots(id),
+    format       TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    content      BLOB NOT NULL,
+    PRIMARY KEY (snapshot_id, format)
+);
+
+-- Client-native rule artifacts are immutable members of the same snapshot as
+-- the generated subscription files.
+CREATE TABLE IF NOT EXISTS subscription_rule_files (
+    snapshot_id  INTEGER NOT NULL REFERENCES subscription_snapshots(id),
+    name         TEXT NOT NULL,
+    format       TEXT NOT NULL, -- mihomo|singbox|quanx
+    source_sha256 TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    content      BLOB NOT NULL,
+    PRIMARY KEY (snapshot_id, name, format)
+);
+
+CREATE TABLE IF NOT EXISTS published_subscription_snapshots (
+    user_id     INTEGER PRIMARY KEY REFERENCES users(id),
+    snapshot_id INTEGER NOT NULL REFERENCES subscription_snapshots(id),
+    published_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_subscription_snapshots_user
+    ON subscription_snapshots(user_id, revision DESC);
+
 -- 主机遥测（§13）：每服务器一行，最新值。
 CREATE TABLE IF NOT EXISTS server_metrics (
     server_id          INTEGER PRIMARY KEY REFERENCES servers(id),
