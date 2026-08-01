@@ -47,19 +47,9 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 				shared.PlaceholderRealityPrivateKey, prev.PrivateKey))
 		}
 	}
-	portCandidates := p.PortCandidates
-	prefer443 := config.Port == 0 && len(portCandidates) == 0 && prev == nil
-	if prefer443 {
-		portCandidates = []int{443}
-	}
+	portCandidates := endpointPortCandidates(config.Port, p.PortCandidates, prev)
 	inbound, realized, err := m.fillTemplate(sharedEndpointTag(p.EndpointID), config, nil,
 		p.DestCandidates, portCandidates)
-	if err != nil && prefer443 {
-		// 443 is a recommendation for unrestricted servers, not a deployment
-		// requirement. Fall back to an ephemeral free port when it is occupied.
-		inbound, realized, err = m.fillTemplate(sharedEndpointTag(p.EndpointID), config, nil,
-			p.DestCandidates, nil)
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +107,17 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 
 func (m *Manager) RemoveSharedEndpoint(endpointID int64) error {
 	return m.RemoveChainHop(endpointID, sharedEndpointPieceKind)
+}
+
+// endpointPortCandidates 决定共享端点部署的端口候选（§21）：
+//   - 端口留空且面板未下发候选（普通直连机）→ 空候选，pickPort 挑随机空闲端口；
+//   - NAT 受限机 → 透传面板段内候选（AllowedPorts 展开）；
+//   - 显式端口 / 重发复用已落地端口 → 不传候选（config.Port 已非 0）。
+func endpointPortCandidates(configPort int, panelCandidates []int, prev *state.ChainPiece) []int {
+	if configPort == 0 && len(panelCandidates) == 0 && prev == nil {
+		return nil
+	}
+	return panelCandidates
 }
 
 func renderSharedEndpointOutbound(route shared.SharedEndpointRoute, tag string) map[string]any {
