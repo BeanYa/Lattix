@@ -81,15 +81,8 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 	}
 	sort.Slice(payload.Clients, func(i, j int) bool { return payload.Clients[i].Email < payload.Clients[j].Email })
 	sort.Slice(payload.Routes, func(i, j int) bool { return payload.Routes[i].ChainID < payload.Routes[j].ChainID })
-	if len(payload.Routes) == 0 {
-		// 无剩余路由：下发移除命令，释放 agent 上的监听端口（端点记录保留供复用）。
-		if err := d.st.SetSharedEndpointPending(ctx, endpointID); err != nil {
-			return err
-		}
-		_, err = d.Enqueue(ctx, endpoint.ServerID, shared.TypeRemoveSharedEndpoint,
-			shared.RemoveSharedEndpointPayload{EndpointID: endpointID})
-		return err
-	}
+	// 建链即部署监听：即使 routes/clients 为空也下发 apply（端口 + Reality 密钥即刻生效）。
+	// 用户分配仅做增量用户添加，不再是部署前提。
 	if err := d.st.SetSharedEndpointApplying(ctx, endpointID); err != nil {
 		return err
 	}

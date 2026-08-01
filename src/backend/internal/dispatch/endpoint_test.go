@@ -122,27 +122,24 @@ func TestPublishReconcilesPreviousAndNewSharedEndpoints(t *testing.T) {
 	d.publishDesiredRevision(ctx, deployment.ChainID, hops, *node)
 
 	commands, err := st.CommandsByType(ctx, shared.TypeApplySharedEndpoint)
-	if err != nil || len(commands) != 1 {
-		t.Fatalf("endpoint apply commands: len=%d err=%v", len(commands), err)
+	if err != nil || len(commands) != 2 {
+		t.Fatalf("endpoint apply commands: len=%d err=%v（旧+新端点各一次）", len(commands), err)
 	}
-	var applyPayload shared.ApplySharedEndpointPayload
-	if err := json.Unmarshal(commands[0].Data, &applyPayload); err != nil {
-		t.Fatal(err)
+	seen := map[int64]bool{}
+	for _, cmd := range commands {
+		var applyPayload shared.ApplySharedEndpointPayload
+		if err := json.Unmarshal(cmd.Data, &applyPayload); err != nil {
+			t.Fatal(err)
+		}
+		seen[applyPayload.EndpointID] = true
 	}
-	if applyPayload.EndpointID != endpointB.ID {
-		t.Fatalf("apply 应发往新端点 %d，实际 = %d", endpointB.ID, applyPayload.EndpointID)
+	if !seen[endpointA.ID] || !seen[endpointB.ID] {
+		t.Fatalf("apply 应覆盖旧端点 %d 与新端点 %d，实际 = %v", endpointA.ID, endpointB.ID, seen)
 	}
-	// 旧端点无剩余路由，应收到 remove 命令。
+	// 建链即部署：切换端点时旧端点 reconcile 为 apply（可空 clients），不再 remove。
 	removes, err := st.CommandsByType(ctx, shared.TypeRemoveSharedEndpoint)
-	if err != nil || len(removes) != 1 {
-		t.Fatalf("endpoint remove commands: len=%d err=%v", len(removes), err)
-	}
-	var removePayload shared.RemoveSharedEndpointPayload
-	if err := json.Unmarshal(removes[0].Data, &removePayload); err != nil {
-		t.Fatal(err)
-	}
-	if removePayload.EndpointID != endpointA.ID {
-		t.Fatalf("remove 应发往旧端点 %d，实际 = %d", endpointA.ID, removePayload.EndpointID)
+	if err != nil || len(removes) != 0 {
+		t.Fatalf("不应下发 remove 命令，实际有 %d 条", len(removes))
 	}
 }
 
@@ -204,9 +201,9 @@ func TestChainDegradedWhenEndpointNotActive(t *testing.T) {
 	}
 }
 
-// TestReconcileRemovesEndpointWhenNoRoutes 验证最后一条链删除后，
-// reconcile 下发 shared-endpoint.remove（而非空 apply），端点状态重置为 pending。
-func TestReconcileRemovesEndpointWhenNoRoutes(t *testing.T) {
+// TestReconcileDeploysEndpointEvenWithNoUsers 验证建链即部署监听（即使 routes/clients 为空也 apply）。
+// 用户分配仅增量添加用户，不再是部署前提。删除最后一条链后端点记录保留。
+func TestReconcileDeploysEndpointEvenWithNoUsers(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -226,7 +223,7 @@ func TestReconcileRemovesEndpointWhenNoRoutes(t *testing.T) {
 	}
 
 	d := New(st, &fakeRequester{online: map[int64]bool{}})
-	// 有路由时 reconcile 应下发 apply。
+	// 有用户时 reconcile 应下发 apply。
 	if err := d.ReconcileSharedEndpoint(ctx, endpoint.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +236,7 @@ func TestReconcileRemovesEndpointWhenNoRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 删除链（模拟面板删链流程）。
+	// 删除链（模拟面板删链流程）——端点记录应保留。
 	if err := st.DeleteChain(ctx, deployment.ChainID); err != nil {
 		t.Fatal(err)
 	}
@@ -247,35 +244,25 @@ func TestReconcileRemovesEndpointWhenNoRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 应下发 remove 命令，而非再次 apply。
+	// 不应下发 remove；删链后仍 apply（建链即部署语义下端点记录常驻复用）。
 	removes, err := st.CommandsByType(ctx, shared.TypeRemoveSharedEndpoint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(removes) != 1 {
-		t.Fatalf("remove 命令数 = %d，期望 1", len(removes))
-	}
-	var payload shared.RemoveSharedEndpointPayload
-	if err := json.Unmarshal(removes[0].Data, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.EndpointID != endpoint.ID {
-		t.Fatalf("remove 载荷 endpoint_id = %d，期望 %d", payload.EndpointID, endpoint.ID)
+	if err != nil || len(removes) != 0 {
+		t.Fatalf("不应下发 remove 命令，实际有 %d 条", len(removes))
 	}
 	applies, _ = st.CommandsByType(ctx, shared.TypeApplySharedEndpoint)
-	if len(applies) != 1 {
-		t.Fatalf("删链后 apply 命令数 = %d，不应新增", len(applies))
+	if len(applies) < 2 {
+		t.Fatalf("删链后应再次下发 apply，实际 %d 条", len(applies))
 	}
 
-	// 端点状态应重置为 pending，realized 清空。
 	ep, err := st.SharedEndpointByID(ctx, endpoint.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ep.Status != store.EndpointStatusPending {
-		t.Fatalf("端点状态 = %s，期望 pending", ep.Status)
+	// reconcile 会置 applying；realized 在 ack 前仍保留上次生效值。
+	if ep.Status != store.EndpointStatusApplying {
+		t.Fatalf("端点状态 = %s，期望 applying", ep.Status)
 	}
-	if ep.RealizedConfig != nil {
-		t.Fatalf("端点 realized_config 应清空，实际 = %s", ep.RealizedConfig)
+	if ep.RealizedConfig == nil {
+		t.Fatal("端点 realized_config 应保留")
 	}
 }
