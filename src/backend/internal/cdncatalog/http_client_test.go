@@ -60,6 +60,30 @@ func TestHTTPClientRejectsInvalidConfiguration(t *testing.T) {
 	}
 }
 
+func TestHTTPClientEmbedsBothZstaticTrustRoots(t *testing.T) {
+	for name, root := range map[string][]byte{
+		"digicert": zstaticTrustRootPEM,
+		"aaa":      zstaticOverseasTrustRootPEM,
+	} {
+		root := root
+		t.Run(name, func(t *testing.T) {
+			if len(root) == 0 {
+				t.Fatal("embedded trust root is empty")
+			}
+			block, _ := pem.Decode(root)
+			if block == nil || block.Type != "CERTIFICATE" {
+				t.Fatal("embedded trust root is not a PEM certificate")
+			}
+			if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+				t.Fatalf("embedded trust root is invalid: %v", err)
+			}
+			if _, err := newHTTPClient(time.Second, unavailableSystemRoots, root); err != nil {
+				t.Fatalf("embedded trust root could not be loaded: %v", err)
+			}
+		})
+	}
+}
+
 func unavailableSystemRoots() (*x509.CertPool, error) {
 	return nil, errors.New("system roots unavailable")
 }
