@@ -32,6 +32,10 @@
 #   LATX_BBR_CONFIG     BBR 持久化文件覆盖（e2e 用）
 #   LATX_BBR_TEST=1     DEV/非 root 下仍执行 BBR 流程（仅限配合上述覆盖进行 e2e）
 #   LATX_BBR_TEST_ONLY=1 仅执行 BBR 流程后退出（e2e 用）
+#
+# 依赖自愈：缺少 sha256sum/tar/unzip 时按发行版包管理器自动安装（root 直装；
+# 非 root 有 sudo 走 sudo，都没有则报错提示手动安装）。unzip 仅 xray 下载分支
+# 需要，DEV 模式或 XRAY_BIN 复制安装分支缺 unzip 不阻塞。
 set -euo pipefail
 
 # ===== CI 发版烧入区（release.yml 在发版时 sed 替换以下占位符）=====
@@ -70,6 +74,90 @@ one_line() {
     value="${value//$'\r'/ }"
     value="${value//$'\n'/; }"
     printf '%s' "$value"
+}
+
+DEPS_PKG_MGR=""
+DEPS_OS_ID=""
+
+# 按 /etc/os-release 识别发行版包管理器；无法识别或对应命令不存在时返回非零。
+detect_pkg_mgr() {
+    DEPS_PKG_MGR=""
+    DEPS_OS_ID=""
+    [[ -r /etc/os-release ]] || return 1
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    DEPS_OS_ID="${ID:-unknown}"
+    case "${ID:-}" in
+        ubuntu|debian|armbian|linuxmint|pop|elementary|kali) DEPS_PKG_MGR="apt-get" ;;
+        fedora)                                                DEPS_PKG_MGR="dnf" ;;
+        centos|rhel|almalinux|rocky|ol|amzn)                   DEPS_PKG_MGR="yum" ;;
+        alpine)                                                DEPS_PKG_MGR="apk" ;;
+        arch|manjaro|endeavouros)                              DEPS_PKG_MGR="pacman" ;;
+        opensuse*|sles|suse)                                   DEPS_PKG_MGR="zypper" ;;
+    esac
+    [[ -n "$DEPS_PKG_MGR" ]] && command -v "$DEPS_PKG_MGR" >/dev/null 2>&1
+}
+
+# 依赖自愈：命令已存在则幂等跳过；缺失时按发行版与权限自动安装，失败即中止。
+ensure_deps() {
+    local cmd missing=() pkgs=() pkg SUDO_PREFIX="" install_output=""
+    for cmd in "$@"; do
+        command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
+    done
+    [[ "${#missing[@]}" -eq 0 ]] && return 0
+
+    local missing_display="${missing[*]}"
+    for cmd in "${missing[@]}"; do
+        case "$cmd" in
+            unzip)     pkg="unzip" ;;
+            tar)       pkg="tar" ;;
+            sha256sum) pkg="coreutils" ;;
+            *)         die "缺少 $cmd 且不支持自动安装，请手动安装后重试" ;;
+        esac
+        pkgs+=("$pkg")
+    done
+
+    detect_pkg_mgr \
+        || die "缺少 $missing_display 且无法自动安装（系统 ${DEPS_OS_ID:-unknown} 无可用包管理器），请手动安装：${missing_display}"
+    if [[ "$(id -u)" -ne 0 ]]; then
+        command -v sudo >/dev/null 2>&1 \
+            || die "缺少 $missing_display 且当前用户无 root/sudo 权限，无法自动安装；请以 root/sudo 重试或手动安装：${missing_display}"
+        SUDO_PREFIX="sudo"
+    fi
+
+    echo ">> 缺少依赖 ${missing_display}，将通过 $DEPS_PKG_MGR 自动安装"
+    case "$DEPS_PKG_MGR" in
+        apt-get)
+            if ! install_output="$($SUDO_PREFIX apt-get update -qq 2>&1)"; then
+                die "apt-get update 失败，无法自动安装依赖（$(one_line "$install_output")）；请手动安装：${missing_display}"
+            fi
+            install_output="$($SUDO_PREFIX apt-get install -y --no-install-recommends "${pkgs[@]}" 2>&1)" \
+                || die "依赖安装失败（apt-get）：$(one_line "$install_output")；请手动安装：${missing_display}"
+            ;;
+        dnf|yum)
+            install_output="$($SUDO_PREFIX "$DEPS_PKG_MGR" install -y "${pkgs[@]}" 2>&1)" \
+                || die "依赖安装失败（$DEPS_PKG_MGR）：$(one_line "$install_output")；请手动安装：${missing_display}"
+            ;;
+        apk)
+            install_output="$($SUDO_PREFIX apk add --no-cache "${pkgs[@]}" 2>&1)" \
+                || die "依赖安装失败（apk）：$(one_line "$install_output")；请手动安装：${missing_display}"
+            ;;
+        pacman)
+            install_output="$($SUDO_PREFIX pacman -Sy --noconfirm "${pkgs[@]}" 2>&1)" \
+                || die "依赖安装失败（pacman）：$(one_line "$install_output")；请手动安装：${missing_display}"
+            ;;
+        zypper)
+            install_output="$($SUDO_PREFIX zypper --non-interactive install -y "${pkgs[@]}" 2>&1)" \
+                || die "依赖安装失败（zypper）：$(one_line "$install_output")；请手动安装：${missing_display}"
+            ;;
+        *) die "不支持的包管理器：$DEPS_PKG_MGR" ;;
+    esac
+
+    for cmd in "${missing[@]}"; do
+        command -v "$cmd" >/dev/null 2>&1 \
+            || die "依赖 $cmd 安装后仍不可用；请手动安装后重试"
+    done
+    echo ">> 依赖已就绪：${missing_display}"
 }
 
 enable_bbr_best_effort() {
@@ -182,8 +270,7 @@ done
 [[ -n "$BOOTSTRAP_TOKEN" ]] || die "--token is required"
 [[ "$LATTIX_VERSION" != *"{{"* ]] || die "--version is required"
 [[ "$GITHUB_REPO" != *"{{"* ]] || die "GITHUB_REPO 未配置"
-command -v curl      >/dev/null || die "curl is required"
-command -v sha256sum >/dev/null || die "sha256sum is required"
+command -v curl >/dev/null || die "curl is required"
 
 # --- 运行模式判定（三档）---
 # DEV：无 systemd/非 root 且 LATX_DEV=1（现有开发降级语义不变）；
@@ -203,6 +290,15 @@ elif [[ "${LATX_USER_MODE:-0}" == "1" ]]; then
     USER_MODE=1
     echo ">> [user] LATX_USER_MODE=1，强制用户态模式：不注册 unit，agent 由守护脚本 lattix-agent-run 常驻"
 fi
+
+# --- 依赖自愈（幂等）：安装缺失的依赖 ---
+# sha256sum/tar 恒需要（agent 包校验/解压）；unzip 仅 xray 下载分支需要，
+# DEV 模式或 XRAY_BIN 复制安装分支缺 unzip 不阻塞。
+REQUIRED_DEPS=(sha256sum tar)
+if [[ "$DEV_MODE" -ne 1 && ! ( -n "${XRAY_BIN:-}" && -x "${XRAY_BIN:-}" ) ]]; then
+    REQUIRED_DEPS+=(unzip)
+fi
+ensure_deps "${REQUIRED_DEPS[@]}"
 
 # 路径变量（在模式判定之后确定）：user 模式未显式指定 LATX_PREFIX 时，
 # 非 root 默认 $HOME/.lattix-agent，root 默认 /opt/lattix-agent。
@@ -305,9 +401,7 @@ else
         fi
     fi
 
-    command -v unzip >/dev/null || die "unzip is required"
-    echo ">> installing xray-core ${XRAY_VERSION}"
-    download_file "xray-core ${XRAY_VERSION}" \
+    echo ">> installing xray-core ${XRAY_VERSION}"    download_file "xray-core ${XRAY_VERSION}" \
         "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}" \
         "$TMP_DIR/xray.zip" || die "xray-core 下载失败"
 
@@ -344,7 +438,6 @@ fi
 
 # agent 包下载基址：钉到目标版本的 GitHub Release。
 # LATX_RELEASE_BASE 可覆盖下载基址（e2e 本地模拟，支持 file://）。
-command -v tar >/dev/null || die "tar is required"
 RELEASE_BASE="${LATX_RELEASE_BASE:-https://github.com/${GITHUB_REPO}/releases/download/${LATTIX_VERSION}}"
 echo ">> installing lattix-agent ${LATTIX_VERSION}（source: GitHub）"
 download_file "lattix-agent ${LATTIX_VERSION}" \

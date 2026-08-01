@@ -4,6 +4,7 @@
 #   → LATX_DEV=1 + LATX_PREFIX 无 systemd 降级安装（xray 由 XRAY_BIN 本机二进制复制安装）
 #   → latx-ag 随装 → checksum 篡改应中止 → 成功输出（面板地址/agent 状态/latx-ag 提示块）
 #   → 重装清旧 state（预置坏 state 仍能上线）→ agent 连上面板（online）
+#   → PATH 中无 unzip 时 DEV 安装仍应成功（unzip 仅 xray 下载分支需要，回归用例）
 #   → latx-ag version / status（进程检查）可用
 #   → user 用户态模式（LATX_USER_MODE=1 无 LATX_DEV）：守护脚本常驻 + latx-ag 用户态 start/stop
 #   → PATH 中无 flock 时使用 mkdir 兼容锁启动。
@@ -35,7 +36,8 @@ JAR="$WORK/cookies.txt"
 cleanup() {
     kill ${BPID:-} 2>/dev/null || true
     local install_prefix
-    for install_prefix in "$PREFIX" "$USER_PREFIX"; do
+    for install_prefix in "$PREFIX" "$USER_PREFIX" "${NO_UNZIP_PREFIX:-}"; do
+        [[ -n "$install_prefix" ]] || continue
         pkill -f "$install_prefix/opt/lattix-agent/bin/lattix-agent-run" 2>/dev/null || true
         pkill -f "$install_prefix/opt/lattix-agent/bin/lattix-agent" 2>/dev/null || true
         pkill -f "$install_prefix/opt/lattix-agent/bin/xray run" 2>/dev/null || true
@@ -146,6 +148,25 @@ grep -q "latx-ag status / log / update / xray-update / uninstall" "$WORK/install
     && echo "OK: 成功输出含 latx-ag 运维提示块" || { echo "FAIL: 成功输出缺 latx-ag 提示块"; exit 1; }
 ! grep -q "§11" "$WORK/install.log" \
     || { echo "FAIL: 安装完成提示不应包含设计文档章节标记"; exit 1; }
+
+echo ">> 用例 2b: PATH 中无 unzip 时 DEV 模式安装仍应成功（unzip 仅 xray 下载分支需要）"
+NO_UNZIP_BIN="$WORK/no-unzip-bin"
+NO_UNZIP_PREFIX="$WORK/no-unzip-prefix"
+mkdir -p "$NO_UNZIP_BIN"
+for command_name in bash cat chmod curl cut dirname grep gzip head id install ln mkdir mktemp mv nohup pgrep pkill rm sed sha256sum sleep tail tar uname; do
+    ln -s "$(command -v "$command_name")" "$NO_UNZIP_BIN/$command_name"
+done
+NO_UNZIP_OUT="$(PATH="$NO_UNZIP_BIN" LATX_DEV=1 LATX_PREFIX="$NO_UNZIP_PREFIX" LATX_RELEASE_BASE="file://$FAKE" \
+    XRAY_BIN="$XRAY_BIN" LATX_AG_XRAY_API="$API_ADDR" \
+    bash "$FAKE/install-agent.sh" --version "$VERSION" --panel "http://$ADDR" --token "$BOOTSTRAP" 2>&1)"
+printf '%s\n' "$NO_UNZIP_OUT" | grep -qF "Agent 状态: [DEV] 进程运行中" \
+    && echo "OK: PATH 无 unzip 时 DEV 安装成功" \
+    || { echo "FAIL: PATH 无 unzip 时安装失败"; printf '%s\n' "$NO_UNZIP_OUT"; exit 1; }
+if printf '%s\n' "$NO_UNZIP_OUT" | grep -qE "unzip is required|缺少依赖"; then
+    echo "FAIL: DEV 模式不应要求或安装 unzip"; printf '%s\n' "$NO_UNZIP_OUT"; exit 1
+fi
+echo "OK: DEV 模式未要求/安装 unzip（依赖自愈按需判定）"
+pkill -f "$NO_UNZIP_PREFIX/opt/lattix-agent/bin/lattix-agent" 2>/dev/null || true
 
 echo ">> 用例 3: agent 连上面板（坏 state 已清除，bootstrap 换发长期凭证）"
 ONLINE=""
