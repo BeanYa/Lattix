@@ -401,7 +401,8 @@ else
         fi
     fi
 
-    echo ">> installing xray-core ${XRAY_VERSION}"    download_file "xray-core ${XRAY_VERSION}" \
+    echo ">> installing xray-core ${XRAY_VERSION}"
+    download_file "xray-core ${XRAY_VERSION}" \
         "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}" \
         "$TMP_DIR/xray.zip" || die "xray-core 下载失败"
 
