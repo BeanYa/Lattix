@@ -42,12 +42,30 @@ func scheduleUninstall(purgeXray bool, mgr *xray.Manager) {
 		script = uninstallPurgeScript
 	}
 	log.Printf("uninstall: 开始自卸载（purge_xray=%v）", purgeXray)
+	spawnCleaner(script)
+	go exitAfter(time.Second)
+}
+
+// spawnCleaner 启动卸载清理脚本。systemd 安装场景下必须经 systemd-run 将脚本
+// 放进独立的 transient unit：Setsid 只能脱离会话/进程组，无法脱离所在服务的
+// cgroup——agent 退出后 systemd 按 KillMode=control-group 清理残留进程，仍在
+// sleep 的脚本会被一并杀掉，导致卸载脚本从未执行（服务仍 enabled、
+// /opt/lattix-agent 原样保留）。systemd-run 不可用或失败时回退到 setsid 直接
+// 派生（非 systemd 托管的守护脚本/手动运行场景仍然有效）。
+func spawnCleaner(script string) {
+	if _, err := exec.LookPath("systemd-run"); err == nil {
+		out, err := exec.Command("systemd-run", "bash", "-c", script).CombinedOutput()
+		if err == nil {
+			log.Printf("uninstall: 清理脚本已移交 systemd transient unit: %s", strings.TrimSpace(string(out)))
+			return
+		}
+		log.Printf("uninstall: systemd-run 派生失败（%v: %s），回退 setsid", err, strings.TrimSpace(string(out)))
+	}
 	cmd := exec.Command("bash", "-c", script)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true} // 脱离进程组，agent 退出后仍可执行
 	if err := cmd.Start(); err != nil {
 		log.Printf("uninstall: spawn cleaner failed: %v", err)
 	}
-	go exitAfter(time.Second)
 }
 
 func exitAfter(d time.Duration) {
