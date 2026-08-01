@@ -78,11 +78,7 @@ func (s *Server) setSubHeaders(w http.ResponseWriter, r *http.Request, user *sto
 		v += fmt.Sprintf("; expire=%d", user.ExpiresAt.Unix())
 	}
 	// 套餐名：用户级 > 全局设置。
-	planName := user.PlanName
-	if planName == "" {
-		planName, _ = s.st.GetSetting(r.Context(), store.SettingSubPlanName)
-	}
-	if planName != "" {
+	if planName := s.effectivePlanName(r, user); planName != "" {
 		v += "; plan_name=" + planName
 	}
 	// 客户端跳转链接：用户级 > 全局设置。
@@ -100,6 +96,82 @@ func (s *Server) setSubHeaders(w http.ResponseWriter, r *http.Request, user *sto
 		interval = global
 	}
 	w.Header().Set("Profile-Update-Interval", interval)
+}
+
+// effectivePlanName 返回生效套餐名：用户级 > 全局设置。
+func (s *Server) effectivePlanName(r *http.Request, user *store.User) string {
+	if user.PlanName != "" {
+		return user.PlanName
+	}
+	planName, _ := s.st.GetSetting(r.Context(), store.SettingSubPlanName)
+	return planName
+}
+
+// subContentDisposition 生成订阅下载文件名（Content-Disposition 头），形如
+// {套餐名|Lattix}-{用户名}.{ext}：套餐名可读，用户名保证不同用户的订阅文件不重名，
+// Clash Party 等客户端按该文件名命名保存订阅，从而在界面上展示套餐别名。
+func (s *Server) subContentDisposition(r *http.Request, user *store.User, ext string) string {
+	label := sanitizeSubName(s.effectivePlanName(r, user))
+	if label == "" {
+		label = "Lattix"
+	}
+	name := sanitizeSubName(user.Name)
+	if name == "" {
+		name = "user"
+	}
+	filename := label + "-" + name + "." + ext
+	plain := strings.ReplaceAll(asciiOnly(filename), `"`, "")
+	v := "attachment; filename*=UTF-8''" + rfc5987Encode(filename)
+	if plain != "" {
+		v = `attachment; filename="` + plain + `"; filename*=UTF-8''` + rfc5987Encode(filename)
+	}
+	return v
+}
+
+// sanitizeSubName 清洗订阅显示名：移除控制字符（防响应头注入），并按字符截断。
+func sanitizeSubName(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+	runes := []rune(s)
+	const maxNameRunes = 40
+	if len(runes) > maxNameRunes {
+		s = string(runes[:maxNameRunes])
+	}
+	return s
+}
+
+// asciiOnly 保留 ASCII 字符（Content-Disposition filename= 参数的兼容回退值）。
+func asciiOnly(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if r < 0x80 {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// rfc5987Encode 按 RFC 5987 对 header 参数值做百分号编码（`filename*=UTF-8%27%27...`），
+// 支持中文等非 ASCII 字符；Clash Party 等客户端用 decodeURIComponent 解码。
+func rfc5987Encode(s string) string {
+	const hexDigits = "0123456789ABCDEF"
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+			strings.IndexByte("!#$&+-.^_`|~", c) >= 0 {
+			b.WriteByte(c)
+		} else {
+			b.WriteByte('%')
+			b.WriteByte(hexDigits[c>>4])
+			b.WriteByte(hexDigits[c&0x0f])
+		}
+	}
+	return b.String()
 }
 
 // daysUntilReset 计算距下次流量重置的天数（与 sweeper 重置语义一致：
@@ -277,6 +349,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if format != "clash" && format != "singbox" && format != "quanx" && format != "quanx-config" && format != "links" {
 		format = "links"
 	}
+	// 下载文件名（Content-Disposition）：{套餐名|Lattix}-{用户名}，含用户名区分不同用户，
+	// Clash Party 等客户端按该文件名命名订阅并展示套餐别名；面板侧缓存按 user_id 隔离，不依赖此名。
+	ext := "yaml"
+	if format == "singbox" {
+		ext = "json"
+	} else if format == "links" {
+		ext = "txt"
+	}
+	w.Header().Set("Content-Disposition", s.subContentDisposition(r, user, ext))
 	file, err := s.st.PublishedSubscriptionFile(r.Context(), user.ID, format)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
