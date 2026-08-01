@@ -72,8 +72,12 @@ func (s *Store) ExpectedXrayState(ctx context.Context, serverID int64) ([]string
 		i = j
 	}
 
-	// 3.3 共享端点。
-	epRows, err := s.db.QueryContext(ctx, `SELECT id FROM shared_endpoints WHERE server_id = ?`, serverID)
+	// 3.3 共享端点：仅计链引用的端点（chains.endpoint_id 关联、链未删除）。
+	// 链删除时端点记录不删（流量/审计引用），孤儿端点（无存活链引用）不在面板有效
+	// 管理范围内，xray.cleanup 应将其从 config.json 中清理。
+	epRows, err := s.db.QueryContext(ctx, `SELECT id FROM shared_endpoints
+		WHERE server_id = ? AND id IN (SELECT endpoint_id FROM chains
+			WHERE deleted_at IS NULL AND endpoint_id <> 0)`, serverID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("expected xray shared endpoints: %w", err)
 	}

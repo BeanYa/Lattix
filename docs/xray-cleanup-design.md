@@ -86,10 +86,16 @@ WHERE chain_hops.server_id = ?`）中的**全部跳**（入口、内部、出口
 
 ### 3.3 共享端点（shared_endpoints）
 
-该服务器全部共享端点（`shared_endpoints WHERE server_id = ?`，无软删）：
+该服务器**被未删除链引用**的共享端点（`shared_endpoints WHERE server_id = ? AND id IN
+(SELECT endpoint_id FROM chains WHERE deleted_at IS NULL)`；`chains.endpoint_id` 为链的
+唯一引用，链删除时端点记录不删——流量/审计仍引用）：
 
 - inbound tag：`shared_endpoint_<endpointID>`
 - piece key：`shared-endpoint/<endpointID>`
+
+链删除（`DeleteChain`）后端点记录残留但失去存活链引用，不再属于面板有效管理范围，
+期望集合将其排除，`xray.cleanup` 会把对应 inbound/路由配置件从 `config.json` 清理；
+端点复用时（新链引用同一端点）重新计入期望。
 
 ## 4. 消息协议
 
