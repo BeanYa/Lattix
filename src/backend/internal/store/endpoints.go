@@ -312,6 +312,25 @@ func (s *Store) SetUserChains(ctx context.Context, userID int64, chainIDs []int6
 	return added, removed, nil
 }
 
+// SharedEndpointsByServer 返回指定服务器上的全部共享端点（端口段收窄越界校验用）。
+func (s *Store) SharedEndpointsByServer(ctx context.Context, serverID int64) ([]SharedEndpoint, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+endpointCols+` FROM shared_endpoints WHERE server_id=? ORDER BY id`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var endpoints []SharedEndpoint
+	for rows.Next() {
+		ep, err := scanEndpoint(rows)
+		if err != nil {
+			return nil, err
+		}
+		endpoints = append(endpoints, *ep)
+	}
+	return endpoints, rows.Err()
+}
+
 // NonActiveEndpointsByServer 返回指定服务器上状态非 active 的共享端点（自愈补发用）。
 func (s *Store) NonActiveEndpointsByServer(ctx context.Context, serverID int64) ([]SharedEndpoint, error) {
 	rows, err := s.db.QueryContext(ctx,

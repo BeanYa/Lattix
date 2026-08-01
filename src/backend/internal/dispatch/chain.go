@@ -188,9 +188,8 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			UserUUIDs:      uuids,
 			DestCandidates: d.DestCandidates,
 		}
-		if vc.Port == 0 {
-			payload.PortCandidates = listenCandidatesOf(servers[exit.ServerID])
-		}
+		// NAT 受限直连机总是携带监听侧候选（自动挑选 + 手动端口段内校验，§21）。
+		payload.PortCandidates = listenCandidatesOf(servers[exit.ServerID])
 		if err := d.st.SetNodeApplying(ctx, node.ID); err != nil {
 			log.Printf("dispatch: chain %d node %d applying: %v", chainID, node.ID, err)
 			return
@@ -316,7 +315,9 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		if i == 0 && endpointID != 0 {
 			spec.LocalOnly = true
 		}
-		if spec.Port == 0 && !spec.LocalOnly {
+		// NAT 受限直连机非回环监听（手动/自动端口）总是携带监听侧候选（§21）：
+		// 自动 → Agent 段内挑空闲；手动 → Agent 校验段内归属（面板已校验，双保险）。
+		if !spec.LocalOnly {
 			spec.PortCandidates = listenCandidatesOf(servers[hop.ServerID])
 		}
 		reverse := hop.TunnelUUID != "" // 本跳 → 下一跳为反向链

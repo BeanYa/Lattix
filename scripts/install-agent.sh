@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lattix Agent 引导安装脚本（设计文档 §11）。
+# Lattix Agent 引导安装脚本。
 #
 # 由根 install.sh 或面板"添加服务器"命令调用，形如：
 #   install-agent.sh --version vX.Y.Z --panel <PANEL_URL> --token <BOOTSTRAP_TOKEN>
@@ -294,7 +294,7 @@ elif [[ -n "${XRAY_BIN:-}" && -x "${XRAY_BIN:-}" ]]; then
     echo ">> installing xray-core（复制本机 $XRAY_BIN，XRAY_BIN 覆盖）"
     install -m 0755 "$XRAY_BIN" "$XRAY_BIN_DST"
 else
-    # latest：执行时经 GitHub API 解析最新 release（§11）；失败回退钉住版本。
+    # latest：执行时经 GitHub API 解析最新 release；失败回退钉住版本。
     if [[ "$XRAY_VERSION" == "latest" ]]; then
         echo ">> resolving latest xray version"
         XRAY_VERSION="$(curl -fsSL https://api.github.com/repos/XTLS/Xray-core/releases/latest \
@@ -311,11 +311,11 @@ else
         "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}" \
         "$TMP_DIR/xray.zip" || die "xray-core 下载失败"
 
-    # 校验官方 .dgst 中的 SHA2-256（§11）；获取不到校验文件时中止，不降级跳过。
+    # 校验官方 .dgst 中的 SHA2-256；获取不到校验文件时中止，不降级跳过。
     download_file "xray-core 校验文件" \
         "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}.dgst" \
         "$TMP_DIR/xray.dgst" \
-        || die "未获取到 xray 官方 .dgst 校验文件，中止安装（§11 要求校验官方 checksums）"
+        || die "未获取到 xray 官方 .dgst 校验文件，中止安装（必须校验官方 checksums，不降级跳过）"
     EXPECTED="$(grep 'SHA2-256=' "$TMP_DIR/xray.dgst" | head -1 | cut -d' ' -f2)"
     ACTUAL="$(sha256sum "$TMP_DIR/xray.zip" | cut -d' ' -f1)"
     [[ -n "$EXPECTED" && "$EXPECTED" == "$ACTUAL" ]] \
@@ -325,7 +325,7 @@ else
     install -m 0755 "$TMP_DIR/xray/xray" "$XRAY_BIN_DST"
 fi
 
-# Agent 独占管理该配置文件（§6）；仅在不存在时写入完整基础配置。
+# Agent 独占管理该配置文件；仅在不存在时写入完整基础配置。
 if [[ ! -f "$XRAY_CONFIG" ]]; then
     cat > "$XRAY_CONFIG" <<EOF
 {

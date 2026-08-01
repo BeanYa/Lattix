@@ -550,7 +550,8 @@ func subscriptionRelevantServerChange(changes map[string]any) bool {
 }
 
 // checkPortsShrink 校验端口段收窄后存量使用不越界（§21）：
-// 该 server 节点的指定/realized 端口与链跳 forward/portal 端口（监听侧）须仍在新段内。
+// 该 server 节点的指定/realized 端口、链跳 forward/portal 端口与共享端点端口
+// （监听侧）须仍在新段内。
 func (s *Server) checkPortsShrink(r *http.Request, serverID int64, ranges []shared.PortRange) error {
 	nodes, err := s.st.ListNodes(r.Context())
 	if err != nil {
@@ -581,6 +582,15 @@ func (s *Server) checkPortsShrink(r *http.Request, serverID int64, ranges []shar
 		}
 		if h.PortalPort != 0 && !shared.InListenRanges(ranges, h.PortalPort) {
 			return fmt.Errorf("端口段收窄后链跳 %d portal 端口 %d 越界", h.ID, h.PortalPort)
+		}
+	}
+	endpoints, err := s.st.SharedEndpointsByServer(r.Context(), serverID)
+	if err != nil {
+		return err
+	}
+	for _, ep := range endpoints {
+		if ep.Port != 0 && !shared.InListenRanges(ranges, ep.Port) {
+			return fmt.Errorf("端口段收窄后共享端点 %d 端口 %d 越界", ep.ID, ep.Port)
 		}
 	}
 	return nil

@@ -350,7 +350,8 @@ func (s *Server) applyNewNode(r *http.Request, name string, serverID int64, port
 }
 
 // enqueueApply 节点进入 applying 并下发 apply_node（携带分配到该节点的用户 UUID §16 与 dest 白名单 §6）。
-// 受限直连 NAT 机（allowed_ports 非空）自动端口时把监听侧候选展开进 port_candidates（§21）。
+// 受限直连 NAT 机（allowed_ports 非空）总是携带监听侧候选（§21）：
+// 自动端口 → Agent 段内挑空闲；手动端口 → Agent 校验段内归属（面板已校验，双保险）。
 func (s *Server) enqueueApply(r *http.Request, serverID, nodeID int64, vc shared.VirtualConfig) error {
 	if err := s.st.SetNodeApplying(r.Context(), nodeID); err != nil {
 		return err
@@ -365,11 +366,9 @@ func (s *Server) enqueueApply(r *http.Request, serverID, nodeID int64, vc shared
 		UserUUIDs:      uuids,
 		DestCandidates: destCandidates,
 	}
-	if vc.Port == 0 {
-		if srv, err := s.st.ServerByID(r.Context(), serverID); err == nil {
-			if ranges, err := shared.ParsePortRanges(srv.AllowedPorts); err == nil && len(ranges) > 0 {
-				payload.PortCandidates = shared.ListenCandidates(ranges)
-			}
+	if srv, err := s.st.ServerByID(r.Context(), serverID); err == nil {
+		if ranges, err := shared.ParsePortRanges(srv.AllowedPorts); err == nil && len(ranges) > 0 {
+			payload.PortCandidates = shared.ListenCandidates(ranges)
 		}
 	}
 	_, err = s.disp.Enqueue(r.Context(), serverID, shared.TypeApplyNode, payload)

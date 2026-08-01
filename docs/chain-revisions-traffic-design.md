@@ -16,6 +16,8 @@ Lattix 是控制面，用户流量不经过 Panel。所有代理入口统一建�
   用户可以同时使用多个共享同一 `IP:port` 的链，并被入口准确分流。
 - `shared_endpoints` 是服务器级 VLESS+REALITY 监听。兼容 profile 复用同一端口和 Reality 密钥；
   已被不兼容受管监听占用的端口返回冲突，未受管进程占用由 Agent bind probe 检出。
+  Agent 侧占用探测区分端口归属：端口被自身受管 xray 持有的视为可复用，重发/自愈直接沿用已落地
+  端口，不误判占用；其他服务占用的端口才报冲突。
 - `chain_revisions` 保存包含有序 hop 的不可变目标快照；chain 分别引用当前发布 revision 和待部署 revision。
 - revision 快照保存 1～4 个有序受控服务器。保留的 hop 沿用稳定 `hop_id`；删除后重加
   同一服务器视为新 hop。
@@ -26,9 +28,10 @@ Lattix 是控制面，用户流量不经过 Panel。所有代理入口统一建�
 
 ## 共享入口与端口策略
 
-- `443` 只是独立 IP 服务器自动选端口时的首选。若被未受管进程占用，Agent 自动选择其他空闲端口；
-  管理员显式指定端口时，冲突必须报错，不静默改端口。
-- NAT 服务器只从 `allowed_ports` 选择监听端口，不越过运营商映射范围。多个兼容链复用一个 Endpoint，
+- 独立 IP 服务器自动选端口时挑随机空闲端口（443 不再是默认首选）；管理员显式指定端口时，冲突必须
+  报错，不静默改端口。
+- NAT 服务器只从 `allowed_ports` 选择监听端口，不越过运营商映射范围；自动端口段内挑选，手动指定
+  端口段内校验（面板校验 + Agent 载荷候选双保险）。多个兼容链复用一个 Endpoint，
   因而只消耗一个公网映射端口。
 - 共享入口后，每条链原有的 entry forward 改为 `127.0.0.1` 内部监听，不再占用 NAT 公网端口。
 - Endpoint routing 按 chain 聚合：一条 chain 一条路由规则，规则的 `user` 数组包含该链全部 active
@@ -58,7 +61,8 @@ Planner 从出口向入口构造规范化 spec，并对规范化 JSON 求 hash�
 2. 从出口向入口部署新增或变化的 service、portal、bridge、forward piece；
 3. 入口内部 forward 最后切换；
 4. 提升 published revision；
-5. 以完整期望状态 reconcile 共享 Endpoint（clients + 按链聚合 routes）；
+5. 以完整期望状态 reconcile 共享 Endpoint（clients + 按链聚合 routes；即使无用户也部署监听，
+   端口与 Reality 密钥即刻生效）；
 6. 立即清理旧 revision 不再引用的 piece。
 
 不设客户端迁移宽限期。协议或端口无法并存时允许最终切换发生一次短暂 Xray reload。完整重建
@@ -247,6 +251,10 @@ Agent→Panel 控制通道断开不会停止 Xray 绝对计数器。只要 Xray 
 全新 chain 在确认前不进入默认订阅。强制发布会立即改为输出 unconfirmed revision。内部 hop 变化且
 入口参数不变时，用户链接保持不变；入口服务器、端口或协议变化后，客户端需刷新稳定的订阅 URL。
 同一真实用户在每条链的订阅 UUID 都来自对应 assignment，而不是全局 `users.uuid`。
+
+发布时收集已分配但未纳入订阅的链的原因（未发布有效修订 / 条目构造失败），持久化到快照 `warnings`
+（schema v10）并经预览/"重新生成"API 返回，前端提示"部分条目未纳入本次订阅"。`clash` 格式内置
+fake-ip DNS，策略含 GEOSITE/GEOIP 规则时另输出 geodata-mode + geox-url，规则在客户端直接生效。
 
 ## Panel / Agent 版本同步
 

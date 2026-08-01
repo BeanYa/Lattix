@@ -382,7 +382,7 @@ cmd_xray_update() {
         *)       die "unsupported arch: $(uname -m)" ;;
     esac
 
-    # 与 agent upgrade.go 同语义（§18）：显式版本走 {base}/{version}；
+    # 与 agent upgrade.go 同语义：显式版本走 {base}/{version}；
     # latest 在自定义基址（镜像）下跳过 GitHub API 走 {base}/latest/download 约定，
     # 官方基址下经 GitHub API 解析实际版本号。
     local version="${1:-latest}" dl_ref

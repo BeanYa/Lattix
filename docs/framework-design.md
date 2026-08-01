@@ -193,6 +193,8 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
   未知变量/属性、非法或越界索引、缺失服务器资料、空结果和超长结果均拒绝创建并定位变量。
   名称中使用自动 `PORT` 时仅提示其会解析为 `auto`，不阻止创建。
 - **（自 0.0.2 之后迭代，§21）**：引入链后，proxies 条目的 `server`/端口取链**入口**的 address 与 public_port（非 1:1 映射时），public-key/short-id/UUID 取链**出口**；命名中的别名与端口取入口。链 degraded 不剔除入口条目，靠客户端测速规避。
+- **跳过原因可见**：发布时收集已分配但未纳入订阅的链的原因（未发布有效修订 / 条目构造失败），持久化在订阅快照 `warnings`（schema v10 新增列），经预览与"重新生成"API 返回，前端以"部分条目未纳入本次订阅"提示，不再静默丢弃。
+- **mihomo 开箱即用**：`clash` 格式内置 fake-ip DNS（`enhanced-mode: fake-ip`、198.18.0.1/16、本地域名 filter 与默认/DoH/回退 nameserver）；策略含 GEOSITE/GEOIP 规则时另输出 `geodata-mode` + `geo-auto-update` 与 `geox-url`（MetaCubeX/meta-rules-dat），规则在客户端直接生效。
 - **响应头**：`/sub/{token}` 的所有文件格式返回 `subscription-userinfo`，包含 upload、download 以及可选 total、expire、reset_day、plan_name、app_url；同时返回 `profile-update-interval`。
 - **用户有效期**：创建或更新用户可带 `expires_at`；过去时间返回 `HTTP 200 + INVALID_ARGUMENT`。`POST /api/user/update` 可修改或清除（null = 长期；省略字段保持不变）。列表 DTO 带 `expires_at`/`expired`/`disabled`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `user.remove`（显式 nodes 载荷；已 disabled 的用户只补记标记不重复扇出）；管理员延长/清除有效期（expired 1→0）→ 扇出 `user.add` 恢复（disabled 用户除外，见 §16 有效停权态）。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`node.apply` 的 `NodeUserUUIDs` 不下发 expired/disabled 用户。
 - 分享链接集合已实现：`GET /sub/{token}?format=links`（§14，仅含分配的 active 节点）。
@@ -512,7 +514,7 @@ sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支�
   非 1:1 时 `realized_config` 区分 `listen_port` / `public_port`，订阅取 `public_port`。
 - NAT 类型 `servers.address` **强制必填**（共享 IP 由 IDC 提供），禁用 RemoteAddr 自动学习
   （多出口/负载均衡 NAT 会学错地址，导致订阅静默失效）。
-- 端口段建后可改（`POST /api/server/update`）：缩小区间时校验存量节点/跳不越界，越界拒绝；
+- 端口段建后可改（`POST /api/server/update`）：缩小区间时校验存量节点/链跳/共享端点不越界，越界拒绝；
   机器类型建后不互转。
 
 **存储**：
@@ -540,17 +542,21 @@ sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支�
 
 - 无全局 `-nat` 模式开关：角色（bridge+业务 inbound / portal+转发 / 转发）完全由
   apply 载荷决定，控制通道、遥测、漂移 reconcile（§17）、xray 升级（§18）全部复用。
-- install.sh 与引导流程不变；机器类型与端口段是面板侧元数据，不下发到 agent。
+- install.sh 与引导流程不变；机器类型与端口段是面板侧元数据，不下发到 agent
+  （NAT 受限直连机经 `port_candidates` 下发段内监听候选：自动端口段内挑选、手动端口段内校验）。
 
 **订阅**：条目 = 入口 Endpoint 的 `address:public_port` + Endpoint 的 public_key/short_id + assignment `access_uuid`；
 命名沿用 `{入口别名}-{协议}-{端口}`；links 端点（§9/§14）同构。
 
-**端口复用**：443 仅为独立 IP 入口自动选择时的首选，不是强制值；被占用时自动端口可回退。
-管理员显式端口不回退。相同 server/port 上兼容 profile 复用既有 Endpoint，不兼容受管监听报冲突。
-NAT 入口只从可用段挑选，所有共享链的 entry forward 改为 loopback 内部口，不再消耗公网映射。
+**端口复用**：自动选端口只挑空闲端口——独立 IP 机挑随机空闲端口（443 不再是默认/首选），NAT 机
+只从可用段内挑选；管理员显式指定端口不回退，冲突报错。Agent 占用探测区分端口归属：端口已被自身
+受管 xray 持有的（受管端口）视为可复用，重发/自愈直接沿用已落地端口，不因自身 xray 持有而误判
+占用；其他服务占用的端口才报冲突。相同 server/port 上兼容 profile 复用既有 Endpoint，不兼容
+受管监听报冲突。NAT 手动指定端口段内校验（面板校验 + Agent 载荷候选双保险），所有共享链的 entry
+forward 改为 loopback 内部口，不再消耗公网映射。
 
-**实施时待定的小项**（不阻塞设计）：portal 监听端口在有端口段的 NAT 机上同样从可用段分配；
-向导链路构图的详细校验规则（入口必须有入站能力，出口任意，中间跳至少一侧可达）。
+**实施时待定的小项**（不阻塞设计）：向导链路构图的详细校验规则（入口必须有入站能力，出口任意，
+中间跳至少一侧可达）。
 
 **PoC 结论（已验证，GO）**：`scripts/dev/poc-reverse.sh` 实证 reverse bridge/portal + 隧道 Reality +
 端到端 Reality 透传可行（链路通、portal 重启自愈、隧道口抗探测分流正常）。两个实测要点：
@@ -578,7 +584,8 @@ bridge 首拨失败由 xray 自动重试兜底，编排层无需处理。
   - ForwardSpec `{tag, port, port_candidates?, target_address, target_port, via_tunnel_domain?}`
 - `chain-hop.remove`：`{hop_id, kind}`（删链逐跳反向下发）。
 - `shared-endpoint.apply`：`{endpoint_id, config, clients, routes, dest_candidates?, port_candidates?}`；
-  完整期望状态替换，assignment 变更不改变已实现端口和 Reality 密钥。
+  完整期望状态替换，assignment 变更不改变已实现端口和 Reality 密钥。建链即部署监听：即使
+  routes/clients 为空也下发 apply（端口 + Reality 密钥即刻落地），用户分配仅做增量添加，不再是部署前提。
 - `shared-endpoint.remove`：`{endpoint_id}`。
 - `RPC response` 增加 `hop_id`、`kind`（omitempty），portal/forward 复用 `realized_config.port/public_key` 回执。
 - `node.apply` 载荷增加 `port_candidates`（omitempty）：受限直连 NAT 机上节点端口从段内挑选。
@@ -591,7 +598,8 @@ bridge 首拨失败由 xray 自动重试兜底，编排层无需处理。
 2. 各反向链的 `portal`（由出口向入口方向逐个）→ 回执 pubkey/端口；
 3. 各反向链的 `bridge`（携带对应 portal 凭证）；
 4. 各 `forward`（由出口向入口方向；共享入口的 entry forward 只监听 loopback）；
-5. 发布 revision 后完整 reconcile shared Endpoint；Endpoint active 后订阅输出该链。
+5. 发布 revision 后完整 reconcile shared Endpoint（无用户也部署监听，端口与密钥即刻生效）；
+   Endpoint active 后订阅输出该链。
 任一链内 piece 失败 → 链 failed 定位到跳，重试只重放失败 piece；Endpoint 失败单独保留错误与重试状态。
 
 **存储 DDL**（全新安装基线；存量库由面板启动迁移到该结构）：

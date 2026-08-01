@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -254,11 +255,21 @@ func hostOf(addr string) string {
 	return addr
 }
 
-// pickPort 确定监听端口（§7）：指定则检查占用（冲突报错）；
-// 留空时若带 port_candidates（受限直连 NAT 机的段内候选，§21）按序挑空闲，
-// 候选全占用报错；无候选则挑随机空闲端口。
-func pickPort(preferred int, candidates []int) (int, error) {
+// pickPort 确定监听端口（§7）：指定则检查占用——端口已被 agent 自身受管
+// xray 持有（出现在受管 config 的 inbound 中）视为可复用，直接采用，避免与
+// 运行中的自身 xray 误判冲突（§21 端口复用：受管端口可复用）；其他服务占用
+// 才报冲突。留空时若带 port_candidates（受限直连 NAT 机的段内候选，§21）
+// 按序挑空闲（跳过受管端口），候选全占用报错；无候选则挑随机空闲端口。
+func (m *Manager) pickPort(preferred int, candidates []int) (int, error) {
 	if preferred != 0 {
+		// 受限直连 NAT 机（载荷带段内候选）：手动指定端口必须落在候选段内（§21），
+		// 先于占用探测/复用判定。
+		if len(candidates) > 0 && !slices.Contains(candidates, preferred) {
+			return 0, fmt.Errorf("端口 %d 不在可用端口段内", preferred)
+		}
+		if m.managedInboundPort(preferred) {
+			return preferred, nil
+		}
 		l, err := net.Listen("tcp", fmt.Sprintf(":%d", preferred))
 		if err != nil {
 			return 0, fmt.Errorf("端口 %d 被占用: %w", preferred, err)
@@ -267,6 +278,9 @@ func pickPort(preferred int, candidates []int) (int, error) {
 		return preferred, nil
 	}
 	for _, c := range candidates {
+		if m.managedInboundPort(c) {
+			continue // 受管端口不可作为自动候选（避免重复监听）
+		}
 		l, err := net.Listen("tcp", fmt.Sprintf(":%d", c))
 		if err != nil {
 			continue
@@ -283,6 +297,24 @@ func pickPort(preferred int, candidates []int) (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// managedInboundPort 报告端口是否出现在当前受管 config 的 inbound 中
+// （即被 agent 自身管理的 xray 实例持有；§21 端口复用判定的唯一依据）。
+func (m *Manager) managedInboundPort(port int) bool {
+	cur, err := m.loadConfig()
+	if err != nil {
+		return false
+	}
+	for _, raw := range cur.inbounds() {
+		var p struct {
+			Port int `json:"port"`
+		}
+		if json.Unmarshal(raw, &p) == nil && p.Port == port {
+			return true
+		}
+	}
+	return false
 }
 
 // vlessEnc 执行 `xray vlessenc` 生成 VLESS Encryption 的 decryption/encryption 对（§15）。

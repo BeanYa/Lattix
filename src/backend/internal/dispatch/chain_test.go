@@ -326,3 +326,57 @@ func TestChainHopResultFailure(t *testing.T) {
 		t.Fatalf("重试后链状态 %s，期望 applying", chain.Status)
 	}
 }
+
+// TestNatPortsCarryCandidatesForManualPorts 验证受限直连 NAT 机上手动端口也携带
+// 监听侧候选（§21 双保险：面板校验后 Agent 再做段内校验/挑选）：
+// 出口业务节点手动端口 → apply_node 携带候选；入口 forward 手动端口 → 携带候选。
+func TestNatPortsCarryCandidatesForManualPorts(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	const segments = `[{"pub_start":20000,"pub_end":20004,"listen_start":30000,"listen_end":30004}]`
+	entryID, _ := st.CreateServer(ctx, "entry", "entry.com", "tok1", store.MachineTypeNAT, segments, "", "US", "Entry")
+	exitID, _ := st.CreateServer(ctx, "exit", "exit.com", "tok2", store.MachineTypeNAT, segments, "", "JP", "Exit")
+	port := 18443
+	vcJSON, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
+	nodeID, _ := st.InsertNode(ctx, "测试出口节点", exitID, shared.ProtocolVLESS, &port, vcJSON)
+	chainID, _ := st.InsertChain(ctx, "测试链路")
+	st.InsertChainHop(ctx, chainID, 0, entryID, store.HopRoleEntry, 0, port, "")
+	st.InsertChainHop(ctx, chainID, 1, exitID, store.HopRoleExit, nodeID, 0, "")
+
+	req := &fakeRequester{online: map[int64]bool{entryID: true, exitID: true}}
+	d := New(st, req)
+	d.DestCandidates = []string{"dl.google.com:443"}
+	if err := d.StartChain(ctx, chainID); err != nil {
+		t.Fatal(err)
+	}
+
+	// 阶段 1：出口业务节点手动端口 → apply_node 仍携带段内候选。
+	c := lastHopCommand(t, st, shared.TypeApplyNode, exitID)
+	var anp shared.ApplyNodePayload
+	if err := json.Unmarshal(c.Data, &anp); err != nil {
+		t.Fatal(err)
+	}
+	if anp.NodeID != nodeID || len(anp.PortCandidates) != 5 || anp.PortCandidates[0] != 30000 {
+		t.Fatalf("apply_node 手动端口候选不符: %+v", anp)
+	}
+	realized, _ := json.Marshal(&shared.RealizedConfig{Port: port})
+	if err := st.SetNodeActive(ctx, nodeID, realized); err != nil {
+		t.Fatal(err)
+	}
+	d.advanceChainByNode(ctx, nodeID)
+
+	// 阶段 4：入口 forward 手动端口 → 携带段内候选（非回环监听）。
+	ec := lastHopCommand(t, st, shared.TypeApplyChainHop, entryID)
+	var fwd shared.ApplyChainHopPayload
+	if err := json.Unmarshal(ec.Data, &fwd); err != nil {
+		t.Fatal(err)
+	}
+	if fwd.Kind != shared.HopKindForward || fwd.Forward == nil || fwd.Forward.Port != port ||
+		len(fwd.Forward.PortCandidates) != 5 || fwd.Forward.PortCandidates[0] != 30000 {
+		t.Fatalf("forward 手动端口候选不符: %+v", fwd.Forward)
+	}
+}

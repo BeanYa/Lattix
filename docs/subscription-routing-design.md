@@ -10,6 +10,10 @@
 4. 保存设置后一次生成所有格式，写入不可变 snapshot，再原子切换该用户的 published 指针。
 5. 用户访问订阅地址时只读取 published snapshot，不执行模板下载、规则下载或配置编译。
 
+发布时收集已分配但未纳入订阅的链的原因（未发布有效修订 / 条目构造失败），随快照持久化
+（`subscription_snapshots.warnings`，schema v10）。预览与"重新生成"API 返回 warnings，
+用户页以"部分条目未纳入本次订阅"提示，不再静默丢弃已分配条目。
+
 用户页“结果预览”读取的也是 published snapshot。模板页“模板预览”显示未填充的缓存原文。
 
 ## 2. 公开订阅协议
@@ -23,6 +27,10 @@
 | `quanx` | Quantumult X 节点列表，保持原有 node-only 行为 |
 | `quanx-config` | Quantumult X 完整分流配置 |
 | `links` | Base64 分享链接集合 |
+
+`clash` 输出为开箱即用配置：内置 fake-ip DNS（`enhanced-mode: fake-ip`、198.18.0.1/16、本地域名
+fake-ip-filter，默认/DoH/回退 nameserver）；策略包含 GEOSITE/GEOIP 规则时另输出 `geodata-mode` +
+`geo-auto-update` 与 `geox-url`（MetaCubeX/meta-rules-dat），保证规则在客户端直接生效。
 
 未传 `format` 时按 User-Agent 识别 Mihomo、sing-box、Quantumult X 或分享链接客户端。浏览器请求包含 `Accept: text/html` 时返回订阅落地页。
 
