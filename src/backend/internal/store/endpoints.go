@@ -159,6 +159,14 @@ func (s *Store) SetSharedEndpointFailed(ctx context.Context, id int64, message s
 	return err
 }
 
+// SetSharedEndpointPending 将端点重置为 pending 并清除 realized 配置
+// （最后一条路由链删除后下发 remove 命令时使用；端点记录保留供后续复用）。
+func (s *Store) SetSharedEndpointPending(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE shared_endpoints SET status=?, realized_config=NULL,
+		error='', updated_at=CURRENT_TIMESTAMP WHERE id=?`, EndpointStatusPending, id)
+	return err
+}
+
 type UserChainAssignment struct {
 	ID         int64
 	UserID     int64

@@ -515,6 +515,13 @@ func (d *Dispatcher) ReconcileStaleEndpoints(ctx context.Context) {
 			} else {
 				log.Printf("dispatch: reconcile stale endpoint %d (server %d, status %s)", ep.ID, srv.ID, ep.Status)
 			}
+			// 兜底链评估：覆盖回执丢失等边缘场景导致的链状态过期
+			//（Evaluate 幂等且 active→degraded 仅首次触发告警，重复调用无副作用）。
+			if chainIDs, err := d.st.ChainIDsByEndpoint(ctx, ep.ID); err == nil {
+				for _, cid := range chainIDs {
+					d.recomputeChain(ctx, cid)
+				}
+			}
 		}
 	}
 }
@@ -935,7 +942,21 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			return
 		}
 		if p.EndpointID != 0 {
-			_ = d.st.SetSharedEndpointFailed(ctx, p.EndpointID, errorMessage)
+			if err := d.st.SetSharedEndpointFailed(ctx, p.EndpointID, errorMessage); err != nil {
+				log.Printf("dispatch: shared endpoint %d failed: %v", p.EndpointID, err)
+			}
+			// 端点部署失败 → 重算使用该端点的链（active → degraded，同步链路页状态）
+			// 并触发受影响用户的订阅重建（同步订阅警告内容）。
+			if chainIDs, err := d.st.ChainIDsByEndpoint(ctx, p.EndpointID); err == nil {
+				for _, cid := range chainIDs {
+					d.recomputeChain(ctx, cid)
+				}
+			}
+			if d.OnEndpointPublished != nil {
+				if err := d.OnEndpointPublished(ctx, p.EndpointID); err != nil {
+					log.Printf("dispatch: enqueue subscriptions for failed shared endpoint %d: %v", p.EndpointID, err)
+				}
+			}
 			return
 		}
 		if p.NodeID != 0 {

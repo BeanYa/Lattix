@@ -529,9 +529,10 @@ sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支�
 - 创建和编辑均由不可变 revision 驱动：出口向入口计算依赖并部署，入口最后切换，随后立即清理旧
   revision。无法证明配置等价时保守重建受影响范围。
 - Agent 离线仅代表控制通道不可达，已部署数据面继续运行。普通编辑等待必须修改的离线 Agent；
-  管理员可强制发布未确认 revision。已发布 active 链任一 hop 离线时推导为 `degraded`，但不退出
-  订阅；服务器删除才使引用链路 `invalid` 并退出订阅。状态重算当前由 Agent 连接状态跃迁触发，
-  Panel 重启后从未重新连接的存量 Agent 存在启动期未重算边界，详见链路设计文档。
+  管理员可强制发布未确认 revision。已发布 active 链任一 hop 离线时由链路状态机（chainFSM）
+  推导为 `degraded`，但不退出订阅；服务器删除经 FSM 校验后使引用链路 `invalid` 并退出订阅。
+  状态重算由 Agent 连接状态跃迁、端点 ack、周期自愈三层触发；Panel 重启时 ResumeChains 全量
+  恢复，运行时 Agent 重连由 ResumeChainsByServer 即时恢复。详见链路设计文档。
 
 **agent 侧**：
 
@@ -610,8 +611,12 @@ CREATE TABLE chain_hops (id INTEGER PRIMARY KEY AUTOINCREMENT,
   portal_port INTEGER NOT NULL DEFAULT 0, portal_public_key TEXT NOT NULL DEFAULT '',
   portal_server_name TEXT NOT NULL DEFAULT '',  -- portal 回执的 Reality SNI（bridge spec 用）
   tunnel_uuid TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);
--- 链状态：pending/applying/active/degraded/failed；跳状态：pending/applying/active/failed
+-- 链状态：pending/applying/active/degraded/failed/waiting_for_agent/active_unconfirmed/active_failed/cleanup_pending/invalid/deleted
+-- 跳状态：pending/applying/active/failed
 ```
 
-**degraded 推导**：hub 注销/注册连接时重算——链任一跳 server 离线 → degraded + §19 告警
+**degraded 推导与链路状态机**：所有链状态变更经 `internal/dispatch/chain_fsm.go` 的转换表校验。
+hub 注销/注册连接时由 FSM Evaluate 重算——链任一跳 server 离线 → degraded + §19 告警
 （新事件 `chain_degraded`，防抖沿用）；全部跳 server 在线且跳均 active → active。
+服务器删除经 `InvalidateForServerDeletion` 事务级联失效。Agent 重连后 `ResumeChainsByServer`
+恢复编排中的链。完整转换表与三层自愈设计见[链路设计文档](chain-revisions-traffic-design.md)。

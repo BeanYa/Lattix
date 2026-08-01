@@ -73,29 +73,102 @@ Agent command 队列负责投递、重试与回执。Panel 重启后从数据库
 Panel 的 Agent 在线状态只表示 Agent→Panel 控制通道可达，不代表服务器对客户端或相邻跳不可达。
 已经落盘的 Xray 数据面在 Panel 或控制通道断开时继续工作。
 
-链路发布状态包括：
+### 链路状态机（chainFSM）
 
-- `applying`：正在部署；
-- `waiting_for_agent`：目标 revision 需要修改的 Agent 不可达；
-- `active`：目标配置均已确认；
-- `active_unconfirmed`：管理员强制发布了未确认配置；
-- `active_failed`：强制发布后的任务执行失败；
-- `cleanup_pending`：新 revision 已生效，旧配置仍待清理；
-- `invalid`：引用的服务器已被删除；
-- `deleted`：链路已软删除。
+所有链状态变更统一经 `internal/dispatch/chain_fsm.go` 的状态机入口，不直接调用
+`store.SetChainStatus`。状态机提供三个入口：
+
+| 入口 | 用途 | 触发方 |
+|------|------|--------|
+| `Transition` | 显式状态变更（编排推进/重试/删除） | advanceChain、RetryChain、failChain、StartChain |
+| `Evaluate` | 条件驱动评估（active ↔ degraded） | Agent 上/离线、端点 ack、发布后、周期自愈 |
+| `InvalidateForServerDeletion` | 服务器删除级联失效 | panel.handleDeleteServer |
+
+辅助入口 `ResumeChainsByServer`：Agent 重连后恢复该服务器上处于编排中的链
+（applying/waiting_for_agent/active_unconfirmed → advanceChain）。
+
+设计原则：
+
+- 转换表强制校验合法性，非法转换拒绝并记录日志（不 panic）；
+- 相同状态幂等（from == to 直接返回，不触发副作用）；
+- 副作用（告警、操作日志、端点 reconcile）声明式绑定到状态进入，与转换逻辑解耦；
+- Evaluate 是幂等的：相同条件重复调用不产生多余转换或副作用。
+
+### 状态定义
+
+链路共有 11 个状态：
+
+| 状态 | 含义 |
+|------|------|
+| `pending` | 已创建，未开始编排 |
+| `applying` | 正在部署 revision piece |
+| `active` | 目标配置均已确认，订阅可用 |
+| `degraded` | 运行时推导：某跳离线或端点未就绪（订阅仍输出） |
+| `failed` | 首次编排失败 |
+| `waiting_for_agent` | 目标 revision 需要修改的 Agent 不可达 |
+| `active_unconfirmed` | 管理员强制发布了未确认配置 |
+| `active_failed` | 强制发布后的任务执行失败 |
+| `cleanup_pending` | 新 revision 已生效，旧配置仍待清理 |
+| `invalid` | 引用的服务器已被删除 |
+| `deleted` | 链路已软删除（终态） |
+
+### 转换表
+
+```text
+pending            → applying | invalid | deleted
+applying           → active | active_unconfirmed | failed | waiting_for_agent | invalid | deleted
+active             → degraded | active_failed | cleanup_pending | invalid | deleted
+degraded           → active | active_failed | cleanup_pending | invalid | deleted
+failed             → applying（重试）| invalid | deleted
+active_unconfirmed → active（agent 确认）| applying（重试）| failed | invalid | deleted
+active_failed      → applying（重试）| active（重新评估恢复）| invalid | deleted
+waiting_for_agent  → applying | failed | invalid | deleted
+cleanup_pending    → active（清理完成）| deleted | invalid
+invalid            → deleted
+deleted            →（终态，无出边）
+```
+
+### 外部事件输入
+
+| 事件 | 接线 | FSM 处理 |
+|------|------|----------|
+| Agent 上线 | hub.OnConnect → OnAgentConnect | Evaluate（恢复 degraded→active）+ ResumeChainsByServer（续编排） |
+| Agent 离线 | hub.OnDisconnect → RecomputeChainsByServer | Evaluate（active→degraded + 告警） |
+| 共享端点 ack | handleCommandResponse | Evaluate（端点就绪 → degraded→active 恢复） |
+| 编排推进 | advanceChain / handleChainHopResult | Transition（applying→active/failed 等） |
+| 管理员操作 | RetryChain / 删链 | Transition（failed→applying / *→deleted） |
+| 服务器删除 | panel.handleDeleteServer | InvalidateForServerDeletion（事务级联 → invalid） |
+| 周期自愈 | 60s ticker → ReconcileStaleEndpoints | 间接触发 Evaluate |
+
+### 条件评估（Evaluate）
+
+Evaluate 仅对 `active` 或 `degraded` 状态的链生效，按优先级检查：
+
+1. **跳服务器在线性**：任一跳 server 离线 → active→degraded（附定位描述）+ chain_degraded 告警；
+2. **共享端点就绪性**：端点未 active → active→degraded + 自动重试（服务器在线时立即 ReconcileSharedEndpoint）；
+3. **恢复判定**：全部跳在线 + 端点 active + 全部跳 hop status 为 active → degraded→active + chain.recovered 日志。
+
+### 三层自愈保障
+
+| 层级 | 触发 | 覆盖场景 |
+|------|------|----------|
+| 即时重试 | Evaluate 检测端点未 active 且服务器在线 | 命令丢失、首次 reconcile 失败 |
+| 连接自愈 | OnAgentConnect → reconcile 该服务器全部未 active 端点 + 恢复编排 | 死信命令、Agent 重启、编排停滞 |
+| 周期兜底 | 60s ReconcileStaleEndpoints 遍历所有在线服务器 | 上述两层未覆盖的边缘情况 |
+
+### 离线语义
 
 普通创建或编辑遇到必须修改的离线 Agent 时不发布，任务保持队列状态；完全未变化的已部署 hop
-可以直接复用。管理员可以执行“强制发布”：立即更新订阅、抛弃旧 revision 并开始 cleanup，未确认
+可以直接复用。管理员可以执行"强制发布"：立即更新订阅、抛弃旧 revision 并开始 cleanup，未确认
 命令继续排队。强制发布是不可自动回滚的单向操作；失败后只能重试或再次编辑。
 
 被目标拓扑删除的离线服务器不阻塞发布，其 cleanup 命令排队。若仍留在目标拓扑的前驱服务器需要
 修改下一跳且当前离线，普通发布必须等待，除非管理员强制发布。
 
-已发布的 `active` 链在任意入口、中间跳或出口 Agent 断开时推导为 `degraded`；这只表示控制面
-无法确认该跳，不撤销订阅，也不推断数据面已经中断。全部 Agent 恢复在线且 hop 均为 `active` 后
-恢复为 `active`。当前重算由 Agent connect/disconnect 事件触发；Panel 重启后始终未重新连接的
-存量 Agent 不会产生事件，因此持久化为 `active` 的链可能暂时仍显示正常，直到相关 Agent 发生一次
-连接状态跃迁。该启动期全量重算属于后续修复项。
+已发布的 `active` 链在任意入口、中间跳或出口 Agent 断开时由 Evaluate 推导为 `degraded`；这只
+表示控制面无法确认该跳，不撤销订阅，也不推断数据面已经中断。全部 Agent 恢复在线且 hop 均为
+`active` 后自动恢复为 `active`。Panel 重启时 `ResumeChains` 全量恢复编排中的链；运行时 Agent
+重连由 `ResumeChainsByServer` 即时恢复。
 
 ## 删除语义
 
@@ -184,7 +257,8 @@ Panel 更新后向所有在线 Agent 下发同步到相同版本的更新命令�
 ## 验收测试
 
 - Planner：增删、替换、重排、协议变化、正向/反向变化、完整重建回退；
-- 状态机：正常编辑、离线等待、重启续跑、强制发布、迟到回执、失败、cleanup、服务器删除；
+- 状态机：正常编辑、离线等待、重启续跑、强制发布、迟到回执、失败、cleanup、服务器删除、
+  非法转换拒绝、Agent 重连恢复编排、端点自愈三层保障、degraded↔active 往返；
 - Agent：revision piece 共存、幂等、入口最后切换、清理与 Xray 回滚；
 - 流量：绝对值去重、丢帧补差、实例切换、倍率分段、跨日/月、时区和 reset；
 - API/前端：预览、提交、强制发布、重试、删除、流量查询、类型检查和生产构建；

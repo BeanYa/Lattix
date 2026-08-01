@@ -539,8 +539,14 @@ func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allow
 	entry := snapshot.Hops[0]
 	if snapshot.EndpointID != 0 {
 		endpoint, err := s.st.SharedEndpointByID(r.Context(), snapshot.EndpointID)
-		if err != nil || endpoint.Status != store.EndpointStatusActive || len(endpoint.RealizedConfig) == 0 {
-			return nil, fmt.Errorf("链 %d 共享入口尚未生效", chainID)
+		if err != nil {
+			return nil, fmt.Errorf("链 %d 共享入口不存在", chainID)
+		}
+		if endpoint.Status != store.EndpointStatusActive || len(endpoint.RealizedConfig) == 0 {
+			if endpoint.Status == store.EndpointStatusFailed {
+				return nil, fmt.Errorf("链 %d 共享入口部署失败: %s", chainID, endpoint.Error)
+			}
+			return nil, fmt.Errorf("链 %d 共享入口部署中，尚未生效", chainID)
 		}
 		var rc shared.RealizedConfig
 		if err := json.Unmarshal(endpoint.RealizedConfig, &rc); err != nil || rc.Port == 0 {
