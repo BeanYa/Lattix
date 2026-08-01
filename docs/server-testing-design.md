@@ -81,11 +81,16 @@ SHA-256；每台服务器只允许一个非终态任务；按 generation 接收�
 Cloudflare `cdn-cgi/trace` 是 IPv4/IPv6 的公开出口预检。出口 IP 仅在 Agent 内存中用于后续
 查询，最终报告不包含具体公网 IP。ASN 使用 Team Cymru DNS TXT。
 
-当前可直接访问的数据源为 IPinfo demo、IPregistry public demo、ipapi.is 与 DB-IP。
-IPregistry 的临时 key 只从其公开 demo 页面提取，限定 Origin/Referer 使用，并在错误信息中
-脱敏；不抓取 NodeQuality 或第三方代理提供的 key。MaxMind、Scamalytics、AbuseIPDB、
-IP2Location、ipdata、IPQS 没有无需私有凭据的等价入口，因此报告为
-`provider_access_unavailable`，不得伪造数据。
+当前数据源为 IPinfo demo、IPregistry public demo、ipapi.is、DB-IP 免费 API，以及
+xykt/IPQuality 生态的上游聚合代理 `ipinfo.check.place`：MaxMind、Scamalytics、
+AbuseIPDB、IP2Location、ipdata、IPQS 六个需要付费凭据的数据库全部经由该代理查询，
+响应字段与上游 `ip.sh` 的 jq 路径对齐；凭据只存在于代理端，Agent 不携带任何 key。
+IPregistry 的临时 key 优先从其公开 demo 页面提取；页面不再暴露该 key 时回退到已知的
+公开 demo key（与上游脚本一致），限定 Origin/Referer 使用，并在错误信息中脱敏；不抓取
+NodeQuality 或第三方代理提供的其他 key。DB-IP 官网对非浏览器请求启用 Cloudflare 校验，
+改用官方免费 API `api.db-ip.com/v2/free/<ip>`；免费档只提供地理位置，风险等级与代理/爬虫
+因子缺失时留空，不得伪造。聚合代理是第三方依赖，请求失败或返回无法识别的响应时如实报告
+`provider_request_failed`/`provider_response_unrecognized`，不得伪造数据。
 
 DNSBL 列表是 `xykt/IPQuality` commit
 `44a55baec6cdd166a68b37f9c07d62d9e0a04f23` 的仓库快照，随 Agent 发布，不在测试时下载。
