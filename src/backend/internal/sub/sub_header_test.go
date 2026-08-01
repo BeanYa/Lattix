@@ -76,7 +76,7 @@ func TestSubContentDisposition(t *testing.T) {
 	server := New(st, nil, nil)
 	r := httptest.NewRequest("GET", "/sub/alice-token", nil)
 
-	if got := server.subContentDisposition(r, user, "yaml"); got != `attachment; filename="VIP1-alice.yaml"; filename*=UTF-8''VIP1-alice.yaml` {
+	if got := server.subContentDisposition(r, user); got != `attachment; filename="VIP1"; filename*=UTF-8''VIP1` {
 		t.Errorf("user plan disposition = %q", got)
 	}
 
@@ -84,7 +84,7 @@ func TestSubContentDisposition(t *testing.T) {
 		t.Fatal(err)
 	}
 	user, _ = st.UserByID(ctx, userID)
-	if got := server.subContentDisposition(r, user, "yaml"); got != `attachment; filename="Lattix-alice.yaml"; filename*=UTF-8''Lattix-alice.yaml` {
+	if got := server.subContentDisposition(r, user); got != `attachment; filename="Lattix"; filename*=UTF-8''Lattix` {
 		t.Errorf("default disposition = %q", got)
 	}
 
@@ -92,12 +92,15 @@ func TestSubContentDisposition(t *testing.T) {
 		t.Fatal(err)
 	}
 	user, _ = st.UserByID(ctx, userID)
-	got := server.subContentDisposition(r, user, "yaml")
-	if !strings.Contains(got, "filename*=UTF-8''%E5%85%A8%E7%90%83-alice.yaml") {
+	got := server.subContentDisposition(r, user)
+	if !strings.Contains(got, "filename*=UTF-8''%E5%85%A8%E7%90%83") {
 		t.Errorf("global plan disposition missing encoded name: %q", got)
 	}
 	if strings.Contains(got, `filename="全球`) {
 		t.Errorf("plain filename param must stay ASCII: %q", got)
+	}
+	if strings.Contains(got, "alice") {
+		t.Errorf("filename must not include user name: %q", got)
 	}
 
 	bobID, _ := st.InsertUser(ctx, "bob", "00000000-0000-0000-0000-0000000000bb", "bob-token", nil)
@@ -105,8 +108,22 @@ func TestSubContentDisposition(t *testing.T) {
 		t.Fatal(err)
 	}
 	bob, _ := st.UserByID(ctx, bobID)
-	if got := server.subContentDisposition(r, bob, "yaml"); !strings.Contains(got, "VIP1-bob.yaml") {
-		t.Errorf("same plan users must not share filename: %q", got)
+	if got := server.subContentDisposition(r, bob); got != `attachment; filename="VIP1"; filename*=UTF-8''VIP1` {
+		t.Errorf("same plan users must share filename: %q", got)
+	}
+
+	// 回归：设置套餐名 "BeanStudio - Admin"、用户 "Bean" 时，文件名应为纯套餐名，
+	// 不带 "-Bean" 用户名后缀与 ".yaml" 扩展名。
+	beanID, _ := st.InsertUser(ctx, "Bean", "00000000-0000-0000-0000-0000000000dd", "bean-token", nil)
+	if err := st.SetUserSubSettings(ctx, beanID, 0, 0, "", "", "BeanStudio - Admin", ""); err != nil {
+		t.Fatal(err)
+	}
+	bean, _ := st.UserByID(ctx, beanID)
+	if got := server.subContentDisposition(r, bean); got != `attachment; filename="BeanStudio - Admin"; filename*=UTF-8''BeanStudio%20-%20Admin` {
+		t.Errorf("bean disposition = %q", got)
+	}
+	if strings.Contains(got, "-Bean") || strings.Contains(got, ".yaml") {
+		t.Errorf("filename must not carry -用户/扩展名 suffix: %q", got)
 	}
 
 	dirty, _ := st.InsertUser(ctx, "eve\nx", "00000000-0000-0000-0000-0000000000ee", "eve-token", nil)
@@ -114,7 +131,7 @@ func TestSubContentDisposition(t *testing.T) {
 		t.Fatal(err)
 	}
 	dirtyUser, _ := st.UserByID(ctx, dirty)
-	got = server.subContentDisposition(r, dirtyUser, "yaml")
+	got = server.subContentDisposition(r, dirtyUser)
 	if strings.ContainsAny(got, "\r\n") {
 		t.Errorf("disposition contains control chars: %q", got)
 	}
@@ -140,7 +157,7 @@ func TestServeHTTPContentDisposition(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/sub/alice-token?format=clash", nil))
-	if got := rec.Header().Get("Content-Disposition"); got != `attachment; filename="VIP1-alice.yaml"; filename*=UTF-8''VIP1-alice.yaml` {
+	if got := rec.Header().Get("Content-Disposition"); got != `attachment; filename="VIP1"; filename*=UTF-8''VIP1` {
 		t.Errorf("clash disposition = %q", got)
 	}
 	if !strings.Contains(rec.Header().Get("Subscription-Userinfo"), "plan_name=VIP1") {
@@ -149,7 +166,7 @@ func TestServeHTTPContentDisposition(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/sub/alice-token?format=links", nil))
-	if got := rec.Header().Get("Content-Disposition"); !strings.Contains(got, "VIP1-alice.txt") {
+	if got := rec.Header().Get("Content-Disposition"); got != `attachment; filename="VIP1"; filename*=UTF-8''VIP1` {
 		t.Errorf("links disposition = %q", got)
 	}
 

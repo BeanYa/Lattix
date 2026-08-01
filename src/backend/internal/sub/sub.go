@@ -108,22 +108,17 @@ func (s *Server) effectivePlanName(r *http.Request, user *store.User) string {
 }
 
 // subContentDisposition 生成订阅下载文件名（Content-Disposition 头），形如
-// {套餐名|Lattix}-{用户名}.{ext}：套餐名可读，用户名保证不同用户的订阅文件不重名，
-// Clash Party 等客户端按该文件名命名保存订阅，从而在界面上展示套餐别名。
-func (s *Server) subContentDisposition(r *http.Request, user *store.User, ext string) string {
+// {套餐名|Lattix}：Clash Party 等客户端按该文件名命名保存订阅，从而在界面上
+// 展示套餐别名；不附加用户名与格式扩展名，保证客户端显示的订阅名与套餐名一致。
+func (s *Server) subContentDisposition(r *http.Request, user *store.User) string {
 	label := sanitizeSubName(s.effectivePlanName(r, user))
 	if label == "" {
 		label = "Lattix"
 	}
-	name := sanitizeSubName(user.Name)
-	if name == "" {
-		name = "user"
-	}
-	filename := label + "-" + name + "." + ext
-	plain := strings.ReplaceAll(asciiOnly(filename), `"`, "")
-	v := "attachment; filename*=UTF-8''" + rfc5987Encode(filename)
+	plain := strings.ReplaceAll(asciiOnly(label), `"`, "")
+	v := "attachment; filename*=UTF-8''" + rfc5987Encode(label)
 	if plain != "" {
-		v = `attachment; filename="` + plain + `"; filename*=UTF-8''` + rfc5987Encode(filename)
+		v = `attachment; filename="` + plain + `"; filename*=UTF-8''` + rfc5987Encode(label)
 	}
 	return v
 }
@@ -349,15 +344,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if format != "clash" && format != "singbox" && format != "quanx" && format != "quanx-config" && format != "links" {
 		format = "links"
 	}
-	// 下载文件名（Content-Disposition）：{套餐名|Lattix}-{用户名}，含用户名区分不同用户，
-	// Clash Party 等客户端按该文件名命名订阅并展示套餐别名；面板侧缓存按 user_id 隔离，不依赖此名。
-	ext := "yaml"
-	if format == "singbox" {
-		ext = "json"
-	} else if format == "links" {
-		ext = "txt"
-	}
-	w.Header().Set("Content-Disposition", s.subContentDisposition(r, user, ext))
+	// 下载文件名（Content-Disposition）：{套餐名|Lattix}，Clash Party 等客户端按该
+	// 文件名命名订阅并展示套餐别名；面板侧缓存按 user_id 隔离，不依赖此名。
+	w.Header().Set("Content-Disposition", s.subContentDisposition(r, user))
 	file, err := s.st.PublishedSubscriptionFile(r.Context(), user.ID, format)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
