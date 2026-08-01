@@ -11,10 +11,6 @@ import (
 
 const sharedEndpointPieceKind = "shared-endpoint"
 
-func sharedEndpointTag(id int64) string {
-	return fmt.Sprintf("shared_endpoint_%d", id)
-}
-
 func sharedEndpointRoutePrefix(id int64) string {
 	return fmt.Sprintf("shared_endpoint_route_%d_", id)
 }
@@ -54,7 +50,7 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 	if err != nil {
 		return nil, err
 	}
-	inbound, realized, err := m.fillTemplate(port, sharedEndpointTag(p.EndpointID), config, nil,
+	inbound, realized, err := m.fillTemplate(port, shared.SharedEndpointTag(p.EndpointID), config, nil,
 		p.DestCandidates, portCandidates)
 	if err != nil {
 		return nil, err
@@ -89,7 +85,7 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 			rec.Outbounds = append(rec.Outbounds, outbound)
 		}
 		rule, err := json.Marshal(map[string]any{
-			"type": "field", "inboundTag": []string{sharedEndpointTag(p.EndpointID)},
+			"type": "field", "inboundTag": []string{shared.SharedEndpointTag(p.EndpointID)},
 			"user": route.Users, "outboundTag": outboundTag,
 		})
 		if err != nil {

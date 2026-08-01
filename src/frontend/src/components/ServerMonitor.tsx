@@ -13,6 +13,7 @@ import {
   RefreshCwIcon,
   RotateCcwKeyIcon,
   ServerCogIcon,
+  SparklesIcon,
   Trash2Icon,
   WifiOffIcon,
   WrenchIcon,
@@ -72,6 +73,7 @@ interface ServerMonitorProps {
   timezone?: string
   onEdit: (server: Server) => void
   onRepair: (server: Server) => void
+  onCleanupXray: (server: Server) => void
   onRotateToken: (server: Server) => void
   onUpgrade: (server: Server, kind: 'xray' | 'agent') => void
   onRenew: (server: Server) => void
@@ -347,6 +349,7 @@ function ServerActions({
   server,
   onEdit,
   onRepair,
+  onCleanupXray,
   onRotateToken,
   onUpgrade,
   onRenew,
@@ -379,6 +382,12 @@ function ServerActions({
             <DropdownMenuItem onClick={() => onRepair(server)}>
               <WrenchIcon />
               修复配置漂移
+            </DropdownMenuItem>
+          ) : null}
+          {isServerOnline(server) ? (
+            <DropdownMenuItem onClick={() => onCleanupXray(server)}>
+              <SparklesIcon />
+              清理 Xray 缓存
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuItem onClick={() => onUpgrade(server, 'xray')}>
@@ -1090,6 +1099,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
             onOpen={() => setSelectedID(server.id)}
             onEdit={props.onEdit}
             onRepair={props.onRepair}
+            onCleanupXray={props.onCleanupXray}
             onRotateToken={props.onRotateToken}
             onUpgrade={props.onUpgrade}
             onRenew={props.onRenew}

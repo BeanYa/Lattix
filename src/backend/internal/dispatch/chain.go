@@ -771,21 +771,10 @@ func (d *Dispatcher) recomputeChain(ctx context.Context, chainID int64) {
 	d.fsm.Evaluate(ctx, chainID)
 }
 
-// ChainHopPieces 返回一个跳的配置件 kind 列表（panel 删链逐跳反向下发 remove_chain_hop 用，§21.1）：
-// forward（入口/中间跳）、bridge（反向链下游机：上一跳 tunnel_uuid 非空）、
-// portal（反向链上游机：本跳 tunnel_uuid 非空）。返回顺序即拆除顺序。
+// ChainHopPieces 返回一个跳的配置件 kind 列表（panel 删链逐跳反向下发 remove_chain_hop 用，§21.1），
+// 实现下沉 store.ChainHopPieces（与 xray.cleanup 期望集合计算同源）。
 func ChainHopPieces(hops []store.ChainHop, i int) []string {
-	kinds := []string{}
-	if hops[i].Role != store.HopRoleExit {
-		kinds = append(kinds, shared.HopKindForward)
-	}
-	if i > 0 && hops[i-1].TunnelUUID != "" {
-		kinds = append(kinds, shared.HopKindBridge)
-	}
-	if hops[i].TunnelUUID != "" {
-		kinds = append(kinds, shared.HopKindPortal)
-	}
-	return kinds
+	return store.ChainHopPieces(hops, i)
 }
 
 // pieceKey 是 piece 进度表的键（"<hopID>|<kind>"）。

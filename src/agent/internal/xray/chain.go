@@ -540,7 +540,7 @@ func chainPieceTags(hopID int64, kind string) (inboundTags, outboundTags map[str
 	reverseTags = map[string]bool{}
 	switch kind {
 	case sharedEndpointPieceKind:
-		inboundTags[sharedEndpointTag(hopID)] = true
+		inboundTags[shared.SharedEndpointTag(hopID)] = true
 	case shared.HopKindPortal:
 		inboundTags[shared.ChainPortalTag(hopID)] = true
 		reverseKey = "portals"

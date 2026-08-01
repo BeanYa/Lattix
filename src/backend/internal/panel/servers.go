@@ -744,6 +744,56 @@ func (s *Server) handleRepairServer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"reapplied": reapplied})
 }
 
+// handleCleanupXray 处理 POST /api/server/cleanup-xray（xray 缓存清理，
+// §docs/xray-cleanup-design.md）：dry_run=true 预览差异、false 执行清理。
+// 服务器须在线；期望集合由面板从 DB 计算，同步等待 agent 回执差异/结果。
+func (s *Server) handleCleanupXray(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ServerID int64 `json:"server_id"`
+		DryRun   bool  `json:"dry_run"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.ServerID
+	if id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid server id")
+		return
+	}
+	if _, err := s.st.ServerByID(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "服务器不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !s.req.IsOnline(id) {
+		writeError(w, http.StatusConflict, "服务器未连接，无法清理")
+		return
+	}
+	tags, pieces, err := s.st.ExpectedXrayState(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+	defer cancel()
+	result, err := s.disp.CleanupXraySync(ctx, id, shared.CleanupXrayPayload{
+		DryRun: req.DryRun, ExpectedInboundTags: tags, ExpectedPieces: pieces,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	sid := id
+	s.audit(r, "server.cleanup_xray", &sid, nil, map[string]any{
+		"dry_run": req.DryRun, "removed_inbounds": len(result.RemovedInbounds), "removed_pieces": len(result.RemovedPieces),
+	})
+	writeJSON(w, http.StatusOK, result)
+}
+
 // installCommand 通过仓库根安装入口安装 Agent。Release 面板显式钉住自身版本；
 // dev 构建省略版本，由入口解析 latest。xray 版本由 Agent 安装脚本默认解析 latest。
 func (s *Server) installCommand(base, token string) string {

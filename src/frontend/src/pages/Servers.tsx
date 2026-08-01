@@ -32,7 +32,7 @@ import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { isServerOnline } from '@/lib/server-state'
 import { useTimezone } from '@/lib/timezone'
-import type { BillingInput, IntervalUnit, MachineType, PortRange, Provider, ReleaseVersions, Server, ServerMetricSeries, TrafficAccountingMode, TrafficPlanInput } from '@/lib/types'
+import type { BillingInput, CleanupXrayResult, IntervalUnit, MachineType, PortRange, Provider, ReleaseVersions, Server, ServerMetricSeries, TrafficAccountingMode, TrafficPlanInput } from '@/lib/types'
 
 const DEPENDENCIES_COMMAND = 'apk add --no-cache bash curl ca-certificates unzip util-linux'
 const CURRENCIES = ['CNY', 'USD', 'EUR', 'CAD', 'HKD', 'JPY', 'AUD', 'GBP', 'SGD', 'CHF']
@@ -250,6 +250,12 @@ export default function Servers() {
   const [upgradeCmdId, setUpgradeCmdId] = useState<number | null>(null)
   const [upgradeResult, setUpgradeResult] = useState<'pending' | 'success' | 'failed' | null>(null)
   const [upgradeResultError, setUpgradeResultError] = useState('')
+  // 清理 xray 缓存（xray.cleanup）：两步（dry-run 预览 → 确认执行）。
+  const [cleanupTarget, setCleanupTarget] = useState<Server | null>(null)
+  const [cleanupPreview, setCleanupPreview] = useState<CleanupXrayResult | null>(null)
+  const [cleanupDone, setCleanupDone] = useState(false)
+  const [cleanupBusy, setCleanupBusy] = useState(false)
+  const [cleanupError, setCleanupError] = useState('')
   const serverListRequest = useRef(0)
 
   const load = useCallback(async (silent = false, signal?: AbortSignal) => {
@@ -450,6 +456,39 @@ export default function Servers() {
       load()
     } catch (err) {
       setError(errorMessage(err))
+    }
+  }
+
+  // 清理 xray 缓存（xray.cleanup）：先 dry-run 预览差异，确认后执行。
+  const onCleanupXray = async (s: Server) => {
+    setCleanupTarget(s)
+    setCleanupPreview(null)
+    setCleanupDone(false)
+    setCleanupError('')
+    setCleanupBusy(true)
+    try {
+      setCleanupPreview(await api.cleanupXray(s.id, true))
+    } catch (err) {
+      setCleanupError(errorMessage(err))
+    } finally {
+      setCleanupBusy(false)
+    }
+  }
+
+  const runCleanupXray = async () => {
+    if (!cleanupTarget) {
+      return
+    }
+    setCleanupBusy(true)
+    setCleanupError('')
+    try {
+      setCleanupPreview(await api.cleanupXray(cleanupTarget.id, false))
+      setCleanupDone(true)
+      load()
+    } catch (err) {
+      setCleanupError(errorMessage(err))
+    } finally {
+      setCleanupBusy(false)
     }
   }
 
@@ -713,6 +752,7 @@ export default function Servers() {
         timezone={timezone}
         onEdit={onOpenEdit}
         onRepair={onRepair}
+        onCleanupXray={onCleanupXray}
         onRotateToken={onRotateToken}
         onUpgrade={onOpenUpgrade}
         onRenew={openRenewal}
@@ -1128,6 +1168,71 @@ export default function Servers() {
               </div>
             )}
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cleanupTarget !== null} onOpenChange={(next) => !next && setCleanupTarget(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>清理 Xray 缓存</DialogTitle>
+            <DialogDescription>
+              {cleanupDone
+                ? `「${cleanupTarget?.alias}」已清理完成，将 xray 配置中未被面板管理的残留配置件删除。`
+                : `对比面板当前链路状态，删除「${cleanupTarget?.alias}」xray 配置中未被面板有效管理的监听与链路配置件。`}
+            </DialogDescription>
+          </DialogHeader>
+          {cleanupError ? <p className="text-sm text-destructive whitespace-pre-wrap">{cleanupError}</p> : null}
+          {cleanupBusy ? (
+            <p className="text-sm text-muted-foreground">
+              {cleanupDone ? '已清理完成。' : '正在向 agent 下发检查…'}
+            </p>
+          ) : cleanupPreview ? (
+            cleanupPreview.removed_inbounds.length === 0 && cleanupPreview.removed_pieces.length === 0 ? (
+              <p className="text-sm text-muted-foreground">无残留配置，xray 配置与面板状态一致。</p>
+            ) : (
+              <div className="space-y-3">
+                {cleanupPreview.removed_inbounds.length > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">将删除 {cleanupPreview.removed_inbounds.length} 个监听（inbound）</p>
+                    <ul className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2 text-sm">
+                      {cleanupPreview.removed_inbounds.map((inbound) => (
+                        <li key={inbound.tag} className="flex items-center justify-between gap-3 font-mono text-xs">
+                          <span className="truncate">{inbound.tag}</span>
+                          <span className="shrink-0 text-muted-foreground">:{inbound.port || '?'}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {cleanupPreview.removed_pieces.length > 0 ? (
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">将删除 {cleanupPreview.removed_pieces.length} 个链路配置件（piece）</p>
+                    <ul className="max-h-32 space-y-1 overflow-y-auto rounded-md border p-2 font-mono text-xs">
+                      {cleanupPreview.removed_pieces.map((piece) => <li key={piece}>{piece}</li>)}
+                    </ul>
+                  </div>
+                ) : null}
+              </div>
+            )
+          ) : null}
+          <DialogFooter>
+            {!cleanupDone ? (
+              <>
+                <Button variant="outline" disabled={cleanupBusy} onClick={() => setCleanupTarget(null)}>
+                  关闭
+                </Button>
+                <Button
+                  disabled={cleanupBusy || cleanupError !== '' || cleanupPreview === null ||
+                    (cleanupPreview.removed_inbounds.length === 0 && cleanupPreview.removed_pieces.length === 0)}
+                  onClick={runCleanupXray}
+                >
+                  {cleanupBusy ? '执行中…' : '确认清理'}
+                </Button>
+              </>
+            ) : (
+              <Button onClick={() => setCleanupTarget(null)}>完成</Button>
+            )}
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

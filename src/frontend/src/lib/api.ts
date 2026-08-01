@@ -3,6 +3,7 @@ import type {
   AlertTestResult,
   BillingInput,
   Chain,
+  CleanupXrayResult,
   CommandLog,
   CreateChainRequest,
   EditChainRequest,
@@ -136,6 +137,11 @@ export const api = {
     }, options),
   repairServer: (serverId: number) =>
     requester.post<{ reapplied: number }>('/api/server/repair', { server_id: serverId }),
+  cleanupXray: (serverId: number, dryRun: boolean) =>
+    requester.post<CleanupXrayResult>('/api/server/cleanup-xray', {
+      server_id: serverId,
+      dry_run: dryRun,
+    }),
   updateServerAddress: (
     serverId: number,
     alias: string,

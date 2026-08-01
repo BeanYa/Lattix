@@ -688,6 +688,19 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		replyResult(sc, env, resultOfEndpoint(p.EndpointID, nil), err)
 
+	case shared.TypeCleanupXray:
+		var p shared.CleanupXrayPayload
+		if !parseData(sc, env, &p) {
+			return
+		}
+		log.Printf("xray.cleanup request_id=%s dry_run=%v expected_inbounds=%d expected_pieces=%d",
+			env.RequestID, p.DryRun, len(p.ExpectedInboundTags), len(p.ExpectedPieces))
+		result, err := mgr.CleanupXray(p)
+		if err == nil {
+			persistChainPieces(statePath, st, mgr)
+		}
+		replyResult(sc, env, shared.ApplyResultPayload{Cleanup: result}, err)
+
 	case shared.TypeRemoveChainHop:
 		var p shared.RemoveChainHopPayload
 		if !parseData(sc, env, &p) {

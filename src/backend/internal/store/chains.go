@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"lattix/shared"
 )
 
 // 链状态机（§21.1）：pending → applying → active | failed；
@@ -292,6 +294,24 @@ func (s *Store) DeleteChain(ctx context.Context, id int64) error {
 		return fmt.Errorf("delete chain: %w", err)
 	}
 	return tx.Commit()
+}
+
+// ChainHopPieces 返回一个跳的配置件 kind 列表（逐跳反向下发 remove_chain_hop 与
+// xray.cleanup 期望集合计算共用，§21.1）：forward（入口/中间跳）、
+// bridge（反向链下游机：上一跳 tunnel_uuid 非空）、portal（反向链上游机：本跳
+// tunnel_uuid 非空）。返回顺序即拆除顺序。
+func ChainHopPieces(hops []ChainHop, i int) []string {
+	kinds := []string{}
+	if hops[i].Role != HopRoleExit {
+		kinds = append(kinds, shared.HopKindForward)
+	}
+	if i > 0 && hops[i-1].TunnelUUID != "" {
+		kinds = append(kinds, shared.HopKindBridge)
+	}
+	if hops[i].TunnelUUID != "" {
+		kinds = append(kinds, shared.HopKindPortal)
+	}
+	return kinds
 }
 
 // ChainExitNodeIDs 返回全部链出口业务节点 id 集合（订阅排除单机条目用，§21）。

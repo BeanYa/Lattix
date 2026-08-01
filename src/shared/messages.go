@@ -90,6 +90,7 @@ const (
 	TypeRemoveChainHop       = "chain-hop.remove"
 	TypeApplySharedEndpoint  = "shared-endpoint.apply"
 	TypeRemoveSharedEndpoint = "shared-endpoint.remove"
+	TypeCleanupXray          = "xray.cleanup"
 )
 
 // NewMessageID 返回用于 request_id/trace_id 的 32 位小写十六进制随机值。
@@ -193,6 +194,27 @@ type ApplyResultPayload struct {
 	RealizedConfig *RealizedConfig `json:"realized_config,omitempty"`
 	HopID          int64           `json:"hop_id,omitempty"`
 	Kind           string          `json:"kind,omitempty"`
+	Cleanup        *CleanupXrayResult `json:"cleanup,omitempty"` // xray.cleanup 回执
+}
+
+// CleanupXrayPayload 是 xray.cleanup 的载荷：面板下发的期望状态快照。
+// DryRun=true 时 agent 只报告差异，不改动配置（预览）。
+type CleanupXrayPayload struct {
+	DryRun             bool     `json:"dry_run"`
+	ExpectedInboundTags []string `json:"expected_inbound_tags"` // node_/chainfwd_/chainportal_/shared_endpoint_
+	ExpectedPieces      []string `json:"expected_pieces"`       // "forward/7"、"portal/9"、"bridge/3"、"shared-endpoint/5"
+}
+
+// CleanupInbound 是一条将被/已删除的 inbound 摘要（port 供展示与日志）。
+type CleanupInbound struct {
+	Tag  string `json:"tag"`
+	Port int    `json:"port"`
+}
+
+// CleanupXrayResult 是 xray.cleanup 的回执数据：差异列表（dry-run 预览或实际删除结果）。
+type CleanupXrayResult struct {
+	RemovedInbounds []CleanupInbound `json:"removed_inbounds"`
+	RemovedPieces   []string         `json:"removed_pieces"`
 }
 
 // ApplySharedEndpointPayload replaces the complete managed state of one

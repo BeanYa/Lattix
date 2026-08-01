@@ -21,3 +21,6 @@ func ChainPortalTag(hopID int64) string { return fmt.Sprintf("chainportal_%d", h
 
 // ChainBridgeTag 是跳 bridge outbound/routing 的 tag。
 func ChainBridgeTag(hopID int64) string { return fmt.Sprintf("chainbr_%d", hopID) }
+
+// SharedEndpointTag 是共享端点 inbound 的 tag。
+func SharedEndpointTag(id int64) string { return fmt.Sprintf("shared_endpoint_%d", id) }

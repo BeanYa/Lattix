@@ -398,6 +398,51 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "request"}, "type": {"const": "xray.cleanup"}},
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": ["dry_run"],
+            "properties": {
+              "dry_run": {"type": "boolean"},
+              "expected_inbound_tags": {"type": "array", "items": {"type": "string"}},
+              "expected_pieces": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "response"}, "type": {"const": "xray.cleanup"}},
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "removed_inbounds": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "tag": {"type": "string"},
+                    "port": {"type": "integer"}
+                  }
+                }
+              },
+              "removed_pieces": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
     }
   ]
 }

@@ -302,6 +302,16 @@ export interface Traffic {
   down: number
 }
 
+export interface CleanupInbound {
+  tag: string
+  port: number
+}
+
+export interface CleanupXrayResult {
+  removed_inbounds: CleanupInbound[]
+  removed_pieces: string[]
+}
+
 export type VirtualConfig = components['schemas']['VirtualConfig']
 
 export interface XrayNode {
