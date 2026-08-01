@@ -29,7 +29,11 @@ func (m *Manager) CleanupXray(p shared.CleanupXrayPayload) (*shared.CleanupXrayR
 		expectedPieces[key] = true
 	}
 
-	result := &shared.CleanupXrayResult{}
+	// 预初始化空数组：Go 的 nil 切片会序列化为 JSON null，面板前端直接读取 .length 会崩溃。
+	result := &shared.CleanupXrayResult{
+		RemovedInbounds: []shared.CleanupInbound{},
+		RemovedPieces:   []string{},
+	}
 
 	// 1. inbounds：期望集之外的全部移除（api 为 agent 基础设施，恒保留；
 	// 非受管前缀的未知 inbound 同样移除——agent 独占管理 config.json，无合法残留）。

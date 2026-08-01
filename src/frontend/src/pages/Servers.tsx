@@ -116,7 +116,7 @@ function BillingTrafficFields({ billing, setBilling, traffic, setTraffic, provid
       <section className="space-y-3">
         <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={billing.enabled} onChange={(e) => setBilling({ ...billing, enabled: e.target.checked })} />统计计费</label>
         {billing.enabled ? <>
-          <div className="grid grid-cols-[1fr_auto] items-end gap-2"><div className="space-y-2"><Label>服务商</Label><Select value={billing.providerId} onValueChange={(v) => v && setBilling({ ...billing, providerId: v })} items={providers.map((p) => ({ value: String(p.id), label: p.name }))}><SelectTrigger><SelectValue placeholder="选择服务商" /></SelectTrigger><SelectContent>{providers.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}</SelectContent></Select></div><Button type="button" variant="outline" size="icon" title="管理服务商" onClick={onManageProviders}><Building2Icon /></Button></div>
+          <div className="grid grid-cols-[1fr_auto] items-end gap-2"><div className="space-y-2"><Label>服务商</Label><Select value={billing.providerId} onValueChange={(v) => v && setBilling({ ...billing, providerId: v })} items={providers.map((p) => ({ value: String(p.id), label: p.name }))}><SelectTrigger><SelectValue placeholder="选择服务商" /></SelectTrigger><SelectContent>{providers.length === 0 ? <p className="px-3 py-6 text-center text-sm text-muted-foreground">暂无服务商，请先添加</p> : providers.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}</SelectContent></Select></div><Button type="button" variant="outline" size="icon" title="管理服务商" onClick={onManageProviders}><Building2Icon /></Button></div>
           <div className="grid grid-cols-[1fr_110px] gap-2"><div className="space-y-2"><Label>每周期实付金额</Label><Input type="number" min="0" step="0.01" value={billing.amount} onChange={(e) => setBilling({ ...billing, amount: e.target.value })} /></div><div className="space-y-2"><Label>币种</Label><Select value={billing.currency} onValueChange={(v) => v && setBilling({ ...billing, currency: v })} items={CURRENCIES.map((c) => ({ value: c, label: c }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div></div>
           <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label>开通日期</Label><Input type="date" max={localDate()} value={billing.startedOn} onChange={(e) => setBilling({ ...billing, startedOn: e.target.value, renewalOn: addInterval(e.target.value, billing.intervalCount, billing.intervalUnit) })} /></div><div className="space-y-2"><Label>下次续费日</Label><Input type="date" value={billing.renewalOn} onChange={(e) => setBilling({ ...billing, renewalOn: e.target.value })} /></div></div>
           <div className="grid grid-cols-[1fr_140px] gap-2"><div className="space-y-2"><Label>计费周期</Label><Input type="number" min="1" value={billing.intervalCount} onChange={(e) => setBilling({ ...billing, intervalCount: Number(e.target.value) })} /></div><div className="space-y-2"><Label>单位</Label><Select value={billing.intervalUnit} onValueChange={(v) => v && setBilling({ ...billing, intervalUnit: v as IntervalUnit })} items={[{ value: 'day', label: '天' }, { value: 'month', label: '月' }, { value: 'year', label: '年' }]}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="day">天</SelectItem><SelectItem value="month">月</SelectItem><SelectItem value="year">年</SelectItem></SelectContent></Select></div></div>
@@ -256,6 +256,11 @@ export default function Servers() {
   const [cleanupDone, setCleanupDone] = useState(false)
   const [cleanupBusy, setCleanupBusy] = useState(false)
   const [cleanupError, setCleanupError] = useState('')
+  // 归一化回执数组：旧 agent 可能返回 null（Go nil 切片），渲染直接读 .length 会崩溃。
+  const normalizeCleanup = (r: CleanupXrayResult): CleanupXrayResult => ({
+    removed_inbounds: r.removed_inbounds ?? [],
+    removed_pieces: r.removed_pieces ?? [],
+  })
   const serverListRequest = useRef(0)
 
   const load = useCallback(async (silent = false, signal?: AbortSignal) => {
@@ -467,7 +472,7 @@ export default function Servers() {
     setCleanupError('')
     setCleanupBusy(true)
     try {
-      setCleanupPreview(await api.cleanupXray(s.id, true))
+      setCleanupPreview(normalizeCleanup(await api.cleanupXray(s.id, true)))
     } catch (err) {
       setCleanupError(errorMessage(err))
     } finally {
@@ -482,7 +487,7 @@ export default function Servers() {
     setCleanupBusy(true)
     setCleanupError('')
     try {
-      setCleanupPreview(await api.cleanupXray(cleanupTarget.id, false))
+      setCleanupPreview(normalizeCleanup(await api.cleanupXray(cleanupTarget.id, false)))
       setCleanupDone(true)
       load()
     } catch (err) {

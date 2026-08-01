@@ -1,6 +1,7 @@
 package xray
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -239,6 +240,41 @@ func TestCleanupXrayNoOp(t *testing.T) {
 	}
 	if len(result.RemovedInbounds) != 0 || len(result.RemovedPieces) != 0 {
 		t.Fatalf("无差异应返回空结果: %+v", result)
+	}
+}
+
+// TestCleanupXrayNoOpJSONArrays 验证无差异回执的 JSON 契约：removed_inbounds/removed_pieces
+// 必须是数组 [] 而非 null（面板前端直接读取 .length，null 会触发页面崩溃）。
+func TestCleanupXrayNoOpJSONArrays(t *testing.T) {
+	m := newCleanupTestManager(t)
+	seedCleanupConfig(t, m,
+		[]json.RawMessage{cleanupInbound(t, "node_1", 10001)}, nil)
+
+	result, err := m.CleanupXray(shared.CleanupXrayPayload{
+		ExpectedInboundTags: []string{"node_1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(b, []byte(`"removed_inbounds":null`)) || bytes.Contains(b, []byte(`"removed_pieces":null`)) {
+		t.Fatalf("回执含 null 数组字段（前端 .length 会崩溃）: %s", b)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"removed_inbounds", "removed_pieces"} {
+		raw, ok := decoded[key]
+		if !ok {
+			t.Fatalf("字段 %s 缺失: %s", key, b)
+		}
+		if string(raw) != "[]" {
+			t.Fatalf("字段 %s = %s，期望 []", key, raw)
+		}
 	}
 }
 
