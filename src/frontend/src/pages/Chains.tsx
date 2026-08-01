@@ -1082,6 +1082,14 @@ export default function Chains() {
                         {c.hops.map((h, i) => {
                           const hst = hopStatusStyle[h.status] ?? hopStatusStyle.pending
                           const offline = !serverOnline(h.server_id)
+                          const exitNode = h.role === 'exit'
+                            ? nodes.find((n) => n.id === h.node_id)
+                            : undefined
+                          const hopPort = h.role === 'entry'
+                            ? (c.entry_port !== 0 ? c.entry_port : h.forward_port)
+                            : h.role === 'middle'
+                              ? h.forward_port
+                              : (exitNode?.realized_config?.port ?? exitNode?.port ?? h.forward_port)
                           return (
                             <div key={h.id} className="flex flex-col items-start sm:flex-row sm:items-center" title={h.error || undefined}>
                               {i > 0 ? (
@@ -1104,7 +1112,7 @@ export default function Chains() {
                                 </span>
                                 <strong className="mt-0.5 block max-w-48 truncate font-medium">{h.server_alias}</strong>
                                 <span className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground tabular-nums">
-									{h.role === 'entry' && c.entry_port !== 0 ? <span>端口 {c.entry_port}</span> : null}
+									{hopPort !== 0 ? <span>端口 {hopPort}</span> : null}
                                   <span className={offline ? 'text-warning' : 'text-success'}>{offline ? 'Agent 离线' : 'Agent 在线'}</span>
                                   {h.traffic ? <span>↑ {humanizeBytes(h.traffic.effective_up)} · ↓ {humanizeBytes(h.traffic.effective_down)}</span> : null}
                                 </span>
