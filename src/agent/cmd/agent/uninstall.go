@@ -122,6 +122,8 @@ type installPaths struct {
 	LatxAgApp      string
 	LatxAgLink     string // 系统安装的 /usr/local/bin/latx-ag；用户态为空
 	EnvFile        string
+	DataDir        string // agent 独占目录（state/settings/connection/queue/lock/servertest 等）
+	LogsDir        string // agent 独占目录（agent.log 等）
 	StateFile      string
 	SettingsFile   string
 	ConnectionFile string
@@ -164,6 +166,8 @@ func installPathsFor(root string) installPaths {
 		RunScript:      filepath.Join(bin, "lattix-agent-run"),
 		LatxAgApp:      filepath.Join(bin, "latx-ag"),
 		EnvFile:        filepath.Join(config, "agent.env"),
+		DataDir:        data,
+		LogsDir:        logs,
 		StateFile:      filepath.Join(data, "state.json"),
 		SettingsFile:   filepath.Join(data, "settings.json"),
 		ConnectionFile: filepath.Join(data, "connection.json"),
@@ -227,15 +231,20 @@ func buildUninstallScript(p installPaths, useSystemd, purgeXray bool) string {
 		}
 	}
 
-	// 与 latx-ag uninstall 文件清单对齐（含 connection/queue/lock/log/bak/run）。
+	// 与 latx-ag uninstall 清理清单对齐：bin/config 内 agent 文件逐项删除；
+	// data/logs 为 agent 独占目录整体清空（覆盖 servertest 任务/结果等运行时文件，
+	// 不遗漏清单外新增文件）。bin/config 若因清空变空则 rmdir 一并移除。
 	b.WriteString(fmt.Sprintf(
-		"rm -f %s %s %s %s %s %s %s %s %s %s\n",
-		shellQuote(p.AgentBin), shellQuote(p.AgentBinBak), shellQuote(p.RunScript),
-		shellQuote(p.EnvFile), shellQuote(p.StateFile), shellQuote(p.SettingsFile),
-		shellQuote(p.ConnectionFile), shellQuote(p.CommandQueue),
-		shellQuote(p.LockFile), shellQuote(p.AgentLog),
+		"rm -f %s %s %s %s\n",
+		shellQuote(p.AgentBin), shellQuote(p.AgentBinBak),
+		shellQuote(p.RunScript), shellQuote(p.EnvFile),
 	))
-	b.WriteString(fmt.Sprintf("rm -rf %s 2>/dev/null\n", shellQuote(p.LockDir)))
+	b.WriteString(fmt.Sprintf("rm -rf %s %s 2>/dev/null\n",
+		shellQuote(p.DataDir), shellQuote(p.LogsDir)))
+	b.WriteString(fmt.Sprintf("rmdir %s %s 2>/dev/null\n",
+		shellQuote(filepath.Join(p.Root, "bin")),
+		shellQuote(filepath.Join(p.Root, "config"))))
+	b.WriteString(fmt.Sprintf("rmdir %s 2>/dev/null\n", shellQuote(p.Root)))
 	b.WriteString(fmt.Sprintf("rm -f %s\n", shellQuote(p.LatxAgApp)))
 	if p.LatxAgLink != "" {
 		b.WriteString(fmt.Sprintf("rm -f %s\n", shellQuote(p.LatxAgLink)))

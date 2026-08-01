@@ -97,11 +97,21 @@ func TestBuildUninstallScriptSystemdNoSleepBeforeDisable(t *testing.T) {
 		t.Fatalf("disable must precede rm:\n%s", script)
 	}
 	for _, want := range []string{
-		"connection.json", "command-queue.json", "lattix-agent.bak",
-		"lattix-agent.lock", "agent.log", "/usr/local/bin/latx-ag", "settings.json",
+		"lattix-agent.bak", "agent.env", "/usr/local/bin/latx-ag",
+		"rm -rf '/opt/lattix-agent/data' '/opt/lattix-agent/logs'",
+		"rmdir '/opt/lattix-agent/bin' '/opt/lattix-agent/config'",
+		"rmdir '/opt/lattix-agent'",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
+	for _, notWant := range []string{
+		"state.json", "connection.json", "settings.json",
+		"command-queue.json", "lattix-agent.lock", "agent.log",
+	} {
+		if strings.Contains(script, notWant) {
+			t.Fatalf("script should not reference %q (covered by data/logs dir removal):\n%s", notWant, script)
 		}
 	}
 	if strings.Contains(script, "disable --now xray.service") {
@@ -133,8 +143,9 @@ func TestBuildUninstallScriptUserMode(t *testing.T) {
 	for _, want := range []string{
 		"pkill -f '/home/alice/.lattix-agent/bin/lattix-agent-run'",
 		"pkill -f '/home/alice/.lattix-agent/bin/lattix-agent -panel'",
-		"crontab", "connection.json", "command-queue.json",
-		"lattix-agent-run", "lattix-agent.lock", "agent.log",
+		"crontab", "lattix-agent-run",
+		"rm -rf '/home/alice/.lattix-agent/data' '/home/alice/.lattix-agent/logs'",
+		"rmdir '/home/alice/.lattix-agent/bin' '/home/alice/.lattix-agent/config'",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("user script missing %q:\n%s", want, script)

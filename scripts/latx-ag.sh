@@ -492,15 +492,13 @@ cmd_uninstall() {
         fi
     fi
 	# 清理清单与 src/agent/cmd/agent/uninstall.go 双向对齐：
-	# 二进制/bak、runner、env/state/settings/connection/command-queue、lock、日志。
-	local queue_file="$APP_ROOT/data/command-queue.json"
-	local lock_file="$APP_ROOT/data/lattix-agent.lock"
-	local lock_dir="$APP_ROOT/data/lattix-agent.lock.d"
-	rm -f "$AGENT_BIN" "$AGENT_BIN.bak" "$RUN_SCRIPT" "$ENV_FILE" \
-		"$STATE_FILE" "$SETTINGS_FILE" "$CONNECTION_FILE" "$queue_file" \
-		"$lock_file" "$LOG_FILE"
-	rm -rf "$lock_dir" 2>/dev/null || true
-    echo ">> 已删除 agent 二进制/env/state/queue/lock/log"
+	# bin/config 内 agent 文件逐项删除；data/logs 为 agent 独占目录整体清空
+	# （覆盖 servertest 任务/结果等清单外运行时文件）；bin/config 清空后 rmdir。
+	rm -f "$AGENT_BIN" "$AGENT_BIN.bak" "$RUN_SCRIPT" "$ENV_FILE"
+	rm -rf "$APP_ROOT/data" "$APP_ROOT/logs"
+	rmdir "$APP_ROOT/bin" "$APP_ROOT/config" 2>/dev/null || true
+	rmdir "$APP_ROOT" 2>/dev/null || true
+	echo ">> 已删除 agent 二进制/env，并清空 $APP_ROOT/data 与 $APP_ROOT/logs"
     if [[ "$purge_xray" -eq 1 ]]; then
         rm -f "$XRAY_BIN" "$XRAY_BIN.bak"
         rm -f "$XRAY_CONFIG" "$XRAY_CONFIG.rebind-backup"
