@@ -2,6 +2,7 @@ package xray
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -111,6 +112,35 @@ func TestApplySharedEndpointAutoPortNo443Preference(t *testing.T) {
 	}
 	if again.Port != realized.Port {
 		t.Fatalf("重发应复用端口 %d，实际 %d", realized.Port, again.Port)
+	}
+}
+
+// TestApplySharedEndpointReapplyWhilePortHeld 验证重发幂等：端点已落地端口且
+// xray 运行中（端口被持有）时，重发不应因占用探测误判失败（§21 重发复用端口与密钥）。
+// 回归场景：面板在每次链路发布/用户分配/自愈时重发 apply_shared_endpoint，
+// 旧实现 pickPort 对已落地端口做 net.Listen 探测，被自身运行中的 xray 持有 → 假失败。
+func TestApplySharedEndpointReapplyWhilePortHeld(t *testing.T) {
+	mgr := newTestEndpointManager(t)
+	payload := endpointPortPayload(10, nil)
+
+	realized, err := mgr.ApplySharedEndpoint(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 模拟运行中的 xray 持有该监听端口。
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", realized.Port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	again, err := mgr.ApplySharedEndpoint(payload)
+	if err != nil {
+		t.Fatalf("重发应在端口被自身 xray 持有时复用端口成功: %v", err)
+	}
+	if again.Port != realized.Port {
+		t.Fatalf("重发应复用已落地端口 %d，实际 %d", realized.Port, again.Port)
 	}
 }
 

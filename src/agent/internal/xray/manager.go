@@ -114,7 +114,11 @@ func (m *Manager) ApplyNode(nodeID int64, vc shared.VirtualConfig, userUUIDs, de
 
 	tag := shared.NodeTag(nodeID)
 	// 1. 填充模板占位符（§7）+ dest 预检（§6 步骤 2）
-	inbound, realized, err := m.fillTemplate(tag, vc, userUUIDs, destCandidates, portCandidates)
+	port, err := pickPort(vc.Port, portCandidates)
+	if err != nil {
+		return nil, err
+	}
+	inbound, realized, err := m.fillTemplate(port, tag, vc, userUUIDs, destCandidates, portCandidates)
 	if err != nil {
 		return nil, err
 	}

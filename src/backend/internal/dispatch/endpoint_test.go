@@ -143,6 +143,62 @@ func TestPublishReconcilesPreviousAndNewSharedEndpoints(t *testing.T) {
 	}
 }
 
+// TestEvaluateDoesNotDoubleApplyInFlightEndpoint 验证 Evaluate 自动重试的幂等性：
+// 端点已有在途部署命令（applying）时不得重复下发 apply_shared_endpoint。
+// 回归场景：publishDesiredRevision → ReconcileSharedEndpoint（端点置 applying）后立即
+// recomputeChain → Evaluate，旧实现对 applying 端点再次自动补发，单次建链产生两次 apply
+// （第二次在 agent 侧因 xray 已持有端口而失败 → 端点 failed → 链 degraded）。
+func TestEvaluateDoesNotDoubleApplyInFlightEndpoint(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
+	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment := createDirectSharedChain(t, st, serverID, endpoint.ID, "inflight")
+	chainID := deployment.ChainID
+	hops, _ := st.ChainHops(ctx, chainID)
+	for _, h := range hops {
+		if err := st.SetChainHopStatus(ctx, h.ID, store.HopStatusActive, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}})
+	// 首次部署（pending → apply #1），端点进入 applying。
+	if err := d.ReconcileSharedEndpoint(ctx, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
+	count := func() int {
+		cmds, _ := st.CommandsByType(ctx, shared.TypeApplySharedEndpoint)
+		return len(cmds)
+	}
+	if got := count(); got != 1 {
+		t.Fatalf("基线 apply 命令数 = %d，期望 1", got)
+	}
+
+	// 端点 applying（在途命令未回执）时重算——旧实现会重复下发。
+	d.recomputeChain(ctx, chainID)
+	if got := count(); got != 1 {
+		t.Fatalf("端点 applying 时 Evaluate 不应重复下发 apply（幂等），实际 %d 条", got)
+	}
+
+	// 端点 pending（无在途命令）时仍应自动补发（首次部署/重试语义不变）。
+	if err := st.SetSharedEndpointPending(ctx, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
+	d.recomputeChain(ctx, chainID)
+	if got := count(); got != 2 {
+		t.Fatalf("端点 pending 时 Evaluate 应补发 apply，实际 %d 条", got)
+	}
+}
+
 // TestChainDegradedWhenEndpointNotActive 验证链状态与共享端点状态联动：
 // 端点未 active 时链应为 degraded，端点生效后链恢复 active。
 func TestChainDegradedWhenEndpointNotActive(t *testing.T) {

@@ -172,8 +172,11 @@ func (f *chainFSM) Evaluate(ctx context.Context, chainID int64) {
 				}
 				f.degrade(ctx, chain, 0, detail)
 			}
-			// 自动重试：端点服务器在线时立即重新下发部署命令。
-			if endpoint != nil && f.d.req.IsOnline(endpoint.ServerID) {
+			// 自动重试：端点服务器在线且无在途部署命令（applying）时重新下发部署命令。
+			// applying 意味着已有 apply_shared_endpoint 在途（回执会再触发 Evaluate），
+			// 重复下发违反 Evaluate 幂等承诺，且会在 agent 侧因端口已被自身 xray
+			// 持有而误报失败（重发复用端口的幂等语义见 agent xray.ApplySharedEndpoint）。
+			if endpoint != nil && endpoint.Status != store.EndpointStatusApplying && f.d.req.IsOnline(endpoint.ServerID) {
 				if err := f.d.ReconcileSharedEndpoint(ctx, chain.EndpointID); err != nil {
 					log.Printf("chain_fsm: chain %d auto-reconcile endpoint %d: %v", chainID, chain.EndpointID, err)
 				}

@@ -1019,7 +1019,13 @@ export default function Chains() {
                       {st.label}
                     </StatusBadge>
                     {c.status === 'degraded' ? (
-                      <span className="text-xs text-warning">Agent 离线，已发布链路仍保留</span>
+                      c.endpoint_status === 'failed' ? (
+                        <span className="text-xs text-warning">共享入口部署失败，已发布链路仍保留</span>
+                      ) : c.endpoint_status === 'applying' || c.endpoint_status === 'pending' ? (
+                        <span className="text-xs text-warning">共享入口部署中，已发布链路仍保留</span>
+                      ) : (
+                        <span className="text-xs text-warning">Agent 离线，已发布链路仍保留</span>
+                      )
                     ) : null}
                     {c.revision_forced ? (
                       <span className="text-xs text-info">订阅已发布，配置等待 Agent 确认</span>

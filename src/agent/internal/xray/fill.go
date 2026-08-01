@@ -18,14 +18,10 @@ import (
 const destCheckTimeout = 4 * time.Second
 
 // fillTemplate 填充模板占位符（§7）并做 dest 预检（§6 步骤 2）。
-// portCandidates 为受限直连 NAT 机的段内候选（§21，Port 为 0 时按序挑选）。
+// port 为调用方已决定的监听端口（ApplyNode 走 pickPort 占用探测；
+// 链 piece/共享端点走 pickChainPort 幂等复用，§21.1）。
 // 返回填充后的 inbound JSON 与提取出的实际生效值（apply_result 上报用）。
-func (m *Manager) fillTemplate(tag string, vc shared.VirtualConfig, userUUIDs []string, destCandidates []string, portCandidates []int) (json.RawMessage, *shared.RealizedConfig, error) {
-	port, err := pickPort(vc.Port, portCandidates)
-	if err != nil {
-		return nil, nil, err
-	}
-
+func (m *Manager) fillTemplate(port int, tag string, vc shared.VirtualConfig, userUUIDs []string, destCandidates []string, portCandidates []int) (json.RawMessage, *shared.RealizedConfig, error) {
 	t := string(vc.Template)
 	// 仅 reality 协议模板含私钥占位符（ss/socks/http/dokodemo 无 Reality 密钥对）。
 	pub := ""
