@@ -491,12 +491,22 @@ cmd_uninstall() {
             echo ">> [用户态] 已停止 xray 进程"
         fi
     fi
-	rm -f "$AGENT_BIN" "$AGENT_BIN.bak" "$RUN_SCRIPT" "$ENV_FILE" "$STATE_FILE" "$SETTINGS_FILE" "$CONNECTION_FILE"
-    echo ">> 已删除 agent 二进制/env/state"
+	# 清理清单与 src/agent/cmd/agent/uninstall.go 双向对齐：
+	# 二进制/bak、runner、env/state/settings/connection/command-queue、lock、日志。
+	local queue_file="$APP_ROOT/data/command-queue.json"
+	local lock_file="$APP_ROOT/data/lattix-agent.lock"
+	local lock_dir="$APP_ROOT/data/lattix-agent.lock.d"
+	rm -f "$AGENT_BIN" "$AGENT_BIN.bak" "$RUN_SCRIPT" "$ENV_FILE" \
+		"$STATE_FILE" "$SETTINGS_FILE" "$CONNECTION_FILE" "$queue_file" \
+		"$lock_file" "$LOG_FILE"
+	rm -rf "$lock_dir" 2>/dev/null || true
+    echo ">> 已删除 agent 二进制/env/state/queue/lock/log"
     if [[ "$purge_xray" -eq 1 ]]; then
         rm -f "$XRAY_BIN" "$XRAY_BIN.bak"
         rm -f "$XRAY_CONFIG" "$XRAY_CONFIG.rebind-backup"
-        echo ">> 已删除 xray 二进制与配置 $XRAY_CONFIG"
+        # purge 时清空应用根（日志目录等残留），与 agent 自卸载脚本一致。
+        rm -rf "$APP_ROOT" 2>/dev/null || true
+        echo ">> 已删除 xray 二进制与配置，并清空 $APP_ROOT"
     else
         echo ">> 保留 xray（$XRAY_BIN）与其配置，节点继续运行"
     fi

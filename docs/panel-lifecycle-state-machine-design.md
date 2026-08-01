@@ -44,7 +44,9 @@ never_connected | connecting | reconnecting | online | offline | auth_rejected
 公开 API 不再返回 `online` 布尔字段。Backend 内部保留 `IsOnline(serverID)`，用于判断
 当前是否存在可投递业务消息的会话。连接历史持久化，当前连接和 session 只在 Hub 内存中维护。
 
-Agent 自身卸载不属于 Panel 生命周期。`agent.uninstall` 成功后 Agent 退出并清理自身，
+Agent 自身卸载不属于 Panel 生命周期。`agent.uninstall` 成功后 Agent 先回执再自毁：
+系统安装经独立 systemd unit 执行清理（避免 service cgroup 带走 cleaner）；用户态安装
+停 runner/crontab 后删文件。详见 framework-design §5 `agent.uninstall` 行。卸载后
 不再维护 Panel 观测状态。
 
 ## 3. 生命周期版本

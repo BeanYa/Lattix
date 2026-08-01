@@ -126,7 +126,7 @@ install.sh           # 唯一面向用户的统一安装入口
 | `user.add` | panel→agent | 向载荷指定节点的 inbound 热加入一个用户（`nodes` 参数携带各节点协议参数；必填，缺省/为空回执错误） |
 | `user.remove` | panel→agent | 从载荷指定节点的 inbound 热移除一个用户（`nodes` 必填，同 user.add） |
 | 对应请求的 `response` | agent→panel | `code=OK` 时 data 可含 realized_config；失败由稳定 code 与安全 message 表达 |
-| `agent.uninstall` | panel→agent | 卸载 agent：`purge_xray=true` 时连同 install.sh 安装的 xray 与配置一并清除，`false` 时仅移除 agent（xray 及节点继续运行）；agent 先回执再自毁 |
+| `agent.uninstall` | panel→agent | 卸载 agent：先回执再自毁。`purge_xray=true` 连同 xray/配置清除，`false` 仅移除 agent（xray 与节点继续运行）。识别 install.sh 安装树（`…/lattix-agent/bin/lattix-agent` 或 `…/.lattix-agent/bin/lattix-agent`）：系统路径经独立 systemd unit 跑清理（`systemd-run` → `/run` oneshot → setsid 三级回退，避免 `KillMode=control-group` 杀掉 cleaner；脚本先 `disable --now` 压制 `Restart=always`）；用户态 setsid 停 runner/crontab 后删文件。dev 非安装路径不触碰宿主机安装。清理清单与 `latx-ag uninstall` 双向对齐（含 connection/command-queue/lock/log/bak）。面板删服务器为 best-effort，不证明远端物理删除 |
 | `xray.upgrade` | panel→agent | 升级 xray 到指定版本（§18）：下载官方 release 校验 .dgst 后替换重启，失败回滚 |
 | `agent.upgrade` | panel→agent | 下载、校验并原子替换当前 Agent，响应后退出并由 systemd 拉起 |
 | `telemetry.report` | agent→panel | 周期遥测（§13）：xray 版本/运行状态、主机指标、流量增量；无需回执 |
@@ -450,8 +450,10 @@ POST restart → 等待恢复并验证 `https://<domain>` 可达，凭据 read -
 **预检**新二进制 `-version` → 停服替换 → 启服校验版本）、`xray-update [version]`
 （官方 .dgst 校验 SHA2-256，拿不到校验文件即失败，与 agent upgrade.go 同语义；
 备份 .bak → 替换 → 重启 → 版本校验，失败回滚；`XRAY_RELEASE_BASE` 对齐
-`-xray-release-base` 镜像语义）、`uninstall [--purge-xray]`（确认后卸载，清理清单与
-agent uninstall.go 对齐含 .bak；默认仅 agent，xray 与节点继续运行）、`version`。
+`-xray-release-base` 镜像语义）、`uninstall [--purge-xray]`（确认后卸载；清理清单与
+agent 远程自卸载双向对齐：二进制/bak、runner、env/state/settings/connection/
+command-queue、lock、日志；purge 时连同 xray 与 APP_ROOT；默认仅 agent，xray
+与节点继续运行）、`version`。
 latx-ag 随 GitHub Release 的 agent 包 `lattix-agent-linux-<arch>.tar.gz` 分发，
 统一经 checksums.txt 校验（§11）。
 install.sh 成功输出面板地址 / agent 状态 / xray 版本与 latx-ag 运维提示块。
