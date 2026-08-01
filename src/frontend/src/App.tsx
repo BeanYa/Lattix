@@ -8,6 +8,7 @@ import { TimezoneProvider } from '@/lib/timezone'
 
 const Layout = lazy(() => import('@/components/Layout'))
 const Chains = lazy(() => import('@/pages/Chains'))
+const Costs = lazy(() => import('@/pages/Costs'))
 const Dashboard = lazy(() => import('@/pages/Dashboard'))
 const Login = lazy(() => import('@/pages/Login'))
 const LogsLayout = lazy(() => import('@/pages/LogsLayout'))
@@ -71,6 +72,9 @@ function ProtectedRoutes() {
             </Route>
             <Route path="/servers">
               <SuspendedRoute><Servers /></SuspendedRoute>
+            </Route>
+            <Route path="/costs">
+              <SuspendedRoute><Costs /></SuspendedRoute>
             </Route>
             <Route path="/chains">
               <SuspendedRoute><Chains /></SuspendedRoute>

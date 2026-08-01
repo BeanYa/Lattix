@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useLocation } from 'wouter'
 import {
+  CoinsIcon,
   LayoutDashboardIcon,
   LogOutIcon,
   MenuIcon,
@@ -26,6 +27,7 @@ import { cn } from '@/lib/utils'
 const navItems = [
   { to: '/', activePrefix: '/', label: '仪表盘', icon: LayoutDashboardIcon, end: true },
   { to: '/servers', activePrefix: '/servers', label: '服务器', icon: ServerIcon, end: false },
+  { to: '/costs', activePrefix: '/costs', label: '成本统计', icon: CoinsIcon, end: false },
   { to: '/chains', activePrefix: '/chains', label: '链路', icon: RouteIcon, end: false },
   { to: '/users', activePrefix: '/users', label: '用户', icon: UsersIcon, end: false },
   { to: '/subscription-templates', activePrefix: '/subscription-templates', label: '订阅模板', icon: FileCode2Icon, end: false },

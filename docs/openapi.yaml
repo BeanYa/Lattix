@@ -125,6 +125,26 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/ConfirmRenewalRequest'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/billing/stats:
+    get:
+      operationId: billingStats
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: {type: string, format: date}
+        - name: to
+          in: query
+          required: true
+          schema: {type: string, format: date}
+        - name: granularity
+          in: query
+          required: true
+          schema: {$ref: '#/components/schemas/BillingStatsGranularity'}
+        - name: rate_mode
+          in: query
+          schema: {$ref: '#/components/schemas/BillingStatsRateMode'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/delete:
     post:
       operationId: serverDelete
@@ -753,6 +773,51 @@ components:
         currency: {$ref: '#/components/schemas/Currency'}
         public_converted: {$ref: '#/components/schemas/ConvertedCost'}
         custom_converted: {$ref: '#/components/schemas/ConvertedCost'}
+    BillingStatsGranularity:
+      type: string
+      enum: [day, month, year]
+    BillingStatsRateMode:
+      type: string
+      enum: [public, custom]
+      default: custom
+    BillingServerStats:
+      type: object
+      description: Per-server cost series aligned with BillingStats.periods. Day granularity labels are YYYY-MM-DD, month YYYY-MM, year YYYY. Costs are in the reporting currency minor unit, rounded per cell; custom arrays are present when custom_available and rate_mode=custom.
+      additionalProperties: false
+      required: [server_id, alias, country_code, location, currency, amount_minor, interval_count, interval_unit, service_started_on, status, days_active, daily_minor, costs_public]
+      properties:
+        server_id: {type: integer}
+        alias: {type: string}
+        country_code: {type: string, description: ISO 3166-1 alpha-2.}
+        location: {type: string}
+        currency: {$ref: '#/components/schemas/Currency'}
+        amount_minor: {type: integer, description: Original price in the server currency minor unit.}
+        interval_count: {type: integer, minimum: 1, maximum: 10000}
+        interval_unit: {type: string, enum: [day, month, year]}
+        service_started_on: {type: string, format: date}
+        status: {type: string, description: Billing lifecycle status.}
+        days_active: {type: integer, description: Days of service inside the requested range.}
+        daily_minor: {type: integer, description: Public daily cost in reporting minor unit.}
+        daily_custom_minor: {type: integer, description: Custom daily cost; present when the server has a custom conversion.}
+        costs_public: {type: array, items: {type: integer}}
+        costs_custom: {type: array, items: {type: integer}, description: Present for every server when custom_available and rate_mode=custom; equals costs_public for servers without a custom conversion.}
+    BillingStats:
+      type: object
+      description: Cost statistics for servers with statistical billing enabled, prorated per day over the requested range and converted to the reporting currency.
+      additionalProperties: false
+      required: [reporting_currency, granularity, from, to, rate_mode, custom_available, periods, servers, totals_public]
+      properties:
+        reporting_currency: {$ref: '#/components/schemas/Currency'}
+        granularity: {$ref: '#/components/schemas/BillingStatsGranularity'}
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        rate_mode: {$ref: '#/components/schemas/BillingStatsRateMode'}
+        rate_date: {type: string, description: Public exchange rate cache date; empty when no conversion was needed.}
+        custom_available: {type: boolean, description: True when at least one server's custom conversion differs from its public conversion; independent of rate_mode.}
+        periods: {type: array, items: {type: string}, description: Every calendar period covering from/to.}
+        servers: {type: array, items: {$ref: '#/components/schemas/BillingServerStats'}, description: Servers with billing enabled, ordered by server_id.}
+        totals_public: {type: array, items: {type: integer}, description: Per-period sum of costs_public.}
+        totals_custom: {type: array, items: {type: integer}, description: Present when custom_available and rate_mode=custom.}
     TrafficPlanInput:
       type: object
       additionalProperties: false

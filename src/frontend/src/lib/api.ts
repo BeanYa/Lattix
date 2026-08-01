@@ -2,6 +2,9 @@ import { requester, RequestError, type RequestOptions } from './requester'
 import type {
   AlertTestResult,
   BillingInput,
+  BillingStats,
+  BillingStatsGranularity,
+  BillingStatsRateMode,
   Chain,
   CleanupXrayResult,
   CommandLog,
@@ -312,6 +315,16 @@ export const api = {
   subSettings: () => requester.get<SubSettings>('/api/setting/sub'),
   updateSubSettings: (body: SubSettings) =>
     requester.post<SubSettings>('/api/setting/sub', body),
+
+  billingStats: (
+    params: {
+      from: string
+      to: string
+      granularity: BillingStatsGranularity
+      rate_mode?: BillingStatsRateMode
+    },
+    options?: RequestOptions,
+  ) => requester.get<BillingStats>('/api/billing/stats', params, { display: 'silent', ...options }),
 
   panelVersion: () => requester.get<PanelVersionInfo>('/api/panel/get-version'),
   startPanelUpdate: (version?: string, force?: boolean) =>

@@ -157,3 +157,38 @@
 - 不做"已支付 vs 已发生"口径切换：范围终点即权威边界
 - 不重写汇率换算逻辑：全部复用 `convertCosts`
 - 不新增 e2e 脚本
+
+## 实现状态（2026-08-02 已实施）
+
+### 变更文件
+
+- `src/backend/internal/panel/cost_stats.go`（新增）：周期生成、服务期计算、单元格摊算、
+  `handleBillingStats` 处理器、`reportingCurrency` 助手
+- `src/backend/internal/panel/cost_stats_test.go`（新增）：周期/服务期/折算/校验/Handler 测试
+- `src/backend/internal/panel/panel.go`：注册 `GET /api/billing/stats`
+- `docs/openapi.yaml`：增补 path 与 `BillingStats` / `BillingServerStats` /
+  `BillingStatsGranularity` / `BillingStatsRateMode` schemas（契约测试强制同步）
+- `src/frontend/package.json` / `bun.lock`：新增 `echarts@6.1.0`
+- `src/frontend/src/lib/api-contract.generated.ts`：`bun run generate:api` 重新生成
+- `src/frontend/src/lib/types.ts` / `api.ts`：`BillingStats` 系列类型与 `billingStats()` 客户端
+- `src/frontend/src/components/echarts.tsx`（新增）：按需引入的 Chart 封装
+  （init / ResizeObserver / dispose / notMerge 更新）
+- `src/frontend/src/pages/Costs.tsx`（新增）：控制栏（粒度/日期范围/快捷预设/换算方式）、
+  汇总卡片、堆叠柱状图、占比环形图、服务器汇总表（可排序）、周期 × 服务器明细矩阵
+- `src/frontend/src/App.tsx` / `components/Layout.tsx`：路由 `/costs` 与导航项（服务器之后）
+
+### 与设计一致/偏差记录
+
+- 单元格级舍入、视图内合计精确、视图间独立：按设计实现
+- 年付服务器的年视图单元格 = `round(amount/365 × 365)` 精确还原年价（非逐日舍入累加）
+- 跨 372 天日视图禁用；月/年 ≤ 3660 天；超出时前端自动钳制起始日期
+- "全部"预设的前端需要 `api.servers()` 计算最早开通日（后端无此接口）
+- ECharts 懒加载进独立 chunk（约 194KB gzip），与既有 GlobeTopology（525KB gzip）同量级
+- 换算方式切换控件仅在 `custom_available` 时展示（含存在差异的判定），默认自定义锚点
+
+### 验证
+
+- `go test ./src/backend/...`：全部通过（含新 Handler/单元测试与 OpenAPI 契约测试）
+- `bun run lint`：0 警告 0 错误
+- `bun run test`：17 个前端测试通过
+- `bun run build`：tsc + API 契约 --check + vite + chunk 循环检查全部通过
