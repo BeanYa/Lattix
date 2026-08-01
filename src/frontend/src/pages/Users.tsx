@@ -195,8 +195,8 @@ export default function Users() {
       const [nextUsers, nextChains, nextCategories, nextTemplates] = await Promise.all([
         api.users(options),
         api.chains(options),
-        api.subscriptionCategories(),
-        api.subscriptionTemplates(),
+        api.subscriptionCategories(options),
+        api.subscriptionTemplates(options),
       ])
       if (signal?.aborted || request !== loadRequest.current) return
       setUsers(nextUsers)

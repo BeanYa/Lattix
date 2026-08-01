@@ -270,10 +270,10 @@ export const api = {
     requester.post<SubscriptionSnapshotStatus>('/api/user/regenerate-subscription', { user_id: userId }),
   userSubscriptionPreview: (userId: number, format: SubscriptionPreviewFormat) =>
     requester.get<SubscriptionPreview>('/api/user/subscription-preview', { user_id: userId, format }),
-  subscriptionCategories: () =>
-    requester.get<SubscriptionRuleCategory[]>('/api/subscription/categories'),
-  subscriptionTemplates: () =>
-    requester.get<SubscriptionTemplate[]>('/api/subscription/templates'),
+  subscriptionCategories: (options?: RequestOptions) =>
+    requester.get<SubscriptionRuleCategory[]>('/api/subscription/categories', undefined, options),
+  subscriptionTemplates: (options?: RequestOptions) =>
+    requester.get<SubscriptionTemplate[]>('/api/subscription/templates', undefined, options),
   saveSubscriptionTemplate: (body: {
     id?: string
     name: string
