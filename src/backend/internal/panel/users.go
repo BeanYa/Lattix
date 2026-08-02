@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
 	"lattix/shared"
@@ -20,28 +21,30 @@ import (
 
 // userDTO 是用户对象的 API 表示。
 type userDTO struct {
-	ID                   int64                            `json:"id"`
-	Name                 string                           `json:"name"`
-	UUID                 string                           `json:"uuid"`
-	SubToken             string                           `json:"sub_token"`
-	SubURL               string                           `json:"sub_url"`
-	SubLinksURL          string                           `json:"sub_links_url"`
-	NodeIDs              []int64                          `json:"node_ids"`
-	ChainIDs             []int64                          `json:"chain_ids"`
-	ChainAssignments     []userChainAssignmentDTO         `json:"chain_assignments"`
-	Traffic              *trafficDTO                      `json:"traffic"`
-	ExpiresAt            *time.Time                       `json:"expires_at"`
-	Expired              bool                             `json:"expired"`
-	Disabled             bool                             `json:"disabled"`
-	TrafficLimit         int64                            `json:"traffic_limit"`
-	TrafficResetDay      int                              `json:"traffic_reset_day"`
-	SubTitle             string                           `json:"sub_title"`
-	SubAnnouncement      string                           `json:"sub_announcement"`
-	PlanName             string                           `json:"plan_name"`
-	AppURL               string                           `json:"app_url"`
-	Routing              subscriptionProfileDTO           `json:"routing"`
-	SubscriptionSnapshot store.SubscriptionSnapshotStatus `json:"subscription_snapshot"`
-	CreatedAt            time.Time                        `json:"created_at"`
+	ID                    int64                            `json:"id"`
+	Name                  string                           `json:"name"`
+	UUID                  string                           `json:"uuid"`
+	SubToken              string                           `json:"sub_token"`
+	SubURL                string                           `json:"sub_url"`
+	SubLinksURL           string                           `json:"sub_links_url"`
+	NodeIDs               []int64                          `json:"node_ids"`
+	ChainIDs              []int64                          `json:"chain_ids"`
+	ChainAssignments      []userChainAssignmentDTO         `json:"chain_assignments"`
+	ExternalSubscriptions []userExternalSubscriptionDTO    `json:"external_subscriptions"`
+	MergedTraffic         *mergedTrafficDTO                `json:"merged_traffic,omitempty"`
+	Traffic               *trafficDTO                      `json:"traffic"`
+	ExpiresAt             *time.Time                       `json:"expires_at"`
+	Expired               bool                             `json:"expired"`
+	Disabled              bool                             `json:"disabled"`
+	TrafficLimit          int64                            `json:"traffic_limit"`
+	TrafficResetDay       int                              `json:"traffic_reset_day"`
+	SubTitle              string                           `json:"sub_title"`
+	SubAnnouncement       string                           `json:"sub_announcement"`
+	PlanName              string                           `json:"plan_name"`
+	AppURL                string                           `json:"app_url"`
+	Routing               subscriptionProfileDTO           `json:"routing"`
+	SubscriptionSnapshot  store.SubscriptionSnapshotStatus `json:"subscription_snapshot"`
+	CreatedAt             time.Time                        `json:"created_at"`
 }
 
 type userChainAssignmentDTO struct {
@@ -49,6 +52,25 @@ type userChainAssignmentDTO struct {
 	ChainID    int64  `json:"chain_id"`
 	EndpointID int64  `json:"endpoint_id"`
 	AccessUUID string `json:"access_uuid"`
+}
+
+type userExternalSubscriptionDTO struct {
+	SubscriptionID int64  `json:"subscription_id"`
+	Name           string `json:"name"`
+	Mode           string `json:"mode"`
+	Upload         int64  `json:"upload"`
+	Download       int64  `json:"download"`
+	Total          int64  `json:"total"`
+	Expire         *int64 `json:"expire,omitempty"`
+	Remaining      *int64 `json:"remaining"` // total=0（未知额度）时为 null
+	NodeCount      int    `json:"node_count"`
+}
+
+type mergedTrafficDTO struct {
+	Upload   int64  `json:"upload"`
+	Download int64  `json:"download"`
+	Total    int64  `json:"total"`
+	Expire   *int64 `json:"expire,omitempty"`
 }
 
 func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userDTO {
@@ -91,6 +113,42 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 	}
 	if snapshot, err := s.st.SubscriptionSnapshotStatus(r.Context(), u.ID); err == nil {
 		dto.SubscriptionSnapshot = snapshot
+	}
+	attached, err := s.st.ListUserExternalSubscriptions(r.Context(), u.ID)
+	if err == nil && len(attached) > 0 {
+		dto.ExternalSubscriptions = make([]userExternalSubscriptionDTO, 0, len(attached))
+		var panelTraffic store.TrafficTotals
+		if t, err := s.st.UserTraffic(r.Context(), u.UUID); err == nil {
+			panelTraffic = t
+		}
+		var panelExpire *int64
+		if u.ExpiresAt != nil {
+			v := u.ExpiresAt.Unix()
+			panelExpire = &v
+		}
+		for _, sub := range attached {
+			var remaining *int64
+			if sub.Total > 0 {
+				v := sub.Total - sub.Upload - sub.Download
+				if v < 0 {
+					v = 0
+				}
+				remaining = &v
+			}
+			dto.ExternalSubscriptions = append(dto.ExternalSubscriptions, userExternalSubscriptionDTO{
+				SubscriptionID: sub.SubscriptionID, Name: sub.Name, Mode: sub.Mode,
+				Upload: sub.Upload, Download: sub.Download, Total: sub.Total,
+				Expire: sub.Expire, Remaining: remaining, NodeCount: sub.NodeCount,
+			})
+		}
+		merged := extsub.MergeUserTraffic(extsub.Traffic{
+			Upload: panelTraffic.Up, Download: panelTraffic.Down,
+			Total: u.TrafficLimit, Expire: panelExpire,
+		}, attached)
+		dto.MergedTraffic = &mergedTrafficDTO{
+			Upload: merged.Upload, Download: merged.Download,
+			Total: merged.Total, Expire: merged.Expire,
+		}
 	}
 	return dto
 }
@@ -240,11 +298,12 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		NodeIDs   []int64 `json:"node_ids"`   // 可选：预选链路对应的业务节点
 		ChainIDs  []int64 `json:"chain_ids"`
 		// 可选订阅设置（省略保持默认；用户级覆盖全局，§9）。
-		TrafficLimit    int64                     `json:"traffic_limit"`
-		TrafficResetDay int                       `json:"traffic_reset_day"`
-		PlanName        string                    `json:"plan_name"`
-		AppURL          string                    `json:"app_url"`
-		Routing         *subscriptionProfileInput `json:"routing"`
+		TrafficLimit          int64                           `json:"traffic_limit"`
+		TrafficResetDay       int                             `json:"traffic_reset_day"`
+		PlanName              string                          `json:"plan_name"`
+		AppURL                string                          `json:"app_url"`
+		Routing               *subscriptionProfileInput       `json:"routing"`
+		ExternalSubscriptions []userExternalSubscriptionInput `json:"external_subscriptions"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -356,6 +415,22 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.reconcileAssignmentEndpoints(r.Context(), added, nil)
+	}
+	if len(req.ExternalSubscriptions) > 0 {
+		items, err := s.validateExternalSubscriptions(r.Context(), req.ExternalSubscriptions)
+		if err != nil {
+			_ = s.st.DeleteUser(r.Context(), id)
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		for i := range items {
+			items[i].UserID = id
+		}
+		if err := s.st.SetUserExternalSubscriptions(r.Context(), id, items); err != nil {
+			_ = s.st.DeleteUser(r.Context(), id)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	if s.subscriptions != nil {
 		if _, err := s.subscriptions.PublishUser(r.Context(), id, s.panelBase(r)); err != nil {
@@ -589,6 +664,89 @@ func (s *Server) handleSetUserNodes(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"node_ids": req.NodeIDs, "chain_ids": req.ChainIDs})
+}
+
+type userExternalSubscriptionInput struct {
+	SubscriptionID int64  `json:"subscription_id"`
+	Mode           string `json:"mode"`
+}
+
+// validExtSubMode 判断外部订阅引入模式。
+func validExtSubMode(mode string) bool {
+	return mode == store.ExtSubModeStack || mode == store.ExtSubModeMerge || mode == store.ExtSubModeNodes
+}
+
+// validateExternalSubscriptions 校验外部订阅列表（去重、模式、存在性）。
+func (s *Server) validateExternalSubscriptions(ctx context.Context, items []userExternalSubscriptionInput) ([]store.UserExternalSubscription, error) {
+	seen := map[int64]bool{}
+	out := make([]store.UserExternalSubscription, 0, len(items))
+	for _, item := range items {
+		if !validExtSubMode(item.Mode) {
+			return nil, errors.New("mode 必须是 stack/merge/nodes")
+		}
+		if item.SubscriptionID <= 0 || seen[item.SubscriptionID] {
+			return nil, errors.New("外部订阅重复或 id 非法")
+		}
+		seen[item.SubscriptionID] = true
+		if _, err := s.st.ExternalSubscriptionByID(ctx, item.SubscriptionID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, fmt.Errorf("外部订阅 %d 不存在: %w", item.SubscriptionID, store.ErrNotFound)
+			}
+			return nil, err
+		}
+		out = append(out, store.UserExternalSubscription{SubscriptionID: item.SubscriptionID, Mode: item.Mode})
+	}
+	return out, nil
+}
+
+func (s *Server) handleSetUserExternalSubscriptions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID int64                           `json:"user_id"`
+		Items  []userExternalSubscriptionInput `json:"items"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.UserID
+	if id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	if _, err := s.st.UserByID(r.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "用户不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	items, err := s.validateExternalSubscriptions(r.Context(), req.Items)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, store.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		writeError(w, status, err.Error())
+		return
+	}
+	for i := range items {
+		items[i].UserID = id
+	}
+	if err := s.st.SetUserExternalSubscriptions(r.Context(), id, items); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if s.subscriptions != nil {
+		if _, err := s.subscriptions.PublishUser(r.Context(), id, s.panelBase(r)); err != nil {
+			writeError(w, http.StatusInternalServerError, "重新生成订阅失败: "+err.Error())
+			return
+		}
+	}
+	s.audit(r, "user.external_subscriptions_updated", nil, nil, map[string]any{
+		"user_id": id, "items": req.Items,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"items": req.Items})
 }
 
 func (s *Server) reconcileAssignmentEndpoints(ctx context.Context, groups ...[]store.UserChainAssignment) {

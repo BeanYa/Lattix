@@ -320,6 +320,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/user/set-nodes",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
 		s.handleSetUserNodes)
+	s.registerRPC(mux, http.MethodPost, "/api/user/set-external-subscriptions",
+		write, s.handleSetUserExternalSubscriptions)
 	s.registerRPC(mux, http.MethodPost, "/api/user/delete",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
 		s.handleDeleteUser)
