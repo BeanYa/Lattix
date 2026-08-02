@@ -100,12 +100,14 @@ flowchart LR
 
 ```go
 type FileRequestOptions struct {
-    UserAgent         string
-    InsecureSkipVerify bool
+    UserAgent string
 }
 
+func (r ExternalFileRequester) GetWithOptions(ctx context.Context, url string, maxBytes int64, opts FileRequestOptions) (FileFetchResult, error)
 func (r ExternalFileRequester) GetTextWithOptions(ctx context.Context, url string, maxBytes int64, opts FileRequestOptions) (string, error)
 ```
+
+`FileRequestOptions` 仅携带 UserAgent；跳过证书校验由 Service 持有的第二套 `ExternalFileRequester`（InsecureSkipVerify Transport）实现，见「实施修订」。
 
 ### 2. Store（`src/backend/internal/store/external_subscriptions.go`）
 
@@ -145,16 +147,16 @@ func (s *Service) SyncDue(ctx context.Context) error // 供定时任务：扫描
 - 拉取 → `ParseSubscription` → `ReplaceExternalChains` → 回填字段
 - `SyncDue` 单订阅失败不影响其他订阅
 
-### 5. Panel 路由（`src/backend/internal/panel/external_subscriptions.go`）
+### 5. Panel 路由（`src/backend/internal/panel/panel.go`）
 
-- `GET /api/external-subscriptions`（read）
-- `POST /api/external-subscriptions`（write，创建 + 首次同步）
-- `PUT /api/external-subscriptions/{id}`（write，编辑，不同步）
-- `DELETE /api/external-subscriptions/{id}`（write）
-- `POST /api/external-subscriptions/{id}/sync`（write，手动同步）
-- `GET /api/external-subscriptions/{id}/chains`（read，节点列表）
+- `GET /api/external-subscription/list`（read）
+- `POST /api/external-subscription/create`（write，创建 + 首次同步）
+- `POST /api/external-subscription/update`（write，编辑，不同步）
+- `POST /api/external-subscription/delete`（write）
+- `POST /api/external-subscription/sync`（write，手动同步）
+- `GET /api/external-subscription/chains?id=`（read，节点列表；`id` 经 `AllowedQuery` 白名单放行）
 
-均遵循现有 RPC 模式（`registerRPC`、`writeJSON`/`writeError`、audit）。`main.go` 装配 `extsub.Service`，panel 注册定时任务 `extsub.sync.refresh`（每 15 分钟跑 `SyncDue`）。
+均遵循现有 RPC 模式（`registerRPC`、`writeJSON`/`writeError`、audit）。`main.go` 装配 `extsub.Service`，panel 注册定时任务 `external_subscriptions.sync`（每 15 分钟跑 `SyncDue`）。
 
 ### 6. 前端
 
