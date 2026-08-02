@@ -795,6 +795,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/set-external-subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 整表替换用户引入的外部订阅及其模式（叠加 stack / 并入 merge / 附加 nodes）。
+         *     保存后重发布该用户的订阅快照。
+         */
+        post: operations["userSetExternalSubscriptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/delete": {
         parameters: {
             query?: never;
@@ -2477,6 +2497,24 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    userSetExternalSubscriptions: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     userDelete: {
         parameters: {
             query?: never;
@@ -3115,6 +3153,7 @@ export const rpcOperations = {
   userCreate: { method: 'POST', path: '/api/user/create' },
   userUpdate: { method: 'POST', path: '/api/user/update' },
   userSetNodes: { method: 'POST', path: '/api/user/set-nodes' },
+  userSetExternalSubscriptions: { method: 'POST', path: '/api/user/set-external-subscriptions' },
   userDelete: { method: 'POST', path: '/api/user/delete' },
   userSubSettings: { method: 'POST', path: '/api/user/sub-settings' },
   userTrafficHistory: { method: 'GET', path: '/api/user/traffic-history' },

@@ -542,6 +542,8 @@ export interface SubUser {
   app_url: string
   routing: SubscriptionRoutingProfile
   subscription_snapshot: SubscriptionSnapshotStatus
+  external_subscriptions: UserExternalSubscription[]
+  merged_traffic?: MergedTraffic
   created_at: string
 }
 
@@ -943,6 +945,27 @@ export interface IPQualityDNSBlacklist {
   Clean: number
   Marked: number
   Blacklisted: number
+}
+
+export type ExternalSubscriptionMode = 'stack' | 'merge' | 'nodes'
+
+export interface UserExternalSubscription {
+  subscription_id: number
+  name: string
+  mode: ExternalSubscriptionMode
+  upload: number
+  download: number
+  total: number
+  expire?: number | null
+  remaining: number | null
+  node_count: number
+}
+
+export interface MergedTraffic {
+  upload: number
+  download: number
+  total: number
+  expire?: number | null
 }
 
 export interface ExternalSubscription {

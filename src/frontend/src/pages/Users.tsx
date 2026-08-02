@@ -61,6 +61,8 @@ import {
 } from '@/lib/user-subscription'
 import type {
   Chain,
+  ExternalSubscription,
+  ExternalSubscriptionMode,
   SubUser,
   SubscriptionRoutingProfile,
   SubscriptionPreview,
@@ -68,6 +70,35 @@ import type {
   SubscriptionRuleCategory,
   SubscriptionTemplate,
 } from '@/lib/types'
+
+const EXTERNAL_MODE_LABELS: Record<ExternalSubscriptionMode, string> = {
+  stack: '叠加',
+  merge: '并入',
+  nodes: '附加',
+}
+
+function ExternalModeSelect({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: ExternalSubscriptionMode
+  onChange: (mode: ExternalSubscriptionMode) => void
+  disabled?: boolean
+}) {
+  return (
+    <Select value={value} onValueChange={(next) => next && onChange(next as ExternalSubscriptionMode)} disabled={disabled}>
+      <SelectTrigger className="w-24" aria-label="引入模式">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {(Object.keys(EXTERNAL_MODE_LABELS) as ExternalSubscriptionMode[]).map((mode) => (
+          <SelectItem key={mode} value={mode}>{EXTERNAL_MODE_LABELS[mode]}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  )
+}
 
 function TrafficLimitInput({
   value,
@@ -161,6 +192,9 @@ export default function Users() {
   const [assignSelection, setAssignSelection] = useState<number[]>([])
   const [assignSaving, setAssignSaving] = useState(false)
   const [assignError, setAssignError] = useState('')
+  const [extSubs, setExtSubs] = useState<ExternalSubscription[]>([])
+  const [assignExt, setAssignExt] = useState<Record<number, ExternalSubscriptionMode>>({})
+  const [createExt, setCreateExt] = useState<Record<number, ExternalSubscriptionMode>>({})
   const [qrText, setQrText] = useState('')
   const loadRequest = useRef(0)
 
@@ -205,6 +239,11 @@ export default function Users() {
       setChains(nextChains)
       setRuleCategories(nextCategories)
       setTemplates(nextTemplates)
+      try {
+        setExtSubs(await api.externalSubscriptions({ display: 'silent' }))
+      } catch {
+        // 外部订阅列表不可用不阻断用户页
+      }
     } catch (err) {
       if (signal?.aborted || request !== loadRequest.current) return
       setError(errorMessage(err))
@@ -244,6 +283,7 @@ export default function Users() {
       setCreatePlanName('')
       setCreateAppURL('')
       setCreateRouting(defaultSubscriptionRouting)
+      setCreateExt({})
     }
   }
 
@@ -272,6 +312,7 @@ export default function Users() {
           plan_name: planName,
           app_url: appURL,
           routing: createRouting,
+          external_subscriptions: Object.entries(createExt).map(([id, mode]) => ({ subscription_id: Number(id), mode })),
         },
       )
       setCreated(res)
@@ -339,8 +380,11 @@ export default function Users() {
   }
 
   const onOpenAssign = (u: SubUser) => {
-		setAssignTarget(u)
-		setAssignSelection(u.chain_ids)
+    setAssignTarget(u)
+    setAssignSelection(u.chain_ids)
+    setAssignExt(
+      Object.fromEntries(u.external_subscriptions.map((s) => [s.subscription_id, s.mode])),
+    )
     setAssignError('')
   }
 
@@ -356,6 +400,10 @@ export default function Users() {
     setAssignSaving(true)
     try {
 			await api.setUserAssignments(assignTarget.id, assignTarget.node_ids, assignSelection)
+      await api.setUserExternalSubscriptions(
+        assignTarget.id,
+        Object.entries(assignExt).map(([id, mode]) => ({ subscription_id: Number(id), mode })),
+      )
       setAssignTarget(null)
       load()
     } catch (err) {
@@ -737,6 +785,52 @@ export default function Users() {
                 categories={ruleCategories}
                 templates={templates}
               />
+              <div className="space-y-2 border-t pt-3">
+                <Label>外部订阅（叠加 = 额度相加，并入 = 已用计入面板配额，附加 = 仅节点）</Label>
+                {extSubs.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">暂无外部订阅，请先在「外部订阅」页添加。</p>
+                ) : (
+                  extSubs.map((sub) => {
+                    const checked = createExt[sub.id] !== undefined
+                    return (
+                      <label
+                        key={sub.id}
+                        className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          className="size-4 accent-primary"
+                          checked={checked}
+                          onChange={(e) => {
+                            setCreateExt((cur) => {
+                              const next = { ...cur }
+                              if (e.target.checked) {
+                                next[sub.id] = 'stack'
+                              } else {
+                                delete next[sub.id]
+                              }
+                              return next
+                            })
+                          }}
+                        />
+                        <span>{sub.name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {sub.total > 0
+                            ? `${humanizeBytes(sub.total)} / 已用 ${humanizeBytes(sub.upload + sub.download)}`
+                            : '额度未知'}
+                        </span>
+                        <span className="ml-auto">
+                          <ExternalModeSelect
+                            value={checked ? createExt[sub.id] : 'stack'}
+                            disabled={!checked}
+                            onChange={(mode) => setCreateExt((cur) => ({ ...cur, [sub.id]: mode }))}
+                          />
+                        </span>
+                      </label>
+                    )
+                  })
+                )}
+              </div>
               {createError && <p className="text-sm text-destructive">{createError}</p>}
               <DialogFooter>
                 <Button type="submit" disabled={creating || !name.trim()}>
@@ -812,6 +906,99 @@ export default function Users() {
               ))
             )}
           </div>
+          <div className="space-y-2 border-t pt-3">
+            <Label>外部订阅（叠加 = 额度相加，并入 = 已用计入面板配额，附加 = 仅节点）</Label>
+            {extSubs.length === 0 ? (
+              <p className="text-sm text-muted-foreground">暂无外部订阅，请先在「外部订阅」页添加。</p>
+            ) : (
+              extSubs.map((sub) => {
+                const checked = assignExt[sub.id] !== undefined
+                return (
+                  <label
+                    key={sub.id}
+                    className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-primary"
+                      checked={checked}
+                      onChange={(e) => {
+                        setAssignExt((cur) => {
+                          const next = { ...cur }
+                          if (e.target.checked) {
+                            next[sub.id] = 'stack'
+                          } else {
+                            delete next[sub.id]
+                          }
+                          return next
+                        })
+                      }}
+                    />
+                    <span>{sub.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {sub.total > 0
+                        ? `${humanizeBytes(sub.total)} / 已用 ${humanizeBytes(sub.upload + sub.download)}`
+                        : '额度未知'}
+                    </span>
+                    <span className="ml-auto">
+                      <ExternalModeSelect
+                        value={checked ? assignExt[sub.id] : 'stack'}
+                        disabled={!checked}
+                        onChange={(mode) => setAssignExt((cur) => ({ ...cur, [sub.id]: mode }))}
+                      />
+                    </span>
+                  </label>
+                )
+              })
+            )}
+          </div>
+          {assignTarget && assignTarget.external_subscriptions.length > 0 ? (
+            <div className="space-y-2 border-t pt-3">
+              <Label>外部订阅统计</Label>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>名称</TableHead>
+                    <TableHead>模式</TableHead>
+                    <TableHead>额度</TableHead>
+                    <TableHead>已用</TableHead>
+                    <TableHead>剩余</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {assignTarget.external_subscriptions.map((s) => (
+                    <TableRow key={s.subscription_id}>
+                      <TableCell className="text-xs">{s.name}</TableCell>
+                      <TableCell className="text-xs">{EXTERNAL_MODE_LABELS[s.mode]}</TableCell>
+                      <TableCell className="text-xs">
+                        {s.total > 0 ? humanizeBytes(s.total) : '未知'}
+                      </TableCell>
+                      <TableCell className="text-xs">{humanizeBytes(s.upload + s.download)}</TableCell>
+                      <TableCell className="text-xs">
+                        {s.remaining === null ? '未知' : humanizeBytes(s.remaining)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {assignTarget.merged_traffic ? (
+                    <TableRow>
+                      <TableCell className="text-xs font-medium" colSpan={2}>合并后（含面板）</TableCell>
+                      <TableCell className="text-xs">
+                        {assignTarget.merged_traffic.total > 0 ? humanizeBytes(assignTarget.merged_traffic.total) : '不限'}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {humanizeBytes(assignTarget.merged_traffic.upload + assignTarget.merged_traffic.download)}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {assignTarget.merged_traffic.total > 0
+                          ? humanizeBytes(Math.max(0, assignTarget.merged_traffic.total - assignTarget.merged_traffic.upload - assignTarget.merged_traffic.download))
+                          : '—'}
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </TableBody>
+              </Table>
+            </div>
+          ) : null}
           {assignError && <p className="text-sm text-destructive">{assignError}</p>}
           <DialogFooter>
             <Button onClick={onSaveAssign} disabled={assignSaving}>
