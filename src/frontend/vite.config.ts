@@ -18,9 +18,15 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': apiProxyTarget,
+      // The backend validates Origin against Host. Preserve the browser-facing
+      // host during development so login has the same semantics as production.
+      '/api': {
+        target: apiProxyTarget,
+        changeOrigin: false,
+      },
       '/sub': {
         target: apiProxyTarget,
+        changeOrigin: false,
         bypass(request) {
           const url = new URL(request.url ?? '/', 'http://vite.local')
           const acceptsHTML = request.headers.accept?.includes('text/html')

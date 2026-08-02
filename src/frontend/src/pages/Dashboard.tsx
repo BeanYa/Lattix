@@ -6,7 +6,7 @@ import {
   WifiIcon,
 } from 'lucide-react'
 
-import { Notice } from '@/components/PagePrimitives'
+import { Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { api, errorMessage } from '@/lib/api'
 import type { Chain, DashboardStats, Server } from '@/lib/types'
@@ -84,28 +84,24 @@ export default function Dashboard() {
       value: stats.servers,
       desc: `在线 ${stats.servers_online} 台`,
       icon: ServerIcon,
-      tone: 'bg-[var(--pastel-blue)]',
     },
     {
       title: '在线节点',
       value: stats.servers_online,
       desc: `共 ${stats.servers} 台`,
       icon: WifiIcon,
-      tone: 'bg-[var(--pastel-mint)]',
     },
     {
       title: '链路',
       value: stats.links,
       desc: `正常 ${stats.links_active} 条${stats.links_degraded ? ` / 降级 ${stats.links_degraded} 条` : ''}`,
       icon: RouteIcon,
-      tone: 'bg-[var(--pastel-yellow)]',
     },
     {
       title: '订阅用户',
       value: stats.users,
       desc: '当前用户总数',
       icon: UsersIcon,
-      tone: 'bg-[var(--pastel-coral)]',
     },
   ]
 
@@ -116,48 +112,52 @@ export default function Dashboard() {
   }).format(new Date())
 
   return (
-    <div className="space-y-5 font-pixel [font-synthesis:none]">
-      <header className="flex flex-col gap-3 border-b pb-5 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="mb-1 text-sm font-medium text-muted-foreground">Lattix 控制中心</p>
-          <h1 className="text-2xl font-extrabold">仪表盘</h1>
-        </div>
-        <div className="flex items-center gap-2 text-sm">
-          <span className="rounded-full bg-secondary px-3 py-1.5 font-medium text-secondary-foreground">{today}</span>
-          <span className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1.5 font-medium">
-            <span className="size-2 rounded-full bg-success" />
-            已同步
-          </span>
-        </div>
-      </header>
+    <Page>
+      <PageHeader
+        title="仪表盘"
+        description="服务器、链路与订阅用户的实时运行状态。"
+        actions={(
+          <div className="flex items-center gap-2 text-xs">
+            <span className="rounded-sm border bg-card/70 px-2.5 py-1.5 text-muted-foreground">{today}</span>
+            <span className="inline-flex items-center gap-2 rounded-sm border bg-card/70 px-2.5 py-1.5 font-medium">
+              <span className="size-1.5 rounded-full bg-success shadow-[0_0_8px_var(--success)]" />
+              已同步
+            </span>
+          </div>
+        )}
+      />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map((card) => (
-          <Card key={card.title} className={`status-tile ${card.tone}`}>
-            <CardHeader className="gap-3">
+          <Card key={card.title} className="status-tile relative gap-0 py-0">
+            <span className="absolute inset-y-4 left-0 w-px bg-primary/70 shadow-[0_0_10px_var(--primary)]" />
+            <CardHeader className="gap-3 px-4 py-4">
               <div className="flex items-center justify-between gap-3">
-                <CardDescription className="font-semibold text-foreground">{card.title}</CardDescription>
-                <span className="grid size-9 place-items-center rounded-lg border bg-card/70">
-                  <card.icon className="size-5" strokeWidth={1.8} />
+                <CardDescription className="text-xs font-medium">{card.title}</CardDescription>
+                <span className="grid size-8 place-items-center rounded-sm border border-primary/15 bg-primary/5 text-primary">
+                  <card.icon className="size-4" strokeWidth={1.7} />
                 </span>
               </div>
-              <CardTitle className="text-4xl font-extrabold tabular-nums">
+              <CardTitle className="text-3xl font-semibold tabular-nums">
                 {String(card.value).padStart(2, '0')}
               </CardTitle>
-              <CardDescription className="text-foreground/60">{card.desc}</CardDescription>
+              <CardDescription className="text-xs">{card.desc}</CardDescription>
             </CardHeader>
           </Card>
         ))}
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <section className="game-panel overflow-hidden">
-          <div className="flex items-center justify-between border-b bg-[var(--pastel-blue)] px-5 py-4">
+          <div className="flex items-center justify-between border-b bg-card/60 px-4 py-3.5">
             <div>
-              <h2 className="font-extrabold">链路拓扑</h2>
-              <p className="mt-1 text-xs text-muted-foreground">服务器地理位置与链路状态</p>
+              <h2 className="text-sm font-semibold">链路拓扑</h2>
+              <p className="mt-1 text-[11px] text-muted-foreground">服务器地理位置与链路状态</p>
             </div>
-            <span className="rounded-full border bg-card/80 px-3 py-1.5 text-xs font-semibold">5 秒刷新</span>
+            <span className="inline-flex items-center gap-2 rounded-sm border bg-muted/50 px-2.5 py-1.5 text-[10px] text-muted-foreground">
+              <span className="size-1.5 rounded-full bg-primary" />
+              5 秒刷新
+            </span>
           </div>
           <Suspense
             fallback={(
@@ -174,27 +174,43 @@ export default function Dashboard() {
           </Suspense>
         </section>
 
-        <div className="grid content-start gap-5">
-          <section className="game-panel p-5">
-            <h2 className="font-extrabold">运行概况</h2>
-            <div className="mt-4 grid gap-3">
+        <div className="grid content-start gap-4">
+          <section className="game-panel overflow-hidden">
+            <div className="border-b px-4 py-3.5">
+              <h2 className="text-sm font-semibold">运行概况</h2>
+              <p className="mt-1 text-[11px] text-muted-foreground">核心资源当前状态</p>
+            </div>
+            <div className="divide-y divide-border">
               {[
-                { label: '活跃链路', value: stats.links_active, icon: RouteIcon, color: 'bg-[var(--pastel-yellow)]' },
-                { label: '在线节点', value: stats.servers_online, icon: WifiIcon, color: 'bg-[var(--pastel-mint)]' },
-                { label: '订阅用户', value: stats.users, icon: UsersIcon, color: 'bg-[var(--pastel-coral)]' },
+                { label: '活跃链路', value: stats.links_active, detail: `${stats.links} 条总计`, icon: RouteIcon },
+                { label: '在线节点', value: stats.servers_online, detail: `${stats.servers} 台总计`, icon: WifiIcon },
+                { label: '订阅用户', value: stats.users, detail: '已配置账户', icon: UsersIcon },
               ].map((item) => (
-                <div key={item.label} className="flex items-center gap-3 rounded-lg border bg-card p-3">
-                  <span className={`grid size-10 place-items-center rounded-lg border ${item.color}`}>
-                    <item.icon className="size-5" />
+                <div key={item.label} className="grid grid-cols-[34px_minmax(0,1fr)_auto] items-center gap-3 px-4 py-4 transition-colors hover:bg-primary/[0.035]">
+                  <span className="grid size-8 place-items-center rounded-sm border border-primary/15 bg-primary/5 text-primary">
+                    <item.icon className="size-4" strokeWidth={1.7} />
                   </span>
-                  <span className="min-w-0 flex-1 font-medium">{item.label}</span>
-                  <strong className="text-xl tabular-nums">{item.value}</strong>
+                  <span className="min-w-0">
+                    <strong className="block text-xs font-medium">{item.label}</strong>
+                    <small className="mt-1 block text-[10px] text-muted-foreground">{item.detail}</small>
+                  </span>
+                  <strong className="text-lg font-semibold tabular-nums">{item.value}</strong>
                 </div>
               ))}
             </div>
           </section>
+
+          {stats.links_degraded > 0 ? (
+            <Notice tone="warning" title="链路降级">
+              {stats.links_degraded} 条链路需要检查
+            </Notice>
+          ) : (
+            <Notice tone="success" title="网络状态">
+              当前没有降级链路
+            </Notice>
+          )}
         </div>
       </div>
-    </div>
+    </Page>
   )
 }

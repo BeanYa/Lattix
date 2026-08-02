@@ -784,7 +784,7 @@ export default function Servers() {
                 ] as const).map(([value, label]) => (
                   <label
                     key={value}
-                    className={`flex h-9 cursor-pointer items-center justify-center rounded-md border-2 text-sm transition-colors focus-within:ring-3 focus-within:ring-ring/50 ${
+                    className={`flex h-9 cursor-pointer items-center justify-center rounded-md border text-sm transition-colors focus-within:ring-2 focus-within:ring-ring/40 ${
                       machineType === value
                         ? 'border-primary bg-primary text-primary-foreground'
                         : 'border-input bg-card text-foreground hover:bg-accent hover:text-accent-foreground'

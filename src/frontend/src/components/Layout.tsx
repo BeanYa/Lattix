@@ -60,11 +60,11 @@ function PanelStateIndicator({ snapshot, compact = false }: {
       role="status"
       title={title}
       className={cn(
-        'flex items-center gap-2 font-heading text-xs text-sidebar-foreground/70 [font-synthesis:none]',
-        compact && 'flex-col gap-1 text-[10px]',
+        'flex min-w-0 items-center gap-2 text-xs text-sidebar-foreground/65',
+        compact && 'justify-center text-[10px]',
       )}
     >
-      <span className={cn('size-2 shrink-0 rounded-full', presentation.dot, snapshot?.state === 'updating' && 'animate-pulse')} />
+      <span className={cn('relative size-2 shrink-0 rounded-full shadow-[0_0_10px_currentColor]', presentation.dot, snapshot?.state === 'updating' && 'animate-pulse')} />
       <span className="truncate">{presentation.label}</span>
     </div>
   )
@@ -112,7 +112,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-[100dvh] flex-col bg-background md:flex-row">
+    <div className="panel-canvas flex min-h-[100dvh] flex-col md:flex-row">
       {foregroundPendingCount > 0 ? (
         <div
           role="status"
@@ -120,10 +120,10 @@ export default function Layout({ children }: { children: ReactNode }) {
           className="fixed inset-x-0 top-0 z-50 h-1 animate-pulse bg-primary"
         />
       ) : null}
-      <header className="flex h-16 shrink-0 items-center justify-between border-b border-sidebar-border bg-sidebar px-4 text-sidebar-foreground md:hidden">
-        <span className="flex items-center gap-3 font-heading font-normal tracking-normal">
-          <LattixMark className="size-9 shrink-0" />
-          <span aria-label="Lattix">LATTIX</span>
+      <header className="panel-sidebar flex h-15 shrink-0 items-center justify-between border-b border-sidebar-border px-4 text-sidebar-foreground md:hidden">
+        <span className="flex items-center gap-3 font-semibold">
+          <LattixMark className="size-8 shrink-0" />
+          <span className="text-sm" aria-label="Lattix">LATTIX</span>
         </span>
         <div className="flex items-center gap-1">
           <PanelStateIndicator snapshot={panelState} />
@@ -132,12 +132,12 @@ export default function Layout({ children }: { children: ReactNode }) {
             <SheetTrigger render={<Button variant="ghost" size="icon" aria-label="打开导航菜单" />}>
               <MenuIcon />
             </SheetTrigger>
-            <SheetContent side="left" className="w-72 bg-sidebar p-0 text-sidebar-foreground" showCloseButton={false}>
-              <SheetTitle className="flex items-center gap-3 border-b border-sidebar-border px-5 py-4 text-lg font-normal tracking-normal text-sidebar-foreground">
-                <LattixMark className="size-9 shrink-0" />
+            <SheetContent side="left" className="panel-sidebar w-72 bg-sidebar p-0 text-sidebar-foreground" showCloseButton={false}>
+              <SheetTitle className="flex items-center gap-3 border-b border-sidebar-border px-5 py-4 text-base font-semibold text-sidebar-foreground">
+                <LattixMark className="size-8 shrink-0" />
                 <span aria-label="Lattix">LATTIX</span>
               </SheetTitle>
-              <nav className="flex-1 space-y-1 p-3">
+              <nav className="flex-1 space-y-1 p-3" aria-label="主导航">
                 {navItems.map((item) => {
                   const isActive = item.end ? location === item.to : location.startsWith(item.activePrefix)
                   return (
@@ -145,25 +145,29 @@ export default function Layout({ children }: { children: ReactNode }) {
                       key={item.to}
                       href={item.to}
                       onClick={() => setMobileNavOpen(false)}
+                      aria-current={isActive ? 'page' : undefined}
                       className={cn(
-                        'flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-sm text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                        isActive && 'border-sidebar-foreground/25 bg-sidebar-accent font-semibold text-sidebar-accent-foreground',
+                        'panel-nav-item flex items-center gap-3 rounded-md border border-transparent px-3 py-2.5 text-sm text-sidebar-foreground/60 transition-[color,background-color,border-color,transform] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:translate-y-px',
+                        isActive && 'border-sidebar-foreground/10 bg-sidebar-accent font-semibold text-sidebar-accent-foreground',
                       )}
                     >
-                      <item.icon className="size-4" />
+                      <item.icon className="size-4" strokeWidth={1.8} />
                       {item.label}
                     </Link>
                   )
                 })}
               </nav>
-              <div className="flex items-center justify-between gap-2 border-t border-sidebar-border p-3">
-                <span className="truncate text-sm" title={username ?? ''}>{username}</span>
+              <div className="grid gap-3 border-t border-sidebar-border p-3">
+                <div className="flex items-center justify-between gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/50 px-3 py-2">
+                  <span className="truncate text-sm" title={username ?? ''}>{username}</span>
+                  <PanelStateIndicator snapshot={panelState} />
+                </div>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={onLogout}
                   disabled={loggingOut}
-                  className="text-sidebar-foreground hover:bg-sidebar-accent"
+                  className="w-full text-sidebar-foreground/70 hover:bg-sidebar-accent"
                 >
                   <LogOutIcon />
                   {loggingOut ? '登出中…' : '登出'}
@@ -173,60 +177,71 @@ export default function Layout({ children }: { children: ReactNode }) {
           </Sheet>
         </div>
       </header>
-      <aside className="hidden w-24 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
-        <div className="flex h-20 items-center justify-center border-b border-sidebar-border">
-          <LattixMark className="size-11" />
+      <aside className="panel-sidebar hidden w-[216px] shrink-0 flex-col border-r border-sidebar-border text-sidebar-foreground md:flex">
+        <div className="flex h-[74px] items-center gap-3 border-b border-sidebar-border px-5">
+          <LattixMark className="size-9 shrink-0" />
+          <div className="min-w-0">
+            <strong className="block text-sm font-semibold" aria-label="Lattix">LATTIX</strong>
+            <span className="block text-[10px] text-sidebar-foreground/40">NETWORK CONTROL</span>
+          </div>
         </div>
-        <nav className="flex-1 space-y-2 px-2 py-4">
+        <nav className="flex-1 space-y-1 px-3 py-4" aria-label="主导航">
+          <div className="panel-section-label mb-2 px-3">控制面板</div>
           {navItems.map((item) => {
             const isActive = item.end ? location === item.to : location.startsWith(item.activePrefix)
             return (
               <Link
                 key={item.to}
                 href={item.to}
+                aria-current={isActive ? 'page' : undefined}
                 className={cn(
-                  'relative flex flex-col items-center gap-1.5 rounded-lg border border-transparent px-2 py-2.5 text-xs text-sidebar-foreground/65 transition-[color,background-color,transform] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:translate-y-px',
-                  isActive && 'border-sidebar-foreground/20 bg-sidebar-accent font-semibold text-sidebar-accent-foreground before:absolute before:-left-2 before:top-2 before:bottom-2 before:w-1 before:rounded-r-full before:bg-sidebar-primary',
+                  'panel-nav-item flex h-10 items-center gap-3 rounded-md border border-transparent px-3 text-xs text-sidebar-foreground/58 transition-[color,background-color,border-color,transform] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:translate-y-px',
+                  isActive && 'border-sidebar-foreground/10 bg-sidebar-accent font-semibold text-sidebar-accent-foreground',
                 )}
               >
-                <item.icon className="size-5" strokeWidth={1.8} />
-                {item.label}
+                <item.icon className="size-4 shrink-0" strokeWidth={1.8} />
+                <span className="truncate">{item.label}</span>
               </Link>
             )
           })}
         </nav>
-        <div className="border-t border-sidebar-border py-3">
-          <PanelStateIndicator snapshot={panelState} compact />
+        <div className="border-t border-sidebar-border px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[10px] text-sidebar-foreground/40">PANEL STATUS</span>
+            <PanelStateIndicator snapshot={panelState} compact />
+          </div>
         </div>
-        <div className="border-t border-sidebar-border p-2">
-          <ThemeToggle className="mb-2 w-full text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
-          <div className="mb-2 grid place-items-center">
-            <span className="grid size-9 place-items-center rounded-full bg-sidebar-primary text-xs font-bold text-sidebar-primary-foreground">
+        <div className="border-t border-sidebar-border p-3">
+          <div className="flex items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/40 p-2">
+            <span className="grid size-8 shrink-0 place-items-center rounded-sm bg-sidebar-primary text-xs font-bold text-sidebar-primary-foreground">
               {(username ?? 'A').slice(0, 1).toUpperCase()}
             </span>
+            <span className="min-w-0 flex-1 truncate text-xs" title={username ?? ''}>{username}</span>
+            <ThemeToggle className="size-8 text-sidebar-foreground/55 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-sidebar-foreground/55 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+              onClick={onLogout}
+              disabled={loggingOut}
+              aria-label={`${username ?? ''} 登出`}
+              title="登出"
+            >
+              <LogOutIcon />
+            </Button>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="w-full text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            onClick={onLogout}
-            disabled={loggingOut}
-            aria-label={`${username ?? ''} 登出`}
-          >
-            <LogOutIcon />
-          </Button>
         </div>
       </aside>
-      <main className="min-w-0 flex-1 overflow-auto p-4 md:p-6 lg:p-8">
+      <main className="min-w-0 flex-1 overflow-auto p-4 md:p-5 lg:p-6">
         {logoutError ? (
           <div
             role="alert"
-            className="mx-auto mb-4 w-full max-w-[1480px] rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            className="mx-auto mb-4 w-full max-w-[1540px] rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
           >
             登出失败：{logoutError}
           </div>
         ) : null}
-        <div className="page-enter mx-auto w-full max-w-[1480px]">
+        <div className="page-enter mx-auto w-full max-w-[1540px]">
           {children}
         </div>
       </main>
