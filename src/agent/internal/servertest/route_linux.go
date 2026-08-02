@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func traceUDPErrorQueue(ctx context.Context, destination netip.Addr, maxHops, probesPerHop int, probeTimeout time.Duration) ([]map[string]any, bool, error) {
+func traceUDPErrorQueue(ctx context.Context, destination netip.Addr, maxHops, probesPerHop int, probeTimeout time.Duration, maxSilentHops int) ([]map[string]any, bool, error) {
 	destination = destination.Unmap()
 	family, protocol, recvErrOption := unix.AF_INET, unix.IPPROTO_IP, unix.IP_RECVERR
 	if destination.Is6() {
@@ -38,9 +38,10 @@ func traceUDPErrorQueue(ctx context.Context, destination netip.Addr, maxHops, pr
 		return nil, false, fmt.Errorf("connect UDP traceroute socket: %w", err)
 	}
 	var hops []map[string]any
+	silent := 0
 	for ttl := 1; ttl <= maxHops; ttl++ {
 		if err := ctx.Err(); err != nil {
-			return hops, false, err
+			return hops, false, classifyCtxError(err)
 		}
 		if destination.Is4() {
 			err = unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_TTL, ttl)
@@ -64,7 +65,7 @@ func traceUDPErrorQueue(ctx context.Context, destination netip.Addr, maxHops, pr
 			}
 			offender, terminal, ok, err := waitUDPError(ctx, fd, destination.Is6(), probeTimeout)
 			if err != nil {
-				return hops, false, err
+				return appendHop(hops, hop, address, rtts, timeouts), false, classifyCtxError(err)
 			}
 			if !ok {
 				timeouts++
@@ -76,19 +77,41 @@ func traceUDPErrorQueue(ctx context.Context, destination netip.Addr, maxHops, pr
 			rtts = append(rtts, float64(time.Since(started).Microseconds())/1000)
 			reached = reached || terminal
 		}
-		if address != "" {
-			hop["address"] = address
+		if timeouts == probesPerHop {
+			silent++
+		} else {
+			silent = 0
 		}
-		hop["timeouts"] = timeouts
-		if len(rtts) > 0 {
-			hop["rtt_ms"] = rtts
-		}
-		hops = append(hops, hop)
+		hops = appendHop(hops, hop, address, rtts, timeouts)
 		if reached {
 			return hops, true, nil
 		}
+		if silent >= maxSilentHops {
+			return hops, false, errRouteSilentLimit
+		}
 	}
 	return hops, false, nil
+}
+
+func appendHop(hops []map[string]any, hop map[string]any, address string, rtts []float64, timeouts int) []map[string]any {
+	if address != "" {
+		hop["address"] = address
+	}
+	hop["timeouts"] = timeouts
+	if len(rtts) > 0 {
+		hop["rtt_ms"] = rtts
+	}
+	return append(hops, hop)
+}
+
+// classifyCtxError maps a probe context timeout to the incomplete-report
+// sentinel so a deadline mid-trace keeps the collected hops; other context
+// outcomes (e.g. task cancellation) pass through as probe failures.
+func classifyCtxError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return errRouteProbeDeadline
+	}
+	return err
 }
 
 func waitUDPError(ctx context.Context, fd int, ipv6 bool, timeout time.Duration) (netip.Addr, bool, bool, error) {

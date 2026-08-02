@@ -2,13 +2,33 @@ package servertest
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"lattix/shared"
 )
 
-const routeTimeout = 120 * time.Second
+const (
+	// routeTimeout bounds the whole route category; with targetConcurrency
+	// workers and a per-target budget of routeTargetTimeout, all targets of a
+	// full province x carrier catalog still fit well within it.
+	routeTimeout       = 1200 * time.Second
+	routeTargetTimeout = 120 * time.Second
+	routeMaxHops       = 30
+	routeProbesPerHop  = 3
+	routeProbeTimeout  = 2 * time.Second
+	routeMaxSilentHops = 5
+)
+
+var (
+	errRouteSilentLimit   = fmt.Errorf("stopped after %d consecutive silent hops", routeMaxSilentHops)
+	errRouteProbeDeadline = errors.New("route probe deadline exceeded")
+)
+
+// traceRoute is the platform traceroute probe seam; tests replace it.
+var traceRoute = traceUDPErrorQueue
 
 type routeTargetResult struct {
 	ID            string           `json:"id"`
@@ -108,21 +128,26 @@ sendRouteJobs:
 	}
 }
 
-func runRouteTarget(ctx context.Context, target shared.ServerTestTarget) routeTargetResult {
+func runRouteTarget(parent context.Context, target shared.ServerTestTarget) routeTargetResult {
 	result := routeTargetResult{
 		ID: target.ID, Label: target.Label, Carrier: target.Carrier, Province: target.Province,
 		AddressFamily: string(target.AddressFamily), ProbeMethod: "udp_error_queue", Degraded: true,
 	}
-	address, err := resolvePublicTarget(ctx, target)
+	address, err := resolvePublicTarget(parent, target)
 	if err != nil {
 		result.ErrorCode, result.ErrorMessage = "target_policy_rejected", err.Error()
 		return result
 	}
-	hops, reached, err := traceUDPErrorQueue(ctx, address, 30, 3, 2*time.Second)
+	ctx, cancel := context.WithTimeout(parent, routeTargetTimeout)
+	defer cancel()
+	hops, reached, err := traceRoute(ctx, address, routeMaxHops, routeProbesPerHop, routeProbeTimeout, routeMaxSilentHops)
 	result.Hops, result.Reached = hops, reached
-	if err != nil {
+	switch {
+	case errors.Is(err, errRouteSilentLimit), errors.Is(err, errRouteProbeDeadline):
+		result.ErrorCode, result.ErrorMessage = "route_incomplete", err.Error()
+	case err != nil:
 		result.ErrorCode, result.ErrorMessage = "route_probe_failed", err.Error()
-	} else if !reached {
+	case !reached:
 		result.ErrorCode, result.ErrorMessage = "route_incomplete", "destination was not reached within 30 hops"
 	}
 	return result
