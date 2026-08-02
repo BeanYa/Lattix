@@ -246,6 +246,7 @@ type ServerTestEnvironment struct {
 	Sandbox        string `json:"sandbox"`
 	SandboxReason  string `json:"sandbox_reason,omitempty"`
 	Privileges     string `json:"privileges"`
+	IPv6Available  *bool  `json:"ipv6_available,omitempty"`
 }
 
 type ServerTestCategoryResult struct {

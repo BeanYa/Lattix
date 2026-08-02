@@ -27,6 +27,7 @@ import { Progress } from '@/components/ui/progress'
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { isIpv6Category, ipv6Unavailable, withoutIpv6Categories } from '@/lib/server-test-ipv6'
 import type {
   IPQualityFactor,
   IPQualityFamily,
@@ -305,6 +306,8 @@ function ReportCategory({ category }: { category: ServerTestCategoryResult }) {
 }
 
 function TestReport({ report, timezone }: { report: ServerTestReport; timezone?: string }) {
+  const ipv6Off = ipv6Unavailable(report.environment)
+  const visibleCategories = ipv6Off ? withoutIpv6Categories(report.categories) : report.categories
   return (
     <div className="min-w-0 space-y-4">
       <div className="grid gap-3 border-y py-3 text-xs sm:grid-cols-4">
@@ -314,8 +317,9 @@ function TestReport({ report, timezone }: { report: ServerTestReport; timezone?:
         <div><span className="block text-muted-foreground">权限 / 沙箱</span><span className="mt-1 block">{report.environment.privileges} · {report.environment.sandbox}</span></div>
       </div>
       {report.environment.degraded || report.environment.sandbox_reason ? <div className="flex items-start gap-2 bg-warning/10 px-3 py-2 text-xs text-warning"><AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" /><span>{report.environment.degraded_reason || report.environment.sandbox_reason}</span></div> : null}
+      {ipv6Off ? <div className="flex items-start gap-2 bg-muted/40 px-3 py-2 text-xs text-muted-foreground"><WifiIcon className="mt-0.5 size-3.5 shrink-0" /><span>IPv6 不可用，IPv6 相关章节已隐藏</span></div> : null}
       <ErrorNotice code={report.error_code} message={report.error_message} />
-      <div>{report.categories.map((category) => <ReportCategory key={category.category} category={category} />)}</div>
+      <div>{visibleCategories.map((category) => <ReportCategory key={category.category} category={category} />)}</div>
     </div>
   )
 }
@@ -334,6 +338,9 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
   const [submitting, setSubmitting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
+  const ipv6Off = ipv6Unavailable(task?.result?.environment)
+  const progressRows = task?.progress?.categories ?? task?.categories.map((category) => ({ category, status: 'pending', completed: 0, total: 1, message: '' })) ?? []
+  const visibleProgressRows = ipv6Off ? withoutIpv6Categories(progressRows) : progressRows
 
   const loadTask = useCallback(async () => {
     const latest = await api.serverTest(server.id, { display: 'silent' })
@@ -371,7 +378,8 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
   }, [task])
 
   const openSelection = () => {
-    setSelected(server.machine_type === 'nat' ? ['ip_quality'] : directDefaults)
+    const base = server.machine_type === 'nat' ? (['ip_quality'] as ServerTestCategory[]) : directDefaults
+    setSelected(ipv6Off ? base.filter((category) => !isIpv6Category(category)) : base)
     setError('')
     setSelectionOpen(true)
     setCatalogLoading(true)
@@ -386,7 +394,7 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
       setSelected((current) => current.filter((item) => item !== category))
       return
     }
-    if ((server.machine_type === 'nat' && category !== 'ip_quality') || category === 'speed') {
+    if ((server.machine_type === 'nat' && category !== 'ip_quality') || category === 'speed' || (ipv6Off && isIpv6Category(category))) {
       setPendingCategory(category)
       setWarningOpen(true)
       return
@@ -455,7 +463,15 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
             {(Object.keys(groupMeta) as Array<keyof typeof groupMeta>).map((group) => {
               const meta = groupMeta[group]
               const Icon = meta.icon
-              return <fieldset key={group} className="border-t pt-3 first:border-0 first:pt-0"><legend className="mb-2 flex items-center gap-2 text-xs font-medium"><Icon className="size-3.5" />{meta.label}</legend><div className="grid gap-2 sm:grid-cols-2">{categoryOptions.filter((option) => option.group === group).map((option) => <label key={option.category} className={cn('flex cursor-pointer items-start gap-3 border px-3 py-2.5 transition-colors hover:bg-muted/40', selected.includes(option.category) && 'border-primary/40 bg-primary/[0.04]')}><input type="checkbox" className="mt-0.5 size-4 accent-primary" checked={selected.includes(option.category)} onChange={(event) => toggleCategory(option.category, event.target.checked)} /><span className="min-w-0"><span className="block text-sm font-medium">{option.label}</span><span className="mt-0.5 block text-xs text-muted-foreground">{option.description}</span></span></label>)}</div></fieldset>
+              return <fieldset key={group} className="border-t pt-3 first:border-0 first:pt-0"><legend className="mb-2 flex items-center gap-2 text-xs font-medium"><Icon className="size-3.5" />{meta.label}</legend><div className="grid gap-2 sm:grid-cols-2">{categoryOptions.filter((option) => option.group === group).map((option) => {
+  const greyed = ipv6Off && isIpv6Category(option.category)
+  return (
+    <label key={option.category} className={cn('flex cursor-pointer items-start gap-3 border px-3 py-2.5 transition-colors hover:bg-muted/40', selected.includes(option.category) && 'border-primary/40 bg-primary/[0.04]', greyed && 'opacity-60')}>
+      <input type="checkbox" className="mt-0.5 size-4 accent-primary" checked={selected.includes(option.category)} onChange={(event) => toggleCategory(option.category, event.target.checked)} />
+      <span className="min-w-0"><span className="block text-sm font-medium">{option.label}</span><span className="mt-0.5 block text-xs text-muted-foreground">{option.description}</span></span>
+    </label>
+  )
+})}</div></fieldset>
             })}
             <div className={cn('flex items-start gap-2 border px-3 py-2 text-xs', catalog?.available ? 'border-success/30 bg-success/5' : 'border-warning/30 bg-warning/5')}>
               {catalogLoading || catalog?.refreshing ? <LoaderCircleIcon className="mt-0.5 size-3.5 shrink-0 animate-spin motion-reduce:animate-none" /> : catalog?.available ? <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-success" /> : <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />}
@@ -470,7 +486,7 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
 
       <Dialog open={warningOpen} onOpenChange={(open) => { setWarningOpen(open); if (!open) setPendingCategory(null) }}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>确认运行 {pendingCategory ? categoryLabels[pendingCategory] : '测试'}</DialogTitle><DialogDescription>{server.machine_type === 'nat' && pendingCategory !== 'ip_quality' ? 'NAT 机型的 TCP、回程或测速测试可能因系统、端口映射或运营商限制而不可用。' : '该项目会产生大量网络流量。'}{pendingCategory === 'speed' ? ' 单线程测速最多可能消耗约 5.5 GiB 流量。' : ''}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>确认运行 {pendingCategory ? categoryLabels[pendingCategory] : '测试'}</DialogTitle><DialogDescription>{pendingCategory && isIpv6Category(pendingCategory) && ipv6Off ? '该服务器未检测到 IPv6 地址，相关测试可能全部失败。' : server.machine_type === 'nat' && pendingCategory !== 'ip_quality' ? 'NAT 机型的 TCP、回程或测速测试可能因系统、端口映射或运营商限制而不可用。' : '该项目会产生大量网络流量。'}{pendingCategory === 'speed' ? ' 单线程测速最多可能消耗约 5.5 GiB 流量。' : ''}</DialogDescription></DialogHeader>
           <DialogFooter><Button variant="outline" onClick={() => { setWarningOpen(false); setPendingCategory(null) }}>取消</Button><Button onClick={confirmWarning}>确认勾选</Button></DialogFooter>
         </DialogContent>
       </Dialog>
@@ -480,7 +496,7 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
           <DialogHeader><DialogTitle>服务器测试进行中</DialogTitle><DialogDescription>进度为尽力上报，最终报告为权威结果</DialogDescription></DialogHeader>
           <div className="space-y-4">
             <div><div className="mb-2 flex items-center justify-between text-xs"><span>{task ? statusLabel(task.status) : '读取状态'}</span><span className="tabular-nums">{Math.round(progressPercent)}%</span></div><Progress value={progressPercent} /></div>
-            <div className="divide-y border-y">{(task?.progress?.categories ?? task?.categories.map((category) => ({ category, status: 'pending', completed: 0, total: 1, message: '' })) ?? []).map((progress) => <div key={progress.category} className="flex items-center gap-3 py-3"><span className={cn('flex size-7 shrink-0 items-center justify-center border', progress.status === 'running' && 'border-info text-info', ['available', 'limited', 'succeeded'].includes(progress.status) && 'border-success text-success', ['unavailable', 'failed'].includes(progress.status) && 'border-destructive text-destructive')}>{progress.status === 'running' ? <LoaderCircleIcon className="size-3.5 animate-spin motion-reduce:animate-none" /> : ['available', 'limited', 'succeeded'].includes(progress.status) ? <CheckIcon className="size-3.5" /> : ['unavailable', 'failed'].includes(progress.status) ? <XCircleIcon className="size-3.5" /> : <CircleDotIcon className="size-3.5" />}</span><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-3 text-xs"><span className="font-medium">{categoryLabels[progress.category]}</span><span className="tabular-nums text-muted-foreground">{progress.completed}/{progress.total}</span></div>{progress.message ? <p className="mt-1 truncate text-xs text-muted-foreground">{progress.message}</p> : null}</div></div>)}</div>
+            <div className="divide-y border-y">{visibleProgressRows.map((progress) => <div key={progress.category} className="flex items-center gap-3 py-3"><span className={cn('flex size-7 shrink-0 items-center justify-center border', progress.status === 'running' && 'border-info text-info', ['available', 'limited', 'succeeded'].includes(progress.status) && 'border-success text-success', ['unavailable', 'failed'].includes(progress.status) && 'border-destructive text-destructive')}>{progress.status === 'running' ? <LoaderCircleIcon className="size-3.5 animate-spin motion-reduce:animate-none" /> : ['available', 'limited', 'succeeded'].includes(progress.status) ? <CheckIcon className="size-3.5" /> : ['unavailable', 'failed'].includes(progress.status) ? <XCircleIcon className="size-3.5" /> : <CircleDotIcon className="size-3.5" />}</span><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-3 text-xs"><span className="font-medium">{categoryLabels[progress.category]}</span><span className="tabular-nums text-muted-foreground">{progress.completed}/{progress.total}</span></div>{progress.message ? <p className="mt-1 truncate text-xs text-muted-foreground">{progress.message}</p> : null}</div></div>)}</div>
             {task?.error_message ? <ErrorNotice code={task.error_code} message={task.error_message} /> : null}
           </div>
         </DialogContent>
