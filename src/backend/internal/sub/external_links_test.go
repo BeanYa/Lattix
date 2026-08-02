@@ -109,3 +109,29 @@ func TestBuildExternalLinkWireguardKeepsPublicKey(t *testing.T) {
 		t.Fatalf("round trip lost public_key: %+v", nodes[0])
 	}
 }
+
+func TestBuildExternalLinkYAMLKeySuppression(t *testing.T) {
+	link, ok := buildExternalLink(extNode("yaml-v", "vless", "1.2.3.4", 443, map[string]any{
+		"uuid": "11111111-2222-3333-4444-555555555555", "network": "tcp",
+		"servername": "cdn.example.com", "client-fingerprint": "chrome", "auth": "k9",
+	}))
+	if !ok {
+		t.Fatal("link failed")
+	}
+	for _, leaked := range []string{"servername=", "client-fingerprint=", "network=", "reality-opts="} {
+		if strings.Contains(link, leaked) {
+			t.Fatalf("consumed key leaked %q: %q", leaked, link)
+		}
+	}
+	if !strings.Contains(link, "sni=cdn.example.com") || !strings.Contains(link, "auth=k9") {
+		t.Fatalf("expected sni/auth in link: %q", link)
+	}
+	nodes, _, err := extsub.ParseSubscription([]byte(link))
+	if err != nil || len(nodes) != 1 {
+		t.Fatalf("reparse = %+v err %v", nodes, err)
+	}
+	back := nodes[0]
+	if back.Extra["sni"] != "cdn.example.com" || back.Extra["auth"] != "k9" {
+		t.Fatalf("round trip lost keys: %+v", back.Extra)
+	}
+}
