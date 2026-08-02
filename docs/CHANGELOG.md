@@ -24,6 +24,12 @@
   外部订阅表，支持手动与定时同步（每订阅可配间隔）。
 - 用户可引入外部订阅并分配（叠加/并入/附加三种模式），订阅流量合并计入用户用量
   统计，新增外部订阅分配 RPC（设置/查询/关联用户级联清理）。
+- 外部订阅节点字段保真：clash/mihomo YAML 输出覆盖完整 proxy schema（alpn、
+  plugin-opts、smux、h2-opts、fragment、ipv6、anytls idle-session 系列等），
+  `skip-cert-verify: false` 等 falsy 值按「字段存在」回填；schema 之外的未知/
+  扩展字段（如第三方认证参数）原样透传；sing-box 出站补 alpn/idle-session/
+  plugin/ipv6 映射；分享链接抑制已消费的 YAML 键（servername/client-fingerprint
+  等）并透传未知标量参数。
 
 ### Fixed
 
@@ -31,3 +37,5 @@
   新建/编辑弹窗时的 `Cannot read properties of null (reading 'length')` 崩溃。
 - custom 换算模式下，无自定义锚点服务器的周期成本以 public 回退值计入 custom 合计，
   合计列 = 可见单元格之和。
+- 外部订阅导入：默认 UA 改用 clash-meta 并支持 UA 预设，导入错误直接显示在对话框。
+- 外部订阅节点数改为按实际解析内容统计。
