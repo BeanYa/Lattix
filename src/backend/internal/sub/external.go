@@ -5,9 +5,28 @@ import (
 	"strconv"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"lattix/backend/internal/extsub"
 	"lattix/shared"
 )
+
+// optsStruct 把 Extra 中指定键的嵌套对象解码为 clash 选项结构体。
+func optsStruct[T any](extra map[string]any, key string) (T, bool) {
+	var out T
+	raw, ok := extra[key]
+	if !ok {
+		return out, false
+	}
+	data, err := yaml.Marshal(raw)
+	if err != nil {
+		return out, false
+	}
+	if err := yaml.Unmarshal(data, &out); err != nil {
+		return out, false
+	}
+	return out, true
+}
 
 // firstValue 返回 Extra 中第一个存在键的值。
 func firstValue(extra map[string]any, keys ...string) (any, bool) {
@@ -356,9 +375,16 @@ func applyExternalTransport(p *clashProxy, e map[string]any) {
 			Path: extStr(e, "path"), Mode: extStr(e, "mode"), Host: extStr(e, "host"),
 		}
 	case "http", "h2":
-		p.HTTPOpts = &clashHTTPOpts{Path: []string{extStr(e, "path")}}
-		if host := extStr(e, "host"); host != "" {
-			p.HTTPOpts.Headers = map[string]string{"Host": host}
+		opts, ok := optsStruct[clashHTTPOpts](e, "http-opts")
+		if !ok {
+			opts = clashHTTPOpts{}
+			if p := extStr(e, "path"); p != "" {
+				opts.Path = []string{p}
+			}
+			if host := extStr(e, "host"); host != "" {
+				opts.Headers = map[string]string{"Host": host}
+			}
 		}
+		p.HTTPOpts = &opts
 	}
 }

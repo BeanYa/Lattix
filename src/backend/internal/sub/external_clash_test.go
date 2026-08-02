@@ -156,6 +156,22 @@ func TestBuildExternalClashYAMLServerNameAndKeys(t *testing.T) {
 	}
 }
 
+func TestBuildExternalClashHTTPTransportNoEmptyPath(t *testing.T) {
+	p, err := buildExternalClash(extNode("v", "vless", "1.2.3.4", 443, map[string]any{
+		"id": "11111111-2222-3333-4444-555555555555", "type": "http",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := yaml.Marshal(clashConfig{Proxies: []clashProxy{p}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "path:") {
+		t.Fatalf("empty path emitted:\n%s", out)
+	}
+}
+
 func TestClashProxyInlineRawMarshal(t *testing.T) {
 	p := clashProxy{
 		Name: "n", Type: "anytls", Server: "s", Port: 443, UDP: true,
