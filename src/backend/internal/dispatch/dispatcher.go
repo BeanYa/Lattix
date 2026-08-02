@@ -342,7 +342,8 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 			d.recordOperation(logging.OperationEvent{
 				Severity: logging.SeverityError, Category: logging.CategoryCommand,
 				Action: "command.dead_lettered", ServerID: &serverID,
-				Detail: map[string]any{"command_id": c.ID, "type": c.Type, "attempts": c.Attempts},
+				Detail: d.commandDetail(ctx, c, 0,
+					fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts)),
 			})
 			// apply_node 死信：节点不能永远卡 applying，置 failed 供管理员重试（§6）。
 			if c.Type == shared.TypeApplyNode {
@@ -931,7 +932,7 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 		d.recordOperation(logging.OperationEvent{
 			Severity: logging.SeverityInfo, Category: logging.CategoryCommand,
 			Action: "command.succeeded", ServerID: &serverID, NodeID: optionalID(p.NodeID),
-			Detail:    map[string]any{"command_id": cmdID, "type": cmd.Type, "hop_id": p.HopID},
+			Detail:    d.commandDetail(ctx, *cmd, p.HopID, ""),
 			RequestID: env.RequestID, TraceID: env.TraceID,
 		})
 		// xray.cleanup：差异/结果投递给同步等待者（面板清理接口），不触碰节点状态机。
@@ -1015,7 +1016,7 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 		d.recordOperation(logging.OperationEvent{
 			Severity: logging.SeverityError, Category: logging.CategoryCommand,
 			Action: "command.failed", ServerID: &serverID, NodeID: optionalID(p.NodeID),
-			Detail:    map[string]any{"command_id": cmdID, "type": cmd.Type, "hop_id": p.HopID, "error": errorMessage},
+			Detail:    d.commandDetail(ctx, *cmd, p.HopID, errorMessage),
 			RequestID: env.RequestID, TraceID: env.TraceID,
 		})
 		// xray.cleanup：失败回执投递给同步等待者（面板清理接口），保留命令失败记录。
@@ -1082,6 +1083,46 @@ func (d *Dispatcher) setRevisionTaskResult(ctx context.Context, commandID int64,
 	if task.Phase == "cleanup" {
 		d.refreshCleanupStatus(ctx, task.RevisionID)
 	}
+}
+
+// commandDetail 构造命令操作日志 Detail：统一携带 command_id/type/attempts/hop_id，
+// shared-endpoint 命令附加 endpoint_id 与使用它的 chain_ids，失败/死信附加 error。
+func (d *Dispatcher) commandDetail(ctx context.Context, cmd store.Command, hopID int64, errMsg string) map[string]any {
+	detail := map[string]any{
+		"command_id": cmd.ID,
+		"type":       cmd.Type,
+		"hop_id":     hopID,
+		"attempts":   cmd.Attempts,
+	}
+	if endpointID, ok := commandEndpointID(cmd); ok {
+		detail["endpoint_id"] = endpointID
+		if chainIDs, err := d.st.ChainIDsByEndpoint(ctx, endpointID); err != nil {
+			log.Printf("dispatch: chain ids for endpoint %d: %v", endpointID, err)
+		} else if len(chainIDs) > 0 {
+			detail["chain_ids"] = chainIDs
+		}
+	}
+	if errMsg != "" {
+		detail["error"] = errMsg
+	}
+	return detail
+}
+
+// commandEndpointID 从命令数据解析 shared-endpoint 相关命令的端点 id（非端点命令返回 false）。
+func commandEndpointID(cmd store.Command) (int64, bool) {
+	switch cmd.Type {
+	case shared.TypeApplySharedEndpoint:
+		var p shared.ApplySharedEndpointPayload
+		if json.Unmarshal(cmd.Data, &p) == nil && p.EndpointID != 0 {
+			return p.EndpointID, true
+		}
+	case shared.TypeRemoveSharedEndpoint:
+		var p shared.RemoveSharedEndpointPayload
+		if json.Unmarshal(cmd.Data, &p) == nil && p.EndpointID != 0 {
+			return p.EndpointID, true
+		}
+	}
+	return 0, false
 }
 
 func (d *Dispatcher) logWebSocketRPC(serverID int64, cmd store.Command, env shared.Envelope) {
