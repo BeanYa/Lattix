@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultUserAgent         = "clash-meta/2.4.0"
+	defaultUserAgent         = "clash.meta/v2.0.0"
 	maxSubscriptionBytes     = 2 << 20 // 2 MiB
 	minSyncIntervalHours     = 1
 	defaultSyncIntervalHours = 24

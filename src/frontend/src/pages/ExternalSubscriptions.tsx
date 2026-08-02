@@ -30,6 +30,13 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Table,
   TableBody,
   TableCell,
@@ -42,6 +49,22 @@ import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { useTimezone } from '@/lib/timezone'
 import type { ExternalChain, ExternalSubscription } from '@/lib/types'
+
+// 订阅商通常按客户端 User-Agent 放行，不同服务商认可名单不同。
+const UA_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'default', label: '默认（clash.meta/v2.0.0）' },
+  { value: 'clash.meta/v2.0.0', label: 'clash.meta/v2.0.0' },
+  { value: 'clash-meta/2.4.0', label: 'clash-meta/2.4.0' },
+  { value: 'Clash for Windows/0.20.39', label: 'Clash for Windows/0.20.39' },
+  { value: 'clash-verge/v2.1.2', label: 'clash-verge/v2.1.2' },
+  { value: 'mihomo/1.18.10', label: 'mihomo/1.18.10' },
+  { value: 'sing-box/1.11.0', label: 'sing-box/1.11.0' },
+  { value: 'v2rayNG/1.8.16', label: 'v2rayNG/1.8.16' },
+  { value: 'Shadowrocket/2.1.48', label: 'Shadowrocket/2.1.48' },
+  { value: 'Stash/2.6.1', label: 'Stash/2.6.1' },
+  { value: 'custom', label: '自定义…' },
+]
+const UA_PRESET_VALUES = new Set(UA_OPTIONS.map((option) => option.value))
 
 export default function ExternalSubscriptions() {
   const { timezone } = useTimezone()
@@ -56,11 +79,13 @@ export default function ExternalSubscriptions() {
   const [editing, setEditing] = useState<ExternalSubscription | null>(null)
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
-  const [userAgent, setUserAgent] = useState('')
+  const [uaPreset, setUaPreset] = useState('default')
+  const [customUA, setCustomUA] = useState('')
   const [skipCertVerify, setSkipCertVerify] = useState(false)
   const [autoUpdate, setAutoUpdate] = useState(true)
   const [updateIntervalHours, setUpdateIntervalHours] = useState('24')
   const [saving, setSaving] = useState(false)
+  const [formError, setFormError] = useState('')
 
   const [chainsTarget, setChainsTarget] = useState<ExternalSubscription | null>(null)
   const [chains, setChains] = useState<ExternalChain[]>([])
@@ -88,10 +113,12 @@ export default function ExternalSubscriptions() {
     setEditing(null)
     setName('')
     setUrl('')
-    setUserAgent('')
+    setUaPreset('default')
+    setCustomUA('')
     setSkipCertVerify(false)
     setAutoUpdate(true)
     setUpdateIntervalHours('24')
+    setFormError('')
   }
 
   const beginEdit = (sub?: ExternalSubscription) => {
@@ -101,7 +128,12 @@ export default function ExternalSubscriptions() {
       setEditing(sub)
       setName(sub.name)
       setUrl(sub.url)
-      setUserAgent(sub.user_agent)
+      if (sub.user_agent && UA_PRESET_VALUES.has(sub.user_agent)) {
+        setUaPreset(sub.user_agent)
+      } else {
+        setUaPreset('custom')
+        setCustomUA(sub.user_agent ?? '')
+      }
       setSkipCertVerify(sub.skip_cert_verify)
       setAutoUpdate(sub.auto_update)
       setUpdateIntervalHours(String(sub.update_interval_hours))
@@ -113,12 +145,15 @@ export default function ExternalSubscriptions() {
     event.preventDefault()
     const session = formSessionRef.current
     setSaving(true)
-    setError('')
+    setFormError('')
     try {
+      const userAgent = uaPreset === 'default' ? undefined
+        : uaPreset === 'custom' ? (customUA.trim() || undefined)
+        : uaPreset
       const body = {
         name: name.trim(),
         url: url.trim(),
-        user_agent: userAgent.trim() || undefined,
+        user_agent: userAgent,
         skip_cert_verify: skipCertVerify,
         auto_update: autoUpdate,
         update_interval_hours: Number(updateIntervalHours) || 24,
@@ -135,7 +170,7 @@ export default function ExternalSubscriptions() {
       await load()
     } catch (err) {
       if (session !== formSessionRef.current) return
-      setError(errorMessage(err))
+      setFormError(errorMessage(err))
     } finally {
       if (session === formSessionRef.current) setSaving(false)
     }
@@ -293,6 +328,7 @@ export default function ExternalSubscriptions() {
             <DialogDescription>导入第三方订阅链接以汇聚节点；可手动同步，或按设定间隔自动同步。</DialogDescription>
           </DialogHeader>
           <form onSubmit={save} className="space-y-4">
+            {formError ? <Notice tone="danger">{formError}</Notice> : null}
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="ext-sub-name">名称</Label>
@@ -311,13 +347,26 @@ export default function ExternalSubscriptions() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="ext-sub-ua">User-Agent</Label>
-              <Input
-                id="ext-sub-ua"
-                value={userAgent}
-                onChange={(event) => setUserAgent(event.target.value)}
-                placeholder="clash-meta/2.4.0（留空使用默认）"
-              />
+              <Label>User-Agent</Label>
+              <Select value={uaPreset} onValueChange={(value) => value && setUaPreset(value)}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {UA_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {uaPreset === 'custom' ? (
+                <Input
+                  value={customUA}
+                  onChange={(event) => setCustomUA(event.target.value)}
+                  placeholder="clash.meta/v2.0.0（留空使用默认）"
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  订阅服务商常按客户端标识放行，选择不被放行的标识可能返回 406 等错误。
+                </p>
+              )}
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
