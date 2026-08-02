@@ -26,6 +26,7 @@ import (
 
 	"lattix/backend/internal/alert"
 	"lattix/backend/internal/dispatch"
+	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/panel"
@@ -34,6 +35,7 @@ import (
 	panelweb "lattix/backend/internal/web"
 	"lattix/backend/internal/ws"
 	"lattix/shared"
+	external "lattix/shared/requester"
 )
 
 // 构建注入（CI release 经 -ldflags -X 覆盖）：面板版本与默认 GitHub 仓库。
@@ -441,6 +443,14 @@ func run() error {
 	}
 	subSrv := sub.New(st, ps.PanelBase, spaHTML)
 	ps.SetSubscriptionService(subSrv)
+	// 外部订阅（第三方机场导入）：普通与跳过证书校验两套拉取客户端。
+	externalFiles := external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Second}}
+	skipVerifyFiles := external.ExternalFileRequester{Doer: &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+	}}
+	extSvc := extsub.New(st, externalFiles, skipVerifyFiles)
+	ps.SetExternalSubscriptionService(extSvc)
 	ps.StartBackgroundTasks(runCtx)
 	mux.Handle("GET /sub/{token}", subSrv)
 	mux.HandleFunc("GET /sub/{token}/rules/{version}/{format}/{name}", subSrv.ServeRuleHTTP)

@@ -944,3 +944,36 @@ export interface IPQualityDNSBlacklist {
   Marked: number
   Blacklisted: number
 }
+
+export interface ExternalSubscription {
+  id: number
+  name: string
+  url: string
+  user_agent: string
+  skip_cert_verify: boolean
+  auto_update: boolean
+  update_interval_hours: number
+  format: string
+  node_count: number
+  upload: number
+  download: number
+  total: number
+  expire?: number | null
+  last_sync_at?: string | null
+  last_attempt_at?: string | null
+  last_error?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ExternalChain {
+  id: number
+  subscription_id: number
+  name: string
+  protocol: string
+  server: string
+  port: number
+  config: unknown
+  config_sha256: string
+  created_at: string
+}

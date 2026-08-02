@@ -536,6 +536,42 @@ CREATE TABLE IF NOT EXISTS chain_hop_identities (
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 外部订阅（第三方机场等导入；下一版本关联用户订阅）
+CREATE TABLE IF NOT EXISTS external_subscriptions (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                  TEXT NOT NULL,
+    url                   TEXT NOT NULL UNIQUE,
+    user_agent            TEXT NOT NULL DEFAULT '',
+    skip_cert_verify      INTEGER NOT NULL DEFAULT 0,
+    auto_update           INTEGER NOT NULL DEFAULT 1,
+    update_interval_hours INTEGER NOT NULL DEFAULT 24,
+    format                TEXT NOT NULL DEFAULT '',
+    node_count            INTEGER NOT NULL DEFAULT 0,
+    upload                INTEGER NOT NULL DEFAULT 0,
+    download              INTEGER NOT NULL DEFAULT 0,
+    total                 INTEGER NOT NULL DEFAULT 0,
+    expire                INTEGER,
+    last_sync_at          DATETIME,
+    last_attempt_at       DATETIME,
+    last_error            TEXT NOT NULL DEFAULT '',
+    created_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS external_chains (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    subscription_id INTEGER NOT NULL REFERENCES external_subscriptions(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    protocol        TEXT NOT NULL,
+    server          TEXT NOT NULL DEFAULT '',
+    port            INTEGER NOT NULL DEFAULT 0,
+    config          TEXT NOT NULL,
+    config_sha256   TEXT NOT NULL,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_external_chains_subscription
+    ON external_chains(subscription_id);
+
 `
 
 // Store 封装 SQLite 数据访问。
