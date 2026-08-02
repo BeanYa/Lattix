@@ -135,8 +135,12 @@ func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(compiled) != 1 || compiled[0].CountryCode != "JP" ||
-		compiled[0].Clash.UUID != added[0].AccessUUID || compiled[0].Singbox.UUID != added[0].AccessUUID ||
+	if len(compiled) != 1 {
+		t.Fatalf("compiled shared endpoint = %+v", compiled)
+	}
+	sb, ok := compiled[0].Singbox.(sbOutbound)
+	if compiled[0].CountryCode != "JP" ||
+		compiled[0].Clash.UUID != added[0].AccessUUID || !ok || sb.UUID != added[0].AccessUUID ||
 		!strings.Contains(compiled[0].QuanX, added[0].AccessUUID) {
 		t.Fatalf("compiled shared endpoint = %+v", compiled)
 	}

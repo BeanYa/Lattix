@@ -412,6 +412,17 @@ paths:
         - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/user/set-external-subscriptions:
+    post:
+      operationId: userSetExternalSubscriptions
+      description: |
+        整表替换用户引入的外部订阅及其模式（叠加 stack / 并入 merge / 附加 nodes）。
+        保存后重发布该用户的订阅快照。
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/user/delete:
     post:
       operationId: userDelete

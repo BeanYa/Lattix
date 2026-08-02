@@ -14,6 +14,7 @@ import type {
   EditChainRequest,
   ExternalChain,
   ExternalSubscription,
+  ExternalSubscriptionMode,
   ChainTrafficBucket,
   CreateNodeRequest,
   CreateServerResponse,
@@ -240,7 +241,7 @@ export const api = {
     name: string,
     expiresAt?: string | null,
     chainIds?: number[],
-    sub?: { traffic_limit?: number; traffic_reset_day?: number; plan_name?: string; app_url?: string; routing?: SubscriptionRoutingProfile },
+    sub?: { traffic_limit?: number; traffic_reset_day?: number; plan_name?: string; app_url?: string; routing?: SubscriptionRoutingProfile; external_subscriptions?: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }> },
   ) =>
     requester.post<SubUser>('/api/user/create', {
       name,
@@ -261,6 +262,14 @@ export const api = {
       node_ids: nodeIds,
       chain_ids: chainIds,
     }),
+  setUserExternalSubscriptions: (
+    userId: number,
+    items: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }>,
+  ) =>
+    requester.post<{ items: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }> }>(
+      '/api/user/set-external-subscriptions',
+      { user_id: userId, items },
+    ),
   deleteUser: (userId: number) =>
     requester.post<void>('/api/user/delete', { user_id: userId }),
   updateUserSubSettings: (body: {

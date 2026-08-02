@@ -207,11 +207,15 @@ func TestSyncDueOnlySyncsDueSubscriptions(t *testing.T) {
 	}
 
 	hitsBefore := hits
-	if err := svc.SyncDue(ctx); err != nil {
+	synced, err := svc.SyncDue(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if hits != hitsBefore+1 {
 		t.Fatalf("SyncDue hits = %d (before %d), want exactly one more", hits, hitsBefore)
+	}
+	if len(synced) != 1 || synced[0] != auto.ID {
+		t.Fatalf("synced = %v, want [%d]", synced, auto.ID)
 	}
 }
 

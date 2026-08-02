@@ -95,7 +95,14 @@ func (s *Server) SetExternalSubscriptionService(service *extsub.Service) {
 	s.scheduler.register(scheduledTask{
 		name: "external_subscriptions.sync", timeout: 10 * time.Minute,
 		trigger: func(context.Context) taskTrigger { return intervalTrigger(15 * time.Minute) },
-		run:     func(ctx context.Context) error { return service.SyncDue(ctx) },
+		run: func(ctx context.Context) error {
+			synced, err := service.SyncDue(ctx)
+			if err != nil {
+				return err
+			}
+			s.republishExternalSubUsers(ctx, synced)
+			return nil
+		},
 	})
 }
 
@@ -320,6 +327,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/user/set-nodes",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
 		s.handleSetUserNodes)
+	s.registerRPC(mux, http.MethodPost, "/api/user/set-external-subscriptions",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
+		s.handleSetUserExternalSubscriptions)
 	s.registerRPC(mux, http.MethodPost, "/api/user/delete",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
 		s.handleDeleteUser)

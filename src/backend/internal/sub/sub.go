@@ -18,6 +18,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/store"
 	"lattix/shared"
 	external "lattix/shared/requester"
@@ -69,13 +70,14 @@ func (s *Server) setSubHeaders(w http.ResponseWriter, r *http.Request, user *sto
 	if err != nil {
 		t = store.TrafficTotals{} // 统计查询失败不阻断订阅
 	}
-	v := fmt.Sprintf("upload=%d; download=%d", t.Up, t.Down)
-	if user.TrafficLimit > 0 {
-		v += fmt.Sprintf("; total=%d", user.TrafficLimit)
+	merged := s.mergedUserTraffic(r.Context(), user, t)
+	v := fmt.Sprintf("upload=%d; download=%d", merged.Upload, merged.Download)
+	if merged.Total > 0 {
+		v += fmt.Sprintf("; total=%d", merged.Total)
 		v += fmt.Sprintf("; reset_day=%d", daysUntilReset(user, time.Now()))
 	}
-	if user.ExpiresAt != nil {
-		v += fmt.Sprintf("; expire=%d", user.ExpiresAt.Unix())
+	if merged.Expire != nil {
+		v += fmt.Sprintf("; expire=%d", *merged.Expire)
 	}
 	// 套餐名：用户级 > 全局设置。
 	if planName := s.effectivePlanName(r, user); planName != "" {
@@ -96,6 +98,22 @@ func (s *Server) setSubHeaders(w http.ResponseWriter, r *http.Request, user *sto
 		interval = global
 	}
 	w.Header().Set("Profile-Update-Interval", interval)
+}
+
+// mergedUserTraffic 合并面板实时流量与用户引入的外部订阅流量（叠加/并入）。
+func (s *Server) mergedUserTraffic(ctx context.Context, user *store.User, t store.TrafficTotals) extsub.Traffic {
+	var panelExpire *int64
+	if user.ExpiresAt != nil {
+		v := user.ExpiresAt.Unix()
+		panelExpire = &v
+	}
+	attached, err := s.st.ListUserExternalSubscriptions(ctx, user.ID)
+	if err != nil {
+		attached = nil
+	}
+	return extsub.MergeUserTraffic(extsub.Traffic{
+		Upload: t.Up, Download: t.Down, Total: user.TrafficLimit, Expire: panelExpire,
+	}, attached)
 }
 
 // effectivePlanName 返回生效套餐名：用户级 > 全局设置。
@@ -225,6 +243,38 @@ type clashProxy struct {
 	ClientFingerprint string            `yaml:"client-fingerprint,omitempty"`
 	GrpcOpts          *clashGrpcOpts    `yaml:"grpc-opts,omitempty"`
 	XhttpOpts         *clashXHTTPOpts   `yaml:"xhttp-opts,omitempty"`
+
+	Ports                string         `yaml:"ports,omitempty"`                  // hysteria2 多端口
+	SkipCertVerify       bool           `yaml:"skip-cert-verify,omitempty"`
+	Obfs                 string         `yaml:"obfs,omitempty"`                   // hysteria2 / snell
+	ObfsPassword         string         `yaml:"obfs-password,omitempty"`
+	Up                   string         `yaml:"up,omitempty"`                     // hysteria2
+	Down                 string         `yaml:"down,omitempty"`                   // hysteria2
+	Protocol             string         `yaml:"protocol,omitempty"`               // ssr
+	ProtocolParam        string         `yaml:"protocol-param,omitempty"`
+	ObfsParam            string         `yaml:"obfs-param,omitempty"`
+	PSK                  string         `yaml:"psk,omitempty"`                    // snell
+	Version              int            `yaml:"version,omitempty"`                // snell
+	IP                   string         `yaml:"ip,omitempty"`                     // wireguard
+	PrivateKey           string         `yaml:"private-key,omitempty"`
+	PublicKey            string         `yaml:"public-key,omitempty"`
+	PresharedKey         string         `yaml:"preshared-key,omitempty"`
+	MTU                  int            `yaml:"mtu,omitempty"`
+	CongestionController string         `yaml:"congestion-controller,omitempty"`  // tuic
+	UDPRelayMode         string         `yaml:"udp-relay-mode,omitempty"`         // tuic
+	ReduceRTT            bool           `yaml:"reduce-rtt,omitempty"`             // tuic
+	WsOpts               *clashWsOpts   `yaml:"ws-opts,omitempty"`
+	HTTPOpts             *clashHTTPOpts `yaml:"http-opts,omitempty"`
+}
+
+type clashWsOpts struct {
+	Path    string            `yaml:"path,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty"`
+}
+
+type clashHTTPOpts struct {
+	Path    string            `yaml:"path,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty"`
 }
 
 type clashProxyGroup struct {
@@ -504,10 +554,12 @@ func nodeName(n store.Node, rc shared.RealizedConfig) string {
 
 // proxyItem 是一个订阅条目的来源：节点行 + 生效值
 // （链条目已把别名/地址/端口替换为入口侧，§21；其余字段取出口 realized_config）。
+// external 非空时表示该条目来自外部订阅节点（凭据取自 config，不派生用户 UUID）。
 type proxyItem struct {
 	node       store.Node
 	rc         shared.RealizedConfig
 	credential string
+	external   *extsub.Node
 }
 
 // subscriptionItems 汇总单机节点与链条目（§21 订阅）：
@@ -578,6 +630,24 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 			continue
 		}
 		items = append(items, *item)
+	}
+	attached, err := s.st.ListUserExternalSubscriptions(r.Context(), user.ID)
+	if err != nil {
+		return items, warnings
+	}
+	for _, sub := range attached {
+		chains, err := s.st.ListExternalChains(r.Context(), sub.SubscriptionID)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("外部订阅「%s」节点读取失败：%v", sub.Name, err))
+			continue
+		}
+		for _, chain := range chains {
+			var ext extsub.Node
+			if err := json.Unmarshal(chain.Config, &ext); err != nil {
+				continue
+			}
+			items = append(items, proxyItem{external: &ext})
+		}
 	}
 	return items, warnings
 }

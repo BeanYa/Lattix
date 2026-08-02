@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/store"
 )
 
@@ -48,6 +49,15 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 
 	t, _ := s.st.UserTraffic(r.Context(), user.UUID)
 	assigned, _ := s.st.UserNodeIDs(r.Context(), user.ID)
+	var panelExpire *int64
+	if user.ExpiresAt != nil {
+		v := user.ExpiresAt.Unix()
+		panelExpire = &v
+	}
+	attached, _ := s.st.ListUserExternalSubscriptions(r.Context(), user.ID)
+	merged := extsub.MergeUserTraffic(extsub.Traffic{
+		Upload: t.Up, Download: t.Down, Total: user.TrafficLimit, Expire: panelExpire,
+	}, attached)
 
 	// 标题：用户级覆盖 > 全局设置 > 默认。
 	title := user.SubTitle
@@ -72,16 +82,16 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 		Name:           user.Name,
 		Expired:        user.Expired,
 		Disabled:       user.Disabled,
-		UsedUp:         t.Up,
-		UsedDown:       t.Down,
-		TrafficLimit:   user.TrafficLimit,
+		UsedUp:         merged.Upload,
+		UsedDown:       merged.Download,
+		TrafficLimit:   merged.Total,
 		NodesCount:     len(assigned),
 		Title:          title,
 		Announcement:   announcement,
 		UpdateInterval: interval,
 	}
-	if user.ExpiresAt != nil {
-		v := user.ExpiresAt.Unix()
+	if merged.Expire != nil {
+		v := *merged.Expire
 		resp.ExpiresAt = &v
 	}
 

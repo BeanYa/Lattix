@@ -224,12 +224,14 @@ func (s *Service) fetchAndParse(ctx context.Context, sub store.ExternalSubscript
 }
 
 // SyncDue 同步所有到达自动更新间隔的订阅；单订阅失败不影响其他订阅。
-func (s *Service) SyncDue(ctx context.Context) error {
+// 返回本次实际同步成功的订阅 ID 列表（供调用方触发关联用户订阅重发布）。
+func (s *Service) SyncDue(ctx context.Context) ([]int64, error) {
 	subs, err := s.st.ListExternalSubscriptions(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	now := time.Now().UTC()
+	var synced []int64
 	for _, sub := range subs {
 		if !sub.AutoUpdate {
 			continue
@@ -242,8 +244,9 @@ func (s *Service) SyncDue(ctx context.Context) error {
 			// 记录保留 last_error；继续其他订阅
 			continue
 		}
+		synced = append(synced, sub.ID)
 	}
-	return nil
+	return synced, nil
 }
 
 func normalizeInterval(hours int) int {

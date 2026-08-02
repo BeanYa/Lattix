@@ -213,7 +213,7 @@ type compiledNode struct {
 	Name        string
 	CountryCode string
 	Clash       clashProxy
-	Singbox     sbOutbound
+	Singbox     any // 面板节点为 sbOutbound；外部节点为 map[string]any
 	QuanX       string
 }
 
@@ -221,6 +221,22 @@ func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid strin
 	out := make([]compiledNode, 0, len(items))
 	var warnings []string
 	for _, item := range items {
+		if item.external != nil {
+			clash, err := buildExternalClash(*item.external)
+			if err != nil {
+				warnings = append(warnings, err.Error())
+				continue
+			}
+			singbox, err := buildExternalSingbox(*item.external)
+			if err != nil {
+				warnings = append(warnings, err.Error())
+			}
+			out = append(out, compiledNode{
+				Name: clash.Name, Clash: clash, Singbox: singbox, // 失败时 nil，renderSingbox 跳过
+				QuanX: buildExternalQuanX(*item.external),
+			})
+			continue
+		}
 		credential := item.credential
 		if credential == "" {
 			credential = uuid
@@ -379,6 +395,9 @@ func defaultClashDNS() *clashDNS {
 func renderSingbox(policy portablePolicy, nodes []compiledNode) ([]byte, error) {
 	outbounds := make([]any, 0, len(nodes)+len(policy.Groups)+2)
 	for _, node := range nodes {
+		if node.Singbox == nil {
+			continue
+		}
 		outbounds = append(outbounds, node.Singbox)
 	}
 	outbounds = append(outbounds, map[string]any{"type": "direct", "tag": "DIRECT"})
@@ -456,6 +475,12 @@ func renderQuanXConfig(policy portablePolicy, nodes []compiledNode) ([]byte, err
 func renderLinks(items []proxyItem, uuid string) ([]byte, error) {
 	links := make([]string, 0, len(items))
 	for _, item := range items {
+		if item.external != nil {
+			if link, ok := buildExternalLink(*item.external); ok {
+				links = append(links, link)
+			}
+			continue
+		}
 		credential := item.credential
 		if credential == "" {
 			credential = uuid
