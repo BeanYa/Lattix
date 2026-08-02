@@ -399,6 +399,84 @@ func (s *Server) handleBillingStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dto)
 }
 
+// handleEstimatedBillingStats 处理 GET /api/billing/stats/estimated（计算成本）：对启用统计计费
+// 且未过期的服务器按"日成本 × 周期天数"估算每周期成本（忽略服务期与已生效部分）。
+func (s *Server) handleEstimatedBillingStats(w http.ResponseWriter, r *http.Request) {
+	loc := s.inspectionLocation(r.Context())
+	from, to, gran, mode, err := parseBillingStatsQuery(r.URL.Query(), loc)
+	if err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	rows, err := s.loadStatsRows(r.Context(), func(b store.ServerBilling) bool {
+		return b.Status != store.BillingExpired
+	})
+	if err != nil {
+		writeStatsLoadError(w, err)
+		return
+	}
+	periods := costPeriods(from, to, gran)
+	spanDays := daysBetween(from, to) + 1
+	dto := estimatedBillingStatsDTO{
+		billingStatsMeta: billingStatsMeta{
+			ReportingCurrency: s.reportingCurrency(r.Context()),
+			Granularity:       gran,
+			From:              from.Format("2006-01-02"),
+			To:                to.Format("2006-01-02"),
+			RateMode:          mode,
+			Periods:           periods,
+		},
+		Servers:               []estimatedBillingServerStatsDTO{},
+		EstimatedTotalsPublic: make([]int64, len(periods)),
+	}
+	for _, row := range rows {
+		if row.customDiffers {
+			dto.CustomAvailable = true
+		}
+		if dto.RateDate == "" && row.rateDate != "" {
+			dto.RateDate = row.rateDate
+		}
+	}
+	var totalsCustom []int64
+	if mode == costModeCustom && dto.CustomAvailable {
+		totalsCustom = make([]int64, len(periods))
+	}
+	perPeriod := periodDays(gran)
+	for _, row := range rows {
+		base := row.base
+		base.DaysActive = spanDays
+		item := estimatedBillingServerStatsDTO{
+			billingServerStatsBase: base,
+			EstimatedCostsPublic:   make([]int64, len(periods)),
+		}
+		var costsCustom []int64
+		if totalsCustom != nil {
+			costsCustom = make([]int64, len(periods))
+		}
+		for i := range periods {
+			cost := new(big.Rat).Mul(row.dailyPublic, new(big.Rat).SetInt64(perPeriod))
+			item.EstimatedCostsPublic[i] = roundRat(cost)
+			dto.EstimatedTotalsPublic[i] += item.EstimatedCostsPublic[i]
+			if costsCustom != nil && row.dailyCustom != nil {
+				cost := new(big.Rat).Mul(row.dailyCustom, new(big.Rat).SetInt64(perPeriod))
+				costsCustom[i] = roundRat(cost)
+				totalsCustom[i] += costsCustom[i]
+			}
+		}
+		if costsCustom != nil {
+			if row.dailyCustom == nil {
+				costsCustom = append([]int64(nil), item.EstimatedCostsPublic...)
+			}
+			item.EstimatedCostsCustom = costsCustom
+		}
+		dto.Servers = append(dto.Servers, item)
+	}
+	if totalsCustom != nil {
+		dto.EstimatedTotalsCustom = totalsCustom
+	}
+	writeJSON(w, http.StatusOK, dto)
+}
+
 func (s *Server) reportingCurrency(ctx context.Context) string {
 	currency := s.getSetting(ctx, store.SettingReportingCurrency)
 	if currency == "" {
