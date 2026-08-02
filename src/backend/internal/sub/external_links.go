@@ -20,15 +20,15 @@ func buildExternalLink(n extsub.Node) (string, bool) {
 	hostPort := fmt.Sprintf("%s:%d", n.Server, n.Port)
 	switch n.Type {
 	case "vless":
-		return "vless://" + extStr(e, "id") + "@" + hostPort + "?" + externalQuery(e, "id", "uuid", "network", "servername", "client-fingerprint", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure", "fragment", "dialer-proxy", "ip-version", "smux") + "#" + name, true
+		return "vless://" + extStr(e, "id") + "@" + hostPort + "?" + externalQuery(e, "id", "uuid", "network", "servername", "client-fingerprint", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux") + "#" + name, true
 	case "trojan":
-		return "trojan://" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "password", "network", "servername", "client-fingerprint", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure", "fragment", "dialer-proxy", "ip-version", "smux") + "#" + name, true
+		return "trojan://" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "password", "network", "servername", "client-fingerprint", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux") + "#" + name, true
 	case "hysteria2":
-		return "hysteria2://" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "password", "servername", "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure", "fragment", "dialer-proxy", "ip-version", "smux", "obfs-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts") + "#" + name, true
+		return "hysteria2://" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "password", "servername", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux", "obfs-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts") + "#" + name, true
 	case "tuic":
-		return "tuic://" + extStr(e, "uuid") + ":" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "uuid", "password", "servername", "client-fingerprint", "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure", "fragment", "dialer-proxy", "ip-version", "smux", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts") + "#" + name, true
+		return "tuic://" + extStr(e, "uuid") + ":" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "uuid", "password", "servername", "client-fingerprint", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts") + "#" + name, true
 	case "anytls":
-		return "anytls://" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "password", "servername", "client-fingerprint", "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure", "fragment", "dialer-proxy", "ip-version", "smux", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts") + "#" + name, true
+		return "anytls://" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "password", "servername", "client-fingerprint", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts") + "#" + name, true
 	case "snell":
 		return "snell://" + extStr(e, "psk") + "@" + hostPort + "?" + externalQuery(e, "psk", "obfs-opts", "smux") + "#" + name, true
 	case "socks":
@@ -75,7 +75,7 @@ func buildExternalLink(n extsub.Node) (string, bool) {
 		}
 		return "ssr://" + base64.StdEncoding.EncodeToString([]byte(payload)) + "?" + query, true
 	case "wireguard":
-		query := externalQuery(e, "private_key", "endpoint", "pk", "public_key", "private-key", "public-key", "preshared_key", "preshared-key", "psk", "address", "mtu", "reserved", "ipv6")
+		query := externalQuery(e, "private_key", "endpoint", "pk", "public_key", "private-key", "public-key")
 		params := []string{
 			"endpoint=" + url.QueryEscape(hostPort),
 			"private_key=" + url.QueryEscape(extStr(e, "private_key")),

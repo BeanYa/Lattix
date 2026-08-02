@@ -19,8 +19,13 @@ func externalSingboxKeys(keys ...string) map[string]bool {
 
 // applySingboxRaw 把未被消费的 Extra 键透传进 sing-box 出站 JSON
 // （Go json 忽略未知字段，兜底不破坏配置加载）。
+// 已存在于 base 的键（type/tag/server/server_port 等）永不覆盖：
+// 外部载荷（如 v2rayN vmess JSON 的 "type":"none"）可能携带同名冲突键。
 func applySingboxRaw(base map[string]any, extra map[string]any, consumed map[string]bool) {
 	for key, value := range extra {
+		if _, exists := base[key]; exists {
+			continue
+		}
 		if !consumed[key] {
 			base[key] = value
 		}
@@ -51,7 +56,7 @@ func buildExternalSingbox(n extsub.Node) (any, error) {
 			base["transport"] = tr
 		}
 	case "vmess":
-		consumed = externalSingboxKeys("id", "uuid", "net", "aid", "scy", "tls", "sni", "servername", "path", "host", "mode", "serviceName", "service_name", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "alpn", "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify")
+		consumed = externalSingboxKeys("id", "uuid", "type", "network", "net", "aid", "scy", "tls", "sni", "servername", "path", "host", "mode", "serviceName", "service_name", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "alpn", "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify")
 		base["uuid"] = extStr(e, "id")
 		base["alter_id"] = extInt(e, "aid")
 		base["security"] = extStr(e, "scy", "auto")

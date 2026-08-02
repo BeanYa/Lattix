@@ -100,3 +100,39 @@ func TestBuildExternalSingboxWGIPv6(t *testing.T) {
 		t.Fatalf("local_address = %+v", addr)
 	}
 }
+
+func TestBuildExternalSingboxVmessTypeNotOverwritten(t *testing.T) {
+	// v2rayN 的 vmess 分享链接 JSON payload 带 "type":"none"、"net":"tcp"，
+	// 落入 Extra 后不得覆盖出站 type（回归：applySingboxRaw 曾把 type 覆写为 none）。
+	ob, err := buildExternalSingbox(extNode("vm", "vmess", "1.2.3.4", 443, map[string]any{
+		"id": "11111111-2222-3333-4444-555555555555", "type": "none", "net": "tcp",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := ob.(map[string]any)
+	if m["type"] != "vmess" {
+		t.Fatalf("type overwritten = %+v", m)
+	}
+	if _, dup := m["net"]; dup {
+		t.Fatalf("net leaked into outbound = %+v", m)
+	}
+}
+
+func TestBuildExternalSingboxSSPlugin(t *testing.T) {
+	ob, err := buildExternalSingbox(extNode("ss-plug", "ss", "1.2.3.4", 8388, map[string]any{
+		"method": "aes-128-gcm", "password": "p", "plugin": "obfs-local",
+		"plugin-opts": map[string]any{"obfs": "http"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := ob.(map[string]any)
+	if m["plugin"] != "obfs-local" {
+		t.Fatalf("plugin = %+v", m["plugin"])
+	}
+	opts, ok := m["plugin_opts"].(map[string]any)
+	if !ok || opts["obfs"] != "http" {
+		t.Fatalf("plugin_opts = %+v", m["plugin_opts"])
+	}
+}
