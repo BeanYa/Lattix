@@ -103,6 +103,82 @@ func TestServerTestLatestGenerationAndValidatedChunkPublish(t *testing.T) {
 	}
 }
 
+func TestServerTestLegacyReportPreservesUnknownIPv6Availability(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	serverID, err := st.CreateServer(ctx, "test", "", "token", MachineTypeDirect, "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := shared.ServerTestCatalogSnapshot{
+		Version: "test-v1",
+		Hashes:  map[string]string{"zstatic": "0000000000000000000000000000000000000000000000000000000000000000"},
+	}
+	if _, _, err := st.EnqueueServerTest(ctx, serverID, "", []shared.ServerTestCategory{shared.ServerTestIPQuality}, catalog); err != nil {
+		t.Fatal(err)
+	}
+	storeResult := func(resultJSON string) {
+		if _, err := st.db.ExecContext(ctx, `UPDATE server_test_tasks SET status = ?, result_json = ?,
+			result_sha256 = '', error_code = '', error_message = '', agent_version = 'v0.0.9',
+			completed_at = CURRENT_TIMESTAMP WHERE server_id = ?`,
+			shared.ServerTestSucceeded, resultJSON, serverID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	readResult := func() *shared.ServerTestReport {
+		t.Helper()
+		stored, err := st.ServerTestByServerID(ctx, serverID)
+		if err != nil || stored.Result == nil {
+			t.Fatalf("read stored result=%+v err=%v", stored, err)
+		}
+		return stored.Result
+	}
+
+	t.Run("legacy report without ipv6_available stays unknown", func(t *testing.T) {
+		storeResult(`{"environment": {"probe_method":"raw_syn","degraded":false,"sandbox":"none","privileges":"root"}}`)
+		report := readResult()
+		if report.Environment.IPv6Available != nil {
+			t.Fatalf("legacy report ipv6_available = %v, want nil", *report.Environment.IPv6Available)
+		}
+		roundTripped, err := json.Marshal(report)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(roundTripped, []byte("ipv6_available")) {
+			t.Fatalf("re-marshaled legacy report fabricates ipv6_available: %s", roundTripped)
+		}
+	})
+	for _, tc := range []struct {
+		name    string
+		value   bool
+		literal string
+	}{
+		{name: "fresh report with ipv6_available true", value: true, literal: "true"},
+		{name: "fresh report with ipv6_available false", value: false, literal: "false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			storeResult(`{"schema_version":1,"status":"succeeded","agent_version":"v0.0.9","catalog_version":"test-v1",` +
+				`"environment": {"probe_method":"raw_syn","degraded":false,"sandbox":"none","privileges":"root",` +
+				`"ipv6_available":` + tc.literal + `}}`)
+			report := readResult()
+			if report.Environment.IPv6Available == nil || *report.Environment.IPv6Available != tc.value {
+				t.Fatalf("fresh report ipv6_available = %v, want %v", report.Environment.IPv6Available, tc.value)
+			}
+			roundTripped, err := json.Marshal(report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Contains(roundTripped, []byte(`"ipv6_available":`+tc.literal)) {
+				t.Fatalf("re-marshaled fresh report lost ipv6_available: %s", roundTripped)
+			}
+		})
+	}
+}
+
 func TestDeleteServerCascadeRemovesServerTestState(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(":memory:")

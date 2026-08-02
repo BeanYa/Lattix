@@ -70,6 +70,28 @@ func TestHasGlobalIPv6(t *testing.T) {
 		}
 	})
 
+	t.Run("global address present as ipnet", func(t *testing.T) {
+		listInterfaces = func() ([]net.Interface, error) {
+			return []net.Interface{{Index: 1, Name: "eth0"}}, nil
+		}
+		interfaceAddresses = func(iface net.Interface) ([]net.Addr, error) {
+			return []net.Addr{&net.IPNet{IP: net.ParseIP("2400:3200::1"), Mask: net.CIDRMask(64, 128)}}, nil
+		}
+		if !hasGlobalIPv6() {
+			t.Error("hasGlobalIPv6() = false, want true")
+		}
+	})
+
+	t.Run("address enumeration error", func(t *testing.T) {
+		listInterfaces = func() ([]net.Interface, error) {
+			return []net.Interface{{Index: 1, Name: "eth0"}}, nil
+		}
+		interfaceAddresses = func(iface net.Interface) ([]net.Addr, error) { return nil, errTestInterfaces }
+		if hasGlobalIPv6() {
+			t.Error("hasGlobalIPv6() = true, want false")
+		}
+	})
+
 	t.Run("interface enumeration error", func(t *testing.T) {
 		listInterfaces = func() ([]net.Interface, error) { return nil, errTestInterfaces }
 		interfaceAddresses = func(iface net.Interface) ([]net.Addr, error) { return nil, nil }

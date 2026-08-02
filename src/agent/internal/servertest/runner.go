@@ -146,10 +146,11 @@ func inspectEnvironment(sandboxState, sandboxReason string) shared.ServerTestEnv
 	if err := rawSocketCapability(); err != nil {
 		probeMethod, degraded, degradedReason = "tcp_connect", true, err.Error()
 	}
+	available := hasGlobalIPv6()
 	return shared.ServerTestEnvironment{
 		ProbeMethod: probeMethod, Degraded: degraded, DegradedReason: degradedReason,
 		Sandbox: sandboxState, SandboxReason: sandboxReason, Privileges: privileges,
-		IPv6Available: hasGlobalIPv6(),
+		IPv6Available: &available,
 	}
 }
 
