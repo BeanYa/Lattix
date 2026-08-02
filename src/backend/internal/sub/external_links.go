@@ -20,29 +20,29 @@ func buildExternalLink(n extsub.Node) (string, bool) {
 	hostPort := fmt.Sprintf("%s:%d", n.Server, n.Port)
 	switch n.Type {
 	case "vless":
-		return "vless://" + extStr(e, "id") + "@" + hostPort + "?" + externalQuery(e, "id") + "#" + name, true
+		return "vless://" + extStr(e, "id") + "@" + hostPort + "?" + externalQuery(e, "id", "uuid", "network", "servername", "client-fingerprint", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux") + "#" + name, true
 	case "trojan":
-		return "trojan://" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "password") + "#" + name, true
+		return "trojan://" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "password", "network", "servername", "client-fingerprint", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux") + "#" + name, true
 	case "hysteria2":
-		return "hysteria2://" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "password") + "#" + name, true
+		return "hysteria2://" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "password", "servername", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux", "obfs-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts") + "#" + name, true
 	case "tuic":
-		return "tuic://" + extStr(e, "uuid") + ":" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "uuid", "password") + "#" + name, true
+		return "tuic://" + extStr(e, "uuid") + ":" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "uuid", "password", "servername", "client-fingerprint", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts") + "#" + name, true
 	case "anytls":
-		return "anytls://" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "password") + "#" + name, true
+		return "anytls://" + extStr(e, "password") + "@" + hostPort + "?" + externalQuery(e, "password", "servername", "client-fingerprint", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts") + "#" + name, true
 	case "snell":
-		return "snell://" + extStr(e, "psk") + "@" + hostPort + "?" + externalQuery(e, "psk") + "#" + name, true
+		return "snell://" + extStr(e, "psk") + "@" + hostPort + "?" + externalQuery(e, "psk", "obfs-opts", "smux") + "#" + name, true
 	case "socks":
 		cred := extStr(e, "username")
 		if pwd := extStr(e, "password"); pwd != "" {
 			cred += ":" + pwd
 		}
-		return "socks://" + cred + "@" + hostPort + "#" + name, true
+		return "socks://" + cred + "@" + hostPort + "?" + externalQuery(e, "username", "password", "servername", "tls", "sni") + "#" + name, true
 	case "http":
 		cred := extStr(e, "username")
 		if pwd := extStr(e, "password"); pwd != "" {
 			cred += ":" + pwd
 		}
-		return "http://" + cred + "@" + hostPort + "#" + name, true
+		return "http://" + cred + "@" + hostPort + "?" + externalQuery(e, "username", "password", "servername", "sni") + "#" + name, true
 	case "vmess":
 		payload := map[string]any{
 			"v": "2", "ps": n.Name, "add": n.Server, "port": strconv.Itoa(n.Port),
@@ -57,7 +57,7 @@ func buildExternalLink(n extsub.Node) (string, bool) {
 		return "vmess://" + base64.RawURLEncoding.EncodeToString(raw), true
 	case "ss":
 		cred := base64.RawURLEncoding.EncodeToString([]byte(extStr(e, "method") + ":" + extStr(e, "password")))
-		query := externalQuery(e, "method", "password")
+		query := externalQuery(e, "method", "password", "smux", "udp")
 		if query != "" {
 			return "ss://" + cred + "@" + hostPort + "?" + query + "#" + name, true
 		}
@@ -66,7 +66,7 @@ func buildExternalLink(n extsub.Node) (string, bool) {
 		payload := fmt.Sprintf("%s:%d:%s:%s:%s:%s", n.Server, n.Port,
 			extStr(e, "protocol"), extStr(e, "method"), extStr(e, "obfs"),
 			base64.StdEncoding.EncodeToString([]byte(extStr(e, "password"))))
-		query := externalQuery(e, "protocol", "method", "obfs", "password", "remarks")
+		query := externalQuery(e, "protocol", "method", "obfs", "password", "remarks", "protocol_param", "protocol-param", "obfs_param", "obfs-param", "udp")
 		remarks := "remarks=" + url.QueryEscape(base64.StdEncoding.EncodeToString([]byte(n.Name)))
 		if query != "" {
 			query += "&" + remarks
@@ -75,7 +75,7 @@ func buildExternalLink(n extsub.Node) (string, bool) {
 		}
 		return "ssr://" + base64.StdEncoding.EncodeToString([]byte(payload)) + "?" + query, true
 	case "wireguard":
-		query := externalQuery(e, "private_key", "endpoint", "pk", "public_key")
+		query := externalQuery(e, "private_key", "endpoint", "pk", "public_key", "private-key", "public-key")
 		params := []string{
 			"endpoint=" + url.QueryEscape(hostPort),
 			"private_key=" + url.QueryEscape(extStr(e, "private_key")),
@@ -91,7 +91,8 @@ func buildExternalLink(n extsub.Node) (string, bool) {
 	return "", false
 }
 
-// externalQuery 把 Extra 剩余键值重建为 URL query（排序保证确定性）。
+// externalQuery 把 Extra 剩余键值重建为 URL query（排序保证确定性）；
+// 抑制已消费键（skip），非标量值（嵌套对象/列表）无法在 query 中表达故跳过。
 func externalQuery(extra map[string]any, skip ...string) string {
 	skipped := map[string]bool{}
 	for _, key := range skip {
@@ -106,7 +107,11 @@ func externalQuery(extra map[string]any, skip ...string) string {
 	sort.Strings(keys)
 	parts := make([]string, 0, len(keys))
 	for _, key := range keys {
-		parts = append(parts, url.QueryEscape(key)+"="+url.QueryEscape(extStr(extra, key)))
+		value := extStr(extra, key)
+		if value == "" {
+			continue
+		}
+		parts = append(parts, url.QueryEscape(key)+"="+url.QueryEscape(value))
 	}
 	return strings.Join(parts, "&")
 }

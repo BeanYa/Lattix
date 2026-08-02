@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"lattix/backend/internal/extsub"
 )
 
@@ -45,7 +47,7 @@ func TestBuildExternalClash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Type != "wireguard" || p.PrivateKey != "pk" || p.IP != "10.0.0.2" || p.PublicKey != "peer" || p.MTU != 1420 {
+	if p.Type != "wireguard" || p.PrivateKey != "pk" || p.IP != "10.0.0.2" || p.PublicKey != "peer" || p.MTU == nil || *p.MTU != 1420 {
 		t.Fatalf("wg = %+v", p)
 	}
 
@@ -97,7 +99,7 @@ func TestBuildExternalClashYAMLBoolInt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !p.SkipCertVerify {
+	if p.SkipCertVerify == nil || !*p.SkipCertVerify {
 		t.Fatalf("yaml bool not read: %+v", p)
 	}
 	wg, err := buildExternalClash(extNode("yaml-wg", "wireguard", "wg.example.com", 51820, map[string]any{
@@ -106,7 +108,7 @@ func TestBuildExternalClashYAMLBoolInt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wg.MTU != 1420 {
+	if wg.MTU == nil || *wg.MTU != 1420 {
 		t.Fatalf("yaml int not read: %+v", wg)
 	}
 }
@@ -151,5 +153,125 @@ func TestBuildExternalClashYAMLServerNameAndKeys(t *testing.T) {
 	}
 	if vmess.Network != "ws" || vmess.WsOpts == nil || vmess.WsOpts.Path != "/ws" {
 		t.Fatalf("vmess network not mapped: %+v", vmess)
+	}
+}
+
+func TestBuildExternalClashHTTPTransportNoEmptyPath(t *testing.T) {
+	p, err := buildExternalClash(extNode("v", "vless", "1.2.3.4", 443, map[string]any{
+		"id": "11111111-2222-3333-4444-555555555555", "type": "http",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := yaml.Marshal(clashConfig{Proxies: []clashProxy{p}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "path:") {
+		t.Fatalf("empty path emitted:\n%s", out)
+	}
+}
+
+func TestClashProxyInlineRawMarshal(t *testing.T) {
+	p := clashProxy{
+		Name: "n", Type: "anytls", Server: "s", Port: 443, UDP: true,
+		Raw: map[string]any{"auth": "token-123", "tfo": []any{"h2", "http/1.1"}},
+	}
+	out, err := yaml.Marshal(&p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{"auth: token-123", "tfo:", "- h2"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("raw not inlined, missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Count(s, "name:") != 1 {
+		t.Fatalf("duplicate name key:\n%s", s)
+	}
+}
+
+func TestBuildExternalClashAnyTLSFullFidelity(t *testing.T) {
+	nodes, _, err := extsub.ParseSubscription([]byte(`
+proxies:
+  - name: '🇭🇰 香港01'
+    type: anytls
+    server: relay.moe233.org
+    port: 443
+    password: pass-123
+    alpn: [h2, http/1.1]
+    skip-cert-verify: false
+    udp: true
+    sni: sni.moe233.org
+    auth: token-abc
+`))
+	if err != nil || len(nodes) != 1 {
+		t.Fatalf("parse = %+v err %v", nodes, err)
+	}
+	p, err := buildExternalClash(nodes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Servername != "sni.moe233.org" {
+		t.Fatalf("servername = %q", p.Servername)
+	}
+	if p.SkipCertVerify == nil || *p.SkipCertVerify {
+		t.Fatalf("skip-cert-verify: false presence lost: %+v", p.SkipCertVerify)
+	}
+	if len(p.ALPN) != 2 || p.ALPN[0] != "h2" || p.ALPN[1] != "http/1.1" {
+		t.Fatalf("alpn = %+v", p.ALPN)
+	}
+	if p.Raw["auth"] != "token-abc" {
+		t.Fatalf("unknown key not preserved: %+v", p.Raw)
+	}
+	if _, dup := p.Raw["sni"]; dup {
+		t.Fatalf("consumed sni leaked to raw: %+v", p.Raw)
+	}
+	out, err := yaml.Marshal(clashConfig{Proxies: []clashProxy{p}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{"alpn:", "- h2", "skip-cert-verify: false", "servername: sni.moe233.org", "auth: token-abc"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("yaml missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Contains(s, "sni:") || strings.Contains(s, "password: pass-123") && strings.Count(s, "auth:") != 1 {
+		t.Fatalf("yaml leakage:\n%s", s)
+	}
+}
+
+func TestBuildExternalClashWSOptsSubfields(t *testing.T) {
+	p, err := buildExternalClash(extNode("yaml-ws", "vless", "1.2.3.4", 443, map[string]any{
+		"id": "11111111-2222-3333-4444-555555555555", "network": "ws",
+		"ws-opts": map[string]any{
+			"path": "/ws", "max-early-data": 1024,
+			"headers": map[string]any{"Host": "h.example.com"},
+		},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.WsOpts == nil || p.WsOpts.Path != "/ws" || p.WsOpts.MaxEarlyData != 1024 ||
+		p.WsOpts.Headers["Host"] != "h.example.com" {
+		t.Fatalf("ws-opts subfields lost: %+v", p.WsOpts)
+	}
+	if _, dup := p.Raw["ws-opts"]; dup {
+		t.Fatalf("consumed ws-opts leaked to raw: %+v", p.Raw)
+	}
+}
+
+func TestBuildExternalClashNoRawForKnownKeys(t *testing.T) {
+	p, err := buildExternalClash(extNode("clean", "vless", "1.2.3.4", 443, map[string]any{
+		"id": "11111111-2222-3333-4444-555555555555", "type": "tcp",
+		"security": "reality", "pbk": "pub", "sid": "abcd", "fp": "chrome", "sni": "cdn.example.com",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Raw != nil && len(p.Raw) != 0 {
+		t.Fatalf("known keys leaked to raw: %+v", p.Raw)
 	}
 }

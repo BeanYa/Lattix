@@ -109,3 +109,104 @@ func TestBuildExternalLinkWireguardKeepsPublicKey(t *testing.T) {
 		t.Fatalf("round trip lost public_key: %+v", nodes[0])
 	}
 }
+
+func TestBuildExternalLinkYAMLKeySuppression(t *testing.T) {
+	link, ok := buildExternalLink(extNode("yaml-v", "vless", "1.2.3.4", 443, map[string]any{
+		"uuid": "11111111-2222-3333-4444-555555555555", "network": "tcp",
+		"servername": "cdn.example.com", "client-fingerprint": "chrome", "auth": "k9",
+	}))
+	if !ok {
+		t.Fatal("link failed")
+	}
+	for _, leaked := range []string{"servername=", "client-fingerprint=", "network=", "reality-opts="} {
+		if strings.Contains(link, leaked) {
+			t.Fatalf("consumed key leaked %q: %q", leaked, link)
+		}
+	}
+	if !strings.Contains(link, "sni=cdn.example.com") || !strings.Contains(link, "auth=k9") {
+		t.Fatalf("expected sni/auth in link: %q", link)
+	}
+	nodes, _, err := extsub.ParseSubscription([]byte(link))
+	if err != nil || len(nodes) != 1 {
+		t.Fatalf("reparse = %+v err %v", nodes, err)
+	}
+	back := nodes[0]
+	if back.Extra["sni"] != "cdn.example.com" || back.Extra["auth"] != "k9" {
+		t.Fatalf("round trip lost keys: %+v", back.Extra)
+	}
+}
+
+func TestBuildExternalLinkInsecurePassthrough(t *testing.T) {
+	// insecure/allowInsecure/allow_insecure 是 URI 约定参数（v2rayN 发
+	// allowInsecure=1，hy2 客户端发 insecure=1），抑制后自签/SNI 不符证书
+	// 的节点链接会 TLS 校验失败（回归：skip 列表曾误抑这三个键）。
+	link, ok := buildExternalLink(extNode("v-ins", "vless", "1.2.3.4", 443, map[string]any{
+		"id": "11111111-2222-3333-4444-555555555555", "insecure": "1",
+	}))
+	if !ok {
+		t.Fatal("vless link failed")
+	}
+	if !strings.Contains(link, "insecure=1") {
+		t.Fatalf("link lost insecure: %q", link)
+	}
+	nodes, _, err := extsub.ParseSubscription([]byte(link))
+	if err != nil || len(nodes) != 1 {
+		t.Fatalf("reparse = %+v err %v", nodes, err)
+	}
+	if nodes[0].Extra["insecure"] != "1" {
+		t.Fatalf("round trip lost insecure: %+v", nodes[0].Extra)
+	}
+}
+
+func TestBuildExternalLinkWireguardAddressPsk(t *testing.T) {
+	// params 只重建 endpoint/private_key/public_key；address/preshared_key/mtu/
+	// reserved/ipv6 必须作为标准 wireguard:// 参数透传（回归：曾全被 skip 抑制）。
+	link, ok := buildExternalLink(extNode("wg", "wireguard", "wg.example.com", 51820, map[string]any{
+		"private_key": "priv", "ip": "10.0.0.2", "address": "10.0.0.2",
+		"preshared_key": "ps", "mtu": "1420", "reserved": "1,2,3", "ipv6": "fd00::1",
+	}))
+	if !ok {
+		t.Fatal("wg link failed")
+	}
+	for _, want := range []string{
+		"address=10.0.0.2", "preshared_key=ps", "mtu=1420",
+		"reserved=1%2C2%2C3", "ipv6=fd00%3A%3A1",
+	} {
+		if !strings.Contains(link, want) {
+			t.Fatalf("wg link missing %q: %q", want, link)
+		}
+	}
+	nodes, _, err := extsub.ParseSubscription([]byte(link))
+	if err != nil || len(nodes) != 1 {
+		t.Fatalf("reparse = %+v err %v", nodes, err)
+	}
+	back := nodes[0]
+	if back.Type != "wireguard" || back.Server != "wg.example.com" || back.Port != 51820 {
+		t.Fatalf("round trip = %+v", back)
+	}
+	for key, want := range map[string]string{
+		"private_key": "priv", "address": "10.0.0.2", "preshared_key": "ps",
+		"mtu": "1420", "reserved": "1,2,3", "ipv6": "fd00::1",
+	} {
+		if back.Extra[key] != want {
+			t.Fatalf("round trip lost %s: %+v", key, back.Extra)
+		}
+	}
+}
+
+func TestBuildExternalLinkSkipsNonScalar(t *testing.T) {
+	// 嵌套对象无法在 query 中表达：必须跳过；标量未知键仍透传。
+	link, ok := buildExternalLink(extNode("v-ns", "vless", "1.2.3.4", 443, map[string]any{
+		"id": "11111111-2222-3333-4444-555555555555", "auth": "k9",
+		"custom-map": map[string]any{"a": "b"},
+	}))
+	if !ok {
+		t.Fatal("vless link failed")
+	}
+	if strings.Contains(link, "custom-map=") {
+		t.Fatalf("non-scalar leaked: %q", link)
+	}
+	if !strings.Contains(link, "auth=k9") {
+		t.Fatalf("scalar unknown key lost: %q", link)
+	}
+}

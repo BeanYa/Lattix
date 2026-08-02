@@ -210,6 +210,7 @@ type clashRealityOpts struct {
 
 type clashGrpcOpts struct {
 	ServiceName string `yaml:"grpc-service-name"`
+	GrpcMode    string `yaml:"grpc-mode,omitempty"`
 }
 
 type clashXHTTPOpts struct {
@@ -218,62 +219,91 @@ type clashXHTTPOpts struct {
 	Host string `yaml:"host,omitempty"`
 }
 
-// clashProxy 是 mihomo 代理项的并集结构：按协议填充相关字段（omitempty 裁剪）。
+type clashH2Opts struct {
+	Path string   `yaml:"path,omitempty"`
+	Host []string `yaml:"host,omitempty"`
+}
+
+// clashProxy 是 mihomo 代理项并集结构：覆盖完整 proxy schema，
+// 按协议填充相关字段（omitempty 裁剪）；Raw 透传未被类型化字段消费的
+// Extra 键（yaml:",inline" 直接并入生成的 YAML 映射）。
 type clashProxy struct {
 	Name   string `yaml:"name"`
 	Type   string `yaml:"type"`
 	Server string `yaml:"server"`
 	Port   int    `yaml:"port"`
 
-	UUID     string `yaml:"uuid,omitempty"`     // vless / vmess
-	AlterID  *int   `yaml:"alterId,omitempty"`  // vmess（mihomo 客户端字段，服务端已废弃）
-	Cipher   string `yaml:"cipher,omitempty"`   // vmess=auto / ss=method
-	Password string `yaml:"password,omitempty"` // trojan / ss / socks / http
-	Username string `yaml:"username,omitempty"` // socks / http
-
-	Network    string `yaml:"network,omitempty"`
-	TLS        bool   `yaml:"tls,omitempty"`
-	Servername string `yaml:"servername,omitempty"` // vless / vmess
-	SNI        string `yaml:"sni,omitempty"`        // trojan
-	Flow       string `yaml:"flow,omitempty"`       // vless
-	Encryption string `yaml:"encryption,omitempty"` // vless（VLESS Encryption 客户端字符串）
-	UDP        bool   `yaml:"udp"`
+	UUID           string `yaml:"uuid,omitempty"`            // vless / vmess
+	AlterID        *int   `yaml:"alterId,omitempty"`         // vmess
+	Cipher         string `yaml:"cipher,omitempty"`          // vmess=auto / ss=method
+	Password       string `yaml:"password,omitempty"`        // trojan / ss / socks / http / anytls
+	Username       string `yaml:"username,omitempty"`        // socks / http
+	Network        string `yaml:"network,omitempty"`
+	PacketEncoding string `yaml:"packet-encoding,omitempty"` // vless
+	TLS            bool   `yaml:"tls,omitempty"`
+	Servername     string `yaml:"servername,omitempty"`      // vless / vmess / anytls
+	SNI            string `yaml:"sni,omitempty"`             // trojan
+	Flow           string `yaml:"flow,omitempty"`            // vless
+	Encryption     string `yaml:"encryption,omitempty"`      // vless
+	ALPN           []string `yaml:"alpn,omitempty"`
+	UDP            bool   `yaml:"udp"`
 
 	RealityOpts       *clashRealityOpts `yaml:"reality-opts,omitempty"`
 	ClientFingerprint string            `yaml:"client-fingerprint,omitempty"`
 	GrpcOpts          *clashGrpcOpts    `yaml:"grpc-opts,omitempty"`
 	XhttpOpts         *clashXHTTPOpts   `yaml:"xhttp-opts,omitempty"`
+	H2Opts            *clashH2Opts      `yaml:"h2-opts,omitempty"`
+	HTTPOpts          *clashHTTPOpts    `yaml:"http-opts,omitempty"`
+	WsOpts            *clashWsOpts      `yaml:"ws-opts,omitempty"`
+	Plugin            string            `yaml:"plugin,omitempty"`      // ss
+	PluginOpts        map[string]any    `yaml:"plugin-opts,omitempty"` // ss
+	Smux              map[string]any    `yaml:"smux,omitempty"`
+	ObfsOpts          map[string]any    `yaml:"obfs-opts,omitempty"` // snell
+	Fragment          map[string]any    `yaml:"fragment,omitempty"`
+	DialerProxy       string            `yaml:"dialer-proxy,omitempty"`
+	IPVersion         string            `yaml:"ip-version,omitempty"`
 
-	Ports                string         `yaml:"ports,omitempty"`                  // hysteria2 多端口
-	SkipCertVerify       bool           `yaml:"skip-cert-verify,omitempty"`
-	Obfs                 string         `yaml:"obfs,omitempty"`                   // hysteria2 / snell
-	ObfsPassword         string         `yaml:"obfs-password,omitempty"`
-	Up                   string         `yaml:"up,omitempty"`                     // hysteria2
-	Down                 string         `yaml:"down,omitempty"`                   // hysteria2
-	Protocol             string         `yaml:"protocol,omitempty"`               // ssr
-	ProtocolParam        string         `yaml:"protocol-param,omitempty"`
-	ObfsParam            string         `yaml:"obfs-param,omitempty"`
-	PSK                  string         `yaml:"psk,omitempty"`                    // snell
-	Version              int            `yaml:"version,omitempty"`                // snell
-	IP                   string         `yaml:"ip,omitempty"`                     // wireguard
-	PrivateKey           string         `yaml:"private-key,omitempty"`
-	PublicKey            string         `yaml:"public-key,omitempty"`
-	PresharedKey         string         `yaml:"preshared-key,omitempty"`
-	MTU                  int            `yaml:"mtu,omitempty"`
-	CongestionController string         `yaml:"congestion-controller,omitempty"`  // tuic
-	UDPRelayMode         string         `yaml:"udp-relay-mode,omitempty"`         // tuic
-	ReduceRTT            bool           `yaml:"reduce-rtt,omitempty"`             // tuic
-	WsOpts               *clashWsOpts   `yaml:"ws-opts,omitempty"`
-	HTTPOpts             *clashHTTPOpts `yaml:"http-opts,omitempty"`
+	Ports                string `yaml:"ports,omitempty"`                  // hysteria2 多端口
+	SkipCertVerify       *bool  `yaml:"skip-cert-verify,omitempty"`
+	Obfs                 string `yaml:"obfs,omitempty"`                   // hysteria2 / snell
+	ObfsPassword         string `yaml:"obfs-password,omitempty"`
+	Up                   string `yaml:"up,omitempty"`                     // hysteria2
+	Down                 string `yaml:"down,omitempty"`                   // hysteria2
+	Protocol             string `yaml:"protocol,omitempty"`               // ssr
+	ProtocolParam        string `yaml:"protocol-param,omitempty"`
+	ObfsParam            string `yaml:"obfs-param,omitempty"`
+	PSK                  string `yaml:"psk,omitempty"`                    // snell
+	Version              *int   `yaml:"version,omitempty"`                // snell
+	IP                   string `yaml:"ip,omitempty"`                     // wireguard
+	IPv6                 string `yaml:"ipv6,omitempty"`                   // wireguard
+	Reserved             string `yaml:"reserved,omitempty"`               // wireguard
+	PrivateKey           string `yaml:"private-key,omitempty"`
+	PublicKey            string `yaml:"public-key,omitempty"`
+	PresharedKey         string `yaml:"preshared-key,omitempty"`
+	MTU                  *int   `yaml:"mtu,omitempty"`
+	CongestionController string `yaml:"congestion-controller,omitempty"`  // tuic
+	UDPRelayMode         string `yaml:"udp-relay-mode,omitempty"`         // tuic
+	ReduceRTT            *bool  `yaml:"reduce-rtt,omitempty"`             // tuic
+	IdleSessionCheckInterval int `yaml:"idle-session-check-interval,omitempty"` // anytls
+	IdleSessionTimeout      int `yaml:"idle-session-timeout,omitempty"`   // anytls
+	MinIdleSession          int `yaml:"min-idle-session,omitempty"`       // anytls
+
+	Raw map[string]any `yaml:",inline"` // 未消费的 Extra 键原样回填
 }
 
 type clashWsOpts struct {
-	Path    string            `yaml:"path,omitempty"`
-	Headers map[string]string `yaml:"headers,omitempty"`
+	Path                  string            `yaml:"path,omitempty"`
+	Headers               map[string]string `yaml:"headers,omitempty"`
+	MaxEarlyData          int               `yaml:"max-early-data,omitempty"`
+	EarlyDataHeaderName   string            `yaml:"early-data-header-name,omitempty"`
+	V2rayHTTPUpgrade      bool              `yaml:"v2ray-http-upgrade,omitempty"`
+	V2rayHTTPUpgradeHost  string            `yaml:"v2ray-http-upgrade-host,omitempty"`
+	V2rayHTTPUpgradePath  string            `yaml:"v2ray-http-upgrade-path,omitempty"`
 }
 
 type clashHTTPOpts struct {
-	Path    string            `yaml:"path,omitempty"`
+	Method  string            `yaml:"method,omitempty"`
+	Path    []string          `yaml:"path,omitempty"`
 	Headers map[string]string `yaml:"headers,omitempty"`
 }
 
