@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -126,6 +127,7 @@ func (s *Server) handleSyncExternalSubscription(w http.ResponseWriter, r *http.R
 	s.audit(r, "external_subscription.synced", nil, nil, map[string]any{
 		"id": sub.ID, "node_count": sub.NodeCount,
 	})
+	s.republishExternalSubUsers(r.Context(), []int64{sub.ID})
 	writeJSON(w, http.StatusOK, sub)
 }
 
@@ -141,4 +143,26 @@ func (s *Server) handleListExternalChains(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, chains)
+}
+
+// republishExternalSubUsers 将关联了给定外部订阅的用户加入订阅重生成队列。
+func (s *Server) republishExternalSubUsers(ctx context.Context, subscriptionIDs []int64) {
+	if s.subscriptions == nil || len(subscriptionIDs) == 0 {
+		return
+	}
+	seen := map[int64]bool{}
+	var userIDs []int64
+	for _, subID := range subscriptionIDs {
+		users, err := s.st.UsersByExternalSubscriptionID(ctx, subID)
+		if err != nil {
+			continue
+		}
+		for _, userID := range users {
+			if !seen[userID] {
+				seen[userID] = true
+				userIDs = append(userIDs, userID)
+			}
+		}
+	}
+	s.subscriptions.EnqueueUsers(userIDs, "")
 }

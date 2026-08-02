@@ -95,7 +95,14 @@ func (s *Server) SetExternalSubscriptionService(service *extsub.Service) {
 	s.scheduler.register(scheduledTask{
 		name: "external_subscriptions.sync", timeout: 10 * time.Minute,
 		trigger: func(context.Context) taskTrigger { return intervalTrigger(15 * time.Minute) },
-		run:     func(ctx context.Context) error { return service.SyncDue(ctx) },
+		run: func(ctx context.Context) error {
+			synced, err := service.SyncDue(ctx)
+			if err != nil {
+				return err
+			}
+			s.republishExternalSubUsers(ctx, synced)
+			return nil
+		},
 	})
 }
 
