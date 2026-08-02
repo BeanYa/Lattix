@@ -70,6 +70,19 @@ func (r *Runner) Run(ctx context.Context, progress func(string)) (RunResult, err
 	progress("运行检测")
 	stdout, err := runScript(ctx, scriptPath, r.Timeout)
 	if err != nil {
+		if families, parseErr := ParseScriptOutput(stdout); parseErr == nil && len(families) > 0 {
+			// Upstream ip.sh exits 1 when its trailing IPv6 gate
+			// `[[ $IPV6work -ne 0 && ... ]]&&check_IP "$IPV6" 6` is false on
+			// hosts without public IPv6 (e.g. NAT-tier machines), even though
+			// the IPv4 family document was fully printed to stdout. Accept the
+			// completed report; the exit code is a script artifact.
+			progress("解析结果")
+			return RunResult{
+				ScriptVersion: scriptVersion,
+				ScriptStale:   stale,
+				Output:        stdout,
+			}, nil
+		}
 		return RunResult{}, err
 	}
 	if strings.TrimSpace(stdout) == "" {
@@ -118,9 +131,9 @@ func runScript(ctx context.Context, scriptPath string, timeout time.Duration) (s
 				tail = tail[len(tail)-2048:]
 			}
 			if tail != "" {
-				return "", fmt.Errorf("ip.sh failed: %w (stderr: %s)", err, tail)
+				return stdout.buf.String(), fmt.Errorf("ip.sh failed: %w (stderr: %s)", err, tail)
 			}
-			return "", fmt.Errorf("ip.sh failed: %w", err)
+			return stdout.buf.String(), fmt.Errorf("ip.sh failed: %w", err)
 		}
 	}
 	return stdout.buf.String(), nil
