@@ -1782,3 +1782,20 @@ git add -A && git commit -m "chore: finalize script-based IP quality redesign" -
 ```
 
 （若 Step 3 发现残留，先修复并单独提交后再执行本步。）
+
+---
+
+## 执行结果（2026-08-02）
+
+本计划已按序执行完毕，全部提交于 `main` 分支。实际实现与计划的主要差异：
+
+1. **脚本源 URL 保持为包级变量** `var ScriptURL`（script.go）；`TestEnsureScriptRealFetcher` 未实现，由 `stubFetcher` 测试覆盖。
+2. **`Runner.Run` 返回 `ipquality.RunResult{ScriptVersion, ScriptStale, Output}`**，其中 `Output` 为脚本原始 stdout；解析由 `ipquality.ParseScriptOutput` 在 Agent 侧（servertest 集成层）完成，与 TCP 测试口径一致（曾短暂评估改由 Panel 解析，用户最终确认保持 Agent 侧解析）。
+3. **解析失败路径**：`runIPQualityScript` 在 `ParseScriptOutput` 失败时返回 `failed`（`ipquality_parse_failed`）；stdout 为空（无公网地址）由 `Runner.Run` 直接返回 `ErrNoFamily`，映射为 `unavailable`（`no_public_address`）。
+4. **无公网地址**从设计稿的 `failed` 调整为 `unavailable`，spec 已同步。
+5. **`mapMail` 显式跳过 JSON `null` 值**（Go 的 `json.Unmarshal(null)` 对非指针类型不报错），保证 `Port25`/邮局服务为 `null` 时产出 `nil` 而非 `false`。
+6. **`TestParseDualStack` 测试数据**：v6 文档 `Port25` 修正为 `true` 与断言一致。
+7. **前端**按计划渲染 `ip_quality` 强类型字段（基础信息/风险评分/因子矩阵/流媒体/邮局/DNSBL），旧 `ProviderTable` 已删除。
+8. **worker 接线**：`workerInput` 新增 `data_dir`，`runWorkerProcess` 增加 `dataDir` 参数并透传。
+
+验证：`src/agent` 与 `src/shared` 的 `go build ./... && go vet ./... && go test ./...` 全部通过；`src/frontend` `bun run build && bun run lint` 通过。

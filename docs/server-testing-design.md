@@ -9,14 +9,14 @@
 Panel 只负责目录维护、任务下发、进度展示、最终结果接收和报告渲染，不参与测试过程。
 每台服务器仅保留最近一次任务，用于表达最近的网络状态，不保存历史报告。
 
-测试动作参考 [TcpQuality](https://github.com/ibsgss/TcpQuality) 与
-[NodeQuality](https://github.com/LloydAsp/NodeQuality) 的原理重新实现为项目内 Go 函数，
-不下载或执行上游脚本。范围明确如下：
+TCP/回程/大包/测速动作参考 [TcpQuality](https://github.com/ibsgss/TcpQuality) 与
+[NodeQuality](https://github.com/LloydAsp/NodeQuality) 的原理实现为项目内 Go 函数。
+IP 质量检测执行上游 [xykt/IPQuality](https://github.com/xykt/IPQuality) 脚本
+（`bash ip.sh -p -j -f`），Agent 缓存脚本并按版本校验更新。范围明确如下：
 
 - 测试网络性能、IP 质量、连通性和回程；不测试 CPU、内存、磁盘等硬件性能；
-- 不运行 25 端口邮件测试；
-- 不上传报告到 TcpQuality、NodeQuality、Check.Place、NodeSeek 或其他报告服务；
-- 不生成报告图片，不包含标题、广告、赞助商或项目推广内容；
+- IP 质量脚本以 `-p` 隐私模式运行，禁止生成在线报告链接、禁止上传报告；
+- 脚本会执行 25 端口邮件连通性检测与 400+ DNSBL 黑名单查询；
 - 不调用 `tcpquality.ibsgss.uk` 等上游辅助代理；
 - 允许直接请求被测节点，以及 Cloudflare、Apple、IP 数据库、流媒体等公开服务；
 - 测试产生的数据只回传当前 Lattix Panel，由 Panel 解析并渲染。
@@ -76,29 +76,34 @@ SHA-256；每台服务器只允许一个非终态任务；按 generation 接收�
 测速单方向窗口 15 秒；单个 Apple 目标下载最多 768 MiB、上传最多 2 GiB，IPv4/IPv6 全部
 跑满时理论上限约 5.5 GiB。UI 在勾选测速时必须显示流量警告。
 
-## 4. IP 质量数据源
+## 4. IP 质量检测（脚本化）
 
-Cloudflare `cdn-cgi/trace` 是 IPv4/IPv6 的公开出口预检。出口 IP 仅在 Agent 内存中用于后续
-查询，最终报告不包含具体公网 IP。ASN 使用 Team Cymru DNS TXT。
+IP 质量检测执行上游 xykt/IPQuality 脚本 `ip.sh`，固定参数 `-p -j -f`：
 
-当前数据源为 IPinfo demo、IPregistry public demo、ipapi.is、DB-IP 免费 API，以及
-xykt/IPQuality 生态的上游聚合代理 `ipinfo.check.place`：MaxMind、Scamalytics、
-AbuseIPDB、IP2Location、ipdata、IPQS 六个需要付费凭据的数据库全部经由该代理查询，
-响应字段与上游 `ip.sh` 的 jq 路径对齐；凭据只存在于代理端，Agent 不携带任何 key。
-IPregistry 的临时 key 优先从其公开 demo 页面提取；页面不再暴露该 key 时回退到已知的
-公开 demo key（与上游脚本一致），限定 Origin/Referer 使用，并在错误信息中脱敏；不抓取
-NodeQuality 或第三方代理提供的其他 key。DB-IP 官网对非浏览器请求启用 Cloudflare 校验，
-改用官方免费 API `api.db-ip.com/v2/free/<ip>`；免费档只提供地理位置，风险等级与代理/爬虫
-因子缺失时留空，不得伪造。聚合代理是第三方依赖，请求失败或返回无法识别的响应时如实报告
-`provider_request_failed`/`provider_response_unrecognized`，不得伪造数据。
+- `-p` 隐私模式：不生成在线报告链接，不上传 `upload.check.place`；
+- `-j` 输出 JSON 到 stdout（双栈时依次输出 IPv4、IPv6 两个文档）；
+- `-f` 展示完整出口 IP（Lattix 报告按用户要求展示完整 IP）。
 
-DNSBL 列表是 `xykt/IPQuality` commit
-`44a55baec6cdd166a68b37f9c07d62d9e0a04f23` 的仓库快照，随 Agent 发布，不在测试时下载。
-IPv4 DNSBL 最多并发 20、单查询 3 秒、总窗口 90 秒；IPv6 明确标记不适用。DNS 错误必须
-脱敏，不得通过错误字符串泄露被测 IP 的反向查询名。
+脚本来源 `https://raw.githubusercontent.com/xykt/IPQuality/main/ip.sh`，由 Agent 缓存在
+数据目录 `scripts/ip.sh`。每次测试前拉取最新脚本并与缓存比对 `script_version`，相同则复用
+缓存，不同则原子替换；拉取失败回退缓存并在报告中标记 `script_stale`。
 
-流媒体/AI 检查直接访问 TikTok、Disney+、Netflix、YouTube Premium、Prime Video、
-Reddit 与 ChatGPT 的公开 HTTPS 页面。响应状态与重定向只能用于可用性判断，不上传报告。
+脚本依赖 `jq curl bc netcat dnsutils iproute2`。Agent 在测试前用 `exec.LookPath` 检测，
+缺失时运行脚本自身的 `-y` 自动安装轮次（120 秒窗口，轮询依赖就绪后立即终止进程组），
+安装失败或超时如实报错。
+
+执行超时 15 分钟，超时后终止整个脚本进程组。脚本输出经流式 JSON 解码拆解为每个地址家族
+一份文档，在 Agent 侧（`src/agent/internal/servertest/ipquality/`）解析并映射为 Lattix 强
+类型结构 `shared.IPQualityResult`，字段覆盖脚本输出的全部内容：Head（IP/版本/时间）、
+Info（ASN/组织/城市/地区/注册地/时区/IP 类型）、Type（用途与公司类型 per 数据库）、
+Score（各库评分，保留原始字符串）、Factor（国家代码与代理/Tor/VPN/机房/滥用/爬虫因子
+per 数据库）、Media（流媒体与 AI 解锁状态/地区/类型）、Mail（25 端口与邮局连通性、
+DNSBL 汇总）。脚本的字面 `"null"` 字符串规范化为空值；未知服务或新增字段不丢失，每个
+家族同时携带规范化后的原始 JSON 副本（`raw`）。
+
+单栈主机只输出一个家族文档，缺失家族在报告中不出现；无任何公网地址时分类状态为
+`unavailable`（错误码 `no_public_address`）。最终报告经 `server-test.result` 分片协议回传
+Panel，由前端报告表渲染（基础信息、风险评分、因子矩阵、流媒体徽章、邮局检测与 DNSBL）。
 
 ## 5. 节点目录
 
@@ -175,14 +180,16 @@ Linux 首选为 worker 创建 PID、mount、IPC namespace；网络 namespace 刻
 进程、私有 `0700` 临时目录和 rlimit 隔离，并在报告写入 `sandbox=degraded` 与具体原因。
 
 Worker 设置 `RLIMIT_NOFILE=1024`、`RLIMIT_NPROC=128`、禁止 core dump、文件大小上限 32 MiB；
-Linux 使用 `Pdeathsig=SIGKILL`，父 Agent 消失时 worker 不会成为孤儿。测试不安装依赖、不改
-sysctl/hosts/防火墙/Xray 配置，不创建常驻服务。默认按 root 能力运行；缺少 raw socket 权限
-时只降级相关动作，不要求管理员额外部署 root helper。
+Linux 使用 `Pdeathsig=SIGKILL`，父 Agent 消失时 worker 不会成为孤儿。常规测试不安装依赖、不
+改 sysctl/hosts/防火墙/Xray 配置，不创建常驻服务；IP 质量测试在脚本依赖缺失时经脚本 `-y`
+自动安装所需命令。默认按 root 能力运行；缺少 raw socket 权限时只降级相关动作，不要求管理
+员额外部署 root helper。
 
 ## 9. 进度与最终结果
 
 进度包含全局 `completed/total`、当前 phase、分类状态与分类内部 `m/n`。TCP、回程、教育网、
-国际与测速按目标完成数更新；IP 质量只能按 IPv4/IPv6 家族粗粒度更新。Agent 最多每秒发送
+国际与测速按目标完成数更新；IP 质量按脚本阶段（下载脚本、检查依赖、运行检测、解析结果）
+粗粒度更新。Agent 最多每秒发送
 一次进度，Panel 只保留当前连接内序号最大的快照，进度不写历史数据库且允许丢失。
 
 最终报告是唯一权威状态。Agent 将 JSON（最大 8 MiB）gzip，按 256 KiB 分片，通过
@@ -198,8 +205,8 @@ Panel 每片返回 `accepted | complete | superseded`，Agent 单片等待 20 �
 时必须提示可能因系统、端口映射或运营商限制失败，确认后才加入任务。测速另显示流量警告。
 
 运行对话框展示各分类的 best-effort 进度。终态后入口变为“测试结果”按钮，报告对话框按分类
-显示目标、运营商、延迟、丢包、探测方法、路由、IP 数据源状态与具体错误，不显示目标 URL、
-广告、上游项目标题或外部报告链接。
+显示目标、运营商、延迟、丢包、探测方法、路由、IP 质量报告（基础信息、风险评分、因子矩阵、
+流媒体徽章、邮局检测与 DNSBL）与具体错误，不显示目标 URL、广告、上游项目标题或外部报告链接。
 
 ## 11. API、协议与错误口径
 
@@ -216,8 +223,8 @@ Agent WS 类型为 `server-test.run`、`server-test.progress`、`server-test.res
 拒绝结果必须区分。WebSocket 断开本身不是测试失败原因。
 
 Panel 的 RPC 日志只允许记录 `server_id` 等声明为安全的字段；Agent 记录 task ID、generation、
-分类数量、worker/投递错误与降级原因。日志和报告不得写入 provider 原始响应体、出口公网 IP、
-DNSBL 反向查询名或 IPregistry 临时 key。
+分类数量、worker/投递错误与降级原因。日志不得写入 provider 原始响应体、DNSBL 反向查询名或
+IPregistry 临时 key；IP 质量报告包含完整出口 IP（用户要求展示），Agent 日志仍不记录该 IP。
 
 ## 12. 代码地图与维护检查
 
@@ -231,6 +238,7 @@ DNSBL 反向查询名或 IPregistry 临时 key。
 | `src/backend/internal/dispatch/dispatcher.go` | WS 下发、进度去重与结果 ACK |
 | `src/agent/cmd/agent/command_queue.go` | 持久命令优先级与执行 barrier |
 | `src/agent/internal/servertest/` | worker、journal、探测分类与结果投递 |
+| `src/agent/internal/servertest/ipquality/` | ip.sh 缓存与版本校验、依赖处理、执行、JSON 解析映射 |
 | `src/frontend/src/components/ServerTestPanel.tsx` | 分类选择、NAT 警告、进度与报告 UI |
 
 修改目录时必须更新来源 commit/note、固定数量断言和 hash 测试；修改协议时必须同步 shared、
