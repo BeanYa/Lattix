@@ -12,6 +12,8 @@ import type {
   CommandLog,
   CreateChainRequest,
   EditChainRequest,
+  ExternalChain,
+  ExternalSubscription,
   ChainTrafficBucket,
   CreateNodeRequest,
   CreateServerResponse,
@@ -296,6 +298,31 @@ export const api = {
     requester.post<void>('/api/subscription/template/delete', { id }),
   refreshSubscriptionTemplates: (id = '') =>
     requester.post<SubscriptionTemplate[]>('/api/subscription/template/refresh', { id }),
+  externalSubscriptions: (options?: RequestOptions) =>
+    requester.get<ExternalSubscription[]>('/api/external-subscription/list', undefined, options),
+  externalSubscriptionChains: (id: number, options?: RequestOptions) =>
+    requester.get<ExternalChain[]>('/api/external-subscription/chains', { id }, options),
+  createExternalSubscription: (body: {
+    name: string
+    url: string
+    user_agent?: string
+    skip_cert_verify?: boolean
+    auto_update?: boolean
+    update_interval_hours?: number
+  }) => requester.post<ExternalSubscription>('/api/external-subscription/create', body),
+  updateExternalSubscription: (body: {
+    id: number
+    name: string
+    url: string
+    user_agent?: string
+    skip_cert_verify?: boolean
+    auto_update?: boolean
+    update_interval_hours?: number
+  }) => requester.post<ExternalSubscription>('/api/external-subscription/update', body),
+  deleteExternalSubscription: (id: number) =>
+    requester.post<void>('/api/external-subscription/delete', { id }),
+  syncExternalSubscription: (id: number) =>
+    requester.post<ExternalSubscription>('/api/external-subscription/sync', { id }),
   userTrafficHistory: (userId: number) =>
     requester.get<Array<{ period_start: string; up: number; down: number }>>(
       '/api/user/traffic-history', { user_id: userId },
