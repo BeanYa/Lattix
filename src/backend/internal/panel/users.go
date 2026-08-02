@@ -810,6 +810,64 @@ func (s *Server) handleRegenerateUserSubscription(w http.ResponseWriter, r *http
 	})
 }
 
+// handleResetUserSubscriptionToken 处理 POST /api/user/reset-subscription-token：
+// 更换 sub_token 生成全新订阅地址（旧链接立即失效），并重新发布全部格式。
+// UUID 不变，不触发节点扇出（§7/§8）。
+func (s *Server) handleResetUserSubscriptionToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID int64 `json:"user_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.UserID <= 0 || s.subscriptions == nil {
+		writeError(w, http.StatusBadRequest, "invalid user id or subscription service unavailable")
+		return
+	}
+	if _, err := s.st.UserByID(r.Context(), req.UserID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var token string
+	for i := 0; i < 5; i++ {
+		candidate := randomHex(8)
+		if _, err := s.st.UserBySubToken(r.Context(), candidate); err != nil {
+			if !errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			token = candidate
+			break
+		}
+	}
+	if token == "" {
+		writeError(w, http.StatusInternalServerError, "failed to generate unique subscription token")
+		return
+	}
+	if err := s.st.SetUserSubToken(r.Context(), req.UserID, token); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	base := s.panelBase(r)
+	if _, err := s.subscriptions.PublishUser(r.Context(), req.UserID, base); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.audit(r, "user.subscription_token.reset", nil, nil, map[string]any{
+		"user_id": req.UserID,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"sub_token":     token,
+		"sub_url":       fmt.Sprintf("%s/sub/%s", base, token),
+		"sub_links_url": fmt.Sprintf("%s/sub/%s?format=links", base, token),
+	})
+}
+
 func (s *Server) handleUserSubscriptionPreview(w http.ResponseWriter, r *http.Request) {
 	userID, err := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
 	if err != nil || userID <= 0 {

@@ -859,6 +859,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/reset-subscription-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["userResetSubscriptionToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/subscription-preview": {
         parameters: {
             query?: never;
@@ -2432,6 +2448,24 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    userResetSubscriptionToken: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     userSubscriptionPreview: {
         parameters: {
             query?: never;
@@ -2889,6 +2923,7 @@ export const rpcOperations = {
   userSubSettings: { method: 'POST', path: '/api/user/sub-settings' },
   userTrafficHistory: { method: 'GET', path: '/api/user/traffic-history' },
   userRegenerateSubscription: { method: 'POST', path: '/api/user/regenerate-subscription' },
+  userResetSubscriptionToken: { method: 'POST', path: '/api/user/reset-subscription-token' },
   userSubscriptionPreview: { method: 'GET', path: '/api/user/subscription-preview' },
   subscriptionCategoryList: { method: 'GET', path: '/api/subscription/categories' },
   subscriptionTemplateList: { method: 'GET', path: '/api/subscription/templates' },
