@@ -1,0 +1,9 @@
+{
+  "Head": { "IP": "192.0.2.1", "Command": "null", "GitHub": "null", "Time": "null", "Version": "null" },
+  "Info": { "ASN": "null", "Organization": "null", "Latitude": "null", "Longitude": "null", "DMS": "null", "Map": "null", "TimeZone": "null", "City": { "Name": "null", "PostalCode": "null", "SubCode": "null", "Subdivisions": "null" }, "Region": { "Code": "null", "Name": "null" }, "Continent": { "Code": "null", "Name": "null" }, "RegisteredRegion": { "Code": "null", "Name": "null" }, "Type": "null" },
+  "Type": { "Usage": { "IPinfo": "null" }, "Company": { "IPinfo": "null" } },
+  "Score": { "IPQS": "null", "ipapi": "0.47%" },
+  "Factor": { "CountryCode": { "IPinfo": "TW" }, "Proxy": { "IPinfo": null }, "Tor": { "IPinfo": true }, "VPN": { "IPinfo": false }, "Server": { "IPinfo": null }, "Abuser": { "IPinfo": null }, "Robot": { "IPinfo": null } },
+  "Media": { "FutureStream": { "Status": "null", "Region": "null", "Type": "null" } },
+  "Mail": { "Port25": null, "NewMailService": true, "Gmail": null, "DNSBlacklist": { "Total": 0, "Clean": 0, "Marked": 0, "Blacklisted": 0 } }
+}

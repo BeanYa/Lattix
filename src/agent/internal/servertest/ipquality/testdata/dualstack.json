@@ -1,0 +1,18 @@
+{
+  "Head": { "IP": "203.0.113.7", "Command": "bash <(curl -sL https://Check.Place) -jpf", "GitHub": "https://github.com/xykt/IPQuality", "Time": "2026-02-01 00:00:00 UTC", "Version": "v2026-02-01" },
+  "Info": { "ASN": "64512", "Organization": "Example Org", "City": { "Name": "Shanghai", "PostalCode": "null", "SubCode": "SH", "Subdivisions": "Shanghai" }, "Region": { "Code": "CN", "Name": "China" }, "Continent": { "Code": "AS", "Name": "Asia" }, "RegisteredRegion": { "Code": "CN", "Name": "China" }, "Type": "Geo-consistent" },
+  "Type": { "Usage": { "IPinfo": "ISP" }, "Company": { "IPinfo": "ISP" } },
+  "Score": { "IP2LOCATION": "12", "SCAMALYTICS": "3", "ipapi": "2.5%", "AbuseIPDB": "0", "IPQS": "null", "DBIP": "1" },
+  "Factor": { "CountryCode": { "IPinfo": "CN" }, "Proxy": { "IPinfo": false }, "Tor": { "IPinfo": false }, "VPN": { "IPinfo": false }, "Server": { "IPinfo": false }, "Abuser": { "IPinfo": null }, "Robot": { "IPinfo": null } },
+  "Media": { "TikTok": { "Status": "No", "Region": "", "Type": "" }, "ChatGPT": { "Status": "Yes", "Region": "CN", "Type": "Native" } },
+  "Mail": { "Port25": true, "Gmail": true, "Outlook": false, "DNSBlacklist": { "Total": 439, "Clean": 420, "Marked": 19, "Blacklisted": 0 } }
+}
+{
+  "Head": { "IP": "240e:390:caf2:6e00:85af:0:d0:0", "Command": "bash <(curl -sL https://Check.Place) -jpf", "GitHub": "https://github.com/xykt/IPQuality", "Time": "2026-02-01 00:00:01 UTC", "Version": "v2026-02-01" },
+  "Info": { "ASN": "4134", "Organization": "Chinanet", "City": { "Name": "Shanghai", "PostalCode": "null", "SubCode": "SH", "Subdivisions": "Shanghai" }, "Region": { "Code": "CN", "Name": "China" }, "Continent": { "Code": "AS", "Name": "Asia" }, "RegisteredRegion": { "Code": "CN", "Name": "China" }, "Type": "Geo-consistent" },
+  "Type": { "Usage": { "IPinfo": "ISP" }, "Company": { "IPinfo": "ISP" } },
+  "Score": { "IP2LOCATION": "9", "SCAMALYTICS": "1", "ipapi": "0.9%", "AbuseIPDB": "0", "IPQS": "null", "DBIP": "0" },
+  "Factor": { "CountryCode": { "IPinfo": "CN" }, "Proxy": { "IPinfo": false }, "Tor": { "IPinfo": false }, "VPN": { "IPinfo": false }, "Server": { "IPinfo": false }, "Abuser": { "IPinfo": null }, "Robot": { "IPinfo": null } },
+  "Media": { "TikTok": { "Status": "No", "Region": "", "Type": "" }, "ChatGPT": { "Status": "Yes", "Region": "CN", "Type": "Native" } },
+  "Mail": { "Port25": true, "Gmail": false, "Outlook": true, "DNSBlacklist": { "Total": 0, "Clean": 0, "Marked": 0, "Blacklisted": 0 } }
+}
