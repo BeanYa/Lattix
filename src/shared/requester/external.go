@@ -70,23 +70,64 @@ func (r ExternalWebhookRequester) PostJSON(ctx context.Context, url string, valu
 
 type ExternalFileRequester struct{ Doer HTTPDoer }
 
-func (r ExternalFileRequester) GetText(ctx context.Context, url string, maxBytes int64) (string, error) {
-	resp, err := do(ctx, r.Doer, http.MethodGet, url, "", nil)
+// FileRequestOptions 控制单次文件拉取的请求细节。
+type FileRequestOptions struct {
+	UserAgent string
+}
+
+// FileFetchResult 携带响应体与响应头，供需要读取头信息（如
+// subscription-userinfo）的调用方使用。
+type FileFetchResult struct {
+	Body   string
+	Header http.Header
+}
+
+// GetWithOptions 拉取文件并返回响应体与响应头。
+func (r ExternalFileRequester) GetWithOptions(
+	ctx context.Context, url string, maxBytes int64, opts FileRequestOptions,
+) (FileFetchResult, error) {
+	if r.Doer == nil {
+		return FileFetchResult{}, fmt.Errorf("%s: external HTTP client is nil", redactedDestination(url))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", err
+		return FileFetchResult{}, wrapExternalURLError(url, "build request", err)
+	}
+	if opts.UserAgent != "" {
+		req.Header.Set("User-Agent", opts.UserAgent)
+	}
+	resp, err := r.Doer.Do(req)
+	if err != nil {
+		return FileFetchResult{}, wrapExternalURLError(url, "request", err)
 	}
 	defer resp.Body.Close()
 	if err := require2xx(url, resp); err != nil {
-		return "", err
+		return FileFetchResult{}, err
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
-		return "", fmt.Errorf("%s: read body: %w", redactedDestination(url), err)
+		return FileFetchResult{}, fmt.Errorf("%s: read body: %w", redactedDestination(url), err)
 	}
 	if int64(len(body)) > maxBytes {
-		return "", fmt.Errorf("%s: response exceeds %d bytes", redactedDestination(url), maxBytes)
+		return FileFetchResult{}, fmt.Errorf("%s: response exceeds %d bytes", redactedDestination(url), maxBytes)
 	}
-	return string(body), nil
+	return FileFetchResult{Body: string(body), Header: resp.Header.Clone()}, nil
+}
+
+// GetTextWithOptions 拉取文件文本，可携带自定义请求头选项。
+func (r ExternalFileRequester) GetTextWithOptions(
+	ctx context.Context, url string, maxBytes int64, opts FileRequestOptions,
+) (string, error) {
+	result, err := r.GetWithOptions(ctx, url, maxBytes, opts)
+	if err != nil {
+		return "", err
+	}
+	return result.Body, nil
+}
+
+// GetText 拉取文件文本。
+func (r ExternalFileRequester) GetText(ctx context.Context, url string, maxBytes int64) (string, error) {
+	return r.GetTextWithOptions(ctx, url, maxBytes, FileRequestOptions{})
 }
 
 func (r ExternalFileRequester) Download(
