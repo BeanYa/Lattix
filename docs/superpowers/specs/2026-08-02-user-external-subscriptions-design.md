@@ -84,8 +84,10 @@ expire = 模式=stack 且 total>0 的部分取 min(面板, 各订阅)；merge/no
 ## 快照重发布联动
 
 - 用户关联变更（`set-external-subscriptions` / 创建用户）→ 重发布该用户快照。
-- **外部订阅同步完成后 → 重发布所有关联用户**：新增 `sub.Server.RepublishUsersWithExternalSubscription(ctx, subID)`（内部 `store.UsersByExternalSubscriptionID` + `PublishUser`）。
-- 跨会话集成点：另一会话的 panel 同步 handler（`POST /api/external-subscriptions/{id}/sync`）与定时任务（`SyncDue`）在同步成功后调用该方法；两边分支合并后补齐（本期先提供方法与面板侧 helper）。
+- **外部订阅同步完成后 → 重发布所有关联用户**：`store.UsersByExternalSubscriptionID(subID)` 取关联用户，走 `sub.Server.EnqueueUsers` 异步重生成队列（与 nodes/chains 现有模式一致）。
+- 落点（外部订阅导入会话已合入 main，集成点已闭合）：
+  - `handleSyncExternalSubscription`（`panel/external_subscriptions.go:105`）同步成功后调用；
+  - 定时任务 `external_subscriptions.sync`（`panel.go:95`）中执行完 `SyncDue` 后调用——`extsub.Service.SyncDue` 返回值扩展为 `([]int64, error)`（本次实际同步过的订阅 ID，唯一调用方即该定时任务；extsub 包不可 import sub，由 panel 编排）。
 
 ## API 与前端
 
