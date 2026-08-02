@@ -183,6 +183,8 @@ POST /api/user/set-nodes
 POST /api/user/delete
 POST /api/user/sub-settings
 POST /api/user/regenerate-subscription
+POST /api/user/reset-subscription-token
+POST /api/user/set-external-subscriptions
 GET  /api/user/subscription-preview
 
 GET  /api/subscription/categories
@@ -191,6 +193,13 @@ POST /api/subscription/template/save
 POST /api/subscription/template/clone
 POST /api/subscription/template/delete
 POST /api/subscription/template/refresh
+
+GET  /api/external-subscription/list
+POST /api/external-subscription/create
+POST /api/external-subscription/update
+POST /api/external-subscription/delete
+POST /api/external-subscription/sync
+GET  /api/external-subscription/chains?id={id}
 
 GET  /api/setting/get
 POST /api/setting/update

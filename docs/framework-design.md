@@ -198,10 +198,38 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
 - **响应头**：`/sub/{token}` 的所有文件格式返回 `subscription-userinfo`，包含 upload、download 以及可选 total、expire、reset_day、plan_name、app_url；同时返回 `profile-update-interval`。
 - **用户有效期**：创建或更新用户可带 `expires_at`；过去时间返回 `HTTP 200 + INVALID_ARGUMENT`。`POST /api/user/update` 可修改或清除（null = 长期；省略字段保持不变）。列表 DTO 带 `expires_at`/`expired`/`disabled`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `user.remove`（显式 nodes 载荷；已 disabled 的用户只补记标记不重复扇出）；管理员延长/清除有效期（expired 1→0）→ 扇出 `user.add` 恢复（disabled 用户除外，见 §16 有效停权态）。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`node.apply` 的 `NodeUserUUIDs` 不下发 expired/disabled 用户。
 - 分享链接集合已实现：`GET /sub/{token}?format=links`（§14，仅含分配的 active 节点）。
+- **外部订阅（导入 + 用户关联）**：管理页导入第三方订阅 URL，节点与订阅信息独立落库
+  （`external_chains` / `external_subscriptions`，不进入 `chains` 状态机与流量统计），
+  用户以「一个外部订阅」为单位引入订阅输出。详见下方小节。
+
+### 9.1 外部订阅导入与用户关联
+
+- **导入**：支持三种格式（base64 分享链接、Clash/mihomo YAML `proxies:`、v2rayN 自定义
+  base64 JSON 条目）与 12 种协议（vless/vmess/ss/ssr/trojan/hysteria2/tuic/wireguard/
+  anytls/snell/socks/http），统一解析为标准化 JSON 存入 `external_chains`
+  （`config_sha256` 去重）；订阅记录 `external_subscriptions` 保存
+  `subscription-userinfo` 流量（upload/download/total/expire，浮点取整、expire=0 忽略）、
+  节点数、识别到的格式与最近同步状态。
+- **拉取安全**：URL 仅允许 https，拒绝 localhost / 内网 / CGNAT（100.64/10）/
+  TEST-NET 等保留段地址（防 SSRF）；每订阅可配自定义 UA（默认 clash-meta/2.4.0，
+  未拿到流量头时自动以 clash UA 重试一次）与跳过证书校验开关；30s 超时、2 MiB 上限。
+- **同步**：创建即同步、手动按钮与定时任务（`external_subscriptions.sync`，每 15 分钟扫
+  描到期订阅）三入口；重同步为事务内全量替换节点（事务内校验订阅仍存在，防删除竞态）；
+  失败保留记录并写 `last_error`，可重试。前端外部订阅页提供列表、增删改、同步与节点查看。
+- **用户关联**：`user_external_subscriptions` 表（user × subscription + 模式），三模式：
+  **叠加（stack）** total/used 都并入面板池、**并入（merge）** 仅 used 并入（total 不变）、
+  **附加（nodes）** 仅引入节点（流量单独展示）；`total=0` 视为额度未知不参与合并。
+  合并为读取时实时计算（`extsub.MergeUserTraffic`，纯函数），不物化缓存表；
+  `subscription-userinfo` 头与 `/api/sub/{token}/info` 均按合并值发出（头不封底，
+  仅前端剩余显示 0 封底；`reset_day` 不合并）。
+- **渲染**：订阅快照管线扩展 `proxyItem.external`，为外部节点走独立构建器
+  （mihomo YAML / sing-box JSON / Quantumult X / base64 分享链接，与解析器互逆）；
+  客户端格式无法表达的协议跳过并记入快照 warning。外部订阅同步成功后自动重发布
+  所有关联用户（`UsersByExternalSubscriptionID` + 异步重生成队列）。
 
 ## 10. 面板页面与 API
 
-页面：登录 / 仪表盘（服务器数、在线数、链路数、正常/降级数、用户数）/ 服务器列表（创建和编辑时填写别名、Country、Location、机器类型、公网地址、NAT 可用端口、Tag 与 xray 版本）/ **链路页** / 用户列表。
+页面：登录 / 仪表盘（服务器数、在线数、链路数、正常/降级数、用户数）/ 服务器列表（创建和编辑时填写别名、Country、Location、机器类型、公网地址、NAT 可用端口、Tag 与 xray 版本）/ **链路页** / 用户列表 / **外部订阅页**（第三方订阅导入、同步与节点查看，§9.1）。
 
 链路页是唯一的产品入口，不保留 `/nodes` 页面或重定向。创建时先选择：
 
