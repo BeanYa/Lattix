@@ -104,7 +104,6 @@ export default function SubscriptionPage() {
             {!info.disabled && !info.expired && <span className="rounded-full bg-[#123f2b] px-3 py-1 text-xs text-[#4ade80]">正常</span>}
           </div>
         </div>
-        <p className="mt-1 text-sm text-[#9aa4c0]">{info.name}</p>
 
         {/* 超限通知 */}
         {overLimit && (
