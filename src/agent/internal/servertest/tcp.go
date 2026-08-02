@@ -259,8 +259,12 @@ func preflightConnect(ctx context.Context, address netip.Addr, port int) error {
 }
 
 func resolvePublicTarget(ctx context.Context, target shared.ServerTestTarget) (netip.Addr, error) {
-	network := networkForFamily(target.AddressFamily)
-	addresses, err := net.DefaultResolver.LookupNetIP(ctx, network, target.Host)
+	return resolvePublicTargetWithLookup(ctx, target, net.DefaultResolver.LookupNetIP)
+}
+
+func resolvePublicTargetWithLookup(ctx context.Context, target shared.ServerTestTarget, lookup func(context.Context, string, string) ([]netip.Addr, error)) (netip.Addr, error) {
+	network := lookupNetworkForFamily(target.AddressFamily)
+	addresses, err := lookup(ctx, network, target.Host)
 	if err != nil {
 		return netip.Addr{}, fmt.Errorf("resolve %s: %w", target.Host, err)
 	}
@@ -283,6 +287,13 @@ func networkForFamily(family shared.ServerTestAddressFamily) string {
 		return "tcp6"
 	}
 	return "tcp4"
+}
+
+func lookupNetworkForFamily(family shared.ServerTestAddressFamily) string {
+	if family == shared.ServerTestIPv6 {
+		return "ip6"
+	}
+	return "ip4"
 }
 
 func networkForAddr(address netip.Addr) string {
