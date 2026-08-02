@@ -2,9 +2,7 @@ package servertest
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"runtime"
 	"sort"
 	"time"
 
@@ -17,11 +15,12 @@ type ProgressFunc func(shared.ServerTestProgressPayload)
 
 type Runner struct {
 	AgentVersion string
+	DataDir      string
 	Now          func() time.Time
 }
 
-func NewRunner(agentVersion string) *Runner {
-	return &Runner{AgentVersion: agentVersion, Now: time.Now}
+func NewRunner(agentVersion, dataDir string) *Runner {
+	return &Runner{AgentVersion: agentVersion, DataDir: dataDir, Now: time.Now}
 }
 
 func (r *Runner) Run(parent context.Context, payload shared.ServerTestRunPayload, progress ProgressFunc, sandboxState, sandboxReason string) shared.ServerTestReport {
@@ -96,7 +95,7 @@ func (r *Runner) Run(parent context.Context, payload shared.ServerTestRunPayload
 		categories []shared.ServerTestCategory
 		run        func(context.Context, shared.ServerTestCategory, []shared.ServerTestTarget, func(int, int, string)) shared.ServerTestCategoryResult
 	}{
-		{name: "ip_quality", categories: []shared.ServerTestCategory{shared.ServerTestIPQuality}, run: r.runIPQuality},
+		{name: "ip_quality", categories: []shared.ServerTestCategory{shared.ServerTestIPQuality}, run: r.runIPQualityScript},
 		{name: "tcp", categories: []shared.ServerTestCategory{shared.ServerTestTCPIPv4, shared.ServerTestTCPIPv6, shared.ServerTestCERNETIPv4, shared.ServerTestCERNET2IPv6}, run: r.runTCP},
 		{name: "large_packet", categories: []shared.ServerTestCategory{shared.ServerTestLargePacketIPv4}, run: r.runLargePacket},
 		{name: "routes", categories: []shared.ServerTestCategory{shared.ServerTestReturnRouteIPv4, shared.ServerTestReturnRouteIPv6}, run: r.runRoute},
@@ -166,8 +165,4 @@ func filterTargets(targets []shared.ServerTestTarget, category shared.ServerTest
 
 func unsupportedResult(category shared.ServerTestCategory, code, message string) shared.ServerTestCategoryResult {
 	return shared.ServerTestCategoryResult{Category: category, Status: "unavailable", ErrorCode: code, ErrorMessage: message}
-}
-
-func runtimeSummary() map[string]any {
-	return map[string]any{"goos": runtime.GOOS, "goarch": runtime.GOARCH, "runtime": fmt.Sprintf("go%s", runtime.Version())}
 }

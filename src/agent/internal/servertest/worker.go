@@ -20,6 +20,7 @@ import (
 
 type workerInput struct {
 	AgentVersion  string                      `json:"agent_version"`
+	DataDir       string                      `json:"data_dir"`
 	SandboxState  string                      `json:"sandbox_state"`
 	SandboxReason string                      `json:"sandbox_reason,omitempty"`
 	Payload       shared.ServerTestRunPayload `json:"payload"`
@@ -43,7 +44,7 @@ func WorkerMain(stdin io.Reader, stdout io.Writer) error {
 	}
 	applyWorkerLimits()
 	encoder := json.NewEncoder(stdout)
-	runner := NewRunner(input.AgentVersion)
+	runner := NewRunner(input.AgentVersion, input.DataDir)
 	report := runner.Run(context.Background(), input.Payload, func(progress shared.ServerTestProgressPayload) {
 		_ = encoder.Encode(workerMessage{Kind: "progress", Progress: &progress})
 	}, input.SandboxState, input.SandboxReason)
@@ -95,12 +96,12 @@ func RunWorker(ctx context.Context, dataDir, agentVersion string, payload shared
 	} else {
 		state, reason = "degraded", "namespace isolation is unavailable on "+runtime.GOOS
 	}
-	report, stderr, err := runWorkerProcess(ctx, executable, tempDir, agentVersion, payload, state, reason, cloneFlags, progress)
+	report, stderr, err := runWorkerProcess(ctx, executable, tempDir, dataDir, agentVersion, payload, state, reason, cloneFlags, progress)
 	if err == nil || cloneFlags == 0 || (!errors.Is(err, syscall.EPERM) && !strings.Contains(strings.ToLower(err.Error()), "operation not permitted")) {
 		return report, err
 	}
 	state, reason = "degraded", "PID/mount/IPC namespaces were denied; using process, temp-dir and rlimit isolation"
-	report, fallbackStderr, fallbackErr := runWorkerProcess(ctx, executable, tempDir, agentVersion, payload, state, reason, 0, progress)
+	report, fallbackStderr, fallbackErr := runWorkerProcess(ctx, executable, tempDir, dataDir, agentVersion, payload, state, reason, 0, progress)
 	if fallbackErr != nil {
 		return report, fmt.Errorf("sandbox fallback failed: %w (isolated stderr=%s; fallback stderr=%s)", fallbackErr, stderr, fallbackStderr)
 	}
@@ -109,14 +110,15 @@ func RunWorker(ctx context.Context, dataDir, agentVersion string, payload shared
 
 func runWorkerProcess(
 	ctx context.Context,
-	executable, tempDir, agentVersion string,
+	executable, tempDir, dataDir, agentVersion string,
 	payload shared.ServerTestRunPayload,
 	sandboxState, sandboxReason string,
 	cloneFlags uintptr,
 	progress ProgressFunc,
 ) (shared.ServerTestReport, string, error) {
 	input, err := json.Marshal(workerInput{
-		AgentVersion: agentVersion, SandboxState: sandboxState, SandboxReason: sandboxReason, Payload: payload,
+		AgentVersion: agentVersion, DataDir: dataDir,
+		SandboxState: sandboxState, SandboxReason: sandboxReason, Payload: payload,
 	})
 	if err != nil {
 		return shared.ServerTestReport{}, "", err
