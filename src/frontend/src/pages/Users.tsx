@@ -6,6 +6,7 @@ import {
   ExternalLinkIcon,
   EyeIcon,
   HistoryIcon,
+  KeyRoundIcon,
   PlusIcon,
   QrCodeIcon,
   RefreshCwIcon,
@@ -176,6 +177,7 @@ export default function Users() {
   const [subErr, setSubErr] = useState('')
   const [subRouting, setSubRouting] = useState<SubscriptionRoutingProfile>(defaultSubscriptionRouting)
   const [regenerating, setRegenerating] = useState<number | null>(null)
+  const [resettingToken, setResettingToken] = useState<number | null>(null)
   const [previewTarget, setPreviewTarget] = useState<SubUser | null>(null)
   const [previewFormat, setPreviewFormat] = useState<SubscriptionPreviewFormat>('clash')
   const [previewData, setPreviewData] = useState<SubscriptionPreview | null>(null)
@@ -416,6 +418,27 @@ export default function Users() {
     }
   }
 
+  const onResetToken = async (user: SubUser) => {
+    if (!(await confirm({
+      title: '重置订阅地址',
+      description: `确认重置「${user.name}」的订阅地址？新地址将立即生效，旧链接立即失效，客户端需要重新导入新链接。`,
+      confirmLabel: '重置订阅地址',
+      destructive: true,
+    }))) {
+      return
+    }
+    setResettingToken(user.id)
+    setError('')
+    try {
+      await api.resetUserSubscriptionToken(user.id)
+      load()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setResettingToken(null)
+    }
+  }
+
   const loadSubscriptionPreview = async (user: SubUser, format: SubscriptionPreviewFormat) => {
     setPreviewLoading(true)
     setPreviewError('')
@@ -561,6 +584,15 @@ export default function Users() {
                       onClick={() => onRegenerate(u)}
                     >
                       <RefreshCwIcon className={regenerating === u.id ? 'animate-spin' : undefined} />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      title="重置订阅地址（更换链接，旧链接立即失效）"
+                      disabled={resettingToken === u.id}
+                      onClick={() => onResetToken(u)}
+                    >
+                      <KeyRoundIcon className={resettingToken === u.id ? 'animate-spin' : undefined} />
                     </Button>
                     <Button variant="outline" size="sm" title="结果预览" onClick={() => onOpenPreview(u)}>
                       <EyeIcon />

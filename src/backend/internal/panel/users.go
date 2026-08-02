@@ -277,7 +277,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	u := store.User{
 		Name:     req.Name,
 		UUID:     uuid.NewString(),
-		SubToken: randomHex(16),
+		SubToken: randomHex(8),
 	}
 	id, err := s.st.InsertUser(r.Context(), u.Name, u.UUID, u.SubToken, expiresAt)
 	if err != nil {
@@ -807,6 +807,75 @@ func (s *Server) handleRegenerateUserSubscription(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": result.Status, "error": result.Error, "revision": result.Revision,
 		"source_label": result.SourceLabel, "generated_at": result.GeneratedAt, "warnings": result.Warnings,
+	})
+}
+
+// handleResetUserSubscriptionToken 处理 POST /api/user/reset-subscription-token：
+// 更换 sub_token 生成全新订阅地址（旧链接立即失效），并重新发布全部格式。
+// UUID 不变，不触发节点扇出（§7/§8）。
+func (s *Server) handleResetUserSubscriptionToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID int64 `json:"user_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.UserID <= 0 || s.subscriptions == nil {
+		writeError(w, http.StatusBadRequest, "invalid user id or subscription service unavailable")
+		return
+	}
+	u, err := s.st.UserByID(r.Context(), req.UserID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var token string
+	for i := 0; i < 5; i++ {
+		candidate := randomHex(8)
+		if _, err := s.st.UserBySubToken(r.Context(), candidate); err != nil {
+			if !errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			token = candidate
+			break
+		}
+	}
+	if token == "" {
+		writeError(w, http.StatusInternalServerError, "failed to generate unique subscription token")
+		return
+	}
+	if err := s.st.SetUserSubToken(r.Context(), req.UserID, token); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "用户不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	base := s.panelBase(r)
+	if _, err := s.subscriptions.PublishUser(r.Context(), req.UserID, base); err != nil {
+		// 发布失败时回滚 token：保持"轮换成功 ⇔ 发布成功"的不变量，
+		// 失败则旧链接继续可用（避免新链接内容仍含旧 token 而旧链接已死）。
+		log.Printf("panel: reset sub token user %d (%s): publish failed: %v; rolling back token", req.UserID, u.Name, err)
+		if rbErr := s.st.SetUserSubToken(r.Context(), req.UserID, u.SubToken); rbErr != nil {
+			log.Printf("panel: reset sub token user %d: rollback failed: %v", req.UserID, rbErr)
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.audit(r, "user.subscription_token.reset", nil, nil, map[string]any{
+		"user_id": req.UserID,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"sub_token":     token,
+		"sub_url":       fmt.Sprintf("%s/sub/%s", base, token),
+		"sub_links_url": fmt.Sprintf("%s/sub/%s?format=links", base, token),
 	})
 }
 

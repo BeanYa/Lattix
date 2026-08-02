@@ -237,6 +237,18 @@ func (s *Store) SetUserSubSettings(ctx context.Context, id int64, trafficLimit i
 	return nil
 }
 
+// SetUserSubToken 更换用户的订阅 token（§8）。
+func (s *Store) SetUserSubToken(ctx context.Context, id int64, token string) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET sub_token = ? WHERE id = ?`, token, id)
+	if err != nil {
+		return fmt.Errorf("set user sub token: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // UserNodeIDs 返回用户分配到的节点 id 列表（§16）。
 func (s *Store) UserNodeIDs(ctx context.Context, userID int64) ([]int64, error) {
 	rows, err := s.db.QueryContext(ctx,
