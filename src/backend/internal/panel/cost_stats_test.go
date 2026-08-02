@@ -297,8 +297,8 @@ func TestBillingStatsHandlerMonthView(t *testing.T) {
 	}
 	wantUSD := []int64{4080, 6720, 7440}
 	for i := range wantUSD {
-		if usd.CostsPublic[i] != wantUSD[i] {
-			t.Fatalf("usd costs = %v, want %v", usd.CostsPublic, wantUSD)
+		if usd.ActualCostsPublic[i] != wantUSD[i] {
+			t.Fatalf("usd costs = %v, want %v", usd.ActualCostsPublic, wantUSD)
 		}
 	}
 	// CNY 年付 ¥60/年 → 6000/365/天；1 月 31 天 → 510，2 月 28 天 → 460，3 月 31 天 → 510。
@@ -307,11 +307,11 @@ func TestBillingStatsHandlerMonthView(t *testing.T) {
 	}
 	wantCNY := []int64{510, 460, 510}
 	for i := range wantCNY {
-		if cny.CostsPublic[i] != wantCNY[i] {
-			t.Fatalf("cny costs = %v, want %v", cny.CostsPublic, wantCNY)
+		if cny.ActualCostsPublic[i] != wantCNY[i] {
+			t.Fatalf("cny costs = %v, want %v", cny.ActualCostsPublic, wantCNY)
 		}
 	}
-	if got := dto.TotalsPublic; len(got) != 3 || got[0] != 4080+510 || got[1] != 6720+460 || got[2] != 7440+510 {
+	if got := dto.ActualTotalsPublic; len(got) != 3 || got[0] != 4080+510 || got[1] != 6720+460 || got[2] != 7440+510 {
 		t.Fatalf("totals_public = %v", got)
 	}
 	if dto.CustomAvailable {
@@ -329,7 +329,7 @@ func TestBillingStatsHandlerMonthView(t *testing.T) {
 	var usdDays []int64
 	for i := range dayDTO.Servers {
 		if dayDTO.Servers[i].ServerID == usdID {
-			usdDays = dayDTO.Servers[i].CostsPublic
+			usdDays = dayDTO.Servers[i].ActualCostsPublic
 		}
 	}
 	jan, feb, mar := int64(0), int64(0), int64(0)
@@ -362,7 +362,7 @@ func TestBillingStatsHandlerCustomRates(t *testing.T) {
 	if dto == nil || !dto.CustomAvailable {
 		t.Fatal("custom_available should be true with matching anchor")
 	}
-	if dto.TotalsCustom == nil || dto.TotalsPublic == nil {
+	if dto.ActualTotalsCustom == nil || dto.ActualTotalsPublic == nil {
 		t.Fatal("custom mode should carry both totals")
 	}
 	for i := range dto.Servers {
@@ -375,8 +375,8 @@ func TestBillingStatsHandlerCustomRates(t *testing.T) {
 		}
 		want := []int64{4760, 7840, 8680}
 		for j := range want {
-			if dto.Servers[i].CostsCustom[j] != want[j] {
-				t.Fatalf("custom costs = %v, want %v", dto.Servers[i].CostsCustom, want)
+			if dto.Servers[i].ActualCostsCustom[j] != want[j] {
+				t.Fatalf("custom costs = %v, want %v", dto.Servers[i].ActualCostsCustom, want)
 			}
 		}
 		// 公共口径仍为 240/天。
@@ -391,7 +391,7 @@ func TestBillingStatsHandlerCustomRates(t *testing.T) {
 		t.Fatal("custom_available should be independent of rate_mode")
 	}
 	for i := range pubDTO.Servers {
-		if pubDTO.Servers[i].CostsCustom != nil || pubDTO.TotalsCustom != nil {
+		if pubDTO.Servers[i].ActualCostsCustom != nil || pubDTO.ActualTotalsCustom != nil {
 			t.Fatal("public mode must not carry custom payloads")
 		}
 	}
@@ -416,11 +416,11 @@ func TestBillingStatsHandlerYearView(t *testing.T) {
 			cny = &dto.Servers[i]
 		}
 	}
-	if cny == nil || cny.DaysActive != 365 || cny.CostsPublic[0] != 6000 {
+	if cny == nil || cny.DaysActive != 365 || cny.ActualCostsPublic[0] != 6000 {
 		t.Fatalf("year view server = %+v, want days 365 cost 6000", cny)
 	}
-	if dto.TotalsPublic[0] != 6000 {
-		t.Fatalf("year totals = %v, want [6000]", dto.TotalsPublic)
+	if dto.ActualTotalsPublic[0] != 6000 {
+		t.Fatalf("year totals = %v, want [6000]", dto.ActualTotalsPublic)
 	}
 }
 

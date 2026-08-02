@@ -27,38 +27,63 @@ const (
 	costMaxMonthSpan = 3660
 )
 
-// billingServerStatsDTO 是成本统计中单台服务器的周期成本序列（§成本统计设计）。
-type billingServerStatsDTO struct {
-	ServerID         int64   `json:"server_id"`
-	Alias            string  `json:"alias"`
-	CountryCode      string  `json:"country_code"`
-	Location         string  `json:"location"`
-	Currency         string  `json:"currency"`
-	AmountMinor      int64   `json:"amount_minor"`
-	IntervalCount    int     `json:"interval_count"`
-	IntervalUnit     string  `json:"interval_unit"`
-	ServiceStartedOn string  `json:"service_started_on"`
-	Status           string  `json:"status"`
-	DaysActive       int     `json:"days_active"`
-	DailyMinor       int64   `json:"daily_minor"`
-	DailyCustomMinor int64   `json:"daily_custom_minor,omitempty"`
-	CostsPublic      []int64 `json:"costs_public"`
-	CostsCustom      []int64 `json:"costs_custom,omitempty"`
+// billingServerStatsBase 是两种成本统计口径共用的单台服务器元数据。
+type billingServerStatsBase struct {
+	ServerID         int64  `json:"server_id"`
+	Alias            string `json:"alias"`
+	CountryCode      string `json:"country_code"`
+	Location         string `json:"location"`
+	Currency         string `json:"currency"`
+	AmountMinor      int64  `json:"amount_minor"`
+	IntervalCount    int    `json:"interval_count"`
+	IntervalUnit     string `json:"interval_unit"`
+	ServiceStartedOn string `json:"service_started_on"`
+	Status           string `json:"status"`
+	DaysActive       int    `json:"days_active"`
+	DailyMinor       int64  `json:"daily_minor"`
+	DailyCustomMinor int64  `json:"daily_custom_minor,omitempty"`
 }
 
-// billingStatsDTO 是 GET /api/billing/stats 的响应。
+// billingServerStatsDTO 是已生效成本统计中单台服务器的周期成本序列（§成本统计设计）。
+type billingServerStatsDTO struct {
+	billingServerStatsBase
+	ActualCostsPublic []int64 `json:"actual_costs_public"`
+	ActualCostsCustom []int64 `json:"actual_costs_custom,omitempty"`
+}
+
+// estimatedBillingServerStatsDTO 是计算成本统计中单台服务器的周期成本序列。
+type estimatedBillingServerStatsDTO struct {
+	billingServerStatsBase
+	EstimatedCostsPublic []int64 `json:"estimated_costs_public"`
+	EstimatedCostsCustom []int64 `json:"estimated_costs_custom,omitempty"`
+}
+
+// billingStatsMeta 是两种成本统计响应共用的头部字段（匿名嵌入使 JSON 平铺）。
+type billingStatsMeta struct {
+	ReportingCurrency string   `json:"reporting_currency"`
+	Granularity       string   `json:"granularity"`
+	From              string   `json:"from"`
+	To                string   `json:"to"`
+	RateMode          string   `json:"rate_mode"`
+	RateDate          string   `json:"rate_date,omitempty"`
+	CustomAvailable   bool     `json:"custom_available"`
+	Periods           []string `json:"periods"`
+}
+
+// billingStatsDTO 是 GET /api/billing/stats 的响应（已生效成本）。
 type billingStatsDTO struct {
-	ReportingCurrency string                    `json:"reporting_currency"`
-	Granularity       string                    `json:"granularity"`
-	From              string                    `json:"from"`
-	To                string                    `json:"to"`
-	RateMode          string                    `json:"rate_mode"`
-	RateDate          string                    `json:"rate_date,omitempty"`
-	CustomAvailable   bool                      `json:"custom_available"`
-	Periods           []string                  `json:"periods"`
-	Servers           []billingServerStatsDTO   `json:"servers"`
-	TotalsPublic      []int64                   `json:"totals_public"`
-	TotalsCustom      []int64                   `json:"totals_custom,omitempty"`
+	billingStatsMeta
+	Servers            []billingServerStatsDTO `json:"servers"`
+	ActualTotalsPublic []int64                 `json:"actual_totals_public"`
+	ActualTotalsCustom []int64                 `json:"actual_totals_custom,omitempty"`
+}
+
+// estimatedBillingStatsDTO 是 GET /api/billing/stats/estimated 的响应（计算成本）。
+type estimatedBillingStatsDTO struct {
+	billingStatsMeta
+	Servers               []estimatedBillingServerStatsDTO `json:"servers"`
+	EstimatedTotalsPublic []int64                          `json:"estimated_totals_public"`
+	EstimatedTotalsCustom []int64                          `json:"estimated_totals_custom,omitempty"`
 }
 
 // intervalDays 把计费周期折算成天数：日 = count、月 = count*30、年 = count*365。
@@ -81,6 +106,80 @@ func intervalDailyCost(amountMinor int64, count int, unit string) *big.Rat {
 		return nil
 	}
 	return new(big.Rat).SetFrac(new(big.Int).SetInt64(amountMinor), big.NewInt(days))
+}
+
+// periodDays 返回粒度对应的固定周期天数：day=1、month=30、year=365（与 intervalDays 口径一致）。
+func periodDays(gran string) int64 {
+	switch gran {
+	case costGranDay:
+		return 1
+	case costGranMonth:
+		return 30
+	case costGranYear:
+		return 365
+	}
+	return 0
+}
+
+// statsRow 是成本统计中单台参与服务器的装配结果（两种口径共用）。
+type statsRow struct {
+	billing       store.ServerBilling
+	base          billingServerStatsBase
+	dailyPublic   *big.Rat
+	dailyCustom   *big.Rat
+	customDiffers bool
+	rateDate      string
+}
+
+// loadStatsRows 装配参与统计的服务器行：元数据 + convertCosts 两套日成本（big.Rat 精确值），
+// 按 server_id 升序稳定排列。participate 在 enabled 之上决定口径参与范围。
+func (s *Server) loadStatsRows(ctx context.Context, participate func(b store.ServerBilling) bool) ([]statsRow, error) {
+	servers, err := s.st.ListServers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	billing, err := s.st.ServerBillingMap(ctx)
+	if err != nil {
+		return nil, err
+	}
+	serversByID := make(map[int64]store.Server, len(servers))
+	for _, srv := range servers {
+		serversByID[srv.ID] = srv
+	}
+	var rows []statsRow
+	for _, b := range billing {
+		if !b.Enabled || !participate(b) {
+			continue
+		}
+		srv, ok := serversByID[b.ServerID]
+		if !ok {
+			continue
+		}
+		public, custom, err := s.convertCosts(ctx, b.AmountMinor, b.Currency)
+		if err != nil {
+			return nil, err
+		}
+		dailyPublic := intervalDailyCost(public.AmountMinor, b.IntervalCount, b.IntervalUnit)
+		row := statsRow{
+			billing:     b,
+			dailyPublic: dailyPublic,
+			rateDate:    public.RateDate,
+			base: billingServerStatsBase{
+				ServerID: b.ServerID, Alias: srv.Alias, CountryCode: srv.CountryCode, Location: srv.Location,
+				Currency: b.Currency, AmountMinor: b.AmountMinor, IntervalCount: b.IntervalCount,
+				IntervalUnit: b.IntervalUnit, ServiceStartedOn: b.ServiceStartedOn, Status: b.Status,
+				DailyMinor: roundRat(dailyPublic),
+			},
+		}
+		if custom != nil {
+			row.dailyCustom = intervalDailyCost(custom.AmountMinor, b.IntervalCount, b.IntervalUnit)
+			row.base.DailyCustomMinor = roundRat(row.dailyCustom)
+			row.customDiffers = custom.AmountMinor != public.AmountMinor
+		}
+		rows = append(rows, row)
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].base.ServerID < rows[j].base.ServerID })
+	return rows, nil
 }
 
 // billingServiceEnd 返回服务器服务期的排他截止日（含起不含止）。
@@ -205,8 +304,8 @@ func parseBillingStatsQuery(q url.Values, loc *time.Location) (from, to time.Tim
 	return from, to, gran, mode, nil
 }
 
-// handleBillingStats 处理 GET /api/billing/stats：对所有启用统计计费的服务器按
-// 日/月/年周期摊算成本（复用 convertCosts 换算到统计币种），返回周期 × 服务器矩阵。
+// handleBillingStats 处理 GET /api/billing/stats（已生效成本）：对所有启用统计计费的服务器按
+// 服务期与日/月/年周期重叠摊算成本（复用 convertCosts 换算到统计币种），返回周期 × 服务器矩阵。
 func (s *Server) handleBillingStats(w http.ResponseWriter, r *http.Request) {
 	loc := s.inspectionLocation(r.Context())
 	from, to, gran, mode, err := parseBillingStatsQuery(r.URL.Query(), loc)
@@ -214,76 +313,48 @@ func (s *Server) handleBillingStats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
-	servers, err := s.st.ListServers(r.Context())
+	rows, err := s.loadStatsRows(r.Context(), func(store.ServerBilling) bool { return true })
 	if err != nil {
 		writeError(w, 500, err.Error())
 		return
 	}
-	billing, err := s.st.ServerBillingMap(r.Context())
-	if err != nil {
-		writeError(w, 500, err.Error())
-		return
-	}
-	serversByID := make(map[int64]store.Server, len(servers))
-	for _, srv := range servers {
-		serversByID[srv.ID] = srv
-	}
-
-	enabled := make([]store.ServerBilling, 0, len(billing))
-	for _, b := range billing {
-		if b.Enabled {
-			enabled = append(enabled, b)
-		}
-	}
-	sort.Slice(enabled, func(i, j int) bool { return enabled[i].ServerID < enabled[j].ServerID })
-
 	periods := costPeriods(from, to, gran)
-	totalsPublic := make([]int64, len(periods))
-	totalsCustom := make([]int64, len(periods))
 	dto := billingStatsDTO{
-		ReportingCurrency: s.reportingCurrency(r.Context()),
-		Granularity:       gran,
-		From:              from.Format("2006-01-02"),
-		To:                to.Format("2006-01-02"),
-		RateMode:          mode,
-		Periods:           periods,
-		Servers:           []billingServerStatsDTO{},
+		billingStatsMeta: billingStatsMeta{
+			ReportingCurrency: s.reportingCurrency(r.Context()),
+			Granularity:       gran,
+			From:              from.Format("2006-01-02"),
+			To:                to.Format("2006-01-02"),
+			RateMode:          mode,
+			Periods:           periods,
+		},
+		Servers:            []billingServerStatsDTO{},
+		ActualTotalsPublic: make([]int64, len(periods)),
 	}
-
-	for _, b := range enabled {
-		srv, ok := serversByID[b.ServerID]
-		if !ok {
+	for _, row := range rows {
+		if row.customDiffers {
+			dto.CustomAvailable = true
+		}
+		if dto.RateDate == "" && row.rateDate != "" {
+			dto.RateDate = row.rateDate
+		}
+	}
+	var totalsCustom []int64
+	if mode == costModeCustom && dto.CustomAvailable {
+		totalsCustom = make([]int64, len(periods))
+	}
+	for _, row := range rows {
+		start, err := time.ParseInLocation("2006-01-02", row.base.ServiceStartedOn, loc)
+		if err != nil {
 			continue
 		}
-		public, custom, err := s.convertCosts(r.Context(), b.AmountMinor, b.Currency)
-		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
-			return
-		}
-		start, err := time.ParseInLocation("2006-01-02", b.ServiceStartedOn, loc)
-		if err != nil {
-			continue
-		}
-		end := billingServiceEnd(b, loc)
-		dailyPublic := intervalDailyCost(public.AmountMinor, b.IntervalCount, b.IntervalUnit)
-		var dailyCustom *big.Rat
-		if custom != nil {
-			dailyCustom = intervalDailyCost(custom.AmountMinor, b.IntervalCount, b.IntervalUnit)
-			if custom.AmountMinor != public.AmountMinor {
-				dto.CustomAvailable = true
-			}
-		}
-
+		end := billingServiceEnd(row.billing, loc)
 		item := billingServerStatsDTO{
-			ServerID: b.ServerID, Alias: srv.Alias, CountryCode: srv.CountryCode, Location: srv.Location,
-			Currency: b.Currency, AmountMinor: b.AmountMinor, IntervalCount: b.IntervalCount,
-			IntervalUnit: b.IntervalUnit, ServiceStartedOn: b.ServiceStartedOn, Status: b.Status,
-			DailyMinor: roundRat(dailyPublic),
-			CostsPublic: make([]int64, len(periods)),
+			billingServerStatsBase: row.base,
+			ActualCostsPublic:      make([]int64, len(periods)),
 		}
 		var costsCustom []int64
-		if custom != nil {
-			item.DailyCustomMinor = roundRat(dailyCustom)
+		if totalsCustom != nil {
 			costsCustom = make([]int64, len(periods))
 		}
 		for i, label := range periods {
@@ -293,31 +364,26 @@ func (s *Server) handleBillingStats(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			item.DaysActive += days
-			cost := new(big.Rat).Mul(dailyPublic, new(big.Rat).SetInt64(int64(days)))
-			item.CostsPublic[i] = roundRat(cost)
-			totalsPublic[i] += item.CostsPublic[i]
-			if costsCustom != nil {
-				cost := new(big.Rat).Mul(dailyCustom, new(big.Rat).SetInt64(int64(days)))
+			cost := new(big.Rat).Mul(row.dailyPublic, new(big.Rat).SetInt64(int64(days)))
+			item.ActualCostsPublic[i] = roundRat(cost)
+			dto.ActualTotalsPublic[i] += item.ActualCostsPublic[i]
+			if costsCustom != nil && row.dailyCustom != nil {
+				cost := new(big.Rat).Mul(row.dailyCustom, new(big.Rat).SetInt64(int64(days)))
 				costsCustom[i] = roundRat(cost)
 				totalsCustom[i] += costsCustom[i]
 			}
 		}
-		if mode == costModeCustom && dto.CustomAvailable {
-			if costsCustom == nil {
-				costsCustom = append([]int64(nil), item.CostsPublic...)
+		if costsCustom != nil {
+			if row.dailyCustom == nil {
+				costsCustom = append([]int64(nil), item.ActualCostsPublic...)
 			}
-			item.CostsCustom = costsCustom
-		}
-		if dto.RateDate == "" && public.RateDate != "" {
-			dto.RateDate = public.RateDate
+			item.ActualCostsCustom = costsCustom
 		}
 		dto.Servers = append(dto.Servers, item)
 	}
-
-	if mode == costModeCustom && dto.CustomAvailable {
-		dto.TotalsCustom = totalsCustom
+	if totalsCustom != nil {
+		dto.ActualTotalsCustom = totalsCustom
 	}
-	dto.TotalsPublic = totalsPublic
 	writeJSON(w, http.StatusOK, dto)
 }
 
