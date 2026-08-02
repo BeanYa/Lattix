@@ -33,6 +33,7 @@ src/backend/internal/web/dist/*
 .zcode/
 /.qoder/
 /.worktree/
+/.superpowers/
 
 # Build artifacts
 /backend
