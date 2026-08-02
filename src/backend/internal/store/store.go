@@ -572,6 +572,17 @@ CREATE TABLE IF NOT EXISTS external_chains (
 CREATE INDEX IF NOT EXISTS idx_external_chains_subscription
     ON external_chains(subscription_id);
 
+-- 用户引入外部订阅（叠加 stack / 并入 merge / 附加 nodes）；删除订阅或用户时级联清理。
+CREATE TABLE IF NOT EXISTS user_external_subscriptions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    subscription_id INTEGER NOT NULL REFERENCES external_subscriptions(id) ON DELETE CASCADE,
+    mode            TEXT NOT NULL DEFAULT 'stack',
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, subscription_id)
+);
+
 `
 
 // Store 封装 SQLite 数据访问。

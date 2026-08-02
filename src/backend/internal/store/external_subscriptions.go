@@ -82,10 +82,11 @@ func (s *Store) CreateExternalSubscription(ctx context.Context, sub ExternalSubs
 		autoUpdate = 1
 	}
 	res, err := s.db.ExecContext(ctx, `INSERT INTO external_subscriptions
-		(name, url, user_agent, skip_cert_verify, auto_update, update_interval_hours, format)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		(name, url, user_agent, skip_cert_verify, auto_update, update_interval_hours, format,
+		upload, download, total)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sub.Name, sub.URL, sub.UserAgent, skipCertVerify, autoUpdate,
-		sub.UpdateIntervalHours, sub.Format)
+		sub.UpdateIntervalHours, sub.Format, sub.Upload, sub.Download, sub.Total)
 	if err != nil {
 		return 0, fmt.Errorf("insert external subscription: %w", err)
 	}
@@ -134,6 +135,9 @@ func (s *Store) DeleteExternalSubscription(ctx context.Context, id int64) error 
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM external_chains WHERE subscription_id = ?`, id); err != nil {
 		return fmt.Errorf("delete external subscription chains: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM user_external_subscriptions WHERE subscription_id = ?`, id); err != nil {
+		return fmt.Errorf("delete external subscription user links: %w", err)
 	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM external_subscriptions WHERE id = ?`, id)
 	if err != nil {
