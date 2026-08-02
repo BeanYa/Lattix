@@ -65,3 +65,28 @@ func TestBuildExternalLink(t *testing.T) {
 		t.Fatal("unknown protocol unexpectedly serialized")
 	}
 }
+
+func TestBuildExternalLinkSSWithSlashPassword(t *testing.T) {
+	// "00?" 使 StdEncoding("aes-128-gcm:00?") = "YWVzLTEyOC1nY206MDA/" 含 "/"，
+	// url.Parse 以 "/" 终止 authority 导致旧实现无法回环；RawURLEncoding 输出为
+	// "YWVzLTEyOC1nY206MDA_"（URL-safe），回环必须成功。
+	link, ok := buildExternalLink(extNode("ss-slash", "ss", "5.6.7.8", 8388, map[string]any{
+		"method": "aes-128-gcm", "password": "00?",
+	}))
+	if !ok {
+		t.Fatal("ss link failed")
+	}
+	userinfo := strings.SplitN(strings.TrimPrefix(link, "ss://"), "@", 2)[0]
+	if strings.ContainsAny(userinfo, "/+") {
+		t.Fatalf("ss userinfo must be url-safe base64, got %q in %q", userinfo, link)
+	}
+	nodes, _, err := extsub.ParseSubscription([]byte(link))
+	if err != nil || len(nodes) != 1 {
+		t.Fatalf("reparse = %+v err %v", nodes, err)
+	}
+	back := nodes[0]
+	if back.Type != "ss" || back.Server != "5.6.7.8" || back.Port != 8388 ||
+		back.Extra["method"] != "aes-128-gcm" || back.Extra["password"] != "00?" {
+		t.Fatalf("round trip = %+v", back)
+	}
+}

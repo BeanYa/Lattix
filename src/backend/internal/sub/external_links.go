@@ -56,7 +56,7 @@ func buildExternalLink(n extsub.Node) (string, bool) {
 		}
 		return "vmess://" + base64.RawURLEncoding.EncodeToString(raw), true
 	case "ss":
-		cred := base64.StdEncoding.EncodeToString([]byte(extStr(e, "method") + ":" + extStr(e, "password")))
+		cred := base64.RawURLEncoding.EncodeToString([]byte(extStr(e, "method") + ":" + extStr(e, "password")))
 		query := externalQuery(e, "method", "password")
 		if query != "" {
 			return "ss://" + cred + "@" + hostPort + "?" + query + "#" + name, true
