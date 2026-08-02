@@ -26,7 +26,9 @@ func (s *Server) handleListExternalSubscriptions(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, subs)
+	out := make([]store.ExternalSubscription, 0, len(subs))
+	out = append(out, subs...)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleCreateExternalSubscription(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +144,9 @@ func (s *Server) handleListExternalChains(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, chains)
+	out := make([]store.ExternalChain, 0, len(chains))
+	out = append(out, chains...)
+	writeJSON(w, http.StatusOK, out)
 }
 
 // republishExternalSubUsers 将关联了给定外部订阅的用户加入订阅重生成队列。

@@ -104,6 +104,22 @@ func TestExternalSubscriptionCreateSyncListDelete(t *testing.T) {
 	}
 }
 
+func TestExternalSubscriptionEmptyListJSONIsArray(t *testing.T) {
+	server, _ := newExternalSubscriptionTestServer(t)
+
+	rec := httptest.NewRecorder()
+	server.handleListExternalSubscriptions(rec, httptest.NewRequest(http.MethodGet, "/api/external-subscription/list", nil))
+	if strings.Contains(rec.Body.String(), `"data":null`) {
+		t.Fatalf("list data must be [] when empty, got: %s", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	server.handleListExternalChains(rec, httptest.NewRequest(http.MethodGet, "/api/external-subscription/chains?id=1", nil))
+	if strings.Contains(rec.Body.String(), `"data":null`) {
+		t.Fatalf("chains data must be [] when empty, got: %s", rec.Body.String())
+	}
+}
+
 func TestExternalSubscriptionCreateValidation(t *testing.T) {
 	server, _ := newExternalSubscriptionTestServer(t)
 	rec := httptest.NewRecorder()

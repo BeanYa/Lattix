@@ -27,5 +27,7 @@
 
 ### Fixed
 
+- 外部订阅列表/节点列表为空时返回 `[]` 而非 `null`，修复外部订阅页与用户页打开
+  新建/编辑弹窗时的 `Cannot read properties of null (reading 'length')` 崩溃。
 - custom 换算模式下，无自定义锚点服务器的周期成本以 public 回退值计入 custom 合计，
   合计列 = 可见单元格之和。
