@@ -65,6 +65,9 @@ func traceUDPErrorQueue(ctx context.Context, destination netip.Addr, maxHops, pr
 			}
 			offender, terminal, ok, err := waitUDPError(ctx, fd, destination.Is6(), probeTimeout)
 			if err != nil {
+				if reached {
+					return appendHop(hops, hop, address, rtts, timeouts), true, nil
+				}
 				return appendHop(hops, hop, address, rtts, timeouts), false, classifyCtxError(err)
 			}
 			if !ok {

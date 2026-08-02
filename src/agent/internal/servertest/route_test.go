@@ -96,6 +96,15 @@ func TestRunRouteTargetErrorMapping(t *testing.T) {
 	}
 }
 
+func TestClassifyCtxError(t *testing.T) {
+	if got := classifyCtxError(context.DeadlineExceeded); !errors.Is(got, errRouteProbeDeadline) {
+		t.Errorf("classifyCtxError(DeadlineExceeded) = %v, want %v", got, errRouteProbeDeadline)
+	}
+	if got := classifyCtxError(context.Canceled); !errors.Is(got, context.Canceled) {
+		t.Errorf("classifyCtxError(Canceled) = %v, want %v", got, context.Canceled)
+	}
+}
+
 func TestRunRouteTargetPerTargetDeadline(t *testing.T) {
 	var captured context.Context
 	restore := stubTraceRoute(func(ctx context.Context, _ netip.Addr, _, _ int, _ time.Duration, _ int) ([]map[string]any, bool, error) {
