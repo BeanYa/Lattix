@@ -152,14 +152,36 @@ GET  /api/auth/me
 GET  /api/dashboard/get
 
 GET  /api/server/list
+GET  /api/server/list-metric-samples?limit=
+GET  /api/server/get-metric-history?server_id=&hours=
 GET  /api/server/list-commands?server_id=&limit=
+GET  /api/server/get-test?server_id=
+POST /api/server/run-test
+GET  /api/server-test/catalog-status
+POST /api/server-test/refresh-catalog
 POST /api/server/create
 POST /api/server/update
 POST /api/server/delete
 POST /api/server/rotate-token
 POST /api/server/repair
+POST /api/server/cleanup-xray
 POST /api/server/upgrade-xray
 POST /api/server/upgrade-agent
+POST /api/server/confirm-renewal
+GET  /api/server/list-release-versions?kind=
+
+GET  /api/billing/stats?from=&to=&granularity=&rate_mode=
+GET  /api/billing/stats/estimated?from=&to=&granularity=&rate_mode=
+
+GET  /api/provider/list
+POST /api/provider/create
+POST /api/provider/update
+POST /api/provider/delete
+
+GET  /api/exchange-rate/list
+POST /api/exchange-rate/refresh
+POST /api/exchange-rate/save-custom
+POST /api/exchange-rate/delete-custom
 
 GET  /api/node/list
 POST /api/node/create
@@ -180,12 +202,13 @@ GET  /api/user/list
 POST /api/user/create
 POST /api/user/update
 POST /api/user/set-nodes
+POST /api/user/set-external-subscriptions
 POST /api/user/delete
 POST /api/user/sub-settings
+GET  /api/user/traffic-history?user_id={id}
 POST /api/user/regenerate-subscription
 POST /api/user/reset-subscription-token
-POST /api/user/set-external-subscriptions
-GET  /api/user/subscription-preview
+GET  /api/user/subscription-preview?user_id={id}&format={format}
 
 GET  /api/subscription/categories
 GET  /api/subscription/templates
@@ -205,19 +228,24 @@ GET  /api/setting/get
 POST /api/setting/update
 POST /api/setting/change-password
 POST /api/setting/test-alerts
+GET  /api/setting/sub
+POST /api/setting/sub
 
 POST /api/panel/restart
+GET  /api/panel/state
 GET  /api/panel/get-version
 POST /api/panel/start-update
 GET  /api/panel/get-update-status
 
 GET  /api/backup/download
 
-GET  /api/log/list-operations
+GET  /api/log/list-operations?severity=&category=&server_id=&operator=&q=&from=&to=&limit=&offset=
 POST /api/log/clear-operations
-GET  /api/log/list-requests
+GET  /api/log/list-requests?limit=
 POST /api/log/clear-requests
 ```
+
+端点以 `docs/openapi.yaml` 为权威（`panel/contract_test.go` 强制两者一致），本节仅作速览；query 参数为路由白名单，非全部可选组合。
 
 协议例外：
 
@@ -225,6 +253,9 @@ POST /api/log/clear-requests
 GET /api/agent/ws
 GET /sub/{token}
 GET /sub/{token}/rules/{version}/{format}/{name}
+GET /api/sub/{token}/info
+GET /api/sub/{token}/clients
+GET /api/sub/{token}/history
 GET /healthz
 GET /readyz
 ```
