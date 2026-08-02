@@ -18,6 +18,7 @@ import (
 
 	"lattix/backend/internal/alert"
 	"lattix/backend/internal/dispatch"
+	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/store"
@@ -58,6 +59,7 @@ type Server struct {
 	exchange      *exchangeCatalog
 	cdn           *cdnCatalog
 	subscriptions *sub.Server
+	extSubs       *extsub.Service
 	scheduler     *taskScheduler
 	opLog         *logging.OperationStore
 	reqLog        *logging.RequestLog
@@ -83,6 +85,17 @@ func (s *Server) SetSubscriptionService(service *sub.Server) {
 		name: "subscription.templates.refresh", runOnStart: true, timeout: 10 * time.Minute,
 		trigger: func(context.Context) taskTrigger { return intervalTrigger(6 * time.Hour) },
 		run:     func(ctx context.Context) error { return service.RefreshTemplates(ctx, "") },
+	})
+}
+
+// SetExternalSubscriptionService wires the external subscription importer and
+// its periodic sync task.
+func (s *Server) SetExternalSubscriptionService(service *extsub.Service) {
+	s.extSubs = service
+	s.scheduler.register(scheduledTask{
+		name: "external_subscriptions.sync", timeout: 10 * time.Minute,
+		trigger: func(context.Context) taskTrigger { return intervalTrigger(15 * time.Minute) },
+		run:     func(ctx context.Context) error { return service.SyncDue(ctx) },
 	})
 }
 
@@ -332,6 +345,14 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/subscription/template/clone", write, s.handleCloneSubscriptionTemplate)
 	s.registerRPC(mux, http.MethodPost, "/api/subscription/template/delete", write, s.handleDeleteSubscriptionTemplate)
 	s.registerRPC(mux, http.MethodPost, "/api/subscription/template/refresh", write, s.handleRefreshSubscriptionTemplates)
+
+	s.registerRPC(mux, http.MethodGet, "/api/external-subscription/list", read, s.handleListExternalSubscriptions)
+	s.registerRPC(mux, http.MethodPost, "/api/external-subscription/create", write, s.handleCreateExternalSubscription)
+	s.registerRPC(mux, http.MethodPost, "/api/external-subscription/update", write, s.handleUpdateExternalSubscription)
+	s.registerRPC(mux, http.MethodPost, "/api/external-subscription/delete", write, s.handleDeleteExternalSubscription)
+	s.registerRPC(mux, http.MethodPost, "/api/external-subscription/sync", write, s.handleSyncExternalSubscription)
+	s.registerRPC(mux, http.MethodGet, "/api/external-subscription/chains",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"id"}}, s.handleListExternalChains)
 
 	s.registerRPC(mux, http.MethodGet, "/api/setting/get", read, s.handleGetSettings)
 	s.registerRPC(mux, http.MethodPost, "/api/setting/update", write, s.handleUpdateSettings)
