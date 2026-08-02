@@ -297,7 +297,7 @@ wsl -d Ubuntu -- bash -lc "cd /home/bean/workspace/Lattix-codex/.worktree/field-
 
 - [ ] **Step 1: 新增消费键与转换助手（external.go 顶部，extBoolPtr 之后）**
 
-文件 import 增加 `"encoding/json"`。新增：
+注意：`optsStruct[T any]` **已存在**于 external.go:14（Task 1 修复期间已实现，yaml.Marshal/Unmarshal 泛型版，import 了 `gopkg.in/yaml.v3`），直接复用，不要重复定义、不要新增 encoding/json import。新增：
 
 ```go
 // tlsConsumedKeys 是 TLS 系协议消费的公共 Extra 键（规范键 + 别名 + opts 键）。
@@ -369,24 +369,6 @@ func rawMap(v any) map[string]any {
 		return m
 	}
 	return nil
-}
-
-// optsStruct 把 Extra 中的嵌套 opts 对象转换为类型化结构；
-// 键不存在或类型不符时返回零值结构与 false。
-func optsStruct[T any](e map[string]any, key string) (T, bool) {
-	var out T
-	raw, ok := e[key].(map[string]any)
-	if !ok {
-		return out, false
-	}
-	buf, err := json.Marshal(raw)
-	if err != nil {
-		return out, false
-	}
-	if err := json.Unmarshal(buf, &out); err != nil {
-		return out, false
-	}
-	return out, true
 }
 ```
 
