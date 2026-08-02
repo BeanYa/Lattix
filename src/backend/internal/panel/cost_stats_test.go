@@ -515,6 +515,9 @@ func TestEstimatedBillingStatsHandlerMonthView(t *testing.T) {
 		if srv.ServerID == expiredID {
 			t.Fatal("expired billing server leaked into estimated stats")
 		}
+		if srv.EstimatedCostsCustom != nil {
+			t.Fatal("estimated_costs_custom should be nil without anchors")
+		}
 	}
 	var usd, cny *estimatedBillingServerStatsDTO
 	for i := range dto.Servers {
@@ -553,6 +556,9 @@ func TestEstimatedBillingStatsHandlerMonthView(t *testing.T) {
 	}
 	if dto.CustomAvailable {
 		t.Fatal("custom_available should be false without anchors")
+	}
+	if dto.EstimatedTotalsCustom != nil {
+		t.Fatal("estimated_totals_custom should be nil without anchors")
 	}
 	if dto.RateDate != "2026-07-29" {
 		t.Fatalf("rate_date = %q, want 2026-07-29", dto.RateDate)

@@ -3,20 +3,18 @@ import { CoinsIcon } from 'lucide-react'
 
 import { CountryFlag } from '@/components/CountryFlag'
 import { Chart, type ChartOption } from '@/components/echarts'
-import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
+import { EmptyState, LoadingState, Notice } from '@/components/PagePrimitives'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, errorMessage } from '@/lib/api'
 import { useTheme } from '@/lib/theme-context'
 import type {
-  BillingActualServerStats,
-  BillingActualStats,
+  BillingEstimatedServerStats,
+  BillingEstimatedStats,
   BillingStatsGranularity,
   BillingStatsRateMode,
 } from '@/lib/types'
-import EstimatedCostsTab from './EstimatedCostsTab'
 import {
   GRANULARITY_LABEL,
   StatsControls,
@@ -34,25 +32,19 @@ import {
   useRowSort,
 } from './costs-shared'
 
-function costsOf(server: BillingActualServerStats, rateMode: BillingStatsRateMode): number[] {
-  return rateMode === 'custom' && server.actual_costs_custom ? server.actual_costs_custom : server.actual_costs_public
+function costsOfEstimated(server: BillingEstimatedServerStats, rateMode: BillingStatsRateMode): number[] {
+  return rateMode === 'custom' && server.estimated_costs_custom
+    ? server.estimated_costs_custom
+    : server.estimated_costs_public
 }
 
-interface ServerRow {
-  name: string
-  server: BillingActualServerStats
-  total: number
-  share: number
-  daily: number
-}
-
-function ActualCostsTab() {
+export default function EstimatedCostsTab() {
   const { theme } = useTheme()
   const [granularity, setGranularity] = useState<BillingStatsGranularity>('month')
   const [from, setFrom] = useState(() => firstOfMonth(addMonths(localDate(), -11)))
   const [to, setTo] = useState(() => localDate())
   const [rateMode, setRateMode] = useState<BillingStatsRateMode>('custom')
-  const [stats, setStats] = useState<BillingActualStats | null>(null)
+  const [stats, setStats] = useState<BillingEstimatedStats | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const { sort, header } = useRowSort()
@@ -60,7 +52,7 @@ function ActualCostsTab() {
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
-      const result = await api.billingStats({
+      const result = await api.billingStatsEstimated({
         from,
         to,
         granularity,
@@ -113,14 +105,14 @@ function ActualCostsTab() {
     }
   }
 
-  const rows = useMemo<ServerRow[]>(() => {
+  const rows = useMemo(() => {
     if (!stats) return []
     const totalAll = stats.servers.reduce(
-      (sum, server) => sum + costsOf(server, rateMode).reduce((acc, value) => acc + value, 0),
+      (sum, server) => sum + costsOfEstimated(server, rateMode).reduce((acc, value) => acc + value, 0),
       0,
     )
     return stats.servers.map((server) => {
-      const costs = costsOf(server, rateMode)
+      const costs = costsOfEstimated(server, rateMode)
       const total = costs.reduce((sum, value) => sum + value, 0)
       return {
         name: server.alias,
@@ -140,22 +132,10 @@ function ActualCostsTab() {
   }, [stats, rateMode, sort])
 
   const totalAll = useMemo(() => rows.reduce((sum, row) => sum + row.total, 0), [rows])
-  const totals = rateMode === 'custom' && stats?.actual_totals_custom ? stats.actual_totals_custom : stats?.actual_totals_public ?? []
-  const monthsInRange = useMemo(() => {
-    if (!stats) return 1
-    if (stats.granularity === 'month') return Math.max(1, stats.periods.length)
-    if (stats.granularity === 'year') return Math.max(1, stats.periods.length * 12)
-    return Math.max(1, stats.periods.length / 30)
-  }, [stats])
-  const topServer = useMemo(() => {
-    if (!stats || stats.servers.length === 0) return null
-    return stats.servers
-      .map((server) => ({
-        server,
-        total: costsOf(server, rateMode).reduce((sum, value) => sum + value, 0),
-      }))
-      .sort((a, b) => b.total - a.total)[0]
-  }, [stats, rateMode])
+  const dailyTotal = useMemo(() => rows.reduce((sum, row) => sum + row.daily, 0), [rows])
+  const totals = rateMode === 'custom' && stats?.estimated_totals_custom
+    ? stats.estimated_totals_custom
+    : stats?.estimated_totals_public ?? []
 
   const reportingCurrency = stats?.reporting_currency ?? 'CNY'
   const textColor = theme === 'dark' ? '#c9cbe2' : '#686a7c'
@@ -167,7 +147,7 @@ function ActualCostsTab() {
       periods: stats.periods,
       servers: stats.servers.map((server) => ({
         alias: server.alias,
-        costs: costsOf(server, rateMode),
+        costs: costsOfEstimated(server, rateMode),
       })),
       granularity,
       currency: reportingCurrency,
@@ -186,10 +166,6 @@ function ActualCostsTab() {
     )
   }, [stats, rows, totalAll, reportingCurrency, textColor, theme])
 
-  const errorPage = (
-    <Notice tone="danger" title="成本统计加载失败">{error}</Notice>
-  )
-
   return (
     <>
       <StatsControls
@@ -206,24 +182,42 @@ function ActualCostsTab() {
         onPreset={applyPreset}
         onRateMode={(value) => setRateMode(value)}
       />
-      {error ? errorPage : null}
+      {error ? <Notice tone="danger" title="计算成本加载失败">{error}</Notice> : null}
       {loading && !stats ? (
-        <LoadingState className="py-16">正在统计成本…</LoadingState>
+        <LoadingState className="py-16">正在估算成本…</LoadingState>
       ) : stats && stats.servers.length === 0 ? (
         <EmptyState
           icon={<CoinsIcon className="size-8" />}
-          title="暂无启用统计计费的服务器"
-          description="在「服务器」页为服务器开启统计计费并填写周期价格后，这里会展示已生效成本。"
+          title="暂无启用计费且未过期的服务器"
+          description="在「服务器」页为服务器开启统计计费并填写周期价格后，这里会展示计算成本估算。"
         />
       ) : stats ? (
         <>
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Card>
               <CardHeader>
-                <CardDescription>范围内总成本</CardDescription>
+                <CardDescription>估算日成本</CardDescription>
                 <CardTitle className="text-2xl tabular-nums">
-                  {money(totalAll, reportingCurrency)}
-                  <span className="ml-1 text-sm font-normal text-muted-foreground">{reportingCurrency}</span>
+                  {money(dailyTotal, reportingCurrency)}
+                  <span className="ml-1 text-sm font-normal text-muted-foreground">/ 天 · {reportingCurrency}</span>
+                </CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardDescription>估算月成本（×30）</CardDescription>
+                <CardTitle className="text-2xl tabular-nums">
+                  {money(dailyTotal * 30, reportingCurrency)}
+                  <span className="ml-1 text-sm font-normal text-muted-foreground">/ 月 · {reportingCurrency}</span>
+                </CardTitle>
+              </CardHeader>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardDescription>估算年成本（×365）</CardDescription>
+                <CardTitle className="text-2xl tabular-nums">
+                  {money(dailyTotal * 365, reportingCurrency)}
+                  <span className="ml-1 text-sm font-normal text-muted-foreground">/ 年 · {reportingCurrency}</span>
                 </CardTitle>
               </CardHeader>
             </Card>
@@ -233,31 +227,12 @@ function ActualCostsTab() {
                 <CardTitle className="text-2xl tabular-nums">{stats.servers.length} 台</CardTitle>
               </CardHeader>
             </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>平均月成本</CardDescription>
-                <CardTitle className="text-2xl tabular-nums">
-                  {money(Math.round(totalAll / monthsInRange), reportingCurrency)}
-                  <span className="ml-1 text-sm font-normal text-muted-foreground">{reportingCurrency}</span>
-                </CardTitle>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>成本最高服务器</CardDescription>
-                <CardTitle className="truncate text-xl tabular-nums" title={topServer?.server.alias}>
-                  {topServer
-                    ? `${topServer.server.alias} · ${money(topServer.total, reportingCurrency)}`
-                    : '—'}
-                </CardTitle>
-              </CardHeader>
-            </Card>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2">
               <CardHeader>
-                <CardTitle>周期成本分布</CardTitle>
+                <CardTitle>周期估算成本分布</CardTitle>
                 <CardDescription>每台服务器一个色段，悬停查看明细；图例可点击隐藏单台服务器。</CardDescription>
               </CardHeader>
               <CardContent>
@@ -267,7 +242,7 @@ function ActualCostsTab() {
             <Card>
               <CardHeader>
                 <CardTitle>成本占比</CardTitle>
-                <CardDescription>范围内各服务器成本占比。</CardDescription>
+                <CardDescription>范围内各服务器估算成本占比。</CardDescription>
               </CardHeader>
               <CardContent>
                 {totalAll > 0
@@ -281,7 +256,7 @@ function ActualCostsTab() {
             <CardHeader>
               <CardTitle>服务器汇总</CardTitle>
               <CardDescription>
-                原价与周期以服务器币种展示；其余数值按 {reportingCurrency} 折算，点击列头排序。
+                原价与周期以服务器币种展示；其余数值按 {reportingCurrency} 估算，点击列头排序。
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -290,9 +265,8 @@ function ActualCostsTab() {
                   <TableRow>
                     <TableHead>{header('name', '服务器')}</TableHead>
                     <TableHead className="text-right">原价 / 周期</TableHead>
-                    <TableHead className="text-right">服务天数</TableHead>
-                    <TableHead className="text-right">{header('daily', `日均成本 (${reportingCurrency})`)}</TableHead>
-                    <TableHead className="text-right">{header('total', `总成本 (${reportingCurrency})`)}</TableHead>
+                    <TableHead className="text-right">{header('daily', `估算日成本 (${reportingCurrency})`)}</TableHead>
+                    <TableHead className="text-right">{header('total', `估算总成本 (${reportingCurrency})`)}</TableHead>
                     <TableHead className="text-right">{header('share', '占比')}</TableHead>
                     <TableHead className="text-right">状态</TableHead>
                   </TableRow>
@@ -315,7 +289,6 @@ function ActualCostsTab() {
                           {money(server.amount_minor, server.currency)} {server.currency}
                           <span className="text-muted-foreground"> / {server.interval_count} {GRANULARITY_LABEL[server.interval_unit]}</span>
                         </TableCell>
-                        <TableCell className="text-right tabular-nums">{server.days_active} 天</TableCell>
                         <TableCell className="text-right tabular-nums">{money(row.daily, reportingCurrency)}</TableCell>
                         <TableCell className="text-right tabular-nums font-medium">{money(row.total, reportingCurrency)}</TableCell>
                         <TableCell className="text-right tabular-nums">{(row.share * 100).toFixed(1)}%</TableCell>
@@ -337,7 +310,7 @@ function ActualCostsTab() {
           <Card>
             <CardHeader>
               <CardTitle>周期明细矩阵</CardTitle>
-              <CardDescription>行 = 周期，列 = 服务器；单元格为对应周期成本（{reportingCurrency}），行尾为周期合计。</CardDescription>
+              <CardDescription>行 = 周期，列 = 服务器；单元格为对应周期估算成本（{reportingCurrency}），行尾为周期合计。</CardDescription>
             </CardHeader>
             <CardContent className="overflow-x-auto">
               <Table>
@@ -359,7 +332,7 @@ function ActualCostsTab() {
                         {periodLabel(period, granularity)}
                       </TableCell>
                       {stats.servers.map((server) => {
-                        const costs = costsOf(server, rateMode)
+                        const costs = costsOfEstimated(server, rateMode)
                         return (
                           <TableCell key={server.server_id} className="text-right tabular-nums">
                             {costs[index] ? money(costs[index], reportingCurrency) : '—'}
@@ -378,24 +351,5 @@ function ActualCostsTab() {
         </>
       ) : null}
     </>
-  )
-}
-
-export default function Costs() {
-  const [tab, setTab] = useState<'actual' | 'estimated'>('actual')
-  return (
-    <Page>
-      <PageHeader
-        title="成本统计"
-        description="已生效成本按服务期摊算实际花费；计算成本按日成本估算各周期成本，统一以统计币种展示"
-      />
-      <Tabs value={tab} onValueChange={(value) => value && setTab(value as 'actual' | 'estimated')}>
-        <TabsList>
-          <TabsTrigger value="actual">已生效成本</TabsTrigger>
-          <TabsTrigger value="estimated">计算成本</TabsTrigger>
-        </TabsList>
-      </Tabs>
-      {tab === 'actual' ? <ActualCostsTab /> : <EstimatedCostsTab />}
-    </Page>
   )
 }
