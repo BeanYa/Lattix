@@ -149,6 +149,7 @@ func inspectEnvironment(sandboxState, sandboxReason string) shared.ServerTestEnv
 	return shared.ServerTestEnvironment{
 		ProbeMethod: probeMethod, Degraded: degraded, DegradedReason: degradedReason,
 		Sandbox: sandboxState, SandboxReason: sandboxReason, Privileges: privileges,
+		IPv6Available: hasGlobalIPv6(),
 	}
 }
 
