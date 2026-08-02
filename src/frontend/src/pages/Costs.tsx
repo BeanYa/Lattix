@@ -721,9 +721,6 @@ function EstimatedCostsTab() {
     }
   }
 
-  const dailyOf = (server: BillingEstimatedServerStats): number =>
-    rateMode === 'custom' ? server.daily_custom_minor ?? server.daily_minor : server.daily_minor
-
   const rows = useMemo(() => {
     if (!stats) return []
     const totalAll = stats.servers.reduce(
@@ -738,7 +735,7 @@ function EstimatedCostsTab() {
         server,
         total,
         share: totalAll > 0 ? total / totalAll : 0,
-        daily: dailyOf(server),
+        daily: rateMode === 'custom' ? server.daily_custom_minor ?? server.daily_minor : server.daily_minor,
       }
     }).sort((a, b) => {
       const left = a[sort.key]
