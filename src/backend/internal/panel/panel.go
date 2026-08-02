@@ -63,6 +63,7 @@ type Server struct {
 	reqLog        *logging.RequestLog
 
 	routePolicies   map[string]logging.LogPolicy
+	debugRoutes     map[string]bool // 轮询/状态类路由：成功请求记录为 debug 级别
 	methodFallbacks map[string]bool // 已注册 405 回退路由的裸路径（同路径多方法时避免重复注册）
 	idempotencyMu   sync.Mutex
 	authOnce        sync.Once
@@ -130,6 +131,7 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
 		routePolicies:   make(map[string]logging.LogPolicy),
+		debugRoutes:     make(map[string]bool),
 		methodFallbacks: make(map[string]bool),
 	}
 	s.upd = newPanelUpdater(s)
@@ -203,7 +205,7 @@ func (s *Server) registerCoreTasks() {
 // RegisterRoutes 注册面板路由（管理 API 均需登录）。
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	read := rpcRouteOptions{Auth: true}
-	polledRead := rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly}
+	polledRead := rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly, Debug: true}
 	write := rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true}
 
 	s.registerRPC(mux, http.MethodPost, "/api/auth/login",
@@ -211,7 +213,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/auth/logout",
 		rpcRouteOptions{Auth: true, CSRF: true}, s.handleLogout)
 	s.registerRPC(mux, http.MethodGet, "/api/auth/me",
-		rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly}, s.handleMe)
+		rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly, Debug: true}, s.handleMe)
 
 	s.registerRPC(mux, http.MethodGet, "/api/dashboard/get", polledRead, s.handleDashboard)
 
@@ -226,7 +228,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"server_id", "limit"}},
 		s.handleListCommands)
 	s.registerRPC(mux, http.MethodGet, "/api/server/get-test",
-		rpcRouteOptions{Auth: true, AllowedQuery: []string{"server_id"}}, s.handleGetServerTest)
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"server_id"}, Debug: true}, s.handleGetServerTest)
 	s.registerRPC(mux, http.MethodPost, "/api/server/run-test",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id"}},
 		s.handleRunServerTest)
@@ -337,11 +339,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/setting/sub", write, s.handleUpdateSubSettings)
 
 	s.registerRPC(mux, http.MethodPost, "/api/panel/restart", write, s.handleRestart)
-	s.registerRPC(mux, http.MethodGet, "/api/panel/state", read, s.handlePanelState)
+	s.registerRPC(mux, http.MethodGet, "/api/panel/state",
+		rpcRouteOptions{Auth: true, Debug: true}, s.handlePanelState)
 	s.registerRPC(mux, http.MethodGet, "/api/panel/get-version", read, s.handlePanelVersion)
 	s.registerRPC(mux, http.MethodPost, "/api/panel/start-update", write, s.handlePanelUpdateStart)
 	s.registerRPC(mux, http.MethodGet, "/api/panel/get-update-status",
-		rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly}, s.handlePanelUpdateStatus)
+		rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly, Debug: true}, s.handlePanelUpdateStatus)
 
 	s.registerRPC(mux, http.MethodGet, "/api/backup/download", read, s.handleBackup)
 

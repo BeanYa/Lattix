@@ -458,7 +458,7 @@ func run() error {
 	mux.Handle("/", spaHandler(frontendFS))
 
 	srv := newHTTPServer(*addr,
-		drainMiddleware(hub, logging.RequestMiddleware(reqLog, ps.Operator, ps.LogPolicy, mux)))
+		drainMiddleware(hub, logging.RequestMiddleware(reqLog, ps.Operator, ps.LogPolicy, ps.DebugRoute, ps.RequestLogLevel, mux)))
 	var serve func() error
 	switch applied.Mode {
 	case panel.TLSModeACME:

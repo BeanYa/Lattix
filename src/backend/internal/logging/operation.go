@@ -20,6 +20,7 @@ import (
 type Severity string
 
 const (
+	SeverityDebug   Severity = "debug"
 	SeverityInfo    Severity = "info"
 	SeverityWarning Severity = "warning"
 	SeverityError   Severity = "error"

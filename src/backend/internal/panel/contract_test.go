@@ -71,7 +71,10 @@ func TestOpenAPIRoutesMatchRegisteredRPCs(t *testing.T) {
 			}
 		}
 	}
-	server := &Server{routePolicies: make(map[string]logging.LogPolicy)}
+	server := &Server{
+		routePolicies: make(map[string]logging.LogPolicy),
+		debugRoutes:   make(map[string]bool),
+	}
 	server.RegisterRoutes(http.NewServeMux())
 
 	missingFromSpec := setDifference(server.routePolicies, documented)

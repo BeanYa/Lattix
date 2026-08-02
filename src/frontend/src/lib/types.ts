@@ -685,6 +685,7 @@ export interface PanelSettings {
   alert_telegram_chat_id: string
   operation_log_limit: number
   request_log_max_mb: number
+  request_log_level: LogSeverity
   log_dir: string
   request_log_usage_bytes: number
   request_log_dropped: number
@@ -711,6 +712,7 @@ export interface UpdateSettingsRequest {
   alert_telegram_chat_id: string
   operation_log_limit: number
   request_log_max_mb: number
+  request_log_level: LogSeverity
   agent: AgentSettings
   release_inspection: ReleaseInspectionSettings
   billing_inspection: InspectionSchedule
@@ -785,7 +787,7 @@ export interface PanelLifecycleSnapshot {
   latency_resume_window_ms: number
 }
 
-export type LogSeverity = 'info' | 'warning' | 'error'
+export type LogSeverity = 'debug' | 'info' | 'warning' | 'error'
 export type OperationCategory =
   | 'server'
   | 'chain'

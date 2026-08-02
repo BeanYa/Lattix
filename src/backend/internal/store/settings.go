@@ -27,6 +27,7 @@ const (
 	SettingAlertTelegramChatID   = "alert_telegram_chat_id"   // Telegram 会话 ID
 	SettingOperationLogLimit     = "operation_log_limit"      // 操作日志最多保留条数，默认 1000
 	SettingRequestLogMaxMB       = "request_log_max_mb"       // 请求日志 JSONL 总容量 MiB，默认 10
+	SettingRequestLogLevel       = "request_log_level"        // 请求日志最低记录级别 debug|info|warning|error，默认 debug
 	SettingPanelInstanceID       = "panel_instance_id"
 	SettingAgentSettings         = "agent_settings"
 	SettingReleaseInspection     = "release_inspection"

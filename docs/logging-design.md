@@ -45,6 +45,7 @@
 - 业务数据库只保存日志容量设置：
   - `operation_log_limit`
   - `request_log_max_mb`
+  - `request_log_level`（最低记录级别，立即生效）
 - “下载备份”只备份业务 SQLite，不包含 `operation.db` 或请求日志文件；
 - 日志没有导入、导出接口。
 
@@ -203,8 +204,14 @@ RPC handler 成功解析 body 后，只能写入路由注册时显式声明的�
 改为自动高频轮询，必须同步调整它的 LogPolicy。健康状态不逐次记录；ready 状态变化
 分别写 `panel.not_ready` 和 `panel.ready` 操作日志。
 
+轮询/状态类路由（`/api/panel/state`、`/api/panel/get-update-status`、
+`/api/server/get-test`、`/api/auth/me`、`/api/dashboard/get`、`/api/server/list`、
+`/api/chain/list`、`/api/user/list`）在注册时声明 `Debug: true`：成功请求的
+`severity` 降级为 `debug`，失败仍按原级别记录。
+
 ### 4.4 请求重要程度
 
+- `debug`：轮询/状态类路由的成功请求；
 - `info`：协议正常且 RPC code 为 `OK` / `ACCEPTED`；
 - `warning`：HTTP 4xx、慢请求，或
   `AUTH_REQUIRED` / `AUTH_INVALID_CREDENTIALS` / `INVALID_ARGUMENT` /
@@ -212,9 +219,18 @@ RPC handler 成功解析 body 后，只能写入路由注册时显式声明的�
 - `error`：HTTP 5xx、panic，或
   `INTERNAL_ERROR` / `UPSTREAM_ERROR` / `SERVICE_UNAVAILABLE`。
 
-优先级为 `error > warning > info`。HTTP 200 但 RPC code 为 `INTERNAL_ERROR`
+优先级为 `error > warning > info > debug`。HTTP 200 但 RPC code 为 `INTERNAL_ERROR`
 时必须记为 error；成功但超过慢请求阈值时记为 warning。WebSocket 101 始终是 info，
 成功的幂等重放不提升级别。
+
+### 4.5 记录级别设置
+
+面板设置页的“请求日志记录级别”（`request_log_level`，默认 `debug`）控制最低写入
+级别：低于该级别的条目不写入日志文件。`debug` 记录全部；`info` 过滤轮询噪声；
+`warning` / `error` 仅保留告警与错误。该设置立即生效，无需重启。
+
+`failures_only` 路由的最低级别取“记录级别”与 `warning` 中的较高者，保证其成功
+请求（info/debug）始终不写入。
 
 ### 4.5 脱敏规则
 
@@ -282,7 +298,7 @@ token password secret key cookie authorization cert private
 ```
 
 默认均为“不刷新”。偏好写入当前浏览器的 `localStorage`，不写入服务器设置。请求日志窗口
-大小也按浏览器保存，默认 30 行。
+大小也按浏览器保存，默认 30 行，可选 `10 / 30 / 50 / 100 / 200 / 300 / 500` 行。
 
 操作日志使用服务端过滤和分页；请求日志使用客户端当前窗口过滤。两个清空按钮分别确认，
 互不影响。
@@ -291,6 +307,7 @@ token password secret key cookie authorization cert private
 
 - 操作日志保留条数；
 - 请求日志容量上限；
+- 请求日志记录级别（最低写入级别）；
 - 请求日志当前占用和累计丢弃数；
 - 实际日志目录；
 - 业务备份不包含日志的明确提示。

@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"lattix/backend/internal/logging"
 	"lattix/backend/internal/store"
 	"lattix/shared"
 )
@@ -96,6 +97,7 @@ type settingsDTO struct {
 	AlertTelegramChatID      string                    `json:"alert_telegram_chat_id"`
 	OperationLogLimit        int                       `json:"operation_log_limit"`
 	RequestLogMaxMB          int                       `json:"request_log_max_mb"`
+	RequestLogLevel          string                    `json:"request_log_level"` // 最低记录级别 debug|info|warning|error
 	LogDir                   string                    `json:"log_dir"`
 	RequestLogUsageBytes     int64                     `json:"request_log_usage_bytes"`
 	RequestLogDropped        uint64                    `json:"request_log_dropped"`
@@ -129,6 +131,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		AlertTelegramChatID:      s.getSetting(ctx, store.SettingAlertTelegramChatID),
 		OperationLogLimit:        settingInt(s.getSetting(ctx, store.SettingOperationLogLimit), 1000),
 		RequestLogMaxMB:          settingInt(s.getSetting(ctx, store.SettingRequestLogMaxMB), 10),
+		RequestLogLevel:          firstNonEmpty(s.getSetting(ctx, store.SettingRequestLogLevel), string(logging.SeverityDebug)),
 		LogDir:                   s.cfg.LogDir,
 		BackupIncludesLogs:       false,
 		ReleaseInspection:        s.releaseInspectionSettings(ctx),
@@ -212,6 +215,7 @@ type updateSettingsRequest struct {
 	AlertTelegramChatID   string                     `json:"alert_telegram_chat_id"`
 	OperationLogLimit     int                        `json:"operation_log_limit"`
 	RequestLogMaxMB       int                        `json:"request_log_max_mb"`
+	RequestLogLevel       string                     `json:"request_log_level"` // 空 = 默认 debug
 	Agent                 *shared.AgentSettings      `json:"agent"`
 	ReleaseInspection     *releaseInspectionSettings `json:"release_inspection"`
 	BillingInspection     *inspectionSchedule        `json:"billing_inspection"`
@@ -242,6 +246,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"alert_telegram_bot_token_set": s.getSetting(ctx, store.SettingAlertTelegramBotToken) != "",
 		"operation_log_limit":          settingInt(s.getSetting(ctx, store.SettingOperationLogLimit), 1000),
 		"request_log_max_mb":           settingInt(s.getSetting(ctx, store.SettingRequestLogMaxMB), 10),
+		"request_log_level":            firstNonEmpty(s.getSetting(ctx, store.SettingRequestLogLevel), string(logging.SeverityDebug)),
 		"release_inspection":           s.releaseInspectionSettings(ctx),
 		"billing_inspection":           s.billingInspectionSchedule(ctx),
 		"exchange_rate_inspection":     s.exchangeInspectionSchedule(ctx),
@@ -261,6 +266,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if req.RequestLogMaxMB < 1 || req.RequestLogMaxMB > 1024 {
 		writeError(w, http.StatusBadRequest, "请求日志缓存须为 1–1024 MB")
 		return
+	}
+	switch logging.Severity(req.RequestLogLevel) {
+	case logging.SeverityDebug, logging.SeverityInfo, logging.SeverityWarning, logging.SeverityError:
+	default:
+		req.RequestLogLevel = string(logging.SeverityDebug)
 	}
 	if req.Agent != nil {
 		// The panel owns revision assignment; clients edit only the values.
@@ -436,6 +446,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	set(store.SettingOperationLogLimit, strconv.Itoa(req.OperationLogLimit))
 	set(store.SettingRequestLogMaxMB, strconv.Itoa(req.RequestLogMaxMB))
+	set(store.SettingRequestLogLevel, req.RequestLogLevel)
 	releaseInspectionChanged := req.ReleaseInspection != nil
 	billingInspectionChanged := req.BillingInspection != nil
 	exchangeInspectionChanged := req.ExchangeInspection != nil
@@ -495,6 +506,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"alert_telegram_chat_id":       strings.TrimSpace(req.AlertTelegramChatID),
 		"alert_telegram_bot_token_set": before["alert_telegram_bot_token_set"].(bool) || strings.TrimSpace(req.AlertTelegramBotToken) != "",
 		"operation_log_limit":          req.OperationLogLimit, "request_log_max_mb": req.RequestLogMaxMB,
+		"request_log_level":            req.RequestLogLevel,
 		"release_inspection": before["release_inspection"],
 		"billing_inspection": before["billing_inspection"], "exchange_rate_inspection": before["exchange_rate_inspection"],
 		"reporting_currency": req.ReportingCurrency,

@@ -129,7 +129,7 @@ func (l *RequestLog) Append(entry RequestEntry) {
 }
 
 func (l *RequestLog) Tail(ctx context.Context, limit int) ([]RequestEntry, RequestLogStatus, error) {
-	if limit != 10 && limit != 30 && limit != 50 && limit != 100 {
+	if limit != 10 && limit != 30 && limit != 50 && limit != 100 && limit != 200 && limit != 300 && limit != 500 {
 		limit = 30
 	}
 	result, err := l.call(ctx, requestCommand{tail: limit})

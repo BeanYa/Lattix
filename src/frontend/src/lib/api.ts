@@ -1,4 +1,5 @@
 import { requester, RequestError, type RequestOptions } from './requester'
+import type { RequestWindow } from './log-preferences'
 import type {
   AlertTestResult,
   BillingActualStats,
@@ -375,7 +376,7 @@ export const api = {
       { display: 'silent' },
     ),
   clearOperationLogs: () => requester.post<void>('/api/log/clear-operations', {}),
-  requestLogs: (limit: 10 | 30 | 50 | 100) =>
+  requestLogs: (limit: RequestWindow) =>
     requester.get<RequestLogPage>(
       '/api/log/list-requests',
       { limit },

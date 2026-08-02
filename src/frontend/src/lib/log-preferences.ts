@@ -2,7 +2,7 @@ import { useState } from 'react'
 
 export type RefreshSeconds = 0 | 5 | 10 | 15 | 30 | 60
 export type OperationPageSize = 10 | 20 | 50 | 100
-export type RequestWindow = 10 | 30 | 50 | 100
+export type RequestWindow = 10 | 30 | 50 | 100 | 200 | 300 | 500
 
 export const REFRESH_OPTIONS: { value: RefreshSeconds; label: string }[] = [
   { value: 0, label: '不刷新' },
@@ -14,7 +14,7 @@ export const REFRESH_OPTIONS: { value: RefreshSeconds; label: string }[] = [
 ]
 
 export const OPERATION_PAGE_SIZE_OPTIONS: OperationPageSize[] = [10, 20, 50, 100]
-export const REQUEST_WINDOW_OPTIONS: RequestWindow[] = [10, 30, 50, 100]
+export const REQUEST_WINDOW_OPTIONS: RequestWindow[] = [10, 30, 50, 100, 200, 300, 500]
 
 function readStoredNumber<T extends number>(key: string, fallback: T, allowed: readonly T[]): T {
   const value = Number(window.localStorage.getItem(key))

@@ -176,6 +176,7 @@ export default function RequestLogs() {
           <Select value={severity || null} onValueChange={(value) => setSeverity((value as LogSeverity) ?? '')}>
             <SelectTrigger className="w-28"><SelectValue placeholder="全部" /></SelectTrigger>
             <SelectContent><SelectGroup>
+              <SelectItem value="debug">调试</SelectItem>
               <SelectItem value="info">信息</SelectItem>
               <SelectItem value="warning">警告</SelectItem>
               <SelectItem value="error">错误</SelectItem>

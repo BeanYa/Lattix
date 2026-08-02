@@ -24,6 +24,7 @@ type rpcRouteOptions struct {
 	CSRF           bool
 	Idempotent     bool
 	LogPolicy      logging.LogPolicy
+	Debug          bool // 轮询/状态类：成功请求记录为 debug 级别
 	AllowedQuery   []string
 	SafeBodyFields []string
 	BodyLimit      int64
@@ -41,6 +42,7 @@ func (s *Server) registerRPC(
 		options.LogPolicy = logging.LogFull
 	}
 	s.routePolicies[pattern] = options.LogPolicy
+	s.debugRoutes[pattern] = options.Debug
 
 	wrapped := handler
 	if options.Idempotent {
@@ -84,6 +86,22 @@ func (s *Server) LogPolicy(r *http.Request) logging.LogPolicy {
 		return policy
 	}
 	return logging.LogFull
+}
+
+// DebugRoute 返回路由是否为轮询/状态类（成功请求记录为 debug 级别）。
+func (s *Server) DebugRoute(r *http.Request) bool {
+	return s.debugRoutes[r.Pattern]
+}
+
+// RequestLogLevel 返回请求日志最低记录级别设置（debug|info|warning|error，默认 debug）。
+func (s *Server) RequestLogLevel(r *http.Request) logging.Severity {
+	level := logging.Severity(s.getSetting(r.Context(), store.SettingRequestLogLevel))
+	switch level {
+	case logging.SeverityDebug, logging.SeverityInfo, logging.SeverityWarning, logging.SeverityError:
+		return level
+	default:
+		return logging.SeverityDebug
+	}
 }
 
 func validateRPCJSON(limit int64, safeFields []string, next http.HandlerFunc) http.HandlerFunc {

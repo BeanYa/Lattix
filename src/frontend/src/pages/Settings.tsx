@@ -40,7 +40,7 @@ import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
 import { useTimezone } from '@/lib/timezone'
-import type { AlertTestResult, ExchangeRateSettings, InspectionUnit, PanelSettings, PanelVersionInfo } from '@/lib/types'
+import type { AlertTestResult, ExchangeRateSettings, InspectionUnit, LogSeverity, PanelSettings, PanelVersionInfo } from '@/lib/types'
 
 // 常用 IANA 时区（可直接输入其他名称，后端用 time.LoadLocation 校验）。
 const COMMON_TIMEZONES = [
@@ -124,6 +124,7 @@ export default function Settings() {
   // 日志
   const [operationLogLimit, setOperationLogLimit] = useState(1000)
   const [requestLogMaxMB, setRequestLogMaxMB] = useState(10)
+  const [requestLogLevel, setRequestLogLevel] = useState<LogSeverity>('debug')
   // Agent（面板统一下发）
   const [reconnectMode, setReconnectMode] = useState<'infinite' | 'limited'>('infinite')
   const [reconnectMaxRetries, setReconnectMaxRetries] = useState(10)
@@ -199,6 +200,7 @@ export default function Settings() {
         setAlertChatID(s.alert_telegram_chat_id)
         setOperationLogLimit(s.operation_log_limit)
         setRequestLogMaxMB(s.request_log_max_mb)
+        setRequestLogLevel(s.request_log_level)
         setReconnectMode(s.agent.reconnect.mode)
         setReconnectMaxRetries(s.agent.reconnect.max_retries)
         setTelemetrySeconds(s.agent.telemetry.interval_seconds)
@@ -282,6 +284,7 @@ export default function Settings() {
         alert_telegram_chat_id: alertChatID.trim(),
         operation_log_limit: operationLogLimit,
         request_log_max_mb: requestLogMaxMB,
+        request_log_level: requestLogLevel,
         agent: {
           revision: settings?.agent.revision ?? 1,
           reconnect: {
@@ -1004,6 +1007,24 @@ export default function Settings() {
                 {settings.request_log_dropped > 0
                   ? ` 极端负载下累计丢弃 ${settings.request_log_dropped} 条。`
                   : ''}
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="requestLogLevel">请求日志记录级别</Label>
+              <Select
+                value={requestLogLevel}
+                onValueChange={(value) => setRequestLogLevel((value as LogSeverity) ?? 'debug')}
+              >
+                <SelectTrigger id="requestLogLevel" className="w-40"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectGroup>
+                  <SelectItem value="debug">调试（记录全部）</SelectItem>
+                  <SelectItem value="info">信息（过滤调试）</SelectItem>
+                  <SelectItem value="warning">警告（仅警告/错误）</SelectItem>
+                  <SelectItem value="error">错误（仅错误）</SelectItem>
+                </SelectGroup></SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                低于该级别的请求不写入日志。状态轮询等高频请求记录为调试级，选择"信息"即可过滤。
               </p>
             </div>
           </CardContent>

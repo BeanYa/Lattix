@@ -40,7 +40,20 @@ const (
 
 type LogPolicyFunc func(*http.Request) LogPolicy
 
-func RequestMiddleware(log *RequestLog, operator OperatorFunc, policy LogPolicyFunc, next http.Handler) http.Handler {
+// DebugRouteFunc 声明路由为轮询/状态类：成功请求记录为 debug 级别。
+type DebugRouteFunc func(*http.Request) bool
+
+// SeverityFunc 返回请求日志最低记录级别（低于该级别不写入）。
+type SeverityFunc func(*http.Request) Severity
+
+func RequestMiddleware(
+	log *RequestLog,
+	operator OperatorFunc,
+	policy LogPolicyFunc,
+	debugRoute DebugRouteFunc,
+	level SeverityFunc,
+	next http.Handler,
+) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := validOrNewID(r.Header.Get("X-Request-ID"))
 		traceID := validOrNewID(r.Header.Get("X-Trace-ID"))
@@ -62,8 +75,8 @@ func RequestMiddleware(log *RequestLog, operator OperatorFunc, policy LogPolicyF
 				if recorder.status == 0 {
 					http.Error(recorder, "internal server error", http.StatusInternalServerError)
 				}
-				entry := buildRequestEntry(r, recorder, started, operator, fmt.Sprint(recovered))
-				if shouldAppend(policyFor(policy, r), entry) {
+				entry := buildRequestEntry(r, recorder, started, operator, fmt.Sprint(recovered), debugRoute)
+				if shouldAppend(policyFor(policy, r), levelFor(level, r), entry) {
 					log.Append(entry)
 				}
 				return
@@ -72,8 +85,8 @@ func RequestMiddleware(log *RequestLog, operator OperatorFunc, policy LogPolicyF
 			if r.URL.Path == "/api/agent/ws" && (recorder.status == 0 || recorder.status == http.StatusSwitchingProtocols) {
 				return
 			}
-			entry := buildRequestEntry(r, recorder, started, operator, "")
-			if shouldAppend(policyFor(policy, r), entry) {
+			entry := buildRequestEntry(r, recorder, started, operator, "", debugRoute)
+			if shouldAppend(policyFor(policy, r), levelFor(level, r), entry) {
 				log.Append(entry)
 			}
 		}()
@@ -104,7 +117,7 @@ func LogWebSocketUpgrade(log *RequestLog, r *http.Request, operator OperatorFunc
 	log.Append(entry)
 }
 
-func buildRequestEntry(r *http.Request, recorder *responseRecorder, started time.Time, operator OperatorFunc, panicSummary string) RequestEntry {
+func buildRequestEntry(r *http.Request, recorder *responseRecorder, started time.Time, operator OperatorFunc, panicSummary string, debugRoute DebugRouteFunc) RequestEntry {
 	status := recorder.status
 	if status == 0 {
 		status = http.StatusOK
@@ -120,6 +133,9 @@ func buildRequestEntry(r *http.Request, recorder *responseRecorder, started time
 		attributes = mergeAttributes(attributes, meta.Attributes)
 	}
 	severity := requestSeverity(status, rpcCode, duration, panicSummary != "")
+	if debugRoute != nil && debugRoute(r) && status < 400 {
+		severity = SeverityDebug
+	}
 	errorSummary := panicSummary
 	if errorSummary == "" && rpcCode != "" && rpcCode != shared.CodeOK && rpcCode != shared.CodeAccepted {
 		errorSummary = safeMessage
@@ -192,14 +208,41 @@ func policyFor(resolve LogPolicyFunc, r *http.Request) LogPolicy {
 	return LogFull
 }
 
-func shouldAppend(policy LogPolicy, entry RequestEntry) bool {
+func levelFor(resolve SeverityFunc, r *http.Request) Severity {
+	if resolve == nil {
+		return SeverityDebug
+	}
+	if level := resolve(r); level != "" {
+		return level
+	}
+	return SeverityDebug
+}
+
+func severityRank(severity Severity) int {
+	switch severity {
+	case SeverityDebug:
+		return 0
+	case SeverityWarning:
+		return 2
+	case SeverityError:
+		return 3
+	default:
+		return 1
+	}
+}
+
+func shouldAppend(policy LogPolicy, minSeverity Severity, entry RequestEntry) bool {
 	switch policy {
 	case LogNone:
 		return false
 	case LogFailuresOnly:
-		return entry.Severity != SeverityInfo
+		threshold := severityRank(minSeverity)
+		if warning := severityRank(SeverityWarning); warning > threshold {
+			threshold = warning
+		}
+		return severityRank(entry.Severity) >= threshold
 	default:
-		return true
+		return severityRank(entry.Severity) >= severityRank(minSeverity)
 	}
 }
 
