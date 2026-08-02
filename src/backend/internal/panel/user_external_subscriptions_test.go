@@ -132,6 +132,27 @@ func TestUserDTOIncludesExternalSubscriptions(t *testing.T) {
 	if dto.MergedTraffic == nil || dto.MergedTraffic.Total != 700 || dto.MergedTraffic.Upload != 100 {
 		t.Fatalf("merged = %+v", dto.MergedTraffic)
 	}
+	noSubID, err := st.InsertUser(ctx, "bob", "00000000-0000-0000-0000-0000000000bb", "bob-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserSubSettings(ctx, noSubID, 500, 0, "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	noSubUser, err := st.UserByID(ctx, noSubID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	noSubDTO := server.toUserDTO(httptest.NewRequest(http.MethodGet, "/api/user/list", nil), *noSubUser, nil)
+	if noSubDTO.ExternalSubscriptions == nil {
+		t.Fatalf("external_subscriptions should be [] not nil, dto = %+v", noSubDTO)
+	}
+	if len(noSubDTO.ExternalSubscriptions) != 0 {
+		t.Fatalf("dto = %+v", noSubDTO)
+	}
+	if noSubDTO.MergedTraffic != nil {
+		t.Fatalf("merged should stay nil, dto = %+v", noSubDTO)
+	}
 }
 
 func itoa(v int64) string { return fmt.Sprintf("%d", v) }

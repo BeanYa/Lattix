@@ -150,6 +150,9 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 			Total: merged.Total, Expire: merged.Expire,
 		}
 	}
+	if dto.ExternalSubscriptions == nil {
+		dto.ExternalSubscriptions = []userExternalSubscriptionDTO{}
+	}
 	return dto
 }
 
@@ -710,7 +713,7 @@ func (s *Server) handleSetUserExternalSubscriptions(w http.ResponseWriter, r *ht
 	}
 	id := req.UserID
 	if id <= 0 {
-		writeError(w, http.StatusBadRequest, "invalid user id")
+		writeError(w, http.StatusBadRequest, "用户 id 非法")
 		return
 	}
 	if _, err := s.st.UserByID(r.Context(), id); err != nil {
