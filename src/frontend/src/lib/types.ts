@@ -236,6 +236,7 @@ export interface ServerTestEnvironment {
   sandbox: string
   sandbox_reason?: string
   privileges: string
+  ipv6_available?: boolean
 }
 
 export interface ServerTestCategoryResult {
