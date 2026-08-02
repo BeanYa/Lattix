@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   EyeIcon,
   FileCode2Icon,
@@ -66,8 +66,13 @@ export default function ExternalSubscriptions() {
   const [chains, setChains] = useState<ExternalChain[]>([])
   const [chainsLoading, setChainsLoading] = useState(false)
   const [chainsError, setChainsError] = useState('')
+  // 记录当前打开的节点弹窗目标 id，避免过期请求的响应覆盖新目标
+  const chainsTargetRef = useRef<number | null>(null)
+  // 表单会话计数：每次打开弹窗自增，用于丢弃过期保存请求的响应
+  const formSessionRef = useRef(0)
 
   const load = useCallback(async () => {
+    setError('')
     try {
       setSubs(await api.externalSubscriptions())
     } catch (err) {
@@ -90,6 +95,7 @@ export default function ExternalSubscriptions() {
   }
 
   const beginEdit = (sub?: ExternalSubscription) => {
+    formSessionRef.current += 1
     resetForm()
     if (sub) {
       setEditing(sub)
@@ -105,6 +111,7 @@ export default function ExternalSubscriptions() {
 
   const save = async (event: FormEvent) => {
     event.preventDefault()
+    const session = formSessionRef.current
     setSaving(true)
     setError('')
     try {
@@ -121,13 +128,16 @@ export default function ExternalSubscriptions() {
       } else {
         await api.createExternalSubscription(body)
       }
+      // 保存期间弹窗被关闭/重新打开：丢弃过期响应，避免误关新弹窗
+      if (session !== formSessionRef.current) return
       setOpen(false)
       resetForm()
       await load()
     } catch (err) {
+      if (session !== formSessionRef.current) return
       setError(errorMessage(err))
     } finally {
-      setSaving(false)
+      if (session === formSessionRef.current) setSaving(false)
     }
   }
 
@@ -163,18 +173,22 @@ export default function ExternalSubscriptions() {
   }
 
   const openChains = async (sub: ExternalSubscription) => {
+    chainsTargetRef.current = sub.id
     setChainsTarget(sub)
     setChains([])
     setChainsError('')
     setChainsLoading(true)
     try {
-      setChains(await api.externalSubscriptionChains(sub.id))
+      const result = await api.externalSubscriptionChains(sub.id)
+      if (chainsTargetRef.current !== sub.id) return
+      setChains(result)
     } catch (err) {
+      if (chainsTargetRef.current !== sub.id) return
       const message = errorMessage(err)
       setChainsError(message)
       setError(message)
     } finally {
-      setChainsLoading(false)
+      if (chainsTargetRef.current === sub.id) setChainsLoading(false)
     }
   }
 
@@ -346,7 +360,12 @@ export default function ExternalSubscriptions() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={chainsTarget !== null} onOpenChange={(next) => !next && setChainsTarget(null)}>
+      <Dialog open={chainsTarget !== null} onOpenChange={(next) => {
+        if (!next) {
+          setChainsTarget(null)
+          chainsTargetRef.current = null
+        }
+      }}>
         <DialogContent className="max-h-[90vh] sm:max-w-3xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>外部节点</DialogTitle>
