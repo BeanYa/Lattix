@@ -31,6 +31,9 @@ func TestSetUserSubToken(t *testing.T) {
 	if u.SubToken != "new-token" {
 		t.Fatalf("sub token = %q, want new-token", u.SubToken)
 	}
+	if u.UUID != "user-uuid" {
+		t.Fatalf("uuid = %q, want user-uuid", u.UUID)
+	}
 	if err := st.SetUserSubToken(ctx, 9999, "ghost"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing user err = %v, want ErrNotFound", err)
 	}

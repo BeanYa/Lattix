@@ -65,6 +65,9 @@ func TestResetUserSubscriptionToken(t *testing.T) {
 	if got.Data.SubToken == "" || got.Data.SubToken == "old-token" {
 		t.Fatalf("sub_token = %q", got.Data.SubToken)
 	}
+	if len(got.Data.SubToken) != 16 {
+		t.Fatalf("sub_token length = %d, want 16", len(got.Data.SubToken))
+	}
 	if !strings.Contains(got.Data.SubURL, got.Data.SubToken) || !strings.Contains(got.Data.SubLinksURL, got.Data.SubToken) {
 		t.Fatalf("urls do not contain new token: %s %s", got.Data.SubURL, got.Data.SubLinksURL)
 	}
@@ -82,10 +85,36 @@ func TestResetUserSubscriptionTokenRejectsInvalidUserID(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	server := &Server{st: st}
+	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
 	rec := httptest.NewRecorder()
 	server.handleResetUserSubscriptionToken(rec, httptest.NewRequest(http.MethodPost,
 		"/api/user/reset-subscription-token", strings.NewReader(`{"user_id": 0}`)))
+	var resp struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != shared.CodeInvalidArgument {
+		t.Fatalf("code = %q, want %q", resp.Code, shared.CodeInvalidArgument)
+	}
+}
+
+func TestResetUserSubscriptionTokenMissingSubscriptionService(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	userID, err := st.InsertUser(ctx, "user", "user-uuid", "old-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{st: st}
+	rec := httptest.NewRecorder()
+	server.handleResetUserSubscriptionToken(rec, httptest.NewRequest(http.MethodPost,
+		"/api/user/reset-subscription-token", strings.NewReader(fmt.Sprintf(`{"user_id": %d}`, userID))))
 	var resp struct {
 		Code string `json:"code"`
 	}

@@ -825,7 +825,8 @@ func (s *Server) handleResetUserSubscriptionToken(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "invalid user id or subscription service unavailable")
 		return
 	}
-	if _, err := s.st.UserByID(r.Context(), req.UserID); err != nil {
+	u, err := s.st.UserByID(r.Context(), req.UserID)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "user not found")
 			return
@@ -850,11 +851,21 @@ func (s *Server) handleResetUserSubscriptionToken(w http.ResponseWriter, r *http
 		return
 	}
 	if err := s.st.SetUserSubToken(r.Context(), req.UserID, token); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "用户不存在")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	base := s.panelBase(r)
 	if _, err := s.subscriptions.PublishUser(r.Context(), req.UserID, base); err != nil {
+		// 发布失败时回滚 token：保持"轮换成功 ⇔ 发布成功"的不变量，
+		// 失败则旧链接继续可用（避免新链接内容仍含旧 token 而旧链接已死）。
+		log.Printf("panel: reset sub token user %d (%s): publish failed: %v; rolling back token", req.UserID, u.Name, err)
+		if rbErr := s.st.SetUserSubToken(r.Context(), req.UserID, u.SubToken); rbErr != nil {
+			log.Printf("panel: reset sub token user %d: rollback failed: %v", req.UserID, rbErr)
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
