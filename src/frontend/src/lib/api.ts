@@ -273,6 +273,9 @@ export const api = {
   }) => requester.post<void>('/api/user/sub-settings', body),
   regenerateUserSubscription: (userId: number) =>
     requester.post<SubscriptionSnapshotStatus>('/api/user/regenerate-subscription', { user_id: userId }),
+  resetUserSubscriptionToken: (userId: number) =>
+    requester.post<{ sub_token: string; sub_url: string; sub_links_url: string }>(
+      '/api/user/reset-subscription-token', { user_id: userId }),
   userSubscriptionPreview: (userId: number, format: SubscriptionPreviewFormat) =>
     requester.get<SubscriptionPreview>('/api/user/subscription-preview', { user_id: userId, format }),
   subscriptionCategories: (options?: RequestOptions) =>
