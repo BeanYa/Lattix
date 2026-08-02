@@ -9,42 +9,107 @@ import (
 	"lattix/shared"
 )
 
-// extStr 按序取 Extra 中第一个存在的字符串值。
-func extStr(extra map[string]any, keys ...string) string {
+// firstValue 返回 Extra 中第一个存在键的值。
+func firstValue(extra map[string]any, keys ...string) (any, bool) {
 	for _, key := range keys {
 		if v, ok := extra[key]; ok {
-			if s, ok := v.(string); ok {
-				return s
-			}
+			return v, true
 		}
+	}
+	return nil, false
+}
+
+// extStr 按序取 Extra 中第一个存在的字符串值。
+func extStr(extra map[string]any, keys ...string) string {
+	v, ok := firstValue(extra, keys...)
+	if !ok {
+		return ""
+	}
+	if s, ok := v.(string); ok {
+		return s
 	}
 	return ""
 }
 
-// extBool 判断 Extra 布尔值（1/true/yes/on）。
+// extBool 判断 Extra 布尔值（1/true/yes/on，或原生 bool/数值）。
 func extBool(extra map[string]any, keys ...string) bool {
-	switch strings.ToLower(extStr(extra, keys...)) {
-	case "1", "true", "yes", "on":
-		return true
+	v, ok := firstValue(extra, keys...)
+	if !ok {
+		return false
+	}
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		switch strings.ToLower(t) {
+		case "1", "true", "yes", "on":
+			return true
+		}
+	case float64:
+		return t != 0
 	}
 	return false
 }
 
 // extInt 取 Extra 整数值。
 func extInt(extra map[string]any, keys ...string) int {
-	for _, key := range keys {
-		if v, ok := extra[key]; ok {
-			switch t := v.(type) {
-			case string:
-				if n, err := strconv.Atoi(t); err == nil {
-					return n
-				}
-			case float64:
-				return int(t)
-			}
+	v, ok := firstValue(extra, keys...)
+	if !ok {
+		return 0
+	}
+	switch t := v.(type) {
+	case string:
+		if n, err := strconv.Atoi(t); err == nil {
+			return n
 		}
+	case int:
+		return t
+	case int64:
+		return int(t)
+	case uint64:
+		return int(t)
+	case float64:
+		return int(t)
 	}
 	return 0
+}
+
+// externalYAMLFallback 把 mihomo YAML 订阅的 Extra 键补齐为分享链接约定键
+// （uuid→id、network→type、client-fingerprint→fp，并展开 reality-opts/ws-opts/
+// grpc-opts/http-opts 嵌套对象）。返回浅拷贝，不修改调用方 map。
+func externalYAMLFallback(extra map[string]any) map[string]any {
+	out := make(map[string]any, len(extra))
+	for key, value := range extra {
+		out[key] = value
+	}
+	fill := func(key string, value any) {
+		if _, exists := out[key]; !exists && value != nil {
+			out[key] = value
+		}
+	}
+	fill("id", extStr(out, "uuid"))
+	fill("type", extStr(out, "network"))
+	fill("fp", extStr(out, "client-fingerprint"))
+	if opts, ok := out["reality-opts"].(map[string]any); ok {
+		fill("pbk", opts["public-key"])
+		fill("sid", opts["short-id"])
+	}
+	if opts, ok := out["ws-opts"].(map[string]any); ok {
+		fill("path", opts["path"])
+		if headers, ok := opts["headers"].(map[string]any); ok {
+			fill("host", headers["Host"])
+		}
+	}
+	if opts, ok := out["grpc-opts"].(map[string]any); ok {
+		fill("serviceName", opts["service-name"])
+	}
+	if opts, ok := out["http-opts"].(map[string]any); ok {
+		fill("path", opts["path"])
+		if headers, ok := opts["headers"].(map[string]any); ok {
+			fill("host", headers["Host"])
+		}
+	}
+	return out
 }
 
 // externalNetwork 归一化外部节点传输层字段（tcp/ws/grpc/xhttp/http/h2）。
@@ -55,13 +120,16 @@ func externalNetwork(extra map[string]any, keys ...string) string {
 // buildExternalClash 把外部订阅节点编译为 mihomo 代理项。
 // 凭据取自 config（外部节点没有面板派发的用户 UUID）。
 func buildExternalClash(n extsub.Node) (clashProxy, error) {
-	if n.Name == "" || n.Server == "" || n.Port == 0 {
+	if n.Name == "" {
+		return clashProxy{}, fmt.Errorf("外部节点未命名：缺少名称/地址/端口")
+	}
+	if n.Server == "" || n.Port == 0 {
 		return clashProxy{}, fmt.Errorf("外部节点「%s」缺少名称/地址/端口", n.Name)
 	}
-	e := n.Extra
+	e := externalYAMLFallback(n.Extra)
 	p := clashProxy{
 		Name: n.Name, Server: n.Server, Port: n.Port, UDP: true,
-		SkipCertVerify: extBool(e, "insecure", "allowInsecure", "allow_insecure"),
+		SkipCertVerify: extBool(e, "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify"),
 	}
 	switch n.Type {
 	case "vless":
@@ -81,6 +149,12 @@ func buildExternalClash(n extsub.Node) (clashProxy, error) {
 		case "tls":
 			p.TLS = true
 			p.ClientFingerprint = extStr(e, "fp")
+		default:
+			if _, ok := e["reality-opts"]; ok || extStr(e, "pbk") != "" {
+				p.TLS = true
+				p.RealityOpts = &clashRealityOpts{PublicKey: extStr(e, "pbk"), ShortID: extStr(e, "sid")}
+				p.ClientFingerprint = extStr(e, "fp")
+			}
 		}
 		p.Servername = extStr(e, "sni")
 		applyExternalTransport(&p, e)
@@ -135,7 +209,7 @@ func buildExternalClash(n extsub.Node) (clashProxy, error) {
 		p.UUID = extStr(e, "uuid")
 		p.Password = extStr(e, "password")
 		p.Servername = extStr(e, "sni")
-		p.CongestionController = extStr(e, "congestion_controller", "congestion-controller")
+		p.CongestionController = extStr(e, "congestion_controller", "congestion-controller", "congestion_control")
 		p.UDPRelayMode = extStr(e, "udp_relay_mode", "udp-relay-mode")
 		p.ReduceRTT = extBool(e, "reduce_rtt", "reduce-rtt")
 	case "wireguard":
