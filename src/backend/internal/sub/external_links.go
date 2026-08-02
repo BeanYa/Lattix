@@ -80,6 +80,9 @@ func buildExternalLink(n extsub.Node) (string, bool) {
 			"endpoint=" + url.QueryEscape(hostPort),
 			"private_key=" + url.QueryEscape(extStr(e, "private_key")),
 		}
+		if pk := extStr(e, "public_key", "pk"); pk != "" {
+			params = append(params, "public_key="+url.QueryEscape(pk))
+		}
 		if query != "" {
 			params = append(params, query)
 		}

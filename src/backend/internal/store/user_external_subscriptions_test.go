@@ -125,6 +125,10 @@ func TestUserExternalSubscriptionsCascade(t *testing.T) {
 	if err != nil || len(joined) != 0 {
 		t.Fatalf("after sub delete = %+v err %v", joined, err)
 	}
+	users, err := st.UsersByExternalSubscriptionID(ctx, subA)
+	if err != nil || len(users) != 0 {
+		t.Fatalf("users of deleted sub = %v err %v", users, err)
+	}
 	// 删除用户 → 关联级联清理。
 	subB := insertTestExtSub(t, st, "机场B", "https://sub.example.com/b", 0, 0, 100)
 	if err := st.SetUserExternalSubscriptions(ctx, userID, []UserExternalSubscription{

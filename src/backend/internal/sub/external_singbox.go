@@ -23,7 +23,7 @@ func buildExternalSingbox(n extsub.Node) (any, error) {
 		if flow := extStr(e, "flow"); flow != "" {
 			base["flow"] = flow
 		}
-		if tls := externalSingboxTLS(e, extStr(e, "security") == "reality"); tls != nil {
+		if tls := externalSingboxTLS(e, extStr(e, "security") == "reality" || extStr(e, "pbk") != ""); tls != nil {
 			base["tls"] = tls
 		}
 		if tr := externalSingboxTransport(e, externalNetwork(e, "type")); tr != nil {

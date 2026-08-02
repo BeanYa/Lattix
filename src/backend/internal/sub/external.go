@@ -83,12 +83,15 @@ func externalYAMLFallback(extra map[string]any) map[string]any {
 		out[key] = value
 	}
 	fill := func(key string, value any) {
-		if _, exists := out[key]; !exists && value != nil {
+		if _, exists := out[key]; !exists && value != nil && value != "" {
 			out[key] = value
 		}
 	}
 	fill("id", extStr(out, "uuid"))
 	fill("type", extStr(out, "network"))
+	fill("net", extStr(out, "network"))          // vmess YAML 的 network
+	fill("sni", extStr(out, "servername"))       // vless YAML 的 reality SNI
+	fill("public_key", extStr(out, "public-key")) // wireguard YAML
 	fill("fp", extStr(out, "client-fingerprint"))
 	if opts, ok := out["reality-opts"].(map[string]any); ok {
 		fill("pbk", opts["public-key"])

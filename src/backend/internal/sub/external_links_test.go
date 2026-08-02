@@ -90,3 +90,22 @@ func TestBuildExternalLinkSSWithSlashPassword(t *testing.T) {
 		t.Fatalf("round trip = %+v", back)
 	}
 }
+
+func TestBuildExternalLinkWireguardKeepsPublicKey(t *testing.T) {
+	link, ok := buildExternalLink(extNode("wg", "wireguard", "wg.example.com", 51820, map[string]any{
+		"private_key": "priv", "public_key": "pub", "ip": "10.0.0.2",
+	}))
+	if !ok {
+		t.Fatal("wg link failed")
+	}
+	if !strings.Contains(link, "public_key=pub") {
+		t.Fatalf("wg link missing public_key: %q", link)
+	}
+	nodes, _, err := extsub.ParseSubscription([]byte(link))
+	if err != nil || len(nodes) != 1 {
+		t.Fatalf("reparse = %+v err %v", nodes, err)
+	}
+	if nodes[0].Extra["public_key"] != "pub" {
+		t.Fatalf("round trip lost public_key: %+v", nodes[0])
+	}
+}

@@ -230,10 +230,9 @@ func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid strin
 			singbox, err := buildExternalSingbox(*item.external)
 			if err != nil {
 				warnings = append(warnings, err.Error())
-				continue
 			}
 			out = append(out, compiledNode{
-				Name: clash.Name, Clash: clash, Singbox: singbox,
+				Name: clash.Name, Clash: clash, Singbox: singbox, // 失败时 nil，renderSingbox 跳过
 				QuanX: buildExternalQuanX(*item.external),
 			})
 			continue
@@ -396,6 +395,9 @@ func defaultClashDNS() *clashDNS {
 func renderSingbox(policy portablePolicy, nodes []compiledNode) ([]byte, error) {
 	outbounds := make([]any, 0, len(nodes)+len(policy.Groups)+2)
 	for _, node := range nodes {
+		if node.Singbox == nil {
+			continue
+		}
 		outbounds = append(outbounds, node.Singbox)
 	}
 	outbounds = append(outbounds, map[string]any{"type": "direct", "tag": "DIRECT"})

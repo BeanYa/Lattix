@@ -122,3 +122,34 @@ func TestBuildExternalClashTUICCongestionControl(t *testing.T) {
 		t.Fatalf("congestion_control not mapped: %+v", p)
 	}
 }
+
+func TestBuildExternalClashYAMLServerNameAndKeys(t *testing.T) {
+	vless, err := buildExternalClash(extNode("yaml-vless2", "vless", "1.2.3.4", 443, map[string]any{
+		"uuid": "11111111-2222-3333-4444-555555555555", "servername": "cdn.example.com",
+		"reality-opts": map[string]any{"public-key": "pub", "short-id": "abcd"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vless.Servername != "cdn.example.com" {
+		t.Fatalf("servername not mapped: %+v", vless)
+	}
+	wg, err := buildExternalClash(extNode("yaml-wg2", "wireguard", "wg.example.com", 51820, map[string]any{
+		"private-key": "priv", "public-key": "pub", "ip": "10.0.0.2",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wg.PublicKey != "pub" {
+		t.Fatalf("public-key not mapped: %+v", wg)
+	}
+	vmess, err := buildExternalClash(extNode("yaml-vmess", "vmess", "1.2.3.4", 443, map[string]any{
+		"id": "11111111-2222-3333-4444-555555555555", "network": "ws", "path": "/ws", "host": "h.example.com",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vmess.Network != "ws" || vmess.WsOpts == nil || vmess.WsOpts.Path != "/ws" {
+		t.Fatalf("vmess network not mapped: %+v", vmess)
+	}
+}
