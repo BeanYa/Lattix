@@ -85,6 +85,13 @@ flowchart LR
 - **同步**：拉取（UA/跳证按订阅配置，30s 超时，大小上限 2 MiB）→ 格式识别 → 解析 → 事务全量替换节点 → 回填 `node_count`/`format`/流量/`last_sync_at`。
 - **删除订阅**：级联删除其全部外部链路（`ON DELETE CASCADE`）。
 
+## 实施修订（2026-08-02）
+
+- 路由采用现有 RPC 动词风格（前端 requester 无 PUT/DELETE）：`/api/external-subscription/list|create|update|delete|sync|chains`，替代初稿的 REST 式 `/api/external-subscriptions` 与 `PUT/DELETE .../{id}`；chains 路由的 `?id=` 查询参数通过 `AllowedQuery` 白名单放行（`validateRPCQuery` 默认拒绝任意查询参数）。
+- `requester` 增加 `GetWithOptions`（返回响应头）与 `GetTextWithOptions`；跳证书校验由 Service 持有的第二套 `ExternalFileRequester`（InsecureSkipVerify Transport）实现，`FileRequestOptions` 仅携带 UserAgent。
+- 本仓库未启用 `PRAGMA foreign_keys`，`external_chains` 的 `ON DELETE CASCADE` 不生效；删除订阅时在事务内显式删除关联节点（沿用 `DeleteServerCascade` 先例）。
+- 解析器：`ParseSubscription` 先对原文逐行解析、无结果再回退到 base64 解码后解析（Go 的 `base64.DecodeString` 会忽略换行，必须先试原文避免吞掉 v2rayN 无 scheme 条目）；vmess/ssr 的 base64 载荷按 `u.Host + u.Path` 拼接后解码（载荷可能含 `/`）。
+
 ## 改动清单
 
 ### 1. Requester（`src/shared/requester/external.go`）
