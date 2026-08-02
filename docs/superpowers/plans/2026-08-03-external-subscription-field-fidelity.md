@@ -243,20 +243,22 @@ func extIntPtr(extra map[string]any, keys ...string) *int {
 
 - [ ] **Step 5: 新增 inline 透传 marshal 测试（external_clash_test.go 末尾）**
 
+注意：yaml.v3 的 inline map 与类型化字段**同名键会 panic**（`cannot have key "alpn" in inlined map: conflicts with struct field`）。测试的 Raw 键必须用不在 clashProxy 字段中的真实 mihomo 键（如 `tfo`），不能用 `alpn`（它已被类型化字段 ALPN 消费）。
+
 在文件顶部 import 增加 `"gopkg.in/yaml.v3"`，末尾追加：
 
 ```go
 func TestClashProxyInlineRawMarshal(t *testing.T) {
 	p := clashProxy{
 		Name: "n", Type: "anytls", Server: "s", Port: 443, UDP: true,
-		Raw: map[string]any{"auth": "token-123", "alpn": []any{"h2", "http/1.1"}},
+		Raw: map[string]any{"tfo": true, "x-extra": []any{"h2", "http/1.1"}},
 	}
 	out, err := yaml.Marshal(&p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(out)
-	for _, want := range []string{"auth: token-123", "alpn:", "- h2"} {
+	for _, want := range []string{"tfo: true", "x-extra:", "- h2"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("raw not inlined, missing %q:\n%s", want, s)
 		}
@@ -300,11 +302,34 @@ wsl -d Ubuntu -- bash -lc "cd /home/bean/workspace/Lattix-codex/.worktree/field-
 ```go
 // tlsConsumedKeys 是 TLS 系协议消费的公共 Extra 键（规范键 + 别名 + opts 键）。
 var tlsConsumedKeys = []string{
-	"udp", "alpn", "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure",
+	"udp", "alpn", "tls", "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure",
 	"sni", "servername", "client-fingerprint", "fragment", "dialer-proxy", "ip-version", "smux",
 	"reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts",
 	"path", "host", "mode", "serviceName", "service_name",
 }
+
+// clashProxyYamlKeys 是 clashProxy 全部类型化字段的 yaml 键名。
+// 用途：inline Raw 与类型化字段同名键会在 yaml.v3 marshal 时 panic，
+// 因此 Raw 回填必须排除这些键（它们未被协议消费时按 schema 字段处理，静默丢弃）。
+var clashProxyYamlKeys = func() map[string]bool {
+	keys := []string{
+		"name", "type", "server", "port",
+		"uuid", "alterId", "cipher", "password", "username",
+		"network", "packet-encoding", "tls", "servername", "sni", "flow", "encryption",
+		"alpn", "udp", "reality-opts", "client-fingerprint", "grpc-opts", "xhttp-opts",
+		"h2-opts", "http-opts", "ws-opts", "plugin", "plugin-opts", "smux", "obfs-opts",
+		"fragment", "dialer-proxy", "ip-version", "ports", "skip-cert-verify", "obfs",
+		"obfs-password", "up", "down", "protocol", "protocol-param", "obfs-param", "psk",
+		"version", "ip", "ipv6", "reserved", "private-key", "public-key", "preshared-key",
+		"mtu", "congestion-controller", "udp-relay-mode", "reduce-rtt",
+		"idle-session-check-interval", "idle-session-timeout", "min-idle-session",
+	}
+	out := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		out[k] = true
+	}
+	return out
+}()
 
 // externalKeys 构建消费键集合。
 func externalKeys(keys ...string) map[string]bool {
@@ -322,11 +347,13 @@ func externalTLSKeys(extra ...string) map[string]bool {
 	return externalKeys(keys...)
 }
 
-// externalRaw 返回 Extra 中未被消费的键（未知字段透传回填）；无未知键时返回 nil。
+// externalRaw 返回 Extra 中未被消费的键（未知字段透传回填）。
+// 排除与类型化字段同名的键：yaml.v3 inline 对同名键直接 panic，
+// 未被协议消费的 schema 字段键按 schema 字段处理（静默丢弃）。
 func externalRaw(extra map[string]any, consumed map[string]bool) map[string]any {
 	raw := make(map[string]any)
 	for key, value := range extra {
-		if !consumed[key] {
+		if !consumed[key] && !clashProxyYamlKeys[key] {
 			raw[key] = value
 		}
 	}
@@ -414,11 +441,14 @@ func buildExternalClash(n extsub.Node) (clashProxy, error) {
 		applyExternalTransport(&p, e)
 	case "vmess":
 		zero := 0
-		consumed = externalTLSKeys("id", "uuid", "net", "aid", "scy", "tls")
+		consumed = externalTLSKeys("id", "uuid", "net", "aid", "scy", "tls", "cipher")
 		p.Type = "vmess"
 		p.UUID = extStr(e, "id")
 		p.AlterID = &zero
 		p.Cipher = "auto"
+		if c := extStr(e, "cipher"); c != "" {
+			p.Cipher = c
+		}
 		p.Network = externalNetwork(e, "net")
 		if p.Network == "" {
 			p.Network = shared.NetworkTCP
@@ -538,10 +568,13 @@ func buildExternalClash(n extsub.Node) (clashProxy, error) {
 	return p, nil
 }
 
-// applyExternalCommons 填充跨协议通用字段（alpn/smux/fragment/dialer-proxy/ip-version）。
+// applyExternalCommons 填充跨协议通用字段（alpn/smux/fragment/dialer-proxy/ip-version/tls）。
 func applyExternalCommons(p *clashProxy, e map[string]any) {
 	if alpn := extStrings(e, "alpn"); len(alpn) > 0 {
 		p.ALPN = alpn
+	}
+	if extBool(e, "tls") {
+		p.TLS = true
 	}
 	if m := rawMap(e["smux"]); m != nil {
 		p.Smux = m
