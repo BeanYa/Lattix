@@ -66,8 +66,8 @@ type cleanupWaiterOut struct {
 func New(st *store.Store, req ws.AgentRequester) *Dispatcher {
 	d := &Dispatcher{
 		st: st, req: req, flushMu: make(map[int64]*sync.Mutex),
-		testProgress:     make(map[int64]shared.ServerTestProgressPayload),
-		cleanupWaiters:   make(map[string]chan cleanupWaiterOut),
+		testProgress:      make(map[int64]shared.ServerTestProgressPayload),
+		cleanupWaiters:    make(map[string]chan cleanupWaiterOut),
 		endpointRetriedAt: make(map[int64]time.Time),
 	}
 	d.fsm = &chainFSM{d: d}
