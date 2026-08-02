@@ -131,6 +131,18 @@ type statsRow struct {
 	rateDate      string
 }
 
+// errCostConversion 标记 convertCosts 换算失败（上游汇率获取错误，映射 502）。
+var errCostConversion = errors.New("cost conversion failed")
+
+// writeStatsLoadError 把 loadStatsRows 的错误映射为 HTTP 状态：换算失败 → 502，其余 → 500。
+func writeStatsLoadError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errCostConversion) {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeError(w, 500, err.Error())
+}
+
 // loadStatsRows 装配参与统计的服务器行：元数据 + convertCosts 两套日成本（big.Rat 精确值），
 // 按 server_id 升序稳定排列。participate 在 enabled 之上决定口径参与范围。
 func (s *Server) loadStatsRows(ctx context.Context, participate func(b store.ServerBilling) bool) ([]statsRow, error) {
@@ -157,7 +169,7 @@ func (s *Server) loadStatsRows(ctx context.Context, participate func(b store.Ser
 		}
 		public, custom, err := s.convertCosts(ctx, b.AmountMinor, b.Currency)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("%w: %v", errCostConversion, err)
 		}
 		dailyPublic := intervalDailyCost(public.AmountMinor, b.IntervalCount, b.IntervalUnit)
 		row := statsRow{
@@ -315,7 +327,7 @@ func (s *Server) handleBillingStats(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.loadStatsRows(r.Context(), func(store.ServerBilling) bool { return true })
 	if err != nil {
-		writeError(w, 500, err.Error())
+		writeStatsLoadError(w, err)
 		return
 	}
 	periods := costPeriods(from, to, gran)
