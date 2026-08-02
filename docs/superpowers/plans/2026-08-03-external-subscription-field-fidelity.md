@@ -774,7 +774,7 @@ func applySingboxRaw(base map[string]any, extra map[string]any, consumed map[str
 在每个 case 开头声明 `consumed := externalSingboxKeys(...)`，并在 switch 之后统一调用 `applySingboxRaw(base, n.Extra, consumed)`。各 case 消费键与新增字段：
 
 - `vless`：`consumed = externalSingboxKeys("id", "uuid", "type", "network", "flow", "security", "pbk", "sid", "fp", "client-fingerprint", "sni", "servername", "path", "host", "mode", "serviceName", "service_name", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "alpn", "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify")`
-- `vmess`：`consumed = externalSingboxKeys("id", "uuid", "net", "aid", "scy", "tls", "sni", "servername", "path", "host", "mode", "serviceName", "service_name", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "alpn", "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify")`
+- `vmess`：`consumed = externalSingboxKeys("id", "uuid", "type", "network", "net", "aid", "scy", "tls", "sni", "servername", "path", "host", "mode", "serviceName", "service_name", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "alpn", "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify")`（含 `type`/`network`：v2rayN vmess payload 的 `"type":"none"` 不得覆盖出站 type；`applySingboxRaw` 也跳过 base 已存在的键）
 - `trojan`：`consumed = externalSingboxKeys("password", "type", "network", "sni", "servername", "path", "host", "mode", "serviceName", "service_name", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "alpn", "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify")`
 - `ss`：`consumed = externalSingboxKeys("method", "password", "plugin", "plugin-opts")`，并在 case 内新增：
 
@@ -937,19 +937,19 @@ func externalQuery(extra map[string]any, skip ...string) string {
 
 - [ ] **Step 2: 各协议调用点扩展 skip 列表（external_links.go:22-89）**
 
-把各 `externalQuery` 调用点的 skip 参数替换为（覆盖 YAML 规范键 + 已折算别名）：
+把各 `externalQuery` 调用点的 skip 参数替换为（覆盖 YAML 规范键 + 已折算别名）。**规则：URI 约定参数永不抑制** —— `insecure`/`allowInsecure`/`allow_insecure` 本身就是 v2rayN/hy2 客户端的 canonical URI 参数（没有可抑制的重复键），不得列入 skip；wg 的 `address`/`preshared_key`/`mtu`/`reserved`/`ipv6` 是标准 wireguard:// 参数，同样不得抑制（最终评审修复后的正式清单）：
 
-- `vless`（第 23 行）：`externalQuery(e, "id", "uuid", "network", "servername", "client-fingerprint", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure", "fragment", "dialer-proxy", "ip-version", "smux")`
-- `trojan`（第 25 行）：`externalQuery(e, "password", "network", "servername", "client-fingerprint", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure", "fragment", "dialer-proxy", "ip-version", "smux")`
-- `hysteria2`（第 27 行）：`externalQuery(e, "password", "servername", "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure", "fragment", "dialer-proxy", "ip-version", "smux", "obfs-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts")`
-- `tuic`（第 29 行）：`externalQuery(e, "uuid", "password", "servername", "client-fingerprint", "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure", "fragment", "dialer-proxy", "ip-version", "smux", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts")`
-- `anytls`（第 31 行）：`externalQuery(e, "password", "servername", "client-fingerprint", "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure", "fragment", "dialer-proxy", "ip-version", "smux", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts")`
+- `vless`（第 23 行）：`externalQuery(e, "id", "uuid", "network", "servername", "client-fingerprint", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux")`
+- `trojan`（第 25 行）：`externalQuery(e, "password", "network", "servername", "client-fingerprint", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux")`
+- `hysteria2`（第 27 行）：`externalQuery(e, "password", "servername", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux", "obfs-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts")`
+- `tuic`（第 29 行）：`externalQuery(e, "uuid", "password", "servername", "client-fingerprint", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts")`
+- `anytls`（第 31 行）：`externalQuery(e, "password", "servername", "client-fingerprint", "skip-cert-verify", "fragment", "dialer-proxy", "ip-version", "smux", "reality-opts", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts")`
 - `snell`（第 33 行）：`externalQuery(e, "psk", "obfs-opts", "smux")`
 - `socks`（第 38 行）：`externalQuery(e, "username", "password", "servername", "tls", "sni")`
 - `http`（第 42 行）：`externalQuery(e, "username", "password", "servername", "sni")`
 - `ss`（第 60 行）：`externalQuery(e, "method", "password", "smux", "udp")`
 - `ssr`（第 69 行）：`externalQuery(e, "protocol", "method", "obfs", "password", "remarks", "protocol_param", "protocol-param", "obfs_param", "obfs-param", "udp")`
-- `wireguard`（第 78 行）：`externalQuery(e, "private_key", "endpoint", "pk", "public_key", "private-key", "public-key", "preshared_key", "preshared-key", "psk", "address", "mtu", "reserved", "ipv6")`（保留 `ip` 与未知键透传）
+- `wireguard`（第 78 行）：`externalQuery(e, "private_key", "endpoint", "pk", "public_key", "private-key", "public-key")`（`address`/`preshared_key`/`mtu`/`reserved`/`ipv6` 与未知键透传）
 - `vmess`（第 50-56 行）：保持现状不动（JSON payload 原样携带全部键）。
 
 注意：不要动 `externalQuery` 调用点的**返回值赋值**逻辑，只替换 skip 参数列表。
