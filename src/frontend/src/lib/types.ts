@@ -114,7 +114,7 @@ export interface BillingInput {
 export type BillingStatsGranularity = 'day' | 'month' | 'year'
 export type BillingStatsRateMode = 'public' | 'custom'
 
-export interface BillingServerStats {
+export interface BillingActualServerStats {
   server_id: number
   alias: string
   country_code: string
@@ -128,11 +128,11 @@ export interface BillingServerStats {
   days_active: number
   daily_minor: number
   daily_custom_minor?: number
-  costs_public: number[]
-  costs_custom?: number[]
+  actual_costs_public: number[]
+  actual_costs_custom?: number[]
 }
 
-export interface BillingStats {
+export interface BillingActualStats {
   reporting_currency: string
   granularity: BillingStatsGranularity
   from: string
@@ -141,9 +141,41 @@ export interface BillingStats {
   rate_date?: string
   custom_available: boolean
   periods: string[]
-  servers: BillingServerStats[]
-  totals_public: number[]
-  totals_custom?: number[]
+  servers: BillingActualServerStats[]
+  actual_totals_public: number[]
+  actual_totals_custom?: number[]
+}
+
+export interface BillingEstimatedServerStats {
+  server_id: number
+  alias: string
+  country_code: string
+  location: string
+  currency: string
+  amount_minor: number
+  interval_count: number
+  interval_unit: IntervalUnit
+  service_started_on: string
+  status: BillingStatus
+  days_active: number
+  daily_minor: number
+  daily_custom_minor?: number
+  estimated_costs_public: number[]
+  estimated_costs_custom?: number[]
+}
+
+export interface BillingEstimatedStats {
+  reporting_currency: string
+  granularity: BillingStatsGranularity
+  from: string
+  to: string
+  rate_mode: BillingStatsRateMode
+  rate_date?: string
+  custom_available: boolean
+  periods: string[]
+  servers: BillingEstimatedServerStats[]
+  estimated_totals_public: number[]
+  estimated_totals_custom?: number[]
 }
 
 export interface TrafficPlanInput {

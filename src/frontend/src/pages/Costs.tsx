@@ -14,8 +14,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, errorMessage } from '@/lib/api'
 import { useTheme } from '@/lib/theme-context'
 import type {
-  BillingServerStats,
-  BillingStats,
+  BillingActualServerStats,
+  BillingActualStats,
   BillingStatsGranularity,
   BillingStatsRateMode,
 } from '@/lib/types'
@@ -82,13 +82,13 @@ function money(minor: number, currency: string): string {
   return (minor / divisor).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 
-function costsOf(server: BillingServerStats, rateMode: BillingStatsRateMode): number[] {
-  return rateMode === 'custom' && server.costs_custom ? server.costs_custom : server.costs_public
+function costsOf(server: BillingActualServerStats, rateMode: BillingStatsRateMode): number[] {
+  return rateMode === 'custom' && server.actual_costs_custom ? server.actual_costs_custom : server.actual_costs_public
 }
 
 interface ServerRow {
   name: string
-  server: BillingServerStats
+  server: BillingActualServerStats
   total: number
   share: number
   daily: number
@@ -100,7 +100,7 @@ export default function Costs() {
   const [from, setFrom] = useState(() => firstOfMonth(addMonths(localDate(), -11)))
   const [to, setTo] = useState(() => localDate())
   const [rateMode, setRateMode] = useState<BillingStatsRateMode>('custom')
-  const [stats, setStats] = useState<BillingStats | null>(null)
+  const [stats, setStats] = useState<BillingActualStats | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [earliestStart, setEarliestStart] = useState('')
@@ -203,7 +203,7 @@ export default function Costs() {
   }, [stats, rateMode, sort])
 
   const totalAll = useMemo(() => rows.reduce((sum, row) => sum + row.total, 0), [rows])
-  const totals = rateMode === 'custom' && stats?.totals_custom ? stats.totals_custom : stats?.totals_public ?? []
+  const totals = rateMode === 'custom' && stats?.actual_totals_custom ? stats.actual_totals_custom : stats?.actual_totals_public ?? []
   const monthsInRange = useMemo(() => {
     if (!stats) return 1
     if (stats.granularity === 'month') return Math.max(1, stats.periods.length)
