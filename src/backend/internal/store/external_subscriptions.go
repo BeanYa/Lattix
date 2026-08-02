@@ -200,6 +200,17 @@ func (s *Store) ReplaceExternalChains(ctx context.Context, subID int64, chains [
 	}
 	defer tx.Rollback()
 
+	// 同步在事务外拉取（最长 30s），期间订阅可能已被删除；若已不存在
+	// 则拒绝写入，避免为已删除订阅残留孤儿节点（PRAGMA foreign_keys 未开启）。
+	var exists int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM external_subscriptions WHERE id = ?)`, subID).Scan(&exists); err != nil {
+		return 0, fmt.Errorf("check external subscription exists: %w", err)
+	}
+	if exists == 0 {
+		return 0, ErrNotFound
+	}
+
 	if _, err := tx.ExecContext(ctx, `DELETE FROM external_chains WHERE subscription_id = ?`, subID); err != nil {
 		return 0, fmt.Errorf("clear external chains: %w", err)
 	}

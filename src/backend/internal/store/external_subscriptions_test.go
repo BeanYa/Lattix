@@ -103,6 +103,26 @@ func TestReplaceExternalChainsReplacesAndDedups(t *testing.T) {
 	}
 }
 
+func TestReplaceExternalChainsUnknownSubscription(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	chains := []ExternalChain{{
+		SubscriptionID: 9999, Name: "n", Protocol: "vless", Server: "9.9.9.9", Port: 443,
+		Config: json.RawMessage(`{"name":"n"}`), ConfigSHA256: "s",
+	}}
+	if _, err := st.ReplaceExternalChains(ctx, 9999, chains); err != ErrNotFound {
+		t.Fatalf("replace for missing subscription err = %v, want ErrNotFound", err)
+	}
+	got, err := st.ListExternalChains(ctx, 9999)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("orphan chains inserted: %v, err %v", got, err)
+	}
+}
+
 func TestDeleteExternalSubscriptionCascadesChains(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(":memory:")
