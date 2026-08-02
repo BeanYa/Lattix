@@ -8,6 +8,25 @@ import (
 	"lattix/backend/internal/extsub"
 )
 
+// externalSingboxKeys 构建 sing-box 消费键集合。
+func externalSingboxKeys(keys ...string) map[string]bool {
+	out := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		out[k] = true
+	}
+	return out
+}
+
+// applySingboxRaw 把未被消费的 Extra 键透传进 sing-box 出站 JSON
+// （Go json 忽略未知字段，兜底不破坏配置加载）。
+func applySingboxRaw(base map[string]any, extra map[string]any, consumed map[string]bool) {
+	for key, value := range extra {
+		if !consumed[key] {
+			base[key] = value
+		}
+	}
+}
+
 // buildExternalSingbox 把外部订阅节点编译为 sing-box 出站（map JSON）。
 // sing-box 不原生支持 ssr/snell，返回错误由调用方记 warning 跳过。
 func buildExternalSingbox(n extsub.Node) (any, error) {
@@ -16,8 +35,10 @@ func buildExternalSingbox(n extsub.Node) (any, error) {
 	}
 	e := externalYAMLFallback(n.Extra)
 	base := map[string]any{"type": n.Type, "tag": n.Name, "server": n.Server, "server_port": n.Port}
+	var consumed map[string]bool
 	switch n.Type {
 	case "vless":
+		consumed = externalSingboxKeys("id", "uuid", "type", "network", "flow", "security", "pbk", "sid", "fp", "client-fingerprint", "sni", "servername", "path", "host", "mode", "serviceName", "service_name", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "alpn", "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify")
 		base["uuid"] = extStr(e, "id")
 		base["packet_encoding"] = "xudp"
 		if flow := extStr(e, "flow"); flow != "" {
@@ -30,6 +51,7 @@ func buildExternalSingbox(n extsub.Node) (any, error) {
 			base["transport"] = tr
 		}
 	case "vmess":
+		consumed = externalSingboxKeys("id", "uuid", "net", "aid", "scy", "tls", "sni", "servername", "path", "host", "mode", "serviceName", "service_name", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "alpn", "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify")
 		base["uuid"] = extStr(e, "id")
 		base["alter_id"] = extInt(e, "aid")
 		base["security"] = extStr(e, "scy", "auto")
@@ -40,15 +62,24 @@ func buildExternalSingbox(n extsub.Node) (any, error) {
 			base["transport"] = tr
 		}
 	case "trojan":
+		consumed = externalSingboxKeys("password", "type", "network", "sni", "servername", "path", "host", "mode", "serviceName", "service_name", "ws-opts", "grpc-opts", "xhttp-opts", "http-opts", "h2-opts", "alpn", "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify")
 		base["password"] = extStr(e, "password")
 		base["tls"] = externalSingboxTLSSimple(e)
 		if tr := externalSingboxTransport(e, externalNetwork(e, "type")); tr != nil {
 			base["transport"] = tr
 		}
 	case "ss":
+		consumed = externalSingboxKeys("method", "password", "plugin", "plugin-opts")
 		base["method"] = extStr(e, "method")
 		base["password"] = extStr(e, "password")
+		if plugin := extStr(e, "plugin"); plugin != "" {
+			base["plugin"] = plugin
+			if opts := rawMap(e["plugin-opts"]); opts != nil {
+				base["plugin_opts"] = opts
+			}
+		}
 	case "hysteria2":
+		consumed = externalSingboxKeys("password", "obfs", "obfs-password", "obfs_password", "sni", "peername", "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify")
 		base["password"] = extStr(e, "password")
 		if extStr(e, "obfs") != "" {
 			base["obfs"] = map[string]any{
@@ -60,6 +91,7 @@ func buildExternalSingbox(n extsub.Node) (any, error) {
 			"insecure": extBool(e, "insecure"),
 		}
 	case "tuic":
+		consumed = externalSingboxKeys("uuid", "password", "congestion_controller", "congestion-controller", "congestion_control", "udp_relay_mode", "udp-relay-mode", "reduce_rtt", "reduce-rtt", "sni", "alpn", "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify")
 		base["uuid"] = extStr(e, "uuid")
 		if pwd := extStr(e, "password"); pwd != "" {
 			base["password"] = pwd
@@ -76,7 +108,14 @@ func buildExternalSingbox(n extsub.Node) (any, error) {
 			"insecure": extBool(e, "allow_insecure"),
 		}
 	case "wireguard":
-		base["local_address"] = []string{extStr(e, "ip", "address")}
+		consumed = externalSingboxKeys("ip", "address", "ipv6", "private_key", "private-key", "public_key", "pk", "public-key", "preshared_key", "preshared-key", "psk", "mtu", "reserved")
+		addr := []string{extStr(e, "ip", "address")}
+		if v6 := extStr(e, "ipv6"); v6 != "" {
+			for _, part := range strings.FieldsFunc(v6, func(r rune) bool { return r == ',' || r == ' ' }) {
+				addr = append(addr, part)
+			}
+		}
+		base["local_address"] = addr
 		base["private_key"] = extStr(e, "private_key")
 		if pk := extStr(e, "public_key", "pk"); pk != "" {
 			base["peer_public_key"] = pk
@@ -99,16 +138,28 @@ func buildExternalSingbox(n extsub.Node) (any, error) {
 			}
 		}
 	case "socks", "http":
+		consumed = externalSingboxKeys("username", "password")
 		base["username"] = extStr(e, "username")
 		if pwd := extStr(e, "password"); pwd != "" {
 			base["password"] = pwd
 		}
 	case "anytls":
+		consumed = externalSingboxKeys("password", "sni", "servername", "alpn", "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify", "idle-session-check-interval", "idle-session-timeout", "min-idle-session")
 		base["password"] = extStr(e, "password")
 		base["tls"] = externalSingboxTLSSimple(e)
+		if v := extInt(e, "idle-session-check-interval"); v > 0 {
+			base["idle_session_check_interval"] = v
+		}
+		if v := extInt(e, "idle-session-timeout"); v > 0 {
+			base["idle_session_timeout"] = v
+		}
+		if v := extInt(e, "min-idle-session"); v > 0 {
+			base["min_idle_session"] = v
+		}
 	default:
 		return nil, fmt.Errorf("外部节点「%s」sing-box 不支持协议 %s", n.Name, n.Type)
 	}
+	applySingboxRaw(base, n.Extra, consumed)
 	return base, nil
 }
 
@@ -128,10 +179,14 @@ func externalSingboxTLS(e map[string]any, reality bool) map[string]any {
 
 // externalSingboxTLSSimple 构造普通 TLS 对象。
 func externalSingboxTLSSimple(e map[string]any) map[string]any {
-	return map[string]any{
+	tls := map[string]any{
 		"enabled": true, "server_name": extStr(e, "sni"),
 		"insecure": extBool(e, "insecure", "allowInsecure", "allow_insecure"),
 	}
+	if alpn := extStrings(e, "alpn"); len(alpn) > 0 {
+		tls["alpn"] = alpn
+	}
+	return tls
 }
 
 // externalSingboxTransport 构造传输层对象；不支持/缺省返回 nil。
