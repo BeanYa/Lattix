@@ -36,16 +36,27 @@ func ParseSubscription(body []byte) ([]Node, string, error) {
 	if nodes, ok := parseYAML([]byte(text)); ok && len(nodes) > 0 {
 		return nodes, "yaml", nil
 	}
-	decoded := decodeBase64Layers(text)
-	nodes, sawJSON := parseLinkLines(decoded)
-	if len(nodes) > 0 {
-		format := "v2ray"
-		if sawJSON {
-			format = "v2rayn"
-		}
+	// 先按原文逐行解析（v2rayN 无 scheme 的 base64 JSON 行在此命中）；
+	// 原文无任何节点时才回退到整体 base64 解码后的行解析。
+	if nodes, format, ok := parseLinkLinesWithFormat(text); ok {
+		return nodes, format, nil
+	}
+	if nodes, format, ok := parseLinkLinesWithFormat(decodeBase64Layers(text)); ok {
 		return nodes, format, nil
 	}
 	return nil, "", fmt.Errorf("no supported nodes found")
+}
+
+func parseLinkLinesWithFormat(text string) ([]Node, string, bool) {
+	nodes, sawJSON := parseLinkLines(text)
+	if len(nodes) == 0 {
+		return nil, "", false
+	}
+	format := "v2ray"
+	if sawJSON {
+		format = "v2rayn"
+	}
+	return nodes, format, true
 }
 
 // decodeBase64Layers 尝试最多三层 base64 解码；解码结果看起来不像
@@ -237,7 +248,8 @@ func parseCredentialURI(u *url.URL) Node {
 }
 
 func parseVmessURI(u *url.URL) (Node, bool) {
-	decoded, err := tryBase64Decode(u.Host)
+	payload := u.Host + u.Path
+	decoded, err := tryBase64Decode(payload)
 	if err != nil {
 		return Node{}, false
 	}
@@ -321,7 +333,8 @@ func parseSSURI(u *url.URL) (Node, bool) {
 }
 
 func parseSSRURI(u *url.URL) (Node, bool) {
-	decoded, err := tryBase64Decode(u.Host)
+	payload := u.Host + u.Path
+	decoded, err := tryBase64Decode(payload)
 	if err != nil {
 		return Node{}, false
 	}

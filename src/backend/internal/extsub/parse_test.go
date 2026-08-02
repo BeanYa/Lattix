@@ -36,20 +36,75 @@ func TestParseLinksBase64Bundle(t *testing.T) {
 func TestParseLinksVmessAndV2rayN(t *testing.T) {
 	vmessJSON := `{"v":"2","ps":"vmess-01","add":"5.6.7.8","port":"443","id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","aid":"0","scy":"auto","net":"ws","type":"none","host":"h.example.com","path":"/p","tls":"tls","sni":"h.example.com"}`
 	vmessLink := "vmess://" + base64urlEncode(vmessJSON)
-	// v2rayN 自定义：无 scheme 的 base64 JSON 行
-	customLine := base64urlEncode(`{"v":"2","ps":"custom-01","add":"9.9.9.9","port":"8443","id":"id-id-id","net":"tcp","tls":"","type":"none"}`)
-	nodes, format, err := ParseSubscription([]byte(vmessLink + "\n" + customLine))
+	t.Run("vmess link", func(t *testing.T) {
+		nodes, format, err := ParseSubscription([]byte(vmessLink))
+		if err != nil || format != "v2ray" {
+			t.Fatalf("format %q err %v", format, err)
+		}
+		if len(nodes) != 1 {
+			t.Fatalf("nodes = %+v", nodes)
+		}
+		if nodes[0].Type != "vmess" || nodes[0].Name != "vmess-01" || nodes[0].Server != "5.6.7.8" || nodes[0].Port != 443 {
+			t.Fatalf("vmess node = %+v", nodes[0])
+		}
+	})
+	t.Run("v2rayn all scheme-less", func(t *testing.T) {
+		// v2rayN 自定义格式：全部为无 scheme 的 base64 JSON 行
+		customLine := base64urlEncode(`{"v":"2","ps":"custom-01","add":"9.9.9.9","port":"8443","id":"id-id-id","net":"tcp","tls":"","type":"none"}`)
+		customLine2 := base64urlEncode(`{"v":"2","ps":"custom-02","add":"8.8.8.8","port":"8444","id":"id2-id2-id2","net":"tcp","tls":"","type":"none"}`)
+		nodes, format, err := ParseSubscription([]byte(customLine + "\n" + customLine2))
+		if err != nil || format != "v2rayn" {
+			t.Fatalf("format %q err %v", format, err)
+		}
+		if len(nodes) != 2 {
+			t.Fatalf("nodes = %+v", nodes)
+		}
+		if nodes[0].Name != "custom-01" || nodes[0].Type != "vmess" || nodes[0].Server != "9.9.9.9" || nodes[0].Port != 8443 {
+			t.Fatalf("custom node = %+v", nodes[0])
+		}
+		if nodes[1].Name != "custom-02" || nodes[1].Server != "8.8.8.8" || nodes[1].Port != 8444 {
+			t.Fatalf("custom node = %+v", nodes[1])
+		}
+	})
+}
+
+func TestParseLinksV2rayNSingleEntry(t *testing.T) {
+	entry := base64urlEncode(`{"v":"2","ps":"solo-01","add":"1.2.3.4","port":"8388","id":"solo-id","net":"tcp","tls":"","type":"none"}`)
+	nodes, format, err := ParseSubscription([]byte(entry))
 	if err != nil || format != "v2rayn" {
+		t.Fatalf("format %q err %v", format, err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("nodes = %+v", nodes)
+	}
+	if nodes[0].Name != "solo-01" || nodes[0].Server != "1.2.3.4" || nodes[0].Port != 8388 {
+		t.Fatalf("node = %+v", nodes[0])
+	}
+}
+
+func TestParseLinksTrojanAndHysteria2(t *testing.T) {
+	body := "trojan://pass@example.org:8443?type=ws&path=/p&sni=example.org#Trojan01\n" +
+		"hysteria2://pass@hk.example.com:443?sni=hk.example.com&insecure=1#HK02"
+	nodes, format, err := ParseSubscription([]byte(body))
+	if err != nil || format != "v2ray" {
 		t.Fatalf("format %q err %v", format, err)
 	}
 	if len(nodes) != 2 {
 		t.Fatalf("nodes = %+v", nodes)
 	}
-	if nodes[0].Type != "vmess" || nodes[0].Name != "vmess-01" || nodes[0].Server != "5.6.7.8" || nodes[0].Port != 443 {
-		t.Fatalf("vmess node = %+v", nodes[0])
+	trojan := nodes[0]
+	if trojan.Type != "trojan" || trojan.Server != "example.org" || trojan.Port != 8443 || trojan.Name != "Trojan01" {
+		t.Fatalf("trojan node = %+v", trojan)
 	}
-	if nodes[1].Name != "custom-01" || nodes[1].Server != "9.9.9.9" || nodes[1].Port != 8443 {
-		t.Fatalf("custom node = %+v", nodes[1])
+	if trojan.Extra["password"] != "pass" || trojan.Extra["path"] != "/p" {
+		t.Fatalf("trojan extra = %+v", trojan.Extra)
+	}
+	hy2 := nodes[1]
+	if hy2.Type != "hysteria2" || hy2.Server != "hk.example.com" || hy2.Port != 443 || hy2.Name != "HK02" {
+		t.Fatalf("hy2 node = %+v", hy2)
+	}
+	if hy2.Extra["password"] != "pass" || hy2.Extra["sni"] != "hk.example.com" || hy2.Extra["insecure"] != "1" {
+		t.Fatalf("hy2 extra = %+v", hy2.Extra)
 	}
 }
 
