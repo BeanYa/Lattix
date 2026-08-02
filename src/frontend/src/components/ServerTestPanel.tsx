@@ -27,6 +27,7 @@ import { Progress } from '@/components/ui/progress'
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { ipv6Unavailable, withoutIpv6Categories } from '@/lib/server-test-ipv6'
 import type {
   IPQualityFactor,
   IPQualityFamily,
@@ -305,6 +306,8 @@ function ReportCategory({ category }: { category: ServerTestCategoryResult }) {
 }
 
 function TestReport({ report, timezone }: { report: ServerTestReport; timezone?: string }) {
+  const ipv6Off = ipv6Unavailable(report.environment)
+  const visibleCategories = ipv6Off ? withoutIpv6Categories(report.categories) : report.categories
   return (
     <div className="min-w-0 space-y-4">
       <div className="grid gap-3 border-y py-3 text-xs sm:grid-cols-4">
@@ -314,8 +317,9 @@ function TestReport({ report, timezone }: { report: ServerTestReport; timezone?:
         <div><span className="block text-muted-foreground">权限 / 沙箱</span><span className="mt-1 block">{report.environment.privileges} · {report.environment.sandbox}</span></div>
       </div>
       {report.environment.degraded || report.environment.sandbox_reason ? <div className="flex items-start gap-2 bg-warning/10 px-3 py-2 text-xs text-warning"><AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" /><span>{report.environment.degraded_reason || report.environment.sandbox_reason}</span></div> : null}
+      {ipv6Off ? <div className="flex items-start gap-2 bg-muted/40 px-3 py-2 text-xs text-muted-foreground"><WifiIcon className="mt-0.5 size-3.5 shrink-0" /><span>IPv6 不可用，IPv6 相关章节已隐藏</span></div> : null}
       <ErrorNotice code={report.error_code} message={report.error_message} />
-      <div>{report.categories.map((category) => <ReportCategory key={category.category} category={category} />)}</div>
+      <div>{visibleCategories.map((category) => <ReportCategory key={category.category} category={category} />)}</div>
     </div>
   )
 }
