@@ -3,6 +3,7 @@ package shared
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -252,6 +253,99 @@ type ServerTestCategoryResult struct {
 	Status       string             `json:"status"`
 	Summary      map[string]any     `json:"summary,omitempty"`
 	Items        []map[string]any   `json:"items,omitempty"`
+	IPQuality    *IPQualityResult   `json:"ip_quality,omitempty"`
 	ErrorCode    string             `json:"error_code,omitempty"`
 	ErrorMessage string             `json:"error_message,omitempty"`
+}
+
+// IPQualityResult is the Lattix-native representation of a xykt/IPQuality
+// script report. It mirrors every field the upstream ip.sh JSON output emits;
+// the script is executed with -p (privacy, no online report) -j (JSON) -f
+// (full IP). Subfield JSON tags keep the upstream key names 1:1.
+type IPQualityResult struct {
+	SchemaVersion int               `json:"schema_version"`
+	ScriptVersion string            `json:"script_version"`
+	ScriptStale   bool              `json:"script_stale,omitempty"`
+	Families      []IPQualityFamily `json:"families"`
+}
+
+type IPQualityFamily struct {
+	Family ServerTestAddressFamily      `json:"family"`
+	Head   IPQualityHead                `json:"Head"`
+	Info   IPQualityInfo                `json:"Info"`
+	Type   IPQualityType                `json:"Type"`
+	Score  map[string]string            `json:"Score,omitempty"`
+	Factor IPQualityFactor              `json:"Factor"`
+	Media  map[string]IPQualityMediaStatus `json:"Media,omitempty"`
+	Mail   IPQualityMail                `json:"Mail"`
+	Raw    json.RawMessage              `json:"raw,omitempty"`
+}
+
+type IPQualityHead struct {
+	IP      string `json:"IP"`
+	Command string `json:"Command,omitempty"`
+	GitHub  string `json:"GitHub,omitempty"`
+	Time    string `json:"Time,omitempty"`
+	Version string `json:"Version,omitempty"`
+}
+
+type IPQualityInfo struct {
+	ASN              string             `json:"ASN,omitempty"`
+	Organization     string             `json:"Organization,omitempty"`
+	Latitude         string             `json:"Latitude,omitempty"`
+	Longitude        string             `json:"Longitude,omitempty"`
+	DMS              string             `json:"DMS,omitempty"`
+	Map              string             `json:"Map,omitempty"`
+	TimeZone         string             `json:"TimeZone,omitempty"`
+	City             IPQualityCity      `json:"City"`
+	Region           IPQualityRegion    `json:"Region"`
+	Continent        IPQualityRegion    `json:"Continent"`
+	RegisteredRegion IPQualityRegion    `json:"RegisteredRegion"`
+	Type             string             `json:"Type,omitempty"`
+}
+
+type IPQualityCity struct {
+	Name         string `json:"Name,omitempty"`
+	PostalCode   string `json:"PostalCode,omitempty"`
+	SubCode      string `json:"SubCode,omitempty"`
+	Subdivisions string `json:"Subdivisions,omitempty"`
+}
+
+type IPQualityRegion struct {
+	Code string `json:"Code,omitempty"`
+	Name string `json:"Name,omitempty"`
+}
+
+type IPQualityType struct {
+	Usage   map[string]string `json:"Usage,omitempty"`
+	Company map[string]string `json:"Company,omitempty"`
+}
+
+type IPQualityFactor struct {
+	CountryCode map[string]string `json:"CountryCode,omitempty"`
+	Proxy       map[string]*bool  `json:"Proxy,omitempty"`
+	Tor         map[string]*bool  `json:"Tor,omitempty"`
+	VPN         map[string]*bool  `json:"VPN,omitempty"`
+	Server      map[string]*bool  `json:"Server,omitempty"`
+	Abuser      map[string]*bool  `json:"Abuser,omitempty"`
+	Robot       map[string]*bool  `json:"Robot,omitempty"`
+}
+
+type IPQualityMediaStatus struct {
+	Status string `json:"Status,omitempty"`
+	Region string `json:"Region,omitempty"`
+	Type   string `json:"Type,omitempty"`
+}
+
+type IPQualityMail struct {
+	Port25       *bool                `json:"Port25,omitempty"`
+	Providers    map[string]*bool     `json:"providers,omitempty"`
+	DNSBlacklist IPQualityDNSBlacklist `json:"DNSBlacklist"`
+}
+
+type IPQualityDNSBlacklist struct {
+	Total       int `json:"Total"`
+	Clean       int `json:"Clean"`
+	Marked      int `json:"Marked"`
+	Blacklisted int `json:"Blacklisted"`
 }
