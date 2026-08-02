@@ -213,8 +213,8 @@ proxies:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Servername != "sni.moe233.org" {
-		t.Fatalf("servername = %q", p.Servername)
+	if p.SNI != "sni.moe233.org" {
+		t.Fatalf("sni = %q", p.SNI)
 	}
 	if p.SkipCertVerify == nil || *p.SkipCertVerify {
 		t.Fatalf("skip-cert-verify: false presence lost: %+v", p.SkipCertVerify)
@@ -233,13 +233,36 @@ proxies:
 		t.Fatal(err)
 	}
 	s := string(out)
-	for _, want := range []string{"alpn:", "- h2", "skip-cert-verify: false", "servername: sni.moe233.org", "auth: token-abc"} {
+	for _, want := range []string{"alpn:", "- h2", "skip-cert-verify: false", "sni: sni.moe233.org", "auth: token-abc"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("yaml missing %q:\n%s", want, s)
 		}
 	}
-	if strings.Contains(s, "sni:") || strings.Contains(s, "password: pass-123") && strings.Count(s, "auth:") != 1 {
+	if strings.Contains(s, "servername:") || strings.Contains(s, "password: pass-123") && strings.Count(s, "auth:") != 1 {
 		t.Fatalf("yaml leakage:\n%s", s)
+	}
+}
+
+func TestBuildExternalClashAnyTLSServerNameSource(t *testing.T) {
+	// mihomo anytls 规范字段为 sni（adapter/outbound/anytls.go: `proxy:"sni"`）；
+	// 源键为 servername（如 lattix 旧约定导出再导入）时经 externalYAMLFallback
+	// 折算，输出仍只带 sni 一个键，避免 mihomo 系客户端 SNI 为空导致握手失败。
+	p, err := buildExternalClash(extNode("anytls-sn", "anytls", "relay.example.org", 443, map[string]any{
+		"password": "p1", "servername": "node1.qchwnd.example",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.SNI != "node1.qchwnd.example" {
+		t.Fatalf("sni not mapped from servername source: %+v", p)
+	}
+	out, err := yaml.Marshal(clashConfig{Proxies: []clashProxy{p}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "sni: node1.qchwnd.example") || strings.Contains(s, "servername:") {
+		t.Fatalf("anytls must emit mihomo canonical sni only:\n%s", s)
 	}
 }
 

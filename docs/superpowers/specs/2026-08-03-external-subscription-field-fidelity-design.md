@@ -19,13 +19,24 @@
   server: ...
   port: 443
   password: ...
-  servername: moe233-...
+  sni: moe233-...
   udp: true
 ```
 
 丢失 `alpn: [h2, http/1.1]`（功能性字段）与 `skip-cert-verify: false`（falsy 值被 omitempty 裁剪）。
 
 **根因**：解析层（`extsub/parse_yaml.go`）已把全部字段保留进 `Node.Extra`，丢失全部发生在生成层——`clashProxy` 结构体字段不全，且 `omitempty` 语义无法区分"字段为 false"与"字段不存在"。
+
+## 约定更正（2026-08-04）
+
+原假设"anytls 的 mihomo 字段为 `servername`"有误。实测 mihomo 源码（Meta 分支 `adapter/outbound/`）的 proxy 标签：
+
+| 协议 | mihomo 字段 |
+|---|---|
+| vless / vmess | `servername` |
+| trojan / anytls / hysteria2 / tuic / http(tls) | `sni` |
+
+mihomo 对未知字段静默忽略：此前输出 `servername` 的 anytls/hy2/tuic 节点在 mihomo 系客户端 SNI 为空，对 SNI 路由的中继（如 `relay.moe233.org`）TLS 握手失败、测速超时。已修正 `buildExternalClash`：上述协议 SNI 统一输出 `sni`（vless/vmess 保持 `servername`）。
 
 ## 目标
 
@@ -61,8 +72,8 @@ type clashProxy struct {
 
     Network    string `yaml:"network,omitempty"`
     TLS        bool   `yaml:"tls,omitempty"`
-    Servername string `yaml:"servername,omitempty"`
-    SNI        string `yaml:"sni,omitempty"`
+    Servername string `yaml:"servername,omitempty"` // vless / vmess
+    SNI        string `yaml:"sni,omitempty"`        // trojan / anytls / hysteria2 / tuic / http(tls)
     Flow       string `yaml:"flow,omitempty"`
     Encryption string `yaml:"encryption,omitempty"`
     PacketEncoding string `yaml:"packet-encoding,omitempty"` // vless
@@ -133,7 +144,7 @@ opts 子结构补全：`ws-opts` 增加 `max-early-data`/`early-data-header-name
 ## 测试
 
 - `external_clash_test.go`：指针字段断言更新（`*p.SkipCertVerify` 等）；新增完整回填用例：
-  - anytls YAML 往返：`alpn: [h2, http/1.1]`、`skip-cert-verify: false`、`servername`（sni 折算）、无重复键；
+  - anytls YAML 往返：`alpn: [h2, http/1.1]`、`skip-cert-verify: false`、`sni`（mihomo 规范字段）、无重复键；
   - 未知键透传：`auth: xxx` 原样出现在 YAML；
   - `ws-opts` 子字段（max-early-data 等）保真；
   - 面板自建节点（`buildProxy`）输出零变化。

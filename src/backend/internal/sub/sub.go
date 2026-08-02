@@ -241,8 +241,8 @@ type clashProxy struct {
 	Network        string `yaml:"network,omitempty"`
 	PacketEncoding string `yaml:"packet-encoding,omitempty"` // vless
 	TLS            bool   `yaml:"tls,omitempty"`
-	Servername     string `yaml:"servername,omitempty"`      // vless / vmess / anytls
-	SNI            string `yaml:"sni,omitempty"`             // trojan
+	Servername     string `yaml:"servername,omitempty"`      // vless / vmess
+	SNI            string `yaml:"sni,omitempty"`             // trojan / anytls / hysteria2 / tuic / http(tls)
 	Flow           string `yaml:"flow,omitempty"`            // vless
 	Encryption     string `yaml:"encryption,omitempty"`      // vless
 	ALPN           []string `yaml:"alpn,omitempty"`

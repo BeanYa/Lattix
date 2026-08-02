@@ -394,13 +394,13 @@ func buildExternalClash(n extsub.Node) (clashProxy, error) {
 		p.ObfsPassword = extStr(e, "obfs-password", "obfs_password")
 		p.Up = extStr(e, "up")
 		p.Down = extStr(e, "down")
-		p.Servername = extStr(e, "sni", "peername")
+		p.SNI = extStr(e, "sni", "peername")
 	case "tuic":
 		consumed = externalTLSKeys("uuid", "password", "congestion_controller", "congestion-controller", "congestion_control", "udp_relay_mode", "udp-relay-mode", "reduce_rtt", "reduce-rtt")
 		p.Type = "tuic"
 		p.UUID = extStr(e, "uuid")
 		p.Password = extStr(e, "password")
-		p.Servername = extStr(e, "sni")
+		p.SNI = extStr(e, "sni")
 		p.CongestionController = extStr(e, "congestion_controller", "congestion-controller", "congestion_control")
 		p.UDPRelayMode = extStr(e, "udp_relay_mode", "udp-relay-mode")
 		p.ReduceRTT = extBoolPtr(e, "reduce_rtt", "reduce-rtt")
@@ -418,7 +418,7 @@ func buildExternalClash(n extsub.Node) (clashProxy, error) {
 		consumed = externalTLSKeys("password", "idle-session-check-interval", "idle-session-timeout", "min-idle-session")
 		p.Type = "anytls"
 		p.Password = extStr(e, "password")
-		p.Servername = extStr(e, "sni")
+		p.SNI = extStr(e, "sni")
 		p.IdleSessionCheckInterval = extInt(e, "idle-session-check-interval")
 		p.IdleSessionTimeout = extInt(e, "idle-session-timeout")
 		p.MinIdleSession = extInt(e, "min-idle-session")
@@ -442,7 +442,7 @@ func buildExternalClash(n extsub.Node) (clashProxy, error) {
 		p.UDP = false
 		if extStr(e, "tls") == "tls" {
 			p.TLS = true
-			p.Servername = extStr(e, "sni")
+			p.SNI = extStr(e, "sni")
 		}
 	default:
 		return clashProxy{}, fmt.Errorf("外部节点「%s」未知协议 %s", n.Name, n.Type)
