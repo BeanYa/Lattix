@@ -39,7 +39,55 @@ type SystemdRunner struct {
 
 // Restart 实现 Runner。
 func (r *SystemdRunner) Restart(ctx context.Context) error {
-	return exec.CommandContext(ctx, "systemctl", "restart", r.unit).Run()
+	out, err := exec.CommandContext(ctx, "systemctl", "restart", r.unit).CombinedOutput()
+	if err != nil {
+		return r.restartErr(err, string(out))
+	}
+	return nil
+}
+
+// restartErr 汇总重启失败详情：systemd stderr（截断 8 行）+ xray journal 尾部（best-effort）。
+func (r *SystemdRunner) restartErr(err error, output string) error {
+	detail := firstLines(output, 8)
+	if tail := journalTail(context.Background(), r.unit, 20); tail != "" {
+		detail += "; journal: " + tail
+	}
+	detail = trimDetail(detail)
+	if detail != "" {
+		return fmt.Errorf("systemctl restart %s: %v: %s", r.unit, err, detail)
+	}
+	return fmt.Errorf("systemctl restart %s: %v", r.unit, err)
+}
+
+// journalTail 抓取 systemd 单元最近 n 行 journal（失败/超时返回空串）。
+var journalTail = journalTailImpl
+
+func journalTailImpl(ctx context.Context, unit string, n int) string {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "journalctl", "-u", unit, "-n", strconv.Itoa(n), "--no-pager", "-o", "cat").Output()
+	if err != nil {
+		return ""
+	}
+	return trimDetail(string(out))
+}
+
+// firstLines 返回前 n 行（去空白、以 " | " 连接）。
+func firstLines(s string, n int) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, " | ")
+}
+
+// trimDetail 截断诊断文本到 2000 字符（防刷爆错误消息/日志列）。
+func trimDetail(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 2000 {
+		s = s[:2000]
+	}
+	return s
 }
 
 // IsRunning 实现 Runner。
