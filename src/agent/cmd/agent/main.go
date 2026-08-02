@@ -650,6 +650,9 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		log.Printf("node.apply request_id=%s node=%d users=%d", env.RequestID, p.NodeID, len(p.UserUUIDs))
 		realized, err := mgr.ApplyNode(p.NodeID, p.Config, p.UserUUIDs, p.DestCandidates, p.PortCandidates)
+		if err != nil {
+			log.Printf("node.apply failed request_id=%s node=%d: %v", env.RequestID, p.NodeID, err)
+		}
 		replyResult(sc, env, resultOf(p.NodeID, realized), err)
 
 	case shared.TypeApplyChainHop:
@@ -659,6 +662,10 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		log.Printf("chain-hop.apply request_id=%s chain=%d hop=%d kind=%s", env.RequestID, p.ChainID, p.HopID, p.Kind)
 		realized, err := mgr.ApplyChainHop(p)
+		if err != nil {
+			log.Printf("chain-hop.apply failed request_id=%s chain=%d hop=%d kind=%s: %v",
+				env.RequestID, p.ChainID, p.HopID, p.Kind, err)
+		}
 		if err == nil {
 			persistChainPieces(statePath, st, mgr)
 		}
@@ -672,6 +679,10 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		log.Printf("shared-endpoint.apply request_id=%s endpoint=%d clients=%d routes=%d",
 			env.RequestID, p.EndpointID, len(p.Clients), len(p.Routes))
 		realized, err := mgr.ApplySharedEndpoint(p)
+		if err != nil {
+			log.Printf("shared-endpoint.apply failed request_id=%s endpoint=%d clients=%d routes=%d: %v",
+				env.RequestID, p.EndpointID, len(p.Clients), len(p.Routes), err)
+		}
 		if err == nil {
 			persistChainPieces(statePath, st, mgr)
 		}
@@ -683,6 +694,9 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			return
 		}
 		err := mgr.RemoveSharedEndpoint(p.EndpointID)
+		if err != nil {
+			log.Printf("shared-endpoint.remove failed request_id=%s endpoint=%d: %v", env.RequestID, p.EndpointID, err)
+		}
 		if err == nil {
 			persistChainPieces(statePath, st, mgr)
 		}
@@ -708,6 +722,9 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		log.Printf("chain-hop.remove request_id=%s hop=%d kind=%s", env.RequestID, p.HopID, p.Kind)
 		err := mgr.RemoveChainHop(p.HopID, p.Kind)
+		if err != nil {
+			log.Printf("chain-hop.remove failed request_id=%s hop=%d kind=%s: %v", env.RequestID, p.HopID, p.Kind, err)
+		}
 		if err == nil {
 			persistChainPieces(statePath, st, mgr)
 		}

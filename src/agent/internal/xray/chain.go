@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"lattix/agent/internal/state"
@@ -147,6 +148,7 @@ func (m *Manager) RemoveChainHop(hopID int64, kind string) error {
 // restartApply 重启 xray 使落盘配置生效，失败恢复上一份并再次重启（§6 步骤 7-8）。
 func (m *Manager) restartApply() error {
 	if err := m.runner.Restart(context.Background()); err != nil {
+		log.Printf("xray: restart apply failed: %v（回滚上一份配置并再次重启）", err)
 		m.restorePrev()
 		_ = m.runner.Restart(context.Background())
 		return fmt.Errorf("重启失败(%v)，已回滚配置", err)

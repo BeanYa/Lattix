@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"lattix/shared"
@@ -157,5 +158,34 @@ func TestApplySharedEndpointHonorsNatCandidates(t *testing.T) {
 	}
 	if realized.Port != free {
 		t.Fatalf("NAT 段内候选应被采用，期望 %d 实际 %d", free, realized.Port)
+	}
+}
+
+// TestApplySharedEndpointRestartFailureReportsDetail 验证重启失败时错误消息携带
+// runner 的真实原因（stderr/journal 详情），且配置回滚到上一份。
+func TestApplySharedEndpointRestartFailureReportsDetail(t *testing.T) {
+	mgr := newTestEndpointManager(t)
+	payload := endpointPortPayload(11, nil)
+	if _, err := mgr.ApplySharedEndpoint(payload); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(mgr.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr.runner = &failingRestartRunner{}
+	_, err = mgr.ApplySharedEndpoint(payload)
+	if err == nil {
+		t.Fatal("重启失败应返回错误")
+	}
+	if !strings.Contains(err.Error(), "restart boom") {
+		t.Fatalf("错误应包含 runner 详情: %v", err)
+	}
+	restored, err := os.ReadFile(mgr.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restored) != string(first) {
+		t.Fatal("失败后配置应回滚到上一份")
 	}
 }
