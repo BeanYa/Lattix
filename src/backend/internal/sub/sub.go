@@ -225,6 +225,38 @@ type clashProxy struct {
 	ClientFingerprint string            `yaml:"client-fingerprint,omitempty"`
 	GrpcOpts          *clashGrpcOpts    `yaml:"grpc-opts,omitempty"`
 	XhttpOpts         *clashXHTTPOpts   `yaml:"xhttp-opts,omitempty"`
+
+	Ports                string         `yaml:"ports,omitempty"`                  // hysteria2 多端口
+	SkipCertVerify       bool           `yaml:"skip-cert-verify,omitempty"`
+	Obfs                 string         `yaml:"obfs,omitempty"`                   // hysteria2 / snell
+	ObfsPassword         string         `yaml:"obfs-password,omitempty"`
+	Up                   string         `yaml:"up,omitempty"`                     // hysteria2
+	Down                 string         `yaml:"down,omitempty"`                   // hysteria2
+	Protocol             string         `yaml:"protocol,omitempty"`               // ssr
+	ProtocolParam        string         `yaml:"protocol-param,omitempty"`
+	ObfsParam            string         `yaml:"obfs-param,omitempty"`
+	PSK                  string         `yaml:"psk,omitempty"`                    // snell
+	Version              int            `yaml:"version,omitempty"`                // snell
+	IP                   string         `yaml:"ip,omitempty"`                     // wireguard
+	PrivateKey           string         `yaml:"private-key,omitempty"`
+	PublicKey            string         `yaml:"public-key,omitempty"`
+	PresharedKey         string         `yaml:"preshared-key,omitempty"`
+	MTU                  int            `yaml:"mtu,omitempty"`
+	CongestionController string         `yaml:"congestion-controller,omitempty"`  // tuic
+	UDPRelayMode         string         `yaml:"udp-relay-mode,omitempty"`         // tuic
+	ReduceRTT            bool           `yaml:"reduce-rtt,omitempty"`             // tuic
+	WsOpts               *clashWsOpts   `yaml:"ws-opts,omitempty"`
+	HTTPOpts             *clashHTTPOpts `yaml:"http-opts,omitempty"`
+}
+
+type clashWsOpts struct {
+	Path    string            `yaml:"path,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty"`
+}
+
+type clashHTTPOpts struct {
+	Path    string            `yaml:"path,omitempty"`
+	Headers map[string]string `yaml:"headers,omitempty"`
 }
 
 type clashProxyGroup struct {
