@@ -14,3 +14,36 @@ bun run preview  # 本地预览生产构建
 
 生产构建产物位于 `src/frontend/dist/`。发布时，工作流会将其复制到
 `src/backend/internal/web/dist/`，再嵌入 Go 面板二进制。
+
+## CDN 与缓存
+
+生产环境可以把面板域名开启 Cloudflare Proxy（橙云），回源到 Lattix 面板。不要把
+React、Three.js 等依赖改成多个公共包 CDN URL：完整 Vite 构建产物版本一致、可回滚，
+也不会因某个公共镜像不可用导致页面白屏。
+
+Cloudflare 标准网络覆盖全球，但中国大陆访问属于尽力而为，不承诺境内节点与稳定时延。
+如果大陆加速是强 SLA，需使用 Cloudflare China Network（企业方案，按要求完成备案），
+或另设境内 CDN。以下源站缓存策略对 Cloudflare 标准网络与 China Network 都适用。
+
+源站已经输出以下缓存语义，CDN 应选择“遵循源站 Cache-Control”：
+
+| 路径 | CDN 行为 | 源站缓存头 |
+| --- | --- | --- |
+| `/assets/*` | 缓存并启用 Brotli/Gzip、HTTP/2/3 | `public, max-age=31536000, immutable` |
+| `/`, SPA 路由及 `index.html` | 每次重新验证 | `no-cache` |
+| `/api/*`、`/sub/*` | 不做公共缓存，直接回源 | 订阅公开 API 为 `private, no-store` |
+| `/api/agent/ws` | WebSocket 透传 | 不缓存 |
+
+Cloudflare Dashboard 建议配置：
+
+1. DNS 中为面板域名开启 Proxy status。
+2. 新建最高优先级 Cache Rule：URI Path starts with `/assets/`，Cache eligibility 设为
+   Eligible for cache，Edge TTL 使用源站 Cache-Control；开启 Tiered Cache、Brotli 与 HTTP/3。
+3. 新建 Bypass Cache Rule：URI Path starts with `/api/` OR `/sub/`。不要对这两个路径
+   使用 Cache Everything。
+4. 其他路径保持默认缓存行为；HTML 的 `no-cache` 会保证面板升级后及时获取新入口文件。
+5. Network 中启用 WebSockets，确保 `/api/agent/ws` 正常透传。
+
+不要为 `/sub/*` 配置“忽略源站强制缓存”。订阅地址本身是凭证，公开边缘缓存会造成
+用户数据泄露。城市数据、字体、3D 与图表依赖都位于带内容哈希的 `/assets/*` 下，首次
+下载后可长期复用；新版本文件名变化时会自然换新，无需清理旧缓存。

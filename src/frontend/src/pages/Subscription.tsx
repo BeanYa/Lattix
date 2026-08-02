@@ -1,4 +1,32 @@
-import { useEffect, useState } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from 'react'
+import {
+  ArrowDownToLine,
+  ArrowUpRight,
+  CheckIcon,
+  ChevronRightIcon,
+  CircleAlertIcon,
+  CopyIcon,
+  GaugeIcon,
+  RadioIcon,
+  RefreshCwIcon,
+  ShieldCheckIcon,
+  WifiIcon,
+} from 'lucide-react'
+
+import LattixMark from '@/components/LattixMark'
+import MagicRings from '@/components/MagicRings'
+import AnimatedContent from '@/components/react-bits/AnimatedContent'
+import DotGrid from '@/components/react-bits/DotGrid'
+import ElectricBorder from '@/components/react-bits/ElectricBorder'
+import { RequestError, requester } from '@/lib/requester'
+
+import './subscription.css'
 
 interface SubInfo {
   name: string
@@ -21,16 +49,32 @@ interface ClientInfo {
   format: string
 }
 
-function humanizeBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let v = n / 1024
-  let i = 0
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
-  return v >= 100 ? `${v.toFixed(0)} ${units[i]}` : `${v.toFixed(1)} ${units[i]}`
+const previewInfo: SubInfo = {
+  name: 'bean',
+  expires_at: Math.floor(Date.now() / 1000) + 86400 * 126,
+  expired: false,
+  disabled: false,
+  used_up: 18_640_000_000,
+  used_down: 46_920_000_000,
+  traffic_limit: 0,
+  nodes_count: 18,
+  title: 'Lattix Private Network',
+  announcement: '新的东京与洛杉矶线路已上线。客户端会在下一次自动更新时同步节点。',
+  update_interval: '6',
 }
 
+const previewClients: ClientInfo[] = [
+  { name: 'Stash', platform: 'ios', deeplink: '#preview-stash', format: 'stash' },
+  { name: 'Shadowrocket', platform: 'ios', deeplink: '#preview-shadowrocket', format: 'base64' },
+  { name: 'Clash Meta', platform: 'android', deeplink: '#preview-clash-meta', format: 'mihomo' },
+  { name: 'v2rayNG', platform: 'android', deeplink: '#preview-v2rayng', format: 'base64' },
+  { name: 'Mihomo Party', platform: 'windows', deeplink: '#preview-mihomo-party', format: 'mihomo' },
+  { name: 'Clash Verge', platform: 'macos', deeplink: '#preview-clash-verge', format: 'mihomo' },
+  { name: '通用订阅', platform: 'universal', deeplink: '', format: 'base64' },
+]
+
 const platformLabels: Record<string, string> = {
+  all: '全部',
   ios: 'iOS',
   android: 'Android',
   windows: 'Windows',
@@ -38,187 +82,409 @@ const platformLabels: Record<string, string> = {
   universal: '通用',
 }
 
+const platformOrder = ['ios', 'android', 'windows', 'macos', 'universal']
+
+function humanizeBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = n / 1024
+  let index = 0
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024
+    index++
+  }
+  return value >= 100 ? `${value.toFixed(0)} ${units[index]}` : `${value.toFixed(1)} ${units[index]}`
+}
+
+function formatExpiry(timestamp?: number): string {
+  if (!timestamp) return '长期有效'
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(timestamp * 1000))
+}
+
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return
+  } catch {
+    const input = document.createElement('textarea')
+    input.value = text
+    input.setAttribute('readonly', '')
+    input.style.position = 'fixed'
+    input.style.opacity = '0'
+    document.body.append(input)
+    input.select()
+    const copied = document.execCommand('copy')
+    input.remove()
+    if (!copied) throw new Error('copy failed')
+  }
+}
+
+function LoadingState() {
+  return (
+    <main className="subscription-page subscription-loading" aria-busy="true" aria-label="正在加载订阅">
+      <div className="subscription-noise" />
+      <div className="subscription-skeleton">
+        <div className="skeleton-line skeleton-brand" />
+        <div className="skeleton-grid">
+          <div>
+            <div className="skeleton-line skeleton-title" />
+            <div className="skeleton-line skeleton-copy" />
+            <div className="skeleton-line skeleton-copy short" />
+          </div>
+          <div className="skeleton-orbit" />
+        </div>
+        <div className="skeleton-line skeleton-panel" />
+      </div>
+    </main>
+  )
+}
+
+function ErrorState({ message }: { message: string }) {
+  return (
+    <main className="subscription-page subscription-error-page">
+      <div className="subscription-noise" />
+      <section className="subscription-error" role="alert">
+        <div className="error-icon"><CircleAlertIcon /></div>
+        <span className="section-kicker">CONNECTION FAILED</span>
+        <h1>订阅暂时无法打开</h1>
+        <p>{message}</p>
+        <button type="button" className="primary-action" onClick={() => window.location.reload()}>
+          <RefreshCwIcon />
+          重新连接
+        </button>
+      </section>
+    </main>
+  )
+}
+
 export default function SubscriptionPage() {
-  const token = window.location.pathname.split('/sub/')[1] || ''
+  const token = window.location.pathname.split('/sub/')[1]?.replace(/\/$/, '') || ''
+  const isPreview = import.meta.env.DEV && token === 'preview'
   const [info, setInfo] = useState<SubInfo | null>(null)
   const [clients, setClients] = useState<ClientInfo[]>([])
   const [error, setError] = useState('')
   const [copied, setCopied] = useState('')
-
-  const handleCopy = (text: string, label: string) => {
-    navigator.clipboard?.writeText(text).catch(() => {})
-    setCopied(label)
-    setTimeout(() => setCopied(''), 1500)
-  }
+  const [activePlatform, setActivePlatform] = useState('all')
+  const copyTimer = useRef<number | undefined>(undefined)
 
   useEffect(() => {
-    if (!token) { setError('无效订阅链接'); return }
-    fetch(`/api/sub/${token}/info`).then(r => {
-      if (!r.ok) throw new Error(r.status === 404 ? '订阅不存在' : '加载失败')
-      return r.json()
-    }).then(setInfo).catch(e => setError(e.message))
-    fetch(`/api/sub/${token}/clients`).then(r => r.ok ? r.json() : []).then(setClients).catch(() => {})
-  }, [token])
+    if (!token) {
+      setError('链接中缺少有效的订阅凭证。')
+      return
+    }
+    if (isPreview) {
+      setInfo(previewInfo)
+      setClients(previewClients)
+      return
+    }
 
-  const subURL = `${window.location.origin}/sub/${token}`
+    const controller = new AbortController()
+    Promise.all([
+      requester.getJSON<SubInfo>(`/api/sub/${token}/info`, { signal: controller.signal }),
+      requester
+        .getJSON<ClientInfo[]>(`/api/sub/${token}/clients`, {
+          signal: controller.signal,
+          display: 'silent',
+        })
+        .catch(() => []),
+    ])
+      .then(([nextInfo, nextClients]) => {
+        setInfo(nextInfo)
+        setClients(nextClients)
+      })
+      .catch((reason: unknown) => {
+        if (reason instanceof RequestError && reason.code === 'REQUEST_CANCELLED') return
+        setError(
+          reason instanceof RequestError && reason.httpStatus === 404
+            ? '这条订阅不存在，或链接已经失效。'
+            : '无法读取订阅信息，请检查网络后重试。',
+        )
+      })
+    return () => controller.abort()
+  }, [isPreview, token])
 
-  if (error) {
-    return (
-      <div className="flex min-h-[100dvh] items-center justify-center bg-[#0f1420] p-4">
-        <div className="rounded-xl border border-[#2a3350] bg-[#1a2132] p-8 text-center text-[#f87171]">
-          {error}
-        </div>
-      </div>
-    )
+  useEffect(() => () => window.clearTimeout(copyTimer.current), [])
+
+  const subURL = isPreview
+    ? `${window.location.origin}/sub/9b5c-preview-token`
+    : `${window.location.origin}/sub/${token}`
+
+  const handleCopy = async (text: string, label: string) => {
+    try {
+      await copyText(text)
+      setCopied(label)
+      window.clearTimeout(copyTimer.current)
+      copyTimer.current = window.setTimeout(() => setCopied(''), 1800)
+    } catch {
+      setCopied('')
+    }
   }
 
-  if (!info) {
-    return (
-      <div className="flex min-h-[100dvh] items-center justify-center bg-[#0f1420]">
-        <div className="animate-pulse text-sm text-[#9aa4c0]">加载中...</div>
-      </div>
-    )
-  }
+  const availablePlatforms = useMemo(
+    () => platformOrder.filter((platform) => clients.some((client) => client.platform === platform)),
+    [clients],
+  )
+  const visibleClients = activePlatform === 'all'
+    ? clients
+    : clients.filter((client) => client.platform === activePlatform)
+
+  if (error) return <ErrorState message={error} />
+  if (!info) return <LoadingState />
 
   const usedTotal = info.used_up + info.used_down
-  const usagePercent = info.traffic_limit > 0 ? Math.min(100, (usedTotal / info.traffic_limit) * 100) : 0
+  const remaining = Math.max(0, info.traffic_limit - usedTotal)
+  const usagePercent = info.traffic_limit > 0
+    ? Math.min(100, (usedTotal / info.traffic_limit) * 100)
+    : 0
   const overLimit = info.traffic_limit > 0 && usedTotal > info.traffic_limit
-
-  // 按平台分组客户端
-  const platforms = ['ios', 'android', 'windows', 'universal']
-  const grouped = platforms.map(p => ({
-    platform: p,
-    label: platformLabels[p] || p,
-    clients: clients.filter(c => c.platform === p),
-  })).filter(g => g.clients.length > 0)
+  const unavailable = info.disabled || info.expired || overLimit
+  const statusLabel = info.disabled ? '已停用' : info.expired ? '已到期' : overLimit ? '已超额' : '网络就绪'
+  const statusDetail = unavailable ? '节点当前不可用' : '订阅与节点均可用'
+  const primaryClient = clients.find((client) => client.deeplink)
+  const ringStyle = { '--usage-angle': `${usagePercent * 3.6}deg` } as CSSProperties
 
   return (
-    <div className="flex min-h-[100dvh] flex-col items-center justify-center bg-[#0f1420] p-4 text-[#e6e9f0]">
-      <div className="w-full max-w-[560px] rounded-[14px] border border-[#2a3350] bg-[#1a2132] p-6">
-        {/* 头部 */}
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold">{info.title}</h1>
-          <div className="flex gap-2">
-            {info.disabled && <span className="rounded-full bg-[#4a1d1d] px-3 py-1 text-xs text-[#f87171]">已停用</span>}
-            {info.expired && <span className="rounded-full bg-[#4a1d1d] px-3 py-1 text-xs text-[#f87171]">已到期</span>}
-            {!info.disabled && !info.expired && <span className="rounded-full bg-[#123f2b] px-3 py-1 text-xs text-[#4ade80]">正常</span>}
-          </div>
-        </div>
-
-        {/* 超限通知 */}
-        {overLimit && (
-          <div className="mt-3 rounded-lg bg-[#4a1d1d] px-3 py-2 text-sm text-[#fca5a5]">
-            流量已超出配额，请联系管理员。
-          </div>
-        )}
-
-        {/* 停用/到期通知 */}
-        {info.disabled && (
-          <div className="mt-3 rounded-lg bg-[#4a1d1d] px-3 py-2 text-sm text-[#fca5a5]">
-            订阅已被管理员停用，节点不可用。
-          </div>
-        )}
-        {info.expired && (
-          <div className="mt-3 rounded-lg bg-[#4a1d1d] px-3 py-2 text-sm text-[#fca5a5]">
-            订阅已到期，节点已停用。
-          </div>
-        )}
-
-        {/* 统计 */}
-        <div className="mt-4 grid grid-cols-3 gap-2.5">
-          <div className="rounded-[10px] bg-[#131a2b] p-3">
-            <span className="block text-xs text-[#9aa4c0]">已用流量</span>
-            <span className="text-sm">↑ {humanizeBytes(info.used_up)} ↓ {humanizeBytes(info.used_down)}</span>
-          </div>
-          <div className="rounded-[10px] bg-[#131a2b] p-3">
-            <span className="block text-xs text-[#9aa4c0]">有效期</span>
-            <span className="text-sm">{info.expires_at ? new Date(info.expires_at * 1000).toLocaleDateString() : '长期'}</span>
-          </div>
-          <div className="rounded-[10px] bg-[#131a2b] p-3">
-            <span className="block text-xs text-[#9aa4c0]">节点数量</span>
-            <span className="text-sm">{info.nodes_count}</span>
-          </div>
-        </div>
-
-        {/* 流量进度条 */}
-        {info.traffic_limit > 0 && (
-          <div className="mt-3">
-            <div className="flex justify-between text-xs text-[#9aa4c0]">
-              <span>{humanizeBytes(usedTotal)} / {humanizeBytes(info.traffic_limit)}</span>
-              <span>{usagePercent.toFixed(1)}%</span>
-            </div>
-            <div className="mt-1 h-2 overflow-hidden rounded-full bg-[#131a2b]">
-              <div
-                className={`h-full rounded-full transition-all ${overLimit ? 'bg-[#f87171]' : 'bg-[#3b82f6]'}`}
-                style={{ width: `${usagePercent}%` }}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* 订阅地址 */}
-        <div className="mt-4">
-          <span className="text-xs text-[#9aa4c0]">订阅地址（通用）</span>
-          <div className="mt-1 flex items-center gap-2 rounded-[10px] bg-[#131a2b] px-3 py-2">
-            <code className="flex-1 break-all text-xs text-[#cdd6ee]">{subURL}</code>
-            <button
-              onClick={() => handleCopy(subURL, 'url')}
-              className="shrink-0 rounded-lg bg-[#3b82f6] px-3 py-1.5 text-xs text-white hover:bg-[#2563eb]"
-            >
-              {copied === 'url' ? '已复制' : '复制'}
-            </button>
-          </div>
-        </div>
-
-        {/* 客户端导入 */}
-        <div className="mt-5">
-          <span className="text-xs text-[#9aa4c0]">一键导入客户端</span>
-          <div className="mt-2 space-y-3">
-            {grouped.map(group => (
-              <div key={group.platform}>
-                <span className="text-[11px] font-medium uppercase tracking-wide text-[#6b7595]">{group.label}</span>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {group.clients.map(client => (
-                    client.deeplink
-                      ? (
-                        <a
-                          key={client.name}
-                          href={client.deeplink}
-                          className="rounded-lg bg-[#3b82f6] px-3 py-1.5 text-xs text-white no-underline hover:bg-[#2563eb]"
-                        >
-                          {client.name}
-                        </a>
-                      )
-                      : (
-                        <button
-                          key={client.name}
-                          onClick={() => handleCopy(`${subURL}?format=${client.format}`, client.name)}
-                          className="rounded-lg bg-[#2a3350] px-3 py-1.5 text-xs text-[#cdd6ee] hover:bg-[#3a4560]"
-                        >
-                          {copied === client.name ? '已复制' : `${client.name}（复制链接）`}
-                        </button>
-                      )
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* 公告 */}
-        {info.announcement && (
-          <div className="mt-5 rounded-[10px] bg-[#131a2b] p-4">
-            <span className="text-xs text-[#9aa4c0]">公告</span>
-            <div className="mt-2 whitespace-pre-wrap text-sm text-[#cdd6ee]">
-              {info.announcement}
-            </div>
-          </div>
-        )}
+    <main className="subscription-page" data-status={unavailable ? 'warning' : 'ready'}>
+      <div className="subscription-noise" />
+      <div className="react-bits-background" aria-hidden="true">
+        <DotGrid
+          dotSize={2}
+          gap={24}
+          baseColor="#263129"
+          activeColor="#bdf33b"
+          proximity={130}
+          shockRadius={220}
+          shockStrength={3.5}
+          returnDuration={1.2}
+        />
       </div>
 
-      <p className="mt-4 text-xs text-[#6b7595]">
-        Lattix · 订阅每 {info.update_interval} 小时自动更新
-      </p>
-    </div>
+      <div className="subscription-frame">
+        <header className="subscription-nav">
+          <a className="brand-lockup" href={subURL} aria-label="Lattix 订阅主页">
+            <LattixMark className="brand-mark" />
+            <span>LATTIX</span>
+          </a>
+          <div className="nav-status" aria-label={`订阅状态：${statusLabel}`}>
+            <span className="status-pulse" />
+            {statusLabel}
+          </div>
+        </header>
+
+        <section className="subscription-stage">
+          <div className="stage-copy">
+            <h1>{info.title}</h1>
+            <div className="stage-meta" aria-label="订阅基本信息">
+              <span>{info.name}</span>
+              <span>{info.nodes_count} 个节点</span>
+              <span>{formatExpiry(info.expires_at)}</span>
+            </div>
+            <div className="stage-actions">
+              {primaryClient ? (
+                <a className="primary-action magnetic-action" href={primaryClient.deeplink}>
+                  <ArrowDownToLine />
+                  导入到 {primaryClient.name}
+                  <ArrowUpRight className="action-tail" />
+                </a>
+              ) : null}
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={() => handleCopy(subURL, 'hero-url')}
+              >
+                {copied === 'hero-url' ? <CheckIcon /> : <CopyIcon />}
+                {copied === 'hero-url' ? '链接已复制' : '复制订阅地址'}
+              </button>
+            </div>
+          </div>
+
+          {info.traffic_limit > 0 ? (
+            <ElectricBorder
+              className="traffic-electric"
+              color={unavailable ? '#ff7059' : '#bdf33b'}
+              speed={0.8}
+              chaos={0.08}
+              borderRadius={8}
+            >
+              <div className="traffic-orbit" style={ringStyle} aria-label={`流量已使用 ${usagePercent.toFixed(1)}%`}>
+                <div className="orbit-track">
+                  <div className="orbit-core">
+                    <span>剩余流量</span>
+                    <strong>{humanizeBytes(remaining)}</strong>
+                    <small>{usagePercent.toFixed(1)}% 已使用</small>
+                  </div>
+                </div>
+                <span className="orbit-node node-a" />
+                <span className="orbit-node node-b" />
+                <span className="orbit-node node-c" />
+              </div>
+            </ElectricBorder>
+          ) : (
+            <div className="traffic-orbit traffic-orbit-unlimited" aria-label="无限流量，无配额限制">
+              <div className="unlimited-rings" aria-hidden="true">
+                <MagicRings
+                  color="#bdf33b"
+                  colorTwo="#f0f4ee"
+                  speed={0.72}
+                  ringCount={7}
+                  attenuation={9}
+                  lineThickness={1.8}
+                  baseRadius={0.18}
+                  radiusStep={0.075}
+                  scaleRate={0.46}
+                  opacity={0.72}
+                  noiseAmount={0.025}
+                  ringGap={1.35}
+                  fadeIn={0.58}
+                  fadeOut={2.5}
+                  followMouse
+                  mouseInfluence={0.08}
+                  hoverScale={1.06}
+                  parallax={0.018}
+                  clickBurst
+                />
+              </div>
+              <div className="unlimited-core">
+                <span className="unlimited-symbol" aria-hidden="true">∞</span>
+                <strong>无限流量</strong>
+                <small>本期已用 {humanizeBytes(usedTotal)}</small>
+              </div>
+            </div>
+          )}
+        </section>
+
+        {unavailable ? (
+          <div className="status-alert" role="alert">
+            <CircleAlertIcon />
+            <div>
+              <strong>{statusLabel}</strong>
+              <span>{info.disabled ? '订阅已被管理员停用。' : info.expired ? '订阅有效期已结束。' : '流量已超出当前配额。'}</span>
+            </div>
+          </div>
+        ) : null}
+
+        <AnimatedContent distance={28} duration={0.65} threshold={0.08}>
+          <section className="signal-strip" aria-label="订阅摘要">
+            <div className="signal-item">
+              <GaugeIcon />
+              <span>本期流量</span>
+              <strong>{humanizeBytes(usedTotal)}</strong>
+              <small>上行 {humanizeBytes(info.used_up)} · 下行 {humanizeBytes(info.used_down)}</small>
+            </div>
+            <div className="signal-item">
+              <ShieldCheckIcon />
+              <span>有效期</span>
+              <strong>{formatExpiry(info.expires_at)}</strong>
+              <small>{info.expired ? '续期后恢复服务' : '凭证状态正常'}</small>
+            </div>
+            <div className="signal-item">
+              <RadioIcon />
+              <span>节点</span>
+              <strong>{info.nodes_count} 个</strong>
+              <small>每 {info.update_interval} 小时自动同步</small>
+            </div>
+          </section>
+        </AnimatedContent>
+
+        <AnimatedContent distance={36} duration={0.7} threshold={0.12}>
+          <section className="client-section">
+          <div className="section-heading">
+            <h2>客户端</h2>
+          </div>
+
+          {clients.length > 0 ? (
+            <>
+              <div className="platform-tabs" role="tablist" aria-label="客户端平台">
+                {['all', ...availablePlatforms].map((platform) => (
+                  <button
+                    key={platform}
+                    type="button"
+                    role="tab"
+                    aria-selected={activePlatform === platform}
+                    onClick={() => setActivePlatform(platform)}
+                  >
+                    {platformLabels[platform] ?? platform}
+                  </button>
+                ))}
+              </div>
+
+              <div className="client-grid">
+                {visibleClients.map((client, index) => {
+                  const label = `${client.platform}-${client.name}`
+                  const content = (
+                    <>
+                      <span className="client-index">{String(index + 1).padStart(2, '0')}</span>
+                      <span className="client-name">
+                        <strong>{client.name}</strong>
+                        <small>{platformLabels[client.platform] ?? client.platform} · {client.format}</small>
+                      </span>
+                      <span className="client-action-icon">
+                        {copied === label ? <CheckIcon /> : client.deeplink ? <ArrowUpRight /> : <CopyIcon />}
+                      </span>
+                    </>
+                  )
+                  return client.deeplink ? (
+                    <a key={label} className="client-row" href={client.deeplink}>{content}</a>
+                  ) : (
+                    <button
+                      key={label}
+                      type="button"
+                      className="client-row"
+                      onClick={() => handleCopy(`${subURL}?format=${client.format}`, label)}
+                    >
+                      {content}
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          ) : (
+            <div className="client-empty">
+              <WifiIcon />
+              <strong>暂无一键导入客户端</strong>
+              <span>仍可复制通用订阅地址，在客户端中手动添加。</span>
+            </div>
+          )}
+          </section>
+        </AnimatedContent>
+
+        <AnimatedContent distance={28} duration={0.65} threshold={0.16}>
+          <section className="subscription-endpoint">
+          <div className="endpoint-copy"><h2>订阅地址</h2></div>
+          <div className="endpoint-value">
+            <code>{subURL}</code>
+            <button
+              type="button"
+              aria-label="复制通用订阅地址"
+              title="复制通用订阅地址"
+              onClick={() => handleCopy(subURL, 'endpoint-url')}
+            >
+              {copied === 'endpoint-url' ? <CheckIcon /> : <CopyIcon />}
+            </button>
+          </div>
+          </section>
+        </AnimatedContent>
+
+        {info.announcement ? (
+          <aside className="announcement">
+            <span className="announcement-icon"><WifiIcon /></span>
+            <div>
+              <span>网络公告</span>
+              <p>{info.announcement}</p>
+            </div>
+            <ChevronRightIcon />
+          </aside>
+        ) : null}
+
+        <footer className="subscription-footer">
+          <span>Lattix</span>
+          <span>每 {info.update_interval} 小时自动更新 · {statusDetail}</span>
+        </footer>
+      </div>
+    </main>
   )
 }

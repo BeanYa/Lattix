@@ -102,6 +102,10 @@ export class Requester {
     return this.execute<T>('GET', path + suffix, undefined, options, GET_MAX_ATTEMPTS)
   }
 
+  getJSON<T>(path: string, options?: RequestOptions): Promise<T> {
+    return this.executeJSON<T>(path, options, GET_MAX_ATTEMPTS)
+  }
+
   post<T>(path: RPCPathByMethod<'POST'>, body: object = {}, options?: RequestOptions): Promise<T> {
     return this.execute<T>('POST', path, body, options, 1)
   }
@@ -158,6 +162,59 @@ export class Requester {
       cleanup()
       this.emit({ phase: 'finish', ...lifecycle, error: requestError })
     }
+  }
+
+  private async executeJSON<T>(
+    path: string,
+    options: RequestOptions | undefined,
+    maxAttempts: number,
+  ): Promise<T> {
+    const traceId = options?.traceId ?? newRequestId()
+    const display = options?.display ?? 'foreground'
+    let lastError: RequestError | undefined
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const requestId = newRequestId()
+      const lifecycle = { requestId, traceId, method: 'GET' as const, path, display }
+      this.emit({ phase: 'start', ...lifecycle })
+      const { signal, cleanup, abortSource } = combinedSignal(
+        options?.signal,
+        options?.timeoutMs ?? 15_000,
+      )
+      try {
+        const response = await fetch(path, {
+          method: 'GET',
+          credentials: 'include',
+          signal,
+          headers: { 'X-Request-ID': requestId, 'X-Trace-ID': traceId },
+        })
+        if (!response.ok) {
+          throw new RequestError({
+            kind: 'transport',
+            code: `HTTP_${response.status}`,
+            message: `请求失败（HTTP ${response.status}）`,
+            httpStatus: response.status,
+            requestId,
+            traceId,
+          })
+        }
+        const result = await parseJSON<T>(response, requestId, traceId)
+        this.emit({ phase: 'finish', ...lifecycle })
+        cleanup()
+        return result
+      } catch (error) {
+        cleanup()
+        lastError = normalizeError(error, requestId, traceId, abortSource())
+        this.emit({ phase: 'finish', ...lifecycle, error: lastError })
+        const retryable = lastError.code === 'NETWORK_UNREACHABLE' || lastError.code === 'REQUEST_TIMEOUT'
+        if (attempt + 1 >= maxAttempts || !retryable) throw lastError
+        const retryDelay = GET_RETRY_DELAYS_MS[Math.min(attempt, GET_RETRY_DELAYS_MS.length - 1)]
+        if (!(await waitForRetry(retryDelay, options?.signal))) {
+          throw cancelledError(requestId, traceId)
+        }
+      }
+    }
+    throw lastError
   }
 
   private async execute<T>(
@@ -274,6 +331,25 @@ async function parseEnvelope<T>(
     data: data as T,
     request_id: requestId,
     trace_id: traceId,
+  }
+}
+
+async function parseJSON<T>(
+  response: Response,
+  requestId: string,
+  traceId: string,
+): Promise<T> {
+  try {
+    return await response.json() as T
+  } catch {
+    throw new RequestError({
+      kind: 'protocol',
+      code: 'INVALID_RESPONSE',
+      message: '服务端返回了无效 JSON',
+      httpStatus: response.status,
+      requestId,
+      traceId,
+    })
   }
 }
 

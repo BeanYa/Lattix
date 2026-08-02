@@ -41,17 +41,21 @@ func TestSPAHandlerServesAssetAndFallsBackToIndex(t *testing.T) {
 	handler := spaHandler(fs.FS(content))
 
 	for _, tc := range []struct {
-		path string
-		want string
+		path      string
+		want      string
+		wantCache string
 	}{
-		{path: "/assets/app.js", want: "console.log('ok')"},
-		{path: "/settings", want: "<main>Lattix</main>"},
+		{path: "/assets/app.js", want: "console.log('ok')", wantCache: "public, max-age=31536000, immutable"},
+		{path: "/settings", want: "<main>Lattix</main>", wantCache: "no-cache"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK || rec.Body.String() != tc.want {
 			t.Fatalf("%s: status=%d body=%q", tc.path, rec.Code, rec.Body.String())
+		}
+		if got := rec.Header().Get("Cache-Control"); got != tc.wantCache {
+			t.Errorf("%s: Cache-Control=%q, want %q", tc.path, got, tc.wantCache)
 		}
 	}
 }

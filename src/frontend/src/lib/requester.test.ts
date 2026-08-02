@@ -28,6 +28,29 @@ afterEach(() => {
 })
 
 describe('Requester', () => {
+  it('reads raw JSON endpoints through the shared lifecycle', async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(jsonResponse({ title: 'Lattix', nodes_count: 8 })),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new Requester()
+    const events: RequestLifecycleEvent[] = []
+    client.subscribe((event) => events.push(event))
+
+    await expect(
+      client.getJSON<{ title: string; nodes_count: number }>('/api/sub/token/info', {
+        traceId: TRACE_ID,
+      }),
+    ).resolves.toEqual({ title: 'Lattix', nodes_count: 8 })
+
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toMatchObject({ 'X-Trace-ID': TRACE_ID })
+    expect(events).toHaveLength(2)
+    expect(events[0]).toMatchObject({ phase: 'start', method: 'GET' })
+    expect(events[1]).toMatchObject({ phase: 'finish', method: 'GET' })
+  })
+
   it('returns data from a valid envelope and emits a balanced lifecycle', async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
       Promise.resolve(jsonResponse(envelope('OK', { username: 'admin' }))),

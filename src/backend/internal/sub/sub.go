@@ -493,6 +493,7 @@ func (s *Server) serveSPA(w http.ResponseWriter) {
 		http.Error(w, "frontend not embedded\n", http.StatusServiceUnavailable)
 		return
 	}
+	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(s.spaHTML)
 }

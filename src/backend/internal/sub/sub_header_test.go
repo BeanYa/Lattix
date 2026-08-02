@@ -178,4 +178,7 @@ func TestServeHTTPContentDisposition(t *testing.T) {
 	if got := rec.Header().Get("Content-Disposition"); got != "" {
 		t.Errorf("browser landing must not set Content-Disposition: %q", got)
 	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Errorf("browser landing Cache-Control = %q, want no-cache", got)
+	}
 }

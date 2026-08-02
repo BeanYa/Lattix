@@ -19,7 +19,17 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': apiProxyTarget,
-      '/sub': apiProxyTarget,
+      '/sub': {
+        target: apiProxyTarget,
+        bypass(request) {
+          const url = new URL(request.url ?? '/', 'http://vite.local')
+          const acceptsHTML = request.headers.accept?.includes('text/html')
+          const isLandingPage = /^\/sub\/[^/]+\/?$/.test(url.pathname)
+          if (acceptsHTML && isLandingPage && !url.searchParams.has('format')) {
+            return '/index.html'
+          }
+        },
+      },
     },
   },
 })

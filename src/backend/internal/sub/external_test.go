@@ -135,6 +135,9 @@ func TestHandleSubInfoMergesTraffic(t *testing.T) {
 	req := httptest.NewRequest("GET", "/api/sub/alice-token/info", nil)
 	req.SetPathValue("token", "alice-token")
 	server.HandleSubInfo(rec, req)
+	if got := rec.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Fatalf("Cache-Control = %q, want private, no-store", got)
+	}
 	var resp SubInfoResponse
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatal(err)

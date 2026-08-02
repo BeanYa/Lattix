@@ -34,8 +34,13 @@ type ClientInfo struct {
 	Format   string `json:"format"`   // 对应的 ?format= 值
 }
 
+func disableSharedCache(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "private, no-store")
+}
+
 // HandleSubInfo 处理 GET /api/sub/{token}/info（仅凭 token 鉴权，无需登录）。
 func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
+	disableSharedCache(w)
 	token := r.PathValue("token")
 	user, err := s.st.UserBySubToken(r.Context(), token)
 	if err != nil {
@@ -107,6 +112,7 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 
 // HandleSubClients 处理 GET /api/sub/{token}/clients（返回客户端导入列表）。
 func (s *Server) HandleSubClients(w http.ResponseWriter, r *http.Request) {
+	disableSharedCache(w)
 	token := r.PathValue("token")
 	user, err := s.st.UserBySubToken(r.Context(), token)
 	if err != nil {
@@ -145,6 +151,7 @@ func (s *Server) HandleSubClients(w http.ResponseWriter, r *http.Request) {
 
 // HandleSubHistory 处理 GET /api/sub/{token}/history（返回用户流量历史）。
 func (s *Server) HandleSubHistory(w http.ResponseWriter, r *http.Request) {
+	disableSharedCache(w)
 	token := r.PathValue("token")
 	user, err := s.st.UserBySubToken(r.Context(), token)
 	if err != nil {

@@ -643,6 +643,7 @@ func spaHandler(content fs.FS) http.Handler {
 		name := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(r.URL.Path)), "/")
 		if name != "." && name != "" {
 			if info, err := fs.Stat(content, name); err == nil && !info.IsDir() {
+				setFrontendCacheHeaders(w, name)
 				files.ServeHTTP(w, r)
 				return
 			}
@@ -652,9 +653,18 @@ func spaHandler(content fs.FS) http.Handler {
 			http.Error(w, "frontend is not embedded; run the frontend build first or use -static", http.StatusServiceUnavailable)
 			return
 		}
+		setFrontendCacheHeaders(w, "index.html")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write(index)
 	})
+}
+
+func setFrontendCacheHeaders(w http.ResponseWriter, name string) {
+	if strings.HasPrefix(name, "assets/") {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
 }
 
 func settingInt(st *store.Store, key string, fallback int) int {
