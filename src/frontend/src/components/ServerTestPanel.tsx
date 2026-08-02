@@ -27,7 +27,7 @@ import { Progress } from '@/components/ui/progress'
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { ipv6Unavailable, withoutIpv6Categories } from '@/lib/server-test-ipv6'
+import { isIpv6Category, ipv6Unavailable, withoutIpv6Categories } from '@/lib/server-test-ipv6'
 import type {
   IPQualityFactor,
   IPQualityFamily,
@@ -338,6 +338,7 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
   const [submitting, setSubmitting] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
+  const ipv6Off = ipv6Unavailable(task?.result?.environment)
 
   const loadTask = useCallback(async () => {
     const latest = await api.serverTest(server.id, { display: 'silent' })
@@ -375,7 +376,8 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
   }, [task])
 
   const openSelection = () => {
-    setSelected(server.machine_type === 'nat' ? ['ip_quality'] : directDefaults)
+    const base = server.machine_type === 'nat' ? (['ip_quality'] as ServerTestCategory[]) : directDefaults
+    setSelected(ipv6Off ? base.filter((category) => !isIpv6Category(category)) : base)
     setError('')
     setSelectionOpen(true)
     setCatalogLoading(true)
@@ -390,7 +392,7 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
       setSelected((current) => current.filter((item) => item !== category))
       return
     }
-    if ((server.machine_type === 'nat' && category !== 'ip_quality') || category === 'speed') {
+    if ((server.machine_type === 'nat' && category !== 'ip_quality') || category === 'speed' || (ipv6Off && isIpv6Category(category))) {
       setPendingCategory(category)
       setWarningOpen(true)
       return
@@ -459,7 +461,15 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
             {(Object.keys(groupMeta) as Array<keyof typeof groupMeta>).map((group) => {
               const meta = groupMeta[group]
               const Icon = meta.icon
-              return <fieldset key={group} className="border-t pt-3 first:border-0 first:pt-0"><legend className="mb-2 flex items-center gap-2 text-xs font-medium"><Icon className="size-3.5" />{meta.label}</legend><div className="grid gap-2 sm:grid-cols-2">{categoryOptions.filter((option) => option.group === group).map((option) => <label key={option.category} className={cn('flex cursor-pointer items-start gap-3 border px-3 py-2.5 transition-colors hover:bg-muted/40', selected.includes(option.category) && 'border-primary/40 bg-primary/[0.04]')}><input type="checkbox" className="mt-0.5 size-4 accent-primary" checked={selected.includes(option.category)} onChange={(event) => toggleCategory(option.category, event.target.checked)} /><span className="min-w-0"><span className="block text-sm font-medium">{option.label}</span><span className="mt-0.5 block text-xs text-muted-foreground">{option.description}</span></span></label>)}</div></fieldset>
+              return <fieldset key={group} className="border-t pt-3 first:border-0 first:pt-0"><legend className="mb-2 flex items-center gap-2 text-xs font-medium"><Icon className="size-3.5" />{meta.label}</legend><div className="grid gap-2 sm:grid-cols-2">{categoryOptions.filter((option) => option.group === group).map((option) => {
+  const greyed = ipv6Off && isIpv6Category(option.category)
+  return (
+    <label key={option.category} className={cn('flex cursor-pointer items-start gap-3 border px-3 py-2.5 transition-colors hover:bg-muted/40', selected.includes(option.category) && 'border-primary/40 bg-primary/[0.04]', greyed && 'opacity-60')}>
+      <input type="checkbox" className="mt-0.5 size-4 accent-primary" checked={selected.includes(option.category)} onChange={(event) => toggleCategory(option.category, event.target.checked)} />
+      <span className="min-w-0"><span className="block text-sm font-medium">{option.label}</span><span className="mt-0.5 block text-xs text-muted-foreground">{option.description}</span></span>
+    </label>
+  )
+})}</div></fieldset>
             })}
             <div className={cn('flex items-start gap-2 border px-3 py-2 text-xs', catalog?.available ? 'border-success/30 bg-success/5' : 'border-warning/30 bg-warning/5')}>
               {catalogLoading || catalog?.refreshing ? <LoaderCircleIcon className="mt-0.5 size-3.5 shrink-0 animate-spin motion-reduce:animate-none" /> : catalog?.available ? <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-success" /> : <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />}
@@ -474,7 +484,7 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
 
       <Dialog open={warningOpen} onOpenChange={(open) => { setWarningOpen(open); if (!open) setPendingCategory(null) }}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>确认运行 {pendingCategory ? categoryLabels[pendingCategory] : '测试'}</DialogTitle><DialogDescription>{server.machine_type === 'nat' && pendingCategory !== 'ip_quality' ? 'NAT 机型的 TCP、回程或测速测试可能因系统、端口映射或运营商限制而不可用。' : '该项目会产生大量网络流量。'}{pendingCategory === 'speed' ? ' 单线程测速最多可能消耗约 5.5 GiB 流量。' : ''}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>确认运行 {pendingCategory ? categoryLabels[pendingCategory] : '测试'}</DialogTitle><DialogDescription>{pendingCategory && isIpv6Category(pendingCategory) && ipv6Off ? '该服务器未检测到 IPv6 地址，相关测试可能全部失败。' : server.machine_type === 'nat' && pendingCategory !== 'ip_quality' ? 'NAT 机型的 TCP、回程或测速测试可能因系统、端口映射或运营商限制而不可用。' : '该项目会产生大量网络流量。'}{pendingCategory === 'speed' ? ' 单线程测速最多可能消耗约 5.5 GiB 流量。' : ''}</DialogDescription></DialogHeader>
           <DialogFooter><Button variant="outline" onClick={() => { setWarningOpen(false); setPendingCategory(null) }}>取消</Button><Button onClick={confirmWarning}>确认勾选</Button></DialogFooter>
         </DialogContent>
       </Dialog>
