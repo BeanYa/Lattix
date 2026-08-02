@@ -24,6 +24,25 @@ const (
 	defaultSyncIntervalHours = 24
 )
 
+// reservedCIDRs 是 IP 字面量订阅地址同样拒绝的保留/特殊用途网段：
+// RFC 6598 运营商级 NAT（100.64/10）、TEST-NET-1/2/3（192.0.2/24、
+// 198.51.100/24、203.0.113/24）与基准测试网段（198.18/15）。
+var reservedCIDRs = []*net.IPNet{
+	mustParseCIDR("100.64.0.0/10"),
+	mustParseCIDR("192.0.2.0/24"),
+	mustParseCIDR("198.51.100.0/24"),
+	mustParseCIDR("203.0.113.0/24"),
+	mustParseCIDR("198.18.0.0/15"),
+}
+
+func mustParseCIDR(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic(err)
+	}
+	return n
+}
+
 // Service 编排外部订阅的拉取、解析与入库。
 type Service struct {
 	st              *store.Store
@@ -121,7 +140,11 @@ func (s *Service) Sync(ctx context.Context, id int64) (store.ExternalSubscriptio
 
 	count, err := s.st.ReplaceExternalChains(ctx, sub.ID, result.chains)
 	if err != nil {
-		return store.ExternalSubscription{}, err
+		sub.LastError = err.Error()
+		if updateErr := s.st.UpdateExternalSubscription(ctx, sub); updateErr != nil {
+			return store.ExternalSubscription{}, updateErr
+		}
+		return sub, err
 	}
 	sub.Format = result.format
 	sub.NodeCount = count
@@ -247,6 +270,11 @@ func validateSubscriptionURL(raw string) error {
 		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
 			ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
 			return errors.New("订阅地址不能指向本机或内网地址")
+		}
+		for _, n := range reservedCIDRs {
+			if n.Contains(ip) {
+				return errors.New("订阅地址不能指向本机、内网或保留地址")
+			}
 		}
 		return nil
 	}

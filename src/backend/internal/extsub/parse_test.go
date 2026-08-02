@@ -1,6 +1,9 @@
 package extsub
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 const vlessLink = "vless://11111111-2222-3333-4444-555555555555@example.com:443?type=tcp&security=reality&pbk=Pbk&sid=abcd&sni=cdn.example.com&fp=chrome&flow=xtls-rprx-vision#%E4%B8%9C%E4%BA%AC%2001"
 
@@ -153,6 +156,128 @@ func TestParseRejectsGarbage(t *testing.T) {
 	if _, _, err := ParseSubscription([]byte("")); err == nil {
 		t.Fatal("empty body unexpectedly parsed")
 	}
+}
+
+func TestParseLinksMoreProtocols(t *testing.T) {
+	parseOne := func(t *testing.T, link string) Node {
+		t.Helper()
+		nodes, format, err := ParseSubscription([]byte(link))
+		if err != nil || format != "v2ray" || len(nodes) != 1 {
+			t.Fatalf("nodes %v format %q err %v", nodes, format, err)
+		}
+		return nodes[0]
+	}
+
+	t.Run("ssr", func(t *testing.T) {
+		// 真实 ssr 链接：整个 server:port:protocol:method:obfs:base64(password)
+		// 载荷整体 base64 编码（RawURLEncoding），remarks 参数亦为 base64。
+		payload := base64urlEncode(
+			"1.2.3.4:9000:origin:aes-128-cfb:plain:" + base64urlEncode("pass123"))
+		link := "ssr://" + payload + "?obfsparam=abc&remarks=" + base64urlEncode("SSR-01")
+		n := parseOne(t, link)
+		if n.Type != "ssr" || n.Server != "1.2.3.4" || n.Port != 9000 || n.Name != "SSR-01" {
+			t.Fatalf("node = %+v", n)
+		}
+		if n.Extra["method"] != "aes-128-cfb" || n.Extra["protocol"] != "origin" ||
+			n.Extra["obfs"] != "plain" || n.Extra["password"] != "pass123" {
+			t.Fatalf("extra = %+v", n.Extra)
+		}
+	})
+
+	t.Run("tuic", func(t *testing.T) {
+		link := "tuic://uuid-here:pass@example.com:443?sni=example.com&congestion_control=bbr#TUIC01"
+		n := parseOne(t, link)
+		if n.Type != "tuic" || n.Server != "example.com" || n.Port != 443 || n.Name != "TUIC01" {
+			t.Fatalf("node = %+v", n)
+		}
+		if n.Extra["uuid"] != "uuid-here" || n.Extra["password"] != "pass" ||
+			n.Extra["sni"] != "example.com" || n.Extra["congestion_control"] != "bbr" {
+			t.Fatalf("extra = %+v", n.Extra)
+		}
+	})
+
+	t.Run("anytls", func(t *testing.T) {
+		link := "anytls://pass@example.com:8443?sni=example.com&insecure=1#ANY01"
+		n := parseOne(t, link)
+		if n.Type != "anytls" || n.Server != "example.com" || n.Port != 8443 || n.Name != "ANY01" {
+			t.Fatalf("node = %+v", n)
+		}
+		if n.Extra["password"] != "pass" || n.Extra["sni"] != "example.com" || n.Extra["insecure"] != "1" {
+			t.Fatalf("extra = %+v", n.Extra)
+		}
+	})
+
+	t.Run("snell", func(t *testing.T) {
+		link := "snell://psksecret@example.com:8388?obfs=http&obfs-host=example.com#SNELL01"
+		n := parseOne(t, link)
+		if n.Type != "snell" || n.Server != "example.com" || n.Port != 8388 || n.Name != "SNELL01" {
+			t.Fatalf("node = %+v", n)
+		}
+		if n.Extra["psk"] != "psksecret" || n.Extra["obfs"] != "http" || n.Extra["obfs-host"] != "example.com" {
+			t.Fatalf("extra = %+v", n.Extra)
+		}
+	})
+
+	t.Run("socks", func(t *testing.T) {
+		link := "socks://user1:pass1@example.com:1080#SOCKS01"
+		n := parseOne(t, link)
+		if n.Type != "socks" || n.Server != "example.com" || n.Port != 1080 || n.Name != "SOCKS01" {
+			t.Fatalf("node = %+v", n)
+		}
+		if n.Extra["username"] != "user1" || n.Extra["password"] != "pass1" {
+			t.Fatalf("extra = %+v", n.Extra)
+		}
+	})
+
+	t.Run("wireguard", func(t *testing.T) {
+		link := "wireguard://?address=10.0.0.2%2F32&private_key=priv&public_key=pub&endpoint=example.com:51820#WG01"
+		n := parseOne(t, link)
+		if n.Type != "wireguard" || n.Server != "example.com" || n.Port != 51820 || n.Name != "WG01" {
+			t.Fatalf("node = %+v", n)
+		}
+		if n.Extra["private_key"] != "priv" || n.Extra["public_key"] != "pub" {
+			t.Fatalf("extra = %+v", n.Extra)
+		}
+		if _, hasEndpoint := n.Extra["endpoint"]; hasEndpoint {
+			t.Fatalf("endpoint should be consumed, extra = %+v", n.Extra)
+		}
+	})
+
+	t.Run("hy2 alias normalized to hysteria2", func(t *testing.T) {
+		n := parseOne(t, "hy2://pass@hy.example.com:443?sni=hy.example.com#HY03")
+		if n.Type != "hysteria2" {
+			t.Fatalf("type = %q, want hysteria2", n.Type)
+		}
+		if n.Extra["password"] != "pass" || n.Extra["sni"] != "hy.example.com" {
+			t.Fatalf("extra = %+v", n.Extra)
+		}
+	})
+
+	t.Run("vmess std base64 payload containing slash", func(t *testing.T) {
+		// StdEncoding 可能产生 /，url.Parse 会把载荷拆进 Host 与 Path；
+		// 解析器须按 u.Host + u.Path 拼接后解码。纯 ASCII 字节流的 base64
+		// 不可能出现 /（需要 6 个连续 1 位），故 ps 值须含非 ASCII 字符。
+		ps := "vmess-slash-01"
+		encoded := ""
+		for i := 0; i < 200; i++ {
+			vmessJSON := `{"v":"2","ps":"` + ps + `","add":"5.6.7.8","port":"443","id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","aid":"0","scy":"auto","net":"ws","type":"none","host":"h.example.com","path":"/p","tls":"tls","sni":"h.example.com"}`
+			encoded = base64Encode(vmessJSON)
+			if strings.Contains(encoded, "/") {
+				break
+			}
+			ps += string(rune(0x4E00 + i))
+		}
+		if !strings.Contains(encoded, "/") {
+			t.Fatal("failed to craft a vmess payload whose std base64 contains /")
+		}
+		n := parseOne(t, "vmess://"+encoded)
+		if n.Type != "vmess" || n.Server != "5.6.7.8" || n.Port != 443 {
+			t.Fatalf("node = %+v", n)
+		}
+		if n.Extra["id"] != "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" {
+			t.Fatalf("extra = %+v", n.Extra)
+		}
+	})
 }
 
 func base64Encode(s string) string    { return stdBase64.EncodeToString([]byte(s)) }

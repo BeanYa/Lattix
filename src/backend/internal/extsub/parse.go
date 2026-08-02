@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 var (
@@ -161,11 +162,15 @@ func looksLikeVmessJSON(text string) bool {
 
 func parseURI(uri string) (Node, bool) {
 	u, err := url.Parse(uri)
-	if err != nil || u.Hostname() == "" {
+	if err != nil {
 		return Node{}, false
 	}
 	switch u.Scheme {
 	case "vless", "trojan", "hysteria2", "hy2", "tuic", "anytls", "snell", "socks", "socks5", "http":
+		// 凭据类协议要求主机非空；wireguard 的主机在 endpoint 查询参数里。
+		if u.Hostname() == "" {
+			return Node{}, false
+		}
 		return parseCredentialURI(u), true
 	case "vmess":
 		return parseVmessURI(u)
@@ -240,6 +245,10 @@ func parseCredentialURI(u *url.URL) Node {
 		if pwd, ok := u.User.Password(); ok {
 			node.Extra = extraWith(node.Extra, "password", pwd)
 		}
+	}
+	// hy2 为 hysteria2 的别名，统一协议枚举。
+	if node.Type == "hy2" {
+		node.Type = "hysteria2"
 	}
 	if node.Type == "" || node.Server == "" || node.Port == 0 {
 		return Node{}
@@ -363,9 +372,18 @@ func parseSSRURI(u *url.URL) (Node, bool) {
 	node.Extra = extraWith(node.Extra, "obfs", parts[4])
 	node.Extra = extraWith(node.Extra, "password", password)
 	if query := u.Query(); query.Get("remarks") != "" {
-		node.Name = nodeName(query.Get("remarks"))
+		node.Name = decodeRemarkName(query.Get("remarks"))
 	}
 	return node, true
+}
+
+// decodeRemarkName 兼容 remarks=<base64> 的分享链接：解码产物为合法
+// UTF-8 文本时使用解码结果，否则按原样处理。
+func decodeRemarkName(value string) string {
+	if decoded, err := tryBase64Decode(value); err == nil && utf8.ValidString(decoded) {
+		return nodeName(decoded)
+	}
+	return nodeName(value)
 }
 
 func parseWireguardURI(u *url.URL) (Node, bool) {

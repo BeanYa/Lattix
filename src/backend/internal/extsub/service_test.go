@@ -65,6 +65,12 @@ func TestValidateSubscriptionURL(t *testing.T) {
 		{"https://foo.internal/a", false},
 		{"https://foo.local/a", false},
 		{"https://[::1]/a", false},
+		{"https://100.64.0.1/a", false},
+		{"https://100.127.255.254/a", false},
+		{"https://192.0.2.1/a", false},
+		{"https://198.51.100.1/a", false},
+		{"https://203.0.113.1/a", false},
+		{"https://198.18.0.1/a", false},
 		{"https://8.8.8.8/a", true},
 		{"not a url", false},
 		{"https://", false},
@@ -189,8 +195,9 @@ func TestSyncDueOnlySyncsDueSubscriptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 手动订阅同样立即同步一次（dial-all 直达本地测试服务器），也会计入 hits
 	if _, err := svc.Create(ctx, "手动", "https://sub.manual.example/x", "", false, false, 1); err != nil {
-		t.Fatal(err) // 创建时立即同步会失败，但记录保留
+		t.Fatal(err)
 	}
 	// 回拨 last_attempt_at，使自动订阅到期（Create 刚同步过，否则 SyncDue 会跳过）
 	back := time.Now().UTC().Add(-2 * time.Hour)
