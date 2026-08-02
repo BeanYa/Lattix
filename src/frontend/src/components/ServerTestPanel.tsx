@@ -28,6 +28,8 @@ import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type {
+  IPQualityFactor,
+  IPQualityFamily,
   Server,
   ServerTestCatalogStatus,
   ServerTestCategory,
@@ -172,83 +174,105 @@ function RouteReport({ category }: { category: ServerTestCategoryResult }) {
   )
 }
 
-function ProviderTable({ providers }: { providers: Array<Record<string, unknown>> }) {
+const factorLabels: Record<string, string> = {
+  CountryCode: '国家代码', Proxy: '代理', Tor: 'Tor', VPN: 'VPN', Server: '机房', Abuser: '滥用', Robot: '爬虫',
+}
+const factorKeys: Array<keyof IPQualityFactor> = ['Proxy', 'Tor', 'VPN', 'Server', 'Abuser', 'Robot']
+
+function ipText(value: string | undefined): string {
+  return value && value !== 'null' ? value : '-'
+}
+
+function IPQualityFamilySection({ family }: { family: IPQualityFamily }) {
+  const info = family.Info ?? {}
+  const scoreRows = Object.entries(family.Score ?? {})
+  const factorRows = (() => {
+    const names = new Set<string>()
+    for (const key of factorKeys) {
+      for (const name of Object.keys(family.Factor?.[key] ?? {})) names.add(name)
+    }
+    return Array.from(names)
+  })()
+  const mediaRows = Object.entries(family.Media ?? {})
+  const mailRows = Object.entries(family.Mail?.Providers ?? {})
+  const dnsbl = family.Mail?.DNSBlacklist
   return (
-    <>
-      <div className="divide-y border-y sm:hidden">
-        {providers.map((provider) => (
-          <div key={text(provider.name)} className="space-y-2 py-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-xs font-medium">{text(provider.name)}</span>
-              <Badge variant={statusBadge(text(provider.status))}>{statusLabel(text(provider.status))}</Badge>
-            </div>
-            <dl className="grid grid-cols-3 gap-2 text-xs">
-              <div><dt className="text-muted-foreground">分数</dt><dd className="mt-0.5 tabular-nums">{number(provider.score) === null ? '-' : number(provider.score)?.toFixed(1)}</dd></div>
-              <div><dt className="text-muted-foreground">类型</dt><dd className="mt-0.5 break-words">{text(provider.usage_type)}</dd></div>
-              <div><dt className="text-muted-foreground">风险因子</dt><dd className="mt-0.5">{provider.error_message ? '-' : `${text(provider.factor_hits, '0')} / ${text(provider.effective_factors, '0')}`}</dd></div>
-            </dl>
-            {provider.error_message ? <ErrorNotice code={text(provider.error_code, '')} message={text(provider.error_message, '')} /> : null}
-          </div>
-        ))}
+    <section className="space-y-3 border-t pt-4 first:border-0 first:pt-0">
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 className="text-sm font-medium">{family.family.toUpperCase()}</h4>
+        <span className="font-mono text-xs text-muted-foreground">{ipText(family.Head?.IP)}</span>
+        {family.Head?.Version ? <Badge variant="outline">{family.Head.Version}</Badge> : null}
+        {family.Head?.Time ? <span className="text-xs text-muted-foreground">{family.Head.Time}</span> : null}
       </div>
-      <div className="hidden max-w-full overflow-x-auto sm:block">
-        <table className="w-full min-w-[600px] text-left text-xs">
-        <thead className="border-b text-muted-foreground"><tr><th className="px-2 py-2 font-medium">数据库</th><th className="px-2 py-2 font-medium">状态</th><th className="px-2 py-2 font-medium">分数</th><th className="px-2 py-2 font-medium">类型</th><th className="px-2 py-2 font-medium">风险因子</th></tr></thead>
-        <tbody className="divide-y">
-          {providers.map((provider) => (
-            <tr key={text(provider.name)}>
-              <td className="px-2 py-2 font-medium">{text(provider.name)}</td>
-              <td className="px-2 py-2"><Badge variant={statusBadge(text(provider.status))}>{statusLabel(text(provider.status))}</Badge></td>
-              <td className="px-2 py-2 tabular-nums">{number(provider.score) === null ? '-' : number(provider.score)?.toFixed(1)}</td>
-              <td className="px-2 py-2">{text(provider.usage_type)}</td>
-              <td className="max-w-72 px-2 py-2">{provider.error_message ? <span className="text-destructive">{text(provider.error_code)} · {text(provider.error_message)}</span> : `${text(provider.factor_hits, '0')} / ${text(provider.effective_factors, '0')} 命中`}</td>
-            </tr>
-          ))}
-        </tbody>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="border p-3">
+          <div className="mb-2 text-xs font-medium">基础信息</div>
+          <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+            <dt className="text-muted-foreground">ASN</dt><dd>{ipText(info.ASN)}{info.Organization ? ` · ${info.Organization}` : ''}</dd>
+            <dt className="text-muted-foreground">城市</dt><dd>{ipText(info.City?.Name)}{info.City?.Subdivisions ? ` · ${info.City.Subdivisions}` : ''}</dd>
+            <dt className="text-muted-foreground">地区</dt><dd>{ipText(info.Region?.Name)}{info.Region?.Code ? ` (${info.Region.Code})` : ''}</dd>
+            <dt className="text-muted-foreground">注册地</dt><dd>{ipText(info.RegisteredRegion?.Name)}{info.RegisteredRegion?.Code ? ` (${info.RegisteredRegion.Code})` : ''}</dd>
+            <dt className="text-muted-foreground">时区</dt><dd>{ipText(info.TimeZone)}</dd>
+            <dt className="text-muted-foreground">IP 类型</dt><dd>{ipText(info.Type)}</dd>
+          </dl>
+        </div>
+        <div className="border p-3">
+          <div className="mb-2 text-xs font-medium">风险评分</div>
+          <table className="w-full text-left text-xs">
+            <tbody className="divide-y">
+              {scoreRows.length === 0 ? <tr><td className="py-1.5 text-muted-foreground">无数据</td></tr> : scoreRows.map(([name, score]) => (
+                <tr key={name}><td className="py-1.5 font-medium">{name}</td><td className="py-1.5 text-right tabular-nums">{score === 'null' ? '-' : score}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div className="overflow-x-auto border">
+        <table className="w-full min-w-[560px] text-left text-xs">
+          <thead className="border-b text-muted-foreground">
+            <tr><th className="px-2 py-2 font-medium">数据库</th>{factorKeys.map((key) => <th key={key} className="px-2 py-2 text-center font-medium">{factorLabels[key]}</th>)}<th className="px-2 py-2 text-center font-medium">{factorLabels.CountryCode}</th></tr>
+          </thead>
+          <tbody className="divide-y">
+            {factorRows.length === 0 ? <tr><td colSpan={factorKeys.length + 2} className="px-2 py-2 text-muted-foreground">无数据</td></tr> : factorRows.map((name) => (
+              <tr key={name}>
+                <td className="px-2 py-2 font-medium">{name}</td>
+                {factorKeys.map((key) => {
+                  const value = family.Factor?.[key]?.[name]
+                  return <td key={key} className="px-2 py-2 text-center">{value === undefined || value === null ? <span className="text-muted-foreground">-</span> : value ? <span className="text-destructive">是</span> : <span className="text-success">否</span>}</td>
+                })}
+                <td className="px-2 py-2 text-center">{ipText(family.Factor?.CountryCode?.[name])}</td>
+              </tr>
+            ))}
+          </tbody>
         </table>
       </div>
-    </>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="border p-3">
+          <div className="mb-2 text-xs font-medium">流媒体与 AI</div>
+          {mediaRows.length === 0 ? <div className="text-xs text-muted-foreground">无数据</div> : <div className="flex flex-wrap gap-1.5">{mediaRows.map(([name, media]) => <Badge key={name} variant={statusBadge(media.Status ?? '')} title={`${media.Type ?? ''}${media.Region ? ` · ${media.Region}` : ''}`}>{name}{media.Region ? ` · ${media.Region}` : ''}</Badge>)}</div>}
+        </div>
+        <div className="border p-3">
+          <div className="mb-2 text-xs font-medium">邮局检测</div>
+          <div className="flex flex-wrap gap-1.5">
+            <Badge variant={family.Mail?.Port25 ? 'secondary' : 'outline'}>{family.Mail?.Port25 == null ? '25 端口未知' : `25 端口${family.Mail.Port25 ? '开放' : '受限'}`}</Badge>
+            {mailRows.map(([name, open]) => <Badge key={name} variant={open ? 'secondary' : 'outline'}>{name}</Badge>)}
+          </div>
+          {dnsbl ? (
+            <div className="mt-2 text-xs text-muted-foreground">DNSBL {dnsbl.Total} 库 · 正常 {dnsbl.Clean} · 标记 {dnsbl.Marked} · 黑名单 {dnsbl.Blacklisted}</div>
+          ) : null}
+        </div>
+      </div>
+    </section>
   )
 }
 
 function IPQualityReport({ category }: { category: ServerTestCategoryResult }) {
+  const result = category.ip_quality
+  if (!result || result.families.length === 0) return null
   return (
     <div className="space-y-4">
-      {(category.items ?? []).map((family, index) => {
-        const dnsbl = asRecord(family.dnsbl)
-        const network = asRecord(family.network)
-        const asn = asRecord(network.asn)
-        const streaming = asRecords(family.streaming)
-        const dnsErrorCounts = new Map<string, number>()
-        for (const entry of asRecords(dnsbl.errors)) {
-          const reason = text(entry.error, 'DNS lookup failed')
-          dnsErrorCounts.set(reason, (dnsErrorCounts.get(reason) ?? 0) + 1)
-        }
-        return (
-          <section key={text(family.address_family, String(index))} className="space-y-3 border-t pt-4 first:border-0 first:pt-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h4 className="text-sm font-medium">{text(family.address_family).toUpperCase()}</h4>
-              <Badge variant={statusBadge(text(family.status))}>{statusLabel(text(family.status))}</Badge>
-              <span className="text-xs text-muted-foreground">{text(network.country)} · {asn.asn ? `AS${text(asn.asn)} ${text(asn.name, '')}` : statusLabel(text(asn.status))}</span>
-            </div>
-            <ErrorNotice code={text(asn.error_code, '')} message={text(asn.error_message, '')} />
-            <ProviderTable providers={asRecords(family.providers)} />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="border p-3">
-                <div className="mb-2 flex items-center justify-between"><span className="text-xs font-medium">DNSBL</span><Badge variant={statusBadge(text(dnsbl.status))}>{statusLabel(text(dnsbl.status))}</Badge></div>
-                <div className="text-xs text-muted-foreground">有效 {text(dnsbl.checked, '0')} · 黑名单 {text(dnsbl.blacklisted, '0')} · 标记 {text(dnsbl.marked, '0')} · 未知 {text(dnsbl.unknown, '0')}</div>
-                {dnsErrorCounts.size ? <div className="mt-2 space-y-1 text-xs text-destructive">{Array.from(dnsErrorCounts).map(([reason, count]) => <div key={reason} className="break-words">{reason} · {count} 项</div>)}</div> : null}
-              </div>
-              <div className="border p-3">
-                <div className="mb-2 text-xs font-medium">流媒体与 AI</div>
-                <div className="flex flex-wrap gap-1.5">{streaming.map((service) => <Badge key={text(service.name)} variant={statusBadge(text(service.status))}>{text(service.name)} · {statusLabel(text(service.status))}</Badge>)}</div>
-                {streaming.some((service) => service.error) ? <div className="mt-2 space-y-1 text-xs text-destructive">{streaming.filter((service) => service.error).map((service) => <div key={text(service.name)} className="break-words">{text(service.name)} · {text(service.error)}</div>)}</div> : null}
-              </div>
-            </div>
-            <ErrorNotice code={text(family.error_code, '')} message={text(family.error_message, '')} />
-          </section>
-        )
-      })}
+      {result.script_stale ? <div className="flex items-start gap-2 bg-warning/10 px-3 py-2 text-xs text-warning"><AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" /><span>脚本版本可能过期（script_version={result.script_version}），本次复用缓存</span></div> : null}
+      {result.families.map((family) => <IPQualityFamilySection key={family.family} family={family} />)}
     </div>
   )
 }

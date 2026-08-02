@@ -243,6 +243,7 @@ export interface ServerTestCategoryResult {
   status: string
   summary?: Record<string, unknown>
   items?: Array<Record<string, unknown>>
+  ip_quality?: IPQualityResult
   error_code?: string
   error_message?: string
 }
@@ -819,4 +820,92 @@ export interface RequestLogStatus {
 export interface RequestLogPage {
   items: RequestLogEntry[]
   status: RequestLogStatus
+}
+
+export interface IPQualityResult {
+  schema_version: number
+  script_version: string
+  script_stale?: boolean
+  families: IPQualityFamily[]
+}
+
+export interface IPQualityFamily {
+  family: 'ipv4' | 'ipv6' | 'dualstack'
+  Head: IPQualityHead
+  Info: IPQualityInfo
+  Type: IPQualityType
+  Score?: Record<string, string>
+  Factor: IPQualityFactor
+  Media?: Record<string, IPQualityMediaStatus>
+  Mail: IPQualityMail
+  raw?: string
+}
+
+export interface IPQualityHead {
+  IP: string
+  Command?: string
+  GitHub?: string
+  Time?: string
+  Version?: string
+}
+
+export interface IPQualityInfo {
+  ASN?: string
+  Organization?: string
+  Latitude?: string
+  Longitude?: string
+  DMS?: string
+  Map?: string
+  TimeZone?: string
+  City?: IPQualityCity
+  Region?: IPQualityRegion
+  Continent?: IPQualityRegion
+  RegisteredRegion?: IPQualityRegion
+  Type?: string
+}
+
+export interface IPQualityCity {
+  Name?: string
+  PostalCode?: string
+  SubCode?: string
+  Subdivisions?: string
+}
+
+export interface IPQualityRegion {
+  Code?: string
+  Name?: string
+}
+
+export interface IPQualityType {
+  Usage?: Record<string, string>
+  Company?: Record<string, string>
+}
+
+export interface IPQualityFactor {
+  CountryCode?: Record<string, string>
+  Proxy?: Record<string, boolean | null>
+  Tor?: Record<string, boolean | null>
+  VPN?: Record<string, boolean | null>
+  Server?: Record<string, boolean | null>
+  Abuser?: Record<string, boolean | null>
+  Robot?: Record<string, boolean | null>
+}
+
+export interface IPQualityMediaStatus {
+  Status?: string
+  Region?: string
+  Type?: string
+}
+
+export interface IPQualityMail {
+  Port25?: boolean | null
+  Providers?: Record<string, boolean | null>
+  DNSBlacklist: IPQualityDNSBlacklist
+}
+
+export interface IPQualityDNSBlacklist {
+  Total: number
+  Clean: number
+  Marked: number
+  Blacklisted: number
 }
