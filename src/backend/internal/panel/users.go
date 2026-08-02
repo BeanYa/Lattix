@@ -277,7 +277,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	u := store.User{
 		Name:     req.Name,
 		UUID:     uuid.NewString(),
-		SubToken: randomHex(16),
+		SubToken: randomHex(8),
 	}
 	id, err := s.st.InsertUser(r.Context(), u.Name, u.UUID, u.SubToken, expiresAt)
 	if err != nil {
