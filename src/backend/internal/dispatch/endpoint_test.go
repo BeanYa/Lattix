@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"lattix/backend/internal/store"
 	"lattix/shared"
@@ -320,5 +321,86 @@ func TestReconcileDeploysEndpointEvenWithNoUsers(t *testing.T) {
 	}
 	if ep.RealizedConfig == nil {
 		t.Fatal("端点 realized_config 应保留")
+	}
+}
+
+// TestEvaluateEndpointAutoRetryBackoff 验证端点自动重试退避：间隔内不重复补发、
+// 超间隔后补发、端点生效（ack 清除记录）后再次失败可立即补发。
+func TestEvaluateEndpointAutoRetryBackoff(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
+	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment := createDirectSharedChain(t, st, serverID, endpoint.ID, "backoff")
+	chainID := deployment.ChainID
+	hops, _ := st.ChainHops(ctx, chainID)
+	for _, h := range hops {
+		if err := st.SetChainHopStatus(ctx, h.ID, store.HopStatusActive, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}})
+	if err := d.ReconcileSharedEndpoint(ctx, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
+	count := func() int {
+		cmds, _ := st.CommandsByType(ctx, shared.TypeApplySharedEndpoint)
+		return len(cmds)
+	}
+	if got := count(); got != 1 {
+		t.Fatalf("基线 apply 命令数 = %d，期望 1", got)
+	}
+
+	origInterval := endpointAutoRetryMinInterval
+	defer func() { endpointAutoRetryMinInterval = origInterval }()
+
+	// 端点 failed 后首次重算：无退避记录 → 允许自动补发（记录本次时间）。
+	if err := st.SetSharedEndpointFailed(ctx, endpoint.ID, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	d.recomputeChain(ctx, chainID)
+	if got := count(); got != 2 {
+		t.Fatalf("首次失败后应补发，实际 %d 条", got)
+	}
+
+	// 再次置 failed 并重算：间隔内（1h）自动补发被抑制。
+	endpointAutoRetryMinInterval = time.Hour
+	if err := st.SetSharedEndpointFailed(ctx, endpoint.ID, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	d.recomputeChain(ctx, chainID)
+	if got := count(); got != 2 {
+		t.Fatalf("退避期间不应重复补发，实际 %d 条", got)
+	}
+
+	// 间隔缩短后重算：自动补发恢复。sleep 保证墙上时钟确实越过 1ms 间隔（快机否则 <1ms 不生效）。
+	endpointAutoRetryMinInterval = time.Millisecond
+	time.Sleep(10 * time.Millisecond)
+	d.recomputeChain(ctx, chainID)
+	if got := count(); got != 3 {
+		t.Fatalf("超间隔后应补发，实际 %d 条", got)
+	}
+
+	// 端点生效（ack 路径会调用 clearEndpointRetry）清除退避记录：再次失败可立即补发。
+	realized := json.RawMessage(`{"port":443}`)
+	if err := st.SetSharedEndpointActive(ctx, endpoint.ID, realized); err != nil {
+		t.Fatal(err)
+	}
+	d.clearEndpointRetry(endpoint.ID)
+	if err := st.SetSharedEndpointFailed(ctx, endpoint.ID, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	d.recomputeChain(ctx, chainID)
+	if got := count(); got != 4 {
+		t.Fatalf("ack 清除退避后应立即补发，实际 %d 条", got)
 	}
 }

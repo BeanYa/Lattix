@@ -49,6 +49,9 @@ type Dispatcher struct {
 	testProgressMu sync.RWMutex
 	testProgress   map[int64]shared.ServerTestProgressPayload
 
+	endpointRetryMu   sync.Mutex
+	endpointRetriedAt map[int64]time.Time // 端点自动重试退避：key endpointID → 上次自动补发时间
+
 	cleanupMu      sync.Mutex
 	cleanupWaiters map[string]chan cleanupWaiterOut // xray.cleanup 同步回执（requestID → chan）
 }
@@ -63,8 +66,9 @@ type cleanupWaiterOut struct {
 func New(st *store.Store, req ws.AgentRequester) *Dispatcher {
 	d := &Dispatcher{
 		st: st, req: req, flushMu: make(map[int64]*sync.Mutex),
-		testProgress:  make(map[int64]shared.ServerTestProgressPayload),
-		cleanupWaiters: make(map[string]chan cleanupWaiterOut),
+		testProgress:     make(map[int64]shared.ServerTestProgressPayload),
+		cleanupWaiters:   make(map[string]chan cleanupWaiterOut),
+		endpointRetriedAt: make(map[int64]time.Time),
 	}
 	d.fsm = &chainFSM{d: d}
 	return d
@@ -309,6 +313,10 @@ func (d *Dispatcher) enqueueRevisionTask(ctx context.Context, serverID int64, ty
 
 // maxCommandAttempts 是命令投递次数上限；超过即死信（failed，§2）。
 const maxCommandAttempts = 10
+
+// endpointAutoRetryMinInterval 端点自动重试最小间隔（抑制 failed 端点重复补发刷屏）。
+// var 而非 const：测试可临时调小。
+var endpointAutoRetryMinInterval = 60 * time.Second
 
 // Flush 投递该服务器全部待发命令；agent 离线时停止并滞留（§2 离线排队）。
 // attempts 超过 maxCommandAttempts 的命令标记 failed（死信），不再重发。
@@ -953,6 +961,7 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			return
 		}
 		if p.EndpointID != 0 {
+			d.clearEndpointRetry(p.EndpointID)
 			realized, _ := json.Marshal(p.RealizedConfig)
 			if err := d.st.SetSharedEndpointActive(ctx, p.EndpointID, realized); err != nil {
 				log.Printf("dispatch: shared endpoint %d active: %v", p.EndpointID, err)
@@ -1147,6 +1156,24 @@ func (d *Dispatcher) logWebSocketRPC(serverID int64, cmd store.Command, env shar
 		},
 		ErrorSummary: env.Message,
 	})
+}
+
+// allowEndpointAutoRetry 端点自动重试退避：距上次自动补发不足间隔时拒绝；允许时记录本次时间。
+func (d *Dispatcher) allowEndpointAutoRetry(endpointID int64) bool {
+	d.endpointRetryMu.Lock()
+	defer d.endpointRetryMu.Unlock()
+	if last, ok := d.endpointRetriedAt[endpointID]; ok && time.Since(last) < endpointAutoRetryMinInterval {
+		return false
+	}
+	d.endpointRetriedAt[endpointID] = time.Now()
+	return true
+}
+
+// clearEndpointRetry 清除端点的自动重试退避记录（apply 成功回执时调用）。
+func (d *Dispatcher) clearEndpointRetry(endpointID int64) {
+	d.endpointRetryMu.Lock()
+	defer d.endpointRetryMu.Unlock()
+	delete(d.endpointRetriedAt, endpointID)
 }
 
 // alertNodeFailed 上报节点置 failed 事件（§19）：apply_result 失败与死信两条路径共用。
