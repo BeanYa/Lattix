@@ -142,4 +142,7 @@ func TestHandleSubInfoMergesTraffic(t *testing.T) {
 	if resp.UsedUp != 100 || resp.UsedDown != 50 || resp.TrafficLimit != 700 {
 		t.Fatalf("resp = %+v", resp)
 	}
+	if resp.NodesCount != 1 {
+		t.Fatalf("resp.NodesCount = %d, want 1 (external node)", resp.NodesCount)
+	}
 }

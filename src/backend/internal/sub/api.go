@@ -49,6 +49,12 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 
 	t, _ := s.st.UserTraffic(r.Context(), user.UUID)
 	assigned, _ := s.st.UserNodeIDs(r.Context(), user.ID)
+	// 节点数与订阅快照内容一致：直连节点 + 分配链路 + 外部订阅节点。
+	items, _, _ := s.itemsForUser(r.Context(), user)
+	nodesCount := len(items)
+	if nodesCount == 0 {
+		nodesCount = len(assigned) // 快照生成失败时回退到直连节点数
+	}
 	var panelExpire *int64
 	if user.ExpiresAt != nil {
 		v := user.ExpiresAt.Unix()
@@ -85,7 +91,7 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 		UsedUp:         merged.Upload,
 		UsedDown:       merged.Download,
 		TrafficLimit:   merged.Total,
-		NodesCount:     len(assigned),
+		NodesCount:     nodesCount,
 		Title:          title,
 		Announcement:   announcement,
 		UpdateInterval: interval,
