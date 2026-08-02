@@ -351,7 +351,7 @@ func TestBillingStatsHandlerMonthView(t *testing.T) {
 func TestBillingStatsHandlerCustomRates(t *testing.T) {
 	ctx := context.Background()
 	s, st := statsTestServer(t)
-	usdID, _, _ := seedBillingServers(t, st)
+	usdID, _, cnyID := seedBillingServers(t, st)
 	if _, err := st.UpsertCustomExchangeRate(ctx, store.CustomExchangeRate{
 		SourceCurrency: "USD", SourceAmount: "1", TargetCurrency: "CNY", TargetAmount: "7", Enabled: true,
 	}); err != nil {
@@ -382,6 +382,29 @@ func TestBillingStatsHandlerCustomRates(t *testing.T) {
 		// 公共口径仍为 240/天。
 		if dto.Servers[i].DailyMinor != 240 {
 			t.Fatalf("public daily = %d, want 240", dto.Servers[i].DailyMinor)
+		}
+	}
+
+	// 无自定义锚点的服务器回退到公共口径单元格，且计入 custom 合计。
+	var cny *billingServerStatsDTO
+	for i := range dto.Servers {
+		if dto.Servers[i].ServerID == cnyID {
+			cny = &dto.Servers[i]
+		}
+	}
+	if cny == nil {
+		t.Fatal("expected cny server in stats")
+	}
+	wantFallback := []int64{510, 460, 510}
+	for j := range wantFallback {
+		if cny.ActualCostsCustom[j] != wantFallback[j] {
+			t.Fatalf("cny custom fallback = %v, want %v", cny.ActualCostsCustom, wantFallback)
+		}
+	}
+	wantTotals := []int64{4760 + 510, 7840 + 460, 8680 + 510}
+	for j := range wantTotals {
+		if dto.ActualTotalsCustom[j] != wantTotals[j] {
+			t.Fatalf("totals_custom = %v, want %v", dto.ActualTotalsCustom, wantTotals)
 		}
 	}
 
@@ -583,7 +606,7 @@ func TestEstimatedBillingStatsHandlerGranularities(t *testing.T) {
 func TestEstimatedBillingStatsHandlerCustomRates(t *testing.T) {
 	ctx := context.Background()
 	s, st := statsTestServer(t)
-	usdID, _, _ := seedBillingServers(t, st)
+	usdID, _, cnyID := seedBillingServers(t, st)
 	if _, err := st.UpsertCustomExchangeRate(ctx, store.CustomExchangeRate{
 		SourceCurrency: "USD", SourceAmount: "1", TargetCurrency: "CNY", TargetAmount: "7", Enabled: true,
 	}); err != nil {
@@ -612,6 +635,29 @@ func TestEstimatedBillingStatsHandlerCustomRates(t *testing.T) {
 		}
 		if dto.Servers[i].DailyMinor != 240 {
 			t.Fatalf("public daily = %d, want 240", dto.Servers[i].DailyMinor)
+		}
+	}
+
+	// 无自定义锚点的服务器回退到公共口径单元格，且计入 custom 合计。
+	var cny *estimatedBillingServerStatsDTO
+	for i := range dto.Servers {
+		if dto.Servers[i].ServerID == cnyID {
+			cny = &dto.Servers[i]
+		}
+	}
+	if cny == nil {
+		t.Fatal("expected cny server in stats")
+	}
+	wantFallback := []int64{493, 493, 493}
+	for j := range wantFallback {
+		if cny.EstimatedCostsCustom[j] != wantFallback[j] {
+			t.Fatalf("cny custom fallback = %v, want %v", cny.EstimatedCostsCustom, wantFallback)
+		}
+	}
+	wantTotals := []int64{8400 + 493, 8400 + 493, 8400 + 493}
+	for j := range wantTotals {
+		if dto.EstimatedTotalsCustom[j] != wantTotals[j] {
+			t.Fatalf("totals_custom = %v, want %v", dto.EstimatedTotalsCustom, wantTotals)
 		}
 	}
 

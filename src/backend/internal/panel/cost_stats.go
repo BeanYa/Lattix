@@ -379,16 +379,17 @@ func (s *Server) handleBillingStats(w http.ResponseWriter, r *http.Request) {
 			cost := new(big.Rat).Mul(row.dailyPublic, new(big.Rat).SetInt64(int64(days)))
 			item.ActualCostsPublic[i] = roundRat(cost)
 			dto.ActualTotalsPublic[i] += item.ActualCostsPublic[i]
-			if costsCustom != nil && row.dailyCustom != nil {
-				cost := new(big.Rat).Mul(row.dailyCustom, new(big.Rat).SetInt64(int64(days)))
-				costsCustom[i] = roundRat(cost)
+			if costsCustom != nil {
+				if row.dailyCustom != nil {
+					cost := new(big.Rat).Mul(row.dailyCustom, new(big.Rat).SetInt64(int64(days)))
+					costsCustom[i] = roundRat(cost)
+				} else {
+					costsCustom[i] = item.ActualCostsPublic[i]
+				}
 				totalsCustom[i] += costsCustom[i]
 			}
 		}
 		if costsCustom != nil {
-			if row.dailyCustom == nil {
-				costsCustom = append([]int64(nil), item.ActualCostsPublic...)
-			}
 			item.ActualCostsCustom = costsCustom
 		}
 		dto.Servers = append(dto.Servers, item)
@@ -457,16 +458,17 @@ func (s *Server) handleEstimatedBillingStats(w http.ResponseWriter, r *http.Requ
 			cost := new(big.Rat).Mul(row.dailyPublic, new(big.Rat).SetInt64(perPeriod))
 			item.EstimatedCostsPublic[i] = roundRat(cost)
 			dto.EstimatedTotalsPublic[i] += item.EstimatedCostsPublic[i]
-			if costsCustom != nil && row.dailyCustom != nil {
-				cost := new(big.Rat).Mul(row.dailyCustom, new(big.Rat).SetInt64(perPeriod))
-				costsCustom[i] = roundRat(cost)
+			if costsCustom != nil {
+				if row.dailyCustom != nil {
+					cost := new(big.Rat).Mul(row.dailyCustom, new(big.Rat).SetInt64(perPeriod))
+					costsCustom[i] = roundRat(cost)
+				} else {
+					costsCustom[i] = item.EstimatedCostsPublic[i]
+				}
 				totalsCustom[i] += costsCustom[i]
 			}
 		}
 		if costsCustom != nil {
-			if row.dailyCustom == nil {
-				costsCustom = append([]int64(nil), item.EstimatedCostsPublic...)
-			}
 			item.EstimatedCostsCustom = costsCustom
 		}
 		dto.Servers = append(dto.Servers, item)
