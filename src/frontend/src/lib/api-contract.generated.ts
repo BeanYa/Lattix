@@ -260,6 +260,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/billing/stats/estimated": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["billingStatsEstimated"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/server/delete": {
         parameters: {
             query?: never;
@@ -1308,8 +1324,8 @@ export interface components {
          * @enum {string}
          */
         BillingStatsRateMode: "public" | "custom";
-        /** @description Per-server cost series aligned with BillingStats.periods. Day granularity labels are YYYY-MM-DD, month YYYY-MM, year YYYY. Costs are in the reporting currency minor unit, rounded per cell; custom arrays are present when custom_available and rate_mode=custom. */
-        BillingServerStats: {
+        /** @description Per-server cost series aligned with BillingActualStats.periods. Day granularity labels are YYYY-MM-DD, month YYYY-MM, year YYYY. Costs are in the reporting currency minor unit, rounded per cell; custom arrays are present when custom_available and rate_mode=custom. */
+        BillingActualServerStats: {
             server_id: number;
             alias: string;
             /** @description ISO 3166-1 alpha-2. */
@@ -1331,12 +1347,12 @@ export interface components {
             daily_minor: number;
             /** @description Custom daily cost; present when the server has a custom conversion. */
             daily_custom_minor?: number;
-            costs_public: number[];
-            /** @description Present for every server when custom_available and rate_mode=custom; equals costs_public for servers without a custom conversion. */
-            costs_custom?: number[];
+            actual_costs_public: number[];
+            /** @description Present for every server when custom_available and rate_mode=custom; equals actual_costs_public for servers without a custom conversion. */
+            actual_costs_custom?: number[];
         };
         /** @description Cost statistics for servers with statistical billing enabled, prorated per day over the requested range and converted to the reporting currency. */
-        BillingStats: {
+        BillingActualStats: {
             reporting_currency: components["schemas"]["Currency"];
             granularity: components["schemas"]["BillingStatsGranularity"];
             /** Format: date */
@@ -1351,11 +1367,60 @@ export interface components {
             /** @description Every calendar period covering from/to. */
             periods: string[];
             /** @description Servers with billing enabled */
-            servers: components["schemas"]["BillingServerStats"][];
-            /** @description Per-period sum of costs_public. */
-            totals_public: number[];
+            servers: components["schemas"]["BillingActualServerStats"][];
+            /** @description Per-period sum of actual_costs_public. */
+            actual_totals_public: number[];
             /** @description Present when custom_available and rate_mode=custom. */
-            totals_custom?: number[];
+            actual_totals_custom?: number[];
+        };
+        /** @description Per-server estimated cost series aligned with BillingEstimatedStats.periods, computed as daily cost times fixed period days (day=1, month=30, year=365) regardless of service dates. Costs are in the reporting currency minor unit, rounded per cell; custom arrays are present when custom_available and rate_mode=custom. */
+        BillingEstimatedServerStats: {
+            server_id: number;
+            alias: string;
+            /** @description ISO 3166-1 alpha-2. */
+            country_code: string;
+            location: string;
+            currency: components["schemas"]["Currency"];
+            /** @description Original price in the server currency minor unit. */
+            amount_minor: number;
+            interval_count: number;
+            /** @enum {string} */
+            interval_unit: "day" | "month" | "year";
+            /** Format: date */
+            service_started_on: string;
+            /** @description Billing lifecycle status. */
+            status: string;
+            /** @description Days in the requested range (constant for every server). */
+            days_active: number;
+            /** @description Public daily cost in reporting minor unit. */
+            daily_minor: number;
+            /** @description Custom daily cost; present when the server has a custom conversion. */
+            daily_custom_minor?: number;
+            estimated_costs_public: number[];
+            /** @description Present for every server when custom_available and rate_mode=custom; equals estimated_costs_public for servers without a custom conversion. */
+            estimated_costs_custom?: number[];
+        };
+        /** @description Projected cost statistics for non-expired servers with statistical billing enabled, estimated as daily cost times fixed period days per period and converted to the reporting currency. */
+        BillingEstimatedStats: {
+            reporting_currency: components["schemas"]["Currency"];
+            granularity: components["schemas"]["BillingStatsGranularity"];
+            /** Format: date */
+            from: string;
+            /** Format: date */
+            to: string;
+            rate_mode: components["schemas"]["BillingStatsRateMode"];
+            /** @description Public exchange rate cache date; empty when no conversion was needed. */
+            rate_date?: string;
+            /** @description True when at least one server's custom conversion differs from its public conversion; independent of rate_mode. */
+            custom_available: boolean;
+            /** @description Every calendar period covering from/to. */
+            periods: string[];
+            /** @description Non-expired servers with billing enabled */
+            servers: components["schemas"]["BillingEstimatedServerStats"][];
+            /** @description Per-period sum of estimated_costs_public. */
+            estimated_totals_public: number[];
+            /** @description Present when custom_available and rate_mode=custom. */
+            estimated_totals_custom?: number[];
         };
         TrafficPlanInput: {
             /** @description Decimal bytes; null means unlimited. */
@@ -1714,6 +1779,24 @@ export interface operations {
         };
     };
     billingStats: {
+        parameters: {
+            query: {
+                from: string;
+                to: string;
+                granularity: components["schemas"]["BillingStatsGranularity"];
+                rate_mode?: components["schemas"]["BillingStatsRateMode"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    billingStatsEstimated: {
         parameters: {
             query: {
                 from: string;
@@ -2769,6 +2852,7 @@ export const rpcOperations = {
   serverUpdate: { method: 'POST', path: '/api/server/update' },
   serverConfirmRenewal: { method: 'POST', path: '/api/server/confirm-renewal' },
   billingStats: { method: 'GET', path: '/api/billing/stats' },
+  billingStatsEstimated: { method: 'GET', path: '/api/billing/stats/estimated' },
   serverDelete: { method: 'POST', path: '/api/server/delete' },
   serverRotateToken: { method: 'POST', path: '/api/server/rotate-token' },
   serverRepair: { method: 'POST', path: '/api/server/repair' },

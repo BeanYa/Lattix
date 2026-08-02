@@ -297,8 +297,8 @@ func TestBillingStatsHandlerMonthView(t *testing.T) {
 	}
 	wantUSD := []int64{4080, 6720, 7440}
 	for i := range wantUSD {
-		if usd.CostsPublic[i] != wantUSD[i] {
-			t.Fatalf("usd costs = %v, want %v", usd.CostsPublic, wantUSD)
+		if usd.ActualCostsPublic[i] != wantUSD[i] {
+			t.Fatalf("usd costs = %v, want %v", usd.ActualCostsPublic, wantUSD)
 		}
 	}
 	// CNY 年付 ¥60/年 → 6000/365/天；1 月 31 天 → 510，2 月 28 天 → 460，3 月 31 天 → 510。
@@ -307,11 +307,11 @@ func TestBillingStatsHandlerMonthView(t *testing.T) {
 	}
 	wantCNY := []int64{510, 460, 510}
 	for i := range wantCNY {
-		if cny.CostsPublic[i] != wantCNY[i] {
-			t.Fatalf("cny costs = %v, want %v", cny.CostsPublic, wantCNY)
+		if cny.ActualCostsPublic[i] != wantCNY[i] {
+			t.Fatalf("cny costs = %v, want %v", cny.ActualCostsPublic, wantCNY)
 		}
 	}
-	if got := dto.TotalsPublic; len(got) != 3 || got[0] != 4080+510 || got[1] != 6720+460 || got[2] != 7440+510 {
+	if got := dto.ActualTotalsPublic; len(got) != 3 || got[0] != 4080+510 || got[1] != 6720+460 || got[2] != 7440+510 {
 		t.Fatalf("totals_public = %v", got)
 	}
 	if dto.CustomAvailable {
@@ -329,7 +329,7 @@ func TestBillingStatsHandlerMonthView(t *testing.T) {
 	var usdDays []int64
 	for i := range dayDTO.Servers {
 		if dayDTO.Servers[i].ServerID == usdID {
-			usdDays = dayDTO.Servers[i].CostsPublic
+			usdDays = dayDTO.Servers[i].ActualCostsPublic
 		}
 	}
 	jan, feb, mar := int64(0), int64(0), int64(0)
@@ -351,7 +351,7 @@ func TestBillingStatsHandlerMonthView(t *testing.T) {
 func TestBillingStatsHandlerCustomRates(t *testing.T) {
 	ctx := context.Background()
 	s, st := statsTestServer(t)
-	usdID, _, _ := seedBillingServers(t, st)
+	usdID, _, cnyID := seedBillingServers(t, st)
 	if _, err := st.UpsertCustomExchangeRate(ctx, store.CustomExchangeRate{
 		SourceCurrency: "USD", SourceAmount: "1", TargetCurrency: "CNY", TargetAmount: "7", Enabled: true,
 	}); err != nil {
@@ -362,7 +362,7 @@ func TestBillingStatsHandlerCustomRates(t *testing.T) {
 	if dto == nil || !dto.CustomAvailable {
 		t.Fatal("custom_available should be true with matching anchor")
 	}
-	if dto.TotalsCustom == nil || dto.TotalsPublic == nil {
+	if dto.ActualTotalsCustom == nil || dto.ActualTotalsPublic == nil {
 		t.Fatal("custom mode should carry both totals")
 	}
 	for i := range dto.Servers {
@@ -375,13 +375,36 @@ func TestBillingStatsHandlerCustomRates(t *testing.T) {
 		}
 		want := []int64{4760, 7840, 8680}
 		for j := range want {
-			if dto.Servers[i].CostsCustom[j] != want[j] {
-				t.Fatalf("custom costs = %v, want %v", dto.Servers[i].CostsCustom, want)
+			if dto.Servers[i].ActualCostsCustom[j] != want[j] {
+				t.Fatalf("custom costs = %v, want %v", dto.Servers[i].ActualCostsCustom, want)
 			}
 		}
 		// 公共口径仍为 240/天。
 		if dto.Servers[i].DailyMinor != 240 {
 			t.Fatalf("public daily = %d, want 240", dto.Servers[i].DailyMinor)
+		}
+	}
+
+	// 无自定义锚点的服务器回退到公共口径单元格，且计入 custom 合计。
+	var cny *billingServerStatsDTO
+	for i := range dto.Servers {
+		if dto.Servers[i].ServerID == cnyID {
+			cny = &dto.Servers[i]
+		}
+	}
+	if cny == nil {
+		t.Fatal("expected cny server in stats")
+	}
+	wantFallback := []int64{510, 460, 510}
+	for j := range wantFallback {
+		if cny.ActualCostsCustom[j] != wantFallback[j] {
+			t.Fatalf("cny custom fallback = %v, want %v", cny.ActualCostsCustom, wantFallback)
+		}
+	}
+	wantTotals := []int64{4760 + 510, 7840 + 460, 8680 + 510}
+	for j := range wantTotals {
+		if dto.ActualTotalsCustom[j] != wantTotals[j] {
+			t.Fatalf("totals_custom = %v, want %v", dto.ActualTotalsCustom, wantTotals)
 		}
 	}
 
@@ -391,7 +414,7 @@ func TestBillingStatsHandlerCustomRates(t *testing.T) {
 		t.Fatal("custom_available should be independent of rate_mode")
 	}
 	for i := range pubDTO.Servers {
-		if pubDTO.Servers[i].CostsCustom != nil || pubDTO.TotalsCustom != nil {
+		if pubDTO.Servers[i].ActualCostsCustom != nil || pubDTO.ActualTotalsCustom != nil {
 			t.Fatal("public mode must not carry custom payloads")
 		}
 	}
@@ -416,11 +439,11 @@ func TestBillingStatsHandlerYearView(t *testing.T) {
 			cny = &dto.Servers[i]
 		}
 	}
-	if cny == nil || cny.DaysActive != 365 || cny.CostsPublic[0] != 6000 {
+	if cny == nil || cny.DaysActive != 365 || cny.ActualCostsPublic[0] != 6000 {
 		t.Fatalf("year view server = %+v, want days 365 cost 6000", cny)
 	}
-	if dto.TotalsPublic[0] != 6000 {
-		t.Fatalf("year totals = %v, want [6000]", dto.TotalsPublic)
+	if dto.ActualTotalsPublic[0] != 6000 {
+		t.Fatalf("year totals = %v, want [6000]", dto.ActualTotalsPublic)
 	}
 }
 
@@ -436,6 +459,232 @@ func TestBillingStatsHandlerValidation(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/billing/stats?"+query, nil)
 		recorder := httptest.NewRecorder()
 		s.handleBillingStats(recorder, req)
+		var envelope rpcResponse
+		if err := json.NewDecoder(recorder.Body).Decode(&envelope); err != nil {
+			t.Fatalf("decode response for %q: %v", query, err)
+		}
+		if envelope.Code == "OK" {
+			t.Fatalf("invalid query accepted: %s", query)
+		}
+	}
+}
+
+func getEstimatedBillingStats(t *testing.T, s *Server, query string) (*estimatedBillingStatsDTO, *rpcResponse) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/billing/stats/estimated?"+query, nil)
+	recorder := httptest.NewRecorder()
+	s.handleEstimatedBillingStats(recorder, req)
+	var envelope rpcResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	var dto estimatedBillingStatsDTO
+	if err := json.Unmarshal([]byte(jsonMarshal(envelope.Data)), &dto); err != nil {
+		return nil, &envelope
+	}
+	return &dto, &envelope
+}
+
+func seedExpiredBillingServer(t *testing.T, st *store.Store) int64 {
+	t.Helper()
+	id, err := st.CreateServerWithPlans(context.Background(), "HK-Expired", "", "token-exp", store.MachineTypeDirect,
+		"", "", "HK", "Hong Kong", &store.ServerBilling{
+			Enabled: true, ProviderID: 1, AmountMinor: 300, Currency: "CNY",
+			ServiceStartedOn: "2025-06-01", IntervalCount: 1, IntervalUnit: "month",
+			NextRenewalOn: "2026-02-01", Status: store.BillingExpired,
+		}, store.ServerTrafficPlan{AccountingMode: "outbound", ResetAnchorOn: "2025-06-01", ResetCount: 1, ResetUnit: "month", TrackingStartedOn: "2025-06-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestEstimatedBillingStatsHandlerMonthView(t *testing.T) {
+	s, st := statsTestServer(t)
+	usdID, _, cnyID := seedBillingServers(t, st)
+	expiredID := seedExpiredBillingServer(t, st)
+
+	dto, envelope := getEstimatedBillingStats(t, s, "from=2026-01-01&to=2026-03-31&granularity=month")
+	if envelope.Code != "OK" {
+		t.Fatalf("response code = %q message %q", envelope.Code, envelope.Message)
+	}
+	if len(dto.Servers) != 2 {
+		t.Fatalf("servers = %d, want 2 (disabled and expired excluded)", len(dto.Servers))
+	}
+	for _, srv := range dto.Servers {
+		if srv.ServerID == expiredID {
+			t.Fatal("expired billing server leaked into estimated stats")
+		}
+	}
+	var usd, cny *estimatedBillingServerStatsDTO
+	for i := range dto.Servers {
+		switch dto.Servers[i].ServerID {
+		case usdID:
+			usd = &dto.Servers[i]
+		case cnyID:
+			cny = &dto.Servers[i]
+		}
+	}
+	if usd == nil || cny == nil {
+		t.Fatal("expected usd and cny servers in estimated stats")
+	}
+	// USD $12/月 → 7200 minor CNY/月 → 240/天；月单元格 = 240×30 = 7200（忽略 01-15 才开通）。
+	if usd.DailyMinor != 240 || usd.DaysActive != 90 {
+		t.Fatalf("usd daily/days = %d/%d, want 240/90", usd.DailyMinor, usd.DaysActive)
+	}
+	wantUSD := []int64{7200, 7200, 7200}
+	for i := range wantUSD {
+		if usd.EstimatedCostsPublic[i] != wantUSD[i] {
+			t.Fatalf("usd estimated = %v, want %v", usd.EstimatedCostsPublic, wantUSD)
+		}
+	}
+	// CNY 年付 ¥60/年 → 6000/365/天；月单元格 = round(6000/365×30) = round(493.15) = 493。
+	wantCNY := []int64{493, 493, 493}
+	for i := range wantCNY {
+		if cny.EstimatedCostsPublic[i] != wantCNY[i] {
+			t.Fatalf("cny estimated = %v, want %v", cny.EstimatedCostsPublic, wantCNY)
+		}
+	}
+	wantTotals := []int64{7200 + 493, 7200 + 493, 7200 + 493}
+	for i := range wantTotals {
+		if dto.EstimatedTotalsPublic[i] != wantTotals[i] {
+			t.Fatalf("estimated totals = %v, want %v", dto.EstimatedTotalsPublic, wantTotals)
+		}
+	}
+	if dto.CustomAvailable {
+		t.Fatal("custom_available should be false without anchors")
+	}
+	if dto.RateDate != "2026-07-29" {
+		t.Fatalf("rate_date = %q, want 2026-07-29", dto.RateDate)
+	}
+}
+
+func TestEstimatedBillingStatsHandlerGranularities(t *testing.T) {
+	s, st := statsTestServer(t)
+	usdID, _, cnyID := seedBillingServers(t, st)
+
+	// 日视图：5 个周期，每单元格 = 240 与 round(6000/365) = 16。
+	dayDTO, _ := getEstimatedBillingStats(t, s, "from=2026-01-01&to=2026-01-05&granularity=day")
+	if dayDTO == nil {
+		t.Fatal("day view failed")
+	}
+	for i := range dayDTO.Servers {
+		switch dayDTO.Servers[i].ServerID {
+		case usdID:
+			for j, cell := range dayDTO.Servers[i].EstimatedCostsPublic {
+				if cell != 240 {
+					t.Fatalf("usd day cell %d = %d, want 240", j, cell)
+				}
+			}
+		case cnyID:
+			for j, cell := range dayDTO.Servers[i].EstimatedCostsPublic {
+				if cell != 16 {
+					t.Fatalf("cny day cell %d = %d, want 16", j, cell)
+				}
+			}
+		}
+	}
+	if dayDTO.Servers[0].DaysActive != 5 {
+		t.Fatalf("days_active = %d, want 5 (range days)", dayDTO.Servers[0].DaysActive)
+	}
+
+	// 年视图：6000/365 × 365 精确还原年价 6000。
+	yearDTO, _ := getEstimatedBillingStats(t, s, "from=2025-01-01&to=2025-12-31&granularity=year")
+	if yearDTO == nil {
+		t.Fatal("year view failed")
+	}
+	for i := range yearDTO.Servers {
+		if yearDTO.Servers[i].ServerID != cnyID {
+			continue
+		}
+		if yearDTO.Servers[i].EstimatedCostsPublic[0] != 6000 {
+			t.Fatalf("cny year cell = %d, want 6000", yearDTO.Servers[i].EstimatedCostsPublic[0])
+		}
+	}
+}
+
+func TestEstimatedBillingStatsHandlerCustomRates(t *testing.T) {
+	ctx := context.Background()
+	s, st := statsTestServer(t)
+	usdID, _, cnyID := seedBillingServers(t, st)
+	if _, err := st.UpsertCustomExchangeRate(ctx, store.CustomExchangeRate{
+		SourceCurrency: "USD", SourceAmount: "1", TargetCurrency: "CNY", TargetAmount: "7", Enabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	dto, _ := getEstimatedBillingStats(t, s, "from=2026-01-01&to=2026-03-31&granularity=month&rate_mode=custom")
+	if dto == nil || !dto.CustomAvailable {
+		t.Fatal("custom_available should be true with matching anchor")
+	}
+	if dto.EstimatedTotalsCustom == nil || dto.EstimatedTotalsPublic == nil {
+		t.Fatal("custom mode should carry both totals")
+	}
+	for i := range dto.Servers {
+		if dto.Servers[i].ServerID != usdID {
+			continue
+		}
+		// 12 USD → 84 CNY = 8400 minor/月 → 280/天；月单元格 = 280×30 = 8400。
+		if dto.Servers[i].DailyCustomMinor != 280 {
+			t.Fatalf("custom daily = %d, want 280", dto.Servers[i].DailyCustomMinor)
+		}
+		for j, cell := range dto.Servers[i].EstimatedCostsCustom {
+			if cell != 8400 {
+				t.Fatalf("custom cell %d = %d, want 8400", j, cell)
+			}
+		}
+		if dto.Servers[i].DailyMinor != 240 {
+			t.Fatalf("public daily = %d, want 240", dto.Servers[i].DailyMinor)
+		}
+	}
+
+	// 无自定义锚点的服务器回退到公共口径单元格，且计入 custom 合计。
+	var cny *estimatedBillingServerStatsDTO
+	for i := range dto.Servers {
+		if dto.Servers[i].ServerID == cnyID {
+			cny = &dto.Servers[i]
+		}
+	}
+	if cny == nil {
+		t.Fatal("expected cny server in stats")
+	}
+	wantFallback := []int64{493, 493, 493}
+	for j := range wantFallback {
+		if cny.EstimatedCostsCustom[j] != wantFallback[j] {
+			t.Fatalf("cny custom fallback = %v, want %v", cny.EstimatedCostsCustom, wantFallback)
+		}
+	}
+	wantTotals := []int64{8400 + 493, 8400 + 493, 8400 + 493}
+	for j := range wantTotals {
+		if dto.EstimatedTotalsCustom[j] != wantTotals[j] {
+			t.Fatalf("totals_custom = %v, want %v", dto.EstimatedTotalsCustom, wantTotals)
+		}
+	}
+
+	// public 模式不携带 custom 数值，但 custom_available 仍是数据属性。
+	pubDTO, _ := getEstimatedBillingStats(t, s, "from=2026-01-01&to=2026-03-31&granularity=month&rate_mode=public")
+	if pubDTO == nil || !pubDTO.CustomAvailable {
+		t.Fatal("custom_available should be independent of rate_mode")
+	}
+	for i := range pubDTO.Servers {
+		if pubDTO.Servers[i].EstimatedCostsCustom != nil || pubDTO.EstimatedTotalsCustom != nil {
+			t.Fatal("public mode must not carry custom payloads")
+		}
+	}
+}
+
+func TestEstimatedBillingStatsHandlerValidation(t *testing.T) {
+	s, _ := statsTestServer(t)
+	cases := []string{
+		"from=2026-01-01&to=2026-03-31&granularity=week",
+		"from=2026-03-31&to=2026-01-01&granularity=month",
+		"from=bad&to=2026-01-01&granularity=month",
+		"from=2026-01-01&to=2027-01-15&granularity=day",
+	}
+	for _, query := range cases {
+		req := httptest.NewRequest(http.MethodGet, "/api/billing/stats/estimated?"+query, nil)
+		recorder := httptest.NewRecorder()
+		s.handleEstimatedBillingStats(recorder, req)
 		var envelope rpcResponse
 		if err := json.NewDecoder(recorder.Body).Decode(&envelope); err != nil {
 			t.Fatalf("decode response for %q: %v", query, err)

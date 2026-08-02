@@ -258,6 +258,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodGet, "/api/billing/stats",
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"from", "to", "granularity", "rate_mode"}},
 		s.handleBillingStats)
+	s.registerRPC(mux, http.MethodGet, "/api/billing/stats/estimated",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"from", "to", "granularity", "rate_mode"}},
+		s.handleEstimatedBillingStats)
 	s.registerRPC(mux, http.MethodGet, "/api/provider/list", read, s.handleListProviders)
 	s.registerRPC(mux, http.MethodPost, "/api/provider/create", write, s.handleCreateProvider)
 	s.registerRPC(mux, http.MethodPost, "/api/provider/update", write, s.handleUpdateProvider)

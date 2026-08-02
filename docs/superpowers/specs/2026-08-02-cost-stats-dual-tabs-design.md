@@ -164,3 +164,39 @@ estimated 估算的是持续持有成本，已过期服务器无意义，故排�
 - estimated 不在前端计算（前端无货币换算逻辑，全部由后端返回）
 - 不新增历史价格/成本快照表
 - 不新增 e2e 脚本
+
+## 实现状态（2026-08-02 已实施）
+
+### 变更文件
+
+- `src/backend/internal/panel/cost_stats.go`：共享装配核心 `loadStatsRows` / `statsRow` / `periodDays`；
+  已生效端点 DTO 字段改名 `actual_*`；新增 `handleEstimatedBillingStats` 与 `estimatedBillingStatsDTO` 系列
+- `src/backend/internal/panel/cost_stats_test.go`：改名同步 + estimated 端点测试
+- `src/backend/internal/panel/panel.go`：注册 `GET /api/billing/stats/estimated`
+- `docs/openapi.yaml`：`BillingActualStats` / `BillingActualServerStats`（改名）与
+  `BillingEstimatedStats` / `BillingEstimatedServerStats`（新增）schemas + path
+- `src/frontend/src/lib/types.ts` / `api.ts`：类型改名 + `billingStatsEstimated()` 客户端
+- `src/frontend/src/lib/api-contract.generated.ts`：`bun run generate:api` 重新生成
+- `src/frontend/src/pages/Costs.tsx`：双 tab（已生效成本 / 计算成本），共享
+  `StatsControls` / `buildBarOption` / `buildDonutOption` / `useEarliestStart`
+
+### 与设计一致/偏差记录
+
+- 计算成本参与范围 = 启用计费且未过期（expired 排除）、单元格 = round(daily × 周期天数
+  1/30/365)、days_active = 范围天数：按设计实现
+- custom 模式合计（`*_totals_custom`）包含无锚点服务器的 public 回退单元格，合计列 =
+  可见单元格之和（实施期评审发现并修复，两个端点同步）
+- `convertCosts` 失败映射 502（Bad Gateway），其余装配错误 500：恢复原行为
+- 图表配置经共享构建函数 `buildBarOption` / `buildDonutOption` 复用（评审要求，避免逐字重复）
+- EstimatedCostsTab 汇总卡片为估算日/月/年成本（×1/×30/×365）与启用服务器数
+- 前端两个 tab 条件渲染、各自独立请求；tab 切换时重新挂载并重新请求（设计如此）
+- 估算汇总卡片按"Σ 日成本 × 周期天数（1/30/365）"计算；与矩阵单元格
+  `round(daily × 周期天数)` 的舍入顺序不同，日成本带小数的服务器卡片与矩阵存在
+  ≤0.5 最小单位/服务器的展示差异（已确认保持现状）
+
+### 验证
+
+- `go test ./src/backend/...`：全部通过（含 estimated 端点与 OpenAPI 契约测试）
+- `bun run lint`：0 警告 0 错误
+- `bun run test`：17 个前端测试通过
+- `bun run build`：tsc + API 契约 --check + vite 全部通过

@@ -1,8 +1,9 @@
 import { requester, RequestError, type RequestOptions } from './requester'
 import type {
   AlertTestResult,
+  BillingActualStats,
+  BillingEstimatedStats,
   BillingInput,
-  BillingStats,
   BillingStatsGranularity,
   BillingStatsRateMode,
   Chain,
@@ -324,7 +325,17 @@ export const api = {
       rate_mode?: BillingStatsRateMode
     },
     options?: RequestOptions,
-  ) => requester.get<BillingStats>('/api/billing/stats', params, { display: 'silent', ...options }),
+  ) => requester.get<BillingActualStats>('/api/billing/stats', params, { display: 'silent', ...options }),
+
+  billingStatsEstimated: (
+    params: {
+      from: string
+      to: string
+      granularity: BillingStatsGranularity
+      rate_mode?: BillingStatsRateMode
+    },
+    options?: RequestOptions,
+  ) => requester.get<BillingEstimatedStats>('/api/billing/stats/estimated', params, { display: 'silent', ...options }),
 
   panelVersion: () => requester.get<PanelVersionInfo>('/api/panel/get-version'),
   startPanelUpdate: (version?: string, force?: boolean) =>
