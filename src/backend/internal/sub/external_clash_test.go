@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"lattix/backend/internal/extsub"
 )
 
@@ -45,7 +47,7 @@ func TestBuildExternalClash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Type != "wireguard" || p.PrivateKey != "pk" || p.IP != "10.0.0.2" || p.PublicKey != "peer" || p.MTU != 1420 {
+	if p.Type != "wireguard" || p.PrivateKey != "pk" || p.IP != "10.0.0.2" || p.PublicKey != "peer" || p.MTU == nil || *p.MTU != 1420 {
 		t.Fatalf("wg = %+v", p)
 	}
 
@@ -97,7 +99,7 @@ func TestBuildExternalClashYAMLBoolInt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !p.SkipCertVerify {
+	if p.SkipCertVerify == nil || !*p.SkipCertVerify {
 		t.Fatalf("yaml bool not read: %+v", p)
 	}
 	wg, err := buildExternalClash(extNode("yaml-wg", "wireguard", "wg.example.com", 51820, map[string]any{
@@ -106,7 +108,7 @@ func TestBuildExternalClashYAMLBoolInt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wg.MTU != 1420 {
+	if wg.MTU == nil || *wg.MTU != 1420 {
 		t.Fatalf("yaml int not read: %+v", wg)
 	}
 }
@@ -151,5 +153,25 @@ func TestBuildExternalClashYAMLServerNameAndKeys(t *testing.T) {
 	}
 	if vmess.Network != "ws" || vmess.WsOpts == nil || vmess.WsOpts.Path != "/ws" {
 		t.Fatalf("vmess network not mapped: %+v", vmess)
+	}
+}
+
+func TestClashProxyInlineRawMarshal(t *testing.T) {
+	p := clashProxy{
+		Name: "n", Type: "anytls", Server: "s", Port: 443, UDP: true,
+		Raw: map[string]any{"auth": "token-123", "tfo": []any{"h2", "http/1.1"}},
+	}
+	out, err := yaml.Marshal(&p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{"auth: token-123", "tfo:", "- h2"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("raw not inlined, missing %q:\n%s", want, s)
+		}
+	}
+	if strings.Count(s, "name:") != 1 {
+		t.Fatalf("duplicate name key:\n%s", s)
 	}
 }

@@ -74,6 +74,87 @@ func extInt(extra map[string]any, keys ...string) int {
 	return 0
 }
 
+// extStrings 取 Extra 字符串列表（YAML 列表或 URI 逗号串两种形态）。
+func extStrings(extra map[string]any, keys ...string) []string {
+	v, ok := firstValue(extra, keys...)
+	if !ok {
+		return nil
+	}
+	switch t := v.(type) {
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case []string:
+		return t
+	case string:
+		if t == "" {
+			return nil
+		}
+		var out []string
+		for _, part := range strings.Split(t, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// extBoolPtr 仅当键存在时返回布尔指针（presence 感知，false 也可保留）。
+func extBoolPtr(extra map[string]any, keys ...string) *bool {
+	v, ok := firstValue(extra, keys...)
+	if !ok {
+		return nil
+	}
+	b := false
+	switch t := v.(type) {
+	case bool:
+		b = t
+	case string:
+		switch strings.ToLower(t) {
+		case "1", "true", "yes", "on":
+			b = true
+		}
+	case float64:
+		b = t != 0
+	case int:
+		b = t != 0
+	}
+	return &b
+}
+
+// extIntPtr 仅当键存在时返回整型指针。
+func extIntPtr(extra map[string]any, keys ...string) *int {
+	v, ok := firstValue(extra, keys...)
+	if !ok {
+		return nil
+	}
+	switch t := v.(type) {
+	case string:
+		if n, err := strconv.Atoi(t); err == nil {
+			return &n
+		}
+	case int:
+		return &t
+	case int64:
+		n := int(t)
+		return &n
+	case uint64:
+		n := int(t)
+		return &n
+	case float64:
+		n := int(t)
+		return &n
+	}
+	return nil
+}
+
 // externalYAMLFallback 把 mihomo YAML 订阅的 Extra 键补齐为分享链接约定键
 // （uuid→id、network→type、client-fingerprint→fp，并展开 reality-opts/ws-opts/
 // grpc-opts/http-opts 嵌套对象）。返回浅拷贝，不修改调用方 map。
@@ -132,7 +213,7 @@ func buildExternalClash(n extsub.Node) (clashProxy, error) {
 	e := externalYAMLFallback(n.Extra)
 	p := clashProxy{
 		Name: n.Name, Server: n.Server, Port: n.Port, UDP: true,
-		SkipCertVerify: extBool(e, "insecure", "allowInsecure", "allow_insecure", "skip-cert-verify"),
+		SkipCertVerify: extBoolPtr(e, "skip-cert-verify", "insecure", "allowInsecure", "allow_insecure"),
 	}
 	switch n.Type {
 	case "vless":
@@ -214,14 +295,14 @@ func buildExternalClash(n extsub.Node) (clashProxy, error) {
 		p.Servername = extStr(e, "sni")
 		p.CongestionController = extStr(e, "congestion_controller", "congestion-controller", "congestion_control")
 		p.UDPRelayMode = extStr(e, "udp_relay_mode", "udp-relay-mode")
-		p.ReduceRTT = extBool(e, "reduce_rtt", "reduce-rtt")
+		p.ReduceRTT = extBoolPtr(e, "reduce_rtt", "reduce-rtt")
 	case "wireguard":
 		p.Type = "wireguard"
 		p.IP = extStr(e, "ip", "address")
 		p.PrivateKey = extStr(e, "private_key", "private-key")
 		p.PublicKey = extStr(e, "public_key", "pk")
 		p.PresharedKey = extStr(e, "preshared_key", "preshared-key", "psk")
-		p.MTU = extInt(e, "mtu")
+		p.MTU = extIntPtr(e, "mtu")
 	case "anytls":
 		p.Type = "anytls"
 		p.Password = extStr(e, "password")
@@ -230,7 +311,7 @@ func buildExternalClash(n extsub.Node) (clashProxy, error) {
 		p.Type = "snell"
 		p.PSK = extStr(e, "psk")
 		p.Obfs = extStr(e, "obfs")
-		p.Version = extInt(e, "version")
+		p.Version = extIntPtr(e, "version")
 	case "socks":
 		p.Type = "socks5"
 		p.Username = extStr(e, "username")
@@ -275,7 +356,7 @@ func applyExternalTransport(p *clashProxy, e map[string]any) {
 			Path: extStr(e, "path"), Mode: extStr(e, "mode"), Host: extStr(e, "host"),
 		}
 	case "http", "h2":
-		p.HTTPOpts = &clashHTTPOpts{Path: extStr(e, "path")}
+		p.HTTPOpts = &clashHTTPOpts{Path: []string{extStr(e, "path")}}
 		if host := extStr(e, "host"); host != "" {
 			p.HTTPOpts.Headers = map[string]string{"Host": host}
 		}
