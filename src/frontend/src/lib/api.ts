@@ -26,6 +26,7 @@ import type {
   OperationLogPage,
   PanelSettings,
   PanelLifecycleSnapshot,
+  PanelRuntimeSnapshot,
   PanelUpdateStatus,
   PanelVersionInfo,
   PortRange,
@@ -352,6 +353,9 @@ export const api = {
   panelState: () => requester.get<PanelLifecycleSnapshot>('/api/panel/state', undefined, {
     display: 'silent',
   }),
+  panelRuntime: (options?: RequestOptions) => requester.get<PanelRuntimeSnapshot>(
+    '/api/panel/runtime', undefined, options,
+  ),
   testAlerts: () => requester.post<AlertTestResult>('/api/setting/test-alerts', {}),
   subSettings: () => requester.get<SubSettings>('/api/setting/sub'),
   updateSubSettings: (body: SubSettings) =>

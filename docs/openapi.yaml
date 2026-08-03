@@ -602,6 +602,10 @@ paths:
     get:
       operationId: panelState
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/panel/runtime:
+    get:
+      operationId: panelRuntime
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/panel/get-version:
     get:
       operationId: panelGetVersion

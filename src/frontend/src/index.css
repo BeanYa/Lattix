@@ -2315,6 +2315,20 @@
 
 /* Dashboard follows the subscription surface language: ink, lime, and thin rules. */
 .dashboard-subscription-language {
+  --dashboard-ink: #f2f5f2;
+  --dashboard-panel: #fbfdfb;
+  --dashboard-panel-strong: #e8ede9;
+  --dashboard-line: #d4ddd6;
+  --dashboard-line-strong: #aebbb1;
+  --dashboard-text: #172019;
+  --dashboard-muted: #667269;
+  --dashboard-accent: #477a17;
+  --dashboard-accent-ink: #ffffff;
+  gap: 1.5rem;
+  color: var(--dashboard-text);
+}
+
+.dark .dashboard-subscription-language {
   --dashboard-ink: #090b0a;
   --dashboard-panel: #101411;
   --dashboard-panel-strong: #151a16;
@@ -2324,8 +2338,6 @@
   --dashboard-muted: #99a29a;
   --dashboard-accent: #bdf33b;
   --dashboard-accent-ink: #101508;
-  gap: 1.5rem;
-  color: var(--dashboard-text);
 }
 
 .dashboard-subscription-language .page-header {
@@ -2943,21 +2955,37 @@
 }
 
 .dashboard-usage-orbit {
-  --sub-bg: #090b0a;
-  --sub-panel: #101411;
-  --sub-line: #293129;
-  --sub-text: #f0f4ee;
-  --sub-muted: #99a29a;
-  --sub-accent: #bdf33b;
+  --sub-bg: var(--dashboard-ink);
+  --sub-panel: var(--dashboard-panel);
+  --sub-line: var(--dashboard-line);
+  --sub-line-strong: var(--dashboard-line-strong);
+  --sub-text: var(--dashboard-text);
+  --sub-muted: var(--dashboard-muted);
+  --sub-accent: var(--dashboard-accent);
   place-self: center;
 }
 
 .dashboard-usage-orbit.traffic-orbit {
   width: min(100%, 22.5rem);
+  background: var(--dashboard-panel);
 }
 
 .dashboard-usage-electric {
   justify-self: center;
+  background: var(--dashboard-panel);
+  box-shadow: 0 24px 70px var(--shadow-color);
+}
+
+.dashboard-usage-orbit .orbit-track {
+  background: conic-gradient(
+    var(--dashboard-accent) var(--usage-angle),
+    var(--dashboard-panel-strong) var(--usage-angle)
+  );
+  box-shadow: 0 0 44px color-mix(in srgb, var(--dashboard-accent) 10%, transparent);
+}
+
+.dashboard-usage-orbit .orbit-core strong {
+  color: var(--dashboard-text);
 }
 
 .dashboard-health-orbit {

@@ -1,0 +1,775 @@
+.runtime-page {
+  gap: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.runtime-toolbar,
+.runtime-live-chip,
+.runtime-status-primary,
+.runtime-section-header,
+.runtime-process-badge,
+.runtime-task-summary {
+  display: flex;
+  align-items: center;
+}
+
+.runtime-toolbar {
+  gap: 0.35rem;
+}
+
+.runtime-live-chip,
+.runtime-sync-time {
+  min-height: 2rem;
+  border: 1px solid var(--border);
+  border-radius: 0.375rem;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+}
+
+.runtime-live-chip {
+  gap: 0.45rem;
+  padding: 0 0.65rem;
+}
+
+.runtime-live-chip i,
+.runtime-service-dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: none;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0.65rem color-mix(in srgb, var(--success) 55%, transparent);
+}
+
+.runtime-live-chip:not(.is-paused) i {
+  animation: runtime-pulse 1.8s ease-in-out infinite;
+}
+
+.runtime-live-chip.is-paused i {
+  background: var(--muted-foreground);
+  box-shadow: none;
+}
+
+.runtime-sync-time {
+  display: grid;
+  place-items: center;
+  min-width: 5.5rem;
+  padding: 0 0.65rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.runtime-status-band {
+  position: relative;
+  display: grid;
+  min-height: 9rem;
+  grid-template-columns: minmax(16rem, 1fr) minmax(28rem, 1.4fr);
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--success);
+  border-radius: 0.5rem;
+  background: var(--card);
+  padding: 1.15rem 1.35rem;
+  box-shadow: 0 18px 42px var(--shadow-color);
+}
+
+.runtime-status-band[data-state='startup'],
+.runtime-status-band[data-state='updating'] {
+  border-left-color: var(--warning);
+}
+
+.runtime-status-band[data-state='faulted'] {
+  border-left-color: var(--destructive);
+}
+
+.runtime-status-primary {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  gap: 0.9rem;
+}
+
+.runtime-status-icon,
+.runtime-metric-icon,
+.runtime-service-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--success) 35%, var(--border));
+  border-radius: 0.45rem;
+  background: color-mix(in srgb, var(--success) 11%, transparent);
+  color: var(--success);
+}
+
+.runtime-status-icon {
+  width: 3.25rem;
+  height: 3.25rem;
+}
+
+.runtime-status-icon svg {
+  width: 1.35rem;
+}
+
+.runtime-status-primary span:not(.runtime-status-icon),
+.runtime-section-header > div > span {
+  color: var(--muted-foreground);
+  font-size: 0.58rem;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.runtime-status-primary h2 {
+  margin-top: 0.15rem;
+  font-size: 1.42rem;
+  font-weight: 680;
+  line-height: 1.15;
+}
+
+.runtime-status-primary p {
+  margin-top: 0.35rem;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-status-meta {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-left: 1px solid var(--border);
+}
+
+.runtime-status-meta div {
+  min-width: 0;
+  padding: 0.25rem 0.8rem;
+}
+
+.runtime-status-meta dt,
+.runtime-process-metric span,
+.runtime-task-row small,
+.runtime-service-list small {
+  color: var(--muted-foreground);
+  font-size: 0.62rem;
+}
+
+.runtime-status-meta dd {
+  margin-top: 0.3rem;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-signal {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: 34%;
+  height: 3rem;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 0.18rem;
+  padding: 0 1rem;
+  opacity: 0.11;
+  pointer-events: none;
+}
+
+.runtime-signal i {
+  width: 0.22rem;
+  height: var(--signal-height);
+  max-height: 100%;
+  background: var(--primary);
+}
+
+.runtime-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.runtime-metric {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 7.2rem;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: 1fr auto;
+  gap: 0.55rem 0.7rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--card);
+  padding: 0.85rem;
+  transition: border-color 180ms ease, transform 180ms ease;
+}
+
+.runtime-metric:hover {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+  transform: translateY(-1px);
+}
+
+.runtime-metric-icon {
+  width: 2.15rem;
+  height: 2.15rem;
+}
+
+.runtime-metric-icon svg {
+  width: 1rem;
+}
+
+.runtime-metric-copy {
+  min-width: 0;
+}
+
+.runtime-metric-copy > span {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+}
+
+.runtime-metric-copy strong {
+  display: block;
+  margin-top: 0.15rem;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 1.05rem;
+  font-weight: 670;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-metric-copy small {
+  display: block;
+  margin-top: 0.2rem;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-meter {
+  grid-column: 1 / -1;
+  height: 0.22rem;
+  overflow: hidden;
+  border-radius: 0.1rem;
+  background: var(--muted);
+}
+
+.runtime-meter i,
+.runtime-process-track i {
+  display: block;
+  width: var(--meter-value);
+  height: 100%;
+  background: var(--success);
+  transition: width 350ms ease;
+}
+
+.runtime-metric[data-tone='warning'] .runtime-metric-icon,
+.runtime-metric[data-tone='warning'] .runtime-meter i {
+  border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
+  background-color: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+
+.runtime-metric[data-tone='critical'] .runtime-metric-icon,
+.runtime-metric[data-tone='critical'] .runtime-meter i {
+  border-color: color-mix(in srgb, var(--destructive) 40%, var(--border));
+  background-color: color-mix(in srgb, var(--destructive) 12%, transparent);
+  color: var(--destructive);
+}
+
+.runtime-main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(18rem, 0.8fr);
+  gap: 0.7rem;
+}
+
+.runtime-section {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--card);
+}
+
+.runtime-section-header {
+  min-height: 3.8rem;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 0.95rem;
+}
+
+.runtime-section-header h2 {
+  margin-top: 0.12rem;
+  font-size: 0.92rem;
+  font-weight: 660;
+}
+
+.runtime-section-header > small,
+.runtime-section-header > svg {
+  flex: none;
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
+}
+
+.runtime-section-header > svg {
+  width: 1rem;
+}
+
+.runtime-trend-list {
+  display: grid;
+  gap: 0.9rem;
+  padding: 0.95rem;
+}
+
+.runtime-trend {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.runtime-trend figcaption {
+  min-width: 0;
+}
+
+.runtime-trend figcaption span {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
+}
+
+.runtime-trend figcaption strong {
+  display: block;
+  margin-top: 0.15rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.86rem;
+}
+
+.runtime-trend-bars {
+  display: grid;
+  height: 3.15rem;
+  grid-template-columns: repeat(36, minmax(1px, 1fr));
+  align-items: end;
+  gap: 0.16rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.runtime-trend-bars i {
+  min-height: 0.12rem;
+  height: var(--sample-value);
+  border-radius: 1px 1px 0 0;
+  background: var(--success);
+  opacity: 0.82;
+  transition: height 350ms ease, opacity 180ms ease;
+}
+
+.runtime-trend-bars i:hover {
+  opacity: 1;
+}
+
+.runtime-trend-bars i.is-empty {
+  background: var(--muted);
+  opacity: 0.7;
+}
+
+.runtime-service-list {
+  display: grid;
+}
+
+.runtime-service-list > div {
+  display: grid;
+  min-height: 4rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.65rem 0.9rem;
+}
+
+.runtime-service-list > div:last-child {
+  border-bottom: 0;
+}
+
+.runtime-service-icon {
+  width: 1.9rem;
+  height: 1.9rem;
+  border-color: var(--border);
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.runtime-service-icon svg {
+  width: 0.9rem;
+}
+
+.runtime-service-icon.is-ok {
+  border-color: color-mix(in srgb, var(--success) 38%, var(--border));
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+  color: var(--success);
+}
+
+.runtime-service-icon.is-warning {
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--warning);
+}
+
+.runtime-service-list p {
+  min-width: 0;
+}
+
+.runtime-service-list strong,
+.runtime-service-list small {
+  display: block;
+}
+
+.runtime-service-list strong {
+  font-size: 0.74rem;
+}
+
+.runtime-service-list b {
+  color: var(--muted-foreground);
+  font-size: 0.67rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.runtime-process-badge,
+.runtime-task-summary {
+  gap: 0.4rem;
+  color: var(--muted-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.64rem;
+}
+
+.runtime-process-badge svg,
+.runtime-task-summary svg {
+  width: 0.9rem;
+}
+
+.runtime-process-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.runtime-process-metric {
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  padding: 0.9rem;
+}
+
+.runtime-process-metric:last-child {
+  border-right: 0;
+}
+
+.runtime-process-metric > div:first-child {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.runtime-process-metric strong {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-process-track {
+  height: 0.22rem;
+  margin-top: 0.65rem;
+  overflow: hidden;
+  background: var(--muted);
+}
+
+.runtime-process-metric > small {
+  display: block;
+  margin-top: 0.45rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-task-list {
+  display: grid;
+}
+
+.runtime-task-row {
+  position: relative;
+  display: grid;
+  min-height: 4.2rem;
+  grid-template-columns: minmax(15rem, 1.5fr) 5.5rem repeat(3, minmax(7rem, 0.7fr));
+  align-items: center;
+  gap: 0.7rem;
+  border-bottom: 1px solid var(--border);
+  padding: 0.65rem 0.95rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+}
+
+.runtime-task-row:last-child {
+  border-bottom: 0;
+}
+
+.runtime-task-row > span:not(.runtime-task-status) small {
+  display: block;
+  margin-bottom: 0.15rem;
+}
+
+.runtime-task-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.65rem;
+  font-family: inherit;
+}
+
+.runtime-task-name > div {
+  min-width: 0;
+}
+
+.runtime-task-name strong,
+.runtime-task-name small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-task-name strong {
+  font-family: var(--font-sans, inherit);
+  font-size: 0.72rem;
+}
+
+.runtime-task-status {
+  width: fit-content;
+  border: 1px solid color-mix(in srgb, var(--success) 35%, var(--border));
+  border-radius: 0.3rem;
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+  padding: 0.22rem 0.4rem;
+  color: var(--success);
+  font-size: 0.62rem;
+}
+
+.runtime-task-row[data-status='running'] .runtime-service-dot {
+  animation: runtime-pulse 1.2s ease-in-out infinite;
+}
+
+.runtime-task-row[data-status='failed'] .runtime-service-dot {
+  background: var(--destructive);
+  box-shadow: 0 0 0.65rem color-mix(in srgb, var(--destructive) 55%, transparent);
+}
+
+.runtime-task-row[data-status='failed'] .runtime-task-status {
+  border-color: color-mix(in srgb, var(--destructive) 38%, var(--border));
+  background: color-mix(in srgb, var(--destructive) 9%, transparent);
+  color: var(--destructive);
+}
+
+.runtime-task-row > p {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  margin: -0.3rem 0 0 1.05rem;
+  color: var(--destructive);
+  font-size: 0.62rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.runtime-task-empty {
+  display: flex;
+  min-height: 6rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+}
+
+.runtime-task-empty svg {
+  width: 1rem;
+}
+
+.runtime-loading {
+  display: grid;
+  min-height: 45vh;
+  grid-template-columns: repeat(4, 4rem);
+  place-content: center;
+  gap: 0.65rem;
+}
+
+.runtime-loading span {
+  height: 7rem;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--muted);
+  animation: runtime-loading 1.4s ease-in-out infinite alternate;
+}
+
+.runtime-loading span:nth-child(2) { animation-delay: 120ms; }
+.runtime-loading span:nth-child(3) { animation-delay: 240ms; }
+.runtime-loading span:nth-child(4) { animation-delay: 360ms; }
+
+@keyframes runtime-pulse {
+  50% { opacity: 0.35; }
+}
+
+@keyframes runtime-loading {
+  to { opacity: 0.35; transform: translateY(-0.3rem); }
+}
+
+@media (max-width: 1180px) {
+  .runtime-status-band {
+    grid-template-columns: minmax(14rem, 0.8fr) minmax(22rem, 1.2fr);
+  }
+
+  .runtime-status-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem 0;
+  }
+
+  .runtime-metric-grid,
+  .runtime-process-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .runtime-process-metric:nth-child(2) {
+    border-right: 0;
+  }
+
+  .runtime-process-metric:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .runtime-task-row {
+    grid-template-columns: minmax(13rem, 1.4fr) 5rem repeat(2, minmax(7rem, 0.7fr));
+  }
+
+  .runtime-task-row > span:nth-of-type(4) {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .runtime-status-band {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .runtime-status-meta {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+    padding-top: 0.85rem;
+  }
+
+  .runtime-status-meta div {
+    padding-left: 0;
+  }
+
+  .runtime-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-task-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.55rem;
+  }
+
+  .runtime-task-row > span:not(.runtime-task-status) {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .runtime-page {
+    gap: 0.7rem;
+  }
+
+  .runtime-toolbar {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .runtime-sync-time {
+    margin-right: auto;
+  }
+
+  .runtime-status-band {
+    min-height: 0;
+    padding: 1rem;
+  }
+
+  .runtime-status-primary h2 {
+    font-size: 1.2rem;
+  }
+
+  .runtime-status-primary p {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .runtime-status-meta {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .runtime-metric-grid,
+  .runtime-process-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .runtime-process-metric,
+  .runtime-process-metric:nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .runtime-process-metric:last-child {
+    border-bottom: 0;
+  }
+
+  .runtime-trend {
+    grid-template-columns: 1fr;
+    gap: 0.45rem;
+  }
+
+  .runtime-trend figcaption {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+  }
+
+  .runtime-section-header {
+    min-height: 3.5rem;
+  }
+
+  .runtime-task-row {
+    padding-inline: 0.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runtime-live-chip i,
+  .runtime-task-row[data-status='running'] .runtime-service-dot,
+  .runtime-loading span {
+    animation: none;
+  }
+
+  .runtime-metric,
+  .runtime-meter i,
+  .runtime-process-track i,
+  .runtime-trend-bars i {
+    transition: none;
+  }
+}

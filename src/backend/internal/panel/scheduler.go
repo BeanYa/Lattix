@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"sort"
 	"sync"
 	"time"
 )
@@ -81,6 +82,17 @@ type taskResult struct {
 	err      error
 }
 
+type scheduledTaskStatus struct {
+	Name           string     `json:"name"`
+	Running        bool       `json:"running"`
+	Runs           uint64     `json:"runs"`
+	LastStartedAt  *time.Time `json:"last_started_at,omitempty"`
+	LastFinishedAt *time.Time `json:"last_finished_at,omitempty"`
+	LastDurationMS int64      `json:"last_duration_ms"`
+	LastError      string     `json:"last_error,omitempty"`
+	NextRunAt      *time.Time `json:"next_run_at,omitempty"`
+}
+
 // taskScheduler owns all panel-side recurring work. Tasks share lifecycle and
 // wake-up handling while still running independently and never overlapping themselves.
 type taskScheduler struct {
@@ -88,6 +100,7 @@ type taskScheduler struct {
 
 	mu      sync.Mutex
 	tasks   map[string]scheduledTask
+	status  map[string]scheduledTaskStatus
 	changed chan struct{}
 	workers sync.WaitGroup
 }
@@ -96,6 +109,7 @@ func newTaskScheduler(location func(context.Context) *time.Location) *taskSchedu
 	return &taskScheduler{
 		location: location,
 		tasks:    make(map[string]scheduledTask),
+		status:   make(map[string]scheduledTaskStatus),
 		changed:  make(chan struct{}, 1),
 	}
 }
@@ -110,6 +124,7 @@ func (s *taskScheduler) register(task scheduledTask) {
 		panic("panel: duplicate scheduled task " + task.name)
 	}
 	s.tasks[task.name] = task
+	s.status[task.name] = scheduledTaskStatus{Name: task.name}
 }
 
 func (s *taskScheduler) notifyChanged() {
@@ -129,6 +144,52 @@ func (s *taskScheduler) snapshot() map[string]scheduledTask {
 	return out
 }
 
+func (s *taskScheduler) statusSnapshot() []scheduledTaskStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]scheduledTaskStatus, 0, len(s.status))
+	for _, status := range s.status {
+		out = append(out, status)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func (s *taskScheduler) setNextRun(name string, next time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status := s.status[name]
+	status.NextRunAt = &next
+	s.status[name] = status
+}
+
+func (s *taskScheduler) markStarted(name string, started time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status := s.status[name]
+	status.Running = true
+	status.LastStartedAt = &started
+	status.NextRunAt = nil
+	s.status[name] = status
+}
+
+func (s *taskScheduler) markFinished(result taskResult, next time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	status := s.status[result.name]
+	status.Running = false
+	status.Runs++
+	status.LastStartedAt = &result.started
+	status.LastFinishedAt = &result.finished
+	status.LastDurationMS = result.finished.Sub(result.started).Milliseconds()
+	status.LastError = ""
+	if result.err != nil {
+		status.LastError = result.err.Error()
+	}
+	status.NextRunAt = &next
+	s.status[result.name] = status
+}
+
 func (s *taskScheduler) run(ctx context.Context) {
 	tasks := s.snapshot()
 	now := time.Now()
@@ -141,11 +202,13 @@ func (s *taskScheduler) run(ctx context.Context) {
 		} else {
 			next[name] = task.trigger(ctx).next(now, s.location(ctx))
 		}
+		s.setNextRun(name, next[name])
 	}
 
 	launch := func(name string, task scheduledTask) {
 		running[name] = true
 		started := time.Now()
+		s.markStarted(name, started)
 		s.workers.Add(1)
 		go func() {
 			defer s.workers.Done()
@@ -197,6 +260,7 @@ func (s *taskScheduler) run(ctx context.Context) {
 			running[result.name] = false
 			task := tasks[result.name]
 			next[result.name] = task.trigger(ctx).next(result.finished, s.location(ctx))
+			s.markFinished(result, next[result.name])
 			if result.err != nil {
 				log.Printf("panel: scheduled task %s failed after %s: %v", result.name, result.finished.Sub(result.started), result.err)
 			}
@@ -207,6 +271,7 @@ func (s *taskScheduler) run(ctx context.Context) {
 			for name, task := range tasks {
 				if !running[name] {
 					next[name] = task.trigger(ctx).next(now, s.location(ctx))
+					s.setNextRun(name, next[name])
 				}
 			}
 		case <-timer.C:

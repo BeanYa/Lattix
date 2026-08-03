@@ -14,6 +14,7 @@ const Login = lazy(() => import('@/pages/Login'))
 const LogsLayout = lazy(() => import('@/pages/LogsLayout'))
 const OperationLogs = lazy(() => import('@/pages/OperationLogs'))
 const RequestLogs = lazy(() => import('@/pages/RequestLogs'))
+const RuntimeMonitor = lazy(() => import('@/pages/RuntimeMonitor'))
 const Servers = lazy(() => import('@/pages/Servers'))
 const Settings = lazy(() => import('@/pages/Settings'))
 const Users = lazy(() => import('@/pages/Users'))
@@ -73,6 +74,9 @@ function ProtectedRoutes() {
             </Route>
             <Route path="/servers">
               <SuspendedRoute><Servers /></SuspendedRoute>
+            </Route>
+            <Route path="/runtime">
+              <SuspendedRoute><RuntimeMonitor /></SuspendedRoute>
             </Route>
             <Route path="/costs">
               <SuspendedRoute><Costs /></SuspendedRoute>

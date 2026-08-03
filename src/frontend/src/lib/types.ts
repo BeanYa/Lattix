@@ -790,6 +790,62 @@ export interface PanelLifecycleSnapshot {
   latency_resume_window_ms: number
 }
 
+export interface ScheduledTaskRuntime {
+  name: string
+  running: boolean
+  runs: number
+  last_started_at?: string
+  last_finished_at?: string
+  last_duration_ms: number
+  last_error?: string
+  next_run_at?: string
+}
+
+export interface PanelRuntimeSnapshot {
+  sampled_at: string
+  panel: {
+    version: string
+    state: PanelLifecycleState
+    started_at: string
+    uptime_seconds: number
+    pid: number
+  }
+  host: {
+    hostname: string
+    os: string
+    arch: string
+    cpu_cores: number
+    cpu_percent: number | null
+    load1: number
+    load5: number
+    load15: number
+    memory_total: number
+    memory_active: number
+  }
+  process: {
+    go_version: string
+    goroutines: number
+    rss_bytes: number
+    virtual_bytes: number
+    heap_alloc: number
+    heap_sys: number
+    heap_inuse: number
+    stack_inuse: number
+    gc_cycles: number
+    last_gc_at?: string
+  }
+  services: {
+    database_healthy: boolean
+    database_latency_ms: number
+    agents_online: number
+    agents_total: number
+    request_log_usage: number
+    request_log_limit: number
+    request_log_dropped: number
+  }
+  tasks: ScheduledTaskRuntime[]
+}
+
 export type LogSeverity = 'debug' | 'info' | 'warning' | 'error'
 export type OperationCategory =
   | 'server'

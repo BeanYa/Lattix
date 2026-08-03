@@ -63,6 +63,9 @@ type Server struct {
 	scheduler     *taskScheduler
 	opLog         *logging.OperationStore
 	reqLog        *logging.RequestLog
+	startedAt     time.Time
+	runtimeMu     sync.Mutex
+	lastCPU       runtimeCPUSample
 
 	routePolicies   map[string]logging.LogPolicy
 	debugRoutes     map[string]bool // 轮询/状态类路由：成功请求记录为 debug 级别
@@ -150,6 +153,7 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 	s := &Server{
 		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
+		startedAt:       time.Now(),
 		routePolicies:   make(map[string]logging.LogPolicy),
 		debugRoutes:     make(map[string]bool),
 		methodFallbacks: make(map[string]bool),
@@ -375,6 +379,8 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/panel/restart", write, s.handleRestart)
 	s.registerRPC(mux, http.MethodGet, "/api/panel/state",
 		rpcRouteOptions{Auth: true, Debug: true}, s.handlePanelState)
+	s.registerRPC(mux, http.MethodGet, "/api/panel/runtime",
+		rpcRouteOptions{Auth: true, LogPolicy: logging.LogNone, Debug: true}, s.handlePanelRuntime)
 	s.registerRPC(mux, http.MethodGet, "/api/panel/get-version", read, s.handlePanelVersion)
 	s.registerRPC(mux, http.MethodPost, "/api/panel/start-update", write, s.handlePanelUpdateStart)
 	s.registerRPC(mux, http.MethodGet, "/api/panel/get-update-status",

@@ -94,3 +94,43 @@ func TestInspectionScheduleUsesPanelTimezone(t *testing.T) {
 		t.Fatalf("next = %s, want %s", got, want)
 	}
 }
+
+func TestTaskSchedulerStatusTracksCompletedRuns(t *testing.T) {
+	scheduler := newTaskScheduler(func(context.Context) *time.Location { return time.UTC })
+	ran := make(chan struct{}, 1)
+	scheduler.register(scheduledTask{
+		name:       "observed",
+		runOnStart: true,
+		trigger:    func(context.Context) taskTrigger { return intervalTrigger(time.Hour) },
+		run: func(context.Context) error {
+			ran <- struct{}{}
+			return nil
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan struct{})
+	go func() { scheduler.run(ctx); close(finished) }()
+	select {
+	case <-ran:
+	case <-time.After(time.Second):
+		t.Fatal("scheduled task did not run")
+	}
+
+	deadline := time.Now().Add(time.Second)
+	var status scheduledTaskStatus
+	for time.Now().Before(deadline) {
+		items := scheduler.statusSnapshot()
+		if len(items) == 1 && items[0].Runs == 1 {
+			status = items[0]
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	<-finished
+
+	if status.Name != "observed" || status.Running || status.LastFinishedAt == nil || status.NextRunAt == nil {
+		t.Fatalf("status = %+v, want completed run with next schedule", status)
+	}
+}

@@ -1215,6 +1215,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/panel/runtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["panelRuntime"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/panel/get-version": {
         parameters: {
             query?: never;
@@ -2943,6 +2959,19 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    panelRuntime: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     panelGetVersion: {
         parameters: {
             query?: never;
@@ -3180,6 +3209,7 @@ export const rpcOperations = {
   settingTestAlerts: { method: 'POST', path: '/api/setting/test-alerts' },
   panelRestart: { method: 'POST', path: '/api/panel/restart' },
   panelState: { method: 'GET', path: '/api/panel/state' },
+  panelRuntime: { method: 'GET', path: '/api/panel/runtime' },
   panelGetVersion: { method: 'GET', path: '/api/panel/get-version' },
   panelStartUpdate: { method: 'POST', path: '/api/panel/start-update' },
   panelGetUpdateStatus: { method: 'GET', path: '/api/panel/get-update-status' },

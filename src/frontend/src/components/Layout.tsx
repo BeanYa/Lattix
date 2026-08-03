@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useLocation } from 'wouter'
 import {
+  ActivityIcon,
   CoinsIcon,
   LayoutDashboardIcon,
   LogOutIcon,
@@ -28,6 +29,7 @@ import { cn } from '@/lib/utils'
 
 const navItems = [
   { to: '/', activePrefix: '/', label: '仪表盘', icon: LayoutDashboardIcon, end: true },
+  { to: '/runtime', activePrefix: '/runtime', label: '运行监控', icon: ActivityIcon, end: false },
   { to: '/servers', activePrefix: '/servers', label: '服务器', icon: ServerIcon, end: false },
   { to: '/costs', activePrefix: '/costs', label: '成本统计', icon: CoinsIcon, end: false },
   { to: '/chains', activePrefix: '/chains', label: '链路', icon: RouteIcon, end: false },
@@ -39,9 +41,9 @@ const navItems = [
 ]
 
 const navSections = [
-  { label: '实时控制', items: navItems.slice(0, 4) },
-  { label: '资源管理', items: navItems.slice(4, 8) },
-  { label: '系统', items: navItems.slice(8) },
+  { label: '实时控制', items: navItems.slice(0, 5) },
+  { label: '资源管理', items: navItems.slice(5, 9) },
+  { label: '系统', items: navItems.slice(9) },
 ]
 
 const panelStatePresentation: Record<PanelLifecycleState, { label: string; dot: string }> = {
