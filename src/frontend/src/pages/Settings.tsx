@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { PlusIcon, RefreshCwIcon, SearchIcon, Trash2Icon } from 'lucide-react'
+import {
+  CpuIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  ShieldCheckIcon,
+  SlidersHorizontalIcon,
+  Trash2Icon,
+  WrenchIcon,
+} from 'lucide-react'
 
 import { LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { Badge } from '@/components/ui/badge'
@@ -36,6 +45,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
@@ -105,6 +115,7 @@ export default function Settings() {
   const accessProtocol = window.location.protocol === 'https:' ? 'HTTPS' : 'HTTP'
   const [settings, setSettings] = useState<PanelSettings | null>(null)
   const [loadError, setLoadError] = useState('')
+  const [settingsTab, setSettingsTab] = useState('agent')
 
   // 基本设置
   const [publicURL, setPublicURL] = useState('')
@@ -536,7 +547,31 @@ export default function Settings() {
     <Page className="page-shell-narrow">
       <PageHeader title="设置" />
 
-      <form onSubmit={onSave} className="space-y-4">
+      <Tabs className="settings-tabs" value={settingsTab} onValueChange={(value) => setSettingsTab(String(value))}>
+        <TabsList variant="line" className="settings-tabs-list" aria-label="设置分类">
+          <TabsTrigger value="agent">
+            <CpuIcon data-icon="inline-start" />
+            Agent
+          </TabsTrigger>
+          <TabsTrigger value="runtime">
+            <SlidersHorizontalIcon data-icon="inline-start" />
+            运行设置
+          </TabsTrigger>
+          <TabsTrigger value="security">
+            <ShieldCheckIcon data-icon="inline-start" />
+            安全通知
+          </TabsTrigger>
+          <TabsTrigger value="system">
+            <WrenchIcon data-icon="inline-start" />
+            系统维护
+          </TabsTrigger>
+        </TabsList>
+
+        {error && <Notice tone="danger">{error}</Notice>}
+        {message && <Notice tone="success">{message}</Notice>}
+
+        <form onSubmit={onSave} className="settings-tab-form">
+          <TabsContent value="agent" keepMounted className="settings-tab-panel">
         <Card>
           <CardHeader>
             <CardTitle>Agent</CardTitle>
@@ -710,6 +745,9 @@ export default function Settings() {
           </CardContent>
         </Card>
 
+          </TabsContent>
+
+          <TabsContent value="runtime" keepMounted className="settings-tab-panel">
         <Card>
           <CardHeader><CardTitle>费用换算</CardTitle><CardDescription>服务器保留原价和原币种，汇总及详情按统计币种折算。</CardDescription></CardHeader>
           <CardContent className="space-y-5">
@@ -1030,6 +1068,9 @@ export default function Settings() {
           </CardContent>
         </Card>
 
+          </TabsContent>
+
+          <TabsContent value="security" keepMounted className="settings-tab-panel">
         <Card>
           <CardHeader>
             <CardTitle>面板证书（TLS）</CardTitle>
@@ -1257,12 +1298,18 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        {message && <p className="text-sm text-success">{message}</p>}
-        <Button type="submit" disabled={saving}>
-          {saving ? '保存中…' : '保存设置'}
-        </Button>
-      </form>
+          </TabsContent>
+
+          {settingsTab !== 'system' && (
+            <div className="settings-save-bar">
+              <Button type="submit" disabled={saving}>
+                {saving ? '保存中…' : '保存设置'}
+              </Button>
+            </div>
+          )}
+        </form>
+
+        <TabsContent value="system" keepMounted className="settings-tab-panel">
 
       <Card>
         <CardHeader>
@@ -1388,6 +1435,8 @@ export default function Settings() {
           </p>
         </CardContent>
       </Card>
+        </TabsContent>
+      </Tabs>
     </Page>
   )
 }

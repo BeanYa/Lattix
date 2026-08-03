@@ -13,7 +13,7 @@ function preferredTheme(): Theme {
   } catch {
     // Storage can be unavailable in hardened browser contexts.
   }
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  return 'dark'
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {

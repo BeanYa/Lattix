@@ -25,6 +25,10 @@ interface TopologyPoint {
 interface GlobeTopologyProps {
   servers: Server[]
   chains: Chain[]
+  activeServerId?: number
+  demoMode?: boolean
+  motionEnabled?: boolean
+  onServerSelect?: (serverId: number) => void
 }
 
 const coordinateCache = new Map<string, { lat: number; lng: number } | null>()
@@ -103,7 +107,28 @@ function buildLinks(chains: Chain[], points: TopologyPoint[]): EarthLink[] {
   })
 }
 
-export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
+function buildDemoLinks(points: TopologyPoint[]): EarthLink[] {
+  const positioned = points.filter((point) => point.positioned)
+  const anchor = positioned[0]
+  if (!anchor) return []
+  return positioned.slice(1).map((point, index) => ({
+    id: `demo:${anchor.id}:${point.id}`,
+    startLat: anchor.lat,
+    startLng: anchor.lng,
+    endLat: point.lat,
+    endLng: point.lng,
+    status: index === 3 ? 'degraded' : 'active',
+  }))
+}
+
+export default function GlobeTopology({
+  servers,
+  chains,
+  activeServerId,
+  demoMode = false,
+  motionEnabled = true,
+  onServerSelect,
+}: GlobeTopologyProps) {
   const [points, setPoints] = useState<TopologyPoint[]>([])
 
   useEffect(() => {
@@ -162,36 +187,41 @@ export default function GlobeTopology({ servers, chains }: GlobeTopologyProps) {
         countryCode: point.countryCode,
         uploadRate: point.uploadRate,
         downloadRate: point.downloadRate,
+        selected: point.id === activeServerId,
       })),
-    [points],
+    [activeServerId, points],
   )
-  const links = useMemo(() => buildLinks(chains, points), [chains, points])
+  const links = useMemo(() => {
+    const actualLinks = buildLinks(chains, points)
+    return demoMode && actualLinks.length === 0 ? buildDemoLinks(points) : actualLinks
+  }, [chains, demoMode, points])
   const unresolvedCount = points.filter((point) => !point.positioned).length
 
   return (
-    <div className="relative min-h-[430px] overflow-hidden bg-transparent sm:min-h-[520px]">
+    <div className="dashboard-globe">
       <LowPolyEarth
         nodes={nodes}
         links={links}
-        className="absolute inset-0"
+        className="dashboard-globe-canvas"
+        motionEnabled={motionEnabled}
+        selectedNodeId={activeServerId}
+        onNodeClick={(node) => onServerSelect?.(Number(node.id))}
         ariaLabel={`链路拓扑，共 ${nodes.length} 个服务器节点，${links.length} 段链路`}
       />
 
-      <div className="pointer-events-none absolute left-4 top-4 grid gap-2 text-xs font-semibold sm:left-5 sm:top-5">
-        <span className="w-fit rounded-lg border bg-card/90 px-3 py-2 shadow-[0_3px_0_var(--shadow-color)]">
-          节点 {nodes.length} · 链路 {links.length}
-        </span>
+      <div className="globe-telemetry" aria-hidden="true">
+        <span><b>{String(nodes.length).padStart(2, '0')}</b> NODES</span>
+        <span><b>{String(links.length).padStart(2, '0')}</b> ROUTES</span>
         {unresolvedCount > 0 && (
-          <span className="w-fit rounded-lg border bg-[var(--pastel-yellow)] px-3 py-2">
-            {unresolvedCount} 个节点待补充位置
-          </span>
+          <span><b>{String(unresolvedCount).padStart(2, '0')}</b> UNLOCATED</span>
         )}
       </div>
 
-      <div className="pointer-events-none absolute bottom-4 right-4 flex flex-wrap justify-end gap-2 text-[11px] font-semibold sm:bottom-5 sm:right-5">
-        <span className="inline-flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5"><i className="size-2 rounded-full bg-[var(--status-online)]" />在线</span>
-        <span className="inline-flex items-center gap-2 rounded-lg border bg-card/90 px-2.5 py-1.5"><i className="size-2 rounded-full bg-[var(--status-offline)]" />离线</span>
+      <div className="globe-legend" aria-hidden="true">
+        <span><i className="is-online" />在线</span>
+        <span><i />离线 / 重连</span>
       </div>
+
     </div>
   )
 }

@@ -55,6 +55,7 @@ export interface EarthNode {
   countryCode?: string
   uploadRate?: number | null
   downloadRate?: number | null
+  selected?: boolean
 }
 
 export interface EarthLink {
@@ -71,6 +72,9 @@ export interface LowPolyEarthProps {
   links: EarthLink[]
   ariaLabel?: string
   className?: string
+  motionEnabled?: boolean
+  selectedNodeId?: EarthNode['id']
+  onNodeClick?: (node: EarthNode) => void
 }
 
 interface AnimatedEarthLink extends EarthLink {
@@ -336,7 +340,15 @@ function updateNodeVisibility(element: HTMLElement, isVisible: boolean) {
   }
 }
 
-export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }: LowPolyEarthProps) {
+export default function LowPolyEarth({
+  nodes,
+  links,
+  ariaLabel,
+  className = '',
+  motionEnabled = true,
+  selectedNodeId,
+  onNodeClick,
+}: LowPolyEarthProps) {
   const { theme } = useTheme()
   const containerRef = useRef<HTMLDivElement>(null)
   const globeRef = useRef<GlobeMethods | undefined>(undefined)
@@ -630,7 +642,7 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
         }
 
         const pointOfView = globe.pointOfView()
-        if (!reducedMotion) {
+        if (!reducedMotion && motionEnabled) {
           const elapsedDegrees = elapsedSeconds * SELF_ROTATION_RADIANS_PER_SECOND * (180 / Math.PI)
           const longitudeInteraction = normalizeLongitudeDelta(pointOfView.lng - longitudeRef.current)
           const latitudeInteraction = pointOfView.lat - latitudeRef.current
@@ -668,7 +680,7 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
       cancelled = true
       cancelAnimationFrame(frame)
     }
-  }, [cloudLayer, globeReady, reducedMotion])
+  }, [cloudLayer, globeReady, motionEnabled, reducedMotion])
 
   return (
     <div
@@ -709,9 +721,10 @@ export default function LowPolyEarth({ nodes, links, ariaLabel, className = '' }
               return node.status === 'online' ? palette.nodeOnline : palette.nodeOffline
             }}
             pointAltitude={0.025}
-            pointRadius={0.34}
+            pointRadius={(item) => (item as EarthNode).id === selectedNodeId ? 0.52 : 0.34}
             pointResolution={10}
             pointsTransitionDuration={500}
+            onPointClick={onNodeClick ? (item) => onNodeClick(item as EarthNode) : undefined}
             htmlElementsData={nodeLabels}
             htmlLat={(item) => (item as EarthNodeLabel).lat}
             htmlLng={(item) => (item as EarthNodeLabel).lng}

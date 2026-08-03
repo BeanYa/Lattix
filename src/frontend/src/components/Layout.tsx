@@ -17,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import LattixMark from '@/components/LattixMark'
+import ParticleField from '@/components/ParticleField'
 import ThemeToggle from '@/components/ThemeToggle'
 import UpdateOverlay from '@/components/UpdateOverlay'
 import { api, errorMessage } from '@/lib/api'
@@ -35,6 +36,12 @@ const navItems = [
   { to: '/external-subscriptions', activePrefix: '/external-subscriptions', label: '外部订阅', icon: GlobeIcon, end: false },
   { to: '/logs/operations', activePrefix: '/logs', label: '日志', icon: ScrollTextIcon, end: false },
   { to: '/settings', activePrefix: '/settings', label: '设置', icon: SettingsIcon, end: false },
+]
+
+const navSections = [
+  { label: '实时控制', items: navItems.slice(0, 4) },
+  { label: '资源管理', items: navItems.slice(4, 8) },
+  { label: '系统', items: navItems.slice(8) },
 ]
 
 const panelStatePresentation: Record<PanelLifecycleState, { label: string; dot: string }> = {
@@ -113,6 +120,7 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div className="panel-canvas flex min-h-[100dvh] flex-col md:flex-row">
+      <ParticleField />
       {foregroundPendingCount > 0 ? (
         <div
           role="status"
@@ -177,33 +185,39 @@ export default function Layout({ children }: { children: ReactNode }) {
           </Sheet>
         </div>
       </header>
-      <aside className="panel-sidebar hidden w-[216px] shrink-0 flex-col border-r border-sidebar-border text-sidebar-foreground md:flex">
-        <div className="flex h-[74px] items-center gap-3 border-b border-sidebar-border px-5">
-          <LattixMark className="size-9 shrink-0" />
+      <aside className="panel-sidebar hidden w-[228px] shrink-0 flex-col border-r border-sidebar-border text-sidebar-foreground md:flex">
+        <div className="flex h-[78px] items-center gap-3 border-b border-sidebar-border px-5">
+          <span className="brand-mark-shell"><LattixMark className="size-8 shrink-0" /></span>
           <div className="min-w-0">
-            <strong className="block text-sm font-semibold" aria-label="Lattix">LATTIX</strong>
-            <span className="block text-[10px] text-sidebar-foreground/40">NETWORK CONTROL</span>
+            <strong className="block text-[13px] font-semibold" aria-label="Lattix">LATTIX</strong>
+            <span className="block text-[9px] text-sidebar-foreground/38">KNOWLEDGE NETWORK OS</span>
           </div>
         </div>
-        <nav className="flex-1 space-y-1 px-3 py-4" aria-label="主导航">
-          <div className="panel-section-label mb-2 px-3">控制面板</div>
-          {navItems.map((item) => {
-            const isActive = item.end ? location === item.to : location.startsWith(item.activePrefix)
-            return (
-              <Link
-                key={item.to}
-                href={item.to}
-                aria-current={isActive ? 'page' : undefined}
-                className={cn(
-                  'panel-nav-item flex h-10 items-center gap-3 rounded-md border border-transparent px-3 text-xs text-sidebar-foreground/58 transition-[color,background-color,border-color,transform] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:translate-y-px',
-                  isActive && 'border-sidebar-foreground/10 bg-sidebar-accent font-semibold text-sidebar-accent-foreground',
-                )}
-              >
-                <item.icon className="size-4 shrink-0" strokeWidth={1.8} />
-                <span className="truncate">{item.label}</span>
-              </Link>
-            )
-          })}
+        <nav className="no-scrollbar flex-1 overflow-y-auto px-3 py-4" aria-label="主导航">
+          {navSections.map((section) => (
+            <div key={section.label} className="mb-5 last:mb-0">
+              <div className="panel-section-label mb-2 px-3">{section.label}</div>
+              <div className="space-y-1">
+                {section.items.map((item) => {
+                  const isActive = item.end ? location === item.to : location.startsWith(item.activePrefix)
+                  return (
+                    <Link
+                      key={item.to}
+                      href={item.to}
+                      aria-current={isActive ? 'page' : undefined}
+                      className={cn(
+                        'panel-nav-item flex h-10 items-center gap-3 rounded-md border border-transparent px-3 text-xs text-sidebar-foreground/58 transition-[color,background-color,border-color,transform] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:translate-y-px',
+                        isActive && 'border-sidebar-foreground/10 bg-sidebar-accent font-semibold text-sidebar-accent-foreground',
+                      )}
+                    >
+                      <item.icon className="size-4 shrink-0" strokeWidth={1.7} />
+                      <span className="truncate">{item.label}</span>
+                    </Link>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
         <div className="border-t border-sidebar-border px-4 py-3">
           <div className="flex items-center justify-between gap-3">
@@ -232,7 +246,7 @@ export default function Layout({ children }: { children: ReactNode }) {
           </div>
         </div>
       </aside>
-      <main className="min-w-0 flex-1 overflow-auto p-4 md:p-5 lg:p-6">
+      <main id="main-content" className="panel-main min-w-0 flex-1 overflow-auto p-3 md:p-4 lg:p-5">
         {logoutError ? (
           <div
             role="alert"
@@ -241,7 +255,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             登出失败：{logoutError}
           </div>
         ) : null}
-        <div className="page-enter mx-auto w-full max-w-[1540px]">
+        <div className="page-enter mx-auto w-full max-w-[1680px]">
           {children}
         </div>
       </main>
