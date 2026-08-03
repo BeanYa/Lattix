@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link } from 'wouter'
 import {
   ActivityIcon,
@@ -8,6 +8,8 @@ import {
   CpuIcon,
   HardDriveIcon,
   MapPinIcon,
+  PauseIcon,
+  PlayIcon,
   RefreshCwIcon,
   RouteIcon,
   ServerIcon,
@@ -16,6 +18,7 @@ import {
 } from 'lucide-react'
 
 import { Notice, Page, PageHeader } from '@/components/PagePrimitives'
+import ElectricBorder from '@/components/react-bits/ElectricBorder'
 import { Button } from '@/components/ui/button'
 import { api, errorMessage } from '@/lib/api'
 import { DEMO_DASHBOARD_STATS, DEMO_SERVERS } from '@/lib/dashboard-demo'
@@ -23,6 +26,10 @@ import { formatByteRate, humanizeBytes } from '@/lib/format'
 import { isServerOnline, serverConnectionLabel } from '@/lib/server-state'
 import type { Chain, DashboardStats, Server } from '@/lib/types'
 import { cn } from '@/lib/utils'
+
+import './subscription.css'
+
+const GlobeTopology = lazy(() => import('@/components/GlobeTopology'))
 
 function percentage(value: number, total: number) {
   if (total <= 0) return 0
@@ -47,6 +54,7 @@ export default function Dashboard() {
   const [servers, setServers] = useState<Server[]>([])
   const [chains, setChains] = useState<Chain[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
+  const [motionEnabled, setMotionEnabled] = useState(true)
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null)
   const [error, setError] = useState('')
   const loadRequest = useRef(0)
@@ -128,7 +136,8 @@ export default function Dashboard() {
     { label: '订阅用户', value: displayStats.users, detail: '访问状态正常', icon: UsersIcon },
     { label: '待处理', value: displayStats.links_degraded, detail: displayStats.links_degraded ? '存在降级链路' : '暂无异常', icon: ActivityIcon },
   ]
-  const healthStyle = { '--dashboard-health': `${Math.max(serverHealth, linkHealth)}%` } as CSSProperties
+  const availability = Math.max(serverHealth, linkHealth)
+  const healthStyle = { '--usage-angle': `${availability * 3.6}deg` } as CSSProperties
 
   return (
     <Page className="dashboard-page dashboard-subscription-language">
@@ -159,13 +168,20 @@ export default function Dashboard() {
             <ChevronRightIcon />
           </Link>
         </div>
-        <div className="dashboard-health-orbit" style={healthStyle} aria-label={`整体可用性 ${Math.max(serverHealth, linkHealth)}%`}>
-          <div>
-            <span>整体可用性</span>
-            <strong>{Math.max(serverHealth, linkHealth)}%</strong>
-            <small>{displayStats.links_degraded ? `${displayStats.links_degraded} 项需要关注` : '所有系统稳定'}</small>
+        <ElectricBorder className="traffic-electric dashboard-usage-electric" color="#bdf33b" speed={0.8} chaos={0.08} borderRadius={8}>
+          <div className="dashboard-usage-orbit traffic-orbit" style={healthStyle} aria-label={`整体可用性 ${availability}%`}>
+            <div className="orbit-track">
+              <div className="orbit-core">
+                <span>整体可用性</span>
+                <strong>{availability}%</strong>
+                <small>{displayStats.links_degraded ? `${displayStats.links_degraded} 项需要关注` : '所有系统稳定'}</small>
+              </div>
+            </div>
+            <span className="orbit-node node-a" />
+            <span className="orbit-node node-b" />
+            <span className="orbit-node node-c" />
           </div>
-        </div>
+        </ElectricBorder>
       </section>
 
       <section className="dashboard-signal-grid" aria-label="核心指标">
@@ -180,46 +196,45 @@ export default function Dashboard() {
       </section>
 
       <div className="dashboard-content-grid">
-        <section className="dashboard-node-section" aria-labelledby="dashboard-node-heading">
+        <section className="dashboard-globe-section" aria-labelledby="dashboard-node-heading">
           <header className="dashboard-section-heading">
             <div>
               <span className="dashboard-kicker">NODE STATUS</span>
-              <h2 id="dashboard-node-heading">服务器状态</h2>
+              <h2 id="dashboard-node-heading">全球节点</h2>
             </div>
-            <span>{isDemoData ? '演示数据' : `${visibleServers.length} 个节点`}</span>
+            <div className="dashboard-globe-controls">
+              <span>{isDemoData ? '演示数据 · ' : ''}{visibleServers.length} 个节点</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setMotionEnabled((current) => !current)}
+                aria-pressed={motionEnabled}
+              >
+                {motionEnabled ? <PauseIcon /> : <PlayIcon />}
+                {motionEnabled ? '暂停' : '巡航'}
+              </Button>
+            </div>
           </header>
 
           {visibleServers.length ? (
-            <div className="dashboard-node-list">
-              {visibleServers.map((server, index) => {
-                const metrics = server.metrics
-                return (
-                  <button
-                    key={server.id}
-                    type="button"
-                    className={cn('dashboard-node-row', index === activeServerIndex && 'is-selected')}
-                    onClick={() => setActiveIndex(index)}
-                    aria-pressed={index === activeServerIndex}
-                  >
-                    <span className={cn('dashboard-node-state', serverStatusTone(server))} />
-                    <span className="dashboard-node-identity">
-                      <strong>{server.alias}</strong>
-                      <small>{server.country_code || '--'} · {server.location || '位置待补充'}</small>
-                    </span>
-                    <span className="dashboard-node-load">
-                      <small>CPU</small>
-                      <strong>{metrics ? `${Math.round(metrics.cpu_percent ?? 0)}%` : '--'}</strong>
-                    </span>
-                    <ChevronRightIcon />
-                  </button>
-                )
-              })}
-            </div>
+            <Suspense fallback={<div className="dashboard-globe-loading" role="status" aria-label="正在加载全球节点" />}>
+              <GlobeTopology
+                servers={displayServers}
+                chains={chains}
+                activeServerId={selectedServer?.id}
+                demoMode={isDemoData}
+                motionEnabled={motionEnabled}
+                onServerSelect={(serverId) => {
+                  const index = visibleServers.findIndex((server) => server.id === serverId)
+                  if (index >= 0) setActiveIndex(index)
+                }}
+              />
+            </Suspense>
           ) : (
             <div className="dashboard-node-empty">
               <ServerIcon />
               <strong>等待服务器接入</strong>
-              <span>添加服务器后，这里会显示实时节点状态。</span>
+              <span>添加服务器后，这里会显示全球节点状态。</span>
               <Link href="/servers">添加服务器</Link>
             </div>
           )}

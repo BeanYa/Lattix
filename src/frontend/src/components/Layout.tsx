@@ -17,7 +17,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import LattixMark from '@/components/LattixMark'
-import ParticleField from '@/components/ParticleField'
+import DotGrid from '@/components/react-bits/DotGrid'
 import ThemeToggle from '@/components/ThemeToggle'
 import UpdateOverlay from '@/components/UpdateOverlay'
 import { api, errorMessage } from '@/lib/api'
@@ -120,7 +120,18 @@ export default function Layout({ children }: { children: ReactNode }) {
 
   return (
     <div className="panel-canvas flex min-h-[100dvh] flex-col md:flex-row">
-      <ParticleField />
+      <div className="panel-dot-grid" aria-hidden="true">
+        <DotGrid
+          dotSize={2}
+          gap={24}
+          baseColor="#263129"
+          activeColor="#bdf33b"
+          proximity={130}
+          shockRadius={220}
+          shockStrength={3.5}
+          returnDuration={1.2}
+        />
+      </div>
       {foregroundPendingCount > 0 ? (
         <div
           role="status"
