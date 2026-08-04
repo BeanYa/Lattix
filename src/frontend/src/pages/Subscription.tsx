@@ -93,10 +93,46 @@ const previewInfo: SubInfo = {
 const previewClients: ClientInfo[] = [
   { name: 'Stash', platform: 'ios', deeplink: '#preview-stash', format: 'stash' },
   { name: 'Shadowrocket', platform: 'ios', deeplink: '#preview-shadowrocket', format: 'base64' },
-  { name: 'Clash Meta', platform: 'android', deeplink: '#preview-clash-meta', format: 'mihomo' },
-  { name: 'v2rayNG', platform: 'android', deeplink: '#preview-v2rayng', format: 'base64' },
-  { name: 'Mihomo Party', platform: 'windows', deeplink: '#preview-mihomo-party', format: 'mihomo' },
-  { name: 'Clash Verge', platform: 'macos', deeplink: '#preview-clash-verge', format: 'mihomo' },
+  {
+    name: 'Clash Meta',
+    platform: 'android',
+    deeplink: '#preview-clash-meta',
+    format: 'mihomo',
+    download_variants: [
+      { id: 'clash-meta-android-arm64', label: 'ARM64' },
+      { id: 'clash-meta-android-x64', label: 'x64' },
+    ],
+  },
+  {
+    name: 'v2rayNG',
+    platform: 'android',
+    deeplink: '',
+    format: 'base64',
+    download_variants: [
+      { id: 'v2rayng-android-arm64', label: 'ARM64' },
+      { id: 'v2rayng-android-x64', label: 'x64' },
+    ],
+  },
+  {
+    name: 'Mihomo Party',
+    platform: 'windows',
+    deeplink: '#preview-mihomo-party',
+    format: 'mihomo',
+    download_variants: [
+      { id: 'mihomo-party-windows-x64', label: 'x64' },
+      { id: 'mihomo-party-windows-arm64', label: 'ARM64' },
+    ],
+  },
+  {
+    name: 'Clash Verge',
+    platform: 'macos',
+    deeplink: '#preview-clash-verge',
+    format: 'mihomo',
+    download_variants: [
+      { id: 'clash-verge-macos-arm64', label: 'ARM64' },
+      { id: 'clash-verge-macos-x64', label: 'x64' },
+    ],
+  },
   { name: '通用订阅', platform: 'universal', deeplink: '', format: 'base64' },
 ]
 
@@ -650,7 +686,7 @@ export default function SubscriptionPage() {
                         <small>{platformLabels[client.platform] ?? client.platform} · {client.format}</small>
                       </span>
                       <span className="client-action-icon">
-                        {copied === label ? <CheckIcon /> : isAppStore ? <ArrowUpRight /> : isDownloadable ? <DownloadIcon /> : client.deeplink ? <ArrowUpRight /> : <CopyIcon />}
+                        {copied === label ? <CheckIcon /> : isAppStore ? <ArrowUpRight /> : client.deeplink ? <ArrowUpRight /> : isDownloadable ? <DownloadIcon /> : <CopyIcon />}
                       </span>
                     </>
                   )
@@ -669,6 +705,27 @@ export default function SubscriptionPage() {
                     )
                   }
                   if (isDownloadable) {
+                    if (client.deeplink) {
+                      return (
+                        <div key={label} className="client-row client-row-dual">
+                          <a
+                            className="client-row-main"
+                            href={client.deeplink}
+                            aria-label={`导入到 ${client.name}`}
+                          >
+                            {content}
+                          </a>
+                          <button
+                            type="button"
+                            className="client-row-download"
+                            onClick={() => openDownload(client)}
+                            aria-label={`下载 ${client.name}`}
+                          >
+                            <DownloadIcon />
+                          </button>
+                        </div>
+                      )
+                    }
                     return (
                       <button
                         key={label}

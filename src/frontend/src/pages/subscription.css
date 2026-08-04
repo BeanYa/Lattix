@@ -673,6 +673,50 @@
 
 .client-row:active { background: rgb(189 243 59 / 0.12); }
 
+.client-row-dual {
+  grid-template-columns: minmax(0, 1fr) 44px;
+  gap: 4px;
+}
+
+.client-row-main {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 32px;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--sub-text);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.client-row-download {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  justify-self: end;
+  border: 1px solid var(--sub-line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sub-muted);
+  cursor: pointer;
+  transition: transform 170ms ease, border-color 170ms ease, color 170ms ease;
+}
+
+.client-row-download svg { width: 14px; height: 14px; stroke-width: 1.8; }
+
+.client-row:hover .client-row-download {
+  border-color: var(--sub-accent);
+  color: var(--sub-accent);
+  transform: translate(1px, -1px);
+}
+
+.client-row-download:active { transform: translate(1px, -1px) scale(0.94); }
+
 .client-index {
   color: #667068;
   font-size: 10px;
