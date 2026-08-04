@@ -250,11 +250,6 @@ export const api = {
       ...(chainIds && chainIds.length ? { chain_ids: chainIds } : {}),
       ...(sub ?? {}),
     }),
-  updateUserExpiry: (userId: number, expiresAt: string | null) =>
-    requester.post<SubUser>('/api/user/update', {
-      user_id: userId,
-      expires_at: expiresAt,
-    }),
   setUserDisabled: (userId: number, disabled: boolean) =>
     requester.post<SubUser>('/api/user/update', { user_id: userId, disabled }),
   setUserAssignments: (userId: number, nodeIds: number[], chainIds: number[]) =>
@@ -282,6 +277,7 @@ export const api = {
     plan_name: string
     app_url: string
     routing: SubscriptionRoutingProfile
+    expires_at: string | null
   }) => requester.post<void>('/api/user/sub-settings', body),
   regenerateUserSubscription: (userId: number) =>
     requester.post<SubscriptionSnapshotStatus>('/api/user/regenerate-subscription', { user_id: userId }),

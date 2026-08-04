@@ -878,6 +878,8 @@ func (s *Server) fanoutRemoveUser(r *http.Request, uuid string) {
 }
 
 // handleUpdateUserSubSettings 处理 POST /api/user/sub-settings：更新用户级订阅配置。
+// 可带 expires_at（RFC3339 或 null，§9）：省略 = 不变；null = 清除（长期）。
+// 与 handleUpdateUser 一致，expires_at 不允许设为过去时间（400）。
 func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID          int64                     `json:"user_id"`
@@ -888,6 +890,7 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 		PlanName        string                    `json:"plan_name"` // 套餐名（空=用全局）
 		AppURL          string                    `json:"app_url"`   // 客户端跳转链接（空=用全局）
 		Routing         *subscriptionProfileInput `json:"routing"`
+		ExpiresAt       json.RawMessage           `json:"expires_at"` // 省略 = 不变；null = 清除（长期）
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -895,6 +898,15 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 	}
 	if req.UserID <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	u, err := s.st.UserByID(r.Context(), req.UserID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "用户不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if req.TrafficLimit < 0 {
@@ -917,6 +929,59 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 		}
 		routingProfile = &profile
 	}
+
+	// 有效期（§9）：改动可能复位 expired 停权标记，有效停权态跃迁时扇出 add_user 恢复。
+	now := time.Now()
+	expiryTouched := len(req.ExpiresAt) > 0
+	stoppedBefore := u.Disabled || u.Expired
+	if expiryTouched {
+		var expiresAt *time.Time
+		if string(req.ExpiresAt) != "null" {
+			var raw string
+			if err := json.Unmarshal(req.ExpiresAt, &raw); err != nil {
+				writeError(w, http.StatusBadRequest, "expires_at 格式无效（需 RFC3339 或 null）")
+				return
+			}
+			t, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "expires_at 格式无效（需 RFC3339）")
+				return
+			}
+			expiresAt = &t
+		}
+		if expiresAt != nil && !expiresAt.After(now) {
+			writeError(w, http.StatusBadRequest, "expires_at 不能是过去的时间")
+			return
+		}
+		if err := s.st.SetUserExpiry(r.Context(), req.UserID, expiresAt, now); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	stoppedAfter := u.Disabled || (u.Expired && !expiryTouched)
+	if stoppedBefore != stoppedAfter {
+		nodes, err := s.st.ListNodes(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		assigned, err := s.st.UserNodeIDs(r.Context(), req.UserID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if stoppedAfter {
+			s.fanoutUserDiff(r.Context(), u.UUID, nodes, nil, assigned)
+			log.Printf("panel: user %d (%s) 已停权，扇出 remove_user (%d 节点)", req.UserID, u.Name, len(assigned))
+		} else {
+			s.fanoutUserDiff(r.Context(), u.UUID, nodes, assigned, nil)
+			log.Printf("panel: user %d (%s) 已恢复，扇出 add_user (%d 节点)", req.UserID, u.Name, len(assigned))
+		}
+		if assignments, err := s.st.UserChainAssignments(r.Context(), req.UserID); err == nil {
+			s.reconcileAssignmentEndpoints(r.Context(), assignments, nil)
+		}
+	}
+
 	if err := s.st.SetUserSubSettings(r.Context(), req.UserID, req.TrafficLimit, req.TrafficResetDay, req.SubTitle, req.SubAnnouncement, strings.TrimSpace(req.PlanName), strings.TrimSpace(req.AppURL)); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "用户不存在")
@@ -937,10 +1002,16 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+	updated, err := s.st.UserByID(r.Context(), req.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	s.audit(r, "user.sub_settings.updated", nil, nil, map[string]any{
 		"user_id":           req.UserID,
 		"traffic_limit":     req.TrafficLimit,
 		"traffic_reset_day": req.TrafficResetDay,
+		"expires_at":        logTime(updated.ExpiresAt),
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

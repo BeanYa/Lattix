@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   BanIcon,
-  CalendarClockIcon,
   CircleCheckIcon,
   ExternalLinkIcon,
   EyeIcon,
@@ -158,6 +157,15 @@ function localInputToRFC3339(v: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString()
 }
 
+/** expiryResetDay 返回有效期日期中的“日”（1-31）；无效/空值返回空串。 */
+function expiryResetDay(v: string): string {
+  if (!v) {
+    return ''
+  }
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? '' : String(d.getDate())
+}
+
 export default function Users() {
   const { timezone } = useTimezone()
   const { confirm } = useAppDialog()
@@ -184,11 +192,6 @@ export default function Users() {
   const [createAppURL, setCreateAppURL] = useState('')
   const [createRouting, setCreateRouting] = useState<SubscriptionRoutingProfile>(defaultSubscriptionRouting)
 
-  const [expiryTarget, setExpiryTarget] = useState<SubUser | null>(null)
-  const [expiryValue, setExpiryValue] = useState('')
-  const [expirySaving, setExpirySaving] = useState(false)
-  const [expiryError, setExpiryError] = useState('')
-
   const [assignTarget, setAssignTarget] = useState<SubUser | null>(null)
   const [assignSelection, setAssignSelection] = useState<number[]>([])
   const [assignSaving, setAssignSaving] = useState(false)
@@ -201,6 +204,7 @@ export default function Users() {
 
   // 用户订阅设置对话框
   const [subTarget, setSubTarget] = useState<SubUser | null>(null)
+  const [subExpiresAt, setSubExpiresAt] = useState('')
   const [subTrafficLimit, setSubTrafficLimit] = useState('')
   const [subTrafficUnit, setSubTrafficUnit] = useState<TrafficUnit>('GB')
   const [subResetDay, setSubResetDay] = useState('')
@@ -325,29 +329,6 @@ export default function Users() {
     }
   }
 
-  const onOpenExpiry = (u: SubUser) => {
-    setExpiryTarget(u)
-    setExpiryValue(u.expires_at ? toLocalInput(u.expires_at) : '')
-    setExpiryError('')
-  }
-
-  const onSaveExpiry = async (clear: boolean) => {
-    if (!expiryTarget) {
-      return
-    }
-    setExpiryError('')
-    setExpirySaving(true)
-    try {
-      await api.updateUserExpiry(expiryTarget.id, clear ? null : localInputToRFC3339(expiryValue))
-      setExpiryTarget(null)
-      load()
-    } catch (err) {
-      setExpiryError(errorMessage(err))
-    } finally {
-      setExpirySaving(false)
-    }
-  }
-
   const onDelete = async (user: SubUser) => {
     if (!(await confirm({
       title: '删除用户',
@@ -417,6 +398,7 @@ export default function Users() {
   const onOpenSubSettings = (u: SubUser) => {
     const trafficLimit = formatTrafficLimit(u.traffic_limit)
     setSubTarget(u)
+    setSubExpiresAt(u.expires_at ? toLocalInput(u.expires_at) : '')
     setSubTrafficLimit(trafficLimit.value)
     setSubTrafficUnit(trafficLimit.unit)
     setSubResetDay(u.traffic_reset_day > 0 ? String(u.traffic_reset_day) : '')
@@ -444,6 +426,7 @@ export default function Users() {
         plan_name: subPlanName,
         app_url: subAppURL,
         routing: subRouting,
+        expires_at: localInputToRFC3339(subExpiresAt),
       })
       setSubTarget(null)
       load()
@@ -650,10 +633,6 @@ export default function Users() {
                   <Button variant="outline" size="sm" title="流量历史" onClick={() => onOpenHistory(u)}>
                     <HistoryIcon />
                   </Button>
-                  <Button variant="outline" size="sm" title="修改有效期" onClick={() => onOpenExpiry(u)}>
-                    <CalendarClockIcon />
-                    有效期
-                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
@@ -720,8 +699,12 @@ export default function Users() {
                   id="expires-at"
                   type="datetime-local"
                   value={expiresAt}
-                  onChange={(e) => setExpiresAt(e.target.value)}
+                  onChange={(e) => {
+                    setExpiresAt(e.target.value)
+                    if (!createResetDay) setCreateResetDay(expiryResetDay(e.target.value))
+                  }}
                 />
+                {expiresAt && <p className="text-xs text-muted-foreground">重置日默认取到期日（可修改）。</p>}
               </div>
               <div className="space-y-2">
                 <Label>分配链路（可选）</Label>
@@ -762,7 +745,7 @@ export default function Users() {
                       step={1}
                       value={createResetDay}
                       onChange={e => setCreateResetDay(e.target.value)}
-                      placeholder="重置日（留空=创建日）"
+                      placeholder="重置日（留空跟随有效期/创建日）"
                     />
                   </div>
                   <div className="space-y-1">
@@ -844,38 +827,6 @@ export default function Users() {
         </DialogContent>
       </Dialog>
       <QRDialog text={qrText} open={qrText !== ''} onClose={() => setQrText('')} />
-
-      <Dialog open={expiryTarget !== null} onOpenChange={(next) => !next && setExpiryTarget(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>修改有效期</DialogTitle>
-            <DialogDescription>
-              设置「{expiryTarget?.name}」的到期时刻；到期后自动停权（订阅保留但链路为空），
-              延长或清除有效期会恢复其链路。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="edit-expires-at">有效期（留空并保存即为长期）</Label>
-            <Input
-              id="edit-expires-at"
-              type="datetime-local"
-              value={expiryValue}
-              onChange={(e) => setExpiryValue(e.target.value)}
-            />
-          </div>
-          {expiryError && <p className="text-sm text-destructive">{expiryError}</p>}
-          <DialogFooter>
-            {expiryTarget?.expires_at && (
-              <Button variant="outline" disabled={expirySaving} onClick={() => onSaveExpiry(true)}>
-                清除有效期
-              </Button>
-            )}
-            <Button disabled={expirySaving} onClick={() => onSaveExpiry(false)}>
-              {expirySaving ? '保存中…' : '保存'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={assignTarget !== null} onOpenChange={(next) => !next && setAssignTarget(null)}>
         <DialogContent className="max-h-[85vh] overflow-y-auto">
@@ -1015,7 +966,7 @@ export default function Users() {
           <DialogHeader>
             <DialogTitle>订阅设置</DialogTitle>
             <DialogDescription>
-              「{subTarget?.name}」的落地页、分流策略与发布订阅快照。
+              「{subTarget?.name}」的有效期、落地页、分流策略与发布订阅快照。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -1030,7 +981,7 @@ export default function Users() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>重置日（1–31，留空为创建日）</Label>
+                <Label>重置日（1–31，留空跟随有效期到期日/创建日）</Label>
                 <Input
                   type="number"
                   min={1}
@@ -1041,6 +992,29 @@ export default function Users() {
                   placeholder="创建日"
                 />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="sub-expires-at">有效期（留空并保存即为长期）</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="sub-expires-at"
+                  type="datetime-local"
+                  className="flex-1"
+                  value={subExpiresAt}
+                  onChange={(e) => {
+                    setSubExpiresAt(e.target.value)
+                    if (!subResetDay) setSubResetDay(expiryResetDay(e.target.value))
+                  }}
+                />
+                {subExpiresAt && (
+                  <Button type="button" variant="outline" onClick={() => setSubExpiresAt('')}>
+                    清除有效期
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                到期后自动停权（订阅保留但链路为空）；延长或清除有效期会恢复其链路。
+              </p>
             </div>
             <div className="space-y-2">
               <Label>落地页标题覆盖</Label>
