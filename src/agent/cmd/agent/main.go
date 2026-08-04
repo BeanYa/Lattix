@@ -38,6 +38,7 @@ func main() {
 	token := flag.String("token", "", "bootstrap token（§11）；state 文件已有长期凭证时忽略本参数")
 	statePath := flag.String("state", "/opt/lattix-agent/data/state.json", "长期凭证状态文件路径")
 	settingsPath := flag.String("settings", "/opt/lattix-agent/data/settings.json", "面板同步设置文件路径")
+	serverSettingsPath := flag.String("server-settings", "/opt/lattix-agent/data/server-settings.json", "面板同步服务器设置文件路径")
 	xrayBin := flag.String("xray-bin", "/opt/lattix-agent/bin/xray", "xray 二进制路径")
 	xrayConfig := flag.String("xray-config", "/opt/lattix-agent/config/xray.json", "xray 配置文件路径（agent 独占管理，§6）")
 	xrayAPI := flag.String("xray-api", "127.0.0.1:10085", "xray gRPC API 地址")
@@ -72,6 +73,11 @@ func main() {
 		log.Printf("load settings: %v (using defaults)", err)
 	}
 	runtime := newRuntimeSettings(document)
+	serverDocument, err := state.LoadServerSettings(*serverSettingsPath)
+	if err != nil {
+		log.Printf("load server settings: %v (using defaults)", err)
+	}
+	serverRuntime := newServerRuntimeSettings(serverDocument)
 	panelRuntime := newPanelStateTracker(st.PanelObservation)
 	testManager, err := servertest.NewManager(filepath.Dir(*statePath), version)
 	if err != nil {
@@ -111,7 +117,7 @@ func main() {
 	}
 	failures := 0
 	for {
-		newTok, err := run(*panel, tok, *statePath, *settingsPath, connectionPath, mgr, &st, runtime, panelRuntime, testManager, commandQueue)
+		newTok, err := run(*panel, tok, *statePath, *settingsPath, *serverSettingsPath, connectionPath, mgr, &st, runtime, serverRuntime, panelRuntime, testManager, commandQueue)
 		saveConnectionStatus(false, err)
 		if newTok != "" {
 			tok = newTok // 内存兜底：state 落盘失败时仍能凭内存中的 token 重连（§5）
@@ -184,7 +190,7 @@ func (s *safeConn) writeControl(messageType int, data []byte) error {
 
 // run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因。
 // st 为已加载的落盘状态：session.open 换发后更新凭证字段并整体落盘（保留链 piece 记录）。
-func run(panel, token, statePath, settingsPath, connectionPath string, mgr *xray.Manager, st *state.State, runtime *runtimeSettings, panelRuntime *panelStateTracker, testManager *servertest.Manager, commandQueue *persistentCommandQueue) (string, error) {
+func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPath string, mgr *xray.Manager, st *state.State, runtime *runtimeSettings, serverRuntime *serverRuntimeSettings, panelRuntime *panelStateTracker, testManager *servertest.Manager, commandQueue *persistentCommandQueue) (string, error) {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+token)
 	conn, response, err := websocket.DefaultDialer.Dial(panel, header)
@@ -305,7 +311,7 @@ func run(panel, token, statePath, settingsPath, connectionPath string, mgr *xray
 	testManager.Attach(func(envelope shared.Envelope) error { return sc.writeJSON(envelope) })
 	defer testManager.Detach()
 	queueAttachment := commandQueue.Attach(func(envelope shared.Envelope) {
-		handle(sc, mgr, envelope, statePath, settingsPath, st, runtime, panelRuntime, latency, testManager, nil)
+		handle(sc, mgr, envelope, statePath, settingsPath, serverSettingsPath, st, runtime, serverRuntime, panelRuntime, latency, testManager, nil)
 	})
 	defer commandQueue.Detach(queueAttachment)
 	if err := state.SaveConnectionStatus(connectionPath, state.ConnectionStatus{
@@ -315,6 +321,8 @@ func run(panel, token, statePath, settingsPath, connectionPath string, mgr *xray
 		log.Printf("save connected status: %v", err)
 	}
 	sendSettingsSync(sc, runtime)
+	sendServerSettingsSync(sc, serverRuntime)
+	maybeReconcileXray(mgr, serverRuntime)
 
 	// Liveness remains active in every connected lifecycle state.
 	go func() {
@@ -425,7 +433,24 @@ func run(panel, token, statePath, settingsPath, connectionPath string, mgr *xray
 				}
 				return
 			}
-			if err := sendSettingsSync(sc, runtime); err != nil {
+		if err := sendSettingsSync(sc, runtime); err != nil {
+			return
+		}
+	}
+}()
+
+	go func() {
+		for {
+			timer := time.NewTimer(time.Duration(48+time.Now().UnixNano()%25) * time.Second)
+			select {
+			case <-timer.C:
+			case <-done:
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return
+			}
+			if err := sendServerSettingsSync(sc, serverRuntime); err != nil {
 				return
 			}
 		}
@@ -437,7 +462,7 @@ func run(panel, token, statePath, settingsPath, connectionPath string, mgr *xray
 			return newToken, err
 		}
 		conn.SetReadDeadline(time.Now().Add(wsReadTimeout)) // 任何消息到达即续期
-		handle(sc, mgr, env, statePath, settingsPath, st, runtime, panelRuntime, latency, testManager, commandQueue)
+		handle(sc, mgr, env, statePath, settingsPath, serverSettingsPath, st, runtime, serverRuntime, panelRuntime, latency, testManager, commandQueue)
 	}
 }
 
@@ -586,7 +611,7 @@ func runLatencyProbes(done <-chan struct{}, conn *websocket.Conn, sc *safeConn,
 }
 
 // handle 按消息类型分发：命令响应沿用请求的 type/request_id/trace_id。
-func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, settingsPath string, st *state.State, runtime *runtimeSettings, panelRuntime *panelStateTracker, latency *latencyTracker, testManager *servertest.Manager, commandQueue *persistentCommandQueue) {
+func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, settingsPath, serverSettingsPath string, st *state.State, runtime *runtimeSettings, serverRuntime *serverRuntimeSettings, panelRuntime *panelStateTracker, latency *latencyTracker, testManager *servertest.Manager, commandQueue *persistentCommandQueue) {
 	if env.Kind == shared.KindRequest && env.Type == shared.TypeLifecycleChanged {
 		var payload shared.LifecycleChangedPayload
 		if err := json.Unmarshal(env.Data, &payload); err != nil ||
@@ -607,12 +632,22 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		handleSettingsSyncResponse(sc, env, settingsPath, runtime)
 		return
 	}
+	if env.Kind == shared.KindResponse && env.Type == shared.TypeServerSettingsSync {
+		handleServerSettingsSyncResponse(sc, env, serverSettingsPath, serverRuntime, mgr)
+		return
+	}
 	if env.Kind == shared.KindResponse && testManager.HandleResponse(env) {
 		return
 	}
 	if env.Kind == shared.KindEvent && env.Type == shared.TypeSettingsChanged {
 		if err := sendSettingsSync(sc, runtime); err != nil {
 			log.Printf("settings changed pull: %v", err)
+		}
+		return
+	}
+	if env.Kind == shared.KindEvent && env.Type == shared.TypeServerSettingsChanged {
+		if err := sendServerSettingsSync(sc, serverRuntime); err != nil {
+			log.Printf("server settings changed pull: %v", err)
 		}
 		return
 	}
@@ -852,6 +887,79 @@ func handleSettingsSyncResponse(sc *safeConn, env shared.Envelope, settingsPath 
 	if err := sendSettingsSync(sc, runtime); err != nil {
 		log.Printf("confirm agent settings revision: %v", err)
 	}
+}
+
+func sendServerSettingsSync(sc *safeConn, runtime *serverRuntimeSettings) error {
+	_, panelID, revision, applyError := runtime.snapshot()
+	id := shared.NewMessageID()
+	return sc.writeJSON(shared.Envelope{
+		Kind: shared.KindRequest, Type: shared.TypeServerSettingsSync,
+		RequestID: id, TraceID: id,
+		Data: mustJSON(shared.ServerSettingsSyncPayload{
+			PanelInstanceID: panelID,
+			AppliedRevision: revision,
+			LastApplyError:  applyError,
+		}),
+	})
+}
+
+func handleServerSettingsSyncResponse(sc *safeConn, env shared.Envelope, path string, runtime *serverRuntimeSettings, mgr *xray.Manager) {
+	if env.Code != shared.CodeOK {
+		runtime.fail(env.Message)
+		log.Printf("server settings sync failed: %s: %s", env.Code, env.Message)
+		return
+	}
+	var result shared.ServerSettingsSyncResult
+	if err := json.Unmarshal(env.Data, &result); err != nil {
+		runtime.fail("invalid server settings sync response")
+		return
+	}
+	if !result.Changed {
+		return
+	}
+	if result.Settings == nil {
+		runtime.fail("server settings sync response omitted settings")
+		return
+	}
+	if err := result.Settings.Validate(); err != nil {
+		runtime.fail(err.Error())
+		log.Printf("reject panel server settings: %v", err)
+		return
+	}
+	if err := state.SaveServerSettings(path, *result.Settings); err != nil {
+		runtime.fail(err.Error())
+		log.Printf("save panel server settings: %v", err)
+		return
+	}
+	runtime.apply(*result.Settings)
+	log.Printf("applied server settings revision=%d", result.Settings.Revision)
+	if err := sendServerSettingsSync(sc, runtime); err != nil {
+		log.Printf("confirm server settings revision: %v", err)
+	}
+	maybeReconcileXray(mgr, runtime)
+}
+
+// maybeReconcileXray 自动对齐 xray 版本：期望固定版本且与当前不一致时异步升级；
+// 冷却期/升级中/已一致时不动作。latest 与未设置永不自动升级。
+func maybeReconcileXray(mgr *xray.Manager, runtime *serverRuntimeSettings) {
+	ver, running := mgr.Version()
+	if !running {
+		ver = ""
+	}
+	desired, ok := runtime.shouldReconcile(ver)
+	if !ok || !runtime.beginReconcile() {
+		return
+	}
+	go func() {
+		defer runtime.endReconcile()
+		log.Printf("server settings: 对齐 xray 版本 %s（当前 %s）", desired, ver)
+		if err := mgr.UpgradeXray(desired); err != nil {
+			runtime.markAttempt(desired, err)
+			log.Printf("server settings: xray 对齐失败: %v", err)
+			return
+		}
+		runtime.markAttempt(desired, nil)
+	}()
 }
 
 func parseData(sc *safeConn, env shared.Envelope, v any) bool {
