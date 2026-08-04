@@ -187,7 +187,7 @@ func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
 	if err := json.NewDecoder(statusRec.Body).Decode(&status); err != nil {
 		t.Fatal(err)
 	}
-	if len(status.Links) != 1 || status.Links[0].Label != "中转链路 1" || len(status.Links[0].Hops) != 2 {
+	if len(status.Links) != 1 || status.Links[0].Label != "shared" || len(status.Links[0].Hops) != 2 {
 		t.Fatalf("status links = %+v", status.Links)
 	}
 	if status.Links[0].Hops[0].Label != "入口" || status.Links[0].Hops[1].Label != "出口" ||

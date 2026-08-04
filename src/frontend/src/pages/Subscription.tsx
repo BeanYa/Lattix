@@ -102,7 +102,7 @@ const previewClients: ClientInfo[] = [
 
 const previewLinkStatus: LinkStatus[] = [
   {
-    label: '中转链路 1',
+    label: '🇯🇵东京-Out',
     hops: [
       { label: '入口', samples: [42, 38, 45, 39, 41, 44, 40, 43, 46, 48, 44, 39, 42, 41, 43, 46, 40, 38, 41, 44, 45, 43, 47, 42, 41, 39, 44, 40, 42, 45].map(previewLatencySample) },
       { label: '中转 1', samples: [82, 88, 91, 85, 92, 103, 97, 89, 84, 90, 94, 87, 98, 101, 93, 88, 95, 99, 86, 91, 88, 97, 102, 90, 89, 94, 98, 92, 87, 91].map(previewLatencySample) },
@@ -110,7 +110,7 @@ const previewLinkStatus: LinkStatus[] = [
     ],
   },
   {
-    label: '直连链路 1',
+    label: '🇸🇬新加坡-Direct',
     hops: [
       { label: '服务器', samples: [61, 58, 63, 59, 67, 64, 62, 70, 66, 61, 57, 64, 69, 60, 63, 65, 59, 68, 71, 62, 60, 66, 64, 58, 63, 67, 61, 59, 65, 62].map(previewLatencySample) },
     ],

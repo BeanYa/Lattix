@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/store"
@@ -50,7 +51,7 @@ type SubLinkHopStatus struct {
 	Samples []SubLatencySample `json:"samples"`
 }
 
-// SubLinkStatus 是一个实际出现在订阅内的直连或中转链路。
+// SubLinkStatus 是一个实际出现在订阅内的直连或中转链路，Label 为链路名称。
 type SubLinkStatus struct {
 	Label string             `json:"label"`
 	Hops  []SubLinkHopStatus `json:"hops"`
@@ -235,8 +236,12 @@ func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User) ([]Su
 			continue
 		}
 		seenDirectServers[node.ServerID] = true
+		name := strings.TrimSpace(node.Name)
+		if name == "" {
+			name = fmt.Sprintf("直连链路 %d", len(links)+1)
+		}
 		links = append(links, SubLinkStatus{
-			Label: fmt.Sprintf("直连链路 %d", len(links)+1),
+			Label: name,
 			Hops:  []SubLinkHopStatus{{Label: "服务器", Samples: subLatencySamples(samplesByServer[node.ServerID])}},
 		})
 	}
@@ -283,7 +288,11 @@ func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User) ([]Su
 				Samples: subLatencySamples(samplesByServer[hop.ServerID]),
 			})
 		}
-		links = append(links, SubLinkStatus{Label: fmt.Sprintf("中转链路 %d", chainNumber), Hops: hops})
+		name := strings.TrimSpace(chain.Name)
+		if name == "" {
+			name = fmt.Sprintf("中转链路 %d", chainNumber)
+		}
+		links = append(links, SubLinkStatus{Label: name, Hops: hops})
 	}
 	return links, nil
 }
