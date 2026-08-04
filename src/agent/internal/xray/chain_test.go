@@ -74,6 +74,9 @@ func TestRenderPortalInbound(t *testing.T) {
 	if len(sids) != 1 || sids[0] != "0123abcd" {
 		t.Fatalf("shortIds 不符: %v", rs["shortIds"])
 	}
+	if rs["minClientVer"] != "0" {
+		t.Fatalf("minClientVer 应显式为 0（26.7.11+ 默认 26.3.27 会拒绝旧客户端）: %v", rs["minClientVer"])
+	}
 	ss := nested(ib, "streamSettings")
 	if ss["network"] != "tcp" || ss["security"] != "reality" {
 		t.Fatalf("streamSettings 不符: %v", ss)

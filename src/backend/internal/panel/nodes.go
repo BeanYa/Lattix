@@ -474,12 +474,13 @@ func realityStreamSettings(req createNodeRequest) map[string]any {
 		"network":  req.Network,
 		"security": "reality",
 		"realitySettings": map[string]any{
-			"show":        false,
-			"dest":        req.Dest,
-			"xver":        0,
-			"serverNames": req.ServerNames,
-			"privateKey":  shared.PlaceholderRealityPrivateKey,
-			"shortIds":    []string{req.ShortID},
+			"show":         false,
+			"dest":         req.Dest,
+			"xver":         0,
+			"minClientVer": "0", // 26.7.11+ 缺省默认 26.3.27，会拒绝版本声明旧的客户端（mihomo/clash）
+			"serverNames":  req.ServerNames,
+			"privateKey":   shared.PlaceholderRealityPrivateKey,
+			"shortIds":     []string{req.ShortID},
 		},
 	}
 	switch req.Network {

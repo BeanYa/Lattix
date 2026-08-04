@@ -233,9 +233,10 @@ func renderPortalInbound(spec *shared.PortalSpec, tag string, port int, privateK
 			"network": "tcp", "security": "reality",
 			"realitySettings": map[string]any{
 				"show": false, "dest": spec.Dest, "xver": 0,
-				"serverNames": spec.ServerNames,
-				"privateKey":  privateKey,
-				"shortIds":    []string{spec.ShortID},
+				"minClientVer": "0", // 26.7.11+ 缺省默认 26.3.27，会拒绝旧客户端
+				"serverNames":  spec.ServerNames,
+				"privateKey":   privateKey,
+				"shortIds":     []string{spec.ShortID},
 			},
 		},
 	}
