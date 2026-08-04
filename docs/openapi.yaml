@@ -817,6 +817,16 @@ components:
           type: string
           default: Asia/Shanghai
           description: IANA timezone used for chain traffic day/month bucket boundaries.
+        server_settings:
+          type: object
+          additionalProperties: false
+          required: [xray_version]
+          properties:
+            xray_version:
+              type: string
+              nullable: true
+              default: latest
+              description: 面板级默认 xray 版本（latest 或 vX.Y.Z）；服务器可单独覆盖。
         agent: {$ref: '#/components/schemas/AgentSettings'}
         release_inspection: {$ref: '#/components/schemas/ReleaseInspectionSettings'}
         billing_inspection: {$ref: '#/components/schemas/InspectionSchedule'}
