@@ -103,6 +103,8 @@ type settingsDTO struct {
 	RequestLogDropped        uint64                    `json:"request_log_dropped"`
 	BackupIncludesLogs       bool                      `json:"backup_includes_logs"`
 	Agent                    shared.AgentSettings      `json:"agent"`
+	ServerSettings           shared.ServerSettings     `json:"server_settings"`          // 面板级默认（defaultsetting）
+	ServerSettingsRevision   int64                     `json:"server_settings_revision"` // 默认值当前 revision
 	ReleaseInspection        releaseInspectionSettings `json:"release_inspection"`
 	BillingInspection        inspectionSchedule        `json:"billing_inspection"`
 	ExchangeInspection       inspectionSchedule        `json:"exchange_rate_inspection"`
@@ -145,6 +147,11 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dto.Agent = agentSettings
+	dto.ServerSettings, dto.ServerSettingsRevision, err = s.st.DefaultServerSettings(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if s.opLog != nil {
 		dto.OperationLogLimit = s.opLog.MaxEntries()
 	}
@@ -217,6 +224,7 @@ type updateSettingsRequest struct {
 	RequestLogMaxMB       int                        `json:"request_log_max_mb"`
 	RequestLogLevel       string                     `json:"request_log_level"` // 空 = 默认 debug
 	Agent                 *shared.AgentSettings      `json:"agent"`
+	ServerSettings        *shared.ServerSettings     `json:"server_settings"` // nil = 不变
 	ReleaseInspection     *releaseInspectionSettings `json:"release_inspection"`
 	BillingInspection     *inspectionSchedule        `json:"billing_inspection"`
 	ExchangeInspection    *inspectionSchedule        `json:"exchange_rate_inspection"`
@@ -250,6 +258,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"release_inspection":           s.releaseInspectionSettings(ctx),
 		"billing_inspection":           s.billingInspectionSchedule(ctx),
 		"exchange_rate_inspection":     s.exchangeInspectionSchedule(ctx),
+		"server_settings":                func() shared.ServerSettings { v, _, _ := s.st.DefaultServerSettings(ctx); return v }(),
 		"reporting_currency":           firstNonEmpty(s.getSetting(ctx, store.SettingReportingCurrency), "CNY"),
 	}
 
@@ -276,6 +285,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		// The panel owns revision assignment; clients edit only the values.
 		req.Agent.Revision = 1
 		if err := req.Agent.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if req.ServerSettings != nil {
+		if err := req.ServerSettings.Validate(); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -476,6 +491,31 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	set(store.SettingReportingCurrency, req.ReportingCurrency)
 
+	after := map[string]any{
+		"timezone": req.Timezone, "traffic_timezone": req.TrafficTimezone,
+		"public_url": req.PublicURL, "tls_mode": req.TLSMode,
+		"tls_domain": tlsDomain, "acme_domain": acmeDomain, "acme_email": strings.TrimSpace(req.ACMEEmail),
+		"alert_webhook_set":            req.AlertWebhookURL != "",
+		"alert_telegram_chat_id":       strings.TrimSpace(req.AlertTelegramChatID),
+		"alert_telegram_bot_token_set": before["alert_telegram_bot_token_set"].(bool) || strings.TrimSpace(req.AlertTelegramBotToken) != "",
+		"operation_log_limit":          req.OperationLogLimit, "request_log_max_mb": req.RequestLogMaxMB,
+		"request_log_level":            req.RequestLogLevel,
+		"release_inspection": before["release_inspection"],
+		"billing_inspection": before["billing_inspection"], "exchange_rate_inspection": before["exchange_rate_inspection"],
+		"server_settings":     before["server_settings"],
+		"reporting_currency": req.ReportingCurrency,
+	}
+	var serverSettingsRevision int64
+	var err error
+	if req.ServerSettings != nil {
+		serverSettingsRevision, err = s.st.UpdateDefaultServerSettings(ctx, *req.ServerSettings)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		after["server_settings"] = *req.ServerSettings
+	}
+
 	updatedAgent, err := s.st.ApplySettings(ctx, mutations, req.Agent)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -497,20 +537,10 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if updatedAgent != nil {
 		s.disp.NotifyAgentSettingsChanged(ctx, updatedAgent.Revision)
 	}
-
-	after := map[string]any{
-		"timezone": req.Timezone, "traffic_timezone": req.TrafficTimezone,
-		"public_url": req.PublicURL, "tls_mode": req.TLSMode,
-		"tls_domain": tlsDomain, "acme_domain": acmeDomain, "acme_email": strings.TrimSpace(req.ACMEEmail),
-		"alert_webhook_set":            req.AlertWebhookURL != "",
-		"alert_telegram_chat_id":       strings.TrimSpace(req.AlertTelegramChatID),
-		"alert_telegram_bot_token_set": before["alert_telegram_bot_token_set"].(bool) || strings.TrimSpace(req.AlertTelegramBotToken) != "",
-		"operation_log_limit":          req.OperationLogLimit, "request_log_max_mb": req.RequestLogMaxMB,
-		"request_log_level":            req.RequestLogLevel,
-		"release_inspection": before["release_inspection"],
-		"billing_inspection": before["billing_inspection"], "exchange_rate_inspection": before["exchange_rate_inspection"],
-		"reporting_currency": req.ReportingCurrency,
+	if req.ServerSettings != nil {
+		s.disp.NotifyServerSettingsChanged(ctx, 0, serverSettingsRevision)
 	}
+
 	if req.ReleaseInspection != nil {
 		after["release_inspection"] = *req.ReleaseInspection
 	}
