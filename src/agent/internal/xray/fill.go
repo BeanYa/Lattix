@@ -84,6 +84,9 @@ func (m *Manager) fillTemplate(port int, tag string, vc shared.VirtualConfig, us
 	if err := json.Unmarshal([]byte(t), &tmpl); err != nil {
 		return nil, nil, fmt.Errorf("模板填充后不是合法 JSON: %w", err)
 	}
+	// 26.7.11+ xray 在 realitySettings 缺省时默认 minClientVer=26.3.27，会拒绝版本
+	// 声明较旧的客户端（mihomo/clash 等）；旧面板生成的模板缺该字段，填充时兜底注入。
+	pinRealityMinClientVer(tmpl)
 	// dest 预检：模板 dest 不可达时按白名单逐个尝试（§6 步骤 2）；非 reality 模板自动跳过。
 	if err := ensureDestReachable(tmpl, destCandidates); err != nil {
 		return nil, nil, err
@@ -176,6 +179,43 @@ func clientCredentialEntry(protocol, flow, method string, credential shared.Clie
 		}
 		return e
 	}
+}
+
+// pinRealityMinClientVer 确保 Reality 模板显式声明 minClientVer=0：xray 26.7.11+
+// 在字段缺省时默认要求客户端版本 ≥ 26.3.27，会拒绝版本声明较旧的客户端；显式 0
+// 恢复不限版本行为。模板已含该字段时原样保留（尊重面板的显式设置）。
+// 非 reality 模板（无 realitySettings）自动跳过。
+func pinRealityMinClientVer(tmpl map[string]json.RawMessage) {
+	ssRaw, ok := tmpl["streamSettings"]
+	if !ok {
+		return
+	}
+	var ss map[string]json.RawMessage
+	if err := json.Unmarshal(ssRaw, &ss); err != nil {
+		return
+	}
+	rsRaw, ok := ss["realitySettings"]
+	if !ok {
+		return
+	}
+	var rs map[string]json.RawMessage
+	if err := json.Unmarshal(rsRaw, &rs); err != nil {
+		return
+	}
+	if _, ok := rs["minClientVer"]; ok {
+		return
+	}
+	rs["minClientVer"] = json.RawMessage(`"0"`)
+	rsRaw, err := json.Marshal(rs)
+	if err != nil {
+		return
+	}
+	ss["realitySettings"] = rsRaw
+	ssRaw, err = json.Marshal(ss)
+	if err != nil {
+		return
+	}
+	tmpl["streamSettings"] = ssRaw
 }
 
 // ensureDestReachable 检查模板 realitySettings.dest 的 TCP+TLS1.3 可达性：

@@ -117,6 +117,62 @@ func TestRenderBridgeOutbound(t *testing.T) {
 	}
 }
 
+// TestPinRealityMinClientVer 验证填充兜底：旧面板生成的 Reality 模板缺 minClientVer，
+// 26.7.11+ xray 缺省默认 26.3.27 会拒绝旧客户端，须注入显式 0；已显式声明的不覆盖。
+func TestPinRealityMinClientVer(t *testing.T) {
+	asRaw := func(t *testing.T, s string) map[string]json.RawMessage {
+		t.Helper()
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(s), &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	check := func(t *testing.T, tmpl map[string]json.RawMessage, want string) {
+		t.Helper()
+		b, err := json.Marshal(tmpl)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		rs := nested(m, "streamSettings", "realitySettings")
+		if rs == nil {
+			t.Fatalf("缺少 realitySettings: %v", m)
+		}
+		if rs["minClientVer"] != want {
+			t.Fatalf("minClientVer = %v, want %q: %v", rs["minClientVer"], want, m)
+		}
+	}
+
+	// 旧模板缺 minClientVer → 注入 "0"。
+	tmpl := asRaw(t, `{
+		"tag": "node_1", "port": 443, "protocol": "vless",
+		"streamSettings": {"network": "tcp", "security": "reality",
+			"realitySettings": {"show": false, "dest": "dl.google.com:443"}}
+	}`)
+	pinRealityMinClientVer(tmpl)
+	check(t, tmpl, "0")
+
+	// 已显式声明（面板新模板）→ 原样保留。
+	explicit := asRaw(t, `{
+		"tag": "node_2", "port": 443, "protocol": "vless",
+		"streamSettings": {"network": "tcp", "security": "reality",
+			"realitySettings": {"minClientVer": "0", "dest": "dl.google.com:443"}}
+	}`)
+	pinRealityMinClientVer(explicit)
+	check(t, explicit, "0")
+
+	// 非 reality 模板 → 不动。
+	plain := asRaw(t, `{"tag": "node_3", "port": 8388, "protocol": "shadowsocks"}`)
+	pinRealityMinClientVer(plain)
+	if _, ok := plain["streamSettings"]; ok {
+		t.Fatalf("非 reality 模板不应被改动: %v", plain)
+	}
+}
+
 // TestRenderForwardInbound 对照 PoC 的 entry dokodemo-door inbound 断言关键字段。
 func TestRenderForwardInbound(t *testing.T) {
 	spec := &shared.ForwardSpec{TargetAddress: "127.0.0.1", TargetPort: 21001}

@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -196,6 +198,112 @@ func TestOpenRollsBackFailedMigration(t *testing.T) {
 	columns := columnNames(t, db, "servers")
 	if columns["credential_epoch"] {
 		t.Fatal("migration changes were not rolled back")
+	}
+}
+
+func TestNormalizeNodeRealityMinClientVer(t *testing.T) {
+	reality := `{"protocol":"vless","port":0,"template":{"tag":"node_1","port":443,` +
+		`"protocol":"vless","streamSettings":{"network":"tcp","security":"reality",` +
+		`"realitySettings":{"show":false,"dest":"dl.google.com:443","serverNames":["dl.google.com"],` +
+		`"privateKey":"{{PRIVATE_KEY}}","shortIds":["0123abcd"]}}}}`
+	fixed, err := normalizeNodeRealityMinClientVer([]byte(reality))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vc struct {
+		Template struct {
+			StreamSettings struct {
+				RealitySettings map[string]any `json:"realitySettings"`
+			} `json:"streamSettings"`
+		} `json:"template"`
+	}
+	if err := json.Unmarshal(fixed, &vc); err != nil {
+		t.Fatal(err)
+	}
+	if vc.Template.StreamSettings.RealitySettings["minClientVer"] != "0" {
+		t.Fatalf("minClientVer 应被注入 0: %s", fixed)
+	}
+	if string(fixed) == reality {
+		t.Fatal("缺 minClientVer 的模板应被改写")
+	}
+
+	// 已显式声明 → 原样保留。
+	explicit := `{"protocol":"vless","template":{"streamSettings":{"security":"reality",` +
+		`"realitySettings":{"minClientVer":"0"}}}}`
+	if out, err := normalizeNodeRealityMinClientVer([]byte(explicit)); err != nil || string(out) != explicit {
+		t.Fatalf("已声明 minClientVer 的模板不应被改写: %s %v", out, err)
+	}
+
+	// 非 reality 模板（无 realitySettings）→ 原样保留。
+	plain := `{"protocol":"shadowsocks","template":{"port":8388}}`
+	if out, err := normalizeNodeRealityMinClientVer([]byte(plain)); err != nil || string(out) != plain {
+		t.Fatalf("非 reality 模板不应被改写: %s %v", out, err)
+	}
+
+	// 坏 JSON → 报错（交由调用方失败启动，避免静默吞损坏数据）。
+	if _, err := normalizeNodeRealityMinClientVer([]byte(`not json`)); err == nil {
+		t.Fatal("坏 JSON 应返回错误")
+	}
+}
+
+func TestOpenMigratesNodeRealityMinClientVer(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nodes.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverID, err := st.CreateServer(context.Background(), "legacy", "203.0.113.10", "token", MachineTypeDirect, "", "", "JP", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := `{"protocol":"vless","template":{"tag":"node_1","port":443,"protocol":"vless",` +
+		`"streamSettings":{"network":"tcp","security":"reality",` +
+		`"realitySettings":{"dest":"dl.google.com:443","serverNames":["dl.google.com"],` +
+		`"privateKey":"{{PRIVATE_KEY}}","shortIds":["0123abcd"]}}}}`
+	good := `{"protocol":"vless","template":{"streamSettings":{"security":"reality",` +
+		`"realitySettings":{"minClientVer":"0","dest":"dl.google.com:443"}}}}`
+	if _, err := st.InsertNode(context.Background(), "stale", serverID, "vless", nil, json.RawMessage(stale)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.InsertNode(context.Background(), "good", serverID, "vless", nil, json.RawMessage(good)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// 重启触发迁移：存量缺 minClientVer 的模板被修复，已修复的不动。
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	rows, err := st.db.Query(`SELECT name, config_template FROM nodes ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	got := map[string]string{}
+	for rows.Next() {
+		var name, tmpl string
+		if err := rows.Scan(&name, &tmpl); err != nil {
+			t.Fatal(err)
+		}
+		got[name] = tmpl
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"stale", "good"} {
+		if !strings.Contains(got[name], `"minClientVer":"0"`) {
+			t.Fatalf("节点 %s 模板应含 minClientVer=0: %s", name, got[name])
+		}
+	}
+	if got["good"] != good {
+		t.Fatalf("已修复模板不应被改写: %s", got["good"])
+	}
+	if !strings.Contains(got["stale"], `"shortIds":["0123abcd"]`) {
+		t.Fatalf("修复不应丢失模板其他字段: %s", got["stale"])
 	}
 }
 

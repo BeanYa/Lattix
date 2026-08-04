@@ -2,8 +2,11 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
+
+	"lattix/shared"
 )
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
@@ -42,6 +45,9 @@ func initializeSchema(db *sql.DB) error {
 	}
 	if err := migrateCustomExchangeRates(tx); err != nil {
 		return fmt.Errorf("migrate custom exchange rates: %w", err)
+	}
+	if err := migrateNodeRealityMinClientVer(tx); err != nil {
+		return fmt.Errorf("migrate node reality templates: %w", err)
 	}
 	if _, err := tx.Exec(`INSERT OR IGNORE INTO server_traffic_plans
 		(server_id, quota_bytes, accounting_mode, reset_anchor_on, reset_count, reset_unit, tracking_started_on)
@@ -332,4 +338,73 @@ func migrateCustomExchangeRates(tx *sql.Tx) error {
 	_, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_exchange_rates_source
 		ON custom_exchange_rates(source_currency)`)
 	return err
+}
+
+// migrateNodeRealityMinClientVer 为存量节点模板兜底注入 Reality minClientVer=0：
+// xray 26.7.11+ 在 realitySettings 缺省时默认要求客户端版本 ≥ 26.3.27，会拒绝
+// 版本声明较旧的客户端（mihomo/clash 等）；面板在 26.7 默认值引入前创建的模板
+// 缺失该字段，须在升级后修复存量数据。幂等：已含 minClientVer 的模板原样保留。
+func migrateNodeRealityMinClientVer(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT id, config_template FROM nodes`)
+	if err != nil {
+		return fmt.Errorf("query node templates: %w", err)
+	}
+	defer rows.Close()
+	type nodeTemplate struct {
+		id  int64
+		raw string
+	}
+	var stale []nodeTemplate
+	for rows.Next() {
+		var nt nodeTemplate
+		if err := rows.Scan(&nt.id, &nt.raw); err != nil {
+			return fmt.Errorf("scan node template: %w", err)
+		}
+		fixed, err := normalizeNodeRealityMinClientVer([]byte(nt.raw))
+		if err != nil || string(fixed) == nt.raw {
+			continue
+		}
+		stale = append(stale, nodeTemplate{id: nt.id, raw: string(fixed)})
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, nt := range stale {
+		if _, err := tx.Exec(`UPDATE nodes SET config_template = ? WHERE id = ?`, nt.raw, nt.id); err != nil {
+			return fmt.Errorf("update node %d template: %w", nt.id, err)
+		}
+	}
+	return nil
+}
+
+// normalizeNodeRealityMinClientVer 在节点虚拟配置的 Reality 模板中注入 minClientVer=0
+// （缺省时新 xray 默认 26.3.27 拒绝旧客户端）。无 realitySettings 或已显式声明的模板
+// 原样返回（第二个返回值同输入时由调用方跳过更新）。
+func normalizeNodeRealityMinClientVer(raw []byte) ([]byte, error) {
+	var vc shared.VirtualConfig
+	if err := json.Unmarshal(raw, &vc); err != nil {
+		return nil, err
+	}
+	var tmpl map[string]any
+	if err := json.Unmarshal(vc.Template, &tmpl); err != nil {
+		return nil, err
+	}
+	ss, ok := tmpl["streamSettings"].(map[string]any)
+	if !ok {
+		return raw, nil
+	}
+	rs, ok := ss["realitySettings"].(map[string]any)
+	if !ok {
+		return raw, nil
+	}
+	if _, ok := rs["minClientVer"]; ok {
+		return raw, nil
+	}
+	rs["minClientVer"] = "0"
+	out, err := json.Marshal(tmpl)
+	if err != nil {
+		return nil, err
+	}
+	vc.Template = out
+	return json.Marshal(vc)
 }
