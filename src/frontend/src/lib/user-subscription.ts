@@ -41,3 +41,31 @@ export function formatTrafficLimit(bytes: number): { value: string; unit: Traffi
   }
   return { value: String(bytes / TRAFFIC_UNIT_BYTES.MB), unit: 'MB' }
 }
+
+/** toLocalDateInput 把 RFC3339 时间转成 date 输入框所需的本地日期（yyyy-MM-dd）；无效返回空串。 */
+export function toLocalDateInput(t: string): string {
+  const d = new Date(t)
+  if (Number.isNaN(d.getTime())) {
+    return ''
+  }
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+/** localDateToRFC3339EndOfDay 把 date 输入框值（yyyy-MM-dd）转成所选日期当天结束（本地 23:59:59）的 RFC3339（UTC）；空串/无效返回 null。 */
+export function localDateToRFC3339EndOfDay(v: string): string | null {
+  if (!v) {
+    return null
+  }
+  const d = new Date(`${v}T23:59:59`)
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
+}
+
+/** expiryDateDay 返回所选日期中的“日”（1-31）；无效/空值返回空串。 */
+export function expiryDateDay(v: string): string {
+  if (!v) {
+    return ''
+  }
+  const d = new Date(`${v}T00:00:00`)
+  return Number.isNaN(d.getTime()) ? '' : String(d.getDate())
+}

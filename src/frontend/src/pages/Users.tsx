@@ -53,9 +53,12 @@ import { buildLinkOptions } from '@/lib/links'
 import { defaultSubscriptionRouting } from '@/lib/subscription-routing'
 import { useTimezone } from '@/lib/timezone'
 import {
+  expiryDateDay,
   formatTrafficLimit,
+  localDateToRFC3339EndOfDay,
   parseTrafficLimit,
   parseTrafficResetDay,
+  toLocalDateInput,
   TRAFFIC_UNITS,
   type TrafficUnit,
 } from '@/lib/user-subscription'
@@ -141,31 +144,6 @@ function TrafficLimitInput({
   )
 }
 
-/** toLocalInput 把 RFC3339 时间转成 datetime-local 输入框所需的本地格式（yyyy-MM-ddTHH:mm）。 */
-function toLocalInput(t: string): string {
-  const d = new Date(t)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-/** localInputToRFC3339 把 datetime-local 值转成 RFC3339（UTC）；空串返回 null。 */
-function localInputToRFC3339(v: string): string | null {
-  if (!v) {
-    return null
-  }
-  const d = new Date(v)
-  return Number.isNaN(d.getTime()) ? null : d.toISOString()
-}
-
-/** expiryResetDay 返回有效期日期中的“日”（1-31）；无效/空值返回空串。 */
-function expiryResetDay(v: string): string {
-  if (!v) {
-    return ''
-  }
-  const d = new Date(v)
-  return Number.isNaN(d.getTime()) ? '' : String(d.getDate())
-}
-
 export default function Users() {
   const { timezone } = useTimezone()
   const { confirm } = useAppDialog()
@@ -205,6 +183,7 @@ export default function Users() {
   // 用户订阅设置对话框
   const [subTarget, setSubTarget] = useState<SubUser | null>(null)
   const [subExpiresAt, setSubExpiresAt] = useState('')
+  const [subExpiryTouched, setSubExpiryTouched] = useState(false)
   const [subTrafficLimit, setSubTrafficLimit] = useState('')
   const [subTrafficUnit, setSubTrafficUnit] = useState<TrafficUnit>('GB')
   const [subResetDay, setSubResetDay] = useState('')
@@ -309,7 +288,7 @@ export default function Users() {
       const appURL = createAppURL.trim()
       const res = await api.createUser(
         name.trim(),
-        localInputToRFC3339(expiresAt),
+        localDateToRFC3339EndOfDay(expiresAt),
         createLinkSel,
         {
           traffic_limit: trafficLimit,
@@ -398,7 +377,8 @@ export default function Users() {
   const onOpenSubSettings = (u: SubUser) => {
     const trafficLimit = formatTrafficLimit(u.traffic_limit)
     setSubTarget(u)
-    setSubExpiresAt(u.expires_at ? toLocalInput(u.expires_at) : '')
+    setSubExpiresAt(u.expires_at ? toLocalDateInput(u.expires_at) : '')
+    setSubExpiryTouched(false)
     setSubTrafficLimit(trafficLimit.value)
     setSubTrafficUnit(trafficLimit.unit)
     setSubResetDay(u.traffic_reset_day > 0 ? String(u.traffic_reset_day) : '')
@@ -426,7 +406,7 @@ export default function Users() {
         plan_name: subPlanName,
         app_url: subAppURL,
         routing: subRouting,
-        expires_at: localInputToRFC3339(subExpiresAt),
+        expires_at: subExpiryTouched ? localDateToRFC3339EndOfDay(subExpiresAt) : subTarget.expires_at,
       })
       setSubTarget(null)
       load()
@@ -694,14 +674,14 @@ export default function Users() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="expires-at">有效期（可选，留空为长期）</Label>
+                <Label htmlFor="expires-at">有效期（可选，留空为长期；选日期则当天 23:59 到期）</Label>
                 <Input
                   id="expires-at"
-                  type="datetime-local"
+                  type="date"
                   value={expiresAt}
                   onChange={(e) => {
                     setExpiresAt(e.target.value)
-                    if (!createResetDay) setCreateResetDay(expiryResetDay(e.target.value))
+                    if (!createResetDay) setCreateResetDay(expiryDateDay(e.target.value))
                   }}
                 />
                 {expiresAt && <p className="text-xs text-muted-foreground">重置日默认取到期日（可修改）。</p>}
@@ -994,20 +974,21 @@ export default function Users() {
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="sub-expires-at">有效期（留空并保存即为长期）</Label>
+              <Label htmlFor="sub-expires-at">有效期（留空并保存即为长期；选日期则当天 23:59 到期）</Label>
               <div className="flex items-center gap-2">
                 <Input
                   id="sub-expires-at"
-                  type="datetime-local"
+                  type="date"
                   className="flex-1"
                   value={subExpiresAt}
                   onChange={(e) => {
                     setSubExpiresAt(e.target.value)
-                    if (!subResetDay) setSubResetDay(expiryResetDay(e.target.value))
+                    setSubExpiryTouched(true)
+                    if (!subResetDay) setSubResetDay(expiryDateDay(e.target.value))
                   }}
                 />
                 {subExpiresAt && (
-                  <Button type="button" variant="outline" onClick={() => setSubExpiresAt('')}>
+                  <Button type="button" variant="outline" onClick={() => { setSubExpiresAt(''); setSubExpiryTouched(true) }}>
                     清除有效期
                   </Button>
                 )}
