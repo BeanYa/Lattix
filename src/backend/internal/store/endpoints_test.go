@@ -112,6 +112,42 @@ func TestAccessTrafficIsAttributedOnceToUserAndChain(t *testing.T) {
 	}
 }
 
+func TestUserUUIDByAssignment(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", MachineTypeDirect, "", "", "US", "")
+	config := json.RawMessage(`{"protocol":"vless","template":{}}`)
+	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := st.CreateInitialChainDeployment(ctx, InitialChainDeployment{
+		Name: "direct", ServiceServerID: serverID, ServiceProtocol: shared.ProtocolVLESS,
+		ServiceConfig: config, EndpointID: endpoint.ID, ServiceUUID: "service-uuid",
+		TrafficMultiplierMilli: 1000,
+		Hops:                   []InitialChainHop{{ServerID: serverID, Role: HopRoleExit}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	userID, _ := st.InsertUser(ctx, "user", "user-uuid", "sub-token", nil)
+	added, _, err := st.SetUserChains(ctx, userID, []int64{deployment.ChainID})
+	if err != nil || len(added) != 1 {
+		t.Fatalf("assignment: added=%+v err=%v", added, err)
+	}
+	uuid, err := st.UserUUIDByAssignment(ctx, added[0].ID)
+	if err != nil || uuid != "user-uuid" {
+		t.Fatalf("UserUUIDByAssignment(%d) = %q, %v", added[0].ID, uuid, err)
+	}
+	if _, err := st.UserUUIDByAssignment(ctx, 999999); err == nil {
+		t.Fatal("unknown assignment id unexpectedly resolved")
+	}
+}
+
 func TestValidateAssignableChainsRejectsLegacyChain(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(":memory:")

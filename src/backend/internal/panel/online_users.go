@@ -1,17 +1,27 @@
 package panel
 
 import (
+	"context"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"lattix/backend/internal/store"
 	"lattix/shared"
 )
+
+// IdentityResolver 把 xray 用户身份（email）映射为用户 UUID；返回空串表示无法归属。
+// 共享端点身份为 access:<assignment_id>（dispatch 生成），需经 user_chain_assignments
+// 换算为用户 UUID（面板注入 store 实现）；用户 UUID 身份不需要解析。
+type IdentityResolver func(identity string) string
 
 // OnlineUsersTracker 聚合各服务器上报的在线用户快照（telemetry 帧全量覆盖）。
 type OnlineUsersTracker struct {
 	mu        sync.Mutex
 	servers   map[int64]map[string]map[string]struct{} // serverID → user → IP set
 	updatedAt map[int64]time.Time
+	resolve   IdentityResolver // 将 access:<assignment_id> 身份换算为用户 UUID（nil = 不换算）
 }
 
 // FreshnessWindow 是服务器快照的新鲜度窗口：窗口内无更新的服务器记录不计入。
@@ -40,14 +50,48 @@ func (t *OnlineUsersTracker) ApplySnapshot(serverID int64, users []shared.Online
 	}
 	byUser := make(map[string]map[string]struct{}, len(users))
 	for _, u := range users {
+		key := u.User
+		switch {
+		case strings.HasPrefix(key, "tunnel:"):
+			continue // 链内部转发身份，不是业务用户
+		case strings.HasPrefix(key, "access:"):
+			if t.resolve == nil {
+				continue
+			}
+			if mapped := t.resolve(key); mapped != "" {
+				key = mapped
+			} else {
+				continue // 分配已删除等无法归属的 access 身份
+			}
+		}
 		ips := make(map[string]struct{}, len(u.IPs))
 		for _, ip := range u.IPs {
 			ips[ip] = struct{}{}
 		}
-		byUser[u.User] = ips
+		byUser[key] = ips
 	}
 	t.servers[serverID] = byUser
 	t.updatedAt[serverID] = now
+}
+
+// onlineUserResolver 构造把 xray 身份映射为用户 UUID 的解析器（面板注入 store）：
+// access:<assignment_id> 经 user_chain_assignments 换算为用户 UUID；其余身份返回空串
+// （用户 UUID 原样使用；tunnel: 与未知 access: 由 tracker 丢弃）。
+func onlineUserResolver(st *store.Store) IdentityResolver {
+	return func(identity string) string {
+		if !strings.HasPrefix(identity, "access:") {
+			return ""
+		}
+		id, err := strconv.ParseInt(strings.TrimPrefix(identity, "access:"), 10, 64)
+		if err != nil || id <= 0 {
+			return ""
+		}
+		uuid, err := st.UserUUIDByAssignment(context.Background(), id)
+		if err != nil {
+			return ""
+		}
+		return uuid
+	}
 }
 
 // ConnectionsByUser 返回某用户跨服务器去重后的在线连接数；超过 FreshnessWindow 的服务器记录不计入。

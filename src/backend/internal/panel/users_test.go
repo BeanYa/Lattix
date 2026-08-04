@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -145,6 +146,56 @@ func TestResetUserSubscriptionTokenMissingUser(t *testing.T) {
 	}
 	if resp.Code != shared.CodeNotFound {
 		t.Fatalf("code = %q, want %q", resp.Code, shared.CodeNotFound)
+	}
+}
+
+func TestHandleListUsersOnlineConnectionsAccessIdentity(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	config := json.RawMessage(`{"protocol":"vless","template":{}}`)
+	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+		Name: "direct", ServiceServerID: serverID, ServiceProtocol: shared.ProtocolVLESS,
+		ServiceConfig: config, EndpointID: endpoint.ID, ServiceUUID: "service-uuid",
+		TrafficMultiplierMilli: 1000,
+		Hops:                   []store.InitialChainHop{{ServerID: serverID, Role: store.HopRoleExit}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	userID, _ := st.InsertUser(ctx, "alice", "11111111-2222-3333-4444-555555555555", "alice-token", nil)
+	added, _, err := st.SetUserChains(ctx, userID, []int64{deployment.ChainID})
+	if err != nil || len(added) != 1 {
+		t.Fatalf("assignment: added=%+v err=%v", added, err)
+	}
+	server := &Server{st: st, onlineUsers: &OnlineUsersTracker{resolve: onlineUserResolver(st)}}
+	server.onlineUsers.ApplySnapshot(1, []shared.OnlineUserStat{
+		{User: "access:" + strconv.FormatInt(added[0].ID, 10), IPs: []string{"1.1.1.1", "2.2.2.2"}},
+	}, time.Now().UTC())
+	rec := httptest.NewRecorder()
+	server.handleListUsers(rec, httptest.NewRequest(http.MethodGet, "/api/user/list", nil))
+	var resp struct {
+		Code string `json:"code"`
+		Data []struct {
+			OnlineConnections int `json:"online_connections"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != shared.CodeOK || len(resp.Data) != 1 {
+		t.Fatalf("code = %q data = %+v", resp.Code, resp.Data)
+	}
+	if resp.Data[0].OnlineConnections != 2 {
+		t.Fatalf("alice online_connections via access identity = %d, want 2", resp.Data[0].OnlineConnections)
 	}
 }
 

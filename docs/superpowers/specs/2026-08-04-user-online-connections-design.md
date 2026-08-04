@@ -102,7 +102,9 @@ func (t *OnlineUsersTracker) ConnectionsByUser(userUUID string, now time.Time, f
 
 ### 5. 已知边界
 
-- **共享端点（shared endpoint）**：其 client 身份为 assignment 级、非 UUID，第一版不统计其在线数（后续迭代）。
+- **共享端点（shared endpoint）**：client 身份为 assignment 级（`access:<assignment_id>`，非用户 UUID），
+  面板在快照落内存时经 `user_chain_assignments` 换算为用户 UUID 后计入在线数（`OnlineUsersTracker.resolve`
+  注入 store 实现）；链内部转发身份（`tunnel:`）与无法归属的 `access:`（分配已删除）不计。
 - **`statsUserOnline` 生效需重启**：policy 缺失时 agent 落盘重启 xray（现有路径）；重启前该字段为空 → 面板显示 0。
 - **离线/失联服务器**：超过 freshness 窗口无新帧 → 其贡献的 IP 不再计入，不显示陈旧数据。
 - **同一用户同一 IP 出现在多台服务器**：面板按 IP 去重，不重复计数。

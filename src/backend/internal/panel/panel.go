@@ -154,7 +154,7 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 	s := &Server{
 		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
-		onlineUsers:     &OnlineUsersTracker{},
+		onlineUsers:     &OnlineUsersTracker{resolve: onlineUserResolver(st)},
 		startedAt:       time.Now(),
 		routePolicies:   make(map[string]logging.LogPolicy),
 		debugRoutes:     make(map[string]bool),
@@ -175,7 +175,7 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 // 未显式构造时惰性初始化，避免零值 Server 上误用解引用。
 func (s *Server) OnlineUsers() *OnlineUsersTracker {
 	if s.onlineUsers == nil {
-		s.onlineUsers = &OnlineUsersTracker{}
+		s.onlineUsers = &OnlineUsersTracker{resolve: onlineUserResolver(s.st)}
 	}
 	return s.onlineUsers
 }

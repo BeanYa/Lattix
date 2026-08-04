@@ -312,6 +312,16 @@ func (s *Store) SetUserChains(ctx context.Context, userID int64, chainIDs []int6
 	return added, removed, nil
 }
 
+// UserUUIDByAssignment 返回共享端点分配（user_chain_assignments）所属的用户 UUID。
+// 用于把 xray 共享端点身份（access:<assignment_id>）映射回业务用户（在线用户快照）。
+func (s *Store) UserUUIDByAssignment(ctx context.Context, assignmentID int64) (string, error) {
+	var uuid string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT u.uuid FROM user_chain_assignments a JOIN users u ON u.id=a.user_id WHERE a.id=?`,
+		assignmentID).Scan(&uuid)
+	return uuid, err
+}
+
 // SharedEndpointsByServer 返回指定服务器上的全部共享端点（端口段收窄越界校验用）。
 func (s *Store) SharedEndpointsByServer(ctx context.Context, serverID int64) ([]SharedEndpoint, error) {
 	rows, err := s.db.QueryContext(ctx,

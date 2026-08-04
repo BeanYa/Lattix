@@ -151,6 +151,77 @@ func TestOnlineUsersTrackerSweepKeepsBoundarySnapshot(t *testing.T) {
 	}
 }
 
+func TestOnlineUsersTrackerResolverMapsAccessIdentity(t *testing.T) {
+	var tracker OnlineUsersTracker
+	tracker.resolve = func(identity string) string {
+		if identity == "access:7" {
+			return "uuid-alice"
+		}
+		return ""
+	}
+	now := testOnlineNow()
+	tracker.ApplySnapshot(1, []shared.OnlineUserStat{
+		{User: "access:7", IPs: []string{"1.1.1.1", "1.1.1.2"}},
+		{User: "uuid-bob", IPs: []string{"2.2.2.2"}},
+	}, now)
+	if got := tracker.ConnectionsByUser("uuid-alice", now); got != 2 {
+		t.Fatalf("ConnectionsByUser(uuid-alice) after access identity resolution = %d, want 2", got)
+	}
+	if got := tracker.ConnectionsByUser("uuid-bob", now); got != 1 {
+		t.Fatalf("ConnectionsByUser(uuid-bob) = %d, want 1", got)
+	}
+	if got := tracker.ConnectionsByUser("access:7", now); got != 0 {
+		t.Fatalf("raw access identity leaked into tracker: %d", got)
+	}
+}
+
+func TestOnlineUsersTrackerSkipsTunnelIdentity(t *testing.T) {
+	var tracker OnlineUsersTracker
+	now := testOnlineNow()
+	tracker.ApplySnapshot(1, []shared.OnlineUserStat{
+		{User: "tunnel:route-9", IPs: []string{"9.9.9.9"}},
+		{User: "uuid-alice", IPs: []string{"1.1.1.1"}},
+	}, now)
+	if got := tracker.ConnectionsByUser("uuid-alice", now); got != 1 {
+		t.Fatalf("ConnectionsByUser(uuid-alice) = %d, want 1", got)
+	}
+	if got := tracker.ConnectionsByUser("tunnel:route-9", now); got != 0 {
+		t.Fatalf("internal tunnel identity counted as online: %d", got)
+	}
+}
+
+func TestOnlineUsersTrackerDropsUnresolvableAccessIdentity(t *testing.T) {
+	var tracker OnlineUsersTracker
+	tracker.resolve = func(identity string) string {
+		if identity == "access:7" {
+			return "uuid-alice"
+		}
+		return ""
+	}
+	now := testOnlineNow()
+	tracker.ApplySnapshot(1, []shared.OnlineUserStat{
+		{User: "access:999", IPs: []string{"3.3.3.3"}}, // 分配已删除等无法归属
+		{User: "access:7", IPs: []string{"1.1.1.1"}},
+	}, now)
+	if got := tracker.ConnectionsByUser("uuid-alice", now); got != 1 {
+		t.Fatalf("ConnectionsByUser(uuid-alice) = %d, want 1", got)
+	}
+	if got := tracker.ConnectionsByUser("access:999", now); got != 0 {
+		t.Fatalf("unresolvable access identity leaked into tracker: %d", got)
+	}
+}
+
+func TestOnlineUsersTrackerZeroValueDropsAccessIdentity(t *testing.T) {
+	var tracker OnlineUsersTracker
+	now := testOnlineNow()
+	tracker.ApplySnapshot(1, []shared.OnlineUserStat{
+		{User: "access:7", IPs: []string{"1.1.1.1"}},
+	}, now)
+	if got := tracker.ConnectionsByUser("uuid-alice", now); got != 0 {
+		t.Fatalf("zero-value tracker without resolver counted access identity = %d, want 0", got)
+	}
+}
+
 func TestOnlineUsersTrackerConcurrentApplyAndQuery(t *testing.T) {
 	var tracker OnlineUsersTracker
 	now := testOnlineNow()
