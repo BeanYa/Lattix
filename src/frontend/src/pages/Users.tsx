@@ -17,6 +17,7 @@ import {
 import { CopyButton } from '@/components/CopyButton'
 import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { QRDialog } from '@/components/QRDialog'
+import { StatusBadge } from '@/components/StatusBadge'
 import { SubscriptionRoutingFields } from '@/components/SubscriptionRoutingFields'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
@@ -545,6 +546,14 @@ export default function Users() {
                     <span className="block font-medium tabular-nums whitespace-nowrap">
                       {u.traffic ? `↑${humanizeBytes(u.traffic.up)} ↓${humanizeBytes(u.traffic.down)}` : '-'}
                     </span>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="block text-[11px] text-muted-foreground">在线</span>
+                    {u.online_connections > 0 ? (
+                      <StatusBadge tone="success" className="tabular-nums">{u.online_connections}</StatusBadge>
+                    ) : (
+                      <span className="block font-medium tabular-nums text-muted-foreground">-</span>
+                    )}
                   </div>
                   <div className="space-y-1">
                     <span className="block text-[11px] text-muted-foreground">有效期</span>

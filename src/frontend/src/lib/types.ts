@@ -523,6 +523,7 @@ export interface SubUser {
   id: number
   name: string
   uuid: string
+  online_connections: number
   sub_token: string
   sub_url: string
   sub_links_url: string
