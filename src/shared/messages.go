@@ -243,6 +243,12 @@ type RemoveSharedEndpointPayload struct {
 	EndpointID int64 `json:"endpoint_id"`
 }
 
+// OnlineUserStat 是某服务器当前在线的一个用户（有活跃连接）及其源 IP 列表（去重）。
+type OnlineUserStat struct {
+	User string   `json:"user"` // 用户 UUID（xray email）
+	IPs  []string `json:"ips"`
+}
+
 // TelemetryPayload 是 telemetry 的载荷（§13 遥测，周期上报，无需回执）：
 // xray 版本/运行状态（升级管理据此刷新展示）、主机指标、流量增量。
 type TelemetryPayload struct {
@@ -251,6 +257,7 @@ type TelemetryPayload struct {
 	XrayInstanceID string           `json:"xray_instance_id,omitempty"`
 	Host           *HostMetrics     `json:"host,omitempty"`
 	Traffic        []TrafficCounter `json:"traffic,omitempty"`
+	OnlineUsers    []OnlineUserStat `json:"online_users,omitempty"` // 该服务器在线用户全量快照
 }
 
 // HostMetrics 是主机指标（/proc 采集）。

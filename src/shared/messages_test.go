@@ -46,3 +46,43 @@ func TestEnvelopeValidate(t *testing.T) {
 		t.Fatal("invalid request ID accepted")
 	}
 }
+
+func TestTelemetryPayloadOmitsEmptyOnlineUsers(t *testing.T) {
+	payload := TelemetryPayload{XrayVersion: "v1.8.0", XrayRunning: true}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "online_users") {
+		t.Fatalf("empty online_users should be omitted by omitempty: %s", raw)
+	}
+}
+
+func TestTelemetryPayloadMarshalsOnlineUsers(t *testing.T) {
+	payload := TelemetryPayload{
+		XrayVersion: "v1.8.0",
+		XrayRunning: true,
+		OnlineUsers: []OnlineUserStat{
+			{User: "11111111-2222-3333-4444-555555555555", IPs: []string{"1.2.3.4", "5.6.7.8"}},
+			{User: "66666666-7777-8888-9999-000000000000", IPs: []string{"9.9.9.9"}},
+		},
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"online_users":[{"user":"11111111-2222-3333-4444-555555555555","ips":["1.2.3.4","5.6.7.8"]},{"user":"66666666-7777-8888-9999-000000000000","ips":["9.9.9.9"]}]`
+	if !strings.Contains(string(raw), want) {
+		t.Fatalf("online_users marshalled incorrectly, want substring %s, got %s", want, raw)
+	}
+
+	var decoded TelemetryPayload
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.OnlineUsers) != 2 ||
+		decoded.OnlineUsers[0].User != "11111111-2222-3333-4444-555555555555" ||
+		len(decoded.OnlineUsers[0].IPs) != 2 {
+		t.Fatalf("online_users roundtrip mismatch: %+v", decoded.OnlineUsers)
+	}
+}
