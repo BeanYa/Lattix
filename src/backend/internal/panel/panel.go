@@ -60,6 +60,7 @@ type Server struct {
 	cdn           *cdnCatalog
 	subscriptions *sub.Server
 	extSubs       *extsub.Service
+	onlineUsers   *OnlineUsersTracker // 在线用户快照聚合（telemetry 喂入，用户列表 API 读取）
 	scheduler     *taskScheduler
 	opLog         *logging.OperationStore
 	reqLog        *logging.RequestLog
@@ -153,11 +154,14 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 	s := &Server{
 		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
+		onlineUsers:     &OnlineUsersTracker{},
 		startedAt:       time.Now(),
 		routePolicies:   make(map[string]logging.LogPolicy),
 		debugRoutes:     make(map[string]bool),
 		methodFallbacks: make(map[string]bool),
 	}
+	// dispatcher 的 telemetry 处理喂入在线用户快照（注入模式同 OnNodePublished 等回调）。
+	disp.OnOnlineUsers = s.onlineUsers.ApplySnapshot
 	s.upd = newPanelUpdater(s)
 	s.releases = newReleaseCatalog(s)
 	s.exchange = newExchangeCatalog(s)
@@ -166,6 +170,9 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 	s.registerCoreTasks()
 	return s, nil
 }
+
+// OnlineUsers 返回在线用户快照聚合器（telemetry 帧喂入，用户列表 API 读取）。
+func (s *Server) OnlineUsers() *OnlineUsersTracker { return s.onlineUsers }
 
 func (s *Server) registerCoreTasks() {
 	expiryInterval := expirySweepIntervalDefault

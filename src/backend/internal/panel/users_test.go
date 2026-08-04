@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
@@ -144,5 +145,79 @@ func TestResetUserSubscriptionTokenMissingUser(t *testing.T) {
 	}
 	if resp.Code != shared.CodeNotFound {
 		t.Fatalf("code = %q, want %q", resp.Code, shared.CodeNotFound)
+	}
+}
+
+func TestHandleListUsersOnlineConnectionsNoData(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.InsertUser(ctx, "alice", "11111111-2222-3333-4444-555555555555", "alice-token", nil); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{st: st, onlineUsers: &OnlineUsersTracker{}}
+	rec := httptest.NewRecorder()
+	server.handleListUsers(rec, httptest.NewRequest(http.MethodGet, "/api/user/list", nil))
+	var resp struct {
+		Code string `json:"code"`
+		Data []struct {
+			OnlineConnections int `json:"online_connections"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != shared.CodeOK || len(resp.Data) != 1 {
+		t.Fatalf("code = %q data = %+v", resp.Code, resp.Data)
+	}
+	if resp.Data[0].OnlineConnections != 0 {
+		t.Fatalf("online_connections without tracker data = %d, want 0", resp.Data[0].OnlineConnections)
+	}
+}
+
+func TestHandleListUsersOnlineConnectionsWithSnapshot(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.InsertUser(ctx, "alice", "11111111-2222-3333-4444-555555555555", "alice-token", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.InsertUser(ctx, "carol", "11111111-2222-3333-4444-555555555557", "carol-token", nil); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{st: st, onlineUsers: &OnlineUsersTracker{}}
+	server.onlineUsers.ApplySnapshot(1, []shared.OnlineUserStat{
+		{User: "11111111-2222-3333-4444-555555555555", IPs: []string{"1.1.1.1", "2.2.2.2"}},
+	}, time.Now().UTC())
+	rec := httptest.NewRecorder()
+	server.handleListUsers(rec, httptest.NewRequest(http.MethodGet, "/api/user/list", nil))
+	var resp struct {
+		Code string `json:"code"`
+		Data []struct {
+			UUID              string `json:"uuid"`
+			OnlineConnections int    `json:"online_connections"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Code != shared.CodeOK || len(resp.Data) != 2 {
+		t.Fatalf("code = %q data = %+v", resp.Code, resp.Data)
+	}
+	got := map[string]int{}
+	for _, u := range resp.Data {
+		got[u.UUID] = u.OnlineConnections
+	}
+	if got["11111111-2222-3333-4444-555555555555"] != 2 {
+		t.Fatalf("alice online_connections = %d, want 2", got["11111111-2222-3333-4444-555555555555"])
+	}
+	if got["11111111-2222-3333-4444-555555555557"] != 0 {
+		t.Fatalf("carol online_connections = %d, want 0", got["11111111-2222-3333-4444-555555555557"])
 	}
 }

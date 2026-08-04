@@ -2,7 +2,9 @@ package dispatch
 
 import (
 	"testing"
+	"time"
 
+	"lattix/backend/internal/store"
 	"lattix/shared"
 )
 
@@ -33,4 +35,61 @@ func TestLatencyProbeActiveRequiresPanelAndAgentAcceptance(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleTelemetryAppliesOnlineUsersSnapshot(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	d := New(st, &fakeRequester{online: map[int64]bool{}})
+	var gotServer int64
+	var got []shared.OnlineUserStat
+	d.OnOnlineUsers = func(serverID int64, users []shared.OnlineUserStat, _ time.Time) {
+		gotServer = serverID
+		got = users
+	}
+	env := shared.Envelope{Kind: shared.KindEvent, Type: shared.TypeTelemetry, Data: marshalMessageData(shared.TelemetryPayload{
+		XrayVersion: "v1.8.0",
+		OnlineUsers: []shared.OnlineUserStat{{User: "user-uuid-1", IPs: []string{"1.2.3.4", "1.2.3.5"}}},
+	})}
+	d.handleTelemetry(7, env)
+	if gotServer != 7 || len(got) != 1 || got[0].User != "user-uuid-1" || len(got[0].IPs) != 2 {
+		t.Fatalf("online_users not applied: server=%d users=%+v", gotServer, got)
+	}
+}
+
+func TestHandleTelemetryAppliesEmptyOnlineUsersSnapshot(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	d := New(st, &fakeRequester{online: map[int64]bool{}})
+	called := false
+	d.OnOnlineUsers = func(serverID int64, users []shared.OnlineUserStat, _ time.Time) {
+		called = true
+		if serverID != 7 || users != nil {
+			t.Fatalf("expected empty snapshot for server 7, got server=%d users=%+v", serverID, users)
+		}
+	}
+	env := shared.Envelope{Kind: shared.KindEvent, Type: shared.TypeTelemetry, Data: marshalMessageData(shared.TelemetryPayload{XrayVersion: "v1.8.0"})}
+	d.handleTelemetry(7, env)
+	if !called {
+		t.Fatal("empty online_users snapshot not applied (empty snapshot = clear server)")
+	}
+}
+
+func TestHandleTelemetryWithoutOnlineUsersSinkIsSafe(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	d := New(st, &fakeRequester{online: map[int64]bool{}})
+	env := shared.Envelope{Kind: shared.KindEvent, Type: shared.TypeTelemetry, Data: marshalMessageData(shared.TelemetryPayload{
+		OnlineUsers: []shared.OnlineUserStat{{User: "user-uuid-1", IPs: []string{"1.2.3.4"}}},
+	})}
+	d.handleTelemetry(7, env)
 }

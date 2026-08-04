@@ -42,6 +42,8 @@ type Dispatcher struct {
 	OnNodePublished     func(context.Context, int64) error
 	OnChainPublished    func(context.Context, int64) error
 	OnEndpointPublished func(context.Context, int64) error
+	// OnOnlineUsers 接收 telemetry 帧中的在线用户快照（panel.Server 注入；nil = 不记录）。
+	OnOnlineUsers func(serverID int64, users []shared.OnlineUserStat, now time.Time)
 
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
@@ -851,6 +853,10 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 		if err := d.st.ApplyTrafficSnapshot(ctx, serverID, p.XrayInstanceID, counters, time.Now().UTC()); err != nil {
 			log.Printf("dispatch: server %d: apply traffic snapshot: %v", serverID, err)
 		}
+	}
+	// 在线用户快照：每帧全量覆盖该服务器记录（空快照 = 清除），不参与落库。
+	if d.OnOnlineUsers != nil {
+		d.OnOnlineUsers(serverID, p.OnlineUsers, time.Now().UTC())
 	}
 }
 

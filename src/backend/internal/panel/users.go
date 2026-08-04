@@ -44,6 +44,7 @@ type userDTO struct {
 	AppURL                string                           `json:"app_url"`
 	Routing               subscriptionProfileDTO           `json:"routing"`
 	SubscriptionSnapshot  store.SubscriptionSnapshotStatus `json:"subscription_snapshot"`
+	OnlineConnections     int                              `json:"online_connections"` // 跨服务器去重后的在线连接数（telemetry 快照）
 	CreatedAt             time.Time                        `json:"created_at"`
 }
 
@@ -282,6 +283,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dto := s.toUserDTO(r, u, nodeIDs)
+		dto.OnlineConnections = s.onlineUsers.ConnectionsByUser(u.UUID, time.Now().UTC())
 		if t, ok := traffic[u.UUID]; ok {
 			dto.Traffic = &trafficDTO{Up: t.Up, Down: t.Down}
 		}
