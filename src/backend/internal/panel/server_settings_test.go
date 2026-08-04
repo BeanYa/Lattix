@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -87,4 +88,83 @@ func TestSettingsServerSettingsRoundTrip(t *testing.T) {
 		t.Fatalf("invalid version code = %s, body = %s", env.Code, rec.Body.String())
 	}
 	_ = ctx
+}
+
+func TestServerCustomSettingsOverrideLifecycle(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	requester := &settingsRequester{online: map[int64]bool{}}
+	serverAPI := &Server{st: st, disp: dispatch.New(st, requester), req: requester}
+	serverID, err := st.CreateServer(ctx, "s1", "", "tok", store.MachineTypeDirect, "", "", "US", "Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		serverAPI.handleUpdateServer(rec, httptest.NewRequest(http.MethodPost, "/api/server/update", strings.NewReader(body)))
+		return rec
+	}
+	list := func() []serverDTO {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		serverAPI.handleListServers(rec, httptest.NewRequest(http.MethodGet, "/api/server/list", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var servers []serverDTO
+		if err := json.Unmarshal(decodeRPC(t, rec).Data, &servers); err != nil {
+			t.Fatal(err)
+		}
+		return servers
+	}
+	find := func(servers []serverDTO) serverDTO {
+		for _, item := range servers {
+			if item.ID == serverID {
+				return item
+			}
+		}
+		t.Fatal("server not in list")
+		return serverDTO{}
+	}
+
+	// 无覆盖：custom_settings nil，effective = 默认 latest。
+	update(fmt.Sprintf(`{"server_id":%d,"alias":"s1","address":""}`, serverID))
+	dto := find(list())
+	if dto.CustomSettings != nil {
+		t.Fatalf("custom_settings = %+v, want nil", dto.CustomSettings)
+	}
+	if dto.EffectiveXrayVersion != "latest" {
+		t.Fatalf("effective_xray_version = %q, want latest", dto.EffectiveXrayVersion)
+	}
+
+	// 设置覆盖 v1.8.10。
+	update(fmt.Sprintf(`{"server_id":%d,"alias":"s1","address":"","custom_settings":{"xray_version":"v1.8.10"}}`, serverID))
+	dto = find(list())
+	if dto.CustomSettings == nil || dto.CustomSettings.XrayVersion == nil || *dto.CustomSettings.XrayVersion != "v1.8.10" {
+		t.Fatalf("custom_settings = %+v", dto.CustomSettings)
+	}
+	if dto.EffectiveXrayVersion != "v1.8.10" {
+		t.Fatalf("effective_xray_version = %q, want v1.8.10", dto.EffectiveXrayVersion)
+	}
+
+	// 清除覆盖（{}）回退默认。
+	update(fmt.Sprintf(`{"server_id":%d,"alias":"s1","address":"","custom_settings":{}}`, serverID))
+	dto = find(list())
+	if dto.CustomSettings != nil {
+		t.Fatalf("custom_settings after clear = %+v, want nil", dto.CustomSettings)
+	}
+	if dto.EffectiveXrayVersion != "latest" {
+		t.Fatalf("effective_xray_version after clear = %q, want latest", dto.EffectiveXrayVersion)
+	}
+
+	// 非法版本拒绝。
+	rec := update(fmt.Sprintf(`{"server_id":%d,"alias":"s1","address":"","custom_settings":{"xray_version":"bad"}}`, serverID))
+	if env := decodeRPC(t, rec); env.Code != "INVALID_ARGUMENT" {
+		t.Fatalf("invalid version code = %s, body = %s", env.Code, rec.Body.String())
+	}
 }

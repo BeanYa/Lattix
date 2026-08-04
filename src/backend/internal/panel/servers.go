@@ -38,37 +38,39 @@ type metricsDTO struct {
 
 // serverDTO 是服务器对象的 API 表示。
 type serverDTO struct {
-	ID                           int64              `json:"id"`
-	Alias                        string             `json:"alias"`
-	ConnectionState              string             `json:"connection_state"`
-	SessionID                    string             `json:"session_id,omitempty"`
-	SessionKind                  string             `json:"session_kind,omitempty"`
-	LastConnectedAt              *time.Time         `json:"last_connected_at"`
-	LastDisconnectedAt           *time.Time         `json:"last_disconnected_at"`
-	LastReconnectedAt            *time.Time         `json:"last_reconnected_at"`
-	ReconnectCount               int64              `json:"reconnect_count"`
-	LastDisconnectReason         string             `json:"last_disconnect_reason"`
-	LastSeenAt                   *time.Time         `json:"last_seen_at"`
-	XrayVersion                  string             `json:"xray_version"`
-	AgentVersion                 string             `json:"agent_version"` // session.open 上报的 agent 版本
-	Address                      string             `json:"address"`       // 公网地址（session.open 记录，订阅用，§9）
-	LearnedAddr                  string             `json:"learned_addr"`  // 拨入学习公网地址（容器网关回退到 agent 公网网卡，§9）
-	NICAddresses                 []string           `json:"nic_addresses"` // agent 上报的网卡非回环地址（§9），编辑地址时的内置候选
-	ConfigDrift                  bool               `json:"config_drift"`  // 配置漂移标志（§17）
-	MachineType                  string             `json:"machine_type"`  // direct|nat（§21）
-	AllowedPorts                 []shared.PortRange `json:"allowed_ports"` // NAT 可用端口段（§21），空 = 无段（仅出口档/direct）
-	Tags                         []string           `json:"tags"`          // 管理标签；按顺序供名称模板 {{TAG_n}} 使用
-	CountryCode                  string             `json:"country_code"`  // ISO 3166-1 alpha-2
-	Location                     string             `json:"location"`      // 城市或机房位置
-	AgentSettingsStatus          string             `json:"agent_settings_status"`
-	AgentSettingsRevision        int64              `json:"agent_settings_revision"`
-	AgentSettingsDesiredRevision int64              `json:"agent_settings_desired_revision"`
-	AgentSettingsError           string             `json:"agent_settings_error"`
-	AgentSettingsReportedAt      *time.Time         `json:"agent_settings_reported_at"`
-	Metrics                      *metricsDTO        `json:"metrics"` // 主机遥测最新值（§13），无数据为 null
-	Billing                      *billingDTO        `json:"billing"`
-	TrafficPlan                  trafficPlanDTO     `json:"traffic_plan"`
-	CreatedAt                    time.Time          `json:"created_at"`
+	ID                           int64                  `json:"id"`
+	Alias                        string                 `json:"alias"`
+	ConnectionState              string                 `json:"connection_state"`
+	SessionID                    string                 `json:"session_id,omitempty"`
+	SessionKind                  string                 `json:"session_kind,omitempty"`
+	LastConnectedAt              *time.Time             `json:"last_connected_at"`
+	LastDisconnectedAt           *time.Time             `json:"last_disconnected_at"`
+	LastReconnectedAt            *time.Time             `json:"last_reconnected_at"`
+	ReconnectCount               int64                  `json:"reconnect_count"`
+	LastDisconnectReason         string                 `json:"last_disconnect_reason"`
+	LastSeenAt                   *time.Time             `json:"last_seen_at"`
+	XrayVersion                  string                 `json:"xray_version"`
+	AgentVersion                 string                 `json:"agent_version"`          // session.open 上报的 agent 版本
+	Address                      string                 `json:"address"`                // 公网地址（session.open 记录，订阅用，§9）
+	LearnedAddr                  string                 `json:"learned_addr"`           // 拨入学习公网地址（容器网关回退到 agent 公网网卡，§9）
+	NICAddresses                 []string               `json:"nic_addresses"`          // agent 上报的网卡非回环地址（§9），编辑地址时的内置候选
+	ConfigDrift                  bool                   `json:"config_drift"`           // 配置漂移标志（§17）
+	MachineType                  string                 `json:"machine_type"`           // direct|nat（§21）
+	AllowedPorts                 []shared.PortRange     `json:"allowed_ports"`          // NAT 可用端口段（§21），空 = 无段（仅出口档/direct）
+	Tags                         []string               `json:"tags"`                   // 管理标签；按顺序供名称模板 {{TAG_n}} 使用
+	CountryCode                  string                 `json:"country_code"`           // ISO 3166-1 alpha-2
+	Location                     string                 `json:"location"`               // 城市或机房位置
+	CustomSettings               *shared.ServerSettings `json:"custom_settings"`        // 服务器覆盖（customsetting），nil = 跟随面板默认
+	EffectiveXrayVersion         string                 `json:"effective_xray_version"` // 合并后的生效 xray 版本，空 = 未设置
+	AgentSettingsStatus          string                 `json:"agent_settings_status"`
+	AgentSettingsRevision        int64                  `json:"agent_settings_revision"`
+	AgentSettingsDesiredRevision int64                  `json:"agent_settings_desired_revision"`
+	AgentSettingsError           string                 `json:"agent_settings_error"`
+	AgentSettingsReportedAt      *time.Time             `json:"agent_settings_reported_at"`
+	Metrics                      *metricsDTO            `json:"metrics"` // 主机遥测最新值（§13），无数据为 null
+	Billing                      *billingDTO            `json:"billing"`
+	TrafficPlan                  trafficPlanDTO         `json:"traffic_plan"`
+	CreatedAt                    time.Time              `json:"created_at"`
 }
 
 func (s *Server) toServerDTO(srv store.Server) serverDTO {
@@ -132,6 +134,8 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		Tags:                         decodeServerTags(srv.Tags),
 		CountryCode:                  srv.CountryCode,
 		Location:                     srv.Location,
+		EffectiveXrayVersion:         effectiveXrayVersion(s, srv.ID),
+		CustomSettings:               customServerSettings(s, srv.ID),
 		AgentSettingsStatus:          settingsStatus,
 		AgentSettingsRevision:        srv.AgentSettingsRevision,
 		AgentSettingsDesiredRevision: desiredRevision,
@@ -139,6 +143,25 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		AgentSettingsReportedAt:      srv.AgentSettingsReportedAt,
 		CreatedAt:                    srv.CreatedAt,
 	}
+}
+
+// effectiveXrayVersion 读取合并生效值（读失败按未设置处理，不阻断列表）。
+func effectiveXrayVersion(s *Server, id int64) string {
+	settings, _, err := s.st.EffectiveServerSettings(context.Background(), id)
+	if err != nil || settings.XrayVersion == nil {
+		return ""
+	}
+	return *settings.XrayVersion
+}
+
+// customServerSettings 读取服务器覆盖（读失败或无有效覆盖字段时按无覆盖处理，不阻断列表）。
+// 墓碑（清除后 custom 非 nil 但 XrayVersion 为 nil）同样归入 nil，DTO 显示跟随默认。
+func customServerSettings(s *Server, id int64) *shared.ServerSettings {
+	custom, err := s.st.ServerCustomSettings(context.Background(), id)
+	if err != nil || custom == nil || custom.XrayVersion == nil {
+		return nil
+	}
+	return &shared.ServerSettings{XrayVersion: custom.XrayVersion}
 }
 
 func (s *Server) toServerDTOWithPlans(ctx context.Context, srv store.Server) (serverDTO, error) {
@@ -388,16 +411,17 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 // 该 server 存量节点 realized 端口与链跳端口不越界，越界 400。
 func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		ServerID     int64               `json:"server_id"`
-		Alias        *string             `json:"alias"` // 省略 = 不变
-		Address      string              `json:"address"`
-		MachineType  string              `json:"machine_type"`  // 不允许互转：带不同值 → 400
-		AllowedPorts *[]shared.PortRange `json:"allowed_ports"` // 省略 = 不变；显式 null/数组 = 整体替换
-		Tags         *[]string           `json:"tags"`          // 省略 = 不变；数组 = 整体替换
-		CountryCode  *string             `json:"country_code"`  // 省略 = 不变
-		Location     *string             `json:"location"`      // 省略 = 不变
-		Billing      *billingInput       `json:"billing"`
-		TrafficPlan  *trafficPlanInput   `json:"traffic_plan"`
+		ServerID       int64                  `json:"server_id"`
+		Alias          *string                `json:"alias"` // 省略 = 不变
+		Address        string                 `json:"address"`
+		MachineType    string                 `json:"machine_type"`  // 不允许互转：带不同值 → 400
+		AllowedPorts   *[]shared.PortRange    `json:"allowed_ports"` // 省略 = 不变；显式 null/数组 = 整体替换
+		Tags           *[]string              `json:"tags"`          // 省略 = 不变；数组 = 整体替换
+		CountryCode    *string                `json:"country_code"`  // 省略 = 不变
+		Location       *string                `json:"location"`      // 省略 = 不变
+		Billing        *billingInput          `json:"billing"`
+		TrafficPlan    *trafficPlanInput      `json:"traffic_plan"`
+		CustomSettings *shared.ServerSettings `json:"custom_settings"` // 省略 = 不变；{} 或 null = 清除覆盖；非空 = 覆盖
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -429,6 +453,12 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.TrafficPlan != nil {
 		if err := validateTrafficInput(*req.TrafficPlan); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if req.CustomSettings != nil && req.CustomSettings.XrayVersion != nil {
+		if err := req.CustomSettings.Validate(); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -504,6 +534,18 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	settingsChanged := false
+	if req.CustomSettings != nil {
+		var custom *shared.ServerSettings
+		if req.CustomSettings.XrayVersion != nil {
+			custom = req.CustomSettings
+		}
+		if err := s.st.UpdateServerCustomSettings(r.Context(), id, custom); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		settingsChanged = true
+	}
 	if err := s.saveServerPlans(r.Context(), id, req.Billing, req.TrafficPlan); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -512,6 +554,19 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if settingsChanged {
+		if _, revision, err := s.st.EffectiveServerSettings(r.Context(), id); err == nil {
+			s.disp.NotifyServerSettingsChanged(r.Context(), id, revision)
+		}
+		sid := id
+		after := map[string]any{}
+		if req.CustomSettings != nil && req.CustomSettings.XrayVersion != nil {
+			after["custom_settings"] = map[string]any{"xray_version": *req.CustomSettings.XrayVersion}
+		} else {
+			after["custom_settings"] = "已清除"
+		}
+		s.audit(r, "server.settings.updated", &sid, nil, after)
 	}
 	sid := id
 	afterDTO, err := s.toServerDTOWithPlans(r.Context(), *srv)
