@@ -20,7 +20,6 @@ import {
   StatsControls,
   billingStatusLabel,
   billingStatusVariant,
-  buildBarOption,
   buildDonutOption,
   clampRange,
   firstOfMonth,
@@ -36,6 +35,39 @@ function costsOfEstimated(server: BillingEstimatedServerStats, rateMode: Billing
   return rateMode === 'custom' && server.estimated_costs_custom
     ? server.estimated_costs_custom
     : server.estimated_costs_public
+}
+
+function ratesOfEstimated(
+  server: BillingEstimatedServerStats,
+  rateMode: BillingStatsRateMode,
+): { monthly: number; annual: number; daily: number } {
+  const monthly = rateMode === 'custom' ? server.monthly_custom_minor ?? server.monthly_minor : server.monthly_minor
+  const annual = rateMode === 'custom' ? server.annual_custom_minor ?? server.annual_minor : server.annual_minor
+  const daily = rateMode === 'custom' ? server.daily_custom_minor ?? server.daily_minor : server.daily_minor
+  return { monthly, annual, daily }
+}
+
+function formulaParts(server: BillingEstimatedServerStats, rateMode: BillingStatsRateMode, currency: string) {
+  const { monthly, annual, daily } = ratesOfEstimated(server, rateMode)
+  switch (server.interval_unit) {
+    case 'year':
+      return `${money(monthly, currency)} / 月 · ${money(daily, currency)} / 日`
+    case 'month':
+      return `${money(annual, currency)} / 年 · ${money(daily, currency)} / 日`
+    default:
+      return `${money(monthly, currency)} / 月 · ${money(annual, currency)} / 年`
+  }
+}
+
+function formulaTitle(server: BillingEstimatedServerStats): string {
+  switch (server.interval_unit) {
+    case 'year':
+      return '月成本 = 年成本 ÷ 12；日成本 = 月成本 ÷ 30'
+    case 'month':
+      return server.interval_count === 3 ? '季付：年成本 = 季付 × 4；月成本 = 季付 ÷ 3；日成本 = 月成本 ÷ 30' : '年成本 = 月成本 × 12；日成本 = 月成本 ÷ 30'
+    default:
+      return '日成本 = 日付金额 ÷ 周期天数；月成本 = 日成本 × 30；年成本 = 日成本 × 360'
+  }
 }
 
 export default function EstimatedCostsTab() {
@@ -139,22 +171,6 @@ export default function EstimatedCostsTab() {
 
   const reportingCurrency = stats?.reporting_currency ?? 'CNY'
   const textColor = theme === 'dark' ? '#c9cbe2' : '#686a7c'
-  const axisColor = theme === 'dark' ? '#42466f' : '#d4d6e0'
-
-  const barOption = useMemo<ChartOption>(() => {
-    if (!stats) return {}
-    return buildBarOption({
-      periods: stats.periods,
-      servers: stats.servers.map((server) => ({
-        alias: server.alias,
-        costs: costsOfEstimated(server, rateMode),
-      })),
-      granularity,
-      currency: reportingCurrency,
-      textColor,
-      axisColor,
-    })
-  }, [stats, rateMode, granularity, reportingCurrency, textColor, axisColor])
 
   const donutOption = useMemo<ChartOption>(() => {
     if (!stats || rows.length === 0 || totalAll <= 0) return {}
@@ -196,7 +212,7 @@ export default function EstimatedCostsTab() {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Card>
               <CardHeader>
-                <CardDescription>估算日成本</CardDescription>
+                <CardDescription>估算日成本（月成本 ÷ 30 天）</CardDescription>
                 <CardTitle className="text-2xl tabular-nums">
                   {money(dailyTotal, reportingCurrency)}
                   <span className="ml-1 text-sm font-normal text-muted-foreground">/ 天 · {reportingCurrency}</span>
@@ -205,7 +221,7 @@ export default function EstimatedCostsTab() {
             </Card>
             <Card>
               <CardHeader>
-                <CardDescription>估算月成本（×30）</CardDescription>
+                <CardDescription>估算月成本（×1月）</CardDescription>
                 <CardTitle className="text-2xl tabular-nums">
                   {money(dailyTotal * 30, reportingCurrency)}
                   <span className="ml-1 text-sm font-normal text-muted-foreground">/ 月 · {reportingCurrency}</span>
@@ -214,9 +230,9 @@ export default function EstimatedCostsTab() {
             </Card>
             <Card>
               <CardHeader>
-                <CardDescription>估算年成本（×365）</CardDescription>
+                <CardDescription>估算年成本（×12月）</CardDescription>
                 <CardTitle className="text-2xl tabular-nums">
-                  {money(dailyTotal * 365, reportingCurrency)}
+                  {money(dailyTotal * 360, reportingCurrency)}
                   <span className="ml-1 text-sm font-normal text-muted-foreground">/ 年 · {reportingCurrency}</span>
                 </CardTitle>
               </CardHeader>
@@ -229,36 +245,27 @@ export default function EstimatedCostsTab() {
             </Card>
           </div>
 
-          <div className="grid gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
-              <CardHeader>
-                <CardTitle>周期估算成本分布</CardTitle>
-                <CardDescription>每台服务器一个色段，悬停查看明细；图例可点击隐藏单台服务器。</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Chart option={barOption} className="h-80 w-full" />
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>成本占比</CardTitle>
-                <CardDescription>范围内各服务器估算成本占比。</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {totalAll > 0
-                  ? <Chart option={donutOption} className="h-80 w-full" />
-                  : <EmptyState title="范围内暂无成本" description="调整时间范围后查看占比。" className="h-80" />}
-              </CardContent>
-            </Card>
-          </div>
-
           <Card>
             <CardHeader>
-              <CardTitle>服务器汇总</CardTitle>
-              <CardDescription>
-                原价与周期以服务器币种展示；其余数值按 {reportingCurrency} 估算，点击列头排序。
-              </CardDescription>
+              <CardTitle>成本占比</CardTitle>
+              <CardDescription>范围内各服务器估算成本占比。</CardDescription>
             </CardHeader>
+            <CardContent>
+              {totalAll > 0
+                ? <Chart option={donutOption} className="h-80 w-full" />
+                : <EmptyState title="范围内暂无成本" description="调整时间范围后查看占比。" className="h-80" />}
+            </CardContent>
+          </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>服务器汇总</CardTitle>
+                <CardDescription>
+                  估算总成本 = 年成本 × 整年数 + 月成本 × 整月数 + 日成本 × 剩余天数；月成本按
+                  30 天/月、年成本按 360 天/年折算。原价与周期以服务器币种展示；其余数值按{' '}
+                  {reportingCurrency} 估算，点击列头排序。
+                </CardDescription>
+              </CardHeader>
             <CardContent>
               <Table>
                 <TableHeader>
@@ -285,9 +292,14 @@ export default function EstimatedCostsTab() {
                             ) : null}
                           </span>
                         </TableCell>
-                        <TableCell className="text-right tabular-nums whitespace-nowrap">
-                          {money(server.amount_minor, server.currency)} {server.currency}
-                          <span className="text-muted-foreground"> / {server.interval_count} {GRANULARITY_LABEL[server.interval_unit]}</span>
+                        <TableCell className="text-right whitespace-nowrap">
+                          <div className="tabular-nums">
+                            {money(server.amount_minor, server.currency)} {server.currency}
+                            <span className="text-muted-foreground"> / {server.interval_count} {GRANULARITY_LABEL[server.interval_unit]}</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground tabular-nums" title={formulaTitle(server)}>
+                            ≈ {formulaParts(server, rateMode, reportingCurrency)}
+                          </div>
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{money(row.daily, reportingCurrency)}</TableCell>
                         <TableCell className="text-right tabular-nums font-medium">{money(row.total, reportingCurrency)}</TableCell>

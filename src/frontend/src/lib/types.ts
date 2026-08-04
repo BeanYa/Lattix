@@ -160,6 +160,10 @@ export interface BillingEstimatedServerStats {
   days_active: number
   daily_minor: number
   daily_custom_minor?: number
+  monthly_minor: number
+  annual_minor: number
+  monthly_custom_minor?: number
+  annual_custom_minor?: number
   estimated_costs_public: number[]
   estimated_costs_custom?: number[]
 }

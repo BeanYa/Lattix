@@ -52,8 +52,13 @@ type billingServerStatsDTO struct {
 }
 
 // estimatedBillingServerStatsDTO 是计算成本统计中单台服务器的周期成本序列。
+// MonthlyMinor/AnnualMinor 为换算后月/年成本（= 日成本 × 30 / × 360，估算口径）。
 type estimatedBillingServerStatsDTO struct {
 	billingServerStatsBase
+	MonthlyMinor       int64   `json:"monthly_minor"`
+	AnnualMinor        int64   `json:"annual_minor"`
+	MonthlyCustomMinor int64   `json:"monthly_custom_minor,omitempty"`
+	AnnualCustomMinor  int64   `json:"annual_custom_minor,omitempty"`
 	EstimatedCostsPublic []int64 `json:"estimated_costs_public"`
 	EstimatedCostsCustom []int64 `json:"estimated_costs_custom,omitempty"`
 }
@@ -108,27 +113,55 @@ func intervalDailyCost(amountMinor int64, count int, unit string) *big.Rat {
 	return new(big.Rat).SetFrac(new(big.Int).SetInt64(amountMinor), big.NewInt(days))
 }
 
-// periodDays 返回粒度对应的固定周期天数：day=1、month=30、year=365（与 intervalDays 口径一致）。
-func periodDays(gran string) int64 {
-	switch gran {
-	case costGranDay:
-		return 1
-	case costGranMonth:
-		return 30
-	case costGranYear:
-		return 365
+// estimatedIntervalDays 把计费周期折算成计算成本口径天数：日 = count、月 = count*30、
+// 年 = count*360（12 个月 × 30 天）。年按 360 天计使年付价可精确还原为年成本
+// （月成本 = 年成本/12、日成本 = 年成本/360），与已生效口径的 365 天年区分。
+func estimatedIntervalDays(unit string, count int) int64 {
+	switch unit {
+	case "day":
+		return int64(count)
+	case "month":
+		return int64(count) * 30
+	case "year":
+		return int64(count) * 360
 	}
 	return 0
 }
 
+// estimatedDailyCost 返回计算成本口径下换算后整周期金额的日均成本（big.Rat 精确值）。
+func estimatedDailyCost(amountMinor int64, count int, unit string) *big.Rat {
+	days := estimatedIntervalDays(unit, count)
+	if days <= 0 {
+		return nil
+	}
+	return new(big.Rat).SetFrac(new(big.Int).SetInt64(amountMinor), big.NewInt(days))
+}
+
+// estimateDays 返回计算成本口径下 [from, to) 区间的计费天数：整月按 30 天、整年按 360 天、
+// 剩余天数按日计，等价于「年成本 × 整年 + 月成本 × 整月 + 日成本 × 剩余天」公式
+// （月差借位按 30 天处理）。完整月/年区间恒得 30/360，天然覆盖各粒度。
+func estimateDays(from, to time.Time) int64 {
+	months := int64(to.Year()-from.Year())*12 + int64(to.Month()-from.Month())
+	days := int64(to.Day() - from.Day())
+	if days < 0 {
+		days += 30
+		months--
+	}
+	return months*30 + days
+}
+
 // statsRow 是成本统计中单台参与服务器的装配结果（两种口径共用）。
+// dailyPublic/dailyCustom 为已生效口径日成本（365 天年）；estDailyPublic/estDailyCustom
+// 为计算成本口径日成本（360 天年，月成本 × 30 / 年成本 × 360 精确）。
 type statsRow struct {
-	billing       store.ServerBilling
-	base          billingServerStatsBase
-	dailyPublic   *big.Rat
-	dailyCustom   *big.Rat
-	customDiffers bool
-	rateDate      string
+	billing          store.ServerBilling
+	base             billingServerStatsBase
+	dailyPublic      *big.Rat
+	dailyCustom      *big.Rat
+	estDailyPublic   *big.Rat
+	estDailyCustom   *big.Rat
+	customDiffers    bool
+	rateDate         string
 }
 
 // errCostConversion 标记 convertCosts 换算失败（上游汇率获取错误，映射 502）。
@@ -173,9 +206,10 @@ func (s *Server) loadStatsRows(ctx context.Context, participate func(b store.Ser
 		}
 		dailyPublic := intervalDailyCost(public.AmountMinor, b.IntervalCount, b.IntervalUnit)
 		row := statsRow{
-			billing:     b,
-			dailyPublic: dailyPublic,
-			rateDate:    public.RateDate,
+			billing:        b,
+			dailyPublic:    dailyPublic,
+			estDailyPublic: estimatedDailyCost(public.AmountMinor, b.IntervalCount, b.IntervalUnit),
+			rateDate:       public.RateDate,
 			base: billingServerStatsBase{
 				ServerID: b.ServerID, Alias: srv.Alias, CountryCode: srv.CountryCode, Location: srv.Location,
 				Currency: b.Currency, AmountMinor: b.AmountMinor, IntervalCount: b.IntervalCount,
@@ -186,6 +220,7 @@ func (s *Server) loadStatsRows(ctx context.Context, participate func(b store.Ser
 		if custom != nil {
 			row.dailyCustom = intervalDailyCost(custom.AmountMinor, b.IntervalCount, b.IntervalUnit)
 			row.base.DailyCustomMinor = roundRat(row.dailyCustom)
+			row.estDailyCustom = estimatedDailyCost(custom.AmountMinor, b.IntervalCount, b.IntervalUnit)
 			row.customDiffers = custom.AmountMinor != public.AmountMinor
 		}
 		rows = append(rows, row)
@@ -401,7 +436,9 @@ func (s *Server) handleBillingStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleEstimatedBillingStats 处理 GET /api/billing/stats/estimated（计算成本）：对启用统计计费
-// 且未过期的服务器按"日成本 × 周期天数"估算每周期成本（忽略服务期与已生效部分）。
+// 且未过期的服务器按"日成本 × 周期天数"估算每周期成本（忽略服务期与已生效部分）。估算口径
+// 按 12 个月 × 30 天计：日成本 = 周期金额 ÷ (周期数 × 每周期天数)，月成本 = 日成本 × 30、
+// 年成本 = 日成本 × 360；范围成本 = 年成本 × 整年 + 月成本 × 整月 + 日成本 × 剩余天。
 func (s *Server) handleEstimatedBillingStats(w http.ResponseWriter, r *http.Request) {
 	loc := s.inspectionLocation(r.Context())
 	from, to, gran, mode, err := parseBillingStatsQuery(r.URL.Query(), loc)
@@ -442,25 +479,50 @@ func (s *Server) handleEstimatedBillingStats(w http.ResponseWriter, r *http.Requ
 	if mode == costModeCustom && dto.CustomAvailable {
 		totalsCustom = make([]int64, len(periods))
 	}
-	perPeriod := periodDays(gran)
 	for _, row := range rows {
 		base := row.base
 		base.DaysActive = spanDays
+		base.DailyMinor = roundRat(row.estDailyPublic)
+		if row.estDailyCustom != nil {
+			base.DailyCustomMinor = roundRat(row.estDailyCustom)
+		}
 		item := estimatedBillingServerStatsDTO{
 			billingServerStatsBase: base,
+			MonthlyMinor:           roundRat(new(big.Rat).Mul(row.estDailyPublic, big.NewRat(30, 1))),
+			AnnualMinor:            roundRat(new(big.Rat).Mul(row.estDailyPublic, big.NewRat(360, 1))),
 			EstimatedCostsPublic:   make([]int64, len(periods)),
+		}
+		if row.estDailyCustom != nil {
+			item.MonthlyCustomMinor = roundRat(new(big.Rat).Mul(row.estDailyCustom, big.NewRat(30, 1)))
+			item.AnnualCustomMinor = roundRat(new(big.Rat).Mul(row.estDailyCustom, big.NewRat(360, 1)))
 		}
 		var costsCustom []int64
 		if totalsCustom != nil {
 			costsCustom = make([]int64, len(periods))
 		}
-		for i := range periods {
-			cost := new(big.Rat).Mul(row.dailyPublic, new(big.Rat).SetInt64(perPeriod))
+		for i, label := range periods {
+			pStart, pEnd := periodBounds(label, gran, loc)
+			days := int64(0)
+			if gran == costGranDay {
+				days = 1
+			} else {
+				ovStart, ovEnd := pStart, pEnd
+				if from.After(ovStart) {
+					ovStart = from
+				}
+				if to.Before(ovEnd) {
+					ovEnd = to
+				}
+				if ovEnd.After(ovStart) {
+					days = estimateDays(ovStart, ovEnd)
+				}
+			}
+			cost := new(big.Rat).Mul(row.estDailyPublic, new(big.Rat).SetInt64(days))
 			item.EstimatedCostsPublic[i] = roundRat(cost)
 			dto.EstimatedTotalsPublic[i] += item.EstimatedCostsPublic[i]
 			if costsCustom != nil {
-				if row.dailyCustom != nil {
-					cost := new(big.Rat).Mul(row.dailyCustom, new(big.Rat).SetInt64(perPeriod))
+				if row.estDailyCustom != nil {
+					cost := new(big.Rat).Mul(row.estDailyCustom, new(big.Rat).SetInt64(days))
 					costsCustom[i] = roundRat(cost)
 				} else {
 					costsCustom[i] = item.EstimatedCostsPublic[i]

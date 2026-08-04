@@ -153,6 +153,54 @@ func TestIntervalDailyCost(t *testing.T) {
 	}
 }
 
+func TestEstimatedDailyCost(t *testing.T) {
+	// 估算口径：月付 3 个月（季付）= 金额/90；年付 = 金额/(n×360)。
+	if got := estimatedDailyCost(30000, 1, "year").RatString(); got != "250/3" {
+		t.Fatalf("yearly estimated daily = %s, want 250/3", got)
+	}
+	if got := estimatedDailyCost(10000, 3, "month").RatString(); got != "1000/9" {
+		t.Fatalf("quarter estimated daily = %s, want 1000/9", got)
+	}
+	if got := estimatedDailyCost(5000, 1, "month").RatString(); got != "500/3" {
+		t.Fatalf("monthly estimated daily = %s, want 500/3", got)
+	}
+	if got := estimatedDailyCost(123, 3, "day").RatString(); got != "41" {
+		t.Fatalf("daily estimated cost = %s, want 41", got)
+	}
+	if estimatedDailyCost(100, 1, "fortnight") != nil {
+		t.Fatal("unknown unit should produce nil estimated daily cost")
+	}
+}
+
+func TestEstimateDays(t *testing.T) {
+	loc := time.UTC
+	parse := func(value string) time.Time {
+		tm, err := time.ParseInLocation("2006-01-02", value, loc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tm
+	}
+	cases := []struct {
+		from, to string
+		want     int64
+	}{
+		{"2025-05-01", "2025-05-31", 30},  // 整月 = 30 天
+		{"2025-05-01", "2025-05-06", 5},   // 剩余天数
+		{"2025-01-01", "2025-12-31", 360}, // 整年 = 11 月 + 30 天 = 360
+		{"2023-01-01", "2025-05-06", 845}, // 2 年 4 个月 5 天 = 2×360 + 4×30 + 5
+		{"2023-06-15", "2025-05-06", 681}, // 跨月借位：22 月 + 21 天
+		{"2025-01-01", "2026-01-01", 360}, // 完整年区间
+		{"2025-05-06", "2025-05-07", 1},   // 单日
+	}
+	for _, tc := range cases {
+		got := estimateDays(parse(tc.from), parse(tc.to))
+		if got != tc.want {
+			t.Fatalf("estimateDays(%s, %s) = %d, want %d", tc.from, tc.to, got, tc.want)
+		}
+	}
+}
+
 func TestParseBillingStatsQuery(t *testing.T) {
 	loc := time.UTC
 	valid := url.Values{"from": {"2026-01-01"}, "to": {"2026-03-31"}, "granularity": {"month"}}
@@ -531,9 +579,13 @@ func TestEstimatedBillingStatsHandlerMonthView(t *testing.T) {
 	if usd == nil || cny == nil {
 		t.Fatal("expected usd and cny servers in estimated stats")
 	}
-	// USD $12/月 → 7200 minor CNY/月 → 240/天；月单元格 = 240×30 = 7200（忽略 01-15 才开通）。
+	// USD $12/月 → 7200 minor CNY/月 → 240/天；月成本 = 实际月付 7200、年成本 = ×12。
+	// 月单元格 = 240×30 = 7200（估算口径整月恒为 30 天）。
 	if usd.DailyMinor != 240 || usd.DaysActive != 90 {
 		t.Fatalf("usd daily/days = %d/%d, want 240/90", usd.DailyMinor, usd.DaysActive)
+	}
+	if usd.MonthlyMinor != 7200 || usd.AnnualMinor != 86400 {
+		t.Fatalf("usd monthly/annual = %d/%d, want 7200/86400", usd.MonthlyMinor, usd.AnnualMinor)
 	}
 	wantUSD := []int64{7200, 7200, 7200}
 	for i := range wantUSD {
@@ -541,14 +593,19 @@ func TestEstimatedBillingStatsHandlerMonthView(t *testing.T) {
 			t.Fatalf("usd estimated = %v, want %v", usd.EstimatedCostsPublic, wantUSD)
 		}
 	}
-	// CNY 年付 ¥60/年 → 6000/365/天；月单元格 = round(6000/365×30) = round(493.15) = 493。
-	wantCNY := []int64{493, 493, 493}
+	// CNY 年付 ¥60/年：日成本 = 6000/360 = 16.67 → 17；月成本 = 年成本/12 = 500；
+	// 月单元格 = round(6000/360×30) = 500。
+	wantCNY := []int64{500, 500, 500}
 	for i := range wantCNY {
 		if cny.EstimatedCostsPublic[i] != wantCNY[i] {
 			t.Fatalf("cny estimated = %v, want %v", cny.EstimatedCostsPublic, wantCNY)
 		}
 	}
-	wantTotals := []int64{7200 + 493, 7200 + 493, 7200 + 493}
+	if cny.DailyMinor != 17 || cny.MonthlyMinor != 500 || cny.AnnualMinor != 6000 {
+		t.Fatalf("cny daily/monthly/annual = %d/%d/%d, want 17/500/6000",
+			cny.DailyMinor, cny.MonthlyMinor, cny.AnnualMinor)
+	}
+	wantTotals := []int64{7200 + 500, 7200 + 500, 7200 + 500}
 	for i := range wantTotals {
 		if dto.EstimatedTotalsPublic[i] != wantTotals[i] {
 			t.Fatalf("estimated totals = %v, want %v", dto.EstimatedTotalsPublic, wantTotals)
@@ -569,7 +626,7 @@ func TestEstimatedBillingStatsHandlerGranularities(t *testing.T) {
 	s, st := statsTestServer(t)
 	usdID, _, cnyID := seedBillingServers(t, st)
 
-	// 日视图：5 个周期，每单元格 = 240 与 round(6000/365) = 16。
+	// 日视图：5 个周期，每单元格 = 240 与 round(6000/360) = 17。
 	dayDTO, _ := getEstimatedBillingStats(t, s, "from=2026-01-01&to=2026-01-05&granularity=day")
 	if dayDTO == nil {
 		t.Fatal("day view failed")
@@ -584,8 +641,8 @@ func TestEstimatedBillingStatsHandlerGranularities(t *testing.T) {
 			}
 		case cnyID:
 			for j, cell := range dayDTO.Servers[i].EstimatedCostsPublic {
-				if cell != 16 {
-					t.Fatalf("cny day cell %d = %d, want 16", j, cell)
+				if cell != 17 {
+					t.Fatalf("cny day cell %d = %d, want 17", j, cell)
 				}
 			}
 		}
@@ -594,7 +651,7 @@ func TestEstimatedBillingStatsHandlerGranularities(t *testing.T) {
 		t.Fatalf("days_active = %d, want 5 (range days)", dayDTO.Servers[0].DaysActive)
 	}
 
-	// 年视图：6000/365 × 365 精确还原年价 6000。
+	// 年视图：6000/360 × 360 精确还原年价 6000。
 	yearDTO, _ := getEstimatedBillingStats(t, s, "from=2025-01-01&to=2025-12-31&granularity=year")
 	if yearDTO == nil {
 		t.Fatal("year view failed")
@@ -605,6 +662,68 @@ func TestEstimatedBillingStatsHandlerGranularities(t *testing.T) {
 		}
 		if yearDTO.Servers[i].EstimatedCostsPublic[0] != 6000 {
 			t.Fatalf("cny year cell = %d, want 6000", yearDTO.Servers[i].EstimatedCostsPublic[0])
+		}
+	}
+}
+
+func TestEstimatedBillingStatsHandlerCustomRange(t *testing.T) {
+	s, st := statsTestServer(t)
+	ctx := context.Background()
+	// 年付 ¥300/年：估算公式 = 300×2 + (300/12)×4 + ((300/12)/30)×5 = 704.17。
+	yearID, err := st.CreateServerWithPlans(ctx, "YR-300", "", "token-yr300", store.MachineTypeDirect,
+		"", "", "NL", "Amsterdam", &store.ServerBilling{
+			Enabled: true, ProviderID: 1, AmountMinor: 30000, Currency: "CNY",
+			ServiceStartedOn: "2023-01-01", IntervalCount: 1, IntervalUnit: "year",
+			NextRenewalOn: "2030-01-01", Status: store.BillingActive,
+		}, store.ServerTrafficPlan{AccountingMode: "outbound", ResetAnchorOn: "2023-01-01", ResetCount: 1, ResetUnit: "month", TrackingStartedOn: "2023-01-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 季付 ¥100/季（3 个月）：年成本 = 100×4、月成本 = 100/3、日成本 = (100/3)/30。
+	quarterID, err := st.CreateServerWithPlans(ctx, "QR-100", "", "token-qr100", store.MachineTypeDirect,
+		"", "", "US", "Los Angeles", &store.ServerBilling{
+			Enabled: true, ProviderID: 1, AmountMinor: 10000, Currency: "CNY",
+			ServiceStartedOn: "2023-01-01", IntervalCount: 3, IntervalUnit: "month",
+			NextRenewalOn: "2030-01-01", Status: store.BillingActive,
+		}, store.ServerTrafficPlan{AccountingMode: "outbound", ResetAnchorOn: "2023-01-01", ResetCount: 1, ResetUnit: "month", TrackingStartedOn: "2023-01-01"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 自定义范围 2 年 4 个月 5 天（2023-01-01 ~ 2025-05-06），月视图：28 个整月 × 月成本 + 5 天 × 日成本。
+	dto, envelope := getEstimatedBillingStats(t, s, "from=2023-01-01&to=2025-05-06&granularity=month")
+	if envelope.Code != "OK" {
+		t.Fatalf("response code = %q message %q", envelope.Code, envelope.Message)
+	}
+	if len(dto.Periods) != 29 {
+		t.Fatalf("periods = %d, want 29", len(dto.Periods))
+	}
+	for i := range dto.Servers {
+		var wantMonthly, wantDaily, wantTotal, wantPartial int64
+		switch dto.Servers[i].ServerID {
+		case yearID:
+			// 年付：月成本 2500、日成本 2500/30 = 83.33；28 个整月 × 2500 + 月末 5 天
+			// round(83.33×5) = 417 → 合计 70417（≈ 用户公式 300×2 + 25×4 + 25/30×5）。
+			wantMonthly, wantDaily, wantTotal, wantPartial = 2500, 83, 70417, 417
+		case quarterID:
+			// 季付：月成本 10000/3 = 3333.33、日成本 (10000/3)/30 = 111.11；
+			// 28×3333 + round(111.11×5) = 556 → 合计 93880。
+			wantMonthly, wantDaily, wantTotal, wantPartial = 3333, 111, 93880, 556
+		}
+		if dto.Servers[i].MonthlyMinor != wantMonthly || dto.Servers[i].DailyMinor != wantDaily {
+			t.Fatalf("server %d monthly/daily = %d/%d, want %d/%d",
+				dto.Servers[i].ServerID, dto.Servers[i].MonthlyMinor, dto.Servers[i].DailyMinor,
+				wantMonthly, wantDaily)
+		}
+		var total int64
+		for _, cell := range dto.Servers[i].EstimatedCostsPublic {
+			total += cell
+		}
+		if total != wantTotal {
+			t.Fatalf("server %d custom range total = %d, want %d", dto.Servers[i].ServerID, total, wantTotal)
+		}
+		if got := dto.Servers[i].EstimatedCostsPublic[28]; got != wantPartial {
+			t.Fatalf("server %d last partial month cell = %d, want %d", dto.Servers[i].ServerID, got, wantPartial)
 		}
 	}
 }
@@ -634,9 +753,14 @@ func TestEstimatedBillingStatsHandlerCustomRates(t *testing.T) {
 		if dto.Servers[i].DailyCustomMinor != 280 {
 			t.Fatalf("custom daily = %d, want 280", dto.Servers[i].DailyCustomMinor)
 		}
+		if dto.Servers[i].MonthlyCustomMinor != 8400 || dto.Servers[i].AnnualCustomMinor != 100800 {
+			t.Fatalf("custom monthly/annual = %d/%d, want 8400/100800",
+				dto.Servers[i].MonthlyCustomMinor, dto.Servers[i].AnnualCustomMinor)
+		}
+		wantCells := []int64{8400, 8400, 8400}
 		for j, cell := range dto.Servers[i].EstimatedCostsCustom {
-			if cell != 8400 {
-				t.Fatalf("custom cell %d = %d, want 8400", j, cell)
+			if cell != wantCells[j] {
+				t.Fatalf("custom cell %d = %d, want %d", j, cell, wantCells[j])
 			}
 		}
 		if dto.Servers[i].DailyMinor != 240 {
@@ -654,13 +778,13 @@ func TestEstimatedBillingStatsHandlerCustomRates(t *testing.T) {
 	if cny == nil {
 		t.Fatal("expected cny server in stats")
 	}
-	wantFallback := []int64{493, 493, 493}
+	wantFallback := []int64{500, 500, 500}
 	for j := range wantFallback {
 		if cny.EstimatedCostsCustom[j] != wantFallback[j] {
 			t.Fatalf("cny custom fallback = %v, want %v", cny.EstimatedCostsCustom, wantFallback)
 		}
 	}
-	wantTotals := []int64{8400 + 493, 8400 + 493, 8400 + 493}
+	wantTotals := []int64{8400 + 500, 8400 + 500, 8400 + 500}
 	for j := range wantTotals {
 		if dto.EstimatedTotalsCustom[j] != wantTotals[j] {
 			t.Fatalf("totals_custom = %v, want %v", dto.EstimatedTotalsCustom, wantTotals)

@@ -1521,7 +1521,7 @@ export interface components {
             /** @description Present when custom_available and rate_mode=custom. */
             actual_totals_custom?: number[];
         };
-        /** @description Per-server estimated cost series aligned with BillingEstimatedStats.periods, computed as daily cost times fixed period days (day=1, month=30, year=365) regardless of service dates. Costs are in the reporting currency minor unit, rounded per cell; custom arrays are present when custom_available and rate_mode=custom. */
+        /** @description Per-server estimated cost series aligned with BillingEstimatedStats.periods, computed in the 12-month/30-day convention (daily cost = price per interval days, month = daily x 30, year = daily x 360; a period cell is daily cost times its in-range days, with full months at 30 and full years at 360) regardless of service dates. Costs are in the reporting currency minor unit, rounded per cell; custom arrays are present when custom_available and rate_mode=custom. */
         BillingEstimatedServerStats: {
             server_id: number;
             alias: string;
@@ -1540,15 +1540,23 @@ export interface components {
             status: string;
             /** @description Days in the requested range (constant for every server). */
             days_active: number;
-            /** @description Public daily cost in reporting minor unit. */
+            /** @description Public daily cost in reporting minor unit (year-paid = price/360 */
             daily_minor: number;
             /** @description Custom daily cost; present when the server has a custom conversion. */
             daily_custom_minor?: number;
+            /** @description Public monthly cost in reporting minor unit (= daily x 30). */
+            monthly_minor: number;
+            /** @description Public annual cost in reporting minor unit (= daily x 360). */
+            annual_minor: number;
+            /** @description Custom monthly cost; present when the server has a custom conversion. */
+            monthly_custom_minor?: number;
+            /** @description Custom annual cost; present when the server has a custom conversion. */
+            annual_custom_minor?: number;
             estimated_costs_public: number[];
             /** @description Present for every server when custom_available and rate_mode=custom; equals estimated_costs_public for servers without a custom conversion. */
             estimated_costs_custom?: number[];
         };
-        /** @description Projected cost statistics for non-expired servers with statistical billing enabled, estimated as daily cost times fixed period days per period and converted to the reporting currency. */
+        /** @description Projected cost statistics for non-expired servers with statistical billing enabled, estimated as daily cost times in-range days per period (12-month/30-day convention; range cost = annual x full years + monthly x full months + daily x remaining days) and converted to the reporting currency. */
         BillingEstimatedStats: {
             reporting_currency: components["schemas"]["Currency"];
             granularity: components["schemas"]["BillingStatsGranularity"];
