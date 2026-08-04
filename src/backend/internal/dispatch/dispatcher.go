@@ -634,6 +634,8 @@ func (d *Dispatcher) HandleMessage(serverID int64, env shared.Envelope) {
 		switch env.Type {
 		case shared.TypeSettingsSync:
 			d.handleAgentSettingsSync(serverID, env)
+		case shared.TypeServerSettingsSync:
+			d.handleServerSettingsSync(serverID, env)
 		case shared.TypeServerTestResult:
 			d.handleServerTestResult(serverID, env)
 		default:
@@ -745,6 +747,46 @@ func (d *Dispatcher) handleAgentSettingsSync(serverID int64, env shared.Envelope
 	d.replyAgentRequest(ctx, serverID, env, shared.CodeOK, "", result)
 }
 
+// handleServerSettingsSync 处理 agent.settings.sync 的平行通道：agent 上报已应用
+// effective revision，面板比对后返回逐服务器合并的 ServerSettingsDocument。
+func (d *Dispatcher) handleServerSettingsSync(serverID int64, env shared.Envelope) {
+	ctx := context.Background()
+	var payload shared.ServerSettingsSyncPayload
+	if err := json.Unmarshal(env.Data, &payload); err != nil {
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInvalidArgument, "invalid server settings sync payload", nil)
+		return
+	}
+	if len(payload.LastApplyError) > 512 {
+		payload.LastApplyError = payload.LastApplyError[:512]
+	}
+	if err := d.st.ReportServerSettings(ctx, serverID, payload.AppliedRevision, payload.LastApplyError); err != nil {
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, "failed to record server settings status", nil)
+		return
+	}
+	settings, revision, err := d.st.EffectiveServerSettings(ctx, serverID)
+	if err != nil {
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, "failed to load server settings", nil)
+		return
+	}
+	panelID, err := d.st.PanelInstanceID(ctx)
+	if err != nil {
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, "failed to load panel identity", nil)
+		return
+	}
+	changed := (payload.PanelInstanceID != "" && payload.PanelInstanceID != panelID) ||
+		payload.AppliedRevision != revision ||
+		payload.LastApplyError != ""
+	result := shared.ServerSettingsSyncResult{Changed: changed}
+	if changed {
+		result.Settings = &shared.ServerSettingsDocument{
+			SchemaVersion: shared.ServerSettingsSchemaVersion,
+			Revision:      revision,
+			Server:        settings,
+		}
+	}
+	d.replyAgentRequest(ctx, serverID, env, shared.CodeOK, "", result)
+}
+
 func (d *Dispatcher) replyAgentRequest(ctx context.Context, serverID int64, request shared.Envelope, code, message string, data any) {
 	if data == nil {
 		data = struct{}{}
@@ -802,6 +844,34 @@ func (d *Dispatcher) NotifyAgentSettingsChanged(ctx context.Context, revision in
 		}
 		if err := d.req.Send(ctx, server.ID, env); err != nil {
 			log.Printf("dispatch: notify server %d settings revision %d: %v", server.ID, revision, err)
+		}
+	}
+}
+
+// NotifyServerSettingsChanged is best effort; agents also pull after session.open
+// and periodically. serverID=0 notifies every online server (default changed),
+// otherwise only that server (custom override changed).
+func (d *Dispatcher) NotifyServerSettingsChanged(ctx context.Context, serverID int64, revision int64) {
+	servers, err := d.st.ListServers(ctx)
+	if err != nil {
+		log.Printf("dispatch: list agents for server settings notification: %v", err)
+		return
+	}
+	for _, server := range servers {
+		if serverID != 0 && server.ID != serverID {
+			continue
+		}
+		if !d.req.IsOnline(server.ID) {
+			continue
+		}
+		id := shared.NewMessageID()
+		env := shared.Envelope{
+			Kind: shared.KindEvent, Type: shared.TypeServerSettingsChanged,
+			RequestID: id, TraceID: id,
+			Data: marshalMessageData(shared.ServerSettingsChangedPayload{Revision: revision}),
+		}
+		if err := d.req.Send(ctx, server.ID, env); err != nil {
+			log.Printf("dispatch: notify server %d server settings revision %d: %v", server.ID, revision, err)
 		}
 	}
 }
