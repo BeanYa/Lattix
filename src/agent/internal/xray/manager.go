@@ -406,7 +406,8 @@ func (m *Manager) QueryStats() (map[string]int64, error) {
 }
 
 // QueryOnlineUsers 拉取全部在线用户及源 IP（§13 遥测）。
-// 老 xray 核心无 GetUsersStats API 时返回 Unimplemented 错误（由调用方降级）。
+// 老 xray 核心无 GetUsersStats 时在 hot client 内回退旧 API；更老核心
+// 返回 Unimplemented 错误（由调用方降级）。
 func (m *Manager) QueryOnlineUsers() ([]shared.OnlineUserStat, error) {
 	return m.hot.QueryOnlineUsers()
 }

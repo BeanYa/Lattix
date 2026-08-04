@@ -53,8 +53,8 @@ func (t *telemetry) collect() shared.TelemetryPayload {
 	}
 }
 
-// onlineUsers 采集在线用户快照（§13 遥测）。老 xray 核心无 GetUsersStats API 时
-// QueryOnlineUsers 返回 Unimplemented 等错误，记录调试日志并静默降级（返回 nil）。
+// onlineUsers 采集在线用户快照（§13 遥测）。xray 无 GetUsersStats 时 hot client 回退
+// 旧 API；仅当核心连在线用户 API 都没有（Unimplemented 等）时才记录日志并静默降级（返回 nil）。
 func (t *telemetry) onlineUsers() []shared.OnlineUserStat {
 	users, err := t.mgr.QueryOnlineUsers()
 	if err != nil {

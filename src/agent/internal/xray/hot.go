@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/xtls/xray-core/app/proxyman/command"
 	statscommand "github.com/xtls/xray-core/app/stats/command"
@@ -70,12 +73,19 @@ func (c *HotClient) QueryStats() (map[string]int64, error) {
 }
 
 // QueryOnlineUsers 拉取全部在线用户及源 IP（StatsService.GetUsersStats，一次 RPC 覆盖全部用户）。
-// 老 xray 核心无此 API 时返回 Unimplemented 错误（由调用方降级）。
+// 老 xray 核心无 GetUsersStats API 时（如 latest 对齐的 v26.3.27）回退到
+// GetAllOnlineUsers + GetStatsOnlineIpList（在线 IP 集合语义一致，代价为每在线用户一次 RPC）；
+// 更老核心（无在线用户 API）返回 Unimplemented 等错误，由调用方降级。
 func (c *HotClient) QueryOnlineUsers() ([]shared.OnlineUserStat, error) {
 	out := []shared.OnlineUserStat{}
 	err := c.callConn(func(ctx context.Context, conn *grpc.ClientConn) error {
-		resp, err := statscommand.NewStatsServiceClient(conn).GetUsersStats(ctx, &statscommand.GetUsersStatsRequest{})
+		client := statscommand.NewStatsServiceClient(conn)
+		resp, err := client.GetUsersStats(ctx, &statscommand.GetUsersStatsRequest{})
 		if err != nil {
+			if status.Code(err) == codes.Unimplemented {
+				out, err = queryOnlineUsersLegacy(ctx, client)
+				return err
+			}
 			return err
 		}
 		for _, u := range resp.GetUsers() {
@@ -94,6 +104,38 @@ func (c *HotClient) QueryOnlineUsers() ([]shared.OnlineUserStat, error) {
 		return nil
 	})
 	return out, err
+}
+
+// queryOnlineUsersLegacy 老核心回退实现：GetAllOnlineUsers 一次 RPC 拿在线用户集合，
+// 再逐个 GetStatsOnlineIpList 拿该用户在线 IP 列表。老核心返回的在线用户是完整
+// online map key（user>>>email>>>online），需切出 email；查询间隙用户下线等竞态
+// 导致单用户失败时跳过该用户，不中断整帧。
+func queryOnlineUsersLegacy(ctx context.Context, client statscommand.StatsServiceClient) ([]shared.OnlineUserStat, error) {
+	usersResp, err := client.GetAllOnlineUsers(ctx, &statscommand.GetAllOnlineUsersRequest{})
+	if err != nil {
+		return nil, err
+	}
+	out := []shared.OnlineUserStat{}
+	for _, key := range usersResp.GetUsers() {
+		if ctx.Err() != nil {
+			break
+		}
+		_, rest, _ := strings.Cut(key, ">>>")
+		email, _, _ := strings.Cut(rest, ">>>")
+		if email == "" {
+			continue
+		}
+		ipsResp, err := client.GetStatsOnlineIpList(ctx, &statscommand.GetStatsRequest{Name: key})
+		if err != nil {
+			continue
+		}
+		stat := shared.OnlineUserStat{User: email}
+		for ip := range ipsResp.GetIps() {
+			stat.IPs = append(stat.IPs, ip)
+		}
+		out = append(out, stat)
+	}
+	return out, nil
 }
 
 // ReplaceInbound 幂等地下发 inbound：先移除同 tag 旧 inbound（不存在属预期），再添加。

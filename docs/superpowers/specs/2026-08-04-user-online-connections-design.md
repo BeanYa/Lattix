@@ -18,7 +18,7 @@
 - **依赖 policy `statsUserOnline`**：现有 `ensureStatsPolicy` 已注入 `statsUserUplink/Downlink`（`src/agent/internal/xray/manager.go:382-484`），扩展加 `statsUserOnline: true`；旧配置缺失则走既有"落盘重启"路径。
 - **上报链路 = 复用 telemetry 周期推送**：不新增 RPC。`TelemetryPayload` 扩展 `online_users` 字段（每帧该服务器全量快照），随现有 `telemetry.report`（默认 60s，可配置 10-3600s）上报。前端用户列表已 5s 轮询，展示延迟 ≈ 60s，可接受。
 - **聚合 = 面板内存 tracker 跨服务器按 IP 去重**：`serverID → user → IP set`，telemetry 帧全量覆盖该服务器快照；新鲜度窗口（2×上报间隔兜底，固定 120s）内无更新的服务器自动过期，离线服务器自然失效，无需跨层挂钩 hub unregister。不落库（纯实时展示）。
-- **老 xray 降级**：`GetUsersStats` 返回 Unimplemented（老核心无此 API）时 agent 静默跳过该帧字段，面板显示 0。
+- **老 xray 降级**：`GetUsersStats` 返回 Unimplemented 时回退旧 API —— `GetAllOnlineUsers`（一次 RPC 拿在线用户集合，返回完整 online map key `user>>>email>>>online` 需切出 email）+ 逐个 `GetStatsOnlineIpList`（每用户一次 RPC 拿 IP 列表，数据与 `GetUsersStats` 等价，旧核心在线 map 同为去重 IP 语义，跨服务器去重计数不受影响；查询间隙用户下线等竞态跳过该用户）。更老核心（无在线用户 API，Unimplemented 等）才静默跳过该帧字段，面板显示 0。
 
 ## 数据流
 
