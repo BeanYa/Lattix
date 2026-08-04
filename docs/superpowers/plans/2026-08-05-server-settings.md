@@ -1512,7 +1512,10 @@ func TestShouldReconcileGates(t *testing.T) {
 	if !ok || version != "v1.8.24" {
 		t.Fatalf("should reconcile = (%s, %v), want (v1.8.24, true)", version, ok)
 	}
-	// 版本已一致：跳过。
+	// 版本已一致（含 v 前缀差异，如 xray 自报 1.8.24）：跳过。
+	if _, ok := runtime.shouldReconcile("1.8.24"); ok {
+		t.Fatal("matching version without v prefix should not reconcile")
+	}
 	if _, ok := runtime.shouldReconcile("v1.8.24"); ok {
 		t.Fatal("matching version should not reconcile")
 	}
@@ -1693,6 +1696,8 @@ func (r *serverRuntimeSettings) resetForPanelRebind() {
 
 // shouldReconcile 决定是否触发版本对齐：期望为固定版本、与当前不一致、
 // 且（版本与上次尝试不同 或 已过冷却期）。
+// 版本比较忽略 v 前缀（xray 自报版本通常不带 v，如 1.8.24），
+// 避免升级成功后因格式差异每 30 分钟重复触发升级重启。
 func (r *serverRuntimeSettings) shouldReconcile(current string) (string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -1700,7 +1705,7 @@ func (r *serverRuntimeSettings) shouldReconcile(current string) (string, bool) {
 	if v == nil || *v == "" || *v == "latest" {
 		return "", false
 	}
-	if *v == current {
+	if strings.TrimPrefix(*v, "v") == strings.TrimPrefix(current, "v") {
 		return "", false
 	}
 	if *v == r.lastAttemptVersion && time.Since(r.lastAttemptAt) < reconcileCooldown {
