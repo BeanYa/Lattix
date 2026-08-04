@@ -933,6 +933,12 @@ function DetailSheet({
               <div>
                 <dt className="text-xs text-muted-foreground">Agent / Xray</dt>
                 <dd className="mt-1">{server.agent_version ?? '-'} / {server.xray_version ?? '-'}</dd>
+                {server.effective_xray_version && (
+                  <span className="text-xs text-muted-foreground">
+                    期望 {server.effective_xray_version}
+                    {server.custom_settings ? '（服务器覆盖）' : '（面板默认）'}
+                  </span>
+                )}
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">机器类型 / 端口</dt>

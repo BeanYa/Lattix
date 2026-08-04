@@ -603,7 +603,7 @@ export default function Servers() {
     const requestID = ++upgradeVersionsRequest.current
     setUpgradeTarget(s)
     setUpgradeKind(kind)
-    setUpgradeVersion(s.effective_xray_version ?? 'latest')
+    setUpgradeVersion(kind === 'xray' ? (s.effective_xray_version ?? 'latest') : 'latest')
     setUpgradeVersions(null)
     setUpgradeVersionsLoading(true)
     setUpgradeError('')
@@ -1119,7 +1119,7 @@ export default function Servers() {
                 </>
               )}
             </DialogDescription>
-            {upgradeTarget?.effective_xray_version && (
+            {upgradeKind === 'xray' && upgradeTarget?.effective_xray_version && (
               <span className="text-xs text-muted-foreground">
                 期望版本：{upgradeTarget.effective_xray_version}
                 {upgradeTarget.custom_settings ? '（服务器覆盖）' : '（面板默认）'}
