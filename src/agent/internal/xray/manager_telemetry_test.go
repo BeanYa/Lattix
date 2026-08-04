@@ -81,7 +81,7 @@ func assertTelemetryConfig(t *testing.T, path string) {
 	policy := config["policy"].(map[string]any)
 	level := policy["levels"].(map[string]any)["0"].(map[string]any)
 	system := policy["system"].(map[string]any)
-	for _, key := range []string{"statsUserUplink", "statsUserDownlink"} {
+	for _, key := range []string{"statsUserUplink", "statsUserDownlink", "statsUserOnline"} {
 		if level[key] != true {
 			t.Fatalf("policy.levels.0.%s = %v", key, level[key])
 		}
@@ -93,5 +93,32 @@ func assertTelemetryConfig(t *testing.T, path string) {
 	}
 	if config["routing"] == nil || len(config["inbounds"].([]any)) != 1 {
 		t.Fatal("migration discarded existing managed configuration")
+	}
+}
+
+func TestEnsureTelemetryFeaturesEnablesUserOnlinePolicy(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "xray")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "xray.json")
+	runner := &telemetryTestRunner{}
+	mgr := NewManager(bin, configPath, "127.0.0.1:19085", runner)
+
+	if err := mgr.EnsureTelemetryFeatures(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	level := config["policy"].(map[string]any)["levels"].(map[string]any)["0"].(map[string]any)
+	if level["statsUserOnline"] != true {
+		t.Fatalf("policy.levels.0.statsUserOnline = %v, want true", level["statsUserOnline"])
 	}
 }

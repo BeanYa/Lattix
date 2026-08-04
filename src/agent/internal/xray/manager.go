@@ -405,6 +405,12 @@ func (m *Manager) QueryStats() (map[string]int64, error) {
 	return m.hot.QueryStats()
 }
 
+// QueryOnlineUsers 拉取全部在线用户及源 IP（§13 遥测）。
+// 老 xray 核心无 GetUsersStats API 时返回 Unimplemented 错误（由调用方降级）。
+func (m *Manager) QueryOnlineUsers() ([]shared.OnlineUserStat, error) {
+	return m.hot.QueryOnlineUsers()
+}
+
 // EnsureTelemetryFeatures 确保当前配置包含遥测所需的
 // stats/policy/StatsService（缺失则落盘并重启 xray 生效，尽力而为）。
 func (m *Manager) EnsureTelemetryFeatures() error {
@@ -460,7 +466,7 @@ func ensureStatsPolicy(raw json.RawMessage) (json.RawMessage, bool) {
 		levels["0"] = level
 		changed = true
 	}
-	for _, key := range []string{"statsUserUplink", "statsUserDownlink"} {
+	for _, key := range []string{"statsUserUplink", "statsUserDownlink", "statsUserOnline"} {
 		if enabled, ok := level[key].(bool); !ok || !enabled {
 			level[key] = true
 			changed = true

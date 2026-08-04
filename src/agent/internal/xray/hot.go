@@ -69,6 +69,33 @@ func (c *HotClient) QueryStats() (map[string]int64, error) {
 	return out, err
 }
 
+// QueryOnlineUsers 拉取全部在线用户及源 IP（StatsService.GetUsersStats，一次 RPC 覆盖全部用户）。
+// 老 xray 核心无此 API 时返回 Unimplemented 错误（由调用方降级）。
+func (c *HotClient) QueryOnlineUsers() ([]shared.OnlineUserStat, error) {
+	out := []shared.OnlineUserStat{}
+	err := c.callConn(func(ctx context.Context, conn *grpc.ClientConn) error {
+		resp, err := statscommand.NewStatsServiceClient(conn).GetUsersStats(ctx, &statscommand.GetUsersStatsRequest{})
+		if err != nil {
+			return err
+		}
+		for _, u := range resp.GetUsers() {
+			if u == nil || u.Email == "" {
+				continue
+			}
+			stat := shared.OnlineUserStat{User: u.Email}
+			for _, ip := range u.GetIps() {
+				if ip == nil || ip.Ip == "" {
+					continue
+				}
+				stat.IPs = append(stat.IPs, ip.Ip)
+			}
+			out = append(out, stat)
+		}
+		return nil
+	})
+	return out, err
+}
+
 // ReplaceInbound 幂等地下发 inbound：先移除同 tag 旧 inbound（不存在属预期），再添加。
 // inbound 为填充后的 xray inbound JSON，经 infra/conf 转为 protobuf。
 func (c *HotClient) ReplaceInbound(tag string, inbound json.RawMessage) error {
