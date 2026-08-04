@@ -915,6 +915,7 @@ func handleServerSettingsSyncResponse(sc *safeConn, env shared.Envelope, path st
 		return
 	}
 	if !result.Changed {
+		maybeReconcileXray(mgr, runtime)
 		return
 	}
 	if result.Settings == nil {
