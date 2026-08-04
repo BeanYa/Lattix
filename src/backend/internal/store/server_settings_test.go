@@ -107,7 +107,7 @@ func TestServerCustomSettingsOverrideAndClear(t *testing.T) {
 	if custom.Revision != 2 {
 		t.Fatalf("custom revision = %d, want 2", custom.Revision)
 	}
-	// 清除覆盖。
+	// 清除覆盖 → 写入 tombstone（revision+1，XrayVersion=nil）。
 	if err := st.UpdateServerCustomSettings(ctx, serverID, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +115,19 @@ func TestServerCustomSettingsOverrideAndClear(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if custom != nil {
-		t.Fatalf("custom after clear = %+v, want nil", custom)
+	if custom == nil || custom.Revision != 3 || custom.XrayVersion != nil {
+		t.Fatalf("custom after clear = %+v, want tombstone revision 3", custom)
+	}
+	// 清除后再次覆盖 → revision 继续递增（tombstone 不复位计数器）。
+	if err := st.UpdateServerCustomSettings(ctx, serverID, &shared.ServerSettings{XrayVersion: ptr("v1.8.20")}); err != nil {
+		t.Fatal(err)
+	}
+	custom, err = st.ServerCustomSettings(ctx, serverID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custom == nil || custom.Revision != 4 || custom.XrayVersion == nil || *custom.XrayVersion != "v1.8.20" {
+		t.Fatalf("custom after re-override = %+v, want revision 4", custom)
 	}
 }
 
@@ -161,7 +172,7 @@ func TestEffectiveServerSettingsFieldMergeAndRevision(t *testing.T) {
 	if *settings.XrayVersion != "v1.8.10" || revision != 3 {
 		t.Fatalf("effective = (%+v, %d)", settings, revision)
 	}
-	// 清除覆盖 → 回到 default，revision = 2 + 0 = 2（单调：不因清除而回退）。
+	// 清除覆盖 → 内容回到 default，effective revision = default 2 + tombstone 2 = 4（单调递增）。
 	if err := st.UpdateServerCustomSettings(ctx, serverID, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -169,8 +180,8 @@ func TestEffectiveServerSettingsFieldMergeAndRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *settings.XrayVersion != "v1.8.24" || revision != 2 {
-		t.Fatalf("effective after clear = (%+v, %d)", settings, revision)
+	if *settings.XrayVersion != "v1.8.24" || revision != 4 {
+		t.Fatalf("effective after clear = (%+v, %d), want revision 4", settings, revision)
 	}
 }
 

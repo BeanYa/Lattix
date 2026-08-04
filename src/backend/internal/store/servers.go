@@ -368,8 +368,8 @@ func (s *Store) ServerCustomSettings(ctx context.Context, id int64) (*serverSett
 	return &value, nil
 }
 
-// UpdateServerCustomSettings 写入服务器覆盖；settings 为 nil 时清除覆盖。
-// 每次写入 revision+1，保证 effective revision 单调递增（清除也递增语义由 EffectiveServerSettings 处理）。
+// UpdateServerCustomSettings 写入服务器覆盖；settings 为 nil 时写入 tombstone
+// （XrayVersion=nil）清除覆盖。每次写入（含清除）revision+1，保证 effective revision 单调递增。
 func (s *Store) UpdateServerCustomSettings(ctx context.Context, id int64, settings *shared.ServerSettings) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -393,7 +393,12 @@ func (s *Store) UpdateServerCustomSettings(ctx context.Context, id int64, settin
 		revision = current.Revision
 	}
 	if settings == nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE servers SET custom_settings = '' WHERE id = ?`, id); err != nil {
+		value := serverSettingsValue{Revision: revision + 1}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE servers SET custom_settings = ? WHERE id = ?`, string(encoded), id); err != nil {
 			return fmt.Errorf("clear server custom settings: %w", err)
 		}
 		return tx.Commit()
