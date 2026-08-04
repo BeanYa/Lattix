@@ -372,7 +372,7 @@ func TestServerCustomSettingsOverrideAndClear(t *testing.T) {
 	if custom.Revision != 2 {
 		t.Fatalf("custom revision = %d, want 2", custom.Revision)
 	}
-	// 清除覆盖。
+	// 清除覆盖：写入墓碑（revision 继续递增，XrayVersion 为 nil），不破坏单调性。
 	if err := st.UpdateServerCustomSettings(ctx, serverID, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -380,8 +380,16 @@ func TestServerCustomSettingsOverrideAndClear(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if custom != nil {
-		t.Fatalf("custom after clear = %+v, want nil", custom)
+	if custom == nil || custom.Revision != 3 || custom.XrayVersion != nil {
+		t.Fatalf("custom after clear = %+v, want tombstone revision 3", custom)
+	}
+	// 墓碑后再次覆盖：revision 4。
+	if err := st.UpdateServerCustomSettings(ctx, serverID, &shared.ServerSettings{XrayVersion: ptr("v1.8.20")}); err != nil {
+		t.Fatal(err)
+	}
+	custom, _ = st.ServerCustomSettings(ctx, serverID)
+	if custom.Revision != 4 || custom.XrayVersion == nil || *custom.XrayVersion != "v1.8.20" {
+		t.Fatalf("custom after re-override = %+v", custom)
 	}
 }
 
@@ -426,7 +434,7 @@ func TestEffectiveServerSettingsFieldMergeAndRevision(t *testing.T) {
 	if *settings.XrayVersion != "v1.8.10" || revision != 3 {
 		t.Fatalf("effective = (%+v, %d)", settings, revision)
 	}
-	// 清除覆盖 → 回到 default，revision = 2 + 0 = 2（单调：不因清除而回退）。
+	// 清除覆盖 → 墓碑只贡献 revision：回到 default 内容，revision = 2 + 2 = 4（单调递增）。
 	if err := st.UpdateServerCustomSettings(ctx, serverID, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +442,7 @@ func TestEffectiveServerSettingsFieldMergeAndRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *settings.XrayVersion != "v1.8.24" || revision != 2 {
+	if *settings.XrayVersion != "v1.8.24" || revision != 4 {
 		t.Fatalf("effective after clear = (%+v, %d)", settings, revision)
 	}
 }
@@ -548,8 +556,9 @@ func (s *Store) ServerCustomSettings(ctx context.Context, id int64) (*serverSett
 	return &value, nil
 }
 
-// UpdateServerCustomSettings 写入服务器覆盖；settings 为 nil 时清除覆盖。
-// 每次写入 revision+1，保证 effective revision 单调递增（清除也递增语义由 EffectiveServerSettings 处理）。
+// UpdateServerCustomSettings 写入服务器覆盖；settings 为 nil 时写入墓碑
+// （{"revision":N+1}，无字段）而非清空——custom revision 只增不减，
+// 保证 effective revision 全程单调（离线 agent 错过中间态也不会碰撞）。
 func (s *Store) UpdateServerCustomSettings(ctx context.Context, id int64, settings *shared.ServerSettings) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -572,16 +581,15 @@ func (s *Store) UpdateServerCustomSettings(ctx context.Context, id int64, settin
 		}
 		revision = current.Revision
 	}
-	if settings == nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE servers SET custom_settings = '' WHERE id = ?`, id); err != nil {
-			return fmt.Errorf("clear server custom settings: %w", err)
+	if settings != nil {
+		if err := settings.Validate(); err != nil {
+			return err
 		}
-		return tx.Commit()
 	}
-	if err := settings.Validate(); err != nil {
-		return err
+	value := serverSettingsValue{Revision: revision + 1}
+	if settings != nil {
+		value.XrayVersion = settings.XrayVersion
 	}
-	value := serverSettingsValue{Revision: revision + 1, XrayVersion: settings.XrayVersion}
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		return err
@@ -593,7 +601,8 @@ func (s *Store) UpdateServerCustomSettings(ctx context.Context, id int64, settin
 }
 
 // EffectiveServerSettings 返回服务器生效设置 = 面板默认 + 字段级覆盖；
-// effective revision = default.revision + custom.revision（单调递增）。
+// effective revision = default.revision + custom.revision（两者均只增不减，全程单调）。
+// custom 为墓碑（清除后）时 XrayVersion 为 nil，不覆盖任何字段，仅贡献 revision。
 func (s *Store) EffectiveServerSettings(ctx context.Context, id int64) (shared.ServerSettings, int64, error) {
 	settings, revision, err := s.DefaultServerSettings(ctx)
 	if err != nil {
@@ -1273,10 +1282,11 @@ func effectiveXrayVersion(s *Server, id int64) string {
 	return *settings.XrayVersion
 }
 
-// customServerSettings 读取服务器覆盖（读失败按无覆盖处理，不阻断列表）。
+// customServerSettings 读取服务器覆盖（读失败或无有效覆盖字段时按无覆盖处理，不阻断列表）。
+// 墓碑（清除后 custom 非 nil 但 XrayVersion 为 nil）同样归入 nil，DTO 显示跟随默认。
 func customServerSettings(s *Server, id int64) *shared.ServerSettings {
 	custom, err := s.st.ServerCustomSettings(context.Background(), id)
-	if err != nil || custom == nil {
+	if err != nil || custom == nil || custom.XrayVersion == nil {
 		return nil
 	}
 	return &shared.ServerSettings{XrayVersion: custom.XrayVersion}
