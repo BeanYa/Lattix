@@ -14,10 +14,18 @@ import (
 	"lattix/shared"
 )
 
+// telemetryManager 是 telemetry 对 xray.Manager 的依赖视图（便于测试注入 fake）。
+type telemetryManager interface {
+	Version() (string, bool)
+	StatsInstanceID() string
+	QueryStats() (map[string]int64, error)
+	QueryOnlineUsers() ([]shared.OnlineUserStat, error)
+}
+
 // telemetry 采集周期遥测（§13）：xray 版本/运行状态、主机指标（/proc）、
-// xray 绝对流量计数器（出口 node、每跳 forward 与用户维度）。
+// xray 绝对流量计数器（出口 node、每跳 forward 与用户维度）与在线用户快照。
 type telemetry struct {
-	mgr *xray.Manager
+	mgr telemetryManager
 
 	lastCPUIdle, lastCPUTot uint64
 	cpuPrimed               bool
@@ -41,7 +49,19 @@ func (t *telemetry) collect() shared.TelemetryPayload {
 		XrayInstanceID: t.mgr.StatsInstanceID(),
 		Host:           t.hostMetrics(),
 		Traffic:        t.trafficCounters(),
+		OnlineUsers:    t.onlineUsers(),
 	}
+}
+
+// onlineUsers 采集在线用户快照（§13 遥测）。老 xray 核心无 GetUsersStats API 时
+// QueryOnlineUsers 返回 Unimplemented 等错误，记录调试日志并静默降级（返回 nil）。
+func (t *telemetry) onlineUsers() []shared.OnlineUserStat {
+	users, err := t.mgr.QueryOnlineUsers()
+	if err != nil {
+		log.Printf("telemetry: query online users: %v", err)
+		return nil
+	}
+	return users
 }
 
 func (t *telemetry) trafficCounters() []shared.TrafficCounter {
