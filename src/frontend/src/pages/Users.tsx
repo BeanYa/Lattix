@@ -16,10 +16,11 @@ import {
 } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
-import { EmptyState, Notice, Page, PageHeader, Surface } from '@/components/PagePrimitives'
+import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { QRDialog } from '@/components/QRDialog'
 import { SubscriptionRoutingFields } from '@/components/SubscriptionRoutingFields'
 import { Badge } from '@/components/ui/badge'
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -546,138 +547,139 @@ export default function Users() {
           description="点击上方“创建用户”开始"
         />
       ) : null}
-      <Surface className={!loading && users.length === 0 ? 'hidden' : undefined}>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>姓名</TableHead>
-              <TableHead>链路</TableHead>
-              <TableHead>流量</TableHead>
-              <TableHead>有效期</TableHead>
-              <TableHead>订阅链接</TableHead>
-              <TableHead>创建时间</TableHead>
-              <TableHead>操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground">
-                  加载中…
-                </TableCell>
-              </TableRow>
-            ) : (
-              users.map((u) => (
-                <TableRow key={u.id}>
-                  <TableCell className="font-medium">
-                    <div className="flex items-center gap-2">
-                      {u.name}
-                      {u.disabled && <Badge variant="destructive">已停用</Badge>}
-                      {u.expired && <Badge variant="destructive">已到期</Badge>}
-                      {u.subscription_snapshot.status === 'ready' ? (
-                        <Badge variant="secondary">订阅 r{u.subscription_snapshot.revision}</Badge>
-                      ) : (
-                        <Badge variant="destructive" title={u.subscription_snapshot.error}>订阅异常</Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-					{u.chain_ids.length === 0 ? (
-                      <span className="text-muted-foreground">未分配</span>
+      {!loading && users.length === 0 ? null : (
+        <div className="flex flex-col gap-3">
+          {loading ? (
+            <LoadingState />
+          ) : (
+            users.map((u) => (
+              <Card key={u.id}>
+                <CardHeader className="border-b">
+                  <CardTitle className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="truncate">{u.name}</span>
+                    {u.disabled && <Badge variant="destructive">已停用</Badge>}
+                    {u.expired && <Badge variant="destructive">已到期</Badge>}
+                    {u.subscription_snapshot.status === 'ready' ? (
+                      <Badge variant="secondary">订阅 r{u.subscription_snapshot.revision}</Badge>
                     ) : (
-						`${u.chain_ids.filter((id) => linkOptions.some((link) => link.chainId === id)).length} / ${linkOptions.length}`
+                      <Badge variant="destructive" title={u.subscription_snapshot.error}>订阅异常</Badge>
                     )}
-                  </TableCell>
-                  <TableCell className="text-xs whitespace-nowrap">
-                    {u.traffic ? `↑${humanizeBytes(u.traffic.up)} ↓${humanizeBytes(u.traffic.down)}` : '-'}
-                  </TableCell>
-                  <TableCell className="text-xs whitespace-nowrap">
-                    {u.expires_at ? formatDateTime(u.expires_at, timezone) : <span className="text-muted-foreground">长期</span>}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex max-w-md items-center gap-2">
-                      <span className="truncate font-mono text-xs text-muted-foreground" title={u.sub_url}>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="space-y-1">
+                    <span className="block text-[11px] text-muted-foreground">链路</span>
+                    <span className="block font-medium tabular-nums">
+                      {u.chain_ids.length === 0 ? (
+                        <span className="text-muted-foreground">未分配</span>
+                      ) : (
+                        `${u.chain_ids.filter((id) => linkOptions.some((link) => link.chainId === id)).length} / ${linkOptions.length}`
+                      )}
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="block text-[11px] text-muted-foreground">流量</span>
+                    <span className="block font-medium tabular-nums whitespace-nowrap">
+                      {u.traffic ? `↑${humanizeBytes(u.traffic.up)} ↓${humanizeBytes(u.traffic.down)}` : '-'}
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="block text-[11px] text-muted-foreground">有效期</span>
+                    <span className="block">
+                      {u.expires_at ? formatDateTime(u.expires_at, timezone) : <span className="text-muted-foreground">长期</span>}
+                    </span>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="block text-[11px] text-muted-foreground">创建时间</span>
+                    <span className="block">{formatDateTime(u.created_at, timezone)}</span>
+                  </div>
+                  <div className="space-y-1 sm:col-span-2 lg:col-span-4">
+                    <span className="block text-[11px] text-muted-foreground">订阅链接</span>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={u.sub_url}>
                         {u.sub_url}
                       </span>
-                      <CopyButton text={u.sub_url} />
-                      <span title="复制分享链接订阅（vless:// 等链接集合）">
-                        <CopyButton text={u.sub_links_url} />
+                      <span className="flex shrink-0 items-center gap-1">
+                        <CopyButton text={u.sub_url} />
+                        <span title="复制分享链接订阅（vless:// 等链接集合）">
+                          <CopyButton text={u.sub_links_url} />
+                        </span>
+                        <Button variant="ghost" size="icon-sm" title="订阅二维码" onClick={() => setQrText(u.sub_url)}>
+                          <QrCodeIcon />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="打开订阅落地页（浏览器）"
+                          onClick={() => window.open(u.sub_url, '_blank', 'noopener')}
+                        >
+                          <ExternalLinkIcon />
+                        </Button>
                       </span>
-                      <Button variant="ghost" size="icon" title="订阅二维码" onClick={() => setQrText(u.sub_url)}>
-                        <QrCodeIcon />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        title="打开订阅落地页（浏览器）"
-                        onClick={() => window.open(u.sub_url, '_blank', 'noopener')}
-                      >
-                        <ExternalLinkIcon />
-                      </Button>
                     </div>
-                  </TableCell>
-                  <TableCell>{formatDateTime(u.created_at, timezone)}</TableCell>
-                  <TableCell className="space-x-2">
-                    <Button variant="outline" size="sm" onClick={() => onOpenAssign(u)}>
-                      分配链路
-                    </Button>
-                    <Button variant="outline" size="sm" title="订阅设置" onClick={() => onOpenSubSettings(u)}>
-                      <Settings2Icon />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      title="重新生成全部订阅格式"
-                      disabled={regenerating === u.id}
-                      onClick={() => onRegenerate(u)}
-                    >
-                      <RefreshCwIcon className={regenerating === u.id ? 'animate-spin' : undefined} />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      title="重置订阅地址（更换链接，旧链接立即失效）"
-                      disabled={resettingToken === u.id}
-                      onClick={() => onResetToken(u)}
-                    >
-                      <KeyRoundIcon className={resettingToken === u.id ? 'animate-spin' : undefined} />
-                    </Button>
-                    <Button variant="outline" size="sm" title="结果预览" onClick={() => onOpenPreview(u)}>
-                      <EyeIcon />
-                    </Button>
-                    <Button variant="outline" size="sm" title="流量历史" onClick={() => onOpenHistory(u)}>
-                      <HistoryIcon />
-                    </Button>
-                    <Button variant="outline" size="sm" title="修改有效期" onClick={() => onOpenExpiry(u)}>
-                      <CalendarClockIcon />
-                      有效期
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      title={u.disabled ? '启用（恢复链路下发与订阅）' : '停用（立即停权，订阅链路清空）'}
-                      disabled={toggling === u.id}
-                      onClick={() => onToggleDisabled(u)}
-                    >
-                      {u.disabled ? <CircleCheckIcon /> : <BanIcon />}
-                      {toggling === u.id ? '处理中…' : u.disabled ? '启用' : '停用'}
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      disabled={deleting === u.id}
-                      onClick={() => onDelete(u)}
-                    >
-                      <Trash2Icon />
-                      {deleting === u.id ? '删除中…' : '删除'}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </Surface>
+                  </div>
+                </CardContent>
+                <CardFooter className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => onOpenAssign(u)}>
+                    分配链路
+                  </Button>
+                  <Button variant="outline" size="sm" title="订阅设置" onClick={() => onOpenSubSettings(u)}>
+                    <Settings2Icon />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    title="重新生成全部订阅格式"
+                    disabled={regenerating === u.id}
+                    onClick={() => onRegenerate(u)}
+                  >
+                    <RefreshCwIcon className={regenerating === u.id ? 'animate-spin' : undefined} />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    title="重置订阅地址（更换链接，旧链接立即失效）"
+                    disabled={resettingToken === u.id}
+                    onClick={() => onResetToken(u)}
+                  >
+                    <KeyRoundIcon className={resettingToken === u.id ? 'animate-spin' : undefined} />
+                  </Button>
+                  <Button variant="outline" size="sm" title="结果预览" onClick={() => onOpenPreview(u)}>
+                    <EyeIcon />
+                  </Button>
+                  <Button variant="outline" size="sm" title="流量历史" onClick={() => onOpenHistory(u)}>
+                    <HistoryIcon />
+                  </Button>
+                  <Button variant="outline" size="sm" title="修改有效期" onClick={() => onOpenExpiry(u)}>
+                    <CalendarClockIcon />
+                    有效期
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    title={u.disabled ? '启用（恢复链路下发与订阅）' : '停用（立即停权，订阅链路清空）'}
+                    disabled={toggling === u.id}
+                    onClick={() => onToggleDisabled(u)}
+                  >
+                    {u.disabled ? <CircleCheckIcon /> : <BanIcon />}
+                    {toggling === u.id ? '处理中…' : u.disabled ? '启用' : '停用'}
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="ml-auto"
+                    disabled={deleting === u.id}
+                    onClick={() => onDelete(u)}
+                  >
+                    <Trash2Icon />
+                    {deleting === u.id ? '删除中…' : '删除'}
+                  </Button>
+                </CardFooter>
+              </Card>
+            ))
+          )}
+        </div>
+      )}
 
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-h-[85vh] sm:max-w-4xl overflow-y-auto">
