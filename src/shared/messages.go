@@ -77,6 +77,8 @@ const (
 	TypeLifecycleChanged     = "panel.lifecycle.changed"
 	TypeSettingsSync         = "agent.settings.sync"
 	TypeSettingsChanged      = "agent.settings.changed"
+	TypeServerSettingsSync    = "server.settings.sync"
+	TypeServerSettingsChanged = "server.settings.changed"
 	TypeApplyNode            = "node.apply"
 	TypeRemoveNode           = "node.remove"
 	TypeAddUser              = "user.add"

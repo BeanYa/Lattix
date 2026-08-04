@@ -218,6 +218,8 @@ export interface Server {
   agent_settings_desired_revision: number
   agent_settings_error: string
   agent_settings_reported_at: string | null
+  custom_settings: ServerSettings | null
+  effective_xray_version: string | null
   metrics: ServerMetrics | null
   billing: BillingProfile
   traffic_plan: TrafficPlan
@@ -612,6 +614,10 @@ export type CertInfo = components['schemas']['CertInfo']
 
 export type TLSMode = '' | 'off' | 'cert' | 'acme' | 'path'
 
+export interface ServerSettings {
+  xray_version?: string | null
+}
+
 export interface AgentSettings {
   revision: number
   reconnect: {
@@ -699,6 +705,8 @@ export interface PanelSettings {
   request_log_dropped: number
   backup_includes_logs: boolean
   agent: AgentSettings
+  server_settings: ServerSettings
+  server_settings_revision: number
   release_inspection: ReleaseInspectionSettings
   billing_inspection: InspectionSchedule
   exchange_rate_inspection: InspectionSchedule
@@ -722,6 +730,7 @@ export interface UpdateSettingsRequest {
   request_log_max_mb: number
   request_log_level: LogSeverity
   agent: AgentSettings
+  server_settings?: ServerSettings
   release_inspection: ReleaseInspectionSettings
   billing_inspection: InspectionSchedule
   exchange_rate_inspection: InspectionSchedule

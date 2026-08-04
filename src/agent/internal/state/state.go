@@ -135,3 +135,39 @@ func SaveSettings(path string, settings shared.AgentSettingsDocument) error {
 	}
 	return os.Rename(tmp, path)
 }
+
+func LoadServerSettings(path string) (shared.ServerSettingsDocument, error) {
+	var settings shared.ServerSettingsDocument
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return settings, nil
+	}
+	if err != nil {
+		return settings, err
+	}
+	if err := json.Unmarshal(b, &settings); err != nil {
+		return settings, err
+	}
+	if err := settings.Validate(); err != nil {
+		return shared.ServerSettingsDocument{}, err
+	}
+	return settings, nil
+}
+
+func SaveServerSettings(path string, settings shared.ServerSettingsDocument) error {
+	if err := settings.Validate(); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}

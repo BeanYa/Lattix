@@ -1418,6 +1418,13 @@ export interface components {
              * @default Asia/Shanghai
              */
             traffic_timezone: string;
+            server_settings?: {
+                /**
+                 * @description 面板级默认 xray 版本（latest 或 vX.Y.Z）；服务器可单独覆盖。
+                 * @default latest
+                 */
+                xray_version: string | null;
+            };
             agent?: components["schemas"]["AgentSettings"];
             release_inspection?: components["schemas"]["ReleaseInspectionSettings"];
             billing_inspection?: components["schemas"]["InspectionSchedule"];

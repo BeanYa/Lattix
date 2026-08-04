@@ -69,6 +69,8 @@ function createDemoServer(input: DemoServerInput): Server {
     agent_settings_desired_revision: 12,
     agent_settings_error: '',
     agent_settings_reported_at: now,
+    custom_settings: null,
+    effective_xray_version: '25.6.8',
     metrics: createMetrics(input),
     billing: {
       enabled: false,

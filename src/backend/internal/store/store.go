@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS servers (
     agent_settings_revision INTEGER NOT NULL DEFAULT 0,
     agent_settings_error TEXT NOT NULL DEFAULT '',
     agent_settings_reported_at DATETIME,
+    custom_settings TEXT    NOT NULL DEFAULT '', -- 服务器级覆盖（JSON：{revision, xray_version, ...}，字段级覆盖面板默认）
+    server_settings_revision INTEGER NOT NULL DEFAULT 0, -- agent 上报的已应用 effective revision
+    server_settings_error TEXT   NOT NULL DEFAULT '',    -- agent 应用错误信息（透出给列表状态）
+    server_settings_reported_at DATETIME,                -- 最近一次上报时间
     created_at   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
