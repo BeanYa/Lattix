@@ -93,13 +93,15 @@ func (r *serverRuntimeSettings) shouldReconcile(current string) (string, bool) {
 	return *v, true
 }
 
-// markAttempt 记录一次对齐尝试；失败时写入 lastApplyError 供回执展示。
+// markAttempt 记录一次对齐尝试；失败时写入 lastApplyError 供回执展示，成功时清除。
 func (r *serverRuntimeSettings) markAttempt(version string, err error) {
 	r.mu.Lock()
 	r.lastAttemptVersion = version
 	r.lastAttemptAt = time.Now()
 	if err != nil {
 		r.lastApplyError = err.Error()
+	} else {
+		r.lastApplyError = ""
 	}
 	r.mu.Unlock()
 }

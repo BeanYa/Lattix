@@ -433,11 +433,11 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 				}
 				return
 			}
-		if err := sendSettingsSync(sc, runtime); err != nil {
-			return
+			if err := sendSettingsSync(sc, runtime); err != nil {
+				return
+			}
 		}
-	}
-}()
+	}()
 
 	go func() {
 		for {

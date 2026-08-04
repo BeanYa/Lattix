@@ -72,6 +72,18 @@ func TestShouldReconcileGates(t *testing.T) {
 	}
 }
 
+func TestMarkAttemptClearsStaleErrorOnSuccess(t *testing.T) {
+	runtime := newServerRuntimeSettings(shared.ServerSettingsDocument{})
+	runtime.markAttempt("v1.8.24", errors.New("boom"))
+	if _, _, _, err := runtime.snapshot(); err != "boom" {
+		t.Fatalf("lastApplyError = %q after failure, want boom", err)
+	}
+	runtime.markAttempt("v1.8.24", nil)
+	if _, _, _, err := runtime.snapshot(); err != "" {
+		t.Fatalf("lastApplyError = %q after success, want empty", err)
+	}
+}
+
 func TestServerRuntimeSettingsBeginReconcileExcludesConcurrent(t *testing.T) {
 	runtime := newServerRuntimeSettings(shared.ServerSettingsDocument{})
 	if !runtime.beginReconcile() {
