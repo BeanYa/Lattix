@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -83,7 +84,7 @@ func (r *serverRuntimeSettings) shouldReconcile(current string) (string, bool) {
 	if v == nil || *v == "" || *v == "latest" {
 		return "", false
 	}
-	if *v == current {
+	if strings.TrimPrefix(*v, "v") == strings.TrimPrefix(current, "v") {
 		return "", false
 	}
 	if *v == r.lastAttemptVersion && time.Since(r.lastAttemptAt) < reconcileCooldown {

@@ -51,6 +51,10 @@ func TestShouldReconcileGates(t *testing.T) {
 	if _, ok := runtime.shouldReconcile("v1.8.24"); ok {
 		t.Fatal("matching version should not reconcile")
 	}
+	// Xray 自报版本无 v 前缀（"1.8.24"）：同样视为一致，跳过。
+	if _, ok := runtime.shouldReconcile("1.8.24"); ok {
+		t.Fatal("matching version without v prefix should not reconcile")
+	}
 	// 失败冷却：同版本 30 分钟内不重试。
 	runtime.markAttempt("v1.8.24", errors.New("boom"))
 	if _, ok := runtime.shouldReconcile("v1.8.20"); ok {
