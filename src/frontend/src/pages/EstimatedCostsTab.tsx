@@ -47,16 +47,49 @@ function ratesOfEstimated(
   return { monthly, annual, daily }
 }
 
-function formulaParts(server: BillingEstimatedServerStats, rateMode: BillingStatsRateMode, currency: string) {
+// estimateOf 返回当前粒度对应的估算值：粒度与计费周期匹配（如年付 + 年粒度）时
+// 直接用后端返回的周期实价（monthly_minor/annual_minor 为精确值），否则为估算折算值。
+function estimateOf(
+  server: BillingEstimatedServerStats,
+  rateMode: BillingStatsRateMode,
+  granularity: BillingStatsGranularity,
+): number {
   const { monthly, annual, daily } = ratesOfEstimated(server, rateMode)
-  switch (server.interval_unit) {
-    case 'year':
-      return `${money(monthly, currency)} / 月 · ${money(daily, currency)} / 日`
-    case 'month':
-      return `${money(annual, currency)} / 年 · ${money(daily, currency)} / 日`
-    default:
-      return `${money(monthly, currency)} / 月 · ${money(annual, currency)} / 年`
+  return granularity === 'year' ? annual : granularity === 'month' ? monthly : daily
+}
+
+function conversionBasis(server: BillingEstimatedServerStats, granularity: BillingStatsGranularity): string {
+  const { interval_unit: unit, interval_count: count } = server
+  if (granularity === 'day') {
+    if (unit === 'day' && count === 1) return '日付'
+    if (unit === 'day') return `实付 ÷ ${count} 天`
+    return '月成本 ÷ 30'
   }
+  if (granularity === 'month') {
+    if (unit === 'month' && count === 1) return '月付'
+    if (unit === 'month') return `实付 ÷ ${count} 月`
+    if (unit === 'year') return '年成本 ÷ 12'
+    return '日成本 × 30'
+  }
+  if (unit === 'year' && count === 1) return '年付'
+  if (unit === 'year') return `实付 ÷ ${count} 年`
+  if (unit === 'month') return '月成本 × 12'
+  return '日成本 × 360'
+}
+
+function formulaParts(
+  server: BillingEstimatedServerStats,
+  rateMode: BillingStatsRateMode,
+  currency: string,
+  granularity: BillingStatsGranularity,
+) {
+  const unit = GRANULARITY_LABEL[granularity]
+  const value = estimateOf(server, rateMode, granularity)
+  const basis = conversionBasis(server, granularity)
+  const exact = server.interval_unit === granularity && server.interval_count === 1
+  return exact
+    ? `${money(value, currency)} / ${unit}（${basis}实价）`
+    : `≈ ${money(value, currency)} / ${unit}（${basis}）`
 }
 
 function formulaTitle(server: BillingEstimatedServerStats): string {
@@ -165,6 +198,14 @@ export default function EstimatedCostsTab() {
 
   const totalAll = useMemo(() => rows.reduce((sum, row) => sum + row.total, 0), [rows])
   const dailyTotal = useMemo(() => rows.reduce((sum, row) => sum + row.daily, 0), [rows])
+  const monthlyTotal = useMemo(
+    () => (stats ? stats.servers.reduce((sum, server) => sum + ratesOfEstimated(server, rateMode).monthly, 0) : 0),
+    [stats, rateMode],
+  )
+  const annualTotal = useMemo(
+    () => (stats ? stats.servers.reduce((sum, server) => sum + ratesOfEstimated(server, rateMode).annual, 0) : 0),
+    [stats, rateMode],
+  )
   const totals = rateMode === 'custom' && stats?.estimated_totals_custom
     ? stats.estimated_totals_custom
     : stats?.estimated_totals_public ?? []
@@ -221,18 +262,18 @@ export default function EstimatedCostsTab() {
             </Card>
             <Card>
               <CardHeader>
-                <CardDescription>估算月成本（×1月）</CardDescription>
+                <CardDescription>估算月成本（月付实价，其余估算折算）</CardDescription>
                 <CardTitle className="text-2xl tabular-nums">
-                  {money(dailyTotal * 30, reportingCurrency)}
+                  {money(monthlyTotal, reportingCurrency)}
                   <span className="ml-1 text-sm font-normal text-muted-foreground">/ 月 · {reportingCurrency}</span>
                 </CardTitle>
               </CardHeader>
             </Card>
             <Card>
               <CardHeader>
-                <CardDescription>估算年成本（×12月）</CardDescription>
+                <CardDescription>估算年成本（年付实价，其余估算折算）</CardDescription>
                 <CardTitle className="text-2xl tabular-nums">
-                  {money(dailyTotal * 360, reportingCurrency)}
+                  {money(annualTotal, reportingCurrency)}
                   <span className="ml-1 text-sm font-normal text-muted-foreground">/ 年 · {reportingCurrency}</span>
                 </CardTitle>
               </CardHeader>
@@ -272,7 +313,7 @@ export default function EstimatedCostsTab() {
                   <TableRow>
                     <TableHead>{header('name', '服务器')}</TableHead>
                     <TableHead className="text-right">原价 / 周期</TableHead>
-                    <TableHead className="text-right">{header('daily', `估算日成本 (${reportingCurrency})`)}</TableHead>
+                    <TableHead className="text-right">{header('daily', `估算${GRANULARITY_LABEL[granularity]}成本 (${reportingCurrency})`)}</TableHead>
                     <TableHead className="text-right">{header('total', `估算总成本 (${reportingCurrency})`)}</TableHead>
                     <TableHead className="text-right">{header('share', '占比')}</TableHead>
                     <TableHead className="text-right">状态</TableHead>
@@ -298,10 +339,10 @@ export default function EstimatedCostsTab() {
                             <span className="text-muted-foreground"> / {server.interval_count} {GRANULARITY_LABEL[server.interval_unit]}</span>
                           </div>
                           <div className="text-xs text-muted-foreground tabular-nums" title={formulaTitle(server)}>
-                            ≈ {formulaParts(server, rateMode, reportingCurrency)}
+                            {formulaParts(server, rateMode, reportingCurrency, granularity)}
                           </div>
                         </TableCell>
-                        <TableCell className="text-right tabular-nums">{money(row.daily, reportingCurrency)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{money(estimateOf(server, rateMode, granularity), reportingCurrency)}</TableCell>
                         <TableCell className="text-right tabular-nums font-medium">{money(row.total, reportingCurrency)}</TableCell>
                         <TableCell className="text-right tabular-nums">{(row.share * 100).toFixed(1)}%</TableCell>
                         <TableCell className="text-right">
