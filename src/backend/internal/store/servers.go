@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"lattix/shared"
@@ -24,45 +26,49 @@ const (
 
 // Server 是 servers 表的一行（§4）。
 type Server struct {
-	ID                      int64
-	Alias                   string
-	Token                   string // 长期凭证；创建时先存 bootstrap token，session.open 后换发（§11）
-	LastSeenAt              *time.Time
-	XrayVersion             string
-	AgentVersion            string // session.open 上报的 agent 版本（§18 升级管理）
-	Address                 string // 公网地址（session.open 时按 WS RemoteAddr 记录，订阅用，§9）
-	AddressMode             string // auto|manual；manual 地址不被后续 session.open 覆盖
-	LearnedAddr             string // 每次 session.open 学习的公网地址；容器网关对端回退到 agent 公网网卡（§9）
-	NICAddresses            string // agent 上报的网卡非回环地址 JSON 数组（§9 公网地址候选）；空串 = 无
-	ConfigDrift             bool   // 配置漂移标志（§17，agent drift_report 驱动）
-	MachineType             string // direct|nat（§21）
-	AllowedPorts            string // NAT 可用端口段 JSON（shared.PortRange 数组，§21）；空串 = 无段
-	Tags                    string // 管理标签 JSON 数组；名称模板 {{TAG_n}} 的来源
-	CountryCode             string // ISO 3166-1 alpha-2；管理员在服务器资料中选择
-	Location                string // 城市或机房位置；管理员填写
-	CredentialEpoch         int64
-	CredentialCommitted     bool
-	CredentialPendingToken  string
-	CredentialExchangeID    string
-	LastConnectedAt         *time.Time
-	LastDisconnectedAt      *time.Time
-	LastReconnectedAt       *time.Time
-	ReconnectCount          int64
-	LastDisconnectReason    string
-	AgentSettingsRevision   int64
-	AgentSettingsError      string
-	AgentSettingsReportedAt *time.Time
-	CreatedAt               time.Time
+	ID                       int64
+	Alias                    string
+	Token                    string // 长期凭证；创建时先存 bootstrap token，session.open 后换发（§11）
+	LastSeenAt               *time.Time
+	XrayVersion              string
+	AgentVersion             string // session.open 上报的 agent 版本（§18 升级管理）
+	Address                  string // 公网地址（session.open 时按 WS RemoteAddr 记录，订阅用，§9）
+	AddressMode              string // auto|manual；manual 地址不被后续 session.open 覆盖
+	LearnedAddr              string // 每次 session.open 学习的公网地址；容器网关对端回退到 agent 公网网卡（§9）
+	NICAddresses             string // agent 上报的网卡非回环地址 JSON 数组（§9 公网地址候选）；空串 = 无
+	ConfigDrift              bool   // 配置漂移标志（§17，agent drift_report 驱动）
+	MachineType              string // direct|nat（§21）
+	AllowedPorts             string // NAT 可用端口段 JSON（shared.PortRange 数组，§21）；空串 = 无段
+	Tags                     string // 管理标签 JSON 数组；名称模板 {{TAG_n}} 的来源
+	CountryCode              string // ISO 3166-1 alpha-2；管理员在服务器资料中选择
+	Location                 string // 城市或机房位置；管理员填写
+	CredentialEpoch          int64
+	CredentialCommitted      bool
+	CredentialPendingToken   string
+	CredentialExchangeID     string
+	LastConnectedAt          *time.Time
+	LastDisconnectedAt       *time.Time
+	LastReconnectedAt        *time.Time
+	ReconnectCount           int64
+	LastDisconnectReason     string
+	AgentSettingsRevision    int64
+	AgentSettingsError       string
+	AgentSettingsReportedAt  *time.Time
+	CustomSettings           string // 服务器级覆盖 JSON（空串 = 无覆盖）
+	ServerSettingsRevision   int64
+	ServerSettingsError      string
+	ServerSettingsReportedAt *time.Time
+	CreatedAt                time.Time
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, credential_epoch, credential_committed, credential_pending_token, credential_exchange_id, last_connected_at, last_disconnected_at, last_reconnected_at, reconnect_count, last_disconnect_reason, agent_settings_revision, agent_settings_error, agent_settings_reported_at, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, credential_epoch, credential_committed, credential_pending_token, credential_exchange_id, last_connected_at, last_disconnected_at, last_reconnected_at, reconnect_count, last_disconnect_reason, agent_settings_revision, agent_settings_error, agent_settings_reported_at, custom_settings, server_settings_revision, server_settings_error, server_settings_reported_at, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
-	var lastSeen, lastConnected, lastDisconnected, lastReconnected, settingsReported sql.NullTime
+	var lastSeen, lastConnected, lastDisconnected, lastReconnected, settingsReported, serverSettingsReported sql.NullTime
 	var xrayVer, agentVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.CredentialEpoch, &srv.CredentialCommitted, &srv.CredentialPendingToken, &srv.CredentialExchangeID, &lastConnected, &lastDisconnected, &lastReconnected, &srv.ReconnectCount, &srv.LastDisconnectReason, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.CredentialEpoch, &srv.CredentialCommitted, &srv.CredentialPendingToken, &srv.CredentialExchangeID, &lastConnected, &lastDisconnected, &lastReconnected, &srv.ReconnectCount, &srv.LastDisconnectReason, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CustomSettings, &srv.ServerSettingsRevision, &srv.ServerSettingsError, &serverSettingsReported, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -87,6 +93,10 @@ func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	if settingsReported.Valid {
 		t := settingsReported.Time
 		srv.AgentSettingsReportedAt = &t
+	}
+	if serverSettingsReported.Valid {
+		t := serverSettingsReported.Time
+		srv.ServerSettingsReportedAt = &t
 	}
 	return &srv, nil
 }
@@ -334,6 +344,102 @@ func (s *Store) ReportAgentSettings(ctx context.Context, id, revision int64, app
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE servers
 		 SET agent_settings_revision = ?, agent_settings_error = ?, agent_settings_reported_at = CURRENT_TIMESTAMP
+		 WHERE id = ?`, revision, applyError, id)
+	return err
+}
+
+// ServerCustomSettings 读取服务器覆盖；无覆盖返回 (nil, nil)。
+func (s *Store) ServerCustomSettings(ctx context.Context, id int64) (*serverSettingsValue, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT custom_settings FROM servers WHERE id = ?`, id).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get server custom settings: %w", err)
+	}
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var value serverSettingsValue
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return nil, fmt.Errorf("decode server custom settings: %w", err)
+	}
+	return &value, nil
+}
+
+// UpdateServerCustomSettings 写入服务器覆盖；settings 为 nil 时清除覆盖。
+// 每次写入 revision+1，保证 effective revision 单调递增（清除也递增语义由 EffectiveServerSettings 处理）。
+func (s *Store) UpdateServerCustomSettings(ctx context.Context, id int64, settings *shared.ServerSettings) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var raw string
+	err = tx.QueryRowContext(ctx, `SELECT custom_settings FROM servers WHERE id = ?`, id).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("get server custom settings: %w", err)
+	}
+	revision := int64(0)
+	if strings.TrimSpace(raw) != "" {
+		var current serverSettingsValue
+		if err := json.Unmarshal([]byte(raw), &current); err != nil {
+			return fmt.Errorf("decode server custom settings: %w", err)
+		}
+		revision = current.Revision
+	}
+	if settings == nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE servers SET custom_settings = '' WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("clear server custom settings: %w", err)
+		}
+		return tx.Commit()
+	}
+	if err := settings.Validate(); err != nil {
+		return err
+	}
+	value := serverSettingsValue{Revision: revision + 1, XrayVersion: settings.XrayVersion}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE servers SET custom_settings = ? WHERE id = ?`, string(encoded), id); err != nil {
+		return fmt.Errorf("save server custom settings: %w", err)
+	}
+	return tx.Commit()
+}
+
+// EffectiveServerSettings 返回服务器生效设置 = 面板默认 + 字段级覆盖；
+// effective revision = default.revision + custom.revision（单调递增）。
+func (s *Store) EffectiveServerSettings(ctx context.Context, id int64) (shared.ServerSettings, int64, error) {
+	settings, revision, err := s.DefaultServerSettings(ctx)
+	if err != nil {
+		return shared.ServerSettings{}, 0, err
+	}
+	custom, err := s.ServerCustomSettings(ctx, id)
+	if errors.Is(err, ErrNotFound) {
+		return shared.ServerSettings{}, 0, err
+	}
+	if err != nil {
+		return shared.ServerSettings{}, 0, err
+	}
+	if custom != nil {
+		if custom.XrayVersion != nil {
+			settings.XrayVersion = custom.XrayVersion
+		}
+		revision += custom.Revision
+	}
+	return settings, revision, nil
+}
+
+// ReportServerSettings records the last effective revision the Agent applied.
+func (s *Store) ReportServerSettings(ctx context.Context, id, revision int64, applyError string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE servers
+		 SET server_settings_revision = ?, server_settings_error = ?, server_settings_reported_at = CURRENT_TIMESTAMP
 		 WHERE id = ?`, revision, applyError, id)
 	return err
 }

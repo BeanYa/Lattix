@@ -11,7 +11,7 @@ import (
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
-const schemaVersion = 10
+const schemaVersion = 11
 
 type columnMigration struct {
 	name       string
@@ -81,6 +81,10 @@ func migrateSchema(tx *sql.Tx) error {
 		{"agent_settings_revision", "INTEGER NOT NULL DEFAULT 0"},
 		{"agent_settings_error", "TEXT NOT NULL DEFAULT ''"},
 		{"agent_settings_reported_at", "DATETIME"},
+		{"custom_settings", "TEXT NOT NULL DEFAULT ''"},
+		{"server_settings_revision", "INTEGER NOT NULL DEFAULT 0"},
+		{"server_settings_error", "TEXT NOT NULL DEFAULT ''"},
+		{"server_settings_reported_at", "DATETIME"},
 		{"address_mode", "TEXT NOT NULL DEFAULT 'auto'"},
 	})
 	if err != nil {

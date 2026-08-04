@@ -30,6 +30,7 @@ const (
 	SettingRequestLogLevel       = "request_log_level"        // 请求日志最低记录级别 debug|info|warning|error，默认 debug
 	SettingPanelInstanceID       = "panel_instance_id"
 	SettingAgentSettings         = "agent_settings"
+	SettingServerSettings        = "server_settings" // 面板级服务器设置默认值（JSON：{revision, xray_version}）
 	SettingReleaseInspection     = "release_inspection"
 	SettingAgentReleaseCache     = "agent_release_cache"
 	SettingXrayReleaseCache      = "xray_release_cache"
@@ -223,4 +224,95 @@ func (s *Store) ApplySettings(
 		return nil, err
 	}
 	return &updated, nil
+}
+
+// serverSettingsValue 是 settings 表默认值与 servers.custom_settings 共用的存储结构。
+type serverSettingsValue struct {
+	Revision    int64   `json:"revision"`
+	XrayVersion *string `json:"xray_version,omitempty"`
+}
+
+// DefaultServerSettings 返回面板级默认服务器设置与当前 revision，首次读取时建默认
+// （xray_version=latest，保持现状行为）。
+// 注意：存储值始终保证 XrayVersion 非 nil（否则下发生效文档会被
+// ServerSettingsDocument.Validate 拒绝，造成 sync 错误循环）。
+func (s *Store) DefaultServerSettings(ctx context.Context) (shared.ServerSettings, int64, error) {
+	raw, err := s.GetSetting(ctx, SettingServerSettings)
+	if err != nil {
+		return shared.ServerSettings{}, 0, err
+	}
+	if raw == "" {
+		value := serverSettingsValue{Revision: 1, XrayVersion: shared.DefaultServerSettings().XrayVersion}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return shared.ServerSettings{}, 0, err
+		}
+		if _, err := s.db.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE settings.value = ''`,
+			SettingServerSettings, string(encoded)); err != nil {
+			return shared.ServerSettings{}, 0, err
+		}
+		raw = string(encoded)
+	}
+	var value serverSettingsValue
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return shared.ServerSettings{}, 0, fmt.Errorf("decode server settings: %w", err)
+	}
+	if err := shared.ValidateXrayVersion(xrayVersionOrEmpty(value.XrayVersion)); err != nil {
+		return shared.ServerSettings{}, 0, fmt.Errorf("validate stored server settings: %w", err)
+	}
+	settings := shared.ServerSettings{XrayVersion: value.XrayVersion}
+	return settings, value.Revision, nil
+}
+
+// UpdateDefaultServerSettings 替换面板默认并在同一事务内递增 revision。
+func (s *Store) UpdateDefaultServerSettings(ctx context.Context, desired shared.ServerSettings) (int64, error) {
+	if err := desired.Validate(); err != nil {
+		return 0, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	revision := int64(0)
+	var raw string
+	err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, SettingServerSettings).Scan(&raw)
+	if err == nil {
+		var current serverSettingsValue
+		if err := json.Unmarshal([]byte(raw), &current); err != nil {
+			return 0, fmt.Errorf("decode server settings: %w", err)
+		}
+		revision = current.Revision
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("get server settings: %w", err)
+	}
+	// 归一化：nil XrayVersion 按空串存储（保持文档校验不变式：xray_version 必填）。
+	normalized := desired.XrayVersion
+	if normalized == nil {
+		empty := ""
+		normalized = &empty
+	}
+	value := serverSettingsValue{Revision: revision + 1, XrayVersion: normalized}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO settings (key, value) VALUES (?, ?)
+		 ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+		SettingServerSettings, string(encoded)); err != nil {
+		return 0, fmt.Errorf("save server settings: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return value.Revision, nil
+}
+
+func xrayVersionOrEmpty(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }
