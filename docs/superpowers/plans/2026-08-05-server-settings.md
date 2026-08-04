@@ -1039,49 +1039,109 @@ git commit -m "feat(dispatch): server settings sync channel with per-server effe
 
 - [ ] **Step 1: 写失败测试**
 
-在 `src/backend/internal/panel/server_tests.go` 末尾（或新建 `settings_server_test.go`）追加：
+面板测试框架（既有模式，见 `sub_settings_test.go`/`chains_edit_test.go`）：`store.Open(":memory:")` + `&Server{st: st, disp: dispatch.New(st, requester), req: requester}` + `httptest.NewRecorder()` 直调 handler；响应为 RPC 信封 `{code, message, data}`。
+
+创建 `src/backend/internal/panel/server_settings_test.go`：
 
 ```go
+package panel
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"lattix/backend/internal/dispatch"
+	"lattix/backend/internal/store"
+	"lattix/shared"
+)
+
+type settingsRequester struct {
+	online map[int64]bool
+}
+
+func (f *settingsRequester) Send(context.Context, int64, shared.Envelope) error { return nil }
+func (f *settingsRequester) IsOnline(serverID int64) bool                       { return f.online[serverID] }
+
+// rpcEnvelope 是面板响应信封的通用解码结构。
+type rpcEnvelope struct {
+	Code    string          `json:"code"`
+	Message string          `json:"message"`
+	Data    json.RawMessage `json:"data"`
+}
+
+func decodeRPC(t *testing.T, rec *httptest.ResponseRecorder) rpcEnvelope {
+	t.Helper()
+	var env rpcEnvelope
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode rpc envelope: %v, body = %s", err, rec.Body.String())
+	}
+	return env
+}
+
 func TestSettingsServerSettingsRoundTrip(t *testing.T) {
-	s := newTestServer(t)
 	ctx := context.Background()
-	// 初始默认 latest。
-	body := `{}`
-	s.patchJSON(t, "/api/setting/update", body)
-	// GET 默认值。
-	resp := s.getJSON(t, "/api/setting/get")
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	requester := &settingsRequester{online: map[int64]bool{}}
+	serverAPI := &Server{st: st, disp: dispatch.New(st, requester), req: requester}
+
+	// 初始默认 latest（revision 1）。
+	rec := httptest.NewRecorder()
+	serverAPI.handleGetSettings(rec, httptest.NewRequest(http.MethodGet, "/api/setting/get", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get settings status = %d, body = %s", rec.Code, rec.Body.String())
+	}
 	var dto struct {
 		ServerSettings         shared.ServerSettings `json:"server_settings"`
 		ServerSettingsRevision int64                 `json:"server_settings_revision"`
 	}
-	if err := json.Unmarshal(resp, &dto); err != nil {
+	if err := json.Unmarshal(decodeRPC(t, rec).Data, &dto); err != nil {
 		t.Fatal(err)
 	}
 	if dto.ServerSettingsRevision != 1 || dto.ServerSettings.XrayVersion == nil || *dto.ServerSettings.XrayVersion != "latest" {
 		t.Fatalf("default = %+v rev=%d", dto.ServerSettings, dto.ServerSettingsRevision)
 	}
-	// 保存覆盖值。
-	s.patchJSON(t, "/api/setting/update", `{"server_settings":{"xray_version":"v1.8.24"}}`)
-	resp = s.getJSON(t, "/api/setting/get")
-	if err := json.Unmarshal(resp, &dto); err != nil {
+
+	// 保存默认覆盖值 → revision+1。
+	rec = httptest.NewRecorder()
+	serverAPI.handleUpdateSettings(rec, httptest.NewRequest(http.MethodPost, "/api/setting/update",
+		strings.NewReader(`{"server_settings":{"xray_version":"v1.8.24"}}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update settings status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	rec = httptest.NewRecorder()
+	serverAPI.handleGetSettings(rec, httptest.NewRequest(http.MethodGet, "/api/setting/get", nil))
+	if err := json.Unmarshal(decodeRPC(t, rec).Data, &dto); err != nil {
 		t.Fatal(err)
 	}
 	if dto.ServerSettingsRevision != 2 || dto.ServerSettings.XrayVersion == nil || *dto.ServerSettings.XrayVersion != "v1.8.24" {
 		t.Fatalf("after update = %+v rev=%d", dto.ServerSettings, dto.ServerSettingsRevision)
 	}
+
 	// 非法版本被拒绝。
-	s.patchError(t, "/api/setting/update", `{"server_settings":{"xray_version":"nope"}}`, http.StatusBadRequest)
+	rec = httptest.NewRecorder()
+	serverAPI.handleUpdateSettings(rec, httptest.NewRequest(http.MethodPost, "/api/setting/update",
+		strings.NewReader(`{"server_settings":{"xray_version":"nope"}}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid version status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	_ = ctx
 }
 ```
 
-（先确认 `newTestServer`/`getJSON`/`patchJSON`/`patchError` 在 `server_tests.go` 中的确切签名再写，见 Step 2 检查步骤。）
+- [ ] **Step 2: 检查测试框架签名并运行确认失败**
 
-- [ ] **Step 2: 检查测试框架签名**
-
-Read `src/backend/internal/panel/server_tests.go` 找到 `newTestServer`、`getJSON`、`patchJSON`、`patchError` 的签名与用法（它们可能命名为 `doJSON` 等）。若签名不同，按实际签名改写 Step 1 的测试。然后运行确认失败：
+若 `Server` 字段名或 `dispatch.New` 签名与上面不符，按实际代码修正。然后：
 
 Run（workdir `src/backend`）：`go test ./internal/panel/ -run TestSettingsServerSettingsRoundTrip -v`
-Expected: 编译失败或断言失败（DTO 字段不存在）。
+Expected: 编译失败（`ServerSettings` 字段不存在于 settingsDTO）或断言失败。
 
 - [ ] **Step 3: 实现**
 
@@ -1182,77 +1242,95 @@ git commit -m "feat(panel): default server settings in settings API"
 
 - [ ] **Step 1: 写失败测试**
 
-`src/backend/internal/panel/server_tests.go` 追加：
+同 Task 4 框架（`server_settings_test.go` 内追加，复用 `settingsRequester`/`decodeRPC`）：
 
 ```go
 func TestServerCustomSettingsOverrideLifecycle(t *testing.T) {
-	s := newTestServer(t)
-	serverID := s.createTestServer(t, "s1", "")
-	// 无覆盖：effective = 默认 latest。
-	body := fmt.Sprintf(`{"server_id":%d,"alias":"s1","address":""}`, serverID)
-	s.patchJSON(t, "/api/server/update", body)
-	resp := s.getJSON(t, "/api/server/list")
-	var list []map[string]any
-	if err := json.Unmarshal(resp, &list); err != nil {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
-	for _, item := range list {
-		if int64(item["id"].(float64)) == serverID {
-			found = true
-			if item["custom_settings"] != nil {
-				t.Fatalf("custom_settings = %v, want nil", item["custom_settings"])
-			}
-			if item["effective_xray_version"] != "latest" {
-				t.Fatalf("effective_xray_version = %v, want latest", item["effective_xray_version"])
+	defer st.Close()
+	requester := &settingsRequester{online: map[int64]bool{}}
+	serverAPI := &Server{st: st, disp: dispatch.New(st, requester), req: requester}
+	serverID, err := st.CreateServer(ctx, "s1", "", "tok", store.MachineTypeDirect, "", "", "US", "Test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		serverAPI.handleUpdateServer(rec, httptest.NewRequest(http.MethodPost, "/api/server/update", strings.NewReader(body)))
+		return rec
+	}
+	list := func() []serverDTO {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		serverAPI.handleListServers(rec, httptest.NewRequest(http.MethodGet, "/api/server/list", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var servers []serverDTO
+		if err := json.Unmarshal(decodeRPC(t, rec).Data, &servers); err != nil {
+			t.Fatal(err)
+		}
+		return servers
+	}
+	find := func(servers []serverDTO) serverDTO {
+		for _, item := range servers {
+			if item.ID == serverID {
+				return item
 			}
 		}
-	}
-	if !found {
 		t.Fatal("server not in list")
+		return serverDTO{}
 	}
+
+	// 无覆盖：custom_settings nil，effective = 默认 latest。
+	update(fmt.Sprintf(`{"server_id":%d,"alias":"s1","address":""}`, serverID))
+	dto := find(list())
+	if dto.CustomSettings != nil {
+		t.Fatalf("custom_settings = %+v, want nil", dto.CustomSettings)
+	}
+	if dto.EffectiveXrayVersion != "latest" {
+		t.Fatalf("effective_xray_version = %q, want latest", dto.EffectiveXrayVersion)
+	}
+
 	// 设置覆盖 v1.8.10。
-	s.patchJSON(t, "/api/server/update", fmt.Sprintf(`{"server_id":%d,"alias":"s1","address":"","custom_settings":{"xray_version":"v1.8.10"}}`, serverID))
-	resp = s.getJSON(t, "/api/server/list")
-	if err := json.Unmarshal(resp, &list); err != nil {
-		t.Fatal(err)
+	update(fmt.Sprintf(`{"server_id":%d,"alias":"s1","address":"","custom_settings":{"xray_version":"v1.8.10"}}`, serverID))
+	dto = find(list())
+	if dto.CustomSettings == nil || dto.CustomSettings.XrayVersion == nil || *dto.CustomSettings.XrayVersion != "v1.8.10" {
+		t.Fatalf("custom_settings = %+v", dto.CustomSettings)
 	}
-	for _, item := range list {
-		if int64(item["id"].(float64)) == serverID {
-			custom := item["custom_settings"].(map[string]any)
-			if custom["xray_version"] != "v1.8.10" {
-				t.Fatalf("custom_settings = %v", item["custom_settings"])
-			}
-			if item["effective_xray_version"] != "v1.8.10" {
-				t.Fatalf("effective_xray_version = %v, want v1.8.10", item["effective_xray_version"])
-			}
-		}
+	if dto.EffectiveXrayVersion != "v1.8.10" {
+		t.Fatalf("effective_xray_version = %q, want v1.8.10", dto.EffectiveXrayVersion)
 	}
-	// 清除覆盖回退默认。
-	s.patchJSON(t, "/api/server/update", fmt.Sprintf(`{"server_id":%d,"alias":"s1","address":"","custom_settings":{}}`, serverID))
-	resp = s.getJSON(t, "/api/server/list")
-	if err := json.Unmarshal(resp, &list); err != nil {
-		t.Fatal(err)
+
+	// 清除覆盖（{}）回退默认。
+	update(fmt.Sprintf(`{"server_id":%d,"alias":"s1","address":"","custom_settings":{}}`, serverID))
+	dto = find(list())
+	if dto.CustomSettings != nil {
+		t.Fatalf("custom_settings after clear = %+v, want nil", dto.CustomSettings)
 	}
-	for _, item := range list {
-		if int64(item["id"].(float64)) == serverID {
-			if item["custom_settings"] != nil {
-				t.Fatalf("custom_settings after clear = %v, want nil", item["custom_settings"])
-			}
-			if item["effective_xray_version"] != "latest" {
-				t.Fatalf("effective_xray_version after clear = %v, want latest", item["effective_xray_version"])
-			}
-		}
+	if dto.EffectiveXrayVersion != "latest" {
+		t.Fatalf("effective_xray_version after clear = %q, want latest", dto.EffectiveXrayVersion)
 	}
+
 	// 非法版本拒绝。
-	s.patchError(t, "/api/server/update", fmt.Sprintf(`{"server_id":%d,"alias":"s1","address":"","custom_settings":{"xray_version":"bad"}}`, serverID), http.StatusBadRequest)
+	rec := update(fmt.Sprintf(`{"server_id":%d,"alias":"s1","address":"","custom_settings":{"xray_version":"bad"}}`, serverID))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid version status = %d, body = %s", rec.Code, rec.Body.String())
+	}
 }
 ```
+
+（需要 import `fmt`。）
 
 - [ ] **Step 2: 运行确认失败**
 
 Run（workdir `src/backend`）：`go test ./internal/panel/ -run TestServerCustomSettingsOverrideLifecycle -v`
-Expected: 编译失败或断言失败（DTO 字段不存在）。若 `newTestServer`/`createTestServer`/`patchError` 签名不同，按 `server_tests.go` 实际框架改写。
+Expected: 编译失败或断言失败（DTO 字段不存在）。
 
 - [ ] **Step 3: 实现**
 
@@ -1353,7 +1431,7 @@ Expected: PASS。
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/backend/internal/panel/servers.go src/backend/internal/panel/server_tests.go
+git add src/backend/internal/panel/servers.go src/backend/internal/panel/server_settings_test.go
 git commit -m "feat(panel): per-server custom settings with effective version in API"
 ```
 
