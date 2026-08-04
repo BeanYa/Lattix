@@ -60,7 +60,7 @@ func TestHandleTelemetryAppliesOnlineUsersSnapshot(t *testing.T) {
 	}
 }
 
-func TestHandleTelemetryAppliesEmptyOnlineUsersSnapshot(t *testing.T) {
+func TestHandleTelemetryNullOnlineUsersKeepsSnapshot(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -70,14 +70,37 @@ func TestHandleTelemetryAppliesEmptyOnlineUsersSnapshot(t *testing.T) {
 	called := false
 	d.OnOnlineUsers = func(serverID int64, users []shared.OnlineUserStat, _ time.Time) {
 		called = true
-		if serverID != 7 || users != nil {
-			t.Fatalf("expected empty snapshot for server 7, got server=%d users=%+v", serverID, users)
-		}
 	}
+	// 降级帧：online_users 缺失（或为 null，nil 序列化结果），不得触碰既有快照。
 	env := shared.Envelope{Kind: shared.KindEvent, Type: shared.TypeTelemetry, Data: marshalMessageData(shared.TelemetryPayload{XrayVersion: "v1.8.0"})}
 	d.handleTelemetry(7, env)
+	if called {
+		t.Fatal("degraded frame without online_users must not touch the snapshot")
+	}
+}
+
+func TestHandleTelemetryEmptyOnlineUsersSnapshotClears(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	d := New(st, &fakeRequester{online: map[int64]bool{}})
+	called := false
+	d.OnOnlineUsers = func(serverID int64, users []shared.OnlineUserStat, _ time.Time) {
+		called = true
+		if serverID != 7 || users == nil || len(users) != 0 {
+			t.Fatalf("expected empty non-nil snapshot for server 7, got server=%d users=%+v", serverID, users)
+		}
+	}
+	// 成功空查询帧：online_users:[]，必须投递（空快照 = 清除该服务器在线记录）。
+	env := shared.Envelope{Kind: shared.KindEvent, Type: shared.TypeTelemetry, Data: marshalMessageData(shared.TelemetryPayload{
+		XrayVersion: "v1.8.0",
+		OnlineUsers: []shared.OnlineUserStat{},
+	})}
+	d.handleTelemetry(7, env)
 	if !called {
-		t.Fatal("empty online_users snapshot not applied (empty snapshot = clear server)")
+		t.Fatal("empty [] online_users snapshot not applied (empty snapshot = clear server)")
 	}
 }
 

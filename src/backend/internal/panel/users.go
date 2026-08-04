@@ -283,7 +283,7 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		dto := s.toUserDTO(r, u, nodeIDs)
-		dto.OnlineConnections = s.onlineUsers.ConnectionsByUser(u.UUID, time.Now().UTC())
+		dto.OnlineConnections = s.OnlineUsers().ConnectionsByUser(u.UUID, time.Now().UTC())
 		if t, ok := traffic[u.UUID]; ok {
 			dto.Traffic = &trafficDTO{Up: t.Up, Down: t.Down}
 		}

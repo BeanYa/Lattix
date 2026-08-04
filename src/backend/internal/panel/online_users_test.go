@@ -115,6 +115,42 @@ func TestOnlineUsersTrackerSnapshotReplace(t *testing.T) {
 	}
 }
 
+func TestOnlineUsersTrackerSweepsStaleServerOnApply(t *testing.T) {
+	var tracker OnlineUsersTracker
+	now := testOnlineNow()
+	tracker.ApplySnapshot(1, []shared.OnlineUserStat{
+		{User: "u1", IPs: []string{"1.1.1.1"}},
+	}, now.Add(-3*FreshnessWindow))
+	// 另一台服务器上报帧时，超出窗口的旧服务器记录必须被物理清除（servers 与 updatedAt 两表）。
+	tracker.ApplySnapshot(2, []shared.OnlineUserStat{
+		{User: "u1", IPs: []string{"2.2.2.2"}},
+	}, now)
+	if _, ok := tracker.servers[1]; ok {
+		t.Fatal("stale server 1 not swept from servers map")
+	}
+	if _, ok := tracker.updatedAt[1]; ok {
+		t.Fatal("stale server 1 not swept from updatedAt map")
+	}
+	if got := tracker.ConnectionsByUser("u1", now); got != 1 {
+		t.Fatalf("ConnectionsByUser(u1) = %d, want 1 (stale server 1 swept on apply)", got)
+	}
+}
+
+func TestOnlineUsersTrackerSweepKeepsBoundarySnapshot(t *testing.T) {
+	var tracker OnlineUsersTracker
+	now := testOnlineNow()
+	// 恰好 FreshnessWindow 前的记录不满足 now.Sub(updatedAt) > FreshnessWindow，不得被清扫。
+	tracker.ApplySnapshot(1, []shared.OnlineUserStat{
+		{User: "u1", IPs: []string{"1.1.1.1"}},
+	}, now.Add(-FreshnessWindow))
+	tracker.ApplySnapshot(2, []shared.OnlineUserStat{
+		{User: "u1", IPs: []string{"2.2.2.2"}},
+	}, now)
+	if got := tracker.ConnectionsByUser("u1", now); got != 2 {
+		t.Fatalf("ConnectionsByUser(u1) = %d, want 2 (boundary snapshot kept)", got)
+	}
+}
+
 func TestOnlineUsersTrackerConcurrentApplyAndQuery(t *testing.T) {
 	var tracker OnlineUsersTracker
 	now := testOnlineNow()

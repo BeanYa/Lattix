@@ -171,8 +171,14 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 	return s, nil
 }
 
-// OnlineUsers 返回在线用户快照聚合器（telemetry 帧喂入，用户列表 API 读取）。
-func (s *Server) OnlineUsers() *OnlineUsersTracker { return s.onlineUsers }
+// OnlineUsers 返回在线用户快照聚合器（telemetry 帧喂入，用户列表 API 读取）；
+// 未显式构造时惰性初始化，避免零值 Server 上误用解引用。
+func (s *Server) OnlineUsers() *OnlineUsersTracker {
+	if s.onlineUsers == nil {
+		s.onlineUsers = &OnlineUsersTracker{}
+	}
+	return s.onlineUsers
+}
 
 func (s *Server) registerCoreTasks() {
 	expiryInterval := expirySweepIntervalDefault

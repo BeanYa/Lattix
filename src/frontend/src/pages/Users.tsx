@@ -530,7 +530,7 @@ export default function Users() {
                     )}
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                   <div className="space-y-1">
                     <span className="block text-[11px] text-muted-foreground">链路</span>
                     <span className="block font-medium tabular-nums">
@@ -565,7 +565,7 @@ export default function Users() {
                     <span className="block text-[11px] text-muted-foreground">创建时间</span>
                     <span className="block">{formatDateTime(u.created_at, timezone)}</span>
                   </div>
-                  <div className="space-y-1 sm:col-span-2 lg:col-span-4">
+                  <div className="space-y-1 sm:col-span-2 lg:col-span-5">
                     <span className="block text-[11px] text-muted-foreground">订阅链接</span>
                     <div className="flex min-w-0 items-center gap-2">
                       <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={u.sub_url}>

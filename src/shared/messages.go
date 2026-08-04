@@ -257,7 +257,9 @@ type TelemetryPayload struct {
 	XrayInstanceID string           `json:"xray_instance_id,omitempty"`
 	Host           *HostMetrics     `json:"host,omitempty"`
 	Traffic        []TrafficCounter `json:"traffic,omitempty"`
-	OnlineUsers    []OnlineUserStat `json:"online_users,omitempty"` // 该服务器在线用户全量快照
+	// OnlineUsers 该服务器在线用户全量快照；无 omitempty 以便区分
+	// "成功空查询"（[]，序列化为 []）与"查询失败/不支持"（nil，序列化为 null）。
+	OnlineUsers []OnlineUserStat `json:"online_users"`
 }
 
 // HostMetrics 是主机指标（/proc 采集）。

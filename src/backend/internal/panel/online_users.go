@@ -18,19 +18,25 @@ type OnlineUsersTracker struct {
 const FreshnessWindow = 2 * time.Minute
 
 // ApplySnapshot 用某服务器一帧全量快照替换该服务器记录（空快照 = 清除该服务器）。
+// 顺带清扫超出 FreshnessWindow 的陈旧服务器记录（O(servers) 每帧），
+// 查询时的新鲜度检查仍保留（ConnectionsByUser 按 updatedAt 过滤）。
 func (t *OnlineUsersTracker) ApplySnapshot(serverID int64, users []shared.OnlineUserStat, now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if len(users) == 0 {
-		if t.servers != nil {
-			delete(t.servers, serverID)
-			delete(t.updatedAt, serverID)
-		}
-		return
-	}
 	if t.servers == nil {
 		t.servers = make(map[int64]map[string]map[string]struct{})
 		t.updatedAt = make(map[int64]time.Time)
+	}
+	for id, updatedAt := range t.updatedAt {
+		if now.Sub(updatedAt) > FreshnessWindow {
+			delete(t.servers, id)
+			delete(t.updatedAt, id)
+		}
+	}
+	if len(users) == 0 {
+		delete(t.servers, serverID)
+		delete(t.updatedAt, serverID)
+		return
 	}
 	byUser := make(map[string]map[string]struct{}, len(users))
 	for _, u := range users {

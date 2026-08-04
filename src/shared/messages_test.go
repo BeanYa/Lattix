@@ -47,14 +47,40 @@ func TestEnvelopeValidate(t *testing.T) {
 	}
 }
 
-func TestTelemetryPayloadOmitsEmptyOnlineUsers(t *testing.T) {
-	payload := TelemetryPayload{XrayVersion: "v1.8.0", XrayRunning: true}
-	raw, err := json.Marshal(payload)
+func TestTelemetryPayloadAlwaysCarriesOnlineUsers(t *testing.T) {
+	// nil = agent 未上报（查询失败/不支持）：必须序列化为显式 null，
+	// 后端据此区分"降级帧"（保留旧快照）与"空快照"（全员离线，清除）。
+	nilPayload := TelemetryPayload{XrayVersion: "v1.8.0", XrayRunning: true}
+	raw, err := json.Marshal(nilPayload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "online_users") {
-		t.Fatalf("empty online_users should be omitted by omitempty: %s", raw)
+	if !strings.Contains(string(raw), `"online_users":null`) {
+		t.Fatalf("nil online_users must serialize as explicit null: %s", raw)
+	}
+	var decoded TelemetryPayload
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.OnlineUsers != nil {
+		t.Fatalf("null online_users must roundtrip to nil, got %+v", decoded.OnlineUsers)
+	}
+
+	// 非 nil 空切片 = 成功空查询（全员离线）：必须序列化为 [] 并往返保持非 nil。
+	emptyPayload := TelemetryPayload{XrayVersion: "v1.8.0", XrayRunning: true, OnlineUsers: []OnlineUserStat{}}
+	raw, err = json.Marshal(emptyPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"online_users":[]`) {
+		t.Fatalf("empty non-nil online_users must serialize as []: %s", raw)
+	}
+	var decodedEmpty TelemetryPayload
+	if err := json.Unmarshal(raw, &decodedEmpty); err != nil {
+		t.Fatal(err)
+	}
+	if decodedEmpty.OnlineUsers == nil || len(decodedEmpty.OnlineUsers) != 0 {
+		t.Fatalf("empty slice must roundtrip to non-nil empty slice, got %+v", decodedEmpty.OnlineUsers)
 	}
 }
 

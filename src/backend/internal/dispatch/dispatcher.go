@@ -854,8 +854,9 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 			log.Printf("dispatch: server %d: apply traffic snapshot: %v", serverID, err)
 		}
 	}
-	// 在线用户快照：每帧全量覆盖该服务器记录（空快照 = 清除），不参与落库。
-	if d.OnOnlineUsers != nil {
+	// 在线用户快照：每帧全量覆盖该服务器记录（空快照 [] = 清除，保留在线时为 0 的语义）。
+	// nil = 该帧未携带在线数据（agent 查询失败/不支持），保留旧快照直至新鲜度窗口过期。
+	if p.OnlineUsers != nil && d.OnOnlineUsers != nil {
 		d.OnOnlineUsers(serverID, p.OnlineUsers, time.Now().UTC())
 	}
 }
