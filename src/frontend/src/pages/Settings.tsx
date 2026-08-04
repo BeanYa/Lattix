@@ -150,6 +150,8 @@ export default function Settings() {
   const [billingInspectionAt, setBillingInspectionAt] = useState('00:05')
   const [exchangeInspectionAt, setExchangeInspectionAt] = useState('02:30')
   const [reportingCurrency, setReportingCurrency] = useState('CNY')
+  const [serverXrayVersion, setServerXrayVersion] = useState('latest')
+  const [xrayVersions, setXrayVersions] = useState<string[]>(['latest'])
   const [exchangeData, setExchangeData] = useState<ExchangeRateSettings | null>(null)
   const [customSource, setCustomSource] = useState('')
   const [customSourceAmount, setCustomSourceAmount] = useState('1')
@@ -226,11 +228,18 @@ export default function Settings() {
         setBillingInspectionAt(s.billing_inspection.at ?? '00:05')
         setExchangeInspectionAt(s.exchange_rate_inspection.at ?? '02:30')
         setReportingCurrency(s.reporting_currency)
+        setServerXrayVersion(s.server_settings.xray_version ?? 'latest')
       })
       .catch((err) => setLoadError(errorMessage(err)))
   }, [])
 
   useEffect(() => { api.exchangeRates().then(setExchangeData).catch(() => {}) }, [])
+
+  useEffect(() => {
+    api.releaseVersions('xray').then((versions) => {
+      setXrayVersions(versions.versions)
+    }).catch(() => {})
+  }, [])
 
   useEffect(() => {
     api.subSettings().then((s) => {
@@ -327,6 +336,7 @@ export default function Settings() {
         billing_inspection: { every: 1, unit: 'day', at: billingInspectionAt },
         exchange_rate_inspection: { every: 1, unit: 'day', at: exchangeInspectionAt },
         reporting_currency: reportingCurrency,
+        server_settings: { xray_version: serverXrayVersion },
         // bot token 留空 = 保持已保存值（后端语义，与 tls key 一致）
         ...(alertBotToken.trim() ? { alert_telegram_bot_token: alertBotToken.trim() } : {}),
       })
@@ -645,6 +655,40 @@ export default function Settings() {
               </div>
             </div>
             <p className="text-xs text-muted-foreground">当前期望 revision：{settings.agent.revision}</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>服务器设置</CardTitle>
+            <CardDescription>
+              面板级默认设置（defaultsetting）。服务器未单独覆盖时采用该值；
+              xray 版本为具体版本时，agent 收到后会自动对齐升级到该版本；
+              latest 保持现状（仅手动升级）。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="serverXrayVersion">xray 版本（默认）</Label>
+              <Select
+                value={serverXrayVersion}
+                onValueChange={(value) => value && setServerXrayVersion(value)}
+                items={xrayVersions.map((version) => ({ value: version, label: version }))}
+              >
+                <SelectTrigger id="serverXrayVersion" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {xrayVersions.map((version) => (
+                    <SelectItem key={version} value={version}>{version}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                版本列表来自 GitHub release 缓存；当前期望 revision：
+                {settings?.server_settings_revision ?? 1}
+              </p>
+            </div>
           </CardContent>
         </Card>
 

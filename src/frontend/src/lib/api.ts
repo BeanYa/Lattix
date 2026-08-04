@@ -35,6 +35,7 @@ import type {
   Server,
   ServerMetrics,
   ServerMetricSeries,
+  ServerSettings,
   ServerTestCatalogStatus,
   ServerTestCategory,
   ServerTestTask,
@@ -160,6 +161,7 @@ export const api = {
     location: string,
     billing?: BillingInput,
     trafficPlan?: TrafficPlanInput,
+    customSettings?: ServerSettings,
   ) =>
     requester.post<Server>('/api/server/update', {
       server_id: serverId,
@@ -170,6 +172,7 @@ export const api = {
       location,
       billing,
       traffic_plan: trafficPlan,
+      ...(customSettings !== undefined ? { custom_settings: customSettings } : {}),
     }),
   updateServerPorts: (
     serverId: number,
@@ -181,6 +184,7 @@ export const api = {
     location: string,
     billing?: BillingInput,
     trafficPlan?: TrafficPlanInput,
+    customSettings?: ServerSettings,
   ) =>
     requester.post<Server>('/api/server/update', {
       server_id: serverId,
@@ -192,6 +196,7 @@ export const api = {
       location,
       billing,
       traffic_plan: trafficPlan,
+      ...(customSettings !== undefined ? { custom_settings: customSettings } : {}),
     }),
   deleteServer: (serverId: number, purge: 'xray' | 'agent') =>
     requester.post<void>('/api/server/delete', { server_id: serverId, purge }),

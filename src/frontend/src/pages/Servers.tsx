@@ -235,6 +235,8 @@ export default function Servers() {
   const [editError, setEditError] = useState('')
   const [editBilling, setEditBilling] = useState<BillingFormState>(defaultBilling)
   const [editTraffic, setEditTraffic] = useState<TrafficFormState>(defaultTraffic)
+  const [editXrayOverride, setEditXrayOverride] = useState('')
+  const [editXrayVersions, setEditXrayVersions] = useState<string[]>(['latest'])
   const [renewTarget, setRenewTarget] = useState<Server | null>(null)
   const [renewalOn, setRenewalOn] = useState('')
   const [renewing, setRenewing] = useState(false)
@@ -520,6 +522,9 @@ export default function Servers() {
     const quota = s.traffic_plan.quota_bytes
     const quotaUnit: 'GB' | 'TB' = quota !== null && quota >= 1e12 ? 'TB' : 'GB'
     setEditTraffic({ limited: quota !== null, quota: quota === null ? '1000' : String(quota / (quotaUnit === 'TB' ? 1e12 : 1e9)), quotaUnit, accountingMode: s.traffic_plan.accounting_mode, anchorOn: s.traffic_plan.reset_anchor_on || localDate(), resetCount: s.traffic_plan.reset_count || 1, resetUnit: s.traffic_plan.reset_unit || 'month' })
+    setEditXrayOverride(s.custom_settings?.xray_version ?? '')
+    setEditXrayVersions(['latest'])
+    api.releaseVersions('xray').then((versions) => setEditXrayVersions(versions.versions)).catch(() => {})
     setEditError('')
   }
 
@@ -568,6 +573,7 @@ export default function Servers() {
           editLocation.trim(),
           billingPayload(editBilling),
           trafficPayload(editTraffic),
+          editXrayOverride ? { xray_version: editXrayOverride } : {},
         )
       } else {
         await api.updateServerAddress(
@@ -579,6 +585,7 @@ export default function Servers() {
           editLocation.trim(),
           billingPayload(editBilling),
           trafficPayload(editTraffic),
+          editXrayOverride ? { xray_version: editXrayOverride } : {},
         )
       }
       setEditTarget(null)
@@ -596,7 +603,7 @@ export default function Servers() {
     const requestID = ++upgradeVersionsRequest.current
     setUpgradeTarget(s)
     setUpgradeKind(kind)
-    setUpgradeVersion('latest')
+    setUpgradeVersion(s.effective_xray_version ?? 'latest')
     setUpgradeVersions(null)
     setUpgradeVersionsLoading(true)
     setUpgradeError('')
@@ -1039,6 +1046,27 @@ export default function Servers() {
                 />
               )}
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="editXrayOverride">xray 版本（覆盖面板默认）</Label>
+              <Select
+                value={editXrayOverride}
+                onValueChange={(value) => value !== undefined && value !== null && setEditXrayOverride(value)}
+                items={[
+                  { value: '', label: '跟随面板默认' },
+                  ...editXrayVersions.filter((v) => v !== 'latest').map((version) => ({ value: version, label: version })),
+                ]}
+              >
+                <SelectTrigger id="editXrayOverride" className="w-full">
+                  <SelectValue placeholder="跟随面板默认" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">跟随面板默认</SelectItem>
+                  {editXrayVersions.filter((v) => v !== 'latest').map((version) => (
+                    <SelectItem key={version} value={version}>{version}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             {editTarget?.machine_type === 'nat' && (
               <div className="space-y-2">
                 <Label>可用端口</Label>
@@ -1091,6 +1119,12 @@ export default function Servers() {
                 </>
               )}
             </DialogDescription>
+            {upgradeTarget?.effective_xray_version && (
+              <span className="text-xs text-muted-foreground">
+                期望版本：{upgradeTarget.effective_xray_version}
+                {upgradeTarget.custom_settings ? '（服务器覆盖）' : '（面板默认）'}
+              </span>
+            )}
           </DialogHeader>
           <form onSubmit={onUpgrade} className="space-y-4">
             {upgradeResult === null && (
