@@ -441,7 +441,8 @@ func run() error {
 	if idx, err := fs.ReadFile(frontendFS, "index.html"); err == nil {
 		spaHTML = idx
 	}
-	subSrv := sub.New(st, ps.PanelBase, spaHTML)
+	clientCacheDir := filepath.Join(filepath.Dir(dbPathAbs), "client-cache")
+	subSrv := sub.NewWithCacheDir(st, ps.PanelBase, spaHTML, clientCacheDir)
 	ps.SetSubscriptionService(subSrv)
 	// 外部订阅（第三方机场导入）：普通与跳过证书校验两套拉取客户端。
 	externalFiles := external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Second}}
@@ -458,6 +459,10 @@ func run() error {
 	// 订阅公开 API（仅凭 token 鉴权，无需管理员登录）。
 	mux.HandleFunc("GET /api/sub/{token}/info", subSrv.HandleSubInfo)
 	mux.HandleFunc("GET /api/sub/{token}/clients", subSrv.HandleSubClients)
+	mux.HandleFunc("GET /api/sub/{token}/status", subSrv.HandleSubStatus)
+	mux.HandleFunc("GET /api/sub/{token}/client-download/start", subSrv.HandleSubClientDownloadStart)
+	mux.HandleFunc("GET /api/sub/{token}/client-download/status", subSrv.HandleSubClientDownloadStatus)
+	mux.HandleFunc("GET /api/sub/{token}/client-download/file", subSrv.HandleSubClientDownloadFile)
 	mux.HandleFunc("GET /api/sub/{token}/history", subSrv.HandleSubHistory)
 
 	// Frontend SPA 构建产物（§3），客户端路由回退到 index.html。

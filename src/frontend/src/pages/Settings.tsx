@@ -188,6 +188,7 @@ export default function Settings() {
   const [subHistoryKeep, setSubHistoryKeep] = useState(6)
   const [subPlanName, setSubPlanName] = useState('')
   const [subAppURL, setSubAppURL] = useState('')
+  const [clientCacheTTL, setClientCacheTTL] = useState(72)
   const [savingSub, setSavingSub] = useState(false)
   const [subMessage, setSubMessage] = useState('')
   const [subError, setSubError] = useState('')
@@ -240,6 +241,7 @@ export default function Settings() {
       setSubHistoryKeep(s.traffic_history_keep)
       setSubPlanName(s.plan_name)
       setSubAppURL(s.app_url)
+      setClientCacheTTL(s.client_cache_ttl_hours)
     }).catch(() => {})
   }, [])
 
@@ -256,6 +258,7 @@ export default function Settings() {
         traffic_history_keep: subHistoryKeep,
         plan_name: subPlanName,
         app_url: subAppURL,
+        client_cache_ttl_hours: clientCacheTTL,
       })
       setSubMessage('已保存。')
     } catch (err) {
@@ -976,6 +979,17 @@ export default function Settings() {
                   value={subHistoryKeep}
                   onChange={e => setSubHistoryKeep(Number(e.target.value) || 6)}
                 />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label>客户端安装包缓存（小时）</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={720}
+                  value={clientCacheTTL}
+                  onChange={e => setClientCacheTTL(Number(e.target.value) || 72)}
+                />
+                <p className="text-xs text-muted-foreground">默认 72 小时。每个客户端与架构只保留最新版本。</p>
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">

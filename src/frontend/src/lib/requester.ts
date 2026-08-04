@@ -110,7 +110,7 @@ export class Requester {
     return this.execute<T>('POST', path, body, options, 1)
   }
 
-  async download(path: RPCPathByMethod<'GET'>, options?: RequestOptions): Promise<void> {
+  async download(path: string, options?: RequestOptions): Promise<void> {
     const traceId = options?.traceId ?? newRequestId()
     const requestId = newRequestId()
     const display = options?.display ?? 'foreground'
@@ -154,7 +154,7 @@ export class Requester {
       anchor.href = url
       anchor.download = filename
       anchor.click()
-      URL.revokeObjectURL(url)
+      globalThis.setTimeout(() => URL.revokeObjectURL(url), 1000)
     } catch (error) {
       requestError = normalizeError(error, requestId, traceId, abortSource())
       throw requestError

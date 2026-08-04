@@ -165,6 +165,35 @@ func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
 			t.Fatalf("%s affected users = %v, err %v", label, ids, err)
 		}
 	}
+	entryLatency, exitLatency := 42.0, 184.0
+	if err := st.SaveServerMetrics(ctx, entryID, store.ServerMetrics{LatencyMS: &entryLatency}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveServerMetrics(ctx, exitID, store.ServerMetrics{LatencyMS: &exitLatency}, true); err != nil {
+		t.Fatal(err)
+	}
+	statusRec := httptest.NewRecorder()
+	statusReq := httptest.NewRequest("GET", "/api/sub/sub/status", nil)
+	statusReq.SetPathValue("token", "sub")
+	New(st, nil, nil).HandleSubStatus(statusRec, statusReq)
+	if statusRec.Code != 200 {
+		t.Fatalf("status code = %d, body = %s", statusRec.Code, statusRec.Body.String())
+	}
+	if strings.Contains(statusRec.Body.String(), "entry.example.com") || strings.Contains(statusRec.Body.String(), "exit.example.com") ||
+		strings.Contains(statusRec.Body.String(), `"server_id"`) {
+		t.Fatalf("status response leaked server identity: %s", statusRec.Body.String())
+	}
+	var status SubLinkStatusResponse
+	if err := json.NewDecoder(statusRec.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if len(status.Links) != 1 || status.Links[0].Label != "中转链路 1" || len(status.Links[0].Hops) != 2 {
+		t.Fatalf("status links = %+v", status.Links)
+	}
+	if status.Links[0].Hops[0].Label != "入口" || status.Links[0].Hops[1].Label != "出口" ||
+		len(status.Links[0].Hops[0].Samples) != 1 || len(status.Links[0].Hops[1].Samples) != 1 {
+		t.Fatalf("status hops = %+v", status.Links[0].Hops)
+	}
 	if err := st.SetUserDisabled(ctx, userID, true); err != nil {
 		t.Fatal(err)
 	}

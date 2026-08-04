@@ -47,6 +47,7 @@ const (
 	SettingSubUpdateInterval  = "sub_update_interval"       // 默认更新间隔（小时）
 	SettingSubPlanName        = "sub_plan_name"             // 默认套餐名（subscription-userinfo plan_name）
 	SettingSubAppURL          = "sub_app_url"               // 默认客户端跳转链接（subscription-userinfo app_url）
+	SettingClientCacheTTL     = "client_cache_ttl_hours"    // 客户端安装包缓存时长（小时）
 	SettingTrafficHistoryKeep = "traffic_history_retention" // 历史保留周期数
 )
 

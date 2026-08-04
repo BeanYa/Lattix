@@ -26,12 +26,14 @@ import (
 
 // Server 实现订阅端点。
 type Server struct {
-	st      *store.Store
-	base    func(*http.Request) string // 面板对外地址（落地页绝对链接，同 panel.PanelBase 判定链）
-	spaHTML []byte                     // 内嵌前端 index.html（浏览器访问时返回 SPA 壳）
-	files   external.FileRequester
-	refresh sync.Mutex
-	publish sync.Mutex
+	st            *store.Store
+	base          func(*http.Request) string // 面板对外地址（落地页绝对链接，同 panel.PanelBase 判定链）
+	spaHTML       []byte                     // 内嵌前端 index.html（浏览器访问时返回 SPA 壳）
+	files         external.FileRequester
+	downloadFiles external.FileRequester
+	cacheDir      string
+	refresh       sync.Mutex
+	publish       sync.Mutex
 
 	queueMu   sync.Mutex
 	queued    map[int64]string
@@ -40,11 +42,22 @@ type Server struct {
 	startOnce sync.Once
 	baseMu    sync.RWMutex
 	lastBase  string
+
+	downloadMu      sync.Mutex
+	downloadTasks   map[string]*clientDownloadTask
+	activeDownloads map[string]string
 }
 
 // New 创建订阅服务；base 返回请求对应的面板对外地址（可为 nil，落地页退回请求推断）。
 // spaHTML 为前端构建产物的 index.html 内容（浏览器访问时返回 SPA 壳）。
 func New(st *store.Store, base func(*http.Request) string, spaHTML []byte) *Server {
+	return NewWithCacheDir(st, base, spaHTML, "")
+}
+
+// NewWithCacheDir creates the subscription service and stores downloaded client
+// packages under cacheDir. An empty directory disables package persistence,
+// which is useful for tests and embedded callers.
+func NewWithCacheDir(st *store.Store, base func(*http.Request) string, spaHTML []byte, cacheDir string) *Server {
 	if base == nil {
 		base = func(r *http.Request) string {
 			scheme := "http"
@@ -55,9 +68,11 @@ func New(st *store.Store, base func(*http.Request) string, spaHTML []byte) *Serv
 		}
 	}
 	server := &Server{
-		st: st, base: base, spaHTML: spaHTML,
-		files:  external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Second}},
-		queued: make(map[int64]string), queueWake: make(chan struct{}, 1),
+		st: st, base: base, spaHTML: spaHTML, cacheDir: cacheDir,
+		files:         external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Second}},
+		downloadFiles: external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Minute}},
+		queued:        make(map[int64]string), queueWake: make(chan struct{}, 1),
+		downloadTasks: make(map[string]*clientDownloadTask), activeDownloads: make(map[string]string),
 	}
 	server.ensureBuiltInTemplateSources(context.Background())
 	return server
@@ -233,20 +248,20 @@ type clashProxy struct {
 	Server string `yaml:"server"`
 	Port   int    `yaml:"port"`
 
-	UUID           string `yaml:"uuid,omitempty"`            // vless / vmess
-	AlterID        *int   `yaml:"alterId,omitempty"`         // vmess
-	Cipher         string `yaml:"cipher,omitempty"`          // vmess=auto / ss=method
-	Password       string `yaml:"password,omitempty"`        // trojan / ss / socks / http / anytls
-	Username       string `yaml:"username,omitempty"`        // socks / http
-	Network        string `yaml:"network,omitempty"`
-	PacketEncoding string `yaml:"packet-encoding,omitempty"` // vless
-	TLS            bool   `yaml:"tls,omitempty"`
-	Servername     string `yaml:"servername,omitempty"`      // vless / vmess
-	SNI            string `yaml:"sni,omitempty"`             // trojan / anytls / hysteria2 / tuic / http(tls)
-	Flow           string `yaml:"flow,omitempty"`            // vless
-	Encryption     string `yaml:"encryption,omitempty"`      // vless
+	UUID           string   `yaml:"uuid,omitempty"`     // vless / vmess
+	AlterID        *int     `yaml:"alterId,omitempty"`  // vmess
+	Cipher         string   `yaml:"cipher,omitempty"`   // vmess=auto / ss=method
+	Password       string   `yaml:"password,omitempty"` // trojan / ss / socks / http / anytls
+	Username       string   `yaml:"username,omitempty"` // socks / http
+	Network        string   `yaml:"network,omitempty"`
+	PacketEncoding string   `yaml:"packet-encoding,omitempty"` // vless
+	TLS            bool     `yaml:"tls,omitempty"`
+	Servername     string   `yaml:"servername,omitempty"` // vless / vmess
+	SNI            string   `yaml:"sni,omitempty"`        // trojan / anytls / hysteria2 / tuic / http(tls)
+	Flow           string   `yaml:"flow,omitempty"`       // vless
+	Encryption     string   `yaml:"encryption,omitempty"` // vless
 	ALPN           []string `yaml:"alpn,omitempty"`
-	UDP            bool   `yaml:"udp"`
+	UDP            bool     `yaml:"udp"`
 
 	RealityOpts       *clashRealityOpts `yaml:"reality-opts,omitempty"`
 	ClientFingerprint string            `yaml:"client-fingerprint,omitempty"`
@@ -263,42 +278,42 @@ type clashProxy struct {
 	DialerProxy       string            `yaml:"dialer-proxy,omitempty"`
 	IPVersion         string            `yaml:"ip-version,omitempty"`
 
-	Ports                string `yaml:"ports,omitempty"`                  // hysteria2 多端口
-	SkipCertVerify       *bool  `yaml:"skip-cert-verify,omitempty"`
-	Obfs                 string `yaml:"obfs,omitempty"`                   // hysteria2 / snell
-	ObfsPassword         string `yaml:"obfs-password,omitempty"`
-	Up                   string `yaml:"up,omitempty"`                     // hysteria2
-	Down                 string `yaml:"down,omitempty"`                   // hysteria2
-	Protocol             string `yaml:"protocol,omitempty"`               // ssr
-	ProtocolParam        string `yaml:"protocol-param,omitempty"`
-	ObfsParam            string `yaml:"obfs-param,omitempty"`
-	PSK                  string `yaml:"psk,omitempty"`                    // snell
-	Version              *int   `yaml:"version,omitempty"`                // snell
-	IP                   string `yaml:"ip,omitempty"`                     // wireguard
-	IPv6                 string `yaml:"ipv6,omitempty"`                   // wireguard
-	Reserved             string `yaml:"reserved,omitempty"`               // wireguard
-	PrivateKey           string `yaml:"private-key,omitempty"`
-	PublicKey            string `yaml:"public-key,omitempty"`
-	PresharedKey         string `yaml:"preshared-key,omitempty"`
-	MTU                  *int   `yaml:"mtu,omitempty"`
-	CongestionController string `yaml:"congestion-controller,omitempty"`  // tuic
-	UDPRelayMode         string `yaml:"udp-relay-mode,omitempty"`         // tuic
-	ReduceRTT            *bool  `yaml:"reduce-rtt,omitempty"`             // tuic
-	IdleSessionCheckInterval int `yaml:"idle-session-check-interval,omitempty"` // anytls
-	IdleSessionTimeout      int `yaml:"idle-session-timeout,omitempty"`   // anytls
-	MinIdleSession          int `yaml:"min-idle-session,omitempty"`       // anytls
+	Ports                    string `yaml:"ports,omitempty"` // hysteria2 多端口
+	SkipCertVerify           *bool  `yaml:"skip-cert-verify,omitempty"`
+	Obfs                     string `yaml:"obfs,omitempty"` // hysteria2 / snell
+	ObfsPassword             string `yaml:"obfs-password,omitempty"`
+	Up                       string `yaml:"up,omitempty"`       // hysteria2
+	Down                     string `yaml:"down,omitempty"`     // hysteria2
+	Protocol                 string `yaml:"protocol,omitempty"` // ssr
+	ProtocolParam            string `yaml:"protocol-param,omitempty"`
+	ObfsParam                string `yaml:"obfs-param,omitempty"`
+	PSK                      string `yaml:"psk,omitempty"`      // snell
+	Version                  *int   `yaml:"version,omitempty"`  // snell
+	IP                       string `yaml:"ip,omitempty"`       // wireguard
+	IPv6                     string `yaml:"ipv6,omitempty"`     // wireguard
+	Reserved                 string `yaml:"reserved,omitempty"` // wireguard
+	PrivateKey               string `yaml:"private-key,omitempty"`
+	PublicKey                string `yaml:"public-key,omitempty"`
+	PresharedKey             string `yaml:"preshared-key,omitempty"`
+	MTU                      *int   `yaml:"mtu,omitempty"`
+	CongestionController     string `yaml:"congestion-controller,omitempty"`       // tuic
+	UDPRelayMode             string `yaml:"udp-relay-mode,omitempty"`              // tuic
+	ReduceRTT                *bool  `yaml:"reduce-rtt,omitempty"`                  // tuic
+	IdleSessionCheckInterval int    `yaml:"idle-session-check-interval,omitempty"` // anytls
+	IdleSessionTimeout       int    `yaml:"idle-session-timeout,omitempty"`        // anytls
+	MinIdleSession           int    `yaml:"min-idle-session,omitempty"`            // anytls
 
 	Raw map[string]any `yaml:",inline"` // 未消费的 Extra 键原样回填
 }
 
 type clashWsOpts struct {
-	Path                  string            `yaml:"path,omitempty"`
-	Headers               map[string]string `yaml:"headers,omitempty"`
-	MaxEarlyData          int               `yaml:"max-early-data,omitempty"`
-	EarlyDataHeaderName   string            `yaml:"early-data-header-name,omitempty"`
-	V2rayHTTPUpgrade      bool              `yaml:"v2ray-http-upgrade,omitempty"`
-	V2rayHTTPUpgradeHost  string            `yaml:"v2ray-http-upgrade-host,omitempty"`
-	V2rayHTTPUpgradePath  string            `yaml:"v2ray-http-upgrade-path,omitempty"`
+	Path                 string            `yaml:"path,omitempty"`
+	Headers              map[string]string `yaml:"headers,omitempty"`
+	MaxEarlyData         int               `yaml:"max-early-data,omitempty"`
+	EarlyDataHeaderName  string            `yaml:"early-data-header-name,omitempty"`
+	V2rayHTTPUpgrade     bool              `yaml:"v2ray-http-upgrade,omitempty"`
+	V2rayHTTPUpgradeHost string            `yaml:"v2ray-http-upgrade-host,omitempty"`
+	V2rayHTTPUpgradePath string            `yaml:"v2ray-http-upgrade-path,omitempty"`
 }
 
 type clashHTTPOpts struct {
@@ -326,14 +341,14 @@ type clashRuleProvider struct {
 
 // clashDNS 是订阅内置的 fake-ip DNS 配置，使订阅在客户端开箱即用。
 type clashDNS struct {
-	Enable            bool                  `yaml:"enable"`
-	IPv6              bool                  `yaml:"ipv6"`
-	EnhancedMode      string                `yaml:"enhanced-mode"`
-	FakeIPRange       string                `yaml:"fake-ip-range,omitempty"`
-	FakeIPFilter      []string              `yaml:"fake-ip-filter,omitempty"`
-	DefaultNameserver []string              `yaml:"default-nameserver,omitempty"`
-	Nameserver        []string              `yaml:"nameserver,omitempty"`
-	Fallback          []string              `yaml:"fallback,omitempty"`
+	Enable            bool                    `yaml:"enable"`
+	IPv6              bool                    `yaml:"ipv6"`
+	EnhancedMode      string                  `yaml:"enhanced-mode"`
+	FakeIPRange       string                  `yaml:"fake-ip-range,omitempty"`
+	FakeIPFilter      []string                `yaml:"fake-ip-filter,omitempty"`
+	DefaultNameserver []string                `yaml:"default-nameserver,omitempty"`
+	Nameserver        []string                `yaml:"nameserver,omitempty"`
+	Fallback          []string                `yaml:"fallback,omitempty"`
 	FallbackFilter    *clashDNSFallbackFilter `yaml:"fallback-filter,omitempty"`
 }
 

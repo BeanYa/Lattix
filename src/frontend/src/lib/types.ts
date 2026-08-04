@@ -735,6 +735,7 @@ export interface SubSettings {
   traffic_history_keep: number
   plan_name: string
   app_url: string
+  client_cache_ttl_hours: number
 }
 
 export interface AlertChannelResult {

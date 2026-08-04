@@ -371,7 +371,10 @@ export default function SubscriptionPage() {
       .then(() => {
         setDownloadTask((current) => current?.task_id === downloadTask.task_id ? { ...current, status: 'downloaded' } : current)
       })
-      .catch(() => setDownloadError('浏览器下载客户端失败，请重新点击下载。'))
+      .catch(() => {
+        setDownloadError('浏览器下载客户端失败，请重新点击下载。')
+        setDownloadTask((current) => current?.task_id === downloadTask.task_id ? { ...current, status: 'failed' } : current)
+      })
   }, [downloadTask, token])
 
   const subURL = isPreview
