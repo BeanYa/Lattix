@@ -203,6 +203,9 @@ func (d ServerSettingsDocument) Validate() error {
 	if d.Revision < 1 {
 		return errors.New("server settings revision must be at least 1")
 	}
+	if d.Server.XrayVersion == nil {
+		return errors.New("server.xray_version is required")
+	}
 	return d.Server.Validate()
 }
 
@@ -643,6 +646,8 @@ type serverSettingsValue struct {
 
 // DefaultServerSettings 返回面板级默认服务器设置与当前 revision，首次读取时建默认
 // （xray_version=latest，保持现状行为）。
+// 注意：存储值始终保证 XrayVersion 非 nil（否则下发生效文档会被
+// ServerSettingsDocument.Validate 拒绝，造成 sync 错误循环）。
 func (s *Store) DefaultServerSettings(ctx context.Context) (shared.ServerSettings, int64, error) {
 	raw, err := s.GetSetting(ctx, SettingServerSettings)
 	if err != nil {
@@ -694,7 +699,13 @@ func (s *Store) UpdateDefaultServerSettings(ctx context.Context, desired shared.
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("get server settings: %w", err)
 	}
-	value := serverSettingsValue{Revision: revision + 1, XrayVersion: desired.XrayVersion}
+	// 归一化：nil XrayVersion 按空串存储（保持文档校验不变式：xray_version 必填）。
+	normalized := desired.XrayVersion
+	if normalized == nil {
+		empty := ""
+		normalized = &empty
+	}
+	value := serverSettingsValue{Revision: revision + 1, XrayVersion: normalized}
 	encoded, err := json.Marshal(value)
 	if err != nil {
 		return 0, err
