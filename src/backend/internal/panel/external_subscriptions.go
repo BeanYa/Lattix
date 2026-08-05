@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -93,9 +94,16 @@ func (s *Server) handleDeleteExternalSubscription(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "id 必须为正整数")
 		return
 	}
-	// 删除前收集受影响用户（删除后按订阅 ID 查不到行）。
-	affected, _ := s.st.UsersByExternalSubscriptionID(r.Context(), req.ID)
-	groupAffected, _ := s.st.UsersByExternalSubscriptionThroughGroups(r.Context(), req.ID)
+	// 删除前收集受影响用户（删除后按订阅 ID 查不到行）；收集失败记日志，
+	// 不丢弃已收集到的直接分配用户。
+	affected, err := s.st.UsersByExternalSubscriptionID(r.Context(), req.ID)
+	if err != nil {
+		log.Printf("panel: collect direct users of external subscription %d: %v", req.ID, err)
+	}
+	groupAffected, err := s.st.UsersByExternalSubscriptionThroughGroups(r.Context(), req.ID)
+	if err != nil {
+		log.Printf("panel: collect group users of external subscription %d: %v", req.ID, err)
+	}
 	if err := s.st.DeleteExternalSubscription(r.Context(), req.ID); err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, store.ErrNotFound) {
@@ -164,6 +172,7 @@ func (s *Server) handleListExternalChains(w http.ResponseWriter, r *http.Request
 }
 
 // republishExternalSubUsers 将关联了给定外部订阅的用户加入订阅重生成队列。
+// 直接分配与分组派生分别收集、合并去重；单边查询失败记日志并保留另一侧已收集的用户。
 func (s *Server) republishExternalSubUsers(ctx context.Context, subscriptionIDs []int64) {
 	if s.subscriptions == nil || len(subscriptionIDs) == 0 {
 		return
@@ -171,15 +180,15 @@ func (s *Server) republishExternalSubUsers(ctx context.Context, subscriptionIDs 
 	seen := map[int64]bool{}
 	var userIDs []int64
 	for _, subID := range subscriptionIDs {
-		users, err := s.st.UsersByExternalSubscriptionID(ctx, subID)
+		direct, err := s.st.UsersByExternalSubscriptionID(ctx, subID)
 		if err != nil {
-			continue
+			log.Printf("panel: collect direct users of external subscription %d: %v", subID, err)
 		}
 		groupUsers, err := s.st.UsersByExternalSubscriptionThroughGroups(ctx, subID)
 		if err != nil {
-			continue
+			log.Printf("panel: collect group users of external subscription %d: %v", subID, err)
 		}
-		for _, userID := range append(users, groupUsers...) {
+		for _, userID := range append(append([]int64{}, direct...), groupUsers...) {
 			if !seen[userID] {
 				seen[userID] = true
 				userIDs = append(userIDs, userID)
