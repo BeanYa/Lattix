@@ -6,7 +6,7 @@
 
 xray 升级 26.3.27 → 26.7.28 后，realitySettings 缺省 `minClientVer` 时默认 26.3.27，会拒绝旧客户端（mihomo/clash）。面板与 agent 已补齐兼容性处理（`pinRealityMinClientVer` 注入、模板迁移 `minClientVer: "0"`），但**既有部署的 xray.json 是升级前生成的文件**，不会自动获得该字段——即使升级 xray 二进制，已有端口配置也不会改变。
 
-本功能提供"重建 xray 配置"：删除/覆盖现有 xray.json，按当前生效的链路与用户配置重新生成，使 miniclientver 等规范化处理落到实际文件中。
+**目的不限于 miniclientver**：xray 版本升级后可能陆续出现其他"缺省值变化/新字段缺失"类兼容问题（如本次 minClientVer 一样），旧文件一律不会自动补全。本功能提供"重建 xray 配置"：按当前生效的链路与用户配置重新生成 xray.json，并内建**可扩展的全配置规范化扫描**——凡"升级后需要补全的字段"类问题，只需追加一个规范化器，重建即生效。
 
 ## 目标
 
@@ -59,7 +59,8 @@ type RebuildXrayResult struct {
 3. **重建候选配置**：
    - 骨架 `skeleton()`（api/stats/policy/log + direct outbound）。
    - 逐个 `Payload.Nodes` 重渲染：`fillTemplate` 增加"保留模式"——按 tag 从备份文件提取现有 `node_` inbound 的 Reality `privateKey`、`decryption`、监听端口，替换占位符时复用而非重新生成/重选；备份缺失该 inbound 时回退现有逻辑（`x25519()`/`vlessEnc()`/`pickPort()`）。`minClientVer` 由 `pinRealityMinClientVer` 兜底注入（模板本身已含迁移后的 `minClientVer: "0"`）。
-   - `mergePieces(m.chainPieces)` 重放链路/共享端点 pieces。
+   - `mergePieces(m.chainPieces)` 重放链路/共享端点 pieces（字节级原样——旧 piece 不含升级后新增字段）。
+   - **规范化扫描（全配置）**：`normalizeRebuiltConfig(cand)` 依次应用可扩展的规范化器列表（`normalizers`），对最终配置全部 inbound 生效——重放的链路/共享端点 piece 同样补全缺失字段（首项：`normalizeRealityMinClientVer`，复用 `pinRealityMinClientVer` 遍历注入；幂等，node 重渲染已注入时无操作）。未来升级后新增字段：追加一个规范化器函数即可，无需改协议。
 4. **校验**：候选写临时文件 + `xray run -test`（复用 `commitConfig` 的校验逻辑，但不经 commitConfig 的 .prev 路径）。
 5. **原子落盘**：rename 至 xray.json、chmod 0600、更新 `lastHash`、清 `drifted`。
 6. **重启**：`runner.Restart()`。
@@ -100,7 +101,8 @@ POST /api/server/rebuild-xray   body: { "server_id": N }
   - 渲染失败、校验失败、自检缺失 → 回滚断言（xray.json 恢复为备份内容、服务重启、RolledBack=true）；
   - 备份缺失（xray.json 不存在）场景；
   - 私钥/decryption/端口复用断言：备份中的值出现在新配置，未重新生成；
-  - minClientVer 注入断言：旧模板重渲染后新配置含 `minClientVer: "0"`。
+  - minClientVer 注入断言：旧模板重渲染后新配置含 `minClientVer: "0"`；
+  - **规范化扫描断言**：重放的旧链路 portal piece（无 minClientVer）经重建后同样被注入 `minClientVer: "0"`；规范化幂等（二次执行无变化）。
 - **面板测试**：`handleRebuildXray` 载荷组装（活跃 node + 用户 + 期望集）、离线 409、`RebuildXraySync` 超时/失败路径。
 - **前端**：类型生成 + 按钮/对话框渲染冒烟（现有测试框架内）。
 

@@ -422,7 +422,7 @@ git commit -m "feat(agent): xray rebuild inbound render with prev value preserva
 
 ---
 
-### Task 3: agent RebuildXray 主流程（停服→备份→重建→校验→落盘→重启→自检→回滚）
+### Task 3: agent RebuildXray 主流程（停服→备份→重建→规范化→校验→落盘→重启→自检→回滚）
 
 **Files:**
 - Modify: `src/agent/internal/xray/rebuild.go`
@@ -430,8 +430,8 @@ git commit -m "feat(agent): xray rebuild inbound render with prev value preserva
 - Test: `src/agent/internal/xray/rebuild_test.go`（扩展）
 
 **Interfaces:**
-- Consumes: `rebuildInbound`（Task 2）、`m.skeleton()`、`m.mergePieces()`、`m.chainPieces`、`m.runner.Stop/Restart/IsRunning`、`hashBytes`、`inboundTag`、`inboundPort`（现有）、`shared.NodeTag`。
-- Produces: `(*Manager).RebuildXray(p shared.RebuildXrayPayload) (*shared.RebuildXrayResult, error)`、`(*Manager).writeValidated(b []byte) error`、`(*Manager).selfCheck(p) []string`。Task 4 在 main.go 调用 `RebuildXray`。
+- Consumes: `rebuildInbound`（Task 2）、`m.skeleton()`、`m.mergePieces()`、`m.chainPieces`、`m.runner.Stop/Restart/IsRunning`、`hashBytes`、`inboundTag`、`inboundPort`（现有）、`shared.NodeTag`、`pinRealityMinClientVer`（fill.go 现有，就地修改 inbound map）。
+- Produces: `(*Manager).RebuildXray(p shared.RebuildXrayPayload) (*shared.RebuildXrayResult, error)`、`(*Manager).writeValidated(b []byte) error`、`(*Manager).selfCheck(p) []string`、`normalizeRebuiltConfig(fc fullConfig) fullConfig`、`normalizers []func(fullConfig) fullConfig`、`normalizeRealityMinClientVer(fc fullConfig) fullConfig`。Task 4 在 main.go 调用 `RebuildXray`。
 
 - [ ] **Step 1: 写失败测试**（追加到 `rebuild_test.go`）
 
@@ -595,9 +595,89 @@ func TestRebuildXrayRestartFailureRollsBack(t *testing.T) {
 		t.Fatalf("回滚后应恢复原配置: %s", got)
 	}
 }
+
+// TestNormalizeRealityMinClientVer 验证规范化扫描：全配置遍历注入 minClientVer。
+// 重点：重放的链路 portal piece（旧渲染、缺 minClientVer）同样被补全——这是
+// "升级后需补全字段"机制的核心（§docs/rebuild-xray-config-design.md）。
+func TestNormalizeRealityMinClientVer(t *testing.T) {
+	fc := fullConfig{}
+	oldPortal := json.RawMessage(`{
+		"tag": "chainportal_7", "port": 20001, "protocol": "vless",
+		"settings": {"decryption": "none"},
+		"streamSettings": {"network": "tcp", "security": "reality",
+			"realitySettings": {"dest": "example.com:443", "serverNames": ["example.com"],
+				"privateKey": "priv-old", "shortIds": ["6ba85179e30d4fc2"]}}
+	}`)
+	okInbound := json.RawMessage(`{
+		"tag": "node_1", "port": 10001, "protocol": "vless",
+		"streamSettings": {"network": "tcp", "security": "reality",
+			"realitySettings": {"dest": "example.com:443", "minClientVer": "0", "privateKey": "priv"}}
+	}`)
+	plain := json.RawMessage(`{"tag": "chainfwd_3", "port": 20003, "protocol": "dokodemo-door", "settings": {}}`)
+	fc.setInbounds([]json.RawMessage{oldPortal, okInbound, plain})
+
+	normalized := normalizeRebuiltConfig(fc)
+	byTag := map[string]string{}
+	for _, raw := range normalized.inbounds() {
+		byTag[inboundTag(raw)] = string(raw)
+	}
+	if !jsonContains(byTag["chainportal_7"], `"minClientVer":"0"`) {
+		t.Fatalf("重放旧 portal piece 应被注入 minClientVer: %s", byTag["chainportal_7"])
+	}
+	if !jsonContains(byTag["node_1"], `"minClientVer":"0"`) {
+		t.Fatalf("已有字段应原样保留: %s", byTag["node_1"])
+	}
+	if jsonContains(byTag["chainfwd_3"], "minClientVer") {
+		t.Fatalf("非 reality inbound 不应注入: %s", byTag["chainfwd_3"])
+	}
+	// 幂等：二次规范化无变化。
+	again := normalizeRebuiltConfig(normalized)
+	for _, raw := range again.inbounds() {
+		if byTag[inboundTag(raw)] != string(raw) {
+			t.Fatalf("规范化应幂等: %s", raw)
+		}
+	}
+}
+
+// TestRebuildXrayNormalizesReplayedPieces 验证端到端：旧 chain portal piece 记录
+// 重放后经规范化补全 minClientVer。
+func TestRebuildXrayNormalizesReplayedPieces(t *testing.T) {
+	m, _ := newRebuildTestManager(t)
+	orig := destReachable
+	destReachable = func(string, string) bool { return true }
+	t.Cleanup(func() { destReachable = orig })
+	oldPortal := json.RawMessage(`{
+		"tag": "chainportal_7", "port": 20001, "protocol": "vless",
+		"settings": {"decryption": "none"},
+		"streamSettings": {"network": "tcp", "security": "reality",
+			"realitySettings": {"dest": "example.com:443", "serverNames": ["example.com"],
+				"privateKey": "priv-old", "shortIds": ["6ba85179e30d4fc2"]}}
+	}`)
+	m.SetChainPieces([]state.ChainPiece{{HopID: 7, Kind: shared.HopKindPortal, Port: 20001, Inbound: oldPortal}})
+	payload := shared.RebuildXrayPayload{
+		ExpectedInboundTags: []string{"chainportal_7"},
+		ExpectedPieces:      []string{"portal/7"},
+	}
+	result, err := m.RebuildXray(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RolledBack {
+		t.Fatal("不应回滚")
+	}
+	s := readRebuildFile(t, m)
+	if !jsonContains(s, `"minClientVer":"0"`) {
+		t.Fatalf("重建后链路 piece 应补全 minClientVer: %s", s)
+	}
+	if len(result.RebuiltPieces) != 1 || result.RebuiltPieces[0] != "portal/7" {
+		t.Fatalf("回执 pieces = %v", result.RebuiltPieces)
+	}
+}
 ```
 
-（需要 import：`errors`、`context` 已有、`filepath` 已有。）
+（需要 import：`state`、`errors`；`state` 用于 `state.ChainPiece`。）
+
+注意：`TestRebuildXrayNormalizesReplayedPieces` 中 portal piece 只有 Inbound（无 Reverse/Rules），`mergePieces` 仅合并记录中存在的部分——若 `mergePieces` 对缺字段 piece 不完整合并导致自检失败，这是正常现象吗？**不是**：链 portal piece 应有 Inbound + Reverse + Rules。请检查 `state.ChainPiece` 结构与 `mergePieces` 实现（`chain.go:77-82`），按 `chain_test.go` 中真实 portal 记录补全该测试 piece 的字段（Reverse/Rules），保证 mergePieces 完整重放。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -706,6 +786,8 @@ func (m *Manager) RebuildXray(p shared.RebuildXrayPayload) (*shared.RebuildXrayR
 		cand = cand.upsertInbound(tag, inbound)
 	}
 	cand = m.mergePieces(cand)
+	// 3b. 规范化扫描：补全 xray 版本升级后缺省的字段（minClientVer 等，全配置生效）。
+	cand = normalizeRebuiltConfig(cand)
 	// 4-5. 校验 + 原子落盘。
 	b, err := json.MarshalIndent(cand, "", "  ")
 	if err != nil {
@@ -752,6 +834,55 @@ func inboundProtocol(raw json.RawMessage) string {
 		return ""
 	}
 	return p.Protocol
+}
+
+// normalizers 是按序应用的全配置规范化器（重建专用，§docs/rebuild-xray-config-design.md）：
+// 用于补全 xray 版本升级后缺省/新增的字段。每个规范化器必须幂等；
+// 未来升级后出现同类问题，只需在此追加一个函数。
+var normalizers = []func(fullConfig) fullConfig{
+	normalizeRealityMinClientVer,
+}
+
+// normalizeRebuiltConfig 依次应用全部规范化器（跳过配置为 nil 的情况）。
+func normalizeRebuiltConfig(fc fullConfig) fullConfig {
+	for _, n := range normalizers {
+		if n == nil {
+			continue
+		}
+		fc = n(fc)
+	}
+	return fc
+}
+
+// normalizeRealityMinClientVer 遍历全部 inbound（含重放的链路/共享端点 piece），
+// 为缺少 minClientVer 的 realitySettings 注入 "0"（复用 pinRealityMinClientVer；
+// node 重渲染经 fillTemplate 已注入，此处幂等）。显式值原样保留。
+func normalizeRealityMinClientVer(fc fullConfig) fullConfig {
+	list := fc.inbounds()
+	out := make([]json.RawMessage, 0, len(list))
+	changed := false
+	for _, raw := range list {
+		var ib map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &ib); err != nil {
+			out = append(out, raw)
+			continue
+		}
+		before, _ := json.Marshal(ib)
+		pinRealityMinClientVer(ib)
+		after, _ := json.Marshal(ib)
+		if string(before) != string(after) {
+			changed = true
+			out = append(out, after)
+			continue
+		}
+		out = append(out, raw)
+	}
+	if !changed {
+		return fc
+	}
+	nc := fc.clone()
+	nc.setInbounds(out)
+	return nc
 }
 
 // selfCheck 核对重建后配置：期望 inbound tag 全部存在、期望 piece 全部在
@@ -1623,6 +1754,6 @@ git commit -m "fix: review cleanups for xray rebuild"
 
 ## Self-Review 记录
 
-- **Spec 覆盖**：协议（Task 1）✓、agent 流程含私钥/decryption/端口保留（Task 2-3）✓、自检+回滚（Task 3）✓、面板 API+在线检查+期望集剔除（Task 6）✓、前端按钮/对话框（Task 7）✓、openapi（Task 7）✓、错误矩阵（Task 3 rollback 标注）✓、minClientVer 注入（Task 2 断言 + 既有 TestPinRealityMinClientVer）✓、测试三层（Task 1/2/3/5/6/7）✓。
+- **Spec 覆盖**：协议（Task 1）✓、agent 流程含私钥/decryption/端口保留（Task 2-3）✓、自检+回滚（Task 3）✓、面板 API+在线检查+期望集剔除（Task 6）✓、前端按钮/对话框（Task 7）✓、openapi（Task 7）✓、错误矩阵（Task 3 rollback 标注）✓、minClientVer 注入（Task 2 断言 + 既有 TestPinRealityMinClientVer）✓、规范化扫描含重放 piece 补全（Task 3 追加）✓、测试三层（Task 1/2/3/5/6/7）✓。
 - **类型一致性**：`RebuildXrayPayload.Nodes []ApplyNodePayload`（Task 1）→ Task 6 构造；`RebuildXrayResult` 字段贯穿 Task 1/3/5/7；`rebuildInbound` 签名 Task 2 定义、Task 3 调用；`RebuildXraySync` 签名 Task 5 定义、Task 6 调用。
 - **占位符**：无 TBD；测试中的 `contains` 辅助函数已注明改为 `bytes.Contains`；`TestRebuildInboundWithoutPrevGenerates` 的 decmkem 修正已注明。
