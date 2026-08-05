@@ -302,13 +302,23 @@ func (s *Store) SubscriptionUserIDsForChain(ctx context.Context, chainID int64) 
 	return querySubscriptionUserIDs(ctx, s.db, `SELECT user_id FROM (
 		SELECT user_id FROM user_chain_assignments WHERE chain_id=?
 		UNION SELECT un.user_id FROM user_nodes un
-		JOIN chains c ON c.service_node_id=un.node_id WHERE c.id=?) ORDER BY user_id`, chainID, chainID)
+			JOIN chains c ON c.service_node_id=un.node_id WHERE c.id=?
+		UNION SELECT ugm.user_id FROM user_group_members ugm
+			JOIN user_group_links ugl ON ugl.user_group_id = ugm.user_group_id
+			JOIN link_group_chains lgc ON lgc.group_id = ugl.link_group_id
+			WHERE lgc.chain_id=?) ORDER BY user_id`, chainID, chainID, chainID)
 }
 
 func (s *Store) SubscriptionUserIDsForEndpoint(ctx context.Context, endpointID int64) ([]int64, error) {
-	return querySubscriptionUserIDs(ctx, s.db, `SELECT DISTINCT a.user_id
-		FROM user_chain_assignments a JOIN chains c ON c.id=a.chain_id
-		WHERE c.endpoint_id=? AND c.deleted_at IS NULL ORDER BY a.user_id`, endpointID)
+	return querySubscriptionUserIDs(ctx, s.db, `SELECT user_id FROM (
+		SELECT DISTINCT a.user_id FROM user_chain_assignments a
+			JOIN chains c ON c.id=a.chain_id
+			WHERE c.endpoint_id=? AND c.deleted_at IS NULL
+		UNION SELECT DISTINCT ugm.user_id FROM user_group_members ugm
+			JOIN user_group_links ugl ON ugl.user_group_id = ugm.user_group_id
+			JOIN link_group_chains lgc ON lgc.group_id = ugl.link_group_id
+			JOIN chains c ON c.id = lgc.chain_id
+			WHERE c.endpoint_id=? AND c.deleted_at IS NULL) ORDER BY user_id`, endpointID, endpointID)
 }
 
 func (s *Store) SubscriptionUserIDsForServer(ctx context.Context, serverID int64) ([]int64, error) {
@@ -370,6 +380,10 @@ func (s *Store) SubscriptionUserIDsForServer(ctx context.Context, serverID int64
 		}{
 			{`SELECT user_id FROM user_chain_assignments WHERE chain_id=?`, chain.chainID},
 			{`SELECT user_id FROM user_nodes WHERE node_id=?`, chain.serviceNodeID},
+			{`SELECT DISTINCT ugm.user_id FROM user_group_members ugm
+				JOIN user_group_links ugl ON ugl.user_group_id = ugm.user_group_id
+				JOIN link_group_chains lgc ON lgc.group_id = ugl.link_group_id
+				WHERE lgc.chain_id=?`, chain.chainID},
 		} {
 			ids, err := querySubscriptionUserIDs(ctx, s.db, query.text, query.arg)
 			if err != nil {

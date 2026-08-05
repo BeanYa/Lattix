@@ -443,3 +443,133 @@ func (s *Store) UserGroupNameTaken(ctx context.Context, name string, excludeID i
 	}
 	return exists > 0, nil
 }
+
+// UserGroupIDsForUser 返回用户所属的用户分组 ID 列表。
+func (s *Store) UserGroupIDsForUser(ctx context.Context, userID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT user_group_id FROM user_group_members WHERE user_id=? ORDER BY user_group_id`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("user group ids for user: %w", err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// EffectiveUserChainAssignments 返回用户生效的链路分配：
+//   - 用户在任意用户分组内 → 只返回分组派生链路（AccessUUID 为确定性 UUIDv5，
+//     ID 为 0）；直接分配被遮蔽；
+//   - 否则 → 直接分配（等价 UserChainAssignments）。
+func (s *Store) EffectiveUserChainAssignments(ctx context.Context, userID int64) ([]UserChainAssignment, error) {
+	groupIDs, err := s.UserGroupIDsForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(groupIDs) == 0 {
+		return s.UserChainAssignments(ctx, userID)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT u.uuid, lgc.chain_id, c.endpoint_id
+		FROM users u
+		JOIN user_group_members ugm ON ugm.user_id = u.id
+		JOIN user_group_links ugl ON ugl.user_group_id = ugm.user_group_id
+		JOIN link_group_chains lgc ON lgc.group_id = ugl.link_group_id
+		JOIN chains c ON c.id = lgc.chain_id
+		WHERE u.id = ? AND c.deleted_at IS NULL
+		ORDER BY lgc.chain_id`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("effective chain assignments: %w", err)
+	}
+	defer rows.Close()
+	seen := map[int64]bool{}
+	var out []UserChainAssignment
+	for rows.Next() {
+		var userUUID string
+		var a UserChainAssignment
+		if err := rows.Scan(&userUUID, &a.ChainID, &a.EndpointID); err != nil {
+			return nil, err
+		}
+		if seen[a.ChainID] {
+			continue
+		}
+		seen[a.ChainID] = true
+		a.UserID = userID
+		a.AccessUUID = GroupAccessUUID(userUUID, a.ChainID)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// EffectiveUserExternalSubscriptions 返回用户生效的外部订阅：
+//   - 分组用户 → 分组派生（mode 取分组行，经多分组引用同一订阅时按订阅去重取首行）；
+//   - 否则 → 直接分配（等价 ListUserExternalSubscriptions）。
+func (s *Store) EffectiveUserExternalSubscriptions(ctx context.Context, userID int64) ([]UserExternalSubscriptionJoined, error) {
+	groupIDs, err := s.UserGroupIDsForUser(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(groupIDs) == 0 {
+		return s.ListUserExternalSubscriptions(ctx, userID)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT lges.subscription_id, lges.mode,
+		es.name, es.upload, es.download, es.total, es.expire, es.node_count
+		FROM user_group_members ugm
+		JOIN user_group_links ugl ON ugl.user_group_id = ugm.user_group_id
+		JOIN link_group_external_subscriptions lges ON lges.group_id = ugl.link_group_id
+		JOIN external_subscriptions es ON es.id = lges.subscription_id
+		WHERE ugm.user_id = ?
+		ORDER BY lges.subscription_id`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("effective external subscriptions: %w", err)
+	}
+	defer rows.Close()
+	seen := map[int64]bool{}
+	var out []UserExternalSubscriptionJoined
+	for rows.Next() {
+		var joined UserExternalSubscriptionJoined
+		var expire sql.NullInt64
+		if err := rows.Scan(&joined.SubscriptionID, &joined.Mode, &joined.Name,
+			&joined.Upload, &joined.Download, &joined.Total, &expire, &joined.NodeCount); err != nil {
+			return nil, err
+		}
+		if seen[joined.SubscriptionID] {
+			continue
+		}
+		seen[joined.SubscriptionID] = true
+		joined.UserID = userID
+		if expire.Valid {
+			joined.Expire = &expire.Int64
+		}
+		out = append(out, joined)
+	}
+	return out, rows.Err()
+}
+
+// SubscriptionUserIDsForLinkGroup 返回经用户分组引用该链路分组的全部用户。
+func (s *Store) SubscriptionUserIDsForLinkGroup(ctx context.Context, linkGroupID int64) ([]int64, error) {
+	return querySubscriptionUserIDs(ctx, s.db, `SELECT DISTINCT ugm.user_id
+		FROM user_group_members ugm
+		JOIN user_group_links ugl ON ugl.user_group_id = ugm.user_group_id
+		WHERE ugl.link_group_id=? ORDER BY ugm.user_id`, linkGroupID)
+}
+
+// UsersForUserGroup 返回用户分组全体成员。
+func (s *Store) UsersForUserGroup(ctx context.Context, userGroupID int64) ([]int64, error) {
+	return querySubscriptionUserIDs(ctx, s.db,
+		`SELECT user_id FROM user_group_members WHERE user_group_id=? ORDER BY user_id`, userGroupID)
+}
+
+// UsersByExternalSubscriptionThroughGroups 返回经链路分组引用指定外部订阅的用户。
+func (s *Store) UsersByExternalSubscriptionThroughGroups(ctx context.Context, subscriptionID int64) ([]int64, error) {
+	return querySubscriptionUserIDs(ctx, s.db, `SELECT DISTINCT ugm.user_id
+		FROM user_group_members ugm
+		JOIN user_group_links ugl ON ugl.user_group_id = ugm.user_group_id
+		JOIN link_group_external_subscriptions lges ON lges.group_id = ugl.link_group_id
+		WHERE lges.subscription_id=? ORDER BY ugm.user_id`, subscriptionID)
+}
