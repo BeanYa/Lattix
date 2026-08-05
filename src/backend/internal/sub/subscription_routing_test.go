@@ -536,7 +536,7 @@ func TestPublishUserForcedAssignmentOverridesUserChoice(t *testing.T) {
 	}
 }
 
-func TestPublishUserAssignedSuggestedPresetProducesUsableRules(t *testing.T) {
+func TestPublishUserAssignedSuggestedCategoriesProducesUsableRules(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -547,11 +547,11 @@ func TestPublishUserAssignedSuggestedPresetProducesUsableRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 用户默认（建议规则/balanced/单分类），被指派建议规则 comprehensive。
+	// 用户默认（建议规则/balanced/单分类），被指派 ads+ai+gaming 分组。
 	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
 		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
-		CategoriesJSON: `["ai"]`, GenerationStatus: store.SubscriptionGenerationMissing,
-		AssignedSuggestedPreset: "comprehensive",
+		CategoriesJSON:                  `["ai"]`, GenerationStatus: store.SubscriptionGenerationMissing,
+		AssignedSuggestedCategories: `["ads","ai","gaming"]`,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -562,6 +562,9 @@ func TestPublishUserAssignedSuggestedPresetProducesUsableRules(t *testing.T) {
 	}
 	clash := string(result.Files["clash"])
 	if !strings.Contains(clash, "AI 服务") || !strings.Contains(clash, "广告拦截") || !strings.Contains(clash, "游戏平台") {
-		t.Fatalf("assigned suggested preset rules missing: %s", clash)
+		t.Fatalf("assigned suggested categories rules missing: %s", clash)
+	}
+	if strings.Contains(clash, "油管视频") || strings.Contains(clash, "电报消息") {
+		t.Fatalf("unassigned categories leaked into rules: %s", clash)
 	}
 }

@@ -165,7 +165,7 @@ func (s *Server) resolvePolicy(ctx context.Context, profile store.SubscriptionPr
 			selected = append([]string(nil), presetCategories[profile.Preset]...)
 		}
 		policy, err := suggestedPolicy(sortedSelectedCategories(selected))
-		return policy, "内置 " + strings.Title(profile.Preset), nil, err
+		return policy, "内置建议规则", nil, err
 	}
 	if profile.PortableTemplateID == "" {
 		return portablePolicy{}, "", nil, errors.New("custom template mode requires a portable template")

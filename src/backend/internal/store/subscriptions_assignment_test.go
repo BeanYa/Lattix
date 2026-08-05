@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 )
 
@@ -67,42 +66,26 @@ func TestEffectiveProfileForcedOverridesUserChoice(t *testing.T) {
 	}
 }
 
-func TestEffectiveProfileAssignedSuggestedPresetApplies(t *testing.T) {
+func TestEffectiveProfileAssignedSuggestedCategoriesApplies(t *testing.T) {
 	profile := SubscriptionProfile{
 		Mode: SubscriptionModeSuggested, Preset: "balanced",
-		CategoriesJSON:            `["ai"]`,
-		AssignedSuggestedPreset:   "comprehensive",
-		AssignForcedPortable:      false,
+		CategoriesJSON:              `["ai"]`,
+		AssignedSuggestedCategories: `["ads","ai","gaming"]`,
+		AssignForcedPortable:        false,
 	}
 	got := EffectiveProfile(profile)
-	if got.Mode != SubscriptionModeSuggested || got.Preset != "comprehensive" {
+	if got.Mode != SubscriptionModeSuggested || got.Preset != "balanced" {
 		t.Fatalf("assigned suggested not applied: mode=%q preset=%q", got.Mode, got.Preset)
 	}
-	var categories []string
-	if err := json.Unmarshal([]byte(got.CategoriesJSON), &categories); err != nil {
-		t.Fatal(err)
-	}
-	if len(categories) != len(presetCategorySets["comprehensive"]) {
-		t.Fatalf("preset categories not applied: %v", categories)
-	}
-	for _, want := range presetCategorySets["comprehensive"] {
-		found := false
-		for _, category := range categories {
-			if category == want {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("preset categories missing %q: %v", want, categories)
-		}
+	if got.CategoriesJSON != `["ads","ai","gaming"]` {
+		t.Fatalf("assigned categories not applied: %q", got.CategoriesJSON)
 	}
 }
 
 func TestEffectiveProfileUserTemplateWinsOverSuggestedAssignment(t *testing.T) {
 	profile := SubscriptionProfile{
 		Mode: SubscriptionModeTemplate, PortableTemplateID: "mine",
-		AssignedSuggestedPreset: "minimal",
+		AssignedSuggestedCategories: `["private","domestic","overseas"]`,
 	}
 	got := EffectiveProfile(profile)
 	if got.Mode != SubscriptionModeTemplate || got.PortableTemplateID != "mine" {
@@ -113,11 +96,11 @@ func TestEffectiveProfileUserTemplateWinsOverSuggestedAssignment(t *testing.T) {
 func TestEffectiveProfileForcedSuggestedOverridesUserChoice(t *testing.T) {
 	profile := SubscriptionProfile{
 		Mode: SubscriptionModeTemplate, PortableTemplateID: "mine",
-		AssignedSuggestedPreset: "minimal",
+		AssignedSuggestedCategories: `["private","domestic","overseas"]`,
 		AssignForcedPortable:    true,
 	}
 	got := EffectiveProfile(profile)
-	if got.Mode != SubscriptionModeSuggested || got.Preset != "minimal" {
+	if got.Mode != SubscriptionModeSuggested || got.Preset != "balanced" {
 		t.Fatalf("forced suggested not applied: mode=%q preset=%q", got.Mode, got.Preset)
 	}
 	if got.PortableTemplateID != "mine" {

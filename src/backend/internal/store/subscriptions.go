@@ -112,27 +112,20 @@ func defaultSubscriptionProfile(userID int64) SubscriptionProfile {
 }
 
 // presetCategorySets 建议规则预设的默认生效分类（与 sub/policy.go 的 presetCategories 保持一致）。
+// 仅用于迁移回填旧 preset 指派；新指派使用 assigned_suggested_categories。
 var presetCategorySets = map[string][]string{
 	"minimal":       {"private", "domestic", "overseas"},
 	"balanced":      DefaultBalancedCategories,
 	"comprehensive": {"ads", "ai", "bilibili", "youtube", "google", "private", "domestic", "telegram", "github", "microsoft", "apple", "social", "streaming", "gaming", "education", "finance", "cloud", "overseas"},
 }
 
-func presetCategoriesJSON(preset string) string {
-	raw, err := json.Marshal(presetCategorySets[preset])
-	if err != nil {
-		return "[]"
-	}
-	return string(raw)
-}
-
 // EffectiveProfile 合并管理员指派与用户自选，返回订阅构建实际使用的 profile：
 // 指派槽位在用户未自选（或强制覆盖）时生效；用户自选优先于普通指派。
 func EffectiveProfile(p SubscriptionProfile) SubscriptionProfile {
-	if p.AssignedSuggestedPreset != "" && (p.AssignForcedPortable || p.Mode != SubscriptionModeTemplate || p.PortableTemplateID == "") {
+	if p.AssignedSuggestedCategories != "" && (p.AssignForcedPortable || p.Mode != SubscriptionModeTemplate || p.PortableTemplateID == "") {
 		p.Mode = SubscriptionModeSuggested
-		p.Preset = p.AssignedSuggestedPreset
-		p.CategoriesJSON = presetCategoriesJSON(p.AssignedSuggestedPreset)
+		p.Preset = "balanced" // 占位值；发布标签不再依赖 preset 名。
+		p.CategoriesJSON = p.AssignedSuggestedCategories
 	} else if p.AssignedPortableTemplateID != "" && (p.AssignForcedPortable || p.Mode != SubscriptionModeTemplate || p.PortableTemplateID == "") {
 		p.Mode = SubscriptionModeTemplate
 		p.PortableTemplateID = p.AssignedPortableTemplateID
