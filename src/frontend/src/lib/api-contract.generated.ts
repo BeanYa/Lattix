@@ -1023,6 +1023,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/subscription/template/assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["subscriptionTemplateAssign"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/subscription/template/unassign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["subscriptionTemplateUnassign"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/external-subscription/list": {
         parameters: {
             query?: never;
@@ -2904,6 +2936,42 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    subscriptionTemplateAssign: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    subscriptionTemplateUnassign: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     externalSubscriptionList: {
         parameters: {
             query?: never;
@@ -3507,6 +3575,8 @@ export const rpcOperations = {
   subscriptionTemplateClone: { method: 'POST', path: '/api/subscription/template/clone' },
   subscriptionTemplateDelete: { method: 'POST', path: '/api/subscription/template/delete' },
   subscriptionTemplateRefresh: { method: 'POST', path: '/api/subscription/template/refresh' },
+  subscriptionTemplateAssign: { method: 'POST', path: '/api/subscription/template/assign' },
+  subscriptionTemplateUnassign: { method: 'POST', path: '/api/subscription/template/unassign' },
   externalSubscriptionList: { method: 'GET', path: '/api/external-subscription/list' },
   externalSubscriptionCreate: { method: 'POST', path: '/api/external-subscription/create' },
   externalSubscriptionUpdate: { method: 'POST', path: '/api/external-subscription/update' },
