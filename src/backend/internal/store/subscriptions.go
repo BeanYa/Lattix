@@ -37,7 +37,6 @@ type SubscriptionProfile struct {
 	AssignedMihomoTemplateID   string
 	AssignedSingboxTemplateID  string
 	AssignedQuanXTemplateID    string
-	AssignedSuggestedPreset    string // 建议规则预设指派（minimal|balanced|comprehensive），与 AssignedPortableTemplateID 互斥
 	AssignedSuggestedCategories string // 建议规则分组指派（JSON 数组），与 AssignedPortableTemplateID 互斥
 	AssignForcedPortable       bool
 	AssignForcedMihomo         bool
@@ -148,14 +147,13 @@ func (s *Store) UserSubscriptionProfile(ctx context.Context, userID int64) (Subs
 	err := s.db.QueryRowContext(ctx, `SELECT user_id, mode, preset, categories, portable_template_id,
 		mihomo_template_id, singbox_template_id, quanx_template_id,
 		assigned_portable_template_id, assigned_mihomo_template_id, assigned_singbox_template_id, assigned_quanx_template_id,
-		assigned_suggested_preset,
 		assigned_suggested_categories,
 		assign_forced_portable, assign_forced_mihomo, assign_forced_singbox, assign_forced_quanx,
 		generation_status, generation_error, updated_at FROM user_subscription_profiles WHERE user_id = ?`, userID).Scan(
 		&profile.UserID, &profile.Mode, &profile.Preset, &profile.CategoriesJSON,
 		&profile.PortableTemplateID, &profile.MihomoTemplateID, &profile.SingboxTemplateID,
 		&profile.QuanXTemplateID, &profile.AssignedPortableTemplateID, &profile.AssignedMihomoTemplateID,
-		&profile.AssignedSingboxTemplateID, &profile.AssignedQuanXTemplateID, &profile.AssignedSuggestedPreset,
+		&profile.AssignedSingboxTemplateID, &profile.AssignedQuanXTemplateID,
 		&profile.AssignedSuggestedCategories,
 		&forcedPortable, &forcedMihomo, &forcedSingbox, &forcedQuanx,
 		&profile.GenerationStatus, &profile.GenerationError, &profile.UpdatedAt)
@@ -193,11 +191,11 @@ func (s *Store) SaveUserSubscriptionProfile(ctx context.Context, profile Subscri
 	_, err := s.db.ExecContext(ctx, `INSERT INTO user_subscription_profiles
 		(user_id, mode, preset, categories, portable_template_id, mihomo_template_id,
 		 singbox_template_id, quanx_template_id, assigned_portable_template_id, assigned_mihomo_template_id,
-		 assigned_singbox_template_id, assigned_quanx_template_id, assigned_suggested_preset,
+		 assigned_singbox_template_id, assigned_quanx_template_id,
 		 assigned_suggested_categories,
 		 assign_forced_portable, assign_forced_mihomo,
 		 assign_forced_singbox, assign_forced_quanx, generation_status, generation_error, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', CURRENT_TIMESTAMP)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', CURRENT_TIMESTAMP)
 		ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode, preset=excluded.preset,
 		categories=excluded.categories, portable_template_id=excluded.portable_template_id,
 		mihomo_template_id=excluded.mihomo_template_id, singbox_template_id=excluded.singbox_template_id,
@@ -206,7 +204,6 @@ func (s *Store) SaveUserSubscriptionProfile(ctx context.Context, profile Subscri
 		assigned_mihomo_template_id=excluded.assigned_mihomo_template_id,
 		assigned_singbox_template_id=excluded.assigned_singbox_template_id,
 		assigned_quanx_template_id=excluded.assigned_quanx_template_id,
-		assigned_suggested_preset=excluded.assigned_suggested_preset,
 		assigned_suggested_categories=excluded.assigned_suggested_categories,
 		assign_forced_portable=excluded.assign_forced_portable,
 		assign_forced_mihomo=excluded.assign_forced_mihomo,
@@ -217,7 +214,7 @@ func (s *Store) SaveUserSubscriptionProfile(ctx context.Context, profile Subscri
 		profile.UserID, profile.Mode, profile.Preset, profile.CategoriesJSON,
 		profile.PortableTemplateID, profile.MihomoTemplateID, profile.SingboxTemplateID,
 		profile.QuanXTemplateID, profile.AssignedPortableTemplateID, profile.AssignedMihomoTemplateID,
-		profile.AssignedSingboxTemplateID, profile.AssignedQuanXTemplateID, profile.AssignedSuggestedPreset,
+		profile.AssignedSingboxTemplateID, profile.AssignedQuanXTemplateID,
 		profile.AssignedSuggestedCategories,
 		forcedPortable, forcedMihomo, forcedSingbox, forcedQuanx, profile.GenerationStatus)
 	if err != nil {

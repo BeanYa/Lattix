@@ -144,7 +144,7 @@ func TestSubscriptionProfilePersistsAssignment(t *testing.T) {
 	}
 }
 
-func TestSubscriptionProfilePersistsSuggestedPresetAssignment(t *testing.T) {
+func TestSubscriptionProfilePersistsSuggestedCategoriesAssignment(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(":memory:")
 	if err != nil {
@@ -158,8 +158,8 @@ func TestSubscriptionProfilePersistsSuggestedPresetAssignment(t *testing.T) {
 	profile := SubscriptionProfile{
 		UserID: userID, Mode: SubscriptionModeSuggested, Preset: "balanced",
 		CategoriesJSON:                  `["ai"]`,
-		AssignedSuggestedPreset:         "minimal", AssignForcedPortable: true,
 		AssignedSuggestedCategories:     `["private","domestic","overseas"]`,
+		AssignForcedPortable:            true,
 		GenerationStatus: SubscriptionGenerationMissing,
 	}
 	if err := st.SaveUserSubscriptionProfile(ctx, profile); err != nil {
@@ -169,7 +169,7 @@ func TestSubscriptionProfilePersistsSuggestedPresetAssignment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.AssignedSuggestedPreset != "minimal" || got.AssignedSuggestedCategories != `["private","domestic","overseas"]` || !got.AssignForcedPortable {
+	if got.AssignedSuggestedCategories != `["private","domestic","overseas"]` || !got.AssignForcedPortable {
 		t.Fatalf("suggested assignment lost: %+v", got)
 	}
 	if got.AssignedPortableTemplateID != "" {

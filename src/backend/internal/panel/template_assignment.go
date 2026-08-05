@@ -1,12 +1,15 @@
 package panel
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"lattix/backend/internal/store"
+	"lattix/backend/internal/sub"
 )
 
 // applyTemplateAssignment 按模板 kind 把指派写入对应槽位；acl4ssr 归主策略槽位。
@@ -55,54 +58,73 @@ func dedupeUserIDs(ids []int64) []int64 {
 	return out
 }
 
-func validSuggestedPreset(preset string) bool {
-	switch preset {
-	case "minimal", "balanced", "comprehensive":
-		return true
-	default:
-		return false
+// normalizeSuggestedCategories 校验并规范化分组列表：未知 id → 错误；空 → 错误；去重并按内置顺序排序。
+func normalizeSuggestedCategories(raw []string) ([]string, error) {
+	known := make(map[string]bool)
+	order := make(map[string]int)
+	for index, category := range sub.Categories() {
+		known[category.ID] = true
+		order[category.ID] = index
 	}
+	seen := make(map[string]bool)
+	out := make([]string, 0, len(raw))
+	for _, id := range raw {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		if !known[id] {
+			return nil, fmt.Errorf("未知分组 %q", id)
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("suggested_categories 不能为空")
+	}
+	sort.SliceStable(out, func(i, j int) bool { return order[out[i]] < order[out[j]] })
+	return out, nil
 }
 
-// assignmentTarget 解析指派目标：template_id 与 suggested_preset 二选一（均空或均非空 → 400）。
-func (s *Server) assignmentTarget(w http.ResponseWriter, r *http.Request, templateID, suggestedPreset string) (target *store.SubscriptionTemplate, preset string, ok bool) {
+// assignmentTarget 解析指派目标：template_id 与 suggested_categories 二选一（均空或均非空 → 400）。
+func (s *Server) assignmentTarget(w http.ResponseWriter, r *http.Request, templateID string, suggestedCategories []string) (target *store.SubscriptionTemplate, categories []string, ok bool) {
 	templateID = strings.TrimSpace(templateID)
-	suggestedPreset = strings.TrimSpace(suggestedPreset)
-	if (templateID == "") == (suggestedPreset == "") {
-		writeError(w, http.StatusBadRequest, "template_id 与 suggested_preset 必须二选一")
-		return nil, "", false
+	if (templateID == "") == (len(suggestedCategories) == 0) {
+		writeError(w, http.StatusBadRequest, "template_id 与 suggested_categories 必须二选一")
+		return nil, nil, false
 	}
-	if suggestedPreset != "" {
-		if !validSuggestedPreset(suggestedPreset) {
-			writeError(w, http.StatusBadRequest, "suggested_preset 无效")
-			return nil, "", false
+	if len(suggestedCategories) > 0 {
+		normalized, err := normalizeSuggestedCategories(suggestedCategories)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return nil, nil, false
 		}
-		return nil, suggestedPreset, true
+		return nil, normalized, true
 	}
 	template, err := s.st.SubscriptionTemplateByID(r.Context(), templateID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "订阅模板不存在")
-			return nil, "", false
+			return nil, nil, false
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
-		return nil, "", false
+		return nil, nil, false
 	}
 	if strings.TrimSpace(template.Content) == "" {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("订阅模板 %q 尚无有效缓存", template.Name))
-		return nil, "", false
+		return nil, nil, false
 	}
-	return &template, "", true
+	return &template, nil, true
 }
 
 // handleAssignSubscriptionTemplate 处理 POST /api/subscription/template/assign：
 // 多选用户批量指派模板或建议规则预设到主策略槽位，可强制覆盖用户自选；指派后重发各用户订阅快照。
 func (s *Server) handleAssignSubscriptionTemplate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserIDs         []int64 `json:"user_ids"`
-		TemplateID      string  `json:"template_id"`
-		SuggestedPreset string  `json:"suggested_preset"`
-		Forced          bool    `json:"forced"`
+		UserIDs              []int64  `json:"user_ids"`
+		TemplateID           string   `json:"template_id"`
+		SuggestedCategories  []string `json:"suggested_categories"`
+		Forced               bool     `json:"forced"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -113,7 +135,7 @@ func (s *Server) handleAssignSubscriptionTemplate(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "user_ids 不能为空")
 		return
 	}
-	template, suggestedPreset, ok := s.assignmentTarget(w, r, req.TemplateID, req.SuggestedPreset)
+	template, categories, ok := s.assignmentTarget(w, r, req.TemplateID, req.SuggestedCategories)
 	if !ok {
 		return
 	}
@@ -131,17 +153,18 @@ func (s *Server) handleAssignSubscriptionTemplate(w http.ResponseWriter, r *http
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if suggestedPreset != "" {
+		if categories != nil {
 			// 建议规则指派与模板指派同为主策略槽位，互斥。
 			profile.AssignedPortableTemplateID = ""
-			profile.AssignedSuggestedPreset = suggestedPreset
+			raw, _ := json.Marshal(categories)
+			profile.AssignedSuggestedCategories = string(raw)
 			profile.AssignForcedPortable = req.Forced
 		} else {
 			if err := applyTemplateAssignment(&profile, template.Kind, template.ID, req.Forced); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			profile.AssignedSuggestedPreset = ""
+			profile.AssignedSuggestedCategories = ""
 		}
 		if err := s.st.SaveUserSubscriptionProfile(r.Context(), profile); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -157,10 +180,10 @@ func (s *Server) handleAssignSubscriptionTemplate(w http.ResponseWriter, r *http
 		}
 	}
 	s.audit(r, "subscription.template.assigned", nil, nil, map[string]any{
-		"template_id": req.TemplateID, "suggested_preset": suggestedPreset, "user_ids": userIDs, "forced": req.Forced,
+		"template_id": req.TemplateID, "suggested_categories": categories, "user_ids": userIDs, "forced": req.Forced,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user_ids": userIDs, "template_id": req.TemplateID, "suggested_preset": suggestedPreset, "forced": req.Forced,
+		"user_ids": userIDs, "template_id": req.TemplateID, "suggested_categories": categories, "forced": req.Forced,
 	})
 }
 
@@ -168,9 +191,9 @@ func (s *Server) handleAssignSubscriptionTemplate(w http.ResponseWriter, r *http
 // 清除用户对应指派（模板或建议规则），用户自选值保留，并重发订阅快照。
 func (s *Server) handleUnassignSubscriptionTemplate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		UserIDs         []int64 `json:"user_ids"`
-		TemplateID      string  `json:"template_id"`
-		SuggestedPreset string  `json:"suggested_preset"`
+		UserIDs              []int64  `json:"user_ids"`
+		TemplateID           string   `json:"template_id"`
+		SuggestedCategories  []string `json:"suggested_categories"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -181,7 +204,7 @@ func (s *Server) handleUnassignSubscriptionTemplate(w http.ResponseWriter, r *ht
 		writeError(w, http.StatusBadRequest, "user_ids 不能为空")
 		return
 	}
-	template, suggestedPreset, ok := s.assignmentTarget(w, r, req.TemplateID, req.SuggestedPreset)
+	template, categories, ok := s.assignmentTarget(w, r, req.TemplateID, req.SuggestedCategories)
 	if !ok {
 		return
 	}
@@ -199,8 +222,8 @@ func (s *Server) handleUnassignSubscriptionTemplate(w http.ResponseWriter, r *ht
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if suggestedPreset != "" {
-			profile.AssignedSuggestedPreset = ""
+		if categories != nil {
+			profile.AssignedSuggestedCategories = ""
 			profile.AssignForcedPortable = false
 		} else {
 			if err := clearTemplateAssignment(&profile, template.Kind); err != nil {
@@ -222,9 +245,9 @@ func (s *Server) handleUnassignSubscriptionTemplate(w http.ResponseWriter, r *ht
 		}
 	}
 	s.audit(r, "subscription.template.unassigned", nil, nil, map[string]any{
-		"template_id": req.TemplateID, "suggested_preset": suggestedPreset, "user_ids": userIDs,
+		"template_id": req.TemplateID, "suggested_categories": categories, "user_ids": userIDs,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user_ids": userIDs, "template_id": req.TemplateID, "suggested_preset": suggestedPreset,
+		"user_ids": userIDs, "template_id": req.TemplateID, "suggested_categories": categories,
 	})
 }
