@@ -1317,7 +1317,9 @@ export default function Servers() {
             <DialogTitle>重建 Xray 配置</DialogTitle>
             <DialogDescription>
               {rebuildDone
-                ? `「${rebuildTarget?.alias}」已按当前生效的链路与用户配置重建 xray.json。`
+                ? rebuildResult?.rolled_back
+                  ? `「${rebuildTarget?.alias}」重建失败，已恢复重建前的 xray.json。`
+                  : `「${rebuildTarget?.alias}」已按当前生效的链路与用户配置重建 xray.json。`
                 : `将停止「${rebuildTarget?.alias}」的 xray 服务，备份并重新生成 xray.json（保留现有私钥与端口），校验后重启并自检；失败会自动恢复备份。重建期间该服务器代理不可用。`}
             </DialogDescription>
           </DialogHeader>
