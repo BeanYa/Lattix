@@ -8,6 +8,7 @@ import {
   MenuIcon,
   FileCode2Icon,
   GlobeIcon,
+  Layers as LayersIcon,
   RouteIcon,
   ScrollTextIcon,
   ServerIcon,
@@ -36,14 +37,15 @@ const navItems = [
   { to: '/users', activePrefix: '/users', label: '用户', icon: UsersIcon, end: false },
   { to: '/subscription-templates', activePrefix: '/subscription-templates', label: '订阅模板', icon: FileCode2Icon, end: false },
   { to: '/external-subscriptions', activePrefix: '/external-subscriptions', label: '外部订阅', icon: GlobeIcon, end: false },
+  { to: '/groups', activePrefix: '/groups', label: '分组', icon: LayersIcon, end: false },
   { to: '/logs/operations', activePrefix: '/logs', label: '日志', icon: ScrollTextIcon, end: false },
   { to: '/settings', activePrefix: '/settings', label: '设置', icon: SettingsIcon, end: false },
 ]
 
 const navSections = [
   { label: '实时控制', items: navItems.slice(0, 5) },
-  { label: '资源管理', items: navItems.slice(5, 9) },
-  { label: '系统', items: navItems.slice(9) },
+  { label: '资源管理', items: navItems.slice(5, 10) },
+  { label: '系统', items: navItems.slice(10) },
 ]
 
 const panelStatePresentation: Record<PanelLifecycleState, { label: string; dot: string }> = {
