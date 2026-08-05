@@ -296,25 +296,25 @@ func TestPickChainPort(t *testing.T) {
 	m := NewManager("xray", "/nonexistent/config.json", "127.0.0.1:10085", nil)
 	// 复用已记录端口（重发幂等）。
 	prev := &state.ChainPiece{Port: 0}
-	p, err := m.pickChainPort(0, nil, prev)
+	p, err := m.pickChainPort(0, nil, prev, "")
 	if err != nil || p == 0 {
 		t.Fatalf("无候选无记录应挑随机空闲端口: %d %v", p, err)
 	}
 	// 候选全占用报错：占住一个端口后单候选挑选。
-	hold, err := m.pickPort(0, nil)
+	hold, err := m.pickPort(0, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	l := listenOn(t, hold)
 	defer l.Close()
-	if _, err := m.pickChainPort(0, []int{hold}, nil); err == nil {
+	if _, err := m.pickChainPort(0, []int{hold}, nil, ""); err == nil {
 		t.Fatal("候选全占用应报错")
 	}
 }
 
 func TestPickChainPortReusesPortOwnedByExistingPiece(t *testing.T) {
 	m := NewManager("xray", "/nonexistent/config.json", "127.0.0.1:10085", nil)
-	port, err := m.pickPort(0, nil)
+	port, err := m.pickPort(0, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,10 +322,10 @@ func TestPickChainPortReusesPortOwnedByExistingPiece(t *testing.T) {
 	defer listener.Close()
 	previous := &state.ChainPiece{HopID: 7, Kind: shared.HopKindForward, Port: port}
 
-	if got, err := m.pickChainPort(port, nil, previous); err != nil || got != port {
+	if got, err := m.pickChainPort(port, nil, previous, ""); err != nil || got != port {
 		t.Fatalf("显式复用已有配置件端口 = %d, %v；期望 %d", got, err, port)
 	}
-	if got, err := m.pickChainPort(0, nil, previous); err != nil || got != port {
+	if got, err := m.pickChainPort(0, nil, previous, ""); err != nil || got != port {
 		t.Fatalf("自动复用已有配置件端口 = %d, %v；期望 %d", got, err, port)
 	}
 }
@@ -334,7 +334,7 @@ func TestPickChainPortReusesPortOwnedByExistingPiece(t *testing.T) {
 // 端口已被 agent 自身受管 config 记录（运行中的 xray 持有）→ 复用不报冲突。
 func TestPickPortReusesManagedPort(t *testing.T) {
 	mgr := newTestEndpointManager(t)
-	port, err := mgr.pickPort(0, nil)
+	port, err := mgr.pickPort(0, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestPickPortReusesManagedPort(t *testing.T) {
 	ln := listenOn(t, port)
 	defer ln.Close()
 
-	if got, err := mgr.pickPort(port, nil); err != nil || got != port {
+	if got, err := mgr.pickPort(port, nil, ""); err != nil || got != port {
 		t.Fatalf("受管端口应可复用: got=%d err=%v", got, err)
 	}
 }
@@ -361,14 +361,14 @@ func TestPickPortReusesManagedPort(t *testing.T) {
 // 外部进程占用 → node_failed/forward failed 告警路径不变）。
 func TestPickPortForeignPortConflict(t *testing.T) {
 	mgr := newTestEndpointManager(t)
-	port, err := mgr.pickPort(0, nil)
+	port, err := mgr.pickPort(0, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ln := listenOn(t, port)
 	defer ln.Close()
 
-	if _, err := mgr.pickPort(port, nil); err == nil {
+	if _, err := mgr.pickPort(port, nil, ""); err == nil {
 		t.Fatal("其他服务占用的端口应报冲突")
 	}
 }
@@ -377,26 +377,26 @@ func TestPickPortForeignPortConflict(t *testing.T) {
 // 段内候选）手动指定端口必须落在候选段内（§21）：段内通过，段外拒绝（先于占用探测）。
 func TestPickPortManualPortValidatedAgainstCandidates(t *testing.T) {
 	mgr := newTestEndpointManager(t)
-	free, err := mgr.pickPort(0, nil)
+	free, err := mgr.pickPort(0, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 段内手动端口 → 采用。
-	if got, err := mgr.pickPort(free, []int{free}); err != nil || got != free {
+	if got, err := mgr.pickPort(free, []int{free}, ""); err != nil || got != free {
 		t.Fatalf("候选段内手动端口应通过: got=%d err=%v", got, err)
 	}
 	// 占住段内端口后再取一个不同端口作段外输入（确定性，避免 OS 复用临时端口）。
 	ln := listenOn(t, free)
 	defer ln.Close()
-	other, err := mgr.pickPort(0, nil)
+	other, err := mgr.pickPort(0, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr.pickPort(other, []int{free}); err == nil {
+	if _, err := mgr.pickPort(other, []int{free}, ""); err == nil {
 		t.Fatal("候选段外手动端口应报错")
 	}
 	// pickChainPort 透传候选做同样校验（链 piece 入口）。
-	if _, err := mgr.pickChainPort(other, []int{free}, nil); err == nil {
+	if _, err := mgr.pickChainPort(other, []int{free}, nil, ""); err == nil {
 		t.Fatal("pickChainPort 候选段外手动端口应报错")
 	}
 }
@@ -406,7 +406,7 @@ func TestPickPortManualPortValidatedAgainstCandidates(t *testing.T) {
 // 不误报"端口被占用"（§21 端口复用：受管端口可复用，其他服务占用才冲突）。
 func TestApplySharedEndpointFixedPortWhileManagedHeld(t *testing.T) {
 	mgr := newTestEndpointManager(t)
-	port, err := mgr.pickPort(0, nil)
+	port, err := mgr.pickPort(0, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

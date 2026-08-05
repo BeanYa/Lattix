@@ -165,7 +165,8 @@ func (m *Manager) renderPortal(p shared.ApplyChainHopPayload) (*shared.RealizedC
 		return nil, state.ChainPiece{}, fmt.Errorf("portal 配置件缺少 portal 规格")
 	}
 	prev := m.findChainPiece(p.HopID, p.Kind)
-	port, err := m.pickChainPort(spec.Port, spec.PortCandidates, prev)
+	tag := shared.ChainPortalTag(p.HopID)
+	port, err := m.pickChainPort(spec.Port, spec.PortCandidates, prev, tag)
 	if err != nil {
 		return nil, state.ChainPiece{}, err
 	}
@@ -177,7 +178,6 @@ func (m *Manager) renderPortal(p shared.ApplyChainHopPayload) (*shared.RealizedC
 			return nil, state.ChainPiece{}, err
 		}
 	}
-	tag := shared.ChainPortalTag(p.HopID)
 	inbound, err := toRawTemplate(renderPortalInbound(spec, tag, port, priv))
 	if err != nil {
 		return nil, state.ChainPiece{}, err
@@ -320,7 +320,8 @@ func (m *Manager) renderForward(p shared.ApplyChainHopPayload, cur fullConfig) (
 		return nil, state.ChainPiece{}, fmt.Errorf("forward 配置件缺少 forward 规格")
 	}
 	prev := m.findChainPiece(p.HopID, p.Kind)
-	port, err := m.pickChainPort(spec.Port, spec.PortCandidates, prev)
+	tag := shared.ChainForwardTag(p.HopID)
+	port, err := m.pickChainPort(spec.Port, spec.PortCandidates, prev, tag)
 	if err != nil {
 		return nil, state.ChainPiece{}, err
 	}
@@ -331,7 +332,6 @@ func (m *Manager) renderForward(p shared.ApplyChainHopPayload, cur fullConfig) (
 			return nil, state.ChainPiece{}, fmt.Errorf("via_tunnel_domain %q 对应的上游 portal 尚未就绪", spec.ViaTunnelDomain)
 		}
 	}
-	tag := shared.ChainForwardTag(p.HopID)
 	inboundRaw, err := json.Marshal(renderForwardInbound(spec, tag, port))
 	if err != nil {
 		return nil, state.ChainPiece{}, err
@@ -369,18 +369,19 @@ func renderForwardInbound(spec *shared.ForwardSpec, tag string, port int) map[st
 
 // pickChainPort 挑选链 piece 监听端口：同一 piece 复用自己已记录的端口；
 // 新的指定端口校验占用与段内归属（自身受管 xray 持有的端口可复用，§21），
-// 未指定且无记录时从候选段挑空闲端口。
-func (m *Manager) pickChainPort(preferred int, candidates []int, prev *state.ChainPiece) (int, error) {
+// 未指定且无记录时从候选段挑空闲端口。tag 为本次 apply 的 inbound tag
+// （同 tag 受管端口可复用，见 pickPort）。
+func (m *Manager) pickChainPort(preferred int, candidates []int, prev *state.ChainPiece, tag string) (int, error) {
 	if preferred != 0 {
 		if prev != nil && prev.Port == preferred {
 			return preferred, nil
 		}
-		return m.pickPort(preferred, candidates)
+		return m.pickPort(preferred, candidates, tag)
 	}
 	if prev != nil && prev.Port != 0 {
 		return prev.Port, nil
 	}
-	return m.pickPort(0, candidates)
+	return m.pickPort(0, candidates, tag)
 }
 
 // realityServerName 提取 inbound realitySettings.serverNames[0]（dest 预检后的实际上报值）。

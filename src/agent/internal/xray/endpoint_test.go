@@ -148,7 +148,7 @@ func TestApplySharedEndpointReapplyWhilePortHeld(t *testing.T) {
 // TestApplySharedEndpointHonorsNatCandidates 验证 NAT 受限机：面板下发段内候选时按序挑选。
 func TestApplySharedEndpointHonorsNatCandidates(t *testing.T) {
 	mgr := newTestEndpointManager(t)
-	free, err := mgr.pickPort(0, nil)
+	free, err := mgr.pickPort(0, nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,6 +158,60 @@ func TestApplySharedEndpointHonorsNatCandidates(t *testing.T) {
 	}
 	if realized.Port != free {
 		t.Fatalf("NAT 段内候选应被采用，期望 %d 实际 %d", free, realized.Port)
+	}
+}
+
+// TestApplyNodeAutoPortReusesOwnManagedPort 验证单候选端口 NAT 机上同节点重发
+// （配置变更/重试/重建）时，候选端口虽被自身受管 inbound 持有仍可复用：
+// pickPort 自动路径须按 tag 区分——同 tag（本次将替换的 inbound）可复用，
+// 而不是一律跳过导致"候选端口全部被占用（1 个）"。
+func TestApplyNodeAutoPortReusesOwnManagedPort(t *testing.T) {
+	mgr := newTestEndpointManager(t)
+	vc := shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Port: 0,
+		Template: json.RawMessage(`{
+			"tag": "{{TAG}}", "listen": "0.0.0.0", "port": "{{PORT}}",
+			"protocol": "vless", "settings": {"clients": "{{CLIENTS}}"},
+			"streamSettings": {"network": "tcp"}
+		}`),
+	}
+	realized, err := mgr.ApplyNode(42, vc, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟运行中的 xray 持有该端口（同节点旧 inbound 未清理）。
+	ln := listenOn(t, realized.Port)
+	defer ln.Close()
+
+	// 同节点重发：候选仅剩自身持有的端口 → 应复用而非报"候选端口全部被占用"。
+	again, err := mgr.ApplyNode(42, vc, nil, nil, []int{realized.Port})
+	if err != nil {
+		t.Fatalf("同节点重发应复用自身受管端口: %v", err)
+	}
+	if again.Port != realized.Port {
+		t.Fatalf("重发应复用端口 %d，实际 %d", realized.Port, again.Port)
+	}
+}
+
+// TestApplyNodeAutoPortBlockedByOtherManagedInbound 验证其他受管配置持有候选端口时
+// 仍拒绝自动挑选（不同 inbound 不得共用一个监听端口），错误信息区分"其他受管配置"，
+// 便于用户在单端口 NAT 机上定位是别的部署占用了端口。
+func TestApplyNodeAutoPortBlockedByOtherManagedInbound(t *testing.T) {
+	mgr := newTestEndpointManager(t)
+	vc := shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Port: 0,
+		Template: json.RawMessage(`{
+			"tag": "{{TAG}}", "listen": "0.0.0.0", "port": "{{PORT}}",
+			"protocol": "vless", "settings": {"clients": "{{CLIENTS}}"},
+			"streamSettings": {"network": "tcp"}
+		}`),
+	}
+	realized, err := mgr.ApplyNode(7, vc, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.ApplyNode(8, vc, nil, nil, []int{realized.Port}); err == nil {
+		t.Fatal("其他节点持有的候选端口应拒绝自动挑选")
+	} else if !strings.Contains(err.Error(), "其他受管配置") {
+		t.Fatalf("错误应区分其他受管配置占用，实际: %v", err)
 	}
 }
 
