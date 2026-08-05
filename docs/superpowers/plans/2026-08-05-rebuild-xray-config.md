@@ -1423,7 +1423,7 @@ Expected: FAIL（handleRebuildXray 未定义；若 CreateNode/SetNodeFailed 签�
 // handleRebuildXray 处理 POST /api/server/rebuild-xray（重建 xray 配置，
 // §docs/rebuild-xray-config-design.md）：按当前生效配置（活跃节点 + 链路/共享端点）
 // 重新生成 xray.json。服务器须在线；节点规格与期望集由面板从 DB 计算，
-// 同步等待 agent 重建/回滚回执（90s 超时，含停服/重启）。
+// 同步等待 agent 重建/回滚回执（180s 超时，含停服/重启与 dest 预检）。
 func (s *Server) handleRebuildXray(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ServerID int64 `json:"server_id"`
@@ -1495,7 +1495,7 @@ func (s *Server) handleRebuildXray(w http.ResponseWriter, r *http.Request) {
 		payload.ExpectedInboundTags = append(payload.ExpectedInboundTags, tag)
 	}
 	payload.ExpectedPieces = pieces
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 180*time.Second)
 	defer cancel()
 	result, err := s.disp.RebuildXraySync(ctx, id, payload)
 	if err != nil {

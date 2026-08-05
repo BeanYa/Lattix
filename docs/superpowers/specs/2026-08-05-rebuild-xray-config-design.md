@@ -78,7 +78,7 @@ POST /api/server/rebuild-xray   body: { "server_id": N }
 - 仿 `handleCleanupXray`（servers.go:805-850）：
   - 服务器存在性检查；`s.req.IsOnline(id)` 离线返回 409。
   - 收集数据：`ListNodes` 过滤 `ServerID == id && Status == active`，解 `ConfigTemplate` 为 `VirtualConfig`，查用户 UUID 列表（与 dispatch 拼 `apply_node` 载荷同一数据源）→ `Nodes`；`store.ExpectedXrayState` → 期望 tag/pieces。
-- 新增 dispatcher `RebuildXraySync`（仿 `CleanupXraySync`），超时 90s（含停服/重启）。
+- 新增 dispatcher `RebuildXraySync`（仿 `CleanupXraySync`），超时 180s（含停服/重启与 dest 预检）。
 - 审计：`server.rebuild_xray`，记录重建 inbound/piece 数与是否回滚。
 - 前端：Servers 页"重建 xray 配置"按钮 + 确认对话框（仿 cleanup 对话框）；`RolledBack=true` 时红色提示"重建失败，已恢复原配置"并展示信封 message 中的原因；成功展示重建后的监听/piece 清单。
 - 契约：`docs/openapi.yaml`、`api-contract.generated.ts`、`api.ts`、`types.ts` 同步更新。
