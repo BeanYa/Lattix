@@ -56,6 +56,9 @@ type Dispatcher struct {
 
 	cleanupMu      sync.Mutex
 	cleanupWaiters map[string]chan cleanupWaiterOut // xray.cleanup 同步回执（requestID → chan）
+
+	rebuildMu      sync.Mutex
+	rebuildWaiters map[string]chan rebuildWaiterOut
 }
 
 // cleanupWaiterOut 是一次 xray.cleanup 同步等待的投递结果。
@@ -70,6 +73,7 @@ func New(st *store.Store, req ws.AgentRequester) *Dispatcher {
 		st: st, req: req, flushMu: make(map[int64]*sync.Mutex),
 		testProgress:      make(map[int64]shared.ServerTestProgressPayload),
 		cleanupWaiters:    make(map[string]chan cleanupWaiterOut),
+		rebuildWaiters:    map[string]chan rebuildWaiterOut{},
 		endpointRetriedAt: make(map[int64]time.Time),
 	}
 	d.fsm = &chainFSM{d: d}
@@ -230,6 +234,48 @@ func (d *Dispatcher) CleanupXraySync(ctx context.Context, serverID int64, payloa
 	return nil, fmt.Errorf("agent 未回执清理命令（已重试 %d 次）", uninstallMaxAttempts)
 }
 
+// RebuildXraySync 同步下发 xray.rebuild 并等待 agent 回执（面板「重建 xray 配置」，
+// §docs/rebuild-xray-config-design.md）：命令照常落库，回执数据经进程内 waiter 投递。
+// 重发复用同一 request id（agent 命令队列按 request id 幂等去重）。
+func (d *Dispatcher) RebuildXraySync(ctx context.Context, serverID int64, payload shared.RebuildXrayPayload) (*shared.RebuildXrayResult, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal rebuild payload: %w", err)
+	}
+	requestID := shared.NewMessageID()
+	traceID := logging.TraceID(ctx)
+	if traceID == "" {
+		traceID = shared.NewMessageID()
+	}
+	commandID, err := d.st.EnqueueCommand(ctx, requestID, traceID, serverID, shared.TypeRebuildXray, raw)
+	if err != nil {
+		return nil, err
+	}
+	envelope := shared.Envelope{
+		Kind: shared.KindRequest, Type: shared.TypeRebuildXray,
+		RequestID: requestID, TraceID: traceID, Data: raw,
+	}
+	waiter := d.registerRebuildWaiter(requestID)
+	defer d.unregisterRebuildWaiter(requestID)
+	for attempt := 1; attempt <= uninstallMaxAttempts; attempt++ {
+		if err := d.st.MarkCommandSent(ctx, commandID); err != nil {
+			return nil, err
+		}
+		if err := d.req.Send(ctx, serverID, envelope); err != nil {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case out := <-waiter:
+			return out.result, out.err
+		case <-time.After(uninstallRetryDelay(attempt)):
+			// 无回执则重发（同 request id，agent 幂等）
+		}
+	}
+	return nil, fmt.Errorf("agent 未回执重建命令（已重试 %d 次）", uninstallMaxAttempts)
+}
+
 func (d *Dispatcher) registerCleanupWaiter(requestID string) chan cleanupWaiterOut {
 	ch := make(chan cleanupWaiterOut, 1)
 	d.cleanupMu.Lock()
@@ -254,6 +300,41 @@ func (d *Dispatcher) deliverCleanupResult(requestID string, result *shared.Clean
 		return
 	}
 	out := cleanupWaiterOut{result: result}
+	if errorMessage != "" {
+		out.err = fmt.Errorf("%s", errorMessage)
+	}
+	ch <- out
+}
+
+type rebuildWaiterOut struct {
+	result *shared.RebuildXrayResult
+	err    error
+}
+
+func (d *Dispatcher) registerRebuildWaiter(requestID string) chan rebuildWaiterOut {
+	ch := make(chan rebuildWaiterOut, 1)
+	d.rebuildMu.Lock()
+	d.rebuildWaiters[requestID] = ch
+	d.rebuildMu.Unlock()
+	return ch
+}
+
+func (d *Dispatcher) unregisterRebuildWaiter(requestID string) {
+	d.rebuildMu.Lock()
+	delete(d.rebuildWaiters, requestID)
+	d.rebuildMu.Unlock()
+}
+
+// deliverRebuildResult 把 xray.rebuild 回执投递给同步等待者（handleCommandResponse 调用）。
+func (d *Dispatcher) deliverRebuildResult(requestID string, result *shared.RebuildXrayResult, errorMessage string) {
+	d.rebuildMu.Lock()
+	ch, ok := d.rebuildWaiters[requestID]
+	delete(d.rebuildWaiters, requestID)
+	d.rebuildMu.Unlock()
+	if !ok {
+		return
+	}
+	out := rebuildWaiterOut{result: result}
 	if errorMessage != "" {
 		out.err = fmt.Errorf("%s", errorMessage)
 	}
@@ -1026,6 +1107,11 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			log.Printf("dispatch: server %d: cleanup xray command %d acked", serverID, cmdID)
 			return
 		}
+		if cmd.Type == shared.TypeRebuildXray {
+			d.deliverRebuildResult(cmd.RequestID, p.Rebuild, "")
+			log.Printf("dispatch: server %d: rebuild xray command %d acked", serverID, cmdID)
+			return
+		}
 		// 清理命令只更新命令/修订任务，不得触碰当前工作拓扑的节点状态。
 		if cmd.Type == shared.TypeRemoveChainHop || cmd.Type == shared.TypeRemoveNode ||
 			cmd.Type == shared.TypeRemoveSharedEndpoint {
@@ -1109,6 +1195,11 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 		if cmd.Type == shared.TypeCleanupXray {
 			d.deliverCleanupResult(cmd.RequestID, p.Cleanup, errorMessage)
 			log.Printf("dispatch: server %d: cleanup xray command %d failed: %s", serverID, cmdID, errorMessage)
+			return
+		}
+		if cmd.Type == shared.TypeRebuildXray {
+			d.deliverRebuildResult(cmd.RequestID, p.Rebuild, errorMessage)
+			log.Printf("dispatch: server %d: rebuild xray command %d failed: %s", serverID, cmdID, errorMessage)
 			return
 		}
 		// 清理失败保留任务记录，不能让已发布的数据面 revision 回滚或失效。
