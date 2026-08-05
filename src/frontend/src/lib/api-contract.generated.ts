@@ -340,6 +340,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/server/rebuild-xray": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["serverRebuildXray"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/server/upgrade-xray": {
         parameters: {
             query?: never;
@@ -2049,6 +2065,24 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    serverRebuildXray: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     serverUpgradeXray: {
         parameters: {
             query?: never;
@@ -3169,6 +3203,7 @@ export const rpcOperations = {
   serverRotateToken: { method: 'POST', path: '/api/server/rotate-token' },
   serverRepair: { method: 'POST', path: '/api/server/repair' },
   serverCleanupXray: { method: 'POST', path: '/api/server/cleanup-xray' },
+  serverRebuildXray: { method: 'POST', path: '/api/server/rebuild-xray' },
   serverUpgradeXray: { method: 'POST', path: '/api/server/upgrade-xray' },
   serverUpgradeAgent: { method: 'POST', path: '/api/server/upgrade-agent' },
   serverListReleaseVersions: { method: 'GET', path: '/api/server/list-release-versions' },

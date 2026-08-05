@@ -10,6 +10,7 @@ import type {
   Chain,
   CleanupXrayResult,
   CommandLog,
+  RebuildXrayResult,
   CreateChainRequest,
   EditChainRequest,
   ExternalChain,
@@ -151,6 +152,10 @@ export const api = {
     requester.post<CleanupXrayResult>('/api/server/cleanup-xray', {
       server_id: serverId,
       dry_run: dryRun,
+    }),
+  rebuildXray: (serverId: number) =>
+    requester.post<RebuildXrayResult>('/api/server/rebuild-xray', {
+      server_id: serverId,
     }),
   updateServerAddress: (
     serverId: number,

@@ -74,6 +74,7 @@ interface ServerMonitorProps {
   onEdit: (server: Server) => void
   onRepair: (server: Server) => void
   onCleanupXray: (server: Server) => void
+  onRebuildXray: (server: Server) => void
   onRotateToken: (server: Server) => void
   onUpgrade: (server: Server, kind: 'xray' | 'agent') => void
   onRenew: (server: Server) => void
@@ -350,6 +351,7 @@ function ServerActions({
   onEdit,
   onRepair,
   onCleanupXray,
+  onRebuildXray,
   onRotateToken,
   onUpgrade,
   onRenew,
@@ -388,6 +390,12 @@ function ServerActions({
             <DropdownMenuItem onClick={() => onCleanupXray(server)}>
               <SparklesIcon />
               清理 Xray 缓存
+            </DropdownMenuItem>
+          ) : null}
+          {isServerOnline(server) ? (
+            <DropdownMenuItem onClick={() => onRebuildXray(server)}>
+              <RefreshCwIcon />
+              重建 Xray 配置
             </DropdownMenuItem>
           ) : null}
           <DropdownMenuItem onClick={() => onUpgrade(server, 'xray')}>
@@ -1106,6 +1114,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
             onEdit={props.onEdit}
             onRepair={props.onRepair}
             onCleanupXray={props.onCleanupXray}
+            onRebuildXray={props.onRebuildXray}
             onRotateToken={props.onRotateToken}
             onUpgrade={props.onUpgrade}
             onRenew={props.onRenew}

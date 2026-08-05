@@ -387,6 +387,18 @@ export interface CleanupXrayResult {
   removed_pieces: string[]
 }
 
+export interface RebuiltInbound {
+  tag: string
+  port: number
+  kind: string
+}
+
+export interface RebuildXrayResult {
+  rebuilt_inbounds: RebuiltInbound[]
+  rebuilt_pieces: string[]
+  rolled_back: boolean
+}
+
 export type VirtualConfig = components['schemas']['VirtualConfig']
 
 export interface XrayNode {

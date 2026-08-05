@@ -32,7 +32,7 @@ import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { isServerOnline } from '@/lib/server-state'
 import { useTimezone } from '@/lib/timezone'
-import type { BillingInput, CleanupXrayResult, IntervalUnit, MachineType, PortRange, Provider, ReleaseVersions, Server, ServerMetricSeries, TrafficAccountingMode, TrafficPlanInput } from '@/lib/types'
+import type { BillingInput, CleanupXrayResult, IntervalUnit, MachineType, PortRange, Provider, ReleaseVersions, RebuildXrayResult, Server, ServerMetricSeries, TrafficAccountingMode, TrafficPlanInput } from '@/lib/types'
 
 const DEPENDENCIES_COMMAND = 'apk add --no-cache bash curl ca-certificates unzip util-linux'
 const CURRENCIES = ['CNY', 'USD', 'EUR', 'CAD', 'HKD', 'JPY', 'AUD', 'GBP', 'SGD', 'CHF']
@@ -263,6 +263,41 @@ export default function Servers() {
     removed_inbounds: r.removed_inbounds ?? [],
     removed_pieces: r.removed_pieces ?? [],
   })
+  // 重建 xray 配置（xray.rebuild）：单步确认执行，回执展示重建结果或回滚提示。
+  const [rebuildTarget, setRebuildTarget] = useState<Server | null>(null)
+  const [rebuildResult, setRebuildResult] = useState<RebuildXrayResult | null>(null)
+  const [rebuildDone, setRebuildDone] = useState(false)
+  const [rebuildBusy, setRebuildBusy] = useState(false)
+  const [rebuildError, setRebuildError] = useState('')
+  const normalizeRebuild = (r: RebuildXrayResult): RebuildXrayResult => ({
+    rebuilt_inbounds: r.rebuilt_inbounds ?? [],
+    rebuilt_pieces: r.rebuilt_pieces ?? [],
+    rolled_back: r.rolled_back ?? false,
+  })
+
+  const onRebuildXray = (s: Server) => {
+    setRebuildTarget(s)
+    setRebuildResult(null)
+    setRebuildDone(false)
+    setRebuildError('')
+  }
+
+  const runRebuildXray = async () => {
+    if (!rebuildTarget) {
+      return
+    }
+    setRebuildBusy(true)
+    setRebuildError('')
+    try {
+      setRebuildResult(normalizeRebuild(await api.rebuildXray(rebuildTarget.id)))
+      setRebuildDone(true)
+      load()
+    } catch (err) {
+      setRebuildError(errorMessage(err))
+    } finally {
+      setRebuildBusy(false)
+    }
+  }
   const serverListRequest = useRef(0)
 
   const load = useCallback(async (silent = false, signal?: AbortSignal) => {
@@ -765,6 +800,7 @@ export default function Servers() {
         onEdit={onOpenEdit}
         onRepair={onRepair}
         onCleanupXray={onCleanupXray}
+        onRebuildXray={onRebuildXray}
         onRotateToken={onRotateToken}
         onUpgrade={onOpenUpgrade}
         onRenew={openRenewal}
@@ -1270,6 +1306,61 @@ export default function Servers() {
               </>
             ) : (
               <Button onClick={() => setCleanupTarget(null)}>完成</Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={rebuildTarget !== null} onOpenChange={(next) => !next && setRebuildTarget(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>重建 Xray 配置</DialogTitle>
+            <DialogDescription>
+              {rebuildDone
+                ? `「${rebuildTarget?.alias}」已按当前生效的链路与用户配置重建 xray.json。`
+                : `将停止「${rebuildTarget?.alias}」的 xray 服务，备份并重新生成 xray.json（保留现有私钥与端口），校验后重启并自检；失败会自动恢复备份。重建期间该服务器代理不可用。`}
+            </DialogDescription>
+          </DialogHeader>
+          {rebuildError ? <p className="text-sm text-destructive whitespace-pre-wrap">{rebuildError}</p> : null}
+          {rebuildBusy ? (
+            <p className="text-sm text-muted-foreground">正在向 agent 下发重建…</p>
+          ) : rebuildResult ? (
+            <div className="space-y-3">
+              {rebuildResult.rolled_back ? (
+                <p className="text-sm text-destructive">
+                  重建失败，已恢复重建前的 xray.json 并重启 xray。
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    已重建 {rebuildResult.rebuilt_inbounds.length} 个监听与 {rebuildResult.rebuilt_pieces.length} 个链路配置件。
+                  </p>
+                  {rebuildResult.rebuilt_inbounds.length > 0 ? (
+                    <ul className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2 font-mono text-xs">
+                      {rebuildResult.rebuilt_inbounds.map((inbound) => (
+                        <li key={inbound.tag} className="flex items-center justify-between gap-3">
+                          <span className="truncate">{inbound.tag}</span>
+                          <span className="shrink-0 text-muted-foreground">:{inbound.port || '?'}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </>
+              )}
+            </div>
+          ) : null}
+          <DialogFooter>
+            {!rebuildDone ? (
+              <>
+                <Button variant="outline" disabled={rebuildBusy} onClick={() => setRebuildTarget(null)}>
+                  取消
+                </Button>
+                <Button variant="default" disabled={rebuildBusy} onClick={runRebuildXray}>
+                  {rebuildBusy ? '重建中…' : '确认重建'}
+                </Button>
+              </>
+            ) : (
+              <Button onClick={() => setRebuildTarget(null)}>完成</Button>
             )}
           </DialogFooter>
         </DialogContent>
