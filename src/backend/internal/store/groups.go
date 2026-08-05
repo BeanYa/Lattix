@@ -20,8 +20,8 @@ func GroupAccessUUID(userUUID string, chainID int64) string {
 
 // LinkGroupExternalSubscription 是链路分组内的一条外部订阅（含模式）。
 type LinkGroupExternalSubscription struct {
-	SubscriptionID int64
-	Mode           string
+	SubscriptionID int64  `json:"subscription_id"`
+	Mode           string `json:"mode"`
 }
 
 // LinkGroup 是一个链路分组的完整视图（JSON 键为前端契约）。

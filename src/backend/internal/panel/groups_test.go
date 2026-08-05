@@ -125,12 +125,16 @@ func TestLinkGroupRPCValidationAndList(t *testing.T) {
 	srv.handleListLinkGroups(rec, httptest.NewRequest(http.MethodGet, "/api/link-group/list", nil))
 	var listed struct {
 		Data []struct {
-			ID                int64  `json:"id"`
-			Name              string `json:"name"`
-			ChainCount        int    `json:"chain_count"`
-			ExtSubCount       int    `json:"external_subscription_count"`
-			UserGroupNames    []string `json:"user_group_names"`
-			ChainIDs          []int64 `json:"chain_ids"`
+			ID                    int64    `json:"id"`
+			Name                  string   `json:"name"`
+			ChainCount            int      `json:"chain_count"`
+			ExtSubCount           int      `json:"external_subscription_count"`
+			UserGroupNames        []string `json:"user_group_names"`
+			ChainIDs              []int64  `json:"chain_ids"`
+			ExternalSubscriptions []struct {
+				SubscriptionID int64  `json:"subscription_id"`
+				Mode           string `json:"mode"`
+			} `json:"external_subscriptions"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
@@ -140,6 +144,11 @@ func TestLinkGroupRPCValidationAndList(t *testing.T) {
 		listed.Data[0].ExtSubCount != 1 || len(listed.Data[0].UserGroupNames) != 1 ||
 		listed.Data[0].UserGroupNames[0] != "青铜会员" {
 		t.Fatalf("list = %+v", listed.Data)
+	}
+	// 契约：external_subscriptions 元素键为 subscription_id / mode
+	subs := listed.Data[0].ExternalSubscriptions
+	if len(subs) != 1 || subs[0].SubscriptionID != subID || subs[0].Mode != "stack" {
+		t.Fatalf("external_subscriptions = %+v", subs)
 	}
 }
 

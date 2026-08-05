@@ -356,7 +356,7 @@ func (s *Server) endpointIDsForLinkGroups(ctx context.Context, linkGroupIDs []in
 	return s.endpointIDsForChains(ctx, chainIDs)
 }
 
-// mergeInt64s 返回 a ∪ b（去重升序）。
+// mergeInt64s 返回 a ∪ b（去重，保持首次出现顺序）。
 func mergeInt64s(a, b []int64) []int64 {
 	seen := map[int64]bool{}
 	var out []int64
