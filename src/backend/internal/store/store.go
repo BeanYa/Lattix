@@ -289,6 +289,7 @@ CREATE TABLE IF NOT EXISTS user_subscription_profiles (
     assigned_mihomo_template_id  TEXT NOT NULL DEFAULT '',
     assigned_singbox_template_id TEXT NOT NULL DEFAULT '',
     assigned_quanx_template_id   TEXT NOT NULL DEFAULT '',
+    assigned_suggested_preset    TEXT NOT NULL DEFAULT '', -- 建议规则预设指派（minimal|balanced|comprehensive，与模板指派互斥）
     assign_forced_portable INTEGER NOT NULL DEFAULT 0,
     assign_forced_mihomo  INTEGER NOT NULL DEFAULT 0,
     assign_forced_singbox INTEGER NOT NULL DEFAULT 0,

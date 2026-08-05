@@ -30,6 +30,14 @@ const SLOTS = [
   ['assigned_quanx_template_id', 'assign_forced_quanx'],
 ] as const
 
+const SUGGESTED_PREFIX = 'suggested:'
+
+const PRESET_LABELS: Record<string, string> = {
+  minimal: 'Minimal',
+  balanced: 'Balanced',
+  comprehensive: 'Comprehensive',
+}
+
 const KIND_LABELS: Record<SubscriptionTemplate['kind'], string> = {
   portable: '主策略',
   acl4ssr: '主策略',
@@ -67,7 +75,11 @@ export function TemplateAssignmentTab({ users, templates, onChanged }: TemplateA
     return byTemplate
   }, [users])
 
-  const unassigned = users.filter((user) => !SLOTS.some(([assignedField]) => user.routing[assignedField] as string))
+  const suggestedUsers = users.filter((user) => user.routing.assigned_suggested_preset)
+  const unassigned = users.filter((user) =>
+    !SLOTS.some(([assignedField]) => user.routing[assignedField] as string)
+    && !user.routing.assigned_suggested_preset,
+  )
 
   const toggle = (id: number, checked: boolean) => {
     setSelected((cur) => {
@@ -93,7 +105,10 @@ export function TemplateAssignmentTab({ users, templates, onChanged }: TemplateA
     setSaving(true)
     setError('')
     try {
-      await api.assignSubscriptionTemplate([...selected], templateId, forced)
+      const target = templateId.startsWith(SUGGESTED_PREFIX)
+        ? { suggested_preset: templateId.slice(SUGGESTED_PREFIX.length) }
+        : { template_id: templateId }
+      await api.assignSubscriptionTemplate([...selected], target, forced)
       setDialogOpen(false)
       setSelected(new Set())
       onChanged()
@@ -104,15 +119,18 @@ export function TemplateAssignmentTab({ users, templates, onChanged }: TemplateA
     }
   }
 
-  const unassign = async (user: SubUser, id: string) => {
+  const unassign = async (user: SubUser, target: { template_id?: string; suggested_preset?: string }) => {
     setError('')
     try {
-      await api.unassignSubscriptionTemplate([user.id], id)
+      await api.unassignSubscriptionTemplate([user.id], target)
       onChanged()
     } catch (err) {
       setError(errorMessage(err))
     }
   }
+
+  const unassignTemplate = (user: SubUser, id: string) => unassign(user, { template_id: id })
+  const unassignSuggested = (user: SubUser, preset: string) => unassign(user, { suggested_preset: preset })
 
   const templateOf = (id: string) => templates.find((template) => template.id === id)
 
@@ -149,6 +167,31 @@ export function TemplateAssignmentTab({ users, templates, onChanged }: TemplateA
       {error && <Notice tone="danger">{error}</Notice>}
 
       <div className="space-y-3">
+        {suggestedUsers.length > 0 && (
+          <div className="rounded-lg border p-3">
+            <div className="flex items-center gap-2">
+              <span className="font-medium">建议规则 · {PRESET_LABELS[suggestedUsers[0].routing.assigned_suggested_preset] ?? suggestedUsers[0].routing.assigned_suggested_preset}</span>
+              <Badge variant="secondary">主策略</Badge>
+              <span className="ml-auto text-xs text-muted-foreground">{suggestedUsers.length} 个用户</span>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {suggestedUsers.map((user) => (
+                <span key={user.id} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-sm">
+                  {user.name}
+                  {user.routing.assign_forced_portable && <Badge variant="destructive">强制</Badge>}
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    title="取消该用户的建议规则指派"
+                    onClick={() => unassignSuggested(user, user.routing.assigned_suggested_preset)}
+                  >
+                    <XIcon />
+                  </Button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         {[...assignedUsers.entries()]
           .sort(([a], [b]) => (templateOf(a)?.name ?? a).localeCompare(templateOf(b)?.name ?? b))
           .map(([id, entries]) => {
@@ -169,7 +212,7 @@ export function TemplateAssignmentTab({ users, templates, onChanged }: TemplateA
                         variant="ghost"
                         size="icon-xs"
                         title="取消该用户的此模板指派"
-                        onClick={() => unassign(user, id)}
+                        onClick={() => unassignTemplate(user, id)}
                       >
                         <XIcon />
                       </Button>
@@ -217,6 +260,9 @@ export function TemplateAssignmentTab({ users, templates, onChanged }: TemplateA
               <Select value={templateId} onValueChange={(id) => id && setTemplateId(id)}>
                 <SelectTrigger className="w-full"><SelectValue placeholder="选择模板" /></SelectTrigger>
                 <SelectContent>
+                  <SelectItem value={`${SUGGESTED_PREFIX}minimal`}>建议规则（Minimal）</SelectItem>
+                  <SelectItem value={`${SUGGESTED_PREFIX}balanced`}>建议规则（Balanced）</SelectItem>
+                  <SelectItem value={`${SUGGESTED_PREFIX}comprehensive`}>建议规则（Comprehensive）</SelectItem>
                   {(['portable', 'acl4ssr', 'mihomo', 'singbox', 'quanx'] as const).map((kind) => {
                     const items = assignable.filter((template) => template.kind === kind)
                     if (items.length === 0) return null
@@ -229,7 +275,7 @@ export function TemplateAssignmentTab({ users, templates, onChanged }: TemplateA
                 </SelectContent>
               </Select>
               {assignable.length === 0 && (
-                <p className="text-xs text-muted-foreground">暂无可用模板，请先在「订阅模板」页创建或刷新缓存。</p>
+                <p className="text-xs text-muted-foreground">模板缓存为空时可先指派内置建议规则。</p>
               )}
             </div>
             <label className="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm">

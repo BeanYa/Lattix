@@ -535,3 +535,33 @@ func TestPublishUserForcedAssignmentOverridesUserChoice(t *testing.T) {
 		t.Fatalf("forced assignment not applied: %s", clash)
 	}
 }
+
+func TestPublishUserAssignedSuggestedPresetProducesUsableRules(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	userID, err := st.InsertUser(ctx, "user", "00000000-0000-0000-0000-000000000007", "suggested-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 用户默认（建议规则/balanced/单分类），被指派建议规则 comprehensive。
+	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
+		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
+		CategoriesJSON: `["ai"]`, GenerationStatus: store.SubscriptionGenerationMissing,
+		AssignedSuggestedPreset: "comprehensive",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(st, nil, nil)
+	result, err := server.PublishUser(ctx, userID, "https://panel.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clash := string(result.Files["clash"])
+	if !strings.Contains(clash, "AI 服务") || !strings.Contains(clash, "广告拦截") || !strings.Contains(clash, "游戏平台") {
+		t.Fatalf("assigned suggested preset rules missing: %s", clash)
+	}
+}

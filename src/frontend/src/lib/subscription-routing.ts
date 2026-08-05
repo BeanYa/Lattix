@@ -16,4 +16,5 @@ export const defaultSubscriptionRouting: SubscriptionRoutingProfile = {
   assign_forced_singbox: false,
   assigned_quanx_template_id: '',
   assign_forced_quanx: false,
+  assigned_suggested_preset: '',
 }

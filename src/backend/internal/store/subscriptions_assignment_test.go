@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -66,6 +67,64 @@ func TestEffectiveProfileForcedOverridesUserChoice(t *testing.T) {
 	}
 }
 
+func TestEffectiveProfileAssignedSuggestedPresetApplies(t *testing.T) {
+	profile := SubscriptionProfile{
+		Mode: SubscriptionModeSuggested, Preset: "balanced",
+		CategoriesJSON:            `["ai"]`,
+		AssignedSuggestedPreset:   "comprehensive",
+		AssignForcedPortable:      false,
+	}
+	got := EffectiveProfile(profile)
+	if got.Mode != SubscriptionModeSuggested || got.Preset != "comprehensive" {
+		t.Fatalf("assigned suggested not applied: mode=%q preset=%q", got.Mode, got.Preset)
+	}
+	var categories []string
+	if err := json.Unmarshal([]byte(got.CategoriesJSON), &categories); err != nil {
+		t.Fatal(err)
+	}
+	if len(categories) != len(presetCategorySets["comprehensive"]) {
+		t.Fatalf("preset categories not applied: %v", categories)
+	}
+	for _, want := range presetCategorySets["comprehensive"] {
+		found := false
+		for _, category := range categories {
+			if category == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("preset categories missing %q: %v", want, categories)
+		}
+	}
+}
+
+func TestEffectiveProfileUserTemplateWinsOverSuggestedAssignment(t *testing.T) {
+	profile := SubscriptionProfile{
+		Mode: SubscriptionModeTemplate, PortableTemplateID: "mine",
+		AssignedSuggestedPreset: "minimal",
+	}
+	got := EffectiveProfile(profile)
+	if got.Mode != SubscriptionModeTemplate || got.PortableTemplateID != "mine" {
+		t.Fatalf("user choice overridden by suggested assignment: mode=%q portable=%q", got.Mode, got.PortableTemplateID)
+	}
+}
+
+func TestEffectiveProfileForcedSuggestedOverridesUserChoice(t *testing.T) {
+	profile := SubscriptionProfile{
+		Mode: SubscriptionModeTemplate, PortableTemplateID: "mine",
+		AssignedSuggestedPreset: "minimal",
+		AssignForcedPortable:    true,
+	}
+	got := EffectiveProfile(profile)
+	if got.Mode != SubscriptionModeSuggested || got.Preset != "minimal" {
+		t.Fatalf("forced suggested not applied: mode=%q preset=%q", got.Mode, got.Preset)
+	}
+	if got.PortableTemplateID != "mine" {
+		t.Fatalf("user portable value lost: %q", got.PortableTemplateID)
+	}
+}
+
 func TestSubscriptionProfilePersistsAssignment(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(":memory:")
@@ -99,6 +158,38 @@ func TestSubscriptionProfilePersistsAssignment(t *testing.T) {
 	}
 	if got.AssignForcedSingbox || got.AssignForcedQuanX {
 		t.Fatalf("unrelated forced flags set: %+v", got)
+	}
+}
+
+func TestSubscriptionProfilePersistsSuggestedPresetAssignment(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	userID, err := st.InsertUser(ctx, "user", "00000000-0000-0000-0000-000000000003", "tok3", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := SubscriptionProfile{
+		UserID: userID, Mode: SubscriptionModeSuggested, Preset: "balanced",
+		CategoriesJSON:       `["ai"]`,
+		AssignedSuggestedPreset: "minimal", AssignForcedPortable: true,
+		GenerationStatus: SubscriptionGenerationMissing,
+	}
+	if err := st.SaveUserSubscriptionProfile(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.AssignedSuggestedPreset != "minimal" || !got.AssignForcedPortable {
+		t.Fatalf("suggested assignment lost: %+v", got)
+	}
+	if got.AssignedPortableTemplateID != "" {
+		t.Fatalf("template slot unexpectedly set: %+v", got)
 	}
 }
 

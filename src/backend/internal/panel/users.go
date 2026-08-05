@@ -192,6 +192,7 @@ type subscriptionProfileDTO struct {
 	AssignForcedSingbox       bool     `json:"assign_forced_singbox"`
 	AssignedQuanXTemplateID   string   `json:"assigned_quanx_template_id"`
 	AssignForcedQuanX         bool     `json:"assign_forced_quanx"`
+	AssignedSuggestedPreset   string   `json:"assigned_suggested_preset"`
 }
 
 func subscriptionProfileToDTO(profile store.SubscriptionProfile) subscriptionProfileDTO {
@@ -209,6 +210,7 @@ func subscriptionProfileToDTO(profile store.SubscriptionProfile) subscriptionPro
 		AssignForcedSingbox:        profile.AssignForcedSingbox,
 		AssignedQuanXTemplateID:    profile.AssignedQuanXTemplateID,
 		AssignForcedQuanX:          profile.AssignForcedQuanX,
+		AssignedSuggestedPreset:    profile.AssignedSuggestedPreset,
 	}
 }
 
@@ -964,6 +966,7 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 			profile.AssignForcedSingbox = current.AssignForcedSingbox
 			profile.AssignedQuanXTemplateID = current.AssignedQuanXTemplateID
 			profile.AssignForcedQuanX = current.AssignForcedQuanX
+			profile.AssignedSuggestedPreset = current.AssignedSuggestedPreset
 		}
 		routingProfile = &profile
 	}

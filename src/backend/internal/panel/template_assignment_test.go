@@ -191,6 +191,147 @@ func TestUnassignSubscriptionTemplateClearsSlotKeepsUserChoice(t *testing.T) {
 	}
 }
 
+func TestAssignSubscriptionTemplateSuggestedPreset(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	userID, _ := st.InsertUser(ctx, "a", "00000000-0000-0000-0000-000000000015", "tok-f", nil)
+	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+
+	status, code := assignRequest(t, server, fmt.Sprintf(
+		`{"user_ids":[%d],"suggested_preset":"comprehensive","forced":true}`, userID))
+	if status != http.StatusOK || code != shared.CodeOK {
+		t.Fatalf("status=%d code=%q", status, code)
+	}
+	profile, err := st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.AssignedSuggestedPreset != "comprehensive" || !profile.AssignForcedPortable {
+		t.Fatalf("suggested assignment = %+v", profile)
+	}
+	if profile.AssignedPortableTemplateID != "" {
+		t.Fatalf("template slot unexpectedly set: %+v", profile)
+	}
+	snapshot, err := st.SubscriptionSnapshotStatus(ctx, userID)
+	if err != nil || snapshot.Status != store.SubscriptionGenerationReady {
+		t.Fatalf("snapshot = %+v, err %v", snapshot, err)
+	}
+}
+
+func TestAssignSubscriptionTemplateSuggestedMutualExclusion(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	upsertTestTemplate(t, st, store.SubscriptionTemplate{
+		ID: "tpl-portable", Name: "Portable", Kind: "portable", Origin: "local",
+		Content: portableTemplateBody, ContentSHA256: "sha-1",
+	})
+	userID, _ := st.InsertUser(ctx, "a", "00000000-0000-0000-0000-000000000016", "tok-g", nil)
+	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+
+	// 先指派建议规则，再指派模板 → 建议规则被清除。
+	if status, code := assignRequest(t, server, fmt.Sprintf(
+		`{"user_ids":[%d],"suggested_preset":"balanced"}`, userID)); status != http.StatusOK || code != shared.CodeOK {
+		t.Fatalf("assign suggested: status=%d code=%q", status, code)
+	}
+	if status, code := assignRequest(t, server, fmt.Sprintf(
+		`{"user_ids":[%d],"template_id":"tpl-portable"}`, userID)); status != http.StatusOK || code != shared.CodeOK {
+		t.Fatalf("assign template: status=%d code=%q", status, code)
+	}
+	profile, err := st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.AssignedSuggestedPreset != "" || profile.AssignedPortableTemplateID != "tpl-portable" {
+		t.Fatalf("template assign did not clear suggested: %+v", profile)
+	}
+
+	// 再指派建议规则 → 模板指派被清除。
+	if status, code := assignRequest(t, server, fmt.Sprintf(
+		`{"user_ids":[%d],"suggested_preset":"minimal","forced":true}`, userID)); status != http.StatusOK || code != shared.CodeOK {
+		t.Fatalf("reassign suggested: status=%d code=%q", status, code)
+	}
+	profile, err = st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.AssignedSuggestedPreset != "minimal" || profile.AssignedPortableTemplateID != "" || !profile.AssignForcedPortable {
+		t.Fatalf("suggested assign did not clear template: %+v", profile)
+	}
+}
+
+func TestAssignSubscriptionTemplateSuggestedValidation(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+
+	if _, code := assignRequest(t, server, `{"user_ids":[1],"suggested_preset":"extreme"}`); code != shared.CodeInvalidArgument {
+		t.Fatalf("invalid preset: code=%q", code)
+	}
+	if _, code := assignRequest(t, server, `{"user_ids":[1],"template_id":"tpl","suggested_preset":"balanced"}`); code != shared.CodeInvalidArgument {
+		t.Fatalf("both targets: code=%q", code)
+	}
+	if _, code := assignRequest(t, server, `{"user_ids":[1]}`); code != shared.CodeInvalidArgument {
+		t.Fatalf("no target: code=%q", code)
+	}
+}
+
+func TestUnassignSubscriptionTemplateSuggestedKeepsUserChoice(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	upsertTestTemplate(t, st, store.SubscriptionTemplate{
+		ID: "user-own", Name: "UserOwn", Kind: "portable", Origin: "local",
+		Content: "name: U\ngroups:\n  - name: UGroup\n    type: select\n    options: [DIRECT]\nrules: []\nfinal: UGroup\n",
+		ContentSHA256: "sha-3",
+	})
+	userID, _ := st.InsertUser(ctx, "a", "00000000-0000-0000-0000-000000000017", "tok-h", nil)
+	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
+		UserID: userID, Mode: store.SubscriptionModeTemplate, Preset: "balanced",
+		CategoriesJSON: `[]`, PortableTemplateID: "user-own",
+		GenerationStatus: store.SubscriptionGenerationMissing,
+		AssignedSuggestedPreset: "balanced", AssignForcedPortable: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+
+	rec := httptest.NewRecorder()
+	server.handleUnassignSubscriptionTemplate(rec, httptest.NewRequest(http.MethodPost,
+		"/api/subscription/template/unassign", strings.NewReader(fmt.Sprintf(
+			`{"user_ids":[%d],"suggested_preset":"balanced"}`, userID))))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	profile, err := st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.AssignedSuggestedPreset != "" || profile.AssignForcedPortable {
+		t.Fatalf("suggested assignment not cleared: %+v", profile)
+	}
+	if profile.PortableTemplateID != "user-own" || profile.Mode != store.SubscriptionModeTemplate {
+		t.Fatalf("user choice lost: %+v", profile)
+	}
+	snapshot, err := st.SubscriptionSnapshotStatus(ctx, userID)
+	if err != nil || snapshot.Status != store.SubscriptionGenerationReady {
+		t.Fatalf("snapshot = %+v, err %v", snapshot, err)
+	}
+}
+
 func TestUpdateUserSubSettingsPreservesAssignment(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")

@@ -340,8 +340,8 @@ func TestMigrateLegacyPreservesSubToken(t *testing.T) {
 	if err := st.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 13 {
-		t.Fatalf("schema version = %d, want 13", version)
+	if version != 14 {
+		t.Fatalf("schema version = %d, want 14", version)
 	}
 	var token string
 	if err := st.db.QueryRowContext(ctx, `SELECT sub_token FROM users WHERE name='a'`).Scan(&token); err != nil {

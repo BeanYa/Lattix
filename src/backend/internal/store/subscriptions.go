@@ -37,6 +37,7 @@ type SubscriptionProfile struct {
 	AssignedMihomoTemplateID   string
 	AssignedSingboxTemplateID  string
 	AssignedQuanXTemplateID    string
+	AssignedSuggestedPreset    string // 建议规则预设指派（minimal|balanced|comprehensive），与 AssignedPortableTemplateID 互斥
 	AssignForcedPortable       bool
 	AssignForcedMihomo         bool
 	AssignForcedSingbox        bool
@@ -109,10 +110,29 @@ func defaultSubscriptionProfile(userID int64) SubscriptionProfile {
 	}
 }
 
+// presetCategorySets 建议规则预设的默认生效分类（与 sub/policy.go 的 presetCategories 保持一致）。
+var presetCategorySets = map[string][]string{
+	"minimal":       {"private", "domestic", "overseas"},
+	"balanced":      DefaultBalancedCategories,
+	"comprehensive": {"ads", "ai", "bilibili", "youtube", "google", "private", "domestic", "telegram", "github", "microsoft", "apple", "social", "streaming", "gaming", "education", "finance", "cloud", "overseas"},
+}
+
+func presetCategoriesJSON(preset string) string {
+	raw, err := json.Marshal(presetCategorySets[preset])
+	if err != nil {
+		return "[]"
+	}
+	return string(raw)
+}
+
 // EffectiveProfile 合并管理员指派与用户自选，返回订阅构建实际使用的 profile：
 // 指派槽位在用户未自选（或强制覆盖）时生效；用户自选优先于普通指派。
 func EffectiveProfile(p SubscriptionProfile) SubscriptionProfile {
-	if p.AssignedPortableTemplateID != "" && (p.AssignForcedPortable || p.Mode != SubscriptionModeTemplate || p.PortableTemplateID == "") {
+	if p.AssignedSuggestedPreset != "" && (p.AssignForcedPortable || p.Mode != SubscriptionModeTemplate || p.PortableTemplateID == "") {
+		p.Mode = SubscriptionModeSuggested
+		p.Preset = p.AssignedSuggestedPreset
+		p.CategoriesJSON = presetCategoriesJSON(p.AssignedSuggestedPreset)
+	} else if p.AssignedPortableTemplateID != "" && (p.AssignForcedPortable || p.Mode != SubscriptionModeTemplate || p.PortableTemplateID == "") {
 		p.Mode = SubscriptionModeTemplate
 		p.PortableTemplateID = p.AssignedPortableTemplateID
 	}
@@ -134,12 +154,13 @@ func (s *Store) UserSubscriptionProfile(ctx context.Context, userID int64) (Subs
 	err := s.db.QueryRowContext(ctx, `SELECT user_id, mode, preset, categories, portable_template_id,
 		mihomo_template_id, singbox_template_id, quanx_template_id,
 		assigned_portable_template_id, assigned_mihomo_template_id, assigned_singbox_template_id, assigned_quanx_template_id,
+		assigned_suggested_preset,
 		assign_forced_portable, assign_forced_mihomo, assign_forced_singbox, assign_forced_quanx,
 		generation_status, generation_error, updated_at FROM user_subscription_profiles WHERE user_id = ?`, userID).Scan(
 		&profile.UserID, &profile.Mode, &profile.Preset, &profile.CategoriesJSON,
 		&profile.PortableTemplateID, &profile.MihomoTemplateID, &profile.SingboxTemplateID,
 		&profile.QuanXTemplateID, &profile.AssignedPortableTemplateID, &profile.AssignedMihomoTemplateID,
-		&profile.AssignedSingboxTemplateID, &profile.AssignedQuanXTemplateID,
+		&profile.AssignedSingboxTemplateID, &profile.AssignedQuanXTemplateID, &profile.AssignedSuggestedPreset,
 		&forcedPortable, &forcedMihomo, &forcedSingbox, &forcedQuanx,
 		&profile.GenerationStatus, &profile.GenerationError, &profile.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -176,9 +197,10 @@ func (s *Store) SaveUserSubscriptionProfile(ctx context.Context, profile Subscri
 	_, err := s.db.ExecContext(ctx, `INSERT INTO user_subscription_profiles
 		(user_id, mode, preset, categories, portable_template_id, mihomo_template_id,
 		 singbox_template_id, quanx_template_id, assigned_portable_template_id, assigned_mihomo_template_id,
-		 assigned_singbox_template_id, assigned_quanx_template_id, assign_forced_portable, assign_forced_mihomo,
+		 assigned_singbox_template_id, assigned_quanx_template_id, assigned_suggested_preset,
+		 assign_forced_portable, assign_forced_mihomo,
 		 assign_forced_singbox, assign_forced_quanx, generation_status, generation_error, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', CURRENT_TIMESTAMP)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', CURRENT_TIMESTAMP)
 		ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode, preset=excluded.preset,
 		categories=excluded.categories, portable_template_id=excluded.portable_template_id,
 		mihomo_template_id=excluded.mihomo_template_id, singbox_template_id=excluded.singbox_template_id,
@@ -187,6 +209,7 @@ func (s *Store) SaveUserSubscriptionProfile(ctx context.Context, profile Subscri
 		assigned_mihomo_template_id=excluded.assigned_mihomo_template_id,
 		assigned_singbox_template_id=excluded.assigned_singbox_template_id,
 		assigned_quanx_template_id=excluded.assigned_quanx_template_id,
+		assigned_suggested_preset=excluded.assigned_suggested_preset,
 		assign_forced_portable=excluded.assign_forced_portable,
 		assign_forced_mihomo=excluded.assign_forced_mihomo,
 		assign_forced_singbox=excluded.assign_forced_singbox,
@@ -196,7 +219,7 @@ func (s *Store) SaveUserSubscriptionProfile(ctx context.Context, profile Subscri
 		profile.UserID, profile.Mode, profile.Preset, profile.CategoriesJSON,
 		profile.PortableTemplateID, profile.MihomoTemplateID, profile.SingboxTemplateID,
 		profile.QuanXTemplateID, profile.AssignedPortableTemplateID, profile.AssignedMihomoTemplateID,
-		profile.AssignedSingboxTemplateID, profile.AssignedQuanXTemplateID,
+		profile.AssignedSingboxTemplateID, profile.AssignedQuanXTemplateID, profile.AssignedSuggestedPreset,
 		forcedPortable, forcedMihomo, forcedSingbox, forcedQuanx, profile.GenerationStatus)
 	if err != nil {
 		return fmt.Errorf("save user subscription profile: %w", err)
