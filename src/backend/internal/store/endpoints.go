@@ -173,7 +173,18 @@ type UserChainAssignment struct {
 	ChainID    int64
 	EndpointID int64
 	AccessUUID string
+	UserUUID   string
 	CreatedAt  time.Time
+}
+
+// Identity 返回共享端点 xray 用户身份（email，dispatch 生成客户端 email 与路由 user）：
+// 直接分配 → access:<assignment_id>；分组派生（ID=0）→ group:<user_uuid>:<chain_id>。
+// 分组身份与直接身份前缀互斥，且按（用户,链路）唯一，不会在 xray 用户表中碰撞。
+func (a UserChainAssignment) Identity() string {
+	if a.ID == 0 {
+		return fmt.Sprintf("group:%s:%d", a.UserUUID, a.ChainID)
+	}
+	return fmt.Sprintf("access:%d", a.ID)
 }
 
 func (s *Store) UserChainAssignments(ctx context.Context, userID int64) ([]UserChainAssignment, error) {
@@ -203,7 +214,7 @@ func (s *Store) UserChainAssignments(ctx context.Context, userID int64) ([]UserC
 // 其直接 user_chain_assignments 行被遮蔽。直接分配部分排除分组成员避免重复。
 func (s *Store) ActiveEndpointAssignments(ctx context.Context, endpointID int64) ([]UserChainAssignment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id, a.user_id, a.chain_id, c.endpoint_id,
-		a.access_uuid, a.created_at FROM user_chain_assignments a
+		a.access_uuid, u.uuid, a.created_at FROM user_chain_assignments a
 		JOIN chains c ON c.id=a.chain_id
 		JOIN users u ON u.id=a.user_id
 		WHERE c.endpoint_id=? AND c.deleted_at IS NULL AND u.expired=0 AND u.disabled=0
@@ -217,7 +228,7 @@ func (s *Store) ActiveEndpointAssignments(ctx context.Context, endpointID int64)
 	for rows.Next() {
 		var item UserChainAssignment
 		if err := rows.Scan(&item.ID, &item.UserID, &item.ChainID, &item.EndpointID,
-			&item.AccessUUID, &item.CreatedAt); err != nil {
+			&item.AccessUUID, &item.UserUUID, &item.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, item)
@@ -243,6 +254,7 @@ func (s *Store) ActiveEndpointAssignments(ctx context.Context, endpointID int64)
 		if err := groupRows.Scan(&item.UserID, &userUUID, &item.ChainID, &item.EndpointID); err != nil {
 			return nil, err
 		}
+		item.UserUUID = userUUID
 		item.AccessUUID = GroupAccessUUID(userUUID, item.ChainID)
 		out = append(out, item)
 	}

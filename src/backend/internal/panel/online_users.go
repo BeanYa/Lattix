@@ -54,14 +54,14 @@ func (t *OnlineUsersTracker) ApplySnapshot(serverID int64, users []shared.Online
 		switch {
 		case strings.HasPrefix(key, "tunnel:"):
 			continue // 链内部转发身份，不是业务用户
-		case strings.HasPrefix(key, "access:"):
+		case strings.HasPrefix(key, "access:"), strings.HasPrefix(key, "group:"):
 			if t.resolve == nil {
 				continue
 			}
 			if mapped := t.resolve(key); mapped != "" {
 				key = mapped
 			} else {
-				continue // 分配已删除等无法归属的 access 身份
+				continue // 分配已删除等无法归属的 access/group 身份
 			}
 		}
 		ips := make(map[string]struct{}, len(u.IPs))
@@ -75,22 +75,29 @@ func (t *OnlineUsersTracker) ApplySnapshot(serverID int64, users []shared.Online
 }
 
 // onlineUserResolver 构造把 xray 身份映射为用户 UUID 的解析器（面板注入 store）：
-// access:<assignment_id> 经 user_chain_assignments 换算为用户 UUID；其余身份返回空串
-// （用户 UUID 原样使用；tunnel: 与未知 access: 由 tracker 丢弃）。
+// access:<assignment_id> 经 user_chain_assignments 换算为用户 UUID；group:<user_uuid>:<chain_id>
+// （分组派生身份）直接取内嵌用户 UUID；其余身份返回空串（用户 UUID 原样使用；tunnel: 与
+// 未知 access:/group: 由 tracker 丢弃）。
 func onlineUserResolver(st *store.Store) IdentityResolver {
 	return func(identity string) string {
-		if !strings.HasPrefix(identity, "access:") {
-			return ""
+		switch {
+		case strings.HasPrefix(identity, "access:"):
+			id, err := strconv.ParseInt(strings.TrimPrefix(identity, "access:"), 10, 64)
+			if err != nil || id <= 0 {
+				return ""
+			}
+			uuid, err := st.UserUUIDByAssignment(context.Background(), id)
+			if err != nil {
+				return ""
+			}
+			return uuid
+		case strings.HasPrefix(identity, "group:"):
+			rest := strings.TrimPrefix(identity, "group:")
+			if idx := strings.LastIndex(rest, ":"); idx > 0 {
+				return rest[:idx]
+			}
 		}
-		id, err := strconv.ParseInt(strings.TrimPrefix(identity, "access:"), 10, 64)
-		if err != nil || id <= 0 {
-			return ""
-		}
-		uuid, err := st.UserUUIDByAssignment(context.Background(), id)
-		if err != nil {
-			return ""
-		}
-		return uuid
+		return ""
 	}
 }
 

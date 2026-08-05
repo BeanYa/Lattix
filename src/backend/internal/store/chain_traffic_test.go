@@ -144,3 +144,45 @@ func TestTrafficSnapshotNewInstanceCountsFromZero(t *testing.T) {
 		t.Fatalf("user up = %d, want 125", total.Up)
 	}
 }
+
+// TestApplyTrafficSnapshotGroupIdentity 回归：分组派生身份（group:<user_uuid>:<chain_id>）
+// 必须像直接 access:<id> 一样入账用户流量与链路流量，而不是因 access:0 无法归属被丢弃。
+func TestApplyTrafficSnapshotGroupIdentity(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	chainID, endpointID := newTestEndpointChain(t, st, "group-traffic")
+	member, _ := st.InsertUser(ctx, "member", "00000000-0000-0000-0000-0000000000aa", "tok-g", nil)
+	lgID, err := st.CreateLinkGroup(ctx, "lg", []int64{chainID}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUserGroup(ctx, "ug", []int64{member}, []int64{lgID}); err != nil {
+		t.Fatal(err)
+	}
+	assignments, err := st.ActiveEndpointAssignments(ctx, endpointID)
+	if err != nil || len(assignments) != 1 {
+		t.Fatalf("assignments = %+v err %v", assignments, err)
+	}
+	var serverID int64
+	if err := st.db.QueryRow(`SELECT server_id FROM shared_endpoints WHERE id=?`, endpointID).Scan(&serverID); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	if err := st.ApplyTrafficSnapshot(ctx, serverID, "group:1",
+		[]TrafficCounterSnapshot{{User: assignments[0].Identity(), Up: 100, Down: 200}}, now); err != nil {
+		t.Fatal(err)
+	}
+	traffic, err := st.UserTraffic(ctx, "00000000-0000-0000-0000-0000000000aa")
+	if err != nil || traffic.Up != 100 || traffic.Down != 200 {
+		t.Fatalf("group user traffic = %+v err %v", traffic, err)
+	}
+	totals, err := st.ChainTrafficTotals(ctx, chainID)
+	if err != nil || len(totals) != 1 || totals[0].HopID != 0 ||
+		totals[0].RawUp != 100 || totals[0].EffectiveUp != 100 {
+		t.Fatalf("group chain traffic = %+v err %v", totals, err)
+	}
+}

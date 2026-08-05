@@ -1,9 +1,11 @@
 package panel
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"lattix/backend/internal/store"
 	"lattix/shared"
 )
 
@@ -219,6 +221,59 @@ func TestOnlineUsersTrackerZeroValueDropsAccessIdentity(t *testing.T) {
 	}, now)
 	if got := tracker.ConnectionsByUser("uuid-alice", now); got != 0 {
 		t.Fatalf("zero-value tracker without resolver counted access identity = %d, want 0", got)
+	}
+}
+
+func TestOnlineUsersTrackerResolvesGroupIdentity(t *testing.T) {
+	var tracker OnlineUsersTracker
+	tracker.resolve = func(identity string) string {
+		if identity == "group:00000000-0000-0000-0000-0000000000aa:5" {
+			return "00000000-0000-0000-0000-0000000000aa"
+		}
+		return ""
+	}
+	now := testOnlineNow()
+	tracker.ApplySnapshot(1, []shared.OnlineUserStat{
+		{User: "group:00000000-0000-0000-0000-0000000000aa:5", IPs: []string{"1.1.1.1", "1.1.1.2"}},
+		{User: "group:00000000-0000-0000-0000-0000000000bb:9", IPs: []string{"2.2.2.2"}}, // 无法归属
+	}, now)
+	if got := tracker.ConnectionsByUser("00000000-0000-0000-0000-0000000000aa", now); got != 2 {
+		t.Fatalf("ConnectionsByUser(member) after group identity resolution = %d, want 2", got)
+	}
+	if got := tracker.ConnectionsByUser("group:00000000-0000-0000-0000-0000000000aa:5", now); got != 0 {
+		t.Fatalf("raw group identity leaked into tracker: %d", got)
+	}
+	if got := tracker.ConnectionsByUser("00000000-0000-0000-0000-0000000000bb", now); got != 0 {
+		t.Fatalf("unresolvable group identity leaked into tracker: %d", got)
+	}
+}
+
+func TestOnlineUserResolverGroupIdentity(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	chainID, endpointID := newTestEndpointChainStore(t, st, "g-online")
+	member, _ := st.InsertUser(ctx, "member", "00000000-0000-0000-0000-0000000000aa", "tok-g", nil)
+	lgID, err := st.CreateLinkGroup(ctx, "lg", []int64{chainID}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUserGroup(ctx, "ug", []int64{member}, []int64{lgID}); err != nil {
+		t.Fatal(err)
+	}
+	assignments, err := st.ActiveEndpointAssignments(ctx, endpointID)
+	if err != nil || len(assignments) != 1 {
+		t.Fatalf("assignments = %+v err %v", assignments, err)
+	}
+	resolver := onlineUserResolver(st)
+	if got := resolver(assignments[0].Identity()); got != "00000000-0000-0000-0000-0000000000aa" {
+		t.Fatalf("resolver(%q) = %q", assignments[0].Identity(), got)
+	}
+	if got := resolver("group:bogus"); got != "" {
+		t.Fatalf("malformed group identity resolved to %q", got)
 	}
 }
 

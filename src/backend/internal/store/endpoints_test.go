@@ -188,7 +188,8 @@ func TestActiveEndpointAssignmentsIncludesGroupUsers(t *testing.T) {
 	if _, err := st.CreateUserGroup(ctx, "白银会员", []int64{member}, []int64{lgID}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := st.SetUserChains(ctx, direct, []int64{chainB}); err != nil {
+	directAdded, _, err := st.SetUserChains(ctx, direct, []int64{chainB})
+	if err != nil {
 		t.Fatal(err)
 	}
 	assignments, err := st.ActiveEndpointAssignments(ctx, endpointA)
@@ -200,10 +201,23 @@ func TestActiveEndpointAssignmentsIncludesGroupUsers(t *testing.T) {
 		assignments[0].EndpointID != endpointA || assignments[0].AccessUUID != want {
 		t.Fatalf("endpoint A assignment = %+v want uuid %s", assignments[0], want)
 	}
+	// 分组派生身份必须是 group:<user_uuid>:<chain_id>，且用户 UUID 内嵌（≠ access:0）
+	if assignments[0].UserUUID != "00000000-0000-0000-0000-0000000000aa" {
+		t.Fatalf("endpoint A assignment UserUUID = %q", assignments[0].UserUUID)
+	}
+	wantIdentity := "group:00000000-0000-0000-0000-0000000000aa:" + jsonNumber(chainA)
+	if got := assignments[0].Identity(); got != wantIdentity {
+		t.Fatalf("group identity = %q want %q", got, wantIdentity)
+	}
 	// endpointB：直接用户可见；分组用户不在其链路上
 	assignments, err = st.ActiveEndpointAssignments(ctx, endpointB)
 	if err != nil || len(assignments) != 1 || assignments[0].UserID != direct {
 		t.Fatalf("endpoint B assignments = %+v err %v", assignments, err)
+	}
+	// 直接身份保持 access:<assignment_id> 格式
+	wantDirect := "access:" + jsonNumber(directAdded[0].ID)
+	if got := assignments[0].Identity(); got != wantDirect {
+		t.Fatalf("direct identity = %q want %q", got, wantDirect)
 	}
 	// 分组用户即使有直接分配行也被遮蔽（同链重复不出现）
 	if _, _, err := st.SetUserChains(ctx, member, []int64{chainA}); err != nil {

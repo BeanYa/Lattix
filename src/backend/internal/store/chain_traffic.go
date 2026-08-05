@@ -228,6 +228,27 @@ func publishedChainForCounter(tx *sql.Tx, serverID, nodeID, hopID int64) (chainI
 
 func accessTrafficOwner(tx *sql.Tx, serverID int64, identity string) (userUUID string,
 	chainID, revisionID int64, multiplier int, access bool, err error) {
+	if strings.HasPrefix(identity, "group:") {
+		// 分组派生身份 group:<user_uuid>:<chain_id>（store.UserChainAssignment.Identity），
+		// 用户 UUID 内嵌于身份；仅校验链路归属本服务器即入账。
+		rest := strings.TrimPrefix(identity, "group:")
+		idx := strings.LastIndex(rest, ":")
+		if idx <= 0 {
+			return "", 0, 0, 0, false, sql.ErrNoRows
+		}
+		chainID, err = strconv.ParseInt(rest[idx+1:], 10, 64)
+		if err != nil || chainID <= 0 {
+			return "", 0, 0, 0, false, sql.ErrNoRows
+		}
+		err = tx.QueryRow(`SELECT c.published_revision_id, c.traffic_multiplier_milli
+			FROM chains c JOIN shared_endpoints e ON e.id=c.endpoint_id
+			WHERE c.id=? AND e.server_id=? AND c.published_revision_id!=0 AND c.deleted_at IS NULL`,
+			chainID, serverID).Scan(&revisionID, &multiplier)
+		if err != nil {
+			return "", 0, 0, 0, false, err
+		}
+		return rest[:idx], chainID, revisionID, multiplier, true, nil
+	}
 	if !strings.HasPrefix(identity, "access:") {
 		return "", 0, 0, 0, false, nil
 	}

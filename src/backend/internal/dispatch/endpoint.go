@@ -56,7 +56,7 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 		route := shared.SharedEndpointRoute{ChainID: chain.ID, Direct: len(revision.Snapshot.Hops) == 1,
 			TunnelUUID: revision.Snapshot.ServiceUUID}
 		for _, assignment := range assignmentsByChain[chain.ID] {
-			identity := fmt.Sprintf("access:%d", assignment.ID)
+			identity := assignment.Identity()
 			payload.Clients = append(payload.Clients, shared.ClientCredential{
 				ID: assignment.AccessUUID, Email: identity,
 			})

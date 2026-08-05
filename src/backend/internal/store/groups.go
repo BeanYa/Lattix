@@ -509,6 +509,7 @@ func (s *Store) EffectiveUserChainAssignments(ctx context.Context, userID int64)
 		}
 		seen[a.ChainID] = true
 		a.UserID = userID
+		a.UserUUID = userUUID
 		a.AccessUUID = GroupAccessUUID(userUUID, a.ChainID)
 		out = append(out, a)
 	}

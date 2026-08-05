@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,6 +91,70 @@ func TestReconcileSharedEndpointGroupsUsersByChain(t *testing.T) {
 	payload = latestEndpointPayload(t, st)
 	if len(payload.Clients) != 2 {
 		t.Fatalf("disabled user still present: %+v", payload.Clients)
+	}
+}
+
+func TestReconcileSharedEndpointGroupUsersGetDistinctIdentities(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
+	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chainA := createDirectSharedChain(t, st, serverID, endpoint.ID, "g-a")
+	chainB := createDirectSharedChain(t, st, serverID, endpoint.ID, "g-b")
+	memberA, _ := st.InsertUser(ctx, "member-a", "00000000-0000-0000-0000-0000000000aa", "sub-ga", nil)
+	memberB, _ := st.InsertUser(ctx, "member-b", "00000000-0000-0000-0000-0000000000bb", "sub-gb", nil)
+	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA.ChainID, chainB.ChainID}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUserGroup(ctx, "青铜", []int64{memberA, memberB}, []int64{lgID}); err != nil {
+		t.Fatal(err)
+	}
+
+	d := New(st, &fakeRequester{online: map[int64]bool{}})
+	if err := d.ReconcileSharedEndpoint(ctx, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
+	payload := latestEndpointPayload(t, st)
+	// 回归：分组派生身份不得退化为 access:0（xray 以 email 为键，重复即
+	// "User access:0 already exists"，导致共享入口部署失败）
+	if len(payload.Clients) != 4 {
+		t.Fatalf("clients = %d, want 4: %+v", len(payload.Clients), payload.Clients)
+	}
+	seen := map[string]bool{}
+	for _, client := range payload.Clients {
+		if seen[client.Email] {
+			t.Fatalf("duplicate client email %q", client.Email)
+		}
+		seen[client.Email] = true
+		if client.Email == "access:0" || !strings.HasPrefix(client.Email, "group:") {
+			t.Fatalf("client email %q is not a distinct group identity", client.Email)
+		}
+		if !strings.Contains(client.Email, "00000000-0000-0000-0000-0000000000aa") &&
+			!strings.Contains(client.Email, "00000000-0000-0000-0000-0000000000bb") {
+			t.Fatalf("client email %q does not embed a member user uuid", client.Email)
+		}
+	}
+	if len(payload.Routes) != 2 {
+		t.Fatalf("routes = %d, want 2", len(payload.Routes))
+	}
+	for _, route := range payload.Routes {
+		if len(route.Users) != 2 {
+			t.Fatalf("route %d users = %d, want 2", route.ChainID, len(route.Users))
+		}
+		for _, user := range route.Users {
+			if !seen[user] {
+				t.Fatalf("route user %q not present in clients", user)
+			}
+		}
 	}
 }
 
