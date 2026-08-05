@@ -382,7 +382,8 @@ func renderMihomo(policy portablePolicy, nodes []compiledNode) ([]byte, error) {
 }
 
 // defaultClashDNS 返回内置 fake-ip DNS 配置，使 GEOSITE/GEOIP 与 RULE-SET 规则
-// 在客户端无需额外配置即可生效。
+// 在客户端无需额外配置即可生效。节点域名（如 hk.whoisbean.com）经
+// proxy-server-nameserver 用国内可达解析器直查，不经过境外交互，避免节点测速/连接超时。
 func defaultClashDNS() *clashDNS {
 	return &clashDNS{
 		Enable:       true,
@@ -393,10 +394,9 @@ func defaultClashDNS() *clashDNS {
 			"*.lan", "*.localdomain", "*.example", "*.invalid", "*.local",
 			"*.home.arpa", "time.*.com", "ntp.*.com", "+.pool.ntp.org", "+.mcdn.bilivideo.cn",
 		},
-		DefaultNameserver: []string{"223.5.5.5", "119.29.29.29"},
-		Nameserver:        []string{"https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"},
-		Fallback:          []string{"https://dns.cloudflare.com/dns-query", "https://dns.google/dns-query", "tls://8.8.4.4:853"},
-		FallbackFilter:    &clashDNSFallbackFilter{GeoIP: true, GeoIPCode: "CN"},
+		DefaultNameserver:     []string{"223.5.5.5", "119.29.29.29"},
+		Nameserver:            []string{"https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"},
+		ProxyServerNameserver: []string{"https://doh.pub/dns-query", "https://dns.alidns.com/dns-query"},
 	}
 }
 

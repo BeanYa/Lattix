@@ -33,7 +33,8 @@
 无法表达的协议跳过并记入快照 warning；详见 [framework-design §9.1](framework-design.md#91-外部订阅导入与用户关联)。
 
 `clash` 输出为开箱即用配置：内置 fake-ip DNS（`enhanced-mode: fake-ip`、198.18.0.1/16、本地域名
-fake-ip-filter，默认/DoH/回退 nameserver）；策略包含 GEOSITE/GEOIP 规则时另输出 `geodata-mode` +
+fake-ip-filter，默认/DoH nameserver；节点域名经 `proxy-server-nameserver` 用国内可达解析器直查，
+不设境外回退，避免节点测速超时）；策略包含 GEOSITE/GEOIP 规则时另输出 `geodata-mode` +
 `geo-auto-update` 与 `geox-url`（MetaCubeX/meta-rules-dat），保证规则在客户端直接生效。
 
 未传 `format` 时按 User-Agent 识别 Mihomo、sing-box、Quantumult X 或分享链接客户端。浏览器请求包含 `Accept: text/html` 时返回订阅落地页。

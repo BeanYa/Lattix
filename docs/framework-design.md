@@ -194,7 +194,7 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
   名称中使用自动 `PORT` 时仅提示其会解析为 `auto`，不阻止创建。
 - **（自 0.0.2 之后迭代，§21）**：引入链后，proxies 条目的 `server`/端口取链**入口**的 address 与 public_port（非 1:1 映射时），public-key/short-id/UUID 取链**出口**；命名中的别名与端口取入口。链 degraded 不剔除入口条目，靠客户端测速规避。
 - **跳过原因可见**：发布时收集已分配但未纳入订阅的链的原因（未发布有效修订 / 条目构造失败），持久化在订阅快照 `warnings`（schema v10 新增列），经预览与"重新生成"API 返回，前端以"部分条目未纳入本次订阅"提示，不再静默丢弃。
-- **mihomo 开箱即用**：`clash` 格式内置 fake-ip DNS（`enhanced-mode: fake-ip`、198.18.0.1/16、本地域名 filter 与默认/DoH/回退 nameserver）；策略含 GEOSITE/GEOIP 规则时另输出 `geodata-mode` + `geo-auto-update` 与 `geox-url`（MetaCubeX/meta-rules-dat），规则在客户端直接生效。
+- **mihomo 开箱即用**：`clash` 格式内置 fake-ip DNS（`enhanced-mode: fake-ip`、198.18.0.1/16、本地域名 filter 与默认/DoH nameserver；节点域名经 `proxy-server-nameserver` 用国内可达解析器直查，不设境外回退，避免节点测速超时）；策略含 GEOSITE/GEOIP 规则时另输出 `geodata-mode` + `geo-auto-update` 与 `geox-url`（MetaCubeX/meta-rules-dat），规则在客户端直接生效。
 - **响应头**：`/sub/{token}` 的所有文件格式返回 `subscription-userinfo`，包含 upload、download 以及可选 total、expire、reset_day、plan_name、app_url；同时返回 `profile-update-interval`。
 - **用户有效期**：创建或更新用户可带 `expires_at`；过去时间返回 `HTTP 200 + INVALID_ARGUMENT`。`POST /api/user/update` 可修改或清除（null = 长期；省略字段保持不变）。列表 DTO 带 `expires_at`/`expired`/`disabled`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `user.remove`（显式 nodes 载荷；已 disabled 的用户只补记标记不重复扇出）；管理员延长/清除有效期（expired 1→0）→ 扇出 `user.add` 恢复（disabled 用户除外，见 §16 有效停权态）。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`node.apply` 的 `NodeUserUUIDs` 不下发 expired/disabled 用户。
 - 分享链接集合已实现：`GET /sub/{token}?format=links`（§14，仅含分配的 active 节点）。

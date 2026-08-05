@@ -340,21 +340,18 @@ type clashRuleProvider struct {
 }
 
 // clashDNS 是订阅内置的 fake-ip DNS 配置，使订阅在客户端开箱即用。
+// 有意不输出 fallback/fallback-filter：fake-ip 模式下客户端查询不返回真实 IP，
+// geoip 回退过滤失效；境外 DoH（dns.google/8.8.4.4 等）在国内不可达，回退查询
+// 只会拖垮节点域名解析。节点域名经 proxy-server-nameserver 用国内可达解析器直查。
 type clashDNS struct {
-	Enable            bool                    `yaml:"enable"`
-	IPv6              bool                    `yaml:"ipv6"`
-	EnhancedMode      string                  `yaml:"enhanced-mode"`
-	FakeIPRange       string                  `yaml:"fake-ip-range,omitempty"`
-	FakeIPFilter      []string                `yaml:"fake-ip-filter,omitempty"`
-	DefaultNameserver []string                `yaml:"default-nameserver,omitempty"`
-	Nameserver        []string                `yaml:"nameserver,omitempty"`
-	Fallback          []string                `yaml:"fallback,omitempty"`
-	FallbackFilter    *clashDNSFallbackFilter `yaml:"fallback-filter,omitempty"`
-}
-
-type clashDNSFallbackFilter struct {
-	GeoIP     bool   `yaml:"geoip"`
-	GeoIPCode string `yaml:"geoip-code,omitempty"`
+	Enable                bool     `yaml:"enable"`
+	IPv6                  bool     `yaml:"ipv6"`
+	EnhancedMode          string   `yaml:"enhanced-mode"`
+	FakeIPRange           string   `yaml:"fake-ip-range,omitempty"`
+	FakeIPFilter          []string `yaml:"fake-ip-filter,omitempty"`
+	DefaultNameserver     []string `yaml:"default-nameserver,omitempty"`
+	Nameserver            []string `yaml:"nameserver,omitempty"`
+	ProxyServerNameserver []string `yaml:"proxy-server-nameserver,omitempty"`
 }
 
 // clashGeoxURL 指向 MetaCubeX/meta-rules-dat 的地理数据源，
