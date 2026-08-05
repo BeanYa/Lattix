@@ -64,6 +64,7 @@ type chainDTO struct {
 	ServiceNodeID       int64                  `json:"service_node_id"`
 	EndpointID          int64                  `json:"endpoint_id"`
 	EntryPort           int                    `json:"entry_port"`
+	EntryShared         bool                   `json:"entry_shared,omitempty"`
 	EndpointStatus      string                 `json:"endpoint_status,omitempty"`
 	EndpointError       string                 `json:"endpoint_error,omitempty"`
 	TrafficMultiplier   string                 `json:"traffic_multiplier"`
@@ -115,6 +116,9 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 			out.EntryPort = endpoint.Port
 			out.EndpointStatus = endpoint.Status
 			out.EndpointError = endpoint.Error
+		}
+		if count, err := s.st.EndpointChainCount(r.Context(), out.EndpointID); err == nil {
+			out.EntryShared = count >= 2
 		}
 	}
 	if len(hops) == 0 && c.PublishedRevisionID != 0 {
@@ -341,11 +345,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		endpoint, _, err := s.st.EnsureSharedEndpoint(r.Context(), entrySrv.ID, vc.Protocol,
 			entryPort, profileHash, endpointJSON)
 		if err != nil {
-			status := http.StatusInternalServerError
-			if errors.Is(err, store.ErrEndpointConflict) {
-				status = http.StatusConflict
-			}
-			writeError(w, status, err.Error())
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		endpointID = endpoint.ID
@@ -586,7 +586,7 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			endpoint, _, err := s.st.EnsureSharedEndpoint(r.Context(), servers[0].ID,
 				vc.Protocol, endpointPort, profileHash, endpointJSON)
 			if err != nil {
-				writeError(w, http.StatusConflict, err.Error())
+				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 			endpointID = endpoint.ID
