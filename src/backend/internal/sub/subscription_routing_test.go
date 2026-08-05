@@ -457,3 +457,81 @@ func TestSingboxNativeTemplateMergesNodesAndPreservesRoute(t *testing.T) {
 		t.Fatalf("native route was replaced: %+v", document.Route)
 	}
 }
+
+func TestPublishUserAppliesAssignedPortableTemplate(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.UpsertSubscriptionTemplate(ctx, store.SubscriptionTemplate{
+		ID: "assigned-tpl", Name: "Assigned", Kind: "portable", Origin: "local",
+		Content:       "name: Cached\ngroups:\n  - name: Proxy\n    type: select\n    options: [DIRECT]\nrules: []\nfinal: Proxy\n",
+		ContentSHA256: "assigned-sha",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	userID, err := st.InsertUser(ctx, "user", "00000000-0000-0000-0000-000000000005", "assigned-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 用户未自选（默认建议模式），仅被指派模板。
+	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
+		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
+		CategoriesJSON: `["ai"]`, GenerationStatus: store.SubscriptionGenerationMissing,
+		AssignedPortableTemplateID: "assigned-tpl",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(st, nil, nil)
+	result, err := server.PublishUser(ctx, userID, "https://panel.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(result.Files["clash"]), "Proxy") {
+		t.Fatalf("assigned template group missing from clash output: %s", result.Files["clash"])
+	}
+}
+
+func TestPublishUserForcedAssignmentOverridesUserChoice(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	body := "name: Cached\ngroups:\n  - name: Proxy\n    type: select\n    options: [DIRECT]\nrules: []\nfinal: Proxy\n"
+	for _, template := range []store.SubscriptionTemplate{
+		{ID: "assigned-tpl", Name: "Assigned", Kind: "portable", Origin: "local", Content: body, ContentSHA256: "assigned-sha"},
+		{ID: "user-tpl", Name: "User", Kind: "portable", Origin: "local",
+			Content:       "name: User\ngroups:\n  - name: UserGroup\n    type: select\n    options: [DIRECT]\nrules: []\nfinal: UserGroup\n",
+			ContentSHA256: "user-sha"},
+	} {
+		if err := st.UpsertSubscriptionTemplate(ctx, template); err != nil {
+			t.Fatal(err)
+		}
+	}
+	userID, err := st.InsertUser(ctx, "user", "00000000-0000-0000-0000-000000000006", "forced-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 用户自选 user-tpl，但被强制指派 assigned-tpl。
+	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
+		UserID: userID, Mode: store.SubscriptionModeTemplate, Preset: "balanced",
+		CategoriesJSON: `[]`, PortableTemplateID: "user-tpl",
+		GenerationStatus: store.SubscriptionGenerationMissing,
+		AssignedPortableTemplateID: "assigned-tpl", AssignForcedPortable: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(st, nil, nil)
+	result, err := server.PublishUser(ctx, userID, "https://panel.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clash := string(result.Files["clash"])
+	if !strings.Contains(clash, "Proxy") || strings.Contains(clash, "UserGroup") {
+		t.Fatalf("forced assignment not applied: %s", clash)
+	}
+}

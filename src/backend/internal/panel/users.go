@@ -177,13 +177,21 @@ type subscriptionProfileInput struct {
 }
 
 type subscriptionProfileDTO struct {
-	Mode               string   `json:"mode"`
-	Preset             string   `json:"preset"`
-	Categories         []string `json:"categories"`
-	PortableTemplateID string   `json:"portable_template_id"`
-	MihomoTemplateID   string   `json:"mihomo_template_id"`
-	SingboxTemplateID  string   `json:"singbox_template_id"`
-	QuanXTemplateID    string   `json:"quanx_template_id"`
+	Mode                      string   `json:"mode"`
+	Preset                    string   `json:"preset"`
+	Categories                []string `json:"categories"`
+	PortableTemplateID        string   `json:"portable_template_id"`
+	MihomoTemplateID          string   `json:"mihomo_template_id"`
+	SingboxTemplateID         string   `json:"singbox_template_id"`
+	QuanXTemplateID           string   `json:"quanx_template_id"`
+	AssignedPortableTemplateID string  `json:"assigned_portable_template_id"`
+	AssignForcedPortable      bool     `json:"assign_forced_portable"`
+	AssignedMihomoTemplateID  string   `json:"assigned_mihomo_template_id"`
+	AssignForcedMihomo        bool     `json:"assign_forced_mihomo"`
+	AssignedSingboxTemplateID string   `json:"assigned_singbox_template_id"`
+	AssignForcedSingbox       bool     `json:"assign_forced_singbox"`
+	AssignedQuanXTemplateID   string   `json:"assigned_quanx_template_id"`
+	AssignForcedQuanX         bool     `json:"assign_forced_quanx"`
 }
 
 func subscriptionProfileToDTO(profile store.SubscriptionProfile) subscriptionProfileDTO {
@@ -193,6 +201,14 @@ func subscriptionProfileToDTO(profile store.SubscriptionProfile) subscriptionPro
 		Mode: profile.Mode, Preset: profile.Preset, Categories: categories,
 		PortableTemplateID: profile.PortableTemplateID, MihomoTemplateID: profile.MihomoTemplateID,
 		SingboxTemplateID: profile.SingboxTemplateID, QuanXTemplateID: profile.QuanXTemplateID,
+		AssignedPortableTemplateID: profile.AssignedPortableTemplateID,
+		AssignForcedPortable:       profile.AssignForcedPortable,
+		AssignedMihomoTemplateID:   profile.AssignedMihomoTemplateID,
+		AssignForcedMihomo:         profile.AssignForcedMihomo,
+		AssignedSingboxTemplateID:  profile.AssignedSingboxTemplateID,
+		AssignForcedSingbox:        profile.AssignForcedSingbox,
+		AssignedQuanXTemplateID:    profile.AssignedQuanXTemplateID,
+		AssignForcedQuanX:          profile.AssignForcedQuanX,
 	}
 }
 
@@ -937,6 +953,17 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 		if err := s.validateSubscriptionProfileTemplates(r.Context(), profile); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
+		}
+		// 订阅设置只改用户自选；管理员指派槽位与强制标记原样保留。
+		if current, err := s.st.UserSubscriptionProfile(r.Context(), req.UserID); err == nil {
+			profile.AssignedPortableTemplateID = current.AssignedPortableTemplateID
+			profile.AssignForcedPortable = current.AssignForcedPortable
+			profile.AssignedMihomoTemplateID = current.AssignedMihomoTemplateID
+			profile.AssignForcedMihomo = current.AssignForcedMihomo
+			profile.AssignedSingboxTemplateID = current.AssignedSingboxTemplateID
+			profile.AssignForcedSingbox = current.AssignForcedSingbox
+			profile.AssignedQuanXTemplateID = current.AssignedQuanXTemplateID
+			profile.AssignForcedQuanX = current.AssignForcedQuanX
 		}
 		routingProfile = &profile
 	}

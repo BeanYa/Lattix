@@ -575,6 +575,14 @@ export interface SubscriptionRoutingProfile {
   mihomo_template_id: string
   singbox_template_id: string
   quanx_template_id: string
+  assigned_portable_template_id: string
+  assign_forced_portable: boolean
+  assigned_mihomo_template_id: string
+  assign_forced_mihomo: boolean
+  assigned_singbox_template_id: string
+  assign_forced_singbox: boolean
+  assigned_quanx_template_id: string
+  assign_forced_quanx: boolean
 }
 
 export interface SubscriptionSnapshotStatus {

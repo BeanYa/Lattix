@@ -19,6 +19,7 @@ import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components
 import { QRDialog } from '@/components/QRDialog'
 import { StatusBadge } from '@/components/StatusBadge'
 import { SubscriptionRoutingFields } from '@/components/SubscriptionRoutingFields'
+import { TemplateAssignmentTab } from '@/components/TemplateAssignmentTab'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -39,6 +40,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
   TableBody,
@@ -208,6 +210,7 @@ export default function Users() {
   const [historyTarget, setHistoryTarget] = useState<SubUser | null>(null)
   const [historyData, setHistoryData] = useState<Array<{ period_start: string; up: number; down: number }>>([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [usersTab, setUsersTab] = useState<'users' | 'assign'>('users')
 
   const load = useCallback(async (silent = false, signal?: AbortSignal) => {
     const request = ++loadRequest.current
@@ -508,6 +511,16 @@ export default function Users() {
 
       {error && <Notice tone="danger">{error}</Notice>}
 
+      <Tabs value={usersTab} onValueChange={(value) => value && setUsersTab(value as 'users' | 'assign')}>
+        <TabsList>
+          <TabsTrigger value="users">用户</TabsTrigger>
+          <TabsTrigger value="assign">模板指派</TabsTrigger>
+        </TabsList>
+      </Tabs>
+      {usersTab === 'assign' ? (
+        <TemplateAssignmentTab users={users} templates={templates} onChanged={() => load(true)} />
+      ) : (
+        <>
       {!loading && users.length === 0 ? (
         <EmptyState
           icon={<UsersIcon />}
@@ -656,6 +669,8 @@ export default function Users() {
             ))
           )}
         </div>
+      )}
+        </>
       )}
 
       <Dialog open={open} onOpenChange={onOpenChange}>
