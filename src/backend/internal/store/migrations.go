@@ -11,7 +11,7 @@ import (
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
-const schemaVersion = 14
+const schemaVersion = 15
 
 type columnMigration struct {
 	name       string
@@ -177,6 +177,27 @@ func migrateSchema(tx *sql.Tx) error {
 	}
 	if err := migrateServerMetrics(tx); err != nil {
 		return err
+	}
+	addedProfiles, err := ensureColumns(tx, "user_subscription_profiles", []columnMigration{
+		{"assigned_suggested_categories", "TEXT NOT NULL DEFAULT ''"},
+	})
+	if err != nil {
+		return err
+	}
+	if addedProfiles["assigned_suggested_categories"] {
+		// 旧建议规则预设指派展开为分组列表，效果不变。
+		for preset, ids := range presetCategorySets {
+			raw, err := json.Marshal(ids)
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE user_subscription_profiles
+				SET assigned_suggested_categories = ?
+				WHERE assigned_suggested_preset = ? AND assigned_suggested_categories = ''`,
+				string(raw), preset); err != nil {
+				return fmt.Errorf("backfill assigned_suggested_categories: %w", err)
+			}
+		}
 	}
 	return migrateCommands(tx)
 }

@@ -140,6 +140,7 @@ func TestOpenMigratesLegacySchemaAndPreservesData(t *testing.T) {
 	assertColumns(t, st.db, "subscription_template_rules", "template_sha256", "source_url", "content_sha256")
 	assertColumns(t, st.db, "subscription_snapshots", "revision", "source_sha256", "generated_at", "warnings")
 	assertColumns(t, st.db, "subscription_rule_files", "name", "format", "source_sha256", "content")
+	assertColumns(t, st.db, "user_subscription_profiles", "assigned_suggested_categories")
 	if err := st.SaveServerMetrics(context.Background(), 1, ServerMetrics{}, true); err != nil {
 		t.Fatalf("write nullable metrics after migration: %v", err)
 	}
@@ -340,8 +341,8 @@ func TestMigrateLegacyPreservesSubToken(t *testing.T) {
 	if err := st.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 14 {
-		t.Fatalf("schema version = %d, want 14", version)
+	if version != 15 {
+		t.Fatalf("schema version = %d, want 15", version)
 	}
 	var token string
 	if err := st.db.QueryRowContext(ctx, `SELECT sub_token FROM users WHERE name='a'`).Scan(&token); err != nil {
@@ -377,8 +378,76 @@ func TestMigrateLegacyPreservesSubToken(t *testing.T) {
 	}
 }
 
-func assertColumns(t *testing.T, db *sql.DB, table string, expected ...string) {
-	t.Helper()
+// TestOpenBackfillsAssignedSuggestedCategories 验证 v14 库的旧建议规则预设指派
+// 迁移到 v15 时展开为分组列表，效果不变。
+func TestOpenBackfillsAssignedSuggestedCategories(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "suggested.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟 v14 库：旧表带 assigned_suggested_preset 指派，无新列。
+	if _, err := db.Exec(legacySchema + `
+CREATE TABLE user_subscription_profiles (
+    user_id INTEGER PRIMARY KEY,
+    mode TEXT NOT NULL DEFAULT 'suggested',
+    preset TEXT NOT NULL DEFAULT 'balanced',
+    categories TEXT NOT NULL DEFAULT '[]',
+    portable_template_id TEXT NOT NULL DEFAULT '',
+    mihomo_template_id TEXT NOT NULL DEFAULT '',
+    singbox_template_id TEXT NOT NULL DEFAULT '',
+    quanx_template_id TEXT NOT NULL DEFAULT '',
+    assigned_portable_template_id TEXT NOT NULL DEFAULT '',
+    assigned_mihomo_template_id TEXT NOT NULL DEFAULT '',
+    assigned_singbox_template_id TEXT NOT NULL DEFAULT '',
+    assigned_quanx_template_id TEXT NOT NULL DEFAULT '',
+    assigned_suggested_preset TEXT NOT NULL DEFAULT '',
+    assign_forced_portable INTEGER NOT NULL DEFAULT 0,
+    assign_forced_mihomo INTEGER NOT NULL DEFAULT 0,
+    assign_forced_singbox INTEGER NOT NULL DEFAULT 0,
+    assign_forced_quanx INTEGER NOT NULL DEFAULT 0,
+    generation_status TEXT NOT NULL DEFAULT 'missing',
+    generation_error TEXT NOT NULL DEFAULT '',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO user_subscription_profiles (user_id, mode, preset, categories, assigned_suggested_preset, generation_status)
+VALUES (1, 'suggested', 'balanced', '["ai"]', 'comprehensive', 'missing');
+PRAGMA user_version = 14;`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var got string
+	if err := st.db.QueryRow(`SELECT assigned_suggested_categories FROM user_subscription_profiles WHERE user_id = 1`).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(got), &ids); err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != len(presetCategorySets["comprehensive"]) {
+		t.Fatalf("backfilled categories = %v", ids)
+	}
+	for _, want := range presetCategorySets["comprehensive"] {
+		found := false
+		for _, id := range ids {
+			if id == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("backfilled categories missing %q: %v", want, ids)
+		}
+	}
+}
+
+func assertColumns(t *testing.T, db *sql.DB, table string, expected ...string) {	t.Helper()
 	columns := columnNames(t, db, table)
 	for _, name := range expected {
 		if !columns[name] {
