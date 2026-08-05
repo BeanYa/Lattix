@@ -274,7 +274,10 @@ func ensureDestReachable(tmpl map[string]json.RawMessage, candidates []string) e
 }
 
 // destReachable 以 TCP+TLS1.3 握手探测 dest 可达性（Reality 借用证书的前提）。
-func destReachable(dest, serverName string) bool {
+// 包级变量：单元测试可桩（避免依赖外网）。
+var destReachable = destReachableImpl
+
+func destReachableImpl(dest, serverName string) bool {
 	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: destCheckTimeout}, "tcp", dest, &tls.Config{
 		ServerName:         serverName,
 		InsecureSkipVerify: true, // 仅探测可达性，不校验证书链
