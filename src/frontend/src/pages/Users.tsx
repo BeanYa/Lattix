@@ -518,7 +518,7 @@ export default function Users() {
         </TabsList>
       </Tabs>
       {usersTab === 'assign' ? (
-        <TemplateAssignmentTab users={users} templates={templates} onChanged={() => load(true)} />
+        <TemplateAssignmentTab users={users} templates={templates} categories={ruleCategories} onChanged={() => load(true)} />
       ) : (
         <>
       {!loading && users.length === 0 ? (
