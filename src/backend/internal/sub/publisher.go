@@ -39,6 +39,7 @@ func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) 
 	if err != nil {
 		return PublishResult{}, err
 	}
+	profile = store.EffectiveProfile(profile)
 	policy, sourceLabel, template, err := s.resolvePolicy(ctx, profile)
 	if err != nil {
 		return s.publishFailure(ctx, userID, err)
