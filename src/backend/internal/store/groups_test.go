@@ -372,3 +372,44 @@ func TestAffectedUsersQueries(t *testing.T) {
 		t.Fatalf("server 3 (aff-b entry) users = %v err %v", users, err)
 	}
 }
+
+// TestGroupLifecyclePreservesSubToken 验证用户订阅 token 在整个分组生命周期
+// （建组→入组→改链路分组→删链路分组→删用户分组）中保持不变（用户硬约束）。
+func TestGroupLifecyclePreservesSubToken(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	chainA, _ := newTestEndpointChain(t, st, "tok-a")
+	userID, _ := st.InsertUser(ctx, "alice", "00000000-0000-0000-0000-0000000000aa", "tok-stable", nil)
+	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ugID, err := st.CreateUserGroup(ctx, "青铜会员", []int64{userID}, []int64{lgID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := st.UserByID(ctx, userID)
+	if err != nil || user.SubToken != "tok-stable" {
+		t.Fatalf("入组后 token 变化: %+v err %v", user, err)
+	}
+	if err := st.UpdateLinkGroup(ctx, lgID, "改名组", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteLinkGroup(ctx, lgID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateUserGroup(ctx, ugID, "黄金会员", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteUserGroup(ctx, ugID); err != nil {
+		t.Fatal(err)
+	}
+	user, err = st.UserByID(ctx, userID)
+	if err != nil || user.SubToken != "tok-stable" {
+		t.Fatalf("全生命周期后 token 变化: %+v err %v", user, err)
+	}
+}

@@ -191,3 +191,40 @@ func TestUserGroupRPCAndUserDTOGroups(t *testing.T) {
 		t.Fatalf("删除后 dto.UserGroupIDs = %v", dto.UserGroupIDs)
 	}
 }
+
+// TestSubURLStableAcrossGroupOps 验证 toUserDTO 的 sub_url 在分组操作前后不变
+// （用户硬约束：已有用户的订阅地址不能改变）。
+func TestSubURLStableAcrossGroupOps(t *testing.T) {
+	ctx := context.Background()
+	st, chainA, _, _, u1, _ := groupsFixture(t)
+	user, err := st.UserByID(ctx, u1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{st: st}
+	before := srv.toUserDTO(httptest.NewRequest(http.MethodGet, "/", nil), *user, nil)
+	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUserGroup(ctx, "青铜会员", []int64{u1}, []int64{lgID}); err != nil {
+		t.Fatal(err)
+	}
+	user, _ = st.UserByID(ctx, u1)
+	mid := srv.toUserDTO(httptest.NewRequest(http.MethodGet, "/", nil), *user, nil)
+	if mid.SubURL != before.SubURL || mid.SubLinksURL != before.SubLinksURL {
+		t.Fatalf("入组后 sub_url 变化: before %s / %s, after %s / %s",
+			before.SubURL, before.SubLinksURL, mid.SubURL, mid.SubLinksURL)
+	}
+	if len(mid.UserGroupIDs) != 1 {
+		t.Fatalf("入组后 user_group_ids = %v", mid.UserGroupIDs)
+	}
+	if err := st.DeleteUserGroup(ctx, mid.UserGroupIDs[0]); err != nil {
+		t.Fatal(err)
+	}
+	user, _ = st.UserByID(ctx, u1)
+	after := srv.toUserDTO(httptest.NewRequest(http.MethodGet, "/", nil), *user, nil)
+	if after.SubURL != before.SubURL || after.SubLinksURL != before.SubLinksURL {
+		t.Fatalf("出组后 sub_url 变化: before %s, after %s", before.SubURL, after.SubURL)
+	}
+}

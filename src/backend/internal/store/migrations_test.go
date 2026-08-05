@@ -307,6 +307,51 @@ func TestOpenMigratesNodeRealityMinClientVer(t *testing.T) {
 	}
 }
 
+// TestMigrateLegacyPreservesSubToken 验证存量库迁移到 schemaVersion 12 后，
+// 既有用户 sub_token 原样保留（订阅地址不变，用户硬约束）。
+func TestMigrateLegacyPreservesSubToken(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "legacy.db")
+	legacy, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`PRAGMA user_version = 2`); err != nil {
+		t.Fatal(err)
+	}
+	// 与 TestOpenMigratesLegacySchemaAndPreservesData 相同的 legacy 建表语句（users 含 sub_token）。
+	if _, err := legacy.Exec(`CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL, uuid TEXT NOT NULL UNIQUE, sub_token TEXT NOT NULL UNIQUE,
+		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`INSERT INTO users (name, uuid, sub_token) VALUES ('a','ua','legacy-token-1')`); err != nil {
+		t.Fatal(err)
+	}
+	_ = legacy.Close()
+
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	var version int
+	if err := st.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 12 {
+		t.Fatalf("schema version = %d, want 12", version)
+	}
+	var token string
+	if err := st.db.QueryRowContext(ctx, `SELECT sub_token FROM users WHERE name='a'`).Scan(&token); err != nil {
+		t.Fatal(err)
+	}
+	if token != "legacy-token-1" {
+		t.Fatalf("迁移后 sub_token = %q, want legacy-token-1", token)
+	}
+}
+
 func assertColumns(t *testing.T, db *sql.DB, table string, expected ...string) {
 	t.Helper()
 	columns := columnNames(t, db, table)
