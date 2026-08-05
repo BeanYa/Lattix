@@ -327,6 +327,80 @@ func TestChainHopResultFailure(t *testing.T) {
 	}
 }
 
+// TestAdvanceChainSkipsReusedPieces 验证全复用 revision（仅改名/倍率变更，ApplyKeys 为空）
+// 的编排不重发任何 piece：reused forward/portal/bridge 视为已 acked，链直接 active。
+// 回归场景：reused 标记写入的键与 pieces 读取键命名空间不一致（revisionPieceKey vs
+// pieceKey）→ advanceChain 对已复用 piece 再次 enqueue，因任务不存在而失败，
+// 跳卡 applying、链卡 applying，编辑永不完成。
+func TestAdvanceChainSkipsReusedPieces(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	entryID, _ := st.CreateServer(ctx, "entry", "e.com", "tok1", store.MachineTypeDirect, "", "", "US", "Entry")
+	exitID, _ := st.CreateServer(ctx, "exit", "x.com", "tok2", store.MachineTypeDirect, "", "", "JP", "Exit")
+	vcJSON, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
+	nodeID, _ := st.InsertNode(ctx, "测试出口节点", exitID, shared.ProtocolVLESS, nil, vcJSON)
+	realized, _ := json.Marshal(&shared.RealizedConfig{Port: 4433})
+	_ = st.SetNodeActive(ctx, nodeID, realized)
+	chainID, _ := st.InsertChain(ctx, "测试链路")
+	hop1, _ := st.InsertChainHop(ctx, chainID, 0, entryID, store.HopRoleEntry, 0, 18443, "")
+	hop2, _ := st.InsertChainHop(ctx, chainID, 1, exitID, store.HopRoleExit, nodeID, 0, "")
+
+	// 已发布的初始 revision（拓扑与配置快照）。
+	snapshot := store.ChainRevisionSnapshot{
+		Name: "测试链路", ServiceNodeID: nodeID, ServiceServerID: exitID,
+		ServiceConfig: vcJSON, ServiceRealized: realized, TrafficMultiplierMilli: 1000,
+		Hops: []store.ChainRevisionHop{
+			{HopID: hop1, ServerID: entryID, Role: store.HopRoleEntry, Transport: "direct", ForwardPort: 18443},
+			{HopID: hop2, ServerID: exitID, Role: store.HopRoleExit, ForwardPort: 0},
+		},
+	}
+	revision, err := st.CreateChainRevision(ctx, chainID, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PublishChainRevision(ctx, revision.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟 handleEditChain：同拓扑同配置的新 revision（ApplyKeys 为空 = 全部复用），
+	// chain_hops 重置为 pending（ReplaceWorkingChainTopology 语义）。
+	desired, err := st.CreateChainRevision(ctx, chainID, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(desired.Snapshot.ApplyKeys) != 0 {
+		t.Fatalf("fixture 应全复用，ApplyKeys = %v", desired.Snapshot.ApplyKeys)
+	}
+	if err := st.ReplaceWorkingChainTopology(ctx, desired, shared.ProtocolVLESS, nil, false); err != nil {
+		t.Fatal(err)
+	}
+
+	req := &fakeRequester{online: map[int64]bool{entryID: true, exitID: true}}
+	d := New(st, req)
+	d.DestCandidates = []string{"dl.google.com:443"}
+	if err := d.StartChain(ctx, chainID); err != nil {
+		t.Fatal(err)
+	}
+
+	cmds, err := st.CommandsByType(ctx, shared.TypeApplyChainHop)
+	if err != nil || len(cmds) != 0 {
+		t.Fatalf("全复用 revision 不应下发任何 apply_chain_hop（%d 条）", len(cmds))
+	}
+	chain, _ := st.ChainByID(ctx, chainID)
+	if chain.Status != store.ChainStatusActive {
+		t.Fatalf("链状态 %s，期望 active（全复用应直接完成）", chain.Status)
+	}
+	hops, _ := st.ChainHops(ctx, chainID)
+	for _, h := range hops {
+		if h.Status != store.HopStatusActive {
+			t.Fatalf("跳 %d 状态 %s，期望 active", h.ID, h.Status)
+		}
+	}
+}
+
 // TestNatPortsCarryCandidatesForManualPorts 验证受限直连 NAT 机上手动端口也携带
 // 监听侧候选（§21 双保险：面板校验后 Agent 再做段内校验/挑选）：
 // 出口业务节点手动端口 → apply_node 携带候选；入口 forward 手动端口 → 携带候选。
