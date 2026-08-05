@@ -469,3 +469,51 @@ func TestEvaluateEndpointAutoRetryBackoff(t *testing.T) {
 		t.Fatalf("ack 清除退避后应立即补发，实际 %d 条", got)
 	}
 }
+
+// TestReconcileSharedEndpointAggregatesJoinedChains 验证不同 profile 的链加入
+// 同一端点后，reconcile 聚合两链的路由与用户（join 经 store 语义，端点行唯一）。
+func TestReconcileSharedEndpointAggregatesJoinedChains(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	configA := json.RawMessage(`{"protocol":"vless","port":443,"template":{"dest":"a.example.com"}}`)
+	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile-a", configA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configB := json.RawMessage(`{"protocol":"vless","port":443,"template":{"dest":"b.example.com"}}`)
+	joined, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile-b", configB)
+	if err != nil || joined.ID != endpoint.ID {
+		t.Fatalf("join: id=%d err=%v, want endpoint %d", joined.ID, err, endpoint.ID)
+	}
+	chainA := createDirectSharedChain(t, st, serverID, endpoint.ID, "a")
+	chainB := createDirectSharedChain(t, st, serverID, endpoint.ID, "b")
+	userA, _ := st.InsertUser(ctx, "user-a", "global-a", "sub-a", nil)
+	userB, _ := st.InsertUser(ctx, "user-b", "global-b", "sub-b", nil)
+	if _, _, err := st.SetUserChains(ctx, userA, []int64{chainA.ChainID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetUserChains(ctx, userB, []int64{chainB.ChainID}); err != nil {
+		t.Fatal(err)
+	}
+
+	d := New(st, &fakeRequester{online: map[int64]bool{}})
+	if err := d.ReconcileSharedEndpoint(ctx, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
+	payload := latestEndpointPayload(t, st)
+	if len(payload.Routes) != 2 || len(payload.Clients) != 2 {
+		t.Fatalf("payload routes/clients = %d/%d, want 2/2", len(payload.Routes), len(payload.Clients))
+	}
+	seen := map[int64]bool{}
+	for _, route := range payload.Routes {
+		seen[route.ChainID] = true
+	}
+	if !seen[chainA.ChainID] || !seen[chainB.ChainID] {
+		t.Fatalf("routes missing chains: %+v", seen)
+	}
+}
