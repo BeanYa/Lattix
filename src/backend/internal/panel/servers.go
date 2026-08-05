@@ -849,6 +849,96 @@ func (s *Server) handleCleanupXray(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// handleRebuildXray 处理 POST /api/server/rebuild-xray（重建 xray 配置，
+// §docs/rebuild-xray-config-design.md）：按当前生效配置（活跃节点 + 链路/共享端点）
+// 重新生成 xray.json。服务器须在线；节点规格与期望集由面板从 DB 计算，
+// 同步等待 agent 重建/回滚回执（90s 超时，含停服/重启）。
+func (s *Server) handleRebuildXray(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ServerID int64 `json:"server_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	id := req.ServerID
+	if id <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid server id")
+		return
+	}
+	srv, err := s.st.ServerByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "服务器不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !s.req.IsOnline(id) {
+		writeError(w, http.StatusConflict, "服务器未连接，无法重建")
+		return
+	}
+	nodes, err := s.st.ListNodes(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	payload := shared.RebuildXrayPayload{}
+	for _, n := range nodes {
+		if n.ServerID != id || n.Status != store.NodeStatusActive {
+			continue
+		}
+		var vc shared.VirtualConfig
+		if err := json.Unmarshal(n.ConfigTemplate, &vc); err != nil {
+			continue // 模板损坏的节点跳过（异常留在 nodes 表）
+		}
+		uuids, err := s.st.NodeUserUUIDs(r.Context(), n.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		spec := shared.ApplyNodePayload{
+			NodeID: n.ID, Config: vc, UserUUIDs: uuids, DestCandidates: destCandidates,
+		}
+		if ranges, err := shared.ParsePortRanges(srv.AllowedPorts); err == nil && len(ranges) > 0 {
+			spec.PortCandidates = shared.ListenCandidates(ranges)
+		}
+		payload.Nodes = append(payload.Nodes, spec)
+	}
+	tags, pieces, err := s.st.ExpectedXrayState(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// 期望 inbound 集合剔除本次未下发的节点 tag（非活跃或模板损坏），
+	// 否则 agent 自检会因缺失而误判失败。
+	dispatched := map[string]bool{}
+	for _, spec := range payload.Nodes {
+		dispatched[shared.NodeTag(spec.NodeID)] = true
+	}
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, "node_") && !dispatched[tag] {
+			continue
+		}
+		payload.ExpectedInboundTags = append(payload.ExpectedInboundTags, tag)
+	}
+	payload.ExpectedPieces = pieces
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	result, err := s.disp.RebuildXraySync(ctx, id, payload)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	sid := id
+	s.audit(r, "server.rebuild_xray", &sid, nil, map[string]any{
+		"nodes": len(payload.Nodes), "inbounds": len(result.RebuiltInbounds),
+		"pieces": len(result.RebuiltPieces), "rolled_back": result.RolledBack,
+	})
+	writeJSON(w, http.StatusOK, result)
+}
+
 // installCommand 通过仓库根安装入口安装 Agent。Release 面板显式钉住自身版本；
 // dev 构建省略版本，由入口解析 latest。xray 版本由 Agent 安装脚本默认解析 latest。
 func (s *Server) installCommand(base, token string) string {

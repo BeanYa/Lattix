@@ -287,6 +287,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/server/cleanup-xray",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id", "dry_run"}},
 		s.handleCleanupXray)
+	s.registerRPC(mux, http.MethodPost, "/api/server/rebuild-xray",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id"}},
+		s.handleRebuildXray)
 	s.registerRPC(mux, http.MethodPost, "/api/server/upgrade-xray",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id", "version"}},
 		s.handleUpgradeXray)
