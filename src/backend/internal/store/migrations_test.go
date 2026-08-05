@@ -350,6 +350,31 @@ func TestMigrateLegacyPreservesSubToken(t *testing.T) {
 	if token != "legacy-token-1" {
 		t.Fatalf("迁移后 sub_token = %q, want legacy-token-1", token)
 	}
+	// 迁移后 6 张分组新表全部存在。
+	rows, err := st.db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	tables := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		tables[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"link_groups", "link_group_chains", "link_group_external_subscriptions",
+		"user_groups", "user_group_members", "user_group_links",
+	} {
+		if !tables[want] {
+			t.Fatalf("迁移后缺少分组表 %s", want)
+		}
+	}
 }
 
 func assertColumns(t *testing.T, db *sql.DB, table string, expected ...string) {
