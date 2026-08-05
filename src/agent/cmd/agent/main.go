@@ -750,6 +750,21 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		replyResult(sc, env, shared.ApplyResultPayload{Cleanup: result}, err)
 
+	case shared.TypeRebuildXray:
+		var p shared.RebuildXrayPayload
+		if !parseData(sc, env, &p) {
+			return
+		}
+		log.Printf("xray.rebuild request_id=%s nodes=%d expected_inbounds=%d expected_pieces=%d",
+			env.RequestID, len(p.Nodes), len(p.ExpectedInboundTags), len(p.ExpectedPieces))
+		result, err := mgr.RebuildXray(p)
+		if err != nil {
+			log.Printf("xray.rebuild failed request_id=%s: %v", env.RequestID, err)
+		} else {
+			persistChainPieces(statePath, st, mgr)
+		}
+		replyResult(sc, env, shared.ApplyResultPayload{Rebuild: result}, err)
+
 	case shared.TypeRemoveChainHop:
 		var p shared.RemoveChainHopPayload
 		if !parseData(sc, env, &p) {
