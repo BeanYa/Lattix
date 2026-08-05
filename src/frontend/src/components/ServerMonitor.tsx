@@ -11,6 +11,7 @@ import {
   Maximize2Icon,
   PencilIcon,
   RefreshCwIcon,
+  RotateCcwIcon,
   RotateCcwKeyIcon,
   ServerCogIcon,
   SparklesIcon,
@@ -394,7 +395,7 @@ function ServerActions({
           ) : null}
           {isServerOnline(server) ? (
             <DropdownMenuItem onClick={() => onRebuildXray(server)}>
-              <RefreshCwIcon />
+              <RotateCcwIcon />
               重建 Xray 配置
             </DropdownMenuItem>
           ) : null}
