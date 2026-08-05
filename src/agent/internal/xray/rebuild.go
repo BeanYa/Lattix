@@ -57,7 +57,7 @@ func (m *Manager) rebuildInbound(tag string, vc shared.VirtualConfig, userUUIDs,
 	port, _, _ := extractPrevInbound(prev)
 	if port == 0 {
 		var err error
-		if port, err = m.pickPort(vc.Port, portCandidates); err != nil {
+		if port, err = m.pickPort(vc.Port, portCandidates, tag); err != nil {
 			return nil, nil, err
 		}
 	}
