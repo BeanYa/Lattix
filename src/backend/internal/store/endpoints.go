@@ -63,9 +63,11 @@ func (s *Store) SharedEndpointByID(ctx context.Context, id int64) (*SharedEndpoi
 	return endpoint, err
 }
 
-// EnsureSharedEndpoint reuses a compatible managed listener. A selected port
-// occupied by a different managed profile is a conflict; an unmanaged OS
-// listener is detected later by the Agent's bind probe.
+// EnsureSharedEndpoint returns the shared listener for a server/port pair:
+// an existing VLESS listener on the port is joined regardless of profile
+// (entry params come from the first claimant); a listener of a different
+// protocol is a conflict; an unmanaged OS listener is detected later by the
+// Agent's bind probe.
 func (s *Store) EnsureSharedEndpoint(ctx context.Context, serverID int64, protocol string, port int,
 	profileHash string, config json.RawMessage) (*SharedEndpoint, bool, error) {
 	if serverID <= 0 || profileHash == "" || !json.Valid(config) {
@@ -83,7 +85,7 @@ func (s *Store) EnsureSharedEndpoint(ctx context.Context, serverID int64, protoc
 			if err != nil {
 				return nil, false, err
 			}
-			if endpoint.ProfileHash != profileHash || endpoint.Protocol != protocol {
+			if endpoint.Protocol != protocol {
 				return nil, false, ErrEndpointConflict
 			}
 			return endpoint, false, nil
@@ -426,6 +428,15 @@ func (s *Store) ChainIDsByEndpoint(ctx context.Context, endpointID int64) ([]int
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// EndpointChainCount 返回引用端点的未删链数量（entry_shared 聚合用；
+// 不沿用 ChainIDsByEndpoint——它只统计 active/degraded 链）。
+func (s *Store) EndpointChainCount(ctx context.Context, endpointID int64) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM chains WHERE endpoint_id=? AND deleted_at IS NULL`, endpointID).Scan(&count)
+	return count, err
 }
 
 func (s *Store) SharedEndpointIDsForAssignments(assignments ...[]UserChainAssignment) []int64 {

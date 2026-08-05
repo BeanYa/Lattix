@@ -27,8 +27,13 @@ func TestSharedEndpointReuseAndAssignmentIdentity(t *testing.T) {
 	if err != nil || created || reused.ID != endpoint.ID {
 		t.Fatalf("reuse endpoint: got=%+v created=%v err=%v", reused, created, err)
 	}
-	if _, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile-b", config); !errors.Is(err, ErrEndpointConflict) {
-		t.Fatalf("incompatible endpoint error = %v", err)
+	// 不同 profile 同端口：加入既有监听（不再冲突）；protocol 不同才冲突。
+	joined, created, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile-b", config)
+	if err != nil || created || joined.ID != endpoint.ID {
+		t.Fatalf("join incompatible profile: id=%d created=%v err=%v", joined.ID, created, err)
+	}
+	if _, _, err := st.EnsureSharedEndpoint(ctx, serverID, "socks", 443, "profile-b", config); !errors.Is(err, ErrEndpointConflict) {
+		t.Fatalf("different protocol must conflict, got %v", err)
 	}
 	second, created, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 8443, "profile-a", config)
 	if err != nil || !created || second.ID == endpoint.ID || second.Port != 8443 {
@@ -226,6 +231,69 @@ func TestActiveEndpointAssignmentsIncludesGroupUsers(t *testing.T) {
 	assignments, err = st.ActiveEndpointAssignments(ctx, endpointA)
 	if err != nil || len(assignments) != 1 {
 		t.Fatalf("after direct assign, endpoint A = %+v err %v", assignments, err)
+	}
+}
+
+func TestEnsureSharedEndpointJoinsWithoutDuplicateRows(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", MachineTypeDirect, "", "", "US", "")
+	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
+	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile-a", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 同端口多行遗留（并发竞态）：ORDER BY id 取首行加入，不新增行。
+	other, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile-b", config)
+	if err != nil || other.ID != endpoint.ID {
+		t.Fatalf("join = %+v err=%v, want endpoint %d", other, err, endpoint.ID)
+	}
+	var count int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM shared_endpoints WHERE server_id=? AND port=443`, serverID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("shared_endpoints rows for port 443 = %d, want 1", count)
+	}
+}
+
+func TestEndpointChainCount(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", MachineTypeDirect, "", "", "US", "")
+	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
+	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := st.EndpointChainCount(ctx, endpoint.ID); err != nil || count != 0 {
+		t.Fatalf("count before chains = %d err=%v", count, err)
+	}
+	deployment, err := st.CreateInitialChainDeployment(ctx, InitialChainDeployment{
+		Name: "a", ServiceServerID: serverID, ServiceProtocol: shared.ProtocolVLESS,
+		ServiceConfig: config, EndpointID: endpoint.ID, ServiceUUID: "svc-a",
+		TrafficMultiplierMilli: 1000,
+		Hops:                   []InitialChainHop{{ServerID: serverID, Role: HopRoleExit}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := st.EndpointChainCount(ctx, endpoint.ID); err != nil || count != 1 {
+		t.Fatalf("count after one chain = %d err=%v", count, err)
+	}
+	if err := st.DeleteChain(ctx, deployment.ChainID); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := st.EndpointChainCount(ctx, endpoint.ID); err != nil || count != 0 {
+		t.Fatalf("count after delete = %d err=%v", count, err)
 	}
 }
 
