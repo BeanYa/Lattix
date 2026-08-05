@@ -152,6 +152,43 @@ func TestLinkGroupRPCValidationAndList(t *testing.T) {
 	}
 }
 
+// TestGroupInputDedupesDuplicateIDs 重复的 chain_ids / external_subscriptions /
+// user_ids / link_group_ids 在入参校验时去重（保持首次出现），不再触发主键冲突 500。
+func TestGroupInputDedupesDuplicateIDs(t *testing.T) {
+	ctx := context.Background()
+	st, chainA, _, subID, u1, _ := groupsFixture(t)
+	srv := &Server{st: st}
+	code, _ := postGroup(t, srv, srv.handleCreateLinkGroup, "/api/link-group/create",
+		`{"name":"去重组","chain_ids":[`+itoa(chainA)+`,`+itoa(chainA)+`],"external_subscriptions":[{"subscription_id":`+itoa(subID)+`,"mode":"stack"},{"subscription_id":`+itoa(subID)+`,"mode":"merge"}]}`)
+	if code != "OK" {
+		t.Fatalf("重复 id 应去重成功, code = %q", code)
+	}
+	groups, err := st.ListLinkGroups(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 || groups[0].ChainCount != 1 || groups[0].ExtSubCount != 1 ||
+		groups[0].ExternalSubscriptions[0].Mode != "stack" {
+		t.Fatalf("链路分组应去重存储（保留首次出现）: %+v", groups)
+	}
+	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, _ = postGroup(t, srv, srv.handleCreateUserGroup, "/api/user-group/create",
+		`{"name":"去重人组","user_ids":[`+itoa(u1)+`,`+itoa(u1)+`],"link_group_ids":[`+itoa(lgID)+`,`+itoa(lgID)+`]}`)
+	if code != "OK" {
+		t.Fatalf("重复用户 id 应去重成功, code = %q", code)
+	}
+	ugroups, err := st.ListUserGroups(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ugroups) != 1 || ugroups[0].MemberCount != 1 || ugroups[0].LinkGroupCount != 1 {
+		t.Fatalf("用户分组应去重存储: %+v", ugroups)
+	}
+}
+
 func TestUserGroupRPCAndUserDTOGroups(t *testing.T) {
 	ctx := context.Background()
 	st, chainA, _, _, u1, u2 := groupsFixture(t)

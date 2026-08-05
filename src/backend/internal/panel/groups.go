@@ -25,6 +25,7 @@ type userGroupInput struct {
 }
 
 // validateLinkGroup 校验链路分组输入：名称非空唯一、链路存在且带共享入口、外部订阅存在且模式合法。
+// chain_ids 与 external_subscriptions 先去重（保留首次出现），重复 id 不再触发主键冲突 500。
 func (s *Server) validateLinkGroup(ctx context.Context, input linkGroupInput, isCreate bool) (string, []int64, []store.LinkGroupExternalSubscription, error) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
@@ -39,10 +40,20 @@ func (s *Server) validateLinkGroup(ctx context.Context, input linkGroupInput, is
 	} else if taken {
 		return "", nil, nil, errors.New("分组名称已存在")
 	}
-	if err := s.st.ValidateAssignableChains(ctx, input.ChainIDs); err != nil {
+	chainIDs := dedupeInt64s(input.ChainIDs)
+	if err := s.st.ValidateAssignableChains(ctx, chainIDs); err != nil {
 		return "", nil, nil, err
 	}
-	items, err := s.validateExternalSubscriptions(ctx, input.ExternalSubscriptions)
+	seenSubs := map[int64]bool{}
+	dedupedSubs := make([]userExternalSubscriptionInput, 0, len(input.ExternalSubscriptions))
+	for _, item := range input.ExternalSubscriptions {
+		if seenSubs[item.SubscriptionID] {
+			continue
+		}
+		seenSubs[item.SubscriptionID] = true
+		dedupedSubs = append(dedupedSubs, item)
+	}
+	items, err := s.validateExternalSubscriptions(ctx, dedupedSubs)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -52,10 +63,11 @@ func (s *Server) validateLinkGroup(ctx context.Context, input linkGroupInput, is
 			SubscriptionID: item.SubscriptionID, Mode: item.Mode,
 		})
 	}
-	return name, input.ChainIDs, extSubs, nil
+	return name, chainIDs, extSubs, nil
 }
 
 // validateUserGroup 校验用户分组输入：名称非空唯一、用户与链路分组存在。
+// user_ids 与 link_group_ids 先去重（保留首次出现），重复 id 不再触发主键冲突 500。
 func (s *Server) validateUserGroup(ctx context.Context, input userGroupInput, isCreate bool) (string, []int64, []int64, error) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
@@ -70,7 +82,8 @@ func (s *Server) validateUserGroup(ctx context.Context, input userGroupInput, is
 	} else if taken {
 		return "", nil, nil, errors.New("分组名称已存在")
 	}
-	for _, userID := range input.UserIDs {
+	userIDs := dedupeInt64s(input.UserIDs)
+	for _, userID := range userIDs {
 		if _, err := s.st.UserByID(ctx, userID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return "", nil, nil, errors.New("用户不存在")
@@ -78,7 +91,8 @@ func (s *Server) validateUserGroup(ctx context.Context, input userGroupInput, is
 			return "", nil, nil, err
 		}
 	}
-	for _, linkGroupID := range input.LinkGroupIDs {
+	linkGroupIDs := dedupeInt64s(input.LinkGroupIDs)
+	for _, linkGroupID := range linkGroupIDs {
 		if _, err := s.st.LinkGroupByID(ctx, linkGroupID); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return "", nil, nil, errors.New("链路分组不存在")
@@ -86,7 +100,7 @@ func (s *Server) validateUserGroup(ctx context.Context, input userGroupInput, is
 			return "", nil, nil, err
 		}
 	}
-	return name, input.UserIDs, input.LinkGroupIDs, nil
+	return name, userIDs, linkGroupIDs, nil
 }
 
 func (s *Server) handleListLinkGroups(w http.ResponseWriter, r *http.Request) {
@@ -358,12 +372,17 @@ func (s *Server) endpointIDsForLinkGroups(ctx context.Context, linkGroupIDs []in
 
 // mergeInt64s 返回 a ∪ b（去重，保持首次出现顺序）。
 func mergeInt64s(a, b []int64) []int64 {
+	return dedupeInt64s(append(append([]int64{}, a...), b...))
+}
+
+// dedupeInt64s 去除重复 id，保留首次出现顺序。
+func dedupeInt64s(ids []int64) []int64 {
 	seen := map[int64]bool{}
 	var out []int64
-	for _, v := range append(append([]int64{}, a...), b...) {
-		if !seen[v] {
-			seen[v] = true
-			out = append(out, v)
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
 		}
 	}
 	return out
