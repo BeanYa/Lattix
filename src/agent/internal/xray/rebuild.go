@@ -35,12 +35,10 @@ func extractPrevInbound(raw json.RawMessage) (port int, privateKey, decryption s
 	return ib.Port, ib.StreamSettings.RealitySettings.PrivateKey, ib.Settings.Decryption
 }
 
-// rebuildInbound 以保留模式重渲染一个 node inbound（重建专用，§docs/rebuild-xray-config-design.md）：
-// 端口/私钥/decryption 优先复用 prev（备份）中的当前生效值——占位符预替换后
-// fillTemplate 不再重新生成；prev 缺失时回退 fillTemplate 生成路径。
-// minClientVer 由 fillTemplate 内 pinRealityMinClientVer 兜底注入。
-func (m *Manager) rebuildInbound(tag string, vc shared.VirtualConfig, userUUIDs, destCandidates []string, portCandidates []int, prev json.RawMessage) (json.RawMessage, *shared.RealizedConfig, error) {
-	port, privateKey, decryption := extractPrevInbound(prev)
+// preserveTemplate 把备份中的私钥/decryption 预替换进模板（占位符消失后
+// fillTemplate 不再重新生成）；返回替换后的模板字符串。
+func preserveTemplate(vc shared.VirtualConfig, prev json.RawMessage) string {
+	_, privateKey, decryption := extractPrevInbound(prev)
 	t := string(vc.Template)
 	if privateKey != "" {
 		t = strings.ReplaceAll(t, shared.PlaceholderRealityPrivateKey, privateKey)
@@ -48,15 +46,30 @@ func (m *Manager) rebuildInbound(tag string, vc shared.VirtualConfig, userUUIDs,
 	if decryption != "" {
 		t = strings.ReplaceAll(t, shared.PlaceholderVLessDecryption, decryption)
 	}
+	return t
+}
+
+// rebuildInbound 以保留模式重渲染一个 node inbound（重建专用，§docs/rebuild-xray-config-design.md）：
+// 端口/私钥/decryption 优先复用 prev（备份）中的当前生效值——占位符预替换后
+// fillTemplate 不再重新生成；prev 缺失时回退 fillTemplate 生成路径。
+// minClientVer 由 fillTemplate 内 pinRealityMinClientVer 兜底注入。
+func (m *Manager) rebuildInbound(tag string, vc shared.VirtualConfig, userUUIDs, destCandidates []string, portCandidates []int, prev json.RawMessage) (json.RawMessage, *shared.RealizedConfig, error) {
+	port, _, _ := extractPrevInbound(prev)
 	if port == 0 {
 		var err error
 		if port, err = m.pickPort(vc.Port, portCandidates); err != nil {
 			return nil, nil, err
 		}
 	}
+	return m.renderInbound(tag, vc, userUUIDs, destCandidates, port, prev)
+}
+
+// renderInbound 以指定端口渲染 inbound（保留模式），rebuildInbound 与
+// 同 pass 端口去重共用。
+func (m *Manager) renderInbound(tag string, vc shared.VirtualConfig, userUUIDs, destCandidates []string, port int, prev json.RawMessage) (json.RawMessage, *shared.RealizedConfig, error) {
 	rebuilt := vc
-	rebuilt.Template = json.RawMessage(t)
-	return m.fillTemplate(port, tag, rebuilt, userUUIDs, destCandidates, portCandidates)
+	rebuilt.Template = json.RawMessage(preserveTemplate(vc, prev))
+	return m.fillTemplate(port, tag, rebuilt, userUUIDs, destCandidates, nil)
 }
 
 // rebuildBackupSuffix 是重建前备份文件的缀名（失败回滚源）。
@@ -119,7 +132,10 @@ func (m *Manager) RebuildXray(p shared.RebuildXrayPayload) (*shared.RebuildXrayR
 			m.lastHash = hashBytes(b)
 		}
 		m.drifted = false
-		return result, fmt.Errorf("重建失败：%v（已恢复备份 xray.json 并重启）", cause)
+		if hadPrev {
+			return result, fmt.Errorf("重建失败：%v（已恢复备份 xray.json 并重启）", cause)
+		}
+		return result, fmt.Errorf("重建失败：%v（无原配置，已清理重建配置并重启）", cause)
 	}
 	// 3. 重建候选：骨架 + 重渲染 node inbound（复用备份生效值）+ chain piece 重放。
 	prevByTag := map[string]json.RawMessage{}
@@ -133,14 +149,45 @@ func (m *Manager) RebuildXray(p shared.RebuildXrayPayload) (*shared.RebuildXrayR
 			}
 		}
 	}
+	// 同 pass 端口去重（§docs/rebuild-xray-config-design.md）：pickPort 只看磁盘
+	// 上的旧配置（本次重建结束前不落盘），两个无可用 prev 的节点可能选到同一端口。
+	// 已占用集合 = 备份中全部 inbound 端口（含重放 piece 的端口）+ 本 pass 已分配。
+	usedPorts := map[int]bool{}
+	for _, raw := range prevByTag {
+		usedPorts[inboundPort(raw)] = true
+	}
 	cand := m.skeleton()
 	for _, spec := range p.Nodes {
 		tag := shared.NodeTag(spec.NodeID)
+		prevPort := 0
+		if raw := prevByTag[tag]; raw != nil {
+			prevPort, _, _ = extractPrevInbound(raw)
+		}
 		inbound, _, err := m.rebuildInbound(tag, spec.Config, spec.UserUUIDs,
 			spec.DestCandidates, spec.PortCandidates, prevByTag[tag])
 		if err != nil {
 			return rollback(fmt.Errorf("重建节点 %s 失败: %w", tag, err))
 		}
+		if p := inboundPort(inbound); p != prevPort && usedPorts[p] {
+			// 端口冲突：换用候选段内未占用端口重渲染（无候选节点走
+			// pickPort(0,nil) 的 OS 临时端口，天然不冲突）。
+			next := 0
+			for _, c := range spec.PortCandidates {
+				if usedPorts[c] {
+					continue
+				}
+				next = c
+				break
+			}
+			if next == 0 {
+				return rollback(fmt.Errorf("重建节点 %s 端口冲突且候选段内无空闲端口", tag))
+			}
+			if inbound, _, err = m.renderInbound(tag, spec.Config, spec.UserUUIDs,
+				spec.DestCandidates, next, prevByTag[tag]); err != nil {
+				return rollback(fmt.Errorf("重建节点 %s 失败: %w", tag, err))
+			}
+		}
+		usedPorts[inboundPort(inbound)] = true
 		cand = cand.upsertInbound(tag, inbound)
 	}
 	cand = m.mergePieces(cand)
@@ -284,17 +331,20 @@ func (m *Manager) writeValidated(b []byte) error {
 		return err
 	}
 	tmpPath := tmp.Name()
+	// 任一失败路径（写入/校验/重命名）都清理临时文件；成功重命名后文件已不存在。
+	defer func() {
+		if _, err := os.Stat(tmpPath); err == nil {
+			os.Remove(tmpPath)
+		}
+	}()
 	if _, err := tmp.Write(b); err != nil {
 		tmp.Close()
-		os.Remove(tmpPath)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
 		return err
 	}
 	if out, err := exec.Command(m.bin, "run", "-test", "-config", tmpPath).CombinedOutput(); err != nil {
-		os.Remove(tmpPath)
 		return fmt.Errorf("xray 配置校验失败: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	if err := os.Rename(tmpPath, m.configPath); err != nil {

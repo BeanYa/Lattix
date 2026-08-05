@@ -381,3 +381,101 @@ func TestRebuildXrayNormalizesReplayedPieces(t *testing.T) {
 		t.Fatalf("回执 pieces = %v", result.RebuiltPieces)
 	}
 }
+
+// rebuildDokodemoTemplate 构造 dokodemo-door 模板（无 Reality/dest 探测，
+// 端口占位符 {{PORT}}，测试重建端口逻辑用）。
+func rebuildDokodemoTemplate() shared.VirtualConfig {
+	return shared.VirtualConfig{Template: json.RawMessage(`{
+		"protocol": "dokodemo-door", "listen": "0.0.0.0", "port": "{{PORT}}",
+		"tag": "{{TAG}}", "settings": {"address": "1.1.1.1", "port": 53, "network": "tcp,udp"}
+	}`)}
+}
+
+// TestRebuildXrayPortDedup 验证同 pass 端口去重：无 prev（无备份）的两个节点
+// 带相同候选段时，第二个节点重选段内未占用端口，不冲突不回滚。
+func TestRebuildXrayPortDedup(t *testing.T) {
+	m, _ := newRebuildTestManager(t)
+	candidates := []int{20001, 20002}
+	payload := rebuildPayload(
+		shared.ApplyNodePayload{NodeID: 1, Config: rebuildDokodemoTemplate(), PortCandidates: candidates},
+		shared.ApplyNodePayload{NodeID: 2, Config: rebuildDokodemoTemplate(), PortCandidates: candidates},
+	)
+
+	result, err := m.RebuildXray(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RolledBack {
+		t.Fatal("不应回滚")
+	}
+	if len(result.RebuiltInbounds) != 2 {
+		t.Fatalf("重建 inbound = %+v", result.RebuiltInbounds)
+	}
+	ports := map[int]bool{}
+	for _, ib := range result.RebuiltInbounds {
+		if ib.Port != 20001 && ib.Port != 20002 {
+			t.Fatalf("端口 %d 不在候选段内: %+v", ib.Port, result.RebuiltInbounds)
+		}
+		ports[ib.Port] = true
+	}
+	if len(ports) != 2 {
+		t.Fatalf("两个节点端口应不同: %+v", result.RebuiltInbounds)
+	}
+}
+
+// TestRebuildXrayNoPreviousConfig 验证无原配置（首次重建，无备份）：
+// 重建成功、不产生 .rebuild.bak、配置包含重建 inbound。
+func TestRebuildXrayNoPreviousConfig(t *testing.T) {
+	m, _ := newRebuildTestManager(t)
+	payload := rebuildPayload(shared.ApplyNodePayload{NodeID: 1, Config: shared.VirtualConfig{
+		Port: 12346,
+		Template: json.RawMessage(`{
+			"protocol": "dokodemo-door", "listen": "0.0.0.0", "port": 12346,
+			"tag": "{{TAG}}", "settings": {"address": "1.1.1.1", "port": 53, "network": "tcp,udp"}
+		}`),
+	}})
+
+	result, err := m.RebuildXray(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RolledBack {
+		t.Fatal("不应回滚")
+	}
+	if _, err := os.Stat(m.configPath + rebuildBackupSuffix); !os.IsNotExist(err) {
+		t.Fatalf("无原配置不应产生备份文件")
+	}
+	s := readRebuildFile(t, m)
+	if !jsonContains(s, `"tag": "node_1"`) || !jsonContains(s, `"port": 12346`) {
+		t.Fatalf("重建配置缺少 node_1 inbound: %s", s)
+	}
+	if len(result.RebuiltInbounds) != 1 || result.RebuiltInbounds[0].Port != 12346 {
+		t.Fatalf("重建 inbound 摘要 = %+v", result.RebuiltInbounds)
+	}
+}
+
+// TestRebuildXrayBackupFailure 验证备份写入失败：恢复重启 xray、报错且
+// RolledBack=false（未改动任何配置）。用目录占位 .rebuild.bak 使 WriteFile 失败。
+func TestRebuildXrayBackupFailure(t *testing.T) {
+	m, runner := newRebuildTestManager(t)
+	seedRebuildConfig(t, m, `{"log":{"loglevel":"warning"},"inbounds":[{"tag":"node_1","port":12345,"protocol":"dokodemo-door"}],"outbounds":[{"protocol":"freedom","tag":"direct"}]}`)
+	if err := os.Mkdir(m.configPath+rebuildBackupSuffix, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := m.RebuildXray(rebuildPayload(shared.ApplyNodePayload{
+		NodeID: 1, Config: rebuildDokodemoTemplate(),
+	}))
+	if err == nil {
+		t.Fatal("备份失败应返回错误")
+	}
+	if result.RolledBack {
+		t.Fatal("备份失败未改动任何配置，不应回滚")
+	}
+	if runner.stops != 1 || runner.restarts != 1 {
+		t.Fatalf("stop=%d restart=%d，期望各 1 次（恢复重启）", runner.stops, runner.restarts)
+	}
+	if got := readRebuildFile(t, m); !jsonContains(got, `"port":12345`) {
+		t.Fatalf("原配置应保持不变: %s", got)
+	}
+}
