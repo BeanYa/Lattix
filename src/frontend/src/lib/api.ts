@@ -20,6 +20,8 @@ import type {
   CreateNodeRequest,
   CreateServerResponse,
   DashboardStats,
+  LinkGroup,
+  LinkGroupInput,
   LogSeverity,
   MachineType,
   Provider,
@@ -52,6 +54,8 @@ import type {
   ExchangeRateSettings,
   SubUser,
   UpdateSettingsRequest,
+  UserGroup,
+  UserGroupInput,
   XrayNode,
 } from './types'
 
@@ -316,6 +320,14 @@ export const api = {
     requester.post<SubscriptionTemplate[]>('/api/subscription/template/refresh', { id }),
   externalSubscriptions: (options?: RequestOptions) =>
     requester.get<ExternalSubscription[]>('/api/external-subscription/list', undefined, options),
+  linkGroups: (options?: RequestOptions) => requester.get<LinkGroup[]>('/api/link-group/list', undefined, options),
+  linkGroupCreate: (input: LinkGroupInput) => requester.post<{ id: number }>('/api/link-group/create', input),
+  linkGroupUpdate: (input: LinkGroupInput) => requester.post<{ id: number }>('/api/link-group/update', input),
+  linkGroupDelete: (id: number) => requester.post<null>('/api/link-group/delete', { id }),
+  userGroups: (options?: RequestOptions) => requester.get<UserGroup[]>('/api/user-group/list', undefined, options),
+  userGroupCreate: (input: UserGroupInput) => requester.post<{ id: number }>('/api/user-group/create', input),
+  userGroupUpdate: (input: UserGroupInput) => requester.post<{ id: number }>('/api/user-group/update', input),
+  userGroupDelete: (id: number) => requester.post<null>('/api/user-group/delete', { id }),
   externalSubscriptionChains: (id: number, options?: RequestOptions) =>
     requester.get<ExternalChain[]>('/api/external-subscription/chains', { id }, options),
   createExternalSubscription: (body: {

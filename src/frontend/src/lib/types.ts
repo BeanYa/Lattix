@@ -543,6 +543,7 @@ export interface SubUser {
   sub_links_url: string
   node_ids: number[]
   chain_ids: number[]
+  user_group_ids: number[]
   chain_assignments: Array<{
     id: number
     chain_id: number
@@ -1082,4 +1083,44 @@ export interface ExternalChain {
   config: unknown
   config_sha256: string
   created_at: string
+}
+
+export interface LinkGroupExternalSubscription {
+  subscription_id: number
+  mode: ExternalSubscriptionMode
+}
+
+export interface LinkGroup {
+  id: number
+  name: string
+  chain_ids: number[]
+  external_subscriptions: LinkGroupExternalSubscription[]
+  chain_count: number
+  external_subscription_count: number
+  user_group_names: string[]
+  created_at: string
+}
+
+export interface LinkGroupInput {
+  id?: number
+  name: string
+  chain_ids: number[]
+  external_subscriptions: { subscription_id: number; mode: ExternalSubscriptionMode }[]
+}
+
+export interface UserGroup {
+  id: number
+  name: string
+  user_ids: number[]
+  link_group_ids: number[]
+  member_count: number
+  link_group_count: number
+  created_at: string
+}
+
+export interface UserGroupInput {
+  id?: number
+  name: string
+  user_ids: number[]
+  link_group_ids: number[]
 }
