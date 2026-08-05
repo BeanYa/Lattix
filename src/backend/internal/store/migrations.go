@@ -11,7 +11,7 @@ import (
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
-const schemaVersion = 11
+const schemaVersion = 12
 
 type columnMigration struct {
 	name       string
