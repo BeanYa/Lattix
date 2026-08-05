@@ -383,10 +383,18 @@ type clashConfig struct {
 const proxyGroupName = "PROXY"
 
 // assignedActiveNodes 返回订阅用户及其分配到的 active 节点（§16 公共查询）。
+// 分组用户的直连 user_nodes 被遮蔽（订阅 = 分组派生链路 + 外部订阅节点），返回空列表。
 func (s *Server) assignedActiveNodes(r *http.Request) (*store.User, []store.Node, error) {
 	user, err := s.st.UserBySubToken(r.Context(), r.PathValue("token"))
 	if err != nil {
 		return nil, nil, err
+	}
+	groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), user.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(groupIDs) > 0 {
+		return user, []store.Node{}, nil
 	}
 	nodes, err := s.st.ListNodes(r.Context())
 	if err != nil {

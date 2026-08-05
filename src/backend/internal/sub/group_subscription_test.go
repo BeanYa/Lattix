@@ -79,6 +79,47 @@ func TestSubscriptionItemsUseGroups(t *testing.T) {
 		t.Fatalf("outside items = %d, want 1: %+v", len(outsideItems), outsideItems)
 	}
 
+	// 直连节点遮蔽：给 member 直接分配一个普通 vless 节点（非链出口节点，避免被
+	// exitIDs 过滤使断言空洞），分组用户订阅仍为 4 条（直连节点不出现）；
+	// 非分组用户同一节点照常可见。
+	directServer, _ := st.CreateServer(ctx, "direct-srv", "direct.example.com", "tok-d", store.MachineTypeDirect, "", "", "US", "")
+	directConfig, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Network: shared.NetworkTCP, Template: json.RawMessage(`{}`)})
+	directNode, _ := st.InsertNode(ctx, "direct-node", directServer, shared.ProtocolVLESS, nil, directConfig)
+	if err := st.SetNodeActive(ctx, directNode, []byte(`{"port":20003,"network":"tcp"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetUserNodes(ctx, member, []int64{directNode}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetUserNodes(ctx, outside, []int64{directNode}); err != nil {
+		t.Fatal(err)
+	}
+	memberItems, _, err = New(st, nil, nil).itemsForUser(ctx, &store.User{ID: member, UUID: "00000000-0000-0000-0000-0000000000aa"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(memberItems) != 4 {
+		t.Fatalf("分组用户直连节点应被遮蔽: items = %d, want 4: %+v", len(memberItems), memberItems)
+	}
+	for _, item := range memberItems {
+		if item.node.ID == directNode {
+			t.Fatalf("分组用户订阅不应含直连节点: %+v", item.node)
+		}
+	}
+	outsideItems, _, err = New(st, nil, nil).itemsForUser(ctx, &store.User{ID: outside, UUID: "00000000-0000-0000-0000-0000000000bb"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawDirect bool
+	for _, item := range outsideItems {
+		if item.node.ID == directNode {
+			sawDirect = true
+		}
+	}
+	if !sawDirect {
+		t.Fatalf("非分组用户应能看到直连节点: %+v", outsideItems)
+	}
+
 	// 原子性：从链路分组移除外部订阅 → 分组用户订阅外部节点消失
 	if err := st.UpdateLinkGroup(ctx, lgID, "普通组", []int64{chainA, chainB}, nil); err != nil {
 		t.Fatal(err)

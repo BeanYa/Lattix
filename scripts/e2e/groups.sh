@@ -140,11 +140,20 @@ echo ">> u1 订阅 = 1 链 + 2 外部节点 = 3；u2（无分配）订阅 = 0"
 [[ "$(sub_count "$TOK1")" == "3" ]] && echo "OK: 组用户订阅 3 条" || { echo "FAIL: u1 订阅数 $(sub_count "$TOK1")"; exit 1; }
 [[ "$(sub_count "$TOK2")" == "0" ]] && echo "OK: 非组用户不受影响" || { echo "FAIL: u2 订阅数 $(sub_count "$TOK2")"; exit 1; }
 
-echo ">> 直接分配被遮蔽：给 u1 直接分配链 + 外部订阅，订阅不变"
-rpc_data POST /api/user/set-nodes "{\"user_id\":$UID1,\"node_ids\":[]}" >/dev/null
+echo ">> 直接分配被遮蔽：给 u1 直接分配真实节点（A 机新建 vless）+ 外部订阅，订阅不变"
+DNODE="$(py "d['id']" "$(rpc_data POST /api/node/create "{\"server_id\":$AID,\"protocol\":\"vless\"}")")"
+NODE_LIST="$(rpc_data GET /api/node/list)"
+for _ in $(seq 1 30); do
+    [[ "$(py "next(n['status'] for n in d if n['id']==$DNODE)" "$NODE_LIST")" == "active" ]] && break
+    NODE_LIST="$(rpc_data GET /api/node/list)"
+    sleep 1
+done
+[[ "$(py "next(n['status'] for n in d if n['id']==$DNODE)" "$NODE_LIST")" == "active" ]] \
+    || { echo "FAIL: 直连节点未 active"; exit 1; }
+rpc_data POST /api/user/set-nodes "{\"user_id\":$UID1,\"node_ids\":[$DNODE]}" >/dev/null
 rpc_data POST /api/user/set-external-subscriptions "{\"user_id\":$UID1,\"items\":[{\"subscription_id\":$EXTID,\"mode\":\"stack\"}]}" >/dev/null
 sleep 2
-[[ "$(sub_count "$TOK1")" == "3" ]] && echo "OK: 直接分配被遮蔽" || { echo "FAIL: 遮蔽失败，订阅数 $(sub_count "$TOK1")"; exit 1; }
+[[ "$(sub_count "$TOK1")" == "3" ]] && echo "OK: 直接节点 + 直接外部订阅均被遮蔽" || { echo "FAIL: 遮蔽失败，订阅数 $(sub_count "$TOK1")"; exit 1; }
 
 echo ">> 原子性：链路分组移除外部订阅 → u1 外部节点消失（2 条链条目→1 条）"
 rpc_data POST /api/link-group/update "{\"id\":$LGID,\"name\":\"旗舰线路\",\"chain_ids\":[$CH1],\"external_subscriptions\":[]}" >/dev/null
@@ -166,12 +175,12 @@ rpc_data POST /api/external-subscription/sync "{\"id\":$EXTID}" >/dev/null
 sleep 2
 [[ "$(sub_count "$TOK1")" == "3" ]] && echo "OK: 外部订阅内容还原同步后分组用户订阅恢复（2→3）" || { echo "FAIL: 内容还原同步后订阅数 $(sub_count "$TOK1")"; exit 1; }
 
-echo ">> 清空 u1 直接分配（遮蔽测试遗留的外部订阅）→ 删除用户分组 → 恢复直接分配（空 → 订阅 0）"
+echo ">> 清空 u1 直接外部订阅（保留直连节点）→ 删除用户分组 → 恢复直接分配（1 个直连节点）"
 rpc_data POST /api/user/set-external-subscriptions "{\"user_id\":$UID1,\"items\":[]}" >/dev/null
 sleep 1
 rpc_data POST /api/user-group/delete "{\"id\":$UGID}" >/dev/null
 sleep 2
-[[ "$(sub_count "$TOK1")" == "0" ]] && echo "OK: 删除用户分组后恢复直接分配" || { echo "FAIL: 删除分组后订阅数 $(sub_count "$TOK1")"; exit 1; }
+[[ "$(sub_count "$TOK1")" == "1" ]] && echo "OK: 删除用户分组后恢复直接分配（1 个直连节点）" || { echo "FAIL: 删除分组后订阅数 $(sub_count "$TOK1")"; exit 1; }
 
 echo ">> 用户硬约束：全部操作后订阅地址不变（sub_token 原样）"
 TOK1_LATER="$(rpc_data GET /api/user/list | python3 -c "import json,sys; users=json.load(sys.stdin); print(next(u['sub_token'] for u in users if u['id']==$UID1))")"
