@@ -80,8 +80,12 @@ func (s *Store) UpdateLinkGroup(ctx context.Context, id int64, name string, chai
 		return fmt.Errorf("begin update link group: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE link_groups SET name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, name, id); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE link_groups SET name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, name, id)
+	if err != nil {
 		return fmt.Errorf("update link group name: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
 	}
 	if err := insertLinkGroupMembers(ctx, tx, id, chainIDs, extSubs); err != nil {
 		return err
@@ -285,8 +289,12 @@ func (s *Store) UpdateUserGroup(ctx context.Context, id int64, name string, user
 		return fmt.Errorf("begin update user group: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE user_groups SET name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, name, id); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE user_groups SET name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, name, id)
+	if err != nil {
 		return fmt.Errorf("update user group name: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
 	}
 	if err := insertUserGroupMembers(ctx, tx, id, userIDs, linkGroupIDs); err != nil {
 		return err

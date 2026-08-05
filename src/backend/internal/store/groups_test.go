@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -108,6 +109,22 @@ func TestLinkGroupCRUD(t *testing.T) {
 	if len(leftover) != 0 {
 		t.Fatalf("删除后应无残留, got %+v", leftover)
 	}
+	var chains, subs int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM link_group_chains`).Scan(&chains); err != nil || chains != 0 {
+		t.Fatalf("删除后 link_group_chains 应清空, count=%d err=%v", chains, err)
+	}
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM link_group_external_subscriptions`).Scan(&subs); err != nil || subs != 0 {
+		t.Fatalf("删除后 link_group_external_subscriptions 应清空, count=%d err=%v", subs, err)
+	}
+	if err := st.UpdateLinkGroup(ctx, g.ID, "幽灵组", []int64{chainA}, nil); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("更新已删除分组应返回 ErrNotFound, got %v", err)
+	}
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM link_group_chains`).Scan(&chains); err != nil || chains != 0 {
+		t.Fatalf("幽灵更新不应写入链路行, count=%d err=%v", chains, err)
+	}
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM link_group_external_subscriptions`).Scan(&subs); err != nil || subs != 0 {
+		t.Fatalf("幽灵更新不应写入订阅行, count=%d err=%v", subs, err)
+	}
 }
 
 func TestUserGroupCRUD(t *testing.T) {
@@ -140,6 +157,20 @@ func TestUserGroupCRUD(t *testing.T) {
 		len(ug.UserIDs) != 2 || len(ug.LinkGroupIDs) != 1 || ug.LinkGroupIDs[0] != lgID {
 		t.Fatalf("user group = %+v", ug)
 	}
+	if err := st.DeleteLinkGroup(ctx, lgID); err != nil {
+		t.Fatal(err)
+	}
+	var ugLinks int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM user_group_links`).Scan(&ugLinks); err != nil || ugLinks != 0 {
+		t.Fatalf("删除链路分组后 user_group_links 应清空, count=%d err=%v", ugLinks, err)
+	}
+	if _, err := st.UserGroupByID(ctx, ugID); err != nil {
+		t.Fatalf("删除链路分组不应影响用户分组本身: %v", err)
+	}
+	groups, err = st.ListUserGroups(ctx)
+	if err != nil || len(groups) != 1 || groups[0].LinkGroupCount != 0 {
+		t.Fatalf("删除链路分组后用户分组 LinkGroupCount 应为 0, groups=%+v err=%v", groups, err)
+	}
 	if err := st.UpdateUserGroup(ctx, ugID, "黄金会员", []int64{u1}, []int64{}); err != nil {
 		t.Fatal(err)
 	}
@@ -152,6 +183,16 @@ func TestUserGroupCRUD(t *testing.T) {
 	}
 	if _, err := st.UserGroupByID(ctx, ugID); err == nil {
 		t.Fatal("删除后应查不到")
+	}
+	if err := st.UpdateUserGroup(ctx, ugID, "幽灵组", []int64{u1}, []int64{lgID}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("更新已删除用户分组应返回 ErrNotFound, got %v", err)
+	}
+	var ugMembers int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM user_group_members`).Scan(&ugMembers); err != nil || ugMembers != 0 {
+		t.Fatalf("幽灵更新不应写入成员行, count=%d err=%v", ugMembers, err)
+	}
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM user_group_links`).Scan(&ugLinks); err != nil || ugLinks != 0 {
+		t.Fatalf("幽灵更新不应写入关联行, count=%d err=%v", ugLinks, err)
 	}
 }
 
