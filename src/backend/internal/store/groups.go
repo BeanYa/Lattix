@@ -178,8 +178,12 @@ func (s *Store) ListLinkGroups(ctx context.Context) ([]LinkGroup, error) {
 }
 
 // fillLinkGroup 填充成员与统计（每个分组 3 条查询；管理页低频轮询，量级可接受）。
+// 软删除的链不出现在视图中（与解析侧 EffectiveUserChainAssignments 的
+// deleted_at IS NULL 过滤一致）。
 func (s *Store) fillLinkGroup(ctx context.Context, g *LinkGroup) error {
-	chainRows, err := s.db.QueryContext(ctx, `SELECT chain_id FROM link_group_chains WHERE group_id=? ORDER BY chain_id`, g.ID)
+	chainRows, err := s.db.QueryContext(ctx, `SELECT lgc.chain_id FROM link_group_chains lgc
+		JOIN chains c ON c.id = lgc.chain_id
+		WHERE lgc.group_id=? AND c.deleted_at IS NULL ORDER BY lgc.chain_id`, g.ID)
 	if err != nil {
 		return err
 	}
@@ -524,7 +528,7 @@ func (s *Store) EffectiveUserExternalSubscriptions(ctx context.Context, userID i
 		JOIN link_group_external_subscriptions lges ON lges.group_id = ugl.link_group_id
 		JOIN external_subscriptions es ON es.id = lges.subscription_id
 		WHERE ugm.user_id = ?
-		ORDER BY lges.subscription_id`, userID)
+		ORDER BY lges.subscription_id, lges.group_id`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("effective external subscriptions: %w", err)
 	}
