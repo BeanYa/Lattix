@@ -373,6 +373,114 @@ func TestAffectedUsersQueries(t *testing.T) {
 	}
 }
 
+// TestDeleteUserCleansUserGroupMembers 删除用户须手工级联清理 user_group_members
+// （SQLite 未开启 foreign_keys）：成员查询与 MemberCount 不再含已删用户。
+func TestDeleteUserCleansUserGroupMembers(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	chainA, _ := newTestEndpointChain(t, st, "del-a")
+	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u1, _ := st.InsertUser(ctx, "alice", "00000000-0000-0000-0000-0000000000aa", "tok-a", nil)
+	u2, _ := st.InsertUser(ctx, "bob", "00000000-0000-0000-0000-0000000000bb", "tok-b", nil)
+	ugID, err := st.CreateUserGroup(ctx, "青铜会员", []int64{u1, u2}, []int64{lgID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteUser(ctx, u1); err != nil {
+		t.Fatal(err)
+	}
+	users, err := st.UsersForUserGroup(ctx, ugID)
+	if err != nil || len(users) != 1 || users[0] != u2 {
+		t.Fatalf("删除用户后成员 = %v err %v, want [%d]", users, err, u2)
+	}
+	groups, err := st.ListUserGroups(ctx)
+	if err != nil || len(groups) != 1 || groups[0].MemberCount != 1 {
+		t.Fatalf("删除用户后 MemberCount = %+v err %v, want 1", groups, err)
+	}
+}
+
+// TestEffectiveExtSubModeDeterministicAcrossGroups 两个用户分组引用同一外部订阅且
+// 模式不同时，生效模式取（subscription_id, group_id）排序首行：group_id 较小者。
+// 组A 的行序被 UpdateLinkGroup 重写到组B 之后，仅依赖插入顺序的实现会取到 merge。
+func TestEffectiveExtSubModeDeterministicAcrossGroups(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	subID, err := st.CreateExternalSubscription(ctx, ExternalSubscription{
+		Name: "机场X", URL: "https://sub.example.com/x", UpdateIntervalHours: 24,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lg1, err := st.CreateLinkGroup(ctx, "组A", nil,
+		[]LinkGroupExternalSubscription{{SubscriptionID: subID, Mode: ExtSubModeStack}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lg2, err := st.CreateLinkGroup(ctx, "组B", nil,
+		[]LinkGroupExternalSubscription{{SubscriptionID: subID, Mode: ExtSubModeMerge}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpdateLinkGroup(ctx, lg1, "组A", nil,
+		[]LinkGroupExternalSubscription{{SubscriptionID: subID, Mode: ExtSubModeStack}}); err != nil {
+		t.Fatal(err)
+	}
+	userID, _ := st.InsertUser(ctx, "alice", "00000000-0000-0000-0000-0000000000aa", "tok-a", nil)
+	// 先建引用 lg2（merge）的分组：user_group_links 行序与 group_id 序相反，
+	// 仅依赖插入顺序的实现会取到 merge。
+	if _, err := st.CreateUserGroup(ctx, "白银会员", []int64{userID}, []int64{lg2}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUserGroup(ctx, "青铜会员", []int64{userID}, []int64{lg1}); err != nil {
+		t.Fatal(err)
+	}
+	subs, err := st.EffectiveUserExternalSubscriptions(ctx, userID)
+	if err != nil || len(subs) != 1 {
+		t.Fatalf("effective ext subs = %+v err %v, want 1 条", subs, err)
+	}
+	if subs[0].Mode != ExtSubModeStack {
+		t.Fatalf("mode = %q, want %q（取 group_id 较小者）", subs[0].Mode, ExtSubModeStack)
+	}
+}
+
+// TestLinkGroupHidesDeletedChains 软删除的链不出现在链路分组视图中
+// （fillLinkGroup 与解析侧 EffectiveUserChainAssignments 保持一致）。
+func TestLinkGroupHidesDeletedChains(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	chainA, _ := newTestEndpointChain(t, st, "hide-a")
+	chainB, _ := newTestEndpointChain(t, st, "hide-b")
+	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA, chainB}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteChain(ctx, chainB); err != nil {
+		t.Fatal(err)
+	}
+	lg, err := st.LinkGroupByID(ctx, lgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lg.ChainCount != 1 || len(lg.ChainIDs) != 1 || lg.ChainIDs[0] != chainA {
+		t.Fatalf("软删除链应被隐藏: %+v", lg)
+	}
+}
+
 // TestGroupLifecyclePreservesSubToken 验证用户订阅 token 在整个分组生命周期
 // （建组→入组→改链路分组→删链路分组→删用户分组）中保持不变（用户硬约束）。
 func TestGroupLifecyclePreservesSubToken(t *testing.T) {
