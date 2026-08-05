@@ -468,6 +468,32 @@ func (s *Store) SetChainRevisionStatus(ctx context.Context, revisionID int64, st
 	return err
 }
 
+// AbandonChainRevision 废弃被新编辑取代的失败 revision（§21 失败后编辑）：
+// 未投递/在途的任务与命令置 abandoned（不再送达 Agent 产生过期配置），
+// revision 置 cancelled；acked/failed 等终态不受影响。
+func (s *Store) AbandonChainRevision(ctx context.Context, revisionID int64, reason string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE commands SET status=?, error=?, updated_at=CURRENT_TIMESTAMP
+		WHERE id IN (SELECT command_id FROM chain_revision_tasks WHERE revision_id=?) AND status IN (?, ?)`,
+		CommandStatusAbandoned, reason, revisionID, CommandStatusQueued, CommandStatusSent); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chain_revision_tasks SET status=?, error=?, updated_at=CURRENT_TIMESTAMP
+		WHERE revision_id=? AND status IN (?, ?)`,
+		RevisionTaskAbandoned, reason, revisionID, RevisionTaskPending, RevisionTaskQueued); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chain_revisions SET status=?, error=? WHERE id=? AND status IN (?, ?)`,
+		RevisionStatusCancelled, reason, revisionID, RevisionStatusFailed, RevisionStatusActiveFailed); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) AddRevisionTask(ctx context.Context, task ChainRevisionTask) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `INSERT INTO chain_revision_tasks
 		(revision_id, task_key, phase, action, kind, hop_id, server_id, status)

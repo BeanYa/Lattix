@@ -131,9 +131,11 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			}
 			for _, hop := range revision.Snapshot.Hops {
 				for _, kind := range []string{RevisionPieceForward, RevisionPiecePortal, RevisionPieceBridge} {
-					key := revisionPieceKey(kind, hop.HopID)
-					if !applyKeys[key] {
-						pieces[key] = store.CommandStatusAcked
+					// 复用 piece（不在 apply_keys）：标记为已 acked，编排不得重发。
+					// pieces 的读取键为 pieceKey（"<hopID>|<kind>"），apply_keys 为
+					// revisionPieceKey（"<kind>/<hopID>"）——两者命名空间不同，须分别使用。
+					if !applyKeys[revisionPieceKey(kind, hop.HopID)] {
+						pieces[pieceKey(hop.HopID, kind)] = store.CommandStatusAcked
 					}
 				}
 			}

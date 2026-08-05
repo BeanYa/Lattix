@@ -302,15 +302,19 @@ func hostOf(addr string) string {
 // xray 持有（出现在受管 config 的 inbound 中）视为可复用，直接采用，避免与
 // 运行中的自身 xray 误判冲突（§21 端口复用：受管端口可复用）；其他服务占用
 // 才报冲突。留空时若带 port_candidates（受限直连 NAT 机的段内候选，§21）
-// 按序挑空闲（跳过受管端口），候选全占用报错；无候选则挑随机空闲端口。
-func (m *Manager) pickPort(preferred int, candidates []int) (int, error) {
+// 按序挑空闲，跳过被其他受管配置持有/外部服务占用的端口；候选全占用报错。
+// tag 为本次 apply 将写入的 inbound tag：候选端口被同一 tag 的受管 inbound
+// 持有（幂等重发，upsert 原地替换旧 inbound）视为可复用直接采用——否则单端口
+// NAT 机上同节点配置变更/重试/重建会因旧 inbound 未清理而误报"候选全部被占用"。
+func (m *Manager) pickPort(preferred int, candidates []int, tag string) (int, error) {
+	held := m.managedPorts()
 	if preferred != 0 {
 		// 受限直连 NAT 机（载荷带段内候选）：手动指定端口必须落在候选段内（§21），
 		// 先于占用探测/复用判定。
 		if len(candidates) > 0 && !slices.Contains(candidates, preferred) {
 			return 0, fmt.Errorf("端口 %d 不在可用端口段内", preferred)
 		}
-		if m.managedInboundPort(preferred) {
+		if _, ok := held[preferred]; ok {
 			return preferred, nil
 		}
 		l, err := net.Listen("tcp", fmt.Sprintf(":%d", preferred))
@@ -320,9 +324,14 @@ func (m *Manager) pickPort(preferred int, candidates []int) (int, error) {
 		l.Close()
 		return preferred, nil
 	}
+	blocked := 0
 	for _, c := range candidates {
-		if m.managedInboundPort(c) {
-			continue // 受管端口不可作为自动候选（避免重复监听）
+		if holder, ok := held[c]; ok {
+			if tag != "" && holder == tag {
+				return c, nil // 同配置件幂等重发：upsert 替换旧 inbound，端口可复用（§21）
+			}
+			blocked++ // 其他受管配置持有，不可作为自动候选（避免重复监听）
+			continue
 		}
 		l, err := net.Listen("tcp", fmt.Sprintf(":%d", c))
 		if err != nil {
@@ -332,6 +341,9 @@ func (m *Manager) pickPort(preferred int, candidates []int) (int, error) {
 		return c, nil
 	}
 	if len(candidates) > 0 {
+		if blocked == len(candidates) {
+			return 0, fmt.Errorf("候选端口全部被其他受管配置占用（%d 个）", blocked)
+		}
 		return 0, fmt.Errorf("候选端口全部被占用（%d 个）", len(candidates))
 	}
 	l, err := net.Listen("tcp", ":0")
@@ -342,22 +354,24 @@ func (m *Manager) pickPort(preferred int, candidates []int) (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-// managedInboundPort 报告端口是否出现在当前受管 config 的 inbound 中
-// （即被 agent 自身管理的 xray 实例持有；§21 端口复用判定的唯一依据）。
-func (m *Manager) managedInboundPort(port int) bool {
+// managedPorts 返回当前受管 config 中全部 inbound 的 port→tag 映射
+// （§21 端口复用判定的依据：被 agent 自身管理的 xray 实例持有的端口）。
+func (m *Manager) managedPorts() map[int]string {
+	out := map[int]string{}
 	cur, err := m.loadConfig()
 	if err != nil {
-		return false
+		return out
 	}
 	for _, raw := range cur.inbounds() {
 		var p struct {
-			Port int `json:"port"`
+			Tag  string `json:"tag"`
+			Port int    `json:"port"`
 		}
-		if json.Unmarshal(raw, &p) == nil && p.Port == port {
-			return true
+		if json.Unmarshal(raw, &p) == nil && p.Port != 0 {
+			out[p.Port] = p.Tag
 		}
 	}
-	return false
+	return out
 }
 
 // vlessEnc 执行 `xray vlessenc` 生成 VLESS Encryption 的 decryption/encryption 对（§15）。

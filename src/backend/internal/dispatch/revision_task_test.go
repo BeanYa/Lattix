@@ -177,6 +177,7 @@ func newForcePublishFixture(t *testing.T, entryPort int, serviceRealized shared.
 	revision, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{
 		Name: "chain", ServiceNodeID: nodeID, ServiceServerID: exitID,
 		ServiceConfig: config, ServiceRealized: realized, TrafficMultiplierMilli: 1000,
+		ApplyKeys: []string{revisionPieceKey(RevisionPieceForward, entryHopID)},
 		Hops: []store.ChainRevisionHop{
 			{HopID: entryHopID, ServerID: entryID, Role: store.HopRoleEntry, Transport: "direct", ForwardPort: entryPort},
 			{HopID: exitHopID, ServerID: exitID, Role: store.HopRoleExit, ForwardPort: serviceRealized.Port},

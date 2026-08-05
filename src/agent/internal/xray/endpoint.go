@@ -46,7 +46,7 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 	portCandidates := endpointPortCandidates(config.Port, p.PortCandidates, prev)
 	// 重发幂等：同端点已落地端口直接复用（xray 运行中本就持有该端口，
 	// 重复占用探测会误判冲突——与 pickChainPort 语义一致）；新端口才做占用检查。
-	port, err := m.pickChainPort(config.Port, portCandidates, prev)
+	port, err := m.pickChainPort(config.Port, portCandidates, prev, shared.SharedEndpointTag(p.EndpointID))
 	if err != nil {
 		return nil, err
 	}

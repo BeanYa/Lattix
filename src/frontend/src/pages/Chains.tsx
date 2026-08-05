@@ -1063,7 +1063,11 @@ export default function Chains() {
                         variant="outline"
                         size="icon-sm"
                         title="编辑链路"
-                        disabled={c.desired_revision_id !== 0}
+                        disabled={
+                          c.desired_revision_id !== 0 &&
+                          c.status !== 'failed' &&
+                          c.status !== 'active_failed'
+                        }
                         onClick={() => openEdit(c)}
                       >
                         <PencilIcon />
