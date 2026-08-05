@@ -184,6 +184,10 @@ func TestActiveEndpointAssignmentsIncludesGroupUsers(t *testing.T) {
 	if _, err := st.CreateUserGroup(ctx, "青铜会员", []int64{member}, []int64{lgID}); err != nil {
 		t.Fatal(err)
 	}
+	// 回归：同一用户属于两个用户分组且引用同一链路组时，组派生查询不得产生重复行
+	if _, err := st.CreateUserGroup(ctx, "白银会员", []int64{member}, []int64{lgID}); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := st.SetUserChains(ctx, direct, []int64{chainB}); err != nil {
 		t.Fatal(err)
 	}

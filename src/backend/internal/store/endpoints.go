@@ -225,7 +225,7 @@ func (s *Store) ActiveEndpointAssignments(ctx context.Context, endpointID int64)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	groupRows, err := s.db.QueryContext(ctx, `SELECT u.id, u.uuid, lgc.chain_id, c.endpoint_id
+	groupRows, err := s.db.QueryContext(ctx, `SELECT DISTINCT u.id, u.uuid, lgc.chain_id, c.endpoint_id
 		FROM user_group_members ugm
 		JOIN user_group_links ugl ON ugl.user_group_id = ugm.user_group_id
 		JOIN link_group_chains lgc ON lgc.group_id = ugl.link_group_id
