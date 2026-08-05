@@ -122,7 +122,7 @@ func (s *Server) mergedUserTraffic(ctx context.Context, user *store.User, t stor
 		v := user.ExpiresAt.Unix()
 		panelExpire = &v
 	}
-	attached, err := s.st.ListUserExternalSubscriptions(ctx, user.ID)
+	attached, err := s.st.EffectiveUserExternalSubscriptions(ctx, user.ID)
 	if err != nil {
 		attached = nil
 	}
@@ -383,10 +383,18 @@ type clashConfig struct {
 const proxyGroupName = "PROXY"
 
 // assignedActiveNodes 返回订阅用户及其分配到的 active 节点（§16 公共查询）。
+// 分组用户的直连 user_nodes 被遮蔽（订阅 = 分组派生链路 + 外部订阅节点），返回空列表。
 func (s *Server) assignedActiveNodes(r *http.Request) (*store.User, []store.Node, error) {
 	user, err := s.st.UserBySubToken(r.Context(), r.PathValue("token"))
 	if err != nil {
 		return nil, nil, err
+	}
+	groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), user.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(groupIDs) > 0 {
+		return user, []store.Node{}, nil
 	}
 	nodes, err := s.st.ListNodes(r.Context())
 	if err != nil {
@@ -634,15 +642,26 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 		}
 		items = append(items, proxyItem{node: n, rc: rc})
 	}
-	assigned, err := s.st.UserNodeIDs(r.Context(), user.ID)
+	// 用户维度分配（§16）：分组用户只按分组派生（直接分配被遮蔽）；
+	// 非分组用户走直接分配（user_nodes + user_chain_assignments）。
+	groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), user.ID)
 	if err != nil {
 		return items, warnings
 	}
-	allowed := make(map[int64]bool, len(assigned))
-	for _, id := range assigned {
-		allowed[id] = true
+	allowed := map[int64]bool{}
+	var chainAssignments []store.UserChainAssignment
+	if len(groupIDs) > 0 {
+		chainAssignments, err = s.st.EffectiveUserChainAssignments(r.Context(), user.ID)
+	} else {
+		assigned, err := s.st.UserNodeIDs(r.Context(), user.ID)
+		if err != nil {
+			return items, warnings
+		}
+		for _, id := range assigned {
+			allowed[id] = true
+		}
+		chainAssignments, err = s.st.UserChainAssignments(r.Context(), user.ID)
 	}
-	chainAssignments, err := s.st.UserChainAssignments(r.Context(), user.ID)
 	if err != nil {
 		return items, warnings
 	}
@@ -677,7 +696,7 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 		}
 		items = append(items, *item)
 	}
-	attached, err := s.st.ListUserExternalSubscriptions(r.Context(), user.ID)
+	attached, err := s.st.EffectiveUserExternalSubscriptions(r.Context(), user.ID)
 	if err != nil {
 		return items, warnings
 	}

@@ -191,18 +191,26 @@ func (s *Server) itemsForUser(ctx context.Context, user *store.User) ([]proxyIte
 	if err != nil {
 		return nil, nil, err
 	}
-	assigned, err := s.st.UserNodeIDs(ctx, user.ID)
+	active := []store.Node{}
+	// 分组用户的直连 user_nodes 被遮蔽：订阅 = 分组派生链路 + 外部订阅节点。
+	groupIDs, err := s.st.UserGroupIDsForUser(ctx, user.ID)
 	if err != nil {
 		return nil, nil, err
 	}
-	allowed := make(map[int64]bool, len(assigned))
-	for _, id := range assigned {
-		allowed[id] = true
-	}
-	active := make([]store.Node, 0, len(assigned))
-	for _, node := range nodes {
-		if allowed[node.ID] && node.Status == store.NodeStatusActive && len(node.RealizedConfig) > 0 {
-			active = append(active, node)
+	if len(groupIDs) == 0 {
+		assigned, err := s.st.UserNodeIDs(ctx, user.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		allowed := make(map[int64]bool, len(assigned))
+		for _, id := range assigned {
+			allowed[id] = true
+		}
+		active = make([]store.Node, 0, len(assigned))
+		for _, node := range nodes {
+			if allowed[node.ID] && node.Status == store.NodeStatusActive && len(node.RealizedConfig) > 0 {
+				active = append(active, node)
+			}
 		}
 	}
 	items, warnings := s.subscriptionItems(r, user, active)

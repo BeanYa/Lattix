@@ -164,6 +164,57 @@ func TestValidateAssignableChainsRejectsLegacyChain(t *testing.T) {
 	}
 }
 
+func TestActiveEndpointAssignmentsIncludesGroupUsers(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	chainA, endpointA := newTestEndpointChain(t, st, "ep-a")
+	chainB, endpointB := newTestEndpointChain(t, st, "ep-b")
+	// 分组用户（经分组引用 endpointA 的链）
+	member, _ := st.InsertUser(ctx, "member", "00000000-0000-0000-0000-0000000000aa", "tok-m", nil)
+	// 直接分配用户
+	direct, _ := st.InsertUser(ctx, "direct", "00000000-0000-0000-0000-0000000000bb", "tok-d", nil)
+	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUserGroup(ctx, "青铜会员", []int64{member}, []int64{lgID}); err != nil {
+		t.Fatal(err)
+	}
+	// 回归：同一用户属于两个用户分组且引用同一链路组时，组派生查询不得产生重复行
+	if _, err := st.CreateUserGroup(ctx, "白银会员", []int64{member}, []int64{lgID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetUserChains(ctx, direct, []int64{chainB}); err != nil {
+		t.Fatal(err)
+	}
+	assignments, err := st.ActiveEndpointAssignments(ctx, endpointA)
+	if err != nil || len(assignments) != 1 {
+		t.Fatalf("endpoint A assignments = %+v err %v", assignments, err)
+	}
+	want := GroupAccessUUID("00000000-0000-0000-0000-0000000000aa", chainA)
+	if assignments[0].UserID != member || assignments[0].ChainID != chainA ||
+		assignments[0].EndpointID != endpointA || assignments[0].AccessUUID != want {
+		t.Fatalf("endpoint A assignment = %+v want uuid %s", assignments[0], want)
+	}
+	// endpointB：直接用户可见；分组用户不在其链路上
+	assignments, err = st.ActiveEndpointAssignments(ctx, endpointB)
+	if err != nil || len(assignments) != 1 || assignments[0].UserID != direct {
+		t.Fatalf("endpoint B assignments = %+v err %v", assignments, err)
+	}
+	// 分组用户即使有直接分配行也被遮蔽（同链重复不出现）
+	if _, _, err := st.SetUserChains(ctx, member, []int64{chainA}); err != nil {
+		t.Fatal(err)
+	}
+	assignments, err = st.ActiveEndpointAssignments(ctx, endpointA)
+	if err != nil || len(assignments) != 1 {
+		t.Fatalf("after direct assign, endpoint A = %+v err %v", assignments, err)
+	}
+}
+
 func jsonNumber(value int64) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)

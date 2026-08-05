@@ -199,12 +199,15 @@ func (s *Store) UserChainAssignments(ctx context.Context, userID int64) ([]UserC
 // ActiveEndpointAssignments returns every active client routed by one shared
 // endpoint in a single query. This is the hot path for complete endpoint
 // reconciliation, so it must not scale queries with the number of users.
+// 分组用户（属于任意用户分组）的生效客户端来自分组派生链路（确定性 UUIDv5）；
+// 其直接 user_chain_assignments 行被遮蔽。直接分配部分排除分组成员避免重复。
 func (s *Store) ActiveEndpointAssignments(ctx context.Context, endpointID int64) ([]UserChainAssignment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id, a.user_id, a.chain_id, c.endpoint_id,
 		a.access_uuid, a.created_at FROM user_chain_assignments a
 		JOIN chains c ON c.id=a.chain_id
 		JOIN users u ON u.id=a.user_id
 		WHERE c.endpoint_id=? AND c.deleted_at IS NULL AND u.expired=0 AND u.disabled=0
+		AND NOT EXISTS (SELECT 1 FROM user_group_members g WHERE g.user_id = a.user_id)
 		ORDER BY a.chain_id, a.id`, endpointID)
 	if err != nil {
 		return nil, err
@@ -219,7 +222,40 @@ func (s *Store) ActiveEndpointAssignments(ctx context.Context, endpointID int64)
 		}
 		out = append(out, item)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	groupRows, err := s.db.QueryContext(ctx, `SELECT DISTINCT u.id, u.uuid, lgc.chain_id, c.endpoint_id
+		FROM user_group_members ugm
+		JOIN user_group_links ugl ON ugl.user_group_id = ugm.user_group_id
+		JOIN link_group_chains lgc ON lgc.group_id = ugl.link_group_id
+		JOIN chains c ON c.id = lgc.chain_id
+		JOIN users u ON u.id = ugm.user_id
+		WHERE c.endpoint_id=? AND c.deleted_at IS NULL AND u.expired=0 AND u.disabled=0
+		ORDER BY lgc.chain_id, u.id`, endpointID)
+	if err != nil {
+		return nil, err
+	}
+	defer groupRows.Close()
+	for groupRows.Next() {
+		var item UserChainAssignment
+		var userUUID string
+		if err := groupRows.Scan(&item.UserID, &userUUID, &item.ChainID, &item.EndpointID); err != nil {
+			return nil, err
+		}
+		item.AccessUUID = GroupAccessUUID(userUUID, item.ChainID)
+		out = append(out, item)
+	}
+	if err := groupRows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ChainID != out[j].ChainID {
+			return out[i].ChainID < out[j].ChainID
+		}
+		return out[i].UserID < out[j].UserID
+	})
+	return out, nil
 }
 
 func (s *Store) UserChainIDs(ctx context.Context, userID int64) ([]int64, error) {

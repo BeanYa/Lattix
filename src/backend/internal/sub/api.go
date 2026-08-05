@@ -82,6 +82,11 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 
 	t, _ := s.st.UserTraffic(r.Context(), user.UUID)
 	assigned, _ := s.st.UserNodeIDs(r.Context(), user.ID)
+	// 分组用户的直连节点被遮蔽，快照生成失败时回退不得计入直连节点数
+	// （itemsForUser 已反映真实计数，回退仅在快照生成失败时生效）。
+	if groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), user.ID); err == nil && len(groupIDs) > 0 {
+		assigned = []int64{}
+	}
 	// 节点数与订阅快照内容一致：直连节点 + 分配链路 + 外部订阅节点。
 	items, _, _ := s.itemsForUser(r.Context(), user)
 	nodesCount := len(items)
@@ -93,7 +98,7 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 		v := user.ExpiresAt.Unix()
 		panelExpire = &v
 	}
-	attached, _ := s.st.ListUserExternalSubscriptions(r.Context(), user.ID)
+	attached, _ := s.st.EffectiveUserExternalSubscriptions(r.Context(), user.ID)
 	merged := extsub.MergeUserTraffic(extsub.Traffic{
 		Upload: t.Up, Download: t.Down, Total: user.TrafficLimit, Expire: panelExpire,
 	}, attached)

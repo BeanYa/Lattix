@@ -175,6 +175,9 @@ install.sh            # 面向用户的统一安装入口
 - 用户外部订阅分配：以订阅为单位引入用户订阅（叠加/并入/附加三模式），
   `subscription-userinfo` 头按模式实时合并外部额度（剩余 0 封底仅展示），
   外部同步完成后自动重发布所有关联用户
+- 分组：链路分组编排共享入口链路与外部订阅（外部订阅整体原子参与，移除即整组节点消失），
+  用户分组把用户编组并关联链路分组；组内用户订阅由分组派生（直接分配被遮蔽，移出分组恢复），
+  分组或相关服务器/外部订阅更新自动触发组内用户订阅重发布
 
 **运维**
 
@@ -364,6 +367,7 @@ cd src/frontend && bun run build   # 含 tsc 类型检查
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/xray.sh           # 基础流水线回归
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/protocols.sh      # 全协议节点 + 订阅
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/vlessenc.sh       # VLESS Encryption 数据通路
+XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/groups.sh         # 分组：链路分组/用户分组/原子外部订阅/触发重发布
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/usernodes.sh      # 逐节点用户分配
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/telemetry.sh      # 流量统计 + 主机遥测
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/reconcile.sh      # 配置漂移检测与修复

@@ -73,6 +73,7 @@ import type {
   SubscriptionPreviewFormat,
   SubscriptionRuleCategory,
   SubscriptionTemplate,
+  UserGroup,
 } from '@/lib/types'
 
 const EXTERNAL_MODE_LABELS: Record<ExternalSubscriptionMode, string> = {
@@ -152,6 +153,7 @@ export default function Users() {
   const [chains, setChains] = useState<Chain[]>([])
   const [ruleCategories, setRuleCategories] = useState<SubscriptionRuleCategory[]>([])
   const [templates, setTemplates] = useState<SubscriptionTemplate[]>([])
+  const [userGroups, setUserGroups] = useState<UserGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleting, setDeleting] = useState<number | null>(null)
@@ -213,17 +215,19 @@ export default function Users() {
       ? { signal, ...(silent ? { display: 'silent' as const } : {}) }
       : silent ? { display: 'silent' as const } : undefined
     try {
-      const [nextUsers, nextChains, nextCategories, nextTemplates] = await Promise.all([
+      const [nextUsers, nextChains, nextCategories, nextTemplates, nextUserGroups] = await Promise.all([
         api.users(options),
         api.chains(options),
         api.subscriptionCategories(options),
         api.subscriptionTemplates(options),
+        api.userGroups(options),
       ])
       if (signal?.aborted || request !== loadRequest.current) return
       setUsers(nextUsers)
       setChains(nextChains)
       setRuleCategories(nextCategories)
       setTemplates(nextTemplates)
+      setUserGroups(nextUserGroups)
       try {
         setExtSubs(await api.externalSubscriptions({ display: 'silent' }))
       } catch {
@@ -521,6 +525,11 @@ export default function Users() {
                 <CardHeader className="border-b">
                   <CardTitle className="flex min-w-0 flex-wrap items-center gap-2">
                     <span className="truncate">{u.name}</span>
+                    {u.user_group_ids.length > 0 && (
+                      <Badge variant="secondary" title="订阅由用户分组派生">
+                        {u.user_group_ids.map((id) => userGroups.find((g) => g.id === id)?.name ?? `#${id}`).join('、')}
+                      </Badge>
+                    )}
                     {u.disabled && <Badge variant="destructive">已停用</Badge>}
                     {u.expired && <Badge variant="destructive">已到期</Badge>}
                     {u.subscription_snapshot.status === 'ready' ? (
@@ -826,6 +835,12 @@ export default function Users() {
               保存后即时下发变更（默认全关，§16）。
             </DialogDescription>
           </DialogHeader>
+          {assignTarget && assignTarget.user_group_ids.length > 0 && (
+            <Notice tone="info">
+              该用户位于用户分组「{assignTarget.user_group_ids.map((id) => userGroups.find((g) => g.id === id)?.name ?? `#${id}`).join('、')}」中，
+              直接分配链路与外部订阅不生效，其订阅内容由分组派生。
+            </Notice>
+          )}
           <div className="space-y-2">
             {linkOptions.length === 0 ? (
               <p className="text-sm text-muted-foreground">暂无链路，请先在「链路」页创建。</p>

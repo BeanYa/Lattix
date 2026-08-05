@@ -45,6 +45,7 @@ type userDTO struct {
 	Routing               subscriptionProfileDTO           `json:"routing"`
 	SubscriptionSnapshot  store.SubscriptionSnapshotStatus `json:"subscription_snapshot"`
 	OnlineConnections     int                              `json:"online_connections"` // 跨服务器去重后的在线连接数（telemetry 快照）
+	UserGroupIDs          []int64                          `json:"user_group_ids"`
 	CreatedAt             time.Time                        `json:"created_at"`
 }
 
@@ -115,7 +116,7 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 	if snapshot, err := s.st.SubscriptionSnapshotStatus(r.Context(), u.ID); err == nil {
 		dto.SubscriptionSnapshot = snapshot
 	}
-	attached, err := s.st.ListUserExternalSubscriptions(r.Context(), u.ID)
+	attached, err := s.st.EffectiveUserExternalSubscriptions(r.Context(), u.ID)
 	if err == nil && len(attached) > 0 {
 		dto.ExternalSubscriptions = make([]userExternalSubscriptionDTO, 0, len(attached))
 		var panelTraffic store.TrafficTotals
@@ -153,6 +154,14 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 	}
 	if dto.ExternalSubscriptions == nil {
 		dto.ExternalSubscriptions = []userExternalSubscriptionDTO{}
+	}
+	if groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), u.ID); err == nil {
+		dto.UserGroupIDs = groupIDs
+	} else {
+		dto.UserGroupIDs = []int64{}
+	}
+	if dto.UserGroupIDs == nil {
+		dto.UserGroupIDs = []int64{}
 	}
 	return dto
 }

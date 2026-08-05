@@ -587,6 +587,47 @@ CREATE TABLE IF NOT EXISTS user_external_subscriptions (
     UNIQUE(user_id, subscription_id)
 );
 
+CREATE TABLE IF NOT EXISTS link_groups (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS link_group_chains (
+    group_id   INTEGER NOT NULL REFERENCES link_groups(id) ON DELETE CASCADE,
+    chain_id   INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (group_id, chain_id)
+);
+CREATE TABLE IF NOT EXISTS link_group_external_subscriptions (
+    group_id        INTEGER NOT NULL REFERENCES link_groups(id) ON DELETE CASCADE,
+    subscription_id INTEGER NOT NULL REFERENCES external_subscriptions(id) ON DELETE CASCADE,
+    mode            TEXT NOT NULL DEFAULT 'stack',
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (group_id, subscription_id)
+);
+CREATE TABLE IF NOT EXISTS user_groups (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS user_group_members (
+    user_group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+    user_id       INTEGER NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_group_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS user_group_links (
+    user_group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+    link_group_id INTEGER NOT NULL REFERENCES link_groups(id) ON DELETE CASCADE,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (user_group_id, link_group_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_group_members_user
+    ON user_group_members(user_id);
+
 `
 
 // Store 封装 SQLite 数据访问。

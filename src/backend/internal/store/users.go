@@ -139,6 +139,8 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 		`DELETE FROM subscription_snapshots WHERE user_id = ?`,
 		`DELETE FROM user_subscription_profiles WHERE user_id = ?`,
 		`DELETE FROM user_nodes WHERE user_id = ?`,
+		// SQLite 未开启 foreign_keys，手工级联分组成员（分组视图不再含已删用户）。
+		`DELETE FROM user_group_members WHERE user_id = ?`,
 		`DELETE FROM users WHERE id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
