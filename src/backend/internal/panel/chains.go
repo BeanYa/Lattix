@@ -454,12 +454,43 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "链路不存在")
 		return
 	}
-	if chain.DesiredRevisionID != 0 {
+	// 部署失败（failed/active_failed）的链允许编辑后重新编排（§21）；
+	// 其他在途状态（applying/waiting_for_agent/active_unconfirmed）仍拒绝并发编辑。
+	failed := chain.Status == store.ChainStatusFailed || chain.Status == store.ChainStatusActiveFailed
+	if chain.DesiredRevisionID != 0 && !failed {
 		writeError(w, http.StatusConflict, "链路已有部署中的编辑")
 		return
 	}
 	current, err := s.st.PublishedChainRevision(r.Context(), chain.ID)
-	if err != nil {
+	if err != nil && !failed {
+		writeError(w, http.StatusConflict, "链路尚无已发布 revision")
+		return
+	}
+	// 失败链以失败 desired revision 为基线（Agent 实际状态 = 部分落地的失败配置，
+	// 而非已发布快照），并把 chain_hops 的落地参数（realized 端口等）并入基线，
+	// 使未变化的 piece 按运行中参数复用，避免发布后订阅端口漂移。
+	var failedRevision *store.ChainRevision
+	if failed {
+		if revision, desiredErr := s.st.DesiredChainRevision(r.Context(), chain.ID); desiredErr == nil {
+			failedRevision = revision
+			current = revision
+			if hops, hopErr := s.st.ChainHops(r.Context(), chain.ID); hopErr == nil {
+				byID := make(map[int64]store.ChainHop, len(hops))
+				for _, hop := range hops {
+					byID[hop.ID] = hop
+				}
+				for i := range current.Snapshot.Hops {
+					if hop, ok := byID[current.Snapshot.Hops[i].HopID]; ok {
+						current.Snapshot.Hops[i].ForwardPort = hop.ForwardPort
+						current.Snapshot.Hops[i].PortalPort = hop.PortalPort
+						current.Snapshot.Hops[i].PortalPublicKey = hop.PortalPublicKey
+						current.Snapshot.Hops[i].PortalServerName = hop.PortalServerName
+					}
+				}
+			}
+		}
+	}
+	if current == nil {
 		writeError(w, http.StatusConflict, "链路尚无已发布 revision")
 		return
 	}
@@ -632,6 +663,26 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// 失败链基线为失败 revision：仅已落地（acked）的 piece 可复用；
+	// 未落地的相同 piece 必须重发，否则会以未应用的配置被标记 active。
+	if failedRevision != nil {
+		tasks, err := s.st.RevisionTasks(r.Context(), failedRevision.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		acked := make(map[string]bool, len(tasks))
+		for _, task := range tasks {
+			if task.Phase == "apply" && task.Status == store.RevisionTaskAcked {
+				acked[task.TaskKey] = true
+			}
+		}
+		for _, piece := range plan.Reuse {
+			if !acked[piece.Key] {
+				plan.Apply = append(plan.Apply, piece)
+			}
+		}
+	}
 	for _, piece := range plan.Apply {
 		desired.ApplyKeys = append(desired.ApplyKeys, piece.Key)
 	}
@@ -672,6 +723,13 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	if err := s.st.ReplaceWorkingChainTopology(r.Context(), revision, vc.Protocol, nodePort, serviceChanged); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// 废弃被取代的失败 revision：未投递/在途命令不再送达 Agent（§21 失败后编辑）。
+	if failedRevision != nil {
+		if err := s.st.AbandonChainRevision(r.Context(), failedRevision.ID, "被新编辑取代"); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	offline := false
 	for _, piece := range plan.Apply {
