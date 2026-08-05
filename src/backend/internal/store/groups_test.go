@@ -521,3 +521,42 @@ func TestGroupLifecyclePreservesSubToken(t *testing.T) {
 		t.Fatalf("全生命周期后 token 变化: %+v err %v", user, err)
 	}
 }
+
+// TestGroupEmptyCollectionsSerializeAsArrays 空成员集合必须序列化为 [] 而非 null，
+// 否则前端 g.user_group_names.map 直接崩溃。
+func TestGroupEmptyCollectionsSerializeAsArrays(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	lgID, err := st.CreateLinkGroup(ctx, "空链路组", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ugID, err := st.CreateUserGroup(ctx, "空用户组", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lg, err := st.LinkGroupByID(ctx, lgID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ug, err := st.UserGroupByID(ctx, ugID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lgJSON, _ := json.Marshal(lg)
+	ugJSON, _ := json.Marshal(ug)
+	for _, field := range []string{"chain_ids", "external_subscriptions", "user_group_names"} {
+		if strings.Contains(string(lgJSON), `"`+field+`":null`) {
+			t.Fatalf("链路分组空集合应序列化为 [] 而非 null (%s): %s", field, lgJSON)
+		}
+	}
+	for _, field := range []string{"user_ids", "link_group_ids"} {
+		if strings.Contains(string(ugJSON), `"`+field+`":null`) {
+			t.Fatalf("用户分组空集合应序列化为 [] 而非 null (%s): %s", field, ugJSON)
+		}
+	}
+}

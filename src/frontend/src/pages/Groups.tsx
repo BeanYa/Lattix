@@ -60,7 +60,11 @@ function LinkGroupsTab() {
 
   const load = useCallback(async () => {
     try {
-      const [gs, cs, subs] = await Promise.all([api.linkGroups(), api.chains(), api.externalSubscriptions({ display: 'silent' })])
+      const [gs, cs, subs] = await Promise.all([
+        api.linkGroups({ display: 'silent' }),
+        api.chains({ display: 'silent' }),
+        api.externalSubscriptions({ display: 'silent' }),
+      ])
       setGroups(gs)
       setChains(cs)
       setExtSubs(subs)
@@ -103,7 +107,7 @@ function LinkGroupsTab() {
                 <span className="font-medium">{g.name}</span>
                 <Badge variant="secondary">{g.chain_count} 链路</Badge>
                 <Badge variant="secondary">{g.external_subscription_count} 外部订阅</Badge>
-                {g.user_group_names.map((n) => <Badge key={n} variant="outline">{n}</Badge>)}
+                {(g.user_group_names ?? []).map((n) => <Badge key={n} variant="outline">{n}</Badge>)}
               </div>
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" onClick={() => setEditing(g)}>编辑</Button>
@@ -241,7 +245,11 @@ function UserGroupsTab() {
 
   const load = useCallback(async () => {
     try {
-      const [gs, us, lgs] = await Promise.all([api.userGroups(), api.users({ display: 'silent' }), api.linkGroups()])
+      const [gs, us, lgs] = await Promise.all([
+        api.userGroups({ display: 'silent' }),
+        api.users({ display: 'silent' }),
+        api.linkGroups({ display: 'silent' }),
+      ])
       setGroups(gs)
       setUsers(us)
       setLinkGroups(lgs)

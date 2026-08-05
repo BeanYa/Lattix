@@ -181,6 +181,9 @@ func (s *Store) ListLinkGroups(ctx context.Context) ([]LinkGroup, error) {
 // 软删除的链不出现在视图中（与解析侧 EffectiveUserChainAssignments 的
 // deleted_at IS NULL 过滤一致）。
 func (s *Store) fillLinkGroup(ctx context.Context, g *LinkGroup) error {
+	g.ChainIDs = make([]int64, 0)
+	g.ExternalSubscriptions = make([]LinkGroupExternalSubscription, 0)
+	g.UserGroupNames = make([]string, 0)
 	chainRows, err := s.db.QueryContext(ctx, `SELECT lgc.chain_id FROM link_group_chains lgc
 		JOIN chains c ON c.id = lgc.chain_id
 		WHERE lgc.group_id=? AND c.deleted_at IS NULL ORDER BY lgc.chain_id`, g.ID)
@@ -386,6 +389,8 @@ func (s *Store) ListUserGroups(ctx context.Context) ([]UserGroup, error) {
 }
 
 func (s *Store) fillUserGroup(ctx context.Context, g *UserGroup) error {
+	g.UserIDs = make([]int64, 0)
+	g.LinkGroupIDs = make([]int64, 0)
 	userRows, err := s.db.QueryContext(ctx, `SELECT user_id FROM user_group_members WHERE user_group_id=? ORDER BY user_id`, g.ID)
 	if err != nil {
 		return err
