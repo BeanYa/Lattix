@@ -54,6 +54,13 @@ export function SubscriptionRoutingFields({
             : `已指派模板「${templateName(value.assigned_portable_template_id)}」（自选优先，可在此覆盖）。`}
         </Notice>
       )}
+      {value.assigned_suggested_preset && (
+        <Notice tone="info">
+          {value.assign_forced_portable
+            ? `已强制指派建议规则（${presetLabels[value.assigned_suggested_preset as keyof typeof presetLabels] ?? value.assigned_suggested_preset}），以下自选设置暂不生效。`
+            : `已指派建议规则（${presetLabels[value.assigned_suggested_preset as keyof typeof presetLabels] ?? value.assigned_suggested_preset}）（自选优先，可在此覆盖）。`}
+        </Notice>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-2">
           <Label>规则来源</Label>
