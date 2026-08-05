@@ -93,6 +93,7 @@ const (
 	TypeApplySharedEndpoint  = "shared-endpoint.apply"
 	TypeRemoveSharedEndpoint = "shared-endpoint.remove"
 	TypeCleanupXray          = "xray.cleanup"
+	TypeRebuildXray          = "xray.rebuild"
 )
 
 // NewMessageID 返回用于 request_id/trace_id 的 32 位小写十六进制随机值。
@@ -197,6 +198,7 @@ type ApplyResultPayload struct {
 	HopID          int64           `json:"hop_id,omitempty"`
 	Kind           string          `json:"kind,omitempty"`
 	Cleanup        *CleanupXrayResult `json:"cleanup,omitempty"` // xray.cleanup 回执
+	Rebuild        *RebuildXrayResult `json:"rebuild,omitempty"` // xray.rebuild 回执
 }
 
 // CleanupXrayPayload 是 xray.cleanup 的载荷：面板下发的期望状态快照。
@@ -217,6 +219,42 @@ type CleanupInbound struct {
 type CleanupXrayResult struct {
 	RemovedInbounds []CleanupInbound `json:"removed_inbounds"`
 	RemovedPieces   []string         `json:"removed_pieces"`
+}
+
+// RebuildXrayPayload 是 xray.rebuild 的载荷：面板下发的重建期望。
+// Nodes 为该服务器全部活跃节点的完整 apply 规格（模板+用户，agent 重渲染）；
+// ExpectedInboundTags/ExpectedPieces 为重建后自检用的期望集合。
+type RebuildXrayPayload struct {
+	Nodes               []ApplyNodePayload `json:"nodes"`
+	ExpectedInboundTags []string           `json:"expected_inbound_tags"`
+	ExpectedPieces      []string           `json:"expected_pieces"`
+}
+
+// RebuiltInbound 是重建后的一条 inbound 摘要（展示用）。
+type RebuiltInbound struct {
+	Tag  string `json:"tag"`
+	Port int    `json:"port"`
+	Kind string `json:"kind"` // 协议（vless/vmess/…）
+}
+
+// RebuildXrayResult 是 xray.rebuild 的回执数据：重建后的监听/piece 摘要与回滚标记。
+// 失败时错误经信封 code/message 表达，RolledBack=true 表示已恢复备份配置。
+type RebuildXrayResult struct {
+	RebuiltInbounds []RebuiltInbound `json:"rebuilt_inbounds"`
+	RebuiltPieces   []string         `json:"rebuilt_pieces"`
+	RolledBack      bool             `json:"rolled_back"`
+}
+
+// MarshalJSON 保证数组字段始终为 [] 而非 null（前端直接读 .length，null 会崩溃）。
+func (r RebuildXrayResult) MarshalJSON() ([]byte, error) {
+	type alias RebuildXrayResult
+	if r.RebuiltInbounds == nil {
+		r.RebuiltInbounds = []RebuiltInbound{}
+	}
+	if r.RebuiltPieces == nil {
+		r.RebuiltPieces = []string{}
+	}
+	return json.Marshal(alias(r))
 }
 
 // ApplySharedEndpointPayload replaces the complete managed state of one
