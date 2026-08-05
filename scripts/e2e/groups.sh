@@ -98,7 +98,6 @@ echo ">> 用户 u1（入组）/ u2（不入组）+ 建链（A=入口、C=出口�
 U1="$(rpc_data POST /api/user/create '{"name":"grp-member"}')"
 U2="$(rpc_data POST /api/user/create '{"name":"grp-outside"}')"
 UID1="$(py "d['id']" "$U1")"; UID2="$(py "d['id']" "$U2")"
-UUID1="$(py "d['uuid']" "$U1")"; UUID2="$(py "d['uuid']" "$U2")"
 TOK1="$(py "d['sub_token']" "$U1")"; TOK2="$(py "d['sub_token']" "$U2")"
 CHAIN="$(rpc_data POST /api/chain/create "{\"entry\":{\"server_id\":$AID},\"exit\":{\"server_id\":$CID},\"node\":{\"protocol\":\"vless\"}}")"
 CH1="$(py "d['id']" "$CHAIN")"
@@ -108,8 +107,9 @@ wait_chain "$CH1" active 90 || { echo "FAIL: 链未 active"; exit 1; }
 
 echo ">> 外部订阅（本地静态订阅文件，2 个节点）"
 EXT_FILE="$WORK/sub-ext.txt"
-printf '%s' "vmess://eyJhZGQiOiJleHQtYS5leGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ4LXV1aWQtYSIsIm5ldCI6InRjcCIsInBzIjoiZXh0LWEifQ==
-vmess://eyJhZGQiOiJleHQtYi5leGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ4LXV1aWQtYiIsIm5ldCI6InRjcCIsInBzIjoiZXh0LWIifQ==" > "$EXT_FILE"
+VMESS_A="vmess://eyJhZGQiOiJleHQtYS5leGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ4LXV1aWQtYSIsIm5ldCI6InRjcCIsInBzIjoiZXh0LWEifQ=="
+VMESS_B="vmess://eyJhZGQiOiJleHQtYi5leGFtcGxlLmNvbSIsInBvcnQiOjQ0MywiaWQiOiJ4LXV1aWQtYiIsIm5ldCI6InRjcCIsInBzIjoiZXh0LWIifQ=="
+printf '%s\n' "$VMESS_A" "$VMESS_B" > "$EXT_FILE"
 python3 -m http.server 18080 -d "$WORK" >"$WORK/http.log" 2>&1 &
 HTTPID=$!
 for _ in $(seq 1 20); do curl -fsS "http://127.0.0.1:18080/sub-ext.txt" >/dev/null 2>&1 && break; sleep 0.2; done
@@ -151,10 +151,20 @@ rpc_data POST /api/link-group/update "{\"id\":$LGID,\"name\":\"旗舰线路\",\"
 sleep 2
 [[ "$(sub_count "$TOK1")" == "1" ]] && echo "OK: 外部订阅原子移除" || { echo "FAIL: 移除后订阅数 $(sub_count "$TOK1")"; exit 1; }
 
-echo ">> 外部订阅同步触发分组用户重发布：恢复分组内订阅，同步后 u1 订阅回到 3"
+echo ">> 恢复分组内外部订阅 → u1 订阅回到 3（分组变更触发重发布）"
 rpc_data POST /api/link-group/update "{\"id\":$LGID,\"name\":\"旗舰线路\",\"chain_ids\":[$CH1],\"external_subscriptions\":[{\"subscription_id\":$EXTID,\"mode\":\"stack\"}]}" >/dev/null
 sleep 2
 [[ "$(sub_count "$TOK1")" == "3" ]] || { echo "FAIL: 恢复后订阅数 $(sub_count "$TOK1")"; exit 1; }
+
+echo ">> 外部订阅内容变更同步 → 分组用户 u1 订阅自动重发布（3→2）"
+printf '%s\n' "$VMESS_A" > "$EXT_FILE"
+rpc_data POST /api/external-subscription/sync "{\"id\":$EXTID}" >/dev/null
+sleep 2
+[[ "$(sub_count "$TOK1")" == "2" ]] && echo "OK: 外部订阅内容变更同步后分组用户订阅自动重发布（3→2）" || { echo "FAIL: 内容变更同步后订阅数 $(sub_count "$TOK1")"; exit 1; }
+printf '%s\n' "$VMESS_A" "$VMESS_B" > "$EXT_FILE"
+rpc_data POST /api/external-subscription/sync "{\"id\":$EXTID}" >/dev/null
+sleep 2
+[[ "$(sub_count "$TOK1")" == "3" ]] && echo "OK: 外部订阅内容还原同步后分组用户订阅恢复（2→3）" || { echo "FAIL: 内容还原同步后订阅数 $(sub_count "$TOK1")"; exit 1; }
 
 echo ">> 清空 u1 直接分配（遮蔽测试遗留的外部订阅）→ 删除用户分组 → 恢复直接分配（空 → 订阅 0）"
 rpc_data POST /api/user/set-external-subscriptions "{\"user_id\":$UID1,\"items\":[]}" >/dev/null
