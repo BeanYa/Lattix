@@ -122,7 +122,7 @@ func (s *Server) mergedUserTraffic(ctx context.Context, user *store.User, t stor
 		v := user.ExpiresAt.Unix()
 		panelExpire = &v
 	}
-	attached, err := s.st.ListUserExternalSubscriptions(ctx, user.ID)
+	attached, err := s.st.EffectiveUserExternalSubscriptions(ctx, user.ID)
 	if err != nil {
 		attached = nil
 	}
@@ -634,15 +634,26 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 		}
 		items = append(items, proxyItem{node: n, rc: rc})
 	}
-	assigned, err := s.st.UserNodeIDs(r.Context(), user.ID)
+	// 用户维度分配（§16）：分组用户只按分组派生（直接分配被遮蔽）；
+	// 非分组用户走直接分配（user_nodes + user_chain_assignments）。
+	groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), user.ID)
 	if err != nil {
 		return items, warnings
 	}
-	allowed := make(map[int64]bool, len(assigned))
-	for _, id := range assigned {
-		allowed[id] = true
+	allowed := map[int64]bool{}
+	var chainAssignments []store.UserChainAssignment
+	if len(groupIDs) > 0 {
+		chainAssignments, err = s.st.EffectiveUserChainAssignments(r.Context(), user.ID)
+	} else {
+		assigned, err := s.st.UserNodeIDs(r.Context(), user.ID)
+		if err != nil {
+			return items, warnings
+		}
+		for _, id := range assigned {
+			allowed[id] = true
+		}
+		chainAssignments, err = s.st.UserChainAssignments(r.Context(), user.ID)
 	}
-	chainAssignments, err := s.st.UserChainAssignments(r.Context(), user.ID)
 	if err != nil {
 		return items, warnings
 	}
@@ -677,7 +688,7 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 		}
 		items = append(items, *item)
 	}
-	attached, err := s.st.ListUserExternalSubscriptions(r.Context(), user.ID)
+	attached, err := s.st.EffectiveUserExternalSubscriptions(r.Context(), user.ID)
 	if err != nil {
 		return items, warnings
 	}

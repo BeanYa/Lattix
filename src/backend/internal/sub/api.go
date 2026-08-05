@@ -93,7 +93,7 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 		v := user.ExpiresAt.Unix()
 		panelExpire = &v
 	}
-	attached, _ := s.st.ListUserExternalSubscriptions(r.Context(), user.ID)
+	attached, _ := s.st.EffectiveUserExternalSubscriptions(r.Context(), user.ID)
 	merged := extsub.MergeUserTraffic(extsub.Traffic{
 		Upload: t.Up, Download: t.Down, Total: user.TrafficLimit, Expire: panelExpire,
 	}, attached)
