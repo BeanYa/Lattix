@@ -285,6 +285,14 @@ CREATE TABLE IF NOT EXISTS user_subscription_profiles (
     mihomo_template_id  TEXT NOT NULL DEFAULT '',
     singbox_template_id TEXT NOT NULL DEFAULT '',
     quanx_template_id   TEXT NOT NULL DEFAULT '',
+    assigned_portable_template_id TEXT NOT NULL DEFAULT '',
+    assigned_mihomo_template_id  TEXT NOT NULL DEFAULT '',
+    assigned_singbox_template_id TEXT NOT NULL DEFAULT '',
+    assigned_quanx_template_id   TEXT NOT NULL DEFAULT '',
+    assign_forced_portable INTEGER NOT NULL DEFAULT 0,
+    assign_forced_mihomo  INTEGER NOT NULL DEFAULT 0,
+    assign_forced_singbox INTEGER NOT NULL DEFAULT 0,
+    assign_forced_quanx   INTEGER NOT NULL DEFAULT 0,
     generation_status   TEXT NOT NULL DEFAULT 'missing', -- missing|pending|ready|error
     generation_error    TEXT NOT NULL DEFAULT '',
     updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP

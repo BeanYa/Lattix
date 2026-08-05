@@ -25,17 +25,25 @@ var DefaultBalancedCategories = []string{
 }
 
 type SubscriptionProfile struct {
-	UserID             int64
-	Mode               string
-	Preset             string
-	CategoriesJSON     string
-	PortableTemplateID string
-	MihomoTemplateID   string
-	SingboxTemplateID  string
-	QuanXTemplateID    string
-	GenerationStatus   string
-	GenerationError    string
-	UpdatedAt          time.Time
+	UserID                    int64
+	Mode                      string
+	Preset                    string
+	CategoriesJSON            string
+	PortableTemplateID        string
+	MihomoTemplateID          string
+	SingboxTemplateID         string
+	QuanXTemplateID           string
+	AssignedPortableTemplateID string
+	AssignedMihomoTemplateID   string
+	AssignedSingboxTemplateID  string
+	AssignedQuanXTemplateID    string
+	AssignForcedPortable       bool
+	AssignForcedMihomo         bool
+	AssignForcedSingbox        bool
+	AssignForcedQuanX          bool
+	GenerationStatus           string
+	GenerationError            string
+	UpdatedAt                  time.Time
 }
 
 type SubscriptionTemplate struct {
@@ -101,14 +109,39 @@ func defaultSubscriptionProfile(userID int64) SubscriptionProfile {
 	}
 }
 
+// EffectiveProfile 合并管理员指派与用户自选，返回订阅构建实际使用的 profile：
+// 指派槽位在用户未自选（或强制覆盖）时生效；用户自选优先于普通指派。
+func EffectiveProfile(p SubscriptionProfile) SubscriptionProfile {
+	if p.AssignedPortableTemplateID != "" && (p.AssignForcedPortable || p.Mode != SubscriptionModeTemplate || p.PortableTemplateID == "") {
+		p.Mode = SubscriptionModeTemplate
+		p.PortableTemplateID = p.AssignedPortableTemplateID
+	}
+	if p.AssignedMihomoTemplateID != "" && (p.AssignForcedMihomo || p.MihomoTemplateID == "") {
+		p.MihomoTemplateID = p.AssignedMihomoTemplateID
+	}
+	if p.AssignedSingboxTemplateID != "" && (p.AssignForcedSingbox || p.SingboxTemplateID == "") {
+		p.SingboxTemplateID = p.AssignedSingboxTemplateID
+	}
+	if p.AssignedQuanXTemplateID != "" && (p.AssignForcedQuanX || p.QuanXTemplateID == "") {
+		p.QuanXTemplateID = p.AssignedQuanXTemplateID
+	}
+	return p
+}
+
 func (s *Store) UserSubscriptionProfile(ctx context.Context, userID int64) (SubscriptionProfile, error) {
 	var profile SubscriptionProfile
+	var forcedPortable, forcedMihomo, forcedSingbox, forcedQuanx int
 	err := s.db.QueryRowContext(ctx, `SELECT user_id, mode, preset, categories, portable_template_id,
-		mihomo_template_id, singbox_template_id, quanx_template_id, generation_status,
-		generation_error, updated_at FROM user_subscription_profiles WHERE user_id = ?`, userID).Scan(
+		mihomo_template_id, singbox_template_id, quanx_template_id,
+		assigned_portable_template_id, assigned_mihomo_template_id, assigned_singbox_template_id, assigned_quanx_template_id,
+		assign_forced_portable, assign_forced_mihomo, assign_forced_singbox, assign_forced_quanx,
+		generation_status, generation_error, updated_at FROM user_subscription_profiles WHERE user_id = ?`, userID).Scan(
 		&profile.UserID, &profile.Mode, &profile.Preset, &profile.CategoriesJSON,
 		&profile.PortableTemplateID, &profile.MihomoTemplateID, &profile.SingboxTemplateID,
-		&profile.QuanXTemplateID, &profile.GenerationStatus, &profile.GenerationError, &profile.UpdatedAt)
+		&profile.QuanXTemplateID, &profile.AssignedPortableTemplateID, &profile.AssignedMihomoTemplateID,
+		&profile.AssignedSingboxTemplateID, &profile.AssignedQuanXTemplateID,
+		&forcedPortable, &forcedMihomo, &forcedSingbox, &forcedQuanx,
+		&profile.GenerationStatus, &profile.GenerationError, &profile.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		if _, userErr := s.UserByID(ctx, userID); userErr != nil {
 			return SubscriptionProfile{}, userErr
@@ -118,22 +151,53 @@ func (s *Store) UserSubscriptionProfile(ctx context.Context, userID int64) (Subs
 	if err != nil {
 		return SubscriptionProfile{}, fmt.Errorf("query user subscription profile: %w", err)
 	}
+	profile.AssignForcedPortable = forcedPortable != 0
+	profile.AssignForcedMihomo = forcedMihomo != 0
+	profile.AssignForcedSingbox = forcedSingbox != 0
+	profile.AssignForcedQuanX = forcedQuanx != 0
 	return profile, nil
 }
 
 func (s *Store) SaveUserSubscriptionProfile(ctx context.Context, profile SubscriptionProfile) error {
+	forcedPortable, forcedMihomo := 0, 0
+	forcedSingbox, forcedQuanx := 0, 0
+	if profile.AssignForcedPortable {
+		forcedPortable = 1
+	}
+	if profile.AssignForcedMihomo {
+		forcedMihomo = 1
+	}
+	if profile.AssignForcedSingbox {
+		forcedSingbox = 1
+	}
+	if profile.AssignForcedQuanX {
+		forcedQuanx = 1
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO user_subscription_profiles
 		(user_id, mode, preset, categories, portable_template_id, mihomo_template_id,
-		 singbox_template_id, quanx_template_id, generation_status, generation_error, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', CURRENT_TIMESTAMP)
+		 singbox_template_id, quanx_template_id, assigned_portable_template_id, assigned_mihomo_template_id,
+		 assigned_singbox_template_id, assigned_quanx_template_id, assign_forced_portable, assign_forced_mihomo,
+		 assign_forced_singbox, assign_forced_quanx, generation_status, generation_error, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', CURRENT_TIMESTAMP)
 		ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode, preset=excluded.preset,
 		categories=excluded.categories, portable_template_id=excluded.portable_template_id,
 		mihomo_template_id=excluded.mihomo_template_id, singbox_template_id=excluded.singbox_template_id,
-		quanx_template_id=excluded.quanx_template_id, generation_status=excluded.generation_status,
+		quanx_template_id=excluded.quanx_template_id,
+		assigned_portable_template_id=excluded.assigned_portable_template_id,
+		assigned_mihomo_template_id=excluded.assigned_mihomo_template_id,
+		assigned_singbox_template_id=excluded.assigned_singbox_template_id,
+		assigned_quanx_template_id=excluded.assigned_quanx_template_id,
+		assign_forced_portable=excluded.assign_forced_portable,
+		assign_forced_mihomo=excluded.assign_forced_mihomo,
+		assign_forced_singbox=excluded.assign_forced_singbox,
+		assign_forced_quanx=excluded.assign_forced_quanx,
+		generation_status=excluded.generation_status,
 		generation_error='', updated_at=CURRENT_TIMESTAMP`,
 		profile.UserID, profile.Mode, profile.Preset, profile.CategoriesJSON,
 		profile.PortableTemplateID, profile.MihomoTemplateID, profile.SingboxTemplateID,
-		profile.QuanXTemplateID, profile.GenerationStatus)
+		profile.QuanXTemplateID, profile.AssignedPortableTemplateID, profile.AssignedMihomoTemplateID,
+		profile.AssignedSingboxTemplateID, profile.AssignedQuanXTemplateID,
+		forcedPortable, forcedMihomo, forcedSingbox, forcedQuanx, profile.GenerationStatus)
 	if err != nil {
 		return fmt.Errorf("save user subscription profile: %w", err)
 	}
@@ -560,8 +624,9 @@ func (s *Store) EnsureSubscriptionTemplate(ctx context.Context, template Subscri
 func (s *Store) DeleteSubscriptionTemplate(ctx context.Context, id string) error {
 	var refs int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_subscription_profiles WHERE
-		portable_template_id=? OR mihomo_template_id=? OR singbox_template_id=? OR quanx_template_id=?`,
-		id, id, id, id).Scan(&refs); err != nil {
+		portable_template_id=? OR mihomo_template_id=? OR singbox_template_id=? OR quanx_template_id=?
+		OR assigned_portable_template_id=? OR assigned_mihomo_template_id=? OR assigned_singbox_template_id=? OR assigned_quanx_template_id=?`,
+		id, id, id, id, id, id, id, id).Scan(&refs); err != nil {
 		return err
 	}
 	if refs > 0 {

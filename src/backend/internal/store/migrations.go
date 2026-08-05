@@ -11,7 +11,7 @@ import (
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
-const schemaVersion = 12
+const schemaVersion = 13
 
 type columnMigration struct {
 	name       string
@@ -158,6 +158,16 @@ func migrateSchema(tx *sql.Tx) error {
 		},
 		"subscription_snapshots": {
 			{"warnings", "TEXT NOT NULL DEFAULT ''"},
+		},
+		"user_subscription_profiles": {
+			{"assigned_portable_template_id", "TEXT NOT NULL DEFAULT ''"},
+			{"assigned_mihomo_template_id", "TEXT NOT NULL DEFAULT ''"},
+			{"assigned_singbox_template_id", "TEXT NOT NULL DEFAULT ''"},
+			{"assigned_quanx_template_id", "TEXT NOT NULL DEFAULT ''"},
+			{"assign_forced_portable", "INTEGER NOT NULL DEFAULT 0"},
+			{"assign_forced_mihomo", "INTEGER NOT NULL DEFAULT 0"},
+			{"assign_forced_singbox", "INTEGER NOT NULL DEFAULT 0"},
+			{"assign_forced_quanx", "INTEGER NOT NULL DEFAULT 0"},
 		},
 	} {
 		if _, err := ensureColumns(tx, table, columns); err != nil {
