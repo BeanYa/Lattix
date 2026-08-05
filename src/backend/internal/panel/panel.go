@@ -384,6 +384,15 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodGet, "/api/external-subscription/chains",
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"id"}}, s.handleListExternalChains)
 
+	s.registerRPC(mux, http.MethodGet, "/api/link-group/list", read, s.handleListLinkGroups)
+	s.registerRPC(mux, http.MethodPost, "/api/link-group/create", write, s.handleCreateLinkGroup)
+	s.registerRPC(mux, http.MethodPost, "/api/link-group/update", write, s.handleUpdateLinkGroup)
+	s.registerRPC(mux, http.MethodPost, "/api/link-group/delete", write, s.handleDeleteLinkGroup)
+	s.registerRPC(mux, http.MethodGet, "/api/user-group/list", read, s.handleListUserGroups)
+	s.registerRPC(mux, http.MethodPost, "/api/user-group/create", write, s.handleCreateUserGroup)
+	s.registerRPC(mux, http.MethodPost, "/api/user-group/update", write, s.handleUpdateUserGroup)
+	s.registerRPC(mux, http.MethodPost, "/api/user-group/delete", write, s.handleDeleteUserGroup)
+
 	s.registerRPC(mux, http.MethodGet, "/api/setting/get", read, s.handleGetSettings)
 	s.registerRPC(mux, http.MethodPost, "/api/setting/update", write, s.handleUpdateSettings)
 	s.registerRPC(mux, http.MethodPost, "/api/setting/change-password",

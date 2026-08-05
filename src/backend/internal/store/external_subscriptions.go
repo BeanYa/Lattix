@@ -139,6 +139,9 @@ func (s *Store) DeleteExternalSubscription(ctx context.Context, id int64) error 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM user_external_subscriptions WHERE subscription_id = ?`, id); err != nil {
 		return fmt.Errorf("delete external subscription user links: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM link_group_external_subscriptions WHERE subscription_id = ?`, id); err != nil {
+		return fmt.Errorf("delete external subscription group links: %w", err)
+	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM external_subscriptions WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete external subscription: %w", err)
