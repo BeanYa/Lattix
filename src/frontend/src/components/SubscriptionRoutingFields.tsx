@@ -19,6 +19,12 @@ const presetLabels = {
   comprehensive: 'Comprehensive',
 } as const
 
+function suggestedCategoryLabels(ids: string[], categories: SubscriptionRuleCategory[]): string {
+  const byId = new Map(categories.map((category) => [category.id, category.label]))
+  const labels = ids.map((id) => byId.get(id) ?? id)
+  return labels.length === 0 ? '未指定分组' : labels.join('、')
+}
+
 function categoriesForPreset(
   preset: SubscriptionRoutingProfile['preset'],
   categories: SubscriptionRuleCategory[],
@@ -54,11 +60,11 @@ export function SubscriptionRoutingFields({
             : `已指派模板「${templateName(value.assigned_portable_template_id)}」（自选优先，可在此覆盖）。`}
         </Notice>
       )}
-      {value.assigned_suggested_preset && (
+      {value.assigned_suggested_categories.length > 0 && (
         <Notice tone="info">
           {value.assign_forced_portable
-            ? `已强制指派建议规则（${presetLabels[value.assigned_suggested_preset as keyof typeof presetLabels] ?? value.assigned_suggested_preset}），以下自选设置暂不生效。`
-            : `已指派建议规则（${presetLabels[value.assigned_suggested_preset as keyof typeof presetLabels] ?? value.assigned_suggested_preset}）（自选优先，可在此覆盖）。`}
+            ? `已强制指派建议规则（${suggestedCategoryLabels(value.assigned_suggested_categories, categories)}），以下自选设置暂不生效。`
+            : `已指派建议规则（${suggestedCategoryLabels(value.assigned_suggested_categories, categories)}）（自选优先，可在此覆盖）。`}
         </Notice>
       )}
       <div className="grid gap-3 sm:grid-cols-2">

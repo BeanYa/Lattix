@@ -318,13 +318,13 @@ export const api = {
     requester.post<void>('/api/subscription/template/delete', { id }),
   refreshSubscriptionTemplates: (id = '') =>
     requester.post<SubscriptionTemplate[]>('/api/subscription/template/refresh', { id }),
-  assignSubscriptionTemplate: (userIds: number[], target: { template_id?: string; suggested_preset?: string }, forced: boolean) =>
-    requester.post<{ user_ids: number[]; template_id?: string; suggested_preset?: string; forced: boolean }>(
+  assignSubscriptionTemplate: (userIds: number[], target: { template_id?: string; suggested_categories?: string[] }, forced: boolean) =>
+    requester.post<{ user_ids: number[]; template_id?: string; suggested_categories?: string[]; forced: boolean }>(
       '/api/subscription/template/assign',
       { user_ids: userIds, ...target, forced },
     ),
-  unassignSubscriptionTemplate: (userIds: number[], target: { template_id?: string; suggested_preset?: string }) =>
-    requester.post<{ user_ids: number[]; template_id?: string; suggested_preset?: string }>(
+  unassignSubscriptionTemplate: (userIds: number[], target: { template_id?: string; suggested_categories?: string[] }) =>
+    requester.post<{ user_ids: number[]; template_id?: string; suggested_categories?: string[] }>(
       '/api/subscription/template/unassign',
       { user_ids: userIds, ...target },
     ),

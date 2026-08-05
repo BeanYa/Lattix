@@ -583,7 +583,7 @@ export interface SubscriptionRoutingProfile {
   assign_forced_singbox: boolean
   assigned_quanx_template_id: string
   assign_forced_quanx: boolean
-  assigned_suggested_preset: string
+  assigned_suggested_categories: string[]
 }
 
 export interface SubscriptionSnapshotStatus {
