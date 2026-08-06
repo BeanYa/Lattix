@@ -705,9 +705,32 @@ paths:
   /api/observe-task/get:
     get:
       operationId: observeTaskGet
+      summary: 查询旁路观察进度
+      tags: [panel]
+      security:
+        - session: []
       parameters:
         - {name: observe_id, in: query, required: true, schema: {type: string, minLength: 32, maxLength: 32}}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+      responses:
+        '200':
+          description: 观察快照
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [code, message, data, request_id, trace_id]
+                properties:
+                  code:
+                    oneOf:
+                      - {$ref: '#/components/schemas/RPCCode'}
+                      - {$ref: '#/components/schemas/ProtocolCode'}
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/Observation'}
+                  request_id: {$ref: '#/components/schemas/MessageID'}
+                  trace_id: {$ref: '#/components/schemas/MessageID'}
+                  observe_id: {$ref: '#/components/schemas/MessageID'}
+        default: {$ref: '#/components/responses/ProtocolErrorResponse'}
   /api/backup/download:
     get:
       operationId: backupDownload
@@ -1133,3 +1156,31 @@ components:
         request_id: {$ref: '#/components/schemas/MessageID'}
         trace_id: {$ref: '#/components/schemas/MessageID'}
         observe_id: {$ref: '#/components/schemas/MessageID'}
+    Observation:
+      type: object
+      description: 旁路操作进度快照（GET /api/observe-task/get）。
+      additionalProperties: false
+      required: [id, kind, title, stages, stage, percent, message, status]
+      properties:
+        id: {type: string}
+        kind: {type: string}
+        title: {type: string}
+        stages:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, label]
+            properties:
+              key: {type: string}
+              label: {type: string}
+        stage: {type: string}
+        percent: {type: integer, minimum: 0, maximum: 100}
+        message: {type: string}
+        status: {type: string, enum: [running, done, failed]}
+        warnings:
+          type: array
+          items: {type: string}
+        error: {type: string}
+        started_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}

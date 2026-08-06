@@ -1455,6 +1455,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/observe-task/get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 查询旁路观察进度 */
+        get: operations["observeTaskGet"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/backup/download": {
         parameters: {
             query?: never;
@@ -1812,6 +1829,7 @@ export interface components {
             data: null;
             request_id: components["schemas"]["MessageID"];
             trace_id: components["schemas"]["MessageID"];
+            observe_id?: components["schemas"]["MessageID"];
         };
         RPCEnvelope: {
             code: components["schemas"]["RPCCode"] | components["schemas"]["ProtocolCode"];
@@ -1819,6 +1837,28 @@ export interface components {
             data: unknown;
             request_id: components["schemas"]["MessageID"];
             trace_id: components["schemas"]["MessageID"];
+            observe_id?: components["schemas"]["MessageID"];
+        };
+        /** @description 旁路操作进度快照（GET /api/observe-task/get）。 */
+        Observation: {
+            id: string;
+            kind: string;
+            title: string;
+            stages: {
+                key: string;
+                label: string;
+            }[];
+            stage: string;
+            percent: number;
+            message: string;
+            /** @enum {string} */
+            status: "running" | "done" | "failed";
+            warnings?: string[];
+            error?: string;
+            /** Format: date-time */
+            started_at?: string;
+            /** Format: date-time */
+            finished_at?: string;
         };
     };
     responses: {
@@ -3395,6 +3435,36 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    observeTaskGet: {
+        parameters: {
+            query: {
+                observe_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 观察快照 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        code: components["schemas"]["RPCCode"] | components["schemas"]["ProtocolCode"];
+                        message: string;
+                        data: components["schemas"]["Observation"];
+                        request_id: components["schemas"]["MessageID"];
+                        trace_id: components["schemas"]["MessageID"];
+                        observe_id?: components["schemas"]["MessageID"];
+                    };
+                };
+            };
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     backupDownload: {
         parameters: {
             query?: never;
@@ -3603,6 +3673,7 @@ export const rpcOperations = {
   panelGetVersion: { method: 'GET', path: '/api/panel/get-version' },
   panelStartUpdate: { method: 'POST', path: '/api/panel/start-update' },
   panelGetUpdateStatus: { method: 'GET', path: '/api/panel/get-update-status' },
+  observeTaskGet: { method: 'GET', path: '/api/observe-task/get' },
   backupDownload: { method: 'GET', path: '/api/backup/download' },
   logListOperations: { method: 'GET', path: '/api/log/list-operations' },
   logClearOperations: { method: 'POST', path: '/api/log/clear-operations' },

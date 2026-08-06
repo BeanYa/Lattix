@@ -217,4 +217,48 @@ describe('Requester', () => {
     await expect(request).resolves.toEqual({ username: 'admin' })
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
+
+  it('postObserved resolves observeId from envelope', async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        jsonResponse({ ...envelope('OK', { id: 42 }), observe_id: '0123456789abcdef0123456789abcdef' }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new Requester()
+    client.setCSRFToken('csrf-token')
+
+    await expect(
+      client.postObserved<{ id: number }>('/api/server/rebuild-xray', { server_id: 1 }, {
+        traceId: TRACE_ID,
+      }),
+    ).resolves.toEqual({
+      data: { id: 42 },
+      observeId: '0123456789abcdef0123456789abcdef',
+    })
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [path, init] = fetchMock.mock.calls[0]!
+    expect(path).toBe('/api/server/rebuild-xray')
+    expect(init?.headers).toMatchObject({
+      'Content-Type': 'application/json',
+      'Idempotency-Key': expect.stringMatching(/^[0-9a-f]{32}$/),
+      'X-CSRF-Token': 'csrf-token',
+    })
+  })
+
+  it('postObserved resolves undefined observeId when envelope lacks it', async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(jsonResponse(envelope('OK', { id: 42 }))),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await new Requester().postObserved<{ id: number }>(
+      '/api/user-group/create',
+      { name: 'admin' },
+    )
+
+    expect(result.data).toEqual({ id: 42 })
+    expect(result.observeId).toBeUndefined()
+  })
 })
