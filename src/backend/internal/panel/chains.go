@@ -14,9 +14,17 @@ import (
 	"github.com/google/uuid"
 
 	"lattix/backend/internal/dispatch"
+	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/shared"
 )
+
+// chainNodeObserveStages 是链路/节点操作的统一观察阶段（与分组操作一致的三段式）。
+var chainNodeObserveStages = []progress.Stage{
+	{Key: "db", Label: "校验并写入数据库"},
+	{Key: "publish", Label: "下发节点配置"},
+	{Key: "regenerate", Label: "重新生成订阅文件"},
+}
 
 // chainHopDTO 是链跳对象的 API 表示（§21）。
 type chainHopDTO struct {
@@ -325,6 +333,9 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	o := s.observeStart(r, "chain.create", "创建链路", chainNodeObserveStages)
+	defer o.Close()
+
 	// Build the complete initial deployment before exposing it to the scheduler.
 	vc := buildVirtualConfig(req.Node)
 	endpointID := int64(0)
@@ -335,6 +346,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		endpointConfig.StaticClients = nil
 		endpointJSON, err := json.Marshal(endpointConfig)
 		if err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -345,6 +357,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		endpoint, _, err := s.st.EnsureSharedEndpoint(r.Context(), entrySrv.ID, vc.Protocol,
 			entryPort, profileHash, endpointJSON)
 		if err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -360,6 +373,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	}
 	vcJSON, err := json.Marshal(vc)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -399,10 +413,12 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		TrafficMultiplierMilli: trafficMultiplierMilli, Hops: initialHops,
 	})
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	chainID := deployment.ChainID
+	o.Report("db", 100, "链路已落库")
 	for _, task := range deployment.ApplyKeys {
 		_, id := splitRevisionPieceKey(task)
 		serverID := exitSrv.ID
@@ -420,19 +436,24 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.disp.StartChain(r.Context(), chainID); err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("publish", 100, "编排已启动")
 	chain, err := s.st.ChainByID(r.Context(), chainID)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	dto, err := s.toChainDTO(r, *chain)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "chain.create", nil, nil, map[string]any{"chain_id": chainID, "name": req.Name, "hops": len(dto.Hops)})
 	writeJSON(w, http.StatusCreated, dto)
 }
@@ -663,6 +684,8 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	o := s.observeStart(r, "chain.edit", "编辑链路", chainNodeObserveStages)
+	defer o.Close()
 	// 失败链基线为失败 revision：仅已落地（acked）的 piece 可复用；
 	// 未落地的相同 piece 必须重发，否则会以未应用的配置被标记 active。
 	if failedRevision != nil {
@@ -697,6 +720,7 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	}
 	revision, err := s.st.CreateChainRevision(r.Context(), chain.ID, desired)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -721,16 +745,19 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		nodePort = &value
 	}
 	if err := s.st.ReplaceWorkingChainTopology(r.Context(), revision, vc.Protocol, nodePort, serviceChanged); err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	// 废弃被取代的失败 revision：未投递/在途命令不再送达 Agent（§21 失败后编辑）。
 	if failedRevision != nil {
 		if err := s.st.AbandonChainRevision(r.Context(), failedRevision.ID, "被新编辑取代"); err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
+	o.Report("db", 100, "新 revision 已保存")
 	offline := false
 	for _, piece := range plan.Apply {
 		if !s.req.IsOnline(piece.ServerID) {
@@ -742,15 +769,19 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		_ = s.st.SetChainRevisionStatus(r.Context(), revision.ID, store.RevisionStatusWaitingForAgent, "")
 	}
 	if err := s.disp.StartChain(r.Context(), chain.ID); err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("publish", 100, "编排已启动")
 	chain, _ = s.st.ChainByID(r.Context(), chain.ID)
 	dto, err := s.toChainDTO(r, *chain)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("regenerate", 0, "等待订阅重生成")
 	writeJSON(w, http.StatusAccepted, dto)
 }
 
@@ -777,16 +808,23 @@ func (s *Server) handleForcePublishChain(w http.ResponseWriter, r *http.Request)
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	o := s.observeStart(r, "chain.force_publish", "强制发布链路", chainNodeObserveStages)
+	defer o.Close()
 	if err := s.disp.ForcePublishRevision(r.Context(), req.ChainID); err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	o.Report("db", 100, "revision 已更新")
+	o.Report("publish", 100, "已强制发布")
 	chain, _ := s.st.ChainByID(r.Context(), req.ChainID)
 	dto, err := s.toChainDTO(r, *chain)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("regenerate", 0, "等待订阅重生成")
 	writeJSON(w, http.StatusOK, dto)
 }
 
@@ -923,7 +961,10 @@ func (s *Server) handleRetryChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid chain id")
 		return
 	}
+	o := s.observeStart(r, "chain.retry", "重试链路", chainNodeObserveStages)
+	defer o.Close()
 	if err := s.disp.RetryChain(r.Context(), id); err != nil {
+		o.Fail(err)
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "链不存在")
 			return
@@ -931,16 +972,21 @@ func (s *Server) handleRetryChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	o.Report("db", 100, "失败任务已复位")
+	o.Report("publish", 100, "重发命令已下发")
 	chain, err := s.st.ChainByID(r.Context(), id)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	dto, err := s.toChainDTO(r, *chain)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "chain.retry", nil, nil, map[string]any{"chain_id": id})
 	writeJSON(w, http.StatusOK, dto)
 }
@@ -984,10 +1030,13 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 			hops = revisionSnapshotHops(*revision)
 		}
 	}
+	o := s.observeStart(r, "chain.delete", "删除链路", chainNodeObserveStages)
+	defer o.Close()
 	for i, h := range hops {
 		for _, kind := range dispatch.ChainHopPieces(hops, i) {
 			if _, err := s.disp.Enqueue(r.Context(), h.ServerID, shared.TypeRemoveChainHop,
 				shared.RemoveChainHopPayload{HopID: h.ID, Kind: kind}); err != nil {
+				o.Fail(err)
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
@@ -996,19 +1045,24 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 		if h.Role == store.HopRoleExit && h.NodeID != 0 {
 			if _, err := s.disp.Enqueue(r.Context(), h.ServerID, shared.TypeRemoveNode,
 				shared.RemoveNodePayload{NodeID: h.NodeID}); err != nil {
+				o.Fail(err)
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 			if err := s.st.DeleteNode(r.Context(), h.NodeID); err != nil {
+				o.Fail(err)
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
 			}
 		}
 	}
+	o.Report("publish", 100, "拆链命令已下发")
 	if err := s.st.DeleteChain(r.Context(), id); err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("db", 100, "链路已删除")
 	if chain.EndpointID != 0 {
 		if err := s.disp.ReconcileSharedEndpoint(r.Context(), chain.EndpointID); err != nil {
 			log.Printf("panel: reconcile shared endpoint %d after chain delete: %v", chain.EndpointID, err)
@@ -1017,6 +1071,8 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 	if s.subscriptions != nil {
 		s.subscriptions.EnqueueUsers(affectedUsers, s.panelBase(r))
 	}
+	o.WatchUsers(affectedUsers)
+	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "chain.delete", nil, nil, map[string]any{"chain_id": id, "hops": len(hops)})
 	writeJSON(w, http.StatusOK, nil)
 }
