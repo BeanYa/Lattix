@@ -288,7 +288,7 @@ func (r *Registry) sweepExpiredLocked(now time.Time) {
 			continue
 		}
 		if now.After(o.expiresAt) {
-			o.Warnings = append(o.Warnings, "部分订阅仍在后台生成，已超时")
+			o.Warnings = append(o.Warnings, "进度超时")
 			o.finishLocked(StatusDone, "")
 		}
 	}

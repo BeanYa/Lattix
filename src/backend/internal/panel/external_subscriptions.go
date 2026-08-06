@@ -149,8 +149,8 @@ func (s *Server) handleDeleteExternalSubscription(w http.ResponseWriter, r *http
 	}
 	if s.subscriptions != nil {
 		s.subscriptions.EnqueueUsers(ids, "")
+		o.WatchUsers(ids)
 	}
-	o.WatchUsers(ids)
 	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "external_subscription.deleted", nil, nil, map[string]any{"id": req.ID})
 	writeJSON(w, http.StatusOK, nil)

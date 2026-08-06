@@ -200,7 +200,9 @@ func (s *Server) handleUpdateLinkGroup(w http.ResponseWriter, r *http.Request) {
 	endpointIDs := s.endpointIDsForChains(r.Context(), affectedChains)
 	o.Report("reconcile", 100, "共享端点已同步")
 	s.triggerGroupChange(r.Context(), users, endpointIDs)
-	o.WatchUsers(users)
+	if s.subscriptions != nil {
+		o.WatchUsers(users)
+	}
 	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "link_group.update", nil, nil, map[string]any{"id": req.ID, "name": name})
 	writeJSON(w, http.StatusOK, map[string]any{"id": req.ID})
@@ -250,7 +252,9 @@ func (s *Server) handleDeleteLinkGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	o.Report("db", 100, "分组已删除")
 	s.triggerGroupChange(r.Context(), users, s.endpointIDsForChains(r.Context(), before.ChainIDs))
-	o.WatchUsers(users)
+	if s.subscriptions != nil {
+		o.WatchUsers(users)
+	}
 	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "link_group.delete", nil, nil, map[string]any{"id": req.ID, "name": before.Name})
 	writeJSON(w, http.StatusOK, nil)
@@ -292,7 +296,9 @@ func (s *Server) handleCreateUserGroup(w http.ResponseWriter, r *http.Request) {
 	o.Report("db", 100, "分组已保存")
 	// 新分组立即使成员进入分组模式：重发布成员 + reconcile 关联链路端点。
 	s.triggerGroupChange(r.Context(), userIDs, s.endpointIDsForLinkGroups(r.Context(), linkGroupIDs))
-	o.WatchUsers(userIDs)
+	if s.subscriptions != nil {
+		o.WatchUsers(userIDs)
+	}
 	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "user_group.create", nil, nil, map[string]any{"id": id, "name": name})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id})
@@ -339,7 +345,9 @@ func (s *Server) handleUpdateUserGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	o.Report("db", 100, "分组已保存")
 	s.triggerGroupChange(r.Context(), allUsers, s.endpointIDsForLinkGroups(r.Context(), allLinkGroups))
-	o.WatchUsers(allUsers)
+	if s.subscriptions != nil {
+		o.WatchUsers(allUsers)
+	}
 	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "user_group.update", nil, nil, map[string]any{"id": req.ID, "name": name})
 	writeJSON(w, http.StatusOK, map[string]any{"id": req.ID})
@@ -390,7 +398,9 @@ func (s *Server) handleDeleteUserGroup(w http.ResponseWriter, r *http.Request) {
 	o.Report("db", 100, "分组已删除")
 	// 成员恢复直接分配，需重发布 + 端点 reconcile。
 	s.triggerGroupChange(r.Context(), users, s.endpointIDsForLinkGroups(r.Context(), before.LinkGroupIDs))
-	o.WatchUsers(users)
+	if s.subscriptions != nil {
+		o.WatchUsers(users)
+	}
 	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "user_group.delete", nil, nil, map[string]any{"id": req.ID, "name": before.Name})
 	writeJSON(w, http.StatusOK, nil)

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"lattix/backend/internal/progress"
+	"lattix/backend/internal/sub"
 	"lattix/shared"
 )
 
@@ -122,7 +123,7 @@ func TestCreateUserGroupCarriesObserveID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &Server{st: st, observes: progress.NewRegistry()}
+	srv := &Server{st: st, subscriptions: sub.New(st, nil, nil), observes: progress.NewRegistry()}
 	env, rec := postGroupObserve(t, srv, srv.handleCreateUserGroup,
 		`{"name":"青铜会员","user_ids":[`+itoa(u1)+`,`+itoa(u2)+`],"link_group_ids":[`+itoa(lgID)+`]}`)
 	if rec.Code != http.StatusOK || env.Code != "OK" {
@@ -142,7 +143,7 @@ func TestUpdateUserGroupCarriesObserveID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &Server{st: st, observes: progress.NewRegistry()}
+	srv := &Server{st: st, subscriptions: sub.New(st, nil, nil), observes: progress.NewRegistry()}
 	env, rec := postGroupObserve(t, srv, srv.handleUpdateUserGroup,
 		`{"id":`+itoa(ugID)+`,"name":"白银会员","user_ids":[`+itoa(u2)+`],"link_group_ids":[`+itoa(lgID)+`]}`)
 	if rec.Code != http.StatusOK || env.Code != "OK" {
@@ -163,7 +164,7 @@ func TestDeleteUserGroupCarriesObserveID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &Server{st: st, observes: progress.NewRegistry()}
+	srv := &Server{st: st, subscriptions: sub.New(st, nil, nil), observes: progress.NewRegistry()}
 	env, rec := postGroupObserve(t, srv, srv.handleDeleteUserGroup, `{"id":`+itoa(ugID)+`}`)
 	if rec.Code != http.StatusOK || env.Code != "OK" {
 		t.Fatalf("delete status = %d code = %q body = %s", rec.Code, env.Code, rec.Body.String())

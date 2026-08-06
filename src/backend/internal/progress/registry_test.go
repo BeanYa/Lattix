@@ -249,7 +249,7 @@ func TestRunningTimeoutFinishesWithWarning(t *testing.T) {
 	if got.Percent != 100 {
 		t.Fatalf("超时收口 percent = %d, want 100", got.Percent)
 	}
-	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "已超时") {
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "进度超时") {
 		t.Fatalf("超时警告缺失: %v", got.Warnings)
 	}
 }
@@ -267,7 +267,7 @@ func TestNotifyUserPublishedSweepsExpired(t *testing.T) {
 	if got.Status != StatusDone {
 		t.Fatalf("Notify 触发扫描应收口 done: %+v", got)
 	}
-	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "已超时") {
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "进度超时") {
 		t.Fatalf("超时警告缺失: %v", got.Warnings)
 	}
 }
