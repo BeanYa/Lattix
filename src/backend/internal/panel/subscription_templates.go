@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
 )
@@ -102,9 +103,20 @@ func (s *Server) handleRefreshSubscriptionTemplates(w http.ResponseWriter, r *ht
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	o := s.observeStart(r, "subscription.template.refresh", "刷新订阅模板",
+		[]progress.Stage{
+			{Key: "fetch", Label: "拉取远程模板"},
+			{Key: "parse", Label: "解析模板"},
+			{Key: "db", Label: "写入数据库"},
+		})
+	defer o.Close()
 	if err := s.subscriptions.RefreshTemplates(r.Context(), strings.TrimSpace(req.ID)); err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	o.Report("fetch", 100, "拉取完成")
+	o.Report("parse", 100, "解析完成")
+	o.Report("db", 100, "已写入数据库")
 	s.handleSubscriptionTemplates(w, r)
 }

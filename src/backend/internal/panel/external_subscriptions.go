@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 )
 
@@ -41,12 +42,23 @@ func (s *Server) handleCreateExternalSubscription(w http.ResponseWriter, r *http
 	if req.UpdateIntervalHours == 0 {
 		req.UpdateIntervalHours = 24
 	}
+	o := s.observeStart(r, "external_subscription.create", "创建外部订阅",
+		[]progress.Stage{
+			{Key: "fetch", Label: "拉取远程订阅"},
+			{Key: "parse", Label: "解析节点"},
+			{Key: "db", Label: "写入数据库"},
+		})
+	defer o.Close()
 	sub, err := s.extSubs.Create(r.Context(), req.Name, strings.TrimSpace(req.URL),
 		req.UserAgent, req.SkipCertVerify, req.AutoUpdate, req.UpdateIntervalHours)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	o.Report("fetch", 100, "拉取完成")
+	o.Report("parse", 100, "解析完成")
+	o.Report("db", 100, "已写入数据库")
 	s.audit(r, "external_subscription.created", nil, nil, map[string]any{
 		"id": sub.ID, "name": sub.Name, "node_count": sub.NodeCount,
 	})
@@ -66,9 +78,15 @@ func (s *Server) handleUpdateExternalSubscription(w http.ResponseWriter, r *http
 	if req.UpdateIntervalHours == 0 {
 		req.UpdateIntervalHours = 24
 	}
+	o := s.observeStart(r, "external_subscription.update", "更新外部订阅",
+		[]progress.Stage{
+			{Key: "db", Label: "写入数据库"},
+		})
+	defer o.Close()
 	sub, err := s.extSubs.Update(r.Context(), req.ID, req.Name, strings.TrimSpace(req.URL),
 		req.UserAgent, req.SkipCertVerify, req.AutoUpdate, req.UpdateIntervalHours)
 	if err != nil {
+		o.Fail(err)
 		status := http.StatusBadRequest
 		if errors.Is(err, store.ErrNotFound) {
 			status = http.StatusNotFound
@@ -76,6 +94,7 @@ func (s *Server) handleUpdateExternalSubscription(w http.ResponseWriter, r *http
 		writeError(w, status, err.Error())
 		return
 	}
+	o.Report("db", 100, "订阅已更新")
 	s.audit(r, "external_subscription.updated", nil, nil, map[string]any{
 		"id": sub.ID, "name": sub.Name,
 	})
@@ -94,6 +113,12 @@ func (s *Server) handleDeleteExternalSubscription(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "id 必须为正整数")
 		return
 	}
+	o := s.observeStart(r, "external_subscription.delete", "删除外部订阅",
+		[]progress.Stage{
+			{Key: "db", Label: "写入数据库"},
+			{Key: "regenerate", Label: "重发布关联用户"},
+		})
+	defer o.Close()
 	// 删除前收集受影响用户（删除后按订阅 ID 查不到行）；收集失败记日志，
 	// 不丢弃已收集到的直接分配用户。
 	affected, err := s.st.UsersByExternalSubscriptionID(r.Context(), req.ID)
@@ -105,6 +130,7 @@ func (s *Server) handleDeleteExternalSubscription(w http.ResponseWriter, r *http
 		log.Printf("panel: collect group users of external subscription %d: %v", req.ID, err)
 	}
 	if err := s.st.DeleteExternalSubscription(r.Context(), req.ID); err != nil {
+		o.Fail(err)
 		status := http.StatusBadRequest
 		if errors.Is(err, store.ErrNotFound) {
 			status = http.StatusNotFound
@@ -112,17 +138,20 @@ func (s *Server) handleDeleteExternalSubscription(w http.ResponseWriter, r *http
 		writeError(w, status, err.Error())
 		return
 	}
-	if s.subscriptions != nil {
-		seen := map[int64]bool{}
-		var ids []int64
-		for _, id := range append(affected, groupAffected...) {
-			if id > 0 && !seen[id] {
-				seen[id] = true
-				ids = append(ids, id)
-			}
+	o.Report("db", 100, "订阅已删除")
+	seen := map[int64]bool{}
+	var ids []int64
+	for _, id := range append(affected, groupAffected...) {
+		if id > 0 && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
 		}
+	}
+	if s.subscriptions != nil {
 		s.subscriptions.EnqueueUsers(ids, "")
 	}
+	o.WatchUsers(ids)
+	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "external_subscription.deleted", nil, nil, map[string]any{"id": req.ID})
 	writeJSON(w, http.StatusOK, nil)
 }
@@ -139,8 +168,17 @@ func (s *Server) handleSyncExternalSubscription(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "id 必须为正整数")
 		return
 	}
+	o := s.observeStart(r, "external_subscription.sync", "同步外部订阅",
+		[]progress.Stage{
+			{Key: "fetch", Label: "拉取远程订阅"},
+			{Key: "parse", Label: "解析节点"},
+			{Key: "db", Label: "写入数据库"},
+			{Key: "regenerate", Label: "重发布关联用户"},
+		})
+	defer o.Close()
 	sub, err := s.extSubs.Sync(r.Context(), req.ID)
 	if err != nil {
+		o.Fail(err)
 		status := http.StatusBadGateway
 		if errors.Is(err, store.ErrNotFound) {
 			status = http.StatusNotFound
@@ -148,10 +186,14 @@ func (s *Server) handleSyncExternalSubscription(w http.ResponseWriter, r *http.R
 		writeError(w, status, err.Error())
 		return
 	}
+	o.Report("fetch", 100, "拉取完成")
+	o.Report("parse", 100, "解析完成")
+	o.Report("db", 100, "已写入数据库")
 	s.audit(r, "external_subscription.synced", nil, nil, map[string]any{
 		"id": sub.ID, "node_count": sub.NodeCount,
 	})
 	s.republishExternalSubUsers(r.Context(), []int64{sub.ID})
+	o.Report("regenerate", 100, "已触发重发布")
 	writeJSON(w, http.StatusOK, sub)
 }
 
