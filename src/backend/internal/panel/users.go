@@ -196,7 +196,7 @@ type subscriptionProfileDTO struct {
 }
 
 func assignedSuggestedCategories(profile store.SubscriptionProfile) []string {
-	var ids []string
+	ids := []string{}
 	_ = json.Unmarshal([]byte(profile.AssignedSuggestedCategories), &ids)
 	return ids
 }
