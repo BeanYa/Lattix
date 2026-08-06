@@ -184,6 +184,17 @@ type subscriptionProfileInput struct {
 	MihomoTemplateID   string   `json:"mihomo_template_id"`
 	SingboxTemplateID  string   `json:"singbox_template_id"`
 	QuanXTemplateID    string   `json:"quanx_template_id"`
+	// 以下为 GET DTO 的只读回显字段：前端把 routing 对象原样回传，
+	// 本接口忽略它们（管理员指派槽位在保存时从现有 profile 原样保留）。
+	AssignedPortableTemplateID   string   `json:"assigned_portable_template_id"`
+	AssignForcedPortable         bool     `json:"assign_forced_portable"`
+	AssignedMihomoTemplateID     string   `json:"assigned_mihomo_template_id"`
+	AssignForcedMihomo           bool     `json:"assign_forced_mihomo"`
+	AssignedSingboxTemplateID    string   `json:"assigned_singbox_template_id"`
+	AssignForcedSingbox          bool     `json:"assign_forced_singbox"`
+	AssignedQuanXTemplateID      string   `json:"assigned_quanx_template_id"`
+	AssignForcedQuanX            bool     `json:"assign_forced_quanx"`
+	AssignedSuggestedCategories  []string `json:"assigned_suggested_categories"`
 }
 
 type subscriptionProfileDTO struct {
