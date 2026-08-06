@@ -11,10 +11,18 @@ import (
 	"time"
 
 	"lattix/backend/internal/dispatch"
+	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/ws"
 	"lattix/shared"
 )
+
+// serverObserveStages 是服务器重建/修复/清理共用观察的阶段定义。
+var serverObserveStages = []progress.Stage{
+	{Key: "db", Label: "校验并写入数据库"},
+	{Key: "dispatch", Label: "下发命令"},
+	{Key: "ack", Label: "等待 agent 回执"},
+}
 
 // metricsDTO 是主机指标的 API 表示（§13）。
 type metricsDTO struct {
@@ -774,11 +782,15 @@ func (s *Server) handleRepairServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o := s.observeStart(r, "server.repair", "修复配置漂移", serverObserveStages)
+	defer o.Close()
 	nodes, err := s.st.ListNodes(r.Context())
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("db", 100, "节点清单已就绪")
 	reapplied := 0
 	for _, n := range nodes {
 		if n.ServerID != id || n.Status != store.NodeStatusActive {
@@ -789,11 +801,14 @@ func (s *Server) handleRepairServer(w http.ResponseWriter, r *http.Request) {
 			continue // 模板损坏的节点跳过（异常留在 nodes 表）
 		}
 		if err := s.enqueueApply(r, id, n.ID, vc); err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		reapplied++
 	}
+	o.Report("dispatch", 100, "重放命令已下发")
+	o.Report("ack", 0, "已下发，后台执行")
 	sid := id
 	s.audit(r, "server.repair", &sid, nil, map[string]int{"reapplied": reapplied})
 	writeJSON(w, http.StatusOK, map[string]int{"reapplied": reapplied})
@@ -828,20 +843,27 @@ func (s *Server) handleCleanupXray(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "服务器未连接，无法清理")
 		return
 	}
+	o := s.observeStart(r, "server.cleanup_xray", "清理 xray 缓存", serverObserveStages)
+	defer o.Close()
 	tags, pieces, err := s.st.ExpectedXrayState(r.Context(), id)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("db", 100, "期望状态已就绪")
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
 	result, err := s.disp.CleanupXraySync(ctx, id, shared.CleanupXrayPayload{
 		DryRun: req.DryRun, ExpectedInboundTags: tags, ExpectedPieces: pieces,
 	})
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("dispatch", 100, "清理命令已下发")
+	o.Report("ack", 100, "agent 已回执")
 	sid := id
 	s.audit(r, "server.cleanup_xray", &sid, nil, map[string]any{
 		"dry_run": req.DryRun, "removed_inbounds": len(result.RemovedInbounds), "removed_pieces": len(result.RemovedPieces),
@@ -879,8 +901,11 @@ func (s *Server) handleRebuildXray(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "服务器未连接，无法重建")
 		return
 	}
+	o := s.observeStart(r, "server.rebuild_xray", "重建 xray 配置", serverObserveStages)
+	defer o.Close()
 	nodes, err := s.st.ListNodes(r.Context())
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -895,6 +920,7 @@ func (s *Server) handleRebuildXray(w http.ResponseWriter, r *http.Request) {
 		}
 		uuids, err := s.st.NodeUserUUIDs(r.Context(), n.ID)
 		if err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -908,6 +934,7 @@ func (s *Server) handleRebuildXray(w http.ResponseWriter, r *http.Request) {
 	}
 	tags, pieces, err := s.st.ExpectedXrayState(r.Context(), id)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -924,14 +951,18 @@ func (s *Server) handleRebuildXray(w http.ResponseWriter, r *http.Request) {
 		payload.ExpectedInboundTags = append(payload.ExpectedInboundTags, tag)
 	}
 	payload.ExpectedPieces = pieces
+	o.Report("db", 100, "节点规格与期望集已就绪")
 	ctx, cancel := context.WithTimeout(r.Context(), 180*time.Second)
 	defer cancel()
 	result, err := s.disp.RebuildXraySync(ctx, id, payload)
 	sid := id
 	if err != nil {
 		if result != nil {
-			// agent 已回滚并回执结果（RolledBack=true）：照常审计，错误信封
-			// 的 data 携带回滚结果（前端据此展示"已恢复原配置"明细）。
+			// agent 已回滚并回执结果（RolledBack=true）：下发与回执均已发生，
+			// 先如实落阶段再 Fail；错误信封的 data 携带回滚结果（前端据此展示"已恢复原配置"明细）。
+			o.Report("dispatch", 100, "重建命令已下发")
+			o.Report("ack", 100, "agent 已回执并回滚")
+			o.Fail(err)
 			s.audit(r, "server.rebuild_xray", &sid, nil, map[string]any{
 				"nodes": len(payload.Nodes), "inbounds": len(result.RebuiltInbounds),
 				"pieces": len(result.RebuiltPieces), "rolled_back": result.RolledBack,
@@ -939,9 +970,12 @@ func (s *Server) handleRebuildXray(w http.ResponseWriter, r *http.Request) {
 			writeRPC(w, rpcCodeForLegacyStatus(http.StatusInternalServerError), err.Error(), result)
 			return
 		}
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("dispatch", 100, "重建命令已下发")
+	o.Report("ack", 100, "agent 已回执")
 	if result != nil {
 		s.audit(r, "server.rebuild_xray", &sid, nil, map[string]any{
 			"nodes": len(payload.Nodes), "inbounds": len(result.RebuiltInbounds),
