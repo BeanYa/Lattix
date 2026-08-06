@@ -111,3 +111,74 @@ func TestPublishUserSurfacesSkippedChainWarnings(t *testing.T) {
 	}
 	t.Logf("warnings: %v", result.Warnings)
 }
+
+// TestPublishUserIncludesJoinedChainsOnSharedEndpoint 验证跨 profile 加入同一
+// 共享端点的两条链都出现在订阅中（条目参数取自端点 realized_config，与链自身
+// 的 service config 无关）。
+func TestPublishUserIncludesJoinedChainsOnSharedEndpoint(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	entryID, _ := st.CreateServer(ctx, "entry", "entry.example.com", "token-entry", store.MachineTypeDirect, "", "", "US", "")
+	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "token-exit", store.MachineTypeDirect, "", "", "JP", "")
+
+	configA := json.RawMessage(`{"protocol":"vless","port":443,"template":{"dest":"a.example.com"}}`)
+	endpoint, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 443, "profile-a", configA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configB := json.RawMessage(`{"protocol":"vless","port":443,"template":{"dest":"b.example.com"}}`)
+	joined, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 443, "profile-b", configB)
+	if err != nil || joined.ID != endpoint.ID {
+		t.Fatalf("join: id=%d err=%v, want endpoint %d", joined.ID, err, endpoint.ID)
+	}
+	realized := json.RawMessage(`{"port":443,"network":"tcp","public_key":"key","short_id":"short","server_name":"example.com"}`)
+	if err := st.SetSharedEndpointActive(ctx, endpoint.ID, realized); err != nil {
+		t.Fatal(err)
+	}
+
+	deploy := func(name string, config json.RawMessage) int64 {
+		t.Helper()
+		deployment, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+			Name: name, ServiceServerID: exitID, ServiceProtocol: shared.ProtocolVLESS,
+			ServiceConfig: config, EndpointID: endpoint.ID, ServiceUUID: "svc-" + name,
+			TrafficMultiplierMilli: 1000,
+			Hops: []store.InitialChainHop{
+				{ServerID: entryID, Role: store.HopRoleEntry},
+				{ServerID: exitID, Role: store.HopRoleExit},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.PublishChainRevision(ctx, deployment.RevisionID, false); err != nil {
+			t.Fatal(err)
+		}
+		return deployment.ChainID
+	}
+	chainA := deploy("JP共享A", configA)
+	chainB := deploy("JP共享B", configB)
+
+	userID, _ := st.InsertUser(ctx, "Bean", "global-user-uuid", "bean-token", nil)
+	if _, _, err := st.SetUserChains(ctx, userID, []int64{chainA, chainB}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := New(st, nil, nil).PublishUser(ctx, userID, "https://panel.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	clash := string(result.Files["clash"])
+	for _, want := range []string{"JP共享A", "JP共享B"} {
+		if !strings.Contains(clash, want) {
+			t.Fatalf("published clash snapshot missing %q:\n%s", want, clash)
+		}
+	}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", result.Warnings)
+	}
+}
