@@ -2,6 +2,7 @@ package logging
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -27,6 +28,16 @@ var (
 	pathParameterPattern = regexp.MustCompile(`\{([^}/]+)\}`)
 	sensitiveNamePattern = regexp.MustCompile(`(?i)(token|password|secret|key|cookie|authorization|cert|private)`)
 )
+
+// readObserveID 由 panel 启动时注入（SetObserveIDReader），从请求 context 读取旁路
+// 观察 ID；未注入时返回空（envelope 不带 observe_id）。注入式避免 logging → progress
+// 反向依赖。
+var readObserveID func(ctx context.Context) string
+
+// SetObserveIDReader 注入 observe_id 读取器（panel 启动时调用；最后调用者生效）。
+func SetObserveIDReader(fn func(ctx context.Context) string) {
+	readObserveID = fn
+}
 
 type OperatorFunc func(*http.Request) string
 
@@ -385,6 +396,13 @@ func (w *responseRecorder) SetIdempotencyReplayed(replayed bool) {
 
 func (w *responseRecorder) RPCIDs() (string, string) {
 	return RequestID(w.request.Context()), TraceID(w.request.Context())
+}
+
+func (w *responseRecorder) ObserveID() string {
+	if readObserveID == nil {
+		return ""
+	}
+	return readObserveID(w.request.Context())
 }
 
 func (w *responseRecorder) WriteHeader(status int) {

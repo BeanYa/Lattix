@@ -319,6 +319,13 @@ func (w *rpcCapture) RPCIDs() (string, string) {
 	return "", ""
 }
 
+func (w *rpcCapture) ObserveID() string {
+	if target, ok := w.target.(interface{ ObserveID() string }); ok {
+		return target.ObserveID()
+	}
+	return ""
+}
+
 func (w *rpcCapture) flushTo(target http.ResponseWriter) {
 	for key, values := range w.header {
 		target.Header()[key] = append([]string(nil), values...)

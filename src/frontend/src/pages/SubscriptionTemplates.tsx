@@ -39,6 +39,7 @@ import {
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
+import { useOperationProgress } from '@/lib/operation-progress-context'
 import { useTimezone } from '@/lib/timezone'
 import type { SubscriptionTemplate } from '@/lib/types'
 
@@ -53,6 +54,7 @@ const kinds: Array<{ value: SubscriptionTemplate['kind']; label: string }> = [
 export default function SubscriptionTemplates() {
   const { timezone } = useTimezone()
   const { confirm } = useAppDialog()
+  const { showOperation } = useOperationProgress()
   const [templates, setTemplates] = useState<SubscriptionTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -128,7 +130,8 @@ export default function SubscriptionTemplates() {
     setRefreshing(id || 'all')
     setError('')
     try {
-      await api.refreshSubscriptionTemplates(id)
+      const { observeId } = await api.refreshSubscriptionTemplates(id)
+      if (observeId) showOperation({ observeId })
     } catch (err) {
       setError(errorMessage(err))
     } finally {

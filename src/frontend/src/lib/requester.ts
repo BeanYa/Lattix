@@ -8,6 +8,7 @@ import {
 export type { RPCCode, RPCEnvelope } from './api-contract.generated'
 
 export type RequestFailureKind = 'business' | 'transport' | 'protocol' | 'cancelled'
+export type TrackedResult<T> = { data: T; observeId?: string }
 export type RequestErrorCode =
   | RPCCode
   | `HTTP_${number}`
@@ -108,6 +109,14 @@ export class Requester {
 
   post<T>(path: RPCPathByMethod<'POST'>, body: object = {}, options?: RequestOptions): Promise<T> {
     return this.execute<T>('POST', path, body, options, 1)
+  }
+
+  postObserved<T>(
+    path: RPCPathByMethod<'POST'>,
+    body: object = {},
+    options?: RequestOptions,
+  ): Promise<TrackedResult<T>> {
+    return this.executeObserved<T>('POST', path, body, options)
   }
 
   async download(path: string, options?: RequestOptions): Promise<void> {
@@ -289,6 +298,64 @@ export class Requester {
     throw lastError
   }
 
+  private async executeObserved<T>(
+    method: 'POST',
+    path: string,
+    body: object | undefined,
+    options: RequestOptions | undefined,
+  ): Promise<TrackedResult<T>> {
+    const traceId = options?.traceId ?? newRequestId()
+    const display = options?.display ?? 'foreground'
+    const idempotencyKey = options?.idempotencyKey ?? newRequestId()
+    const requestId = newRequestId()
+    const lifecycle = { requestId, traceId, method, path, display }
+    this.emit({ phase: 'start', ...lifecycle })
+    const { signal, cleanup, abortSource } = combinedSignal(
+      options?.signal,
+      options?.timeoutMs ?? 15_000,
+    )
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': idempotencyKey,
+        'X-Request-ID': requestId,
+        'X-Trace-ID': traceId,
+      }
+      if (this.csrfToken) headers['X-CSRF-Token'] = this.csrfToken
+      const response = await fetch(path, {
+        method,
+        credentials: 'include',
+        headers,
+        body: JSON.stringify(body ?? {}),
+        signal,
+      })
+      const envelope = await parseEnvelope<T>(response, requestId, traceId)
+      if (!response.ok) {
+        throw new RequestError({
+          kind: 'protocol',
+          code: envelope.code || `HTTP_${response.status}`,
+          message: envelope.message || `请求协议失败（HTTP ${response.status}）`,
+          httpStatus: response.status,
+          requestId: envelope.request_id,
+          traceId: envelope.trace_id,
+        })
+      }
+      if (envelope.code !== 'OK' && envelope.code !== 'ACCEPTED') {
+        const error = businessError(envelope, response.status)
+        if (error.code === 'AUTH_REQUIRED') this.unauthorizedHandler?.()
+        throw error
+      }
+      this.emit({ phase: 'finish', ...lifecycle })
+      cleanup()
+      return { data: envelope.data, observeId: envelope.observe_id }
+    } catch (error) {
+      cleanup()
+      const lastError = normalizeError(error, requestId, traceId, abortSource())
+      this.emit({ phase: 'finish', ...lifecycle, error: lastError })
+      throw lastError
+    }
+  }
+
   private emit(event: RequestLifecycleEvent) {
     for (const listener of this.listeners) listener(event)
   }
@@ -298,7 +365,7 @@ async function parseEnvelope<T>(
   response: Response,
   fallbackRequestId: string,
   fallbackTraceId: string,
-): Promise<RPCEnvelope<T>> {
+): Promise<RPCEnvelope<T> & { observe_id?: string }> {
   let value: unknown
   try {
     value = await response.json()
@@ -315,7 +382,14 @@ async function parseEnvelope<T>(
   if (!isRecord(value)) {
     throw invalidEnvelope(response.status, fallbackRequestId, fallbackTraceId)
   }
-  const { code, message, data, request_id: requestId, trace_id: traceId } = value
+  const {
+    code,
+    message,
+    data,
+    request_id: requestId,
+    trace_id: traceId,
+    observe_id: observeId,
+  } = value
   if (
     !(isRPCCode(code) || isProtocolCode(code)) ||
     typeof message !== 'string' ||
@@ -331,6 +405,7 @@ async function parseEnvelope<T>(
     data: data as T,
     request_id: requestId,
     trace_id: traceId,
+    ...(observeId !== undefined ? { observe_id: observeId as string } : {}),
   }
 }
 

@@ -231,17 +231,24 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Name = name
+	o := s.observeStart(r, "node.create", "创建节点", chainNodeObserveStages)
+	defer o.Close()
 	vc := buildVirtualConfig(req)
 	id, err := s.applyNewNode(r, req.Name, req.ServerID, req.Port, vc)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("db", 100, "节点已保存")
+	o.Report("publish", 100, "下发命令已入队")
 	n, err := s.st.NodeByID(r.Context(), id)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("regenerate", 0, "等待订阅重生成")
 	srvID, nodeID := n.ServerID, n.ID
 	s.audit(r, "node.create", &srvID, &nodeID, map[string]any{
 		"name": n.Name, "protocol": n.Protocol, "port": n.Port,
@@ -277,10 +284,16 @@ func (s *Server) handleRetryNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, fmt.Sprintf("节点虚拟配置损坏: %v", err))
 		return
 	}
+	o := s.observeStart(r, "node.retry", "重试节点", chainNodeObserveStages)
+	defer o.Close()
 	if err := s.enqueueApply(r, n.ServerID, n.ID, vc); err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("db", 100, "节点状态已更新")
+	o.Report("publish", 100, "重发命令已入队")
+	o.Report("regenerate", 0, "等待订阅重生成")
 	srvID, nodeID := n.ServerID, n.ID
 	s.audit(r, "node.retry", &srvID, &nodeID, nil)
 	writeJSON(w, http.StatusOK, toNodeDTO(*n))
@@ -314,17 +327,25 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o := s.observeStart(r, "node.delete", "删除节点", chainNodeObserveStages)
+	defer o.CloseIfPending()
 	if _, err := s.disp.Enqueue(r.Context(), n.ServerID, shared.TypeRemoveNode, shared.RemoveNodePayload{NodeID: n.ID}); err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("publish", 100, "删除命令已下发")
 	if err := s.st.DeleteNode(r.Context(), id); err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("db", 100, "节点已删除")
 	if s.subscriptions != nil {
 		s.subscriptions.EnqueueUsers(affectedUsers, s.panelBase(r))
+		o.WatchUsers(affectedUsers)
 	}
+	o.Report("regenerate", 0, "等待订阅重生成")
 	// 删除后对象不存在，审计行存 protocol/port 快照留痕（§log）。
 	srvID, nodeID := n.ServerID, n.ID
 	s.audit(r, "node.delete", &srvID, &nodeID, map[string]any{

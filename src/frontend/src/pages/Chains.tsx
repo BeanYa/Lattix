@@ -50,6 +50,7 @@ import {
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
+import { useOperationProgress } from '@/lib/operation-progress-context'
 import { validateNameTemplate } from '@/lib/naming'
 import { DEFAULT_REALITY_DEST, inferRealityDestPreset } from '@/lib/reality'
 import { isServerOnline } from '@/lib/server-state'
@@ -421,6 +422,7 @@ function TrafficHistoryChart({
 export default function Chains() {
   const { timezone } = useTimezone()
   const { confirm } = useAppDialog()
+  const { showOperation } = useOperationProgress()
   const [chains, setChains] = useState<Chain[]>([])
   const [nodes, setNodes] = useState<XrayNode[]>([])
   const [servers, setServers] = useState<Server[]>([])
@@ -741,7 +743,8 @@ export default function Chains() {
 				traffic_multiplier: trafficMultiplier,
 			}
 			if (entryPort.trim()) body.entry_port = Number(entryPort)
-			await api.editChain(body)
+			const { observeId } = await api.editChain(body)
+			if (observeId) showOperation({ observeId })
 		} else {
 			const body: CreateChainRequest = {
 				name: resolvedName,
@@ -753,7 +756,8 @@ export default function Chains() {
 				traffic_multiplier: trafficMultiplier,
 			}
 			if (entryPort.trim()) body.entry_port = Number(entryPort)
-			await api.createChain(body)
+			const { observeId } = await api.createChain(body)
+			if (observeId) showOperation({ observeId })
 		}
       onOpenChange(false)
       load()
@@ -772,7 +776,8 @@ export default function Chains() {
       destructive: true,
     }))) return
     try {
-      await api.forcePublishChain(chain.id)
+      const { observeId } = await api.forcePublishChain(chain.id)
+      if (observeId) showOperation({ observeId })
       load()
     } catch (err) {
       setError(errorMessage(err))
@@ -815,7 +820,8 @@ export default function Chains() {
   const onRetry = async (id: number) => {
     setRetrying(`relay-${id}`)
     try {
-      await api.retryChain(id)
+      const { observeId } = await api.retryChain(id)
+      if (observeId) showOperation({ observeId })
       load()
     } catch (err) {
       setError(errorMessage(err))
@@ -827,7 +833,8 @@ export default function Chains() {
   const onRetryDirect = async (id: number) => {
     setRetrying(`direct-${id}`)
     try {
-      await api.retryNode(id)
+      const { observeId } = await api.retryNode(id)
+      if (observeId) showOperation({ observeId })
       load()
     } catch (err) {
       setError(errorMessage(err))
@@ -847,7 +854,8 @@ export default function Chains() {
       return
     }
     try {
-      await api.deleteChain(id)
+      const { observeId } = await api.deleteChain(id)
+      if (observeId) showOperation({ observeId })
       load()
     } catch (err) {
       setError(errorMessage(err))
@@ -865,7 +873,8 @@ export default function Chains() {
       return
     }
     try {
-      await api.deleteNode(id)
+      const { observeId } = await api.deleteNode(id)
+      if (observeId) showOperation({ observeId })
       load()
     } catch (err) {
       setError(errorMessage(err))
