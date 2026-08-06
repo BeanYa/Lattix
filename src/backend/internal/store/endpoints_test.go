@@ -243,21 +243,37 @@ func TestEnsureSharedEndpointJoinsWithoutDuplicateRows(t *testing.T) {
 	defer st.Close()
 	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", MachineTypeDirect, "", "", "US", "")
 	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
+	// 遗留重复行（并发竞态产物）：同一 server/port 已存在两行，Ensure 必须按 id 取首行加入，
+	// 不新增行，也不取到后写入的重复行。
+	insert := func(profile string) int64 {
+		t.Helper()
+		res, err := st.db.Exec(`INSERT INTO shared_endpoints
+			(server_id, protocol, port, profile_hash, config_template) VALUES (?, ?, ?, ?, ?)`,
+			serverID, shared.ProtocolVLESS, 443, profile, string(config))
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	firstID := insert("profile-legacy-1")
+	insert("profile-legacy-2")
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile-a", config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 同端口多行遗留（并发竞态）：ORDER BY id 取首行加入，不新增行。
-	other, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile-b", config)
-	if err != nil || other.ID != endpoint.ID {
-		t.Fatalf("join = %+v err=%v, want endpoint %d", other, err, endpoint.ID)
+	if endpoint.ID != firstID {
+		t.Fatalf("join = %+v, want first row by id %d", endpoint, firstID)
 	}
 	var count int
 	if err := st.db.QueryRow(`SELECT COUNT(*) FROM shared_endpoints WHERE server_id=? AND port=443`, serverID).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Fatalf("shared_endpoints rows for port 443 = %d, want 1", count)
+	if count != 2 {
+		t.Fatalf("shared_endpoints rows for port 443 = %d, want 2 (no new rows)", count)
 	}
 }
 
