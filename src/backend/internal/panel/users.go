@@ -29,6 +29,7 @@ type userDTO struct {
 	SubLinksURL           string                           `json:"sub_links_url"`
 	NodeIDs               []int64                          `json:"node_ids"`
 	ChainIDs              []int64                          `json:"chain_ids"`
+	EffectiveChainIDs     []int64                          `json:"effective_chain_ids"` // 生效链路：分组用户为分组派生，非分组用户同 chain_ids
 	ChainAssignments      []userChainAssignmentDTO         `json:"chain_assignments"`
 	ExternalSubscriptions []userExternalSubscriptionDTO    `json:"external_subscriptions"`
 	MergedTraffic         *mergedTrafficDTO                `json:"merged_traffic,omitempty"`
@@ -104,8 +105,17 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 			})
 		}
 	}
+	// 生效链路（分组派生或直接，§分组）：用户卡片按此展示实际订阅内容。
+	if effective, err := s.st.EffectiveUserChainAssignments(r.Context(), u.ID); err == nil {
+		for _, assignment := range effective {
+			dto.EffectiveChainIDs = append(dto.EffectiveChainIDs, assignment.ChainID)
+		}
+	}
 	if dto.ChainIDs == nil {
 		dto.ChainIDs = []int64{}
+	}
+	if dto.EffectiveChainIDs == nil {
+		dto.EffectiveChainIDs = []int64{}
 	}
 	if dto.ChainAssignments == nil {
 		dto.ChainAssignments = []userChainAssignmentDTO{}
@@ -143,7 +153,7 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 				Expire: sub.Expire, Remaining: remaining, NodeCount: sub.NodeCount,
 			})
 		}
-		merged := extsub.MergeUserTraffic(extsub.Traffic{
+		merged := extsub.MergeUserTraffic(time.Now(), extsub.Traffic{
 			Upload: panelTraffic.Up, Download: panelTraffic.Down,
 			Total: u.TrafficLimit, Expire: panelExpire,
 		}, attached)

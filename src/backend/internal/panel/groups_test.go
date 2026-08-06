@@ -300,3 +300,39 @@ func TestUserGroupCreateMovesUsersAcrossGroups(t *testing.T) {
 		}
 	}
 }
+
+// TestUserDTOEffectiveChainIDs 用户卡片链路数按生效分配展示：
+// 分组用户 effective_chain_ids 为分组派生链路（直接分配被遮蔽），
+// 非分组用户退化为直接分配（与 chain_ids 一致）。
+func TestUserDTOEffectiveChainIDs(t *testing.T) {
+	ctx := context.Background()
+	st, chainA, chainB, _, u1, u2 := groupsFixture(t)
+	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA, chainB}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUserGroup(ctx, "青铜会员", []int64{u1}, []int64{lgID}); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{st: st}
+	grouped, err := st.UserByID(ctx, u1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dto := srv.toUserDTO(httptest.NewRequest(http.MethodGet, "/api/user/list", nil), *grouped, nil)
+	if len(dto.EffectiveChainIDs) != 2 ||
+		dto.EffectiveChainIDs[0] != chainA || dto.EffectiveChainIDs[1] != chainB {
+		t.Fatalf("分组用户 effective_chain_ids = %v, want [%d %d]", dto.EffectiveChainIDs, chainA, chainB)
+	}
+	if len(dto.ChainIDs) != 0 {
+		t.Fatalf("分组用户直接 chain_ids 应保持为空, got %v", dto.ChainIDs)
+	}
+	direct, err := st.UserByID(ctx, u2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dto2 := srv.toUserDTO(httptest.NewRequest(http.MethodGet, "/api/user/list", nil), *direct, nil)
+	if len(dto2.EffectiveChainIDs) != 0 {
+		t.Fatalf("非分组用户 effective_chain_ids = %v, want []", dto2.EffectiveChainIDs)
+	}
+}

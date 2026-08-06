@@ -126,7 +126,7 @@ func (s *Server) mergedUserTraffic(ctx context.Context, user *store.User, t stor
 	if err != nil {
 		attached = nil
 	}
-	return extsub.MergeUserTraffic(extsub.Traffic{
+	return extsub.MergeUserTraffic(time.Now(), extsub.Traffic{
 		Upload: t.Up, Download: t.Down, Total: user.TrafficLimit, Expire: panelExpire,
 	}, attached)
 }
