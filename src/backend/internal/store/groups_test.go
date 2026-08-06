@@ -284,13 +284,21 @@ func TestEffectiveAssignmentsShadowing(t *testing.T) {
 			t.Fatalf("chain B uuid = %s want %s", a.AccessUUID, wantB)
 		}
 	}
-	// 多分组并集去重：再加一个引用同一链路分组的分组
-	if _, err := st.CreateUserGroup(ctx, "白银会员", []int64{userID}, []int64{lgID}); err != nil {
+	// 一用户一组：再建一个引用同一链路分组的分组，用户被自动移出旧组
+	ug2ID, err := st.CreateUserGroup(ctx, "白银会员", []int64{userID}, []int64{lgID})
+	if err != nil {
 		t.Fatal(err)
+	}
+	ids, err = st.UserGroupIDsForUser(ctx, userID)
+	if err != nil || len(ids) != 1 || ids[0] != ug2ID {
+		t.Fatalf("移组后应仅属于新组 %d, got %v err %v", ug2ID, ids, err)
+	}
+	if left, err := st.UsersForUserGroup(ctx, ugID); err != nil || len(left) != 0 {
+		t.Fatalf("旧组应已移出用户, members = %v err %v", left, err)
 	}
 	groupChains, _ = st.EffectiveUserChainAssignments(ctx, userID)
 	if len(groupChains) != 2 {
-		t.Fatalf("并集去重失败: %+v", groupChains)
+		t.Fatalf("移组后分组派生链路 = %+v", groupChains)
 	}
 	// 外部订阅：分组模式生效（merge），且只出现一次
 	extSubs, err := st.EffectiveUserExternalSubscriptions(ctx, userID)

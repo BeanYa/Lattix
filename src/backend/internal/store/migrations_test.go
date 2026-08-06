@@ -341,8 +341,8 @@ func TestMigrateLegacyPreservesSubToken(t *testing.T) {
 	if err := st.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 15 {
-		t.Fatalf("schema version = %d, want 15", version)
+	if version != 16 {
+		t.Fatalf("schema version = %d, want 16", version)
 	}
 	var token string
 	if err := st.db.QueryRowContext(ctx, `SELECT sub_token FROM users WHERE name='a'`).Scan(&token); err != nil {
@@ -444,6 +444,61 @@ PRAGMA user_version = 14;`); err != nil {
 		if !found {
 			t.Fatalf("backfilled categories missing %q: %v", want, ids)
 		}
+	}
+}
+
+// TestMigrateUserGroupMembersUnique 验证 v15 库的重复成员行在 v16 迁移时去重
+// （每用户保留最小 user_group_id），并落地 user_id 唯一索引兜底。
+func TestMigrateUserGroupMembersUnique(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "members.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(Schema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO user_groups (id, name) VALUES (1, 'A'), (2, 'B')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO user_group_members (user_group_id, user_id)
+		VALUES (2, 10), (1, 10), (1, 11)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 15`); err != nil {
+		t.Fatal(err)
+	}
+	_ = db.Close()
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	var version int
+	if err := st.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 16 {
+		t.Fatalf("schema version = %d, want 16", version)
+	}
+	var count int
+	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_group_members WHERE user_id = 10`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("user 10 应只保留一行, count = %d", count)
+	}
+	var groupID int64
+	if err := st.db.QueryRowContext(ctx, `SELECT user_group_id FROM user_group_members WHERE user_id = 10`).Scan(&groupID); err != nil {
+		t.Fatal(err)
+	}
+	if groupID != 1 {
+		t.Fatalf("user 10 应保留最小 user_group_id=1, got %d", groupID)
+	}
+	if _, err := st.db.ExecContext(ctx, `INSERT INTO user_group_members (user_group_id, user_id) VALUES (2, 11)`); err == nil {
+		t.Fatal("唯一索引应拒绝同一用户加入第二个分组")
 	}
 }
 

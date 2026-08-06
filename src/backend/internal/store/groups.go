@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -313,9 +314,22 @@ func (s *Store) UpdateUserGroup(ctx context.Context, id int64, name string, user
 }
 
 // insertUserGroupMembers 先清空再写入用户分组（成员 + 关联链路分组，同一事务内）。
+// 一用户一组约束：本组写入前把所选用户从其他用户分组移出（移组语义）。
 func insertUserGroupMembers(ctx context.Context, tx *sql.Tx, groupID int64, userIDs, linkGroupIDs []int64) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM user_group_members WHERE user_group_id=?`, groupID); err != nil {
 		return fmt.Errorf("clear user group members: %w", err)
+	}
+	if len(userIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(userIDs)-1) + "?"
+		args := make([]any, 0, len(userIDs)+1)
+		args = append(args, groupID)
+		for _, userID := range userIDs {
+			args = append(args, userID)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM user_group_members
+			WHERE user_group_id != ? AND user_id IN (`+placeholders+`)`, args...); err != nil {
+			return fmt.Errorf("move users out of other groups: %w", err)
+		}
 	}
 	for _, userID := range userIDs {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO user_group_members (user_group_id, user_id) VALUES (?, ?)`,

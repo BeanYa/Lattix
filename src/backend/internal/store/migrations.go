@@ -11,7 +11,7 @@ import (
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
-const schemaVersion = 15
+const schemaVersion = 16
 
 type columnMigration struct {
 	name       string
@@ -199,7 +199,27 @@ func migrateSchema(tx *sql.Tx) error {
 			}
 		}
 	}
+	if err := migrateUserGroupMembersUnique(tx); err != nil {
+		return err
+	}
 	return migrateCommands(tx)
+}
+
+// migrateUserGroupMembersUnique 实施「一用户仅属一个用户分组」约束：先为存量
+// 重复成员行去重（每用户保留最小 user_group_id），再建唯一索引兜底。
+// 不能在 Schema 中直接声明：旧库带重复行时 CREATE UNIQUE INDEX 会失败。
+func migrateUserGroupMembersUnique(tx *sql.Tx) error {
+	if _, err := tx.Exec(`DELETE FROM user_group_members
+		WHERE EXISTS (SELECT 1 FROM user_group_members o
+			WHERE o.user_id = user_group_members.user_id
+				AND o.user_group_id < user_group_members.user_group_id)`); err != nil {
+		return fmt.Errorf("dedupe user group members: %w", err)
+	}
+	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_group_members_unique_user
+		ON user_group_members(user_id)`); err != nil {
+		return fmt.Errorf("create unique user group member index: %w", err)
+	}
+	return nil
 }
 
 func ensureColumns(tx *sql.Tx, table string, migrations []columnMigration) (map[string]bool, error) {

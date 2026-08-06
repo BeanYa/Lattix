@@ -302,6 +302,7 @@ function UserGroupsTab() {
       {editing && (
         <UserGroupDialog
           group={editing === 'new' ? null : editing}
+          groups={groups ?? []}
           users={users}
           linkGroups={linkGroups}
           saving={saving}
@@ -314,8 +315,9 @@ function UserGroupsTab() {
   )
 }
 
-function UserGroupDialog({ group, users, linkGroups, saving, setSaving, onClose, onSaved }: {
+function UserGroupDialog({ group, groups, users, linkGroups, saving, setSaving, onClose, onSaved }: {
   group: UserGroup | null
+  groups: UserGroup[]
   users: SubUser[]
   linkGroups: LinkGroup[]
   saving: boolean
@@ -327,6 +329,17 @@ function UserGroupDialog({ group, users, linkGroups, saving, setSaving, onClose,
   const [userSel, setUserSel] = useState<number[]>(group?.user_ids ?? [])
   const [linkGroupSel, setLinkGroupSel] = useState<number[]>(group?.link_group_ids ?? [])
   const [error, setError] = useState('')
+
+  // 一用户一组：其他分组已占用的用户在本组编辑/新建时不展示。
+  const occupiedElsewhere = useMemo(() => {
+    const ids = new Set<number>()
+    for (const g of groups) {
+      if (g.id !== group?.id) for (const uid of g.user_ids) ids.add(uid)
+    }
+    return ids
+  }, [groups, group])
+  const visibleUsers = useMemo(() => users.filter((u) => !occupiedElsewhere.has(u.id)), [users, occupiedElsewhere])
+  const hiddenCount = users.length - visibleUsers.length
 
   async function onSave() {
     if (!name.trim()) { setError('分组名称不能为空'); return }
@@ -363,13 +376,22 @@ function UserGroupDialog({ group, users, linkGroups, saving, setSaving, onClose,
             {users.length === 0 ? (
               <p className="text-sm text-muted-foreground">暂无用户。</p>
             ) : (
-              users.map((u) => (
-                <label key={u.id} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
-                  <input type="checkbox" className="size-4 accent-primary" checked={userSel.includes(u.id)}
-                    onChange={(e) => setUserSel((cur) => (e.target.checked ? [...cur, u.id] : cur.filter((x) => x !== u.id)))} />
-                  <span>{u.name}</span>
-                </label>
-              ))
+              <>
+                {hiddenCount > 0 && (
+                  <p className="text-sm text-muted-foreground">已分配到其他分组的 {hiddenCount} 位用户不在本页展示。</p>
+                )}
+                {visibleUsers.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">全部用户均已分配到其他分组。</p>
+                ) : (
+                  visibleUsers.map((u) => (
+                    <label key={u.id} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
+                      <input type="checkbox" className="size-4 accent-primary" checked={userSel.includes(u.id)}
+                        onChange={(e) => setUserSel((cur) => (e.target.checked ? [...cur, u.id] : cur.filter((x) => x !== u.id)))} />
+                      <span>{u.name}</span>
+                    </label>
+                  ))
+                )}
+              </>
             )}
           </div>
           <div className="space-y-2 border-t pt-3">

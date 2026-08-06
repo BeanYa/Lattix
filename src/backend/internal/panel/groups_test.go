@@ -265,3 +265,38 @@ func TestSubURLStableAcrossGroupOps(t *testing.T) {
 		t.Fatalf("出组后 sub_url 变化: before %s, after %s", before.SubURL, after.SubURL)
 	}
 }
+
+// TestUserGroupCreateMovesUsersAcrossGroups 一用户一组约束：把已在「青铜会员」的
+// 用户分配到「白银会员」时自动移组，旧组不再包含该用户。
+func TestUserGroupCreateMovesUsersAcrossGroups(t *testing.T) {
+	ctx := context.Background()
+	st, chainA, _, _, u1, u2 := groupsFixture(t)
+	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{st: st}
+	code, _ := postGroup(t, srv, srv.handleCreateUserGroup, "/api/user-group/create",
+		`{"name":"青铜会员","user_ids":[`+itoa(u1)+`],"link_group_ids":[`+itoa(lgID)+`]}`)
+	if code != "OK" {
+		t.Fatalf("创建青铜会员失败, code = %q", code)
+	}
+	code, _ = postGroup(t, srv, srv.handleCreateUserGroup, "/api/user-group/create",
+		`{"name":"白银会员","user_ids":[`+itoa(u1)+`,`+itoa(u2)+`],"link_group_ids":[`+itoa(lgID)+`]}`)
+	if code != "OK" {
+		t.Fatalf("创建白银会员失败, code = %q", code)
+	}
+	ids, err := st.UserGroupIDsForUser(ctx, u1)
+	if err != nil || len(ids) != 1 {
+		t.Fatalf("u1 应仅属于一个分组, ids = %v err %v", ids, err)
+	}
+	groups, err := st.ListUserGroups(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range groups {
+		if g.Name == "青铜会员" && len(g.UserIDs) != 0 {
+			t.Fatalf("青铜会员应已移出 u1, members = %v", g.UserIDs)
+		}
+	}
+}
