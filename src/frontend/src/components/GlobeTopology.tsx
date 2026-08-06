@@ -91,7 +91,8 @@ function buildLinks(chains: Chain[], points: TopologyPoint[]): EarthLink[] {
           case 'waiting_for_agent':
           case 'cleanup_pending': return 'applying'
           case 'active_failed':
-          case 'invalid': return 'failed'
+          case 'invalid':
+          case 'deleted': return 'failed'
           default: return chain.status
         }
       })()

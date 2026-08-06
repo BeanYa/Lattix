@@ -79,6 +79,7 @@ const chainStatusStyle: Record<ChainStatus, { label: string; tone: FeedbackTone 
   active_failed: { label: '发布后失败', tone: 'danger' },
   cleanup_pending: { label: '等待清理', tone: 'warning' },
   invalid: { label: '已失效', tone: 'danger' },
+  deleted: { label: '已删除', tone: 'neutral' },
 }
 
 const hopStatusStyle: Record<NodeStatus, { label: string; tone: FeedbackTone }> = {
@@ -474,6 +475,19 @@ export default function Chains() {
   ]
   const hopIndexes =
     chainType === 'relay' ? selectedMiddleServers.map((_, index) => index + 1) : []
+  const entryPortHint = (() => {
+    const value = Number(entryPort)
+    if (!value || !entryId) return ''
+    const owner = chains.find(
+      (c) =>
+        c.id !== editingChainId &&
+        c.entry_port === value &&
+        c.hops[0]?.server_id === Number(entryId) &&
+        c.status !== 'deleted',
+    )
+    if (!owner) return ''
+    return `端口已被链路「${owner.name}」的共享监听占用，将共享其入口参数（dest/short_id 以现有监听为准）`
+  })()
   const strictNameResult = validateNameTemplate(name, {
     servers: topologyServers,
     protocol,
@@ -1117,6 +1131,11 @@ export default function Chains() {
                                 <strong className="mt-0.5 block max-w-48 truncate font-medium">{h.server_alias}</strong>
                                 <span className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground tabular-nums">
 									{hopPort !== 0 ? <span>端口 {hopPort}</span> : null}
+                                  {h.role === 'entry' && c.entry_shared ? (
+                                    <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
+                                      共享入口
+                                    </span>
+                                  ) : null}
                                   <span className={offline ? 'text-warning' : 'text-success'}>{offline ? 'Agent 离线' : 'Agent 在线'}</span>
                                   {h.traffic ? <span>↑ {humanizeBytes(h.traffic.effective_up)} · ↓ {humanizeBytes(h.traffic.effective_down)}</span> : null}
                                 </span>
@@ -1312,6 +1331,7 @@ export default function Chains() {
                 onChange={(e) => setEntryPort(e.target.value)}
                 placeholder="留空自动分配（须在服务器可用段内）"
               />
+              {entryPortHint ? <p className="text-xs text-muted-foreground">{entryPortHint}</p> : null}
             </div>
 
             <div className="space-y-2">

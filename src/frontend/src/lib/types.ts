@@ -448,6 +448,7 @@ export type ChainStatus =
   | 'active_failed'
   | 'cleanup_pending'
   | 'invalid'
+  | 'deleted'
 export type ChainHopRole = 'entry' | 'middle' | 'exit'
 
 export interface ChainHop {
@@ -500,6 +501,7 @@ export interface Chain {
   endpoint_id: number
   entry_port: number
   endpoint_status?: NodeStatus
+  entry_shared?: boolean
   endpoint_error?: string
   traffic_multiplier: string
   traffic?: ChainTraffic
