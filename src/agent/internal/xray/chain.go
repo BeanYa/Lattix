@@ -81,6 +81,28 @@ func (m *Manager) mergePieces(fc fullConfig) fullConfig {
 	return fc
 }
 
+// mergeExpectedPieces 只重放面板期望集内的链 piece（重建专用，§docs/rebuild-xray-config-design.md）：
+// 本地 chainPieces 中已删除链的残留记录（不在 ExpectedPieces）不得重放进 config，
+// 否则 rebuild 会复活面板已不管理的监听，与 xray.cleanup 按期望集清理的语义互相打架。
+// 返回重放后的配置与实际重放的 piece 键列表（回执汇总用）。
+func (m *Manager) mergeExpectedPieces(fc fullConfig, expected []string) (fullConfig, []string) {
+	want := make(map[string]bool, len(expected))
+	for _, key := range expected {
+		want[key] = true
+	}
+	replayed := []string{}
+	for _, rec := range m.chainPieces {
+		key := fmt.Sprintf("%s/%d", rec.Kind, rec.HopID)
+		if !want[key] {
+			log.Printf("xray: rebuild skip unexpected local piece %s (not in panel expected set)", key)
+			continue
+		}
+		fc = applyChainPiece(fc, rec)
+		replayed = append(replayed, key)
+	}
+	return fc, replayed
+}
+
 // ApplyChainHop 落地一个链跳配置件（§21.1）：渲染 → 合并 → 落盘校验 → 重启（失败回滚）。
 // 幂等：同 hop_id+kind 重发替换同名 tag 的配置件，并复用已记录的端口与密钥。
 // 成功返回回执上报值（portal：port/public_key/server_name；forward：port；bridge：nil）。

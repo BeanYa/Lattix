@@ -190,7 +190,7 @@ func (m *Manager) RebuildXray(p shared.RebuildXrayPayload) (*shared.RebuildXrayR
 		usedPorts[inboundPort(inbound)] = true
 		cand = cand.upsertInbound(tag, inbound)
 	}
-	cand = m.mergePieces(cand)
+	cand, replayedPieces := m.mergeExpectedPieces(cand, p.ExpectedPieces)
 	// 3b. 规范化扫描：补全 xray 版本升级后缺省的字段（minClientVer 等，全配置生效）。
 	cand = normalizeRebuiltConfig(cand)
 	// 4-5. 校验 + 原子落盘。
@@ -223,8 +223,8 @@ func (m *Manager) RebuildXray(p shared.RebuildXrayPayload) (*shared.RebuildXrayR
 			Tag: inboundTag(raw), Port: inboundPort(raw), Kind: inboundProtocol(raw),
 		})
 	}
-	for _, rec := range m.chainPieces {
-		result.RebuiltPieces = append(result.RebuiltPieces, fmt.Sprintf("%s/%d", rec.Kind, rec.HopID))
+	for _, key := range replayedPieces {
+		result.RebuiltPieces = append(result.RebuiltPieces, key)
 	}
 	log.Printf("xray: rebuild done inbounds=%d pieces=%d", len(result.RebuiltInbounds), len(result.RebuiltPieces))
 	return result, nil

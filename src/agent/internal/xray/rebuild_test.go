@@ -479,3 +479,56 @@ func TestRebuildXrayBackupFailure(t *testing.T) {
 		t.Fatalf("原配置应保持不变: %s", got)
 	}
 }
+
+// TestRebuildXraySkipsUnexpectedLocalPieces 回归：本地 chainPieces 中面板已不
+// 管理（不在 ExpectedPieces）的残留记录不得重放进 config——否则 rebuild 会复活
+// 已删除链的监听，与 xray.cleanup 按期望集清理的语义互相打架（用户实况：已删链
+// 的 chainfwd_29/31/38 残留被 rebuild 反复复活，最终 config 被清空）。
+func TestRebuildXraySkipsUnexpectedLocalPieces(t *testing.T) {
+	m, _ := newRebuildTestManager(t)
+	forward := json.RawMessage(`{
+		"tag": "chainfwd_29", "listen": "0.0.0.0", "port": 45331, "protocol": "dokodemo-door",
+		"settings": {"address": "10.0.0.1", "port": 443, "network": "tcp"}
+	}`)
+	forwardRule, _ := json.Marshal(map[string]any{
+		"type": "field", "inboundTag": []string{shared.ChainForwardTag(29)},
+		"outboundTag": directOutboundTag,
+	})
+	portal := json.RawMessage(`{
+		"tag": "chainportal_7", "port": 20001, "protocol": "vless",
+		"settings": {"decryption": "none"},
+		"streamSettings": {"network": "tcp", "security": "reality",
+			"realitySettings": {"dest": "example.com:443", "serverNames": ["example.com"],
+				"privateKey": "priv-old", "shortIds": ["6ba85179e30d4fc2"]}}
+	}`)
+	reverse, _ := json.Marshal(map[string]any{"tag": chainPortalReverseTag(7), "domain": "c1h2.lx"})
+	portalRule, _ := json.Marshal(map[string]any{
+		"type": "field", "inboundTag": []string{shared.ChainPortalTag(7)},
+		"outboundTag": chainPortalReverseTag(7),
+	})
+	m.SetChainPieces([]state.ChainPiece{
+		{HopID: 29, Kind: shared.HopKindForward, Port: 45331, Inbound: forward, Rules: []json.RawMessage{forwardRule}},
+		{HopID: 7, Kind: shared.HopKindPortal, Port: 20001, Inbound: portal, Reverse: reverse, Rules: []json.RawMessage{portalRule}},
+	})
+	payload := shared.RebuildXrayPayload{
+		ExpectedInboundTags: []string{"chainportal_7"},
+		ExpectedPieces:      []string{"portal/7"},
+	}
+	result, err := m.RebuildXray(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RolledBack {
+		t.Fatal("不应回滚")
+	}
+	s := readRebuildFile(t, m)
+	if jsonContains(s, "chainfwd_29") {
+		t.Fatalf("面板不期望的残留 forward 不得重放: %s", s)
+	}
+	if !jsonContains(s, "chainportal_7") {
+		t.Fatalf("期望内的 portal piece 应重放: %s", s)
+	}
+	if len(result.RebuiltPieces) != 1 || result.RebuiltPieces[0] != "portal/7" {
+		t.Fatalf("回执 pieces = %v, want [portal/7]", result.RebuiltPieces)
+	}
+}
