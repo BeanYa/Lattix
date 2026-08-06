@@ -1,5 +1,6 @@
 import { requester, RequestError, type RequestOptions, type TrackedResult } from './requester'
 import type { RequestWindow } from './log-preferences'
+import type { Observation } from './operation-progress'
 import type {
   AlertTestResult,
   BillingActualStats,
@@ -418,6 +419,10 @@ export const api = {
     }),
   panelUpdateStatus: () =>
     requester.get<PanelUpdateStatus>('/api/panel/get-update-status', undefined, {
+      display: 'silent',
+    }),
+  observeTask: (observeId: string) =>
+    requester.get<Observation>('/api/observe-task/get', { observe_id: observeId }, {
       display: 'silent',
     }),
 

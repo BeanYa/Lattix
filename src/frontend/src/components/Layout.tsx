@@ -22,6 +22,7 @@ import LattixMark from '@/components/LattixMark'
 import DotGrid from '@/components/react-bits/DotGrid'
 import ThemeToggle from '@/components/ThemeToggle'
 import UpdateOverlay from '@/components/UpdateOverlay'
+import { OperationProgressProvider } from '@/components/OperationProgressProvider'
 import { api, errorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useRequestState } from '@/lib/request-state'
@@ -123,7 +124,8 @@ export default function Layout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="panel-canvas flex min-h-[100dvh] flex-col md:flex-row">
+    <OperationProgressProvider>
+      <div className="panel-canvas flex min-h-[100dvh] flex-col md:flex-row">
       <div className="panel-dot-grid" aria-hidden="true">
         <DotGrid
           dotSize={2}
@@ -275,6 +277,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         </div>
       </main>
       <UpdateOverlay />
-    </div>
+      </div>
+    </OperationProgressProvider>
   )
 }
