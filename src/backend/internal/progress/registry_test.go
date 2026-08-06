@@ -97,6 +97,44 @@ func TestFinishedTTLClears(t *testing.T) {
 	}
 }
 
+func TestStartSweepsExpiredFinished(t *testing.T) {
+	old := finishedTTL
+	finishedTTL = 20 * time.Millisecond
+	defer func() { finishedTTL = old }()
+	r := NewRegistry()
+	o := r.Start("x", "y", nil)
+	o.Finish()
+	time.Sleep(40 * time.Millisecond)
+	if got := r.Start("k", "t", nil); got == nil {
+		t.Fatal("Start must succeed and sweep expired observation")
+	}
+	if _, ok := r.Get(o.ID); ok {
+		t.Fatal("expired finished observation should be swept by Start")
+	}
+}
+
+func TestGetSnapshotIsInert(t *testing.T) {
+	r := NewRegistry()
+	o := r.Start("x", "y", nil)
+	o.WatchUsers([]int64{1, 2})
+	o.Report("k", 50, "m")
+	snap, ok := r.Get(o.ID)
+	if !ok {
+		t.Fatal("Get failed")
+	}
+	snap.WatchUsers([]int64{3, 4})
+	snap.Report("k", 90, "mutated")
+	snap.Warn("mutated")
+	snap.Finish()
+	got, _ := r.Get(o.ID)
+	if got.Percent != 50 || got.Message != "m" || got.Status != StatusRunning {
+		t.Fatalf("snapshot mutations leaked into registry: %+v", got)
+	}
+	if len(got.Warnings) != 0 {
+		t.Fatalf("snapshot warning leaked: %v", got.Warnings)
+	}
+}
+
 func TestAttachAndObserveIDFromContext(t *testing.T) {
 	r := NewRegistry()
 	ctx := r.Attach(context.Background(), "obs-1")

@@ -74,6 +74,12 @@ func (r *Registry) Start(kind, title string, stages []Stage) *Observation {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	now := time.Now()
+	for id, o := range r.obs {
+		if o.finished && o.FinishedAt != nil && now.Sub(*o.FinishedAt) > finishedTTL {
+			delete(r.obs, id)
+		}
+	}
 	running := 0
 	for _, o := range r.obs {
 		if o.Status == StatusRunning {
@@ -92,7 +98,7 @@ func (r *Registry) Start(kind, title string, stages []Stage) *Observation {
 	return o
 }
 
-// Get 返回观察快照副本（外部不可修改内部状态）。
+// Get 返回观察快照副本（r 已置空，快照上的方法调用均为 no-op，外部不可修改内部状态）。
 func (r *Registry) Get(id string) (*Observation, bool) {
 	defer r.recover()
 	if r == nil {
@@ -109,6 +115,7 @@ func (r *Registry) Get(id string) (*Observation, bool) {
 		return nil, false
 	}
 	cp := *o
+	cp.r = nil // 快照不指向注册表，所有方法成为 no-op（nil 安全）
 	cp.Stages = append([]Stage(nil), o.Stages...)
 	cp.Warnings = append([]string(nil), o.Warnings...)
 	return &cp, true
