@@ -76,7 +76,7 @@ type Observation struct {
   - 观察状态按 ID 独立存储：一条观察损坏/panic 不影响其他观察与业务。
   - 注册表容量上限（如同时 64 条 running，超出拒绝新建、不影响业务）。
   - TTL：终态观察保留 5 分钟（供轮询收尾/其他页面查询），超时惰性清理。
-- **观察者机制（订阅重生成进度）**：`o.WatchUsers(userIDs []int64)`——把观察登记为"等待这批用户发布完成"。regenerator 每发布完一个用户（成功或失败）调用注册表 `NotifyUserPublished(userID, err)`：回调所有 watch 该用户的活跃观察，推进 `Stage="regenerate"` 的 percent（x/n），失败用户计入该观察的 Warnings。注册表内 recover 包裹；无活跃观察时是原子读 + 空 map 返回，零成本路径。**注入**：`progress.Registry` 实例由 panel 构造并注入 sub.Server（regenerator 与 `WatchUsers` 所在的 triggerGroupChange 同源），sub 包只依赖 `progress.Registry` 接口。
+- **观察者机制（订阅重生成进度）**：`o.WatchUsers(userIDs []int64)`——把观察登记为"等待这批用户发布完成"。regenerator 每发布完一个用户（成功或失败）调用注册表 `NotifyUserPublished(userID, err)`：回调所有 watch 该用户的活跃观察，推进 `Stage="regenerate"` 的 percent（x/n），失败用户计入该观察的 Warnings；watched 用户全部处理完时自动 `Finish`（观察存活至重生成完成）。注册表内 recover 包裹；无活跃观察时是原子读 + 空 map 返回，零成本路径。**注入**：`progress.Registry` 实例由 panel 构造并注入 sub.Server（regenerator 与 `WatchUsers` 所在的 triggerGroupChange 同源），sub 包只依赖 `progress.Registry` 接口。
 
 ### 观察挂点（只插入报告调用，不碰业务行）
 
@@ -90,7 +90,10 @@ type Observation struct {
 | 订阅模板刷新 | 拉取远程模板 → 解析 → 写入数据库 | 同上 |
 
 - 校验失败**不创建观察**（前端保持内联报错，无弹窗）。
-- 观察的生命周期绑定 handler：`o := progress.Start(...)`，`defer o.Close()`；reconcile/发布循环与 enqueue 之间插入 Report。业务错误路径不变（`writeError` 照旧），观察由 defer Close 落终态；若业务失败发生在创建观察之前则无观察。
+- 观察的生命周期：
+  - **无 `WatchUsers` 的观察**（服务器 rebuild/repair/cleanup、外部订阅 create/update、模板刷新、链路创建/编辑等无用户重发布的同步型操作）：绑定 handler，`defer o.Close()` 收口；业务失败路径 `o.Fail(err)` 后照常写错误响应。
+  - **有 `WatchUsers` 的观察**（分组增删改、链路/节点删除、外部订阅 sync/delete 等触发订阅重生成的操作）：观察在 handler 返回后**保持 running**，由 regenerator 完成回调自动收口——`NotifyUserPublished` 在 watched 用户全部处理完（成功+失败）时自动 `Finish`；带超时保护（观察创建后 5 分钟强制收口为 done + 警告"部分订阅仍在后台生成，已超时"），防止用户失败/离线导致观察悬挂。超时检查惰性执行（`Get`/`NotifyUserPublished`/`Start` 时扫描）。
+  - 业务失败路径（写库失败等，发生在 enqueue 之前）：`o.Fail(err)` 立即收口为 failed，前端显示错误。
 - 同步型 handler（外部订阅同步等）：观察在 handler 内同步跑完，弹窗轮询可能立即看到终态（显示完整步骤勾选），仍提供"这操作做了哪几步、是否成功"的信息。
 
 ### 响应附加 observe_id（向后兼容）
@@ -124,6 +127,8 @@ type Observation struct {
 | 注册表容量满 | Start 返回 nil，无弹窗，业务照常 |
 | 单用户发布失败 | 计入观察 Warnings，整体 done 带警告；不阻断其余用户 |
 | 端点 reconcile 失败 | 现状记日志；观察 Warnings 汇总 |
+| watched 用户全部处理完 | 观察自动 Finish（存活至重生成完成） |
+| watched 用户超时未完成（5 分钟） | 惰性检查强制收口 done + 警告"部分订阅仍在后台生成，已超时" |
 
 ## 测试
 

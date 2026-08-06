@@ -42,6 +42,7 @@
   - `(*Observation) Report(stageKey string, percent int, message string)`
   - `(*Observation) Warn(msg string)`、`(*Observation) Finish()`、`(*Observation) Fail(err error)`、`(*Observation) Close()`（幂等）
   - `(*Observation) WatchUsers(userIDs []int64)`
+  - **观察存活语义**：有 WatchUsers 的观察保持 running 直到 watched 用户全部处理完（`NotifyUserPublished` 自动 `Finish`，成功+失败都计入）；观察创建后 5 分钟强制收口（done + 警告"部分订阅仍在后台生成，已超时"），超时检查在 `Get`/`NotifyUserPublished`/`Start` 惰性执行（新增 `runningTimeout` 常量，可被测试改写）。无 WatchUsers 的观察不受影响（handler 内 `Close` 收口）。
   - 常量 `MaxRunningObservations = 64`、`FinishedTTL = 5 * time.Minute`
 
 - [ ] **Step 1: 写失败测试 `registry_test.go`**
@@ -475,12 +476,6 @@ func (r *Registry) NotifyUserPublished(userID int64, publishErr error) {
 		}
 	}
 	r.mu.Unlock()
-	for _, o := range matched {
-		if o.published == 0 {
-			continue
-		}
-		_ = o
-	}
 }
 
 func (r *Registry) recover() {
@@ -501,11 +496,9 @@ func safeID(o *Observation) string {
 	}
 	return o.ID
 }
-
-var _ = errors.New // 占位避免误删导入（若不需要可删除本行与 errors 导入）
 ```
 
-注意：若 `errors` 未被使用，删除其导入与末尾占位行；运行 `go vet ./internal/progress/...` 检查。
+注意：若 `errors` 未被使用，不要导入它；运行 `go vet ./internal/progress/...` 检查。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -540,7 +533,7 @@ git commit -m "feat(progress): 旁路式操作进度观察注册表"
 
 - [ ] **Step 1: 写失败测试 `observe_task_test.go`**
 
-先看现有测试辅助（`httptest.NewRequest` + `serverAPI` 构造方式，参照 `groups_test.go` 或 `contract_test.go` 的 Server 构造）。测试内容：
+先看现有测试辅助（`httptest.NewRequest` + `serverAPI` 构造方式，参照 `groups_test.go` 或 `contract_test.go` 的 Server 构造）。测试内容（**删除 `TestEnvelopeCarriesObserveID` 用例，envelope 注入由 Task 3 起的 handler 级测试断言**）：
 
 ```go
 package panel
@@ -548,7 +541,6 @@ package panel
 import (
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"lattix/backend/internal/progress"
@@ -586,24 +578,7 @@ func TestObserveTaskGet(t *testing.T) {
 		t.Fatalf("missing observe status = %d, want 404", rec2.Code)
 	}
 }
-
-func TestEnvelopeCarriesObserveID(t *testing.T) {
-	// 校验响应 envelope 的 observe_id 字段（参照 contract_test.go 的断言方式）
-	serverAPI, _ := newTestServerAPI(t)
-	reg := progress.NewRegistry()
-	serverAPI.observes = reg
-	o := reg.Start("k", "t", []progress.Stage{{Key: "a", Label: "A"}})
-	ctx := reg.Attach(httptest.NewRequest(http.MethodGet, "/", nil).Context(), o.ID)
-	rec := httptest.NewRecorder()
-	writeRPC(rec, "OK", "", nil) // 直接调用不带 ctx 的写路径无法携带——改为：
-	_ = ctx
-	_ = rec
-	// 说明：envelope 注入经 responseRecorder 从 request context 读取；
-	// 集成断言放到 handler 级测试（Task 3 起各挂点测试断言 response envelope.observe_id）
-}
 ```
-
-> 若 `newTestServerAPI` 等辅助函数不存在，按 `groups_test.go` 实际构造方式写。`TestEnvelopeCarriesObserveID` 可精简为验证 `handleGetObserveTask` 已覆盖的 404/200 分支 + Task 3 中的 handler 级断言（若时间有限允许删除该用例，但必须保留 404 分支断言）。
 
 - [ ] **Step 2: 运行确认失败**
 
@@ -1191,6 +1166,47 @@ git commit -m "feat(panel): 外部订阅/模板同步附加 observe 进度观察
 
 ---
 
+### Task 6b: 观察生命周期重构（存活至重生成完成）
+
+**背景（用户决策）**：Task 3-6 实现的观察 `defer o.Close()` 在 handler 返回时收口为 done，导致"重新生成订阅文件"阶段永远无法真实推进（WatchUsers 回调发生在观察已 finished 之后）。用户要求弹窗真实展示逐用户进度。本任务重构：有 WatchUsers 的观察在 handler 返回后保持 running，由 regenerator 完成回调自动收口，带超时保护。
+
+**Files:**
+- Modify: `src/backend/internal/progress/registry.go`（完成自动收口 + running 超时 + 测试）
+- Modify: `src/backend/internal/progress/registry_test.go`
+- Modify: `src/backend/internal/panel/groups.go`（6 个 handler：有用户的去 defer Close；link_group.create 无用户保持 Close）
+- Modify: `src/backend/internal/panel/groups_observe_test.go`（终态断言改为等待完成/手动 NotifyUserPublished）
+- Modify: `src/backend/internal/panel/chains.go`、`nodes.go`（delete 类 handler 去 defer Close；其余保持）
+- Modify: `src/backend/internal/panel/chains_observe_test.go`、`nodes_observe_test.go`
+- Modify: `src/backend/internal/panel/external_subscriptions.go`（sync/delete 去 defer Close；create/update 保持）
+- Modify: `src/backend/internal/panel/external_subscriptions_observe_test.go`
+
+**Interfaces:**
+- Consumes: `progress.Registry`、`Observation`（Task 1）、各挂点（Task 3-6）
+- Produces: 有 WatchUsers 的观察终态由 regenerator 完成回调驱动；无 WatchUsers 的观察行为不变
+
+**实现要点：**
+1. `registry.go`：
+   - `Observation` 增加 `watchedTotal`、`processed` 计数（WatchUsers 时累加 watchedTotal 去重；NotifyUserPublished 时 processed++ 无论成败，processed >= watchedTotal 且 watchedTotal > 0 时自动 `finishLocked(StatusDone, "")`）
+   - `Observation` 增加 `expiresAt time.Time`（Start 时 `now + runningTimeout`）；`runningTimeout` 为包级 var（默认 5 分钟，测试可改写）
+   - 惰性超时扫描：`Get`、`NotifyUserPublished`、`Start` 内对 running 且 `now > expiresAt` 的观察收口为 done + 警告"部分订阅仍在后台生成，已超时"（`Warn` 后再 `finishLocked`；注意顺序在锁内）
+   - `Close()` 语义不变（已 finished 幂等；未 finished 且无 watchedTotal 时收口 done——有 watchedTotal 的观察理论上不会走 Close，除非调用方显式调用；Close 对未完成的 watched 观察也收口 done + 警告？——**设计决定（实现已确认）：CloseIfPending 对 pending 观察保持 running（no-op），等待 regenerator 完成回调或 5 分钟超时扫描收口**——若在 defer 时收口，processed 恒为 0，会瞬间终结观察、使"存活至重生成完成"失效（计划原稿此处自相矛盾，以用户决策为准）
+   - 测试：完成自动收口（4/4 用户通知后 done）；失败用户也计入（3/4 失败 1/4 成功仍 done）；超时收口（缩短 runningTimeout，Get 触发）；Close 对未完成 watched 收口 done+警告
+2. 挂点重构（每处：有 WatchUsers 的 handler 删除 `defer o.Close()`，改为无操作——观察自然收口；业务失败路径 `o.Fail(err)` 保留。注意：**删掉 defer Close 后，handler panic 时观察悬挂直到超时**——可接受（5 分钟强制收口），或保留 `defer func(){ if o!=nil && !o.Finished() { o.Close() } }()`？**设计决定：保留 defer 但改为条件收口**——`defer o.CloseIfPending()`：对 pending（有未完成 watched）观察 **no-op（保持 running）**，由 regenerator 完成回调或超时扫描收口；对无 watched 或已 finished 观察正常收口）
+   - 新增 `(*Observation) CloseIfPending()`：finished → no-op；watchedTotal > processed → **no-op（保持 running，等待完成/超时）**；否则 finishLocked(done)
+   - `groups.go`：link_group.update/delete、user_group.create/update/delete 用 `defer o.CloseIfPending()`；link_group.create 用 `defer o.Close()`（无用户）
+   - `chains.go`/`nodes.go`：delete 类用 `defer o.CloseIfPending()`（有 EnqueueUsers）；create/edit/retry/force-publish 保持 `defer o.Close()`（无 enqueue）
+   - `external_subscriptions.go`：sync/delete 用 `defer o.CloseIfPending()`；create/update 保持 `defer o.Close()`
+3. 测试更新：有 WatchUsers 的 handler 测试——handler 返回后观察应为 running（regenerate 阶段 0%）；随后手动 `serverAPI.observes.NotifyUserPublished(userID, nil)` 逐个完成 watched 用户 → 断言 done + percent 100。groups 测试的 watched 用户集从 fixture 得出。超时路径测试：缩短 runningTimeout 后 Get 断言收口。
+
+- [ ] **Step 1: 写失败测试（registry_test.go 增补）**
+- [ ] **Step 2: 运行确认失败**（新用例失败：观察未自动收口/超时未实现）
+- [ ] **Step 3: 实现 registry.go 变更**
+- [ ] **Step 4: 实现挂点重构（groups/chains/nodes/external_subscriptions）与测试更新**
+- [ ] **Step 5: 运行** `go test ./internal/progress/... -race` + `go build ./... && go test ./internal/panel/ ./internal/sub/`
+- [ ] **Step 6: Commit** `git add src/backend/internal/progress/ src/backend/internal/panel/ && git commit -m "feat(progress): 观察存活至订阅重生成完成（自动收口+超时）"`
+
+---
+
 ### Task 7: 前端契约（openapi + requester + api）
 
 **Files:**
@@ -1549,6 +1565,8 @@ Expected: PASS 或环境不允许时跳过并说明
 - [ ] observe 命名（grep 确认无 `task_id`/`/api/task/` 残留：`rg -n "task_id|/api/task" src docs/openapi.yaml`）
 - [ ] 校验失败无观察（测试覆盖）
 - [ ] 已有进度机制未动
+- [ ] 有 WatchUsers 的观察存活至重生成完成（自动收口+超时，Task 6b）
+- [ ] 无 WatchUsers 的观察 handler 内收口（服务器/外部订阅 create/update 等）
 
 - [ ] **Step 6: Commit 收尾（如有改动）**
 
@@ -1561,6 +1579,6 @@ git commit -m "chore: observe 进度系统收尾"
 
 ## Self-Review 记录
 
-- **Spec 覆盖**：progress 包（T1）、envelope/端点/regenerator（T2）、分组（T3）、链路/节点（T4）、服务器（T5）、外部订阅/模板（T6）、前端契约（T7）、弹窗（T8）、调用点（T9）、回归（T10）。"已有进度机制不动"在 T10 核对。崩溃隔离在 T1 测试。命名核对在 T10。✅
+- **Spec 覆盖**：progress 包（T1）、envelope/端点/regenerator（T2）、分组（T3）、链路/节点（T4）、服务器（T5）、外部订阅/模板（T6）、观察生命周期重构（T6b）、前端契约（T7）、弹窗（T8）、调用点（T9）、回归（T10）。"已有进度机制不动"在 T10 核对。崩溃隔离在 T1 测试。命名核对在 T10。✅
 - **占位符**：Task 3-6 的 handler 插入代码引用"按现有文件结构插入"，挂点位置已给出文件与函数名；`newTestServerAPI` 等辅助函数名标注"按实际调整"——执行者需读现有测试文件后落笔。这是有意的（现有测试辅助名未知），非逻辑占位。✅
 - **类型一致性**：`observeStart`（T3 定义）被 T4-T6 复用；`postObserved`（T7）→ `TrackedResult`（T7）→ 页面解构（T9）→ `showOperation({ observeId })`（T8）。`progress.Observation` JSON 字段（T1）与前端 `Observation` 类型（T8）字段对齐（id/kind/title/stages/stage/percent/message/status/warnings/error）。✅
