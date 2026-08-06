@@ -545,6 +545,7 @@ export interface SubUser {
   sub_links_url: string
   node_ids: number[]
   chain_ids: number[]
+  effective_chain_ids: number[]
   user_group_ids: number[]
   chain_assignments: Array<{
     id: number

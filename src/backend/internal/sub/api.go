@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/store"
@@ -99,7 +100,7 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 		panelExpire = &v
 	}
 	attached, _ := s.st.EffectiveUserExternalSubscriptions(r.Context(), user.ID)
-	merged := extsub.MergeUserTraffic(extsub.Traffic{
+	merged := extsub.MergeUserTraffic(time.Now(), extsub.Traffic{
 		Upload: t.Up, Download: t.Down, Total: user.TrafficLimit, Expire: panelExpire,
 	}, attached)
 

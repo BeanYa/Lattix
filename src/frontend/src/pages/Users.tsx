@@ -533,7 +533,10 @@ export default function Users() {
           {loading ? (
             <LoadingState />
           ) : (
-            users.map((u) => (
+            users.map((u) => {
+              const effectiveChainIds = u.effective_chain_ids ?? u.chain_ids
+              const effectiveLinks = effectiveChainIds.filter((id) => linkOptions.some((link) => link.chainId === id))
+              return (
               <Card key={u.id}>
                 <CardHeader className="border-b">
                   <CardTitle className="flex min-w-0 flex-wrap items-center gap-2">
@@ -556,10 +559,10 @@ export default function Users() {
                   <div className="space-y-1">
                     <span className="block text-[11px] text-muted-foreground">链路</span>
                     <span className="block font-medium tabular-nums">
-                      {u.chain_ids.length === 0 ? (
+                      {effectiveLinks.length === 0 ? (
                         <span className="text-muted-foreground">未分配</span>
                       ) : (
-                        `${u.chain_ids.filter((id) => linkOptions.some((link) => link.chainId === id)).length} / ${linkOptions.length}`
+                        `${effectiveLinks.length} / ${linkOptions.length}`
                       )}
                     </span>
                   </div>
@@ -666,7 +669,8 @@ export default function Users() {
                   </Button>
                 </CardFooter>
               </Card>
-            ))
+              )
+            })
           )}
         </div>
       )}
