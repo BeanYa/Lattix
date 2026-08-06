@@ -1118,6 +1118,7 @@ components:
         data: {type: 'null'}
         request_id: {$ref: '#/components/schemas/MessageID'}
         trace_id: {$ref: '#/components/schemas/MessageID'}
+        observe_id: {$ref: '#/components/schemas/MessageID'}
     RPCEnvelope:
       type: object
       additionalProperties: false
@@ -1131,3 +1132,4 @@ components:
         data: {}
         request_id: {$ref: '#/components/schemas/MessageID'}
         trace_id: {$ref: '#/components/schemas/MessageID'}
+        observe_id: {$ref: '#/components/schemas/MessageID'}
