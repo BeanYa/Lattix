@@ -443,6 +443,7 @@ func run() error {
 	}
 	clientCacheDir := filepath.Join(filepath.Dir(dbPathAbs), "client-cache")
 	subSrv := sub.NewWithCacheDir(st, ps.PanelBase, spaHTML, clientCacheDir)
+	subSrv.SetObserver(ps.ObserverRegistry())
 	ps.SetSubscriptionService(subSrv)
 	// 外部订阅（第三方机场导入）：普通与跳过证书校验两套拉取客户端。
 	externalFiles := external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Second}}

@@ -21,6 +21,7 @@ import (
 	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
+	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
 	"lattix/backend/internal/ws"
@@ -64,6 +65,7 @@ type Server struct {
 	scheduler     *taskScheduler
 	opLog         *logging.OperationStore
 	reqLog        *logging.RequestLog
+	observes      *progress.Registry // 旁路操作进度观察（nil = 关闭）
 	startedAt     time.Time
 	runtimeMu     sync.Mutex
 	lastCPU       runtimeCPUSample
@@ -155,11 +157,14 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
 		onlineUsers:     &OnlineUsersTracker{resolve: onlineUserResolver(st)},
+		observes:        progress.NewRegistry(),
 		startedAt:       time.Now(),
 		routePolicies:   make(map[string]logging.LogPolicy),
 		debugRoutes:     make(map[string]bool),
 		methodFallbacks: make(map[string]bool),
 	}
+	// 观察 ID 读取器注入请求日志中间件（避免 logging → progress 反向依赖）。
+	logging.SetObserveIDReader(s.observes.ObserveIDFromContext)
 	// dispatcher 的 telemetry 处理喂入在线用户快照（注入模式同 OnNodePublished 等回调）。
 	disp.OnOnlineUsers = s.onlineUsers.ApplySnapshot
 	s.upd = newPanelUpdater(s)
@@ -169,6 +174,14 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 	s.scheduler = newTaskScheduler(s.inspectionLocation)
 	s.registerCoreTasks()
 	return s, nil
+}
+
+// ObserverRegistry 返回旁路观察注册表（sub regenerator 等侧通道调用方注入用）。
+func (s *Server) ObserverRegistry() *progress.Registry {
+	if s.observes == nil {
+		s.observes = progress.NewRegistry()
+	}
+	return s.observes
 }
 
 // OnlineUsers 返回在线用户快照聚合器（telemetry 帧喂入，用户列表 API 读取）；
@@ -417,6 +430,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodGet, "/api/panel/get-update-status",
 		rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly, Debug: true}, s.handlePanelUpdateStatus)
 
+	s.registerRPC(mux, http.MethodGet, "/api/observe-task/get",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"observe_id"}, LogPolicy: logging.LogFailuresOnly, Debug: true},
+		s.handleGetObserveTask)
+
 	s.registerRPC(mux, http.MethodGet, "/api/backup/download", read, s.handleBackup)
 
 	logRead := rpcRouteOptions{
@@ -468,11 +485,13 @@ type rpcResponse struct {
 	Data      any    `json:"data"`
 	RequestID string `json:"request_id"`
 	TraceID   string `json:"trace_id"`
+	ObserveID string `json:"observe_id,omitempty"`
 }
 
 type rpcResponseWriter interface {
 	SetRPCOutcome(code, safeMessage string)
 	RPCIDs() (requestID, traceID string)
+	ObserveID() string
 }
 
 func writeJSON(w http.ResponseWriter, legacyCode int, data any) {
@@ -495,10 +514,14 @@ func writeRPC(w http.ResponseWriter, code, message string, data any) {
 	if traceID == "" {
 		traceID = requestID
 	}
+	observeID := ""
+	if rw, ok := w.(rpcResponseWriter); ok {
+		observeID = rw.ObserveID()
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(rpcResponse{
-		Code: code, Message: message, Data: data, RequestID: requestID, TraceID: traceID,
+		Code: code, Message: message, Data: data, RequestID: requestID, TraceID: traceID, ObserveID: observeID,
 	})
 }
 
@@ -532,6 +555,10 @@ func writeProtocolError(w http.ResponseWriter, status int, message string) {
 	if traceID == "" {
 		traceID = requestID
 	}
+	observeID := ""
+	if rw, ok := w.(rpcResponseWriter); ok {
+		observeID = rw.ObserveID()
+	}
 	w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(rpcResponse{
@@ -540,6 +567,7 @@ func writeProtocolError(w http.ResponseWriter, status int, message string) {
 		Data:      nil,
 		RequestID: requestID,
 		TraceID:   traceID,
+		ObserveID: observeID,
 	})
 }
 

@@ -702,6 +702,12 @@ paths:
     get:
       operationId: panelGetUpdateStatus
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/observe-task/get:
+    get:
+      operationId: observeTaskGet
+      parameters:
+        - {name: observe_id, in: query, required: true, schema: {type: string, minLength: 32, maxLength: 32}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/backup/download:
     get:
       operationId: backupDownload

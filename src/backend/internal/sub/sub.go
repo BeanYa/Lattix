@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"lattix/backend/internal/extsub"
+	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/shared"
 	external "lattix/shared/requester"
@@ -46,6 +47,13 @@ type Server struct {
 	downloadMu      sync.Mutex
 	downloadTasks   map[string]*clientDownloadTask
 	activeDownloads map[string]string
+
+	observer *progress.Registry // 旁路观察（nil = 关闭，发布循环零开销）
+}
+
+// SetObserver 注入旁路观察注册表（panel 初始化时调用；可多次调用，最后者生效）。
+func (s *Server) SetObserver(r *progress.Registry) {
+	s.observer = r
 }
 
 // New 创建订阅服务；base 返回请求对应的面板对外地址（可为 nil，落地页退回请求推断）。

@@ -109,6 +109,9 @@ func (s *Server) runRegenerator(ctx context.Context) {
 			publishCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 			_, err := s.PublishUser(publishCtx, userID, baseURL)
 			cancel()
+			if s.observer != nil {
+				s.observer.NotifyUserPublished(userID, err)
+			}
 			if err != nil {
 				log.Printf("subscription: regenerate user %d: %v", userID, err)
 			}
