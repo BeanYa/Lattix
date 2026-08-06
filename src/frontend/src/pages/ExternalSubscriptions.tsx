@@ -47,6 +47,7 @@ import {
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
+import { useOperationProgress } from '@/lib/operation-progress-context'
 import { useTimezone } from '@/lib/timezone'
 import type { ExternalChain, ExternalSubscription } from '@/lib/types'
 
@@ -69,6 +70,7 @@ const UA_PRESET_VALUES = new Set(UA_OPTIONS.map((option) => option.value))
 export default function ExternalSubscriptions() {
   const { timezone } = useTimezone()
   const { confirm } = useAppDialog()
+  const { showOperation } = useOperationProgress()
   const [subs, setSubs] = useState<ExternalSubscription[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -159,9 +161,11 @@ export default function ExternalSubscriptions() {
         update_interval_hours: Number(updateIntervalHours) || 24,
       }
       if (editing) {
-        await api.updateExternalSubscription({ id: editing.id, ...body })
+        const { observeId } = await api.updateExternalSubscription({ id: editing.id, ...body })
+        if (observeId) showOperation({ observeId })
       } else {
-        await api.createExternalSubscription(body)
+        const { observeId } = await api.createExternalSubscription(body)
+        if (observeId) showOperation({ observeId })
       }
       // 保存期间弹窗被关闭/重新打开：丢弃过期响应，避免误关新弹窗
       if (session !== formSessionRef.current) return
@@ -180,7 +184,8 @@ export default function ExternalSubscriptions() {
     setSyncing(sub.id)
     setError('')
     try {
-      await api.syncExternalSubscription(sub.id)
+      const { observeId } = await api.syncExternalSubscription(sub.id)
+      if (observeId) showOperation({ observeId })
     } catch (err) {
       setError(errorMessage(err))
     } finally {
@@ -198,7 +203,8 @@ export default function ExternalSubscriptions() {
     }))) return
     setDeleting(sub.id)
     try {
-      await api.deleteExternalSubscription(sub.id)
+      const { observeId } = await api.deleteExternalSubscription(sub.id)
+      if (observeId) showOperation({ observeId })
       await load()
     } catch (err) {
       setError(errorMessage(err))

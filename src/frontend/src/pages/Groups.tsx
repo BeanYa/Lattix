@@ -13,6 +13,7 @@ import { buildLinkOptions } from '@/lib/links'
 import type { Chain, ExternalSubscription, ExternalSubscriptionMode, LinkGroup, SubUser, UserGroup } from '@/lib/types'
 import { useAppDialog } from '@/lib/app-dialog'
 import { humanizeBytes } from '@/lib/format'
+import { useOperationProgress } from '@/lib/operation-progress-context'
 
 const EXTERNAL_MODE_LABELS: Record<ExternalSubscriptionMode, string> = {
   stack: '叠加',
@@ -51,6 +52,7 @@ export default function Groups() {
 
 function LinkGroupsTab() {
   const { confirm } = useAppDialog()
+  const { showOperation } = useOperationProgress()
   const [groups, setGroups] = useState<LinkGroup[] | null>(null)
   const [chains, setChains] = useState<Chain[]>([])
   const [extSubs, setExtSubs] = useState<ExternalSubscription[]>([])
@@ -84,7 +86,8 @@ function LinkGroupsTab() {
   async function onDelete(g: LinkGroup) {
     if (!(await confirm({ title: '删除链路分组', description: `删除「${g.name}」后，引用它的用户分组将不再包含该分组的链路与外部订阅。`, confirmLabel: '删除', destructive: true }))) return
     try {
-      await api.linkGroupDelete(g.id)
+      const { observeId } = await api.linkGroupDelete(g.id)
+      if (observeId) showOperation({ observeId })
       void load()
     } catch (err) {
       setError(errorMessage(err))
@@ -149,6 +152,7 @@ function LinkGroupDialog({ group, linkOptions, extSubs, saving, setSaving, onClo
     return init
   })
   const [error, setError] = useState('')
+  const { showOperation } = useOperationProgress()
 
   function toggleChain(id: number, checked: boolean) {
     setChainSel((cur) => (checked ? [...cur, id] : cur.filter((x) => x !== id)))
@@ -161,9 +165,11 @@ function LinkGroupDialog({ group, linkOptions, extSubs, saving, setSaving, onClo
     try {
       const external_subscriptions = Object.entries(extSel).map(([sid, mode]) => ({ subscription_id: Number(sid), mode }))
       if (group) {
-        await api.linkGroupUpdate({ id: group.id, name: name.trim(), chain_ids: chainSel, external_subscriptions })
+        const { observeId } = await api.linkGroupUpdate({ id: group.id, name: name.trim(), chain_ids: chainSel, external_subscriptions })
+        if (observeId) showOperation({ observeId })
       } else {
-        await api.linkGroupCreate({ name: name.trim(), chain_ids: chainSel, external_subscriptions })
+        const { observeId } = await api.linkGroupCreate({ name: name.trim(), chain_ids: chainSel, external_subscriptions })
+        if (observeId) showOperation({ observeId })
       }
       onSaved()
     } catch (err) {
@@ -236,6 +242,7 @@ function LinkGroupDialog({ group, linkOptions, extSubs, saving, setSaving, onClo
 
 function UserGroupsTab() {
   const { confirm } = useAppDialog()
+  const { showOperation } = useOperationProgress()
   const [groups, setGroups] = useState<UserGroup[] | null>(null)
   const [users, setUsers] = useState<SubUser[]>([])
   const [linkGroups, setLinkGroups] = useState<LinkGroup[]>([])
@@ -267,7 +274,8 @@ function UserGroupsTab() {
   async function onDelete(g: UserGroup) {
     if (!(await confirm({ title: '删除用户分组', description: `删除「${g.name}」后，成员恢复直接分配。`, confirmLabel: '删除', destructive: true }))) return
     try {
-      await api.userGroupDelete(g.id)
+      const { observeId } = await api.userGroupDelete(g.id)
+      if (observeId) showOperation({ observeId })
       void load()
     } catch (err) {
       setError(errorMessage(err))
@@ -329,6 +337,7 @@ function UserGroupDialog({ group, groups, users, linkGroups, saving, setSaving, 
   const [userSel, setUserSel] = useState<number[]>(group?.user_ids ?? [])
   const [linkGroupSel, setLinkGroupSel] = useState<number[]>(group?.link_group_ids ?? [])
   const [error, setError] = useState('')
+  const { showOperation } = useOperationProgress()
 
   // 一用户一组：其他分组已占用的用户在本组编辑/新建时不展示。
   const occupiedElsewhere = useMemo(() => {
@@ -347,9 +356,11 @@ function UserGroupDialog({ group, groups, users, linkGroups, saving, setSaving, 
     setError('')
     try {
       if (group) {
-        await api.userGroupUpdate({ id: group.id, name: name.trim(), user_ids: userSel, link_group_ids: linkGroupSel })
+        const { observeId } = await api.userGroupUpdate({ id: group.id, name: name.trim(), user_ids: userSel, link_group_ids: linkGroupSel })
+        if (observeId) showOperation({ observeId })
       } else {
-        await api.userGroupCreate({ name: name.trim(), user_ids: userSel, link_group_ids: linkGroupSel })
+        const { observeId } = await api.userGroupCreate({ name: name.trim(), user_ids: userSel, link_group_ids: linkGroupSel })
+        if (observeId) showOperation({ observeId })
       }
       onSaved()
     } catch (err) {

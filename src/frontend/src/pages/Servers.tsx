@@ -28,6 +28,7 @@ import {
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
+import { useOperationProgress } from '@/lib/operation-progress-context'
 import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { isServerOnline } from '@/lib/server-state'
@@ -193,6 +194,7 @@ function parsePortRows(rows: string[]): { ranges: PortRange[] } | { error: strin
 export default function Servers() {
   const { timezone } = useTimezone()
   const { confirm, notify } = useAppDialog()
+  const { showOperation } = useOperationProgress()
   const [servers, setServers] = useState<Server[]>([])
   const [metricSamples, setMetricSamples] = useState<ServerMetricSeries[]>([])
   const [loading, setLoading] = useState(true)
@@ -289,7 +291,9 @@ export default function Servers() {
     setRebuildBusy(true)
     setRebuildError('')
     try {
-      setRebuildResult(normalizeRebuild(await api.rebuildXray(rebuildTarget.id)))
+      const { data: result, observeId } = await api.rebuildXray(rebuildTarget.id)
+      if (observeId) showOperation({ observeId })
+      setRebuildResult(normalizeRebuild(result))
       setRebuildDone(true)
       load()
     } catch (err) {
@@ -489,7 +493,8 @@ export default function Servers() {
       return
     }
     try {
-      const res = await api.repairServer(s.id)
+      const { data: res, observeId } = await api.repairServer(s.id)
+      if (observeId) showOperation({ observeId })
       setError('')
       await notify({
         title: '修复命令已下发',
@@ -509,7 +514,9 @@ export default function Servers() {
     setCleanupError('')
     setCleanupBusy(true)
     try {
-      setCleanupPreview(normalizeCleanup(await api.cleanupXray(s.id, true)))
+      const { data: preview, observeId } = await api.cleanupXray(s.id, true)
+      if (observeId) showOperation({ observeId })
+      setCleanupPreview(normalizeCleanup(preview))
     } catch (err) {
       setCleanupError(errorMessage(err))
     } finally {
@@ -524,7 +531,9 @@ export default function Servers() {
     setCleanupBusy(true)
     setCleanupError('')
     try {
-      setCleanupPreview(normalizeCleanup(await api.cleanupXray(cleanupTarget.id, false)))
+      const { data: preview, observeId } = await api.cleanupXray(cleanupTarget.id, false)
+      if (observeId) showOperation({ observeId })
+      setCleanupPreview(normalizeCleanup(preview))
       setCleanupDone(true)
       load()
     } catch (err) {
