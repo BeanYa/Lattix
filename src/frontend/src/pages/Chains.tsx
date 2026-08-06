@@ -480,12 +480,15 @@ export default function Chains() {
     if (!value || !entryId) return ''
     const owner = chains.find(
       (c) =>
-        c.id !== editingChainId &&
         c.entry_port === value &&
         c.hops[0]?.server_id === Number(entryId) &&
+        c.endpoint_id !== 0 &&
         c.status !== 'deleted',
     )
     if (!owner) return ''
+    if (owner.id === editingChainId) {
+      return `该端口为本链现有监听端口，入口参数修改不会生效（以首次配置为准）`
+    }
     return `端口已被链路「${owner.name}」的共享监听占用，将共享其入口参数（dest/short_id 以现有监听为准）`
   })()
   const strictNameResult = validateNameTemplate(name, {
@@ -1131,7 +1134,7 @@ export default function Chains() {
                                 <strong className="mt-0.5 block max-w-48 truncate font-medium">{h.server_alias}</strong>
                                 <span className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground tabular-nums">
 									{hopPort !== 0 ? <span>端口 {hopPort}</span> : null}
-                                  {h.role === 'entry' && c.entry_shared ? (
+                                  {(h.role === 'entry' || c.hops.length === 1) && c.entry_shared ? (
                                     <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
                                       共享入口
                                     </span>
