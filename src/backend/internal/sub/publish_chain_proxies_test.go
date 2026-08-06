@@ -178,6 +178,10 @@ func TestPublishUserIncludesJoinedChainsOnSharedEndpoint(t *testing.T) {
 			t.Fatalf("published clash snapshot missing %q:\n%s", want, clash)
 		}
 	}
+	// 共享端点条目只渲染端点 realized 参数：链 B 自身的 dest（b.example.com）不得泄漏进订阅。
+	if strings.Contains(clash, "b.example.com") {
+		t.Fatalf("shared-endpoint entry must render endpoint params only, chain B config leaked:\n%s", clash)
+	}
 	if len(result.Warnings) != 0 {
 		t.Fatalf("unexpected warnings: %v", result.Warnings)
 	}
