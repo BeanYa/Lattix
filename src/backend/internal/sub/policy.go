@@ -300,6 +300,12 @@ func inferredGroupCountry(name string) string {
 	for marker, country := range map[string]string{
 		"香港": "HK", "🇭🇰": "HK", "美国": "US", "🇺🇸": "US", "日本": "JP", "🇯🇵": "JP",
 		"新加坡": "SG", "🇸🇬": "SG", "台湾": "TW", "🇹🇼": "TW", "韩国": "KR", "🇰🇷": "KR",
+		"加拿大": "CA", "🇨🇦": "CA", "英国": "GB", "🇬🇧": "GB", "法国": "FR", "🇫🇷": "FR",
+		"德国": "DE", "🇩🇪": "DE", "荷兰": "NL", "🇳🇱": "NL", "土耳其": "TR", "🇹🇷": "TR",
+		"俄罗斯": "RU", "🇷🇺": "RU", "澳大利亚": "AU", "🇦🇺": "AU", "印度": "IN", "🇮🇳": "IN",
+		"巴西": "BR", "🇧🇷": "BR", "泰国": "TH", "🇹🇭": "TH", "马来西亚": "MY", "🇲🇾": "MY",
+		"越南": "VN", "🇻🇳": "VN", "意大利": "IT", "🇮🇹": "IT", "西班牙": "ES", "🇪🇸": "ES",
+		"瑞士": "CH", "🇨🇭": "CH", "波兰": "PL", "🇵🇱": "PL", "阿联酋": "AE", "🇦🇪": "AE",
 	} {
 		if strings.Contains(name, marker) {
 			return country

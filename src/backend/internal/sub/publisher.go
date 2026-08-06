@@ -56,11 +56,15 @@ func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) 
 		return PublishResult{}, err
 	}
 	warnings := append(append([]string{}, chainWarnings...), compileWarnings...)
+	policyWarnings, err := expandPolicy(&policy, nodes)
+	if err != nil {
+		return s.publishFailure(ctx, userID, err)
+	}
+	warnings = append(warnings, policyWarnings...)
 	if len(warnings) > 0 {
 		log.Printf("sub: publish user %d (%s): %d item(s) skipped: %s",
 			user.ID, user.Name, len(warnings), strings.Join(warnings, "; "))
 	}
-	expandPolicy(&policy, nodes)
 	cachedRules, err := s.cachedTemplateRules(ctx, template, policy)
 	if err != nil {
 		return s.publishFailure(ctx, userID, err)
@@ -272,7 +276,7 @@ func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid strin
 	return out, warnings, nil
 }
 
-func expandPolicy(policy *portablePolicy, nodes []compiledNode) {
+func expandPolicy(policy *portablePolicy, nodes []compiledNode) ([]string, error) {
 	all := make([]string, 0, len(nodes))
 	byCountry := map[string][]string{}
 	for _, node := range nodes {
@@ -313,6 +317,87 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode) {
 		}
 		policy.Groups[index].Options = uniqueStrings(options)
 	}
+	return pruneEmptyGroups(policy, all)
+}
+
+// pruneEmptyGroups 删除展开后无可选出站的策略组，并清除其余组的悬空引用：
+// 区域分组（如 🇰🇷 韩国节点）在无对应国家节点时 options 为空，Mihomo/sing-box
+// 会因空组或悬空引用拒绝整份配置。规则若指向被剪除的组则跳过并给出警告。
+// 无任何节点时跳过剪除（订阅本身退化为空配置，维持既有发布契约）。
+func pruneEmptyGroups(policy *portablePolicy, all []string) ([]string, error) {
+	if len(all) == 0 {
+		return nil, nil
+	}
+	nodeSet := make(map[string]bool, len(all))
+	for _, name := range all {
+		nodeSet[name] = true
+	}
+	alive := map[string]bool{}
+	for {
+		changed := false
+		for _, group := range policy.Groups {
+			if alive[group.Name] {
+				continue
+			}
+			for _, option := range group.Options {
+				if option == "DIRECT" || option == "REJECT" || nodeSet[option] || alive[option] {
+					alive[group.Name] = true
+					changed = true
+					break
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	if len(alive) == len(policy.Groups) {
+		if policy.Final == "DIRECT" || policy.Final == "REJECT" || alive[policy.Final] {
+			return nil, nil
+		}
+	}
+	var warnings []string
+	kept := policy.Groups[:0]
+	for _, group := range policy.Groups {
+		if !alive[group.Name] {
+			warnings = append(warnings, fmt.Sprintf("策略组「%s」无可用节点或引用，已从订阅移除", group.Name))
+			continue
+		}
+		options := make([]string, 0, len(group.Options))
+		for _, option := range group.Options {
+			if option == "DIRECT" || option == "REJECT" || nodeSet[option] || alive[option] {
+				options = append(options, option)
+			}
+		}
+		group.Options = options
+		kept = append(kept, group)
+	}
+	policy.Groups = kept
+
+	keptRules := policy.Rules[:0]
+	for _, rule := range policy.Rules {
+		if rule.Outbound != "DIRECT" && rule.Outbound != "REJECT" && !alive[rule.Outbound] {
+			warnings = append(warnings, fmt.Sprintf("规则 %s,%s 指向已移除的策略组「%s」，已跳过", rule.Kind, rule.Value, rule.Outbound))
+			continue
+		}
+		keptRules = append(keptRules, rule)
+	}
+	policy.Rules = keptRules
+
+	keptRemote := policy.RemoteRule[:0]
+	for _, remote := range policy.RemoteRule {
+		if remote.Outbound != "DIRECT" && remote.Outbound != "REJECT" && !alive[remote.Outbound] {
+			warnings = append(warnings, fmt.Sprintf("远程规则 %s 指向已移除的策略组「%s」，已跳过", remote.Name, remote.Outbound))
+			continue
+		}
+		keptRemote = append(keptRemote, remote)
+	}
+	policy.RemoteRule = keptRemote
+
+	if policy.Final != "DIRECT" && policy.Final != "REJECT" && !alive[policy.Final] {
+		return warnings, fmt.Errorf("final 指向已移除的策略组 %q", policy.Final)
+	}
+	return warnings, nil
 }
 
 func countryFlag(code string) string {
