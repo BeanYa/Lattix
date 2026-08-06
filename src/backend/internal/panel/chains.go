@@ -691,6 +691,7 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	if failedRevision != nil {
 		tasks, err := s.st.RevisionTasks(r.Context(), failedRevision.ID)
 		if err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
