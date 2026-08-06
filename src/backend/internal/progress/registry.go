@@ -17,6 +17,10 @@ const MaxRunningObservations = 64
 // 终态观察保留时长（测试可改写）。
 var finishedTTL = 5 * time.Minute
 
+// runningTimeout 运行中观察的最长存活时长：WatchUsers 的观察等待 regenerator
+// 完成回调，超过该时长由惰性扫描强制收口（测试可改写）。
+var runningTimeout = 5 * time.Minute
+
 // Status 观察状态。
 type Status string
 
@@ -51,8 +55,10 @@ type Observation struct {
 
 	watched      map[int64]bool // WatchUsers 登记的用户
 	watchedTotal int            // 登记用户总数
+	processed    int            // 已处理（成功或失败）的用户数
 	published    int            // 已成功发布的用户数
 	errored      int            // 已处理但发布失败的用户数
+	expiresAt    time.Time      // running 超时点（Start 时 = now + runningTimeout）
 	finished     bool
 }
 
@@ -75,6 +81,7 @@ func (r *Registry) Start(kind, title string, stages []Stage) *Observation {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now()
+	r.sweepExpiredLocked(now)
 	for id, o := range r.obs {
 		if o.finished && o.FinishedAt != nil && now.Sub(*o.FinishedAt) > finishedTTL {
 			delete(r.obs, id)
@@ -92,7 +99,7 @@ func (r *Registry) Start(kind, title string, stages []Stage) *Observation {
 	o := &Observation{
 		r: r, ID: shared.NewMessageID(), Kind: kind, Title: title,
 		Stages: append([]Stage(nil), stages...), Status: StatusRunning,
-		StartedAt: time.Now(), watched: make(map[int64]bool),
+		StartedAt: now, expiresAt: now.Add(runningTimeout), watched: make(map[int64]bool),
 	}
 	r.obs[o.ID] = o
 	return o
@@ -106,6 +113,7 @@ func (r *Registry) Get(id string) (*Observation, bool) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.sweepExpiredLocked(time.Now())
 	o, ok := r.obs[id]
 	if !ok {
 		return nil, false
@@ -237,6 +245,27 @@ func (o *Observation) Close() {
 	}
 }
 
+// CloseIfPending 是 defer 收尾专用（Close 的增强版）：已终态 → no-op；有未完成
+// watched 用户（watchedTotal > processed）→ no-op（观察保持 running，由
+// regenerator 完成回调自动收口；超时由 runningTimeout 惰性扫描兜底，保证不悬挂）；
+// 无 watched 用户 → 按 done 收口（行为与 Close 一致）。允许 regenerator 完成
+// 回调先到：自动收口完成后本方法 no-op。
+func (o *Observation) CloseIfPending() {
+	defer o.recover()
+	if o == nil || o.r == nil {
+		return
+	}
+	o.r.mu.Lock()
+	defer o.r.mu.Unlock()
+	if o.finished {
+		return
+	}
+	if o.watchedTotal > o.processed {
+		return
+	}
+	o.finishLocked(StatusDone, "")
+}
+
 func (o *Observation) finishLocked(status Status, errMsg string) {
 	if o.finished {
 		return
@@ -251,8 +280,23 @@ func (o *Observation) finishLocked(status Status, errMsg string) {
 	o.FinishedAt = &now
 }
 
+// sweepExpiredLocked 惰性超时扫描：把超过 expiresAt 仍未终态的 running 观察收口
+// 为 done + 超时警告（调用方须持锁；直接追加警告，避免嵌套加锁）。
+func (r *Registry) sweepExpiredLocked(now time.Time) {
+	for _, o := range r.obs {
+		if o.finished || o.Status != StatusRunning {
+			continue
+		}
+		if now.After(o.expiresAt) {
+			o.Warnings = append(o.Warnings, "部分订阅仍在后台生成，已超时")
+			o.finishLocked(StatusDone, "")
+		}
+	}
+}
+
 // NotifyUserPublished 由 regenerator 每发布完一个用户调用：推进所有 watch 该
-// 用户的活跃观察的百分比；发布失败计入该观察警告。无活跃观察时零开销返回。
+// 用户的活跃观察的百分比；发布失败计入该观察警告。全部 watched 用户处理完后
+// 观察自动收口为 done（无需等待调用方）。无活跃观察时零开销返回。
 func (r *Registry) NotifyUserPublished(userID int64, publishErr error) {
 	defer r.recover()
 	if r == nil || userID <= 0 {
@@ -260,11 +304,13 @@ func (r *Registry) NotifyUserPublished(userID int64, publishErr error) {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.sweepExpiredLocked(time.Now())
 	for _, o := range r.obs {
 		if o.Status != StatusRunning || o.finished || !o.watched[userID] {
 			continue
 		}
 		o.watched[userID] = false // 每用户只计一次
+		o.processed++
 		if publishErr != nil {
 			o.errored++
 			o.Warnings = append(o.Warnings, publishErr.Error())
@@ -275,6 +321,9 @@ func (r *Registry) NotifyUserPublished(userID int64, publishErr error) {
 			o.Percent = 100
 		} else if o.watchedTotal > 0 {
 			o.Percent = o.published * 100 / o.watchedTotal
+		}
+		if o.watchedTotal > 0 && o.processed >= o.watchedTotal {
+			o.finishLocked(StatusDone, "")
 		}
 	}
 }

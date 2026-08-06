@@ -55,6 +55,7 @@ func TestNilObservationIsNoOp(t *testing.T) {
 	o.Finish()
 	o.Fail(errors.New("e"))
 	o.Close()
+	o.CloseIfPending()
 	o.WatchUsers([]int64{1, 2})
 }
 
@@ -182,5 +183,150 @@ func TestNotifyPublishedRecoversPanic(t *testing.T) {
 	r.NotifyUserPublished(1, errors.New("boom"))
 	if _, ok := r.Get(o.ID); !ok {
 		t.Fatal("registry must survive notification")
+	}
+}
+
+func TestNotifyUserPublishedAutoFinishes(t *testing.T) {
+	r := NewRegistry()
+	o := r.Start("x", "y", []Stage{{Key: "regenerate", Label: "重新生成订阅文件"}})
+	o.WatchUsers([]int64{1, 2, 3, 4})
+	o.Report("regenerate", 0, "等待发布")
+	got, _ := r.Get(o.ID)
+	if got.Status != StatusRunning {
+		t.Fatalf("完成前应仍 running: %+v", got)
+	}
+	for _, id := range []int64{1, 2, 3, 4} {
+		r.NotifyUserPublished(id, nil)
+	}
+	got, ok := r.Get(o.ID)
+	if !ok {
+		t.Fatal("完成后的观察应仍可读取")
+	}
+	if got.Status != StatusDone {
+		t.Fatalf("4/4 通知后应自动收口 done: %+v", got)
+	}
+	if got.Percent != 100 || got.Stage != "regenerate" {
+		t.Fatalf("percent/stage = %d/%s, want 100/regenerate", got.Percent, got.Stage)
+	}
+}
+
+func TestNotifyUserPublishedFailureCountsTowardCompletion(t *testing.T) {
+	r := NewRegistry()
+	o := r.Start("x", "y", []Stage{{Key: "regenerate", Label: "重新生成订阅文件"}})
+	o.WatchUsers([]int64{1, 2, 3, 4})
+	r.NotifyUserPublished(1, errors.New("失败1"))
+	r.NotifyUserPublished(2, errors.New("失败2"))
+	r.NotifyUserPublished(3, errors.New("失败3"))
+	got, _ := r.Get(o.ID)
+	if got.Status != StatusRunning {
+		t.Fatalf("3/4 已处理（全失败）应仍 running: %+v", got)
+	}
+	r.NotifyUserPublished(4, nil)
+	got, _ = r.Get(o.ID)
+	if got.Status != StatusDone {
+		t.Fatalf("4/4 处理完（3 失败 1 成功）应 done: %+v", got)
+	}
+	if len(got.Warnings) != 3 {
+		t.Fatalf("warnings = %v, want 3 条失败警告", got.Warnings)
+	}
+}
+
+func TestRunningTimeoutFinishesWithWarning(t *testing.T) {
+	old := runningTimeout
+	runningTimeout = 30 * time.Millisecond
+	defer func() { runningTimeout = old }()
+	r := NewRegistry()
+	o := r.Start("x", "y", []Stage{{Key: "regenerate", Label: "重新生成订阅文件"}})
+	o.WatchUsers([]int64{1})
+	time.Sleep(50 * time.Millisecond)
+	got, ok := r.Get(o.ID)
+	if !ok {
+		t.Fatal("超时观察应仍可读取")
+	}
+	if got.Status != StatusDone {
+		t.Fatalf("超时应收口 done: %+v", got)
+	}
+	if got.Percent != 100 {
+		t.Fatalf("超时收口 percent = %d, want 100", got.Percent)
+	}
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "已超时") {
+		t.Fatalf("超时警告缺失: %v", got.Warnings)
+	}
+}
+
+func TestNotifyUserPublishedSweepsExpired(t *testing.T) {
+	old := runningTimeout
+	runningTimeout = 30 * time.Millisecond
+	defer func() { runningTimeout = old }()
+	r := NewRegistry()
+	o := r.Start("x", "y", []Stage{{Key: "regenerate", Label: "重新生成订阅文件"}})
+	o.WatchUsers([]int64{1})
+	time.Sleep(50 * time.Millisecond)
+	r.NotifyUserPublished(1, nil) // 触发惰性超时扫描
+	got, _ := r.Get(o.ID)
+	if got.Status != StatusDone {
+		t.Fatalf("Notify 触发扫描应收口 done: %+v", got)
+	}
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "已超时") {
+		t.Fatalf("超时警告缺失: %v", got.Warnings)
+	}
+}
+
+func TestCloseIfPendingPartialWatchedStaysRunning(t *testing.T) {
+	r := NewRegistry()
+	o := r.Start("x", "y", []Stage{{Key: "regenerate", Label: "重新生成订阅文件"}})
+	o.WatchUsers([]int64{1, 2})
+	r.NotifyUserPublished(1, nil)
+	o.CloseIfPending()
+	got, _ := r.Get(o.ID)
+	if got.Status != StatusRunning {
+		t.Fatalf("有未完成 watched 时 CloseIfPending 不得收口: %+v", got)
+	}
+	if len(got.Warnings) != 0 {
+		t.Fatalf("保持 running 不应产生警告: %v", got.Warnings)
+	}
+	// 补完剩余用户后仍能正常自动收口
+	r.NotifyUserPublished(2, nil)
+	got, _ = r.Get(o.ID)
+	if got.Status != StatusDone || got.Percent != 100 {
+		t.Fatalf("补完用户后应 done: %+v", got)
+	}
+}
+
+func TestCloseIfPendingFullyWatchedNoWarning(t *testing.T) {
+	r := NewRegistry()
+	o := r.Start("x", "y", []Stage{{Key: "regenerate", Label: "重新生成订阅文件"}})
+	o.WatchUsers([]int64{1, 2})
+	r.NotifyUserPublished(1, nil)
+	r.NotifyUserPublished(2, nil)
+	o.CloseIfPending() // 已完成时 no-op
+	got, _ := r.Get(o.ID)
+	if got.Status != StatusDone {
+		t.Fatalf("自动收口后 CloseIfPending: %+v", got)
+	}
+	if len(got.Warnings) != 0 {
+		t.Fatalf("完整完成后不应有未完成警告: %v", got.Warnings)
+	}
+}
+
+func TestCloseIfPendingNoWatchedBehavesLikeClose(t *testing.T) {
+	r := NewRegistry()
+	o := r.Start("x", "y", nil)
+	o.Warn("部分失败")
+	o.CloseIfPending()
+	got, _ := r.Get(o.ID)
+	if got.Status != StatusDone || len(got.Warnings) != 1 {
+		t.Fatalf("CloseIfPending 无 watched 应等同 Close: %+v", got)
+	}
+}
+
+func TestCloseIfPendingIdempotentAfterFail(t *testing.T) {
+	r := NewRegistry()
+	o := r.Start("x", "y", nil)
+	o.Fail(errors.New("boom"))
+	o.CloseIfPending()
+	got, _ := r.Get(o.ID)
+	if got.Status != StatusFailed {
+		t.Fatalf("Fail 后 CloseIfPending 不得覆盖终态: %+v", got)
 	}
 }

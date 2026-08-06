@@ -328,7 +328,7 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o := s.observeStart(r, "node.delete", "删除节点", chainNodeObserveStages)
-	defer o.Close()
+	defer o.CloseIfPending()
 	if _, err := s.disp.Enqueue(r.Context(), n.ServerID, shared.TypeRemoveNode, shared.RemoveNodePayload{NodeID: n.ID}); err != nil {
 		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())

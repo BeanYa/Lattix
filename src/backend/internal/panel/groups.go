@@ -190,7 +190,7 @@ func (s *Server) handleUpdateLinkGroup(w http.ResponseWriter, r *http.Request) {
 			{Key: "reconcile", Label: "同步共享端点"},
 			{Key: "regenerate", Label: "重新生成订阅文件"},
 		})
-	defer o.Close()
+	defer o.CloseIfPending()
 	if err := s.st.UpdateLinkGroup(r.Context(), req.ID, name, chainIDs, extSubs); err != nil {
 		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -238,7 +238,7 @@ func (s *Server) handleDeleteLinkGroup(w http.ResponseWriter, r *http.Request) {
 			{Key: "reconcile", Label: "同步共享端点"},
 			{Key: "regenerate", Label: "重新生成订阅文件"},
 		})
-	defer o.Close()
+	defer o.CloseIfPending()
 	if err := s.st.DeleteLinkGroup(r.Context(), req.ID); err != nil {
 		o.Fail(err)
 		if errors.Is(err, store.ErrNotFound) {
@@ -282,7 +282,7 @@ func (s *Server) handleCreateUserGroup(w http.ResponseWriter, r *http.Request) {
 			{Key: "reconcile", Label: "同步共享端点"},
 			{Key: "regenerate", Label: "重新生成订阅文件"},
 		})
-	defer o.Close()
+	defer o.CloseIfPending()
 	id, err := s.st.CreateUserGroup(r.Context(), name, userIDs, linkGroupIDs)
 	if err != nil {
 		o.Fail(err)
@@ -331,7 +331,7 @@ func (s *Server) handleUpdateUserGroup(w http.ResponseWriter, r *http.Request) {
 			{Key: "reconcile", Label: "同步共享端点"},
 			{Key: "regenerate", Label: "重新生成订阅文件"},
 		})
-	defer o.Close()
+	defer o.CloseIfPending()
 	if err := s.st.UpdateUserGroup(r.Context(), req.ID, name, userIDs, linkGroupIDs); err != nil {
 		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -377,7 +377,7 @@ func (s *Server) handleDeleteUserGroup(w http.ResponseWriter, r *http.Request) {
 			{Key: "reconcile", Label: "同步共享端点"},
 			{Key: "regenerate", Label: "重新生成订阅文件"},
 		})
-	defer o.Close()
+	defer o.CloseIfPending()
 	if err := s.st.DeleteUserGroup(r.Context(), req.ID); err != nil {
 		o.Fail(err)
 		if errors.Is(err, store.ErrNotFound) {

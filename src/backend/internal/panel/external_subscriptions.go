@@ -118,7 +118,7 @@ func (s *Server) handleDeleteExternalSubscription(w http.ResponseWriter, r *http
 			{Key: "db", Label: "写入数据库"},
 			{Key: "regenerate", Label: "重发布关联用户"},
 		})
-	defer o.Close()
+	defer o.CloseIfPending()
 	// 删除前收集受影响用户（删除后按订阅 ID 查不到行）；收集失败记日志，
 	// 不丢弃已收集到的直接分配用户。
 	affected, err := s.st.UsersByExternalSubscriptionID(r.Context(), req.ID)
@@ -175,7 +175,7 @@ func (s *Server) handleSyncExternalSubscription(w http.ResponseWriter, r *http.R
 			{Key: "db", Label: "写入数据库"},
 			{Key: "regenerate", Label: "重发布关联用户"},
 		})
-	defer o.Close()
+	defer o.CloseIfPending()
 	sub, err := s.extSubs.Sync(r.Context(), req.ID)
 	if err != nil {
 		o.Fail(err)

@@ -1032,7 +1032,7 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	o := s.observeStart(r, "chain.delete", "删除链路", chainNodeObserveStages)
-	defer o.Close()
+	defer o.CloseIfPending()
 	for i, h := range hops {
 		for _, kind := range dispatch.ChainHopPieces(hops, i) {
 			if _, err := s.disp.Enqueue(r.Context(), h.ServerID, shared.TypeRemoveChainHop,
