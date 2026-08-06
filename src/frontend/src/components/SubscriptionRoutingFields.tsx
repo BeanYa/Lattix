@@ -60,7 +60,7 @@ export function SubscriptionRoutingFields({
             : `已指派模板「${templateName(value.assigned_portable_template_id)}」（自选优先，可在此覆盖）。`}
         </Notice>
       )}
-      {value.assigned_suggested_categories.length > 0 && (
+      {value.assigned_suggested_categories?.length > 0 && (
         <Notice tone="info">
           {value.assign_forced_portable
             ? `已强制指派建议规则（${suggestedCategoryLabels(value.assigned_suggested_categories, categories)}），以下自选设置暂不生效。`

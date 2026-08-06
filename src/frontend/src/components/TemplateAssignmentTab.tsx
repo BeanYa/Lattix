@@ -93,7 +93,7 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
   const suggestedBySet = useMemo(() => {
     const groups = new Map<string, SubUser[]>()
     for (const user of users) {
-      const ids = user.routing.assigned_suggested_categories
+      const ids = user.routing.assigned_suggested_categories ?? []
       if (ids.length === 0) continue
       const key = JSON.stringify(ids)
       const list = groups.get(key) ?? []
@@ -113,7 +113,7 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
 
   const unassigned = users.filter((user) =>
     !SLOTS.some(([assignedField]) => user.routing[assignedField] as string)
-    && user.routing.assigned_suggested_categories.length === 0,
+    && (user.routing.assigned_suggested_categories ?? []).length === 0,
   )
 
   const toggle = (id: number, checked: boolean) => {
