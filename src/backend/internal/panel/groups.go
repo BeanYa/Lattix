@@ -7,8 +7,18 @@ import (
 	"net/http"
 	"strings"
 
+	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 )
+
+// observeStart 创建旁路观察并绑定到请求 context；返回观察句柄（可能为 nil）。
+func (s *Server) observeStart(r *http.Request, kind, title string, stages []progress.Stage) *progress.Observation {
+	o := s.observes.Start(kind, title, stages)
+	if o != nil {
+		*r = *r.WithContext(s.observes.Attach(r.Context(), o.ID))
+	}
+	return o
+}
 
 type linkGroupInput struct {
 	ID                    int64                          `json:"id"`
@@ -123,11 +133,22 @@ func (s *Server) handleCreateLinkGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	o := s.observeStart(r, "link_group.create", "创建链路分组",
+		[]progress.Stage{
+			{Key: "db", Label: "校验并写入数据库"},
+			{Key: "reconcile", Label: "同步共享端点"},
+			{Key: "regenerate", Label: "重新生成订阅文件"},
+		})
+	defer o.Close()
 	id, err := s.st.CreateLinkGroup(r.Context(), name, chainIDs, extSubs)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("db", 100, "分组已保存")
+	o.Report("reconcile", 100, "共享端点已同步")
+	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "link_group.create", nil, nil, map[string]any{"id": id, "name": name})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id})
 }
@@ -163,11 +184,24 @@ func (s *Server) handleUpdateLinkGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	affectedChains := mergeInt64s(before.ChainIDs, chainIDs)
+	o := s.observeStart(r, "link_group.update", "更新链路分组",
+		[]progress.Stage{
+			{Key: "db", Label: "校验并写入数据库"},
+			{Key: "reconcile", Label: "同步共享端点"},
+			{Key: "regenerate", Label: "重新生成订阅文件"},
+		})
+	defer o.Close()
 	if err := s.st.UpdateLinkGroup(r.Context(), req.ID, name, chainIDs, extSubs); err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.triggerGroupChange(r.Context(), users, s.endpointIDsForChains(r.Context(), affectedChains))
+	o.Report("db", 100, "分组已保存")
+	endpointIDs := s.endpointIDsForChains(r.Context(), affectedChains)
+	o.Report("reconcile", 100, "共享端点已同步")
+	s.triggerGroupChange(r.Context(), users, endpointIDs)
+	o.WatchUsers(users)
+	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "link_group.update", nil, nil, map[string]any{"id": req.ID, "name": name})
 	writeJSON(w, http.StatusOK, map[string]any{"id": req.ID})
 }
@@ -198,7 +232,15 @@ func (s *Server) handleDeleteLinkGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o := s.observeStart(r, "link_group.delete", "删除链路分组",
+		[]progress.Stage{
+			{Key: "db", Label: "校验并写入数据库"},
+			{Key: "reconcile", Label: "同步共享端点"},
+			{Key: "regenerate", Label: "重新生成订阅文件"},
+		})
+	defer o.Close()
 	if err := s.st.DeleteLinkGroup(r.Context(), req.ID); err != nil {
+		o.Fail(err)
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "链路分组不存在")
 			return
@@ -206,7 +248,10 @@ func (s *Server) handleDeleteLinkGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("db", 100, "分组已删除")
 	s.triggerGroupChange(r.Context(), users, s.endpointIDsForChains(r.Context(), before.ChainIDs))
+	o.WatchUsers(users)
+	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "link_group.delete", nil, nil, map[string]any{"id": req.ID, "name": before.Name})
 	writeJSON(w, http.StatusOK, nil)
 }
@@ -231,13 +276,24 @@ func (s *Server) handleCreateUserGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	o := s.observeStart(r, "user_group.create", "创建用户分组",
+		[]progress.Stage{
+			{Key: "db", Label: "校验并写入数据库"},
+			{Key: "reconcile", Label: "同步共享端点"},
+			{Key: "regenerate", Label: "重新生成订阅文件"},
+		})
+	defer o.Close()
 	id, err := s.st.CreateUserGroup(r.Context(), name, userIDs, linkGroupIDs)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("db", 100, "分组已保存")
 	// 新分组立即使成员进入分组模式：重发布成员 + reconcile 关联链路端点。
 	s.triggerGroupChange(r.Context(), userIDs, s.endpointIDsForLinkGroups(r.Context(), linkGroupIDs))
+	o.WatchUsers(userIDs)
+	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "user_group.create", nil, nil, map[string]any{"id": id, "name": name})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id})
 }
@@ -269,11 +325,22 @@ func (s *Server) handleUpdateUserGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	allUsers := mergeInt64s(before.UserIDs, userIDs)
 	allLinkGroups := mergeInt64s(before.LinkGroupIDs, linkGroupIDs)
+	o := s.observeStart(r, "user_group.update", "更新用户分组",
+		[]progress.Stage{
+			{Key: "db", Label: "校验并写入数据库"},
+			{Key: "reconcile", Label: "同步共享端点"},
+			{Key: "regenerate", Label: "重新生成订阅文件"},
+		})
+	defer o.Close()
 	if err := s.st.UpdateUserGroup(r.Context(), req.ID, name, userIDs, linkGroupIDs); err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("db", 100, "分组已保存")
 	s.triggerGroupChange(r.Context(), allUsers, s.endpointIDsForLinkGroups(r.Context(), allLinkGroups))
+	o.WatchUsers(allUsers)
+	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "user_group.update", nil, nil, map[string]any{"id": req.ID, "name": name})
 	writeJSON(w, http.StatusOK, map[string]any{"id": req.ID})
 }
@@ -304,7 +371,15 @@ func (s *Server) handleDeleteUserGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o := s.observeStart(r, "user_group.delete", "删除用户分组",
+		[]progress.Stage{
+			{Key: "db", Label: "校验并写入数据库"},
+			{Key: "reconcile", Label: "同步共享端点"},
+			{Key: "regenerate", Label: "重新生成订阅文件"},
+		})
+	defer o.Close()
 	if err := s.st.DeleteUserGroup(r.Context(), req.ID); err != nil {
+		o.Fail(err)
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "用户分组不存在")
 			return
@@ -312,8 +387,11 @@ func (s *Server) handleDeleteUserGroup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("db", 100, "分组已删除")
 	// 成员恢复直接分配，需重发布 + 端点 reconcile。
 	s.triggerGroupChange(r.Context(), users, s.endpointIDsForLinkGroups(r.Context(), before.LinkGroupIDs))
+	o.WatchUsers(users)
+	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "user_group.delete", nil, nil, map[string]any{"id": req.ID, "name": before.Name})
 	writeJSON(w, http.StatusOK, nil)
 }
