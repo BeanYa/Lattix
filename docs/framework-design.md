@@ -408,7 +408,8 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，由面板 Agent 设置�
 
 - 触发仅状态跃迁，不周期重发：
   - `server_offline`：WS 断开导致 online→offline（hub unregister 实际移除注册连接为唯一挂点；
-    被新连接顶替的旧连接注销不算，session 重连不重复报）；
+    被新连接顶替的旧连接注销不算，session 重连不重复报；断连后经消音窗口（默认 10s，
+    `LATTIX_OFFLINE_DEBOUNCE` 可覆盖）仍离线才触发，窗口内重连则静默）；
   - `config_drift`：dispatcher 收到 `config.drift` true（§17）；
   - `node_failed`：RPC response 失败或命令死信导致节点置 failed（§6）。
 - 通道（各自独立判定，异步发送不阻塞主路径，5s 超时，失败仅记日志）：

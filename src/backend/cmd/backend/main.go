@@ -269,7 +269,11 @@ func run() error {
 			RPCCode: shared.CodeInvalidArgument, ErrorSummary: message, Attributes: attributes,
 		})
 	}
+	// 断连消音（§19）：offline 事件/告警与链降级重估延迟一个窗口执行，窗口内重连则取消。
+	debouncer := newOfflineDebouncer(offlineDebounceWindow)
+	defer debouncer.close()
 	hub.OnConnect = func(serverID int64) {
+		debouncer.cancel(serverID)
 		// agent 重连后重置并补发离线期间滞留的命令（§2）。
 		dispatcher.OnAgentConnect(context.Background(), serverID)
 		// 链 degraded 推导（§21.1）：重算受影响链，全部跳在线且跳 active 的恢复 active。
@@ -315,16 +319,23 @@ func run() error {
 		if err := st.RecordServerDisconnected(context.Background(), serverID, "connection closed"); err != nil {
 			log.Printf("main: record server disconnected: %v", err)
 		}
-		notifier.Notify(serverID, alert.EventServerOffline, "", "WS 连接断开，服务器离线")
-		sid := serverID
-		if err := opLog.Record(context.Background(), logging.OperationEvent{
-			Severity: logging.SeverityWarning, Category: logging.CategoryAgent, Action: "agent.offline",
-			ServerID: &sid, Detail: "WS 连接断开，服务器离线",
-		}); err != nil {
-			log.Printf("main: record agent.offline event: %v", err)
-		}
-		// 链 degraded 推导（§21.1）：任一跳 server 离线 → degraded + chain_degraded 告警。
-		dispatcher.RecomputeChainsByServer(serverID)
+		// 断连消音：窗口内重连成功（OnConnect 取消）则不产生 offline 事件/告警与链路抖动；
+		// 超时仍离线（且非 drain）才上报。
+		debouncer.schedule(serverID, func() {
+			if hub.IsOnline(serverID) || hub.IsDraining() {
+				return
+			}
+			notifier.Notify(serverID, alert.EventServerOffline, "", "WS 连接断开，服务器离线")
+			sid := serverID
+			if err := opLog.Record(context.Background(), logging.OperationEvent{
+				Severity: logging.SeverityWarning, Category: logging.CategoryAgent, Action: "agent.offline",
+				ServerID: &sid, Detail: "WS 连接断开，服务器离线",
+			}); err != nil {
+				log.Printf("main: record agent.offline event: %v", err)
+			}
+			// 链 degraded 推导（§21.1）：任一跳 server 离线 → degraded + chain_degraded 告警。
+			dispatcher.RecomputeChainsByServer(serverID)
+		})
 	}
 
 	// 面板管理 API（§10）。

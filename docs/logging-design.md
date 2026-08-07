@@ -110,6 +110,8 @@ Agent 连接事件按真实状态跃迁记录：
 
 旧连接被新连接替换后，其退出不会删除新连接，也不会触发 `agent.offline`。
 
+断连消音：`agent.offline` 事件、`server_offline` 告警与链降级重估在 WS 断开后延迟一个消音窗口（默认 10s，`LATTIX_OFFLINE_DEBOUNCE` 可覆盖）执行；窗口内重连成功则全部取消，只留一条 `agent.reconnected`。超时仍离线（且非 drain）才按上表上报，链路抖动（秒级断连）不再产生 offline/degraded/recovered 事件对。
+
 ### 3.5 变更详情
 
 - 更新操作只记录实际发生变化的字段；
