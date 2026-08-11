@@ -682,7 +682,7 @@ export default function Users() {
       )}
 
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[85vh] sm:max-w-4xl overflow-y-auto">
+        <DialogContent className="max-h-[85vh] sm:max-w-4xl overflow-y-auto [&>*]:min-w-0">
           <DialogHeader>
             <DialogTitle>创建用户</DialogTitle>
             <DialogDescription>
@@ -848,7 +848,7 @@ export default function Users() {
       <QRDialog text={qrText} open={qrText !== ''} onClose={() => setQrText('')} />
 
       <Dialog open={assignTarget !== null} onOpenChange={(next) => !next && setAssignTarget(null)}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-h-[85vh] overflow-y-auto [&>*]:min-w-0">
           <DialogHeader>
             <DialogTitle>分配链路</DialogTitle>
             <DialogDescription>
@@ -876,7 +876,7 @@ export default function Users() {
                   />
                   <span className="cg-status is-blue">{link.type === 'direct' ? '直连' : '中转'}</span>
                   <span>{link.name}</span>
-                  <span className="cg-check-row-detail">{link.detail}</span>
+                  <span className="cg-check-row-detail ml-auto text-right">{link.detail}</span>
                   {link.status !== 'active' && (
                     <span className="cg-check-row-detail">（{link.status}）</span>
                   )}

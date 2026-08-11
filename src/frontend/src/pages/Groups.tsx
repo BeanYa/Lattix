@@ -188,7 +188,7 @@ function LinkGroupDialog({ group, linkOptions, extSubs, saving, setSaving, onClo
           <DialogTitle>{group ? '编辑链路分组' : '新建链路分组'}</DialogTitle>
           <DialogDescription>勾选链路与外部订阅；外部订阅整体原子参与分组。</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-3 min-w-0">
           <div>
             <Label>分组名称</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：旗舰线路" />
@@ -203,7 +203,7 @@ function LinkGroupDialog({ group, linkOptions, extSubs, saving, setSaving, onClo
                   <input type="checkbox" className="cg-groups-checkbox" checked={chainSel.includes(link.chainId)} onChange={(e) => toggleChain(link.chainId, e.target.checked)} />
                   <span className="cg-status is-blue">{link.type === 'direct' ? '直连' : '中转'}</span>
                   <span>{link.name}</span>
-                  <span className="cg-groups-check-row-detail">{link.detail}</span>
+                  <span className="cg-groups-check-row-detail ml-auto text-right">{link.detail}</span>
                   {link.status !== 'active' && <span className="cg-groups-check-row-detail">（{link.status}）</span>}
                 </label>
               ))
@@ -379,7 +379,7 @@ function UserGroupDialog({ group, groups, users, linkGroups, saving, setSaving, 
           <DialogTitle>{group ? '编辑用户分组' : '新建用户分组'}</DialogTitle>
           <DialogDescription>组内用户不再直接分配链路，订阅内容由关联的链路分组派生。</DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="space-y-3 min-w-0">
           <div>
             <Label>分组名称</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：青铜会员" />
