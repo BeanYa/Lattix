@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCwIcon, Trash2Icon } from 'lucide-react'
 
-import { Notice, Surface } from '@/components/PagePrimitives'
+import { Notice } from '@/components/PagePrimitives'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -321,8 +321,7 @@ export default function OperationLogs() {
         <Button variant="ghost" size="sm" onClick={resetFilters}>重置</Button>
       </div>
 
-      <Surface>
-        <Table>
+      <Table>
           <TableHeader>
             <TableRow>
               <TableHead>时间</TableHead>
@@ -356,7 +355,6 @@ export default function OperationLogs() {
             })}
           </TableBody>
         </Table>
-      </Surface>
 
       <div className="cg-logs-pagination">
         <span className="cg-log-label">{total > 0 ? `第 ${offset + 1}-${Math.min(offset + pageSize, total)} 条` : ''}</span>

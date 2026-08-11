@@ -8,7 +8,7 @@ import {
   Trash2Icon,
 } from 'lucide-react'
 
-import { EmptyState, Notice, Page, PageHeader, Surface } from '@/components/PagePrimitives'
+import { EmptyState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -192,7 +192,7 @@ export default function SubscriptionTemplates() {
       {!loading && templates.length === 0 ? (
         <EmptyState icon={<FileCode2Icon />} title="暂无模板" description="创建本地模板或添加公开 GitHub 文件" />
       ) : null}
-      <Surface className={!loading && templates.length === 0 ? 'hidden' : undefined}>
+      <div className={!loading && templates.length === 0 ? 'hidden' : undefined}>
         <Table>
           <TableHeader>
             <TableRow>
@@ -256,7 +256,7 @@ export default function SubscriptionTemplates() {
             ))}
           </TableBody>
         </Table>
-      </Surface>
+      </div>
 
       <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) resetForm() }}>
         <DialogContent className="max-h-[90vh] sm:max-w-4xl overflow-y-auto">

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { RefreshCwIcon, Trash2Icon } from 'lucide-react'
 
-import { Notice, Surface } from '@/components/PagePrimitives'
+import { Notice } from '@/components/PagePrimitives'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -202,8 +202,7 @@ export default function RequestLogs() {
         </div>
       </div>
 
-      <Surface>
-        <Table>
+      <Table>
           <TableHeader>
             <TableRow>
               <TableHead>时间</TableHead>
@@ -250,7 +249,6 @@ export default function RequestLogs() {
             ))}
           </TableBody>
         </Table>
-      </Surface>
       <p className="cg-log-note">筛选仅作用于当前显示窗口，不扫描全部请求日志文件。</p>
     </div>
   )
