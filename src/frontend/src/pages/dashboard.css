@@ -227,6 +227,30 @@
   flex-direction: column;
 }
 
+/* 拓扑面板背景跟随深浅主题（纸张令牌在 .dark 下自动转深） */
+.cg-terminal.cg-dash-topology {
+  background: var(--cg-paper-light);
+  color: var(--cg-ink);
+}
+
+.cg-dash-topology .cg-dash-terminal-head {
+  border-bottom: var(--cg-border);
+}
+
+.cg-dash-topology .cg-dash-terminal-title {
+  color: var(--cg-ink);
+}
+
+.cg-dash-topology .cg-dash-terminal-button {
+  border-color: var(--cg-ink-soft);
+  background: var(--cg-paper-soft);
+  color: var(--cg-lime-dark);
+}
+
+.cg-dash-topology .cg-dash-terminal-button:hover {
+  border-color: var(--cg-lime-dark);
+}
+
 .cg-dash-terminal-head {
   display: flex;
   align-items: flex-start;
@@ -312,8 +336,8 @@
   pointer-events: none;
   opacity: .5;
   background-image:
-    linear-gradient(rgba(183, 243, 31, .05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(183, 243, 31, .05) 1px, transparent 1px);
+    linear-gradient(var(--cg-grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--cg-grid-line) 1px, transparent 1px);
   background-size: 28px 28px;
   mask-image: radial-gradient(circle at center, black, transparent 78%);
 }
@@ -337,7 +361,7 @@
   min-height: 30rem;
   background:
     radial-gradient(circle at center, rgba(183, 243, 31, .07), transparent 36%),
-    linear-gradient(100deg, var(--cg-charcoal), var(--cg-charcoal-raised), var(--cg-charcoal));
+    linear-gradient(100deg, var(--cg-paper-light), var(--cg-paper-soft), var(--cg-paper-light));
   background-size: 100% 100%, 200% 100%;
   animation: cg-globe-shimmer 1.7s ease-in-out infinite;
 }
@@ -369,10 +393,10 @@
   gap: 6px;
   min-height: 26px;
   padding: 0 9px;
-  border: 2px solid var(--cg-charcoal-line);
+  border: 2px solid var(--cg-ink-soft);
   border-radius: var(--cg-r-xs);
-  background: var(--cg-charcoal-raised);
-  color: var(--cg-subtle);
+  background: var(--cg-paper-soft);
+  color: var(--cg-muted);
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 800;
@@ -380,7 +404,7 @@
 }
 
 .globe-telemetry b {
-  color: var(--cg-lime);
+  color: var(--cg-lime-dark);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }

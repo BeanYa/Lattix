@@ -745,16 +745,16 @@
     --earth-land-emissive: #284d17;
     --earth-land-side: #55a927;
     --earth-land-side-emissive: #193d13;
-    --earth-cloud: #fffbe6;
+    --earth-cloud: #eae3c6;
     --earth-atmosphere: #a9efff;
     --earth-node-online: #7ce5b2;
     --earth-node-offline: #ff8d87;
     --earth-node-warning: #ffd45f;
-    --earth-link-active: #f7ffb2;
+    --earth-link-active: #80a814;
     --earth-link-degraded: #ffbf3f;
     --earth-link-failed: #ff7771;
-    --earth-link-pending: #d8d2ff;
-    --earth-ring: #d9f47d;
+    --earth-link-pending: #9792ef;
+    --earth-ring: #9ccb2e;
 }
 
 .dark {

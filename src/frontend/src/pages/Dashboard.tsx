@@ -258,7 +258,7 @@ export default function Dashboard() {
         <section className="cg-terminal cg-dash-topology" aria-labelledby="cg-dash-topology-heading">
           <header className="cg-dash-terminal-head">
             <div>
-              <span className="cg-micro" style={{ color: 'var(--cg-lime)' }}>NODE / TOPOLOGY</span>
+              <span className="cg-micro" style={{ color: 'var(--cg-lime-dark)' }}>NODE / TOPOLOGY</span>
               <h2 className="cg-dash-terminal-title" id="cg-dash-topology-heading">全球节点拓扑</h2>
             </div>
             <div className="cg-dash-terminal-controls">
@@ -292,7 +292,7 @@ export default function Dashboard() {
               />
             </Suspense>
           ) : (
-            <div className="cg-dash-empty is-dark">
+            <div className="cg-dash-empty">
               <WifiIcon />
               <strong>暂无节点数据</strong>
               <span>添加服务器后，这里会显示全球节点拓扑。</span>
