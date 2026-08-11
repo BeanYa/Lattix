@@ -10,7 +10,7 @@
   cursor: text;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   padding: 4px 6px;
   border: var(--cg-border);
   border-radius: var(--cg-r-control);
@@ -33,7 +33,7 @@
 .cg-template-text {
   height: 24px;
   max-width: 100%;
-  padding: 0 2px;
+  padding: 0 1px;
   border: none;
   background: transparent;
   font-size: 13px;
@@ -53,7 +53,7 @@
   flex-shrink: 0;
   align-items: center;
   gap: 2px;
-  padding: 0 3px 0 6px;
+  padding: 0 3px 0 4px;
   border: 2px solid var(--cg-ink-soft);
   border-radius: var(--cg-r-xs);
   background: var(--cg-lime-soft);

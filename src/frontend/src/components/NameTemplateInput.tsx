@@ -134,13 +134,27 @@ export function NameTemplateInput({
     replaceRange(part.start, part.end, '')
   }
 
-  const focusLastTextPart = () => {
-    const textInputs = editorRef.current?.querySelectorAll<HTMLInputElement>('[data-template-text]')
-    const target = textInputs?.item((textInputs?.length ?? 1) - 1)
-    if (!target) return
+  const focusNearestTextPart = (clientX: number) => {
+    const textParts = [
+      ...(editorRef.current?.querySelectorAll<HTMLInputElement>('[data-template-text]') ?? []),
+    ]
+    if (!textParts.length) return
+    let target = textParts[0]
+    let minDistance = Number.POSITIVE_INFINITY
+    for (const input of textParts) {
+      const rect = input.getBoundingClientRect()
+      const distance =
+        clientX < rect.left ? rect.left - clientX : clientX > rect.right ? clientX - rect.right : 0
+      if (distance < minDistance) {
+        minDistance = distance
+        target = input
+      }
+    }
+    const rect = target.getBoundingClientRect()
+    const localCursor = clientX > (rect.left + rect.right) / 2 ? target.value.length : 0
     target.focus()
-    target.setSelectionRange(target.value.length, target.value.length)
-    setCursor(Number(target.dataset.end))
+    target.setSelectionRange(localCursor, localCursor)
+    setCursor(Number(target.dataset.start) + localCursor)
     setDismissed(false)
   }
 
@@ -154,7 +168,7 @@ export function NameTemplateInput({
         aria-invalid={Boolean(result.error)}
         className={cn('cg-template-editor', result.error && 'is-error')}
         onClick={(event) => {
-          if (event.target === event.currentTarget) focusLastTextPart()
+          if (event.target === event.currentTarget) focusNearestTextPart(event.clientX)
         }}
       >
         {parts.map((part, index) =>
@@ -191,17 +205,13 @@ export function NameTemplateInput({
                   ? 'min-w-0 flex-1'
                   : part.value
                     ? 'min-w-[1ch] shrink-0'
-                    : cn('min-w-0 shrink-0', index === 0 && '-mr-1'),
+                    : 'min-w-0 shrink-0',
               )}
               style={
                 parts.length === 1
                   ? undefined
                   : {
-                      width: part.value
-                        ? `calc(${textWidth(part.value)}ch + 4px)`
-                        : index === 0
-                          ? '0'
-                          : '2px',
+                      width: part.value ? `calc(${textWidth(part.value)}ch + 2px)` : '4px',
                     }
               }
               onFocus={(event) => {
