@@ -1,0 +1,41 @@
+/* ============================================================
+   RealityDestPicker — Cream Grid Tech 组件样式
+   ============================================================ */
+
+.cg-reality-select {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-light);
+  color: var(--cg-ink);
+  font-size: 13px;
+  font-weight: 650;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 160ms var(--cg-ease);
+}
+
+.cg-reality-select:focus-visible {
+  border-color: var(--cg-blue);
+}
+
+.cg-reality-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--cg-muted);
+}
+
+/* 预设项解析结果（dest/SNI）：blue-soft 信息盒 + mono */
+.cg-reality-summary {
+  padding: 8px 12px;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-blue-soft);
+  font-family: var(--cg-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--cg-ink);
+  overflow-wrap: anywhere;
+}

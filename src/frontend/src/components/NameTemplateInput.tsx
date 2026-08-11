@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button'
 import { evaluateNameTemplate, getTemplateSuggestions, type NameTemplateContext } from '@/lib/naming'
 import { cn } from '@/lib/utils'
 
+import './NameTemplateInput.css'
+
 interface NameTemplateInputProps {
   id?: string
   value: string
@@ -150,10 +152,7 @@ export function NameTemplateInput({
         role="textbox"
         aria-multiline="false"
         aria-invalid={Boolean(result.error)}
-        className={cn(
-          'flex min-h-8 w-full cursor-text flex-wrap items-center gap-1 rounded-lg border border-input bg-transparent px-1 py-1 text-sm transition-colors outline-none focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50',
-          result.error && 'border-destructive ring-3 ring-destructive/20',
-        )}
+        className={cn('cg-template-editor', result.error && 'is-error')}
         onClick={(event) => {
           if (event.target === event.currentTarget) focusLastTextPart()
         }}
@@ -164,12 +163,12 @@ export function NameTemplateInput({
               key={`${part.start}-${part.value}`}
               data-template-token
               data-template-value={part.value}
-              className="inline-flex h-6 shrink-0 items-center gap-0.5 rounded-md border border-primary/20 bg-primary/10 pl-1.5 pr-1 font-mono text-xs text-primary"
+              className="cg-template-token"
             >
               {tokenLabel(part.value)}
               <button
                 type="button"
-                className="inline-flex size-4 items-center justify-center rounded-sm text-primary/70 hover:bg-primary/15 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="cg-template-token-remove"
                 aria-label={`删除变量 ${tokenLabel(part.value)}`}
                 onClick={() => removeToken(part)}
               >
@@ -187,12 +186,12 @@ export function NameTemplateInput({
               placeholder={isEmpty ? placeholder : undefined}
               autoFocus={index === 0}
               className={cn(
-                'h-6 max-w-full bg-transparent text-base leading-6 outline-none placeholder:text-muted-foreground md:text-sm',
+                'cg-template-text',
                 parts.length === 1
-                  ? 'min-w-0 flex-1 px-0.5'
+                  ? 'min-w-0 flex-1'
                   : part.value
-                    ? 'min-w-[1ch] shrink-0 px-0.5'
-                    : cn('min-w-0 shrink-0 px-0', index === 0 && '-mr-1'),
+                    ? 'min-w-[1ch] shrink-0'
+                    : cn('min-w-0 shrink-0', index === 0 && '-mr-1'),
               )}
               style={
                 parts.length === 1
@@ -272,7 +271,7 @@ export function NameTemplateInput({
         )}
       </div>
       {visibleSuggestions ? (
-        <div className="flex flex-wrap gap-1 rounded-md border bg-muted/40 p-2" role="listbox">
+        <div className="cg-template-suggestions" role="listbox">
           {visibleSuggestions.items.map((item, index) => (
             <Button
               key={item}
@@ -289,7 +288,7 @@ export function NameTemplateInput({
           ))}
         </div>
       ) : null}
-      <p className={result.error ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+      <p className={cn('cg-template-hint', result.error && 'is-error')}>
         {result.error || (allowEmpty && isEmpty ? emptyHint : `预览：${result.preview}`)}
       </p>
     </div>

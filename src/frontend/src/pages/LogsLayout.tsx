@@ -10,6 +10,7 @@ export default function LogsLayout({ children }: { children: ReactNode }) {
 
   return (
     <Page>
+      <span className="cg-eyebrow">SYSTEM / AUDIT TRAIL</span>
       <PageHeader title="日志" description="审阅系统操作与最近的 API 请求流量。" />
       <Tabs
         value={active}

@@ -40,11 +40,11 @@ export function QRDialog({ text, open, onClose }: { text: string; open: boolean;
           <DialogTitle>订阅二维码</DialogTitle>
           <DialogDescription>使用移动端客户端扫码导入订阅。</DialogDescription>
         </DialogHeader>
-        <div className="flex justify-center">
+        <div className="cg-qr-box">
           {dataURL ? (
-            <img src={dataURL} alt="订阅二维码" className="rounded-lg border" />
+            <img src={dataURL} alt="订阅二维码" className="cg-qr-img" />
           ) : (
-            <p className="text-sm text-muted-foreground">生成中…</p>
+            <p className="cg-hint">生成中…</p>
           )}
         </div>
       </DialogContent>

@@ -34,7 +34,7 @@ export function TagInput({
 
   return (
     <div
-      className="flex min-h-8 w-full flex-wrap items-center gap-1 rounded-lg border border-input bg-transparent px-2 py-1 text-sm transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
+      className="sv-tag-input flex min-h-9 w-full flex-wrap items-center gap-1.5 px-2 py-1 text-sm"
       onClick={(event) => {
         if (event.target === event.currentTarget) {
           event.currentTarget.querySelector('input')?.focus()
@@ -45,12 +45,12 @@ export function TagInput({
       {value.map((tag, index) => (
         <span
           key={`${tag}-${index}`}
-          className="inline-flex h-6 items-center gap-0.5 rounded-md border border-primary/20 bg-primary/10 pl-2 pr-1 text-xs text-primary"
+          className="sv-tag-chip"
         >
           {tag}
           <button
             type="button"
-            className="inline-flex size-4 items-center justify-center rounded-sm text-primary/70 hover:bg-primary/15 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="sv-tag-chip-remove focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label={`删除标签 ${tag}`}
             onClick={() => removeTag(index)}
           >

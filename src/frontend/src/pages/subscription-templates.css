@@ -1,0 +1,85 @@
+/* ============================================================
+   SubscriptionTemplates — Cream Grid Tech 页面样式
+   ============================================================ */
+
+.subtpl-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.subtpl-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 模板 ID（mono 小号） */
+.subtpl-id {
+  max-width: 24rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--cg-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: var(--cg-muted);
+}
+
+/* 缓存时间 */
+.subtpl-cache {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.subtpl-cache-time {
+  font-family: var(--cg-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: var(--cg-muted);
+}
+
+/* 模板预览：Charcoal 深色技术面板 */
+.subtpl-preview {
+  margin: 0;
+  max-height: 65vh;
+  overflow: auto;
+  padding: 16px;
+  font-family: var(--cg-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--cg-on-charcoal);
+}
+
+/* 模板内容编辑：Charcoal 代码编辑器 */
+.subtpl-code-input {
+  min-height: 20rem;
+  width: 100%;
+  resize: vertical;
+  padding: 12px 14px;
+  border: var(--cg-border-strong);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-charcoal);
+  color: var(--cg-on-charcoal);
+  caret-color: var(--cg-lime);
+  font-family: var(--cg-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  outline: none;
+  transition: border-color 160ms var(--cg-ease);
+}
+
+.subtpl-code-input:focus {
+  border-color: var(--cg-lime);
+}
+
+.subtpl-code-input::placeholder {
+  color: var(--cg-subtle);
+}

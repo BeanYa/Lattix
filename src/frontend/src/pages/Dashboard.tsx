@@ -1,25 +1,28 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'wouter'
 import {
   ActivityIcon,
+  AlertTriangleIcon,
   ArrowDownIcon,
   ArrowUpIcon,
+  CheckCircle2Icon,
   ChevronRightIcon,
   CpuIcon,
+  GaugeIcon,
   HardDriveIcon,
+  LayoutDashboardIcon,
   MapPinIcon,
   PauseIcon,
   PlayIcon,
   RefreshCwIcon,
   RouteIcon,
   ServerIcon,
+  TimerIcon,
   UsersIcon,
   WifiIcon,
 } from 'lucide-react'
 
-import { Notice, Page, PageHeader } from '@/components/PagePrimitives'
-import ElectricBorder from '@/components/react-bits/ElectricBorder'
-import { Button } from '@/components/ui/button'
+import { Notice } from '@/components/PagePrimitives'
 import { api, errorMessage } from '@/lib/api'
 import { DEMO_DASHBOARD_STATS, DEMO_SERVERS } from '@/lib/dashboard-demo'
 import { formatByteRate, humanizeBytes } from '@/lib/format'
@@ -27,7 +30,7 @@ import { isServerOnline, serverConnectionLabel } from '@/lib/server-state'
 import type { Chain, DashboardStats, Server } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
-import './subscription.css'
+import './dashboard.css'
 
 const GlobeTopology = lazy(() => import('@/components/GlobeTopology'))
 
@@ -43,10 +46,10 @@ function formatUptime(seconds: number | undefined) {
   return `${Math.floor(seconds / 3600)} 小时`
 }
 
-function serverStatusTone(server: Server) {
+function nodeStatusTone(server: Server) {
   if (!isServerOnline(server)) return 'is-offline'
   if (server.config_drift) return 'is-warning'
-  return 'is-ready'
+  return 'is-online'
 }
 
 export default function Dashboard() {
@@ -105,10 +108,9 @@ export default function Dashboard() {
 
   if (!stats) {
     return (
-      <div className="dashboard-quiet-loading" aria-label="仪表盘加载中">
-        <span />
-        <span />
-        <span />
+      <div className="cg-dashboard-loading" role="status" aria-label="仪表盘加载中">
+        <span className="cg-micro">LOADING / PANEL</span>
+        <div className="cg-dashboard-loading-bar"><i /><i /><i /></div>
       </div>
     )
   }
@@ -116,107 +118,166 @@ export default function Dashboard() {
   const isDemoData = import.meta.env.DEV && servers.length === 0
   const displayStats = isDemoData ? DEMO_DASHBOARD_STATS : stats
   const displayServers = isDemoData ? DEMO_SERVERS : servers
-  const visibleServers = displayServers.slice(0, 7)
-  const activeServerIndex = Math.min(activeIndex, Math.max(visibleServers.length - 1, 0))
-  const selectedServer = visibleServers[activeServerIndex] ?? null
+  const activeServerIndex = Math.min(activeIndex, Math.max(displayServers.length - 1, 0))
+  const selectedServer = displayServers[activeServerIndex] ?? null
   const selectedMetrics = selectedServer?.metrics ?? null
   const serverHealth = percentage(displayStats.servers_online, displayStats.servers)
   const linkHealth = percentage(displayStats.links_active, displayStats.links)
+  const availability = Math.max(serverHealth, linkHealth)
   const activeChains = isDemoData
     ? displayStats.links_active
     : chains.filter((chain) => chain.status === 'active').length
+  const degradedChains = isDemoData
+    ? []
+    : chains.filter((chain) => chain.status === 'degraded' || chain.status === 'failed')
   const today = new Intl.DateTimeFormat('zh-CN', {
     month: 'long',
     day: 'numeric',
     weekday: 'short',
   }).format(new Date())
-  const signalItems = [
-    { label: '服务器', value: displayStats.servers, detail: `${displayStats.servers_online} 台在线`, icon: ServerIcon },
-    { label: '链路', value: displayStats.links, detail: `${activeChains} 条活跃`, icon: RouteIcon },
-    { label: '订阅用户', value: displayStats.users, detail: '访问状态正常', icon: UsersIcon },
-    { label: '待处理', value: displayStats.links_degraded, detail: displayStats.links_degraded ? '存在降级链路' : '暂无异常', icon: ActivityIcon },
+
+  const metricItems = [
+    { label: '服务器', mono: 'SERVERS', value: displayStats.servers, detail: `${displayStats.servers_online} 台在线`, icon: ServerIcon },
+    { label: '链路', mono: 'LINKS', value: displayStats.links, detail: `${activeChains} 条活跃`, icon: RouteIcon },
+    { label: '订阅用户', mono: 'USERS', value: displayStats.users, detail: '访问状态正常', icon: UsersIcon },
+    { label: '待处理', mono: 'PENDING', value: displayStats.links_degraded, detail: displayStats.links_degraded ? '存在降级链路' : '暂无异常', icon: ActivityIcon },
   ]
-  const availability = Math.max(serverHealth, linkHealth)
-  const healthStyle = { '--usage-angle': `${availability * 3.6}deg` } as CSSProperties
 
   return (
-    <Page className="dashboard-page dashboard-subscription-language">
-      <PageHeader
-        title="仪表盘"
-        description="服务器、链路与订阅访问的实时运行图景。"
-        actions={(
-          <div className="dashboard-toolbar">
-            <span className="dashboard-date">{today}</span>
-            <span className="dashboard-sync-status">
-              <i />
-              {lastSyncedAt ? `${lastSyncedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 已同步` : '正在同步'}
-            </span>
-            <Button variant="ghost" size="icon" onClick={() => void load()} aria-label="立即刷新" title="立即刷新">
-              <RefreshCwIcon />
-            </Button>
-          </div>
-        )}
-      />
-
-      <section className="dashboard-command-deck" aria-label="网络运行概览">
-        <div className="dashboard-command-copy">
-          <span className="dashboard-kicker">PANEL OVERVIEW</span>
-          <h2>网络运行概览</h2>
-          <p>核心节点和传输链路保持同步，集中查看当前可用性与资源负载。</p>
-          <Link href="/servers" className="dashboard-primary-link">
-            管理服务器
-            <ChevronRightIcon />
-          </Link>
+    <div className="cg-dashboard">
+      {/* Eyebrow + 环境信息 */}
+      <div className="cg-dash-topline">
+        <span className="cg-eyebrow">PANEL / OVERVIEW</span>
+        <div className="cg-dash-topline-side">
+          <span className="cg-pill">{today}</span>
+          <span className={cn('cg-pill', lastSyncedAt && 'is-active')}>
+            {lastSyncedAt
+              ? `${lastSyncedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 已同步`
+              : '正在同步'}
+          </span>
+          <button
+            type="button"
+            className="cg-button is-icon"
+            onClick={() => void load()}
+            aria-label="立即刷新"
+            title="立即刷新"
+          >
+            <RefreshCwIcon />
+          </button>
         </div>
-        <ElectricBorder className="traffic-electric dashboard-usage-electric" color="#bdf33b" speed={0.8} chaos={0.08} borderRadius={8}>
-          <div className="dashboard-usage-orbit traffic-orbit" style={healthStyle} aria-label={`整体可用性 ${availability}%`}>
-            <div className="orbit-track">
-              <div className="orbit-core">
-                <span>整体可用性</span>
-                <strong>{availability}%</strong>
-                <small>{displayStats.links_degraded ? `${displayStats.links_degraded} 项需要关注` : '所有系统稳定'}</small>
-              </div>
-            </div>
-            <span className="orbit-node node-a" />
-            <span className="orbit-node node-b" />
-            <span className="orbit-node node-c" />
-          </div>
-        </ElectricBorder>
-      </section>
+      </div>
 
-      <section className="dashboard-signal-grid" aria-label="核心指标">
-        {signalItems.map((item) => (
-          <article key={item.label} className="dashboard-signal-item">
-            <item.icon />
-            <span>{item.label}</span>
-            <strong>{String(item.value).padStart(2, '0')}</strong>
-            <small>{item.detail}</small>
+      {/* Header Card */}
+      <header className="cg-card-raised cg-dash-header">
+        <div className="cg-dash-header-main">
+          <span className="cg-dash-header-icon">
+            <LayoutDashboardIcon />
+          </span>
+          <div className="min-w-0">
+            <span className="cg-micro" style={{ color: 'var(--cg-muted)' }}>CONTROL PANEL / 实时运行图景</span>
+            <h1 className="cg-title cg-dash-title">仪表盘</h1>
+            <p className="cg-dash-subtitle">服务器、链路与订阅访问的实时运行图景，集中查看可用性与资源负载。</p>
+          </div>
+        </div>
+        <div className="cg-dash-header-side">
+          {isDemoData ? <span className="cg-status is-muted">DEMO DATA</span> : null}
+          <span className={cn('cg-status', displayStats.links_degraded ? 'is-red' : 'is-lime')}>
+            {displayStats.links_degraded ? `${displayStats.links_degraded} DEGRADED` : 'ALL SYSTEMS STABLE'}
+          </span>
+        </div>
+      </header>
+
+      {/* Metric Tiles */}
+      <section className="cg-dash-metrics" aria-label="核心指标">
+        {metricItems.map((item) => (
+          <article key={item.label} className="cg-metric">
+            <span className="cg-metric-value">{String(item.value).padStart(2, '0')}</span>
+            <span className="cg-metric-copy">
+              <span className="cg-metric-label">
+                <item.icon size={14} strokeWidth={2.2} />
+                {item.label}
+              </span>
+              <span className="cg-metric-detail">{item.mono} / {item.detail}</span>
+            </span>
           </article>
         ))}
       </section>
 
-      <div className="dashboard-content-grid">
-        <section className="dashboard-globe-section" aria-labelledby="dashboard-node-heading">
-          <header className="dashboard-section-heading">
+      {/* Main Split：节点摘要 + 深色拓扑面板 */}
+      <div className="cg-dash-split">
+        <section className="cg-card cg-dash-nodes" aria-labelledby="cg-dash-node-heading">
+          <header className="cg-dash-section-head">
             <div>
-              <span className="dashboard-kicker">NODE STATUS</span>
-              <h2 id="dashboard-node-heading">全球节点</h2>
+              <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>NODE / SUMMARY</span>
+              <h2 className="cg-title cg-dash-section-title" id="cg-dash-node-heading">节点摘要</h2>
             </div>
-            <div className="dashboard-globe-controls">
-              <span>{isDemoData ? '演示数据 · ' : ''}{visibleServers.length} 个节点</span>
-              <Button
-                variant="ghost"
-                size="sm"
+            <span className="cg-status is-blue">{String(displayServers.length).padStart(2, '0')} NODES</span>
+          </header>
+
+          <div className="cg-dash-availability">
+            <span className="cg-micro" style={{ color: 'var(--cg-muted)' }}>AVAILABILITY</span>
+            <strong className="cg-title">{availability}%</strong>
+            <span className="cg-dash-availability-note">整体可用性 · 服务器与链路健康度</span>
+          </div>
+
+          {displayServers.length ? (
+            <ul className="cg-dash-node-list">
+              {displayServers.map((server, index) => {
+                const tone = nodeStatusTone(server)
+                return (
+                  <li key={server.id}>
+                    <button
+                      type="button"
+                      className={cn('cg-dash-node-item', index === activeServerIndex && 'is-selected')}
+                      onClick={() => setActiveIndex(index)}
+                      aria-pressed={index === activeServerIndex}
+                    >
+                      <span className={cn('cg-dash-node-dot', tone)} />
+                      <span className="cg-dash-node-copy">
+                        <strong>{server.alias}</strong>
+                        <small>{server.country_code || '--'} · {server.location || '位置待补充'}</small>
+                      </span>
+                      <span className={cn('cg-status', tone === 'is-online' ? 'is-lime' : tone === 'is-warning' ? 'is-muted' : 'is-red')}>
+                        {serverConnectionLabel(server.connection_state)}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <div className="cg-dash-empty">
+              <ServerIcon />
+              <strong>等待服务器接入</strong>
+              <span>添加服务器后，这里会显示节点状态。</span>
+              <Link href="/servers" className="cg-button is-primary">添加服务器</Link>
+            </div>
+          )}
+        </section>
+
+        <section className="cg-terminal cg-dash-topology" aria-labelledby="cg-dash-topology-heading">
+          <header className="cg-dash-terminal-head">
+            <div>
+              <span className="cg-micro" style={{ color: 'var(--cg-lime)' }}>NODE / TOPOLOGY</span>
+              <h2 className="cg-dash-terminal-title" id="cg-dash-topology-heading">全球节点拓扑</h2>
+            </div>
+            <div className="cg-dash-terminal-controls">
+              <span className="cg-dash-terminal-count">
+                {isDemoData ? 'DEMO · ' : ''}{displayServers.length} 个节点
+              </span>
+              <button
+                type="button"
+                className="cg-dash-terminal-button"
                 onClick={() => setMotionEnabled((current) => !current)}
                 aria-pressed={motionEnabled}
               >
-                {motionEnabled ? <PauseIcon /> : <PlayIcon />}
+                {motionEnabled ? <PauseIcon size={13} /> : <PlayIcon size={13} />}
                 {motionEnabled ? '暂停' : '巡航'}
-              </Button>
+              </button>
             </div>
           </header>
 
-          {visibleServers.length ? (
+          {displayServers.length ? (
             <Suspense fallback={<div className="dashboard-globe-loading" role="status" aria-label="正在加载全球节点" />}>
               <GlobeTopology
                 servers={displayServers}
@@ -225,71 +286,115 @@ export default function Dashboard() {
                 demoMode={isDemoData}
                 motionEnabled={motionEnabled}
                 onServerSelect={(serverId) => {
-                  const index = visibleServers.findIndex((server) => server.id === serverId)
+                  const index = displayServers.findIndex((server) => server.id === serverId)
                   if (index >= 0) setActiveIndex(index)
                 }}
               />
             </Suspense>
           ) : (
-            <div className="dashboard-node-empty">
-              <ServerIcon />
-              <strong>等待服务器接入</strong>
-              <span>添加服务器后，这里会显示全球节点状态。</span>
-              <Link href="/servers">添加服务器</Link>
+            <div className="cg-dash-empty is-dark">
+              <WifiIcon />
+              <strong>暂无节点数据</strong>
+              <span>添加服务器后，这里会显示全球节点拓扑。</span>
             </div>
           )}
         </section>
-
-        <aside className="dashboard-focus-panel" aria-label="选中服务器概况">
-          {selectedServer ? (
-            <>
-              <header className="dashboard-focus-header">
-                <div>
-                  <span className="dashboard-kicker">FOCUS NODE</span>
-                  <h2>{selectedServer.alias}</h2>
-                  <p><MapPinIcon />{selectedServer.country_code || '--'} · {selectedServer.location || '位置待补充'}</p>
-                </div>
-                <span className={cn('dashboard-status-label', serverStatusTone(selectedServer))}>
-                  <i />{serverConnectionLabel(selectedServer.connection_state)}
-                </span>
-              </header>
-
-              <dl className="dashboard-focus-meta">
-                <div><dt>入口地址</dt><dd>{selectedServer.learned_addr || selectedServer.address || '--'}</dd></div>
-                <div><dt>Agent</dt><dd>{selectedServer.agent_version || '--'}</dd></div>
-                <div><dt>运行时间</dt><dd>{formatUptime(selectedMetrics?.uptime_seconds)}</dd></div>
-              </dl>
-
-              <section className="dashboard-resource-list" aria-label="资源负载">
-                <div>
-                  <span><CpuIcon />CPU</span>
-                  <strong>{selectedMetrics ? `${Math.round(selectedMetrics.cpu_percent ?? 0)}%` : '--'}</strong>
-                </div>
-                <div>
-                  <span><ArrowUpIcon />上行</span>
-                  <strong>{formatByteRate(selectedMetrics?.network_tx_bps ?? null)}</strong>
-                </div>
-                <div>
-                  <span><ArrowDownIcon />下行</span>
-                  <strong>{formatByteRate(selectedMetrics?.network_rx_bps ?? null)}</strong>
-                </div>
-                <div>
-                  <span><HardDriveIcon />磁盘</span>
-                  <strong>{selectedMetrics ? `${humanizeBytes(selectedMetrics.disk_used)} / ${humanizeBytes(selectedMetrics.disk_total)}` : '--'}</strong>
-                </div>
-              </section>
-
-              <Link href="/servers" className="dashboard-focus-link">查看服务器 <ChevronRightIcon /></Link>
-            </>
-          ) : (
-            <div className="dashboard-focus-empty">
-              <WifiIcon />
-              <strong>尚未选择节点</strong>
-              <span>选择服务器后显示运行概况。</span>
-            </div>
-          )}
-        </aside>
       </div>
-    </Page>
+
+      {/* Focus Node：选中服务器运行时（浅色数据卡） */}
+      {selectedServer ? (
+        <section className="cg-card cg-dash-focus" aria-label="选中服务器运行时">
+          <header className="cg-dash-terminal-head">
+            <div>
+              <span className="cg-micro" style={{ color: 'var(--cg-lime-dark)' }}>NODE / RUNTIME</span>
+              <h2 className="cg-dash-terminal-title">
+                <MapPinIcon size={15} style={{ color: 'var(--cg-lime-dark)' }} />
+                {selectedServer.alias}
+                <small>{selectedServer.country_code || '--'} · {selectedServer.location || '位置待补充'}</small>
+              </h2>
+            </div>
+            <span className={cn('cg-status', isServerOnline(selectedServer) ? 'is-lime' : 'is-red')}>
+              {serverConnectionLabel(selectedServer.connection_state)}
+            </span>
+          </header>
+
+          <dl className="cg-dash-focus-grid">
+            <div>
+              <dt><CpuIcon size={12} />CPU</dt>
+              <dd>{selectedMetrics ? `${Math.round(selectedMetrics.cpu_percent ?? 0)}%` : '--'}</dd>
+            </div>
+            <div>
+              <dt><ArrowUpIcon size={12} />上行 TX</dt>
+              <dd>{formatByteRate(selectedMetrics?.network_tx_bps ?? null)}</dd>
+            </div>
+            <div>
+              <dt><ArrowDownIcon size={12} />下行 RX</dt>
+              <dd>{formatByteRate(selectedMetrics?.network_rx_bps ?? null)}</dd>
+            </div>
+            <div>
+              <dt><HardDriveIcon size={12} />磁盘</dt>
+              <dd>{selectedMetrics ? `${humanizeBytes(selectedMetrics.disk_used)} / ${humanizeBytes(selectedMetrics.disk_total)}` : '--'}</dd>
+            </div>
+            <div>
+              <dt><TimerIcon size={12} />运行时间</dt>
+              <dd>{formatUptime(selectedMetrics?.uptime_seconds)}</dd>
+            </div>
+            <div>
+              <dt><GaugeIcon size={12} />AGENT</dt>
+              <dd>{selectedServer.agent_version || '--'}</dd>
+            </div>
+          </dl>
+
+          <div className="cg-dash-focus-addr">
+            <span className="cg-micro">ENTRY ADDR</span>
+            <code>{selectedServer.learned_addr || selectedServer.address || '--'}</code>
+            <Link href="/servers" className="cg-dash-focus-link">
+              查看服务器 <ChevronRightIcon size={13} />
+            </Link>
+          </div>
+        </section>
+      ) : null}
+
+      {/* Bottom：链路健康 */}
+      {displayStats.links_degraded > 0 ? (
+        <section className="cg-semantic-card is-bad" aria-label="降级链路">
+          <header>
+            <span className="flex items-center gap-2">
+              <AlertTriangleIcon size={15} />
+              降级链路需要关注
+            </span>
+            <span className="cg-micro">LINKS / DEGRADED</span>
+          </header>
+          <div className="cg-semantic-body cg-dash-degraded-list">
+            {degradedChains.length ? degradedChains.map((chain) => (
+              <Link key={chain.id} href="/chains" className="cg-dash-degraded-item">
+                <strong>{chain.name}</strong>
+                <span>{chain.error || chain.status}</span>
+                <ChevronRightIcon size={14} />
+              </Link>
+            )) : (
+              <Link href="/chains" className="cg-dash-degraded-item">
+                <strong>{displayStats.links_degraded} 条链路降级</strong>
+                <span>前往链路页面查看详情</span>
+                <ChevronRightIcon size={14} />
+              </Link>
+            )}
+          </div>
+        </section>
+      ) : (
+        <section className="cg-semantic-card is-good" aria-label="链路健康">
+          <header>
+            <span className="flex items-center gap-2">
+              <CheckCircle2Icon size={15} />
+              所有系统稳定
+            </span>
+            <span className="cg-micro">LINKS / HEALTHY</span>
+          </header>
+          <div className="cg-semantic-body" style={{ color: 'var(--cg-muted)', fontSize: 13 }}>
+            当前没有降级或失败的链路，{displayStats.links} 条链路中 {displayStats.links_active} 条保持活跃。
+          </div>
+        </section>
+      )}
+    </div>
   )
 }

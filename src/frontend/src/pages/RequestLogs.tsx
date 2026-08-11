@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { RefreshCwIcon, Trash2Icon } from 'lucide-react'
 
 import { Notice, Surface } from '@/components/PagePrimitives'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -34,6 +33,9 @@ import {
 } from '@/lib/log-preferences'
 import { useTimezone } from '@/lib/timezone'
 import type { LogSeverity, RequestLogEntry, RequestLogStatus } from '@/lib/types'
+import { cn } from '@/lib/utils'
+
+import './logs.css'
 
 const REFRESH_VALUES = REFRESH_OPTIONS.map((option) => option.value)
 const METHODS = ['GET', 'POST', 'WS']
@@ -44,8 +46,10 @@ function formatBytes(bytes: number) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-function severityVariant(severity: LogSeverity) {
-  return severity === 'error' ? 'destructive' : severity === 'warning' ? 'secondary' : 'outline'
+function severityTone(severity: LogSeverity) {
+  if (severity === 'error') return 'is-red'
+  if (severity === 'info') return 'is-blue'
+  return 'is-muted'
 }
 
 export default function RequestLogs() {
@@ -127,15 +131,15 @@ export default function RequestLogs() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          <span>显示最新 {items.length} / {windowSize} 行</span>
-          {status ? <span>· {formatBytes(status.usage_bytes)} / {formatBytes(status.max_bytes)}</span> : null}
-          {status?.dropped ? <Badge variant="destructive">丢弃 {status.dropped}</Badge> : null}
+    <div className="cg-logs">
+      <div className="cg-logs-toolbar">
+        <div className="cg-logs-toolbar-group">
+          <span className="cg-pill">显示最新 {items.length} / {windowSize} 行</span>
+          {status ? <span className="cg-pill">{formatBytes(status.usage_bytes)} / {formatBytes(status.max_bytes)}</span> : null}
+          {status?.dropped ? <span className="cg-status is-red">丢弃 {status.dropped}</span> : null}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Label className="text-xs">窗口</Label>
+        <div className="cg-logs-toolbar-group">
+          <Label className="cg-log-label">窗口</Label>
           <Select
             value={String(windowSize)}
             onValueChange={(value) => setWindowSize(Number(value) as RequestWindow)}
@@ -146,7 +150,7 @@ export default function RequestLogs() {
               {REQUEST_WINDOW_OPTIONS.map((value) => <SelectItem key={value} value={String(value)}>{value} 行</SelectItem>)}
             </SelectGroup></SelectContent>
           </Select>
-          <Label className="text-xs">刷新</Label>
+          <Label className="cg-log-label">刷新</Label>
           <Select
             value={String(refreshSeconds)}
             onValueChange={(value) => setRefreshSeconds(Number(value) as RefreshSeconds)}
@@ -170,9 +174,9 @@ export default function RequestLogs() {
 
       {error ? <Notice tone="danger">{error}</Notice> : null}
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs">程度</Label>
+      <div className="cg-card cg-log-filters">
+        <div className="cg-log-filter-item">
+          <Label className="cg-log-label">程度</Label>
           <Select value={severity || null} onValueChange={(value) => setSeverity((value as LogSeverity) ?? '')}>
             <SelectTrigger className="w-28"><SelectValue placeholder="全部" /></SelectTrigger>
             <SelectContent><SelectGroup>
@@ -183,8 +187,8 @@ export default function RequestLogs() {
             </SelectGroup></SelectContent>
           </Select>
         </div>
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs">方法</Label>
+        <div className="cg-log-filter-item">
+          <Label className="cg-log-label">方法</Label>
           <Select value={method || null} onValueChange={(value) => setMethod(value ? String(value) : '')}>
             <SelectTrigger className="w-28"><SelectValue placeholder="全部" /></SelectTrigger>
             <SelectContent><SelectGroup>
@@ -192,8 +196,8 @@ export default function RequestLogs() {
             </SelectGroup></SelectContent>
           </Select>
         </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="request-query" className="text-xs">当前窗口过滤</Label>
+        <div className="cg-log-filter-item">
+          <Label htmlFor="request-query" className="cg-log-label">当前窗口过滤</Label>
           <Input id="request-query" className="w-64" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="路径 / 参数 / IP / 请求 ID" />
         </div>
       </div>
@@ -220,12 +224,12 @@ export default function RequestLogs() {
             ) : visibleItems.map((entry) => (
               <TableRow key={entry.request_id}>
                 <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(entry.timestamp, timezone)}</TableCell>
-                <TableCell><Badge variant={severityVariant(entry.severity)}>{entry.severity}</Badge></TableCell>
+                <TableCell><span className={cn('cg-status', severityTone(entry.severity))}>{entry.severity}</span></TableCell>
                 <TableCell className="font-mono text-xs">{entry.transport === 'websocket' ? 'WS' : entry.method}</TableCell>
                 <TableCell>
-                  <Badge variant={entry.severity === 'error' ? 'destructive' : 'outline'}>
+                  <span className={cn('cg-status', entry.severity === 'error' ? 'is-red' : entry.severity === 'warning' ? 'is-muted' : 'is-lime')}>
                     {entry.rpc_code || entry.http_status || '-'}
-                  </Badge>
+                  </span>
                 </TableCell>
                 <TableCell>
                   <div className="flex max-w-80 flex-col gap-1">
@@ -247,7 +251,7 @@ export default function RequestLogs() {
           </TableBody>
         </Table>
       </Surface>
-      <p className="text-xs text-muted-foreground">筛选仅作用于当前显示窗口，不扫描全部请求日志文件。</p>
+      <p className="cg-log-note">筛选仅作用于当前显示窗口，不扫描全部请求日志文件。</p>
     </div>
   )
 }

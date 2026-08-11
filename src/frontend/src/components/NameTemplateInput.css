@@ -1,0 +1,114 @@
+/* ============================================================
+   NameTemplateInput — Cream Grid Tech 组件样式
+   模板编辑器：2px 深色描边盒子 + lime-soft 变量贴纸
+   ============================================================ */
+
+.cg-template-editor {
+  display: flex;
+  min-height: 36px;
+  width: 100%;
+  cursor: text;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-light);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 160ms var(--cg-ease);
+}
+
+.cg-template-editor:focus-within {
+  border-color: var(--cg-blue);
+}
+
+.cg-template-editor.is-error,
+.cg-template-editor.is-error:focus-within {
+  border-color: var(--cg-red);
+}
+
+/* 文本段 input：宽度由组件内联 style 按字符数计算 */
+.cg-template-text {
+  height: 24px;
+  max-width: 100%;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  line-height: 24px;
+  color: var(--cg-ink);
+  outline: none;
+}
+
+.cg-template-text::placeholder {
+  color: var(--cg-subtle);
+}
+
+/* 变量贴纸（lime-soft 底 + 深色描边 + mono） */
+.cg-template-token {
+  display: inline-flex;
+  height: 24px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  padding: 0 3px 0 6px;
+  border: 2px solid var(--cg-ink-soft);
+  border-radius: var(--cg-r-xs);
+  background: var(--cg-lime-soft);
+  font-family: var(--cg-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--cg-ink);
+}
+
+.cg-template-token-remove {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--cg-muted);
+  cursor: pointer;
+}
+
+.cg-template-token-remove:hover {
+  background: var(--cg-red);
+  color: var(--cg-on-accent);
+}
+
+.cg-template-token-remove:focus-visible {
+  outline: 2px solid var(--cg-blue);
+  outline-offset: 1px;
+}
+
+.cg-template-token-remove svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* 候选变量条 */
+.cg-template-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-soft);
+}
+
+.cg-template-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--cg-muted);
+}
+
+.cg-template-hint.is-error {
+  font-weight: 650;
+  color: var(--cg-red);
+}

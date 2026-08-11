@@ -17,10 +17,8 @@ import {
 import { CopyButton } from '@/components/CopyButton'
 import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { QRDialog } from '@/components/QRDialog'
-import { StatusBadge } from '@/components/StatusBadge'
 import { SubscriptionRoutingFields } from '@/components/SubscriptionRoutingFields'
 import { TemplateAssignmentTab } from '@/components/TemplateAssignmentTab'
-import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
@@ -77,6 +75,8 @@ import type {
   SubscriptionTemplate,
   UserGroup,
 } from '@/lib/types'
+
+import './users.css'
 
 const EXTERNAL_MODE_LABELS: Record<ExternalSubscriptionMode, string> = {
   stack: '叠加',
@@ -499,8 +499,10 @@ export default function Users() {
 
   return (
     <Page>
+      <span className="cg-eyebrow">ACCESS / USERS</span>
       <PageHeader
         title="用户"
+        description="订阅用户的创建、链路分配、订阅策略与用量概览。"
         actions={(
           <Button onClick={() => setOpen(true)}>
             <PlusIcon />
@@ -529,7 +531,7 @@ export default function Users() {
         />
       ) : null}
       {!loading && users.length === 0 ? null : (
-        <div className="flex flex-col gap-3">
+        <div className="cg-users-list">
           {loading ? (
             <LoadingState />
           ) : (
@@ -542,61 +544,63 @@ export default function Users() {
                   <CardTitle className="flex min-w-0 flex-wrap items-center gap-2">
                     <span className="truncate">{u.name}</span>
                     {u.user_group_ids.length > 0 && (
-                      <Badge variant="secondary" title="订阅由用户分组派生">
+                      <span className="cg-status is-blue" title="订阅由用户分组派生">
                         {u.user_group_ids.map((id) => userGroups.find((g) => g.id === id)?.name ?? `#${id}`).join('、')}
-                      </Badge>
+                      </span>
                     )}
-                    {u.disabled && <Badge variant="destructive">已停用</Badge>}
-                    {u.expired && <Badge variant="destructive">已到期</Badge>}
+                    {u.disabled && <span className="cg-status is-red">已停用</span>}
+                    {u.expired && <span className="cg-status is-red">已到期</span>}
                     {u.subscription_snapshot.status === 'ready' ? (
-                      <Badge variant="secondary">订阅 r{u.subscription_snapshot.revision}</Badge>
+                      <span className="cg-status is-lime">订阅 r{u.subscription_snapshot.revision}</span>
                     ) : (
-                      <Badge variant="destructive" title={u.subscription_snapshot.error}>订阅异常</Badge>
+                      <span className="cg-status is-red" title={u.subscription_snapshot.error}>订阅异常</span>
                     )}
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                  <div className="space-y-1">
-                    <span className="block text-[11px] text-muted-foreground">链路</span>
-                    <span className="block font-medium tabular-nums">
-                      {effectiveLinks.length === 0 ? (
-                        <span className="text-muted-foreground">未分配</span>
-                      ) : (
-                        `${effectiveLinks.length} / ${linkOptions.length}`
-                      )}
-                    </span>
-                  </div>
-                  <div className="space-y-1">
-                    <span className="block text-[11px] text-muted-foreground">流量</span>
-                    <span className="block font-medium tabular-nums whitespace-nowrap">
-                      {u.traffic ? `↑${humanizeBytes(u.traffic.up)} ↓${humanizeBytes(u.traffic.down)}` : '-'}
-                    </span>
-                  </div>
-                  <div className="space-y-1">
-                    <span className="block text-[11px] text-muted-foreground">在线</span>
-                    {u.online_connections > 0 ? (
-                      <StatusBadge tone="success" className="tabular-nums">{u.online_connections}</StatusBadge>
+                <CardContent className="cg-user-metrics">
+                  <div className="cg-user-metric">
+                    <span className="cg-user-metric-label">链路 / LINKS</span>
+                    {effectiveLinks.length === 0 ? (
+                      <span className="cg-user-metric-value is-muted">未分配</span>
                     ) : (
-                      <span className="block font-medium tabular-nums text-muted-foreground">-</span>
+                      <span className="cg-user-metric-value">{effectiveLinks.length} / {linkOptions.length}</span>
                     )}
                   </div>
-                  <div className="space-y-1">
-                    <span className="block text-[11px] text-muted-foreground">有效期</span>
-                    <span className="block">
-                      {u.expires_at ? formatDateTime(u.expires_at, timezone) : <span className="text-muted-foreground">长期</span>}
-                    </span>
+                  <div className="cg-user-metric">
+                    <span className="cg-user-metric-label">流量 / TRAFFIC</span>
+                    {u.traffic ? (
+                      <span className="cg-user-metric-value whitespace-nowrap">↑{humanizeBytes(u.traffic.up)} ↓{humanizeBytes(u.traffic.down)}</span>
+                    ) : (
+                      <span className="cg-user-metric-value is-muted">-</span>
+                    )}
                   </div>
-                  <div className="space-y-1">
-                    <span className="block text-[11px] text-muted-foreground">创建时间</span>
-                    <span className="block">{formatDateTime(u.created_at, timezone)}</span>
+                  <div className="cg-user-metric">
+                    <span className="cg-user-metric-label">在线 / ONLINE</span>
+                    {u.online_connections > 0 ? (
+                      <span><span className="cg-status is-lime">{u.online_connections}</span></span>
+                    ) : (
+                      <span className="cg-user-metric-value is-muted">-</span>
+                    )}
                   </div>
-                  <div className="space-y-1 sm:col-span-2 lg:col-span-5">
-                    <span className="block text-[11px] text-muted-foreground">订阅链接</span>
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="min-w-0 truncate font-mono text-xs text-muted-foreground" title={u.sub_url}>
+                  <div className="cg-user-metric">
+                    <span className="cg-user-metric-label">有效期 / EXPIRES</span>
+                    {u.expires_at ? (
+                      <span className="cg-user-metric-value">{formatDateTime(u.expires_at, timezone)}</span>
+                    ) : (
+                      <span className="cg-user-metric-value is-muted">长期</span>
+                    )}
+                  </div>
+                  <div className="cg-user-metric">
+                    <span className="cg-user-metric-label">创建时间 / CREATED</span>
+                    <span className="cg-user-metric-value">{formatDateTime(u.created_at, timezone)}</span>
+                  </div>
+                  <div className="cg-user-metric cg-user-metric-wide">
+                    <span className="cg-user-metric-label">订阅链接 / SUB URL</span>
+                    <div className="cg-user-suburl">
+                      <span className="cg-user-suburl-text" title={u.sub_url}>
                         {u.sub_url}
                       </span>
-                      <span className="flex shrink-0 items-center gap-1">
+                      <span className="cg-user-suburl-actions">
                         <CopyButton text={u.sub_url} />
                         <span title="复制分享链接订阅（vless:// 等链接集合）">
                           <CopyButton text={u.sub_links_url} />
@@ -689,9 +693,7 @@ export default function Users() {
             <div className="space-y-3">
               <div className="space-y-2">
                 <Label>订阅链接</Label>
-                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs break-all">
-                  {created.sub_url}
-                </div>
+                <div className="cg-users-created-url">{created.sub_url}</div>
               </div>
               <DialogFooter showCloseButton>
                 <CopyButton text={created.sub_url} />
@@ -721,24 +723,24 @@ export default function Users() {
                     if (!createResetDay) setCreateResetDay(expiryDateDay(e.target.value))
                   }}
                 />
-                {expiresAt && <p className="text-xs text-muted-foreground">重置日默认取到期日（可修改）。</p>}
+                {expiresAt && <p className="cg-hint">重置日默认取到期日（可修改）。</p>}
               </div>
               <div className="space-y-2">
                 <Label>分配链路（可选）</Label>
                 {linkOptions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">暂无链路，请先在「链路」页创建。</p>
+                  <p className="cg-hint">暂无链路，请先在「链路」页创建。</p>
                 ) : (
                   linkOptions.map((link) => (
-					<label key={link.chainId} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
+					<label key={link.chainId} className="cg-check-row">
                       <input
                         type="checkbox"
-                        className="size-4 accent-primary"
+                        className="cg-checkbox"
 						checked={createLinkSel.includes(link.chainId)}
 						onChange={(e) => onToggleCreateLink(link.chainId, e.target.checked)}
                       />
-                      <Badge variant="secondary">{link.type === 'direct' ? '直连' : '中转'}</Badge>
+                      <span className="cg-status is-blue">{link.type === 'direct' ? '直连' : '中转'}</span>
                       <span>{link.name}</span>
-                      <span className="text-xs text-muted-foreground">{link.detail}</span>
+                      <span className="cg-check-row-detail">{link.detail}</span>
                     </label>
                   ))
                 )}
@@ -790,18 +792,18 @@ export default function Users() {
               <div className="space-y-2 border-t pt-3">
                 <Label>外部订阅（叠加 = 额度相加，并入 = 已用计入面板配额，附加 = 仅节点）</Label>
                 {extSubs.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">暂无外部订阅，请先在「外部订阅」页添加。</p>
+                  <p className="cg-hint">暂无外部订阅，请先在「外部订阅」页添加。</p>
                 ) : (
                   extSubs.map((sub) => {
                     const checked = createExt[sub.id] !== undefined
                     return (
                       <label
                         key={sub.id}
-                        className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm"
+                        className="cg-check-row"
                       >
                         <input
                           type="checkbox"
-                          className="size-4 accent-primary"
+                          className="cg-checkbox"
                           checked={checked}
                           onChange={(e) => {
                             setCreateExt((cur) => {
@@ -816,7 +818,7 @@ export default function Users() {
                           }}
                         />
                         <span>{sub.name}</span>
-                        <span className="text-xs text-muted-foreground">
+                        <span className="cg-check-row-detail">
                           {sub.total > 0
                             ? `${humanizeBytes(sub.total)} / 已用 ${humanizeBytes(sub.upload + sub.download)}`
                             : '额度未知'}
@@ -833,7 +835,7 @@ export default function Users() {
                   })
                 )}
               </div>
-              {createError && <p className="text-sm text-destructive">{createError}</p>}
+              {createError && <Notice tone="danger">{createError}</Notice>}
               <DialogFooter>
                 <Button type="submit" disabled={creating || !name.trim()}>
                   {creating ? '创建中…' : '创建'}
@@ -862,21 +864,21 @@ export default function Users() {
           )}
           <div className="space-y-2">
             {linkOptions.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无链路，请先在「链路」页创建。</p>
+              <p className="cg-hint">暂无链路，请先在「链路」页创建。</p>
             ) : (
               linkOptions.map((link) => (
-				<label key={link.chainId} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
+				<label key={link.chainId} className="cg-check-row">
                   <input
                     type="checkbox"
-                    className="size-4 accent-primary"
+                    className="cg-checkbox"
 					checked={assignSelection.includes(link.chainId)}
 					onChange={(e) => onToggleNode(link.chainId, e.target.checked)}
                   />
-                  <Badge variant="secondary">{link.type === 'direct' ? '直连' : '中转'}</Badge>
+                  <span className="cg-status is-blue">{link.type === 'direct' ? '直连' : '中转'}</span>
                   <span>{link.name}</span>
-                  <span className="text-xs text-muted-foreground">{link.detail}</span>
+                  <span className="cg-check-row-detail">{link.detail}</span>
                   {link.status !== 'active' && (
-                    <span className="text-xs text-muted-foreground">（{link.status}）</span>
+                    <span className="cg-check-row-detail">（{link.status}）</span>
                   )}
                 </label>
               ))
@@ -885,18 +887,18 @@ export default function Users() {
           <div className="space-y-2 border-t pt-3">
             <Label>外部订阅（叠加 = 额度相加，并入 = 已用计入面板配额，附加 = 仅节点）</Label>
             {extSubs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无外部订阅，请先在「外部订阅」页添加。</p>
+              <p className="cg-hint">暂无外部订阅，请先在「外部订阅」页添加。</p>
             ) : (
               extSubs.map((sub) => {
                 const checked = assignExt[sub.id] !== undefined
                 return (
                   <label
                     key={sub.id}
-                    className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm"
+                    className="cg-check-row"
                   >
                     <input
                       type="checkbox"
-                      className="size-4 accent-primary"
+                      className="cg-checkbox"
                       checked={checked}
                       onChange={(e) => {
                         setAssignExt((cur) => {
@@ -911,7 +913,7 @@ export default function Users() {
                       }}
                     />
                     <span>{sub.name}</span>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="cg-check-row-detail">
                       {sub.total > 0
                         ? `${humanizeBytes(sub.total)} / 已用 ${humanizeBytes(sub.upload + sub.download)}`
                         : '额度未知'}
@@ -975,7 +977,7 @@ export default function Users() {
               </Table>
             </div>
           ) : null}
-          {assignError && <p className="text-sm text-destructive">{assignError}</p>}
+          {assignError && <Notice tone="danger">{assignError}</Notice>}
           <DialogFooter>
             <Button onClick={onSaveAssign} disabled={assignSaving}>
               {assignSaving ? '保存中…' : '保存'}
@@ -1036,7 +1038,7 @@ export default function Users() {
                   </Button>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">
+              <p className="cg-hint">
                 到期后自动停权（订阅保留但链路为空）；延长或清除有效期会恢复其链路。
               </p>
             </div>
@@ -1051,7 +1053,7 @@ export default function Users() {
             <div className="space-y-2">
               <Label>公告覆盖（Markdown）</Label>
               <textarea
-                className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 font-mono text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                className="cg-textarea"
                 rows={3}
                 value={subAnnouncementOverride}
                 onChange={e => setSubAnnouncementOverride(e.target.value)}
@@ -1066,7 +1068,7 @@ export default function Users() {
                   onChange={e => setSubPlanName(e.target.value)}
                   placeholder="留空跟随全局"
                 />
-                <p className="text-xs text-muted-foreground">客户端 hover 流量信息时显示</p>
+                <p className="cg-hint">客户端 hover 流量信息时显示</p>
               </div>
               <div className="space-y-2">
                 <Label>跳转链接</Label>
@@ -1075,7 +1077,7 @@ export default function Users() {
                   onChange={e => setSubAppURL(e.target.value)}
                   placeholder="留空跟随全局"
                 />
-                <p className="text-xs text-muted-foreground">客户端流量卡片可点击跳转的按钮</p>
+                <p className="cg-hint">客户端流量卡片可点击跳转的按钮</p>
               </div>
             </div>
             <SubscriptionRoutingFields
@@ -1085,7 +1087,7 @@ export default function Users() {
               templates={templates}
             />
           </div>
-          {subErr && <p className="text-sm text-destructive">{subErr}</p>}
+          {subErr && <Notice tone="danger">{subErr}</Notice>}
           <DialogFooter>
             <Button disabled={subSaving} onClick={onSaveSubSettings}>
               {subSaving ? '保存中…' : '保存'}
@@ -1139,11 +1141,11 @@ export default function Users() {
             </Notice>
           ) : null}
           {previewLoading ? (
-            <p className="flex h-80 items-center justify-center text-sm text-muted-foreground">加载中…</p>
+            <p className="cg-hint cg-users-preview-loading">加载中…</p>
           ) : previewError ? (
             <Notice tone="danger">{previewError}</Notice>
           ) : (
-            <pre className="h-[min(65vh,42rem)] overflow-auto border bg-muted/40 p-4 font-mono text-xs leading-5 whitespace-pre">
+            <pre className="cg-terminal cg-users-preview">
               {previewData?.content ?? ''}
             </pre>
           )}
@@ -1159,9 +1161,9 @@ export default function Users() {
             </DialogDescription>
           </DialogHeader>
           {historyLoading ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">加载中…</p>
+            <p className="cg-hint py-4 text-center">加载中…</p>
           ) : historyData.length === 0 ? (
-            <p className="py-4 text-center text-sm text-muted-foreground">暂无历史记录</p>
+            <p className="cg-hint py-4 text-center">暂无历史记录</p>
           ) : (
             <Table>
               <TableHeader>

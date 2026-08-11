@@ -33,6 +33,9 @@ import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { isServerOnline } from '@/lib/server-state'
 import { useTimezone } from '@/lib/timezone'
+import { cn } from '@/lib/utils'
+
+import './servers.css'
 import type { BillingInput, CleanupXrayResult, IntervalUnit, MachineType, PortRange, Provider, ReleaseVersions, RebuildXrayResult, Server, ServerMetricSeries, TrafficAccountingMode, TrafficPlanInput } from '@/lib/types'
 
 const DEPENDENCIES_COMMAND = 'apk add --no-cache bash curl ca-certificates unzip util-linux'
@@ -788,14 +791,21 @@ export default function Servers() {
   }
 
   return (
-    <Page>
+    <Page className="cg-page-in">
+      <div className="sv-topline">
+        <span className="cg-eyebrow">SERVERS / FLEET</span>
+        <span className="cg-pill">
+          {loading ? '正在同步' : `${String(servers.length).padStart(2, '0')} NODES`}
+        </span>
+      </div>
       <PageHeader
         title="服务器"
+        description="接入机器的在线状态、资源指标与生命周期管理。"
         actions={(
-          <Button onClick={() => setOpen(true)}>
+          <button type="button" className="cg-button is-primary" onClick={() => setOpen(true)}>
             <PlusIcon />
             添加服务器
-          </Button>
+          </button>
         )}
       />
 
@@ -836,11 +846,7 @@ export default function Servers() {
                 ] as const).map(([value, label]) => (
                   <label
                     key={value}
-                    className={`flex h-9 cursor-pointer items-center justify-center rounded-md border text-sm transition-colors focus-within:ring-2 focus-within:ring-ring/40 ${
-                      machineType === value
-                        ? 'border-primary bg-primary text-primary-foreground'
-                        : 'border-input bg-card text-foreground hover:bg-accent hover:text-accent-foreground'
-                    }`}
+                    className={cn('sv-radio-card', machineType === value && 'is-active')}
                   >
                     <input
                       type="radio"
@@ -960,13 +966,13 @@ export default function Servers() {
               <p className="text-sm text-muted-foreground">bash/curl 等依赖安装（按需执行）</p>
               <CopyButton text={DEPENDENCIES_COMMAND} />
             </div>
-            <pre className="overflow-auto rounded-lg bg-muted p-3 text-xs break-all whitespace-pre-wrap">
+            <pre className="sv-code-block">
               {DEPENDENCIES_COMMAND}
             </pre>
           </div>
           <div className="space-y-2">
             <p className="text-sm font-medium">Agent 安装命令</p>
-            <pre className="max-h-40 overflow-auto rounded-lg bg-muted p-3 text-xs break-all whitespace-pre-wrap">
+            <pre className="sv-code-block max-h-40">
               {cmdView?.command}
             </pre>
           </div>
@@ -1278,7 +1284,7 @@ export default function Servers() {
                 {cleanupPreview.removed_inbounds.length > 0 ? (
                   <div className="space-y-1">
                     <p className="text-xs font-medium text-muted-foreground">将删除 {cleanupPreview.removed_inbounds.length} 个监听（inbound）</p>
-                    <ul className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2 text-sm">
+                    <ul className="sv-mono-list max-h-48 space-y-1 overflow-y-auto text-sm">
                       {cleanupPreview.removed_inbounds.map((inbound) => (
                         <li key={inbound.tag} className="flex items-center justify-between gap-3 font-mono text-xs">
                           <span className="truncate">{inbound.tag}</span>
@@ -1291,7 +1297,7 @@ export default function Servers() {
                 {cleanupPreview.removed_pieces.length > 0 ? (
                   <div className="space-y-1">
                     <p className="text-xs font-medium text-muted-foreground">将删除 {cleanupPreview.removed_pieces.length} 个链路配置件（piece）</p>
-                    <ul className="max-h-32 space-y-1 overflow-y-auto rounded-md border p-2 font-mono text-xs">
+                    <ul className="sv-mono-list max-h-32 space-y-1 overflow-y-auto font-mono text-xs">
                       {cleanupPreview.removed_pieces.map((piece) => <li key={piece}>{piece}</li>)}
                     </ul>
                   </div>
@@ -1347,7 +1353,7 @@ export default function Servers() {
                     已重建 {rebuildResult.rebuilt_inbounds.length} 个监听与 {rebuildResult.rebuilt_pieces.length} 个链路配置件。
                   </p>
                   {rebuildResult.rebuilt_inbounds.length > 0 ? (
-                    <ul className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2 font-mono text-xs">
+                    <ul className="sv-mono-list max-h-48 space-y-1 overflow-y-auto font-mono text-xs">
                       {rebuildResult.rebuilt_inbounds.map((inbound) => (
                         <li key={inbound.tag} className="flex items-center justify-between gap-3">
                           <span className="truncate">{inbound.tag}</span>

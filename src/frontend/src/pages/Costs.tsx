@@ -4,8 +4,6 @@ import { CoinsIcon } from 'lucide-react'
 import { CountryFlag } from '@/components/CountryFlag'
 import { Chart, type ChartOption } from '@/components/echarts'
 import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
-import { Badge } from '@/components/ui/badge'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, errorMessage } from '@/lib/api'
@@ -16,14 +14,16 @@ import type {
   BillingStatsGranularity,
   BillingStatsRateMode,
 } from '@/lib/types'
+import { cn } from '@/lib/utils'
 import EstimatedCostsTab from './EstimatedCostsTab'
 import {
   GRANULARITY_LABEL,
   StatsControls,
   billingStatusLabel,
-  billingStatusVariant,
+  billingStatusTone,
   buildBarOption,
   buildDonutOption,
+  chartThemeColors,
   clampRange,
   firstOfMonth,
   addMonths,
@@ -32,7 +32,10 @@ import {
   periodLabel,
   useEarliestStart,
   useRowSort,
+  type ChartThemeColors,
 } from './costs-shared'
+
+import './costs.css'
 
 function costsOf(server: BillingActualServerStats, rateMode: BillingStatsRateMode): number[] {
   return rateMode === 'custom' && server.actual_costs_custom ? server.actual_costs_custom : server.actual_costs_public
@@ -57,6 +60,13 @@ function ActualCostsTab() {
   const [loading, setLoading] = useState(true)
   const { sort, header } = useRowSort()
   const earliestStart = useEarliestStart()
+
+  // 图表颜色在主题切换后从 CSS 变量重新解析（.dark 类在 ThemeProvider 的
+  // layout effect 中应用，这里的被动 effect 一定在其之后运行）。
+  const [chartColors, setChartColors] = useState<ChartThemeColors>(() => chartThemeColors())
+  useEffect(() => {
+    setChartColors(chartThemeColors())
+  }, [theme])
 
   const load = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -158,8 +168,6 @@ function ActualCostsTab() {
   }, [stats, rateMode])
 
   const reportingCurrency = stats?.reporting_currency ?? 'CNY'
-  const textColor = theme === 'dark' ? '#c9cbe2' : '#686a7c'
-  const axisColor = theme === 'dark' ? '#42466f' : '#d4d6e0'
 
   const barOption = useMemo<ChartOption>(() => {
     if (!stats) return {}
@@ -171,27 +179,25 @@ function ActualCostsTab() {
       })),
       granularity,
       currency: reportingCurrency,
-      textColor,
-      axisColor,
+      colors: chartColors,
     })
-  }, [stats, rateMode, granularity, reportingCurrency, textColor, axisColor])
+  }, [stats, rateMode, granularity, reportingCurrency, chartColors])
 
   const donutOption = useMemo<ChartOption>(() => {
     if (!stats || rows.length === 0 || totalAll <= 0) return {}
     return buildDonutOption(
       rows.map((row) => ({ name: row.server.alias, value: row.total })),
       reportingCurrency,
-      textColor,
-      theme,
+      chartColors,
     )
-  }, [stats, rows, totalAll, reportingCurrency, textColor, theme])
+  }, [stats, rows, totalAll, reportingCurrency, chartColors])
 
   const errorPage = (
     <Notice tone="danger" title="成本统计加载失败">{error}</Notice>
   )
 
   return (
-    <>
+    <div className="cg-costs-tab">
       <StatsControls
         granularity={granularity}
         from={from}
@@ -217,74 +223,82 @@ function ActualCostsTab() {
         />
       ) : stats ? (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Card>
-              <CardHeader>
-                <CardDescription>范围内总成本</CardDescription>
-                <CardTitle className="text-2xl tabular-nums">
-                  {money(totalAll, reportingCurrency)}
-                  <span className="ml-1 text-sm font-normal text-muted-foreground">{reportingCurrency}</span>
-                </CardTitle>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>启用计费服务器</CardDescription>
-                <CardTitle className="text-2xl tabular-nums">{stats.servers.length} 台</CardTitle>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>平均月成本</CardDescription>
-                <CardTitle className="text-2xl tabular-nums">
-                  {money(Math.round(totalAll / monthsInRange), reportingCurrency)}
-                  <span className="ml-1 text-sm font-normal text-muted-foreground">{reportingCurrency}</span>
-                </CardTitle>
-              </CardHeader>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardDescription>成本最高服务器</CardDescription>
-                <CardTitle className="truncate text-xl tabular-nums" title={topServer?.server.alias}>
-                  {topServer
-                    ? `${topServer.server.alias} · ${money(topServer.total, reportingCurrency)}`
-                    : '—'}
-                </CardTitle>
-              </CardHeader>
-            </Card>
-          </div>
+          <section className="cg-costs-metrics" aria-label="成本汇总">
+            <article className="cg-metric">
+              <span className="cg-metric-value">{money(totalAll, reportingCurrency)}</span>
+              <span className="cg-metric-copy">
+                <span className="cg-metric-label">范围内总成本</span>
+                <span className="cg-metric-detail">TOTAL / {reportingCurrency}</span>
+              </span>
+            </article>
+            <article className="cg-metric">
+              <span className="cg-metric-value">{String(stats.servers.length).padStart(2, '0')}</span>
+              <span className="cg-metric-copy">
+                <span className="cg-metric-label">启用计费服务器</span>
+                <span className="cg-metric-detail">SERVERS / 计费中</span>
+              </span>
+            </article>
+            <article className="cg-metric">
+              <span className="cg-metric-value">{money(Math.round(totalAll / monthsInRange), reportingCurrency)}</span>
+              <span className="cg-metric-copy">
+                <span className="cg-metric-label">平均月成本</span>
+                <span className="cg-metric-detail">AVG MONTH / {reportingCurrency}</span>
+              </span>
+            </article>
+            <article className="cg-metric">
+              <span className="cg-metric-value">
+                {topServer ? money(topServer.total, reportingCurrency) : '—'}
+              </span>
+              <span className="cg-metric-copy">
+                <span className="cg-metric-label">成本最高服务器</span>
+                <span className="cg-metric-detail" title={topServer?.server.alias}>
+                  TOP / {topServer?.server.alias ?? '—'}
+                </span>
+              </span>
+            </article>
+          </section>
 
-          <div className="grid gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-2">
-              <CardHeader>
-                <CardTitle>周期成本分布</CardTitle>
-                <CardDescription>每台服务器一个色段，悬停查看明细；图例可点击隐藏单台服务器。</CardDescription>
-              </CardHeader>
-              <CardContent>
+          <div className="cg-costs-charts">
+            <section className="cg-card cg-costs-chart-card" aria-labelledby="cg-costs-bar-heading">
+              <header className="cg-costs-card-head">
+                <div>
+                  <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>COST / PERIODS</span>
+                  <h2 className="cg-title cg-costs-card-title" id="cg-costs-bar-heading">周期成本分布</h2>
+                </div>
+                <span className="cg-status is-blue">{GRANULARITY_LABEL[granularity]}粒度</span>
+              </header>
+              <p className="cg-costs-card-desc">每台服务器一个色段，悬停查看明细；图例可点击隐藏单台服务器。</p>
+              <div className="cg-costs-chart-body">
                 <Chart option={barOption} className="h-80 w-full" />
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader>
-                <CardTitle>成本占比</CardTitle>
-                <CardDescription>范围内各服务器成本占比。</CardDescription>
-              </CardHeader>
-              <CardContent>
+              </div>
+            </section>
+            <section className="cg-card cg-costs-chart-card" aria-labelledby="cg-costs-donut-heading">
+              <header className="cg-costs-card-head">
+                <div>
+                  <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>COST / SHARE</span>
+                  <h2 className="cg-title cg-costs-card-title" id="cg-costs-donut-heading">成本占比</h2>
+                </div>
+              </header>
+              <p className="cg-costs-card-desc">范围内各服务器成本占比。</p>
+              <div className="cg-costs-chart-body">
                 {totalAll > 0
                   ? <Chart option={donutOption} className="h-80 w-full" />
                   : <EmptyState title="范围内暂无成本" description="调整时间范围后查看占比。" className="h-80" />}
-              </CardContent>
-            </Card>
+              </div>
+            </section>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>服务器汇总</CardTitle>
-              <CardDescription>
-                原价与周期以服务器币种展示；其余数值按 {reportingCurrency} 折算，点击列头排序。
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+          <section className="cg-card cg-costs-table-card" aria-labelledby="cg-costs-summary-heading">
+            <header className="cg-costs-card-head">
+              <div>
+                <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>SERVERS / SUMMARY</span>
+                <h2 className="cg-title cg-costs-card-title" id="cg-costs-summary-heading">服务器汇总</h2>
+              </div>
+            </header>
+            <p className="cg-costs-card-desc">
+              原价与周期以服务器币种展示；其余数值按 {reportingCurrency} 折算，点击列头排序。
+            </p>
+            <div className="cg-costs-table-body">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -321,9 +335,9 @@ function ActualCostsTab() {
                         <TableCell className="text-right tabular-nums">{(row.share * 100).toFixed(1)}%</TableCell>
                         <TableCell className="text-right">
                           {billingStatusLabel[server.status] ? (
-                            <Badge variant={billingStatusVariant[server.status] ?? 'outline'}>
+                            <span className={cn('cg-status', billingStatusTone[server.status] ?? 'is-muted')}>
                               {billingStatusLabel[server.status]}
-                            </Badge>
+                            </span>
                           ) : null}
                         </TableCell>
                       </TableRow>
@@ -331,15 +345,20 @@ function ActualCostsTab() {
                   })}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>周期明细矩阵</CardTitle>
-              <CardDescription>行 = 周期，列 = 服务器；单元格为对应周期成本（{reportingCurrency}），行尾为周期合计。</CardDescription>
-            </CardHeader>
-            <CardContent className="overflow-x-auto">
+          <section className="cg-card cg-costs-table-card" aria-labelledby="cg-costs-matrix-heading">
+            <header className="cg-costs-card-head">
+              <div>
+                <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>COST / MATRIX</span>
+                <h2 className="cg-title cg-costs-card-title" id="cg-costs-matrix-heading">周期明细矩阵</h2>
+              </div>
+            </header>
+            <p className="cg-costs-card-desc">
+              行 = 周期，列 = 服务器；单元格为对应周期成本（{reportingCurrency}），行尾为周期合计。
+            </p>
+            <div className="cg-costs-table-body is-scroll">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -373,18 +392,21 @@ function ActualCostsTab() {
                   ))}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         </>
       ) : null}
-    </>
+    </div>
   )
 }
 
 export default function Costs() {
   const [tab, setTab] = useState<'actual' | 'estimated'>('actual')
   return (
-    <Page>
+    <Page className="cg-costs">
+      <div className="cg-costs-topline">
+        <span className="cg-eyebrow">BILLING / COSTS</span>
+      </div>
       <PageHeader
         title="成本统计"
         description="已生效成本按服务期摊算实际花费；计算成本按日成本估算各周期成本，统一以统计币种展示"

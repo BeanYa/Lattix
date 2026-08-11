@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { CheckIcon, CopyIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 export function CopyButton({
   text,
@@ -25,7 +26,7 @@ export function CopyButton({
   }
 
   return (
-    <Button type="button" variant="outline" size={size} className={className} onClick={copy}>
+    <Button type="button" variant="outline" size={size} className={cn('bg-card', className)} onClick={copy}>
       {copied ? <CheckIcon /> : <CopyIcon />}
       {copied ? '已复制' : '复制'}
     </Button>

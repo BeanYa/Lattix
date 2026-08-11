@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { RefreshCwIcon, Trash2Icon } from 'lucide-react'
 
 import { Notice, Surface } from '@/components/PagePrimitives'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -46,6 +45,9 @@ import type {
   OperationLogEntry,
   Server,
 } from '@/lib/types'
+import { cn } from '@/lib/utils'
+
+import './logs.css'
 
 const REFRESH_VALUES = REFRESH_OPTIONS.map((option) => option.value)
 const CATEGORY_OPTIONS: { value: OperationCategory; label: string }[] = [
@@ -67,8 +69,8 @@ const SEVERITY_OPTIONS: { value: LogSeverity; label: string }[] = [
 
 function severityBadge(severity: LogSeverity) {
   const label = SEVERITY_OPTIONS.find((option) => option.value === severity)?.label ?? severity
-  const variant = severity === 'error' ? 'destructive' : severity === 'warning' ? 'secondary' : 'outline'
-  return <Badge variant={variant}>{label}</Badge>
+  const tone = severity === 'error' ? 'is-red' : 'is-muted'
+  return <span className={cn('cg-status', tone)}>{label}</span>
 }
 
 function prettyDetail(detail: string): string {
@@ -188,11 +190,11 @@ export default function OperationLogs() {
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className="text-sm text-muted-foreground">共 {total} 条</span>
-        <div className="flex items-center gap-2">
-          <Label htmlFor="operation-page-size" className="text-xs">每页</Label>
+    <div className="cg-logs">
+      <div className="cg-logs-toolbar">
+        <span className="cg-pill">共 {total} 条</span>
+        <div className="cg-logs-toolbar-group">
+          <Label htmlFor="operation-page-size" className="cg-log-label">每页</Label>
           <Select
             value={String(pageSize)}
             onValueChange={(value) => {
@@ -212,7 +214,7 @@ export default function OperationLogs() {
               </SelectGroup>
             </SelectContent>
           </Select>
-          <Label htmlFor="operation-refresh" className="text-xs">刷新</Label>
+          <Label htmlFor="operation-refresh" className="cg-log-label">刷新</Label>
           <Select
             value={String(refreshSeconds)}
             onValueChange={(value) => setRefreshSeconds(Number(value) as RefreshSeconds)}
@@ -244,9 +246,9 @@ export default function OperationLogs() {
 
       {error ? <Notice tone="danger">{error}</Notice> : null}
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs">程度</Label>
+      <div className="cg-card cg-log-filters">
+        <div className="cg-log-filter-item">
+          <Label className="cg-log-label">程度</Label>
           <Select
             value={severity || null}
             onValueChange={(value) => {
@@ -263,8 +265,8 @@ export default function OperationLogs() {
             </SelectGroup></SelectContent>
           </Select>
         </div>
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs">类别</Label>
+        <div className="cg-log-filter-item">
+          <Label className="cg-log-label">类别</Label>
           <Select
             value={category || null}
             onValueChange={(value) => {
@@ -281,8 +283,8 @@ export default function OperationLogs() {
             </SelectGroup></SelectContent>
           </Select>
         </div>
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs">服务器</Label>
+        <div className="cg-log-filter-item">
+          <Label className="cg-log-label">服务器</Label>
           <Select
             value={serverId || null}
             onValueChange={(value) => {
@@ -299,20 +301,20 @@ export default function OperationLogs() {
             </SelectGroup></SelectContent>
           </Select>
         </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="operation-operator" className="text-xs">操作员</Label>
+        <div className="cg-log-filter-item">
+          <Label htmlFor="operation-operator" className="cg-log-label">操作员</Label>
           <Input id="operation-operator" className="w-32" value={operator} onChange={(event) => setOperator(event.target.value)} />
         </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="operation-query" className="text-xs">关键字</Label>
+        <div className="cg-log-filter-item">
+          <Label htmlFor="operation-query" className="cg-log-label">关键字</Label>
           <Input id="operation-query" className="w-48" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="动作 / 详情 / 请求 ID" />
         </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="operation-from" className="text-xs">开始时间</Label>
+        <div className="cg-log-filter-item">
+          <Label htmlFor="operation-from" className="cg-log-label">开始时间</Label>
           <Input id="operation-from" type="datetime-local" value={from} onChange={(event) => setFrom(event.target.value)} />
         </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="operation-to" className="text-xs">结束时间</Label>
+        <div className="cg-log-filter-item">
+          <Label htmlFor="operation-to" className="cg-log-label">结束时间</Label>
           <Input id="operation-to" type="datetime-local" value={to} onChange={(event) => setTo(event.target.value)} />
         </div>
         <Button variant="outline" size="sm" onClick={applyFilters}>筛选</Button>
@@ -344,7 +346,7 @@ export default function OperationLogs() {
                 <TableRow key={entry.event_id} className={detail ? 'cursor-pointer' : ''} onClick={() => detail && setDetailEntry(entry)}>
                   <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(entry.timestamp, timezone)}</TableCell>
                   <TableCell>{severityBadge(entry.severity)}</TableCell>
-                  <TableCell><Badge variant="outline">{categoryLabel}</Badge></TableCell>
+                  <TableCell><span className="cg-status is-blue">{categoryLabel}</span></TableCell>
                   <TableCell className="font-medium">{entry.action}</TableCell>
                   <TableCell>{entry.server || '-'}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{entry.operator || entry.ip || '-'}{entry.operator && entry.ip ? ` · ${entry.ip}` : ''}</TableCell>
@@ -356,9 +358,9 @@ export default function OperationLogs() {
         </Table>
       </Surface>
 
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>{total > 0 ? `第 ${offset + 1}-${Math.min(offset + pageSize, total)} 条` : ''}</span>
-        <div className="flex gap-2">
+      <div className="cg-logs-pagination">
+        <span className="cg-log-label">{total > 0 ? `第 ${offset + 1}-${Math.min(offset + pageSize, total)} 条` : ''}</span>
+        <div className="cg-logs-pagination-buttons">
           <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - pageSize))}>上一页</Button>
           <Button variant="outline" size="sm" disabled={offset + pageSize >= total} onClick={() => setOffset(offset + pageSize)}>下一页</Button>
         </div>
@@ -374,7 +376,13 @@ export default function OperationLogs() {
             </DialogDescription>
           </DialogHeader>
           {detailEntry?.detail ? (
-            <pre className="max-h-96 overflow-auto rounded-lg bg-muted p-3 text-xs">{prettyDetail(detailEntry.detail)}</pre>
+            <div className="cg-terminal cg-log-terminal">
+              <div className="cg-log-terminal-head">
+                <span className="cg-micro">DETAIL / JSON</span>
+                {detailEntry.request_id ? <span className="cg-micro">REQ {detailEntry.request_id}</span> : null}
+              </div>
+              <pre className="cg-log-terminal-body">{prettyDetail(detailEntry.detail)}</pre>
+            </div>
           ) : null}
         </DialogContent>
       </Dialog>

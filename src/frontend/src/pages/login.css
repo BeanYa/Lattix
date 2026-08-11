@@ -1,0 +1,255 @@
+/* ============================================================
+   Login — Cream Grid Tech「技术手册封面」
+   ============================================================ */
+
+.cg-login {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 20px 16px;
+  animation: cg-page-in 300ms var(--cg-ease) both;
+}
+
+.cg-login-theme {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-light);
+  color: var(--cg-ink);
+  box-shadow: var(--cg-shadow-control);
+}
+
+@media (min-width: 768px) {
+  .cg-login-theme {
+    top: 28px;
+    right: 28px;
+  }
+}
+
+/* ---------- 手册封面卡 ---------- */
+
+.cg-login-card {
+  display: grid;
+  width: 100%;
+  max-width: 860px;
+  overflow: hidden;
+}
+
+/* ---------- 品牌区（Charcoal 技术面板，桌面端显示） ---------- */
+
+.cg-login-brand {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .cg-login-card {
+    grid-template-columns: 330px minmax(0, 1fr);
+  }
+
+  .cg-login-brand {
+    display: flex;
+    flex-direction: column;
+    min-height: 520px;
+    padding: 26px;
+    border-right: var(--cg-border-strong);
+    background: var(--cg-charcoal);
+    color: var(--cg-on-charcoal);
+  }
+}
+
+.cg-login-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cg-login-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 2px solid var(--cg-charcoal-line);
+  border-radius: 12px;
+  background: var(--cg-lime);
+}
+
+.cg-login-brand-name {
+  display: block;
+  font-size: 15px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  color: #fff;
+}
+
+.cg-login-brand-sub {
+  display: block;
+  margin-top: 3px;
+  font-family: var(--cg-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  color: var(--cg-lime);
+  text-transform: uppercase;
+}
+
+.cg-login-brand-hero {
+  display: grid;
+  gap: 10px;
+  margin: auto 0;
+  padding: 32px 0;
+}
+
+.cg-login-brand-tag {
+  margin: 0;
+  font-family: var(--cg-mono);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--cg-on-charcoal);
+}
+
+.cg-login-brand-desc {
+  margin: 0;
+  max-width: 250px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--cg-subtle);
+}
+
+.cg-login-brand-foot {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 2px solid var(--cg-charcoal-line);
+}
+
+.cg-login-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 2px solid var(--cg-charcoal-line);
+  border-radius: var(--cg-r-pill);
+  background: var(--cg-charcoal-raised);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.cg-login-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cg-lime);
+}
+
+.cg-login-brand-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--cg-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--cg-subtle);
+}
+
+.cg-login-brand-line svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+/* ---------- 登录表单区 ---------- */
+
+.cg-login-form {
+  display: grid;
+  gap: 16px;
+  align-content: center;
+  padding: 30px 24px;
+}
+
+@media (min-width: 768px) {
+  .cg-login-form {
+    padding: 38px 44px;
+  }
+}
+
+.cg-login-form-mobile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--cg-ink);
+}
+
+@media (min-width: 1024px) {
+  .cg-login-form-mobile {
+    display: none;
+  }
+}
+
+.cg-login-form-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: var(--cg-border);
+  border-radius: 12px;
+  background: var(--cg-lime);
+  color: var(--cg-on-accent);
+  box-shadow: var(--cg-shadow-control);
+}
+
+.cg-login-form-icon svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.2;
+}
+
+.cg-login-form-head {
+  display: grid;
+  gap: 8px;
+}
+
+.cg-login-form-title {
+  margin: 0;
+  font-size: 28px;
+}
+
+.cg-login-form-sub {
+  margin: 0;
+  font-family: var(--cg-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--cg-muted);
+}
+
+.cg-login-fields {
+  display: grid;
+  gap: 16px;
+  margin-top: 4px;
+}
+
+.cg-login-field {
+  display: grid;
+  gap: 6px;
+}
+
+.cg-login-submit {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 4px;
+  font-size: 14px;
+}

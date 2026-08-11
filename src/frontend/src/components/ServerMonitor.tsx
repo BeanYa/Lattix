@@ -136,14 +136,14 @@ function TrafficSegmentBar({ ratio, complete, unlimited }: { ratio: number; comp
   const clamped = Math.min(100, Math.max(0, ratio))
   const filled = unlimited ? segments : clamped === 0 ? 0 : Math.ceil((clamped / 100) * segments)
   const fillClass = unlimited
-    ? 'bg-success'
+    ? 'sv-seg-ok'
     : !complete
-      ? 'bg-muted-foreground'
+      ? 'sv-seg-idle'
       : clamped >= 80
-        ? 'bg-destructive'
+        ? 'sv-seg-crit'
         : clamped >= 60
-          ? 'bg-warning'
-          : 'bg-success'
+          ? 'sv-seg-warn'
+          : 'sv-seg-ok'
   return (
     <div
       className="grid h-2 grid-cols-[repeat(24,minmax(0,1fr))] gap-[2px]"
@@ -155,7 +155,7 @@ function TrafficSegmentBar({ ratio, complete, unlimited }: { ratio: number; comp
       aria-valuetext={unlimited ? '无限额度' : undefined}
     >
       {Array.from({ length: segments }).map((_, index) => (
-        <span key={index} className={cn('h-2 bg-muted', index < filled && fillClass)} />
+        <span key={index} className={cn('sv-seg', index < filled && fillClass)} />
       ))}
     </div>
   )
@@ -195,9 +195,9 @@ function health(value: number, warning = 80, critical = 90): Health {
 function healthIndicatorClass(value: number, warning = 80, critical = 90): string {
   const state = health(value, warning, critical)
   return cn(
-    '[&_[data-slot=progress-indicator]]:bg-success',
-    state === 'warning' && '[&_[data-slot=progress-indicator]]:bg-warning',
-    state === 'critical' && '[&_[data-slot=progress-indicator]]:bg-destructive',
+    'sv-progress-ok',
+    state === 'warning' && 'sv-progress-warn',
+    state === 'critical' && 'sv-progress-crit',
   )
 }
 
@@ -236,7 +236,7 @@ function MetricBlock({
         className={cn(
           'gap-0',
           progress === null
-            ? '[&_[data-slot=progress-indicator]]:bg-muted'
+            ? 'sv-progress-idle'
             : healthIndicatorClass(progress, warning, critical),
         )}
         aria-label={`${label} ${value}`}
@@ -330,11 +330,11 @@ function LatencyStrip({ samples, timezone }: { samples: ServerMetrics[]; timezon
             <span
               aria-hidden="true"
               className={cn(
-                'absolute inset-0 origin-bottom rounded-[1px] bg-muted transition-[transform,box-shadow] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none',
-                timedOut && 'bg-destructive',
-                state === 'normal' && 'bg-success',
-                state === 'warning' && 'bg-warning',
-                state === 'critical' && 'bg-destructive',
+                'sv-lat absolute inset-0 origin-bottom rounded-[1px] transition-[transform,box-shadow] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none',
+                timedOut && 'is-crit',
+                state === 'normal' && 'is-ok',
+                state === 'warning' && 'is-warn',
+                state === 'critical' && 'is-crit',
                 distance === 0 && '-translate-y-1 scale-x-[1.45] scale-y-[1.8] ring-1 ring-background shadow-md',
                 distance === 1 && '-translate-y-0.5 scale-x-[1.2] scale-y-[1.4]',
                 distance === 2 && 'scale-x-[1.08] scale-y-[1.15]',
@@ -466,24 +466,24 @@ function ServerCard({
       tabIndex={0}
       aria-label={`查看 ${server.alias} 监控详情，${serverConnectionLabel(server.connection_state)}`}
       className={cn(
-        'relative cursor-pointer border-t-2 transition-[box-shadow,background-color] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        online && 'border-t-success/70 bg-success/[0.025]',
-        transitioning && 'border-t-warning/70 bg-warning/[0.04]',
-        !online && !transitioning && 'border-t-destructive/70 bg-destructive/[0.04]',
+        'sv-server-card relative cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        online && 'is-online',
+        transitioning && 'is-transitioning',
+        !online && !transitioning && 'is-offline',
       )}
       onClick={onOpen}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') onOpen()
       }}
     >
-      <CardHeader className={cn('border-b', !online && (transitioning ? 'border-warning/30' : 'border-destructive/30'))}>
+      <CardHeader className="sv-card-head">
         <CardTitle className="flex min-w-0 items-center gap-2">
           <span
             className={cn(
-              'flex size-7 shrink-0 items-center justify-center rounded-md border',
-              online && 'border-success/30 bg-success/15 text-success',
-              transitioning && 'border-warning/30 bg-warning/15 text-warning',
-              !online && !transitioning && 'border-destructive/30 bg-destructive/15 text-destructive',
+              'sv-icon-chip',
+              online && 'is-online',
+              transitioning && 'is-transitioning',
+              !online && !transitioning && 'is-offline',
             )}
             aria-hidden="true"
           >
@@ -498,13 +498,10 @@ function ServerCard({
           <span className="truncate">{server.alias}</span>
           <span
             className={cn(
-              'ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs font-semibold',
-              online && 'border-success/30 bg-success/10 text-success',
-              transitioning && 'border-warning/30 bg-warning/10 text-warning',
-              !online && !transitioning && 'border-destructive/30 bg-destructive/10 text-destructive',
+              'cg-status ml-auto shrink-0',
+              online ? 'is-lime' : transitioning ? 'is-blue' : 'is-red',
             )}
           >
-            <span className={cn('size-1.5 rounded-full', online ? 'bg-success' : transitioning ? 'bg-warning' : 'bg-destructive')} />
             Agent {serverConnectionLabel(server.connection_state)}
           </span>
         </CardTitle>
@@ -513,6 +510,9 @@ function ServerCard({
             <CountryFlag code={server.country_code} />
             <span className="truncate">{server.location || server.country_code || '未设置地区'}</span>
           </span>
+          {server.config_drift ? (
+            <span className="cg-status is-muted mt-1 w-fit">DRIFT / 配置漂移</span>
+          ) : null}
           {server.billing.enabled && server.billing.status in billingStatusLabel ? (
             <Badge
               variant={server.billing.status === 'expired' ? 'destructive' : 'outline'}
@@ -537,10 +537,10 @@ function ServerCard({
       <CardContent className="flex flex-col gap-3">
         <div
           className={cn(
-            '-mx-3 -mt-3 flex min-h-11 items-center gap-2.5 border-b px-3 py-2 text-xs',
-            online && 'border-success/20 bg-success/[0.07] text-success',
-            transitioning && 'border-warning/25 bg-warning/10 text-warning',
-            !online && !transitioning && 'border-destructive/25 bg-destructive/10 text-destructive',
+            'sv-banner -mx-3 -mt-3 flex min-h-11 items-center gap-2.5 border-b px-3 py-2 text-xs',
+            online && 'is-online',
+            transitioning && 'is-transitioning',
+            !online && !transitioning && 'is-offline',
           )}
         >
           <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background/50">
@@ -592,11 +592,11 @@ function ServerCard({
               <div className="flex min-w-0 flex-col gap-1.5">
                 <span className="text-xs text-muted-foreground">网络</span>
                 <div className="flex min-w-0 items-center gap-3 text-xs tabular-nums">
-                  <span className="flex min-w-0 items-center gap-1 truncate text-success">
+                  <span className="sv-rate-up flex min-w-0 items-center gap-1 truncate">
                     <ArrowUpIcon className="size-3" />
                     {formatByteRate(metrics.network_tx_bps)}
                   </span>
-                  <span className="flex min-w-0 items-center gap-1 truncate text-info">
+                  <span className="sv-rate-down flex min-w-0 items-center gap-1 truncate">
                     <ArrowDownIcon className="size-3" />
                     {formatByteRate(metrics.network_rx_bps)}
                   </span>
@@ -705,10 +705,10 @@ function TrendChart({
               <span key={item.label} className="flex items-center gap-1">
                 <span
                   className={cn(
-                    'size-2 rounded-full',
-                    item.color === 'success' && 'bg-success',
-                    item.color === 'info' && 'bg-info',
-                    item.color === 'warning' && 'bg-warning',
+                    'size-2 rounded-full bg-current',
+                    item.color === 'success' && 'sv-line-ok',
+                    item.color === 'info' && 'sv-line-info',
+                    item.color === 'warning' && 'sv-line-warn',
                   )}
                 />
                 {item.label}
@@ -728,7 +728,7 @@ function TrendChart({
           ) : null}
         </div>
       </div>
-      <div className="relative rounded-lg border bg-muted/20 p-2">
+      <div className="sv-chart-box relative p-2">
         {values.length > 1 ? (
           <svg
             ref={chartRef}
@@ -761,9 +761,9 @@ function TrendChart({
                 strokeWidth="2"
                 vectorEffect="non-scaling-stroke"
                 className={cn(
-                  item.color === 'success' && 'text-success',
-                  item.color === 'info' && 'text-info',
-                  item.color === 'warning' && 'text-warning',
+                  item.color === 'success' && 'sv-line-ok',
+                  item.color === 'info' && 'sv-line-info',
+                  item.color === 'warning' && 'sv-line-warn',
                 )}
               />
             ))}
@@ -803,9 +803,9 @@ function TrendChart({
                       strokeWidth="2"
                       vectorEffect="non-scaling-stroke"
                       className={cn(
-                        item.color === 'success' && 'text-success',
-                        item.color === 'info' && 'text-info',
-                        item.color === 'warning' && 'text-warning',
+                        item.color === 'success' && 'sv-line-ok',
+                        item.color === 'info' && 'sv-line-info',
+                        item.color === 'warning' && 'sv-line-warn',
                       )}
                     />
                   )

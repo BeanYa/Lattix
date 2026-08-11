@@ -1,25 +1,29 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
+  BellIcon,
+  CalendarClockIcon,
+  CoinsIcon,
   CpuIcon,
+  DatabaseBackupIcon,
+  GlobeIcon,
+  KeyRoundIcon,
   PlusIcon,
   RefreshCwIcon,
+  RocketIcon,
+  RssIcon,
+  ScrollTextIcon,
   SearchIcon,
+  ServerIcon,
+  Settings2Icon,
   ShieldCheckIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
   WrenchIcon,
+  type LucideIcon,
 } from 'lucide-react'
 
-import { LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
-import { Badge } from '@/components/ui/badge'
+import { LoadingState, Notice, Page } from '@/components/PagePrimitives'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -45,12 +49,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
 import { useTimezone } from '@/lib/timezone'
 import type { AlertTestResult, ExchangeRateSettings, InspectionUnit, LogSeverity, PanelSettings, PanelVersionInfo } from '@/lib/types'
+import { cn } from '@/lib/utils'
+
+import './settings.css'
 
 // 常用 IANA 时区（可直接输入其他名称，后端用 time.LoadLocation 校验）。
 const COMMON_TIMEZONES = [
@@ -101,8 +107,45 @@ const INSPECTION_UNITS: { value: InspectionUnit; label: string }[] = [
 ]
 const CURRENCIES = ['CNY', 'USD', 'EUR', 'CAD', 'HKD', 'JPY', 'AUD', 'GBP', 'SGD', 'CHF']
 
-const textareaClass =
-  'w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 font-mono text-xs transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30'
+// 设置分区（横向 cg-pill 按钮组，active = lime）
+const SETTINGS_TABS = [
+  { value: 'agent', label: 'Agent', icon: CpuIcon },
+  { value: 'runtime', label: '运行设置', icon: SlidersHorizontalIcon },
+  { value: 'security', label: '安全通知', icon: ShieldCheckIcon },
+  { value: 'system', label: '系统维护', icon: WrenchIcon },
+] as const
+
+// 设置分区卡片：左列描述/图标，右列实际配置控件（纯展示组件，无逻辑）。
+function SettingsCard({
+  icon: Icon,
+  tag,
+  title,
+  description,
+  aside,
+  children,
+}: {
+  icon: LucideIcon
+  tag: string
+  title: ReactNode
+  description?: ReactNode
+  aside?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <section className="cg-card cg-set-card">
+      <aside className="cg-set-card-aside">
+        <span className="cg-set-card-icon">
+          <Icon />
+        </span>
+        <span className="cg-micro cg-set-card-tag">{tag}</span>
+        <h2 className="cg-title cg-set-card-title">{title}</h2>
+        {description ? <p className="cg-set-card-desc">{description}</p> : null}
+        {aside}
+      </aside>
+      <div className="cg-set-card-body">{children}</div>
+    </section>
+  )
+}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -557,42 +600,66 @@ export default function Settings() {
   )
 
   return (
-    <Page className="page-shell-narrow">
-      <PageHeader title="设置" />
+    <Page className="cg-settings">
+      {/* Eyebrow + 环境信息 */}
+      <div className="cg-set-topline">
+        <span className="cg-eyebrow">PANEL / SETTINGS</span>
+        <div className="cg-set-topline-side">
+          <span className="cg-pill">{accessProtocol} 访问</span>
+          <span className="cg-pill is-dark">v{settings.panel_version}</span>
+        </div>
+      </div>
 
-      <Tabs className="settings-tabs" value={settingsTab} onValueChange={(value) => setSettingsTab(String(value))}>
-        <TabsList variant="line" className="settings-tabs-list" aria-label="设置分类">
-          <TabsTrigger value="agent">
-            <CpuIcon data-icon="inline-start" />
-            Agent
-          </TabsTrigger>
-          <TabsTrigger value="runtime">
-            <SlidersHorizontalIcon data-icon="inline-start" />
-            运行设置
-          </TabsTrigger>
-          <TabsTrigger value="security">
-            <ShieldCheckIcon data-icon="inline-start" />
-            安全通知
-          </TabsTrigger>
-          <TabsTrigger value="system">
-            <WrenchIcon data-icon="inline-start" />
-            系统维护
-          </TabsTrigger>
-        </TabsList>
+      {/* Header Card */}
+      <header className="cg-card-raised cg-set-header">
+        <div className="cg-set-header-main">
+          <span className="cg-set-header-icon">
+            <Settings2Icon />
+          </span>
+          <div className="min-w-0">
+            <span className="cg-micro cg-set-header-tag">CONFIGURATION / 全局配置</span>
+            <h1 className="cg-title cg-set-title">设置</h1>
+            <p className="cg-set-subtitle">
+              面板、Agent、订阅与安全的全局配置集中管理；保存后在线 Agent 立即同步，离线 Agent 重连后拉取。
+            </p>
+          </div>
+        </div>
+        <div className="cg-set-header-side">
+          <span className={cn('cg-status', settings.restart_required ? 'is-red' : 'is-lime')}>
+            {settings.restart_required ? 'RESTART REQUIRED' : 'CONFIG APPLIED'}
+          </span>
+        </div>
+      </header>
 
-        {error && <Notice tone="danger">{error}</Notice>}
-        {message && <Notice tone="success">{message}</Notice>}
+      {/* 横向 Category Tabs（cg-pill 按钮组，active = lime） */}
+      <nav className="cg-set-tabs" aria-label="设置分类">
+        {SETTINGS_TABS.map((tab) => (
+          <button
+            key={tab.value}
+            type="button"
+            className={cn('cg-pill cg-set-tab', settingsTab === tab.value && 'is-active')}
+            aria-pressed={settingsTab === tab.value}
+            onClick={() => setSettingsTab(tab.value)}
+          >
+            <tab.icon />
+            {tab.label}
+          </button>
+        ))}
+      </nav>
 
-        <form onSubmit={onSave} className="settings-tab-form">
-          <TabsContent value="agent" keepMounted className="settings-tab-panel">
-        <Card>
-          <CardHeader>
-            <CardTitle>Agent</CardTitle>
-            <CardDescription>
-              所有 Agent 使用同一份设置。保存后 revision 自动递增，在线 Agent 会立即拉取，离线 Agent 在重连后同步。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
+      {error && <Notice tone="danger">{error}</Notice>}
+      {message && <Notice tone="success">{message}</Notice>}
+
+      <form onSubmit={onSave} className="cg-set-form">
+        {/* Agent 分区 */}
+        <div className="cg-set-panel" hidden={settingsTab !== 'agent'}>
+          <SettingsCard
+            icon={CpuIcon}
+            tag="AGENT / POLICY"
+            title="Agent"
+            description="所有 Agent 使用同一份设置。保存后 revision 自动递增，在线 Agent 会立即拉取，离线 Agent 在重连后同步。"
+            aside={<span className="cg-status is-blue">REVISION {settings.agent.revision}</span>}
+          >
             <div className="flex flex-col gap-2">
               <Label>重连策略</Label>
               <Select
@@ -613,7 +680,7 @@ export default function Settings() {
                   </SelectGroup>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
+              <p className="cg-set-note">
                 两种策略均使用指数退避。限制次数耗尽或认证失败后，Agent 仍会每 5 分钟低频探测，不会永久停止。
               </p>
             </div>
@@ -628,7 +695,7 @@ export default function Settings() {
                 value={reconnectMaxRetries}
                 onChange={(event) => setReconnectMaxRetries(Number(event.target.value))}
               />
-              <p className="text-xs text-muted-foreground">范围 1-100；无限重试模式会保存但忽略该值。</p>
+              <p className="cg-set-note">范围 1-100；无限重试模式会保存但忽略该值。</p>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="flex flex-col gap-2">
@@ -654,20 +721,15 @@ export default function Settings() {
                 />
               </div>
             </div>
-            <p className="text-xs text-muted-foreground">当前期望 revision：{settings.agent.revision}</p>
-          </CardContent>
-        </Card>
+          </SettingsCard>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>服务器设置</CardTitle>
-            <CardDescription>
-              面板级默认设置（defaultsetting）。服务器未单独覆盖时采用该值；
-              xray 版本为具体版本时，agent 收到后会自动对齐升级到该版本；
-              latest 保持现状（仅手动升级）。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
+          <SettingsCard
+            icon={ServerIcon}
+            tag="SERVER / DEFAULTS"
+            title="服务器设置"
+            description="面板级默认设置（defaultsetting）。服务器未单独覆盖时采用该值；xray 版本为具体版本时，agent 收到后会自动对齐升级到该版本；latest 保持现状（仅手动升级）。"
+            aside={<span className="cg-status is-blue">REV {settings?.server_settings_revision ?? 1}</span>}
+          >
             <div className="flex flex-col gap-2">
               <Label htmlFor="serverXrayVersion">xray 版本（默认）</Label>
               <Select
@@ -684,27 +746,21 @@ export default function Settings() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
-                版本列表来自 GitHub release 缓存；当前期望 revision：
-                {settings?.server_settings_revision ?? 1}
-              </p>
+              <p className="cg-set-note">版本列表来自 GitHub release 缓存。</p>
             </div>
-          </CardContent>
-        </Card>
+          </SettingsCard>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>巡检任务</CardTitle>
-            <CardDescription>
-              定期从 GitHub 更新升级弹窗使用的 release 版本缓存。GitHub 暂时不可用时继续使用最近一次成功缓存。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="space-y-3">
-              <Label>Agent 版本</Label>
+          <SettingsCard
+            icon={CalendarClockIcon}
+            tag="INSPECTION / SCHEDULE"
+            title="巡检任务"
+            description="定期从 GitHub 更新升级弹窗使用的 release 版本缓存。GitHub 暂时不可用时继续使用最近一次成功缓存。"
+          >
+            <div className="cg-set-group">
+              <span className="cg-set-group-title">Agent 版本</span>
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
-                <div className="space-y-2">
-                  <Label htmlFor="agentInspectionEvery" className="text-xs text-muted-foreground">每隔</Label>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="agentInspectionEvery" className="cg-set-sublabel">每隔</Label>
                   <Input
                     id="agentInspectionEvery"
                     type="number"
@@ -714,8 +770,8 @@ export default function Settings() {
                     onChange={(event) => setAgentInspectionEvery(Number(event.target.value))}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">单位</Label>
+                <div className="flex flex-col gap-2">
+                  <Label className="cg-set-sublabel">单位</Label>
                   <Select
                     value={agentInspectionUnit}
                     onValueChange={(value) => value && setAgentInspectionUnit(value as InspectionUnit)}
@@ -730,8 +786,8 @@ export default function Settings() {
                   </Select>
                 </div>
                 {agentInspectionUnit !== 'minute' && agentInspectionUnit !== 'hour' && (
-                  <div className="space-y-2">
-                    <Label htmlFor="agentInspectionAt" className="text-xs text-muted-foreground">执行时间</Label>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="agentInspectionAt" className="cg-set-sublabel">执行时间</Label>
                     <Input
                       id="agentInspectionAt"
                       type="time"
@@ -742,11 +798,12 @@ export default function Settings() {
                 )}
               </div>
             </div>
-            <div className="space-y-3 border-t pt-5">
-              <Label>xray 版本</Label>
+            <div className="cg-set-divider" />
+            <div className="cg-set-group">
+              <span className="cg-set-group-title">xray 版本</span>
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
-                <div className="space-y-2">
-                  <Label htmlFor="xrayInspectionEvery" className="text-xs text-muted-foreground">每隔</Label>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="xrayInspectionEvery" className="cg-set-sublabel">每隔</Label>
                   <Input
                     id="xrayInspectionEvery"
                     type="number"
@@ -756,8 +813,8 @@ export default function Settings() {
                     onChange={(event) => setXrayInspectionEvery(Number(event.target.value))}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">单位</Label>
+                <div className="flex flex-col gap-2">
+                  <Label className="cg-set-sublabel">单位</Label>
                   <Select
                     value={xrayInspectionUnit}
                     onValueChange={(value) => value && setXrayInspectionUnit(value as InspectionUnit)}
@@ -772,8 +829,8 @@ export default function Settings() {
                   </Select>
                 </div>
                 {xrayInspectionUnit !== 'minute' && xrayInspectionUnit !== 'hour' && (
-                  <div className="space-y-2">
-                    <Label htmlFor="xrayInspectionAt" className="text-xs text-muted-foreground">执行时间</Label>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="xrayInspectionAt" className="cg-set-sublabel">执行时间</Label>
                     <Input
                       id="xrayInspectionAt"
                       type="time"
@@ -783,23 +840,34 @@ export default function Settings() {
                   </div>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">默认每天 03:00 巡检一次。</p>
+              <p className="cg-set-note">默认每天 03:00 巡检一次。</p>
             </div>
-            <div className="grid gap-4 border-t pt-5 sm:grid-cols-2">
-              <div className="space-y-2"><Label htmlFor="billingInspectionAt">计费状态巡检</Label><Input id="billingInspectionAt" type="time" value={billingInspectionAt} onChange={(e) => setBillingInspectionAt(e.target.value)} /><p className="text-xs text-muted-foreground">每日执行并驱动服务器计费状态机。</p></div>
-              <div className="space-y-2"><Label htmlFor="exchangeInspectionAt">汇率刷新</Label><Input id="exchangeInspectionAt" type="time" value={exchangeInspectionAt} onChange={(e) => setExchangeInspectionAt(e.target.value)} /><p className="text-xs text-muted-foreground">每日从 Frankfurter 更新持久化缓存。</p></div>
+            <div className="cg-set-divider" />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="billingInspectionAt">计费状态巡检</Label>
+                <Input id="billingInspectionAt" type="time" value={billingInspectionAt} onChange={(e) => setBillingInspectionAt(e.target.value)} />
+                <p className="cg-set-note">每日执行并驱动服务器计费状态机。</p>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="exchangeInspectionAt">汇率刷新</Label>
+                <Input id="exchangeInspectionAt" type="time" value={exchangeInspectionAt} onChange={(e) => setExchangeInspectionAt(e.target.value)} />
+                <p className="cg-set-note">每日从 Frankfurter 更新持久化缓存。</p>
+              </div>
             </div>
-          </CardContent>
-        </Card>
+          </SettingsCard>
+        </div>
 
-          </TabsContent>
-
-          <TabsContent value="runtime" keepMounted className="settings-tab-panel">
-        <Card>
-          <CardHeader><CardTitle>费用换算</CardTitle><CardDescription>服务器保留原价和原币种，汇总及详情按统计币种折算。</CardDescription></CardHeader>
-          <CardContent className="space-y-5">
+        {/* 运行设置分区 */}
+        <div className="cg-set-panel" hidden={settingsTab !== 'runtime'}>
+          <SettingsCard
+            icon={CoinsIcon}
+            tag="BILLING / EXCHANGE"
+            title="费用换算"
+            description="服务器保留原价和原币种，汇总及详情按统计币种折算。"
+          >
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-              <div className="space-y-2">
+              <div className="flex flex-col gap-2">
                 <Label>统计币种</Label>
                 <Select value={reportingCurrency} onValueChange={(v) => v && setReportingCurrency(v)} items={CURRENCIES.map((c) => ({ value: c, label: c }))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -817,12 +885,25 @@ export default function Settings() {
                 </Button>
               </div>
             </div>
-            <div className="space-y-3 border-t pt-5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="cg-set-divider" />
+            <div className="cg-set-group">
+              <div className="cg-set-inline-row">
                 <Label>自定义汇率</Label>
-                <div className="flex rounded-md border p-0.5">
-                  <Button type="button" size="xs" variant={customBaseSide === 'source' ? 'secondary' : 'ghost'} onClick={() => changeCustomBaseSide('source')}>源币种 = 1</Button>
-                  <Button type="button" size="xs" variant={customBaseSide === 'target' ? 'secondary' : 'ghost'} onClick={() => changeCustomBaseSide('target')}>展示币种 = 1</Button>
+                <div className="cg-set-segment" role="group" aria-label="自定义汇率基准侧">
+                  <button
+                    type="button"
+                    className={cn(customBaseSide === 'source' && 'is-active')}
+                    onClick={() => changeCustomBaseSide('source')}
+                  >
+                    源币种 = 1
+                  </button>
+                  <button
+                    type="button"
+                    className={cn(customBaseSide === 'target' && 'is-active')}
+                    onClick={() => changeCustomBaseSide('target')}
+                  >
+                    展示币种 = 1
+                  </button>
                 </div>
               </div>
               <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
@@ -833,30 +914,33 @@ export default function Settings() {
                     <SelectContent>{customSourceOptions.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <span className="text-center text-lg font-medium text-muted-foreground">:</span>
+                <span className="cg-set-ratio">:</span>
                 <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-2">
                   <Input type="number" min="0" step="any" placeholder="金额" readOnly={customBaseSide === 'target'} value={customTargetAmount} onChange={(e) => setCustomTargetAmount(e.target.value)} aria-label="展示币种金额" />
-                  <div className="flex h-8 items-center rounded-lg border border-input bg-muted/40 px-2.5 text-sm font-medium" aria-label="展示币种">{reportingCurrency}</div>
+                  <div className="cg-set-static-field" aria-label="展示币种">{reportingCurrency}</div>
                 </div>
               </div>
-              <Button type="button" variant="outline" disabled={!customRateReady} onClick={addCustomRate}>
-                <PlusIcon />保存并启用
-              </Button>
-              {reportingCurrencyPending ? <p className="text-xs text-warning">展示币种已修改，请先保存设置再添加自定义汇率。</p> : null}
-              <p className="text-xs leading-5 text-muted-foreground">
+              <div>
+                <button type="button" className="cg-button is-primary" disabled={!customRateReady} onClick={addCustomRate}>
+                  <PlusIcon />保存并启用
+                </button>
+              </div>
+              {reportingCurrencyPending ? <p className="cg-set-msg-info">展示币种已修改，请先保存设置再添加自定义汇率。</p> : null}
+              <p className="cg-set-note">
                 两侧必须有一侧为 1。以 1 USD : 7 CNY 为例：USD 直接按该汇率换算；CAD、EUR、JPY 等先按 Frankfurter 换成 USD，再按自定义汇率换成 CNY；原价为 CNY 的费用保持不变。切换展示币种不会删除记录，仅目标币种匹配当前展示币种的启用项参与自定义结果。费用详情同时显示公共汇率与自定义汇率结果。
               </p>
             </div>
-            <div className="space-y-2 border-t pt-4">
+            <div className="cg-set-divider" />
+            <div className="cg-set-rate-list">
               {(exchangeData?.custom_rates ?? []).map((rate) => (
-                <div key={rate.id} className="flex flex-wrap items-center justify-between gap-2 border-b py-2 last:border-b-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-sm tabular-nums">{rate.source_amount} {rate.source_currency} : {rate.target_amount} {rate.target_currency}</span>
-                    <Badge variant={rate.enabled && rate.target_currency === reportingCurrency ? 'secondary' : 'outline'}>
-                      {rate.enabled && rate.target_currency === reportingCurrency ? '当前使用' : rate.enabled ? `目标为 ${rate.target_currency}，未应用` : '已停用'}
-                    </Badge>
+                <div key={rate.id} className="cg-set-rate-row">
+                  <div className="cg-set-rate-info">
+                    <span className="cg-set-rate-text">{rate.source_amount} {rate.source_currency} : {rate.target_amount} {rate.target_currency}</span>
+                    <span className={cn('cg-status', rate.enabled && rate.target_currency === reportingCurrency ? 'is-lime' : rate.enabled ? 'is-blue' : 'is-muted')}>
+                      {rate.enabled && rate.target_currency === reportingCurrency ? '当前使用' : rate.enabled ? `未应用 · ${rate.target_currency}` : '已停用'}
+                    </span>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="cg-set-rate-actions">
                     <Button type="button" variant={rate.enabled ? 'secondary' : 'outline'} size="sm" onClick={() => setCustomRateEnabled(rate, !rate.enabled)}>
                       {rate.enabled ? '停用' : '启用'}
                     </Button>
@@ -864,6 +948,7 @@ export default function Settings() {
                       type="button"
                       variant="ghost"
                       size="icon-sm"
+                      className="cg-set-danger-btn"
                       aria-label="删除自定义汇率"
                       disabled={deletingCustomRateID === rate.id}
                       onClick={() => void deleteCustomRate(rate.id)}
@@ -873,61 +958,17 @@ export default function Settings() {
                   </div>
                 </div>
               ))}
-              <p className="text-xs text-muted-foreground">公开汇率日期：{exchangeData?.rates[0]?.rate_date || '暂无缓存'}</p>
+              <p className="cg-set-note">公开汇率日期：{exchangeData?.rates[0]?.rate_date || '暂无缓存'}</p>
             </div>
-          </CardContent>
-        </Card>
+          </SettingsCard>
 
-        <Dialog open={publicRatesOpen} onOpenChange={setPublicRatesOpen}>
-          <DialogContent className="max-h-[85vh] sm:max-w-4xl">
-            <DialogHeader>
-              <DialogTitle>公开汇率</DialogTitle>
-              <DialogDescription>Frankfurter 公开汇率缓存，拉取 EUR / USD / CNY / JPY / CAD 五种基准。</DialogDescription>
-            </DialogHeader>
-            {loadingPublicRates ? (
-              <LoadingState />
-            ) : publicRatesError ? (
-              <Notice tone="danger">{publicRatesError}</Notice>
-            ) : exchangeData?.rates.length ? (
-              <div className="max-h-[60vh] overflow-auto rounded-lg border">
-                <Table>
-                  <TableHeader className="sticky top-0 z-10 bg-popover">
-                    <TableRow>
-                      <TableHead>基准币种</TableHead>
-                      <TableHead>报价币种</TableHead>
-                      <TableHead>公开汇率</TableHead>
-                      <TableHead>汇率日期</TableHead>
-                      <TableHead>抓取时间</TableHead>
-                      <TableHead>来源</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {exchangeData.rates.map((rate) => (
-                      <TableRow key={`${rate.base_currency}-${rate.quote_currency}`}>
-                        <TableCell className="font-medium">{rate.base_currency}</TableCell>
-                        <TableCell className="font-medium">{rate.quote_currency}</TableCell>
-                        <TableCell className="tabular-nums">1 {rate.base_currency} = {rate.rate} {rate.quote_currency}</TableCell>
-                        <TableCell>{rate.rate_date}</TableCell>
-                        <TableCell>{formatDateTime(rate.fetched_at, timezone)}</TableCell>
-                        <TableCell className="capitalize">{rate.source}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            ) : (
-              <p className="py-8 text-center text-sm text-muted-foreground">暂无公开汇率缓存，请先刷新汇率。</p>
-            )}
-          </DialogContent>
-        </Dialog>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>基本设置</CardTitle>
-            <CardDescription>对外地址与时区保存后立即生效。</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
+          <SettingsCard
+            icon={GlobeIcon}
+            tag="PANEL / GENERAL"
+            title="基本设置"
+            description="对外地址与时区保存后立即生效。"
+          >
+            <div className="flex flex-col gap-2">
               <Label htmlFor="publicURL">面板对外地址（含协议与端口）</Label>
               <Input
                 id="publicURL"
@@ -935,11 +976,11 @@ export default function Settings() {
                 onChange={(e) => setPublicURL(e.target.value)}
                 placeholder="https://panel.example.com:8443，留空按请求推断"
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="cg-set-note">
                 用于生成 agent 安装命令与订阅链接；反代部署时填反代后的地址（https 即安全入口）。
               </p>
             </div>
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="timezone">显示时区</Label>
               <Input
                 id="timezone"
@@ -953,11 +994,11 @@ export default function Settings() {
                   <option key={tz} value={tz} />
                 ))}
               </datalist>
-              <p className="text-xs text-muted-foreground">
+              <p className="cg-set-note">
                 IANA 时区名（如 Asia/Shanghai），全局生效：所有浏览器看到的面板时间一致。
               </p>
             </div>
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="trafficTimezone">流量统计时区</Label>
               <Input
                 id="trafficTimezone"
@@ -968,17 +1009,14 @@ export default function Settings() {
                 required
               />
             </div>
-          </CardContent>
-        </Card>
+          </SettingsCard>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>订阅</CardTitle>
-            <CardDescription>
-              订阅落地页与客户端流量信息全局配置。用户级覆盖在用户页“订阅设置”中配置。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+          <SettingsCard
+            icon={RssIcon}
+            tag="SUBSCRIPTION / PORTAL"
+            title="订阅"
+            description="订阅落地页与客户端流量信息全局配置。用户级覆盖在用户页“订阅设置”中配置。"
+          >
             <div className="flex flex-col gap-2">
               <Label>落地页标题</Label>
               <Input value={subTitle} onChange={e => setSubTitle(e.target.value)} placeholder="Lattix 订阅" />
@@ -986,7 +1024,7 @@ export default function Settings() {
             <div className="flex flex-col gap-2">
               <Label>公告（Markdown）</Label>
               <textarea
-                className={textareaClass}
+                className="cg-set-textarea"
                 rows={4}
                 value={subAnnouncement}
                 onChange={e => setSubAnnouncement(e.target.value)}
@@ -996,7 +1034,7 @@ export default function Settings() {
             <div className="flex flex-col gap-2">
               <Label>自定义 CSS</Label>
               <textarea
-                className={textareaClass}
+                className="cg-set-textarea"
                 rows={3}
                 value={subCustomCSS}
                 onChange={e => setSubCustomCSS(e.target.value)}
@@ -1033,7 +1071,7 @@ export default function Settings() {
                   value={clientCacheTTL}
                   onChange={e => setClientCacheTTL(Number(e.target.value) || 72)}
                 />
-                <p className="text-xs text-muted-foreground">默认 72 小时。每个客户端与架构只保留最新版本。</p>
+                <p className="cg-set-note">默认 72 小时。每个客户端与架构只保留最新版本。</p>
               </div>
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -1054,25 +1092,21 @@ export default function Settings() {
                 />
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <Button type="button" disabled={savingSub} onClick={onSaveSub}>
+            <div className="cg-set-actions">
+              <button type="button" className="cg-button is-primary" disabled={savingSub} onClick={onSaveSub}>
                 {savingSub ? '保存中…' : '保存订阅设置'}
-              </Button>
-              {subMessage && <span className="text-sm text-emerald-600">{subMessage}</span>}
-              {subError && <span className="text-sm text-destructive">{subError}</span>}
+              </button>
+              {subMessage && <span className="cg-set-msg-ok">{subMessage}</span>}
+              {subError && <span className="cg-set-msg-err">{subError}</span>}
             </div>
-          </CardContent>
-        </Card>
+          </SettingsCard>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>日志缓存</CardTitle>
-            <CardDescription>
-              操作日志与业务数据隔离存储；请求日志按行追加到分段 JSONL 文件。
-              修改后立即清理超出限制的最旧记录。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
+          <SettingsCard
+            icon={ScrollTextIcon}
+            tag="LOGGING / RETENTION"
+            title="日志缓存"
+            description="操作日志与业务数据隔离存储；请求日志按行追加到分段 JSONL 文件。修改后立即清理超出限制的最旧记录。"
+          >
             <div className="flex flex-col gap-2">
               <Label htmlFor="operationLogLimit">操作日志保留条数</Label>
               <Input
@@ -1083,7 +1117,7 @@ export default function Settings() {
                 value={operationLogLimit}
                 onChange={(event) => setOperationLogLimit(Number(event.target.value))}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="cg-set-note">
                 范围 100-100000，默认 1000 条；超过后按时间删除最旧记录。
               </p>
             </div>
@@ -1097,9 +1131,9 @@ export default function Settings() {
                 value={requestLogMaxMB}
                 onChange={(event) => setRequestLogMaxMB(Number(event.target.value))}
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="cg-set-note">
                 范围 1-1024 MB，默认 10 MB；当前占用 {formatBytes(settings.request_log_usage_bytes)}，
-                分段文件位于 <code className="rounded bg-muted px-1">{settings.log_dir}</code>。
+                分段文件位于 <code>{settings.log_dir}</code>。
                 {settings.request_log_dropped > 0
                   ? ` 极端负载下累计丢弃 ${settings.request_log_dropped} 条。`
                   : ''}
@@ -1119,32 +1153,31 @@ export default function Settings() {
                   <SelectItem value="error">错误（仅错误）</SelectItem>
                 </SelectGroup></SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground">
+              <p className="cg-set-note">
                 低于该级别的请求不写入日志。状态轮询等高频请求记录为调试级，选择"信息"即可过滤。
               </p>
             </div>
-          </CardContent>
-        </Card>
+          </SettingsCard>
+        </div>
 
-          </TabsContent>
-
-          <TabsContent value="security" keepMounted className="settings-tab-panel">
-        <Card>
-          <CardHeader>
-            <CardTitle>面板证书（TLS）</CardTitle>
-            <CardDescription>
-              当前访问：
-              <Badge variant="outline" className="mx-1">
-                {accessProtocol}
-              </Badge>
-              ；面板监听：
-              <Badge variant="outline" className="mx-1">
-                {RUNNING_MODE_LABEL[settings.running_tls_mode] ?? settings.running_tls_mode}
-              </Badge>
-              ；TLS 设置在<strong>重启面板进程后生效</strong>。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        {/* 安全通知分区 */}
+        <div className="cg-set-panel" hidden={settingsTab !== 'security'}>
+          <SettingsCard
+            icon={ShieldCheckIcon}
+            tag="SECURITY / TLS"
+            title="面板证书（TLS）"
+            description="TLS 设置保存后写入配置，重启面板进程后生效；当前访问协议与面板监听模式见下方贴纸。"
+            aside={(
+              <div className="cg-set-facts">
+                <span className={cn('cg-status', accessProtocol === 'HTTPS' ? 'is-lime' : 'is-blue')}>
+                  访问 {accessProtocol}
+                </span>
+                <span className="cg-status is-muted">
+                  监听 {RUNNING_MODE_LABEL[settings.running_tls_mode] ?? settings.running_tls_mode}
+                </span>
+              </div>
+            )}
+          >
             {settings.restart_required && (
               <Notice
                 tone="warning"
@@ -1157,7 +1190,7 @@ export default function Settings() {
                 已保存的 TLS 设置与面板当前监听模式不一致，重启面板进程后生效。
               </Notice>
             )}
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               <Label>TLS 模式</Label>
               <Select value={tlsMode} onValueChange={(v) => v && setTlsMode(v as TLSModeChoice)} items={TLS_MODES}>
                 <SelectTrigger className="w-full">
@@ -1176,17 +1209,17 @@ export default function Settings() {
             {tlsMode === 'cert' && (
               <>
                 {settings.tls_cert && (
-                  <p className="text-xs text-muted-foreground">
+                  <p className="cg-set-note">
                     已保存证书：CN={settings.tls_cert.common_name || '-'}
                     {(settings.tls_cert.dns_names ?? []).length > 0 &&
                       `，SAN=${(settings.tls_cert.dns_names ?? []).join(', ')}`}
                     ，到期 {formatDateTime(settings.tls_cert.not_after)}
-                    {settings.tls_cert.expired && <span className="text-destructive">（已过期）</span>}
+                    {settings.tls_cert.expired && <span className="cg-set-msg-err">（已过期）</span>}
                     {settings.tls_key_set && '；私钥已保存'}
                   </p>
                 )}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-2">
+                  <div className="cg-set-inline-row">
                     <Label htmlFor="certPEM">证书 PEM（留空保持不变）</Label>
                     <Button type="button" variant="outline" size="sm" onClick={() => certFileRef.current?.click()}>
                       上传文件
@@ -1201,15 +1234,15 @@ export default function Settings() {
                   </div>
                   <textarea
                     id="certPEM"
-                    className={textareaClass}
+                    className="cg-set-textarea"
                     rows={6}
                     value={certPEM}
                     onChange={(e) => setCertPEM(e.target.value)}
                     placeholder="-----BEGIN CERTIFICATE-----"
                   />
                 </div>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
+                <div className="flex flex-col gap-2">
+                  <div className="cg-set-inline-row">
                     <Label htmlFor="keyPEM">私钥 PEM（留空保持不变）</Label>
                     <Button type="button" variant="outline" size="sm" onClick={() => keyFileRef.current?.click()}>
                       上传文件
@@ -1224,7 +1257,7 @@ export default function Settings() {
                   </div>
                   <textarea
                     id="keyPEM"
-                    className={textareaClass}
+                    className="cg-set-textarea"
                     rows={6}
                     value={keyPEM}
                     onChange={(e) => setKeyPEM(e.target.value)}
@@ -1236,7 +1269,7 @@ export default function Settings() {
 
             {tlsMode === 'path' && (
               <>
-                <div className="space-y-2">
+                <div className="flex flex-col gap-2">
                   <Label htmlFor="tlsDomain">证书域名</Label>
                   <Input
                     id="tlsDomain"
@@ -1244,22 +1277,22 @@ export default function Settings() {
                     onChange={(e) => setTlsDomain(e.target.value)}
                     placeholder="panel.example.com"
                   />
-                  <p className="text-xs text-muted-foreground">
-                    面板从证书根目录 <code className="rounded bg-muted px-1">{settings.tls_dir}</code> 读取
-                    <code className="rounded bg-muted px-1">{'<域名>/fullchain.pem'}</code> 与
-                    <code className="rounded bg-muted px-1">{'<域名>/privkey.pem'}</code>
-                    （如 <code className="rounded bg-muted px-1">{settings.tls_dir}/panel.example.com/fullchain.pem</code>）。
+                  <p className="cg-set-note">
+                    面板从证书根目录 <code>{settings.tls_dir}</code> 读取
+                    <code>{'<域名>/fullchain.pem'}</code> 与
+                    <code>{'<域名>/privkey.pem'}</code>
+                    （如 <code>{settings.tls_dir}/panel.example.com/fullchain.pem</code>）。
                     外部 ACME（安装脚本）申请/续期后写入该目录即可，续期替换文件后下一次
                     TLS 握手自动加载新证书，无需重启。保存时会校验证书已存在且配对有效。
                   </p>
                 </div>
                 {settings.tls_cert && (
-                  <p className="text-xs text-muted-foreground">
+                  <p className="cg-set-note">
                     目录内当前证书：CN={settings.tls_cert.common_name || '-'}
                     {(settings.tls_cert.dns_names ?? []).length > 0 &&
                       `，SAN=${(settings.tls_cert.dns_names ?? []).join(', ')}`}
                     ，到期 {formatDateTime(settings.tls_cert.not_after)}
-                    {settings.tls_cert.expired && <span className="text-destructive">（已过期）</span>}
+                    {settings.tls_cert.expired && <span className="cg-set-msg-err">（已过期）</span>}
                   </p>
                 )}
               </>
@@ -1267,7 +1300,7 @@ export default function Settings() {
 
             {tlsMode === 'acme' && (
               <>
-                <div className="space-y-2">
+                <div className="flex flex-col gap-2">
                   <Label htmlFor="acmeDomain">ACME 域名</Label>
                   <Input
                     id="acmeDomain"
@@ -1275,11 +1308,11 @@ export default function Settings() {
                     onChange={(e) => setAcmeDomain(e.target.value)}
                     placeholder="panel.example.com"
                   />
-                  <p className="text-xs text-muted-foreground">
+                  <p className="cg-set-note">
                     Let&apos;s Encrypt TLS-ALPN-01 签发，需 443 端口公网可达。
                   </p>
                 </div>
-                <div className="space-y-2">
+                <div className="flex flex-col gap-2">
                   <Label htmlFor="acmeEmail">ACME 邮箱（可选）</Label>
                   <Input
                     id="acmeEmail"
@@ -1290,19 +1323,15 @@ export default function Settings() {
                 </div>
               </>
             )}
-          </CardContent>
-        </Card>
+          </SettingsCard>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>告警</CardTitle>
-            <CardDescription>
-              服务器离线、配置漂移、节点失败时推送通知（仅状态跃迁触发，同一服务器同一事件 5 分钟内不重复）。
-              三项全空 = 关闭；测试使用<strong>已保存</strong>的配置，请先保存。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
+          <SettingsCard
+            icon={BellIcon}
+            tag="ALERTS / NOTIFY"
+            title="告警"
+            description="服务器离线、配置漂移、节点失败时推送通知（仅状态跃迁触发，同一服务器同一事件 5 分钟内不重复）。三项全空 = 关闭；测试使用已保存的配置，请先保存。"
+          >
+            <div className="flex flex-col gap-2">
               <Label htmlFor="alertWebhook">Webhook 地址</Label>
               <Input
                 id="alertWebhook"
@@ -1311,7 +1340,7 @@ export default function Settings() {
                 placeholder="https://example.com/hook，POST JSON"
               />
             </div>
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="alertBotToken">Telegram Bot Token</Label>
               <Input
                 id="alertBotToken"
@@ -1322,7 +1351,7 @@ export default function Settings() {
                 autoComplete="off"
               />
             </div>
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="alertChatID">Telegram Chat ID</Label>
               <Input
                 id="alertChatID"
@@ -1330,57 +1359,103 @@ export default function Settings() {
                 onChange={(e) => setAlertChatID(e.target.value)}
                 placeholder="与 bot 对话后由 getUpdates 获取"
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="cg-set-note">
                 Telegram 通道需 token 与 chat_id 同时具备才发送。
               </p>
             </div>
-            <div className="space-y-2">
-              <Button type="button" variant="outline" size="sm" disabled={testingAlerts} onClick={onTestAlerts}>
-                {testingAlerts ? '发送中…' : '发送测试'}
-              </Button>
-              {alertTestError && <p className="text-sm text-destructive">{alertTestError}</p>}
+            <div className="cg-set-group">
+              <div>
+                <Button type="button" variant="outline" size="sm" disabled={testingAlerts} onClick={onTestAlerts}>
+                  {testingAlerts ? '发送中…' : '发送测试'}
+                </Button>
+              </div>
+              {alertTestError && <p className="cg-set-msg-err">{alertTestError}</p>}
               {alertTestResult && (
-                <div className="space-y-1 text-sm">
+                <div className="cg-set-alert-results">
                   {(['webhook', 'telegram'] as const).map((ch) => {
                     const r = alertTestResult[ch]
                     return (
-                      <p key={ch} className={r.configured && r.ok ? 'text-success' : 'text-destructive'}>
-                        {ch === 'webhook' ? 'Webhook' : 'Telegram'}：
-                        {!r.configured ? '未配置' : r.ok ? '发送成功' : `发送失败${r.error ? `（${r.error}）` : ''}`}
-                      </p>
+                      <div key={ch} className="cg-set-alert-line">
+                        <span className={cn('cg-status', !r.configured ? 'is-muted' : r.ok ? 'is-lime' : 'is-red')}>
+                          {ch === 'webhook' ? 'WEBHOOK' : 'TELEGRAM'}
+                        </span>
+                        <span className="cg-set-note">
+                          {!r.configured ? '未配置' : r.ok ? '发送成功' : `发送失败${r.error ? `（${r.error}）` : ''}`}
+                        </span>
+                      </div>
                     )
                   })}
                 </div>
               )}
             </div>
-          </CardContent>
-        </Card>
+          </SettingsCard>
+        </div>
 
-          </TabsContent>
+        {/* 保存栏：固定在分区底部，lime 主按钮 */}
+        {settingsTab !== 'system' && (
+          <div className="cg-set-save-bar">
+            <span className="cg-micro cg-set-save-hint">SAVE / 保存后全局生效，TLS 变更需重启</span>
+            <button type="submit" className="cg-button is-primary" disabled={saving}>
+              {saving ? '保存中…' : '保存设置'}
+            </button>
+          </div>
+        )}
+      </form>
 
-          {settingsTab !== 'system' && (
-            <div className="settings-save-bar">
-              <Button type="submit" disabled={saving}>
-                {saving ? '保存中…' : '保存设置'}
-              </Button>
+      {/* 公开汇率 Dialog */}
+      <Dialog open={publicRatesOpen} onOpenChange={setPublicRatesOpen}>
+        <DialogContent className="max-h-[85vh] sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>公开汇率</DialogTitle>
+            <DialogDescription>Frankfurter 公开汇率缓存，拉取 EUR / USD / CNY / JPY / CAD 五种基准。</DialogDescription>
+          </DialogHeader>
+          {loadingPublicRates ? (
+            <LoadingState />
+          ) : publicRatesError ? (
+            <Notice tone="danger">{publicRatesError}</Notice>
+          ) : exchangeData?.rates.length ? (
+            <div className="max-h-[60vh] overflow-auto rounded-lg border">
+              <Table>
+                <TableHeader className="sticky top-0 z-10 bg-popover">
+                  <TableRow>
+                    <TableHead>基准币种</TableHead>
+                    <TableHead>报价币种</TableHead>
+                    <TableHead>公开汇率</TableHead>
+                    <TableHead>汇率日期</TableHead>
+                    <TableHead>抓取时间</TableHead>
+                    <TableHead>来源</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {exchangeData.rates.map((rate) => (
+                    <TableRow key={`${rate.base_currency}-${rate.quote_currency}`}>
+                      <TableCell className="font-medium">{rate.base_currency}</TableCell>
+                      <TableCell className="font-medium">{rate.quote_currency}</TableCell>
+                      <TableCell className="tabular-nums">1 {rate.base_currency} = {rate.rate} {rate.quote_currency}</TableCell>
+                      <TableCell>{rate.rate_date}</TableCell>
+                      <TableCell>{formatDateTime(rate.fetched_at, timezone)}</TableCell>
+                      <TableCell className="capitalize">{rate.source}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             </div>
+          ) : (
+            <p className="cg-set-dialog-empty">暂无公开汇率缓存，请先刷新汇率。</p>
           )}
-        </form>
+        </DialogContent>
+      </Dialog>
 
-        <TabsContent value="system" keepMounted className="settings-tab-panel">
-
-      <Card>
-        <CardHeader>
-          <CardTitle>修改密码</CardTitle>
-          <CardDescription>
-            账号 {settings.admin_user}
-            {settings.password_override ? '（密码已被设置页覆盖）' : '（当前使用启动参数密码）'}
-            ；修改后所有会话失效，需重新登录。
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={onChangePassword} className="space-y-4">
-            <div className="space-y-2">
+      {/* 系统维护分区（独立表单与操作，不参与上方统一保存） */}
+      <div className="cg-set-panel" hidden={settingsTab !== 'system'}>
+        <SettingsCard
+          icon={KeyRoundIcon}
+          tag="ACCOUNT / PASSWORD"
+          title="修改密码"
+          description={`账号 ${settings.admin_user}${settings.password_override ? '（密码已被设置页覆盖）' : '（当前使用启动参数密码）'}；修改后所有会话失效，需重新登录。`}
+        >
+          <form onSubmit={onChangePassword} className="cg-set-group">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="currentPassword">当前密码</Label>
               <Input
                 id="currentPassword"
@@ -1390,7 +1465,7 @@ export default function Settings() {
                 autoComplete="current-password"
               />
             </div>
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="newPassword">新密码（至少 8 位）</Label>
               <Input
                 id="newPassword"
@@ -1400,7 +1475,7 @@ export default function Settings() {
                 autoComplete="new-password"
               />
             </div>
-            <div className="space-y-2">
+            <div className="flex flex-col gap-2">
               <Label htmlFor="confirmPassword">确认新密码</Label>
               <Input
                 id="confirmPassword"
@@ -1410,91 +1485,101 @@ export default function Settings() {
                 autoComplete="new-password"
               />
             </div>
-            {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
-            {passwordMessage && <p className="text-sm text-success">{passwordMessage}</p>}
-            <Button type="submit" disabled={savingPassword || !currentPassword || !newPassword}>
-              {savingPassword ? '修改中…' : '修改密码'}
-            </Button>
+            {passwordError && <p className="cg-set-msg-err">{passwordError}</p>}
+            {passwordMessage && <p className="cg-set-msg-ok">{passwordMessage}</p>}
+            <div>
+              <button type="submit" className="cg-button is-primary" disabled={savingPassword || !currentPassword || !newPassword}>
+                {savingPassword ? '修改中…' : '修改密码'}
+              </button>
+            </div>
           </form>
-        </CardContent>
-      </Card>
+        </SettingsCard>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>面板更新</CardTitle>
-          <CardDescription>
-            以 GitHub release 最新版本为标准检测更新；更新过程中面板操作将被锁定，
-            下载/校验/解压/替换进度实时可见，完成后自动重启生效。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-muted-foreground">当前版本</span>
-            <Badge variant="secondary">{settings.panel_version}</Badge>
-            {versionInfo && versionInfo.latest && (
-              <>
-                <span className="text-muted-foreground">最新版本</span>
-                <Badge variant={versionInfo.update_available ? 'default' : 'outline'}>
-                  {versionInfo.latest}
-                </Badge>
-              </>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              disabled={checkingUpdate || startingUpdate}
-              onClick={onCheckUpdate}
-            >
-              {checkingUpdate ? '检查中…' : '检查更新'}
-            </Button>
-            {versionInfo?.update_available && (
-              <Button disabled={startingUpdate} onClick={onStartUpdate}>
-                {startingUpdate ? '启动中…' : `更新到 ${versionInfo.latest}`}
-              </Button>
-            )}
-            {versionInfo && !versionInfo.update_available && versionInfo.can_update && (
-              <Button variant="outline" disabled={startingUpdate} onClick={onForceUpdate}>
-                {startingUpdate ? '启动中…' : '强制更新'}
-              </Button>
-            )}
-          </div>
-          {updateError && <p className="text-sm text-destructive">{updateError}</p>}
-          {versionInfo && !versionInfo.update_available && !updateError && (
-            <p className="text-sm text-muted-foreground">
-              {versionInfo.message || '已是最新版本'}
+        <section className="cg-semantic-card is-info">
+          <header>
+            <span className="cg-set-semantic-title">
+              <RocketIcon size={15} />
+              面板更新
+            </span>
+            <span className="cg-micro cg-set-semantic-tag">SYSTEM / UPDATE</span>
+          </header>
+          <div className="cg-semantic-body cg-set-semantic-body">
+            <p className="cg-set-note">
+              以 GitHub release 最新版本为标准检测更新；更新过程中面板操作将被锁定，
+              下载/校验/解压/替换进度实时可见，完成后自动重启生效。
             </p>
-          )}
-        </CardContent>
-      </Card>
+            <div className="cg-set-facts">
+              <span className="cg-set-note">当前版本</span>
+              <span className="cg-pill">{settings.panel_version}</span>
+              {versionInfo && versionInfo.latest && (
+                <>
+                  <span className="cg-set-note">最新版本</span>
+                  <span className={cn('cg-pill', versionInfo.update_available && 'is-active')}>
+                    {versionInfo.latest}
+                  </span>
+                </>
+              )}
+            </div>
+            <div className="cg-set-actions">
+              <Button
+                variant="outline"
+                disabled={checkingUpdate || startingUpdate}
+                onClick={onCheckUpdate}
+              >
+                {checkingUpdate ? '检查中…' : '检查更新'}
+              </Button>
+              {versionInfo?.update_available && (
+                <button type="button" className="cg-button is-primary" disabled={startingUpdate} onClick={onStartUpdate}>
+                  {startingUpdate ? '启动中…' : `更新到 ${versionInfo.latest}`}
+                </button>
+              )}
+              {versionInfo && !versionInfo.update_available && versionInfo.can_update && (
+                <Button variant="destructive" disabled={startingUpdate} onClick={onForceUpdate}>
+                  {startingUpdate ? '启动中…' : '强制更新'}
+                </Button>
+              )}
+            </div>
+            {updateError && <p className="cg-set-msg-err">{updateError}</p>}
+            {versionInfo && !versionInfo.update_available && !updateError && (
+              <p className="cg-set-note">
+                {versionInfo.message || '已是最新版本'}
+              </p>
+            )}
+          </div>
+        </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>面板维护</CardTitle>
-          <CardDescription>
-            重启面板进程：TLS 等重启生效项、以及后续面板版本更新都经此生效。
-            Docker 模式由容器 restart policy 拉起，原生安装由 systemd 拉起；
-            仅非托管运行时由面板自派生新进程接管。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" disabled={restarting} onClick={onRestart}>
-            {restarting ? '重启中，请稍候…' : '重启面板'}
-          </Button>
+        <section className="cg-semantic-card is-bad">
+          <header>
+            <span className="cg-set-semantic-title">
+              <DatabaseBackupIcon size={15} />
+              面板维护
+            </span>
+            <span className="cg-micro cg-set-semantic-tag">SYSTEM / MAINTENANCE</span>
+          </header>
+          <div className="cg-semantic-body cg-set-semantic-body">
+            <p className="cg-set-note">
+              重启面板进程：TLS 等重启生效项、以及后续面板版本更新都经此生效。
+              Docker 模式由容器 restart policy 拉起，原生安装由 systemd 拉起；
+              仅非托管运行时由面板自派生新进程接管。
+            </p>
+            <div className="cg-set-actions">
+              <Button variant="destructive" disabled={restarting} onClick={onRestart}>
+                {restarting ? '重启中，请稍候…' : '重启面板'}
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => void api.downloadBackup().catch((err) => setError(errorMessage(err)))}
               >
-            下载备份
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            备份为业务 SQLite 数据库快照（VACUUM INTO），可直接替换数据文件恢复；
-            <strong>不包含操作日志和请求日志</strong>。
-          </p>
-        </CardContent>
-      </Card>
-        </TabsContent>
-      </Tabs>
+                下载备份
+              </Button>
+            </div>
+            <p className="cg-set-note">
+              备份为业务 SQLite 数据库快照（VACUUM INTO），可直接替换数据文件恢复；
+              <strong>不包含操作日志和请求日志</strong>。
+            </p>
+          </div>
+        </section>
+      </div>
     </Page>
   )
 }

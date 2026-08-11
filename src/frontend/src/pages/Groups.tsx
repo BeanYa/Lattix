@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { PlusIcon, Trash2Icon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -14,6 +13,8 @@ import type { Chain, ExternalSubscription, ExternalSubscriptionMode, LinkGroup, 
 import { useAppDialog } from '@/lib/app-dialog'
 import { humanizeBytes } from '@/lib/format'
 import { useOperationProgress } from '@/lib/operation-progress-context'
+
+import './groups.css'
 
 const EXTERNAL_MODE_LABELS: Record<ExternalSubscriptionMode, string> = {
   stack: '叠加',
@@ -38,6 +39,7 @@ export default function Groups() {
   const [tab, setTab] = useState<'links' | 'users'>('links')
   return (
     <Page>
+      <span className="cg-eyebrow">ACCESS / GROUPS</span>
       <PageHeader title="分组" description="链路分组编排链路与外部订阅；用户分组把链路分组分配给用户。" />
       <Tabs value={tab} onValueChange={(value) => value && setTab(value as 'links' | 'users')}>
         <TabsList>
@@ -103,22 +105,22 @@ function LinkGroupsTab() {
       {groups === null ? <LoadingState /> : groups.length === 0 ? (
         <EmptyState title="暂无链路分组" description="创建链路分组，把链路与外部订阅编排到一起。" />
       ) : (
-        groups.map((g) => (
-          <div key={g.id} className="game-panel space-y-2 rounded-lg border p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="font-medium">{g.name}</span>
-                <Badge variant="secondary">{g.chain_count} 链路</Badge>
-                <Badge variant="secondary">{g.external_subscription_count} 外部订阅</Badge>
-                {(g.user_group_names ?? []).map((n) => <Badge key={n} variant="outline">{n}</Badge>)}
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setEditing(g)}>编辑</Button>
-                <Button variant="outline" size="sm" onClick={() => onDelete(g)}><Trash2Icon className="size-4" /></Button>
-              </div>
+        <div className="cg-groups-list">
+        {groups.map((g) => (
+          <div key={g.id} className="cg-card cg-group-card">
+            <div className="cg-group-card-main">
+              <span className="cg-group-card-name">{g.name}</span>
+              <span className="cg-status is-blue">{g.chain_count} 链路</span>
+              <span className="cg-status is-blue">{g.external_subscription_count} 外部订阅</span>
+              {(g.user_group_names ?? []).map((n) => <span key={n} className="cg-status is-muted">{n}</span>)}
+            </div>
+            <div className="cg-group-card-actions">
+              <Button variant="outline" size="sm" onClick={() => setEditing(g)}>编辑</Button>
+              <Button variant="outline" size="sm" title="删除链路分组" onClick={() => onDelete(g)}><Trash2Icon className="size-4" /></Button>
             </div>
           </div>
-        ))
+        ))}
+        </div>
       )}
       {editing && (
         <LinkGroupDialog
@@ -194,15 +196,15 @@ function LinkGroupDialog({ group, linkOptions, extSubs, saving, setSaving, onClo
           <div className="space-y-2">
             <Label>链路（仅共享入口链路可分配）</Label>
             {linkOptions.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无链路，请先在「链路」页创建。</p>
+              <p className="cg-groups-hint">暂无链路，请先在「链路」页创建。</p>
             ) : (
               linkOptions.map((link) => (
-                <label key={link.chainId} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
-                  <input type="checkbox" className="size-4 accent-primary" checked={chainSel.includes(link.chainId)} onChange={(e) => toggleChain(link.chainId, e.target.checked)} />
-                  <Badge variant="secondary">{link.type === 'direct' ? '直连' : '中转'}</Badge>
+                <label key={link.chainId} className="cg-groups-check-row">
+                  <input type="checkbox" className="cg-groups-checkbox" checked={chainSel.includes(link.chainId)} onChange={(e) => toggleChain(link.chainId, e.target.checked)} />
+                  <span className="cg-status is-blue">{link.type === 'direct' ? '直连' : '中转'}</span>
                   <span>{link.name}</span>
-                  <span className="text-xs text-muted-foreground">{link.detail}</span>
-                  {link.status !== 'active' && <span className="text-xs text-muted-foreground">（{link.status}）</span>}
+                  <span className="cg-groups-check-row-detail">{link.detail}</span>
+                  {link.status !== 'active' && <span className="cg-groups-check-row-detail">（{link.status}）</span>}
                 </label>
               ))
             )}
@@ -210,16 +212,16 @@ function LinkGroupDialog({ group, linkOptions, extSubs, saving, setSaving, onClo
           <div className="space-y-2 border-t pt-3">
             <Label>外部订阅（叠加 = 额度相加，并入 = 已用计入面板配额，附加 = 仅节点）</Label>
             {extSubs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无外部订阅，请先在「外部订阅」页添加。</p>
+              <p className="cg-groups-hint">暂无外部订阅，请先在「外部订阅」页添加。</p>
             ) : (
               extSubs.map((sub) => {
                 const checked = extSel[sub.id] !== undefined
                 return (
-                  <label key={sub.id} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
-                    <input type="checkbox" className="size-4 accent-primary" checked={checked}
+                  <label key={sub.id} className="cg-groups-check-row">
+                    <input type="checkbox" className="cg-groups-checkbox" checked={checked}
                       onChange={(e) => setExtSel((cur) => { const next = { ...cur }; if (e.target.checked) next[sub.id] = 'stack'; else delete next[sub.id]; return next })} />
                     <span>{sub.name}</span>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="cg-groups-check-row-detail">
                       {sub.total > 0 ? `${humanizeBytes(sub.total)} / 已用 ${humanizeBytes(sub.upload + sub.download)}` : '额度未知'}
                     </span>
                     <span className="ml-auto">
@@ -230,7 +232,7 @@ function LinkGroupDialog({ group, linkOptions, extSubs, saving, setSaving, onClo
               })
             )}
           </div>
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <Notice tone="danger">{error}</Notice>}
         </div>
         <DialogFooter>
           <Button onClick={onSave} disabled={saving}>{saving ? '保存中…' : '保存'}</Button>
@@ -291,21 +293,21 @@ function UserGroupsTab() {
       {groups === null ? <LoadingState /> : groups.length === 0 ? (
         <EmptyState title="暂无用户分组" description="创建用户分组，把链路分组分配给一批用户。" />
       ) : (
-        groups.map((g) => (
-          <div key={g.id} className="game-panel space-y-2 rounded-lg border p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="font-medium">{g.name}</span>
-                <Badge variant="secondary">{g.member_count} 用户</Badge>
-                <Badge variant="secondary">{g.link_group_count} 链路分组</Badge>
-              </div>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setEditing(g)}>编辑</Button>
-                <Button variant="outline" size="sm" onClick={() => onDelete(g)}><Trash2Icon className="size-4" /></Button>
-              </div>
+        <div className="cg-groups-list">
+        {groups.map((g) => (
+          <div key={g.id} className="cg-card cg-group-card">
+            <div className="cg-group-card-main">
+              <span className="cg-group-card-name">{g.name}</span>
+              <span className="cg-status is-blue">{g.member_count} 用户</span>
+              <span className="cg-status is-blue">{g.link_group_count} 链路分组</span>
+            </div>
+            <div className="cg-group-card-actions">
+              <Button variant="outline" size="sm" onClick={() => setEditing(g)}>编辑</Button>
+              <Button variant="outline" size="sm" title="删除用户分组" onClick={() => onDelete(g)}><Trash2Icon className="size-4" /></Button>
             </div>
           </div>
-        ))
+        ))}
+        </div>
       )}
       {editing && (
         <UserGroupDialog
@@ -385,18 +387,18 @@ function UserGroupDialog({ group, groups, users, linkGroups, saving, setSaving, 
           <div className="space-y-2">
             <Label>用户</Label>
             {users.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无用户。</p>
+              <p className="cg-groups-hint">暂无用户。</p>
             ) : (
               <>
                 {hiddenCount > 0 && (
-                  <p className="text-sm text-muted-foreground">已分配到其他分组的 {hiddenCount} 位用户不在本页展示。</p>
+                  <p className="cg-groups-hint">已分配到其他分组的 {hiddenCount} 位用户不在本页展示。</p>
                 )}
                 {visibleUsers.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">全部用户均已分配到其他分组。</p>
+                  <p className="cg-groups-hint">全部用户均已分配到其他分组。</p>
                 ) : (
                   visibleUsers.map((u) => (
-                    <label key={u.id} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
-                      <input type="checkbox" className="size-4 accent-primary" checked={userSel.includes(u.id)}
+                    <label key={u.id} className="cg-groups-check-row">
+                      <input type="checkbox" className="cg-groups-checkbox" checked={userSel.includes(u.id)}
                         onChange={(e) => setUserSel((cur) => (e.target.checked ? [...cur, u.id] : cur.filter((x) => x !== u.id)))} />
                       <span>{u.name}</span>
                     </label>
@@ -408,19 +410,19 @@ function UserGroupDialog({ group, groups, users, linkGroups, saving, setSaving, 
           <div className="space-y-2 border-t pt-3">
             <Label>关联链路分组</Label>
             {linkGroups.length === 0 ? (
-              <p className="text-sm text-muted-foreground">暂无链路分组，请先在「链路分组」页创建。</p>
+              <p className="cg-groups-hint">暂无链路分组，请先在「链路分组」页创建。</p>
             ) : (
               linkGroups.map((g) => (
-                <label key={g.id} className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
-                  <input type="checkbox" className="size-4 accent-primary" checked={linkGroupSel.includes(g.id)}
+                <label key={g.id} className="cg-groups-check-row">
+                  <input type="checkbox" className="cg-groups-checkbox" checked={linkGroupSel.includes(g.id)}
                     onChange={(e) => setLinkGroupSel((cur) => (e.target.checked ? [...cur, g.id] : cur.filter((x) => x !== g.id)))} />
                   <span>{g.name}</span>
-                  <span className="ml-auto text-xs text-muted-foreground">{g.chain_count} 链路 / {g.external_subscription_count} 外部订阅</span>
+                  <span className="cg-groups-check-row-detail ml-auto">{g.chain_count} 链路 / {g.external_subscription_count} 外部订阅</span>
                 </label>
               ))
             )}
           </div>
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <Notice tone="danger">{error}</Notice>}
         </div>
         <DialogFooter>
           <Button onClick={onSave} disabled={saving}>{saving ? '保存中…' : '保存'}</Button>

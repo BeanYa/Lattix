@@ -32,13 +32,13 @@ function SuspendedRoute({ children, fullPage = false }: {
       fallback={(
         <div
           className={fullPage
-            ? 'grid min-h-[100dvh] place-items-center bg-background p-4'
+            ? 'grid min-h-[100dvh] place-items-center p-4'
             : 'grid min-h-[40vh] place-items-center'}
           role="status"
         >
-          <div className="game-panel flex items-center gap-3 px-5 py-4 text-sm text-muted-foreground">
-            <span className="size-3 animate-pulse rounded-sm bg-primary" />
-            正在加载页面...
+          <div className="cg-card-raised flex items-center gap-3 px-5 py-4">
+            <span className="size-3 animate-pulse rounded-sm border-2 border-border bg-primary" />
+            <span className="cg-micro text-muted-foreground">正在加载页面...</span>
           </div>
         </div>
       )}
@@ -52,10 +52,10 @@ function RequireAuth({ children }: { children: ReactElement }) {
   const { username, loading } = useAuth()
   if (loading) {
     return (
-      <div className="flex min-h-[100dvh] items-center justify-center bg-background p-4">
-        <div className="game-panel flex items-center gap-3 px-5 py-4 text-sm text-muted-foreground">
-          <span className="size-3 animate-pulse rounded-sm bg-primary" />
-          正在连接控制面板...
+      <div className="flex min-h-[100dvh] items-center justify-center p-4">
+        <div className="cg-card-raised flex items-center gap-3 px-5 py-4">
+          <span className="size-3 animate-pulse rounded-sm border-2 border-border bg-primary" />
+          <span className="cg-micro text-muted-foreground">正在连接控制面板...</span>
         </div>
       </div>
     )

@@ -9,16 +9,7 @@ import {
 } from 'lucide-react'
 
 import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -50,6 +41,8 @@ import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { useOperationProgress } from '@/lib/operation-progress-context'
 import { useTimezone } from '@/lib/timezone'
 import type { ExternalChain, ExternalSubscription } from '@/lib/types'
+
+import './external-subscriptions.css'
 
 // 订阅商通常按客户端 User-Agent 放行，不同服务商认可名单不同。
 const UA_OPTIONS: Array<{ value: string; label: string }> = [
@@ -234,14 +227,19 @@ export default function ExternalSubscriptions() {
   }
 
   return (
-    <Page>
+    <Page className="cg-page-in">
+      <div className="extsub-topline">
+        <span className="cg-eyebrow">SUBSCRIPTION / EXTERNAL</span>
+        <span className="cg-pill">{String(subs.length).padStart(2, '0')} SOURCES</span>
+      </div>
       <PageHeader
         title="外部订阅"
+        description="导入第三方订阅链接以汇聚节点，支持手动同步与按间隔自动更新。"
         actions={(
-          <Button onClick={() => beginEdit()}>
+          <button type="button" className="cg-button is-primary" onClick={() => beginEdit()}>
             <PlusIcon />
             新建订阅
-          </Button>
+          </button>
         )}
       />
       {error ? <Notice tone="danger">{error}</Notice> : null}
@@ -257,72 +255,69 @@ export default function ExternalSubscriptions() {
           />
         ) : (
           subs.map((sub) => (
-            <Card key={sub.id} size="sm">
-              <CardHeader className="border-b has-data-[slot=card-action]:grid-cols-1 sm:has-data-[slot=card-action]:grid-cols-[1fr_auto]">
-                <CardTitle className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="truncate">{sub.name}</span>
-                  {sub.format ? <Badge variant="secondary">{sub.format}</Badge> : null}
-                </CardTitle>
-                <CardDescription className="flex min-w-0 items-center gap-1.5 pl-10 text-xs">
-                  <span className="truncate font-mono" title={sub.url}>{sub.url}</span>
-                </CardDescription>
-                <CardAction className="col-start-1 row-start-3 row-span-1 justify-self-start sm:col-start-2 sm:row-start-1 sm:row-span-2 sm:justify-self-end">
-                  <div className="flex max-w-full flex-wrap gap-2 sm:justify-end">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      title="立即同步"
-                      disabled={syncing === sub.id}
-                      onClick={() => sync(sub)}
-                    >
-                      <RefreshCwIcon className={syncing === sub.id ? 'animate-spin' : undefined} />
-                      {syncing === sub.id ? '同步中…' : '同步'}
-                    </Button>
-                    <Button variant="outline" size="sm" title="查看导入的节点" onClick={() => openChains(sub)}>
-                      <EyeIcon />
-                      节点
-                    </Button>
-                    <Button variant="ghost" size="icon-sm" title="编辑" onClick={() => beginEdit(sub)}>
-                      <FileCode2Icon />
-                    </Button>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      disabled={deleting === sub.id}
-                      onClick={() => remove(sub)}
-                    >
-                      <Trash2Icon />
-                      {deleting === sub.id ? '删除中…' : '删除'}
-                    </Button>
+            <article key={sub.id} className="cg-card-raised extsub-card">
+              <header className="extsub-card-head">
+                <div className="extsub-card-title">
+                  <div className="extsub-card-name">
+                    <strong className="truncate">{sub.name}</strong>
+                    {sub.format ? <span className="cg-status is-blue">{sub.format}</span> : null}
                   </div>
-                </CardAction>
-              </CardHeader>
-              <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="space-y-1">
-                  <span className="block text-[11px] text-muted-foreground">节点数</span>
-                  <span className="block font-medium tabular-nums">{sub.node_count}</span>
+                  <span className="extsub-card-url" title={sub.url}>{sub.url}</span>
                 </div>
-                <div className="space-y-1">
-                  <span className="block text-[11px] text-muted-foreground">流量（已用/总量）</span>
-                  <span className="block font-medium tabular-nums">{humanizeBytes(sub.download)} / {humanizeBytes(sub.total)}</span>
+                <div className="extsub-card-actions">
+                  <button
+                    type="button"
+                    className="cg-button"
+                    title="立即同步"
+                    disabled={syncing === sub.id}
+                    onClick={() => sync(sub)}
+                  >
+                    <RefreshCwIcon className={syncing === sub.id ? 'animate-spin' : undefined} />
+                    {syncing === sub.id ? '同步中…' : '同步'}
+                  </button>
+                  <button type="button" className="cg-button" title="查看导入的节点" onClick={() => openChains(sub)}>
+                    <EyeIcon />
+                    节点
+                  </button>
+                  <button type="button" className="cg-icon-button" title="编辑" onClick={() => beginEdit(sub)}>
+                    <FileCode2Icon />
+                  </button>
+                  <button
+                    type="button"
+                    className="cg-button extsub-danger"
+                    disabled={deleting === sub.id}
+                    onClick={() => remove(sub)}
+                  >
+                    <Trash2Icon />
+                    {deleting === sub.id ? '删除中…' : '删除'}
+                  </button>
                 </div>
-                <div className="space-y-1">
-                  <span className="block text-[11px] text-muted-foreground">到期时间</span>
-                  <span className="block">
-                    {sub.expire ? formatDateTime(new Date(sub.expire * 1000).toISOString(), timezone) : '-'}
+              </header>
+              <div className="extsub-card-stats">
+                <div className="extsub-stat">
+                  <span className="cg-micro">节点数 / NODES</span>
+                  <strong>{sub.node_count}</strong>
+                </div>
+                <div className="extsub-stat">
+                  <span className="cg-micro">流量 USAGE / TOTAL</span>
+                  <strong>{humanizeBytes(sub.download)} / {humanizeBytes(sub.total)}</strong>
+                  <span className="extsub-traffic-bar" aria-hidden="true">
+                    <i style={{ width: `${sub.total > 0 ? Math.min(100, Math.round((sub.download / sub.total) * 100)) : 0}%` }} />
                   </span>
                 </div>
-                <div className="space-y-1">
-                  <span className="block text-[11px] text-muted-foreground">上次同步</span>
-                  <span className="block">
-                    {sub.last_sync_at ? formatDateTime(sub.last_sync_at, timezone) : '-'}
-                  </span>
+                <div className="extsub-stat">
+                  <span className="cg-micro">到期时间 / EXPIRE</span>
+                  <strong>{sub.expire ? formatDateTime(new Date(sub.expire * 1000).toISOString(), timezone) : '-'}</strong>
                 </div>
-                {sub.last_error ? (
-                  <Notice tone="danger" className="sm:col-span-2 lg:col-span-4">{sub.last_error}</Notice>
-                ) : null}
-              </CardContent>
-            </Card>
+                <div className="extsub-stat">
+                  <span className="cg-micro">上次同步 / LAST SYNC</span>
+                  <strong>{sub.last_sync_at ? formatDateTime(sub.last_sync_at, timezone) : '-'}</strong>
+                </div>
+              </div>
+              {sub.last_error ? (
+                <Notice tone="danger" className="extsub-error">{sub.last_error}</Notice>
+              ) : null}
+            </article>
           ))
         )}
       </div>
@@ -375,19 +370,19 @@ export default function ExternalSubscriptions() {
               )}
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
-              <label className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
+              <label className="extsub-check">
                 <input
                   type="checkbox"
-                  className="size-4 accent-primary"
+                  className="extsub-check-input"
                   checked={skipCertVerify}
                   onChange={(event) => setSkipCertVerify(event.target.checked)}
                 />
                 跳过证书校验
               </label>
-              <label className="flex cursor-pointer items-center gap-2 rounded-md border p-2 text-sm">
+              <label className="extsub-check">
                 <input
                   type="checkbox"
-                  className="size-4 accent-primary"
+                  className="extsub-check-input"
                   checked={autoUpdate}
                   onChange={(event) => setAutoUpdate(event.target.checked)}
                 />
@@ -445,9 +440,9 @@ export default function ExternalSubscriptions() {
                 {chains.map((chain) => (
                   <TableRow key={chain.id}>
                     <TableCell className="font-medium">{chain.name}</TableCell>
-                    <TableCell><Badge variant="secondary">{chain.protocol}</Badge></TableCell>
+                    <TableCell><span className="cg-status is-blue">{chain.protocol}</span></TableCell>
                     <TableCell className="font-mono text-xs">{chain.server}:{chain.port}</TableCell>
-                    <TableCell><Badge variant="outline" className="font-mono">{chain.config_sha256.slice(0, 8)}</Badge></TableCell>
+                    <TableCell><code className="extsub-sha">{chain.config_sha256.slice(0, 8)}</code></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

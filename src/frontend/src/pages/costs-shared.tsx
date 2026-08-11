@@ -5,7 +5,6 @@ import { CoinsIcon } from 'lucide-react'
 
 import { type ChartOption } from '@/components/echarts'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -13,10 +12,29 @@ import { api } from '@/lib/api'
 import type { BillingStatsGranularity, BillingStatsRateMode } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
-export const SERVER_PALETTE = [
-  '#5f5cdb', '#48aa88', '#e6bc45', '#e17872', '#6994d1', '#66cbb7',
-  '#f2a291', '#b9b4ff', '#42b88c', '#e97872', '#3e72c7', '#278f69',
-]
+// ECharts 走 canvas 渲染，无法直接消费 var() 字符串，
+// 因此在运行时从 CSS 变量解析颜色，深浅色随 .dark 令牌自动切换。
+// fallback 仅在变量缺失时兜底（与 :root 令牌一致）。
+export interface ChartThemeColors {
+  palette: string[]
+  textColor: string
+  axisColor: string
+  gridColor: string
+  surfaceColor: string
+}
+
+export function chartThemeColors(): ChartThemeColors {
+  const styles = getComputedStyle(document.documentElement)
+  const read = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback
+  return {
+    palette: ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5']
+      .map((name) => read(name, '#3568D7')),
+    textColor: read('--cg-muted', '#7F7A69'),
+    axisColor: read('--cg-subtle', '#A09A89'),
+    gridColor: read('--cg-grid-line', 'rgba(60, 55, 42, .1)'),
+    surfaceColor: read('--cg-paper-light', '#FFFDF7'),
+  }
+}
 
 export const GRANULARITY_LABEL: Record<BillingStatsGranularity, string> = {
   day: '日',
@@ -24,11 +42,11 @@ export const GRANULARITY_LABEL: Record<BillingStatsGranularity, string> = {
   year: '年',
 }
 
-export const billingStatusVariant: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-  active: 'default',
-  due_today: 'secondary',
-  assumed_valid: 'outline',
-  expired: 'destructive',
+export const billingStatusTone: Record<string, 'is-lime' | 'is-blue' | 'is-muted' | 'is-red'> = {
+  active: 'is-lime',
+  due_today: 'is-blue',
+  assumed_valid: 'is-muted',
+  expired: 'is-red',
 }
 
 export const billingStatusLabel: Record<string, string> = {
@@ -106,11 +124,11 @@ export function buildBarOption(options: {
   servers: CostsSeriesServer[]
   granularity: BillingStatsGranularity
   currency: string
-  textColor: string
-  axisColor: string
+  colors: ChartThemeColors
 }): ChartOption {
+  const { colors } = options
   return {
-    color: SERVER_PALETTE,
+    color: colors.palette,
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
@@ -119,7 +137,7 @@ export function buildBarOption(options: {
     legend: {
       type: 'scroll',
       bottom: 0,
-      textStyle: { color: options.textColor },
+      textStyle: { color: colors.textColor },
       data: options.servers.map((server) => server.alias),
     },
     grid: {
@@ -132,17 +150,17 @@ export function buildBarOption(options: {
     xAxis: {
       type: 'category',
       data: options.periods,
-      axisLabel: { color: options.textColor },
-      axisLine: { lineStyle: { color: options.axisColor } },
+      axisLabel: { color: colors.textColor },
+      axisLine: { lineStyle: { color: colors.axisColor } },
       axisTick: { show: false },
     },
     yAxis: {
       type: 'value',
-      axisLabel: { color: options.textColor },
-      splitLine: { lineStyle: { color: options.axisColor } },
+      axisLabel: { color: colors.textColor },
+      splitLine: { lineStyle: { color: colors.gridColor } },
     },
     dataZoom: options.granularity === 'day'
-      ? [{ type: 'inside' }, { type: 'slider', bottom: 24, height: 18, borderColor: options.axisColor }]
+      ? [{ type: 'inside' }, { type: 'slider', bottom: 24, height: 18, borderColor: colors.axisColor }]
       : [],
     series: options.servers.map((server) => ({
       name: server.alias,
@@ -158,11 +176,10 @@ export function buildBarOption(options: {
 export function buildDonutOption(
   data: Array<{ name: string; value: number }>,
   currency: string,
-  textColor: string,
-  theme: string,
+  colors: ChartThemeColors,
 ): ChartOption {
   return {
-    color: SERVER_PALETTE,
+    color: colors.palette,
     tooltip: {
       trigger: 'item',
       valueFormatter: (value: unknown) => `${money(Number(value), currency)} ${currency}`,
@@ -172,7 +189,7 @@ export function buildDonutOption(
       orient: 'vertical',
       right: 8,
       top: 'middle',
-      textStyle: { color: textColor },
+      textStyle: { color: colors.textColor },
     },
     series: [{
       name: '成本占比',
@@ -181,10 +198,10 @@ export function buildDonutOption(
       center: ['38%', '50%'],
       avoidLabelOverlap: true,
       itemStyle: {
-        borderColor: theme === 'dark' ? '#1c1e2e' : '#ffffff',
+        borderColor: colors.surfaceColor,
         borderWidth: 2,
       },
-      label: { color: textColor, formatter: '{b}\n{d}%' },
+      label: { color: colors.textColor, formatter: '{b}\n{d}%' },
       data,
     }],
   }
@@ -210,59 +227,55 @@ export function StatsControls({
   onGranularity, onFrom, onTo, onPreset, onRateMode,
 }: StatsControlsProps) {
   return (
-    <Card>
-      <CardContent className="flex flex-wrap items-end gap-x-4 gap-y-3">
-        <div className="space-y-2">
-          <span className="text-xs font-medium text-muted-foreground">统计粒度</span>
-          <Tabs value={granularity} onValueChange={onGranularity}>
-            <TabsList>
-              {(Object.keys(GRANULARITY_LABEL) as BillingStatsGranularity[]).map((gran) => (
-                <TabsTrigger key={gran} value={gran}>{GRANULARITY_LABEL[gran]}</TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
+    <section className="cg-card cg-costs-controls" aria-label="统计条件">
+      <div className="cg-costs-control">
+        <span className="cg-costs-control-label">统计粒度</span>
+        <Tabs value={granularity} onValueChange={onGranularity}>
+          <TabsList>
+            {(Object.keys(GRANULARITY_LABEL) as BillingStatsGranularity[]).map((gran) => (
+              <TabsTrigger key={gran} value={gran}>{GRANULARITY_LABEL[gran]}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
+      <div className="cg-costs-control">
+        <span className="cg-costs-control-label">起始日期</span>
+        <Input type="date" value={from} max={to} onChange={(event) => onFrom(event.target.value)} className="w-40" />
+      </div>
+      <div className="cg-costs-control">
+        <span className="cg-costs-control-label">结束日期</span>
+        <Input type="date" value={to} min={from} onChange={(event) => onTo(event.target.value)} className="w-40" />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => onPreset('month')}>本月</Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => onPreset('12months')}>近 12 个月</Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => onPreset('3years')}>近 3 年</Button>
+        <Button type="button" variant="outline" size="sm" disabled={presetsDisabled} onClick={() => onPreset('all')}>全部</Button>
+      </div>
+      {customAvailable ? (
+        <div className="cg-costs-control">
+          <span className="cg-costs-control-label">换算方式</span>
+          <Select
+            value={rateMode}
+            onValueChange={(value) => value && onRateMode(value as BillingStatsRateMode)}
+          >
+            <SelectTrigger className="w-40" size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="custom">自定义锚点</SelectItem>
+              <SelectItem value="public">公共汇率</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <div className="grid grid-cols-2 items-end gap-2">
-          <div className="space-y-2">
-            <span className="text-xs font-medium text-muted-foreground">起始日期</span>
-            <Input type="date" value={from} max={to} onChange={(event) => onFrom(event.target.value)} className="w-40" />
-          </div>
-          <div className="space-y-2">
-            <span className="text-xs font-medium text-muted-foreground">结束日期</span>
-            <Input type="date" value={to} min={from} onChange={(event) => onTo(event.target.value)} className="w-40" />
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => onPreset('month')}>本月</Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => onPreset('12months')}>近 12 个月</Button>
-          <Button type="button" variant="outline" size="sm" onClick={() => onPreset('3years')}>近 3 年</Button>
-          <Button type="button" variant="outline" size="sm" disabled={presetsDisabled} onClick={() => onPreset('all')}>全部</Button>
-        </div>
-        {customAvailable ? (
-          <div className="space-y-2">
-            <span className="text-xs font-medium text-muted-foreground">换算方式</span>
-            <Select
-              value={rateMode}
-              onValueChange={(value) => value && onRateMode(value as BillingStatsRateMode)}
-            >
-              <SelectTrigger className="w-40" size="sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="custom">自定义锚点</SelectItem>
-                <SelectItem value="public">公共汇率</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        ) : null}
-        {rateDate ? (
-          <span className="inline-flex items-center gap-2 rounded-full border bg-card px-3 py-1.5 text-sm font-medium">
-            <CoinsIcon className="size-4" />
-            汇率日期 {rateDate}
-          </span>
-        ) : null}
-      </CardContent>
-    </Card>
+      ) : null}
+      {rateDate ? (
+        <span className="cg-pill">
+          <CoinsIcon size={14} />
+          汇率日期 {rateDate}
+        </span>
+      ) : null}
+    </section>
   )
 }
 

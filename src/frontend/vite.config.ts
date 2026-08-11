@@ -24,7 +24,7 @@ export default defineConfig({
         target: apiProxyTarget,
         changeOrigin: false,
       },
-      '/sub': {
+      '/sub/': {
         target: apiProxyTarget,
         changeOrigin: false,
         bypass(request) {

@@ -9,7 +9,6 @@ import {
 } from 'lucide-react'
 
 import { EmptyState, Notice, Page, PageHeader, Surface } from '@/components/PagePrimitives'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -42,6 +41,8 @@ import { formatDateTime } from '@/lib/format'
 import { useOperationProgress } from '@/lib/operation-progress-context'
 import { useTimezone } from '@/lib/timezone'
 import type { SubscriptionTemplate } from '@/lib/types'
+
+import './subscription-templates.css'
 
 const kinds: Array<{ value: SubscriptionTemplate['kind']; label: string }> = [
   { value: 'portable', label: 'Lattix 中立 YAML' },
@@ -166,16 +167,24 @@ export default function SubscriptionTemplates() {
   }
 
   return (
-    <Page>
+    <Page className="cg-page-in">
+      <div className="subtpl-topline">
+        <span className="cg-eyebrow">SUBSCRIPTION / TEMPLATES</span>
+        <span className="cg-pill">{String(templates.length).padStart(2, '0')} TEMPLATES</span>
+      </div>
       <PageHeader
         title="订阅模板"
+        description="管理订阅转换模板：本地 YAML / INI / CONF 内容或公开 GitHub 文件，支持刷新缓存与克隆。"
         actions={(
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => refresh()} disabled={Boolean(refreshing)}>
+          <div className="subtpl-actions">
+            <button type="button" className="cg-button" onClick={() => refresh()} disabled={Boolean(refreshing)}>
               <RefreshCwIcon className={refreshing === 'all' ? 'animate-spin' : undefined} />
               刷新全部
-            </Button>
-            <Button onClick={() => beginEdit()}><PlusIcon />新建模板</Button>
+            </button>
+            <button type="button" className="cg-button is-primary" onClick={() => beginEdit()}>
+              <PlusIcon />
+              新建模板
+            </button>
           </div>
         )}
       />
@@ -200,34 +209,45 @@ export default function SubscriptionTemplates() {
               <TableRow key={template.id}>
                 <TableCell>
                   <div className="font-medium">{template.name}</div>
-                  <div className="max-w-sm truncate font-mono text-xs text-muted-foreground">{template.id}</div>
+                  <div className="subtpl-id">{template.id}</div>
                 </TableCell>
-                <TableCell><Badge variant="secondary">{template.kind}</Badge></TableCell>
+                <TableCell><span className="cg-status is-blue">{template.kind}</span></TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <Badge variant={template.readonly ? 'outline' : 'secondary'}>{template.origin === 'github' ? 'GitHub' : '本地'}</Badge>
-                    {template.readonly ? <span className="text-xs text-muted-foreground">只读</span> : null}
+                    <span className={template.origin === 'github' ? 'cg-status is-blue' : 'cg-status is-muted'}>
+                      {template.origin === 'github' ? 'GitHub' : '本地'}
+                    </span>
+                    {template.readonly ? <span className="cg-status is-muted">只读</span> : null}
                   </div>
                 </TableCell>
                 <TableCell className="text-xs">
                   {template.last_error ? (
-                    <span className="text-destructive" title={template.last_error}>刷新失败，沿用缓存</span>
-                  ) : template.fetched_at ? formatDateTime(template.fetched_at, timezone) : template.content ? '本地内容' : '尚未缓存'}
+                    <span className="cg-status is-red" title={template.last_error}>刷新失败，沿用缓存</span>
+                  ) : template.fetched_at ? (
+                    <div className="subtpl-cache">
+                      <span className="cg-status is-lime">已缓存</span>
+                      <span className="subtpl-cache-time">{formatDateTime(template.fetched_at, timezone)}</span>
+                    </div>
+                  ) : template.content ? (
+                    <span className="cg-status is-muted">本地内容</span>
+                  ) : (
+                    <span className="cg-status is-muted">尚未缓存</span>
+                  )}
                 </TableCell>
                 <TableCell className="text-xs">{template.license || '-'}</TableCell>
                 <TableCell>
                   <div className="flex gap-1">
-                    <Button variant="ghost" size="icon" title="模板预览" onClick={() => setPreview(template)}><EyeIcon /></Button>
+                    <button type="button" className="cg-icon-button" title="模板预览" onClick={() => setPreview(template)}><EyeIcon /></button>
                     {template.origin === 'github' ? (
-                      <Button variant="ghost" size="icon" title="刷新" onClick={() => refresh(template.id)} disabled={Boolean(refreshing)}>
+                      <button type="button" className="cg-icon-button" title="刷新" onClick={() => refresh(template.id)} disabled={Boolean(refreshing)}>
                         <RefreshCwIcon className={refreshing === template.id ? 'animate-spin' : undefined} />
-                      </Button>
+                      </button>
                     ) : null}
-                    <Button variant="ghost" size="icon" title="克隆" onClick={() => clone(template)}><CopyIcon /></Button>
+                    <button type="button" className="cg-icon-button" title="克隆" onClick={() => clone(template)}><CopyIcon /></button>
                     {!template.readonly ? (
                       <>
-                        <Button variant="ghost" size="icon" title="编辑" onClick={() => beginEdit(template)}><FileCode2Icon /></Button>
-                        <Button variant="ghost" size="icon" title="删除" onClick={() => remove(template)}><Trash2Icon /></Button>
+                        <button type="button" className="cg-icon-button" title="编辑" onClick={() => beginEdit(template)}><FileCode2Icon /></button>
+                        <button type="button" className="cg-icon-button" title="删除" onClick={() => remove(template)}><Trash2Icon /></button>
                       </>
                     ) : null}
                   </div>
@@ -263,7 +283,7 @@ export default function SubscriptionTemplates() {
               <div className="space-y-2">
                 <Label>模板内容</Label>
                 <textarea
-                  className="min-h-80 w-full resize-y rounded-md border bg-background p-3 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="subtpl-code-input"
                   value={content}
                   onChange={(event) => setContent(event.target.value)}
                   spellCheck={false}
@@ -280,7 +300,7 @@ export default function SubscriptionTemplates() {
       <Dialog open={preview !== null} onOpenChange={(next) => !next && setPreview(null)}>
         <DialogContent className="max-h-[90vh] sm:max-w-5xl overflow-y-auto">
           <DialogHeader><DialogTitle>模板预览</DialogTitle><DialogDescription>{preview?.name} · 未填充 Lattix 用户和链路数据</DialogDescription></DialogHeader>
-          <pre className="max-h-[65vh] overflow-auto rounded-md border bg-muted/30 p-4 font-mono text-xs whitespace-pre-wrap break-words">{preview?.content || '尚未取得有效缓存'}</pre>
+          <pre className="cg-terminal subtpl-preview">{preview?.content || '尚未取得有效缓存'}</pre>
           <DialogFooter showCloseButton />
         </DialogContent>
       </Dialog>

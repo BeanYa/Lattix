@@ -37,7 +37,7 @@ export function CountryCombobox({
       }}
       autoHighlight
     >
-      <Combobox.InputGroup className="relative flex h-8 w-full items-center rounded-lg border border-input bg-transparent text-sm transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50">
+      <Combobox.InputGroup className="sv-combobox relative flex h-9 w-full items-center text-sm">
         {selected ? (
           <CountryFlag
             code={selected.code}
@@ -65,7 +65,7 @@ export function CountryCombobox({
 
       <Combobox.Portal>
         <Combobox.Positioner sideOffset={4} className="isolate z-50 outline-none">
-          <Combobox.Popup className="relative isolate max-h-(--available-height) w-(--anchor-width) min-w-64 origin-(--transform-origin) overflow-hidden rounded-lg bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
+          <Combobox.Popup className="sv-combobox-popup relative isolate max-h-(--available-height) w-(--anchor-width) min-w-64 origin-(--transform-origin) overflow-hidden duration-100 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
             <Combobox.Empty className="px-3 py-4 text-center text-sm text-muted-foreground">
               未找到匹配的国家
             </Combobox.Empty>
@@ -74,12 +74,12 @@ export function CountryCombobox({
                 <Combobox.Item
                   key={country.code}
                   value={country}
-                  className="relative flex cursor-default items-center gap-2 rounded-md py-1.5 pr-8 pl-2 text-sm outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground"
+                  className="sv-combobox-item relative flex cursor-default items-center gap-2 rounded-md py-1.5 pr-8 pl-2 text-sm outline-none select-none"
                 >
                   <CountryFlag code={country.code} label={`${country.label}国旗`} />
                   <span>{country.label}</span>
                   <span className="text-xs text-muted-foreground">{country.name}</span>
-                  <span className="ml-auto text-xs text-muted-foreground">{country.code}</span>
+                  <span className="ml-auto font-mono text-xs text-muted-foreground">{country.code}</span>
                   <Combobox.ItemIndicator className="absolute right-2 flex size-4 items-center justify-center">
                     <CheckIcon />
                   </Combobox.ItemIndicator>

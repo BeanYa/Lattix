@@ -1,0 +1,185 @@
+/* ============================================================
+   ExternalSubscriptions — Cream Grid Tech 页面样式
+   ============================================================ */
+
+.extsub-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* ---------- 订阅卡片 ---------- */
+
+.extsub-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.extsub-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+  border-bottom: var(--cg-border);
+  flex-wrap: wrap;
+}
+
+.extsub-card-title {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.extsub-card-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.extsub-card-name strong {
+  font-size: 15px;
+  font-weight: 850;
+  color: var(--cg-ink);
+}
+
+.extsub-card-url {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--cg-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--cg-muted);
+}
+
+.extsub-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 删除：coral 危险按钮（cg-button 变体，页面级） */
+.extsub-danger {
+  background: var(--cg-red);
+  color: var(--cg-on-accent);
+}
+
+/* ---------- 统计格 ---------- */
+
+.extsub-card-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.extsub-stat {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding: 10px 12px;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-soft);
+}
+
+.extsub-stat .cg-micro {
+  color: var(--cg-muted);
+}
+
+.extsub-stat strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--cg-ink);
+}
+
+/* 流量用量条（信息图式） */
+.extsub-traffic-bar {
+  display: block;
+  height: 8px;
+  border: 2px solid var(--cg-ink-soft);
+  border-radius: var(--cg-r-pill);
+  background: var(--cg-paper-light);
+  overflow: hidden;
+}
+
+.extsub-traffic-bar i {
+  display: block;
+  height: 100%;
+  background: var(--cg-lime);
+  transition: width 300ms var(--cg-ease);
+}
+
+/* 卡片内错误提示 */
+.extsub-error {
+  margin: 0 16px 14px;
+}
+
+/* ---------- 节点弹窗 ---------- */
+
+/* 配置指纹：mono 代码片 */
+.extsub-sha {
+  display: inline-block;
+  padding: 3px 7px;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-xs);
+  background: var(--cg-paper-soft);
+  font-family: var(--cg-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: var(--cg-ink);
+}
+
+/* ---------- 编辑弹窗复选框 ---------- */
+
+.extsub-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-light);
+  font-size: 13px;
+  font-weight: 750;
+  color: var(--cg-ink);
+  cursor: pointer;
+  transition: transform 160ms var(--cg-ease), background-color 160ms var(--cg-ease);
+}
+
+.extsub-check:hover {
+  transform: translateY(-1px);
+  background: var(--cg-paper-soft);
+}
+
+.extsub-check:has(.extsub-check-input:checked) {
+  background: var(--cg-lime-soft);
+}
+
+.extsub-check-input {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  accent-color: var(--cg-lime-dark);
+}
+
+/* ---------- 响应式 ---------- */
+
+@media (max-width: 900px) {
+  .extsub-card-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

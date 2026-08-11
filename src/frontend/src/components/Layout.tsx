@@ -16,10 +16,8 @@ import {
   UsersIcon,
 } from 'lucide-react'
 
-import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import LattixMark from '@/components/LattixMark'
-import DotGrid from '@/components/react-bits/DotGrid'
 import ThemeToggle from '@/components/ThemeToggle'
 import UpdateOverlay from '@/components/UpdateOverlay'
 import { OperationProgressProvider } from '@/components/OperationProgressProvider'
@@ -44,48 +42,65 @@ const navItems = [
 ]
 
 const navSections = [
-  { label: '实时控制', items: navItems.slice(0, 5) },
-  { label: '资源管理', items: navItems.slice(5, 10) },
-  { label: '系统', items: navItems.slice(10) },
+  { label: '实时控制 / LIVE OPS', items: navItems.slice(0, 5) },
+  { label: '资源管理 / RESOURCES', items: navItems.slice(5, 10) },
+  { label: '系统 / SYSTEM', items: navItems.slice(10) },
 ]
 
-const panelStatePresentation: Record<PanelLifecycleState, { label: string; dot: string }> = {
-  startup: { label: '启动中', dot: 'bg-primary' },
-  active: { label: '正常', dot: 'bg-success' },
-  updating: { label: '更新中', dot: 'bg-warning' },
-  faulted: { label: '故障', dot: 'bg-destructive' },
+const panelStateTone: Record<PanelLifecycleState, { label: string; className: string }> = {
+  startup: { label: 'STARTUP', className: 'is-blue' },
+  active: { label: 'ACTIVE', className: 'is-lime' },
+  updating: { label: 'UPDATING', className: 'is-blue' },
+  faulted: { label: 'FAULTED', className: 'is-red' },
 }
 
-function PanelStateIndicator({ snapshot, compact = false }: {
-  snapshot: PanelLifecycleSnapshot | null
-  compact?: boolean
-}) {
-  const presentation = snapshot
-    ? panelStatePresentation[snapshot.state]
-    : { label: '不可用', dot: 'bg-muted-foreground' }
-  const title = snapshot?.fault
-    ? `Panel ${presentation.label}: ${snapshot.fault}`
-    : `Panel ${presentation.label}`
+function PanelStateBadge({ snapshot }: { snapshot: PanelLifecycleSnapshot | null }) {
+  const tone = snapshot
+    ? panelStateTone[snapshot.state]
+    : { label: 'OFFLINE', className: 'is-muted' }
+  const title = snapshot?.fault ? `Panel ${tone.label}: ${snapshot.fault}` : `Panel ${tone.label}`
 
   return (
-    <div
-      role="status"
-      title={title}
-      className={cn(
-        'flex min-w-0 items-center gap-2 text-xs text-sidebar-foreground/65',
-        compact && 'justify-center text-[10px]',
-      )}
-    >
-      <span className={cn('relative size-2 shrink-0 rounded-full shadow-[0_0_10px_currentColor]', presentation.dot, snapshot?.state === 'updating' && 'animate-pulse')} />
-      <span className="truncate">{presentation.label}</span>
-    </div>
+    <span role="status" title={title} className={cn('cg-status', tone.className)}>
+      {tone.label}
+    </span>
+  )
+}
+
+function NavList({ onNavigate }: { onNavigate?: () => void }) {
+  const [location] = useLocation()
+  return (
+    <>
+      {navSections.map((section) => (
+        <div key={section.label} className="cg-nav-section">
+          <div className="cg-nav-section-label">{section.label}</div>
+          <div className="cg-nav-list">
+            {section.items.map((item) => {
+              const isActive = item.end ? location === item.to : location.startsWith(item.activePrefix)
+              return (
+                <Link
+                  key={item.to}
+                  href={item.to}
+                  onClick={onNavigate}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={cn('cg-nav-item', isActive && 'is-active')}
+                >
+                  <item.icon strokeWidth={2} />
+                  <span className="truncate">{item.label}</span>
+                </Link>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </>
   )
 }
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { username, logout } = useAuth()
   const { foregroundPendingCount } = useRequestState()
-  const [location, navigate] = useLocation()
+  const [, navigate] = useLocation()
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [panelState, setPanelState] = useState<PanelLifecycleSnapshot | null>(null)
   const [loggingOut, setLoggingOut] = useState(false)
@@ -123,160 +138,119 @@ export default function Layout({ children }: { children: ReactNode }) {
     }
   }
 
+  const logoutButton = (
+    <button
+      type="button"
+      className="cg-icon-button"
+      onClick={onLogout}
+      disabled={loggingOut}
+      aria-label={`${username ?? ''} 登出`}
+      title={loggingOut ? '登出中…' : '登出'}
+    >
+      <LogOutIcon />
+    </button>
+  )
+
   return (
     <OperationProgressProvider>
-      <div className="panel-canvas flex min-h-[100dvh] flex-col md:flex-row">
-      <div className="panel-dot-grid" aria-hidden="true">
-        <DotGrid
-          dotSize={2}
-          gap={24}
-          baseColor="#263129"
-          activeColor="#bdf33b"
-          proximity={130}
-          shockRadius={220}
-          shockStrength={3.5}
-          returnDuration={1.2}
-        />
-      </div>
-      {foregroundPendingCount > 0 ? (
-        <div
-          role="status"
-          aria-label="请求处理中"
-          className="fixed inset-x-0 top-0 z-50 h-1 animate-pulse bg-primary"
-        />
-      ) : null}
-      <header className="panel-sidebar flex h-15 shrink-0 items-center justify-between border-b border-sidebar-border px-4 text-sidebar-foreground md:hidden">
-        <span className="flex items-center gap-3 font-semibold">
-          <LattixMark className="size-8 shrink-0" />
-          <span className="text-sm" aria-label="Lattix">LATTIX</span>
-        </span>
-        <div className="flex items-center gap-1">
-          <PanelStateIndicator snapshot={panelState} />
-          <ThemeToggle className="text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
-          <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-            <SheetTrigger render={<Button variant="ghost" size="icon" aria-label="打开导航菜单" />}>
-              <MenuIcon />
-            </SheetTrigger>
-            <SheetContent side="left" className="panel-sidebar w-72 bg-sidebar p-0 text-sidebar-foreground" showCloseButton={false}>
-              <SheetTitle className="flex items-center gap-3 border-b border-sidebar-border px-5 py-4 text-base font-semibold text-sidebar-foreground">
-                <LattixMark className="size-8 shrink-0" />
-                <span aria-label="Lattix">LATTIX</span>
-              </SheetTitle>
-              <nav className="flex-1 space-y-1 p-3" aria-label="主导航">
-                {navItems.map((item) => {
-                  const isActive = item.end ? location === item.to : location.startsWith(item.activePrefix)
-                  return (
-                    <Link
-                      key={item.to}
-                      href={item.to}
-                      onClick={() => setMobileNavOpen(false)}
-                      aria-current={isActive ? 'page' : undefined}
-                      className={cn(
-                        'panel-nav-item flex items-center gap-3 rounded-md border border-transparent px-3 py-2.5 text-sm text-sidebar-foreground/60 transition-[color,background-color,border-color,transform] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:translate-y-px',
-                        isActive && 'border-sidebar-foreground/10 bg-sidebar-accent font-semibold text-sidebar-accent-foreground',
-                      )}
-                    >
-                      <item.icon className="size-4" strokeWidth={1.8} />
-                      {item.label}
-                    </Link>
-                  )
-                })}
-              </nav>
-              <div className="grid gap-3 border-t border-sidebar-border p-3">
-                <div className="flex items-center justify-between gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/50 px-3 py-2">
-                  <span className="truncate text-sm" title={username ?? ''}>{username}</span>
-                  <PanelStateIndicator snapshot={panelState} />
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={onLogout}
-                  disabled={loggingOut}
-                  className="w-full text-sidebar-foreground/70 hover:bg-sidebar-accent"
-                >
-                  <LogOutIcon />
-                  {loggingOut ? '登出中…' : '登出'}
-                </Button>
-              </div>
-            </SheetContent>
-          </Sheet>
-        </div>
-      </header>
-      <aside className="panel-sidebar hidden w-[228px] shrink-0 flex-col border-r border-sidebar-border text-sidebar-foreground md:flex">
-        <div className="flex h-[78px] items-center gap-3 border-b border-sidebar-border px-5">
-          <span className="brand-mark-shell"><LattixMark className="size-8 shrink-0" /></span>
-          <div className="min-w-0">
-            <strong className="block text-[13px] font-semibold" aria-label="Lattix">LATTIX</strong>
-            <span className="block text-[9px] text-sidebar-foreground/38">KNOWLEDGE NETWORK OS</span>
-          </div>
-        </div>
-        <nav className="no-scrollbar flex-1 overflow-y-auto px-3 py-4" aria-label="主导航">
-          {navSections.map((section) => (
-            <div key={section.label} className="mb-5 last:mb-0">
-              <div className="panel-section-label mb-2 px-3">{section.label}</div>
-              <div className="space-y-1">
-                {section.items.map((item) => {
-                  const isActive = item.end ? location === item.to : location.startsWith(item.activePrefix)
-                  return (
-                    <Link
-                      key={item.to}
-                      href={item.to}
-                      aria-current={isActive ? 'page' : undefined}
-                      className={cn(
-                        'panel-nav-item flex h-10 items-center gap-3 rounded-md border border-transparent px-3 text-xs text-sidebar-foreground/58 transition-[color,background-color,border-color,transform] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:translate-y-px',
-                        isActive && 'border-sidebar-foreground/10 bg-sidebar-accent font-semibold text-sidebar-accent-foreground',
-                      )}
-                    >
-                      <item.icon className="size-4 shrink-0" strokeWidth={1.7} />
-                      <span className="truncate">{item.label}</span>
-                    </Link>
-                  )
-                })}
-              </div>
-            </div>
-          ))}
-        </nav>
-        <div className="border-t border-sidebar-border px-4 py-3">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-[10px] text-sidebar-foreground/40">PANEL STATUS</span>
-            <PanelStateIndicator snapshot={panelState} compact />
-          </div>
-        </div>
-        <div className="border-t border-sidebar-border p-3">
-          <div className="flex items-center gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/40 p-2">
-            <span className="grid size-8 shrink-0 place-items-center rounded-sm bg-sidebar-primary text-xs font-bold text-sidebar-primary-foreground">
-              {(username ?? 'A').slice(0, 1).toUpperCase()}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-xs" title={username ?? ''}>{username}</span>
-            <ThemeToggle className="size-8 text-sidebar-foreground/55 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 text-sidebar-foreground/55 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-              onClick={onLogout}
-              disabled={loggingOut}
-              aria-label={`${username ?? ''} 登出`}
-              title="登出"
-            >
-              <LogOutIcon />
-            </Button>
-          </div>
-        </div>
-      </aside>
-      <main id="main-content" className="panel-main min-w-0 flex-1 overflow-auto p-3 md:p-4 lg:p-5">
-        {logoutError ? (
+      <div className="cg-shell">
+        {foregroundPendingCount > 0 ? (
           <div
-            role="alert"
-            className="mx-auto mb-4 w-full max-w-[1540px] rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
-          >
-            登出失败：{logoutError}
-          </div>
+            role="status"
+            aria-label="请求处理中"
+            className="fixed inset-x-0 top-0 z-50 h-1 animate-pulse"
+            style={{ background: 'var(--cg-lime)' }}
+          />
         ) : null}
-        <div className="page-enter mx-auto w-full max-w-[1680px]">
-          {children}
-        </div>
-      </main>
-      <UpdateOverlay />
+
+        {/* 移动端顶栏 */}
+        <header className="cg-topbar">
+          <span className="flex items-center gap-3">
+            <span className="cg-sidebar-brand-icon" style={{ width: 36, height: 36 }}>
+              <LattixMark className="size-6 shrink-0" />
+            </span>
+            <span className="cg-sidebar-brand-name" aria-label="Lattix">LATTIX</span>
+          </span>
+          <div className="flex items-center gap-2">
+            <PanelStateBadge snapshot={panelState} />
+            <ThemeToggle className="text-foreground hover:bg-accent" />
+            <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+              <SheetTrigger render={<button type="button" className="cg-icon-button" aria-label="打开导航菜单" />}>
+                <MenuIcon />
+              </SheetTrigger>
+              <SheetContent
+                side="left"
+                showCloseButton={false}
+                className="w-72 border-[3px] border-[var(--cg-ink-soft)] bg-[var(--cg-paper-light)] p-0 text-[var(--cg-ink)]"
+              >
+                <SheetTitle className="cg-sidebar-brand">
+                  <span className="cg-sidebar-brand-icon">
+                    <LattixMark className="size-7 shrink-0" />
+                  </span>
+                  <span>
+                    <span className="cg-sidebar-brand-name" aria-label="Lattix">LATTIX</span>
+                    <span className="cg-sidebar-brand-sub">KNOWLEDGE NETWORK OS</span>
+                  </span>
+                </SheetTitle>
+                <nav className="cg-sidebar-nav" aria-label="主导航">
+                  <NavList onNavigate={() => setMobileNavOpen(false)} />
+                </nav>
+                <div className="cg-sidebar-footer">
+                  <div className="cg-sidebar-user">
+                    <span className="cg-sidebar-avatar">{(username ?? 'A').slice(0, 1).toUpperCase()}</span>
+                    <span className="cg-sidebar-username" title={username ?? ''}>{username}</span>
+                    {logoutButton}
+                  </div>
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
+        </header>
+
+        {/* 桌面端侧边栏 */}
+        <aside className="cg-sidebar">
+          <div className="cg-sidebar-brand">
+            <span className="cg-sidebar-brand-icon">
+              <LattixMark className="size-7 shrink-0" />
+            </span>
+            <span className="min-w-0">
+              <span className="cg-sidebar-brand-name" aria-label="Lattix">LATTIX</span>
+              <span className="cg-sidebar-brand-sub">KNOWLEDGE NETWORK OS</span>
+            </span>
+          </div>
+          <nav className="cg-sidebar-nav no-scrollbar" aria-label="主导航">
+            <NavList />
+          </nav>
+          <div className="cg-sidebar-footer">
+            <div className="cg-sidebar-state">
+              <span className="cg-micro" style={{ color: 'var(--cg-subtle)' }}>PANEL STATUS</span>
+              <PanelStateBadge snapshot={panelState} />
+            </div>
+            <div className="cg-sidebar-user">
+              <span className="cg-sidebar-avatar">{(username ?? 'A').slice(0, 1).toUpperCase()}</span>
+              <span className="cg-sidebar-username" title={username ?? ''}>{username}</span>
+              <ThemeToggle className="size-8 text-muted-foreground hover:bg-accent" />
+              {logoutButton}
+            </div>
+          </div>
+        </aside>
+
+        <main id="main-content" className="cg-main">
+          {logoutError ? (
+            <div
+              role="alert"
+              className="cg-semantic-card is-bad cg-main-inner"
+              style={{ marginBottom: 16 }}
+            >
+              <header>登出失败</header>
+              <div className="cg-semantic-body">{logoutError}</div>
+            </div>
+          ) : null}
+          <div className="cg-main-inner cg-page-in">
+            {children}
+          </div>
+        </main>
+        <UpdateOverlay />
       </div>
     </OperationProgressProvider>
   )

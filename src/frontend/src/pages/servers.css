@@ -1,0 +1,314 @@
+/* ============================================================
+   Servers — Cream Grid Tech 页面样式
+   覆盖 Servers.tsx 与其专属组件（ServerMonitor / CountryCombobox / TagInput）
+   全部颜色走 var(--cg-*) 令牌，暗色模式自动适配。
+   ============================================================ */
+
+/* ---------- 顶部 Eyebrow 行 ---------- */
+
+.sv-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* ---------- 机器类型单选卡（添加服务器 Dialog） ---------- */
+
+.sv-radio-card {
+  display: flex;
+  height: 38px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-light);
+  color: var(--cg-ink);
+  font-size: 13px;
+  font-weight: 750;
+  transition: transform 160ms var(--cg-ease), background-color 160ms var(--cg-ease);
+}
+
+.sv-radio-card:hover {
+  transform: translateY(-1px);
+  background: var(--cg-paper-soft);
+}
+
+.sv-radio-card.is-active {
+  background: var(--cg-lime);
+  color: var(--cg-on-accent);
+  box-shadow: var(--cg-shadow-control);
+  font-weight: 850;
+}
+
+.sv-radio-card:focus-within {
+  outline: 2px solid var(--cg-ink);
+  outline-offset: 2px;
+}
+
+/* ---------- 安装命令代码块（Charcoal 技术区） ---------- */
+
+.sv-code-block {
+  overflow: auto;
+  border: 2px solid var(--cg-charcoal-line);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-charcoal);
+  color: var(--cg-lime);
+  padding: 12px;
+  font-family: var(--cg-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ---------- 清理 / 重建回执 mono 列表 ---------- */
+
+.sv-mono-list {
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-soft);
+  padding: 8px;
+}
+
+/* ---------- 服务器卡片 ---------- */
+
+.sv-server-card {
+  border: var(--cg-border);
+  border-radius: var(--cg-r-card);
+  background: var(--cg-paper-light);
+  box-shadow: var(--cg-shadow-card);
+  transition: transform 160ms var(--cg-ease), box-shadow 160ms var(--cg-ease);
+}
+
+.sv-server-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--cg-shadow-panel);
+}
+
+.sv-server-card.is-online {
+  border-top: 3px solid var(--cg-lime-dark);
+}
+
+.sv-server-card.is-transitioning {
+  border-top: 3px solid var(--cg-blue);
+}
+
+.sv-server-card.is-offline {
+  border-top: 3px solid var(--cg-red);
+}
+
+.sv-card-head {
+  border-bottom: var(--cg-border);
+}
+
+/* 卡片左上角状态图标块 */
+
+.sv-icon-chip {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-xs);
+  background: var(--cg-paper-light);
+  color: var(--cg-ink);
+}
+
+.sv-icon-chip.is-online {
+  background: var(--cg-lime);
+  color: var(--cg-on-accent);
+}
+
+.sv-icon-chip.is-transitioning {
+  background: var(--cg-blue);
+  color: #fff;
+}
+
+.sv-icon-chip.is-offline {
+  background: var(--cg-red);
+  color: var(--cg-on-accent);
+}
+
+/* 卡片顶部连接状态横幅 */
+
+.sv-banner.is-online {
+  background: var(--cg-lime-soft);
+  color: var(--cg-lime-dark);
+}
+
+.sv-banner.is-transitioning {
+  background: var(--cg-blue-soft);
+  color: var(--cg-blue);
+}
+
+.sv-banner.is-offline {
+  background: var(--cg-red-soft);
+  color: var(--cg-red);
+}
+
+/* ---------- 指标进度条（覆盖 ui/progress 指示器颜色） ---------- */
+
+.sv-progress-ok [data-slot='progress-indicator'] {
+  background: var(--cg-lime-dark);
+}
+
+.sv-progress-warn [data-slot='progress-indicator'] {
+  background: var(--cg-blue);
+}
+
+.sv-progress-crit [data-slot='progress-indicator'] {
+  background: var(--cg-red);
+}
+
+.sv-progress-idle [data-slot='progress-indicator'] {
+  background: var(--cg-paper-warm);
+}
+
+/* 网络速率 */
+
+.sv-rate-up {
+  color: var(--cg-lime-dark);
+}
+
+.sv-rate-down {
+  color: var(--cg-blue);
+}
+
+/* ---------- 流量额度分段条 ---------- */
+
+.sv-seg {
+  height: 8px;
+  border-radius: 2px;
+  background: var(--cg-paper-warm);
+}
+
+.sv-seg-ok {
+  background: var(--cg-lime-dark);
+}
+
+.sv-seg-warn {
+  background: var(--cg-blue);
+}
+
+.sv-seg-crit {
+  background: var(--cg-red);
+}
+
+.sv-seg-idle {
+  background: var(--cg-subtle);
+}
+
+/* ---------- 延迟趋势条（LatencyStrip） ---------- */
+
+.sv-lat {
+  background: var(--cg-paper-warm);
+}
+
+.sv-lat.is-ok {
+  background: var(--cg-lime-dark);
+}
+
+.sv-lat.is-warn {
+  background: var(--cg-blue);
+}
+
+.sv-lat.is-crit {
+  background: var(--cg-red);
+}
+
+/* ---------- 趋势图 ---------- */
+
+.sv-chart-box {
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-soft);
+}
+
+.sv-line-ok {
+  color: var(--cg-lime-dark);
+}
+
+.sv-line-info {
+  color: var(--cg-blue);
+}
+
+.sv-line-warn {
+  color: var(--cg-red);
+}
+
+/* ---------- 国家选择 Combobox ---------- */
+
+.sv-combobox {
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-light);
+  box-shadow: var(--cg-shadow-control);
+  transition: border-color 160ms var(--cg-ease), box-shadow 160ms var(--cg-ease);
+}
+
+.sv-combobox:focus-within {
+  border-color: var(--cg-ink);
+  box-shadow: var(--cg-shadow-card);
+}
+
+.sv-combobox-popup {
+  border: var(--cg-border);
+  border-radius: var(--cg-r-card);
+  background: var(--cg-paper-light);
+  color: var(--cg-ink);
+  box-shadow: var(--cg-shadow-card);
+}
+
+.sv-combobox-item[data-highlighted] {
+  background: var(--cg-lime-soft);
+  color: var(--cg-ink);
+}
+
+/* ---------- 标签输入 TagInput ---------- */
+
+.sv-tag-input {
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-light);
+  box-shadow: var(--cg-shadow-control);
+  transition: border-color 160ms var(--cg-ease), box-shadow 160ms var(--cg-ease);
+}
+
+.sv-tag-input:focus-within {
+  border-color: var(--cg-ink);
+  box-shadow: var(--cg-shadow-card);
+}
+
+.sv-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  padding: 0 4px 0 8px;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-xs);
+  background: var(--cg-lime-soft);
+  color: var(--cg-ink);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.sv-tag-chip-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  color: var(--cg-muted);
+  cursor: pointer;
+  transition: background-color 150ms var(--cg-ease), color 150ms var(--cg-ease);
+}
+
+.sv-tag-chip-remove:hover {
+  background: var(--cg-lime);
+  color: var(--cg-on-accent);
+}

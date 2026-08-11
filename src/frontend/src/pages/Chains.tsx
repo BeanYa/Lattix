@@ -17,19 +17,9 @@ import {
 } from 'lucide-react'
 
 import { NameTemplateInput } from '@/components/NameTemplateInput'
-import { EmptyState, LoadingState, Notice, Page, PageHeader, type FeedbackTone } from '@/components/PagePrimitives'
+import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { RealityDestPicker } from '@/components/RealityDestPicker'
-import { StatusBadge } from '@/components/StatusBadge'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -69,52 +59,42 @@ import type {
   XrayNode,
 } from '@/lib/types'
 
-const chainStatusStyle: Record<ChainStatus, { label: string; tone: FeedbackTone }> = {
-  active: { label: '正常', tone: 'success' },
-  applying: { label: '部署中', tone: 'warning' },
-  failed: { label: '异常', tone: 'danger' },
-  pending: { label: '部署中', tone: 'neutral' },
-  degraded: { label: '降级', tone: 'warning' },
-  waiting_for_agent: { label: '等待 Agent', tone: 'warning' },
-  active_unconfirmed: { label: '已强制发布', tone: 'info' },
-  active_failed: { label: '发布后失败', tone: 'danger' },
-  cleanup_pending: { label: '等待清理', tone: 'warning' },
-  invalid: { label: '已失效', tone: 'danger' },
-  deleted: { label: '已删除', tone: 'neutral' },
+import './chains.css'
+
+/** cg-status 贴纸语义：lime=正常/在线，blue=部署流程中，red=异常/失败，muted=其他。 */
+type CgStatusTone = 'is-lime' | 'is-blue' | 'is-red' | 'is-muted'
+
+const chainStatusStyle: Record<ChainStatus, { label: string; cg: CgStatusTone }> = {
+  active: { label: '正常', cg: 'is-lime' },
+  applying: { label: '部署中', cg: 'is-blue' },
+  failed: { label: '异常', cg: 'is-red' },
+  pending: { label: '部署中', cg: 'is-blue' },
+  degraded: { label: '降级', cg: 'is-red' },
+  waiting_for_agent: { label: '等待 Agent', cg: 'is-blue' },
+  active_unconfirmed: { label: '已强制发布', cg: 'is-muted' },
+  active_failed: { label: '发布后失败', cg: 'is-red' },
+  cleanup_pending: { label: '等待清理', cg: 'is-blue' },
+  invalid: { label: '已失效', cg: 'is-red' },
+  deleted: { label: '已删除', cg: 'is-muted' },
 }
 
-const hopStatusStyle: Record<NodeStatus, { label: string; tone: FeedbackTone }> = {
-  active: { label: '正常', tone: 'success' },
-  applying: { label: '部署中', tone: 'warning' },
-  failed: { label: '异常', tone: 'danger' },
-  pending: { label: '部署中', tone: 'neutral' },
+const hopStatusStyle: Record<NodeStatus, { label: string; cg: CgStatusTone }> = {
+  active: { label: '正常', cg: 'is-lime' },
+  applying: { label: '部署中', cg: 'is-blue' },
+  failed: { label: '异常', cg: 'is-red' },
+  pending: { label: '部署中', cg: 'is-blue' },
 }
 
-const statusSurfaceStyle: Record<FeedbackTone, string> = {
-  success: 'border-success/30 bg-success/10 text-success',
-  warning: 'border-warning/30 bg-warning/10 text-warning',
-  danger: 'border-destructive/30 bg-destructive/10 text-destructive',
-  info: 'border-info/30 bg-info/10 text-info',
-  neutral: 'border-border bg-muted/60 text-muted-foreground',
-}
-
-function ChainStateMark({ tone, label }: { tone: FeedbackTone; label: string }) {
+function ChainStateMark({ tone, label }: { tone: CgStatusTone; label: string }) {
   const loading = ['部署中', '等待 Agent', '等待清理'].includes(label)
-  const Icon = tone === 'success' || tone === 'info'
+  const Icon = tone === 'is-lime' || label === '已强制发布'
     ? CircleCheckIcon
     : loading
       ? LoaderCircleIcon
       : TriangleAlertIcon
   return (
-    <span
-      className={cn(
-        'flex size-8 shrink-0 items-center justify-center rounded-md border',
-        statusSurfaceStyle[tone],
-      )}
-      title={label}
-      aria-label={label}
-    >
-      <Icon className={cn('size-4', loading && 'animate-spin motion-reduce:animate-none')} />
+    <span className={cn('cg-chain-mark', tone)} title={label} aria-label={label}>
+      <Icon className={cn(loading && 'animate-spin motion-reduce:animate-none')} />
     </span>
   )
 }
@@ -135,29 +115,29 @@ function TrafficSummary({
   const hasTraffic = up !== undefined && down !== undefined
   const adjusted = hasTraffic && rawUp !== undefined && rawDown !== undefined && (rawUp !== up || rawDown !== down)
   return (
-    <div className="grid grid-cols-2 gap-4 border-t pt-3 lg:border-t-0 lg:border-l lg:pl-4 lg:pt-0" aria-label="累计流量">
-      <div className="min-w-0">
-        <span className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-          <ArrowUpIcon className="size-3 text-success" />
+    <div className="cg-chain-traffic" aria-label="累计流量">
+      <div className="cg-chain-traffic-item is-up">
+        <span className="cg-chain-traffic-label">
+          <ArrowUpIcon />
           累计上传
         </span>
-        <strong className="mt-1 block truncate text-base font-semibold tabular-nums text-success">
+        <strong className="cg-chain-traffic-value">
           {hasTraffic ? humanizeBytes(up ?? 0) : '--'}
         </strong>
-        {adjusted ? <span className="text-[10px] text-muted-foreground">原始 {humanizeBytes(rawUp ?? 0)}</span> : null}
+        {adjusted ? <span className="cg-chain-traffic-raw">原始 {humanizeBytes(rawUp ?? 0)}</span> : null}
       </div>
-      <div className="min-w-0">
-        <span className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-          <ArrowDownIcon className="size-3 text-info" />
+      <div className="cg-chain-traffic-item is-down">
+        <span className="cg-chain-traffic-label">
+          <ArrowDownIcon />
           累计下载
         </span>
-        <strong className="mt-1 block truncate text-base font-semibold tabular-nums text-info">
+        <strong className="cg-chain-traffic-value">
           {hasTraffic ? humanizeBytes(down ?? 0) : '--'}
         </strong>
-        {adjusted ? <span className="text-[10px] text-muted-foreground">原始 {humanizeBytes(rawDown ?? 0)}</span> : null}
+        {adjusted ? <span className="cg-chain-traffic-raw">原始 {humanizeBytes(rawDown ?? 0)}</span> : null}
       </div>
       {multiplier ? (
-        <span className="col-span-2 text-[10px] text-muted-foreground">流量倍率 x{multiplier}</span>
+        <span className="cg-chain-traffic-multiplier">流量倍率 x{multiplier}</span>
       ) : null}
     </div>
   )
@@ -190,7 +170,7 @@ function inboundCapable(s: Server): boolean {
 
 function serverLabel(s: Server): string {
   const tags: string[] = []
-	if (!isServerOnline(s)) {
+  if (!isServerOnline(s)) {
     tags.push('离线')
   }
   if (!inboundCapable(s)) {
@@ -268,23 +248,23 @@ function TrafficHistoryChart({
   const activeBucket = activePoint ? buckets[activePoint.index] : null
 
   return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <span className="text-muted-foreground">相对用量（当前视图峰值 = 100%）</span>
-        <div className="flex items-center gap-4 text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="size-2 rounded-full bg-success" />上传
+    <section className="cg-chain-chart">
+      <div className="cg-chain-chart-legend">
+        <span>相对用量（当前视图峰值 = 100%）</span>
+        <div className="cg-chain-chart-legend-keys">
+          <span>
+            <i className="cg-chain-chart-key-dot is-up" />上传
           </span>
-          <span className="flex items-center gap-1.5">
-            <span className="size-2 rounded-full bg-info" />下载
+          <span>
+            <i className="cg-chain-chart-key-dot is-down" />下载
           </span>
         </div>
       </div>
-      <div className="relative rounded-md border bg-muted/20 p-2">
+      <div className="cg-chain-chart-frame">
         <svg
           ref={chartRef}
           viewBox={`0 0 ${width} ${height}`}
-          className="h-auto min-h-56 w-full touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="cg-chain-chart-svg"
           role="img"
           aria-label="链路上传和下载流量趋势，使用左右方向键查看日期数据"
           tabIndex={0}
@@ -308,16 +288,16 @@ function TrafficHistoryChart({
                   x2={plot.left + plotWidth}
                   y1={y}
                   y2={y}
-                  stroke="var(--border)"
                   strokeWidth="1"
                   vectorEffect="non-scaling-stroke"
+                  className="cg-chain-chart-grid"
                 />
                 <text
                   x={plot.left - 8}
                   y={y + 4}
                   textAnchor="end"
-                  fill="var(--muted-foreground)"
                   fontSize="11"
+                  className="cg-chain-chart-tick"
                 >
                   {percent}%
                 </text>
@@ -330,8 +310,8 @@ function TrafficHistoryChart({
               x={xAt(index)}
               y={height - 10}
               textAnchor={index === 0 ? 'start' : index === buckets.length - 1 ? 'end' : 'middle'}
-              fill="var(--muted-foreground)"
               fontSize="11"
+              className="cg-chain-chart-tick"
             >
               {labelDate(bucket.date)}
             </text>
@@ -342,7 +322,7 @@ function TrafficHistoryChart({
             stroke="currentColor"
             strokeWidth="2"
             vectorEffect="non-scaling-stroke"
-            className="text-success"
+            className="cg-chain-chart-line is-up"
           />
           <polyline
             points={points('effective_down')}
@@ -350,7 +330,7 @@ function TrafficHistoryChart({
             stroke="currentColor"
             strokeWidth="2"
             vectorEffect="non-scaling-stroke"
-            className="text-info"
+            className="cg-chain-chart-line is-down"
           />
           {activePoint && activeBucket ? (
             <>
@@ -359,57 +339,56 @@ function TrafficHistoryChart({
                 x2={xAt(activePoint.index)}
                 y1={plot.top}
                 y2={plot.top + plotHeight}
-                stroke="var(--muted-foreground)"
                 strokeWidth="1"
                 strokeDasharray="3 3"
                 vectorEffect="non-scaling-stroke"
+                className="cg-chain-chart-cross"
               />
               <line
                 x1={plot.left}
                 x2={plot.left + plotWidth}
                 y1={activePoint.y}
                 y2={activePoint.y}
-                stroke="var(--muted-foreground)"
                 strokeWidth="1"
                 strokeDasharray="3 3"
                 vectorEffect="non-scaling-stroke"
+                className="cg-chain-chart-cross"
               />
               <circle
                 cx={xAt(activePoint.index)}
                 cy={yAt(activeBucket.effective_up)}
                 r="4"
-                fill="var(--background)"
                 stroke="currentColor"
                 strokeWidth="2"
                 vectorEffect="non-scaling-stroke"
-                className="text-success"
+                className="cg-chain-chart-line is-up cg-chain-chart-dot"
               />
               <circle
                 cx={xAt(activePoint.index)}
                 cy={yAt(activeBucket.effective_down)}
                 r="4"
-                fill="var(--background)"
                 stroke="currentColor"
                 strokeWidth="2"
                 vectorEffect="non-scaling-stroke"
-                className="text-info"
+                className="cg-chain-chart-line is-down cg-chain-chart-dot"
               />
             </>
           ) : null}
         </svg>
         {activeBucket && activePoint ? (
           <div
-            className={`pointer-events-none absolute top-3 z-10 min-w-48 rounded-md border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md ${
-              activePoint.index < buckets.length / 2 ? 'right-3' : 'left-14'
-            }`}
+            className={cn(
+              'cg-chain-chart-tip',
+              activePoint.index < buckets.length / 2 ? 'is-right' : 'is-left',
+            )}
           >
-            <div className="mb-1.5 font-medium">{activeBucket.date}</div>
-            <div className="flex justify-between gap-6 tabular-nums">
-              <span className="text-muted-foreground">上传</span>
+            <div className="cg-chain-chart-tip-date">{activeBucket.date}</div>
+            <div className="cg-chain-chart-tip-row">
+              <span>上传</span>
               <span>{humanizeBytes(activeBucket.effective_up)}</span>
             </div>
-            <div className="flex justify-between gap-6 tabular-nums">
-              <span className="text-muted-foreground">下载</span>
+            <div className="cg-chain-chart-tip-row">
+              <span>下载</span>
               <span>{humanizeBytes(activeBucket.effective_down)}</span>
             </div>
           </div>
@@ -926,20 +905,29 @@ export default function Chains() {
     return [...months.values()]
   }, [trafficHistory, trafficRange])
   return (
-    <Page>
+    <Page className="cg-chains">
+      <div className="cg-chains-topline">
+        <span className="cg-eyebrow">LINKS / ROUTING</span>
+        <span className="cg-micro cg-chains-topline-note">入口 → 中转 → 出口 · 客户端仅见入口</span>
+      </div>
+
       <PageHeader
         title="链路"
+        description="直连与中转链路的部署状态、跳点拓扑与累计流量，统一在此编排与维护。"
         actions={(
-          <Button onClick={openCreate}>
-            <PlusIcon />
-            创建链路
-          </Button>
+          <>
+            <span className="cg-pill">{loading ? '同步中…' : `${entries.length} 条链路`}</span>
+            <button type="button" className="cg-button is-primary" onClick={openCreate}>
+              <PlusIcon />
+              创建链路
+            </button>
+          </>
         )}
       />
 
       {error && <Notice tone="danger">{error}</Notice>}
 
-      <div className="flex flex-col gap-3">
+      <div className="cg-chain-list">
         {loading ? (
           <LoadingState />
         ) : entries.length === 0 ? (
@@ -956,33 +944,21 @@ export default function Chains() {
               const server = servers.find((candidate) => candidate.id === node.server_id)
               const displayPort = node.realized_config?.port ?? node.port
               return (
-                <Card
-                  key={`direct-${node.id}`}
-                  size="sm"
-                  className={cn(
-                    'relative border-l-2',
-                    st.tone === 'success' && 'border-l-success/70',
-                    st.tone === 'warning' && 'border-l-warning/70',
-                    st.tone === 'danger' && 'border-l-destructive/70',
-                    st.tone === 'neutral' && 'border-l-muted-foreground/50',
-                  )}
-                >
-                  <CardHeader className="border-b has-data-[slot=card-action]:grid-cols-1 sm:has-data-[slot=card-action]:grid-cols-[1fr_auto]">
-                    <CardTitle className="flex min-w-0 flex-wrap items-center gap-2">
-                      <ChainStateMark tone={st.tone} label={st.label} />
-                      <span className="truncate">{node.name || `直连 #${node.id}`}</span>
-                      <span className="font-mono text-[10px] font-normal text-muted-foreground">#{node.id}</span>
-                      <Badge variant="secondary">直连</Badge>
-                      <StatusBadge tone={st.tone}>
-                        {st.label}
-                      </StatusBadge>
-                    </CardTitle>
-                    <CardDescription className="flex items-center gap-1.5 pl-10 text-xs">
-                      <Clock3Icon className="size-3" />
-                      创建于 {formatDateTime(node.created_at, timezone)}
-                    </CardDescription>
-                    <CardAction className="col-start-1 row-start-3 row-span-1 justify-self-start sm:col-start-2 sm:row-start-1 sm:row-span-2 sm:justify-self-end">
-                      <div className="flex max-w-full flex-wrap gap-2 sm:justify-end">
+                <article key={`direct-${node.id}`} className="cg-card cg-chain-card" data-tone={st.cg}>
+                  <header className="cg-chain-card-head">
+                    <div className="cg-chain-card-title">
+                      <ChainStateMark tone={st.cg} label={st.label} />
+                      <strong className="cg-chain-name">{node.name || `直连 #${node.id}`}</strong>
+                      <span className="cg-chain-id">#{node.id}</span>
+                      <span className="cg-chain-tag">直连</span>
+                      <span className={cn('cg-status', st.cg)}>{st.label}</span>
+                    </div>
+                    <div className="cg-chain-card-side">
+                      <span className="cg-chain-meta">
+                        <Clock3Icon />
+                        创建于 {formatDateTime(node.created_at, timezone)}
+                      </span>
+                      <div className="cg-chain-actions">
                         {node.status === 'failed' ? (
                           <Button
                             variant="outline"
@@ -997,24 +973,26 @@ export default function Chains() {
                           删除链路
                         </Button>
                       </div>
-                    </CardAction>
-                  </CardHeader>
-                  <CardContent className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px] lg:items-center">
-                    {node.error ? <p className="text-sm text-destructive lg:col-span-2">{node.error}</p> : null}
-                    <div className="flex min-w-0 items-center gap-3 py-1 text-sm">
-                      <span className={cn('size-2 shrink-0 rounded-full', server && isServerOnline(server) ? 'bg-success' : 'bg-warning')} />
-                      <div className="min-w-0">
-                        <span className="block text-[11px] text-muted-foreground">直连服务器</span>
-                        <span className="block truncate font-medium">{node.server_alias}</span>
-                        {displayPort ? <span className="text-muted-foreground">:{displayPort}</span> : null}
-                      </div>
-                      <StatusBadge tone={server ? (isServerOnline(server) ? 'success' : 'warning') : 'neutral'} className="ml-auto shrink-0">
-                        {server ? (isServerOnline(server) ? 'Agent 在线' : 'Agent 离线') : 'Agent 未知'}
-                      </StatusBadge>
                     </div>
-                    <TrafficSummary up={node.traffic?.up} down={node.traffic?.down} />
-                  </CardContent>
-                </Card>
+                  </header>
+                  <div className="cg-chain-card-body">
+                    {node.error ? <p className="cg-chain-error">{node.error}</p> : null}
+                    <div className="cg-chain-split">
+                      <div className="cg-chain-direct">
+                        <span className={cn('cg-hop-dot', server && isServerOnline(server) ? 'is-lime' : 'is-red')} />
+                        <div className="cg-chain-direct-copy">
+                          <span className="cg-chain-direct-label">直连服务器</span>
+                          <strong className="cg-chain-direct-name">{node.server_alias}</strong>
+                          {displayPort ? <span className="cg-chain-direct-port">:{displayPort}</span> : null}
+                        </div>
+                        <span className={cn('cg-status', server ? (isServerOnline(server) ? 'is-lime' : 'is-red') : 'is-muted')}>
+                          {server ? (isServerOnline(server) ? 'Agent 在线' : 'Agent 离线') : 'Agent 未知'}
+                        </span>
+                      </div>
+                      <TrafficSummary up={node.traffic?.up} down={node.traffic?.down} />
+                    </div>
+                  </div>
+                </article>
               )
             }
             const c = entry.chain
@@ -1023,46 +1001,33 @@ export default function Chains() {
             const isDirect = c.hops.length === 1
             const pendingTasks = c.revision_tasks.filter((task) => task.status === 'pending' || task.status === 'queued')
             return (
-              <Card
-                key={`relay-${c.id}`}
-                size="sm"
-                className={cn(
-                  'relative border-l-2',
-                  st.tone === 'success' && 'border-l-success/70',
-                  st.tone === 'warning' && 'border-l-warning/70',
-                  st.tone === 'danger' && 'border-l-destructive/70',
-                  st.tone === 'info' && 'border-l-info/70',
-                  st.tone === 'neutral' && 'border-l-muted-foreground/50',
-                )}
-              >
-                <CardHeader className="border-b has-data-[slot=card-action]:grid-cols-1 sm:has-data-[slot=card-action]:grid-cols-[1fr_auto]">
-                  <CardTitle className="flex min-w-0 flex-wrap items-center gap-2">
-                    <ChainStateMark tone={st.tone} label={st.label} />
-                    <span className="truncate">{c.name || `中转 #${c.id}`}</span>
-                    <span className="font-mono text-[10px] font-normal text-muted-foreground">#{c.id}</span>
-                    <Badge variant="secondary">{isDirect ? '直连' : '中转'}</Badge>
-                    <StatusBadge tone={st.tone}>
-                      {st.label}
-                    </StatusBadge>
+              <article key={`relay-${c.id}`} className="cg-card cg-chain-card" data-tone={st.cg}>
+                <header className="cg-chain-card-head">
+                  <div className="cg-chain-card-title">
+                    <ChainStateMark tone={st.cg} label={st.label} />
+                    <strong className="cg-chain-name">{c.name || `中转 #${c.id}`}</strong>
+                    <span className="cg-chain-id">#{c.id}</span>
+                    <span className="cg-chain-tag">{isDirect ? '直连' : '中转'}</span>
+                    <span className={cn('cg-status', st.cg)}>{st.label}</span>
                     {c.status === 'degraded' ? (
                       c.endpoint_status === 'failed' ? (
-                        <span className="text-xs text-warning">共享入口部署失败，已发布链路仍保留</span>
+                        <span className="cg-chain-note is-red">共享入口部署失败，已发布链路仍保留</span>
                       ) : c.endpoint_status === 'applying' || c.endpoint_status === 'pending' ? (
-                        <span className="text-xs text-warning">共享入口部署中，已发布链路仍保留</span>
+                        <span className="cg-chain-note is-blue">共享入口部署中，已发布链路仍保留</span>
                       ) : (
-                        <span className="text-xs text-warning">Agent 离线，已发布链路仍保留</span>
+                        <span className="cg-chain-note is-red">Agent 离线，已发布链路仍保留</span>
                       )
                     ) : null}
                     {c.revision_forced ? (
-                      <span className="text-xs text-info">订阅已发布，配置等待 Agent 确认</span>
+                      <span className="cg-chain-note is-blue">订阅已发布，配置等待 Agent 确认</span>
                     ) : null}
-                  </CardTitle>
-                  <CardDescription className="flex items-center gap-1.5 pl-10 text-xs">
-                    <Clock3Icon className="size-3" />
-                    创建于 {formatDateTime(c.created_at, timezone)}
-                  </CardDescription>
-                  <CardAction className="col-start-1 row-start-3 row-span-1 justify-self-start sm:col-start-2 sm:row-start-1 sm:row-span-2 sm:justify-self-end">
-                    <div className="flex max-w-full flex-wrap gap-2 sm:justify-end">
+                  </div>
+                  <div className="cg-chain-card-side">
+                    <span className="cg-chain-meta">
+                      <Clock3Icon />
+                      创建于 {formatDateTime(c.created_at, timezone)}
+                    </span>
+                    <div className="cg-chain-actions">
                       {c.status === 'failed' || c.status === 'active_failed' || hasFailedHop ? (
                         <Button
                           variant="outline"
@@ -1102,13 +1067,13 @@ export default function Chains() {
                         删除链路
                       </Button>
                     </div>
-                  </CardAction>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-3">
-                  {c.error ? <p className="text-sm text-destructive">{c.error}</p> : null}
-                  <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_240px] lg:items-center">
-                    <div className="min-w-0 overflow-x-auto pb-1">
-                      <div className="flex flex-col items-stretch text-sm sm:min-w-max sm:flex-row sm:items-center">
+                  </div>
+                </header>
+                <div className="cg-chain-card-body">
+                  {c.error ? <p className="cg-chain-error">{c.error}</p> : null}
+                  <div className="cg-chain-split">
+                    <div className="cg-hop-scroll">
+                      <div className="cg-hop-flow">
                         {c.hops.map((h, i) => {
                           const hst = hopStatusStyle[h.status] ?? hopStatusStyle.pending
                           const offline = !serverOnline(h.server_id)
@@ -1121,34 +1086,27 @@ export default function Chains() {
                               ? h.forward_port
                               : (exitNode?.realized_config?.port ?? exitNode?.port ?? h.forward_port)
                           return (
-                            <div key={h.id} className="flex flex-col items-start sm:flex-row sm:items-center" title={h.error || undefined}>
+                            <div key={h.id} className="cg-hop-seg" title={h.error || undefined}>
                               {i > 0 ? (
-                                <span className="my-1 ml-[3px] flex h-5 flex-col items-center text-muted-foreground sm:mx-3 sm:my-0 sm:ml-0 sm:h-auto sm:flex-row" aria-hidden="true">
-                                  <span className="h-4 w-px bg-border sm:h-px sm:w-5" />
-                                  <ArrowDownIcon className="-mt-1 size-3 sm:hidden" />
-                                  <ArrowRightIcon className="-ml-1 hidden size-3 sm:block" />
+                                <span className="cg-hop-link" aria-hidden="true">
+                                  <i />
+                                  <ArrowDownIcon className="cg-hop-link-v" />
+                                  <ArrowRightIcon className="cg-hop-link-h" />
                                 </span>
                               ) : null}
-                              <div className="min-w-0 py-1 sm:min-w-36">
-                                <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                                  <span className={cn(
-                                    'size-1.5 rounded-full',
-                                    offline && 'bg-warning',
-                                    !offline && hst.tone === 'success' && 'bg-success',
-                                    !offline && hst.tone === 'danger' && 'bg-destructive',
-                                    !offline && hst.tone !== 'success' && hst.tone !== 'danger' && 'bg-warning',
-                                  )} />
-                                  {roleLabel[h.role]} · {hst.label}
+                              <div className="cg-hop">
+                                <span className="cg-hop-head">
+                                  <span className="cg-hop-num">{String(i + 1).padStart(2, '0')}</span>
+                                  <span className={cn('cg-hop-dot', offline ? 'is-red' : hst.cg)} />
+                                  <span className="cg-hop-role">{roleLabel[h.role]} · {hst.label}</span>
                                 </span>
-                                <strong className="mt-0.5 block max-w-48 truncate font-medium">{h.server_alias}</strong>
-                                <span className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground tabular-nums">
-									{hopPort !== 0 ? <span>端口 {hopPort}</span> : null}
+                                <strong className="cg-hop-name">{h.server_alias}</strong>
+                                <span className="cg-hop-meta">
+                                  {hopPort !== 0 ? <span>端口 {hopPort}</span> : null}
                                   {(h.role === 'entry' || c.hops.length === 1) && c.entry_shared ? (
-                                    <span className="rounded bg-muted px-1 py-0.5 text-[10px] font-medium text-muted-foreground">
-                                      共享入口
-                                    </span>
+                                    <span className="cg-hop-shared">共享入口</span>
                                   ) : null}
-                                  <span className={offline ? 'text-warning' : 'text-success'}>{offline ? 'Agent 离线' : 'Agent 在线'}</span>
+                                  <span className={offline ? 'is-red' : 'is-lime'}>{offline ? 'Agent 离线' : 'Agent 在线'}</span>
                                   {h.traffic ? <span>↑ {humanizeBytes(h.traffic.effective_up)} · ↓ {humanizeBytes(h.traffic.effective_down)}</span> : null}
                                 </span>
                               </div>
@@ -1166,13 +1124,13 @@ export default function Chains() {
                     />
                   </div>
                 {pendingTasks.length > 0 ? (
-                  <p className="text-xs text-muted-foreground">
+                  <p className="cg-chain-queue">
                     {pendingTasks.filter((task) => task.phase === 'apply').length} 个部署任务、
                     {pendingTasks.filter((task) => task.phase === 'cleanup').length} 个清理任务在队列中
                   </p>
                 ) : null}
                 {c.hops.some((h) => h.error) ? (
-                  <div className="flex flex-col gap-1 text-xs text-destructive">
+                  <div className="cg-chain-hop-errors">
                     {c.hops
                       .filter((h) => h.error)
                       .map((h) => (
@@ -1182,8 +1140,8 @@ export default function Chains() {
                       ))}
                   </div>
                 ) : null}
-                </CardContent>
-              </Card>
+                </div>
+              </article>
             )
           })
         )}
@@ -1213,11 +1171,7 @@ export default function Chains() {
                 ] as const).map(([value, label]) => (
                   <label
                     key={value}
-                    className={`flex h-9 cursor-pointer items-center justify-center rounded-md border text-sm transition-colors focus-within:ring-2 focus-within:ring-ring/40 ${
-                      chainType === value
-                        ? 'border-primary bg-primary text-primary-foreground'
-                        : 'border-input bg-card text-foreground hover:bg-accent hover:text-accent-foreground'
-                    }`}
+                    className={cn('cg-chain-type', chainType === value && 'is-selected')}
                   >
                     <input
                       type="radio"
@@ -1243,7 +1197,7 @@ export default function Chains() {
                 placeholder="留空自动生成 Chain #xxxx"
                 emptyHint="留空将在创建时自动生成 Chain #xxxx（4 位随机大小写字母）"
               />
-              <p className="text-xs text-muted-foreground">
+              <p className="cg-chain-hint">
                 输入 {'{{'} 后可选择变量；中转节点显示为 HOP_1/HOP_2，对应模板中的
                 HOP[1]/HOP[2]。
               </p>
@@ -1343,7 +1297,7 @@ export default function Chains() {
                 onChange={(e) => setEntryPort(e.target.value)}
                 placeholder="留空自动分配（须在服务器可用段内）"
               />
-              {entryPortHint ? <p className="text-xs text-muted-foreground">{entryPortHint}</p> : null}
+              {entryPortHint ? <p className="cg-chain-hint">{entryPortHint}</p> : null}
             </div>
 
             <div className="space-y-2">
@@ -1544,7 +1498,7 @@ export default function Chains() {
               />
             </div>
 
-            {createError && <p className="text-sm text-destructive">{createError}</p>}
+            {createError && <p className="cg-chain-error">{createError}</p>}
             <DialogFooter>
               <Button
                 type="submit"
@@ -1570,7 +1524,7 @@ export default function Chains() {
           {trafficChain ? (
             <div className="space-y-4">
               <div className="flex flex-wrap gap-2">
-                <div className="flex rounded-md border p-0.5">
+                <div className="cg-chain-range">
                   {(['day', 'month'] as const).map((range) => (
                     <Button
                       key={range}
@@ -1615,9 +1569,9 @@ export default function Chains() {
                 </Select>
               </div>
               {trafficLoading ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">加载中…</p>
+                <p className="cg-chain-dialog-note">加载中…</p>
               ) : displayedTrafficHistory.length === 0 ? (
-                <p className="py-8 text-center text-sm text-muted-foreground">暂无流量记录</p>
+                <p className="cg-chain-dialog-note">暂无流量记录</p>
               ) : (
                 <TrafficHistoryChart buckets={displayedTrafficHistory} range={trafficRange} />
               )}

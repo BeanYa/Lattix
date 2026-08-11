@@ -1,0 +1,113 @@
+/* ============================================================
+   Logs（操作日志 / 请求日志）— Cream Grid Tech 页面样式
+   ============================================================ */
+
+.cg-logs {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ---------- 工具行 ---------- */
+
+.cg-logs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cg-logs-toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.cg-log-label {
+  font-family: var(--cg-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--cg-muted);
+  white-space: nowrap;
+}
+
+/* ---------- 筛选栏（紧凑卡片） ---------- */
+
+.cg-log-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px 14px;
+  padding: 12px 14px;
+}
+
+.cg-log-filter-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ---------- 分页 / 备注 ---------- */
+
+.cg-logs-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cg-logs-pagination-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.cg-log-note {
+  margin: 0;
+  font-family: var(--cg-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--cg-subtle);
+}
+
+/* ---------- 详情深色技术面板（Terminal） ---------- */
+
+.cg-log-terminal {
+  overflow: hidden;
+}
+
+.cg-log-terminal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--cg-charcoal-line);
+}
+
+.cg-log-terminal-head .cg-micro {
+  color: var(--cg-lime);
+}
+
+.cg-log-terminal-head .cg-micro + .cg-micro {
+  color: var(--cg-subtle);
+}
+
+.cg-log-terminal-body {
+  margin: 0;
+  max-height: 24rem;
+  overflow: auto;
+  padding: 12px 14px;
+  font-family: var(--cg-mono);
+  font-size: 11px;
+  line-height: 1.7;
+  color: var(--cg-on-charcoal);
+  white-space: pre-wrap;
+  word-break: break-all;
+}

@@ -5,7 +5,6 @@ import {
   Clock3Icon,
   CpuIcon,
   DatabaseIcon,
-  GaugeIcon,
   HardDriveIcon,
   ListChecksIcon,
   MemoryStickIcon,
@@ -17,8 +16,7 @@ import {
   WaypointsIcon,
 } from 'lucide-react'
 
-import { Notice, Page, PageHeader } from '@/components/PagePrimitives'
-import { Button } from '@/components/ui/button'
+import { EmptyState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { api, errorMessage } from '@/lib/api'
 import { humanizeBytes } from '@/lib/format'
 import type { PanelLifecycleState, PanelRuntimeSnapshot, ScheduledTaskRuntime } from '@/lib/types'
@@ -80,6 +78,12 @@ function metricTone(value: number, warning = 75, critical = 90): 'normal' | 'war
   return 'normal'
 }
 
+function panelStateTone(state: PanelLifecycleState): 'is-lime' | 'is-blue' | 'is-red' {
+  if (state === 'active') return 'is-lime'
+  if (state === 'faulted') return 'is-red'
+  return 'is-blue'
+}
+
 function MetricTile({
   icon,
   label,
@@ -95,15 +99,16 @@ function MetricTile({
 }) {
   const tone = metricTone(progress)
   return (
-    <article className="runtime-metric" data-tone={tone}>
-      <div className="runtime-metric-icon" aria-hidden="true">{icon}</div>
-      <div className="runtime-metric-copy">
-        <span>{label}</span>
-        <strong>{value}</strong>
-        <small>{detail}</small>
+    <article className="cg-card cg-runtime-metric" data-tone={tone}>
+      <div className="cg-runtime-metric-main">
+        <span className="cg-metric-value">{value}</span>
+        <span className="cg-metric-copy">
+          <span className="cg-metric-label">{icon}{label}</span>
+          <span className="cg-metric-detail">{detail}</span>
+        </span>
       </div>
       <div
-        className="runtime-meter"
+        className="cg-runtime-meter"
         role="progressbar"
         aria-label={`${label} ${value}`}
         aria-valuemin={0}
@@ -120,19 +125,21 @@ function TrendStrip({
   label,
   values,
   formatter,
+  color,
 }: {
   label: string
   values: Array<number | null>
   formatter: (value: number | null) => string
+  color: string
 }) {
   const padded = [...Array.from<null>({ length: Math.max(0, MAX_SAMPLES - values.length) }).fill(null), ...values].slice(-MAX_SAMPLES)
   return (
-    <figure className="runtime-trend">
+    <figure className="cg-runtime-trend" style={{ '--trend-color': color } as CSSProperties}>
       <figcaption>
         <span>{label}</span>
         <strong>{formatter(values.at(-1) ?? null)}</strong>
       </figcaption>
-      <div className="runtime-trend-bars" aria-label={`${label}最近 ${values.length} 次采样`}>
+      <div className="cg-runtime-trend-bars" aria-label={`${label}最近 ${values.length} 次采样`}>
         {padded.map((value, index) => (
           <i
             key={`${index}-${value ?? 'empty'}`}
@@ -153,9 +160,9 @@ function ProcessMetric({ label, value, detail, progress }: {
   progress: number
 }) {
   return (
-    <div className="runtime-process-metric">
+    <div className="cg-runtime-process-metric">
       <div><span>{label}</span><strong>{value}</strong></div>
-      <div className="runtime-process-track"><i style={{ '--meter-value': `${progress}%` } as CSSProperties} /></div>
+      <div className="cg-runtime-process-track"><i style={{ '--meter-value': `${progress}%` } as CSSProperties} /></div>
       <small>{detail}</small>
     </div>
   )
@@ -164,13 +171,14 @@ function ProcessMetric({ label, value, detail, progress }: {
 function TaskRow({ task }: { task: ScheduledTaskRuntime }) {
   const failed = Boolean(task.last_error)
   const status = task.running ? '运行中' : failed ? '上次失败' : task.runs > 0 ? '正常' : '等待执行'
+  const statusTone = task.running ? 'is-lime' : failed ? 'is-red' : task.runs > 0 ? 'is-blue' : 'is-muted'
   return (
-    <div className="runtime-task-row" data-status={task.running ? 'running' : failed ? 'failed' : 'idle'}>
-      <div className="runtime-task-name">
-        <span className="runtime-service-dot" />
+    <div className="cg-runtime-task-row" data-status={task.running ? 'running' : failed ? 'failed' : 'idle'}>
+      <div className="cg-runtime-task-name">
+        <span className="cg-runtime-task-dot" />
         <div><strong>{taskLabels[task.name] ?? task.name}</strong><small>{task.name}</small></div>
       </div>
-      <span className="runtime-task-status">{status}</span>
+      <span className={cn('cg-status', statusTone)}>{status}</span>
       <span><small>上次完成</small>{formatTaskTime(task.last_finished_at)}</span>
       <span><small>耗时</small>{task.runs > 0 ? `${task.last_duration_ms.toLocaleString()} ms` : '--'}</span>
       <span><small>下次执行</small>{formatTaskTime(task.next_run_at)}</span>
@@ -226,8 +234,9 @@ export default function RuntimeMonitor() {
 
   if (!snapshot) {
     return (
-      <div className="runtime-loading" role="status" aria-label="正在读取运行状态">
-        <span /><span /><span /><span />
+      <div className="cg-runtime-loading" role="status" aria-label="正在读取运行状态">
+        <span className="cg-micro">LOADING / RUNTIME</span>
+        <div className="cg-runtime-loading-bar"><i /><i /><i /></div>
       </div>
     )
   }
@@ -242,96 +251,162 @@ export default function RuntimeMonitor() {
   const cpuPercent = snapshot.host.cpu_percent ?? 0
   const runningTasks = snapshot.tasks.filter((task) => task.running).length
   const failedTasks = snapshot.tasks.filter((task) => task.last_error).length
+  const servicesOk = snapshot.services.database_healthy && failedTasks === 0 && snapshot.services.request_log_dropped === 0
 
   return (
-    <Page className="runtime-page">
+    <Page className="cg-runtime">
+      {/* Eyebrow + 采样状态 */}
+      <div className="cg-runtime-topline">
+        <span className="cg-eyebrow">PANEL / RUNTIME MONITOR</span>
+        <div className="cg-runtime-topline-side">
+          <span className="cg-pill">
+            {lastSyncedAt
+              ? `${lastSyncedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} 已同步`
+              : '正在同步'}
+          </span>
+          <span className={cn('cg-pill cg-runtime-live', live && 'is-active')}>
+            {live ? '实时采样' : '已暂停'}
+          </span>
+        </div>
+      </div>
+
       <PageHeader
         title="运行监控"
         description="面板进程、宿主资源与后台任务的实时状态。"
         actions={(
-          <div className="runtime-toolbar">
-            <span className={cn('runtime-live-chip', !live && 'is-paused')}><i />{live ? '实时采样' : '已暂停'}</span>
-            <span className="runtime-sync-time">{lastSyncedAt?.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
-            <Button
-              variant="ghost"
-              size="icon"
+          <>
+            <button
+              type="button"
+              className="cg-button is-icon"
               onClick={() => setLive((current) => !current)}
               aria-label={live ? '暂停自动刷新' : '继续自动刷新'}
               title={live ? '暂停自动刷新' : '继续自动刷新'}
             >
               {live ? <PauseIcon /> : <PlayIcon />}
-            </Button>
-            <Button variant="ghost" size="icon" onClick={() => void load()} aria-label="立即刷新" title="立即刷新">
+            </button>
+            <button
+              type="button"
+              className="cg-button is-icon"
+              onClick={() => void load()}
+              aria-label="立即刷新"
+              title="立即刷新"
+            >
               <RefreshCwIcon />
-            </Button>
-          </div>
+            </button>
+          </>
         )}
       />
 
       {error ? <Notice tone="warning" title="本次刷新失败">正在显示上一次有效快照：{error}</Notice> : null}
 
-      <section className="runtime-status-band" data-state={snapshot.panel.state} aria-labelledby="runtime-panel-heading">
-        <div className="runtime-status-primary">
-          <span className="runtime-status-icon"><ActivityIcon /></span>
-          <div>
-            <span>PANEL RUNTIME</span>
-            <h2 id="runtime-panel-heading">{stateLabel[snapshot.panel.state]}</h2>
-            <p>{snapshot.host.hostname || 'Lattix Panel'} · {snapshot.host.os}/{snapshot.host.arch}</p>
+      {/* Hero：面板运行时（浅色数据卡） */}
+      <section className="cg-card-raised cg-runtime-band" data-state={snapshot.panel.state} aria-labelledby="runtime-panel-heading">
+        <div className="cg-runtime-band-main">
+          <div className="cg-runtime-band-primary">
+            <span className="cg-runtime-band-icon"><ActivityIcon /></span>
+            <div className="cg-runtime-band-copy">
+              <span className="cg-micro">PANEL RUNTIME</span>
+              <h2 id="runtime-panel-heading">{stateLabel[snapshot.panel.state]}</h2>
+              <p>{snapshot.host.hostname || 'Lattix Panel'} · {snapshot.host.os}/{snapshot.host.arch}</p>
+            </div>
           </div>
+          <span className={cn('cg-status', panelStateTone(snapshot.panel.state))}>
+            {snapshot.panel.state}
+          </span>
         </div>
-        <dl className="runtime-status-meta">
-          <div><dt>版本</dt><dd>{snapshot.panel.version || 'dev'}</dd></div>
-          <div><dt>运行时间</dt><dd>{formatDuration(snapshot.panel.uptime_seconds)}</dd></div>
-          <div><dt>进程</dt><dd>PID {snapshot.panel.pid}</dd></div>
+        <dl className="cg-runtime-band-meta">
+          <div><dt>版本 Version</dt><dd>{snapshot.panel.version || 'dev'}</dd></div>
+          <div><dt>运行时间 Uptime</dt><dd>{formatDuration(snapshot.panel.uptime_seconds)}</dd></div>
+          <div><dt>进程 PID</dt><dd>{snapshot.panel.pid}</dd></div>
           <div><dt>Go Runtime</dt><dd>{snapshot.process.go_version}</dd></div>
         </dl>
-        <div className="runtime-signal" aria-hidden="true">
+        <div className="cg-runtime-signal" aria-hidden="true">
           {Array.from({ length: 18 }).map((_, index) => (
             <i key={index} style={{ '--signal-height': `${20 + (index % 6) * 12}%` } as CSSProperties} />
           ))}
         </div>
       </section>
 
-      <section className="runtime-metric-grid" aria-label="资源概览">
+      {/* 资源指标 */}
+      <section className="cg-runtime-metric-grid" aria-label="资源概览">
         <MetricTile icon={<CpuIcon />} label="CPU 使用率" value={formatPercent(snapshot.host.cpu_percent)} detail={`${snapshot.host.cpu_cores} 核 · Load ${snapshot.host.load1.toFixed(2)}`} progress={cpuPercent} />
         <MetricTile icon={<MemoryStickIcon />} label="主机内存" value={`${memoryPercent.toFixed(0)}%`} detail={`${humanizeBytes(snapshot.host.memory_active)} / ${humanizeBytes(snapshot.host.memory_total)}`} progress={memoryPercent} />
         <MetricTile icon={<HardDriveIcon />} label="进程驻留内存" value={humanizeBytes(snapshot.process.rss_bytes)} detail={`虚拟内存 ${humanizeBytes(snapshot.process.virtual_bytes)}`} progress={rssPercent} />
         <MetricTile icon={<DatabaseIcon />} label="数据库响应" value={snapshot.services.database_healthy ? `${snapshot.services.database_latency_ms.toFixed(2)} ms` : '不可用'} detail={snapshot.services.database_healthy ? 'SQLite 探测正常' : '探测未通过'} progress={snapshot.services.database_healthy ? Math.min(100, snapshot.services.database_latency_ms) : 100} />
       </section>
 
-      <div className="runtime-main-grid">
-        <section className="runtime-section runtime-resource-section" aria-labelledby="runtime-resource-heading">
-          <header className="runtime-section-header">
-            <div><span>RESOURCE WINDOW</span><h2 id="runtime-resource-heading">资源趋势</h2></div>
-            <small>{samples.length} / {MAX_SAMPLES} 个样本</small>
+      <div className="cg-runtime-main-grid">
+        <section className="cg-card cg-runtime-section" aria-labelledby="runtime-resource-heading">
+          <header className="cg-runtime-section-head">
+            <div>
+              <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>RESOURCE WINDOW</span>
+              <h2 className="cg-title cg-runtime-section-title" id="runtime-resource-heading">资源趋势</h2>
+            </div>
+            <span className="cg-status is-blue">{samples.length} / {MAX_SAMPLES} SAMPLES</span>
           </header>
-          <div className="runtime-trend-list">
-            <TrendStrip label="CPU" values={trends.map((sample) => sample.cpu)} formatter={formatPercent} />
-            <TrendStrip label="主机内存" values={trends.map((sample) => sample.memory)} formatter={(value) => formatPercent(value)} />
-            <TrendStrip label="进程 RSS / 主机" values={trends.map((sample) => sample.rss)} formatter={(value) => formatPercent(value)} />
+          <div className="cg-runtime-trend-list">
+            <TrendStrip label="CPU" values={trends.map((sample) => sample.cpu)} formatter={formatPercent} color="var(--chart-1)" />
+            <TrendStrip label="主机内存" values={trends.map((sample) => sample.memory)} formatter={(value) => formatPercent(value)} color="var(--chart-2)" />
+            <TrendStrip label="进程 RSS / 主机" values={trends.map((sample) => sample.rss)} formatter={(value) => formatPercent(value)} color="var(--chart-3)" />
           </div>
         </section>
 
-        <aside className="runtime-section runtime-service-section" aria-labelledby="runtime-service-heading">
-          <header className="runtime-section-header">
-            <div><span>SERVICE HEALTH</span><h2 id="runtime-service-heading">服务状态</h2></div>
-            <GaugeIcon />
+        <aside className="cg-card cg-runtime-section" aria-labelledby="runtime-service-heading">
+          <header className="cg-runtime-section-head">
+            <div>
+              <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>SERVICE HEALTH</span>
+              <h2 className="cg-title cg-runtime-section-title" id="runtime-service-heading">服务状态</h2>
+            </div>
+            <span className={cn('cg-status', servicesOk ? 'is-lime' : 'is-red')}>
+              {servicesOk ? 'ALL OK' : 'ATTENTION'}
+            </span>
           </header>
-          <div className="runtime-service-list">
-            <div><span className={cn('runtime-service-icon', snapshot.services.database_healthy && 'is-ok')}><DatabaseIcon /></span><p><strong>SQLite</strong><small>主数据存储</small></p><b>{snapshot.services.database_healthy ? '正常' : '异常'}</b></div>
-            <div><span className={cn('runtime-service-icon', failedTasks === 0 && 'is-ok', failedTasks > 0 && 'is-warning')}><ListChecksIcon /></span><p><strong>后台调度</strong><small>{snapshot.tasks.length} 项任务</small></p><b>{failedTasks > 0 ? `${failedTasks} 项异常` : runningTasks > 0 ? `${runningTasks} 项运行中` : '待命'}</b></div>
-            <div><span className={cn('runtime-service-icon', onlinePercent === 100 && 'is-ok', onlinePercent < 100 && 'is-warning')}><WaypointsIcon /></span><p><strong>Agent 会话</strong><small>控制通道</small></p><b>{snapshot.services.agents_online} / {snapshot.services.agents_total}</b></div>
-            <div><span className={cn('runtime-service-icon', snapshot.services.request_log_dropped === 0 && 'is-ok', snapshot.services.request_log_dropped > 0 && 'is-warning')}><ServerIcon /></span><p><strong>请求日志</strong><small>{logPercent.toFixed(0)}% 容量</small></p><b>{snapshot.services.request_log_dropped ? `丢弃 ${snapshot.services.request_log_dropped}` : '正常'}</b></div>
+          <div className="cg-runtime-service-list">
+            <div className="cg-runtime-service-row">
+              <span className={cn('cg-runtime-service-icon', snapshot.services.database_healthy && 'is-ok', !snapshot.services.database_healthy && 'is-warning')}><DatabaseIcon /></span>
+              <p><strong>SQLite</strong><small>主数据存储</small></p>
+              <span className={cn('cg-status', snapshot.services.database_healthy ? 'is-lime' : 'is-red')}>
+                {snapshot.services.database_healthy ? '正常' : '异常'}
+              </span>
+            </div>
+            <div className="cg-runtime-service-row">
+              <span className={cn('cg-runtime-service-icon', failedTasks === 0 && 'is-ok', failedTasks > 0 && 'is-warning')}><ListChecksIcon /></span>
+              <p><strong>后台调度</strong><small>{snapshot.tasks.length} 项任务</small></p>
+              <span className={cn('cg-status', failedTasks > 0 ? 'is-red' : runningTasks > 0 ? 'is-blue' : 'is-muted')}>
+                {failedTasks > 0 ? `${failedTasks} 项异常` : runningTasks > 0 ? `${runningTasks} 项运行中` : '待命'}
+              </span>
+            </div>
+            <div className="cg-runtime-service-row">
+              <span className={cn('cg-runtime-service-icon', onlinePercent === 100 && 'is-ok', onlinePercent < 100 && 'is-warning')}><WaypointsIcon /></span>
+              <p><strong>Agent 会话</strong><small>控制通道</small></p>
+              <span className={cn('cg-status', onlinePercent === 100 ? 'is-lime' : 'is-blue')}>
+                {snapshot.services.agents_online} / {snapshot.services.agents_total}
+              </span>
+            </div>
+            <div className="cg-runtime-service-row">
+              <span className={cn('cg-runtime-service-icon', snapshot.services.request_log_dropped === 0 && 'is-ok', snapshot.services.request_log_dropped > 0 && 'is-warning')}><ServerIcon /></span>
+              <p><strong>请求日志</strong><small>{logPercent.toFixed(0)}% 容量</small></p>
+              <span className={cn('cg-status', snapshot.services.request_log_dropped ? 'is-red' : 'is-lime')}>
+                {snapshot.services.request_log_dropped ? `丢弃 ${snapshot.services.request_log_dropped}` : '正常'}
+              </span>
+            </div>
           </div>
         </aside>
       </div>
 
-      <section className="runtime-section runtime-process-section" aria-labelledby="runtime-process-heading">
-        <header className="runtime-section-header">
-          <div><span>GO PROCESS</span><h2 id="runtime-process-heading">进程详情</h2></div>
-          <span className="runtime-process-badge"><BracesIcon />{snapshot.process.goroutines} Goroutines</span>
+      {/* Go 进程详情（浅色数据卡） */}
+      <section className="cg-card cg-runtime-process" aria-labelledby="runtime-process-heading">
+        <header className="cg-runtime-terminal-head">
+          <div>
+            <span className="cg-micro" style={{ color: 'var(--cg-lime-dark)' }}>GO PROCESS</span>
+            <h2 className="cg-runtime-terminal-title" id="runtime-process-heading">
+              <BracesIcon size={15} style={{ color: 'var(--cg-lime-dark)' }} />
+              进程详情
+            </h2>
+          </div>
+          <span className="cg-status is-lime">{snapshot.process.goroutines} GOROUTINES</span>
         </header>
-        <div className="runtime-process-grid">
+        <div className="cg-runtime-process-grid">
           <ProcessMetric label="Heap Alloc" value={humanizeBytes(snapshot.process.heap_alloc)} detail={`Heap Sys ${humanizeBytes(snapshot.process.heap_sys)}`} progress={heapPercent} />
           <ProcessMetric label="Heap In-use" value={humanizeBytes(snapshot.process.heap_inuse)} detail={`已保留堆内存的 ${percent(snapshot.process.heap_inuse, snapshot.process.heap_sys).toFixed(0)}%`} progress={percent(snapshot.process.heap_inuse, snapshot.process.heap_sys)} />
           <ProcessMetric label="Stack In-use" value={humanizeBytes(snapshot.process.stack_inuse)} detail={`${snapshot.process.goroutines} 个 Goroutine`} progress={percent(snapshot.process.stack_inuse, snapshot.process.heap_sys + snapshot.process.stack_inuse)} />
@@ -339,14 +414,21 @@ export default function RuntimeMonitor() {
         </div>
       </section>
 
-      <section className="runtime-section runtime-task-section" aria-labelledby="runtime-task-heading">
-        <header className="runtime-section-header">
-          <div><span>SCHEDULED WORK</span><h2 id="runtime-task-heading">后台任务</h2></div>
-          <span className="runtime-task-summary"><TimerResetIcon />{snapshot.tasks.length} 项已注册</span>
+      {/* 后台任务 */}
+      <section className="cg-card cg-runtime-section" aria-labelledby="runtime-task-heading">
+        <header className="cg-runtime-section-head">
+          <div>
+            <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>SCHEDULED WORK</span>
+            <h2 className="cg-title cg-runtime-section-title" id="runtime-task-heading">
+              <TimerResetIcon size={15} />
+              后台任务
+            </h2>
+          </div>
+          <span className="cg-status is-blue">{snapshot.tasks.length} REGISTERED</span>
         </header>
-        <div className="runtime-task-list">
+        <div className="cg-runtime-task-list">
           {snapshot.tasks.length ? snapshot.tasks.map((task) => <TaskRow key={task.name} task={task} />) : (
-            <div className="runtime-task-empty"><Clock3Icon /><span>尚无已注册任务</span></div>
+            <EmptyState icon={<Clock3Icon />} title="尚无已注册任务" />
           )}
         </div>
       </section>

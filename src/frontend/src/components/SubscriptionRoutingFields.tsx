@@ -114,10 +114,10 @@ export function SubscriptionRoutingFields({
           <legend className="text-sm font-medium">生效分类</legend>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {categories.map((category) => (
-              <label key={category.id} className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm">
+              <label key={category.id} className="cg-check-row">
                 <input
                   type="checkbox"
-                  className="size-4 shrink-0 accent-primary"
+                  className="cg-checkbox"
                   checked={value.categories.includes(category.id)}
                   onChange={(event) => set({
                     categories: event.target.checked
@@ -133,8 +133,8 @@ export function SubscriptionRoutingFields({
         </fieldset>
       ) : null}
 
-      <details className="rounded-md border px-3 py-2">
-        <summary className="cursor-pointer text-sm font-medium">客户端原生模板覆盖</summary>
+      <details className="cg-routing-details">
+        <summary>客户端原生模板覆盖</summary>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           {([
             ['mihomo_template_id', 'assigned_mihomo_template_id', 'assign_forced_mihomo', 'Mihomo', 'mihomo'],
@@ -159,7 +159,7 @@ export function SubscriptionRoutingFields({
                   </SelectContent>
                 </Select>
                 {assigned ? (
-                  <p className="text-xs text-muted-foreground">
+                  <p className="cg-hint">
                     {forced
                       ? `已强制指派「${templateName(assigned)}」`
                       : `已指派「${templateName(assigned)}」，自选优先`}

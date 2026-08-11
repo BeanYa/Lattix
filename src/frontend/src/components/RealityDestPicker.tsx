@@ -2,6 +2,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { CUSTOM_REALITY_DEST, REALITY_DEST_OPTIONS } from '@/lib/reality'
 
+import './RealityDestPicker.css'
+
 interface RealityDestPickerProps {
   idPrefix: string
   preset: string
@@ -35,7 +37,7 @@ export function RealityDestPicker({
         <Label htmlFor={`${idPrefix}-dest-preset`}>Reality 伪装站点</Label>
         <select
           id={`${idPrefix}-dest-preset`}
-          className="h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+          className="cg-reality-select"
           value={preset}
           onChange={(event) => selectPreset(event.target.value)}
         >
@@ -46,7 +48,7 @@ export function RealityDestPicker({
           ))}
           <option value={CUSTOM_REALITY_DEST}>自定义…</option>
         </select>
-        <p className="text-xs text-muted-foreground">
+        <p className="cg-reality-hint">
           内置项会同时设置 dest 与 SNI；具体可用性取决于服务器所在网络。
         </p>
       </div>
@@ -72,7 +74,7 @@ export function RealityDestPicker({
           </div>
         </>
       ) : (
-        <div className="rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+        <div className="cg-reality-summary">
           dest：{dest} · SNI：{serverNames}
         </div>
       )}

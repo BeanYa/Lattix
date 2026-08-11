@@ -1,0 +1,91 @@
+/* ============================================================
+   Groups — Cream Grid Tech 页面样式
+   ============================================================ */
+
+/* ---------- 分组卡片列表 ---------- */
+
+.cg-groups-list {
+  display: grid;
+  gap: 12px;
+}
+
+.cg-group-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  transition: transform 160ms var(--cg-ease);
+}
+
+.cg-group-card:hover {
+  transform: translateY(-1px);
+}
+
+.cg-group-card-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.cg-group-card-name {
+  font-size: 14px;
+  font-weight: 850;
+  color: var(--cg-ink);
+}
+
+.cg-group-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---------- 对话框内小件 ---------- */
+
+.cg-groups-hint {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--cg-muted);
+}
+
+.cg-groups-checkbox {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  accent-color: var(--cg-blue);
+}
+
+.cg-groups-check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-light);
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--cg-ink);
+  cursor: pointer;
+  transition: transform 160ms var(--cg-ease), background-color 160ms var(--cg-ease);
+}
+
+.cg-groups-check-row:hover {
+  transform: translateY(-1px);
+  background: var(--cg-paper-soft);
+}
+
+.cg-groups-check-row-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--cg-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--cg-muted);
+}
