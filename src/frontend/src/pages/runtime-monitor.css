@@ -275,7 +275,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(18rem, 0.8fr);
   gap: 16px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .cg-runtime-section {
