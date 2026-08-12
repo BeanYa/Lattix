@@ -632,7 +632,7 @@ export default function SubscriptionPage() {
           <section className="link-monitor" aria-label="链路状态">
             <div className="section-heading">
               <h2>链路状态</h2>
-              <span>最近 30 次延迟</span>
+              <span>最近 30 次延迟（节点到面板服务器）</span>
             </div>
             {linkStatus && linkStatus.length > 0 ? (
               <div className="link-monitor-list">
