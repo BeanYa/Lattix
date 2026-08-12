@@ -11,6 +11,15 @@ Commit everything, tag the latest commit with the next patch version, push, and 
 
 ## Workflow
 
+### 0. Determine the scope
+
+- **No explicit release instruction from the user** (no mention of releasing, tagging, publishing, or pushing): run in **commit-only mode**:
+  - Stage and commit **only the changes produced by the current session** (the files this session created or modified). Identify them from the session's own edit history, and verify against `git status --porcelain` / `git diff`.
+  - **Leave changes from other sessions untouched** — do not stage, commit, revert, or tag over them.
+  - **Do not tag and do not push.** Skip steps 4–7 entirely.
+  - After committing, report to the user: the commit message(s) used, and a summary of the other sessions' changes that were left uncommitted (files and what they appear to be, based on `git status` / `git diff --stat`).
+- **Explicit release instruction**: run the full workflow below (steps 1–7).
+
 ### 1. Check for unmerged branches/worktrees
 
 - Run `git branch --no-merged main` for unmerged branches, and `git worktree list` for worktrees; check each worktree's branch against the same unmerged list.
@@ -66,6 +75,8 @@ Commit everything, tag the latest commit with the next patch version, push, and 
 
 | Mistake | Fix |
 |---------|-----|
+| Committing other sessions' changes without a release instruction | Commit-only mode: stage only the current session's files; leave the rest uncommitted (step 0) |
+| Tagging/pushing without an explicit release instruction | No release instruction -> no tag, no push (step 0) |
 | Merging branches without asking | Ask first; only merge on confirmation (step 1) |
 | Missing worktree branches | Check each worktree's branch in `git worktree list` too |
 | Tagging while files remain uncommitted | Drain the tree first (step 2) |
