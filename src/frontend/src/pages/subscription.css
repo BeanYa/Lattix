@@ -897,6 +897,35 @@
   white-space: nowrap;
 }
 
+.download-sha256 {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+}
+
+.download-sha256 code {
+  overflow: hidden;
+  flex: 1;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-sha256-copy {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: none;
+  background: none;
+  color: var(--sub-muted);
+  cursor: pointer;
+}
+
+.download-sha256-copy:hover { color: var(--sub-text); }
+
+.download-sha256-copy svg { width: 12px; height: 12px; }
+
 .download-modal-error {
   margin: 18px 0 0;
   color: var(--sub-danger);
@@ -907,8 +936,17 @@
 .download-modal-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
   margin-top: 28px;
 }
+
+.download-source a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.download-source a:hover { color: var(--sub-text); }
 
 .download-modal-actions .primary-action:disabled {
   cursor: not-allowed;

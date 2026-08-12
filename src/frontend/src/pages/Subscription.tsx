@@ -57,6 +57,8 @@ interface DownloadTask {
   progress: number
   size: number
   filename?: string
+  source_url?: string
+  sha256?: string
   error?: string
 }
 
@@ -399,12 +401,12 @@ export default function SubscriptionPage() {
   useEffect(() => {
     if (!downloadTask || downloadTask.status !== 'done' || downloadTriggered.current === downloadTask.task_id) return
     downloadTriggered.current = downloadTask.task_id
+    const taskParam = encodeURIComponent(downloadTask.task_id)
+    // 换取短期下载票据，再用普通 HTTP 链接交给浏览器原生下载（支持暂停/断点续传）。
     requester
-      .download(`/api/sub/${token}/client-download/file?task=${encodeURIComponent(downloadTask.task_id)}`, {
-        timeoutMs: 10 * 60 * 1000,
-        display: 'silent',
-      })
-      .then(() => {
+      .getJSON<{ ticket: string }>(`/api/sub/${token}/client-download/ticket?task=${taskParam}`, { display: 'silent' })
+      .then(({ ticket }) => {
+        window.location.assign(`/api/sub/${token}/client-download/file?task=${taskParam}&ticket=${encodeURIComponent(ticket)}`)
         setDownloadTask((current) => current?.task_id === downloadTask.task_id ? { ...current, status: 'downloaded' } : current)
       })
       .catch(() => {
@@ -850,12 +852,41 @@ export default function SubscriptionPage() {
                     <span style={{ width: `${Math.round(Math.max(0, Math.min(1, downloadTask.progress)) * 100)}%` }} />
                   </div>
                   {downloadTask.filename ? <small>{downloadTask.filename}</small> : null}
+                  {downloadTask.source_url ? (
+                    <small className="download-source">
+                      下载源：<a href={downloadTask.source_url} target="_blank" rel="noreferrer">{downloadTask.source_url}</a>
+                    </small>
+                  ) : null}
+                  {downloadTask.sha256 ? (
+                    <small className="download-sha256">
+                      <span>SHA-256</span>
+                      <code>{downloadTask.sha256}</code>
+                      <button
+                        type="button"
+                        className="download-sha256-copy"
+                        aria-label="复制 SHA-256 校验码"
+                        onClick={() => void handleCopy(downloadTask.sha256 ?? '', 'sha256')}
+                      >
+                        {copied === 'sha256' ? <CheckIcon /> : <CopyIcon />}
+                      </button>
+                    </small>
+                  ) : null}
                 </div>
               ) : null}
 
               {downloadError || downloadTask?.error ? <p className="download-modal-error" role="alert">{downloadError || downloadTask?.error}</p> : null}
 
               <div className="download-modal-actions">
+                {downloadTask?.status === 'failed' && downloadTask.source_url ? (
+                  <button
+                    type="button"
+                    className="secondary-action"
+                    onClick={() => window.open(downloadTask.source_url, '_blank', 'noreferrer')}
+                  >
+                    <ArrowUpRight />
+                    自行下载
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="primary-action"
@@ -863,7 +894,7 @@ export default function SubscriptionPage() {
                   onClick={() => void startDownload()}
                 >
                   {downloadTask && ['queued', 'downloading'].includes(downloadTask.status) ? <RefreshCwIcon className="download-spin" /> : <DownloadIcon />}
-                  {downloadTask && ['queued', 'downloading'].includes(downloadTask.status) ? '下载中' : '开始下载'}
+                  {downloadTask && ['queued', 'downloading'].includes(downloadTask.status) ? '下载中' : downloadTask?.status === 'failed' ? '重试下载' : '开始下载'}
                 </button>
               </div>
             </section>

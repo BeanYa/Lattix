@@ -474,6 +474,7 @@ func run() error {
 	mux.HandleFunc("GET /api/sub/{token}/status", subSrv.HandleSubStatus)
 	mux.HandleFunc("GET /api/sub/{token}/client-download/start", subSrv.HandleSubClientDownloadStart)
 	mux.HandleFunc("GET /api/sub/{token}/client-download/status", subSrv.HandleSubClientDownloadStatus)
+	mux.HandleFunc("GET /api/sub/{token}/client-download/ticket", subSrv.HandleSubClientDownloadTicket)
 	mux.HandleFunc("GET /api/sub/{token}/client-download/file", subSrv.HandleSubClientDownloadFile)
 	mux.HandleFunc("GET /api/sub/{token}/history", subSrv.HandleSubHistory)
 

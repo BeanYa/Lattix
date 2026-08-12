@@ -2,9 +2,12 @@ package sub
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,8 +21,9 @@ import (
 )
 
 const (
-	defaultClientCacheTTL = 72 * time.Hour
-	maxClientPackageBytes = int64(512 << 20)
+	defaultClientCacheTTL   = 72 * time.Hour
+	maxClientPackageBytes   = int64(512 << 20)
+	clientDownloadTicketTTL = 3 * time.Hour
 )
 
 type ClientDownloadVariant struct {
@@ -43,6 +47,7 @@ type clientReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
 	Size               int64  `json:"size"`
+	Digest             string `json:"digest"` // GitHub API 提供的 "sha256:<hex>" 形式校验值（可能为空）
 }
 
 type clientCacheMetadata struct {
@@ -51,6 +56,7 @@ type clientCacheMetadata struct {
 	AssetURL     string    `json:"asset_url"`
 	Filename     string    `json:"filename"`
 	Size         int64     `json:"size"`
+	SHA256       string    `json:"sha256,omitempty"`
 	DownloadedAt time.Time `json:"downloaded_at"`
 }
 
@@ -62,8 +68,18 @@ type clientDownloadTask struct {
 	Size      int64
 	Filename  string
 	FilePath  string
+	SourceURL string
+	SHA256    string
 	Error     string
 	CreatedAt time.Time
+}
+
+// clientDownloadTicket 是一次会话级的下载票据：绑定下载任务与订阅 token，
+// 有效期内可多次使用（断点续传需对同一 URL 发起多次 Range 请求），过期即失效。
+type clientDownloadTicket struct {
+	TaskID    string
+	Token     string
+	ExpiresAt time.Time
 }
 
 var clientDownloadSpecs = map[string]clientDownloadSpec{
@@ -164,7 +180,7 @@ func (s *Server) HandleSubClientDownloadStatus(w http.ResponseWriter, r *http.Re
 		subDownloadErrorStatus(w, http.StatusNotFound, errors.New("下载任务不存在"))
 		return
 	}
-	resp := clientDownloadTaskResponse{TaskID: task.ID, Status: task.Status, Progress: task.Progress, Size: task.Size, Filename: task.Filename, Error: task.Error}
+	resp := clientDownloadTaskResponse{TaskID: task.ID, Status: task.Status, Progress: task.Progress, Size: task.Size, Filename: task.Filename, SourceURL: task.SourceURL, SHA256: task.SHA256, Error: task.Error}
 	s.downloadMu.Unlock()
 	writeClientDownloadJSON(w, http.StatusOK, resp)
 }
@@ -175,6 +191,39 @@ func writeClientDownloadJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
+// HandleSubClientDownloadTicket 为已完成的下载任务签发短期票据，
+// 前端凭票据换取普通 HTTP 下载链接（浏览器原生下载，支持断点续传）。
+func (s *Server) HandleSubClientDownloadTicket(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.subDownloadUser(r); err != nil {
+		subDownloadError(w, err)
+		return
+	}
+	taskID := r.URL.Query().Get("task")
+	now := time.Now().UTC()
+	s.downloadMu.Lock()
+	task := s.downloadTasks[taskID]
+	if task == nil || task.Status != "done" || task.FilePath == "" {
+		s.downloadMu.Unlock()
+		subDownloadErrorStatus(w, http.StatusNotFound, errors.New("下载文件不可用"))
+		return
+	}
+	// 惰性清理过期票据。
+	for id, ticket := range s.downloadTickets {
+		if now.After(ticket.ExpiresAt) {
+			delete(s.downloadTickets, id)
+		}
+	}
+	ticketID := shared.NewMessageID()
+	expiresAt := now.Add(clientDownloadTicketTTL)
+	s.downloadTickets[ticketID] = &clientDownloadTicket{
+		TaskID:    taskID,
+		Token:     r.PathValue("token"),
+		ExpiresAt: expiresAt,
+	}
+	s.downloadMu.Unlock()
+	writeClientDownloadJSON(w, http.StatusOK, clientDownloadTicketResponse{Ticket: ticketID, ExpiresAt: expiresAt})
+}
+
 func (s *Server) HandleSubClientDownloadFile(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.subDownloadUser(r); err != nil {
 		subDownloadError(w, err)
@@ -182,6 +231,12 @@ func (s *Server) HandleSubClientDownloadFile(w http.ResponseWriter, r *http.Requ
 	}
 	taskID := r.URL.Query().Get("task")
 	s.downloadMu.Lock()
+	ticket := s.downloadTickets[r.URL.Query().Get("ticket")]
+	if ticket == nil || ticket.TaskID != taskID || ticket.Token != r.PathValue("token") || time.Now().UTC().After(ticket.ExpiresAt) {
+		s.downloadMu.Unlock()
+		subDownloadErrorStatus(w, http.StatusForbidden, errors.New("下载链接已失效，请重新下载"))
+		return
+	}
 	task := s.downloadTasks[taskID]
 	if task == nil || task.Status != "done" || task.FilePath == "" {
 		s.downloadMu.Unlock()
@@ -200,13 +255,20 @@ func (s *Server) HandleSubClientDownloadFile(w http.ResponseWriter, r *http.Requ
 	http.ServeFile(w, r, path)
 }
 
+type clientDownloadTicketResponse struct {
+	Ticket    string    `json:"ticket"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 type clientDownloadTaskResponse struct {
-	TaskID   string  `json:"task_id"`
-	Status   string  `json:"status"`
-	Progress float64 `json:"progress"`
-	Size     int64   `json:"size"`
-	Filename string  `json:"filename,omitempty"`
-	Error    string  `json:"error,omitempty"`
+	TaskID    string  `json:"task_id"`
+	Status    string  `json:"status"`
+	Progress  float64 `json:"progress"`
+	Size      int64   `json:"size"`
+	Filename  string  `json:"filename,omitempty"`
+	SourceURL string  `json:"source_url,omitempty"`
+	SHA256    string  `json:"sha256,omitempty"`
+	Error     string  `json:"error,omitempty"`
 }
 
 func (s *Server) subDownloadUser(r *http.Request) (*store.User, error) {
@@ -266,14 +328,24 @@ func (s *Server) runClientDownload(taskID string, spec clientDownloadSpec) {
 		finish("failed", "客户端安装包大小超出限制")
 		return
 	}
-	setTask(func(task *clientDownloadTask) { task.Size = asset.Size })
+	setTask(func(task *clientDownloadTask) { task.Size, task.SourceURL = asset.Size, asset.BrowserDownloadURL })
+	// 发布页提供的校验码（asset digest 或校验文件），用于下载后比对，防止文件损坏。
+	expectedSHA256 := s.expectedClientSHA256(ctx, release, asset)
 	if metadata, ok := readClientCacheMetadata(metadataPath); ok && metadata.VariantID == spec.ID && metadata.ReleaseTag == release.TagName && metadata.AssetURL == asset.BrowserDownloadURL && time.Since(metadata.DownloadedAt) < s.clientCacheTTL(ctx) {
 		if info, statErr := os.Stat(targetPath); statErr == nil && info.Size() == metadata.Size {
-			setTask(func(task *clientDownloadTask) {
-				task.Status, task.Progress, task.Size, task.Filename, task.FilePath = "done", 1, metadata.Size, metadata.Filename, targetPath
-			})
-			finish("done", "")
-			return
+			digest := metadata.SHA256
+			if digest == "" {
+				// 旧版本缓存元数据缺少校验码，补算一次。
+				digest, _ = fileSHA256(targetPath)
+			}
+			if expectedSHA256 == "" || strings.EqualFold(digest, expectedSHA256) {
+				setTask(func(task *clientDownloadTask) {
+					task.Status, task.Progress, task.Size, task.Filename, task.FilePath, task.SHA256 = "done", 1, metadata.Size, metadata.Filename, targetPath, digest
+				})
+				finish("done", "")
+				return
+			}
+			// 缓存文件与发布页校验码不一致，回退到重新下载。
 		}
 	}
 
@@ -293,6 +365,17 @@ func (s *Server) runClientDownload(taskID string, spec clientDownloadSpec) {
 		finish("failed", "下载文件校验失败")
 		return
 	}
+	digest, err := fileSHA256(tmpPath)
+	if err != nil {
+		_ = os.Remove(tmpPath)
+		finish("failed", "计算文件校验码失败")
+		return
+	}
+	if expectedSHA256 != "" && !strings.EqualFold(digest, expectedSHA256) {
+		_ = os.Remove(tmpPath)
+		finish("failed", "下载校验失败，文件与发布页校验码不一致")
+		return
+	}
 	if err := os.Rename(tmpPath, targetPath); err != nil {
 		// Windows cannot rename over an existing file; retry after removing the
 		// previous latest package while retaining the same per-variant target.
@@ -303,16 +386,30 @@ func (s *Server) runClientDownload(taskID string, spec clientDownloadSpec) {
 		}
 	}
 	metadata := clientCacheMetadata{VariantID: spec.ID, ReleaseTag: release.TagName, AssetURL: asset.BrowserDownloadURL,
-		Filename: safeClientFilename(asset.Name), Size: info.Size(), DownloadedAt: time.Now().UTC()}
+		Filename: safeClientFilename(asset.Name), Size: info.Size(), SHA256: digest, DownloadedAt: time.Now().UTC()}
 	metadataBytes, _ := json.Marshal(metadata)
 	if err := os.WriteFile(metadataPath, metadataBytes, 0o600); err != nil {
 		finish("failed", "写入客户端缓存信息失败")
 		return
 	}
 	setTask(func(task *clientDownloadTask) {
-		task.Status, task.Progress, task.Size, task.Filename, task.FilePath = "done", 1, info.Size(), metadata.Filename, targetPath
+		task.Status, task.Progress, task.Size, task.Filename, task.FilePath, task.SHA256 = "done", 1, info.Size(), metadata.Filename, targetPath, digest
 	})
 	finish("done", "")
+}
+
+// fileSHA256 流式计算文件的 SHA-256 校验码（十六进制），供下载方核对文件完整性。
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func (s *Server) latestClientAsset(ctx context.Context, spec clientDownloadSpec) (clientRelease, clientReleaseAsset, error) {
@@ -330,6 +427,57 @@ func (s *Server) latestClientAsset(ctx context.Context, spec clientDownloadSpec)
 		}
 	}
 	return clientRelease{}, clientReleaseAsset{}, errors.New("当前版本没有匹配的客户端安装包")
+}
+
+// expectedClientSHA256 取发布页为安装包提供的 SHA-256 校验码：
+// 优先 GitHub API 的 asset digest 字段；否则在 release 中查找校验文件
+// （<安装包名>.sha256、sha256sums、checksums 之类）并解析对应行。返回 "" 表示上游未提供。
+func (s *Server) expectedClientSHA256(ctx context.Context, release clientRelease, asset clientReleaseAsset) string {
+	if digest, ok := strings.CutPrefix(asset.Digest, "sha256:"); ok && isSHA256Hex(digest) {
+		return strings.ToLower(digest)
+	}
+	for _, candidate := range release.Assets {
+		if candidate.Name == asset.Name {
+			continue
+		}
+		name := strings.ToLower(candidate.Name)
+		companion := name == strings.ToLower(asset.Name)+".sha256"
+		sums := strings.Contains(name, "sha256") || strings.Contains(name, "checksum")
+		if (!companion && !sums) || candidate.Size <= 0 || candidate.Size > 1<<20 {
+			continue
+		}
+		body, err := s.downloadFiles.GetText(ctx, candidate.BrowserDownloadURL, 1<<20)
+		if err != nil {
+			continue
+		}
+		if digest := findSHA256ForAsset(body, asset.Name); digest != "" {
+			return digest
+		}
+	}
+	return ""
+}
+
+var sha256HexPattern = regexp.MustCompile(`[0-9a-fA-F]{64}`)
+
+// findSHA256ForAsset 从校验文件内容中解析安装包对应的 SHA-256：
+// 匹配 "<hex>  <文件名>" 行；文件只含单个哈希（伴随文件）时直接取该值。
+func findSHA256ForAsset(body, assetName string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.Contains(line, assetName) {
+			continue
+		}
+		if digest := sha256HexPattern.FindString(line); digest != "" {
+			return strings.ToLower(digest)
+		}
+	}
+	if all := sha256HexPattern.FindAllString(body, 2); len(all) == 1 {
+		return strings.ToLower(all[0])
+	}
+	return ""
+}
+
+func isSHA256Hex(value string) bool {
+	return len(value) == 64 && sha256HexPattern.MatchString(value)
 }
 
 func readClientCacheMetadata(path string) (clientCacheMetadata, bool) {
