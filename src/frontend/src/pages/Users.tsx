@@ -176,11 +176,7 @@ export default function Users() {
   const [createRouting, setCreateRouting] = useState<SubscriptionRoutingProfile>(defaultSubscriptionRouting)
 
   const [assignTarget, setAssignTarget] = useState<SubUser | null>(null)
-  const [assignSelection, setAssignSelection] = useState<number[]>([])
-  const [assignSaving, setAssignSaving] = useState(false)
-  const [assignError, setAssignError] = useState('')
   const [extSubs, setExtSubs] = useState<ExternalSubscription[]>([])
-  const [assignExt, setAssignExt] = useState<Record<number, ExternalSubscriptionMode>>({})
   const [createExt, setCreateExt] = useState<Record<number, ExternalSubscriptionMode>>({})
   const [qrText, setQrText] = useState('')
   const loadRequest = useRef(0)
@@ -285,6 +281,12 @@ export default function Users() {
 
   const linkOptions = useMemo(() => buildLinkOptions(chains), [chains])
 
+  const assignLinks = useMemo(() => {
+    if (!assignTarget) return []
+    const effectiveIds = assignTarget.effective_chain_ids ?? assignTarget.chain_ids
+    return linkOptions.filter((link) => effectiveIds.includes(link.chainId))
+  }, [assignTarget, linkOptions])
+
   const onCreate = async (e: FormEvent) => {
     e.preventDefault()
     setCreateError('')
@@ -350,36 +352,6 @@ export default function Users() {
 
   const onOpenAssign = (u: SubUser) => {
     setAssignTarget(u)
-    setAssignSelection(u.chain_ids)
-    setAssignExt(
-      Object.fromEntries(u.external_subscriptions.map((s) => [s.subscription_id, s.mode])),
-    )
-    setAssignError('')
-  }
-
-  const onToggleNode = (id: number, checked: boolean) => {
-    setAssignSelection((cur) => (checked ? [...cur, id] : cur.filter((x) => x !== id)))
-  }
-
-  const onSaveAssign = async () => {
-    if (!assignTarget) {
-      return
-    }
-    setAssignError('')
-    setAssignSaving(true)
-    try {
-			await api.setUserAssignments(assignTarget.id, assignTarget.node_ids, assignSelection)
-      await api.setUserExternalSubscriptions(
-        assignTarget.id,
-        Object.entries(assignExt).map(([id, mode]) => ({ subscription_id: Number(id), mode })),
-      )
-      setAssignTarget(null)
-      load()
-    } catch (err) {
-      setAssignError(errorMessage(err))
-    } finally {
-      setAssignSaving(false)
-    }
   }
 
   const onOpenSubSettings = (u: SubUser) => {
@@ -622,7 +594,7 @@ export default function Users() {
                 </CardContent>
                 <CardFooter className="flex flex-wrap gap-2">
                   <Button variant="outline" size="sm" onClick={() => onOpenAssign(u)}>
-                    分配链路
+                    查看链路
                   </Button>
                   <Button variant="outline" size="sm" title="订阅设置" onClick={() => onOpenSubSettings(u)}>
                     <Settings2Icon />
@@ -850,89 +822,42 @@ export default function Users() {
       <Dialog open={assignTarget !== null} onOpenChange={(next) => !next && setAssignTarget(null)}>
         <DialogContent className="max-h-[85vh] overflow-y-auto [&>*]:min-w-0">
           <DialogHeader>
-            <DialogTitle>分配链路</DialogTitle>
+            <DialogTitle>查看链路</DialogTitle>
             <DialogDescription>
-              勾选「{assignTarget?.name}」可使用的链路；未勾选的链路不会出现在其订阅中，
-              保存后即时下发变更（默认全关，§16）。
+              「{assignTarget?.name}」实际生效的链路与外部订阅，仅供查看，不可在此修改。
             </DialogDescription>
           </DialogHeader>
-          {assignTarget && assignTarget.user_group_ids.length > 0 && (
+          {assignTarget && (
             <Notice tone="info">
-              该用户位于用户分组「{assignTarget.user_group_ids.map((id) => userGroups.find((g) => g.id === id)?.name ?? `#${id}`).join('、')}」中，
-              直接分配链路与外部订阅不生效，其订阅内容由分组派生。
+              {assignTarget.user_group_ids.length > 0 && (
+                <>该用户位于用户分组「{assignTarget.user_group_ids.map((id) => userGroups.find((g) => g.id === id)?.name ?? `#${id}`).join('、')}」中。</>
+              )}
+              链路绑定与用户分组和链路分组有关，如需调整该用户可用链路，请在「分组」页为相应分组分配链路。
             </Notice>
           )}
           <div className="space-y-2">
-            {linkOptions.length === 0 ? (
-              <p className="cg-hint">暂无链路，请先在「链路」页创建。</p>
+            <Label>链路</Label>
+            {assignLinks.length === 0 ? (
+              <p className="cg-hint">未分配到链路。</p>
             ) : (
-              linkOptions.map((link) => (
-				<label key={link.chainId} className="cg-check-row">
-                  <input
-                    type="checkbox"
-                    className="cg-checkbox"
-					checked={assignSelection.includes(link.chainId)}
-					onChange={(e) => onToggleNode(link.chainId, e.target.checked)}
-                  />
+              assignLinks.map((link) => (
+                <div key={link.chainId} className="cg-check-row">
                   <span className="cg-status is-blue">{link.type === 'direct' ? '直连' : '中转'}</span>
                   <span>{link.name}</span>
                   <span className="cg-check-row-detail ml-auto text-right">{link.detail}</span>
                   {link.status !== 'active' && (
                     <span className="cg-check-row-detail">（{link.status}）</span>
                   )}
-                </label>
+                </div>
               ))
             )}
           </div>
-          <div className="space-y-2 border-t pt-3">
-            <Label>外部订阅（叠加 = 额度相加，并入 = 已用计入面板配额，附加 = 仅节点）</Label>
-            {extSubs.length === 0 ? (
-              <p className="cg-hint">暂无外部订阅，请先在「外部订阅」页添加。</p>
-            ) : (
-              extSubs.map((sub) => {
-                const checked = assignExt[sub.id] !== undefined
-                return (
-                  <label
-                    key={sub.id}
-                    className="cg-check-row"
-                  >
-                    <input
-                      type="checkbox"
-                      className="cg-checkbox"
-                      checked={checked}
-                      onChange={(e) => {
-                        setAssignExt((cur) => {
-                          const next = { ...cur }
-                          if (e.target.checked) {
-                            next[sub.id] = 'stack'
-                          } else {
-                            delete next[sub.id]
-                          }
-                          return next
-                        })
-                      }}
-                    />
-                    <span>{sub.name}</span>
-                    <span className="cg-check-row-detail">
-                      {sub.total > 0
-                        ? `${humanizeBytes(sub.total)} / 已用 ${humanizeBytes(sub.upload + sub.download)}`
-                        : '额度未知'}
-                    </span>
-                    <span className="ml-auto">
-                      <ExternalModeSelect
-                        value={checked ? assignExt[sub.id] : 'stack'}
-                        disabled={!checked}
-                        onChange={(mode) => setAssignExt((cur) => ({ ...cur, [sub.id]: mode }))}
-                      />
-                    </span>
-                  </label>
-                )
-              })
-            )}
-          </div>
-          {assignTarget && assignTarget.external_subscriptions.length > 0 ? (
+          {assignTarget && (
             <div className="space-y-2 border-t pt-3">
-              <Label>外部订阅统计</Label>
+              <Label>外部订阅</Label>
+              {assignTarget.external_subscriptions.length === 0 ? (
+                <p className="cg-hint">未分配外部订阅。</p>
+              ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -975,14 +900,9 @@ export default function Users() {
                   ) : null}
                 </TableBody>
               </Table>
+              )}
             </div>
-          ) : null}
-          {assignError && <Notice tone="danger">{assignError}</Notice>}
-          <DialogFooter>
-            <Button onClick={onSaveAssign} disabled={assignSaving}>
-              {assignSaving ? '保存中…' : '保存'}
-            </Button>
-          </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
 
