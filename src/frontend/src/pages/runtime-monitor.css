@@ -650,7 +650,7 @@
 
 /* ---------- 响应式 ---------- */
 
-@media (max-width: 1180px) {
+@container cg-main (max-width: 1180px) {
   .cg-runtime-band {
     grid-template-columns: 1fr;
   }
@@ -673,13 +673,13 @@
   }
 }
 
-@media (max-width: 900px) {
+@container cg-main (max-width: 900px) {
   .cg-runtime-main-grid {
     grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 640px) {
+@container cg-main (max-width: 640px) {
   .cg-runtime-band {
     padding: 14px;
   }

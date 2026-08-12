@@ -628,10 +628,14 @@ body {
   box-shadow: var(--cg-shadow-card);
 }
 
+/* 容器查询上下文：页面内的响应式断点以内容区实际宽度为准，
+   而不是视口宽度（桌面端侧边栏会占去 ~288px）。 */
 .cg-main {
   flex: 1;
   min-width: 0;
   padding: 20px 20px 32px;
+  container-type: inline-size;
+  container-name: cg-main;
 }
 
 .cg-main-inner {

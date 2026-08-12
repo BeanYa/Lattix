@@ -169,7 +169,7 @@
   gap: 12px;
 }
 
-@media (min-width: 1024px) {
+@container cg-main (min-width: 1024px) {
   .cg-chain-split {
     grid-template-columns: minmax(0, 1fr) 240px;
     align-items: center;
@@ -235,7 +235,7 @@
   align-items: stretch;
 }
 
-@media (min-width: 640px) {
+@container cg-main (min-width: 640px) {
   .cg-hop-flow {
     flex-direction: row;
     align-items: center;
@@ -249,7 +249,7 @@
   align-items: flex-start;
 }
 
-@media (min-width: 640px) {
+@container cg-main (min-width: 640px) {
   .cg-hop-seg {
     flex-direction: row;
     align-items: center;
@@ -282,7 +282,7 @@
   display: none;
 }
 
-@media (min-width: 640px) {
+@container cg-main (min-width: 640px) {
   .cg-hop-link {
     flex-direction: row;
     margin: 0 10px;
@@ -308,7 +308,7 @@
   padding: 4px 0;
 }
 
-@media (min-width: 640px) {
+@container cg-main (min-width: 640px) {
   .cg-hop {
     min-width: 144px;
   }
@@ -672,7 +672,7 @@
 
 /* ---------- 响应式 ---------- */
 
-@media (max-width: 640px) {
+@container cg-main (max-width: 640px) {
   .cg-chain-card-side {
     justify-items: start;
   }

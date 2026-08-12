@@ -16,13 +16,13 @@
   gap: 12px;
 }
 
-@media (min-width: 640px) {
+@container cg-main (min-width: 640px) {
   .cg-user-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (min-width: 1024px) {
+@container cg-main (min-width: 1024px) {
   .cg-user-metrics {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
