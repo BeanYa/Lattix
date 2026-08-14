@@ -48,6 +48,7 @@
 
 ```
 src/frontend/  # Vite + React + TypeScript + shadcn/ui，包管理器使用 bun
+               # 可插拔主题系统（src/frontend/src/themes/，默认 Apple HIG，见 frontend.md）
 src/backend/   # Go：面板 HTTP API + Agent WS 端点 + SQLite
 src/agent/     # Go：独立二进制，systemd 托管
 src/shared/    # Go module：WS 消息结构体、虚拟配置类型，backend/agent 共用
@@ -57,7 +58,9 @@ scripts/
 install.sh           # 唯一面向用户的统一安装入口
 ```
 
-- 前端依赖安装与构建：`bun install` / `bun run build`，锁文件入库。
+- 前端依赖安装与构建：`bun install` / `bun run build`，锁文件入库。设计语言由语义
+  令牌 + 主题注册表驱动：默认 Apple HIG，经典 Cream Grid 作为可选主题安装，设计主题
+  与浅色/深色外观两个维度运行时切换（约定见 [前端开发](frontend.md)）。
 - 后端与 Agent 均为 Go，通过 Shared module 共享消息定义，保证协议两端类型一致。
 - 数据库：SQLite（规模假设下绰绰有余）。
 - 版本管理：git，monorepo。**项目初始化第一步即初始化 git 仓库**（`git init`），全部开发在 git 工作流中进行；`.gitignore`、前端锁文件（bun）、go.work 等随首次提交入库。
@@ -89,6 +92,8 @@ install.sh           # 唯一面向用户的统一安装入口
 | `chain_traffic_totals` / `chain_traffic_daily` | 链与逐跳 raw/effective 累计、倍率余数及按 revision/统计时区的日桶 |
 | `chain_traffic_baselines` / `chain_multiplier_events` | 流量重置 checkpoint 与倍率分段审计 |
 | `endpoint_traffic_totals` | 共享入口 inbound 的运维流量累计；用户/链权威流量另按 assignment identity 入账 |
+| `link_groups` / `link_group_chains` / `link_group_external_subscriptions` | 链路分组及其成员（共享入口链路多条编排、外部订阅整体原子参与，§22） |
+| `user_groups` / `user_group_members` / `user_group_links` | 用户分组、成员及「用户组 × 链路分组」关联（§22；组内用户订阅由分组派生） |
 
 说明：
 
@@ -131,6 +136,10 @@ install.sh           # 唯一面向用户的统一安装入口
 | `agent.upgrade` | panel→agent | 下载、校验并原子替换当前 Agent，响应后退出并由 systemd 拉起 |
 | `telemetry.report` | agent→panel | 周期遥测（§13）：xray 版本/运行状态、主机指标、流量增量；无需回执 |
 | `config.drift` | agent→panel | 配置漂移状态变化（§17）：外部修改时 true，修复/恢复后 false |
+| `server.settings.sync` | agent→panel | 服务器级设置（当前为 xray 版本锁定，面板默认 + 单服务器覆盖两级）按 revision 拉取同步，机制照抄 `agent.settings.sync`；面板默认或覆盖变更经 `server.settings.changed` 提示在线 Agent 立即 pull |
+| `xray.cleanup` | panel→agent | 按期望 inbound tag / piece 集合清理 xray 受管配置件（支持 dry_run 预览），详见 [xray 清理设计](xray-cleanup-design.md) |
+| `xray.rebuild` | panel→agent | 重建服务器 xray 配置（期望状态全量重放，服务器页"重建 xray 配置"） |
+| `server-test.run` / `server-test.progress` / `server-test.result` | panel→agent / agent→panel | 服务器测试原子任务下发、尽力进度上报与断线可恢复的权威最终报告，详见[服务器测试设计](server-testing-design.md) |
 
 Panel 生命周期为 `startup|active|updating|faulted`；每个 Agent 的连接状态为 `never_connected|connecting|reconnecting|online|offline|auth_rejected`。HTTP Upgrade 使用 Bearer token，明确鉴权失败返回 HTTP 403 与结构化 RPC body，暂时不可用返回 503。liveness 与 latency probe 分离：liveness 维持连接，latency 只在 active 测量且失败不再断开 WS。完整语义见 [Panel 生命周期与 Agent 连接状态机](panel-lifecycle-state-machine-design.md)。
 
@@ -198,6 +207,12 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
 - **响应头**：`/sub/{token}` 的所有文件格式返回 `subscription-userinfo`，包含 upload、download 以及可选 total、expire、reset_day、plan_name、app_url；同时返回 `profile-update-interval`。
 - **用户有效期**：创建或更新用户可带 `expires_at`；过去时间返回 `HTTP 200 + INVALID_ARGUMENT`。`POST /api/user/update` 可修改或清除（null = 长期；省略字段保持不变）。列表 DTO 带 `expires_at`/`expired`/`disabled`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `user.remove`（显式 nodes 载荷；已 disabled 的用户只补记标记不重复扇出）；管理员延长/清除有效期（expired 1→0）→ 扇出 `user.add` 恢复（disabled 用户除外，见 §16 有效停权态）。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`node.apply` 的 `NodeUserUUIDs` 不下发 expired/disabled 用户。
 - 分享链接集合已实现：`GET /sub/{token}?format=links`（§14，仅含分配的 active 节点）。
+- **落地页客户端下载**：面板代取 GitHub Release 客户端安装包并校验发布方 SHA-256
+  （缓存 72 小时、流式上限 512 MiB，校验失败即失败并删件）；落地页经
+  `/api/sub/{token}/client-download/{start,status,ticket,file}` 四端点获取 3 小时
+  会话票据直链，交给浏览器原生下载（`http.ServeFile` 天然支持 Range 断点续传）。
+  票据与订阅 token、任务双向绑定，过期或跨订阅使用返回 403；状态端点回显校验值
+  与来源供用户独立核验。
 - **外部订阅（导入 + 用户关联）**：管理页导入第三方订阅 URL，节点与订阅信息独立落库
   （`external_chains` / `external_subscriptions`，不进入 `chains` 状态机与流量统计），
   用户以「一个外部订阅」为单位引入订阅输出。详见下方小节。
@@ -213,9 +228,11 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
 - **拉取安全**：URL 仅允许 https，拒绝 localhost / 内网 / CGNAT（100.64/10）/
   TEST-NET 等保留段地址（防 SSRF）；每订阅可配自定义 UA（默认 clash-meta/2.4.0，
   未拿到流量头时自动以 clash UA 重试一次）与跳过证书校验开关；30s 超时、2 MiB 上限。
-- **同步**：创建即同步、手动按钮与定时任务（`external_subscriptions.sync`，每 15 分钟扫
-  描到期订阅）三入口；重同步为事务内全量替换节点（事务内校验订阅仍存在，防删除竞态）；
-  失败保留记录并写 `last_error`，可重试。前端外部订阅页提供列表、增删改、同步与节点查看。
+- **同步**：创建即同步、手动按钮与定时任务三入口；每订阅可配自动同步开关与更新间隔
+  （`UpdateIntervalHours`，最小 1 小时、默认 24 小时），调度任务
+  `external_subscriptions.sync` 每 15 分钟扫描到期订阅；重同步为事务内全量替换节点
+  （事务内校验订阅仍存在，防删除竞态）；失败保留记录并写 `last_error`，可重试。
+  同步成功的订阅自动重发布所有关联用户。前端外部订阅页提供列表、增删改、同步与节点查看。
 - **用户关联**：`user_external_subscriptions` 表（user × subscription + 模式），三模式：
   **叠加（stack）** total/used 都并入面板池、**并入（merge）** 仅 used 并入（total 不变）、
   **附加（nodes）** 仅引入节点（流量单独展示）；`total=0` 视为额度未知不参与合并。
@@ -229,7 +246,7 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
 
 ## 10. 面板页面与 API
 
-页面：登录 / 仪表盘（服务器数、在线数、链路数、正常/降级数、用户数）/ 服务器列表（创建和编辑时填写别名、Country、Location、机器类型、公网地址、NAT 可用端口、Tag 与 xray 版本）/ **链路页** / 用户列表 / **外部订阅页**（第三方订阅导入、同步与节点查看，§9.1）。
+页面：登录 / 仪表盘（服务器数、在线数、链路数、正常/降级数、用户数）/ 服务器列表（创建和编辑时填写别名、Country、Location、机器类型、公网地址、NAT 可用端口、Tag 与 xray 版本）/ **链路页** / 用户列表 / **外部订阅页**（第三方订阅导入、同步与节点查看，§9.1）/ **分组页**（链路分组与用户分组，§22）/ **订阅模板页**（分流模板管理与分配，见[订阅分流与模板](subscription-routing-design.md)）/ **成本统计页**（已生效成本 + 计算成本两个口径，见[后端调度与服务器计费设计](billing-scheduler-design.md)）/ **运行监控页** / **日志页**（操作日志与请求日志，见[日志系统设计](logging-design.md)）/ **设置页**。
 
 链路页是唯一的产品入口，不保留 `/nodes` 页面或重定向。创建时先选择：
 
@@ -276,9 +293,10 @@ Agent 收到该明确拒绝后停止自动连接；管理员必须执行新的�
 
 ## 12. 安全
 
-- 面板 TLS 已实现（§14 已知问题关闭），三种部署形态：
+- 面板 TLS 已实现（§14 已知问题关闭），四种部署形态：
   - **自带证书**：`-tls-cert`/`-tls-key` 启动参数指定证书与私钥（须为受信 CA 签发，agent 走系统 CA 校验 wss）；
   - **ACME 自动证书**：`-tls-acme-domain`（Let's Encrypt，TLS-ALPN-01 挑战，仅需 443 公网可达，无需 80 端口），缓存目录 `-tls-acme-cache`；
+  - **域名路径模式**（设置页 `tls_mode=path`）：按域名从 `-tls-dir`（安装器统一为数据目录下 `certs/`）读取 `<域名>/fullchain.pem` 与 `privkey.pem`（certbot 风格）；外部 ACME（如 `latx cert`）续期替换文件后下一次 TLS 握手自动加载新证书，免重启（加载失败回退已缓存证书，握手不中断）；
   - **反向代理终止 TLS**（推荐生产形态，如 docker + openresty/nginx 管理证书）：面板保持 HTTP，
     反代整个站点并为 `/api/agent/ws` 转发 Upgrade/Connection 头，
     并以 `-public-url https://域名` 或 `X-Forwarded-Proto: https` 告知面板生成 https 链接。
@@ -660,3 +678,37 @@ hub 注销/注册连接时由 FSM Evaluate 重算——链任一跳 server 离�
 （新事件 `chain_degraded`，防抖沿用）；全部跳 server 在线且跳均 active → active。
 服务器删除经 `InvalidateForServerDeletion` 事务级联失效。Agent 重连后 `ResumeChainsByServer`
 恢复编排中的链。完整转换表与三层自愈设计见[链路设计文档](chain-revisions-traffic-design.md)。
+
+## 22. 链路分组与用户分组（已实现，超出 MVP 范围）
+
+分组在用户/链路直接分配语义（§8/§16）之上提供一层编排便携，不引入新状态机：
+
+- **链路分组**（`link_groups` + `link_group_chains` / `link_group_external_subscriptions`）：
+  把多条共享入口链路与外部订阅编排为一个组。外部订阅**整体原子参与**——移除即整组
+  节点从订阅消失。
+- **用户分组**（`user_groups` + `user_group_members` + `user_group_links`）：把用户编组
+  并关联一个或多个链路分组。组内用户订阅**由分组派生**：直接分配被遮蔽（数据保留，
+  移出分组即恢复），与用户外部订阅引入（§9.1 三模式）叠加生效。
+- **触发重发布**：分组自身或相关服务器/外部订阅更新自动触发组内全部用户订阅重发布；
+  长操作接入 observe 进度弹窗（§23）。
+- 管理端点 `/api/link-group/{list,create,update,delete}` 与
+  `/api/user-group/{list,create,update,delete}`；e2e 见 `scripts/e2e/groups.sh`。
+
+## 23. 旁路式操作进度观察（observe，已实现）
+
+长操作在业务校验通过后创建**观察记录**，在流程自然节点上报 stage/percent/message，
+前端轮询渲染全局唯一进度弹窗（阶段清单 + 进度条 + 警告框）。观察**严格尽力而为**：
+全部方法 nil 安全、panic 恢复，容量满时该操作照常执行但不观察，任何观察故障不影响
+业务操作本身。
+
+- **覆盖操作**：链路创建/编辑/强制发布/重试/删除、节点创建/重试/删除、链路分组与
+  用户分组 CRUD、服务器修复（重放节点）/清理 xray 缓存/重建 xray 配置、外部订阅
+  创建/更新/删除/同步、订阅模板刷新。普通用户 CRUD 不观察。
+- **信封与查询**：响应信封可选携带 `observe_id`（32 hex，`writeRPC` 注入；openapi
+  envelope 已含该可选字段），前端 `postObserved` 提取后以 400ms 间隔轮询
+  `GET /api/observe-task/get?observe_id=`；404 进入 `lost` 态（提示"操作可能仍在
+  后台继续"），`done` 后 1 秒自动关闭（有警告则保留人工确认）。
+- **注册表限制**（进程内、不持久化）：最多 64 个并发 running 观察；终态观察保留
+  5 分钟；running 超过 5 分钟被惰性清理并以"进度超时"警告收口。
+- **订阅重生成收口**：用户/分组/链路删除与外部订阅同步可 `WatchUsers`，订阅再生器
+  每发布一个用户推进百分比，全部发布后自动 Finish——观察存活至订阅重生成完成。

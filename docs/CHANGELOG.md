@@ -20,6 +20,18 @@
   记录」安装即可自动出现在切换菜单（见 `src/frontend/src/themes/README.md`）。
 - 经典 Cream Grid 设计保留为可选主题（`cream`）：全量语义令牌覆写 + 仪表盘页面
   覆写，与默认主题可随时互切（亮/暗各两套）。
+- 旁路式操作进度观察系统（observe）：链路/节点增删改与重试、链路分组与用户分组
+  操作、服务器修复/清理/重建、外部订阅与模板同步等长操作的响应信封可选携带
+  `observe_id`，`GET /api/observe-task/get` 查询快照，前端弹窗展示阶段清单、进度、
+  警告并自动收口（订阅重生成完成才关闭）；观察尽力而为，不影响业务操作。
+- 订阅落地页客户端下载改为会话票据直链：面板代取 GitHub Release 客户端安装包并
+  校验发布方 SHA-256（缓存 72 小时、上限 512 MiB），`/api/sub/{token}/client-download/*`
+  四端点（start/status/ticket/file）配合浏览器原生下载，支持断点续传；票据 3 小时
+  有效并与订阅 token、任务双向绑定。
+- 服务器测试新增 speedtest.net 测速目标（Ookla CLI 执行）与 TCP 返回路径 traceroute
+  回程探测。
+- 服务器离线事件、告警与链路降级重估增加跨 WS 抖动消音：断连后经消音窗口（默认
+  10s，`LATTIX_OFFLINE_DEBOUNCE` 可覆盖）仍离线才触发，窗口内重连全部取消。
 - 新增 `GET /api/billing/stats/estimated`：对启用统计计费且未过期的服务器，按
   日成本 × 周期天数（日 1 / 月 30 / 年 365）估算每周期成本。
 - 成本统计页新增「计算成本」tab：估算日/月/年成本汇总卡片、周期分布图与明细矩阵；
@@ -43,6 +55,12 @@
 
 ### Fixed
 
+- 链状态机补 `applying`/`waiting_for_agent` → `active_failed` 转换边：已发布链编辑
+  失败不再永久卡在 applying。
+- 链路 revision 状态转换加 CAS 守卫：迟到失败回执不再覆盖已发布 revision；发布窗口
+  竞态在链恢复 active 后自动补发发布；Agent 上线复位 `waiting_for_agent` revision。
+- 修复用户到期停权后订阅不重发布的缺陷（sweeper 补 EnqueueUsers 触发异步发布队列）。
+- Agent：状态落盘互斥修复；自升级基址强制 https 校验；命令 payload 严格解码。
 - 计算成本（`GET /api/billing/stats/estimated`）折算模型改为「12 个月 × 30 天」口径：
   - 日成本按计费周期推导：年付 = 年付价 ÷ 周期年数 ÷ 12 ÷ 30，月付 = 月付价 ÷ 周期
     月数 ÷ 30，季付 = 季付价 ÷ 3 ÷ 30；月成本 = 日成本 × 30（年付 = 年付价 ÷ 12），
@@ -61,3 +79,13 @@
   合计列 = 可见单元格之和。
 - 外部订阅导入：默认 UA 改用 clash-meta 并支持 UA 预设，导入错误直接显示在对话框。
 - 外部订阅节点数改为按实际解析内容统计。
+
+### Security
+
+- release 构建拒绝以公开已知的默认密码 `lattix-admin` 启动，必须显式设置
+  `-admin-pass`/`LATTIX_ADMIN_PASS`（dev 构建与 e2e 不受限）。
+- 请求日志对 `/api/sub/{token}/...` 路径脱敏，订阅 token 不再明文落盘。
+- 订阅落地页 subURL/linksURL 经 HTML 转义（防 Host 投毒 XSS）。
+- 订阅 token 熵由 64 bit 提升到 128 bit。
+- isSecure 与订阅 base 仅信任回环反代的 `X-Forwarded-Proto` 声明。
+- 面板下载器新增流式大小上限（默认 512 MiB，超限中止并清理部分文件）。

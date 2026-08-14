@@ -97,7 +97,9 @@ JSON 合法但字段缺失、值越界或业务约束不满足，返回
 ```
 
 无返回数据时 `data` 为 `null`，不返回 204。异步操作快速返回
-`ACCEPTED`，随后通过 GET 查询状态。
+`ACCEPTED`，随后通过 GET 查询状态。接入旁路式进度观察（observe）的长操作另在信封
+携带可选 `observe_id`（32 hex），前端据此轮询 `GET /api/observe-task/get` 渲染进度
+弹窗；无观察时字段缺省，不影响信封解析。
 `POST /api/setting/update` 在期望设置及新 revision 已提交后返回 `OK`；Agent 的后续
 pull/apply 不改变该调用的业务结果。`POST /api/panel/restart` 在同步登记重启意图后返回
 `ACCEPTED`，并发请求返回 `OPERATION_LOCKED`。
@@ -165,6 +167,7 @@ POST /api/server/delete
 POST /api/server/rotate-token
 POST /api/server/repair
 POST /api/server/cleanup-xray
+POST /api/server/rebuild-xray
 POST /api/server/upgrade-xray
 POST /api/server/upgrade-agent
 POST /api/server/confirm-renewal
@@ -216,6 +219,8 @@ POST /api/subscription/template/save
 POST /api/subscription/template/clone
 POST /api/subscription/template/delete
 POST /api/subscription/template/refresh
+POST /api/subscription/template/assign
+POST /api/subscription/template/unassign
 
 GET  /api/external-subscription/list
 POST /api/external-subscription/create
@@ -223,6 +228,15 @@ POST /api/external-subscription/update
 POST /api/external-subscription/delete
 POST /api/external-subscription/sync
 GET  /api/external-subscription/chains?id={id}
+
+GET  /api/link-group/list
+POST /api/link-group/create
+POST /api/link-group/update
+POST /api/link-group/delete
+GET  /api/user-group/list
+POST /api/user-group/create
+POST /api/user-group/update
+POST /api/user-group/delete
 
 GET  /api/setting/get
 POST /api/setting/update
@@ -233,9 +247,12 @@ POST /api/setting/sub
 
 POST /api/panel/restart
 GET  /api/panel/state
+GET  /api/panel/runtime
 GET  /api/panel/get-version
 POST /api/panel/start-update
 GET  /api/panel/get-update-status
+
+GET  /api/observe-task/get?observe_id={id}
 
 GET  /api/backup/download
 
@@ -255,7 +272,12 @@ GET /sub/{token}
 GET /sub/{token}/rules/{version}/{format}/{name}
 GET /api/sub/{token}/info
 GET /api/sub/{token}/clients
+GET /api/sub/{token}/status
 GET /api/sub/{token}/history
+GET /api/sub/{token}/client-download/start?variant=
+GET /api/sub/{token}/client-download/status?task=
+GET /api/sub/{token}/client-download/ticket?task=
+GET /api/sub/{token}/client-download/file?task=&ticket=
 GET /healthz
 GET /readyz
 ```
@@ -396,11 +418,20 @@ user.add
 user.remove
 chain-hop.apply
 chain-hop.remove
+shared-endpoint.apply
+shared-endpoint.remove
 xray.upgrade
+xray.cleanup
+xray.rebuild
 agent.upgrade
 agent.uninstall
 agent.settings.sync
 agent.settings.changed
+server.settings.sync
+server.settings.changed
+server-test.run
+server-test.progress
+server-test.result
 telemetry.report
 config.drift
 ```

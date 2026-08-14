@@ -370,10 +370,52 @@
         "properties": {
           "data": {
             "type": "object",
-            "required": ["xray_instance_id", "traffic"],
+            "required": ["xray_version", "xray_running", "online_users"],
             "properties": {
+              "xray_version": {"type": "string"},
+              "xray_running": {"type": "boolean"},
               "xray_instance_id": {"type": "string", "minLength": 1},
-              "traffic": {"type": "array", "items": {"$ref": "#/$defs/trafficCounter"}}
+              "host": {
+                "type": ["object", "null"],
+                "additionalProperties": false,
+                "required": ["load1", "load5", "load15", "mem_total", "mem_used", "disk_total", "disk_used", "network_tx_bytes", "network_rx_bytes", "uptime_seconds"],
+                "properties": {
+                  "load1": {"type": "number"},
+                  "load5": {"type": "number"},
+                  "load15": {"type": "number"},
+                  "cpu_percent": {"type": "number"},
+                  "mem_total": {"type": "integer", "minimum": 0},
+                  "mem_used": {"type": "integer", "minimum": 0},
+                  "disk_total": {"type": "integer", "minimum": 0},
+                  "disk_used": {"type": "integer", "minimum": 0},
+                  "network_interface": {"type": "string"},
+                  "network_tx_bytes": {"type": "integer", "minimum": 0},
+                  "network_rx_bytes": {"type": "integer", "minimum": 0},
+                  "network_tx_bps": {"type": "number"},
+                  "network_rx_bps": {"type": "number"},
+                  "uptime_seconds": {"type": "integer", "minimum": 0},
+                  "latency_ms": {"type": "number"},
+                  "latency_probe_active": {"type": "boolean"}
+                }
+              },
+              "traffic": {"type": "array", "items": {"$ref": "#/$defs/trafficCounter"}},
+              "online_users": {
+                "oneOf": [
+                  {"type": "null"},
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["user"],
+                      "properties": {
+                        "user": {"type": "string"},
+                        "ips": {"type": ["array", "null"], "items": {"type": "string"}}
+                      }
+                    }
+                  }
+                ]
+              }
             }
           }
         }

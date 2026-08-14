@@ -35,6 +35,15 @@ Docker 部署的证书目录为：
 
 设置页和后端使用容器内路径 `/data/certs/<域名>/fullchain.pem` 与 `privkey.pem`。宿主机工具写入证书时必须使用对应的宿主机路径。ACME 缓存持久化在 `/opt/lattix-panel/data/acme-cache/`。
 
+## Release 构建拒绝默认管理员密码
+
+正式（release）构建的面板拒绝以公开已知的默认密码 `lattix-admin` 对外提供服务：未显式
+设置 `-admin-pass` / `LATTIX_ADMIN_PASS`，且数据库中没有已落库的 bcrypt 密码（设置页改密
+或 `-reset-admin` 产生）时，进程启动即退出并提示设置强密码。dev 构建与本地 e2e 不受限制。
+
+因此仍在使用默认密码的旧安装，应先在设置页改密或运行 `latx reset-admin <新密码>`，否则
+升级到带该守卫的 release 后面板将拒绝启动。
+
 ## GHCR 镜像必须保持公开
 
 一键 Docker 安装不要求 GitHub Token，依赖 `ghcr.io/beanya/lattix` 可匿名拉取。如果 GitHub Container Package 被改为私有，即使 Release 正常发布，新的匿名 Docker 安装也会失败。
