@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const installTimeout = 2 * time.Minute
+// installTimeout is generous because it only applies on a fresh host where
+// apt-get update / package installs (or waiting on the dpkg lock) can be
+// slow. Once dependencies are present this path is skipped entirely.
+const installTimeout = 10 * time.Minute
 
 var requiredCommands = []string{"jq", "curl", "bc", "nc", "dig", "ip"}
 
@@ -24,10 +27,10 @@ func MissingDependencies() []string {
 	return missing
 }
 
-// InstallDependencies runs the script's own installer (-y auto-install) for
-// a short window and polls until every dependency appears. The script keeps
-// running its v4 checks after installing; the process group is killed as soon
-// as the dependencies are ready.
+// InstallDependencies runs the script's own installer (-y auto-install) and
+// polls until every dependency appears. The script keeps running its v4
+// checks after installing; the process group is killed as soon as the
+// dependencies are ready.
 func InstallDependencies(ctx context.Context, scriptPath string, check func() []string) error {
 	ctx, cancel := context.WithTimeout(ctx, installTimeout)
 	defer cancel()
@@ -70,7 +73,10 @@ func InstallDependencies(ctx context.Context, scriptPath string, check func() []
 		case <-ctx.Done():
 			_ = killProcessGroup(cmd)
 			<-done
-			return fmt.Errorf("dependency install timed out after %s", installTimeout)
+			if tail := outputTail(&stderr, &stdout); tail != "" {
+				return fmt.Errorf("dependency install timed out after %s (output: %s)", installTimeout, tail)
+			}
+			return fmt.Errorf("dependency install timed out after %s (still missing: %s)", installTimeout, strings.Join(check(), ", "))
 		}
 	}
 }
