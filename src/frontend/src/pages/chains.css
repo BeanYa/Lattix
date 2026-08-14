@@ -78,7 +78,7 @@
   display: inline-flex;
   align-items: center;
   padding: 3px 8px;
-  border: 2px solid var(--cg-ink-soft);
+  border: 1px solid var(--cg-sep);
   border-radius: var(--cg-r-pill);
   background: var(--cg-paper-soft);
   font-family: var(--cg-mono);
@@ -342,7 +342,7 @@
   height: 8px;
   flex-shrink: 0;
   border-radius: 50%;
-  border: 2px solid var(--cg-ink-soft);
+  border: 1px solid var(--cg-sep);
   background: var(--cg-paper-warm);
 }
 
@@ -389,7 +389,7 @@
 
 .cg-hop-shared {
   padding: 1px 6px;
-  border: 2px solid var(--cg-ink-soft);
+  border: 1px solid var(--cg-sep);
   border-radius: var(--cg-r-pill);
   background: var(--cg-paper-warm);
   font-size: 9px;
@@ -584,7 +584,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  border: 2px solid var(--cg-ink-soft);
+  border: 1px solid var(--cg-sep);
 }
 
 .cg-chain-chart-key-dot.is-up { background: var(--cg-lime-dark); }

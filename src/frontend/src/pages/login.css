@@ -72,9 +72,9 @@
   width: 44px;
   height: 44px;
   flex-shrink: 0;
-  border: 2px solid var(--cg-charcoal-line);
+  border: none;
   border-radius: 12px;
-  background: var(--cg-lime);
+  background: linear-gradient(180deg, #3B9BFF, var(--cg-lime));
 }
 
 .cg-login-brand-name {
@@ -118,14 +118,14 @@
   max-width: 250px;
   font-size: 12px;
   line-height: 1.7;
-  color: var(--cg-subtle);
+  color: rgba(235, 235, 245, 0.62);
 }
 
 .cg-login-brand-foot {
   display: grid;
   gap: 10px;
   padding-top: 14px;
-  border-top: 2px solid var(--cg-charcoal-line);
+  border-top: 1px solid var(--cg-charcoal-line);
 }
 
 .cg-login-status {
@@ -135,7 +135,7 @@
   width: fit-content;
   min-height: 30px;
   padding: 0 12px;
-  border: 2px solid var(--cg-charcoal-line);
+  border: 1px solid var(--cg-charcoal-line);
   border-radius: var(--cg-r-pill);
   background: var(--cg-charcoal-raised);
   color: #fff;
@@ -147,7 +147,7 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--cg-lime);
+  background: var(--cg-green);
 }
 
 .cg-login-brand-line {
@@ -159,7 +159,7 @@
   font-weight: 700;
   letter-spacing: .12em;
   text-transform: uppercase;
-  color: var(--cg-subtle);
+  color: rgba(235, 235, 245, 0.55);
 }
 
 .cg-login-brand-line svg {

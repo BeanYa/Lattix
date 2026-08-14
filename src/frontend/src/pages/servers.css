@@ -44,7 +44,7 @@
 }
 
 .sv-radio-card:focus-within {
-  outline: 2px solid var(--cg-ink);
+  outline: 2px solid var(--cg-lime);
   outline-offset: 2px;
 }
 

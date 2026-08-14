@@ -105,13 +105,13 @@
   color: var(--cg-ink);
 }
 
-/* 流量用量条（信息图式） */
+/* 流量用量条 */
 .extsub-traffic-bar {
   display: block;
   height: 8px;
-  border: 2px solid var(--cg-ink-soft);
+  border: none;
   border-radius: var(--cg-r-pill);
-  background: var(--cg-paper-light);
+  background: var(--cg-paper-soft);
   overflow: hidden;
 }
 
