@@ -969,7 +969,7 @@
   color: var(--cg-on-accent);
 }
 
-[data-theme="cream"] .cg-runtime-band[data-state='startup'] .cg-runtime-band-icon,,
+[data-theme="cream"] .cg-runtime-band[data-state='startup'] .cg-runtime-band-icon,
 [data-theme="cream"] .cg-runtime-band[data-state='updating'] .cg-runtime-band-icon {
   background: var(--cg-blue);
   border-color: var(--cg-blue);
@@ -1167,7 +1167,7 @@
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-runtime-section-head,,
+[data-theme="cream"] .cg-runtime-section-head,
 [data-theme="cream"] .cg-runtime-terminal-head {
   display: flex;
   align-items: flex-start;
@@ -1544,7 +1544,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  [data-theme="cream"] .cg-runtime-metric-grid,,
+  [data-theme="cream"] .cg-runtime-metric-grid,
   [data-theme="cream"] .cg-runtime-process-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1578,7 +1578,7 @@
     overflow-wrap: anywhere;
   }
 
-  [data-theme="cream"] .cg-runtime-metric-grid,,
+  [data-theme="cream"] .cg-runtime-metric-grid,
   [data-theme="cream"] .cg-runtime-process-grid {
     grid-template-columns: 1fr;
   }
@@ -1607,14 +1607,14 @@
 
 @media (prefers-reduced-motion: reduce) {
   .cg-runtime-live.is-active::before,
-  [data-theme="cream"] .cg-runtime-task-row[data-status='running'] .cg-runtime-task-dot,,
+  [data-theme="cream"] .cg-runtime-task-row[data-status='running'] .cg-runtime-task-dot,
   [data-theme="cream"] .cg-runtime-loading-bar i {
     animation: none;
   }
 
-  [data-theme="cream"] .cg-runtime-metric,,
-  [data-theme="cream"] .cg-runtime-meter i,,
-  [data-theme="cream"] .cg-runtime-process-track i,,
+  [data-theme="cream"] .cg-runtime-metric,
+  [data-theme="cream"] .cg-runtime-meter i,
+  [data-theme="cream"] .cg-runtime-process-track i,
   [data-theme="cream"] .cg-runtime-trend-bars i {
     transition: none;
   }
@@ -3023,7 +3023,7 @@
   border-color: var(--cg-blue);
 }
 
-[data-theme="cream"] .cg-template-editor.is-error,,
+[data-theme="cream"] .cg-template-editor.is-error,
 .cg-template-editor.is-error:focus-within {
   border-color: var(--cg-red);
 }

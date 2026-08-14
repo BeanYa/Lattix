@@ -26,7 +26,7 @@
 [data-theme="cream"] body {
   background-color: var(--cg-paper);
   background-image:
-  [data-theme="cream"] linear-gradient(var(--cg-grid-line) 1px, transparent 1px),,
+  linear-gradient(var(--cg-grid-line) 1px, transparent 1px),
     linear-gradient(90deg, var(--cg-grid-line) 1px, transparent 1px);
   background-size: 28px 28px;
 }
@@ -617,7 +617,7 @@
     min-width: 320px;
     letter-spacing: 0;
   }
-  [data-theme="cream"] html {
+  html[data-theme="cream"] {
     @apply font-sans;
     scroll-behavior: smooth;
   }
@@ -632,14 +632,14 @@
   [data-theme="cream"].dark select {
     color-scheme: dark;
   }
-  [data-theme="cream"] h1, h2, h3, h4,,
-  [data-theme="cream"] nav,,
-  [data-theme="cream"] button,,
-  [data-theme="cream"] th,,
-  [data-theme="cream"] strong,,
-  [data-theme="cream"] [data-slot="card-title"],,
-  [data-theme="cream"] [data-slot="dialog-title"],,
-  [data-theme="cream"] [data-slot="sheet-title"],,
+  [data-theme="cream"] h1, [data-theme="cream"] h2, [data-theme="cream"] h3, [data-theme="cream"] h4,
+  [data-theme="cream"] nav,
+  [data-theme="cream"] button,
+  [data-theme="cream"] th,
+  [data-theme="cream"] strong,
+  [data-theme="cream"] [data-slot="card-title"],
+  [data-theme="cream"] [data-slot="dialog-title"],
+  [data-theme="cream"] [data-slot="sheet-title"],
   [data-theme="cream"] [data-slot="tabs-trigger"] {
     font-family: var(--font-heading);
     font-synthesis: none;
@@ -751,23 +751,23 @@
     line-height: 1.5;
     text-wrap: pretty;
   }
-  [data-theme="cream"] .notice,,
+  [data-theme="cream"] .notice,
   [data-theme="cream"] .status-badge {
     --tone-color: var(--muted-foreground);
   }
-  [data-theme="cream"] .notice[data-tone="info"],,
+  [data-theme="cream"] .notice[data-tone="info"],
   [data-theme="cream"] .status-badge[data-tone="info"] {
     --tone-color: var(--info);
   }
-  [data-theme="cream"] .notice[data-tone="success"],,
+  [data-theme="cream"] .notice[data-tone="success"],
   [data-theme="cream"] .status-badge[data-tone="success"] {
     --tone-color: var(--success);
   }
-  [data-theme="cream"] .notice[data-tone="warning"],,
+  [data-theme="cream"] .notice[data-tone="warning"],
   [data-theme="cream"] .status-badge[data-tone="warning"] {
     --tone-color: var(--warning);
   }
-  [data-theme="cream"] .notice[data-tone="danger"],,
+  [data-theme="cream"] .notice[data-tone="danger"],
   [data-theme="cream"] .status-badge[data-tone="danger"] {
     --tone-color: var(--destructive);
   }
@@ -852,7 +852,7 @@
   [data-slot="button"]:active:not(:disabled) {
     transform: translateY(1px);
   }
-  [data-theme="cream"] [data-slot="input"],,
+  [data-theme="cream"] [data-slot="input"],
   [data-theme="cream"] [data-slot="select-trigger"] {
     border-radius: 10px;
     background: var(--card);
@@ -879,9 +879,9 @@
   [data-slot="table-row"]:hover {
     background: color-mix(in srgb, var(--primary) 14%, var(--card));
   }
-  [data-theme="cream"] [data-slot="dialog-content"],,
-  [data-theme="cream"] [data-slot="sheet-content"],,
-  [data-theme="cream"] [data-slot="select-content"],,
+  [data-theme="cream"] [data-slot="dialog-content"],
+  [data-theme="cream"] [data-slot="sheet-content"],
+  [data-theme="cream"] [data-slot="select-content"],
   [data-theme="cream"] [data-slot="dropdown-menu-content"] {
     box-shadow: var(--cg-shadow-panel);
   }
@@ -984,8 +984,8 @@
   z-index: 0;
   inset: -35% -25% -35% 27%;
   background:
-  [data-theme="cream"] radial-gradient(ellipse at 75% 22%, color-mix(in srgb, var(--fluid-a) 78%, transparent), transparent 38%),,
-  [data-theme="cream"] radial-gradient(ellipse at 52% 86%, color-mix(in srgb, var(--fluid-b) 72%, transparent), transparent 46%),,
+  radial-gradient(ellipse at 75% 22%, color-mix(in srgb, var(--fluid-a) 78%, transparent), transparent 38%),
+  radial-gradient(ellipse at 52% 86%, color-mix(in srgb, var(--fluid-b) 72%, transparent), transparent 46%),
     radial-gradient(ellipse at 96% 55%, color-mix(in srgb, var(--fluid-c) 82%, transparent), transparent 42%);
   filter: blur(0.45rem) saturate(118%);
   animation: cream-fluid-plume-drift 9s ease-in-out infinite alternate;
@@ -1029,4 +1029,47 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ---- 字体：还原 main 的 Geist 字体栈 ----
+   @theme inline 会把 font-* 工具类的值在编译期内联成字面量，
+   令牌覆写管不到，需按类名作用域化覆写；var(--font-*) 引用处
+   由上面的变量覆写接管。 */
+[data-theme="cream"] {
+  --font-sans: 'Geist Variable', sans-serif;
+  --font-heading: 'Geist Variable', 'Microsoft YaHei', sans-serif;
+  --font-pixel: 'Geist Variable', 'Microsoft YaHei', sans-serif;
+}
+
+[data-theme="cream"] body,
+[data-theme="cream"] .font-sans {
+  font-family: 'Geist Variable', sans-serif;
+}
+
+[data-theme="cream"] .font-heading,
+[data-theme="cream"] .font-pixel {
+  font-family: 'Geist Variable', 'Microsoft YaHei', sans-serif;
+}
+
+/* ---- 属性复位 ----
+   默认主题在以下选择器上声明了 main 未定义的 box-shadow / font-size，
+   作用域化副本只覆写 main 已有的声明，无法抵消这些新增属性，
+   需显式复位为 main 的表现（无阴影 / 继承字号）。 */
+[data-theme="cream"] .cg-card,
+[data-theme="cream"] .cg-metric,
+[data-theme="cream"] .cg-semantic-card,
+[data-theme="cream"] .cg-terminal,
+[data-theme="cream"] .empty-state,
+[data-theme="cream"] .notice,
+[data-theme="cream"] .notice[data-tone="danger"],
+[data-theme="cream"] .notice[data-tone="info"],
+[data-theme="cream"] .notice[data-tone="success"],
+[data-theme="cream"] .notice[data-tone="warning"],
+[data-theme="cream"] .surface-frame,
+[data-theme="cream"] [data-slot="card"] {
+  box-shadow: none;
+}
+
+[data-theme="cream"] .cg-semantic-card > header {
+  font-size: inherit;
 }
