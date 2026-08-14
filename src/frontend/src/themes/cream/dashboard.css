@@ -5,7 +5,7 @@
 [data-theme="cream"] .cg-dashboard {
   display: grid;
   gap: 18px;
-  animation: cg-page-in 300ms var(--cg-ease) both;
+  animation: cream-cg-page-in 300ms var(--cg-ease) both;
 }
 
 /* ---------- 顶部 Eyebrow 行 ---------- */
@@ -363,10 +363,10 @@
     radial-gradient(circle at center, rgba(183, 243, 31, .07), transparent 36%),
     linear-gradient(100deg, var(--cg-paper-light), var(--cg-paper-soft), var(--cg-paper-light));
   background-size: 100% 100%, 200% 100%;
-  animation: cg-globe-shimmer 1.7s ease-in-out infinite;
+  animation: cream-cg-globe-shimmer 1.7s ease-in-out infinite;
 }
 
-@keyframes cg-globe-shimmer {
+@keyframes cream-cg-globe-shimmer {
   0% { background-position: 0 0, 0% 0; }
   50% { background-position: 0 0, 100% 0; }
   100% { background-position: 0 0, 0% 0; }
@@ -604,13 +604,13 @@
   border: var(--cg-border);
   border-radius: 4px;
   background: var(--cg-lime);
-  animation: cg-loading-pulse 900ms var(--cg-ease) infinite;
+  animation: cream-cg-loading-pulse 900ms var(--cg-ease) infinite;
 }
 
 .cg-dashboard-loading-bar i:nth-child(2) { animation-delay: 150ms; }
 .cg-dashboard-loading-bar i:nth-child(3) { animation-delay: 300ms; }
 
-@keyframes cg-loading-pulse {
+@keyframes cream-cg-loading-pulse {
   0%, 100% { opacity: .35; }
   50% { opacity: 1; }
 }

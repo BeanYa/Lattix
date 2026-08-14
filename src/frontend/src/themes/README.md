@@ -15,9 +15,11 @@ src/themes/
 ├── registry.ts    # 已安装主题注册表（切换菜单由此驱动）
 ├── hig/           # 默认主题，仅清单，无覆写
 └── cream/         # Cream Grid 主题（经典设计）
-    ├── index.ts   # 清单：id / label / overrides
-    ├── tokens.css # [data-theme="cream"] 令牌覆写（亮 + 暗）
-    ├── dashboard.css
+    ├── index.ts      # 清单：id / label / overrides
+    ├── tokens.css    # [data-theme="cream"] 令牌覆写（亮 + 暗）
+    ├── base.css      # 组件基础层与基础样式覆写（作用域化）
+    ├── pages.css     # 与默认主题有差异的页面样式覆写（作用域化）
+    ├── dashboard.css # Dashboard 覆写组件的页面样式（作用域化）
     └── DashboardCream.tsx
 ```
 
@@ -25,9 +27,12 @@ src/themes/
 
 1. **令牌层（必需）**：全站语义令牌（`--background`、`--cg-paper`、`--earth-*` 等）定义于
    `index.css` / `cream-grid.css` 的 `:root` 与 `.dark`。主题在同目录 `tokens.css` 中用
-   `[data-theme="<id>"]` 与 `[data-theme="<id>"].dark` 覆写**同名令牌**即可让所有页面换肤，
-   组件类无需改动。
-2. **页面插槽（可选）**：若主题对某页面的 DOM 结构做了重写，在 `ThemeSlot`
+   `[data-theme="<id>"]` 与 `[data-theme="<id>"].dark` 覆写**同名令牌**即可让所有页面换肤。
+2. **组件层（按需）**：若默认主题修改了 `cg-*` 等共享组件类的样式（描边、阴影、
+   肌理等），主题可携带 `base.css` / `pages.css`，把所需版本的样式规则整层作用域化到
+   `[data-theme="<id>"]` 下覆写回来（cream 即采用此方式还原经典设计；keyframe 需加
+   主题前缀重命名，避免全局污染默认主题）。
+3. **页面插槽（可选）**：若主题对某页面的 DOM 结构做了重写，在 `ThemeSlot`
    （`types.ts`）中声明插槽，并在清单 `overrides` 里给出懒加载组件。未声明时回落到
    `src/pages/` 下的基础实现。`pages/Dashboard.tsx` 是插槽分发的范例。
 
