@@ -54,7 +54,7 @@
   align-items: center;
   gap: 2px;
   padding: 0 3px 0 4px;
-  border: 2px solid var(--cg-ink-soft);
+  border: 1px solid var(--cg-sep);
   border-radius: var(--cg-r-xs);
   background: var(--cg-lime-soft);
   font-family: var(--cg-mono);

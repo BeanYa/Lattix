@@ -201,7 +201,7 @@
   display: grid;
   place-items: center;
   padding: 16px;
-  border: 2px solid var(--cg-ink-soft);
+  border: 1px solid var(--cg-sep);
   border-radius: var(--cg-r-card);
   background: #fff; /* 固定白底：保证暗色模式下扫码可读 */
   box-shadow: var(--cg-shadow-card);

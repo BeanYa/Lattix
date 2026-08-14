@@ -238,9 +238,9 @@
 .cg-runtime-meter {
   height: 8px;
   overflow: hidden;
-  border: 2px solid var(--cg-ink-soft);
+  border: none;
   border-radius: var(--cg-r-pill);
-  background: var(--cg-paper-warm);
+  background: var(--cg-paper-soft);
 }
 
 .cg-runtime-meter i {
@@ -590,7 +590,7 @@
   width: 10px;
   height: 10px;
   flex-shrink: 0;
-  border: 2px solid var(--cg-ink-soft);
+  border: none;
   border-radius: 50%;
   background: var(--cg-paper-warm);
 }
