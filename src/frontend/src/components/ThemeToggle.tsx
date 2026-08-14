@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -43,32 +44,36 @@ export default function ThemeToggle({ className }: ThemeToggleProps) {
         }
       />
       <DropdownMenuContent align="end" className="w-44">
-        <DropdownMenuLabel>外观模式</DropdownMenuLabel>
-        {(['light', 'dark'] as const).map((mode) => (
-          <DropdownMenuItem key={mode} onClick={() => setTheme(mode)} className="justify-between">
-            <span className="flex items-center gap-2">
-              {mode === 'light' ? <SunIcon /> : <MoonIcon />}
-              {MODE_LABELS[mode]}
-            </span>
-            {theme === mode && <CheckIcon className="size-4 opacity-60" />}
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>外观模式</DropdownMenuLabel>
+          {(['light', 'dark'] as const).map((mode) => (
+            <DropdownMenuItem key={mode} onClick={() => setTheme(mode)} className="justify-between">
+              <span className="flex items-center gap-2">
+                {mode === 'light' ? <SunIcon /> : <MoonIcon />}
+                {MODE_LABELS[mode]}
+              </span>
+              {theme === mode && <CheckIcon className="size-4 opacity-60" />}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel>设计主题</DropdownMenuLabel>
-        {DESIGN_THEMES.map(({ id, label, description }) => (
-          <DropdownMenuItem
-            key={id}
-            onClick={() => setDesign(id)}
-            title={description}
-            className="justify-between"
-          >
-            <span className="truncate">
-              {label}
-              {id === DEFAULT_DESIGN && <span className="ml-1 text-xs opacity-50">默认</span>}
-            </span>
-            {design === id && <CheckIcon className="size-4 opacity-60" />}
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>设计主题</DropdownMenuLabel>
+          {DESIGN_THEMES.map(({ id, label, description }) => (
+            <DropdownMenuItem
+              key={id}
+              onClick={() => setDesign(id)}
+              title={description}
+              className="justify-between"
+            >
+              <span className="truncate">
+                {label}
+                {id === DEFAULT_DESIGN && <span className="ml-1 text-xs opacity-50">默认</span>}
+              </span>
+              {design === id && <CheckIcon className="size-4 opacity-60" />}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   )
