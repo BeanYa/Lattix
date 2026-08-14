@@ -2,7 +2,7 @@ module lattix/agent
 
 go 1.26
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 require lattix/shared v0.0.0
 
