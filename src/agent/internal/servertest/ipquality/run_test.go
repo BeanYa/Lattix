@@ -172,3 +172,41 @@ func TestInstallDependenciesPollsAndKills(t *testing.T) {
 		t.Errorf("marker missing: %v", err)
 	}
 }
+
+func TestInstallDependenciesAcceptsExit1WhenReady(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "installer.sh")
+	marker := filepath.Join(dir, "ready")
+	// Mimics upstream ip.sh: installs dependencies, then exits 1 from its
+	// trailing IPv6 gate before the poll ticker notices the deps are ready.
+	content := "#!/bin/bash\n" +
+		"touch " + marker + "\n" +
+		"exit 1\n"
+	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
+		t.Fatalf("write installer: %v", err)
+	}
+	check := func() []string {
+		if _, err := os.Stat(marker); err == nil {
+			return nil
+		}
+		return []string{"jq"}
+	}
+	if err := InstallDependencies(context.Background(), script, check); err != nil {
+		t.Fatalf("InstallDependencies: %v", err)
+	}
+}
+
+func TestInstallDependenciesReportsOutputOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "installer.sh")
+	content := "#!/bin/bash\n" +
+		"echo 'apt: permission denied' >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
+		t.Fatalf("write installer: %v", err)
+	}
+	err := InstallDependencies(context.Background(), script, func() []string { return []string{"jq"} })
+	if err == nil || !strings.Contains(err.Error(), "apt: permission denied") {
+		t.Fatalf("err = %v, want installer output", err)
+	}
+}

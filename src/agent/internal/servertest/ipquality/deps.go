@@ -3,8 +3,8 @@ package ipquality
 import (
 	"context"
 	"fmt"
-	"io"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -33,8 +33,11 @@ func InstallDependencies(ctx context.Context, scriptPath string, check func() []
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "bash", scriptPath, "-y", "-p", "-4")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	var stdout, stderr limitedBuffer
+	stdout.max = maxOutputBytes
+	stderr.max = maxOutputBytes
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start dependency installer: %w", err)
 	}
@@ -45,10 +48,19 @@ func InstallDependencies(ctx context.Context, scriptPath string, check func() []
 	for {
 		select {
 		case err := <-done:
-			if err == nil && len(check()) == 0 {
+			if remaining := check(); len(remaining) == 0 {
+				// Upstream ip.sh exits 1 from its trailing IPv6 gate even
+				// after a successful install (see Runner.Run); the
+				// dependency state is the source of truth here.
 				return nil
+			} else if err != nil {
+				if tail := outputTail(&stderr, &stdout); tail != "" {
+					return fmt.Errorf("dependency install: %w (output: %s)", err, tail)
+				}
+				return fmt.Errorf("dependency install: %w (still missing: %s)", err, strings.Join(remaining, ", "))
+			} else {
+				return fmt.Errorf("dependency install finished but still missing: %s", strings.Join(remaining, ", "))
 			}
-			return fmt.Errorf("dependency install: %w", err)
 		case <-ticker.C:
 			if len(check()) == 0 {
 				_ = killProcessGroup(cmd)
@@ -61,6 +73,22 @@ func InstallDependencies(ctx context.Context, scriptPath string, check func() []
 			return fmt.Errorf("dependency install timed out after %s", installTimeout)
 		}
 	}
+}
+
+// outputTail returns the trimmed tail of the first non-empty buffer,
+// capped at 2048 bytes, for installer diagnostics.
+func outputTail(buffers ...*limitedBuffer) string {
+	for _, buffer := range buffers {
+		tail := strings.TrimSpace(buffer.buf.String())
+		if tail == "" {
+			continue
+		}
+		if len(tail) > 2048 {
+			tail = tail[len(tail)-2048:]
+		}
+		return tail
+	}
+	return ""
 }
 
 func killProcessGroup(cmd *exec.Cmd) error {
