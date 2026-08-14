@@ -37,3 +37,6 @@ src/backend/internal/web/dist/*
 
 # Build artifacts
 /backend
+
+# Backend runtime logs (默认与 db 同级的 logs/)
+logs/
