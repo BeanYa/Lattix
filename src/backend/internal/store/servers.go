@@ -15,6 +15,13 @@ import (
 // ErrNotFound 表示查询的行不存在。
 var ErrNotFound = errors.New("store: not found")
 
+// ErrStateTransition 表示状态写入被守卫拒绝（当前状态不在允许的前置状态集合内）。
+// 所有带状态前置条件的 CAS 写入（节点/端点/跳/任务/链）共用该哨兵。
+var ErrStateTransition = errors.New("store: state transition not allowed")
+
+// ErrChainStatusChanged 表示链状态 CAS 写入失败：读取与写入之间链状态已被并发修改。
+var ErrChainStatusChanged = errors.New("store: chain status changed concurrently")
+
 // 机器类型（§21 NAT 两档）：direct = 独立 IP；nat = NAT（allowed_ports 非空 = 受限直连，
 // 留空 = 仅出口档）。建后不允许互转。
 const (
@@ -172,6 +179,15 @@ func (s *Store) ServerByToken(ctx context.Context, token string) (*Server, error
 	return srv, nil
 }
 
+// 凭证换发小状态机（§graceful-shutdown-agent-settings-design §6）：
+//
+//	bootstrap → pending（session.open 换发长期凭证，未提交）
+//	pending  → committed（agent.credential.commit 后 bootstrap 失效）
+//	committed → bootstrap（rotate-token 递增 epoch 并重置，旧凭证立即失效）
+//
+// 守卫：SetPendingCredential 仅在 committed=0 且无 pending 时写入（重复换发幂等返回
+// 同一 pending）；CommitPendingCredential 校验 exchange_id 且要求存在 pending，
+// 杜绝迟到 commit 与跨会话串线。
 func (s *Store) SetPendingCredential(ctx context.Context, id int64, token, exchangeID string) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `UPDATE servers
 		SET credential_pending_token = ?, credential_exchange_id = ?

@@ -47,6 +47,35 @@ const (
 	updStageFailed   = "failed"
 )
 
+// panelUpdateStageTransitions 定义自更新阶段状态机的合法推进顺序（线性流水）：
+// check → download → verify → extract → apply → restart → done；
+// 任一阶段失败进入 failed；done/failed 为终态（新一次更新启动时重置）。
+// 同阶段内的进度百分比更新（下载/校验/解压）幂等允许。
+var panelUpdateStageTransitions = map[string]map[string]bool{
+	updStageCheck: {
+		updStageDownload: true,
+		updStageDone:     true, // 目标版本与当前一致
+	},
+	updStageDownload: {updStageVerify: true},
+	updStageVerify:   {updStageExtract: true},
+	updStageExtract:  {updStageApply: true},
+	updStageApply:    {updStageRestart: true},
+	updStageRestart:  {},
+	updStageDone:     {},
+	updStageFailed:   {},
+}
+
+func validPanelUpdateStageTransition(from, to string) bool {
+	if from == to {
+		return true // 同阶段进度更新
+	}
+	targets, ok := panelUpdateStageTransitions[from]
+	if !ok {
+		return false
+	}
+	return targets[to]
+}
+
 func currentPanelTarball() (string, error) {
 	switch runtime.GOARCH {
 	case "amd64", "arm64":
@@ -197,6 +226,9 @@ func (s *Server) handlePanelUpdateStart(w http.ResponseWriter, r *http.Request) 
 	if lifecycleErr != nil {
 		u.mu.Lock()
 		u.st.Running = false
+		u.st.Stage = updStageFailed
+		u.st.Message = "启动更新失败"
+		u.st.Error = lifecycleErr.Error()
 		u.mu.Unlock()
 		writeError(w, http.StatusInternalServerError, lifecycleErr.Error())
 		return
@@ -233,11 +265,21 @@ func (u *panelUpdater) running() bool {
 	return u.st.Running
 }
 
+// setStage 推进更新阶段状态机：非法阶段迁移（倒退/从终态出发）拒绝写入并记录日志。
+// failed 为显式失败路径（fail）专用终态，不走本函数。
 func (u *panelUpdater) setStage(stage string, percent int, msg string) {
 	u.mu.Lock()
-	u.st.Stage = stage
-	u.st.Percent = percent
-	u.st.Message = msg
+	prev := u.st.Stage
+	if prev == stage {
+		u.st.Percent = percent
+		u.st.Message = msg
+	} else if prev == "" || validPanelUpdateStageTransition(prev, stage) {
+		u.st.Stage = stage
+		u.st.Percent = percent
+		u.st.Message = msg
+	} else {
+		log.Printf("panel update: illegal stage transition %q → %q (ignored)", prev, stage)
+	}
 	u.mu.Unlock()
 	log.Printf("panel update: [%s] %d%% %s", stage, percent, msg)
 }

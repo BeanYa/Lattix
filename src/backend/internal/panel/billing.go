@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -137,6 +138,36 @@ func validateTrafficInput(in trafficPlanInput) error {
 		return errors.New("流量重置锚点格式无效")
 	}
 	return store.ValidateInterval(in.ResetCount, in.ResetUnit)
+}
+
+// billingManualTransitions 定义计费状态机的手动转换边（billing-scheduler-design §生命周期状态机）：
+// 续费确认允许 due_today/assumed_valid/expired → active，以及 active → active（仅改期）。
+// 巡检路径（inspectBilling）为派生计算，天然满足状态图，不走本表。
+var billingManualTransitions = map[string]map[string]bool{
+	store.BillingActive: {
+		store.BillingActive: true, // 更新续费日
+	},
+	store.BillingDueToday: {
+		store.BillingActive: true,
+	},
+	store.BillingAssumedValid: {
+		store.BillingActive: true,
+	},
+	store.BillingExpired: {
+		store.BillingActive: true,
+	},
+}
+
+// validBillingTransition 校验计费状态的手动转换是否合法（from == to 幂等允许）。
+func validBillingTransition(from, to string) bool {
+	if from == to {
+		return true
+	}
+	targets, ok := billingManualTransitions[from]
+	if !ok {
+		return false
+	}
+	return targets[to]
 }
 
 func billingStatus(enabled bool, renewal, today string, online bool) string {
@@ -293,6 +324,10 @@ func (s *Server) handleConfirmRenewal(w http.ResponseWriter, r *http.Request) {
 	b, ok := items[req.ServerID]
 	if !ok || !b.Enabled {
 		writeError(w, 400, "服务器未开启统计计费")
+		return
+	}
+	if !validBillingTransition(b.Status, store.BillingActive) {
+		writeError(w, http.StatusConflict, fmt.Sprintf("当前计费状态 %s 不允许直接确认续费", b.Status))
 		return
 	}
 	today := time.Now().In(s.inspectionLocation(r.Context())).Format("2006-01-02")

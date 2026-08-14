@@ -417,7 +417,9 @@ func (s *Store) ChainsReferencingServer(ctx context.Context, serverID int64) ([]
 	return out, nil
 }
 
-func (s *Store) InvalidateChainForServerDeletion(ctx context.Context, chainID, serverID int64, reason string) error {
+// InvalidateChainForServerDeletion 服务器删除时级联失效链。可选 fromStatus 开启 CAS：
+// 仅当链仍处于链状态机已校验的状态时写入 invalid，否则回滚并返回 ErrChainStatusChanged。
+func (s *Store) InvalidateChainForServerDeletion(ctx context.Context, chainID, serverID int64, reason string, fromStatus ...string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -439,9 +441,23 @@ func (s *Store) InvalidateChainForServerDeletion(ctx context.Context, chainID, s
 		RevisionStatusCancelled, reason, chainID, chainID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE chains SET status=?, error=?, desired_revision_id=0,
-		updated_at=CURRENT_TIMESTAMP WHERE id=?`, ChainStatusInvalid, reason, chainID); err != nil {
+	chainQuery := `UPDATE chains SET status=?, error=?, desired_revision_id=0,
+		updated_at=CURRENT_TIMESTAMP WHERE id=?`
+	chainArgs := []any{ChainStatusInvalid, reason, chainID}
+	if len(fromStatus) > 0 {
+		chainQuery += ` AND status=?`
+		chainArgs = append(chainArgs, fromStatus[0])
+	}
+	result, err := tx.ExecContext(ctx, chainQuery, chainArgs...)
+	if err != nil {
 		return err
+	}
+	if len(fromStatus) > 0 {
+		if n, nerr := result.RowsAffected(); nerr != nil {
+			return nerr
+		} else if n == 0 {
+			return fmt.Errorf("%w: chain %d not in status %s", ErrChainStatusChanged, chainID, fromStatus[0])
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_hops WHERE chain_id=?`, chainID); err != nil {
 		return err
@@ -587,14 +603,25 @@ func (s *Store) RevisionTaskByCommandID(ctx context.Context, commandID int64) (*
 	return &task, err
 }
 
+// SetRevisionTaskResult 回写任务终态（acked/failed）。仅 pending/queued 可转入：
+// abandoned 任务（编辑取代/删除级联）不得被迟到回执或死信回写翻回。
 func (s *Store) SetRevisionTaskResult(ctx context.Context, taskID int64, success bool, errorMessage string) error {
 	status := RevisionTaskAcked
 	if !success {
 		status = RevisionTaskFailed
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE chain_revision_tasks SET status=?, error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		status, errorMessage, taskID)
-	return err
+	result, err := s.db.ExecContext(ctx, `UPDATE chain_revision_tasks SET status=?, error=?, updated_at=CURRENT_TIMESTAMP
+		WHERE id=? AND status IN (?, ?)`,
+		status, errorMessage, taskID, RevisionTaskPending, RevisionTaskQueued)
+	if err != nil {
+		return err
+	}
+	if n, nerr := result.RowsAffected(); nerr != nil {
+		return nerr
+	} else if n == 0 {
+		return fmt.Errorf("%w: revision task %d cannot transition to %s", ErrStateTransition, taskID, status)
+	}
+	return nil
 }
 
 func (s *Store) ResetFailedRevisionTasks(ctx context.Context, revisionID int64) error {
@@ -604,7 +631,10 @@ func (s *Store) ResetFailedRevisionTasks(ctx context.Context, revisionID int64) 
 	return err
 }
 
-func (s *Store) PublishChainRevision(ctx context.Context, revisionID int64, forced bool) error {
+// PublishChainRevision 发布 revision 并在同一事务内更新链状态（普通发布 → active，
+// 强制发布 → active_unconfirmed）。可选 fromStatus 参数开启 CAS 守卫：链必须仍处于
+// 调用方（链状态机）已校验的状态，否则整体回滚并返回 ErrChainStatusChanged。
+func (s *Store) PublishChainRevision(ctx context.Context, revisionID int64, forced bool, fromStatus ...string) error {
 	revision, err := s.ChainRevisionByID(ctx, revisionID)
 	if err != nil {
 		return err
@@ -613,7 +643,7 @@ func (s *Store) PublishChainRevision(ctx context.Context, revisionID int64, forc
 	chainStatus := ChainStatusActive
 	if forced {
 		status = RevisionStatusActiveUnconfirmed
-		chainStatus = RevisionStatusActiveUnconfirmed
+		chainStatus = ChainStatusActiveUnconfirmed
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -628,12 +658,27 @@ func (s *Store) PublishChainRevision(ctx context.Context, revisionID int64, forc
 	if forced {
 		desiredRevisionID = revisionID
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE chains SET name=?, service_node_id=?, endpoint_id=?, service_uuid=?, traffic_multiplier_milli=?,
-		published_revision_id=?, desired_revision_id=?, status=?, error='', updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+	chainQuery := `UPDATE chains SET name=?, service_node_id=?, endpoint_id=?, service_uuid=?, traffic_multiplier_milli=?,
+		published_revision_id=?, desired_revision_id=?, status=?, error='', updated_at=CURRENT_TIMESTAMP WHERE id=?`
+	chainArgs := []any{
 		revision.Snapshot.Name, revision.Snapshot.ServiceNodeID, revision.Snapshot.EndpointID,
 		revision.Snapshot.ServiceUUID, revision.Snapshot.TrafficMultiplierMilli,
-		revisionID, desiredRevisionID, chainStatus, revision.ChainID); err != nil {
+		revisionID, desiredRevisionID, chainStatus, revision.ChainID,
+	}
+	if len(fromStatus) > 0 {
+		chainQuery += ` AND status=?`
+		chainArgs = append(chainArgs, fromStatus[0])
+	}
+	result, err := tx.ExecContext(ctx, chainQuery, chainArgs...)
+	if err != nil {
 		return err
+	}
+	if len(fromStatus) > 0 {
+		if n, nerr := result.RowsAffected(); nerr != nil {
+			return nerr
+		} else if n == 0 {
+			return fmt.Errorf("%w: chain %d not in status %s", ErrChainStatusChanged, revision.ChainID, fromStatus[0])
+		}
 	}
 	return tx.Commit()
 }
@@ -647,7 +692,10 @@ func (s *Store) RevisionByCommandID(ctx context.Context, commandID int64) (*Chai
 	return revision, task, err
 }
 
-func (s *Store) ReplaceWorkingChainTopology(ctx context.Context, revision *ChainRevision, protocol string, port *int, serviceChanged bool) error {
+// ReplaceWorkingChainTopology 以编辑目标 revision 整体替换链工作拓扑（hops/出口节点），
+// 并在同一事务内把链状态 CAS 写入 applying。可选 fromStatus 开启守卫：仅当链仍处于
+// 调用方（链状态机）已校验的编辑前置状态时写入，否则回滚并返回 ErrChainStatusChanged。
+func (s *Store) ReplaceWorkingChainTopology(ctx context.Context, revision *ChainRevision, protocol string, port *int, serviceChanged bool, fromStatus ...string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -682,9 +730,22 @@ func (s *Store) ReplaceWorkingChainTopology(ctx context.Context, revision *Chain
 		port, string(revision.Snapshot.ServiceConfig), nodeStatus, revision.Snapshot.ServiceNodeID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE chains SET name=?, status=?, error='', updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-		revision.Snapshot.Name, ChainStatusApplying, revision.ChainID); err != nil {
+	chainQuery := `UPDATE chains SET name=?, status=?, error='', updated_at=CURRENT_TIMESTAMP WHERE id=?`
+	chainArgs := []any{revision.Snapshot.Name, ChainStatusApplying, revision.ChainID}
+	if len(fromStatus) > 0 {
+		chainQuery += ` AND status=?`
+		chainArgs = append(chainArgs, fromStatus[0])
+	}
+	result, err := tx.ExecContext(ctx, chainQuery, chainArgs...)
+	if err != nil {
 		return err
+	}
+	if len(fromStatus) > 0 {
+		if n, nerr := result.RowsAffected(); nerr != nil {
+			return nerr
+		} else if n == 0 {
+			return fmt.Errorf("%w: chain %d not in status %s", ErrChainStatusChanged, revision.ChainID, fromStatus[0])
+		}
 	}
 	return tx.Commit()
 }

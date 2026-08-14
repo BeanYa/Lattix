@@ -221,3 +221,51 @@ func TestDeleteServerCascadeRemovesServerTestState(t *testing.T) {
 		}
 	}
 }
+
+func TestServerTestTransitionTable(t *testing.T) {
+	// queued 为初始态（无入边）；其余非终态与终态均可由三个非终态转入。
+	if got := serverTestFromSet(shared.ServerTestQueued); len(got) != 0 {
+		t.Fatalf("queued 是初始态不应有入边，实际 %v", got)
+	}
+	for _, target := range []shared.ServerTestTaskStatus{
+		shared.ServerTestAccepted, shared.ServerTestRunning,
+		shared.ServerTestSucceeded, shared.ServerTestCompletedWithErrors, shared.ServerTestFailed,
+	} {
+		got := serverTestFromSet(target)
+		if len(got) != 3 {
+			t.Fatalf("serverTestFromSet(%s) = %v，期望 3 个非终态前置", target, got)
+		}
+		for _, from := range got {
+			if !validServerTestTransition(from, target) {
+				t.Errorf("from-set 与转换表不一致: %s → %s", from, target)
+			}
+		}
+	}
+	// 终态无出边。
+	for _, terminal := range []shared.ServerTestTaskStatus{
+		shared.ServerTestSucceeded, shared.ServerTestCompletedWithErrors, shared.ServerTestFailed,
+	} {
+		if targets := serverTestTransitions[terminal]; len(targets) != 0 {
+			t.Fatalf("%s 终态出边 = %v，期望空", terminal, targets)
+		}
+	}
+}
+
+func TestServerTestTransitionsMatchOrderedStatuses(t *testing.T) {
+	// SQL IN 参数顺序稳定（表键固定顺序），构建出的 placeholders 数量一致。
+	for _, target := range serverTestStatusOrder {
+		set := serverTestFromSet(target)
+		if len(set) == 0 && !target.Terminal() && target != shared.ServerTestQueued {
+			// 仅初始态 queued 允许空入边。
+			t.Fatalf("非终态 %s 的 from 集合为空", target)
+		}
+		if target.Terminal() {
+			// 终态只能由非终态转入。
+			for _, from := range set {
+				if from.Terminal() {
+					t.Errorf("终态 → 终态转换 %s → %s 不应存在", from, target)
+				}
+			}
+		}
+	}
+}

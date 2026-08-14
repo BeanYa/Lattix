@@ -35,14 +35,37 @@ startup | active | updating | faulted
 校验通过，人工干预或更新任务均可将其恢复为 `active`。关键控制面故障可从任意状态
 进入 `faulted`；恢复时重新执行初始化检查。
 
+进程内合法转换由 `lifecycle.Manager` 的转换表强制执行（非法转换拒绝并返回
+`ErrIllegalTransition`）：
+
+```text
+startup → active | updating | faulted
+active  → updating | faulted
+updating → active | faulted
+faulted →（进程内终态）
+```
+
+`startup → updating` 覆盖 HTTP 先于生命周期初始化完成的启动窗口；`faulted` 为
+进程内终态——恢复必须重启进程回到 `startup` 并重新执行初始化检查。
+
 每个 Agent 在 Panel 侧另有连接状态：
 
 ```text
 never_connected | connecting | reconnecting | online | offline | auth_rejected
 ```
 
+连接状态由 Hub 的转换表强制校验（非法转换拒绝并记录日志）。`auth_rejected` 由面板在
+`rotate-token` 时主动标记：轮换后 Agent 用旧凭证重试将得到明确 HTTP 403 并停止自动
+重连（握手 403 本身无法从失效 token 归属服务器，面板侧不在握手路径落该状态）。
+失败的新握手仅在服务器无已登记连接时才回写断开状态，不覆盖仍在线连接的显示状态。
+
 公开 API 不再返回 `online` 布尔字段。Backend 内部保留 `IsOnline(serverID)`，用于判断
 当前是否存在可投递业务消息的会话。连接历史持久化，当前连接和 session 只在 Hub 内存中维护。
+
+Agent 进程另有自身的连接循环状态机（`state.ConnectionStatus.State`，与面板侧观测正交）：
+`connecting → online → backoff → connecting …`，显式拒绝进入 `auth_rejected`（进程内
+终态，重启并重新绑定后重置）。转换由 `state.ValidConnectionTransition` 强制校验，
+非法转换拒绝并保留当前状态。
 
 Agent 自身卸载不属于 Panel 生命周期。`agent.uninstall` 成功后 Agent 先回执再自毁：
 系统安装经独立 systemd unit 执行清理（避免 service cgroup 带走 cleaner）；用户态安装

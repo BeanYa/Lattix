@@ -50,7 +50,7 @@ stateDiagram-v2
     EXPIRED --> DISABLED: 关闭统计计费
 ```
 
-续费日当天无论 Agent 是否在线均为 `DUE_TODAY`。逾期后在线只表示 `ASSUMED_VALID`，不是财务确认；离线为 `EXPIRED`，重新上线可恢复推定有效。转为已过期时保留最后的 `assumed_valid_through`。手动续费必须提交晚于今天的新续费日。
+续费日当天无论 Agent 是否在线均为 `DUE_TODAY`。逾期后在线只表示 `ASSUMED_VALID`，不是财务确认；离线为 `EXPIRED`，重新上线可恢复推定有效。转为已过期时保留最后的 `assumed_valid_through`。手动续费必须提交晚于今天的新续费日，且由 `validBillingTransition` 按上图校验前置状态（due_today/assumed_valid/expired → active；active → active 仅改期；disabled 必须先重新开启统计计费）。
 
 ## 汇率
 

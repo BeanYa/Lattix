@@ -117,10 +117,23 @@ func (s *Store) EnsureSharedEndpoint(ctx context.Context, serverID int64, protoc
 	return endpoint, true, err
 }
 
+// SetSharedEndpointApplying 端点进入 applying（部署命令已下发/在途）。
+// pending/failed/applying/active 均可转入：applying 幂等（重连自愈重复 reconcile 在途端点），
+// active 为路由变化后重新部署（如删链后 reconcile 更新聚合路由）。
 func (s *Store) SetSharedEndpointApplying(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE shared_endpoints SET status=?, error='',
-		updated_at=CURRENT_TIMESTAMP WHERE id=?`, EndpointStatusApplying, id)
-	return err
+	result, err := s.db.ExecContext(ctx, `UPDATE shared_endpoints SET status=?, error='',
+		updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN (?, ?, ?, ?)`,
+		EndpointStatusApplying, id, EndpointStatusPending, EndpointStatusFailed,
+		EndpointStatusApplying, EndpointStatusActive)
+	if err != nil {
+		return err
+	}
+	if n, nerr := result.RowsAffected(); nerr != nil {
+		return nerr
+	} else if n == 0 {
+		return fmt.Errorf("%w: endpoint %d cannot transition to applying", ErrStateTransition, id)
+	}
+	return nil
 }
 
 func (s *Store) SetSharedEndpointActive(ctx context.Context, id int64, realized json.RawMessage) error {
@@ -148,25 +161,53 @@ func (s *Store) SetSharedEndpointActive(ctx context.Context, id int64, realized 
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE shared_endpoints SET port=?, realized_config=?, status=?,
-		error='', updated_at=CURRENT_TIMESTAMP WHERE id=?`, value.Port, string(realized), EndpointStatusActive, id); err != nil {
+	result, err := tx.ExecContext(ctx, `UPDATE shared_endpoints SET port=?, realized_config=?, status=?,
+		error='', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN (?, ?)`,
+		value.Port, string(realized), EndpointStatusActive, id, EndpointStatusPending, EndpointStatusApplying)
+	if err != nil {
 		return err
+	}
+	if n, nerr := result.RowsAffected(); nerr != nil {
+		return nerr
+	} else if n == 0 {
+		return fmt.Errorf("%w: endpoint %d cannot transition to active", ErrStateTransition, id)
 	}
 	return tx.Commit()
 }
 
+// SetSharedEndpointFailed 端点部署失败，携带错误详情。
+// pending/applying/active 均可转入（active 失败保留：新一次部署失败定位到端点）。
 func (s *Store) SetSharedEndpointFailed(ctx context.Context, id int64, message string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE shared_endpoints SET status=?, error=?,
-		updated_at=CURRENT_TIMESTAMP WHERE id=?`, EndpointStatusFailed, message, id)
-	return err
+	result, err := s.db.ExecContext(ctx, `UPDATE shared_endpoints SET status=?, error=?,
+		updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN (?, ?, ?)`,
+		EndpointStatusFailed, message, id, EndpointStatusPending, EndpointStatusApplying, EndpointStatusActive)
+	if err != nil {
+		return err
+	}
+	if n, nerr := result.RowsAffected(); nerr != nil {
+		return nerr
+	} else if n == 0 {
+		return fmt.Errorf("%w: endpoint %d cannot transition to failed", ErrStateTransition, id)
+	}
+	return nil
 }
 
 // SetSharedEndpointPending 将端点重置为 pending 并清除 realized 配置
 // （最后一条路由链删除后下发 remove 命令时使用；端点记录保留供后续复用）。
+// applying/active/failed 可复位（在途/生效/失败端点均可回到待部署）。
 func (s *Store) SetSharedEndpointPending(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE shared_endpoints SET status=?, realized_config=NULL,
-		error='', updated_at=CURRENT_TIMESTAMP WHERE id=?`, EndpointStatusPending, id)
-	return err
+	result, err := s.db.ExecContext(ctx, `UPDATE shared_endpoints SET status=?, realized_config=NULL,
+		error='', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN (?, ?, ?)`,
+		EndpointStatusPending, id, EndpointStatusApplying, EndpointStatusActive, EndpointStatusFailed)
+	if err != nil {
+		return err
+	}
+	if n, nerr := result.RowsAffected(); nerr != nil {
+		return nerr
+	} else if n == 0 {
+		return fmt.Errorf("%w: endpoint %d cannot transition to pending", ErrStateTransition, id)
+	}
+	return nil
 }
 
 type UserChainAssignment struct {

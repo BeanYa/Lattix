@@ -10,12 +10,16 @@ package dispatch
 //   - 周期自愈（ReconcileStaleEndpoints → 间接触发 Evaluate）
 //
 // 设计原则：
-//   - 所有链状态变更经 Transition 或 Evaluate 入口，不直接调用 store.SetChainStatus。
+//   - 所有链状态变更经本状态机的入口：Transition/Evaluate 显式校验，或
+//     EditChainTopology/DeleteChain/InvalidateForServerDeletion 等前置校验 +
+//     store 事务内 `WHERE status = <from>` 的 CAS 双重断言（多表事务无法走纯内存
+//     状态机时的收敛方式）；任何路径不绕过转换表。
 //   - 副作用（告警、端点 reconcile、订阅重建）声明式绑定到状态进入，与转换逻辑解耦。
 //   - Evaluate 是幂等的：相同条件重复调用不产生多余转换或副作用。
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 
@@ -33,17 +37,18 @@ var chainTransitions = map[string]map[string]bool{
 		store.ChainStatusDeleted:  true,
 	},
 	store.ChainStatusApplying: {
-		store.ChainStatusActive:          true,
-		store.ChainStatusActiveUnconfirmed: true,
-		store.ChainStatusFailed:          true,
-		store.ChainStatusWaitingForAgent: true,
-		store.ChainStatusInvalid:         true,
-		store.ChainStatusDeleted:         true,
+		store.ChainStatusActive:            true,
+		store.ChainStatusActiveUnconfirmed: true, // 强制发布
+		store.ChainStatusFailed:            true,
+		store.ChainStatusWaitingForAgent:   true, // 编辑所需 Agent 离线
+		store.ChainStatusInvalid:           true,
+		store.ChainStatusDeleted:           true,
 	},
 	store.ChainStatusActive: {
 		store.ChainStatusDegraded:       true,
 		store.ChainStatusActiveFailed:   true,
 		store.ChainStatusCleanupPending: true,
+		store.ChainStatusApplying:       true, // 编辑
 		store.ChainStatusInvalid:        true,
 		store.ChainStatusDeleted:        true,
 	},
@@ -51,40 +56,47 @@ var chainTransitions = map[string]map[string]bool{
 		store.ChainStatusActive:         true,
 		store.ChainStatusActiveFailed:   true,
 		store.ChainStatusCleanupPending: true,
+		store.ChainStatusApplying:       true, // 编辑
 		store.ChainStatusInvalid:        true,
 		store.ChainStatusDeleted:        true,
 	},
 	store.ChainStatusFailed: {
-		store.ChainStatusApplying: true, // 重试
-		store.ChainStatusInvalid:  true,
-		store.ChainStatusDeleted:  true,
+		store.ChainStatusApplying:          true, // 重试
+		store.ChainStatusActiveUnconfirmed: true, // 强制发布失败编辑
+		store.ChainStatusInvalid:           true,
+		store.ChainStatusDeleted:           true,
 	},
 	store.ChainStatusActiveUnconfirmed: {
-		store.ChainStatusActive:   true, // agent 确认
-		store.ChainStatusApplying: true, // 重试
-		store.ChainStatusFailed:   true,
-		store.ChainStatusInvalid:  true,
-		store.ChainStatusDeleted:  true,
+		store.ChainStatusActive:       true, // agent 确认
+		store.ChainStatusApplying:     true, // 重试
+		store.ChainStatusFailed:       true,
+		store.ChainStatusActiveFailed: true, // 强制发布后的任务失败（PublishedRevisionID 已置）
+		store.ChainStatusInvalid:      true,
+		store.ChainStatusDeleted:      true,
 	},
 	store.ChainStatusActiveFailed: {
-		store.ChainStatusApplying: true, // 重试
-		store.ChainStatusActive:   true, // 重新评估恢复
-		store.ChainStatusInvalid:  true,
-		store.ChainStatusDeleted:  true,
+		store.ChainStatusApplying:          true, // 重试
+		store.ChainStatusActive:            true, // 重新评估恢复
+		store.ChainStatusActiveUnconfirmed: true, // 强制发布
+		store.ChainStatusInvalid:           true,
+		store.ChainStatusDeleted:           true,
 	},
 	store.ChainStatusWaitingForAgent: {
-		store.ChainStatusApplying: true,
-		store.ChainStatusFailed:   true,
-		store.ChainStatusInvalid:  true,
-		store.ChainStatusDeleted:  true,
+		store.ChainStatusApplying:          true, // Agent 上线恢复编排
+		store.ChainStatusActiveUnconfirmed: true, // 强制发布
+		store.ChainStatusFailed:            true,
+		store.ChainStatusInvalid:           true,
+		store.ChainStatusDeleted:           true,
 	},
 	store.ChainStatusCleanupPending: {
-		store.ChainStatusActive:  true, // 清理完成恢复
-		store.ChainStatusDeleted: true,
-		store.ChainStatusInvalid: true,
+		store.ChainStatusActive:   true, // 清理完成恢复
+		store.ChainStatusApplying: true, // 编辑
+		store.ChainStatusDeleted:  true,
+		store.ChainStatusInvalid:  true,
 	},
 	store.ChainStatusInvalid: {
-		store.ChainStatusDeleted: true,
+		store.ChainStatusApplying: true, // 替换缺失 hop 重新发布（编辑）
+		store.ChainStatusDeleted:  true,
 	},
 }
 
@@ -120,7 +132,10 @@ func (f *chainFSM) Transition(ctx context.Context, chainID int64, to, detail str
 		log.Printf("chain_fsm: chain %d: illegal transition %s → %s (detail: %s)", chainID, from, to, detail)
 		return fmt.Errorf("chain_fsm: illegal transition %s → %s", from, to)
 	}
-	if err := f.d.st.SetChainStatus(ctx, chainID, to, detail); err != nil {
+	if err := f.d.st.SetChainStatus(ctx, chainID, to, detail, from); err != nil {
+		if errors.Is(err, store.ErrChainStatusChanged) {
+			return fmt.Errorf("chain_fsm: chain %d: %w (expected %s)", chainID, err, from)
+		}
 		return fmt.Errorf("chain_fsm: chain %d persist %s: %w", chainID, to, err)
 	}
 	log.Printf("chain_fsm: chain %d: %s → %s (%s)", chainID, from, to, detail)
@@ -219,6 +234,12 @@ func (f *chainFSM) degrade(ctx context.Context, chain *store.Chain, serverID int
 	}
 }
 
+// WaitForAgent 编辑完成后所需 Agent 离线（§21.1 离线语义）：applying → waiting_for_agent。
+// 编排暂停，待任一相关 Agent 上线后由 ResumeChainsByServer 恢复推进。
+func (f *chainFSM) WaitForAgent(ctx context.Context, chainID int64, detail string) error {
+	return f.Transition(ctx, chainID, store.ChainStatusWaitingForAgent, detail)
+}
+
 // InvalidateForServerDeletion 服务器删除时级联失效链（§10）：
 // 校验转换合法性 → 事务性废弃命令/修订/跳 → 记录操作日志。
 // 由 panel.handleDeleteServer 调用，替代直接调用 store.InvalidateChainForServerDeletion。
@@ -231,7 +252,10 @@ func (f *chainFSM) InvalidateForServerDeletion(ctx context.Context, chainID, ser
 		log.Printf("chain_fsm: chain %d: illegal invalidation from %s", chainID, chain.Status)
 		return fmt.Errorf("chain_fsm: illegal invalidation from %s", chain.Status)
 	}
-	if err := f.d.st.InvalidateChainForServerDeletion(ctx, chainID, serverID, reason); err != nil {
+	if err := f.d.st.InvalidateChainForServerDeletion(ctx, chainID, serverID, reason, chain.Status); err != nil {
+		if errors.Is(err, store.ErrChainStatusChanged) {
+			return fmt.Errorf("chain_fsm: chain %d: %w (expected %s)", chainID, err, chain.Status)
+		}
 		return fmt.Errorf("chain_fsm: chain %d invalidate: %w", chainID, err)
 	}
 	log.Printf("chain_fsm: chain %d: %s → invalid (server %d deleted: %s)", chainID, chain.Status, serverID, reason)
@@ -262,8 +286,15 @@ func (f *chainFSM) ResumeChainsByServer(ctx context.Context, serverID int64) {
 			continue
 		}
 		switch chain.Status {
-		case store.ChainStatusApplying, store.ChainStatusWaitingForAgent, store.ChainStatusActiveUnconfirmed:
+		case store.ChainStatusApplying, store.ChainStatusActiveUnconfirmed:
 			log.Printf("chain_fsm: chain %d: resuming orchestration (agent reconnected, server %d)", chain.ID, serverID)
+			f.d.advanceChain(ctx, chain.ID)
+		case store.ChainStatusWaitingForAgent:
+			log.Printf("chain_fsm: chain %d: required agent online, resuming orchestration (server %d)", chain.ID, serverID)
+			if err := f.Transition(ctx, chain.ID, store.ChainStatusApplying, "Agent 上线恢复编排"); err != nil {
+				log.Printf("chain_fsm: chain %d resume from waiting_for_agent: %v", chain.ID, err)
+				continue
+			}
 			f.d.advanceChain(ctx, chain.ID)
 		}
 	}
@@ -283,4 +314,3 @@ func (f *chainFSM) onEnter(ctx context.Context, chain *store.Chain, state, detai
 		}
 	}
 }
-

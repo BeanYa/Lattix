@@ -100,25 +100,55 @@ func (s *Store) NodeByID(ctx context.Context, id int64) (*Node, error) {
 }
 
 // SetNodeApplying 节点进入 applying（apply_node 已下发）。
+// pending/failed/active 可转入：active 为管理员修复（repair）重放生效配置（§17）。
 func (s *Store) SetNodeApplying(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE nodes SET status = ?, error = NULL WHERE id = ?`, NodeStatusApplying, id)
-	return err
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE nodes SET status = ?, error = NULL WHERE id = ? AND status IN (?, ?, ?)`,
+		NodeStatusApplying, id, NodeStatusPending, NodeStatusFailed, NodeStatusActive)
+	if err != nil {
+		return err
+	}
+	if n, nerr := result.RowsAffected(); nerr != nil {
+		return nerr
+	} else if n == 0 {
+		return fmt.Errorf("%w: node %d cannot transition to applying", ErrStateTransition, id)
+	}
+	return nil
 }
 
 // SetNodeActive 节点生效，记录 Agent 上报的实际生效值（§7）。
+// 仅 pending/applying 可转入；终态回执（重复 ack/死信后迟到回执）不得翻写。
 func (s *Store) SetNodeActive(ctx context.Context, id int64, realized json.RawMessage) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE nodes SET status = ?, realized_config = ?, error = NULL WHERE id = ?`,
-		NodeStatusActive, string(realized), id)
-	return err
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE nodes SET status = ?, realized_config = ?, error = NULL
+		 WHERE id = ? AND status IN (?, ?)`,
+		NodeStatusActive, string(realized), id, NodeStatusPending, NodeStatusApplying)
+	if err != nil {
+		return err
+	}
+	if n, nerr := result.RowsAffected(); nerr != nil {
+		return nerr
+	} else if n == 0 {
+		return fmt.Errorf("%w: node %d cannot transition to active", ErrStateTransition, id)
+	}
+	return nil
 }
 
 // SetNodeFailed 节点失败，携带错误详情（面板提供重试按钮，§6）。
+// 仅 pending/applying/active 可转入（active 失败保留重试入口；测试夹具亦依赖）。
 func (s *Store) SetNodeFailed(ctx context.Context, id int64, errMsg string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE nodes SET status = ?, error = ? WHERE id = ?`, NodeStatusFailed, errMsg, id)
-	return err
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE nodes SET status = ?, error = ? WHERE id = ? AND status IN (?, ?, ?)`,
+		NodeStatusFailed, errMsg, id, NodeStatusPending, NodeStatusApplying, NodeStatusActive)
+	if err != nil {
+		return err
+	}
+	if n, nerr := result.RowsAffected(); nerr != nil {
+		return nerr
+	} else if n == 0 {
+		return fmt.Errorf("%w: node %d cannot transition to failed", ErrStateTransition, id)
+	}
+	return nil
 }
 
 // DeleteNode 删除一个节点（remove_node 已由面板先行下发，§5）；同时清理用户关联（§16）。

@@ -191,6 +191,11 @@ func newForcePublishFixture(t *testing.T, entryPort int, serviceRealized shared.
 		Kind: RevisionPieceForward, HopID: entryHopID, ServerID: entryID}); err != nil {
 		t.Fatal(err)
 	}
+	// 生产路径中链在强制发布前处于编排中（StartChain 已置 applying），
+	// 强制发布入口按链状态机校验前置状态（§21.1），夹具同步该状态。
+	if err := st.SetChainStatus(ctx, chainID, store.ChainStatusApplying, ""); err != nil {
+		t.Fatal(err)
+	}
 	requester := &fakeRequester{online: map[int64]bool{entryID: false, exitID: true}}
 	return st, New(st, requester), chainID, entryID, revision.ID
 }

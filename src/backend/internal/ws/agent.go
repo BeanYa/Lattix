@@ -70,7 +70,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, responseHeaders)
 	if err != nil {
 		log.Printf("ws upgrade: %v", err)
-		h.setConnectionState(auth.ServerID, disconnectedState(auth.Reconnect), "", sessionKind)
+		h.setDisconnectedIfIdle(auth.ServerID, disconnectedState(auth.Reconnect))
 		return
 	}
 	conn.SetReadLimit(maxMessageBytes)
@@ -81,7 +81,8 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	registered := false
 	defer func() {
 		if !registered {
-			h.setConnectionState(auth.ServerID, disconnectedState(auth.Reconnect), "", sessionKind)
+			// 握手失败回写断开状态；若已有登记连接（旧连接/并发新连接）则不覆盖其 online 显示。
+			h.setDisconnectedIfIdle(auth.ServerID, disconnectedState(auth.Reconnect))
 		}
 	}()
 

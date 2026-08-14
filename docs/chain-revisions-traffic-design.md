@@ -87,12 +87,15 @@ Panel 的 Agent 在线状态只表示 Agent→Panel 控制通道可达，不代�
 
 | 入口 | 用途 | 触发方 |
 |------|------|--------|
-| `Transition` | 显式状态变更（编排推进/重试/删除） | advanceChain、RetryChain、failChain、StartChain |
+| `Transition` | 显式状态变更（编排推进/重试/等待/恢复/删除） | advanceChain、RetryChain、failChain、StartChain、StartChainOrWait |
 | `Evaluate` | 条件驱动评估（active ↔ degraded） | Agent 上/离线、端点 ack、发布后、周期自愈 |
 | `InvalidateForServerDeletion` | 服务器删除级联失效 | panel.handleDeleteServer |
+| `EditChainTopology` | 编辑：FSM 校验 + CAS 事务替换工作拓扑 | panel.handleEditChain |
+| `StartChainOrWait` | 编辑后启动编排或进入 waiting_for_agent | panel.handleEditChain |
+| `DeleteChain` | 删除：FSM 校验 + CAS 事务软删除 | panel.handleDeleteChain |
 
 辅助入口 `ResumeChainsByServer`：Agent 重连后恢复该服务器上处于编排中的链
-（applying/waiting_for_agent/active_unconfirmed → advanceChain）。
+（applying/active_unconfirmed → advanceChain；waiting_for_agent → applying → advanceChain）。
 
 设计原则：
 
@@ -112,7 +115,7 @@ Panel 的 Agent 在线状态只表示 Agent→Panel 控制通道可达，不代�
 | `active` | 目标配置均已确认，订阅可用 |
 | `degraded` | 运行时推导：某跳离线或端点未就绪（订阅仍输出） |
 | `failed` | 首次编排失败 |
-| `waiting_for_agent` | 目标 revision 需要修改的 Agent 不可达 |
+| `waiting_for_agent` | 编辑所需的任一 Agent 不可达，编排暂停（revision 同步置 waiting_for_agent） |
 | `active_unconfirmed` | 管理员强制发布了未确认配置 |
 | `active_failed` | 强制发布后的任务执行失败 |
 | `cleanup_pending` | 新 revision 已生效，旧配置仍待清理 |
@@ -123,17 +126,21 @@ Panel 的 Agent 在线状态只表示 Agent→Panel 控制通道可达，不代�
 
 ```text
 pending            → applying | invalid | deleted
-applying           → active | active_unconfirmed | failed | waiting_for_agent | invalid | deleted
-active             → degraded | active_failed | cleanup_pending | invalid | deleted
-degraded           → active | active_failed | cleanup_pending | invalid | deleted
-failed             → applying（重试）| invalid | deleted
-active_unconfirmed → active（agent 确认）| applying（重试）| failed | invalid | deleted
-active_failed      → applying（重试）| active（重新评估恢复）| invalid | deleted
-waiting_for_agent  → applying | failed | invalid | deleted
-cleanup_pending    → active（清理完成）| deleted | invalid
-invalid            → deleted
+applying           → active | active_unconfirmed（强制发布）| failed | waiting_for_agent（编辑所需 Agent 离线）| invalid | deleted
+active             → degraded | active_failed | cleanup_pending | applying（编辑）| invalid | deleted
+degraded           → active | active_failed | cleanup_pending | applying（编辑）| invalid | deleted
+failed             → applying（重试）| active_unconfirmed（强制发布失败编辑）| invalid | deleted
+active_unconfirmed → active（agent 确认）| applying（重试）| failed | active_failed（强制发布后任务失败）| invalid | deleted
+active_failed      → applying（重试）| active（重新评估恢复）| active_unconfirmed（强制发布）| invalid | deleted
+waiting_for_agent  → applying（Agent 上线恢复编排）| active_unconfirmed（强制发布）| failed | invalid | deleted
+cleanup_pending    → active（清理完成）| applying（编辑）| deleted | invalid
+invalid            → applying（替换缺失 hop 重新发布）| deleted
 deleted            →（终态，无出边）
 ```
+
+转换表由 `chainFSM` 强制执行；涉及多表事务的链状态写入（编辑拓扑替换、发布、
+删除、级联失效）经 FSM 前置校验后，在 store 事务内以 `WHERE status = <from>` 的
+CAS 形式再次断言，并发修改返回 `ErrChainStatusChanged`（TOCTOU 防护）。
 
 ### 外部事件输入
 
@@ -163,11 +170,30 @@ Evaluate 仅对 `active` 或 `degraded` 状态的链生效，按优先级检查�
 | 连接自愈 | OnAgentConnect → reconcile 该服务器全部未 active 端点 + 恢复编排 | 死信命令、Agent 重启、编排停滞 |
 | 周期兜底 | 60s ReconcileStaleEndpoints 遍历所有在线服务器 | 上述两层未覆盖的边缘情况 |
 
+### 共享端点状态机（endpointFSM）
+
+共享端点有独立的 4 状态机，与链路状态机同构（`internal/dispatch/endpoint_fsm.go`）：
+所有端点状态变更经 `Transition` 入口，store 层 `WHERE status IN (...)` 守卫与转换表
+双重断言；副作用（使用该端点的链重算 + 受影响用户订阅重建）声明式绑定到状态进入。
+
+```text
+pending   → applying | active | failed（active/failed 为测试夹具直通；生产必经 applying）
+applying  → applying（幂等，重连自愈重复 reconcile 在途端点）| active | failed | pending（重置复用）
+active    → applying（路由变化重部署）| failed（新一轮部署失败，旧 realized 保留）| pending（重置复用）
+failed    → applying（重试）| pending（重置复用）
+```
+
+外部事件接线：`ReconcileSharedEndpoint`（建链/发布/用户分配/三层自愈）→ applying；
+`apply_shared_endpoint` 回执 → active | failed；命令死信 → failed。
+
 ### 离线语义
 
-普通创建或编辑遇到必须修改的离线 Agent 时不发布，任务保持队列状态；完全未变化的已部署 hop
-可以直接复用。管理员可以执行"强制发布"：立即更新订阅、抛弃旧 revision 并开始 cleanup，未确认
-命令继续排队。强制发布是不可自动回滚的单向操作；失败后只能重试或再次编辑。
+普通创建或编辑遇到必须修改的离线 Agent 时不发布：链进入 `waiting_for_agent`（revision 同步
+置 waiting_for_agent），编排暂停且不下发命令；任一相关 Agent 上线后由 `ResumeChainsByServer`
+恢复为 `applying` 并续跑。完全未变化的已部署 hop 可以直接复用。管理员可以执行"强制发布"
+（前置状态：applying/waiting_for_agent/active_unconfirmed/failed/active_failed）：立即更新订阅、
+抛弃旧 revision 并开始 cleanup，未确认命令继续排队。强制发布是不可自动回滚的单向操作；失败后
+只能重试或再次编辑，也可以再次强制发布（active_failed → active_unconfirmed）。
 
 被目标拓扑删除的离线服务器不阻塞发布，其 cleanup 命令排队。若仍留在目标拓扑的前驱服务器需要
 修改下一跳且当前离线，普通发布必须等待，除非管理员强制发布。

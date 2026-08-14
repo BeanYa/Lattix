@@ -396,6 +396,13 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 	}); ok {
 		closer.CloseAgent(srv.ID, 4001, "credential revoked")
 	}
+	// 连接状态机：轮换后旧凭证重试将得到明确 403，面板侧标记 auth_rejected
+	// （§graceful-shutdown-agent-settings-design §6），直到管理员重新绑定。
+	if marker, ok := s.req.(interface {
+		MarkAuthRejected(serverID int64)
+	}); ok {
+		marker.MarkAuthRejected(srv.ID)
+	}
 	sid := srv.ID
 	s.audit(r, "server.rotate_token", &sid, nil, map[string]string{"alias": srv.Alias})
 	base := s.panelBase(r)

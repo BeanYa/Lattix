@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"lattix/shared"
@@ -234,17 +235,68 @@ func (s *Store) ChainHopByNodeID(ctx context.Context, nodeID int64) (*ChainHop, 
 }
 
 // SetChainStatus 更新链状态与错误定位（error 定位到跳，§21）。
-func (s *Store) SetChainStatus(ctx context.Context, id int64, status, errMsg string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE chains SET status = ?, error = ? WHERE id = ?`, status, errMsg, id)
-	return err
+// 可选 fromStatus 参数开启 CAS 守卫：仅当链当前处于该状态时写入，否则返回
+// ErrChainStatusChanged（链状态机 Transition 使用，防并发覆盖）。
+func (s *Store) SetChainStatus(ctx context.Context, id int64, status, errMsg string, fromStatus ...string) error {
+	query := `UPDATE chains SET status = ?, error = ? WHERE id = ?`
+	args := []any{status, errMsg, id}
+	if len(fromStatus) > 0 {
+		query += ` AND status = ?`
+		args = append(args, fromStatus[0])
+	}
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if len(fromStatus) > 0 {
+		if n, nerr := result.RowsAffected(); nerr != nil {
+			return nerr
+		} else if n == 0 {
+			return fmt.Errorf("%w: chain %d not in status %s", ErrChainStatusChanged, id, fromStatus[0])
+		}
+	}
+	return nil
 }
 
-// SetChainHopStatus 更新跳状态与错误详情。
+// hopStatusFromSet 返回允许转入目标状态的跳前置状态集合（与节点状态机同语义，§21.1）：
+// pending 仅重试复位；applying 覆盖首次下发/重试重放；active/failed 覆盖编排与失败定位。
+func hopStatusFromSet(status string) []string {
+	switch status {
+	case HopStatusPending:
+		return []string{HopStatusFailed}
+	case HopStatusApplying:
+		return []string{HopStatusPending, HopStatusFailed, HopStatusApplying}
+	case HopStatusActive:
+		return []string{HopStatusPending, HopStatusApplying}
+	case HopStatusFailed:
+		return []string{HopStatusPending, HopStatusApplying, HopStatusActive}
+	}
+	return nil
+}
+
+// SetChainHopStatus 更新跳状态与错误详情；非法前置状态拒绝写入（返回 ErrStateTransition）。
 func (s *Store) SetChainHopStatus(ctx context.Context, id int64, status, errMsg string) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE chain_hops SET status = ?, error = ? WHERE id = ?`, status, errMsg, id)
-	return err
+	from := hopStatusFromSet(status)
+	if len(from) == 0 {
+		return fmt.Errorf("%w: unknown hop status %q", ErrStateTransition, status)
+	}
+	placeholders := strings.Repeat("?,", len(from))
+	placeholders = placeholders[:len(placeholders)-1]
+	query := `UPDATE chain_hops SET status = ?, error = ? WHERE id = ? AND status IN (` + placeholders + `)`
+	args := []any{status, errMsg, id}
+	for _, state := range from {
+		args = append(args, state)
+	}
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if n, nerr := result.RowsAffected(); nerr != nil {
+		return nerr
+	} else if n == 0 {
+		return fmt.Errorf("%w: hop %d cannot transition to %s", ErrStateTransition, id, status)
+	}
+	return nil
 }
 
 // SetChainHopPortalRealized 写回 portal 回执的生效端口、公钥与 Reality SNI（§21.1）。
@@ -264,7 +316,9 @@ func (s *Store) SetChainHopForwardPort(ctx context.Context, id int64, port int) 
 
 // DeleteChain soft-deletes a chain after cleanup commands have been queued.
 // Revision and traffic history remain available for audit/accounting.
-func (s *Store) DeleteChain(ctx context.Context, id int64) error {
+// 可选 fromStatus 参数开启 CAS 守卫：仅当链仍处于调用方已校验的状态时删除，
+// 否则整体回滚并返回 ErrChainStatusChanged（并发编辑/发布保护）。
+func (s *Store) DeleteChain(ctx context.Context, id int64, fromStatus ...string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -289,9 +343,23 @@ func (s *Store) DeleteChain(ctx context.Context, id int64) error {
 		SET archived_at=COALESCE(archived_at, CURRENT_TIMESTAMP) WHERE chain_id=?`, id); err != nil {
 		return fmt.Errorf("delete chain: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE chains SET status=?, desired_revision_id=0,
-		deleted_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?`, ChainStatusDeleted, id); err != nil {
+	deleteQuery := `UPDATE chains SET status=?, desired_revision_id=0,
+		deleted_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+	deleteArgs := []any{ChainStatusDeleted, id}
+	if len(fromStatus) > 0 {
+		deleteQuery += ` AND status=?`
+		deleteArgs = append(deleteArgs, fromStatus[0])
+	}
+	result, err := tx.ExecContext(ctx, deleteQuery, deleteArgs...)
+	if err != nil {
 		return fmt.Errorf("delete chain: %w", err)
+	}
+	if len(fromStatus) > 0 {
+		if n, nerr := result.RowsAffected(); nerr != nil {
+			return fmt.Errorf("delete chain: %w", nerr)
+		} else if n == 0 {
+			return fmt.Errorf("%w: chain %d not in status %s", ErrChainStatusChanged, id, fromStatus[0])
+		}
 	}
 	return tx.Commit()
 }

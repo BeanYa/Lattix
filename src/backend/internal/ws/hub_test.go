@@ -146,3 +146,52 @@ func inertAgentConn(serverID int64) *agentConn {
 	c.once.Do(func() {})
 	return c
 }
+
+func TestConnectionStateTransitions(t *testing.T) {
+	h := NewHub()
+	// 正常握手序列：never_connected → connecting → online → offline
+	h.setConnectionState(7, shared.ConnectionStateConnecting, "s", "initial")
+	if got := h.ConnectionState(7, false).State; got != shared.ConnectionStateConnecting {
+		t.Fatalf("state = %s", got)
+	}
+	h.setConnectionState(7, shared.ConnectionStateOnline, "s", "initial")
+	if got := h.ConnectionState(7, false).State; got != shared.ConnectionStateOnline {
+		t.Fatalf("state = %s", got)
+	}
+	h.setConnectionState(7, shared.ConnectionStateOffline, "", "initial")
+	if got := h.ConnectionState(7, true).State; got != shared.ConnectionStateOffline {
+		t.Fatalf("state = %s", got)
+	}
+
+	// 非法转换拒绝写入：offline → never_connected
+	h.setConnectionState(7, shared.ConnectionStateNeverConnected, "", "")
+	if got := h.ConnectionState(7, true).State; got != shared.ConnectionStateOffline {
+		t.Fatalf("illegal transition applied, state = %s", got)
+	}
+	// auth_rejected 标记与恢复：auth_rejected → online（重新绑定后新握手）
+	h.MarkAuthRejected(7)
+	if got := h.ConnectionState(7, true).State; got != shared.ConnectionStateAuthRejected {
+		t.Fatalf("state = %s", got)
+	}
+	h.setConnectionState(7, shared.ConnectionStateOnline, "s2", "reconnect")
+	if got := h.ConnectionState(7, true).State; got != shared.ConnectionStateOnline {
+		t.Fatalf("state = %s", got)
+	}
+}
+
+func TestSetDisconnectedIfIdleKeepsLiveConnectionState(t *testing.T) {
+	h := NewHub()
+	conn := inertAgentConn(7)
+	h.register(conn)
+	// 失败的新握手不得把在线连接覆盖为 offline。
+	h.setDisconnectedIfIdle(7, shared.ConnectionStateOffline)
+	if got := h.ConnectionState(7, true).State; got != shared.ConnectionStateOnline {
+		t.Fatalf("live connection state overwritten: %s", got)
+	}
+	// 无连接时正常回写。
+	h.unregister(conn)
+	h.setDisconnectedIfIdle(7, shared.ConnectionStateOffline)
+	if got := h.ConnectionState(7, true).State; got != shared.ConnectionStateOffline {
+		t.Fatalf("state = %s", got)
+	}
+}

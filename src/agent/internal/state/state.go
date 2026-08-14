@@ -12,9 +12,58 @@ import (
 	"lattix/shared"
 )
 
+// ConnectionState 取值（ConnectionStatus.State）：agent 进程自身的连接循环状态机
+// （与面板侧服务器级连接观测正交，§panel-lifecycle 设计 §2）。
+// 转换表：
+//
+//	connecting → online | backoff | auth_rejected
+//	online     → connecting | backoff | auth_rejected（connecting = 断开后立即重拨）
+//	backoff    → connecting | auth_rejected
+//	auth_rejected →（进程内终态）
+//
+// auth_rejected 后进程存活等待 SIGTERM（systemd/watchdog 不再循环重试）；
+// 管理员运行新安装命令并重启 Agent 后，状态机随进程重置回到 connecting。
+const (
+	ConnStateConnecting   = "connecting"
+	ConnStateOnline       = "online"
+	ConnStateBackoff      = "backoff"
+	ConnStateAuthRejected = "auth_rejected"
+)
+
+var connectionTransitions = map[string]map[string]bool{
+	ConnStateConnecting: {
+		ConnStateOnline:       true,
+		ConnStateBackoff:      true,
+		ConnStateAuthRejected: true,
+	},
+	ConnStateOnline: {
+		ConnStateConnecting:   true, // 断开后立即重拨（无退避路径）
+		ConnStateBackoff:      true,
+		ConnStateAuthRejected: true,
+	},
+	ConnStateBackoff: {
+		ConnStateConnecting:   true,
+		ConnStateAuthRejected: true,
+	},
+	ConnStateAuthRejected: {},
+}
+
+// ValidConnectionTransition 校验连接状态转换是否合法（同状态幂等）。
+func ValidConnectionTransition(from, to string) bool {
+	if from == to {
+		return true
+	}
+	targets, ok := connectionTransitions[from]
+	if !ok {
+		return false
+	}
+	return targets[to]
+}
+
 // ConnectionStatus is a credential-free runtime snapshot consumed by latx-ag.
 type ConnectionStatus struct {
 	Connected    bool      `json:"connected"`
+	State        string    `json:"state,omitempty"` // connecting|online|backoff|auth_rejected
 	Panel        string    `json:"panel"`
 	ServerID     int64     `json:"server_id,omitempty"`
 	AgentVersion string    `json:"agent_version"`

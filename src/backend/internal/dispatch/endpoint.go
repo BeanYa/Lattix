@@ -83,7 +83,8 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 	sort.Slice(payload.Routes, func(i, j int) bool { return payload.Routes[i].ChainID < payload.Routes[j].ChainID })
 	// 建链即部署监听：即使 routes/clients 为空也下发 apply（端口 + Reality 密钥即刻生效）。
 	// 用户分配仅做增量用户添加，不再是部署前提。
-	if err := d.st.SetSharedEndpointApplying(ctx, endpointID); err != nil {
+	// 端点状态机入口：pending/failed/applying/active → applying（重试/重部署/幂等自愈）。
+	if err := d.efsm.Transition(ctx, endpointID, store.EndpointStatusApplying, "下发端点部署命令", nil); err != nil {
 		return err
 	}
 	_, err = d.Enqueue(ctx, endpoint.ServerID, shared.TypeApplySharedEndpoint, payload)

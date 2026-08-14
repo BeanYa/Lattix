@@ -9,12 +9,12 @@ import (
 
 func TestBillingStatusTransitions(t *testing.T) {
 	tests := []struct {
-		name string
+		name    string
 		enabled bool
 		renewal string
-		today string
-		online bool
-		want string
+		today   string
+		online  bool
+		want    string
 	}{
 		{"disabled", false, "2026-04-10", "2026-04-01", false, store.BillingDisabled},
 		{"active", true, "2026-04-10", "2026-04-01", false, store.BillingActive},
@@ -37,12 +37,46 @@ func TestTrafficPeriodPreservesMonthEndAnchor(t *testing.T) {
 	anchor := time.Date(2026, time.January, 31, 0, 0, 0, 0, loc)
 	today := time.Date(2026, time.March, 15, 0, 0, 0, 0, loc)
 	start, next := trafficPeriod(anchor, today, 1, "month")
-	if got, want := start.Format("2006-01-02"), "2026-02-28"; got != want { t.Fatalf("start = %s, want %s", got, want) }
-	if got, want := next.Format("2006-01-02"), "2026-03-31"; got != want { t.Fatalf("next = %s, want %s", got, want) }
+	if got, want := start.Format("2006-01-02"), "2026-02-28"; got != want {
+		t.Fatalf("start = %s, want %s", got, want)
+	}
+	if got, want := next.Format("2006-01-02"), "2026-03-31"; got != want {
+		t.Fatalf("next = %s, want %s", got, want)
+	}
 }
 
 func TestTrafficAccountingModes(t *testing.T) {
-	if got := trafficUsed("outbound", 10, 20); got != 10 { t.Fatalf("outbound = %d", got) }
-	if got := trafficUsed("bidirectional", 10, 20); got != 30 { t.Fatalf("bidirectional = %d", got) }
-	if got := trafficUsed("max", 10, 20); got != 20 { t.Fatalf("max = %d", got) }
+	if got := trafficUsed("outbound", 10, 20); got != 10 {
+		t.Fatalf("outbound = %d", got)
+	}
+	if got := trafficUsed("bidirectional", 10, 20); got != 30 {
+		t.Fatalf("bidirectional = %d", got)
+	}
+	if got := trafficUsed("max", 10, 20); got != 20 {
+		t.Fatalf("max = %d", got)
+	}
+}
+
+func TestBillingManualTransitions(t *testing.T) {
+	legal := []struct{ from, to string }{
+		{store.BillingActive, store.BillingActive},
+		{store.BillingDueToday, store.BillingActive},
+		{store.BillingAssumedValid, store.BillingActive},
+		{store.BillingExpired, store.BillingActive},
+	}
+	for _, c := range legal {
+		if !validBillingTransition(c.from, c.to) {
+			t.Errorf("缺少手动转换边 %s → %s", c.from, c.to)
+		}
+	}
+	illegal := []struct{ from, to string }{
+		{store.BillingDisabled, store.BillingActive}, // 禁用后须重新开启统计计费
+		{store.BillingActive, store.BillingExpired},  // 手动路径不得反向过期
+		{store.BillingDueToday, store.BillingExpired},
+	}
+	for _, c := range illegal {
+		if validBillingTransition(c.from, c.to) {
+			t.Errorf("非法手动转换未被拒绝 %s → %s", c.from, c.to)
+		}
+	}
 }

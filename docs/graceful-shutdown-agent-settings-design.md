@@ -123,6 +123,14 @@ Agent 同时看到安装命令 bootstrap 与本地长期 token 时：
 - epoch 更高：使用安装命令 bootstrap，适用于管理员 rotate 后重装；
 - panel ID 不同：使用安装命令 bootstrap，进入跨面板重新绑定。
 
+凭证换发是一个三态小状态机（store 层 `WHERE` 守卫强制转换，见 `store/servers.go`）：
+
+```text
+bootstrap → pending（session.open 换发长期凭证，未提交；重复换发幂等返回同一 pending）
+pending   → committed（agent.credential.commit，校验 exchange_id 后 bootstrap 失效）
+committed → bootstrap（rotate-token 递增 epoch 并重置）
+```
+
 `rotate-token` 表示立即撤销：面板递增 epoch、替换数据库 token，并以 WS `4001` 关闭旧连接。
 旧 Agent 重连时收到带 `X-Lattix-Protocol` 标记和合法 RPC body 的 HTTP 403 后进入
 `auth_rejected` 并停止自动重试，直到管理员运行新安装命令并重启 Agent。同面板 rotate

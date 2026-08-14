@@ -73,6 +73,59 @@ type ConnectionSnapshot struct {
 	ChangedAt   time.Time `json:"changed_at"`
 }
 
+// connectionTransitions 定义面板侧 Agent 连接状态的合法转换（设计文档 §2）。
+// 同状态写入幂等；非法转换拒绝并记录日志（保持显示状态不被错误覆盖）。
+// auth_rejected 由面板在 token 轮换时主动标记：轮换后 Agent 重试将得到明确
+// HTTP 403 并停止自动重连，直到重新绑定（握手 403 本身无法从失效 token 归属服务器）。
+var connectionTransitions = map[string]map[string]bool{
+	shared.ConnectionStateNeverConnected: {
+		shared.ConnectionStateConnecting:   true,
+		shared.ConnectionStateOnline:       true,
+		shared.ConnectionStateAuthRejected: true,
+	},
+	shared.ConnectionStateConnecting: {
+		shared.ConnectionStateOnline:         true,
+		shared.ConnectionStateOffline:        true,
+		shared.ConnectionStateNeverConnected: true,
+		shared.ConnectionStateAuthRejected:   true,
+	},
+	shared.ConnectionStateReconnecting: {
+		shared.ConnectionStateOnline:       true,
+		shared.ConnectionStateOffline:      true,
+		shared.ConnectionStateAuthRejected: true,
+	},
+	shared.ConnectionStateOnline: {
+		shared.ConnectionStateConnecting:   true,
+		shared.ConnectionStateReconnecting: true,
+		shared.ConnectionStateOnline:       true, // 新连接顶替旧连接
+		shared.ConnectionStateOffline:      true,
+		shared.ConnectionStateAuthRejected: true,
+	},
+	shared.ConnectionStateOffline: {
+		shared.ConnectionStateConnecting:   true,
+		shared.ConnectionStateReconnecting: true,
+		shared.ConnectionStateOnline:       true,
+		shared.ConnectionStateAuthRejected: true,
+	},
+	shared.ConnectionStateAuthRejected: {
+		shared.ConnectionStateConnecting:   true, // 重新绑定后新握手
+		shared.ConnectionStateReconnecting: true,
+		shared.ConnectionStateOnline:       true,
+		shared.ConnectionStateAuthRejected: true,
+	},
+}
+
+func validConnectionTransition(from, to string) bool {
+	if from == to {
+		return true
+	}
+	targets, ok := connectionTransitions[from]
+	if !ok {
+		return false
+	}
+	return targets[to]
+}
+
 func (h *Hub) ConnectionState(serverID int64, everConnected bool) ConnectionSnapshot {
 	h.mu.RLock()
 	state, ok := h.states[serverID]
@@ -93,10 +146,36 @@ func (h *Hub) ConnectionState(serverID int64, everConnected bool) ConnectionSnap
 
 func (h *Hub) setConnectionState(serverID int64, state, sessionID, sessionKind string) {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	if prev, ok := h.states[serverID]; ok && !validConnectionTransition(prev.State, state) {
+		log.Printf("ws: server %d: illegal connection state transition %s → %s (ignored)", serverID, prev.State, state)
+		return
+	}
 	h.states[serverID] = ConnectionSnapshot{
 		State: state, SessionID: sessionID, SessionKind: sessionKind, ChangedAt: time.Now().UTC(),
 	}
-	h.mu.Unlock()
+}
+
+// setDisconnectedIfIdle 仅当服务器当前没有已登记连接时才回写断开状态：
+// 失败的新握手不得把仍在线连接的显示状态错误覆盖为 offline/never_connected。
+func (h *Hub) setDisconnectedIfIdle(serverID int64, state string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if _, online := h.conns[serverID]; online {
+		return
+	}
+	if prev, ok := h.states[serverID]; ok && !validConnectionTransition(prev.State, state) {
+		log.Printf("ws: server %d: illegal connection state transition %s → %s (ignored)", serverID, prev.State, state)
+		return
+	}
+	h.states[serverID] = ConnectionSnapshot{State: state, ChangedAt: time.Now().UTC()}
+}
+
+// MarkAuthRejected 将服务器连接状态置为 auth_rejected（token 轮换等场景，
+// §graceful-shutdown-agent-settings-design §6）：旧凭证重试将得到明确 403，
+// Agent 停止自动重连，直到管理员重新绑定。
+func (h *Hub) MarkAuthRejected(serverID int64) {
+	h.setConnectionState(serverID, shared.ConnectionStateAuthRejected, "", "")
 }
 
 // IsOnline 实现 Requester。

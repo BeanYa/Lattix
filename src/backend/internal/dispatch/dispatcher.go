@@ -23,9 +23,10 @@ import (
 
 // Dispatcher 串联 store 与 Requester。
 type Dispatcher struct {
-	st  *store.Store
-	req ws.AgentRequester
-	fsm *chainFSM // 链路状态机：所有链状态变更的唯一入口
+	st   *store.Store
+	req  ws.AgentRequester
+	fsm  *chainFSM    // 链路状态机：所有链状态变更的唯一入口
+	efsm *endpointFSM // 共享端点状态机：所有端点状态变更的唯一入口
 
 	// Alerter 事件告警（§19）：nil = 关闭；仅状态跃迁时调用，发送方自行防抖动。
 	Alerter      *alert.Notifier
@@ -77,6 +78,7 @@ func New(st *store.Store, req ws.AgentRequester) *Dispatcher {
 		endpointRetriedAt: make(map[int64]time.Time),
 	}
 	d.fsm = &chainFSM{d: d}
+	d.efsm = &endpointFSM{d: d}
 	return d
 }
 
@@ -451,8 +453,8 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 			if c.Type == shared.TypeApplySharedEndpoint {
 				var p shared.ApplySharedEndpointPayload
 				if json.Unmarshal(c.Data, &p) == nil && p.EndpointID != 0 {
-					_ = d.st.SetSharedEndpointFailed(ctx, p.EndpointID,
-						fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts))
+					_ = d.efsm.Transition(ctx, p.EndpointID, store.EndpointStatusFailed,
+						fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts), nil)
 				}
 			}
 			// apply_chain_hop 死信：跳置 failed，链 failed 定位到跳（§21）。
@@ -1126,20 +1128,9 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 		if p.EndpointID != 0 {
 			d.clearEndpointRetry(p.EndpointID)
 			realized, _ := json.Marshal(p.RealizedConfig)
-			if err := d.st.SetSharedEndpointActive(ctx, p.EndpointID, realized); err != nil {
+			// 端点状态机：active 副作用（链重算 + 订阅重建）在 onEnter 分派。
+			if err := d.efsm.Transition(ctx, p.EndpointID, store.EndpointStatusActive, "部署回执确认", realized); err != nil {
 				log.Printf("dispatch: shared endpoint %d active: %v", p.EndpointID, err)
-			} else {
-				// 端点生效 → 重算使用该端点的链（degraded → active 恢复）。
-				if chainIDs, err := d.st.ChainIDsByEndpoint(ctx, p.EndpointID); err == nil {
-					for _, cid := range chainIDs {
-						d.recomputeChain(ctx, cid)
-					}
-				}
-				if d.OnEndpointPublished != nil {
-					if err := d.OnEndpointPublished(ctx, p.EndpointID); err != nil {
-						log.Printf("dispatch: enqueue subscriptions for shared endpoint %d: %v", p.EndpointID, err)
-					}
-				}
 			}
 			return
 		}
@@ -1214,20 +1205,9 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			return
 		}
 		if p.EndpointID != 0 {
-			if err := d.st.SetSharedEndpointFailed(ctx, p.EndpointID, errorMessage); err != nil {
+			// 端点状态机：failed 副作用（链重算 + 订阅重建）在 onEnter 分派。
+			if err := d.efsm.Transition(ctx, p.EndpointID, store.EndpointStatusFailed, errorMessage, nil); err != nil {
 				log.Printf("dispatch: shared endpoint %d failed: %v", p.EndpointID, err)
-			}
-			// 端点部署失败 → 重算使用该端点的链（active → degraded，同步链路页状态）
-			// 并触发受影响用户的订阅重建（同步订阅警告内容）。
-			if chainIDs, err := d.st.ChainIDsByEndpoint(ctx, p.EndpointID); err == nil {
-				for _, cid := range chainIDs {
-					d.recomputeChain(ctx, cid)
-				}
-			}
-			if d.OnEndpointPublished != nil {
-				if err := d.OnEndpointPublished(ctx, p.EndpointID); err != nil {
-					log.Printf("dispatch: enqueue subscriptions for failed shared endpoint %d: %v", p.EndpointID, err)
-				}
 			}
 			return
 		}

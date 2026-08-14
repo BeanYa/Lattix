@@ -745,8 +745,12 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		value := vc.Port
 		nodePort = &value
 	}
-	if err := s.st.ReplaceWorkingChainTopology(r.Context(), revision, vc.Protocol, nodePort, serviceChanged); err != nil {
+	if err := s.disp.EditChainTopology(r.Context(), revision, vc.Protocol, nodePort, serviceChanged); err != nil {
 		o.Fail(err)
+		if errors.Is(err, store.ErrChainStatusChanged) {
+			writeError(w, http.StatusConflict, "链路状态已变化，请刷新后重试")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -769,7 +773,9 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	if offline {
 		_ = s.st.SetChainRevisionStatus(r.Context(), revision.ID, store.RevisionStatusWaitingForAgent, "")
 	}
-	if err := s.disp.StartChain(r.Context(), chain.ID); err != nil {
+	// 链状态机入口：所需 Agent 全部在线 → 推进编排；存在离线必需服务器 →
+	// applying → waiting_for_agent，Agent 上线后由 ResumeChainsByServer 恢复（§21.1）。
+	if err := s.disp.StartChainOrWait(r.Context(), chain.ID, offline, "编辑所需 Agent 离线，等待上线后恢复编排"); err != nil {
 		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -1058,8 +1064,16 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	o.Report("publish", 100, "拆链命令已下发")
-	if err := s.st.DeleteChain(r.Context(), id); err != nil {
+	if err := s.disp.DeleteChain(r.Context(), id); err != nil {
 		o.Fail(err)
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "链路不存在")
+			return
+		}
+		if errors.Is(err, store.ErrChainStatusChanged) {
+			writeError(w, http.StatusConflict, "链路状态已变化，请刷新后重试")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"lattix/shared"
 )
@@ -173,6 +174,67 @@ func (s *Store) ServerTestByServerID(ctx context.Context, serverID int64) (*Serv
 	return &task, nil
 }
 
+// serverTestTransitions 声明式定义服务器测试任务状态机转换（§server-test）：
+//
+//	queued → accepted → running → succeeded | completed_with_errors
+//	任一非终态 → failed（命令失败/死信）
+//
+// 进展帧允许同状态/回退幂等（Agent 重复帧、迟到 accepted 帧），因此 accepted/running
+// 对全部非终态开放；终态由 generation/terminal 校验拒绝回退。
+// 三条写入 SQL（UpdateServerTestState/FailServerTestCommand/finalizeServerTestResult）
+// 的前置状态集合统一由本表推导（serverTestFromSet），不再散落硬编码。
+var serverTestTransitions = map[shared.ServerTestTaskStatus]map[shared.ServerTestTaskStatus]bool{
+	shared.ServerTestQueued: {
+		shared.ServerTestAccepted:            true,
+		shared.ServerTestRunning:             true,
+		shared.ServerTestSucceeded:           true,
+		shared.ServerTestCompletedWithErrors: true,
+		shared.ServerTestFailed:              true,
+	},
+	shared.ServerTestAccepted: {
+		shared.ServerTestAccepted:            true, // 重复帧幂等
+		shared.ServerTestRunning:             true,
+		shared.ServerTestSucceeded:           true,
+		shared.ServerTestCompletedWithErrors: true,
+		shared.ServerTestFailed:              true,
+	},
+	shared.ServerTestRunning: {
+		shared.ServerTestAccepted:            true, // 迟到 accepted 帧容忍
+		shared.ServerTestRunning:             true, // 重复帧幂等
+		shared.ServerTestSucceeded:           true,
+		shared.ServerTestCompletedWithErrors: true,
+		shared.ServerTestFailed:              true,
+	},
+	shared.ServerTestSucceeded:           {},
+	shared.ServerTestCompletedWithErrors: {},
+	shared.ServerTestFailed:              {},
+}
+
+// serverTestStatusOrder 是转换表键的固定顺序（SQL IN 子句参数顺序确定）。
+var serverTestStatusOrder = []shared.ServerTestTaskStatus{
+	shared.ServerTestQueued, shared.ServerTestAccepted, shared.ServerTestRunning,
+	shared.ServerTestSucceeded, shared.ServerTestCompletedWithErrors, shared.ServerTestFailed,
+}
+
+func validServerTestTransition(from, to shared.ServerTestTaskStatus) bool {
+	if from == to {
+		return true
+	}
+	targets, ok := serverTestTransitions[from]
+	return ok && targets[to]
+}
+
+// serverTestFromSet 返回允许转入 target 状态的前置状态集合（由转换表推导，顺序确定）。
+func serverTestFromSet(target shared.ServerTestTaskStatus) []shared.ServerTestTaskStatus {
+	out := make([]shared.ServerTestTaskStatus, 0, len(serverTestStatusOrder))
+	for _, from := range serverTestStatusOrder {
+		if serverTestTransitions[from][target] {
+			out = append(out, from)
+		}
+	}
+	return out
+}
+
 // UpdateServerTestState persists lifecycle transitions, but not progress
 // counters. A stale generation is reported as superseded.
 func (s *Store) UpdateServerTestState(ctx context.Context, serverID int64, taskID string, generation int64, status shared.ServerTestTaskStatus) (bool, error) {
@@ -186,10 +248,16 @@ func (s *Store) UpdateServerTestState(ctx context.Context, serverID int64, taskI
 	case shared.ServerTestRunning:
 		timestampColumn = ", accepted_at = COALESCE(accepted_at, CURRENT_TIMESTAMP), started_at = COALESCE(started_at, CURRENT_TIMESTAMP)"
 	}
+	fromSet := serverTestFromSet(status)
+	placeholders := strings.Repeat("?,", len(fromSet))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := []any{status, serverID, taskID, generation}
+	for _, from := range fromSet {
+		args = append(args, from)
+	}
 	result, err := s.db.ExecContext(ctx, `UPDATE server_test_tasks SET status = ?, updated_at = CURRENT_TIMESTAMP`+timestampColumn+
-		` WHERE server_id = ? AND task_id = ? AND generation = ? AND status IN (?, ?, ?)`,
-		status, serverID, taskID, generation,
-		shared.ServerTestQueued, shared.ServerTestAccepted, shared.ServerTestRunning)
+		` WHERE server_id = ? AND task_id = ? AND generation = ? AND status IN (`+placeholders+`)`,
+		args...)
 	if err != nil {
 		return false, err
 	}
@@ -198,11 +266,17 @@ func (s *Store) UpdateServerTestState(ctx context.Context, serverID int64, taskI
 }
 
 func (s *Store) FailServerTestCommand(ctx context.Context, serverID int64, taskID string, generation int64, code, message string) error {
+	fromSet := serverTestFromSet(shared.ServerTestFailed)
+	placeholders := strings.Repeat("?,", len(fromSet))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := []any{shared.ServerTestFailed, code, message, serverID, taskID, generation}
+	for _, from := range fromSet {
+		args = append(args, from)
+	}
 	_, err := s.db.ExecContext(ctx, `UPDATE server_test_tasks SET status = ?, error_code = ?,
 		error_message = ?, completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-		WHERE server_id = ? AND task_id = ? AND generation = ? AND status IN (?, ?, ?)`,
-		shared.ServerTestFailed, code, message, serverID, taskID, generation,
-		shared.ServerTestQueued, shared.ServerTestAccepted, shared.ServerTestRunning)
+		WHERE server_id = ? AND task_id = ? AND generation = ? AND status IN (`+placeholders+`)`,
+		args...)
 	return err
 }
 
@@ -369,12 +443,22 @@ func finalizeServerTestResult(ctx context.Context, tx *sql.Tx, serverID int64, t
 		report.Generation != generation || report.Status != manifest.Status {
 		return errors.New("server test report identity mismatch")
 	}
+	fromSet := serverTestFromSet(manifest.Status)
+	if len(fromSet) == 0 {
+		return fmt.Errorf("server test result manifest has non-terminal status %q", manifest.Status)
+	}
+	placeholders := strings.Repeat("?,", len(fromSet))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := []any{manifest.Status, string(resultJSON), manifest.SHA256, manifest.ErrorCode,
+		manifest.ErrorMessage, manifest.AgentVersion, serverID, taskID, generation}
+	for _, from := range fromSet {
+		args = append(args, from)
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE server_test_tasks SET status = ?, result_json = ?,
 		result_sha256 = ?, error_code = ?, error_message = ?, agent_version = ?,
 		completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-		WHERE server_id = ? AND task_id = ? AND generation = ?`,
-		manifest.Status, string(resultJSON), manifest.SHA256, manifest.ErrorCode,
-		manifest.ErrorMessage, manifest.AgentVersion, serverID, taskID, generation)
+		WHERE server_id = ? AND task_id = ? AND generation = ? AND status IN (`+placeholders+`)`,
+		args...)
 	if err != nil {
 		return err
 	}

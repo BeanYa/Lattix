@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -53,8 +54,12 @@ func (d *Dispatcher) ResumeChains(ctx context.Context) error {
 			continue
 		}
 		switch chain.Status {
-		case store.ChainStatusApplying, store.ChainStatusWaitingForAgent, store.ChainStatusActiveUnconfirmed:
+		case store.ChainStatusApplying, store.ChainStatusActiveUnconfirmed:
 			d.advanceChain(ctx, chain.ID)
+		case store.ChainStatusWaitingForAgent:
+			// 启动时全部 Agent 离线，保持等待；Agent 重连后由
+			// ResumeChainsByServer 完成 waiting_for_agent → applying 并推进编排。
+			continue
 		}
 	}
 	return nil
@@ -396,7 +401,7 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 		return
 	}
 	previous, _ := d.st.PublishedChainRevision(ctx, chainID)
-	if err := d.st.PublishChainRevision(ctx, revision.ID, false); err != nil {
+	if err := d.st.PublishChainRevision(ctx, revision.ID, false, store.ChainStatusActive); err != nil {
 		log.Printf("dispatch: chain %d publish revision: %v", chainID, err)
 		return
 	}
@@ -426,6 +431,22 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 	revision, err := d.st.DesiredChainRevision(ctx, chainID)
 	if err != nil {
 		return err
+	}
+	// 链状态机校验强制发布前置状态：编排中（applying/waiting_for_agent）、
+	// 已强制发布（active_unconfirmed）、失败编辑（failed/active_failed）。
+	// 已上线（active/degraded/cleanup_pending/invalid）与已删除链不允许强制发布。
+	chain, err := d.st.ChainByID(ctx, chainID)
+	if err != nil {
+		return err
+	}
+	switch chain.Status {
+	case store.ChainStatusApplying, store.ChainStatusWaitingForAgent,
+		store.ChainStatusActiveUnconfirmed, store.ChainStatusFailed, store.ChainStatusActiveFailed:
+	default:
+		return fmt.Errorf("强制发布失败：链路状态 %s 不允许强制发布（仅编排中或失败的链可强制发布）", chain.Status)
+	}
+	if !validChainTransition(chain.Status, store.ChainStatusActiveUnconfirmed) {
+		return fmt.Errorf("强制发布失败：链路状态 %s 不允许强制发布", chain.Status)
 	}
 	if target := strings.TrimSpace(d.PanelVersion); target != "" && target != "dev" {
 		tasks, err := d.st.RevisionTasks(ctx, revision.ID)
@@ -492,7 +513,10 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 	if err := d.st.UpdateChainRevision(ctx, revision.ID, store.RevisionStatusActiveUnconfirmed, "", revision.Snapshot); err != nil {
 		return err
 	}
-	if err := d.st.PublishChainRevision(ctx, revision.ID, true); err != nil {
+	if err := d.st.PublishChainRevision(ctx, revision.ID, true, chain.Status); err != nil {
+		if errors.Is(err, store.ErrChainStatusChanged) {
+			return fmt.Errorf("强制发布失败：链路状态已并发变化，请刷新后重试: %w", err)
+		}
 		return err
 	}
 	if d.OnChainPublished != nil {
@@ -848,4 +872,66 @@ func publicPortOf(srv *store.Server, listen int) int {
 		return pub
 	}
 	return listen
+}
+
+// EditChainTopology 编辑链路入口：先经链状态机校验（当前状态 → applying），
+// 再以 CAS 事务替换工作拓扑（store.ReplaceWorkingChainTopology 带 fromStatus 守卫）。
+// 合法编辑前置状态：active/degraded/cleanup_pending（已上线链）、failed/active_failed
+// （失败链以失败 revision 为基线）、invalid（替换缺失 hop 重新发布）、pending/applying。
+func (d *Dispatcher) EditChainTopology(ctx context.Context, revision *store.ChainRevision, protocol string, port *int, serviceChanged bool) error {
+	chain, err := d.st.ChainByID(ctx, revision.ChainID)
+	if err != nil {
+		return fmt.Errorf("chain_fsm: chain %d: %w", revision.ChainID, err)
+	}
+	if !validChainTransition(chain.Status, store.ChainStatusApplying) {
+		log.Printf("chain_fsm: chain %d: illegal transition %s → applying (edit topology)", revision.ChainID, chain.Status)
+		return fmt.Errorf("chain_fsm: illegal transition %s → applying", chain.Status)
+	}
+	if err := d.st.ReplaceWorkingChainTopology(ctx, revision, protocol, port, serviceChanged, chain.Status); err != nil {
+		if errors.Is(err, store.ErrChainStatusChanged) {
+			return fmt.Errorf("chain_fsm: chain %d: %w (expected %s)", revision.ChainID, err, chain.Status)
+		}
+		return err
+	}
+	log.Printf("chain_fsm: chain %d: %s → applying (edit topology)", revision.ChainID, chain.Status)
+	return nil
+}
+
+// StartChainOrWait 启动编辑编排：所需 Agent 全部在线时推进编排（StartChain）；
+// 存在离线的必需服务器时进入 waiting_for_agent（§21.1 离线语义），编排暂停，
+// 待 Agent 上线后由 ResumeChainsByServer 恢复。detail 记录等待原因。
+func (d *Dispatcher) StartChainOrWait(ctx context.Context, chainID int64, waitForAgent bool, detail string) error {
+	if waitForAgent {
+		return d.fsm.Transition(ctx, chainID, store.ChainStatusWaitingForAgent, detail)
+	}
+	return d.StartChain(ctx, chainID)
+}
+
+// DeleteChain 删除链路入口：经链状态机校验（任意非终态 → deleted）后以 CAS 事务
+// 软删除（store.DeleteChain 带 fromStatus 守卫），并记录操作日志。
+// 已删除的链幂等返回 nil。
+func (d *Dispatcher) DeleteChain(ctx context.Context, chainID int64) error {
+	chain, err := d.st.ChainByID(ctx, chainID)
+	if err != nil {
+		return err
+	}
+	if chain.Status == store.ChainStatusDeleted {
+		return nil // 幂等：重复删除不触发副作用
+	}
+	if !validChainTransition(chain.Status, store.ChainStatusDeleted) {
+		log.Printf("chain_fsm: chain %d: illegal transition %s → deleted", chainID, chain.Status)
+		return fmt.Errorf("chain_fsm: illegal transition %s → deleted", chain.Status)
+	}
+	if err := d.st.DeleteChain(ctx, chainID, chain.Status); err != nil {
+		if errors.Is(err, store.ErrChainStatusChanged) {
+			return fmt.Errorf("chain_fsm: chain %d: %w (expected %s)", chainID, err, chain.Status)
+		}
+		return fmt.Errorf("chain_fsm: chain %d delete: %w", chainID, err)
+	}
+	log.Printf("chain_fsm: chain %d: %s → deleted", chainID, chain.Status)
+	d.recordOperation(logging.OperationEvent{
+		Severity: logging.SeverityInfo, Category: logging.CategoryChain, Action: "chain.deleted",
+		Detail: map[string]any{"chain_id": chainID},
+	})
+	return nil
 }
