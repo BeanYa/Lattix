@@ -9,6 +9,17 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // 首屏前应用持久化的主题，避免亮色/主题切换闪白。
+      // 主题 id 只做格式校验，合法性由 ThemeProvider 按注册表纠正。
+      try {
+        var t = localStorage.getItem('lattix-theme')
+        if (t === 'light') document.documentElement.style.colorScheme = 'light'
+        else { document.documentElement.classList.add('dark'); document.documentElement.style.colorScheme = 'dark' }
+        var d = localStorage.getItem('lattix-design-theme')
+        document.documentElement.dataset.theme = /^[a-z][a-z0-9-]*$/.test(d || '') ? d : 'hig'
+      } catch (e) {}
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
