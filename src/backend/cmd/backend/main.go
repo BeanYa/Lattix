@@ -69,6 +69,10 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+// defaultAdminPass 是未显式配置凭据时的默认密码。release 构建启动时拒绝该
+// 公开已知的默认值（§12 安全加固）；dev 构建与本地 e2e 保持原行为。
+const defaultAdminPass = "lattix-admin"
+
 func main() {
 	if err := run(); err != nil {
 		log.Printf("lattix backend: %v", err)
@@ -87,7 +91,7 @@ func run() error {
 	logDir := flag.String("log-dir", envOr("LATTIX_LOG_DIR", ""), "日志目录；空 = 数据库同级 logs/")
 	staticDir := flag.String("static", envOr("LATTIX_STATIC", ""), "frontend 构建产物覆盖目录（空 = 使用二进制内嵌前端）")
 	adminUser := flag.String("admin-user", envOr("LATTIX_ADMIN_USER", "admin"), "管理员账号（单管理员，§10）")
-	adminPass := flag.String("admin-pass", envOr("LATTIX_ADMIN_PASS", "lattix-admin"), "管理员密码（MVP 本地/受信网络，§12）")
+	adminPass := flag.String("admin-pass", envOr("LATTIX_ADMIN_PASS", defaultAdminPass), "管理员密码（MVP 本地/受信网络，§12）")
 	publicURL := flag.String("public-url", envOr("LATTIX_PUBLIC_URL", ""), "面板对外地址（生成安装命令/订阅链接），默认从请求推断")
 	ghRepo := flag.String("github-repo", "", "GitHub 仓库（org/repo，生成 release 安装命令/升级下载基址）；空 = 构建注入值")
 	tlsCert := flag.String("tls-cert", "", "TLS 证书文件（自带证书，须与 -tls-key 同用，§12）")
@@ -145,6 +149,17 @@ func run() error {
 		return fmt.Errorf("store: %w", err)
 	}
 	defer st.Close()
+	// 安全：release 构建拒绝以公开已知的默认密码对外提供服务。DB 中已有
+	// bcrypt 哈希（设置页改密 / -reset-admin）时启动参数已被覆盖，允许启动。
+	if version != "dev" && *adminPass == defaultAdminPass {
+		stored, err := st.GetSetting(context.Background(), store.SettingAdminPassBcrypt)
+		if err != nil {
+			return fmt.Errorf("读取管理员密码设置: %w", err)
+		}
+		if stored == "" {
+			return errors.New("拒绝使用默认管理员密码启动：请设置 -admin-pass / LATTIX_ADMIN_PASS 强密码（或先运行 -reset-admin <新密码>）")
+		}
+	}
 	panelInstanceID, err := st.PanelInstanceID(context.Background())
 	if err != nil {
 		return fmt.Errorf("panel identity: %w", err)

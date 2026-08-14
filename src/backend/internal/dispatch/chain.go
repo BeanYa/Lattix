@@ -56,6 +56,9 @@ func (d *Dispatcher) ResumeChains(ctx context.Context) error {
 		switch chain.Status {
 		case store.ChainStatusApplying, store.ChainStatusActiveUnconfirmed:
 			d.advanceChain(ctx, chain.ID)
+		case store.ChainStatusActive:
+			// 发布窗口竞态遗留（revision 已 active 但未发布）：重启后补发（评审 P2-8）。
+			d.maybePublishReadyRevision(ctx, chain.ID)
 		case store.ChainStatusWaitingForAgent:
 			// 启动时全部 Agent 离线，保持等待；Agent 重连后由
 			// ResumeChainsByServer 完成 waiting_for_agent → applying 并推进编排。
@@ -402,6 +405,13 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 	}
 	previous, _ := d.st.PublishedChainRevision(ctx, chainID)
 	if err := d.st.PublishChainRevision(ctx, revision.ID, false, store.ChainStatusActive); err != nil {
+		if errors.Is(err, store.ErrChainStatusChanged) {
+			// 发布窗口内链状态被并发改写（Evaluate 降级等）：revision 已置 active 但
+			// 尚未发布。链恢复 active 后由 maybePublishReadyRevision 补发（评审 P2-8）。
+			log.Printf("dispatch: chain %d publish raced with chain status change; deferred to recovery", chainID)
+			d.recomputeChain(ctx, chainID)
+			return
+		}
 		log.Printf("dispatch: chain %d publish revision: %v", chainID, err)
 		return
 	}
@@ -425,6 +435,32 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 		// 端点刚置 applying，立即重算链状态（若端点未 active 则链进入 degraded，待 ack 后恢复）。
 		d.recomputeChain(ctx, chainID)
 	}
+}
+
+// maybePublishReadyRevision 自愈发布窗口竞态（评审 P2-8）：链已 active 且 desired
+// revision 已被置为 active 却尚未发布（PublishChainRevision CAS 被并发状态改写
+// 打断）时，在链恢复 active 后于此补发发布，避免新 revision 无人再发布。
+func (d *Dispatcher) maybePublishReadyRevision(ctx context.Context, chainID int64) {
+	chain, err := d.st.ChainByID(ctx, chainID)
+	if err != nil || chain.Status != store.ChainStatusActive || chain.DesiredRevisionID == 0 {
+		return
+	}
+	revision, err := d.st.DesiredChainRevision(ctx, chainID)
+	if err != nil || revision.Status != store.RevisionStatusActive {
+		return
+	}
+	node, err := d.st.NodeByID(ctx, revision.Snapshot.ServiceNodeID)
+	if err != nil {
+		log.Printf("dispatch: chain %d ready revision %d node: %v", chainID, revision.ID, err)
+		return
+	}
+	hops, err := d.st.ChainHops(ctx, chainID)
+	if err != nil || len(hops) == 0 {
+		log.Printf("dispatch: chain %d ready revision %d hops: %v", chainID, revision.ID, err)
+		return
+	}
+	log.Printf("dispatch: chain %d re-publishing ready revision %d", chainID, revision.ID)
+	d.publishDesiredRevision(ctx, chainID, hops, *node)
 }
 
 func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) error {
@@ -733,7 +769,9 @@ func (d *Dispatcher) failChain(ctx context.Context, chainID int64, hop *store.Ch
 		if revision.Forced {
 			revisionStatus = store.RevisionStatusActiveFailed
 		}
-		_ = d.st.SetChainRevisionStatus(ctx, revision.ID, revisionStatus, locate)
+		if err := d.st.SetChainRevisionStatus(ctx, revision.ID, revisionStatus, locate); err != nil {
+			log.Printf("dispatch: chain %d revision %d status %s: %v", chainID, revision.ID, revisionStatus, err)
+		}
 	}
 	if err := d.fsm.Transition(ctx, chainID, status, locate); err != nil {
 		log.Printf("dispatch: chain %d failed: %v", chainID, err)

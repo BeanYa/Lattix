@@ -34,6 +34,7 @@ type WebhookRequester interface {
 type FileRequester interface {
 	GetText(context.Context, string, int64) (string, error)
 	Download(context.Context, string, string, func(float64)) error
+	DownloadLimited(context.Context, string, string, int64, func(float64)) error
 }
 
 type ExternalJSONRequester struct{ Doer HTTPDoer }
@@ -130,8 +131,19 @@ func (r ExternalFileRequester) GetText(ctx context.Context, url string, maxBytes
 	return r.GetTextWithOptions(ctx, url, maxBytes, FileRequestOptions{})
 }
 
+// defaultDownloadLimit 是 Download 的默认流式大小上限（防御异常上游，评审 P3）。
+const defaultDownloadLimit = int64(512 << 20)
+
 func (r ExternalFileRequester) Download(
 	ctx context.Context, url, path string, onProgress func(float64),
+) error {
+	return r.DownloadLimited(ctx, url, path, defaultDownloadLimit, onProgress)
+}
+
+// DownloadLimited 与 Download 相同，但流式写入超过 maxBytes 时中止并删除部分文件
+// （防御恶意/异常上游在下载期间撑满磁盘，评审 P2/P3）。
+func (r ExternalFileRequester) DownloadLimited(
+	ctx context.Context, url, path string, maxBytes int64, onProgress func(float64),
 ) error {
 	resp, err := do(ctx, r.Doer, http.MethodGet, url, "", nil)
 	if err != nil {
@@ -156,6 +168,11 @@ func (r ExternalFileRequester) Download(
 				return err
 			}
 			downloaded += int64(n)
+			if maxBytes > 0 && downloaded > maxBytes {
+				file.Close()
+				_ = os.Remove(path)
+				return fmt.Errorf("%s: download exceeds %d bytes", redactedDestination(url), maxBytes)
+			}
 			if onProgress != nil && resp.ContentLength > 0 {
 				onProgress(float64(downloaded) / float64(resp.ContentLength))
 			}

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
 	"lattix/shared"
@@ -67,8 +68,8 @@ func TestResetUserSubscriptionToken(t *testing.T) {
 	if got.Data.SubToken == "" || got.Data.SubToken == "old-token" {
 		t.Fatalf("sub_token = %q", got.Data.SubToken)
 	}
-	if len(got.Data.SubToken) != 16 {
-		t.Fatalf("sub_token length = %d, want 16", len(got.Data.SubToken))
+	if len(got.Data.SubToken) != 32 {
+		t.Fatalf("sub_token length = %d, want 32", len(got.Data.SubToken))
 	}
 	if !strings.Contains(got.Data.SubURL, got.Data.SubToken) || !strings.Contains(got.Data.SubLinksURL, got.Data.SubToken) {
 		t.Fatalf("urls do not contain new token: %s %s", got.Data.SubURL, got.Data.SubLinksURL)
@@ -149,6 +150,54 @@ func TestResetUserSubscriptionTokenMissingUser(t *testing.T) {
 	}
 }
 
+func TestExpirySweepRepublishesUserSubscription(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, err := st.CreateServer(ctx, "exit", "exit.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := json.RawMessage(`{"protocol":"vless","template":{}}`)
+	nodeID, err := st.InsertNode(ctx, "n1", serverID, shared.ProtocolVLESS, nil, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(-time.Hour)
+	userID, err := st.InsertUser(ctx, "u1", "u1-uuid", "u1-token", &expires)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetUserNodes(ctx, userID, []int64{nodeID}); err != nil {
+		t.Fatal(err)
+	}
+	subSrv := sub.New(st, nil, nil)
+	subSrv.StartRegenerator(ctx)
+	requester := &chainEditRequester{online: map[int64]bool{serverID: false}}
+	server := &Server{st: st, disp: dispatch.New(st, requester), req: requester, subscriptions: subSrv}
+
+	server.sweepExpiredUsers(ctx)
+
+	// 到期停权后必须触发订阅重发布：发布文件出现且节点清空（评审发现的原缺失路径）。
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		file, err := st.PublishedSubscriptionFile(ctx, userID, "links")
+		if err == nil {
+			if strings.TrimSpace(string(file.Content)) != "" {
+				t.Fatalf("过期用户订阅仍含内容: %q", file.Content)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("到期停权后订阅未重发布（PublishedSubscriptionFile 缺失）")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
 func TestHandleListUsersOnlineConnectionsAccessIdentity(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")

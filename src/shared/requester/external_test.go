@@ -65,6 +65,23 @@ func (failingExternalDoer) Do(req *http.Request) (*http.Response, error) {
 	return nil, errors.New("dial failed for " + req.URL.String())
 }
 
+func TestDownloadLimitedEnforcesSizeCap(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, 1024*1024))
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "big")
+	err := (ExternalFileRequester{Doer: server.Client()}).DownloadLimited(
+		context.Background(), server.URL+"/", path, 1024, nil,
+	)
+	if err == nil {
+		t.Fatal("oversized download was not rejected")
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatal("partial file was not removed after size limit breach")
+	}
+}
+
 func TestExternalRequesterRedactsSecretsFromErrors(t *testing.T) {
 	rawURL := "https://alice:password@example.com/bot-secret/sendMessage?token=query-secret#fragment-secret"
 	err := (ExternalWebhookRequester{Doer: failingExternalDoer{}}).PostJSON(

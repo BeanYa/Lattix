@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -474,9 +475,21 @@ func (s *Server) panelBase(r *http.Request) string {
 }
 
 // isSecure 报告当前请求是否经 HTTPS 到达（含反代终止 TLS 的场景）。
+// 反代声明（X-Forwarded-Proto）仅在请求来自回环地址（本机反代）时采信，
+// 直连场景防客户端伪造（评审 P2）。
 func (s *Server) isSecure(r *http.Request) bool {
-	return s.cfg.Secure || r.TLS != nil ||
-		strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	if s.cfg.Secure || r.TLS != nil {
+		return true
+	}
+	if !strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return false
+	}
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = h
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 type rpcResponse struct {

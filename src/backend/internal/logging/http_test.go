@@ -37,6 +37,18 @@ func TestSafePathHashesSubscriptionToken(t *testing.T) {
 	}
 }
 
+// TestSafePathHashesSubscriptionAPIToken 修复评审 P1：/api/sub/{token}/... 的
+// 订阅 token 同样必须脱敏（此前只处理 /sub/ 前缀，token 会明文落入请求日志）。
+func TestSafePathHashesSubscriptionAPIToken(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "https://example.test/api/sub/super-secret/info", nil)
+	request.Pattern = "GET /api/sub/{token}/info"
+	request.SetPathValue("token", "super-secret")
+	path := safePath(request)
+	if strings.Contains(path, "super-secret") || !strings.Contains(path, "[token:") {
+		t.Fatalf("unsafe subscription API path %q", path)
+	}
+}
+
 func TestPanelStatePollingLoggedAsDebug(t *testing.T) {
 	log, err := OpenRequestLog(filepath.Join(t.TempDir(), "requests"), 1<<20)
 	if err != nil {

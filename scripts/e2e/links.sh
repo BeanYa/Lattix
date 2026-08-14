@@ -216,9 +216,18 @@ done
 [[ "$(db "SELECT expired FROM users WHERE id=$UID2")" == "1" ]] \
     && echo "OK: sweeper 已置 expired=1" || { echo "FAIL: sweeper 未停权"; exit 1; }
 wait_clients "$N1" "$UUID2" absent && echo "OK: 到期扇出 remove_user 生效"
-[[ -z "$(curl -s "http://$ADDR/sub/$TOK2?format=clash" | grep 'type: vless')" ]] \
+# 到期重发布经订阅队列异步完成（sweeper → EnqueueUsers → regenerator），轮询等待。
+YAML_EMPTY=0
+LINKS_EMPTY=0
+for _ in $(seq 1 20); do
+    [[ -z "$(curl -s "http://$ADDR/sub/$TOK2?format=clash" | grep 'type: vless')" ]] && YAML_EMPTY=1
+    [[ -z "$(curl -s "http://$ADDR/sub/$TOK2?format=links")" ]] && LINKS_EMPTY=1
+    [[ "$YAML_EMPTY" == "1" && "$LINKS_EMPTY" == "1" ]] && break
+    sleep 0.5
+done
+[[ "$YAML_EMPTY" == "1" ]] \
     && echo "OK: 过期用户 YAML proxies 为空" || { echo "FAIL: 过期订阅应为空"; exit 1; }
-[[ -z "$(curl -s "http://$ADDR/sub/$TOK2?format=links")" ]] \
+[[ "$LINKS_EMPTY" == "1" ]] \
     && echo "OK: 过期用户 links 为空" || { echo "FAIL: 过期 links 应为空"; exit 1; }
 HDRS2="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK2?format=clash")"
 grep -qi "^subscription-userinfo: upload=0; download=0; expire=$EXPIRE2" <<<"$HDRS2" \

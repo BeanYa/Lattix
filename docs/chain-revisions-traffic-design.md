@@ -117,7 +117,7 @@ Panel 的 Agent 在线状态只表示 Agent→Panel 控制通道可达，不代�
 | `failed` | 首次编排失败 |
 | `waiting_for_agent` | 编辑所需的任一 Agent 不可达，编排暂停（revision 同步置 waiting_for_agent） |
 | `active_unconfirmed` | 管理员强制发布了未确认配置 |
-| `active_failed` | 强制发布后的任务执行失败 |
+| `active_failed` | 已发布链的部署失败：强制发布后的任务失败，或已发布链编辑（applying/waiting_for_agent）期间的失败 |
 | `cleanup_pending` | 新 revision 已生效，旧配置仍待清理 |
 | `invalid` | 引用的服务器已被删除 |
 | `deleted` | 链路已软删除（终态） |
@@ -126,13 +126,13 @@ Panel 的 Agent 在线状态只表示 Agent→Panel 控制通道可达，不代�
 
 ```text
 pending            → applying | invalid | deleted
-applying           → active | active_unconfirmed（强制发布）| failed | waiting_for_agent（编辑所需 Agent 离线）| invalid | deleted
+applying           → active | active_unconfirmed（强制发布）| failed | active_failed（已发布链编辑失败）| waiting_for_agent（编辑所需 Agent 离线）| invalid | deleted
 active             → degraded | active_failed | cleanup_pending | applying（编辑）| invalid | deleted
 degraded           → active | active_failed | cleanup_pending | applying（编辑）| invalid | deleted
 failed             → applying（重试）| active_unconfirmed（强制发布失败编辑）| invalid | deleted
 active_unconfirmed → active（agent 确认）| applying（重试）| failed | active_failed（强制发布后任务失败）| invalid | deleted
 active_failed      → applying（重试）| active（重新评估恢复）| active_unconfirmed（强制发布）| invalid | deleted
-waiting_for_agent  → applying（Agent 上线恢复编排）| active_unconfirmed（强制发布）| failed | invalid | deleted
+waiting_for_agent  → applying（Agent 上线恢复编排）| active_unconfirmed（强制发布）| failed | active_failed（等待期间在途命令失败回执）| invalid | deleted
 cleanup_pending    → active（清理完成）| applying（编辑）| deleted | invalid
 invalid            → applying（替换缺失 hop 重新发布）| deleted
 deleted            →（终态，无出边）

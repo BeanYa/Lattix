@@ -43,6 +43,11 @@ func (s *Server) sweepExpiredUsers(ctx context.Context) {
 		if assignments, err := s.st.UserChainAssignments(ctx, u.ID); err == nil {
 			s.reconcileAssignmentEndpoints(ctx, assignments, nil)
 		}
+		// 到期停权后重发布订阅（节点清空，§9）。此前该路径缺失重发布触发，
+		// 已到期的用户订阅文件仍残留旧节点（评审发现，links.sh e2e 复现）。
+		if s.subscriptions != nil {
+			s.subscriptions.EnqueueUsers([]int64{u.ID}, "")
+		}
 		log.Printf("panel: user %d (%s) 已到期，置 expired 并扇出 remove_user（%d 节点）", u.ID, u.Name, len(assigned))
 	}
 }

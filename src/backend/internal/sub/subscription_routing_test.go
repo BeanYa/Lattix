@@ -112,6 +112,10 @@ func (f *fakeFileRequester) GetText(_ context.Context, url string, _ int64) (str
 
 func (*fakeFileRequester) Download(context.Context, string, string, func(float64)) error { return nil }
 
+func (*fakeFileRequester) DownloadLimited(context.Context, string, string, int64, func(float64)) error {
+	return nil
+}
+
 func TestTemplateRefreshPreservesLastCompleteCache(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")
@@ -520,7 +524,7 @@ func TestPublishUserForcedAssignmentOverridesUserChoice(t *testing.T) {
 	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
 		UserID: userID, Mode: store.SubscriptionModeTemplate, Preset: "balanced",
 		CategoriesJSON: `[]`, PortableTemplateID: "user-tpl",
-		GenerationStatus: store.SubscriptionGenerationMissing,
+		GenerationStatus:           store.SubscriptionGenerationMissing,
 		AssignedPortableTemplateID: "assigned-tpl", AssignForcedPortable: true,
 	}); err != nil {
 		t.Fatal(err)
@@ -550,7 +554,7 @@ func TestPublishUserAssignedSuggestedCategoriesProducesUsableRules(t *testing.T)
 	// 用户默认（建议规则/balanced/单分类），被指派 ads+ai+gaming 分组。
 	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
 		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
-		CategoriesJSON:                  `["ai"]`, GenerationStatus: store.SubscriptionGenerationMissing,
+		CategoriesJSON: `["ai"]`, GenerationStatus: store.SubscriptionGenerationMissing,
 		AssignedSuggestedCategories: `["ads","ai","gaming"]`,
 	}); err != nil {
 		t.Fatal(err)

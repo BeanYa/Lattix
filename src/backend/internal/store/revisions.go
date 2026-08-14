@@ -469,19 +469,88 @@ func (s *Store) InvalidateChainForServerDeletion(ctx context.Context, chainID, s
 	return tx.Commit()
 }
 
+// revisionStatusFromSet 返回允许转入目标状态的 revision 前置状态集合（与链状态机
+// 同一套转换纪律，§21.1）：当前状态不在集合内时写入返回 ErrStateTransition，
+// 防止迟到的失败回执覆盖已发布 revision（并发丢失更新，评审 P2-7）。
+func revisionStatusFromSet(status string) []string {
+	switch status {
+	case RevisionStatusApplying:
+		// 初始（schema 默认 applying）、重试复位、等待恢复与幂等重写。
+		return []string{RevisionStatusApplying, RevisionStatusFailed,
+			RevisionStatusActiveFailed, RevisionStatusWaitingForAgent}
+	case RevisionStatusWaitingForAgent:
+		return []string{RevisionStatusApplying}
+	case RevisionStatusActive:
+		// 正常发布（applying → active）、unconfirmed 确认（回执齐全）与幂等重发布。
+		return []string{RevisionStatusApplying, RevisionStatusActiveUnconfirmed, RevisionStatusActive}
+	case RevisionStatusActiveUnconfirmed:
+		// 强制发布：编排中/失败/等待中的 revision 均可强制置 unconfirmed。
+		return []string{RevisionStatusApplying, RevisionStatusActiveUnconfirmed, RevisionStatusFailed,
+			RevisionStatusActiveFailed, RevisionStatusWaitingForAgent}
+	case RevisionStatusFailed:
+		return []string{RevisionStatusApplying, RevisionStatusWaitingForAgent}
+	case RevisionStatusActiveFailed:
+		return []string{RevisionStatusApplying, RevisionStatusActiveUnconfirmed, RevisionStatusWaitingForAgent}
+	case RevisionStatusCancelled:
+		return []string{RevisionStatusFailed, RevisionStatusActiveFailed}
+	}
+	return nil
+}
+
+// UpdateChainRevision 写入 revision 状态、错误与快照（发布路径）。状态写入受
+// revisionStatusFromSet 前置守卫：当前状态不在允许集合时返回 ErrStateTransition
+// （例如迟到的失败回执试图覆盖已 active 的 revision）。
 func (s *Store) UpdateChainRevision(ctx context.Context, revisionID int64, status, errorMessage string, snapshot ChainRevisionSnapshot) error {
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE chain_revisions SET status=?, error=?, snapshot=? WHERE id=?`,
-		status, errorMessage, string(raw), revisionID)
-	return err
+	from := revisionStatusFromSet(status)
+	if len(from) == 0 {
+		return fmt.Errorf("%w: unknown revision status %q", ErrStateTransition, status)
+	}
+	placeholders := strings.Repeat("?,", len(from))
+	placeholders = placeholders[:len(placeholders)-1]
+	query := `UPDATE chain_revisions SET status=?, error=?, snapshot=? WHERE id=? AND status IN (` + placeholders + `)`
+	args := []any{status, errorMessage, string(raw), revisionID}
+	for _, state := range from {
+		args = append(args, state)
+	}
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if n, nerr := result.RowsAffected(); nerr != nil {
+		return nerr
+	} else if n == 0 {
+		return fmt.Errorf("%w: revision %d cannot transition to %s", ErrStateTransition, revisionID, status)
+	}
+	return nil
 }
 
+// SetChainRevisionStatus 更新 revision 状态与错误详情（CAS 前置守卫，见 UpdateChainRevision）。
 func (s *Store) SetChainRevisionStatus(ctx context.Context, revisionID int64, status, errorMessage string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE chain_revisions SET status=?, error=? WHERE id=?`, status, errorMessage, revisionID)
-	return err
+	from := revisionStatusFromSet(status)
+	if len(from) == 0 {
+		return fmt.Errorf("%w: unknown revision status %q", ErrStateTransition, status)
+	}
+	placeholders := strings.Repeat("?,", len(from))
+	placeholders = placeholders[:len(placeholders)-1]
+	query := `UPDATE chain_revisions SET status=?, error=? WHERE id=? AND status IN (` + placeholders + `)`
+	args := []any{status, errorMessage, revisionID}
+	for _, state := range from {
+		args = append(args, state)
+	}
+	result, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	if n, nerr := result.RowsAffected(); nerr != nil {
+		return nerr
+	} else if n == 0 {
+		return fmt.Errorf("%w: revision %d cannot transition to %s", ErrStateTransition, revisionID, status)
+	}
+	return nil
 }
 
 // AbandonChainRevision 废弃被新编辑取代的失败 revision（§21 失败后编辑）：
@@ -650,9 +719,27 @@ func (s *Store) PublishChainRevision(ctx context.Context, revisionID int64, forc
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE chain_revisions SET status=?, forced=?, published_at=CURRENT_TIMESTAMP WHERE id=?`,
-		status, forced, revisionID); err != nil {
+	revisionFrom := revisionStatusFromSet(status)
+	revisionQuery := `UPDATE chain_revisions SET status=?, forced=?, published_at=CURRENT_TIMESTAMP WHERE id=?`
+	revisionArgs := []any{status, forced, revisionID}
+	if len(revisionFrom) > 0 {
+		placeholders := strings.Repeat("?,", len(revisionFrom))
+		placeholders = placeholders[:len(placeholders)-1]
+		revisionQuery += ` AND status IN (` + placeholders + `)`
+		for _, state := range revisionFrom {
+			revisionArgs = append(revisionArgs, state)
+		}
+	}
+	revisionResult, err := tx.ExecContext(ctx, revisionQuery, revisionArgs...)
+	if err != nil {
 		return err
+	}
+	if len(revisionFrom) > 0 {
+		if n, nerr := revisionResult.RowsAffected(); nerr != nil {
+			return nerr
+		} else if n == 0 {
+			return fmt.Errorf("%w: revision %d cannot transition to %s", ErrStateTransition, revisionID, status)
+		}
 	}
 	desiredRevisionID := int64(0)
 	if forced {

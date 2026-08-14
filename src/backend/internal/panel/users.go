@@ -186,34 +186,34 @@ type subscriptionProfileInput struct {
 	QuanXTemplateID    string   `json:"quanx_template_id"`
 	// 以下为 GET DTO 的只读回显字段：前端把 routing 对象原样回传，
 	// 本接口忽略它们（管理员指派槽位在保存时从现有 profile 原样保留）。
-	AssignedPortableTemplateID   string   `json:"assigned_portable_template_id"`
-	AssignForcedPortable         bool     `json:"assign_forced_portable"`
-	AssignedMihomoTemplateID     string   `json:"assigned_mihomo_template_id"`
-	AssignForcedMihomo           bool     `json:"assign_forced_mihomo"`
-	AssignedSingboxTemplateID    string   `json:"assigned_singbox_template_id"`
-	AssignForcedSingbox          bool     `json:"assign_forced_singbox"`
-	AssignedQuanXTemplateID      string   `json:"assigned_quanx_template_id"`
-	AssignForcedQuanX            bool     `json:"assign_forced_quanx"`
-	AssignedSuggestedCategories  []string `json:"assigned_suggested_categories"`
+	AssignedPortableTemplateID  string   `json:"assigned_portable_template_id"`
+	AssignForcedPortable        bool     `json:"assign_forced_portable"`
+	AssignedMihomoTemplateID    string   `json:"assigned_mihomo_template_id"`
+	AssignForcedMihomo          bool     `json:"assign_forced_mihomo"`
+	AssignedSingboxTemplateID   string   `json:"assigned_singbox_template_id"`
+	AssignForcedSingbox         bool     `json:"assign_forced_singbox"`
+	AssignedQuanXTemplateID     string   `json:"assigned_quanx_template_id"`
+	AssignForcedQuanX           bool     `json:"assign_forced_quanx"`
+	AssignedSuggestedCategories []string `json:"assigned_suggested_categories"`
 }
 
 type subscriptionProfileDTO struct {
-	Mode                      string   `json:"mode"`
-	Preset                    string   `json:"preset"`
-	Categories                []string `json:"categories"`
-	PortableTemplateID        string   `json:"portable_template_id"`
-	MihomoTemplateID          string   `json:"mihomo_template_id"`
-	SingboxTemplateID         string   `json:"singbox_template_id"`
-	QuanXTemplateID           string   `json:"quanx_template_id"`
-	AssignedPortableTemplateID string  `json:"assigned_portable_template_id"`
-	AssignForcedPortable      bool     `json:"assign_forced_portable"`
-	AssignedMihomoTemplateID  string   `json:"assigned_mihomo_template_id"`
-	AssignForcedMihomo        bool     `json:"assign_forced_mihomo"`
-	AssignedSingboxTemplateID string   `json:"assigned_singbox_template_id"`
-	AssignForcedSingbox       bool     `json:"assign_forced_singbox"`
-	AssignedQuanXTemplateID   string   `json:"assigned_quanx_template_id"`
-	AssignForcedQuanX         bool     `json:"assign_forced_quanx"`
-	AssignedSuggestedCategories  []string `json:"assigned_suggested_categories"`
+	Mode                        string   `json:"mode"`
+	Preset                      string   `json:"preset"`
+	Categories                  []string `json:"categories"`
+	PortableTemplateID          string   `json:"portable_template_id"`
+	MihomoTemplateID            string   `json:"mihomo_template_id"`
+	SingboxTemplateID           string   `json:"singbox_template_id"`
+	QuanXTemplateID             string   `json:"quanx_template_id"`
+	AssignedPortableTemplateID  string   `json:"assigned_portable_template_id"`
+	AssignForcedPortable        bool     `json:"assign_forced_portable"`
+	AssignedMihomoTemplateID    string   `json:"assigned_mihomo_template_id"`
+	AssignForcedMihomo          bool     `json:"assign_forced_mihomo"`
+	AssignedSingboxTemplateID   string   `json:"assigned_singbox_template_id"`
+	AssignForcedSingbox         bool     `json:"assign_forced_singbox"`
+	AssignedQuanXTemplateID     string   `json:"assigned_quanx_template_id"`
+	AssignForcedQuanX           bool     `json:"assign_forced_quanx"`
+	AssignedSuggestedCategories []string `json:"assigned_suggested_categories"`
 }
 
 func assignedSuggestedCategories(profile store.SubscriptionProfile) []string {
@@ -229,14 +229,14 @@ func subscriptionProfileToDTO(profile store.SubscriptionProfile) subscriptionPro
 		Mode: profile.Mode, Preset: profile.Preset, Categories: categories,
 		PortableTemplateID: profile.PortableTemplateID, MihomoTemplateID: profile.MihomoTemplateID,
 		SingboxTemplateID: profile.SingboxTemplateID, QuanXTemplateID: profile.QuanXTemplateID,
-		AssignedPortableTemplateID: profile.AssignedPortableTemplateID,
-		AssignForcedPortable:       profile.AssignForcedPortable,
-		AssignedMihomoTemplateID:   profile.AssignedMihomoTemplateID,
-		AssignForcedMihomo:         profile.AssignForcedMihomo,
-		AssignedSingboxTemplateID:  profile.AssignedSingboxTemplateID,
-		AssignForcedSingbox:        profile.AssignForcedSingbox,
-		AssignedQuanXTemplateID:    profile.AssignedQuanXTemplateID,
-		AssignForcedQuanX:          profile.AssignForcedQuanX,
+		AssignedPortableTemplateID:  profile.AssignedPortableTemplateID,
+		AssignForcedPortable:        profile.AssignForcedPortable,
+		AssignedMihomoTemplateID:    profile.AssignedMihomoTemplateID,
+		AssignForcedMihomo:          profile.AssignForcedMihomo,
+		AssignedSingboxTemplateID:   profile.AssignedSingboxTemplateID,
+		AssignForcedSingbox:         profile.AssignForcedSingbox,
+		AssignedQuanXTemplateID:     profile.AssignedQuanXTemplateID,
+		AssignForcedQuanX:           profile.AssignForcedQuanX,
 		AssignedSuggestedCategories: assignedSuggestedCategories(profile),
 	}
 }
@@ -395,7 +395,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	u := store.User{
 		Name:     req.Name,
 		UUID:     uuid.NewString(),
-		SubToken: randomHex(8),
+		SubToken: randomHex(16), // 128-bit（评审 P3：订阅 URL 为长期 bearer 凭据）
 	}
 	id, err := s.st.InsertUser(r.Context(), u.Name, u.UUID, u.SubToken, expiresAt)
 	if err != nil {
@@ -1136,7 +1136,7 @@ func (s *Server) handleResetUserSubscriptionToken(w http.ResponseWriter, r *http
 	}
 	var token string
 	for i := 0; i < 5; i++ {
-		candidate := randomHex(8)
+		candidate := randomHex(16)
 		if _, err := s.st.UserBySubToken(r.Context(), candidate); err != nil {
 			if !errors.Is(err, store.ErrNotFound) {
 				writeError(w, http.StatusInternalServerError, err.Error())

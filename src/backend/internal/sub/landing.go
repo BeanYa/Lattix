@@ -70,8 +70,8 @@ func (s *Server) serveLanding(w http.ResponseWriter, r *http.Request, user *stor
 	fmt.Fprintf(&b, `<div class="stat"><span class="k">节点数量</span><span class="v">%d</span></div>`, len(nodes))
 	b.WriteString(`</div>`)
 
-	b.WriteString(`<div class="row"><span class="k">订阅地址（mihomo YAML）</span><div class="url"><code>` + subURL + `</code><button onclick="copyText(this)">复制</button></div></div>`)
-	b.WriteString(`<div class="row"><span class="k">链接集合地址</span><div class="url"><code>` + linksURL + `</code><button onclick="copyText(this)">复制</button></div></div>`)
+	b.WriteString(`<div class="row"><span class="k">订阅地址（mihomo YAML）</span><div class="url"><code>` + html.EscapeString(subURL) + `</code><button onclick="copyText(this)">复制</button></div></div>`)
+	b.WriteString(`<div class="row"><span class="k">链接集合地址</span><div class="url"><code>` + html.EscapeString(linksURL) + `</code><button onclick="copyText(this)">复制</button></div></div>`)
 
 	b.WriteString(`<div class="qrwrap"><div id="qr"></div><p class="hint">扫码导入订阅</p></div>`)
 

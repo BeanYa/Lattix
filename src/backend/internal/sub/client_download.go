@@ -351,7 +351,7 @@ func (s *Server) runClientDownload(taskID string, spec clientDownloadSpec) {
 
 	tmpPath := filepath.Join(targetDir, ".download-"+taskID)
 	_ = os.Remove(tmpPath)
-	err = s.downloadFiles.Download(ctx, asset.BrowserDownloadURL, tmpPath, func(progress float64) {
+	err = s.downloadFiles.DownloadLimited(ctx, asset.BrowserDownloadURL, tmpPath, maxClientPackageBytes, func(progress float64) {
 		setTask(func(task *clientDownloadTask) { task.Progress = progress })
 	})
 	if err != nil {

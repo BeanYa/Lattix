@@ -22,6 +22,8 @@ func TestChainTransitionTableCoversRealFlows(t *testing.T) {
 		{store.ChainStatusDegraded, store.ChainStatusApplying},                 // 编辑
 		{store.ChainStatusCleanupPending, store.ChainStatusApplying},           // 编辑
 		{store.ChainStatusInvalid, store.ChainStatusApplying},                  // 替换缺失 hop 重新发布
+		{store.ChainStatusApplying, store.ChainStatusActiveFailed},             // 已发布链编辑失败
+		{store.ChainStatusWaitingForAgent, store.ChainStatusActiveFailed},      // 等待期间在途命令失败
 		{store.ChainStatusActiveUnconfirmed, store.ChainStatusActiveFailed},    // 强制发布后任务失败
 		{store.ChainStatusWaitingForAgent, store.ChainStatusActiveUnconfirmed}, // 强制发布
 		{store.ChainStatusWaitingForAgent, store.ChainStatusApplying},          // Agent 上线恢复
@@ -116,6 +118,63 @@ func TestActiveUnconfirmedToActiveFailed(t *testing.T) {
 	}
 }
 
+// TestPublishedChainEditFailureReachesActiveFailed 修复评审 P1：已发布链编辑
+// （status=applying，published_revision_id 仍在）期间跳失败必须允许
+// applying → active_failed，否则链卡在 applying（重试/编辑均被拒绝）。
+func TestPublishedChainEditFailureReachesActiveFailed(t *testing.T) {
+	ctx := context.Background()
+	st, d, chainID, _ := newFSMFixture(t)
+	defer st.Close()
+	// 发布 revision：链 active 且 published_revision_id 置位。
+	if err := st.SetChainStatus(ctx, chainID, store.ChainStatusActive, ""); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{Name: "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PublishChainRevision(ctx, revision.ID, false, store.ChainStatusActive); err != nil {
+		t.Fatal(err)
+	}
+	// 编辑已发布链：desired revision 就位，链进入 applying（published_revision_id 保留，
+	// 与 ReplaceWorkingChainTopology 一致）。
+	revision2, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{Name: "c2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetChainStatus(ctx, chainID, store.ChainStatusApplying, ""); err != nil {
+		t.Fatal(err)
+	}
+	hops, err := st.ChainHops(ctx, chainID)
+	if err != nil || len(hops) == 0 {
+		t.Fatalf("chain hops: %d, %v", len(hops), err)
+	}
+	if err := st.SetChainHopStatus(ctx, hops[0].ID, store.HopStatusFailed, "跳部署失败"); err != nil {
+		t.Fatal(err)
+	}
+	// 跳失败 → failChain 按 published_revision_id 选择 active_failed，不得被转换表拒绝。
+	d.failChain(ctx, chainID, &hops[0], "跳部署失败")
+	chain, _ := st.ChainByID(ctx, chainID)
+	if chain.Status != store.ChainStatusActiveFailed {
+		t.Fatalf("失败后链状态 = %s，期望 active_failed（已发布链编辑失败不得卡 applying）", chain.Status)
+	}
+	if chain.DesiredRevisionID != revision2.ID {
+		t.Fatalf("desired_revision_id = %d，期望 %d", chain.DesiredRevisionID, revision2.ID)
+	}
+	// 恢复路径：RetryChain 接受 active_failed → applying 继续编排，失败跳复位 pending。
+	if err := d.RetryChain(ctx, chainID); err != nil {
+		t.Fatalf("active_failed 链重试被拒绝: %v", err)
+	}
+	chain, _ = st.ChainByID(ctx, chainID)
+	if chain.Status != store.ChainStatusApplying {
+		t.Fatalf("重试后链状态 = %s，期望 applying", chain.Status)
+	}
+	hops, _ = st.ChainHops(ctx, chainID)
+	if len(hops) == 0 || hops[0].Status != store.HopStatusPending {
+		t.Fatalf("重试后跳状态 = %v，期望 pending", hops)
+	}
+}
+
 // TestWaitForAgentAndResume 覆盖 §21.1 离线语义：编辑所需 Agent 离线 →
 // applying → waiting_for_agent；Agent 上线（ResumeChainsByServer）→ applying 并推进编排。
 func TestWaitForAgentAndResume(t *testing.T) {
@@ -145,6 +204,46 @@ func TestWaitForAgentAndResume(t *testing.T) {
 	cmds, err := st.CommandsByType(ctx, shared.TypeApplyNode)
 	if err != nil || len(cmds) != 1 || cmds[0].Status != store.CommandStatusQueued {
 		t.Fatalf("恢复后应入队 1 条 queued apply_node: %d, %v", len(cmds), err)
+	}
+}
+
+// TestMaybePublishReadyRevisionRepublishesRacedRevision 修复评审 P2-8：发布窗口
+// 竞态遗留（链 active、desired revision 已置 active 却未发布）时，恢复路径补发发布。
+func TestMaybePublishReadyRevisionRepublishesRacedRevision(t *testing.T) {
+	ctx := context.Background()
+	st, d, chainID, _ := newFSMFixture(t)
+	defer st.Close()
+	if err := st.SetChainStatus(ctx, chainID, store.ChainStatusActive, ""); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{Name: "c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PublishChainRevision(ctx, revision.ID, false, store.ChainStatusActive); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := st.ListNodes(ctx)
+	if err != nil || len(nodes) == 0 {
+		t.Fatalf("nodes: %d, %v", len(nodes), err)
+	}
+	revision2, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{
+		Name: "c2", ServiceNodeID: nodes[0].ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟竞态遗留：revision 已置 active，但 published_revision_id 未推进（发布 CAS 被中断）。
+	if err := st.UpdateChainRevision(ctx, revision2.ID, store.RevisionStatusActive, "", revision2.Snapshot); err != nil {
+		t.Fatal(err)
+	}
+	d.maybePublishReadyRevision(ctx, chainID)
+	chain, _ := st.ChainByID(ctx, chainID)
+	if chain.PublishedRevisionID != revision2.ID {
+		t.Fatalf("published_revision_id = %d, want %d（竞态遗留未补发发布）", chain.PublishedRevisionID, revision2.ID)
+	}
+	if chain.DesiredRevisionID != 0 {
+		t.Fatalf("补发后 desired_revision_id = %d, want 0", chain.DesiredRevisionID)
 	}
 }
 
@@ -286,5 +385,24 @@ func TestEntityStateWriteGuards(t *testing.T) {
 	}
 	if err := st.SetRevisionTaskResult(ctx, taskID, false, "late"); !errors.Is(err, store.ErrStateTransition) {
 		t.Fatalf("task acked→failed error = %v, want ErrStateTransition", err)
+	}
+
+	// revision（评审 P2-7）：applying → failed 合法；failed → active 拒绝（迟到失败
+	// 不得覆盖已发布）；failed → applying（重试复位）与 applying → waiting_for_agent
+	// 合法；waiting_for_agent → active 拒绝（需先复位 applying）。
+	if err := st.SetChainRevisionStatus(ctx, revision.ID, store.RevisionStatusFailed, "boom"); err != nil {
+		t.Fatalf("revision applying→failed: %v", err)
+	}
+	if err := st.UpdateChainRevision(ctx, revision.ID, store.RevisionStatusActive, "", store.ChainRevisionSnapshot{Name: "c"}); !errors.Is(err, store.ErrStateTransition) {
+		t.Fatalf("revision failed→active error = %v, want ErrStateTransition", err)
+	}
+	if err := st.SetChainRevisionStatus(ctx, revision.ID, store.RevisionStatusApplying, ""); err != nil {
+		t.Fatalf("revision failed→applying (retry): %v", err)
+	}
+	if err := st.SetChainRevisionStatus(ctx, revision.ID, store.RevisionStatusWaitingForAgent, ""); err != nil {
+		t.Fatalf("revision applying→waiting_for_agent: %v", err)
+	}
+	if err := st.SetChainRevisionStatus(ctx, revision.ID, store.RevisionStatusActive, ""); !errors.Is(err, store.ErrStateTransition) {
+		t.Fatalf("revision waiting_for_agent→active error = %v, want ErrStateTransition", err)
 	}
 }

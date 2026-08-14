@@ -50,7 +50,7 @@ run_install_with() {
 }
 
 run_install() {
-    run_install_with --admin-pass lattix-admin
+    run_install_with --admin-pass e2e-admin-pass
 }
 
 latx() {
@@ -89,7 +89,7 @@ grep -q "访问地址: http://127.0.0.1:18081" "$WORK/install.log" \
 grep -q ">> 正在下载 Lattix Panel $VERSION" "$WORK/install.log" \
     && echo "OK: panel 依赖下载前显示进度提示" \
     || { echo "FAIL: panel 下载提示缺失"; cat "$WORK/install.log"; exit 1; }
-grep -q "管理员:   admin" "$WORK/install.log" && grep -q "初始密码: lattix-admin" "$WORK/install.log" \
+grep -q "管理员:   admin" "$WORK/install.log" && grep -q "初始密码: e2e-admin-pass" "$WORK/install.log" \
     && echo "OK: 成功输出含默认账号提示" || { echo "FAIL: 成功输出缺默认账号"; exit 1; }
 
 [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/")" == "200" ]] \
@@ -97,7 +97,7 @@ grep -q "管理员:   admin" "$WORK/install.log" && grep -q "初始密码: latti
 
 SETTINGS_JAR="$WORK/settings-cookies.txt"
 curl -s -c "$SETTINGS_JAR" -H "Origin: http://$ADDR" -H 'Content-Type: application/json' \
-    -d '{"username":"admin","password":"lattix-admin"}' "http://$ADDR/api/auth/login" >/dev/null
+    -d '{"username":"admin","password":"e2e-admin-pass"}' "http://$ADDR/api/auth/login" >/dev/null
 TLS_DIR="$(curl -s -b "$SETTINGS_JAR" -H "Origin: http://$ADDR" "http://$ADDR/api/setting/get" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["tls_dir"])')"
 [[ "$TLS_DIR" == "$PANEL_ROOT/data/certs" ]] \
@@ -106,10 +106,10 @@ TLS_DIR="$(curl -s -b "$SETTINGS_JAR" -H "Origin: http://$ADDR" "http://$ADDR/ap
 
 echo ">> 用例 3: 无凭据参数重装保留已有管理员配置"
 run_install_with >"$WORK/reinstall.log"
-grep -q "初始密码: lattix-admin" "$WORK/reinstall.log" \
+grep -q "初始密码: e2e-admin-pass" "$WORK/reinstall.log" \
     && echo "OK: 重装保留已有管理员密码" \
     || { echo "FAIL: 重装未保留管理员密码"; cat "$WORK/reinstall.log"; exit 1; }
-[[ "$(rpc_code POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')" == "OK" ]] \
+[[ "$(rpc_code POST /api/auth/login '{"username":"admin","password":"e2e-admin-pass"}')" == "OK" ]] \
     && echo "OK: 保留的管理员密码仍可登录" || { echo "FAIL: 重装后登录"; exit 1; }
 
 echo ">> 用例 4: latx status / version（LATX_DEV=1 进程检查）"
@@ -137,7 +137,7 @@ MENU_ZH_OUT="$(printf '2\n13\n\n0\n' | latx)"
 
 echo ">> 用例 5: latx reset-admin（改密即全部会话失效，§10）"
 JAR="$WORK/cookies.txt"
-[[ "$(rpc_code POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')" == "OK" ]] \
+[[ "$(rpc_code POST /api/auth/login '{"username":"admin","password":"e2e-admin-pass"}')" == "OK" ]] \
     && echo "OK: 默认密码可登录" || { echo "FAIL: 默认密码登录"; exit 1; }
 if latx reset-admin short 2>"$WORK/short.log"; then
     echo "FAIL: 短密码未被拒绝"; exit 1
@@ -148,7 +148,7 @@ latx reset-admin newpass456 | grep -q "所有会话已失效" \
     && echo "OK: reset-admin 成功且提示会话失效" || { echo "FAIL: reset-admin"; exit 1; }
 [[ "$(rpc_code POST /api/auth/login '{"username":"admin","password":"newpass456"}')" == "OK" ]] \
     && echo "OK: 新密码可登录" || { echo "FAIL: 新密码登录"; exit 1; }
-[[ "$(rpc_code POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')" == "AUTH_INVALID_CREDENTIALS" ]] \
+[[ "$(rpc_code POST /api/auth/login '{"username":"admin","password":"e2e-admin-pass"}')" == "AUTH_INVALID_CREDENTIALS" ]] \
     && echo "OK: 旧默认密码已失效" || { echo "FAIL: 旧密码仍可用"; exit 1; }
 # 旧会话失效检查（用改密前的 cookie）
 curl -s -c "$JAR" -H "Origin: http://$ADDR" -H 'Content-Type: application/json' \

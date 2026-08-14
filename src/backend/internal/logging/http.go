@@ -293,7 +293,7 @@ func routePattern(r *http.Request) string {
 
 func safePath(r *http.Request) string {
 	path := r.URL.Path
-	if strings.HasPrefix(path, "/sub/") {
+	if strings.HasPrefix(path, "/sub/") || strings.HasPrefix(path, "/api/sub/") {
 		token := r.PathValue("token")
 		if token != "" {
 			sum := sha256.Sum256([]byte(token))

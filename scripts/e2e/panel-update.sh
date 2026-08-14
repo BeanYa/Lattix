@@ -70,6 +70,7 @@ echo "<html>old frontend $OLD_VER</html>" > "$WORK/root/frontend-dist/index.html
     while true; do
         LATX_RELEASE_BASE="http://127.0.0.1:$MIRROR_PORT" \
             "$WORK/root/lattix-backend" -addr "$ADDR" -db "$WORK/root/lattix.db" \
+            -admin-pass e2e-panel-pass \
             -static "$WORK/root/frontend-dist" >>"$WORK/panel.log" 2>&1
         sleep 0.2
     done
@@ -81,7 +82,7 @@ for _ in $(seq 1 30); do
 done
 
 echo ">> 登录"
-LOGIN="$(api POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')"
+LOGIN="$(api POST /api/auth/login '{"username":"admin","password":"e2e-panel-pass"}')"
 CSRF_TOKEN="$(printf '%s' "$LOGIN" | python3 -c 'import json,sys; print(json.load(sys.stdin)["data"]["csrf_token"])')"
 [[ -n "$CSRF_TOKEN" ]] || { echo "FAIL: 登录失败 ($LOGIN)"; exit 1; }
 

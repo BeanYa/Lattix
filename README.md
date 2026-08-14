@@ -248,7 +248,7 @@ go build -o lattix-backend ./src/backend/cmd/backend
 ./lattix-backend -addr :443 -tls-acme-domain panel.example.com
 ```
 
-默认账号由启动参数或环境变量决定（安装器会生成密码）。
+默认账号由启动参数或环境变量决定（安装器会生成密码）。正式（release）构建拒绝以公开已知的默认密码 `lattix-admin` 启动，必须显式设置 `-admin-pass`/`LATTIX_ADMIN_PASS`（dev 构建不受限）。
 宿主机 Nginx/OpenResty 终止 TLS 时，只需把站点整体反代到默认的
 `127.0.0.1:8080`，并为 `/api/agent/ws` 转发 Upgrade/Connection 头，同时转发
 `Host`、`X-Forwarded-Proto` 和 `X-Forwarded-For`。容器内没有 Nginx，Go 进程直接

@@ -40,6 +40,7 @@ var chainTransitions = map[string]map[string]bool{
 		store.ChainStatusActive:            true,
 		store.ChainStatusActiveUnconfirmed: true, // 强制发布
 		store.ChainStatusFailed:            true,
+		store.ChainStatusActiveFailed:      true, // 已发布链编辑失败（published_revision_id 仍在）
 		store.ChainStatusWaitingForAgent:   true, // 编辑所需 Agent 离线
 		store.ChainStatusInvalid:           true,
 		store.ChainStatusDeleted:           true,
@@ -85,6 +86,7 @@ var chainTransitions = map[string]map[string]bool{
 		store.ChainStatusApplying:          true, // Agent 上线恢复编排
 		store.ChainStatusActiveUnconfirmed: true, // 强制发布
 		store.ChainStatusFailed:            true,
+		store.ChainStatusActiveFailed:      true, // 等待期间在途命令失败回执（已发布链编辑）
 		store.ChainStatusInvalid:           true,
 		store.ChainStatusDeleted:           true,
 	},
@@ -213,6 +215,7 @@ func (f *chainFSM) Evaluate(ctx context.Context, chainID int64) {
 			}
 		}
 		_ = f.Transition(ctx, chainID, store.ChainStatusActive, "")
+		f.d.maybePublishReadyRevision(ctx, chainID)
 		f.d.recordOperation(logging.OperationEvent{
 			Severity: logging.SeverityInfo, Category: logging.CategoryChain, Action: "chain.recovered",
 			Detail: map[string]any{"chain_id": chainID},
@@ -284,6 +287,13 @@ func (f *chainFSM) ResumeChainsByServer(ctx context.Context, serverID int64) {
 		chain, err := f.d.st.ChainByID(ctx, h.ChainID)
 		if err != nil {
 			continue
+		}
+		// 等待中的 revision 随 Agent 上线复位（创建/编辑两路径统一，§21.1）。
+		if revision, err := f.d.st.DesiredChainRevision(ctx, chain.ID); err == nil &&
+			revision.Status == store.RevisionStatusWaitingForAgent {
+			if err := f.d.st.SetChainRevisionStatus(ctx, revision.ID, store.RevisionStatusApplying, ""); err != nil {
+				log.Printf("chain_fsm: chain %d revision %d resume: %v", chain.ID, revision.ID, err)
+			}
 		}
 		switch chain.Status {
 		case store.ChainStatusApplying, store.ChainStatusActiveUnconfirmed:

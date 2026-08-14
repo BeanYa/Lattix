@@ -64,7 +64,11 @@ func (f *cacheProbeRequester) GetText(context.Context, string, int64) (string, e
 	return f.releaseJSON, nil
 }
 
-func (f *cacheProbeRequester) Download(_ context.Context, _ string, path string, onProgress func(float64)) error {
+func (f *cacheProbeRequester) Download(ctx context.Context, url, path string, onProgress func(float64)) error {
+	return f.DownloadLimited(ctx, url, path, 0, onProgress)
+}
+
+func (f *cacheProbeRequester) DownloadLimited(_ context.Context, _ string, path string, _ int64, onProgress func(float64)) error {
 	f.downloadCalls++
 	if f.downloadContent == nil {
 		return errors.New("download fixture is not configured")

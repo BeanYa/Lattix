@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -70,7 +71,7 @@ func NewWithCacheDir(st *store.Store, base func(*http.Request) string, spaHTML [
 	if base == nil {
 		base = func(r *http.Request) string {
 			scheme := "http"
-			if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+			if r.TLS != nil || trustedForwardedProto(r) {
 				scheme = "https"
 			}
 			return fmt.Sprintf("%s://%s", scheme, r.Host)
@@ -86,6 +87,20 @@ func NewWithCacheDir(st *store.Store, base func(*http.Request) string, spaHTML [
 	}
 	server.ensureBuiltInTemplateSources(context.Background())
 	return server
+}
+
+// trustedForwardedProto 仅当请求来自回环地址（本机反代）时信任 X-Forwarded-Proto
+// 声明（与 panel.isSecure 同一信任策略，防直连场景伪造，评审 P2）。
+func trustedForwardedProto(r *http.Request) bool {
+	if !strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return false
+	}
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = h
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // setSubHeaders 写订阅通用响应头（§9）：

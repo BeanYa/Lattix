@@ -3,6 +3,8 @@ package panel
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -63,6 +65,22 @@ func TestConcurrentPasswordChangeCannotUpgradeOldLogin(t *testing.T) {
 	}
 }
 
+func TestIsSecureTrustsForwardedProtoOnlyFromLoopback(t *testing.T) {
+	s := &Server{cfg: Config{}}
+	// 反代场景：面板收到的是纯 HTTP 请求（r.TLS == nil），协议由 X-Forwarded-Proto 声明。
+	loopback := httptest.NewRequest(http.MethodGet, "http://panel.example/", nil)
+	loopback.RemoteAddr = "127.0.0.1:8443"
+	loopback.Header.Set("X-Forwarded-Proto", "https")
+	if !s.isSecure(loopback) {
+		t.Fatal("loopback reverse proxy X-Forwarded-Proto must be trusted")
+	}
+	direct := httptest.NewRequest(http.MethodGet, "http://panel.example/", nil)
+	direct.RemoteAddr = "198.51.100.7:443"
+	direct.Header.Set("X-Forwarded-Proto", "https")
+	if s.isSecure(direct) {
+		t.Fatal("non-loopback peer X-Forwarded-Proto must not be trusted")
+	}
+}
 func TestLoginLimiterBlocksAndResets(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	limiter := newLoginLimiter(func() time.Time { return now })
