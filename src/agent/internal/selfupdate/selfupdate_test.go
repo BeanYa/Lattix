@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -129,6 +130,13 @@ func TestApplyForceReplacesSameVersion(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsNonLoopbackHTTPBase(t *testing.T) {
+	_, err := applyTo("v0.0.9", "http://198.51.100.7/releases/download",
+		"v0.0.2", "unused/repo", filepath.Join(t.TempDir(), "agent"), false)
+	if err == nil || !strings.Contains(err.Error(), "https") {
+		t.Fatalf("non-loopback http base error = %v, want https requirement", err)
+	}
+}
 func TestApplyRejectsChecksumMismatch(t *testing.T) {
 	// 服务端给的期望值与 tarball 内容不匹配。
 	asset := "lattix-agent-linux-" + runtime.GOARCH + ".tar.gz"

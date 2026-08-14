@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"lattix/shared"
@@ -72,8 +73,11 @@ type ConnectionStatus struct {
 	LastError    string    `json:"last_error,omitempty"`
 }
 
-// State 是 agent 落盘的本地状态。
+// State 是 agent 落盘的本地状态。mu 保护跨 goroutine 的读写（WS 读循环与
+// 离线命令队列执行器并发变更 state），不参与 JSON 序列化（评审 P2-2）。
 type State struct {
+	mu sync.Mutex `json:"-"`
+
 	Token            string                         `json:"token"`     // 长期服务器 token（session.open 换发）
 	ServerID         int64                          `json:"server_id"` // 面板分配的服务器 id
 	PanelInstanceID  string                         `json:"panel_instance_id"`
@@ -100,8 +104,8 @@ type ChainPiece struct {
 }
 
 // Load 读取状态文件；不存在或为空时返回零值 State（首次启动）。
-func Load(path string) (State, error) {
-	var st State
+func Load(path string) (*State, error) {
+	st := &State{}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return st, nil
@@ -112,14 +116,26 @@ func Load(path string) (State, error) {
 	if len(b) == 0 {
 		return st, nil
 	}
-	if err := json.Unmarshal(b, &st); err != nil {
+	if err := json.Unmarshal(b, st); err != nil {
 		return st, err
 	}
 	return st, nil
 }
 
-// Save 原子写入状态文件（tmp + rename，0600）。
-func Save(path string, st State) error {
+// Save 在 st.mu 保护下原子落盘状态（tmp + rename，0600）。
+func Save(path string, st *State) error {
+	return SaveWith(path, st, nil)
+}
+
+// SaveWith 在互斥下应用变更并原子落盘（读-改-写一体）：WS 读循环与离线命令
+// 队列执行器并发变更 state 时，避免共用 .tmp 文件互相破坏导致状态损坏
+// （评审 P2-2）。mutate 内不得重入 State 的锁方法。
+func SaveWith(path string, st *State, mutate func(*State)) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if mutate != nil {
+		mutate(st)
+	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err
@@ -132,6 +148,16 @@ func Save(path string, st State) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// Reset 清空状态（跨面板重绑，§5）：在互斥下执行，避免与并发变更竞争。
+func (s *State) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Token, s.ServerID, s.PanelInstanceID, s.CredentialEpoch = "", 0, "", 0
+	s.PanelObservation = nil
+	s.AuthRejected = false
+	s.ChainPieces = nil
 }
 
 func SaveConnectionStatus(path string, status ConnectionStatus) error {

@@ -11,7 +11,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,6 +52,9 @@ func applyTo(version, releaseBase, currentVersion, defaultRepo, executable strin
 		// GitHub 基址时从中推导仓库路径（latest 解析用）；镜像基址无法推导。
 		rest := strings.SplitN(base, "github.com/", 2)[1]
 		repo = strings.TrimSuffix(strings.TrimSuffix(rest, "/releases/download"), "/")
+	}
+	if err := validateReleaseBase(base); err != nil {
+		return false, err
 	}
 
 	if version == "" || version == "latest" {
@@ -144,6 +149,27 @@ func applyTo(version, releaseBase, currentVersion, defaultRepo, executable strin
 		return false, fmt.Errorf("替换 agent 二进制失败: %w", err)
 	}
 	return true, nil
+}
+
+// validateReleaseBase 校验升级下载基址：必须为 http(s) URL，且非回环地址的
+// 明文 http 被拒绝（checksums.txt 与二进制同源，明文传输可被中间人整体替换，
+// 评审 P2 供应链加固；本机回环镜像与 e2e 保留 http 能力）。
+func validateReleaseBase(base string) error {
+	u, err := url.Parse(base)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return fmt.Errorf("无效的升级下载基址: %q", base)
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	host := u.Hostname()
+	if host == "localhost" {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("升级下载基址必须使用 https（明文 http 仅允许回环镜像）: %s", base)
 }
 
 // resolveLatest 经 GitHub API 解析最新 release tag。

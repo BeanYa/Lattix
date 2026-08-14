@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -127,7 +128,7 @@ func main() {
 	failures := 0
 	for {
 		saveConnectionStatus(false, state.ConnStateConnecting, nil)
-		newTok, reachedOnline, err := run(*panel, tok, *statePath, *settingsPath, *serverSettingsPath, connectionPath, mgr, &st, runtime, serverRuntime, panelRuntime, testManager, commandQueue)
+		newTok, reachedOnline, err := run(*panel, tok, *statePath, *settingsPath, *serverSettingsPath, connectionPath, mgr, st, runtime, serverRuntime, panelRuntime, testManager, commandQueue)
 		if reachedOnline {
 			// run 内部已落盘 online 快照；推进跟踪状态使随后的 backoff/auth_rejected
 			// 转换具备合法前置状态（online → backoff | auth_rejected）。
@@ -285,18 +286,19 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 		if err := mgr.ResetForPanelRebind(); err != nil {
 			return "", false, fmt.Errorf("reset previous panel configuration: %w", err)
 		}
-		*st = state.State{}
+		st.Reset()
 		runtime.resetForPanelRebind()
 	}
 	if opened.PanelState.PanelInstanceID != credential.PanelInstanceID ||
 		!panelRuntime.apply(opened.PanelState, true) {
 		return "", false, fmt.Errorf("invalid panel lifecycle snapshot")
 	}
-	st.Token, st.ServerID = newToken, opened.ServerID
-	st.PanelInstanceID, st.CredentialEpoch = credential.PanelInstanceID, credential.Epoch
-	st.PanelObservation = &opened.PanelState
-	st.AuthRejected = false
-	saved := state.Save(statePath, *st) == nil
+	saved := state.SaveWith(statePath, st, func(s *state.State) {
+		s.Token, s.ServerID = newToken, opened.ServerID
+		s.PanelInstanceID, s.CredentialEpoch = credential.PanelInstanceID, credential.Epoch
+		s.PanelObservation = &opened.PanelState
+		s.AuthRejected = false
+	}) == nil
 	if !saved {
 		// 落盘失败由外层内存兜底（§5），但进程重启前未落盘将需凭证刷新。
 		log.Printf("save state: failed (WARNING: in-memory token will be used for reconnects)")
@@ -542,8 +544,9 @@ func markSessionReady(sc *safeConn, conn *websocket.Conn, sessionID string,
 			return fmt.Errorf("session ready returned invalid lifecycle")
 		}
 		latency.setEnabled(current.State == shared.PanelStateActive)
-		st.PanelObservation = &current
-		if err := state.Save(statePath, *st); err != nil {
+		if err := state.SaveWith(statePath, st, func(s *state.State) {
+			s.PanelObservation = &current
+		}); err != nil {
 			log.Printf("save panel lifecycle: %v", err)
 		}
 	}
@@ -638,8 +641,9 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			return
 		}
 		latency.setEnabled(payload.PanelState.State == shared.PanelStateActive)
-		st.PanelObservation = &payload.PanelState
-		if err := state.Save(statePath, *st); err != nil {
+		if err := state.SaveWith(statePath, st, func(s *state.State) {
+			s.PanelObservation = &payload.PanelState
+		}); err != nil {
 			log.Printf("save panel lifecycle: %v", err)
 		}
 		replyCode(sc, env, shared.CodeOK, "", struct{}{})
@@ -996,7 +1000,11 @@ func maybeReconcileXray(mgr *xray.Manager, runtime *serverRuntimeSettings) {
 }
 
 func parseData(sc *safeConn, env shared.Envelope, v any) bool {
-	if err := json.Unmarshal(env.Data, v); err != nil {
+	// 严格解码：拒绝未知字段。协议同步发布策略下 panel 与 agent 同版部署，
+	// 未知字段意味着协议漂移，显式拒绝优于静默忽略（评审 P3）。
+	decoder := json.NewDecoder(bytes.NewReader(env.Data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(v); err != nil {
 		log.Printf("bad %s data: %v", env.Type, err)
 		replyCode(sc, env, shared.CodeInvalidArgument, "invalid message data", nil)
 		return false
@@ -1019,8 +1027,9 @@ func resultOfHop(hopID int64, kind string, realized *shared.RealizedConfig) shar
 
 // persistChainPieces 把链 piece 记录随 state 落盘（重启重建 config.json 的依据，§21.1）。
 func persistChainPieces(statePath string, st *state.State, mgr *xray.Manager) {
-	st.ChainPieces = mgr.ChainPieces()
-	if err := state.Save(statePath, *st); err != nil {
+	if err := state.SaveWith(statePath, st, func(s *state.State) {
+		s.ChainPieces = mgr.ChainPieces()
+	}); err != nil {
 		log.Printf("save state (chain pieces): %v", err)
 	}
 }
