@@ -27,15 +27,7 @@
   gap: 14px;
 }
 
-/* 2px 深色描边紧凑卡片，左侧 4px 状态色条（贴纸语义） */
-.cg-chain-card {
-  border-left-width: 4px;
-}
-
-.cg-chain-card[data-tone='is-lime'] { border-left-color: var(--cg-lime); }
-.cg-chain-card[data-tone='is-blue'] { border-left-color: var(--cg-blue); }
-.cg-chain-card[data-tone='is-red'] { border-left-color: var(--cg-red); }
-.cg-chain-card[data-tone='is-muted'] { border-left-color: var(--cg-subtle); }
+/* 链路状态由卡片内的状态徽章表达，不再使用左侧色条 */
 
 .cg-chain-card-head {
   display: flex;
