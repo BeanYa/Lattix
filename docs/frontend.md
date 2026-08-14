@@ -15,6 +15,31 @@ bun run preview  # 本地预览生产构建
 生产构建产物位于 `src/frontend/dist/`。发布时，工作流会将其复制到
 `src/backend/internal/web/dist/`，再嵌入 Go 面板二进制。
 
+## 主题系统
+
+前端支持多套设计主题运行时切换，由两个正交维度组成：
+
+- **外观模式**（浅色 / 深色）：`<html>` 上的 `dark` class，`lib/theme.tsx` 持久化到
+  localStorage（`lattix-theme`）。
+- **设计主题**（`hig` / `cream` / …）：`<html data-theme="<id>">`，持久化到
+  `lattix-design-theme`，由 `src/frontend/src/themes/registry.ts` 注册表驱动。
+
+默认主题是 **Apple HIG**（`index.css` 与 `styles/cream-grid.css` 的根令牌就是它的
+令牌）；**Cream Grid**（重构前的经典设计）作为可选主题安装，含全量令牌覆写与
+Dashboard 页面覆写。顶栏调色板按钮可同时切换两个维度，`index.html` 中的首屏脚本会在
+渲染前应用持久化的主题以避免闪白。
+
+主题 = 一个 `src/frontend/src/themes/<id>/` 目录 + 注册表中的一条记录：
+
+- `tokens.css` 用 `[data-theme="<id>"]` / `[data-theme="<id>"].dark` 覆写**同名语义令牌**
+  即可让全站换肤，组件类零改动；
+- 若主题重写了某页面的 DOM 结构，在清单 `overrides` 中声明插槽（当前支持
+  `dashboard`），对应页面入口（如 `pages/Dashboard.tsx`）会懒加载主题实现，否则回落
+  基础实现。
+
+安装与卸载主题的完整步骤和约定见
+[`src/frontend/src/themes/README.md`](../src/frontend/src/themes/README.md)。
+
 ## CDN 与缓存
 
 生产环境可以把面板域名开启 Cloudflare Proxy（橙云），回源到 Lattix 面板。不要把

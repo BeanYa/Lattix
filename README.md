@@ -108,6 +108,7 @@ curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
 
 ```
 src/frontend/  # Vite + React + TypeScript + shadcn/ui + Three.js（包管理器 bun）
+               # 含可插拔主题系统（src/frontend/src/themes/，默认 Apple HIG，可切换经典 Cream Grid）
 src/backend/   # Go：面板 HTTP API + Agent WS 端点 + SQLite
 src/agent/     # Go：独立二进制，systemd 托管
 src/shared/    # Go module：WS 消息结构体、虚拟配置类型，backend/agent 共用

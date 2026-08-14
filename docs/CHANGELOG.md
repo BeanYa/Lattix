@@ -15,6 +15,11 @@
 
 ### Added
 
+- 前端新增可插拔主题系统（`src/frontend/src/themes/`）：设计主题与外观模式（浅色/
+  深色）两个维度运行时切换，顶栏调色板菜单选择并持久化；新主题按「目录 + 注册表
+  记录」安装即可自动出现在切换菜单（见 `src/frontend/src/themes/README.md`）。
+- 经典 Cream Grid 设计保留为可选主题（`cream`）：全量语义令牌覆写 + 仪表盘页面
+  覆写，与默认主题可随时互切（亮/暗各两套）。
 - 新增 `GET /api/billing/stats/estimated`：对启用统计计费且未过期的服务器，按
   日成本 × 周期天数（日 1 / 月 30 / 年 365）估算每周期成本。
 - 成本统计页新增「计算成本」tab：估算日/月/年成本汇总卡片、周期分布图与明细矩阵；
@@ -30,6 +35,11 @@
   扩展字段（如第三方认证参数）原样透传；sing-box 出站补 alpn/idle-session/
   plugin/ipv6 映射；分享链接抑制已消费的 YAML 键（servername/client-fingerprint
   等）并透传未知标量参数。
+
+### Changed
+
+- 前端默认设计语言切换为 Apple HIG（原 Cream Grid 设计经令牌层重构；语义令牌名
+  保持不变，仅重定义取值，原设计以可选主题保留）。
 
 ### Fixed
 
