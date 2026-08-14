@@ -103,6 +103,7 @@ type ServerTestTarget struct {
 	SNI           string                  `json:"sni,omitempty"`
 	Path          string                  `json:"path,omitempty"`
 	UploadPath    string                  `json:"upload_path,omitempty"`
+	OoklaServerID string                  `json:"ookla_server_id,omitempty"`
 	Backup        *ServerTestTarget       `json:"backup,omitempty"`
 	Source        string                  `json:"source"`
 }

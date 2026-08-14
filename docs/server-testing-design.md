@@ -62,9 +62,9 @@ SHA-256；每台服务器只允许一个非终态任务；按 generation 接收�
 | `cernet_ipv4` | 31 个公开高校 IPv4 目标的 TCP 延迟与丢包 |
 | `cernet2_ipv6` | 同一批教育网目标的 IPv6/CERNET2 连通性 |
 | `international` | 44 个国际站点/CDN 的 TCP 延迟与丢包，已排除 NodeSeek |
-| `return_route_ipv4` | 对省级三网 IPv4 目标执行 UDP error-queue traceroute，最多 30 跳，每跳 3 包；连续 5 跳无响应提前终止；每目标独立 120s 预算，类别总预算 20 分钟 |
+| `return_route_ipv4` | 对省级三网 IPv4 目标执行 TCP error-queue traceroute（逐跳 SYN 到目标服务端口），最多 30 跳，每跳 3 包；前段完全无响应时连续 5 跳提前终止；每目标独立 120s 预算，类别总预算 20 分钟 |
 | `return_route_ipv6` | IPv6 回程，口径同 IPv4 |
-| `speed` | Apple CDN IPv4/IPv6 单线程下载与上传；没有公开授权方式的火山引擎 TOS 目标明确显示不可用 |
+| `speed` | Apple CDN IPv4/IPv6 单线程下载与上传（agent 直连）；大陆三网目标走 Ookla 官方 speedtest CLI（版本与 SHA256 锁定），节点表参照 xykt/NetQuality `ref/speedtest_cn.json` 的 speedtest.net 公共服务器 |
 
 普通 TCP 目标发送 30 次探测，国际目标发送 15 次，目标并发上限 16，单目标窗口 30 秒。
 有 `CAP_NET_RAW`（通常为 root）时使用原始 SYN，权限不足时自动降级为 TCP connect，并在

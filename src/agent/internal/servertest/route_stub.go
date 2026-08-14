@@ -9,6 +9,6 @@ import (
 	"time"
 )
 
-func traceUDPErrorQueue(context.Context, netip.Addr, int, int, time.Duration, int) ([]map[string]any, bool, error) {
-	return nil, false, errors.New("UDP error queue traceroute is unsupported on this platform")
+func traceTCPErrorQueue(context.Context, netip.Addr, uint16, int, int, time.Duration, int) ([]map[string]any, bool, error) {
+	return nil, false, errors.New("TCP error queue traceroute is unsupported on this platform")
 }

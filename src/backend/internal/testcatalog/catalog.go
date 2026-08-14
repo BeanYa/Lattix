@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -42,9 +43,10 @@ type SpeedTarget struct {
 	Label      string `json:"label"`
 	Host       string `json:"host"`
 	SNI        string `json:"sni"`
-	Path       string `json:"path,omitempty"`
-	UploadPath string `json:"upload_path,omitempty"`
-	Family     string `json:"family,omitempty"`
+	Path          string `json:"path,omitempty"`
+	UploadPath    string `json:"upload_path,omitempty"`
+	Family        string `json:"family,omitempty"`
+	OoklaServerID string `json:"ookla_server_id,omitempty"`
 }
 
 type Catalog struct {
@@ -85,7 +87,7 @@ func Load() (Catalog, error) {
 	if international.Version != 1 || education.Version != 1 || speed.Version != 1 {
 		return Catalog{}, errors.New("unsupported static test catalog version")
 	}
-	if len(international.Targets) != 44 || len(education.Targets) != 31 || len(speed.Targets) != 11 {
+	if len(international.Targets) != 44 || len(education.Targets) != 31 || len(speed.Targets) != 14 {
 		return Catalog{}, fmt.Errorf("unexpected static catalog counts: international=%d education=%d speed=%d",
 			len(international.Targets), len(education.Targets), len(speed.Targets))
 	}
@@ -119,7 +121,18 @@ func Load() (Catalog, error) {
 		}
 	}
 	for _, target := range speed.Targets {
-		if target.ID == "" || target.Label == "" || target.SNI != target.Host {
+		if target.ID == "" || target.Label == "" {
+			return Catalog{}, fmt.Errorf("invalid speed target %+v", target)
+		}
+		if target.OoklaServerID != "" {
+			// Ookla targets are resolved by the official speedtest CLI at
+			// runtime; they carry no host of their own.
+			if _, err := strconv.Atoi(target.OoklaServerID); err != nil {
+				return Catalog{}, fmt.Errorf("invalid ookla server id %q", target.OoklaServerID)
+			}
+			continue
+		}
+		if target.SNI != target.Host {
 			return Catalog{}, fmt.Errorf("invalid speed target %+v", target)
 		}
 		if err := validateHost(target.Host); err != nil {

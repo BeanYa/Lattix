@@ -28,7 +28,7 @@ var (
 )
 
 // traceRoute is the platform traceroute probe seam; tests replace it.
-var traceRoute = traceUDPErrorQueue
+var traceRoute = traceTCPErrorQueue
 
 type routeTargetResult struct {
 	ID            string           `json:"id"`
@@ -121,7 +121,7 @@ sendRouteJobs:
 		Category: category, Status: status,
 		Summary: map[string]any{
 			"targets": len(results), "failed_targets": failed,
-			"probe_method": "udp_error_queue", "degraded": true,
+			"probe_method": "tcp_error_queue", "degraded": true,
 			"asn_enrichment": "unavailable", "classifier_source": "lattix-bundled-routes-v1",
 		},
 		Items: items,
@@ -131,16 +131,20 @@ sendRouteJobs:
 func runRouteTarget(parent context.Context, target shared.ServerTestTarget) routeTargetResult {
 	result := routeTargetResult{
 		ID: target.ID, Label: target.Label, Carrier: target.Carrier, Province: target.Province,
-		AddressFamily: string(target.AddressFamily), ProbeMethod: "udp_error_queue", Degraded: true,
+		AddressFamily: string(target.AddressFamily), ProbeMethod: "tcp_error_queue", Degraded: true,
 	}
 	address, err := resolvePublicTarget(parent, target)
 	if err != nil {
 		result.ErrorCode, result.ErrorMessage = "target_policy_rejected", err.Error()
 		return result
 	}
+	port := uint16(target.Port)
+	if port == 0 {
+		port = 443
+	}
 	ctx, cancel := context.WithTimeout(parent, routeTargetTimeout)
 	defer cancel()
-	hops, reached, err := traceRoute(ctx, address, routeMaxHops, routeProbesPerHop, routeProbeTimeout, routeMaxSilentHops)
+	hops, reached, err := traceRoute(ctx, address, port, routeMaxHops, routeProbesPerHop, routeProbeTimeout, routeMaxSilentHops)
 	result.Hops, result.Reached = hops, reached
 	switch {
 	case errors.Is(err, errRouteSilentLimit), errors.Is(err, errRouteProbeDeadline):

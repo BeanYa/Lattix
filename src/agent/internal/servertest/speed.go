@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -32,6 +33,8 @@ type speedTargetResult struct {
 	DownloadMS    int64   `json:"download_ms,omitempty"`
 	UploadMS      int64   `json:"upload_ms,omitempty"`
 	HTTPStatus    int     `json:"http_status,omitempty"`
+	LatencyMS     float64 `json:"latency_ms,omitempty"`
+	ResultURL     string  `json:"result_url,omitempty"`
 	ErrorCode     string  `json:"error_code,omitempty"`
 	ErrorMessage  string  `json:"error_message,omitempty"`
 }
@@ -40,10 +43,17 @@ func (r *Runner) runSpeed(parent context.Context, category shared.ServerTestCate
 	if len(targets) == 0 {
 		return unsupportedResult(category, "catalog_targets_unavailable", "no speed targets were supplied")
 	}
+	ooklaBin, ooklaErr := "", error(nil)
+	for _, target := range targets {
+		if target.OoklaServerID != "" {
+			ooklaBin, ooklaErr = EnsureOoklaCLI(parent, ooklaCLIFetcher(), filepath.Join(r.DataDir, "ookla"))
+			break
+		}
+	}
 	items := make([]map[string]any, 0, len(targets))
 	available, failed, unavailable := 0, 0, 0
 	for index, target := range targets {
-		result := runSpeedTarget(parent, target)
+		result := runSpeedTarget(parent, target, ooklaBin, ooklaErr)
 		encoded := map[string]any{
 			"id": result.ID, "label": result.Label, "address_family": result.AddressFamily,
 			"status": result.Status,
@@ -56,6 +66,12 @@ func (r *Runner) runSpeed(parent context.Context, category shared.ServerTestCate
 		}
 		if result.HTTPStatus > 0 {
 			encoded["http_status"] = result.HTTPStatus
+		}
+		if result.LatencyMS > 0 {
+			encoded["latency_ms"] = result.LatencyMS
+		}
+		if result.ResultURL != "" {
+			encoded["result_url"] = result.ResultURL
 		}
 		if result.ErrorCode != "" {
 			encoded["error_code"], encoded["error_message"] = result.ErrorCode, result.ErrorMessage
@@ -88,8 +104,11 @@ func (r *Runner) runSpeed(parent context.Context, category shared.ServerTestCate
 	}
 }
 
-func runSpeedTarget(parent context.Context, target shared.ServerTestTarget) speedTargetResult {
+func runSpeedTarget(parent context.Context, target shared.ServerTestTarget, ooklaBin string, ooklaErr error) speedTargetResult {
 	result := speedTargetResult{ID: target.ID, Label: target.Label, AddressFamily: string(target.AddressFamily)}
+	if target.OoklaServerID != "" {
+		return runOoklaSpeedTarget(parent, target, ooklaBin, ooklaErr)
+	}
 	if !strings.EqualFold(target.Host, "mensura.cdn-apple.com") || target.Path == "" || target.UploadPath == "" {
 		result.Status = "provider_access_unavailable"
 		result.ErrorCode = "provider_access_unavailable"
@@ -125,6 +144,26 @@ func runSpeedTarget(parent context.Context, target shared.ServerTestTarget) spee
 		result.Status = "limited"
 		result.ErrorCode = "speed_probe_partial"
 	}
+	return result
+}
+
+// runOoklaSpeedTarget probes a speedtest.net server through the official CLI.
+func runOoklaSpeedTarget(parent context.Context, target shared.ServerTestTarget, ooklaBin string, ooklaErr error) speedTargetResult {
+	result := speedTargetResult{ID: target.ID, Label: target.Label, AddressFamily: string(target.AddressFamily)}
+	if ooklaErr != nil {
+		result.Status, result.ErrorCode = "failed", "ookla_cli_unavailable"
+		result.ErrorMessage = ooklaErr.Error()
+		return result
+	}
+	outcome, err := runOoklaServer(parent, ooklaBin, target.OoklaServerID)
+	if err != nil {
+		result.Status, result.ErrorCode, result.ErrorMessage = "failed", "speed_probe_failed", err.Error()
+		return result
+	}
+	result.Status = "available"
+	result.DownloadMbps, result.DownloadBytes, result.DownloadMS = outcome.DownloadMbps, outcome.DownloadBytes, outcome.DownloadMS
+	result.UploadMbps, result.UploadBytes, result.UploadMS = outcome.UploadMbps, outcome.UploadBytes, outcome.UploadMS
+	result.LatencyMS, result.ResultURL = outcome.LatencyMS, outcome.ResultURL
 	return result
 }
 

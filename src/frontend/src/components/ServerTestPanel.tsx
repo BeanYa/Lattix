@@ -55,7 +55,7 @@ const categoryOptions: Array<{
   { category: 'international', label: '国际连通', description: '国际站点与 CDN 延迟', group: 'tcp' },
   { category: 'return_route_ipv4', label: 'IPv4 回程', description: '三网回程路由', group: 'route' },
   { category: 'return_route_ipv6', label: 'IPv6 回程', description: '三网回程路由', group: 'route' },
-  { category: 'speed', label: '单线程测速', description: 'Apple CDN 与可用运营商节点', group: 'speed' },
+  { category: 'speed', label: '单线程测速', description: 'Apple CDN 与 speedtest.net 三网节点', group: 'speed' },
 ]
 
 const categoryLabels = Object.fromEntries(categoryOptions.map((option) => [option.category, option.label])) as Record<ServerTestCategory, string>
@@ -486,7 +486,7 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
 
       <Dialog open={warningOpen} onOpenChange={(open) => { setWarningOpen(open); if (!open) setPendingCategory(null) }}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>确认运行 {pendingCategory ? categoryLabels[pendingCategory] : '测试'}</DialogTitle><DialogDescription>{pendingCategory && isIpv6Category(pendingCategory) && ipv6Off ? '该服务器未检测到 IPv6 地址，相关测试可能全部失败。' : server.machine_type === 'nat' && pendingCategory !== 'ip_quality' ? 'NAT 机型的 TCP、回程或测速测试可能因系统、端口映射或运营商限制而不可用。' : '该项目会产生大量网络流量。'}{pendingCategory === 'speed' ? ' 单线程测速最多可能消耗约 5.5 GiB 流量。' : ''}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>确认运行 {pendingCategory ? categoryLabels[pendingCategory] : '测试'}</DialogTitle><DialogDescription>{pendingCategory && isIpv6Category(pendingCategory) && ipv6Off ? '该服务器未检测到 IPv6 地址，相关测试可能全部失败。' : server.machine_type === 'nat' && pendingCategory !== 'ip_quality' ? 'NAT 机型的 TCP、回程或测速测试可能因系统、端口映射或运营商限制而不可用。' : '该项目会产生大量网络流量。'}{pendingCategory === 'speed' ? ' Apple CDN 单线程测速最多约 5.5 GiB；speedtest.net 节点会跑满带宽，流量与带宽成正比（千兆线路约数十 GB）。' : ''}</DialogDescription></DialogHeader>
           <DialogFooter><Button variant="outline" onClick={() => { setWarningOpen(false); setPendingCategory(null) }}>取消</Button><Button onClick={confirmWarning}>确认勾选</Button></DialogFooter>
         </DialogContent>
       </Dialog>

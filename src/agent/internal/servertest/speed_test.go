@@ -12,7 +12,7 @@ func TestRunSpeedTargetRejectsUnauthorizedTOS(t *testing.T) {
 	result := runSpeedTarget(t.Context(), shared.ServerTestTarget{
 		ID: "speed:beijing-telecom", Label: "北京电信", Host: "tos-cn-beijing.volces.com",
 		AddressFamily: shared.ServerTestIPv4,
-	})
+	}, "", nil)
 	if result.Status != "provider_access_unavailable" || result.ErrorCode != "provider_access_unavailable" {
 		t.Fatalf("unexpected TOS result: %#v", result)
 	}

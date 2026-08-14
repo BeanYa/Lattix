@@ -237,7 +237,7 @@ func (s *Server) serverTestCatalogSnapshot(ctx context.Context, categories []sha
 			targets = append(targets, shared.ServerTestTarget{
 				ID: "speed:" + target.ID, Category: shared.ServerTestSpeed, Label: target.Label,
 				AddressFamily: family, Host: target.Host, Port: 443, SNI: target.SNI, Source: "speed",
-				Path: target.Path, UploadPath: target.UploadPath,
+				Path: target.Path, UploadPath: target.UploadPath, OoklaServerID: target.OoklaServerID,
 			})
 		}
 	}

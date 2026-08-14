@@ -17,7 +17,7 @@ func routeTestTarget() shared.ServerTestTarget {
 	}
 }
 
-func stubTraceRoute(probe func(context.Context, netip.Addr, int, int, time.Duration, int) ([]map[string]any, bool, error)) func() {
+func stubTraceRoute(probe func(context.Context, netip.Addr, uint16, int, int, time.Duration, int) ([]map[string]any, bool, error)) func() {
 	original := traceRoute
 	traceRoute = probe
 	return func() { traceRoute = original }
@@ -27,49 +27,49 @@ func TestRunRouteTargetErrorMapping(t *testing.T) {
 	hops := []map[string]any{{"hop": 1, "address": "8.8.8.8"}}
 	cases := []struct {
 		name      string
-		probe     func(context.Context, netip.Addr, int, int, time.Duration, int) ([]map[string]any, bool, error)
+		probe     func(context.Context, netip.Addr, uint16, int, int, time.Duration, int) ([]map[string]any, bool, error)
 		wantCode  string
 		wantMsg   string
 		wantHops  bool
 	}{
 		{
 			name: "silent limit maps to incomplete",
-			probe: func(context.Context, netip.Addr, int, int, time.Duration, int) ([]map[string]any, bool, error) {
+			probe: func(context.Context, netip.Addr, uint16, int, int, time.Duration, int) ([]map[string]any, bool, error) {
 				return hops, false, errRouteSilentLimit
 			},
 			wantCode: "route_incomplete", wantMsg: errRouteSilentLimit.Error(), wantHops: true,
 		},
 		{
 			name: "probe deadline maps to incomplete",
-			probe: func(context.Context, netip.Addr, int, int, time.Duration, int) ([]map[string]any, bool, error) {
+			probe: func(context.Context, netip.Addr, uint16, int, int, time.Duration, int) ([]map[string]any, bool, error) {
 				return hops, false, errRouteProbeDeadline
 			},
 			wantCode: "route_incomplete", wantMsg: errRouteProbeDeadline.Error(), wantHops: true,
 		},
 		{
 			name: "hard error maps to probe failed",
-			probe: func(context.Context, netip.Addr, int, int, time.Duration, int) ([]map[string]any, bool, error) {
+			probe: func(context.Context, netip.Addr, uint16, int, int, time.Duration, int) ([]map[string]any, bool, error) {
 				return nil, false, errors.New("boom")
 			},
 			wantCode: "route_probe_failed", wantMsg: "boom",
 		},
 		{
 			name: "cancellation maps to probe failed",
-			probe: func(context.Context, netip.Addr, int, int, time.Duration, int) ([]map[string]any, bool, error) {
+			probe: func(context.Context, netip.Addr, uint16, int, int, time.Duration, int) ([]map[string]any, bool, error) {
 				return nil, false, context.Canceled
 			},
 			wantCode: "route_probe_failed", wantMsg: context.Canceled.Error(),
 		},
 		{
 			name: "silent hops without error map to incomplete",
-			probe: func(context.Context, netip.Addr, int, int, time.Duration, int) ([]map[string]any, bool, error) {
+			probe: func(context.Context, netip.Addr, uint16, int, int, time.Duration, int) ([]map[string]any, bool, error) {
 				return hops, false, nil
 			},
 			wantCode: "route_incomplete", wantMsg: "destination was not reached within 30 hops", wantHops: true,
 		},
 		{
 			name: "reached maps to success",
-			probe: func(context.Context, netip.Addr, int, int, time.Duration, int) ([]map[string]any, bool, error) {
+			probe: func(context.Context, netip.Addr, uint16, int, int, time.Duration, int) ([]map[string]any, bool, error) {
 				return hops, true, nil
 			},
 			wantHops: true,
@@ -107,7 +107,7 @@ func TestClassifyCtxError(t *testing.T) {
 
 func TestRunRouteTargetPerTargetDeadline(t *testing.T) {
 	var captured context.Context
-	restore := stubTraceRoute(func(ctx context.Context, _ netip.Addr, _, _ int, _ time.Duration, _ int) ([]map[string]any, bool, error) {
+	restore := stubTraceRoute(func(ctx context.Context, _ netip.Addr, _ uint16, _, _ int, _ time.Duration, _ int) ([]map[string]any, bool, error) {
 		captured = ctx
 		return nil, false, errRouteProbeDeadline
 	})
