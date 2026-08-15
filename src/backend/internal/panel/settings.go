@@ -21,6 +21,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"lattix/backend/internal/logging"
+	"lattix/backend/internal/nettrust"
 	"lattix/backend/internal/store"
 	"lattix/shared"
 )
@@ -79,6 +80,7 @@ type settingsDTO struct {
 	Timezone         string       `json:"timezone"`         // IANA 时区；空 = 浏览器本地
 	TrafficTimezone  string       `json:"traffic_timezone"` // 流量日/月桶边界使用的 IANA 时区
 	PublicURL        string       `json:"public_url"`       // 空 = 从请求推断
+	TrustedProxies   string       `json:"trusted_proxies"`  // 可信反代网段（CIDR 逗号分隔）；空 = 仅回环
 	TLSMode          string       `json:"tls_mode"`         // 保存的待生效模式；空 = 跟随启动参数
 	TLSCert          *certInfoDTO `json:"tls_cert"`         // 保存的证书摘要（cert 为 PEM，path 为目录文件）
 	TLSKeySet        bool         `json:"tls_key_set"`      // 已保存私钥
@@ -118,6 +120,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		Timezone:                 s.getSetting(ctx, store.SettingTimezone),
 		TrafficTimezone:          firstNonEmpty(s.getSetting(ctx, store.SettingTrafficTimezone), store.DefaultTrafficTimezone),
 		PublicURL:                s.getSetting(ctx, store.SettingPublicURL),
+		TrustedProxies:           s.getSetting(ctx, store.SettingTrustedProxies),
 		TLSMode:                  s.getSetting(ctx, store.SettingTLSMode),
 		TLSKeySet:                s.getSetting(ctx, store.SettingTLSKeyPEM) != "",
 		TLSDomain:                s.getSetting(ctx, store.SettingTLSDomain),
@@ -210,7 +213,8 @@ type updateSettingsRequest struct {
 	Timezone        string `json:"timezone"`
 	TrafficTimezone string `json:"traffic_timezone"`
 	PublicURL       string `json:"public_url"`
-	TLSMode         string `json:"tls_mode"` // ""=跟随启动参数 off|cert|acme|path
+	TrustedProxies  string `json:"trusted_proxies"` // CIDR 逗号分隔；空 = 仅回环
+	TLSMode         string `json:"tls_mode"`        // ""=跟随启动参数 off|cert|acme|path
 	TLSCertPEM      string `json:"tls_cert_pem"`
 	TLSKeyPEM       string `json:"tls_key_pem"`
 	TLSDomain       string `json:"tls_domain"` // path 模式域名
@@ -245,6 +249,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"timezone":                     s.getSetting(ctx, store.SettingTimezone),
 		"traffic_timezone":             firstNonEmpty(s.getSetting(ctx, store.SettingTrafficTimezone), store.DefaultTrafficTimezone),
 		"public_url":                   s.getSetting(ctx, store.SettingPublicURL),
+		"trusted_proxies":              s.getSetting(ctx, store.SettingTrustedProxies),
 		"tls_mode":                     s.getSetting(ctx, store.SettingTLSMode),
 		"tls_domain":                   s.getSetting(ctx, store.SettingTLSDomain),
 		"acme_domain":                  s.getSetting(ctx, store.SettingACMEDomain),
@@ -258,7 +263,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"release_inspection":           s.releaseInspectionSettings(ctx),
 		"billing_inspection":           s.billingInspectionSchedule(ctx),
 		"exchange_rate_inspection":     s.exchangeInspectionSchedule(ctx),
-		"server_settings":                func() shared.ServerSettings { v, _, _ := s.st.DefaultServerSettings(ctx); return v }(),
+		"server_settings":              func() shared.ServerSettings { v, _, _ := s.st.DefaultServerSettings(ctx); return v }(),
 		"reporting_currency":           firstNonEmpty(s.getSetting(ctx, store.SettingReportingCurrency), "CNY"),
 	}
 
@@ -341,6 +346,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		u, err := url.Parse(req.PublicURL)
 		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 			writeError(w, http.StatusBadRequest, "对外地址须形如 http(s)://域名或IP[:端口]")
+			return
+		}
+	}
+
+	req.TrustedProxies = strings.Join(strings.Fields(req.TrustedProxies), ",")
+	if req.TrustedProxies != "" {
+		if err := nettrust.Validate(req.TrustedProxies); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
@@ -432,6 +445,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	} else {
 		set(store.SettingPublicURL, req.PublicURL)
 	}
+	if req.TrustedProxies == "" {
+		del(store.SettingTrustedProxies)
+	} else {
+		set(store.SettingTrustedProxies, req.TrustedProxies)
+	}
 
 	if req.TLSMode == "" {
 		del(store.SettingTLSMode)
@@ -493,16 +511,16 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	after := map[string]any{
 		"timezone": req.Timezone, "traffic_timezone": req.TrafficTimezone,
-		"public_url": req.PublicURL, "tls_mode": req.TLSMode,
+		"public_url": req.PublicURL, "trusted_proxies": req.TrustedProxies, "tls_mode": req.TLSMode,
 		"tls_domain": tlsDomain, "acme_domain": acmeDomain, "acme_email": strings.TrimSpace(req.ACMEEmail),
 		"alert_webhook_set":            req.AlertWebhookURL != "",
 		"alert_telegram_chat_id":       strings.TrimSpace(req.AlertTelegramChatID),
 		"alert_telegram_bot_token_set": before["alert_telegram_bot_token_set"].(bool) || strings.TrimSpace(req.AlertTelegramBotToken) != "",
 		"operation_log_limit":          req.OperationLogLimit, "request_log_max_mb": req.RequestLogMaxMB,
-		"request_log_level":            req.RequestLogLevel,
+		"request_log_level":  req.RequestLogLevel,
 		"release_inspection": before["release_inspection"],
 		"billing_inspection": before["billing_inspection"], "exchange_rate_inspection": before["exchange_rate_inspection"],
-		"server_settings":     before["server_settings"],
+		"server_settings":    before["server_settings"],
 		"reporting_currency": req.ReportingCurrency,
 	}
 	var serverSettingsRevision int64
@@ -520,6 +538,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// trusted_proxies 立即生效（无需重启）：影响协议推断、订阅链接与日志的
+	// X-Forwarded-* 采纳范围，保存即热更新进程级判定。
+	if err := nettrust.Default.Configure(req.TrustedProxies); err != nil {
+		log.Printf("panel: apply trusted proxies: %v", err)
 	}
 	if releaseInspectionChanged || billingInspectionChanged || exchangeInspectionChanged {
 		s.scheduler.notifyChanged()

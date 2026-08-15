@@ -162,6 +162,7 @@ export default function Settings() {
 
   // 基本设置
   const [publicURL, setPublicURL] = useState('')
+  const [trustedProxies, setTrustedProxies] = useState('')
   const [timezone, setTimezone] = useState('')
   const [trafficTimezone, setTrafficTimezone] = useState('Asia/Shanghai')
   // TLS
@@ -247,6 +248,7 @@ export default function Settings() {
       .then((s) => {
         setSettings(s)
         setPublicURL(s.public_url)
+        setTrustedProxies(s.trusted_proxies ?? '')
         setTimezone(s.timezone)
         setTrafficTimezone(s.traffic_timezone)
         setTlsMode(s.tls_mode === '' ? 'flag' : s.tls_mode)
@@ -339,6 +341,7 @@ export default function Settings() {
         timezone: timezone.trim(),
         traffic_timezone: trafficTimezone.trim(),
         public_url: publicURL.trim(),
+        trusted_proxies: trustedProxies.trim(),
         tls_mode: tlsMode === 'flag' ? '' : tlsMode,
         // 留空 = 保持已保存值不变（后端语义）
         ...(certPEM.trim() ? { tls_cert_pem: certPEM } : {}),
@@ -978,6 +981,19 @@ export default function Settings() {
               />
               <p className="cg-set-note">
                 用于生成 agent 安装命令与订阅链接；反代部署时填反代后的地址（https 即安全入口）。
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="trustedProxies">可信反代网段（CIDR，逗号分隔）</Label>
+              <Input
+                id="trustedProxies"
+                value={trustedProxies}
+                onChange={(e) => setTrustedProxies(e.target.value)}
+                placeholder="172.17.0.0/16, 10.0.0.0/8，留空仅信任本机回环"
+              />
+              <p className="cg-set-note">
+                TLS 由外部反代（1panel/openresty、nginx、CDN 回源）终止时，填代理连到面板的来源网段，面板才会采纳
+                X-Forwarded-Proto/For（安装命令协议、订阅链接与日志 IP 随之正确）；留空仅信任本机回环，防止伪造。
               </p>
             </div>
             <div className="flex flex-col gap-2">

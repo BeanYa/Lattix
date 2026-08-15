@@ -29,6 +29,7 @@ import (
 	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
+	"lattix/backend/internal/nettrust"
 	"lattix/backend/internal/panel"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
@@ -197,6 +198,13 @@ func run() error {
 	// TLS 生效解析（§10 设置页）：DB 保存的 tls_mode 优先于启动参数，重启生效。
 	// tls_mode 未设置（空）时完全跟随启动参数。
 	ctx := context.Background()
+	// 可信反代网段（§10 设置页）：外部反代终止 TLS 时采纳 X-Forwarded-*；
+	// 保存后由设置处理器热更新，此处覆盖进程重启场景。
+	if raw, err := st.GetSetting(ctx, store.SettingTrustedProxies); err != nil {
+		log.Printf("load trusted proxies: %v", err)
+	} else if err := nettrust.Default.Configure(raw); err != nil {
+		return fmt.Errorf("设置页保存的可信反代网段无效: %w", err)
+	}
 	dbTLSMode, _ := st.GetSetting(ctx, store.SettingTLSMode)
 	dbCertPEM, _ := st.GetSetting(ctx, store.SettingTLSCertPEM)
 	dbKeyPEM, _ := st.GetSetting(ctx, store.SettingTLSKeyPEM)

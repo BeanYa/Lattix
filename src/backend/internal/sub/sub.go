@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"lattix/backend/internal/extsub"
+	"lattix/backend/internal/nettrust"
 	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/shared"
@@ -89,18 +89,10 @@ func NewWithCacheDir(st *store.Store, base func(*http.Request) string, spaHTML [
 	return server
 }
 
-// trustedForwardedProto 仅当请求来自回环地址（本机反代）时信任 X-Forwarded-Proto
-// 声明（与 panel.isSecure 同一信任策略，防直连场景伪造，评审 P2）。
+// trustedForwardedProto 报告是否应采信 X-Forwarded-Proto: https 声明
+// （与 panel.isSecure 同一信任策略，防直连场景伪造，评审 P2；统一在 nettrust）。
 func trustedForwardedProto(r *http.Request) bool {
-	if !strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
-		return false
-	}
-	host := r.RemoteAddr
-	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		host = h
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return nettrust.Default.ForwardedHTTPS(r)
 }
 
 // setSubHeaders 写订阅通用响应头（§9）：

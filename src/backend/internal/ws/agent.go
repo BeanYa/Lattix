@@ -6,13 +6,13 @@ import (
 	"errors"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
 
+	"lattix/backend/internal/nettrust"
 	"lattix/shared"
 )
 
@@ -332,22 +332,11 @@ func strictUnmarshal(data []byte, target any) error {
 // 确保 Hub 满足 http.Handler。
 var _ http.Handler = (*Hub)(nil)
 
-// clientIP 取 WS 对端 IP（自动学习公网地址的依据，§9）。当对端是受信回环代理
-// （panel 前置本机 nginx/caddy 反代）时，改用 X-Forwarded-For 的首个 IP；
-// 非回环对端直连场景不信任该头，防止伪造。
+// clientIP 取 WS 对端 IP（自动学习公网地址的依据，§9）。对端为可信反代
+// （回环，或 trusted_proxies 配置网段）时解析 X-Forwarded-For 的真实客户端；
+// 非可信对端直连场景不信任该头，防止伪造。判定统一在 nettrust。
 func clientIP(r *http.Request) string {
-	host := r.RemoteAddr
-	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		host = h
-	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			if first, _, _ := strings.Cut(xff, ","); strings.TrimSpace(first) != "" {
-				return strings.TrimSpace(first)
-			}
-		}
-	}
-	return host
+	return nettrust.Default.ClientIP(r)
 }
 
 func mustJSON(v any) json.RawMessage {

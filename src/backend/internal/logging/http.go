@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"lattix/backend/internal/nettrust"
 	"lattix/shared"
 )
 
@@ -353,22 +354,10 @@ func responseError(data []byte) string {
 	return strings.TrimSpace(string(data))
 }
 
+// ClientIP 解析请求来源 IP：对端为可信反代（回环，或 trusted_proxies 配置网段）时
+// 采纳 X-Forwarded-For；判定统一在 nettrust，与面板协议推断/Agent 地址学习一致。
 func ClientIP(r *http.Request) string {
-	host, _, splitErr := net.SplitHostPort(r.RemoteAddr)
-	if splitErr != nil {
-		host = r.RemoteAddr
-	}
-	if remoteIP := net.ParseIP(host); remoteIP != nil && remoteIP.IsLoopback() {
-		xff := r.Header.Get("X-Forwarded-For")
-		if xff == "" {
-			return host
-		}
-		if first, _, found := strings.Cut(xff, ","); found {
-			return strings.TrimSpace(first)
-		}
-		return strings.TrimSpace(xff)
-	}
-	return host
+	return nettrust.Default.ClientIP(r)
 }
 
 func truncate(value string, max int) string {

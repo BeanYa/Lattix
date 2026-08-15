@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -22,6 +21,7 @@ import (
 	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
+	"lattix/backend/internal/nettrust"
 	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
@@ -459,13 +459,15 @@ func (s *Server) Operator(r *http.Request) string {
 func (s *Server) PanelBase(r *http.Request) string { return s.panelBase(r) }
 
 // panelBase 返回面板对外地址：DB 设置（设置页）> 启动参数 PublicURL > 从请求推断。
+// 尾斜杠统一去除：安装命令按字符串拼接 /api/agent/ws，带尾斜杠会拼出 //api/agent/ws，
+// ServeMux 返回 307 而 agent 不跟随重定向，表现为永久 bad handshake。
 // HTTPS 判定：面板自身 TLS、直连 TLS，或反代经 X-Forwarded-Proto 声明（§12）。
 func (s *Server) panelBase(r *http.Request) string {
 	if v := s.getSetting(r.Context(), store.SettingPublicURL); v != "" {
-		return v
+		return strings.TrimRight(strings.TrimSpace(v), "/")
 	}
 	if s.cfg.PublicURL != "" {
-		return s.cfg.PublicURL
+		return strings.TrimRight(strings.TrimSpace(s.cfg.PublicURL), "/")
 	}
 	scheme := "http"
 	if s.isSecure(r) {
@@ -475,21 +477,14 @@ func (s *Server) panelBase(r *http.Request) string {
 }
 
 // isSecure 报告当前请求是否经 HTTPS 到达（含反代终止 TLS 的场景）。
-// 反代声明（X-Forwarded-Proto）仅在请求来自回环地址（本机反代）时采信，
-// 直连场景防客户端伪造（评审 P2）。
+// 反代声明（X-Forwarded-Proto）仅在可信对端（回环，或设置页 trusted_proxies
+// 配置的网段，如 1panel/openresty、nginx、CDN 回源）时采信，直连场景防客户端
+// 伪造（评审 P2）。信任判定统一收敛在 nettrust。
 func (s *Server) isSecure(r *http.Request) bool {
 	if s.cfg.Secure || r.TLS != nil {
 		return true
 	}
-	if !strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
-		return false
-	}
-	host := r.RemoteAddr
-	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-		host = h
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return nettrust.Default.ForwardedHTTPS(r)
 }
 
 type rpcResponse struct {
