@@ -381,6 +381,7 @@ type PortalSpec struct {
 	ShortID        string   `json:"short_id"`
 	Dest           string   `json:"dest"`
 	ServerNames    []string `json:"server_names"`
+	ListenFamily   string   `json:"listen_family,omitempty"` // "ipv6" → 监听 ::（双栈）；空 = 0.0.0.0（§9）
 }
 
 // BridgeSpec 是反向链下游机（仅出口档 NAT）的配置件（§21.1）：
@@ -407,6 +408,7 @@ type ForwardSpec struct {
 	TargetPort      int    `json:"target_port"`
 	ViaTunnelDomain string `json:"via_tunnel_domain,omitempty"`
 	LocalOnly       bool   `json:"local_only,omitempty"`
+	ListenFamily    string `json:"listen_family,omitempty"` // "ipv6" → 监听 ::（双栈）；空 = 0.0.0.0（§9）
 }
 
 // RemoveChainHopPayload 是 remove_chain_hop 的载荷（§21.1）：删链逐跳反向下发。

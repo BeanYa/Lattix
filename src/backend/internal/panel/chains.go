@@ -37,6 +37,7 @@ type chainHopDTO struct {
 	Status          string           `json:"status"` // pending/applying/active/failed
 	Error           string           `json:"error"`
 	ForwardPort     int              `json:"forward_port"` // entry 跳 = 订阅端口（监听侧）
+	Address         string           `json:"address"`      // 本跳所选公网地址（空 = 跟随服务器默认地址，§9）
 	PortalPort      int              `json:"portal_port"`
 	PortalPublicKey string           `json:"portal_public_key,omitempty"`
 	TunnelUUID      string           `json:"tunnel_uuid,omitempty"`
@@ -138,6 +139,7 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 				}
 				hops = append(hops, store.ChainHop{ID: hop.HopID, ChainID: c.ID, Seq: seq,
 					ServerID: hop.ServerID, Role: hop.Role, NodeID: nodeID, ForwardPort: hop.ForwardPort,
+					Address: hop.Address,
 					PortalPort: hop.PortalPort, PortalPublicKey: hop.PortalPublicKey,
 					PortalServerName: hop.PortalServerName, TunnelUUID: hop.TunnelUUID})
 			}
@@ -165,6 +167,7 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 			Status:          h.Status,
 			Error:           h.Error,
 			ForwardPort:     h.ForwardPort,
+			Address:         h.Address,
 			PortalPort:      h.PortalPort,
 			PortalPublicKey: h.PortalPublicKey,
 			TunnelUUID:      h.TunnelUUID,
@@ -216,7 +219,8 @@ type createChainRequest struct {
 }
 
 type chainHopRef struct {
-	ServerID int64 `json:"server_id"`
+	ServerID int64  `json:"server_id"`
+	Address  string `json:"address,omitempty"` // 所选公网地址（空 = 跟随服务器默认地址，§9）
 }
 
 type editChainRequest struct {
@@ -284,6 +288,12 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		if i < len(refs)-1 && !inboundCapable(srv) {
 			writeError(w, http.StatusBadRequest,
 				fmt.Sprintf("服务器 %s 无入站能力（仅出口档 NAT），不能作入口/中间跳", srv.Alias))
+			return
+		}
+		// 跳地址引用（§9）：非空时须属于该服务器当前地址集合（空 = 跟随服务器默认地址）。
+		if ref.Address != "" && !store.ServerAddressSet(srv)[ref.Address] {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("服务器 %s 不存在公网地址 %s", srv.Alias, ref.Address))
 			return
 		}
 		servers = append(servers, srv)
@@ -404,7 +414,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		}
 		initialHops = append(initialHops, store.InitialChainHop{
 			ServerID: srv.ID, Role: role, Transport: transport,
-			ForwardPort: hopForwardPort, TunnelUUID: tunnelUUID,
+			ForwardPort: hopForwardPort, Address: refs[i].Address, TunnelUUID: tunnelUUID,
 		})
 	}
 	deployment, err := s.st.CreateInitialChainDeployment(r.Context(), store.InitialChainDeployment{
@@ -541,6 +551,12 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("服务器 %s 无入站能力", server.Alias))
 			return
 		}
+		// 跳地址引用（§9）：非空时须属于该服务器当前地址集合（空 = 跟随服务器默认地址）。
+		if ref.Address != "" && !store.ServerAddressSet(server)[ref.Address] {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("服务器 %s 不存在公网地址 %s", server.Alias, ref.Address))
+			return
+		}
 		servers = append(servers, server)
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -650,6 +666,7 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		if i == 0 && endpointID != 0 {
 			hop.ForwardPort = 0
 		}
+		hop.Address = req.Hops[i].Address // 地址引用以本次编辑提交为准（§9）
 		desiredHops = append(desiredHops, hop)
 	}
 	plaintext := req.Node.Protocol == shared.ProtocolSocks || req.Node.Protocol == shared.ProtocolHTTP
@@ -798,6 +815,7 @@ func revisionTopology(revisionID int64, snapshot store.ChainRevisionSnapshot) di
 		settings, _ := json.Marshal(map[string]any{
 			"tunnel_uuid": hop.TunnelUUID,
 			"local_only":  index == 0 && snapshot.EndpointID != 0,
+			"address":     hop.Address, // 地址引用（§9）：选择变更须触发本跳 piece 重发并沿下游哈希传播
 		})
 		hops = append(hops, dispatch.RevisionHopSpec{HopID: hop.HopID, ServerID: hop.ServerID,
 			Transport: hop.Transport, ListenPort: hop.ForwardPort, Settings: settings})

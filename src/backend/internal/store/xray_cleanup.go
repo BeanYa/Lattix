@@ -35,7 +35,7 @@ func (s *Store) ExpectedXrayState(ctx context.Context, serverID int64) ([]string
 	// 3.2 中转链跳：该服务器关联的全部未删除链的全部跳（入口/内部/出口）。
 	// bridge 归属取决于同链上一跳的 tunnel_uuid（可能在其他服务器），故取整链再按服务器过滤。
 	hopRows, err := s.db.QueryContext(ctx, `SELECT h.id, h.chain_id, h.seq, h.server_id, h.role,
-		h.node_id, h.status, h.error, h.forward_port, h.portal_port, h.portal_public_key,
+		h.node_id, h.status, h.error, h.forward_port, h.address, h.portal_port, h.portal_public_key,
 		h.portal_server_name, h.tunnel_uuid, h.created_at
 		FROM chain_hops h JOIN chains c ON c.id = h.chain_id
 		WHERE c.deleted_at IS NULL

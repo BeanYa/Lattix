@@ -11,7 +11,7 @@ import (
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
-const schemaVersion = 16
+const schemaVersion = 17
 
 type columnMigration struct {
 	name       string
@@ -86,9 +86,17 @@ func migrateSchema(tx *sql.Tx) error {
 		{"server_settings_error", "TEXT NOT NULL DEFAULT ''"},
 		{"server_settings_reported_at", "DATETIME"},
 		{"address_mode", "TEXT NOT NULL DEFAULT 'auto'"},
+		{"addresses", "TEXT NOT NULL DEFAULT ''"},
 	})
 	if err != nil {
 		return err
+	}
+	if serversAdded["addresses"] {
+		// 存量服务器的当前公网地址作为地址列表唯一条目（默认地址仍由 address 列表达）。
+		if _, err := tx.Exec(`UPDATE servers SET addresses = json_array(address)
+			WHERE addresses = '' AND address != ''`); err != nil {
+			return fmt.Errorf("backfill servers.addresses: %w", err)
+		}
 	}
 	if serversAdded["address_mode"] {
 		// Before address_mode existed, matching address/learned_addr values were
@@ -139,6 +147,9 @@ func migrateSchema(tx *sql.Tx) error {
 			{"traffic_multiplier_milli", "INTEGER NOT NULL DEFAULT 1000"},
 			{"deleted_at", "DATETIME"},
 			{"updated_at", "DATETIME"},
+		},
+		"chain_hops": {
+			{"address", "TEXT NOT NULL DEFAULT ''"},
 		},
 		"server_metrics": {
 			{"load5", "REAL NOT NULL DEFAULT 0"},

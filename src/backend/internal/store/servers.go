@@ -39,7 +39,8 @@ type Server struct {
 	LastSeenAt               *time.Time
 	XrayVersion              string
 	AgentVersion             string // session.open 上报的 agent 版本（§18 升级管理）
-	Address                  string // 公网地址（session.open 时按 WS RemoteAddr 记录，订阅用，§9）
+	Address                  string // 默认公网地址（session.open 时按 WS RemoteAddr 记录，订阅用，§9）
+	Addresses                string // 公网地址列表 JSON 字符串数组（§9；含默认地址，访问流学习 + NIC 上报合并）
 	AddressMode              string // auto|manual；manual 地址不被后续 session.open 覆盖
 	LearnedAddr              string // 每次 session.open 学习的公网地址；容器网关对端回退到 agent 公网网卡（§9）
 	NICAddresses             string // agent 上报的网卡非回环地址 JSON 数组（§9 公网地址候选）；空串 = 无
@@ -69,13 +70,13 @@ type Server struct {
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, credential_epoch, credential_committed, credential_pending_token, credential_exchange_id, last_connected_at, last_disconnected_at, last_reconnected_at, reconnect_count, last_disconnect_reason, agent_settings_revision, agent_settings_error, agent_settings_reported_at, custom_settings, server_settings_revision, server_settings_error, server_settings_reported_at, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, addresses, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, credential_epoch, credential_committed, credential_pending_token, credential_exchange_id, last_connected_at, last_disconnected_at, last_reconnected_at, reconnect_count, last_disconnect_reason, agent_settings_revision, agent_settings_error, agent_settings_reported_at, custom_settings, server_settings_revision, server_settings_error, server_settings_reported_at, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
 	var lastSeen, lastConnected, lastDisconnected, lastReconnected, settingsReported, serverSettingsReported sql.NullTime
 	var xrayVer, agentVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.CredentialEpoch, &srv.CredentialCommitted, &srv.CredentialPendingToken, &srv.CredentialExchangeID, &lastConnected, &lastDisconnected, &lastReconnected, &srv.ReconnectCount, &srv.LastDisconnectReason, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CustomSettings, &srv.ServerSettingsRevision, &srv.ServerSettingsError, &serverSettingsReported, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.Addresses, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.CredentialEpoch, &srv.CredentialCommitted, &srv.CredentialPendingToken, &srv.CredentialExchangeID, &lastConnected, &lastDisconnected, &lastReconnected, &srv.ReconnectCount, &srv.LastDisconnectReason, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CustomSettings, &srv.ServerSettingsRevision, &srv.ServerSettingsError, &serverSettingsReported, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -121,12 +122,16 @@ func (s *Store) createServer(ctx context.Context, exec contextExecer, alias, add
 		epoch = credential.Epoch
 	}
 	addressMode := AddressModeAuto
+	addresses := ""
 	if address != "" {
 		addressMode = AddressModeManual
+		if raw, err := json.Marshal([]string{address}); err == nil {
+			addresses = string(raw)
+		}
 	}
 	res, err := exec.ExecContext(ctx,
-		`INSERT INTO servers (alias, address, address_mode, token, machine_type, allowed_ports, tags, country_code, location, credential_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		alias, address, addressMode, bootstrapToken, machineType, allowedPorts, tags, countryCode, location, epoch)
+		`INSERT INTO servers (alias, address, addresses, address_mode, token, machine_type, allowed_ports, tags, country_code, location, credential_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		alias, address, addresses, addressMode, bootstrapToken, machineType, allowedPorts, tags, countryCode, location, epoch)
 	if err != nil {
 		return 0, fmt.Errorf("insert server: %w", err)
 	}
@@ -273,14 +278,144 @@ func (s *Store) RotateServerToken(ctx context.Context, id int64, newToken string
 
 // UpdateServerAddress 由管理员修改服务器公网地址（§4"地址变更由管理员修改"）；
 // 非空切换为手工模式，置空切换为自动模式并在下次 session.open 重新学习
-// （NAT 类型禁止置空，由 panel 校验）。
+// （NAT 类型禁止置空，由 panel 校验）。地址同时并入地址列表（不存在时）。
 func (s *Store) UpdateServerAddress(ctx context.Context, id int64, address string) error {
 	mode := AddressModeManual
 	if address == "" {
 		mode = AddressModeAuto
 	}
+	if address != "" {
+		// addresses 为 '' 时 json_each 报 malformed JSON，用 COALESCE 归一为 '[]'。
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE servers SET address = ?, address_mode = ?,
+				addresses = CASE
+					WHEN EXISTS (SELECT 1 FROM json_each(COALESCE(NULLIF(addresses, ''), '[]')) WHERE value = ?) THEN addresses
+					WHEN addresses = '' THEN json_array(?)
+					ELSE json_insert(addresses, '$[#]', ?) END
+			WHERE id = ?`, address, mode, address, address, address, id); err != nil {
+			return err
+		}
+		return nil
+	}
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE servers SET address = ?, address_mode = ? WHERE id = ?`, address, mode, id)
+	return err
+}
+
+// ParseServerAddresses 容错解析地址列表 JSON（空串/非法 JSON = 空列表）。
+func ParseServerAddresses(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var addrs []string
+	if err := json.Unmarshal([]byte(raw), &addrs); err != nil {
+		return nil
+	}
+	return addrs
+}
+
+// ServerAddressSet 返回服务器当前可用公网地址集合：地址列表 ∪ 默认地址 ∪ 学习地址。
+func ServerAddressSet(srv *Server) map[string]bool {
+	set := map[string]bool{}
+	for _, a := range ParseServerAddresses(srv.Addresses) {
+		if a != "" {
+			set[a] = true
+		}
+	}
+	if srv.Address != "" {
+		set[srv.Address] = true
+	}
+	if srv.LearnedAddr != "" {
+		set[srv.LearnedAddr] = true
+	}
+	return set
+}
+
+// ResolveServerAddress 解析链路 hop 的地址引用：selected 非空且仍 ∈ 服务器当前地址
+// 集合时返回 selected，否则回退服务器默认地址（地址列表化后引用可能失效，§9）。
+func ResolveServerAddress(srv *Server, selected string) string {
+	if selected != "" && ServerAddressSet(srv)[selected] {
+		return selected
+	}
+	return srv.Address
+}
+
+// UpdateServerAddresses 由管理员整体更新地址列表与默认地址（§9）：
+// defaultAddr 必须 ∈ addrs（或 addrs 为空时 defaultAddr 亦为空）；
+// 默认地址非空切换 manual，空切换 auto（NAT 禁止置空由 panel 校验）。
+func (s *Store) UpdateServerAddresses(ctx context.Context, id int64, addrs []string, defaultAddr string) error {
+	addrs = shared.DedupeAddresses(addrs)
+	found := false
+	for _, a := range addrs {
+		if a == defaultAddr {
+			found = true
+			break
+		}
+	}
+	if defaultAddr != "" && !found {
+		return fmt.Errorf("默认地址须属于地址列表")
+	}
+	if defaultAddr != "" && len(addrs) == 0 {
+		addrs = []string{defaultAddr}
+	}
+	mode := AddressModeManual
+	if defaultAddr == "" {
+		mode = AddressModeAuto
+	}
+	raw, err := json.Marshal(addrs)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE servers SET address = ?, addresses = ?, address_mode = ? WHERE id = ?`,
+		defaultAddr, string(raw), mode, id)
+	return err
+}
+
+// RefreshServerAddresses 按 session.open 学习结果合并刷新地址列表（§9）：
+// 访问流学到的 learned 居首（auto 模式下即默认地址，与 address 列一致），随后为
+// NIC 上报的公网地址，最后保留管理员手工条目（旧列表 − 旧自动来源集合还原）。
+// 全部合并去重，不做同族覆盖；采不到公网地址的族在列表中自然缺失。
+func (s *Store) RefreshServerAddresses(ctx context.Context, srv *Server, learned string, nicPublic []string) error {
+	prevAuto := map[string]bool{}
+	if srv.LearnedAddr != "" {
+		prevAuto[srv.LearnedAddr] = true
+	}
+	for _, a := range ParseServerAddresses(srv.NICAddresses) {
+		prevAuto[a] = true
+	}
+	auto := []string{}
+	if learned != "" {
+		auto = append(auto, learned)
+	}
+	auto = append(auto, nicPublic...)
+	manual := []string{}
+	for _, a := range ParseServerAddresses(srv.Addresses) {
+		if !prevAuto[a] {
+			manual = append(manual, a)
+		}
+	}
+	merged := shared.DedupeAddresses(append(auto, manual...))
+	// 默认地址（address 列）须始终在列表中：manual 模式下管理员指定的地址
+	// 可能恰与旧自动来源同名而被误归为 prevAuto，这里兜底补回。
+	// auto 模式下 address 列即上次 learnedAddr（已含于 prevAuto），不兜底，避免旧学习地址滞留。
+	if srv.Address != "" && srv.AddressMode == AddressModeManual {
+		found := false
+		for _, a := range merged {
+			if a == srv.Address {
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, srv.Address)
+		}
+	}
+	raw, err := json.Marshal(merged)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE servers SET addresses = ? WHERE id = ?`, string(raw), srv.ID)
 	return err
 }
 

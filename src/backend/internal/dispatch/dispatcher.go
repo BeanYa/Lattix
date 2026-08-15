@@ -568,6 +568,23 @@ func (d *Dispatcher) OpenSession(ctx context.Context, auth ws.AuthResult, p shar
 	if err := d.st.TouchServer(ctx, srv.ID, p.XrayVersion, p.AgentVersion, remoteAddr, learnedAddr, nicAddrs); err != nil {
 		log.Printf("dispatch: touch server %d: %v", srv.ID, err)
 	}
+	// 地址列表双族采集（§9）：访问流学到的公网地址居首，NIC 公网地址全部并入去重，
+	// 管理员手工条目保留；仅本次上报了网卡地址时刷新（否则无法还原手工条目）。
+	if len(p.NICAddresses) > 0 {
+		learnedForList := ""
+		if isPublicAgentIP(learnedAddr) {
+			learnedForList = learnedAddr
+		}
+		var nicPublic []string
+		for _, candidate := range p.NICAddresses {
+			if isPublicAgentIP(candidate) {
+				nicPublic = append(nicPublic, candidate)
+			}
+		}
+		if err := d.st.RefreshServerAddresses(ctx, srv, learnedForList, nicPublic); err != nil {
+			log.Printf("dispatch: refresh server %d addresses: %v", srv.ID, err)
+		}
+	}
 	d.ensureAgentVersion(ctx, srv.ID, p.AgentVersion)
 	return result, nil
 }

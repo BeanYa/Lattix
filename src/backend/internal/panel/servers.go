@@ -59,7 +59,8 @@ type serverDTO struct {
 	LastSeenAt                   *time.Time             `json:"last_seen_at"`
 	XrayVersion                  string                 `json:"xray_version"`
 	AgentVersion                 string                 `json:"agent_version"`          // session.open 上报的 agent 版本
-	Address                      string                 `json:"address"`                // 公网地址（session.open 记录，订阅用，§9）
+	Address                      string                 `json:"address"`                // 默认公网地址（session.open 记录，订阅用，§9）
+	Addresses                    []string               `json:"addresses"`              // 公网地址列表（§9；首项通常为访问流学习地址，链路按跳引用）
 	LearnedAddr                  string                 `json:"learned_addr"`           // 拨入学习公网地址（容器网关回退到 agent 公网网卡，§9）
 	NICAddresses                 []string               `json:"nic_addresses"`          // agent 上报的网卡非回环地址（§9），编辑地址时的内置候选
 	ConfigDrift                  bool                   `json:"config_drift"`           // 配置漂移标志（§17）
@@ -98,6 +99,10 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 	if nicAddrs == nil {
 		nicAddrs = []string{}
 	}
+	addresses := store.ParseServerAddresses(srv.Addresses)
+	if addresses == nil {
+		addresses = []string{}
+	}
 	desiredRevision := int64(0)
 	if desired, err := s.st.AgentSettings(context.Background()); err == nil {
 		desiredRevision = desired.Revision
@@ -134,6 +139,7 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		XrayVersion:                  srv.XrayVersion,
 		AgentVersion:                 srv.AgentVersion,
 		Address:                      srv.Address,
+		Addresses:                    addresses,
 		LearnedAddr:                  srv.LearnedAddr,
 		NICAddresses:                 nicAddrs,
 		ConfigDrift:                  srv.ConfigDrift,
@@ -429,6 +435,7 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		ServerID       int64                  `json:"server_id"`
 		Alias          *string                `json:"alias"` // 省略 = 不变
 		Address        string                 `json:"address"`
+		Addresses      *[]string              `json:"addresses"`     // 省略 = 仅维护默认地址（旧语义）；数组 = 整体替换地址列表（§9）
 		MachineType    string                 `json:"machine_type"`  // 不允许互转：带不同值 → 400
 		AllowedPorts   *[]shared.PortRange    `json:"allowed_ports"` // 省略 = 不变；显式 null/数组 = 整体替换
 		Tags           *[]string              `json:"tags"`          // 省略 = 不变；数组 = 整体替换
@@ -541,7 +548,13 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if err := s.st.UpdateServerAddress(r.Context(), id, req.Address); err != nil {
+	if req.Addresses != nil {
+		// 地址列表整体替换（§9）：默认地址须属于列表；旧调用（省略 addresses）保持原语义。
+		if err := s.st.UpdateServerAddresses(r.Context(), id, *req.Addresses, req.Address); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else if err := s.st.UpdateServerAddress(r.Context(), id, req.Address); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

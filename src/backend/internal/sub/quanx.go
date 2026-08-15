@@ -39,12 +39,13 @@ func buildQuanXLine(n store.Node, rc shared.RealizedConfig, uuid string) string 
 		rc.Network = shared.NetworkTCP
 	}
 	name := nodeName(n, rc)
+	addr := shared.HostPort(n.ServerAddress, rc.Port) // IPv6 字面量自动加 []（§9）
 
 	switch n.Protocol {
 	case shared.ProtocolVLESS:
 		// Quantumult X vless 格式（1.5.0+）
 		parts := []string{
-			fmt.Sprintf("vless=%s:%d", n.ServerAddress, rc.Port),
+			fmt.Sprintf("vless=%s", addr),
 			"method=none",
 			fmt.Sprintf("password=%s", uuid),
 			"obfs=over-tls",
@@ -67,7 +68,7 @@ func buildQuanXLine(n store.Node, rc shared.RealizedConfig, uuid string) string 
 		return strings.Join(parts, ", ")
 	case shared.ProtocolTrojan:
 		parts := []string{
-			fmt.Sprintf("trojan=%s:%d", n.ServerAddress, rc.Port),
+			fmt.Sprintf("trojan=%s", addr),
 			fmt.Sprintf("password=%s", uuid),
 			"obfs=over-tls",
 			fmt.Sprintf("obfs-host=%s", rc.ServerName),
@@ -83,7 +84,7 @@ func buildQuanXLine(n store.Node, rc shared.RealizedConfig, uuid string) string 
 			password = rc.PSK + ":" + password
 		}
 		parts := []string{
-			fmt.Sprintf("shadowsocks=%s:%d", n.ServerAddress, rc.Port),
+			fmt.Sprintf("shadowsocks=%s", addr),
 			fmt.Sprintf("method=%s", rc.Method),
 			fmt.Sprintf("password=%s", password),
 			"fast-open=false",

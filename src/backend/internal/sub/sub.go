@@ -823,7 +823,9 @@ func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allow
 	entryNode.ConfigTemplate = append(json.RawMessage(nil), snapshot.ServiceConfig...)
 	entryNode.RealizedConfig = append(json.RawMessage(nil), snapshot.ServiceRealized...)
 	entryNode.ServerAlias = entrySrv.Alias
-	entryNode.ServerAddress = entrySrv.Address
+	// 入口地址实时解析（§9）：hop 存的是对服务器地址列表的引用（随修订快照携带），
+	// 引用失效/空时回退服务器当前默认地址——管理员改服务器地址立即生效，不做快照冻结。
+	entryNode.ServerAddress = store.ResolveServerAddress(entrySrv, entry.Address)
 	rc.Port = port
 	return &proxyItem{node: entryNode, rc: rc}, nil
 }

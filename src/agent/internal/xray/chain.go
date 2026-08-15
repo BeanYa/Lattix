@@ -243,10 +243,15 @@ func (m *Manager) renderPortal(p shared.ApplyChainHopPayload) (*shared.RealizedC
 }
 
 // renderPortalInbound 渲染 portal 的 VLESS+Reality interconn inbound（对照 PoC portal.json；
-// 监听 0.0.0.0：隧道口有 UUID+Reality 认证，§21.1）。
+// 默认监听 0.0.0.0：隧道口有 UUID+Reality 认证，§21.1；listen_family=ipv6 时监听 ::，
+// Linux 默认 bindv6only=0 双栈同听，§9）。
 func renderPortalInbound(spec *shared.PortalSpec, tag string, port int, privateKey string) map[string]any {
+	listen := "0.0.0.0"
+	if spec.ListenFamily == shared.AddressFamilyIPv6 {
+		listen = "::"
+	}
 	return map[string]any{
-		"tag": tag, "listen": "0.0.0.0", "port": port, "protocol": "vless",
+		"tag": tag, "listen": listen, "port": port, "protocol": "vless",
 		"settings": map[string]any{
 			"clients":    []map[string]any{{"id": spec.TunnelUUID}},
 			"decryption": "none",
@@ -375,11 +380,13 @@ func (m *Manager) renderForward(p shared.ApplyChainHopPayload, cur fullConfig) (
 }
 
 // renderForwardInbound 渲染 forward 的 dokodemo-door 透传 inbound（对照 PoC entry inbound；
-// 监听 0.0.0.0：固定目标无滥用面，§21.1）。
+// 默认监听 0.0.0.0：固定目标无滥用面，§21.1；listen_family=ipv6 时监听 :: 双栈同听，§9）。
 func renderForwardInbound(spec *shared.ForwardSpec, tag string, port int) map[string]any {
 	listen := "0.0.0.0"
 	if spec.LocalOnly {
 		listen = "127.0.0.1"
+	} else if spec.ListenFamily == shared.AddressFamilyIPv6 {
+		listen = "::"
 	}
 	return map[string]any{
 		"tag": tag, "listen": listen, "port": port, "protocol": "dokodemo-door",

@@ -341,8 +341,8 @@ func TestMigrateLegacyPreservesSubToken(t *testing.T) {
 	if err := st.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 16 {
-		t.Fatalf("schema version = %d, want 16", version)
+	if version != 17 {
+		t.Fatalf("schema version = %d, want 17", version)
 	}
 	var token string
 	if err := st.db.QueryRowContext(ctx, `SELECT sub_token FROM users WHERE name='a'`).Scan(&token); err != nil {
@@ -480,8 +480,8 @@ func TestMigrateUserGroupMembersUnique(t *testing.T) {
 	if err := st.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 16 {
-		t.Fatalf("schema version = %d, want 16", version)
+	if version != 17 {
+		t.Fatalf("schema version = %d, want 17", version)
 	}
 	var count int
 	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_group_members WHERE user_id = 10`).Scan(&count); err != nil {

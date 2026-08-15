@@ -70,6 +70,7 @@ type ChainHop struct {
 	Status           string
 	Error            string
 	ForwardPort      int // entry 跳 = 订阅端口（监听侧）
+	Address          string // 本跳所选公网地址（空 = 跟随服务器默认地址；引用语义，消费时 ResolveServerAddress 实时校验回退）
 	PortalPort       int
 	PortalPublicKey  string
 	PortalServerName string // portal 回执的 Reality SNI（bridge spec 用，空回退白名单首位）
@@ -90,12 +91,12 @@ func scanChain(row interface{ Scan(...any) error }) (*Chain, error) {
 	return &c, nil
 }
 
-const chainHopCols = `id, chain_id, seq, server_id, role, node_id, status, error, forward_port, portal_port, portal_public_key, portal_server_name, tunnel_uuid, created_at`
+const chainHopCols = `id, chain_id, seq, server_id, role, node_id, status, error, forward_port, address, portal_port, portal_public_key, portal_server_name, tunnel_uuid, created_at`
 
 func scanChainHop(row interface{ Scan(...any) error }) (*ChainHop, error) {
 	var h ChainHop
 	err := row.Scan(&h.ID, &h.ChainID, &h.Seq, &h.ServerID, &h.Role, &h.NodeID, &h.Status, &h.Error,
-		&h.ForwardPort, &h.PortalPort, &h.PortalPublicKey, &h.PortalServerName, &h.TunnelUUID, &h.CreatedAt)
+		&h.ForwardPort, &h.Address, &h.PortalPort, &h.PortalPublicKey, &h.PortalServerName, &h.TunnelUUID, &h.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -130,16 +131,21 @@ func (s *Store) SetChainServiceNode(ctx context.Context, chainID, nodeID int64) 
 }
 
 // InsertChainHop 插入一个跳（pending）。forwardPort 仅入口跳用户指定时非 0；
-// tunnelUUID 仅反向链 portal 所在跳（上游机）非空。
-func (s *Store) InsertChainHop(ctx context.Context, chainID int64, seq int, serverID int64, role string, nodeID int64, forwardPort int, tunnelUUID string) (int64, error) {
+// tunnelUUID 仅反向链 portal 所在跳（上游机）非空。address 为可选的本跳所选公网地址
+// （空 = 跟随服务器默认地址，§9 引用语义）。
+func (s *Store) InsertChainHop(ctx context.Context, chainID int64, seq int, serverID int64, role string, nodeID int64, forwardPort int, tunnelUUID string, address ...string) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
+	hopAddress := ""
+	if len(address) > 0 {
+		hopAddress = address[0]
+	}
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO chain_hops (chain_id, seq, server_id, role, node_id, forward_port, tunnel_uuid) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		chainID, seq, serverID, role, nodeID, forwardPort, tunnelUUID)
+		`INSERT INTO chain_hops (chain_id, seq, server_id, role, node_id, forward_port, address, tunnel_uuid) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		chainID, seq, serverID, role, nodeID, forwardPort, hopAddress, tunnelUUID)
 	if err != nil {
 		return 0, fmt.Errorf("insert chain hop: %w", err)
 	}

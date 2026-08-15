@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS servers (
     xray_version TEXT,
     config_drift INTEGER NOT NULL DEFAULT 0,
     agent_version TEXT,
-    address      TEXT    NOT NULL DEFAULT '', -- 公网地址：管理员填写，留空按 agent 拨入 RemoteAddr 学习（§4/§9）
+    address      TEXT    NOT NULL DEFAULT '', -- 默认公网地址：管理员填写，留空按 agent 拨入 RemoteAddr 学习（§4/§9）
+    addresses    TEXT    NOT NULL DEFAULT '', -- 公网地址列表 JSON 字符串数组（含默认地址；访问流学习 + NIC 上报合并，§9）
     address_mode TEXT    NOT NULL DEFAULT 'auto', -- auto|manual；自动地址可在每次 session.open 时重新学习
     learned_addr TEXT    NOT NULL DEFAULT '',
     nic_addresses TEXT   NOT NULL DEFAULT '', -- JSON 字符串数组
@@ -451,6 +452,7 @@ CREATE TABLE IF NOT EXISTS chain_hops (
     status             TEXT    NOT NULL DEFAULT 'pending',
     error              TEXT    NOT NULL DEFAULT '',
     forward_port       INTEGER NOT NULL DEFAULT 0,
+    address            TEXT    NOT NULL DEFAULT '', -- 本跳所选公网地址（空 = 跟随服务器默认地址；引用语义，消费时实时校验回退）
     portal_port        INTEGER NOT NULL DEFAULT 0,
     portal_public_key  TEXT    NOT NULL DEFAULT '',
     portal_server_name TEXT    NOT NULL DEFAULT '',

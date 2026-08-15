@@ -22,7 +22,7 @@ func buildShareLink(n store.Node, rc shared.RealizedConfig, uuid string) (string
 		rc.Fingerprint = shared.FingerprintChrome
 	}
 	name := shareName(n, rc)
-	addr := fmt.Sprintf("%s:%d", n.ServerAddress, rc.Port)
+	addr := shared.HostPort(n.ServerAddress, rc.Port) // IPv6 字面量自动加 []（§9）
 	switch n.Protocol {
 	case shared.ProtocolVLESS:
 		q := url.Values{}

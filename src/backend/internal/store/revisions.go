@@ -42,6 +42,7 @@ type ChainRevisionHop struct {
 	Role             string `json:"role"`
 	Transport        string `json:"transport"`
 	ForwardPort      int    `json:"forward_port"`
+	Address          string `json:"address,omitempty"` // 所选公网地址引用（空 = 跟随服务器默认；消费时 ResolveServerAddress 实时解析回退）
 	PortalPort       int    `json:"portal_port"`
 	PortalPublicKey  string `json:"portal_public_key,omitempty"`
 	PortalServerName string `json:"portal_server_name,omitempty"`
@@ -92,6 +93,7 @@ type InitialChainHop struct {
 	Role        string
 	Transport   string
 	ForwardPort int
+	Address     string // 所选公网地址引用（空 = 跟随服务器默认地址）
 	TunnelUUID  string
 }
 
@@ -165,9 +167,9 @@ func (s *Store) CreateInitialChainDeployment(
 			nodeID = out.NodeID
 		}
 		hopResult, err := tx.ExecContext(ctx,
-			`INSERT INTO chain_hops (chain_id, seq, server_id, role, node_id, forward_port, tunnel_uuid)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			out.ChainID, seq, hop.ServerID, hop.Role, nodeID, hop.ForwardPort, hop.TunnelUUID)
+			`INSERT INTO chain_hops (chain_id, seq, server_id, role, node_id, forward_port, address, tunnel_uuid)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			out.ChainID, seq, hop.ServerID, hop.Role, nodeID, hop.ForwardPort, hop.Address, hop.TunnelUUID)
 		if err != nil {
 			return out, fmt.Errorf("insert initial chain hop %d: %w", seq, err)
 		}
@@ -182,7 +184,7 @@ func (s *Store) CreateInitialChainDeployment(
 		}
 		out.Hops = append(out.Hops, ChainRevisionHop{
 			HopID: hopID, ServerID: hop.ServerID, Role: hop.Role, Transport: hop.Transport,
-			ForwardPort: hop.ForwardPort, TunnelUUID: hop.TunnelUUID,
+			ForwardPort: hop.ForwardPort, Address: hop.Address, TunnelUUID: hop.TunnelUUID,
 		})
 	}
 
@@ -797,10 +799,10 @@ func (s *Store) ReplaceWorkingChainTopology(ctx context.Context, revision *Chain
 			nodeID = revision.Snapshot.ServiceNodeID
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO chain_hops
-			(id, chain_id, seq, server_id, role, node_id, status, error, forward_port,
+			(id, chain_id, seq, server_id, role, node_id, status, error, forward_port, address,
 			 portal_port, portal_public_key, portal_server_name, tunnel_uuid)
-			VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)`, hop.HopID, revision.ChainID, seq,
-			hop.ServerID, hop.Role, nodeID, HopStatusPending, hop.ForwardPort, hop.PortalPort,
+			VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)`, hop.HopID, revision.ChainID, seq,
+			hop.ServerID, hop.Role, nodeID, HopStatusPending, hop.ForwardPort, hop.Address, hop.PortalPort,
 			hop.PortalPublicKey, hop.PortalServerName, hop.TunnelUUID); err != nil {
 			return fmt.Errorf("insert desired chain hop: %w", err)
 		}

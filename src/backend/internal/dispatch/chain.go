@@ -262,6 +262,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			ShortID:        tunnelShortID(up.TunnelUUID),
 			Dest:           d.portalDest(),
 			ServerNames:    []string{destHost(d.portalDest())},
+			ListenFamily:   listenFamilyOf(store.ResolveServerAddress(servers[up.ServerID], up.Address)), // bridge 将拨入的地址族（§9）
 		}
 		d.enqueueHop(ctx, chainID, revisionID, up, shared.HopKindPortal, shared.ApplyChainHopPayload{
 			ChainID:        chainID,
@@ -284,13 +285,14 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			return
 		}
 		upSrv := servers[up.ServerID]
+		portalAddress := store.ResolveServerAddress(upSrv, up.Address) // bridge 拨入地址：hop 引用实时解析，失效回退默认（§9）
 		serverName := up.PortalServerName
 		if serverName == "" {
 			serverName = destHost(d.portalDest()) // 回退白名单首位（旧回执无 server_name）
 		}
 		spec := &shared.BridgeSpec{
 			TunnelDomain:  shared.TunnelDomain(chainID, up.ID),
-			PortalAddress: upSrv.Address,
+			PortalAddress: portalAddress,
 			PortalPort:    publicPortOf(upSrv, up.PortalPort), // bridge 外拨，取公网侧端口
 			TunnelUUID:    up.TunnelUUID,
 			PublicKey:     up.PortalPublicKey,
@@ -329,6 +331,8 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		// 自动 → Agent 段内挑空闲；手动 → Agent 校验段内归属（面板已校验，双保险）。
 		if !spec.LocalOnly {
 			spec.PortCandidates = listenCandidatesOf(servers[hop.ServerID])
+			// 监听族按本跳解析后的公网地址派生：IPv6 字面量 → 监听 ::（§9）。
+			spec.ListenFamily = listenFamilyOf(store.ResolveServerAddress(servers[hop.ServerID], hop.Address))
 		}
 		reverse := hop.TunnelUUID != "" // 本跳 → 下一跳为反向链
 		next := hops[i+1]
@@ -339,7 +343,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 				spec.TargetPort = rc.Port
 				spec.ViaTunnelDomain = shared.TunnelDomain(chainID, hop.ID)
 			} else {
-				spec.TargetAddress = servers[next.ServerID].Address
+				spec.TargetAddress = store.ResolveServerAddress(servers[next.ServerID], next.Address)
 				spec.TargetPort = publicPortOf(servers[next.ServerID], rc.Port)
 			}
 		} else {
@@ -349,7 +353,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 				spec.TargetPort = next.ForwardPort
 				spec.ViaTunnelDomain = shared.TunnelDomain(chainID, hop.ID)
 			} else {
-				spec.TargetAddress = servers[next.ServerID].Address
+				spec.TargetAddress = store.ResolveServerAddress(servers[next.ServerID], next.Address)
 				spec.TargetPort = publicPortOf(servers[next.ServerID], next.ForwardPort)
 			}
 		}
@@ -897,6 +901,15 @@ func listenCandidatesOf(srv *store.Server) []int {
 		return nil
 	}
 	return shared.ListenCandidates(ranges)
+}
+
+// listenFamilyOf 按拨入本跳的公网地址派生监听族（§9）：IPv6 字面量 → "ipv6"
+// （agent 监听 "::"，双栈同听）；IPv4/域名 → ""（默认 0.0.0.0，兼容旧 agent）。
+func listenFamilyOf(addr string) string {
+	if shared.AddressFamily(addr) == shared.AddressFamilyIPv6 {
+		return shared.AddressFamilyIPv6
+	}
+	return ""
 }
 
 // publicPortOf 按服务器端口段把监听端口换算为公网端口（非 1:1 映射，§21）；
