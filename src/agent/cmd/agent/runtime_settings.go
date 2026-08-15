@@ -6,6 +6,8 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
+	"path"
 	"sync"
 	"time"
 
@@ -148,6 +150,33 @@ func panelTemporarilyUnavailable(response *http.Response) bool {
 		return false
 	}
 	return true
+}
+
+// handshakeErrorDescription 把非 101 响应的状态行与 Location 摘要进日志：
+// "bad handshake" 本身无法区分路径错误（307/404）与中间设备应答（代理 403/502 等）。
+func handshakeErrorDescription(response *http.Response) string {
+	if response == nil {
+		return ""
+	}
+	detail := response.Status
+	if location := response.Header.Get("Location"); location != "" {
+		detail += " (Location: " + location + ")"
+	}
+	return detail
+}
+
+// normalizePanelWS 规整 -panel 地址：清理路径中的重复/结尾斜杠并去掉查询与片段。
+// 面板地址多带一个尾斜杠会拼出 //api/agent/ws，Go ServeMux 对其返回 307 而
+// gorilla 不跟随重定向，表现为永久 bad handshake；拨号前静默修正。
+func normalizePanelWS(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return raw // 保留原值，让拨号错误贴近原始输入
+	}
+	u.Path = path.Clean("/" + u.Path)
+	u.RawQuery = ""
+	u.Fragment = ""
+	return u.String()
 }
 
 func unavailableRetryDelay() time.Duration {

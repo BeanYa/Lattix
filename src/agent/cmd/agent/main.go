@@ -48,6 +48,7 @@ func main() {
 	showVersion := flag.Bool("version", false, "打印版本并退出")
 	serverTestWorker := flag.Bool("server-test-worker", false, "run the internal server test worker")
 	flag.Parse()
+	*panel = normalizePanelWS(*panel)
 	if *serverTestWorker {
 		if err := servertest.WorkerMain(os.Stdin, os.Stdout); err != nil {
 			log.Printf("server test worker: %v", err)
@@ -221,6 +222,9 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 		}
 		if panelTemporarilyUnavailable(response) {
 			return "", false, errPanelUnavailable
+		}
+		if detail := handshakeErrorDescription(response); detail != "" {
+			return "", false, fmt.Errorf("%w [%s]", err, detail)
 		}
 		return "", false, err
 	}

@@ -464,8 +464,9 @@ if [[ "$USER_MODE" -eq 0 || "$(id -u)" -eq 0 ]]; then
     ln -sfn "$LATX_AG_BIN" "$LATX_AG_LINK"
 fi
 
-# http→ws / https→wss
-PANEL_WS="$(echo "$PANEL_URL" | sed -e 's|^https://|wss://|' -e 's|^http://|ws://|')/api/agent/ws"
+# http→ws / https→wss；先去结尾斜杠——PANEL_URL 带尾斜杠会拼出 //api/agent/ws，
+# Go ServeMux 对双斜杠路径回 307 且 agent 不跟随重定向，导致永久 bad handshake。
+PANEL_WS="$(echo "$PANEL_URL" | sed -e 's:/*$::' -e 's|^https://|wss://|' -e 's|^http://|ws://|')/api/agent/ws"
 
 echo ">> writing $ENV_FILE"
 install -m 0600 /dev/null "$ENV_FILE"

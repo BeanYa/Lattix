@@ -119,3 +119,34 @@ func TestPanelUnavailableUsesLowFrequencyRetry(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizePanelWS(t *testing.T) {
+	cases := map[string]string{
+		"ws://127.0.0.1:8080/api/agent/ws":      "ws://127.0.0.1:8080/api/agent/ws",
+		"ws://host//api/agent/ws":               "ws://host/api/agent/ws", // 安装命令尾斜杠拼接产物
+		"wss://panel.example.com//api/agent/ws": "wss://panel.example.com/api/agent/ws",
+		"ws://host/api/agent/ws/":               "ws://host/api/agent/ws",
+		"ws://host/api/agent/ws?x=1#frag":       "ws://host/api/agent/ws",
+		"not a url":                             "not a url", // 保留原值，拨号错误贴近输入
+	}
+	for raw, want := range cases {
+		if got := normalizePanelWS(raw); got != want {
+			t.Errorf("normalizePanelWS(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+func TestHandshakeErrorDescription(t *testing.T) {
+	if got := handshakeErrorDescription(nil); got != "" {
+		t.Errorf("nil response should produce empty description, got %q", got)
+	}
+	response := &http.Response{
+		StatusCode: http.StatusTemporaryRedirect,
+		Status:     "307 Temporary Redirect",
+		Header:     http.Header{"Location": []string{"/api/agent/ws"}},
+	}
+	want := "307 Temporary Redirect (Location: /api/agent/ws)"
+	if got := handshakeErrorDescription(response); got != want {
+		t.Errorf("handshakeErrorDescription = %q, want %q", got, want)
+	}
+}
