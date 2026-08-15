@@ -108,6 +108,16 @@ wait_clients() {
     echo "FAIL: 节点 $1 用户 $2 未达 $3 状态"; return 1
 }
 
+# wait_sub_vless <token> <count>：订阅重发布已转异步（操作入队 + regenerator 去抖），
+# 轮询 clash 正文的 vless 行数直到达到预期。
+wait_sub_vless() {
+    for _ in $(seq 1 20); do
+        [[ "$(curl -s "http://$ADDR/sub/$1?format=clash" | grep -c 'type: vless')" == "$2" ]] && return 0
+        sleep 0.5
+    done
+    echo "FAIL: 订阅 $1 vless 行数未达 $2"; return 1
+}
+
 echo ">> start backend（有效期 sweeper 周期 1s，保证停权确定性）"
 LATTIX_EXPIRY_SWEEP_INTERVAL=1s "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" >"$WORK/backend.log" 2>&1 &
 BPID=$!
@@ -141,7 +151,7 @@ else
 fi
 wait_active "$N1"; wait_active "$N2"
 rpc_data POST /api/user/set-nodes "{\"user_id\":1,\"node_ids\":[$N1,$N2]}" >/dev/null
-sleep 1
+wait_sub_vless "$TOK" 2 || exit 1
 
 echo ">> /sub/{token}?format=links 校验"
 LINKS="$(curl -s "http://$ADDR/sub/$TOK?format=links" | python3 -c 'import base64,sys;print(base64.b64decode(sys.stdin.read()).decode())')"
@@ -207,8 +217,8 @@ TOK2="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["sub_token"])'
 EXPIRE2="$(python3 -c 'import json,sys,datetime;print(int(datetime.datetime.fromisoformat(json.loads(sys.argv[1])["expires_at"].replace("Z","+00:00")).timestamp()))' "$U2")"
 rpc_data POST /api/user/set-nodes "{\"user_id\":$UID2,\"node_ids\":[$N1]}" >/dev/null
 wait_clients "$N1" "$UUID2" present && echo "OK: 到期前用户已下发"
-[[ "$(curl -s "http://$ADDR/sub/$TOK2?format=clash" | grep -c 'type: vless')" == "1" ]] \
-    && echo "OK: 到期前订阅含 1 节点" || { echo "FAIL: 到期前订阅异常"; exit 1; }
+wait_sub_vless "$TOK2" 1 \
+    && echo "OK: 到期前订阅含 1 节点" || exit 1
 for _ in $(seq 1 30); do
     [[ "$(db "SELECT expired FROM users WHERE id=$UID2")" == "1" ]] && break
     sleep 0.5
@@ -241,8 +251,8 @@ rpc_data POST /api/user/update "{\"user_id\":$UID2,\"expires_at\":\"$FUTURE1H\"}
 [[ "$(db "SELECT expired FROM users WHERE id=$UID2")" == "0" ]] \
     && echo "OK: expired 已清除" || { echo "FAIL: expired 未清除"; exit 1; }
 wait_clients "$N1" "$UUID2" present && echo "OK: 恢复扇出 add_user 生效"
-[[ "$(curl -s "http://$ADDR/sub/$TOK2?format=clash" | grep -c 'type: vless')" == "1" ]] \
-    && echo "OK: 恢复后订阅含 1 节点" || { echo "FAIL: 恢复后订阅异常"; exit 1; }
+wait_sub_vless "$TOK2" 1 \
+    && echo "OK: 恢复后订阅含 1 节点" || exit 1
 
 echo ">> 清除有效期（expires_at:null → 长期）"
 rpc_data POST /api/user/update "{\"user_id\":$UID2,\"expires_at\":null}" >/dev/null
@@ -273,9 +283,18 @@ rpc_data GET /api/user/list | grep -q '"disabled":true' \
     && echo "OK: 用户列表 DTO 带 disabled" || { echo "FAIL: DTO 缺 disabled"; exit 1; }
 wait_clients "$N1" "$UUID1" absent && wait_clients "$N2" "$UUID1" absent \
     && echo "OK: 停用扇出 remove_user 生效（两节点）"
-[[ -z "$(curl -s "http://$ADDR/sub/$TOK?format=clash" | grep 'type: vless')" ]] \
+# 停用重发布经订阅队列异步完成，轮询等待（同到期停权段）。
+DIS_YAML_EMPTY=0
+DIS_LINKS_EMPTY=0
+for _ in $(seq 1 20); do
+    [[ -z "$(curl -s "http://$ADDR/sub/$TOK?format=clash" | grep 'type: vless')" ]] && DIS_YAML_EMPTY=1
+    [[ -z "$(curl -s "http://$ADDR/sub/$TOK?format=links")" ]] && DIS_LINKS_EMPTY=1
+    [[ "$DIS_YAML_EMPTY" == "1" && "$DIS_LINKS_EMPTY" == "1" ]] && break
+    sleep 0.5
+done
+[[ "$DIS_YAML_EMPTY" == "1" ]] \
     && echo "OK: 停用用户 YAML proxies 为空" || { echo "FAIL: 停用订阅应为空"; exit 1; }
-[[ -z "$(curl -s "http://$ADDR/sub/$TOK?format=links")" ]] \
+[[ "$DIS_LINKS_EMPTY" == "1" ]] \
     && echo "OK: 停用用户 links 为空" || { echo "FAIL: 停用 links 应为空"; exit 1; }
 HDRS4="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK?format=clash")"
 grep -qi '^subscription-userinfo: upload=1234; download=5678' <<<"$HDRS4" \
@@ -294,8 +313,8 @@ rpc_data POST /api/user/update '{"user_id":1,"disabled":false}' >/dev/null
     && echo "OK: disabled 已清除" || { echo "FAIL: disabled 未清除"; exit 1; }
 wait_clients "$N1" "$UUID1" present && wait_clients "$N2" "$UUID1" present \
     && echo "OK: 启用扇出 add_user 生效（两节点）"
-[[ "$(curl -s "http://$ADDR/sub/$TOK?format=clash" | grep -c 'type: vless')" == "2" ]] \
-    && echo "OK: 启用后订阅含 2 节点" || { echo "FAIL: 启用后订阅异常"; exit 1; }
+wait_sub_vless "$TOK" 2 \
+    && echo "OK: 启用后订阅含 2 节点" || exit 1
 
 echo ">> 复合场景：disabled + expired 不重复扇出（有效停权态跃迁才扇出）"
 rpc_data POST /api/user/update "{\"user_id\":$UID2,\"disabled\":true}" >/dev/null

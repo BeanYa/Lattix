@@ -25,6 +25,7 @@ func TestFrontendSubSettingsPayloadAccepted(t *testing.T) {
 	}
 	defer st.Close()
 	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+	startTestRegenerator(t, server.subscriptions)
 	userID := mustCreateUser(t, st, "alice", nil)
 
 	if _, err := server.subscriptions.PublishUser(ctx, userID, "https://panel.example"); err != nil {
@@ -48,13 +49,8 @@ func TestFrontendSubSettingsPayloadAccepted(t *testing.T) {
 		t.Fatalf("routing not saved: mode=%s preset=%s categories=%s", profile.Mode, profile.Preset, profile.CategoriesJSON)
 	}
 
-	file, err := st.PublishedSubscriptionFile(ctx, userID, "clash")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if file.Revision <= 1 {
-		t.Fatalf("snapshot revision = %d, want > 1 (republished after save)", file.Revision)
-	}
+	// 发布已转异步：等待重发布后修订号递增。
+	file := awaitSubscriptionFileRevision(t, st, userID, "clash", 1)
 	if !strings.Contains(string(file.Content), "AI 服务") {
 		t.Fatalf("suggested rules missing from republished snapshot: %s", file.Content)
 	}

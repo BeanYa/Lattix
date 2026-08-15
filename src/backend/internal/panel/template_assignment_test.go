@@ -51,6 +51,7 @@ func TestAssignSubscriptionTemplateWritesSlotAndPublishes(t *testing.T) {
 	userA, _ := st.InsertUser(ctx, "a", "00000000-0000-0000-0000-000000000010", "tok-a", nil)
 	userB, _ := st.InsertUser(ctx, "b", "00000000-0000-0000-0000-000000000011", "tok-b", nil)
 	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+	startTestRegenerator(t, server.subscriptions)
 
 	status, code := assignRequest(t, server, fmt.Sprintf(
 		`{"user_ids":[%d,%d],"template_id":"tpl-portable","forced":true}`, userA, userB))
@@ -65,10 +66,8 @@ func TestAssignSubscriptionTemplateWritesSlotAndPublishes(t *testing.T) {
 		if profile.AssignedPortableTemplateID != "tpl-portable" || !profile.AssignForcedPortable {
 			t.Fatalf("user %d assignment = %+v", userID, profile)
 		}
-		snapshot, err := st.SubscriptionSnapshotStatus(ctx, userID)
-		if err != nil || snapshot.Status != store.SubscriptionGenerationReady {
-			t.Fatalf("user %d snapshot = %+v, err %v", userID, snapshot, err)
-		}
+		// 发布已转异步（regenerator 去抖执行），等待快照就绪。
+		awaitSnapshotReady(t, st, userID)
 	}
 }
 
@@ -167,6 +166,7 @@ func TestUnassignSubscriptionTemplateClearsSlotKeepsUserChoice(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+	startTestRegenerator(t, server.subscriptions)
 
 	rec := httptest.NewRecorder()
 	server.handleUnassignSubscriptionTemplate(rec, httptest.NewRequest(http.MethodPost,
@@ -185,10 +185,8 @@ func TestUnassignSubscriptionTemplateClearsSlotKeepsUserChoice(t *testing.T) {
 	if profile.PortableTemplateID != "user-own" || profile.Mode != store.SubscriptionModeTemplate {
 		t.Fatalf("user choice lost: %+v", profile)
 	}
-	snapshot, err := st.SubscriptionSnapshotStatus(ctx, userID)
-	if err != nil || snapshot.Status != store.SubscriptionGenerationReady {
-		t.Fatalf("snapshot = %+v, err %v", snapshot, err)
-	}
+	// 发布已转异步：等待重发布完成（恢复用户自选模板的快照）。
+	awaitSnapshotReady(t, st, userID)
 }
 
 func TestAssignSubscriptionTemplateSuggestedCategories(t *testing.T) {
@@ -200,6 +198,7 @@ func TestAssignSubscriptionTemplateSuggestedCategories(t *testing.T) {
 	defer st.Close()
 	userID, _ := st.InsertUser(ctx, "a", "00000000-0000-0000-0000-000000000015", "tok-f", nil)
 	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+	startTestRegenerator(t, server.subscriptions)
 
 	// 乱序 + 重复 → 按内置顺序去重存储。
 	status, code := assignRequest(t, server, fmt.Sprintf(
@@ -217,10 +216,8 @@ func TestAssignSubscriptionTemplateSuggestedCategories(t *testing.T) {
 	if profile.AssignedPortableTemplateID != "" {
 		t.Fatalf("template slot unexpectedly set: %+v", profile)
 	}
-	snapshot, err := st.SubscriptionSnapshotStatus(ctx, userID)
-	if err != nil || snapshot.Status != store.SubscriptionGenerationReady {
-		t.Fatalf("snapshot = %+v, err %v", snapshot, err)
-	}
+	// 发布已转异步：等待快照就绪。
+	awaitSnapshotReady(t, st, userID)
 }
 
 func TestAssignSubscriptionTemplateSuggestedMutualExclusion(t *testing.T) {
@@ -312,6 +309,7 @@ func TestUnassignSubscriptionTemplateSuggestedKeepsUserChoice(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+	startTestRegenerator(t, server.subscriptions)
 
 	rec := httptest.NewRecorder()
 	server.handleUnassignSubscriptionTemplate(rec, httptest.NewRequest(http.MethodPost,
@@ -330,10 +328,8 @@ func TestUnassignSubscriptionTemplateSuggestedKeepsUserChoice(t *testing.T) {
 	if profile.PortableTemplateID != "user-own" || profile.Mode != store.SubscriptionModeTemplate {
 		t.Fatalf("user choice lost: %+v", profile)
 	}
-	snapshot, err := st.SubscriptionSnapshotStatus(ctx, userID)
-	if err != nil || snapshot.Status != store.SubscriptionGenerationReady {
-		t.Fatalf("snapshot = %+v, err %v", snapshot, err)
-	}
+	// 发布已转异步：等待重发布完成。
+	awaitSnapshotReady(t, st, userID)
 }
 
 func TestUpdateUserSubSettingsPreservesAssignment(t *testing.T) {

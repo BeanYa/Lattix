@@ -139,8 +139,13 @@ func (s *Server) handleAssignSubscriptionTemplate(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
+	// 批量指派逐个用户重发布订阅：发布转异步，观察跟踪至全部用户发布完成
+	// （WatchUsers 先于 EnqueueUsers 登记，消除完成回调竞态）。
+	o := s.observeStart(r, "subscription.template.assign", "指派订阅模板", userPublishObserveStages)
+	defer o.CloseIfPending()
 	for _, userID := range userIDs {
 		if _, err := s.st.UserByID(r.Context(), userID); err != nil {
+			o.Fail(err)
 			if errors.Is(err, store.ErrNotFound) {
 				writeError(w, http.StatusNotFound, "用户不存在")
 				return
@@ -150,6 +155,7 @@ func (s *Server) handleAssignSubscriptionTemplate(w http.ResponseWriter, r *http
 		}
 		profile, err := s.st.UserSubscriptionProfile(r.Context(), userID)
 		if err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -161,23 +167,23 @@ func (s *Server) handleAssignSubscriptionTemplate(w http.ResponseWriter, r *http
 			profile.AssignForcedPortable = req.Forced
 		} else {
 			if err := applyTemplateAssignment(&profile, template.Kind, template.ID, req.Forced); err != nil {
+				o.Fail(err)
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 			profile.AssignedSuggestedCategories = ""
 		}
 		if err := s.st.SaveUserSubscriptionProfile(r.Context(), profile); err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
+	o.Report("db", 100, "指派已保存")
 	if s.subscriptions != nil {
-		for _, userID := range userIDs {
-			if _, err := s.subscriptions.PublishUser(r.Context(), userID, s.panelBase(r)); err != nil {
-				writeError(w, http.StatusBadRequest, "生成订阅失败: "+err.Error())
-				return
-			}
-		}
+		o.WatchUsers(userIDs)
+		s.subscriptions.EnqueueUsers(userIDs, s.panelBase(r))
+		o.Report("regenerate", 0, "等待订阅重生成")
 	}
 	s.audit(r, "subscription.template.assigned", nil, nil, map[string]any{
 		"template_id": req.TemplateID, "suggested_categories": categories, "user_ids": userIDs, "forced": req.Forced,
@@ -208,8 +214,11 @@ func (s *Server) handleUnassignSubscriptionTemplate(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
+	o := s.observeStart(r, "subscription.template.unassign", "取消指派订阅模板", userPublishObserveStages)
+	defer o.CloseIfPending()
 	for _, userID := range userIDs {
 		if _, err := s.st.UserByID(r.Context(), userID); err != nil {
+			o.Fail(err)
 			if errors.Is(err, store.ErrNotFound) {
 				writeError(w, http.StatusNotFound, "用户不存在")
 				return
@@ -219,6 +228,7 @@ func (s *Server) handleUnassignSubscriptionTemplate(w http.ResponseWriter, r *ht
 		}
 		profile, err := s.st.UserSubscriptionProfile(r.Context(), userID)
 		if err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -227,22 +237,22 @@ func (s *Server) handleUnassignSubscriptionTemplate(w http.ResponseWriter, r *ht
 			profile.AssignForcedPortable = false
 		} else {
 			if err := clearTemplateAssignment(&profile, template.Kind); err != nil {
+				o.Fail(err)
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 		}
 		if err := s.st.SaveUserSubscriptionProfile(r.Context(), profile); err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
+	o.Report("db", 100, "指派已清除")
 	if s.subscriptions != nil {
-		for _, userID := range userIDs {
-			if _, err := s.subscriptions.PublishUser(r.Context(), userID, s.panelBase(r)); err != nil {
-				writeError(w, http.StatusBadRequest, "生成订阅失败: "+err.Error())
-				return
-			}
-		}
+		o.WatchUsers(userIDs)
+		s.subscriptions.EnqueueUsers(userIDs, s.panelBase(r))
+		o.Report("regenerate", 0, "等待订阅重生成")
 	}
 	s.audit(r, "subscription.template.unassigned", nil, nil, map[string]any{
 		"template_id": req.TemplateID, "suggested_categories": categories, "user_ids": userIDs,

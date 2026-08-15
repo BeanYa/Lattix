@@ -180,7 +180,13 @@ EXIT_FLOW="$(py "d['realized_config'].get('flow') or ''" "$NODE_JSON")"
 EXIT_PORT="$(py "d['realized_config']['port']" "$NODE_JSON")"
 
 echo ">> 订阅断言（入口地址:端口 + 出口密钥/UUID）"
-SUB="$(curl -s "http://$ADDR/sub/$SUB_TOKEN?format=clash")"
+# 订阅重发布已转异步（set-nodes 入队 + regenerator 去抖），轮询等待内容就绪。
+SUB=""
+for _ in $(seq 1 20); do
+    SUB="$(curl -s "http://$ADDR/sub/$SUB_TOKEN?format=clash")"
+    grep -q "name: chain-a-vless-$ENTRY_PORT" <<<"$SUB" && break
+    sleep 0.5
+done
 echo "$SUB" | grep -q "name: chain-a-vless-$ENTRY_PORT" \
     && echo "$SUB" | grep -q "server: 127.0.0.1" \
     && echo "$SUB" | grep -q "port: $ENTRY_PORT" \

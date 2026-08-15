@@ -14,10 +14,18 @@ import (
 	"github.com/google/uuid"
 
 	"lattix/backend/internal/extsub"
+	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
 	"lattix/shared"
 )
+
+// userPublishObserveStages 用户变更类操作的观察阶段：写库后订阅发布转异步，
+// 由 regenerator 完成回调收口（WatchUsers 先于 EnqueueUsers 登记，消除竞态）。
+var userPublishObserveStages = []progress.Stage{
+	{Key: "db", Label: "校验并写入数据库"},
+	{Key: "regenerate", Label: "重新生成订阅文件"},
+}
 
 // userDTO 是用户对象的 API 表示。
 type userDTO struct {
@@ -397,29 +405,36 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		UUID:     uuid.NewString(),
 		SubToken: randomHex(16), // 128-bit（评审 P3：订阅 URL 为长期 bearer 凭据）
 	}
+	o := s.observeStart(r, "user.create", "创建用户", userPublishObserveStages)
+	defer o.CloseIfPending()
 	id, err := s.st.InsertUser(r.Context(), u.Name, u.UUID, u.SubToken, expiresAt)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
 	created, err := s.st.UserByID(r.Context(), id)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	profile, err := profileFromInput(id, req.Routing)
 	if err != nil {
+		o.Fail(err)
 		_ = s.st.DeleteUser(r.Context(), id)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := s.validateSubscriptionProfileTemplates(r.Context(), profile); err != nil {
+		o.Fail(err)
 		_ = s.st.DeleteUser(r.Context(), id)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := s.st.SaveUserSubscriptionProfile(r.Context(), profile); err != nil {
+		o.Fail(err)
 		_ = s.st.DeleteUser(r.Context(), id)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -428,6 +443,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	// 可选订阅设置：任一项非默认时写入（用户级覆盖全局）。
 	if req.TrafficLimit != 0 || req.TrafficResetDay != 0 || req.PlanName != "" || req.AppURL != "" {
 		if err := s.st.SetUserSubSettings(r.Context(), id, req.TrafficLimit, req.TrafficResetDay, "", "", strings.TrimSpace(req.PlanName), strings.TrimSpace(req.AppURL)); err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -442,6 +458,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if len(req.NodeIDs) > 0 {
 		nodes, err := s.st.ListNodes(r.Context())
 		if err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -452,7 +469,9 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		seen := map[int64]bool{}
 		for _, nodeID := range req.NodeIDs {
 			if !validNodes[nodeID] {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("链路对应节点 %d 不存在", nodeID))
+				err := fmt.Errorf("链路对应节点 %d 不存在", nodeID)
+				o.Fail(err)
+				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 			if !seen[nodeID] {
@@ -462,6 +481,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		}
 		added, _, err := s.st.SetUserNodes(r.Context(), id, nodeIDs)
 		if err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -470,6 +490,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if len(req.ChainIDs) > 0 {
 		added, _, err := s.st.SetUserChains(r.Context(), id, req.ChainIDs)
 		if err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -478,6 +499,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if len(req.ExternalSubscriptions) > 0 {
 		items, err := s.validateExternalSubscriptions(r.Context(), req.ExternalSubscriptions)
 		if err != nil {
+			o.Fail(err)
 			_ = s.st.DeleteUser(r.Context(), id)
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -486,16 +508,18 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			items[i].UserID = id
 		}
 		if err := s.st.SetUserExternalSubscriptions(r.Context(), id, items); err != nil {
+			o.Fail(err)
 			_ = s.st.DeleteUser(r.Context(), id)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
+	o.Report("db", 100, "用户已保存")
 	if s.subscriptions != nil {
-		if _, err := s.subscriptions.PublishUser(r.Context(), id, s.panelBase(r)); err != nil {
-			writeError(w, http.StatusBadRequest, "生成订阅失败: "+err.Error())
-			return
-		}
+		// 发布转异步：观察先行登记，regenerator 完成回调收口；失败以警告呈现。
+		o.WatchUsers([]int64{id})
+		s.subscriptions.EnqueueUsers([]int64{id}, s.panelBase(r))
+		o.Report("regenerate", 0, "等待订阅重生成")
 	}
 	s.audit(r, "user.create", nil, nil, map[string]any{
 		"user_id": created.ID, "name": created.Name, "node_count": len(nodeIDs),
@@ -591,6 +615,9 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 有效停权态跃迁才扇出（§9/§16）：expiry 被修改后只可能是未来/清除，expired 必已复位。
+	// 停权跃迁需重发布订阅：此时注册观察（nil 安全，未注册时方法全为 no-op），发布转异步。
+	var o *progress.Observation
+	defer func() { o.CloseIfPending() }()
 	stoppedAfter := disabledAfter || (u.Expired && !expiryTouched)
 	if stoppedBefore != stoppedAfter {
 		nodes, err := s.st.ListNodes(r.Context())
@@ -613,20 +640,23 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		if assignments, err := s.st.UserChainAssignments(r.Context(), id); err == nil {
 			s.reconcileAssignmentEndpoints(r.Context(), assignments, nil)
 		}
+		o = s.observeStart(r, "user.update", "更新用户状态", userPublishObserveStages)
+		o.Report("db", 100, "已保存")
+		if s.subscriptions != nil {
+			o.WatchUsers([]int64{id})
+			s.subscriptions.EnqueueUsers([]int64{id}, s.panelBase(r))
+			o.Report("regenerate", 0, "等待订阅重生成")
+		}
 	}
 	updated, err := s.st.UserByID(r.Context(), id)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if s.subscriptions != nil && stoppedBefore != stoppedAfter {
-		if _, err := s.subscriptions.PublishUser(r.Context(), id, s.panelBase(r)); err != nil {
-			writeError(w, http.StatusInternalServerError, "重新生成订阅失败: "+err.Error())
-			return
-		}
-	}
 	nodeIDs, err := s.st.UserNodeIDs(r.Context(), id)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -698,23 +728,27 @@ func (s *Server) handleSetUserNodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o := s.observeStart(r, "user.set_nodes", "更新用户分配", userPublishObserveStages)
+	defer o.CloseIfPending()
 	added, removed, err := s.st.SetUserNodes(r.Context(), id, req.NodeIDs)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.fanoutUserDiff(r.Context(), u.UUID, nodes, added, removed)
 	addedChains, removedChains, err := s.st.SetUserChains(r.Context(), id, req.ChainIDs)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	s.reconcileAssignmentEndpoints(r.Context(), addedChains, removedChains)
+	o.Report("db", 100, "分配已保存")
 	if s.subscriptions != nil {
-		if _, err := s.subscriptions.PublishUser(r.Context(), id, s.panelBase(r)); err != nil {
-			writeError(w, http.StatusInternalServerError, "重新生成订阅失败: "+err.Error())
-			return
-		}
+		o.WatchUsers([]int64{id})
+		s.subscriptions.EnqueueUsers([]int64{id}, s.panelBase(r))
+		o.Report("regenerate", 0, "等待订阅重生成")
 	}
 	if len(added) > 0 || len(removed) > 0 {
 		s.audit(r, "user.nodes_updated", nil, nil, map[string]any{
@@ -792,15 +826,18 @@ func (s *Server) handleSetUserExternalSubscriptions(w http.ResponseWriter, r *ht
 	for i := range items {
 		items[i].UserID = id
 	}
+	o := s.observeStart(r, "user.set_external_subscriptions", "更新用户外部订阅", userPublishObserveStages)
+	defer o.CloseIfPending()
 	if err := s.st.SetUserExternalSubscriptions(r.Context(), id, items); err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o.Report("db", 100, "外部订阅已保存")
 	if s.subscriptions != nil {
-		if _, err := s.subscriptions.PublishUser(r.Context(), id, s.panelBase(r)); err != nil {
-			writeError(w, http.StatusInternalServerError, "重新生成订阅失败: "+err.Error())
-			return
-		}
+		o.WatchUsers([]int64{id})
+		s.subscriptions.EnqueueUsers([]int64{id}, s.panelBase(r))
+		o.Report("regenerate", 0, "等待订阅重生成")
 	}
 	s.audit(r, "user.external_subscriptions_updated", nil, nil, map[string]any{
 		"user_id": id, "items": req.Items,
@@ -1050,7 +1087,10 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	o := s.observeStart(r, "user.sub_settings", "保存订阅设置", userPublishObserveStages)
+	defer o.CloseIfPending()
 	if err := s.st.SetUserSubSettings(r.Context(), req.UserID, req.TrafficLimit, req.TrafficResetDay, req.SubTitle, req.SubAnnouncement, strings.TrimSpace(req.PlanName), strings.TrimSpace(req.AppURL)); err != nil {
+		o.Fail(err)
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "用户不存在")
 			return
@@ -1060,18 +1100,20 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 	}
 	if routingProfile != nil {
 		if err := s.st.SaveUserSubscriptionProfile(r.Context(), *routingProfile); err != nil {
+			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}
+	o.Report("db", 100, "订阅设置已保存")
 	if s.subscriptions != nil {
-		if _, err := s.subscriptions.PublishUser(r.Context(), req.UserID, s.panelBase(r)); err != nil {
-			writeError(w, http.StatusBadRequest, "生成订阅失败: "+err.Error())
-			return
-		}
+		o.WatchUsers([]int64{req.UserID})
+		s.subscriptions.EnqueueUsers([]int64{req.UserID}, s.panelBase(r))
+		o.Report("regenerate", 0, "等待订阅重生成")
 	}
 	updated, err := s.st.UserByID(r.Context(), req.UserID)
 	if err != nil {
+		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -1084,6 +1126,8 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleRegenerateUserSubscription 重新发布用户订阅：发布转异步（regenerator 去抖执行），
+// 观察跟踪至发布完成，失败以警告呈现（前端进度弹窗展示，不再干等同步响应）。
 func (s *Server) handleRegenerateUserSubscription(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID int64 `json:"user_id"`
@@ -1096,18 +1140,25 @@ func (s *Server) handleRegenerateUserSubscription(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "invalid user id or subscription service unavailable")
 		return
 	}
-	result, err := s.subscriptions.PublishUser(r.Context(), req.UserID, s.panelBase(r))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if _, err := s.st.UserByID(r.Context(), req.UserID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "用户不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	o := s.observeStart(r, "user.regenerate", "重新生成订阅", []progress.Stage{
+		{Key: "regenerate", Label: "重新生成订阅文件"},
+	})
+	defer o.CloseIfPending()
+	o.WatchUsers([]int64{req.UserID})
+	s.subscriptions.EnqueueUsers([]int64{req.UserID}, s.panelBase(r))
+	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "user.subscription.regenerated", nil, nil, map[string]any{
-		"user_id": req.UserID, "revision": result.Revision,
+		"user_id": req.UserID,
 	})
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status": result.Status, "error": result.Error, "revision": result.Revision,
-		"source_label": result.SourceLabel, "generated_at": result.GeneratedAt, "warnings": result.Warnings,
-	})
+	writeJSON(w, http.StatusOK, nil)
 }
 
 // handleResetUserSubscriptionToken 处理 POST /api/user/reset-subscription-token：

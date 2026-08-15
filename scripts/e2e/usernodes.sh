@@ -87,6 +87,16 @@ wait_clients() {
 
 sub_count() { curl -s "http://$ADDR/sub/$1?format=clash" | grep -c 'server: ' || true; }
 
+# wait_sub_count <token> <count>：订阅重发布已转异步（set-nodes 入队 + regenerator 去抖），
+# 轮询等待订阅条目数达到预期。
+wait_sub_count() {
+    for _ in $(seq 1 20); do
+        [[ "$(sub_count "$1")" == "$2" ]] && return 0
+        sleep 0.5
+    done
+    echo "FAIL: 订阅 $1 条目数未达 $2（当前 $(sub_count "$1")）"; return 1
+}
+
 echo ">> start backend"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" >"$WORK/backend.log" 2>&1 &
 BPID=$!
@@ -134,18 +144,18 @@ echo ">> u1 分配节点 $N1"
 rpc_data POST /api/user/set-nodes "{\"user_id\":$UID1,\"node_ids\":[$N1]}" >/dev/null
 wait_clients "$N1" "$UUID1" present && echo "OK: 增量 add_user 仅落到分配的节点"
 [[ -z "$(clients_of "$N2")" ]] || { echo "FAIL: 未分配节点 $N2 不应有 u1"; exit 1; }
-[[ "$(sub_count "$TOK1")" == "1" ]] && echo "OK: u1 订阅含 1 个节点" || { echo "FAIL: u1 订阅数异常"; exit 1; }
+wait_sub_count "$TOK1" 1 && echo "OK: u1 订阅含 1 个节点" || exit 1
 
 echo ">> u2 分配节点 $N1,$N2"
 rpc_data POST /api/user/set-nodes "{\"user_id\":$UID2,\"node_ids\":[$N1,$N2]}" >/dev/null
 wait_clients "$N1" "$UUID2" present
 wait_clients "$N2" "$UUID2" present
-[[ "$(sub_count "$TOK2")" == "2" ]] && echo "OK: u2 订阅含 2 个节点" || { echo "FAIL: u2 订阅数异常"; exit 1; }
+wait_sub_count "$TOK2" 2 && echo "OK: u2 订阅含 2 个节点" || exit 1
 
 echo ">> u1 取消全部分配"
 rpc_data POST /api/user/set-nodes "{\"user_id\":$UID1,\"node_ids\":[]}" >/dev/null
 wait_clients "$N1" "$UUID1" absent && echo "OK: 取消分配后 remove_user 生效"
-[[ "$(sub_count "$TOK1")" == "0" ]] && echo "OK: u1 订阅回到空" || { echo "FAIL: u1 订阅应为空"; exit 1; }
+wait_sub_count "$TOK1" 0 && echo "OK: u1 订阅回到空" || exit 1
 [[ "$(sub_count "$TOK2")" == "2" ]] || { echo "FAIL: u2 不应受影响"; exit 1; }
 
 echo ">> 存量库迁移（§16 默认全关：建表即可，不做隐含全对全补全）"

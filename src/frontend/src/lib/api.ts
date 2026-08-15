@@ -48,7 +48,6 @@ import type {
   SubscriptionPreview,
   SubscriptionPreviewFormat,
   SubscriptionRuleCategory,
-  SubscriptionSnapshotStatus,
   SubscriptionTemplate,
   TrafficPlanInput,
   CustomExchangeRate,
@@ -260,16 +259,16 @@ export const api = {
     chainIds?: number[],
     sub?: { traffic_limit?: number; traffic_reset_day?: number; plan_name?: string; app_url?: string; routing?: SubscriptionRoutingProfile; external_subscriptions?: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }> },
   ) =>
-    requester.post<SubUser>('/api/user/create', {
+    requester.postObserved<SubUser>('/api/user/create', {
       name,
       ...(expiresAt ? { expires_at: expiresAt } : {}),
       ...(chainIds && chainIds.length ? { chain_ids: chainIds } : {}),
       ...(sub ?? {}),
     }),
   setUserDisabled: (userId: number, disabled: boolean) =>
-    requester.post<SubUser>('/api/user/update', { user_id: userId, disabled }),
+    requester.postObserved<SubUser>('/api/user/update', { user_id: userId, disabled }),
   setUserAssignments: (userId: number, nodeIds: number[], chainIds: number[]) =>
-    requester.post<{ node_ids: number[]; chain_ids: number[] }>('/api/user/set-nodes', {
+    requester.postObserved<{ node_ids: number[]; chain_ids: number[] }>('/api/user/set-nodes', {
       user_id: userId,
       node_ids: nodeIds,
       chain_ids: chainIds,
@@ -278,7 +277,7 @@ export const api = {
     userId: number,
     items: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }>,
   ) =>
-    requester.post<{ items: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }> }>(
+    requester.postObserved<{ items: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }> }>(
       '/api/user/set-external-subscriptions',
       { user_id: userId, items },
     ),
@@ -294,9 +293,9 @@ export const api = {
     app_url: string
     routing: SubscriptionRoutingProfile
     expires_at: string | null
-  }) => requester.post<void>('/api/user/sub-settings', body),
+  }) => requester.postObserved<void>('/api/user/sub-settings', body),
   regenerateUserSubscription: (userId: number) =>
-    requester.post<SubscriptionSnapshotStatus>('/api/user/regenerate-subscription', { user_id: userId }),
+    requester.postObserved<void>('/api/user/regenerate-subscription', { user_id: userId }),
   resetUserSubscriptionToken: (userId: number) =>
     requester.post<{ sub_token: string; sub_url: string; sub_links_url: string }>(
       '/api/user/reset-subscription-token', { user_id: userId }),
@@ -321,12 +320,12 @@ export const api = {
   refreshSubscriptionTemplates: (id = '') =>
     requester.postObserved<SubscriptionTemplate[]>('/api/subscription/template/refresh', { id }),
   assignSubscriptionTemplate: (userIds: number[], target: { template_id?: string; suggested_categories?: string[] }, forced: boolean) =>
-    requester.post<{ user_ids: number[]; template_id?: string; suggested_categories?: string[]; forced: boolean }>(
+    requester.postObserved<{ user_ids: number[]; template_id?: string; suggested_categories?: string[]; forced: boolean }>(
       '/api/subscription/template/assign',
       { user_ids: userIds, ...target, forced },
     ),
   unassignSubscriptionTemplate: (userIds: number[], target: { template_id?: string; suggested_categories?: string[] }) =>
-    requester.post<{ user_ids: number[]; template_id?: string; suggested_categories?: string[] }>(
+    requester.postObserved<{ user_ids: number[]; template_id?: string; suggested_categories?: string[] }>(
       '/api/subscription/template/unassign',
       { user_ids: userIds, ...target },
     ),

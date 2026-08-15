@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { api, errorMessage } from '@/lib/api'
+import { useOperationProgress } from '@/lib/operation-progress-context'
 import type { SubUser, SubscriptionRuleCategory, SubscriptionTemplate } from '@/lib/types'
 
 const SLOTS = [
@@ -54,6 +55,7 @@ interface TemplateAssignmentTabProps {
 }
 
 export function TemplateAssignmentTab({ users, templates, categories, onChanged }: TemplateAssignmentTabProps) {
+  const { showOperation } = useOperationProgress()
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [dialogOpen, setDialogOpen] = useState(false)
   const [ruleMode, setRuleMode] = useState<'suggested' | 'template'>('suggested')
@@ -152,7 +154,8 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
       const target = ruleMode === 'template'
         ? { template_id: templateId }
         : { suggested_categories: selectedCategories }
-      await api.assignSubscriptionTemplate([...selected], target, forced)
+      const { observeId } = await api.assignSubscriptionTemplate([...selected], target, forced)
+      if (observeId) showOperation({ observeId })
       setDialogOpen(false)
       setSelected(new Set())
       onChanged()
@@ -166,7 +169,8 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
   const unassign = async (user: SubUser, target: { template_id?: string; suggested_categories?: string[] }) => {
     setError('')
     try {
-      await api.unassignSubscriptionTemplate([user.id], target)
+      const { observeId } = await api.unassignSubscriptionTemplate([user.id], target)
+      if (observeId) showOperation({ observeId })
       onChanged()
     } catch (err) {
       setError(errorMessage(err))

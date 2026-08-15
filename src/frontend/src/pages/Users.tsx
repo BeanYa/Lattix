@@ -49,6 +49,7 @@ import {
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
+import { useOperationProgress } from '@/lib/operation-progress-context'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { buildLinkOptions } from '@/lib/links'
 import { defaultSubscriptionRouting } from '@/lib/subscription-routing'
@@ -151,6 +152,7 @@ function TrafficLimitInput({
 export default function Users() {
   const { timezone } = useTimezone()
   const { confirm } = useAppDialog()
+  const { showOperation } = useOperationProgress()
   const [users, setUsers] = useState<SubUser[]>([])
   const [chains, setChains] = useState<Chain[]>([])
   const [ruleCategories, setRuleCategories] = useState<SubscriptionRuleCategory[]>([])
@@ -296,7 +298,7 @@ export default function Users() {
       const resetDay = parseTrafficResetDay(createResetDay)
       const planName = createPlanName.trim()
       const appURL = createAppURL.trim()
-      const res = await api.createUser(
+      const { data: res, observeId } = await api.createUser(
         name.trim(),
         localDateToRFC3339EndOfDay(expiresAt),
         createLinkSel,
@@ -309,6 +311,7 @@ export default function Users() {
           external_subscriptions: Object.entries(createExt).map(([id, mode]) => ({ subscription_id: Number(id), mode })),
         },
       )
+      if (observeId) showOperation({ observeId })
       setCreated(res)
       load()
     } catch (err) {
@@ -341,7 +344,8 @@ export default function Users() {
   const onToggleDisabled = async (user: SubUser) => {
     setToggling(user.id)
     try {
-      await api.setUserDisabled(user.id, !user.disabled)
+      const { observeId } = await api.setUserDisabled(user.id, !user.disabled)
+      if (observeId) showOperation({ observeId })
       load()
     } catch (err) {
       setError(errorMessage(err))
@@ -377,7 +381,7 @@ export default function Users() {
     try {
       const trafficLimit = parseTrafficLimit(subTrafficLimit, subTrafficUnit)
       const resetDay = parseTrafficResetDay(subResetDay)
-      await api.updateUserSubSettings({
+      const { observeId } = await api.updateUserSubSettings({
         user_id: subTarget.id,
         traffic_limit: trafficLimit,
         traffic_reset_day: resetDay,
@@ -388,6 +392,7 @@ export default function Users() {
         routing: subRouting,
         expires_at: subExpiryTouched ? localDateToRFC3339EndOfDay(subExpiresAt) : subTarget.expires_at,
       })
+      if (observeId) showOperation({ observeId })
       setSubTarget(null)
       load()
     } catch (err) {
@@ -401,7 +406,8 @@ export default function Users() {
     setRegenerating(user.id)
     setError('')
     try {
-      await api.regenerateUserSubscription(user.id)
+      const { observeId } = await api.regenerateUserSubscription(user.id)
+      if (observeId) showOperation({ observeId })
       load()
     } catch (err) {
       setError(errorMessage(err))
