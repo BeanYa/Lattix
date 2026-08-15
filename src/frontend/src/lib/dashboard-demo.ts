@@ -58,6 +58,7 @@ function createDemoServer(input: DemoServerInput): Server {
     address: input.address,
     learned_addr: input.address,
     nic_addresses: [input.address],
+    addresses: [input.address],
     config_drift: false,
     machine_type: 'direct',
     allowed_ports: [{ pub_start: 10000, pub_end: 29999 }],

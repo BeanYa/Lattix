@@ -38,6 +38,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { api, errorMessage } from '@/lib/api'
+import { addressFamily } from '@/lib/address'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { useOperationProgress } from '@/lib/operation-progress-context'
@@ -48,6 +49,7 @@ import { useTimezone } from '@/lib/timezone'
 import { cn } from '@/lib/utils'
 import type {
   Chain,
+  ChainHopInput,
   ChainHopRole,
   ChainStatus,
   ChainTrafficBucket,
@@ -198,6 +200,91 @@ function parseConfigRecord(value: unknown): Record<string, unknown> {
   const record = asRecord(parsed)
   if (!record) throw new Error('config is not an object')
   return record
+}
+
+// 逐跳公网地址选择（§9）：候选 = 服务器 addresses（空则回退默认/学习地址）；空值 = 跟随服务器默认地址。
+// 服务器同时有 IPv4/IPv6 字面量条目时提供族切换（域名条目两组均显示），切换后自动选中该族第一个地址。
+function HopAddressField({
+  server,
+  value,
+  onChange,
+}: {
+  server: Server | undefined
+  value: string
+  onChange: (addr: string) => void
+}) {
+  const [family, setFamily] = useState<'ipv4' | 'ipv6'>(() =>
+    value && addressFamily(value) === 'ipv6' ? 'ipv6' : 'ipv4',
+  )
+  if (!server) {
+    return null
+  }
+  const candidates = server.addresses.length > 0
+    ? server.addresses
+    : [...new Set([server.address, server.learned_addr].filter(Boolean))]
+  if (candidates.length === 0) {
+    return null
+  }
+  const hasV4 = candidates.some((a) => addressFamily(a) === 'ipv4')
+  const hasV6 = candidates.some((a) => addressFamily(a) === 'ipv6')
+  const showFamilySwitch = hasV4 && hasV6
+  const invalid = value !== '' && !candidates.includes(value)
+  const visible = candidates.filter((a) => {
+    const f = addressFamily(a)
+    return !showFamilySwitch || f === 'domain' || f === family
+  })
+  const items = [
+    { value: '', label: '跟随服务器默认地址' },
+    ...visible.map((a) => ({ value: a, label: a })),
+    ...(invalid ? [{ value, label: `${value}（已失效，将回退默认地址）` }] : []),
+  ]
+  const switchFamily = (next: 'ipv4' | 'ipv6') => {
+    setFamily(next)
+    const first = candidates.find((a) => addressFamily(a) === next)
+    if (first) {
+      onChange(first)
+    }
+  }
+  return (
+    <div className="space-y-1.5">
+      {showFamilySwitch ? (
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+          <span>公网地址</span>
+          {(['ipv4', 'ipv6'] as const).map((f) => (
+            <label key={f} className="flex items-center gap-1">
+              <input
+                type="radio"
+                checked={family === f}
+                onChange={() => switchFamily(f)}
+              />
+              {f === 'ipv4' ? 'IPv4' : 'IPv6'}
+            </label>
+          ))}
+        </div>
+      ) : (
+        <span className="text-xs text-muted-foreground">公网地址</span>
+      )}
+      <Select
+        value={value}
+        onValueChange={(v) => onChange(String(v ?? ''))}
+        items={items}
+      >
+        <SelectTrigger className="w-full">
+          <SelectValue placeholder="跟随服务器默认地址" />
+        </SelectTrigger>
+        <SelectContent>
+          {items.map((item) => (
+            <SelectItem key={item.value === '' ? '__default__' : item.value} value={item.value}>
+              {item.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {invalid ? (
+        <p className="text-xs text-destructive">所选地址已不在该服务器地址列表中，保存后将回退默认地址</p>
+      ) : null}
+    </div>
+  )
 }
 
 function TrafficHistoryChart({
@@ -422,6 +509,9 @@ export default function Chains() {
   const [entryId, setEntryId] = useState('')
   const [middleIds, setMiddleIds] = useState<string[]>([])
   const [exitId, setExitId] = useState('')
+  const [entryAddr, setEntryAddr] = useState('')
+  const [middleAddrs, setMiddleAddrs] = useState<string[]>([])
+  const [exitAddr, setExitAddr] = useState('')
   const [entryPort, setEntryPort] = useState('')
   const [protocol, setProtocol] = useState('vless')
   const [port, setPort] = useState('')
@@ -526,6 +616,9 @@ export default function Chains() {
     setEntryId('')
     setMiddleIds([])
     setExitId('')
+    setEntryAddr('')
+    setMiddleAddrs([])
+    setExitAddr('')
     setEntryPort('')
     setProtocol('vless')
     setPort('')
@@ -592,6 +685,10 @@ export default function Chains() {
     setEntryId(String(chain.hops[0]?.server_id ?? ''))
     setMiddleIds(chain.hops.slice(1, -1).map((hop) => String(hop.server_id)))
     setExitId(chain.hops.length > 1 ? String(chain.hops.at(-1)?.server_id ?? '') : '')
+    // 逐跳地址回填：空串 = 跟随服务器默认地址；已失效值由选择器内标注。
+    setEntryAddr(chain.hops[0]?.address ?? '')
+    setMiddleAddrs(chain.hops.slice(1, -1).map((hop) => hop.address ?? ''))
+    setExitAddr(chain.hops.length > 1 ? (chain.hops.at(-1)?.address ?? '') : '')
 		setEntryPort(chain.entry_port ? String(chain.entry_port) : '')
     setTrafficMultiplier(chain.traffic_multiplier || '1.000')
     setProtocol(String(virtual.protocol ?? service?.protocol ?? 'vless'))
@@ -619,6 +716,8 @@ export default function Chains() {
     setChainType(value)
     setMiddleIds([])
     setExitId('')
+    setMiddleAddrs([])
+    setExitAddr('')
     if (value === 'relay' && protocol === 'dokodemo-door') {
       setProtocol('vless')
     }
@@ -628,6 +727,13 @@ export default function Chains() {
     const next = middleIds.slice()
     next[i] = value
     setMiddleIds(next)
+    setMiddleAddr(i, '')
+  }
+
+  const setMiddleAddr = (i: number, value: string) => {
+    const next = middleAddrs.slice()
+    next[i] = value
+    setMiddleAddrs(next)
   }
 
   const onSubmit = async (e: FormEvent) => {
@@ -712,12 +818,16 @@ export default function Chains() {
       nodeBody.target_port = Number(targetPort)
     }
     setCreating(true)
+    // 逐跳地址：空串 = 跟随服务器默认地址，提交时不携带 address 字段。
+    const hopAddrList = chainType === 'direct' ? [entryAddr] : [entryAddr, ...middleAddrs, exitAddr]
+    const mkHop = (id: string, addr: string | undefined): ChainHopInput =>
+      addr ? { server_id: Number(id), address: addr } : { server_id: Number(id) }
     try {
 		if (editingChainId !== null) {
 			const body: EditChainRequest = {
 				chain_id: editingChainId,
 				name: resolvedName,
-				hops: hopIds.map((id) => ({ server_id: Number(id) })),
+				hops: hopIds.map((id, i) => mkHop(id, hopAddrList[i])),
 				node: nodeBody,
 				traffic_multiplier: trafficMultiplier,
 			}
@@ -727,10 +837,10 @@ export default function Chains() {
 		} else {
 			const body: CreateChainRequest = {
 				name: resolvedName,
-				hops: hopIds.map((id) => ({ server_id: Number(id) })),
-				entry: { server_id: Number(entryId) },
-				middle: middleIds.map((id) => ({ server_id: Number(id) })),
-				exit: { server_id: Number(chainType === 'direct' ? entryId : exitId) },
+				hops: hopIds.map((id, i) => mkHop(id, hopAddrList[i])),
+				entry: mkHop(entryId, entryAddr),
+				middle: middleIds.map((id, i) => mkHop(id, middleAddrs[i])),
+				exit: mkHop(chainType === 'direct' ? entryId : exitId, chainType === 'direct' ? entryAddr : exitAddr),
 				node: nodeBody,
 				traffic_multiplier: trafficMultiplier,
 			}
@@ -1206,7 +1316,7 @@ export default function Chains() {
               <Label>{chainType === 'direct' ? '直连服务器' : '入口服务器'}</Label>
               <Select
                 value={entryId}
-                onValueChange={(v) => setEntryId(String(v))}
+                onValueChange={(v) => { setEntryId(String(v)); setEntryAddr('') }}
                 items={serverSelectItems}
               >
                 <SelectTrigger className="w-full">
@@ -1220,37 +1330,54 @@ export default function Chains() {
                   ))}
                 </SelectContent>
               </Select>
+              <HopAddressField
+                key={`entry-${entryId}`}
+                server={servers.find((s) => String(s.id) === entryId)}
+                value={entryAddr}
+                onChange={setEntryAddr}
+              />
             </div>
             {chainType === 'relay' ? (
               <>
             <div className="space-y-2">
               <Label>中转服务器（0-2 个）</Label>
               {middleIds.map((id, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <Select
-                    value={id}
-                    onValueChange={(v) => setMiddle(i, String(v))}
-                    items={serverSelectItems}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder={`中转 ${i + 1}`} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {servers.map((s) => (
-                        <SelectItem key={s.id} value={String(s.id)}>
-                          {serverLabel(s)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setMiddleIds(middleIds.filter((_, j) => j !== i))}
-                  >
-                    <XIcon />
-                  </Button>
+                <div key={i} className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <Select
+                      value={id}
+                      onValueChange={(v) => setMiddle(i, String(v))}
+                      items={serverSelectItems}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder={`中转 ${i + 1}`} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {servers.map((s) => (
+                          <SelectItem key={s.id} value={String(s.id)}>
+                            {serverLabel(s)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setMiddleIds(middleIds.filter((_, j) => j !== i))
+                        setMiddleAddrs(middleAddrs.filter((_, j) => j !== i))
+                      }}
+                    >
+                      <XIcon />
+                    </Button>
+                  </div>
+                  <HopAddressField
+                    key={`middle-${i}-${id}`}
+                    server={servers.find((s) => String(s.id) === id)}
+                    value={middleAddrs[i] ?? ''}
+                    onChange={(addr) => setMiddleAddr(i, addr)}
+                  />
                 </div>
               ))}
               {middleIds.length < 2 && (
@@ -1258,7 +1385,10 @@ export default function Chains() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={() => setMiddleIds([...middleIds, ''])}
+                  onClick={() => {
+                    setMiddleIds([...middleIds, ''])
+                    setMiddleAddrs([...middleAddrs, ''])
+                  }}
                 >
                   <PlusIcon />
                   添加中转
@@ -1269,7 +1399,7 @@ export default function Chains() {
               <Label>出口服务器</Label>
               <Select
                 value={exitId}
-                onValueChange={(v) => setExitId(String(v))}
+                onValueChange={(v) => { setExitId(String(v)); setExitAddr('') }}
                 items={serverSelectItems}
               >
                 <SelectTrigger className="w-full">
@@ -1283,6 +1413,12 @@ export default function Chains() {
                   ))}
                 </SelectContent>
               </Select>
+              <HopAddressField
+                key={`exit-${exitId}`}
+                server={servers.find((s) => String(s.id) === exitId)}
+                value={exitAddr}
+                onChange={setExitAddr}
+              />
             </div>
               </>
             ) : null}

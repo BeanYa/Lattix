@@ -1797,6 +1797,59 @@ export interface components {
              */
             next_renewal_on: string;
         };
+        /** @description Panel-editable server fields. Only the declared fields are validated here; extra fields follow existing RPC semantics. */
+        ServerUpdateRequest: {
+            server_id: number;
+            alias: string;
+            /** @description Default public address. Must be a member of addresses when addresses is provided; required non-empty for NAT machines. */
+            address: string;
+            /** @description Optional full replacement of the public address list. Omitted keeps legacy semantics (only address is maintained). When provided, address must be a member. */
+            addresses?: string[];
+            tags: string[];
+            country_code: string;
+            location: string;
+            billing?: components["schemas"]["BillingInput"];
+            traffic_plan?: components["schemas"]["TrafficPlanInput"];
+            custom_settings?: {
+                [key: string]: unknown;
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description Reference to one chain hop server. Response-side chain hops carry the same address field (empty string means following the server default address). */
+        ChainHopRef: {
+            server_id: number;
+            /** @description Optional selected public address for this hop. Empty or omitted follows the server default address; a non-empty value must be one of the server's addresses ∪ {address, learned_addr}, otherwise the request is rejected with 400. */
+            address?: string;
+        };
+        /** @description Ordered hop topology (entry / 0-2 middle / exit) plus the exit-side service node form. Only hop references are validated here; the node form follows the existing RPC semantics. */
+        ChainCreateRequest: {
+            name: string;
+            hops?: components["schemas"]["ChainHopRef"][];
+            entry?: components["schemas"]["ChainHopRef"];
+            middle?: components["schemas"]["ChainHopRef"][];
+            exit?: components["schemas"]["ChainHopRef"];
+            entry_port?: number;
+            node?: {
+                [key: string]: unknown;
+            };
+            traffic_multiplier?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description Same hop semantics as ChainCreateRequest; creates a desired revision for the target chain. */
+        ChainEditRequest: {
+            chain_id: number;
+            name: string;
+            hops: components["schemas"]["ChainHopRef"][];
+            entry_port?: number;
+            node?: {
+                [key: string]: unknown;
+            };
+            traffic_multiplier?: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** @description Source currency is unique. On create, target_currency is overwritten with the panel reporting currency. At least one amount must equal 1. A rate is applied only while enabled and its target matches the current reporting currency. */
         CustomExchangeRate: {
             /** @description Zero creates a new rate; a positive ID updates it. */
@@ -2129,7 +2182,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: components["requestBodies"]["RPCBody"];
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ServerUpdateRequest"];
+            };
+        };
         responses: {
             200: components["responses"]["RPCResponse"];
             default: components["responses"]["ProtocolErrorResponse"];
@@ -2564,7 +2621,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: components["requestBodies"]["RPCBody"];
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChainCreateRequest"];
+            };
+        };
         responses: {
             200: components["responses"]["RPCResponse"];
             default: components["responses"]["ProtocolErrorResponse"];
@@ -2582,7 +2643,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: components["requestBodies"]["RPCBody"];
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChainEditRequest"];
+            };
+        };
         responses: {
             200: components["responses"]["RPCResponse"];
             default: components["responses"]["ProtocolErrorResponse"];

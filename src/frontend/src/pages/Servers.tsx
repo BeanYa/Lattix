@@ -7,6 +7,7 @@ import { Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { ServerMonitorGrid } from '@/components/ServerMonitor'
 import { TagInput } from '@/components/TagInput'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
   DialogContent,
@@ -26,6 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { api, errorMessage } from '@/lib/api'
+import { addressFamily } from '@/lib/address'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
 import { useOperationProgress } from '@/lib/operation-progress-context'
@@ -228,9 +230,9 @@ export default function Servers() {
   const [deleting, setDeleting] = useState(false)
   const [editTarget, setEditTarget] = useState<Server | null>(null)
   const [editAlias, setEditAlias] = useState('')
-  const [editAddress, setEditAddress] = useState('')
-  const [editAddrMode, setEditAddrMode] = useState<'builtin' | 'custom'>('custom')
-  const [editAddrChoice, setEditAddrChoice] = useState('')
+  const [editAddresses, setEditAddresses] = useState<string[]>([])
+  const [editDefaultAddr, setEditDefaultAddr] = useState('')
+  const [editAddrInput, setEditAddrInput] = useState('')
   const [editPortRows, setEditPortRows] = useState<string[]>([''])
   const [editTags, setEditTags] = useState<string[]>([])
   const [editCountryCode, setEditCountryCode] = useState('')
@@ -549,15 +551,13 @@ export default function Servers() {
   const onOpenEdit = (s: Server) => {
     setEditTarget(s)
     setEditAlias(s.alias)
-    setEditAddress(s.address)
-    const candidates = addrCandidates(s)
-    if (candidates.includes(s.address)) {
-      setEditAddrMode('builtin')
-      setEditAddrChoice(s.address)
-    } else {
-      setEditAddrMode('custom')
-      setEditAddrChoice(candidates[0] ?? '')
-    }
+    // 地址列表回填：优先 server.addresses，空则回退默认/学习地址（去重保序）。
+    const initialAddrs = s.addresses.length > 0
+      ? s.addresses
+      : [...new Set([s.address, s.learned_addr].filter(Boolean))]
+    setEditAddresses(initialAddrs)
+    setEditDefaultAddr(s.address)
+    setEditAddrInput('')
     setEditPortRows(
       s.allowed_ports.length > 0 ? s.allowed_ports.map(formatPortRange) : [''],
     )
@@ -586,11 +586,16 @@ export default function Servers() {
       setEditError('名称不能为空')
       return
     }
-    // 内置地址 = 候选下拉选中值；自定义 = 文本框输入。
-    const finalAddress = editAddrMode === 'builtin' ? editAddrChoice : editAddress.trim()
+    // 默认地址 = 列表中选中的条目；列表非空时提交 addresses 整体替换。
+    const finalAddress = editDefaultAddr
     const isNat = editTarget.machine_type === 'nat'
     if (isNat && !finalAddress) {
       setEditError('NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）')
+      return
+    }
+    const nextAddresses = editAddresses.length > 0 ? editAddresses : undefined
+    if (nextAddresses && !nextAddresses.includes(finalAddress)) {
+      setEditError('默认地址必须是地址列表中的一项')
       return
     }
     let ranges: PortRange[] = []
@@ -621,6 +626,7 @@ export default function Servers() {
           billingPayload(editBilling),
           trafficPayload(editTraffic),
           editXrayOverride ? { xray_version: editXrayOverride } : {},
+          nextAddresses,
         )
       } else {
         await api.updateServerAddress(
@@ -633,6 +639,7 @@ export default function Servers() {
           billingPayload(editBilling),
           trafficPayload(editTraffic),
           editXrayOverride ? { xray_version: editXrayOverride } : {},
+          nextAddresses,
         )
       }
       setEditTarget(null)
@@ -758,7 +765,23 @@ export default function Servers() {
     }
   }
 
-  const editCandidates = editTarget ? addrCandidates(editTarget) : []
+  // 「添加地址」下拉候选：agent 上报地址中尚未列入清单的项。
+  const editAddCandidates = editTarget
+    ? addrCandidates(editTarget).filter((c) => !editAddresses.includes(c))
+    : []
+
+  // 添加地址：去重；列表为空时新条目自动成为默认地址。
+  const addEditAddress = (raw: string) => {
+    const addr = raw.trim()
+    if (!addr || editAddresses.includes(addr)) {
+      return
+    }
+    setEditAddresses([...editAddresses, addr])
+    if (editAddresses.length === 0 || !editDefaultAddr) {
+      setEditDefaultAddr(addr)
+    }
+    setEditAddrInput('')
+  }
 
   const saveProvider = async (event: FormEvent) => {
     event.preventDefault()
@@ -1047,55 +1070,90 @@ export default function Servers() {
             </div>
             <div className="space-y-2">
               <Label>公网地址{editTarget?.machine_type === 'nat' ? '（必填）' : ''}</Label>
-              <Select
-                value={editAddrMode}
-                onValueChange={(v) => v && setEditAddrMode(v as 'builtin' | 'custom')}
-                items={[
-                  { value: 'builtin', label: '内置地址（agent 上报）' },
-                  { value: 'custom', label: '自定义' },
-                ]}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="builtin">内置地址（agent 上报）</SelectItem>
-                  <SelectItem value="custom">自定义</SelectItem>
-                </SelectContent>
-              </Select>
-              {editAddrMode === 'builtin' ? (
-                editCandidates.length > 0 ? (
-                  <Select
-                    value={editAddrChoice}
-                    onValueChange={(v) => v && setEditAddrChoice(v)}
-                    items={editCandidates.map((c) => ({ value: c, label: c }))}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {editCandidates.map((c) => (
-                        <SelectItem key={c} value={c}>
-                          {c}
-                          {c === editTarget?.learned_addr ? '（拨入学习）' : ''}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    暂无内置地址候选：agent 尚未上报网卡地址（上线后自动收集），请改用自定义。
-                  </p>
-                )
+              {editAddresses.length > 0 ? (
+                <div className="space-y-1.5">
+                  {editAddresses.map((addr) => {
+                    const family = addressFamily(addr)
+                    return (
+                      <div key={addr} className="flex items-center gap-2">
+                        <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                          <input
+                            type="radio"
+                            name="edit-default-address"
+                            checked={editDefaultAddr === addr}
+                            onChange={() => setEditDefaultAddr(addr)}
+                            title="设为默认地址"
+                          />
+                          <span className="truncate font-mono text-xs">{addr}</span>
+                        </label>
+                        <Badge variant="outline">{family === 'ipv4' ? 'IPv4' : family === 'ipv6' ? 'IPv6' : '域名'}</Badge>
+                        {editTarget && addrCandidates(editTarget).includes(addr) ? (
+                          <span className="shrink-0 text-xs text-muted-foreground">agent 上报</span>
+                        ) : null}
+                        {addr === editDefaultAddr ? (
+                          <span className="shrink-0 text-xs text-muted-foreground">默认</span>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            title="删除该地址；引用它的链路跳将回退到默认地址"
+                            onClick={() => setEditAddresses(editAddresses.filter((a) => a !== addr))}
+                          >
+                            <XIcon />
+                          </Button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               ) : (
-                <Input
-                  id="editAddress"
-                  value={editAddress}
-                  onChange={(e) => setEditAddress(e.target.value)}
-                  placeholder="例如：1.2.3.4 或 hk-01.example.com"
-                  autoFocus
-                />
+                <p className="text-xs text-muted-foreground">
+                  暂无公网地址，请从下方候选或手动输入添加。
+                </p>
               )}
+              {editAddCandidates.length > 0 ? (
+                <Select
+                  value=""
+                  onValueChange={(v) => {
+                    if (v) addEditAddress(v)
+                  }}
+                  items={editAddCandidates.map((c) => ({ value: c, label: c }))}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="从 agent 上报地址添加…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {editAddCandidates.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {c}
+                        {c === editTarget?.learned_addr ? '（拨入学习）' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
+              <div className="flex items-center gap-2">
+                <Input
+                  id="editAddressInput"
+                  value={editAddrInput}
+                  onChange={(e) => setEditAddrInput(e.target.value)}
+                  placeholder="手动输入地址，例如：1.2.3.4 或 hk-01.example.com"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!editAddrInput.trim()}
+                  onClick={() => addEditAddress(editAddrInput)}
+                >
+                  <PlusIcon />
+                  添加
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                单选按钮选择默认地址；链路各跳未指定地址时使用默认地址。
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="editXrayOverride">xray 版本（覆盖面板默认）</Label>
@@ -1133,7 +1191,7 @@ export default function Servers() {
             <DialogFooter>
               <Button
                 type="submit"
-                disabled={editSaving || !editAlias.trim() || (editAddrMode === 'builtin' && !editAddrChoice)}
+                disabled={editSaving || !editAlias.trim() || (editTarget?.machine_type === 'nat' && !editDefaultAddr)}
               >
                 {editSaving ? '保存中…' : '保存'}
               </Button>

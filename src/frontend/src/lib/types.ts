@@ -207,6 +207,7 @@ export interface Server {
   address: string
   learned_addr: string
   nic_addresses: string[]
+  addresses: string[] // 公网地址列表（§9）：首项通常是访问流学习地址；address 为默认地址
   config_drift: boolean
   machine_type: MachineType
   allowed_ports: PortRange[]
@@ -457,6 +458,7 @@ export interface ChainHop {
   server_id: number
   server_alias: string
   role: ChainHopRole
+  address: string // 该跳所选公网地址；空串 = 跟随服务器默认地址
   node_id: number
   status: NodeStatus
   error: string
@@ -515,12 +517,18 @@ export interface Chain {
 
 // 链路构图提交（§21）：依次入口 / 中间跳（0-2）/ 出口，出口携带业务节点协议表单，
 // 入口端口可空 = 自动。node.server_id 由后端按 exit.server_id 覆盖。
+// hop 引用可携带 address：空/省略 = 跟随服务器默认地址。
+export interface ChainHopInput {
+  server_id: number
+  address?: string
+}
+
 export interface CreateChainRequest {
 	name: string
-	hops?: { server_id: number }[]
-  entry: { server_id: number }
-  middle: { server_id: number }[]
-  exit: { server_id: number }
+	hops?: ChainHopInput[]
+  entry: ChainHopInput
+  middle: ChainHopInput[]
+  exit: ChainHopInput
   entry_port?: number
 	node: Omit<CreateNodeRequest, 'server_id' | 'name'>
 	traffic_multiplier?: string
@@ -529,7 +537,7 @@ export interface CreateChainRequest {
 export interface EditChainRequest {
   chain_id: number
   name: string
-  hops: { server_id: number }[]
+  hops: ChainHopInput[]
   entry_port?: number
   node: Omit<CreateNodeRequest, 'server_id' | 'name'>
   traffic_multiplier: string

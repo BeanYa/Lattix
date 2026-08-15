@@ -111,7 +111,11 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
-      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ServerUpdateRequest'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/confirm-renewal:
     post:
@@ -328,7 +332,11 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
-      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChainCreateRequest'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/edit:
     post:
@@ -337,7 +345,11 @@ paths:
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
-      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChainEditRequest'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/force-publish:
     post:
@@ -1081,6 +1093,77 @@ components:
       properties:
         server_id: {type: integer, minimum: 1}
         next_renewal_on: {type: string, format: date, description: Must be later than today in the panel timezone.}
+    ServerUpdateRequest:
+      type: object
+      description: Panel-editable server fields. Only the declared fields are validated here; extra fields follow existing RPC semantics.
+      additionalProperties: true
+      required: [server_id, alias, address, tags, country_code, location]
+      properties:
+        server_id: {type: integer, minimum: 1}
+        alias: {type: string}
+        address:
+          type: string
+          description: Default public address. Must be a member of addresses when addresses is provided; required non-empty for NAT machines.
+        addresses:
+          type: array
+          items: {type: string}
+          description: Optional full replacement of the public address list. Omitted keeps legacy semantics (only address is maintained). When provided, address must be a member.
+        tags:
+          type: array
+          items: {type: string}
+        country_code: {type: string}
+        location: {type: string}
+        billing: {$ref: '#/components/schemas/BillingInput'}
+        traffic_plan: {$ref: '#/components/schemas/TrafficPlanInput'}
+        custom_settings:
+          type: object
+          additionalProperties: true
+    ChainHopRef:
+      type: object
+      description: Reference to one chain hop server. Response-side chain hops carry the same address field (empty string means following the server default address).
+      additionalProperties: false
+      required: [server_id]
+      properties:
+        server_id: {type: integer, minimum: 1}
+        address:
+          type: string
+          description: Optional selected public address for this hop. Empty or omitted follows the server default address; a non-empty value must be one of the server's addresses ∪ {address, learned_addr}, otherwise the request is rejected with 400.
+    ChainCreateRequest:
+      type: object
+      description: Ordered hop topology (entry / 0-2 middle / exit) plus the exit-side service node form. Only hop references are validated here; the node form follows the existing RPC semantics.
+      additionalProperties: true
+      required: [name]
+      properties:
+        name: {type: string}
+        hops:
+          type: array
+          items: {$ref: '#/components/schemas/ChainHopRef'}
+        entry: {$ref: '#/components/schemas/ChainHopRef'}
+        middle:
+          type: array
+          items: {$ref: '#/components/schemas/ChainHopRef'}
+        exit: {$ref: '#/components/schemas/ChainHopRef'}
+        entry_port: {type: integer, minimum: 1, maximum: 65535}
+        node:
+          type: object
+          additionalProperties: true
+        traffic_multiplier: {type: string}
+    ChainEditRequest:
+      type: object
+      description: Same hop semantics as ChainCreateRequest; creates a desired revision for the target chain.
+      additionalProperties: true
+      required: [chain_id, name, hops]
+      properties:
+        chain_id: {type: integer, minimum: 1}
+        name: {type: string}
+        hops:
+          type: array
+          items: {$ref: '#/components/schemas/ChainHopRef'}
+        entry_port: {type: integer, minimum: 1, maximum: 65535}
+        node:
+          type: object
+          additionalProperties: true
+        traffic_multiplier: {type: string}
     CustomExchangeRate:
       type: object
       description: Source currency is unique. On create, target_currency is overwritten with the panel reporting currency. At least one amount must equal 1. A rate is applied only while enabled and its target matches the current reporting currency.

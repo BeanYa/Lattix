@@ -10,6 +10,7 @@ function hop(id: number, role: ChainHop['role'], nodeId = 0): ChainHop {
     server_id: id,
     server_alias: `Server ${id}`,
     role,
+    address: '',
     node_id: nodeId,
     status: 'active',
     error: '',

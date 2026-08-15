@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 
 import { CountryFlag } from '@/components/CountryFlag'
+import { addressFamily } from '@/lib/address'
 import { EmptyState } from '@/components/PagePrimitives'
 import { ServerTestPanel } from '@/components/ServerTestPanel'
 import { Badge } from '@/components/ui/badge'
@@ -528,6 +529,14 @@ function ServerCard({
           >
             <Globe2Icon className="size-3 shrink-0" />
             <span className="truncate">{publicAddress || '公网地址待学习'}</span>
+            {server.addresses.length > 1 ? (
+              <span
+                className="shrink-0 text-muted-foreground"
+                title={`共 ${server.addresses.length} 个公网地址`}
+              >
+                +{server.addresses.length - 1}
+              </span>
+            ) : null}
           </span>
         </CardDescription>
         <CardAction>
@@ -918,6 +927,24 @@ function DetailSheet({
               <div>
                 <dt className="text-xs text-muted-foreground">地址</dt>
                 <dd className="mt-1 font-mono text-xs">{server.address || server.learned_addr || '-'}</dd>
+                {server.addresses.length > 0 ? (
+                  <ul className="mt-1.5 space-y-1">
+                    {server.addresses.map((addr) => {
+                      const family = addressFamily(addr)
+                      return (
+                        <li key={addr} className="flex items-center gap-2 font-mono text-xs">
+                          <span className="truncate">{addr}</span>
+                          <Badge variant="outline" className="shrink-0">
+                            {family === 'ipv4' ? 'IPv4' : family === 'ipv6' ? 'IPv6' : '域名'}
+                          </Badge>
+                          {addr === server.address ? (
+                            <span className="shrink-0 text-[10px] text-muted-foreground">默认</span>
+                          ) : null}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : null}
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">默认网卡</dt>
