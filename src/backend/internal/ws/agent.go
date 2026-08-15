@@ -333,8 +333,8 @@ func strictUnmarshal(data []byte, target any) error {
 var _ http.Handler = (*Hub)(nil)
 
 // clientIP 取 WS 对端 IP（自动学习公网地址的依据，§9）。对端为可信反代
-// （回环，或 trusted_proxies 配置网段）时解析 X-Forwarded-For 的真实客户端；
-// 非可信对端直连场景不信任该头，防止伪造。判定统一在 nettrust。
+// （回环、内建内网/容器网段，或 trusted_proxies 追加网段）时解析
+// X-Forwarded-For 的真实客户端；公网对端直连不信任该头，防止伪造。判定统一在 nettrust。
 func clientIP(r *http.Request) string {
 	return nettrust.Default.ClientIP(r)
 }

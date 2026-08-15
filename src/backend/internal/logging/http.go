@@ -354,8 +354,9 @@ func responseError(data []byte) string {
 	return strings.TrimSpace(string(data))
 }
 
-// ClientIP 解析请求来源 IP：对端为可信反代（回环，或 trusted_proxies 配置网段）时
-// 采纳 X-Forwarded-For；判定统一在 nettrust，与面板协议推断/Agent 地址学习一致。
+// ClientIP 解析请求来源 IP：对端为可信反代（回环、内建内网/容器网段，或
+// trusted_proxies 追加网段）时采纳 X-Forwarded-For；判定统一在 nettrust，
+// 与面板协议推断/Agent 地址学习一致。
 func ClientIP(r *http.Request) string {
 	return nettrust.Default.ClientIP(r)
 }

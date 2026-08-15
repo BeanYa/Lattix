@@ -55,6 +55,12 @@
 
 ### Fixed
 
+- 反代终止 TLS 的 https 识别修复：`nettrust` 在回环之外内建信任内网/容器网段
+  （RFC1918、169.254/16、CGNAT 100.64/10、IPv6 ULA/链路本地），1panel/OpenResty、
+  docker compose、局域网 nginx 反代部署无需再手工配置 `trusted_proxies`，
+  安装命令/订阅链接即正确推断 https、日志与 agent 地址学习取真实客户端 IP；
+  `trusted_proxies` 语义改为在其上追加公网回源网段（如 CDN），公网对端直连的
+  `X-Forwarded-*` 伪造声明仍不采信。
 - 链状态机补 `applying`/`waiting_for_agent` → `active_failed` 转换边：已发布链编辑
   失败不再永久卡在 applying。
 - 链路 revision 状态转换加 CAS 守卫：迟到失败回执不再覆盖已发布 revision；发布窗口

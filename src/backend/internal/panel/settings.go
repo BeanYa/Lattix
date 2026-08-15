@@ -80,7 +80,7 @@ type settingsDTO struct {
 	Timezone         string       `json:"timezone"`         // IANA 时区；空 = 浏览器本地
 	TrafficTimezone  string       `json:"traffic_timezone"` // 流量日/月桶边界使用的 IANA 时区
 	PublicURL        string       `json:"public_url"`       // 空 = 从请求推断
-	TrustedProxies   string       `json:"trusted_proxies"`  // 可信反代网段（CIDR 逗号分隔）；空 = 仅回环
+	TrustedProxies   string       `json:"trusted_proxies"`  // 追加可信反代网段（CIDR 逗号分隔）；空 = 仅内建默认（回环+内网/容器网段）
 	TLSMode          string       `json:"tls_mode"`         // 保存的待生效模式；空 = 跟随启动参数
 	TLSCert          *certInfoDTO `json:"tls_cert"`         // 保存的证书摘要（cert 为 PEM，path 为目录文件）
 	TLSKeySet        bool         `json:"tls_key_set"`      // 已保存私钥
@@ -213,7 +213,7 @@ type updateSettingsRequest struct {
 	Timezone        string `json:"timezone"`
 	TrafficTimezone string `json:"traffic_timezone"`
 	PublicURL       string `json:"public_url"`
-	TrustedProxies  string `json:"trusted_proxies"` // CIDR 逗号分隔；空 = 仅回环
+	TrustedProxies  string `json:"trusted_proxies"` // CIDR 逗号分隔；空 = 仅内建默认（回环+内网/容器网段）
 	TLSMode         string `json:"tls_mode"`        // ""=跟随启动参数 off|cert|acme|path
 	TLSCertPEM      string `json:"tls_cert_pem"`
 	TLSKeyPEM       string `json:"tls_key_pem"`
@@ -540,7 +540,8 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// trusted_proxies 立即生效（无需重启）：影响协议推断、订阅链接与日志的
-	// X-Forwarded-* 采纳范围，保存即热更新进程级判定。
+	// X-Forwarded-* 采纳范围，保存即热更新进程级判定；回环与内网/容器网段
+	// 为内建默认可信，此处配置是在其上追加公网网段（如 CDN 回源）。
 	if err := nettrust.Default.Configure(req.TrustedProxies); err != nil {
 		log.Printf("panel: apply trusted proxies: %v", err)
 	}

@@ -265,10 +265,12 @@ go build -o lattix-backend ./src/backend/cmd/backend
 提供 SPA、API、WebSocket 和订阅内容。
 
 面板"设置"页可在线修改：对外地址与显示时区（立即生效）；可信反代网段
-（`trusted_proxies`，CIDR 逗号分隔，立即生效）——TLS 由外部反代（1panel/OpenResty、
-nginx、CDN 回源）终止时，填代理连到面板的来源网段后，面板才会采纳
-`X-Forwarded-Proto`/`X-Forwarded-For`（安装命令协议、订阅链接与日志 IP 随之正确），
-留空仅信任本机回环、防直连伪造；TLS 模式 / 自带证书 PEM /
+（`trusted_proxies`，CIDR 逗号分隔，立即生效）——本机回环与内网/容器网段
+（10/8、172.16/12、192.168/16、100.64/10 等）**默认可信**，1panel/OpenResty、
+docker、局域网 nginx 反代终止 TLS 时无需配置，面板即采纳
+`X-Forwarded-Proto`/`X-Forwarded-For`（安装命令协议、订阅链接与日志 IP 随之正确）；
+该设置仅用于追加公网回源网段（如 CDN），公网对端直连的伪造声明始终不采信；
+TLS 模式 / 自带证书 PEM /
 ACME 域名（保存后重启进程生效）；管理员密码（bcrypt 落库，改密即全部会话失效）；
 事件告警（Webhook 地址 / Telegram Bot token / chat_id，三项全空即关闭，可发测试消息）；
 操作日志保留条数与请求日志容量；全局 Agent 重连策略、遥测上报间隔和配置漂移检测间隔。

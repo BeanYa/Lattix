@@ -14,7 +14,7 @@ import (
 const (
 	SettingTimezone        = "timezone"          // IANA 时区名（面板时间显示）；空 = 浏览器本地
 	SettingPublicURL       = "public_url"        // 面板对外地址（含端口），生成安装命令/订阅链接
-	SettingTrustedProxies  = "trusted_proxies"   // 可信反代网段（CIDR 逗号分隔）；空 = 仅回环，X-Forwarded-* 采纳范围
+	SettingTrustedProxies  = "trusted_proxies"   // 追加可信反代网段（CIDR 逗号分隔）；回环与内网/容器网段内建可信，此处用于公网网段（如 CDN 回源）
 	SettingTLSMode         = "tls_mode"          // off|cert|acme|path；空 = 未配置（跟随启动参数）
 	SettingTLSCertPEM      = "tls_cert_pem"      // 自带证书 PEM（tls_mode=cert）
 	SettingTLSKeyPEM       = "tls_key_pem"       // 私钥 PEM（tls_mode=cert）

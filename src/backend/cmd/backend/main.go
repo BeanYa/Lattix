@@ -199,6 +199,7 @@ func run() error {
 	// tls_mode 未设置（空）时完全跟随启动参数。
 	ctx := context.Background()
 	// 可信反代网段（§10 设置页）：外部反代终止 TLS 时采纳 X-Forwarded-*；
+	// 回环与内网/容器网段内建可信，此处配置是追加公网网段（如 CDN 回源）；
 	// 保存后由设置处理器热更新，此处覆盖进程重启场景。
 	if raw, err := st.GetSetting(ctx, store.SettingTrustedProxies); err != nil {
 		log.Printf("load trusted proxies: %v", err)

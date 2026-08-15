@@ -477,9 +477,10 @@ func (s *Server) panelBase(r *http.Request) string {
 }
 
 // isSecure 报告当前请求是否经 HTTPS 到达（含反代终止 TLS 的场景）。
-// 反代声明（X-Forwarded-Proto）仅在可信对端（回环，或设置页 trusted_proxies
-// 配置的网段，如 1panel/openresty、nginx、CDN 回源）时采信，直连场景防客户端
-// 伪造（评审 P2）。信任判定统一收敛在 nettrust。
+// 反代声明（X-Forwarded-Proto）仅在可信对端时采信：回环、内建内网/容器网段
+// （docker 桥接、局域网、CGNAT 等，1panel/openresty 部署无需配置即命中），
+// 或设置页 trusted_proxies 追加的网段（如 CDN 回源）；公网对端直连不采信，防伪造。
+// 信任判定统一收敛在 nettrust。
 func (s *Server) isSecure(r *http.Request) bool {
 	if s.cfg.Secure || r.TLS != nil {
 		return true

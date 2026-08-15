@@ -989,11 +989,12 @@ export default function Settings() {
                 id="trustedProxies"
                 value={trustedProxies}
                 onChange={(e) => setTrustedProxies(e.target.value)}
-                placeholder="172.17.0.0/16, 10.0.0.0/8，留空仅信任本机回环"
+                placeholder="173.245.48.0/20 等公网回源网段，通常留空"
               />
               <p className="cg-set-note">
-                TLS 由外部反代（1panel/openresty、nginx、CDN 回源）终止时，填代理连到面板的来源网段，面板才会采纳
-                X-Forwarded-Proto/For（安装命令协议、订阅链接与日志 IP 随之正确）；留空仅信任本机回环，防止伪造。
+                本机回环与内网/容器网段（10/8、172.16/12、192.168/16、100.64/10 等）默认可信，
+                1panel/OpenResty、docker、局域网 nginx 反代的 X-Forwarded-Proto/For 无需配置即被采纳
+                （安装命令协议、订阅链接与日志 IP 随之正确）；此处仅用于追加公网回源网段（如 CDN）。
               </p>
             </div>
             <div className="flex flex-col gap-2">

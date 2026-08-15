@@ -247,7 +247,7 @@ token password secret key cookie authorization cert private
 - `/sub/{token}` 路径中的 token 替换为 SHA-256 摘要前 4 字节；
 - 单个参数、路径、User-Agent 和错误摘要限制为 512 字节；
 - attributes JSON 总长度限制为 4096 字节，超出时添加 `_truncated=true`；
-- 只在直接连接来自回环地址时信任 `X-Forwarded-For` 的首个地址，防止外部请求伪造来源 IP；
+- 只在直接连接来自可信反代（回环、内建内网/容器网段或 `trusted_proxies` 追加网段）时采纳 `X-Forwarded-For`（从右向左取第一个非可信地址），公网直连不采信、防止伪造来源 IP；
 - 日志从结构化 RPC outcome 读取 code 和安全 message，不捕获并重新解析响应 body；
 - panic 或非 RPC 内容端点只记录经过截断和脱敏的安全摘要。
 

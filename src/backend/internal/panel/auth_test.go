@@ -65,20 +65,24 @@ func TestConcurrentPasswordChangeCannotUpgradeOldLogin(t *testing.T) {
 	}
 }
 
-func TestIsSecureTrustsForwardedProtoOnlyFromLoopback(t *testing.T) {
+func TestIsSecureTrustsForwardedProtoFromTrustedPeers(t *testing.T) {
 	s := &Server{cfg: Config{}}
 	// 反代场景：面板收到的是纯 HTTP 请求（r.TLS == nil），协议由 X-Forwarded-Proto 声明。
-	loopback := httptest.NewRequest(http.MethodGet, "http://panel.example/", nil)
-	loopback.RemoteAddr = "127.0.0.1:8443"
-	loopback.Header.Set("X-Forwarded-Proto", "https")
-	if !s.isSecure(loopback) {
+	newRequest := func(remote string) *http.Request {
+		r := httptest.NewRequest(http.MethodGet, "http://panel.example/", nil)
+		r.RemoteAddr = remote
+		r.Header.Set("X-Forwarded-Proto", "https")
+		return r
+	}
+	if !s.isSecure(newRequest("127.0.0.1:8443")) {
 		t.Fatal("loopback reverse proxy X-Forwarded-Proto must be trusted")
 	}
-	direct := httptest.NewRequest(http.MethodGet, "http://panel.example/", nil)
-	direct.RemoteAddr = "198.51.100.7:443"
-	direct.Header.Set("X-Forwarded-Proto", "https")
-	if s.isSecure(direct) {
-		t.Fatal("non-loopback peer X-Forwarded-Proto must not be trusted")
+	// 1panel/openresty 容器反代：对端为 docker 桥接网段，内建默认可信。
+	if !s.isSecure(newRequest("172.18.0.3:9000")) {
+		t.Fatal("docker bridge reverse proxy X-Forwarded-Proto must be trusted")
+	}
+	if s.isSecure(newRequest("198.51.100.7:443")) {
+		t.Fatal("public peer X-Forwarded-Proto must not be trusted")
 	}
 }
 func TestLoginLimiterBlocksAndResets(t *testing.T) {
