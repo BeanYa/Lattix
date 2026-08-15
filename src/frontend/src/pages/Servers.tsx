@@ -27,7 +27,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { api, errorMessage } from '@/lib/api'
-import { addressFamily, isPublicAddress } from '@/lib/address'
+import { addressFamily } from '@/lib/address'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime } from '@/lib/format'
 import { useOperationProgress } from '@/lib/operation-progress-context'
@@ -765,10 +765,10 @@ export default function Servers() {
     }
   }
 
-  // 「添加地址」下拉候选：agent 上报地址中尚未列入清单的公网地址
-  // （私网/链路本地/CGNAT 不作为公网候选，与后端 isPublicAgentIP 同语义）。
+  // 「添加地址」下拉候选：agent 上报地址中尚未列入清单的项
+  // （含私网/链路本地，局域网场景可用；是否选用由管理员判断）。
   const editAddCandidates = editTarget
-    ? addrCandidates(editTarget).filter((c) => !editAddresses.includes(c) && isPublicAddress(c))
+    ? addrCandidates(editTarget).filter((c) => !editAddresses.includes(c))
     : []
 
   // 添加地址：去重；列表为空时新条目自动成为默认地址。
