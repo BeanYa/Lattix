@@ -287,6 +287,35 @@ func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid strin
 }
 
 func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort string) ([]string, error) {
+	// 模板自带分组数与地区组标记须在展开前捕获（展开会重写 Options）。
+	templateCount := len(policy.Groups)
+	regionLike := make([]bool, templateCount) // 选项全部为 __LATTIX_REGION*__ 占位符的模板组 = 地区组
+	poolGroup := make([]bool, templateCount)  // 选项含 __LATTIX_ALL__ 的节点池组（自动选择/故障转移等）
+	firstAll, autoName := "", ""              // 「自动选择」：选项含 __LATTIX_ALL__ 的组，url-test 优先
+	for i, group := range policy.Groups {
+		regionLike[i] = len(group.Options) > 0
+		hasAll := false
+		for _, option := range group.Options {
+			if !strings.HasPrefix(option, "__LATTIX_REGION") {
+				regionLike[i] = false
+			}
+			if option == "__LATTIX_ALL__" {
+				hasAll = true
+			}
+		}
+		poolGroup[i] = hasAll
+		if hasAll {
+			if firstAll == "" {
+				firstAll = group.Name
+			}
+			if autoName == "" && group.Type == "url-test" {
+				autoName = group.Name
+			}
+		}
+	}
+	if autoName == "" {
+		autoName = firstAll
+	}
 	all := make([]string, 0, len(nodes))
 	byCountry := map[string][]string{}
 	var noRegion []string
@@ -303,7 +332,9 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort strin
 		countries = append(countries, country)
 	}
 	sort.Strings(countries)
-	regions := make([]string, 0, len(countries)+1)
+	// 叶子分组：只含节点、不含其他组引用的分组（来源分组 + 地区分组 + 无地区分组）。
+	// 它们与 __LATTIX_REGIONS__ 一同展开、一同剔除，且是节点池组唯一允许保留的组引用。
+	leafGroups := make([]string, 0, len(countries)+2)
 	var warnings []string
 	existing := make(map[string]bool, len(policy.Groups))
 	for _, group := range policy.Groups {
@@ -317,27 +348,28 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort strin
 			continue
 		}
 		existing[group.Name] = true
+		leafGroups = append(leafGroups, group.Name)
 		policy.Groups = append(policy.Groups, group)
 	}
 	for _, country := range countries {
 		name := countryFlag(country) + " " + country
-		regions = append(regions, name)
+		leafGroups = append(leafGroups, name)
 		policy.Groups = append(policy.Groups, policyGroup{Name: name, Type: "select", Options: byCountry[country]})
 	}
 	// 无地区标识的节点（如名称无法推断国家的外部订阅节点）收进固定的无地区分组，
 	// 随 __LATTIX_REGIONS__ 一起展开，保证所有节点在分组层都可达。
 	if len(noRegion) > 0 {
-		regions = append(regions, noRegionGroupName)
+		leafGroups = append(leafGroups, noRegionGroupName)
 		policy.Groups = append(policy.Groups, policyGroup{Name: noRegionGroupName, Type: "select", Options: noRegion})
 	}
 	for index := range policy.Groups {
-		options := make([]string, 0, len(policy.Groups[index].Options)+len(all)+len(regions))
+		options := make([]string, 0, len(policy.Groups[index].Options)+len(all)+len(leafGroups))
 		for _, option := range policy.Groups[index].Options {
 			switch option {
 			case "__LATTIX_ALL__":
 				options = append(options, all...)
 			case "__LATTIX_REGIONS__":
-				options = append(options, regions...)
+				options = append(options, leafGroups...)
 			default:
 				if strings.HasPrefix(option, "__LATTIX_REGION_") && strings.HasSuffix(option, "__") {
 					country := strings.TrimSuffix(strings.TrimPrefix(option, "__LATTIX_REGION_"), "__")
@@ -351,8 +383,108 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort strin
 		}
 		policy.Groups[index].Options = uniqueStrings(options)
 	}
+	// 可达性增强：模板定义的分组（地区组与自动生成的来源/地区分组除外）在保留原有
+	// 选项（含叶子分组引用）的基础上追加全部节点、「自动选择」与「节点选择」（final）
+	// 引用，使任何分流组既可指定固定节点也可回落自动选择。
+	// 不变量：节点池组（选项含 __LATTIX_ALL__，如自动选择/故障转移）与节点选择的
+	// 选项只保留节点与叶子分组（及 DIRECT/REJECT），剔除其他组引用——它们因此永不
+	// 反向引用分流组，分流组注入对它们的引用不会产生环；detectGroupCycle 兜底。
+	finalName := ""
+	if policy.Final != "DIRECT" && policy.Final != "REJECT" && existing[policy.Final] {
+		finalName = policy.Final
+	}
+	nodeSet := make(map[string]bool, len(all))
+	for _, name := range all {
+		nodeSet[name] = true
+	}
+	leafSet := make(map[string]bool, len(leafGroups))
+	for _, name := range leafGroups {
+		leafSet[name] = true
+	}
+	for index := range policy.Groups[:templateCount] {
+		if regionLike[index] {
+			continue
+		}
+		group := &policy.Groups[index]
+		options := append([]string{}, group.Options...)
+		if poolGroup[index] || group.Name == finalName {
+			kept := make([]string, 0, len(options))
+			for _, option := range options {
+				if option == "DIRECT" || option == "REJECT" || nodeSet[option] || leafSet[option] {
+					kept = append(kept, option)
+				}
+			}
+			options = append(kept, all...)
+		} else {
+			options = append(options, all...)
+			if autoName != "" {
+				options = append(options, autoName)
+			}
+			if finalName != "" {
+				options = append(options, finalName)
+			}
+		}
+		group.Options = uniqueStrings(options)
+	}
 	pruneWarnings, err := pruneEmptyGroups(policy, all)
-	return append(warnings, pruneWarnings...), err
+	warnings = append(warnings, pruneWarnings...)
+	if err != nil {
+		return warnings, err
+	}
+	if err := detectGroupCycle(policy.Groups); err != nil {
+		return warnings, err
+	}
+	return warnings, nil
+}
+
+// detectGroupCycle 检查组间引用环：含叶子的环（A↔B 且 B 另引节点）不会被
+// pruneEmptyGroups 清除，但 Mihomo 启动校验会拒绝整份配置，发布前报错。
+func detectGroupCycle(groups []policyGroup) error {
+	names := make(map[string]bool, len(groups))
+	for _, group := range groups {
+		names[group.Name] = true
+	}
+	adj := make(map[string][]string, len(groups))
+	for _, group := range groups {
+		for _, option := range group.Options {
+			if names[option] {
+				adj[group.Name] = append(adj[group.Name], option)
+			}
+		}
+	}
+	const (
+		white = 0 // 未访问
+		gray  = 1 // 在栈中
+		black = 2 // 已完成
+	)
+	state := map[string]int{}
+	var stack []string
+	var visit func(name string) error
+	visit = func(name string) error {
+		state[name] = gray
+		stack = append(stack, name)
+		for _, next := range adj[name] {
+			if state[next] == gray {
+				return fmt.Errorf("策略组存在循环引用：%s → %s", strings.Join(stack, " → "), next)
+			}
+			if state[next] == white {
+				if err := visit(next); err != nil {
+					return err
+				}
+			}
+		}
+		stack = stack[:len(stack)-1]
+		state[name] = black
+		return nil
+	}
+	for _, group := range groups {
+		if state[group.Name] == white {
+			if err := visit(group.Name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // sourcePolicyGroups 生成按节点来源划分的策略组：「<panelShort> 分组」包含全部面板
@@ -735,7 +867,14 @@ func uniqueNativeGroups(groups []any, nameKey string) []any {
 
 func expandNativeGroups(groups []any, optionKey string, nodes []compiledNode, nameKey, regionType, panelShort string) []any {
 	all, regions, byCountry := nativeNodeOptions(nodes)
-	expanded := make([]any, 0, len(groups)+len(regions))
+	// __LATTIX_REGIONS__ 展开为叶子分组：来源分组（面板分组 + 各外部订阅分组）
+	// 与地区分组同级，一同出现、一同剔除。
+	leafGroups := make([]string, 0, len(regions)+2)
+	for _, group := range sourcePolicyGroups(nodes, panelShort) {
+		leafGroups = append(leafGroups, group.Name)
+	}
+	leafGroups = append(leafGroups, regions...)
+	expanded := make([]any, 0, len(groups)+len(leafGroups))
 	existing := map[string]bool{}
 	for _, value := range groups {
 		group, ok := value.(map[string]any)
@@ -747,7 +886,7 @@ func expandNativeGroups(groups []any, optionKey string, nodes []compiledNode, na
 			existing[name] = true
 		}
 		if options, ok := group[optionKey].([]any); ok {
-			group[optionKey] = expandNativeOptions(options, all, regions, byCountry)
+			group[optionKey] = expandNativeOptions(options, all, leafGroups, byCountry)
 		}
 		expanded = append(expanded, group)
 	}

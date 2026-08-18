@@ -40,8 +40,9 @@ func TestExpandPolicyPrunesEmptyRegionGroups(t *testing.T) {
 		t.Fatalf("populated region group was pruned: %+v", groups)
 	}
 	main := groups["🚀 节点选择"]
-	if len(main) != 2 || main[0] != "♻️ 自动选择" || main[1] != "DIRECT" {
-		t.Fatalf("dangling reference kept: %+v", main)
+	// 节点选择只保留节点与地区分组：♻️ 自动选择/🇰🇷 韩国节点引用被剥离，并追加全部节点。
+	if len(main) != 2 || main[0] != "DIRECT" || main[1] != "US-1" {
+		t.Fatalf("final group options = %+v, want [DIRECT US-1]", main)
 	}
 	if len(policy.Rules) != 1 || policy.Rules[0].Outbound != "🚀 节点选择" {
 		t.Fatalf("rule to pruned group kept: %+v", policy.Rules)
@@ -243,8 +244,10 @@ func TestExpandPolicyGroupsNodesWithoutCountryIntoNoRegionGroup(t *testing.T) {
 		t.Fatalf("no-region group = %+v, want [Relay 01]: %+v", noRegion, groups)
 	}
 	main := groups["🚀 节点选择"]
-	if len(main) != 3 || main[0] != "♻️ 自动选择" || main[1] != "🇺🇸 US" || main[2] != noRegionGroupName {
-		t.Fatalf("regions expansion = %+v, want [自动选择, 🇺🇸 US, 无地区]", main)
+	// 节点选择剥离组引用后为叶子分组（来源分组 + 地区分组 + 无地区）+ 全部节点。
+	wantMain := []string{"Lattix 分组", "🇺🇸 US", noRegionGroupName, "US-1", "Relay 01"}
+	if strings.Join(main, "|") != strings.Join(wantMain, "|") {
+		t.Fatalf("final group options = %+v, want %v", main, wantMain)
 	}
 	auto := groups["♻️ 自动选择"]
 	if len(auto) != 2 || auto[0] != "US-1" || auto[1] != "Relay 01" {
@@ -341,5 +344,67 @@ func TestExpandPolicySourceGroupNameCollision(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(warnings, "; "), "Lattix 分组") {
 		t.Fatalf("collision warning missing: %v", warnings)
+	}
+}
+
+// 可达性增强：模板分流组保留原有叶子分组引用，并追加全部节点 + 自动选择 +
+// 节点选择引用；自动选择/节点选择自身只含节点与叶子分组；地区组保持纯地区节点。
+func TestExpandPolicyAugmentsTemplateGroups(t *testing.T) {
+	nodes := []compiledNode{
+		{Name: "US-1", CountryCode: "US", Clash: clashProxy{Name: "US-1"}},
+		{Name: "JP-1", CountryCode: "JP", Clash: clashProxy{Name: "JP-1"}},
+	}
+	policy := portablePolicy{
+		Final: "🚀 节点选择",
+		Groups: []policyGroup{
+			{Name: "🚀 节点选择", Type: "select", Options: []string{"♻️ 自动选择", "__LATTIX_REGIONS__", "__LATTIX_ALL__"}},
+			{Name: "♻️ 自动选择", Type: "url-test", Options: []string{"__LATTIX_ALL__"}},
+			{Name: "💬 AI 服务", Type: "select", Options: []string{"🚀 节点选择", "♻️ 自动选择", "DIRECT", "__LATTIX_REGIONS__"}},
+			{Name: "🇯🇵 日本节点", Type: "url-test", Options: []string{"__LATTIX_REGION_JP__"}},
+		},
+	}
+	if _, err := expandPolicy(&policy, nodes, "Lattix"); err != nil {
+		t.Fatal(err)
+	}
+	groups := map[string][]string{}
+	for _, group := range policy.Groups {
+		groups[group.Name] = group.Options
+	}
+	// 分流组：原选项保留（含叶子分组引用），末尾追加全部节点 + 自动选择 + 节点选择。
+	wantAI := []string{"🚀 节点选择", "♻️ 自动选择", "DIRECT", "Lattix 分组", "🇯🇵 JP", "🇺🇸 US", "US-1", "JP-1"}
+	if got := groups["💬 AI 服务"]; strings.Join(got, "|") != strings.Join(wantAI, "|") {
+		t.Fatalf("category group = %+v, want %v", got, wantAI)
+	}
+	// 节点选择：剥离组引用（♻️ 自动选择），仅余叶子分组与节点。
+	wantMain := []string{"Lattix 分组", "🇯🇵 JP", "🇺🇸 US", "US-1", "JP-1"}
+	if got := groups["🚀 节点选择"]; strings.Join(got, "|") != strings.Join(wantMain, "|") {
+		t.Fatalf("final group = %+v, want %v", got, wantMain)
+	}
+	// 自动选择：仅节点。
+	if got := groups["♻️ 自动选择"]; strings.Join(got, "|") != "US-1|JP-1" {
+		t.Fatalf("auto group = %+v, want [US-1 JP-1]", got)
+	}
+	// 地区组：仅本地区节点，不追加其他内容。
+	if got := groups["🇯🇵 日本节点"]; len(got) != 1 || got[0] != "JP-1" {
+		t.Fatalf("region group = %+v, want [JP-1]", got)
+	}
+}
+
+// 模板自带的引用环（含叶子，prune 无法清除）在发布前报错。
+func TestExpandPolicyDetectsGroupCycle(t *testing.T) {
+	nodes := []compiledNode{
+		{Name: "US-1", CountryCode: "US", Clash: clashProxy{Name: "US-1"}},
+	}
+	policy := portablePolicy{
+		Final: "🚀 节点选择",
+		Groups: []policyGroup{
+			{Name: "🚀 节点选择", Type: "select", Options: []string{"__LATTIX_ALL__"}},
+			{Name: "组A", Type: "select", Options: []string{"组B"}},
+			{Name: "组B", Type: "select", Options: []string{"组A"}},
+		},
+	}
+	_, err := expandPolicy(&policy, nodes, "Lattix")
+	if err == nil || !strings.Contains(err.Error(), "循环引用") {
+		t.Fatalf("error = %v, want cycle detection", err)
 	}
 }

@@ -97,7 +97,8 @@ func suggestedPolicy(selected []string) (portablePolicy, error) {
 	policy.Groups = []policyGroup{
 		{Name: "♻️ 自动选择", Type: "url-test", Options: []string{"__LATTIX_ALL__"}, URL: "https://www.gstatic.com/generate_204", Interval: 300, Tolerance: 50},
 		{Name: "🛟 故障转移", Type: "fallback", Options: []string{"__LATTIX_ALL__"}, URL: "https://www.gstatic.com/generate_204", Interval: 300},
-		{Name: "🚀 节点选择", Type: "select", Options: []string{"♻️ 自动选择", "🛟 故障转移", "__LATTIX_REGIONS__", "__LATTIX_ALL__"}},
+		// 节点选择/自动选择仅能包含节点与地区分组（展开时强制），否则其他组对它们的引用会形成引用环。
+		{Name: "🚀 节点选择", Type: "select", Options: []string{"__LATTIX_REGIONS__", "__LATTIX_ALL__"}},
 	}
 	seen := map[string]bool{}
 	for _, id := range selected {
