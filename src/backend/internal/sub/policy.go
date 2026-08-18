@@ -65,6 +65,10 @@ type policyGroup struct {
 	URL       string   `yaml:"url,omitempty"`
 	Interval  int      `yaml:"interval,omitempty"`
 	Tolerance int      `yaml:"tolerance,omitempty"`
+	// Source 标记发布时自动生成的来源分组（"panel"=面板分组 / "outer"=外部订阅
+	// 分组），模板解析出的分组为空。预编译中间态据此把分组条目替换为
+	// __LATTIX-GROUP__ / __OUTER-SUBS-GROUP__ 占位符。
+	Source string `yaml:"-"`
 }
 
 type policyRule struct {

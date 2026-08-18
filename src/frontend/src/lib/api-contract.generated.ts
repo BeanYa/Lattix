@@ -2932,7 +2932,10 @@ export interface operations {
     };
     userSubscriptionPreview: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description 预览阶段：final（默认，正式交付内容）或 pre（预编译中间态，占位符未解压） */
+                stage?: "final" | "pre";
+            };
             header?: never;
             path?: never;
             cookie?: never;

@@ -116,6 +116,19 @@ Quantumult X 原生模板必须包含 `__LATTIX_SERVERS__`，发布时替换为 
 
 链节点归属出口服务器国家，连接地址和端口仍取链入口。共享 Endpoint 链使用对应 assignment 的 `access_uuid`，独立节点继续使用用户 `uuid`。
 
+## 6.1 预编译中间态
+
+订阅文件生成分两阶段：先生成**预编译中间态**（节点区与来源分组区以占位符表示），选项展开/分组增强/剪枝/环检测等全部处理在中间态上完成后，最终交付前再把占位符解压替换为目标格式的真实条目（clash 为含 name/type/server/port 的完整 proxy map，sing-box 为 outbound 对象，QuanX 为 server 行 / policy 行，links 为分享链接）。条目级占位符：
+
+- `__LATTIX-NODES__`：面板管理链路节点条目；
+- `__OUTTER-SUBS-NODES__`：外部订阅节点条目（用户分配到的全部外部订阅节点）；
+- `__LATTIX-GROUP__`：「<面板缩写> 分组」条目；
+- `__OUTER-SUBS-GROUP__`：外部订阅分组条目，解压为每组一个（3 条外部订阅即 3 个分组）。
+
+原生模板作者可手写上述占位符控制注入位置（例如让外部订阅节点排在面板节点之前）；未写时按默认规则注入，行为与此前一致。空来源（无面板节点/无外部订阅）的占位符条目在解压时删除，不产出空分组。交付内容不允许残留占位符，残留即发布失败。
+
+每个 snapshot 除正式文件外另存 `<format>-pre` 中间态文件（同 snapshot 级联清理，公共订阅端点不可达），面板用户订阅预览对话框可切换「正式交付 / 预编译中间态」查看（`GET /api/user/subscription-preview` 加 `stage=pre`）。
+
 ## 7. ACL4SSR 支持范围
 
 支持 `[custom]` 中影响路由的：

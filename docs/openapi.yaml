@@ -482,6 +482,12 @@ paths:
   /api/user/subscription-preview:
     get:
       operationId: userSubscriptionPreview
+      parameters:
+        - name: stage
+          in: query
+          required: false
+          description: 预览阶段：final（默认，正式交付内容）或 pre（预编译中间态，占位符未解压）
+          schema: {type: string, enum: [final, pre]}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/subscription/categories:
     get:

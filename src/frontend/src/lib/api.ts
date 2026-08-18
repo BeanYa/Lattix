@@ -47,6 +47,7 @@ import type {
   SubscriptionRoutingProfile,
   SubscriptionPreview,
   SubscriptionPreviewFormat,
+  SubscriptionPreviewStage,
   SubscriptionRuleCategory,
   SubscriptionTemplate,
   TrafficPlanInput,
@@ -303,8 +304,8 @@ export const api = {
   resetUserSubscriptionToken: (userId: number) =>
     requester.post<{ sub_token: string; sub_url: string; sub_links_url: string }>(
       '/api/user/reset-subscription-token', { user_id: userId }),
-  userSubscriptionPreview: (userId: number, format: SubscriptionPreviewFormat) =>
-    requester.get<SubscriptionPreview>('/api/user/subscription-preview', { user_id: userId, format }),
+  userSubscriptionPreview: (userId: number, format: SubscriptionPreviewFormat, stage?: SubscriptionPreviewStage) =>
+    requester.get<SubscriptionPreview>('/api/user/subscription-preview', { user_id: userId, format, stage }),
   subscriptionCategories: (options?: RequestOptions) =>
     requester.get<SubscriptionRuleCategory[]>('/api/subscription/categories', undefined, options),
   subscriptionTemplates: (options?: RequestOptions) =>

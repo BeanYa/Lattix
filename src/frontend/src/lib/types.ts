@@ -608,8 +608,11 @@ export interface SubscriptionSnapshotStatus {
 
 export type SubscriptionPreviewFormat = 'clash' | 'singbox' | 'quanx' | 'quanx-config' | 'links'
 
+export type SubscriptionPreviewStage = 'final' | 'pre'
+
 export interface SubscriptionPreview {
   format: SubscriptionPreviewFormat
+  stage?: SubscriptionPreviewStage
   revision: number
   content_type: string
   content: string

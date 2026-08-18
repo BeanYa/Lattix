@@ -72,6 +72,7 @@ import type {
   SubscriptionRoutingProfile,
   SubscriptionPreview,
   SubscriptionPreviewFormat,
+  SubscriptionPreviewStage,
   SubscriptionRuleCategory,
   SubscriptionTemplate,
   UserGroup,
@@ -201,6 +202,7 @@ export default function Users() {
   const [resettingToken, setResettingToken] = useState<number | null>(null)
   const [previewTarget, setPreviewTarget] = useState<SubUser | null>(null)
   const [previewFormat, setPreviewFormat] = useState<SubscriptionPreviewFormat>('clash')
+  const [previewStage, setPreviewStage] = useState<SubscriptionPreviewStage>('final')
   const [previewData, setPreviewData] = useState<SubscriptionPreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewError, setPreviewError] = useState('')
@@ -437,11 +439,11 @@ export default function Users() {
     }
   }
 
-  const loadSubscriptionPreview = async (user: SubUser, format: SubscriptionPreviewFormat) => {
+  const loadSubscriptionPreview = async (user: SubUser, format: SubscriptionPreviewFormat, stage: SubscriptionPreviewStage) => {
     setPreviewLoading(true)
     setPreviewError('')
     try {
-      setPreviewData(await api.userSubscriptionPreview(user.id, format))
+      setPreviewData(await api.userSubscriptionPreview(user.id, format, stage))
     } catch (err) {
       setPreviewData(null)
       setPreviewError(errorMessage(err))
@@ -453,13 +455,19 @@ export default function Users() {
   const onOpenPreview = (user: SubUser) => {
     setPreviewTarget(user)
     setPreviewFormat('clash')
+    setPreviewStage('final')
     setPreviewData(null)
-    void loadSubscriptionPreview(user, 'clash')
+    void loadSubscriptionPreview(user, 'clash', 'final')
   }
 
   const onPreviewFormatChange = (format: SubscriptionPreviewFormat) => {
     setPreviewFormat(format)
-    if (previewTarget) void loadSubscriptionPreview(previewTarget, format)
+    if (previewTarget) void loadSubscriptionPreview(previewTarget, format, previewStage)
+  }
+
+  const onPreviewStageChange = (stage: SubscriptionPreviewStage) => {
+    setPreviewStage(stage)
+    if (previewTarget) void loadSubscriptionPreview(previewTarget, previewFormat, stage)
   }
 
   const onOpenHistory = async (u: SubUser) => {
@@ -1040,21 +1048,35 @@ export default function Users() {
             </DialogDescription>
           </DialogHeader>
           <div className="flex items-center justify-between gap-3">
-            <Select
-              value={previewFormat}
-              onValueChange={(value) => value && onPreviewFormatChange(value as SubscriptionPreviewFormat)}
-            >
-              <SelectTrigger className="w-48" aria-label="订阅格式">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="clash">Mihomo YAML</SelectItem>
-                <SelectItem value="singbox">sing-box JSON</SelectItem>
-                <SelectItem value="quanx">Quantumult X 节点</SelectItem>
-                <SelectItem value="quanx-config">Quantumult X 配置</SelectItem>
-                <SelectItem value="links">Base64 分享链接</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              <Select
+                value={previewFormat}
+                onValueChange={(value) => value && onPreviewFormatChange(value as SubscriptionPreviewFormat)}
+              >
+                <SelectTrigger className="w-48" aria-label="订阅格式">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="clash">Mihomo YAML</SelectItem>
+                  <SelectItem value="singbox">sing-box JSON</SelectItem>
+                  <SelectItem value="quanx">Quantumult X 节点</SelectItem>
+                  <SelectItem value="quanx-config">Quantumult X 配置</SelectItem>
+                  <SelectItem value="links">Base64 分享链接</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select
+                value={previewStage}
+                onValueChange={(value) => value && onPreviewStageChange(value as SubscriptionPreviewStage)}
+              >
+                <SelectTrigger className="w-36" aria-label="生成阶段">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="final">正式交付</SelectItem>
+                  <SelectItem value="pre">预编译中间态</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             {previewData ? <CopyButton text={previewData.content} /> : null}
           </div>
           {previewData?.warnings && previewData.warnings.length > 0 ? (

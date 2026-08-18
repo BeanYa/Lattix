@@ -1241,7 +1241,17 @@ func (s *Server) handleUserSubscriptionPreview(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, "invalid subscription format")
 		return
 	}
-	file, err := s.st.PublishedSubscriptionFile(r.Context(), userID, format)
+	// stage=pre 查看预编译中间态（占位符未解压），默认正式交付内容。
+	stage := r.URL.Query().Get("stage")
+	if stage != "" && stage != "final" && stage != "pre" {
+		writeError(w, http.StatusBadRequest, "invalid stage")
+		return
+	}
+	lookupFormat := format
+	if stage == "pre" {
+		lookupFormat = format + "-pre"
+	}
+	file, err := s.st.PublishedSubscriptionFile(r.Context(), userID, lookupFormat)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
@@ -1251,10 +1261,10 @@ func (s *Server) handleUserSubscriptionPreview(w http.ResponseWriter, r *http.Re
 		return
 	}
 	s.audit(r, "user.subscription.previewed", nil, nil, map[string]any{
-		"user_id": userID, "format": format, "revision": file.Revision,
+		"user_id": userID, "format": format, "stage": stage, "revision": file.Revision,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
-		"format": format, "revision": file.Revision, "content_type": file.ContentType,
+		"format": format, "stage": stage, "revision": file.Revision, "content_type": file.ContentType,
 		"content": string(file.Content), "generated_at": file.GeneratedAt, "warnings": file.Warnings,
 	})
 }
