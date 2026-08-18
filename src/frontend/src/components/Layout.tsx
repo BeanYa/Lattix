@@ -34,9 +34,9 @@ const navItems = [
   { to: '/costs', activePrefix: '/costs', label: '成本统计', icon: CoinsIcon, end: false },
   { to: '/chains', activePrefix: '/chains', label: '链路', icon: RouteIcon, end: false },
   { to: '/users', activePrefix: '/users', label: '用户', icon: UsersIcon, end: false },
+  { to: '/groups', activePrefix: '/groups', label: '分组', icon: LayersIcon, end: false },
   { to: '/subscription-templates', activePrefix: '/subscription-templates', label: '订阅模板', icon: FileCode2Icon, end: false },
   { to: '/external-subscriptions', activePrefix: '/external-subscriptions', label: '外部订阅', icon: GlobeIcon, end: false },
-  { to: '/groups', activePrefix: '/groups', label: '分组', icon: LayersIcon, end: false },
   { to: '/logs/operations', activePrefix: '/logs', label: '日志', icon: ScrollTextIcon, end: false },
   { to: '/settings', activePrefix: '/settings', label: '设置', icon: SettingsIcon, end: false },
 ]
