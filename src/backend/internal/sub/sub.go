@@ -623,11 +623,13 @@ func nodeName(n store.Node, rc shared.RealizedConfig) string {
 // proxyItem 是一个订阅条目的来源：节点行 + 生效值
 // （链条目已把别名/地址/端口替换为入口侧，§21；其余字段取出口 realized_config）。
 // external 非空时表示该条目来自外部订阅节点（凭据取自 config，不派生用户 UUID）。
+// group 为来源分组名：面板管理节点为空，外部订阅节点为其外部订阅名称。
 type proxyItem struct {
 	node       store.Node
 	rc         shared.RealizedConfig
 	credential string
 	external   *extsub.Node
+	group      string
 }
 
 // subscriptionItems 汇总单机节点与链条目（§21 订阅）：
@@ -725,7 +727,7 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 			if err := json.Unmarshal(chain.Config, &ext); err != nil {
 				continue
 			}
-			items = append(items, proxyItem{external: &ext})
+			items = append(items, proxyItem{external: &ext, group: sub.Name})
 		}
 	}
 	return items, warnings

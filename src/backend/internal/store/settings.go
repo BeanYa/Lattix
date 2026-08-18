@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"lattix/shared"
 )
@@ -42,6 +43,11 @@ const (
 	SettingCDNNodeCatalog        = "cdn_node_catalog"
 	SettingCDNNodeCatalogStatus  = "cdn_node_catalog_status"
 	SettingTrafficTimezone       = "traffic_timezone"
+	SettingPanelShort            = "panel_short" // 面板缩写：链路命名模板 {{PANEL_SHORT}} 与订阅「<PanelShort> 分组」组名；空 = 默认 DefaultPanelShort
+
+	// DefaultPanelShort 是 panel_short 未设置时的默认面板缩写。
+	DefaultPanelShort = "Lattix"
+
 	// 订阅系统全局配置（§9 落地页/多格式输出）。
 	SettingSubTitle           = "sub_title"                 // 订阅页默认标题
 	SettingSubAnnouncement    = "sub_announcement"          // 全局公告（Markdown）
@@ -57,6 +63,14 @@ type SettingMutation struct {
 	Key    string
 	Value  string
 	Delete bool
+}
+
+// EffectivePanelShort 归一化面板缩写：去首尾空白，空值回退默认 DefaultPanelShort。
+func EffectivePanelShort(raw string) string {
+	if v := strings.TrimSpace(raw); v != "" {
+		return v
+	}
+	return DefaultPanelShort
 }
 
 // GetSetting 读取一个设置；未设置返回空字符串（不视为错误）。

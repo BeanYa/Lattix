@@ -296,6 +296,20 @@ func isACLRemoteSource(source string) bool {
 		strings.HasPrefix(lower, "clash-ipcidr:") || validRelativeRuleSource(source)
 }
 
+// inferNodeCountry 从节点名称推断国家/地区代码：外部订阅节点没有面板服务器的
+// CountryCode 字段，只能依靠命名——优先识别旗帜 emoji 的区域指示符对（直接映射
+// 为两位代码），其次复用 inferredGroupCountry 的关键词表。无法推断时返回空串，
+// 该节点只进入 __LATTIX_ALL__，不参与区域分组。
+func inferNodeCountry(name string) string {
+	runes := []rune(name)
+	for i := 0; i+1 < len(runes); i++ {
+		if runes[i] >= 0x1F1E6 && runes[i] <= 0x1F1FF && runes[i+1] >= 0x1F1E6 && runes[i+1] <= 0x1F1FF {
+			return string([]rune{runes[i] - 0x1F1E6 + 'A', runes[i+1] - 0x1F1E6 + 'A'})
+		}
+	}
+	return inferredGroupCountry(name)
+}
+
 func inferredGroupCountry(name string) string {
 	for marker, country := range map[string]string{
 		"香港": "HK", "🇭🇰": "HK", "美国": "US", "🇺🇸": "US", "日本": "JP", "🇯🇵": "JP",

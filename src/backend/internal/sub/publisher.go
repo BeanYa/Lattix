@@ -55,8 +55,9 @@ func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) 
 	if err != nil {
 		return PublishResult{}, err
 	}
+	panelShort := s.panelShort(ctx)
 	warnings := append(append([]string{}, chainWarnings...), compileWarnings...)
-	policyWarnings, err := expandPolicy(&policy, nodes)
+	policyWarnings, err := expandPolicy(&policy, nodes, panelShort)
 	if err != nil {
 		return s.publishFailure(ctx, userID, err)
 	}
@@ -139,7 +140,7 @@ func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) 
 		} else if format == "quanx-config" {
 			nativePolicy = quanxPolicy
 		}
-		content, templateErr := applyNativeTemplate(format, template.Content, nativePolicy, nodes)
+		content, templateErr := applyNativeTemplate(format, template.Content, nativePolicy, nodes, panelShort)
 		if templateErr != nil {
 			return s.publishFailure(ctx, userID, templateErr)
 		}
@@ -160,6 +161,12 @@ func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) 
 func (s *Server) publishFailure(ctx context.Context, userID int64, err error) (PublishResult, error) {
 	_ = s.st.SetSubscriptionGenerationError(ctx, userID, err.Error())
 	return PublishResult{}, err
+}
+
+// panelShort 读取面板缩写设置（读取失败按未设置处理，回退默认值）。
+func (s *Server) panelShort(ctx context.Context) string {
+	raw, _ := s.st.GetSetting(ctx, store.SettingPanelShort)
+	return store.EffectivePanelShort(raw)
 }
 
 func (s *Server) resolvePolicy(ctx context.Context, profile store.SubscriptionProfile) (portablePolicy, string, *store.SubscriptionTemplate, error) {
@@ -225,6 +232,7 @@ func (s *Server) itemsForUser(ctx context.Context, user *store.User) ([]proxyIte
 type compiledNode struct {
 	Name        string
 	CountryCode string
+	Group       string // 来源分组名：面板管理节点为空，外部订阅节点为其订阅名称
 	Clash       clashProxy
 	Singbox     any // 面板节点为 sbOutbound；外部节点为 map[string]any
 	QuanX       string
@@ -245,7 +253,9 @@ func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid strin
 				warnings = append(warnings, err.Error())
 			}
 			out = append(out, compiledNode{
-				Name: clash.Name, Clash: clash, Singbox: singbox, // 失败时 nil，renderSingbox 跳过
+				Name: clash.Name, CountryCode: inferNodeCountry(clash.Name), // 与面板节点同级参与区域分组
+				Group: item.group, // 来源分组：外部订阅名
+				Clash: clash, Singbox: singbox, // 失败时 nil，renderSingbox 跳过
 				QuanX: buildExternalQuanX(*item.external),
 			})
 			continue
@@ -276,13 +286,16 @@ func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid strin
 	return out, warnings, nil
 }
 
-func expandPolicy(policy *portablePolicy, nodes []compiledNode) ([]string, error) {
+func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort string) ([]string, error) {
 	all := make([]string, 0, len(nodes))
 	byCountry := map[string][]string{}
+	var noRegion []string
 	for _, node := range nodes {
 		all = append(all, node.Name)
 		if node.CountryCode != "" {
 			byCountry[node.CountryCode] = append(byCountry[node.CountryCode], node.Name)
+		} else {
+			noRegion = append(noRegion, node.Name)
 		}
 	}
 	countries := make([]string, 0, len(byCountry))
@@ -290,11 +303,32 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode) ([]string, error
 		countries = append(countries, country)
 	}
 	sort.Strings(countries)
-	regions := make([]string, 0, len(countries))
+	regions := make([]string, 0, len(countries)+1)
+	var warnings []string
+	existing := make(map[string]bool, len(policy.Groups))
+	for _, group := range policy.Groups {
+		existing[group.Name] = true
+	}
+	// 按来源分组：「<panelShort> 分组」含全部面板管理节点，每个外部订阅一组
+	// （组名 = 订阅名）含其解析节点；与既有组重名时跳过，避免非法的重复组名。
+	for _, group := range sourcePolicyGroups(nodes, panelShort) {
+		if existing[group.Name] {
+			warnings = append(warnings, fmt.Sprintf("来源分组「%s」与既有策略组重名，已跳过自动生成", group.Name))
+			continue
+		}
+		existing[group.Name] = true
+		policy.Groups = append(policy.Groups, group)
+	}
 	for _, country := range countries {
 		name := countryFlag(country) + " " + country
 		regions = append(regions, name)
 		policy.Groups = append(policy.Groups, policyGroup{Name: name, Type: "select", Options: byCountry[country]})
+	}
+	// 无地区标识的节点（如名称无法推断国家的外部订阅节点）收进固定的无地区分组，
+	// 随 __LATTIX_REGIONS__ 一起展开，保证所有节点在分组层都可达。
+	if len(noRegion) > 0 {
+		regions = append(regions, noRegionGroupName)
+		policy.Groups = append(policy.Groups, policyGroup{Name: noRegionGroupName, Type: "select", Options: noRegion})
 	}
 	for index := range policy.Groups {
 		options := make([]string, 0, len(policy.Groups[index].Options)+len(all)+len(regions))
@@ -317,7 +351,35 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode) ([]string, error
 		}
 		policy.Groups[index].Options = uniqueStrings(options)
 	}
-	return pruneEmptyGroups(policy, all)
+	pruneWarnings, err := pruneEmptyGroups(policy, all)
+	return append(warnings, pruneWarnings...), err
+}
+
+// sourcePolicyGroups 生成按节点来源划分的策略组：「<panelShort> 分组」包含全部面板
+// 管理节点；每个外部订阅一组（组名 = 订阅名，按首次出现排序）包含其解析出的节点。
+// 无节点的来源不生成组。
+func sourcePolicyGroups(nodes []compiledNode, panelShort string) []policyGroup {
+	var panel []string
+	outerOrder := []string{}
+	outer := map[string][]string{}
+	for _, node := range nodes {
+		if node.Group == "" {
+			panel = append(panel, node.Name)
+			continue
+		}
+		if _, ok := outer[node.Group]; !ok {
+			outerOrder = append(outerOrder, node.Group)
+		}
+		outer[node.Group] = append(outer[node.Group], node.Name)
+	}
+	groups := make([]policyGroup, 0, len(outerOrder)+1)
+	if len(panel) > 0 {
+		groups = append(groups, policyGroup{Name: panelShort + " 分组", Type: "select", Options: panel})
+	}
+	for _, name := range outerOrder {
+		groups = append(groups, policyGroup{Name: name, Type: "select", Options: outer[name]})
+	}
+	return groups
 }
 
 // pruneEmptyGroups 删除展开后无可选出站的策略组，并清除其余组的悬空引用：
@@ -399,6 +461,10 @@ func pruneEmptyGroups(policy *portablePolicy, all []string) ([]string, error) {
 	}
 	return warnings, nil
 }
+
+// noRegionGroupName 是无地区标识节点的固定分组名：随地区分组一起生成并排在最后，
+// 同时随 __LATTIX_REGIONS__ 展开，保证无国家代码的节点在分组层也可达。
+const noRegionGroupName = "🌐 无地区"
 
 func countryFlag(code string) string {
 	if len(code) != 2 {
@@ -587,7 +653,7 @@ func renderLinks(items []proxyItem, uuid string) ([]byte, error) {
 	return []byte(body + "\n"), nil
 }
 
-func applyNativeTemplate(format, content string, policy portablePolicy, nodes []compiledNode) ([]byte, error) {
+func applyNativeTemplate(format, content string, policy portablePolicy, nodes []compiledNode, panelShort string) ([]byte, error) {
 	switch format {
 	case "clash":
 		var document map[string]any
@@ -604,7 +670,7 @@ func applyNativeTemplate(format, content string, policy portablePolicy, nodes []
 		}
 		document["proxies"] = values["proxies"]
 		if groups, ok := document["proxy-groups"].([]any); ok {
-			document["proxy-groups"] = expandNativeGroups(groups, "proxies", nodes, "name", "select")
+			document["proxy-groups"] = expandNativeGroups(groups, "proxies", nodes, "name", "select", panelShort)
 		} else {
 			document["proxy-groups"] = values["proxy-groups"]
 		}
@@ -628,7 +694,7 @@ func applyNativeTemplate(format, content string, policy portablePolicy, nodes []
 		if outbounds, ok := document["outbounds"].([]any); ok {
 			generated, _ := values["outbounds"].([]any)
 			injected := append([]any(nil), generated[:min(len(nodes)+2, len(generated))]...)
-			injected = append(injected, expandNativeGroups(outbounds, "outbounds", nodes, "tag", "selector")...)
+			injected = append(injected, expandNativeGroups(outbounds, "outbounds", nodes, "tag", "selector", panelShort)...)
 			document["outbounds"] = uniqueNativeGroups(injected, "tag")
 		} else {
 			document["outbounds"] = values["outbounds"]
@@ -667,7 +733,7 @@ func uniqueNativeGroups(groups []any, nameKey string) []any {
 	return out
 }
 
-func expandNativeGroups(groups []any, optionKey string, nodes []compiledNode, nameKey, regionType string) []any {
+func expandNativeGroups(groups []any, optionKey string, nodes []compiledNode, nameKey, regionType, panelShort string) []any {
 	all, regions, byCountry := nativeNodeOptions(nodes)
 	expanded := make([]any, 0, len(groups)+len(regions))
 	existing := map[string]bool{}
@@ -685,15 +751,23 @@ func expandNativeGroups(groups []any, optionKey string, nodes []compiledNode, na
 		}
 		expanded = append(expanded, group)
 	}
+	appendGroup := func(name string, options []string) {
+		if existing[name] {
+			return
+		}
+		existing[name] = true
+		values := make([]any, 0, len(options))
+		for _, option := range options {
+			values = append(values, option)
+		}
+		expanded = append(expanded, map[string]any{nameKey: name, "type": regionType, optionKey: values})
+	}
+	// 来源分组（面板分组 + 各外部订阅分组）与便携策略路径保持一致。
+	for _, group := range sourcePolicyGroups(nodes, panelShort) {
+		appendGroup(group.Name, group.Options)
+	}
 	for _, region := range regions {
-		if existing[region] {
-			continue
-		}
-		options := make([]any, 0, len(byCountry[region]))
-		for _, option := range byCountry[region] {
-			options = append(options, option)
-		}
-		expanded = append(expanded, map[string]any{nameKey: region, "type": regionType, optionKey: options})
+		appendGroup(region, byCountry[region])
 	}
 	return expanded
 }
@@ -701,18 +775,25 @@ func expandNativeGroups(groups []any, optionKey string, nodes []compiledNode, na
 func nativeNodeOptions(nodes []compiledNode) ([]string, []string, map[string][]string) {
 	all := make([]string, 0, len(nodes))
 	byCountry := map[string][]string{}
+	var noRegion []string
 	for _, node := range nodes {
 		all = append(all, node.Name)
 		if node.CountryCode != "" {
 			region := countryFlag(node.CountryCode) + " " + strings.ToUpper(node.CountryCode)
 			byCountry[region] = append(byCountry[region], node.Name)
+		} else {
+			noRegion = append(noRegion, node.Name)
 		}
 	}
-	regions := make([]string, 0, len(byCountry))
+	regions := make([]string, 0, len(byCountry)+1)
 	for region := range byCountry {
 		regions = append(regions, region)
 	}
 	sort.Strings(regions)
+	if len(noRegion) > 0 {
+		byCountry[noRegionGroupName] = noRegion
+		regions = append(regions, noRegionGroupName)
+	}
 	return all, regions, byCountry
 }
 

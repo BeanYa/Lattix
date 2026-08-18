@@ -108,6 +108,8 @@ Mihomo `proxy-groups[].proxies` 和 sing-box selector `outbounds` 支持：
 - `__LATTIX_REGIONS__`：动态地区分组；
 - `__LATTIX_REGION_XX__`：ISO 3166-1 alpha-2 国家对应的节点，例如 `__LATTIX_REGION_US__`。
 
+发布时另按节点来源自动生成分组（无节点的来源不生成，与既有组重名时跳过）：「<面板缩写> 分组」包含全部面板管理链路节点（面板缩写取设置 `panel_short`，默认 `Lattix`），每个外部订阅一组（组名 = 订阅名）包含其解析节点；外部订阅节点的地区归属由节点名称推断（旗帜 emoji 优先，其次地区关键词），无法推断的节点收进「🌐 无地区」分组并随 `__LATTIX_REGIONS__` 展开。
+
 Quantumult X 原生模板必须包含 `__LATTIX_SERVERS__`，发布时替换为 `[server_local]` 节点内容。Mihomo 的 `proxies` 和 sing-box 的节点 outbounds 始终由 Lattix 结构化注入，不使用字符串拼接。
 
 链节点归属出口服务器国家，连接地址和端口仍取链入口。共享 Endpoint 链使用对应 assignment 的 `access_uuid`，独立节点继续使用用户 `uuid`。

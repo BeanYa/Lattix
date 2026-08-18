@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -80,6 +81,7 @@ type settingsDTO struct {
 	Timezone         string       `json:"timezone"`         // IANA 时区；空 = 浏览器本地
 	TrafficTimezone  string       `json:"traffic_timezone"` // 流量日/月桶边界使用的 IANA 时区
 	PublicURL        string       `json:"public_url"`       // 空 = 从请求推断
+	PanelShort       string       `json:"panel_short"`      // 面板缩写（链路命名模板/订阅分组名）；空 = 默认 Lattix
 	TrustedProxies   string       `json:"trusted_proxies"`  // 追加可信反代网段（CIDR 逗号分隔）；空 = 仅内建默认（回环+内网/容器网段）
 	TLSMode          string       `json:"tls_mode"`         // 保存的待生效模式；空 = 跟随启动参数
 	TLSCert          *certInfoDTO `json:"tls_cert"`         // 保存的证书摘要（cert 为 PEM，path 为目录文件）
@@ -120,6 +122,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		Timezone:                 s.getSetting(ctx, store.SettingTimezone),
 		TrafficTimezone:          firstNonEmpty(s.getSetting(ctx, store.SettingTrafficTimezone), store.DefaultTrafficTimezone),
 		PublicURL:                s.getSetting(ctx, store.SettingPublicURL),
+		PanelShort:               store.EffectivePanelShort(s.getSetting(ctx, store.SettingPanelShort)),
 		TrustedProxies:           s.getSetting(ctx, store.SettingTrustedProxies),
 		TLSMode:                  s.getSetting(ctx, store.SettingTLSMode),
 		TLSKeySet:                s.getSetting(ctx, store.SettingTLSKeyPEM) != "",
@@ -213,6 +216,7 @@ type updateSettingsRequest struct {
 	Timezone        string `json:"timezone"`
 	TrafficTimezone string `json:"traffic_timezone"`
 	PublicURL       string `json:"public_url"`
+	PanelShort      string `json:"panel_short"`     // 空 = 恢复默认 Lattix
 	TrustedProxies  string `json:"trusted_proxies"` // CIDR 逗号分隔；空 = 仅内建默认（回环+内网/容器网段）
 	TLSMode         string `json:"tls_mode"`        // ""=跟随启动参数 off|cert|acme|path
 	TLSCertPEM      string `json:"tls_cert_pem"`
@@ -249,6 +253,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"timezone":                     s.getSetting(ctx, store.SettingTimezone),
 		"traffic_timezone":             firstNonEmpty(s.getSetting(ctx, store.SettingTrafficTimezone), store.DefaultTrafficTimezone),
 		"public_url":                   s.getSetting(ctx, store.SettingPublicURL),
+		"panel_short":                  store.EffectivePanelShort(s.getSetting(ctx, store.SettingPanelShort)),
 		"trusted_proxies":              s.getSetting(ctx, store.SettingTrustedProxies),
 		"tls_mode":                     s.getSetting(ctx, store.SettingTLSMode),
 		"tls_domain":                   s.getSetting(ctx, store.SettingTLSDomain),
@@ -350,6 +355,19 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 面板缩写进入链路命名与订阅分组名：拒绝模板定界符与换行，限长避免组名臃肿。
+	req.PanelShort = strings.TrimSpace(req.PanelShort)
+	if req.PanelShort != "" {
+		if strings.ContainsAny(req.PanelShort, "{}") || strings.ContainsAny(req.PanelShort, "\r\n") {
+			writeError(w, http.StatusBadRequest, "面板缩写不能包含 {} 或换行")
+			return
+		}
+		if utf8.RuneCountInString(req.PanelShort) > 30 {
+			writeError(w, http.StatusBadRequest, "面板缩写不能超过 30 个字符")
+			return
+		}
+	}
+
 	req.TrustedProxies = strings.Join(strings.Fields(req.TrustedProxies), ",")
 	if req.TrustedProxies != "" {
 		if err := nettrust.Validate(req.TrustedProxies); err != nil {
@@ -445,6 +463,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	} else {
 		set(store.SettingPublicURL, req.PublicURL)
 	}
+	if req.PanelShort == "" {
+		del(store.SettingPanelShort)
+	} else {
+		set(store.SettingPanelShort, req.PanelShort)
+	}
 	if req.TrustedProxies == "" {
 		del(store.SettingTrustedProxies)
 	} else {
@@ -511,7 +534,8 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	after := map[string]any{
 		"timezone": req.Timezone, "traffic_timezone": req.TrafficTimezone,
-		"public_url": req.PublicURL, "trusted_proxies": req.TrustedProxies, "tls_mode": req.TLSMode,
+		"public_url": req.PublicURL, "panel_short": store.EffectivePanelShort(req.PanelShort),
+		"trusted_proxies": req.TrustedProxies, "tls_mode": req.TLSMode,
 		"tls_domain": tlsDomain, "acme_domain": acmeDomain, "acme_email": strings.TrimSpace(req.ACMEEmail),
 		"alert_webhook_set":            req.AlertWebhookURL != "",
 		"alert_telegram_chat_id":       strings.TrimSpace(req.AlertTelegramChatID),
@@ -544,6 +568,20 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	// 为内建默认可信，此处配置是在其上追加公网网段（如 CDN 回源）。
 	if err := nettrust.Default.Configure(req.TrustedProxies); err != nil {
 		log.Printf("panel: apply trusted proxies: %v", err)
+	}
+	// 面板缩写进入链路命名与订阅来源分组名：变更后全量用户订阅异步重发布，
+	// 使新组名立即生效（快照模型下不触发则维持旧内容）。
+	if store.EffectivePanelShort(req.PanelShort) != before["panel_short"] && s.subscriptions != nil {
+		users, err := s.st.ListUsers(ctx)
+		if err != nil {
+			log.Printf("panel: list users for panel_short republish: %v", err)
+		} else if len(users) > 0 {
+			ids := make([]int64, 0, len(users))
+			for _, u := range users {
+				ids = append(ids, u.ID)
+			}
+			s.subscriptions.EnqueueUsers(ids, s.panelBase(r))
+		}
 	}
 	if releaseInspectionChanged || billingInspectionChanged || exchangeInspectionChanged {
 		s.scheduler.notifyChanged()

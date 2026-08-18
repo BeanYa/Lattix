@@ -304,9 +304,10 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		nameServers = append(nameServers, nameServer(srv))
 	}
 	name, err := resolveNameTemplate(req.Name, nameTemplateValues{
-		Protocol: req.Node.Protocol,
-		Port:     req.EntryPort,
-		Servers:  nameServers,
+		Protocol:   req.Node.Protocol,
+		Port:       req.EntryPort,
+		Servers:    nameServers,
+		PanelShort: store.EffectivePanelShort(s.getSetting(r.Context(), store.SettingPanelShort)),
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -575,9 +576,10 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		nameServers = append(nameServers, nameServer(server))
 	}
 	name, err := resolveNameTemplate(req.Name, nameTemplateValues{
-		Protocol: req.Node.Protocol,
-		Port:     req.EntryPort,
-		Servers:  nameServers,
+		Protocol:   req.Node.Protocol,
+		Port:       req.EntryPort,
+		Servers:    nameServers,
+		PanelShort: store.EffectivePanelShort(s.getSetting(r.Context(), store.SettingPanelShort)),
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

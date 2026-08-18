@@ -715,6 +715,7 @@ export interface PanelSettings {
   timezone: string
   traffic_timezone: string
   public_url: string
+  panel_short: string
   trusted_proxies: string
   tls_mode: TLSMode
   tls_cert: CertInfo | null
@@ -751,6 +752,7 @@ export interface UpdateSettingsRequest {
   timezone: string
   traffic_timezone: string
   public_url: string
+  panel_short: string
   trusted_proxies: string
   tls_mode: TLSMode
   tls_cert_pem?: string

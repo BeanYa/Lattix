@@ -48,4 +48,18 @@ describe('multi-hop name templates', () => {
     const globalSuggestions = getTemplateSuggestions(globalTemplate, globalTemplate.length, relayContext)
     expect(globalSuggestions).toBeNull()
   })
+
+  it('resolves PANEL_SHORT from context with default fallback', () => {
+    expect(validateNameTemplate('{{PANEL_SHORT}}-{{EXIT.NAME}}', relayContext)).toEqual({
+      preview: 'Lattix-JP Exit',
+      error: '',
+    })
+    const branded = { ...relayContext, panelShort: 'MyPanel' }
+    expect(validateNameTemplate('{{PANEL_SHORT}}', branded)).toEqual({ preview: 'MyPanel', error: '' })
+  })
+
+  it('suggests PANEL_SHORT for multi-hop templates', () => {
+    const template = '{{PANEL'
+    expect(getTemplateSuggestions(template, template.length, relayContext)?.items).toContain('PANEL_SHORT')
+  })
 })

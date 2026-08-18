@@ -3,12 +3,15 @@ import type { Server } from '@/lib/types'
 
 export const DEFAULT_DIRECT_NAME_TEMPLATE = '{{COUNTRY_FLAG}}{{LOCATION}}-Direct'
 export const DEFAULT_RELAY_NAME_TEMPLATE = '{{EXIT.COUNTRY_FLAG}}-Out'
+// 与后端 store.DefaultPanelShort 保持一致（panel_short 未设置时的回退）。
+export const DEFAULT_PANEL_SHORT = 'Lattix'
 
 export interface NameTemplateContext {
   servers: Server[]
   protocol: string
   port?: string
   hopIndexes?: number[]
+  panelShort?: string
 }
 
 export interface NameTemplateResult {
@@ -74,6 +77,8 @@ function resolveToken(key: string, context: NameTemplateContext): string {
 
   if (!/^[A-Z][A-Z0-9_]*$/.test(key)) throw new Error(`名称模板包含无效参数 {{${key}}}`)
   switch (key) {
+    case 'PANEL_SHORT':
+      return context.panelShort || DEFAULT_PANEL_SHORT
     case 'PROTOCOL':
       return context.protocol
     case 'PORT':
@@ -160,11 +165,12 @@ export function getTemplateSuggestions(
   if (open < 0 || template.lastIndexOf('}}', cursor) > open) return null
   const fragment = template.slice(open + 2, cursor).trimStart().toUpperCase()
   const globalItems = context.servers.length > 1
-    ? ['PROTOCOL', 'PORT', 'HOPS']
+    ? ['PANEL_SHORT', 'PROTOCOL', 'PORT', 'HOPS']
     : [
         ...serverAttributes,
         'SERVER',
         'SERVER_ID',
+        'PANEL_SHORT',
         'PROTOCOL',
         'PORT',
         'HOPS',

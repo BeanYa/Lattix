@@ -47,9 +47,10 @@ func nameServer(srv *store.Server) nameTemplateServer {
 // nameTemplateValues 是创建直连/中转链路时可用于名称模板的上下文。
 // Servers 按客户端到 Internet 的顺序排列；无作用域服务器变量仅用于单跳链路。
 type nameTemplateValues struct {
-	Protocol string
-	Port     *int
-	Servers  []nameTemplateServer
+	Protocol   string
+	Port       *int
+	Servers    []nameTemplateServer
+	PanelShort string // {{PANEL_SHORT}}：面板缩写（panel_short 设置，调用方已归一化）
 }
 
 // resolveNameTemplate 将名称模板解析成最终管理名称。空模板使用自动命名。
@@ -141,6 +142,8 @@ func resolveNameVariable(key string, values nameTemplateValues) (string, error) 
 		return "", fmt.Errorf("名称模板包含无效参数 {{%s}}", key)
 	}
 	switch key {
+	case "PANEL_SHORT":
+		return values.PanelShort, nil
 	case "PROTOCOL":
 		return values.Protocol, nil
 	case "PORT":

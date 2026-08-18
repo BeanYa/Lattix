@@ -385,7 +385,7 @@ rules: [MATCH,Main]
 		{Name: "US-1", CountryCode: "US", Clash: clashProxy{Name: "US-1", Type: "vless"}},
 		{Name: "JP-1", CountryCode: "JP", Clash: clashProxy{Name: "JP-1", Type: "vless"}},
 	}
-	result, err := applyNativeTemplate("clash", content, portablePolicy{Final: "Main"}, nodes)
+	result, err := applyNativeTemplate("clash", content, portablePolicy{Final: "Main"}, nodes, "Lattix")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestSingboxNativeTemplateMergesNodesAndPreservesRoute(t *testing.T) {
 		{Name: "US-1", CountryCode: "US", Singbox: sbOutbound{Type: "vless", Tag: "US-1"}},
 		{Name: "JP-1", CountryCode: "JP", Singbox: sbOutbound{Type: "vless", Tag: "JP-1"}},
 	}
-	result, err := applyNativeTemplate("singbox", content, portablePolicy{Final: "Main"}, nodes)
+	result, err := applyNativeTemplate("singbox", content, portablePolicy{Final: "Main"}, nodes, "Lattix")
 	if err != nil {
 		t.Fatal(err)
 	}

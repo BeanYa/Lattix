@@ -73,3 +73,29 @@ func TestResolveDirectEntryExitAliases(t *testing.T) {
 		t.Fatalf("解析结果 = %q", got)
 	}
 }
+
+func TestResolveNameTemplatePanelShort(t *testing.T) {
+	values := nameTemplateValues{
+		Protocol:   "vless",
+		PanelShort: "Lattix",
+		Servers: []nameTemplateServer{{
+			ID: 7, Name: "JP Hyper", CountryCode: "JP", Location: "Tokyo",
+		}},
+	}
+	got, err := resolveNameTemplate("{{PANEL_SHORT}}-{{COUNTRY_FLAG}}{{LOCATION}}", values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Lattix-🇯🇵Tokyo"; got != want {
+		t.Fatalf("解析结果 = %q，期望 %q", got, want)
+	}
+	// 多跳链路同样可用（非服务器作用域变量）。
+	values.Servers = append(values.Servers, nameTemplateServer{ID: 8, Name: "US Exit", CountryCode: "US"})
+	got, err = resolveNameTemplate("{{PANEL_SHORT}} {{ENTRY.NAME}}→{{EXIT.NAME}}", values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "Lattix JP Hyper→US Exit"; got != want {
+		t.Fatalf("解析结果 = %q，期望 %q", got, want)
+	}
+}

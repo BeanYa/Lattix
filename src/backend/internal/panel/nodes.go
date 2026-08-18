@@ -222,9 +222,10 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	name, err := resolveNameTemplate(req.Name, nameTemplateValues{
-		Protocol: req.Protocol,
-		Port:     req.Port,
-		Servers:  []nameTemplateServer{nameServer(srv)},
+		Protocol:   req.Protocol,
+		Port:       req.Port,
+		Servers:    []nameTemplateServer{nameServer(srv)},
+		PanelShort: store.EffectivePanelShort(s.getSetting(r.Context(), store.SettingPanelShort)),
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

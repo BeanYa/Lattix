@@ -195,6 +195,7 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
   直连 `{{COUNTRY_FLAG}}{{LOCATION}}-Direct`，中转 `{{EXIT.COUNTRY_FLAG}}-Out`。
 - 全局变量 `ID/NAME/COUNTRY/COUNTRY_CODE/COUNTRY_FLAG/LOCATION/ADDRESS/TAG[n]` 取客户端实际连接的服务器：
   直连为唯一服务器，中转为入口；另有 `PROTOCOL/PORT/HOPS`。`PORT` 选择自动端口时解析为 `auto`。
+  `PANEL_SHORT` 解析为面板缩写（设置页 `panel_short`，默认 `Lattix`），与服务器拓扑无关。
 - 拓扑对象 `ENTRY/EXIT/HOP[n]` 代表服务器，支持属性
   `.ID/.NAME/.COUNTRY/.COUNTRY_CODE/.COUNTRY_FLAG/.LOCATION/.ADDRESS/.TAG[n]`；
   `HOP[0] == ENTRY`，`HOP[最后] == EXIT`，数组索引从 0 开始。直连中三者均指唯一服务器。

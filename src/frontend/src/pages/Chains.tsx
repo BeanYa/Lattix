@@ -492,6 +492,7 @@ export default function Chains() {
   const [chains, setChains] = useState<Chain[]>([])
   const [nodes, setNodes] = useState<XrayNode[]>([])
   const [servers, setServers] = useState<Server[]>([])
+  const [panelShort, setPanelShort] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [retrying, setRetrying] = useState<string | null>(null)
@@ -608,6 +609,11 @@ export default function Chains() {
       if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [load])
+
+  // 名称模板 {{PANEL_SHORT}} 预览值；读取失败由 naming 层回退默认缩写。
+  useEffect(() => {
+    api.settings().then((s) => setPanelShort(s.panel_short)).catch(() => {})
+  }, [])
 
   const resetChainForm = () => {
     setEditingChainId(null)
@@ -1302,7 +1308,7 @@ export default function Chains() {
                 id="chain-name-template"
                 value={name}
                 onChange={setName}
-                context={{ servers: topologyServers, protocol, port: entryPort, hopIndexes }}
+                context={{ servers: topologyServers, protocol, port: entryPort, hopIndexes, panelShort }}
                 allowEmpty
                 placeholder="留空自动生成 Chain #xxxx"
                 emptyHint="留空将在创建时自动生成 Chain #xxxx（4 位随机大小写字母）"

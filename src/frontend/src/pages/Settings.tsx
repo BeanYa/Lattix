@@ -162,6 +162,7 @@ export default function Settings() {
 
   // 基本设置
   const [publicURL, setPublicURL] = useState('')
+  const [panelShort, setPanelShort] = useState('')
   const [trustedProxies, setTrustedProxies] = useState('')
   const [timezone, setTimezone] = useState('')
   const [trafficTimezone, setTrafficTimezone] = useState('Asia/Shanghai')
@@ -248,6 +249,7 @@ export default function Settings() {
       .then((s) => {
         setSettings(s)
         setPublicURL(s.public_url)
+        setPanelShort(s.panel_short)
         setTrustedProxies(s.trusted_proxies ?? '')
         setTimezone(s.timezone)
         setTrafficTimezone(s.traffic_timezone)
@@ -341,6 +343,7 @@ export default function Settings() {
         timezone: timezone.trim(),
         traffic_timezone: trafficTimezone.trim(),
         public_url: publicURL.trim(),
+        panel_short: panelShort.trim(),
         trusted_proxies: trustedProxies.trim(),
         tls_mode: tlsMode === 'flag' ? '' : tlsMode,
         // 留空 = 保持已保存值不变（后端语义）
@@ -981,6 +984,19 @@ export default function Settings() {
               />
               <p className="cg-set-note">
                 用于生成 agent 安装命令与订阅链接；反代部署时填反代后的地址（https 即安全入口）。
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="panelShort">面板缩写</Label>
+              <Input
+                id="panelShort"
+                value={panelShort}
+                onChange={(e) => setPanelShort(e.target.value)}
+                placeholder="Lattix"
+              />
+              <p className="cg-set-note">
+                用于链路命名模板变量 {'{{PANEL_SHORT}}'} 与订阅的「面板缩写 分组」策略组名；
+                留空恢复默认 Lattix，保存后新生成的订阅与链路名称生效。
               </p>
             </div>
             <div className="flex flex-col gap-2">
