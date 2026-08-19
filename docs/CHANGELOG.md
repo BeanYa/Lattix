@@ -87,6 +87,9 @@
 
 ### Fixed
 
+- 修复用户订阅预览接口因 RPC 路由查询参数白名单未登记 `stage` 而拒绝请求
+  （`unknown query parameter: stage`）的问题：`/api/user/subscription-preview`
+  的 `AllowedQuery` 补上 `stage`。
 - 反代终止 TLS 的 https 识别修复：`nettrust` 在回环之外内建信任内网/容器网段
   （RFC1918、169.254/16、CGNAT 100.64/10、IPv6 ULA/链路本地），1panel/OpenResty、
   docker compose、局域网 nginx 反代部署无需再手工配置 `trusted_proxies`，

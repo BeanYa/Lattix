@@ -380,7 +380,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
 		s.handleResetUserSubscriptionToken)
 	s.registerRPC(mux, http.MethodGet, "/api/user/subscription-preview",
-		rpcRouteOptions{Auth: true, AllowedQuery: []string{"user_id", "format"}},
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"user_id", "format", "stage"}},
 		s.handleUserSubscriptionPreview)
 
 	s.registerRPC(mux, http.MethodGet, "/api/subscription/categories", read, s.handleSubscriptionCategories)
