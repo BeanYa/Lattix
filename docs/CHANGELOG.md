@@ -6,6 +6,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 订阅预编译中间态进一步推迟选项展开：组选项中的选项级占位符
+  （`__LATTIX_ALL__`/`__LATTIX_REGIONS__`/`__LATTIX_REGION_XX__`，新增内部占位符
+  `__LATTIX_REGION_NONE__` 表示无地区节点）在中间态保持原样，剪枝与引用环检测
+  改为占位符感知，直到最终渲染（交付）阶段才统一展开为真实节点/分组名；
+  交付内容对全部占位符（条目级 + 选项级）做残留扫描，残留即发布失败。
+  最终交付文件行为不变，预编译预览（`stage=pre`）中组选项同样只显示占位符。
+
 ### Breaking changes
 
 - `GET /api/billing/stats`（成本统计）响应字段改名：`costs_public` →

@@ -330,7 +330,7 @@ func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid strin
 }
 
 func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort string) ([]string, error) {
-	// 模板自带分组数与地区组标记须在展开前捕获（展开会重写 Options）。
+	// 模板自带分组数与地区组/节点池组标记须在追加自动生成分组前捕获。
 	templateCount := len(policy.Groups)
 	regionLike := make([]bool, templateCount) // 选项全部为 __LATTIX_REGION*__ 占位符的模板组 = 地区组
 	poolGroup := make([]bool, templateCount)  // 选项含 __LATTIX_ALL__ 的节点池组（自动选择/故障转移等）
@@ -397,43 +397,27 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort strin
 	for _, country := range countries {
 		name := countryFlag(country) + " " + country
 		leafGroups = append(leafGroups, name)
-		policy.Groups = append(policy.Groups, policyGroup{Name: name, Type: "select", Options: byCountry[country]})
+		policy.Groups = append(policy.Groups, policyGroup{Name: name, Type: "select", Options: []string{placeholderRegionPrefix + country + "__"}})
 	}
 	// 无地区标识的节点（如名称无法推断国家的外部订阅节点）收进固定的无地区分组，
 	// 随 __LATTIX_REGIONS__ 一起展开，保证所有节点在分组层都可达。
 	if len(noRegion) > 0 {
 		leafGroups = append(leafGroups, noRegionGroupName)
-		policy.Groups = append(policy.Groups, policyGroup{Name: noRegionGroupName, Type: "select", Options: noRegion})
+		policy.Groups = append(policy.Groups, policyGroup{Name: noRegionGroupName, Type: "select", Options: []string{placeholderRegionNone}})
 	}
-	for index := range policy.Groups {
-		options := make([]string, 0, len(policy.Groups[index].Options)+len(all)+len(leafGroups))
-		for _, option := range policy.Groups[index].Options {
-			switch option {
-			case "__LATTIX_ALL__":
-				options = append(options, all...)
-			case "__LATTIX_REGIONS__":
-				options = append(options, leafGroups...)
-			default:
-				if strings.HasPrefix(option, "__LATTIX_REGION_") && strings.HasSuffix(option, "__") {
-					country := strings.TrimSuffix(strings.TrimPrefix(option, "__LATTIX_REGION_"), "__")
-					if len(byCountry[country]) > 0 {
-						options = append(options, byCountry[country]...)
-					}
-					continue
-				}
-				options = append(options, option)
-			}
-		}
-		policy.Groups[index].Options = uniqueStrings(options)
-	}
+	// 选项级占位符（__LATTIX_ALL__ / __LATTIX_REGIONS__ / __LATTIX_REGION_*__）
+	// 在中间态保持原样，到最终渲染阶段才按 expansion 解析为节点/分组名字；
+	// 剪枝与环检测因此必须是占位符感知的（见 pruneEmptyGroups）。
+	policy.expansion = &policyExpansion{all: all, byCountry: byCountry, noRegion: noRegion, leafGroups: leafGroups}
 	// 可达性增强：模板定义的分组（地区组与自动生成的来源/地区分组除外）在保留原有
 	// 选项（含叶子分组引用）的基础上补充 DIRECT/REJECT 兜底并追加全部节点、
 	// 「自动选择」与「节点选择」（final）引用，使任何分流组既可指定固定节点
 	// 也可回落自动选择、直连或拒绝。「自动选择」自身不补 DIRECT/REJECT
 	// （纯节点测速组，兜底出站会污染延迟测试结果）。
 	// 不变量：节点池组（选项含 __LATTIX_ALL__，如自动选择/故障转移）与节点选择的
-	// 选项只保留节点与叶子分组（及 DIRECT/REJECT），剔除其他组引用——它们因此永不
-	// 反向引用分流组，分流组注入对它们的引用不会产生环；detectGroupCycle 兜底。
+	// 选项只保留节点、叶子分组与选项级占位符（及 DIRECT/REJECT），剔除其他组引用
+	// ——它们因此永不反向引用分流组，分流组注入对它们的引用不会产生环；
+	// detectGroupCycle 兜底。
 	finalName := ""
 	if policy.Final != "DIRECT" && policy.Final != "REJECT" && existing[policy.Final] {
 		finalName = policy.Final
@@ -473,18 +457,26 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort strin
 		options := append([]string{}, group.Options...)
 		if poolGroup[index] || group.Name == finalName {
 			kept := make([]string, 0, len(options))
+			hasAll := false
 			for _, option := range options {
-				if option == "DIRECT" || option == "REJECT" || nodeSet[option] || leafSet[option] {
+				if option == "DIRECT" || option == "REJECT" || nodeSet[option] || leafSet[option] || isOptionPlaceholder(option) {
+					if option == placeholderAllNodes {
+						hasAll = true
+					}
 					kept = append(kept, option)
 				}
 			}
 			if group.Name != autoName {
 				kept = appendDirectReject(kept)
 			}
-			options = append(kept, all...)
+			if !hasAll {
+				// 保证节点池组/final 组始终覆盖全部节点（占位符，最终渲染展开）。
+				kept = append(kept, placeholderAllNodes)
+			}
+			options = kept
 		} else {
 			options = appendDirectReject(options)
-			options = append(options, all...)
+			options = append(options, placeholderAllNodes)
 			if autoName != "" {
 				options = append(options, autoName)
 			}
@@ -586,6 +578,9 @@ func sourcePolicyGroups(nodes []compiledNode, panelShort string) []policyGroup {
 // 区域分组（如 🇰🇷 韩国节点）在无对应国家节点时 options 为空，Mihomo/sing-box
 // 会因空组或悬空引用拒绝整份配置。规则若指向被剪除的组则跳过并给出警告。
 // 无任何节点时跳过剪除（订阅本身退化为空配置，维持既有发布契约）。
+// 选项级占位符按 policy.expansion 的解析结果判断存活性：解析为空的占位符
+// （如没有对应国家节点的 __LATTIX_REGION_XX__）视同不存在，最终渲染展开时
+// 自然消失；占位符本身在过滤阶段保留，留待最终渲染展开。
 func pruneEmptyGroups(policy *portablePolicy, all []string) ([]string, error) {
 	if len(all) == 0 {
 		return nil, nil
@@ -594,7 +589,16 @@ func pruneEmptyGroups(policy *portablePolicy, all []string) ([]string, error) {
 	for _, name := range all {
 		nodeSet[name] = true
 	}
+	expansion := policy.expansion
 	alive := map[string]bool{}
+	// optionAlive 判定选项存活：内置出站、真实节点、已存活的组引用，
+	// 或解析结果非空的选项级占位符。
+	optionAlive := func(option string) bool {
+		if option == "DIRECT" || option == "REJECT" || nodeSet[option] || alive[option] {
+			return true
+		}
+		return expansion != nil && isOptionPlaceholder(option) && len(expansion.resolveOption(option)) > 0
+	}
 	for {
 		changed := false
 		for _, group := range policy.Groups {
@@ -602,7 +606,7 @@ func pruneEmptyGroups(policy *portablePolicy, all []string) ([]string, error) {
 				continue
 			}
 			for _, option := range group.Options {
-				if option == "DIRECT" || option == "REJECT" || nodeSet[option] || alive[option] {
+				if optionAlive(option) {
 					alive[group.Name] = true
 					changed = true
 					break
@@ -627,7 +631,9 @@ func pruneEmptyGroups(policy *portablePolicy, all []string) ([]string, error) {
 		}
 		options := make([]string, 0, len(group.Options))
 		for _, option := range group.Options {
-			if option == "DIRECT" || option == "REJECT" || nodeSet[option] || alive[option] {
+			if optionAlive(option) || isOptionPlaceholder(option) && expansion != nil && len(expansion.resolveOption(option)) == 0 {
+				// 存活选项保留；解析为空的占位符也暂时保留——最终渲染展开时自然消失，
+				// 避免中间态丢失模板意图。
 				options = append(options, option)
 			}
 		}
@@ -688,19 +694,22 @@ func uniqueStrings(values []string) []string {
 }
 
 // mihomoPre 是 clash 订阅的预编译中间态：节点区与来源分组区以占位符表示，
+// 组选项中的选项级占位符（__LATTIX_ALL__ 等）同样保留到最终渲染才展开；
 // 规则/DNS/geodata 等已就绪；expand 解压为最终配置，artifact 输出中间态 YAML。
 type mihomoPre struct {
 	config      clashConfig // Proxies/ProxyGroups 为空，其余字段已填
 	proxies     []any       // 节点占位符
-	groups      []any       // clashProxyGroup 或来源分组占位符
-	panelGroup  *clashProxyGroup
-	outerGroups []clashProxyGroup
+	groups      []any       // policyGroup 或来源分组占位符
+	panelGroup  *policyGroup
+	outerGroups []policyGroup
+	expansion   *policyExpansion // 选项级占位符的最终展开上下文
 }
 
 func renderMihomoPre(policy portablePolicy) mihomoPre {
 	pre := mihomoPre{
-		config:  clashConfig{Proxies: []clashProxy{}, RuleProviders: map[string]clashRuleProvider{}},
-		proxies: []any{placeholderLattixNodes, placeholderOuterSubsNodes},
+		config:    clashConfig{Proxies: []clashProxy{}, RuleProviders: map[string]clashRuleProvider{}},
+		proxies:   []any{placeholderLattixNodes, placeholderOuterSubsNodes},
+		expansion: policy.expansion,
 	}
 	pre.config.DNS = defaultClashDNS()
 	panelDone, outerDone := false, false
@@ -711,25 +720,16 @@ func renderMihomoPre(policy portablePolicy) mihomoPre {
 				pre.groups = append(pre.groups, placeholderLattixGroup)
 				panelDone = true
 			}
-			cg := clashProxyGroup{
-				Name: group.Name, Type: group.Type, Proxies: group.Options,
-				URL: group.URL, Interval: group.Interval, Tolerance: group.Tolerance,
-			}
-			pre.panelGroup = &cg
+			g := group
+			pre.panelGroup = &g
 		case "outer":
 			if !outerDone {
 				pre.groups = append(pre.groups, placeholderOuterSubsGroup)
 				outerDone = true
 			}
-			pre.outerGroups = append(pre.outerGroups, clashProxyGroup{
-				Name: group.Name, Type: group.Type, Proxies: group.Options,
-				URL: group.URL, Interval: group.Interval, Tolerance: group.Tolerance,
-			})
+			pre.outerGroups = append(pre.outerGroups, group)
 		default:
-			pre.groups = append(pre.groups, clashProxyGroup{
-				Name: group.Name, Type: group.Type, Proxies: group.Options,
-				URL: group.URL, Interval: group.Interval, Tolerance: group.Tolerance,
-			})
+			pre.groups = append(pre.groups, group)
 		}
 	}
 	needsGeodata := false
@@ -763,7 +763,8 @@ func renderMihomoPre(policy portablePolicy) mihomoPre {
 }
 
 // expand 解压中间态：节点占位符替换为真实节点，来源分组占位符替换为构建期
-// 捕获的分组载荷；空来源（无面板节点/无外部订阅）的占位符条目被删除。
+// 捕获的分组载荷，选项级占位符按 expansion 展开为真实节点/分组名；
+// 空来源（无面板节点/无外部订阅）的占位符条目被删除。
 func (p mihomoPre) expand(nodes []compiledNode) clashConfig {
 	panel, outer := splitNodesBySource(nodes)
 	out := p.config
@@ -781,33 +782,44 @@ func (p mihomoPre) expand(nodes []compiledNode) clashConfig {
 		}
 	}
 	out.ProxyGroups = []clashProxyGroup{}
+	appendGroup := func(group policyGroup) {
+		out.ProxyGroups = append(out.ProxyGroups, clashProxyGroup{
+			Name: group.Name, Type: group.Type, Proxies: expandPolicyOptions(group.Options, p.expansion),
+			URL: group.URL, Interval: group.Interval, Tolerance: group.Tolerance,
+		})
+	}
 	for _, entry := range p.groups {
 		switch entry {
 		case placeholderLattixGroup:
 			if p.panelGroup != nil {
-				out.ProxyGroups = append(out.ProxyGroups, *p.panelGroup)
+				appendGroup(*p.panelGroup)
 			}
 		case placeholderOuterSubsGroup:
-			out.ProxyGroups = append(out.ProxyGroups, p.outerGroups...)
+			for _, group := range p.outerGroups {
+				appendGroup(group)
+			}
 		default:
-			out.ProxyGroups = append(out.ProxyGroups, entry.(clashProxyGroup))
+			appendGroup(entry.(policyGroup))
 		}
 	}
 	return out
 }
 
-// groupMaps 把中间态分组列表转为 map 序列（占位符字符串保留），供原生模板
-// 缺省分组区与中间态 artifact 使用。
+// groupMaps 把中间态分组列表转为 map 序列（占位符字符串保留、组选项不展开），
+// 供原生模板缺省分组区与中间态 artifact 使用。
 func (p mihomoPre) groupMaps() ([]any, error) {
 	groups := make([]any, 0, len(p.groups))
 	for _, entry := range p.groups {
-		group, ok := entry.(clashProxyGroup)
+		group, ok := entry.(policyGroup)
 		if !ok {
 			groups = append(groups, entry)
 			continue
 		}
 		var m map[string]any
-		raw, err := yaml.Marshal(group)
+		raw, err := yaml.Marshal(clashProxyGroup{
+			Name: group.Name, Type: group.Type, Proxies: group.Options,
+			URL: group.URL, Interval: group.Interval, Tolerance: group.Tolerance,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -885,12 +897,14 @@ func singboxGroupOutbound(group policyGroup) map[string]any {
 }
 
 // singboxPre 是 sing-box 订阅的预编译中间态：outbounds 中节点区与来源分组区
-// 以占位符表示；expand 解压为最终配置，artifact 输出中间态 JSON。
+// 以占位符表示，组选项中的选项级占位符保留到最终渲染才展开；
+// expand 解压为最终配置，artifact 输出中间态 JSON。
 type singboxPre struct {
 	route       map[string]any
-	outbounds   []any // 节点占位符 + DIRECT/REJECT + 组 map 或来源分组占位符
-	panelGroup  map[string]any
-	outerGroups []map[string]any
+	outbounds   []any // 节点占位符 + DIRECT/REJECT + policyGroup 或来源分组占位符
+	panelGroup  *policyGroup
+	outerGroups []policyGroup
+	expansion   *policyExpansion
 }
 
 func renderSingboxPre(policy portablePolicy) singboxPre {
@@ -900,6 +914,7 @@ func renderSingboxPre(policy portablePolicy) singboxPre {
 			map[string]any{"type": "direct", "tag": "DIRECT"},
 			map[string]any{"type": "block", "tag": "REJECT"},
 		},
+		expansion: policy.expansion,
 	}
 	panelDone, outerDone := false, false
 	for _, group := range policy.Groups {
@@ -909,15 +924,16 @@ func renderSingboxPre(policy portablePolicy) singboxPre {
 				pre.outbounds = append(pre.outbounds, placeholderLattixGroup)
 				panelDone = true
 			}
-			pre.panelGroup = singboxGroupOutbound(group)
+			g := group
+			pre.panelGroup = &g
 		case "outer":
 			if !outerDone {
 				pre.outbounds = append(pre.outbounds, placeholderOuterSubsGroup)
 				outerDone = true
 			}
-			pre.outerGroups = append(pre.outerGroups, singboxGroupOutbound(group))
+			pre.outerGroups = append(pre.outerGroups, group)
 		default:
-			pre.outbounds = append(pre.outbounds, singboxGroupOutbound(group))
+			pre.outbounds = append(pre.outbounds, group)
 		}
 	}
 	rules := make([]any, 0, len(policy.Rules)+len(policy.RemoteRule))
@@ -943,7 +959,8 @@ func renderSingboxPre(policy portablePolicy) singboxPre {
 }
 
 // expand 解压中间态：节点占位符替换为真实 outbound（Singbox 为空的节点跳过），
-// 来源分组占位符替换为构建期捕获的组载荷；空来源的占位符条目被删除。
+// 来源分组占位符替换为构建期捕获的组载荷，选项级占位符按 expansion 展开；
+// 空来源的占位符条目被删除。
 func (p singboxPre) expand(nodes []compiledNode) map[string]any {
 	panel, outer := splitNodesBySource(nodes)
 	appendNodes := func(out []any, source []compiledNode) []any {
@@ -955,6 +972,10 @@ func (p singboxPre) expand(nodes []compiledNode) map[string]any {
 		}
 		return out
 	}
+	appendGroup := func(out []any, group policyGroup) []any {
+		group.Options = expandPolicyOptions(group.Options, p.expansion)
+		return append(out, singboxGroupOutbound(group))
+	}
 	outbounds := make([]any, 0, len(p.outbounds)+len(nodes))
 	for _, entry := range p.outbounds {
 		switch entry {
@@ -964,22 +985,34 @@ func (p singboxPre) expand(nodes []compiledNode) map[string]any {
 			outbounds = appendNodes(outbounds, outer)
 		case placeholderLattixGroup:
 			if p.panelGroup != nil {
-				outbounds = append(outbounds, p.panelGroup)
+				outbounds = appendGroup(outbounds, *p.panelGroup)
 			}
 		case placeholderOuterSubsGroup:
 			for _, group := range p.outerGroups {
-				outbounds = append(outbounds, group)
+				outbounds = appendGroup(outbounds, group)
 			}
 		default:
+			if group, ok := entry.(policyGroup); ok {
+				outbounds = appendGroup(outbounds, group)
+				continue
+			}
 			outbounds = append(outbounds, entry)
 		}
 	}
 	return map[string]any{"outbounds": outbounds, "route": p.route}
 }
 
-// artifact 输出中间态 JSON（占位符保留），供调试预览与排查分组问题。
+// artifact 输出中间态 JSON（占位符保留、组选项不展开），供调试预览与排查分组问题。
 func (p singboxPre) artifact() ([]byte, error) {
-	return json.MarshalIndent(map[string]any{"outbounds": p.outbounds, "route": p.route}, "", "  ")
+	outbounds := make([]any, 0, len(p.outbounds))
+	for _, entry := range p.outbounds {
+		if group, ok := entry.(policyGroup); ok {
+			outbounds = append(outbounds, singboxGroupOutbound(group))
+			continue
+		}
+		outbounds = append(outbounds, entry)
+	}
+	return json.MarshalIndent(map[string]any{"outbounds": outbounds, "route": p.route}, "", "  ")
 }
 
 func renderSingbox(policy portablePolicy, nodes []compiledNode) ([]byte, error) {
@@ -1026,71 +1059,108 @@ func quanxPolicyLine(group policyGroup) string {
 }
 
 // quanxConfigPre 是 quanx-config 的预编译中间态：[server_local] 含节点占位符行，
-// [policy] 含来源分组占位符行；expand 解压为最终配置。
+// 组列表单独保存（含来源分组占位符），组选项中的选项级占位符保留到最终渲染
+// 才展开；expand 解压为最终配置。
 type quanxConfigPre struct {
-	text        string
+	prefix      string // 到 [policy] 头为止（含节点占位符行）
+	groups      []any  // policyGroup 或来源分组占位符
+	suffix      string // [filter_remote] 起的尾部
 	panelGroup  *policyGroup
 	outerGroups []policyGroup
+	expansion   *policyExpansion
 }
 
 func renderQuanXConfigPre(policy portablePolicy) quanxConfigPre {
-	pre := quanxConfigPre{}
-	var body strings.Builder
-	body.WriteString("# Generated by Lattix\n[server_local]\n")
-	body.WriteString(renderQuanXNodesPre())
-	body.WriteString("\n[policy]\n")
+	pre := quanxConfigPre{expansion: policy.expansion}
+	var head strings.Builder
+	head.WriteString("# Generated by Lattix\n[server_local]\n")
+	head.WriteString(renderQuanXNodesPre())
+	head.WriteString("\n[policy]\n")
+	pre.prefix = head.String()
 	panelDone, outerDone := false, false
 	for _, group := range policy.Groups {
 		switch group.Source {
 		case "panel":
 			if !panelDone {
-				body.WriteString(placeholderLattixGroup + "\n")
+				pre.groups = append(pre.groups, placeholderLattixGroup)
 				panelDone = true
 			}
 			g := group
 			pre.panelGroup = &g
 		case "outer":
 			if !outerDone {
-				body.WriteString(placeholderOuterSubsGroup + "\n")
+				pre.groups = append(pre.groups, placeholderOuterSubsGroup)
 				outerDone = true
 			}
 			pre.outerGroups = append(pre.outerGroups, group)
 		default:
-			body.WriteString(quanxPolicyLine(group) + "\n")
+			pre.groups = append(pre.groups, group)
 		}
 	}
-	body.WriteString("\n[filter_remote]\n")
+	var tail strings.Builder
+	tail.WriteString("\n[filter_remote]\n")
 	for _, remote := range policy.RemoteRule {
-		body.WriteString(remote.URL + ", tag=" + remote.Name + ", force-policy=" + remote.Outbound + ", enabled=true\n")
+		tail.WriteString(remote.URL + ", tag=" + remote.Name + ", force-policy=" + remote.Outbound + ", enabled=true\n")
 	}
-	body.WriteString("\n[filter_local]\n")
+	tail.WriteString("\n[filter_local]\n")
 	for _, rule := range policy.Rules {
-		body.WriteString(rule.Kind + "," + rule.Value + "," + rule.Outbound + "\n")
+		tail.WriteString(rule.Kind + "," + rule.Value + "," + rule.Outbound + "\n")
 	}
-	body.WriteString("FINAL," + policy.Final + "\n")
-	pre.text = body.String()
+	tail.WriteString("FINAL," + policy.Final + "\n")
+	pre.suffix = tail.String()
 	return pre
 }
 
-// expand 解压中间态：节点/来源分组占位符行替换为真实行，空来源删除占位符行。
-func (p quanxConfigPre) expand(nodes []compiledNode) []byte {
-	text := expandQuanXNodes(p.text, nodes)
-	var panelLines []string
-	if p.panelGroup != nil {
-		panelLines = []string{quanxPolicyLine(*p.panelGroup)}
+// policyLines 渲染组记录行：来源分组占位符替换为构建期捕获的组行，选项级
+// 占位符按 expansion 展开；空来源的占位符行被删除。expanded 控制是否展开选项。
+func (p quanxConfigPre) policyLines(expanded bool) []string {
+	lines := make([]string, 0, len(p.groups))
+	appendGroup := func(group policyGroup) {
+		if expanded {
+			group.Options = expandPolicyOptions(group.Options, p.expansion)
+		}
+		lines = append(lines, quanxPolicyLine(group))
 	}
-	outerLines := make([]string, 0, len(p.outerGroups))
-	for _, group := range p.outerGroups {
-		outerLines = append(outerLines, quanxPolicyLine(group))
+	for _, entry := range p.groups {
+		switch entry {
+		case placeholderLattixGroup:
+			if !expanded {
+				lines = append(lines, entry.(string))
+			} else if p.panelGroup != nil {
+				appendGroup(*p.panelGroup)
+			}
+		case placeholderOuterSubsGroup:
+			if !expanded {
+				lines = append(lines, entry.(string))
+			} else {
+				for _, group := range p.outerGroups {
+					appendGroup(group)
+				}
+			}
+		default:
+			appendGroup(entry.(policyGroup))
+		}
 	}
-	return []byte(expandTextPlaceholders(text, map[string][]string{
-		placeholderLattixGroup:    panelLines,
-		placeholderOuterSubsGroup: outerLines,
-	}))
+	return lines
 }
 
-// artifact 输出中间态文本（占位符保留），供调试预览。
-func (p quanxConfigPre) artifact() []byte { return []byte(p.text) }
+// expand 解压中间态：节点占位符行替换为真实 server 行，组行渲染并展开选项。
+func (p quanxConfigPre) expand(nodes []compiledNode) []byte {
+	text := expandQuanXNodes(p.prefix, nodes)
+	for _, line := range p.policyLines(true) {
+		text += line + "\n"
+	}
+	return []byte(text + p.suffix)
+}
+
+// artifact 输出中间态文本（占位符保留、组选项不展开），供调试预览。
+func (p quanxConfigPre) artifact() []byte {
+	text := p.prefix
+	for _, line := range p.policyLines(false) {
+		text += line + "\n"
+	}
+	return []byte(text + p.suffix)
+}
 
 func renderQuanXConfig(policy portablePolicy, nodes []compiledNode) ([]byte, error) {
 	pre := renderQuanXConfigPre(policy)
@@ -1372,20 +1442,15 @@ func uniqueNativeGroups(groups []any, nameKey string) []any {
 	return out
 }
 
-// expandNativeGroupsPre 展开原生模板分组的选项级占位符（__LATTIX_ALL__ /
-// __LATTIX_REGIONS__ / __LATTIX_REGION_XX__），并把来源分组以条目占位符
-// （__LATTIX-GROUP__ / __OUTER-SUBS-GROUP__）表示：模板手写占位符时保留原位，
-// 否则按默认位置（模板分组之后、地区分组之前）补占位符；地区分组保持实体条目。
+// expandNativeGroupsPre 处理原生模板分组区：来源分组以条目占位符
+// （__LATTIX-GROUP__ / __OUTER-SUBS-GROUP__）表示——模板手写占位符时保留原位，
+// 否则按默认位置（模板分组之后）补占位符；地区分组以实体条目追加，选项为
+// 单地区占位符 __LATTIX_REGION_XX__（无地区分组为 __LATTIX_REGION_NONE__）。
+// 模板组选项中的选项级占位符在中间态保持原样，到 materializeNativeGroups
+// 才展开为真实节点/分组名。
 func expandNativeGroupsPre(groups []any, optionKey string, nodes []compiledNode, nameKey, regionType, panelShort string) []any {
-	all, regions, byCountry := nativeNodeOptions(nodes)
-	// __LATTIX_REGIONS__ 展开为叶子分组：来源分组（面板分组 + 各外部订阅分组）
-	// 与地区分组同级，一同出现、一同剔除。
-	leafGroups := make([]string, 0, len(regions)+2)
-	for _, group := range sourcePolicyGroups(nodes, panelShort) {
-		leafGroups = append(leafGroups, group.Name)
-	}
-	leafGroups = append(leafGroups, regions...)
-	expanded := make([]any, 0, len(groups)+len(leafGroups))
+	_, regions, _ := nativeNodeOptions(nodes)
+	expanded := make([]any, 0, len(groups)+len(regions)+2)
 	existing := map[string]bool{}
 	lattixSeen, outerSeen := false, false
 	for _, value := range groups {
@@ -1399,18 +1464,12 @@ func expandNativeGroupsPre(groups []any, optionKey string, nodes []compiledNode,
 			expanded = append(expanded, value)
 			continue
 		}
-		group, ok := value.(map[string]any)
-		if !ok {
-			expanded = append(expanded, value)
-			continue
+		if group, ok := value.(map[string]any); ok {
+			if name, _ := group[nameKey].(string); name != "" {
+				existing[name] = true
+			}
 		}
-		if name, _ := group[nameKey].(string); name != "" {
-			existing[name] = true
-		}
-		if options, ok := group[optionKey].([]any); ok {
-			group[optionKey] = expandNativeOptions(options, all, leafGroups, byCountry)
-		}
-		expanded = append(expanded, group)
+		expanded = append(expanded, value)
 	}
 	// 模板未手写来源分组占位符时按默认位置补（与既有组重名的来源不补，
 	// 避免解压出重复组名）。
@@ -1429,36 +1488,49 @@ func expandNativeGroupsPre(groups []any, optionKey string, nodes []compiledNode,
 	if !outerSeen && outerPending {
 		expanded = append(expanded, placeholderOuterSubsGroup)
 	}
-	appendGroup := func(name string, options []string) {
-		if existing[name] {
-			return
-		}
-		existing[name] = true
-		values := make([]any, 0, len(options))
-		for _, option := range options {
-			values = append(values, option)
-		}
-		expanded = append(expanded, map[string]any{nameKey: name, "type": regionType, optionKey: values})
-	}
 	for _, region := range regions {
-		appendGroup(region, byCountry[region])
+		if existing[region] {
+			continue
+		}
+		existing[region] = true
+		option := placeholderRegionNone
+		if region != noRegionGroupName {
+			code := region[strings.LastIndex(region, " ")+1:]
+			option = placeholderRegionPrefix + code + "__"
+		}
+		expanded = append(expanded, map[string]any{nameKey: region, "type": regionType, optionKey: []any{option}})
 	}
 	return expanded
 }
 
-// materializeNativeGroups 把中间态分组列表中的来源分组占位符解压为真实分组
-// 条目；与既有组重名的来源分组跳过（与 expandNativeGroupsPre 语义一致）。
+// materializeNativeGroups 把中间态分组列表解压为最终分组条目：所有组选项中的
+// 选项级占位符（__LATTIX_ALL__ / __LATTIX_REGIONS__ / __LATTIX_REGION_XX__ /
+// __LATTIX_REGION_NONE__）展开为真实节点/分组名，来源分组占位符解压为真实
+// 分组条目；与既有组重名的来源分组跳过（与 expandNativeGroupsPre 语义一致）。
 func materializeNativeGroups(groups []any, optionKey string, nodes []compiledNode, nameKey, regionType, panelShort string) []any {
+	all, regions, byCountry := nativeNodeOptions(nodes)
+	// __LATTIX_REGIONS__ 展开为叶子分组：来源分组（面板分组 + 各外部订阅分组）
+	// 与地区分组同级，一同出现、一同剔除。
+	leafGroups := make([]string, 0, len(regions)+2)
+	for _, group := range sourcePolicyGroups(nodes, panelShort) {
+		leafGroups = append(leafGroups, group.Name)
+	}
+	leafGroups = append(leafGroups, regions...)
 	existing := map[string]bool{}
+	expanded := make([]any, 0, len(groups))
 	for _, value := range groups {
-		if m, ok := value.(map[string]any); ok {
-			if name, _ := m[nameKey].(string); name != "" {
+		if group, ok := value.(map[string]any); ok {
+			if name, _ := group[nameKey].(string); name != "" {
 				existing[name] = true
 			}
+			if options, ok := group[optionKey].([]any); ok {
+				group[optionKey] = expandNativeOptions(options, all, leafGroups, byCountry)
+			}
 		}
+		expanded = append(expanded, value)
 	}
 	panel, outer := nativeSourceGroupMaps(nodes, nameKey, regionType, optionKey, panelShort, existing)
-	return spliceEntryPlaceholders(groups, map[string][]any{
+	return spliceEntryPlaceholders(expanded, map[string][]any{
 		placeholderLattixGroup:    panel,
 		placeholderOuterSubsGroup: outer,
 	})
@@ -1503,13 +1575,15 @@ func expandNativeOptions(options []any, all, regions []string, byCountry map[str
 			continue
 		}
 		switch option {
-		case "__LATTIX_ALL__":
+		case placeholderAllNodes:
 			appendStrings(all)
-		case "__LATTIX_REGIONS__":
+		case placeholderLeafGroups:
 			appendStrings(regions)
+		case placeholderRegionNone:
+			appendStrings(byCountry[noRegionGroupName])
 		default:
-			if strings.HasPrefix(option, "__LATTIX_REGION_") && strings.HasSuffix(option, "__") {
-				country := strings.TrimSuffix(strings.TrimPrefix(option, "__LATTIX_REGION_"), "__")
+			if strings.HasPrefix(option, placeholderRegionPrefix) && strings.HasSuffix(option, "__") {
+				country := strings.TrimSuffix(strings.TrimPrefix(option, placeholderRegionPrefix), "__")
 				appendStrings(byCountry[countryFlag(country)+" "+strings.ToUpper(country)])
 				continue
 			}

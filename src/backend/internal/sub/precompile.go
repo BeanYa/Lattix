@@ -20,10 +20,65 @@ const (
 	placeholderOuterSubsGroup = "__OUTER-SUBS-GROUP__" // 外部订阅分组条目（解压为每订阅一组）
 )
 
+// 选项级占位符（组选项内引用节点/分组集合）：
+const (
+	placeholderAllNodes     = "__LATTIX_ALL__"         // 全部可用节点
+	placeholderLeafGroups   = "__LATTIX_REGIONS__"     // 叶子分组（来源分组 + 地区分组 + 无地区分组）
+	placeholderRegionPrefix = "__LATTIX_REGION_"       // 单地区节点，形如 __LATTIX_REGION_US__
+	placeholderRegionNone   = "__LATTIX_REGION_NONE__" // 无地区节点（内部生成，模板亦可使用）
+)
+
 // precompiledPlaceholders 是全部预编译占位符，用于交付前残留扫描。
 var precompiledPlaceholders = []string{
 	placeholderLattixNodes, placeholderOuterSubsNodes,
 	placeholderLattixGroup, placeholderOuterSubsGroup,
+}
+
+// isOptionPlaceholder 判断选项是否为选项级占位符（延迟到最终渲染展开）。
+func isOptionPlaceholder(option string) bool {
+	if option == placeholderAllNodes || option == placeholderLeafGroups || option == placeholderRegionNone {
+		return true
+	}
+	return strings.HasPrefix(option, placeholderRegionPrefix) && strings.HasSuffix(option, "__")
+}
+
+// policyExpansion 是策略的最终展开上下文：选项级占位符在中间态保持原样，
+// 到最后渲染阶段才按它解析为节点/分组名字。
+type policyExpansion struct {
+	all        []string
+	byCountry  map[string][]string
+	noRegion   []string
+	leafGroups []string
+}
+
+// resolveOption 把单个选项解析为名字列表：占位符展开，普通选项原样返回。
+func (x *policyExpansion) resolveOption(option string) []string {
+	switch option {
+	case placeholderAllNodes:
+		return x.all
+	case placeholderLeafGroups:
+		return x.leafGroups
+	case placeholderRegionNone:
+		return x.noRegion
+	}
+	if strings.HasPrefix(option, placeholderRegionPrefix) && strings.HasSuffix(option, "__") {
+		country := strings.TrimSuffix(strings.TrimPrefix(option, placeholderRegionPrefix), "__")
+		return x.byCountry[country]
+	}
+	return []string{option}
+}
+
+// expandPolicyOptions 最终渲染阶段展开组选项并去重（保持顺序）；
+// 无展开上下文（未经过 expandPolicy 的直接渲染）时仅去重。
+func expandPolicyOptions(options []string, x *policyExpansion) []string {
+	if x == nil {
+		return uniqueStrings(options)
+	}
+	out := make([]string, 0, len(options))
+	for _, option := range options {
+		out = append(out, x.resolveOption(option)...)
+	}
+	return uniqueStrings(out)
 }
 
 // splitNodesBySource 按来源拆分编译节点：Group 为空 = 面板管理节点，否则为
@@ -77,13 +132,23 @@ func spliceEntryPlaceholders(list []any, replacements map[string][]any) []any {
 	return out
 }
 
-// assertNoPrecompiledPlaceholders 保证最终交付内容不残留预编译占位符：
-// 残留说明解压环节遗漏，交付出去会被客户端当作非法节点/分组，直接判发布失败。
+// assertNoPrecompiledPlaceholders 保证最终交付内容不残留任何预编译占位符：
+// 条目级占位符（__LATTIX-NODES__ 等）逐个精确匹配，选项级占位符以
+// __LATTIX_ 为前缀统一扫描；残留说明解压环节遗漏，交付出去会被客户端
+// 当作非法节点/分组，直接判发布失败。
 func assertNoPrecompiledPlaceholders(format string, content []byte) error {
+	text := string(content)
 	for _, token := range precompiledPlaceholders {
-		if strings.Contains(string(content), token) {
+		if strings.Contains(text, token) {
 			return fmt.Errorf("generate %s: 预编译占位符 %s 未被解压", format, token)
 		}
+	}
+	if idx := strings.Index(text, "__LATTIX_"); idx >= 0 {
+		end := idx + 2
+		for end < len(text) && (text[end] == '_' || text[end] == '-' || text[end] >= 'A' && text[end] <= 'Z' || text[end] >= '0' && text[end] <= '9') {
+			end++
+		}
+		return fmt.Errorf("generate %s: 预编译占位符 %s 未被解压", format, text[idx:end])
 	}
 	return nil
 }

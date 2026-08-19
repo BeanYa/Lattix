@@ -55,6 +55,12 @@ func TestMihomoPrecompilePlaceholdersAndExpansion(t *testing.T) {
 			t.Fatalf("pre-compiled artifact missing %s:\n%s", token, text)
 		}
 	}
+	// 选项级占位符在中间态保持原样，最终渲染才展开为节点/分组名。
+	for _, token := range []string{placeholderAllNodes, placeholderLeafGroups} {
+		if !strings.Contains(text, token) {
+			t.Fatalf("pre-compiled artifact missing option placeholder %s:\n%s", token, text)
+		}
+	}
 	final, err := renderMihomo(policy, nodes)
 	if err != nil {
 		t.Fatal(err)

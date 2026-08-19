@@ -90,6 +90,10 @@ type portablePolicy struct {
 	Rules      []policyRule    `yaml:"rules"`
 	RemoteRule []remoteRuleSet `yaml:"remote_rules,omitempty"`
 	Final      string          `yaml:"final"`
+	// expansion 是 expandPolicy 生成的选项级占位符展开上下文：组选项中的
+	// __LATTIX_ALL__ / __LATTIX_REGIONS__ 等占位符在中间态保持原样，到最终
+	// 渲染阶段才按它解析为节点/分组名字。不参与 YAML 序列化。
+	expansion *policyExpansion `yaml:"-"`
 }
 
 func suggestedPolicy(selected []string) (portablePolicy, error) {

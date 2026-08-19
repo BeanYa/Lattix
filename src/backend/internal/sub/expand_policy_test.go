@@ -31,7 +31,7 @@ func TestExpandPolicyPrunesEmptyRegionGroups(t *testing.T) {
 	}
 	groups := map[string][]string{}
 	for _, group := range policy.Groups {
-		groups[group.Name] = group.Options
+		groups[group.Name] = expandPolicyOptions(group.Options, policy.expansion)
 	}
 	if _, exists := groups["🇰🇷 韩国节点"]; exists {
 		t.Fatalf("empty region group was not pruned: %+v", groups)
@@ -70,7 +70,7 @@ func TestExpandPolicyKeepsMatchingRegionGroup(t *testing.T) {
 	}
 	groups := map[string][]string{}
 	for _, group := range policy.Groups {
-		groups[group.Name] = group.Options
+		groups[group.Name] = expandPolicyOptions(group.Options, policy.expansion)
 	}
 	de, exists := groups["🇩🇪 德国节点"]
 	if !exists {
@@ -192,7 +192,7 @@ func TestExpandPolicyGroupsExternalNodesByInferredCountry(t *testing.T) {
 	}
 	groups := map[string][]string{}
 	for _, group := range policy.Groups {
-		groups[group.Name] = group.Options
+		groups[group.Name] = expandPolicyOptions(group.Options, policy.expansion)
 	}
 	jp, exists := groups["🇯🇵 日本节点"]
 	if !exists || len(jp) != 1 || jp[0] != "🇯🇵 东京 01" {
@@ -237,7 +237,7 @@ func TestExpandPolicyGroupsNodesWithoutCountryIntoNoRegionGroup(t *testing.T) {
 	}
 	groups := map[string][]string{}
 	for _, group := range policy.Groups {
-		groups[group.Name] = group.Options
+		groups[group.Name] = expandPolicyOptions(group.Options, policy.expansion)
 	}
 	noRegion, exists := groups[noRegionGroupName]
 	if !exists || len(noRegion) != 1 || noRegion[0] != "Relay 01" {
@@ -299,7 +299,7 @@ func TestExpandPolicySourceGroups(t *testing.T) {
 	groups := map[string][]string{}
 	order := []string{}
 	for _, group := range policy.Groups {
-		groups[group.Name] = group.Options
+		groups[group.Name] = expandPolicyOptions(group.Options, policy.expansion)
 		order = append(order, group.Name)
 	}
 	if got := groups["Lattix 分组"]; len(got) != 1 || got[0] != "链-香港" {
@@ -368,7 +368,7 @@ func TestExpandPolicyAugmentsTemplateGroups(t *testing.T) {
 	}
 	groups := map[string][]string{}
 	for _, group := range policy.Groups {
-		groups[group.Name] = group.Options
+		groups[group.Name] = expandPolicyOptions(group.Options, policy.expansion)
 	}
 	// 分流组：原选项保留（含叶子分组引用），补充缺失的 REJECT（DIRECT 已有），
 	// 末尾追加全部节点 + 自动选择 + 节点选择。
