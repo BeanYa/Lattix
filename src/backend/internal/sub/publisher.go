@@ -427,8 +427,10 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort strin
 		policy.Groups[index].Options = uniqueStrings(options)
 	}
 	// 可达性增强：模板定义的分组（地区组与自动生成的来源/地区分组除外）在保留原有
-	// 选项（含叶子分组引用）的基础上追加全部节点、「自动选择」与「节点选择」（final）
-	// 引用，使任何分流组既可指定固定节点也可回落自动选择。
+	// 选项（含叶子分组引用）的基础上补充 DIRECT/REJECT 兜底并追加全部节点、
+	// 「自动选择」与「节点选择」（final）引用，使任何分流组既可指定固定节点
+	// 也可回落自动选择、直连或拒绝。「自动选择」自身不补 DIRECT/REJECT
+	// （纯节点测速组，兜底出站会污染延迟测试结果）。
 	// 不变量：节点池组（选项含 __LATTIX_ALL__，如自动选择/故障转移）与节点选择的
 	// 选项只保留节点与叶子分组（及 DIRECT/REJECT），剔除其他组引用——它们因此永不
 	// 反向引用分流组，分流组注入对它们的引用不会产生环；detectGroupCycle 兜底。
@@ -444,6 +446,25 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort strin
 	for _, name := range leafGroups {
 		leafSet[name] = true
 	}
+	// appendDirectReject 为组补充缺失的 DIRECT/REJECT 兜底选项（DIRECT 在前）。
+	appendDirectReject := func(options []string) []string {
+		hasDirect, hasReject := false, false
+		for _, option := range options {
+			if option == "DIRECT" {
+				hasDirect = true
+			}
+			if option == "REJECT" {
+				hasReject = true
+			}
+		}
+		if !hasDirect {
+			options = append(options, "DIRECT")
+		}
+		if !hasReject {
+			options = append(options, "REJECT")
+		}
+		return options
+	}
 	for index := range policy.Groups[:templateCount] {
 		if regionLike[index] {
 			continue
@@ -457,8 +478,12 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort strin
 					kept = append(kept, option)
 				}
 			}
+			if group.Name != autoName {
+				kept = appendDirectReject(kept)
+			}
 			options = append(kept, all...)
 		} else {
+			options = appendDirectReject(options)
 			options = append(options, all...)
 			if autoName != "" {
 				options = append(options, autoName)

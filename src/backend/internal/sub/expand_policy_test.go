@@ -40,9 +40,9 @@ func TestExpandPolicyPrunesEmptyRegionGroups(t *testing.T) {
 		t.Fatalf("populated region group was pruned: %+v", groups)
 	}
 	main := groups["🚀 节点选择"]
-	// 节点选择只保留节点与地区分组：♻️ 自动选择/🇰🇷 韩国节点引用被剥离，并追加全部节点。
-	if len(main) != 2 || main[0] != "DIRECT" || main[1] != "US-1" {
-		t.Fatalf("final group options = %+v, want [DIRECT US-1]", main)
+	// 节点选择只保留节点与地区分组：♻️ 自动选择/🇰🇷 韩国节点引用被剥离，补充 DIRECT/REJECT 并追加全部节点。
+	if len(main) != 3 || main[0] != "DIRECT" || main[1] != "REJECT" || main[2] != "US-1" {
+		t.Fatalf("final group options = %+v, want [DIRECT REJECT US-1]", main)
 	}
 	if len(policy.Rules) != 1 || policy.Rules[0].Outbound != "🚀 节点选择" {
 		t.Fatalf("rule to pruned group kept: %+v", policy.Rules)
@@ -244,8 +244,8 @@ func TestExpandPolicyGroupsNodesWithoutCountryIntoNoRegionGroup(t *testing.T) {
 		t.Fatalf("no-region group = %+v, want [Relay 01]: %+v", noRegion, groups)
 	}
 	main := groups["🚀 节点选择"]
-	// 节点选择剥离组引用后为叶子分组（来源分组 + 地区分组 + 无地区）+ 全部节点。
-	wantMain := []string{"Lattix 分组", "🇺🇸 US", noRegionGroupName, "US-1", "Relay 01"}
+	// 节点选择剥离组引用后为叶子分组（来源分组 + 地区分组 + 无地区）+ DIRECT/REJECT + 全部节点。
+	wantMain := []string{"Lattix 分组", "🇺🇸 US", noRegionGroupName, "DIRECT", "REJECT", "US-1", "Relay 01"}
 	if strings.Join(main, "|") != strings.Join(wantMain, "|") {
 		t.Fatalf("final group options = %+v, want %v", main, wantMain)
 	}
@@ -370,13 +370,14 @@ func TestExpandPolicyAugmentsTemplateGroups(t *testing.T) {
 	for _, group := range policy.Groups {
 		groups[group.Name] = group.Options
 	}
-	// 分流组：原选项保留（含叶子分组引用），末尾追加全部节点 + 自动选择 + 节点选择。
-	wantAI := []string{"🚀 节点选择", "♻️ 自动选择", "DIRECT", "Lattix 分组", "🇯🇵 JP", "🇺🇸 US", "US-1", "JP-1"}
+	// 分流组：原选项保留（含叶子分组引用），补充缺失的 REJECT（DIRECT 已有），
+	// 末尾追加全部节点 + 自动选择 + 节点选择。
+	wantAI := []string{"🚀 节点选择", "♻️ 自动选择", "DIRECT", "Lattix 分组", "🇯🇵 JP", "🇺🇸 US", "REJECT", "US-1", "JP-1"}
 	if got := groups["💬 AI 服务"]; strings.Join(got, "|") != strings.Join(wantAI, "|") {
 		t.Fatalf("category group = %+v, want %v", got, wantAI)
 	}
-	// 节点选择：剥离组引用（♻️ 自动选择），仅余叶子分组与节点。
-	wantMain := []string{"Lattix 分组", "🇯🇵 JP", "🇺🇸 US", "US-1", "JP-1"}
+	// 节点选择：剥离组引用（♻️ 自动选择），仅余叶子分组与节点，并补充 DIRECT/REJECT。
+	wantMain := []string{"Lattix 分组", "🇯🇵 JP", "🇺🇸 US", "US-1", "JP-1", "DIRECT", "REJECT"}
 	if got := groups["🚀 节点选择"]; strings.Join(got, "|") != strings.Join(wantMain, "|") {
 		t.Fatalf("final group = %+v, want %v", got, wantMain)
 	}
