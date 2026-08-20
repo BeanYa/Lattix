@@ -20,7 +20,7 @@
 
 Agent 是唯一的 Ping 发起方，但连接保活与延迟测量使用不同类型的控制帧。每条已鉴权连接先发送一次独立的 liveness Ping，再通过 `agent.session.ready` 完成会话就绪；之后 liveness 在随机错峰后每 30 秒发送。收到任何数据帧或控制帧都会续期读期限，连续 90 秒没有收到任何字节才判定连接失效并进入重连流程。
 
-latency Ping 仅在 Panel 生命周期为 `active` 时启用：进入或恢复 `active` 后在 0–30 秒内随机错峰，随后每 30 秒采样一次，最近三次有效 RTT 的中位数作为当前延迟。单次 Pong 超过 10 秒视为超时，当前延迟置空直到下一次有效 Pong，但不会关闭 WebSocket。进入 `startup`、`updating` 或 `faulted` 时清理待完成探针但保留已有样本；恢复后继续向原窗口追加。遥测不等待延迟样本；预热、探测超时或探针暂停时均上报空值，并通过 `latency_probe_active` 区分“尚无探测结果或生命周期暂停”和“已接受但超时”。
+latency Ping 仅在 Panel 生命周期为 `active` 时启用：进入或恢复 `active` 后在 0–30 秒内随机错峰，随后每 30 秒采样一次，最近三次有效 RTT 的中位数作为当前延迟。单次 Pong 超过 10 秒视为超时，当前延迟置空直到下一次有效 Pong，但不会关闭 WebSocket。进入 `startup`、`updating` 或 `faulted` 时清理待完成探针但保留已有样本；恢复后继续向原窗口追加。遥测不等待延迟样本；预热、探测超时或探针暂停时 `latency_ms` 缺省或为 null（实现为 `*float64` + `omitempty`，nil 时字段缺省），并通过 `latency_probe_active` 区分“尚无探测结果或生命周期暂停”和“已接受但超时”。
 
 latency Ping 载荷使用类型字节和单调递增的 64 位序号。Agent 本地保存序号与发送时刻；Pong 只负责回显，Panel 与 Agent 不比较系统时钟。liveness 使用独立类型字节，因此不会进入延迟样本。新会话在首个 latency Ping 得到结果前属于预热期，立即发送的遥测标记为探针未就绪，不进入最近延迟队列；只有实际探针超时才记录红色超时样本。
 
