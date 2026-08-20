@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -277,7 +278,9 @@ func (s *Server) subDownloadUser(r *http.Request) (*store.User, error) {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, fmt.Errorf("订阅不存在")
 		}
-		return nil, err
+		// 内部错误（DB 失败）不回显细节，原始错误只记日志（安全评审 L3）。
+		log.Printf("sub: client download user: %v", err)
+		return nil, errors.New("internal error")
 	}
 	if user.Expired || user.Disabled {
 		return nil, errors.New("订阅不可用")

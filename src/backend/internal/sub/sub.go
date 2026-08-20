@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -441,11 +442,11 @@ func (s *Server) assignedActiveNodes(r *http.Request) (*store.User, []store.Node
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	user, err := s.st.UserBySubToken(r.Context(), r.PathValue("token"))
 	if err != nil {
-		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
-			status = http.StatusNotFound
+			http.Error(w, err.Error()+"\n", http.StatusNotFound)
+			return
 		}
-		http.Error(w, err.Error()+"\n", status)
+		writeInternalError(w, "serve subscription", err)
 		return
 	}
 	s.setSubHeaders(w, r, user)
@@ -471,7 +472,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "subscription snapshot has not been published\n", http.StatusServiceUnavailable)
 			return
 		}
-		http.Error(w, err.Error()+"\n", http.StatusInternalServerError)
+		writeInternalError(w, "serve subscription", err)
 		return
 	}
 	w.Header().Set("Content-Type", file.ContentType)
@@ -487,11 +488,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) ServeRuleHTTP(w http.ResponseWriter, r *http.Request) {
 	user, err := s.st.UserBySubToken(r.Context(), r.PathValue("token"))
 	if err != nil {
-		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
-			status = http.StatusNotFound
+			http.Error(w, err.Error()+"\n", http.StatusNotFound)
+			return
 		}
-		http.Error(w, err.Error()+"\n", status)
+		writeInternalError(w, "serve rule artifact", err)
 		return
 	}
 	version := r.PathValue("version")
@@ -504,11 +505,11 @@ func (s *Server) ServeRuleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	file, err := s.st.SubscriptionRuleFile(r.Context(), user.ID, version, format, name)
 	if err != nil {
-		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
-			status = http.StatusNotFound
+			http.Error(w, err.Error()+"\n", http.StatusNotFound)
+			return
 		}
-		http.Error(w, err.Error()+"\n", status)
+		writeInternalError(w, "serve rule artifact", err)
 		return
 	}
 	w.Header().Set("Content-Type", file.ContentType)
@@ -517,6 +518,13 @@ func (s *Server) ServeRuleHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", `"`+version+`-`+format+`"`)
 	w.Header().Set("Cache-Control", "private, max-age=21600, immutable")
 	_, _ = w.Write(file.Content)
+}
+
+// writeInternalError 把内部错误（DB 失败等 500 类）记入日志，并向匿名订阅客户端
+// 返回通用文案：响应体不回显原始错误，避免泄露内部细节（安全评审 L3）。
+func writeInternalError(w http.ResponseWriter, op string, err error) {
+	log.Printf("sub: %s: %v", op, err)
+	http.Error(w, "internal error\n", http.StatusInternalServerError)
 }
 
 func validHex(value string) bool {
