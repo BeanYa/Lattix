@@ -295,7 +295,12 @@ cmd_update() {
 	[[ ! -f "$INSTALL_ROOT/latx" ]] || cp -a "$INSTALL_ROOT/latx" "$INSTALL_ROOT/latx.bak"
 	install -m 0755 "$tmp/lattix-panel/lattix-backend" "$BACKEND"
 	install -m 0755 "$tmp/lattix-panel/latx" "$INSTALL_ROOT/latx"
-	systemctl start "$UNIT"
+	if ! systemctl start "$UNIT"; then
+		mv "$BACKEND.bak" "$BACKEND"
+		[[ ! -f "$INSTALL_ROOT/latx.bak" ]] || mv "$INSTALL_ROOT/latx.bak" "$INSTALL_ROOT/latx"
+		systemctl restart "$UNIT" || true
+		die "启动面板失败，已回滚 .bak 并重启"
+	fi
 
 	local new_version ready=0
 	new_version="$(panel_version)"
