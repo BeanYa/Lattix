@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"sync"
 	"time"
@@ -210,6 +211,16 @@ func websocketCloseCode(err error) int {
 		return closeErr.Code
 	}
 	return 0
+}
+
+// installToken 解析安装期 bootstrap token：显式 -token 优先；flag 为空时回退
+// LATTIX_TOKEN 环境变量（systemd EnvironmentFile / 用户态守护脚本注入路径），
+// 使 token 不经进程 argv 暴露（ps 对本机所有用户可见）。
+func installToken(flagToken string) string {
+	if flagToken != "" {
+		return flagToken
+	}
+	return os.Getenv("LATTIX_TOKEN")
 }
 
 func selectInitialToken(stored, install string) string {

@@ -506,7 +506,7 @@ StartLimitBurst=10
 [Service]
 UMask=0077
 EnvironmentFile=$ENV_FILE
-ExecStart=$AGENT_BIN -panel "\${LATTIX_PANEL_WS}" -token "\${LATTIX_TOKEN}" -state "$STATE_FILE" -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG"
+ExecStart=$AGENT_BIN -panel "\${LATTIX_PANEL_WS}" -state "$STATE_FILE" -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG"
 Restart=always
 RestartSec=1
 
@@ -588,7 +588,7 @@ else
 fi
 while true; do
     set -a; . "$ENV_FILE"; set +a
-    "$AGENT_BIN" -panel "\$LATTIX_PANEL_WS" -token "\$LATTIX_TOKEN" -state "$STATE_FILE" \\
+    "$AGENT_BIN" -panel "\$LATTIX_PANEL_WS" -state "$STATE_FILE" \\
         -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG" \\
         -xray-api "$XRAY_API" -xray-runner exec 9>&-
     sleep 1

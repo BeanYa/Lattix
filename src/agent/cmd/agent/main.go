@@ -48,6 +48,8 @@ func main() {
 	showVersion := flag.Bool("version", false, "打印版本并退出")
 	serverTestWorker := flag.Bool("server-test-worker", false, "run the internal server test worker")
 	flag.Parse()
+	// -token 为空时回退 LATTIX_TOKEN 环境变量（systemd EnvironmentFile 注入路径），token 不进 argv。
+	*token = installToken(*token)
 	*panel = normalizePanelWS(*panel)
 	if *serverTestWorker {
 		if err := servertest.WorkerMain(os.Stdin, os.Stdout); err != nil {

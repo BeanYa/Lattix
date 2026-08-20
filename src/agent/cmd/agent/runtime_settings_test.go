@@ -32,6 +32,16 @@ func TestSelectInitialToken(t *testing.T) {
 	}
 }
 
+func TestInstallToken(t *testing.T) {
+	t.Setenv("LATTIX_TOKEN", "env-token")
+	if got := installToken("flag-token"); got != "flag-token" {
+		t.Fatal("explicit -token must win over LATTIX_TOKEN")
+	}
+	if got := installToken(""); got != "env-token" {
+		t.Fatal("empty -token must fall back to LATTIX_TOKEN")
+	}
+}
+
 func TestReconnectDelaySpecialCases(t *testing.T) {
 	settings := shared.DefaultAgentSettings()
 	serviceRestart := reconnectDelay(settings, 1, websocket.CloseServiceRestart)
