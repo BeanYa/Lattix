@@ -513,7 +513,8 @@ func run() error {
 	mux.Handle("/", spaHandler(frontendFS))
 
 	srv := newHTTPServer(*addr,
-		drainMiddleware(hub, logging.RequestMiddleware(reqLog, ps.Operator, ps.LogPolicy, ps.DebugRoute, ps.RequestLogLevel, mux)))
+		securityHeadersMiddleware(
+			drainMiddleware(hub, logging.RequestMiddleware(reqLog, ps.Operator, ps.LogPolicy, ps.DebugRoute, ps.RequestLogLevel, mux))))
 	var serve func() error
 	switch applied.Mode {
 	case panel.TLSModeACME:
@@ -659,6 +660,18 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		IdleTimeout:       httpIdleTimeout,
 		MaxHeaderBytes:    httpMaxHeaderBytes,
 	}
+}
+
+// securityHeadersMiddleware 为所有响应补充基础安全响应头（对 WebSocket 握手同样无害）。
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func drainMiddleware(hub *ws.Hub, next http.Handler) http.Handler {

@@ -32,6 +32,25 @@ func TestHTTPServerHasResourceLimits(t *testing.T) {
 	}
 }
 
+func TestSecurityHeadersMiddlewareSetsHeaders(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	req := httptest.NewRequest(http.MethodGet, "/api/anything", nil)
+	rec := httptest.NewRecorder()
+	securityHeadersMiddleware(next).ServeHTTP(rec, req)
+
+	want := map[string]string{
+		"X-Content-Type-Options":  "nosniff",
+		"X-Frame-Options":         "DENY",
+		"Referrer-Policy":         "strict-origin-when-cross-origin",
+		"Content-Security-Policy": "frame-ancestors 'none'",
+	}
+	for name, value := range want {
+		if got := rec.Header().Get(name); got != value {
+			t.Errorf("%s = %q, want %q", name, got, value)
+		}
+	}
+}
+
 func TestSPAHandlerServesAssetAndFallsBackToIndex(t *testing.T) {
 	content := fstest.MapFS{
 		"index.html":       &fstest.MapFile{Data: []byte("<main>Lattix</main>")},
