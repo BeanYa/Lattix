@@ -27,7 +27,9 @@ func fakeScriptContent() string {
 
 func TestRunnerRun(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "ip.sh"), []byte(fakeScriptContent()), 0o700); err != nil {
+	content := fakeScriptContent()
+	stubScriptHash(t, content)
+	if err := os.WriteFile(filepath.Join(dir, "ip.sh"), []byte(content), 0o700); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
 	runner := Runner{
@@ -69,7 +71,9 @@ func TestRunnerRunAcceptsExitOneWithCompletedReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ip.sh"), []byte("script_version=\"v-fake\"\n"+string(content)), 0o700); err != nil {
+	script := "script_version=\"v-fake\"\n" + string(content)
+	stubScriptHash(t, script)
+	if err := os.WriteFile(filepath.Join(dir, "ip.sh"), []byte(script), 0o700); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
 	runner := Runner{
@@ -96,7 +100,9 @@ func TestRunnerRunAcceptsExitOneWithCompletedReport(t *testing.T) {
 func TestRunnerRunExitOneWithoutReport(t *testing.T) {
 	dir := t.TempDir()
 	script := "#!/bin/bash\necho 'boom'\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(dir, "ip.sh"), []byte("script_version=\"v-boom\"\n"+script), 0o700); err != nil {
+	content := "script_version=\"v-boom\"\n" + script
+	stubScriptHash(t, content)
+	if err := os.WriteFile(filepath.Join(dir, "ip.sh"), []byte(content), 0o700); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
 	runner := Runner{
@@ -114,7 +120,9 @@ func TestRunnerRunExitOneWithoutReport(t *testing.T) {
 func TestRunnerRunNoPublicAddress(t *testing.T) {
 	dir := t.TempDir()
 	script := "#!/bin/bash\nexit 0\n"
-	if err := os.WriteFile(filepath.Join(dir, "ip.sh"), []byte("script_version=\"v-empty\"\n"+script), 0o700); err != nil {
+	content := "script_version=\"v-empty\"\n" + script
+	stubScriptHash(t, content)
+	if err := os.WriteFile(filepath.Join(dir, "ip.sh"), []byte(content), 0o700); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
 	runner := Runner{
@@ -132,7 +140,9 @@ func TestRunnerRunNoPublicAddress(t *testing.T) {
 func TestRunnerRunTimeout(t *testing.T) {
 	dir := t.TempDir()
 	script := "#!/bin/bash\nsleep 30\n"
-	if err := os.WriteFile(filepath.Join(dir, "ip.sh"), []byte("script_version=\"v-slow\"\n"+script), 0o700); err != nil {
+	content := "script_version=\"v-slow\"\n" + script
+	stubScriptHash(t, content)
+	if err := os.WriteFile(filepath.Join(dir, "ip.sh"), []byte(content), 0o700); err != nil {
 		t.Fatalf("seed script: %v", err)
 	}
 	runner := Runner{
