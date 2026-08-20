@@ -353,6 +353,7 @@ export interface CreateServerResponse {
   server: Server
   bootstrap_token: string
   install_command: string
+  install_insecure: boolean
 }
 
 export type NodeStatus = 'pending' | 'applying' | 'active' | 'failed'

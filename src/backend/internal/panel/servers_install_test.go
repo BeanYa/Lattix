@@ -85,3 +85,28 @@ func TestPanelBaseInfersSchemeFromContainerProxy(t *testing.T) {
 		t.Errorf("panelBase(configured) = %q, want https://panel.example.com:8443", got)
 	}
 }
+
+// TestInstallInsecure 覆盖明文告警判定（审查 H1）：仅 http + 公网地址（含域名）告警；
+// https、回环与私网地址不告警。
+func TestInstallInsecure(t *testing.T) {
+	cases := []struct {
+		base string
+		want bool
+	}{
+		{"http://203.0.113.10:8080", true}, // 裸 http 公网 IP
+		{"http://panel.example.com", true}, // 域名保守按公网对待
+		{"http://panel.example.com:8080", true},
+		{"https://panel.example.com", false}, // 反代终止 TLS
+		{"https://203.0.113.10", false},
+		{"http://127.0.0.1:8080", false}, // 本机回环
+		{"http://[::1]:8080", false},
+		{"http://192.168.1.10:8080", false}, // 私网
+		{"http://10.0.0.8", false},
+		{"http://172.16.0.3", false},
+	}
+	for _, c := range cases {
+		if got := installInsecure(c.base); got != c.want {
+			t.Errorf("installInsecure(%q) = %v, want %v", c.base, got, c.want)
+		}
+	}
+}

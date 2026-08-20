@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { Building2Icon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from 'lucide-react'
+import { AlertTriangleIcon, Building2Icon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
 import { CountryCombobox } from '@/components/CountryCombobox'
@@ -225,7 +225,7 @@ export default function Servers() {
   const [portRows, setPortRows] = useState<string[]>([''])
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
-  const [cmdView, setCmdView] = useState<{ title: string; command: string } | null>(null)
+  const [cmdView, setCmdView] = useState<{ title: string; command: string; insecure: boolean } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Server | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [editTarget, setEditTarget] = useState<Server | null>(null)
@@ -454,7 +454,7 @@ export default function Servers() {
     try {
       const res = await api.createServer(body)
       onOpenChange(false)
-      setCmdView({ title: '服务器已创建，请在目标机器上执行安装命令', command: res.install_command })
+      setCmdView({ title: '服务器已创建，请在目标机器上执行安装命令', command: res.install_command, insecure: res.install_insecure })
       load()
     } catch (err) {
       setCreateError(errorMessage(err))
@@ -482,6 +482,7 @@ export default function Servers() {
       setCmdView({
         title: installed ? '凭证已刷新，请重新执行安装命令' : '安装命令（bootstrap token 已刷新）',
         command: res.install_command,
+        insecure: res.install_insecure,
       })
     } catch (err) {
       setError(errorMessage(err))
@@ -999,6 +1000,12 @@ export default function Servers() {
             <pre className="sv-code-block max-h-40">
               {cmdView?.command}
             </pre>
+            {cmdView?.insecure ? (
+              <div className="flex items-start gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
+                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+                <span>面板地址为明文 http：Agent 与面板间的控制流量可被窃听或篡改。跨公网部署请改用 https 反向代理。</span>
+              </div>
+            ) : null}
           </div>
           <DialogFooter showCloseButton>
             <CopyButton text={cmdView?.command ?? ''} size="default" />

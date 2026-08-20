@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -352,9 +354,10 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"server":          createdDTO,
-		"bootstrap_token": bootstrap,
-		"install_command": s.installCommand(base, bootstrap),
+		"server":           createdDTO,
+		"bootstrap_token":  bootstrap,
+		"install_command":  s.installCommand(base, bootstrap),
+		"install_insecure": installInsecure(base),
 	})
 }
 
@@ -420,9 +423,10 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"server":          rotatedDTO,
-		"bootstrap_token": bootstrap,
-		"install_command": s.installCommand(base, bootstrap),
+		"server":           rotatedDTO,
+		"bootstrap_token":  bootstrap,
+		"install_command":  s.installCommand(base, bootstrap),
+		"install_insecure": installInsecure(base),
 	})
 }
 
@@ -1015,6 +1019,21 @@ func (s *Server) installCommand(base, token string) string {
 	return fmt.Sprintf(
 		"curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | bash -s -- agent%s --panel %s --token %s",
 		s.cfg.GitHubRepo, versionArg, base, token)
+}
+
+// installInsecure 报告安装命令是否走明文公网链路（审查 H1）：base 为 http 且其
+// host 非回环/私网地址时为 true（Agent 控制流量明文 ws，token 可嗅探、命令可伪造）。
+// host 为域名时无法本地判定出口，保守按公网对待；https（含反代终止 TLS）不告警。
+func installInsecure(base string) bool {
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	ip := net.ParseIP(u.Hostname())
+	if ip == nil {
+		return true // 域名按公网保守告警
+	}
+	return !ip.IsLoopback() && !ip.IsPrivate()
 }
 
 // handleDeleteServer 处理 DELETE /api/servers/{id}：
