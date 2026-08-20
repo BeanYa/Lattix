@@ -117,7 +117,7 @@ dispatch() {
     shift
     case "$component" in
         panel|agent) ;;
-        *) die "usage: install.sh panel [options]" ;;
+        *) die "usage: install.sh panel|agent [options]" ;;
     esac
 
     local version="" arg
