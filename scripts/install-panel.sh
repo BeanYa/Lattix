@@ -169,6 +169,8 @@ EOF
 
 install_docker_mode() {
     local root="${CONFIG_DIR:-${LATX_DOCKER_ROOT:-/opt/lattix-panel}}"
+    # GHCR 镜像路径须全小写：由 GITHUB_REPO 派生，不再硬编码。
+    local image_repo="ghcr.io/${GITHUB_REPO,,}"
     ensure_docker
     need_root
     "${ROOT[@]}" install -d -m 0755 "$root" "$root/config"
@@ -186,7 +188,7 @@ install_docker_mode() {
     cat >"$work/compose.yaml" <<'YAML'
 services:
   lattix:
-    image: ghcr.io/beanya/lattix:${LATTIX_VERSION}
+    image: __LATTIX_IMAGE_REPO__:${LATTIX_VERSION}
     container_name: lattix-panel
     restart: unless-stopped
     env_file:
@@ -196,6 +198,7 @@ services:
     volumes:
       - ./data:/data
 YAML
+    sed -i "s|__LATTIX_IMAGE_REPO__|${image_repo}|" "$work/compose.yaml"
     "${ROOT[@]}" install -m 0600 "$work/.env" "$root/config/.env"
     "${ROOT[@]}" install -m 0644 "$work/compose.yaml" "$root/compose.yaml"
 
