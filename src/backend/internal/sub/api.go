@@ -73,11 +73,11 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	user, err := s.st.UserBySubToken(r.Context(), token)
 	if err != nil {
-		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
-			status = http.StatusNotFound
+			http.Error(w, err.Error()+"\n", http.StatusNotFound)
+			return
 		}
-		http.Error(w, err.Error()+"\n", status)
+		writeInternalError(w, "serve sub info", err)
 		return
 	}
 
@@ -150,11 +150,11 @@ func (s *Server) HandleSubClients(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	user, err := s.st.UserBySubToken(r.Context(), token)
 	if err != nil {
-		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
-			status = http.StatusNotFound
+			http.Error(w, err.Error()+"\n", http.StatusNotFound)
+			return
 		}
-		http.Error(w, err.Error()+"\n", status)
+		writeInternalError(w, "serve sub clients", err)
 		return
 	}
 
@@ -194,17 +194,17 @@ func (s *Server) HandleSubStatus(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	user, err := s.st.UserBySubToken(r.Context(), token)
 	if err != nil {
-		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
-			status = http.StatusNotFound
+			http.Error(w, err.Error()+"\n", http.StatusNotFound)
+			return
 		}
-		http.Error(w, err.Error()+"\n", status)
+		writeInternalError(w, "serve sub status", err)
 		return
 	}
 
 	links, err := s.subscriptionLinkStatus(r, user)
 	if err != nil {
-		http.Error(w, err.Error()+"\n", http.StatusInternalServerError)
+		writeInternalError(w, "serve sub status", err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -330,16 +330,16 @@ func (s *Server) HandleSubHistory(w http.ResponseWriter, r *http.Request) {
 	token := r.PathValue("token")
 	user, err := s.st.UserBySubToken(r.Context(), token)
 	if err != nil {
-		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
-			status = http.StatusNotFound
+			http.Error(w, err.Error()+"\n", http.StatusNotFound)
+			return
 		}
-		http.Error(w, err.Error()+"\n", status)
+		writeInternalError(w, "serve sub history", err)
 		return
 	}
 	history, err := s.st.ListUserTrafficHistory(r.Context(), user.UUID, 50)
 	if err != nil {
-		http.Error(w, err.Error()+"\n", http.StatusInternalServerError)
+		writeInternalError(w, "serve sub history", err)
 		return
 	}
 	if history == nil {

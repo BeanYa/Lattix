@@ -18,6 +18,10 @@ func TestSubEndpointsHideInternalErrors(t *testing.T) {
 		mux := http.NewServeMux()
 		mux.Handle("GET /sub/{token}", server)
 		mux.HandleFunc("GET /sub/{token}/rules/{version}/{format}/{name}", server.ServeRuleHTTP)
+		mux.HandleFunc("GET /api/sub/{token}/info", server.HandleSubInfo)
+		mux.HandleFunc("GET /api/sub/{token}/clients", server.HandleSubClients)
+		mux.HandleFunc("GET /api/sub/{token}/status", server.HandleSubStatus)
+		mux.HandleFunc("GET /api/sub/{token}/history", server.HandleSubHistory)
 		return mux
 	}
 	rulePath := "/sub/err-token/rules/" + strings.Repeat("a", 64) + "/mihomo/sample"
@@ -30,7 +34,9 @@ func TestSubEndpointsHideInternalErrors(t *testing.T) {
 	server := New(st, nil, nil)
 	mux := newMux(server)
 	st.Close()
-	for _, target := range []string{"/sub/err-token?format=clash", rulePath} {
+	for _, target := range []string{"/sub/err-token?format=clash", rulePath,
+		"/api/sub/err-token/info", "/api/sub/err-token/clients",
+		"/api/sub/err-token/status", "/api/sub/err-token/history"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
 		if rec.Code != http.StatusInternalServerError || rec.Body.String() != "internal error\n\n" {
@@ -62,7 +68,9 @@ func TestSubEndpointsHideInternalErrors(t *testing.T) {
 	mux2 := newMux(server2)
 
 	// 订阅不存在 → 404 store.ErrNotFound 原文。
-	for _, target := range []string{"/sub/no-such-token?format=clash", strings.Replace(rulePath, "err-token", "no-such-token", 1)} {
+	for _, target := range []string{"/sub/no-such-token?format=clash", strings.Replace(rulePath, "err-token", "no-such-token", 1),
+		"/api/sub/no-such-token/info", "/api/sub/no-such-token/clients",
+		"/api/sub/no-such-token/status", "/api/sub/no-such-token/history"} {
 		rec := httptest.NewRecorder()
 		mux2.ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
 		if rec.Code != http.StatusNotFound || rec.Body.String() != "store: not found\n\n" {
