@@ -684,54 +684,44 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 轮换会话签名密钥：改密即全部会话失效，需重新登录。
+	if err := s.rotateSessionSecret(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	s.audit(r, "auth.password_changed", nil, nil, map[string]string{"password": "已变更"})
 	writeJSON(w, http.StatusOK, nil)
 }
 
 // checkPassword 校验登录密码：DB 中有 bcrypt 哈希则以其为准，否则比对启动参数。
 func (s *Server) checkPassword(ctx context.Context, pw string) (bool, error) {
-	ok, _, err := s.authenticatePassword(ctx, pw)
-	return ok, err
+	return s.authenticatePassword(ctx, pw)
 }
 
-// authenticatePassword returns the exact credential snapshot that was
-// verified. Login must sign with this snapshot so a concurrent password change
-// cannot turn an old-password check into a session signed by the new password.
-func (s *Server) authenticatePassword(ctx context.Context, pw string) (bool, string, error) {
+// authenticatePassword 校验密码：DB 中有 bcrypt 哈希则以其为准，否则比对启动参数。
+func (s *Server) authenticatePassword(ctx context.Context, pw string) (bool, error) {
 	h, err := s.st.GetSetting(ctx, store.SettingAdminPassBcrypt)
 	if err != nil {
-		return false, "", fmt.Errorf("read admin password hash: %w", err)
+		return false, fmt.Errorf("read admin password hash: %w", err)
 	}
 	if h != "" {
 		if !s.acquireBcryptSlot() {
-			return false, "", errBcryptBusy
+			return false, errBcryptBusy
 		}
 		defer s.releaseBcryptSlot()
 		err := bcrypt.CompareHashAndPassword([]byte(h), []byte(pw))
 		if errors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
-			return false, "", nil
+			return false, nil
 		}
 		if err != nil {
-			return false, "", fmt.Errorf("compare admin password hash: %w", err)
+			return false, fmt.Errorf("compare admin password hash: %w", err)
 		}
-		return true, h, nil
+		return true, nil
 	}
 	if subtle.ConstantTimeCompare([]byte(pw), []byte(s.cfg.AdminPass)) != 1 {
-		return false, "", nil
+		return false, nil
 	}
-	return true, s.cfg.AdminPass, nil
-}
-
-// credentialKey 是会话签名密钥的派生源（改密即换源，全部会话失效）。
-func (s *Server) credentialKey(ctx context.Context) (string, error) {
-	h, err := s.st.GetSetting(ctx, store.SettingAdminPassBcrypt)
-	if err != nil {
-		return "", fmt.Errorf("read session credential: %w", err)
-	}
-	if h != "" {
-		return h, nil
-	}
-	return s.cfg.AdminPass, nil
+	return true, nil
 }
 
 // getSetting 读取设置，出错按未设置处理（设置为非关键路径，降级到启动参数）。

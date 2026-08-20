@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,7 +32,71 @@ func TestCheckPasswordFailsClosedWhenSettingsUnavailable(t *testing.T) {
 	}
 }
 
-func TestConcurrentPasswordChangeCannotUpgradeOldLogin(t *testing.T) {
+func TestSessionSecretGeneratedOnFirstUse(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &Server{st: st, cfg: Config{AdminUser: "admin", AdminPass: "fallback-password"}}
+	secret, err := s.sessionSecret(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := st.GetSetting(ctx, store.SettingSessionSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored == "" || string(secret) != stored {
+		t.Fatal("session secret was not persisted on first use")
+	}
+	if len(stored) != 64 {
+		t.Fatalf("session secret length = %d, want 64 (32 字节 hex 编码)", len(stored))
+	}
+	// 再次读取复用已持久化密钥，不重复生成。
+	again, err := s.sessionSecret(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != stored {
+		t.Fatal("session secret changed between reads")
+	}
+	// 新密钥签发的会话可验证。
+	session := signSession("admin", time.Now().Add(time.Hour), secret)
+	user, valid, err := s.verifySession(ctx, session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !valid || user != "admin" {
+		t.Fatalf("session signed with generated secret = (%q, %t), want (admin, true)", user, valid)
+	}
+}
+
+func TestSessionInvalidAfterSecretRotation(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &Server{st: st, cfg: Config{AdminUser: "admin"}}
+	secret, err := s.sessionSecret(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := signSession("admin", time.Now().Add(time.Hour), secret)
+	if err := s.rotateSessionSecret(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, valid, err := s.verifySession(ctx, session); err != nil {
+		t.Fatal(err)
+	} else if valid {
+		t.Fatal("session remained valid after session secret rotation")
+	}
+}
+
+func TestChangePasswordInvalidatesSessions(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -45,23 +110,23 @@ func TestConcurrentPasswordChangeCannotUpgradeOldLogin(t *testing.T) {
 	if err := st.SetSetting(ctx, store.SettingAdminPassBcrypt, string(oldHash)); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{st: st, cfg: Config{AdminPass: "fallback-password"}}
-	ok, credential, err := s.authenticatePassword(ctx, "old-password")
-	if err != nil || !ok {
-		t.Fatalf("authenticate old password = %t, %v", ok, err)
-	}
-	newHash, err := bcrypt.GenerateFromPassword([]byte("new-password"), bcrypt.MinCost)
+	s := &Server{st: st, cfg: Config{AdminUser: "admin"}}
+	secret, err := s.sessionSecret(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetSetting(ctx, store.SettingAdminPassBcrypt, string(newHash)); err != nil {
-		t.Fatal(err)
+	session := signSession("admin", time.Now().Add(time.Hour), secret)
+	body := strings.NewReader(`{"current_password":"old-password","new_password":"new-password"}`)
+	r := httptest.NewRequest(http.MethodPut, "/api/settings/password", body)
+	w := httptest.NewRecorder()
+	s.handleChangePassword(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("change password status = %d, body = %s", w.Code, w.Body.String())
 	}
-	session := signSession("admin", time.Now().Add(time.Hour), sessionSecretForCredential(credential))
 	if _, valid, err := s.verifySession(ctx, session); err != nil {
 		t.Fatal(err)
 	} else if valid {
-		t.Fatal("session authenticated with the old password remained valid after password change")
+		t.Fatal("session remained valid after password change")
 	}
 }
 
