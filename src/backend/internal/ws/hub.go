@@ -225,7 +225,10 @@ func isBusinessCommand(env shared.Envelope) bool {
 	case shared.TypeApplyNode, shared.TypeRemoveNode,
 		shared.TypeApplyChainHop, shared.TypeRemoveChainHop,
 		shared.TypeAddUser, shared.TypeRemoveUser,
-		shared.TypeUninstall, shared.TypeUpgradeXray, shared.TypeUpgradeAgent:
+		shared.TypeUninstall, shared.TypeUpgradeXray, shared.TypeUpgradeAgent,
+		shared.TypeApplySharedEndpoint, shared.TypeRemoveSharedEndpoint,
+		shared.TypeCleanupXray, shared.TypeRebuildXray,
+		shared.TypeServerTestRun:
 		return true
 	default:
 		return false

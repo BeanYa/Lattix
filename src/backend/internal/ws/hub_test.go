@@ -69,6 +69,32 @@ func TestStartupBlocksBusinessCommandsButAllowsControlMessages(t *testing.T) {
 	}
 }
 
+// startup/faulted 状态必须拒投全部业务命令类型（含后加的共享入口、xray 维护与 server-test 命令）。
+func TestStartupAndFaultedBlockAllBusinessCommands(t *testing.T) {
+	businessTypes := []string{
+		shared.TypeApplySharedEndpoint,
+		shared.TypeRemoveSharedEndpoint,
+		shared.TypeCleanupXray,
+		shared.TypeRebuildXray,
+		shared.TypeServerTestRun,
+	}
+	states := []string{shared.PanelStateStartup, shared.PanelStateFaulted}
+	for _, state := range states {
+		for _, typ := range businessTypes {
+			h := NewHub()
+			h.Lifecycle = fixedLifecycle{snapshot: shared.PanelLifecycleSnapshot{State: state}}
+			conn := inertAgentConn(7)
+			conn.send = make(chan shared.Envelope, 1)
+			conn.done = make(chan struct{})
+			h.register(conn)
+			env := shared.Envelope{Kind: shared.KindRequest, Type: typ}
+			if err := h.Send(context.Background(), 7, env); !errors.Is(err, ErrPanelNotActive) {
+				t.Fatalf("state %s type %s: send error = %v, want ErrPanelNotActive", state, typ, err)
+			}
+		}
+	}
+}
+
 func TestSyncLifecycleWaitsForACKAndReportsTimeout(t *testing.T) {
 	h := NewHub()
 	acked := inertAgentConn(7)
