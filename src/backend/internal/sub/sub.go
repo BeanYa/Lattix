@@ -50,6 +50,7 @@ type Server struct {
 	downloadTasks   map[string]*clientDownloadTask
 	activeDownloads map[string]string
 	downloadTickets map[string]*clientDownloadTicket
+	downloadLimiter *clientDownloadLimiter
 
 	observer *progress.Registry // 旁路观察（nil = 关闭，发布循环零开销）
 }
@@ -85,6 +86,7 @@ func NewWithCacheDir(st *store.Store, base func(*http.Request) string, spaHTML [
 		queued:        make(map[int64]string), queueWake: make(chan struct{}, 1),
 		downloadTasks: make(map[string]*clientDownloadTask), activeDownloads: make(map[string]string),
 		downloadTickets: make(map[string]*clientDownloadTicket),
+		downloadLimiter: newClientDownloadLimiter(),
 	}
 	server.ensureBuiltInTemplateSources(context.Background())
 	return server

@@ -335,3 +335,126 @@ func TestFindSHA256ForAsset(t *testing.T) {
 		t.Fatalf("no match: got %q", got)
 	}
 }
+
+// blockingDownloadRequester 卡住上游请求，让下载任务保持活跃，
+// 避免限流测试触发真实网络或任务提前结束影响去重分支。
+type blockingDownloadRequester struct {
+	block chan struct{}
+}
+
+func (b *blockingDownloadRequester) GetText(context.Context, string, int64) (string, error) {
+	<-b.block
+	return "", errors.New("unblocked")
+}
+
+func (b *blockingDownloadRequester) Download(ctx context.Context, url, path string, onProgress func(float64)) error {
+	return b.DownloadLimited(ctx, url, path, 0, onProgress)
+}
+
+func (b *blockingDownloadRequester) DownloadLimited(context.Context, string, string, int64, func(float64)) error {
+	<-b.block
+	return errors.New("unblocked")
+}
+
+func TestClientDownloadLimiterWindow(t *testing.T) {
+	current := time.Now()
+	limiter := newClientDownloadLimiter()
+	limiter.now = func() time.Time { return current }
+
+	// 窗口内第 11 次新建被拒。
+	for i := 0; i < maxClientDownloadTasksPerTokenHour; i++ {
+		if !limiter.allow("token-a") {
+			t.Fatalf("allow #%d should pass", i+1)
+		}
+	}
+	if limiter.allow("token-a") {
+		t.Fatal("11th task within the window should be rejected")
+	}
+	// 不同 token 互不影响。
+	if !limiter.allow("token-b") {
+		t.Fatal("other token should have its own window")
+	}
+	// 窗口滑动后放行。
+	current = current.Add(clientDownloadLimitWindow + time.Second)
+	if !limiter.allow("token-a") {
+		t.Fatal("should pass after the window slides")
+	}
+}
+
+func TestHandleSubClientDownloadStartRateLimit(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if _, err := st.InsertUser(ctx, "dave", "00000000-0000-0000-0000-0000000000d2", "dave-token", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.InsertUser(ctx, "eve", "00000000-0000-0000-0000-0000000000e2", "eve-token", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	server := NewWithCacheDir(st, nil, nil, t.TempDir())
+	block := make(chan struct{})
+	server.downloadFiles = &blockingDownloadRequester{block: block}
+	t.Cleanup(func() { close(block) })
+
+	variants := []string{
+		"clash-verge-windows-x64", "clash-verge-windows-arm64", "clash-verge-macos-x64",
+		"clash-verge-macos-arm64", "mihomo-party-windows-x64", "mihomo-party-windows-arm64",
+		"flclash-android-arm64", "flclash-android-armv7", "flclash-android-x64",
+		"flclash-windows-x64", "surfboard-android-arm64", "singbox-android-arm64",
+	}
+	start := func(token, variant string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/api/sub/"+token+"/client-download/start?variant="+variant, nil)
+		req.SetPathValue("token", token)
+		rec := httptest.NewRecorder()
+		server.HandleSubClientDownloadStart(rec, req)
+		return rec
+	}
+
+	// 同 variant 已有活跃任务时去重直接返回（200），不消耗限流额度。
+	rec := start("dave-token", variants[0])
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("first start: status = %d body = %s", rec.Code, rec.Body)
+	}
+	var first clientDownloadTaskResponse
+	if err := json.NewDecoder(rec.Body).Decode(&first); err != nil {
+		t.Fatal(err)
+	}
+	rec = start("dave-token", variants[0])
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dedup start: status = %d body = %s", rec.Code, rec.Body)
+	}
+	var dup clientDownloadTaskResponse
+	if err := json.NewDecoder(rec.Body).Decode(&dup); err != nil || dup.TaskID != first.TaskID {
+		t.Fatalf("dedup start should return the active task: resp = %+v err = %v", dup, err)
+	}
+	if got := len(server.downloadLimiter.windows["dave-token"].timestamps); got != 1 {
+		t.Fatalf("dedup path should not consume quota: counted = %d", got)
+	}
+
+	// 窗口内新建至上限均放行。
+	for _, variant := range variants[1:maxClientDownloadTasksPerTokenHour] {
+		if rec := start("dave-token", variant); rec.Code != http.StatusAccepted {
+			t.Fatalf("start %s: status = %d body = %s", variant, rec.Code, rec.Body)
+		}
+	}
+	// 超出窗口上限 → 429 + 业务化文案（不泄露内部细节）。
+	rec = start("dave-token", variants[maxClientDownloadTasksPerTokenHour])
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("over-limit start: status = %d body = %s", rec.Code, rec.Body)
+	}
+	if !strings.Contains(rec.Body.String(), "过于频繁") {
+		t.Fatalf("over-limit body = %q", rec.Body)
+	}
+	// 额度耗尽后，命中活跃任务的去重路径仍直接放行。
+	if rec := start("dave-token", variants[0]); rec.Code != http.StatusOK {
+		t.Fatalf("dedup start over limit: status = %d body = %s", rec.Code, rec.Body)
+	}
+	// 不同 token 互不影响。
+	if rec := start("eve-token", variants[maxClientDownloadTasksPerTokenHour+1]); rec.Code != http.StatusAccepted {
+		t.Fatalf("other token start: status = %d body = %s", rec.Code, rec.Body)
+	}
+}
