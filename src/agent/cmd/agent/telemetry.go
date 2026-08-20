@@ -72,6 +72,10 @@ func (t *telemetry) trafficCounters() []shared.TrafficCounter {
 	return aggregateTrafficCounters(cur)
 }
 
+// chainForwardTagPrefix 是 forward 跳 inbound 的 stats 名前缀，
+// 由 shared.ChainForwardTag 的 chainfwd_%d 推导，避免与 tag 生成端漂移。
+var chainForwardTagPrefix = strings.TrimSuffix(shared.ChainForwardTag(0), "0")
+
 func aggregateTrafficCounters(cur map[string]int64) []shared.TrafficCounter {
 	type key struct {
 		nodeID     int64
@@ -91,8 +95,8 @@ func aggregateTrafficCounters(cur map[string]int64) []shared.TrafficCounter {
 			switch {
 			case strings.HasPrefix(parts[1], "node_"):
 				k.nodeID, _ = strconv.ParseInt(strings.TrimPrefix(parts[1], "node_"), 10, 64)
-			case strings.HasPrefix(parts[1], "chain_forward_"):
-				k.hopID, _ = strconv.ParseInt(strings.TrimPrefix(parts[1], "chain_forward_"), 10, 64)
+			case strings.HasPrefix(parts[1], chainForwardTagPrefix):
+				k.hopID, _ = strconv.ParseInt(strings.TrimPrefix(parts[1], chainForwardTagPrefix), 10, 64)
 			case strings.HasPrefix(parts[1], "shared_endpoint_"):
 				k.endpointID, _ = strconv.ParseInt(strings.TrimPrefix(parts[1], "shared_endpoint_"), 10, 64)
 			}
