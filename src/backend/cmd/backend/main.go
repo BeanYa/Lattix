@@ -480,11 +480,14 @@ func run() error {
 	subSrv := sub.NewWithCacheDir(st, ps.PanelBase, spaHTML, clientCacheDir)
 	subSrv.SetObserver(ps.ObserverRegistry())
 	ps.SetSubscriptionService(subSrv)
-	// 外部订阅（第三方机场导入）：普通与跳过证书校验两套拉取客户端。
-	externalFiles := external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Second}}
+	// 外部订阅（第三方机场导入）：普通与跳过证书校验两套拉取客户端，均带 SSRF 拨号防护。
+	externalFiles := external.ExternalFileRequester{Doer: external.NewExternalHTTPClient(30 * time.Second)}
 	skipVerifyFiles := external.ExternalFileRequester{Doer: &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			DialContext:     external.GuardedDialContext(nil),
+		},
 	}}
 	extSvc := extsub.New(st, externalFiles, skipVerifyFiles)
 	ps.SetExternalSubscriptionService(extSvc)

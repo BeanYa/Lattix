@@ -24,25 +24,6 @@ const (
 	defaultSyncIntervalHours = 24
 )
 
-// reservedCIDRs 是 IP 字面量订阅地址同样拒绝的保留/特殊用途网段：
-// RFC 6598 运营商级 NAT（100.64/10）、TEST-NET-1/2/3（192.0.2/24、
-// 198.51.100/24、203.0.113/24）与基准测试网段（198.18/15）。
-var reservedCIDRs = []*net.IPNet{
-	mustParseCIDR("100.64.0.0/10"),
-	mustParseCIDR("192.0.2.0/24"),
-	mustParseCIDR("198.51.100.0/24"),
-	mustParseCIDR("203.0.113.0/24"),
-	mustParseCIDR("198.18.0.0/15"),
-}
-
-func mustParseCIDR(s string) *net.IPNet {
-	_, n, err := net.ParseCIDR(s)
-	if err != nil {
-		panic(err)
-	}
-	return n
-}
-
 // Service 编排外部订阅的拉取、解析与入库。
 type Service struct {
 	st              *store.Store
@@ -262,7 +243,8 @@ func configSHA256(config []byte) string {
 }
 
 // validateSubscriptionURL 仅允许 https，并拒绝 localhost、内网与保留段地址
-// （IP 字面量直接判定；主机名按常见内网后缀拒绝，不做 DNS 解析）。
+// （IP 字面量直接判定；主机名按常见内网后缀拒绝，不做 DNS 解析——
+// 解析到内网的域名由 requester 的拨号防护在连接时拦截）。
 func validateSubscriptionURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" || u.Host == "" {
@@ -270,14 +252,8 @@ func validateSubscriptionURL(raw string) error {
 	}
 	host := u.Hostname()
 	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
-			ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
-			return errors.New("订阅地址不能指向本机或内网地址")
-		}
-		for _, n := range reservedCIDRs {
-			if n.Contains(ip) {
-				return errors.New("订阅地址不能指向本机、内网或保留地址")
-			}
+		if requester.IsBlockedIP(ip) {
+			return errors.New("订阅地址不能指向本机、内网或保留地址")
 		}
 		return nil
 	}
