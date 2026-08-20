@@ -122,8 +122,12 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := logging.ClientIP(r)
-	if retry, blocked := s.loginLimiter().retryAfter(ip); blocked {
-		writeLoginRateLimit(w, retry)
+	usernameKey := loginUsernameKey(req.Username)
+	// per-IP 与 per-username 两桶任一被封即限流，retryAfter 取两者较大值。
+	ipRetry, ipBlocked := s.loginLimiter().retryAfter(ip)
+	userRetry, userBlocked := s.usernameLoginLimiter().retryAfter(usernameKey)
+	if ipBlocked || userBlocked {
+		writeLoginRateLimit(w, max(ipRetry, userRetry))
 		return
 	}
 	passwordOK, authErr := s.authenticatePassword(r.Context(), req.Password)
@@ -145,14 +149,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			log.Printf("panel: record login_failed event: %v", err)
 		}
-		if retry, blocked := s.loginLimiter().recordFailure(ip); blocked {
-			writeLoginRateLimit(w, retry)
+		// 认证失败两桶都记录：IP 桶可被伪造 XFF 换新，username 桶兜底持续累计。
+		ipRetry, ipBlocked := s.loginLimiter().recordFailure(ip)
+		userRetry, userBlocked := s.usernameLoginLimiter().recordFailure(usernameKey)
+		if ipBlocked || userBlocked {
+			writeLoginRateLimit(w, max(ipRetry, userRetry))
 			return
 		}
 		writeRPC(w, shared.CodeAuthInvalidCredentials, "用户名或密码错误", nil)
 		return
 	}
+	// 认证成功两桶都清零。
 	s.loginLimiter().recordSuccess(ip)
+	s.usernameLoginLimiter().recordSuccess(usernameKey)
 	secret, err := s.sessionSecret(r.Context())
 	if err != nil {
 		log.Printf("panel: load session secret request_id=%s: %v", logging.RequestID(r.Context()), err)

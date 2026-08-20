@@ -71,14 +71,15 @@ type Server struct {
 	runtimeMu     sync.Mutex
 	lastCPU       runtimeCPUSample
 
-	routePolicies   map[string]logging.LogPolicy
-	debugRoutes     map[string]bool // 轮询/状态类路由：成功请求记录为 debug 级别
-	methodFallbacks map[string]bool // 已注册 405 回退路由的裸路径（同路径多方法时避免重复注册）
-	idempotencyMu   sync.Mutex
-	authOnce        sync.Once
-	loginAttempts   *loginLimiter
-	bcryptSlots     chan struct{}
-	tasks           sync.WaitGroup
+	routePolicies         map[string]logging.LogPolicy
+	debugRoutes           map[string]bool // 轮询/状态类路由：成功请求记录为 debug 级别
+	methodFallbacks       map[string]bool // 已注册 405 回退路由的裸路径（同路径多方法时避免重复注册）
+	idempotencyMu         sync.Mutex
+	authOnce              sync.Once
+	loginAttempts         *loginLimiter
+	loginUsernameAttempts *loginLimiter // per-username 兜底桶（防 XFF 伪造绕过 per-IP 限流）
+	bcryptSlots           chan struct{}
+	tasks                 sync.WaitGroup
 }
 
 // SetSubscriptionService wires the snapshot compiler after PanelBase is
