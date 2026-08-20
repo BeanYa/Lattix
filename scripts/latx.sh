@@ -9,7 +9,7 @@
 #   latx start|stop|restart      systemctl 包装（需 root）
 #   latx enable|disable          systemctl 包装（需 root）
 #   latx log [-n N]              journalctl -u lattix-panel -f（-n N 时不跟随）
-#   latx update [version]        从 GitHub release 更新面板（默认 latest）
+#   latx update [version]        从 GitHub release 更新面板（默认 latest，失败回滚 .bak）
 #   latx acme <domain>           引导式申请 ACME 证书并切 HTTPS（设置页 API，重启生效）
 #   latx cert <domain> [port]    用 acme.sh 申请证书到面板 data/certs 目录并切 HTTPS
 #   latx bbr                     开启 BBR 拥塞控制（写入独立 sysctl 配置）
@@ -290,14 +290,21 @@ cmd_update() {
 		|| die "预检失败：新 latx 版本不符（期望 ${version}，实际 ${packaged_cli_version:-unknown}）"
 
 	systemctl stop "$UNIT"
+	# 备份 → 替换 → 启动 → 版本与 ready 探测；失败回滚 .bak 并重启（同 latx-ag xray-update）。
+	cp -a "$BACKEND" "$BACKEND.bak"
+	[[ ! -f "$INSTALL_ROOT/latx" ]] || cp -a "$INSTALL_ROOT/latx" "$INSTALL_ROOT/latx.bak"
 	install -m 0755 "$tmp/lattix-panel/lattix-backend" "$BACKEND"
 	install -m 0755 "$tmp/lattix-panel/latx" "$INSTALL_ROOT/latx"
 	systemctl start "$UNIT"
 
 	local new_version ready=0
 	new_version="$(panel_version)"
-	[[ "$new_version" == "$version" ]] \
-		|| die "更新后版本校验失败（期望 ${version}，实际 ${new_version}）"
+	if [[ "$new_version" != "$version" ]]; then
+		mv "$BACKEND.bak" "$BACKEND"
+		[[ ! -f "$INSTALL_ROOT/latx.bak" ]] || mv "$INSTALL_ROOT/latx.bak" "$INSTALL_ROOT/latx"
+		systemctl restart "$UNIT" || true
+		die "更新后版本校验失败（期望 ${version}，实际 ${new_version}），已回滚 .bak 并重启"
+	fi
 	for _ in $(seq 1 30); do
 		if systemctl is-active --quiet "$UNIT" && curl -fsS --max-time 2 "$PANEL_URL/readyz" >/dev/null 2>&1; then
 			ready=1
@@ -305,7 +312,13 @@ cmd_update() {
 		fi
 		sleep 1
 	done
-	[[ "$ready" -eq 1 ]] || die "面板已替换为 ${new_version}，但服务未在 30 秒内恢复就绪（请运行 latx status 和 latx log -n 100）"
+	if [[ "$ready" -ne 1 ]]; then
+		mv "$BACKEND.bak" "$BACKEND"
+		[[ ! -f "$INSTALL_ROOT/latx.bak" ]] || mv "$INSTALL_ROOT/latx.bak" "$INSTALL_ROOT/latx"
+		systemctl restart "$UNIT" || true
+		die "面板已替换为 ${new_version}，但服务未在 30 秒内恢复就绪，已回滚 .bak 并重启（详情见 latx log -n 100）"
+	fi
+	rm -f "$BACKEND.bak" "$INSTALL_ROOT/latx.bak"
 	echo ">> done. 面板与 latx 已更新至 ${new_version}；Agent 会自动重连。"
 }
 
