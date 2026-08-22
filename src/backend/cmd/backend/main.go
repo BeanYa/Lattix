@@ -167,8 +167,8 @@ func run() error {
 	}
 	lifecycleManager := lifecycle.New(panelInstanceID)
 
-	operationLimit := settingInt(st, store.SettingOperationLogLimit, 1000)
-	requestLogMB := settingInt(st, store.SettingRequestLogMaxMB, 10)
+	operationLimit := settingIntFromStore(st, store.SettingOperationLogLimit, 1000)
+	requestLogMB := settingIntFromStore(st, store.SettingRequestLogMaxMB, 10)
 	opLog, err := logging.OpenOperationStore(filepath.Join(logDirAbs, "operation.db"), operationLimit)
 	if err != nil {
 		return fmt.Errorf("operation log: %w", err)
@@ -725,7 +725,8 @@ func setFrontendCacheHeaders(w http.ResponseWriter, name string) {
 	w.Header().Set("Cache-Control", "no-cache")
 }
 
-func settingInt(st *store.Store, key string, fallback int) int {
+// settingIntFromStore 从 store 读取整型设置（与 panel 包内解析字符串的 settingInt 同名不同义，特此区分）。
+func settingIntFromStore(st *store.Store, key string, fallback int) int {
 	raw, err := st.GetSetting(context.Background(), key)
 	if err != nil || raw == "" {
 		return fallback
