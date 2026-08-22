@@ -440,7 +440,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 	go func() {
 		for {
 			// Periodic pull is the recovery path for a lost changed hint.
-			timer := time.NewTimer(time.Duration(48+time.Now().UnixNano()%25) * time.Second)
+			timer := time.NewTimer(time.Duration(48+rand.Intn(25)) * time.Second)
 			select {
 			case <-timer.C:
 			case <-done:
@@ -457,7 +457,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 
 	go func() {
 		for {
-			timer := time.NewTimer(time.Duration(48+time.Now().UnixNano()%25) * time.Second)
+			timer := time.NewTimer(time.Duration(48+rand.Intn(25)) * time.Second)
 			select {
 			case <-timer.C:
 			case <-done:
