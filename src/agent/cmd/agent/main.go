@@ -98,6 +98,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("load command queue: %v", err)
 	}
+	// 主循环长期依赖打包：run/handle 与会话协程共享。
+	ctx := &agentContext{
+		statePath:          *statePath,
+		settingsPath:       *settingsPath,
+		serverSettingsPath: *serverSettingsPath,
+		mgr:                mgr,
+		st:                 st,
+		settings:           runtime,
+		serverSettings:     serverRuntime,
+		panel:              panelRuntime,
+		tests:              testManager,
+		queue:              commandQueue,
+	}
 	connectionPath := filepath.Join(filepath.Dir(*statePath), "connection.json")
 	// 连接状态机（state.ConnState*）：进程内跟踪当前状态并校验每次写入的转换，
 	// connection.json 的状态序列保持严谨（connecting → online → backoff → connecting …，
@@ -131,7 +144,7 @@ func main() {
 	failures := 0
 	for {
 		saveConnectionStatus(false, state.ConnStateConnecting, nil)
-		newTok, err := run(*panel, tok, *statePath, *settingsPath, *serverSettingsPath, saveConnectionStatus, mgr, st, runtime, serverRuntime, panelRuntime, testManager, commandQueue)
+		newTok, err := run(*panel, tok, saveConnectionStatus, ctx)
 		if newTok != "" {
 			tok = newTok // 内存兜底：state 落盘失败时仍能凭内存中的 token 重连（§5）
 			failures = 0
@@ -204,10 +217,26 @@ func (s *safeConn) writeControl(messageType int, data []byte) error {
 	return s.conn.WriteControl(messageType, data, time.Now().Add(wsWriteTimeout))
 }
 
+// agentContext 打包 agent 主循环的长期依赖：落盘路径、本地状态、各运行时
+// 设置源与功能管理器。main 构造一次，run/handle 与会话协程共享，
+// 避免同一组依赖成群穿越参数列表。
+type agentContext struct {
+	statePath          string
+	settingsPath       string
+	serverSettingsPath string
+	mgr                *xray.Manager
+	st                 *state.State
+	settings           *runtimeSettings
+	serverSettings     *serverRuntimeSettings
+	panel              *panelStateTracker
+	tests              *servertest.Manager
+	queue              *persistentCommandQueue
+}
+
 // run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因；到达 online
 // （session.ready 完成）时经 saveConnectionStatus 落盘 online 快照（与外层同一连接状态机校验）。
-// st 为已加载的落盘状态：session.open 换发后更新凭证字段并整体落盘（保留链 piece 记录）。
-func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveConnectionStatus func(connected bool, stateName string, connectionErr error), mgr *xray.Manager, st *state.State, runtime *runtimeSettings, serverRuntime *serverRuntimeSettings, panelRuntime *panelStateTracker, testManager *servertest.Manager, commandQueue *persistentCommandQueue) (string, error) {
+// ctx.st 为已加载的落盘状态：session.open 换发后更新凭证字段并整体落盘（保留链 piece 记录）。
+func run(panel, token string, saveConnectionStatus func(connected bool, stateName string, connectionErr error), ctx *agentContext) (string, error) {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+token)
 	conn, response, err := websocket.DefaultDialer.Dial(panel, header)
@@ -236,7 +265,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 	conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 
 	// Every authenticated WebSocket starts with an application session open.
-	xrayVer, xrayRunning := mgr.Version()
+	xrayVer, xrayRunning := ctx.mgr.Version()
 	openID := shared.NewMessageID()
 	open := shared.Envelope{
 		Kind:      shared.KindRequest,
@@ -249,7 +278,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 			XrayVersion:     xrayVer,
 			XrayRunning:     xrayRunning,
 			NICAddresses:    nonLoopbackAddrs(),
-			LastLifecycle:   lifecycleVersion(st.PanelObservation),
+			LastLifecycle:   lifecycleVersion(ctx.st.PanelObservation),
 		}),
 	}
 	if err := sc.writeJSON(open); err != nil {
@@ -283,19 +312,19 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 	if err != nil {
 		return "", fmt.Errorf("bad issued credential: %w", err)
 	}
-	crossPanelRebind := st.PanelInstanceID != "" && st.PanelInstanceID != credential.PanelInstanceID
+	crossPanelRebind := ctx.st.PanelInstanceID != "" && ctx.st.PanelInstanceID != credential.PanelInstanceID
 	if crossPanelRebind {
-		if err := mgr.ResetForPanelRebind(); err != nil {
+		if err := ctx.mgr.ResetForPanelRebind(); err != nil {
 			return "", fmt.Errorf("reset previous panel configuration: %w", err)
 		}
-		st.Reset()
-		runtime.resetForPanelRebind()
+		ctx.st.Reset()
+		ctx.settings.resetForPanelRebind()
 	}
 	if opened.PanelState.PanelInstanceID != credential.PanelInstanceID ||
-		!panelRuntime.apply(opened.PanelState, true) {
+		!ctx.panel.apply(opened.PanelState, true) {
 		return "", fmt.Errorf("invalid panel lifecycle snapshot")
 	}
-	saved := state.SaveWith(statePath, st, func(s *state.State) {
+	saved := state.SaveWith(ctx.statePath, ctx.st, func(s *state.State) {
 		s.Token, s.ServerID = newToken, opened.ServerID
 		s.PanelInstanceID, s.CredentialEpoch = credential.PanelInstanceID, credential.Epoch
 		s.PanelObservation = &opened.PanelState
@@ -306,7 +335,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 		log.Printf("save state: failed (WARNING: in-memory token will be used for reconnects)")
 	}
 	log.Printf("authenticated as server %d session=%s kind=%s", opened.ServerID, opened.SessionID, opened.SessionKind)
-	if err := mgr.EnsureTelemetryFeatures(); err != nil {
+	if err := ctx.mgr.EnsureTelemetryFeatures(); err != nil {
 		log.Printf("ensure telemetry features: %v (traffic stats may be unavailable)", err)
 	}
 	latency := newLatencyTracker()
@@ -326,21 +355,24 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 	if err := sendLiveness(sc); err != nil {
 		return newToken, fmt.Errorf("initial liveness: %w", err)
 	}
-	if err := markSessionReady(sc, conn, opened.SessionID, panelRuntime, statePath, st, latency); err != nil {
+	if err := markSessionReady(sc, conn, opened.SessionID, ctx.panel, ctx.statePath, ctx.st, latency); err != nil {
 		return newToken, err
 	}
-	testManager.Attach(func(envelope shared.Envelope) error { return sc.writeJSON(envelope) })
-	defer testManager.Detach()
-	queueAttachment := commandQueue.Attach(func(envelope shared.Envelope) {
-		handle(sc, mgr, envelope, statePath, settingsPath, serverSettingsPath, st, runtime, serverRuntime, panelRuntime, latency, testManager, nil)
+	ctx.tests.Attach(func(envelope shared.Envelope) error { return sc.writeJSON(envelope) })
+	defer ctx.tests.Detach()
+	queueAttachment := ctx.queue.Attach(func(envelope shared.Envelope) {
+		// 队列内命令已随日志落盘，直接分发不再入队（原 handle 的 commandQueue=nil 语义）。
+		direct := *ctx
+		direct.queue = nil
+		handle(sc, envelope, latency, &direct)
 	})
-	defer commandQueue.Detach(queueAttachment)
+	defer ctx.queue.Detach(queueAttachment)
 	saveConnectionStatus(true, state.ConnStateOnline, nil)
-	agentSync := agentSettingsSync(settingsPath, runtime)
-	serverSync := serverSettingsSync(serverSettingsPath, serverRuntime, mgr)
+	agentSync := ctx.agentSettingsSync()
+	serverSync := ctx.serverSettingsSync()
 	agentSync.send(sc)
 	serverSync.send(sc)
-	maybeReconcileXray(mgr, serverRuntime)
+	maybeReconcileXray(ctx.mgr, ctx.serverSettings)
 
 	// Liveness remains active in every connected lifecycle state.
 	go func() {
@@ -360,11 +392,11 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 			}
 		}
 	}()
-	go runLatencyProbes(done, conn, sc, latency, panelRuntime)
+	go runLatencyProbes(done, conn, sc, latency, ctx.panel)
 
 	// Telemetry does not wait for a latency sample.
 	go func() {
-		t := newTelemetry(mgr, latency.snapshot)
+		t := newTelemetry(ctx.mgr, latency.snapshot)
 		send := func() bool {
 			messageID := shared.NewMessageID()
 			env := shared.Envelope{
@@ -384,7 +416,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 			return
 		}
 		for {
-			if !runtime.waitInterval(done, func(settings shared.AgentSettings) time.Duration {
+			if !ctx.settings.waitInterval(done, func(settings shared.AgentSettings) time.Duration {
 				return time.Duration(settings.Telemetry.IntervalSeconds) * time.Second
 			}) {
 				return
@@ -399,7 +431,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 	go func() {
 		drifted := false
 		check := func() bool {
-			d, err := mgr.ConfigDrift()
+			d, err := ctx.mgr.ConfigDrift()
 			if err != nil {
 				log.Printf("drift check: %v", err)
 				return true
@@ -428,7 +460,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 			return
 		}
 		for {
-			if !runtime.waitInterval(done, func(settings shared.AgentSettings) time.Duration {
+			if !ctx.settings.waitInterval(done, func(settings shared.AgentSettings) time.Duration {
 				return time.Duration(settings.DriftDetection.IntervalSeconds) * time.Second
 			}) {
 				return
@@ -448,7 +480,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 			return newToken, err
 		}
 		conn.SetReadDeadline(time.Now().Add(wsReadTimeout)) // 任何消息到达即续期
-		handle(sc, mgr, env, statePath, settingsPath, serverSettingsPath, st, runtime, serverRuntime, panelRuntime, latency, testManager, commandQueue)
+		handle(sc, env, latency, ctx)
 	}
 }
 
@@ -598,17 +630,17 @@ func runLatencyProbes(done <-chan struct{}, conn *websocket.Conn, sc *safeConn,
 }
 
 // handle 按消息类型分发：命令响应沿用请求的 type/request_id/trace_id。
-func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, settingsPath, serverSettingsPath string, st *state.State, runtime *runtimeSettings, serverRuntime *serverRuntimeSettings, panelRuntime *panelStateTracker, latency *latencyTracker, testManager *servertest.Manager, commandQueue *persistentCommandQueue) {
+func handle(sc *safeConn, env shared.Envelope, latency *latencyTracker, ctx *agentContext) {
 	if env.Kind == shared.KindRequest && env.Type == shared.TypeLifecycleChanged {
 		var payload shared.LifecycleChangedPayload
 		if err := json.Unmarshal(env.Data, &payload); err != nil ||
-			payload.PanelState.PanelInstanceID != st.PanelInstanceID ||
-			!panelRuntime.apply(payload.PanelState, false) {
+			payload.PanelState.PanelInstanceID != ctx.st.PanelInstanceID ||
+			!ctx.panel.apply(payload.PanelState, false) {
 			replyCode(sc, env, shared.CodeInvalidArgument, "invalid lifecycle snapshot", nil)
 			return
 		}
 		latency.setEnabled(payload.PanelState.State == shared.PanelStateActive)
-		if err := state.SaveWith(statePath, st, func(s *state.State) {
+		if err := state.SaveWith(ctx.statePath, ctx.st, func(s *state.State) {
 			s.PanelObservation = &payload.PanelState
 		}); err != nil {
 			log.Printf("save panel lifecycle: %v", err)
@@ -617,30 +649,30 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		return
 	}
 	if env.Kind == shared.KindResponse && env.Type == shared.TypeSettingsSync {
-		agentSettingsSync(settingsPath, runtime).handleResponse(sc, env)
+		ctx.agentSettingsSync().handleResponse(sc, env)
 		return
 	}
 	if env.Kind == shared.KindResponse && env.Type == shared.TypeServerSettingsSync {
-		serverSettingsSync(serverSettingsPath, serverRuntime, mgr).handleResponse(sc, env)
+		ctx.serverSettingsSync().handleResponse(sc, env)
 		return
 	}
-	if env.Kind == shared.KindResponse && testManager.HandleResponse(env) {
+	if env.Kind == shared.KindResponse && ctx.tests.HandleResponse(env) {
 		return
 	}
 	if env.Kind == shared.KindEvent && env.Type == shared.TypeSettingsChanged {
-		if err := agentSettingsSync(settingsPath, runtime).send(sc); err != nil {
+		if err := ctx.agentSettingsSync().send(sc); err != nil {
 			log.Printf("settings changed pull: %v", err)
 		}
 		return
 	}
 	if env.Kind == shared.KindEvent && env.Type == shared.TypeServerSettingsChanged {
-		if err := serverSettingsSync(serverSettingsPath, serverRuntime, mgr).send(sc); err != nil {
+		if err := ctx.serverSettingsSync().send(sc); err != nil {
 			log.Printf("server settings changed pull: %v", err)
 		}
 		return
 	}
-	if env.Kind == shared.KindRequest && commandQueue != nil {
-		if err := commandQueue.Submit(env); err != nil {
+	if env.Kind == shared.KindRequest && ctx.queue != nil {
+		if err := ctx.queue.Submit(env); err != nil {
 			replyCode(sc, env, shared.CodeInternalError, err.Error(), struct{}{})
 		}
 		return
@@ -659,7 +691,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			replyCode(sc, env, shared.CodeInvalidArgument, err.Error(), struct{}{})
 			return
 		}
-		if err := testManager.Accept(p); err != nil {
+		if err := ctx.tests.Accept(p); err != nil {
 			replyCode(sc, env, shared.CodeConflict, err.Error(), struct{}{})
 			return
 		}
@@ -672,7 +704,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			return
 		}
 		log.Printf("node.apply request_id=%s node=%d users=%d", env.RequestID, p.NodeID, len(p.UserUUIDs))
-		realized, err := mgr.ApplyNode(p.NodeID, p.Config, p.UserUUIDs, p.DestCandidates, p.PortCandidates)
+		realized, err := ctx.mgr.ApplyNode(p.NodeID, p.Config, p.UserUUIDs, p.DestCandidates, p.PortCandidates)
 		if err != nil {
 			log.Printf("node.apply failed request_id=%s node=%d: %v", env.RequestID, p.NodeID, err)
 		}
@@ -684,13 +716,13 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			return
 		}
 		log.Printf("chain-hop.apply request_id=%s chain=%d hop=%d kind=%s", env.RequestID, p.ChainID, p.HopID, p.Kind)
-		realized, err := mgr.ApplyChainHop(p)
+		realized, err := ctx.mgr.ApplyChainHop(p)
 		if err != nil {
 			log.Printf("chain-hop.apply failed request_id=%s chain=%d hop=%d kind=%s: %v",
 				env.RequestID, p.ChainID, p.HopID, p.Kind, err)
 		}
 		if err == nil {
-			persistChainPieces(statePath, st, mgr)
+			persistChainPieces(ctx.statePath, ctx.st, ctx.mgr)
 		}
 		replyResult(sc, env, resultOfHop(p.HopID, p.Kind, realized), err)
 
@@ -701,13 +733,13 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		log.Printf("shared-endpoint.apply request_id=%s endpoint=%d clients=%d routes=%d",
 			env.RequestID, p.EndpointID, len(p.Clients), len(p.Routes))
-		realized, err := mgr.ApplySharedEndpoint(p)
+		realized, err := ctx.mgr.ApplySharedEndpoint(p)
 		if err != nil {
 			log.Printf("shared-endpoint.apply failed request_id=%s endpoint=%d clients=%d routes=%d: %v",
 				env.RequestID, p.EndpointID, len(p.Clients), len(p.Routes), err)
 		}
 		if err == nil {
-			persistChainPieces(statePath, st, mgr)
+			persistChainPieces(ctx.statePath, ctx.st, ctx.mgr)
 		}
 		replyResult(sc, env, resultOfEndpoint(p.EndpointID, realized), err)
 
@@ -716,12 +748,12 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		if !parseData(sc, env, &p) {
 			return
 		}
-		err := mgr.RemoveSharedEndpoint(p.EndpointID)
+		err := ctx.mgr.RemoveSharedEndpoint(p.EndpointID)
 		if err != nil {
 			log.Printf("shared-endpoint.remove failed request_id=%s endpoint=%d: %v", env.RequestID, p.EndpointID, err)
 		}
 		if err == nil {
-			persistChainPieces(statePath, st, mgr)
+			persistChainPieces(ctx.statePath, ctx.st, ctx.mgr)
 		}
 		replyResult(sc, env, resultOfEndpoint(p.EndpointID, nil), err)
 
@@ -732,9 +764,9 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		log.Printf("xray.cleanup request_id=%s dry_run=%v expected_inbounds=%d expected_pieces=%d",
 			env.RequestID, p.DryRun, len(p.ExpectedInboundTags), len(p.ExpectedPieces))
-		result, err := mgr.CleanupXray(p)
+		result, err := ctx.mgr.CleanupXray(p)
 		if err == nil {
-			persistChainPieces(statePath, st, mgr)
+			persistChainPieces(ctx.statePath, ctx.st, ctx.mgr)
 		}
 		replyResult(sc, env, shared.ApplyResultPayload{Cleanup: result}, err)
 
@@ -745,11 +777,11 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		log.Printf("xray.rebuild request_id=%s nodes=%d expected_inbounds=%d expected_pieces=%d",
 			env.RequestID, len(p.Nodes), len(p.ExpectedInboundTags), len(p.ExpectedPieces))
-		result, err := mgr.RebuildXray(p)
+		result, err := ctx.mgr.RebuildXray(p)
 		if err != nil {
 			log.Printf("xray.rebuild failed request_id=%s: %v", env.RequestID, err)
 		} else {
-			persistChainPieces(statePath, st, mgr)
+			persistChainPieces(ctx.statePath, ctx.st, ctx.mgr)
 		}
 		replyResult(sc, env, shared.ApplyResultPayload{Rebuild: result}, err)
 
@@ -759,12 +791,12 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			return
 		}
 		log.Printf("chain-hop.remove request_id=%s hop=%d kind=%s", env.RequestID, p.HopID, p.Kind)
-		err := mgr.RemoveChainHop(p.HopID, p.Kind)
+		err := ctx.mgr.RemoveChainHop(p.HopID, p.Kind)
 		if err != nil {
 			log.Printf("chain-hop.remove failed request_id=%s hop=%d kind=%s: %v", env.RequestID, p.HopID, p.Kind, err)
 		}
 		if err == nil {
-			persistChainPieces(statePath, st, mgr)
+			persistChainPieces(ctx.statePath, ctx.st, ctx.mgr)
 		}
 		replyResult(sc, env, resultOfHop(p.HopID, p.Kind, nil), err)
 
@@ -774,7 +806,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			return
 		}
 		log.Printf("node.remove request_id=%s node=%d", env.RequestID, p.NodeID)
-		err := mgr.RemoveNode(p.NodeID)
+		err := ctx.mgr.RemoveNode(p.NodeID)
 		replyResult(sc, env, resultOf(p.NodeID, nil), err)
 
 	case shared.TypeAddUser:
@@ -787,7 +819,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			replyCode(sc, env, shared.CodeInvalidArgument, "nodes field required", resultOf(0, nil))
 			return
 		}
-		err := mgr.AddUser(p.UUID, p.Nodes)
+		err := ctx.mgr.AddUser(p.UUID, p.Nodes)
 		replyResult(sc, env, resultOf(0, nil), err) // NodeID 0 = 非节点命令
 
 	case shared.TypeRemoveUser:
@@ -800,7 +832,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			replyCode(sc, env, shared.CodeInvalidArgument, "nodes field required", resultOf(0, nil))
 			return
 		}
-		err := mgr.RemoveUser(p.UUID, p.Nodes)
+		err := ctx.mgr.RemoveUser(p.UUID, p.Nodes)
 		replyResult(sc, env, resultOf(0, nil), err)
 
 	case shared.TypeUpgradeXray:
@@ -809,7 +841,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			return
 		}
 		log.Printf("xray.upgrade request_id=%s version=%s", env.RequestID, p.Version)
-		err := mgr.UpgradeXray(p.Version)
+		err := ctx.mgr.UpgradeXray(p.Version)
 		replyResult(sc, env, resultOf(0, nil), err)
 
 	case shared.TypeUpgradeAgent:
@@ -835,7 +867,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		log.Printf("agent.uninstall request_id=%s purge_xray=%v", env.RequestID, p.PurgeXray)
 		replyResult(sc, env, resultOf(0, nil), nil)
-		scheduleUninstall(p.PurgeXray, mgr)
+		scheduleUninstall(p.PurgeXray, ctx.mgr)
 
 	default:
 		log.Printf("recv unknown type=%s request_id=%s", env.Type, env.RequestID)
@@ -930,32 +962,32 @@ func (s settingsSync) handleResponse(sc *safeConn, env shared.Envelope) {
 }
 
 // agentSettingsSync 返回 agent settings 同步描述（文档为 AgentSettingsDocument）。
-func agentSettingsSync(settingsPath string, runtime *runtimeSettings) settingsSync {
+func (c *agentContext) agentSettingsSync() settingsSync {
 	return settingsSync{
 		name: "settings", docName: "agent settings",
 		syncType: shared.TypeSettingsSync,
-		fail:     runtime.fail,
+		fail:     c.settings.fail,
 		snapshot: func() (string, int64, string) {
-			_, panelID, revision, applyError := runtime.snapshot()
+			_, panelID, revision, applyError := c.settings.snapshot()
 			return panelID, revision, applyError
 		},
 		apply: func(raw json.RawMessage) (int64, bool) {
 			var document shared.AgentSettingsDocument
 			if err := json.Unmarshal(raw, &document); err != nil {
-				runtime.fail("invalid settings sync response")
+				c.settings.fail("invalid settings sync response")
 				return 0, false
 			}
 			if err := document.Validate(); err != nil {
-				runtime.fail(err.Error())
+				c.settings.fail(err.Error())
 				log.Printf("reject panel settings: %v", err)
 				return 0, false
 			}
-			if err := state.SaveSettings(settingsPath, document); err != nil {
-				runtime.fail(err.Error())
+			if err := state.SaveSettings(c.settingsPath, document); err != nil {
+				c.settings.fail(err.Error())
 				log.Printf("save panel settings: %v", err)
 				return 0, false
 			}
-			runtime.apply(document)
+			c.settings.apply(document)
 			return document.Agent.Revision, true
 		},
 	}
@@ -963,35 +995,35 @@ func agentSettingsSync(settingsPath string, runtime *runtimeSettings) settingsSy
 
 // serverSettingsSync 返回 server settings 同步描述；after 钩子在每次响应后
 // 尝试 xray 版本对齐（含未变更的响应，与原实现一致）。
-func serverSettingsSync(serverSettingsPath string, runtime *serverRuntimeSettings, mgr *xray.Manager) settingsSync {
+func (c *agentContext) serverSettingsSync() settingsSync {
 	return settingsSync{
 		name: "server settings", docName: "server settings",
 		syncType: shared.TypeServerSettingsSync,
-		fail:     runtime.fail,
+		fail:     c.serverSettings.fail,
 		snapshot: func() (string, int64, string) {
-			_, panelID, revision, applyError := runtime.snapshot()
+			_, panelID, revision, applyError := c.serverSettings.snapshot()
 			return panelID, revision, applyError
 		},
 		apply: func(raw json.RawMessage) (int64, bool) {
 			var document shared.ServerSettingsDocument
 			if err := json.Unmarshal(raw, &document); err != nil {
-				runtime.fail("invalid server settings sync response")
+				c.serverSettings.fail("invalid server settings sync response")
 				return 0, false
 			}
 			if err := document.Validate(); err != nil {
-				runtime.fail(err.Error())
+				c.serverSettings.fail(err.Error())
 				log.Printf("reject panel server settings: %v", err)
 				return 0, false
 			}
-			if err := state.SaveServerSettings(serverSettingsPath, document); err != nil {
-				runtime.fail(err.Error())
+			if err := state.SaveServerSettings(c.serverSettingsPath, document); err != nil {
+				c.serverSettings.fail(err.Error())
 				log.Printf("save panel server settings: %v", err)
 				return 0, false
 			}
-			runtime.apply(document)
+			c.serverSettings.apply(document)
 			return document.Revision, true
 		},
-		after: func() { maybeReconcileXray(mgr, runtime) },
+		after: func() { maybeReconcileXray(c.mgr, c.serverSettings) },
 	}
 }
 
