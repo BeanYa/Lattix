@@ -114,7 +114,7 @@ func (f *endpointFSM) onEnter(ctx context.Context, ep *store.SharedEndpoint, to 
 			log.Printf("endpoint_fsm: endpoint %d chain ids: %v", ep.ID, err)
 		} else {
 			for _, cid := range chainIDs {
-				f.d.recomputeChain(ctx, cid)
+				f.d.fsm.Evaluate(ctx, cid)
 			}
 		}
 		if f.d.OnEndpointPublished != nil {

@@ -382,7 +382,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	}
 	log.Printf("dispatch: chain %d active（%d 跳）", chainID, len(hops))
 	d.publishDesiredRevision(ctx, chainID, hops, *node)
-	d.recomputeChain(ctx, chainID)
+	d.fsm.Evaluate(ctx, chainID)
 }
 
 func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, hops []store.ChainHop, node store.Node) {
@@ -413,7 +413,7 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 			// 发布窗口内链状态被并发改写（Evaluate 降级等）：revision 已置 active 但
 			// 尚未发布。链恢复 active 后由 maybePublishReadyRevision 补发（评审 P2-8）。
 			log.Printf("dispatch: chain %d publish raced with chain status change; deferred to recovery", chainID)
-			d.recomputeChain(ctx, chainID)
+			d.fsm.Evaluate(ctx, chainID)
 			return
 		}
 		log.Printf("dispatch: chain %d publish revision: %v", chainID, err)
@@ -437,7 +437,7 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 			log.Printf("dispatch: chain %d shared endpoint %d: %v", chainID, revision.Snapshot.EndpointID, err)
 		}
 		// 端点刚置 applying，立即重算链状态（若端点未 active 则链进入 degraded，待 ack 后恢复）。
-		d.recomputeChain(ctx, chainID)
+		d.fsm.Evaluate(ctx, chainID)
 	}
 }
 
@@ -684,7 +684,7 @@ func (d *Dispatcher) refreshCleanupStatus(ctx context.Context, revisionID int64)
 	}
 	if chain.Status == store.ChainStatusCleanupPending {
 		_ = d.fsm.Transition(ctx, chain.ID, store.ChainStatusActive, "清理完成")
-		d.recomputeChain(ctx, chain.ID)
+		d.fsm.Evaluate(ctx, chain.ID)
 	}
 }
 
@@ -832,17 +832,6 @@ func (d *Dispatcher) RecomputeChainsByServer(serverID int64) {
 		seen[h.ChainID] = true
 		d.fsm.Evaluate(ctx, h.ChainID)
 	}
-}
-
-// recomputeChain 委托给链路状态机的条件评估（保留方法签名兼容内部调用点）。
-func (d *Dispatcher) recomputeChain(ctx context.Context, chainID int64) {
-	d.fsm.Evaluate(ctx, chainID)
-}
-
-// ChainHopPieces 返回一个跳的配置件 kind 列表（panel 删链逐跳反向下发 remove_chain_hop 用，§21.1），
-// 实现下沉 store.ChainHopPieces（与 xray.cleanup 期望集合计算同源）。
-func ChainHopPieces(hops []store.ChainHop, i int) []string {
-	return store.ChainHopPieces(hops, i)
 }
 
 // pieceKey 是 piece 进度表的键（"<hopID>|<kind>"）。

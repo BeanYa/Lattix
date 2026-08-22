@@ -212,7 +212,7 @@ func TestPublishReconcilesPreviousAndNewSharedEndpoints(t *testing.T) {
 // TestEvaluateDoesNotDoubleApplyInFlightEndpoint 验证 Evaluate 自动重试的幂等性：
 // 端点已有在途部署命令（applying）时不得重复下发 apply_shared_endpoint。
 // 回归场景：publishDesiredRevision → ReconcileSharedEndpoint（端点置 applying）后立即
-// recomputeChain → Evaluate，旧实现对 applying 端点再次自动补发，单次建链产生两次 apply
+// fsm.Evaluate，旧实现对 applying 端点再次自动补发，单次建链产生两次 apply
 // （第二次在 agent 侧因 xray 已持有端口而失败 → 端点 failed → 链 degraded）。
 func TestEvaluateDoesNotDoubleApplyInFlightEndpoint(t *testing.T) {
 	ctx := context.Background()
@@ -250,7 +250,7 @@ func TestEvaluateDoesNotDoubleApplyInFlightEndpoint(t *testing.T) {
 	}
 
 	// 端点 applying（在途命令未回执）时重算——旧实现会重复下发。
-	d.recomputeChain(ctx, chainID)
+	d.fsm.Evaluate(ctx, chainID)
 	if got := count(); got != 1 {
 		t.Fatalf("端点 applying 时 Evaluate 不应重复下发 apply（幂等），实际 %d 条", got)
 	}
@@ -259,7 +259,7 @@ func TestEvaluateDoesNotDoubleApplyInFlightEndpoint(t *testing.T) {
 	if err := st.SetSharedEndpointPending(ctx, endpoint.ID); err != nil {
 		t.Fatal(err)
 	}
-	d.recomputeChain(ctx, chainID)
+	d.fsm.Evaluate(ctx, chainID)
 	if got := count(); got != 2 {
 		t.Fatalf("端点 pending 时 Evaluate 应补发 apply，实际 %d 条", got)
 	}
@@ -299,7 +299,7 @@ func TestChainDegradedWhenEndpointNotActive(t *testing.T) {
 	// 端点仍为 pending，重算后链应进入 degraded。
 	req := &fakeRequester{online: map[int64]bool{serverID: true}}
 	d := New(st, req)
-	d.recomputeChain(ctx, chainID)
+	d.fsm.Evaluate(ctx, chainID)
 	chain, _ = st.ChainByID(ctx, chainID)
 	if chain.Status != store.ChainStatusDegraded {
 		t.Fatalf("端点未生效时链状态 = %s，期望 degraded", chain.Status)
@@ -313,7 +313,7 @@ func TestChainDegradedWhenEndpointNotActive(t *testing.T) {
 	if err := st.SetSharedEndpointActive(ctx, endpoint.ID, realized); err != nil {
 		t.Fatal(err)
 	}
-	d.recomputeChain(ctx, chainID)
+	d.fsm.Evaluate(ctx, chainID)
 	chain, _ = st.ChainByID(ctx, chainID)
 	if chain.Status != store.ChainStatusActive {
 		t.Fatalf("端点生效后链状态 = %s，期望 active", chain.Status)
@@ -432,7 +432,7 @@ func TestEvaluateEndpointAutoRetryBackoff(t *testing.T) {
 	if err := st.SetSharedEndpointFailed(ctx, endpoint.ID, "boom"); err != nil {
 		t.Fatal(err)
 	}
-	d.recomputeChain(ctx, chainID)
+	d.fsm.Evaluate(ctx, chainID)
 	if got := count(); got != 2 {
 		t.Fatalf("首次失败后应补发，实际 %d 条", got)
 	}
@@ -442,7 +442,7 @@ func TestEvaluateEndpointAutoRetryBackoff(t *testing.T) {
 	if err := st.SetSharedEndpointFailed(ctx, endpoint.ID, "boom"); err != nil {
 		t.Fatal(err)
 	}
-	d.recomputeChain(ctx, chainID)
+	d.fsm.Evaluate(ctx, chainID)
 	if got := count(); got != 2 {
 		t.Fatalf("退避期间不应重复补发，实际 %d 条", got)
 	}
@@ -450,7 +450,7 @@ func TestEvaluateEndpointAutoRetryBackoff(t *testing.T) {
 	// 间隔缩短后重算：自动补发恢复。sleep 保证墙上时钟确实越过 1ms 间隔（快机否则 <1ms 不生效）。
 	endpointAutoRetryMinInterval = time.Millisecond
 	time.Sleep(10 * time.Millisecond)
-	d.recomputeChain(ctx, chainID)
+	d.fsm.Evaluate(ctx, chainID)
 	if got := count(); got != 3 {
 		t.Fatalf("超间隔后应补发，实际 %d 条", got)
 	}
@@ -464,7 +464,7 @@ func TestEvaluateEndpointAutoRetryBackoff(t *testing.T) {
 	if err := st.SetSharedEndpointFailed(ctx, endpoint.ID, "boom"); err != nil {
 		t.Fatal(err)
 	}
-	d.recomputeChain(ctx, chainID)
+	d.fsm.Evaluate(ctx, chainID)
 	if got := count(); got != 4 {
 		t.Fatalf("ack 清除退避后应立即补发，实际 %d 条", got)
 	}

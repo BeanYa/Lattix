@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/ws"
@@ -1081,7 +1080,7 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reason := fmt.Sprintf("服务器 %d（%s）已删除，链路失效", id, srv.Alias)
-		if err := s.disp.InvalidateChainForServerDeletion(r.Context(), chain.ID, id, reason); err != nil {
+		if err := s.disp.ChainFSM().InvalidateForServerDeletion(r.Context(), chain.ID, id, reason); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -1092,7 +1091,7 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 				if hop.ServerID == id {
 					continue
 				}
-				for _, kind := range dispatch.ChainHopPieces(hops, i) {
+				for _, kind := range store.ChainHopPieces(hops, i) {
 					key := fmt.Sprintf("%d/%d/%s", hop.ServerID, hop.ID, kind)
 					if seen[key] {
 						continue

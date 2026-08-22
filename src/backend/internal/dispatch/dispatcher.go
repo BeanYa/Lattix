@@ -634,18 +634,16 @@ func (d *Dispatcher) ReconcileStaleEndpoints(ctx context.Context) {
 			//（Evaluate 幂等且 active→degraded 仅首次触发告警，重复调用无副作用）。
 			if chainIDs, err := d.st.ChainIDsByEndpoint(ctx, ep.ID); err == nil {
 				for _, cid := range chainIDs {
-					d.recomputeChain(ctx, cid)
+					d.fsm.Evaluate(ctx, cid)
 				}
 			}
 		}
 	}
 }
 
-// InvalidateChainForServerDeletion 服务器删除时级联失效链（§10，经 FSM 校验转换合法性）。
-// 由 panel.handleDeleteServer 调用，替代直接调用 store 方法。
-func (d *Dispatcher) InvalidateChainForServerDeletion(ctx context.Context, chainID, serverID int64, reason string) error {
-	return d.fsm.InvalidateForServerDeletion(ctx, chainID, serverID, reason)
-}
+// ChainFSM 返回链路状态机：所有链状态变更的唯一入口（panel 侧 FSM 语义操作直调，
+// 如 handleDeleteServer 的 InvalidateForServerDeletion，§10）。
+func (d *Dispatcher) ChainFSM() *chainFSM { return d.fsm }
 
 // HandleMessage 处理 agent 上行业务信封（注入 ws.Hub.OnMessage）。
 func (d *Dispatcher) HandleMessage(serverID int64, env shared.Envelope) {
