@@ -19,9 +19,50 @@ import (
 
 type Sender func(shared.Envelope) error
 
+// taskJournalState is the persisted journal state (taskJournal.State). The journal
+// is stored as JSON, so the string values are part of the on-disk format and must
+// not change. Transition table:
+//
+//	running        → result_pending (result persisted, awaiting delivery)
+//	result_pending → completed      (panel published the full result)
+//	completed      → (terminal marker, kept for idempotent re-accept)
+type taskJournalState string
+
+const (
+	taskStateRunning       taskJournalState = "running"
+	taskStateResultPending taskJournalState = "result_pending"
+	taskStateCompleted     taskJournalState = "completed"
+)
+
+var taskJournalTransitions = map[taskJournalState]map[taskJournalState]bool{
+	taskStateRunning: {
+		taskStateResultPending: true,
+	},
+	taskStateResultPending: {
+		taskStateCompleted: true,
+	},
+	taskStateCompleted: {},
+}
+
+// Valid reports whether s is a known journal state.
+func (s taskJournalState) Valid() bool {
+	_, ok := taskJournalTransitions[s]
+	return ok
+}
+
+// validTaskJournalTransition reports whether the from → to journal transition is
+// legal (same-state is idempotent).
+func validTaskJournalTransition(from, to taskJournalState) bool {
+	if from == to {
+		return true
+	}
+	targets, ok := taskJournalTransitions[from]
+	return ok && targets[to]
+}
+
 type taskJournal struct {
 	Version   int                              `json:"version"`
-	State     string                           `json:"state"` // running|result_pending|completed
+	State     taskJournalState                 `json:"state"` // running|result_pending|completed
 	BootID    string                           `json:"boot_id"`
 	Payload   shared.ServerTestRunPayload      `json:"payload"`
 	Manifest  *shared.ServerTestResultManifest `json:"manifest,omitempty"`
@@ -57,17 +98,17 @@ func NewManager(dataDir, agentVersion string) (*Manager, error) {
 	if err := manager.load(); err != nil {
 		return nil, err
 	}
-	if manager.journal == nil || manager.journal.State == "completed" {
+	if manager.journal == nil || manager.journal.State == taskStateCompleted {
 		if manager.journal != nil {
 			_ = os.Remove(manager.resultPath)
 		}
 		close(manager.idle)
 		manager.executionDone = make(chan struct{})
 		close(manager.executionDone)
-	} else if manager.journal.State == "result_pending" {
+	} else if manager.journal.State == taskStateResultPending {
 		manager.executionDone = make(chan struct{})
 		close(manager.executionDone)
-	} else if manager.journal.State == "running" {
+	} else if manager.journal.State == taskStateRunning {
 		manager.executionDone = make(chan struct{})
 		if err := manager.recordInterruptedResult(); err != nil {
 			return nil, err
@@ -88,7 +129,7 @@ func (m *Manager) Accept(payload shared.ServerTestRunPayload) error {
 			m.mu.Unlock()
 			return nil
 		}
-		if m.journal.State == "completed" {
+		if m.journal.State == taskStateCompleted {
 			m.journal = nil
 		} else {
 			m.mu.Unlock()
@@ -98,7 +139,7 @@ func (m *Manager) Accept(payload shared.ServerTestRunPayload) error {
 	m.idle = make(chan struct{})
 	m.executionDone = make(chan struct{})
 	m.journal = &taskJournal{
-		Version: 1, State: "running", BootID: currentBootID(), Payload: payload, UpdatedAt: time.Now().UTC(),
+		Version: 1, State: taskStateRunning, BootID: currentBootID(), Payload: payload, UpdatedAt: time.Now().UTC(),
 	}
 	if err := m.saveJournalLocked(); err != nil {
 		m.journal = nil
@@ -114,7 +155,7 @@ func (m *Manager) Accept(payload shared.ServerTestRunPayload) error {
 func (m *Manager) Busy() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.journal != nil && m.journal.State != "completed"
+	return m.journal != nil && m.journal.State != taskStateCompleted
 }
 
 func (m *Manager) WaitIdle(ctx context.Context) error {
@@ -200,7 +241,7 @@ func (m *Manager) run(payload shared.ServerTestRunPayload) {
 
 func (m *Manager) reportProgress(progress shared.ServerTestProgressPayload) {
 	m.mu.Lock()
-	if m.journal == nil || m.journal.Payload.TaskID != progress.TaskID || m.journal.State != "running" {
+	if m.journal == nil || m.journal.Payload.TaskID != progress.TaskID || m.journal.State != taskStateRunning {
 		m.mu.Unlock()
 		return
 	}
@@ -268,7 +309,10 @@ func (m *Manager) persistResult(report shared.ServerTestReport) error {
 	if m.journal == nil || m.journal.Payload.TaskID != report.TaskID || m.journal.Payload.Generation != report.Generation {
 		return errors.New("server test result was superseded locally")
 	}
-	m.journal.State = "result_pending"
+	if !validTaskJournalTransition(m.journal.State, taskStateResultPending) {
+		return fmt.Errorf("invalid server test journal transition %q → %q", m.journal.State, taskStateResultPending)
+	}
+	m.journal.State = taskStateResultPending
 	m.journal.Manifest = &manifest
 	m.journal.UpdatedAt = time.Now().UTC()
 	m.progress = nil
@@ -288,7 +332,7 @@ func (m *Manager) deliveryLoop() {
 		<-m.wake
 		for {
 			m.mu.Lock()
-			ready := m.journal != nil && m.journal.State == "result_pending" && m.journal.Manifest != nil && m.sender != nil
+			ready := m.journal != nil && m.journal.State == taskStateResultPending && m.journal.Manifest != nil && m.sender != nil
 			m.mu.Unlock()
 			if !ready {
 				break
@@ -379,10 +423,13 @@ func (m *Manager) completeLocal(taskID string, generation int64) error {
 	if m.journal == nil || m.journal.Payload.TaskID != taskID || m.journal.Payload.Generation != generation {
 		return nil
 	}
-	if m.journal.State == "completed" {
+	if m.journal.State == taskStateCompleted {
 		return nil
 	}
-	m.journal.State = "completed"
+	if !validTaskJournalTransition(m.journal.State, taskStateCompleted) {
+		return fmt.Errorf("invalid server test journal transition %q → %q", m.journal.State, taskStateCompleted)
+	}
+	m.journal.State = taskStateCompleted
 	m.journal.Manifest = nil
 	m.journal.UpdatedAt = time.Now().UTC()
 	if err := m.saveJournalLocked(); err != nil {
@@ -406,10 +453,10 @@ func (m *Manager) load() error {
 	}
 	var journal taskJournal
 	if err := json.Unmarshal(raw, &journal); err != nil || journal.Version != 1 || journal.Payload.Validate() != nil ||
-		(journal.State != "running" && journal.State != "result_pending" && journal.State != "completed") {
+		!journal.State.Valid() {
 		return fmt.Errorf("invalid server test journal: %w", err)
 	}
-	if journal.State == "result_pending" && journal.Manifest == nil {
+	if journal.State == taskStateResultPending && journal.Manifest == nil {
 		return errors.New("server test result journal has no manifest")
 	}
 	m.journal = &journal
