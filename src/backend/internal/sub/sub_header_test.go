@@ -69,7 +69,7 @@ func TestSubContentDisposition(t *testing.T) {
 	}
 	defer st.Close()
 	userID, _ := st.InsertUser(ctx, "alice", "00000000-0000-0000-0000-0000000000aa", "alice-token", nil)
-	if err := st.SetUserSubSettings(ctx, userID, 0, 0, "", "", "VIP1", ""); err != nil {
+	if err := st.SetUserSubSettings(ctx, userID, store.UserSubSettings{PlanName: "VIP1"}); err != nil {
 		t.Fatal(err)
 	}
 	user, _ := st.UserByID(ctx, userID)
@@ -80,7 +80,7 @@ func TestSubContentDisposition(t *testing.T) {
 		t.Errorf("user plan disposition = %q", got)
 	}
 
-	if err := st.SetUserSubSettings(ctx, userID, 0, 0, "", "", "", ""); err != nil {
+	if err := st.SetUserSubSettings(ctx, userID, store.UserSubSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	user, _ = st.UserByID(ctx, userID)
@@ -104,7 +104,7 @@ func TestSubContentDisposition(t *testing.T) {
 	}
 
 	bobID, _ := st.InsertUser(ctx, "bob", "00000000-0000-0000-0000-0000000000bb", "bob-token", nil)
-	if err := st.SetUserSubSettings(ctx, bobID, 0, 0, "", "", "VIP1", ""); err != nil {
+	if err := st.SetUserSubSettings(ctx, bobID, store.UserSubSettings{PlanName: "VIP1"}); err != nil {
 		t.Fatal(err)
 	}
 	bob, _ := st.UserByID(ctx, bobID)
@@ -115,7 +115,7 @@ func TestSubContentDisposition(t *testing.T) {
 	// 回归：设置套餐名 "BeanStudio - Admin"、用户 "Bean" 时，文件名应为纯套餐名，
 	// 不带 "-Bean" 用户名后缀与 ".yaml" 扩展名。
 	beanID, _ := st.InsertUser(ctx, "Bean", "00000000-0000-0000-0000-0000000000dd", "bean-token", nil)
-	if err := st.SetUserSubSettings(ctx, beanID, 0, 0, "", "", "BeanStudio - Admin", ""); err != nil {
+	if err := st.SetUserSubSettings(ctx, beanID, store.UserSubSettings{PlanName: "BeanStudio - Admin"}); err != nil {
 		t.Fatal(err)
 	}
 	bean, _ := st.UserByID(ctx, beanID)
@@ -127,7 +127,7 @@ func TestSubContentDisposition(t *testing.T) {
 	}
 
 	dirty, _ := st.InsertUser(ctx, "eve\nx", "00000000-0000-0000-0000-0000000000ee", "eve-token", nil)
-	if err := st.SetUserSubSettings(ctx, dirty, 0, 0, "", "", "A;B\nC", ""); err != nil {
+	if err := st.SetUserSubSettings(ctx, dirty, store.UserSubSettings{PlanName: "A;B\nC"}); err != nil {
 		t.Fatal(err)
 	}
 	dirtyUser, _ := st.UserByID(ctx, dirty)
@@ -145,7 +145,7 @@ func TestServeHTTPContentDisposition(t *testing.T) {
 	}
 	defer st.Close()
 	userID, _ := st.InsertUser(ctx, "alice", "00000000-0000-0000-0000-0000000000cc", "alice-token", nil)
-	if err := st.SetUserSubSettings(ctx, userID, 0, 0, "", "", "VIP1", ""); err != nil {
+	if err := st.SetUserSubSettings(ctx, userID, store.UserSubSettings{PlanName: "VIP1"}); err != nil {
 		t.Fatal(err)
 	}
 	server := New(st, nil, []byte("<html></html>"))

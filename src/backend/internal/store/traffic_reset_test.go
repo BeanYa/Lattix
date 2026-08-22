@@ -43,7 +43,7 @@ func TestUsersDueForTrafficResetCatchesMissedMonthEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetUserSubSettings(ctx, userID, 0, 31, "", "", "", ""); err != nil {
+	if err := st.SetUserSubSettings(ctx, userID, UserSubSettings{ResetDay: 31}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.db.ExecContext(ctx,

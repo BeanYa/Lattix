@@ -442,7 +442,10 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 
 	// 可选订阅设置：任一项非默认时写入（用户级覆盖全局）。
 	if req.TrafficLimit != 0 || req.TrafficResetDay != 0 || req.PlanName != "" || req.AppURL != "" {
-		if err := s.st.SetUserSubSettings(r.Context(), id, req.TrafficLimit, req.TrafficResetDay, "", "", strings.TrimSpace(req.PlanName), strings.TrimSpace(req.AppURL)); err != nil {
+		if err := s.st.SetUserSubSettings(r.Context(), id, store.UserSubSettings{
+			TrafficLimit: req.TrafficLimit, ResetDay: req.TrafficResetDay,
+			PlanName: strings.TrimSpace(req.PlanName), AppURL: strings.TrimSpace(req.AppURL),
+		}); err != nil {
 			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -1089,7 +1092,10 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 
 	o := s.observeStart(r, "user.sub_settings", "保存订阅设置", userPublishObserveStages)
 	defer o.CloseIfPending()
-	if err := s.st.SetUserSubSettings(r.Context(), req.UserID, req.TrafficLimit, req.TrafficResetDay, req.SubTitle, req.SubAnnouncement, strings.TrimSpace(req.PlanName), strings.TrimSpace(req.AppURL)); err != nil {
+	if err := s.st.SetUserSubSettings(r.Context(), req.UserID, store.UserSubSettings{
+		TrafficLimit: req.TrafficLimit, ResetDay: req.TrafficResetDay, SubTitle: req.SubTitle,
+		SubAnnouncement: req.SubAnnouncement, PlanName: strings.TrimSpace(req.PlanName), AppURL: strings.TrimSpace(req.AppURL),
+	}); err != nil {
 		o.Fail(err)
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "用户不存在")
