@@ -437,40 +437,8 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 		}
 	}()
 
-	go func() {
-		for {
-			// Periodic pull is the recovery path for a lost changed hint.
-			timer := time.NewTimer(time.Duration(48+rand.Intn(25)) * time.Second)
-			select {
-			case <-timer.C:
-			case <-done:
-				if !timer.Stop() {
-					<-timer.C
-				}
-				return
-			}
-			if err := sendSettingsSync(sc, runtime); err != nil {
-				return
-			}
-		}
-	}()
-
-	go func() {
-		for {
-			timer := time.NewTimer(time.Duration(48+rand.Intn(25)) * time.Second)
-			select {
-			case <-timer.C:
-			case <-done:
-				if !timer.Stop() {
-					<-timer.C
-				}
-				return
-			}
-			if err := sendServerSettingsSync(sc, serverRuntime); err != nil {
-				return
-			}
-		}
-	}()
+	go periodicSettingsPull(done, func() error { return sendSettingsSync(sc, runtime) })
+	go periodicSettingsPull(done, func() error { return sendServerSettingsSync(sc, serverRuntime) })
 
 	for {
 		var env shared.Envelope
@@ -870,6 +838,26 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 	default:
 		log.Printf("recv unknown type=%s request_id=%s", env.Type, env.RequestID)
 		replyCode(sc, env, shared.CodeUnsupportedAction, "unsupported action", nil)
+	}
+}
+
+// periodicSettingsPull 周期 pull 设置同步：changed 事件丢失时的恢复路径
+// （48–72s 随机抖动，避免多 agent 同步打面板）。
+func periodicSettingsPull(done <-chan struct{}, pull func() error) {
+	for {
+		// Periodic pull is the recovery path for a lost changed hint.
+		timer := time.NewTimer(time.Duration(48+rand.Intn(25)) * time.Second)
+		select {
+		case <-timer.C:
+		case <-done:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return
+		}
+		if err := pull(); err != nil {
+			return
+		}
 	}
 }
 
