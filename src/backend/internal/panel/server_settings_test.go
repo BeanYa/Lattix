@@ -99,7 +99,7 @@ func TestServerCustomSettingsOverrideLifecycle(t *testing.T) {
 	defer st.Close()
 	requester := &settingsRequester{online: map[int64]bool{}}
 	serverAPI := &Server{st: st, disp: dispatch.New(st, requester), req: requester}
-	serverID, err := st.CreateServer(ctx, "s1", "", "tok", store.MachineTypeDirect, "", "", "US", "Test")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "s1", BootstrapToken: "tok", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}

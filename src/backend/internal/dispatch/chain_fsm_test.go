@@ -56,7 +56,7 @@ func newFSMFixture(t *testing.T) (*store.Store, *Dispatcher, int64, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverID, _ := st.CreateServer(ctx, "direct", "direct.test", "token", store.MachineTypeDirect, "", "", "US", "Test")
+	serverID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "direct", Address: "direct.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
 	nodeID, _ := st.InsertNode(ctx, "direct", serverID, shared.ProtocolVLESS, nil, config)
 	chainID, _ := st.InsertChain(ctx, "direct")

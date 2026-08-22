@@ -330,8 +330,10 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	id, err := s.st.CreateServerWithPlans(r.Context(), req.Alias, req.Address, bootstrap, req.MachineType,
-		allowedJSON, tagsJSON, countryCode, location, billing, traffic)
+	id, err := s.st.CreateServerWithPlans(r.Context(), store.ServerDraft{
+		Alias: req.Alias, Address: req.Address, BootstrapToken: bootstrap, MachineType: req.MachineType,
+		AllowedPorts: allowedJSON, Tags: tagsJSON, CountryCode: countryCode, Location: location,
+	}, billing, traffic)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

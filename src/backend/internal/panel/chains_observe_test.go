@@ -49,7 +49,7 @@ func TestCreateChainCarriesObserveID(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, err := st.CreateServer(ctx, "entry", "entry.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +165,11 @@ func TestForcePublishChainFailureMarksObserveFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	aID, err := st.CreateServer(ctx, "a", "a.example.com", "token-a", store.MachineTypeDirect, "", "", "US", "")
+	aID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "a", Address: "a.example.com", BootstrapToken: "token-a", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	cID, err := st.CreateServer(ctx, "c", "c.example.com", "token-c", store.MachineTypeDirect, "", "", "US", "")
+	cID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "c", Address: "c.example.com", BootstrapToken: "token-c", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	if err != nil {
 		t.Fatal(err)
 	}

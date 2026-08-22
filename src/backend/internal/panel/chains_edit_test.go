@@ -30,7 +30,7 @@ func TestEditChainRemovesMiddleAndPlansOnlyAffectedPieces(t *testing.T) {
 	}
 	defer st.Close()
 	server := func(alias, token string) int64 {
-		id, err := st.CreateServer(ctx, alias, alias+".example.com", token, store.MachineTypeDirect, "", "", "US", "")
+		id, err := st.CreateServer(ctx, store.ServerDraft{Alias: alias, Address: alias+".example.com", BootstrapToken: token, MachineType: store.MachineTypeDirect, CountryCode: "US"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,7 +120,7 @@ func chainEditFixture(t *testing.T, ctx context.Context, st *store.Store) (
 	aID, cID, nodeID, chainID, aHop, cHop int64, nodeRequest createNodeRequest, config []byte) {
 	t.Helper()
 	server := func(alias, token string) int64 {
-		id, err := st.CreateServer(ctx, alias, alias+".example.com", token, store.MachineTypeDirect, "", "", "US", "")
+		id, err := st.CreateServer(ctx, store.ServerDraft{Alias: alias, Address: alias+".example.com", BootstrapToken: token, MachineType: store.MachineTypeDirect, CountryCode: "US"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -274,7 +274,7 @@ func TestEditChainAfterInitialDeploymentFailure(t *testing.T) {
 	}
 	defer st.Close()
 	server := func(alias, token string) int64 {
-		id, err := st.CreateServer(ctx, alias, alias+".example.com", token, store.MachineTypeDirect, "", "", "US", "")
+		id, err := st.CreateServer(ctx, store.ServerDraft{Alias: alias, Address: alias+".example.com", BootstrapToken: token, MachineType: store.MachineTypeDirect, CountryCode: "US"})
 		if err != nil {
 			t.Fatal(err)
 		}

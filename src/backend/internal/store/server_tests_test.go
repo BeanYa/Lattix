@@ -22,7 +22,7 @@ func TestServerTestLatestGenerationAndValidatedChunkPublish(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	serverID, err := st.CreateServer(ctx, "test", "", "token", MachineTypeDirect, "", "", "", "")
+	serverID, err := st.CreateServer(ctx, ServerDraft{Alias: "test", BootstrapToken: "token", MachineType: MachineTypeDirect})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestServerTestLegacyReportPreservesUnknownIPv6Availability(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	serverID, err := st.CreateServer(ctx, "test", "", "token", MachineTypeDirect, "", "", "", "")
+	serverID, err := st.CreateServer(ctx, ServerDraft{Alias: "test", BootstrapToken: "token", MachineType: MachineTypeDirect})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestDeleteServerCascadeRemovesServerTestState(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	serverID, err := st.CreateServer(ctx, "test", "", "token", MachineTypeDirect, "", "", "", "")
+	serverID, err := st.CreateServer(ctx, ServerDraft{Alias: "test", BootstrapToken: "token", MachineType: MachineTypeDirect})
 	if err != nil {
 		t.Fatal(err)
 	}

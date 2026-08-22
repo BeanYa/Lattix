@@ -52,7 +52,7 @@ func seedRebuildServer(t *testing.T) (*Server, *rebuildRecordingRequester, *stor
 	dispatcher := dispatch.New(st, requester)
 	requester.disp = dispatcher
 	serverAPI := &Server{st: st, disp: dispatcher, req: requester}
-	serverID, err := st.CreateServer(ctx, "s1", "s1.test", "tok", store.MachineTypeDirect, "", "", "US", "Test")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "s1", Address: "s1.test", BootstrapToken: "tok", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}

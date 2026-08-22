@@ -16,9 +16,7 @@ func TestServerTagsAndManagedNamesRoundTrip(t *testing.T) {
 	}
 	defer st.Close()
 
-	serverID, err := st.CreateServer(
-		ctx, "日本", "jp.example.com", "token", MachineTypeDirect, "", `["主力","移动"]`, "JP", "Tokyo",
-	)
+	serverID, err := st.CreateServer(ctx, ServerDraft{Alias: "日本", Address: "jp.example.com", BootstrapToken: "token", MachineType: MachineTypeDirect, Tags: `["主力","移动"]`, CountryCode: "JP", Location: "Tokyo"})
 	if err != nil {
 		t.Fatal(err)
 	}

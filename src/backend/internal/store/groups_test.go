@@ -15,8 +15,8 @@ import (
 func newTestEndpointChain(t *testing.T, st *Store, name string) (int64, int64) {
 	t.Helper()
 	ctx := context.Background()
-	entryID, _ := st.CreateServer(ctx, name+"-entry", "entry.example.com", "tok-"+name+"-e", MachineTypeDirect, "", "", "US", "")
-	exitID, _ := st.CreateServer(ctx, name+"-exit", "exit.example.com", "tok-"+name+"-x", MachineTypeDirect, "", "", "JP", "")
+	entryID, _ := st.CreateServer(ctx, ServerDraft{Alias: name+"-entry", Address: "entry.example.com", BootstrapToken: "tok-"+name+"-e", MachineType: MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, ServerDraft{Alias: name+"-exit", Address: "exit.example.com", BootstrapToken: "tok-"+name+"-x", MachineType: MachineTypeDirect, CountryCode: "JP"})
 	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Network: shared.NetworkTCP, Template: json.RawMessage(`{}`)})
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 30000, "profile", config)
 	if err != nil {

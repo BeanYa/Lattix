@@ -253,7 +253,7 @@ func TestOpenMigratesNodeRealityMinClientVer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverID, err := st.CreateServer(context.Background(), "legacy", "203.0.113.10", "token", MachineTypeDirect, "", "", "JP", "")
+	serverID, err := st.CreateServer(context.Background(), ServerDraft{Alias: "legacy", Address: "203.0.113.10", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "JP"})
 	if err != nil {
 		t.Fatal(err)
 	}

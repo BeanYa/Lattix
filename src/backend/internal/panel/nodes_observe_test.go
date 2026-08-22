@@ -20,7 +20,7 @@ func nodeObserveFixture(t *testing.T, ctx context.Context) (*store.Store, int64,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	serverID, err := st.CreateServer(ctx, "svc", "svc.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "svc", Address: "svc.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	if err != nil {
 		t.Fatal(err)
 	}

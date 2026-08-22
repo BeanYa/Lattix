@@ -18,7 +18,7 @@ func TestCleanupResponseOnlyCompletesRevisionTask(t *testing.T) {
 	}
 	defer st.Close()
 
-	serverID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
 	nodeID, _ := st.InsertNode(ctx, "service", serverID, shared.ProtocolVLESS, nil, config)
 	realized, _ := json.Marshal(shared.RealizedConfig{Port: 443, PublicKey: "keep-me"})
@@ -81,8 +81,8 @@ func TestResumeChainsEnqueuesNextPersistedTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	entryID, _ := st.CreateServer(ctx, "entry", "entry.example.com", "entry-token", store.MachineTypeDirect, "", "", "US", "")
-	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "exit-token", store.MachineTypeDirect, "", "", "US", "")
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.example.com", BootstrapToken: "entry-token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "exit-token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
 	nodeID, _ := st.InsertNode(ctx, "service", exitID, shared.ProtocolVLESS, nil, config)
 	realized, _ := json.Marshal(shared.RealizedConfig{Port: 2443})
@@ -128,7 +128,7 @@ func TestVersionMismatchOnlyDeliversExactUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "server", "server.example.com", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "server", Address: "server.example.com", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	_ = st.TouchServer(ctx, serverID, "", "v1.0.0", "server.example.com", "server.example.com", "")
 	requester := &fakeRequester{online: map[int64]bool{serverID: true}}
 	d := New(st, requester)
@@ -160,8 +160,8 @@ func newForcePublishFixture(t *testing.T, entryPort int, serviceRealized shared.
 	if err != nil {
 		t.Fatal(err)
 	}
-	entryID, _ := st.CreateServer(ctx, "entry", "entry.example.com", "entry-token", store.MachineTypeDirect, "", "", "US", "")
-	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "exit-token", store.MachineTypeDirect, "", "", "US", "")
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.example.com", BootstrapToken: "entry-token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "exit-token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
 	nodeID, _ := st.InsertNode(ctx, "service", exitID, shared.ProtocolVLESS, nil, config)
 	realized, _ := json.Marshal(serviceRealized)
@@ -262,7 +262,7 @@ func TestCleanupPendingReturnsActiveAfterAllCleanupTasksAck(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "server", "server.example.com", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "server", Address: "server.example.com", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	chainID, _ := st.InsertChain(ctx, "chain")
 	revision, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{
 		Name: "chain", TrafficMultiplierMilli: 1000,

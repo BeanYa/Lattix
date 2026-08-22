@@ -19,7 +19,7 @@ func TestServerSettingsSyncDeliversChangedDocument(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	serverID, err := st.CreateServer(ctx, "s1", "", "tok", store.MachineTypeDirect, "", "", "US", "Test")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "s1", BootstrapToken: "tok", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestServerSettingsSyncNoChangeWhenUpToDate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, err := st.CreateServer(context.Background(), "s1", "", "tok", store.MachineTypeDirect, "", "", "US", "Test")
+	serverID, err := st.CreateServer(context.Background(), store.ServerDraft{Alias: "s1", BootstrapToken: "tok", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}

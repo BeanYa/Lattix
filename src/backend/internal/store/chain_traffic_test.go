@@ -37,8 +37,8 @@ func TestApplyTrafficSnapshotIsRecoverableAndMultiplied(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	entryID, _ := st.CreateServer(ctx, "entry", "entry.test", "entry-token", MachineTypeDirect, "", "", "US", "Entry")
-	exitID, _ := st.CreateServer(ctx, "exit", "exit.test", "exit-token", MachineTypeDirect, "", "", "US", "Exit")
+	entryID, _ := st.CreateServer(ctx, ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "entry-token", MachineType: MachineTypeDirect, CountryCode: "US", Location: "Entry"})
+	exitID, _ := st.CreateServer(ctx, ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "exit-token", MachineType: MachineTypeDirect, CountryCode: "US", Location: "Exit"})
 	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
 	nodeID, err := st.InsertNode(ctx, "chain", exitID, shared.ProtocolVLESS, nil, config)
 	if err != nil {
@@ -87,7 +87,7 @@ func TestApplyTrafficSnapshotIsRecoverableAndMultiplied(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The same stable service ID reported by a non-published server is ignored.
-	futureExitID, _ := st.CreateServer(ctx, "future-exit", "future.test", "future-token", MachineTypeDirect, "", "", "US", "Future")
+	futureExitID, _ := st.CreateServer(ctx, ServerDraft{Alias: "future-exit", Address: "future.test", BootstrapToken: "future-token", MachineType: MachineTypeDirect, CountryCode: "US", Location: "Future"})
 	if err := st.ApplyTrafficSnapshot(ctx, futureExitID, "future:1", []TrafficCounterSnapshot{{NodeID: nodeID, Up: 999, Down: 999}}, now); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestTrafficSnapshotNewInstanceCountsFromZero(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	serverID, _ := st.CreateServer(ctx, "server", "server.test", "token", MachineTypeDirect, "", "", "US", "Test")
+	serverID, _ := st.CreateServer(ctx, ServerDraft{Alias: "server", Address: "server.test", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err := st.ApplyTrafficSnapshot(ctx, serverID, "instance-1", []TrafficCounterSnapshot{{User: "u", Up: 100}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}

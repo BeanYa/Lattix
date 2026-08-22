@@ -21,7 +21,7 @@ func TestPendingCredentialExchangeKeepsBootstrapUntilCommit(t *testing.T) {
 	}
 	bootstrap, _ := shared.NewCredential(panelID, 1)
 	pending, _ := shared.NewCredential(panelID, 1)
-	serverID, err := st.CreateServer(ctx, "agent", "agent.test", bootstrap, MachineTypeDirect, "", "", "US", "Test")
+	serverID, err := st.CreateServer(ctx, ServerDraft{Alias: "agent", Address: "agent.test", BootstrapToken: bootstrap, MachineType: MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}

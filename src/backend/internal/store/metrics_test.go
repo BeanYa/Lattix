@@ -13,7 +13,7 @@ func TestSaveAndReadServerMetrics(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	serverID, err := st.CreateServer(ctx, "probe", "", "token", MachineTypeDirect, "", "", "HK", "Hong Kong")
+	serverID, err := st.CreateServer(ctx, ServerDraft{Alias: "probe", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "HK", Location: "Hong Kong"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestRecentServerMetricSamplesSkipsPausedProbeAndKeepsTimeout(t *testing.T) 
 	}
 	defer st.Close()
 	ctx := context.Background()
-	serverID, err := st.CreateServer(ctx, "probe", "", "token", MachineTypeDirect, "", "", "HK", "Hong Kong")
+	serverID, err := st.CreateServer(ctx, ServerDraft{Alias: "probe", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "HK", Location: "Hong Kong"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestDeleteExpiredServerMetricHistory(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	serverID, err := st.CreateServer(ctx, "probe", "", "token", MachineTypeDirect, "", "", "HK", "Hong Kong")
+	serverID, err := st.CreateServer(ctx, ServerDraft{Alias: "probe", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "HK", Location: "Hong Kong"})
 	if err != nil {
 		t.Fatal(err)
 	}

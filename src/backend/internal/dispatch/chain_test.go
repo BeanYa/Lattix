@@ -81,7 +81,7 @@ func TestSingleHopChainBecomesActiveAfterServiceApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "direct", "direct.test", "token", store.MachineTypeDirect, "", "", "US", "Test")
+	serverID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "direct", Address: "direct.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
 	nodeID, _ := st.InsertNode(ctx, "direct", serverID, shared.ProtocolVLESS, nil, config)
 	chainID, _ := st.InsertChain(ctx, "direct")
@@ -134,7 +134,7 @@ func TestChainOrchestration(t *testing.T) {
 	defer st.Close()
 
 	mkServer := func(alias, addr, mtype, ports string) int64 {
-		id, err := st.CreateServer(ctx, alias, addr, "tok-"+alias, mtype, ports, "", "US", "Test")
+		id, err := st.CreateServer(ctx, store.ServerDraft{Alias: alias, Address: addr, BootstrapToken: "tok-"+alias, MachineType: mtype, AllowedPorts: ports, CountryCode: "US", Location: "Test"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -283,8 +283,8 @@ func TestChainHopResultFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	entryID, _ := st.CreateServer(ctx, "entry", "e.com", "tok1", store.MachineTypeDirect, "", "", "US", "Entry")
-	exitID, _ := st.CreateServer(ctx, "exit", "x.com", "tok2", store.MachineTypeNAT, "", "", "JP", "Exit")
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "e.com", BootstrapToken: "tok1", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Entry"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "x.com", BootstrapToken: "tok2", MachineType: store.MachineTypeNAT, CountryCode: "JP", Location: "Exit"})
 	vcJSON, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
 	nodeID, _ := st.InsertNode(ctx, "测试出口节点", exitID, shared.ProtocolVLESS, nil, vcJSON)
 	chainID, _ := st.InsertChain(ctx, "测试链路")
@@ -339,8 +339,8 @@ func TestAdvanceChainSkipsReusedPieces(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	entryID, _ := st.CreateServer(ctx, "entry", "e.com", "tok1", store.MachineTypeDirect, "", "", "US", "Entry")
-	exitID, _ := st.CreateServer(ctx, "exit", "x.com", "tok2", store.MachineTypeDirect, "", "", "JP", "Exit")
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "e.com", BootstrapToken: "tok1", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Entry"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "x.com", BootstrapToken: "tok2", MachineType: store.MachineTypeDirect, CountryCode: "JP", Location: "Exit"})
 	vcJSON, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
 	nodeID, _ := st.InsertNode(ctx, "测试出口节点", exitID, shared.ProtocolVLESS, nil, vcJSON)
 	realized, _ := json.Marshal(&shared.RealizedConfig{Port: 4433})
@@ -412,8 +412,8 @@ func TestNatPortsCarryCandidatesForManualPorts(t *testing.T) {
 	}
 	defer st.Close()
 	const segments = `[{"pub_start":20000,"pub_end":20004,"listen_start":30000,"listen_end":30004}]`
-	entryID, _ := st.CreateServer(ctx, "entry", "entry.com", "tok1", store.MachineTypeNAT, segments, "", "US", "Entry")
-	exitID, _ := st.CreateServer(ctx, "exit", "exit.com", "tok2", store.MachineTypeNAT, segments, "", "JP", "Exit")
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.com", BootstrapToken: "tok1", MachineType: store.MachineTypeNAT, AllowedPorts: segments, CountryCode: "US", Location: "Entry"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.com", BootstrapToken: "tok2", MachineType: store.MachineTypeNAT, AllowedPorts: segments, CountryCode: "JP", Location: "Exit"})
 	port := 18443
 	vcJSON, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
 	nodeID, _ := st.InsertNode(ctx, "测试出口节点", exitID, shared.ProtocolVLESS, &port, vcJSON)
