@@ -391,18 +391,7 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 		return
 	}
 	revision.Snapshot.ServiceRealized = append(json.RawMessage(nil), node.RealizedConfig...)
-	byID := make(map[int64]store.ChainHop, len(hops))
-	for _, hop := range hops {
-		byID[hop.ID] = hop
-	}
-	for i := range revision.Snapshot.Hops {
-		if hop, ok := byID[revision.Snapshot.Hops[i].HopID]; ok {
-			revision.Snapshot.Hops[i].ForwardPort = hop.ForwardPort
-			revision.Snapshot.Hops[i].PortalPort = hop.PortalPort
-			revision.Snapshot.Hops[i].PortalPublicKey = hop.PortalPublicKey
-			revision.Snapshot.Hops[i].PortalServerName = hop.PortalServerName
-		}
-	}
+	mergeSnapshotHopFields(&revision.Snapshot, hops, false)
 	if err := d.st.UpdateChainRevision(ctx, revision.ID, store.RevisionStatusActive, "", revision.Snapshot); err != nil {
 		log.Printf("dispatch: chain %d revision snapshot: %v", chainID, err)
 		return
@@ -425,20 +414,53 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 		}
 	}
 	d.cleanupPublishedRevision(ctx, previous, revision)
-	if previous != nil && previous.Snapshot.EndpointID != 0 &&
-		previous.Snapshot.EndpointID != revision.Snapshot.EndpointID {
-		if err := d.ReconcileSharedEndpoint(ctx, previous.Snapshot.EndpointID); err != nil {
-			log.Printf("dispatch: chain %d previous shared endpoint %d: %v",
-				chainID, previous.Snapshot.EndpointID, err)
-		}
+	if err := d.reconcilePublishedEndpoints(ctx, previous, revision); err != nil {
+		log.Printf("dispatch: chain %d reconcile shared endpoint: %v", chainID, err)
 	}
 	if revision.Snapshot.EndpointID != 0 {
-		if err := d.ReconcileSharedEndpoint(ctx, revision.Snapshot.EndpointID); err != nil {
-			log.Printf("dispatch: chain %d shared endpoint %d: %v", chainID, revision.Snapshot.EndpointID, err)
-		}
 		// 端点刚置 applying，立即重算链状态（若端点未 active 则链进入 degraded，待 ack 后恢复）。
 		d.fsm.Evaluate(ctx, chainID)
 	}
+}
+
+// mergeSnapshotHopFields 把最新 hop 的端口/密钥字段合并回 revision 快照（发布与强制发布共用）。
+// keepNonZeroForward 为 true 时仅在 hop.ForwardPort 非零时覆盖（强制发布保留快照中已确认的入口端口）。
+func mergeSnapshotHopFields(snapshot *store.ChainRevisionSnapshot, hops []store.ChainHop, keepNonZeroForward bool) {
+	byID := make(map[int64]store.ChainHop, len(hops))
+	for _, hop := range hops {
+		byID[hop.ID] = hop
+	}
+	for i := range snapshot.Hops {
+		hop, ok := byID[snapshot.Hops[i].HopID]
+		if !ok {
+			continue
+		}
+		if !keepNonZeroForward || hop.ForwardPort != 0 {
+			snapshot.Hops[i].ForwardPort = hop.ForwardPort
+		}
+		snapshot.Hops[i].PortalPort = hop.PortalPort
+		snapshot.Hops[i].PortalPublicKey = hop.PortalPublicKey
+		snapshot.Hops[i].PortalServerName = hop.PortalServerName
+	}
+}
+
+// reconcilePublishedEndpoints 发布后按快照引用变化 reconcile 共享端点：旧端点不再被引用
+// 时回收、新端点置 applying。新旧端点都会尝试 reconcile，返回首个原始错误
+// （不包装，调用方决定记日志还是中断流程）。
+func (d *Dispatcher) reconcilePublishedEndpoints(ctx context.Context, previous, revision *store.ChainRevision) error {
+	var firstErr error
+	if previous != nil && previous.Snapshot.EndpointID != 0 &&
+		previous.Snapshot.EndpointID != revision.Snapshot.EndpointID {
+		if err := d.ReconcileSharedEndpoint(ctx, previous.Snapshot.EndpointID); err != nil {
+			firstErr = err
+		}
+	}
+	if revision.Snapshot.EndpointID != 0 {
+		if err := d.ReconcileSharedEndpoint(ctx, revision.Snapshot.EndpointID); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // maybePublishReadyRevision 自愈发布窗口竞态（评审 P2-8）：链已 active 且 desired
@@ -526,20 +548,7 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 		revision.Snapshot.ServiceRealized = realized
 	}
 	if hops, err := d.st.ChainHops(ctx, chainID); err == nil {
-		byID := make(map[int64]store.ChainHop, len(hops))
-		for _, hop := range hops {
-			byID[hop.ID] = hop
-		}
-		for i := range revision.Snapshot.Hops {
-			if hop, ok := byID[revision.Snapshot.Hops[i].HopID]; ok {
-				if hop.ForwardPort != 0 {
-					revision.Snapshot.Hops[i].ForwardPort = hop.ForwardPort
-				}
-				revision.Snapshot.Hops[i].PortalPort = hop.PortalPort
-				revision.Snapshot.Hops[i].PortalPublicKey = hop.PortalPublicKey
-				revision.Snapshot.Hops[i].PortalServerName = hop.PortalServerName
-			}
-		}
+		mergeSnapshotHopFields(&revision.Snapshot, hops, true)
 	}
 	if len(revision.Snapshot.Hops) == 1 && revision.Snapshot.Hops[0].ForwardPort == 0 {
 		var realized shared.RealizedConfig
@@ -565,16 +574,8 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 		}
 	}
 	d.cleanupPublishedRevision(ctx, previous, revision)
-	if previous != nil && previous.Snapshot.EndpointID != 0 &&
-		previous.Snapshot.EndpointID != revision.Snapshot.EndpointID {
-		if err := d.ReconcileSharedEndpoint(ctx, previous.Snapshot.EndpointID); err != nil {
-			return err
-		}
-	}
-	if revision.Snapshot.EndpointID != 0 {
-		if err := d.ReconcileSharedEndpoint(ctx, revision.Snapshot.EndpointID); err != nil {
-			return err
-		}
+	if err := d.reconcilePublishedEndpoints(ctx, previous, revision); err != nil {
+		return err
 	}
 	d.advanceChain(context.Background(), chainID)
 	return nil
