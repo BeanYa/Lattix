@@ -385,34 +385,9 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 				Detail: d.commandDetail(ctx, c, 0,
 					fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts)),
 			})
-			// apply_node 死信：节点不能永远卡 applying，置 failed 供管理员重试（§6）。
-			if c.Type == shared.TypeApplyNode {
-				var p shared.ApplyNodePayload
-				if err := json.Unmarshal(c.Data, &p); err == nil && p.NodeID != 0 {
-					reason := fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts)
-					if err := d.st.SetNodeFailed(ctx, p.NodeID, reason); err != nil {
-						log.Printf("dispatch: dead-letter node %d failed: %v", p.NodeID, err)
-					}
-					d.alertNodeFailed(serverID, p.NodeID, reason)
-					d.failChainByNode(ctx, p.NodeID, reason) // 链出口业务死信 → 链 failed 定位到跳（§21）
-				}
-			}
-			if c.Type == shared.TypeApplySharedEndpoint {
-				var p shared.ApplySharedEndpointPayload
-				if json.Unmarshal(c.Data, &p) == nil && p.EndpointID != 0 {
-					_ = d.efsm.Transition(ctx, p.EndpointID, store.EndpointStatusFailed,
-						fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts), nil)
-				}
-			}
-			// apply_chain_hop 死信：跳置 failed，链 failed 定位到跳（§21）。
-			if c.Type == shared.TypeApplyChainHop {
-				var p shared.ApplyChainHopPayload
-				if err := json.Unmarshal(c.Data, &p); err == nil && p.HopID != 0 {
-					reason := fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts)
-					if hop, err := d.st.ChainHopByID(ctx, p.HopID); err == nil {
-						d.failHop(ctx, hop, reason)
-					}
-				}
+			// 死信的状态机收尾按命令类型查表分派（注册见 commandHandlers）。
+			if h, ok := commandHandlers[c.Type]; ok && h.deadLetter != nil {
+				h.deadLetter(d, ctx, serverID, c)
 			}
 			continue
 		}
@@ -1051,68 +1026,7 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			log.Printf("dispatch: server %d: response for command %d not in sent state, ignored", serverID, cmdID)
 			return
 		}
-		if cmd.Type == shared.TypeServerTestRun {
-			var testPayload shared.ServerTestRunPayload
-			if err := json.Unmarshal(cmd.Data, &testPayload); err == nil {
-				if _, err := d.st.UpdateServerTestState(ctx, serverID, testPayload.TaskID, testPayload.Generation, shared.ServerTestAccepted); err != nil {
-					log.Printf("dispatch: server %d: accept server test: %v", serverID, err)
-				}
-			}
-			return
-		}
-		d.setRevisionTaskResult(ctx, cmdID, true, "")
-		d.recordOperation(logging.OperationEvent{
-			Severity: logging.SeverityInfo, Category: logging.CategoryCommand,
-			Action: "command.succeeded", ServerID: &serverID, NodeID: optionalID(p.NodeID),
-			Detail:    d.commandDetail(ctx, *cmd, p.HopID, ""),
-			RequestID: env.RequestID, TraceID: env.TraceID,
-		})
-		// xray.cleanup：差异/结果投递给同步等待者（面板清理接口），不触碰节点状态机。
-		if cmd.Type == shared.TypeCleanupXray {
-			d.cleanupWaiters.deliver(cmd.RequestID, p.Cleanup, "")
-			log.Printf("dispatch: server %d: cleanup xray command %d acked", serverID, cmdID)
-			return
-		}
-		if cmd.Type == shared.TypeRebuildXray {
-			d.rebuildWaiters.deliver(cmd.RequestID, p.Rebuild, "")
-			log.Printf("dispatch: server %d: rebuild xray command %d acked", serverID, cmdID)
-			return
-		}
-		// 清理命令只更新命令/修订任务，不得触碰当前工作拓扑的节点状态。
-		if cmd.Type == shared.TypeRemoveChainHop || cmd.Type == shared.TypeRemoveNode ||
-			cmd.Type == shared.TypeRemoveSharedEndpoint {
-			log.Printf("dispatch: server %d: cleanup command %d acked", serverID, cmdID)
-			return
-		}
-		// 链跳配置件回执（§21）：路由到链编排器，不触碰节点状态机。
-		if p.HopID != 0 {
-			d.handleChainHopResult(serverID, p, "")
-			return
-		}
-		if p.EndpointID != 0 {
-			d.clearEndpointRetry(p.EndpointID)
-			realized, _ := json.Marshal(p.RealizedConfig)
-			// 端点状态机：active 副作用（链重算 + 订阅重建）在 onEnter 分派。
-			if err := d.efsm.Transition(ctx, p.EndpointID, store.EndpointStatusActive, "部署回执确认", realized); err != nil {
-				log.Printf("dispatch: shared endpoint %d active: %v", p.EndpointID, err)
-			}
-			return
-		}
-		realized, _ := json.Marshal(p.RealizedConfig)
-		// NodeID 0 表示非节点命令（add_user/remove_user 等），不触碰节点状态机。
-		if p.NodeID != 0 {
-			if err := d.st.SetNodeActive(ctx, p.NodeID, realized); err != nil {
-				log.Printf("dispatch: node %d active: %v", p.NodeID, err)
-			} else if d.OnNodePublished != nil {
-				if err := d.OnNodePublished(ctx, p.NodeID); err != nil {
-					log.Printf("dispatch: enqueue subscriptions for node %d: %v", p.NodeID, err)
-				}
-			}
-			log.Printf("dispatch: server %d: node %d active (command %d)", serverID, p.NodeID, cmdID)
-			d.advanceChainByNode(ctx, p.NodeID) // 链出口业务就绪 → 推进链编排（§21 阶段 2 起）
-		} else {
-			log.Printf("dispatch: server %d: command %d acked", serverID, cmdID)
-		}
+		d.applyCommandOutcome(serverID, cmd, p, env, true, "")
 	} else {
 		errorMessage := env.Message
 		if errorMessage == "" {
@@ -1127,64 +1041,222 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			log.Printf("dispatch: server %d: response for command %d not in sent state, ignored", serverID, cmdID)
 			return
 		}
-		if cmd.Type == shared.TypeServerTestRun {
-			var testPayload shared.ServerTestRunPayload
-			if err := json.Unmarshal(cmd.Data, &testPayload); err == nil {
-				if err := d.st.FailServerTestCommand(ctx, serverID, testPayload.TaskID, testPayload.Generation, env.Code, errorMessage); err != nil {
-					log.Printf("dispatch: server %d: fail server test command: %v", serverID, err)
-				}
+		d.applyCommandOutcome(serverID, cmd, p, env, false, errorMessage)
+	}
+}
+
+// applyCommandOutcome 命令落终态后的收尾（成功/失败共用）：server_test_run 等接管型
+// 命令自行维护任务状态；其余先通用记账（revision task 结果 + 操作日志），再按命令类型
+// 注册的 handler 处理，未注册的走 payload 通用分支（hop → 链编排，endpoint → 端点状态机，
+// node → 节点状态机）。
+func (d *Dispatcher) applyCommandOutcome(serverID int64, cmd *store.Command, p shared.ApplyResultPayload,
+	env shared.Envelope, success bool, errorMessage string) {
+	ctx := context.Background()
+	if h, ok := commandHandlers[cmd.Type]; ok && h.takeover != nil {
+		h.takeover(d, serverID, cmd, env, success, errorMessage)
+		return
+	}
+	d.setRevisionTaskResult(ctx, cmd.ID, success, errorMessage)
+	d.recordCommandOutcome(ctx, serverID, cmd, p, env, success, errorMessage)
+	if h, ok := commandHandlers[cmd.Type]; ok && h.respond != nil {
+		h.respond(d, serverID, cmd, p, success, errorMessage)
+		return
+	}
+	// 链跳配置件回执（§21）：路由到链编排器，不触碰节点状态机（失败定位到跳，链置 failed）。
+	if p.HopID != 0 {
+		d.handleChainHopResult(serverID, p, errorMessage)
+		return
+	}
+	if p.EndpointID != 0 {
+		if success {
+			d.clearEndpointRetry(p.EndpointID)
+			realized, _ := json.Marshal(p.RealizedConfig)
+			// 端点状态机：active 副作用（链重算 + 订阅重建）在 onEnter 分派。
+			if err := d.efsm.Transition(ctx, p.EndpointID, store.EndpointStatusActive, "部署回执确认", realized); err != nil {
+				log.Printf("dispatch: shared endpoint %d active: %v", p.EndpointID, err)
 			}
-			d.testProgressMu.Lock()
-			delete(d.testProgress, serverID)
-			d.testProgressMu.Unlock()
-			return
-		}
-		d.setRevisionTaskResult(ctx, cmdID, false, errorMessage)
-		d.recordOperation(logging.OperationEvent{
-			Severity: logging.SeverityError, Category: logging.CategoryCommand,
-			Action: "command.failed", ServerID: &serverID, NodeID: optionalID(p.NodeID),
-			Detail:    d.commandDetail(ctx, *cmd, p.HopID, errorMessage),
-			RequestID: env.RequestID, TraceID: env.TraceID,
-		})
-		// xray.cleanup：失败回执投递给同步等待者（面板清理接口），保留命令失败记录。
-		if cmd.Type == shared.TypeCleanupXray {
-			d.cleanupWaiters.deliver(cmd.RequestID, p.Cleanup, errorMessage)
-			log.Printf("dispatch: server %d: cleanup xray command %d failed: %s", serverID, cmdID, errorMessage)
-			return
-		}
-		if cmd.Type == shared.TypeRebuildXray {
-			d.rebuildWaiters.deliver(cmd.RequestID, p.Rebuild, errorMessage)
-			log.Printf("dispatch: server %d: rebuild xray command %d failed: %s", serverID, cmdID, errorMessage)
-			return
-		}
-		// 清理失败保留任务记录，不能让已发布的数据面 revision 回滚或失效。
-		if cmd.Type == shared.TypeRemoveChainHop || cmd.Type == shared.TypeRemoveNode ||
-			cmd.Type == shared.TypeRemoveSharedEndpoint {
-			log.Printf("dispatch: server %d: cleanup command %d failed: %s", serverID, cmdID, errorMessage)
-			return
-		}
-		// 链跳配置件回执（§21）：路由到链编排器（失败定位到跳，链置 failed）。
-		if p.HopID != 0 {
-			d.handleChainHopResult(serverID, p, errorMessage)
-			return
-		}
-		if p.EndpointID != 0 {
+		} else {
 			// 端点状态机：failed 副作用（链重算 + 订阅重建）在 onEnter 分派。
 			if err := d.efsm.Transition(ctx, p.EndpointID, store.EndpointStatusFailed, errorMessage, nil); err != nil {
 				log.Printf("dispatch: shared endpoint %d failed: %v", p.EndpointID, err)
 			}
-			return
 		}
-		if p.NodeID != 0 {
+		return
+	}
+	// NodeID 0 表示非节点命令（add_user/remove_user 等），不触碰节点状态机。
+	if p.NodeID != 0 {
+		if success {
+			realized, _ := json.Marshal(p.RealizedConfig)
+			if err := d.st.SetNodeActive(ctx, p.NodeID, realized); err != nil {
+				log.Printf("dispatch: node %d active: %v", p.NodeID, err)
+			} else if d.OnNodePublished != nil {
+				if err := d.OnNodePublished(ctx, p.NodeID); err != nil {
+					log.Printf("dispatch: enqueue subscriptions for node %d: %v", p.NodeID, err)
+				}
+			}
+			log.Printf("dispatch: server %d: node %d active (command %d)", serverID, p.NodeID, cmd.ID)
+			d.advanceChainByNode(ctx, p.NodeID) // 链出口业务就绪 → 推进链编排（§21 阶段 2 起）
+		} else {
 			if err := d.st.SetNodeFailed(ctx, p.NodeID, errorMessage); err != nil {
 				log.Printf("dispatch: node %d failed: %v", p.NodeID, err)
 			}
-			log.Printf("dispatch: server %d: node %d failed (command %d): %s", serverID, p.NodeID, cmdID, errorMessage)
+			log.Printf("dispatch: server %d: node %d failed (command %d): %s", serverID, p.NodeID, cmd.ID, errorMessage)
 			d.alertNodeFailed(serverID, p.NodeID, errorMessage)
 			d.failChainByNode(ctx, p.NodeID, errorMessage) // 链出口业务失败 → 链 failed 定位到跳（§21）
-		} else {
-			log.Printf("dispatch: server %d: command %d failed: %s", serverID, cmdID, errorMessage)
 		}
+		return
+	}
+	if success {
+		log.Printf("dispatch: server %d: command %d acked", serverID, cmd.ID)
+	} else {
+		log.Printf("dispatch: server %d: command %d failed: %s", serverID, cmd.ID, errorMessage)
+	}
+}
+
+// recordCommandOutcome 记录命令回执的通用操作日志（command.succeeded / command.failed）。
+func (d *Dispatcher) recordCommandOutcome(ctx context.Context, serverID int64, cmd *store.Command,
+	p shared.ApplyResultPayload, env shared.Envelope, success bool, errorMessage string) {
+	severity := logging.SeverityInfo
+	action := "command.succeeded"
+	if !success {
+		severity = logging.SeverityError
+		action = "command.failed"
+	}
+	d.recordOperation(logging.OperationEvent{
+		Severity: severity, Category: logging.CategoryCommand,
+		Action: action, ServerID: &serverID, NodeID: optionalID(p.NodeID),
+		Detail:    d.commandDetail(ctx, *cmd, p.HopID, errorMessage),
+		RequestID: env.RequestID, TraceID: env.TraceID,
+	})
+}
+
+// commandHandler 按命令类型注册回执/死信处理，收敛原先分散在 4 处的类型分派
+// （handleCommandResponse 成功/失败级联、Flush 死信、commandEndpointID）；
+// 新增需要特殊处理的命令类型时在此登记一项即可。
+type commandHandler struct {
+	// takeover 非 nil 时完全接管回执处理（在通用记账前调用）。
+	takeover func(d *Dispatcher, serverID int64, cmd *store.Command, env shared.Envelope, success bool, errorMessage string)
+	// respond 非 nil 时在通用记账后处理回执，并跳过 payload 通用分支。
+	respond func(d *Dispatcher, serverID int64, cmd *store.Command, p shared.ApplyResultPayload, success bool, errorMessage string)
+	// deadLetter 非 nil 时死信后执行状态机收尾（节点/端点/跳置 failed）。
+	deadLetter func(d *Dispatcher, ctx context.Context, serverID int64, cmd store.Command)
+	// endpointID 非 nil 时从命令数据解析 shared-endpoint id（操作日志附带 endpoint/chain 归属用）。
+	endpointID func(cmd store.Command) (int64, bool)
+}
+
+// commandHandlers 是命令类型的处理注册表（键为 shared.TypeXxx 命令类型）。
+// 在 init 中构建：注册项闭包引用 Dispatcher 方法（efsm.Transition 等），而这些方法又经
+// Flush/applyCommandOutcome 反查本表，包级变量直接初始化会构成初始化循环。
+var commandHandlers map[string]commandHandler
+
+func init() {
+	commandHandlers = map[string]commandHandler{
+		shared.TypeServerTestRun: {
+			takeover: func(d *Dispatcher, serverID int64, cmd *store.Command, env shared.Envelope, success bool, errorMessage string) {
+				ctx := context.Background()
+				var testPayload shared.ServerTestRunPayload
+				if err := json.Unmarshal(cmd.Data, &testPayload); err == nil {
+					if success {
+						if _, err := d.st.UpdateServerTestState(ctx, serverID, testPayload.TaskID, testPayload.Generation, shared.ServerTestAccepted); err != nil {
+							log.Printf("dispatch: server %d: accept server test: %v", serverID, err)
+						}
+					} else if err := d.st.FailServerTestCommand(ctx, serverID, testPayload.TaskID, testPayload.Generation, env.Code, errorMessage); err != nil {
+						log.Printf("dispatch: server %d: fail server test command: %v", serverID, err)
+					}
+				}
+				if !success {
+					d.testProgressMu.Lock()
+					delete(d.testProgress, serverID)
+					d.testProgressMu.Unlock()
+				}
+			},
+		},
+		// xray.cleanup：差异/结果投递给同步等待者（面板清理接口），不触碰节点状态机；
+		// 失败回执同样投递，保留命令失败记录。
+		shared.TypeCleanupXray: {
+			respond: func(d *Dispatcher, serverID int64, cmd *store.Command, p shared.ApplyResultPayload, success bool, errorMessage string) {
+				d.cleanupWaiters.deliver(cmd.RequestID, p.Cleanup, errorMessage)
+				if success {
+					log.Printf("dispatch: server %d: cleanup xray command %d acked", serverID, cmd.ID)
+				} else {
+					log.Printf("dispatch: server %d: cleanup xray command %d failed: %s", serverID, cmd.ID, errorMessage)
+				}
+			},
+		},
+		shared.TypeRebuildXray: {
+			respond: func(d *Dispatcher, serverID int64, cmd *store.Command, p shared.ApplyResultPayload, success bool, errorMessage string) {
+				d.rebuildWaiters.deliver(cmd.RequestID, p.Rebuild, errorMessage)
+				if success {
+					log.Printf("dispatch: server %d: rebuild xray command %d acked", serverID, cmd.ID)
+				} else {
+					log.Printf("dispatch: server %d: rebuild xray command %d failed: %s", serverID, cmd.ID, errorMessage)
+				}
+			},
+		},
+		shared.TypeRemoveChainHop: {respond: respondRemoveCommand},
+		shared.TypeRemoveNode:     {respond: respondRemoveCommand},
+		shared.TypeApplyNode: {
+			// apply_node 死信：节点不能永远卡 applying，置 failed 供管理员重试（§6）。
+			deadLetter: func(d *Dispatcher, ctx context.Context, serverID int64, cmd store.Command) {
+				var p shared.ApplyNodePayload
+				if err := json.Unmarshal(cmd.Data, &p); err == nil && p.NodeID != 0 {
+					reason := fmt.Sprintf("command %d dead-lettered after %d attempts", cmd.ID, cmd.Attempts)
+					if err := d.st.SetNodeFailed(ctx, p.NodeID, reason); err != nil {
+						log.Printf("dispatch: dead-letter node %d failed: %v", p.NodeID, err)
+					}
+					d.alertNodeFailed(serverID, p.NodeID, reason)
+					d.failChainByNode(ctx, p.NodeID, reason) // 链出口业务死信 → 链 failed 定位到跳（§21）
+				}
+			},
+		},
+		shared.TypeApplySharedEndpoint: {
+			deadLetter: func(d *Dispatcher, ctx context.Context, _ int64, cmd store.Command) {
+				var p shared.ApplySharedEndpointPayload
+				if json.Unmarshal(cmd.Data, &p) == nil && p.EndpointID != 0 {
+					_ = d.efsm.Transition(ctx, p.EndpointID, store.EndpointStatusFailed,
+						fmt.Sprintf("command %d dead-lettered after %d attempts", cmd.ID, cmd.Attempts), nil)
+				}
+			},
+			endpointID: func(cmd store.Command) (int64, bool) {
+				var p shared.ApplySharedEndpointPayload
+				if json.Unmarshal(cmd.Data, &p) == nil && p.EndpointID != 0 {
+					return p.EndpointID, true
+				}
+				return 0, false
+			},
+		},
+		// apply_chain_hop 死信：跳置 failed，链 failed 定位到跳（§21）。
+		shared.TypeApplyChainHop: {
+			deadLetter: func(d *Dispatcher, ctx context.Context, _ int64, cmd store.Command) {
+				var p shared.ApplyChainHopPayload
+				if err := json.Unmarshal(cmd.Data, &p); err == nil && p.HopID != 0 {
+					reason := fmt.Sprintf("command %d dead-lettered after %d attempts", cmd.ID, cmd.Attempts)
+					if hop, err := d.st.ChainHopByID(ctx, p.HopID); err == nil {
+						d.failHop(ctx, hop, reason)
+					}
+				}
+			},
+		},
+		shared.TypeRemoveSharedEndpoint: {
+			respond: respondRemoveCommand,
+			endpointID: func(cmd store.Command) (int64, bool) {
+				var p shared.RemoveSharedEndpointPayload
+				if json.Unmarshal(cmd.Data, &p) == nil && p.EndpointID != 0 {
+					return p.EndpointID, true
+				}
+				return 0, false
+			},
+		},
+	}
+}
+
+// respondRemoveCommand 处理清理类命令（remove_*）回执：只更新命令/修订任务，
+// 不得触碰当前工作拓扑的节点状态；清理失败保留任务记录，不能让已发布的数据面 revision 回滚或失效。
+func respondRemoveCommand(_ *Dispatcher, serverID int64, cmd *store.Command, _ shared.ApplyResultPayload, success bool, errorMessage string) {
+	if success {
+		log.Printf("dispatch: server %d: cleanup command %d acked", serverID, cmd.ID)
+	} else {
+		log.Printf("dispatch: server %d: cleanup command %d failed: %s", serverID, cmd.ID, errorMessage)
 	}
 }
 
@@ -1230,18 +1302,10 @@ func (d *Dispatcher) commandDetail(ctx context.Context, cmd store.Command, hopID
 }
 
 // commandEndpointID 从命令数据解析 shared-endpoint 相关命令的端点 id（非端点命令返回 false）。
+// 解析逻辑随命令类型注册在 commandHandlers（endpointID 字段）。
 func commandEndpointID(cmd store.Command) (int64, bool) {
-	switch cmd.Type {
-	case shared.TypeApplySharedEndpoint:
-		var p shared.ApplySharedEndpointPayload
-		if json.Unmarshal(cmd.Data, &p) == nil && p.EndpointID != 0 {
-			return p.EndpointID, true
-		}
-	case shared.TypeRemoveSharedEndpoint:
-		var p shared.RemoveSharedEndpointPayload
-		if json.Unmarshal(cmd.Data, &p) == nil && p.EndpointID != 0 {
-			return p.EndpointID, true
-		}
+	if h, ok := commandHandlers[cmd.Type]; ok && h.endpointID != nil {
+		return h.endpointID(cmd)
 	}
 	return 0, false
 }
