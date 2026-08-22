@@ -131,12 +131,7 @@ func main() {
 	failures := 0
 	for {
 		saveConnectionStatus(false, state.ConnStateConnecting, nil)
-		newTok, reachedOnline, err := run(*panel, tok, *statePath, *settingsPath, *serverSettingsPath, connectionPath, mgr, st, runtime, serverRuntime, panelRuntime, testManager, commandQueue)
-		if reachedOnline {
-			// run 内部已落盘 online 快照；推进跟踪状态使随后的 backoff/auth_rejected
-			// 转换具备合法前置状态（online → backoff | auth_rejected）。
-			currentConnState = state.ConnStateOnline
-		}
+		newTok, err := run(*panel, tok, *statePath, *settingsPath, *serverSettingsPath, saveConnectionStatus, mgr, st, runtime, serverRuntime, panelRuntime, testManager, commandQueue)
 		if newTok != "" {
 			tok = newTok // 内存兜底：state 落盘失败时仍能凭内存中的 token 重连（§5）
 			failures = 0
@@ -146,8 +141,9 @@ func main() {
 		if err != nil {
 			if authenticationRejected(err) {
 				saveConnectionStatus(false, state.ConnStateAuthRejected, err)
-				st.AuthRejected = true
-				_ = state.Save(*statePath, st)
+				_ = state.SaveWith(*statePath, st, func(s *state.State) {
+					s.AuthRejected = true
+				})
 				log.Printf("connection: 面板明确拒绝当前凭证（面板可能已重建或凭证已替换）；已停止自动重试，请使用新面板安装命令重新绑定后重启 Agent")
 				waitForShutdown()
 				return
@@ -208,10 +204,10 @@ func (s *safeConn) writeControl(messageType int, data []byte) error {
 	return s.conn.WriteControl(messageType, data, time.Now().Add(wsWriteTimeout))
 }
 
-// run 建立连接并完成首连认证，返回本次换发/确认的 token、会话是否已到达 online
-// （session.ready 完成）与断开原因。reachedOnline 供外层连接状态机推导合法转换。
+// run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因；到达 online
+// （session.ready 完成）时经 saveConnectionStatus 落盘 online 快照（与外层同一连接状态机校验）。
 // st 为已加载的落盘状态：session.open 换发后更新凭证字段并整体落盘（保留链 piece 记录）。
-func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPath string, mgr *xray.Manager, st *state.State, runtime *runtimeSettings, serverRuntime *serverRuntimeSettings, panelRuntime *panelStateTracker, testManager *servertest.Manager, commandQueue *persistentCommandQueue) (string, bool, error) {
+func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveConnectionStatus func(connected bool, stateName string, connectionErr error), mgr *xray.Manager, st *state.State, runtime *runtimeSettings, serverRuntime *serverRuntimeSettings, panelRuntime *panelStateTracker, testManager *servertest.Manager, commandQueue *persistentCommandQueue) (string, error) {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+token)
 	conn, response, err := websocket.DefaultDialer.Dial(panel, header)
@@ -220,15 +216,15 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 			defer response.Body.Close()
 		}
 		if explicitAuthenticationRejection(response) {
-			return "", false, errAuthenticationRejected
+			return "", errAuthenticationRejected
 		}
 		if panelTemporarilyUnavailable(response) {
-			return "", false, errPanelUnavailable
+			return "", errPanelUnavailable
 		}
 		if detail := handshakeErrorDescription(response); detail != "" {
-			return "", false, fmt.Errorf("%w [%s]", err, detail)
+			return "", fmt.Errorf("%w [%s]", err, detail)
 		}
-		return "", false, err
+		return "", err
 	}
 	defer conn.Close()
 	conn.SetReadLimit(maxWSMessageBytes)
@@ -257,27 +253,27 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 		}),
 	}
 	if err := sc.writeJSON(open); err != nil {
-		return "", false, fmt.Errorf("send session open: %w", err)
+		return "", fmt.Errorf("send session open: %w", err)
 	}
 
 	// The first response carries the complete lifecycle snapshot.
 	var resp shared.Envelope
 	if err := conn.ReadJSON(&resp); err != nil {
-		return "", false, fmt.Errorf("read session open response: %w", err)
+		return "", fmt.Errorf("read session open response: %w", err)
 	}
 	if err := resp.Validate(); err != nil {
-		return "", false, fmt.Errorf("invalid session open response: %w", err)
+		return "", fmt.Errorf("invalid session open response: %w", err)
 	}
 	if resp.Kind != shared.KindResponse || resp.Type != shared.TypeSessionOpen || resp.RequestID != openID {
-		return "", false, fmt.Errorf("unexpected first frame: kind=%s type=%s request_id=%s",
+		return "", fmt.Errorf("unexpected first frame: kind=%s type=%s request_id=%s",
 			resp.Kind, resp.Type, resp.RequestID)
 	}
 	if resp.Code != shared.CodeOK {
-		return "", false, fmt.Errorf("session open failed: %s: %s", resp.Code, resp.Message)
+		return "", fmt.Errorf("session open failed: %s: %s", resp.Code, resp.Message)
 	}
 	var opened shared.SessionOpenResult
 	if err := json.Unmarshal(resp.Data, &opened); err != nil {
-		return "", false, fmt.Errorf("bad session open result: %w", err)
+		return "", fmt.Errorf("bad session open result: %w", err)
 	}
 	newToken := token
 	if opened.IssuedToken != "" {
@@ -285,19 +281,19 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 	}
 	credential, err := shared.ParseCredential(newToken)
 	if err != nil {
-		return "", false, fmt.Errorf("bad issued credential: %w", err)
+		return "", fmt.Errorf("bad issued credential: %w", err)
 	}
 	crossPanelRebind := st.PanelInstanceID != "" && st.PanelInstanceID != credential.PanelInstanceID
 	if crossPanelRebind {
 		if err := mgr.ResetForPanelRebind(); err != nil {
-			return "", false, fmt.Errorf("reset previous panel configuration: %w", err)
+			return "", fmt.Errorf("reset previous panel configuration: %w", err)
 		}
 		st.Reset()
 		runtime.resetForPanelRebind()
 	}
 	if opened.PanelState.PanelInstanceID != credential.PanelInstanceID ||
 		!panelRuntime.apply(opened.PanelState, true) {
-		return "", false, fmt.Errorf("invalid panel lifecycle snapshot")
+		return "", fmt.Errorf("invalid panel lifecycle snapshot")
 	}
 	saved := state.SaveWith(statePath, st, func(s *state.State) {
 		s.Token, s.ServerID = newToken, opened.ServerID
@@ -321,17 +317,17 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 	})
 	if opened.CredentialExchangeID != "" && saved {
 		if err := exchangeCredential(sc, conn, opened.CredentialExchangeID); err != nil {
-			return newToken, false, err
+			return newToken, err
 		}
 	}
 	// A lightweight keepalive proves the new session in both directions. It is
 	// deliberately excluded from latency samples.
 	time.Sleep(time.Duration(rand.Intn(1001)) * time.Millisecond)
 	if err := sendLiveness(sc); err != nil {
-		return newToken, false, fmt.Errorf("initial liveness: %w", err)
+		return newToken, fmt.Errorf("initial liveness: %w", err)
 	}
 	if err := markSessionReady(sc, conn, opened.SessionID, panelRuntime, statePath, st, latency); err != nil {
-		return newToken, false, err
+		return newToken, err
 	}
 	testManager.Attach(func(envelope shared.Envelope) error { return sc.writeJSON(envelope) })
 	defer testManager.Detach()
@@ -339,12 +335,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 		handle(sc, mgr, envelope, statePath, settingsPath, serverSettingsPath, st, runtime, serverRuntime, panelRuntime, latency, testManager, nil)
 	})
 	defer commandQueue.Detach(queueAttachment)
-	if err := state.SaveConnectionStatus(connectionPath, state.ConnectionStatus{
-		Connected: true, State: state.ConnStateOnline, Panel: panel, ServerID: opened.ServerID,
-		AgentVersion: version, PID: os.Getpid(), ChangedAt: time.Now().UTC(),
-	}); err != nil {
-		log.Printf("save connected status: %v", err)
-	}
+	saveConnectionStatus(true, state.ConnStateOnline, nil)
 	sendSettingsSync(sc, runtime)
 	sendServerSettingsSync(sc, serverRuntime)
 	maybeReconcileXray(mgr, serverRuntime)
@@ -484,7 +475,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 	for {
 		var env shared.Envelope
 		if err := conn.ReadJSON(&env); err != nil {
-			return newToken, true, err
+			return newToken, err
 		}
 		conn.SetReadDeadline(time.Now().Add(wsReadTimeout)) // 任何消息到达即续期
 		handle(sc, mgr, env, statePath, settingsPath, serverSettingsPath, st, runtime, serverRuntime, panelRuntime, latency, testManager, commandQueue)
