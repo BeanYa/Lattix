@@ -726,68 +726,48 @@ func (d *Dispatcher) handleServerTestResult(serverID int64, env shared.Envelope)
 }
 
 func (d *Dispatcher) handleAgentSettingsSync(serverID int64, env shared.Envelope) {
-	ctx := context.Background()
-	var payload shared.AgentSettingsSyncPayload
-	if err := json.Unmarshal(env.Data, &payload); err != nil {
-		d.replyAgentRequest(ctx, serverID, env, shared.CodeInvalidArgument, "invalid settings sync payload", nil)
-		return
-	}
-	if len(payload.LastApplyError) > 512 {
-		payload.LastApplyError = payload.LastApplyError[:512]
-	}
-	if err := d.st.ReportAgentSettings(ctx, serverID, payload.AppliedRevision, payload.LastApplyError); err != nil {
-		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, "failed to record settings status", nil)
-		return
-	}
-	settings, err := d.st.AgentSettings(ctx)
-	if err != nil {
-		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, "failed to load settings", nil)
-		return
-	}
-	panelID, err := d.st.PanelInstanceID(ctx)
-	if err != nil {
-		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, "failed to load panel identity", nil)
-		return
-	}
-	changed := payload.PanelInstanceID != panelID ||
-		payload.AppliedRevision != settings.Revision ||
-		payload.LastApplyError != ""
-	result := shared.AgentSettingsSyncResult{Changed: changed}
-	if changed {
-		doc := shared.AgentSettingsDocument{
-			SchemaVersion: shared.AgentSettingsSchemaVersion,
-			Panel: shared.PanelMetadata{
-				InstanceID: panelID,
-				Version:    d.PanelVersion,
-				PublicURL:  d.panelPublicURL(ctx),
-				WSURL:      panelWSURL(d.panelPublicURL(ctx)),
-			},
-			Agent: settings,
-		}
-		result.Settings = &doc
-	}
-	d.replyAgentRequest(ctx, serverID, env, shared.CodeOK, "", result)
+	handleSettingsSync(d, serverID, env, agentSettingsSync)
 }
 
 // handleServerSettingsSync 处理 agent.settings.sync 的平行通道：agent 上报已应用
 // effective revision，面板比对后返回逐服务器合并的 ServerSettingsDocument。
 func (d *Dispatcher) handleServerSettingsSync(serverID int64, env shared.Envelope) {
+	handleSettingsSync(d, serverID, env, serverSettingsSync)
+}
+
+// settingsSyncSpec 描述一条 settings.sync 通道（agent 全局 / server 逐服务器合并）的
+// 差异化步骤；公共流程见 handleSettingsSync。
+type settingsSyncSpec[E any] struct {
+	invalidPayloadMsg string // payload 解析失败的回执文案
+	reportErrMsg      string // 上报落库失败的回执文案
+	loadErrMsg        string // 加载生效配置失败的回执文案
+	// report 落库 agent 上报的已应用 revision 与错误。
+	report func(d *Dispatcher, ctx context.Context, serverID, appliedRevision int64, lastApplyError string) error
+	// load 读取当前生效配置快照。
+	load func(d *Dispatcher, ctx context.Context, serverID int64) (E, error)
+	// buildResult 比对上报与生效配置构造回执结果（Changed 时携带完整文档）。
+	buildResult func(d *Dispatcher, ctx context.Context, payload shared.SettingsSyncPayload, panelID string, effective E) any
+}
+
+// handleSettingsSync 是两条 settings.sync 通道共用的处理流程：
+// 解析 payload → 截断超长错误 → 落库上报 → 加载生效配置 → 比对后按需回包配置文档。
+func handleSettingsSync[E any](d *Dispatcher, serverID int64, env shared.Envelope, spec settingsSyncSpec[E]) {
 	ctx := context.Background()
-	var payload shared.ServerSettingsSyncPayload
+	var payload shared.SettingsSyncPayload
 	if err := json.Unmarshal(env.Data, &payload); err != nil {
-		d.replyAgentRequest(ctx, serverID, env, shared.CodeInvalidArgument, "invalid server settings sync payload", nil)
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInvalidArgument, spec.invalidPayloadMsg, nil)
 		return
 	}
 	if len(payload.LastApplyError) > 512 {
 		payload.LastApplyError = payload.LastApplyError[:512]
 	}
-	if err := d.st.ReportServerSettings(ctx, serverID, payload.AppliedRevision, payload.LastApplyError); err != nil {
-		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, "failed to record server settings status", nil)
+	if err := spec.report(d, ctx, serverID, payload.AppliedRevision, payload.LastApplyError); err != nil {
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, spec.reportErrMsg, nil)
 		return
 	}
-	settings, revision, err := d.st.EffectiveServerSettings(ctx, serverID)
+	effective, err := spec.load(d, ctx, serverID)
 	if err != nil {
-		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, "failed to load server settings", nil)
+		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, spec.loadErrMsg, nil)
 		return
 	}
 	panelID, err := d.st.PanelInstanceID(ctx)
@@ -795,18 +775,76 @@ func (d *Dispatcher) handleServerSettingsSync(serverID int64, env shared.Envelop
 		d.replyAgentRequest(ctx, serverID, env, shared.CodeInternalError, "failed to load panel identity", nil)
 		return
 	}
-	changed := (payload.PanelInstanceID != "" && payload.PanelInstanceID != panelID) ||
-		payload.AppliedRevision != revision ||
-		payload.LastApplyError != ""
-	result := shared.ServerSettingsSyncResult{Changed: changed}
-	if changed {
-		result.Settings = &shared.ServerSettingsDocument{
-			SchemaVersion: shared.ServerSettingsSchemaVersion,
-			Revision:      revision,
-			Server:        settings,
+	d.replyAgentRequest(ctx, serverID, env, shared.CodeOK, "", spec.buildResult(d, ctx, payload, panelID, effective))
+}
+
+// agentSettingsSync 是 agent 全局设置通道的描述。
+var agentSettingsSync = settingsSyncSpec[shared.AgentSettings]{
+	invalidPayloadMsg: "invalid settings sync payload",
+	reportErrMsg:      "failed to record settings status",
+	loadErrMsg:        "failed to load settings",
+	report: func(d *Dispatcher, ctx context.Context, serverID, appliedRevision int64, lastApplyError string) error {
+		return d.st.ReportAgentSettings(ctx, serverID, appliedRevision, lastApplyError)
+	},
+	load: func(d *Dispatcher, ctx context.Context, _ int64) (shared.AgentSettings, error) {
+		return d.st.AgentSettings(ctx)
+	},
+	buildResult: func(d *Dispatcher, ctx context.Context, payload shared.SettingsSyncPayload, panelID string, settings shared.AgentSettings) any {
+		changed := payload.PanelInstanceID != panelID ||
+			payload.AppliedRevision != settings.Revision ||
+			payload.LastApplyError != ""
+		result := shared.AgentSettingsSyncResult{Changed: changed}
+		if changed {
+			result.Settings = &shared.AgentSettingsDocument{
+				SchemaVersion: shared.AgentSettingsSchemaVersion,
+				Panel: shared.PanelMetadata{
+					InstanceID: panelID,
+					Version:    d.PanelVersion,
+					PublicURL:  d.panelPublicURL(ctx),
+					WSURL:      panelWSURL(d.panelPublicURL(ctx)),
+				},
+				Agent: settings,
+			}
 		}
-	}
-	d.replyAgentRequest(ctx, serverID, env, shared.CodeOK, "", result)
+		return result
+	},
+}
+
+// serverSettingsEffective 是 server 通道的生效配置快照（逐服务器合并结果 + revision）。
+type serverSettingsEffective struct {
+	settings shared.ServerSettings
+	revision int64
+}
+
+// serverSettingsSync 是逐服务器合并设置通道的描述。
+var serverSettingsSync = settingsSyncSpec[serverSettingsEffective]{
+	invalidPayloadMsg: "invalid server settings sync payload",
+	reportErrMsg:      "failed to record server settings status",
+	loadErrMsg:        "failed to load server settings",
+	report: func(d *Dispatcher, ctx context.Context, serverID, appliedRevision int64, lastApplyError string) error {
+		return d.st.ReportServerSettings(ctx, serverID, appliedRevision, lastApplyError)
+	},
+	load: func(d *Dispatcher, ctx context.Context, serverID int64) (serverSettingsEffective, error) {
+		settings, revision, err := d.st.EffectiveServerSettings(ctx, serverID)
+		if err != nil {
+			return serverSettingsEffective{}, err
+		}
+		return serverSettingsEffective{settings: settings, revision: revision}, nil
+	},
+	buildResult: func(_ *Dispatcher, _ context.Context, payload shared.SettingsSyncPayload, panelID string, effective serverSettingsEffective) any {
+		changed := (payload.PanelInstanceID != "" && payload.PanelInstanceID != panelID) ||
+			payload.AppliedRevision != effective.revision ||
+			payload.LastApplyError != ""
+		result := shared.ServerSettingsSyncResult{Changed: changed}
+		if changed {
+			result.Settings = &shared.ServerSettingsDocument{
+				SchemaVersion: shared.ServerSettingsSchemaVersion,
+				Revision:      effective.revision,
+				Server:        effective.settings,
+			}
+		}
+		return result
+	},
 }
 
 func (d *Dispatcher) replyAgentRequest(ctx context.Context, serverID int64, request shared.Envelope, code, message string, data any) {
