@@ -62,7 +62,8 @@ func applyTo(version, releaseBase, currentVersion, defaultRepo, executable strin
 		if repo == "" {
 			return false, fmt.Errorf("使用镜像下载基址时须显式指定版本（vX.Y.Z），不支持 latest")
 		}
-		v, err := resolveLatest("https://api.github.com/repos/" + repo)
+		v, err := external.GitHubLatestReleaseTag(context.Background(), &http.Client{Timeout: 30 * time.Second},
+			"https://api.github.com/repos/"+repo)
 		if err != nil {
 			return false, err
 		}
@@ -171,21 +172,6 @@ func validateReleaseBase(base string) error {
 		return nil
 	}
 	return fmt.Errorf("升级下载基址必须使用 https（明文 http 仅允许回环镜像）: %s", base)
-}
-
-// resolveLatest 经 GitHub API 解析最新 release tag。
-func resolveLatest(apiRepos string) (string, error) {
-	var rel struct {
-		TagName string `json:"tag_name"`
-	}
-	client := external.ExternalJSONRequester{Doer: &http.Client{Timeout: 30 * time.Second}}
-	if err := client.GetJSON(context.Background(), apiRepos+"/releases/latest", &rel); err != nil {
-		return "", fmt.Errorf("解析 latest 失败: %w", err)
-	}
-	if rel.TagName == "" {
-		return "", fmt.Errorf("解析 latest 失败: 无法读取 tag_name")
-	}
-	return rel.TagName, nil
 }
 
 // verifySHA256 在 checksums.txt（sha256sum 标准格式）中查 asset 的期望值并校验文件。

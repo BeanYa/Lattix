@@ -37,7 +37,8 @@ func (m *Manager) UpgradeXray(version string) error {
 			// 实际版本由升级后的版本校验与 telemetry 上报，无需 API 返回的版本号。
 			return m.upgradeXray("latest", "latest/download")
 		}
-		v, err := resolveLatestXrayVersion()
+		v, err := external.GitHubLatestReleaseTag(context.Background(), &http.Client{Timeout: 30 * time.Second},
+			"https://api.github.com/repos/XTLS/Xray-core")
 		if err != nil {
 			return err
 		}
@@ -122,22 +123,6 @@ func (m *Manager) rollbackXray(backup string) {
 	if err := m.runner.Restart(context.Background()); err != nil {
 		log.Printf("xray rollback: 回滚后重启失败: %v", err)
 	}
-}
-
-// resolveLatestXrayVersion 经 GitHub API 解析最新 release tag（§11 同款逻辑）。
-func resolveLatestXrayVersion() (string, error) {
-	var rel struct {
-		TagName string `json:"tag_name"`
-	}
-	client := external.ExternalJSONRequester{Doer: &http.Client{Timeout: 30 * time.Second}}
-	if err := client.GetJSON(context.Background(),
-		"https://api.github.com/repos/XTLS/Xray-core/releases/latest", &rel); err != nil {
-		return "", fmt.Errorf("解析 latest 失败: %w", err)
-	}
-	if rel.TagName == "" {
-		return "", fmt.Errorf("解析 latest 失败: 无法读取 tag_name")
-	}
-	return rel.TagName, nil
 }
 
 // downloadFile 下载 URL 到本地文件。

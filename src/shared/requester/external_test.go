@@ -65,6 +65,26 @@ func (failingExternalDoer) Do(req *http.Request) (*http.Response, error) {
 	return nil, errors.New("dial failed for " + req.URL.String())
 }
 
+func TestGitHubLatestReleaseTag(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/o/r/releases/latest" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"tag_name":"v1.2.3"}`))
+	}))
+	defer server.Close()
+
+	tag, err := GitHubLatestReleaseTag(context.Background(), server.Client(), server.URL+"/repos/o/r")
+	if err != nil || tag != "v1.2.3" {
+		t.Fatalf("GitHubLatestReleaseTag = %q, %v", tag, err)
+	}
+	if _, err := GitHubLatestReleaseTag(context.Background(), server.Client(), server.URL+"/repos/o/missing"); err == nil {
+		t.Fatal("upstream non-2xx status was accepted")
+	}
+}
+
 func TestDownloadLimitedEnforcesSizeCap(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(make([]byte, 1024*1024))

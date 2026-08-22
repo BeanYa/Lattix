@@ -54,6 +54,22 @@ func (r ExternalJSONRequester) GetJSON(ctx context.Context, url string, dst any)
 	return nil
 }
 
+// GitHubLatestReleaseTag resolves the latest release tag through the GitHub
+// API: GET {apiRepos}/releases/latest, where apiRepos looks like
+// https://api.github.com/repos/<org>/<repo>.
+func GitHubLatestReleaseTag(ctx context.Context, doer HTTPDoer, apiRepos string) (string, error) {
+	var rel struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := (ExternalJSONRequester{Doer: doer}).GetJSON(ctx, apiRepos+"/releases/latest", &rel); err != nil {
+		return "", fmt.Errorf("解析 latest 失败: %w", err)
+	}
+	if rel.TagName == "" {
+		return "", fmt.Errorf("解析 latest 失败: 无法读取 tag_name")
+	}
+	return rel.TagName, nil
+}
+
 type ExternalWebhookRequester struct{ Doer HTTPDoer }
 
 func (r ExternalWebhookRequester) PostJSON(ctx context.Context, url string, value any) error {
