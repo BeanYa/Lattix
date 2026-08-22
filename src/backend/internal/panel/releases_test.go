@@ -15,6 +15,9 @@ func TestReleaseCatalogCachesVersionsWithLatestFirst(t *testing.T) {
 		if r.URL.Path != "/repos/BeanYa/Lattix/releases" {
 			t.Fatalf("unexpected release path: %s", r.URL.Path)
 		}
+		if r.Header.Get("Accept") != "application/vnd.github+json" || r.Header.Get("User-Agent") != "Lattix-panel" {
+			t.Fatalf("release request missing github headers: %v", r.Header)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[
 			{"tag_name":"latest","draft":false},

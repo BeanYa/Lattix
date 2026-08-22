@@ -12,11 +12,12 @@ import (
 	"time"
 
 	"lattix/backend/internal/store"
+	external "lattix/shared/requester"
 )
 
 type exchangeCatalog struct {
 	s       *Server
-	client  *http.Client
+	api     external.ExternalJSONRequester
 	apiBase string
 }
 
@@ -25,7 +26,7 @@ func newExchangeCatalog(s *Server) *exchangeCatalog {
 	if base == "" {
 		base = "https://api.frankfurter.app"
 	}
-	return &exchangeCatalog{s: s, client: &http.Client{Timeout: 30 * time.Second}, apiBase: base}
+	return &exchangeCatalog{s: s, api: external.ExternalJSONRequester{Doer: &http.Client{Timeout: 30 * time.Second}}, apiBase: base}
 }
 
 // pivotBases 是需要拉取的基准货币列表；EUR 始终排在首位，convertCosts 使用 EUR 行做交叉汇率。
@@ -47,27 +48,13 @@ func (c *exchangeCatalog) refresh(ctx context.Context) error {
 }
 
 func (c *exchangeCatalog) fetchBase(ctx context.Context, base string) ([]store.ExchangeRate, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.apiBase+"/latest?from="+base, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("拉取 Frankfurter 汇率失败 (%s): %w", base, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("拉取 Frankfurter 汇率失败 (%s): HTTP %d", base, resp.StatusCode)
-	}
 	var payload struct {
 		Base  string                 `json:"base"`
 		Date  string                 `json:"date"`
 		Rates map[string]json.Number `json:"rates"`
 	}
-	decoder := json.NewDecoder(resp.Body)
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil {
-		return nil, err
+	if err := c.api.GetJSON(ctx, c.apiBase+"/latest?from="+base, &payload); err != nil {
+		return nil, fmt.Errorf("拉取 Frankfurter 汇率失败 (%s): %w", base, err)
 	}
 	payload.Rates[base] = json.Number("1")
 	now := time.Now().UTC().Format(time.RFC3339)

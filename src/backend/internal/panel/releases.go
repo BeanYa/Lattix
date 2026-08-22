@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"lattix/backend/internal/store"
+	external "lattix/shared/requester"
 )
 
 const (
@@ -44,7 +45,7 @@ type releaseVersionsDTO struct {
 
 type releaseCatalog struct {
 	s       *Server
-	client  *http.Client
+	api     external.ExternalJSONRequester
 	apiBase string
 
 	mu     sync.Mutex
@@ -59,7 +60,7 @@ func newReleaseCatalog(s *Server) *releaseCatalog {
 		base = "https://api.github.com"
 	}
 	return &releaseCatalog{
-		s: s, client: &http.Client{Timeout: 30 * time.Second}, apiBase: base,
+		s: s, api: external.ExternalJSONRequester{Doer: &http.Client{Timeout: 30 * time.Second}}, apiBase: base,
 		cache: make(map[string]releaseCache), errors: make(map[string]string),
 		loaded: make(map[string]bool),
 	}
@@ -136,27 +137,17 @@ func (c *releaseCatalog) refresh(ctx context.Context, kind string) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.apiBase+"/repos/"+repo+"/releases?per_page=100", nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "Lattix-panel")
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return c.rememberError(kind, fmt.Errorf("拉取 GitHub release 失败: %w", err))
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return c.rememberError(kind, fmt.Errorf("拉取 GitHub release 失败: HTTP %d", resp.StatusCode))
-	}
+	header := http.Header{}
+	header.Set("Accept", "application/vnd.github+json")
+	header.Set("User-Agent", "Lattix-panel")
 	var releases []struct {
 		TagName string `json:"tag_name"`
 		Draft   bool   `json:"draft"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-		return c.rememberError(kind, fmt.Errorf("解析 GitHub release 失败: %w", err))
+	err = c.api.GetWithOptions(ctx, c.apiBase+"/repos/"+repo+"/releases?per_page=100", &releases,
+		external.JSONRequestOptions{Header: header})
+	if err != nil {
+		return c.rememberError(kind, fmt.Errorf("拉取 GitHub release 失败: %w", err))
 	}
 	seen := make(map[string]bool)
 	versions := make([]string, 0, len(releases))

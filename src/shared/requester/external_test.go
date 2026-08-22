@@ -65,6 +65,32 @@ func (failingExternalDoer) Do(req *http.Request) (*http.Response, error) {
 	return nil, errors.New("dial failed for " + req.URL.String())
 }
 
+func TestJSONGetWithOptionsSendsCustomHeaders(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept") != "application/vnd.github+json" ||
+			r.Header.Get("User-Agent") != "Lattix-panel" {
+			http.Error(w, "missing headers", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"value":"ok"}`))
+	}))
+	defer server.Close()
+
+	header := http.Header{}
+	header.Set("Accept", "application/vnd.github+json")
+	header.Set("User-Agent", "Lattix-panel")
+	var payload struct {
+		Value string `json:"value"`
+	}
+	err := (ExternalJSONRequester{Doer: server.Client()}).GetWithOptions(
+		context.Background(), server.URL+"/json", &payload, JSONRequestOptions{Header: header},
+	)
+	if err != nil || payload.Value != "ok" {
+		t.Fatalf("GetWithOptions = %#v, %v", payload, err)
+	}
+}
+
 func TestGitHubLatestReleaseTag(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/repos/o/r/releases/latest" {
