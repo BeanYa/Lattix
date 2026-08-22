@@ -46,16 +46,15 @@ func clearTemplateAssignment(profile *store.SubscriptionProfile, kind string) er
 	return nil
 }
 
+// dedupeUserIDs 过滤非法用户 id（≤0）后去重，保留首次出现顺序。
 func dedupeUserIDs(ids []int64) []int64 {
-	seen := make(map[int64]bool, len(ids))
-	out := make([]int64, 0, len(ids))
+	valid := make([]int64, 0, len(ids))
 	for _, id := range ids {
-		if id > 0 && !seen[id] {
-			seen[id] = true
-			out = append(out, id)
+		if id > 0 {
+			valid = append(valid, id)
 		}
 	}
-	return out
+	return dedupeInt64s(valid)
 }
 
 // normalizeSuggestedCategories 校验并规范化分组列表：未知 id → 错误；空 → 错误；去重并按内置顺序排序。
@@ -120,11 +119,23 @@ func (s *Server) assignmentTarget(w http.ResponseWriter, r *http.Request, templa
 // handleAssignSubscriptionTemplate 处理 POST /api/subscription/template/assign：
 // 多选用户批量指派模板或建议规则预设到主策略槽位，可强制覆盖用户自选；指派后重发各用户订阅快照。
 func (s *Server) handleAssignSubscriptionTemplate(w http.ResponseWriter, r *http.Request) {
+	s.handleTemplateAssignment(w, r, true)
+}
+
+// handleUnassignSubscriptionTemplate 处理 POST /api/subscription/template/unassign：
+// 清除用户对应指派（模板或建议规则），用户自选值保留，并重发订阅快照。
+func (s *Server) handleUnassignSubscriptionTemplate(w http.ResponseWriter, r *http.Request) {
+	s.handleTemplateAssignment(w, r, false)
+}
+
+// handleTemplateAssignment 是指派/取消指派的共用实现：两者流程逐行同构，仅槽位写入
+// 方向（assign 写入/可强制覆盖，unassign 清除/保留用户自选）与观察、审计文案不同。
+func (s *Server) handleTemplateAssignment(w http.ResponseWriter, r *http.Request, assign bool) {
 	var req struct {
-		UserIDs              []int64  `json:"user_ids"`
-		TemplateID           string   `json:"template_id"`
-		SuggestedCategories  []string `json:"suggested_categories"`
-		Forced               bool     `json:"forced"`
+		UserIDs             []int64  `json:"user_ids"`
+		TemplateID          string   `json:"template_id"`
+		SuggestedCategories []string `json:"suggested_categories"`
+		Forced              bool     `json:"forced"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -141,7 +152,11 @@ func (s *Server) handleAssignSubscriptionTemplate(w http.ResponseWriter, r *http
 	}
 	// 批量指派逐个用户重发布订阅：发布转异步，观察跟踪至全部用户发布完成
 	// （WatchUsers 先于 EnqueueUsers 登记，消除完成回调竞态）。
-	o := s.observeStart(r, "subscription.template.assign", "指派订阅模板", userPublishObserveStages)
+	action, name, saved := "subscription.template.unassign", "取消指派订阅模板", "指派已清除"
+	if assign {
+		action, name, saved = "subscription.template.assign", "指派订阅模板", "指派已保存"
+	}
+	o := s.observeStart(r, action, name, userPublishObserveStages)
 	defer o.CloseIfPending()
 	for _, userID := range userIDs {
 		if _, err := s.st.UserByID(r.Context(), userID); err != nil {
@@ -159,87 +174,31 @@ func (s *Server) handleAssignSubscriptionTemplate(w http.ResponseWriter, r *http
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if categories != nil {
-			// 建议规则指派与模板指派同为主策略槽位，互斥。
-			profile.AssignedPortableTemplateID = ""
-			raw, _ := json.Marshal(categories)
-			profile.AssignedSuggestedCategories = string(raw)
-			profile.AssignForcedPortable = req.Forced
-		} else {
-			if err := applyTemplateAssignment(&profile, template.Kind, template.ID, req.Forced); err != nil {
-				o.Fail(err)
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
+		if assign {
+			if categories != nil {
+				// 建议规则指派与模板指派同为主策略槽位，互斥。
+				profile.AssignedPortableTemplateID = ""
+				raw, _ := json.Marshal(categories)
+				profile.AssignedSuggestedCategories = string(raw)
+				profile.AssignForcedPortable = req.Forced
+			} else {
+				if err := applyTemplateAssignment(&profile, template.Kind, template.ID, req.Forced); err != nil {
+					o.Fail(err)
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				profile.AssignedSuggestedCategories = ""
 			}
-			profile.AssignedSuggestedCategories = ""
-		}
-		if err := s.st.SaveUserSubscriptionProfile(r.Context(), profile); err != nil {
-			o.Fail(err)
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	}
-	o.Report("db", 100, "指派已保存")
-	if s.subscriptions != nil {
-		o.WatchUsers(userIDs)
-		s.subscriptions.EnqueueUsers(userIDs, s.panelBase(r))
-		o.Report("regenerate", 0, "等待订阅重生成")
-	}
-	s.audit(r, "subscription.template.assigned", nil, nil, map[string]any{
-		"template_id": req.TemplateID, "suggested_categories": categories, "user_ids": userIDs, "forced": req.Forced,
-	})
-	writeJSON(w, http.StatusOK, map[string]any{
-		"user_ids": userIDs, "template_id": req.TemplateID, "suggested_categories": categories, "forced": req.Forced,
-	})
-}
-
-// handleUnassignSubscriptionTemplate 处理 POST /api/subscription/template/unassign：
-// 清除用户对应指派（模板或建议规则），用户自选值保留，并重发订阅快照。
-func (s *Server) handleUnassignSubscriptionTemplate(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		UserIDs              []int64  `json:"user_ids"`
-		TemplateID           string   `json:"template_id"`
-		SuggestedCategories  []string `json:"suggested_categories"`
-	}
-	if err := readJSON(r, &req); err != nil {
-		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	userIDs := dedupeUserIDs(req.UserIDs)
-	if len(userIDs) == 0 {
-		writeError(w, http.StatusBadRequest, "user_ids 不能为空")
-		return
-	}
-	template, categories, ok := s.assignmentTarget(w, r, req.TemplateID, req.SuggestedCategories)
-	if !ok {
-		return
-	}
-	o := s.observeStart(r, "subscription.template.unassign", "取消指派订阅模板", userPublishObserveStages)
-	defer o.CloseIfPending()
-	for _, userID := range userIDs {
-		if _, err := s.st.UserByID(r.Context(), userID); err != nil {
-			o.Fail(err)
-			if errors.Is(err, store.ErrNotFound) {
-				writeError(w, http.StatusNotFound, "用户不存在")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		profile, err := s.st.UserSubscriptionProfile(r.Context(), userID)
-		if err != nil {
-			o.Fail(err)
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if categories != nil {
-			profile.AssignedSuggestedCategories = ""
-			profile.AssignForcedPortable = false
 		} else {
-			if err := clearTemplateAssignment(&profile, template.Kind); err != nil {
-				o.Fail(err)
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
+			if categories != nil {
+				profile.AssignedSuggestedCategories = ""
+				profile.AssignForcedPortable = false
+			} else {
+				if err := clearTemplateAssignment(&profile, template.Kind); err != nil {
+					o.Fail(err)
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
 			}
 		}
 		if err := s.st.SaveUserSubscriptionProfile(r.Context(), profile); err != nil {
@@ -248,11 +207,20 @@ func (s *Server) handleUnassignSubscriptionTemplate(w http.ResponseWriter, r *ht
 			return
 		}
 	}
-	o.Report("db", 100, "指派已清除")
+	o.Report("db", 100, saved)
 	if s.subscriptions != nil {
 		o.WatchUsers(userIDs)
 		s.subscriptions.EnqueueUsers(userIDs, s.panelBase(r))
 		o.Report("regenerate", 0, "等待订阅重生成")
+	}
+	if assign {
+		s.audit(r, "subscription.template.assigned", nil, nil, map[string]any{
+			"template_id": req.TemplateID, "suggested_categories": categories, "user_ids": userIDs, "forced": req.Forced,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"user_ids": userIDs, "template_id": req.TemplateID, "suggested_categories": categories, "forced": req.Forced,
+		})
+		return
 	}
 	s.audit(r, "subscription.template.unassigned", nil, nil, map[string]any{
 		"template_id": req.TemplateID, "suggested_categories": categories, "user_ids": userIDs,
