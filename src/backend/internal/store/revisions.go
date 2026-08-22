@@ -499,22 +499,24 @@ func revisionStatusFromSet(status string) []string {
 	return nil
 }
 
-// UpdateChainRevision 写入 revision 状态、错误与快照（发布路径）。状态写入受
-// revisionStatusFromSet 前置守卫：当前状态不在允许集合时返回 ErrStateTransition
+// updateChainRevisionCAS 在 revisionStatusFromSet 前置守卫下更新 revision 状态/错误
+// （snapshot 非 nil 时一并重写快照）：当前状态不在允许集合时返回 ErrStateTransition
 // （例如迟到的失败回执试图覆盖已 active 的 revision）。
-func (s *Store) UpdateChainRevision(ctx context.Context, revisionID int64, status, errorMessage string, snapshot ChainRevisionSnapshot) error {
-	raw, err := json.Marshal(snapshot)
-	if err != nil {
-		return err
-	}
+func (s *Store) updateChainRevisionCAS(ctx context.Context, revisionID int64, status, errorMessage string, snapshot *string) error {
 	from := revisionStatusFromSet(status)
 	if len(from) == 0 {
 		return fmt.Errorf("%w: unknown revision status %q", ErrStateTransition, status)
 	}
+	setClause := `status=?, error=?`
+	args := []any{status, errorMessage}
+	if snapshot != nil {
+		setClause += `, snapshot=?`
+		args = append(args, *snapshot)
+	}
 	placeholders := strings.Repeat("?,", len(from))
 	placeholders = placeholders[:len(placeholders)-1]
-	query := `UPDATE chain_revisions SET status=?, error=?, snapshot=? WHERE id=? AND status IN (` + placeholders + `)`
-	args := []any{status, errorMessage, string(raw), revisionID}
+	query := `UPDATE chain_revisions SET ` + setClause + ` WHERE id=? AND status IN (` + placeholders + `)`
+	args = append(args, revisionID)
 	for _, state := range from {
 		args = append(args, state)
 	}
@@ -530,29 +532,20 @@ func (s *Store) UpdateChainRevision(ctx context.Context, revisionID int64, statu
 	return nil
 }
 
-// SetChainRevisionStatus 更新 revision 状态与错误详情（CAS 前置守卫，见 UpdateChainRevision）。
-func (s *Store) SetChainRevisionStatus(ctx context.Context, revisionID int64, status, errorMessage string) error {
-	from := revisionStatusFromSet(status)
-	if len(from) == 0 {
-		return fmt.Errorf("%w: unknown revision status %q", ErrStateTransition, status)
-	}
-	placeholders := strings.Repeat("?,", len(from))
-	placeholders = placeholders[:len(placeholders)-1]
-	query := `UPDATE chain_revisions SET status=?, error=? WHERE id=? AND status IN (` + placeholders + `)`
-	args := []any{status, errorMessage, revisionID}
-	for _, state := range from {
-		args = append(args, state)
-	}
-	result, err := s.db.ExecContext(ctx, query, args...)
+// UpdateChainRevision 写入 revision 状态、错误与快照（发布路径）。状态写入受
+// revisionStatusFromSet 前置守卫，见 updateChainRevisionCAS。
+func (s *Store) UpdateChainRevision(ctx context.Context, revisionID int64, status, errorMessage string, snapshot ChainRevisionSnapshot) error {
+	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		return err
 	}
-	if n, nerr := result.RowsAffected(); nerr != nil {
-		return nerr
-	} else if n == 0 {
-		return fmt.Errorf("%w: revision %d cannot transition to %s", ErrStateTransition, revisionID, status)
-	}
-	return nil
+	rawSnapshot := string(raw)
+	return s.updateChainRevisionCAS(ctx, revisionID, status, errorMessage, &rawSnapshot)
+}
+
+// SetChainRevisionStatus 更新 revision 状态与错误详情（CAS 前置守卫，见 updateChainRevisionCAS）。
+func (s *Store) SetChainRevisionStatus(ctx context.Context, revisionID int64, status, errorMessage string) error {
+	return s.updateChainRevisionCAS(ctx, revisionID, status, errorMessage, nil)
 }
 
 // AbandonChainRevision 废弃被新编辑取代的失败 revision（§21 失败后编辑）：
