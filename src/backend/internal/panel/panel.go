@@ -195,13 +195,18 @@ func (s *Server) OnlineUsers() *OnlineUsersTracker {
 	return s.onlineUsers
 }
 
-func (s *Server) registerCoreTasks() {
-	expiryInterval := expirySweepIntervalDefault
-	if value := os.Getenv("LATTIX_EXPIRY_SWEEP_INTERVAL"); value != "" {
+// envDuration 解析以环境变量覆盖的调度周期：空值、解析失败或非正数时回退默认值。
+func envDuration(name string, fallback time.Duration) time.Duration {
+	if value := os.Getenv(name); value != "" {
 		if parsed, err := time.ParseDuration(value); err == nil && parsed > 0 {
-			expiryInterval = parsed
+			return parsed
 		}
 	}
+	return fallback
+}
+
+func (s *Server) registerCoreTasks() {
+	expiryInterval := envDuration("LATTIX_EXPIRY_SWEEP_INTERVAL", expirySweepIntervalDefault)
 	s.scheduler.register(scheduledTask{
 		name: "user.expiry", runOnStart: true, timeout: time.Minute,
 		trigger: func(context.Context) taskTrigger { return intervalTrigger(expiryInterval) },
@@ -236,12 +241,7 @@ func (s *Server) registerCoreTasks() {
 		trigger: func(ctx context.Context) taskTrigger { return s.exchangeInspectionSchedule(ctx) },
 		run:     s.exchange.refresh,
 	})
-	cdnRefreshInterval := cdnCatalogRefreshIntervalDefault
-	if value := os.Getenv("LATTIX_CDN_REFRESH_INTERVAL"); value != "" {
-		if parsed, err := time.ParseDuration(value); err == nil && parsed > 0 {
-			cdnRefreshInterval = parsed
-		}
-	}
+	cdnRefreshInterval := envDuration("LATTIX_CDN_REFRESH_INTERVAL", cdnCatalogRefreshIntervalDefault)
 	s.scheduler.register(scheduledTask{
 		name: "cdn.catalog.refresh", timeout: 2 * time.Minute,
 		trigger: func(context.Context) taskTrigger { return intervalTrigger(cdnRefreshInterval) },
