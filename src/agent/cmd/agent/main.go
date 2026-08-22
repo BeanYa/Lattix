@@ -336,8 +336,10 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 	})
 	defer commandQueue.Detach(queueAttachment)
 	saveConnectionStatus(true, state.ConnStateOnline, nil)
-	sendSettingsSync(sc, runtime)
-	sendServerSettingsSync(sc, serverRuntime)
+	agentSync := agentSettingsSync(settingsPath, runtime)
+	serverSync := serverSettingsSync(serverSettingsPath, serverRuntime, mgr)
+	agentSync.send(sc)
+	serverSync.send(sc)
 	maybeReconcileXray(mgr, serverRuntime)
 
 	// Liveness remains active in every connected lifecycle state.
@@ -437,8 +439,8 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath string, saveC
 		}
 	}()
 
-	go periodicSettingsPull(done, func() error { return sendSettingsSync(sc, runtime) })
-	go periodicSettingsPull(done, func() error { return sendServerSettingsSync(sc, serverRuntime) })
+	go periodicSettingsPull(done, func() error { return agentSync.send(sc) })
+	go periodicSettingsPull(done, func() error { return serverSync.send(sc) })
 
 	for {
 		var env shared.Envelope
@@ -615,24 +617,24 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		return
 	}
 	if env.Kind == shared.KindResponse && env.Type == shared.TypeSettingsSync {
-		handleSettingsSyncResponse(sc, env, settingsPath, runtime)
+		agentSettingsSync(settingsPath, runtime).handleResponse(sc, env)
 		return
 	}
 	if env.Kind == shared.KindResponse && env.Type == shared.TypeServerSettingsSync {
-		handleServerSettingsSyncResponse(sc, env, serverSettingsPath, serverRuntime, mgr)
+		serverSettingsSync(serverSettingsPath, serverRuntime, mgr).handleResponse(sc, env)
 		return
 	}
 	if env.Kind == shared.KindResponse && testManager.HandleResponse(env) {
 		return
 	}
 	if env.Kind == shared.KindEvent && env.Type == shared.TypeSettingsChanged {
-		if err := sendSettingsSync(sc, runtime); err != nil {
+		if err := agentSettingsSync(settingsPath, runtime).send(sc); err != nil {
 			log.Printf("settings changed pull: %v", err)
 		}
 		return
 	}
 	if env.Kind == shared.KindEvent && env.Type == shared.TypeServerSettingsChanged {
-		if err := sendServerSettingsSync(sc, serverRuntime); err != nil {
+		if err := serverSettingsSync(serverSettingsPath, serverRuntime, mgr).send(sc); err != nil {
 			log.Printf("server settings changed pull: %v", err)
 		}
 		return
@@ -861,13 +863,28 @@ func periodicSettingsPull(done <-chan struct{}, pull func() error) {
 	}
 }
 
-func sendSettingsSync(sc *safeConn, runtime *runtimeSettings) error {
-	_, panelID, revision, applyError := runtime.snapshot()
+// settingsSync 描述一类面板设置同步（agent settings / server settings）的协议差异：
+// 消息类型、日志名、运行时状态与文档应用回调。send/handleResponse 主流程两类共用；
+// name/docName 区分两类日志文案（保持不变）。
+type settingsSync struct {
+	name     string // 短名：settings | server settings
+	docName  string // 文档名：agent settings | server settings
+	syncType string // WS 请求类型
+	fail     func(message string)
+	snapshot func() (panelID string, revision int64, applyError string)
+	// apply 解析、校验、落盘并应用 changed 文档，返回应用的 revision；
+	// 失败时已调用 fail 并记录日志，ok=false。
+	apply func(raw json.RawMessage) (revision int64, ok bool)
+	after func() // 可空：server settings 每次响应后尝试 xray 版本对齐
+}
+
+func (s settingsSync) send(sc *safeConn) error {
+	panelID, revision, applyError := s.snapshot()
 	id := shared.NewMessageID()
 	return sc.writeJSON(shared.Envelope{
-		Kind: shared.KindRequest, Type: shared.TypeSettingsSync,
+		Kind: shared.KindRequest, Type: s.syncType,
 		RequestID: id, TraceID: id,
-		Data: mustJSON(shared.AgentSettingsSyncPayload{
+		Data: mustJSON(shared.SettingsSyncPayload{
 			PanelInstanceID: panelID,
 			AppliedRevision: revision,
 			LastApplyError:  applyError,
@@ -875,90 +892,107 @@ func sendSettingsSync(sc *safeConn, runtime *runtimeSettings) error {
 	})
 }
 
-func handleSettingsSyncResponse(sc *safeConn, env shared.Envelope, settingsPath string, runtime *runtimeSettings) {
+func (s settingsSync) handleResponse(sc *safeConn, env shared.Envelope) {
 	if env.Code != shared.CodeOK {
-		runtime.fail(env.Message)
-		log.Printf("settings sync failed: %s: %s", env.Code, env.Message)
+		s.fail(env.Message)
+		log.Printf("%s sync failed: %s: %s", s.name, env.Code, env.Message)
 		return
 	}
-	var result shared.AgentSettingsSyncResult
+	var result struct {
+		Changed  bool             `json:"changed"`
+		Settings *json.RawMessage `json:"settings"`
+	}
 	if err := json.Unmarshal(env.Data, &result); err != nil {
-		runtime.fail("invalid settings sync response")
+		s.fail("invalid " + s.name + " sync response")
 		return
 	}
 	if !result.Changed {
+		if s.after != nil {
+			s.after()
+		}
 		return
 	}
 	if result.Settings == nil {
-		runtime.fail("settings sync response omitted settings")
+		s.fail(s.name + " sync response omitted settings")
 		return
 	}
-	if err := result.Settings.Validate(); err != nil {
-		runtime.fail(err.Error())
-		log.Printf("reject panel settings: %v", err)
+	revision, ok := s.apply(*result.Settings)
+	if !ok {
 		return
 	}
-	if err := state.SaveSettings(settingsPath, *result.Settings); err != nil {
-		runtime.fail(err.Error())
-		log.Printf("save panel settings: %v", err)
-		return
+	log.Printf("applied %s revision=%d", s.docName, revision)
+	if err := s.send(sc); err != nil {
+		log.Printf("confirm %s revision: %v", s.docName, err)
 	}
-	runtime.apply(*result.Settings)
-	log.Printf("applied agent settings revision=%d", result.Settings.Agent.Revision)
-	if err := sendSettingsSync(sc, runtime); err != nil {
-		log.Printf("confirm agent settings revision: %v", err)
+	if s.after != nil {
+		s.after()
 	}
 }
 
-func sendServerSettingsSync(sc *safeConn, runtime *serverRuntimeSettings) error {
-	_, panelID, revision, applyError := runtime.snapshot()
-	id := shared.NewMessageID()
-	return sc.writeJSON(shared.Envelope{
-		Kind: shared.KindRequest, Type: shared.TypeServerSettingsSync,
-		RequestID: id, TraceID: id,
-		Data: mustJSON(shared.ServerSettingsSyncPayload{
-			PanelInstanceID: panelID,
-			AppliedRevision: revision,
-			LastApplyError:  applyError,
-		}),
-	})
+// agentSettingsSync 返回 agent settings 同步描述（文档为 AgentSettingsDocument）。
+func agentSettingsSync(settingsPath string, runtime *runtimeSettings) settingsSync {
+	return settingsSync{
+		name: "settings", docName: "agent settings",
+		syncType: shared.TypeSettingsSync,
+		fail:     runtime.fail,
+		snapshot: func() (string, int64, string) {
+			_, panelID, revision, applyError := runtime.snapshot()
+			return panelID, revision, applyError
+		},
+		apply: func(raw json.RawMessage) (int64, bool) {
+			var document shared.AgentSettingsDocument
+			if err := json.Unmarshal(raw, &document); err != nil {
+				runtime.fail("invalid settings sync response")
+				return 0, false
+			}
+			if err := document.Validate(); err != nil {
+				runtime.fail(err.Error())
+				log.Printf("reject panel settings: %v", err)
+				return 0, false
+			}
+			if err := state.SaveSettings(settingsPath, document); err != nil {
+				runtime.fail(err.Error())
+				log.Printf("save panel settings: %v", err)
+				return 0, false
+			}
+			runtime.apply(document)
+			return document.Agent.Revision, true
+		},
+	}
 }
 
-func handleServerSettingsSyncResponse(sc *safeConn, env shared.Envelope, path string, runtime *serverRuntimeSettings, mgr *xray.Manager) {
-	if env.Code != shared.CodeOK {
-		runtime.fail(env.Message)
-		log.Printf("server settings sync failed: %s: %s", env.Code, env.Message)
-		return
+// serverSettingsSync 返回 server settings 同步描述；after 钩子在每次响应后
+// 尝试 xray 版本对齐（含未变更的响应，与原实现一致）。
+func serverSettingsSync(serverSettingsPath string, runtime *serverRuntimeSettings, mgr *xray.Manager) settingsSync {
+	return settingsSync{
+		name: "server settings", docName: "server settings",
+		syncType: shared.TypeServerSettingsSync,
+		fail:     runtime.fail,
+		snapshot: func() (string, int64, string) {
+			_, panelID, revision, applyError := runtime.snapshot()
+			return panelID, revision, applyError
+		},
+		apply: func(raw json.RawMessage) (int64, bool) {
+			var document shared.ServerSettingsDocument
+			if err := json.Unmarshal(raw, &document); err != nil {
+				runtime.fail("invalid server settings sync response")
+				return 0, false
+			}
+			if err := document.Validate(); err != nil {
+				runtime.fail(err.Error())
+				log.Printf("reject panel server settings: %v", err)
+				return 0, false
+			}
+			if err := state.SaveServerSettings(serverSettingsPath, document); err != nil {
+				runtime.fail(err.Error())
+				log.Printf("save panel server settings: %v", err)
+				return 0, false
+			}
+			runtime.apply(document)
+			return document.Revision, true
+		},
+		after: func() { maybeReconcileXray(mgr, runtime) },
 	}
-	var result shared.ServerSettingsSyncResult
-	if err := json.Unmarshal(env.Data, &result); err != nil {
-		runtime.fail("invalid server settings sync response")
-		return
-	}
-	if !result.Changed {
-		maybeReconcileXray(mgr, runtime)
-		return
-	}
-	if result.Settings == nil {
-		runtime.fail("server settings sync response omitted settings")
-		return
-	}
-	if err := result.Settings.Validate(); err != nil {
-		runtime.fail(err.Error())
-		log.Printf("reject panel server settings: %v", err)
-		return
-	}
-	if err := state.SaveServerSettings(path, *result.Settings); err != nil {
-		runtime.fail(err.Error())
-		log.Printf("save panel server settings: %v", err)
-		return
-	}
-	runtime.apply(*result.Settings)
-	log.Printf("applied server settings revision=%d", result.Settings.Revision)
-	if err := sendServerSettingsSync(sc, runtime); err != nil {
-		log.Printf("confirm server settings revision: %v", err)
-	}
-	maybeReconcileXray(mgr, runtime)
 }
 
 // maybeReconcileXray 自动对齐 xray 版本：期望固定版本且与当前不一致时异步升级；
