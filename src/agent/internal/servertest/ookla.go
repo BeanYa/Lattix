@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"lattix/agent/internal/fileutil"
 	"lattix/shared/requester"
 )
 
@@ -140,23 +141,11 @@ func extractSpeedtestBinary(archivePath, binPath string) error {
 		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != "speedtest" {
 			continue
 		}
-		tmp, err := os.CreateTemp(filepath.Dir(binPath), "speedtest-*")
+		data, err := io.ReadAll(tarReader)
 		if err != nil {
-			return fmt.Errorf("create speedtest temp: %w", err)
-		}
-		defer os.Remove(tmp.Name())
-		if _, err := io.Copy(tmp, tarReader); err != nil {
-			_ = tmp.Close()
 			return fmt.Errorf("extract speedtest binary: %w", err)
 		}
-		if err := tmp.Chmod(0o700); err != nil {
-			_ = tmp.Close()
-			return fmt.Errorf("chmod speedtest binary: %w", err)
-		}
-		if err := tmp.Close(); err != nil {
-			return fmt.Errorf("close speedtest binary: %w", err)
-		}
-		if err := os.Rename(tmp.Name(), binPath); err != nil {
+		if err := fileutil.WriteFileAtomic(binPath, data, 0o700); err != nil {
 			return fmt.Errorf("install speedtest binary: %w", err)
 		}
 		return nil

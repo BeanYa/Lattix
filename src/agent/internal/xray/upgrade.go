@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"lattix/agent/internal/fileutil"
 	external "lattix/shared/requester"
 )
 
@@ -91,10 +92,10 @@ func (m *Manager) upgradeXray(expectVer, dlRef string) error {
 
 	// 备份并原子替换（运行中的进程持有旧 inode，重启后生效）。
 	backup := m.bin + ".bak"
-	if err := copyFile(m.bin, backup, 0o755); err != nil {
+	if err := fileutil.CopyFileAtomic(m.bin, backup, 0o755); err != nil {
 		return fmt.Errorf("备份旧 xray 失败: %w", err)
 	}
-	if err := copyFile(binPath, m.bin, 0o755); err != nil {
+	if err := fileutil.CopyFileAtomic(binPath, m.bin, 0o755); err != nil {
 		return fmt.Errorf("替换 xray 二进制失败: %w", err)
 	}
 
@@ -114,7 +115,7 @@ func (m *Manager) upgradeXray(expectVer, dlRef string) error {
 
 // rollbackXray 从备份恢复旧二进制并尽力重启。
 func (m *Manager) rollbackXray(backup string) {
-	if err := copyFile(backup, m.bin, 0o755); err != nil {
+	if err := fileutil.CopyFileAtomic(backup, m.bin, 0o755); err != nil {
 		log.Printf("xray rollback: 从 %s 恢复二进制失败: %v", backup, err)
 		return
 	}
@@ -202,28 +203,4 @@ func unzipOne(zipPath, name, dest string) error {
 		return err
 	}
 	return fmt.Errorf("zip 中未找到 %s", name)
-}
-
-// copyFile 复制文件并设置权限（目标先写临时文件再原子替换）。
-func copyFile(src, dest string, perm os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	tmp := dest + ".tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, dest)
 }

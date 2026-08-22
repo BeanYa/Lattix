@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+
+	"lattix/agent/internal/fileutil"
 )
 
 const (
@@ -89,8 +91,8 @@ func EnsureScript(ctx context.Context, fetcher ScriptFetcher, cacheDir string) (
 	}
 	// The cache is missing, outdated, or tampered with (same version line but
 	// a different body); replace it with the verified download.
-	if err := replaceScript(path, fresh); err != nil {
-		return "", "", false, err
+	if err := fileutil.WriteFileAtomic(path, []byte(fresh), 0o700); err != nil {
+		return "", "", false, fmt.Errorf("replace cached script: %w", err)
 	}
 	return path, freshVersion, false, nil
 }
@@ -114,29 +116,6 @@ func verifyCachedScriptSHA256(path string) error {
 	}
 	if err := verifyScriptSHA256(string(content)); err != nil {
 		return fmt.Errorf("cached %w", err)
-	}
-	return nil
-}
-
-func replaceScript(path, content string) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), "ip.sh-*")
-	if err != nil {
-		return fmt.Errorf("create script temp: %w", err)
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.WriteString(content); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write script temp: %w", err)
-	}
-	if err := tmp.Chmod(0o700); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod script temp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close script temp: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("replace cached script: %w", err)
 	}
 	return nil
 }

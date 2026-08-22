@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"lattix/agent/internal/fileutil"
 	"lattix/shared"
 )
 
@@ -143,11 +144,7 @@ func SaveWith(path string, st *State, mutate func(*State)) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return fileutil.WriteFileAtomic(path, b, 0o600)
 }
 
 // Reset 清空状态（跨面板重绑，§5）：在互斥下执行，避免与并发变更竞争。
@@ -168,11 +165,7 @@ func SaveConnectionStatus(path string, status ConnectionStatus) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return fileutil.WriteFileAtomic(path, b, 0o600)
 }
 
 func LoadSettings(path string) (shared.AgentSettingsDocument, error) {
@@ -204,11 +197,7 @@ func SaveSettings(path string, settings shared.AgentSettingsDocument) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return fileutil.WriteFileAtomic(path, b, 0o600)
 }
 
 func LoadServerSettings(path string) (shared.ServerSettingsDocument, error) {
@@ -240,9 +229,5 @@ func SaveServerSettings(path string, settings shared.ServerSettingsDocument) err
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return fileutil.WriteFileAtomic(path, b, 0o600)
 }

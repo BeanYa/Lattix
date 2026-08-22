@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"lattix/agent/internal/fileutil"
 	"lattix/shared"
 )
 
@@ -296,12 +297,7 @@ func (m *Manager) persistResult(report shared.ServerTestReport) error {
 	if err := manifest.Validate(); err != nil {
 		return err
 	}
-	tempPath := m.resultPath + ".tmp"
-	if err := os.WriteFile(tempPath, compressed.Bytes(), 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, m.resultPath); err != nil {
-		_ = os.Remove(tempPath)
+	if err := fileutil.WriteFileAtomic(m.resultPath, compressed.Bytes(), 0o600); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -493,15 +489,7 @@ func (m *Manager) saveJournalLocked() error {
 	if err != nil {
 		return err
 	}
-	tempPath := m.journalPath + ".tmp"
-	if err := os.WriteFile(tempPath, encoded, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, m.journalPath); err != nil {
-		_ = os.Remove(tempPath)
-		return err
-	}
-	return nil
+	return fileutil.WriteFileAtomic(m.journalPath, encoded, 0o600)
 }
 
 func (m *Manager) signal() {

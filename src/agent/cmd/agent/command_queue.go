@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"lattix/agent/internal/fileutil"
 	"lattix/shared"
 )
 
@@ -241,15 +242,7 @@ func (q *persistentCommandQueue) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	tempPath := q.path + ".tmp"
-	if err := os.WriteFile(tempPath, raw, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, q.path); err != nil {
-		_ = os.Remove(tempPath)
-		return err
-	}
-	return nil
+	return fileutil.WriteFileAtomic(q.path, raw, 0o600)
 }
 
 func (q *persistentCommandQueue) signal() {
