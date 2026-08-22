@@ -92,13 +92,17 @@ func (d AgentSettingsDocument) Validate() error {
 	return d.Agent.Validate()
 }
 
-// AgentSettingsSyncPayload reports what the Agent has successfully applied.
+// SettingsSyncPayload reports what the Agent has successfully applied.
 // LastApplyError is safe diagnostic text and must not contain credentials.
-type AgentSettingsSyncPayload struct {
+// Agent settings 与 server settings 两条同步链路共用同一载荷结构。
+type SettingsSyncPayload struct {
 	PanelInstanceID string `json:"panel_instance_id"`
 	AppliedRevision int64  `json:"applied_revision"`
 	LastApplyError  string `json:"last_apply_error,omitempty"`
 }
+
+// AgentSettingsSyncPayload 是 SettingsSyncPayload 的别名（保留原协议名）。
+type AgentSettingsSyncPayload = SettingsSyncPayload
 
 type AgentSettingsSyncResult struct {
 	Changed  bool                   `json:"changed"`

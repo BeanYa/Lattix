@@ -27,12 +27,8 @@ type ServerSettingsDocument struct {
 	Server        ServerSettings `json:"server"`
 }
 
-// ServerSettingsSyncPayload 是 agent 上报已应用 revision 的载荷（照抄 AgentSettingsSyncPayload）。
-type ServerSettingsSyncPayload struct {
-	PanelInstanceID string `json:"panel_instance_id"`
-	AppliedRevision int64  `json:"applied_revision"`
-	LastApplyError  string `json:"last_apply_error,omitempty"`
-}
+// ServerSettingsSyncPayload 是 SettingsSyncPayload 的别名（保留原协议名）。
+type ServerSettingsSyncPayload = SettingsSyncPayload
 
 // ServerSettingsSyncResult 是面板对 sync 请求的响应；Changed 时携带完整文档。
 type ServerSettingsSyncResult struct {
