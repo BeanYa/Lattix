@@ -45,6 +45,13 @@ type metricsDTO struct {
 	UpdatedAt        string   `json:"updated_at"`
 }
 
+// Agent 设置同步状态（serverDTO.agent_settings_status 取值，仿 store.BillingAssumedValid 常量先例收口）。
+const (
+	settingsStatusPending = "pending"
+	settingsStatusFailed  = "failed"
+	settingsStatusSynced  = "synced"
+)
+
 // serverDTO 是服务器对象的 API 表示。
 type serverDTO struct {
 	ID                           int64                  `json:"id"`
@@ -108,11 +115,11 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 	if desired, err := s.st.AgentSettings(context.Background()); err == nil {
 		desiredRevision = desired.Revision
 	}
-	settingsStatus := "pending"
+	settingsStatus := settingsStatusPending
 	if srv.AgentSettingsError != "" {
-		settingsStatus = "failed"
+		settingsStatus = settingsStatusFailed
 	} else if srv.AgentSettingsReportedAt != nil && srv.AgentSettingsRevision == desiredRevision {
-		settingsStatus = "synced"
+		settingsStatus = settingsStatusSynced
 	}
 	connection := ws.ConnectionSnapshot{State: shared.ConnectionStateNeverConnected}
 	if srv.LastConnectedAt != nil {
