@@ -195,10 +195,6 @@ func (h *Hub) Send(ctx context.Context, serverID int64, env shared.Envelope) err
 	if draining {
 		return ErrDraining
 	}
-	if lifecycle := h.lifecycleSnapshot(); (lifecycle.State == shared.PanelStateStartup || lifecycle.State == shared.PanelStateFaulted) &&
-		isBusinessCommand(env) {
-		return ErrPanelNotActive
-	}
 	if !ok {
 		return ErrOffline
 	}
@@ -214,24 +210,6 @@ func (h *Hub) Send(ctx context.Context, serverID int64, env shared.Envelope) err
 		log.Printf("ws: server %d send buffer full, closing connection", serverID)
 		c.close()
 		return ErrOffline
-	}
-}
-
-func isBusinessCommand(env shared.Envelope) bool {
-	if env.Kind != shared.KindRequest {
-		return false
-	}
-	switch env.Type {
-	case shared.TypeApplyNode, shared.TypeRemoveNode,
-		shared.TypeApplyChainHop, shared.TypeRemoveChainHop,
-		shared.TypeAddUser, shared.TypeRemoveUser,
-		shared.TypeUninstall, shared.TypeUpgradeXray, shared.TypeUpgradeAgent,
-		shared.TypeApplySharedEndpoint, shared.TypeRemoveSharedEndpoint,
-		shared.TypeCleanupXray, shared.TypeRebuildXray,
-		shared.TypeServerTestRun:
-		return true
-	default:
-		return false
 	}
 }
 

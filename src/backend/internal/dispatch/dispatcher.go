@@ -236,7 +236,7 @@ func (d *Dispatcher) UninstallWithRetry(ctx context.Context, serverID int64, pay
 		if err := d.st.MarkCommandSent(ctx, commandID); err != nil {
 			return false, attempt - 1, err
 		}
-		_ = d.req.Send(ctx, serverID, envelope)
+		_ = d.send(ctx, serverID, envelope)
 		acked, err := d.waitForCommandACK(ctx, requestID, uninstallRetryDelay(attempt))
 		if err != nil {
 			return false, attempt, err
@@ -291,7 +291,7 @@ func runSyncCommand[R any](ctx context.Context, d *Dispatcher, serverID int64, t
 		if err := d.st.MarkCommandSent(ctx, commandID); err != nil {
 			return nil, err
 		}
-		if err := d.req.Send(ctx, serverID, envelope); err != nil {
+		if err := d.send(ctx, serverID, envelope); err != nil {
 			return nil, err
 		}
 		select {
@@ -359,6 +359,48 @@ func (d *Dispatcher) enqueueRevisionTask(ctx context.Context, serverID int64, ty
 	return id, nil
 }
 
+// ErrPanelNotActive 表示面板处于 startup/faulted，业务命令暂缓下发
+//（门控自 ws 传输层上移至此，D7）；命令滞留 queued，待面板就绪后补发。
+var ErrPanelNotActive = errors.New("dispatch: panel not active")
+
+// send 是 Dispatcher 全部下发点的统一入口：startup/faulted 状态下按 isBusinessCommand
+// 白名单拦截业务命令；握手、回执、上报等非业务信封不受影响，直接透传 Requester。
+func (d *Dispatcher) send(ctx context.Context, serverID int64, env shared.Envelope) error {
+	if lifecycle := d.panelLifecycleSnapshot(); (lifecycle.State == shared.PanelStateStartup || lifecycle.State == shared.PanelStateFaulted) &&
+		isBusinessCommand(env) {
+		return ErrPanelNotActive
+	}
+	return d.req.Send(ctx, serverID, env)
+}
+
+// panelLifecycleSnapshot 读取面板生命周期快照；未注入时视为 active（测试直调场景）。
+func (d *Dispatcher) panelLifecycleSnapshot() shared.PanelLifecycleSnapshot {
+	if d.PanelLifecycle == nil {
+		return shared.PanelLifecycleSnapshot{State: shared.PanelStateActive}
+	}
+	return d.PanelLifecycle()
+}
+
+// isBusinessCommand 判定信封是否为业务命令（仅 Kind==Request 才判定）：
+// 白名单覆盖节点/用户/链跳/共享端点/维护与 server-test 共 14 类下发命令。
+func isBusinessCommand(env shared.Envelope) bool {
+	if env.Kind != shared.KindRequest {
+		return false
+	}
+	switch env.Type {
+	case shared.TypeApplyNode, shared.TypeRemoveNode,
+		shared.TypeApplyChainHop, shared.TypeRemoveChainHop,
+		shared.TypeAddUser, shared.TypeRemoveUser,
+		shared.TypeUninstall, shared.TypeUpgradeXray, shared.TypeUpgradeAgent,
+		shared.TypeApplySharedEndpoint, shared.TypeRemoveSharedEndpoint,
+		shared.TypeCleanupXray, shared.TypeRebuildXray,
+		shared.TypeServerTestRun:
+		return true
+	default:
+		return false
+	}
+}
+
 // maxCommandAttempts 是命令投递次数上限；超过即死信（failed，§2）。
 const maxCommandAttempts = 10
 
@@ -414,8 +456,8 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 			TraceID:   c.TraceID,
 			Data:      c.Data,
 		}
-		if err := d.req.Send(ctx, serverID, env); err != nil {
-			return // 离线：剩余命令滞留 queued，待重连补发
+		if err := d.send(ctx, serverID, env); err != nil {
+			return // 离线或面板未就绪：剩余命令滞留 queued，待重连/就绪后补发
 		}
 		if err := d.st.MarkCommandSent(ctx, c.ID); err != nil {
 			log.Printf("dispatch: mark sent %d: %v", c.ID, err)
@@ -870,7 +912,7 @@ func (d *Dispatcher) replyAgentRequest(ctx context.Context, serverID int64, requ
 		RequestID: request.RequestID, TraceID: request.TraceID,
 		Code: code, Message: message, Data: marshalMessageData(data),
 	}
-	if err := d.req.Send(ctx, serverID, response); err != nil {
+	if err := d.send(ctx, serverID, response); err != nil {
 		log.Printf("dispatch: server %d: send %s response: %v", serverID, request.Type, err)
 	}
 }
@@ -916,7 +958,7 @@ func (d *Dispatcher) NotifyAgentSettingsChanged(ctx context.Context, revision in
 			RequestID: id, TraceID: id,
 			Data: marshalMessageData(shared.AgentSettingsChangedPayload{Revision: revision}),
 		}
-		if err := d.req.Send(ctx, server.ID, env); err != nil {
+		if err := d.send(ctx, server.ID, env); err != nil {
 			log.Printf("dispatch: notify server %d settings revision %d: %v", server.ID, revision, err)
 		}
 	}
@@ -944,7 +986,7 @@ func (d *Dispatcher) NotifyServerSettingsChanged(ctx context.Context, serverID i
 			RequestID: id, TraceID: id,
 			Data: marshalMessageData(shared.ServerSettingsChangedPayload{Revision: revision}),
 		}
-		if err := d.req.Send(ctx, server.ID, env); err != nil {
+		if err := d.send(ctx, server.ID, env); err != nil {
 			log.Printf("dispatch: notify server %d server settings revision %d: %v", server.ID, revision, err)
 		}
 	}

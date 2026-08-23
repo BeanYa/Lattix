@@ -45,56 +45,6 @@ func TestBeginDrainRejectsSendAndSuppressesDisconnect(t *testing.T) {
 	}
 }
 
-type fixedLifecycle struct {
-	snapshot shared.PanelLifecycleSnapshot
-}
-
-func (f fixedLifecycle) Snapshot() shared.PanelLifecycleSnapshot { return f.snapshot }
-
-func TestStartupBlocksBusinessCommandsButAllowsControlMessages(t *testing.T) {
-	h := NewHub()
-	h.Lifecycle = fixedLifecycle{snapshot: shared.PanelLifecycleSnapshot{State: shared.PanelStateStartup}}
-	conn := inertAgentConn(7)
-	conn.send = make(chan shared.Envelope, 2)
-	conn.done = make(chan struct{})
-	h.register(conn)
-
-	business := shared.Envelope{Kind: shared.KindRequest, Type: shared.TypeApplyNode}
-	if err := h.Send(context.Background(), 7, business); !errors.Is(err, ErrPanelNotActive) {
-		t.Fatalf("business send error = %v, want ErrPanelNotActive", err)
-	}
-	control := shared.Envelope{Kind: shared.KindRequest, Type: shared.TypeLifecycleChanged}
-	if err := h.Send(context.Background(), 7, control); err != nil {
-		t.Fatalf("control send error = %v", err)
-	}
-}
-
-// startup/faulted 状态必须拒投全部业务命令类型（含后加的共享入口、xray 维护与 server-test 命令）。
-func TestStartupAndFaultedBlockAllBusinessCommands(t *testing.T) {
-	businessTypes := []string{
-		shared.TypeApplySharedEndpoint,
-		shared.TypeRemoveSharedEndpoint,
-		shared.TypeCleanupXray,
-		shared.TypeRebuildXray,
-		shared.TypeServerTestRun,
-	}
-	states := []string{shared.PanelStateStartup, shared.PanelStateFaulted}
-	for _, state := range states {
-		for _, typ := range businessTypes {
-			h := NewHub()
-			h.Lifecycle = fixedLifecycle{snapshot: shared.PanelLifecycleSnapshot{State: state}}
-			conn := inertAgentConn(7)
-			conn.send = make(chan shared.Envelope, 1)
-			conn.done = make(chan struct{})
-			h.register(conn)
-			env := shared.Envelope{Kind: shared.KindRequest, Type: typ}
-			if err := h.Send(context.Background(), 7, env); !errors.Is(err, ErrPanelNotActive) {
-				t.Fatalf("state %s type %s: send error = %v, want ErrPanelNotActive", state, typ, err)
-			}
-		}
-	}
-}
-
 func TestSyncLifecycleWaitsForACKAndReportsTimeout(t *testing.T) {
 	h := NewHub()
 	acked := inertAgentConn(7)

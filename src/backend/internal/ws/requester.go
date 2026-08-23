@@ -12,7 +12,6 @@ import (
 // ErrOffline 表示目标服务器当前不在线（无 WS 连接，§5 在线状态由连接存在性推导）。
 var ErrOffline = errors.New("ws: agent offline")
 var ErrDraining = errors.New("ws: hub draining")
-var ErrPanelNotActive = errors.New("ws: panel not active")
 var ErrAuthentication = errors.New("ws: authentication failed")
 
 // AgentRequester 描述 Backend 通过 WebSocket 向 Agent 发起 RPC 的能力。
