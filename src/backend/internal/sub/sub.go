@@ -5,7 +5,6 @@ package sub
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -16,8 +15,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/nettrust"
@@ -396,48 +393,6 @@ type clashConfig struct {
 	Rules             []string                     `yaml:"rules"`
 }
 
-// proxyGroupName 是 select 组名，MATCH 规则指向它。
-const proxyGroupName = "PROXY"
-
-// assignedActiveNodes 返回订阅用户及其分配到的 active 节点（§16 公共查询）。
-// 分组用户的直连 user_nodes 被遮蔽（订阅 = 分组派生链路 + 外部订阅节点），返回空列表。
-func (s *Server) assignedActiveNodes(r *http.Request) (*store.User, []store.Node, error) {
-	user, err := s.st.UserBySubToken(r.Context(), r.PathValue("token"))
-	if err != nil {
-		return nil, nil, err
-	}
-	groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), user.ID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(groupIDs) > 0 {
-		return user, []store.Node{}, nil
-	}
-	nodes, err := s.st.ListNodes(r.Context())
-	if err != nil {
-		return nil, nil, err
-	}
-	assigned, err := s.st.UserNodeIDs(r.Context(), user.ID)
-	if err != nil {
-		return nil, nil, err
-	}
-	allowed := make(map[int64]bool, len(assigned))
-	for _, id := range assigned {
-		allowed[id] = true
-	}
-	out := []store.Node{}
-	for _, n := range nodes {
-		if !allowed[n.ID] {
-			continue
-		}
-		if n.Status != store.NodeStatusActive || len(n.RealizedConfig) == 0 {
-			continue
-		}
-		out = append(out, n)
-	}
-	return user, out, nil
-}
-
 // ServeHTTP 处理 GET /sub/{token}：按 UA / ?format= 返回对应格式订阅内容；
 // 浏览器（Accept 含 text/html 且无 ?format=）返回 SPA 壳（index.html）。
 // 有效停权态（expired=1 或 disabled=1）的用户订阅照常返回但节点为空。
@@ -543,51 +498,6 @@ func (s *Server) serveSPA(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(s.spaHTML)
-}
-
-// serveClash 输出 mihomo（Clash.Meta）YAML。
-func (s *Server) serveClash(w http.ResponseWriter, r *http.Request, user *store.User, items []proxyItem) {
-	cfg := clashConfig{Proxies: []clashProxy{}}
-	names := []string{}
-	for _, it := range items {
-		credential := it.credential
-		if credential == "" {
-			credential = user.UUID
-		}
-		p, err := buildProxy(it.node, it.rc, credential)
-		if err != nil {
-			continue
-		}
-		cfg.Proxies = append(cfg.Proxies, p)
-		names = append(names, p.Name)
-	}
-	cfg.ProxyGroups = []clashProxyGroup{{Name: proxyGroupName, Type: "select", Proxies: names}}
-	cfg.Rules = []string{"MATCH," + proxyGroupName}
-
-	out, err := yaml.Marshal(&cfg)
-	if err != nil {
-		http.Error(w, err.Error()+"\n", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
-	w.Write(out)
-}
-
-// serveLinks 输出 base64 编码的分享链接集合（vless:// 等）。
-func (s *Server) serveLinks(w http.ResponseWriter, r *http.Request, user *store.User, items []proxyItem) {
-	links := []string{}
-	for _, it := range items {
-		credential := it.credential
-		if credential == "" {
-			credential = user.UUID
-		}
-		if link, ok := buildShareLink(it.node, it.rc, credential); ok {
-			links = append(links, link)
-		}
-	}
-	body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte(body + "\n"))
 }
 
 // detectFormat 根据 User-Agent 识别客户端类型，返回格式标识。

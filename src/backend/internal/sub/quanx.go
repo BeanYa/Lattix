@@ -2,31 +2,11 @@ package sub
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 
 	"lattix/backend/internal/store"
 	"lattix/shared"
 )
-
-// serveQuanX 输出 Quantumult X 格式（[server_local] 段纯文本）。
-// Quantumult X 的 VLESS 支持有限，首版仅输出 VLESS+Reality 节点。
-func (s *Server) serveQuanX(w http.ResponseWriter, r *http.Request, user *store.User, items []proxyItem) {
-	var lines []string
-	for _, it := range items {
-		credential := it.credential
-		if credential == "" {
-			credential = user.UUID
-		}
-		line := buildQuanXLine(it.node, it.rc, credential)
-		if line != "" {
-			lines = append(lines, line)
-		}
-	}
-	body := strings.Join(lines, "\n") + "\n"
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte(body))
-}
 
 // buildQuanXLine 构造单条 Quantumult X server_local 行。
 // 格式：vless=host:port, method=none, password=uuid, obfs=over-tls, ...

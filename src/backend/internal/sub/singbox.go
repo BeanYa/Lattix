@@ -1,9 +1,7 @@
 package sub
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
 
 	"lattix/backend/internal/store"
 	"lattix/shared"
@@ -50,50 +48,6 @@ type sbOutbound struct {
 	TLS        *sbTLS       `json:"tls,omitempty"`
 	Transport  *sbTransport `json:"transport,omitempty"`
 	Outbounds  []string     `json:"outbounds,omitempty"` // selector
-}
-
-type sbRoute struct {
-	Final string `json:"final"`
-}
-
-type sbConfig struct {
-	Outbounds []sbOutbound `json:"outbounds"`
-	Route     sbRoute      `json:"route"`
-}
-
-// serveSingbox 输出 sing-box JSON 远程配置。
-func (s *Server) serveSingbox(w http.ResponseWriter, r *http.Request, user *store.User, items []proxyItem) {
-	cfg := sbConfig{
-		Outbounds: []sbOutbound{},
-		Route:     sbRoute{Final: proxyGroupName},
-	}
-	tags := []string{}
-	for _, it := range items {
-		credential := it.credential
-		if credential == "" {
-			credential = user.UUID
-		}
-		ob, err := buildSbOutbound(it.node, it.rc, credential)
-		if err != nil {
-			continue
-		}
-		cfg.Outbounds = append(cfg.Outbounds, ob)
-		tags = append(tags, ob.Tag)
-	}
-	// selector 组
-	cfg.Outbounds = append(cfg.Outbounds, sbOutbound{
-		Type:      "selector",
-		Tag:       proxyGroupName,
-		Outbounds: tags,
-	})
-
-	out, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		http.Error(w, err.Error()+"\n", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Write(out)
 }
 
 // buildSbOutbound 按协议构造 sing-box outbound；预留协议分支。
