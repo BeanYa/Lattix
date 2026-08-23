@@ -29,8 +29,9 @@ type PublishResult struct {
 
 func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) (PublishResult, error) {
 	s.rememberBaseURL(baseURL)
-	s.publish.Lock()
-	defer s.publish.Unlock()
+	lock := s.publishLock(userID)
+	lock.Lock()
+	defer lock.Unlock()
 	user, err := s.st.UserByID(ctx, userID)
 	if err != nil {
 		return PublishResult{}, err

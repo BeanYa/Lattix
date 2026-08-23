@@ -33,7 +33,9 @@ type Server struct {
 	downloadFiles external.FileRequester
 	cacheDir      string
 	refresh       sync.Mutex
-	publish       sync.Mutex
+	// publishLocks 按用户分片的发布锁（64 桶条纹锁）：同一用户发布仍互斥
+	// （防并发写同一用户快照），不同用户并行，节点 ACK 波及多用户时不再全局串行。
+	publishLocks [publishLockBuckets]sync.Mutex
 
 	queueMu   sync.Mutex
 	queued    map[int64]string
@@ -87,6 +89,14 @@ func NewWithCacheDir(st *store.Store, base func(*http.Request) string, spaHTML [
 	}
 	server.ensureBuiltInTemplateSources(context.Background())
 	return server
+}
+
+// publishLockBuckets 是发布锁的分桶数（条纹锁）。
+const publishLockBuckets = 64
+
+// publishLock 返回该用户的发布锁：userID 取模分桶，同一用户互斥，不同用户并行。
+func (s *Server) publishLock(userID int64) *sync.Mutex {
+	return &s.publishLocks[userID%publishLockBuckets]
 }
 
 // trustedForwardedProto 报告是否应采信 X-Forwarded-Proto: https 声明

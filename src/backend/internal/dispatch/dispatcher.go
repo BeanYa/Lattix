@@ -46,6 +46,10 @@ type Dispatcher struct {
 	// OnOnlineUsers 接收 telemetry 帧中的在线用户快照（panel.Server 注入；nil = 不记录）。
 	OnOnlineUsers func(serverID int64, users []shared.OnlineUserStat, now time.Time)
 
+	// ctx 是 Dispatcher 生命周期 context（main 注入 runCtx，关停时取消）：
+	// 回执/事件等无请求来源的处理统一经 baseCtx 从它派生，使关停取消传播到落库。
+	ctx context.Context
+
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
 
@@ -109,7 +113,7 @@ func (w *syncWaiters[R]) deliver(requestID string, result *R, errorMessage strin
 // New 创建 Dispatcher。
 func New(st *store.Store, req ws.AgentRequester) *Dispatcher {
 	d := &Dispatcher{
-		st: st, req: req, flushMu: make(map[int64]*sync.Mutex),
+		st: st, req: req, ctx: context.Background(), flushMu: make(map[int64]*sync.Mutex),
 		testProgress:      make(map[int64]shared.ServerTestProgressPayload),
 		cleanupWaiters:    newSyncWaiters[shared.CleanupXrayResult](),
 		rebuildWaiters:    newSyncWaiters[shared.RebuildXrayResult](),
@@ -118,6 +122,18 @@ func New(st *store.Store, req ws.AgentRequester) *Dispatcher {
 	d.fsm = &chainFSM{d: d}
 	d.efsm = &endpointFSM{d: d}
 	return d
+}
+
+// SetContext 注入 Dispatcher 生命周期 context（随面板关停取消）；回执处理经 baseCtx
+// 从此派生。须在 hub 开始服务前调用（main 启动序列保证）。
+func (d *Dispatcher) SetContext(ctx context.Context) {
+	d.ctx = ctx
+}
+
+// baseCtx 返回回执/事件处理（HandleMessage 链路及 hub 回调触发的重算）的父 context：
+// 随面板关停取消；未注入时为 Background（测试直调 Handler 的场景）。
+func (d *Dispatcher) baseCtx() context.Context {
+	return d.ctx
 }
 
 func (d *Dispatcher) EnqueueServerTest(
@@ -688,7 +704,7 @@ func (d *Dispatcher) handleServerTestProgress(serverID int64, env shared.Envelop
 		log.Printf("dispatch: server %d: invalid server test progress", serverID)
 		return
 	}
-	task, err := d.st.ServerTestByServerID(context.Background(), serverID)
+	task, err := d.st.ServerTestByServerID(d.baseCtx(), serverID)
 	if err != nil || task.TaskID != progress.TaskID || task.Generation != progress.Generation || task.Status.Terminal() {
 		return
 	}
@@ -698,13 +714,13 @@ func (d *Dispatcher) handleServerTestProgress(serverID int64, env shared.Envelop
 		d.testProgress[serverID] = progress
 	}
 	d.testProgressMu.Unlock()
-	if _, err := d.st.UpdateServerTestState(context.Background(), serverID, progress.TaskID, progress.Generation, progress.Status); err != nil {
+	if _, err := d.st.UpdateServerTestState(d.baseCtx(), serverID, progress.TaskID, progress.Generation, progress.Status); err != nil {
 		log.Printf("dispatch: server %d: persist server test state: %v", serverID, err)
 	}
 }
 
 func (d *Dispatcher) handleServerTestResult(serverID int64, env shared.Envelope) {
-	ctx := context.Background()
+	ctx := d.baseCtx()
 	var chunk shared.ServerTestResultChunkPayload
 	if err := json.Unmarshal(env.Data, &chunk); err != nil {
 		d.replyAgentRequest(ctx, serverID, env, shared.CodeInvalidArgument, "invalid server test result chunk", nil)
@@ -750,7 +766,7 @@ type settingsSyncSpec[E any] struct {
 // handleSettingsSync 是两条 settings.sync 通道共用的处理流程：
 // 解析 payload → 截断超长错误 → 落库上报 → 加载生效配置 → 比对后按需回包配置文档。
 func handleSettingsSync[E any](d *Dispatcher, serverID int64, env shared.Envelope, spec settingsSyncSpec[E]) {
-	ctx := context.Background()
+	ctx := d.baseCtx()
 	var payload shared.SettingsSyncPayload
 	if err := json.Unmarshal(env.Data, &payload); err != nil {
 		d.replyAgentRequest(ctx, serverID, env, shared.CodeInvalidArgument, spec.invalidPayloadMsg, nil)
@@ -944,7 +960,7 @@ func marshalMessageData(value any) json.RawMessage {
 
 // handleTelemetry 落库周期遥测（§13）：xray 版本、主机指标、流量增量（仅统计）。
 func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
-	ctx := context.Background()
+	ctx := d.baseCtx()
 	var p shared.TelemetryPayload
 	if err := json.Unmarshal(env.Data, &p); err != nil {
 		log.Printf("dispatch: server %d: bad telemetry data: %v", serverID, err)
@@ -1003,7 +1019,7 @@ func (d *Dispatcher) handleDriftReport(serverID int64, env shared.Envelope) {
 		log.Printf("dispatch: server %d: bad drift data: %v", serverID, err)
 		return
 	}
-	if err := d.st.SetServerDrift(context.Background(), serverID, p.Drifted); err != nil {
+	if err := d.st.SetServerDrift(d.baseCtx(), serverID, p.Drifted); err != nil {
 		log.Printf("dispatch: server %d: set drift: %v", serverID, err)
 		return
 	}
@@ -1029,7 +1045,7 @@ func (d *Dispatcher) handleDriftReport(serverID int64, env shared.Envelope) {
 
 // handleCommandResponse 回写命令状态与节点状态机：成功 acked/active，失败 failed。
 func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) {
-	ctx := context.Background()
+	ctx := d.baseCtx()
 	var p shared.ApplyResultPayload
 	if err := json.Unmarshal(env.Data, &p); err != nil {
 		log.Printf("dispatch: server %d: bad response data: %v", serverID, err)
@@ -1087,7 +1103,7 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 // node → 节点状态机）。
 func (d *Dispatcher) applyCommandOutcome(serverID int64, cmd *store.Command, p shared.ApplyResultPayload,
 	env shared.Envelope, success bool, errorMessage string) {
-	ctx := context.Background()
+	ctx := d.baseCtx()
 	if h, ok := commandHandlers[cmd.Type]; ok && h.takeover != nil {
 		h.takeover(d, serverID, cmd, env, success, errorMessage)
 		return
@@ -1189,7 +1205,7 @@ func init() {
 	commandHandlers = map[string]commandHandler{
 		shared.TypeServerTestRun: {
 			takeover: func(d *Dispatcher, serverID int64, cmd *store.Command, env shared.Envelope, success bool, errorMessage string) {
-				ctx := context.Background()
+				ctx := d.baseCtx()
 				var testPayload shared.ServerTestRunPayload
 				if err := json.Unmarshal(cmd.Data, &testPayload); err == nil {
 					if success {
@@ -1411,7 +1427,7 @@ func (d *Dispatcher) recordOperation(event logging.OperationEvent) {
 	if d.OperationLog == nil {
 		return
 	}
-	if err := d.OperationLog.Record(context.Background(), event); err != nil {
+	if err := d.OperationLog.Record(d.baseCtx(), event); err != nil {
 		log.Printf("dispatch: record operation %s: %v", event.Action, err)
 	}
 }

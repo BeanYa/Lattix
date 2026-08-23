@@ -278,7 +278,11 @@ func run() error {
 	// 控制通道（§5）：hub 负责传输，dispatcher 负责命令生命周期与认证。
 	hub := ws.NewHub()
 	hub.Lifecycle = lifecycleManager
+	// runCtx 随关停取消：dispatcher 回执处理与 hub 连接回调统一从它派生（D9）。
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
 	dispatcher := dispatch.New(st, hub)
+	dispatcher.SetContext(runCtx)
 	dispatcher.OperationLog = opLog
 	dispatcher.RequestLog = reqLog
 	dispatcher.PanelLifecycle = lifecycleManager.Snapshot
@@ -299,16 +303,16 @@ func run() error {
 	hub.OnConnect = func(serverID int64) {
 		debouncer.cancel(serverID)
 		// agent 重连后重置并补发离线期间滞留的命令（§2）。
-		dispatcher.OnAgentConnect(context.Background(), serverID)
+		dispatcher.OnAgentConnect(runCtx, serverID)
 		// 链 degraded 推导（§21.1）：重算受影响链，全部跳在线且跳 active 的恢复 active。
 		dispatcher.RecomputeChainsByServer(serverID)
 	}
 	hub.OnOnline = func(serverID int64) {
-		if err := st.RecordServerConnected(context.Background(), serverID, false); err != nil {
+		if err := st.RecordServerConnected(runCtx, serverID, false); err != nil {
 			log.Printf("main: record server connected: %v", err)
 		}
 		sid := serverID
-		if err := opLog.Record(context.Background(), logging.OperationEvent{
+		if err := opLog.Record(runCtx, logging.OperationEvent{
 			Severity: logging.SeverityInfo, Category: logging.CategoryAgent, Action: "agent.online",
 			ServerID: &sid, Detail: "WS 连接建立，服务器在线",
 		}); err != nil {
@@ -316,11 +320,11 @@ func run() error {
 		}
 	}
 	hub.OnReconnect = func(serverID int64) {
-		if err := st.RecordServerConnected(context.Background(), serverID, true); err != nil {
+		if err := st.RecordServerConnected(runCtx, serverID, true); err != nil {
 			log.Printf("main: record server reconnected: %v", err)
 		}
 		sid := serverID
-		if err := opLog.Record(context.Background(), logging.OperationEvent{
+		if err := opLog.Record(runCtx, logging.OperationEvent{
 			Severity: logging.SeverityInfo, Category: logging.CategoryAgent, Action: "agent.reconnected",
 			ServerID: &sid, Detail: "新的 WS 连接替换原连接，服务器保持在线",
 		}); err != nil {
@@ -340,7 +344,7 @@ func run() error {
 	}()
 	dispatcher.Alerter = notifier
 	hub.OnDisconnect = func(serverID int64) {
-		if err := st.RecordServerDisconnected(context.Background(), serverID, "connection closed"); err != nil {
+		if err := st.RecordServerDisconnected(runCtx, serverID, "connection closed"); err != nil {
 			log.Printf("main: record server disconnected: %v", err)
 		}
 		// 断连消音：窗口内重连成功（OnConnect 取消）则不产生 offline 事件/告警与链路抖动；
@@ -351,7 +355,7 @@ func run() error {
 			}
 			notifier.Notify(serverID, alert.EventServerOffline, "", "WS 连接断开，服务器离线")
 			sid := serverID
-			if err := opLog.Record(context.Background(), logging.OperationEvent{
+			if err := opLog.Record(runCtx, logging.OperationEvent{
 				Severity: logging.SeverityWarning, Category: logging.CategoryAgent, Action: "agent.offline",
 				ServerID: &sid, Detail: "WS 连接断开，服务器离线",
 			}); err != nil {
@@ -370,8 +374,6 @@ func run() error {
 	restartCh := make(chan string, 1)
 	var restartMu sync.Mutex
 	restartRequested := false
-	runCtx, cancelRun := context.WithCancel(context.Background())
-	defer cancelRun()
 	ps, err := panel.New(st, dispatcher, hub, panel.Config{
 		AdminUser:        *adminUser,
 		AdminPass:        *adminPass,

@@ -711,7 +711,7 @@ func (d *Dispatcher) enqueueHop(ctx context.Context, chainID, revisionID int64, 
 // portal/forward 回执的 realized port/public_key 写回 chain_hops 并推进编排；
 // 失败定位到跳并置链 failed。remove_chain_hop 的回执到达时跳行已删（删链流程），仅记日志。
 func (d *Dispatcher) handleChainHopResult(serverID int64, p shared.ApplyResultPayload, responseError string) {
-	ctx := context.Background()
+	ctx := d.baseCtx()
 	hop, err := d.st.ChainHopByID(ctx, p.HopID)
 	if err != nil {
 		log.Printf("dispatch: server %d: apply_result hop %d 不存在（可能为删链回执）: %v", serverID, p.HopID, err)
@@ -819,7 +819,7 @@ func (d *Dispatcher) failChainByNode(ctx context.Context, nodeID int64, reason s
 // 链任一跳 server 离线 → degraded + chain_degraded 告警（§19 防抖沿用）；
 // 全部跳 server 在线且跳均 active → 恢复 active。
 func (d *Dispatcher) RecomputeChainsByServer(serverID int64) {
-	ctx := context.Background()
+	ctx := d.baseCtx()
 	hops, err := d.st.ChainHopsByServerID(ctx, serverID)
 	if err != nil {
 		log.Printf("dispatch: recompute chains by server %d: %v", serverID, err)
