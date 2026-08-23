@@ -25,7 +25,7 @@ func TestCleanupXraySyncDeliversResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	requester := &uninstallRequester{wake: make(chan struct{}, 2)}
-	dispatcher := New(st, requester)
+	dispatcher := New(st, requester, Options{}, Events{})
 	go func() {
 		select {
 		case <-requester.wake:
@@ -82,7 +82,7 @@ func TestCleanupXraySyncFailureReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 	requester := &uninstallRequester{wake: make(chan struct{}, 2)}
-	dispatcher := New(st, requester)
+	dispatcher := New(st, requester, Options{}, Events{})
 	go func() {
 		select {
 		case <-requester.wake:

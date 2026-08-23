@@ -196,7 +196,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			NodeID:         node.ID,
 			Config:         vc,
 			UserUUIDs:      uuids,
-			DestCandidates: d.DestCandidates,
+			DestCandidates: d.opts.DestCandidates,
 		}
 		// NAT 受限直连机总是携带监听侧候选（自动挑选 + 手动端口段内校验，§21）。
 		payload.PortCandidates = listenCandidatesOf(servers[exit.ServerID])
@@ -270,7 +270,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			HopID:          up.ID,
 			Kind:           shared.HopKindPortal,
 			Portal:         spec,
-			DestCandidates: d.DestCandidates,
+			DestCandidates: d.opts.DestCandidates,
 		})
 		return
 	}
@@ -408,8 +408,8 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 		log.Printf("dispatch: chain %d publish revision: %v", chainID, err)
 		return
 	}
-	if d.OnChainPublished != nil {
-		if err := d.OnChainPublished(ctx, chainID); err != nil {
+	if d.events.OnChainPublished != nil {
+		if err := d.events.OnChainPublished(ctx, chainID); err != nil {
 			log.Printf("dispatch: enqueue subscriptions for chain %d: %v", chainID, err)
 		}
 	}
@@ -510,7 +510,7 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 	if !validChainTransition(chain.Status, store.ChainStatusActiveUnconfirmed) {
 		return fmt.Errorf("强制发布失败：链路状态 %s 不允许强制发布", chain.Status)
 	}
-	if target := strings.TrimSpace(d.PanelVersion); target != "" && target != "dev" {
+	if target := strings.TrimSpace(d.opts.PanelVersion); target != "" && target != "dev" {
 		tasks, err := d.st.RevisionTasks(ctx, revision.ID)
 		if err != nil {
 			return err
@@ -568,8 +568,8 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 		}
 		return err
 	}
-	if d.OnChainPublished != nil {
-		if err := d.OnChainPublished(ctx, chainID); err != nil {
+	if d.events.OnChainPublished != nil {
+		if err := d.events.OnChainPublished(ctx, chainID); err != nil {
 			log.Printf("dispatch: enqueue subscriptions for chain %d: %v", chainID, err)
 		}
 	}
@@ -863,8 +863,8 @@ func (d *Dispatcher) chainPieces(ctx context.Context, chainID, revisionID int64)
 
 // portalDest 返回 portal 的 Reality dest（白名单首位，隧道 inbound 复用 §6 同一白名单，§21 PoC）。
 func (d *Dispatcher) portalDest() string {
-	if len(d.DestCandidates) > 0 {
-		return d.DestCandidates[0]
+	if len(d.opts.DestCandidates) > 0 {
+		return d.opts.DestCandidates[0]
 	}
 	return "dl.google.com:443"
 }

@@ -25,7 +25,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"lattix/backend/internal/alert"
-	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
@@ -281,12 +280,6 @@ func run() error {
 	// runCtx 随关停取消：dispatcher 回执处理与 hub 连接回调统一从它派生（D9）。
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	defer cancelRun()
-	dispatcher := dispatch.New(st, hub)
-	dispatcher.SetContext(runCtx)
-	dispatcher.OperationLog = opLog
-	dispatcher.RequestLog = reqLog
-	dispatcher.PanelLifecycle = lifecycleManager.Snapshot
-	hub.Auth = dispatcher
 	hub.OnProtocolError = func(serverID int64, requestID, traceID, rpcType, message string) {
 		attributes := map[string]string{}
 		if serverID != 0 {
@@ -300,6 +293,57 @@ func run() error {
 	// 断连消音（§19）：offline 事件/告警与链降级重估延迟一个窗口执行，窗口内重连则取消。
 	debouncer := newOfflineDebouncer(offlineDebounceWindow)
 	defer debouncer.close()
+	// 事件告警（§19）：offline 跃迁挂在 hub 注销路径；漂移/节点失败在 dispatcher 处理点。
+	notifier := alert.New(st)
+	notifierClosed := false
+	defer func() {
+		if !notifierClosed {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			_ = notifier.Close(ctx)
+		}
+	}()
+
+	// 面板管理 API（§10）：panel.New 内部构造 dispatcher，不可变配置与事件回调
+	// 经 dispatch.Options/Events 一次性注入（D2），不再后置写字段。
+	repo := githubRepo
+	if *ghRepo != "" {
+		repo = *ghRepo
+	}
+	restartCh := make(chan string, 1)
+	var restartMu sync.Mutex
+	restartRequested := false
+	ps, err := panel.New(st, hub, panel.Config{
+		AdminUser:        *adminUser,
+		AdminPass:        *adminPass,
+		PublicURL:        *publicURL,
+		Secure:           secure,
+		RunningTLS:       applied,
+		TLSDir:           tlsDirAbs,
+		Version:          version,
+		GitHubRepo:       repo,
+		Alerter:          notifier,
+		OperationLog:     opLog,
+		RequestLog:       reqLog,
+		LogDir:           logDirAbs,
+		LifecycleContext: runCtx,
+		Lifecycle:        lifecycleManager,
+		RequestRestart: func(reason string) error {
+			restartMu.Lock()
+			defer restartMu.Unlock()
+			if restartRequested {
+				return errors.New("restart already requested")
+			}
+			restartRequested = true
+			restartCh <- reason
+			return nil
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("panel: %w", err)
+	}
+	dispatcher := ps.Dispatcher()
+	hub.Auth = dispatcher
 	hub.OnConnect = func(serverID int64) {
 		debouncer.cancel(serverID)
 		// agent 重连后重置并补发离线期间滞留的命令（§2）。
@@ -332,17 +376,6 @@ func run() error {
 		}
 	}
 	hub.OnMessage = dispatcher.HandleMessage
-	// 事件告警（§19）：offline 跃迁挂在 hub 注销路径；漂移/节点失败在 dispatcher 处理点。
-	notifier := alert.New(st)
-	notifierClosed := false
-	defer func() {
-		if !notifierClosed {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			_ = notifier.Close(ctx)
-		}
-	}()
-	dispatcher.Alerter = notifier
 	hub.OnDisconnect = func(serverID int64) {
 		if err := st.RecordServerDisconnected(runCtx, serverID, "connection closed"); err != nil {
 			log.Printf("main: record server disconnected: %v", err)
@@ -364,44 +397,6 @@ func run() error {
 			// 链 degraded 推导（§21.1）：任一跳 server 离线 → degraded + chain_degraded 告警。
 			dispatcher.RecomputeChainsByServer(serverID)
 		})
-	}
-
-	// 面板管理 API（§10）。
-	repo := githubRepo
-	if *ghRepo != "" {
-		repo = *ghRepo
-	}
-	restartCh := make(chan string, 1)
-	var restartMu sync.Mutex
-	restartRequested := false
-	ps, err := panel.New(st, dispatcher, hub, panel.Config{
-		AdminUser:        *adminUser,
-		AdminPass:        *adminPass,
-		PublicURL:        *publicURL,
-		Secure:           secure,
-		RunningTLS:       applied,
-		TLSDir:           tlsDirAbs,
-		Version:          version,
-		GitHubRepo:       repo,
-		Alerter:          notifier,
-		OperationLog:     opLog,
-		RequestLog:       reqLog,
-		LogDir:           logDirAbs,
-		LifecycleContext: runCtx,
-		Lifecycle:        lifecycleManager,
-		RequestRestart: func(reason string) error {
-			restartMu.Lock()
-			defer restartMu.Unlock()
-			if restartRequested {
-				return errors.New("restart already requested")
-			}
-			restartRequested = true
-			restartCh <- reason
-			return nil
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("panel: %w", err)
 	}
 	hub.OnUpgrade = func(r *http.Request) {
 		logging.LogWebSocketUpgrade(reqLog, r, ps.Operator)

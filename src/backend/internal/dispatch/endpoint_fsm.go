@@ -117,8 +117,8 @@ func (f *endpointFSM) onEnter(ctx context.Context, ep *store.SharedEndpoint, to 
 				f.d.fsm.Evaluate(ctx, cid)
 			}
 		}
-		if f.d.OnEndpointPublished != nil {
-			if err := f.d.OnEndpointPublished(ctx, ep.ID); err != nil {
+		if f.d.events.OnEndpointPublished != nil {
+			if err := f.d.events.OnEndpointPublished(ctx, ep.ID); err != nil {
 				log.Printf("endpoint_fsm: enqueue subscriptions for endpoint %d: %v", ep.ID, err)
 			}
 		}

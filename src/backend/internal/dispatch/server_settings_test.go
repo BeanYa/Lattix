@@ -24,7 +24,7 @@ func TestServerSettingsSyncDeliversChangedDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	requester := &uninstallRequester{wake: make(chan struct{}, 2)}
-	dispatcher := New(st, requester)
+	dispatcher := New(st, requester, Options{}, Events{})
 
 	// 期望版本：默认 latest（revision 1）→ 无变化时不回文档。
 	dispatcher.HandleMessage(serverID, shared.Envelope{
@@ -100,7 +100,7 @@ func TestServerSettingsSyncNoChangeWhenUpToDate(t *testing.T) {
 		t.Fatal(err)
 	}
 	requester := &uninstallRequester{wake: make(chan struct{}, 2)}
-	dispatcher := New(st, requester)
+	dispatcher := New(st, requester, Options{}, Events{})
 	dispatcher.HandleMessage(serverID, shared.Envelope{
 		Kind: shared.KindRequest, Type: shared.TypeServerSettingsSync,
 		RequestID: shared.NewMessageID(), TraceID: shared.NewMessageID(),
@@ -126,7 +126,7 @@ func TestServerSettingsSyncInvalidPayload(t *testing.T) {
 	}
 	defer st.Close()
 	requester := &uninstallRequester{wake: make(chan struct{}, 2)}
-	dispatcher := New(st, requester)
+	dispatcher := New(st, requester, Options{}, Events{})
 	dispatcher.HandleMessage(1, shared.Envelope{
 		Kind: shared.KindRequest, Type: shared.TypeServerSettingsSync,
 		RequestID: shared.NewMessageID(), TraceID: shared.NewMessageID(),

@@ -86,9 +86,6 @@ type Server struct {
 // available and before background tasks or HTTP serving start.
 func (s *Server) SetSubscriptionService(service *sub.Server) {
 	s.subscriptions = service
-	s.disp.OnNodePublished = service.EnqueueUsersForNode
-	s.disp.OnChainPublished = service.EnqueueUsersForChain
-	s.disp.OnEndpointPublished = service.EnqueueUsersForEndpoint
 	s.scheduler.register(scheduledTask{
 		name: "subscription.templates.refresh", runOnStart: true, timeout: 10 * time.Minute,
 		trigger: func(context.Context) taskTrigger { return intervalTrigger(6 * time.Hour) },
@@ -143,20 +140,14 @@ func (s *Server) WaitBackground(ctx context.Context) error {
 	}
 }
 
-// New 创建面板 API 服务。
-func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg Config) (*Server, error) {
+// New 创建面板 API 服务：内部构造 Dispatcher，不可变配置与事件回调经
+// dispatch.Options/Events 一次性注入（D2），之后不再写入。
+func New(st *store.Store, req ws.AgentRequester, cfg Config) (*Server, error) {
 	if cfg.LifecycleContext == nil {
 		cfg.LifecycleContext = context.Background()
 	}
-	// 链编排器与单机节点共用同一份 dest 白名单（§6/§21）。
-	disp.DestCandidates = destCandidates
-	disp.PanelVersion = cfg.Version
-	disp.PanelPublicURL = cfg.PublicURL
-	if cfg.GitHubRepo != "" {
-		disp.AgentReleaseBase = "https://github.com/" + cfg.GitHubRepo + "/releases/download"
-	}
 	s := &Server{
-		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
+		st: st, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
 		onlineUsers:     &OnlineUsersTracker{resolve: onlineUserResolver(st)},
 		observes:        progress.NewRegistry(),
@@ -165,10 +156,32 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 		debugRoutes:     make(map[string]bool),
 		methodFallbacks: make(map[string]bool),
 	}
+	// 链编排器与单机节点共用同一份 dest 白名单（§6/§21）。
+	opts := dispatch.Options{
+		Context:        cfg.LifecycleContext,
+		Alerter:        cfg.Alerter,
+		OperationLog:   cfg.OperationLog,
+		RequestLog:     cfg.RequestLog,
+		DestCandidates: destCandidates,
+		PanelVersion:   cfg.Version,
+		PanelPublicURL: cfg.PublicURL,
+	}
+	if cfg.GitHubRepo != "" {
+		opts.AgentReleaseBase = "https://github.com/" + cfg.GitHubRepo + "/releases/download"
+	}
+	if cfg.Lifecycle != nil {
+		opts.PanelLifecycle = cfg.Lifecycle.Snapshot
+	}
+	// 发布事件转发给订阅服务（SetSubscriptionService 接线前到达的忽略）；
+	// dispatcher 的 telemetry 处理喂入在线用户快照。
+	s.disp = dispatch.New(st, req, opts, dispatch.Events{
+		OnNodePublished:     s.onNodePublished,
+		OnChainPublished:    s.onChainPublished,
+		OnEndpointPublished: s.onEndpointPublished,
+		OnOnlineUsers:       s.onlineUsers.ApplySnapshot,
+	})
 	// 观察 ID 读取器注入请求日志中间件（避免 logging → progress 反向依赖）。
 	logging.SetObserveIDReader(s.observes.ObserveIDFromContext)
-	// dispatcher 的 telemetry 处理喂入在线用户快照（注入模式同 OnNodePublished 等回调）。
-	disp.OnOnlineUsers = s.onlineUsers.ApplySnapshot
 	s.upd = newPanelUpdater(s)
 	s.releases = newReleaseCatalog(s)
 	s.exchange = newExchangeCatalog(s)
@@ -176,6 +189,33 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 	s.scheduler = newTaskScheduler(s.inspectionLocation)
 	s.registerCoreTasks()
 	return s, nil
+}
+
+// Dispatcher 返回面板持有的命令分发器（New 内部构造；main 据此接线 hub 认证/消息回调）。
+func (s *Server) Dispatcher() *dispatch.Dispatcher { return s.disp }
+
+// onNodePublished/onChainPublished/onEndpointPublished 是 dispatcher 发布事件的面板侧
+// 实现：订阅服务接线（SetSubscriptionService）前到达的事件直接忽略，与接线前回调为 nil
+// 的旧行为一致。
+func (s *Server) onNodePublished(ctx context.Context, nodeID int64) error {
+	if s.subscriptions == nil {
+		return nil
+	}
+	return s.subscriptions.EnqueueUsersForNode(ctx, nodeID)
+}
+
+func (s *Server) onChainPublished(ctx context.Context, chainID int64) error {
+	if s.subscriptions == nil {
+		return nil
+	}
+	return s.subscriptions.EnqueueUsersForChain(ctx, chainID)
+}
+
+func (s *Server) onEndpointPublished(ctx context.Context, endpointID int64) error {
+	if s.subscriptions == nil {
+		return nil
+	}
+	return s.subscriptions.EnqueueUsersForEndpoint(ctx, endpointID)
 }
 
 // ObserverRegistry 返回旁路观察注册表（sub regenerator 等侧通道调用方注入用）。

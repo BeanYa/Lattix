@@ -12,10 +12,11 @@ import (
 // gateDispatcher 构造 PanelLifecycle 固定为 state 的 Dispatcher（fakeRequester 中服务器 7 在线）。
 func gateDispatcher(state string) (*Dispatcher, *fakeRequester) {
 	req := &fakeRequester{online: map[int64]bool{7: true}}
-	d := New(nil, req)
-	d.PanelLifecycle = func() shared.PanelLifecycleSnapshot {
-		return shared.PanelLifecycleSnapshot{State: state}
-	}
+	d := New(nil, req, Options{
+		PanelLifecycle: func() shared.PanelLifecycleSnapshot {
+			return shared.PanelLifecycleSnapshot{State: state}
+		},
+	}, Events{})
 	return d, req
 }
 
@@ -78,11 +79,12 @@ func TestFlushStallsWhilePanelNotActive(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := &fakeRequester{online: map[int64]bool{serverID: true}}
-	d := New(st, req)
 	state := shared.PanelStateStartup
-	d.PanelLifecycle = func() shared.PanelLifecycleSnapshot {
-		return shared.PanelLifecycleSnapshot{State: state}
-	}
+	d := New(st, req, Options{
+		PanelLifecycle: func() shared.PanelLifecycleSnapshot {
+			return shared.PanelLifecycleSnapshot{State: state}
+		},
+	}, Events{})
 
 	commandID, err := d.Enqueue(ctx, serverID, shared.TypeApplyNode, shared.ApplyNodePayload{})
 	if err != nil {

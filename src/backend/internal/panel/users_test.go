@@ -178,7 +178,7 @@ func TestExpirySweepRepublishesUserSubscription(t *testing.T) {
 	subSrv := sub.New(st, nil, nil)
 	subSrv.StartRegenerator(ctx)
 	requester := &chainEditRequester{online: map[int64]bool{serverID: false}}
-	server := &Server{st: st, disp: dispatch.New(st, requester), req: requester, subscriptions: subSrv}
+	server := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester, subscriptions: subSrv}
 
 	server.sweepExpiredUsers(ctx)
 

@@ -64,9 +64,10 @@ func TestEndpointFSMTransitionSideEffects(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}})
 	published := 0
-	d.OnEndpointPublished = func(context.Context, int64) error { published++; return nil }
+	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}}, Options{}, Events{
+		OnEndpointPublished: func(context.Context, int64) error { published++; return nil },
+	})
 
 	// pending → failed：链应 degraded（端点未生效）。
 	if err := d.efsm.Transition(ctx, endpoint.ID, store.EndpointStatusFailed, "boom", nil); err != nil {
@@ -116,7 +117,7 @@ func TestEndpointFSMRejectsIllegalTransition(t *testing.T) {
 	if err := st.SetSharedEndpointFailed(ctx, endpoint.ID, "boom"); err != nil {
 		t.Fatal(err)
 	}
-	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}})
+	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}}, Options{}, Events{})
 	err = d.efsm.Transition(ctx, endpoint.ID, store.EndpointStatusActive, "x", json.RawMessage(`{"port":443}`))
 	if err == nil || !strings.Contains(err.Error(), "illegal transition") {
 		t.Fatalf("Transition error = %v, want illegal transition", err)

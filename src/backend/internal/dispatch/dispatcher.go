@@ -21,12 +21,13 @@ import (
 	"lattix/shared"
 )
 
-// Dispatcher 串联 store 与 Requester。
-type Dispatcher struct {
-	st   *store.Store
-	req  ws.AgentRequester
-	fsm  *chainFSM    // 链路状态机：所有链状态变更的唯一入口
-	efsm *endpointFSM // 共享端点状态机：所有端点状态变更的唯一入口
+// Options 是 Dispatcher 的不可变运行配置：随 New 注入，之后不再写入，
+// 运行期并发读取无需同步（D2）。
+type Options struct {
+	// Context 是 Dispatcher 生命周期 context（main 注入 runCtx，关停时取消）：
+	// 回执/事件等无请求来源的处理统一经 baseCtx 从它派生，使关停取消传播到落库；
+	// nil = Background（测试直调 Handler 的场景）。
+	Context context.Context
 
 	// Alerter 事件告警（§19）：nil = 关闭；仅状态跃迁时调用，发送方自行防抖动。
 	Alerter      *alert.Notifier
@@ -35,20 +36,33 @@ type Dispatcher struct {
 
 	// DestCandidates 是面板内置的 dest 白名单（§6 预检 fallback）：链编排下发
 	// apply_node/portal 时携带（panel 初始化时注入，与单机节点同一份）。
-	DestCandidates      []string
-	PanelVersion        string
-	PanelPublicURL      string
-	AgentReleaseBase    string
-	PanelLifecycle      func() shared.PanelLifecycleSnapshot
+	DestCandidates   []string
+	PanelVersion     string
+	PanelPublicURL   string
+	AgentReleaseBase string
+	// PanelLifecycle 读取面板生命周期快照（D7 门控与遥测降级）；nil = 视为 active（测试直调场景）。
+	PanelLifecycle func() shared.PanelLifecycleSnapshot
+}
+
+// Events 是 Dispatcher 向外发布的事件回调集合：随 New 注入，之后不再写入（D2）；
+// 各回调 nil = 不订阅。
+type Events struct {
 	OnNodePublished     func(context.Context, int64) error
 	OnChainPublished    func(context.Context, int64) error
 	OnEndpointPublished func(context.Context, int64) error
 	// OnOnlineUsers 接收 telemetry 帧中的在线用户快照（panel.Server 注入；nil = 不记录）。
 	OnOnlineUsers func(serverID int64, users []shared.OnlineUserStat, now time.Time)
+}
 
-	// ctx 是 Dispatcher 生命周期 context（main 注入 runCtx，关停时取消）：
-	// 回执/事件等无请求来源的处理统一经 baseCtx 从它派生，使关停取消传播到落库。
-	ctx context.Context
+// Dispatcher 串联 store 与 Requester。
+type Dispatcher struct {
+	st   *store.Store
+	req  ws.AgentRequester
+	fsm  *chainFSM    // 链路状态机：所有链状态变更的唯一入口
+	efsm *endpointFSM // 共享端点状态机：所有端点状态变更的唯一入口
+
+	opts   Options // 不可变配置（New 注入）
+	events Events  // 事件回调（New 注入）
 
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
@@ -110,10 +124,13 @@ func (w *syncWaiters[R]) deliver(requestID string, result *R, errorMessage strin
 	ch <- out
 }
 
-// New 创建 Dispatcher。
-func New(st *store.Store, req ws.AgentRequester) *Dispatcher {
+// New 创建 Dispatcher。opts 与 events 构造后不可变，运行期并发读取无需同步。
+func New(st *store.Store, req ws.AgentRequester, opts Options, events Events) *Dispatcher {
+	if opts.Context == nil {
+		opts.Context = context.Background()
+	}
 	d := &Dispatcher{
-		st: st, req: req, ctx: context.Background(), flushMu: make(map[int64]*sync.Mutex),
+		st: st, req: req, opts: opts, events: events, flushMu: make(map[int64]*sync.Mutex),
 		testProgress:      make(map[int64]shared.ServerTestProgressPayload),
 		cleanupWaiters:    newSyncWaiters[shared.CleanupXrayResult](),
 		rebuildWaiters:    newSyncWaiters[shared.RebuildXrayResult](),
@@ -124,16 +141,10 @@ func New(st *store.Store, req ws.AgentRequester) *Dispatcher {
 	return d
 }
 
-// SetContext 注入 Dispatcher 生命周期 context（随面板关停取消）；回执处理经 baseCtx
-// 从此派生。须在 hub 开始服务前调用（main 启动序列保证）。
-func (d *Dispatcher) SetContext(ctx context.Context) {
-	d.ctx = ctx
-}
-
 // baseCtx 返回回执/事件处理（HandleMessage 链路及 hub 回调触发的重算）的父 context：
 // 随面板关停取消；未注入时为 Background（测试直调 Handler 的场景）。
 func (d *Dispatcher) baseCtx() context.Context {
-	return d.ctx
+	return d.opts.Context
 }
 
 func (d *Dispatcher) EnqueueServerTest(
@@ -375,10 +386,10 @@ func (d *Dispatcher) send(ctx context.Context, serverID int64, env shared.Envelo
 
 // panelLifecycleSnapshot 读取面板生命周期快照；未注入时视为 active（测试直调场景）。
 func (d *Dispatcher) panelLifecycleSnapshot() shared.PanelLifecycleSnapshot {
-	if d.PanelLifecycle == nil {
+	if d.opts.PanelLifecycle == nil {
 		return shared.PanelLifecycleSnapshot{State: shared.PanelStateActive}
 	}
-	return d.PanelLifecycle()
+	return d.opts.PanelLifecycle()
 }
 
 // isBusinessCommand 判定信封是否为业务命令（仅 Kind==Request 才判定）：
@@ -421,13 +432,13 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 		return
 	}
 	versionMismatch := false
-	if target := strings.TrimSpace(d.PanelVersion); target != "" && target != "dev" {
+	if target := strings.TrimSpace(d.opts.PanelVersion); target != "" && target != "dev" {
 		if server, err := d.st.ServerByID(ctx, serverID); err == nil {
 			versionMismatch = server.AgentVersion != target
 		}
 	}
 	for _, c := range cmds {
-		if versionMismatch && !isExactAgentUpgrade(c, d.PanelVersion) {
+		if versionMismatch && !isExactAgentUpgrade(c, d.opts.PanelVersion) {
 			continue
 		}
 		if c.Attempts >= maxCommandAttempts {
@@ -581,7 +592,7 @@ func (d *Dispatcher) CommitCredential(ctx context.Context, serverID int64, excha
 }
 
 func (d *Dispatcher) ensureAgentVersion(ctx context.Context, serverID int64, reported string) {
-	target := strings.TrimSpace(d.PanelVersion)
+	target := strings.TrimSpace(d.opts.PanelVersion)
 	if target == "" || target == "dev" || reported == target {
 		return
 	}
@@ -600,7 +611,7 @@ func (d *Dispatcher) ensureAgentVersion(ctx context.Context, serverID int64, rep
 		}
 	}
 	if _, err := d.Enqueue(ctx, serverID, shared.TypeUpgradeAgent, shared.UpgradeAgentPayload{
-		Version: target, ReleaseBase: d.AgentReleaseBase,
+		Version: target, ReleaseBase: d.opts.AgentReleaseBase,
 	}); err != nil {
 		log.Printf("dispatch: server %d enqueue agent synchronization to %s: %v", serverID, target, err)
 	}
@@ -855,7 +866,7 @@ var agentSettingsSync = settingsSyncSpec[shared.AgentSettings]{
 				SchemaVersion: shared.AgentSettingsSchemaVersion,
 				Panel: shared.PanelMetadata{
 					InstanceID: panelID,
-					Version:    d.PanelVersion,
+					Version:    d.opts.PanelVersion,
 					PublicURL:  d.panelPublicURL(ctx),
 					WSURL:      panelWSURL(d.panelPublicURL(ctx)),
 				},
@@ -921,7 +932,7 @@ func (d *Dispatcher) panelPublicURL(ctx context.Context) string {
 	if value, err := d.st.GetSetting(ctx, store.SettingPublicURL); err == nil && value != "" {
 		return strings.TrimRight(value, "/")
 	}
-	return strings.TrimRight(d.PanelPublicURL, "/")
+	return strings.TrimRight(d.opts.PanelPublicURL, "/")
 }
 
 func panelWSURL(publicURL string) string {
@@ -1042,13 +1053,13 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 	}
 	// 在线用户快照：每帧全量覆盖该服务器记录（空快照 [] = 清除，保留在线时为 0 的语义）。
 	// nil = 该帧未携带在线数据（agent 查询失败/不支持），保留旧快照直至新鲜度窗口过期。
-	if p.OnlineUsers != nil && d.OnOnlineUsers != nil {
-		d.OnOnlineUsers(serverID, p.OnlineUsers, time.Now().UTC())
+	if p.OnlineUsers != nil && d.events.OnOnlineUsers != nil {
+		d.events.OnOnlineUsers(serverID, p.OnlineUsers, time.Now().UTC())
 	}
 }
 
 func (d *Dispatcher) latencyProbeActive(reported *bool) bool {
-	if d.PanelLifecycle != nil && d.PanelLifecycle().State != shared.PanelStateActive {
+	if d.opts.PanelLifecycle != nil && d.opts.PanelLifecycle().State != shared.PanelStateActive {
 		return false
 	}
 	return reported == nil || *reported
@@ -1067,8 +1078,8 @@ func (d *Dispatcher) handleDriftReport(serverID int64, env shared.Envelope) {
 	}
 	if p.Drifted {
 		log.Printf("dispatch: server %d: 配置漂移（外部修改），待管理员修复", serverID)
-		if d.Alerter != nil {
-			d.Alerter.Notify(serverID, alert.EventConfigDrift, "", "xray 配置被外部修改，待管理员修复")
+		if d.opts.Alerter != nil {
+			d.opts.Alerter.Notify(serverID, alert.EventConfigDrift, "", "xray 配置被外部修改，待管理员修复")
 		}
 		d.recordOperation(logging.OperationEvent{
 			Severity: logging.SeverityWarning, Category: logging.CategoryServer,
@@ -1183,8 +1194,8 @@ func (d *Dispatcher) applyCommandOutcome(serverID int64, cmd *store.Command, p s
 			realized, _ := json.Marshal(p.RealizedConfig)
 			if err := d.st.SetNodeActive(ctx, p.NodeID, realized); err != nil {
 				log.Printf("dispatch: node %d active: %v", p.NodeID, err)
-			} else if d.OnNodePublished != nil {
-				if err := d.OnNodePublished(ctx, p.NodeID); err != nil {
+			} else if d.events.OnNodePublished != nil {
+				if err := d.events.OnNodePublished(ctx, p.NodeID); err != nil {
 					log.Printf("dispatch: enqueue subscriptions for node %d: %v", p.NodeID, err)
 				}
 			}
@@ -1405,7 +1416,7 @@ func commandEndpointID(cmd store.Command) (int64, bool) {
 }
 
 func (d *Dispatcher) logWebSocketRPC(serverID int64, cmd store.Command, env shared.Envelope) {
-	if d.RequestLog == nil {
+	if d.opts.RequestLog == nil {
 		return
 	}
 	duration := int64(0)
@@ -1414,7 +1425,7 @@ func (d *Dispatcher) logWebSocketRPC(serverID int64, cmd store.Command, env shar
 			duration = time.Since(sentAt).Milliseconds()
 		}
 	}
-	logging.LogWebSocketRPC(d.RequestLog, logging.RequestEntry{
+	logging.LogWebSocketRPC(d.opts.RequestLog, logging.RequestEntry{
 		RequestID:  env.RequestID,
 		TraceID:    env.TraceID,
 		RPCType:    env.Type,
@@ -1448,10 +1459,10 @@ func (d *Dispatcher) clearEndpointRetry(endpointID int64) {
 
 // alertNodeFailed 上报节点置 failed 事件（§19）：apply_result 失败与死信两条路径共用。
 func (d *Dispatcher) alertNodeFailed(serverID, nodeID int64, reason string) {
-	if d.Alerter == nil {
+	if d.opts.Alerter == nil {
 		return
 	}
-	d.Alerter.Notify(serverID, alert.EventNodeFailed, fmt.Sprintf("node_%d", nodeID), reason)
+	d.opts.Alerter.Notify(serverID, alert.EventNodeFailed, fmt.Sprintf("node_%d", nodeID), reason)
 }
 
 func (d *Dispatcher) serverLock(serverID int64) *sync.Mutex {
@@ -1466,10 +1477,10 @@ func (d *Dispatcher) serverLock(serverID int64) *sync.Mutex {
 }
 
 func (d *Dispatcher) recordOperation(event logging.OperationEvent) {
-	if d.OperationLog == nil {
+	if d.opts.OperationLog == nil {
 		return
 	}
-	if err := d.OperationLog.Record(d.baseCtx(), event); err != nil {
+	if err := d.opts.OperationLog.Record(d.baseCtx(), event); err != nil {
 		log.Printf("dispatch: record operation %s: %v", event.Action, err)
 	}
 }

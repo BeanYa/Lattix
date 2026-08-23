@@ -61,7 +61,7 @@ func newFSMFixture(t *testing.T) (*store.Store, *Dispatcher, int64, int64) {
 	nodeID, _ := st.InsertNode(ctx, "direct", serverID, shared.ProtocolVLESS, nil, config)
 	chainID, _ := st.InsertChain(ctx, "direct")
 	_, _ = st.InsertChainHop(ctx, chainID, 0, serverID, store.HopRoleExit, nodeID, 0, "")
-	return st, New(st, &fakeRequester{online: map[int64]bool{serverID: false}}), chainID, serverID
+	return st, New(st, &fakeRequester{online: map[int64]bool{serverID: false}}, Options{}, Events{}), chainID, serverID
 }
 
 // TestFSMTransitionRejectsIllegalEdge 校验 Transition 拒绝非法转换且不落库。

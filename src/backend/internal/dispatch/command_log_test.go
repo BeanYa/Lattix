@@ -34,8 +34,7 @@ func TestCommandFailedDetailCarriesEndpointAndChainContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer opLog.Close()
-	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}})
-	d.OperationLog = opLog
+	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}}, Options{OperationLog: opLog}, Events{})
 
 	if _, err := d.Enqueue(ctx, serverID, shared.TypeApplySharedEndpoint,
 		shared.ApplySharedEndpointPayload{EndpointID: endpoint.ID}); err != nil {

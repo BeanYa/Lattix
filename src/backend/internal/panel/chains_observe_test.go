@@ -54,7 +54,7 @@ func TestCreateChainCarriesObserveID(t *testing.T) {
 		t.Fatal(err)
 	}
 	requester := &chainEditRequester{online: map[int64]bool{serverID: true}}
-	srv := &Server{st: st, disp: dispatch.New(st, requester), req: requester, observes: progress.NewRegistry()}
+	srv := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester, observes: progress.NewRegistry()}
 	node := createNodeRequest{Name: "a", ServerID: serverID, Protocol: shared.ProtocolVLESS,
 		ShortID: "short-a", Dest: "dl.google.com:443", ServerNames: []string{"dl.google.com"},
 		Fingerprint: shared.FingerprintChrome, Network: shared.NetworkTCP, Flow: shared.FlowVision}
@@ -82,7 +82,7 @@ func TestEditChainCarriesObserveID(t *testing.T) {
 	defer st.Close()
 	aID, cID, _, chainID, _, _, nodeRequest, _ := chainEditFixture(t, ctx, st)
 	requester := &chainEditRequester{online: map[int64]bool{aID: true, cID: true}}
-	srv := &Server{st: st, disp: dispatch.New(st, requester), req: requester, observes: progress.NewRegistry()}
+	srv := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester, observes: progress.NewRegistry()}
 	entryPort := 1000
 	body, _ := json.Marshal(editChainRequest{ChainID: chainID, Name: "chain",
 		Hops: []chainHopRef{{ServerID: aID}, {ServerID: cID}}, EntryPort: &entryPort,
@@ -103,7 +103,7 @@ func TestDeleteChainCarriesObserveID(t *testing.T) {
 	defer st.Close()
 	aID, cID, _, chainID, _, _, _, _ := chainEditFixture(t, ctx, st)
 	requester := &chainEditRequester{online: map[int64]bool{aID: true, cID: true}}
-	srv := &Server{st: st, disp: dispatch.New(st, requester), req: requester, observes: progress.NewRegistry()}
+	srv := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester, observes: progress.NewRegistry()}
 	body, _ := json.Marshal(struct {
 		ChainID int64 `json:"chain_id"`
 	}{ChainID: chainID})
@@ -124,7 +124,7 @@ func TestRetryChainCarriesObserveID(t *testing.T) {
 	aID, cID, nodeID, chainID, aHop, _, _, config := chainEditFixture(t, ctx, st)
 	failChainAfterEdit(t, ctx, st, chainID, nodeID, aID, cID, aHop, 2000, config)
 	requester := &chainEditRequester{online: map[int64]bool{aID: true, cID: true}}
-	srv := &Server{st: st, disp: dispatch.New(st, requester), req: requester, observes: progress.NewRegistry()}
+	srv := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester, observes: progress.NewRegistry()}
 	body, _ := json.Marshal(struct {
 		ChainID int64 `json:"chain_id"`
 	}{ChainID: chainID})
@@ -145,7 +145,7 @@ func TestForcePublishChainCarriesObserveID(t *testing.T) {
 	aID, cID, nodeID, chainID, aHop, _, _, config := chainEditFixture(t, ctx, st)
 	failChainAfterEdit(t, ctx, st, chainID, nodeID, aID, cID, aHop, 2000, config)
 	requester := &chainEditRequester{online: map[int64]bool{aID: true, cID: true}}
-	srv := &Server{st: st, disp: dispatch.New(st, requester), req: requester, observes: progress.NewRegistry()}
+	srv := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester, observes: progress.NewRegistry()}
 	body, _ := json.Marshal(struct {
 		ChainID int64 `json:"chain_id"`
 	}{ChainID: chainID})
@@ -203,7 +203,7 @@ func TestForcePublishChainFailureMarksObserveFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 	requester := &chainEditRequester{online: map[int64]bool{aID: true, cID: true}}
-	srv := &Server{st: st, disp: dispatch.New(st, requester), req: requester, observes: progress.NewRegistry()}
+	srv := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester, observes: progress.NewRegistry()}
 	body, _ := json.Marshal(struct {
 		ChainID int64 `json:"chain_id"`
 	}{ChainID: chainID})

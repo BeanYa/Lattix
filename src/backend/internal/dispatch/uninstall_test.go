@@ -63,7 +63,7 @@ func TestUninstallRetriesSameRequestUntilACK(t *testing.T) {
 		t.Fatal(err)
 	}
 	requester := &uninstallRequester{wake: make(chan struct{}, 2)}
-	dispatcher := New(st, requester)
+	dispatcher := New(st, requester, Options{}, Events{})
 	go func() {
 		for deliveries := 1; deliveries <= 2; deliveries++ {
 			select {

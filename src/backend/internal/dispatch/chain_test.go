@@ -96,7 +96,7 @@ func TestSingleHopChainBecomesActiveAfterServiceApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	req := &fakeRequester{online: map[int64]bool{serverID: true}}
-	d := New(st, req)
+	d := New(st, req, Options{}, Events{})
 	if err := d.StartChain(ctx, chainID); err != nil {
 		t.Fatal(err)
 	}
@@ -160,8 +160,7 @@ func TestChainOrchestration(t *testing.T) {
 	hop3, _ := st.InsertChainHop(ctx, chainID, 2, exitID, store.HopRoleExit, nodeID, 0, "")
 
 	req := &fakeRequester{online: map[int64]bool{entryID: true, midID: true, exitID: true}}
-	d := New(st, req)
-	d.DestCandidates = []string{"dl.google.com:443"}
+	d := New(st, req, Options{DestCandidates: []string{"dl.google.com:443"}}, Events{})
 
 	// 阶段 1：出口业务 apply_node（仅出口档无端口段 → 无 port_candidates）。
 	if err := d.StartChain(ctx, chainID); err != nil {
@@ -292,8 +291,7 @@ func TestChainHopResultFailure(t *testing.T) {
 	st.InsertChainHop(ctx, chainID, 1, exitID, store.HopRoleExit, nodeID, 0, "")
 
 	req := &fakeRequester{online: map[int64]bool{entryID: true, exitID: true}}
-	d := New(st, req)
-	d.DestCandidates = []string{"dl.google.com:443"}
+	d := New(st, req, Options{DestCandidates: []string{"dl.google.com:443"}}, Events{})
 	if err := d.StartChain(ctx, chainID); err != nil {
 		t.Fatal(err)
 	}
@@ -379,8 +377,7 @@ func TestAdvanceChainSkipsReusedPieces(t *testing.T) {
 	}
 
 	req := &fakeRequester{online: map[int64]bool{entryID: true, exitID: true}}
-	d := New(st, req)
-	d.DestCandidates = []string{"dl.google.com:443"}
+	d := New(st, req, Options{DestCandidates: []string{"dl.google.com:443"}}, Events{})
 	if err := d.StartChain(ctx, chainID); err != nil {
 		t.Fatal(err)
 	}
@@ -422,8 +419,7 @@ func TestNatPortsCarryCandidatesForManualPorts(t *testing.T) {
 	st.InsertChainHop(ctx, chainID, 1, exitID, store.HopRoleExit, nodeID, 0, "")
 
 	req := &fakeRequester{online: map[int64]bool{entryID: true, exitID: true}}
-	d := New(st, req)
-	d.DestCandidates = []string{"dl.google.com:443"}
+	d := New(st, req, Options{DestCandidates: []string{"dl.google.com:443"}}, Events{})
 	if err := d.StartChain(ctx, chainID); err != nil {
 		t.Fatal(err)
 	}

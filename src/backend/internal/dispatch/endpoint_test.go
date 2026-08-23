@@ -66,7 +66,7 @@ func TestReconcileSharedEndpointGroupsUsersByChain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d := New(st, &fakeRequester{online: map[int64]bool{}})
+	d := New(st, &fakeRequester{online: map[int64]bool{}}, Options{}, Events{})
 	if err := d.ReconcileSharedEndpoint(ctx, endpoint.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestReconcileSharedEndpointGroupUsersGetDistinctIdentities(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d := New(st, &fakeRequester{online: map[int64]bool{}})
+	d := New(st, &fakeRequester{online: map[int64]bool{}}, Options{}, Events{})
 	if err := d.ReconcileSharedEndpoint(ctx, endpoint.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestPublishReconcilesPreviousAndNewSharedEndpoints(t *testing.T) {
 	}
 	hops, _ := st.ChainHops(ctx, deployment.ChainID)
 	node, _ := st.NodeByID(ctx, deployment.NodeID)
-	d := New(st, &fakeRequester{online: map[int64]bool{}})
+	d := New(st, &fakeRequester{online: map[int64]bool{}}, Options{}, Events{})
 	d.publishDesiredRevision(ctx, deployment.ChainID, hops, *node)
 
 	commands, err := st.CommandsByType(ctx, shared.TypeApplySharedEndpoint)
@@ -236,7 +236,7 @@ func TestEvaluateDoesNotDoubleApplyInFlightEndpoint(t *testing.T) {
 		}
 	}
 
-	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}})
+	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}}, Options{}, Events{})
 	// 首次部署（pending → apply #1），端点进入 applying。
 	if err := d.ReconcileSharedEndpoint(ctx, endpoint.ID); err != nil {
 		t.Fatal(err)
@@ -298,7 +298,7 @@ func TestChainDegradedWhenEndpointNotActive(t *testing.T) {
 
 	// 端点仍为 pending，重算后链应进入 degraded。
 	req := &fakeRequester{online: map[int64]bool{serverID: true}}
-	d := New(st, req)
+	d := New(st, req, Options{}, Events{})
 	d.fsm.Evaluate(ctx, chainID)
 	chain, _ = st.ChainByID(ctx, chainID)
 	if chain.Status != store.ChainStatusDegraded {
@@ -344,7 +344,7 @@ func TestReconcileDeploysEndpointEvenWithNoUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d := New(st, &fakeRequester{online: map[int64]bool{}})
+	d := New(st, &fakeRequester{online: map[int64]bool{}}, Options{}, Events{})
 	// 有用户时 reconcile 应下发 apply。
 	if err := d.ReconcileSharedEndpoint(ctx, endpoint.ID); err != nil {
 		t.Fatal(err)
@@ -413,7 +413,7 @@ func TestEvaluateEndpointAutoRetryBackoff(t *testing.T) {
 		}
 	}
 
-	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}})
+	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}}, Options{}, Events{})
 	if err := d.ReconcileSharedEndpoint(ctx, endpoint.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -501,7 +501,7 @@ func TestReconcileSharedEndpointAggregatesJoinedChains(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d := New(st, &fakeRequester{online: map[int64]bool{}})
+	d := New(st, &fakeRequester{online: map[int64]bool{}}, Options{}, Events{})
 	if err := d.ReconcileSharedEndpoint(ctx, endpoint.ID); err != nil {
 		t.Fatal(err)
 	}
