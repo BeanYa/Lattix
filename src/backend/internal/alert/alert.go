@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -57,8 +56,9 @@ func New(st *store.Store) *Notifier {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Notifier{
 		st: st,
+		// webhook 是管理员配置 URL，同样走 SSRF 拨号防护（拒绝解析到内网/保留段）。
 		requester: external.ExternalWebhookRequester{
-			Doer: &http.Client{Timeout: sendTimeout},
+			Doer: external.NewExternalHTTPClient(sendTimeout),
 		},
 		debounce: debounce,
 		lastSent: make(map[string]time.Time),

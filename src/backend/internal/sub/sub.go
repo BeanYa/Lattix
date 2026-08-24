@@ -80,8 +80,9 @@ func NewWithCacheDir(st *store.Store, base func(*http.Request) string, spaHTML [
 	}
 	server := &Server{
 		st: st, base: base, spaHTML: spaHTML, cacheDir: cacheDir,
-		files:         external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Second}},
-		downloadFiles: external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Minute}},
+		// 模板/规则与客户端安装包拉取均为外部 URL，接 SSRF 拨号防护（拒绝内网/保留段）。
+		files:         external.ExternalFileRequester{Doer: external.NewExternalHTTPClient(30 * time.Second)},
+		downloadFiles: external.ExternalFileRequester{Doer: external.NewExternalHTTPClient(30 * time.Minute)},
 		queued:        make(map[int64]string), queueWake: make(chan struct{}, 1),
 		downloadTasks: make(map[string]*clientDownloadTask), activeDownloads: make(map[string]string),
 		downloadTickets: make(map[string]*clientDownloadTicket),
