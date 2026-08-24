@@ -9,9 +9,14 @@ import (
 
 // WriteFileAtomic 将 data 原子写入 path（先写 path+".tmp" 再 rename），
 // perm 为目标文件权限；rename 失败时清理临时文件。
+// .tmp 可能复用崩溃遗留文件（os.WriteFile 的 perm 仅创建时生效），写后补 Chmod 收口权限。
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, data, perm); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, perm); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
