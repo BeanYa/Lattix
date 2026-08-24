@@ -190,8 +190,18 @@ jobs:
             out/lattix-agent-linux-arm64.tar.gz
             out/checksums.txt
           )
+          # Release notes 取自 docs/CHANGELOG.md 的 [Unreleased] 段；为空时回退自动生成。
+          awk '
+            { sub(/\r$/, "") }
+            /^## \[Unreleased\]/ { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' docs/CHANGELOG.md > release-notes.md
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" "${ASSETS[@]}" --clobber
+          elif grep -q '[^[:space:]]' release-notes.md; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" --notes-file release-notes.md "${ASSETS[@]}"
           else
             gh release create "${GITHUB_REF_NAME}" \
               --title "${GITHUB_REF_NAME}" --generate-notes "${ASSETS[@]}"
