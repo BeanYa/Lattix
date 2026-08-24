@@ -102,7 +102,9 @@ export default function ExternalSubscriptions() {
     }
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    void load()
+  }, [load])
 
   const resetForm = () => {
     setEditing(null)
@@ -142,9 +144,12 @@ export default function ExternalSubscriptions() {
     setSaving(true)
     setFormError('')
     try {
-      const userAgent = uaPreset === 'default' ? undefined
-        : uaPreset === 'custom' ? (customUA.trim() || undefined)
-        : uaPreset
+      const userAgent =
+        uaPreset === 'default'
+          ? undefined
+          : uaPreset === 'custom'
+            ? customUA.trim() || undefined
+            : uaPreset
       const body = {
         name: name.trim(),
         url: url.trim(),
@@ -188,12 +193,15 @@ export default function ExternalSubscriptions() {
   }
 
   const remove = async (sub: ExternalSubscription) => {
-    if (!(await confirm({
-      title: '删除订阅',
-      description: `确认删除「${sub.name}」？其导入的节点将一并移除。`,
-      confirmLabel: '删除订阅',
-      destructive: true,
-    }))) return
+    if (
+      !(await confirm({
+        title: '删除订阅',
+        description: `确认删除「${sub.name}」？其导入的节点将一并移除。`,
+        confirmLabel: '删除订阅',
+        destructive: true,
+      }))
+    )
+      return
     setDeleting(sub.id)
     try {
       const { observeId } = await api.deleteExternalSubscription(sub.id)
@@ -235,12 +243,12 @@ export default function ExternalSubscriptions() {
       <PageHeader
         title="外部订阅"
         description="导入第三方订阅链接以汇聚节点，支持手动同步与按间隔自动更新。"
-        actions={(
+        actions={
           <button type="button" className="cg-button is-primary" onClick={() => beginEdit()}>
             <PlusIcon />
             新建订阅
           </button>
-        )}
+        }
       />
       {error ? <Notice tone="danger">{error}</Notice> : null}
 
@@ -262,7 +270,9 @@ export default function ExternalSubscriptions() {
                     <strong className="truncate">{sub.name}</strong>
                     {sub.format ? <span className="cg-status is-blue">{sub.format}</span> : null}
                   </div>
-                  <span className="extsub-card-url" title={sub.url}>{sub.url}</span>
+                  <span className="extsub-card-url" title={sub.url}>
+                    {sub.url}
+                  </span>
                 </div>
                 <div className="extsub-card-actions">
                   <button
@@ -275,11 +285,21 @@ export default function ExternalSubscriptions() {
                     <RefreshCwIcon className={syncing === sub.id ? 'animate-spin' : undefined} />
                     {syncing === sub.id ? '同步中…' : '同步'}
                   </button>
-                  <button type="button" className="cg-button" title="查看导入的节点" onClick={() => openChains(sub)}>
+                  <button
+                    type="button"
+                    className="cg-button"
+                    title="查看导入的节点"
+                    onClick={() => openChains(sub)}
+                  >
                     <EyeIcon />
                     节点
                   </button>
-                  <button type="button" className="cg-icon-button" title="编辑" onClick={() => beginEdit(sub)}>
+                  <button
+                    type="button"
+                    className="cg-icon-button"
+                    title="编辑"
+                    onClick={() => beginEdit(sub)}
+                  >
                     <FileCode2Icon />
                   </button>
                   <button
@@ -300,40 +320,67 @@ export default function ExternalSubscriptions() {
                 </div>
                 <div className="extsub-stat">
                   <span className="cg-micro">流量 USAGE / TOTAL</span>
-                  <strong>{humanizeBytes(sub.download)} / {humanizeBytes(sub.total)}</strong>
+                  <strong>
+                    {humanizeBytes(sub.download)} / {humanizeBytes(sub.total)}
+                  </strong>
                   <span className="extsub-traffic-bar" aria-hidden="true">
-                    <i style={{ width: `${sub.total > 0 ? Math.min(100, Math.round((sub.download / sub.total) * 100)) : 0}%` }} />
+                    <i
+                      style={{
+                        width: `${sub.total > 0 ? Math.min(100, Math.round((sub.download / sub.total) * 100)) : 0}%`,
+                      }}
+                    />
                   </span>
                 </div>
                 <div className="extsub-stat">
                   <span className="cg-micro">到期时间 / EXPIRE</span>
-                  <strong>{sub.expire ? formatDateTime(new Date(sub.expire * 1000).toISOString(), timezone) : '-'}</strong>
+                  <strong>
+                    {sub.expire
+                      ? formatDateTime(new Date(sub.expire * 1000).toISOString(), timezone)
+                      : '-'}
+                  </strong>
                 </div>
                 <div className="extsub-stat">
                   <span className="cg-micro">上次同步 / LAST SYNC</span>
-                  <strong>{sub.last_sync_at ? formatDateTime(sub.last_sync_at, timezone) : '-'}</strong>
+                  <strong>
+                    {sub.last_sync_at ? formatDateTime(sub.last_sync_at, timezone) : '-'}
+                  </strong>
                 </div>
               </div>
               {sub.last_error ? (
-                <Notice tone="danger" className="extsub-error">{sub.last_error}</Notice>
+                <Notice tone="danger" className="extsub-error">
+                  {sub.last_error}
+                </Notice>
               ) : null}
             </article>
           ))
         )}
       </div>
 
-      <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) resetForm() }}>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next)
+          if (!next) resetForm()
+        }}
+      >
         <DialogContent className="max-h-[90vh] sm:max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editing ? '编辑订阅' : '新建订阅'}</DialogTitle>
-            <DialogDescription>导入第三方订阅链接以汇聚节点；可手动同步，或按设定间隔自动同步。</DialogDescription>
+            <DialogDescription>
+              导入第三方订阅链接以汇聚节点；可手动同步，或按设定间隔自动同步。
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={save} className="space-y-4">
             {formError ? <Notice tone="danger">{formError}</Notice> : null}
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="ext-sub-name">名称</Label>
-                <Input id="ext-sub-name" value={name} onChange={(event) => setName(event.target.value)} required />
+                <Input
+                  id="ext-sub-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  required
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="ext-sub-url">URL</Label>
@@ -350,10 +397,14 @@ export default function ExternalSubscriptions() {
             <div className="space-y-2">
               <Label>User-Agent</Label>
               <Select value={uaPreset} onValueChange={(value) => value && setUaPreset(value)}>
-                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   {UA_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -410,12 +461,15 @@ export default function ExternalSubscriptions() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={chainsTarget !== null} onOpenChange={(next) => {
-        if (!next) {
-          setChainsTarget(null)
-          chainsTargetRef.current = null
-        }
-      }}>
+      <Dialog
+        open={chainsTarget !== null}
+        onOpenChange={(next) => {
+          if (!next) {
+            setChainsTarget(null)
+            chainsTargetRef.current = null
+          }
+        }}
+      >
         <DialogContent className="max-h-[90vh] sm:max-w-3xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>外部节点</DialogTitle>
@@ -423,9 +477,13 @@ export default function ExternalSubscriptions() {
           </DialogHeader>
           {chainsError ? <Notice tone="danger">{chainsError}</Notice> : null}
           {chainsLoading ? (
-            <p className="flex h-40 items-center justify-center text-sm text-muted-foreground">加载中…</p>
+            <p className="flex h-40 items-center justify-center text-sm text-muted-foreground">
+              加载中…
+            </p>
           ) : chains.length === 0 ? (
-            <p className="flex h-40 items-center justify-center text-sm text-muted-foreground">暂无节点，先同步该订阅试试</p>
+            <p className="flex h-40 items-center justify-center text-sm text-muted-foreground">
+              暂无节点，先同步该订阅试试
+            </p>
           ) : (
             <Table>
               <TableHeader>
@@ -440,9 +498,15 @@ export default function ExternalSubscriptions() {
                 {chains.map((chain) => (
                   <TableRow key={chain.id}>
                     <TableCell className="font-medium">{chain.name}</TableCell>
-                    <TableCell><span className="cg-status is-blue">{chain.protocol}</span></TableCell>
-                    <TableCell className="font-mono text-xs">{chain.server}:{chain.port}</TableCell>
-                    <TableCell><code className="extsub-sha">{chain.config_sha256.slice(0, 8)}</code></TableCell>
+                    <TableCell>
+                      <span className="cg-status is-blue">{chain.protocol}</span>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {chain.server}:{chain.port}
+                    </TableCell>
+                    <TableCell>
+                      <code className="extsub-sha">{chain.config_sha256.slice(0, 8)}</code>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

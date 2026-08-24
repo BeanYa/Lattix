@@ -74,14 +74,14 @@
   flex-shrink: 0;
   border: none;
   border-radius: 12px;
-  background: linear-gradient(180deg, #3B9BFF, var(--cg-lime));
+  background: linear-gradient(180deg, #3b9bff, var(--cg-lime));
 }
 
 .cg-login-brand-name {
   display: block;
   font-size: 15px;
   font-weight: 900;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   color: #fff;
 }
 
@@ -91,7 +91,7 @@
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: .16em;
+  letter-spacing: 0.16em;
   color: var(--cg-lime);
   text-transform: uppercase;
 }
@@ -108,7 +108,7 @@
   font-family: var(--cg-mono);
   font-size: 12px;
   font-weight: 800;
-  letter-spacing: .14em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--cg-on-charcoal);
 }
@@ -157,7 +157,7 @@
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: .12em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: rgba(235, 235, 245, 0.55);
 }
@@ -231,7 +231,7 @@
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .14em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--cg-muted);
 }

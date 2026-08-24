@@ -105,12 +105,15 @@ export default function RequestLogs() {
   }, [items, method, query, severity])
 
   const clearLogs = async () => {
-    if (!(await confirm({
-      title: '清空请求日志',
-      description: '确定清空请求日志？本次清空请求会成为新的第一条请求记录。',
-      confirmLabel: '清空日志',
-      destructive: true,
-    }))) return
+    if (
+      !(await confirm({
+        title: '清空请求日志',
+        description: '确定清空请求日志？本次清空请求会成为新的第一条请求记录。',
+        confirmLabel: '清空日志',
+        destructive: true,
+      }))
+    )
+      return
     try {
       await api.clearRequestLogs()
       await load()
@@ -123,8 +126,14 @@ export default function RequestLogs() {
     <div className="cg-logs">
       <div className="cg-logs-toolbar">
         <div className="cg-logs-toolbar-group">
-          <span className="cg-pill">显示最新 {items.length} / {windowSize} 行</span>
-          {status ? <span className="cg-pill">{formatBytes(status.usage_bytes)} / {formatBytes(status.max_bytes)}</span> : null}
+          <span className="cg-pill">
+            显示最新 {items.length} / {windowSize} 行
+          </span>
+          {status ? (
+            <span className="cg-pill">
+              {formatBytes(status.usage_bytes)} / {formatBytes(status.max_bytes)}
+            </span>
+          ) : null}
           {status?.dropped ? <span className="cg-status is-red">丢弃 {status.dropped}</span> : null}
         </div>
         <div className="cg-logs-toolbar-group">
@@ -132,12 +141,23 @@ export default function RequestLogs() {
           <Select
             value={String(windowSize)}
             onValueChange={(value) => setWindowSize(Number(value) as RequestWindow)}
-            items={REQUEST_WINDOW_OPTIONS.map((value) => ({ value: String(value), label: `${value} 行` }))}
+            items={REQUEST_WINDOW_OPTIONS.map((value) => ({
+              value: String(value),
+              label: `${value} 行`,
+            }))}
           >
-            <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectGroup>
-              {REQUEST_WINDOW_OPTIONS.map((value) => <SelectItem key={value} value={String(value)}>{value} 行</SelectItem>)}
-            </SelectGroup></SelectContent>
+            <SelectTrigger className="w-24">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {REQUEST_WINDOW_OPTIONS.map((value) => (
+                  <SelectItem key={value} value={String(value)}>
+                    {value} 行
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
           </Select>
           <Label className="cg-log-label">刷新</Label>
           <Select
@@ -145,10 +165,18 @@ export default function RequestLogs() {
             onValueChange={(value) => setRefreshSeconds(Number(value) as RefreshSeconds)}
             items={REFRESH_OPTIONS.map((option) => ({ ...option, value: String(option.value) }))}
           >
-            <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectGroup>
-              {REFRESH_OPTIONS.map((option) => <SelectItem key={option.value} value={String(option.value)}>{option.label}</SelectItem>)}
-            </SelectGroup></SelectContent>
+            <SelectTrigger className="w-28">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {REFRESH_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
           </Select>
           <Button variant="outline" size="sm" onClick={() => void load()}>
             <RefreshCwIcon data-icon="inline-start" />
@@ -166,56 +194,108 @@ export default function RequestLogs() {
       <div className="cg-card cg-log-filters">
         <div className="cg-log-filter-item">
           <Label className="cg-log-label">程度</Label>
-          <Select value={severity || null} onValueChange={(value) => setSeverity((value as LogSeverity) ?? '')}>
-            <SelectTrigger className="w-28"><SelectValue placeholder="全部" /></SelectTrigger>
-            <SelectContent><SelectGroup>
-              <SelectItem value="debug">调试</SelectItem>
-              <SelectItem value="info">信息</SelectItem>
-              <SelectItem value="warning">警告</SelectItem>
-              <SelectItem value="error">错误</SelectItem>
-            </SelectGroup></SelectContent>
+          <Select
+            value={severity || null}
+            onValueChange={(value) => setSeverity((value as LogSeverity) ?? '')}
+          >
+            <SelectTrigger className="w-28">
+              <SelectValue placeholder="全部" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                <SelectItem value="debug">调试</SelectItem>
+                <SelectItem value="info">信息</SelectItem>
+                <SelectItem value="warning">警告</SelectItem>
+                <SelectItem value="error">错误</SelectItem>
+              </SelectGroup>
+            </SelectContent>
           </Select>
         </div>
         <div className="cg-log-filter-item">
           <Label className="cg-log-label">方法</Label>
-          <Select value={method || null} onValueChange={(value) => setMethod(value ? String(value) : '')}>
-            <SelectTrigger className="w-28"><SelectValue placeholder="全部" /></SelectTrigger>
-            <SelectContent><SelectGroup>
-              {METHODS.map((value) => <SelectItem key={value} value={value}>{value}</SelectItem>)}
-            </SelectGroup></SelectContent>
+          <Select
+            value={method || null}
+            onValueChange={(value) => setMethod(value ? String(value) : '')}
+          >
+            <SelectTrigger className="w-28">
+              <SelectValue placeholder="全部" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {METHODS.map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {value}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
           </Select>
         </div>
         <div className="cg-log-filter-item">
-          <Label htmlFor="request-query" className="cg-log-label">当前窗口过滤</Label>
-          <Input id="request-query" className="w-64" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="路径 / 参数 / IP / 请求 ID" />
+          <Label htmlFor="request-query" className="cg-log-label">
+            当前窗口过滤
+          </Label>
+          <Input
+            id="request-query"
+            className="w-64"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="路径 / 参数 / IP / 请求 ID"
+          />
         </div>
       </div>
 
       <Table>
-          <TableHeader>
+        <TableHeader>
+          <TableRow>
+            <TableHead>时间</TableHead>
+            <TableHead>程度</TableHead>
+            <TableHead>方法</TableHead>
+            <TableHead>结果</TableHead>
+            <TableHead>路径 / 动作</TableHead>
+            <TableHead>耗时</TableHead>
+            <TableHead>来源</TableHead>
+            <TableHead>参数 / 错误</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {loading ? (
             <TableRow>
-              <TableHead>时间</TableHead>
-              <TableHead>程度</TableHead>
-              <TableHead>方法</TableHead>
-              <TableHead>结果</TableHead>
-              <TableHead>路径 / 动作</TableHead>
-              <TableHead>耗时</TableHead>
-              <TableHead>来源</TableHead>
-              <TableHead>参数 / 错误</TableHead>
+              <TableCell colSpan={8} className="text-center text-muted-foreground">
+                加载中…
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground">加载中…</TableCell></TableRow>
-            ) : visibleItems.length === 0 ? (
-              <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground">当前窗口暂无匹配记录</TableCell></TableRow>
-            ) : visibleItems.map((entry) => (
+          ) : visibleItems.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={8} className="text-center text-muted-foreground">
+                当前窗口暂无匹配记录
+              </TableCell>
+            </TableRow>
+          ) : (
+            visibleItems.map((entry) => (
               <TableRow key={entry.request_id}>
-                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(entry.timestamp, timezone)}</TableCell>
-                <TableCell><span className={cn('cg-status', severityTone(entry.severity))}>{entry.severity}</span></TableCell>
-                <TableCell className="font-mono text-xs">{entry.transport === 'websocket' ? 'WS' : entry.method}</TableCell>
+                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                  {formatDateTime(entry.timestamp, timezone)}
+                </TableCell>
                 <TableCell>
-                  <span className={cn('cg-status', entry.severity === 'error' ? 'is-red' : entry.severity === 'warning' ? 'is-muted' : 'is-lime')}>
+                  <span className={cn('cg-status', severityTone(entry.severity))}>
+                    {entry.severity}
+                  </span>
+                </TableCell>
+                <TableCell className="font-mono text-xs">
+                  {entry.transport === 'websocket' ? 'WS' : entry.method}
+                </TableCell>
+                <TableCell>
+                  <span
+                    className={cn(
+                      'cg-status',
+                      entry.severity === 'error'
+                        ? 'is-red'
+                        : entry.severity === 'warning'
+                          ? 'is-muted'
+                          : 'is-lime',
+                    )}
+                  >
                     {entry.rpc_code || entry.http_status || '-'}
                   </span>
                 </TableCell>
@@ -224,20 +304,31 @@ export default function RequestLogs() {
                     <span className="truncate text-sm" title={entry.path || entry.rpc_type}>
                       {entry.path || entry.rpc_type}
                     </span>
-                    <span className="truncate font-mono text-xs text-muted-foreground" title={entry.route || entry.trace_id}>
+                    <span
+                      className="truncate font-mono text-xs text-muted-foreground"
+                      title={entry.route || entry.trace_id}
+                    >
                       {entry.route || `trace ${entry.trace_id}`}
                     </span>
                   </div>
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-xs">{entry.duration_ms} ms</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{entry.operator || entry.ip || '-'}{entry.operator && entry.ip ? ` · ${entry.ip}` : ''}</TableCell>
-                <TableCell className="max-w-72 truncate font-mono text-xs text-muted-foreground" title={entry.error_summary || JSON.stringify(entry.attributes ?? {})}>
-                  {entry.error_summary || (entry.attributes ? JSON.stringify(entry.attributes) : '-')}
+                <TableCell className="text-xs text-muted-foreground">
+                  {entry.operator || entry.ip || '-'}
+                  {entry.operator && entry.ip ? ` · ${entry.ip}` : ''}
+                </TableCell>
+                <TableCell
+                  className="max-w-72 truncate font-mono text-xs text-muted-foreground"
+                  title={entry.error_summary || JSON.stringify(entry.attributes ?? {})}
+                >
+                  {entry.error_summary ||
+                    (entry.attributes ? JSON.stringify(entry.attributes) : '-')}
                 </TableCell>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            ))
+          )}
+        </TableBody>
+      </Table>
       <p className="cg-log-note">筛选仅作用于当前显示窗口，不扫描全部请求日志文件。</p>
     </div>
   )

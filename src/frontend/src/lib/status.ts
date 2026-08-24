@@ -43,10 +43,19 @@ export function severityTone(severity: LogSeverity): CgStatusTone {
 /** serverTestStatusLabel 服务器测试任务/条目状态 → 中文标签；未知状态原样返回。 */
 export function serverTestStatusLabel(status: string): string {
   const labels: Record<string, string> = {
-    queued: '等待 Agent', accepted: 'Agent 已接收', running: '正在测试', succeeded: '测试完成',
-    completed_with_errors: '部分项目异常', failed: '测试失败', pending: '等待中',
-    available: '可用', limited: '部分可用', unavailable: '不可用',
-    provider_access_unavailable: '无公开访问方式', clean: '正常', listed: '已列入名单',
+    queued: '等待 Agent',
+    accepted: 'Agent 已接收',
+    running: '正在测试',
+    succeeded: '测试完成',
+    completed_with_errors: '部分项目异常',
+    failed: '测试失败',
+    pending: '等待中',
+    available: '可用',
+    limited: '部分可用',
+    unavailable: '不可用',
+    provider_access_unavailable: '无公开访问方式',
+    clean: '正常',
+    listed: '已列入名单',
   }
   return labels[status] ?? status
 }
@@ -59,7 +68,9 @@ export function serverTestStatusBadge(status: string): 'destructive' | 'secondar
 }
 
 /** earthLinkColorKey 地球链路状态 → 调色板键；active/degraded/failed 之外一律按 pending。 */
-export function earthLinkColorKey(status: string): 'linkActive' | 'linkDegraded' | 'linkFailed' | 'linkPending' {
+export function earthLinkColorKey(
+  status: string,
+): 'linkActive' | 'linkDegraded' | 'linkFailed' | 'linkPending' {
   if (status === 'active') return 'linkActive'
   if (status === 'degraded') return 'linkDegraded'
   if (status === 'failed') return 'linkFailed'

@@ -70,7 +70,9 @@
   font-weight: 650;
   color: var(--cg-ink);
   cursor: pointer;
-  transition: transform 160ms var(--cg-ease), background-color 160ms var(--cg-ease);
+  transition:
+    transform 160ms var(--cg-ease),
+    background-color 160ms var(--cg-ease);
 }
 
 .cg-groups-check-row:hover {
@@ -86,6 +88,6 @@
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   color: var(--cg-muted);
 }

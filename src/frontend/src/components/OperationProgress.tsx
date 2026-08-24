@@ -98,7 +98,12 @@ export default function OperationProgress({
             )}
             <div className="mt-4 flex items-center justify-between">
               {autoClose && <span className="text-xs text-muted-foreground">1 秒后自动关闭</span>}
-              <Button variant="outline" size="sm" onClick={onClose} className={autoClose ? '' : 'ml-auto'}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={onClose}
+                className={autoClose ? '' : 'ml-auto'}
+              >
                 关闭
               </Button>
             </div>

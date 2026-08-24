@@ -4,7 +4,14 @@ import { CoinsIcon } from 'lucide-react'
 import { CountryFlag } from '@/components/CountryFlag'
 import { Chart, type ChartOption } from '@/components/echarts'
 import { EmptyState, LoadingState, Notice } from '@/components/PagePrimitives'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
 import { useTheme } from '@/lib/theme-context'
 import type {
@@ -32,7 +39,10 @@ import {
   type ChartThemeColors,
 } from './costs-shared'
 
-function costsOfEstimated(server: BillingEstimatedServerStats, rateMode: BillingStatsRateMode): number[] {
+function costsOfEstimated(
+  server: BillingEstimatedServerStats,
+  rateMode: BillingStatsRateMode,
+): number[] {
   return rateMode === 'custom' && server.estimated_costs_custom
     ? server.estimated_costs_custom
     : server.estimated_costs_public
@@ -42,9 +52,16 @@ function ratesOfEstimated(
   server: BillingEstimatedServerStats,
   rateMode: BillingStatsRateMode,
 ): { monthly: number; annual: number; daily: number } {
-  const monthly = rateMode === 'custom' ? server.monthly_custom_minor ?? server.monthly_minor : server.monthly_minor
-  const annual = rateMode === 'custom' ? server.annual_custom_minor ?? server.annual_minor : server.annual_minor
-  const daily = rateMode === 'custom' ? server.daily_custom_minor ?? server.daily_minor : server.daily_minor
+  const monthly =
+    rateMode === 'custom'
+      ? (server.monthly_custom_minor ?? server.monthly_minor)
+      : server.monthly_minor
+  const annual =
+    rateMode === 'custom'
+      ? (server.annual_custom_minor ?? server.annual_minor)
+      : server.annual_minor
+  const daily =
+    rateMode === 'custom' ? (server.daily_custom_minor ?? server.daily_minor) : server.daily_minor
   return { monthly, annual, daily }
 }
 
@@ -59,7 +76,10 @@ function estimateOf(
   return granularity === 'year' ? annual : granularity === 'month' ? monthly : daily
 }
 
-function conversionBasis(server: BillingEstimatedServerStats, granularity: BillingStatsGranularity): string {
+function conversionBasis(
+  server: BillingEstimatedServerStats,
+  granularity: BillingStatsGranularity,
+): string {
   const { interval_unit: unit, interval_count: count } = server
   if (granularity === 'day') {
     if (unit === 'day' && count === 1) return '日付'
@@ -98,7 +118,9 @@ function formulaTitle(server: BillingEstimatedServerStats): string {
     case 'year':
       return '月成本 = 年成本 ÷ 12；日成本 = 月成本 ÷ 30'
     case 'month':
-      return server.interval_count === 3 ? '季付：年成本 = 季付 × 4；月成本 = 季付 ÷ 3；日成本 = 月成本 ÷ 30' : '年成本 = 月成本 × 12；日成本 = 月成本 ÷ 30'
+      return server.interval_count === 3
+        ? '季付：年成本 = 季付 × 4；月成本 = 季付 ÷ 3；日成本 = 月成本 ÷ 30'
+        : '年成本 = 月成本 × 12；日成本 = 月成本 ÷ 30'
     default:
       return '日成本 = 日付金额 ÷ 周期天数；月成本 = 日成本 × 30；年成本 = 日成本 × 360'
   }
@@ -123,24 +145,30 @@ export default function EstimatedCostsTab() {
     setChartColors(chartThemeColors())
   }, [theme])
 
-  const load = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const result = await api.billingStatsEstimated({
-        from,
-        to,
-        granularity,
-        rate_mode: rateMode,
-      }, signal ? { signal, display: 'silent' } : { display: 'silent' })
-      if (signal?.aborted) return
-      setStats(result)
-      setError('')
-    } catch (err) {
-      if (signal?.aborted) return
-      setError(errorMessage(err))
-    } finally {
-      if (!signal?.aborted) setLoading(false)
-    }
-  }, [from, to, granularity, rateMode])
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        const result = await api.billingStatsEstimated(
+          {
+            from,
+            to,
+            granularity,
+            rate_mode: rateMode,
+          },
+          signal ? { signal, display: 'silent' } : { display: 'silent' },
+        )
+        if (signal?.aborted) return
+        setStats(result)
+        setError('')
+      } catch (err) {
+        if (signal?.aborted) return
+        setError(errorMessage(err))
+      } finally {
+        if (!signal?.aborted) setLoading(false)
+      }
+    },
+    [from, to, granularity, rateMode],
+  )
 
   useEffect(() => {
     const controller = new AbortController()
@@ -181,42 +209,55 @@ export default function EstimatedCostsTab() {
   const rows = useMemo(() => {
     if (!stats) return []
     const totalAll = stats.servers.reduce(
-      (sum, server) => sum + costsOfEstimated(server, rateMode).reduce((acc, value) => acc + value, 0),
+      (sum, server) =>
+        sum + costsOfEstimated(server, rateMode).reduce((acc, value) => acc + value, 0),
       0,
     )
-    return stats.servers.map((server) => {
-      const costs = costsOfEstimated(server, rateMode)
-      const total = costs.reduce((sum, value) => sum + value, 0)
-      return {
-        name: server.alias,
-        server,
-        total,
-        share: totalAll > 0 ? total / totalAll : 0,
-        daily: rateMode === 'custom' ? server.daily_custom_minor ?? server.daily_minor : server.daily_minor,
-      }
-    }).sort((a, b) => {
-      const left = a[sort.key]
-      const right = b[sort.key]
-      if (typeof left === 'string' && typeof right === 'string') {
-        return left.localeCompare(right) * sort.dir
-      }
-      return ((left as number) - (right as number)) * sort.dir
-    })
+    return stats.servers
+      .map((server) => {
+        const costs = costsOfEstimated(server, rateMode)
+        const total = costs.reduce((sum, value) => sum + value, 0)
+        return {
+          name: server.alias,
+          server,
+          total,
+          share: totalAll > 0 ? total / totalAll : 0,
+          daily:
+            rateMode === 'custom'
+              ? (server.daily_custom_minor ?? server.daily_minor)
+              : server.daily_minor,
+        }
+      })
+      .sort((a, b) => {
+        const left = a[sort.key]
+        const right = b[sort.key]
+        if (typeof left === 'string' && typeof right === 'string') {
+          return left.localeCompare(right) * sort.dir
+        }
+        return ((left as number) - (right as number)) * sort.dir
+      })
   }, [stats, rateMode, sort])
 
   const totalAll = useMemo(() => rows.reduce((sum, row) => sum + row.total, 0), [rows])
   const dailyTotal = useMemo(() => rows.reduce((sum, row) => sum + row.daily, 0), [rows])
   const monthlyTotal = useMemo(
-    () => (stats ? stats.servers.reduce((sum, server) => sum + ratesOfEstimated(server, rateMode).monthly, 0) : 0),
+    () =>
+      stats
+        ? stats.servers.reduce((sum, server) => sum + ratesOfEstimated(server, rateMode).monthly, 0)
+        : 0,
     [stats, rateMode],
   )
   const annualTotal = useMemo(
-    () => (stats ? stats.servers.reduce((sum, server) => sum + ratesOfEstimated(server, rateMode).annual, 0) : 0),
+    () =>
+      stats
+        ? stats.servers.reduce((sum, server) => sum + ratesOfEstimated(server, rateMode).annual, 0)
+        : 0,
     [stats, rateMode],
   )
-  const totals = rateMode === 'custom' && stats?.estimated_totals_custom
-    ? stats.estimated_totals_custom
-    : stats?.estimated_totals_public ?? []
+  const totals =
+    rateMode === 'custom' && stats?.estimated_totals_custom
+      ? stats.estimated_totals_custom
+      : (stats?.estimated_totals_public ?? [])
 
   const reportingCurrency = stats?.reporting_currency ?? 'CNY'
 
@@ -245,7 +286,11 @@ export default function EstimatedCostsTab() {
         onPreset={applyPreset}
         onRateMode={(value) => setRateMode(value)}
       />
-      {error ? <Notice tone="danger" title="计算成本加载失败">{error}</Notice> : null}
+      {error ? (
+        <Notice tone="danger" title="计算成本加载失败">
+          {error}
+        </Notice>
+      ) : null}
       {loading && !stats ? (
         <LoadingState className="py-16">正在估算成本…</LoadingState>
       ) : stats && stats.servers.length === 0 ? (
@@ -261,25 +306,33 @@ export default function EstimatedCostsTab() {
               <span className="cg-metric-value">{money(dailyTotal, reportingCurrency)}</span>
               <span className="cg-metric-copy">
                 <span className="cg-metric-label">估算日成本</span>
-                <span className="cg-metric-detail">PER DAY / {reportingCurrency} · 月成本 ÷ 30 天</span>
+                <span className="cg-metric-detail">
+                  PER DAY / {reportingCurrency} · 月成本 ÷ 30 天
+                </span>
               </span>
             </article>
             <article className="cg-metric">
               <span className="cg-metric-value">{money(monthlyTotal, reportingCurrency)}</span>
               <span className="cg-metric-copy">
                 <span className="cg-metric-label">估算月成本</span>
-                <span className="cg-metric-detail">PER MONTH / {reportingCurrency} · 月付实价，其余估算折算</span>
+                <span className="cg-metric-detail">
+                  PER MONTH / {reportingCurrency} · 月付实价，其余估算折算
+                </span>
               </span>
             </article>
             <article className="cg-metric">
               <span className="cg-metric-value">{money(annualTotal, reportingCurrency)}</span>
               <span className="cg-metric-copy">
                 <span className="cg-metric-label">估算年成本</span>
-                <span className="cg-metric-detail">PER YEAR / {reportingCurrency} · 年付实价，其余估算折算</span>
+                <span className="cg-metric-detail">
+                  PER YEAR / {reportingCurrency} · 年付实价，其余估算折算
+                </span>
               </span>
             </article>
             <article className="cg-metric">
-              <span className="cg-metric-value">{String(stats.servers.length).padStart(2, '0')}</span>
+              <span className="cg-metric-value">
+                {String(stats.servers.length).padStart(2, '0')}
+              </span>
               <span className="cg-metric-copy">
                 <span className="cg-metric-label">启用计费服务器</span>
                 <span className="cg-metric-detail">SERVERS / 计费中</span>
@@ -287,31 +340,51 @@ export default function EstimatedCostsTab() {
             </article>
           </section>
 
-          <section className="cg-card cg-costs-chart-card" aria-labelledby="cg-costs-est-donut-heading">
+          <section
+            className="cg-card cg-costs-chart-card"
+            aria-labelledby="cg-costs-est-donut-heading"
+          >
             <header className="cg-costs-card-head">
               <div>
-                <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>COST / SHARE</span>
-                <h2 className="cg-title cg-costs-card-title" id="cg-costs-est-donut-heading">成本占比</h2>
+                <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>
+                  COST / SHARE
+                </span>
+                <h2 className="cg-title cg-costs-card-title" id="cg-costs-est-donut-heading">
+                  成本占比
+                </h2>
               </div>
             </header>
             <p className="cg-costs-card-desc">范围内各服务器估算成本占比。</p>
             <div className="cg-costs-chart-body">
-              {totalAll > 0
-                ? <Chart option={donutOption} className="h-80 w-full" />
-                : <EmptyState title="范围内暂无成本" description="调整时间范围后查看占比。" className="h-80" />}
+              {totalAll > 0 ? (
+                <Chart option={donutOption} className="h-80 w-full" />
+              ) : (
+                <EmptyState
+                  title="范围内暂无成本"
+                  description="调整时间范围后查看占比。"
+                  className="h-80"
+                />
+              )}
             </div>
           </section>
 
-          <section className="cg-card cg-costs-table-card" aria-labelledby="cg-costs-est-summary-heading">
+          <section
+            className="cg-card cg-costs-table-card"
+            aria-labelledby="cg-costs-est-summary-heading"
+          >
             <header className="cg-costs-card-head">
               <div>
-                <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>SERVERS / SUMMARY</span>
-                <h2 className="cg-title cg-costs-card-title" id="cg-costs-est-summary-heading">服务器汇总</h2>
+                <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>
+                  SERVERS / SUMMARY
+                </span>
+                <h2 className="cg-title cg-costs-card-title" id="cg-costs-est-summary-heading">
+                  服务器汇总
+                </h2>
               </div>
             </header>
             <p className="cg-costs-card-desc">
-              估算总成本 = 年成本 × 整年数 + 月成本 × 整月数 + 日成本 × 剩余天数；月成本按
-              30 天/月、年成本按 360 天/年折算。原价与周期以服务器币种展示；其余数值按{' '}
+              估算总成本 = 年成本 × 整年数 + 月成本 × 整月数 + 日成本 × 剩余天数；月成本按 30
+              天/月、年成本按 360 天/年折算。原价与周期以服务器币种展示；其余数值按{' '}
               {reportingCurrency} 估算，点击列头排序。
             </p>
             <div className="cg-costs-table-body">
@@ -320,8 +393,15 @@ export default function EstimatedCostsTab() {
                   <TableRow>
                     <TableHead>{header('name', '服务器')}</TableHead>
                     <TableHead className="text-right">原价 / 周期</TableHead>
-                    <TableHead className="text-right">{header('daily', `估算${GRANULARITY_LABEL[granularity]}成本 (${reportingCurrency})`)}</TableHead>
-                    <TableHead className="text-right">{header('total', `估算总成本 (${reportingCurrency})`)}</TableHead>
+                    <TableHead className="text-right">
+                      {header(
+                        'daily',
+                        `估算${GRANULARITY_LABEL[granularity]}成本 (${reportingCurrency})`,
+                      )}
+                    </TableHead>
+                    <TableHead className="text-right">
+                      {header('total', `估算总成本 (${reportingCurrency})`)}
+                    </TableHead>
                     <TableHead className="text-right">{header('share', '占比')}</TableHead>
                     <TableHead className="text-right">状态</TableHead>
                   </TableRow>
@@ -333,28 +413,53 @@ export default function EstimatedCostsTab() {
                       <TableRow key={server.server_id}>
                         <TableCell>
                           <span className="flex min-w-0 items-center gap-2">
-                            <CountryFlag code={server.country_code} label={server.country_code} className="rounded-[2px] text-base" />
-                            <span className="truncate font-medium" title={server.alias}>{server.alias}</span>
+                            <CountryFlag
+                              code={server.country_code}
+                              label={server.country_code}
+                              className="rounded-[2px] text-base"
+                            />
+                            <span className="truncate font-medium" title={server.alias}>
+                              {server.alias}
+                            </span>
                             {server.location ? (
-                              <span className="hidden truncate text-muted-foreground sm:inline">{server.location}</span>
+                              <span className="hidden truncate text-muted-foreground sm:inline">
+                                {server.location}
+                              </span>
                             ) : null}
                           </span>
                         </TableCell>
                         <TableCell className="text-right whitespace-nowrap">
                           <div className="tabular-nums">
                             {money(server.amount_minor, server.currency)} {server.currency}
-                            <span className="text-muted-foreground"> / {server.interval_count} {GRANULARITY_LABEL[server.interval_unit]}</span>
+                            <span className="text-muted-foreground">
+                              {' '}
+                              / {server.interval_count} {GRANULARITY_LABEL[server.interval_unit]}
+                            </span>
                           </div>
-                          <div className="text-xs text-muted-foreground tabular-nums" title={formulaTitle(server)}>
+                          <div
+                            className="text-xs text-muted-foreground tabular-nums"
+                            title={formulaTitle(server)}
+                          >
                             {formulaParts(server, rateMode, reportingCurrency, granularity)}
                           </div>
                         </TableCell>
-                        <TableCell className="text-right tabular-nums">{money(estimateOf(server, rateMode, granularity), reportingCurrency)}</TableCell>
-                        <TableCell className="text-right tabular-nums font-medium">{money(row.total, reportingCurrency)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{(row.share * 100).toFixed(1)}%</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {money(estimateOf(server, rateMode, granularity), reportingCurrency)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums font-medium">
+                          {money(row.total, reportingCurrency)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {(row.share * 100).toFixed(1)}%
+                        </TableCell>
                         <TableCell className="text-right">
                           {billingStatusLabel[server.status] ? (
-                            <span className={cn('cg-status', billingStatusTone[server.status] ?? 'is-muted')}>
+                            <span
+                              className={cn(
+                                'cg-status',
+                                billingStatusTone[server.status] ?? 'is-muted',
+                              )}
+                            >
                               {billingStatusLabel[server.status]}
                             </span>
                           ) : null}
@@ -367,15 +472,23 @@ export default function EstimatedCostsTab() {
             </div>
           </section>
 
-          <section className="cg-card cg-costs-table-card" aria-labelledby="cg-costs-est-matrix-heading">
+          <section
+            className="cg-card cg-costs-table-card"
+            aria-labelledby="cg-costs-est-matrix-heading"
+          >
             <header className="cg-costs-card-head">
               <div>
-                <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>COST / MATRIX</span>
-                <h2 className="cg-title cg-costs-card-title" id="cg-costs-est-matrix-heading">周期明细矩阵</h2>
+                <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>
+                  COST / MATRIX
+                </span>
+                <h2 className="cg-title cg-costs-card-title" id="cg-costs-est-matrix-heading">
+                  周期明细矩阵
+                </h2>
               </div>
             </header>
             <p className="cg-costs-card-desc">
-              行 = 周期，列 = 服务器；单元格为对应周期估算成本（{reportingCurrency}），行尾为周期合计。
+              行 = 周期，列 = 服务器；单元格为对应周期估算成本（{reportingCurrency}
+              ），行尾为周期合计。
             </p>
             <div className="cg-costs-table-body is-scroll">
               <Table>
@@ -383,7 +496,11 @@ export default function EstimatedCostsTab() {
                   <TableRow>
                     <TableHead className="sticky left-0 bg-card">周期</TableHead>
                     {stats.servers.map((server) => (
-                      <TableHead key={server.server_id} className="max-w-36 truncate text-right" title={server.alias}>
+                      <TableHead
+                        key={server.server_id}
+                        className="max-w-36 truncate text-right"
+                        title={server.alias}
+                      >
                         {server.alias}
                       </TableHead>
                     ))}

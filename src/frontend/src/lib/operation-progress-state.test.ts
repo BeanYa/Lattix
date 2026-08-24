@@ -31,7 +31,12 @@ function run(initial: ProgressState, events: ProgressEvent[]): ProgressState {
 }
 
 const running = observation()
-const doneClean = observation({ status: 'done', stage: 'regenerate', percent: 100, message: '完成' })
+const doneClean = observation({
+  status: 'done',
+  stage: 'regenerate',
+  percent: 100,
+  message: '完成',
+})
 const doneWithWarnings = observation({
   status: 'done',
   stage: 'regenerate',

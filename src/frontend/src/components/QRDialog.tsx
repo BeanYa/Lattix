@@ -10,7 +10,15 @@ import {
 } from '@/components/ui/dialog'
 
 // QRDialog 展示内容的二维码（订阅链接移动端扫码导入，§14）。
-export function QRDialog({ text, open, onClose }: { text: string; open: boolean; onClose: () => void }) {
+export function QRDialog({
+  text,
+  open,
+  onClose,
+}: {
+  text: string
+  open: boolean
+  onClose: () => void
+}) {
   const [generated, setGenerated] = useState<{ text: string; dataURL: string } | null>(null)
 
   useEffect(() => {

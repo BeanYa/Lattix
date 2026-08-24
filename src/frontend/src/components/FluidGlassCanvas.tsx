@@ -123,9 +123,15 @@ function clamp(value: number, min: number, max: number) {
 
 function hexToRgb(value: string) {
   const normalized = value.replace('#', '')
-  const numeric = Number.parseInt(normalized.length === 3
-    ? normalized.split('').map((part) => part + part).join('')
-    : normalized, 16)
+  const numeric = Number.parseInt(
+    normalized.length === 3
+      ? normalized
+          .split('')
+          .map((part) => part + part)
+          .join('')
+      : normalized,
+    16,
+  )
   return [((numeric >> 16) & 255) / 255, ((numeric >> 8) & 255) / 255, (numeric & 255) / 255]
 }
 
@@ -212,7 +218,9 @@ class FluidGlassRenderer {
     this.config = this.normalizeConfig(config)
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.intersectionObserver = new IntersectionObserver(
-      (entries) => { this.active = entries[0]?.isIntersecting !== false },
+      (entries) => {
+        this.active = entries[0]?.isIntersecting !== false
+      },
       { rootMargin: '80px' },
     )
     this.bindPointer()
@@ -256,19 +264,31 @@ class FluidGlassRenderer {
       lastTime = now
       this.mouseMix = 1
     }
-    this.element.addEventListener('pointerenter', (event) => {
-      this.pointerInside = true
-      update(event)
-    }, { signal, passive: true })
+    this.element.addEventListener(
+      'pointerenter',
+      (event) => {
+        this.pointerInside = true
+        update(event)
+      },
+      { signal, passive: true },
+    )
     this.element.addEventListener('pointermove', update, { signal, passive: true })
-    this.element.addEventListener('pointerleave', () => {
-      this.pointerInside = false
-      this.mouseTarget = [0.76, 0.46]
-    }, { signal, passive: true })
-    this.element.addEventListener('pointerdown', (event) => {
-      this.mouseMix = 1.2
-      update(event)
-    }, { signal, passive: true })
+    this.element.addEventListener(
+      'pointerleave',
+      () => {
+        this.pointerInside = false
+        this.mouseTarget = [0.76, 0.46]
+      },
+      { signal, passive: true },
+    )
+    this.element.addEventListener(
+      'pointerdown',
+      (event) => {
+        this.mouseMix = 1.2
+        update(event)
+      },
+      { signal, passive: true },
+    )
     this.canvas.addEventListener('webglcontextlost', (event) => event.preventDefault(), { signal })
   }
 
@@ -298,14 +318,28 @@ class FluidGlassRenderer {
       gl.useProgram(this.program)
       this.buffer = gl.createBuffer()
       gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer)
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]), gl.STATIC_DRAW)
+      gl.bufferData(
+        gl.ARRAY_BUFFER,
+        new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
+        gl.STATIC_DRAW,
+      )
       const position = gl.getAttribLocation(this.program, 'a_position')
       gl.enableVertexAttribArray(position)
       gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
       ;[
-        'u_resolution', 'u_mouse', 'u_mouseVelocity', 'u_mouseMix', 'u_time',
-        'u_speed', 'u_intensity', 'u_pointer', 'u_seed', 'u_surfaceOpacity',
-        'u_colorA', 'u_colorB', 'u_colorC',
+        'u_resolution',
+        'u_mouse',
+        'u_mouseVelocity',
+        'u_mouseMix',
+        'u_time',
+        'u_speed',
+        'u_intensity',
+        'u_pointer',
+        'u_seed',
+        'u_surfaceOpacity',
+        'u_colorA',
+        'u_colorB',
+        'u_colorC',
       ].forEach((name) => this.uniforms.set(name, gl.getUniformLocation(this.program!, name)))
       this.resize()
       registerRenderer(this)
@@ -349,10 +383,17 @@ class FluidGlassRenderer {
     gl.useProgram(this.program)
     gl.uniform2f(this.uniforms.get('u_resolution') ?? null, this.canvas.width, this.canvas.height)
     gl.uniform2f(this.uniforms.get('u_mouse') ?? null, this.mouse[0], this.mouse[1])
-    gl.uniform2f(this.uniforms.get('u_mouseVelocity') ?? null, this.mouseVelocity[0], this.mouseVelocity[1])
+    gl.uniform2f(
+      this.uniforms.get('u_mouseVelocity') ?? null,
+      this.mouseVelocity[0],
+      this.mouseVelocity[1],
+    )
     gl.uniform1f(this.uniforms.get('u_mouseMix') ?? null, clamp(this.mouseMix, 0, 1.2))
     gl.uniform1f(this.uniforms.get('u_time') ?? null, now * 0.001 + this.index * 3.73)
-    gl.uniform1f(this.uniforms.get('u_speed') ?? null, reduced ? Math.min(config.speed, 0.08) : config.speed)
+    gl.uniform1f(
+      this.uniforms.get('u_speed') ?? null,
+      reduced ? Math.min(config.speed, 0.08) : config.speed,
+    )
     gl.uniform1f(this.uniforms.get('u_intensity') ?? null, config.intensity)
     gl.uniform1f(this.uniforms.get('u_pointer') ?? null, config.pointer)
     gl.uniform1f(this.uniforms.get('u_seed') ?? null, config.seed)
@@ -366,8 +407,16 @@ class FluidGlassRenderer {
 
   private destroyGl() {
     if (!this.gl) return
-    try { if (this.program) this.gl.deleteProgram(this.program) } catch { /* Context can already be lost. */ }
-    try { if (this.buffer) this.gl.deleteBuffer(this.buffer) } catch { /* Context can already be lost. */ }
+    try {
+      if (this.program) this.gl.deleteProgram(this.program)
+    } catch {
+      /* Context can already be lost. */
+    }
+    try {
+      if (this.buffer) this.gl.deleteBuffer(this.buffer)
+    } catch {
+      /* Context can already be lost. */
+    }
     liveContexts = Math.max(0, liveContexts - 1)
     this.gl = null
     this.program = null
@@ -383,7 +432,10 @@ class FluidGlassRenderer {
   }
 }
 
-export default function FluidGlassCanvas({ config, index }: {
+export default function FluidGlassCanvas({
+  config,
+  index,
+}: {
   config: FluidGlassConfig
   index: number
 }) {
@@ -418,7 +470,10 @@ export default function FluidGlassCanvas({ config, index }: {
         data-fluid-mode={mode}
         aria-hidden="true"
       />
-      <span className={cn('fluid-metric-plume', mode === 'webgl' && 'is-hidden')} aria-hidden="true" />
+      <span
+        className={cn('fluid-metric-plume', mode === 'webgl' && 'is-hidden')}
+        aria-hidden="true"
+      />
     </>
   )
 }

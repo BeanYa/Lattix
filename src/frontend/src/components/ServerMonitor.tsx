@@ -43,12 +43,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
 import {
@@ -64,7 +59,13 @@ import { formatByteRate, formatDateTime, humanizeBytes } from '@/lib/format'
 import { formatPortRange } from '@/lib/ports'
 import { isServerOnline, serverConnectionLabel } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
-import type { ConvertedCost, Server, ServerConnectionState, ServerMetrics, ServerMetricSeries } from '@/lib/types'
+import type {
+  ConvertedCost,
+  Server,
+  ServerConnectionState,
+  ServerMetrics,
+  ServerMetricSeries,
+} from '@/lib/types'
 
 type Health = 'normal' | 'warning' | 'critical'
 
@@ -119,11 +120,12 @@ function serverConnectionNotice(state: ServerConnectionState): string {
 }
 
 function convertedRateLabel(cost: ConvertedCost): string {
-  const label = cost.source === 'identity'
-    ? '无需换算'
-    : cost.source === 'custom_anchor'
-      ? `自定义锚点 ${cost.anchor_currency ?? ''}`.trim()
-      : 'Frankfurter'
+  const label =
+    cost.source === 'identity'
+      ? '无需换算'
+      : cost.source === 'custom_anchor'
+        ? `自定义锚点 ${cost.anchor_currency ?? ''}`.trim()
+        : 'Frankfurter'
   return cost.rate_date ? `${label} · ${cost.rate_date}` : label
 }
 
@@ -132,7 +134,15 @@ function formatConvertedCost(cost: ConvertedCost): string {
   return `${(cost.amount_minor / divisor).toLocaleString()} ${cost.currency}`
 }
 
-function TrafficSegmentBar({ ratio, complete, unlimited }: { ratio: number; complete: boolean; unlimited: boolean }) {
+function TrafficSegmentBar({
+  ratio,
+  complete,
+  unlimited,
+}: {
+  ratio: number
+  complete: boolean
+  unlimited: boolean
+}) {
   const segments = 24
   const clamped = Math.min(100, Math.max(0, ratio))
   const filled = unlimited ? segments : clamped === 0 ? 0 : Math.ceil((clamped / 100) * segments)
@@ -169,7 +179,14 @@ function TrafficUsage({ server }: { server: Server }) {
   return (
     <div className="space-y-1.5" aria-label="本周期流量">
       <div className="flex items-center justify-between gap-3 text-xs tabular-nums">
-        <span className={cn('font-medium', alert && (ratio >= 80 ? 'text-destructive' : 'text-warning'))}>{formatTrafficBytes(traffic.used_bytes)}</span>
+        <span
+          className={cn(
+            'font-medium',
+            alert && (ratio >= 80 ? 'text-destructive' : 'text-warning'),
+          )}
+        >
+          {formatTrafficBytes(traffic.used_bytes)}
+        </span>
         <span className="text-muted-foreground">
           <span aria-label={traffic.quota_bytes === null ? '无限额度' : undefined}>
             {traffic.quota_bytes === null ? '∞' : formatTrafficBytes(traffic.quota_bytes)}
@@ -177,8 +194,14 @@ function TrafficUsage({ server }: { server: Server }) {
           <span className="ml-1">· {traffic.next_reset_on} 重置</span>
         </span>
       </div>
-      <TrafficSegmentBar ratio={ratio} complete={traffic.complete} unlimited={traffic.quota_bytes === null} />
-      {!traffic.complete ? <span className="text-[11px] text-muted-foreground">本周期数据不完整</span> : null}
+      <TrafficSegmentBar
+        ratio={ratio}
+        complete={traffic.complete}
+        unlimited={traffic.quota_bytes === null}
+      />
+      {!traffic.complete ? (
+        <span className="text-[11px] text-muted-foreground">本周期数据不完整</span>
+      ) : null}
     </div>
   )
 }
@@ -270,7 +293,9 @@ function LatencyStrip({ samples, timezone }: { samples: ServerMetrics[]; timezon
         event.preventDefault()
         event.stopPropagation()
         const direction = event.key === 'ArrowLeft' ? -1 : 1
-        setActiveIndex((current) => Math.min(cells.length - 1, Math.max(0, (current ?? cells.length - 1) + direction)))
+        setActiveIndex((current) =>
+          Math.min(cells.length - 1, Math.max(0, (current ?? cells.length - 1) + direction)),
+        )
       }}
     >
       {cells.map((sample, index) => {
@@ -279,7 +304,8 @@ function LatencyStrip({ samples, timezone }: { samples: ServerMetrics[]; timezon
         const missing = sample === null
         const timedOut = !missing && latency === null
         const state = missing || timedOut ? null : health(latencyValue, 100, 300)
-        const distance = activeIndex === null ? Number.POSITIVE_INFINITY : Math.abs(activeIndex - index)
+        const distance =
+          activeIndex === null ? Number.POSITIVE_INFINITY : Math.abs(activeIndex - index)
         const label = missing
           ? '无数据'
           : timedOut
@@ -336,7 +362,8 @@ function LatencyStrip({ samples, timezone }: { samples: ServerMetrics[]; timezon
                 state === 'normal' && 'is-ok',
                 state === 'warning' && 'is-warn',
                 state === 'critical' && 'is-crit',
-                distance === 0 && '-translate-y-1 scale-x-[1.45] scale-y-[1.8] ring-1 ring-background shadow-md',
+                distance === 0 &&
+                  '-translate-y-1 scale-x-[1.45] scale-y-[1.8] ring-1 ring-background shadow-md',
                 distance === 1 && '-translate-y-0.5 scale-x-[1.2] scale-y-[1.4]',
                 distance === 2 && 'scale-x-[1.08] scale-y-[1.15]',
               )}
@@ -412,7 +439,8 @@ function ServerActions({
             <RotateCcwKeyIcon />
             {server.last_seen_at ? '刷新凭证' : '查看安装命令'}
           </DropdownMenuItem>
-          {server.billing.enabled && ['due_today', 'assumed_valid', 'expired'].includes(server.billing.status) ? (
+          {server.billing.enabled &&
+          ['due_today', 'assumed_valid', 'expired'].includes(server.billing.status) ? (
             <DropdownMenuItem onClick={() => onRenew(server)}>
               <CalendarCheckIcon />
               续费确认
@@ -420,7 +448,9 @@ function ServerActions({
           ) : null}
           {server.billing.provider?.website_url ? (
             <DropdownMenuItem
-              onClick={() => window.open(server.billing.provider?.website_url, '_blank', 'noopener,noreferrer')}
+              onClick={() =>
+                window.open(server.billing.provider?.website_url, '_blank', 'noopener,noreferrer')
+              }
             >
               <ExternalLinkIcon />
               打开服务商官网
@@ -453,7 +483,8 @@ function ServerCard({
 }) {
   const metrics = server.metrics
   const online = isServerOnline(server)
-  const transitioning = server.connection_state === 'connecting' || server.connection_state === 'reconnecting'
+  const transitioning =
+    server.connection_state === 'connecting' || server.connection_state === 'reconnecting'
   const publicAddress = server.address || server.learned_addr
   const memoryPercent = metrics ? percent(metrics.mem_used, metrics.mem_total) : 0
   const diskPercent = metrics ? percent(metrics.disk_used, metrics.disk_total) : 0
@@ -509,7 +540,9 @@ function ServerCard({
         <CardDescription className="flex min-w-0 flex-col gap-1 text-xs">
           <span className="flex min-w-0 items-center gap-2">
             <CountryFlag code={server.country_code} />
-            <span className="truncate">{server.location || server.country_code || '未设置地区'}</span>
+            <span className="truncate">
+              {server.location || server.country_code || '未设置地区'}
+            </span>
           </span>
           {server.config_drift ? (
             <span className="cg-status is-muted mt-1 w-fit">DRIFT / 配置漂移</span>
@@ -575,7 +608,9 @@ function ServerCard({
                   : '暂无可用遥测'}
             </span>
           </span>
-          {!online && metrics ? <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">历史数据</span> : null}
+          {!online && metrics ? (
+            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">历史数据</span>
+          ) : null}
         </div>
         {metrics ? (
           <>
@@ -633,7 +668,9 @@ function ServerCard({
             <div className="flex min-h-28 flex-col items-center justify-center gap-2 text-center">
               <ServerCogIcon className="size-6 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">
-				{isServerOnline(server) ? '等待 Agent 首次遥测' : serverConnectionLabel(server.connection_state)}
+                {isServerOnline(server)
+                  ? '等待 Agent 首次遥测'
+                  : serverConnectionLabel(server.connection_state)}
               </span>
             </div>
             <Separator />
@@ -669,7 +706,9 @@ function TrendChart({
   const chartRef = useRef<SVGSVGElement>(null)
   const [activePoint, setActivePoint] = useState<{ index: number; y: number } | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const values = series.flatMap((item) => item.values.filter((value): value is number => value !== null))
+  const values = series.flatMap((item) =>
+    item.values.filter((value): value is number => value !== null),
+  )
   const max = Math.max(1, ...values)
   const width = 480
   const height = 96
@@ -823,7 +862,9 @@ function TrendChart({
             ) : null}
           </svg>
         ) : (
-          <div className="flex h-24 items-center justify-center text-xs text-muted-foreground">暂无趋势数据</div>
+          <div className="flex h-24 items-center justify-center text-xs text-muted-foreground">
+            暂无趋势数据
+          </div>
         )}
         {activePoint ? (
           <div
@@ -836,7 +877,10 @@ function TrendChart({
               {formatDateTime(timestamps[activePoint.index], timezone)}
             </div>
             {series.map((item) => (
-              <div key={item.label} className="flex items-center justify-between gap-4 tabular-nums">
+              <div
+                key={item.label}
+                className="flex items-center justify-between gap-4 tabular-nums"
+              >
                 <span>{item.label}</span>
                 <span className="font-medium">{formatValue(item.values[activePoint.index])}</span>
               </div>
@@ -882,7 +926,8 @@ function DetailSheet({
   const load = useCallback(() => {
     if (!server) return
     setLoading(true)
-    api.serverMetricHistory(server.id)
+    api
+      .serverMetricHistory(server.id)
       .then(setHistory)
       .catch(() => setHistory([]))
       .finally(() => setLoading(false))
@@ -898,8 +943,12 @@ function DetailSheet({
   const cpu = history.map((sample) => sample.cpu_percent)
   const memory = history.map((sample) => percent(sample.mem_used, sample.mem_total))
   const disk = history.map((sample) => percent(sample.disk_used, sample.disk_total))
-  const tx = history.map((sample) => sample.network_tx_bps === null ? null : sample.network_tx_bps / 1024)
-  const rx = history.map((sample) => sample.network_rx_bps === null ? null : sample.network_rx_bps / 1024)
+  const tx = history.map((sample) =>
+    sample.network_tx_bps === null ? null : sample.network_tx_bps / 1024,
+  )
+  const rx = history.map((sample) =>
+    sample.network_rx_bps === null ? null : sample.network_rx_bps / 1024,
+  )
   const latency = history.map((sample) => sample.latency_ms)
   const timestamps = history.map((sample) => sample.updated_at)
   const metrics = server?.metrics
@@ -909,7 +958,12 @@ function DetailSheet({
       <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
         <SheetHeader className="border-b">
           <SheetTitle className="flex items-center gap-2">
-            <span className={cn('size-2 rounded-full bg-muted-foreground', isServerOnline(server) && 'bg-success')} />
+            <span
+              className={cn(
+                'size-2 rounded-full bg-muted-foreground',
+                isServerOnline(server) && 'bg-success',
+              )}
+            />
             {server?.alias ?? '服务器详情'}
           </SheetTitle>
           <SheetDescription>主机信息与最近 24 小时探针指标</SheetDescription>
@@ -926,7 +980,9 @@ function DetailSheet({
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">地址</dt>
-                <dd className="mt-1 font-mono text-xs">{server.address || server.learned_addr || '-'}</dd>
+                <dd className="mt-1 font-mono text-xs">
+                  {server.address || server.learned_addr || '-'}
+                </dd>
                 {server.addresses.length > 0 ? (
                   <ul className="mt-1.5 space-y-1">
                     {server.addresses.map((addr) => {
@@ -968,7 +1024,9 @@ function DetailSheet({
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">Agent / Xray</dt>
-                <dd className="mt-1">{server.agent_version ?? '-'} / {server.xray_version ?? '-'}</dd>
+                <dd className="mt-1">
+                  {server.agent_version ?? '-'} / {server.xray_version ?? '-'}
+                </dd>
                 {server.effective_xray_version && (
                   <span className="text-xs text-muted-foreground">
                     期望 {server.effective_xray_version}
@@ -990,11 +1048,22 @@ function DetailSheet({
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">流量额度</dt>
-                <dd className="mt-1">{server.traffic_plan.quota_bytes === null ? '无限' : formatTrafficBytes(server.traffic_plan.quota_bytes)}</dd>
+                <dd className="mt-1">
+                  {server.traffic_plan.quota_bytes === null
+                    ? '无限'
+                    : formatTrafficBytes(server.traffic_plan.quota_bytes)}
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">本周期流量</dt>
-                <dd className="mt-1">{formatTrafficBytes(server.traffic_plan.used_bytes)} · {server.traffic_plan.accounting_mode === 'bidirectional' ? '双向合计' : server.traffic_plan.accounting_mode === 'max' ? '取较大方向' : '仅出站'}</dd>
+                <dd className="mt-1">
+                  {formatTrafficBytes(server.traffic_plan.used_bytes)} ·{' '}
+                  {server.traffic_plan.accounting_mode === 'bidirectional'
+                    ? '双向合计'
+                    : server.traffic_plan.accounting_mode === 'max'
+                      ? '取较大方向'
+                      : '仅出站'}
+                </dd>
               </div>
               {server.billing.enabled ? (
                 <>
@@ -1004,7 +1073,18 @@ function DetailSheet({
                   </div>
                   <div>
                     <dt className="text-xs text-muted-foreground">费用</dt>
-                    <dd className="mt-1 tabular-nums">{(server.billing.amount_minor / (['JPY', 'KRW', 'ISK'].includes(server.billing.currency) ? 1 : 100)).toLocaleString()} {server.billing.currency} / {server.billing.interval_count} {server.billing.interval_unit === 'day' ? '天' : server.billing.interval_unit === 'year' ? '年' : '月'}</dd>
+                    <dd className="mt-1 tabular-nums">
+                      {(
+                        server.billing.amount_minor /
+                        (['JPY', 'KRW', 'ISK'].includes(server.billing.currency) ? 1 : 100)
+                      ).toLocaleString()}{' '}
+                      {server.billing.currency} / {server.billing.interval_count}{' '}
+                      {server.billing.interval_unit === 'day'
+                        ? '天'
+                        : server.billing.interval_unit === 'year'
+                          ? '年'
+                          : '月'}
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-muted-foreground">下次续费</dt>
@@ -1019,7 +1099,7 @@ function DetailSheet({
                     ? '已同步'
                     : server.agent_settings_status === 'failed'
                       ? '同步失败'
-                  : '待同步'}
+                      : '待同步'}
                 </dd>
               </div>
               {server.billing.enabled && server.billing.public_converted ? (
@@ -1029,14 +1109,16 @@ function DetailSheet({
                     <div>
                       <span className="block text-xs text-muted-foreground">公共汇率结果</span>
                       <span className="mt-0.5 block tabular-nums">
-                        {formatConvertedCost(server.billing.public_converted)} · {convertedRateLabel(server.billing.public_converted)}
+                        {formatConvertedCost(server.billing.public_converted)} ·{' '}
+                        {convertedRateLabel(server.billing.public_converted)}
                       </span>
                     </div>
                     {server.billing.custom_converted ? (
                       <div>
                         <span className="block text-xs text-muted-foreground">自定义汇率结果</span>
                         <span className="mt-0.5 block tabular-nums">
-                          {formatConvertedCost(server.billing.custom_converted)} · {convertedRateLabel(server.billing.custom_converted)}
+                          {formatConvertedCost(server.billing.custom_converted)} ·{' '}
+                          {convertedRateLabel(server.billing.custom_converted)}
                         </span>
                       </div>
                     ) : null}
@@ -1122,10 +1204,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
 
   if (props.servers.length === 0) {
     return (
-      <EmptyState
-        icon={<ServerCogIcon />}
-        description="暂无服务器，点击右上角“添加服务器”开始"
-      />
+      <EmptyState icon={<ServerCogIcon />} description="暂无服务器，点击右上角“添加服务器”开始" />
     )
   }
 

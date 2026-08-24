@@ -215,7 +215,8 @@ export class Requester {
         cleanup()
         lastError = normalizeError(error, requestId, traceId, abortSource())
         this.emit({ phase: 'finish', ...lifecycle, error: lastError })
-        const retryable = lastError.code === 'NETWORK_UNREACHABLE' || lastError.code === 'REQUEST_TIMEOUT'
+        const retryable =
+          lastError.code === 'NETWORK_UNREACHABLE' || lastError.code === 'REQUEST_TIMEOUT'
         if (attempt + 1 >= maxAttempts || !retryable) throw lastError
         const retryDelay = GET_RETRY_DELAYS_MS[Math.min(attempt, GET_RETRY_DELAYS_MS.length - 1)]
         if (!(await waitForRetry(retryDelay, options?.signal))) {
@@ -409,13 +410,9 @@ async function parseEnvelope<T>(
   }
 }
 
-async function parseJSON<T>(
-  response: Response,
-  requestId: string,
-  traceId: string,
-): Promise<T> {
+async function parseJSON<T>(response: Response, requestId: string, traceId: string): Promise<T> {
   try {
-    return await response.json() as T
+    return (await response.json()) as T
   } catch {
     throw new RequestError({
       kind: 'protocol',

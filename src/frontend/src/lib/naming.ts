@@ -59,11 +59,7 @@ function resolveToken(key: string, context: NameTemplateContext): string {
   const scoped = key.match(/^(ENTRY|EXIT|HOP\[(\d+)\])\.([A-Z][A-Z0-9_]*)(?:\[(\d+)\])?$/)
   if (scoped) {
     const index =
-      scoped[1] === 'ENTRY'
-        ? 0
-        : scoped[1] === 'EXIT'
-          ? servers.length - 1
-          : Number(scoped[2])
+      scoped[1] === 'ENTRY' ? 0 : scoped[1] === 'EXIT' ? servers.length - 1 : Number(scoped[2])
     if (index < 0 || index >= servers.length) {
       throw new Error(`参数 {{${key}}} 数组越界：当前链路共 ${servers.length} 跳`)
     }
@@ -127,7 +123,8 @@ export function evaluateNameTemplate(
     const preview = template.replace(tokenPattern, (_, rawKey: string) =>
       resolveToken(rawKey.trim(), context),
     )
-    if (preview.includes('{{') || preview.includes('}}')) throw new Error('名称模板包含未解析的参数')
+    if (preview.includes('{{') || preview.includes('}}'))
+      throw new Error('名称模板包含未解析的参数')
     if (!preview.trim()) throw new Error('名称模板解析结果不能为空')
     if ([...preview].length > 100) throw new Error('名称解析结果不能超过 100 个字符')
     return { preview, error: '' }
@@ -163,23 +160,27 @@ export function getTemplateSuggestions(
 ): { start: number; items: string[] } | null {
   const open = template.lastIndexOf('{{', cursor)
   if (open < 0 || template.lastIndexOf('}}', cursor) > open) return null
-  const fragment = template.slice(open + 2, cursor).trimStart().toUpperCase()
-  const globalItems = context.servers.length > 1
-    ? ['PANEL_SHORT', 'PROTOCOL', 'PORT', 'HOPS']
-    : [
-        ...serverAttributes,
-        'SERVER',
-        'SERVER_ID',
-        'PANEL_SHORT',
-        'PROTOCOL',
-        'PORT',
-        'HOPS',
-        ...context.servers[0]?.tags.map((_, index) => `TAG[${index}]`) ?? [],
-      ]
+  const fragment = template
+    .slice(open + 2, cursor)
+    .trimStart()
+    .toUpperCase()
+  const globalItems =
+    context.servers.length > 1
+      ? ['PANEL_SHORT', 'PROTOCOL', 'PORT', 'HOPS']
+      : [
+          ...serverAttributes,
+          'SERVER',
+          'SERVER_ID',
+          'PANEL_SHORT',
+          'PROTOCOL',
+          'PORT',
+          'HOPS',
+          ...(context.servers[0]?.tags.map((_, index) => `TAG[${index}]`) ?? []),
+        ]
   const hopIndexes = new Set(
     context.servers.length > 1
       ? context.servers.map((_, index) => index)
-      : context.hopIndexes ?? [],
+      : (context.hopIndexes ?? []),
   )
   const scopedItems = context.servers.flatMap((server, index) => {
     const scopes = [

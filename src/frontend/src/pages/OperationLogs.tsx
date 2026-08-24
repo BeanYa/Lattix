@@ -39,12 +39,7 @@ import {
   type RefreshSeconds,
 } from '@/lib/log-preferences'
 import { useTimezone } from '@/lib/timezone'
-import type {
-  LogSeverity,
-  OperationCategory,
-  OperationLogEntry,
-  Server,
-} from '@/lib/types'
+import type { LogSeverity, OperationCategory, OperationLogEntry, Server } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 import './logs.css'
@@ -140,7 +135,10 @@ export default function OperationLogs() {
   }, [category, filters, offset, pageSize, serverId, severity])
 
   useEffect(() => {
-    api.servers().then(setServers).catch(() => {})
+    api
+      .servers()
+      .then(setServers)
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -174,12 +172,15 @@ export default function OperationLogs() {
   }
 
   const clearLogs = async () => {
-    if (!(await confirm({
-      title: '清空操作日志',
-      description: '确定清空操作日志？清空操作本身会作为新的第一条记录保留。',
-      confirmLabel: '清空日志',
-      destructive: true,
-    }))) return
+    if (
+      !(await confirm({
+        title: '清空操作日志',
+        description: '确定清空操作日志？清空操作本身会作为新的第一条记录保留。',
+        confirmLabel: '清空日志',
+        destructive: true,
+      }))
+    )
+      return
     try {
       await api.clearOperationLogs()
       setOffset(0)
@@ -194,14 +195,19 @@ export default function OperationLogs() {
       <div className="cg-logs-toolbar">
         <span className="cg-pill">共 {total} 条</span>
         <div className="cg-logs-toolbar-group">
-          <Label htmlFor="operation-page-size" className="cg-log-label">每页</Label>
+          <Label htmlFor="operation-page-size" className="cg-log-label">
+            每页
+          </Label>
           <Select
             value={String(pageSize)}
             onValueChange={(value) => {
               setPageSize(Number(value) as OperationPageSize)
               setOffset(0)
             }}
-            items={OPERATION_PAGE_SIZE_OPTIONS.map((value) => ({ value: String(value), label: `${value} 条` }))}
+            items={OPERATION_PAGE_SIZE_OPTIONS.map((value) => ({
+              value: String(value),
+              label: `${value} 条`,
+            }))}
           >
             <SelectTrigger id="operation-page-size" className="w-24">
               <SelectValue />
@@ -209,12 +215,16 @@ export default function OperationLogs() {
             <SelectContent>
               <SelectGroup>
                 {OPERATION_PAGE_SIZE_OPTIONS.map((value) => (
-                  <SelectItem key={value} value={String(value)}>{value} 条</SelectItem>
+                  <SelectItem key={value} value={String(value)}>
+                    {value} 条
+                  </SelectItem>
                 ))}
               </SelectGroup>
             </SelectContent>
           </Select>
-          <Label htmlFor="operation-refresh" className="cg-log-label">刷新</Label>
+          <Label htmlFor="operation-refresh" className="cg-log-label">
+            刷新
+          </Label>
           <Select
             value={String(refreshSeconds)}
             onValueChange={(value) => setRefreshSeconds(Number(value) as RefreshSeconds)}
@@ -257,12 +267,18 @@ export default function OperationLogs() {
             }}
             items={SEVERITY_OPTIONS}
           >
-            <SelectTrigger className="w-28"><SelectValue placeholder="全部" /></SelectTrigger>
-            <SelectContent><SelectGroup>
-              {SEVERITY_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-              ))}
-            </SelectGroup></SelectContent>
+            <SelectTrigger className="w-28">
+              <SelectValue placeholder="全部" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {SEVERITY_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
           </Select>
         </div>
         <div className="cg-log-filter-item">
@@ -275,12 +291,18 @@ export default function OperationLogs() {
             }}
             items={CATEGORY_OPTIONS}
           >
-            <SelectTrigger className="w-32"><SelectValue placeholder="全部" /></SelectTrigger>
-            <SelectContent><SelectGroup>
-              {CATEGORY_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-              ))}
-            </SelectGroup></SelectContent>
+            <SelectTrigger className="w-32">
+              <SelectValue placeholder="全部" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {CATEGORY_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
           </Select>
         </div>
         <div className="cg-log-filter-item">
@@ -293,74 +315,157 @@ export default function OperationLogs() {
             }}
             items={servers.map((server) => ({ value: String(server.id), label: server.alias }))}
           >
-            <SelectTrigger className="w-40"><SelectValue placeholder="全部" /></SelectTrigger>
-            <SelectContent><SelectGroup>
-              {servers.map((server) => (
-                <SelectItem key={server.id} value={String(server.id)}>{server.alias}</SelectItem>
-              ))}
-            </SelectGroup></SelectContent>
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="全部" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {servers.map((server) => (
+                  <SelectItem key={server.id} value={String(server.id)}>
+                    {server.alias}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
           </Select>
         </div>
         <div className="cg-log-filter-item">
-          <Label htmlFor="operation-operator" className="cg-log-label">操作员</Label>
-          <Input id="operation-operator" className="w-32" value={operator} onChange={(event) => setOperator(event.target.value)} />
+          <Label htmlFor="operation-operator" className="cg-log-label">
+            操作员
+          </Label>
+          <Input
+            id="operation-operator"
+            className="w-32"
+            value={operator}
+            onChange={(event) => setOperator(event.target.value)}
+          />
         </div>
         <div className="cg-log-filter-item">
-          <Label htmlFor="operation-query" className="cg-log-label">关键字</Label>
-          <Input id="operation-query" className="w-48" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="动作 / 详情 / 请求 ID" />
+          <Label htmlFor="operation-query" className="cg-log-label">
+            关键字
+          </Label>
+          <Input
+            id="operation-query"
+            className="w-48"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="动作 / 详情 / 请求 ID"
+          />
         </div>
         <div className="cg-log-filter-item">
-          <Label htmlFor="operation-from" className="cg-log-label">开始时间</Label>
-          <Input id="operation-from" type="datetime-local" value={from} onChange={(event) => setFrom(event.target.value)} />
+          <Label htmlFor="operation-from" className="cg-log-label">
+            开始时间
+          </Label>
+          <Input
+            id="operation-from"
+            type="datetime-local"
+            value={from}
+            onChange={(event) => setFrom(event.target.value)}
+          />
         </div>
         <div className="cg-log-filter-item">
-          <Label htmlFor="operation-to" className="cg-log-label">结束时间</Label>
-          <Input id="operation-to" type="datetime-local" value={to} onChange={(event) => setTo(event.target.value)} />
+          <Label htmlFor="operation-to" className="cg-log-label">
+            结束时间
+          </Label>
+          <Input
+            id="operation-to"
+            type="datetime-local"
+            value={to}
+            onChange={(event) => setTo(event.target.value)}
+          />
         </div>
-        <Button variant="outline" size="sm" onClick={applyFilters}>筛选</Button>
-        <Button variant="ghost" size="sm" onClick={resetFilters}>重置</Button>
+        <Button variant="outline" size="sm" onClick={applyFilters}>
+          筛选
+        </Button>
+        <Button variant="ghost" size="sm" onClick={resetFilters}>
+          重置
+        </Button>
       </div>
 
       <Table>
-          <TableHeader>
+        <TableHeader>
+          <TableRow>
+            <TableHead>时间</TableHead>
+            <TableHead>程度</TableHead>
+            <TableHead>类别</TableHead>
+            <TableHead>动作</TableHead>
+            <TableHead>服务器</TableHead>
+            <TableHead>来源</TableHead>
+            <TableHead>详情</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {loading ? (
             <TableRow>
-              <TableHead>时间</TableHead>
-              <TableHead>程度</TableHead>
-              <TableHead>类别</TableHead>
-              <TableHead>动作</TableHead>
-              <TableHead>服务器</TableHead>
-              <TableHead>来源</TableHead>
-              <TableHead>详情</TableHead>
+              <TableCell colSpan={7} className="text-center text-muted-foreground">
+                加载中…
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground">加载中…</TableCell></TableRow>
-            ) : items.length === 0 ? (
-              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground">暂无记录</TableCell></TableRow>
-            ) : items.map((entry) => {
+          ) : items.length === 0 ? (
+            <TableRow>
+              <TableCell colSpan={7} className="text-center text-muted-foreground">
+                暂无记录
+              </TableCell>
+            </TableRow>
+          ) : (
+            items.map((entry) => {
               const detail = prettyDetail(entry.detail)
-              const categoryLabel = CATEGORY_OPTIONS.find((option) => option.value === entry.category)?.label ?? entry.category
+              const categoryLabel =
+                CATEGORY_OPTIONS.find((option) => option.value === entry.category)?.label ??
+                entry.category
               return (
-                <TableRow key={entry.event_id} className={detail ? 'cursor-pointer' : ''} onClick={() => detail && setDetailEntry(entry)}>
-                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(entry.timestamp, timezone)}</TableCell>
+                <TableRow
+                  key={entry.event_id}
+                  className={detail ? 'cursor-pointer' : ''}
+                  onClick={() => detail && setDetailEntry(entry)}
+                >
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                    {formatDateTime(entry.timestamp, timezone)}
+                  </TableCell>
                   <TableCell>{severityBadge(entry.severity)}</TableCell>
-                  <TableCell><span className="cg-status is-blue">{categoryLabel}</span></TableCell>
+                  <TableCell>
+                    <span className="cg-status is-blue">{categoryLabel}</span>
+                  </TableCell>
                   <TableCell className="font-medium">{entry.action}</TableCell>
                   <TableCell>{entry.server || '-'}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{entry.operator || entry.ip || '-'}{entry.operator && entry.ip ? ` · ${entry.ip}` : ''}</TableCell>
-                  <TableCell className="max-w-64 truncate text-xs text-muted-foreground" title={detail || undefined}>{detail || '-'}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {entry.operator || entry.ip || '-'}
+                    {entry.operator && entry.ip ? ` · ${entry.ip}` : ''}
+                  </TableCell>
+                  <TableCell
+                    className="max-w-64 truncate text-xs text-muted-foreground"
+                    title={detail || undefined}
+                  >
+                    {detail || '-'}
+                  </TableCell>
                 </TableRow>
               )
-            })}
-          </TableBody>
-        </Table>
+            })
+          )}
+        </TableBody>
+      </Table>
 
       <div className="cg-logs-pagination">
-        <span className="cg-log-label">{total > 0 ? `第 ${offset + 1}-${Math.min(offset + pageSize, total)} 条` : ''}</span>
+        <span className="cg-log-label">
+          {total > 0 ? `第 ${offset + 1}-${Math.min(offset + pageSize, total)} 条` : ''}
+        </span>
         <div className="cg-logs-pagination-buttons">
-          <Button variant="outline" size="sm" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - pageSize))}>上一页</Button>
-          <Button variant="outline" size="sm" disabled={offset + pageSize >= total} onClick={() => setOffset(offset + pageSize)}>下一页</Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={offset === 0}
+            onClick={() => setOffset(Math.max(0, offset - pageSize))}
+          >
+            上一页
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={offset + pageSize >= total}
+            onClick={() => setOffset(offset + pageSize)}
+          >
+            下一页
+          </Button>
         </div>
       </div>
 
@@ -377,7 +482,9 @@ export default function OperationLogs() {
             <div className="cg-terminal cg-log-terminal">
               <div className="cg-log-terminal-head">
                 <span className="cg-micro">DETAIL / JSON</span>
-                {detailEntry.request_id ? <span className="cg-micro">REQ {detailEntry.request_id}</span> : null}
+                {detailEntry.request_id ? (
+                  <span className="cg-micro">REQ {detailEntry.request_id}</span>
+                ) : null}
               </div>
               <pre className="cg-log-terminal-body">{prettyDetail(detailEntry.detail)}</pre>
             </div>

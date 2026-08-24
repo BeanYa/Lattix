@@ -28,7 +28,9 @@
   color: var(--cg-ink);
   font-size: 13px;
   font-weight: 750;
-  transition: transform 160ms var(--cg-ease), background-color 160ms var(--cg-ease);
+  transition:
+    transform 160ms var(--cg-ease),
+    background-color 160ms var(--cg-ease);
 }
 
 .sv-radio-card:hover {
@@ -80,7 +82,9 @@
   border-radius: var(--cg-r-card);
   background: var(--cg-paper-light);
   box-shadow: var(--cg-shadow-card);
-  transition: transform 160ms var(--cg-ease), box-shadow 160ms var(--cg-ease);
+  transition:
+    transform 160ms var(--cg-ease),
+    box-shadow 160ms var(--cg-ease);
 }
 
 .sv-server-card:hover {
@@ -247,7 +251,9 @@
   border-radius: var(--cg-r-control);
   background: var(--cg-paper-light);
   box-shadow: var(--cg-shadow-control);
-  transition: border-color 160ms var(--cg-ease), box-shadow 160ms var(--cg-ease);
+  transition:
+    border-color 160ms var(--cg-ease),
+    box-shadow 160ms var(--cg-ease);
 }
 
 .sv-combobox:focus-within {
@@ -275,7 +281,9 @@
   border-radius: var(--cg-r-control);
   background: var(--cg-paper-light);
   box-shadow: var(--cg-shadow-control);
-  transition: border-color 160ms var(--cg-ease), box-shadow 160ms var(--cg-ease);
+  transition:
+    border-color 160ms var(--cg-ease),
+    box-shadow 160ms var(--cg-ease);
 }
 
 .sv-tag-input:focus-within {
@@ -305,7 +313,9 @@
   border-radius: 4px;
   color: var(--cg-muted);
   cursor: pointer;
-  transition: background-color 150ms var(--cg-ease), color 150ms var(--cg-ease);
+  transition:
+    background-color 150ms var(--cg-ease),
+    color 150ms var(--cg-ease);
 }
 
 .sv-tag-chip-remove:hover {

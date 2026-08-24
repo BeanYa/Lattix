@@ -121,9 +121,7 @@ export default function UpdateOverlay() {
         }
       }
       if (!stopped) {
-        setStatus((s) =>
-          s ? { ...s, message: '等待面板恢复超时，请稍后手动刷新页面。' } : s,
-        )
+        setStatus((s) => (s ? { ...s, message: '等待面板恢复超时，请稍后手动刷新页面。' } : s))
       }
     }
 

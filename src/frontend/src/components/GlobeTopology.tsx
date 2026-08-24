@@ -1,10 +1,7 @@
 import { startTransition, useEffect, useMemo, useState } from 'react'
 
 import LowPolyEarth, { type EarthLink, type EarthNode } from '@/components/LowPolyEarth'
-import {
-  resolveGeographyLocations,
-  type GeographyLocationResult,
-} from '@/lib/geography'
+import { resolveGeographyLocations, type GeographyLocationResult } from '@/lib/geography'
 import { isServerOnline } from '@/lib/server-state'
 import type { Chain, Server } from '@/lib/types'
 
@@ -34,7 +31,10 @@ interface GlobeTopologyProps {
 const coordinateCache = new Map<string, { lat: number; lng: number } | null>()
 
 function normalizePlace(value: string) {
-  return value.trim().toLocaleLowerCase().replace(/[\s_-]+/g, '')
+  return value
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[\s_-]+/g, '')
 }
 
 function positionServers(
@@ -54,7 +54,9 @@ function positionServers(
     const positioned = lat !== null && lng !== null
     const baseLat = lat ?? -68 + (server.id % 3) * 4
     const baseLng = lng ?? ((server.id * 137.508) % 340) - 170
-    const locationKey = positioned ? `${baseLat.toFixed(3)}:${baseLng.toFixed(3)}` : `fallback:${server.id}`
+    const locationKey = positioned
+      ? `${baseLat.toFixed(3)}:${baseLng.toFixed(3)}`
+      : `fallback:${server.id}`
     const duplicateIndex = duplicateLocations.get(locationKey) ?? 0
     duplicateLocations.set(locationKey, duplicateIndex + 1)
     const angle = duplicateIndex * 2.39996
@@ -87,23 +89,29 @@ function buildLinks(chains: Chain[], points: TopologyPoint[]): EarthLink[] {
       if (!start || !end) return []
       const status: EarthLink['status'] = (() => {
         switch (chain.status) {
-          case 'active_unconfirmed': return 'active'
+          case 'active_unconfirmed':
+            return 'active'
           case 'waiting_for_agent':
-          case 'cleanup_pending': return 'applying'
+          case 'cleanup_pending':
+            return 'applying'
           case 'active_failed':
           case 'invalid':
-          case 'deleted': return 'failed'
-          default: return chain.status
+          case 'deleted':
+            return 'failed'
+          default:
+            return chain.status
         }
       })()
-      return [{
-        id: `${chain.id}:${index}`,
-        startLat: start.lat,
-        startLng: start.lng,
-        endLat: end.lat,
-        endLng: end.lng,
-        status,
-      }]
+      return [
+        {
+          id: `${chain.id}:${index}`,
+          startLat: start.lat,
+          startLng: start.lng,
+          endLat: end.lat,
+          endLng: end.lng,
+          status,
+        },
+      ]
     })
   })
 }
@@ -139,7 +147,10 @@ export default function GlobeTopology({
     }
 
     const cachedCoordinates = new Map<string, GeographyLocationResult>()
-    const missingRequests = new Map<string, { key: string; countryCode: string; location: string }>()
+    const missingRequests = new Map<
+      string,
+      { key: string; countryCode: string; location: string }
+    >()
     servers.forEach((server) => {
       const countryCode = server.country_code.trim().toUpperCase()
       const key = `${countryCode}:${normalizePlace(server.location)}`
@@ -161,7 +172,9 @@ export default function GlobeTopology({
         results.forEach((result) => {
           coordinateCache.set(
             result.key,
-            result.lat !== null && result.lng !== null ? { lat: result.lat, lng: result.lng } : null,
+            result.lat !== null && result.lng !== null
+              ? { lat: result.lat, lng: result.lng }
+              : null,
           )
           resolvedCoordinates.set(result.key, result)
         })
@@ -174,22 +187,23 @@ export default function GlobeTopology({
   }, [servers])
 
   const nodes = useMemo<EarthNode[]>(
-    () => points
-      .filter((point) => point.positioned)
-      .map((point) => ({
-        id: point.id,
-        label: point.alias,
-        description: `${point.location}，${point.online ? '在线' : '离线'}`,
-        clusterKey: point.locationKey,
-        lat: point.lat,
-        lng: point.lng,
-        status: (point.online ? 'online' : 'offline') as EarthNode['status'],
-        online: point.online,
-        countryCode: point.countryCode,
-        uploadRate: point.uploadRate,
-        downloadRate: point.downloadRate,
-        selected: point.id === activeServerId,
-      })),
+    () =>
+      points
+        .filter((point) => point.positioned)
+        .map((point) => ({
+          id: point.id,
+          label: point.alias,
+          description: `${point.location}，${point.online ? '在线' : '离线'}`,
+          clusterKey: point.locationKey,
+          lat: point.lat,
+          lng: point.lng,
+          status: (point.online ? 'online' : 'offline') as EarthNode['status'],
+          online: point.online,
+          countryCode: point.countryCode,
+          uploadRate: point.uploadRate,
+          downloadRate: point.downloadRate,
+          selected: point.id === activeServerId,
+        })),
     [activeServerId, points],
   )
   const links = useMemo(() => {
@@ -211,18 +225,29 @@ export default function GlobeTopology({
       />
 
       <div className="globe-telemetry" aria-hidden="true">
-        <span><b>{String(nodes.length).padStart(2, '0')}</b> NODES</span>
-        <span><b>{String(links.length).padStart(2, '0')}</b> ROUTES</span>
+        <span>
+          <b>{String(nodes.length).padStart(2, '0')}</b> NODES
+        </span>
+        <span>
+          <b>{String(links.length).padStart(2, '0')}</b> ROUTES
+        </span>
         {unresolvedCount > 0 && (
-          <span><b>{String(unresolvedCount).padStart(2, '0')}</b> UNLOCATED</span>
+          <span>
+            <b>{String(unresolvedCount).padStart(2, '0')}</b> UNLOCATED
+          </span>
         )}
       </div>
 
       <div className="globe-legend" aria-hidden="true">
-        <span><i className="is-online" />在线</span>
-        <span><i />离线 / 重连</span>
+        <span>
+          <i className="is-online" />
+          在线
+        </span>
+        <span>
+          <i />
+          离线 / 重连
+        </span>
       </div>
-
     </div>
   )
 }

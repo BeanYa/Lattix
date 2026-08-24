@@ -23,17 +23,22 @@ const SubscriptionTemplates = lazy(() => import('@/pages/SubscriptionTemplates')
 const ExternalSubscriptions = lazy(() => import('@/pages/ExternalSubscriptions'))
 const Groups = lazy(() => import('@/pages/Groups'))
 
-function SuspendedRoute({ children, fullPage = false }: {
+function SuspendedRoute({
+  children,
+  fullPage = false,
+}: {
   children: ReactElement
   fullPage?: boolean
 }) {
   return (
     <Suspense
-      fallback={(
+      fallback={
         <div
-          className={fullPage
-            ? 'grid min-h-[100dvh] place-items-center p-4'
-            : 'grid min-h-[40vh] place-items-center'}
+          className={
+            fullPage
+              ? 'grid min-h-[100dvh] place-items-center p-4'
+              : 'grid min-h-[40vh] place-items-center'
+          }
           role="status"
         >
           <div className="cg-card-raised flex items-center gap-3 px-5 py-4">
@@ -41,7 +46,7 @@ function SuspendedRoute({ children, fullPage = false }: {
             <span className="cg-micro text-muted-foreground">正在加载页面...</span>
           </div>
         </div>
-      )}
+      }
     >
       {children}
     </Suspense>
@@ -71,43 +76,71 @@ function ProtectedRoutes() {
         <Layout>
           <Switch>
             <Route path="/">
-              <SuspendedRoute><Dashboard /></SuspendedRoute>
+              <SuspendedRoute>
+                <Dashboard />
+              </SuspendedRoute>
             </Route>
             <Route path="/servers">
-              <SuspendedRoute><Servers /></SuspendedRoute>
+              <SuspendedRoute>
+                <Servers />
+              </SuspendedRoute>
             </Route>
             <Route path="/runtime">
-              <SuspendedRoute><RuntimeMonitor /></SuspendedRoute>
+              <SuspendedRoute>
+                <RuntimeMonitor />
+              </SuspendedRoute>
             </Route>
             <Route path="/costs">
-              <SuspendedRoute><Costs /></SuspendedRoute>
+              <SuspendedRoute>
+                <Costs />
+              </SuspendedRoute>
             </Route>
             <Route path="/chains">
-              <SuspendedRoute><Chains /></SuspendedRoute>
+              <SuspendedRoute>
+                <Chains />
+              </SuspendedRoute>
             </Route>
             <Route path="/users">
-              <SuspendedRoute><Users /></SuspendedRoute>
+              <SuspendedRoute>
+                <Users />
+              </SuspendedRoute>
             </Route>
             <Route path="/subscription-templates">
-              <SuspendedRoute><SubscriptionTemplates /></SuspendedRoute>
+              <SuspendedRoute>
+                <SubscriptionTemplates />
+              </SuspendedRoute>
             </Route>
             <Route path="/external-subscriptions">
-              <SuspendedRoute><ExternalSubscriptions /></SuspendedRoute>
+              <SuspendedRoute>
+                <ExternalSubscriptions />
+              </SuspendedRoute>
             </Route>
             <Route path="/groups">
-              <SuspendedRoute><Groups /></SuspendedRoute>
+              <SuspendedRoute>
+                <Groups />
+              </SuspendedRoute>
             </Route>
             <Route path="/logs/operations">
-              <SuspendedRoute><LogsLayout><OperationLogs /></LogsLayout></SuspendedRoute>
+              <SuspendedRoute>
+                <LogsLayout>
+                  <OperationLogs />
+                </LogsLayout>
+              </SuspendedRoute>
             </Route>
             <Route path="/logs/requests">
-              <SuspendedRoute><LogsLayout><RequestLogs /></LogsLayout></SuspendedRoute>
+              <SuspendedRoute>
+                <LogsLayout>
+                  <RequestLogs />
+                </LogsLayout>
+              </SuspendedRoute>
             </Route>
             <Route path="/logs">
               <Redirect to="/logs/operations" replace />
             </Route>
             <Route path="/settings">
-              <SuspendedRoute><Settings /></SuspendedRoute>
+              <SuspendedRoute>
+                <Settings />
+              </SuspendedRoute>
             </Route>
             <Route>
               <Redirect to="/" replace />
@@ -128,12 +161,18 @@ export default function App() {
             <TimezoneProvider>
               <Switch>
                 <Route path="/login">
-                  <SuspendedRoute fullPage><Login /></SuspendedRoute>
+                  <SuspendedRoute fullPage>
+                    <Login />
+                  </SuspendedRoute>
                 </Route>
                 <Route path="/sub/:token">
-                  <SuspendedRoute fullPage><Subscription /></SuspendedRoute>
+                  <SuspendedRoute fullPage>
+                    <Subscription />
+                  </SuspendedRoute>
                 </Route>
-                <Route><ProtectedRoutes /></Route>
+                <Route>
+                  <ProtectedRoutes />
+                </Route>
               </Switch>
             </TimezoneProvider>
           </AuthProvider>

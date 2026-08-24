@@ -155,14 +155,15 @@ describe('Requester', () => {
   })
 
   it('normalizes an aborted request and closes its lifecycle', async () => {
-    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
-      new Promise<Response>((_resolve, reject) => {
-        const signal = init?.signal
-        if (!signal) throw new Error('missing request signal')
-        const rejectAbort = () => reject(signal.reason)
-        if (signal.aborted) rejectAbort()
-        else signal.addEventListener('abort', rejectAbort, { once: true })
-      }),
+    const fetchMock = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal
+          if (!signal) throw new Error('missing request signal')
+          const rejectAbort = () => reject(signal.reason)
+          if (signal.aborted) rejectAbort()
+          else signal.addEventListener('abort', rejectAbort, { once: true })
+        }),
     )
     vi.stubGlobal('fetch', fetchMock)
 
@@ -221,7 +222,10 @@ describe('Requester', () => {
   it('postObserved resolves observeId from envelope', async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
       Promise.resolve(
-        jsonResponse({ ...envelope('OK', { id: 42 }), observe_id: '0123456789abcdef0123456789abcdef' }),
+        jsonResponse({
+          ...envelope('OK', { id: 42 }),
+          observe_id: '0123456789abcdef0123456789abcdef',
+        }),
       ),
     )
     vi.stubGlobal('fetch', fetchMock)
@@ -230,9 +234,13 @@ describe('Requester', () => {
     client.setCSRFToken('csrf-token')
 
     await expect(
-      client.postObserved<{ id: number }>('/api/server/rebuild-xray', { server_id: 1 }, {
-        traceId: TRACE_ID,
-      }),
+      client.postObserved<{ id: number }>(
+        '/api/server/rebuild-xray',
+        { server_id: 1 },
+        {
+          traceId: TRACE_ID,
+        },
+      ),
     ).resolves.toEqual({
       data: { id: 42 },
       observeId: '0123456789abcdef0123456789abcdef',
@@ -253,10 +261,9 @@ describe('Requester', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    const result = await new Requester().postObserved<{ id: number }>(
-      '/api/user-group/create',
-      { name: 'admin' },
-    )
+    const result = await new Requester().postObserved<{ id: number }>('/api/user-group/create', {
+      name: 'admin',
+    })
 
     expect(result.data).toEqual({ id: 42 })
     expect(result.observeId).toBeUndefined()

@@ -35,9 +35,27 @@ const navItems = [
   { to: '/chains', activePrefix: '/chains', label: '链路', icon: RouteIcon, end: false },
   { to: '/users', activePrefix: '/users', label: '用户', icon: UsersIcon, end: false },
   { to: '/groups', activePrefix: '/groups', label: '分组', icon: LayersIcon, end: false },
-  { to: '/subscription-templates', activePrefix: '/subscription-templates', label: '订阅模板', icon: FileCode2Icon, end: false },
-  { to: '/external-subscriptions', activePrefix: '/external-subscriptions', label: '外部订阅', icon: GlobeIcon, end: false },
-  { to: '/logs/operations', activePrefix: '/logs', label: '日志', icon: ScrollTextIcon, end: false },
+  {
+    to: '/subscription-templates',
+    activePrefix: '/subscription-templates',
+    label: '订阅模板',
+    icon: FileCode2Icon,
+    end: false,
+  },
+  {
+    to: '/external-subscriptions',
+    activePrefix: '/external-subscriptions',
+    label: '外部订阅',
+    icon: GlobeIcon,
+    end: false,
+  },
+  {
+    to: '/logs/operations',
+    activePrefix: '/logs',
+    label: '日志',
+    icon: ScrollTextIcon,
+    end: false,
+  },
   { to: '/settings', activePrefix: '/settings', label: '设置', icon: SettingsIcon, end: false },
 ]
 
@@ -76,7 +94,9 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
           <div className="cg-nav-section-label">{section.label}</div>
           <div className="cg-nav-list">
             {section.items.map((item) => {
-              const isActive = item.end ? location === item.to : location.startsWith(item.activePrefix)
+              const isActive = item.end
+                ? location === item.to
+                : location.startsWith(item.activePrefix)
               return (
                 <Link
                   key={item.to}
@@ -169,13 +189,19 @@ export default function Layout({ children }: { children: ReactNode }) {
             <span className="cg-sidebar-brand-icon" style={{ width: 36, height: 36 }}>
               <LattixMark className="size-6 shrink-0" />
             </span>
-            <span className="cg-sidebar-brand-name" aria-label="Lattix">LATTIX</span>
+            <span className="cg-sidebar-brand-name" aria-label="Lattix">
+              LATTIX
+            </span>
           </span>
           <div className="flex items-center gap-2">
             <PanelStateBadge snapshot={panelState} />
             <ThemeToggle className="text-foreground hover:bg-accent" />
             <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-              <SheetTrigger render={<button type="button" className="cg-icon-button" aria-label="打开导航菜单" />}>
+              <SheetTrigger
+                render={
+                  <button type="button" className="cg-icon-button" aria-label="打开导航菜单" />
+                }
+              >
                 <MenuIcon />
               </SheetTrigger>
               <SheetContent
@@ -188,7 +214,9 @@ export default function Layout({ children }: { children: ReactNode }) {
                     <LattixMark className="size-7 shrink-0" />
                   </span>
                   <span>
-                    <span className="cg-sidebar-brand-name" aria-label="Lattix">LATTIX</span>
+                    <span className="cg-sidebar-brand-name" aria-label="Lattix">
+                      LATTIX
+                    </span>
                     <span className="cg-sidebar-brand-sub">KNOWLEDGE NETWORK OS</span>
                   </span>
                 </SheetTitle>
@@ -197,8 +225,12 @@ export default function Layout({ children }: { children: ReactNode }) {
                 </nav>
                 <div className="cg-sidebar-footer">
                   <div className="cg-sidebar-user">
-                    <span className="cg-sidebar-avatar">{(username ?? 'A').slice(0, 1).toUpperCase()}</span>
-                    <span className="cg-sidebar-username" title={username ?? ''}>{username}</span>
+                    <span className="cg-sidebar-avatar">
+                      {(username ?? 'A').slice(0, 1).toUpperCase()}
+                    </span>
+                    <span className="cg-sidebar-username" title={username ?? ''}>
+                      {username}
+                    </span>
                     {logoutButton}
                   </div>
                 </div>
@@ -214,7 +246,9 @@ export default function Layout({ children }: { children: ReactNode }) {
               <LattixMark className="size-7 shrink-0" />
             </span>
             <span className="min-w-0">
-              <span className="cg-sidebar-brand-name" aria-label="Lattix">LATTIX</span>
+              <span className="cg-sidebar-brand-name" aria-label="Lattix">
+                LATTIX
+              </span>
               <span className="cg-sidebar-brand-sub">KNOWLEDGE NETWORK OS</span>
             </span>
           </div>
@@ -223,12 +257,18 @@ export default function Layout({ children }: { children: ReactNode }) {
           </nav>
           <div className="cg-sidebar-footer">
             <div className="cg-sidebar-state">
-              <span className="cg-micro" style={{ color: 'var(--cg-subtle)' }}>PANEL STATUS</span>
+              <span className="cg-micro" style={{ color: 'var(--cg-subtle)' }}>
+                PANEL STATUS
+              </span>
               <PanelStateBadge snapshot={panelState} />
             </div>
             <div className="cg-sidebar-user">
-              <span className="cg-sidebar-avatar">{(username ?? 'A').slice(0, 1).toUpperCase()}</span>
-              <span className="cg-sidebar-username" title={username ?? ''}>{username}</span>
+              <span className="cg-sidebar-avatar">
+                {(username ?? 'A').slice(0, 1).toUpperCase()}
+              </span>
+              <span className="cg-sidebar-username" title={username ?? ''}>
+                {username}
+              </span>
               <ThemeToggle className="size-8 text-muted-foreground hover:bg-accent" />
               {logoutButton}
             </div>
@@ -246,9 +286,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               <div className="cg-semantic-body">{logoutError}</div>
             </div>
           ) : null}
-          <div className="cg-main-inner cg-page-in">
-            {children}
-          </div>
+          <div className="cg-main-inner cg-page-in">{children}</div>
         </main>
         <UpdateOverlay />
       </div>

@@ -45,21 +45,34 @@ export default function Login() {
               <LattixMark className="size-6" />
             </span>
             <div>
-              <strong className="cg-login-brand-name" aria-label="Lattix">LATTIX</strong>
+              <strong className="cg-login-brand-name" aria-label="Lattix">
+                LATTIX
+              </strong>
               <span className="cg-login-brand-sub">NETWORK CONTROL</span>
             </div>
           </div>
 
           <div className="cg-login-brand-hero">
-            <span className="cg-micro" style={{ color: 'var(--cg-lime)' }}>OPS MANUAL / VOL.01</span>
+            <span className="cg-micro" style={{ color: 'var(--cg-lime)' }}>
+              OPS MANUAL / VOL.01
+            </span>
             <p className="cg-login-brand-tag">CHAIN ROUTING · SUBSCRIPTION OPS</p>
             <p className="cg-login-brand-desc">代理链路、订阅访问与运行审计的工程手册式控制台。</p>
           </div>
 
           <div className="cg-login-brand-foot">
-            <span className="cg-login-status"><i />控制服务可用</span>
-            <span className="cg-login-brand-line"><ShieldCheckIcon />安全会话 / SECURE SESSION</span>
-            <span className="cg-login-brand-line"><ServerIcon />LATTIX PANEL</span>
+            <span className="cg-login-status">
+              <i />
+              控制服务可用
+            </span>
+            <span className="cg-login-brand-line">
+              <ShieldCheckIcon />
+              安全会话 / SECURE SESSION
+            </span>
+            <span className="cg-login-brand-line">
+              <ServerIcon />
+              LATTIX PANEL
+            </span>
           </div>
         </aside>
 
@@ -102,10 +115,12 @@ export default function Login() {
                 className="h-10"
               />
             </div>
-            {error && (
-              <Notice tone="danger">{error}</Notice>
-            )}
-            <button type="submit" className="cg-button is-primary cg-login-submit" disabled={submitting}>
+            {error && <Notice tone="danger">{error}</Notice>}
+            <button
+              type="submit"
+              className="cg-button is-primary cg-login-submit"
+              disabled={submitting}
+            >
               {submitting ? '登录中…' : '登录'}
             </button>
           </form>

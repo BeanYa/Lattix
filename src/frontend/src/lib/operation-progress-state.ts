@@ -18,8 +18,7 @@ export type ProgressEvent =
 
 export const INITIAL_PROGRESS_STATE: ProgressState = { phase: 'idle' }
 
-const hasWarnings = (observation: Observation): boolean =>
-  (observation.warnings?.length ?? 0) > 0
+const hasWarnings = (observation: Observation): boolean => (observation.warnings?.length ?? 0) > 0
 
 export function progressTransition(prev: ProgressState, event: ProgressEvent): ProgressState {
   switch (event.type) {

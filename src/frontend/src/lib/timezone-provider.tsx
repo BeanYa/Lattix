@@ -23,5 +23,7 @@ export function TimezoneProvider({ children }: { children: ReactNode }) {
     }
   }, [username, refresh])
 
-  return <TimezoneContext.Provider value={{ timezone, refresh }}>{children}</TimezoneContext.Provider>
+  return (
+    <TimezoneContext.Provider value={{ timezone, refresh }}>{children}</TimezoneContext.Provider>
+  )
 }

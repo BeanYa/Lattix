@@ -65,12 +65,19 @@ import type {
 
 import './chains.css'
 
-function ChainStateMark({ status, style }: { status: ChainStatus | NodeStatus; style: CgStatusStyle }) {
-  const Icon = style.cg === 'is-lime' || status === 'active_unconfirmed'
-    ? CircleCheckIcon
-    : style.loading
-      ? LoaderCircleIcon
-      : TriangleAlertIcon
+function ChainStateMark({
+  status,
+  style,
+}: {
+  status: ChainStatus | NodeStatus
+  style: CgStatusStyle
+}) {
+  const Icon =
+    style.cg === 'is-lime' || status === 'active_unconfirmed'
+      ? CircleCheckIcon
+      : style.loading
+        ? LoaderCircleIcon
+        : TriangleAlertIcon
   return (
     <span className={cn('cg-chain-mark', style.cg)} title={style.label} aria-label={style.label}>
       <Icon className={cn(style.loading && 'animate-spin motion-reduce:animate-none')} />
@@ -92,7 +99,8 @@ function TrafficSummary({
   multiplier?: string
 }) {
   const hasTraffic = up !== undefined && down !== undefined
-  const adjusted = hasTraffic && rawUp !== undefined && rawDown !== undefined && (rawUp !== up || rawDown !== down)
+  const adjusted =
+    hasTraffic && rawUp !== undefined && rawDown !== undefined && (rawUp !== up || rawDown !== down)
   return (
     <div className="cg-chain-traffic" aria-label="累计流量">
       <div className="cg-chain-traffic-item is-up">
@@ -103,7 +111,9 @@ function TrafficSummary({
         <strong className="cg-chain-traffic-value">
           {hasTraffic ? humanizeBytes(up ?? 0) : '--'}
         </strong>
-        {adjusted ? <span className="cg-chain-traffic-raw">原始 {humanizeBytes(rawUp ?? 0)}</span> : null}
+        {adjusted ? (
+          <span className="cg-chain-traffic-raw">原始 {humanizeBytes(rawUp ?? 0)}</span>
+        ) : null}
       </div>
       <div className="cg-chain-traffic-item is-down">
         <span className="cg-chain-traffic-label">
@@ -113,7 +123,9 @@ function TrafficSummary({
         <strong className="cg-chain-traffic-value">
           {hasTraffic ? humanizeBytes(down ?? 0) : '--'}
         </strong>
-        {adjusted ? <span className="cg-chain-traffic-raw">原始 {humanizeBytes(rawDown ?? 0)}</span> : null}
+        {adjusted ? (
+          <span className="cg-chain-traffic-raw">原始 {humanizeBytes(rawDown ?? 0)}</span>
+        ) : null}
       </div>
       {multiplier ? (
         <span className="cg-chain-traffic-multiplier">流量倍率 x{multiplier}</span>
@@ -133,7 +145,18 @@ const DIRECT_PROTOCOLS = ['vless', 'socks', 'http', 'dokodemo-door'] as const
 const RELAY_PROTOCOLS = ['vless', 'socks', 'http'] as const
 const REALITY_PROTOCOLS = ['vless']
 const NETWORKS = ['tcp', 'xhttp']
-const FINGERPRINTS = ['chrome', 'firefox', 'safari', 'edge', 'ios', 'android', '360', 'qq', 'random', 'randomized']
+const FINGERPRINTS = [
+  'chrome',
+  'firefox',
+  'safari',
+  'edge',
+  'ios',
+  'android',
+  '360',
+  'qq',
+  'random',
+  'randomized',
+]
 const FLOWS = ['xtls-rprx-vision', 'none']
 const VLESS_ENCS = [
   { value: 'none', label: '无' },
@@ -162,13 +185,15 @@ const chainNameAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 
 function randomChainName(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(4))
-  const suffix = [...bytes].map((byte) => chainNameAlphabet[byte % chainNameAlphabet.length]).join('')
+  const suffix = [...bytes]
+    .map((byte) => chainNameAlphabet[byte % chainNameAlphabet.length])
+    .join('')
   return `Chain #${suffix}`
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null
 }
 
@@ -196,9 +221,10 @@ function HopAddressField({
   if (!server) {
     return null
   }
-  const candidates = server.addresses.length > 0
-    ? server.addresses
-    : [...new Set([server.address, server.learned_addr].filter(Boolean))]
+  const candidates =
+    server.addresses.length > 0
+      ? server.addresses
+      : [...new Set([server.address, server.learned_addr].filter(Boolean))]
   if (candidates.length === 0) {
     return null
   }
@@ -229,11 +255,7 @@ function HopAddressField({
           <span>公网地址</span>
           {(['ipv4', 'ipv6'] as const).map((f) => (
             <label key={f} className="flex items-center gap-1">
-              <input
-                type="radio"
-                checked={family === f}
-                onChange={() => switchFamily(f)}
-              />
+              <input type="radio" checked={family === f} onChange={() => switchFamily(f)} />
               {f === 'ipv4' ? 'IPv4' : 'IPv6'}
             </label>
           ))}
@@ -241,11 +263,7 @@ function HopAddressField({
       ) : (
         <span className="text-xs text-muted-foreground">公网地址</span>
       )}
-      <Select
-        value={value}
-        onValueChange={(v) => onChange(String(v ?? ''))}
-        items={items}
-      >
+      <Select value={value} onValueChange={(v) => onChange(String(v ?? ''))} items={items}>
         <SelectTrigger className="w-full">
           <SelectValue placeholder="跟随服务器默认地址" />
         </SelectTrigger>
@@ -258,7 +276,9 @@ function HopAddressField({
         </SelectContent>
       </Select>
       {invalid ? (
-        <p className="text-xs text-destructive">所选地址已不在该服务器地址列表中，保存后将回退默认地址</p>
+        <p className="text-xs text-destructive">
+          所选地址已不在该服务器地址列表中，保存后将回退默认地址
+        </p>
       ) : null}
     </div>
   )
@@ -286,7 +306,9 @@ function TrafficHistoryChart({
     plot.left + (buckets.length <= 1 ? plotWidth / 2 : (index / (buckets.length - 1)) * plotWidth)
   const yAt = (value: number) => plot.top + (1 - value / peak) * plotHeight
   const points = (key: 'effective_up' | 'effective_down') =>
-    buckets.map((bucket, index) => `${xAt(index).toFixed(1)},${yAt(bucket[key]).toFixed(1)}`).join(' ')
+    buckets
+      .map((bucket, index) => `${xAt(index).toFixed(1)},${yAt(bucket[key]).toFixed(1)}`)
+      .join(' ')
   const tickStep = Math.max(1, Math.ceil((buckets.length - 1) / 6))
   const xTicks = buckets
     .map((bucket, index) => ({ bucket, index }))
@@ -305,7 +327,10 @@ function TrafficHistoryChart({
   }
   const moveActivePoint = (offset: number) => {
     setActivePoint((current) => ({
-      index: Math.min(buckets.length - 1, Math.max(0, (current?.index ?? buckets.length - 1) + offset)),
+      index: Math.min(
+        buckets.length - 1,
+        Math.max(0, (current?.index ?? buckets.length - 1) + offset),
+      ),
       y: current?.y ?? plot.top + plotHeight / 2,
     }))
   }
@@ -317,10 +342,12 @@ function TrafficHistoryChart({
         <span>相对用量（当前视图峰值 = 100%）</span>
         <div className="cg-chain-chart-legend-keys">
           <span>
-            <i className="cg-chain-chart-key-dot is-up" />上传
+            <i className="cg-chain-chart-key-dot is-up" />
+            上传
           </span>
           <span>
-            <i className="cg-chain-chart-key-dot is-down" />下载
+            <i className="cg-chain-chart-key-dot is-down" />
+            下载
           </span>
         </div>
       </div>
@@ -334,7 +361,9 @@ function TrafficHistoryChart({
           tabIndex={0}
           onPointerMove={(event) => setPointFromPointer(event.clientX, event.clientY)}
           onPointerLeave={() => setActivePoint(null)}
-          onFocus={() => setActivePoint({ index: buckets.length - 1, y: plot.top + plotHeight / 2 })}
+          onFocus={() =>
+            setActivePoint({ index: buckets.length - 1, y: plot.top + plotHeight / 2 })
+          }
           onBlur={() => setActivePoint(null)}
           onKeyDown={(event) => {
             if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
@@ -505,8 +534,8 @@ export default function Chains() {
   const [flow, setFlow] = useState('xtls-rprx-vision')
   const [encryption, setEncryption] = useState('none')
   const [targetAddress, setTargetAddress] = useState('')
-	const [targetPort, setTargetPort] = useState('')
-	const [trafficMultiplier, setTrafficMultiplier] = useState('1.000')
+  const [targetPort, setTargetPort] = useState('')
+  const [trafficMultiplier, setTrafficMultiplier] = useState('1.000')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
 
@@ -522,8 +551,7 @@ export default function Chains() {
     ...selectedMiddleServers,
     ...(chainType === 'relay' && selectedExit ? [selectedExit] : []),
   ]
-  const hopIndexes =
-    chainType === 'relay' ? selectedMiddleServers.map((_, index) => index + 1) : []
+  const hopIndexes = chainType === 'relay' ? selectedMiddleServers.map((_, index) => index + 1) : []
   const entryPortHint = (() => {
     const value = Number(entryPort)
     if (!value || !entryId) return ''
@@ -551,7 +579,9 @@ export default function Chains() {
     const request = ++loadRequest.current
     const options = signal
       ? { signal, ...(silent ? { display: 'silent' as const } : {}) }
-      : silent ? { display: 'silent' as const } : undefined
+      : silent
+        ? { display: 'silent' as const }
+        : undefined
     try {
       const [nextChains, nextNodes, nextServers] = await Promise.all([
         api.chains(options),
@@ -574,7 +604,10 @@ export default function Chains() {
 
   // 名称模板 {{PANEL_SHORT}} 预览值；读取失败由 naming 层回退默认缩写。
   useEffect(() => {
-    api.settings().then((s) => setPanelShort(s.panel_short)).catch(() => {})
+    api
+      .settings()
+      .then((s) => setPanelShort(s.panel_short))
+      .catch(() => {})
   }, [])
 
   const resetChainForm = () => {
@@ -602,8 +635,8 @@ export default function Chains() {
     setFlow('xtls-rprx-vision')
     setEncryption('none')
     setTargetAddress('')
-		setTargetPort('')
-		setTrafficMultiplier('1.000')
+    setTargetPort('')
+    setTrafficMultiplier('1.000')
     setCreateError('')
   }
 
@@ -644,9 +677,8 @@ export default function Chains() {
       ? reality.serverNames.filter((value): value is string => typeof value === 'string')
       : []
     const configuredDest = String(reality.dest || `${DEFAULT_REALITY_DEST}:443`)
-    const effectiveServerNames = configuredServerNames.length > 0
-      ? configuredServerNames
-      : [DEFAULT_REALITY_DEST]
+    const effectiveServerNames =
+      configuredServerNames.length > 0 ? configuredServerNames : [DEFAULT_REALITY_DEST]
     setEditingChainId(chain.id)
     setChainType(chain.hops.length === 1 ? 'direct' : 'relay')
     setName(chain.name)
@@ -657,7 +689,7 @@ export default function Chains() {
     setEntryAddr(chain.hops[0]?.address ?? '')
     setMiddleAddrs(chain.hops.slice(1, -1).map((hop) => hop.address ?? ''))
     setExitAddr(chain.hops.length > 1 ? (chain.hops.at(-1)?.address ?? '') : '')
-		setEntryPort(chain.entry_port ? String(chain.entry_port) : '')
+    setEntryPort(chain.entry_port ? String(chain.entry_port) : '')
     setTrafficMultiplier(chain.traffic_multiplier || '1.000')
     setProtocol(String(virtual.protocol ?? service?.protocol ?? 'vless'))
     setPort(virtual.port ? String(virtual.port) : '')
@@ -791,31 +823,34 @@ export default function Chains() {
     const mkHop = (id: string, addr: string | undefined): ChainHopInput =>
       addr ? { server_id: Number(id), address: addr } : { server_id: Number(id) }
     try {
-		if (editingChainId !== null) {
-			const body: EditChainRequest = {
-				chain_id: editingChainId,
-				name: resolvedName,
-				hops: hopIds.map((id, i) => mkHop(id, hopAddrList[i])),
-				node: nodeBody,
-				traffic_multiplier: trafficMultiplier,
-			}
-			if (entryPort.trim()) body.entry_port = Number(entryPort)
-			const { observeId } = await api.editChain(body)
-			if (observeId) showOperation({ observeId })
-		} else {
-			const body: CreateChainRequest = {
-				name: resolvedName,
-				hops: hopIds.map((id, i) => mkHop(id, hopAddrList[i])),
-				entry: mkHop(entryId, entryAddr),
-				middle: middleIds.map((id, i) => mkHop(id, middleAddrs[i])),
-				exit: mkHop(chainType === 'direct' ? entryId : exitId, chainType === 'direct' ? entryAddr : exitAddr),
-				node: nodeBody,
-				traffic_multiplier: trafficMultiplier,
-			}
-			if (entryPort.trim()) body.entry_port = Number(entryPort)
-			const { observeId } = await api.createChain(body)
-			if (observeId) showOperation({ observeId })
-		}
+      if (editingChainId !== null) {
+        const body: EditChainRequest = {
+          chain_id: editingChainId,
+          name: resolvedName,
+          hops: hopIds.map((id, i) => mkHop(id, hopAddrList[i])),
+          node: nodeBody,
+          traffic_multiplier: trafficMultiplier,
+        }
+        if (entryPort.trim()) body.entry_port = Number(entryPort)
+        const { observeId } = await api.editChain(body)
+        if (observeId) showOperation({ observeId })
+      } else {
+        const body: CreateChainRequest = {
+          name: resolvedName,
+          hops: hopIds.map((id, i) => mkHop(id, hopAddrList[i])),
+          entry: mkHop(entryId, entryAddr),
+          middle: middleIds.map((id, i) => mkHop(id, middleAddrs[i])),
+          exit: mkHop(
+            chainType === 'direct' ? entryId : exitId,
+            chainType === 'direct' ? entryAddr : exitAddr,
+          ),
+          node: nodeBody,
+          traffic_multiplier: trafficMultiplier,
+        }
+        if (entryPort.trim()) body.entry_port = Number(entryPort)
+        const { observeId } = await api.createChain(body)
+        if (observeId) showOperation({ observeId })
+      }
       onOpenChange(false)
       load()
     } catch (err) {
@@ -826,12 +861,15 @@ export default function Chains() {
   }
 
   const onForcePublish = async (chain: Chain) => {
-    if (!(await confirm({
-      title: '强制发布未确认配置',
-      description: `链路「${chain.name}」将立即更新订阅，离线 Agent 的任务继续排队。此操作不会自动回滚。`,
-      confirmLabel: '强制发布',
-      destructive: true,
-    }))) return
+    if (
+      !(await confirm({
+        title: '强制发布未确认配置',
+        description: `链路「${chain.name}」将立即更新订阅，离线 Agent 的任务继续排队。此操作不会自动回滚。`,
+        confirmLabel: '强制发布',
+        destructive: true,
+      }))
+    )
+      return
     try {
       const { observeId } = await api.forcePublishChain(chain.id)
       if (observeId) showOperation({ observeId })
@@ -842,12 +880,15 @@ export default function Chains() {
   }
 
   const onResetTraffic = async (chain: Chain) => {
-    if (!(await confirm({
-      title: '重置流量统计',
-      description: `重置链路「${chain.name}」及各跳当前显示的累计流量？历史原始计数不会回写 Agent。`,
-      confirmLabel: '重置',
-      destructive: true,
-    }))) return
+    if (
+      !(await confirm({
+        title: '重置流量统计',
+        description: `重置链路「${chain.name}」及各跳当前显示的累计流量？历史原始计数不会回写 Agent。`,
+        confirmLabel: '重置',
+        destructive: true,
+      }))
+    )
+      return
     try {
       await api.resetChainTraffic(chain.id)
       load()
@@ -856,16 +897,21 @@ export default function Chains() {
     }
   }
 
-  const loadTrafficHistory = useCallback(async (chain: Chain, hopId: number, range: 'day' | 'month') => {
-    setTrafficLoading(true)
-    try {
-      setTrafficHistory((await api.chainTrafficHistory(chain.id, hopId, range === 'day' ? 30 : 365)) ?? [])
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      setTrafficLoading(false)
-    }
-  }, [])
+  const loadTrafficHistory = useCallback(
+    async (chain: Chain, hopId: number, range: 'day' | 'month') => {
+      setTrafficLoading(true)
+      try {
+        setTrafficHistory(
+          (await api.chainTrafficHistory(chain.id, hopId, range === 'day' ? 30 : 365)) ?? [],
+        )
+      } catch (err) {
+        setError(errorMessage(err))
+      } finally {
+        setTrafficLoading(false)
+      }
+    },
+    [],
+  )
 
   const openTraffic = (chain: Chain) => {
     setTrafficChain(chain)
@@ -902,12 +948,14 @@ export default function Chains() {
 
   const onDelete = async (id: number) => {
     const chain = chains.find((c) => c.id === id)
-    if (!(await confirm({
-      title: '删除链路',
-      description: `确定删除链路「${chain?.name || `#${id}`}」？将逐跳拆除转发/隧道并删除出口节点。`,
-      confirmLabel: '删除链路',
-      destructive: true,
-    }))) {
+    if (
+      !(await confirm({
+        title: '删除链路',
+        description: `确定删除链路「${chain?.name || `#${id}`}」？将逐跳拆除转发/隧道并删除出口节点。`,
+        confirmLabel: '删除链路',
+        destructive: true,
+      }))
+    ) {
       return
     }
     try {
@@ -921,12 +969,14 @@ export default function Chains() {
 
   const onDeleteDirect = async (id: number) => {
     const node = nodes.find((candidate) => candidate.id === id)
-    if (!(await confirm({
-      title: '删除直连链路',
-      description: `确定删除直连链路「${node?.name || `#${id}`}」？将从服务器移除业务入站。`,
-      confirmLabel: '删除链路',
-      destructive: true,
-    }))) {
+    if (
+      !(await confirm({
+        title: '删除直连链路',
+        description: `确定删除直连链路「${node?.name || `#${id}`}」？将从服务器移除业务入站。`,
+        confirmLabel: '删除链路',
+        destructive: true,
+      }))
+    ) {
       return
     }
     try {
@@ -938,12 +988,16 @@ export default function Chains() {
     }
   }
 
-  const serverOnline = (id: number): boolean =>
-		isServerOnline(servers.find((s) => s.id === id))
+  const serverOnline = (id: number): boolean => isServerOnline(servers.find((s) => s.id === id))
 
   const serverSelectItems = servers.map((s) => ({ value: String(s.id), label: serverLabel(s) }))
   const relayExitNodeIds = useMemo(
-    () => new Set(chains.flatMap((chain) => chain.hops.filter((hop) => hop.role === 'exit').map((hop) => hop.node_id))),
+    () =>
+      new Set(
+        chains.flatMap((chain) =>
+          chain.hops.filter((hop) => hop.role === 'exit').map((hop) => hop.node_id),
+        ),
+      ),
     [chains],
   )
   const directNodes = useMemo(
@@ -953,7 +1007,11 @@ export default function Chains() {
   const entries = useMemo(
     () =>
       [
-        ...directNodes.map((node) => ({ type: 'direct' as const, createdAt: node.created_at, node })),
+        ...directNodes.map((node) => ({
+          type: 'direct' as const,
+          createdAt: node.created_at,
+          node,
+        })),
         ...chains.map((chain) => ({ type: 'relay' as const, createdAt: chain.created_at, chain })),
       ].toSorted((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [chains, directNodes],
@@ -992,7 +1050,7 @@ export default function Chains() {
       <PageHeader
         title="链路"
         description="直连与中转链路的部署状态、跳点拓扑与累计流量，统一在此编排与维护。"
-        actions={(
+        actions={
           <>
             <span className="cg-pill">{loading ? '同步中…' : `${entries.length} 条链路`}</span>
             <button type="button" className="cg-button is-primary" onClick={openCreate}>
@@ -1000,7 +1058,7 @@ export default function Chains() {
               创建链路
             </button>
           </>
-        )}
+        }
       />
 
       {error && <Notice tone="danger">{error}</Notice>}
@@ -1009,11 +1067,7 @@ export default function Chains() {
         {loading ? (
           <LoadingState />
         ) : entries.length === 0 ? (
-          <EmptyState
-            icon={<RouteIcon />}
-            title="暂无链路"
-            description="点击上方“创建链路”开始"
-          />
+          <EmptyState icon={<RouteIcon />} title="暂无链路" description="点击上方“创建链路”开始" />
         ) : (
           entries.map((entry) => {
             if (entry.type === 'direct') {
@@ -1022,7 +1076,11 @@ export default function Chains() {
               const server = servers.find((candidate) => candidate.id === node.server_id)
               const displayPort = node.realized_config?.port ?? node.port
               return (
-                <article key={`direct-${node.id}`} className="cg-card cg-chain-card" data-tone={st.cg}>
+                <article
+                  key={`direct-${node.id}`}
+                  className="cg-card cg-chain-card"
+                  data-tone={st.cg}
+                >
                   <header className="cg-chain-card-head">
                     <div className="cg-chain-card-title">
                       <ChainStateMark status={node.status} style={st} />
@@ -1057,14 +1115,30 @@ export default function Chains() {
                     {node.error ? <p className="cg-chain-error">{node.error}</p> : null}
                     <div className="cg-chain-split">
                       <div className="cg-chain-direct">
-                        <span className={cn('cg-hop-dot', server && isServerOnline(server) ? 'is-lime' : 'is-red')} />
+                        <span
+                          className={cn(
+                            'cg-hop-dot',
+                            server && isServerOnline(server) ? 'is-lime' : 'is-red',
+                          )}
+                        />
                         <div className="cg-chain-direct-copy">
                           <span className="cg-chain-direct-label">直连服务器</span>
                           <strong className="cg-chain-direct-name">{node.server_alias}</strong>
-                          {displayPort ? <span className="cg-chain-direct-port">:{displayPort}</span> : null}
+                          {displayPort ? (
+                            <span className="cg-chain-direct-port">:{displayPort}</span>
+                          ) : null}
                         </div>
-                        <span className={cn('cg-status', server ? (isServerOnline(server) ? 'is-lime' : 'is-red') : 'is-muted')}>
-                          {server ? (isServerOnline(server) ? 'Agent 在线' : 'Agent 离线') : 'Agent 未知'}
+                        <span
+                          className={cn(
+                            'cg-status',
+                            server ? (isServerOnline(server) ? 'is-lime' : 'is-red') : 'is-muted',
+                          )}
+                        >
+                          {server
+                            ? isServerOnline(server)
+                              ? 'Agent 在线'
+                              : 'Agent 离线'
+                            : 'Agent 未知'}
                         </span>
                       </div>
                       <TrafficSummary up={node.traffic?.up} down={node.traffic?.down} />
@@ -1077,7 +1151,9 @@ export default function Chains() {
             const st = chainStatusStyle[c.status] ?? chainStatusStyle.pending
             const hasFailedHop = c.hops.some((h) => h.status === 'failed')
             const isDirect = c.hops.length === 1
-            const pendingTasks = c.revision_tasks.filter((task) => task.status === 'pending' || task.status === 'queued')
+            const pendingTasks = c.revision_tasks.filter(
+              (task) => task.status === 'pending' || task.status === 'queued',
+            )
             return (
               <article key={`relay-${c.id}`} className="cg-card cg-chain-card" data-tone={st.cg}>
                 <header className="cg-chain-card-head">
@@ -1089,9 +1165,13 @@ export default function Chains() {
                     <span className={cn('cg-status', st.cg)}>{st.label}</span>
                     {c.status === 'degraded' ? (
                       c.endpoint_status === 'failed' ? (
-                        <span className="cg-chain-note is-red">共享入口部署失败，已发布链路仍保留</span>
+                        <span className="cg-chain-note is-red">
+                          共享入口部署失败，已发布链路仍保留
+                        </span>
                       ) : c.endpoint_status === 'applying' || c.endpoint_status === 'pending' ? (
-                        <span className="cg-chain-note is-blue">共享入口部署中，已发布链路仍保留</span>
+                        <span className="cg-chain-note is-blue">
+                          共享入口部署中，已发布链路仍保留
+                        </span>
                       ) : (
                         <span className="cg-chain-note is-red">Agent 离线，已发布链路仍保留</span>
                       )
@@ -1122,10 +1202,20 @@ export default function Chains() {
                           强制发布
                         </Button>
                       ) : null}
-                      <Button variant="outline" size="icon-sm" title="流量历史" onClick={() => openTraffic(c)}>
+                      <Button
+                        variant="outline"
+                        size="icon-sm"
+                        title="流量历史"
+                        onClick={() => openTraffic(c)}
+                      >
                         <BarChart3Icon />
                       </Button>
-                      <Button variant="outline" size="icon-sm" title="重置流量" onClick={() => onResetTraffic(c)}>
+                      <Button
+                        variant="outline"
+                        size="icon-sm"
+                        title="重置流量"
+                        onClick={() => onResetTraffic(c)}
+                      >
                         <RotateCcwIcon />
                       </Button>
                       <Button
@@ -1155,14 +1245,18 @@ export default function Chains() {
                         {c.hops.map((h, i) => {
                           const hst = hopStatusStyle[h.status] ?? hopStatusStyle.pending
                           const offline = !serverOnline(h.server_id)
-                          const exitNode = h.role === 'exit'
-                            ? nodes.find((n) => n.id === h.node_id)
-                            : undefined
-                          const hopPort = h.role === 'entry'
-                            ? (c.entry_port !== 0 ? c.entry_port : h.forward_port)
-                            : h.role === 'middle'
-                              ? h.forward_port
-                              : (exitNode?.realized_config?.port ?? exitNode?.port ?? h.forward_port)
+                          const exitNode =
+                            h.role === 'exit' ? nodes.find((n) => n.id === h.node_id) : undefined
+                          const hopPort =
+                            h.role === 'entry'
+                              ? c.entry_port !== 0
+                                ? c.entry_port
+                                : h.forward_port
+                              : h.role === 'middle'
+                                ? h.forward_port
+                                : (exitNode?.realized_config?.port ??
+                                  exitNode?.port ??
+                                  h.forward_port)
                           return (
                             <div key={h.id} className="cg-hop-seg" title={h.error || undefined}>
                               {i > 0 ? (
@@ -1174,9 +1268,13 @@ export default function Chains() {
                               ) : null}
                               <div className="cg-hop">
                                 <span className="cg-hop-head">
-                                  <span className="cg-hop-num">{String(i + 1).padStart(2, '0')}</span>
+                                  <span className="cg-hop-num">
+                                    {String(i + 1).padStart(2, '0')}
+                                  </span>
                                   <span className={cn('cg-hop-dot', offline ? 'is-red' : hst.cg)} />
-                                  <span className="cg-hop-role">{roleLabel[h.role]} · {hst.label}</span>
+                                  <span className="cg-hop-role">
+                                    {roleLabel[h.role]} · {hst.label}
+                                  </span>
                                 </span>
                                 <strong className="cg-hop-name">{h.server_alias}</strong>
                                 <span className="cg-hop-meta">
@@ -1184,8 +1282,15 @@ export default function Chains() {
                                   {(h.role === 'entry' || c.hops.length === 1) && c.entry_shared ? (
                                     <span className="cg-hop-shared">共享入口</span>
                                   ) : null}
-                                  <span className={offline ? 'is-red' : 'is-lime'}>{offline ? 'Agent 离线' : 'Agent 在线'}</span>
-                                  {h.traffic ? <span>↑ {humanizeBytes(h.traffic.effective_up)} · ↓ {humanizeBytes(h.traffic.effective_down)}</span> : null}
+                                  <span className={offline ? 'is-red' : 'is-lime'}>
+                                    {offline ? 'Agent 离线' : 'Agent 在线'}
+                                  </span>
+                                  {h.traffic ? (
+                                    <span>
+                                      ↑ {humanizeBytes(h.traffic.effective_up)} · ↓{' '}
+                                      {humanizeBytes(h.traffic.effective_down)}
+                                    </span>
+                                  ) : null}
                                 </span>
                               </div>
                             </div>
@@ -1201,23 +1306,24 @@ export default function Chains() {
                       multiplier={c.traffic_multiplier}
                     />
                   </div>
-                {pendingTasks.length > 0 ? (
-                  <p className="cg-chain-queue">
-                    {pendingTasks.filter((task) => task.phase === 'apply').length} 个部署任务、
-                    {pendingTasks.filter((task) => task.phase === 'cleanup').length} 个清理任务在队列中
-                  </p>
-                ) : null}
-                {c.hops.some((h) => h.error) ? (
-                  <div className="cg-chain-hop-errors">
-                    {c.hops
-                      .filter((h) => h.error)
-                      .map((h) => (
-                        <p key={h.id}>
-                          {roleLabel[h.role]}（{h.server_alias}）：{h.error}
-                        </p>
-                      ))}
-                  </div>
-                ) : null}
+                  {pendingTasks.length > 0 ? (
+                    <p className="cg-chain-queue">
+                      {pendingTasks.filter((task) => task.phase === 'apply').length} 个部署任务、
+                      {pendingTasks.filter((task) => task.phase === 'cleanup').length}{' '}
+                      个清理任务在队列中
+                    </p>
+                  ) : null}
+                  {c.hops.some((h) => h.error) ? (
+                    <div className="cg-chain-hop-errors">
+                      {c.hops
+                        .filter((h) => h.error)
+                        .map((h) => (
+                          <p key={h.id}>
+                            {roleLabel[h.role]}（{h.server_alias}）：{h.error}
+                          </p>
+                        ))}
+                    </div>
+                  ) : null}
                 </div>
               </article>
             )
@@ -1243,10 +1349,12 @@ export default function Chains() {
                 aria-labelledby="chain-type-label"
                 className="grid grid-cols-2 gap-2"
               >
-                {([
-                  ['direct', '直连'],
-                  ['relay', '中转'],
-                ] as const).map(([value, label]) => (
+                {(
+                  [
+                    ['direct', '直连'],
+                    ['relay', '中转'],
+                  ] as const
+                ).map(([value, label]) => (
                   <label
                     key={value}
                     className={cn('cg-chain-type', chainType === value && 'is-selected')}
@@ -1270,21 +1378,29 @@ export default function Chains() {
                 id="chain-name-template"
                 value={name}
                 onChange={setName}
-                context={{ servers: topologyServers, protocol, port: entryPort, hopIndexes, panelShort }}
+                context={{
+                  servers: topologyServers,
+                  protocol,
+                  port: entryPort,
+                  hopIndexes,
+                  panelShort,
+                }}
                 allowEmpty
                 placeholder="留空自动生成 Chain #xxxx"
                 emptyHint="留空将在创建时自动生成 Chain #xxxx（4 位随机大小写字母）"
               />
               <p className="cg-chain-hint">
-                输入 {'{{'} 后可选择变量；中转节点显示为 HOP_1/HOP_2，对应模板中的
-                HOP[1]/HOP[2]。
+                输入 {'{{'} 后可选择变量；中转节点显示为 HOP_1/HOP_2，对应模板中的 HOP[1]/HOP[2]。
               </p>
             </div>
             <div className="space-y-2">
               <Label>{chainType === 'direct' ? '直连服务器' : '入口服务器'}</Label>
               <Select
                 value={entryId}
-                onValueChange={(v) => { setEntryId(String(v)); setEntryAddr('') }}
+                onValueChange={(v) => {
+                  setEntryId(String(v))
+                  setEntryAddr('')
+                }}
                 items={serverSelectItems}
               >
                 <SelectTrigger className="w-full">
@@ -1307,87 +1423,90 @@ export default function Chains() {
             </div>
             {chainType === 'relay' ? (
               <>
-            <div className="space-y-2">
-              <Label>中转服务器（0-2 个）</Label>
-              {middleIds.map((id, i) => (
-                <div key={i} className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={id}
-                      onValueChange={(v) => setMiddle(i, String(v))}
-                      items={serverSelectItems}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder={`中转 ${i + 1}`} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {servers.map((s) => (
-                          <SelectItem key={s.id} value={String(s.id)}>
-                            {serverLabel(s)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                <div className="space-y-2">
+                  <Label>中转服务器（0-2 个）</Label>
+                  {middleIds.map((id, i) => (
+                    <div key={i} className="space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <Select
+                          value={id}
+                          onValueChange={(v) => setMiddle(i, String(v))}
+                          items={serverSelectItems}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder={`中转 ${i + 1}`} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {servers.map((s) => (
+                              <SelectItem key={s.id} value={String(s.id)}>
+                                {serverLabel(s)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setMiddleIds(middleIds.filter((_, j) => j !== i))
+                            setMiddleAddrs(middleAddrs.filter((_, j) => j !== i))
+                          }}
+                        >
+                          <XIcon />
+                        </Button>
+                      </div>
+                      <HopAddressField
+                        key={`middle-${i}-${id}`}
+                        server={servers.find((s) => String(s.id) === id)}
+                        value={middleAddrs[i] ?? ''}
+                        onChange={(addr) => setMiddleAddr(i, addr)}
+                      />
+                    </div>
+                  ))}
+                  {middleIds.length < 2 && (
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
                       onClick={() => {
-                        setMiddleIds(middleIds.filter((_, j) => j !== i))
-                        setMiddleAddrs(middleAddrs.filter((_, j) => j !== i))
+                        setMiddleIds([...middleIds, ''])
+                        setMiddleAddrs([...middleAddrs, ''])
                       }}
                     >
-                      <XIcon />
+                      <PlusIcon />
+                      添加中转
                     </Button>
-                  </div>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <Label>出口服务器</Label>
+                  <Select
+                    value={exitId}
+                    onValueChange={(v) => {
+                      setExitId(String(v))
+                      setExitAddr('')
+                    }}
+                    items={serverSelectItems}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="选择出口服务器" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {servers.map((s) => (
+                        <SelectItem key={s.id} value={String(s.id)}>
+                          {serverLabel(s)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <HopAddressField
-                    key={`middle-${i}-${id}`}
-                    server={servers.find((s) => String(s.id) === id)}
-                    value={middleAddrs[i] ?? ''}
-                    onChange={(addr) => setMiddleAddr(i, addr)}
+                    key={`exit-${exitId}`}
+                    server={servers.find((s) => String(s.id) === exitId)}
+                    value={exitAddr}
+                    onChange={setExitAddr}
                   />
                 </div>
-              ))}
-              {middleIds.length < 2 && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setMiddleIds([...middleIds, ''])
-                    setMiddleAddrs([...middleAddrs, ''])
-                  }}
-                >
-                  <PlusIcon />
-                  添加中转
-                </Button>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label>出口服务器</Label>
-              <Select
-                value={exitId}
-                onValueChange={(v) => { setExitId(String(v)); setExitAddr('') }}
-                items={serverSelectItems}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="选择出口服务器" />
-                </SelectTrigger>
-                <SelectContent>
-                  {servers.map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)}>
-                      {serverLabel(s)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <HopAddressField
-                key={`exit-${exitId}`}
-                server={servers.find((s) => String(s.id) === exitId)}
-                value={exitAddr}
-                onChange={setExitAddr}
-              />
-            </div>
               </>
             ) : null}
             <div className="space-y-2">
@@ -1421,17 +1540,17 @@ export default function Chains() {
             </div>
             {chainType === 'relay' ? (
               <div className="space-y-2">
-              <Label htmlFor="exitNodePort">出口节点端口</Label>
-              <Input
-                id="exitNodePort"
-                type="number"
-                min={1}
-                max={65535}
-                value={port}
-                onChange={(e) => setPort(e.target.value)}
-                placeholder="留空自动分配"
-              />
-            </div>
+                <Label htmlFor="exitNodePort">出口节点端口</Label>
+                <Input
+                  id="exitNodePort"
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={port}
+                  onChange={(e) => setPort(e.target.value)}
+                  placeholder="留空自动分配"
+                />
+              </div>
             ) : null}
 
             {isReality && (
@@ -1491,7 +1610,11 @@ export default function Chains() {
                 {protocol === 'vless' && (
                   <div className="space-y-2">
                     <Label>VLESS Encryption（可与 flow 组合）</Label>
-                    <Select value={encryption} onValueChange={(v) => v !== null && setEncryption(v)} items={VLESS_ENCS}>
+                    <Select
+                      value={encryption}
+                      onValueChange={(v) => v !== null && setEncryption(v)}
+                      items={VLESS_ENCS}
+                    >
                       <SelectTrigger className="w-full">
                         <SelectValue />
                       </SelectTrigger>
@@ -1613,7 +1736,13 @@ export default function Chains() {
                   (chainType === 'relay' && !exitId)
                 }
               >
-                {creating ? (editingChainId === null ? '创建中…' : '保存中…') : (editingChainId === null ? '创建' : '保存修改')}
+                {creating
+                  ? editingChainId === null
+                    ? '创建中…'
+                    : '保存中…'
+                  : editingChainId === null
+                    ? '创建'
+                    : '保存修改'}
               </Button>
             </DialogFooter>
           </form>

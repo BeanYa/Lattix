@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { AlertTriangleIcon, Building2Icon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from 'lucide-react'
+import {
+  AlertTriangleIcon,
+  Building2Icon,
+  PencilIcon,
+  PlusIcon,
+  Trash2Icon,
+  XIcon,
+} from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
 import { CountryCombobox } from '@/components/CountryCombobox'
@@ -39,7 +46,20 @@ import { usePolling } from '@/lib/use-polling'
 import { cn } from '@/lib/utils'
 
 import './servers.css'
-import type { BillingInput, CleanupXrayResult, IntervalUnit, MachineType, PortRange, Provider, ReleaseVersions, RebuildXrayResult, Server, ServerMetricSeries, TrafficAccountingMode, TrafficPlanInput } from '@/lib/types'
+import type {
+  BillingInput,
+  CleanupXrayResult,
+  IntervalUnit,
+  MachineType,
+  PortRange,
+  Provider,
+  ReleaseVersions,
+  RebuildXrayResult,
+  Server,
+  ServerMetricSeries,
+  TrafficAccountingMode,
+  TrafficPlanInput,
+} from '@/lib/types'
 
 const DEPENDENCIES_COMMAND = 'apk add --no-cache bash curl ca-certificates unzip util-linux'
 
@@ -79,23 +99,64 @@ function addInterval(date: string, count: number, unit: IntervalUnit) {
 
 function defaultBilling(): BillingFormState {
   const today = localDate()
-  return { enabled: false, providerId: '', amount: '', currency: 'CNY', startedOn: today, intervalCount: 1, intervalUnit: 'month', renewalOn: addInterval(today, 1, 'month') }
+  return {
+    enabled: false,
+    providerId: '',
+    amount: '',
+    currency: 'CNY',
+    startedOn: today,
+    intervalCount: 1,
+    intervalUnit: 'month',
+    renewalOn: addInterval(today, 1, 'month'),
+  }
 }
 
 function defaultTraffic(): TrafficFormState {
-  return { limited: false, quota: '1000', quotaUnit: 'GB', accountingMode: 'outbound', anchorOn: localDate(), resetCount: 1, resetUnit: 'month' }
+  return {
+    limited: false,
+    quota: '1000',
+    quotaUnit: 'GB',
+    accountingMode: 'outbound',
+    anchorOn: localDate(),
+    resetCount: 1,
+    resetUnit: 'month',
+  }
 }
 
 function billingPayload(value: BillingFormState): BillingInput {
   const digits = ['JPY', 'KRW', 'ISK'].includes(value.currency) ? 0 : 2
-  return { enabled: value.enabled, provider_id: Number(value.providerId || 0), amount_minor: Math.round(Number(value.amount || 0) * 10 ** digits), currency: value.currency, service_started_on: value.startedOn, interval_count: value.intervalCount, interval_unit: value.intervalUnit, next_renewal_on: value.renewalOn }
+  return {
+    enabled: value.enabled,
+    provider_id: Number(value.providerId || 0),
+    amount_minor: Math.round(Number(value.amount || 0) * 10 ** digits),
+    currency: value.currency,
+    service_started_on: value.startedOn,
+    interval_count: value.intervalCount,
+    interval_unit: value.intervalUnit,
+    next_renewal_on: value.renewalOn,
+  }
 }
 
 function trafficPayload(value: TrafficFormState): TrafficPlanInput {
-  return { quota_bytes: value.limited ? Math.round(Number(value.quota) * (value.quotaUnit === 'TB' ? 1e12 : 1e9)) : null, accounting_mode: value.accountingMode, reset_anchor_on: value.anchorOn, reset_count: value.resetCount, reset_unit: value.resetUnit }
+  return {
+    quota_bytes: value.limited
+      ? Math.round(Number(value.quota) * (value.quotaUnit === 'TB' ? 1e12 : 1e9))
+      : null,
+    accounting_mode: value.accountingMode,
+    reset_anchor_on: value.anchorOn,
+    reset_count: value.resetCount,
+    reset_unit: value.resetUnit,
+  }
 }
 
-function BillingTrafficFields({ billing, setBilling, traffic, setTraffic, providers, onManageProviders }: {
+function BillingTrafficFields({
+  billing,
+  setBilling,
+  traffic,
+  setTraffic,
+  providers,
+  onManageProviders,
+}: {
   billing: BillingFormState
   setBilling: (value: BillingFormState) => void
   traffic: TrafficFormState
@@ -109,24 +170,225 @@ function BillingTrafficFields({ billing, setBilling, traffic, setTraffic, provid
       <section className="space-y-3">
         <div>
           <h3 className="text-sm font-medium">流量额度</h3>
-          <p className="text-xs text-muted-foreground">十进制换算：1 GB = 10^9 bytes，1 TB = 1000 GB</p>
+          <p className="text-xs text-muted-foreground">
+            十进制换算：1 GB = 10^9 bytes，1 TB = 1000 GB
+          </p>
         </div>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={traffic.limited} onChange={(e) => setTraffic({ ...traffic, limited: e.target.checked })} />有限额度</label>
-        {traffic.limited ? <div className="grid grid-cols-[1fr_110px] gap-2"><Input type="number" min="0.01" step="0.01" value={traffic.quota} onChange={(e) => setTraffic({ ...traffic, quota: e.target.value })} /><Select value={traffic.quotaUnit} onValueChange={(v) => v && setTraffic({ ...traffic, quotaUnit: v as 'GB' | 'TB' })} items={[{ value: 'GB', label: 'GB' }, { value: 'TB', label: 'TB' }]}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="GB">GB</SelectItem><SelectItem value="TB">TB</SelectItem></SelectContent></Select></div> : null}
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={traffic.limited}
+            onChange={(e) => setTraffic({ ...traffic, limited: e.target.checked })}
+          />
+          有限额度
+        </label>
+        {traffic.limited ? (
+          <div className="grid grid-cols-[1fr_110px] gap-2">
+            <Input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={traffic.quota}
+              onChange={(e) => setTraffic({ ...traffic, quota: e.target.value })}
+            />
+            <Select
+              value={traffic.quotaUnit}
+              onValueChange={(v) => v && setTraffic({ ...traffic, quotaUnit: v as 'GB' | 'TB' })}
+              items={[
+                { value: 'GB', label: 'GB' },
+                { value: 'TB', label: 'TB' },
+              ]}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="GB">GB</SelectItem>
+                <SelectItem value="TB">TB</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-2"><Label>计流方式</Label><Select value={traffic.accountingMode} onValueChange={(v) => v && setTraffic({ ...traffic, accountingMode: v as TrafficAccountingMode })} items={[{ value: 'outbound', label: '仅出站' }, { value: 'bidirectional', label: '入站 + 出站' }, { value: 'max', label: '取较大方向' }]}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="outbound">仅出站</SelectItem><SelectItem value="bidirectional">入站 + 出站</SelectItem><SelectItem value="max">取较大方向</SelectItem></SelectContent></Select></div>
-          <div className="space-y-2"><Label>重置锚点</Label><Input type="date" value={traffic.anchorOn} onChange={(e) => setTraffic({ ...traffic, anchorOn: e.target.value })} /></div>
+          <div className="space-y-2">
+            <Label>计流方式</Label>
+            <Select
+              value={traffic.accountingMode}
+              onValueChange={(v) =>
+                v && setTraffic({ ...traffic, accountingMode: v as TrafficAccountingMode })
+              }
+              items={[
+                { value: 'outbound', label: '仅出站' },
+                { value: 'bidirectional', label: '入站 + 出站' },
+                { value: 'max', label: '取较大方向' },
+              ]}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="outbound">仅出站</SelectItem>
+                <SelectItem value="bidirectional">入站 + 出站</SelectItem>
+                <SelectItem value="max">取较大方向</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>重置锚点</Label>
+            <Input
+              type="date"
+              value={traffic.anchorOn}
+              onChange={(e) => setTraffic({ ...traffic, anchorOn: e.target.value })}
+            />
+          </div>
         </div>
       </section>
       <Separator />
       <section className="space-y-3">
-        <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={billing.enabled} onChange={(e) => setBilling({ ...billing, enabled: e.target.checked })} />统计计费</label>
-        {billing.enabled ? <>
-          <div className="grid grid-cols-[1fr_auto] items-end gap-2"><div className="space-y-2"><Label>服务商</Label><Select value={billing.providerId} onValueChange={(v) => v && setBilling({ ...billing, providerId: v })} items={providers.map((p) => ({ value: String(p.id), label: p.name }))}><SelectTrigger><SelectValue placeholder="选择服务商" /></SelectTrigger><SelectContent>{providers.length === 0 ? <p className="px-3 py-6 text-center text-sm text-muted-foreground">暂无服务商，请先添加</p> : providers.map((p) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}</SelectContent></Select></div><Button type="button" variant="outline" size="icon" title="管理服务商" onClick={onManageProviders}><Building2Icon /></Button></div>
-          <div className="grid grid-cols-[1fr_110px] gap-2"><div className="space-y-2"><Label>每周期实付金额</Label><Input type="number" min="0" step="0.01" value={billing.amount} onChange={(e) => setBilling({ ...billing, amount: e.target.value })} /></div><div className="space-y-2"><Label>币种</Label><Select value={billing.currency} onValueChange={(v) => v && setBilling({ ...billing, currency: v })} items={CURRENCIES.map((c) => ({ value: c, label: c }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{CURRENCIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></div></div>
-          <div className="grid gap-3 sm:grid-cols-2"><div className="space-y-2"><Label>开通日期</Label><Input type="date" max={localDate()} value={billing.startedOn} onChange={(e) => setBilling({ ...billing, startedOn: e.target.value, renewalOn: addInterval(e.target.value, billing.intervalCount, billing.intervalUnit) })} /></div><div className="space-y-2"><Label>下次续费日</Label><Input type="date" value={billing.renewalOn} onChange={(e) => setBilling({ ...billing, renewalOn: e.target.value })} /></div></div>
-          <div className="grid grid-cols-[1fr_140px] gap-2"><div className="space-y-2"><Label>计费周期</Label><Input type="number" min="1" value={billing.intervalCount} onChange={(e) => setBilling({ ...billing, intervalCount: Number(e.target.value) })} /></div><div className="space-y-2"><Label>单位</Label><Select value={billing.intervalUnit} onValueChange={(v) => v && setBilling({ ...billing, intervalUnit: v as IntervalUnit })} items={[{ value: 'day', label: '天' }, { value: 'month', label: '月' }, { value: 'year', label: '年' }]}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="day">天</SelectItem><SelectItem value="month">月</SelectItem><SelectItem value="year">年</SelectItem></SelectContent></Select></div></div>
-        </> : null}
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            checked={billing.enabled}
+            onChange={(e) => setBilling({ ...billing, enabled: e.target.checked })}
+          />
+          统计计费
+        </label>
+        {billing.enabled ? (
+          <>
+            <div className="grid grid-cols-[1fr_auto] items-end gap-2">
+              <div className="space-y-2">
+                <Label>服务商</Label>
+                <Select
+                  value={billing.providerId}
+                  onValueChange={(v) => v && setBilling({ ...billing, providerId: v })}
+                  items={providers.map((p) => ({ value: String(p.id), label: p.name }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="选择服务商" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {providers.length === 0 ? (
+                      <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                        暂无服务商，请先添加
+                      </p>
+                    ) : (
+                      providers.map((p) => (
+                        <SelectItem key={p.id} value={String(p.id)}>
+                          {p.name}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                title="管理服务商"
+                onClick={onManageProviders}
+              >
+                <Building2Icon />
+              </Button>
+            </div>
+            <div className="grid grid-cols-[1fr_110px] gap-2">
+              <div className="space-y-2">
+                <Label>每周期实付金额</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={billing.amount}
+                  onChange={(e) => setBilling({ ...billing, amount: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>币种</Label>
+                <Select
+                  value={billing.currency}
+                  onValueChange={(v) => v && setBilling({ ...billing, currency: v })}
+                  items={CURRENCIES.map((c) => ({ value: c, label: c }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CURRENCIES.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {c}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>开通日期</Label>
+                <Input
+                  type="date"
+                  max={localDate()}
+                  value={billing.startedOn}
+                  onChange={(e) =>
+                    setBilling({
+                      ...billing,
+                      startedOn: e.target.value,
+                      renewalOn: addInterval(
+                        e.target.value,
+                        billing.intervalCount,
+                        billing.intervalUnit,
+                      ),
+                    })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>下次续费日</Label>
+                <Input
+                  type="date"
+                  value={billing.renewalOn}
+                  onChange={(e) => setBilling({ ...billing, renewalOn: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-[1fr_140px] gap-2">
+              <div className="space-y-2">
+                <Label>计费周期</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={billing.intervalCount}
+                  onChange={(e) =>
+                    setBilling({ ...billing, intervalCount: Number(e.target.value) })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>单位</Label>
+                <Select
+                  value={billing.intervalUnit}
+                  onValueChange={(v) =>
+                    v && setBilling({ ...billing, intervalUnit: v as IntervalUnit })
+                  }
+                  items={[
+                    { value: 'day', label: '天' },
+                    { value: 'month', label: '月' },
+                    { value: 'year', label: '年' },
+                  ]}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="day">天</SelectItem>
+                    <SelectItem value="month">月</SelectItem>
+                    <SelectItem value="year">年</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </>
+        ) : null}
       </section>
     </div>
   )
@@ -185,7 +447,9 @@ function parsePortRows(rows: string[]): { ranges: PortRange[] } | { error: strin
   for (const row of filled) {
     const r = parsePortRange(row)
     if (!r) {
-      return { error: `端口段「${row}」格式非法：支持单端口 10000、范围 10001-10010、映射 20001-20010:10001-10010` }
+      return {
+        error: `端口段「${row}」格式非法：支持单端口 10000、范围 10001-10010、映射 20001-20010:10001-10010`,
+      }
     }
     ranges.push(r)
   }
@@ -225,7 +489,11 @@ export default function Servers() {
   const [portRows, setPortRows] = useState<string[]>([''])
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
-  const [cmdView, setCmdView] = useState<{ title: string; command: string; insecure: boolean } | null>(null)
+  const [cmdView, setCmdView] = useState<{
+    title: string
+    command: string
+    insecure: boolean
+  } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Server | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [editTarget, setEditTarget] = useState<Server | null>(null)
@@ -313,7 +581,9 @@ export default function Servers() {
     const request = ++serverListRequest.current
     const options = signal
       ? { signal, ...(silent ? { display: 'silent' as const } : {}) }
-      : silent ? { display: 'silent' as const } : undefined
+      : silent
+        ? { display: 'silent' as const }
+        : undefined
     try {
       const nextServers = await api.servers(options)
       if (signal?.aborted || request !== serverListRequest.current) return
@@ -326,16 +596,26 @@ export default function Servers() {
     }
   }, [])
 
-  const loadProviders = useCallback(() => api.providers().then(setProviders).catch(() => setProviders([])), [])
+  const loadProviders = useCallback(
+    () =>
+      api
+        .providers()
+        .then(setProviders)
+        .catch(() => setProviders([])),
+    [],
+  )
 
   usePolling(load, serverListRequest)
 
-  useEffect(() => { loadProviders() }, [loadProviders])
+  useEffect(() => {
+    loadProviders()
+  }, [loadProviders])
 
   useEffect(() => {
     let active = true
     const loadSamples = () => {
-      api.serverMetricSamples()
+      api
+        .serverMetricSamples()
         .then((result) => {
           if (active) setMetricSamples(result)
         })
@@ -353,7 +633,9 @@ export default function Servers() {
 
   useEffect(() => {
     if (!open && !editTarget) return
-    loadCountries().then(setCountryOptions).catch(() => setCountryOptions([]))
+    loadCountries()
+      .then(setCountryOptions)
+      .catch(() => setCountryOptions([]))
   }, [open, editTarget])
 
   useEffect(() => {
@@ -361,7 +643,9 @@ export default function Servers() {
       setCities([])
       return
     }
-    loadCities(countryCode).then(setCities).catch(() => setCities([]))
+    loadCities(countryCode)
+      .then(setCities)
+      .catch(() => setCities([]))
   }, [countryCode])
 
   useEffect(() => {
@@ -369,7 +653,9 @@ export default function Servers() {
       setEditCities([])
       return
     }
-    loadCities(editCountryCode).then(setEditCities).catch(() => setEditCities([]))
+    loadCities(editCountryCode)
+      .then(setEditCities)
+      .catch(() => setEditCities([]))
   }, [editCountryCode])
 
   const citySuggestions = useMemo(() => {
@@ -379,7 +665,9 @@ export default function Servers() {
 
   const editCitySuggestions = useMemo(() => {
     const query = editLocation.trim().toLocaleLowerCase()
-    return editCities.filter((city) => !query || city.toLocaleLowerCase().includes(query)).slice(0, 30)
+    return editCities
+      .filter((city) => !query || city.toLocaleLowerCase().includes(query))
+      .slice(0, 30)
   }, [editCities, editLocation])
 
   const onOpenChange = (next: boolean) => {
@@ -439,7 +727,11 @@ export default function Servers() {
     try {
       const res = await api.createServer(body)
       onOpenChange(false)
-      setCmdView({ title: '服务器已创建，请在目标机器上执行安装命令', command: res.install_command, insecure: res.install_insecure })
+      setCmdView({
+        title: '服务器已创建，请在目标机器上执行安装命令',
+        command: res.install_command,
+        insecure: res.install_insecure,
+      })
       load()
     } catch (err) {
       setCreateError(errorMessage(err))
@@ -455,7 +747,8 @@ export default function Servers() {
       installed &&
       !(await confirm({
         title: '刷新服务器凭证',
-        description: '刷新后该服务器的旧凭证（含长期凭证）立即失效，agent 重连前需重新执行安装命令。',
+        description:
+          '刷新后该服务器的旧凭证（含长期凭证）立即失效，agent 重连前需重新执行安装命令。',
         confirmLabel: '刷新凭证',
         destructive: true,
       }))
@@ -476,11 +769,13 @@ export default function Servers() {
 
   // 配置漂移修复（§17）：重放该服务器全部 active 节点，agent 重建配置后漂移标志自动清除。
   const onRepair = async (s: Server) => {
-    if (!(await confirm({
-      title: '修复配置漂移',
-      description: `确定修复「${s.alias}」的配置漂移？将按面板节点状态重建该机 xray 配置。`,
-      confirmLabel: '开始修复',
-    }))) {
+    if (
+      !(await confirm({
+        title: '修复配置漂移',
+        description: `确定修复「${s.alias}」的配置漂移？将按面板节点状态重建该机 xray 配置。`,
+        confirmLabel: '开始修复',
+      }))
+    ) {
       return
     }
     try {
@@ -538,26 +833,45 @@ export default function Servers() {
     setEditTarget(s)
     setEditAlias(s.alias)
     // 地址列表回填：优先 server.addresses，空则回退默认/学习地址（去重保序）。
-    const initialAddrs = s.addresses.length > 0
-      ? s.addresses
-      : [...new Set([s.address, s.learned_addr].filter(Boolean))]
+    const initialAddrs =
+      s.addresses.length > 0
+        ? s.addresses
+        : [...new Set([s.address, s.learned_addr].filter(Boolean))]
     setEditAddresses(initialAddrs)
     setEditDefaultAddr(s.address)
     setEditAddrInput('')
-    setEditPortRows(
-      s.allowed_ports.length > 0 ? s.allowed_ports.map(formatPortRange) : [''],
-    )
+    setEditPortRows(s.allowed_ports.length > 0 ? s.allowed_ports.map(formatPortRange) : [''])
     setEditTags(s.tags)
     setEditCountryCode(s.country_code)
     setEditLocation(s.location)
     const divisor = ['JPY', 'KRW', 'ISK'].includes(s.billing.currency) ? 1 : 100
-    setEditBilling({ enabled: s.billing.enabled, providerId: s.billing.provider ? String(s.billing.provider.id) : '', amount: String(s.billing.amount_minor / divisor), currency: s.billing.currency || 'CNY', startedOn: s.billing.service_started_on || localDate(), intervalCount: s.billing.interval_count || 1, intervalUnit: s.billing.interval_unit || 'month', renewalOn: s.billing.next_renewal_on || addInterval(localDate(), 1, 'month') })
+    setEditBilling({
+      enabled: s.billing.enabled,
+      providerId: s.billing.provider ? String(s.billing.provider.id) : '',
+      amount: String(s.billing.amount_minor / divisor),
+      currency: s.billing.currency || 'CNY',
+      startedOn: s.billing.service_started_on || localDate(),
+      intervalCount: s.billing.interval_count || 1,
+      intervalUnit: s.billing.interval_unit || 'month',
+      renewalOn: s.billing.next_renewal_on || addInterval(localDate(), 1, 'month'),
+    })
     const quota = s.traffic_plan.quota_bytes
     const quotaUnit: 'GB' | 'TB' = quota !== null && quota >= 1e12 ? 'TB' : 'GB'
-    setEditTraffic({ limited: quota !== null, quota: quota === null ? '1000' : String(quota / (quotaUnit === 'TB' ? 1e12 : 1e9)), quotaUnit, accountingMode: s.traffic_plan.accounting_mode, anchorOn: s.traffic_plan.reset_anchor_on || localDate(), resetCount: s.traffic_plan.reset_count || 1, resetUnit: s.traffic_plan.reset_unit || 'month' })
+    setEditTraffic({
+      limited: quota !== null,
+      quota: quota === null ? '1000' : String(quota / (quotaUnit === 'TB' ? 1e12 : 1e9)),
+      quotaUnit,
+      accountingMode: s.traffic_plan.accounting_mode,
+      anchorOn: s.traffic_plan.reset_anchor_on || localDate(),
+      resetCount: s.traffic_plan.reset_count || 1,
+      resetUnit: s.traffic_plan.reset_unit || 'month',
+    })
     setEditXrayOverride(s.custom_settings?.xray_version ?? '')
     setEditXrayVersions(['latest'])
-    api.releaseVersions('xray').then((versions) => setEditXrayVersions(versions.versions)).catch(() => {})
+    api
+      .releaseVersions('xray')
+      .then((versions) => setEditXrayVersions(versions.versions))
+      .catch(() => {})
     setEditError('')
   }
 
@@ -650,7 +964,8 @@ export default function Servers() {
     setUpgradeCmdId(null)
     setUpgradeResult(null)
     setUpgradeResultError('')
-    api.releaseVersions(kind)
+    api
+      .releaseVersions(kind)
       .then((versions) => {
         if (upgradeVersionsRequest.current === requestID) setUpgradeVersions(versions)
       })
@@ -725,7 +1040,9 @@ export default function Servers() {
     const timeout = setTimeout(() => {
       if (!stopped) {
         setUpgradeResult(null)
-        setUpgradeResultError('未在超时内收到 agent 回执（agent 自升级会重启重连，请稍后核对版本或查看命令日志）')
+        setUpgradeResultError(
+          '未在超时内收到 agent 回执（agent 自升级会重启重连，请稍后核对版本或查看命令日志）',
+        )
       }
     }, 90000)
     return () => {
@@ -776,28 +1093,53 @@ export default function Servers() {
     try {
       if (providerEditID) await api.updateProvider(providerEditID, providerName, providerWebsite)
       else await api.createProvider(providerName, providerWebsite)
-      setProviderEditID(null); setProviderName(''); setProviderWebsite('')
+      setProviderEditID(null)
+      setProviderName('')
+      setProviderWebsite('')
       await loadProviders()
-    } catch (err) { setProviderError(errorMessage(err)) }
+    } catch (err) {
+      setProviderError(errorMessage(err))
+    }
   }
 
   const removeProvider = async (provider: Provider) => {
-    if (!(await confirm({ title: '删除服务商', description: `确定删除「${provider.name}」？已被服务器使用时无法删除。`, confirmLabel: '删除', destructive: true }))) return
-    try { await api.deleteProvider(provider.id); await loadProviders() } catch (err) { setProviderError(errorMessage(err)) }
+    if (
+      !(await confirm({
+        title: '删除服务商',
+        description: `确定删除「${provider.name}」？已被服务器使用时无法删除。`,
+        confirmLabel: '删除',
+        destructive: true,
+      }))
+    )
+      return
+    try {
+      await api.deleteProvider(provider.id)
+      await loadProviders()
+    } catch (err) {
+      setProviderError(errorMessage(err))
+    }
   }
 
   const openRenewal = (server: Server) => {
     setRenewTarget(server)
-    setRenewalOn(addInterval(localDate(), server.billing.interval_count, server.billing.interval_unit))
+    setRenewalOn(
+      addInterval(localDate(), server.billing.interval_count, server.billing.interval_unit),
+    )
   }
 
   const confirmRenewal = async (event: FormEvent) => {
     event.preventDefault()
     if (!renewTarget) return
     setRenewing(true)
-    try { await api.confirmServerRenewal(renewTarget.id, renewalOn); setRenewTarget(null); load() }
-    catch (err) { setError(errorMessage(err)) }
-    finally { setRenewing(false) }
+    try {
+      await api.confirmServerRenewal(renewTarget.id, renewalOn)
+      setRenewTarget(null)
+      load()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setRenewing(false)
+    }
   }
 
   return (
@@ -811,15 +1153,19 @@ export default function Servers() {
       <PageHeader
         title="服务器"
         description="接入机器的在线状态、资源指标与生命周期管理。"
-        actions={(
+        actions={
           <button type="button" className="cg-button is-primary" onClick={() => setOpen(true)}>
             <PlusIcon />
             添加服务器
           </button>
-        )}
+        }
       />
 
-      {error && <Notice tone="danger" title="加载失败">{error}</Notice>}
+      {error && (
+        <Notice tone="danger" title="加载失败">
+          {error}
+        </Notice>
+      )}
 
       <ServerMonitorGrid
         servers={servers}
@@ -850,10 +1196,12 @@ export default function Servers() {
                 aria-labelledby="server-type-label"
                 className="grid grid-cols-2 gap-2"
               >
-                {([
-                  ['direct', '独立 IP'],
-                  ['nat', 'NAT'],
-                ] as const).map(([value, label]) => (
+                {(
+                  [
+                    ['direct', '独立 IP'],
+                    ['nat', 'NAT'],
+                  ] as const
+                ).map(([value, label]) => (
                   <label
                     key={value}
                     className={cn('sv-radio-card', machineType === value && 'is-active')}
@@ -910,17 +1258,14 @@ export default function Servers() {
                     <option key={city} value={city} />
                   ))}
                 </datalist>
-                <p className="text-xs text-muted-foreground">城市列表仅作辅助，也可填写自定义机房区域。</p>
+                <p className="text-xs text-muted-foreground">
+                  城市列表仅作辅助，也可填写自定义机房区域。
+                </p>
               </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="tags">标签（Tag）</Label>
-              <TagInput
-                id="tags"
-                value={tags}
-                onChange={setTags}
-                placeholder="输入标签后按回车"
-              />
+              <TagInput id="tags" value={tags} onChange={setTags} placeholder="输入标签后按回车" />
               <p className="text-xs text-muted-foreground">
                 回车或逗号确认，最多 10 个；名称模板可按顺序使用 {'{{TAG[0]}}'}、{'{{TAG[1]}}'}。
               </p>
@@ -932,7 +1277,9 @@ export default function Servers() {
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 placeholder={
-                  machineType === 'nat' ? '共享公网 IP 或域名（由 IDC 提供）' : '留空按 agent 拨入地址自动学习'
+                  machineType === 'nat'
+                    ? '共享公网 IP 或域名（由 IDC 提供）'
+                    : '留空按 agent 拨入地址自动学习'
                 }
               />
             </div>
@@ -946,7 +1293,14 @@ export default function Servers() {
                 </p>
               </div>
             )}
-            <BillingTrafficFields billing={billing} setBilling={setBilling} traffic={traffic} setTraffic={setTraffic} providers={providers} onManageProviders={() => setProviderManagerOpen(true)} />
+            <BillingTrafficFields
+              billing={billing}
+              setBilling={setBilling}
+              traffic={traffic}
+              setTraffic={setTraffic}
+              providers={providers}
+              onManageProviders={() => setProviderManagerOpen(true)}
+            />
             {createError && <p className="text-sm text-destructive">{createError}</p>}
             <DialogFooter>
               <Button
@@ -976,19 +1330,18 @@ export default function Servers() {
               <p className="text-sm text-muted-foreground">bash/curl 等依赖安装（按需执行）</p>
               <CopyButton text={DEPENDENCIES_COMMAND} />
             </div>
-            <pre className="sv-code-block">
-              {DEPENDENCIES_COMMAND}
-            </pre>
+            <pre className="sv-code-block">{DEPENDENCIES_COMMAND}</pre>
           </div>
           <div className="space-y-2">
             <p className="text-sm font-medium">Agent 安装命令</p>
-            <pre className="sv-code-block max-h-40">
-              {cmdView?.command}
-            </pre>
+            <pre className="sv-code-block max-h-40">{cmdView?.command}</pre>
             {cmdView?.insecure ? (
               <div className="flex items-start gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
                 <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
-                <span>面板地址为明文 http：Agent 与面板间的控制流量可被窃听或篡改。跨公网部署请改用 https 反向代理。</span>
+                <span>
+                  面板地址为明文 http：Agent 与面板间的控制流量可被窃听或篡改。跨公网部署请改用
+                  https 反向代理。
+                </span>
               </div>
             ) : null}
           </div>
@@ -1079,7 +1432,9 @@ export default function Servers() {
                           />
                           <span className="truncate font-mono text-xs">{addr}</span>
                         </label>
-                        <Badge variant="outline">{family === 'ipv4' ? 'IPv4' : family === 'ipv6' ? 'IPv6' : '域名'}</Badge>
+                        <Badge variant="outline">
+                          {family === 'ipv4' ? 'IPv4' : family === 'ipv6' ? 'IPv6' : '域名'}
+                        </Badge>
                         {editTarget && addrCandidates(editTarget).includes(addr) ? (
                           <span className="shrink-0 text-xs text-muted-foreground">agent 上报</span>
                         ) : null}
@@ -1091,7 +1446,9 @@ export default function Servers() {
                             variant="outline"
                             size="icon"
                             title="删除该地址；引用它的链路跳将回退到默认地址"
-                            onClick={() => setEditAddresses(editAddresses.filter((a) => a !== addr))}
+                            onClick={() =>
+                              setEditAddresses(editAddresses.filter((a) => a !== addr))
+                            }
                           >
                             <XIcon />
                           </Button>
@@ -1153,10 +1510,14 @@ export default function Servers() {
               <Label htmlFor="editXrayOverride">xray 版本（覆盖面板默认）</Label>
               <Select
                 value={editXrayOverride}
-                onValueChange={(value) => value !== undefined && value !== null && setEditXrayOverride(value)}
+                onValueChange={(value) =>
+                  value !== undefined && value !== null && setEditXrayOverride(value)
+                }
                 items={[
                   { value: '', label: '跟随面板默认' },
-                  ...editXrayVersions.filter((v) => v !== 'latest').map((version) => ({ value: version, label: version })),
+                  ...editXrayVersions
+                    .filter((v) => v !== 'latest')
+                    .map((version) => ({ value: version, label: version })),
                 ]}
               >
                 <SelectTrigger id="editXrayOverride" className="w-full">
@@ -1164,9 +1525,13 @@ export default function Servers() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="">跟随面板默认</SelectItem>
-                  {editXrayVersions.filter((v) => v !== 'latest').map((version) => (
-                    <SelectItem key={version} value={version}>{version}</SelectItem>
-                  ))}
+                  {editXrayVersions
+                    .filter((v) => v !== 'latest')
+                    .map((version) => (
+                      <SelectItem key={version} value={version}>
+                        {version}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1180,12 +1545,23 @@ export default function Servers() {
                 </p>
               </div>
             )}
-            <BillingTrafficFields billing={editBilling} setBilling={setEditBilling} traffic={editTraffic} setTraffic={setEditTraffic} providers={providers} onManageProviders={() => setProviderManagerOpen(true)} />
+            <BillingTrafficFields
+              billing={editBilling}
+              setBilling={setEditBilling}
+              traffic={editTraffic}
+              setTraffic={setEditTraffic}
+              providers={providers}
+              onManageProviders={() => setProviderManagerOpen(true)}
+            />
             {editError && <p className="text-sm text-destructive">{editError}</p>}
             <DialogFooter>
               <Button
                 type="submit"
-                disabled={editSaving || !editAlias.trim() || (editTarget?.machine_type === 'nat' && !editDefaultAddr)}
+                disabled={
+                  editSaving ||
+                  !editAlias.trim() ||
+                  (editTarget?.machine_type === 'nat' && !editDefaultAddr)
+                }
               >
                 {editSaving ? '保存中…' : '保存'}
               </Button>
@@ -1211,14 +1587,13 @@ export default function Servers() {
                 <>
                   将「{upgradeTarget?.alias}」的 agent 升级到指定版本（当前：
                   {upgradeTarget?.agent_version ?? '未知'}）。agent 将从 GitHub release
-                  下载二进制、校验 SHA256 后自替换并重启；该操作也用于收敛落后出兼容窗口的
-                  agent。
+                  下载二进制、校验 SHA256 后自替换并重启；该操作也用于收敛落后出兼容窗口的 agent。
                 </>
               ) : (
                 <>
                   将「{upgradeTarget?.alias}」的 xray 升级到指定版本（当前：
-                  {upgradeTarget?.xray_version ?? '未知'}）。agent 将下载官方 release、
-                  校验 SHA2-256 后替换并重启；失败自动回滚。
+                  {upgradeTarget?.xray_version ?? '未知'}）。agent 将下载官方 release、 校验
+                  SHA2-256 后替换并重启；失败自动回滚。
                 </>
               )}
             </DialogDescription>
@@ -1244,18 +1619,24 @@ export default function Servers() {
                     disabled={upgradeVersionsLoading}
                   >
                     <SelectTrigger id="upgradeVersion" className="w-full" autoFocus>
-                      <SelectValue placeholder={upgradeVersionsLoading ? '正在获取版本…' : '选择版本'} />
+                      <SelectValue
+                        placeholder={upgradeVersionsLoading ? '正在获取版本…' : '选择版本'}
+                      />
                     </SelectTrigger>
                     <SelectContent>
                       {(upgradeVersions?.versions ?? ['latest']).map((version) => (
-                        <SelectItem key={version} value={version}>{version}</SelectItem>
+                        <SelectItem key={version} value={version}>
+                          {version}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                   {upgradeVersions && (
                     <p className="text-xs text-muted-foreground">
                       缓存更新于 {formatDateTime(upgradeVersions.fetched_at, timezone)}
-                      {upgradeVersions.stale ? `；${upgradeVersions.message ?? '本次更新失败，正在使用缓存'}` : ''}
+                      {upgradeVersions.stale
+                        ? `；${upgradeVersions.message ?? '本次更新失败，正在使用缓存'}`
+                        : ''}
                     </p>
                   )}
                 </div>
@@ -1313,7 +1694,10 @@ export default function Servers() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={cleanupTarget !== null} onOpenChange={(next) => !next && setCleanupTarget(null)}>
+      <Dialog
+        open={cleanupTarget !== null}
+        onOpenChange={(next) => !next && setCleanupTarget(null)}
+      >
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>清理 Xray 缓存</DialogTitle>
@@ -1323,24 +1707,34 @@ export default function Servers() {
                 : `对比面板当前链路状态，删除「${cleanupTarget?.alias}」xray 配置中未被面板有效管理的监听与链路配置件。`}
             </DialogDescription>
           </DialogHeader>
-          {cleanupError ? <p className="text-sm text-destructive whitespace-pre-wrap">{cleanupError}</p> : null}
+          {cleanupError ? (
+            <p className="text-sm text-destructive whitespace-pre-wrap">{cleanupError}</p>
+          ) : null}
           {cleanupBusy ? (
             <p className="text-sm text-muted-foreground">
               {cleanupDone ? '已清理完成。' : '正在向 agent 下发检查…'}
             </p>
           ) : cleanupPreview ? (
-            cleanupPreview.removed_inbounds.length === 0 && cleanupPreview.removed_pieces.length === 0 ? (
+            cleanupPreview.removed_inbounds.length === 0 &&
+            cleanupPreview.removed_pieces.length === 0 ? (
               <p className="text-sm text-muted-foreground">无残留配置，xray 配置与面板状态一致。</p>
             ) : (
               <div className="space-y-3">
                 {cleanupPreview.removed_inbounds.length > 0 ? (
                   <div className="space-y-1">
-                    <p className="text-xs font-medium text-muted-foreground">将删除 {cleanupPreview.removed_inbounds.length} 个监听（inbound）</p>
+                    <p className="text-xs font-medium text-muted-foreground">
+                      将删除 {cleanupPreview.removed_inbounds.length} 个监听（inbound）
+                    </p>
                     <ul className="sv-mono-list max-h-48 space-y-1 overflow-y-auto text-sm">
                       {cleanupPreview.removed_inbounds.map((inbound) => (
-                        <li key={inbound.tag} className="flex items-center justify-between gap-3 font-mono text-xs">
+                        <li
+                          key={inbound.tag}
+                          className="flex items-center justify-between gap-3 font-mono text-xs"
+                        >
                           <span className="truncate">{inbound.tag}</span>
-                          <span className="shrink-0 text-muted-foreground">:{inbound.port || '?'}</span>
+                          <span className="shrink-0 text-muted-foreground">
+                            :{inbound.port || '?'}
+                          </span>
                         </li>
                       ))}
                     </ul>
@@ -1348,9 +1742,13 @@ export default function Servers() {
                 ) : null}
                 {cleanupPreview.removed_pieces.length > 0 ? (
                   <div className="space-y-1">
-                    <p className="text-xs font-medium text-muted-foreground">将删除 {cleanupPreview.removed_pieces.length} 个链路配置件（piece）</p>
+                    <p className="text-xs font-medium text-muted-foreground">
+                      将删除 {cleanupPreview.removed_pieces.length} 个链路配置件（piece）
+                    </p>
                     <ul className="sv-mono-list max-h-32 space-y-1 overflow-y-auto font-mono text-xs">
-                      {cleanupPreview.removed_pieces.map((piece) => <li key={piece}>{piece}</li>)}
+                      {cleanupPreview.removed_pieces.map((piece) => (
+                        <li key={piece}>{piece}</li>
+                      ))}
                     </ul>
                   </div>
                 ) : null}
@@ -1360,12 +1758,21 @@ export default function Servers() {
           <DialogFooter>
             {!cleanupDone ? (
               <>
-                <Button variant="outline" disabled={cleanupBusy} onClick={() => setCleanupTarget(null)}>
+                <Button
+                  variant="outline"
+                  disabled={cleanupBusy}
+                  onClick={() => setCleanupTarget(null)}
+                >
                   关闭
                 </Button>
                 <Button
-                  disabled={cleanupBusy || cleanupError !== '' || cleanupPreview === null ||
-                    (cleanupPreview.removed_inbounds.length === 0 && cleanupPreview.removed_pieces.length === 0)}
+                  disabled={
+                    cleanupBusy ||
+                    cleanupError !== '' ||
+                    cleanupPreview === null ||
+                    (cleanupPreview.removed_inbounds.length === 0 &&
+                      cleanupPreview.removed_pieces.length === 0)
+                  }
                   onClick={runCleanupXray}
                 >
                   {cleanupBusy ? '执行中…' : '确认清理'}
@@ -1378,7 +1785,10 @@ export default function Servers() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={rebuildTarget !== null} onOpenChange={(next) => !next && setRebuildTarget(null)}>
+      <Dialog
+        open={rebuildTarget !== null}
+        onOpenChange={(next) => !next && setRebuildTarget(null)}
+      >
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>重建 Xray 配置</DialogTitle>
@@ -1390,7 +1800,9 @@ export default function Servers() {
                 : `将停止「${rebuildTarget?.alias}」的 xray 服务，备份并重新生成 xray.json（保留现有私钥与端口），校验后重启并自检；失败会自动恢复备份。重建期间该服务器代理不可用。`}
             </DialogDescription>
           </DialogHeader>
-          {rebuildError ? <p className="text-sm text-destructive whitespace-pre-wrap">{rebuildError}</p> : null}
+          {rebuildError ? (
+            <p className="text-sm text-destructive whitespace-pre-wrap">{rebuildError}</p>
+          ) : null}
           {rebuildBusy ? (
             <p className="text-sm text-muted-foreground">正在向 agent 下发重建…</p>
           ) : rebuildResult ? (
@@ -1402,14 +1814,17 @@ export default function Servers() {
               ) : (
                 <>
                   <p className="text-sm text-muted-foreground">
-                    已重建 {rebuildResult.rebuilt_inbounds.length} 个监听与 {rebuildResult.rebuilt_pieces.length} 个链路配置件。
+                    已重建 {rebuildResult.rebuilt_inbounds.length} 个监听与{' '}
+                    {rebuildResult.rebuilt_pieces.length} 个链路配置件。
                   </p>
                   {rebuildResult.rebuilt_inbounds.length > 0 ? (
                     <ul className="sv-mono-list max-h-48 space-y-1 overflow-y-auto font-mono text-xs">
                       {rebuildResult.rebuilt_inbounds.map((inbound) => (
                         <li key={inbound.tag} className="flex items-center justify-between gap-3">
                           <span className="truncate">{inbound.tag}</span>
-                          <span className="shrink-0 text-muted-foreground">:{inbound.port || '?'}</span>
+                          <span className="shrink-0 text-muted-foreground">
+                            :{inbound.port || '?'}
+                          </span>
                         </li>
                       ))}
                     </ul>
@@ -1421,7 +1836,11 @@ export default function Servers() {
           <DialogFooter>
             {!rebuildDone ? (
               <>
-                <Button variant="outline" disabled={rebuildBusy} onClick={() => setRebuildTarget(null)}>
+                <Button
+                  variant="outline"
+                  disabled={rebuildBusy}
+                  onClick={() => setRebuildTarget(null)}
+                >
                   取消
                 </Button>
                 <Button variant="default" disabled={rebuildBusy} onClick={runRebuildXray}>
@@ -1466,25 +1885,107 @@ export default function Servers() {
 
       <Dialog open={providerManagerOpen} onOpenChange={setProviderManagerOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>服务商管理</DialogTitle><DialogDescription>服务器列表中仅显示服务商名称，官网用于快捷打开控制台。</DialogDescription></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>服务商管理</DialogTitle>
+            <DialogDescription>
+              服务器列表中仅显示服务商名称，官网用于快捷打开控制台。
+            </DialogDescription>
+          </DialogHeader>
           <form onSubmit={saveProvider} className="space-y-3">
-            <div className="space-y-2"><Label>服务商名称</Label><Input value={providerName} onChange={(e) => setProviderName(e.target.value)} required maxLength={100} /></div>
-            <div className="space-y-2"><Label>官网地址</Label><Input type="url" value={providerWebsite} onChange={(e) => setProviderWebsite(e.target.value)} placeholder="https://provider.example" /></div>
+            <div className="space-y-2">
+              <Label>服务商名称</Label>
+              <Input
+                value={providerName}
+                onChange={(e) => setProviderName(e.target.value)}
+                required
+                maxLength={100}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>官网地址</Label>
+              <Input
+                type="url"
+                value={providerWebsite}
+                onChange={(e) => setProviderWebsite(e.target.value)}
+                placeholder="https://provider.example"
+              />
+            </div>
             {providerError ? <p className="text-sm text-destructive">{providerError}</p> : null}
-            <DialogFooter><Button type="submit">{providerEditID ? '保存修改' : '添加服务商'}</Button></DialogFooter>
+            <DialogFooter>
+              <Button type="submit">{providerEditID ? '保存修改' : '添加服务商'}</Button>
+            </DialogFooter>
           </form>
           <Separator />
           <div className="max-h-56 space-y-2 overflow-y-auto">
-            {providers.map((provider) => <div key={provider.id} className="flex items-center justify-between gap-3 border-b py-2 last:border-0"><div className="min-w-0"><p className="truncate text-sm font-medium">{provider.name}</p><p className="truncate text-xs text-muted-foreground">{provider.website_url || '未配置官网'}</p></div><div className="flex gap-1"><Button type="button" variant="ghost" size="icon" title="编辑服务商" onClick={() => { setProviderEditID(provider.id); setProviderName(provider.name); setProviderWebsite(provider.website_url) }}><PencilIcon /></Button><Button type="button" variant="ghost" size="icon" title="删除服务商" onClick={() => removeProvider(provider)}><Trash2Icon /></Button></div></div>)}
-            {providers.length === 0 ? <p className="py-6 text-center text-sm text-muted-foreground">暂无服务商</p> : null}
+            {providers.map((provider) => (
+              <div
+                key={provider.id}
+                className="flex items-center justify-between gap-3 border-b py-2 last:border-0"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{provider.name}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {provider.website_url || '未配置官网'}
+                  </p>
+                </div>
+                <div className="flex gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    title="编辑服务商"
+                    onClick={() => {
+                      setProviderEditID(provider.id)
+                      setProviderName(provider.name)
+                      setProviderWebsite(provider.website_url)
+                    }}
+                  >
+                    <PencilIcon />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    title="删除服务商"
+                    onClick={() => removeProvider(provider)}
+                  >
+                    <Trash2Icon />
+                  </Button>
+                </div>
+              </div>
+            ))}
+            {providers.length === 0 ? (
+              <p className="py-6 text-center text-sm text-muted-foreground">暂无服务商</p>
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>
 
       <Dialog open={renewTarget !== null} onOpenChange={(next) => !next && setRenewTarget(null)}>
         <DialogContent>
-          <DialogHeader><DialogTitle>续费确认</DialogTitle><DialogDescription>确认「{renewTarget?.alias}」已经续费，并设置新的下次续费日。</DialogDescription></DialogHeader>
-          <form onSubmit={confirmRenewal} className="space-y-4"><div className="space-y-2"><Label>下次续费日</Label><Input type="date" min={addInterval(localDate(), 1, 'day')} value={renewalOn} onChange={(e) => setRenewalOn(e.target.value)} required /></div><DialogFooter><Button type="submit" disabled={renewing}>{renewing ? '确认中…' : '确认续费'}</Button></DialogFooter></form>
+          <DialogHeader>
+            <DialogTitle>续费确认</DialogTitle>
+            <DialogDescription>
+              确认「{renewTarget?.alias}」已经续费，并设置新的下次续费日。
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={confirmRenewal} className="space-y-4">
+            <div className="space-y-2">
+              <Label>下次续费日</Label>
+              <Input
+                type="date"
+                min={addInterval(localDate(), 1, 'day')}
+                value={renewalOn}
+                onChange={(e) => setRenewalOn(e.target.value)}
+                required
+              />
+            </div>
+            <DialogFooter>
+              <Button type="submit" disabled={renewing}>
+                {renewing ? '确认中…' : '确认续费'}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </Page>

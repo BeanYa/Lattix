@@ -40,7 +40,7 @@
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 800;
-  letter-spacing: .12em;
+  letter-spacing: 0.12em;
   line-height: 1;
   text-transform: uppercase;
   color: var(--cg-muted);
