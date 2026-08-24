@@ -46,6 +46,7 @@ import { validateNameTemplate } from '@/lib/naming'
 import { DEFAULT_REALITY_DEST, inferRealityDestPreset } from '@/lib/reality'
 import { isServerOnline } from '@/lib/server-state'
 import { useTimezone } from '@/lib/timezone'
+import { usePolling } from '@/lib/use-polling'
 import { cn } from '@/lib/utils'
 import type {
   Chain,
@@ -593,22 +594,7 @@ export default function Chains() {
     }
   }, [])
 
-  useEffect(() => {
-    const controller = new AbortController()
-    let stopped = false
-    let timer: number | undefined
-    const poll = async (initial: boolean) => {
-      await load(!initial, controller.signal)
-      if (!stopped) timer = window.setTimeout(() => void poll(false), 5000)
-    }
-    void poll(true)
-    return () => {
-      stopped = true
-      loadRequest.current += 1
-      controller.abort()
-      if (timer !== undefined) window.clearTimeout(timer)
-    }
-  }, [load])
+  usePolling(load, loadRequest)
 
   // 名称模板 {{PANEL_SHORT}} 预览值；读取失败由 naming 层回退默认缩写。
   useEffect(() => {

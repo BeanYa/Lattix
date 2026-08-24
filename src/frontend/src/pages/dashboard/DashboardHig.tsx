@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useRef, useState } from 'react'
 import { Link } from 'wouter'
 import {
   ActivityIcon,
@@ -27,6 +27,7 @@ import { DEMO_DASHBOARD_STATS, DEMO_SERVERS } from '@/lib/dashboard-demo'
 import { formatByteRate, humanizeBytes } from '@/lib/format'
 import { isServerOnline, serverConnectionLabel } from '@/lib/server-state'
 import type { Chain, DashboardStats, Server } from '@/lib/types'
+import { usePolling } from '@/lib/use-polling'
 import { cn } from '@/lib/utils'
 
 import '../dashboard.css'
@@ -86,22 +87,7 @@ export default function Dashboard() {
     }
   }, [])
 
-  useEffect(() => {
-    const controller = new AbortController()
-    let stopped = false
-    let timer: number | undefined
-    const poll = async (initial: boolean) => {
-      await load(!initial, controller.signal)
-      if (!stopped) timer = window.setTimeout(() => void poll(false), 5000)
-    }
-    void poll(true)
-    return () => {
-      stopped = true
-      loadRequest.current += 1
-      controller.abort()
-      if (timer !== undefined) window.clearTimeout(timer)
-    }
-  }, [load])
+  usePolling(load, loadRequest)
 
   if (error) {
     return (

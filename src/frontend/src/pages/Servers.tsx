@@ -35,6 +35,7 @@ import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
 import { isServerOnline } from '@/lib/server-state'
 import { useTimezone } from '@/lib/timezone'
+import { usePolling } from '@/lib/use-polling'
 import { cn } from '@/lib/utils'
 
 import './servers.css'
@@ -328,22 +329,7 @@ export default function Servers() {
 
   const loadProviders = useCallback(() => api.providers().then(setProviders).catch(() => setProviders([])), [])
 
-  useEffect(() => {
-    const controller = new AbortController()
-    let stopped = false
-    let timer: number | undefined
-    const poll = async (initial: boolean) => {
-      await load(!initial, controller.signal)
-      if (!stopped) timer = window.setTimeout(() => void poll(false), 5000)
-    }
-    void poll(true)
-    return () => {
-      stopped = true
-      serverListRequest.current += 1
-      controller.abort()
-      if (timer !== undefined) window.clearTimeout(timer)
-    }
-  }, [load])
+  usePolling(load, serverListRequest)
 
   useEffect(() => { loadProviders() }, [loadProviders])
 

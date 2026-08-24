@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   BanIcon,
   CircleCheckIcon,
@@ -54,6 +54,7 @@ import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { buildLinkOptions } from '@/lib/links'
 import { defaultSubscriptionRouting } from '@/lib/subscription-routing'
 import { useTimezone } from '@/lib/timezone'
+import { usePolling } from '@/lib/use-polling'
 import {
   expiryDateDay,
   formatTrafficLimit,
@@ -244,22 +245,7 @@ export default function Users() {
     }
   }, [])
 
-  useEffect(() => {
-    const controller = new AbortController()
-    let stopped = false
-    let timer: number | undefined
-    const poll = async (initial: boolean) => {
-      await load(!initial, controller.signal)
-      if (!stopped) timer = window.setTimeout(() => void poll(false), 5000)
-    }
-    void poll(true)
-    return () => {
-      stopped = true
-      loadRequest.current += 1
-      controller.abort()
-      if (timer !== undefined) window.clearTimeout(timer)
-    }
-  }, [load])
+  usePolling(load, loadRequest)
 
   const onOpenChange = (next: boolean) => {
     setOpen(next)
