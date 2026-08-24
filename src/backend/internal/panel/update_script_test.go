@@ -45,15 +45,3 @@ func TestPackagedLatxVersionDoesNotRequireBash(t *testing.T) {
 		t.Fatalf("latx version output = %q, want %q", out, want)
 	}
 }
-
-func TestPanelCLIManaged(t *testing.T) {
-	t.Setenv("LATTIX_DEPLOY_MODE", "docker")
-	if panelCLIManaged() {
-		t.Fatal("Docker deployments must not manage the host latx command")
-	}
-
-	t.Setenv("LATTIX_DEPLOY_MODE", "native")
-	if !panelCLIManaged() {
-		t.Fatal("native deployments must update latx with the panel")
-	}
-}

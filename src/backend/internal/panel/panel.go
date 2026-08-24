@@ -26,6 +26,7 @@ import (
 	"lattix/backend/internal/panel/exchange"
 	"lattix/backend/internal/panel/releases"
 	"lattix/backend/internal/panel/scheduler"
+	"lattix/backend/internal/panel/selfupdate"
 	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
@@ -60,7 +61,7 @@ type Server struct {
 	lifecycle     *lifecycle.Manager
 	cfg           Config
 	alerter       *alert.Notifier
-	upd           *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
+	upd           *selfupdate.Updater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
 	releases      *releases.Catalog
 	exchange      *exchange.Catalog
 	cdn           *cdn.Catalog
@@ -130,7 +131,7 @@ func (s *Server) WaitBackground(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
 		s.tasks.Wait()
-		s.upd.wg.Wait()
+		s.upd.Wait()
 		close(done)
 	}()
 	select {
@@ -186,7 +187,15 @@ func New(st *store.Store, req ws.AgentRequester, cfg Config) (*Server, error) {
 	})
 	// 观察 ID 读取器注入请求日志中间件（避免 logging → progress 反向依赖）。
 	logging.SetObserveIDReader(s.observes.ObserveIDFromContext)
-	s.upd = newPanelUpdater(s)
+	s.upd = selfupdate.New(cfg.Version, cfg.GitHubRepo, selfupdate.Hooks{
+		TransitionLifecycle: func(ctx context.Context, state, fault string, wait bool) error {
+			_, err := s.transitionLifecycle(ctx, state, fault, wait)
+			return err
+		},
+		RecordOperation:        s.recordOperation,
+		EnqueueAgentUpgradeAll: s.disp.EnqueueAgentUpgradeAll,
+		RequestRestart:         cfg.RequestRestart,
+	})
 	s.releases = releases.New(st, cfg.GitHubRepo)
 	s.exchange = exchange.New(st)
 	s.cdn = cdn.New(st)

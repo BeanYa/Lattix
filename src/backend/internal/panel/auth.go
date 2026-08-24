@@ -250,7 +250,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeRPC(w, shared.CodeAuthRequired, "未登录或会话已过期", nil)
 			return
 		}
-		if s.upd != nil && s.upd.running() &&
+		if s.upd != nil && s.upd.Running() &&
 			r.URL.Path != "/api/panel/get-update-status" && r.URL.Path != "/api/auth/me" {
 			writeRPC(w, shared.CodeUpdateInProgress, "面板更新进行中，请稍候", nil)
 			return
