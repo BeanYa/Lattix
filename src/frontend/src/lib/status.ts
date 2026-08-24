@@ -1,4 +1,4 @@
-import type { ChainStatus, NodeStatus } from './types'
+import type { ChainStatus, LogSeverity, NodeStatus } from './types'
 
 /** cg-status 贴纸语义：lime=正常/在线，blue=部署流程中，red=异常/失败，muted=其他。 */
 export type CgStatusTone = 'is-lime' | 'is-blue' | 'is-red' | 'is-muted'
@@ -31,4 +31,37 @@ export const hopStatusStyle: Record<NodeStatus, CgStatusStyle> = {
   applying: { label: '部署中', cg: 'is-blue', loading: true },
   failed: { label: '异常', cg: 'is-red', loading: false },
   pending: { label: '部署中', cg: 'is-blue', loading: true },
+}
+
+/** severityTone 日志级别 → cg-status 色调。 */
+export function severityTone(severity: LogSeverity): CgStatusTone {
+  if (severity === 'error') return 'is-red'
+  if (severity === 'info') return 'is-blue'
+  return 'is-muted'
+}
+
+/** serverTestStatusLabel 服务器测试任务/条目状态 → 中文标签；未知状态原样返回。 */
+export function serverTestStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    queued: '等待 Agent', accepted: 'Agent 已接收', running: '正在测试', succeeded: '测试完成',
+    completed_with_errors: '部分项目异常', failed: '测试失败', pending: '等待中',
+    available: '可用', limited: '部分可用', unavailable: '不可用',
+    provider_access_unavailable: '无公开访问方式', clean: '正常', listed: '已列入名单',
+  }
+  return labels[status] ?? status
+}
+
+/** serverTestStatusBadge 服务器测试状态 → Badge 变体。 */
+export function serverTestStatusBadge(status: string): 'destructive' | 'secondary' | 'outline' {
+  if (status === 'failed' || status === 'unavailable' || status === 'listed') return 'destructive'
+  if (status === 'succeeded' || status === 'available' || status === 'clean') return 'secondary'
+  return 'outline'
+}
+
+/** earthLinkColorKey 地球链路状态 → 调色板键；active/degraded/failed 之外一律按 pending。 */
+export function earthLinkColorKey(status: string): 'linkActive' | 'linkDegraded' | 'linkFailed' | 'linkPending' {
+  if (status === 'active') return 'linkActive'
+  if (status === 'degraded') return 'linkDegraded'
+  if (status === 'failed') return 'linkFailed'
+  return 'linkPending'
 }

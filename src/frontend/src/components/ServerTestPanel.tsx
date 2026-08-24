@@ -28,6 +28,7 @@ import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { isIpv6Category, ipv6Unavailable, withoutIpv6Categories } from '@/lib/server-test-ipv6'
+import { serverTestStatusBadge, serverTestStatusLabel } from '@/lib/status'
 import type {
   IPQualityFactor,
   IPQualityFamily,
@@ -73,22 +74,6 @@ const directDefaults: ServerTestCategory[] = [
 
 function isTerminal(status: ServerTestTaskStatus): boolean {
   return status === 'succeeded' || status === 'completed_with_errors' || status === 'failed'
-}
-
-function statusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    queued: '等待 Agent', accepted: 'Agent 已接收', running: '正在测试', succeeded: '测试完成',
-    completed_with_errors: '部分项目异常', failed: '测试失败', pending: '等待中',
-    available: '可用', limited: '部分可用', unavailable: '不可用',
-    provider_access_unavailable: '无公开访问方式', clean: '正常', listed: '已列入名单',
-  }
-  return labels[status] ?? status
-}
-
-function statusBadge(status: string) {
-  if (status === 'failed' || status === 'unavailable' || status === 'listed') return 'destructive' as const
-  if (status === 'succeeded' || status === 'available' || status === 'clean') return 'secondary' as const
-  return 'outline' as const
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -250,7 +235,7 @@ function IPQualityFamilySection({ family }: { family: IPQualityFamily }) {
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="border p-3">
           <div className="mb-2 text-xs font-medium">流媒体与 AI</div>
-          {mediaRows.length === 0 ? <div className="text-xs text-muted-foreground">无数据</div> : <div className="flex flex-wrap gap-1.5">{mediaRows.map(([name, media]) => <Badge key={name} variant={statusBadge(media.Status ?? '')} title={`${media.Type ?? ''}${media.Region ? ` · ${media.Region}` : ''}`}>{name}{media.Region ? ` · ${media.Region}` : ''}</Badge>)}</div>}
+          {mediaRows.length === 0 ? <div className="text-xs text-muted-foreground">无数据</div> : <div className="flex flex-wrap gap-1.5">{mediaRows.map(([name, media]) => <Badge key={name} variant={serverTestStatusBadge(media.Status ?? '')} title={`${media.Type ?? ''}${media.Region ? ` · ${media.Region}` : ''}`}>{name}{media.Region ? ` · ${media.Region}` : ''}</Badge>)}</div>}
         </div>
         <div className="border p-3">
           <div className="mb-2 text-xs font-medium">邮局检测</div>
@@ -283,7 +268,7 @@ function SpeedReport({ category }: { category: ServerTestCategoryResult }) {
     <div className="overflow-x-auto">
       <table className="w-full min-w-[600px] text-left text-xs">
         <thead className="border-b text-muted-foreground"><tr><th className="px-2 py-2 font-medium">目的地</th><th className="px-2 py-2 font-medium">协议</th><th className="px-2 py-2 font-medium">上传</th><th className="px-2 py-2 font-medium">下载</th><th className="px-2 py-2 font-medium">状态</th></tr></thead>
-        <tbody className="divide-y">{(category.items ?? []).map((item, index) => <tr key={text(item.id, String(index))}><td className="px-2 py-2 font-medium">{text(item.label)}</td><td className="px-2 py-2">{text(item.address_family).toUpperCase()}</td><td className="px-2 py-2 tabular-nums">{number(item.upload_mbps) === null ? '-' : `${number(item.upload_mbps)?.toFixed(1)} Mbps`}</td><td className="px-2 py-2 tabular-nums">{number(item.download_mbps) === null ? '-' : `${number(item.download_mbps)?.toFixed(1)} Mbps`}</td><td className="max-w-72 px-2 py-2">{item.error_message ? <span className="text-destructive">{text(item.error_code)} · {text(item.error_message)}</span> : statusLabel(text(item.status))}</td></tr>)}</tbody>
+        <tbody className="divide-y">{(category.items ?? []).map((item, index) => <tr key={text(item.id, String(index))}><td className="px-2 py-2 font-medium">{text(item.label)}</td><td className="px-2 py-2">{text(item.address_family).toUpperCase()}</td><td className="px-2 py-2 tabular-nums">{number(item.upload_mbps) === null ? '-' : `${number(item.upload_mbps)?.toFixed(1)} Mbps`}</td><td className="px-2 py-2 tabular-nums">{number(item.download_mbps) === null ? '-' : `${number(item.download_mbps)?.toFixed(1)} Mbps`}</td><td className="max-w-72 px-2 py-2">{item.error_message ? <span className="text-destructive">{text(item.error_code)} · {text(item.error_message)}</span> : serverTestStatusLabel(text(item.status))}</td></tr>)}</tbody>
       </table>
     </div>
   )
@@ -297,7 +282,7 @@ function ReportCategory({ category }: { category: ServerTestCategoryResult }) {
     <section className="min-w-0 border-b py-5 last:border-0">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold">{categoryLabels[category.category]}</h3>
-        <Badge variant={statusBadge(category.status)}>{statusLabel(category.status)}</Badge>
+        <Badge variant={serverTestStatusBadge(category.status)}>{serverTestStatusLabel(category.status)}</Badge>
       </div>
       <ErrorNotice code={category.error_code} message={category.error_message} />
       {isIP ? <IPQualityReport category={category} /> : isRoute ? <RouteReport category={category} /> : isSpeed ? <SpeedReport category={category} /> : <TCPReport category={category} />}
@@ -311,7 +296,7 @@ function TestReport({ report, timezone }: { report: ServerTestReport; timezone?:
   return (
     <div className="min-w-0 space-y-4">
       <div className="grid gap-3 border-y py-3 text-xs sm:grid-cols-4">
-        <div><span className="block text-muted-foreground">状态</span><span className="mt-1 block font-medium">{statusLabel(report.status)}</span></div>
+        <div><span className="block text-muted-foreground">状态</span><span className="mt-1 block font-medium">{serverTestStatusLabel(report.status)}</span></div>
         <div><span className="block text-muted-foreground">完成时间</span><span className="mt-1 block">{formatDateTime(report.completed_at, timezone)}</span></div>
         <div><span className="block text-muted-foreground">Agent</span><span className="mt-1 block font-mono">{report.agent_version}</span></div>
         <div><span className="block text-muted-foreground">权限 / 沙箱</span><span className="mt-1 block">{report.environment.privileges} · {report.environment.sandbox}</span></div>
@@ -447,7 +432,7 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h3 id="server-test-heading" className="text-sm font-semibold">服务器测试</h3>
-          <p className="mt-1 text-xs text-muted-foreground">{task ? `${statusLabel(task.status)} · ${formatDateTime(task.updated_at, timezone)}` : '尚无测试结果'}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{task ? `${serverTestStatusLabel(task.status)} · ${formatDateTime(task.updated_at, timezone)}` : '尚无测试结果'}</p>
         </div>
         <Button variant={task?.result ? 'outline' : 'default'} onClick={primaryAction} disabled={loading}>
           {loading ? <LoaderCircleIcon className="animate-spin motion-reduce:animate-none" /> : task && !isTerminal(task.status) ? <LoaderCircleIcon className="animate-spin motion-reduce:animate-none" /> : task ? <FlaskConicalIcon /> : <CircleDotIcon />}
@@ -495,7 +480,7 @@ export function ServerTestPanel({ server, active, timezone }: { server: Server; 
         <DialogContent className="w-[calc(100%-2rem)] sm:max-w-xl">
           <DialogHeader><DialogTitle>服务器测试进行中</DialogTitle><DialogDescription>进度为尽力上报，最终报告为权威结果</DialogDescription></DialogHeader>
           <div className="space-y-4">
-            <div><div className="mb-2 flex items-center justify-between text-xs"><span>{task ? statusLabel(task.status) : '读取状态'}</span><span className="tabular-nums">{Math.round(progressPercent)}%</span></div><Progress value={progressPercent} /></div>
+            <div><div className="mb-2 flex items-center justify-between text-xs"><span>{task ? serverTestStatusLabel(task.status) : '读取状态'}</span><span className="tabular-nums">{Math.round(progressPercent)}%</span></div><Progress value={progressPercent} /></div>
             <div className="divide-y border-y">{visibleProgressRows.map((progress) => <div key={progress.category} className="flex items-center gap-3 py-3"><span className={cn('flex size-7 shrink-0 items-center justify-center border', progress.status === 'running' && 'border-info text-info', ['available', 'limited', 'succeeded'].includes(progress.status) && 'border-success text-success', ['unavailable', 'failed'].includes(progress.status) && 'border-destructive text-destructive')}>{progress.status === 'running' ? <LoaderCircleIcon className="size-3.5 animate-spin motion-reduce:animate-none" /> : ['available', 'limited', 'succeeded'].includes(progress.status) ? <CheckIcon className="size-3.5" /> : ['unavailable', 'failed'].includes(progress.status) ? <XCircleIcon className="size-3.5" /> : <CircleDotIcon className="size-3.5" />}</span><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-3 text-xs"><span className="font-medium">{categoryLabels[progress.category]}</span><span className="tabular-nums text-muted-foreground">{progress.completed}/{progress.total}</span></div>{progress.message ? <p className="mt-1 truncate text-xs text-muted-foreground">{progress.message}</p> : null}</div></div>)}</div>
             {task?.error_message ? <ErrorNotice code={task.error_code} message={task.error_message} /> : null}
           </div>

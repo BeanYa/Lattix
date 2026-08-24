@@ -31,6 +31,7 @@ import {
   type RefreshSeconds,
   type RequestWindow,
 } from '@/lib/log-preferences'
+import { severityTone } from '@/lib/status'
 import { useTimezone } from '@/lib/timezone'
 import type { LogSeverity, RequestLogEntry, RequestLogStatus } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -39,12 +40,6 @@ import './logs.css'
 
 const REFRESH_VALUES = REFRESH_OPTIONS.map((option) => option.value)
 const METHODS = ['GET', 'POST', 'WS']
-
-function severityTone(severity: LogSeverity) {
-  if (severity === 'error') return 'is-red'
-  if (severity === 'info') return 'is-blue'
-  return 'is-muted'
-}
 
 export default function RequestLogs() {
   const { timezone } = useTimezone()

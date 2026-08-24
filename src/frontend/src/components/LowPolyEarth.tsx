@@ -19,6 +19,7 @@ import {
 } from 'three'
 
 import { formatByteRate } from '@/lib/format'
+import { earthLinkColorKey } from '@/lib/status'
 import { useTheme } from '@/lib/theme-context'
 import { DEFAULT_EARTH_PALETTE, readEarthPalette, type EarthPalette } from '@/lib/visual-theme'
 
@@ -180,10 +181,7 @@ function closeSouthPolarPolygons(collection: FeatureCollection): FeatureCollecti
 }
 
 function linkColor(link: AnimatedEarthLink, palette: EarthPalette) {
-  if (link.status === 'active') return palette.linkActive
-  if (link.status === 'degraded') return palette.linkDegraded
-  if (link.status === 'failed') return palette.linkFailed
-  return palette.linkPending
+  return palette[earthLinkColorKey(link.status)]
 }
 
 function clusterNodeLabels(nodes: EarthNode[]): EarthNodeLabel[] {
