@@ -23,7 +23,7 @@ import {
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
-import { formatDateTime } from '@/lib/format'
+import { formatBytes, formatDateTime } from '@/lib/format'
 import {
   REFRESH_OPTIONS,
   REQUEST_WINDOW_OPTIONS,
@@ -39,12 +39,6 @@ import './logs.css'
 
 const REFRESH_VALUES = REFRESH_OPTIONS.map((option) => option.value)
 const METHODS = ['GET', 'POST', 'WS']
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
 
 function severityTone(severity: LogSeverity) {
   if (severity === 'error') return 'is-red'

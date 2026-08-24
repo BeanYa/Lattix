@@ -29,7 +29,7 @@ import {
 import { api, errorMessage } from '@/lib/api'
 import { addressFamily } from '@/lib/address'
 import { useAppDialog } from '@/lib/app-dialog'
-import { formatDateTime } from '@/lib/format'
+import { CURRENCIES, formatDateTime } from '@/lib/format'
 import { useOperationProgress } from '@/lib/operation-progress-context'
 import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange, parsePortRange, validatePortRanges } from '@/lib/ports'
@@ -42,7 +42,6 @@ import './servers.css'
 import type { BillingInput, CleanupXrayResult, IntervalUnit, MachineType, PortRange, Provider, ReleaseVersions, RebuildXrayResult, Server, ServerMetricSeries, TrafficAccountingMode, TrafficPlanInput } from '@/lib/types'
 
 const DEPENDENCIES_COMMAND = 'apk add --no-cache bash curl ca-certificates unzip util-linux'
-const CURRENCIES = ['CNY', 'USD', 'EUR', 'CAD', 'HKD', 'JPY', 'AUD', 'GBP', 'SGD', 'CHF']
 
 interface BillingFormState {
   enabled: boolean

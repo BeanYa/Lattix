@@ -25,6 +25,7 @@ import MagicRings from '@/components/MagicRings'
 import AnimatedContent from '@/components/react-bits/AnimatedContent'
 import DotGrid from '@/components/react-bits/DotGrid'
 import ElectricBorder from '@/components/react-bits/ElectricBorder'
+import { humanizeBytes } from '@/lib/format'
 import { RequestError, requester } from '@/lib/requester'
 
 import './subscription.css'
@@ -165,18 +166,6 @@ const platformLabels: Record<string, string> = {
 }
 
 const platformOrder = ['ios', 'android', 'windows', 'macos', 'universal']
-
-function humanizeBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let value = n / 1024
-  let index = 0
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024
-    index++
-  }
-  return value >= 100 ? `${value.toFixed(0)} ${units[index]}` : `${value.toFixed(1)} ${units[index]}`
-}
 
 function formatExpiry(timestamp?: number): string {
   if (!timestamp) return '长期有效'

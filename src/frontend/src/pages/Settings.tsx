@@ -51,7 +51,7 @@ import {
 } from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
-import { formatDateTime } from '@/lib/format'
+import { CURRENCIES, formatBytes, formatDateTime } from '@/lib/format'
 import { useTimezone } from '@/lib/timezone'
 import type { AlertTestResult, ExchangeRateSettings, InspectionUnit, LogSeverity, PanelSettings, PanelVersionInfo } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -105,7 +105,6 @@ const INSPECTION_UNITS: { value: InspectionUnit; label: string }[] = [
   { value: 'month', label: '月' },
   { value: 'year', label: '年' },
 ]
-const CURRENCIES = ['CNY', 'USD', 'EUR', 'CAD', 'HKD', 'JPY', 'AUD', 'GBP', 'SGD', 'CHF']
 
 // 设置分区（横向 cg-pill 按钮组，active = lime）
 const SETTINGS_TABS = [
@@ -145,11 +144,6 @@ function SettingsCard({
       <div className="cg-set-card-body">{children}</div>
     </section>
   )
-}
-
-function formatBytes(bytes: number) {
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
 export default function Settings() {

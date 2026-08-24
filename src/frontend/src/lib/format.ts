@@ -18,6 +18,16 @@ export function formatByteRate(value: number | null): string {
   return value === null ? '--' : `${humanizeBytes(Math.round(value))}/s`
 }
 
+/** formatBytes 格式化字节数为 B/KB/MB（一位小数），用于请求日志占用等小米数场景。 */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+}
+
+/** CURRENCIES 面板支持的币种选项。 */
+export const CURRENCIES = ['CNY', 'USD', 'EUR', 'CAD', 'HKD', 'JPY', 'AUD', 'GBP', 'SGD', 'CHF']
+
 /** formatDateTime 按面板设置的全局时区格式化 RFC3339 时间；timezone 为空用浏览器本地。 */
 export function formatDateTime(t: string | null | undefined, timezone?: string): string {
   if (!t) {
