@@ -45,6 +45,7 @@ import { useOperationProgress } from '@/lib/operation-progress-context'
 import { validateNameTemplate } from '@/lib/naming'
 import { DEFAULT_REALITY_DEST, inferRealityDestPreset } from '@/lib/reality'
 import { isServerOnline } from '@/lib/server-state'
+import { chainStatusStyle, hopStatusStyle, type CgStatusStyle } from '@/lib/status'
 import { useTimezone } from '@/lib/timezone'
 import { usePolling } from '@/lib/use-polling'
 import { cn } from '@/lib/utils'
@@ -64,40 +65,15 @@ import type {
 
 import './chains.css'
 
-/** cg-status 贴纸语义：lime=正常/在线，blue=部署流程中，red=异常/失败，muted=其他。 */
-type CgStatusTone = 'is-lime' | 'is-blue' | 'is-red' | 'is-muted'
-
-const chainStatusStyle: Record<ChainStatus, { label: string; cg: CgStatusTone }> = {
-  active: { label: '正常', cg: 'is-lime' },
-  applying: { label: '部署中', cg: 'is-blue' },
-  failed: { label: '异常', cg: 'is-red' },
-  pending: { label: '部署中', cg: 'is-blue' },
-  degraded: { label: '降级', cg: 'is-red' },
-  waiting_for_agent: { label: '等待 Agent', cg: 'is-blue' },
-  active_unconfirmed: { label: '已强制发布', cg: 'is-muted' },
-  active_failed: { label: '发布后失败', cg: 'is-red' },
-  cleanup_pending: { label: '等待清理', cg: 'is-blue' },
-  invalid: { label: '已失效', cg: 'is-red' },
-  deleted: { label: '已删除', cg: 'is-muted' },
-}
-
-const hopStatusStyle: Record<NodeStatus, { label: string; cg: CgStatusTone }> = {
-  active: { label: '正常', cg: 'is-lime' },
-  applying: { label: '部署中', cg: 'is-blue' },
-  failed: { label: '异常', cg: 'is-red' },
-  pending: { label: '部署中', cg: 'is-blue' },
-}
-
-function ChainStateMark({ tone, label }: { tone: CgStatusTone; label: string }) {
-  const loading = ['部署中', '等待 Agent', '等待清理'].includes(label)
-  const Icon = tone === 'is-lime' || label === '已强制发布'
+function ChainStateMark({ status, style }: { status: ChainStatus | NodeStatus; style: CgStatusStyle }) {
+  const Icon = style.cg === 'is-lime' || status === 'active_unconfirmed'
     ? CircleCheckIcon
-    : loading
+    : style.loading
       ? LoaderCircleIcon
       : TriangleAlertIcon
   return (
-    <span className={cn('cg-chain-mark', tone)} title={label} aria-label={label}>
-      <Icon className={cn(loading && 'animate-spin motion-reduce:animate-none')} />
+    <span className={cn('cg-chain-mark', style.cg)} title={style.label} aria-label={style.label}>
+      <Icon className={cn(style.loading && 'animate-spin motion-reduce:animate-none')} />
     </span>
   )
 }
@@ -1049,7 +1025,7 @@ export default function Chains() {
                 <article key={`direct-${node.id}`} className="cg-card cg-chain-card" data-tone={st.cg}>
                   <header className="cg-chain-card-head">
                     <div className="cg-chain-card-title">
-                      <ChainStateMark tone={st.cg} label={st.label} />
+                      <ChainStateMark status={node.status} style={st} />
                       <strong className="cg-chain-name">{node.name || `直连 #${node.id}`}</strong>
                       <span className="cg-chain-id">#{node.id}</span>
                       <span className="cg-chain-tag">直连</span>
@@ -1106,7 +1082,7 @@ export default function Chains() {
               <article key={`relay-${c.id}`} className="cg-card cg-chain-card" data-tone={st.cg}>
                 <header className="cg-chain-card-head">
                   <div className="cg-chain-card-title">
-                    <ChainStateMark tone={st.cg} label={st.label} />
+                    <ChainStateMark status={c.status} style={st} />
                     <strong className="cg-chain-name">{c.name || `中转 #${c.id}`}</strong>
                     <span className="cg-chain-id">#{c.id}</span>
                     <span className="cg-chain-tag">{isDirect ? '直连' : '中转'}</span>
