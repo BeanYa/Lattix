@@ -66,6 +66,20 @@ func TestStartupAndFaultedBlockAllBusinessCommands(t *testing.T) {
 	}
 }
 
+// active 状态门控不拦截：业务命令透传 Requester（与 startup/faulted 拒投互为镜像，
+// 防门控条件反转导致全线命令滞留 queued）。
+func TestActiveAllowsBusinessCommands(t *testing.T) {
+	d, req := gateDispatcher(shared.PanelStateActive)
+
+	business := shared.Envelope{Kind: shared.KindRequest, Type: shared.TypeApplyNode}
+	if err := d.send(context.Background(), 7, business); err != nil {
+		t.Fatalf("active send error = %v, want nil", err)
+	}
+	if len(req.sent) != 1 || req.sent[0].Type != shared.TypeApplyNode {
+		t.Fatalf("sent = %+v, want the business envelope delivered", req.sent)
+	}
+}
+
 // 门控拒绝时 Flush 与离线语义一致：命令滞留 queued，面板恢复 active 后补发。
 func TestFlushStallsWhilePanelNotActive(t *testing.T) {
 	ctx := context.Background()
