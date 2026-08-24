@@ -637,7 +637,8 @@ EOF
 else
     echo ">> [DEV] nohup 启动 agent（日志 $AGENT_LOG）"
     mkdir -p "$(dirname "$AGENT_LOG")"
-    nohup "$AGENT_BIN" -panel "$PANEL_WS" -token "$BOOTSTRAP_TOKEN" -state "$STATE_FILE" \
+    # token 走 env 注入（agent 对空 -token 回退 LATTIX_TOKEN，同 systemd/user 路径），不进 argv（ps 可见）。
+    LATTIX_TOKEN="$BOOTSTRAP_TOKEN" nohup "$AGENT_BIN" -panel "$PANEL_WS" -state "$STATE_FILE" \
         -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG" \
         -xray-api "$XRAY_API" -xray-runner exec \
         >"$AGENT_LOG" 2>&1 &
