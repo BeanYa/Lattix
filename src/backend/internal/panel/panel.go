@@ -22,6 +22,7 @@ import (
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/nettrust"
+	"lattix/backend/internal/panel/releases"
 	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
@@ -58,7 +59,7 @@ type Server struct {
 	cfg           Config
 	alerter       *alert.Notifier
 	upd           *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
-	releases      *releaseCatalog
+	releases      *releases.Catalog
 	exchange      *exchangeCatalog
 	cdn           *cdnCatalog
 	subscriptions *sub.Server
@@ -184,7 +185,7 @@ func New(st *store.Store, req ws.AgentRequester, cfg Config) (*Server, error) {
 	// 观察 ID 读取器注入请求日志中间件（避免 logging → progress 反向依赖）。
 	logging.SetObserveIDReader(s.observes.ObserveIDFromContext)
 	s.upd = newPanelUpdater(s)
-	s.releases = newReleaseCatalog(s)
+	s.releases = releases.New(st, cfg.GitHubRepo)
 	s.exchange = newExchangeCatalog(s)
 	s.cdn = newCDNCatalog(s)
 	s.scheduler = scheduler.NewTaskScheduler(s.inspectionLocation)
@@ -258,18 +259,18 @@ func (s *Server) registerCoreTasks() {
 		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(time.Hour) },
 		Run:     s.cleanupMetricHistory,
 	})
-	for _, kind := range []string{releaseKindAgent, releaseKindXray} {
+	for _, kind := range []string{releases.KindAgent, releases.KindXray} {
 		kind := kind
 		s.scheduler.Register(scheduler.ScheduledTask{
 			Name: "release." + kind, RunOnStart: true, Timeout: 45 * time.Second,
 			Trigger: func(ctx context.Context) scheduler.TaskTrigger {
 				settings := s.releaseInspectionSettings(ctx)
-				if kind == releaseKindAgent {
+				if kind == releases.KindAgent {
 					return settings.Agent
 				}
 				return settings.Xray
 			},
-			Run: func(ctx context.Context) error { return s.releases.refresh(ctx, kind) },
+			Run: func(ctx context.Context) error { return s.releases.Refresh(ctx, kind) },
 		})
 	}
 	s.scheduler.Register(scheduler.ScheduledTask{

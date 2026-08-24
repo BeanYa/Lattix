@@ -1,4 +1,4 @@
-package panel
+package releases
 
 import (
 	"context"
@@ -31,11 +31,10 @@ func TestReleaseCatalogCachesVersionsWithLatestFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	server := &Server{st: st, cfg: Config{GitHubRepo: "BeanYa/Lattix"}}
-	catalog := newReleaseCatalog(server)
+	catalog := New(st, "BeanYa/Lattix")
 	catalog.apiBase = upstream.URL
 
-	got, err := catalog.get(context.Background(), releaseKindAgent)
+	got, err := catalog.Get(context.Background(), KindAgent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,19 +49,19 @@ func TestReleaseCatalogCachesVersionsWithLatestFirst(t *testing.T) {
 	}
 
 	upstream.Close()
-	reloaded := newReleaseCatalog(server)
+	reloaded := New(st, "BeanYa/Lattix")
 	reloaded.apiBase = upstream.URL
-	got, err = reloaded.get(context.Background(), releaseKindAgent)
+	got, err = reloaded.Get(context.Background(), KindAgent)
 	if err != nil {
 		t.Fatalf("read persisted cache: %v", err)
 	}
 	if got.Versions[0] != "latest" || got.Stale {
 		t.Fatalf("persisted cache = %#v", got)
 	}
-	if err := reloaded.refresh(context.Background(), releaseKindAgent); err == nil {
+	if err := reloaded.Refresh(context.Background(), KindAgent); err == nil {
 		t.Fatal("refresh unexpectedly succeeded after upstream closed")
 	}
-	got, err = reloaded.get(context.Background(), releaseKindAgent)
+	got, err = reloaded.Get(context.Background(), KindAgent)
 	if err != nil {
 		t.Fatalf("stale cache should remain usable: %v", err)
 	}
@@ -72,7 +71,7 @@ func TestReleaseCatalogCachesVersionsWithLatestFirst(t *testing.T) {
 }
 
 func TestDefaultXrayInspectionIsDaily(t *testing.T) {
-	schedule := defaultReleaseInspectionSettings().Xray
+	schedule := DefaultInspectionSettings().Xray
 	if schedule.Every != 1 || schedule.Unit != "day" || schedule.At == "" {
 		t.Fatalf("unexpected xray schedule: %#v", schedule)
 	}

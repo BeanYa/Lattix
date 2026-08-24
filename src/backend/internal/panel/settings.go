@@ -23,6 +23,7 @@ import (
 
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/nettrust"
+	"lattix/backend/internal/panel/releases"
 	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/store"
 	"lattix/shared"
@@ -110,7 +111,7 @@ type settingsDTO struct {
 	Agent                    shared.AgentSettings         `json:"agent"`
 	ServerSettings           shared.ServerSettings        `json:"server_settings"`          // 面板级默认（defaultsetting）
 	ServerSettingsRevision   int64                        `json:"server_settings_revision"` // 默认值当前 revision
-	ReleaseInspection        releaseInspectionSettings    `json:"release_inspection"`
+	ReleaseInspection        releases.InspectionSettings  `json:"release_inspection"`
 	BillingInspection        scheduler.InspectionSchedule `json:"billing_inspection"`
 	ExchangeInspection       scheduler.InspectionSchedule `json:"exchange_rate_inspection"`
 	ReportingCurrency        string                       `json:"reporting_currency"`
@@ -234,7 +235,7 @@ type updateSettingsRequest struct {
 	RequestLogLevel       string                        `json:"request_log_level"` // 空 = 默认 debug
 	Agent                 *shared.AgentSettings         `json:"agent"`
 	ServerSettings        *shared.ServerSettings        `json:"server_settings"` // nil = 不变
-	ReleaseInspection     *releaseInspectionSettings    `json:"release_inspection"`
+	ReleaseInspection     *releases.InspectionSettings  `json:"release_inspection"`
 	BillingInspection     *scheduler.InspectionSchedule `json:"billing_inspection"`
 	ExchangeInspection    *scheduler.InspectionSchedule `json:"exchange_rate_inspection"`
 	ReportingCurrency     string                        `json:"reporting_currency"`
