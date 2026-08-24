@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"lattix/backend/internal/panel/scheduler"
 )
 
 type runtimePanelDTO struct {
@@ -57,12 +59,12 @@ type runtimeServicesDTO struct {
 }
 
 type panelRuntimeDTO struct {
-	SampledAt string                `json:"sampled_at"`
-	Panel     runtimePanelDTO       `json:"panel"`
-	Host      runtimeHostDTO        `json:"host"`
-	Process   runtimeProcessDTO     `json:"process"`
-	Services  runtimeServicesDTO    `json:"services"`
-	Tasks     []scheduledTaskStatus `json:"tasks"`
+	SampledAt string                          `json:"sampled_at"`
+	Panel     runtimePanelDTO                 `json:"panel"`
+	Host      runtimeHostDTO                  `json:"host"`
+	Process   runtimeProcessDTO               `json:"process"`
+	Services  runtimeServicesDTO              `json:"services"`
+	Tasks     []scheduler.ScheduledTaskStatus `json:"tasks"`
 }
 
 type runtimeCPUSample struct {
@@ -121,9 +123,9 @@ func (s *Server) handlePanelRuntime(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tasks := []scheduledTaskStatus{}
+	tasks := []scheduler.ScheduledTaskStatus{}
 	if s.scheduler != nil {
-		tasks = s.scheduler.statusSnapshot()
+		tasks = s.scheduler.StatusSnapshot()
 	}
 
 	writeJSON(w, http.StatusOK, panelRuntimeDTO{

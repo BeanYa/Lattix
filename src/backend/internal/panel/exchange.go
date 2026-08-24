@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/store"
 	external "lattix/shared/requester"
 )
@@ -67,14 +68,14 @@ func (c *exchangeCatalog) fetchBase(ctx context.Context, base string) ([]store.E
 	return rates, nil
 }
 
-func (s *Server) exchangeInspectionSchedule(ctx context.Context) inspectionSchedule {
-	def := inspectionSchedule{Every: 1, Unit: "day", At: "02:30"}
+func (s *Server) exchangeInspectionSchedule(ctx context.Context) scheduler.InspectionSchedule {
+	def := scheduler.InspectionSchedule{Every: 1, Unit: "day", At: "02:30"}
 	raw := s.getSetting(ctx, store.SettingExchangeInspection)
 	if raw == "" {
 		return def
 	}
-	var value inspectionSchedule
-	if json.Unmarshal([]byte(raw), &value) != nil || value.Unit != "day" || value.validate() != nil {
+	var value scheduler.InspectionSchedule
+	if json.Unmarshal([]byte(raw), &value) != nil || value.Unit != "day" || value.Validate() != nil {
 		return def
 	}
 	return value

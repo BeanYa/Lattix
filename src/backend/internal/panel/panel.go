@@ -22,6 +22,7 @@ import (
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/nettrust"
+	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
@@ -63,7 +64,7 @@ type Server struct {
 	subscriptions *sub.Server
 	extSubs       *extsub.Service
 	onlineUsers   *OnlineUsersTracker // 在线用户快照聚合（telemetry 喂入，用户列表 API 读取）
-	scheduler     *taskScheduler
+	scheduler     *scheduler.TaskScheduler
 	opLog         *logging.OperationStore
 	reqLog        *logging.RequestLog
 	observes      *progress.Registry // 旁路操作进度观察（nil = 关闭）
@@ -86,10 +87,10 @@ type Server struct {
 // available and before background tasks or HTTP serving start.
 func (s *Server) SetSubscriptionService(service *sub.Server) {
 	s.subscriptions = service
-	s.scheduler.register(scheduledTask{
-		name: "subscription.templates.refresh", runOnStart: true, timeout: 10 * time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(6 * time.Hour) },
-		run:     func(ctx context.Context) error { return service.RefreshTemplates(ctx, "") },
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "subscription.templates.refresh", RunOnStart: true, Timeout: 10 * time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(6 * time.Hour) },
+		Run:     func(ctx context.Context) error { return service.RefreshTemplates(ctx, "") },
 	})
 }
 
@@ -97,10 +98,10 @@ func (s *Server) SetSubscriptionService(service *sub.Server) {
 // its periodic sync task.
 func (s *Server) SetExternalSubscriptionService(service *extsub.Service) {
 	s.extSubs = service
-	s.scheduler.register(scheduledTask{
-		name: "external_subscriptions.sync", timeout: 10 * time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(15 * time.Minute) },
-		run: func(ctx context.Context) error {
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "external_subscriptions.sync", Timeout: 10 * time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(15 * time.Minute) },
+		Run: func(ctx context.Context) error {
 			synced, err := service.SyncDue(ctx)
 			if err != nil {
 				return err
@@ -118,7 +119,7 @@ func (s *Server) StartBackgroundTasks(ctx context.Context) {
 	s.tasks.Add(1)
 	go func() {
 		defer s.tasks.Done()
-		s.scheduler.run(ctx)
+		s.scheduler.Run(ctx)
 	}()
 }
 
@@ -186,7 +187,7 @@ func New(st *store.Store, req ws.AgentRequester, cfg Config) (*Server, error) {
 	s.releases = newReleaseCatalog(s)
 	s.exchange = newExchangeCatalog(s)
 	s.cdn = newCDNCatalog(s)
-	s.scheduler = newTaskScheduler(s.inspectionLocation)
+	s.scheduler = scheduler.NewTaskScheduler(s.inspectionLocation)
 	s.registerCoreTasks()
 	return s, nil
 }
@@ -247,50 +248,50 @@ func envDuration(name string, fallback time.Duration) time.Duration {
 
 func (s *Server) registerCoreTasks() {
 	expiryInterval := envDuration("LATTIX_EXPIRY_SWEEP_INTERVAL", expirySweepIntervalDefault)
-	s.scheduler.register(scheduledTask{
-		name: "user.expiry", runOnStart: true, timeout: time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(expiryInterval) },
-		run:     func(ctx context.Context) error { s.sweepExpiredUsers(ctx); return nil },
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "user.expiry", RunOnStart: true, Timeout: time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(expiryInterval) },
+		Run:     func(ctx context.Context) error { s.sweepExpiredUsers(ctx); return nil },
 	})
-	s.scheduler.register(scheduledTask{
-		name: "metrics.retention", runOnStart: true, timeout: time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(time.Hour) },
-		run:     s.cleanupMetricHistory,
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "metrics.retention", RunOnStart: true, Timeout: time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(time.Hour) },
+		Run:     s.cleanupMetricHistory,
 	})
 	for _, kind := range []string{releaseKindAgent, releaseKindXray} {
 		kind := kind
-		s.scheduler.register(scheduledTask{
-			name: "release." + kind, runOnStart: true, timeout: 45 * time.Second,
-			trigger: func(ctx context.Context) taskTrigger {
+		s.scheduler.Register(scheduler.ScheduledTask{
+			Name: "release." + kind, RunOnStart: true, Timeout: 45 * time.Second,
+			Trigger: func(ctx context.Context) scheduler.TaskTrigger {
 				settings := s.releaseInspectionSettings(ctx)
 				if kind == releaseKindAgent {
 					return settings.Agent
 				}
 				return settings.Xray
 			},
-			run: func(ctx context.Context) error { return s.releases.refresh(ctx, kind) },
+			Run: func(ctx context.Context) error { return s.releases.refresh(ctx, kind) },
 		})
 	}
-	s.scheduler.register(scheduledTask{
-		name: "billing.lifecycle", runOnStart: true, timeout: time.Minute,
-		trigger: func(ctx context.Context) taskTrigger { return s.billingInspectionSchedule(ctx) },
-		run:     s.inspectBilling,
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "billing.lifecycle", RunOnStart: true, Timeout: time.Minute,
+		Trigger: func(ctx context.Context) scheduler.TaskTrigger { return s.billingInspectionSchedule(ctx) },
+		Run:     s.inspectBilling,
 	})
-	s.scheduler.register(scheduledTask{
-		name: "exchange_rates.refresh", runOnStart: true, timeout: 45 * time.Second,
-		trigger: func(ctx context.Context) taskTrigger { return s.exchangeInspectionSchedule(ctx) },
-		run:     s.exchange.refresh,
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "exchange_rates.refresh", RunOnStart: true, Timeout: 45 * time.Second,
+		Trigger: func(ctx context.Context) scheduler.TaskTrigger { return s.exchangeInspectionSchedule(ctx) },
+		Run:     s.exchange.refresh,
 	})
 	cdnRefreshInterval := envDuration("LATTIX_CDN_REFRESH_INTERVAL", cdnCatalogRefreshIntervalDefault)
-	s.scheduler.register(scheduledTask{
-		name: "cdn.catalog.refresh", timeout: 2 * time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(cdnRefreshInterval) },
-		run:     s.cdn.refreshZstaticCDNCatalog,
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "cdn.catalog.refresh", Timeout: 2 * time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(cdnRefreshInterval) },
+		Run:     s.cdn.refreshZstaticCDNCatalog,
 	})
-	s.scheduler.register(scheduledTask{
-		name: "traffic.reset", runOnStart: true, timeout: time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(expiryInterval) },
-		run:     s.sweepTrafficReset,
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "traffic.reset", RunOnStart: true, Timeout: time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(expiryInterval) },
+		Run:     s.sweepTrafficReset,
 	})
 }
 

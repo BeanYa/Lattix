@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/store"
 )
 
@@ -208,14 +209,14 @@ func (s *Server) inspectBilling(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) billingInspectionSchedule(ctx context.Context) inspectionSchedule {
-	def := inspectionSchedule{Every: 1, Unit: "day", At: "00:05"}
+func (s *Server) billingInspectionSchedule(ctx context.Context) scheduler.InspectionSchedule {
+	def := scheduler.InspectionSchedule{Every: 1, Unit: "day", At: "00:05"}
 	raw := s.getSetting(ctx, store.SettingBillingInspection)
 	if raw == "" {
 		return def
 	}
-	var value inspectionSchedule
-	if json.Unmarshal([]byte(raw), &value) != nil || value.Unit != "day" || value.validate() != nil {
+	var value scheduler.InspectionSchedule
+	if json.Unmarshal([]byte(raw), &value) != nil || value.Unit != "day" || value.Validate() != nil {
 		return def
 	}
 	return value

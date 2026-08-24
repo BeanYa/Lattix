@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/store"
 	external "lattix/shared/requester"
 )
@@ -21,12 +22,12 @@ const (
 )
 
 type releaseInspectionSettings struct {
-	Agent inspectionSchedule `json:"agent"`
-	Xray  inspectionSchedule `json:"xray"`
+	Agent scheduler.InspectionSchedule `json:"agent"`
+	Xray  scheduler.InspectionSchedule `json:"xray"`
 }
 
 func defaultReleaseInspectionSettings() releaseInspectionSettings {
-	daily := inspectionSchedule{Every: 1, Unit: "day", At: "03:00"}
+	daily := scheduler.InspectionSchedule{Every: 1, Unit: "day", At: "03:00"}
 	return releaseInspectionSettings{Agent: daily, Xray: daily}
 }
 
@@ -189,7 +190,7 @@ func (s *Server) releaseInspectionSettings(ctx context.Context) releaseInspectio
 		return defaults
 	}
 	var settings releaseInspectionSettings
-	if json.Unmarshal([]byte(raw), &settings) != nil || settings.Agent.validate() != nil || settings.Xray.validate() != nil {
+	if json.Unmarshal([]byte(raw), &settings) != nil || settings.Agent.Validate() != nil || settings.Xray.Validate() != nil {
 		return defaults
 	}
 	return settings

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"lattix/backend/internal/cdncatalog"
+	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/store"
 )
 
@@ -108,12 +109,12 @@ func TestCoreTasksRegisterBackgroundCDNRefreshWithoutDNSInspection(t *testing.T)
 		releases:  &releaseCatalog{},
 		exchange:  &exchangeCatalog{},
 		cdn:       &cdnCatalog{},
-		scheduler: newTaskScheduler(func(context.Context) *time.Location { return time.UTC }),
+		scheduler: scheduler.NewTaskScheduler(func(context.Context) *time.Location { return time.UTC }),
 	}
 	panel.registerCoreTasks()
-	tasks := panel.scheduler.snapshot()
+	tasks := panel.scheduler.Snapshot()
 	refresh, found := tasks["cdn.catalog.refresh"]
-	if !found || refresh.runOnStart {
+	if !found || refresh.RunOnStart {
 		t.Fatalf("catalog refresh task = %+v, found=%v", refresh, found)
 	}
 	if _, found := tasks["cdn.dns.inspect"]; found {

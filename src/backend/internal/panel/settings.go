@@ -23,6 +23,7 @@ import (
 
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/nettrust"
+	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/store"
 	"lattix/shared"
 )
@@ -96,23 +97,23 @@ type settingsDTO struct {
 	PanelVersion     string       `json:"panel_version"`     // 当前面板版本（构建注入）
 	PasswordOverride bool         `json:"password_override"` // 密码已被设置页覆盖（否则为启动参数）
 	// 事件告警（§19）：三项全空 = 告警关闭。bot token 不回显（与 tls_key 同风格），仅给置位标记。
-	AlertWebhookURL          string                    `json:"alert_webhook_url"`
-	AlertTelegramBotTokenSet bool                      `json:"alert_telegram_bot_token_set"`
-	AlertTelegramChatID      string                    `json:"alert_telegram_chat_id"`
-	OperationLogLimit        int                       `json:"operation_log_limit"`
-	RequestLogMaxMB          int                       `json:"request_log_max_mb"`
-	RequestLogLevel          string                    `json:"request_log_level"` // 最低记录级别 debug|info|warning|error
-	LogDir                   string                    `json:"log_dir"`
-	RequestLogUsageBytes     int64                     `json:"request_log_usage_bytes"`
-	RequestLogDropped        uint64                    `json:"request_log_dropped"`
-	BackupIncludesLogs       bool                      `json:"backup_includes_logs"`
-	Agent                    shared.AgentSettings      `json:"agent"`
-	ServerSettings           shared.ServerSettings     `json:"server_settings"`          // 面板级默认（defaultsetting）
-	ServerSettingsRevision   int64                     `json:"server_settings_revision"` // 默认值当前 revision
-	ReleaseInspection        releaseInspectionSettings `json:"release_inspection"`
-	BillingInspection        inspectionSchedule        `json:"billing_inspection"`
-	ExchangeInspection       inspectionSchedule        `json:"exchange_rate_inspection"`
-	ReportingCurrency        string                    `json:"reporting_currency"`
+	AlertWebhookURL          string                       `json:"alert_webhook_url"`
+	AlertTelegramBotTokenSet bool                         `json:"alert_telegram_bot_token_set"`
+	AlertTelegramChatID      string                       `json:"alert_telegram_chat_id"`
+	OperationLogLimit        int                          `json:"operation_log_limit"`
+	RequestLogMaxMB          int                          `json:"request_log_max_mb"`
+	RequestLogLevel          string                       `json:"request_log_level"` // 最低记录级别 debug|info|warning|error
+	LogDir                   string                       `json:"log_dir"`
+	RequestLogUsageBytes     int64                        `json:"request_log_usage_bytes"`
+	RequestLogDropped        uint64                       `json:"request_log_dropped"`
+	BackupIncludesLogs       bool                         `json:"backup_includes_logs"`
+	Agent                    shared.AgentSettings         `json:"agent"`
+	ServerSettings           shared.ServerSettings        `json:"server_settings"`          // 面板级默认（defaultsetting）
+	ServerSettingsRevision   int64                        `json:"server_settings_revision"` // 默认值当前 revision
+	ReleaseInspection        releaseInspectionSettings    `json:"release_inspection"`
+	BillingInspection        scheduler.InspectionSchedule `json:"billing_inspection"`
+	ExchangeInspection       scheduler.InspectionSchedule `json:"exchange_rate_inspection"`
+	ReportingCurrency        string                       `json:"reporting_currency"`
 }
 
 // handleGetSettings 处理 GET /api/settings。
@@ -225,18 +226,18 @@ type updateSettingsRequest struct {
 	ACMEDomain      string `json:"acme_domain"`
 	ACMEEmail       string `json:"acme_email"`
 	// 事件告警（§19）：webhook/chat_id 随表单覆盖（允许清空）；bot token 留空 = 保持已保存值。
-	AlertWebhookURL       string                     `json:"alert_webhook_url"`
-	AlertTelegramBotToken string                     `json:"alert_telegram_bot_token"`
-	AlertTelegramChatID   string                     `json:"alert_telegram_chat_id"`
-	OperationLogLimit     int                        `json:"operation_log_limit"`
-	RequestLogMaxMB       int                        `json:"request_log_max_mb"`
-	RequestLogLevel       string                     `json:"request_log_level"` // 空 = 默认 debug
-	Agent                 *shared.AgentSettings      `json:"agent"`
-	ServerSettings        *shared.ServerSettings     `json:"server_settings"` // nil = 不变
-	ReleaseInspection     *releaseInspectionSettings `json:"release_inspection"`
-	BillingInspection     *inspectionSchedule        `json:"billing_inspection"`
-	ExchangeInspection    *inspectionSchedule        `json:"exchange_rate_inspection"`
-	ReportingCurrency     string                     `json:"reporting_currency"`
+	AlertWebhookURL       string                        `json:"alert_webhook_url"`
+	AlertTelegramBotToken string                        `json:"alert_telegram_bot_token"`
+	AlertTelegramChatID   string                        `json:"alert_telegram_chat_id"`
+	OperationLogLimit     int                           `json:"operation_log_limit"`
+	RequestLogMaxMB       int                           `json:"request_log_max_mb"`
+	RequestLogLevel       string                        `json:"request_log_level"` // 空 = 默认 debug
+	Agent                 *shared.AgentSettings         `json:"agent"`
+	ServerSettings        *shared.ServerSettings        `json:"server_settings"` // nil = 不变
+	ReleaseInspection     *releaseInspectionSettings    `json:"release_inspection"`
+	BillingInspection     *scheduler.InspectionSchedule `json:"billing_inspection"`
+	ExchangeInspection    *scheduler.InspectionSchedule `json:"exchange_rate_inspection"`
+	ReportingCurrency     string                        `json:"reporting_currency"`
 }
 
 // handleUpdateSettings 处理 PUT /api/settings：校验后落库。
@@ -306,17 +307,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.ReleaseInspection != nil {
-		if err := req.ReleaseInspection.Agent.validate(); err != nil {
+		if err := req.ReleaseInspection.Agent.Validate(); err != nil {
 			writeError(w, http.StatusBadRequest, "agent release "+err.Error())
 			return
 		}
-		if err := req.ReleaseInspection.Xray.validate(); err != nil {
+		if err := req.ReleaseInspection.Xray.Validate(); err != nil {
 			writeError(w, http.StatusBadRequest, "xray release "+err.Error())
 			return
 		}
 	}
-	for label, schedule := range map[string]*inspectionSchedule{"计费巡检": req.BillingInspection, "汇率刷新": req.ExchangeInspection} {
-		if schedule != nil && (schedule.Unit != "day" || schedule.Every != 1 || schedule.validate() != nil) {
+	for label, schedule := range map[string]*scheduler.InspectionSchedule{"计费巡检": req.BillingInspection, "汇率刷新": req.ExchangeInspection} {
+		if schedule != nil && (schedule.Unit != "day" || schedule.Every != 1 || schedule.Validate() != nil) {
 			writeError(w, http.StatusBadRequest, label+"仅支持每天指定时间执行")
 			return
 		}
@@ -584,7 +585,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if releaseInspectionChanged || billingInspectionChanged || exchangeInspectionChanged {
-		s.scheduler.notifyChanged()
+		s.scheduler.NotifyChanged()
 	}
 	if s.opLog != nil {
 		if err := s.opLog.SetMaxEntries(ctx, req.OperationLogLimit); err != nil {

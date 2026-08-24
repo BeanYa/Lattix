@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"lattix/backend/internal/store"
 )
@@ -76,15 +75,5 @@ func TestDefaultXrayInspectionIsDaily(t *testing.T) {
 	schedule := defaultReleaseInspectionSettings().Xray
 	if schedule.Every != 1 || schedule.Unit != "day" || schedule.At == "" {
 		t.Fatalf("unexpected xray schedule: %#v", schedule)
-	}
-}
-
-func TestInspectionScheduleNextUsesCalendarTime(t *testing.T) {
-	loc := time.FixedZone("test", 8*60*60)
-	after := time.Date(2026, time.July, 28, 4, 0, 0, 0, loc)
-	next := (inspectionSchedule{Every: 1, Unit: "day", At: "03:00"}).next(after, loc)
-	want := time.Date(2026, time.July, 29, 3, 0, 0, 0, loc)
-	if !next.Equal(want) {
-		t.Fatalf("next = %s, want %s", next, want)
 	}
 }
