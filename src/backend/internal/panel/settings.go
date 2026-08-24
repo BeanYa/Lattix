@@ -23,6 +23,7 @@ import (
 
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/nettrust"
+	"lattix/backend/internal/panel/exchange"
 	"lattix/backend/internal/panel/releases"
 	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/store"
@@ -327,7 +328,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if req.ReportingCurrency == "" {
 		req.ReportingCurrency = "CNY"
 	}
-	if !supportedCurrencies[req.ReportingCurrency] {
+	if !exchange.SupportedCurrencies[req.ReportingCurrency] {
 		writeError(w, http.StatusBadRequest, "不支持的统计币种")
 		return
 	}

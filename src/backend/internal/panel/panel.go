@@ -22,6 +22,7 @@ import (
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/nettrust"
+	"lattix/backend/internal/panel/exchange"
 	"lattix/backend/internal/panel/releases"
 	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/progress"
@@ -60,7 +61,7 @@ type Server struct {
 	alerter       *alert.Notifier
 	upd           *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
 	releases      *releases.Catalog
-	exchange      *exchangeCatalog
+	exchange      *exchange.Catalog
 	cdn           *cdnCatalog
 	subscriptions *sub.Server
 	extSubs       *extsub.Service
@@ -186,7 +187,7 @@ func New(st *store.Store, req ws.AgentRequester, cfg Config) (*Server, error) {
 	logging.SetObserveIDReader(s.observes.ObserveIDFromContext)
 	s.upd = newPanelUpdater(s)
 	s.releases = releases.New(st, cfg.GitHubRepo)
-	s.exchange = newExchangeCatalog(s)
+	s.exchange = exchange.New(st)
 	s.cdn = newCDNCatalog(s)
 	s.scheduler = scheduler.NewTaskScheduler(s.inspectionLocation)
 	s.registerCoreTasks()
@@ -281,7 +282,7 @@ func (s *Server) registerCoreTasks() {
 	s.scheduler.Register(scheduler.ScheduledTask{
 		Name: "exchange_rates.refresh", RunOnStart: true, Timeout: 45 * time.Second,
 		Trigger: func(ctx context.Context) scheduler.TaskTrigger { return s.exchangeInspectionSchedule(ctx) },
-		Run:     s.exchange.refresh,
+		Run:     s.exchange.Refresh,
 	})
 	cdnRefreshInterval := envDuration("LATTIX_CDN_REFRESH_INTERVAL", cdnCatalogRefreshIntervalDefault)
 	s.scheduler.Register(scheduler.ScheduledTask{

@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"lattix/backend/internal/panel/exchange"
 	"lattix/backend/internal/store"
 )
 
@@ -214,12 +215,12 @@ func (s *Server) loadStatsRows(ctx context.Context, participate func(b store.Ser
 				ServerID: b.ServerID, Alias: srv.Alias, CountryCode: srv.CountryCode, Location: srv.Location,
 				Currency: b.Currency, AmountMinor: b.AmountMinor, IntervalCount: b.IntervalCount,
 				IntervalUnit: b.IntervalUnit, ServiceStartedOn: b.ServiceStartedOn, Status: b.Status,
-				DailyMinor: roundRat(dailyPublic),
+				DailyMinor: exchange.RoundRat(dailyPublic),
 			},
 		}
 		if custom != nil {
 			row.dailyCustom = intervalDailyCost(custom.AmountMinor, b.IntervalCount, b.IntervalUnit)
-			row.base.DailyCustomMinor = roundRat(row.dailyCustom)
+			row.base.DailyCustomMinor = exchange.RoundRat(row.dailyCustom)
 			row.estDailyCustom = estimatedDailyCost(custom.AmountMinor, b.IntervalCount, b.IntervalUnit)
 			row.customDiffers = custom.AmountMinor != public.AmountMinor
 		}
@@ -412,12 +413,12 @@ func (s *Server) handleBillingStats(w http.ResponseWriter, r *http.Request) {
 			}
 			item.DaysActive += days
 			cost := new(big.Rat).Mul(row.dailyPublic, new(big.Rat).SetInt64(int64(days)))
-			item.ActualCostsPublic[i] = roundRat(cost)
+			item.ActualCostsPublic[i] = exchange.RoundRat(cost)
 			dto.ActualTotalsPublic[i] += item.ActualCostsPublic[i]
 			if costsCustom != nil {
 				if row.dailyCustom != nil {
 					cost := new(big.Rat).Mul(row.dailyCustom, new(big.Rat).SetInt64(int64(days)))
-					costsCustom[i] = roundRat(cost)
+					costsCustom[i] = exchange.RoundRat(cost)
 				} else {
 					costsCustom[i] = item.ActualCostsPublic[i]
 				}
@@ -482,19 +483,19 @@ func (s *Server) handleEstimatedBillingStats(w http.ResponseWriter, r *http.Requ
 	for _, row := range rows {
 		base := row.base
 		base.DaysActive = spanDays
-		base.DailyMinor = roundRat(row.estDailyPublic)
+		base.DailyMinor = exchange.RoundRat(row.estDailyPublic)
 		if row.estDailyCustom != nil {
-			base.DailyCustomMinor = roundRat(row.estDailyCustom)
+			base.DailyCustomMinor = exchange.RoundRat(row.estDailyCustom)
 		}
 		item := estimatedBillingServerStatsDTO{
 			billingServerStatsBase: base,
-			MonthlyMinor:           roundRat(new(big.Rat).Mul(row.estDailyPublic, big.NewRat(30, 1))),
-			AnnualMinor:            roundRat(new(big.Rat).Mul(row.estDailyPublic, big.NewRat(360, 1))),
+			MonthlyMinor:           exchange.RoundRat(new(big.Rat).Mul(row.estDailyPublic, big.NewRat(30, 1))),
+			AnnualMinor:            exchange.RoundRat(new(big.Rat).Mul(row.estDailyPublic, big.NewRat(360, 1))),
 			EstimatedCostsPublic:   make([]int64, len(periods)),
 		}
 		if row.estDailyCustom != nil {
-			item.MonthlyCustomMinor = roundRat(new(big.Rat).Mul(row.estDailyCustom, big.NewRat(30, 1)))
-			item.AnnualCustomMinor = roundRat(new(big.Rat).Mul(row.estDailyCustom, big.NewRat(360, 1)))
+			item.MonthlyCustomMinor = exchange.RoundRat(new(big.Rat).Mul(row.estDailyCustom, big.NewRat(30, 1)))
+			item.AnnualCustomMinor = exchange.RoundRat(new(big.Rat).Mul(row.estDailyCustom, big.NewRat(360, 1)))
 		}
 		var costsCustom []int64
 		if totalsCustom != nil {
@@ -518,12 +519,12 @@ func (s *Server) handleEstimatedBillingStats(w http.ResponseWriter, r *http.Requ
 				}
 			}
 			cost := new(big.Rat).Mul(row.estDailyPublic, new(big.Rat).SetInt64(days))
-			item.EstimatedCostsPublic[i] = roundRat(cost)
+			item.EstimatedCostsPublic[i] = exchange.RoundRat(cost)
 			dto.EstimatedTotalsPublic[i] += item.EstimatedCostsPublic[i]
 			if costsCustom != nil {
 				if row.estDailyCustom != nil {
 					cost := new(big.Rat).Mul(row.estDailyCustom, new(big.Rat).SetInt64(days))
-					costsCustom[i] = roundRat(cost)
+					costsCustom[i] = exchange.RoundRat(cost)
 				} else {
 					costsCustom[i] = item.EstimatedCostsPublic[i]
 				}

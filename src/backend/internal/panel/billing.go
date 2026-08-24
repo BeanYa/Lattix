@@ -10,17 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"lattix/backend/internal/panel/exchange"
 	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/store"
 )
-
-var supportedCurrencies = map[string]bool{
-	"AUD": true, "BRL": true, "CAD": true, "CHF": true, "CNY": true, "CZK": true,
-	"DKK": true, "EUR": true, "GBP": true, "HKD": true, "HUF": true, "IDR": true,
-	"ILS": true, "INR": true, "ISK": true, "JPY": true, "KRW": true, "MXN": true,
-	"MYR": true, "NOK": true, "NZD": true, "PHP": true, "PLN": true, "RON": true,
-	"SEK": true, "SGD": true, "THB": true, "TRY": true, "USD": true, "ZAR": true,
-}
 
 type billingInput struct {
 	Enabled          bool   `json:"enabled"`
@@ -57,13 +50,8 @@ type billingDTO struct {
 	CustomConverted     *convertedCost  `json:"custom_converted,omitempty"`
 }
 
-type convertedCost struct {
-	AmountMinor    int64  `json:"amount_minor"`
-	Currency       string `json:"currency"`
-	RateDate       string `json:"rate_date"`
-	Source         string `json:"source"`
-	AnchorCurrency string `json:"anchor_currency,omitempty"`
-}
+// convertedCost 是 exchange.Converted 的面板侧别名（换算逻辑在 exchange 包）。
+type convertedCost = exchange.Converted
 
 type trafficPlanDTO struct {
 	QuotaBytes      *int64 `json:"quota_bytes"`
@@ -101,7 +89,7 @@ func validateBillingInput(ctx context.Context, st *store.Store, in billingInput,
 	if in.AmountMinor < 0 {
 		return b, errors.New("费用不能为负数")
 	}
-	if !supportedCurrencies[b.Currency] {
+	if !exchange.SupportedCurrencies[b.Currency] {
 		return b, errors.New("不支持的币种")
 	}
 	if err := store.ValidateInterval(in.IntervalCount, in.IntervalUnit); err != nil {

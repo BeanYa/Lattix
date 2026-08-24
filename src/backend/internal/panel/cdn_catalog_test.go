@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"lattix/backend/internal/cdncatalog"
+	"lattix/backend/internal/panel/exchange"
 	"lattix/backend/internal/panel/releases"
 	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/store"
@@ -108,7 +109,7 @@ func TestCDNCatalogClientInitializationFailureIsReported(t *testing.T) {
 func TestCoreTasksRegisterBackgroundCDNRefreshWithoutDNSInspection(t *testing.T) {
 	panel := &Server{
 		releases:  &releases.Catalog{},
-		exchange:  &exchangeCatalog{},
+		exchange:  &exchange.Catalog{},
 		cdn:       &cdnCatalog{},
 		scheduler: scheduler.NewTaskScheduler(func(context.Context) *time.Location { return time.UTC }),
 	}
