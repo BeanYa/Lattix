@@ -22,6 +22,7 @@ import (
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/nettrust"
+	"lattix/backend/internal/panel/cdn"
 	"lattix/backend/internal/panel/exchange"
 	"lattix/backend/internal/panel/releases"
 	"lattix/backend/internal/panel/scheduler"
@@ -62,7 +63,7 @@ type Server struct {
 	upd           *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
 	releases      *releases.Catalog
 	exchange      *exchange.Catalog
-	cdn           *cdnCatalog
+	cdn           *cdn.Catalog
 	subscriptions *sub.Server
 	extSubs       *extsub.Service
 	onlineUsers   *OnlineUsersTracker // 在线用户快照聚合（telemetry 喂入，用户列表 API 读取）
@@ -188,7 +189,7 @@ func New(st *store.Store, req ws.AgentRequester, cfg Config) (*Server, error) {
 	s.upd = newPanelUpdater(s)
 	s.releases = releases.New(st, cfg.GitHubRepo)
 	s.exchange = exchange.New(st)
-	s.cdn = newCDNCatalog(s)
+	s.cdn = cdn.New(st)
 	s.scheduler = scheduler.NewTaskScheduler(s.inspectionLocation)
 	s.registerCoreTasks()
 	return s, nil
@@ -284,11 +285,11 @@ func (s *Server) registerCoreTasks() {
 		Trigger: func(ctx context.Context) scheduler.TaskTrigger { return s.exchangeInspectionSchedule(ctx) },
 		Run:     s.exchange.Refresh,
 	})
-	cdnRefreshInterval := envDuration("LATTIX_CDN_REFRESH_INTERVAL", cdnCatalogRefreshIntervalDefault)
+	cdnRefreshInterval := envDuration("LATTIX_CDN_REFRESH_INTERVAL", cdn.RefreshIntervalDefault)
 	s.scheduler.Register(scheduler.ScheduledTask{
 		Name: "cdn.catalog.refresh", Timeout: 2 * time.Minute,
 		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(cdnRefreshInterval) },
-		Run:     s.cdn.refreshZstaticCDNCatalog,
+		Run:     s.cdn.Refresh,
 	})
 	s.scheduler.Register(scheduler.ScheduledTask{
 		Name: "traffic.reset", RunOnStart: true, Timeout: time.Minute,
