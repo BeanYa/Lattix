@@ -163,8 +163,9 @@ func newClientDownloadLimiter() *clientDownloadLimiter {
 	return &clientDownloadLimiter{windows: make(map[string]*clientDownloadWindow), now: time.Now}
 }
 
-// allow 为 token 记录一次新建下载任务并返回是否放行。
-func (l *clientDownloadLimiter) allow(token string) bool {
+// allow 为 token 记录一次新建下载任务并返回是否放行；拒绝时返回窗口滑动到可用的等待时长
+// （最早一条窗口内记录滑出为止，供 429 响应的 Retry-After 头使用，模式同 panel 的 loginLimiter）。
+func (l *clientDownloadLimiter) allow(token string) (time.Duration, bool) {
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -186,12 +187,12 @@ func (l *clientDownloadLimiter) allow(token string) bool {
 		window.timestamps = kept
 		if len(window.timestamps) >= maxClientDownloadTasksPerTokenHour {
 			window.lastSeen = now
-			return false
+			return clientDownloadLimitWindow - now.Sub(window.timestamps[0]), false
 		}
 	}
 	window.timestamps = append(window.timestamps, now)
 	window.lastSeen = now
-	return true
+	return 0, true
 }
 
 func (l *clientDownloadLimiter) evictOldest() {
@@ -228,8 +229,14 @@ func (s *Server) HandleSubClientDownloadStart(w http.ResponseWriter, r *http.Req
 	}
 	// 只对新建下载任务计数限流：去重命中活跃任务直接返回（不计数）；
 	// 票据签发与 Range 断点续传不经过此入口（安全评审 M3）。
-	if !s.downloadLimiter.allow(r.PathValue("token")) {
+	if retryAfter, allowed := s.downloadLimiter.allow(r.PathValue("token")); !allowed {
 		s.downloadMu.Unlock()
+		// Retry-After 取窗口滑动到可用的秒数（向上取整，至少 1 秒）。
+		seconds := int64((retryAfter + time.Second - 1) / time.Second)
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
 		subDownloadErrorStatus(w, http.StatusTooManyRequests, errors.New("客户端下载请求过于频繁，请稍后重试"))
 		return
 	}

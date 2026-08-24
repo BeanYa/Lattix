@@ -363,20 +363,21 @@ func TestClientDownloadLimiterWindow(t *testing.T) {
 
 	// 窗口内第 11 次新建被拒。
 	for i := 0; i < maxClientDownloadTasksPerTokenHour; i++ {
-		if !limiter.allow("token-a") {
+		if _, allowed := limiter.allow("token-a"); !allowed {
 			t.Fatalf("allow #%d should pass", i+1)
 		}
 	}
-	if limiter.allow("token-a") {
-		t.Fatal("11th task within the window should be rejected")
+	// 拒绝时返回窗口滑动到可用的等待时长（全部记录同一时刻落入 → 等满整个窗口）。
+	if retryAfter, allowed := limiter.allow("token-a"); allowed || retryAfter != clientDownloadLimitWindow {
+		t.Fatalf("11th task within the window = (%s, %t), want (%s, false)", retryAfter, allowed, clientDownloadLimitWindow)
 	}
 	// 不同 token 互不影响。
-	if !limiter.allow("token-b") {
+	if _, allowed := limiter.allow("token-b"); !allowed {
 		t.Fatal("other token should have its own window")
 	}
 	// 窗口滑动后放行。
 	current = current.Add(clientDownloadLimitWindow + time.Second)
-	if !limiter.allow("token-a") {
+	if _, allowed := limiter.allow("token-a"); !allowed {
 		t.Fatal("should pass after the window slides")
 	}
 }
@@ -441,10 +442,13 @@ func TestHandleSubClientDownloadStartRateLimit(t *testing.T) {
 			t.Fatalf("start %s: status = %d body = %s", variant, rec.Code, rec.Body)
 		}
 	}
-	// 超出窗口上限 → 429 + 业务化文案（不泄露内部细节）。
+	// 超出窗口上限 → 429 + Retry-After + 业务化文案（不泄露内部细节）。
 	rec = start("dave-token", variants[maxClientDownloadTasksPerTokenHour])
 	if rec.Code != http.StatusTooManyRequests {
 		t.Fatalf("over-limit start: status = %d body = %s", rec.Code, rec.Body)
+	}
+	if retryAfter := rec.Header().Get("Retry-After"); retryAfter == "" || retryAfter == "0" {
+		t.Fatalf("over-limit response Retry-After = %q, want 正数秒", retryAfter)
 	}
 	if !strings.Contains(rec.Body.String(), "过于频繁") {
 		t.Fatalf("over-limit body = %q", rec.Body)
