@@ -30,10 +30,14 @@ const sessionCookie = "lattix_session"
 // sessionSecret 返回会话签名密钥：独立随机值，持久化于 settings（session_secret），
 // 不派生自任何口令材料。首次使用（含升级后）为空时生成 32 字节随机值（hex 编码）并落库；
 // 改密成功后由 handleChangePassword 轮换（改密码即全部会话失效）。
+// 命中后缓存在进程内（atomic），避免每次认证请求 2 次 SQLite 读；rotate/首次生成时刷新。
 // 残余风险：DB 泄露仍可伪造会话（与会话表方案等同），但口令材料不再因此泄露。
 // 首次生成存在并发竞态（两个请求同时生成）可接受：后写覆盖先写，
 // 仅使竞态窗口内签发的会话失效一次。
 func (s *Server) sessionSecret(ctx context.Context) ([]byte, error) {
+	if cached, ok := s.secretCache.Load().(string); ok && cached != "" {
+		return []byte(cached), nil
+	}
 	secret, err := s.st.GetSetting(ctx, store.SettingSessionSecret)
 	if err != nil {
 		return nil, fmt.Errorf("read session secret: %w", err)
@@ -47,6 +51,7 @@ func (s *Server) sessionSecret(ctx context.Context) ([]byte, error) {
 			return nil, fmt.Errorf("save session secret: %w", err)
 		}
 	}
+	s.secretCache.Store(secret)
 	return []byte(secret), nil
 }
 
@@ -59,6 +64,7 @@ func (s *Server) rotateSessionSecret(ctx context.Context) error {
 	if err := s.st.SetSetting(ctx, store.SettingSessionSecret, secret); err != nil {
 		return fmt.Errorf("save session secret: %w", err)
 	}
+	s.secretCache.Store(secret)
 	return nil
 }
 

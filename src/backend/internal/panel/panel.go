@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"lattix/backend/internal/alert"
@@ -84,7 +85,10 @@ type Server struct {
 	loginAttempts         *loginLimiter
 	loginUsernameAttempts *loginLimiter // per-username 兜底桶（防 XFF 伪造绕过 per-IP 限流）
 	bcryptSlots           chan struct{}
-	tasks                 sync.WaitGroup
+	// secretCache 缓存会话签名密钥（string），省掉每次认证请求的 SQLite 读；
+	// 仅在 sessionSecret 首次生成/读取与 rotateSessionSecret 轮换时刷新。
+	secretCache atomic.Value
+	tasks       sync.WaitGroup
 }
 
 // SetSubscriptionService wires the snapshot compiler after PanelBase is

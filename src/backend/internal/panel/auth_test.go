@@ -73,6 +73,32 @@ func TestSessionSecretGeneratedOnFirstUse(t *testing.T) {
 	}
 }
 
+// TestSessionSecretCachedInProcess 断言密钥命中后缓存在进程内：
+// 直接改库不再影响返回值（进程内唯一写入口是 rotate/首次生成），避免每次认证 2 次 SQLite 读。
+func TestSessionSecretCachedInProcess(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &Server{st: st, cfg: Config{AdminUser: "admin"}}
+	secret, err := s.sessionSecret(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(ctx, store.SettingSessionSecret, "db-overwritten"); err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.sessionSecret(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != string(secret) {
+		t.Fatal("session secret was re-read from the store instead of the process cache")
+	}
+}
+
 func TestSessionInvalidAfterSecretRotation(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")
