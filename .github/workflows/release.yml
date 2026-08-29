@@ -125,8 +125,7 @@ jobs:
           retention-days: 7
 
   # e2e 全量矩阵：scripts/e2e/ 中与 ubuntu-latest 环境兼容的脚本全数纳入。
-  # 未纳入：telemetry.sh / vlessenc.sh（核心断言为真实外网数据通路）；
-  # groups.sh（SSRF 出向防护拒绝 loopback 外部订阅夹具，待测试钩子）。
+  # 未纳入：telemetry.sh / vlessenc.sh（核心断言为真实外网数据通路）。
   # 统一注入 PANEL_BIN/AGENT_BIN/XRAY_BIN：panel.sh、event-log.sh、links.sh
   # 识别并使用 release 产物，其余脚本忽略该变量、自行 go build（脚本内建行为）。
   e2e:
@@ -155,6 +154,10 @@ jobs:
           # chains.sh 的真实流量断言打 cloudflare 外网，CI 中跳过（其余断言全量保留）。
           - script: chains.sh
             skip_external: "1"
+          # groups.sh 的外部订阅夹具起在 loopback，注入 SSRF 测试钩子放行私网拨号
+          # （LATX_ALLOW_PRIVATE_OUTBOUND=1，仅本条目生效；生产环境严禁设置）。
+          - script: groups.sh
+            allow_private_outbound: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -200,6 +203,7 @@ jobs:
       - name: Run e2e (${{ matrix.script }})
         env:
           CHAINS_SKIP_EXTERNAL: ${{ matrix.skip_external }}
+          LATX_ALLOW_PRIVATE_OUTBOUND: ${{ matrix.allow_private_outbound }}
         run: |
           chmod +x out/lattix-backend-linux-amd64 current/lattix-agent-linux-amd64
           PANEL_BIN="$PWD/out/lattix-backend-linux-amd64" \

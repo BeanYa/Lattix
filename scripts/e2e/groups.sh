@@ -4,6 +4,8 @@
 #   遮蔽直接分配）→ 分组变更/外部订阅同步/链路重发布自动触发关联用户订阅重生成。
 # 管理 API 均为 RPC 信封：写操作需 Idempotency-Key 与 X-CSRF-Token。
 # 依赖：python3、curl、openssl、本机 xray 二进制（XRAY_BIN 可覆盖）。
+# 外部订阅夹具起在 loopback，运行需 LATX_ALLOW_PRIVATE_OUTBOUND=1 放行
+# SSRF 私网拨号防护（e2e 测试钩子，CI matrix 已注入；生产环境严禁设置）。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
