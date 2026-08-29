@@ -43,6 +43,7 @@ type sbOutbound struct {
 	UUID       string       `json:"uuid,omitempty"`
 	Flow       string       `json:"flow,omitempty"`
 	Encryption string       `json:"encryption,omitempty"`
+	Username   string       `json:"username,omitempty"` // socks / http
 	Password   string       `json:"password,omitempty"`
 	Method     string       `json:"method,omitempty"` // shadowsocks
 	TLS        *sbTLS       `json:"tls,omitempty"`
@@ -99,6 +100,15 @@ func buildSbOutbound(n store.Node, rc shared.RealizedConfig, uuid string) (sbOut
 		} else {
 			ob.Password = shared.SSUserPassword(uuid, rc.Method)
 		}
+	case shared.ProtocolSocks:
+		// xray 侧 socks 入站 auth=password，账号即用户 UUID；sing-box socks 缺省 version=5。
+		ob.Type = "socks"
+		ob.Username = uuid
+		ob.Password = uuid
+	case shared.ProtocolHTTP:
+		ob.Type = "http"
+		ob.Username = uuid
+		ob.Password = uuid
 	default:
 		return sbOutbound{}, fmt.Errorf("sing-box 不支持协议: %s", n.Protocol)
 	}

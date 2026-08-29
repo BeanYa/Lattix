@@ -126,7 +126,7 @@ jobs:
 
   # e2e 全量矩阵：scripts/e2e/ 中与 ubuntu-latest 环境兼容的脚本全数纳入。
   # 未纳入：telemetry.sh / vlessenc.sh（核心断言为真实外网数据通路）；
-  # chains.sh / protocols.sh（e2e 暴露订阅发布产品 bug，待修复后回归）；
+  # chains.sh（e2e 暴露订阅发布产品 bug，待修复后回归）；
   # groups.sh（SSRF 出向防护拒绝 loopback 外部订阅夹具，待测试钩子）。
   # 统一注入 PANEL_BIN/AGENT_BIN/XRAY_BIN：panel.sh、event-log.sh、links.sh
   # 识别并使用 release 产物，其余脚本忽略该变量、自行 go build（脚本内建行为）。
@@ -152,6 +152,7 @@ jobs:
           - script: reconcile.sh
           - script: upgrade.sh
           - script: panel-update.sh
+          - script: protocols.sh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
