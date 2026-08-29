@@ -27,6 +27,7 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 }
 
 // CopyFileAtomic 复制文件并设置权限（目标先写临时文件再原子替换）。
+// .tmp 可能复用崩溃遗留文件（os.OpenFile 的 perm 仅创建时生效），写后补 Chmod 收口权限。
 func CopyFileAtomic(src, dest string, perm os.FileMode) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -43,9 +44,18 @@ func CopyFileAtomic(src, dest string, perm os.FileMode) error {
 		os.Remove(tmp)
 		return err
 	}
+	if err := out.Chmod(perm); err != nil {
+		out.Close()
+		os.Remove(tmp)
+		return err
+	}
 	if err := out.Close(); err != nil {
 		os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, dest)
+	if err := os.Rename(tmp, dest); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
