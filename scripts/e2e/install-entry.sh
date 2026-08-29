@@ -22,6 +22,14 @@ CHILD
     chmod +x "$work/v9.8.7/scripts/install-${component}.sh"
 done
 
+# Fake release area mirroring release.yml: script assets byte-identical to the
+# tagged files, with their sha256 recorded in checksums.txt.
+release="$work/release/v9.8.7"
+mkdir -p "$release"
+cp "$work/v9.8.7/scripts/install-panel.sh" "$work/v9.8.7/scripts/install-agent.sh" \
+    "$release/"
+(cd "$release" && sha256sum install-panel.sh install-agent.sh >checksums.txt)
+
 mkdir -p "$work/bin"
 cat >"$work/bin/curl" <<'CURL'
 #!/usr/bin/env bash
@@ -38,26 +46,79 @@ chmod +x "$work/bin/curl"
 
 LATX_TEST_OUTPUT="$work/panel.args" \
 LATX_RAW_BASE="file://$work" \
+LATX_RELEASE_BASE="file://$release" \
     bash "$repo_root/install.sh" panel --version v9.8.7 --mode docker --port 9090 \
     >"$work/panel.log" 2>&1
 diff -u <(printf '%s\n' --version v9.8.7 --mode docker --port 9090) "$work/panel.args"
 grep -Fq '>> 正在下载 install-panel.sh' "$work/panel.log" \
     || { echo "panel child installer download progress is missing" >&2; exit 1; }
+grep -Fq '>> install-panel.sh SHA256 校验通过' "$work/panel.log" \
+    || { echo "panel child installer checksum verification is missing" >&2; exit 1; }
 
 LATX_TEST_OUTPUT="$work/agent.args" \
 LATX_RAW_BASE="file://$work" \
+LATX_RELEASE_BASE="file://$release" \
     bash "$repo_root/install.sh" agent --version v9.8.7 \
         --panel https://panel.example.com --token bootstrap \
-        >"$work/agent.log" 2>&1
+    >"$work/agent.log" 2>&1
 diff -u <(printf '%s\n' --version v9.8.7 --panel https://panel.example.com \
     --token bootstrap) "$work/agent.args"
 grep -Fq '>> 正在下载 install-agent.sh' "$work/agent.log" \
     || { echo "agent child installer download progress is missing" >&2; exit 1; }
+grep -Fq '>> install-agent.sh SHA256 校验通过' "$work/agent.log" \
+    || { echo "agent child installer checksum verification is missing" >&2; exit 1; }
+
+# Release assets unavailable: warn about the missing checksums.txt, fall back to
+# the raw tagged file, and continue without verification (old releases).
+LATX_TEST_OUTPUT="$work/fallback.args" \
+LATX_RAW_BASE="file://$work" \
+LATX_RELEASE_BASE="file://$work/no-such-release" \
+    bash "$repo_root/install.sh" panel --version v9.8.7 --mode docker \
+    >"$work/fallback.log" 2>&1
+diff -u <(printf '%s\n' --version v9.8.7 --mode docker) "$work/fallback.args"
+grep -Fq 'WARNING' "$work/fallback.log" \
+    || { echo "fallback without checksums.txt must print a warning" >&2; exit 1; }
+grep -Fq '回退 Git tag 原始文件' "$work/fallback.log" \
+    || { echo "fallback must fall back to the raw tagged file" >&2; exit 1; }
+
+# Tampered child installer: hash mismatch must be refused before execution.
+tampered="$work/release-tampered/v9.8.7"
+mkdir -p "$tampered"
+cp "$release/checksums.txt" "$tampered/checksums.txt"
+cp "$release/install-panel.sh" "$tampered/install-panel.sh"
+echo '# tampered' >>"$tampered/install-panel.sh"
+if LATX_TEST_OUTPUT="$work/tampered.args" \
+LATX_RELEASE_BASE="file://$tampered" \
+    bash "$repo_root/install.sh" panel --version v9.8.7 --mode docker \
+    >"$work/tampered.log" 2>&1; then
+    echo "tampered child installer must be rejected" >&2
+    exit 1
+fi
+grep -Fq 'SHA256 verification failed' "$work/tampered.log" \
+    || { echo "tampered child installer must fail SHA256 verification" >&2; exit 1; }
+[[ ! -e "$work/tampered.args" ]] \
+    || { echo "tampered child installer must not be executed" >&2; exit 1; }
+
+# Old release: checksums.txt exists but has no script entry -> warn and continue.
+old="$work/release-old/v9.8.7"
+mkdir -p "$old"
+cp "$work/v9.8.7/scripts/install-agent.sh" "$old/install-agent.sh"
+echo "0000000000000000000000000000000000000000000000000000000000000000  lattix-agent-linux-amd64.tar.gz" \
+    >"$old/checksums.txt"
+LATX_TEST_OUTPUT="$work/old.args" \
+LATX_RELEASE_BASE="file://$old" \
+    bash "$repo_root/install.sh" agent --version v9.8.7 \
+        --panel https://panel.example.com --token bootstrap \
+    >"$work/old.log" 2>&1
+diff -u <(printf '%s\n' --version v9.8.7 --panel https://panel.example.com \
+    --token bootstrap) "$work/old.args"
+grep -Fq '无 install-agent.sh 条目' "$work/old.log" \
+    || { echo "missing checksum entry must print a warning" >&2; exit 1; }
 
 # The recommended interactive command pipes the installer into bash, so its
 # stdin is not a TTY. Verify the panel-only wizard reads from /dev/tty.
 printf '1\n\n\n\n\n\n' | script -qec \
-    "env PATH='$work/bin':\"\$PATH\" LATX_TEST_OUTPUT='$work/wizard.args' LATX_RAW_BASE='file://$work' bash -c 'cat \"$repo_root/install.sh\" | bash'" \
+    "env PATH='$work/bin':\"\$PATH\" LATX_TEST_OUTPUT='$work/wizard.args' LATX_RAW_BASE='file://$work' LATX_RELEASE_BASE='file://$release' bash -c 'cat \"$repo_root/install.sh\" | bash'" \
     /dev/null >"$work/wizard.log"
 diff -u <(printf '%s\n' --version v9.8.7 --mode docker) "$work/wizard.args"
 if grep -Fq 'Agent' "$work/wizard.log"; then
@@ -66,7 +127,7 @@ if grep -Fq 'Agent' "$work/wizard.log"; then
 fi
 
 printf '1\n0.0.0.0\n9090\noperator\nsecret-pass\n/srv/lattix\n' | script -qec \
-    "env PATH='$work/bin':\"\$PATH\" LATX_TEST_OUTPUT='$work/wizard-custom.args' LATX_RAW_BASE='file://$work' bash -c 'cat \"$repo_root/install.sh\" | bash'" \
+    "env PATH='$work/bin':\"\$PATH\" LATX_TEST_OUTPUT='$work/wizard-custom.args' LATX_RAW_BASE='file://$work' LATX_RELEASE_BASE='file://$release' bash -c 'cat \"$repo_root/install.sh\" | bash'" \
     /dev/null >"$work/wizard-custom.log"
 diff -u <(printf '%s\n' --version v9.8.7 --mode docker --bind 0.0.0.0 \
     --port 9090 --admin-user operator --admin-pass secret-pass \
@@ -75,7 +136,7 @@ grep -Fq '***********' "$work/wizard-custom.log" \
     || { echo "password prompt must display one mask per character" >&2; exit 1; }
 
 printf '2\n192.0.2.10\n7070\noperator\nsecret-pass\n/srv/lattix-native\n' | script -qec \
-    "env PATH='$work/bin':\"\$PATH\" LATX_TEST_OUTPUT='$work/wizard-native.args' LATX_RAW_BASE='file://$work' bash -c 'cat \"$repo_root/install.sh\" | bash'" \
+    "env PATH='$work/bin':\"\$PATH\" LATX_TEST_OUTPUT='$work/wizard-native.args' LATX_RAW_BASE='file://$work' LATX_RELEASE_BASE='file://$release' bash -c 'cat \"$repo_root/install.sh\" | bash'" \
     /dev/null >/dev/null
 diff -u <(printf '%s\n' --version v9.8.7 --mode native --bind 192.0.2.10 \
     --port 7070 --admin-user operator --admin-pass secret-pass \

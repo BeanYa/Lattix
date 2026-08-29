@@ -43,8 +43,9 @@ curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
 ```
 
 不传 `--version` 时安装最新稳定 Release；如需固定版本，追加
-`--version vX.Y.Z`。统一入口会从该版本对应的 Git tag 加载安装实现，并校验下载的
-Release 文件，避免脚本与程序版本不一致。
+`--version vX.Y.Z`。统一入口优先从该版本 Release 资产加载安装实现（无资产时
+回退对应 Git tag 的原始文件），并按 Release `checksums.txt` 校验子安装脚本与
+下载的 Release 文件，避免脚本与程序版本不一致。
 
 ### 脚本选项
 
@@ -327,7 +328,9 @@ Agent 不提供用户自行触发的安装入口。请在面板"添加服务器"
 （release 构建）的下发命令通过根安装器钉到面板当前版本，安装实现与 agent 二进制
 天然同版。
 
-根入口从对应 Git tag 加载 `scripts/install-agent.sh`；脚本从同版本 GitHub Release
+根入口优先从对应版本 Release 资产加载 `install-agent.sh`（无资产时回退 Git tag 的
+`scripts/install-agent.sh`），执行前按 Release `checksums.txt` 校验脚本本身；
+脚本从同版本 GitHub Release
 下载 `lattix-agent-linux-<arch>.tar.gz`（agent + latx-ag）并校验 `checksums.txt`。
 面板不再托管安装脚本或二进制资源，也没有下载源切换设置。
 
@@ -366,7 +369,9 @@ sysctl 权限或安装以非 root 运行时都不会阻断 Agent 安装；脚本
   （前端嵌入单个 Go 面板二进制）、打包 amd64/arm64 的 panel 与 agent tarball、
   生成 `checksums.txt`，并执行**当前面板 × 当前 Agent 协议 e2e 回归**。通过后
   先发布 `ghcr.io/beanya/lattix:<version>` 与 `latest` 多架构镜像，再发布
-  GitHub Release。Release 不重复附带安装脚本。Release notes 依次取自
+  GitHub Release。Release 另附带仓库原样的 `install-panel.sh` /
+  `install-agent.sh` / `latx.sh` / `latx-ag.sh`，其 sha256 一并纳入
+  `checksums.txt`，供根安装器校验子安装脚本。Release notes 依次取自
   `docs/CHANGELOG.md` 的对应版本段、`[Unreleased]` 段（皆空回退自动生成），
   `scripts/dev/changelog-cut.sh vX.Y.Z` 发布前后执行均可：日常变更累计在
   `[Unreleased]`，固化后归入对应版本段。

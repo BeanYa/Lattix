@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Lattix unified installer entrypoint. It resolves a release, then loads the
-# matching tagged child installer so installer logic and artifacts stay aligned.
+# matching child installer — the release asset first, the tagged source file as
+# fallback — and verifies it against the release checksums.txt before executing,
+# so installer logic and artifacts stay aligned.
 set -euo pipefail
 
 GITHUB_REPO="${GITHUB_REPO:-BeanYa/Lattix}"
@@ -25,21 +27,58 @@ resolve_latest() {
         | grep -o '"tag_name": *"[^"]*"' | head -1 | cut -d'"' -f4
 }
 
+# Verify a downloaded child installer against the release checksums.txt.
+# Releases older than the script assets have no matching entry: warn loudly and
+# continue, so pinned old versions stay installable.
+verify_child() {
+    local version="$1" name="$2" file="$3" checksums="$4"
+    local expected actual
+    expected="$(awk -v f="$name" '$2 == f { print $1; exit }' "$checksums")"
+    if [[ -z "$expected" ]]; then
+        echo ">> WARNING: release ${version} 的 checksums.txt 无 ${name} 条目（旧版本 release），跳过完整性校验" >&2
+        return 0
+    fi
+    command -v sha256sum >/dev/null || die "sha256sum is required to verify ${name}"
+    actual="$(sha256sum "$file" | cut -d' ' -f1)"
+    [[ "$actual" == "$expected" ]] \
+        || die "${name} SHA256 verification failed (expected ${expected}, got ${actual}); refusing to execute"
+    echo ">> ${name} SHA256 校验通过（checksums.txt）"
+}
+
 run_child() {
     local component="$1" version="$2"
     shift 2
-    local child="install-${component}.sh" tmp
+    local child="install-${component}.sh" tmp checksums
+    local release_base="${LATX_RELEASE_BASE:-https://github.com/${GITHUB_REPO}/releases/download/${version}}"
     tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' RETURN
-    download_file "$child" "${RAW_BASE}/${version}/scripts/${child}" "$tmp" \
-        || die "failed to load ${child} from tag ${version}"
+    checksums="$(mktemp)"
+    trap 'rm -f "$tmp" "$checksums"' RETURN
+    # checksums.txt lives in the same trust domain as the release assets. If it
+    # cannot be fetched (old release without assets), warn and skip verification
+    # rather than breaking installs of pinned old versions.
+    local have_checksums=0
+    if download_file "checksums.txt" "${release_base}/checksums.txt" "$checksums"; then
+        have_checksums=1
+    else
+        echo ">> WARNING: 未能获取 release ${version} 的 checksums.txt，${child} 跳过完整性校验" >&2
+    fi
+    # Prefer the release asset (same domain as checksums.txt); fall back to the
+    # raw tagged file. Both serve identical content, verified the same way.
+    if ! download_file "$child" "${release_base}/${child}" "$tmp"; then
+        echo ">> release ${version} 无 ${child} 资产，回退 Git tag 原始文件" >&2
+        download_file "$child" "${RAW_BASE}/${version}/scripts/${child}" "$tmp" \
+            || die "failed to load ${child} from tag ${version}"
+    fi
+    if [[ "$have_checksums" -eq 1 ]]; then
+        verify_child "$version" "$child" "$tmp" "$checksums"
+    fi
     chmod 0755 "$tmp"
     if GITHUB_REPO="$GITHUB_REPO" "$tmp" --version "$version" "$@"; then
-        rm -f "$tmp"
+        rm -f "$tmp" "$checksums"
         trap - RETURN
     else
         local status=$?
-        rm -f "$tmp"
+        rm -f "$tmp" "$checksums"
         trap - RETURN
         return "$status"
     fi

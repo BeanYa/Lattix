@@ -145,3 +145,8 @@
 - 订阅 token 熵由 64 bit 提升到 128 bit。
 - isSecure 与订阅 base 仅信任回环反代的 `X-Forwarded-Proto` 声明。
 - 面板下载器新增流式大小上限（默认 512 MiB，超限中止并清理部分文件）。
+- 安装链路完整性：Release 资产新增仓库原样的 `install-panel.sh` /
+  `install-agent.sh` / `latx.sh` / `latx-ag.sh`，sha256 一并纳入
+  `checksums.txt`；根 `install.sh` 加载子安装器改为优先取 Release 资产
+  （回退 Git tag 原始文件），执行前按该版本 `checksums.txt` 校验 sha256，
+  不匹配即中止；旧版本 Release 无脚本条目时打印明显警告后继续。
