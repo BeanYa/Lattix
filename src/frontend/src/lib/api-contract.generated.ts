@@ -205,6 +205,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /**
+         * @description 响应 data 含 server、bootstrap_token、install_command 与 install_insecure（boolean）；
+         *     install_insecure 为 true 表示安装命令走明文公网链路（面板地址为 http 且 host 非回环/私网，
+         *     域名按公网保守处理），Agent 控制流量明文传输，token 可嗅探、命令可伪造。
+         */
         post: operations["serverCreate"];
         delete?: never;
         options?: never;
@@ -301,6 +306,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description 响应 data 字段同 serverCreate（server、bootstrap_token、install_command、install_insecure）。 */
         post: operations["serverRotateToken"];
         delete?: never;
         options?: never;
@@ -2883,7 +2889,9 @@ export interface operations {
     };
     userTrafficHistory: {
         parameters: {
-            query?: never;
+            query: {
+                user_id: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -2932,7 +2940,9 @@ export interface operations {
     };
     userSubscriptionPreview: {
         parameters: {
-            query?: {
+            query: {
+                user_id: number;
+                format: "clash" | "singbox" | "quanx" | "quanx-config" | "links";
                 /** @description 预览阶段：final（默认，正式交付内容）或 pre（预编译中间态，占位符未解压） */
                 stage?: "final" | "pre";
             };
