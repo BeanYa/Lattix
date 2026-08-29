@@ -300,12 +300,6 @@ export const api = {
     }),
   setUserDisabled: (userId: number, disabled: boolean) =>
     requester.postObserved<SubUser>('/api/user/update', { user_id: userId, disabled }),
-  setUserAssignments: (userId: number, nodeIds: number[], chainIds: number[]) =>
-    requester.postObserved<{ node_ids: number[]; chain_ids: number[] }>('/api/user/set-nodes', {
-      user_id: userId,
-      node_ids: nodeIds,
-      chain_ids: chainIds,
-    }),
   setUserExternalSubscriptions: (
     userId: number,
     items: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }>,
