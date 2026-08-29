@@ -369,7 +369,8 @@ sysctl 权限或安装以非 root 运行时都不会阻断 Agent 安装；脚本
   （前端嵌入单个 Go 面板二进制）、打包 amd64/arm64 的 panel 与 agent tarball、
   生成 `checksums.txt`，并以 matrix 执行 `scripts/e2e/` 中可在 CI 环境运行的
   e2e 回归（`telemetry.sh`、`vlessenc.sh` 依赖真实外网数据通路不进 CI；
-  `groups.sh` 暂被 SSRF 出向防护拒绝 loopback 外部订阅夹具阻塞，待测试钩子）。通过后
+  `groups.sh` 的外部订阅夹具起在 loopback，matrix 条目注入
+  `LATX_ALLOW_PRIVATE_OUTBOUND=1` 测试钩子放行 SSRF 私网拨号，生产环境严禁设置）。通过后
   先发布 `ghcr.io/beanya/lattix:<version>` 与 `latest` 多架构镜像，再发布
   GitHub Release。Release 另附带仓库原样的 `install-panel.sh` /
   `install-agent.sh` / `latx.sh` / `latx-ag.sh`，其 sha256 一并纳入
@@ -394,7 +395,7 @@ cd src/frontend && bun run build   # 含 tsc 类型检查
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/xray.sh           # 基础流水线回归
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/protocols.sh      # 全协议节点 + 订阅
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/vlessenc.sh       # VLESS Encryption 数据通路
-XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/groups.sh         # 分组：链路分组/用户分组/原子外部订阅/触发重发布
+LATX_ALLOW_PRIVATE_OUTBOUND=1 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/groups.sh  # 分组（测试钩子放行 loopback 外部订阅夹具）
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/usernodes.sh      # 逐节点用户分配
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/telemetry.sh      # 流量统计 + 主机遥测
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/reconcile.sh      # 配置漂移检测与修复
