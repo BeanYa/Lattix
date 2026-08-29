@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -26,6 +27,12 @@ func mustParseCIDR(s string) *net.IPNet {
 	}
 	return n
 }
+
+// allowPrivateOutboundEnv 是 e2e/开发专用的测试钩子：值为 "1" 时
+// GuardedDialContext 放行内网/保留地址拨号（e2e 的外部订阅夹具起在 loopback，
+// 防护会拒绝本机拉取）。默认不设置即防护开启（opt-out）；生产环境严禁设置，
+// 设置即等于关闭 SSRF 出向防护。
+const allowPrivateOutboundEnv = "LATX_ALLOW_PRIVATE_OUTBOUND"
 
 // IsBlockedIP 报告 ip 是否为本机、内网或保留/特殊用途地址（SSRF 防护判定）。
 func IsBlockedIP(ip net.IP) bool {
@@ -49,6 +56,8 @@ type ipResolver interface {
 // GuardedDialContext 返回带 SSRF 防护的 DialContext：先解析目标主机名，
 // 任一解析 IP 命中 IsBlockedIP 即拒绝连接，防止域名解析到内网绕过 URL 层校验。
 // resolver 为 nil 时使用系统默认解析器。
+// 测试钩子：环境变量 LATX_ALLOW_PRIVATE_OUTBOUND=1 时跳过防护（仅 e2e/开发用，
+// 见 allowPrivateOutboundEnv）。
 func GuardedDialContext(resolver ipResolver) func(context.Context, string, string) (net.Conn, error) {
 	if resolver == nil {
 		resolver = net.DefaultResolver
@@ -73,6 +82,11 @@ func NewExternalHTTPClient(timeout time.Duration) *http.Client {
 // checkDialTarget 校验 addr 的主机部分：IP 字面量直接判定，主机名解析后
 // 逐个校验候选 IP，任一命中内网/保留段即报错。
 func checkDialTarget(ctx context.Context, resolver ipResolver, addr string) error {
+	// e2e 测试钩子：逐次读取环境变量（而非进程启动时固化），便于测试注入；
+	// 默认不设置即防护开启。
+	if os.Getenv(allowPrivateOutboundEnv) == "1" {
+		return nil
+	}
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return err

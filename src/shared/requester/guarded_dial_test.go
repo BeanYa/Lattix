@@ -84,6 +84,20 @@ func TestGuardedDialContextBlocksBeforeDialing(t *testing.T) {
 	}
 }
 
+// e2e 测试钩子：LATX_ALLOW_PRIVATE_OUTBOUND=1 放行内网/保留地址拨号；
+// 其他取值（含未设置，由 TestCheckDialTarget 覆盖）仍拒绝。
+func TestCheckDialTargetAllowPrivateOutboundHook(t *testing.T) {
+	resolver := fakeResolver{
+		"internal.example.com": {{IP: net.ParseIP("10.1.2.3")}},
+	}
+	t.Setenv(allowPrivateOutboundEnv, "1")
+	for _, addr := range []string{"internal.example.com:443", "127.0.0.1:443", "[::1]:443"} {
+		if err := checkDialTarget(context.Background(), resolver, addr); err != nil {
+			t.Errorf("hook enabled: checkDialTarget(%q) = %v, want nil", addr, err)
+		}
+	}
+}
+
 func TestNewExternalHTTPClient(t *testing.T) {
 	client := NewExternalHTTPClient(5 * time.Second)
 	if client == nil || client.Timeout != 5*time.Second {
