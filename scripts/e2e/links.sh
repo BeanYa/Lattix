@@ -37,7 +37,13 @@ cleanup() {
 trap cleanup EXIT
 
 echo ">> build"
-(cd "$ROOT" && go build -o "$WORK/backend" ./src/backend/cmd/backend && go build -o "$WORK/agent" ./src/agent/cmd/agent)
+if [[ -n "${PANEL_BIN:-}" && -n "${AGENT_BIN:-}" && -x "${PANEL_BIN:-}" && -x "${AGENT_BIN:-}" ]]; then
+    # CI 注入的 release 产物（内嵌前端）；本地缺省自构建（需已构建前端 dist，否则落地页断言缺 SPA）。
+    cp "$PANEL_BIN" "$WORK/backend"
+    cp "$AGENT_BIN" "$WORK/agent"
+else
+    (cd "$ROOT" && go build -o "$WORK/backend" ./src/backend/cmd/backend && go build -o "$WORK/agent" ./src/agent/cmd/agent)
+fi
 
 db() { python3 - "$WORK/lattix.db" "$1" <<'PY'
 import sqlite3, sys
@@ -345,7 +351,8 @@ rpc_data POST /api/user/update "{\"user_id\":$UID2,\"expires_at\":null}" >/dev/n
 [[ "$(db "SELECT expired FROM users WHERE id=$UID2")" == "0" ]] \
     || { echo "FAIL: expired 未清除"; exit 1; }
 wait_clients "$N1" "$UUID2" present && echo "OK: 双重解除后扇出 add_user 恢复"
-[[ "$(curl -s "http://$ADDR/sub/$TOK2?format=clash" | grep -c 'type: vless')" == "1" ]] \
-    && echo "OK: 恢复后订阅含 1 节点" || { echo "FAIL: 恢复后订阅异常"; exit 1; }
+# 订阅重发布经订阅队列异步完成（同上文到期/停用段），用 wait_sub_vless 轮询等待。
+wait_sub_vless "$TOK2" 1 \
+    && echo "OK: 恢复后订阅含 1 节点" || exit 1
 
 echo "E2E-LINKS PASS"

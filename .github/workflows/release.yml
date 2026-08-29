@@ -124,9 +124,34 @@ jobs:
             out/checksums.txt
           retention-days: 7
 
+  # e2e 全量矩阵：scripts/e2e/ 中与 ubuntu-latest 环境兼容的脚本全数纳入。
+  # 未纳入：telemetry.sh / vlessenc.sh（核心断言为真实外网数据通路）；
+  # chains.sh / protocols.sh（e2e 暴露订阅发布产品 bug，待修复后回归）；
+  # groups.sh（SSRF 出向防护拒绝 loopback 外部订阅夹具，待测试钩子）。
+  # 统一注入 PANEL_BIN/AGENT_BIN/XRAY_BIN：panel.sh、event-log.sh、links.sh
+  # 识别并使用 release 产物，其余脚本忽略该变量、自行 go build（脚本内建行为）。
   e2e:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - script: panel.sh
+          - script: install-panel.sh
+          - script: install-agent.sh
+          - script: control-channel.sh
+          - script: xray.sh
+          - script: tls.sh
+          - script: settings.sh
+          - script: usernodes.sh
+          - script: links.sh
+          - script: alerts.sh
+          - script: event-log.sh
+          - script: reconcile.sh
+          - script: upgrade.sh
+          - script: panel-update.sh
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -169,13 +194,13 @@ jobs:
           tar -C current -xzf out/lattix-agent-linux-amd64.tar.gz
           mv current/lattix-agent/lattix-agent current/lattix-agent-linux-amd64
 
-      - name: Current protocol e2e
+      - name: Run e2e (${{ matrix.script }})
         run: |
           chmod +x out/lattix-backend-linux-amd64 current/lattix-agent-linux-amd64
           PANEL_BIN="$PWD/out/lattix-backend-linux-amd64" \
           AGENT_BIN="$PWD/current/lattix-agent-linux-amd64" \
           XRAY_BIN=/tmp/xray/xray \
-            bash scripts/e2e/panel.sh
+            bash "scripts/e2e/${{ matrix.script }}"
 
   release:
     needs: [build, e2e]

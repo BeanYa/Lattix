@@ -367,7 +367,9 @@ sysctl 权限或安装以非 root 运行时都不会阻断 Agent 安装；脚本
 
 - **发版**：push `v*` tag 触发 `.github/workflows/release.yml`——构建前后端并注入版本
   （前端嵌入单个 Go 面板二进制）、打包 amd64/arm64 的 panel 与 agent tarball、
-  生成 `checksums.txt`，并执行**当前面板 × 当前 Agent 协议 e2e 回归**。通过后
+  生成 `checksums.txt`，并以 matrix 执行 `scripts/e2e/` 中可在 CI 环境运行的
+  e2e 回归（`telemetry.sh`、`vlessenc.sh` 依赖真实外网数据通路不进 CI；
+  `chains.sh`、`protocols.sh`、`groups.sh` 暂被订阅发布/SSRF 防护问题阻塞）。通过后
   先发布 `ghcr.io/beanya/lattix:<version>` 与 `latest` 多架构镜像，再发布
   GitHub Release。Release 另附带仓库原样的 `install-panel.sh` /
   `install-agent.sh` / `latx.sh` / `latx-ag.sh`，其 sha256 一并纳入
