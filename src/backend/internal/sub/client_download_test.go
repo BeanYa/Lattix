@@ -399,7 +399,31 @@ func TestHandleSubClientDownloadStartRateLimit(t *testing.T) {
 	server := NewWithCacheDir(st, nil, nil, t.TempDir())
 	block := make(chan struct{})
 	server.downloadFiles = &blockingDownloadRequester{block: block}
-	t.Cleanup(func() { close(block) })
+	// 放行并等全部下载 goroutine 退出后再交回 t.TempDir 清理（cleanup LIFO，
+	// 本回调先于 RemoveAll 执行），消除 RemoveAll 与 goroutine 的 MkdirAll
+	// 并发造成的预存在 flake。
+	t.Cleanup(func() {
+		close(block)
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			server.downloadMu.Lock()
+			pending := 0
+			for _, task := range server.downloadTasks {
+				if task.Status == "queued" || task.Status == "downloading" {
+					pending++
+				}
+			}
+			server.downloadMu.Unlock()
+			if pending == 0 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Errorf("%d 个下载任务在测试结束前未退出", pending)
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	})
 
 	variants := []string{
 		"clash-verge-windows-x64", "clash-verge-windows-arm64", "clash-verge-macos-x64",
