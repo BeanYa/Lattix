@@ -565,10 +565,13 @@ type proxyItem struct {
 
 // subscriptionItems 汇总单机节点与链条目（§21 订阅）：
 //   - 链出口业务节点不再作为单机条目出现（只能经链入口消费）；
-//   - 链条目：server/port 取入口（非 1:1 映射时经端口段助手换算 public 端口），
-//     reality-opts/uuid/flow 等取出口节点 realized_config；命名优先使用链路名称；
-//   - 只含 active/degraded 链（failed/pending/applying 不出）；degraded 不剔除（客户端测速规避）；
-//   - 用户维度经 user_nodes 判出口节点分配（§16：UUID 只存在于出口 xray）。
+//   - 链条目：server/port 取入口（共享入口链取端点 realized_config；非 1:1 映射时
+//     经端口段助手换算 public 端口），命名优先使用链路名称；
+//   - 链以已发布修订快照为准（无已发布修订或 invalid/deleted 不出；
+//     applying/failed 的新修订不影响已发布快照）；
+//   - 用户维度分配（§16）：分组用户只按分组派生（直接分配被遮蔽）；
+//     非分组用户走直接分配（user_nodes + user_chain_assignments）；
+//     共享入口链需链分配，订阅凭据取 assignment 的 AccessUUID。
 func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []store.Node) ([]proxyItem, []string) {
 	if user.Expired || user.Disabled {
 		return nil, nil
