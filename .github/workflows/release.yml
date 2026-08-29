@@ -126,7 +126,6 @@ jobs:
 
   # e2e 全量矩阵：scripts/e2e/ 中与 ubuntu-latest 环境兼容的脚本全数纳入。
   # 未纳入：telemetry.sh / vlessenc.sh（核心断言为真实外网数据通路）；
-  # chains.sh（e2e 暴露订阅发布产品 bug，待修复后回归）；
   # groups.sh（SSRF 出向防护拒绝 loopback 外部订阅夹具，待测试钩子）。
   # 统一注入 PANEL_BIN/AGENT_BIN/XRAY_BIN：panel.sh、event-log.sh、links.sh
   # 识别并使用 release 产物，其余脚本忽略该变量、自行 go build（脚本内建行为）。
@@ -153,6 +152,9 @@ jobs:
           - script: upgrade.sh
           - script: panel-update.sh
           - script: protocols.sh
+          # chains.sh 的真实流量断言打 cloudflare 外网，CI 中跳过（其余断言全量保留）。
+          - script: chains.sh
+            skip_external: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -196,6 +198,8 @@ jobs:
           mv current/lattix-agent/lattix-agent current/lattix-agent-linux-amd64
 
       - name: Run e2e (${{ matrix.script }})
+        env:
+          CHAINS_SKIP_EXTERNAL: ${{ matrix.skip_external }}
         run: |
           chmod +x out/lattix-backend-linux-amd64 current/lattix-agent-linux-amd64
           PANEL_BIN="$PWD/out/lattix-backend-linux-amd64" \
