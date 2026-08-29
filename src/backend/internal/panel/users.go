@@ -681,8 +681,9 @@ func logTime(value *time.Time) any {
 	return value.UTC().Format(time.RFC3339)
 }
 
-// handleSetUserNodes 处理 PUT /api/users/{id}/nodes：整体替换用户的节点分配（§16），
+// handleSetUserNodes 处理 POST /api/user/set-nodes：整体替换用户的节点/链分配（§16），
 // 按差量向相关服务器扇出 add_user / remove_user（载荷仅含受影响的节点）。
+// 遗留兼容端点：现行授权模型为用户组/链路分组派生链分配（§22），本端点保留给历史/独立节点场景（§8）。
 func (s *Server) handleSetUserNodes(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID   int64   `json:"user_id"`
