@@ -97,7 +97,7 @@ curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
 | `latx cert <domain> [port]` | 用 acme.sh 通过 HTTP standalone 申请证书，写入面板证书目录并切 HTTPS（默认验证端口 80） |
 | `latx acme <domain>` | 使用面板内置 ACME（TLS-ALPN-01）并切 HTTPS |
 | `latx bbr` | 开启 BBR 拥塞控制（需要 root） |
-| `latx reset-admin <newpass>` | 重置管理员密码（改密即全部会话失效） |
+| `latx reset-admin <newpass>` | 重置管理员密码并轮换会话密钥（重启后全部会话失效） |
 | `latx uninstall [--purge-db]` | 卸载面板（默认保留 DB） |
 | `latx version` | latx 与面板版本 |
 

@@ -122,6 +122,33 @@ func TestSessionInvalidAfterSecretRotation(t *testing.T) {
 	}
 }
 
+// TestSessionInvalidAfterSecretKeyDeleted 覆盖 -reset-admin 场景：密钥设置键被删除后
+// （下次使用重新生成），重启后的新进程（新 Server，进程内缓存为空）重新生成密钥，
+// 旧密钥签发的会话验证失败。
+func TestSessionInvalidAfterSecretKeyDeleted(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &Server{st: st, cfg: Config{AdminUser: "admin"}}
+	secret, err := s.sessionSecret(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := signSession("admin", time.Now().Add(time.Hour), secret)
+	if err := st.DeleteSetting(ctx, store.SettingSessionSecret); err != nil {
+		t.Fatal(err)
+	}
+	restarted := &Server{st: st, cfg: Config{AdminUser: "admin"}}
+	if _, valid, err := restarted.verifySession(ctx, session); err != nil {
+		t.Fatal(err)
+	} else if valid {
+		t.Fatal("session remained valid after session secret reset")
+	}
+}
+
 func TestChangePasswordInvalidatesSessions(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")

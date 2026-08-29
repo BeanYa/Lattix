@@ -100,28 +100,17 @@ func run() error {
 	acmeDomain := flag.String("tls-acme-domain", "", "ACME 自动证书域名（Let's Encrypt，TLS-ALPN-01，需 443 端口公网可达）")
 	acmeCache := flag.String("tls-acme-cache", envOr("LATTIX_ACME_CACHE", "acme-cache"), "ACME 证书缓存目录")
 	acmeEmail := flag.String("tls-acme-email", "", "ACME 账号邮箱（可选，过期通知用）")
-	resetAdmin := flag.String("reset-admin", "", "重置管理员密码为指定值后退出（不启动面板）；bcrypt 落库覆盖启动参数，改密即全部会话失效（latx reset-admin 使用）")
+	resetAdmin := flag.String("reset-admin", "", "重置管理员密码为指定值后退出（不启动面板）；bcrypt 落库覆盖启动参数并轮换会话签名密钥（重启后全部会话失效，latx reset-admin 使用）")
 	flag.Parse()
 
-	// -reset-admin：与设置页改密同一代码路径（bcrypt 哈希写 settings，§10；
-	// 会话签名密钥派生自密码哈希，改密即全部会话失效）。面板运行中执行安全（busy_timeout）。
+	// -reset-admin：与设置页改密同等语义（bcrypt 哈希写 settings 覆盖启动参数，§10），
+	// 并删除会话签名密钥（下次使用重新生成），重置即全部会话失效。面板运行中执行安全
+	// （busy_timeout）；运行中的面板进程缓存密钥于内存，会话失效需重启面板后生效。
 	if *resetAdmin != "" {
-		if len(*resetAdmin) < 8 {
-			return errors.New("新密码至少 8 位")
+		if err := resetAdminPassword(context.Background(), *dbPath, *resetAdmin); err != nil {
+			return err
 		}
-		st, err := store.Open(*dbPath)
-		if err != nil {
-			return fmt.Errorf("store: %w", err)
-		}
-		defer st.Close()
-		hash, err := bcrypt.GenerateFromPassword([]byte(*resetAdmin), bcrypt.DefaultCost)
-		if err != nil {
-			return fmt.Errorf("bcrypt: %w", err)
-		}
-		if err := st.SetSetting(context.Background(), store.SettingAdminPassBcrypt, string(hash)); err != nil {
-			return fmt.Errorf("写入密码哈希: %w", err)
-		}
-		fmt.Println("管理员密码已重置（覆盖 -admin-pass 启动参数）；所有会话已失效，需重新登录。")
+		fmt.Println("管理员密码已重置（覆盖 -admin-pass 启动参数），会话签名密钥已轮换；面板重启后所有会话失效，需重新登录。")
 		return nil
 	}
 
@@ -645,6 +634,30 @@ func run() error {
 		log.Printf("restart requested: exiting for process supervisor (%s)", reason)
 	}
 	return runErr
+}
+
+// resetAdminPassword 实现 -reset-admin：bcrypt 哈希写 settings（覆盖启动参数），
+// 并删除会话签名密钥（下次使用重新生成），使已签发会话在面板重启后失效。
+func resetAdminPassword(ctx context.Context, dbPath, newPassword string) error {
+	if len(newPassword) < 8 {
+		return errors.New("新密码至少 8 位")
+	}
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	defer st.Close()
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("bcrypt: %w", err)
+	}
+	if err := st.SetSetting(ctx, store.SettingAdminPassBcrypt, string(hash)); err != nil {
+		return fmt.Errorf("写入密码哈希: %w", err)
+	}
+	if err := st.DeleteSetting(ctx, store.SettingSessionSecret); err != nil {
+		return fmt.Errorf("轮换会话签名密钥: %w", err)
+	}
+	return nil
 }
 
 func newHTTPServer(addr string, handler http.Handler) *http.Server {

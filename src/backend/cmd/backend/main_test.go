@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
+
+	"golang.org/x/crypto/bcrypt"
+
+	"lattix/backend/internal/store"
 )
 
 func TestDefaultTLSDirUsesCurrentHome(t *testing.T) {
@@ -48,6 +53,49 @@ func TestSecurityHeadersMiddlewareSetsHeaders(t *testing.T) {
 		if got := rec.Header().Get(name); got != value {
 			t.Errorf("%s = %q, want %q", name, got, value)
 		}
+	}
+}
+
+func TestResetAdminPasswordWritesHashAndRotatesSessionSecret(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "lattix.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSetting(ctx, store.SettingSessionSecret, "old-secret"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := resetAdminPassword(ctx, dbPath, "short"); err == nil {
+		t.Fatal("resetAdminPassword accepted a password shorter than 8 chars")
+	}
+	if err := resetAdminPassword(ctx, dbPath, "new-password-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err = store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	hash, err := st.GetSetting(ctx, store.SettingAdminPassBcrypt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte("new-password-1")); err != nil {
+		t.Fatal("stored hash does not match the new password")
+	}
+	// 会话签名密钥已删除（下次使用重新生成），旧密钥签发的会话随之失效。
+	secret, err := st.GetSetting(ctx, store.SettingSessionSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secret != "" {
+		t.Fatalf("session secret = %q, want deleted (empty) after reset", secret)
 	}
 }
 

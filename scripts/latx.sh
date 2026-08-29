@@ -13,7 +13,7 @@
 #   latx acme <domain>           引导式申请 ACME 证书并切 HTTPS（设置页 API，重启生效）
 #   latx cert <domain> [port]    用 acme.sh 申请证书到面板 data/certs 目录并切 HTTPS
 #   latx bbr                     开启 BBR 拥塞控制（写入独立 sysctl 配置）
-#   latx reset-admin <newpass>   重置管理员密码（改密即全部会话失效）
+#   latx reset-admin <newpass>   重置管理员密码并轮换会话密钥（重启后全部会话失效）
 #   latx uninstall [--purge-db] [--yes]   卸载面板（默认保留 DB 并提示路径）
 #   latx version                 latx 自身版本与面板版本
 #   latx help                    本帮助
