@@ -282,6 +282,11 @@ GET /healthz
 GET /readyz
 ```
 
+其中 `client-download/start` 对新建下载任务按订阅 token 滑动窗口限流（每 token 每小时
+最多 10 次）：超限返回 429 与 `Retry-After` 头（窗口滑到可用的秒数，向上取整，至少 1），
+body 为 text/plain 错误信息。命中活跃任务的去重请求直接返回任务状态（不计数）；
+status/ticket/file 与 Range 断点续传不经过此限流入口。
+
 ## 4. 严格解析
 
 管理 RPC 使用严格请求解析：
