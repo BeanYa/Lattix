@@ -93,6 +93,12 @@
   `POST /api/user/regenerate-subscription` 响应不再同步携带发布结果快照
   （`data` 为 null），结果经 `observe_id` 轮询获取；订阅 token 重置保持同步
   发布 + 失败回滚不变量，不受影响。
+- CI/发版流程：release e2e job 以 matrix 纳入 14 个可运行脚本（含 chains.sh、
+  groups.sh 回归，并注入 SSRF 私网出向测试钩子）；Release notes 改为提取
+  CHANGELOG [Unreleased] 段（版本段优先三级回退，提取失败兜底不阻断发布），
+  新增 `scripts/dev/changelog-cut.sh` 将 [Unreleased] 固化为版本段；前端 CI
+  增加 prettier `format:check`；第三方 GitHub Actions 引用从浮动 tag 钉到
+  commit SHA。
 
 ### Fixed
 
@@ -135,6 +141,15 @@
   `__LATTIX_ALL__`（自动选择）中；无法推断地区的节点收进固定生成的
   「🌐 无地区」分组（排在地区分组最后，随 `__LATTIX_REGIONS__` 展开），
   保证所有节点在分组层都可达。
+- 修复 socks/http 协议节点缺失 sing-box 出站构造、导致订阅编译时同批节点被
+  连坐丢弃的问题：sing-box 出站补齐 socks/http 类型，用户名与密码均为用户
+  UUID（与 xray 侧 accounts 一致）。
+- 修复中转链 forward 跳流量未计入遥测统计的问题：agent 聚合 stats 时使用的
+  前缀与实际 `chainfwd_<hop>` inbound tag 不符，现按实际 tag 前缀解析入账。
+- `latx update` 覆盖面板二进制前自动备份 `.bak`；更新后版本探测、就绪探测
+  或启动失败时自动回滚并重启旧版本。
+- 面板 startup/faulted 状态门控补全：共享入口维护、xray 维护与服务器测试等
+  业务命令在面板非 active 期间统一拒投，不再漏过门控下发。
 
 ### Security
 
@@ -150,3 +165,26 @@
   `checksums.txt`；根 `install.sh` 加载子安装器改为优先取 Release 资产
   （回退 Git tag 原始文件），执行前按该版本 `checksums.txt` 校验 sha256，
   不匹配即中止；旧版本 Release 无脚本条目时打印明显警告后继续。
+- 会话签名密钥改为独立随机生成并持久化（设置项 `session_secret`），不再
+  派生自管理员密码哈希：**升级到本版本后现有登录会话失效一次**，需重新
+  登录；此后改密经轮换该密钥使全部会话失效。
+- 登录限流在 per-IP 桶之外增加 per-username 兜底桶，防止伪造
+  `X-Forwarded-For` 绕过 per-IP 限流进行密码爆破。
+- 面板出向 HTTP 新增 SSRF 拨号防护：外部订阅拉取、CDN 节点目录、告警
+  webhook 与订阅模板刷新等生产客户端拒绝向回环/内网/保留地址段拨号
+  （e2e 可经 `LATX_ALLOW_PRIVATE_OUTBOUND` 放行）。
+- 新增全站安全响应头：`X-Content-Type-Options: nosniff`、
+  `X-Frame-Options: DENY`、`Referrer-Policy: strict-origin-when-cross-origin`、
+  CSP `frame-ancestors 'none'`。
+- 订阅落地页客户端下载对新建任务按订阅 token 限流（每 token 每小时最多
+  10 次），超限返回 HTTP 429 与 `Retry-After`；去重命中、票据签发与文件
+  下载（含 Range 断点续传）不受限。
+- 面板地址为明文 http 公网链路时，服务器创建/凭证轮换响应标记
+  `install_insecure: true`，安装命令对话框同步展示明文传输警告（Agent
+  控制流量可被窃听或篡改，跨公网部署建议改用 https 反向代理）。
+- Agent bootstrap token 改经 `LATTIX_TOKEN` 环境变量注入，不再出现于进程
+  命令行参数。
+- 服务器测试的 ip.sh 脚本钉定版本，下载与缓存强制 SHA-256 校验。
+- 匿名订阅端点（info/clients/status/history 等）内部错误回显收敛为通用
+  文案，不再泄露内部错误细节。
+- Agent 原子落盘/文件复制在写后补 `chmod`，收紧遗留临时文件权限。
