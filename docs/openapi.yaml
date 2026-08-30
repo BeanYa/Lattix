@@ -8,7 +8,7 @@ info:
     Upgrade、健康检查和第三方 HTTP 不使用此业务信封。
     订阅落地页客户端下载 `GET /api/sub/{token}/client-download/start`
     对新建下载任务按订阅 token 滑动窗口限流（每 token 每小时最多 10 次）：
-    超限返回 HTTP 429 与 `Retry-After` 头（秒），body 为 text/plain 错误信息；
+    超限返回 HTTP 429 与 `Retry-After` 头（秒，向上取整至少 1 秒），body 为 text/plain 错误信息；
     命中活跃任务的去重请求与 status/ticket/file（含 Range 断点续传）不受此限。
 servers:
   - url: /

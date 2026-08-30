@@ -219,7 +219,8 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
   `/api/sub/{token}/client-download/{start,status,ticket,file}` 四端点获取 3 小时
   会话票据直链，交给浏览器原生下载（`http.ServeFile` 天然支持 Range 断点续传）。
   票据与订阅 token、任务双向绑定，过期或跨订阅使用返回 403；状态端点回显校验值
-  与来源供用户独立核验。
+  与来源供用户独立核验。新建下载任务按订阅 token 滑动窗口限流（每 token 10 次/小时，
+  超限 429 + Retry-After；去重命中、票据签发与 Range 续传不计数，§12）。
 - **外部订阅（导入 + 用户关联）**：管理页导入第三方订阅 URL，节点与订阅信息独立落库
   （`external_chains` / `external_subscriptions`，不进入 `chains` 状态机与流量统计），
   用户以「一个外部订阅」为单位引入订阅输出。详见下方小节。
