@@ -158,7 +158,7 @@ func TestExpirySweepRepublishesUserSubscription(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, err := st.CreateServer(ctx, "exit", "exit.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,7 +178,7 @@ func TestExpirySweepRepublishesUserSubscription(t *testing.T) {
 	subSrv := sub.New(st, nil, nil)
 	subSrv.StartRegenerator(ctx)
 	requester := &chainEditRequester{online: map[int64]bool{serverID: false}}
-	server := &Server{st: st, disp: dispatch.New(st, requester), req: requester, subscriptions: subSrv}
+	server := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester, subscriptions: subSrv}
 
 	server.sweepExpiredUsers(ctx)
 
@@ -205,7 +205,7 @@ func TestHandleListUsersOnlineConnectionsAccessIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	config := json.RawMessage(`{"protocol":"vless","template":{}}`)
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
 	if err != nil {

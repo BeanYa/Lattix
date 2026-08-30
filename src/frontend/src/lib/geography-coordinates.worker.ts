@@ -22,7 +22,10 @@ const workerScope = self as unknown as {
 }
 
 function normalizePlace(value: string) {
-  return value.trim().toLocaleLowerCase().replace(/[\s_-]+/g, '')
+  return value
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[\s_-]+/g, '')
 }
 
 function finiteCoordinate(value: string | null | undefined) {

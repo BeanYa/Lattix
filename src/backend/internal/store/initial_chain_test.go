@@ -14,7 +14,7 @@ func TestCreateInitialChainDeploymentIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, err := st.CreateServer(ctx, "exit", "exit.example.com", "token", MachineTypeDirect, "", "", "US", "")
+	serverID, err := st.CreateServer(ctx, ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,11 +47,11 @@ func TestCreateInitialChainDeploymentStoresCompletePlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	entryID, err := st.CreateServer(ctx, "entry", "entry.example.com", "entry-token", MachineTypeDirect, "", "", "US", "")
+	entryID, err := st.CreateServer(ctx, ServerDraft{Alias: "entry", Address: "entry.example.com", BootstrapToken: "entry-token", MachineType: MachineTypeDirect, CountryCode: "US"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	exitID, err := st.CreateServer(ctx, "exit", "exit.example.com", "exit-token", MachineTypeDirect, "", "", "US", "")
+	exitID, err := st.CreateServer(ctx, ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "exit-token", MachineType: MachineTypeDirect, CountryCode: "US"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -30,7 +30,7 @@ func TestEditChainRemovesMiddleAndPlansOnlyAffectedPieces(t *testing.T) {
 	}
 	defer st.Close()
 	server := func(alias, token string) int64 {
-		id, err := st.CreateServer(ctx, alias, alias+".example.com", token, store.MachineTypeDirect, "", "", "US", "")
+		id, err := st.CreateServer(ctx, store.ServerDraft{Alias: alias, Address: alias+".example.com", BootstrapToken: token, MachineType: store.MachineTypeDirect, CountryCode: "US"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,7 +76,7 @@ func TestEditChainRemovesMiddleAndPlansOnlyAffectedPieces(t *testing.T) {
 	}
 
 	requester := &chainEditRequester{online: map[int64]bool{aID: true, bID: true, cID: true}}
-	dispatcher := dispatch.New(st, requester)
+	dispatcher := dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{})
 	serverAPI := &Server{st: st, disp: dispatcher, req: requester}
 	body, _ := json.Marshal(editChainRequest{ChainID: chainID, Name: "{{ENTRY.COUNTRY_FLAG}}-{{EXIT.COUNTRY_CODE}}",
 		Hops: []chainHopRef{{ServerID: aID}, {ServerID: cID}}, EntryPort: func() *int { value := 1000; return &value }(),
@@ -120,7 +120,7 @@ func chainEditFixture(t *testing.T, ctx context.Context, st *store.Store) (
 	aID, cID, nodeID, chainID, aHop, cHop int64, nodeRequest createNodeRequest, config []byte) {
 	t.Helper()
 	server := func(alias, token string) int64 {
-		id, err := st.CreateServer(ctx, alias, alias+".example.com", token, store.MachineTypeDirect, "", "", "US", "")
+		id, err := st.CreateServer(ctx, store.ServerDraft{Alias: alias, Address: alias+".example.com", BootstrapToken: token, MachineType: store.MachineTypeDirect, CountryCode: "US"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -220,7 +220,7 @@ func TestEditChainAfterFailedDeploymentReappliesUnackedPiecesOnly(t *testing.T) 
 	failed := failChainAfterEdit(t, ctx, st, chainID, nodeID, aID, cID, aHop, 2000, config)
 
 	requester := &chainEditRequester{online: map[int64]bool{aID: true, cID: true}}
-	serverAPI := &Server{st: st, disp: dispatch.New(st, requester), req: requester}
+	serverAPI := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester}
 	entryPort := 2000
 	body, _ := json.Marshal(editChainRequest{ChainID: chainID, Name: "chain",
 		Hops: []chainHopRef{{ServerID: aID}, {ServerID: cID}}, EntryPort: &entryPort,
@@ -274,7 +274,7 @@ func TestEditChainAfterInitialDeploymentFailure(t *testing.T) {
 	}
 	defer st.Close()
 	server := func(alias, token string) int64 {
-		id, err := st.CreateServer(ctx, alias, alias+".example.com", token, store.MachineTypeDirect, "", "", "US", "")
+		id, err := st.CreateServer(ctx, store.ServerDraft{Alias: alias, Address: alias+".example.com", BootstrapToken: token, MachineType: store.MachineTypeDirect, CountryCode: "US"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -320,7 +320,7 @@ func TestEditChainAfterInitialDeploymentFailure(t *testing.T) {
 	}
 
 	requester := &chainEditRequester{online: map[int64]bool{aID: true, cID: true}}
-	serverAPI := &Server{st: st, disp: dispatch.New(st, requester), req: requester}
+	serverAPI := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester}
 	body, _ := json.Marshal(editChainRequest{ChainID: chainID, Name: "chain",
 		Hops: []chainHopRef{{ServerID: aID}, {ServerID: cID}},
 		Node: nodeRequest, TrafficMultiplier: "1.000"})
@@ -381,7 +381,7 @@ func TestEditChainStillBlockedWhileApplying(t *testing.T) {
 		t.Fatal(err)
 	}
 	requester := &chainEditRequester{online: map[int64]bool{aID: true, cID: true}}
-	serverAPI := &Server{st: st, disp: dispatch.New(st, requester), req: requester}
+	serverAPI := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester}
 	body, _ := json.Marshal(editChainRequest{ChainID: chainID, Name: "chain",
 		Hops: []chainHopRef{{ServerID: aID}, {ServerID: cID}},
 		Node: nodeRequest, TrafficMultiplier: "1.000"})

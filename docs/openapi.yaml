@@ -6,6 +6,10 @@ info:
     Lattix 自有管理 RPC。命中并完成协议解析后，业务结果由响应 body
     的 code 表达，HTTP 状态为 200。订阅、文件成功响应、WebSocket
     Upgrade、健康检查和第三方 HTTP 不使用此业务信封。
+    订阅落地页客户端下载 `GET /api/sub/{token}/client-download/start`
+    对新建下载任务按订阅 token 滑动窗口限流（每 token 每小时最多 10 次）：
+    超限返回 HTTP 429 与 `Retry-After` 头（秒，向上取整至少 1 秒），body 为 text/plain 错误信息；
+    命中活跃任务的去重请求与 status/ticket/file（含 Range 断点续传）不受此限。
 servers:
   - url: /
 security:
@@ -100,6 +104,10 @@ paths:
   /api/server/create:
     post:
       operationId: serverCreate
+      description: |
+        响应 data 含 server、bootstrap_token、install_command 与 install_insecure（boolean）；
+        install_insecure 为 true 表示安装命令走明文公网链路（面板地址为 http 且 host 非回环/私网，
+        域名按公网保守处理），Agent 控制流量明文传输，token 可嗅探、命令可伪造。
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -180,6 +188,8 @@ paths:
   /api/server/rotate-token:
     post:
       operationId: serverRotateToken
+      description: |
+        响应 data 字段同 serverCreate（server、bootstrap_token、install_command、install_insecure）。
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -462,6 +472,8 @@ paths:
   /api/user/traffic-history:
     get:
       operationId: userTrafficHistory
+      parameters:
+        - {name: user_id, in: query, required: true, schema: {type: integer, minimum: 1}}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/user/regenerate-subscription:
     post:
@@ -483,6 +495,8 @@ paths:
     get:
       operationId: userSubscriptionPreview
       parameters:
+        - {name: user_id, in: query, required: true, schema: {type: integer, minimum: 1}}
+        - {name: format, in: query, required: true, schema: {type: string, enum: [clash, singbox, quanx, quanx-config, links]}}
         - name: stage
           in: query
           required: false

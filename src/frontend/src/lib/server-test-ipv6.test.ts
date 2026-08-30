@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { IPV6_CATEGORIES, isIpv6Category, ipv6Unavailable, withoutIpv6Categories } from '@/lib/server-test-ipv6'
+import {
+  IPV6_CATEGORIES,
+  isIpv6Category,
+  ipv6Unavailable,
+  withoutIpv6Categories,
+} from '@/lib/server-test-ipv6'
 import type { ServerTestCategoryResult, ServerTestEnvironment } from '@/lib/types'
 
 describe('server-test-ipv6', () => {

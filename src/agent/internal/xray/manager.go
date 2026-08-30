@@ -132,15 +132,10 @@ func (m *Manager) ApplyNode(nodeID int64, vc shared.VirtualConfig, userUUIDs, de
 		return nil, err
 	}
 	// 5. gRPC 热操作（幂等：先删后加）
-	if err := m.hot.ReplaceInbound(tag, inbound); err != nil {
-		log.Printf("xray: hot apply %s failed: %v (fallback to restart)", tag, err)
-		// 6. 热操作失败才重启
-		if rerr := m.runner.Restart(context.Background()); rerr != nil {
-			// 7. 重启失败：恢复上一份可用配置并再次重启
-			m.restorePrev()
-			_ = m.runner.Restart(context.Background())
-			return nil, fmt.Errorf("热操作失败(%v)且重启失败(%v)，已回滚配置", err, rerr)
-		}
+	if _, err := m.withRestartFallback(func() error {
+		return m.hot.ReplaceInbound(tag, inbound)
+	}, "apply %s", "热操作", tag); err != nil {
+		return nil, err
 	}
 	return realized, nil
 }
@@ -162,13 +157,10 @@ func (m *Manager) RemoveNode(nodeID int64) error {
 	if err := m.commitConfig(cand); err != nil {
 		return err
 	}
-	if err := m.hot.RemoveInbound(tag); err != nil {
-		log.Printf("xray: hot remove %s failed: %v (fallback to restart)", tag, err)
-		if rerr := m.runner.Restart(context.Background()); rerr != nil {
-			m.restorePrev()
-			_ = m.runner.Restart(context.Background())
-			return fmt.Errorf("热删除失败(%v)且重启失败(%v)，已回滚配置", err, rerr)
-		}
+	if _, err := m.withRestartFallback(func() error {
+		return m.hot.RemoveInbound(tag)
+	}, "remove %s", "热删除", tag); err != nil {
+		return err
 	}
 	return nil
 }
@@ -217,23 +209,38 @@ func (m *Manager) mutateUser(uuid string, add bool, params map[string]shared.Use
 		verb = "remove"
 	}
 	for _, tag := range tags {
-		var err error
-		if add {
-			err = m.hot.AddUser(tag, params[tag], uuid)
-		} else {
-			err = m.hot.RemoveUser(tag, params[tag], uuid)
-		}
-		if err != nil {
-			log.Printf("xray: hot %s user on %s failed: %v (fallback to restart)", verb, tag, err)
-			if rerr := m.runner.Restart(context.Background()); rerr != nil {
-				m.restorePrev()
-				_ = m.runner.Restart(context.Background())
-				return fmt.Errorf("热%s用户失败(%v)且重启失败(%v)，已回滚配置", verb, err, rerr)
+		hotOK, err := m.withRestartFallback(func() error {
+			if add {
+				return m.hot.AddUser(tag, params[tag], uuid)
 			}
+			return m.hot.RemoveUser(tag, params[tag], uuid)
+		}, "%s user on %s", "热"+verb+"用户", verb, tag)
+		if err != nil {
+			return err
+		}
+		if !hotOK {
 			return nil // 重启后全部生效，无需继续逐 tag 热操作
 		}
 	}
 	return nil
+}
+
+// withRestartFallback 执行一次热操作（§6 步骤 5）；失败时记日志（logFmt 为
+// "xray: hot ... failed" 文案的中段）并重启兜底（§6 步骤 6），重启再失败则
+// 恢复上一份可用配置并再次重启（§6 步骤 7），错误文案以 opDesc 开头。
+// hotOK 为 false 表示已走重启兜底（mutateUser 借此跳过后续 tag 的热操作）。
+func (m *Manager) withRestartFallback(hotOp func() error, logFmt, opDesc string, logArgs ...any) (hotOK bool, err error) {
+	hotErr := hotOp()
+	if hotErr == nil {
+		return true, nil
+	}
+	log.Printf("xray: hot "+logFmt+" failed: %v (fallback to restart)", append(logArgs, hotErr)...)
+	if rerr := m.runner.Restart(context.Background()); rerr != nil {
+		m.restorePrev()
+		_ = m.runner.Restart(context.Background())
+		return false, fmt.Errorf("%s失败(%v)且重启失败(%v)，已回滚配置", opDesc, hotErr, rerr)
+	}
+	return false, nil
 }
 
 // commitConfig 落地候选配置：写临时文件 → xray run -test 校验（§6 步骤 3）→

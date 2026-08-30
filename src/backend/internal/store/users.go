@@ -226,11 +226,21 @@ func (s *Store) SetUserExpiry(ctx context.Context, id int64, expiresAt *time.Tim
 	return nil
 }
 
-// SetUserSubSettings 更新用户级订阅设置（流量配额/重置日/落地页覆盖/套餐名/跳转链接）。
-func (s *Store) SetUserSubSettings(ctx context.Context, id int64, trafficLimit int64, resetDay int, subTitle, subAnnouncement, planName, appURL string) error {
+// UserSubSettings 打包用户级订阅设置（流量配额/重置日/落地页覆盖/套餐名/跳转链接）。
+type UserSubSettings struct {
+	TrafficLimit    int64
+	ResetDay        int
+	SubTitle        string
+	SubAnnouncement string
+	PlanName        string
+	AppURL          string
+}
+
+// SetUserSubSettings 更新用户级订阅设置。
+func (s *Store) SetUserSubSettings(ctx context.Context, id int64, settings UserSubSettings) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE users SET traffic_limit = ?, traffic_reset_day = ?, sub_title = ?, sub_announcement = ?, plan_name = ?, app_url = ? WHERE id = ?`,
-		trafficLimit, resetDay, subTitle, subAnnouncement, planName, appURL, id)
+		settings.TrafficLimit, settings.ResetDay, settings.SubTitle, settings.SubAnnouncement, settings.PlanName, settings.AppURL, id)
 	if err != nil {
 		return fmt.Errorf("set user sub settings: %w", err)
 	}

@@ -1,10 +1,10 @@
-package panel
+package selfupdate
 
 import "testing"
 
 // TestPanelUpdateStageTransitions 校验自更新阶段状态机的线性推进与非法迁移拒绝。
 func TestPanelUpdateStageTransitions(t *testing.T) {
-	u := &panelUpdater{}
+	u := &Updater{}
 	u.setStage(updStageCheck, 0, "check")
 	u.setStage(updStageDownload, 50, "download")
 	u.setStage(updStageDownload, 100, "download done") // 同阶段进度更新
@@ -33,12 +33,12 @@ func TestPanelUpdateStageTransitions(t *testing.T) {
 // TestPanelUpdateStageTerminals 终态（done/failed）不得被普通阶段推进覆盖；
 // failed 由 fail 路径显式写入，新一次更新启动时重置。
 func TestPanelUpdateStageTerminals(t *testing.T) {
-	u := &panelUpdater{st: panelUpdateStatus{Stage: updStageDone}}
+	u := &Updater{st: Status{Stage: updStageDone}}
 	u.setStage(updStageDownload, 0, "no")
 	if u.st.Stage != updStageDone {
 		t.Fatalf("done terminal overridden: %s", u.st.Stage)
 	}
-	u2 := &panelUpdater{st: panelUpdateStatus{Stage: updStageFailed}}
+	u2 := &Updater{st: Status{Stage: updStageFailed}}
 	u2.setStage(updStageVerify, 0, "no")
 	if u2.st.Stage != updStageFailed {
 		t.Fatalf("failed terminal overridden: %s", u2.st.Stage)

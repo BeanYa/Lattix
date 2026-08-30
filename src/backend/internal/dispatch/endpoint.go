@@ -35,7 +35,7 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 		return err
 	}
 	payload := shared.ApplySharedEndpointPayload{
-		EndpointID: endpointID, Config: config, DestCandidates: d.DestCandidates,
+		EndpointID: endpointID, Config: config, DestCandidates: d.opts.DestCandidates,
 	}
 	server, err := d.st.ServerByID(ctx, endpoint.ServerID)
 	if err != nil {

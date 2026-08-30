@@ -3,8 +3,10 @@ package panel
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"lattix/backend/internal/logging"
+	"lattix/backend/internal/store"
 	"lattix/shared"
 )
 
@@ -24,18 +27,54 @@ const sessionTTL = 7 * 24 * time.Hour
 // sessionCookie 是会话 cookie 名。
 const sessionCookie = "lattix_session"
 
-// sessionSecret 由管理员凭证派生（不加存储；改密码即全部会话失效）。
+// sessionSecret 返回会话签名密钥：独立随机值，持久化于 settings（session_secret），
+// 不派生自任何口令材料。首次使用（含升级后）为空时生成 32 字节随机值（hex 编码）并落库；
+// 改密成功后由 handleChangePassword 轮换（改密码即全部会话失效）。
+// 命中后缓存在进程内（atomic），避免每次认证请求 2 次 SQLite 读；rotate/首次生成时刷新。
+// 残余风险：DB 泄露仍可伪造会话（与会话表方案等同），但口令材料不再因此泄露。
+// 首次生成存在并发竞态（两个请求同时生成）可接受：后写覆盖先写，
+// 仅使竞态窗口内签发的会话失效一次。
 func (s *Server) sessionSecret(ctx context.Context) ([]byte, error) {
-	credential, err := s.credentialKey(ctx)
-	if err != nil {
-		return nil, err
+	if cached, ok := s.secretCache.Load().(string); ok && cached != "" {
+		return []byte(cached), nil
 	}
-	return sessionSecretForCredential(credential), nil
+	secret, err := s.st.GetSetting(ctx, store.SettingSessionSecret)
+	if err != nil {
+		return nil, fmt.Errorf("read session secret: %w", err)
+	}
+	if secret == "" {
+		secret, err = newSessionSecret()
+		if err != nil {
+			return nil, err
+		}
+		if err := s.st.SetSetting(ctx, store.SettingSessionSecret, secret); err != nil {
+			return nil, fmt.Errorf("save session secret: %w", err)
+		}
+	}
+	s.secretCache.Store(secret)
+	return []byte(secret), nil
 }
 
-func sessionSecretForCredential(credential string) []byte {
-	sum := sha256.Sum256([]byte(credential + "|lattix-session"))
-	return sum[:]
+// rotateSessionSecret 重新生成并覆盖会话签名密钥（改密后调用，使全部会话失效）。
+func (s *Server) rotateSessionSecret(ctx context.Context) error {
+	secret, err := newSessionSecret()
+	if err != nil {
+		return err
+	}
+	if err := s.st.SetSetting(ctx, store.SettingSessionSecret, secret); err != nil {
+		return fmt.Errorf("save session secret: %w", err)
+	}
+	s.secretCache.Store(secret)
+	return nil
+}
+
+// newSessionSecret 生成 32 字节随机会话密钥（hex 编码存储）。
+func newSessionSecret() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate session secret: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // signSession 生成签名会话值：base64url(user|exp).base64url(hmac)。
@@ -89,11 +128,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := logging.ClientIP(r)
-	if retry, blocked := s.loginLimiter().retryAfter(ip); blocked {
-		writeLoginRateLimit(w, retry)
+	usernameKey := loginUsernameKey(req.Username)
+	// per-IP 与 per-username 两桶任一被封即限流，retryAfter 取两者较大值。
+	ipRetry, ipBlocked := s.loginLimiter().retryAfter(ip)
+	userRetry, userBlocked := s.usernameLoginLimiter().retryAfter(usernameKey)
+	if ipBlocked || userBlocked {
+		writeLoginRateLimit(w, max(ipRetry, userRetry))
 		return
 	}
-	passwordOK, credential, authErr := s.authenticatePassword(r.Context(), req.Password)
+	passwordOK, authErr := s.authenticatePassword(r.Context(), req.Password)
 	if authErr != nil {
 		if errors.Is(authErr, errBcryptBusy) {
 			writeLoginRateLimit(w, time.Second)
@@ -112,15 +155,25 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		}); err != nil {
 			log.Printf("panel: record login_failed event: %v", err)
 		}
-		if retry, blocked := s.loginLimiter().recordFailure(ip); blocked {
-			writeLoginRateLimit(w, retry)
+		// 认证失败两桶都记录：IP 桶可被伪造 XFF 换新，username 桶兜底持续累计。
+		ipRetry, ipBlocked := s.loginLimiter().recordFailure(ip)
+		userRetry, userBlocked := s.usernameLoginLimiter().recordFailure(usernameKey)
+		if ipBlocked || userBlocked {
+			writeLoginRateLimit(w, max(ipRetry, userRetry))
 			return
 		}
 		writeRPC(w, shared.CodeAuthInvalidCredentials, "用户名或密码错误", nil)
 		return
 	}
+	// 认证成功两桶都清零。
 	s.loginLimiter().recordSuccess(ip)
-	secret := sessionSecretForCredential(credential)
+	s.usernameLoginLimiter().recordSuccess(usernameKey)
+	secret, err := s.sessionSecret(r.Context())
+	if err != nil {
+		log.Printf("panel: load session secret request_id=%s: %v", logging.RequestID(r.Context()), err)
+		writeRPC(w, shared.CodeServiceUnavailable, "认证服务暂时不可用", nil)
+		return
+	}
 	sessionValue := signSession(req.Username, time.Now().Add(sessionTTL), secret)
 	csrfToken := csrfForSessionSecret(sessionValue, secret)
 	http.SetCookie(w, &http.Cookie{
@@ -203,7 +256,7 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 			writeRPC(w, shared.CodeAuthRequired, "未登录或会话已过期", nil)
 			return
 		}
-		if s.upd != nil && s.upd.running() &&
+		if s.upd != nil && s.upd.Running() &&
 			r.URL.Path != "/api/panel/get-update-status" && r.URL.Path != "/api/auth/me" {
 			writeRPC(w, shared.CodeUpdateInProgress, "面板更新进行中，请稍候", nil)
 			return

@@ -109,29 +109,42 @@ func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	return &srv, nil
 }
 
-// CreateServer 插入一台服务器，token 为一次性 bootstrap token（§11），返回服务器 id。
-// address 为管理员指定的公网地址（§4）；空串表示留待 session.open 时按 RemoteAddr 自动学习
-// （NAT 类型强制必填，由 panel 校验）。machineType/allowedPorts 为 NAT 元数据（§21，面板侧，不下发 agent）。
-func (s *Store) CreateServer(ctx context.Context, alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location string) (int64, error) {
-	return s.createServer(ctx, s.db, alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location)
+// ServerDraft 打包 CreateServer 的入参（连续字符串参数较多，避免位置参数错序）：
+// BootstrapToken 为一次性 bootstrap token（§11）；Address 为管理员指定的公网地址（§4），
+// 空串表示留待 session.open 时按 RemoteAddr 自动学习（NAT 类型强制必填，由 panel 校验）；
+// MachineType/AllowedPorts 为 NAT 元数据（§21，面板侧，不下发 agent）。
+type ServerDraft struct {
+	Alias          string
+	Address        string
+	BootstrapToken string
+	MachineType    string
+	AllowedPorts   string
+	Tags           string
+	CountryCode    string
+	Location       string
 }
 
-func (s *Store) createServer(ctx context.Context, exec contextExecer, alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location string) (int64, error) {
+// CreateServer 插入一台服务器（§11），返回服务器 id。
+func (s *Store) CreateServer(ctx context.Context, draft ServerDraft) (int64, error) {
+	return s.createServer(ctx, s.db, draft)
+}
+
+func (s *Store) createServer(ctx context.Context, exec contextExecer, draft ServerDraft) (int64, error) {
 	epoch := int64(1)
-	if credential, err := shared.ParseCredential(bootstrapToken); err == nil {
+	if credential, err := shared.ParseCredential(draft.BootstrapToken); err == nil {
 		epoch = credential.Epoch
 	}
 	addressMode := AddressModeAuto
 	addresses := ""
-	if address != "" {
+	if draft.Address != "" {
 		addressMode = AddressModeManual
-		if raw, err := json.Marshal([]string{address}); err == nil {
+		if raw, err := json.Marshal([]string{draft.Address}); err == nil {
 			addresses = string(raw)
 		}
 	}
 	res, err := exec.ExecContext(ctx,
 		`INSERT INTO servers (alias, address, addresses, address_mode, token, machine_type, allowed_ports, tags, country_code, location, credential_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		alias, address, addresses, addressMode, bootstrapToken, machineType, allowedPorts, tags, countryCode, location, epoch)
+		draft.Alias, draft.Address, addresses, addressMode, draft.BootstrapToken, draft.MachineType, draft.AllowedPorts, draft.Tags, draft.CountryCode, draft.Location, epoch)
 	if err != nil {
 		return 0, fmt.Errorf("insert server: %w", err)
 	}
@@ -142,7 +155,7 @@ func (s *Store) createServer(ctx context.Context, exec contextExecer, alias, add
 // visible together. Callers never observe a server missing its default plan.
 func (s *Store) CreateServerWithPlans(
 	ctx context.Context,
-	alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location string,
+	draft ServerDraft,
 	billing *ServerBilling,
 	traffic ServerTrafficPlan,
 ) (int64, error) {
@@ -151,7 +164,7 @@ func (s *Store) CreateServerWithPlans(
 		return 0, fmt.Errorf("begin server creation: %w", err)
 	}
 	defer tx.Rollback()
-	id, err := s.createServer(ctx, tx, alias, address, bootstrapToken, machineType, allowedPorts, tags, countryCode, location)
+	id, err := s.createServer(ctx, tx, draft)
 	if err != nil {
 		return 0, err
 	}

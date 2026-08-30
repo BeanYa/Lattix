@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"lattix/shared"
+	"lattix/shared/requester"
 )
 
 const (
@@ -172,15 +172,13 @@ func speedHTTPClient(family shared.ServerTestAddressFamily) *http.Client {
 	if family == shared.ServerTestIPv6 {
 		network = "tcp6"
 	}
-	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: -1}
-	return &http.Client{Transport: &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		DialContext: func(ctx context.Context, _, address string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, address)
-		},
-		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, TLSHandshakeTimeout: 5 * time.Second,
-		ResponseHeaderTimeout: 10 * time.Second, DisableKeepAlives: true,
-	}}
+	return requester.NewNetworkHTTPClient(requester.NetworkHTTPClientConfig{
+		Network:               network,
+		DialTimeout:           5 * time.Second,
+		TLSMinVersion:         tls.VersionTLS12,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+	})
 }
 
 func speedDownload(parent context.Context, client *http.Client, endpoint string) (float64, int64, int64, int, string) {

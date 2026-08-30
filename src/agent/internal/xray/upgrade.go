@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"lattix/agent/internal/fileutil"
 	external "lattix/shared/requester"
 )
 
@@ -36,7 +37,8 @@ func (m *Manager) UpgradeXray(version string) error {
 			// 实际版本由升级后的版本校验与 telemetry 上报，无需 API 返回的版本号。
 			return m.upgradeXray("latest", "latest/download")
 		}
-		v, err := resolveLatestXrayVersion()
+		v, err := external.GitHubLatestReleaseTag(context.Background(), &http.Client{Timeout: 30 * time.Second},
+			"https://api.github.com/repos/XTLS/Xray-core")
 		if err != nil {
 			return err
 		}
@@ -91,10 +93,10 @@ func (m *Manager) upgradeXray(expectVer, dlRef string) error {
 
 	// 备份并原子替换（运行中的进程持有旧 inode，重启后生效）。
 	backup := m.bin + ".bak"
-	if err := copyFile(m.bin, backup, 0o755); err != nil {
+	if err := fileutil.CopyFileAtomic(m.bin, backup, 0o755); err != nil {
 		return fmt.Errorf("备份旧 xray 失败: %w", err)
 	}
-	if err := copyFile(binPath, m.bin, 0o755); err != nil {
+	if err := fileutil.CopyFileAtomic(binPath, m.bin, 0o755); err != nil {
 		return fmt.Errorf("替换 xray 二进制失败: %w", err)
 	}
 
@@ -114,29 +116,13 @@ func (m *Manager) upgradeXray(expectVer, dlRef string) error {
 
 // rollbackXray 从备份恢复旧二进制并尽力重启。
 func (m *Manager) rollbackXray(backup string) {
-	if err := copyFile(backup, m.bin, 0o755); err != nil {
+	if err := fileutil.CopyFileAtomic(backup, m.bin, 0o755); err != nil {
 		log.Printf("xray rollback: 从 %s 恢复二进制失败: %v", backup, err)
 		return
 	}
 	if err := m.runner.Restart(context.Background()); err != nil {
 		log.Printf("xray rollback: 回滚后重启失败: %v", err)
 	}
-}
-
-// resolveLatestXrayVersion 经 GitHub API 解析最新 release tag（§11 同款逻辑）。
-func resolveLatestXrayVersion() (string, error) {
-	var rel struct {
-		TagName string `json:"tag_name"`
-	}
-	client := external.ExternalJSONRequester{Doer: &http.Client{Timeout: 30 * time.Second}}
-	if err := client.GetJSON(context.Background(),
-		"https://api.github.com/repos/XTLS/Xray-core/releases/latest", &rel); err != nil {
-		return "", fmt.Errorf("解析 latest 失败: %w", err)
-	}
-	if rel.TagName == "" {
-		return "", fmt.Errorf("解析 latest 失败: 无法读取 tag_name")
-	}
-	return rel.TagName, nil
 }
 
 // downloadFile 下载 URL 到本地文件。
@@ -202,28 +188,4 @@ func unzipOne(zipPath, name, dest string) error {
 		return err
 	}
 	return fmt.Errorf("zip 中未找到 %s", name)
-}
-
-// copyFile 复制文件并设置权限（目标先写临时文件再原子替换）。
-func copyFile(src, dest string, perm os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	tmp := dest + ".tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, dest)
 }

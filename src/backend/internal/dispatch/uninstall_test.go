@@ -58,12 +58,12 @@ func TestUninstallRetriesSameRequestUntilACK(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, err := st.CreateServer(ctx, "agent", "agent.test", "token", store.MachineTypeDirect, "", "", "US", "Test")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "agent", Address: "agent.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	requester := &uninstallRequester{wake: make(chan struct{}, 2)}
-	dispatcher := New(st, requester)
+	dispatcher := New(st, requester, Options{}, Events{})
 	go func() {
 		for deliveries := 1; deliveries <= 2; deliveries++ {
 			select {

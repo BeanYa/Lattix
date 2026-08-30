@@ -6,20 +6,19 @@
    重新生成：见 themes/README.md「组件层覆写」说明。
    ============================================================ */
 
-
 /* ---- 来源：pages/chains.css ---- */
 
 /* ============================================================
    Chains（链路页）— Cream Grid Tech 页面样式
    ============================================================ */
 
-[data-theme="cream"] .cg-chains {
+[data-theme='cream'] .cg-chains {
   animation: cream-cg-page-in 300ms var(--cg-ease) both;
 }
 
 /* ---------- 顶部 Eyebrow 行 ---------- */
 
-[data-theme="cream"] .cg-chains-topline {
+[data-theme='cream'] .cg-chains-topline {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -27,28 +26,36 @@
   flex-wrap: wrap;
 }
 
-[data-theme="cream"] .cg-chains-topline-note {
+[data-theme='cream'] .cg-chains-topline-note {
   color: var(--cg-muted);
 }
 
 /* ---------- 链路卡片列表 ---------- */
 
-[data-theme="cream"] .cg-chain-list {
+[data-theme='cream'] .cg-chain-list {
   display: grid;
   gap: 14px;
 }
 
 /* 2px 深色描边紧凑卡片，左侧 4px 状态色条（贴纸语义） */
-[data-theme="cream"] .cg-chain-card {
+[data-theme='cream'] .cg-chain-card {
   border-left-width: 4px;
 }
 
-.cg-chain-card[data-tone='is-lime'] { border-left-color: var(--cg-lime); }
-.cg-chain-card[data-tone='is-blue'] { border-left-color: var(--cg-blue); }
-.cg-chain-card[data-tone='is-red'] { border-left-color: var(--cg-red); }
-.cg-chain-card[data-tone='is-muted'] { border-left-color: var(--cg-subtle); }
+.cg-chain-card[data-tone='is-lime'] {
+  border-left-color: var(--cg-lime);
+}
+.cg-chain-card[data-tone='is-blue'] {
+  border-left-color: var(--cg-blue);
+}
+.cg-chain-card[data-tone='is-red'] {
+  border-left-color: var(--cg-red);
+}
+.cg-chain-card[data-tone='is-muted'] {
+  border-left-color: var(--cg-subtle);
+}
 
-[data-theme="cream"] .cg-chain-card-head {
+[data-theme='cream'] .cg-chain-card-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -58,7 +65,7 @@
   border-bottom: var(--cg-border);
 }
 
-[data-theme="cream"] .cg-chain-card-title {
+[data-theme='cream'] .cg-chain-card-title {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -67,7 +74,7 @@
   color: var(--cg-ink);
 }
 
-[data-theme="cream"] .cg-chain-name {
+[data-theme='cream'] .cg-chain-name {
   font-size: 15px;
   font-weight: 900;
   letter-spacing: -0.01em;
@@ -77,7 +84,7 @@
   white-space: nowrap;
 }
 
-[data-theme="cream"] .cg-chain-id {
+[data-theme='cream'] .cg-chain-id {
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
@@ -85,7 +92,7 @@
 }
 
 /* 类型贴纸（直连/中转） */
-[data-theme="cream"] .cg-chain-tag {
+[data-theme='cream'] .cg-chain-tag {
   display: inline-flex;
   align-items: center;
   padding: 3px 8px;
@@ -95,13 +102,13 @@
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 800;
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
   color: var(--cg-muted);
   white-space: nowrap;
 }
 
 /* 状态图标块 */
-[data-theme="cream"] .cg-chain-mark {
+[data-theme='cream'] .cg-chain-mark {
   display: grid;
   place-items: center;
   width: 30px;
@@ -111,63 +118,80 @@
   border-radius: var(--cg-r-xs);
 }
 
-[data-theme="cream"] .cg-chain-mark svg {
+[data-theme='cream'] .cg-chain-mark svg {
   width: 15px;
   height: 15px;
   stroke-width: 2.4;
 }
 
-.cg-chain-mark.is-lime { background: var(--cg-lime); color: var(--cg-on-accent); }
-.cg-chain-mark.is-blue { background: var(--cg-blue); border-color: var(--cg-blue); color: #fff; }
-.cg-chain-mark.is-red { background: var(--cg-red); color: var(--cg-on-accent); }
-.cg-chain-mark.is-muted { background: var(--cg-paper-warm); color: var(--cg-muted); }
+.cg-chain-mark.is-lime {
+  background: var(--cg-lime);
+  color: var(--cg-on-accent);
+}
+.cg-chain-mark.is-blue {
+  background: var(--cg-blue);
+  border-color: var(--cg-blue);
+  color: #fff;
+}
+.cg-chain-mark.is-red {
+  background: var(--cg-red);
+  color: var(--cg-on-accent);
+}
+.cg-chain-mark.is-muted {
+  background: var(--cg-paper-warm);
+  color: var(--cg-muted);
+}
 
 /* 降级 / 强制发布旁注 */
-[data-theme="cream"] .cg-chain-note {
+[data-theme='cream'] .cg-chain-note {
   font-size: 11px;
   font-weight: 700;
 }
 
-.cg-chain-note.is-red { color: var(--cg-red); }
-.cg-chain-note.is-blue { color: var(--cg-blue); }
+.cg-chain-note.is-red {
+  color: var(--cg-red);
+}
+.cg-chain-note.is-blue {
+  color: var(--cg-blue);
+}
 
-[data-theme="cream"] .cg-chain-card-side {
+[data-theme='cream'] .cg-chain-card-side {
   display: grid;
   gap: 8px;
   justify-items: end;
 }
 
-[data-theme="cream"] .cg-chain-meta {
+[data-theme='cream'] .cg-chain-meta {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .06em;
+  letter-spacing: 0.06em;
   color: var(--cg-muted);
   white-space: nowrap;
 }
 
-[data-theme="cream"] .cg-chain-meta svg {
+[data-theme='cream'] .cg-chain-meta svg {
   width: 12px;
   height: 12px;
 }
 
-[data-theme="cream"] .cg-chain-actions {
+[data-theme='cream'] .cg-chain-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
 }
 
-[data-theme="cream"] .cg-chain-card-body {
+[data-theme='cream'] .cg-chain-card-body {
   display: grid;
   gap: 12px;
   padding: 12px 14px;
 }
 
-[data-theme="cream"] .cg-chain-error {
+[data-theme='cream'] .cg-chain-error {
   margin: 0;
   font-size: 12px;
   font-weight: 700;
@@ -175,13 +199,13 @@
 }
 
 /* 内容区：跳点拓扑 + 流量摘要 双栏 */
-[data-theme="cream"] .cg-chain-split {
+[data-theme='cream'] .cg-chain-split {
   display: grid;
   gap: 12px;
 }
 
 @container cg-main (min-width: 1024px) {
-  [data-theme="cream"] .cg-chain-split {
+  [data-theme='cream'] .cg-chain-split {
     grid-template-columns: minmax(0, 1fr) 240px;
     align-items: center;
   }
@@ -189,29 +213,29 @@
 
 /* ---------- 直连卡片：服务器行 ---------- */
 
-[data-theme="cream"] .cg-chain-direct {
+[data-theme='cream'] .cg-chain-direct {
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-chain-direct-copy {
+[data-theme='cream'] .cg-chain-direct-copy {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-chain-direct-label {
+[data-theme='cream'] .cg-chain-direct-label {
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 800;
-  letter-spacing: .1em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-chain-direct-name {
+[data-theme='cream'] .cg-chain-direct-name {
   font-size: 13px;
   font-weight: 800;
   color: var(--cg-ink);
@@ -220,55 +244,55 @@
   white-space: nowrap;
 }
 
-[data-theme="cream"] .cg-chain-direct-port {
+[data-theme='cream'] .cg-chain-direct-port {
   font-family: var(--cg-mono);
   font-size: 11px;
   font-weight: 700;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-chain-direct > .cg-status {
+[data-theme='cream'] .cg-chain-direct > .cg-status {
   margin-left: auto;
   flex-shrink: 0;
 }
 
 /* ---------- 跳点流程图（§8 图语言：blue 连线 + 编号 mono badge） ---------- */
 
-[data-theme="cream"] .cg-hop-scroll {
+[data-theme='cream'] .cg-hop-scroll {
   min-width: 0;
   overflow-x: auto;
   padding-bottom: 4px;
 }
 
-[data-theme="cream"] .cg-hop-flow {
+[data-theme='cream'] .cg-hop-flow {
   display: flex;
   flex-direction: column;
   align-items: stretch;
 }
 
 @container cg-main (min-width: 640px) {
-  [data-theme="cream"] .cg-hop-flow {
+  [data-theme='cream'] .cg-hop-flow {
     flex-direction: row;
     align-items: center;
     min-width: max-content;
   }
 }
 
-[data-theme="cream"] .cg-hop-seg {
+[data-theme='cream'] .cg-hop-seg {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
 }
 
 @container cg-main (min-width: 640px) {
-  [data-theme="cream"] .cg-hop-seg {
+  [data-theme='cream'] .cg-hop-seg {
     flex-direction: row;
     align-items: center;
   }
 }
 
 /* blue 连接线与箭头（竖排 = 移动端，横排 = ≥sm） */
-[data-theme="cream"] .cg-hop-link {
+[data-theme='cream'] .cg-hop-link {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -276,63 +300,63 @@
   color: var(--cg-blue);
 }
 
-[data-theme="cream"] .cg-hop-link i {
+[data-theme='cream'] .cg-hop-link i {
   display: block;
   width: 2px;
   height: 14px;
   background: currentColor;
 }
 
-[data-theme="cream"] .cg-hop-link svg {
+[data-theme='cream'] .cg-hop-link svg {
   width: 12px;
   height: 12px;
   stroke-width: 2.6;
 }
 
-[data-theme="cream"] .cg-hop-link-h {
+[data-theme='cream'] .cg-hop-link-h {
   display: none;
 }
 
 @container cg-main (min-width: 640px) {
-  [data-theme="cream"] .cg-hop-link {
+  [data-theme='cream'] .cg-hop-link {
     flex-direction: row;
     margin: 0 10px;
   }
 
-  [data-theme="cream"] .cg-hop-link i {
+  [data-theme='cream'] .cg-hop-link i {
     width: 18px;
     height: 2px;
   }
 
-  [data-theme="cream"] .cg-hop-link-v {
+  [data-theme='cream'] .cg-hop-link-v {
     display: none;
   }
 
-  [data-theme="cream"] .cg-hop-link-h {
+  [data-theme='cream'] .cg-hop-link-h {
     display: block;
     margin-left: -2px;
   }
 }
 
-[data-theme="cream"] .cg-hop {
+[data-theme='cream'] .cg-hop {
   min-width: 0;
   padding: 4px 0;
 }
 
 @container cg-main (min-width: 640px) {
-  [data-theme="cream"] .cg-hop {
+  [data-theme='cream'] .cg-hop {
     min-width: 144px;
   }
 }
 
-[data-theme="cream"] .cg-hop-head {
+[data-theme='cream'] .cg-hop-head {
   display: flex;
   align-items: center;
   gap: 6px;
 }
 
 /* 编号 mono badge */
-[data-theme="cream"] .cg-hop-num {
+[data-theme='cream'] .cg-hop-num {
   display: inline-grid;
   place-items: center;
   min-width: 22px;
@@ -348,7 +372,7 @@
   line-height: 1;
 }
 
-[data-theme="cream"] .cg-hop-dot {
+[data-theme='cream'] .cg-hop-dot {
   width: 8px;
   height: 8px;
   flex-shrink: 0;
@@ -357,21 +381,28 @@
   background: var(--cg-paper-warm);
 }
 
-.cg-hop-dot.is-lime { background: var(--cg-lime); }
-.cg-hop-dot.is-blue { background: var(--cg-blue); border-color: var(--cg-blue); }
-.cg-hop-dot.is-red { background: var(--cg-red); }
+.cg-hop-dot.is-lime {
+  background: var(--cg-lime);
+}
+.cg-hop-dot.is-blue {
+  background: var(--cg-blue);
+  border-color: var(--cg-blue);
+}
+.cg-hop-dot.is-red {
+  background: var(--cg-red);
+}
 
-[data-theme="cream"] .cg-hop-role {
+[data-theme='cream'] .cg-hop-role {
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 800;
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--cg-muted);
   white-space: nowrap;
 }
 
-[data-theme="cream"] .cg-hop-name {
+[data-theme='cream'] .cg-hop-name {
   display: block;
   margin-top: 4px;
   max-width: 200px;
@@ -383,7 +414,7 @@
   white-space: nowrap;
 }
 
-[data-theme="cream"] .cg-hop-meta {
+[data-theme='cream'] .cg-hop-meta {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -395,10 +426,14 @@
   color: var(--cg-muted);
 }
 
-.cg-hop-meta .is-lime { color: var(--cg-lime-dark); }
-.cg-hop-meta .is-red { color: var(--cg-red); }
+.cg-hop-meta .is-lime {
+  color: var(--cg-lime-dark);
+}
+.cg-hop-meta .is-red {
+  color: var(--cg-red);
+}
 
-[data-theme="cream"] .cg-hop-shared {
+[data-theme='cream'] .cg-hop-shared {
   padding: 1px 6px;
   border: 2px solid var(--cg-ink-soft);
   border-radius: var(--cg-r-pill);
@@ -411,7 +446,7 @@
 
 /* ---------- 流量摘要盒 ---------- */
 
-[data-theme="cream"] .cg-chain-traffic {
+[data-theme='cream'] .cg-chain-traffic {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px 16px;
@@ -421,34 +456,38 @@
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .cg-chain-traffic-item {
+[data-theme='cream'] .cg-chain-traffic-item {
   display: grid;
   gap: 2px;
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-chain-traffic-label {
+[data-theme='cream'] .cg-chain-traffic-label {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 800;
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-chain-traffic-label svg {
+[data-theme='cream'] .cg-chain-traffic-label svg {
   width: 11px;
   height: 11px;
   stroke-width: 2.4;
 }
 
-.cg-chain-traffic-item.is-up .cg-chain-traffic-label svg { color: var(--cg-lime-dark); }
-.cg-chain-traffic-item.is-down .cg-chain-traffic-label svg { color: var(--cg-blue); }
+.cg-chain-traffic-item.is-up .cg-chain-traffic-label svg {
+  color: var(--cg-lime-dark);
+}
+.cg-chain-traffic-item.is-down .cg-chain-traffic-label svg {
+  color: var(--cg-blue);
+}
 
-[data-theme="cream"] .cg-chain-traffic-value {
+[data-theme='cream'] .cg-chain-traffic-value {
   font-family: var(--cg-mono);
   font-size: 15px;
   font-weight: 800;
@@ -457,42 +496,46 @@
   white-space: nowrap;
 }
 
-.cg-chain-traffic-item.is-up .cg-chain-traffic-value { color: var(--cg-lime-dark); }
-.cg-chain-traffic-item.is-down .cg-chain-traffic-value { color: var(--cg-blue); }
+.cg-chain-traffic-item.is-up .cg-chain-traffic-value {
+  color: var(--cg-lime-dark);
+}
+.cg-chain-traffic-item.is-down .cg-chain-traffic-value {
+  color: var(--cg-blue);
+}
 
-[data-theme="cream"] .cg-chain-traffic-raw {
+[data-theme='cream'] .cg-chain-traffic-raw {
   font-family: var(--cg-mono);
   font-size: 9px;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-chain-traffic-multiplier {
+[data-theme='cream'] .cg-chain-traffic-multiplier {
   grid-column: span 2;
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--cg-muted);
 }
 
 /* ---------- 队列 / 跳点错误 ---------- */
 
-[data-theme="cream"] .cg-chain-queue {
+[data-theme='cream'] .cg-chain-queue {
   margin: 0;
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .06em;
+  letter-spacing: 0.06em;
   color: var(--cg-blue);
 }
 
-[data-theme="cream"] .cg-chain-hop-errors {
+[data-theme='cream'] .cg-chain-hop-errors {
   display: grid;
   gap: 4px;
 }
 
-[data-theme="cream"] .cg-chain-hop-errors p {
+[data-theme='cream'] .cg-chain-hop-errors p {
   margin: 0;
   font-size: 11px;
   font-weight: 650;
@@ -501,7 +544,7 @@
 
 /* ---------- Dialog：链路类型单选（active 用 lime 底） ---------- */
 
-[data-theme="cream"] .cg-chain-type {
+[data-theme='cream'] .cg-chain-type {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -513,7 +556,9 @@
   font-weight: 800;
   color: var(--cg-ink);
   cursor: pointer;
-  transition: transform 160ms var(--cg-ease), background-color 160ms var(--cg-ease);
+  transition:
+    transform 160ms var(--cg-ease),
+    background-color 160ms var(--cg-ease);
 }
 
 .cg-chain-type:hover {
@@ -521,7 +566,7 @@
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .cg-chain-type.is-selected {
+[data-theme='cream'] .cg-chain-type.is-selected {
   background: var(--cg-lime);
   color: var(--cg-on-accent);
   box-shadow: var(--cg-shadow-control);
@@ -532,7 +577,7 @@
   outline-offset: 2px;
 }
 
-[data-theme="cream"] .cg-chain-hint {
+[data-theme='cream'] .cg-chain-hint {
   margin: 0;
   font-size: 11px;
   color: var(--cg-muted);
@@ -540,7 +585,7 @@
 
 /* ---------- Dialog：日/月切换与空态 ---------- */
 
-[data-theme="cream"] .cg-chain-range {
+[data-theme='cream'] .cg-chain-range {
   display: inline-flex;
   gap: 2px;
   padding: 2px;
@@ -549,7 +594,7 @@
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .cg-chain-dialog-note {
+[data-theme='cream'] .cg-chain-dialog-note {
   margin: 0;
   padding: 32px 0;
   text-align: center;
@@ -559,12 +604,12 @@
 
 /* ---------- 流量历史图表 ---------- */
 
-[data-theme="cream"] .cg-chain-chart {
+[data-theme='cream'] .cg-chain-chart {
   display: grid;
   gap: 12px;
 }
 
-[data-theme="cream"] .cg-chain-chart-legend {
+[data-theme='cream'] .cg-chain-chart-legend {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -574,34 +619,39 @@
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-chain-chart-legend-keys {
+[data-theme='cream'] .cg-chain-chart-legend-keys {
   display: flex;
   align-items: center;
   gap: 16px;
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 800;
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-[data-theme="cream"] .cg-chain-chart-legend-keys span {
+[data-theme='cream'] .cg-chain-chart-legend-keys span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-[data-theme="cream"] .cg-chain-chart-key-dot {
+[data-theme='cream'] .cg-chain-chart-key-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   border: 2px solid var(--cg-ink-soft);
 }
 
-.cg-chain-chart-key-dot.is-up { background: var(--cg-lime-dark); }
-.cg-chain-chart-key-dot.is-down { background: var(--cg-blue); border-color: var(--cg-blue); }
+.cg-chain-chart-key-dot.is-up {
+  background: var(--cg-lime-dark);
+}
+.cg-chain-chart-key-dot.is-down {
+  background: var(--cg-blue);
+  border-color: var(--cg-blue);
+}
 
-[data-theme="cream"] .cg-chain-chart-frame {
+[data-theme='cream'] .cg-chain-chart-frame {
   position: relative;
   padding: 8px;
   border: var(--cg-border);
@@ -609,7 +659,7 @@
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .cg-chain-chart-svg {
+[data-theme='cream'] .cg-chain-chart-svg {
   display: block;
   width: 100%;
   height: auto;
@@ -623,28 +673,32 @@
   box-shadow: 0 0 0 2px var(--cg-blue);
 }
 
-[data-theme="cream"] .cg-chain-chart-grid {
+[data-theme='cream'] .cg-chain-chart-grid {
   stroke: var(--cg-ink-soft);
-  opacity: .18;
+  opacity: 0.18;
 }
 
-[data-theme="cream"] .cg-chain-chart-tick {
+[data-theme='cream'] .cg-chain-chart-tick {
   fill: var(--cg-muted);
   font-family: var(--cg-mono);
 }
 
-[data-theme="cream"] .cg-chain-chart-cross {
+[data-theme='cream'] .cg-chain-chart-cross {
   stroke: var(--cg-muted);
 }
 
-.cg-chain-chart-line.is-up { color: var(--cg-lime-dark); }
-.cg-chain-chart-line.is-down { color: var(--cg-blue); }
+.cg-chain-chart-line.is-up {
+  color: var(--cg-lime-dark);
+}
+.cg-chain-chart-line.is-down {
+  color: var(--cg-blue);
+}
 
-[data-theme="cream"] .cg-chain-chart-dot {
+[data-theme='cream'] .cg-chain-chart-dot {
   fill: var(--cg-paper-light);
 }
 
-[data-theme="cream"] .cg-chain-chart-tip {
+[data-theme='cream'] .cg-chain-chart-tip {
   position: absolute;
   top: 12px;
   z-index: 10;
@@ -659,18 +713,22 @@
   color: var(--cg-ink);
 }
 
-.cg-chain-chart-tip.is-right { right: 12px; }
-.cg-chain-chart-tip.is-left { left: 56px; }
+.cg-chain-chart-tip.is-right {
+  right: 12px;
+}
+.cg-chain-chart-tip.is-left {
+  left: 56px;
+}
 
-[data-theme="cream"] .cg-chain-chart-tip-date {
+[data-theme='cream'] .cg-chain-chart-tip-date {
   margin-bottom: 6px;
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 800;
-  letter-spacing: .06em;
+  letter-spacing: 0.06em;
 }
 
-[data-theme="cream"] .cg-chain-chart-tip-row {
+[data-theme='cream'] .cg-chain-chart-tip-row {
   display: flex;
   justify-content: space-between;
   gap: 24px;
@@ -684,11 +742,11 @@
 /* ---------- 响应式 ---------- */
 
 @container cg-main (max-width: 640px) {
-  [data-theme="cream"] .cg-chain-card-side {
+  [data-theme='cream'] .cg-chain-card-side {
     justify-items: start;
   }
 
-  [data-theme="cream"] .cg-chain-actions {
+  [data-theme='cream'] .cg-chain-actions {
     justify-content: flex-start;
   }
 }
@@ -699,7 +757,7 @@
    ExternalSubscriptions — Cream Grid Tech 页面样式
    ============================================================ */
 
-[data-theme="cream"] .extsub-topline {
+[data-theme='cream'] .extsub-topline {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -709,12 +767,12 @@
 
 /* ---------- 订阅卡片 ---------- */
 
-[data-theme="cream"] .extsub-card {
+[data-theme='cream'] .extsub-card {
   display: flex;
   flex-direction: column;
 }
 
-[data-theme="cream"] .extsub-card-head {
+[data-theme='cream'] .extsub-card-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -724,26 +782,26 @@
   flex-wrap: wrap;
 }
 
-[data-theme="cream"] .extsub-card-title {
+[data-theme='cream'] .extsub-card-title {
   min-width: 0;
   display: grid;
   gap: 6px;
 }
 
-[data-theme="cream"] .extsub-card-name {
+[data-theme='cream'] .extsub-card-name {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-[data-theme="cream"] .extsub-card-name strong {
+[data-theme='cream'] .extsub-card-name strong {
   font-size: 15px;
   font-weight: 850;
   color: var(--cg-ink);
 }
 
-[data-theme="cream"] .extsub-card-url {
+[data-theme='cream'] .extsub-card-url {
   display: block;
   max-width: 100%;
   overflow: hidden;
@@ -752,11 +810,11 @@
   font-family: var(--cg-mono);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .extsub-card-actions {
+[data-theme='cream'] .extsub-card-actions {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -764,21 +822,21 @@
 }
 
 /* 删除：coral 危险按钮（cg-button 变体，页面级） */
-[data-theme="cream"] .extsub-danger {
+[data-theme='cream'] .extsub-danger {
   background: var(--cg-red);
   color: var(--cg-on-accent);
 }
 
 /* ---------- 统计格 ---------- */
 
-[data-theme="cream"] .extsub-card-stats {
+[data-theme='cream'] .extsub-card-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   padding: 14px 16px;
 }
 
-[data-theme="cream"] .extsub-stat {
+[data-theme='cream'] .extsub-stat {
   display: grid;
   gap: 6px;
   align-content: start;
@@ -788,11 +846,11 @@
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .extsub-stat .cg-micro {
+[data-theme='cream'] .extsub-stat .cg-micro {
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .extsub-stat strong {
+[data-theme='cream'] .extsub-stat strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -803,7 +861,7 @@
 }
 
 /* 流量用量条（信息图式） */
-[data-theme="cream"] .extsub-traffic-bar {
+[data-theme='cream'] .extsub-traffic-bar {
   display: block;
   height: 8px;
   border: 2px solid var(--cg-ink-soft);
@@ -812,7 +870,7 @@
   overflow: hidden;
 }
 
-[data-theme="cream"] .extsub-traffic-bar i {
+[data-theme='cream'] .extsub-traffic-bar i {
   display: block;
   height: 100%;
   background: var(--cg-lime);
@@ -820,14 +878,14 @@
 }
 
 /* 卡片内错误提示 */
-[data-theme="cream"] .extsub-error {
+[data-theme='cream'] .extsub-error {
   margin: 0 16px 14px;
 }
 
 /* ---------- 节点弹窗 ---------- */
 
 /* 配置指纹：mono 代码片 */
-[data-theme="cream"] .extsub-sha {
+[data-theme='cream'] .extsub-sha {
   display: inline-block;
   padding: 3px 7px;
   border: var(--cg-border);
@@ -836,13 +894,13 @@
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .06em;
+  letter-spacing: 0.06em;
   color: var(--cg-ink);
 }
 
 /* ---------- 编辑弹窗复选框 ---------- */
 
-[data-theme="cream"] .extsub-check {
+[data-theme='cream'] .extsub-check {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -854,7 +912,9 @@
   font-weight: 750;
   color: var(--cg-ink);
   cursor: pointer;
-  transition: transform 160ms var(--cg-ease), background-color 160ms var(--cg-ease);
+  transition:
+    transform 160ms var(--cg-ease),
+    background-color 160ms var(--cg-ease);
 }
 
 .extsub-check:hover {
@@ -866,7 +926,7 @@
   background: var(--cg-lime-soft);
 }
 
-[data-theme="cream"] .extsub-check-input {
+[data-theme='cream'] .extsub-check-input {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
@@ -876,7 +936,7 @@
 /* ---------- 响应式 ---------- */
 
 @container cg-main (max-width: 900px) {
-  [data-theme="cream"] .extsub-card-stats {
+  [data-theme='cream'] .extsub-card-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -889,14 +949,14 @@
    指标卡用 cg-metric 数字块，趋势条读取 --chart-* 变量。
    ============================================================ */
 
-[data-theme="cream"] .cg-runtime {
+[data-theme='cream'] .cg-runtime {
   gap: 18px;
   font-variant-numeric: tabular-nums;
 }
 
 /* ---------- 顶部 Eyebrow 行 ---------- */
 
-[data-theme="cream"] .cg-runtime-topline {
+[data-theme='cream'] .cg-runtime-topline {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -904,7 +964,7 @@
   flex-wrap: wrap;
 }
 
-[data-theme="cream"] .cg-runtime-topline-side {
+[data-theme='cream'] .cg-runtime-topline-side {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -913,7 +973,7 @@
 
 /* 实时采样 pill 的状态点 */
 .cg-runtime-live::before {
-  content: "";
+  content: '';
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -927,12 +987,14 @@
 }
 
 @keyframes cream-cg-runtime-pulse {
-  50% { opacity: .35; }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 /* ---------- Hero：PANEL RUNTIME（浅色数据卡） ---------- */
 
-[data-theme="cream"] .cg-runtime-band {
+[data-theme='cream'] .cg-runtime-band {
   position: relative;
   display: grid;
   grid-template-columns: minmax(16rem, 1fr) minmax(26rem, 1.3fr);
@@ -942,7 +1004,7 @@
   padding: 18px 20px;
 }
 
-[data-theme="cream"] .cg-runtime-band-main {
+[data-theme='cream'] .cg-runtime-band-main {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -950,14 +1012,14 @@
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-runtime-band-primary {
+[data-theme='cream'] .cg-runtime-band-primary {
   display: flex;
   align-items: center;
   gap: 14px;
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-runtime-band-icon {
+[data-theme='cream'] .cg-runtime-band-icon {
   display: grid;
   place-items: center;
   width: 52px;
@@ -969,34 +1031,34 @@
   color: var(--cg-on-accent);
 }
 
-[data-theme="cream"] .cg-runtime-band[data-state='startup'] .cg-runtime-band-icon,
-[data-theme="cream"] .cg-runtime-band[data-state='updating'] .cg-runtime-band-icon {
+[data-theme='cream'] .cg-runtime-band[data-state='startup'] .cg-runtime-band-icon,
+[data-theme='cream'] .cg-runtime-band[data-state='updating'] .cg-runtime-band-icon {
   background: var(--cg-blue);
   border-color: var(--cg-blue);
   color: #fff; /* 固定白：蓝色块上的图标色，两种模式一致 */
 }
 
-[data-theme="cream"] .cg-runtime-band[data-state='faulted'] .cg-runtime-band-icon {
+[data-theme='cream'] .cg-runtime-band[data-state='faulted'] .cg-runtime-band-icon {
   background: var(--cg-red);
 }
 
-[data-theme="cream"] .cg-runtime-band-icon svg {
+[data-theme='cream'] .cg-runtime-band-icon svg {
   width: 24px;
   height: 24px;
   stroke-width: 2.2;
 }
 
-[data-theme="cream"] .cg-runtime-band-copy {
+[data-theme='cream'] .cg-runtime-band-copy {
   display: grid;
   gap: 5px;
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-runtime-band-copy .cg-micro {
+[data-theme='cream'] .cg-runtime-band-copy .cg-micro {
   color: var(--cg-lime-dark);
 }
 
-[data-theme="cream"] .cg-runtime-band-copy h2 {
+[data-theme='cream'] .cg-runtime-band-copy h2 {
   margin: 0;
   font-size: 24px;
   font-weight: 900;
@@ -1005,26 +1067,26 @@
   color: var(--cg-ink);
 }
 
-[data-theme="cream"] .cg-runtime-band-copy p {
+[data-theme='cream'] .cg-runtime-band-copy p {
   margin: 0;
   overflow: hidden;
   font-family: var(--cg-mono);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: .06em;
+  letter-spacing: 0.06em;
   color: var(--cg-subtle);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-[data-theme="cream"] .cg-runtime-band-meta {
+[data-theme='cream'] .cg-runtime-band-meta {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   margin: 0;
 }
 
-[data-theme="cream"] .cg-runtime-band-meta > div {
+[data-theme='cream'] .cg-runtime-band-meta > div {
   display: grid;
   gap: 6px;
   min-width: 0;
@@ -1034,16 +1096,16 @@
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .cg-runtime-band-meta dt {
+[data-theme='cream'] .cg-runtime-band-meta dt {
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 800;
-  letter-spacing: .1em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--cg-subtle);
 }
 
-[data-theme="cream"] .cg-runtime-band-meta dd {
+[data-theme='cream'] .cg-runtime-band-meta dd {
   margin: 0;
   overflow: hidden;
   font-family: var(--cg-mono);
@@ -1055,7 +1117,7 @@
 }
 
 /* 装饰信号条 */
-[data-theme="cream"] .cg-runtime-signal {
+[data-theme='cream'] .cg-runtime-signal {
   position: absolute;
   right: 0;
   bottom: 0;
@@ -1066,11 +1128,11 @@
   justify-content: flex-end;
   gap: 3px;
   padding: 0 16px;
-  opacity: .14;
+  opacity: 0.14;
   pointer-events: none;
 }
 
-[data-theme="cream"] .cg-runtime-signal i {
+[data-theme='cream'] .cg-runtime-signal i {
   width: 4px;
   height: var(--signal-height);
   max-height: 100%;
@@ -1079,13 +1141,13 @@
 
 /* ---------- 资源指标卡（cg-metric 数字块 + 计量条） ---------- */
 
-[data-theme="cream"] .cg-runtime-metric-grid {
+[data-theme='cream'] .cg-runtime-metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
 }
 
-[data-theme="cream"] .cg-runtime-metric {
+[data-theme='cream'] .cg-runtime-metric {
   display: grid;
   gap: 12px;
   padding: 12px;
@@ -1096,31 +1158,31 @@
   transform: translateY(-1px);
 }
 
-[data-theme="cream"] .cg-runtime-metric-main {
+[data-theme='cream'] .cg-runtime-metric-main {
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-runtime-metric .cg-metric-value {
+[data-theme='cream'] .cg-runtime-metric .cg-metric-value {
   min-width: 72px;
   font-size: 16px;
 }
 
-[data-theme="cream"] .cg-runtime-metric .cg-metric-label {
+[data-theme='cream'] .cg-runtime-metric .cg-metric-label {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
 
-[data-theme="cream"] .cg-runtime-metric .cg-metric-label svg {
+[data-theme='cream'] .cg-runtime-metric .cg-metric-label svg {
   width: 14px;
   height: 14px;
   stroke-width: 2.2;
 }
 
-[data-theme="cream"] .cg-runtime-meter {
+[data-theme='cream'] .cg-runtime-meter {
   height: 8px;
   overflow: hidden;
   border: 2px solid var(--cg-ink-soft);
@@ -1128,7 +1190,7 @@
   background: var(--cg-paper-warm);
 }
 
-[data-theme="cream"] .cg-runtime-meter i {
+[data-theme='cream'] .cg-runtime-meter i {
   display: block;
   width: var(--meter-value);
   height: 100%;
@@ -1136,39 +1198,39 @@
   transition: width 350ms var(--cg-ease);
 }
 
-[data-theme="cream"] .cg-runtime-metric[data-tone='warning'] .cg-runtime-meter i {
+[data-theme='cream'] .cg-runtime-metric[data-tone='warning'] .cg-runtime-meter i {
   background: var(--cg-blue);
 }
 
-[data-theme="cream"] .cg-runtime-metric[data-tone='warning'] .cg-metric-value {
+[data-theme='cream'] .cg-runtime-metric[data-tone='warning'] .cg-metric-value {
   background: var(--cg-blue-soft);
   color: var(--cg-blue);
 }
 
-[data-theme="cream"] .cg-runtime-metric[data-tone='critical'] .cg-runtime-meter i {
+[data-theme='cream'] .cg-runtime-metric[data-tone='critical'] .cg-runtime-meter i {
   background: var(--cg-red);
 }
 
-[data-theme="cream"] .cg-runtime-metric[data-tone='critical'] .cg-metric-value {
+[data-theme='cream'] .cg-runtime-metric[data-tone='critical'] .cg-metric-value {
   background: var(--cg-red-soft);
   color: var(--cg-red);
 }
 
 /* ---------- 通用区块头 ---------- */
 
-[data-theme="cream"] .cg-runtime-main-grid {
+[data-theme='cream'] .cg-runtime-main-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(18rem, 0.8fr);
   gap: 16px;
   align-items: stretch;
 }
 
-[data-theme="cream"] .cg-runtime-section {
+[data-theme='cream'] .cg-runtime-section {
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-runtime-section-head,
-[data-theme="cream"] .cg-runtime-terminal-head {
+[data-theme='cream'] .cg-runtime-section-head,
+[data-theme='cream'] .cg-runtime-terminal-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1177,11 +1239,11 @@
   border-bottom: var(--cg-border);
 }
 
-[data-theme="cream"] .cg-runtime-terminal-head {
+[data-theme='cream'] .cg-runtime-terminal-head {
   border-bottom: var(--cg-border);
 }
 
-[data-theme="cream"] .cg-runtime-section-title {
+[data-theme='cream'] .cg-runtime-section-title {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1189,7 +1251,7 @@
   font-size: 18px;
 }
 
-[data-theme="cream"] .cg-runtime-terminal-title {
+[data-theme='cream'] .cg-runtime-terminal-title {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1202,13 +1264,13 @@
 
 /* ---------- 资源趋势（--chart-* 采样条） ---------- */
 
-[data-theme="cream"] .cg-runtime-trend-list {
+[data-theme='cream'] .cg-runtime-trend-list {
   display: grid;
   gap: 16px;
   padding: 14px 16px;
 }
 
-[data-theme="cream"] .cg-runtime-trend {
+[data-theme='cream'] .cg-runtime-trend {
   display: grid;
   grid-template-columns: 8.5rem minmax(0, 1fr);
   align-items: center;
@@ -1216,18 +1278,18 @@
   margin: 0;
 }
 
-[data-theme="cream"] .cg-runtime-trend figcaption {
+[data-theme='cream'] .cg-runtime-trend figcaption {
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-runtime-trend figcaption span {
+[data-theme='cream'] .cg-runtime-trend figcaption span {
   display: block;
   font-size: 12px;
   font-weight: 800;
   color: var(--cg-ink);
 }
 
-[data-theme="cream"] .cg-runtime-trend figcaption strong {
+[data-theme='cream'] .cg-runtime-trend figcaption strong {
   display: block;
   margin-top: 4px;
   font-family: var(--cg-mono);
@@ -1236,7 +1298,7 @@
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-runtime-trend-bars {
+[data-theme='cream'] .cg-runtime-trend-bars {
   display: grid;
   height: 52px;
   grid-template-columns: repeat(36, minmax(1px, 1fr));
@@ -1245,31 +1307,33 @@
   border-bottom: var(--cg-border);
 }
 
-[data-theme="cream"] .cg-runtime-trend-bars i {
+[data-theme='cream'] .cg-runtime-trend-bars i {
   min-height: 2px;
   height: var(--sample-value);
   border-radius: 2px 2px 0 0;
   background: var(--trend-color, var(--chart-1));
-  transition: height 350ms var(--cg-ease), opacity 160ms var(--cg-ease);
+  transition:
+    height 350ms var(--cg-ease),
+    opacity 160ms var(--cg-ease);
 }
 
 .cg-runtime-trend-bars i:hover {
-  opacity: .72;
+  opacity: 0.72;
 }
 
-[data-theme="cream"] .cg-runtime-trend-bars i.is-empty {
+[data-theme='cream'] .cg-runtime-trend-bars i.is-empty {
   background: var(--cg-paper-warm);
 }
 
 /* ---------- 服务状态列表 ---------- */
 
-[data-theme="cream"] .cg-runtime-service-list {
+[data-theme='cream'] .cg-runtime-service-list {
   display: grid;
   gap: 8px;
   padding: 12px;
 }
 
-[data-theme="cream"] .cg-runtime-service-row {
+[data-theme='cream'] .cg-runtime-service-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -1280,7 +1344,7 @@
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .cg-runtime-service-icon {
+[data-theme='cream'] .cg-runtime-service-icon {
   display: grid;
   place-items: center;
   width: 34px;
@@ -1292,55 +1356,55 @@
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-runtime-service-icon svg {
+[data-theme='cream'] .cg-runtime-service-icon svg {
   width: 16px;
   height: 16px;
   stroke-width: 2.2;
 }
 
-[data-theme="cream"] .cg-runtime-service-icon.is-ok {
+[data-theme='cream'] .cg-runtime-service-icon.is-ok {
   background: var(--cg-lime);
   color: var(--cg-on-accent);
 }
 
-[data-theme="cream"] .cg-runtime-service-icon.is-warning {
+[data-theme='cream'] .cg-runtime-service-icon.is-warning {
   background: var(--cg-blue-soft);
   color: var(--cg-blue);
 }
 
-[data-theme="cream"] .cg-runtime-service-row p {
+[data-theme='cream'] .cg-runtime-service-row p {
   min-width: 0;
   margin: 0;
 }
 
-[data-theme="cream"] .cg-runtime-service-row strong {
+[data-theme='cream'] .cg-runtime-service-row strong {
   display: block;
   font-size: 13px;
   font-weight: 800;
   color: var(--cg-ink);
 }
 
-[data-theme="cream"] .cg-runtime-service-row small {
+[data-theme='cream'] .cg-runtime-service-row small {
   display: block;
   margin-top: 2px;
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--cg-muted);
 }
 
 /* ---------- Go 进程详情（浅色数据卡） ---------- */
 
-[data-theme="cream"] .cg-runtime-process-grid {
+[data-theme='cream'] .cg-runtime-process-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   padding: 14px 16px;
 }
 
-[data-theme="cream"] .cg-runtime-process-metric {
+[data-theme='cream'] .cg-runtime-process-metric {
   display: grid;
   gap: 8px;
   min-width: 0;
@@ -1357,16 +1421,16 @@
   gap: 8px;
 }
 
-[data-theme="cream"] .cg-runtime-process-metric span {
+[data-theme='cream'] .cg-runtime-process-metric span {
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 800;
-  letter-spacing: .1em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--cg-subtle);
 }
 
-[data-theme="cream"] .cg-runtime-process-metric strong {
+[data-theme='cream'] .cg-runtime-process-metric strong {
   overflow: hidden;
   font-family: var(--cg-mono);
   font-size: 14px;
@@ -1376,14 +1440,14 @@
   white-space: nowrap;
 }
 
-[data-theme="cream"] .cg-runtime-process-track {
+[data-theme='cream'] .cg-runtime-process-track {
   height: 6px;
   overflow: hidden;
   border-radius: var(--cg-r-pill);
   background: var(--cg-paper-warm);
 }
 
-[data-theme="cream"] .cg-runtime-process-track i {
+[data-theme='cream'] .cg-runtime-process-track i {
   display: block;
   width: var(--meter-value);
   height: 100%;
@@ -1391,12 +1455,12 @@
   transition: width 350ms var(--cg-ease);
 }
 
-[data-theme="cream"] .cg-runtime-process-metric > small {
+[data-theme='cream'] .cg-runtime-process-metric > small {
   overflow: hidden;
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   color: var(--cg-subtle);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1404,11 +1468,11 @@
 
 /* ---------- 后台任务列表 ---------- */
 
-[data-theme="cream"] .cg-runtime-task-list {
+[data-theme='cream'] .cg-runtime-task-list {
   display: grid;
 }
 
-[data-theme="cream"] .cg-runtime-task-row {
+[data-theme='cream'] .cg-runtime-task-row {
   display: grid;
   grid-template-columns: minmax(15rem, 1.5fr) auto repeat(3, minmax(7rem, 0.7fr));
   align-items: center;
@@ -1433,23 +1497,23 @@
   margin-bottom: 3px;
   font-size: 9px;
   font-weight: 800;
-  letter-spacing: .1em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-runtime-task-name {
+[data-theme='cream'] .cg-runtime-task-name {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-runtime-task-name > div {
+[data-theme='cream'] .cg-runtime-task-name > div {
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-runtime-task-name strong {
+[data-theme='cream'] .cg-runtime-task-name strong {
   display: block;
   overflow: hidden;
   font-size: 13px;
@@ -1459,7 +1523,7 @@
   white-space: nowrap;
 }
 
-[data-theme="cream"] .cg-runtime-task-name small {
+[data-theme='cream'] .cg-runtime-task-name small {
   display: block;
   margin-top: 2px;
   overflow: hidden;
@@ -1471,7 +1535,7 @@
   white-space: nowrap;
 }
 
-[data-theme="cream"] .cg-runtime-task-dot {
+[data-theme='cream'] .cg-runtime-task-dot {
   width: 10px;
   height: 10px;
   flex-shrink: 0;
@@ -1480,16 +1544,16 @@
   background: var(--cg-paper-warm);
 }
 
-[data-theme="cream"] .cg-runtime-task-row[data-status='running'] .cg-runtime-task-dot {
+[data-theme='cream'] .cg-runtime-task-row[data-status='running'] .cg-runtime-task-dot {
   background: var(--cg-lime);
   animation: cream-cg-runtime-pulse 1.4s ease-in-out infinite;
 }
 
-[data-theme="cream"] .cg-runtime-task-row[data-status='failed'] .cg-runtime-task-dot {
+[data-theme='cream'] .cg-runtime-task-row[data-status='failed'] .cg-runtime-task-dot {
   background: var(--cg-red);
 }
 
-[data-theme="cream"] .cg-runtime-task-row > p {
+[data-theme='cream'] .cg-runtime-task-row > p {
   grid-column: 1 / -1;
   margin: -2px 0 0 20px;
   overflow: hidden;
@@ -1503,7 +1567,7 @@
 
 /* ---------- 加载态 ---------- */
 
-[data-theme="cream"] .cg-runtime-loading {
+[data-theme='cream'] .cg-runtime-loading {
   display: grid;
   place-items: center;
   gap: 12px;
@@ -1511,12 +1575,12 @@
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-runtime-loading-bar {
+[data-theme='cream'] .cg-runtime-loading-bar {
   display: flex;
   gap: 6px;
 }
 
-[data-theme="cream"] .cg-runtime-loading-bar i {
+[data-theme='cream'] .cg-runtime-loading-bar i {
   width: 22px;
   height: 10px;
   border: var(--cg-border);
@@ -1525,31 +1589,40 @@
   animation: cream-cg-runtime-loading 900ms var(--cg-ease) infinite;
 }
 
-.cg-runtime-loading-bar i:nth-child(2) { animation-delay: 150ms; }
-.cg-runtime-loading-bar i:nth-child(3) { animation-delay: 300ms; }
+.cg-runtime-loading-bar i:nth-child(2) {
+  animation-delay: 150ms;
+}
+.cg-runtime-loading-bar i:nth-child(3) {
+  animation-delay: 300ms;
+}
 
 @keyframes cream-cg-runtime-loading {
-  0%, 100% { opacity: .35; }
-  50% { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* ---------- 响应式 ---------- */
 
 @container cg-main (max-width: 1180px) {
-  [data-theme="cream"] .cg-runtime-band {
+  [data-theme='cream'] .cg-runtime-band {
     grid-template-columns: 1fr;
   }
 
-  [data-theme="cream"] .cg-runtime-band-meta {
+  [data-theme='cream'] .cg-runtime-band-meta {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  [data-theme="cream"] .cg-runtime-metric-grid,
-  [data-theme="cream"] .cg-runtime-process-grid {
+  [data-theme='cream'] .cg-runtime-metric-grid,
+  [data-theme='cream'] .cg-runtime-process-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  [data-theme="cream"] .cg-runtime-task-row {
+  [data-theme='cream'] .cg-runtime-task-row {
     grid-template-columns: minmax(13rem, 1.4fr) auto repeat(2, minmax(7rem, 0.7fr));
   }
 
@@ -1559,42 +1632,42 @@
 }
 
 @container cg-main (max-width: 900px) {
-  [data-theme="cream"] .cg-runtime-main-grid {
+  [data-theme='cream'] .cg-runtime-main-grid {
     grid-template-columns: 1fr;
   }
 }
 
 @container cg-main (max-width: 640px) {
-  [data-theme="cream"] .cg-runtime-band {
+  [data-theme='cream'] .cg-runtime-band {
     padding: 14px;
   }
 
-  [data-theme="cream"] .cg-runtime-band-copy h2 {
+  [data-theme='cream'] .cg-runtime-band-copy h2 {
     font-size: 20px;
   }
 
-  [data-theme="cream"] .cg-runtime-band-copy p {
+  [data-theme='cream'] .cg-runtime-band-copy p {
     white-space: normal;
     overflow-wrap: anywhere;
   }
 
-  [data-theme="cream"] .cg-runtime-metric-grid,
-  [data-theme="cream"] .cg-runtime-process-grid {
+  [data-theme='cream'] .cg-runtime-metric-grid,
+  [data-theme='cream'] .cg-runtime-process-grid {
     grid-template-columns: 1fr;
   }
 
-  [data-theme="cream"] .cg-runtime-trend {
+  [data-theme='cream'] .cg-runtime-trend {
     grid-template-columns: 1fr;
     gap: 6px;
   }
 
-  [data-theme="cream"] .cg-runtime-trend figcaption {
+  [data-theme='cream'] .cg-runtime-trend figcaption {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
   }
 
-  [data-theme="cream"] .cg-runtime-task-row {
+  [data-theme='cream'] .cg-runtime-task-row {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
     padding: 10px 12px;
@@ -1607,15 +1680,15 @@
 
 @media (prefers-reduced-motion: reduce) {
   .cg-runtime-live.is-active::before,
-  [data-theme="cream"] .cg-runtime-task-row[data-status='running'] .cg-runtime-task-dot,
-  [data-theme="cream"] .cg-runtime-loading-bar i {
+  [data-theme='cream'] .cg-runtime-task-row[data-status='running'] .cg-runtime-task-dot,
+  [data-theme='cream'] .cg-runtime-loading-bar i {
     animation: none;
   }
 
-  [data-theme="cream"] .cg-runtime-metric,
-  [data-theme="cream"] .cg-runtime-meter i,
-  [data-theme="cream"] .cg-runtime-process-track i,
-  [data-theme="cream"] .cg-runtime-trend-bars i {
+  [data-theme='cream'] .cg-runtime-metric,
+  [data-theme='cream'] .cg-runtime-meter i,
+  [data-theme='cream'] .cg-runtime-process-track i,
+  [data-theme='cream'] .cg-runtime-trend-bars i {
     transition: none;
   }
 }
@@ -1630,7 +1703,7 @@
 
 /* ---------- 顶部 Eyebrow 行 ---------- */
 
-[data-theme="cream"] .sv-topline {
+[data-theme='cream'] .sv-topline {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1640,7 +1713,7 @@
 
 /* ---------- 机器类型单选卡（添加服务器 Dialog） ---------- */
 
-[data-theme="cream"] .sv-radio-card {
+[data-theme='cream'] .sv-radio-card {
   display: flex;
   height: 38px;
   cursor: pointer;
@@ -1652,7 +1725,9 @@
   color: var(--cg-ink);
   font-size: 13px;
   font-weight: 750;
-  transition: transform 160ms var(--cg-ease), background-color 160ms var(--cg-ease);
+  transition:
+    transform 160ms var(--cg-ease),
+    background-color 160ms var(--cg-ease);
 }
 
 .sv-radio-card:hover {
@@ -1660,7 +1735,7 @@
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .sv-radio-card.is-active {
+[data-theme='cream'] .sv-radio-card.is-active {
   background: var(--cg-lime);
   color: var(--cg-on-accent);
   box-shadow: var(--cg-shadow-control);
@@ -1674,7 +1749,7 @@
 
 /* ---------- 安装命令代码块（Charcoal 技术区） ---------- */
 
-[data-theme="cream"] .sv-code-block {
+[data-theme='cream'] .sv-code-block {
   overflow: auto;
   border: 2px solid var(--cg-charcoal-line);
   border-radius: var(--cg-r-control);
@@ -1690,7 +1765,7 @@
 
 /* ---------- 清理 / 重建回执 mono 列表 ---------- */
 
-[data-theme="cream"] .sv-mono-list {
+[data-theme='cream'] .sv-mono-list {
   border: var(--cg-border);
   border-radius: var(--cg-r-control);
   background: var(--cg-paper-soft);
@@ -1699,12 +1774,14 @@
 
 /* ---------- 服务器卡片 ---------- */
 
-[data-theme="cream"] .sv-server-card {
+[data-theme='cream'] .sv-server-card {
   border: var(--cg-border);
   border-radius: var(--cg-r-card);
   background: var(--cg-paper-light);
   box-shadow: var(--cg-shadow-card);
-  transition: transform 160ms var(--cg-ease), box-shadow 160ms var(--cg-ease);
+  transition:
+    transform 160ms var(--cg-ease),
+    box-shadow 160ms var(--cg-ease);
 }
 
 .sv-server-card:hover {
@@ -1712,25 +1789,25 @@
   box-shadow: var(--cg-shadow-panel);
 }
 
-[data-theme="cream"] .sv-server-card.is-online {
+[data-theme='cream'] .sv-server-card.is-online {
   border-top: 3px solid var(--cg-lime-dark);
 }
 
-[data-theme="cream"] .sv-server-card.is-transitioning {
+[data-theme='cream'] .sv-server-card.is-transitioning {
   border-top: 3px solid var(--cg-blue);
 }
 
-[data-theme="cream"] .sv-server-card.is-offline {
+[data-theme='cream'] .sv-server-card.is-offline {
   border-top: 3px solid var(--cg-red);
 }
 
-[data-theme="cream"] .sv-card-head {
+[data-theme='cream'] .sv-card-head {
   border-bottom: var(--cg-border);
 }
 
 /* 卡片左上角状态图标块 */
 
-[data-theme="cream"] .sv-icon-chip {
+[data-theme='cream'] .sv-icon-chip {
   display: grid;
   place-items: center;
   width: 32px;
@@ -1742,136 +1819,138 @@
   color: var(--cg-ink);
 }
 
-[data-theme="cream"] .sv-icon-chip.is-online {
+[data-theme='cream'] .sv-icon-chip.is-online {
   background: var(--cg-lime);
   color: var(--cg-on-accent);
 }
 
-[data-theme="cream"] .sv-icon-chip.is-transitioning {
+[data-theme='cream'] .sv-icon-chip.is-transitioning {
   background: var(--cg-blue);
   color: #fff;
 }
 
-[data-theme="cream"] .sv-icon-chip.is-offline {
+[data-theme='cream'] .sv-icon-chip.is-offline {
   background: var(--cg-red);
   color: var(--cg-on-accent);
 }
 
 /* 卡片顶部连接状态横幅 */
 
-[data-theme="cream"] .sv-banner.is-online {
+[data-theme='cream'] .sv-banner.is-online {
   background: var(--cg-lime-soft);
   color: var(--cg-lime-dark);
 }
 
-[data-theme="cream"] .sv-banner.is-transitioning {
+[data-theme='cream'] .sv-banner.is-transitioning {
   background: var(--cg-blue-soft);
   color: var(--cg-blue);
 }
 
-[data-theme="cream"] .sv-banner.is-offline {
+[data-theme='cream'] .sv-banner.is-offline {
   background: var(--cg-red-soft);
   color: var(--cg-red);
 }
 
 /* ---------- 指标进度条（覆盖 ui/progress 指示器颜色） ---------- */
 
-[data-theme="cream"] .sv-progress-ok [data-slot='progress-indicator'] {
+[data-theme='cream'] .sv-progress-ok [data-slot='progress-indicator'] {
   background: var(--cg-lime-dark);
 }
 
-[data-theme="cream"] .sv-progress-warn [data-slot='progress-indicator'] {
+[data-theme='cream'] .sv-progress-warn [data-slot='progress-indicator'] {
   background: var(--cg-blue);
 }
 
-[data-theme="cream"] .sv-progress-crit [data-slot='progress-indicator'] {
+[data-theme='cream'] .sv-progress-crit [data-slot='progress-indicator'] {
   background: var(--cg-red);
 }
 
-[data-theme="cream"] .sv-progress-idle [data-slot='progress-indicator'] {
+[data-theme='cream'] .sv-progress-idle [data-slot='progress-indicator'] {
   background: var(--cg-paper-warm);
 }
 
 /* 网络速率 */
 
-[data-theme="cream"] .sv-rate-up {
+[data-theme='cream'] .sv-rate-up {
   color: var(--cg-lime-dark);
 }
 
-[data-theme="cream"] .sv-rate-down {
+[data-theme='cream'] .sv-rate-down {
   color: var(--cg-blue);
 }
 
 /* ---------- 流量额度分段条 ---------- */
 
-[data-theme="cream"] .sv-seg {
+[data-theme='cream'] .sv-seg {
   height: 8px;
   border-radius: 2px;
   background: var(--cg-paper-warm);
 }
 
-[data-theme="cream"] .sv-seg-ok {
+[data-theme='cream'] .sv-seg-ok {
   background: var(--cg-lime-dark);
 }
 
-[data-theme="cream"] .sv-seg-warn {
+[data-theme='cream'] .sv-seg-warn {
   background: var(--cg-blue);
 }
 
-[data-theme="cream"] .sv-seg-crit {
+[data-theme='cream'] .sv-seg-crit {
   background: var(--cg-red);
 }
 
-[data-theme="cream"] .sv-seg-idle {
+[data-theme='cream'] .sv-seg-idle {
   background: var(--cg-subtle);
 }
 
 /* ---------- 延迟趋势条（LatencyStrip） ---------- */
 
-[data-theme="cream"] .sv-lat {
+[data-theme='cream'] .sv-lat {
   background: var(--cg-paper-warm);
 }
 
-[data-theme="cream"] .sv-lat.is-ok {
+[data-theme='cream'] .sv-lat.is-ok {
   background: var(--cg-lime-dark);
 }
 
-[data-theme="cream"] .sv-lat.is-warn {
+[data-theme='cream'] .sv-lat.is-warn {
   background: var(--cg-blue);
 }
 
-[data-theme="cream"] .sv-lat.is-crit {
+[data-theme='cream'] .sv-lat.is-crit {
   background: var(--cg-red);
 }
 
 /* ---------- 趋势图 ---------- */
 
-[data-theme="cream"] .sv-chart-box {
+[data-theme='cream'] .sv-chart-box {
   border: var(--cg-border);
   border-radius: var(--cg-r-control);
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .sv-line-ok {
+[data-theme='cream'] .sv-line-ok {
   color: var(--cg-lime-dark);
 }
 
-[data-theme="cream"] .sv-line-info {
+[data-theme='cream'] .sv-line-info {
   color: var(--cg-blue);
 }
 
-[data-theme="cream"] .sv-line-warn {
+[data-theme='cream'] .sv-line-warn {
   color: var(--cg-red);
 }
 
 /* ---------- 国家选择 Combobox ---------- */
 
-[data-theme="cream"] .sv-combobox {
+[data-theme='cream'] .sv-combobox {
   border: var(--cg-border);
   border-radius: var(--cg-r-control);
   background: var(--cg-paper-light);
   box-shadow: var(--cg-shadow-control);
-  transition: border-color 160ms var(--cg-ease), box-shadow 160ms var(--cg-ease);
+  transition:
+    border-color 160ms var(--cg-ease),
+    box-shadow 160ms var(--cg-ease);
 }
 
 .sv-combobox:focus-within {
@@ -1879,7 +1958,7 @@
   box-shadow: var(--cg-shadow-card);
 }
 
-[data-theme="cream"] .sv-combobox-popup {
+[data-theme='cream'] .sv-combobox-popup {
   border: var(--cg-border);
   border-radius: var(--cg-r-card);
   background: var(--cg-paper-light);
@@ -1887,19 +1966,21 @@
   box-shadow: var(--cg-shadow-card);
 }
 
-[data-theme="cream"] .sv-combobox-item[data-highlighted] {
+[data-theme='cream'] .sv-combobox-item[data-highlighted] {
   background: var(--cg-lime-soft);
   color: var(--cg-ink);
 }
 
 /* ---------- 标签输入 TagInput ---------- */
 
-[data-theme="cream"] .sv-tag-input {
+[data-theme='cream'] .sv-tag-input {
   border: var(--cg-border);
   border-radius: var(--cg-r-control);
   background: var(--cg-paper-light);
   box-shadow: var(--cg-shadow-control);
-  transition: border-color 160ms var(--cg-ease), box-shadow 160ms var(--cg-ease);
+  transition:
+    border-color 160ms var(--cg-ease),
+    box-shadow 160ms var(--cg-ease);
 }
 
 .sv-tag-input:focus-within {
@@ -1907,7 +1988,7 @@
   box-shadow: var(--cg-shadow-card);
 }
 
-[data-theme="cream"] .sv-tag-chip {
+[data-theme='cream'] .sv-tag-chip {
   display: inline-flex;
   align-items: center;
   gap: 2px;
@@ -1921,7 +2002,7 @@
   font-weight: 750;
 }
 
-[data-theme="cream"] .sv-tag-chip-remove {
+[data-theme='cream'] .sv-tag-chip-remove {
   display: inline-grid;
   place-items: center;
   width: 16px;
@@ -1929,7 +2010,9 @@
   border-radius: 4px;
   color: var(--cg-muted);
   cursor: pointer;
-  transition: background-color 150ms var(--cg-ease), color 150ms var(--cg-ease);
+  transition:
+    background-color 150ms var(--cg-ease),
+    color 150ms var(--cg-ease);
 }
 
 .sv-tag-chip-remove:hover {
@@ -1944,13 +2027,13 @@
    大纸张 Frame + 横向 Category Tabs + 两列设置卡片
    ============================================================ */
 
-[data-theme="cream"] .cg-settings {
+[data-theme='cream'] .cg-settings {
   animation: cream-cg-page-in 300ms var(--cg-ease) both;
 }
 
 /* ---------- 顶部 Eyebrow 行 ---------- */
 
-[data-theme="cream"] .cg-set-topline {
+[data-theme='cream'] .cg-set-topline {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1958,7 +2041,7 @@
   flex-wrap: wrap;
 }
 
-[data-theme="cream"] .cg-set-topline-side {
+[data-theme='cream'] .cg-set-topline-side {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1967,7 +2050,7 @@
 
 /* ---------- Header Card ---------- */
 
-[data-theme="cream"] .cg-set-header {
+[data-theme='cream'] .cg-set-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -1976,14 +2059,14 @@
   flex-wrap: wrap;
 }
 
-[data-theme="cream"] .cg-set-header-main {
+[data-theme='cream'] .cg-set-header-main {
   display: flex;
   align-items: flex-start;
   gap: 14px;
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-set-header-icon {
+[data-theme='cream'] .cg-set-header-icon {
   display: grid;
   place-items: center;
   width: 48px;
@@ -1995,29 +2078,29 @@
   color: var(--cg-on-accent);
 }
 
-[data-theme="cream"] .cg-set-header-icon svg {
+[data-theme='cream'] .cg-set-header-icon svg {
   width: 22px;
   height: 22px;
   stroke-width: 2.2;
 }
 
-[data-theme="cream"] .cg-set-header-tag {
+[data-theme='cream'] .cg-set-header-tag {
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-set-title {
+[data-theme='cream'] .cg-set-title {
   margin: 6px 0 0;
   font-size: 30px;
 }
 
-[data-theme="cream"] .cg-set-subtitle {
+[data-theme='cream'] .cg-set-subtitle {
   margin: 6px 0 0;
   font-size: 13px;
   font-weight: 550;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-set-header-side {
+[data-theme='cream'] .cg-set-header-side {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2026,7 +2109,7 @@
 
 /* ---------- 横向 Category Tabs（cg-pill 按钮组） ---------- */
 
-[data-theme="cream"] .cg-set-tabs {
+[data-theme='cream'] .cg-set-tabs {
   position: sticky;
   top: 8px;
   z-index: 20;
@@ -2037,9 +2120,11 @@
   background: var(--cg-paper);
 }
 
-[data-theme="cream"] .cg-set-tab {
+[data-theme='cream'] .cg-set-tab {
   cursor: pointer;
-  transition: transform 160ms var(--cg-ease), background-color 160ms var(--cg-ease);
+  transition:
+    transform 160ms var(--cg-ease),
+    background-color 160ms var(--cg-ease);
 }
 
 .cg-set-tab:hover {
@@ -2050,40 +2135,40 @@
   transform: translateY(1px);
 }
 
-[data-theme="cream"] .cg-set-tab svg {
+[data-theme='cream'] .cg-set-tab svg {
   width: 13px;
   height: 13px;
 }
 
 /* ---------- 分区面板 ---------- */
 
-[data-theme="cream"] .cg-set-form {
+[data-theme='cream'] .cg-set-form {
   display: grid;
   gap: 16px;
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-set-panel {
+[data-theme='cream'] .cg-set-panel {
   display: grid;
   gap: 16px;
   min-width: 0;
   align-content: start;
 }
 
-[data-theme="cream"] .cg-set-panel[hidden] {
+[data-theme='cream'] .cg-set-panel[hidden] {
   display: none;
 }
 
 /* ---------- 两列设置卡片（左：描述/图标，右：配置控件） ---------- */
 
-[data-theme="cream"] .cg-set-card {
+[data-theme='cream'] .cg-set-card {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
   gap: 20px;
   padding: 18px 20px;
 }
 
-[data-theme="cream"] .cg-set-card-aside {
+[data-theme='cream'] .cg-set-card-aside {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -2091,7 +2176,7 @@
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-set-card-icon {
+[data-theme='cream'] .cg-set-card-icon {
   display: grid;
   place-items: center;
   width: 40px;
@@ -2103,22 +2188,22 @@
   color: var(--cg-on-accent);
 }
 
-[data-theme="cream"] .cg-set-card-icon svg {
+[data-theme='cream'] .cg-set-card-icon svg {
   width: 18px;
   height: 18px;
   stroke-width: 2.2;
 }
 
-[data-theme="cream"] .cg-set-card-tag {
+[data-theme='cream'] .cg-set-card-tag {
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-set-card-title {
+[data-theme='cream'] .cg-set-card-title {
   margin: 0;
   font-size: 20px;
 }
 
-[data-theme="cream"] .cg-set-card-desc {
+[data-theme='cream'] .cg-set-card-desc {
   margin: 0;
   font-size: 12.5px;
   font-weight: 550;
@@ -2126,14 +2211,14 @@
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-set-card-body {
+[data-theme='cream'] .cg-set-card-body {
   display: grid;
   gap: 14px;
   align-content: start;
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-set-facts {
+[data-theme='cream'] .cg-set-facts {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2143,34 +2228,34 @@
 
 /* ---------- 卡片内分组 ---------- */
 
-[data-theme="cream"] .cg-set-group {
+[data-theme='cream'] .cg-set-group {
   display: grid;
   gap: 12px;
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-set-group-title {
+[data-theme='cream'] .cg-set-group-title {
   font-size: 13px;
   font-weight: 850;
   color: var(--cg-ink);
 }
 
-[data-theme="cream"] .cg-set-sublabel {
+[data-theme='cream'] .cg-set-sublabel {
   font-family: var(--cg-mono);
   font-size: 9.5px;
   font-weight: 800;
-  letter-spacing: .1em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-set-divider {
+[data-theme='cream'] .cg-set-divider {
   border-top: 2px dashed var(--cg-paper-warm);
 }
 
 /* ---------- 说明文字 / 行内消息 ---------- */
 
-[data-theme="cream"] .cg-set-note {
+[data-theme='cream'] .cg-set-note {
   margin: 0;
   font-size: 12px;
   font-weight: 550;
@@ -2178,7 +2263,7 @@
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-set-note code {
+[data-theme='cream'] .cg-set-note code {
   font-family: var(--cg-mono);
   font-size: 10.5px;
   font-weight: 700;
@@ -2189,7 +2274,7 @@
   color: var(--cg-ink);
 }
 
-[data-theme="cream"] .cg-set-inline-row {
+[data-theme='cream'] .cg-set-inline-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2197,28 +2282,28 @@
   flex-wrap: wrap;
 }
 
-[data-theme="cream"] .cg-set-actions {
+[data-theme='cream'] .cg-set-actions {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
 
-[data-theme="cream"] .cg-set-msg-ok {
+[data-theme='cream'] .cg-set-msg-ok {
   margin: 0;
   font-size: 12.5px;
   font-weight: 700;
   color: var(--cg-lime-dark);
 }
 
-[data-theme="cream"] .cg-set-msg-err {
+[data-theme='cream'] .cg-set-msg-err {
   margin: 0;
   font-size: 12.5px;
   font-weight: 700;
   color: var(--cg-red);
 }
 
-[data-theme="cream"] .cg-set-msg-info {
+[data-theme='cream'] .cg-set-msg-info {
   margin: 0;
   font-size: 12.5px;
   font-weight: 700;
@@ -2227,7 +2312,7 @@
 
 /* ---------- 文本域（公告 / 自定义 CSS / PEM） ---------- */
 
-[data-theme="cream"] .cg-set-textarea {
+[data-theme='cream'] .cg-set-textarea {
   width: 100%;
   min-width: 0;
   padding: 8px 10px;
@@ -2239,7 +2324,9 @@
   font-size: 12px;
   line-height: 1.6;
   outline: none;
-  transition: border-color 160ms var(--cg-ease), box-shadow 160ms var(--cg-ease);
+  transition:
+    border-color 160ms var(--cg-ease),
+    box-shadow 160ms var(--cg-ease);
 }
 
 .cg-set-textarea::placeholder {
@@ -2253,7 +2340,7 @@
 
 /* ---------- 分段切换（自定义汇率基准侧） ---------- */
 
-[data-theme="cream"] .cg-set-segment {
+[data-theme='cream'] .cg-set-segment {
   display: inline-flex;
   gap: 4px;
   padding: 3px;
@@ -2262,7 +2349,7 @@
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .cg-set-segment button {
+[data-theme='cream'] .cg-set-segment button {
   min-height: 26px;
   padding: 0 10px;
   border: 2px solid transparent;
@@ -2272,20 +2359,22 @@
   font-size: 11px;
   font-weight: 800;
   cursor: pointer;
-  transition: background-color 160ms var(--cg-ease), color 160ms var(--cg-ease);
+  transition:
+    background-color 160ms var(--cg-ease),
+    color 160ms var(--cg-ease);
 }
 
 .cg-set-segment button:hover {
   color: var(--cg-ink);
 }
 
-[data-theme="cream"] .cg-set-segment button.is-active {
+[data-theme='cream'] .cg-set-segment button.is-active {
   background: var(--cg-lime);
   border-color: var(--cg-ink-soft);
   color: var(--cg-on-accent);
 }
 
-[data-theme="cream"] .cg-set-ratio {
+[data-theme='cream'] .cg-set-ratio {
   font-family: var(--cg-mono);
   font-size: 16px;
   font-weight: 800;
@@ -2295,7 +2384,7 @@
 
 /* 只读展示字段（展示币种，与输入控件同形） */
 
-[data-theme="cream"] .cg-set-static-field {
+[data-theme='cream'] .cg-set-static-field {
   display: flex;
   align-items: center;
   height: 32px;
@@ -2311,12 +2400,12 @@
 
 /* ---------- 自定义汇率列表 ---------- */
 
-[data-theme="cream"] .cg-set-rate-list {
+[data-theme='cream'] .cg-set-rate-list {
   display: grid;
   gap: 8px;
 }
 
-[data-theme="cream"] .cg-set-rate-row {
+[data-theme='cream'] .cg-set-rate-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2325,12 +2414,12 @@
   padding-bottom: 8px;
 }
 
-[data-theme="cream"] .cg-set-rate-row + .cg-set-rate-row {
+[data-theme='cream'] .cg-set-rate-row + .cg-set-rate-row {
   border-top: 2px dashed var(--cg-paper-warm);
   padding-top: 8px;
 }
 
-[data-theme="cream"] .cg-set-rate-info {
+[data-theme='cream'] .cg-set-rate-info {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2338,14 +2427,14 @@
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-set-rate-text {
+[data-theme='cream'] .cg-set-rate-text {
   font-size: 13px;
   font-weight: 700;
   color: var(--cg-ink);
   font-variant-numeric: tabular-nums;
 }
 
-[data-theme="cream"] .cg-set-rate-actions {
+[data-theme='cream'] .cg-set-rate-actions {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2357,12 +2446,12 @@
 
 /* ---------- 告警测试结果 ---------- */
 
-[data-theme="cream"] .cg-set-alert-results {
+[data-theme='cream'] .cg-set-alert-results {
   display: grid;
   gap: 8px;
 }
 
-[data-theme="cream"] .cg-set-alert-line {
+[data-theme='cream'] .cg-set-alert-line {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2371,7 +2460,7 @@
 
 /* ---------- 保存栏（固定分区底部，lime 主按钮） ---------- */
 
-[data-theme="cream"] .cg-set-save-bar {
+[data-theme='cream'] .cg-set-save-bar {
   position: sticky;
   bottom: 12px;
   z-index: 15;
@@ -2387,23 +2476,23 @@
   box-shadow: var(--cg-shadow-card);
 }
 
-[data-theme="cream"] .cg-set-save-hint {
+[data-theme='cream'] .cg-set-save-hint {
   color: var(--cg-muted);
 }
 
 /* ---------- 语义卡（面板更新 / 面板维护） ---------- */
 
-[data-theme="cream"] .cg-set-semantic-title {
+[data-theme='cream'] .cg-set-semantic-title {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
 
-[data-theme="cream"] .cg-set-semantic-tag {
-  opacity: .8;
+[data-theme='cream'] .cg-set-semantic-tag {
+  opacity: 0.8;
 }
 
-[data-theme="cream"] .cg-set-semantic-body {
+[data-theme='cream'] .cg-set-semantic-body {
   display: grid;
   gap: 12px;
   align-content: start;
@@ -2411,7 +2500,7 @@
 
 /* ---------- Dialog 空态 ---------- */
 
-[data-theme="cream"] .cg-set-dialog-empty {
+[data-theme='cream'] .cg-set-dialog-empty {
   margin: 0;
   padding: 32px 16px;
   text-align: center;
@@ -2423,7 +2512,7 @@
 /* ---------- 响应式 ---------- */
 
 @container cg-main (max-width: 700px) {
-  [data-theme="cream"] .cg-set-card {
+  [data-theme='cream'] .cg-set-card {
     grid-template-columns: 1fr;
   }
 }
@@ -2438,69 +2527,69 @@
 
 /* ---------- 用户卡片列表 ---------- */
 
-[data-theme="cream"] .cg-users-list {
+[data-theme='cream'] .cg-users-list {
   display: grid;
   gap: 14px;
 }
 
-[data-theme="cream"] .cg-user-metrics {
+[data-theme='cream'] .cg-user-metrics {
   display: grid;
   gap: 12px;
 }
 
 @container cg-main (min-width: 640px) {
-  [data-theme="cream"] .cg-user-metrics {
+  [data-theme='cream'] .cg-user-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @container cg-main (min-width: 1024px) {
-  [data-theme="cream"] .cg-user-metrics {
+  [data-theme='cream'] .cg-user-metrics {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
 
-[data-theme="cream"] .cg-user-metric {
+[data-theme='cream'] .cg-user-metric {
   display: grid;
   gap: 4px;
   min-width: 0;
   align-content: start;
 }
 
-[data-theme="cream"] .cg-user-metric-wide {
+[data-theme='cream'] .cg-user-metric-wide {
   grid-column: 1 / -1;
 }
 
-[data-theme="cream"] .cg-user-metric-label {
+[data-theme='cream'] .cg-user-metric-label {
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 800;
-  letter-spacing: .12em;
+  letter-spacing: 0.12em;
   line-height: 1;
   text-transform: uppercase;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-user-metric-value {
+[data-theme='cream'] .cg-user-metric-value {
   font-size: 13px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--cg-ink);
 }
 
-[data-theme="cream"] .cg-user-metric-value.is-muted {
+[data-theme='cream'] .cg-user-metric-value.is-muted {
   font-weight: 550;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-user-suburl {
+[data-theme='cream'] .cg-user-suburl {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
 
-[data-theme="cream"] .cg-user-suburl-text {
+[data-theme='cream'] .cg-user-suburl-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2511,7 +2600,7 @@
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-user-suburl-actions {
+[data-theme='cream'] .cg-user-suburl-actions {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -2520,20 +2609,20 @@
 
 /* ---------- 通用小件（对话框内） ---------- */
 
-[data-theme="cream"] .cg-hint {
+[data-theme='cream'] .cg-hint {
   font-size: 12px;
   font-weight: 550;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-checkbox {
+[data-theme='cream'] .cg-checkbox {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
   accent-color: var(--cg-blue);
 }
 
-[data-theme="cream"] .cg-check-row {
+[data-theme='cream'] .cg-check-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2546,7 +2635,9 @@
   font-weight: 650;
   color: var(--cg-ink);
   cursor: pointer;
-  transition: transform 160ms var(--cg-ease), background-color 160ms var(--cg-ease);
+  transition:
+    transform 160ms var(--cg-ease),
+    background-color 160ms var(--cg-ease);
 }
 
 .cg-check-row:hover {
@@ -2554,7 +2645,7 @@
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .cg-check-row-detail {
+[data-theme='cream'] .cg-check-row-detail {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2562,13 +2653,13 @@
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   color: var(--cg-muted);
 }
 
 /* 创建成功后的订阅链接（lime-soft 强调块） */
 
-[data-theme="cream"] .cg-users-created-url {
+[data-theme='cream'] .cg-users-created-url {
   padding: 12px;
   border: var(--cg-border);
   border-radius: var(--cg-r-control);
@@ -2583,7 +2674,7 @@
 
 /* 公告覆盖 textarea：对齐重主题 Input 的奶油描边 */
 
-[data-theme="cream"] .cg-textarea {
+[data-theme='cream'] .cg-textarea {
   width: 100%;
   min-width: 0;
   padding: 8px 10px;
@@ -2608,7 +2699,7 @@
 
 /* ---------- 订阅结果预览（Charcoal 技术面板） ---------- */
 
-[data-theme="cream"] .cg-users-preview {
+[data-theme='cream'] .cg-users-preview {
   height: min(65vh, 42rem);
   margin: 0;
   overflow: auto;
@@ -2619,7 +2710,7 @@
   white-space: pre;
 }
 
-[data-theme="cream"] .cg-users-preview-loading {
+[data-theme='cream'] .cg-users-preview-loading {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2629,7 +2720,7 @@
 /* ---------- 订阅二维码 ----------
    二维码可读性优先：两种模式都保持固定白底 + 深色描边。 */
 
-[data-theme="cream"] .cg-qr-box {
+[data-theme='cream'] .cg-qr-box {
   display: grid;
   place-items: center;
   padding: 16px;
@@ -2639,21 +2730,21 @@
   box-shadow: var(--cg-shadow-card);
 }
 
-[data-theme="cream"] .cg-qr-img {
+[data-theme='cream'] .cg-qr-img {
   display: block;
   border-radius: var(--cg-r-xs);
 }
 
 /* ---------- 分流策略（SubscriptionRoutingFields） ---------- */
 
-[data-theme="cream"] .cg-routing-details {
+[data-theme='cream'] .cg-routing-details {
   padding: 10px 12px;
   border: var(--cg-border);
   border-radius: var(--cg-r-control);
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .cg-routing-details > summary {
+[data-theme='cream'] .cg-routing-details > summary {
   cursor: pointer;
   font-size: 13px;
   font-weight: 800;
@@ -2662,7 +2753,7 @@
 
 /* ---------- 模板指派（TemplateAssignmentTab） ---------- */
 
-[data-theme="cream"] .cg-assign-panel {
+[data-theme='cream'] .cg-assign-panel {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
@@ -2670,7 +2761,7 @@
   padding: 12px 14px;
 }
 
-[data-theme="cream"] .cg-assign-users {
+[data-theme='cream'] .cg-assign-users {
   margin-top: 8px;
   display: grid;
   gap: 4px;
@@ -2682,7 +2773,7 @@
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .cg-assign-user-row {
+[data-theme='cream'] .cg-assign-user-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2699,38 +2790,38 @@
   background: var(--cg-paper-light);
 }
 
-[data-theme="cream"] .cg-assign-group {
+[data-theme='cream'] .cg-assign-group {
   padding: 12px 14px;
 }
 
-[data-theme="cream"] .cg-assign-group.is-dashed {
+[data-theme='cream'] .cg-assign-group.is-dashed {
   border-style: dashed;
 }
 
-[data-theme="cream"] .cg-assign-group-head {
+[data-theme='cream'] .cg-assign-group-head {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 
-[data-theme="cream"] .cg-assign-group-name {
+[data-theme='cream'] .cg-assign-group-name {
   font-size: 14px;
   font-weight: 850;
   color: var(--cg-ink);
 }
 
-[data-theme="cream"] .cg-assign-group-count {
+[data-theme='cream'] .cg-assign-group-count {
   margin-left: auto;
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-assign-chips {
+[data-theme='cream'] .cg-assign-chips {
   margin-top: 8px;
   display: flex;
   flex-wrap: wrap;
@@ -2743,7 +2834,7 @@
    Login — Cream Grid Tech「技术手册封面」
    ============================================================ */
 
-[data-theme="cream"] .cg-login {
+[data-theme='cream'] .cg-login {
   position: relative;
   display: grid;
   place-items: center;
@@ -2752,7 +2843,7 @@
   animation: cream-cg-page-in 300ms var(--cg-ease) both;
 }
 
-[data-theme="cream"] .cg-login-theme {
+[data-theme='cream'] .cg-login-theme {
   position: absolute;
   top: 16px;
   right: 16px;
@@ -2764,7 +2855,7 @@
 }
 
 @media (min-width: 768px) {
-  [data-theme="cream"] .cg-login-theme {
+  [data-theme='cream'] .cg-login-theme {
     top: 28px;
     right: 28px;
   }
@@ -2772,7 +2863,7 @@
 
 /* ---------- 手册封面卡 ---------- */
 
-[data-theme="cream"] .cg-login-card {
+[data-theme='cream'] .cg-login-card {
   display: grid;
   width: 100%;
   max-width: 860px;
@@ -2781,16 +2872,16 @@
 
 /* ---------- 品牌区（Charcoal 技术面板，桌面端显示） ---------- */
 
-[data-theme="cream"] .cg-login-brand {
+[data-theme='cream'] .cg-login-brand {
   display: none;
 }
 
 @media (min-width: 1024px) {
-  [data-theme="cream"] .cg-login-card {
+  [data-theme='cream'] .cg-login-card {
     grid-template-columns: 330px minmax(0, 1fr);
   }
 
-  [data-theme="cream"] .cg-login-brand {
+  [data-theme='cream'] .cg-login-brand {
     display: flex;
     flex-direction: column;
     min-height: 520px;
@@ -2801,13 +2892,13 @@
   }
 }
 
-[data-theme="cream"] .cg-login-brand-row {
+[data-theme='cream'] .cg-login-brand-row {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-[data-theme="cream"] .cg-login-brand-mark {
+[data-theme='cream'] .cg-login-brand-mark {
   display: grid;
   place-items: center;
   width: 44px;
@@ -2818,43 +2909,43 @@
   background: var(--cg-lime);
 }
 
-[data-theme="cream"] .cg-login-brand-name {
+[data-theme='cream'] .cg-login-brand-name {
   display: block;
   font-size: 15px;
   font-weight: 900;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   color: #fff;
 }
 
-[data-theme="cream"] .cg-login-brand-sub {
+[data-theme='cream'] .cg-login-brand-sub {
   display: block;
   margin-top: 3px;
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: .16em;
+  letter-spacing: 0.16em;
   color: var(--cg-lime);
   text-transform: uppercase;
 }
 
-[data-theme="cream"] .cg-login-brand-hero {
+[data-theme='cream'] .cg-login-brand-hero {
   display: grid;
   gap: 10px;
   margin: auto 0;
   padding: 32px 0;
 }
 
-[data-theme="cream"] .cg-login-brand-tag {
+[data-theme='cream'] .cg-login-brand-tag {
   margin: 0;
   font-family: var(--cg-mono);
   font-size: 12px;
   font-weight: 800;
-  letter-spacing: .14em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--cg-on-charcoal);
 }
 
-[data-theme="cream"] .cg-login-brand-desc {
+[data-theme='cream'] .cg-login-brand-desc {
   margin: 0;
   max-width: 250px;
   font-size: 12px;
@@ -2862,14 +2953,14 @@
   color: var(--cg-subtle);
 }
 
-[data-theme="cream"] .cg-login-brand-foot {
+[data-theme='cream'] .cg-login-brand-foot {
   display: grid;
   gap: 10px;
   padding-top: 14px;
   border-top: 2px solid var(--cg-charcoal-line);
 }
 
-[data-theme="cream"] .cg-login-status {
+[data-theme='cream'] .cg-login-status {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -2884,26 +2975,26 @@
   font-weight: 800;
 }
 
-[data-theme="cream"] .cg-login-status i {
+[data-theme='cream'] .cg-login-status i {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--cg-lime);
 }
 
-[data-theme="cream"] .cg-login-brand-line {
+[data-theme='cream'] .cg-login-brand-line {
   display: flex;
   align-items: center;
   gap: 8px;
   font-family: var(--cg-mono);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: .12em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--cg-subtle);
 }
 
-[data-theme="cream"] .cg-login-brand-line svg {
+[data-theme='cream'] .cg-login-brand-line svg {
   width: 12px;
   height: 12px;
   flex-shrink: 0;
@@ -2911,7 +3002,7 @@
 
 /* ---------- 登录表单区 ---------- */
 
-[data-theme="cream"] .cg-login-form {
+[data-theme='cream'] .cg-login-form {
   display: grid;
   gap: 16px;
   align-content: center;
@@ -2919,12 +3010,12 @@
 }
 
 @media (min-width: 768px) {
-  [data-theme="cream"] .cg-login-form {
+  [data-theme='cream'] .cg-login-form {
     padding: 38px 44px;
   }
 }
 
-[data-theme="cream"] .cg-login-form-mobile {
+[data-theme='cream'] .cg-login-form-mobile {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -2934,12 +3025,12 @@
 }
 
 @media (min-width: 1024px) {
-  [data-theme="cream"] .cg-login-form-mobile {
+  [data-theme='cream'] .cg-login-form-mobile {
     display: none;
   }
 }
 
-[data-theme="cream"] .cg-login-form-icon {
+[data-theme='cream'] .cg-login-form-icon {
   display: grid;
   place-items: center;
   width: 48px;
@@ -2951,44 +3042,44 @@
   box-shadow: var(--cg-shadow-control);
 }
 
-[data-theme="cream"] .cg-login-form-icon svg {
+[data-theme='cream'] .cg-login-form-icon svg {
   width: 20px;
   height: 20px;
   stroke-width: 2.2;
 }
 
-[data-theme="cream"] .cg-login-form-head {
+[data-theme='cream'] .cg-login-form-head {
   display: grid;
   gap: 8px;
 }
 
-[data-theme="cream"] .cg-login-form-title {
+[data-theme='cream'] .cg-login-form-title {
   margin: 0;
   font-size: 28px;
 }
 
-[data-theme="cream"] .cg-login-form-sub {
+[data-theme='cream'] .cg-login-form-sub {
   margin: 0;
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .14em;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-login-fields {
+[data-theme='cream'] .cg-login-fields {
   display: grid;
   gap: 16px;
   margin-top: 4px;
 }
 
-[data-theme="cream"] .cg-login-field {
+[data-theme='cream'] .cg-login-field {
   display: grid;
   gap: 6px;
 }
 
-[data-theme="cream"] .cg-login-submit {
+[data-theme='cream'] .cg-login-submit {
   width: 100%;
   min-height: 44px;
   margin-top: 4px;
@@ -3002,7 +3093,7 @@
    模板编辑器：2px 深色描边盒子 + lime-soft 变量贴纸
    ============================================================ */
 
-[data-theme="cream"] .cg-template-editor {
+[data-theme='cream'] .cg-template-editor {
   display: flex;
   min-height: 36px;
   width: 100%;
@@ -3023,13 +3114,13 @@
   border-color: var(--cg-blue);
 }
 
-[data-theme="cream"] .cg-template-editor.is-error,
+[data-theme='cream'] .cg-template-editor.is-error,
 .cg-template-editor.is-error:focus-within {
   border-color: var(--cg-red);
 }
 
 /* 文本段 input：宽度由组件内联 style 按字符数计算 */
-[data-theme="cream"] .cg-template-text {
+[data-theme='cream'] .cg-template-text {
   height: 24px;
   max-width: 100%;
   padding: 0 1px;
@@ -3046,7 +3137,7 @@
 }
 
 /* 变量贴纸（lime-soft 底 + 深色描边 + mono） */
-[data-theme="cream"] .cg-template-token {
+[data-theme='cream'] .cg-template-token {
   display: inline-flex;
   height: 24px;
   flex-shrink: 0;
@@ -3062,7 +3153,7 @@
   color: var(--cg-ink);
 }
 
-[data-theme="cream"] .cg-template-token-remove {
+[data-theme='cream'] .cg-template-token-remove {
   display: inline-flex;
   width: 16px;
   height: 16px;
@@ -3085,13 +3176,13 @@
   outline-offset: 1px;
 }
 
-[data-theme="cream"] .cg-template-token-remove svg {
+[data-theme='cream'] .cg-template-token-remove svg {
   width: 11px;
   height: 11px;
 }
 
 /* 候选变量条 */
-[data-theme="cream"] .cg-template-suggestions {
+[data-theme='cream'] .cg-template-suggestions {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -3101,13 +3192,13 @@
   background: var(--cg-paper-soft);
 }
 
-[data-theme="cream"] .cg-template-hint {
+[data-theme='cream'] .cg-template-hint {
   margin: 0;
   font-size: 11px;
   color: var(--cg-muted);
 }
 
-[data-theme="cream"] .cg-template-hint.is-error {
+[data-theme='cream'] .cg-template-hint.is-error {
   font-weight: 650;
   color: var(--cg-red);
 }

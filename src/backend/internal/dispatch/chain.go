@@ -196,7 +196,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			NodeID:         node.ID,
 			Config:         vc,
 			UserUUIDs:      uuids,
-			DestCandidates: d.DestCandidates,
+			DestCandidates: d.opts.DestCandidates,
 		}
 		// NAT 受限直连机总是携带监听侧候选（自动挑选 + 手动端口段内校验，§21）。
 		payload.PortCandidates = listenCandidatesOf(servers[exit.ServerID])
@@ -270,7 +270,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			HopID:          up.ID,
 			Kind:           shared.HopKindPortal,
 			Portal:         spec,
-			DestCandidates: d.DestCandidates,
+			DestCandidates: d.opts.DestCandidates,
 		})
 		return
 	}
@@ -382,7 +382,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	}
 	log.Printf("dispatch: chain %d active（%d 跳）", chainID, len(hops))
 	d.publishDesiredRevision(ctx, chainID, hops, *node)
-	d.recomputeChain(ctx, chainID)
+	d.fsm.Evaluate(ctx, chainID)
 }
 
 func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, hops []store.ChainHop, node store.Node) {
@@ -391,18 +391,7 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 		return
 	}
 	revision.Snapshot.ServiceRealized = append(json.RawMessage(nil), node.RealizedConfig...)
-	byID := make(map[int64]store.ChainHop, len(hops))
-	for _, hop := range hops {
-		byID[hop.ID] = hop
-	}
-	for i := range revision.Snapshot.Hops {
-		if hop, ok := byID[revision.Snapshot.Hops[i].HopID]; ok {
-			revision.Snapshot.Hops[i].ForwardPort = hop.ForwardPort
-			revision.Snapshot.Hops[i].PortalPort = hop.PortalPort
-			revision.Snapshot.Hops[i].PortalPublicKey = hop.PortalPublicKey
-			revision.Snapshot.Hops[i].PortalServerName = hop.PortalServerName
-		}
-	}
+	mergeSnapshotHopFields(&revision.Snapshot, hops, false)
 	if err := d.st.UpdateChainRevision(ctx, revision.ID, store.RevisionStatusActive, "", revision.Snapshot); err != nil {
 		log.Printf("dispatch: chain %d revision snapshot: %v", chainID, err)
 		return
@@ -413,32 +402,65 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 			// 发布窗口内链状态被并发改写（Evaluate 降级等）：revision 已置 active 但
 			// 尚未发布。链恢复 active 后由 maybePublishReadyRevision 补发（评审 P2-8）。
 			log.Printf("dispatch: chain %d publish raced with chain status change; deferred to recovery", chainID)
-			d.recomputeChain(ctx, chainID)
+			d.fsm.Evaluate(ctx, chainID)
 			return
 		}
 		log.Printf("dispatch: chain %d publish revision: %v", chainID, err)
 		return
 	}
-	if d.OnChainPublished != nil {
-		if err := d.OnChainPublished(ctx, chainID); err != nil {
+	if d.events.OnChainPublished != nil {
+		if err := d.events.OnChainPublished(ctx, chainID); err != nil {
 			log.Printf("dispatch: enqueue subscriptions for chain %d: %v", chainID, err)
 		}
 	}
 	d.cleanupPublishedRevision(ctx, previous, revision)
+	if err := d.reconcilePublishedEndpoints(ctx, previous, revision); err != nil {
+		log.Printf("dispatch: chain %d reconcile shared endpoint: %v", chainID, err)
+	}
+	if revision.Snapshot.EndpointID != 0 {
+		// 端点刚置 applying，立即重算链状态（若端点未 active 则链进入 degraded，待 ack 后恢复）。
+		d.fsm.Evaluate(ctx, chainID)
+	}
+}
+
+// mergeSnapshotHopFields 把最新 hop 的端口/密钥字段合并回 revision 快照（发布与强制发布共用）。
+// keepNonZeroForward 为 true 时仅在 hop.ForwardPort 非零时覆盖（强制发布保留快照中已确认的入口端口）。
+func mergeSnapshotHopFields(snapshot *store.ChainRevisionSnapshot, hops []store.ChainHop, keepNonZeroForward bool) {
+	byID := make(map[int64]store.ChainHop, len(hops))
+	for _, hop := range hops {
+		byID[hop.ID] = hop
+	}
+	for i := range snapshot.Hops {
+		hop, ok := byID[snapshot.Hops[i].HopID]
+		if !ok {
+			continue
+		}
+		if !keepNonZeroForward || hop.ForwardPort != 0 {
+			snapshot.Hops[i].ForwardPort = hop.ForwardPort
+		}
+		snapshot.Hops[i].PortalPort = hop.PortalPort
+		snapshot.Hops[i].PortalPublicKey = hop.PortalPublicKey
+		snapshot.Hops[i].PortalServerName = hop.PortalServerName
+	}
+}
+
+// reconcilePublishedEndpoints 发布后按快照引用变化 reconcile 共享端点：旧端点不再被引用
+// 时回收、新端点置 applying。新旧端点都会尝试 reconcile，返回首个原始错误
+// （不包装，调用方决定记日志还是中断流程）。
+func (d *Dispatcher) reconcilePublishedEndpoints(ctx context.Context, previous, revision *store.ChainRevision) error {
+	var firstErr error
 	if previous != nil && previous.Snapshot.EndpointID != 0 &&
 		previous.Snapshot.EndpointID != revision.Snapshot.EndpointID {
 		if err := d.ReconcileSharedEndpoint(ctx, previous.Snapshot.EndpointID); err != nil {
-			log.Printf("dispatch: chain %d previous shared endpoint %d: %v",
-				chainID, previous.Snapshot.EndpointID, err)
+			firstErr = err
 		}
 	}
 	if revision.Snapshot.EndpointID != 0 {
-		if err := d.ReconcileSharedEndpoint(ctx, revision.Snapshot.EndpointID); err != nil {
-			log.Printf("dispatch: chain %d shared endpoint %d: %v", chainID, revision.Snapshot.EndpointID, err)
+		if err := d.ReconcileSharedEndpoint(ctx, revision.Snapshot.EndpointID); err != nil && firstErr == nil {
+			firstErr = err
 		}
-		// 端点刚置 applying，立即重算链状态（若端点未 active 则链进入 degraded，待 ack 后恢复）。
-		d.recomputeChain(ctx, chainID)
 	}
+	return firstErr
 }
 
 // maybePublishReadyRevision 自愈发布窗口竞态（评审 P2-8）：链已 active 且 desired
@@ -488,7 +510,7 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 	if !validChainTransition(chain.Status, store.ChainStatusActiveUnconfirmed) {
 		return fmt.Errorf("强制发布失败：链路状态 %s 不允许强制发布", chain.Status)
 	}
-	if target := strings.TrimSpace(d.PanelVersion); target != "" && target != "dev" {
+	if target := strings.TrimSpace(d.opts.PanelVersion); target != "" && target != "dev" {
 		tasks, err := d.st.RevisionTasks(ctx, revision.ID)
 		if err != nil {
 			return err
@@ -526,20 +548,7 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 		revision.Snapshot.ServiceRealized = realized
 	}
 	if hops, err := d.st.ChainHops(ctx, chainID); err == nil {
-		byID := make(map[int64]store.ChainHop, len(hops))
-		for _, hop := range hops {
-			byID[hop.ID] = hop
-		}
-		for i := range revision.Snapshot.Hops {
-			if hop, ok := byID[revision.Snapshot.Hops[i].HopID]; ok {
-				if hop.ForwardPort != 0 {
-					revision.Snapshot.Hops[i].ForwardPort = hop.ForwardPort
-				}
-				revision.Snapshot.Hops[i].PortalPort = hop.PortalPort
-				revision.Snapshot.Hops[i].PortalPublicKey = hop.PortalPublicKey
-				revision.Snapshot.Hops[i].PortalServerName = hop.PortalServerName
-			}
-		}
+		mergeSnapshotHopFields(&revision.Snapshot, hops, true)
 	}
 	if len(revision.Snapshot.Hops) == 1 && revision.Snapshot.Hops[0].ForwardPort == 0 {
 		var realized shared.RealizedConfig
@@ -559,22 +568,14 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 		}
 		return err
 	}
-	if d.OnChainPublished != nil {
-		if err := d.OnChainPublished(ctx, chainID); err != nil {
+	if d.events.OnChainPublished != nil {
+		if err := d.events.OnChainPublished(ctx, chainID); err != nil {
 			log.Printf("dispatch: enqueue subscriptions for chain %d: %v", chainID, err)
 		}
 	}
 	d.cleanupPublishedRevision(ctx, previous, revision)
-	if previous != nil && previous.Snapshot.EndpointID != 0 &&
-		previous.Snapshot.EndpointID != revision.Snapshot.EndpointID {
-		if err := d.ReconcileSharedEndpoint(ctx, previous.Snapshot.EndpointID); err != nil {
-			return err
-		}
-	}
-	if revision.Snapshot.EndpointID != 0 {
-		if err := d.ReconcileSharedEndpoint(ctx, revision.Snapshot.EndpointID); err != nil {
-			return err
-		}
+	if err := d.reconcilePublishedEndpoints(ctx, previous, revision); err != nil {
+		return err
 	}
 	d.advanceChain(context.Background(), chainID)
 	return nil
@@ -684,7 +685,7 @@ func (d *Dispatcher) refreshCleanupStatus(ctx context.Context, revisionID int64)
 	}
 	if chain.Status == store.ChainStatusCleanupPending {
 		_ = d.fsm.Transition(ctx, chain.ID, store.ChainStatusActive, "清理完成")
-		d.recomputeChain(ctx, chain.ID)
+		d.fsm.Evaluate(ctx, chain.ID)
 	}
 }
 
@@ -710,7 +711,7 @@ func (d *Dispatcher) enqueueHop(ctx context.Context, chainID, revisionID int64, 
 // portal/forward 回执的 realized port/public_key 写回 chain_hops 并推进编排；
 // 失败定位到跳并置链 failed。remove_chain_hop 的回执到达时跳行已删（删链流程），仅记日志。
 func (d *Dispatcher) handleChainHopResult(serverID int64, p shared.ApplyResultPayload, responseError string) {
-	ctx := context.Background()
+	ctx := d.baseCtx()
 	hop, err := d.st.ChainHopByID(ctx, p.HopID)
 	if err != nil {
 		log.Printf("dispatch: server %d: apply_result hop %d 不存在（可能为删链回执）: %v", serverID, p.HopID, err)
@@ -818,7 +819,7 @@ func (d *Dispatcher) failChainByNode(ctx context.Context, nodeID int64, reason s
 // 链任一跳 server 离线 → degraded + chain_degraded 告警（§19 防抖沿用）；
 // 全部跳 server 在线且跳均 active → 恢复 active。
 func (d *Dispatcher) RecomputeChainsByServer(serverID int64) {
-	ctx := context.Background()
+	ctx := d.baseCtx()
 	hops, err := d.st.ChainHopsByServerID(ctx, serverID)
 	if err != nil {
 		log.Printf("dispatch: recompute chains by server %d: %v", serverID, err)
@@ -832,17 +833,6 @@ func (d *Dispatcher) RecomputeChainsByServer(serverID int64) {
 		seen[h.ChainID] = true
 		d.fsm.Evaluate(ctx, h.ChainID)
 	}
-}
-
-// recomputeChain 委托给链路状态机的条件评估（保留方法签名兼容内部调用点）。
-func (d *Dispatcher) recomputeChain(ctx context.Context, chainID int64) {
-	d.fsm.Evaluate(ctx, chainID)
-}
-
-// ChainHopPieces 返回一个跳的配置件 kind 列表（panel 删链逐跳反向下发 remove_chain_hop 用，§21.1），
-// 实现下沉 store.ChainHopPieces（与 xray.cleanup 期望集合计算同源）。
-func ChainHopPieces(hops []store.ChainHop, i int) []string {
-	return store.ChainHopPieces(hops, i)
 }
 
 // pieceKey 是 piece 进度表的键（"<hopID>|<kind>"）。
@@ -873,8 +863,8 @@ func (d *Dispatcher) chainPieces(ctx context.Context, chainID, revisionID int64)
 
 // portalDest 返回 portal 的 Reality dest（白名单首位，隧道 inbound 复用 §6 同一白名单，§21 PoC）。
 func (d *Dispatcher) portalDest() string {
-	if len(d.DestCandidates) > 0 {
-		return d.DestCandidates[0]
+	if len(d.opts.DestCandidates) > 0 {
+		return d.opts.DestCandidates[0]
 	}
 	return "dl.google.com:443"
 }

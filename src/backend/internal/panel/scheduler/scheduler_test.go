@@ -1,4 +1,4 @@
-package panel
+package scheduler
 
 import (
 	"context"
@@ -9,16 +9,16 @@ import (
 )
 
 func TestTaskSchedulerPreventsTaskOverlap(t *testing.T) {
-	scheduler := newTaskScheduler(func(context.Context) *time.Location { return time.UTC })
+	scheduler := NewTaskScheduler(func(context.Context) *time.Location { return time.UTC })
 	var active atomic.Int32
 	var maximum atomic.Int32
 	var runs atomic.Int32
 	done := make(chan struct{})
-	scheduler.register(scheduledTask{
-		name:       "slow",
-		runOnStart: true,
-		trigger:    func(context.Context) taskTrigger { return intervalTrigger(5 * time.Millisecond) },
-		run: func(context.Context) error {
+	scheduler.Register(ScheduledTask{
+		Name:       "slow",
+		RunOnStart: true,
+		Trigger:    func(context.Context) TaskTrigger { return IntervalTrigger(5 * time.Millisecond) },
+		Run: func(context.Context) error {
 			current := active.Add(1)
 			for {
 				old := maximum.Load()
@@ -36,7 +36,7 @@ func TestTaskSchedulerPreventsTaskOverlap(t *testing.T) {
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan struct{})
-	go func() { scheduler.run(ctx); close(finished) }()
+	go func() { scheduler.Run(ctx); close(finished) }()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -50,28 +50,28 @@ func TestTaskSchedulerPreventsTaskOverlap(t *testing.T) {
 }
 
 func TestTaskSchedulerScheduleChangeWakesLoop(t *testing.T) {
-	scheduler := newTaskScheduler(func(context.Context) *time.Location { return time.UTC })
+	scheduler := NewTaskScheduler(func(context.Context) *time.Location { return time.UTC })
 	var mu sync.RWMutex
 	delay := 10 * time.Second
 	run := make(chan struct{}, 1)
-	scheduler.register(scheduledTask{
-		name: "configurable",
-		trigger: func(context.Context) taskTrigger {
+	scheduler.Register(ScheduledTask{
+		Name: "configurable",
+		Trigger: func(context.Context) TaskTrigger {
 			mu.RLock()
 			defer mu.RUnlock()
-			return intervalTrigger(delay)
+			return IntervalTrigger(delay)
 		},
-		run: func(context.Context) error { run <- struct{}{}; return nil },
+		Run: func(context.Context) error { run <- struct{}{}; return nil },
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan struct{})
-	go func() { scheduler.run(ctx); close(finished) }()
+	go func() { scheduler.Run(ctx); close(finished) }()
 
 	time.Sleep(20 * time.Millisecond)
 	mu.Lock()
 	delay = 5 * time.Millisecond
 	mu.Unlock()
-	scheduler.notifyChanged()
+	scheduler.NotifyChanged()
 	select {
 	case <-run:
 	case <-time.After(500 * time.Millisecond):
@@ -86,9 +86,9 @@ func TestInspectionScheduleUsesPanelTimezone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schedule := inspectionSchedule{Every: 1, Unit: "day", At: "00:05"}
+	schedule := InspectionSchedule{Every: 1, Unit: "day", At: "00:05"}
 	after := time.Date(2026, time.July, 9, 16, 4, 0, 0, time.UTC)
-	got := schedule.next(after, loc)
+	got := schedule.Next(after, loc)
 	want := time.Date(2026, time.July, 10, 0, 5, 0, 0, loc)
 	if !got.Equal(want) {
 		t.Fatalf("next = %s, want %s", got, want)
@@ -96,13 +96,13 @@ func TestInspectionScheduleUsesPanelTimezone(t *testing.T) {
 }
 
 func TestTaskSchedulerStatusTracksCompletedRuns(t *testing.T) {
-	scheduler := newTaskScheduler(func(context.Context) *time.Location { return time.UTC })
+	scheduler := NewTaskScheduler(func(context.Context) *time.Location { return time.UTC })
 	ran := make(chan struct{}, 1)
-	scheduler.register(scheduledTask{
-		name:       "observed",
-		runOnStart: true,
-		trigger:    func(context.Context) taskTrigger { return intervalTrigger(time.Hour) },
-		run: func(context.Context) error {
+	scheduler.Register(ScheduledTask{
+		Name:       "observed",
+		RunOnStart: true,
+		Trigger:    func(context.Context) TaskTrigger { return IntervalTrigger(time.Hour) },
+		Run: func(context.Context) error {
 			ran <- struct{}{}
 			return nil
 		},
@@ -110,7 +110,7 @@ func TestTaskSchedulerStatusTracksCompletedRuns(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan struct{})
-	go func() { scheduler.run(ctx); close(finished) }()
+	go func() { scheduler.Run(ctx); close(finished) }()
 	select {
 	case <-ran:
 	case <-time.After(time.Second):
@@ -118,9 +118,9 @@ func TestTaskSchedulerStatusTracksCompletedRuns(t *testing.T) {
 	}
 
 	deadline := time.Now().Add(time.Second)
-	var status scheduledTaskStatus
+	var status ScheduledTaskStatus
 	for time.Now().Before(deadline) {
-		items := scheduler.statusSnapshot()
+		items := scheduler.StatusSnapshot()
 		if len(items) == 1 && items[0].Runs == 1 {
 			status = items[0]
 			break
@@ -132,5 +132,15 @@ func TestTaskSchedulerStatusTracksCompletedRuns(t *testing.T) {
 
 	if status.Name != "observed" || status.Running || status.LastFinishedAt == nil || status.NextRunAt == nil {
 		t.Fatalf("status = %+v, want completed run with next schedule", status)
+	}
+}
+
+func TestInspectionScheduleNextUsesCalendarTime(t *testing.T) {
+	loc := time.FixedZone("test", 8*60*60)
+	after := time.Date(2026, time.July, 28, 4, 0, 0, 0, loc)
+	next := (InspectionSchedule{Every: 1, Unit: "day", At: "03:00"}).Next(after, loc)
+	want := time.Date(2026, time.July, 29, 3, 0, 0, 0, loc)
+	if !next.Equal(want) {
+		t.Fatalf("next = %s, want %s", next, want)
 	}
 }

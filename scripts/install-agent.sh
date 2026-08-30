@@ -506,7 +506,7 @@ StartLimitBurst=10
 [Service]
 UMask=0077
 EnvironmentFile=$ENV_FILE
-ExecStart=$AGENT_BIN -panel "\${LATTIX_PANEL_WS}" -token "\${LATTIX_TOKEN}" -state "$STATE_FILE" -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG"
+ExecStart=$AGENT_BIN -panel "\${LATTIX_PANEL_WS}" -state "$STATE_FILE" -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG"
 Restart=always
 RestartSec=1
 
@@ -588,7 +588,7 @@ else
 fi
 while true; do
     set -a; . "$ENV_FILE"; set +a
-    "$AGENT_BIN" -panel "\$LATTIX_PANEL_WS" -token "\$LATTIX_TOKEN" -state "$STATE_FILE" \\
+    "$AGENT_BIN" -panel "\$LATTIX_PANEL_WS" -state "$STATE_FILE" \\
         -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG" \\
         -xray-api "$XRAY_API" -xray-runner exec 9>&-
     sleep 1
@@ -637,7 +637,8 @@ EOF
 else
     echo ">> [DEV] nohup 启动 agent（日志 $AGENT_LOG）"
     mkdir -p "$(dirname "$AGENT_LOG")"
-    nohup "$AGENT_BIN" -panel "$PANEL_WS" -token "$BOOTSTRAP_TOKEN" -state "$STATE_FILE" \
+    # token 走 env 注入（agent 对空 -token 回退 LATTIX_TOKEN，同 systemd/user 路径），不进 argv（ps 可见）。
+    LATTIX_TOKEN="$BOOTSTRAP_TOKEN" nohup "$AGENT_BIN" -panel "$PANEL_WS" -state "$STATE_FILE" \
         -settings "$SETTINGS_FILE" -xray-bin "$XRAY_BIN_DST" -xray-config "$XRAY_CONFIG" \
         -xray-api "$XRAY_API" -xray-runner exec \
         >"$AGENT_LOG" 2>&1 &

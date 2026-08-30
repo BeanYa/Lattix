@@ -1,2 +1,4 @@
 # Shell scripts must use LF (they run on Linux/WSL)
 *.sh text eol=lf
+# Dockerfile must use LF (CRLF breaks some build parsers)
+Dockerfile text eol=lf

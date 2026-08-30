@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import {
-  CopyIcon,
-  EyeIcon,
-  FileCode2Icon,
-  PlusIcon,
-  RefreshCwIcon,
-  Trash2Icon,
-} from 'lucide-react'
+import { CopyIcon, EyeIcon, FileCode2Icon, PlusIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
 
 import { EmptyState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { Button } from '@/components/ui/button'
@@ -80,7 +73,9 @@ export default function SubscriptionTemplates() {
     }
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    void load()
+  }, [load])
 
   const resetForm = () => {
     setEditing(null)
@@ -152,12 +147,15 @@ export default function SubscriptionTemplates() {
   }
 
   const remove = async (template: SubscriptionTemplate) => {
-    if (!(await confirm({
-      title: '删除模板',
-      description: `确认删除「${template.name}」？`,
-      confirmLabel: '删除模板',
-      destructive: true,
-    }))) return
+    if (
+      !(await confirm({
+        title: '删除模板',
+        description: `确认删除「${template.name}」？`,
+        confirmLabel: '删除模板',
+        destructive: true,
+      }))
+    )
+      return
     try {
       await api.deleteSubscriptionTemplate(template.id)
       await load()
@@ -175,9 +173,14 @@ export default function SubscriptionTemplates() {
       <PageHeader
         title="订阅模板"
         description="管理订阅转换模板：本地 YAML / INI / CONF 内容或公开 GitHub 文件，支持刷新缓存与克隆。"
-        actions={(
+        actions={
           <div className="subtpl-actions">
-            <button type="button" className="cg-button" onClick={() => refresh()} disabled={Boolean(refreshing)}>
+            <button
+              type="button"
+              className="cg-button"
+              onClick={() => refresh()}
+              disabled={Boolean(refreshing)}
+            >
               <RefreshCwIcon className={refreshing === 'all' ? 'animate-spin' : undefined} />
               刷新全部
             </button>
@@ -186,11 +189,15 @@ export default function SubscriptionTemplates() {
               新建模板
             </button>
           </div>
-        )}
+        }
       />
       {error ? <Notice tone="danger">{error}</Notice> : null}
       {!loading && templates.length === 0 ? (
-        <EmptyState icon={<FileCode2Icon />} title="暂无模板" description="创建本地模板或添加公开 GitHub 文件" />
+        <EmptyState
+          icon={<FileCode2Icon />}
+          title="暂无模板"
+          description="创建本地模板或添加公开 GitHub 文件"
+        />
       ) : null}
       <div className={!loading && templates.length === 0 ? 'hidden' : undefined}>
         <Table>
@@ -211,10 +218,16 @@ export default function SubscriptionTemplates() {
                   <div className="font-medium">{template.name}</div>
                   <div className="subtpl-id">{template.id}</div>
                 </TableCell>
-                <TableCell><span className="cg-status is-blue">{template.kind}</span></TableCell>
+                <TableCell>
+                  <span className="cg-status is-blue">{template.kind}</span>
+                </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-2">
-                    <span className={template.origin === 'github' ? 'cg-status is-blue' : 'cg-status is-muted'}>
+                    <span
+                      className={
+                        template.origin === 'github' ? 'cg-status is-blue' : 'cg-status is-muted'
+                      }
+                    >
                       {template.origin === 'github' ? 'GitHub' : '本地'}
                     </span>
                     {template.readonly ? <span className="cg-status is-muted">只读</span> : null}
@@ -222,11 +235,15 @@ export default function SubscriptionTemplates() {
                 </TableCell>
                 <TableCell className="text-xs">
                   {template.last_error ? (
-                    <span className="cg-status is-red" title={template.last_error}>刷新失败，沿用缓存</span>
+                    <span className="cg-status is-red" title={template.last_error}>
+                      刷新失败，沿用缓存
+                    </span>
                   ) : template.fetched_at ? (
                     <div className="subtpl-cache">
                       <span className="cg-status is-lime">已缓存</span>
-                      <span className="subtpl-cache-time">{formatDateTime(template.fetched_at, timezone)}</span>
+                      <span className="subtpl-cache-time">
+                        {formatDateTime(template.fetched_at, timezone)}
+                      </span>
                     </div>
                   ) : template.content ? (
                     <span className="cg-status is-muted">本地内容</span>
@@ -237,17 +254,53 @@ export default function SubscriptionTemplates() {
                 <TableCell className="text-xs">{template.license || '-'}</TableCell>
                 <TableCell>
                   <div className="flex gap-1">
-                    <button type="button" className="cg-icon-button" title="模板预览" onClick={() => setPreview(template)}><EyeIcon /></button>
+                    <button
+                      type="button"
+                      className="cg-icon-button"
+                      title="模板预览"
+                      onClick={() => setPreview(template)}
+                    >
+                      <EyeIcon />
+                    </button>
                     {template.origin === 'github' ? (
-                      <button type="button" className="cg-icon-button" title="刷新" onClick={() => refresh(template.id)} disabled={Boolean(refreshing)}>
-                        <RefreshCwIcon className={refreshing === template.id ? 'animate-spin' : undefined} />
+                      <button
+                        type="button"
+                        className="cg-icon-button"
+                        title="刷新"
+                        onClick={() => refresh(template.id)}
+                        disabled={Boolean(refreshing)}
+                      >
+                        <RefreshCwIcon
+                          className={refreshing === template.id ? 'animate-spin' : undefined}
+                        />
                       </button>
                     ) : null}
-                    <button type="button" className="cg-icon-button" title="克隆" onClick={() => clone(template)}><CopyIcon /></button>
+                    <button
+                      type="button"
+                      className="cg-icon-button"
+                      title="克隆"
+                      onClick={() => clone(template)}
+                    >
+                      <CopyIcon />
+                    </button>
                     {!template.readonly ? (
                       <>
-                        <button type="button" className="cg-icon-button" title="编辑" onClick={() => beginEdit(template)}><FileCode2Icon /></button>
-                        <button type="button" className="cg-icon-button" title="删除" onClick={() => remove(template)}><Trash2Icon /></button>
+                        <button
+                          type="button"
+                          className="cg-icon-button"
+                          title="编辑"
+                          onClick={() => beginEdit(template)}
+                        >
+                          <FileCode2Icon />
+                        </button>
+                        <button
+                          type="button"
+                          className="cg-icon-button"
+                          title="删除"
+                          onClick={() => remove(template)}
+                        >
+                          <Trash2Icon />
+                        </button>
                       </>
                     ) : null}
                   </div>
@@ -258,26 +311,52 @@ export default function SubscriptionTemplates() {
         </Table>
       </div>
 
-      <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) resetForm() }}>
+      <Dialog
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next)
+          if (!next) resetForm()
+        }}
+      >
         <DialogContent className="max-h-[90vh] sm:max-w-4xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editing ? '编辑模板' : '新建模板'}</DialogTitle>
-            <DialogDescription>本地内容保存前会解析校验；GitHub 源仅接受公开的具体文件地址。</DialogDescription>
+            <DialogDescription>
+              本地内容保存前会解析校验；GitHub 源仅接受公开的具体文件地址。
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={save} className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2"><Label>名称</Label><Input value={name} onChange={(event) => setName(event.target.value)} required /></div>
+              <div className="space-y-2">
+                <Label>名称</Label>
+                <Input value={name} onChange={(event) => setName(event.target.value)} required />
+              </div>
               <div className="space-y-2">
                 <Label>类型</Label>
-                <Select value={kind} onValueChange={(value) => value && setKind(value as SubscriptionTemplate['kind'])}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                  <SelectContent>{kinds.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
+                <Select
+                  value={kind}
+                  onValueChange={(value) => value && setKind(value as SubscriptionTemplate['kind'])}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {kinds.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
                 </Select>
               </div>
             </div>
             <div className="space-y-2">
               <Label>公开 GitHub 文件地址（留空则使用本地内容）</Label>
-              <Input value={sourceURL} onChange={(event) => setSourceURL(event.target.value)} placeholder="https://github.com/owner/repo/blob/main/path/template.ini" />
+              <Input
+                value={sourceURL}
+                onChange={(event) => setSourceURL(event.target.value)}
+                placeholder="https://github.com/owner/repo/blob/main/path/template.ini"
+              />
             </div>
             {!sourceURL ? (
               <div className="space-y-2">
@@ -291,15 +370,29 @@ export default function SubscriptionTemplates() {
                 />
               </div>
             ) : null}
-            <div className="space-y-2"><Label>许可证</Label><Input value={license} onChange={(event) => setLicense(event.target.value)} placeholder="例如 CC BY-SA 4.0" /></div>
-            <DialogFooter><Button type="submit" disabled={saving || !name.trim()}>{saving ? '保存中…' : '保存'}</Button></DialogFooter>
+            <div className="space-y-2">
+              <Label>许可证</Label>
+              <Input
+                value={license}
+                onChange={(event) => setLicense(event.target.value)}
+                placeholder="例如 CC BY-SA 4.0"
+              />
+            </div>
+            <DialogFooter>
+              <Button type="submit" disabled={saving || !name.trim()}>
+                {saving ? '保存中…' : '保存'}
+              </Button>
+            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
       <Dialog open={preview !== null} onOpenChange={(next) => !next && setPreview(null)}>
         <DialogContent className="max-h-[90vh] sm:max-w-5xl overflow-y-auto">
-          <DialogHeader><DialogTitle>模板预览</DialogTitle><DialogDescription>{preview?.name} · 未填充 Lattix 用户和链路数据</DialogDescription></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>模板预览</DialogTitle>
+            <DialogDescription>{preview?.name} · 未填充 Lattix 用户和链路数据</DialogDescription>
+          </DialogHeader>
           <pre className="cg-terminal subtpl-preview">{preview?.content || '尚未取得有效缓存'}</pre>
           <DialogFooter showCloseButton />
         </DialogContent>

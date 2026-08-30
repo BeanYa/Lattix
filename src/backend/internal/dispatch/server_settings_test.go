@@ -19,12 +19,12 @@ func TestServerSettingsSyncDeliversChangedDocument(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	serverID, err := st.CreateServer(ctx, "s1", "", "tok", store.MachineTypeDirect, "", "", "US", "Test")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "s1", BootstrapToken: "tok", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	requester := &uninstallRequester{wake: make(chan struct{}, 2)}
-	dispatcher := New(st, requester)
+	dispatcher := New(st, requester, Options{}, Events{})
 
 	// 期望版本：默认 latest（revision 1）→ 无变化时不回文档。
 	dispatcher.HandleMessage(serverID, shared.Envelope{
@@ -95,12 +95,12 @@ func TestServerSettingsSyncNoChangeWhenUpToDate(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, err := st.CreateServer(context.Background(), "s1", "", "tok", store.MachineTypeDirect, "", "", "US", "Test")
+	serverID, err := st.CreateServer(context.Background(), store.ServerDraft{Alias: "s1", BootstrapToken: "tok", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	requester := &uninstallRequester{wake: make(chan struct{}, 2)}
-	dispatcher := New(st, requester)
+	dispatcher := New(st, requester, Options{}, Events{})
 	dispatcher.HandleMessage(serverID, shared.Envelope{
 		Kind: shared.KindRequest, Type: shared.TypeServerSettingsSync,
 		RequestID: shared.NewMessageID(), TraceID: shared.NewMessageID(),
@@ -126,7 +126,7 @@ func TestServerSettingsSyncInvalidPayload(t *testing.T) {
 	}
 	defer st.Close()
 	requester := &uninstallRequester{wake: make(chan struct{}, 2)}
-	dispatcher := New(st, requester)
+	dispatcher := New(st, requester, Options{}, Events{})
 	dispatcher.HandleMessage(1, shared.Envelope{
 		Kind: shared.KindRequest, Type: shared.TypeServerSettingsSync,
 		RequestID: shared.NewMessageID(), TraceID: shared.NewMessageID(),

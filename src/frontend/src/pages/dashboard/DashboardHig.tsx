@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useRef, useState } from 'react'
 import { Link } from 'wouter'
 import {
   ActivityIcon,
@@ -27,6 +27,7 @@ import { DEMO_DASHBOARD_STATS, DEMO_SERVERS } from '@/lib/dashboard-demo'
 import { formatByteRate, humanizeBytes } from '@/lib/format'
 import { isServerOnline, serverConnectionLabel } from '@/lib/server-state'
 import type { Chain, DashboardStats, Server } from '@/lib/types'
+import { usePolling } from '@/lib/use-polling'
 import { cn } from '@/lib/utils'
 
 import '../dashboard.css'
@@ -67,7 +68,9 @@ export default function Dashboard() {
     const request = ++loadRequest.current
     const options = signal
       ? { signal, ...(silent ? { display: 'silent' as const } : {}) }
-      : silent ? { display: 'silent' as const } : undefined
+      : silent
+        ? { display: 'silent' as const }
+        : undefined
     try {
       const [dashboardStats, serverList, chainList] = await Promise.all([
         api.dashboard(options),
@@ -86,27 +89,14 @@ export default function Dashboard() {
     }
   }, [])
 
-  useEffect(() => {
-    const controller = new AbortController()
-    let stopped = false
-    let timer: number | undefined
-    const poll = async (initial: boolean) => {
-      await load(!initial, controller.signal)
-      if (!stopped) timer = window.setTimeout(() => void poll(false), 5000)
-    }
-    void poll(true)
-    return () => {
-      stopped = true
-      loadRequest.current += 1
-      controller.abort()
-      if (timer !== undefined) window.clearTimeout(timer)
-    }
-  }, [load])
+  usePolling(load, loadRequest)
 
   if (error) {
     return (
       <div className="db">
-        <Notice tone="danger" title="控制面板连接失败" className="max-w-xl">{error}</Notice>
+        <Notice tone="danger" title="控制面板连接失败" className="max-w-xl">
+          {error}
+        </Notice>
       </div>
     )
   }
@@ -143,10 +133,34 @@ export default function Dashboard() {
   const systemHealthy = displayStats.links_degraded === 0
 
   const metricItems = [
-    { label: '服务器', value: displayStats.servers, detail: `${displayStats.servers_online} 台在线`, icon: ServerIcon, tint: 'blue' as const },
-    { label: '链路', value: displayStats.links, detail: `${activeChains} 条活跃`, icon: RouteIcon, tint: 'indigo' as const },
-    { label: '订阅用户', value: displayStats.users, detail: '访问状态正常', icon: UsersIcon, tint: 'purple' as const },
-    { label: '待处理', value: displayStats.links_degraded, detail: displayStats.links_degraded ? '存在降级链路' : '暂无异常', icon: ActivityIcon, tint: 'orange' as const },
+    {
+      label: '服务器',
+      value: displayStats.servers,
+      detail: `${displayStats.servers_online} 台在线`,
+      icon: ServerIcon,
+      tint: 'blue' as const,
+    },
+    {
+      label: '链路',
+      value: displayStats.links,
+      detail: `${activeChains} 条活跃`,
+      icon: RouteIcon,
+      tint: 'indigo' as const,
+    },
+    {
+      label: '订阅用户',
+      value: displayStats.users,
+      detail: '访问状态正常',
+      icon: UsersIcon,
+      tint: 'purple' as const,
+    },
+    {
+      label: '待处理',
+      value: displayStats.links_degraded,
+      detail: displayStats.links_degraded ? '存在降级链路' : '暂无异常',
+      icon: ActivityIcon,
+      tint: 'orange' as const,
+    },
   ]
 
   return (
@@ -199,12 +213,17 @@ export default function Dashboard() {
       <div className="db-split">
         <section className="db-card db-nodes" aria-labelledby="db-nodes-heading">
           <header className="db-card-head">
-            <h2 className="db-card-title" id="db-nodes-heading">节点</h2>
+            <h2 className="db-card-title" id="db-nodes-heading">
+              节点
+            </h2>
             <span className="db-card-meta">{displayServers.length} 台</span>
           </header>
 
           <div className="db-availability">
-            <strong>{availability}<small>%</small></strong>
+            <strong>
+              {availability}
+              <small>%</small>
+            </strong>
             <span>整体可用性 · 服务器与链路健康度</span>
           </div>
 
@@ -223,12 +242,19 @@ export default function Dashboard() {
                       <span className={cn('db-node-dot', `is-${tone}`)} aria-hidden="true" />
                       <span className="db-node-copy">
                         <strong>{server.alias}</strong>
-                        <small>{server.country_code || '--'} · {server.location || '位置待补充'}</small>
+                        <small>
+                          {server.country_code || '--'} · {server.location || '位置待补充'}
+                        </small>
                       </span>
                       <span className={cn('db-node-status', `is-${tone}`)}>
                         {serverConnectionLabel(server.connection_state)}
                       </span>
-                      <ChevronRightIcon className="db-node-chevron" size={14} strokeWidth={2.4} aria-hidden="true" />
+                      <ChevronRightIcon
+                        className="db-node-chevron"
+                        size={14}
+                        strokeWidth={2.4}
+                        aria-hidden="true"
+                      />
                     </button>
                   </li>
                 )
@@ -239,7 +265,9 @@ export default function Dashboard() {
               <ServerIcon size={28} strokeWidth={1.8} />
               <strong>等待服务器接入</strong>
               <span>添加服务器后，这里会显示节点状态。</span>
-              <Link href="/servers" className="db-button-primary">添加服务器</Link>
+              <Link href="/servers" className="db-button-primary">
+                添加服务器
+              </Link>
             </div>
           )}
         </section>
@@ -247,7 +275,9 @@ export default function Dashboard() {
         <section className="db-topo" aria-labelledby="db-topo-heading">
           <header className="db-topo-head">
             <div className="db-topo-head-copy">
-              <h2 className="db-topo-title" id="db-topo-heading">全球拓扑</h2>
+              <h2 className="db-topo-title" id="db-topo-heading">
+                全球拓扑
+              </h2>
               <span className="db-topo-meta">{displayServers.length} 个节点</span>
             </div>
             <button
@@ -262,7 +292,15 @@ export default function Dashboard() {
           </header>
 
           {displayServers.length ? (
-            <Suspense fallback={<div className="dashboard-globe-loading" role="status" aria-label="正在加载全球节点" />}>
+            <Suspense
+              fallback={
+                <div
+                  className="dashboard-globe-loading"
+                  role="status"
+                  aria-label="正在加载全球节点"
+                />
+              }
+            >
               <GlobeTopology
                 servers={displayServers}
                 chains={chains}
@@ -296,7 +334,12 @@ export default function Dashboard() {
                 {selectedServer.country_code || '--'} · {selectedServer.location || '位置待补充'}
               </span>
             </div>
-            <span className={cn('db-health-pill is-small', isServerOnline(selectedServer) ? 'is-healthy' : 'is-degraded')}>
+            <span
+              className={cn(
+                'db-health-pill is-small',
+                isServerOnline(selectedServer) ? 'is-healthy' : 'is-degraded',
+              )}
+            >
               <span className="db-health-dot" aria-hidden="true" />
               {serverConnectionLabel(selectedServer.connection_state)}
             </span>
@@ -304,27 +347,49 @@ export default function Dashboard() {
 
           <dl className="db-focus-grid">
             <div>
-              <dt><CpuIcon size={12} strokeWidth={2.4} aria-hidden="true" />CPU</dt>
+              <dt>
+                <CpuIcon size={12} strokeWidth={2.4} aria-hidden="true" />
+                CPU
+              </dt>
               <dd>{selectedMetrics ? `${Math.round(selectedMetrics.cpu_percent ?? 0)}%` : '--'}</dd>
             </div>
             <div>
-              <dt><ArrowUpIcon size={12} strokeWidth={2.4} aria-hidden="true" />上行</dt>
+              <dt>
+                <ArrowUpIcon size={12} strokeWidth={2.4} aria-hidden="true" />
+                上行
+              </dt>
               <dd>{formatByteRate(selectedMetrics?.network_tx_bps ?? null)}</dd>
             </div>
             <div>
-              <dt><ArrowDownIcon size={12} strokeWidth={2.4} aria-hidden="true" />下行</dt>
+              <dt>
+                <ArrowDownIcon size={12} strokeWidth={2.4} aria-hidden="true" />
+                下行
+              </dt>
               <dd>{formatByteRate(selectedMetrics?.network_rx_bps ?? null)}</dd>
             </div>
             <div>
-              <dt><HardDriveIcon size={12} strokeWidth={2.4} aria-hidden="true" />磁盘</dt>
-              <dd>{selectedMetrics ? `${humanizeBytes(selectedMetrics.disk_used)} / ${humanizeBytes(selectedMetrics.disk_total)}` : '--'}</dd>
+              <dt>
+                <HardDriveIcon size={12} strokeWidth={2.4} aria-hidden="true" />
+                磁盘
+              </dt>
+              <dd>
+                {selectedMetrics
+                  ? `${humanizeBytes(selectedMetrics.disk_used)} / ${humanizeBytes(selectedMetrics.disk_total)}`
+                  : '--'}
+              </dd>
             </div>
             <div>
-              <dt><TimerIcon size={12} strokeWidth={2.4} aria-hidden="true" />运行时间</dt>
+              <dt>
+                <TimerIcon size={12} strokeWidth={2.4} aria-hidden="true" />
+                运行时间
+              </dt>
               <dd>{formatUptime(selectedMetrics?.uptime_seconds)}</dd>
             </div>
             <div>
-              <dt><GaugeIcon size={12} strokeWidth={2.4} aria-hidden="true" />Agent</dt>
+              <dt>
+                <GaugeIcon size={12} strokeWidth={2.4} aria-hidden="true" />
+                Agent
+              </dt>
               <dd>{selectedServer.agent_version || '--'}</dd>
             </div>
           </dl>
@@ -340,9 +405,16 @@ export default function Dashboard() {
       ) : null}
 
       {/* 链路健康 */}
-      <section className={cn('db-banner', systemHealthy ? 'is-good' : 'is-bad')} aria-label="链路健康">
+      <section
+        className={cn('db-banner', systemHealthy ? 'is-good' : 'is-bad')}
+        aria-label="链路健康"
+      >
         <span className="db-banner-icon" aria-hidden="true">
-          {systemHealthy ? <CheckCircle2Icon size={18} strokeWidth={2.2} /> : <AlertTriangleIcon size={18} strokeWidth={2.2} />}
+          {systemHealthy ? (
+            <CheckCircle2Icon size={18} strokeWidth={2.2} />
+          ) : (
+            <AlertTriangleIcon size={18} strokeWidth={2.2} />
+          )}
         </span>
         <div className="db-banner-copy">
           <strong>{systemHealthy ? '所有系统稳定' : '降级链路需要关注'}</strong>

@@ -22,6 +22,10 @@ const pongTimeoutDefault = 90 * time.Second
 // sendBuffer 是每连接发送队列长度。MVP 命令量极小，写满即视为慢连接并断开（重连后补发）。
 const sendBuffer = 256
 
+// inboundBuffer 是每连接上行消息处理队列长度（读循环 → handlerPump），与发送队列
+// 同量级：写满即视为慢处理并按慢连接策略断开，未处理消息由 agent 重连后补发。
+const inboundBuffer = 256
+
 // Hub 是 agent 连接的注册表，同时实现 AgentRequester（§2 WS 传输实现）。
 type Hub struct {
 	// Auth 校验 Upgrade 凭据并打开 session（由 dispatcher 实现，注入）。
@@ -37,7 +41,8 @@ type Hub struct {
 	// OnReconnect 在服务器已有连接被新的认证连接替换时调用。此时服务器始终在线，
 	// 单独留痕而不伪造 offline→online 状态跃迁。
 	OnReconnect func(serverID int64)
-	// OnMessage 上抛认证后收到的所有业务信封（apply_result 等）。
+	// OnMessage 上抛认证后收到的所有业务信封（apply_result 等）；
+	// 由每连接的 handlerPump goroutine 顺序调用（连接内保序，连接之间可并发）。
 	OnMessage func(serverID int64, env shared.Envelope)
 	// OnProtocolError 只记录无正常业务响应的 WS 协议错误；遥测和 ping/pong 不调用。
 	OnProtocolError func(serverID int64, requestID, traceID, rpcType, message string)
@@ -195,10 +200,6 @@ func (h *Hub) Send(ctx context.Context, serverID int64, env shared.Envelope) err
 	if draining {
 		return ErrDraining
 	}
-	if lifecycle := h.lifecycleSnapshot(); (lifecycle.State == shared.PanelStateStartup || lifecycle.State == shared.PanelStateFaulted) &&
-		isBusinessCommand(env) {
-		return ErrPanelNotActive
-	}
 	if !ok {
 		return ErrOffline
 	}
@@ -214,21 +215,6 @@ func (h *Hub) Send(ctx context.Context, serverID int64, env shared.Envelope) err
 		log.Printf("ws: server %d send buffer full, closing connection", serverID)
 		c.close()
 		return ErrOffline
-	}
-}
-
-func isBusinessCommand(env shared.Envelope) bool {
-	if env.Kind != shared.KindRequest {
-		return false
-	}
-	switch env.Type {
-	case shared.TypeApplyNode, shared.TypeRemoveNode,
-		shared.TypeApplyChainHop, shared.TypeRemoveChainHop,
-		shared.TypeAddUser, shared.TypeRemoveUser,
-		shared.TypeUninstall, shared.TypeUpgradeXray, shared.TypeUpgradeAgent:
-		return true
-	default:
-		return false
 	}
 }
 
@@ -357,7 +343,7 @@ func (h *Hub) unregister(c *agentConn) {
 	}
 }
 
-// agentConn 是一条 agent WS 连接：读在 ServeHTTP 读循环，写在 writePump（gorilla 不允许并发写）。
+// agentConn 是一条 agent WS 连接：读在 ServeHTTP 读循环，业务处理在 handlerPump，写在 writePump（gorilla 不允许并发写）。
 type agentConn struct {
 	hub           *Hub
 	serverID      int64
@@ -365,6 +351,7 @@ type agentConn struct {
 	sessionKind   string
 	ws            *websocket.Conn
 	send          chan shared.Envelope
+	inbound       chan shared.Envelope // 上行消息处理队列：读循环投递，handlerPump 顺序消费
 	done          chan struct{}
 	once          sync.Once
 	ackMu         sync.Mutex
@@ -483,6 +470,22 @@ func (c *agentConn) writePump() {
 			if err := c.ws.WriteJSON(env); err != nil {
 				c.close()
 				return
+			}
+		case <-c.done:
+			return
+		}
+	}
+}
+
+// handlerPump 顺序消费上行消息处理队列（每连接一个 goroutine，保持消息顺序）：
+// 回执落库等慢处理只拖慢本连接的处理队列，不阻塞读循环的读取与续期。
+// done 关闭即退出（无泄漏）；队列残留消息随连接断开丢弃，由 agent 重连补发兜底。
+func (c *agentConn) handlerPump() {
+	for {
+		select {
+		case env := <-c.inbound:
+			if c.hub.OnMessage != nil {
+				c.hub.OnMessage(c.serverID, env)
 			}
 		case <-c.done:
 			return

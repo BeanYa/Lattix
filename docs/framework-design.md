@@ -50,7 +50,11 @@
 src/frontend/  # Vite + React + TypeScript + shadcn/ui，包管理器使用 bun
                # 可插拔主题系统（src/frontend/src/themes/，默认 Apple HIG，见 frontend.md）
 src/backend/   # Go：面板 HTTP API + Agent WS 端点 + SQLite
-src/agent/     # Go：独立二进制，systemd 托管
+               # internal/panel 下另拆五个子包：scheduler（公共周期任务调度）、
+               # releases（agent/xray 版本目录）、exchange（汇率目录与成本换算）、
+               # cdn（CDN 节点目录接线）、selfupdate（面板自更新）
+src/agent/     # Go：独立二进制，systemd 托管；internal/fileutil 为各组件共用的
+               # 原子落盘/复制原语
 src/shared/    # Go module：WS 消息结构体、虚拟配置类型，backend/agent 共用
 scripts/
   install-panel.sh   # 面板原生/Docker 安装实现
@@ -143,6 +147,8 @@ install.sh           # 唯一面向用户的统一安装入口
 
 Panel 生命周期为 `startup|active|updating|faulted`；每个 Agent 的连接状态为 `never_connected|connecting|reconnecting|online|offline|auth_rejected`。HTTP Upgrade 使用 Bearer token，明确鉴权失败返回 HTTP 403 与结构化 RPC body，暂时不可用返回 503。liveness 与 latency probe 分离：liveness 维持连接，latency 只在 active 测量且失败不再断开 WS。完整语义见 [Panel 生命周期与 Agent 连接状态机](panel-lifecycle-state-machine-design.md)。
 
+读模型：每连接读循环只负责读取、续期与投递，业务信封由独立的 handlerPump goroutine 顺序消费（连接内保序，连接之间并发），回执落库等慢处理不阻塞读取与续期；上行处理队列 256 缓冲，写满按慢连接断开，未处理消息由 Agent 重连后补发（下行发送队列同策略）。业务命令门控在 dispatch 层统一下发入口执行（`src/backend/internal/dispatch` 的 `isBusinessCommand`）：面板处于 startup/faulted 时拒投 14 类业务命令，命令滞留 queued，待面板就绪后补发；握手、回执、上报等非业务信封不受影响。
+
 ## 6. 节点生命周期与 apply 流水线
 
 节点状态机：`pending → applying → active | failed`。`failed` 携带错误详情，面板提供重试按钮。（自 0.0.2 之后迭代：链场景的跨机编排、链级状态机与逐跳重试见 §21；本节流水线对链中每一跳仍然适用。）
@@ -213,7 +219,8 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
   `/api/sub/{token}/client-download/{start,status,ticket,file}` 四端点获取 3 小时
   会话票据直链，交给浏览器原生下载（`http.ServeFile` 天然支持 Range 断点续传）。
   票据与订阅 token、任务双向绑定，过期或跨订阅使用返回 403；状态端点回显校验值
-  与来源供用户独立核验。
+  与来源供用户独立核验。新建下载任务按订阅 token 滑动窗口限流（每 token 10 次/小时，
+  超限 429 + Retry-After；去重命中、票据签发与 Range 续传不计数，§12）。
 - **外部订阅（导入 + 用户关联）**：管理页导入第三方订阅 URL，节点与订阅信息独立落库
   （`external_chains` / `external_subscriptions`，不进入 `chains` 状态机与流量统计），
   用户以「一个外部订阅」为单位引入订阅输出。详见下方小节。
@@ -269,8 +276,9 @@ Location 允许自由输入作为兜底。后续可按国家拆分数据文件�
 ## 11. 服务器引导流程
 
 1. 面板"添加服务器"填写别名、公网地址与 **xray 版本**（默认 `latest`，也可指定具体版本），生成一次性 **bootstrap token** 与一行安装命令（自 0.0.2 之后迭代起另含机器类型与 NAT 可用端口段，§21；均为面板侧元数据，不下发到 agent，引导流程不变）；
-2. 面板生成的命令调用仓库根 `install.sh agent --version <面板版本>`。根入口从该
-   Git tag 加载 `scripts/install-agent.sh`，后者按创建时指定的 xray 版本安装
+2. 面板生成的命令调用仓库根 `install.sh agent --version <面板版本>`。根入口优先取该
+   版本 Release 资产中的 `install-agent.sh`（回退 Git tag 原始文件），执行前按同版本
+   `checksums.txt` 校验 SHA256，后者按创建时指定的 xray 版本安装
    （`latest` 经 GitHub API 解析并校验官方 `.dgst`）→ 从同版本 GitHub Release
    下载并校验 `lattix-agent-linux-<arch>.tar.gz` → 安装 Agent/`latx-ag` →
    best-effort 开启 TCP BBR → 写入面板地址与 bootstrap token。面板不托管安装脚本或
@@ -302,8 +310,29 @@ Agent 收到该明确拒绝后停止自动连接；管理员必须执行新的�
     反代整个站点并为 `/api/agent/ws` 转发 Upgrade/Connection 头，
     并以 `-public-url https://域名` 或 `X-Forwarded-Proto: https` 告知面板生成 https 链接。
 - HTTPS（含反代）下会话 cookie 带 `Secure`；安装命令/订阅链接按上述推断生成 `https://`/`wss://`。
-- agent 与面板 Release 二进制的完整性由 `checksums.txt` 的 **SHA256 校验**保障；
-  安装实现从对应 Git tag 经 Raw GitHub HTTPS 加载，二进制只从 GitHub Release 获取。
+- 会话签名密钥为独立随机值，持久化于 settings（`session_secret`），不派生自口令材料；
+  改密即轮换，全部会话失效需重新登录。
+- 登录限流为 per-IP（5 次/分钟 → 封 5 分钟）与 per-username（10 次/5 分钟 → 封 15 分钟）
+  双桶并存，任一命中即拒（429 + `Retry-After`），防伪造 `X-Forwarded-For` 绕过 per-IP 桶；
+  bcrypt 校验另有并发上限。
+- 全站统一输出安全响应头四件套：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、
+  `Referrer-Policy: strict-origin-when-cross-origin`、CSP `frame-ancestors 'none'`。
+- agent 与面板 Release 二进制的完整性由 `checksums.txt` 的 **SHA256 校验**保障，二进制只从
+  GitHub Release 获取；安装/管理脚本（`install-panel.sh`/`install-agent.sh`/`latx.sh`/`latx-ag.sh`）
+  同为 Release 资产并纳入 `checksums.txt`，根 `install.sh` 优先取 Release 资产（回退 Git tag
+  原始文件），执行前校验，不匹配即中止（旧版本 Release 无脚本条目时警告并跳过校验，保持可安装）。
+- 出向 HTTP 拨号带 SSRF 防护：外部订阅拉取、CDN 节点目录、告警 webhook、订阅模板刷新等生产
+  客户端经 requester 的 `GuardedDialContext` 先解析目标主机名，命中回环/内网/保留地址段即拒连
+  （防域名解析绕过 URL 层校验）；e2e 可经 `LATX_ALLOW_PRIVATE_OUTBOUND=1` 放行（仅限测试，
+  生产严禁设置）。
+- Agent 的 bootstrap/长期 token 经 `LATTIX_TOKEN` 环境变量注入（systemd EnvironmentFile /
+  用户态守护脚本），不出现在进程命令行参数。
+- 落地页客户端下载的新建任务按订阅 token 滑动窗口限流（每 token 10 次/小时），超限返回
+  429 + `Retry-After`；去重命中、票据签发与文件下载（含 Range 续传）不计数（§9）。
+- 匿名订阅端点（`/sub/{token}` 与 `/api/sub/{token}/*`）的内部错误对外收敛为通用文案，
+  细节只写进程日志。
+- 服务器测试的上游 ip.sh 脚本钉定版本，下载与缓存均强制 SHA256 校验（见
+  [服务器测试设计](server-testing-design.md)）。
 - Reality 私钥永不出服务器（§7）；VLESS Encryption 的 decryption 私钥侧同理（§15）。
 - Agent 能力面收敛：只执行 xray 配置落地、服务重启、状态上报、自卸载，不接受任意命令。
 
@@ -451,8 +480,11 @@ busy_timeout 下与并发读写安全共存，失败 500。设置页"面板维�
 **统一安装入口**：用户只执行仓库根 `install.sh`。无参数时直接进入面板的
 Docker/原生模式向导；面板自动化安装使用 `panel` 子命令。`agent` 子命令仅供面板
 "添加服务器"生成的安装命令调用，不作为用户自行触发的安装入口。版本默认取最新稳定
-Release，显式 `--version` 可钉版。根入口再从对应 Git tag 加载
-`scripts/install-panel.sh` 或 `scripts/install-agent.sh`；安装脚本不作为 Release 资产。
+Release，显式 `--version` 可钉版。根入口再加载对应版本的子安装器：优先取该版本
+Release 资产（`install-panel.sh`/`install-agent.sh` 与 `latx.sh`/`latx-ag.sh` 均为
+Release 资产，sha256 纳入 `checksums.txt`），回退对应 Git tag 的原始文件；执行前按
+同版本 `checksums.txt` 校验 SHA256，不匹配即中止（旧版本 Release 无脚本条目时警告
+并跳过校验，保持钉版旧版本可安装）。
 
 **安装参数**：Docker 与原生模式的交互向导均允许设置部署地址/端口、管理员账号密码和
 配置目录，各项留空时采用对应模式的默认值（重装时优先复用已有配置）。非交互安装使用
@@ -513,9 +545,10 @@ sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支�
 及单行原因 WARNING，不触碰测试宿主的真实网络参数。
 
 **`-reset-admin` 启动参数**：`lattix-backend -reset-admin <newpass> -db <path>`
-与设置页改密同一代码路径（bcrypt 哈希写 `settings`，≥8 位校验，会话签名密钥派生自
-密码哈希故改密即全部会话失效，§10），写完输出提示即退出，不启动面板；
-面板运行中执行安全（busy_timeout）。
+与设置页改密同等语义（bcrypt 哈希写 `settings`，≥8 位校验；并删除会话签名密钥使其
+下次使用时重新生成——会话签名密钥为独立随机值，不派生自口令材料，§12），写完输出提示
+即退出，不启动面板；面板运行中执行安全（busy_timeout），运行中的面板进程缓存密钥于
+内存，全部会话失效需重启面板后生效。
 
 ## 21. 代理链与 NAT 支持（已实现，v0.0.3）
 

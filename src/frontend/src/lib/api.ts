@@ -100,20 +100,30 @@ export const api = {
     return result
   },
 
-  dashboard: (options?: RequestOptions) => requester.get<DashboardStats>('/api/dashboard/get', undefined, options),
+  dashboard: (options?: RequestOptions) =>
+    requester.get<DashboardStats>('/api/dashboard/get', undefined, options),
 
-  servers: (options?: RequestOptions) => requester.get<Server[]>('/api/server/list', undefined, options),
+  servers: (options?: RequestOptions) =>
+    requester.get<Server[]>('/api/server/list', undefined, options),
   serverMetricSamples: (limit = 30) =>
-    requester.get<ServerMetricSeries[]>('/api/server/list-metric-samples', { limit }, {
-      display: 'silent',
-    }),
+    requester.get<ServerMetricSeries[]>(
+      '/api/server/list-metric-samples',
+      { limit },
+      {
+        display: 'silent',
+      },
+    ),
   serverMetricHistory: (serverId: number, hours = 24) =>
-    requester.get<ServerMetrics[]>('/api/server/get-metric-history', {
-      server_id: serverId,
-      hours,
-    }, {
-      display: 'silent',
-    }),
+    requester.get<ServerMetrics[]>(
+      '/api/server/get-metric-history',
+      {
+        server_id: serverId,
+        hours,
+      },
+      {
+        display: 'silent',
+      },
+    ),
   serverTest: (serverId: number, options?: RequestOptions) =>
     requester.get<ServerTestTask | null>('/api/server/get-test', { server_id: serverId }, options),
   runServerTest: (serverId: number, categories: ServerTestCategory[]) =>
@@ -148,10 +158,14 @@ export const api = {
   releaseVersions: (kind: 'agent' | 'xray') =>
     requester.get<ReleaseVersions>('/api/server/list-release-versions', { kind }),
   serverCommands: (serverId: number, limit = 50, options?: RequestOptions) =>
-    requester.get<CommandLog[]>('/api/server/list-commands', {
-      server_id: serverId,
-      limit,
-    }, options),
+    requester.get<CommandLog[]>(
+      '/api/server/list-commands',
+      {
+        server_id: serverId,
+        limit,
+      },
+      options,
+    ),
   repairServer: (serverId: number) =>
     requester.postObserved<{ reapplied: number }>('/api/server/repair', { server_id: serverId }),
   cleanupXray: (serverId: number, dryRun: boolean) =>
@@ -227,13 +241,17 @@ export const api = {
     requester.post<Provider>('/api/provider/update', { id, name, website_url: websiteUrl }),
   deleteProvider: (id: number) => requester.post<void>('/api/provider/delete', { id }),
   exchangeRates: () => requester.get<ExchangeRateSettings>('/api/exchange-rate/list'),
-  refreshExchangeRates: () => requester.post<ExchangeRateSettings>('/api/exchange-rate/refresh', {}),
+  refreshExchangeRates: () =>
+    requester.post<ExchangeRateSettings>('/api/exchange-rate/refresh', {}),
   saveCustomExchangeRate: (rate: Omit<CustomExchangeRate, 'updated_at'>) =>
     requester.post<CustomExchangeRate>('/api/exchange-rate/save-custom', rate),
-  deleteCustomExchangeRate: (id: number) => requester.post<void>('/api/exchange-rate/delete-custom', { id }),
+  deleteCustomExchangeRate: (id: number) =>
+    requester.post<void>('/api/exchange-rate/delete-custom', { id }),
 
-  chains: (options?: RequestOptions) => requester.get<Chain[]>('/api/chain/list', undefined, options),
-  createChain: (body: CreateChainRequest) => requester.postObserved<Chain>('/api/chain/create', body),
+  chains: (options?: RequestOptions) =>
+    requester.get<Chain[]>('/api/chain/list', undefined, options),
+  createChain: (body: CreateChainRequest) =>
+    requester.postObserved<Chain>('/api/chain/create', body),
   editChain: (body: EditChainRequest) => requester.postObserved<Chain>('/api/chain/edit', body),
   forcePublishChain: (chainId: number) =>
     requester.postObserved<Chain>('/api/chain/force-publish', { chain_id: chainId }),
@@ -250,19 +268,29 @@ export const api = {
   deleteChain: (chainId: number) =>
     requester.postObserved<void>('/api/chain/delete', { chain_id: chainId }),
 
-  nodes: (options?: RequestOptions) => requester.get<XrayNode[]>('/api/node/list', undefined, options),
-  createNode: (body: CreateNodeRequest) => requester.postObserved<XrayNode>('/api/node/create', body),
+  nodes: (options?: RequestOptions) =>
+    requester.get<XrayNode[]>('/api/node/list', undefined, options),
+  createNode: (body: CreateNodeRequest) =>
+    requester.postObserved<XrayNode>('/api/node/create', body),
   retryNode: (nodeId: number) =>
     requester.postObserved<XrayNode>('/api/node/retry', { node_id: nodeId }),
   deleteNode: (nodeId: number) =>
     requester.postObserved<void>('/api/node/delete', { node_id: nodeId }),
 
-  users: (options?: RequestOptions) => requester.get<SubUser[]>('/api/user/list', undefined, options),
+  users: (options?: RequestOptions) =>
+    requester.get<SubUser[]>('/api/user/list', undefined, options),
   createUser: (
     name: string,
     expiresAt?: string | null,
     chainIds?: number[],
-    sub?: { traffic_limit?: number; traffic_reset_day?: number; plan_name?: string; app_url?: string; routing?: SubscriptionRoutingProfile; external_subscriptions?: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }> },
+    sub?: {
+      traffic_limit?: number
+      traffic_reset_day?: number
+      plan_name?: string
+      app_url?: string
+      routing?: SubscriptionRoutingProfile
+      external_subscriptions?: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }>
+    },
   ) =>
     requester.postObserved<SubUser>('/api/user/create', {
       name,
@@ -272,22 +300,14 @@ export const api = {
     }),
   setUserDisabled: (userId: number, disabled: boolean) =>
     requester.postObserved<SubUser>('/api/user/update', { user_id: userId, disabled }),
-  setUserAssignments: (userId: number, nodeIds: number[], chainIds: number[]) =>
-    requester.postObserved<{ node_ids: number[]; chain_ids: number[] }>('/api/user/set-nodes', {
-      user_id: userId,
-      node_ids: nodeIds,
-      chain_ids: chainIds,
-    }),
   setUserExternalSubscriptions: (
     userId: number,
     items: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }>,
   ) =>
-    requester.postObserved<{ items: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }> }>(
-      '/api/user/set-external-subscriptions',
-      { user_id: userId, items },
-    ),
-  deleteUser: (userId: number) =>
-    requester.post<void>('/api/user/delete', { user_id: userId }),
+    requester.postObserved<{
+      items: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }>
+    }>('/api/user/set-external-subscriptions', { user_id: userId, items }),
+  deleteUser: (userId: number) => requester.post<void>('/api/user/delete', { user_id: userId }),
   updateUserSubSettings: (body: {
     user_id: number
     traffic_limit: number
@@ -303,9 +323,19 @@ export const api = {
     requester.postObserved<void>('/api/user/regenerate-subscription', { user_id: userId }),
   resetUserSubscriptionToken: (userId: number) =>
     requester.post<{ sub_token: string; sub_url: string; sub_links_url: string }>(
-      '/api/user/reset-subscription-token', { user_id: userId }),
-  userSubscriptionPreview: (userId: number, format: SubscriptionPreviewFormat, stage?: SubscriptionPreviewStage) =>
-    requester.get<SubscriptionPreview>('/api/user/subscription-preview', { user_id: userId, format, stage }),
+      '/api/user/reset-subscription-token',
+      { user_id: userId },
+    ),
+  userSubscriptionPreview: (
+    userId: number,
+    format: SubscriptionPreviewFormat,
+    stage?: SubscriptionPreviewStage,
+  ) =>
+    requester.get<SubscriptionPreview>('/api/user/subscription-preview', {
+      user_id: userId,
+      format,
+      stage,
+    }),
   subscriptionCategories: (options?: RequestOptions) =>
     requester.get<SubscriptionRuleCategory[]>('/api/subscription/categories', undefined, options),
   subscriptionTemplates: (options?: RequestOptions) =>
@@ -319,30 +349,49 @@ export const api = {
     license?: string
   }) => requester.post<SubscriptionTemplate>('/api/subscription/template/save', body),
   cloneSubscriptionTemplate: (id: string, name?: string) =>
-    requester.post<SubscriptionTemplate>('/api/subscription/template/clone', { id, name: name ?? '' }),
+    requester.post<SubscriptionTemplate>('/api/subscription/template/clone', {
+      id,
+      name: name ?? '',
+    }),
   deleteSubscriptionTemplate: (id: string) =>
     requester.post<void>('/api/subscription/template/delete', { id }),
   refreshSubscriptionTemplates: (id = '') =>
     requester.postObserved<SubscriptionTemplate[]>('/api/subscription/template/refresh', { id }),
-  assignSubscriptionTemplate: (userIds: number[], target: { template_id?: string; suggested_categories?: string[] }, forced: boolean) =>
-    requester.postObserved<{ user_ids: number[]; template_id?: string; suggested_categories?: string[]; forced: boolean }>(
-      '/api/subscription/template/assign',
-      { user_ids: userIds, ...target, forced },
-    ),
-  unassignSubscriptionTemplate: (userIds: number[], target: { template_id?: string; suggested_categories?: string[] }) =>
-    requester.postObserved<{ user_ids: number[]; template_id?: string; suggested_categories?: string[] }>(
-      '/api/subscription/template/unassign',
-      { user_ids: userIds, ...target },
-    ),
+  assignSubscriptionTemplate: (
+    userIds: number[],
+    target: { template_id?: string; suggested_categories?: string[] },
+    forced: boolean,
+  ) =>
+    requester.postObserved<{
+      user_ids: number[]
+      template_id?: string
+      suggested_categories?: string[]
+      forced: boolean
+    }>('/api/subscription/template/assign', { user_ids: userIds, ...target, forced }),
+  unassignSubscriptionTemplate: (
+    userIds: number[],
+    target: { template_id?: string; suggested_categories?: string[] },
+  ) =>
+    requester.postObserved<{
+      user_ids: number[]
+      template_id?: string
+      suggested_categories?: string[]
+    }>('/api/subscription/template/unassign', { user_ids: userIds, ...target }),
   externalSubscriptions: (options?: RequestOptions) =>
     requester.get<ExternalSubscription[]>('/api/external-subscription/list', undefined, options),
-  linkGroups: (options?: RequestOptions) => requester.get<LinkGroup[]>('/api/link-group/list', undefined, options),
-  linkGroupCreate: (input: LinkGroupInput) => requester.postObserved<{ id: number }>('/api/link-group/create', input),
-  linkGroupUpdate: (input: LinkGroupInput) => requester.postObserved<{ id: number }>('/api/link-group/update', input),
+  linkGroups: (options?: RequestOptions) =>
+    requester.get<LinkGroup[]>('/api/link-group/list', undefined, options),
+  linkGroupCreate: (input: LinkGroupInput) =>
+    requester.postObserved<{ id: number }>('/api/link-group/create', input),
+  linkGroupUpdate: (input: LinkGroupInput) =>
+    requester.postObserved<{ id: number }>('/api/link-group/update', input),
   linkGroupDelete: (id: number) => requester.postObserved<null>('/api/link-group/delete', { id }),
-  userGroups: (options?: RequestOptions) => requester.get<UserGroup[]>('/api/user-group/list', undefined, options),
-  userGroupCreate: (input: UserGroupInput) => requester.postObserved<{ id: number }>('/api/user-group/create', input),
-  userGroupUpdate: (input: UserGroupInput) => requester.postObserved<{ id: number }>('/api/user-group/update', input),
+  userGroups: (options?: RequestOptions) =>
+    requester.get<UserGroup[]>('/api/user-group/list', undefined, options),
+  userGroupCreate: (input: UserGroupInput) =>
+    requester.postObserved<{ id: number }>('/api/user-group/create', input),
+  userGroupUpdate: (input: UserGroupInput) =>
+    requester.postObserved<{ id: number }>('/api/user-group/update', input),
   userGroupDelete: (id: number) => requester.postObserved<null>('/api/user-group/delete', { id }),
   externalSubscriptionChains: (id: number, options?: RequestOptions) =>
     requester.get<ExternalChain[]>('/api/external-subscription/chains', { id }, options),
@@ -369,7 +418,8 @@ export const api = {
     requester.postObserved<ExternalSubscription>('/api/external-subscription/sync', { id }),
   userTrafficHistory: (userId: number) =>
     requester.get<Array<{ period_start: string; up: number; down: number }>>(
-      '/api/user/traffic-history', { user_id: userId },
+      '/api/user/traffic-history',
+      { user_id: userId },
     ),
 
   settings: () => requester.get<PanelSettings>('/api/setting/get'),
@@ -384,16 +434,15 @@ export const api = {
     return result
   },
   restartPanel: () => requester.post<{ status: string }>('/api/panel/restart', {}),
-  panelState: () => requester.get<PanelLifecycleSnapshot>('/api/panel/state', undefined, {
-    display: 'silent',
-  }),
-  panelRuntime: (options?: RequestOptions) => requester.get<PanelRuntimeSnapshot>(
-    '/api/panel/runtime', undefined, options,
-  ),
+  panelState: () =>
+    requester.get<PanelLifecycleSnapshot>('/api/panel/state', undefined, {
+      display: 'silent',
+    }),
+  panelRuntime: (options?: RequestOptions) =>
+    requester.get<PanelRuntimeSnapshot>('/api/panel/runtime', undefined, options),
   testAlerts: () => requester.post<AlertTestResult>('/api/setting/test-alerts', {}),
   subSettings: () => requester.get<SubSettings>('/api/setting/sub'),
-  updateSubSettings: (body: SubSettings) =>
-    requester.post<SubSettings>('/api/setting/sub', body),
+  updateSubSettings: (body: SubSettings) => requester.post<SubSettings>('/api/setting/sub', body),
 
   billingStats: (
     params: {
@@ -403,7 +452,11 @@ export const api = {
       rate_mode?: BillingStatsRateMode
     },
     options?: RequestOptions,
-  ) => requester.get<BillingActualStats>('/api/billing/stats', params, { display: 'silent', ...options }),
+  ) =>
+    requester.get<BillingActualStats>('/api/billing/stats', params, {
+      display: 'silent',
+      ...options,
+    }),
 
   billingStatsEstimated: (
     params: {
@@ -413,7 +466,11 @@ export const api = {
       rate_mode?: BillingStatsRateMode
     },
     options?: RequestOptions,
-  ) => requester.get<BillingEstimatedStats>('/api/billing/stats/estimated', params, { display: 'silent', ...options }),
+  ) =>
+    requester.get<BillingEstimatedStats>('/api/billing/stats/estimated', params, {
+      display: 'silent',
+      ...options,
+    }),
 
   panelVersion: () => requester.get<PanelVersionInfo>('/api/panel/get-version'),
   startPanelUpdate: (version?: string, force?: boolean) =>
@@ -426,9 +483,13 @@ export const api = {
       display: 'silent',
     }),
   observeTask: (observeId: string) =>
-    requester.get<Observation>('/api/observe-task/get', { observe_id: observeId }, {
-      display: 'silent',
-    }),
+    requester.get<Observation>(
+      '/api/observe-task/get',
+      { observe_id: observeId },
+      {
+        display: 'silent',
+      },
+    ),
 
   operationLogs: (params: {
     severity?: LogSeverity | ''
@@ -458,11 +519,7 @@ export const api = {
     ),
   clearOperationLogs: () => requester.post<void>('/api/log/clear-operations', {}),
   requestLogs: (limit: RequestWindow) =>
-    requester.get<RequestLogPage>(
-      '/api/log/list-requests',
-      { limit },
-      { display: 'silent' },
-    ),
+    requester.get<RequestLogPage>('/api/log/list-requests', { limit }, { display: 'silent' }),
   clearRequestLogs: () => requester.post<void>('/api/log/clear-requests', {}),
   downloadBackup: () => requester.download('/api/backup/download'),
 }

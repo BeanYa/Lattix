@@ -82,7 +82,7 @@ func TestSubscriptionItemsUseGroups(t *testing.T) {
 	// 直连节点遮蔽：给 member 直接分配一个普通 vless 节点（非链出口节点，避免被
 	// exitIDs 过滤使断言空洞），分组用户订阅仍为 4 条（直连节点不出现）；
 	// 非分组用户同一节点照常可见。
-	directServer, _ := st.CreateServer(ctx, "direct-srv", "direct.example.com", "tok-d", store.MachineTypeDirect, "", "", "US", "")
+	directServer, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "direct-srv", Address: "direct.example.com", BootstrapToken: "tok-d", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	directConfig, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Network: shared.NetworkTCP, Template: json.RawMessage(`{}`)})
 	directNode, _ := st.InsertNode(ctx, "direct-node", directServer, shared.ProtocolVLESS, nil, directConfig)
 	if err := st.SetNodeActive(ctx, directNode, []byte(`{"port":20003,"network":"tcp"}`)); err != nil {
@@ -140,8 +140,8 @@ func TestSubscriptionItemsUseGroups(t *testing.T) {
 func newTestEndpointChain(t *testing.T, st *store.Store, name string) (int64, int64) {
 	t.Helper()
 	ctx := context.Background()
-	entryID, _ := st.CreateServer(ctx, name+"-entry", "entry.example.com", "tok-"+name+"-e", store.MachineTypeDirect, "", "", "US", "")
-	exitID, _ := st.CreateServer(ctx, name+"-exit", "exit.example.com", "tok-"+name+"-x", store.MachineTypeDirect, "", "", "JP", "")
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: name+"-entry", Address: "entry.example.com", BootstrapToken: "tok-"+name+"-e", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: name+"-exit", Address: "exit.example.com", BootstrapToken: "tok-"+name+"-x", MachineType: store.MachineTypeDirect, CountryCode: "JP"})
 	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Network: shared.NetworkTCP, Template: json.RawMessage(`{}`)})
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 30001, "profile", config)
 	if err != nil {

@@ -1,4 +1,6 @@
-package panel
+// Package scheduler 承载面板侧的周期任务调度：固定间隔与日历对齐两种触发，
+// 任务共享生命周期与唤醒处理，各自独立运行且永不与自身并发重叠。
+package scheduler
 
 import (
 	"context"
@@ -9,15 +11,15 @@ import (
 	"time"
 )
 
-// inspectionSchedule supports fixed intervals and calendar-aligned checks.
+// InspectionSchedule supports fixed intervals and calendar-aligned checks.
 // At is used by day/month/year schedules and is interpreted in the panel timezone.
-type inspectionSchedule struct {
+type InspectionSchedule struct {
 	Every int    `json:"every"`
 	Unit  string `json:"unit"` // minute|hour|day|month|year
 	At    string `json:"at,omitempty"`
 }
 
-func (s inspectionSchedule) validate() error {
+func (s InspectionSchedule) Validate() error {
 	if s.Every < 1 || s.Every > 10000 {
 		return errors.New("巡检间隔须为 1-10000")
 	}
@@ -34,7 +36,7 @@ func (s inspectionSchedule) validate() error {
 	}
 }
 
-func (s inspectionSchedule) next(after time.Time, loc *time.Location) time.Time {
+func (s InspectionSchedule) Next(after time.Time, loc *time.Location) time.Time {
 	after = after.In(loc)
 	switch s.Unit {
 	case "minute":
@@ -57,22 +59,22 @@ func (s inspectionSchedule) next(after time.Time, loc *time.Location) time.Time 
 	}
 }
 
-type taskTrigger interface {
-	next(time.Time, *time.Location) time.Time
+type TaskTrigger interface {
+	Next(time.Time, *time.Location) time.Time
 }
 
-type intervalTrigger time.Duration
+type IntervalTrigger time.Duration
 
-func (i intervalTrigger) next(after time.Time, _ *time.Location) time.Time {
+func (i IntervalTrigger) Next(after time.Time, _ *time.Location) time.Time {
 	return after.Add(time.Duration(i))
 }
 
-type scheduledTask struct {
-	name       string
-	trigger    func(context.Context) taskTrigger
-	runOnStart bool
-	timeout    time.Duration
-	run        func(context.Context) error
+type ScheduledTask struct {
+	Name       string
+	Trigger    func(context.Context) TaskTrigger
+	RunOnStart bool
+	Timeout    time.Duration
+	Run        func(context.Context) error
 }
 
 type taskResult struct {
@@ -82,7 +84,7 @@ type taskResult struct {
 	err      error
 }
 
-type scheduledTaskStatus struct {
+type ScheduledTaskStatus struct {
 	Name           string     `json:"name"`
 	Running        bool       `json:"running"`
 	Runs           uint64     `json:"runs"`
@@ -93,61 +95,61 @@ type scheduledTaskStatus struct {
 	NextRunAt      *time.Time `json:"next_run_at,omitempty"`
 }
 
-// taskScheduler owns all panel-side recurring work. Tasks share lifecycle and
+// TaskScheduler owns all panel-side recurring work. Tasks share lifecycle and
 // wake-up handling while still running independently and never overlapping themselves.
-type taskScheduler struct {
+type TaskScheduler struct {
 	location func(context.Context) *time.Location
 
 	mu      sync.Mutex
-	tasks   map[string]scheduledTask
-	status  map[string]scheduledTaskStatus
+	tasks   map[string]ScheduledTask
+	status  map[string]ScheduledTaskStatus
 	changed chan struct{}
 	workers sync.WaitGroup
 }
 
-func newTaskScheduler(location func(context.Context) *time.Location) *taskScheduler {
-	return &taskScheduler{
+func NewTaskScheduler(location func(context.Context) *time.Location) *TaskScheduler {
+	return &TaskScheduler{
 		location: location,
-		tasks:    make(map[string]scheduledTask),
-		status:   make(map[string]scheduledTaskStatus),
+		tasks:    make(map[string]ScheduledTask),
+		status:   make(map[string]ScheduledTaskStatus),
 		changed:  make(chan struct{}, 1),
 	}
 }
 
-func (s *taskScheduler) register(task scheduledTask) {
-	if task.name == "" || task.trigger == nil || task.run == nil {
+func (s *TaskScheduler) Register(task ScheduledTask) {
+	if task.Name == "" || task.Trigger == nil || task.Run == nil {
 		panic("panel: invalid scheduled task")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.tasks[task.name]; exists {
-		panic("panel: duplicate scheduled task " + task.name)
+	if _, exists := s.tasks[task.Name]; exists {
+		panic("panel: duplicate scheduled task " + task.Name)
 	}
-	s.tasks[task.name] = task
-	s.status[task.name] = scheduledTaskStatus{Name: task.name}
+	s.tasks[task.Name] = task
+	s.status[task.Name] = ScheduledTaskStatus{Name: task.Name}
 }
 
-func (s *taskScheduler) notifyChanged() {
+func (s *TaskScheduler) NotifyChanged() {
 	select {
 	case s.changed <- struct{}{}:
 	default:
 	}
 }
 
-func (s *taskScheduler) snapshot() map[string]scheduledTask {
+func (s *TaskScheduler) Snapshot() map[string]ScheduledTask {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make(map[string]scheduledTask, len(s.tasks))
+	out := make(map[string]ScheduledTask, len(s.tasks))
 	for name, task := range s.tasks {
 		out[name] = task
 	}
 	return out
 }
 
-func (s *taskScheduler) statusSnapshot() []scheduledTaskStatus {
+func (s *TaskScheduler) StatusSnapshot() []ScheduledTaskStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := make([]scheduledTaskStatus, 0, len(s.status))
+	out := make([]ScheduledTaskStatus, 0, len(s.status))
 	for _, status := range s.status {
 		out = append(out, status)
 	}
@@ -155,7 +157,7 @@ func (s *taskScheduler) statusSnapshot() []scheduledTaskStatus {
 	return out
 }
 
-func (s *taskScheduler) setNextRun(name string, next time.Time) {
+func (s *TaskScheduler) setNextRun(name string, next time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	status := s.status[name]
@@ -163,7 +165,7 @@ func (s *taskScheduler) setNextRun(name string, next time.Time) {
 	s.status[name] = status
 }
 
-func (s *taskScheduler) markStarted(name string, started time.Time) {
+func (s *TaskScheduler) markStarted(name string, started time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	status := s.status[name]
@@ -173,7 +175,7 @@ func (s *taskScheduler) markStarted(name string, started time.Time) {
 	s.status[name] = status
 }
 
-func (s *taskScheduler) markFinished(result taskResult, next time.Time) {
+func (s *TaskScheduler) markFinished(result taskResult, next time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	status := s.status[result.name]
@@ -190,22 +192,22 @@ func (s *taskScheduler) markFinished(result taskResult, next time.Time) {
 	s.status[result.name] = status
 }
 
-func (s *taskScheduler) run(ctx context.Context) {
-	tasks := s.snapshot()
+func (s *TaskScheduler) Run(ctx context.Context) {
+	tasks := s.Snapshot()
 	now := time.Now()
 	next := make(map[string]time.Time, len(tasks))
 	running := make(map[string]bool, len(tasks))
 	results := make(chan taskResult, len(tasks))
 	for name, task := range tasks {
-		if task.runOnStart {
+		if task.RunOnStart {
 			next[name] = now
 		} else {
-			next[name] = task.trigger(ctx).next(now, s.location(ctx))
+			next[name] = task.Trigger(ctx).Next(now, s.location(ctx))
 		}
 		s.setNextRun(name, next[name])
 	}
 
-	launch := func(name string, task scheduledTask) {
+	launch := func(name string, task ScheduledTask) {
 		running[name] = true
 		started := time.Now()
 		s.markStarted(name, started)
@@ -214,11 +216,11 @@ func (s *taskScheduler) run(ctx context.Context) {
 			defer s.workers.Done()
 			runCtx := ctx
 			cancel := func() {}
-			if task.timeout > 0 {
-				runCtx, cancel = context.WithTimeout(ctx, task.timeout)
+			if task.Timeout > 0 {
+				runCtx, cancel = context.WithTimeout(ctx, task.Timeout)
 			}
 			defer cancel()
-			err := task.run(runCtx)
+			err := task.Run(runCtx)
 			result := taskResult{name: name, started: started, finished: time.Now(), err: err}
 			select {
 			case results <- result:
@@ -259,18 +261,18 @@ func (s *taskScheduler) run(ctx context.Context) {
 			timer.Stop()
 			running[result.name] = false
 			task := tasks[result.name]
-			next[result.name] = task.trigger(ctx).next(result.finished, s.location(ctx))
+			next[result.name] = task.Trigger(ctx).Next(result.finished, s.location(ctx))
 			s.markFinished(result, next[result.name])
 			if result.err != nil {
 				log.Printf("panel: scheduled task %s failed after %s: %v", result.name, result.finished.Sub(result.started), result.err)
 			}
 		case <-s.changed:
 			timer.Stop()
-			tasks = s.snapshot()
+			tasks = s.Snapshot()
 			now = time.Now()
 			for name, task := range tasks {
 				if !running[name] {
-					next[name] = task.trigger(ctx).next(now, s.location(ctx))
+					next[name] = task.Trigger(ctx).Next(now, s.location(ctx))
 					s.setNextRun(name, next[name])
 				}
 			}

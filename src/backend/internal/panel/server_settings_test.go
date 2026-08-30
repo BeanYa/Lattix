@@ -45,7 +45,7 @@ func TestSettingsServerSettingsRoundTrip(t *testing.T) {
 	}
 	defer st.Close()
 	requester := &settingsRequester{online: map[int64]bool{}}
-	serverAPI := &Server{st: st, disp: dispatch.New(st, requester), req: requester}
+	serverAPI := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester}
 
 	// 初始默认 latest（revision 1）。
 	rec := httptest.NewRecorder()
@@ -98,8 +98,8 @@ func TestServerCustomSettingsOverrideLifecycle(t *testing.T) {
 	}
 	defer st.Close()
 	requester := &settingsRequester{online: map[int64]bool{}}
-	serverAPI := &Server{st: st, disp: dispatch.New(st, requester), req: requester}
-	serverID, err := st.CreateServer(ctx, "s1", "", "tok", store.MachineTypeDirect, "", "", "US", "Test")
+	serverAPI := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester}
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "s1", BootstrapToken: "tok", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}

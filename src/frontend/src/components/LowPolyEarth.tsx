@@ -19,6 +19,7 @@ import {
 } from 'three'
 
 import { formatByteRate } from '@/lib/format'
+import { earthLinkColorKey } from '@/lib/status'
 import { useTheme } from '@/lib/theme-context'
 import { DEFAULT_EARTH_PALETTE, readEarthPalette, type EarthPalette } from '@/lib/visual-theme'
 
@@ -132,9 +133,10 @@ function closeSouthPolarSeam(ring: Position[]) {
     if (!nextPosition) return
 
     const crossesAntimeridian = Math.abs(position[0] - nextPosition[0]) > ANTIMERIDIAN_JUMP_DEGREES
-    const isSouthPolarEdge = position[1] < SOUTH_POLAR_SEAM_LATITUDE
-      && nextPosition[1] < SOUTH_POLAR_SEAM_LATITUDE
-      && Math.max(position[1], nextPosition[1]) > -89.5
+    const isSouthPolarEdge =
+      position[1] < SOUTH_POLAR_SEAM_LATITUDE &&
+      nextPosition[1] < SOUTH_POLAR_SEAM_LATITUDE &&
+      Math.max(position[1], nextPosition[1]) > -89.5
     if (!crossesAntimeridian || !isSouthPolarEdge) return
 
     if (position[0] > nextPosition[0]) {
@@ -169,7 +171,9 @@ function closeSouthPolarPolygons(collection: FeatureCollection): FeatureCollecti
           ...feature,
           geometry: {
             ...feature.geometry,
-            coordinates: feature.geometry.coordinates.map((polygon) => polygon.map(closeSouthPolarSeam)),
+            coordinates: feature.geometry.coordinates.map((polygon) =>
+              polygon.map(closeSouthPolarSeam),
+            ),
           },
         }
       }
@@ -180,10 +184,7 @@ function closeSouthPolarPolygons(collection: FeatureCollection): FeatureCollecti
 }
 
 function linkColor(link: AnimatedEarthLink, palette: EarthPalette) {
-  if (link.status === 'active') return palette.linkActive
-  if (link.status === 'degraded') return palette.linkDegraded
-  if (link.status === 'failed') return palette.linkFailed
-  return palette.linkPending
+  return palette[earthLinkColorKey(link.status)]
 }
 
 function clusterNodeLabels(nodes: EarthNode[]): EarthNodeLabel[] {
@@ -261,9 +262,12 @@ function createNodeElement(item: object, palette: EarthPalette) {
     status.style.height = '7px'
     status.style.flex = '0 0 7px'
     status.style.borderRadius = '999px'
-    status.style.background = member.status === 'warning'
-      ? palette.nodeWarning
-      : member.status === 'online' ? palette.nodeOnline : palette.nodeOffline
+    status.style.background =
+      member.status === 'warning'
+        ? palette.nodeWarning
+        : member.status === 'online'
+          ? palette.nodeOnline
+          : palette.nodeOffline
     status.style.marginLeft = 'auto'
 
     header.append(label, status)
@@ -318,7 +322,10 @@ function createNodeElement(item: object, palette: EarthPalette) {
       })
       toggle.textContent = expanded ? '-' : `+${members.length - 1}`
       toggle.setAttribute('aria-expanded', String(expanded))
-      toggle.setAttribute('aria-label', expanded ? '收起同地服务器' : `展开另外 ${members.length - 1} 台同地服务器`)
+      toggle.setAttribute(
+        'aria-label',
+        expanded ? '收起同地服务器' : `展开另外 ${members.length - 1} 台同地服务器`,
+      )
     }
     toggle.addEventListener('click', (event) => {
       event.stopPropagation()
@@ -496,7 +503,11 @@ export default function LowPolyEarth({
         blobs.forEach((blob) => {
           const mesh = new Mesh(cloudGeometry, cloudMaterial)
           mesh.position.set(blob.x, blob.y, blob.z)
-          mesh.scale.set(blob.sx * location.scale, blob.sy * location.scale, blob.sz * location.scale)
+          mesh.scale.set(
+            blob.sx * location.scale,
+            blob.sy * location.scale,
+            blob.sz * location.scale,
+          )
           anchor.add(mesh)
         })
       })
@@ -564,13 +575,17 @@ export default function LowPolyEarth({
     controls.dampingFactor = 0.08
     controls.enablePan = false
     controls.enableZoom = true
-    controls.minDistance = size.width < 520 ? MOBILE_MIN_CAMERA_DISTANCE : DESKTOP_MIN_CAMERA_DISTANCE
+    controls.minDistance =
+      size.width < 520 ? MOBILE_MIN_CAMERA_DISTANCE : DESKTOP_MIN_CAMERA_DISTANCE
     controls.maxDistance = MAX_CAMERA_DISTANCE
-    globe.pointOfView({
-      lat: 20,
-      lng: longitudeRef.current,
-      altitude: size.width < 520 ? 2.72 : 2.05,
-    }, 0)
+    globe.pointOfView(
+      {
+        lat: 20,
+        lng: longitudeRef.current,
+        altitude: size.width < 520 ? 2.72 : 2.05,
+      },
+      0,
+    )
     latitudeRef.current = 20
     globe.resumeAnimation()
   }, [size.width])
@@ -584,12 +599,13 @@ export default function LowPolyEarth({
     setGlobeReady(true)
   }, [configureGlobe])
 
-  const assetsReady = globeReady
-    && landSettled
-    && oceanMesh !== undefined
-    && landCapMaterial !== undefined
-    && landSideMaterial !== undefined
-    && cloudLayer !== undefined
+  const assetsReady =
+    globeReady &&
+    landSettled &&
+    oceanMesh !== undefined &&
+    landCapMaterial !== undefined &&
+    landSideMaterial !== undefined &&
+    cloudLayer !== undefined
 
   useEffect(() => {
     if (!assetsReady) {
@@ -626,7 +642,11 @@ export default function LowPolyEarth({
       const worldUp = new Vector3(0, 1, 0)
       const worldRight = new Vector3(1, 0, 0)
 
-      const setCameraOrientation = (target: InstanceType<typeof Quaternion>, lat: number, lng: number) => {
+      const setCameraOrientation = (
+        target: InstanceType<typeof Quaternion>,
+        lat: number,
+        lng: number,
+      ) => {
         yaw.setFromAxisAngle(worldUp, lng * (Math.PI / 180))
         pitch.setFromAxisAngle(worldRight, -lat * (Math.PI / 180))
         target.copy(yaw).multiply(pitch)
@@ -644,10 +664,15 @@ export default function LowPolyEarth({
         const pointOfView = globe.pointOfView()
         if (!reducedMotion && motionEnabled) {
           const elapsedDegrees = elapsedSeconds * SELF_ROTATION_RADIANS_PER_SECOND * (180 / Math.PI)
-          const longitudeInteraction = normalizeLongitudeDelta(pointOfView.lng - longitudeRef.current)
+          const longitudeInteraction = normalizeLongitudeDelta(
+            pointOfView.lng - longitudeRef.current,
+          )
           const latitudeInteraction = pointOfView.lat - latitudeRef.current
 
-          if (cloudLayer && (Math.abs(longitudeInteraction) > 0.00001 || Math.abs(latitudeInteraction) > 0.00001)) {
+          if (
+            cloudLayer &&
+            (Math.abs(longitudeInteraction) > 0.00001 || Math.abs(latitudeInteraction) > 0.00001)
+          ) {
             setCameraOrientation(previousOrientation, latitudeRef.current, longitudeRef.current)
             setCameraOrientation(currentOrientation, pointOfView.lat, pointOfView.lng)
             cameraDelta.copy(currentOrientation).multiply(previousOrientation.invert())
@@ -656,11 +681,16 @@ export default function LowPolyEarth({
           }
 
           if (cloudLayer) {
-            cloudLayer.quaternion.slerp(identity, 1 - Math.exp(-CLOUD_CATCH_UP_STRENGTH * elapsedSeconds))
+            cloudLayer.quaternion.slerp(
+              identity,
+              1 - Math.exp(-CLOUD_CATCH_UP_STRENGTH * elapsedSeconds),
+            )
             const offsetAngle = cloudLayer.quaternion.angleTo(identity)
             if (offsetAngle > CLOUD_MAX_OFFSET_RADIANS) {
               cappedOffset.copy(cloudLayer.quaternion)
-              cloudLayer.quaternion.copy(identity).slerp(cappedOffset, CLOUD_MAX_OFFSET_RADIANS / offsetAngle)
+              cloudLayer.quaternion
+                .copy(identity)
+                .slerp(cappedOffset, CLOUD_MAX_OFFSET_RADIANS / offsetAngle)
             }
           }
 
@@ -721,7 +751,7 @@ export default function LowPolyEarth({
               return node.status === 'online' ? palette.nodeOnline : palette.nodeOffline
             }}
             pointAltitude={0.025}
-            pointRadius={(item) => (item as EarthNode).id === selectedNodeId ? 0.52 : 0.34}
+            pointRadius={(item) => ((item as EarthNode).id === selectedNodeId ? 0.52 : 0.34)}
             pointResolution={10}
             pointsTransitionDuration={500}
             onPointClick={onNodeClick ? (item) => onNodeClick(item as EarthNode) : undefined}
@@ -743,7 +773,7 @@ export default function LowPolyEarth({
             arcCircularResolution={4}
             arcDashLength={LINK_DASH_LENGTH}
             arcDashGap={LINK_DASH_GAP}
-            arcDashInitialGap={(item: object) => ((item as AnimatedEarthLink).dashPhase)}
+            arcDashInitialGap={(item: object) => (item as AnimatedEarthLink).dashPhase}
             arcDashAnimateTime={(item: object) => {
               const link = item as AnimatedEarthLink
               return reducedMotion ? 0 : link.dashDuration
@@ -771,7 +801,10 @@ export default function LowPolyEarth({
 
       <ul className="sr-only">
         {nodes.map((node) => (
-          <li key={node.id}>{node.label}{node.description ? `，${node.description}` : ''}</li>
+          <li key={node.id}>
+            {node.label}
+            {node.description ? `，${node.description}` : ''}
+          </li>
         ))}
       </ul>
     </div>

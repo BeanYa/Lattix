@@ -50,7 +50,7 @@ func TestEndpointFSMTransitionSideEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
 	if err != nil {
@@ -64,9 +64,10 @@ func TestEndpointFSMTransitionSideEffects(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}})
 	published := 0
-	d.OnEndpointPublished = func(context.Context, int64) error { published++; return nil }
+	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}}, Options{}, Events{
+		OnEndpointPublished: func(context.Context, int64) error { published++; return nil },
+	})
 
 	// pending → failed：链应 degraded（端点未生效）。
 	if err := d.efsm.Transition(ctx, endpoint.ID, store.EndpointStatusFailed, "boom", nil); err != nil {
@@ -110,13 +111,13 @@ func TestEndpointFSMRejectsIllegalTransition(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
 	endpoint, _, _ := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
 	if err := st.SetSharedEndpointFailed(ctx, endpoint.ID, "boom"); err != nil {
 		t.Fatal(err)
 	}
-	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}})
+	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}}, Options{}, Events{})
 	err = d.efsm.Transition(ctx, endpoint.ID, store.EndpointStatusActive, "x", json.RawMessage(`{"port":443}`))
 	if err == nil || !strings.Contains(err.Error(), "illegal transition") {
 		t.Fatalf("Transition error = %v, want illegal transition", err)
@@ -135,7 +136,7 @@ func TestEndpointFSMCASConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
 	endpoint, _, _ := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
 	// 端点已 applying；以过期 pending 视角再次置 applying 应被 CAS 拒绝（ErrStateTransition）。

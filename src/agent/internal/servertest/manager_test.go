@@ -36,7 +36,7 @@ func TestManagerCompletedMarkerPreventsRecoveredCommandRerun(t *testing.T) {
 	manager.mu.Lock()
 	manager.idle = make(chan struct{})
 	manager.journal = &taskJournal{
-		Version: 1, State: "result_pending", Payload: payload,
+		Version: 1, State: taskStateResultPending, Payload: payload,
 		Manifest: &shared.ServerTestResultManifest{}, UpdatedAt: time.Now().UTC(),
 	}
 	if err := manager.saveJournalLocked(); err != nil {
@@ -62,7 +62,7 @@ func TestManagerCompletedMarkerPreventsRecoveredCommandRerun(t *testing.T) {
 	}
 	recovered.mu.Lock()
 	defer recovered.mu.Unlock()
-	if recovered.journal == nil || recovered.journal.State != "completed" {
+	if recovered.journal == nil || recovered.journal.State != taskStateCompleted {
 		t.Fatalf("duplicate command changed completed marker: %+v", recovered.journal)
 	}
 }
@@ -71,7 +71,7 @@ func TestManagerTurnsRunningJournalIntoAgentRestartFailure(t *testing.T) {
 	directory := t.TempDir()
 	payload := testPayload()
 	journal := taskJournal{
-		Version: 1, State: "running", BootID: currentBootID(), Payload: payload,
+		Version: 1, State: taskStateRunning, BootID: currentBootID(), Payload: payload,
 		UpdatedAt: time.Date(2026, time.July, 31, 0, 0, 0, 0, time.UTC),
 	}
 	raw, err := json.Marshal(journal)
@@ -88,7 +88,7 @@ func TestManagerTurnsRunningJournalIntoAgentRestartFailure(t *testing.T) {
 	manager.mu.Lock()
 	stored := *manager.journal
 	manager.mu.Unlock()
-	if stored.State != "result_pending" || stored.Manifest == nil || stored.Manifest.Status != shared.ServerTestFailed {
+	if stored.State != taskStateResultPending || stored.Manifest == nil || stored.Manifest.Status != shared.ServerTestFailed {
 		t.Fatalf("unexpected recovered journal: %+v", stored)
 	}
 	compressed, err := os.Open(filepath.Join(directory, "server-test-result.json.gz"))
@@ -133,5 +133,58 @@ func TestPublicAddressPolicyRejectsLocalRanges(t *testing.T) {
 		if !publicAddress(address) {
 			t.Fatalf("%s unexpectedly rejected", value)
 		}
+	}
+}
+
+func TestTaskJournalTransitions(t *testing.T) {
+	legal := []struct{ from, to taskJournalState }{
+		{taskStateRunning, taskStateResultPending},
+		{taskStateResultPending, taskStateCompleted},
+	}
+	for _, c := range legal {
+		if !validTaskJournalTransition(c.from, c.to) {
+			t.Errorf("missing transition edge %s → %s", c.from, c.to)
+		}
+	}
+	illegal := []struct{ from, to taskJournalState }{
+		{taskStateRunning, taskStateCompleted},     // result must be persisted first
+		{taskStateResultPending, taskStateRunning}, // no re-run while awaiting delivery
+		{taskStateCompleted, taskStateRunning},
+		{taskStateCompleted, taskStateResultPending},
+		{taskStateRunning, "unknown"},
+		{"", taskStateResultPending},
+	}
+	for _, c := range illegal {
+		if validTaskJournalTransition(c.from, c.to) {
+			t.Errorf("illegal transition not rejected %s → %s", c.from, c.to)
+		}
+	}
+	// Same-state transitions stay idempotent.
+	for _, s := range []taskJournalState{taskStateRunning, taskStateResultPending, taskStateCompleted} {
+		if !validTaskJournalTransition(s, s) {
+			t.Errorf("same-state transition %s should be idempotent", s)
+		}
+	}
+}
+
+func TestManagerCompleteLocalRejectsRunningTransition(t *testing.T) {
+	directory := t.TempDir()
+	payload := testPayload()
+	manager, err := NewManager(directory, "v0.0.9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.mu.Lock()
+	manager.journal = &taskJournal{
+		Version: 1, State: taskStateRunning, Payload: payload, UpdatedAt: time.Now().UTC(),
+	}
+	manager.mu.Unlock()
+	if err := manager.completeLocal(payload.TaskID, payload.Generation); err == nil {
+		t.Fatal("completeLocal accepted a running → completed transition")
+	}
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if manager.journal == nil || manager.journal.State != taskStateRunning {
+		t.Fatalf("rejected transition changed the journal: %+v", manager.journal)
 	}
 }

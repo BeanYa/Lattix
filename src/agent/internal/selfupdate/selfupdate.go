@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"lattix/agent/internal/fileutil"
 	external "lattix/shared/requester"
 )
 
@@ -61,7 +62,8 @@ func applyTo(version, releaseBase, currentVersion, defaultRepo, executable strin
 		if repo == "" {
 			return false, fmt.Errorf("使用镜像下载基址时须显式指定版本（vX.Y.Z），不支持 latest")
 		}
-		v, err := resolveLatest("https://api.github.com/repos/" + repo)
+		v, err := external.GitHubLatestReleaseTag(context.Background(), &http.Client{Timeout: 30 * time.Second},
+			"https://api.github.com/repos/"+repo)
 		if err != nil {
 			return false, err
 		}
@@ -123,11 +125,11 @@ func applyTo(version, releaseBase, currentVersion, defaultRepo, executable strin
 	agentBackup := executable + ".bak"
 	cliTarget := filepath.Join(filepath.Dir(executable), "latx-ag")
 	cliBackup := cliTarget + ".bak"
-	if err := copyFile(executable, agentBackup, 0o755); err != nil {
+	if err := fileutil.CopyFileAtomic(executable, agentBackup, 0o755); err != nil {
 		return false, fmt.Errorf("备份旧 agent 失败: %w", err)
 	}
 	cliExisted := true
-	if err := copyFile(cliTarget, cliBackup, 0o755); err != nil {
+	if err := fileutil.CopyFileAtomic(cliTarget, cliBackup, 0o755); err != nil {
 		if !os.IsNotExist(err) {
 			return false, fmt.Errorf("备份旧 latx-ag 失败: %w", err)
 		}
@@ -135,17 +137,17 @@ func applyTo(version, releaseBase, currentVersion, defaultRepo, executable strin
 	}
 	rollbackCLI := func() {
 		if cliExisted {
-			_ = copyFile(cliBackup, cliTarget, 0o755)
+			_ = fileutil.CopyFileAtomic(cliBackup, cliTarget, 0o755)
 		} else {
 			_ = os.Remove(cliTarget)
 		}
 	}
-	if err := copyFile(cliPath, cliTarget, 0o755); err != nil {
+	if err := fileutil.CopyFileAtomic(cliPath, cliTarget, 0o755); err != nil {
 		return false, fmt.Errorf("替换 latx-ag 失败: %w", err)
 	}
-	if err := copyFile(binPath, executable, 0o755); err != nil {
+	if err := fileutil.CopyFileAtomic(binPath, executable, 0o755); err != nil {
 		rollbackCLI()
-		_ = copyFile(agentBackup, executable, 0o755)
+		_ = fileutil.CopyFileAtomic(agentBackup, executable, 0o755)
 		return false, fmt.Errorf("替换 agent 二进制失败: %w", err)
 	}
 	return true, nil
@@ -170,21 +172,6 @@ func validateReleaseBase(base string) error {
 		return nil
 	}
 	return fmt.Errorf("升级下载基址必须使用 https（明文 http 仅允许回环镜像）: %s", base)
-}
-
-// resolveLatest 经 GitHub API 解析最新 release tag。
-func resolveLatest(apiRepos string) (string, error) {
-	var rel struct {
-		TagName string `json:"tag_name"`
-	}
-	client := external.ExternalJSONRequester{Doer: &http.Client{Timeout: 30 * time.Second}}
-	if err := client.GetJSON(context.Background(), apiRepos+"/releases/latest", &rel); err != nil {
-		return "", fmt.Errorf("解析 latest 失败: %w", err)
-	}
-	if rel.TagName == "" {
-		return "", fmt.Errorf("解析 latest 失败: 无法读取 tag_name")
-	}
-	return rel.TagName, nil
 }
 
 // verifySHA256 在 checksums.txt（sha256sum 标准格式）中查 asset 的期望值并校验文件。
@@ -281,28 +268,4 @@ func extractAgentBundle(archivePath, agentDest, cliDest string) error {
 		}
 		found[name] = true
 	}
-}
-
-// copyFile 复制文件并设置权限（先写临时文件再原子 rename）。
-func copyFile(src, dest string, perm os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	tmp := dest + ".tmp"
-	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := out.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, dest)
 }

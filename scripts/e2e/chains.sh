@@ -2,6 +2,9 @@
 # 代理链与 NAT 支持端到端验收（设计文档 §21/§21.1）：
 #   同机双 agent（A=direct 当入口、C=NAT 仅出口档 machine_type=nat/allowed_ports=[] 当出口）
 #   → 建链（A=入口、C=出口，vless+reality 出口节点）→ 五阶段编排 active
+#   （vless 链入口落在入口机共享端点上：客户端连端点端口，链 forward 仅为本机回环转发）
+#   → 分配（chain_ids → user_chain_assignments：access_uuid 扇出到共享端点；
+#     业务用户 UUID 不下发出口 xray，framework-design「user_nodes 不承载新链路授权」）
 #   → 真实流量 → 订阅 → degraded → 失败重试 → 删链。
 # 管理 API 均为 RPC 信封：写操作需 Idempotency-Key 与 X-CSRF-Token。
 # 依赖：python3、curl、openssl、本机 xray 二进制（XRAY_BIN 可覆盖）。
@@ -160,55 +163,85 @@ echo "   跳状态: $HOPS"
 ENTRY_PORT="$(chain_field "$CH1" "c['hops'][0]['forward_port']")"
 PORTAL_PORT="$(chain_field "$CH1" "c['hops'][0]['portal_port']")"
 [[ "$ENTRY_PORT" != "0" && "$PORTAL_PORT" != "0" ]] \
-    && echo "OK: 入口 forward 端口 $ENTRY_PORT、portal 端口 $PORTAL_PORT 已回执" \
+    && echo "OK: 入口 forward 端口 $ENTRY_PORT（回环）、portal 端口 $PORTAL_PORT 已回执" \
     || { echo "FAIL: 端口回执: $HOPS"; exit 1; }
-port_open "$ENTRY_PORT" && echo "OK: 入口端口已监听" || { echo "FAIL: 入口端口未监听"; exit 1; }
+port_open "$ENTRY_PORT" && echo "OK: 入口 forward 已监听（回环，供端点路由转发）" \
+    || { echo "FAIL: 入口 forward 未监听"; exit 1; }
 grep -q "chainportal_" "$XRAY_CONFIG_A" && grep -q "chainfwd_" "$XRAY_CONFIG_A" \
     && echo "OK: A 配置含 portal+forward 配置件" || { echo "FAIL: A 配置件"; exit 1; }
 grep -q "chainbr_" "$XRAY_CONFIG_C" && echo "OK: C 配置含 bridge 配置件" || { echo "FAIL: C 配置件"; exit 1; }
 
-echo ">> 分配用户到出口节点（UUID 扇出到 C）"
-rpc_data POST /api/user/set-nodes "{\"user_id\":$USER_ID1,\"node_ids\":[$NID1]}" >/dev/null
-for _ in $(seq 1 15); do grep -q "$UUID1" "$XRAY_CONFIG_C" && break; sleep 1; done
-grep -q "$UUID1" "$XRAY_CONFIG_C" && echo "OK: 用户 UUID 已扇出到出口 xray" \
-    || { echo "FAIL: UUID 未扇出"; exit 1; }
-NODE_JSON="$(rpc_data GET /api/node/list | python3 -c "import json,sys; print(json.dumps(next(n for n in json.load(sys.stdin) if n['id']==$NID1)))")"
-EXIT_PUB="$(py "d['realized_config']['public_key']" "$NODE_JSON")"
-EXIT_SID="$(py "d['realized_config']['short_id']" "$NODE_JSON")"
-EXIT_SNAME="$(py "d['realized_config']['server_name']" "$NODE_JSON")"
-EXIT_FLOW="$(py "d['realized_config'].get('flow') or ''" "$NODE_JSON")"
-EXIT_PORT="$(py "d['realized_config']['port']" "$NODE_JSON")"
+# vless 链入口为服务器级共享端点：端点 active 后链才可能回到 active，订阅端口即端点端口。
+EP_ID="$(chain_field "$CH1" "c['endpoint_id']")"
+[[ -n "$EP_ID" && "$EP_ID" != "0" ]] || { echo "FAIL: vless 链未落到共享端点"; exit 1; }
+for _ in $(seq 1 30); do
+    [[ "$(chain_field "$CH1" "c.get('endpoint_status','')")" == "active" ]] && break
+    sleep 1
+done
+EP_PORT="$(chain_field "$CH1" "c['entry_port']")"
+[[ "$(chain_field "$CH1" "c.get('endpoint_status','')")" == "active" && -n "$EP_PORT" && "$EP_PORT" != "0" ]] \
+    && echo "OK: 共享端点 active（endpoint $EP_ID，客户端入口端口 $EP_PORT）" \
+    || { echo "FAIL: 共享端点未就绪: $(chain_field "$CH1" "c.get('endpoint_error','')")"; exit 1; }
+wait_chain "$CH1" active 30
+port_open "$EP_PORT" && echo "OK: 共享端点端口已监听" || { echo "FAIL: 共享端点端口未监听"; exit 1; }
 
-echo ">> 订阅断言（入口地址:端口 + 出口密钥/UUID）"
+echo ">> 分配用户到链（chain_ids → assignment，access_uuid 扇出到入口共享端点）"
+rpc_data POST /api/user/set-nodes "{\"user_id\":$USER_ID1,\"node_ids\":[],\"chain_ids\":[$CH1]}" >/dev/null
+ACCESS_UUID=""
+for _ in $(seq 1 15); do
+    ACCESS_UUID="$(rpc_data GET /api/user/list | python3 -c "
+import json,sys
+u=next((x for x in json.load(sys.stdin) if x['id']==$USER_ID1), {})
+ca=u.get('chain_assignments') or []
+print(ca[0]['access_uuid'] if ca else '')")"
+    [[ -n "$ACCESS_UUID" ]] && break
+    sleep 1
+done
+[[ -n "$ACCESS_UUID" ]] || { echo "FAIL: 未取到链路 assignment"; exit 1; }
+for _ in $(seq 1 15); do grep -q "$ACCESS_UUID" "$XRAY_CONFIG_A" && break; sleep 1; done
+grep -q "$ACCESS_UUID" "$XRAY_CONFIG_A" && echo "OK: access_uuid 已扇出到入口共享端点（A）" \
+    || { echo "FAIL: access_uuid 未扇出"; exit 1; }
+! grep -q "$UUID1" "$XRAY_CONFIG_C" && echo "OK: 业务用户 UUID 不下发出口 xray（出口仅持隧道身份）" \
+    || { echo "FAIL: 用户 UUID 泄漏到出口 xray"; exit 1; }
+EP_RC="$(db "SELECT realized_config FROM shared_endpoints WHERE id=$EP_ID")"
+EP_PUB="$(py "d['public_key']" "$EP_RC")"
+EP_SID="$(py "d['short_id']" "$EP_RC")"
+EP_SNAME="$(py "d['server_name']" "$EP_RC")"
+EP_FLOW="$(py "d.get('flow') or ''" "$EP_RC")"
+[[ -n "$EP_PUB" && "$(py "d['port']" "$EP_RC")" == "$EP_PORT" ]] \
+    && echo "OK: 端点 realized 参数齐备（端口与链 entry_port 一致）" \
+    || { echo "FAIL: 端点 realized_config: $EP_RC"; exit 1; }
+
+echo ">> 订阅断言（共享端点地址:端口 + access_uuid + 端点密钥）"
 # 订阅重发布已转异步（set-nodes 入队 + regenerator 去抖），轮询等待内容就绪。
 SUB=""
 for _ in $(seq 1 20); do
     SUB="$(curl -s "http://$ADDR/sub/$SUB_TOKEN?format=clash")"
-    grep -q "name: chain-a-vless-$ENTRY_PORT" <<<"$SUB" && break
+    grep -q "name: chain-a-vless-$EP_PORT" <<<"$SUB" && break
     sleep 0.5
 done
-echo "$SUB" | grep -q "name: chain-a-vless-$ENTRY_PORT" \
+echo "$SUB" | grep -q "name: chain-a-vless-$EP_PORT" \
     && echo "$SUB" | grep -q "server: 127.0.0.1" \
-    && echo "$SUB" | grep -q "port: $ENTRY_PORT" \
-    && echo "$SUB" | grep -q "uuid: $UUID1" \
-    && echo "$SUB" | grep -q "public-key: $EXIT_PUB" \
-    && echo "$SUB" | grep -q "short-id: $EXIT_SID" \
-    && echo "OK: 订阅 YAML 链条目（命名/入口地址端口/出口密钥）" \
+    && echo "$SUB" | grep -q "port: $EP_PORT" \
+    && echo "$SUB" | grep -q "uuid: $ACCESS_UUID" \
+    && echo "$SUB" | grep -q "public-key: $EP_PUB" \
+    && echo "$SUB" | grep -q "short-id: $EP_SID" \
+    && echo "OK: 订阅 YAML 链条目（命名/端点地址端口/access_uuid/端点密钥）" \
     || { echo "FAIL: 订阅内容"; echo "$SUB"; exit 1; }
 [[ "$(echo "$SUB" | grep -cE '^[[:space:]]*- name: chain-')" == "1" && "$(echo "$SUB" | grep -c "chain-c-vless")" == "0" ]] \
     && echo "OK: 出口节点不作为单机条目出现" \
     || { echo "FAIL: 出口节点泄漏为单机条目"; echo "$SUB"; exit 1; }
 LINKS="$(curl -s "http://$ADDR/sub/$SUB_TOKEN?format=links" | base64 -d)"
-echo "$LINKS" | grep -q "^vless://$UUID1@127.0.0.1:$ENTRY_PORT" \
-    && echo "$LINKS" | grep -q "pbk=$EXIT_PUB" \
-    && echo "OK: links 端点同构（vless:// 入口地址:端口 + 出口公钥）" \
+echo "$LINKS" | grep -q "^vless://$ACCESS_UUID@127.0.0.1:$EP_PORT" \
+    && echo "$LINKS" | grep -q "pbk=$EP_PUB" \
+    && echo "OK: links 端点同构（vless:// access_uuid@端点地址:端口 + 端点公钥）" \
     || { echo "FAIL: links: $LINKS"; exit 1; }
 
-echo ">> 真实流量断言（socks→A 入口→reverse 隧道→C 出口→外网）"
+echo ">> 真实流量断言（socks→A 共享端点→链 forward→reverse 隧道→C 出口→外网）"
 if [[ "${CHAINS_SKIP_EXTERNAL:-0}" == "1" ]]; then
     echo ">> CHAINS_SKIP_EXTERNAL=1，跳过外网流量断言"
 else
-python3 - "$CLIENT_CONFIG" "$ENTRY_PORT" "$UUID1" "$EXIT_PUB" "$EXIT_SID" "$EXIT_SNAME" "$EXIT_FLOW" "$SOCKS_PORT" <<'PY'
+python3 - "$CLIENT_CONFIG" "$EP_PORT" "$ACCESS_UUID" "$EP_PUB" "$EP_SID" "$EP_SNAME" "$EP_FLOW" "$SOCKS_PORT" <<'PY'
 import json, sys
 path, port, uuid, pbk, sid, sname, flow, socks = sys.argv[1:9]
 user = {"id": uuid, "encryption": "none"}
@@ -250,10 +283,13 @@ if [[ "${CHAINS_SKIP_EXTERNAL:-0}" != "1" ]]; then
 fi
 
 echo ">> 失败重试：入口端口占用 → forward 失败 → 释放后 retry（幂等）"
+# 链2用 shadowsocks（无共享端点）：vless 链的入口端口由共享端点托管，占用失败落在
+# 端点部署（链 degraded、端点自愈域）；无端点链的入口 forward 直接监听该端口，
+# 占用即 forward piece 失败，可继续覆盖"链 piece 失败 → retry 只重放失败 piece"语义。
 python3 -m http.server "$BLOCK_PORT" --bind 127.0.0.1 >/dev/null 2>&1 &
 BLOCKPID=$!
 sleep 0.5
-CHAIN2="$(rpc_data POST /api/chain/create "{\"entry\":{\"server_id\":$AID},\"exit\":{\"server_id\":$CID},\"entry_port\":$BLOCK_PORT,\"node\":{\"protocol\":\"vless\"}}")"
+CHAIN2="$(rpc_data POST /api/chain/create "{\"entry\":{\"server_id\":$AID},\"exit\":{\"server_id\":$CID},\"entry_port\":$BLOCK_PORT,\"node\":{\"protocol\":\"shadowsocks\",\"method\":\"aes-256-gcm\"}}")"
 CH2="$(py "d['id']" "$CHAIN2")"
 wait_chain "$CH2" failed 90
 ERR2="$(chain_field "$CH2" "c['error']")"

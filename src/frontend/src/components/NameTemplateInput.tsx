@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { XIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { evaluateNameTemplate, getTemplateSuggestions, type NameTemplateContext } from '@/lib/naming'
+import {
+  evaluateNameTemplate,
+  getTemplateSuggestions,
+  type NameTemplateContext,
+} from '@/lib/naming'
 import { cn } from '@/lib/utils'
 
 import './NameTemplateInput.css'
@@ -83,7 +87,7 @@ export function NameTemplateInput({
   const defaultSuggestions = getTemplateSuggestions('{{', 2, context)
   const visibleSuggestions = dismissed
     ? null
-    : suggestions ?? (focused ? defaultSuggestions : null)
+    : (suggestions ?? (focused ? defaultSuggestions : null))
   const suggestionKey = `${suggestions ? 'filter' : 'all'}:${visibleSuggestions?.items.join('|') ?? ''}`
 
   useEffect(() => {
@@ -96,7 +100,9 @@ export function NameTemplateInput({
 
   const focusPosition = (nextValue: string, position: number) => {
     requestAnimationFrame(() => {
-      const textParts = [...(editorRef.current?.querySelectorAll<HTMLInputElement>('[data-template-text]') ?? [])]
+      const textParts = [
+        ...(editorRef.current?.querySelectorAll<HTMLInputElement>('[data-template-text]') ?? []),
+      ]
       const target =
         textParts.find((input) => {
           const start = Number(input.dataset.start)

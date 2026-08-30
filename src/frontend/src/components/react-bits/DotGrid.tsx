@@ -262,18 +262,13 @@ export default function DotGrid({
       window.removeEventListener('mousemove', throttledMove)
       window.removeEventListener('click', click)
     }
-  }, [
-    maxSpeed,
-    proximity,
-    resistance,
-    returnDuration,
-    shockRadius,
-    shockStrength,
-    speedTrigger,
-  ])
+  }, [maxSpeed, proximity, resistance, returnDuration, shockRadius, shockStrength, speedTrigger])
 
   return (
-    <section className={`relative flex h-full w-full items-center justify-center ${className}`} style={style}>
+    <section
+      className={`relative flex h-full w-full items-center justify-center ${className}`}
+      style={style}
+    >
       <div ref={wrapperRef} className="relative h-full w-full">
         <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
       </div>

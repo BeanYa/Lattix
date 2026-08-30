@@ -9,13 +9,13 @@ import (
 
 func TestAggregateTrafficCounters(t *testing.T) {
 	counters := aggregateTrafficCounters(map[string]int64{
-		"inbound>>>node_7>>>traffic>>>uplink":             10,
-		"inbound>>>node_7>>>traffic>>>downlink":           20,
-		"inbound>>>chain_forward_11>>>traffic>>>uplink":   30,
-		"inbound>>>chain_forward_11>>>traffic>>>downlink": 40,
-		"user>>>user-id>>>traffic>>>uplink":               50,
-		"user>>>user-id>>>traffic>>>downlink":             60,
-		"inbound>>>api>>>traffic>>>uplink":                70,
+		"inbound>>>node_7>>>traffic>>>uplink":        10,
+		"inbound>>>node_7>>>traffic>>>downlink":      20,
+		"inbound>>>chainfwd_11>>>traffic>>>uplink":   30,
+		"inbound>>>chainfwd_11>>>traffic>>>downlink": 40,
+		"user>>>user-id>>>traffic>>>uplink":          50,
+		"user>>>user-id>>>traffic>>>downlink":        60,
+		"inbound>>>api>>>traffic>>>uplink":           70,
 	})
 	if len(counters) != 3 {
 		t.Fatalf("got %d counters: %+v", len(counters), counters)

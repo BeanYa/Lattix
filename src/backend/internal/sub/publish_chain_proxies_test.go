@@ -21,8 +21,8 @@ func setupChainFixture(t *testing.T, activate bool) (*store.Store, int64) {
 	}
 	t.Cleanup(func() { st.Close() })
 
-	entryID, _ := st.CreateServer(ctx, "entry", "entry.example.com", "token-entry", store.MachineTypeDirect, "", "", "US", "")
-	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "token-exit", store.MachineTypeDirect, "", "", "JP", "")
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.example.com", BootstrapToken: "token-entry", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "token-exit", MachineType: store.MachineTypeDirect, CountryCode: "JP"})
 
 	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 443, "profile", config)
@@ -123,8 +123,8 @@ func TestPublishUserIncludesJoinedChainsOnSharedEndpoint(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 
-	entryID, _ := st.CreateServer(ctx, "entry", "entry.example.com", "token-entry", store.MachineTypeDirect, "", "", "US", "")
-	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "token-exit", store.MachineTypeDirect, "", "", "JP", "")
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.example.com", BootstrapToken: "token-entry", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "token-exit", MachineType: store.MachineTypeDirect, CountryCode: "JP"})
 
 	configA := json.RawMessage(`{"protocol":"vless","port":443,"template":{"dest":"a.example.com"}}`)
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 443, "profile-a", configA)

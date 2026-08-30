@@ -15,8 +15,8 @@ func TestInvalidateChainAbandonsTasksAndPreservesServiceIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	entryID, _ := st.CreateServer(ctx, "entry", "entry.example.com", "entry-token", MachineTypeDirect, "", "", "US", "")
-	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "exit-token", MachineTypeDirect, "", "", "US", "")
+	entryID, _ := st.CreateServer(ctx, ServerDraft{Alias: "entry", Address: "entry.example.com", BootstrapToken: "entry-token", MachineType: MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "exit-token", MachineType: MachineTypeDirect, CountryCode: "US"})
 	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
 	nodeID, _ := st.InsertNode(ctx, "service", exitID, shared.ProtocolVLESS, nil, config)
 	userID, _ := st.InsertUser(ctx, "user", "user-uuid", "sub-token", nil)

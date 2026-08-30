@@ -6,14 +6,24 @@ Bun 管理。
 ```bash
 cd src/frontend
 bun install --frozen-lockfile
-bun run dev      # 启动开发服务器
-bun run build    # TypeScript 检查并生成生产构建
-bun run lint     # 运行 oxlint
-bun run preview  # 本地预览生产构建
+bun run dev           # 启动开发服务器
+bun run build         # TypeScript 检查并生成生产构建
+bun run lint          # 运行 oxlint
+bun run format        # Prettier 格式化
+bun run format:check  # Prettier 校验（CI 强制执行）
+bun run preview       # 本地预览生产构建
 ```
 
 生产构建产物位于 `src/frontend/dist/`。发布时，工作流会将其复制到
 `src/backend/internal/web/dist/`，再嵌入 Go 面板二进制。
+
+## 结构约定
+
+- `src/lib/` 为跨页共享设施；展示辅助集中归并：`use-polling.ts`（统一的周期轮询
+  hook）、`status.ts`（状态枚举到展示样式/文案的映射）、`format.ts`
+  （humanizeBytes/formatBytes/CURRENCIES 等格式化助手）。
+- `src/pages/` 每页一个入口组件；较大页面的表单对话框与配套 hook 拆入同名子目录
+  （`chains/`、`servers/`、`settings/`、`users/`），入口文件只保留页面骨架。
 
 ## 主题系统
 

@@ -23,9 +23,9 @@ func TestCreateChainsShareOccupiedEntryPort(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	requester := &chainEditRequester{online: map[int64]bool{serverID: true}}
-	serverAPI := &Server{st: st, disp: dispatch.New(st, requester), req: requester}
+	serverAPI := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester}
 
 	create := func(name, shortID string) chainDTO {
 		t.Helper()

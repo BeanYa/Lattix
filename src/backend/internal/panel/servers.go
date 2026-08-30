@@ -6,11 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
-	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/ws"
@@ -43,6 +44,13 @@ type metricsDTO struct {
 	LatencyMS        *float64 `json:"latency_ms"`
 	UpdatedAt        string   `json:"updated_at"`
 }
+
+// Agent 设置同步状态（serverDTO.agent_settings_status 取值，仿 store.BillingAssumedValid 常量先例收口）。
+const (
+	settingsStatusPending = "pending"
+	settingsStatusFailed  = "failed"
+	settingsStatusSynced  = "synced"
+)
 
 // serverDTO 是服务器对象的 API 表示。
 type serverDTO struct {
@@ -107,11 +115,11 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 	if desired, err := s.st.AgentSettings(context.Background()); err == nil {
 		desiredRevision = desired.Revision
 	}
-	settingsStatus := "pending"
+	settingsStatus := settingsStatusPending
 	if srv.AgentSettingsError != "" {
-		settingsStatus = "failed"
+		settingsStatus = settingsStatusFailed
 	} else if srv.AgentSettingsReportedAt != nil && srv.AgentSettingsRevision == desiredRevision {
-		settingsStatus = "synced"
+		settingsStatus = settingsStatusSynced
 	}
 	connection := ws.ConnectionSnapshot{State: shared.ConnectionStateNeverConnected}
 	if srv.LastConnectedAt != nil {
@@ -329,8 +337,10 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	id, err := s.st.CreateServerWithPlans(r.Context(), req.Alias, req.Address, bootstrap, req.MachineType,
-		allowedJSON, tagsJSON, countryCode, location, billing, traffic)
+	id, err := s.st.CreateServerWithPlans(r.Context(), store.ServerDraft{
+		Alias: req.Alias, Address: req.Address, BootstrapToken: bootstrap, MachineType: req.MachineType,
+		AllowedPorts: allowedJSON, Tags: tagsJSON, CountryCode: countryCode, Location: location,
+	}, billing, traffic)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -352,9 +362,10 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"server":          createdDTO,
-		"bootstrap_token": bootstrap,
-		"install_command": s.installCommand(base, bootstrap),
+		"server":           createdDTO,
+		"bootstrap_token":  bootstrap,
+		"install_command":  s.installCommand(base, bootstrap),
+		"install_insecure": installInsecure(base),
 	})
 }
 
@@ -420,9 +431,10 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"server":          rotatedDTO,
-		"bootstrap_token": bootstrap,
-		"install_command": s.installCommand(base, bootstrap),
+		"server":           rotatedDTO,
+		"bootstrap_token":  bootstrap,
+		"install_command":  s.installCommand(base, bootstrap),
+		"install_insecure": installInsecure(base),
 	})
 }
 
@@ -1017,6 +1029,21 @@ func (s *Server) installCommand(base, token string) string {
 		s.cfg.GitHubRepo, versionArg, base, token)
 }
 
+// installInsecure 报告安装命令是否走明文公网链路（审查 H1）：base 为 http 且其
+// host 非回环/私网地址时为 true（Agent 控制流量明文 ws，token 可嗅探、命令可伪造）。
+// host 为域名时无法本地判定出口，保守按公网对待；https（含反代终止 TLS）不告警。
+func installInsecure(base string) bool {
+	u, err := url.Parse(base)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	ip := net.ParseIP(u.Hostname())
+	if ip == nil {
+		return true // 域名按公网保守告警
+	}
+	return !ip.IsLoopback() && !ip.IsPrivate()
+}
+
 // handleDeleteServer 处理 DELETE /api/servers/{id}：
 // 在线则先下发 uninstall 命令（agent 自卸载），随后级联删除记录（§10）。
 // 离线服务器仅删除记录（agent 需手动清理）。
@@ -1062,7 +1089,7 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reason := fmt.Sprintf("服务器 %d（%s）已删除，链路失效", id, srv.Alias)
-		if err := s.disp.InvalidateChainForServerDeletion(r.Context(), chain.ID, id, reason); err != nil {
+		if err := s.disp.ChainFSM().InvalidateForServerDeletion(r.Context(), chain.ID, id, reason); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -1073,7 +1100,7 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 				if hop.ServerID == id {
 					continue
 				}
-				for _, kind := range dispatch.ChainHopPieces(hops, i) {
+				for _, kind := range store.ChainHopPieces(hops, i) {
 					key := fmt.Sprintf("%d/%d/%s", hop.ServerID, hop.ID, kind)
 					if seen[key] {
 						continue

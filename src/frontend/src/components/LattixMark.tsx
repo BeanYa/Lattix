@@ -2,12 +2,7 @@ import type { SVGProps } from 'react'
 
 export default function LattixMark(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg
-      viewBox="0 0 64 64"
-      aria-hidden="true"
-      focusable="false"
-      {...props}
-    >
+    <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false" {...props}>
       <g stroke="var(--brand-ink)" strokeLinejoin="miter" strokeWidth="4">
         <path d="M6 27V6h21v9H15v12Z" fill="var(--brand-yellow)" />
         <path d="M37 6h21v21h-9V15H37Z" fill="var(--brand-mint)" />

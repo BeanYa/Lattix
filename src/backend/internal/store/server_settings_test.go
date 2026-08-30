@@ -75,7 +75,7 @@ func TestServerCustomSettingsOverrideAndClear(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	serverID, err := st.CreateServer(ctx, "s1", "", "tok", MachineTypeDirect, "", "", "US", "Test")
+	serverID, err := st.CreateServer(ctx, ServerDraft{Alias: "s1", BootstrapToken: "tok", MachineType: MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +138,7 @@ func TestEffectiveServerSettingsFieldMergeAndRevision(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	serverID, err := st.CreateServer(ctx, "s1", "", "tok", MachineTypeDirect, "", "", "US", "Test")
+	serverID, err := st.CreateServer(ctx, ServerDraft{Alias: "s1", BootstrapToken: "tok", MachineType: MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestReportServerSettings(t *testing.T) {
 	}
 	defer st.Close()
 	ctx := context.Background()
-	serverID, err := st.CreateServer(ctx, "s1", "", "tok", MachineTypeDirect, "", "", "US", "Test")
+	serverID, err := st.CreateServer(ctx, ServerDraft{Alias: "s1", BootstrapToken: "tok", MachineType: MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}

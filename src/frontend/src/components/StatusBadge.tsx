@@ -24,7 +24,7 @@ export function StatusBadge({
       className={cn(
         'status-badge h-auto px-2 py-1 before:size-1.5 before:shrink-0 before:rounded-full before:bg-current before:content-[""]',
         toneClasses[tone],
-        className
+        className,
       )}
       {...props}
     />

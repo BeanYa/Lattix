@@ -54,7 +54,12 @@ interface TemplateAssignmentTabProps {
   onChanged: () => void
 }
 
-export function TemplateAssignmentTab({ users, templates, categories, onChanged }: TemplateAssignmentTabProps) {
+export function TemplateAssignmentTab({
+  users,
+  templates,
+  categories,
+  onChanged,
+}: TemplateAssignmentTabProps) {
   const { showOperation } = useOperationProgress()
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -67,12 +72,15 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const categoryById = useMemo(() => new Map(categories.map((category) => [category.id, category])), [categories])
+  const categoryById = useMemo(
+    () => new Map(categories.map((category) => [category.id, category])),
+    [categories],
+  )
 
   const categoriesForPreset = (next: Exclude<PresetId, 'custom'>): string[] => {
     if (next === 'comprehensive') return categories.map((category) => category.id)
     return categories
-      .filter((category) => next === 'minimal' ? category.in_minimal : category.in_balanced)
+      .filter((category) => (next === 'minimal' ? category.in_minimal : category.in_balanced))
       .map((category) => category.id)
   }
 
@@ -112,9 +120,10 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
     return labels.length === 0 ? '未指定分组' : labels.join('、')
   }
 
-  const unassigned = users.filter((user) =>
-    !SLOTS.some(([assignedField]) => user.routing[assignedField] as string)
-    && (user.routing.assigned_suggested_categories ?? []).length === 0,
+  const unassigned = users.filter(
+    (user) =>
+      !SLOTS.some(([assignedField]) => user.routing[assignedField] as string) &&
+      (user.routing.assigned_suggested_categories ?? []).length === 0,
   )
 
   const toggle = (id: number, checked: boolean) => {
@@ -151,9 +160,10 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
     setSaving(true)
     setError('')
     try {
-      const target = ruleMode === 'template'
-        ? { template_id: templateId }
-        : { suggested_categories: selectedCategories }
+      const target =
+        ruleMode === 'template'
+          ? { template_id: templateId }
+          : { suggested_categories: selectedCategories }
       const { observeId } = await api.assignSubscriptionTemplate([...selected], target, forced)
       if (observeId) showOperation({ observeId })
       setDialogOpen(false)
@@ -166,7 +176,10 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
     }
   }
 
-  const unassign = async (user: SubUser, target: { template_id?: string; suggested_categories?: string[] }) => {
+  const unassign = async (
+    user: SubUser,
+    target: { template_id?: string; suggested_categories?: string[] },
+  ) => {
     setError('')
     try {
       const { observeId } = await api.unassignSubscriptionTemplate([user.id], target)
@@ -178,7 +191,8 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
   }
 
   const unassignTemplate = (user: SubUser, id: string) => unassign(user, { template_id: id })
-  const unassignSuggested = (user: SubUser, ids: string[]) => unassign(user, { suggested_categories: ids })
+  const unassignSuggested = (user: SubUser, ids: string[]) =>
+    unassign(user, { suggested_categories: ids })
 
   const templateOf = (id: string) => templates.find((template) => template.id === id)
 
@@ -228,7 +242,9 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
                 {groupUsers.map((user) => (
                   <span key={user.id} className="cg-pill">
                     {user.name}
-                    {user.routing.assign_forced_portable && <span className="cg-status is-red">强制</span>}
+                    {user.routing.assign_forced_portable && (
+                      <span className="cg-status is-red">强制</span>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon-xs"
@@ -251,7 +267,9 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
               <div key={id} className="cg-card cg-assign-group">
                 <div className="cg-assign-group-head">
                   <span className="cg-assign-group-name">{template?.name ?? id}</span>
-                  {template && <span className="cg-status is-blue">{KIND_LABELS[template.kind]}</span>}
+                  {template && (
+                    <span className="cg-status is-blue">{KIND_LABELS[template.kind]}</span>
+                  )}
                   <span className="cg-assign-group-count">{entries.length} 个用户</span>
                 </div>
                 <div className="cg-assign-chips">
@@ -290,10 +308,18 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
           </div>
         )}
         {assignedUsers.size === 0 && unassigned.length === 0 && users.length === 0 ? (
-          <EmptyState icon={<ClipboardCheckIcon />} title="暂无用户" description="先创建用户，再指派模板" />
+          <EmptyState
+            icon={<ClipboardCheckIcon />}
+            title="暂无用户"
+            description="先创建用户，再指派模板"
+          />
         ) : null}
         {assignedUsers.size === 0 && users.length > 0 ? (
-          <EmptyState icon={<ClipboardCheckIcon />} title="暂无模板指派" description="勾选上方用户后指派模板" />
+          <EmptyState
+            icon={<ClipboardCheckIcon />}
+            title="暂无模板指派"
+            description="勾选上方用户后指派模板"
+          />
         ) : null}
       </div>
 
@@ -338,9 +364,15 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
                       if (next !== 'custom') setSelectedCategories(categoriesForPreset(next))
                     }}
                   >
-                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
-                      {PRESET_OPTIONS.map(([id, label]) => <SelectItem key={id} value={id}>{label}</SelectItem>)}
+                      {PRESET_OPTIONS.map(([id, label]) => (
+                        <SelectItem key={id} value={id}>
+                          {label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <p className="cg-hint">
@@ -359,7 +391,11 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
                     <span>生效分组</span>
                     <span className="cg-hint">已选择 {selectedCategories.length} 个类别</span>
                     <span className="ml-auto">
-                      {categoryOpen ? <ChevronUpIcon className="size-4" /> : <ChevronDownIcon className="size-4" />}
+                      {categoryOpen ? (
+                        <ChevronUpIcon className="size-4" />
+                      ) : (
+                        <ChevronDownIcon className="size-4" />
+                      )}
                     </span>
                   </summary>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -382,17 +418,21 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
               <div className="space-y-2">
                 <Label>模板（按类型分组）</Label>
                 <Select value={templateId} onValueChange={(id) => id && setTemplateId(id)}>
-                  <SelectTrigger className="w-full"><SelectValue placeholder="选择模板" /></SelectTrigger>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="选择模板" />
+                  </SelectTrigger>
                   <SelectContent>
-                    {(['portable', 'acl4ssr', 'mihomo', 'singbox', 'quanx'] as const).map((kind) => {
-                      const items = assignable.filter((template) => template.kind === kind)
-                      if (items.length === 0) return null
-                      return items.map((template) => (
-                        <SelectItem key={template.id} value={template.id}>
-                          {template.name}（{KIND_LABELS[kind]}）
-                        </SelectItem>
-                      ))
-                    })}
+                    {(['portable', 'acl4ssr', 'mihomo', 'singbox', 'quanx'] as const).map(
+                      (kind) => {
+                        const items = assignable.filter((template) => template.kind === kind)
+                        if (items.length === 0) return null
+                        return items.map((template) => (
+                          <SelectItem key={template.id} value={template.id}>
+                            {template.name}（{KIND_LABELS[kind]}）
+                          </SelectItem>
+                        ))
+                      },
+                    )}
                   </SelectContent>
                 </Select>
                 {assignable.length === 0 && (
@@ -415,7 +455,11 @@ export function TemplateAssignmentTab({ users, templates, categories, onChanged 
           <DialogFooter>
             <Button
               onClick={assign}
-              disabled={saving || selected.size === 0 || (ruleMode === 'template' ? !templateId : selectedCategories.length === 0)}
+              disabled={
+                saving ||
+                selected.size === 0 ||
+                (ruleMode === 'template' ? !templateId : selectedCategories.length === 0)
+              }
             >
               {saving ? '指派中…' : '指派'}
             </Button>

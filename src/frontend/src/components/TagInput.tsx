@@ -43,10 +43,7 @@ export function TagInput({
     >
       <TagIcon className="mr-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       {value.map((tag, index) => (
-        <span
-          key={`${tag}-${index}`}
-          className="sv-tag-chip"
-        >
+        <span key={`${tag}-${index}`} className="sv-tag-chip">
           {tag}
           <button
             type="button"

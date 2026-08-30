@@ -86,7 +86,9 @@ export function validatePortRanges(ranges: PortRange[]): string {
       : [r.pub_start, r.pub_end]
   for (let i = 0; i < ranges.length; i++) {
     for (let j = i + 1; j < ranges.length; j++) {
-      if (overlaps(ranges[i].pub_start, ranges[i].pub_end, ranges[j].pub_start, ranges[j].pub_end)) {
+      if (
+        overlaps(ranges[i].pub_start, ranges[i].pub_end, ranges[j].pub_start, ranges[j].pub_end)
+      ) {
         return `端口段 ${i + 1} 与 ${j + 1} 的外部段重叠`
       }
       const [s1, e1] = listenSide(ranges[i])

@@ -17,10 +17,10 @@ func TestEnqueueAgentUpgradeAllIncludesOfflineServersAndForce(t *testing.T) {
 	}
 	defer st.Close()
 
-	firstID, _ := st.CreateServer(ctx, "first", "first.example.com", "first-token", store.MachineTypeDirect, "", "", "US", "")
-	secondID, _ := st.CreateServer(ctx, "second", "second.example.com", "second-token", store.MachineTypeDirect, "", "", "US", "")
+	firstID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "first", Address: "first.example.com", BootstrapToken: "first-token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	secondID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "second", Address: "second.example.com", BootstrapToken: "second-token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	requester := &fakeRequester{online: map[int64]bool{firstID: true, secondID: false}}
-	d := New(st, requester)
+	d := New(st, requester, Options{}, Events{})
 
 	queued, err := d.EnqueueAgentUpgradeAll(ctx, "v1.2.3", "https://releases.example.com", true)
 	if err != nil {

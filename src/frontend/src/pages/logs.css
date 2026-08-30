@@ -29,7 +29,7 @@
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 800;
-  letter-spacing: .1em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--cg-muted);
   white-space: nowrap;
@@ -71,7 +71,7 @@
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .1em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--cg-subtle);
 }

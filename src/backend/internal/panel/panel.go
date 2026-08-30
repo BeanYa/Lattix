@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"lattix/backend/internal/alert"
@@ -22,6 +23,11 @@ import (
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/nettrust"
+	"lattix/backend/internal/panel/cdn"
+	"lattix/backend/internal/panel/exchange"
+	"lattix/backend/internal/panel/releases"
+	"lattix/backend/internal/panel/scheduler"
+	"lattix/backend/internal/panel/selfupdate"
 	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
@@ -56,14 +62,14 @@ type Server struct {
 	lifecycle     *lifecycle.Manager
 	cfg           Config
 	alerter       *alert.Notifier
-	upd           *panelUpdater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
-	releases      *releaseCatalog
-	exchange      *exchangeCatalog
-	cdn           *cdnCatalog
+	upd           *selfupdate.Updater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
+	releases      *releases.Catalog
+	exchange      *exchange.Catalog
+	cdn           *cdn.Catalog
 	subscriptions *sub.Server
 	extSubs       *extsub.Service
 	onlineUsers   *OnlineUsersTracker // 在线用户快照聚合（telemetry 喂入，用户列表 API 读取）
-	scheduler     *taskScheduler
+	scheduler     *scheduler.TaskScheduler
 	opLog         *logging.OperationStore
 	reqLog        *logging.RequestLog
 	observes      *progress.Registry // 旁路操作进度观察（nil = 关闭）
@@ -71,27 +77,28 @@ type Server struct {
 	runtimeMu     sync.Mutex
 	lastCPU       runtimeCPUSample
 
-	routePolicies   map[string]logging.LogPolicy
-	debugRoutes     map[string]bool // 轮询/状态类路由：成功请求记录为 debug 级别
-	methodFallbacks map[string]bool // 已注册 405 回退路由的裸路径（同路径多方法时避免重复注册）
-	idempotencyMu   sync.Mutex
-	authOnce        sync.Once
-	loginAttempts   *loginLimiter
-	bcryptSlots     chan struct{}
-	tasks           sync.WaitGroup
+	routePolicies         map[string]logging.LogPolicy
+	debugRoutes           map[string]bool // 轮询/状态类路由：成功请求记录为 debug 级别
+	methodFallbacks       map[string]bool // 已注册 405 回退路由的裸路径（同路径多方法时避免重复注册）
+	idempotencyMu         sync.Mutex
+	authOnce              sync.Once
+	loginAttempts         *loginLimiter
+	loginUsernameAttempts *loginLimiter // per-username 兜底桶（防 XFF 伪造绕过 per-IP 限流）
+	bcryptSlots           chan struct{}
+	// secretCache 缓存会话签名密钥（string），省掉每次认证请求的 SQLite 读；
+	// 仅在 sessionSecret 首次生成/读取与 rotateSessionSecret 轮换时刷新。
+	secretCache atomic.Value
+	tasks       sync.WaitGroup
 }
 
 // SetSubscriptionService wires the snapshot compiler after PanelBase is
 // available and before background tasks or HTTP serving start.
 func (s *Server) SetSubscriptionService(service *sub.Server) {
 	s.subscriptions = service
-	s.disp.OnNodePublished = service.EnqueueUsersForNode
-	s.disp.OnChainPublished = service.EnqueueUsersForChain
-	s.disp.OnEndpointPublished = service.EnqueueUsersForEndpoint
-	s.scheduler.register(scheduledTask{
-		name: "subscription.templates.refresh", runOnStart: true, timeout: 10 * time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(6 * time.Hour) },
-		run:     func(ctx context.Context) error { return service.RefreshTemplates(ctx, "") },
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "subscription.templates.refresh", RunOnStart: true, Timeout: 10 * time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(6 * time.Hour) },
+		Run:     func(ctx context.Context) error { return service.RefreshTemplates(ctx, "") },
 	})
 }
 
@@ -99,10 +106,10 @@ func (s *Server) SetSubscriptionService(service *sub.Server) {
 // its periodic sync task.
 func (s *Server) SetExternalSubscriptionService(service *extsub.Service) {
 	s.extSubs = service
-	s.scheduler.register(scheduledTask{
-		name: "external_subscriptions.sync", timeout: 10 * time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(15 * time.Minute) },
-		run: func(ctx context.Context) error {
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "external_subscriptions.sync", Timeout: 10 * time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(15 * time.Minute) },
+		Run: func(ctx context.Context) error {
 			synced, err := service.SyncDue(ctx)
 			if err != nil {
 				return err
@@ -120,7 +127,7 @@ func (s *Server) StartBackgroundTasks(ctx context.Context) {
 	s.tasks.Add(1)
 	go func() {
 		defer s.tasks.Done()
-		s.scheduler.run(ctx)
+		s.scheduler.Run(ctx)
 	}()
 }
 
@@ -128,7 +135,7 @@ func (s *Server) WaitBackground(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
 		s.tasks.Wait()
-		s.upd.wg.Wait()
+		s.upd.Wait()
 		close(done)
 	}()
 	select {
@@ -142,20 +149,14 @@ func (s *Server) WaitBackground(ctx context.Context) error {
 	}
 }
 
-// New 创建面板 API 服务。
-func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg Config) (*Server, error) {
+// New 创建面板 API 服务：内部构造 Dispatcher，不可变配置与事件回调经
+// dispatch.Options/Events 一次性注入（D2），之后不再写入。
+func New(st *store.Store, req ws.AgentRequester, cfg Config) (*Server, error) {
 	if cfg.LifecycleContext == nil {
 		cfg.LifecycleContext = context.Background()
 	}
-	// 链编排器与单机节点共用同一份 dest 白名单（§6/§21）。
-	disp.DestCandidates = destCandidates
-	disp.PanelVersion = cfg.Version
-	disp.PanelPublicURL = cfg.PublicURL
-	if cfg.GitHubRepo != "" {
-		disp.AgentReleaseBase = "https://github.com/" + cfg.GitHubRepo + "/releases/download"
-	}
 	s := &Server{
-		st: st, disp: disp, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
+		st: st, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
 		onlineUsers:     &OnlineUsersTracker{resolve: onlineUserResolver(st)},
 		observes:        progress.NewRegistry(),
@@ -164,17 +165,74 @@ func New(st *store.Store, disp *dispatch.Dispatcher, req ws.AgentRequester, cfg 
 		debugRoutes:     make(map[string]bool),
 		methodFallbacks: make(map[string]bool),
 	}
+	// 链编排器与单机节点共用同一份 dest 白名单（§6/§21）。
+	opts := dispatch.Options{
+		Context:        cfg.LifecycleContext,
+		Alerter:        cfg.Alerter,
+		OperationLog:   cfg.OperationLog,
+		RequestLog:     cfg.RequestLog,
+		DestCandidates: destCandidates,
+		PanelVersion:   cfg.Version,
+		PanelPublicURL: cfg.PublicURL,
+	}
+	if cfg.GitHubRepo != "" {
+		opts.AgentReleaseBase = "https://github.com/" + cfg.GitHubRepo + "/releases/download"
+	}
+	if cfg.Lifecycle != nil {
+		opts.PanelLifecycle = cfg.Lifecycle.Snapshot
+	}
+	// 发布事件转发给订阅服务（SetSubscriptionService 接线前到达的忽略）；
+	// dispatcher 的 telemetry 处理喂入在线用户快照。
+	s.disp = dispatch.New(st, req, opts, dispatch.Events{
+		OnNodePublished:     s.onNodePublished,
+		OnChainPublished:    s.onChainPublished,
+		OnEndpointPublished: s.onEndpointPublished,
+		OnOnlineUsers:       s.onlineUsers.ApplySnapshot,
+	})
 	// 观察 ID 读取器注入请求日志中间件（避免 logging → progress 反向依赖）。
 	logging.SetObserveIDReader(s.observes.ObserveIDFromContext)
-	// dispatcher 的 telemetry 处理喂入在线用户快照（注入模式同 OnNodePublished 等回调）。
-	disp.OnOnlineUsers = s.onlineUsers.ApplySnapshot
-	s.upd = newPanelUpdater(s)
-	s.releases = newReleaseCatalog(s)
-	s.exchange = newExchangeCatalog(s)
-	s.cdn = newCDNCatalog(s)
-	s.scheduler = newTaskScheduler(s.inspectionLocation)
+	s.upd = selfupdate.New(cfg.Version, cfg.GitHubRepo, selfupdate.Hooks{
+		TransitionLifecycle: func(ctx context.Context, state, fault string, wait bool) error {
+			_, err := s.transitionLifecycle(ctx, state, fault, wait)
+			return err
+		},
+		RecordOperation:        s.recordOperation,
+		EnqueueAgentUpgradeAll: s.disp.EnqueueAgentUpgradeAll,
+		RequestRestart:         cfg.RequestRestart,
+	})
+	s.releases = releases.New(st, cfg.GitHubRepo)
+	s.exchange = exchange.New(st)
+	s.cdn = cdn.New(st)
+	s.scheduler = scheduler.NewTaskScheduler(s.inspectionLocation)
 	s.registerCoreTasks()
 	return s, nil
+}
+
+// Dispatcher 返回面板持有的命令分发器（New 内部构造；main 据此接线 hub 认证/消息回调）。
+func (s *Server) Dispatcher() *dispatch.Dispatcher { return s.disp }
+
+// onNodePublished/onChainPublished/onEndpointPublished 是 dispatcher 发布事件的面板侧
+// 实现：订阅服务接线（SetSubscriptionService）前到达的事件直接忽略，与接线前回调为 nil
+// 的旧行为一致。
+func (s *Server) onNodePublished(ctx context.Context, nodeID int64) error {
+	if s.subscriptions == nil {
+		return nil
+	}
+	return s.subscriptions.EnqueueUsersForNode(ctx, nodeID)
+}
+
+func (s *Server) onChainPublished(ctx context.Context, chainID int64) error {
+	if s.subscriptions == nil {
+		return nil
+	}
+	return s.subscriptions.EnqueueUsersForChain(ctx, chainID)
+}
+
+func (s *Server) onEndpointPublished(ctx context.Context, endpointID int64) error {
+	if s.subscriptions == nil {
+		return nil
+	}
+	return s.subscriptions.EnqueueUsersForEndpoint(ctx, endpointID)
 }
 
 // ObserverRegistry 返回旁路观察注册表（sub regenerator 等侧通道调用方注入用）。
@@ -194,62 +252,62 @@ func (s *Server) OnlineUsers() *OnlineUsersTracker {
 	return s.onlineUsers
 }
 
-func (s *Server) registerCoreTasks() {
-	expiryInterval := expirySweepIntervalDefault
-	if value := os.Getenv("LATTIX_EXPIRY_SWEEP_INTERVAL"); value != "" {
+// envDuration 解析以环境变量覆盖的调度周期：空值、解析失败或非正数时回退默认值。
+func envDuration(name string, fallback time.Duration) time.Duration {
+	if value := os.Getenv(name); value != "" {
 		if parsed, err := time.ParseDuration(value); err == nil && parsed > 0 {
-			expiryInterval = parsed
+			return parsed
 		}
 	}
-	s.scheduler.register(scheduledTask{
-		name: "user.expiry", runOnStart: true, timeout: time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(expiryInterval) },
-		run:     func(ctx context.Context) error { s.sweepExpiredUsers(ctx); return nil },
+	return fallback
+}
+
+func (s *Server) registerCoreTasks() {
+	expiryInterval := envDuration("LATTIX_EXPIRY_SWEEP_INTERVAL", expirySweepIntervalDefault)
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "user.expiry", RunOnStart: true, Timeout: time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(expiryInterval) },
+		Run:     func(ctx context.Context) error { s.sweepExpiredUsers(ctx); return nil },
 	})
-	s.scheduler.register(scheduledTask{
-		name: "metrics.retention", runOnStart: true, timeout: time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(time.Hour) },
-		run:     s.cleanupMetricHistory,
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "metrics.retention", RunOnStart: true, Timeout: time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(time.Hour) },
+		Run:     s.cleanupMetricHistory,
 	})
-	for _, kind := range []string{releaseKindAgent, releaseKindXray} {
+	for _, kind := range []string{releases.KindAgent, releases.KindXray} {
 		kind := kind
-		s.scheduler.register(scheduledTask{
-			name: "release." + kind, runOnStart: true, timeout: 45 * time.Second,
-			trigger: func(ctx context.Context) taskTrigger {
+		s.scheduler.Register(scheduler.ScheduledTask{
+			Name: "release." + kind, RunOnStart: true, Timeout: 45 * time.Second,
+			Trigger: func(ctx context.Context) scheduler.TaskTrigger {
 				settings := s.releaseInspectionSettings(ctx)
-				if kind == releaseKindAgent {
+				if kind == releases.KindAgent {
 					return settings.Agent
 				}
 				return settings.Xray
 			},
-			run: func(ctx context.Context) error { return s.releases.refresh(ctx, kind) },
+			Run: func(ctx context.Context) error { return s.releases.Refresh(ctx, kind) },
 		})
 	}
-	s.scheduler.register(scheduledTask{
-		name: "billing.lifecycle", runOnStart: true, timeout: time.Minute,
-		trigger: func(ctx context.Context) taskTrigger { return s.billingInspectionSchedule(ctx) },
-		run:     s.inspectBilling,
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "billing.lifecycle", RunOnStart: true, Timeout: time.Minute,
+		Trigger: func(ctx context.Context) scheduler.TaskTrigger { return s.billingInspectionSchedule(ctx) },
+		Run:     s.inspectBilling,
 	})
-	s.scheduler.register(scheduledTask{
-		name: "exchange_rates.refresh", runOnStart: true, timeout: 45 * time.Second,
-		trigger: func(ctx context.Context) taskTrigger { return s.exchangeInspectionSchedule(ctx) },
-		run:     s.exchange.refresh,
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "exchange_rates.refresh", RunOnStart: true, Timeout: 45 * time.Second,
+		Trigger: func(ctx context.Context) scheduler.TaskTrigger { return s.exchangeInspectionSchedule(ctx) },
+		Run:     s.exchange.Refresh,
 	})
-	cdnRefreshInterval := cdnCatalogRefreshIntervalDefault
-	if value := os.Getenv("LATTIX_CDN_REFRESH_INTERVAL"); value != "" {
-		if parsed, err := time.ParseDuration(value); err == nil && parsed > 0 {
-			cdnRefreshInterval = parsed
-		}
-	}
-	s.scheduler.register(scheduledTask{
-		name: "cdn.catalog.refresh", timeout: 2 * time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(cdnRefreshInterval) },
-		run:     s.cdn.refreshZstaticCDNCatalog,
+	cdnRefreshInterval := envDuration("LATTIX_CDN_REFRESH_INTERVAL", cdn.RefreshIntervalDefault)
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "cdn.catalog.refresh", Timeout: 2 * time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(cdnRefreshInterval) },
+		Run:     s.cdn.Refresh,
 	})
-	s.scheduler.register(scheduledTask{
-		name: "traffic.reset", runOnStart: true, timeout: time.Minute,
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(expiryInterval) },
-		run:     s.sweepTrafficReset,
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "traffic.reset", RunOnStart: true, Timeout: time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(expiryInterval) },
+		Run:     s.sweepTrafficReset,
 	})
 }
 

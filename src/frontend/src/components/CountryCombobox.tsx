@@ -79,7 +79,9 @@ export function CountryCombobox({
                   <CountryFlag code={country.code} label={`${country.label}国旗`} />
                   <span>{country.label}</span>
                   <span className="text-xs text-muted-foreground">{country.name}</span>
-                  <span className="ml-auto font-mono text-xs text-muted-foreground">{country.code}</span>
+                  <span className="ml-auto font-mono text-xs text-muted-foreground">
+                    {country.code}
+                  </span>
                   <Combobox.ItemIndicator className="absolute right-2 flex size-4 items-center justify-center">
                     <CheckIcon />
                   </Combobox.ItemIndicator>

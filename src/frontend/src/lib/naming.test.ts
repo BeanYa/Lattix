@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { getTemplateSuggestions, validateNameTemplate, type NameTemplateContext } from '@/lib/naming'
+import {
+  getTemplateSuggestions,
+  validateNameTemplate,
+  type NameTemplateContext,
+} from '@/lib/naming'
 import type { Server } from '@/lib/types'
 
 function server(id: number, alias: string, countryCode: string, location: string): Server {
@@ -45,7 +49,11 @@ describe('multi-hop name templates', () => {
     }
 
     const globalTemplate = '{{COUNTRY_'
-    const globalSuggestions = getTemplateSuggestions(globalTemplate, globalTemplate.length, relayContext)
+    const globalSuggestions = getTemplateSuggestions(
+      globalTemplate,
+      globalTemplate.length,
+      relayContext,
+    )
     expect(globalSuggestions).toBeNull()
   })
 
@@ -55,11 +63,16 @@ describe('multi-hop name templates', () => {
       error: '',
     })
     const branded = { ...relayContext, panelShort: 'MyPanel' }
-    expect(validateNameTemplate('{{PANEL_SHORT}}', branded)).toEqual({ preview: 'MyPanel', error: '' })
+    expect(validateNameTemplate('{{PANEL_SHORT}}', branded)).toEqual({
+      preview: 'MyPanel',
+      error: '',
+    })
   })
 
   it('suggests PANEL_SHORT for multi-hop templates', () => {
     const template = '{{PANEL'
-    expect(getTemplateSuggestions(template, template.length, relayContext)?.items).toContain('PANEL_SHORT')
+    expect(getTemplateSuggestions(template, template.length, relayContext)?.items).toContain(
+      'PANEL_SHORT',
+    )
   })
 })

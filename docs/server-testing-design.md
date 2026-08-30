@@ -84,9 +84,12 @@ IP 质量检测执行上游 xykt/IPQuality 脚本 `ip.sh`，固定参数 `-p -j 
 - `-j` 输出 JSON 到 stdout（双栈时依次输出 IPv4、IPv6 两个文档）；
 - `-f` 展示完整出口 IP（Lattix 报告按用户要求展示完整 IP）。
 
-脚本来源 `https://raw.githubusercontent.com/xykt/IPQuality/main/ip.sh`，由 Agent 缓存在
-数据目录 `scripts/ip.sh`。每次测试前拉取最新脚本并与缓存比对 `script_version`，相同则复用
-缓存，不同则原子替换；拉取失败回退缓存并在报告中标记 `script_stale`。
+脚本来源钉在上游 commit：
+`https://raw.githubusercontent.com/xykt/IPQuality/0ee5f192fed70c04615852efba0e4b8bd43546c7/ip.sh`，
+由 Agent 缓存在数据目录 `scripts/ip.sh`。下载内容与回退缓存均须通过硬编码 SHA256 校验，
+未通过校验的脚本绝不执行（升级上游版本 = 同步更新 URL 的 commit 与 SHA256 两个值）。每次
+测试前拉取钉版脚本并与缓存比对 `script_version`，相同且缓存校验通过则复用缓存，否则用已
+校验内容原子替换；拉取失败回退缓存并在报告中标记 `script_stale`。
 
 脚本依赖 `jq curl bc netcat dnsutils iproute2`。Agent 在测试前用 `exec.LookPath` 检测，
 缺失时运行脚本自身的 `-y` 自动安装轮次（120 秒窗口，轮询依赖就绪后立即终止进程组），

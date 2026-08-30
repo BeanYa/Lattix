@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,11 +12,18 @@ import (
 )
 
 const (
-	loginFailureLimit      = 5
-	loginFailureWindow     = time.Minute
-	loginBlockDuration     = 5 * time.Minute
-	maxTrackedLoginIPs     = 4096
-	bcryptCheckConcurrency = 4
+	loginFailureLimit  = 5
+	loginFailureWindow = time.Minute
+	loginBlockDuration = 5 * time.Minute
+	maxTrackedLoginIPs = 4096
+	// username 兜底桶：XFF 可被直连同网攻击者伪造，per-IP 桶会被随机化 XFF 绕过，
+	// 故按用户名独立计一层（10 次失败/5min 窗口→封 15min，与 IP 桶并存互不影响）。
+	// 残余风险：知晓用户名者可持续失败登录以锁定该账号（fail2ban 同类权衡），防暴力破解优先。
+	loginUsernameFailureLimit  = 10
+	loginUsernameFailureWindow = 5 * time.Minute
+	loginUsernameBlockDuration = 15 * time.Minute
+	maxTrackedLoginUsernames   = 4096
+	bcryptCheckConcurrency     = 4
 )
 
 var errBcryptBusy = errors.New("bcrypt concurrency limit reached")
@@ -28,18 +36,30 @@ type loginAttempt struct {
 }
 
 type loginLimiter struct {
-	mu       sync.Mutex
-	attempts map[string]loginAttempt
-	now      func() time.Time
+	mu            sync.Mutex
+	attempts      map[string]loginAttempt
+	now           func() time.Time
+	failureLimit  int
+	failureWindow time.Duration
+	blockDuration time.Duration
+	maxTracked    int
 }
 
-func newLoginLimiter(now func() time.Time) *loginLimiter {
-	return &loginLimiter{attempts: make(map[string]loginAttempt), now: now}
+func newLoginLimiter(now func() time.Time, failureLimit int, failureWindow, blockDuration time.Duration, maxTracked int) *loginLimiter {
+	return &loginLimiter{
+		attempts:      make(map[string]loginAttempt),
+		now:           now,
+		failureLimit:  failureLimit,
+		failureWindow: failureWindow,
+		blockDuration: blockDuration,
+		maxTracked:    maxTracked,
+	}
 }
 
 func (s *Server) initAuthProtection() {
 	s.authOnce.Do(func() {
-		s.loginAttempts = newLoginLimiter(time.Now)
+		s.loginAttempts = newLoginLimiter(time.Now, loginFailureLimit, loginFailureWindow, loginBlockDuration, maxTrackedLoginIPs)
+		s.loginUsernameAttempts = newLoginLimiter(time.Now, loginUsernameFailureLimit, loginUsernameFailureWindow, loginUsernameBlockDuration, maxTrackedLoginUsernames)
 		s.bcryptSlots = make(chan struct{}, bcryptCheckConcurrency)
 	})
 }
@@ -47,6 +67,18 @@ func (s *Server) initAuthProtection() {
 func (s *Server) loginLimiter() *loginLimiter {
 	s.initAuthProtection()
 	return s.loginAttempts
+}
+
+// usernameLoginLimiter 返回 per-username 兜底限流器：按 RemoteAddr 计数会在反代部署下
+// 把全员锁进同一桶，故保留 per-IP（采纳 XFF）之外再以用户名兜底，防 XFF 伪造绕过。
+func (s *Server) usernameLoginLimiter() *loginLimiter {
+	s.initAuthProtection()
+	return s.loginUsernameAttempts
+}
+
+// loginUsernameKey 归一化 username 桶键：大小写不敏感；空用户名归入同一 "u:" 桶。
+func loginUsernameKey(username string) string {
+	return "u:" + strings.ToLower(username)
 }
 
 func (s *Server) acquireBcryptSlot() bool {
@@ -71,64 +103,64 @@ func (s *Server) generatePasswordHash(password string) ([]byte, error) {
 	return bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 }
 
-func (l *loginLimiter) retryAfter(ip string) (time.Duration, bool) {
+func (l *loginLimiter) retryAfter(key string) (time.Duration, bool) {
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	attempt, ok := l.attempts[ip]
+	attempt, ok := l.attempts[key]
 	if !ok {
 		return 0, false
 	}
 	attempt.lastSeen = now
 	if attempt.blockedUntil.After(now) {
-		l.attempts[ip] = attempt
+		l.attempts[key] = attempt
 		return attempt.blockedUntil.Sub(now), true
 	}
-	if now.Sub(attempt.windowStart) >= loginFailureWindow {
-		delete(l.attempts, ip)
+	if now.Sub(attempt.windowStart) >= l.failureWindow {
+		delete(l.attempts, key)
 		return 0, false
 	}
-	l.attempts[ip] = attempt
+	l.attempts[key] = attempt
 	return 0, false
 }
 
-func (l *loginLimiter) recordFailure(ip string) (time.Duration, bool) {
+func (l *loginLimiter) recordFailure(key string) (time.Duration, bool) {
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	attempt := l.attempts[ip]
-	if attempt.windowStart.IsZero() || now.Sub(attempt.windowStart) >= loginFailureWindow {
+	attempt := l.attempts[key]
+	if attempt.windowStart.IsZero() || now.Sub(attempt.windowStart) >= l.failureWindow {
 		attempt = loginAttempt{windowStart: now}
 	}
 	attempt.failures++
 	attempt.lastSeen = now
-	if attempt.failures >= loginFailureLimit {
-		attempt.blockedUntil = now.Add(loginBlockDuration)
-		l.attempts[ip] = attempt
-		return loginBlockDuration, true
+	if attempt.failures >= l.failureLimit {
+		attempt.blockedUntil = now.Add(l.blockDuration)
+		l.attempts[key] = attempt
+		return l.blockDuration, true
 	}
-	if _, exists := l.attempts[ip]; !exists && len(l.attempts) >= maxTrackedLoginIPs {
+	if _, exists := l.attempts[key]; !exists && len(l.attempts) >= l.maxTracked {
 		l.evictOldest()
 	}
-	l.attempts[ip] = attempt
+	l.attempts[key] = attempt
 	return 0, false
 }
 
-func (l *loginLimiter) recordSuccess(ip string) {
+func (l *loginLimiter) recordSuccess(key string) {
 	l.mu.Lock()
-	delete(l.attempts, ip)
+	delete(l.attempts, key)
 	l.mu.Unlock()
 }
 
 func (l *loginLimiter) evictOldest() {
-	oldestIP := ""
+	oldestKey := ""
 	var oldest time.Time
-	for ip, attempt := range l.attempts {
-		if oldestIP == "" || attempt.lastSeen.Before(oldest) {
-			oldestIP, oldest = ip, attempt.lastSeen
+	for key, attempt := range l.attempts {
+		if oldestKey == "" || attempt.lastSeen.Before(oldest) {
+			oldestKey, oldest = key, attempt.lastSeen
 		}
 	}
-	delete(l.attempts, oldestIP)
+	delete(l.attempts, oldestKey)
 }
 
 func writeLoginRateLimit(w http.ResponseWriter, retry time.Duration) {

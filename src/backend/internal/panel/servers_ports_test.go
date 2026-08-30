@@ -20,8 +20,7 @@ func TestCheckPortsShrinkRejectsOutOfRangeSharedEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, err := st.CreateServer(ctx, "nat", "nat.example.com", "tok", store.MachineTypeNAT,
-		`[{"pub_start":10000,"pub_end":10009}]`, "", "US", "")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "nat", Address: "nat.example.com", BootstrapToken: "tok", MachineType: store.MachineTypeNAT, AllowedPorts: `[{"pub_start":10000,"pub_end":10009}]`, CountryCode: "US"})
 	if err != nil {
 		t.Fatal(err)
 	}

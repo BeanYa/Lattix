@@ -21,7 +21,7 @@ func TestCommandFailedDetailCarriesEndpointAndChainContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
 	if err != nil {
@@ -34,8 +34,7 @@ func TestCommandFailedDetailCarriesEndpointAndChainContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer opLog.Close()
-	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}})
-	d.OperationLog = opLog
+	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}}, Options{OperationLog: opLog}, Events{})
 
 	if _, err := d.Enqueue(ctx, serverID, shared.TypeApplySharedEndpoint,
 		shared.ApplySharedEndpointPayload{EndpointID: endpoint.ID}); err != nil {

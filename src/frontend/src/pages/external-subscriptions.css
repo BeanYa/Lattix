@@ -55,7 +55,7 @@
   font-family: var(--cg-mono);
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   color: var(--cg-muted);
 }
 
@@ -139,7 +139,7 @@
   font-family: var(--cg-mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: .06em;
+  letter-spacing: 0.06em;
   color: var(--cg-ink);
 }
 
@@ -157,7 +157,9 @@
   font-weight: 750;
   color: var(--cg-ink);
   cursor: pointer;
-  transition: transform 160ms var(--cg-ease), background-color 160ms var(--cg-ease);
+  transition:
+    transform 160ms var(--cg-ease),
+    background-color 160ms var(--cg-ease);
 }
 
 .extsub-check:hover {

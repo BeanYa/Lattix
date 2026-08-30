@@ -20,9 +20,9 @@ func TestSubscriptionUsesPublishedRevisionWhileEditApplies(t *testing.T) {
 	}
 	defer st.Close()
 
-	entryID, _ := st.CreateServer(ctx, "published-entry", "old.example.com", "tok-entry", store.MachineTypeDirect, "", "", "US", "")
-	desiredEntryID, _ := st.CreateServer(ctx, "desired-entry", "new.example.com", "tok-new", store.MachineTypeDirect, "", "", "US", "")
-	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "tok-exit", store.MachineTypeDirect, "", "", "JP", "")
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "published-entry", Address: "old.example.com", BootstrapToken: "tok-entry", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	desiredEntryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "desired-entry", Address: "new.example.com", BootstrapToken: "tok-new", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "tok-exit", MachineType: store.MachineTypeDirect, CountryCode: "JP"})
 
 	publishedConfig, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Network: shared.NetworkTCP, Template: json.RawMessage(`{}`)})
 	desiredConfig, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolSocks, Template: json.RawMessage(`{}`)})
@@ -92,8 +92,8 @@ func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	entryID, _ := st.CreateServer(ctx, "entry", "entry.example.com", "token-entry", store.MachineTypeDirect, "", "", "US", "")
-	exitID, _ := st.CreateServer(ctx, "exit", "exit.example.com", "token-exit", store.MachineTypeDirect, "", "", "JP", "")
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.example.com", BootstrapToken: "token-entry", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "token-exit", MachineType: store.MachineTypeDirect, CountryCode: "JP"})
 	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 443, "profile", config)
 	if err != nil {

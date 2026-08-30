@@ -131,7 +131,7 @@ func TestRefreshServerAddresses(t *testing.T) {
 
 	t.Run("访问流居首并合并NIC双族", func(t *testing.T) {
 		st := open(t)
-		id, err := st.CreateServer(ctx, "a", "", "tok", "direct", "", "", "", "")
+		id, err := st.CreateServer(ctx, ServerDraft{Alias: "a", BootstrapToken: "tok", MachineType: "direct"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -149,7 +149,7 @@ func TestRefreshServerAddresses(t *testing.T) {
 
 	t.Run("手工条目保留且默认地址不丢", func(t *testing.T) {
 		st := open(t)
-		id, err := st.CreateServer(ctx, "b", "9.9.9.9", "tok", "direct", "", "", "", "")
+		id, err := st.CreateServer(ctx, ServerDraft{Alias: "b", Address: "9.9.9.9", BootstrapToken: "tok", MachineType: "direct"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -178,7 +178,7 @@ func TestRefreshServerAddresses(t *testing.T) {
 
 	t.Run("采不到公网地址则列表缺失", func(t *testing.T) {
 		st := open(t)
-		id, err := st.CreateServer(ctx, "c", "", "tok", "nat", "", "", "", "")
+		id, err := st.CreateServer(ctx, ServerDraft{Alias: "c", BootstrapToken: "tok", MachineType: "nat"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -194,7 +194,7 @@ func TestRefreshServerAddresses(t *testing.T) {
 
 	t.Run("重复刷新幂等", func(t *testing.T) {
 		st := open(t)
-		id, err := st.CreateServer(ctx, "d", "", "tok", "direct", "", "", "", "")
+		id, err := st.CreateServer(ctx, ServerDraft{Alias: "d", BootstrapToken: "tok", MachineType: "direct"})
 		if err != nil {
 			t.Fatal(err)
 		}

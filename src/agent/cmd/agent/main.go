@@ -48,6 +48,8 @@ func main() {
 	showVersion := flag.Bool("version", false, "打印版本并退出")
 	serverTestWorker := flag.Bool("server-test-worker", false, "run the internal server test worker")
 	flag.Parse()
+	// -token 为空时回退 LATTIX_TOKEN 环境变量（systemd EnvironmentFile 注入路径），token 不进 argv。
+	*token = installToken(*token)
 	*panel = normalizePanelWS(*panel)
 	if *serverTestWorker {
 		if err := servertest.WorkerMain(os.Stdin, os.Stdout); err != nil {
@@ -96,6 +98,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("load command queue: %v", err)
 	}
+	// 主循环长期依赖打包：run/handle 与会话协程共享。
+	ctx := &agentContext{
+		statePath:          *statePath,
+		settingsPath:       *settingsPath,
+		serverSettingsPath: *serverSettingsPath,
+		mgr:                mgr,
+		st:                 st,
+		settings:           runtime,
+		serverSettings:     serverRuntime,
+		panel:              panelRuntime,
+		tests:              testManager,
+		queue:              commandQueue,
+	}
 	connectionPath := filepath.Join(filepath.Dir(*statePath), "connection.json")
 	// 连接状态机（state.ConnState*）：进程内跟踪当前状态并校验每次写入的转换，
 	// connection.json 的状态序列保持严谨（connecting → online → backoff → connecting …，
@@ -129,12 +144,7 @@ func main() {
 	failures := 0
 	for {
 		saveConnectionStatus(false, state.ConnStateConnecting, nil)
-		newTok, reachedOnline, err := run(*panel, tok, *statePath, *settingsPath, *serverSettingsPath, connectionPath, mgr, st, runtime, serverRuntime, panelRuntime, testManager, commandQueue)
-		if reachedOnline {
-			// run 内部已落盘 online 快照；推进跟踪状态使随后的 backoff/auth_rejected
-			// 转换具备合法前置状态（online → backoff | auth_rejected）。
-			currentConnState = state.ConnStateOnline
-		}
+		newTok, err := run(*panel, tok, saveConnectionStatus, ctx)
 		if newTok != "" {
 			tok = newTok // 内存兜底：state 落盘失败时仍能凭内存中的 token 重连（§5）
 			failures = 0
@@ -144,8 +154,9 @@ func main() {
 		if err != nil {
 			if authenticationRejected(err) {
 				saveConnectionStatus(false, state.ConnStateAuthRejected, err)
-				st.AuthRejected = true
-				_ = state.Save(*statePath, st)
+				_ = state.SaveWith(*statePath, st, func(s *state.State) {
+					s.AuthRejected = true
+				})
 				log.Printf("connection: 面板明确拒绝当前凭证（面板可能已重建或凭证已替换）；已停止自动重试，请使用新面板安装命令重新绑定后重启 Agent")
 				waitForShutdown()
 				return
@@ -206,10 +217,26 @@ func (s *safeConn) writeControl(messageType int, data []byte) error {
 	return s.conn.WriteControl(messageType, data, time.Now().Add(wsWriteTimeout))
 }
 
-// run 建立连接并完成首连认证，返回本次换发/确认的 token、会话是否已到达 online
-// （session.ready 完成）与断开原因。reachedOnline 供外层连接状态机推导合法转换。
-// st 为已加载的落盘状态：session.open 换发后更新凭证字段并整体落盘（保留链 piece 记录）。
-func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPath string, mgr *xray.Manager, st *state.State, runtime *runtimeSettings, serverRuntime *serverRuntimeSettings, panelRuntime *panelStateTracker, testManager *servertest.Manager, commandQueue *persistentCommandQueue) (string, bool, error) {
+// agentContext 打包 agent 主循环的长期依赖：落盘路径、本地状态、各运行时
+// 设置源与功能管理器。main 构造一次，run/handle 与会话协程共享，
+// 避免同一组依赖成群穿越参数列表。
+type agentContext struct {
+	statePath          string
+	settingsPath       string
+	serverSettingsPath string
+	mgr                *xray.Manager
+	st                 *state.State
+	settings           *runtimeSettings
+	serverSettings     *serverRuntimeSettings
+	panel              *panelStateTracker
+	tests              *servertest.Manager
+	queue              *persistentCommandQueue
+}
+
+// run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因；到达 online
+// （session.ready 完成）时经 saveConnectionStatus 落盘 online 快照（与外层同一连接状态机校验）。
+// ctx.st 为已加载的落盘状态：session.open 换发后更新凭证字段并整体落盘（保留链 piece 记录）。
+func run(panel, token string, saveConnectionStatus func(connected bool, stateName string, connectionErr error), ctx *agentContext) (string, error) {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+token)
 	conn, response, err := websocket.DefaultDialer.Dial(panel, header)
@@ -218,15 +245,15 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 			defer response.Body.Close()
 		}
 		if explicitAuthenticationRejection(response) {
-			return "", false, errAuthenticationRejected
+			return "", errAuthenticationRejected
 		}
 		if panelTemporarilyUnavailable(response) {
-			return "", false, errPanelUnavailable
+			return "", errPanelUnavailable
 		}
 		if detail := handshakeErrorDescription(response); detail != "" {
-			return "", false, fmt.Errorf("%w [%s]", err, detail)
+			return "", fmt.Errorf("%w [%s]", err, detail)
 		}
-		return "", false, err
+		return "", err
 	}
 	defer conn.Close()
 	conn.SetReadLimit(maxWSMessageBytes)
@@ -238,7 +265,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 	conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 
 	// Every authenticated WebSocket starts with an application session open.
-	xrayVer, xrayRunning := mgr.Version()
+	xrayVer, xrayRunning := ctx.mgr.Version()
 	openID := shared.NewMessageID()
 	open := shared.Envelope{
 		Kind:      shared.KindRequest,
@@ -251,31 +278,31 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 			XrayVersion:     xrayVer,
 			XrayRunning:     xrayRunning,
 			NICAddresses:    nonLoopbackAddrs(),
-			LastLifecycle:   lifecycleVersion(st.PanelObservation),
+			LastLifecycle:   lifecycleVersion(ctx.st.PanelObservation),
 		}),
 	}
 	if err := sc.writeJSON(open); err != nil {
-		return "", false, fmt.Errorf("send session open: %w", err)
+		return "", fmt.Errorf("send session open: %w", err)
 	}
 
 	// The first response carries the complete lifecycle snapshot.
 	var resp shared.Envelope
 	if err := conn.ReadJSON(&resp); err != nil {
-		return "", false, fmt.Errorf("read session open response: %w", err)
+		return "", fmt.Errorf("read session open response: %w", err)
 	}
 	if err := resp.Validate(); err != nil {
-		return "", false, fmt.Errorf("invalid session open response: %w", err)
+		return "", fmt.Errorf("invalid session open response: %w", err)
 	}
 	if resp.Kind != shared.KindResponse || resp.Type != shared.TypeSessionOpen || resp.RequestID != openID {
-		return "", false, fmt.Errorf("unexpected first frame: kind=%s type=%s request_id=%s",
+		return "", fmt.Errorf("unexpected first frame: kind=%s type=%s request_id=%s",
 			resp.Kind, resp.Type, resp.RequestID)
 	}
 	if resp.Code != shared.CodeOK {
-		return "", false, fmt.Errorf("session open failed: %s: %s", resp.Code, resp.Message)
+		return "", fmt.Errorf("session open failed: %s: %s", resp.Code, resp.Message)
 	}
 	var opened shared.SessionOpenResult
 	if err := json.Unmarshal(resp.Data, &opened); err != nil {
-		return "", false, fmt.Errorf("bad session open result: %w", err)
+		return "", fmt.Errorf("bad session open result: %w", err)
 	}
 	newToken := token
 	if opened.IssuedToken != "" {
@@ -283,21 +310,21 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 	}
 	credential, err := shared.ParseCredential(newToken)
 	if err != nil {
-		return "", false, fmt.Errorf("bad issued credential: %w", err)
+		return "", fmt.Errorf("bad issued credential: %w", err)
 	}
-	crossPanelRebind := st.PanelInstanceID != "" && st.PanelInstanceID != credential.PanelInstanceID
+	crossPanelRebind := ctx.st.PanelInstanceID != "" && ctx.st.PanelInstanceID != credential.PanelInstanceID
 	if crossPanelRebind {
-		if err := mgr.ResetForPanelRebind(); err != nil {
-			return "", false, fmt.Errorf("reset previous panel configuration: %w", err)
+		if err := ctx.mgr.ResetForPanelRebind(); err != nil {
+			return "", fmt.Errorf("reset previous panel configuration: %w", err)
 		}
-		st.Reset()
-		runtime.resetForPanelRebind()
+		ctx.st.Reset()
+		ctx.settings.resetForPanelRebind()
 	}
 	if opened.PanelState.PanelInstanceID != credential.PanelInstanceID ||
-		!panelRuntime.apply(opened.PanelState, true) {
-		return "", false, fmt.Errorf("invalid panel lifecycle snapshot")
+		!ctx.panel.apply(opened.PanelState, true) {
+		return "", fmt.Errorf("invalid panel lifecycle snapshot")
 	}
-	saved := state.SaveWith(statePath, st, func(s *state.State) {
+	saved := state.SaveWith(ctx.statePath, ctx.st, func(s *state.State) {
 		s.Token, s.ServerID = newToken, opened.ServerID
 		s.PanelInstanceID, s.CredentialEpoch = credential.PanelInstanceID, credential.Epoch
 		s.PanelObservation = &opened.PanelState
@@ -308,7 +335,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 		log.Printf("save state: failed (WARNING: in-memory token will be used for reconnects)")
 	}
 	log.Printf("authenticated as server %d session=%s kind=%s", opened.ServerID, opened.SessionID, opened.SessionKind)
-	if err := mgr.EnsureTelemetryFeatures(); err != nil {
+	if err := ctx.mgr.EnsureTelemetryFeatures(); err != nil {
 		log.Printf("ensure telemetry features: %v (traffic stats may be unavailable)", err)
 	}
 	latency := newLatencyTracker()
@@ -319,33 +346,33 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 	})
 	if opened.CredentialExchangeID != "" && saved {
 		if err := exchangeCredential(sc, conn, opened.CredentialExchangeID); err != nil {
-			return newToken, false, err
+			return newToken, err
 		}
 	}
 	// A lightweight keepalive proves the new session in both directions. It is
 	// deliberately excluded from latency samples.
 	time.Sleep(time.Duration(rand.Intn(1001)) * time.Millisecond)
 	if err := sendLiveness(sc); err != nil {
-		return newToken, false, fmt.Errorf("initial liveness: %w", err)
+		return newToken, fmt.Errorf("initial liveness: %w", err)
 	}
-	if err := markSessionReady(sc, conn, opened.SessionID, panelRuntime, statePath, st, latency); err != nil {
-		return newToken, false, err
+	if err := markSessionReady(sc, conn, opened.SessionID, ctx.panel, ctx.statePath, ctx.st, latency); err != nil {
+		return newToken, err
 	}
-	testManager.Attach(func(envelope shared.Envelope) error { return sc.writeJSON(envelope) })
-	defer testManager.Detach()
-	queueAttachment := commandQueue.Attach(func(envelope shared.Envelope) {
-		handle(sc, mgr, envelope, statePath, settingsPath, serverSettingsPath, st, runtime, serverRuntime, panelRuntime, latency, testManager, nil)
+	ctx.tests.Attach(func(envelope shared.Envelope) error { return sc.writeJSON(envelope) })
+	defer ctx.tests.Detach()
+	queueAttachment := ctx.queue.Attach(func(envelope shared.Envelope) {
+		// 队列内命令已随日志落盘，直接分发不再入队（原 handle 的 commandQueue=nil 语义）。
+		direct := *ctx
+		direct.queue = nil
+		handle(sc, envelope, latency, &direct)
 	})
-	defer commandQueue.Detach(queueAttachment)
-	if err := state.SaveConnectionStatus(connectionPath, state.ConnectionStatus{
-		Connected: true, State: state.ConnStateOnline, Panel: panel, ServerID: opened.ServerID,
-		AgentVersion: version, PID: os.Getpid(), ChangedAt: time.Now().UTC(),
-	}); err != nil {
-		log.Printf("save connected status: %v", err)
-	}
-	sendSettingsSync(sc, runtime)
-	sendServerSettingsSync(sc, serverRuntime)
-	maybeReconcileXray(mgr, serverRuntime)
+	defer ctx.queue.Detach(queueAttachment)
+	saveConnectionStatus(true, state.ConnStateOnline, nil)
+	agentSync := ctx.agentSettingsSync()
+	serverSync := ctx.serverSettingsSync()
+	agentSync.send(sc)
+	serverSync.send(sc)
+	maybeReconcileXray(ctx.mgr, ctx.serverSettings)
 
 	// Liveness remains active in every connected lifecycle state.
 	go func() {
@@ -365,11 +392,11 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 			}
 		}
 	}()
-	go runLatencyProbes(done, conn, sc, latency, panelRuntime)
+	go runLatencyProbes(done, conn, sc, latency, ctx.panel)
 
 	// Telemetry does not wait for a latency sample.
 	go func() {
-		t := newTelemetry(mgr, latency.snapshot)
+		t := newTelemetry(ctx.mgr, latency.snapshot)
 		send := func() bool {
 			messageID := shared.NewMessageID()
 			env := shared.Envelope{
@@ -389,7 +416,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 			return
 		}
 		for {
-			if !runtime.waitInterval(done, func(settings shared.AgentSettings) time.Duration {
+			if !ctx.settings.waitInterval(done, func(settings shared.AgentSettings) time.Duration {
 				return time.Duration(settings.Telemetry.IntervalSeconds) * time.Second
 			}) {
 				return
@@ -404,7 +431,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 	go func() {
 		drifted := false
 		check := func() bool {
-			d, err := mgr.ConfigDrift()
+			d, err := ctx.mgr.ConfigDrift()
 			if err != nil {
 				log.Printf("drift check: %v", err)
 				return true
@@ -433,7 +460,7 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 			return
 		}
 		for {
-			if !runtime.waitInterval(done, func(settings shared.AgentSettings) time.Duration {
+			if !ctx.settings.waitInterval(done, func(settings shared.AgentSettings) time.Duration {
 				return time.Duration(settings.DriftDetection.IntervalSeconds) * time.Second
 			}) {
 				return
@@ -444,48 +471,16 @@ func run(panel, token, statePath, settingsPath, serverSettingsPath, connectionPa
 		}
 	}()
 
-	go func() {
-		for {
-			// Periodic pull is the recovery path for a lost changed hint.
-			timer := time.NewTimer(time.Duration(48+time.Now().UnixNano()%25) * time.Second)
-			select {
-			case <-timer.C:
-			case <-done:
-				if !timer.Stop() {
-					<-timer.C
-				}
-				return
-			}
-			if err := sendSettingsSync(sc, runtime); err != nil {
-				return
-			}
-		}
-	}()
-
-	go func() {
-		for {
-			timer := time.NewTimer(time.Duration(48+time.Now().UnixNano()%25) * time.Second)
-			select {
-			case <-timer.C:
-			case <-done:
-				if !timer.Stop() {
-					<-timer.C
-				}
-				return
-			}
-			if err := sendServerSettingsSync(sc, serverRuntime); err != nil {
-				return
-			}
-		}
-	}()
+	go periodicSettingsPull(done, func() error { return agentSync.send(sc) })
+	go periodicSettingsPull(done, func() error { return serverSync.send(sc) })
 
 	for {
 		var env shared.Envelope
 		if err := conn.ReadJSON(&env); err != nil {
-			return newToken, true, err
+			return newToken, err
 		}
 		conn.SetReadDeadline(time.Now().Add(wsReadTimeout)) // 任何消息到达即续期
-		handle(sc, mgr, env, statePath, settingsPath, serverSettingsPath, st, runtime, serverRuntime, panelRuntime, latency, testManager, commandQueue)
+		handle(sc, env, latency, ctx)
 	}
 }
 
@@ -635,17 +630,17 @@ func runLatencyProbes(done <-chan struct{}, conn *websocket.Conn, sc *safeConn,
 }
 
 // handle 按消息类型分发：命令响应沿用请求的 type/request_id/trace_id。
-func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, settingsPath, serverSettingsPath string, st *state.State, runtime *runtimeSettings, serverRuntime *serverRuntimeSettings, panelRuntime *panelStateTracker, latency *latencyTracker, testManager *servertest.Manager, commandQueue *persistentCommandQueue) {
+func handle(sc *safeConn, env shared.Envelope, latency *latencyTracker, ctx *agentContext) {
 	if env.Kind == shared.KindRequest && env.Type == shared.TypeLifecycleChanged {
 		var payload shared.LifecycleChangedPayload
 		if err := json.Unmarshal(env.Data, &payload); err != nil ||
-			payload.PanelState.PanelInstanceID != st.PanelInstanceID ||
-			!panelRuntime.apply(payload.PanelState, false) {
+			payload.PanelState.PanelInstanceID != ctx.st.PanelInstanceID ||
+			!ctx.panel.apply(payload.PanelState, false) {
 			replyCode(sc, env, shared.CodeInvalidArgument, "invalid lifecycle snapshot", nil)
 			return
 		}
 		latency.setEnabled(payload.PanelState.State == shared.PanelStateActive)
-		if err := state.SaveWith(statePath, st, func(s *state.State) {
+		if err := state.SaveWith(ctx.statePath, ctx.st, func(s *state.State) {
 			s.PanelObservation = &payload.PanelState
 		}); err != nil {
 			log.Printf("save panel lifecycle: %v", err)
@@ -654,30 +649,30 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		return
 	}
 	if env.Kind == shared.KindResponse && env.Type == shared.TypeSettingsSync {
-		handleSettingsSyncResponse(sc, env, settingsPath, runtime)
+		ctx.agentSettingsSync().handleResponse(sc, env)
 		return
 	}
 	if env.Kind == shared.KindResponse && env.Type == shared.TypeServerSettingsSync {
-		handleServerSettingsSyncResponse(sc, env, serverSettingsPath, serverRuntime, mgr)
+		ctx.serverSettingsSync().handleResponse(sc, env)
 		return
 	}
-	if env.Kind == shared.KindResponse && testManager.HandleResponse(env) {
+	if env.Kind == shared.KindResponse && ctx.tests.HandleResponse(env) {
 		return
 	}
 	if env.Kind == shared.KindEvent && env.Type == shared.TypeSettingsChanged {
-		if err := sendSettingsSync(sc, runtime); err != nil {
+		if err := ctx.agentSettingsSync().send(sc); err != nil {
 			log.Printf("settings changed pull: %v", err)
 		}
 		return
 	}
 	if env.Kind == shared.KindEvent && env.Type == shared.TypeServerSettingsChanged {
-		if err := sendServerSettingsSync(sc, serverRuntime); err != nil {
+		if err := ctx.serverSettingsSync().send(sc); err != nil {
 			log.Printf("server settings changed pull: %v", err)
 		}
 		return
 	}
-	if env.Kind == shared.KindRequest && commandQueue != nil {
-		if err := commandQueue.Submit(env); err != nil {
+	if env.Kind == shared.KindRequest && ctx.queue != nil {
+		if err := ctx.queue.Submit(env); err != nil {
 			replyCode(sc, env, shared.CodeInternalError, err.Error(), struct{}{})
 		}
 		return
@@ -696,7 +691,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			replyCode(sc, env, shared.CodeInvalidArgument, err.Error(), struct{}{})
 			return
 		}
-		if err := testManager.Accept(p); err != nil {
+		if err := ctx.tests.Accept(p); err != nil {
 			replyCode(sc, env, shared.CodeConflict, err.Error(), struct{}{})
 			return
 		}
@@ -709,7 +704,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			return
 		}
 		log.Printf("node.apply request_id=%s node=%d users=%d", env.RequestID, p.NodeID, len(p.UserUUIDs))
-		realized, err := mgr.ApplyNode(p.NodeID, p.Config, p.UserUUIDs, p.DestCandidates, p.PortCandidates)
+		realized, err := ctx.mgr.ApplyNode(p.NodeID, p.Config, p.UserUUIDs, p.DestCandidates, p.PortCandidates)
 		if err != nil {
 			log.Printf("node.apply failed request_id=%s node=%d: %v", env.RequestID, p.NodeID, err)
 		}
@@ -721,13 +716,13 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			return
 		}
 		log.Printf("chain-hop.apply request_id=%s chain=%d hop=%d kind=%s", env.RequestID, p.ChainID, p.HopID, p.Kind)
-		realized, err := mgr.ApplyChainHop(p)
+		realized, err := ctx.mgr.ApplyChainHop(p)
 		if err != nil {
 			log.Printf("chain-hop.apply failed request_id=%s chain=%d hop=%d kind=%s: %v",
 				env.RequestID, p.ChainID, p.HopID, p.Kind, err)
 		}
 		if err == nil {
-			persistChainPieces(statePath, st, mgr)
+			persistChainPieces(ctx.statePath, ctx.st, ctx.mgr)
 		}
 		replyResult(sc, env, resultOfHop(p.HopID, p.Kind, realized), err)
 
@@ -738,13 +733,13 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		log.Printf("shared-endpoint.apply request_id=%s endpoint=%d clients=%d routes=%d",
 			env.RequestID, p.EndpointID, len(p.Clients), len(p.Routes))
-		realized, err := mgr.ApplySharedEndpoint(p)
+		realized, err := ctx.mgr.ApplySharedEndpoint(p)
 		if err != nil {
 			log.Printf("shared-endpoint.apply failed request_id=%s endpoint=%d clients=%d routes=%d: %v",
 				env.RequestID, p.EndpointID, len(p.Clients), len(p.Routes), err)
 		}
 		if err == nil {
-			persistChainPieces(statePath, st, mgr)
+			persistChainPieces(ctx.statePath, ctx.st, ctx.mgr)
 		}
 		replyResult(sc, env, resultOfEndpoint(p.EndpointID, realized), err)
 
@@ -753,12 +748,12 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		if !parseData(sc, env, &p) {
 			return
 		}
-		err := mgr.RemoveSharedEndpoint(p.EndpointID)
+		err := ctx.mgr.RemoveSharedEndpoint(p.EndpointID)
 		if err != nil {
 			log.Printf("shared-endpoint.remove failed request_id=%s endpoint=%d: %v", env.RequestID, p.EndpointID, err)
 		}
 		if err == nil {
-			persistChainPieces(statePath, st, mgr)
+			persistChainPieces(ctx.statePath, ctx.st, ctx.mgr)
 		}
 		replyResult(sc, env, resultOfEndpoint(p.EndpointID, nil), err)
 
@@ -769,9 +764,9 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		log.Printf("xray.cleanup request_id=%s dry_run=%v expected_inbounds=%d expected_pieces=%d",
 			env.RequestID, p.DryRun, len(p.ExpectedInboundTags), len(p.ExpectedPieces))
-		result, err := mgr.CleanupXray(p)
+		result, err := ctx.mgr.CleanupXray(p)
 		if err == nil {
-			persistChainPieces(statePath, st, mgr)
+			persistChainPieces(ctx.statePath, ctx.st, ctx.mgr)
 		}
 		replyResult(sc, env, shared.ApplyResultPayload{Cleanup: result}, err)
 
@@ -782,11 +777,11 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		log.Printf("xray.rebuild request_id=%s nodes=%d expected_inbounds=%d expected_pieces=%d",
 			env.RequestID, len(p.Nodes), len(p.ExpectedInboundTags), len(p.ExpectedPieces))
-		result, err := mgr.RebuildXray(p)
+		result, err := ctx.mgr.RebuildXray(p)
 		if err != nil {
 			log.Printf("xray.rebuild failed request_id=%s: %v", env.RequestID, err)
 		} else {
-			persistChainPieces(statePath, st, mgr)
+			persistChainPieces(ctx.statePath, ctx.st, ctx.mgr)
 		}
 		replyResult(sc, env, shared.ApplyResultPayload{Rebuild: result}, err)
 
@@ -796,12 +791,12 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			return
 		}
 		log.Printf("chain-hop.remove request_id=%s hop=%d kind=%s", env.RequestID, p.HopID, p.Kind)
-		err := mgr.RemoveChainHop(p.HopID, p.Kind)
+		err := ctx.mgr.RemoveChainHop(p.HopID, p.Kind)
 		if err != nil {
 			log.Printf("chain-hop.remove failed request_id=%s hop=%d kind=%s: %v", env.RequestID, p.HopID, p.Kind, err)
 		}
 		if err == nil {
-			persistChainPieces(statePath, st, mgr)
+			persistChainPieces(ctx.statePath, ctx.st, ctx.mgr)
 		}
 		replyResult(sc, env, resultOfHop(p.HopID, p.Kind, nil), err)
 
@@ -811,7 +806,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			return
 		}
 		log.Printf("node.remove request_id=%s node=%d", env.RequestID, p.NodeID)
-		err := mgr.RemoveNode(p.NodeID)
+		err := ctx.mgr.RemoveNode(p.NodeID)
 		replyResult(sc, env, resultOf(p.NodeID, nil), err)
 
 	case shared.TypeAddUser:
@@ -824,7 +819,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			replyCode(sc, env, shared.CodeInvalidArgument, "nodes field required", resultOf(0, nil))
 			return
 		}
-		err := mgr.AddUser(p.UUID, p.Nodes)
+		err := ctx.mgr.AddUser(p.UUID, p.Nodes)
 		replyResult(sc, env, resultOf(0, nil), err) // NodeID 0 = 非节点命令
 
 	case shared.TypeRemoveUser:
@@ -837,7 +832,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			replyCode(sc, env, shared.CodeInvalidArgument, "nodes field required", resultOf(0, nil))
 			return
 		}
-		err := mgr.RemoveUser(p.UUID, p.Nodes)
+		err := ctx.mgr.RemoveUser(p.UUID, p.Nodes)
 		replyResult(sc, env, resultOf(0, nil), err)
 
 	case shared.TypeUpgradeXray:
@@ -846,7 +841,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 			return
 		}
 		log.Printf("xray.upgrade request_id=%s version=%s", env.RequestID, p.Version)
-		err := mgr.UpgradeXray(p.Version)
+		err := ctx.mgr.UpgradeXray(p.Version)
 		replyResult(sc, env, resultOf(0, nil), err)
 
 	case shared.TypeUpgradeAgent:
@@ -872,7 +867,7 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 		}
 		log.Printf("agent.uninstall request_id=%s purge_xray=%v", env.RequestID, p.PurgeXray)
 		replyResult(sc, env, resultOf(0, nil), nil)
-		scheduleUninstall(p.PurgeXray, mgr)
+		scheduleUninstall(p.PurgeXray, ctx.mgr)
 
 	default:
 		log.Printf("recv unknown type=%s request_id=%s", env.Type, env.RequestID)
@@ -880,13 +875,48 @@ func handle(sc *safeConn, mgr *xray.Manager, env shared.Envelope, statePath, set
 	}
 }
 
-func sendSettingsSync(sc *safeConn, runtime *runtimeSettings) error {
-	_, panelID, revision, applyError := runtime.snapshot()
+// periodicSettingsPull 周期 pull 设置同步：changed 事件丢失时的恢复路径
+// （48–72s 随机抖动，避免多 agent 同步打面板）。
+func periodicSettingsPull(done <-chan struct{}, pull func() error) {
+	for {
+		// Periodic pull is the recovery path for a lost changed hint.
+		timer := time.NewTimer(time.Duration(48+rand.Intn(25)) * time.Second)
+		select {
+		case <-timer.C:
+		case <-done:
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return
+		}
+		if err := pull(); err != nil {
+			return
+		}
+	}
+}
+
+// settingsSync 描述一类面板设置同步（agent settings / server settings）的协议差异：
+// 消息类型、日志名、运行时状态与文档应用回调。send/handleResponse 主流程两类共用；
+// name/docName 区分两类日志文案（保持不变）。
+type settingsSync struct {
+	name     string // 短名：settings | server settings
+	docName  string // 文档名：agent settings | server settings
+	syncType string // WS 请求类型
+	fail     func(message string)
+	snapshot func() (panelID string, revision int64, applyError string)
+	// apply 解析、校验、落盘并应用 changed 文档，返回应用的 revision；
+	// 失败时已调用 fail 并记录日志，ok=false。
+	apply func(raw json.RawMessage) (revision int64, ok bool)
+	after func() // 可空：server settings 每次响应后尝试 xray 版本对齐
+}
+
+func (s settingsSync) send(sc *safeConn) error {
+	panelID, revision, applyError := s.snapshot()
 	id := shared.NewMessageID()
 	return sc.writeJSON(shared.Envelope{
-		Kind: shared.KindRequest, Type: shared.TypeSettingsSync,
+		Kind: shared.KindRequest, Type: s.syncType,
 		RequestID: id, TraceID: id,
-		Data: mustJSON(shared.AgentSettingsSyncPayload{
+		Data: mustJSON(shared.SettingsSyncPayload{
 			PanelInstanceID: panelID,
 			AppliedRevision: revision,
 			LastApplyError:  applyError,
@@ -894,90 +924,107 @@ func sendSettingsSync(sc *safeConn, runtime *runtimeSettings) error {
 	})
 }
 
-func handleSettingsSyncResponse(sc *safeConn, env shared.Envelope, settingsPath string, runtime *runtimeSettings) {
+func (s settingsSync) handleResponse(sc *safeConn, env shared.Envelope) {
 	if env.Code != shared.CodeOK {
-		runtime.fail(env.Message)
-		log.Printf("settings sync failed: %s: %s", env.Code, env.Message)
+		s.fail(env.Message)
+		log.Printf("%s sync failed: %s: %s", s.name, env.Code, env.Message)
 		return
 	}
-	var result shared.AgentSettingsSyncResult
+	var result struct {
+		Changed  bool             `json:"changed"`
+		Settings *json.RawMessage `json:"settings"`
+	}
 	if err := json.Unmarshal(env.Data, &result); err != nil {
-		runtime.fail("invalid settings sync response")
+		s.fail("invalid " + s.name + " sync response")
 		return
 	}
 	if !result.Changed {
+		if s.after != nil {
+			s.after()
+		}
 		return
 	}
 	if result.Settings == nil {
-		runtime.fail("settings sync response omitted settings")
+		s.fail(s.name + " sync response omitted settings")
 		return
 	}
-	if err := result.Settings.Validate(); err != nil {
-		runtime.fail(err.Error())
-		log.Printf("reject panel settings: %v", err)
+	revision, ok := s.apply(*result.Settings)
+	if !ok {
 		return
 	}
-	if err := state.SaveSettings(settingsPath, *result.Settings); err != nil {
-		runtime.fail(err.Error())
-		log.Printf("save panel settings: %v", err)
-		return
+	log.Printf("applied %s revision=%d", s.docName, revision)
+	if err := s.send(sc); err != nil {
+		log.Printf("confirm %s revision: %v", s.docName, err)
 	}
-	runtime.apply(*result.Settings)
-	log.Printf("applied agent settings revision=%d", result.Settings.Agent.Revision)
-	if err := sendSettingsSync(sc, runtime); err != nil {
-		log.Printf("confirm agent settings revision: %v", err)
+	if s.after != nil {
+		s.after()
 	}
 }
 
-func sendServerSettingsSync(sc *safeConn, runtime *serverRuntimeSettings) error {
-	_, panelID, revision, applyError := runtime.snapshot()
-	id := shared.NewMessageID()
-	return sc.writeJSON(shared.Envelope{
-		Kind: shared.KindRequest, Type: shared.TypeServerSettingsSync,
-		RequestID: id, TraceID: id,
-		Data: mustJSON(shared.ServerSettingsSyncPayload{
-			PanelInstanceID: panelID,
-			AppliedRevision: revision,
-			LastApplyError:  applyError,
-		}),
-	})
+// agentSettingsSync 返回 agent settings 同步描述（文档为 AgentSettingsDocument）。
+func (c *agentContext) agentSettingsSync() settingsSync {
+	return settingsSync{
+		name: "settings", docName: "agent settings",
+		syncType: shared.TypeSettingsSync,
+		fail:     c.settings.fail,
+		snapshot: func() (string, int64, string) {
+			_, panelID, revision, applyError := c.settings.snapshot()
+			return panelID, revision, applyError
+		},
+		apply: func(raw json.RawMessage) (int64, bool) {
+			var document shared.AgentSettingsDocument
+			if err := json.Unmarshal(raw, &document); err != nil {
+				c.settings.fail("invalid settings sync response")
+				return 0, false
+			}
+			if err := document.Validate(); err != nil {
+				c.settings.fail(err.Error())
+				log.Printf("reject panel settings: %v", err)
+				return 0, false
+			}
+			if err := state.SaveSettings(c.settingsPath, document); err != nil {
+				c.settings.fail(err.Error())
+				log.Printf("save panel settings: %v", err)
+				return 0, false
+			}
+			c.settings.apply(document)
+			return document.Agent.Revision, true
+		},
+	}
 }
 
-func handleServerSettingsSyncResponse(sc *safeConn, env shared.Envelope, path string, runtime *serverRuntimeSettings, mgr *xray.Manager) {
-	if env.Code != shared.CodeOK {
-		runtime.fail(env.Message)
-		log.Printf("server settings sync failed: %s: %s", env.Code, env.Message)
-		return
+// serverSettingsSync 返回 server settings 同步描述；after 钩子在每次响应后
+// 尝试 xray 版本对齐（含未变更的响应，与原实现一致）。
+func (c *agentContext) serverSettingsSync() settingsSync {
+	return settingsSync{
+		name: "server settings", docName: "server settings",
+		syncType: shared.TypeServerSettingsSync,
+		fail:     c.serverSettings.fail,
+		snapshot: func() (string, int64, string) {
+			_, panelID, revision, applyError := c.serverSettings.snapshot()
+			return panelID, revision, applyError
+		},
+		apply: func(raw json.RawMessage) (int64, bool) {
+			var document shared.ServerSettingsDocument
+			if err := json.Unmarshal(raw, &document); err != nil {
+				c.serverSettings.fail("invalid server settings sync response")
+				return 0, false
+			}
+			if err := document.Validate(); err != nil {
+				c.serverSettings.fail(err.Error())
+				log.Printf("reject panel server settings: %v", err)
+				return 0, false
+			}
+			if err := state.SaveServerSettings(c.serverSettingsPath, document); err != nil {
+				c.serverSettings.fail(err.Error())
+				log.Printf("save panel server settings: %v", err)
+				return 0, false
+			}
+			c.serverSettings.apply(document)
+			return document.Revision, true
+		},
+		after: func() { maybeReconcileXray(c.mgr, c.serverSettings) },
 	}
-	var result shared.ServerSettingsSyncResult
-	if err := json.Unmarshal(env.Data, &result); err != nil {
-		runtime.fail("invalid server settings sync response")
-		return
-	}
-	if !result.Changed {
-		maybeReconcileXray(mgr, runtime)
-		return
-	}
-	if result.Settings == nil {
-		runtime.fail("server settings sync response omitted settings")
-		return
-	}
-	if err := result.Settings.Validate(); err != nil {
-		runtime.fail(err.Error())
-		log.Printf("reject panel server settings: %v", err)
-		return
-	}
-	if err := state.SaveServerSettings(path, *result.Settings); err != nil {
-		runtime.fail(err.Error())
-		log.Printf("save panel server settings: %v", err)
-		return
-	}
-	runtime.apply(*result.Settings)
-	log.Printf("applied server settings revision=%d", result.Settings.Revision)
-	if err := sendServerSettingsSync(sc, runtime); err != nil {
-		log.Printf("confirm server settings revision: %v", err)
-	}
-	maybeReconcileXray(mgr, runtime)
 }
 
 // maybeReconcileXray 自动对齐 xray 版本：期望固定版本且与当前不一致时异步升级；

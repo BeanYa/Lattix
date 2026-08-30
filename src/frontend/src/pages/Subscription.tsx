@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   ArrowDownToLine,
   ArrowUpRight,
@@ -25,6 +19,7 @@ import MagicRings from '@/components/MagicRings'
 import AnimatedContent from '@/components/react-bits/AnimatedContent'
 import DotGrid from '@/components/react-bits/DotGrid'
 import ElectricBorder from '@/components/react-bits/ElectricBorder'
+import { humanizeBytes } from '@/lib/format'
 import { RequestError, requester } from '@/lib/requester'
 
 import './subscription.css'
@@ -142,15 +137,39 @@ const previewLinkStatus: LinkStatus[] = [
   {
     label: '🇯🇵东京-Out',
     hops: [
-      { label: '入口', samples: [42, 38, 45, 39, 41, 44, 40, 43, 46, 48, 44, 39, 42, 41, 43, 46, 40, 38, 41, 44, 45, 43, 47, 42, 41, 39, 44, 40, 42, 45].map(previewLatencySample) },
-      { label: '中转 1', samples: [82, 88, 91, 85, 92, 103, 97, 89, 84, 90, 94, 87, 98, 101, 93, 88, 95, 99, 86, 91, 88, 97, 102, 90, 89, 94, 98, 92, 87, 91].map(previewLatencySample) },
-      { label: '出口', samples: [128, 142, 158, 135, 129, 144, 151, 137, 132, 148, 139, 130, 145, 152, 136, 142, 155, 149, 134, 141, 138, 147, 159, 143, 132, 146, 151, 139, 145, 148].map(previewLatencySample) },
+      {
+        label: '入口',
+        samples: [
+          42, 38, 45, 39, 41, 44, 40, 43, 46, 48, 44, 39, 42, 41, 43, 46, 40, 38, 41, 44, 45, 43,
+          47, 42, 41, 39, 44, 40, 42, 45,
+        ].map(previewLatencySample),
+      },
+      {
+        label: '中转 1',
+        samples: [
+          82, 88, 91, 85, 92, 103, 97, 89, 84, 90, 94, 87, 98, 101, 93, 88, 95, 99, 86, 91, 88, 97,
+          102, 90, 89, 94, 98, 92, 87, 91,
+        ].map(previewLatencySample),
+      },
+      {
+        label: '出口',
+        samples: [
+          128, 142, 158, 135, 129, 144, 151, 137, 132, 148, 139, 130, 145, 152, 136, 142, 155, 149,
+          134, 141, 138, 147, 159, 143, 132, 146, 151, 139, 145, 148,
+        ].map(previewLatencySample),
+      },
     ],
   },
   {
     label: '🇸🇬新加坡-Direct',
     hops: [
-      { label: '服务器', samples: [61, 58, 63, 59, 67, 64, 62, 70, 66, 61, 57, 64, 69, 60, 63, 65, 59, 68, 71, 62, 60, 66, 64, 58, 63, 67, 61, 59, 65, 62].map(previewLatencySample) },
+      {
+        label: '服务器',
+        samples: [
+          61, 58, 63, 59, 67, 64, 62, 70, 66, 61, 57, 64, 69, 60, 63, 65, 59, 68, 71, 62, 60, 66,
+          64, 58, 63, 67, 61, 59, 65, 62,
+        ].map(previewLatencySample),
+      },
     ],
   },
 ]
@@ -165,18 +184,6 @@ const platformLabels: Record<string, string> = {
 }
 
 const platformOrder = ['ios', 'android', 'windows', 'macos', 'universal']
-
-function humanizeBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let value = n / 1024
-  let index = 0
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024
-    index++
-  }
-  return value >= 100 ? `${value.toFixed(0)} ${units[index]}` : `${value.toFixed(1)} ${units[index]}`
-}
 
 function formatExpiry(timestamp?: number): string {
   if (!timestamp) return '长期有效'
@@ -235,12 +242,19 @@ function LatencyHistory({ label, samples }: { label: string; samples: LatencySam
           if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
           event.preventDefault()
           const direction = event.key === 'ArrowLeft' ? -1 : 1
-          setActiveIndex((current) => Math.min(cells.length - 1, Math.max(0, (current ?? cells.length - 1) + direction)))
+          setActiveIndex((current) =>
+            Math.min(cells.length - 1, Math.max(0, (current ?? cells.length - 1) + direction)),
+          )
         }}
       >
         {cells.map((sample, index) => {
           const tone = sample ? latencyTone(sample.latency_ms) : 'missing'
-          const labelText = sample === null ? '无数据' : sample.latency_ms === null ? '探测超时' : `${Math.round(sample.latency_ms)} ms`
+          const labelText =
+            sample === null
+              ? '无数据'
+              : sample.latency_ms === null
+                ? '探测超时'
+                : `${Math.round(sample.latency_ms)} ms`
           return (
             <span
               key={sample ? `${sample.updated_at}-${index}` : `empty-${index}`}
@@ -281,7 +295,11 @@ async function copyText(text: string): Promise<void> {
 
 function LoadingState() {
   return (
-    <main className="subscription-page subscription-loading" aria-busy="true" aria-label="正在加载订阅">
+    <main
+      className="subscription-page subscription-loading"
+      aria-busy="true"
+      aria-label="正在加载订阅"
+    >
       <div className="subscription-noise" />
       <div className="subscription-skeleton">
         <div className="skeleton-line skeleton-brand" />
@@ -304,7 +322,9 @@ function ErrorState({ message }: { message: string }) {
     <main className="subscription-page subscription-error-page">
       <div className="subscription-noise" />
       <section className="subscription-error" role="alert">
-        <div className="error-icon"><CircleAlertIcon /></div>
+        <div className="error-icon">
+          <CircleAlertIcon />
+        </div>
         <span className="section-kicker">CONNECTION FAILED</span>
         <h1>订阅暂时无法打开</h1>
         <p>{message}</p>
@@ -380,11 +400,19 @@ export default function SubscriptionPage() {
   useEffect(() => () => window.clearTimeout(copyTimer.current), [])
 
   useEffect(() => {
-    if (!downloadTask || !downloadTask.task_id || !['queued', 'downloading'].includes(downloadTask.status)) return
+    if (
+      !downloadTask ||
+      !downloadTask.task_id ||
+      !['queued', 'downloading'].includes(downloadTask.status)
+    )
+      return
     let cancelled = false
     const timer = window.setTimeout(() => {
       requester
-        .getJSON<DownloadTask>(`/api/sub/${token}/client-download/status?task=${encodeURIComponent(downloadTask.task_id)}`, { display: 'silent' })
+        .getJSON<DownloadTask>(
+          `/api/sub/${token}/client-download/status?task=${encodeURIComponent(downloadTask.task_id)}`,
+          { display: 'silent' },
+        )
         .then((nextTask) => {
           if (!cancelled) setDownloadTask(nextTask)
         })
@@ -399,19 +427,34 @@ export default function SubscriptionPage() {
   }, [downloadTask, token])
 
   useEffect(() => {
-    if (!downloadTask || downloadTask.status !== 'done' || downloadTriggered.current === downloadTask.task_id) return
+    if (
+      !downloadTask ||
+      downloadTask.status !== 'done' ||
+      downloadTriggered.current === downloadTask.task_id
+    )
+      return
     downloadTriggered.current = downloadTask.task_id
     const taskParam = encodeURIComponent(downloadTask.task_id)
     // 换取短期下载票据，再用普通 HTTP 链接交给浏览器原生下载（支持暂停/断点续传）。
     requester
-      .getJSON<{ ticket: string }>(`/api/sub/${token}/client-download/ticket?task=${taskParam}`, { display: 'silent' })
+      .getJSON<{ ticket: string }>(`/api/sub/${token}/client-download/ticket?task=${taskParam}`, {
+        display: 'silent',
+      })
       .then(({ ticket }) => {
-        window.location.assign(`/api/sub/${token}/client-download/file?task=${taskParam}&ticket=${encodeURIComponent(ticket)}`)
-        setDownloadTask((current) => current?.task_id === downloadTask.task_id ? { ...current, status: 'downloaded' } : current)
+        window.location.assign(
+          `/api/sub/${token}/client-download/file?task=${taskParam}&ticket=${encodeURIComponent(ticket)}`,
+        )
+        setDownloadTask((current) =>
+          current?.task_id === downloadTask.task_id
+            ? { ...current, status: 'downloaded' }
+            : current,
+        )
       })
       .catch(() => {
         setDownloadError('浏览器下载客户端失败，请重新点击下载。')
-        setDownloadTask((current) => current?.task_id === downloadTask.task_id ? { ...current, status: 'failed' } : current)
+        setDownloadTask((current) =>
+          current?.task_id === downloadTask.task_id ? { ...current, status: 'failed' } : current,
+        )
       })
   }, [downloadTask, token])
 
@@ -463,24 +506,31 @@ export default function SubscriptionPage() {
   }
 
   const availablePlatforms = useMemo(
-    () => platformOrder.filter((platform) => clients.some((client) => client.platform === platform)),
+    () =>
+      platformOrder.filter((platform) => clients.some((client) => client.platform === platform)),
     [clients],
   )
-  const visibleClients = activePlatform === 'all'
-    ? clients
-    : clients.filter((client) => client.platform === activePlatform)
+  const visibleClients =
+    activePlatform === 'all'
+      ? clients
+      : clients.filter((client) => client.platform === activePlatform)
 
   if (error) return <ErrorState message={error} />
   if (!info) return <LoadingState />
 
   const usedTotal = info.used_up + info.used_down
   const remaining = Math.max(0, info.traffic_limit - usedTotal)
-  const usagePercent = info.traffic_limit > 0
-    ? Math.min(100, (usedTotal / info.traffic_limit) * 100)
-    : 0
+  const usagePercent =
+    info.traffic_limit > 0 ? Math.min(100, (usedTotal / info.traffic_limit) * 100) : 0
   const overLimit = info.traffic_limit > 0 && usedTotal > info.traffic_limit
   const unavailable = info.disabled || info.expired || overLimit
-  const statusLabel = info.disabled ? '已停用' : info.expired ? '已到期' : overLimit ? '已超额' : '网络就绪'
+  const statusLabel = info.disabled
+    ? '已停用'
+    : info.expired
+      ? '已到期'
+      : overLimit
+        ? '已超额'
+        : '网络就绪'
   const statusDetail = unavailable ? '节点当前不可用' : '订阅与节点均可用'
   const primaryClient = clients.find((client) => client.deeplink)
   const ringStyle = { '--usage-angle': `${usagePercent * 3.6}deg` } as CSSProperties
@@ -548,7 +598,11 @@ export default function SubscriptionPage() {
               chaos={0.08}
               borderRadius={8}
             >
-              <div className="traffic-orbit" style={ringStyle} aria-label={`流量已使用 ${usagePercent.toFixed(1)}%`}>
+              <div
+                className="traffic-orbit"
+                style={ringStyle}
+                aria-label={`流量已使用 ${usagePercent.toFixed(1)}%`}
+              >
                 <div className="orbit-track">
                   <div className="orbit-core">
                     <span>剩余流量</span>
@@ -562,7 +616,10 @@ export default function SubscriptionPage() {
               </div>
             </ElectricBorder>
           ) : (
-            <div className="traffic-orbit traffic-orbit-unlimited" aria-label="无限流量，无配额限制">
+            <div
+              className="traffic-orbit traffic-orbit-unlimited"
+              aria-label="无限流量，无配额限制"
+            >
               <div className="unlimited-rings" aria-hidden="true">
                 <MagicRings
                   color="#bdf33b"
@@ -587,7 +644,9 @@ export default function SubscriptionPage() {
                 />
               </div>
               <div className="unlimited-core">
-                <span className="unlimited-symbol" aria-hidden="true">∞</span>
+                <span className="unlimited-symbol" aria-hidden="true">
+                  ∞
+                </span>
                 <strong>无限流量</strong>
                 <small>本期已用 {humanizeBytes(usedTotal)}</small>
               </div>
@@ -600,7 +659,13 @@ export default function SubscriptionPage() {
             <CircleAlertIcon />
             <div>
               <strong>{statusLabel}</strong>
-              <span>{info.disabled ? '订阅已被管理员停用。' : info.expired ? '订阅有效期已结束。' : '流量已超出当前配额。'}</span>
+              <span>
+                {info.disabled
+                  ? '订阅已被管理员停用。'
+                  : info.expired
+                    ? '订阅有效期已结束。'
+                    : '流量已超出当前配额。'}
+              </span>
             </div>
           </div>
         ) : null}
@@ -611,7 +676,9 @@ export default function SubscriptionPage() {
               <GaugeIcon />
               <span>本期流量</span>
               <strong>{humanizeBytes(usedTotal)}</strong>
-              <small>上行 {humanizeBytes(info.used_up)} · 下行 {humanizeBytes(info.used_down)}</small>
+              <small>
+                上行 {humanizeBytes(info.used_up)} · 下行 {humanizeBytes(info.used_down)}
+              </small>
             </div>
             <div className="signal-item">
               <ShieldCheckIcon />
@@ -655,136 +722,154 @@ export default function SubscriptionPage() {
 
         <AnimatedContent distance={36} duration={0.7} threshold={0.12}>
           <section className="client-section">
-          <div className="section-heading">
-            <h2>客户端</h2>
-          </div>
+            <div className="section-heading">
+              <h2>客户端</h2>
+            </div>
 
-          {clients.length > 0 ? (
-            <>
-              <div className="platform-tabs" role="tablist" aria-label="客户端平台">
-                {['all', ...availablePlatforms].map((platform) => (
-                  <button
-                    key={platform}
-                    type="button"
-                    role="tab"
-                    aria-selected={activePlatform === platform}
-                    onClick={() => setActivePlatform(platform)}
-                  >
-                    {platformLabels[platform] ?? platform}
-                  </button>
-                ))}
-              </div>
+            {clients.length > 0 ? (
+              <>
+                <div className="platform-tabs" role="tablist" aria-label="客户端平台">
+                  {['all', ...availablePlatforms].map((platform) => (
+                    <button
+                      key={platform}
+                      type="button"
+                      role="tab"
+                      aria-selected={activePlatform === platform}
+                      onClick={() => setActivePlatform(platform)}
+                    >
+                      {platformLabels[platform] ?? platform}
+                    </button>
+                  ))}
+                </div>
 
-              <div className="client-grid">
-                {visibleClients.map((client, index) => {
-                  const label = `${client.platform}-${client.name}`
-                  const isAppStore = Boolean(client.app_store_url)
-                  const isDownloadable = !isAppStore && Boolean(client.download_variants?.length)
-                  const content = (
-                    <>
-                      <span className="client-index">{String(index + 1).padStart(2, '0')}</span>
-                      <span className="client-name">
-                        <strong>{client.name}</strong>
-                        <small>{platformLabels[client.platform] ?? client.platform} · {client.format}</small>
-                      </span>
-                      <span className="client-action-icon">
-                        {copied === label ? <CheckIcon /> : isAppStore ? <ArrowUpRight /> : client.deeplink ? <ArrowUpRight /> : isDownloadable ? <DownloadIcon /> : <CopyIcon />}
-                      </span>
-                    </>
-                  )
-                  if (isAppStore) {
-                    return (
-                      <a
-                        key={label}
-                        className="client-row"
-                        href={client.app_store_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        aria-label={`在 App Store 打开 ${client.name}`}
-                      >
-                        {content}
-                      </a>
-                    )
-                  }
-                  if (isDownloadable) {
-                    if (client.deeplink) {
-                      return (
-                        <div key={label} className="client-row client-row-dual">
-                          <a
-                            className="client-row-main"
-                            href={client.deeplink}
-                            aria-label={`导入到 ${client.name}`}
-                          >
-                            {content}
-                          </a>
-                          <button
-                            type="button"
-                            className="client-row-download"
-                            onClick={() => openDownload(client)}
-                            aria-label={`下载 ${client.name}`}
-                          >
+                <div className="client-grid">
+                  {visibleClients.map((client, index) => {
+                    const label = `${client.platform}-${client.name}`
+                    const isAppStore = Boolean(client.app_store_url)
+                    const isDownloadable = !isAppStore && Boolean(client.download_variants?.length)
+                    const content = (
+                      <>
+                        <span className="client-index">{String(index + 1).padStart(2, '0')}</span>
+                        <span className="client-name">
+                          <strong>{client.name}</strong>
+                          <small>
+                            {platformLabels[client.platform] ?? client.platform} · {client.format}
+                          </small>
+                        </span>
+                        <span className="client-action-icon">
+                          {copied === label ? (
+                            <CheckIcon />
+                          ) : isAppStore ? (
+                            <ArrowUpRight />
+                          ) : client.deeplink ? (
+                            <ArrowUpRight />
+                          ) : isDownloadable ? (
                             <DownloadIcon />
-                          </button>
-                        </div>
+                          ) : (
+                            <CopyIcon />
+                          )}
+                        </span>
+                      </>
+                    )
+                    if (isAppStore) {
+                      return (
+                        <a
+                          key={label}
+                          className="client-row"
+                          href={client.app_store_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`在 App Store 打开 ${client.name}`}
+                        >
+                          {content}
+                        </a>
                       )
                     }
-                    return (
+                    if (isDownloadable) {
+                      if (client.deeplink) {
+                        return (
+                          <div key={label} className="client-row client-row-dual">
+                            <a
+                              className="client-row-main"
+                              href={client.deeplink}
+                              aria-label={`导入到 ${client.name}`}
+                            >
+                              {content}
+                            </a>
+                            <button
+                              type="button"
+                              className="client-row-download"
+                              onClick={() => openDownload(client)}
+                              aria-label={`下载 ${client.name}`}
+                            >
+                              <DownloadIcon />
+                            </button>
+                          </div>
+                        )
+                      }
+                      return (
+                        <button
+                          key={label}
+                          type="button"
+                          className="client-row"
+                          onClick={() => openDownload(client)}
+                          aria-label={`下载 ${client.name}`}
+                        >
+                          {content}
+                        </button>
+                      )
+                    }
+                    return client.deeplink ? (
+                      <a key={label} className="client-row" href={client.deeplink}>
+                        {content}
+                      </a>
+                    ) : (
                       <button
                         key={label}
                         type="button"
                         className="client-row"
-                        onClick={() => openDownload(client)}
-                        aria-label={`下载 ${client.name}`}
+                        onClick={() => handleCopy(`${subURL}?format=${client.format}`, label)}
                       >
                         {content}
                       </button>
                     )
-                  }
-                  return client.deeplink ? (
-                    <a key={label} className="client-row" href={client.deeplink}>{content}</a>
-                  ) : (
-                    <button
-                      key={label}
-                      type="button"
-                      className="client-row"
-                      onClick={() => handleCopy(`${subURL}?format=${client.format}`, label)}
-                    >
-                      {content}
-                    </button>
-                  )
-                })}
+                  })}
+                </div>
+              </>
+            ) : (
+              <div className="client-empty">
+                <WifiIcon />
+                <strong>暂无一键导入客户端</strong>
+                <span>仍可复制通用订阅地址，在客户端中手动添加。</span>
               </div>
-            </>
-          ) : (
-            <div className="client-empty">
-              <WifiIcon />
-              <strong>暂无一键导入客户端</strong>
-              <span>仍可复制通用订阅地址，在客户端中手动添加。</span>
-            </div>
-          )}
+            )}
           </section>
         </AnimatedContent>
 
         <AnimatedContent distance={28} duration={0.65} threshold={0.16}>
           <section className="subscription-endpoint">
-          <div className="endpoint-copy"><h2>订阅地址</h2></div>
-          <div className="endpoint-value">
-            <code>{subURL}</code>
-            <button
-              type="button"
-              aria-label="复制通用订阅地址"
-              title="复制通用订阅地址"
-              onClick={() => handleCopy(subURL, 'endpoint-url')}
-            >
-              {copied === 'endpoint-url' ? <CheckIcon /> : <CopyIcon />}
-            </button>
-          </div>
+            <div className="endpoint-copy">
+              <h2>订阅地址</h2>
+            </div>
+            <div className="endpoint-value">
+              <code>{subURL}</code>
+              <button
+                type="button"
+                aria-label="复制通用订阅地址"
+                title="复制通用订阅地址"
+                onClick={() => handleCopy(subURL, 'endpoint-url')}
+              >
+                {copied === 'endpoint-url' ? <CheckIcon /> : <CopyIcon />}
+              </button>
+            </div>
           </section>
         </AnimatedContent>
 
         <footer className="subscription-footer">
           <span>Lattix</span>
-          <span>每 {info.update_interval} 小时自动更新 · {statusDetail}</span>
+          <span>
+            每 {info.update_interval} 小时自动更新 · {statusDetail}
+          </span>
         </footer>
 
         {downloadClient ? (
@@ -792,7 +877,8 @@ export default function SubscriptionPage() {
             className="download-modal-backdrop"
             role="presentation"
             onMouseDown={() => {
-              if (!downloadTask || !['queued', 'downloading'].includes(downloadTask.status)) closeDownload()
+              if (!downloadTask || !['queued', 'downloading'].includes(downloadTask.status))
+                closeDownload()
             }}
           >
             <section
@@ -812,23 +898,31 @@ export default function SubscriptionPage() {
                   className="download-modal-close"
                   aria-label="关闭下载窗口"
                   title="关闭"
-                  disabled={Boolean(downloadTask && ['queued', 'downloading'].includes(downloadTask.status))}
+                  disabled={Boolean(
+                    downloadTask && ['queued', 'downloading'].includes(downloadTask.status),
+                  )}
                   onClick={closeDownload}
                 >
                   <XIcon />
                 </button>
               </div>
 
-              <label className="download-variant-label" htmlFor="download-variant">安装包架构</label>
+              <label className="download-variant-label" htmlFor="download-variant">
+                安装包架构
+              </label>
               <select
                 id="download-variant"
                 className="download-variant-select"
                 value={downloadVariant}
-                disabled={Boolean(downloadTask && ['queued', 'downloading'].includes(downloadTask.status))}
+                disabled={Boolean(
+                  downloadTask && ['queued', 'downloading'].includes(downloadTask.status),
+                )}
                 onChange={(event) => setDownloadVariant(event.target.value)}
               >
                 {downloadClient.download_variants?.map((variant) => (
-                  <option key={variant.id} value={variant.id}>{variant.label}</option>
+                  <option key={variant.id} value={variant.id}>
+                    {variant.label}
+                  </option>
                 ))}
               </select>
 
@@ -846,15 +940,24 @@ export default function SubscriptionPage() {
                               ? '等待下载'
                               : '正在下载'}
                     </span>
-                    <strong>{Math.round(Math.max(0, Math.min(1, downloadTask.progress)) * 100)}%</strong>
+                    <strong>
+                      {Math.round(Math.max(0, Math.min(1, downloadTask.progress)) * 100)}%
+                    </strong>
                   </div>
                   <div className="download-progress-track">
-                    <span style={{ width: `${Math.round(Math.max(0, Math.min(1, downloadTask.progress)) * 100)}%` }} />
+                    <span
+                      style={{
+                        width: `${Math.round(Math.max(0, Math.min(1, downloadTask.progress)) * 100)}%`,
+                      }}
+                    />
                   </div>
                   {downloadTask.filename ? <small>{downloadTask.filename}</small> : null}
                   {downloadTask.source_url ? (
                     <small className="download-source">
-                      下载源：<a href={downloadTask.source_url} target="_blank" rel="noreferrer">{downloadTask.source_url}</a>
+                      下载源：
+                      <a href={downloadTask.source_url} target="_blank" rel="noreferrer">
+                        {downloadTask.source_url}
+                      </a>
                     </small>
                   ) : null}
                   {downloadTask.sha256 ? (
@@ -874,7 +977,11 @@ export default function SubscriptionPage() {
                 </div>
               ) : null}
 
-              {downloadError || downloadTask?.error ? <p className="download-modal-error" role="alert">{downloadError || downloadTask?.error}</p> : null}
+              {downloadError || downloadTask?.error ? (
+                <p className="download-modal-error" role="alert">
+                  {downloadError || downloadTask?.error}
+                </p>
+              ) : null}
 
               <div className="download-modal-actions">
                 {downloadTask?.status === 'failed' && downloadTask.source_url ? (
@@ -890,11 +997,25 @@ export default function SubscriptionPage() {
                 <button
                   type="button"
                   className="primary-action"
-                  disabled={!downloadVariant || Boolean(downloadTask && ['queued', 'downloading', 'done', 'downloaded'].includes(downloadTask.status))}
+                  disabled={
+                    !downloadVariant ||
+                    Boolean(
+                      downloadTask &&
+                      ['queued', 'downloading', 'done', 'downloaded'].includes(downloadTask.status),
+                    )
+                  }
                   onClick={() => void startDownload()}
                 >
-                  {downloadTask && ['queued', 'downloading'].includes(downloadTask.status) ? <RefreshCwIcon className="download-spin" /> : <DownloadIcon />}
-                  {downloadTask && ['queued', 'downloading'].includes(downloadTask.status) ? '下载中' : downloadTask?.status === 'failed' ? '重试下载' : '开始下载'}
+                  {downloadTask && ['queued', 'downloading'].includes(downloadTask.status) ? (
+                    <RefreshCwIcon className="download-spin" />
+                  ) : (
+                    <DownloadIcon />
+                  )}
+                  {downloadTask && ['queued', 'downloading'].includes(downloadTask.status)
+                    ? '下载中'
+                    : downloadTask?.status === 'failed'
+                      ? '重试下载'
+                      : '开始下载'}
                 </button>
               </div>
             </section>

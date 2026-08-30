@@ -15,7 +15,7 @@ func TestServerProfileAndAddressMode(t *testing.T) {
 	}
 	defer st.Close()
 
-	id, err := st.CreateServer(ctx, "old name", "", "token", MachineTypeDirect, "", "", "US", "Seattle")
+	id, err := st.CreateServer(ctx, ServerDraft{Alias: "old name", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US", Location: "Seattle"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,11 +105,8 @@ func TestCreateServerWithPlansRollsBackTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = st.CreateServerWithPlans(ctx, "partial", "", "token", MachineTypeDirect,
-		"", "", "US", "", nil, ServerTrafficPlan{
-			AccountingMode: "outbound", ResetAnchorOn: "2026-01-01", ResetCount: 1,
-			ResetUnit: "month", TrackingStartedOn: "2026-01-01",
-		})
+	_, err = st.CreateServerWithPlans(ctx, ServerDraft{Alias: "partial", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"}, nil, ServerTrafficPlan{
+			AccountingMode: "outbound", ResetAnchorOn: "2026-01-01", ResetCount: 1, ResetUnit: "month", TrackingStartedOn: "2026-01-01", })
 	if err == nil {
 		t.Fatal("expected initial traffic plan insert to fail")
 	}

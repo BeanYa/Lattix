@@ -20,7 +20,7 @@ func nodeObserveFixture(t *testing.T, ctx context.Context) (*store.Store, int64,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	serverID, err := st.CreateServer(ctx, "svc", "svc.test", "token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "svc", Address: "svc.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +44,7 @@ func TestCreateNodeCarriesObserveID(t *testing.T) {
 	ctx := context.Background()
 	st, serverID, _ := nodeObserveFixture(t, ctx)
 	requester := &chainEditRequester{online: map[int64]bool{serverID: true}}
-	srv := &Server{st: st, disp: dispatch.New(st, requester), req: requester, observes: progress.NewRegistry()}
+	srv := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester, observes: progress.NewRegistry()}
 	port := 3001
 	node := createNodeRequest{Name: "n2", ServerID: serverID, Protocol: shared.ProtocolVLESS,
 		Port: &port, ShortID: "abcdef0123456789", Dest: "dl.google.com:443",
@@ -65,7 +65,7 @@ func TestRetryNodeCarriesObserveID(t *testing.T) {
 	ctx := context.Background()
 	st, serverID, nodeID := nodeObserveFixture(t, ctx)
 	requester := &chainEditRequester{online: map[int64]bool{serverID: true}}
-	srv := &Server{st: st, disp: dispatch.New(st, requester), req: requester, observes: progress.NewRegistry()}
+	srv := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester, observes: progress.NewRegistry()}
 	body, _ := json.Marshal(struct {
 		NodeID int64 `json:"node_id"`
 	}{NodeID: nodeID})
@@ -80,7 +80,7 @@ func TestDeleteNodeCarriesObserveID(t *testing.T) {
 	ctx := context.Background()
 	st, serverID, nodeID := nodeObserveFixture(t, ctx)
 	requester := &chainEditRequester{online: map[int64]bool{serverID: true}}
-	srv := &Server{st: st, disp: dispatch.New(st, requester), req: requester, observes: progress.NewRegistry()}
+	srv := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester, observes: progress.NewRegistry()}
 	body, _ := json.Marshal(struct {
 		NodeID int64 `json:"node_id"`
 	}{NodeID: nodeID})

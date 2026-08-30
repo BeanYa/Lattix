@@ -12,7 +12,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
@@ -24,14 +24,14 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: '1.26.6'
           cache-dependency-path: |
             src/backend/go.sum
             src/agent/go.sum
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Build embedded frontend
         working-directory: src/frontend
@@ -74,6 +74,11 @@ jobs:
             -e "s|{{LATTIX_VERSION}}|${GITHUB_REF_NAME}|g" \
             -e "s|{{GITHUB_REPO}}|${GITHUB_REPOSITORY}|g" \
             out/latx out/latx-ag
+          # 安装/管理脚本以仓库原样入 release 资产（不烧入占位符）：与
+          # raw.githubusercontent 的 tag 内容逐字节一致，install.sh 的 release
+          # 资产与 raw 回退两条下载路径可共用同一份 checksums.txt 校验。
+          cp scripts/install-panel.sh scripts/install-agent.sh \
+            scripts/latx.sh scripts/latx-ag.sh out/
 
       - name: Pack release bundles
         run: |
@@ -96,10 +101,14 @@ jobs:
             lattix-panel-linux-arm64.tar.gz \
             lattix-agent-linux-amd64.tar.gz \
             lattix-agent-linux-arm64.tar.gz \
+            install-panel.sh \
+            install-agent.sh \
+            latx.sh \
+            latx-ag.sh \
             > checksums.txt
           cat checksums.txt
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-assets
           path: |
@@ -108,23 +117,58 @@ jobs:
             out/lattix-agent-linux-amd64.tar.gz
             out/lattix-agent-linux-arm64.tar.gz
             out/lattix-backend-linux-amd64
+            out/install-panel.sh
+            out/install-agent.sh
+            out/latx.sh
+            out/latx-ag.sh
             out/checksums.txt
           retention-days: 7
 
+  # e2e 全量矩阵：scripts/e2e/ 中与 ubuntu-latest 环境兼容的脚本全数纳入。
+  # 未纳入：telemetry.sh / vlessenc.sh（核心断言为真实外网数据通路）。
+  # 统一注入 PANEL_BIN/AGENT_BIN/XRAY_BIN：panel.sh、event-log.sh、links.sh
+  # 识别并使用 release 产物，其余脚本忽略该变量、自行 go build（脚本内建行为）。
   e2e:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - script: panel.sh
+          - script: install-panel.sh
+          - script: install-agent.sh
+          - script: control-channel.sh
+          - script: xray.sh
+          - script: tls.sh
+          - script: settings.sh
+          - script: usernodes.sh
+          - script: links.sh
+          - script: alerts.sh
+          - script: event-log.sh
+          - script: reconcile.sh
+          - script: upgrade.sh
+          - script: panel-update.sh
+          - script: protocols.sh
+          # chains.sh 的真实流量断言打 cloudflare 外网，CI 中跳过（其余断言全量保留）。
+          - script: chains.sh
+            skip_external: "1"
+          # groups.sh 的外部订阅夹具起在 loopback，注入 SSRF 测试钩子放行私网拨号
+          # （LATX_ALLOW_PRIVATE_OUTBOUND=1，仅本条目生效；生产环境严禁设置）。
+          - script: groups.sh
+            allow_private_outbound: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: '1.26.6'
           cache-dependency-path: |
             src/backend/go.sum
             src/agent/go.sum
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: release-assets
           path: out
@@ -137,6 +181,16 @@ jobs:
           test -n "$TAG"
           gh release download "$TAG" --repo XTLS/Xray-core \
             --pattern Xray-linux-64.zip --output /tmp/xray.zip
+          # 校验官方 .dgst 中的 SHA2-256（同 scripts/install-agent.sh）；获取不到即失败，不降级跳过。
+          gh release download "$TAG" --repo XTLS/Xray-core \
+            --pattern Xray-linux-64.zip.dgst --output /tmp/xray.zip.dgst
+          EXPECTED="$(grep 'SHA2-256=' /tmp/xray.zip.dgst | head -1 | cut -d' ' -f2)"
+          ACTUAL="$(sha256sum /tmp/xray.zip | cut -d' ' -f1)"
+          if [ -z "$EXPECTED" ] || [ "$EXPECTED" != "$ACTUAL" ]; then
+            echo "::error::xray 包校验和不匹配（期望 ${EXPECTED:-<空>}，实际 $ACTUAL）"
+            exit 1
+          fi
+          echo ">> xray 包 SHA2-256 校验通过"
           unzip -oq /tmp/xray.zip -d /tmp/xray
           chmod +x /tmp/xray/xray
 
@@ -146,13 +200,16 @@ jobs:
           tar -C current -xzf out/lattix-agent-linux-amd64.tar.gz
           mv current/lattix-agent/lattix-agent current/lattix-agent-linux-amd64
 
-      - name: Current protocol e2e
+      - name: Run e2e (${{ matrix.script }})
+        env:
+          CHAINS_SKIP_EXTERNAL: ${{ matrix.skip_external }}
+          LATX_ALLOW_PRIVATE_OUTBOUND: ${{ matrix.allow_private_outbound }}
         run: |
           chmod +x out/lattix-backend-linux-amd64 current/lattix-agent-linux-amd64
           PANEL_BIN="$PWD/out/lattix-backend-linux-amd64" \
           AGENT_BIN="$PWD/current/lattix-agent-linux-amd64" \
           XRAY_BIN=/tmp/xray/xray \
-            bash scripts/e2e/panel.sh
+            bash "scripts/e2e/${{ matrix.script }}"
 
   release:
     needs: [build, e2e]
@@ -162,11 +219,11 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: release-assets
           path: out
@@ -178,10 +235,31 @@ jobs:
             out/lattix-panel-linux-arm64.tar.gz
             out/lattix-agent-linux-amd64.tar.gz
             out/lattix-agent-linux-arm64.tar.gz
+            out/install-panel.sh
+            out/install-agent.sh
+            out/latx.sh
+            out/latx-ag.sh
             out/checksums.txt
           )
+          # Release notes 三级回退：docs/CHANGELOG.md 的当前版本段 → [Unreleased] 段 → 自动生成；
+          # 提取失败（如文件缺失）不阻断发布，自然落入回退。
+          VERSION="${GITHUB_REF_NAME#v}"
+          extract_section() {
+            awk -v header="$1" '
+              { sub(/\r$/, "") }
+              index($0, header) == 1 { found = 1; next }
+              found && /^## / { exit }
+              found { print }
+            ' docs/CHANGELOG.md 2>/dev/null || true
+          }
+          extract_section "## [${VERSION}]" > release-notes.md
+          grep -q '[^[:space:]]' release-notes.md \
+            || extract_section '## [Unreleased]' > release-notes.md
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" "${ASSETS[@]}" --clobber
+          elif grep -q '[^[:space:]]' release-notes.md; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" --notes-file release-notes.md "${ASSETS[@]}"
           else
             gh release create "${GITHUB_REF_NAME}" \
               --title "${GITHUB_REF_NAME}" --generate-notes "${ASSETS[@]}"
@@ -194,20 +272,23 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Derive lowercase image name
+        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
       - name: Build and publish multi-architecture image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -216,10 +297,10 @@ jobs:
             VERSION=${{ github.ref_name }}
             GITHUB_REPO=${{ github.repository }}
           tags: |
-            ghcr.io/beanya/lattix:${{ github.ref_name }}
-            ghcr.io/beanya/lattix:latest
+            ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+            ${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Verify published manifest
-        run: docker buildx imagetools inspect "ghcr.io/beanya/lattix:${GITHUB_REF_NAME}"
+        run: docker buildx imagetools inspect "${IMAGE_NAME}:${GITHUB_REF_NAME}"

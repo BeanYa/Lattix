@@ -111,7 +111,7 @@ func (s *Server) serverTestDTO(task *store.ServerTestTask) serverTestDTO {
 }
 
 func (s *Server) handleCDNCatalogStatus(w http.ResponseWriter, r *http.Request) {
-	status, err := s.cdn.status(r.Context())
+	status, err := s.cdn.Status(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -120,8 +120,8 @@ func (s *Server) handleCDNCatalogStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleRefreshCDNCatalog(w http.ResponseWriter, r *http.Request) {
-	err := s.cdn.refreshZstaticCDNCatalog(r.Context())
-	status, statusErr := s.cdn.status(r.Context())
+	err := s.cdn.Refresh(r.Context())
+	status, statusErr := s.cdn.Status(r.Context())
 	if statusErr != nil {
 		writeError(w, http.StatusInternalServerError, statusErr.Error())
 		return
@@ -156,7 +156,7 @@ func (s *Server) serverTestCatalogSnapshot(ctx context.Context, categories []sha
 		return shared.ServerTestCatalogSnapshot{}, err
 	}
 	if raw == "" {
-		status, _ := s.cdn.status(ctx)
+		status, _ := s.cdn.Status(ctx)
 		if status.LastError != "" {
 			return shared.ServerTestCatalogSnapshot{}, fmt.Errorf("测试节点目录不可用：%s", status.LastError)
 		}

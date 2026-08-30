@@ -136,10 +136,12 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		sessionKind:   sessionKind,
 		ws:            conn,
 		send:          make(chan shared.Envelope, sendBuffer),
+		inbound:       make(chan shared.Envelope, inboundBuffer),
 		done:          make(chan struct{}),
 		lifecycleAcks: make(map[string]chan struct{}),
 	}
 	go c.writePump()
+	go c.handlerPump()
 
 	result := shared.SessionOpenResult{
 		ServerID: auth.ServerID, SessionID: sessionID, SessionKind: sessionKind,
@@ -211,7 +213,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	h.notifyConnectionEstablished(auth.ServerID, becameOnline, auth.Reconnect)
 
-	// 读循环：上抛业务信封直到断开。
+	// 读循环：读取、续期、投递业务信封直到断开；处理在 handlerPump。
 	defer func() {
 		h.unregister(c)
 		c.close()
@@ -233,8 +235,16 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			env.Code == shared.CodeOK && c.resolveLifecycleAck(env.RequestID) {
 			continue
 		}
-		if h.OnMessage != nil {
-			h.OnMessage(auth.ServerID, env)
+		// 业务信封只投递到处理队列，由 handlerPump 顺序消费（回执落库等慢处理
+		// 不阻塞读取与续期）；队列满按慢连接策略断开（同 Send，重连后补发）。
+		select {
+		case c.inbound <- env:
+		case <-c.done:
+			return
+		default:
+			log.Printf("ws: server %d inbound buffer full, closing connection", auth.ServerID)
+			c.close()
+			return
 		}
 	}
 }

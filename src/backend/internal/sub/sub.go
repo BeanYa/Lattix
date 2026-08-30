@@ -5,18 +5,16 @@ package sub
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"gopkg.in/yaml.v3"
 
 	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/nettrust"
@@ -35,7 +33,9 @@ type Server struct {
 	downloadFiles external.FileRequester
 	cacheDir      string
 	refresh       sync.Mutex
-	publish       sync.Mutex
+	// publishLocks 按用户分片的发布锁（64 桶条纹锁）：同一用户发布仍互斥
+	// （防并发写同一用户快照），不同用户并行，节点 ACK 波及多用户时不再全局串行。
+	publishLocks [publishLockBuckets]sync.Mutex
 
 	queueMu   sync.Mutex
 	queued    map[int64]string
@@ -49,6 +49,7 @@ type Server struct {
 	downloadTasks   map[string]*clientDownloadTask
 	activeDownloads map[string]string
 	downloadTickets map[string]*clientDownloadTicket
+	downloadLimiter *clientDownloadLimiter
 
 	observer *progress.Registry // 旁路观察（nil = 关闭，发布循环零开销）
 }
@@ -79,14 +80,24 @@ func NewWithCacheDir(st *store.Store, base func(*http.Request) string, spaHTML [
 	}
 	server := &Server{
 		st: st, base: base, spaHTML: spaHTML, cacheDir: cacheDir,
-		files:         external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Second}},
-		downloadFiles: external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Minute}},
+		// 模板/规则与客户端安装包拉取均为外部 URL，接 SSRF 拨号防护（拒绝内网/保留段）。
+		files:         external.ExternalFileRequester{Doer: external.NewExternalHTTPClient(30 * time.Second)},
+		downloadFiles: external.ExternalFileRequester{Doer: external.NewExternalHTTPClient(30 * time.Minute)},
 		queued:        make(map[int64]string), queueWake: make(chan struct{}, 1),
 		downloadTasks: make(map[string]*clientDownloadTask), activeDownloads: make(map[string]string),
 		downloadTickets: make(map[string]*clientDownloadTicket),
+		downloadLimiter: newClientDownloadLimiter(),
 	}
 	server.ensureBuiltInTemplateSources(context.Background())
 	return server
+}
+
+// publishLockBuckets 是发布锁的分桶数（条纹锁）。
+const publishLockBuckets = 64
+
+// publishLock 返回该用户的发布锁：userID 取模分桶，同一用户互斥，不同用户并行。
+func (s *Server) publishLock(userID int64) *sync.Mutex {
+	return &s.publishLocks[userID%publishLockBuckets]
 }
 
 // trustedForwardedProto 报告是否应采信 X-Forwarded-Proto: https 声明
@@ -393,59 +404,17 @@ type clashConfig struct {
 	Rules             []string                     `yaml:"rules"`
 }
 
-// proxyGroupName 是 select 组名，MATCH 规则指向它。
-const proxyGroupName = "PROXY"
-
-// assignedActiveNodes 返回订阅用户及其分配到的 active 节点（§16 公共查询）。
-// 分组用户的直连 user_nodes 被遮蔽（订阅 = 分组派生链路 + 外部订阅节点），返回空列表。
-func (s *Server) assignedActiveNodes(r *http.Request) (*store.User, []store.Node, error) {
-	user, err := s.st.UserBySubToken(r.Context(), r.PathValue("token"))
-	if err != nil {
-		return nil, nil, err
-	}
-	groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), user.ID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(groupIDs) > 0 {
-		return user, []store.Node{}, nil
-	}
-	nodes, err := s.st.ListNodes(r.Context())
-	if err != nil {
-		return nil, nil, err
-	}
-	assigned, err := s.st.UserNodeIDs(r.Context(), user.ID)
-	if err != nil {
-		return nil, nil, err
-	}
-	allowed := make(map[int64]bool, len(assigned))
-	for _, id := range assigned {
-		allowed[id] = true
-	}
-	out := []store.Node{}
-	for _, n := range nodes {
-		if !allowed[n.ID] {
-			continue
-		}
-		if n.Status != store.NodeStatusActive || len(n.RealizedConfig) == 0 {
-			continue
-		}
-		out = append(out, n)
-	}
-	return user, out, nil
-}
-
 // ServeHTTP 处理 GET /sub/{token}：按 UA / ?format= 返回对应格式订阅内容；
 // 浏览器（Accept 含 text/html 且无 ?format=）返回 SPA 壳（index.html）。
 // 有效停权态（expired=1 或 disabled=1）的用户订阅照常返回但节点为空。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	user, err := s.st.UserBySubToken(r.Context(), r.PathValue("token"))
 	if err != nil {
-		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
-			status = http.StatusNotFound
+			http.Error(w, err.Error()+"\n", http.StatusNotFound)
+			return
 		}
-		http.Error(w, err.Error()+"\n", status)
+		writeInternalError(w, "serve subscription", err)
 		return
 	}
 	s.setSubHeaders(w, r, user)
@@ -471,7 +440,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "subscription snapshot has not been published\n", http.StatusServiceUnavailable)
 			return
 		}
-		http.Error(w, err.Error()+"\n", http.StatusInternalServerError)
+		writeInternalError(w, "serve subscription", err)
 		return
 	}
 	w.Header().Set("Content-Type", file.ContentType)
@@ -487,11 +456,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) ServeRuleHTTP(w http.ResponseWriter, r *http.Request) {
 	user, err := s.st.UserBySubToken(r.Context(), r.PathValue("token"))
 	if err != nil {
-		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
-			status = http.StatusNotFound
+			http.Error(w, err.Error()+"\n", http.StatusNotFound)
+			return
 		}
-		http.Error(w, err.Error()+"\n", status)
+		writeInternalError(w, "serve rule artifact", err)
 		return
 	}
 	version := r.PathValue("version")
@@ -504,11 +473,11 @@ func (s *Server) ServeRuleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	file, err := s.st.SubscriptionRuleFile(r.Context(), user.ID, version, format, name)
 	if err != nil {
-		status := http.StatusInternalServerError
 		if errors.Is(err, store.ErrNotFound) {
-			status = http.StatusNotFound
+			http.Error(w, err.Error()+"\n", http.StatusNotFound)
+			return
 		}
-		http.Error(w, err.Error()+"\n", status)
+		writeInternalError(w, "serve rule artifact", err)
 		return
 	}
 	w.Header().Set("Content-Type", file.ContentType)
@@ -517,6 +486,13 @@ func (s *Server) ServeRuleHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("ETag", `"`+version+`-`+format+`"`)
 	w.Header().Set("Cache-Control", "private, max-age=21600, immutable")
 	_, _ = w.Write(file.Content)
+}
+
+// writeInternalError 把内部错误（DB 失败等 500 类）记入日志，并向匿名订阅客户端
+// 返回通用文案：响应体不回显原始错误，避免泄露内部细节（安全评审 L3）。
+func writeInternalError(w http.ResponseWriter, op string, err error) {
+	log.Printf("sub: %s: %v", op, err)
+	http.Error(w, "internal error\n", http.StatusInternalServerError)
 }
 
 func validHex(value string) bool {
@@ -533,51 +509,6 @@ func (s *Server) serveSPA(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write(s.spaHTML)
-}
-
-// serveClash 输出 mihomo（Clash.Meta）YAML。
-func (s *Server) serveClash(w http.ResponseWriter, r *http.Request, user *store.User, items []proxyItem) {
-	cfg := clashConfig{Proxies: []clashProxy{}}
-	names := []string{}
-	for _, it := range items {
-		credential := it.credential
-		if credential == "" {
-			credential = user.UUID
-		}
-		p, err := buildProxy(it.node, it.rc, credential)
-		if err != nil {
-			continue
-		}
-		cfg.Proxies = append(cfg.Proxies, p)
-		names = append(names, p.Name)
-	}
-	cfg.ProxyGroups = []clashProxyGroup{{Name: proxyGroupName, Type: "select", Proxies: names}}
-	cfg.Rules = []string{"MATCH," + proxyGroupName}
-
-	out, err := yaml.Marshal(&cfg)
-	if err != nil {
-		http.Error(w, err.Error()+"\n", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
-	w.Write(out)
-}
-
-// serveLinks 输出 base64 编码的分享链接集合（vless:// 等）。
-func (s *Server) serveLinks(w http.ResponseWriter, r *http.Request, user *store.User, items []proxyItem) {
-	links := []string{}
-	for _, it := range items {
-		credential := it.credential
-		if credential == "" {
-			credential = user.UUID
-		}
-		if link, ok := buildShareLink(it.node, it.rc, credential); ok {
-			links = append(links, link)
-		}
-	}
-	body := base64.StdEncoding.EncodeToString([]byte(strings.Join(links, "\n")))
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte(body + "\n"))
 }
 
 // detectFormat 根据 User-Agent 识别客户端类型，返回格式标识。
@@ -634,10 +565,13 @@ type proxyItem struct {
 
 // subscriptionItems 汇总单机节点与链条目（§21 订阅）：
 //   - 链出口业务节点不再作为单机条目出现（只能经链入口消费）；
-//   - 链条目：server/port 取入口（非 1:1 映射时经端口段助手换算 public 端口），
-//     reality-opts/uuid/flow 等取出口节点 realized_config；命名优先使用链路名称；
-//   - 只含 active/degraded 链（failed/pending/applying 不出）；degraded 不剔除（客户端测速规避）；
-//   - 用户维度经 user_nodes 判出口节点分配（§16：UUID 只存在于出口 xray）。
+//   - 链条目：server/port 取入口（共享入口链取端点 realized_config；非 1:1 映射时
+//     经端口段助手换算 public 端口），命名优先使用链路名称；
+//   - 链以已发布修订快照为准（无已发布修订或 invalid/deleted 不出；
+//     applying/failed 的新修订不影响已发布快照）；
+//   - 用户维度分配（§16）：分组用户只按分组派生（直接分配被遮蔽）；
+//     非分组用户走直接分配（user_nodes + user_chain_assignments）；
+//     共享入口链需链分配，订阅凭据取 assignment 的 AccessUUID。
 func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []store.Node) ([]proxyItem, []string) {
 	if user.Expired || user.Disabled {
 		return nil, nil

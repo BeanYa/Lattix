@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"lattix/shared/requester"
 )
 
 // DigiCert Global Root G2 is the trust anchor used by the fixed Zstatic
@@ -30,9 +32,17 @@ var zstaticOverseasTrustRootPEM []byte
 
 // NewHTTPClient returns the dedicated client for fetching the Zstatic catalog.
 // It preserves the default transport's proxy and connection behavior while
-// supplementing, rather than replacing, the host's trusted roots.
+// supplementing, rather than replacing, the host's trusted roots. The
+// production client also gets the SSRF dial guard; tests build clients through
+// newHTTPClient and dial httptest servers on loopback, so the guard is only
+// attached here and never touches the TLS root or header behavior.
 func NewHTTPClient(timeout time.Duration) (*http.Client, error) {
-	return newHTTPClient(timeout, x509.SystemCertPool, zstaticTrustRootPEM, zstaticOverseasTrustRootPEM)
+	client, err := newHTTPClient(timeout, x509.SystemCertPool, zstaticTrustRootPEM, zstaticOverseasTrustRootPEM)
+	if err != nil {
+		return nil, err
+	}
+	client.Transport.(*http.Transport).DialContext = requester.GuardedDialContext(nil)
+	return client, nil
 }
 
 func newHTTPClient(

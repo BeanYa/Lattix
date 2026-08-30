@@ -279,7 +279,7 @@ func TestPublishUserStoresPrecompiledArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, err := st.CreateServer(ctx, "edge", "edge.example.com", "server-token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "edge", Address: "edge.example.com", BootstrapToken: "server-token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	if err != nil {
 		t.Fatal(err)
 	}

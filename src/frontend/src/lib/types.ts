@@ -44,12 +44,7 @@ export interface PortRange {
 
 export type MachineType = 'direct' | 'nat'
 export type ServerConnectionState =
-  | 'never_connected'
-  | 'connecting'
-  | 'reconnecting'
-  | 'online'
-  | 'offline'
-  | 'auth_rejected'
+  'never_connected' | 'connecting' | 'reconnecting' | 'online' | 'offline' | 'auth_rejected'
 export type AgentSessionKind = 'initial' | 'reconnect'
 
 export interface Provider {
@@ -240,12 +235,7 @@ export type ServerTestCategory =
   | 'speed'
 
 export type ServerTestTaskStatus =
-  | 'queued'
-  | 'accepted'
-  | 'running'
-  | 'succeeded'
-  | 'completed_with_errors'
-  | 'failed'
+  'queued' | 'accepted' | 'running' | 'succeeded' | 'completed_with_errors' | 'failed'
 
 export interface ServerTestCategoryProgress {
   category: ServerTestCategory
@@ -353,6 +343,7 @@ export interface CreateServerResponse {
   server: Server
   bootstrap_token: string
   install_command: string
+  install_insecure: boolean
 }
 
 export type NodeStatus = 'pending' | 'applying' | 'active' | 'failed'
@@ -524,14 +515,14 @@ export interface ChainHopInput {
 }
 
 export interface CreateChainRequest {
-	name: string
-	hops?: ChainHopInput[]
+  name: string
+  hops?: ChainHopInput[]
   entry: ChainHopInput
   middle: ChainHopInput[]
   exit: ChainHopInput
   entry_port?: number
-	node: Omit<CreateNodeRequest, 'server_id' | 'name'>
-	traffic_multiplier?: string
+  node: Omit<CreateNodeRequest, 'server_id' | 'name'>
+  traffic_multiplier?: string
 }
 
 export interface EditChainRequest {
@@ -809,15 +800,7 @@ export interface PanelVersionInfo {
 }
 
 export type PanelUpdateStage =
-  | ''
-  | 'check'
-  | 'download'
-  | 'verify'
-  | 'extract'
-  | 'apply'
-  | 'restart'
-  | 'done'
-  | 'failed'
+  '' | 'check' | 'download' | 'verify' | 'extract' | 'apply' | 'restart' | 'done' | 'failed'
 
 export interface PanelUpdateStatus {
   running: boolean
@@ -903,15 +886,7 @@ export interface PanelRuntimeSnapshot {
 
 export type LogSeverity = 'debug' | 'info' | 'warning' | 'error'
 export type OperationCategory =
-  | 'server'
-  | 'chain'
-  | 'user'
-  | 'settings'
-  | 'panel'
-  | 'agent'
-  | 'command'
-  | 'auth'
-  | 'log'
+  'server' | 'chain' | 'user' | 'settings' | 'panel' | 'agent' | 'command' | 'auth' | 'log'
 
 export interface OperationLogEntry {
   id: number

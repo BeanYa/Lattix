@@ -1,6 +1,10 @@
 import type { ServerTestCategory, ServerTestEnvironment } from '@/lib/types'
 
-export const IPV6_CATEGORIES: ServerTestCategory[] = ['tcp_ipv6', 'cernet2_ipv6', 'return_route_ipv6']
+export const IPV6_CATEGORIES: ServerTestCategory[] = [
+  'tcp_ipv6',
+  'cernet2_ipv6',
+  'return_route_ipv6',
+]
 
 export function isIpv6Category(category: ServerTestCategory): boolean {
   return IPV6_CATEGORIES.includes(category)

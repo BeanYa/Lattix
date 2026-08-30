@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"lattix/backend/internal/store"
@@ -24,6 +26,11 @@ const (
 	defaultClientCacheTTL   = 72 * time.Hour
 	maxClientPackageBytes   = int64(512 << 20)
 	clientDownloadTicketTTL = 3 * time.Hour
+	// 任意有效订阅 token 都能触发 ≤512MB 的上游下载落盘，按 token 做滑动窗口
+	// 限流，防止磁盘/带宽被反复消耗（安全评审 M3）。
+	maxClientDownloadTasksPerTokenHour = 10
+	clientDownloadLimitWindow          = time.Hour
+	maxTrackedDownloadTokens           = 4096
 )
 
 type ClientDownloadVariant struct {
@@ -138,6 +145,67 @@ func clientDownloadVariants(ids ...string) []ClientDownloadVariant {
 	return out
 }
 
+// clientDownloadLimiter 按订阅 token 限流新建下载任务：滑动窗口内每 token 最多
+// maxClientDownloadTasksPerTokenHour 次。惰性清理窗口外时间戳，并限制跟踪的
+// token 数量防内存膨胀（模式同 panel 的 loginLimiter）。
+type clientDownloadLimiter struct {
+	mu      sync.Mutex
+	windows map[string]*clientDownloadWindow
+	now     func() time.Time
+}
+
+type clientDownloadWindow struct {
+	timestamps []time.Time // 窗口内新建任务的时间点
+	lastSeen   time.Time
+}
+
+func newClientDownloadLimiter() *clientDownloadLimiter {
+	return &clientDownloadLimiter{windows: make(map[string]*clientDownloadWindow), now: time.Now}
+}
+
+// allow 为 token 记录一次新建下载任务并返回是否放行；拒绝时返回窗口滑动到可用的等待时长
+// （最早一条窗口内记录滑出为止，供 429 响应的 Retry-After 头使用，模式同 panel 的 loginLimiter）。
+func (l *clientDownloadLimiter) allow(token string) (time.Duration, bool) {
+	now := l.now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	window, ok := l.windows[token]
+	if !ok {
+		if len(l.windows) >= maxTrackedDownloadTokens {
+			l.evictOldest()
+		}
+		window = &clientDownloadWindow{}
+		l.windows[token] = window
+	} else {
+		// 惰性清理窗口外的时间戳。
+		kept := window.timestamps[:0]
+		for _, ts := range window.timestamps {
+			if now.Sub(ts) < clientDownloadLimitWindow {
+				kept = append(kept, ts)
+			}
+		}
+		window.timestamps = kept
+		if len(window.timestamps) >= maxClientDownloadTasksPerTokenHour {
+			window.lastSeen = now
+			return clientDownloadLimitWindow - now.Sub(window.timestamps[0]), false
+		}
+	}
+	window.timestamps = append(window.timestamps, now)
+	window.lastSeen = now
+	return 0, true
+}
+
+func (l *clientDownloadLimiter) evictOldest() {
+	oldestKey := ""
+	var oldest time.Time
+	for key, window := range l.windows {
+		if oldestKey == "" || window.lastSeen.Before(oldest) {
+			oldestKey, oldest = key, window.lastSeen
+		}
+	}
+	delete(l.windows, oldestKey)
+}
+
 func (s *Server) HandleSubClientDownloadStart(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.subDownloadUser(r); err != nil {
 		subDownloadError(w, err)
@@ -153,18 +221,33 @@ func (s *Server) HandleSubClientDownloadStart(w http.ResponseWriter, r *http.Req
 	s.downloadMu.Lock()
 	if taskID := s.activeDownloads[spec.ID]; taskID != "" {
 		if task := s.downloadTasks[taskID]; task != nil && (task.Status == "queued" || task.Status == "downloading") {
+			resp := clientDownloadTaskResponse{TaskID: task.ID, Status: task.Status}
 			s.downloadMu.Unlock()
-			writeClientDownloadJSON(w, http.StatusOK, clientDownloadTaskResponse{TaskID: task.ID, Status: task.Status})
+			writeClientDownloadJSON(w, http.StatusOK, resp)
 			return
 		}
+	}
+	// 只对新建下载任务计数限流：去重命中活跃任务直接返回（不计数）；
+	// 票据签发与 Range 断点续传不经过此入口（安全评审 M3）。
+	if retryAfter, allowed := s.downloadLimiter.allow(r.PathValue("token")); !allowed {
+		s.downloadMu.Unlock()
+		// Retry-After 取窗口滑动到可用的秒数（向上取整，至少 1 秒）。
+		seconds := int64((retryAfter + time.Second - 1) / time.Second)
+		if seconds < 1 {
+			seconds = 1
+		}
+		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+		subDownloadErrorStatus(w, http.StatusTooManyRequests, errors.New("客户端下载请求过于频繁，请稍后重试"))
+		return
 	}
 	task := &clientDownloadTask{ID: shared.NewMessageID(), VariantID: spec.ID, Status: "queued", CreatedAt: time.Now().UTC()}
 	s.downloadTasks[task.ID] = task
 	s.activeDownloads[spec.ID] = task.ID
+	resp := clientDownloadTaskResponse{TaskID: task.ID, Status: task.Status}
 	s.downloadMu.Unlock()
 
 	go s.runClientDownload(task.ID, spec)
-	writeClientDownloadJSON(w, http.StatusAccepted, clientDownloadTaskResponse{TaskID: task.ID, Status: task.Status})
+	writeClientDownloadJSON(w, http.StatusAccepted, resp)
 }
 
 func (s *Server) HandleSubClientDownloadStatus(w http.ResponseWriter, r *http.Request) {
@@ -277,7 +360,9 @@ func (s *Server) subDownloadUser(r *http.Request) (*store.User, error) {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, fmt.Errorf("订阅不存在")
 		}
-		return nil, err
+		// 内部错误（DB 失败）不回显细节，原始错误只记日志（安全评审 L3）。
+		log.Printf("sub: client download user: %v", err)
+		return nil, errors.New("internal error")
 	}
 	if user.Expired || user.Disabled {
 		return nil, errors.New("订阅不可用")

@@ -1,6 +1,6 @@
 # Xray 缓存清理设计与实现契约
 
-> 状态：设计已确认，待实现。本文记录「清理 xray 缓存」功能的需求结论、运行语义、
+> 状态：已实现。本文记录「清理 xray 缓存」功能的需求结论、运行语义、
 > 数据源边界和实现契约，后续修改协议或实现时必须同步更新本文。
 
 ## 1. 目标与非目标
@@ -156,7 +156,9 @@ type ApplyResultPayload struct {
 
 ## 6. 面板 API 与回执流转
 
-`POST /api/servers/{id}/cleanup-xray`，body `{"dry_run": bool}`：
+`POST /api/server/cleanup-xray`，body `{"server_id": int64, "dry_run": bool}`（命中后
+HTTP 200 业务信封；符合 [RPC API 设计](rpc-api-design.md) 的现行路由规范
+`/api/{单数领域}/{kebab-case 动作}`、目标 ID 走 body 而非 `{id}` 路径）：
 
 1. 校验服务器存在且在线（`req.IsOnline`，离线返回 409「服务器未连接」）；
 2. `ExpectedXrayState(serverID)` 计算期望集合 → `d.Enqueue`（commands 表照常落库，

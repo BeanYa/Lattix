@@ -100,7 +100,7 @@ func TestUserDTOIncludesExternalSubscriptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetUserSubSettings(ctx, userID, 500, 0, "", "", "", ""); err != nil {
+	if err := st.SetUserSubSettings(ctx, userID, store.UserSubSettings{TrafficLimit: 500}); err != nil {
 		t.Fatal(err)
 	}
 	subID, err := st.CreateExternalSubscription(ctx, store.ExternalSubscription{
@@ -136,7 +136,7 @@ func TestUserDTOIncludesExternalSubscriptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetUserSubSettings(ctx, noSubID, 500, 0, "", "", "", ""); err != nil {
+	if err := st.SetUserSubSettings(ctx, noSubID, store.UserSubSettings{TrafficLimit: 500}); err != nil {
 		t.Fatal(err)
 	}
 	noSubUser, err := st.UserByID(ctx, noSubID)

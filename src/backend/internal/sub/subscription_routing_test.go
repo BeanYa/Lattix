@@ -236,7 +236,7 @@ func TestPublishUserCreatesAllFormatsAndDisabledSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, err := st.CreateServer(ctx, "edge", "edge.example.com", "server-token", store.MachineTypeDirect, "", "", "US", "")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "edge", Address: "edge.example.com", BootstrapToken: "server-token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,6 +276,61 @@ func TestPublishUserCreatesAllFormatsAndDisabledSnapshot(t *testing.T) {
 	}
 	if strings.Contains(string(disabled.Files["clash"]), "US node") {
 		t.Fatalf("disabled snapshot retained node: %s", disabled.Files["clash"])
+	}
+}
+
+// 回归：socks/http 面板节点曾因 buildSbOutbound 不支持协议被 compileNodes 连坐丢弃
+// （全格式消失）；sing-box 原生支持两者，修复后各格式均须保留。
+func TestPublishUserKeepsSocksHTTPNodesInSingbox(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "edge", Address: "edge.example.com", BootstrapToken: "server-token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeIDs := make([]int64, 0, 2)
+	for _, protocol := range []string{shared.ProtocolSocks, shared.ProtocolHTTP} {
+		virtual, _ := json.Marshal(shared.VirtualConfig{Protocol: protocol, Network: shared.NetworkTCP, Template: json.RawMessage(`{}`)})
+		nodeID, err := st.InsertNode(ctx, protocol+" node", serverID, protocol, nil, virtual)
+		if err != nil {
+			t.Fatal(err)
+		}
+		realized, _ := json.Marshal(shared.RealizedConfig{Port: 1080, Network: shared.NetworkTCP})
+		if err := st.SetNodeActive(ctx, nodeID, realized); err != nil {
+			t.Fatal(err)
+		}
+		nodeIDs = append(nodeIDs, nodeID)
+	}
+	userID, err := st.InsertUser(ctx, "user", "00000000-0000-0000-0000-000000000008", "user-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetUserNodes(ctx, userID, nodeIDs); err != nil {
+		t.Fatal(err)
+	}
+	server := New(st, nil, nil)
+	result, err := server.PublishUser(ctx, userID, "https://panel.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Warnings) != 0 {
+		t.Fatalf("unexpected publish warnings: %v", result.Warnings)
+	}
+	singbox := string(result.Files["singbox"])
+	for _, want := range []string{`"type": "socks"`, `"type": "http"`, `"username": "00000000-0000-0000-0000-000000000008"`} {
+		if !strings.Contains(singbox, want) {
+			t.Fatalf("singbox snapshot missing %s: %s", want, singbox)
+		}
+	}
+	clash := string(result.Files["clash"])
+	for _, want := range []string{"type: socks5", "type: http"} {
+		if !strings.Contains(clash, want) {
+			t.Fatalf("clash snapshot missing %s: %s", want, clash)
+		}
 	}
 }
 

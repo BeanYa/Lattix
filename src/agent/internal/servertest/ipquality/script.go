@@ -2,11 +2,15 @@ package ipquality
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+
+	"lattix/agent/internal/fileutil"
 )
 
 const (
@@ -15,9 +19,14 @@ const (
 	cachedScriptName = "ip.sh"
 )
 
-// ScriptURL is the upstream ip.sh source; the script is fetched from GitHub
-// raw and cached under the agent data directory.
-var ScriptURL = "https://raw.githubusercontent.com/xykt/IPQuality/main/ip.sh"
+// ScriptURL is the upstream ip.sh source pinned to a specific commit; the
+// script runs as root, so the fetched content is only used after its SHA256
+// matches scriptSHA256 below.
+var ScriptURL = "https://raw.githubusercontent.com/xykt/IPQuality/0ee5f192fed70c04615852efba0e4b8bd43546c7/ip.sh"
+
+// scriptSHA256 is the content hash of the pinned ip.sh. Bumping the upstream
+// script means updating the commit in ScriptURL and this hash together.
+var scriptSHA256 = "9823c560e0d19769eb627329a31cb47da655d087166d86e40d9b6c77bc7f32fb"
 
 var scriptVersionPattern = regexp.MustCompile(`script_version="([^"]+)"`)
 
@@ -47,9 +56,10 @@ func CachedScriptVersion(cacheDir string) string {
 }
 
 // EnsureScript returns the path of a usable local script. It fetches the
-// upstream script, compares its version with the cache, and atomically
-// replaces the cache when a newer version is available. A failed fetch falls
-// back to the cache and reports stale=true.
+// pinned upstream script, verifies its SHA256, and atomically replaces the
+// cache when the version differs. A failed fetch falls back to the cache —
+// also SHA256-verified — and reports stale=true. Content that fails
+// verification is never cached, returned, or executed.
 func EnsureScript(ctx context.Context, fetcher ScriptFetcher, cacheDir string) (path, version string, stale bool, err error) {
 	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
 		return "", "", false, fmt.Errorf("create script cache dir: %w", err)
@@ -62,43 +72,50 @@ func EnsureScript(ctx context.Context, fetcher ScriptFetcher, cacheDir string) (
 		if cached == "" {
 			return "", "", false, fmt.Errorf("fetch ip.sh: %w", fetchErr)
 		}
-		return path, cached, true, nil
-	}
-	freshVersion, ok := ExtractScriptVersion(fresh)
-	if !ok {
-		if cached == "" {
-			return "", "", false, errors.New("ip.sh: script_version not found in fetched content")
+		// The cache may be stale, but it still must pass the pinned-hash
+		// check before it is executed.
+		if err := verifyCachedScriptSHA256(path); err != nil {
+			return "", "", false, err
 		}
 		return path, cached, true, nil
 	}
-	if cached == freshVersion {
+	if err := verifyScriptSHA256(fresh); err != nil {
+		return "", "", false, err
+	}
+	freshVersion, ok := ExtractScriptVersion(fresh)
+	if !ok {
+		return "", "", false, errors.New("ip.sh: script_version not found in fetched content")
+	}
+	if cached == freshVersion && verifyCachedScriptSHA256(path) == nil {
 		return path, cached, false, nil
 	}
-	if err := replaceScript(path, fresh); err != nil {
-		return "", "", false, err
+	// The cache is missing, outdated, or tampered with (same version line but
+	// a different body); replace it with the verified download.
+	if err := fileutil.WriteFileAtomic(path, []byte(fresh), 0o700); err != nil {
+		return "", "", false, fmt.Errorf("replace cached script: %w", err)
 	}
 	return path, freshVersion, false, nil
 }
 
-func replaceScript(path, content string) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), "ip.sh-*")
+// verifyScriptSHA256 checks content against the pinned scriptSHA256; the
+// error carries both hashes for diagnostics.
+func verifyScriptSHA256(content string) error {
+	sum := sha256.Sum256([]byte(content))
+	if got := hex.EncodeToString(sum[:]); got != scriptSHA256 {
+		return fmt.Errorf("ip.sh checksum mismatch: got %s, want %s", got, scriptSHA256)
+	}
+	return nil
+}
+
+// verifyCachedScriptSHA256 checks the cached script file against the pinned
+// scriptSHA256; a tampered or corrupted cache is never executed.
+func verifyCachedScriptSHA256(path string) error {
+	content, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("create script temp: %w", err)
+		return fmt.Errorf("read cached ip.sh: %w", err)
 	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.WriteString(content); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write script temp: %w", err)
-	}
-	if err := tmp.Chmod(0o700); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod script temp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close script temp: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return fmt.Errorf("replace cached script: %w", err)
+	if err := verifyScriptSHA256(string(content)); err != nil {
+		return fmt.Errorf("cached %w", err)
 	}
 	return nil
 }

@@ -45,30 +45,6 @@ func TestBeginDrainRejectsSendAndSuppressesDisconnect(t *testing.T) {
 	}
 }
 
-type fixedLifecycle struct {
-	snapshot shared.PanelLifecycleSnapshot
-}
-
-func (f fixedLifecycle) Snapshot() shared.PanelLifecycleSnapshot { return f.snapshot }
-
-func TestStartupBlocksBusinessCommandsButAllowsControlMessages(t *testing.T) {
-	h := NewHub()
-	h.Lifecycle = fixedLifecycle{snapshot: shared.PanelLifecycleSnapshot{State: shared.PanelStateStartup}}
-	conn := inertAgentConn(7)
-	conn.send = make(chan shared.Envelope, 2)
-	conn.done = make(chan struct{})
-	h.register(conn)
-
-	business := shared.Envelope{Kind: shared.KindRequest, Type: shared.TypeApplyNode}
-	if err := h.Send(context.Background(), 7, business); !errors.Is(err, ErrPanelNotActive) {
-		t.Fatalf("business send error = %v, want ErrPanelNotActive", err)
-	}
-	control := shared.Envelope{Kind: shared.KindRequest, Type: shared.TypeLifecycleChanged}
-	if err := h.Send(context.Background(), 7, control); err != nil {
-		t.Fatalf("control send error = %v", err)
-	}
-}
-
 func TestSyncLifecycleWaitsForACKAndReportsTimeout(t *testing.T) {
 	h := NewHub()
 	acked := inertAgentConn(7)

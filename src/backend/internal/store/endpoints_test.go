@@ -17,7 +17,7 @@ func TestSharedEndpointReuseAndAssignmentIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"})
 	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
 	endpoint, created, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile-a", config)
 	if err != nil || !created {
@@ -72,7 +72,7 @@ func TestAccessTrafficIsAttributedOnceToUserAndChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"})
 	config := json.RawMessage(`{"protocol":"vless","template":{}}`)
 	endpoint, _, _ := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
 	deployment, err := st.CreateInitialChainDeployment(ctx, InitialChainDeployment{
@@ -124,7 +124,7 @@ func TestUserUUIDByAssignment(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"})
 	config := json.RawMessage(`{"protocol":"vless","template":{}}`)
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
 	if err != nil {
@@ -241,7 +241,7 @@ func TestEnsureSharedEndpointJoinsWithoutDuplicateRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"})
 	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
 	// 遗留重复行（并发竞态产物）：同一 server/port 已存在两行，Ensure 必须按 id 取首行加入，
 	// 不新增行，也不取到后写入的重复行。
@@ -284,7 +284,7 @@ func TestEndpointChainCount(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, _ := st.CreateServer(ctx, "entry", "entry.test", "token", MachineTypeDirect, "", "", "US", "")
+	serverID, _ := st.CreateServer(ctx, ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"})
 	config := json.RawMessage(`{"protocol":"vless","port":443,"template":{}}`)
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", config)
 	if err != nil {

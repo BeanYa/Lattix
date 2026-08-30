@@ -40,9 +40,34 @@ type FileRequester interface {
 type ExternalJSONRequester struct{ Doer HTTPDoer }
 
 func (r ExternalJSONRequester) GetJSON(ctx context.Context, url string, dst any) error {
-	resp, err := do(ctx, r.Doer, http.MethodGet, url, "", nil)
+	return r.GetWithOptions(ctx, url, dst, JSONRequestOptions{})
+}
+
+// JSONRequestOptions 控制单次 JSON 拉取的请求细节。
+type JSONRequestOptions struct {
+	// Header 是随请求发送的自定义头（如 GitHub API 要求的 Accept/User-Agent）。
+	Header http.Header
+}
+
+// GetWithOptions 拉取 JSON 并解码到 dst，可携带自定义请求头。
+func (r ExternalJSONRequester) GetWithOptions(
+	ctx context.Context, url string, dst any, opts JSONRequestOptions,
+) error {
+	if r.Doer == nil {
+		return fmt.Errorf("%s: external HTTP client is nil", redactedDestination(url))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return err
+		return wrapExternalURLError(url, "build request", err)
+	}
+	for key, values := range opts.Header {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+	resp, err := r.Doer.Do(req)
+	if err != nil {
+		return wrapExternalURLError(url, "request", err)
 	}
 	defer resp.Body.Close()
 	if err := require2xx(url, resp); err != nil {
@@ -52,6 +77,22 @@ func (r ExternalJSONRequester) GetJSON(ctx context.Context, url string, dst any)
 		return fmt.Errorf("%s: decode JSON: %w", redactedDestination(url), err)
 	}
 	return nil
+}
+
+// GitHubLatestReleaseTag resolves the latest release tag through the GitHub
+// API: GET {apiRepos}/releases/latest, where apiRepos looks like
+// https://api.github.com/repos/<org>/<repo>.
+func GitHubLatestReleaseTag(ctx context.Context, doer HTTPDoer, apiRepos string) (string, error) {
+	var rel struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := (ExternalJSONRequester{Doer: doer}).GetJSON(ctx, apiRepos+"/releases/latest", &rel); err != nil {
+		return "", fmt.Errorf("解析 latest 失败: %w", err)
+	}
+	if rel.TagName == "" {
+		return "", fmt.Errorf("解析 latest 失败: 无法读取 tag_name")
+	}
+	return rel.TagName, nil
 }
 
 type ExternalWebhookRequester struct{ Doer HTTPDoer }

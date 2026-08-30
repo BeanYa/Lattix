@@ -132,7 +132,7 @@ WebSocket liveness 和 latency measurement 使用独立调度。两者可复用 
 - liveness 在所有已连接 Panel 状态下继续运行；
 - latency 只在 `active` 下运行；
 - latency 超时只移除 pending 样本，不关闭 WS；
-- telemetry 不等待首次 latency，当前没有新测量时发送 `latency_ms: null`；
+- telemetry 不等待首次 latency，当前没有新测量时 `latency_ms` 缺省或为 null（实现为 `*float64` + `omitempty`，nil 时字段缺省）；
 - 进入 `updating` 时保留最近 3 个已完成样本，只清理 pending probe；
 - 恢复后向原窗口 append，新样本继续使用最近 3 次中位数；
 - 数据库历史样本不修改。

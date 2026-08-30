@@ -98,7 +98,9 @@
 
 .cg-set-tab {
   cursor: pointer;
-  transition: transform 160ms var(--cg-ease), background-color 160ms var(--cg-ease);
+  transition:
+    transform 160ms var(--cg-ease),
+    background-color 160ms var(--cg-ease);
 }
 
 .cg-set-tab:hover {
@@ -218,7 +220,7 @@
   font-family: var(--cg-mono);
   font-size: 9.5px;
   font-weight: 800;
-  letter-spacing: .1em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--cg-muted);
 }
@@ -298,7 +300,9 @@
   font-size: 12px;
   line-height: 1.6;
   outline: none;
-  transition: border-color 160ms var(--cg-ease), box-shadow 160ms var(--cg-ease);
+  transition:
+    border-color 160ms var(--cg-ease),
+    box-shadow 160ms var(--cg-ease);
 }
 
 .cg-set-textarea::placeholder {
@@ -331,7 +335,9 @@
   font-size: 11px;
   font-weight: 800;
   cursor: pointer;
-  transition: background-color 160ms var(--cg-ease), color 160ms var(--cg-ease);
+  transition:
+    background-color 160ms var(--cg-ease),
+    color 160ms var(--cg-ease);
 }
 
 .cg-set-segment button:hover {
@@ -459,7 +465,7 @@
 }
 
 .cg-set-semantic-tag {
-  opacity: .8;
+  opacity: 0.8;
 }
 
 .cg-set-semantic-body {

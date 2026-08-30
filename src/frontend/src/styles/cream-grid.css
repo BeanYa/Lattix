@@ -9,19 +9,19 @@
 
 :root {
   /* Surface（Apple 分组背景 / 卡片 / 填充） */
-  --cg-paper: #F5F5F7;
+  --cg-paper: #f5f5f7;
   --cg-paper-soft: rgba(120, 120, 128, 0.12);
-  --cg-paper-light: #FFFFFF;
+  --cg-paper-light: #ffffff;
   --cg-paper-warm: rgba(120, 120, 128, 0.18);
 
   /* Label */
-  --cg-ink: #1D1D1F;
-  --cg-ink-soft: #1D1D1F;
+  --cg-ink: #1d1d1f;
+  --cg-ink-soft: #1d1d1f;
   --cg-muted: rgba(60, 60, 67, 0.66);
   --cg-subtle: rgba(60, 60, 67, 0.45);
 
   /* 分隔线（发丝线，替代粗描边） */
-  --cg-sep: rgba(60, 60, 67, 0.10);
+  --cg-sep: rgba(60, 60, 67, 0.1);
 
   /* Technical dark surfaces（终端/运行时面板） */
   --cg-charcoal: #161618;
@@ -29,20 +29,20 @@
   --cg-charcoal-line: rgba(235, 235, 245, 0.16);
 
   /* Semantic accents（Apple 系统色） */
-  --cg-lime: #007AFF;
-  --cg-lime-dark: #0071E3;
+  --cg-lime: #007aff;
+  --cg-lime-dark: #0071e3;
   --cg-lime-soft: rgba(0, 122, 255, 0.12);
-  --cg-blue: #007AFF;
+  --cg-blue: #007aff;
   --cg-blue-soft: rgba(0, 122, 255, 0.12);
-  --cg-red: #FF3B30;
-  --cg-red-soft: rgba(255, 59, 48, 0.10);
-  --cg-green: #34C759;
-  --cg-orange: #FF9500;
+  --cg-red: #ff3b30;
+  --cg-red-soft: rgba(255, 59, 48, 0.1);
+  --cg-green: #34c759;
+  --cg-orange: #ff9500;
 
   /* 强调色上的文字 */
-  --cg-on-accent: #FFFFFF;
+  --cg-on-accent: #ffffff;
   /* 深色面板上的文字（两种模式一致） */
-  --cg-on-charcoal: #F5F5F7;
+  --cg-on-charcoal: #f5f5f7;
 
   /* Metric 数字块 */
   --cg-metric-bg: rgba(120, 120, 128, 0.12);
@@ -58,12 +58,12 @@
   --cg-r-pill: 999px;
 
   /* 柔和分层投影 */
-  --cg-shadow-card: 0 0.5px 1.5px rgba(0, 0, 0, .04), 0 12px 32px -12px rgba(0, 0, 0, .10);
-  --cg-shadow-panel: 0 0.5px 1.5px rgba(0, 0, 0, .05), 0 18px 44px -16px rgba(0, 0, 0, .14);
-  --cg-shadow-control: 0 1px 2px rgba(0, 0, 0, .06);
+  --cg-shadow-card: 0 0.5px 1.5px rgba(0, 0, 0, 0.04), 0 12px 32px -12px rgba(0, 0, 0, 0.1);
+  --cg-shadow-panel: 0 0.5px 1.5px rgba(0, 0, 0, 0.05), 0 18px 44px -16px rgba(0, 0, 0, 0.14);
+  --cg-shadow-control: 0 1px 2px rgba(0, 0, 0, 0.06);
 
   --cg-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --cg-ease: cubic-bezier(.22, 1, .36, 1);
+  --cg-ease: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* 兼容旧引用（网格纸已移除） */
   --cg-grid-line: transparent;
@@ -73,36 +73,36 @@
 
 .dark {
   --cg-paper: #000000;
-  --cg-paper-soft: rgba(120, 120, 128, 0.20);
-  --cg-paper-light: #1C1C1E;
-  --cg-paper-warm: rgba(120, 120, 128, 0.30);
+  --cg-paper-soft: rgba(120, 120, 128, 0.2);
+  --cg-paper-light: #1c1c1e;
+  --cg-paper-warm: rgba(120, 120, 128, 0.3);
 
-  --cg-ink: #F5F5F7;
-  --cg-ink-soft: #F5F5F7;
+  --cg-ink: #f5f5f7;
+  --cg-ink-soft: #f5f5f7;
   --cg-muted: rgba(235, 235, 245, 0.64);
   --cg-subtle: rgba(235, 235, 245, 0.42);
 
   --cg-sep: rgba(235, 235, 245, 0.12);
 
   --cg-charcoal: #161618;
-  --cg-charcoal-raised: #2C2C2E;
+  --cg-charcoal-raised: #2c2c2e;
   --cg-charcoal-line: rgba(235, 235, 245, 0.16);
 
-  --cg-lime: #0A84FF;
-  --cg-lime-dark: #0A84FF;
+  --cg-lime: #0a84ff;
+  --cg-lime-dark: #0a84ff;
   --cg-lime-soft: rgba(10, 132, 255, 0.18);
-  --cg-blue: #0A84FF;
+  --cg-blue: #0a84ff;
   --cg-blue-soft: rgba(10, 132, 255, 0.18);
-  --cg-red: #FF453A;
+  --cg-red: #ff453a;
   --cg-red-soft: rgba(255, 69, 58, 0.14);
-  --cg-green: #30D158;
-  --cg-orange: #FF9F0A;
+  --cg-green: #30d158;
+  --cg-orange: #ff9f0a;
 
-  --cg-shadow-card: 0 0.5px 1.5px rgba(0, 0, 0, .35), 0 14px 36px -14px rgba(0, 0, 0, .55);
-  --cg-shadow-panel: 0 0.5px 1.5px rgba(0, 0, 0, .4), 0 20px 48px -16px rgba(0, 0, 0, .6);
-  --cg-shadow-control: 0 1px 2px rgba(0, 0, 0, .4);
+  --cg-shadow-card: 0 0.5px 1.5px rgba(0, 0, 0, 0.35), 0 14px 36px -14px rgba(0, 0, 0, 0.55);
+  --cg-shadow-panel: 0 0.5px 1.5px rgba(0, 0, 0, 0.4), 0 20px 48px -16px rgba(0, 0, 0, 0.6);
+  --cg-shadow-control: 0 1px 2px rgba(0, 0, 0, 0.4);
 
-  --cg-metric-bg: rgba(120, 120, 128, 0.20);
+  --cg-metric-bg: rgba(120, 120, 128, 0.2);
   --cg-metric-fg: var(--cg-ink);
 }
 
@@ -124,7 +124,7 @@ body {
 .cg-micro {
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   line-height: 1;
   text-transform: uppercase;
 }
@@ -134,7 +134,7 @@ body {
   align-items: center;
   font-size: 12px;
   font-weight: 500;
-  letter-spacing: .02em;
+  letter-spacing: 0.02em;
   line-height: 1;
   color: var(--cg-subtle);
 }
@@ -211,13 +211,13 @@ body {
   color: var(--cg-muted);
   font-size: 11px;
   font-weight: 500;
-  letter-spacing: .02em;
+  letter-spacing: 0.02em;
   line-height: 1.4;
   white-space: nowrap;
 }
 
 .cg-status::before {
-  content: "";
+  content: '';
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -261,7 +261,10 @@ body {
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: opacity 160ms ease, transform 160ms var(--cg-ease), background-color 160ms ease;
+  transition:
+    opacity 160ms ease,
+    transform 160ms var(--cg-ease),
+    background-color 160ms ease;
 }
 
 .cg-button:hover {
@@ -273,7 +276,7 @@ body {
 }
 
 .cg-button:disabled {
-  opacity: .45;
+  opacity: 0.45;
   cursor: not-allowed;
   transform: none;
 }
@@ -285,7 +288,7 @@ body {
 
 .cg-button.is-primary:hover {
   background: var(--cg-lime);
-  opacity: .88;
+  opacity: 0.88;
 }
 
 .cg-button.is-icon {
@@ -379,7 +382,7 @@ body {
 
 .cg-semantic-card.is-good > header {
   background: rgba(52, 199, 89, 0.14);
-  color: #248A3D;
+  color: #248a3d;
 }
 
 .cg-semantic-card.is-bad > header {
@@ -393,7 +396,7 @@ body {
 }
 
 .dark .cg-semantic-card.is-good > header {
-  color: #30D158;
+  color: #30d158;
 }
 
 .cg-semantic-card > .cg-semantic-body {
@@ -440,12 +443,12 @@ body {
   flex-shrink: 0;
   border: none;
   border-radius: 11px;
-  background: linear-gradient(180deg, #3B9BFF, var(--cg-lime));
+  background: linear-gradient(180deg, #3b9bff, var(--cg-lime));
   color: #fff;
 }
 
 .dark .cg-sidebar-brand-icon {
-  background: linear-gradient(180deg, #3B9BFF, #0A84FF);
+  background: linear-gradient(180deg, #3b9bff, #0a84ff);
 }
 
 .cg-sidebar-brand-name {
@@ -461,7 +464,7 @@ body {
   margin-top: 3px;
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: .08em;
+  letter-spacing: 0.08em;
   color: var(--cg-subtle);
   text-transform: uppercase;
 }
@@ -485,7 +488,7 @@ body {
   margin-bottom: 6px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: .04em;
+  letter-spacing: 0.04em;
   color: var(--cg-subtle);
   text-transform: uppercase;
 }
@@ -507,7 +510,9 @@ body {
   font-size: 14px;
   font-weight: 450;
   text-decoration: none;
-  transition: background-color 140ms ease, color 140ms ease;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
 }
 
 .cg-nav-item svg {
@@ -586,7 +591,9 @@ body {
   background: var(--cg-paper-soft);
   color: var(--cg-ink);
   cursor: pointer;
-  transition: background-color 140ms ease, transform 140ms var(--cg-ease);
+  transition:
+    background-color 140ms ease,
+    transform 140ms var(--cg-ease);
 }
 
 .cg-icon-button:hover {
@@ -598,7 +605,7 @@ body {
 }
 
 .cg-icon-button:disabled {
-  opacity: .45;
+  opacity: 0.45;
   cursor: not-allowed;
   transform: none;
 }

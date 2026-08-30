@@ -3,10 +3,7 @@ import { useCallback, useEffect, useMemo, useReducer, type ReactNode } from 'rea
 import OperationProgress from '@/components/OperationProgress'
 import { api, isRequestError } from '@/lib/api'
 import { OperationProgressContext } from '@/lib/operation-progress-context'
-import {
-  INITIAL_PROGRESS_STATE,
-  progressTransition,
-} from '@/lib/operation-progress-state'
+import { INITIAL_PROGRESS_STATE, progressTransition } from '@/lib/operation-progress-state'
 
 const POLL_INTERVAL_MS = 400
 const AUTO_CLOSE_DELAY_MS = 1000

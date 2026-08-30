@@ -71,9 +71,9 @@ func seedObserveServer(t *testing.T) (*Server, int64) {
 	}
 	t.Cleanup(func() { st.Close() })
 	requester := &cleanupRecordingRequester{settingsRequester: settingsRequester{online: map[int64]bool{}}}
-	dispatcher := dispatch.New(st, requester)
+	dispatcher := dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{})
 	requester.disp = dispatcher
-	serverID, err := st.CreateServer(ctx, "s1", "s1.test", "tok", store.MachineTypeDirect, "", "", "US", "Test")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "s1", Address: "s1.test", BootstrapToken: "tok", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Test"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -25,7 +25,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"lattix/backend/internal/alert"
-	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/lifecycle"
 	"lattix/backend/internal/logging"
@@ -101,28 +100,17 @@ func run() error {
 	acmeDomain := flag.String("tls-acme-domain", "", "ACME 自动证书域名（Let's Encrypt，TLS-ALPN-01，需 443 端口公网可达）")
 	acmeCache := flag.String("tls-acme-cache", envOr("LATTIX_ACME_CACHE", "acme-cache"), "ACME 证书缓存目录")
 	acmeEmail := flag.String("tls-acme-email", "", "ACME 账号邮箱（可选，过期通知用）")
-	resetAdmin := flag.String("reset-admin", "", "重置管理员密码为指定值后退出（不启动面板）；bcrypt 落库覆盖启动参数，改密即全部会话失效（latx reset-admin 使用）")
+	resetAdmin := flag.String("reset-admin", "", "重置管理员密码为指定值后退出（不启动面板）；bcrypt 落库覆盖启动参数并轮换会话签名密钥（重启后全部会话失效，latx reset-admin 使用）")
 	flag.Parse()
 
-	// -reset-admin：与设置页改密同一代码路径（bcrypt 哈希写 settings，§10；
-	// 会话签名密钥派生自密码哈希，改密即全部会话失效）。面板运行中执行安全（busy_timeout）。
+	// -reset-admin：与设置页改密同等语义（bcrypt 哈希写 settings 覆盖启动参数，§10），
+	// 并删除会话签名密钥（下次使用重新生成），重置即全部会话失效。面板运行中执行安全
+	// （busy_timeout）；运行中的面板进程缓存密钥于内存，会话失效需重启面板后生效。
 	if *resetAdmin != "" {
-		if len(*resetAdmin) < 8 {
-			return errors.New("新密码至少 8 位")
+		if err := resetAdminPassword(context.Background(), *dbPath, *resetAdmin); err != nil {
+			return err
 		}
-		st, err := store.Open(*dbPath)
-		if err != nil {
-			return fmt.Errorf("store: %w", err)
-		}
-		defer st.Close()
-		hash, err := bcrypt.GenerateFromPassword([]byte(*resetAdmin), bcrypt.DefaultCost)
-		if err != nil {
-			return fmt.Errorf("bcrypt: %w", err)
-		}
-		if err := st.SetSetting(context.Background(), store.SettingAdminPassBcrypt, string(hash)); err != nil {
-			return fmt.Errorf("写入密码哈希: %w", err)
-		}
-		fmt.Println("管理员密码已重置（覆盖 -admin-pass 启动参数）；所有会话已失效，需重新登录。")
+		fmt.Println("管理员密码已重置（覆盖 -admin-pass 启动参数），会话签名密钥已轮换；面板重启后所有会话失效，需重新登录。")
 		return nil
 	}
 
@@ -167,8 +155,8 @@ func run() error {
 	}
 	lifecycleManager := lifecycle.New(panelInstanceID)
 
-	operationLimit := settingInt(st, store.SettingOperationLogLimit, 1000)
-	requestLogMB := settingInt(st, store.SettingRequestLogMaxMB, 10)
+	operationLimit := settingIntFromStore(st, store.SettingOperationLogLimit, 1000)
+	requestLogMB := settingIntFromStore(st, store.SettingRequestLogMaxMB, 10)
 	opLog, err := logging.OpenOperationStore(filepath.Join(logDirAbs, "operation.db"), operationLimit)
 	if err != nil {
 		return fmt.Errorf("operation log: %w", err)
@@ -278,11 +266,9 @@ func run() error {
 	// 控制通道（§5）：hub 负责传输，dispatcher 负责命令生命周期与认证。
 	hub := ws.NewHub()
 	hub.Lifecycle = lifecycleManager
-	dispatcher := dispatch.New(st, hub)
-	dispatcher.OperationLog = opLog
-	dispatcher.RequestLog = reqLog
-	dispatcher.PanelLifecycle = lifecycleManager.Snapshot
-	hub.Auth = dispatcher
+	// runCtx 随关停取消：dispatcher 回执处理与 hub 连接回调统一从它派生（D9）。
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
 	hub.OnProtocolError = func(serverID int64, requestID, traceID, rpcType, message string) {
 		attributes := map[string]string{}
 		if serverID != 0 {
@@ -296,38 +282,6 @@ func run() error {
 	// 断连消音（§19）：offline 事件/告警与链降级重估延迟一个窗口执行，窗口内重连则取消。
 	debouncer := newOfflineDebouncer(offlineDebounceWindow)
 	defer debouncer.close()
-	hub.OnConnect = func(serverID int64) {
-		debouncer.cancel(serverID)
-		// agent 重连后重置并补发离线期间滞留的命令（§2）。
-		dispatcher.OnAgentConnect(context.Background(), serverID)
-		// 链 degraded 推导（§21.1）：重算受影响链，全部跳在线且跳 active 的恢复 active。
-		dispatcher.RecomputeChainsByServer(serverID)
-	}
-	hub.OnOnline = func(serverID int64) {
-		if err := st.RecordServerConnected(context.Background(), serverID, false); err != nil {
-			log.Printf("main: record server connected: %v", err)
-		}
-		sid := serverID
-		if err := opLog.Record(context.Background(), logging.OperationEvent{
-			Severity: logging.SeverityInfo, Category: logging.CategoryAgent, Action: "agent.online",
-			ServerID: &sid, Detail: "WS 连接建立，服务器在线",
-		}); err != nil {
-			log.Printf("main: record agent.online event: %v", err)
-		}
-	}
-	hub.OnReconnect = func(serverID int64) {
-		if err := st.RecordServerConnected(context.Background(), serverID, true); err != nil {
-			log.Printf("main: record server reconnected: %v", err)
-		}
-		sid := serverID
-		if err := opLog.Record(context.Background(), logging.OperationEvent{
-			Severity: logging.SeverityInfo, Category: logging.CategoryAgent, Action: "agent.reconnected",
-			ServerID: &sid, Detail: "新的 WS 连接替换原连接，服务器保持在线",
-		}); err != nil {
-			log.Printf("main: record agent.reconnected event: %v", err)
-		}
-	}
-	hub.OnMessage = dispatcher.HandleMessage
 	// 事件告警（§19）：offline 跃迁挂在 hub 注销路径；漂移/节点失败在 dispatcher 处理点。
 	notifier := alert.New(st)
 	notifierClosed := false
@@ -338,31 +292,9 @@ func run() error {
 			_ = notifier.Close(ctx)
 		}
 	}()
-	dispatcher.Alerter = notifier
-	hub.OnDisconnect = func(serverID int64) {
-		if err := st.RecordServerDisconnected(context.Background(), serverID, "connection closed"); err != nil {
-			log.Printf("main: record server disconnected: %v", err)
-		}
-		// 断连消音：窗口内重连成功（OnConnect 取消）则不产生 offline 事件/告警与链路抖动；
-		// 超时仍离线（且非 drain）才上报。
-		debouncer.schedule(serverID, func() {
-			if hub.IsOnline(serverID) || hub.IsDraining() {
-				return
-			}
-			notifier.Notify(serverID, alert.EventServerOffline, "", "WS 连接断开，服务器离线")
-			sid := serverID
-			if err := opLog.Record(context.Background(), logging.OperationEvent{
-				Severity: logging.SeverityWarning, Category: logging.CategoryAgent, Action: "agent.offline",
-				ServerID: &sid, Detail: "WS 连接断开，服务器离线",
-			}); err != nil {
-				log.Printf("main: record agent.offline event: %v", err)
-			}
-			// 链 degraded 推导（§21.1）：任一跳 server 离线 → degraded + chain_degraded 告警。
-			dispatcher.RecomputeChainsByServer(serverID)
-		})
-	}
 
-	// 面板管理 API（§10）。
+	// 面板管理 API（§10）：panel.New 内部构造 dispatcher，不可变配置与事件回调
+	// 经 dispatch.Options/Events 一次性注入（D2），不再后置写字段。
 	repo := githubRepo
 	if *ghRepo != "" {
 		repo = *ghRepo
@@ -370,9 +302,7 @@ func run() error {
 	restartCh := make(chan string, 1)
 	var restartMu sync.Mutex
 	restartRequested := false
-	runCtx, cancelRun := context.WithCancel(context.Background())
-	defer cancelRun()
-	ps, err := panel.New(st, dispatcher, hub, panel.Config{
+	ps, err := panel.New(st, hub, panel.Config{
 		AdminUser:        *adminUser,
 		AdminPass:        *adminPass,
 		PublicURL:        *publicURL,
@@ -400,6 +330,62 @@ func run() error {
 	})
 	if err != nil {
 		return fmt.Errorf("panel: %w", err)
+	}
+	dispatcher := ps.Dispatcher()
+	hub.Auth = dispatcher
+	hub.OnConnect = func(serverID int64) {
+		debouncer.cancel(serverID)
+		// agent 重连后重置并补发离线期间滞留的命令（§2）。
+		dispatcher.OnAgentConnect(runCtx, serverID)
+		// 链 degraded 推导（§21.1）：重算受影响链，全部跳在线且跳 active 的恢复 active。
+		dispatcher.RecomputeChainsByServer(serverID)
+	}
+	hub.OnOnline = func(serverID int64) {
+		if err := st.RecordServerConnected(runCtx, serverID, false); err != nil {
+			log.Printf("main: record server connected: %v", err)
+		}
+		sid := serverID
+		if err := opLog.Record(runCtx, logging.OperationEvent{
+			Severity: logging.SeverityInfo, Category: logging.CategoryAgent, Action: "agent.online",
+			ServerID: &sid, Detail: "WS 连接建立，服务器在线",
+		}); err != nil {
+			log.Printf("main: record agent.online event: %v", err)
+		}
+	}
+	hub.OnReconnect = func(serverID int64) {
+		if err := st.RecordServerConnected(runCtx, serverID, true); err != nil {
+			log.Printf("main: record server reconnected: %v", err)
+		}
+		sid := serverID
+		if err := opLog.Record(runCtx, logging.OperationEvent{
+			Severity: logging.SeverityInfo, Category: logging.CategoryAgent, Action: "agent.reconnected",
+			ServerID: &sid, Detail: "新的 WS 连接替换原连接，服务器保持在线",
+		}); err != nil {
+			log.Printf("main: record agent.reconnected event: %v", err)
+		}
+	}
+	hub.OnMessage = dispatcher.HandleMessage
+	hub.OnDisconnect = func(serverID int64) {
+		if err := st.RecordServerDisconnected(runCtx, serverID, "connection closed"); err != nil {
+			log.Printf("main: record server disconnected: %v", err)
+		}
+		// 断连消音：窗口内重连成功（OnConnect 取消）则不产生 offline 事件/告警与链路抖动；
+		// 超时仍离线（且非 drain）才上报。
+		debouncer.schedule(serverID, func() {
+			if hub.IsOnline(serverID) || hub.IsDraining() {
+				return
+			}
+			notifier.Notify(serverID, alert.EventServerOffline, "", "WS 连接断开，服务器离线")
+			sid := serverID
+			if err := opLog.Record(runCtx, logging.OperationEvent{
+				Severity: logging.SeverityWarning, Category: logging.CategoryAgent, Action: "agent.offline",
+				ServerID: &sid, Detail: "WS 连接断开，服务器离线",
+			}); err != nil {
+				log.Printf("main: record agent.offline event: %v", err)
+			}
+			// 链 degraded 推导（§21.1）：任一跳 server 离线 → degraded + chain_degraded 告警。
+			dispatcher.RecomputeChainsByServer(serverID)
+		})
 	}
 	hub.OnUpgrade = func(r *http.Request) {
 		logging.LogWebSocketUpgrade(reqLog, r, ps.Operator)
@@ -480,11 +466,14 @@ func run() error {
 	subSrv := sub.NewWithCacheDir(st, ps.PanelBase, spaHTML, clientCacheDir)
 	subSrv.SetObserver(ps.ObserverRegistry())
 	ps.SetSubscriptionService(subSrv)
-	// 外部订阅（第三方机场导入）：普通与跳过证书校验两套拉取客户端。
-	externalFiles := external.ExternalFileRequester{Doer: &http.Client{Timeout: 30 * time.Second}}
+	// 外部订阅（第三方机场导入）：普通与跳过证书校验两套拉取客户端，均带 SSRF 拨号防护。
+	externalFiles := external.ExternalFileRequester{Doer: external.NewExternalHTTPClient(30 * time.Second)}
 	skipVerifyFiles := external.ExternalFileRequester{Doer: &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		Timeout: 30 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			DialContext:     external.GuardedDialContext(nil),
+		},
 	}}
 	extSvc := extsub.New(st, externalFiles, skipVerifyFiles)
 	ps.SetExternalSubscriptionService(extSvc)
@@ -510,7 +499,8 @@ func run() error {
 	mux.Handle("/", spaHandler(frontendFS))
 
 	srv := newHTTPServer(*addr,
-		drainMiddleware(hub, logging.RequestMiddleware(reqLog, ps.Operator, ps.LogPolicy, ps.DebugRoute, ps.RequestLogLevel, mux)))
+		securityHeadersMiddleware(
+			drainMiddleware(hub, logging.RequestMiddleware(reqLog, ps.Operator, ps.LogPolicy, ps.DebugRoute, ps.RequestLogLevel, mux))))
 	var serve func() error
 	switch applied.Mode {
 	case panel.TLSModeACME:
@@ -646,6 +636,30 @@ func run() error {
 	return runErr
 }
 
+// resetAdminPassword 实现 -reset-admin：bcrypt 哈希写 settings（覆盖启动参数），
+// 并删除会话签名密钥（下次使用重新生成），使已签发会话在面板重启后失效。
+func resetAdminPassword(ctx context.Context, dbPath, newPassword string) error {
+	if len(newPassword) < 8 {
+		return errors.New("新密码至少 8 位")
+	}
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("store: %w", err)
+	}
+	defer st.Close()
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("bcrypt: %w", err)
+	}
+	if err := st.SetSetting(ctx, store.SettingAdminPassBcrypt, string(hash)); err != nil {
+		return fmt.Errorf("写入密码哈希: %w", err)
+	}
+	if err := st.DeleteSetting(ctx, store.SettingSessionSecret); err != nil {
+		return fmt.Errorf("轮换会话签名密钥: %w", err)
+	}
+	return nil
+}
+
 func newHTTPServer(addr string, handler http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              addr,
@@ -656,6 +670,18 @@ func newHTTPServer(addr string, handler http.Handler) *http.Server {
 		IdleTimeout:       httpIdleTimeout,
 		MaxHeaderBytes:    httpMaxHeaderBytes,
 	}
+}
+
+// securityHeadersMiddleware 为所有响应补充基础安全响应头（对 WebSocket 握手同样无害）。
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func drainMiddleware(hub *ws.Hub, next http.Handler) http.Handler {
@@ -709,7 +735,8 @@ func setFrontendCacheHeaders(w http.ResponseWriter, name string) {
 	w.Header().Set("Cache-Control", "no-cache")
 }
 
-func settingInt(st *store.Store, key string, fallback int) int {
+// settingIntFromStore 从 store 读取整型设置（与 panel 包内解析字符串的 settingInt 同名不同义，特此区分）。
+func settingIntFromStore(st *store.Store, key string, fallback int) int {
 	raw, err := st.GetSetting(context.Background(), key)
 	if err != nil || raw == "" {
 		return fallback

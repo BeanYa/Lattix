@@ -21,9 +21,7 @@ export default function LogsLayout({ children }: { children: ReactNode }) {
           <TabsTrigger value="operations">操作日志</TabsTrigger>
           <TabsTrigger value="requests">请求日志</TabsTrigger>
         </TabsList>
-        <TabsContent value={active}>
-          {children}
-        </TabsContent>
+        <TabsContent value={active}>{children}</TabsContent>
       </Tabs>
     </Page>
   )

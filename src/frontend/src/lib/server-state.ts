@@ -1,6 +1,8 @@
 import type { Server, ServerConnectionState } from './types'
 
-export function isServerOnline(server: Pick<Server, 'connection_state'> | null | undefined): boolean {
+export function isServerOnline(
+  server: Pick<Server, 'connection_state'> | null | undefined,
+): boolean {
   return server?.connection_state === 'online'
 }
 

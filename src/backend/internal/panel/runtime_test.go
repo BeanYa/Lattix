@@ -7,19 +7,21 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"lattix/backend/internal/panel/scheduler"
 )
 
 func TestHandlePanelRuntimeReturnsProcessAndTaskSnapshot(t *testing.T) {
-	scheduler := newTaskScheduler(func(context.Context) *time.Location { return time.UTC })
-	scheduler.register(scheduledTask{
-		name:    "runtime-test",
-		trigger: func(context.Context) taskTrigger { return intervalTrigger(time.Hour) },
-		run:     func(context.Context) error { return nil },
+	sched := scheduler.NewTaskScheduler(func(context.Context) *time.Location { return time.UTC })
+	sched.Register(scheduler.ScheduledTask{
+		Name:    "runtime-test",
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(time.Hour) },
+		Run:     func(context.Context) error { return nil },
 	})
 	server := &Server{
 		cfg:       Config{Version: "v-test"},
 		startedAt: time.Now().Add(-2 * time.Minute),
-		scheduler: scheduler,
+		scheduler: sched,
 	}
 	recorder := httptest.NewRecorder()
 	server.handlePanelRuntime(recorder, httptest.NewRequest(http.MethodGet, "/api/panel/runtime", nil))

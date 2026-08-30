@@ -9,13 +9,50 @@ import (
 	"sync"
 	"time"
 
+	"lattix/agent/internal/fileutil"
 	"lattix/shared"
 )
+
+// commandState is the persisted queue entry state (queuedAgentCommand.State). The
+// queue is stored as JSON, so the string values are part of the on-disk format and
+// must not change. Transition table:
+//
+//	queued  → running (picked up by the executor loop)
+//	running → (removed after execution; a crash resets it to queued on load)
+type commandState string
+
+const (
+	commandStateQueued  commandState = "queued"
+	commandStateRunning commandState = "running"
+)
+
+var commandTransitions = map[commandState]map[commandState]bool{
+	commandStateQueued: {
+		commandStateRunning: true,
+	},
+	commandStateRunning: {},
+}
+
+// Valid reports whether s is a known command state.
+func (s commandState) Valid() bool {
+	_, ok := commandTransitions[s]
+	return ok
+}
+
+// validCommandTransition reports whether the from → to command transition is
+// legal (same-state is idempotent).
+func validCommandTransition(from, to commandState) bool {
+	if from == to {
+		return true
+	}
+	targets, ok := commandTransitions[from]
+	return ok && targets[to]
+}
 
 type queuedAgentCommand struct {
 	Envelope  shared.Envelope `json:"envelope"`
 	Priority  int             `json:"priority"`
-	State     string          `json:"state"` // queued|running
+	State     commandState    `json:"state"` // queued|running
 	CreatedAt time.Time       `json:"created_at"`
 }
 
@@ -77,7 +114,7 @@ func (q *persistentCommandQueue) Submit(envelope shared.Envelope) error {
 		}
 	}
 	q.commands = append(q.commands, queuedAgentCommand{
-		Envelope: envelope, Priority: commandPriority(envelope.Type), State: "queued", CreatedAt: time.Now().UTC(),
+		Envelope: envelope, Priority: commandPriority(envelope.Type), State: commandStateQueued, CreatedAt: time.Now().UTC(),
 	})
 	if err := q.saveLocked(); err != nil {
 		q.commands = q.commands[:len(q.commands)-1]
@@ -114,7 +151,12 @@ func (q *persistentCommandQueue) loop() {
 				q.mu.Unlock()
 				break
 			}
-			q.commands[index].State = "running"
+			from := q.commands[index].State
+			if !validCommandTransition(from, commandStateRunning) {
+				q.mu.Unlock()
+				panic(fmt.Sprintf("invalid command queue transition %q → %q", from, commandStateRunning))
+			}
+			q.commands[index].State = commandStateRunning
 			_ = q.saveLocked()
 			command := q.commands[index]
 			execute := q.execute
@@ -141,7 +183,7 @@ func (q *persistentCommandQueue) loop() {
 func (q *persistentCommandQueue) nextLocked() int {
 	best := -1
 	for index := range q.commands {
-		if q.commands[index].State == "running" {
+		if q.commands[index].State == commandStateRunning {
 			return index
 		}
 		if best < 0 || q.commands[index].Priority > q.commands[best].Priority ||
@@ -177,7 +219,10 @@ func (q *persistentCommandQueue) load() error {
 			return errors.New("duplicate request in command queue")
 		}
 		seen[command.Envelope.RequestID] = struct{}{}
-		command.State = "queued"
+		if !command.State.Valid() {
+			return fmt.Errorf("invalid queued command state %q", command.State)
+		}
+		command.State = commandStateQueued
 		command.Priority = commandPriority(command.Envelope.Type)
 	}
 	q.commands = journal.Commands
@@ -197,15 +242,7 @@ func (q *persistentCommandQueue) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	tempPath := q.path + ".tmp"
-	if err := os.WriteFile(tempPath, raw, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tempPath, q.path); err != nil {
-		_ = os.Remove(tempPath)
-		return err
-	}
-	return nil
+	return fileutil.WriteFileAtomic(q.path, raw, 0o600)
 }
 
 func (q *persistentCommandQueue) signal() {

@@ -248,8 +248,8 @@ func statsTestServer(t *testing.T) (*Server, *store.Store) {
 func seedBillingServers(t *testing.T, st *store.Store) (usdID, disabledID, cnyID int64) {
 	t.Helper()
 	ctx := context.Background()
-	usdID, err := st.CreateServerWithPlans(ctx, "US-LA-Direct", "", "token-usd", store.MachineTypeDirect,
-		"", "", "US", "Los Angeles", &store.ServerBilling{
+	usdID, err := st.CreateServerWithPlans(ctx, store.ServerDraft{Alias: "US-LA-Direct", BootstrapToken: "token-usd", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Los Angeles"},
+		&store.ServerBilling{
 			Enabled: true, ProviderID: 1, AmountMinor: 1200, Currency: "USD",
 			ServiceStartedOn: "2026-01-15", IntervalCount: 1, IntervalUnit: "month",
 			NextRenewalOn: "2026-04-15", Status: store.BillingActive,
@@ -257,8 +257,8 @@ func seedBillingServers(t *testing.T, st *store.Store) (usdID, disabledID, cnyID
 	if err != nil {
 		t.Fatal(err)
 	}
-	disabledID, err = st.CreateServerWithPlans(ctx, "US-NY-Old", "", "token-old", store.MachineTypeDirect,
-		"", "", "US", "New York", &store.ServerBilling{
+	disabledID, err = st.CreateServerWithPlans(ctx, store.ServerDraft{Alias: "US-NY-Old", BootstrapToken: "token-old", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "New York"},
+		&store.ServerBilling{
 			Enabled: false, ProviderID: 1, AmountMinor: 500, Currency: "USD",
 			ServiceStartedOn: "2025-01-01", IntervalCount: 1, IntervalUnit: "month",
 			NextRenewalOn: "2026-01-01", Status: store.BillingDisabled,
@@ -266,8 +266,8 @@ func seedBillingServers(t *testing.T, st *store.Store) (usdID, disabledID, cnyID
 	if err != nil {
 		t.Fatal(err)
 	}
-	cnyID, err = st.CreateServerWithPlans(ctx, "CN-BJ-Yearly", "", "token-cny", store.MachineTypeDirect,
-		"", "", "CN", "Beijing", &store.ServerBilling{
+	cnyID, err = st.CreateServerWithPlans(ctx, store.ServerDraft{Alias: "CN-BJ-Yearly", BootstrapToken: "token-cny", MachineType: store.MachineTypeDirect, CountryCode: "CN", Location: "Beijing"},
+		&store.ServerBilling{
 			Enabled: true, ProviderID: 1, AmountMinor: 6000, Currency: "CNY",
 			ServiceStartedOn: "2025-01-01", IntervalCount: 1, IntervalUnit: "year",
 			NextRenewalOn: "2026-12-31", Status: store.BillingActive,
@@ -535,8 +535,8 @@ func getEstimatedBillingStats(t *testing.T, s *Server, query string) (*estimated
 
 func seedExpiredBillingServer(t *testing.T, st *store.Store) int64 {
 	t.Helper()
-	id, err := st.CreateServerWithPlans(context.Background(), "HK-Expired", "", "token-exp", store.MachineTypeDirect,
-		"", "", "HK", "Hong Kong", &store.ServerBilling{
+	id, err := st.CreateServerWithPlans(context.Background(), store.ServerDraft{Alias: "HK-Expired", BootstrapToken: "token-exp", MachineType: store.MachineTypeDirect, CountryCode: "HK", Location: "Hong Kong"},
+		&store.ServerBilling{
 			Enabled: true, ProviderID: 1, AmountMinor: 300, Currency: "CNY",
 			ServiceStartedOn: "2025-06-01", IntervalCount: 1, IntervalUnit: "month",
 			NextRenewalOn: "2026-02-01", Status: store.BillingExpired,
@@ -670,8 +670,8 @@ func TestEstimatedBillingStatsHandlerCustomRange(t *testing.T) {
 	s, st := statsTestServer(t)
 	ctx := context.Background()
 	// 年付 ¥300/年：估算公式 = 300×2 + (300/12)×4 + ((300/12)/30)×5 = 704.17。
-	yearID, err := st.CreateServerWithPlans(ctx, "YR-300", "", "token-yr300", store.MachineTypeDirect,
-		"", "", "NL", "Amsterdam", &store.ServerBilling{
+	yearID, err := st.CreateServerWithPlans(ctx, store.ServerDraft{Alias: "YR-300", BootstrapToken: "token-yr300", MachineType: store.MachineTypeDirect, CountryCode: "NL", Location: "Amsterdam"},
+		&store.ServerBilling{
 			Enabled: true, ProviderID: 1, AmountMinor: 30000, Currency: "CNY",
 			ServiceStartedOn: "2023-01-01", IntervalCount: 1, IntervalUnit: "year",
 			NextRenewalOn: "2030-01-01", Status: store.BillingActive,
@@ -680,12 +680,8 @@ func TestEstimatedBillingStatsHandlerCustomRange(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 季付 ¥100/季（3 个月）：年成本 = 100×4、月成本 = 100/3、日成本 = (100/3)/30。
-	quarterID, err := st.CreateServerWithPlans(ctx, "QR-100", "", "token-qr100", store.MachineTypeDirect,
-		"", "", "US", "Los Angeles", &store.ServerBilling{
-			Enabled: true, ProviderID: 1, AmountMinor: 10000, Currency: "CNY",
-			ServiceStartedOn: "2023-01-01", IntervalCount: 3, IntervalUnit: "month",
-			NextRenewalOn: "2030-01-01", Status: store.BillingActive,
-		}, store.ServerTrafficPlan{AccountingMode: "outbound", ResetAnchorOn: "2023-01-01", ResetCount: 1, ResetUnit: "month", TrackingStartedOn: "2023-01-01"})
+	quarterID, err := st.CreateServerWithPlans(ctx, store.ServerDraft{Alias: "QR-100", BootstrapToken: "token-qr100", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Los Angeles"}, &store.ServerBilling{
+			Enabled: true, ProviderID: 1, AmountMinor: 10000, Currency: "CNY", ServiceStartedOn: "2023-01-01", IntervalCount: 3, IntervalUnit: "month", NextRenewalOn: "2030-01-01", Status: store.BillingActive, }, store.ServerTrafficPlan{AccountingMode: "outbound", ResetAnchorOn: "2023-01-01", ResetCount: 1, ResetUnit: "month", TrackingStartedOn: "2023-01-01"})
 	if err != nil {
 		t.Fatal(err)
 	}

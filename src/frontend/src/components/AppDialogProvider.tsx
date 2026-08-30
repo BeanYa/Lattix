@@ -1,9 +1,4 @@
-import {
-  useCallback,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -14,15 +9,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  AppDialogContext,
-  type ConfirmOptions,
-  type NoticeOptions,
-} from '@/lib/app-dialog'
+import { AppDialogContext, type ConfirmOptions, type NoticeOptions } from '@/lib/app-dialog'
 
-type ActiveDialog =
-  | ({ type: 'confirm' } & ConfirmOptions)
-  | ({ type: 'notice' } & NoticeOptions)
+type ActiveDialog = ({ type: 'confirm' } & ConfirmOptions) | ({ type: 'notice' } & NoticeOptions)
 
 export function AppDialogProvider({ children }: { children: ReactNode }) {
   const [activeDialog, setActiveDialog] = useState<ActiveDialog | null>(null)
@@ -74,7 +63,11 @@ export function AppDialogProvider({ children }: { children: ReactNode }) {
             )}
             <Button
               autoFocus
-              variant={activeDialog?.type === 'confirm' && activeDialog.destructive ? 'destructive' : 'default'}
+              variant={
+                activeDialog?.type === 'confirm' && activeDialog.destructive
+                  ? 'destructive'
+                  : 'default'
+              }
               onClick={() => settle(true)}
             >
               {activeDialog?.type === 'confirm'

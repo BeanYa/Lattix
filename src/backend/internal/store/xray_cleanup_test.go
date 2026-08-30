@@ -18,11 +18,11 @@ func TestExpectedXrayState(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	serverA, err := st.CreateServer(ctx, "entry", "", "token-a", MachineTypeDirect, "", "", "", "")
+	serverA, err := st.CreateServer(ctx, ServerDraft{Alias: "entry", BootstrapToken: "token-a", MachineType: MachineTypeDirect})
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverB, err := st.CreateServer(ctx, "exit", "", "token-b", MachineTypeDirect, "", "", "", "")
+	serverB, err := st.CreateServer(ctx, ServerDraft{Alias: "exit", BootstrapToken: "token-b", MachineType: MachineTypeDirect})
 	if err != nil {
 		t.Fatal(err)
 	}

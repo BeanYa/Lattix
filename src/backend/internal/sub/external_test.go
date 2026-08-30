@@ -28,7 +28,7 @@ func newExternalFixture(t *testing.T) (*store.Store, *Server, *store.User) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.SetUserSubSettings(ctx, userID, 500, 0, "", "", "", ""); err != nil {
+	if err := st.SetUserSubSettings(ctx, userID, store.UserSubSettings{TrafficLimit: 500}); err != nil {
 		t.Fatal(err)
 	}
 	subID, err := st.CreateExternalSubscription(ctx, store.ExternalSubscription{

@@ -26,7 +26,13 @@ export function CopyButton({
   }
 
   return (
-    <Button type="button" variant="outline" size={size} className={cn('bg-card', className)} onClick={copy}>
+    <Button
+      type="button"
+      variant="outline"
+      size={size}
+      className={cn('bg-card', className)}
+      onClick={copy}
+    >
       {copied ? <CheckIcon /> : <CopyIcon />}
       {copied ? '已复制' : '复制'}
     </Button>

@@ -31,17 +31,16 @@
   --db-orange-bright: #ff9500;
   --db-indigo: #5856d6;
   --db-purple: #af52de;
-  --db-shadow-card:
-    0 0.5px 1.5px rgba(0, 0, 0, 0.04),
-    0 12px 32px -12px rgba(0, 0, 0, 0.10);
+  --db-shadow-card: 0 0.5px 1.5px rgba(0, 0, 0, 0.04), 0 12px 32px -12px rgba(0, 0, 0, 0.1);
   --db-ease: cubic-bezier(0.22, 1, 0.36, 1);
 
   display: grid;
   gap: 20px;
   align-content: start;
   background: var(--db-bg);
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro SC', 'SF Pro Text',
-    'PingFang SC', 'Helvetica Neue', 'Microsoft YaHei', sans-serif;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'SF Pro SC', 'SF Pro Text', 'PingFang SC', 'Helvetica Neue',
+    'Microsoft YaHei', sans-serif;
   color: var(--db-label);
   animation: db-in 380ms var(--db-ease) both;
 }
@@ -49,8 +48,8 @@
 .dark .db {
   --db-bg: #000000;
   --db-card: #1c1c1e;
-  --db-fill: rgba(120, 120, 128, 0.20);
-  --db-fill-strong: rgba(120, 120, 128, 0.30);
+  --db-fill: rgba(120, 120, 128, 0.2);
+  --db-fill-strong: rgba(120, 120, 128, 0.3);
   --db-separator: rgba(235, 235, 245, 0.12);
   --db-label: #f5f5f7;
   --db-label-2: rgba(235, 235, 245, 0.64);
@@ -65,9 +64,7 @@
   --db-orange-bright: #ff9f0a;
   --db-indigo: #5e5ce6;
   --db-purple: #bf5af2;
-  --db-shadow-card:
-    0 0.5px 1.5px rgba(0, 0, 0, 0.35),
-    0 14px 36px -14px rgba(0, 0, 0, 0.55);
+  --db-shadow-card: 0 0.5px 1.5px rgba(0, 0, 0, 0.35), 0 14px 36px -14px rgba(0, 0, 0, 0.55);
 }
 
 @keyframes db-in {
@@ -176,7 +173,9 @@
   background: var(--db-fill);
   color: var(--db-label);
   cursor: pointer;
-  transition: background-color 160ms ease, transform 160ms var(--db-ease);
+  transition:
+    background-color 160ms ease,
+    transform 160ms var(--db-ease);
 }
 
 .db-icon-button:hover {
@@ -225,10 +224,18 @@
   color: #fff;
 }
 
-.db-metric-icon.is-blue   { background: linear-gradient(180deg, #3b9bff, var(--db-system-blue)); }
-.db-metric-icon.is-indigo { background: linear-gradient(180deg, #7d7aff, var(--db-indigo)); }
-.db-metric-icon.is-purple { background: linear-gradient(180deg, #d478f5, var(--db-purple)); }
-.db-metric-icon.is-orange { background: linear-gradient(180deg, #ffab2e, var(--db-orange-bright)); }
+.db-metric-icon.is-blue {
+  background: linear-gradient(180deg, #3b9bff, var(--db-system-blue));
+}
+.db-metric-icon.is-indigo {
+  background: linear-gradient(180deg, #7d7aff, var(--db-indigo));
+}
+.db-metric-icon.is-purple {
+  background: linear-gradient(180deg, #d478f5, var(--db-purple));
+}
+.db-metric-icon.is-orange {
+  background: linear-gradient(180deg, #ffab2e, var(--db-orange-bright));
+}
 
 .db-metric-value {
   font-size: 28px;
@@ -368,9 +375,15 @@
   border-radius: 50%;
 }
 
-.db-node-dot.is-online  { background: var(--db-green-bright); }
-.db-node-dot.is-warning { background: var(--db-orange-bright); }
-.db-node-dot.is-offline { background: var(--db-red-bright); }
+.db-node-dot.is-online {
+  background: var(--db-green-bright);
+}
+.db-node-dot.is-warning {
+  background: var(--db-orange-bright);
+}
+.db-node-dot.is-offline {
+  background: var(--db-red-bright);
+}
 
 .db-node-copy {
   flex: 1;
@@ -402,9 +415,15 @@
   white-space: nowrap;
 }
 
-.db-node-status.is-online  { color: var(--db-green); }
-.db-node-status.is-warning { color: var(--db-orange); }
-.db-node-status.is-offline { color: var(--db-red); }
+.db-node-status.is-online {
+  color: var(--db-green);
+}
+.db-node-status.is-warning {
+  color: var(--db-orange);
+}
+.db-node-status.is-offline {
+  color: var(--db-red);
+}
 
 .db-node-chevron {
   flex-shrink: 0;
@@ -464,7 +483,7 @@
   padding: 0 13px;
   border: 0.5px solid rgba(255, 255, 255, 0.18);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.1);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   color: rgba(235, 235, 245, 0.85);
@@ -515,16 +534,30 @@
 .dashboard-globe-loading {
   min-height: 30rem;
   background:
-    radial-gradient(circle at center, rgba(10, 132, 255, 0.10), transparent 40%),
+    radial-gradient(circle at center, rgba(10, 132, 255, 0.1), transparent 40%),
     linear-gradient(100deg, #0d1420, #131c2c, #0d1420);
-  background-size: 100% 100%, 200% 100%;
+  background-size:
+    100% 100%,
+    200% 100%;
   animation: db-globe-shimmer 1.7s ease-in-out infinite;
 }
 
 @keyframes db-globe-shimmer {
-  0% { background-position: 0 0, 0% 0; }
-  50% { background-position: 0 0, 100% 0; }
-  100% { background-position: 0 0, 0% 0; }
+  0% {
+    background-position:
+      0 0,
+      0% 0;
+  }
+  50% {
+    background-position:
+      0 0,
+      100% 0;
+  }
+  100% {
+    background-position:
+      0 0,
+      0% 0;
+  }
 }
 
 /* 浮层信息：深色画布上的磨砂胶囊 */
@@ -539,8 +572,12 @@
   pointer-events: none;
 }
 
-.globe-telemetry { left: 12px; }
-.globe-legend { right: 12px; }
+.globe-telemetry {
+  left: 12px;
+}
+.globe-legend {
+  right: 12px;
+}
 
 .globe-telemetry span,
 .globe-legend span {
@@ -837,7 +874,9 @@
   font-size: 14px;
   font-weight: 500;
   text-decoration: none;
-  transition: transform 160ms var(--db-ease), opacity 160ms ease;
+  transition:
+    transform 160ms var(--db-ease),
+    opacity 160ms ease;
 }
 
 .db-button-primary:hover {
@@ -866,7 +905,9 @@
 }
 
 @keyframes db-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .db-loading-label {

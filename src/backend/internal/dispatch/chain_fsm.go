@@ -116,7 +116,7 @@ func validChainTransition(from, to string) bool {
 
 // chainFSM 是链路状态机，嵌入 Dispatcher 使用。所有链状态变更的唯一入口。
 type chainFSM struct {
-	d *Dispatcher // 反向引用，用于访问 st/req/Alerter 等基础设施
+	d *Dispatcher // 反向引用，用于访问 st/req/opts 等基础设施
 }
 
 // Transition 执行一次显式链状态转换：校验合法性 → 持久化 → 分派副作用。
@@ -232,8 +232,8 @@ func (f *chainFSM) degrade(ctx context.Context, chain *store.Chain, serverID int
 		Severity: logging.SeverityWarning, Category: logging.CategoryChain, Action: "chain.degraded",
 		Detail: map[string]any{"chain_id": chain.ID, "endpoint_id": chain.EndpointID, "reason": detail},
 	})
-	if serverID != 0 && f.d.Alerter != nil {
-		f.d.Alerter.Notify(serverID, alert.EventChainDegraded, fmt.Sprintf("chain_%d", chain.ID), detail)
+	if serverID != 0 && f.d.opts.Alerter != nil {
+		f.d.opts.Alerter.Notify(serverID, alert.EventChainDegraded, fmt.Sprintf("chain_%d", chain.ID), detail)
 	}
 }
 

@@ -79,11 +79,12 @@ function loadCityIndex(): Promise<Map<string, GeographyCity[]>> {
 function loadCountryRecords(): Promise<GeographyCountry[]> {
   if (countriesPromise) return countriesPromise
 
-  countriesPromise = fetchGeographyAsset<GeographyCountry[]>(countryDataUrl)
-    .catch((error: unknown) => {
+  countriesPromise = fetchGeographyAsset<GeographyCountry[]>(countryDataUrl).catch(
+    (error: unknown) => {
       countriesPromise = null
       throw error
-    })
+    },
+  )
   return countriesPromise
 }
 
@@ -119,10 +120,7 @@ export async function loadCities(countryCode: string): Promise<string[]> {
 }
 
 export async function loadGeographyCoordinates(): Promise<GeographyCoordinates> {
-  const [citiesByCountry, countries] = await Promise.all([
-    loadCityIndex(),
-    loadCountryRecords(),
-  ])
+  const [citiesByCountry, countries] = await Promise.all([loadCityIndex(), loadCountryRecords()])
   return {
     citiesByCountry,
     countriesByCode: new Map(countries.map((country) => [country.isoCode, country])),

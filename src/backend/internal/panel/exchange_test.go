@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"testing"
 
+	"lattix/backend/internal/panel/exchange"
 	"lattix/backend/internal/store"
 )
 
@@ -25,7 +26,7 @@ func newExchangeTestServer(t *testing.T, reportingCurrency string, rates []store
 	return &Server{st: st}
 }
 
-// multiBaseRates 从 EUR 基准汇率表生成所有 pivotBases 的一致汇率数据。
+// multiBaseRates 从 EUR 基准汇率表生成所有 exchange.PivotBases 的一致汇率数据。
 func multiBaseRates(eurValues map[string]string) []store.ExchangeRate {
 	var out []store.ExchangeRate
 	eurRats := map[string]*big.Rat{}
@@ -34,7 +35,7 @@ func multiBaseRates(eurValues map[string]string) []store.ExchangeRate {
 		eurRats[c] = r
 		out = append(out, store.ExchangeRate{BaseCurrency: "EUR", QuoteCurrency: c, Rate: v, RateDate: "2026-07-29", Source: "frankfurter", FetchedAt: "2026-07-29T02:30:00Z"})
 	}
-	for _, base := range pivotBases[1:] {
+	for _, base := range exchange.PivotBases[1:] {
 		baseR, ok := eurRats[base]
 		if !ok || baseR.Sign() == 0 {
 			continue
