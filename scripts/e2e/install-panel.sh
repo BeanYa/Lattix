@@ -144,7 +144,7 @@ if latx reset-admin short 2>"$WORK/short.log"; then
 fi
 grep -q "至少 8 位" "$WORK/short.log" \
     && echo "OK: 短密码被拒绝（≥8 位）" || { echo "FAIL: 短密码报错不符"; cat "$WORK/short.log"; exit 1; }
-latx reset-admin newpass456 | grep -q "所有会话已失效" \
+latx reset-admin newpass456 | grep -q "所有会话失效" \
     && echo "OK: reset-admin 成功且提示会话失效" || { echo "FAIL: reset-admin"; exit 1; }
 [[ "$(rpc_code POST /api/auth/login '{"username":"admin","password":"newpass456"}')" == "OK" ]] \
     && echo "OK: 新密码可登录" || { echo "FAIL: 新密码登录"; exit 1; }

@@ -145,7 +145,10 @@ jobs:
           - script: settings.sh
           - script: usernodes.sh
           - script: links.sh
+          # alerts.sh 的 webhook 夹具起在 loopback，注入 SSRF 测试钩子放行私网拨号
+          # （LATX_ALLOW_PRIVATE_OUTBOUND=1，仅本条目生效；生产环境严禁设置）。
           - script: alerts.sh
+            allow_private_outbound: "1"
           - script: event-log.sh
           - script: reconcile.sh
           - script: upgrade.sh

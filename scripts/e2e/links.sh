@@ -127,7 +127,11 @@ wait_sub_vless() {
 echo ">> start backend（有效期 sweeper 周期 1s，保证停权确定性）"
 LATTIX_EXPIRY_SWEEP_INTERVAL=1s "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" >"$WORK/backend.log" 2>&1 &
 BPID=$!
-for _ in $(seq 1 30); do curl -fsS "http://$ADDR/readyz" >/dev/null 2>&1 && break; sleep 0.2; done
+ok=0
+for _ in $(seq 1 75); do curl -fsS "http://$ADDR/readyz" >/dev/null 2>&1 && { ok=1; break; }; sleep 0.2; done
+# 后端 15s 未就绪即硬失败并转储日志（慢 CI 上原 6s 静默放行会让后续用例以
+# 连接拒绝的形式连环报错，难以定位）。
+[[ "$ok" == "1" ]] || { echo "FAIL: 后端就绪超时"; cat "$WORK/backend.log"; exit 1; }
 
 echo ">> 登录（签发会话 + CSRF 令牌）"
 LOGIN="$(rpc_data POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')"
