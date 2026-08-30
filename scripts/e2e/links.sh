@@ -23,6 +23,8 @@ HAS_VLESSENC=true
 "$XRAY_BIN" vlessenc >/dev/null 2>&1 || HAS_VLESSENC=false
 
 ADDR="127.0.0.1:18108"
+# release 构建拒绝默认管理员密码启动（dev 构建豁免），e2e 一律显式指定。
+ADMIN_PASS="links-e2e-pass"
 API="127.0.0.1:14208"
 XRAY_CONFIG="$WORK/xray-config.json"
 JAR="$WORK/cookies.txt"
@@ -125,7 +127,7 @@ wait_sub_vless() {
 }
 
 echo ">> start backend（有效期 sweeper 周期 1s，保证停权确定性）"
-LATTIX_EXPIRY_SWEEP_INTERVAL=1s "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" >"$WORK/backend.log" 2>&1 &
+LATTIX_EXPIRY_SWEEP_INTERVAL=1s "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" -admin-pass "$ADMIN_PASS" >"$WORK/backend.log" 2>&1 &
 BPID=$!
 ok=0
 for _ in $(seq 1 75); do curl -fsS "http://$ADDR/readyz" >/dev/null 2>&1 && { ok=1; break; }; sleep 0.2; done
@@ -134,7 +136,7 @@ for _ in $(seq 1 75); do curl -fsS "http://$ADDR/readyz" >/dev/null 2>&1 && { ok
 [[ "$ok" == "1" ]] || { echo "FAIL: 后端就绪超时"; cat "$WORK/backend.log"; exit 1; }
 
 echo ">> 登录（签发会话 + CSRF 令牌）"
-LOGIN="$(rpc_data POST /api/auth/login '{"username":"admin","password":"lattix-admin"}')"
+LOGIN="$(rpc_data POST /api/auth/login '{"username":"admin","password":"'"$ADMIN_PASS"'"}')"
 CSRF="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["csrf_token"])' "$LOGIN")"
 [[ -n "$CSRF" ]] && echo "OK: 登录成功" || { echo "FAIL: 未取到 CSRF 令牌"; exit 1; }
 
