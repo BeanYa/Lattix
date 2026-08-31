@@ -42,6 +42,7 @@ import { animateRackFeedback, hopFeedbackDelay, nextChainIndex } from './motion'
 import { RollingReadout } from './RollingReadout'
 import { filterChains } from './chain-tools'
 import { RouteNavigator } from './RouteNavigator'
+import { HopServerDetails } from './HopServerDetails'
 import './dashboard.css'
 
 interface RouteHopView {
@@ -53,6 +54,8 @@ interface RouteHopView {
   statusLabel: string
   tone: RouteTone
   serverId: number
+  server?: Server
+  address: string
 }
 
 interface ChainView {
@@ -165,6 +168,8 @@ function buildDemoChains(servers: Server[]): ChainView[] {
         statusLabel: isFault ? '重连中' : '正常',
         tone: isFault ? 'degraded' : 'active',
         serverId: server.id,
+        server,
+        address: server.address,
       }
     }),
   }))
@@ -193,10 +198,12 @@ function buildChainViews(chains: Chain[], servers: Server[]): ChainView[] {
             role,
             label: match?.server.alias || hop.server_alias,
             code: match ? channelCode(match.server, match.index) : `NODE-${hop.server_id}`,
-            location: match?.server.location || hop.address || '位置待补充',
+            location: match?.server.location || match?.server.country_code || '位置待补充',
             statusLabel: NODE_STATUS_LABEL[hop.status],
             tone: nodeTone(hop.status),
             serverId: hop.server_id,
+            server: match?.server,
+            address: hop.address,
           }
         }),
       }
@@ -571,12 +578,11 @@ function RouteFocus({ chain, motionPaused }: { chain: ChainView; motionPaused: b
                 </span>
                 <span className="pb-hop-copy">
                   <strong title={hop.label}>{hop.label}</strong>
-                  <small>{hop.code}</small>
+                  <small>
+                    {hop.code} · <span className="pb-hop-status">节点{hop.statusLabel}</span>
+                  </small>
                 </span>
-                <span className="pb-hop-meta">
-                  <span className="pb-hop-status">{hop.statusLabel}</span>
-                  <small title={hop.location}>{hop.location}</small>
-                </span>
+                <HopServerDetails server={hop.server} fallbackAddress={hop.address} />
                 <span className="pb-hop-jacks" aria-hidden="true">
                   {index > 0 ? (
                     <span className="pb-hop-jack is-in">
