@@ -1,0 +1,8 @@
+{
+  "useCase": "ui-mockup",
+  "assetType": "full desktop web dashboard redesign concept, 1536x1024 landscape",
+  "prompt": "Redesign the complete Lattix infrastructure operations dashboard in the established Signal Rack visual system. Compositional option B, Split Bay: below a concise page/status strip, use an asymmetrical two-column operating surface. The left two-thirds is an enamel selected-route inspection bay with a compact vertical six-server index embedded on its edge. The right third stacks health totals, exactly two actionable anomalies, and selected-server runtime instruments. Preserve the dark 190px LATTIX navigation and real Chinese product information. Keep the established brushed aluminum, charcoal enamel, signal blue, green, and rare safety orange material system. Build a full 1536x1024 desktop admin screen with semantic-code-friendly controls. Avoid the incumbent oversized empty center, mirrored source/destination card stacks, route mesh, equal metric cards, generic bento, nested cards, glass, gradients, glow, invented features, marketing copy, browser chrome, and watermark.",
+  "reference": "lattix-route-focus-desktop.png",
+  "seed": "44f01ce4",
+  "approved": false
+}

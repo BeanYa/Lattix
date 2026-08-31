@@ -1,0 +1,98 @@
+[data-theme="patchbay"] .page-shell {
+  gap: 14px;
+}
+
+[data-theme="patchbay"] .page-header {
+  min-height: 66px;
+  padding: 12px 14px;
+  border: 1px solid var(--pb-rule);
+  border-radius: 7px;
+  background-color: var(--pb-aluminum);
+  background-image: var(--pb-texture);
+  box-shadow: var(--pb-engrave);
+}
+
+[data-theme="patchbay"] .page-title {
+  color: var(--foreground);
+  font-size: clamp(1.65rem, 2vw, 2.15rem);
+  font-weight: 740;
+  letter-spacing: -.015em;
+}
+
+[data-theme="patchbay"] .page-description {
+  max-width: 70ch;
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+[data-theme="patchbay"] .surface-frame,
+[data-theme="patchbay"] .notice,
+[data-theme="patchbay"] .empty-state,
+[data-theme="patchbay"] .loading-state,
+[data-theme="patchbay"] .game-panel {
+  border: 1px solid var(--pb-rule);
+  border-radius: 7px;
+  background-color: var(--card);
+  background-image: var(--pb-texture);
+  box-shadow: var(--pb-engrave);
+}
+
+[data-theme="patchbay"] .notice {
+  position: relative;
+  overflow: hidden;
+}
+
+[data-theme="patchbay"] .notice::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  flex: 0 0 auto;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+[data-theme="patchbay"] .notice[data-tone="danger"] {
+  color: var(--destructive);
+}
+
+[data-theme="patchbay"] .notice[data-tone="success"] {
+  color: var(--success);
+}
+
+[data-theme="patchbay"] .notice[data-tone="info"] {
+  color: var(--info);
+}
+
+[data-theme="patchbay"] [data-slot="tabs-list"] {
+  border: 1px solid var(--pb-rule);
+  border-radius: 5px;
+  background: var(--secondary);
+  box-shadow: var(--pb-engrave);
+}
+
+[data-theme="patchbay"] [data-slot="tabs-trigger"] {
+  border-radius: 3px;
+  font-size: 13px;
+  letter-spacing: .025em;
+}
+
+[data-theme="patchbay"] [data-slot="tabs-trigger"][data-state="active"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+[data-theme="patchbay"] .status-badge {
+  border-radius: 4px;
+  font-family: "Barlow Condensed", "PingFang SC", sans-serif;
+  font-weight: 650;
+}
+
+[data-theme="patchbay"] .empty-state-icon {
+  border: 1px solid var(--pb-rule);
+  border-radius: 6px;
+  background: var(--secondary);
+  box-shadow: var(--pb-engrave);
+}

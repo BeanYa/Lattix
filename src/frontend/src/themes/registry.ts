@@ -2,6 +2,7 @@ import type { ThemeDefinition } from '@/themes/types'
 import { THEME_ID_PATTERN } from '@/themes/types'
 import { hig } from '@/themes/hig'
 import { cream } from '@/themes/cream'
+import { patchbay } from '@/themes/patchbay'
 
 /**
  * 已安装主题的注册表，切换菜单与主题分发均由此驱动。
@@ -17,7 +18,7 @@ import { cream } from '@/themes/cream'
  */
 export const DEFAULT_DESIGN = 'hig'
 
-export const DESIGN_THEMES: ThemeDefinition[] = [hig, cream]
+export const DESIGN_THEMES: ThemeDefinition[] = [hig, cream, patchbay]
 
 export function findDesign(id: string | undefined | null): ThemeDefinition | undefined {
   return DESIGN_THEMES.find((theme) => theme.id === id)

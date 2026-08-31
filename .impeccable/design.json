@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-29T18:43:39+08:00",
+  "title": "Design System: Lattix Signal Rack",
+  "extensions": {
+    "colorMeta": {
+      "signal-blue": {
+        "role": "primary",
+        "displayName": "Deep Signal Blue",
+        "canonical": "#315a70",
+        "tonalRamp": ["#07151c", "#102b39", "#1f4356", "#315a70", "#4e7890", "#7397a9", "#a7bbc4", "#e7eef0"]
+      },
+      "signal-blue-bright": {
+        "role": "primary",
+        "displayName": "Bright Trace Blue",
+        "canonical": "#4e91b4",
+        "tonalRamp": ["#071821", "#123246", "#25516d", "#3b7193", "#4e91b4", "#77aec8", "#a8cbd9", "#e8f1f4"]
+      },
+      "safety-orange": {
+        "role": "tertiary",
+        "displayName": "Safety Orange",
+        "canonical": "#f05a28",
+        "tonalRamp": ["#281006", "#54200d", "#843217", "#b9441e", "#f05a28", "#f4845c", "#f6b59c", "#fdece5"]
+      },
+      "signal-green": {
+        "role": "secondary",
+        "displayName": "Instrument Green",
+        "canonical": "#6f933d",
+        "tonalRamp": ["#111a08", "#273713", "#405723", "#58782f", "#6f933d", "#94af6b", "#bacb9b", "#edf2e3"]
+      },
+      "aluminum": {
+        "role": "neutral",
+        "displayName": "Brushed Aluminum",
+        "canonical": "#d8d8d0",
+        "tonalRamp": ["#252622", "#44453f", "#666760", "#898a82", "#adaea6", "#c9c9c2", "#e2e2dc", "#f5f5f1"]
+      },
+      "charcoal": {
+        "role": "neutral",
+        "displayName": "Rack Charcoal",
+        "canonical": "#1d2528",
+        "tonalRamp": ["#090d0e", "#111719", "#1d2528", "#354044", "#566164", "#828b8c", "#b6bcbb", "#eef0ed"]
+      },
+      "enamel": {
+        "role": "neutral",
+        "displayName": "Enamel Black",
+        "canonical": "#111719",
+        "tonalRamp": ["#050809", "#0b1011", "#111719", "#293033", "#4b5355", "#778082", "#adb3b3", "#ebeded"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Equipment Ink",
+        "canonical": "#1b2022",
+        "tonalRamp": ["#080b0c", "#111517", "#1b2022", "#353b3d", "#596062", "#858b8c", "#b9bdbc", "#f0f1ee"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Equipment Display", "purpose": "Page titles and major instrument headings." },
+      "title": { "displayName": "Module Title", "purpose": "Selected resources and module identities." },
+      "body": { "displayName": "Operational Body", "purpose": "Chinese explanations, forms, and long status copy." },
+      "label": { "displayName": "Engraved Label", "purpose": "Controls, state plates, table heads, and technical annotations." }
+    },
+    "shadows": [
+      { "name": "engraved-module", "value": "inset 0 1px 0 rgba(255,255,255,.74), inset 0 -1px 0 rgba(0,0,0,.22)", "purpose": "Stamped edge for aluminum controls and modules." },
+      { "name": "recessed-field", "value": "inset 0 1px 4px rgba(0,0,0,.34)", "purpose": "Recesses routing matrices and terminal surfaces." },
+      { "name": "raised-overlay", "value": "0 1px 2px rgba(12,17,18,.24), 0 8px 20px rgba(12,17,18,.12)", "purpose": "Separates dialogs and menus from the workbench." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(.16,1,.3,1)", "purpose": "Fast, controlled state transitions." },
+      { "name": "active-signal-flow", "value": "one translated pulse over 2.4s linear infinite", "purpose": "Only an active selected route may show continuous flow." },
+      { "name": "meter-response", "value": "transform 480ms cubic-bezier(.16,1,.3,1)", "purpose": "GPU-friendly instrument meter updates." }
+    ],
+    "breakpoints": [
+      { "name": "mobile-rack", "value": "760px" },
+      { "name": "compact-shell", "value": "900px" },
+      { "name": "two-column-readouts", "value": "1120px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Control",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The immediate action in a compact operational control group.",
+      "html": "<button class=\"ds-btn-primary\">APPLY ROUTE</button>",
+      "css": ".ds-btn-primary{height:32px;padding:0 11px;border:1px solid #294d60;border-radius:5px;background:#315a70;color:#f7f7f2;font:650 12px/1.2 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.05em;box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 1px 2px rgba(10,16,18,.22);cursor:pointer;transition:background .18s,transform .18s}.ds-btn-primary:hover{background:#3a6b83}.ds-btn-primary:focus-visible{outline:2px solid #327aa2;outline-offset:2px}.ds-btn-primary:active{transform:translateY(1px);box-shadow:inset 0 2px 4px rgba(0,0,0,.28)}"
+    },
+    {
+      "name": "Secondary Control",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "An engraved aluminum action that does not compete with the primary control.",
+      "html": "<button class=\"ds-btn-secondary\">VIEW DETAILS</button>",
+      "css": ".ds-btn-secondary{height:32px;padding:0 10px;border:1px solid rgba(20,27,29,.42);border-radius:5px;background:#c7c7c0;color:#1b2022;font:650 12px/1.2 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.04em;box-shadow:inset 0 1px 0 rgba(255,255,255,.74),inset 0 -1px 0 rgba(0,0,0,.22);cursor:pointer}.ds-btn-secondary:hover{background:#d8d8d0}.ds-btn-secondary:focus-visible{outline:2px solid #327aa2;outline-offset:2px}.ds-btn-secondary:active{transform:translateY(1px);box-shadow:inset 0 2px 3px rgba(0,0,0,.24)}"
+    },
+    {
+      "name": "Operational Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "A recessed field for configuration and search.",
+      "html": "<label class=\"ds-field\"><span>SERVER ALIAS</span><input value=\"Tokyo Edge 01\" aria-label=\"Server alias\"></label>",
+      "css": ".ds-field{display:grid;gap:5px;color:#50585a;font:650 11px/1.2 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.05em}.ds-field input{padding:8px 10px;border:1px solid rgba(20,27,29,.42);border-radius:4px;background:#f0efe9;color:#1b2022;font:400 13px/1.5 'Segoe UI',sans-serif;box-shadow:inset 0 1px 2px rgba(0,0,0,.12)}.ds-field input:focus-visible{outline:2px solid #327aa2;outline-offset:2px}"
+    },
+    {
+      "name": "Equipment Module",
+      "kind": "card",
+      "refersTo": "module",
+      "description": "The canonical aluminum information surface.",
+      "html": "<article class=\"ds-module\"><span>SERVER</span><strong>06</strong><small>5 ONLINE</small></article>",
+      "css": ".ds-module{display:grid;grid-template-columns:auto 1fr;align-items:end;gap:3px 10px;padding:12px;border:1px solid rgba(20,27,29,.42);border-radius:7px;background:#d8d8d0;color:#1b2022;box-shadow:inset 0 1px 0 rgba(255,255,255,.74),inset 0 -1px 0 rgba(0,0,0,.22)}.ds-module span{grid-column:1/-1;color:#50585a;font:650 12px/1.2 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.05em}.ds-module strong{font:670 42px/.9 'Barlow Condensed','Arial Narrow',sans-serif}.ds-module small{color:#50585a;font:400 11px/1.2 'Segoe UI',sans-serif}"
+    },
+    {
+      "name": "Healthy Status Plate",
+      "kind": "chip",
+      "refersTo": "status-healthy",
+      "description": "A redundant lamp-and-label confirmation state.",
+      "html": "<span class=\"ds-status-healthy\"><i></i>ALL SYSTEMS STABLE</span>",
+      "css": ".ds-status-healthy{display:inline-flex;height:32px;align-items:center;gap:7px;padding:0 10px;border:1px solid rgba(111,147,61,.5);border-radius:4px;background:#f0efe9;color:#58782f;font:650 12px/1.2 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.04em;box-shadow:inset 0 1px 0 rgba(255,255,255,.74)}.ds-status-healthy i{width:8px;height:8px;border:1px solid #405723;border-radius:50%;background:#9bc356;box-shadow:0 0 0 2px rgba(111,147,61,.14)}"
+    },
+    {
+      "name": "Active Navigation Channel",
+      "kind": "nav",
+      "refersTo": "nav-active",
+      "description": "The selected destination within the charcoal equipment rail.",
+      "html": "<a class=\"ds-nav-active\" href=\"#\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z\"/></svg><span>仪表盘</span></a>",
+      "css": ".ds-nav-active{display:flex;width:168px;height:40px;align-items:center;gap:10px;padding:0 10px;border:1px solid #4e91b4;border-radius:4px;background:#263a43;color:#e9f6fa;box-shadow:inset 3px 0 0 #4e91b4;text-decoration:none;font:520 15px/1 'Barlow Condensed','PingFang SC',sans-serif}.ds-nav-active svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5}.ds-nav-active:hover{background:#2d4651}.ds-nav-active:focus-visible{outline:2px solid #78b2cf;outline-offset:2px}"
+    },
+    {
+      "name": "Chain-Driven Command Rail",
+      "kind": "custom",
+      "description": "The Dashboard workbench: selecting an existing chain drives its ordered topology and the runtime instruments for that chain's entry server.",
+      "html": "<section class=\"ds-command-rail\" aria-label=\"链路工作台\"><button class=\"ds-chain-selected\" type=\"button\" aria-pressed=\"true\"><small>已有链路</small><strong>所选链路</strong><span>状态</span></button><ol class=\"ds-topology\" aria-label=\"所选链路的有序拓扑\"><li><b>01</b><span>ENTRY</span></li><li aria-hidden=\"true\">→</li><li><b>…</b><span>ORDERED HOPS</span></li></ol><dl class=\"ds-runtime\"><div><dt>入口服务器</dt><dd>—</dd></div><div><dt>CPU</dt><dd>—</dd></div><div><dt>上行</dt><dd>—</dd></div></dl></section>",
+      "css": ".ds-command-rail{display:grid;grid-template-columns:190px minmax(0,1fr);overflow:hidden;border:1px solid rgba(222,232,232,.2);border-radius:7px;background:#111719;color:#f7f7f2;box-shadow:inset 0 3px 9px rgba(0,0,0,.48);font-family:'Segoe UI','PingFang SC',sans-serif}.ds-chain-selected{display:grid;grid-template-columns:1fr auto;gap:4px;padding:12px;border:0;border-right:1px solid rgba(222,232,232,.2);background:rgba(49,90,112,.24);color:inherit;text-align:left;box-shadow:inset 0 0 0 1px #4e91b4;cursor:pointer}.ds-chain-selected small{grid-column:1/-1;color:#a7bbc4;font:600 11px/1.2 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.04em}.ds-chain-selected strong{font:600 15px/1.2 'Barlow Condensed','PingFang SC',sans-serif}.ds-chain-selected span{color:#9bc356;font-size:10px}.ds-chain-selected:hover{background:rgba(49,90,112,.34)}.ds-chain-selected:focus-visible{outline:2px solid #4e91b4;outline-offset:-3px}.ds-topology{display:flex;align-items:center;justify-content:center;gap:18px;margin:0;padding:20px;list-style:none}.ds-topology li:not([aria-hidden]){display:grid;min-width:78px;gap:5px;padding:10px;border:1px solid rgba(222,232,232,.2);border-radius:5px}.ds-topology b{font:700 18px/1 'Barlow Condensed','Arial Narrow',sans-serif}.ds-topology span{color:#a7bbc4;font:600 10px/1.2 'Barlow Condensed','Arial Narrow',sans-serif}.ds-runtime{display:grid;grid-column:1/-1;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;border-top:1px solid rgba(27,32,34,.24);background:#d8d8d0;color:#1b2022}.ds-runtime div{padding:10px 12px;border-right:1px solid rgba(27,32,34,.2)}.ds-runtime div:last-child{border-right:0}.ds-runtime dt{color:#596062;font-size:10px}.ds-runtime dd{margin:4px 0 0;font:700 22px/1 'Barlow Condensed','Arial Narrow',sans-serif}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Live Signal Rack",
+    "overview": "Lattix should feel like a purpose-built control instrument: tactile, dense, and calm enough for long operational sessions. Its visual world borrows from modular synthesizers and broadcast patchbays—not as decoration, but as a legible model for servers, routes, endpoints, state, and signal flow. Manufactured surfaces establish hierarchy. Pale anodized modules carry readable content; charcoal enamel holds routing and terminal work; engraved rules and condensed labels keep dense interfaces ordered. Color is operational evidence: blue identifies a live selected signal, green confirms health, and safety orange interrupts the surface only when attention is required.",
+    "keyCharacteristics": [
+      "Physical rack modules instead of generic floating SaaS cards.",
+      "Condensed equipment typography paired with a neutral CJK-capable body face.",
+      "State-first hierarchy with redundant text, color, and shape cues.",
+      "Dense desktop workbenches that become deliberate vertical assemblies on narrow screens.",
+      "Motion reserved for real progress, loading, and active signal flow."
+    ],
+    "rules": [
+      { "name": "The Signal Truth Rule", "body": "Blue motion belongs only to an active selected route; pending, degraded, failed, and unassigned routes must retain their real state styling.", "section": "colors" },
+      { "name": "The Safety Orange Rule", "body": "Orange is an exception channel, not a brand flourish. If nothing needs attention, it should be almost absent.", "section": "colors" },
+      { "name": "The Engraved Label Rule", "body": "Use condensed type for short operational labels and metrics, not for paragraphs or long error explanations.", "section": "typography" },
+      { "name": "The Manufactured Depth Rule", "body": "Shadows describe assembly—raised plate, recessed bay, or temporary overlay. They never create decorative floating card stacks.", "section": "elevation" },
+      { "name": "The Chain Owns the Workbench Rule", "body": "On the Dashboard, one selected existing chain is the source of truth for both the central topology and the bottom entry-server instruments.", "section": "components" }
+    ],
+    "dos": [
+      "Do lead dense screens with current health, actionable exceptions, and progress feedback.",
+      "Do derive route geometry, destination labels, and signal styling from real operational state.",
+      "Do use aluminum and enamel textures only where a physical surface helps hierarchy.",
+      "Do retain semantic controls, keyboard focus, redundant state labels, and reduced-motion behavior.",
+      "Do redesign narrow layouts as vertical operational assemblies instead of shrinking desktop geometry.",
+      "Do let Dashboard chain selection update both the central ordered topology and the bottom entry-server instruments."
+    ],
+    "donts": [
+      "Don't turn every section into an interchangeable rounded card or floating glass panel.",
+      "Don't animate an inactive, failed, pending, or unassigned route as if it were carrying traffic.",
+      "Don't use safety orange for decoration, promotion, or ordinary selection.",
+      "Don't rasterize controls, text, sockets, diagrams, or routing geometry.",
+      "Don't render the entire route mesh when the operator is inspecting one selected chain.",
+      "Don't turn the Dashboard's left Command Rail into a server selector or detach its runtime rack from the selected chain's entry server.",
+      "Don't depend on external font or asset CDNs for a self-hosted control surface."
+    ]
+  }
+}

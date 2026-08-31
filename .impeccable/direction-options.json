@@ -1,0 +1,75 @@
+{
+  "title": "选择 Lattix 的新视觉世界",
+  "question": "保留模块化信号台，选择另一套完整语言，或重新抽取方向。",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "模块化信号台",
+      "kicker": "主方向",
+      "lineage": "录音棚 Patchbay、广播路由台与工业信号面板",
+      "thesis": "把服务器、链路和用户编成一张能被追踪、插接与隔离的实时信号面。",
+      "palette": ["#D8D8D0", "#1D2528", "#315A70", "#F05A28", "#83A94C"],
+      "materials": ["阳极氧化铝", "搪瓷铭牌", "编织信号线", "机械刻度"],
+      "viewport": "浅色金属机架占满工作区，左侧窄轨导航像设备分区，中央链路总览以水平信号带穿过实时状态模块。",
+      "risk": "若实体隐喻盖过常用控件，会增加高频管理操作的学习成本。",
+      "sketch": ".impeccable/sketches/patchbay.webp"
+    },
+    {
+      "id": "challenger-miura",
+      "label": "折叠拓扑图",
+      "kicker": "替代方向",
+      "lineage": "Miura 折纸结构与航天展开机构",
+      "thesis": "将复杂代理拓扑压缩成可展开的折面网络，一个操作沿约束关系传播。",
+      "case": "产品清晰度高，但管理员对折叠结构的身份认同弱于信号台。",
+      "palette": ["#F7F6F1", "#15191B", "#8FA9B8", "#C59A36"],
+      "materials": ["哑光工程纸", "金色箔面", "压痕网格", "蓝灰谷折线"],
+      "viewport": "一张横向展开的折面图从左侧服务器压缩包延伸到右侧出口，状态沿折线逐段点亮。",
+      "risk": "斜向网格容易削弱表格、表单与长文本的稳定阅读节奏。",
+      "sketch": ".impeccable/sketches/miura.webp",
+      "hero": "https://impeccable.style/worlds/cards/paper-folds-pleats-deployable-miura-orbit-sheet-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/paper-folds-pleats-deployable-miura-orbit-sheet.webp"
+    },
+    {
+      "id": "challenger-exposure",
+      "label": "暗房曝光记录",
+      "kicker": "替代方向",
+      "lineage": "暗房分区曝光卡与透明描图层",
+      "thesis": "用十一阶明度与叠加透明层表达负载、冲突和依赖，不让颜色独占状态。",
+      "case": "复杂状态表达出色，但与网络运维文化的直接关联较弱。",
+      "palette": ["#F0EFE9", "#111314", "#B7B5AE", "#D13E8A"],
+      "materials": ["背光灰阶", "描图纸", "铅笔网纹", "品红滤色片"],
+      "viewport": "半透明运行记录层以轻微错位叠在十一阶状态坡面上，链路冲突在交叉网纹中显现。",
+      "risk": "低彩度层次若校准不足，会让高风险状态不够醒目。",
+      "sketch": ".impeccable/sketches/exposure.webp",
+      "hero": "https://impeccable.style/worlds/cards/operate-b-exposure-record-zone-sheets-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/operate-b-exposure-record-zone-sheets.webp"
+    },
+    {
+      "id": "challenger-terminal",
+      "label": "船员维护终端",
+      "kicker": "替代方向",
+      "lineage": "耐用型航行器终端与设备维护铭牌",
+      "thesis": "让每个系统状态像船舱设备一样可查询、可确认，并以危险标牌明确动作边界。",
+      "case": "技术受众认同强，但命令终端语法会降低表单与资源浏览的清晰度。",
+      "palette": ["#121816", "#72C58A", "#E9A93B", "#D8D4C8"],
+      "materials": ["曲面 CRT", "旧白设备面板", "丝印编号", "警示条纹"],
+      "viewport": "深色状态屏嵌在浅灰设备面板中，左侧分区编号，中央以绿色读数和琥珀警报呈现运行态。",
+      "risk": "过度字符化会牺牲中文可读性，并让复杂资源管理退化为终端装饰。",
+      "sketch": ".impeccable/sketches/terminal.webp",
+      "hero": "https://impeccable.style/worlds/cards/pop-culture-shelf-industrial-starship-terminal-hero.webp",
+      "board": "https://impeccable.style/worlds/cards/pop-culture-shelf-industrial-starship-terminal.webp"
+    }
+  ],
+  "reroll": true,
+  "canon": true,
+  "canonCard": {
+    "label": "成熟管理后台",
+    "thesis": "沿用行业熟悉的侧栏、指标卡与数据表，但把比例、字阶和状态反馈做到极致。",
+    "palette": ["#F7F8FA", "#18202A", "#4B70E2", "#D7DDE6"],
+    "materials": ["中性画布", "克制阴影", "标准数据卡", "清晰分隔线"],
+    "viewport": "固定侧栏、顶部状态摘要、四张指标卡和一张链路表构成稳定的后台首屏。",
+    "risk": "清晰可靠，但难以形成只属于 Lattix 的记忆点。",
+    "sketch": ".impeccable/sketches/canon.webp"
+  },
+  "steer": true
+}

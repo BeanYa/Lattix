@@ -1,0 +1,45 @@
+{
+  "title": "选择模块化信号台的首屏构图",
+  "question": "选择要实现的构图；可在调整说明中写下希望保留或修改的部分。",
+  "options": [
+    {
+      "id": "rack-matrix",
+      "label": "Rack Matrix",
+      "kicker": "路由矩阵",
+      "lineage": "Patchbay 路由矩阵",
+      "thesis": "六条服务器通道横穿整个信号矩阵，状态与路径在同一个工作面完成。",
+      "palette": ["#D8D8D0", "#1D2528", "#315A70", "#F05A28", "#83A94C"],
+      "materials": ["阳极氧化铝", "深色路由矩阵", "插孔与刻度"],
+      "viewport": "顶部指标、中央路由矩阵、底部选中节点运行时构成高密度但稳定的三段工作台。",
+      "risk": "矩阵最有辨识度，但会弱化现有全球拓扑的视觉主角地位。",
+      "hero": ".impeccable/mocks/rack-matrix.webp"
+    },
+    {
+      "id": "signal-spine",
+      "label": "Signal Spine",
+      "kicker": "信号主干",
+      "lineage": "入口—中转—出口路由台",
+      "thesis": "把一条多跳链路放到中央，让路径本身成为操作和理解系统的主轴。",
+      "palette": ["#D8D8D0", "#1D2528", "#315A70", "#F05A28", "#83A94C"],
+      "materials": ["深色设备底板", "编织线缆", "服务器通道条"],
+      "viewport": "中央大尺度信号主干、右侧节点模块、底部指标条形成明确的入口到出口叙事。",
+      "risk": "更适合链路页；作为总览仪表盘时，统计与全球状态会退居其次。",
+      "hero": ".impeccable/mocks/signal-spine.webp"
+    },
+    {
+      "id": "operator-bench",
+      "label": "Operator Bench",
+      "kicker": "运维工作台",
+      "lineage": "广播主控台与全球路由图",
+      "thesis": "保留全球拓扑为第一视觉锚点，再用设备模块把状态、节点和降级链路围绕它组织。",
+      "palette": ["#D8D8D0", "#1D2528", "#315A70", "#F05A28", "#83A94C"],
+      "materials": ["暗色拓扑井", "金属控制条", "底部信号总线"],
+      "viewport": "左侧全球拓扑占主视野，右侧状态与服务器通道，底部信号总线承担异常定位。",
+      "risk": "信息覆盖最完整，但需要谨慎控制材质密度，避免显得过重。",
+      "hero": ".impeccable/mocks/operator-bench.webp"
+    }
+  ],
+  "reroll": false,
+  "canon": false,
+  "steer": true
+}

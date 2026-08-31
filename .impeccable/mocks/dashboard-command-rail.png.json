@@ -1,0 +1,9 @@
+{
+  "useCase": "ui-mockup",
+  "assetType": "full desktop web dashboard redesign concept, 1536x1024 landscape",
+  "prompt": "Redesign the complete Lattix infrastructure operations dashboard in the established Signal Rack visual system. Compositional option A, Command Rail: a compact status command rail across the top, a dominant wide selected-route operating bay across the center-left, a narrow actionable incident dock on the center-right, and a dense selected-server instrumentation strip along the bottom. Preserve the dark 190px LATTIX navigation, real Chinese product information, six servers, one selected three-hop route, four core totals, exactly two current issues, and six selected-server runtime values. Keep the established brushed aluminum, charcoal enamel, signal blue, green, and rare safety orange material system. Build a full 1536x1024 desktop admin screen with semantic-code-friendly controls. Avoid the incumbent oversized empty center, mirrored source/destination card stacks, route mesh, equal metric cards, generic bento, nested cards, glass, gradients, glow, invented features, marketing copy, browser chrome, and watermark.",
+  "reference": "lattix-route-focus-desktop.png",
+  "seed": "44f01ce4",
+  "approved": true,
+  "approvalNote": "方案 A；左侧选择对象改为已有链路，中央展示所选链路的真实有序拓扑，底部运行指标跟随入口服务器。"
+}
