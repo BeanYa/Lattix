@@ -233,6 +233,23 @@ The routing focus renders one selected chain's ordered hop sequence in a recesse
 
 A bright segment travels along each cable from OUT to IN only when the selected route and both endpoint nodes are active. This indicates route status, not measured traffic. Faulted endpoints use a static orange cable; deployment-pending or unconfirmed connections use a static dashed cable with a state label. Reduced-motion mode hides the travelling segment while retaining cable and status information; signals pause when the routing stage leaves the viewport or the document is hidden. Each cable exposes an accessible source, destination, and state label.
 
+### Motion feedback
+
+- **Chain selection:** a 260ms sliding outline connects the old selection to the new one. Arrow keys and Home/End operate only within the chain selector; Tab retains normal focus navigation. Resizing snaps the outline to the new rail orientation.
+- **Route handoff:** a short border emphasis advances from ENTRY to EXIT when a different chain is selected. Total stagger is capped at 135ms; content, sockets, and cables never disappear. Background polling does not restart this sequence or reset the topology scroll position.
+- **Instrument updates:** a 260ms masked roll exchanges the previous and current formatted readings. Initial values appear immediately; unchanged values remain still. There are no interpolated telemetry values, count-from-zero intros, or animated version identifiers. Assistive technology receives the exact latest value without duplicate animation layers.
+- **Cable flow:** a compact bright head and muted tail travel along the existing OUT → IN cable. A dedicated pause/play control governs the signal and route-handoff effects. All feedback honors reduced motion and hidden documents; finite animations cancel cleanly when interrupted.
+
+Reference research: [React Bits Animated List](https://reactbits.dev/components/animated-list), [React Bits Counter](https://reactbits.dev/components/counter), and [Magic UI Animated Beam](https://magicui.design/docs/components/animated-beam). These are behavioral references, not vendored components: the implementation uses native Web Animations and existing CSS/SVG, without an additional animation dependency. The existing scroll-reveal component remains unchanged because an operational selection should respond to state, not scroll position.
+
+### Chain discovery and topology navigation
+
+The chain rail includes inline search and an All / Needs attention segmented filter with a 220ms sliding plate. Search matches normalized chain names, node aliases, codes, and locations; all words must match. Filtering preserves original numbering and the currently inspected chain, even if it is outside the results. Empty results offer an explicit reset. The existing selection frame tracks the filtered rows and disappears when the selection is outside the list; keyboard navigation stays scoped to visible results.
+
+A compact topology navigator reports the actually readable node range, counting a card once at least half is visible. Its small viewport thumb follows the topology's horizontal scroll, not traffic or health. Previous / next and return-to-entry controls appear only when the route overflows, use native smooth scrolling, and respect reduced motion and the pause control. Resizing recalculates the range; switching chains returns to ENTRY, while polling preserves position. Ports and cables scroll together as one continuous instrument.
+
+Behavioral references: [shadcn searchable selection](https://ui.shadcn.com/docs/components/base/combobox) and [Magic UI Scroll Progress](https://magicui.design/docs/components/scroll-progress). The search is intentionally inline, retaining the existing semantic buttons rather than introducing a duplicate popover. Both are implemented with the existing React/CSS infrastructure, not added packages.
+
 ## Do's and Don'ts
 
 ### Do:
