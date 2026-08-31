@@ -115,10 +115,28 @@ U1="$(rpc_data POST /api/user/create '{"name":"u1"}')"
 USER_ID="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["id"])' "$U1")"
 SUB_TOKEN="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["sub_token"])' "$U1")"
 rpc_data POST /api/user/set-nodes "{\"user_id\":$USER_ID,\"node_ids\":[$NID]}" >/dev/null
-sleep 2
-curl -s --cacert "$WORK/ca.pem" "https://$ADDR/sub/$SUB_TOKEN?format=clash" | grep -q "type: vless" \
-    && echo "OK: HTTPS 订阅可取" \
-    || { echo "FAIL: HTTPS 订阅异常"; exit 1; }
+# set-nodes 仅将订阅重生成入队，等待实际 HTTPS 内容，而非假设两秒内发布完成。
+# 先完整保存响应再断言，避免 pipefail 下 grep -q 提前关闭管道导致 curl 误报失败。
+SUB_READY=0
+SUB_DEADLINE=$((SECONDS + 30))
+while (( SECONDS < SUB_DEADLINE )); do
+    if curl -fsS --connect-timeout 2 --max-time 3 --cacert "$WORK/ca.pem" \
+        "https://$ADDR/sub/$SUB_TOKEN?format=clash" \
+        -o "$WORK/subscription.yaml" 2>"$WORK/subscription-error.log" \
+        && grep -q "type: vless" "$WORK/subscription.yaml"; then
+        SUB_READY=1
+        break
+    fi
+    sleep 0.5
+done
+if [[ "$SUB_READY" != 1 ]]; then
+    echo "FAIL: HTTPS 订阅在 30 秒内未就绪"
+    cat "$WORK/subscription-error.log"
+    [[ ! -f "$WORK/subscription.yaml" ]] || head -c 4096 "$WORK/subscription.yaml"
+    tail -n 80 "$WORK/backend.log"
+    exit 1
+fi
+echo "OK: HTTPS 订阅可取"
 
 echo ">> X-Forwarded-Proto 推断（反代场景）"
 "$WORK/backend" -addr "$ADDR_HTTP" -db "$WORK/lattix-http.db" >"$WORK/backend-http.log" 2>&1 &
