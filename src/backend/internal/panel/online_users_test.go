@@ -346,7 +346,13 @@ func TestServerRelayFilterMatchesServerAddresses(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	serverID, err := st.CreateServer(ctx, "relay-srv", "1.2.3.4", "token-1", store.MachineTypeDirect, "", "", "US", "")
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{
+		Alias:          "relay-srv",
+		Address:        "1.2.3.4",
+		BootstrapToken: "token-1",
+		MachineType:    store.MachineTypeDirect,
+		CountryCode:    "US",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
