@@ -53,3 +53,23 @@ func TestDedupeAddresses(t *testing.T) {
 		t.Errorf("DedupeAddresses(nil) = %v, want empty", got)
 	}
 }
+
+func TestNormalizeIP(t *testing.T) {
+	cases := map[string]string{
+		"1.2.3.4":                 "1.2.3.4",
+		" 1.2.3.4 ":               "1.2.3.4",
+		"::ffff:1.2.3.4":          "1.2.3.4",     // IPv4-in-IPv6 解映射
+		"::ffff:203.0.113.7":      "203.0.113.7",
+		"[2001:db8::1]":           "2001:db8::1", // xray 上报的带方括号形式
+		"2001:DB8::1":             "2001:db8::1", // 规范化为小写压缩
+		"[::1]":                   "::1",
+		"2400:cb00:0:0:0:0:0:1":   "2400:cb00::1",
+		"example.com":             "example.com", // 域名原样
+		"":                        "",
+	}
+	for addr, want := range cases {
+		if got := NormalizeIP(addr); got != want {
+			t.Errorf("NormalizeIP(%q) = %q, want %q", addr, got, want)
+		}
+	}
+}

@@ -154,7 +154,7 @@ func New(st *store.Store, req ws.AgentRequester, cfg Config) (*Server, error) {
 	s := &Server{
 		st: st, req: req, cfg: cfg, alerter: cfg.Alerter, lifecycle: cfg.Lifecycle,
 		opLog: cfg.OperationLog, reqLog: cfg.RequestLog,
-		onlineUsers:     &OnlineUsersTracker{resolve: onlineUserResolver(st)},
+		onlineUsers:     &OnlineUsersTracker{resolve: onlineUserResolver(st), isRelay: serverRelayFilter(st)},
 		observes:        progress.NewRegistry(),
 		startedAt:       time.Now(),
 		routePolicies:   make(map[string]logging.LogPolicy),
@@ -243,7 +243,7 @@ func (s *Server) ObserverRegistry() *progress.Registry {
 // 未显式构造时惰性初始化，避免零值 Server 上误用解引用。
 func (s *Server) OnlineUsers() *OnlineUsersTracker {
 	if s.onlineUsers == nil {
-		s.onlineUsers = &OnlineUsersTracker{resolve: onlineUserResolver(s.st)}
+		s.onlineUsers = &OnlineUsersTracker{resolve: onlineUserResolver(s.st), isRelay: serverRelayFilter(s.st)}
 	}
 	return s.onlineUsers
 }

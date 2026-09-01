@@ -22,6 +22,7 @@ type OnlineUsersTracker struct {
 	servers   map[int64]map[string]map[string]struct{} // serverID → user → IP set
 	updatedAt map[int64]time.Time
 	resolve   IdentityResolver // 将 access:<assignment_id> 身份换算为用户 UUID（nil = 不换算）
+	isRelay   func(ip string) bool // 过滤面板自身服务器的中继源地址（直连链路出口回环）；nil = 不过滤
 }
 
 // FreshnessWindow 是服务器快照的新鲜度窗口：窗口内无更新的服务器记录不计入。
@@ -66,6 +67,16 @@ func (t *OnlineUsersTracker) ApplySnapshot(serverID int64, users []shared.Online
 		}
 		ips := make(map[string]struct{}, len(u.IPs))
 		for _, ip := range u.IPs {
+			ip = shared.NormalizeIP(ip)
+			if ip == "" {
+				continue
+			}
+			// 直连多跳链路：客户端握手经 dokodemo 透传直达出口业务 inbound，出口侧
+			// xray 记录的源地址是上一跳服务器的公网地址（中继 IP）而非客户端地址。
+			// 按用户计入会随链路数虚高（同一面板服务器 IP 也会混入多个用户），此处剔除。
+			if t.isRelay != nil && t.isRelay(ip) {
+				continue
+			}
 			ips[ip] = struct{}{}
 		}
 		byUser[key] = ips
@@ -98,6 +109,43 @@ func onlineUserResolver(st *store.Store) IdentityResolver {
 			}
 		}
 		return ""
+	}
+}
+
+// serverRelayFilter 构造"面板自身服务器地址"过滤器（在线快照剔除中继源地址用）：
+// 集合 = 每台服务器的地址列表 ∪ 默认地址 ∪ 学习地址 ∪ agent 上报 NIC 地址 ∪ 回环地址，
+// 全部经 shared.NormalizeIP 归一化后比较（xray 上报的 IPv6 带方括号）。
+// 集合按 1 分钟缓存刷新；ListServers 失败时沿用旧集合（首次失败则暂不过滤，宁可
+// 显示偏多也不因 DB 抖动整体丢在线数据）。返回的过滤函数幂等（自行归一化输入）。
+func serverRelayFilter(st *store.Store) func(string) bool {
+	var mu sync.Mutex
+	nextRefresh := time.Time{}
+	set := map[string]struct{}{}
+	return func(ip string) bool {
+		ip = shared.NormalizeIP(ip)
+		mu.Lock()
+		defer mu.Unlock()
+		if time.Now().After(nextRefresh) {
+			next := map[string]struct{}{"127.0.0.1": {}, "::1": {}}
+			if servers, err := st.ListServers(context.Background()); err == nil {
+				for i := range servers {
+					for addr := range store.ServerAddressSet(&servers[i]) {
+						if n := shared.NormalizeIP(addr); n != "" {
+							next[n] = struct{}{}
+						}
+					}
+					for _, addr := range store.ParseServerAddresses(servers[i].NICAddresses) {
+						if n := shared.NormalizeIP(addr); n != "" {
+							next[n] = struct{}{}
+						}
+					}
+				}
+				set = next
+			}
+			nextRefresh = time.Now().Add(time.Minute)
+		}
+		_, ok := set[ip]
+		return ok
 	}
 }
 

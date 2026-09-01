@@ -102,6 +102,12 @@
 
 ### Fixed
 
+- 修复用户列表「在线 / ONLINE」计数虚高：直连多跳链路的客户端握手经 dokodemo 透传
+  直达出口业务 inbound，出口侧 xray 把上一跳服务器的公网地址记为连接源地址并按用户
+  计入在线 IP，导致在线连接数随链路数膨胀（如 28 条链路显示 ONLINE 28）。面板在
+  在线快照落内存时按服务器地址集合（地址列表/默认地址/学习地址/NIC 地址，缓存 1 分钟）
+  与回环地址剔除这类中继 IP（`serverRelayFilter`），IP 比较前经 `shared.NormalizeIP`
+  归一化（IPv6 去方括号、IPv4-in-IPv6 解映射）。
 - 修复用户订阅预览接口因 RPC 路由查询参数白名单未登记 `stage` 而拒绝请求
   （`unknown query parameter: stage`）的问题：`/api/user/subscription-preview`
   的 `AllowedQuery` 补上 `stage`。

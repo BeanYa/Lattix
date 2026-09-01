@@ -105,6 +105,11 @@ func (t *OnlineUsersTracker) ConnectionsByUser(userUUID string, now time.Time, f
 - **共享端点（shared endpoint）**：client 身份为 assignment 级（`access:<assignment_id>`，非用户 UUID），
   面板在快照落内存时经 `user_chain_assignments` 换算为用户 UUID 后计入在线数（`OnlineUsersTracker.resolve`
   注入 store 实现）；链内部转发身份（`tunnel:`）与无法归属的 `access:`（分配已删除）不计。
+- **直连多跳链路的中继源地址**：直连链路的客户端握手经 dokodemo 透传入口直达出口业务 inbound，
+  出口侧 xray 记录的源地址是上一跳服务器的公网地址而非客户端地址（反向链为回环地址）。若按用户计入，
+  在线数会随链路数虚高（且同一服务器 IP 混入多个用户）。面板在快照落内存时按服务器地址集合
+  （地址列表/默认地址/学习地址/NIC 地址，缓存 1 分钟）与回环地址剔除这类中继 IP（`serverRelayFilter`），
+  IP 比较前经 `shared.NormalizeIP` 归一化（IPv6 去方括号、IPv4-in-IPv6 解映射）。
 - **`statsUserOnline` 生效需重启**：policy 缺失时 agent 落盘重启 xray（现有路径）；重启前该字段为空 → 面板显示 0。
 - **离线/失联服务器**：超过 freshness 窗口无新帧 → 其贡献的 IP 不再计入，不显示陈旧数据。
 - **同一用户同一 IP 出现在多台服务器**：面板按 IP 去重，不重复计数。

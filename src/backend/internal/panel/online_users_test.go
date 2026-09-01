@@ -298,3 +298,73 @@ func TestOnlineUsersTrackerConcurrentApplyAndQuery(t *testing.T) {
 		<-done
 	}
 }
+
+func TestOnlineUsersTrackerDropsRelayIPs(t *testing.T) {
+	var tracker OnlineUsersTracker
+	tracker.isRelay = func(ip string) bool { return ip == "1.2.3.4" }
+	now := testOnlineNow()
+	tracker.ApplySnapshot(1, []shared.OnlineUserStat{
+		{User: "u1", IPs: []string{"1.2.3.4", "5.6.7.8"}}, // 1.2.3.4 是面板服务器自身地址（中继）
+	}, now)
+	if got := tracker.ConnectionsByUser("u1", now); got != 1 {
+		t.Fatalf("ConnectionsByUser(u1) = %d, want 1 (relay IP excluded)", got)
+	}
+}
+
+func TestOnlineUsersTrackerNilRelayFilterKeepsAll(t *testing.T) {
+	var tracker OnlineUsersTracker
+	now := testOnlineNow()
+	tracker.ApplySnapshot(1, []shared.OnlineUserStat{
+		{User: "u1", IPs: []string{"1.2.3.4", "5.6.7.8"}},
+	}, now)
+	if got := tracker.ConnectionsByUser("u1", now); got != 2 {
+		t.Fatalf("ConnectionsByUser(u1) without relay filter = %d, want 2", got)
+	}
+}
+
+func TestOnlineUsersTrackerNormalizesIPs(t *testing.T) {
+	var tracker OnlineUsersTracker
+	tracker.isRelay = func(ip string) bool { return ip == "2001:db8::1" }
+	now := testOnlineNow()
+	// 带方括号的 IPv6（xray net.Address.String 形式）与无括号形式等价；
+	// IPv4-in-IPv6 映射与点分 IPv4 等价；中继地址经归一化后命中过滤器。
+	tracker.ApplySnapshot(1, []shared.OnlineUserStat{
+		{User: "u1", IPs: []string{"[2001:db8::1]", "5.6.7.8", "::ffff:9.9.9.9"}},
+	}, now)
+	tracker.ApplySnapshot(2, []shared.OnlineUserStat{
+		{User: "u1", IPs: []string{"9.9.9.9"}},
+	}, now)
+	if got := tracker.ConnectionsByUser("u1", now); got != 2 {
+		t.Fatalf("ConnectionsByUser(u1) = %d, want 2 (relay IPv6 dropped, mapped IPv4 deduped)", got)
+	}
+}
+
+func TestServerRelayFilterMatchesServerAddresses(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, err := st.CreateServer(ctx, "relay-srv", "1.2.3.4", "token-1", store.MachineTypeDirect, "", "", "US", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := st.ServerByID(ctx, serverID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 学习地址 + NIC 地址（含 IPv6）；默认地址 1.2.3.4 已入列表。
+	if err := st.RefreshServerAddresses(ctx, srv, "5.6.7.8", []string{"2001:db8::10", "1.2.3.4"}); err != nil {
+		t.Fatal(err)
+	}
+	filter := serverRelayFilter(st)
+	for _, relay := range []string{"1.2.3.4", "5.6.7.8", "2001:db8::10", "[2001:db8::10]", "127.0.0.1", "::1"} {
+		if !filter(relay) {
+			t.Errorf("serverRelayFilter(%q) = false, want true (server-owned/loopback)", relay)
+		}
+	}
+	if filter("9.9.9.9") {
+		t.Errorf("serverRelayFilter(9.9.9.9) = true, want false (real client IP)")
+	}
+}
