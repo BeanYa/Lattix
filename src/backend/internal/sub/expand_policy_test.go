@@ -199,7 +199,7 @@ func TestExpandPolicyGroupsExternalNodesByInferredCountry(t *testing.T) {
 		t.Fatalf("external node missing from region group: %+v", groups)
 	}
 	auto := groups["♻️ 自动选择"]
-	if len(auto) != 1 || auto[0] != "🇯🇵 东京 01" {
+	if len(auto) != 2 || auto[0] != "🇯🇵 东京 01" || auto[1] != "🚀 节点选择" {
 		t.Fatalf("external node missing from all-nodes group: %+v", auto)
 	}
 	if _, exists := groups[noRegionGroupName]; exists {
@@ -250,7 +250,7 @@ func TestExpandPolicyGroupsNodesWithoutCountryIntoNoRegionGroup(t *testing.T) {
 		t.Fatalf("final group options = %+v, want %v", main, wantMain)
 	}
 	auto := groups["♻️ 自动选择"]
-	if len(auto) != 2 || auto[0] != "US-1" || auto[1] != "Relay 01" {
+	if len(auto) != 3 || auto[0] != "US-1" || auto[1] != "Relay 01" || auto[2] != "🚀 节点选择" {
 		t.Fatalf("all-nodes group = %+v", auto)
 	}
 }
@@ -348,7 +348,7 @@ func TestExpandPolicySourceGroupNameCollision(t *testing.T) {
 }
 
 // 可达性增强：模板分流组保留原有叶子分组引用，并追加全部节点 + 自动选择 +
-// 节点选择引用；自动选择/节点选择自身只含节点与叶子分组；地区组保持纯地区节点。
+// 节点选择引用；节点选择自身只含节点与叶子分组，自动选择另附节点选择引用；地区组保持纯地区节点。
 func TestExpandPolicyAugmentsTemplateGroups(t *testing.T) {
 	nodes := []compiledNode{
 		{Name: "US-1", CountryCode: "US", Clash: clashProxy{Name: "US-1"}},
@@ -381,9 +381,9 @@ func TestExpandPolicyAugmentsTemplateGroups(t *testing.T) {
 	if got := groups["🚀 节点选择"]; strings.Join(got, "|") != strings.Join(wantMain, "|") {
 		t.Fatalf("final group = %+v, want %v", got, wantMain)
 	}
-	// 自动选择：仅节点。
-	if got := groups["♻️ 自动选择"]; strings.Join(got, "|") != "US-1|JP-1" {
-		t.Fatalf("auto group = %+v, want [US-1 JP-1]", got)
+	// 自动选择：节点 + 节点选择引用（供客户端手动固定到统一节点）。
+	if got := groups["♻️ 自动选择"]; strings.Join(got, "|") != "US-1|JP-1|🚀 节点选择" {
+		t.Fatalf("auto group = %+v, want [US-1 JP-1 🚀 节点选择]", got)
 	}
 	// 地区组：仅本地区节点，不追加其他内容。
 	if got := groups["🇯🇵 日本节点"]; len(got) != 1 || got[0] != "JP-1" {

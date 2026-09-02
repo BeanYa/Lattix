@@ -414,11 +414,12 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort strin
 	// 选项（含叶子分组引用）的基础上补充 DIRECT/REJECT 兜底并追加全部节点、
 	// 「自动选择」与「节点选择」（final）引用，使任何分流组既可指定固定节点
 	// 也可回落自动选择、直连或拒绝。「自动选择」自身不补 DIRECT/REJECT
-	// （纯节点测速组，兜底出站会污染延迟测试结果）。
+	// （纯节点测速组，兜底出站会污染延迟测试结果），但追加「节点选择」引用，
+	// 使客户端可把自动选择手动固定到节点选择、进而强制全部分流走统一节点。
 	// 不变量：节点池组（选项含 __LATTIX_ALL__，如自动选择/故障转移）与节点选择的
 	// 选项只保留节点、叶子分组与选项级占位符（及 DIRECT/REJECT），剔除其他组引用
-	// ——它们因此永不反向引用分流组，分流组注入对它们的引用不会产生环；
-	// detectGroupCycle 兜底。
+	// ——它们因此永不反向引用分流组；「节点选择」同样被剔除组引用，故「自动选择」
+	// 对它的引用不会成环，detectGroupCycle 兜底。
 	finalName := ""
 	if policy.Final != "DIRECT" && policy.Final != "REJECT" && existing[policy.Final] {
 		finalName = policy.Final
@@ -460,7 +461,10 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort strin
 			kept := make([]string, 0, len(options))
 			hasAll := false
 			for _, option := range options {
-				if option == "DIRECT" || option == "REJECT" || nodeSet[option] || leafSet[option] || isOptionPlaceholder(option) {
+				// 「自动选择」额外保留对「节点选择」（final）的引用：节点选择经
+				// 同样的剥离后只剩节点/叶子分组/占位符，引用它不会成环。
+				if option == "DIRECT" || option == "REJECT" || nodeSet[option] || leafSet[option] || isOptionPlaceholder(option) ||
+					(group.Name == autoName && option == finalName && finalName != group.Name) {
 					if option == placeholderAllNodes {
 						hasAll = true
 					}
@@ -473,6 +477,11 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort strin
 			if !hasAll {
 				// 保证节点池组/final 组始终覆盖全部节点（占位符，最终渲染展开）。
 				kept = append(kept, placeholderAllNodes)
+			}
+			if group.Name == autoName && finalName != "" && finalName != autoName {
+				// 自动选择追加「节点选择」：客户端可将自动选择手动固定到
+				// 节点选择，进而在节点选择里强制全部分流走统一节点。
+				kept = append(kept, finalName)
 			}
 			options = kept
 		} else {
