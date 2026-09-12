@@ -58,3 +58,83 @@ func TestPortOccupants(t *testing.T) {
 		t.Error("其他服务器的端口不应出现")
 	}
 }
+
+func TestPortOccupantsChainSources(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	entryID, err := st.CreateServer(ctx, ServerDraft{Alias: "entry", Address: "entry.example.com", BootstrapToken: "entry-token", MachineType: MachineTypeDirect, CountryCode: "US"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exitID, err := st.CreateServer(ctx, ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "exit-token", MachineType: MachineTypeDirect, CountryCode: "US"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 活链：entry 跳 forward 21001 + portal 21002（反向传输，portal 落在上游入口机）。
+	active, err := st.CreateInitialChainDeployment(ctx, InitialChainDeployment{
+		Name: "链活", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolVLESS,
+		ServiceConfig: json.RawMessage(`{"protocol":"vless"}`), TrafficMultiplierMilli: 1000,
+		Hops: []InitialChainHop{
+			{ServerID: entryID, Role: HopRoleEntry, Transport: "reverse", ForwardPort: 21001, TunnelUUID: "tunnel-a"},
+			{ServerID: exitID, Role: HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetChainHopPortalRealized(ctx, active.Hops[0].HopID, 21002, "pub", "sni"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 软删链：forward 22001 + portal 22002，应被 deleted_at IS NULL 排除。
+	deleted, err := st.CreateInitialChainDeployment(ctx, InitialChainDeployment{
+		Name: "链删", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolVLESS,
+		ServiceConfig: json.RawMessage(`{"protocol":"vless"}`), TrafficMultiplierMilli: 1000,
+		Hops: []InitialChainHop{
+			{ServerID: entryID, Role: HopRoleEntry, Transport: "reverse", ForwardPort: 22001, TunnelUUID: "tunnel-b"},
+			{ServerID: exitID, Role: HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetChainHopPortalRealized(ctx, deleted.Hops[0].HopID, 22002, "pub", "sni"); err != nil {
+		t.Fatal(err)
+	}
+	// DeleteChain 会硬删 chain_hops，无法制造"软删链仍有跳占用"的场景，故直接置 deleted_at。
+	if _, err := st.db.ExecContext(ctx, `UPDATE chains SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, deleted.ChainID); err != nil {
+		t.Fatal(err)
+	}
+
+	occupants, err := st.PortOccupants(ctx, entryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPort := map[int]PortOccupant{}
+	for _, o := range occupants {
+		if o.ChainID == deleted.ChainID {
+			t.Errorf("软删链占用不应出现: %+v", o)
+		}
+		byPort[o.Port] = o
+	}
+	fwd, ok := byPort[21001]
+	if !ok || fwd.Source != "chain_forward" || fwd.Layers != "tcp" || fwd.ChainID != active.ChainID || fwd.RefName != "链活" {
+		t.Errorf("forward 占用不符: %+v", fwd)
+	}
+	portal, ok := byPort[21002]
+	if !ok || portal.Source != "chain_portal" || portal.Layers != "tcp" || portal.ChainID != active.ChainID || portal.RefName != "链活" {
+		t.Errorf("portal 占用不符: %+v", portal)
+	}
+	if _, ok := byPort[22001]; ok {
+		t.Error("软删链 forward 端口不应出现")
+	}
+	if _, ok := byPort[22002]; ok {
+		t.Error("软删链 portal 端口不应出现")
+	}
+}
