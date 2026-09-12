@@ -25,7 +25,7 @@ xray 26.x 要点：`network` 更名 `method`、`tcp` 更名 `raw`（旧名仍兼
 | vmess | 同上 | reality(仅 tcp/xhttp/grpc) / tls / none | 加密: auto/aes-128-gcm/chacha20-poly1305 |
 | trojan | 同上 | reality(仅 tcp/xhttp/grpc) / tls | 无（flow 已被 xray 移除） |
 | shadowsocks | 无传输层 | none | method: 2022-blake3-{aes-128-gcm,aes-256-gcm,chacha20-poly1305}、aes-128-gcm、aes-256-gcm、chacha20-ietf-poly1305 |
-| hysteria2（新增） | 自带 QUIC | tls（强制） | auth 密码（自动生成）、salamander 混淆密码（可选）、brutalUp/brutalDown（可选）、udpHop 端口跳跃（可选，仅单跳直连，见 3.2） |
+| hysteria2（新增） | 自带 QUIC | tls（强制） | auth 密码（自动生成）、salamander 混淆密码（可选）、brutalUp/brutalDown（可选）、udpHop 端口跳跃（端口段可配，单跳/中转均支持，见 3.2 端口跳跃方案） |
 | socks / http | 无 | none | 账密（现状） |
 | dokodemo-door | 无 | none | 转发目标（现状） |
 
@@ -37,7 +37,7 @@ normalize 兼容性规则（后端权威，前端镜像）：
 - vision flow 仅 vless + tcp + (reality|tls)。
 - trojan 不允许 security=none。
 - hysteria2 无 network 概念，表单隐藏传输/安全层选择，恒为 QUIC+TLS。
-- hysteria2 多跳中转时自动禁用 udpHop（端口跳跃依赖入口连续端口区间，中转管道只有单一监听端口无法承接）；brutalUp/Down 与 salamander 不受影响。
+- hysteria2 udpHop 端口段：默认 32 个连续端口（上限 200），NAT 机型校验端口段整体落在其公共端口段内（复用 `checkPortInRanges` 体系）；可用公共端口不足最小段长（8）时允许关闭跳跃退回固定单端口（功能可用，仅失去跳跃的抗 QoS 能力，前端给可用性提示）。brutalUp/Down 与 salamander 不受拓扑影响。
 - ss/socks/http/dokodemo 无安全层与传输选择。
 
 ## 3. 架构
@@ -68,7 +68,16 @@ normalize 兼容性规则（后端权威，前端镜像）：
 - `renderForwardInbound`（`xray/chain.go:384-397`）的 `network` 由硬编码 `"tcp"` 改为按出口协议推导：出口协议为 UDP 型（hy2；ss 的 `tcp,udp`）时管道 inbound 用 `"tcp,udp"`，否则保持 `"tcp"`。dokodemo-door 原生支持 UDP 转发，无需其他 core 变更。
 - 反向隧道段（vless+reality 桥接）可承载 UDP（vless over TCP 传输 UDP 包），无需改动。
 - 逐跳转发端口在端口冲突治理中按出口协议标记 TCP/UDP 占用（见下节）。
-- hy2 中转时 normalize 自动禁用 udpHop（见第 2 节规则）。
+
+#### hy2 端口跳跃（udpHop）方案（评审澄清）
+
+端口跳跃是 hy2 抗 QoS/封锁的核心能力，单跳与中转均支持，不做禁用。机制：客户端在端口段内逐包换端口，要求**每一跳都能接住段内任意端口并 1:1 转发到下一跳同号端口**，出口 hy2 监听整个段。
+
+- **转发实现**：入口/中间跳按端口段生成逐端口 dokodemo UDP inbound（段内每端口一个，`127.0.0.1`/公网监听规则与现有 forward 一致），目标 = 下一跳同号端口；段长默认 32（上限 200），配置膨胀可控。
+- **P4 首个实施任务为验证项**：实测 xray hy2 inbound 的 udpHop 服务端行为——若 xray 自行绑定段内全部端口，按上述 dokodemo 方案；若 xray 只监听单端口、依赖 OS 层 DNAT（官方 hysteria 的做法），则改为 agent 管理 iptables DNAT 规则（入口段→出口同号段、出口段→hy2 监听端口），spec 方案以实测结果收敛，两条路径的对外行为一致。
+- **端口段独占**：跳跃段在**每一跳**的 UDP 空间整体保留，纳入端口冲突治理：段与段、段与单端口均不得重叠；与 TCP 监听同号不冲突（独立端口空间）；与 vless 共享端点等 TCP 占用互不影响。
+- **NAT 少端口机型**：端口段必须整体落在该跳服务器的 NAT 公共端口段内（复用 `checkPortInRanges`）；可用端口不足最小段长（8）时允许关闭跳跃退回固定单端口，前端提示"该机器公共端口不足，已关闭端口跳跃，可用性可能受 QoS 影响"。
+- **多链路同机落地 hy2：共用一个端口段**。复用 shared_endpoints 思路扩展 `EnsureSharedEndpoint` 到 `protocol=hysteria`（位置在出口侧）：同一台落地服务器上的多条 hy2 链路共享同一个 hy2 监听与端口段（首条链路的证书/混淆/带宽参数为准，前端沿用 vless 共享端点的提示文案），避免每条链路各抢一段——对 NAT 小端口池是刚需。各链路的差异仅体现在入口/中间跳的转发路径与订阅的用户凭据上。
 
 #### 端口冲突治理（评审澄清）
 
@@ -79,7 +88,8 @@ normalize 兼容性规则（后端权威，前端镜像）：
   - vless → 沿用共享端点合并（现状）；
   - 其他协议 → 拒绝并提示"该端口已被同协议链路占用，请更换端口或留空自动分配"（非 vless 协议无共享监听机制，不强行合并）。
 - 同服务器 + 同端口 + 同传输层 + 不同协议 → 拒绝并指明占用方链路名。
-- 端口留空（0）→ agent `pickPort` 扩为同时避开已管 TCP/UDP 端口（`fill.go:309-355` 目前只探测 TCP）。
+- hy2 跳跃端口段视为该传输层上一段连续保留端口：段与段、段与单端口均不得重叠（含逐跳转发端口）；同段同 profile 的 hy2 链路走共享监听合并（见上节）。
+- 端口留空（0）→ agent `pickPort` 扩为同时避开已管 TCP/UDP 端口（`fill.go:309-355` 目前只探测 TCP）；跳跃段留空时由 panel 按服务器空闲 UDP 段自动分配（避开所有已保留段与端口）。
 - agent 侧 bind 失败回滚路径保留为最后防线。
 
 ### 3.3 agent（`src/agent/internal/xray/`）
@@ -137,7 +147,7 @@ normalize 兼容性规则（后端权威，前端镜像）：
   - `SOCKS/HTTP`、`端口转发`（特殊用途）
 - **动态渲染**：选协议后只显示该协议有意义的字段；不兼容组合在前端即时禁用/自动纠正（镜像后端矩阵）。
 - **默认即最优**：新链路默认 vless+reality+tcp+vision+mlkem768（维持现状默认）；密钥/密码/shortID/path 等全部可留空自动生成，界面上标注"留空自动生成"。
-- **高级折叠**：fingerprint、xhttp mode/host、hy2 带宽/端口跳跃、salamander 等进"高级选项"折叠区。
+- **高级折叠**：fingerprint、xhttp mode/host、hy2 带宽/端口跳跃段长、salamander 等进"高级选项"折叠区；hy2 端口跳跃默认开启（段长 32），NAT 公共端口不足的机器自动降级为固定端口并提示。
 - **TLS 区域**（安全层选 tls 时）：证书模式单选 —— "伪装域名自签"（默认，可自定义伪装域）/ "使用落地服务器域名(ACME)"（实时检测出口服务器是否已配置域名，无则禁用该选项并提示原因）；hy2 强制 tls，同样提供这两个证书模式。
 - 常量与门禁更新：`DIRECT_PROTOCOLS`/`RELAY_PROTOCOLS` 扩为全量（dokodemo 仍禁多跳出口）、`NETWORKS` 加 ws/httpupgrade、`REALITY_PROTOCOLS` 扩为 vless/vmess/trojan、新增 vmess cipher、hy2 字段区。
 - 编辑回填（`use-chain-form.ts:208-268` 解析模板 JSON）每协议/安全层/传输补分支。
@@ -148,8 +158,8 @@ normalize 兼容性规则（后端权威，前端镜像）：
 
 ## 4. 数据流（以新建 hy2 中转链路为例）
 
-1. 前端提交 `protocol=hysteria`、多跳拓扑、auth 留空、证书模式默认自签。
-2. panel normalize 校验/补默认（多跳自动禁用 udpHop）→ 出口 hy2 inbound 模板（含 `{{PORT}}/{{TAG}}/{{CLIENTS}}/{{TLS_CERT_FILE}}/{{TLS_KEY_FILE}}`）→ 存 `nodes.config_template`；各跳 dokodemo 管道按出口协议推导为 `tcp,udp` → 逐跳下发。
+1. 前端提交 `protocol=hysteria`、多跳拓扑、auth 留空、证书模式默认自签、端口跳跃默认开启（段长 32）。
+2. panel normalize 校验/补默认（端口段逐跳落在各自 NAT 公共段内、段间无重叠；同机 hy2 链路并入共享监听与端口段）→ 出口 hy2 inbound 模板（含 `{{PORT}}/{{TAG}}/{{CLIENTS}}/{{TLS_CERT_FILE}}/{{TLS_KEY_FILE}}` + quicParams udpHop 段）→ 存 `nodes.config_template`；各跳 dokodemo 管道按出口协议推导为 `tcp,udp`，跳跃段逐端口 1:1 转发 → 逐跳下发。
 3. 出口 agent 填充：生成证书（自签 `xray tls cert`；ACME 模式则域名解析自检 + acme.sh 签发）、用户 auth 列表 → `xray run -test` → 生效 → 上报 RealizedConfig（SNI、CertSHA256（仅自签）、带宽等）。
 4. 订阅按格式输出 hy2 链接：地址/端口指向**入口**服务器与入口转发端口（沿用现有非端点链路订阅逻辑，`sub.go:756-765`），hy2 参数取自出口 RealizedConfig；自签输出 pin 或 insecure，ACME 输出普通 TLS。
 
@@ -165,7 +175,7 @@ normalize 兼容性规则（后端权威，前端镜像）：
 ## 6. 测试
 
 - 单测：`panel/nodes_test.go` 矩阵 normalize 用例（每协议合法/非法组合）+ 端口冲突前置校验用例（同层同协议/异协议拒绝、TCP/UDP 同号共存、vless 共享合并）+ ACME 域名检测（无域名服务器拒绝）；`sub/*_test.go` 新协议各格式输出；`fill` 测试（自签证书生成 mock、UDP 端口探测）；`renderForwardInbound` UDP 推导用例。
-- e2e：`scripts/e2e/protocols.sh` 扩展全矩阵（每协议至少一组数据面验证，hy2 用第二个 xray 做客户端仿 `vlessenc.sh`，hy2 中转链路验证 UDP 逐跳转发）；`links.sh` 订阅断言扩展；新增端口冲突场景（同端口异协议应 panel 侧 400，而非 agent bind 失败）。ACME 模式用本地 Pebble/自签 CA 模拟或仅覆盖到"域名自检失败"路径，不做真实 LE 签发。
+- e2e：`scripts/e2e/protocols.sh` 扩展全矩阵（每协议至少一组数据面验证，hy2 用第二个 xray 做客户端仿 `vlessenc.sh`）；hy2 中转链路验证 UDP 逐跳转发 + 端口跳跃段（段内多个端口分别发包验证 1:1 转发）；hy2 同机双链路验证共享监听与端口段合并；`links.sh` 订阅断言扩展；新增端口冲突场景（同端口异协议应 panel 侧 400，而非 agent bind 失败）。ACME 模式用本地 Pebble/自签 CA 模拟或仅覆盖到"域名自检失败"路径，不做真实 LE 签发。
 - 存量用例中硬编码 vless 的 fixture 不受影响（协议字段本身向后兼容，无 DB migration）。
 
 ## 7. 分阶段实施（供 plan 参考）
@@ -173,6 +183,6 @@ normalize 兼容性规则（后端权威，前端镜像）：
 1. **P1 解锁存量**：前端暴露 vmess/trojan/ss + reality 门禁放宽 + grpc 传输；顺带落地端口冲突前置校验（TCP/UDP 分层，见 3.2）。
 2. **P2 传输扩展**：ws/httpupgrade 全链路（panel 模板、fill 提取、订阅、前端）；**UDP 中转管道**（dokodemo `network` 按出口协议推导为 `tcp,udp`，ss 中转 UDP 同步受益）。
 3. **P3 TLS 安全层**：自签（伪装域名 + pin）与 ACME（落地服务器域名，agent 自装 acme.sh）两模式 + tlsStreamSettings + 订阅 pin/insecure/普通 TLS 输出。
-4. **P4 Hysteria2**：新协议全链路 + 版本门控，单跳与中转均支持（依赖 P2 的 UDP 管道与 P3 的 TLS 证书模式）。
+4. **P4 Hysteria2**：新协议全链路 + 版本门控，单跳与中转均支持（依赖 P2 的 UDP 管道与 P3 的 TLS 证书模式）。首个任务为 udpHop 服务端行为验证（xray 自绑段 vs iptables DNAT，见 3.2）；含出口侧 hy2 共享监听（EnsureSharedEndpoint 扩展）与端口段冲突治理。
 
 每阶段独立可交付、可回滚。
