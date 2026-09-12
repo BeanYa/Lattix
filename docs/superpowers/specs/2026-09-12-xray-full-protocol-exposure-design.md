@@ -25,7 +25,7 @@ xray 26.x 要点：`network` 更名 `method`、`tcp` 更名 `raw`（旧名仍兼
 | vmess | 同上 | reality(仅 tcp/xhttp/grpc) / tls / none | 加密: auto/aes-128-gcm/chacha20-poly1305 |
 | trojan | 同上 | reality(仅 tcp/xhttp/grpc) / tls | 无（flow 已被 xray 移除） |
 | shadowsocks | 无传输层 | none | method: 2022-blake3-{aes-128-gcm,aes-256-gcm,chacha20-poly1305}、aes-128-gcm、aes-256-gcm、chacha20-ietf-poly1305 |
-| hysteria2（新增） | 自带 QUIC | tls（强制） | auth 密码（自动生成）、salamander 混淆密码（可选）、brutalUp/brutalDown（可选）、udpHop 端口跳跃（可选）；**首期仅支持单跳直连链路**（见 3.2 拓扑约束） |
+| hysteria2（新增） | 自带 QUIC | tls（强制） | auth 密码（自动生成）、salamander 混淆密码（可选）、brutalUp/brutalDown（可选）、udpHop 端口跳跃（可选，仅单跳直连，见 3.2） |
 | socks / http | 无 | none | 账密（现状） |
 | dokodemo-door | 无 | none | 转发目标（现状） |
 
@@ -37,6 +37,7 @@ normalize 兼容性规则（后端权威，前端镜像）：
 - vision flow 仅 vless + tcp + (reality|tls)。
 - trojan 不允许 security=none。
 - hysteria2 无 network 概念，表单隐藏传输/安全层选择，恒为 QUIC+TLS。
+- hysteria2 多跳中转时自动禁用 udpHop（端口跳跃依赖入口连续端口区间，中转管道只有单一监听端口无法承接）；brutalUp/Down 与 salamander 不受影响。
 - ss/socks/http/dokodemo 无安全层与传输选择。
 
 ## 3. 架构
@@ -47,7 +48,7 @@ normalize 兼容性规则（后端权威，前端镜像）：
 
 - 新增 `ProtocolHysteria2 = "hysteria"`（xray 26.x 入站协议名），`Protocols` 追加。
 - `Networks` 增加 `ws`、`httpupgrade`；新增 `Securities = [reality, tls, none]`、`Security` 字段入 `VirtualConfig`。
-- 新增 `VMessCiphers`、`Hy2` 相关字段：`VirtualConfig` 增加 `Security`、`Cipher`(vmess)、`ObfsPassword`(salamander，空=不启用)、`UpMbps/DownMbps`、`PortHop`。
+- 新增 `VMessCiphers`、`Hy2` 相关字段：`VirtualConfig` 增加 `Security`、`Cipher`(vmess)、`ObfsPassword`(salamander，空=不启用)、`UpMbps/DownMbps`、`PortHop`、`CertMode`(`selfsign`/`acme`)、`TLSDomain`（见 3.3 证书策略）。
 - 新占位符 `{{TLS_CERT_FILE}}`、`{{TLS_KEY_FILE}}`（agent 侧自签证书路径）。hy2 用户 auth 不需要新占位符，走现有 `{{CLIENTS}}` 机制（见 3.3）。
 - `RealizedConfig` 增加：`Security`、`SNI`、`CertSHA256`（自签证书 pin）、`Cipher`、`ObfsPassword`、hy2 带宽/端口跳跃回显。vmess 的 `Cipher` 仅影响订阅输出（客户端 cipher 提示），xray 26.x 的 vmess inbound 本身无此字段。
 
@@ -62,7 +63,12 @@ normalize 兼容性规则（后端权威，前端镜像）：
 
 经代码核实（`dispatch/chain.go:163-218`、`xray/chain.go:384-397`）：**用户协议 inbound 落在出口服务器**，客户端与出口端到端加密；入口/中间跳是 dokodemo TCP 哑管道（plaintext 协议或 NAT 段走 vless+reality 隧道）。vless 是唯一特例：入口跑共享端点、出口挂隧道身份。
 
-对 hy2 的影响：hy2 是 UDP 协议，而中转管道 `renderForwardInbound` 硬编码 `network:"tcp"`（`xray/chain.go:394`），UDP 无法通过现有管道中转。**决策：P4 阶段 hy2 仅允许单跳直连链路**（前端选中 hy2 时隐藏中转拓扑选项，后端 normalize 拒绝多跳）。后续如需 hy2 中转，再把管道 inbound 扩为 `tcp,udp` 并处理逐跳 UDP 转发，单独立项。
+**所有协议（含 hy2）统一支持单跳与中转，不做割裂体验**。hy2 是 UDP 协议，需要把中转管道升级为 UDP 感知：
+
+- `renderForwardInbound`（`xray/chain.go:384-397`）的 `network` 由硬编码 `"tcp"` 改为按出口协议推导：出口协议为 UDP 型（hy2；ss 的 `tcp,udp`）时管道 inbound 用 `"tcp,udp"`，否则保持 `"tcp"`。dokodemo-door 原生支持 UDP 转发，无需其他 core 变更。
+- 反向隧道段（vless+reality 桥接）可承载 UDP（vless over TCP 传输 UDP 包），无需改动。
+- 逐跳转发端口在端口冲突治理中按出口协议标记 TCP/UDP 占用（见下节）。
+- hy2 中转时 normalize 自动禁用 udpHop（见第 2 节规则）。
 
 #### 端口冲突治理（评审澄清）
 
@@ -84,15 +90,28 @@ normalize 兼容性规则（后端权威，前端镜像）：
   - Realized 提取扩展：tlsSettings serverName、hy2 参数。
   - `pickPort`（`fill.go:309-355`）扩为同时探测/避开 UDP 占用（配合 3.2 端口冲突治理）。
 
-#### TLS 自签证书策略（评审澄清）
+#### TLS 证书策略（评审澄清）
 
-服务器通常只有 IP（panel `servers` 表无 domain 字段，`addresses` 可为 IP 或域名），因此**不是按落地服务器的真实域名签发**，而是：
+安全层 `tls` 提供两种证书模式，前端 TLS 区域让用户二选一：
+
+**模式 A：伪装域名自签（默认，无需真实域名）**
 
 - agent 侧调用 `xray tls cert` 自签 CA + 服务器证书，密钥对完全自行生成，不依赖任何真实域名解析。
 - 证书 CN/SAN（即客户端 SNI）使用**伪装域名**：默认从常见域名预设池随机选取（复用 `RealityDestPicker` 的预设思路），高级选项允许用户自定义一个域名（仅作 TLS 伪装身份，不要求指向本机）。
 - 信任锚 = `RealizedConfig.CertSHA256`：订阅输出支持 pin 的格式带证书指纹（mihomo `fingerprint` 等），不支持的格式回退 `skip-cert-verify/allowInsecure`。安全语义是"自签 + pin"，而非域名验证。
-- 证书文件落在 agent `config/certs/`（安装布局已有 0700 的 `config/` 目录，`install-agent.sh:303-324`），按节点 tag 命名缓存复用；模板以绝对路径占位符引用。`PurgeXray`/`ResetForPanelRebind`（`manager.go:66-84, 181-190`）保留 certs 目录（证书不属于 xray 配置漂移重建范围，但文件路径引用可存活于模板）。
-- 真实域名 + ACME/上传证书：列为后续扩展（panel 需新增域名字段与证书下发通道），不在本期。
+
+**模式 B：落地服务器域名 + ACME 真实证书**
+
+- 前端选项"使用落地服务器域名"：panel 检测出口服务器 `addresses` 中是否存在域名型条目（`addressFamily(...) === 'domain'` 同款判定）；**无域名则校验失败**，报错"落地服务器未设置域名，请先在服务器地址中配置域名或改用自签模式"。
+- 选中后 SNI/CN = 该域名，由 **agent 负责 ACME 全流程**：
+  1. agent 首次需要时安装 acme.sh 至 `/opt/lattix-agent/acme/`（官方安装脚本，离线则报错提示）；
+  2. 前置自检：域名解析结果须包含本机地址（不匹配则节点 failed 并报明原因）；standalone 签发需 80 端口空闲（被占则报错提示释放或改用自签）；
+  3. `acme.sh --issue --standalone -d <domain>`（默认 Let's Encrypt），证书安装到 `config/certs/<domain>/`；
+  4. acme.sh 自注册续期 cron；xray 证书文件每小时热重载，续期后自动生效，无需 reloadcmd。
+- ACME 证书为公共 CA 签发，订阅按普通 TLS 输出（系统根证书验证，无 pin/insecure）；`RealizedConfig.CertSHA256` 留空、`SNI` 为该域名。
+- DNS-01（需 API 凭据）与通配符证书不做。
+
+**两模式共用**：证书文件落在 agent `config/certs/`（安装布局已有 0700 的 `config/` 目录，`install-agent.sh:303-324`），模板以绝对路径占位符引用；`PurgeXray`/`ResetForPanelRebind`（`manager.go:66-84, 181-190`）保留 certs 目录。`VirtualConfig` 新增 `CertMode`（`selfsign`/`acme`，默认 selfsign）+ `TLSDomain`（模式 A 的伪装域名 / 模式 B 校验后的落地域名）。
 - `hot.go`：vmess/trojan 已有热操作；hy2 若 `AlterInbound` 不支持则走现有重启回退（`manager.go:212-224`），不专门适配。
 - xray 版本门控：agent 上报 xray 版本（升级链路已有此信息），hy2 节点要求 ≥ 26.3.27，低于则 `ApplyNode` 返回明确错误，panel 在节点选择器中对低版本 server 禁用 hy2 选项。
 
@@ -104,7 +123,7 @@ normalize 兼容性规则（后端权威，前端镜像）：
 - `sub.go`(mihomo)：hy2、ws、httpupgrade、tls(非 reality) 输出；vmess cipher。
 - `singbox.go`：hy2 outbound；`buildSbTLS` 拆分 reality/普通 tls 两个变体（当前硬编码 reality，`singbox.go:118`）。
 - `quanx.go`：尽力而为（vmess/socks/http 本就不支持，hy2 视 QuanX 能力输出或跳过）。
-- 自签证书客户端表达：支持 pin 的格式输出 pin（mihomo `fingerprint`），不支持的输出 `allowInsecure/skip-cert-verify`，保证开箱即用。
+- 自签证书客户端表达：支持 pin 的格式输出 pin（mihomo `fingerprint`），不支持的输出 `allowInsecure/skip-cert-verify`，保证开箱即用；ACME 模式按普通 TLS 输出（系统根证书验证，无 pin/insecure）。
 
 ### 3.5 前端（`src/frontend/`）
 
@@ -119,19 +138,20 @@ normalize 兼容性规则（后端权威，前端镜像）：
 - **动态渲染**：选协议后只显示该协议有意义的字段；不兼容组合在前端即时禁用/自动纠正（镜像后端矩阵）。
 - **默认即最优**：新链路默认 vless+reality+tcp+vision+mlkem768（维持现状默认）；密钥/密码/shortID/path 等全部可留空自动生成，界面上标注"留空自动生成"。
 - **高级折叠**：fingerprint、xhttp mode/host、hy2 带宽/端口跳跃、salamander 等进"高级选项"折叠区。
+- **TLS 区域**（安全层选 tls 时）：证书模式单选 —— "伪装域名自签"（默认，可自定义伪装域）/ "使用落地服务器域名(ACME)"（实时检测出口服务器是否已配置域名，无则禁用该选项并提示原因）；hy2 强制 tls，同样提供这两个证书模式。
 - 常量与门禁更新：`DIRECT_PROTOCOLS`/`RELAY_PROTOCOLS` 扩为全量（dokodemo 仍禁多跳出口）、`NETWORKS` 加 ws/httpupgrade、`REALITY_PROTOCOLS` 扩为 vless/vmess/trojan、新增 vmess cipher、hy2 字段区。
 - 编辑回填（`use-chain-form.ts:208-268` 解析模板 JSON）每协议/安全层/传输补分支。
 
 ### 3.6 安装/升级
 
-`scripts/install-agent.sh` 不变（xray latest ≥ 26.3.27 即含 hy2）；存量 agent 通过既有 `xray.upgrade` 链路升级即可。hy2 需要 UDP 入站放行，文档补充防火墙提示。
+`scripts/install-agent.sh` 不变（xray latest ≥ 26.3.27 即含 hy2）；存量 agent 通过既有 `xray.upgrade` 链路升级即可。acme.sh 由 agent 在首次使用 ACME 模式时按需自安装（见 3.3 模式 B），不进 install 脚本。hy2 需要 UDP 入站放行、ACME 模式需要 80 端口空闲，文档补充防火墙提示。
 
-## 4. 数据流（以新建 hy2 链路为例）
+## 4. 数据流（以新建 hy2 中转链路为例）
 
-1. 前端提交 `protocol=hysteria`，auth 留空。
-2. panel normalize 校验/补默认 → 生成 hysteria inbound 模板（含 `{{PORT}}/{{TAG}}/{{CLIENTS}}/{{TLS_CERT_FILE}}/{{TLS_KEY_FILE}}`）→ 存 `nodes.config_template` → 下发。
-3. agent 填充：生成自签证书（无则 `xray tls cert`）、用户 auth 列表 → `xray run -test` → 生效 → 上报 RealizedConfig（SNI、CertSHA256、带宽等）。
-4. 订阅按格式输出 hy2 链接（pin 或 insecure）。
+1. 前端提交 `protocol=hysteria`、多跳拓扑、auth 留空、证书模式默认自签。
+2. panel normalize 校验/补默认（多跳自动禁用 udpHop）→ 出口 hy2 inbound 模板（含 `{{PORT}}/{{TAG}}/{{CLIENTS}}/{{TLS_CERT_FILE}}/{{TLS_KEY_FILE}}`）→ 存 `nodes.config_template`；各跳 dokodemo 管道按出口协议推导为 `tcp,udp` → 逐跳下发。
+3. 出口 agent 填充：生成证书（自签 `xray tls cert`；ACME 模式则域名解析自检 + acme.sh 签发）、用户 auth 列表 → `xray run -test` → 生效 → 上报 RealizedConfig（SNI、CertSHA256（仅自签）、带宽等）。
+4. 订阅按格式输出 hy2 链接：地址/端口指向**入口**服务器与入口转发端口（沿用现有非端点链路订阅逻辑，`sub.go:756-765`），hy2 参数取自出口 RealizedConfig；自签输出 pin 或 insecure，ACME 输出普通 TLS。
 
 ## 5. 错误处理
 
@@ -139,19 +159,20 @@ normalize 兼容性规则（后端权威，前端镜像）：
 - agent 填充失败/校验失败沿用现有 `failed` 状态与 `.prev` 回滚。
 - hy2 + xray < 26.3.27：明确报错"节点 xray 版本过低，请先在节点页升级 xray"。
 - `xray tls cert` 失败：节点进入 failed，错误透出。
+- ACME 模式：域名未设置（panel 前置 400）、域名解析不含本机、80 端口被占、acme.sh 安装/签发失败——分别给出指向性错误信息，节点 failed 不影响存量 inbound。
 - ws/grpc/httpupgrade 弃用警告不阻断（xray 仅 warning）。
 
 ## 6. 测试
 
-- 单测：`panel/nodes_test.go` 矩阵 normalize 用例（每协议合法/非法组合）+ 端口冲突前置校验用例（同层同协议/异协议拒绝、TCP/UDP 同号共存、vless 共享合并）；`sub/*_test.go` 新协议各格式输出；`fill` 测试（自签证书生成 mock、UDP 端口探测）。
-- e2e：`scripts/e2e/protocols.sh` 扩展全矩阵（每协议至少一组数据面验证，hy2 用第二个 xray 做客户端仿 `vlessenc.sh`）；`links.sh` 订阅断言扩展；新增端口冲突场景（同端口异协议应 panel 侧 400，而非 agent bind 失败）。
+- 单测：`panel/nodes_test.go` 矩阵 normalize 用例（每协议合法/非法组合）+ 端口冲突前置校验用例（同层同协议/异协议拒绝、TCP/UDP 同号共存、vless 共享合并）+ ACME 域名检测（无域名服务器拒绝）；`sub/*_test.go` 新协议各格式输出；`fill` 测试（自签证书生成 mock、UDP 端口探测）；`renderForwardInbound` UDP 推导用例。
+- e2e：`scripts/e2e/protocols.sh` 扩展全矩阵（每协议至少一组数据面验证，hy2 用第二个 xray 做客户端仿 `vlessenc.sh`，hy2 中转链路验证 UDP 逐跳转发）；`links.sh` 订阅断言扩展；新增端口冲突场景（同端口异协议应 panel 侧 400，而非 agent bind 失败）。ACME 模式用本地 Pebble/自签 CA 模拟或仅覆盖到"域名自检失败"路径，不做真实 LE 签发。
 - 存量用例中硬编码 vless 的 fixture 不受影响（协议字段本身向后兼容，无 DB migration）。
 
 ## 7. 分阶段实施（供 plan 参考）
 
 1. **P1 解锁存量**：前端暴露 vmess/trojan/ss + reality 门禁放宽 + grpc 传输；顺带落地端口冲突前置校验（TCP/UDP 分层，见 3.2）。
-2. **P2 传输扩展**：ws/httpupgrade 全链路（panel 模板、fill 提取、订阅、前端）。
-3. **P3 TLS 安全层**：agent 自签证书管线（伪装域名 + pin，见 3.3）+ tlsStreamSettings + 订阅 pin/insecure。
-4. **P4 Hysteria2**：新协议全链路 + 版本门控，**仅单跳直连**（中转需 UDP 管道，后续单独立项）。
+2. **P2 传输扩展**：ws/httpupgrade 全链路（panel 模板、fill 提取、订阅、前端）；**UDP 中转管道**（dokodemo `network` 按出口协议推导为 `tcp,udp`，ss 中转 UDP 同步受益）。
+3. **P3 TLS 安全层**：自签（伪装域名 + pin）与 ACME（落地服务器域名，agent 自装 acme.sh）两模式 + tlsStreamSettings + 订阅 pin/insecure/普通 TLS 输出。
+4. **P4 Hysteria2**：新协议全链路 + 版本门控，单跳与中转均支持（依赖 P2 的 UDP 管道与 P3 的 TLS 证书模式）。
 
 每阶段独立可交付、可回滚。
