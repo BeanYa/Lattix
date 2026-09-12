@@ -1,6 +1,8 @@
 package sub
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -52,5 +54,42 @@ func TestBuildQuanXLineIPv6Bracket(t *testing.T) {
 	line = buildQuanXLine(testNode("1.2.3.4", shared.ProtocolTrojan), rc, "uuid")
 	if !strings.HasPrefix(line, "trojan=1.2.3.4:443,") {
 		t.Errorf("quanx v4 line = %q, want prefix trojan=1.2.3.4:443,", line)
+	}
+}
+
+// TestVMessShareLinkCipher 验证 vmess 分享链接的 scy 取自 VirtualConfig.Cipher，
+// 模板为空/损坏时回退 auto。
+func TestVMessShareLinkCipher(t *testing.T) {
+	rc := testRealized()
+	decode := func(t *testing.T, link string) map[string]string {
+		t.Helper()
+		raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(link, "vmess://"))
+		if err != nil {
+			t.Fatalf("vmess link 解码失败: %v", err)
+		}
+		var m map[string]string
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatalf("vmess JSON 解析失败: %v", err)
+		}
+		return m
+	}
+
+	n := testNode("1.2.3.4", shared.ProtocolVMess)
+	n.ConfigTemplate = json.RawMessage(`{"protocol":"vmess","cipher":"chacha20-poly1305"}`)
+	link, ok := buildShareLink(n, rc, "uuid")
+	if !ok {
+		t.Fatal("vmess link unsupported")
+	}
+	if got := decode(t, link)["scy"]; got != "chacha20-poly1305" {
+		t.Errorf("scy 应为 chacha20-poly1305，实际 %q", got)
+	}
+
+	n.ConfigTemplate = nil
+	link, ok = buildShareLink(n, rc, "uuid")
+	if !ok {
+		t.Fatal("vmess link unsupported")
+	}
+	if got := decode(t, link)["scy"]; got != "auto" {
+		t.Errorf("空模板 scy 应回退 auto，实际 %q", got)
 	}
 }

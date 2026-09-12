@@ -1583,6 +1583,7 @@ export interface components {
             method?: string;
             fingerprint?: string;
             encryption?: string;
+            cipher?: string;
             template: {
                 [key: string]: unknown;
             };

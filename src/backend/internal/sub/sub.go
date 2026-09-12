@@ -800,7 +800,7 @@ func buildProxy(n store.Node, rc shared.RealizedConfig, uuid string) (clashProxy
 		zero := 0
 		p.UUID = uuid
 		p.AlterID = &zero
-		p.Cipher = "auto"
+		p.Cipher = vmessCipher(n.ConfigTemplate)
 		p.Network = rc.Network
 		p.TLS = true
 		p.Servername = rc.ServerName

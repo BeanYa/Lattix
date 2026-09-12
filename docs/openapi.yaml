@@ -915,6 +915,7 @@ components:
         method: {type: string}
         fingerprint: {type: string}
         encryption: {type: string}
+        cipher: {type: string}
         template:
           type: object
           additionalProperties: true

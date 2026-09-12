@@ -424,6 +424,7 @@ export interface CreateNodeRequest {
   host?: string
   flow?: string
   method?: string
+  cipher?: string
   encryption?: string
   target_address?: string
   target_port?: number

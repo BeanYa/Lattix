@@ -76,7 +76,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 // createNodeRequest 是节点创建向导的提交（§10）：端口可空 = 自动（§7）。
 // 各协议有效字段见设计文档"全协议向导"：reality 系（vless/vmess/trojan）使用
 // short_id/dest/server_names/fingerprint/network 及 grpc/xhttp 子选项；flow 仅 vless+tcp；
-// method 仅 shadowsocks；target_address/target_port 仅 dokodemo-door。
+// method 仅 shadowsocks；cipher 仅 vmess；target_address/target_port 仅 dokodemo-door。
 type createNodeRequest struct {
 	Name          string   `json:"name"`
 	ServerID      int64    `json:"server_id"`
@@ -94,6 +94,7 @@ type createNodeRequest struct {
 	Flow          string   `json:"flow"`           // vless 默认 xtls-rprx-vision（仅 tcp）
 	Encryption    string   `json:"encryption"`     // vless：VLESS Encryption 认证方式（x25519/mlkem768），可与 flow 组合（§15）
 	Method        string   `json:"method"`         // shadowsocks，默认 2022-blake3-aes-128-gcm
+	Cipher        string   `json:"cipher"`         // vmess 客户端 cipher，默认 auto
 	TargetAddress string   `json:"target_address"` // dokodemo-door 转发目标
 	TargetPort    *int     `json:"target_port"`
 }
@@ -106,6 +107,10 @@ func (req *createNodeRequest) normalize() error {
 	}
 	if !shared.ValidValue(req.Protocol, shared.Protocols) {
 		return fmt.Errorf("不支持的协议: %s", req.Protocol)
+	}
+	// cipher 仅 vmess 有效：其他协议一律清空（单一真相点，vmess 分支只做默认值/校验）。
+	if req.Protocol != shared.ProtocolVMess {
+		req.Cipher = ""
 	}
 
 	if shared.IsRealityProtocol(req.Protocol) {
@@ -173,7 +178,15 @@ func (req *createNodeRequest) normalize() error {
 			}
 			// vision + Encryption 允许组合（native 拼接），客户端字符串按 1-RTT 下发（§15）。
 		}
-	case shared.ProtocolVMess, shared.ProtocolTrojan:
+	case shared.ProtocolVMess:
+		req.Flow = ""
+		if req.Cipher == "" {
+			req.Cipher = shared.VMessCipherAuto
+		}
+		if !shared.ValidValue(req.Cipher, shared.VMessCiphers) {
+			return fmt.Errorf("不支持的 vmess cipher: %s", req.Cipher)
+		}
+	case shared.ProtocolTrojan:
 		req.Flow = ""
 	case shared.ProtocolShadowsocks:
 		if req.Method == "" {
@@ -490,6 +503,7 @@ func buildVirtualConfig(req createNodeRequest) shared.VirtualConfig {
 		Method:      req.Method,
 		Fingerprint: req.Fingerprint,
 		Encryption:  req.Encryption,
+		Cipher:      req.Cipher,
 		Template:    json.RawMessage(template),
 	}
 }

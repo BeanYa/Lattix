@@ -57,7 +57,7 @@ func buildShareLink(n store.Node, rc shared.RealizedConfig, uuid string) (string
 		port := fmt.Sprintf("%d", rc.Port)
 		j, _ := json.Marshal(map[string]string{
 			"v": "2", "ps": name, "add": n.ServerAddress, "port": port,
-			"id": uuid, "aid": "0", "scy": "auto",
+			"id": uuid, "aid": "0", "scy": vmessCipher(n.ConfigTemplate),
 			"net": rc.Network, "type": "none",
 			"host": rc.Host, "path": rc.Path,
 			"tls": "reality", "sni": rc.ServerName, "fp": rc.Fingerprint,

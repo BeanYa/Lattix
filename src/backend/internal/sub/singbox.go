@@ -43,7 +43,8 @@ type sbOutbound struct {
 	UUID       string       `json:"uuid,omitempty"`
 	Flow       string       `json:"flow,omitempty"`
 	Encryption string       `json:"encryption,omitempty"`
-	Username   string       `json:"username,omitempty"` // socks / http
+	Security   string       `json:"security,omitempty"`   // vmess 客户端 cipher
+	Username   string       `json:"username,omitempty"`   // socks / http
 	Password   string       `json:"password,omitempty"`
 	Method     string       `json:"method,omitempty"` // shadowsocks
 	TLS        *sbTLS       `json:"tls,omitempty"`
@@ -90,6 +91,7 @@ func buildSbOutbound(n store.Node, rc shared.RealizedConfig, uuid string) (sbOut
 	case shared.ProtocolVMess:
 		ob.Type = "vmess"
 		ob.UUID = uuid
+		ob.Security = vmessCipher(n.ConfigTemplate)
 		ob.TLS = buildSbTLS(rc)
 		ob.Transport = buildSbTransport(rc)
 	case shared.ProtocolShadowsocks:
