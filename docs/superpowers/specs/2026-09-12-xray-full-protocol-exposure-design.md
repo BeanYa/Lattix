@@ -69,11 +69,22 @@ normalize 兼容性规则（后端权威，前端镜像）：
 - 反向隧道段（vless+reality 桥接）可承载 UDP（vless over TCP 传输 UDP 包），无需改动。
 - 逐跳转发端口在端口冲突治理中按出口协议标记 TCP/UDP 占用（见下节）。
 
-#### hy2 端口跳跃（udpHop）方案（评审澄清）
+#### 异构入口协议：入口终结模式（评审决策）
 
+动机：大部分运营商对客户端→入口的 UDP 做 QoS，而部分 NAT 机型上 hy2（QUIC+brutal）性能优于长连 TCP。因此新增链路级选项：**入口协议 ≠ 出口协议**——客户端→入口走 VLESS+Reality(TCP)，UDP 只在服务器间流动。
+
+- **入口侧**：复用 vless 共享端点机制（入口终结客户端协议 + 按链路渲染出口 outbound 的骨架已存在于 `xray/endpoint.go:125-160`）。客户端只见 vless+reality，订阅沿用端点链路现有逻辑（`sub.go:698-725`），tunnel 凭据不下发（现有卫生模式）。
+- **最后一段（直连出口的那一跳）**：入口 xray 用 **hy2 outbound** 拨出口 hy2 inbound（UDP）。中间各段沿用现有 encrypted/reverse 隧道（TCP）。2 跳链路 = 入口直接 hy2 拨出口。
+- **出口侧**：hy2 监听按上轮决策同机共享（EnsureSharedEndpoint 扩展）；链路身份 = hy2 users 里的 tunnel auth（`email: tunnel:<uuid>`，仿 vless 的 tunnel UUID 模式，`chains.go:377`）。
+- **默认策略**：中转链路出口选 hy2 时默认开启入口终结模式并标注"推荐：规避运营商 UDP QoS"；用户可关闭退回端到端 hy2（客户端需 hy2 客户端且直面 UDP QoS）。
+- **NAT 出口**：有 ≥1 公共端口即可工作（hy2 单端口；端口跳跃段可选、须落在 NAT 公共段内）；**零公共端口**的出口 hy2 段不可达，回退现有 reverse 隧道（功能可用，失去 UDP 性能收益）。
+- **版本风险与保底**：xray 的 hy2 outbound 系 26.3.27 新增、尚不成熟（已知互操作 bug，但此模式两端均为 xray，不涉及官方 hysteria 互操作）。P4 验证项扩为"xray↔xray hy2 出入站数据面实测"；若不达标，最后一段降级为 **Shadowsocks-2022 UDP**（xray 原生双向支持、加密 UDP）保底，链路架构与前端选项不变。
+- **需要动的接缝**（核实自代码）：`chains.go:354/602` 端点创建门禁（改为按入口协议判定、端点配置与出口配置拆分）、`revision_plan.go:126-131` transport 白名单新增 `"hy2"`、`dispatch/endpoint.go:56-80` route 目标改为出口公网地址+hy2 参数、`xray/endpoint.go:125-160` outbound 按协议分派、`chain.go:327-348` 末段不再生成 TCP 管道、`chain.go:604-610` reality 校验改查端点配置、`SharedEndpointRoute`（`messages.go:272-280`）增加出口协议判别字段。骨架配置单 freedom outbound 不拦 UDP 出口（`manager.go:398-408`），无阻塞。
+
+#### hy2 端口跳跃（udpHop）方案（评审澄清）
 端口跳跃是 hy2 抗 QoS/封锁的核心能力，单跳与中转均支持，不做禁用。机制：客户端在端口段内逐包换端口，要求**每一跳都能接住段内任意端口并 1:1 转发到下一跳同号端口**，出口 hy2 监听整个段。
 
-- **转发实现**：入口/中间跳按端口段生成逐端口 dokodemo UDP inbound（段内每端口一个，`127.0.0.1`/公网监听规则与现有 forward 一致），目标 = 下一跳同号端口；段长默认 32（上限 200），配置膨胀可控。
+- **转发实现**：端到端模式下，入口/中间跳按端口段生成逐端口 dokodemo UDP inbound（段内每端口一个，`127.0.0.1`/公网监听规则与现有 forward 一致），目标 = 下一跳同号端口；入口终结模式下跳跃段仅存在于 hy2 段（入口 hy2 outbound → 出口 inbound），入口/中间跳无 TCP 管道。段长默认 32（上限 200），配置膨胀可控。
 - **P4 首个实施任务为验证项**：实测 xray hy2 inbound 的 udpHop 服务端行为——若 xray 自行绑定段内全部端口，按上述 dokodemo 方案；若 xray 只监听单端口、依赖 OS 层 DNAT（官方 hysteria 的做法），则改为 agent 管理 iptables DNAT 规则（入口段→出口同号段、出口段→hy2 监听端口），spec 方案以实测结果收敛，两条路径的对外行为一致。
 - **端口段独占**：跳跃段在**每一跳**的 UDP 空间整体保留，纳入端口冲突治理：段与段、段与单端口均不得重叠；与 TCP 监听同号不冲突（独立端口空间）；与 vless 共享端点等 TCP 占用互不影响。
 - **NAT 少端口机型**：端口段必须整体落在该跳服务器的 NAT 公共端口段内（复用 `checkPortInRanges`）；可用端口不足最小段长（8）时允许关闭跳跃退回固定单端口，前端提示"该机器公共端口不足，已关闭端口跳跃，可用性可能受 QoS 影响"。
@@ -145,7 +156,7 @@ normalize 兼容性规则（后端权威，前端镜像）：
   - `Trojan / VMess`（兼容性广）
   - `Shadowsocks`（轻量·特征明显）
   - `SOCKS/HTTP`、`端口转发`（特殊用途）
-- **动态渲染**：选协议后只显示该协议有意义的字段；不兼容组合在前端即时禁用/自动纠正（镜像后端矩阵）。
+- **动态渲染**：选协议后只显示该协议有意义的字段；不兼容组合在前端即时禁用/自动纠正（镜像后端矩阵）。中转链路出口选 hy2 时显示"入口协议"选项（默认 VLESS+Reality 入口终结，标注"推荐：规避运营商 UDP QoS"；可关闭退回端到端 hy2）。
 - **默认即最优**：新链路默认 vless+reality+tcp+vision+mlkem768（维持现状默认）；密钥/密码/shortID/path 等全部可留空自动生成，界面上标注"留空自动生成"。
 - **高级折叠**：fingerprint、xhttp mode/host、hy2 带宽/端口跳跃段长、salamander 等进"高级选项"折叠区；hy2 端口跳跃默认开启（段长 32），NAT 公共端口不足的机器自动降级为固定端口并提示。
 - **TLS 区域**（安全层选 tls 时）：证书模式单选 —— "伪装域名自签"（默认，可自定义伪装域）/ "使用落地服务器域名(ACME)"（实时检测出口服务器是否已配置域名，无则禁用该选项并提示原因）；hy2 强制 tls，同样提供这两个证书模式。
@@ -175,7 +186,7 @@ normalize 兼容性规则（后端权威，前端镜像）：
 ## 6. 测试
 
 - 单测：`panel/nodes_test.go` 矩阵 normalize 用例（每协议合法/非法组合）+ 端口冲突前置校验用例（同层同协议/异协议拒绝、TCP/UDP 同号共存、vless 共享合并）+ ACME 域名检测（无域名服务器拒绝）；`sub/*_test.go` 新协议各格式输出；`fill` 测试（自签证书生成 mock、UDP 端口探测）；`renderForwardInbound` UDP 推导用例。
-- e2e：`scripts/e2e/protocols.sh` 扩展全矩阵（每协议至少一组数据面验证，hy2 用第二个 xray 做客户端仿 `vlessenc.sh`）；hy2 中转链路验证 UDP 逐跳转发 + 端口跳跃段（段内多个端口分别发包验证 1:1 转发）；hy2 同机双链路验证共享监听与端口段合并；`links.sh` 订阅断言扩展；新增端口冲突场景（同端口异协议应 panel 侧 400，而非 agent bind 失败）。ACME 模式用本地 Pebble/自签 CA 模拟或仅覆盖到"域名自检失败"路径，不做真实 LE 签发。
+- e2e：`scripts/e2e/protocols.sh` 扩展全矩阵（每协议至少一组数据面验证，hy2 用第二个 xray 做客户端仿 `vlessenc.sh`）；hy2 中转两种模式均验证：端到端（UDP 逐跳转发 + 跳跃段内多端口发包）与入口终结（客户端 vless+reality → 入口 → hy2 段 → 出口）；hy2 同机双链路验证共享监听与端口段合并；`links.sh` 订阅断言扩展；新增端口冲突场景（同端口异协议应 panel 侧 400，而非 agent bind 失败）。ACME 模式用本地 Pebble/自签 CA 模拟或仅覆盖到"域名自检失败"路径，不做真实 LE 签发。
 - 存量用例中硬编码 vless 的 fixture 不受影响（协议字段本身向后兼容，无 DB migration）。
 
 ## 7. 分阶段实施（供 plan 参考）
@@ -183,6 +194,6 @@ normalize 兼容性规则（后端权威，前端镜像）：
 1. **P1 解锁存量**：前端暴露 vmess/trojan/ss + reality 门禁放宽 + grpc 传输；顺带落地端口冲突前置校验（TCP/UDP 分层，见 3.2）。
 2. **P2 传输扩展**：ws/httpupgrade 全链路（panel 模板、fill 提取、订阅、前端）；**UDP 中转管道**（dokodemo `network` 按出口协议推导为 `tcp,udp`，ss 中转 UDP 同步受益）。
 3. **P3 TLS 安全层**：自签（伪装域名 + pin）与 ACME（落地服务器域名，agent 自装 acme.sh）两模式 + tlsStreamSettings + 订阅 pin/insecure/普通 TLS 输出。
-4. **P4 Hysteria2**：新协议全链路 + 版本门控，单跳与中转均支持（依赖 P2 的 UDP 管道与 P3 的 TLS 证书模式）。首个任务为 udpHop 服务端行为验证（xray 自绑段 vs iptables DNAT，见 3.2）；含出口侧 hy2 共享监听（EnsureSharedEndpoint 扩展）与端口段冲突治理。
+4. **P4 Hysteria2**：新协议全链路 + 版本门控，单跳与中转均支持（依赖 P2 的 UDP 管道与 P3 的 TLS 证书模式）；中转默认入口终结模式（末段 hy2 outbound）。首个任务为数据面验证：xray↔xray hy2 出入站实测 + udpHop 服务端行为（xray 自绑段 vs iptables DNAT）；hy2 outbound 不达标则末段降级 SS-2022 UDP 保底（见 3.2）。含出口侧 hy2 共享监听（EnsureSharedEndpoint 扩展）与端口段冲突治理。
 
 每阶段独立可交付、可回滚。
