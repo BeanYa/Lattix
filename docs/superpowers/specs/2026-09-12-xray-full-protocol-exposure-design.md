@@ -25,7 +25,7 @@ xray 26.x 要点：`network` 更名 `method`、`tcp` 更名 `raw`（旧名仍兼
 | vmess | 同上 | reality(仅 tcp/xhttp/grpc) / tls / none | 加密: auto/aes-128-gcm/chacha20-poly1305 |
 | trojan | 同上 | reality(仅 tcp/xhttp/grpc) / tls | 无（flow 已被 xray 移除） |
 | shadowsocks | 无传输层 | none | method: 2022-blake3-{aes-128-gcm,aes-256-gcm,chacha20-poly1305}、aes-128-gcm、aes-256-gcm、chacha20-ietf-poly1305 |
-| hysteria2（新增） | 自带 QUIC | tls（强制） | auth 密码（自动生成）、salamander 混淆密码（可选）、brutalUp/brutalDown（可选）、udpHop 端口跳跃（可选） |
+| hysteria2（新增） | 自带 QUIC | tls（强制） | auth 密码（自动生成）、salamander 混淆密码（可选）、brutalUp/brutalDown（可选）、udpHop 端口跳跃（可选）；**首期仅支持单跳直连链路**（见 3.2 拓扑约束） |
 | socks / http | 无 | none | 账密（现状） |
 | dokodemo-door | 无 | none | 转发目标（现状） |
 
@@ -58,12 +58,41 @@ normalize 兼容性规则（后端权威，前端镜像）：
 - `chains.go`：复用现状。hysteria2/vmess/trojan/ss 链路不享受 vless 共享端点（沿用非 vless 协议独立监听现状）；plaintext 特例逻辑不变。
 - OpenAPI 契约更新 → 前端 `api-contract.generated.ts` 重新生成。
 
+#### 链路拓扑与协议落地点（评审澄清）
+
+经代码核实（`dispatch/chain.go:163-218`、`xray/chain.go:384-397`）：**用户协议 inbound 落在出口服务器**，客户端与出口端到端加密；入口/中间跳是 dokodemo TCP 哑管道（plaintext 协议或 NAT 段走 vless+reality 隧道）。vless 是唯一特例：入口跑共享端点、出口挂隧道身份。
+
+对 hy2 的影响：hy2 是 UDP 协议，而中转管道 `renderForwardInbound` 硬编码 `network:"tcp"`（`xray/chain.go:394`），UDP 无法通过现有管道中转。**决策：P4 阶段 hy2 仅允许单跳直连链路**（前端选中 hy2 时隐藏中转拓扑选项，后端 normalize 拒绝多跳）。后续如需 hy2 中转，再把管道 inbound 扩为 `tcp,udp` 并处理逐跳 UDP 转发，单独立项。
+
+#### 端口冲突治理（评审澄清）
+
+现状：panel 侧零校验（`nodes` 表无 `(server_id,port)` 约束），`xray run -test` 不 bind 端口，冲突要到 agent 热更新/重启时才以 bind 失败 + 回滚暴露。本期在 panel 前置拦截：
+
+- 新增按 `(server_id, port, 传输层)` 的冲突查询（nodes + shared_endpoints）。**TCP 与 UDP 是独立端口空间**：hy2(UDP) 与 vless(TCP) 同端口号允许共存；ss 的 `tcp,udp` 同时占用两层。
+- 同服务器 + 同端口 + 同传输层 + 同协议：
+  - vless → 沿用共享端点合并（现状）；
+  - 其他协议 → 拒绝并提示"该端口已被同协议链路占用，请更换端口或留空自动分配"（非 vless 协议无共享监听机制，不强行合并）。
+- 同服务器 + 同端口 + 同传输层 + 不同协议 → 拒绝并指明占用方链路名。
+- 端口留空（0）→ agent `pickPort` 扩为同时避开已管 TCP/UDP 端口（`fill.go:309-355` 目前只探测 TCP）。
+- agent 侧 bind 失败回滚路径保留为最后防线。
+
 ### 3.3 agent（`src/agent/internal/xray/`）
 
 - `fill.go`：
   - `clientCredentialEntry` 新增 hy2 分支 `{auth, email, level:0}`（auth 为 per-user 随机串，派生方式仿 `SSUserPassword`）。
-  - 新占位符填充：`{{TLS_CERT_FILE}}/{{TLS_KEY_FILE}}` → 首次填充时调用 `xray tls cert` 在配置目录生成自签 CA+证书（按节点 tag 缓存复用），计算证书 SHA256 写入 `RealizedConfig.CertSHA256`。
+  - 新占位符填充：`{{TLS_CERT_FILE}}/{{TLS_KEY_FILE}}` → 首次填充时生成自签证书（策略见下），计算证书 SHA256 写入 `RealizedConfig.CertSHA256`。
   - Realized 提取扩展：tlsSettings serverName、hy2 参数。
+  - `pickPort`（`fill.go:309-355`）扩为同时探测/避开 UDP 占用（配合 3.2 端口冲突治理）。
+
+#### TLS 自签证书策略（评审澄清）
+
+服务器通常只有 IP（panel `servers` 表无 domain 字段，`addresses` 可为 IP 或域名），因此**不是按落地服务器的真实域名签发**，而是：
+
+- agent 侧调用 `xray tls cert` 自签 CA + 服务器证书，密钥对完全自行生成，不依赖任何真实域名解析。
+- 证书 CN/SAN（即客户端 SNI）使用**伪装域名**：默认从常见域名预设池随机选取（复用 `RealityDestPicker` 的预设思路），高级选项允许用户自定义一个域名（仅作 TLS 伪装身份，不要求指向本机）。
+- 信任锚 = `RealizedConfig.CertSHA256`：订阅输出支持 pin 的格式带证书指纹（mihomo `fingerprint` 等），不支持的格式回退 `skip-cert-verify/allowInsecure`。安全语义是"自签 + pin"，而非域名验证。
+- 证书文件落在 agent `config/certs/`（安装布局已有 0700 的 `config/` 目录，`install-agent.sh:303-324`），按节点 tag 命名缓存复用；模板以绝对路径占位符引用。`PurgeXray`/`ResetForPanelRebind`（`manager.go:66-84, 181-190`）保留 certs 目录（证书不属于 xray 配置漂移重建范围，但文件路径引用可存活于模板）。
+- 真实域名 + ACME/上传证书：列为后续扩展（panel 需新增域名字段与证书下发通道），不在本期。
 - `hot.go`：vmess/trojan 已有热操作；hy2 若 `AlterInbound` 不支持则走现有重启回退（`manager.go:212-224`），不专门适配。
 - xray 版本门控：agent 上报 xray 版本（升级链路已有此信息），hy2 节点要求 ≥ 26.3.27，低于则 `ApplyNode` 返回明确错误，panel 在节点选择器中对低版本 server 禁用 hy2 选项。
 
@@ -114,15 +143,15 @@ normalize 兼容性规则（后端权威，前端镜像）：
 
 ## 6. 测试
 
-- 单测：`panel/nodes_test.go` 矩阵 normalize 用例（每协议合法/非法组合）；`sub/*_test.go` 新协议各格式输出；`fill` 测试（自签证书生成 mock）。
-- e2e：`scripts/e2e/protocols.sh` 扩展全矩阵（每协议至少一组数据面验证，hy2 用第二个 xray 做客户端仿 `vlessenc.sh`）；`links.sh` 订阅断言扩展。
+- 单测：`panel/nodes_test.go` 矩阵 normalize 用例（每协议合法/非法组合）+ 端口冲突前置校验用例（同层同协议/异协议拒绝、TCP/UDP 同号共存、vless 共享合并）；`sub/*_test.go` 新协议各格式输出；`fill` 测试（自签证书生成 mock、UDP 端口探测）。
+- e2e：`scripts/e2e/protocols.sh` 扩展全矩阵（每协议至少一组数据面验证，hy2 用第二个 xray 做客户端仿 `vlessenc.sh`）；`links.sh` 订阅断言扩展；新增端口冲突场景（同端口异协议应 panel 侧 400，而非 agent bind 失败）。
 - 存量用例中硬编码 vless 的 fixture 不受影响（协议字段本身向后兼容，无 DB migration）。
 
 ## 7. 分阶段实施（供 plan 参考）
 
-1. **P1 解锁存量**：前端暴露 vmess/trojan/ss + reality 门禁放宽 + grpc 传输；纯前端 + 订阅小改。
+1. **P1 解锁存量**：前端暴露 vmess/trojan/ss + reality 门禁放宽 + grpc 传输；顺带落地端口冲突前置校验（TCP/UDP 分层，见 3.2）。
 2. **P2 传输扩展**：ws/httpupgrade 全链路（panel 模板、fill 提取、订阅、前端）。
-3. **P3 TLS 安全层**：agent 自签证书管线 + tlsStreamSettings + 订阅 pin/insecure。
-4. **P4 Hysteria2**：新协议全链路 + 版本门控。
+3. **P3 TLS 安全层**：agent 自签证书管线（伪装域名 + pin，见 3.3）+ tlsStreamSettings + 订阅 pin/insecure。
+4. **P4 Hysteria2**：新协议全链路 + 版本门控，**仅单跳直连**（中转需 UDP 管道，后续单独立项）。
 
 每阶段独立可交付、可回滚。
