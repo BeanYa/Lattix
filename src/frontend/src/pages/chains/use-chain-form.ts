@@ -14,9 +14,40 @@ import type {
 } from '@/lib/types'
 
 // 与后端 shared 包保持一致的协议/选项常量（出口节点协议表单复用 Nodes 向导的 vless+reality 字段）。
-export const DIRECT_PROTOCOLS = ['vless', 'socks', 'http', 'dokodemo-door'] as const
-export const RELAY_PROTOCOLS = ['vless', 'socks', 'http'] as const
-export const NETWORKS = ['tcp', 'xhttp']
+export const DIRECT_PROTOCOLS = [
+  'vless',
+  'vmess',
+  'trojan',
+  'shadowsocks',
+  'socks',
+  'http',
+  'dokodemo-door',
+] as const
+export const RELAY_PROTOCOLS = ['vless', 'vmess', 'trojan', 'shadowsocks', 'socks', 'http'] as const
+export const NETWORKS = ['tcp', 'xhttp', 'grpc']
+export const SS_METHODS = [
+  { value: '2022-blake3-aes-128-gcm', label: '2022-blake3-aes-128-gcm（推荐）' },
+  { value: '2022-blake3-aes-256-gcm', label: '2022-blake3-aes-256-gcm' },
+  { value: '2022-blake3-chacha20-poly1305', label: '2022-blake3-chacha20-poly1305' },
+  { value: 'aes-128-gcm', label: 'aes-128-gcm' },
+  { value: 'aes-256-gcm', label: 'aes-256-gcm' },
+  { value: 'chacha20-ietf-poly1305', label: 'chacha20-ietf-poly1305' },
+]
+export const VMESS_CIPHERS = [
+  { value: 'auto', label: 'auto（推荐）' },
+  { value: 'aes-128-gcm', label: 'aes-128-gcm' },
+  { value: 'chacha20-poly1305', label: 'chacha20-poly1305' },
+]
+// 协议一句话定位（不懂协议的用户按此选择）。
+export const PROTOCOL_LABELS: Record<string, string> = {
+  vless: 'VLESS（推荐 · Reality 抗封锁最强）',
+  vmess: 'VMess（兼容性广）',
+  trojan: 'Trojan（兼容性广）',
+  shadowsocks: 'Shadowsocks（轻量 · 特征明显）',
+  socks: 'SOCKS5（明文 · 特殊用途）',
+  http: 'HTTP（明文 · 特殊用途）',
+  'dokodemo-door': '端口转发',
+}
 export const FINGERPRINTS = [
   'chrome',
   'firefox',
@@ -37,7 +68,7 @@ export const VLESS_ENCS = [
 ]
 export const XHTTP_MODES = ['auto', 'packet-up', 'stream-up']
 
-const REALITY_PROTOCOLS = ['vless']
+const REALITY_PROTOCOLS = ['vless', 'vmess', 'trojan']
 
 /** 入站能力（§21）：direct 或 NAT 受限直连（有端口段）。仅出口档 NAT 不能作入口/中间跳。 */
 export function inboundCapable(s: Server): boolean {
@@ -90,6 +121,9 @@ export interface ChainFormState {
   host: string
   flow: string
   encryption: string
+  serviceName: string
+  method: string
+  cipher: string
   targetAddress: string
   targetPort: string
   trafficMultiplier: string
@@ -118,6 +152,9 @@ const initialChainForm: ChainFormState = {
   host: '',
   flow: 'xtls-rprx-vision',
   encryption: 'none',
+  serviceName: 'grpc',
+  method: '2022-blake3-aes-128-gcm',
+  cipher: 'auto',
   targetAddress: '',
   targetPort: '',
   trafficMultiplier: '1.000',
@@ -252,6 +289,9 @@ export function useChainForm({
       fingerprint: String(virtual.fingerprint || 'chrome'),
       flow: String(virtual.flow || 'none'),
       encryption: String(virtual.encryption || 'none'),
+      serviceName: String(virtual.service_name || 'grpc'),
+      method: String(virtual.method || '2022-blake3-aes-128-gcm'),
+      cipher: String(virtual.cipher || 'auto'),
       path: String(virtual.path || '/'),
       mode: String(virtual.mode || 'auto'),
       host: String(virtual.host || ''),
@@ -278,6 +318,17 @@ export function useChainForm({
       exitAddr: '',
       protocol:
         value === 'relay' && current.protocol === 'dokodemo-door' ? 'vless' : current.protocol,
+    }))
+  }
+
+  const onProtocolChange = (value: string | null) => {
+    if (!value) return
+    setForm((current) => ({
+      ...current,
+      protocol: value,
+      // 跨协议纠偏：flow/encryption 仅 vless 有意义
+      flow: value === 'vless' ? current.flow : 'none',
+      encryption: value === 'vless' ? current.encryption : 'none',
     }))
   }
 
@@ -365,6 +416,9 @@ export function useChainForm({
           nodeBody.host = form.host.trim()
         }
       }
+      if (form.network === 'grpc') {
+        nodeBody.service_name = form.serviceName.trim() || 'grpc'
+      }
       if (form.protocol === 'vless') {
         // vision 仅 tcp；xhttp 必须无 flow；vision + Encryption 允许组合（§15）
         nodeBody.flow = form.network === 'tcp' ? form.flow : 'none'
@@ -372,6 +426,12 @@ export function useChainForm({
           nodeBody.encryption = form.encryption
         }
       }
+    }
+    if (form.protocol === 'shadowsocks') {
+      nodeBody.method = form.method
+    }
+    if (form.protocol === 'vmess') {
+      nodeBody.cipher = form.cipher
     }
     if (form.protocol === 'dokodemo-door') {
       if (!form.targetAddress.trim() || !form.targetPort.trim()) {
@@ -443,6 +503,7 @@ export function useChainForm({
     openEdit,
     onOpenChange,
     onTypeChange,
+    onProtocolChange,
     setMiddle,
     setMiddleAddr,
     onSubmit,

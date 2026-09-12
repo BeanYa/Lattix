@@ -31,8 +31,11 @@ import {
   FINGERPRINTS,
   FLOWS,
   NETWORKS,
+  PROTOCOL_LABELS,
   RELAY_PROTOCOLS,
+  SS_METHODS,
   VLESS_ENCS,
+  VMESS_CIPHERS,
   XHTTP_MODES,
   inboundCapable,
   type ChainFormController,
@@ -151,6 +154,7 @@ export function ChainFormDialog({
     strictNameResult,
     onOpenChange,
     onTypeChange,
+    onProtocolChange,
     setMiddle,
     setMiddleAddr,
     onSubmit,
@@ -355,14 +359,14 @@ export function ChainFormDialog({
 
           <div className="space-y-2">
             <Label>{form.chainType === 'direct' ? '协议' : '出口协议'}</Label>
-            <Select value={form.protocol} onValueChange={(v) => v && patch({ protocol: v })}>
+            <Select value={form.protocol} onValueChange={onProtocolChange}>
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {(form.chainType === 'direct' ? DIRECT_PROTOCOLS : RELAY_PROTOCOLS).map((p) => (
                   <SelectItem key={p} value={p}>
-                    {p}
+                    {PROTOCOL_LABELS[p] ?? p}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -436,6 +440,17 @@ export function ChainFormDialog({
                     />
                   </div>
                 </>
+              )}
+              {form.network === 'grpc' && (
+                <div className="space-y-2">
+                  <Label htmlFor="grpcServiceName">gRPC serviceName</Label>
+                  <Input
+                    id="grpcServiceName"
+                    value={form.serviceName}
+                    onChange={(e) => patch({ serviceName: e.target.value })}
+                    placeholder="grpc"
+                  />
+                </div>
               )}
               {form.protocol === 'vless' && (
                 <div className="space-y-2">
@@ -516,6 +531,49 @@ export function ChainFormDialog({
                 onServerNamesChange={(value) => patch({ serverNames: value })}
               />
             </>
+          )}
+
+          {form.protocol === 'shadowsocks' && (
+            <div className="space-y-2">
+              <Label>加密方式（method）</Label>
+              <Select
+                value={form.method}
+                onValueChange={(v) => v && patch({ method: v })}
+                items={SS_METHODS}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SS_METHODS.map((m) => (
+                    <SelectItem key={m.value} value={m.value}>
+                      {m.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {form.protocol === 'vmess' && (
+            <div className="space-y-2">
+              <Label>加密方式（cipher）</Label>
+              <Select
+                value={form.cipher}
+                onValueChange={(v) => v && patch({ cipher: v })}
+                items={VMESS_CIPHERS}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {VMESS_CIPHERS.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           )}
 
           {form.chainType === 'direct' && form.protocol === 'dokodemo-door' ? (
