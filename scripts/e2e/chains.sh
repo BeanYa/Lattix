@@ -301,6 +301,14 @@ kill $BLOCKPID; wait $BLOCKPID 2>/dev/null || true; BLOCKPID=""
 sleep 0.5
 rpc_data POST /api/chain/retry "{\"chain_id\":$CH2}" >/dev/null
 wait_chain "$CH2" active 60 && echo "OK: retry 只重放失败 piece → 链 active"
+
+echo ">> 回归：编辑存量链路（原样参数）→ 不因自身端口占用误报冲突"
+# vless 共享链：编辑仅改名，入口共享监听与出口节点均为自身占用，须放行
+rpc_data POST /api/chain/edit "{\"chain_id\":$CH1,\"name\":\"链A回归\",\"hops\":[{\"server_id\":$AID},{\"server_id\":$CID}],\"node\":{\"protocol\":\"vless\"},\"traffic_multiplier\":\"1.000\"}" >/dev/null
+wait_chain "$CH1" active 90 && echo "OK: vless 存量链编辑通过（excludeChainID 生效）"
+# ss 明文链：entry_port 为自身 forward 占用，编辑原样保存须放行
+rpc_data POST /api/chain/edit "{\"chain_id\":$CH2,\"name\":\"链B回归\",\"hops\":[{\"server_id\":$AID},{\"server_id\":$CID}],\"entry_port\":$BLOCK_PORT,\"node\":{\"protocol\":\"shadowsocks\",\"method\":\"aes-256-gcm\"},\"traffic_multiplier\":\"1.000\"}" >/dev/null
+wait_chain "$CH2" active 60 && echo "OK: ss 存量链编辑通过"
 [[ "$(chain_field "$CH2" "c['hops'][0]['forward_port']")" == "$BLOCK_PORT" ]] \
     && echo "OK: 重试后入口端口仍为用户指定的 $BLOCK_PORT" \
     || { echo "FAIL: 重试后端口漂移: $(chain_field "$CH2" "c['hops'][0]['forward_port']")"; exit 1; }

@@ -60,6 +60,14 @@ print(json.dumps(value["data"], separators=(",",":")))
 '
 }
 
+# rpc_expect_fail <method> <path> <body>：断言 RPC 业务失败（code 非 OK/ACCEPTED）。
+rpc_expect_fail() {
+    local out
+    out="$(rpc_raw "$@")"
+    python3 -c 'import json,sys; v=json.loads(sys.argv[1]); assert v["code"] not in ("OK","ACCEPTED"), v' "$out" \
+        || { echo "FAIL: 预期 RPC 失败但成功: $out"; exit 1; }
+}
+
 port_open() { python3 -c "import socket,sys; s=socket.socket(); sys.exit(0 if s.connect_ex(('127.0.0.1', int(sys.argv[1])))==0 else 1)" "$1"; }
 
 # wait_node <id>：轮询节点进入 active/failed，输出 "status|realized|error"。
@@ -154,6 +162,19 @@ R="$(create_node '{"server_id":1,"protocol":"http"}')" && check_port "$R"
 echo ">> dokodemo-door"
 R="$(create_node '{"server_id":1,"protocol":"dokodemo-door","target_address":"127.0.0.1","target_port":18099}')" && check_port "$R"
 
+echo ">> vmess cipher=chacha20-poly1305"
+R="$(create_node '{"server_id":1,"protocol":"vmess","cipher":"chacha20-poly1305"}')"
+check_port "$R"
+
+echo ">> 端口冲突前置校验"
+CLASH_PORT=23456
+R="$(create_node "{\"server_id\":1,\"protocol\":\"trojan\",\"port\":$CLASH_PORT}")"
+check_port "$R"
+rpc_expect_fail POST /api/node/create "{\"server_id\":1,\"protocol\":\"vless\",\"port\":$CLASH_PORT}"
+rpc_expect_fail POST /api/node/create "{\"server_id\":1,\"protocol\":\"trojan\",\"port\":$CLASH_PORT}"
+rpc_expect_fail POST /api/node/create "{\"server_id\":1,\"protocol\":\"shadowsocks\",\"port\":$CLASH_PORT}"
+echo "   同层同端口（异协议/同协议/跨层 ss）均被 400 拦截 OK"
+
 echo ">> 分配全部非 dokodemo 节点给 u1（§16 默认全关，需显式分配）"
 NODE_IDS="$(db "SELECT group_concat(id) FROM nodes WHERE protocol != 'dokodemo-door'")"
 rpc_data POST /api/user/set-nodes "{\"user_id\":1,\"node_ids\":[$NODE_IDS]}" >/dev/null
@@ -185,9 +206,10 @@ check "xhttp-opts:"
 check "cipher: 2022-blake3-aes-128-gcm"
 check "cipher: aes-256-gcm"
 check "cipher: auto"
+check "cipher: chacha20-poly1305"
 if grep -q "dokodemo" <<<"$SUB"; then echo "FAIL: 订阅不应包含 dokodemo 节点"; exit 1; fi
 PROXY_COUNT="$(grep -c 'server: ' <<<"$SUB")"
-[[ "$PROXY_COUNT" -eq 9 ]] || { echo "FAIL: 订阅应有 9 个代理（dokodemo 除外），实际 $PROXY_COUNT"; echo "$SUB"; exit 1; }
-echo "   9 个代理项、各协议字段 OK，dokodemo 已排除"
+[[ "$PROXY_COUNT" -eq 11 ]] || { echo "FAIL: 订阅应有 11 个代理（dokodemo 除外），实际 $PROXY_COUNT"; echo "$SUB"; exit 1; }
+echo "   11 个代理项、各协议字段 OK，dokodemo 已排除"
 
 echo "E2E-PROTOCOLS PASS"
