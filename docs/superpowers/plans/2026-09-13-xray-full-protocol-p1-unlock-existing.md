@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把后端已支持的 vmess/trojan/shadowsocks + reality + grpc 传输全部暴露到链路表单，新增 vmess cipher 贯通，并在 panel 侧落地端口冲突前置校验（TCP/UDP 分层）。
+**Goal:** 把后端已支持的 vmess/trojan/shadowsocks + reality + grpc 传输全部暴露到链路表单，新增 vmess cipher 贯通，并在 panel 侧落地端口冲突前置校验（TCP/UDP 分层）。**硬性要求：存量链路（vless 共享链、明文 socks/http 链、dokodemo 转发链、reverse/encrypted 隧道链）在本次更新后全部不失效，以完整 e2e 回归证明。**
 
 **Architecture:** 沿用现有"panel 模板 → agent 填充 → xray run -test → 热更新"管线，不引入新 core。端口冲突治理新增 store 层 `PortOccupants` 统一查询 + panel 纯函数判定 + agent `pickPort` 分层探测三道防线。
 
@@ -18,6 +18,7 @@
 - Reality 仅允许 tcp/grpc/xhttp；vision flow 仅 vless+tcp；这些既有规则不得放松。
 - 提交信息沿用仓库惯例：`type(scope): 中文摘要`（如 `feat(panel): ...`）。
 - 每个 Task 完成后运行对应验证命令，全绿才提交。
+- **存量回归红线**：任何 Task 不得改变既有协议（vless/socks/http/dokodemo）链路的模板结构、端口分配与订阅输出；Task 7 的全量 e2e 回归（含"编辑存量链路原样保存"用例）必须全绿才算 P1 完成。
 
 验证命令速查：
 - shared: `cd src/shared && go test ./...`
@@ -955,10 +956,11 @@ git commit -m "feat(frontend): 链路表单暴露 vmess/trojan/ss 全协议与 g
 
 ---
 
-### Task 7: e2e — protocols.sh 扩展并全量验证
+### Task 7: e2e — protocols.sh 扩展 + 存量链路回归
 
 **Files:**
 - Modify: `scripts/e2e/protocols.sh`
+- Modify: `scripts/e2e/chains.sh`（存量链路编辑回归用例）
 
 - [ ] **Step 1: 增加 RPC 失败断言助手**
 
@@ -999,23 +1001,50 @@ echo "   同层同端口（异协议/同协议/跨层 ss）均被 400 拦截 OK"
 - `check "cipher: auto"` 之后追加 `check "cipher: chacha20-poly1305"`。
 - 代理总数从 9 改为 10（`PROXY_COUNT -eq 10`，注释同步）。
 
-- [ ] **Step 4: 全量验证**
+- [ ] **Step 4: chains.sh 存量链路编辑回归（防端口冲突误杀）**
 
-Run: `bash scripts/e2e/protocols.sh`
-Expected: 结尾输出 `E2E-PROTOCOLS PASS`
+在 `scripts/e2e/chains.sh` 中 CH2 retry 成功（`:303` 的 `wait_chain "$CH2" active 60`）之后插入：
 
-- [ ] **Step 5: 全仓回归 + Commit**
+```bash
+echo ">> 回归：编辑存量链路（原样参数）→ 不因自身端口占用误报冲突"
+# vless 共享链：编辑仅改名，入口共享监听与出口节点均为自身占用，须放行
+rpc_data POST /api/chain/edit "{\"chain_id\":$CH1,\"name\":\"链A回归\",\"hops\":[{\"server_id\":$AID},{\"server_id\":$CID}],\"node\":{\"protocol\":\"vless\"},\"traffic_multiplier\":\"1.000\"}" >/dev/null
+wait_chain "$CH1" active 90 && echo "OK: vless 存量链编辑通过（excludeChainID 生效）"
+# ss 明文链：entry_port 为自身 forward 占用，编辑原样保存须放行
+rpc_data POST /api/chain/edit "{\"chain_id\":$CH2,\"name\":\"链B回归\",\"hops\":[{\"server_id\":$AID},{\"server_id\":$CID}],\"entry_port\":$BLOCK_PORT,\"node\":{\"protocol\":\"shadowsocks\",\"method\":\"aes-256-gcm\"},\"traffic_multiplier\":\"1.000\"}" >/dev/null
+wait_chain "$CH2" active 60 && echo "OK: ss 存量链编辑通过"
+```
+
+注意：该用例依赖 Task 3 的 `excludeChainID` 正确接线到 `handleEditChain`；若编辑接口要求 node 表单字段完整，按 `editChainRequest`（`chains.go:226-233`）对齐字段。
+
+- [ ] **Step 5: 全量 e2e 回归（存量链路不失效的证明）**
+
+依次运行链路相关 e2e 脚本（release CI 矩阵的子集，全部本地可跑）：
+
+```bash
+bash scripts/e2e/protocols.sh    # 全协议 + 端口冲突 + cipher
+bash scripts/e2e/chains.sh       # 链生命周期 + 存量编辑回归 + 真实流量
+bash scripts/e2e/links.sh        # 订阅/分享链接输出一致性
+bash scripts/e2e/groups.sh       # 分组订阅与派生链
+bash scripts/e2e/usernodes.sh    # 按用户节点操作
+bash scripts/e2e/reconcile.sh    # 漂移自愈
+bash scripts/e2e/vlessenc.sh     # vless Encryption 数据面
+```
+
+Expected: 每个脚本结尾均输出对应 `PASS`。任一失败即回退对应 Task 排查，不允许带病提交。
+
+- [ ] **Step 6: 全仓回归 + Commit**
 
 ```bash
 cd src/shared && go test ./... && cd ../backend && go test ./... && cd ../agent && go test ./...
 cd ../frontend && npm run build && npm test && npm run lint
-git add scripts/e2e/protocols.sh
-git commit -m "test(e2e): protocols 覆盖 vmess cipher 与端口冲突前置校验"
+git add scripts/e2e/protocols.sh scripts/e2e/chains.sh
+git commit -m "test(e2e): protocols 覆盖 vmess cipher 与端口冲突；chains 覆盖存量链路编辑回归"
 ```
 
 ---
 
 ## 自检记录
 
-- **Spec 覆盖**：P1 范围 = 前端暴露 vmess/trojan/ss（Task 6）+ reality 门禁放宽（Task 6 REALITY_PROTOCOLS）+ grpc（Task 6 NETWORKS/serviceName）+ 端口冲突前置校验（Task 2/3/4）+ vmess cipher（Task 1/5）。ws/httpupgrade/TLS/hy2 属 P2-P4，不在本计划。
+- **Spec 覆盖**：P1 范围 = 前端暴露 vmess/trojan/ss（Task 6）+ reality 门禁放宽（Task 6 REALITY_PROTOCOLS）+ grpc（Task 6 NETWORKS/serviceName）+ 端口冲突前置校验（Task 2/3/4）+ vmess cipher（Task 1/5）+ 存量链路回归（Task 7 Step 4/5 + Global Constraints 红线）。ws/httpupgrade/TLS/hy2 属 P2-P4，不在本计划。
 - **类型一致性**：`PortLayers/LayersOverlap/VMessCiphers`（Task 1）↔ Task 2/3/4 调用一致；`PortOccupant` 字段（Task 2）↔ `findPortConflict`（Task 3）一致；`pickPort` 新签名 4 实参（Task 4）↔ 全部调用点已列出；`vmessCipher(json.RawMessage)`（Task 5）三处订阅共用。
