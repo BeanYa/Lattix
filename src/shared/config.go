@@ -78,6 +78,15 @@ var SSMethods = []string{
 	SSMethod2022AES128GCM, SSMethod2022AES256GCM, SSMethod2022Chacha20,
 }
 
+// VMess cipher（仅作客户端订阅提示，xray vmess inbound 无此字段）。
+const (
+	VMessCipherAuto      = "auto"
+	VMessCipherAES128GCM = "aes-128-gcm"
+	VMessCipherChacha20  = "chacha20-poly1305"
+)
+
+var VMessCiphers = []string{VMessCipherAuto, VMessCipherAES128GCM, VMessCipherChacha20}
+
 // ValidValue 报告 v 是否在候选集合中。
 func ValidValue(v string, candidates []string) bool {
 	for _, c := range candidates {
@@ -100,6 +109,29 @@ func IsRealityProtocol(protocol string) bool {
 // HasUserList 报告协议是否有用户列表（dokodemo 为端口转发，无用户概念）。
 func HasUserList(protocol string) bool {
 	return protocol != ProtocolDokodemo
+}
+
+// PortLayers 返回协议监听占用的传输层（端口冲突治理的分层依据）：
+// shadowsocks/dokodemo-door 同时监听 tcp+udp，其余仅 tcp；hy2（P4）将引入 udp-only。
+func PortLayers(protocol string) string {
+	switch protocol {
+	case ProtocolShadowsocks, ProtocolDokodemo:
+		return "tcp,udp"
+	default:
+		return "tcp"
+	}
+}
+
+// LayersOverlap 判定两个层集合是否有交集（"tcp,udp" 与 "udp" 重叠，"udp" 与 "tcp" 不重叠）。
+func LayersOverlap(a, b string) bool {
+	for _, x := range strings.Split(a, ",") {
+		for _, y := range strings.Split(b, ",") {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Is2022Method 报告 ss 加密方式是否为 2022-blake3 系列（定长密钥、多用户 clients 不带 method）。
@@ -182,6 +214,7 @@ type VirtualConfig struct {
 	Method        string             `json:"method,omitempty"`         // shadowsocks
 	Fingerprint   string             `json:"fingerprint,omitempty"`    // 客户端 uTLS 指纹（订阅侧参数，Agent 回显）
 	Encryption    string             `json:"encryption,omitempty"`     // vless：VLESS Encryption 认证方式（x25519/mlkem768）
+	Cipher        string             `json:"cipher,omitempty"`         // vmess 客户端 cipher 提示（默认 auto）
 	StaticClients []ClientCredential `json:"static_clients,omitempty"` // 技术隧道身份，不属于业务用户
 	Template      json.RawMessage    `json:"template"`                 // xray inbound JSON 模板，含占位符
 }
