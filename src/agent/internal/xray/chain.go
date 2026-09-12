@@ -405,12 +405,12 @@ func (m *Manager) pickChainPort(preferred int, candidates []int, prev *state.Cha
 		if prev != nil && prev.Port == preferred {
 			return preferred, nil
 		}
-		return m.pickPort(preferred, candidates, tag)
+		return m.pickPort(preferred, candidates, tag, "tcp")
 	}
 	if prev != nil && prev.Port != 0 {
 		return prev.Port, nil
 	}
-	return m.pickPort(0, candidates, tag)
+	return m.pickPort(0, candidates, tag, "tcp")
 }
 
 // realityServerName 提取 inbound realitySettings.serverNames[0]（dest 预检后的实际上报值）。

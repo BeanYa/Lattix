@@ -148,7 +148,7 @@ func TestApplySharedEndpointReapplyWhilePortHeld(t *testing.T) {
 // TestApplySharedEndpointHonorsNatCandidates 验证 NAT 受限机：面板下发段内候选时按序挑选。
 func TestApplySharedEndpointHonorsNatCandidates(t *testing.T) {
 	mgr := newTestEndpointManager(t)
-	free, err := mgr.pickPort(0, nil, "")
+	free, err := mgr.pickPort(0, nil, "", "tcp")
 	if err != nil {
 		t.Fatal(err)
 	}

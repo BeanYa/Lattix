@@ -306,7 +306,7 @@ func hostOf(addr string) string {
 // tag 为本次 apply 将写入的 inbound tag：候选端口被同一 tag 的受管 inbound
 // 持有（幂等重发，upsert 原地替换旧 inbound）视为可复用直接采用——否则单端口
 // NAT 机上同节点配置变更/重试/重建会因旧 inbound 未清理而误报"候选全部被占用"。
-func (m *Manager) pickPort(preferred int, candidates []int, tag string) (int, error) {
+func (m *Manager) pickPort(preferred int, candidates []int, tag string, layers string) (int, error) {
 	held := m.managedPorts()
 	if preferred != 0 {
 		// 受限直连 NAT 机（载荷带段内候选）：手动指定端口必须落在候选段内（§21），
@@ -317,11 +317,9 @@ func (m *Manager) pickPort(preferred int, candidates []int, tag string) (int, er
 		if _, ok := held[preferred]; ok {
 			return preferred, nil
 		}
-		l, err := net.Listen("tcp", fmt.Sprintf(":%d", preferred))
-		if err != nil {
+		if err := probePortFree(layers, preferred); err != nil {
 			return 0, fmt.Errorf("端口 %d 被占用: %w", preferred, err)
 		}
-		l.Close()
 		return preferred, nil
 	}
 	blocked := 0
@@ -333,11 +331,9 @@ func (m *Manager) pickPort(preferred int, candidates []int, tag string) (int, er
 			blocked++ // 其他受管配置持有，不可作为自动候选（避免重复监听）
 			continue
 		}
-		l, err := net.Listen("tcp", fmt.Sprintf(":%d", c))
-		if err != nil {
+		if err := probePortFree(layers, c); err != nil {
 			continue
 		}
-		l.Close()
 		return c, nil
 	}
 	if len(candidates) > 0 {
@@ -352,6 +348,25 @@ func (m *Manager) pickPort(preferred int, candidates []int, tag string) (int, er
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// probePortFree 按传输层探测端口是否空闲（UDP/TCP 是独立端口空间，分层探测）。
+func probePortFree(layers string, port int) error {
+	if strings.Contains(layers, "tcp") {
+		l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			return err
+		}
+		l.Close()
+	}
+	if strings.Contains(layers, "udp") {
+		c, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			return err
+		}
+		c.Close()
+	}
+	return nil
 }
 
 // managedPorts 返回当前受管 config 中全部 inbound 的 port→tag 映射

@@ -114,7 +114,7 @@ func (m *Manager) ApplyNode(nodeID int64, vc shared.VirtualConfig, userUUIDs, de
 
 	tag := shared.NodeTag(nodeID)
 	// 1. 填充模板占位符（§7）+ dest 预检（§6 步骤 2）
-	port, err := m.pickPort(vc.Port, portCandidates, tag)
+	port, err := m.pickPort(vc.Port, portCandidates, tag, shared.PortLayers(vc.Protocol))
 	if err != nil {
 		return nil, err
 	}

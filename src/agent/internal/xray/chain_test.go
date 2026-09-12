@@ -301,7 +301,7 @@ func TestPickChainPort(t *testing.T) {
 		t.Fatalf("无候选无记录应挑随机空闲端口: %d %v", p, err)
 	}
 	// 候选全占用报错：占住一个端口后单候选挑选。
-	hold, err := m.pickPort(0, nil, "")
+	hold, err := m.pickPort(0, nil, "", "tcp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +314,7 @@ func TestPickChainPort(t *testing.T) {
 
 func TestPickChainPortReusesPortOwnedByExistingPiece(t *testing.T) {
 	m := NewManager("xray", "/nonexistent/config.json", "127.0.0.1:10085", nil)
-	port, err := m.pickPort(0, nil, "")
+	port, err := m.pickPort(0, nil, "", "tcp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +334,7 @@ func TestPickChainPortReusesPortOwnedByExistingPiece(t *testing.T) {
 // 端口已被 agent 自身受管 config 记录（运行中的 xray 持有）→ 复用不报冲突。
 func TestPickPortReusesManagedPort(t *testing.T) {
 	mgr := newTestEndpointManager(t)
-	port, err := mgr.pickPort(0, nil, "")
+	port, err := mgr.pickPort(0, nil, "", "tcp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestPickPortReusesManagedPort(t *testing.T) {
 	ln := listenOn(t, port)
 	defer ln.Close()
 
-	if got, err := mgr.pickPort(port, nil, ""); err != nil || got != port {
+	if got, err := mgr.pickPort(port, nil, "", "tcp"); err != nil || got != port {
 		t.Fatalf("受管端口应可复用: got=%d err=%v", got, err)
 	}
 }
@@ -361,14 +361,14 @@ func TestPickPortReusesManagedPort(t *testing.T) {
 // 外部进程占用 → node_failed/forward failed 告警路径不变）。
 func TestPickPortForeignPortConflict(t *testing.T) {
 	mgr := newTestEndpointManager(t)
-	port, err := mgr.pickPort(0, nil, "")
+	port, err := mgr.pickPort(0, nil, "", "tcp")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ln := listenOn(t, port)
 	defer ln.Close()
 
-	if _, err := mgr.pickPort(port, nil, ""); err == nil {
+	if _, err := mgr.pickPort(port, nil, "", "tcp"); err == nil {
 		t.Fatal("其他服务占用的端口应报冲突")
 	}
 }
@@ -377,22 +377,22 @@ func TestPickPortForeignPortConflict(t *testing.T) {
 // 段内候选）手动指定端口必须落在候选段内（§21）：段内通过，段外拒绝（先于占用探测）。
 func TestPickPortManualPortValidatedAgainstCandidates(t *testing.T) {
 	mgr := newTestEndpointManager(t)
-	free, err := mgr.pickPort(0, nil, "")
+	free, err := mgr.pickPort(0, nil, "", "tcp")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 段内手动端口 → 采用。
-	if got, err := mgr.pickPort(free, []int{free}, ""); err != nil || got != free {
+	if got, err := mgr.pickPort(free, []int{free}, "", "tcp"); err != nil || got != free {
 		t.Fatalf("候选段内手动端口应通过: got=%d err=%v", got, err)
 	}
 	// 占住段内端口后再取一个不同端口作段外输入（确定性，避免 OS 复用临时端口）。
 	ln := listenOn(t, free)
 	defer ln.Close()
-	other, err := mgr.pickPort(0, nil, "")
+	other, err := mgr.pickPort(0, nil, "", "tcp")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr.pickPort(other, []int{free}, ""); err == nil {
+	if _, err := mgr.pickPort(other, []int{free}, "", "tcp"); err == nil {
 		t.Fatal("候选段外手动端口应报错")
 	}
 	// pickChainPort 透传候选做同样校验（链 piece 入口）。
@@ -406,7 +406,7 @@ func TestPickPortManualPortValidatedAgainstCandidates(t *testing.T) {
 // 不误报"端口被占用"（§21 端口复用：受管端口可复用，其他服务占用才冲突）。
 func TestApplySharedEndpointFixedPortWhileManagedHeld(t *testing.T) {
 	mgr := newTestEndpointManager(t)
-	port, err := mgr.pickPort(0, nil, "")
+	port, err := mgr.pickPort(0, nil, "", "tcp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -430,6 +430,26 @@ func TestApplySharedEndpointFixedPortWhileManagedHeld(t *testing.T) {
 	}
 	if realized.Port != port {
 		t.Fatalf("应复用端口 %d，实际 %d", port, realized.Port)
+	}
+}
+
+func TestPickPortLayeredProbe(t *testing.T) {
+	// 占用一个 UDP 端口：udp 层探测应冲突，tcp 层探测应放行
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	udpPort := pc.LocalAddr().(*net.UDPAddr).Port
+
+	m := &Manager{}
+	if _, err := m.pickPort(udpPort, nil, "", "udp"); err == nil {
+		t.Error("UDP 被占用时 layers=udp 应报冲突")
+	}
+	if got, err := m.pickPort(udpPort, nil, "", "tcp"); err != nil {
+		t.Errorf("UDP 被占用不影响 tcp 层: %v", err)
+	} else if got != udpPort {
+		t.Errorf("tcp 层应放行并取得端口 %d，实际 %d", udpPort, got)
 	}
 }
 
