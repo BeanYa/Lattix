@@ -220,6 +220,10 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("端口 %d 不在该 NAT 服务器可用段内", *req.Port))
 			return
 		}
+		if err := s.checkPortConflict(r.Context(), req.ServerID, req.Protocol, *req.Port, 0); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	name, err := resolveNameTemplate(req.Name, nameTemplateValues{
 		Protocol:   req.Protocol,

@@ -336,10 +336,21 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			entryPort = *req.Node.Port
 		}
 	}
+	// 入口监听是 dokodemo 管道（P1 恒 tcp 层）；vless 入口走共享端点合并，跳过前置校验。
+	if entryPort > 0 && req.Node.Protocol != shared.ProtocolVLESS {
+		if err := s.checkPortConflict(r.Context(), entrySrv.ID, req.Node.Protocol, entryPort, 0); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	// 出口节点端口：受限直连 NAT 机上用户指定端口必须在段内（自动端口由编排器携带候选展开）。
 	if req.Node.Port != nil {
 		if err := checkPortInRanges(exitSrv, *req.Node.Port); err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("出口节点端口 %d 不在出口机可用段内", *req.Node.Port))
+			return
+		}
+		if err := s.checkPortConflict(r.Context(), exitSrv.ID, req.Node.Protocol, *req.Node.Port, 0); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
@@ -592,9 +603,23 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "入口端口不在可用范围内")
 			return
 		}
+		// vless 入口走共享端点合并，跳过前置校验；excludeChainID 排除本链既有占用。
+		if req.Node.Protocol != shared.ProtocolVLESS {
+			if err := s.checkPortConflict(r.Context(), servers[0].ID, req.Node.Protocol, *req.EntryPort, req.ChainID); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		}
 	}
 	if len(servers) == 1 && req.EntryPort != nil {
 		req.Node.Port = req.EntryPort
+	}
+	// 出口节点端口冲突前置校验（镜像创建路径），excludeChainID 排除本链既有占用。
+	if req.Node.Port != nil {
+		if err := s.checkPortConflict(r.Context(), servers[len(servers)-1].ID, req.Node.Protocol, *req.Node.Port, req.ChainID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	vc := buildVirtualConfig(req.Node)
 	endpointID := int64(0)
