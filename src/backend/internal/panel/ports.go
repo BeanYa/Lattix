@@ -17,8 +17,8 @@ var portOccupantSourceNames = map[string]string{
 }
 
 // findPortConflict 端口冲突前置判定（纯函数）：同端口 + 传输层重叠即冲突。
-// excludeChainID 用于编辑链路时排除自身既有占用；vless 撞共享端点放行（共享合并语义，
-// 由 EnsureSharedEndpoint 自行处理同协议合并与跨协议冲突）。
+// excludeChainID 用于编辑链路时排除自身既有占用。vless 链入口的共享端点合并语义
+// 由调用点门控（chains.go 入口校验 protocol != vless 才进本函数），此处不做协议豁免。
 func findPortConflict(occupants []store.PortOccupant, protocol string, port int, excludeChainID int64) error {
 	layers := shared.PortLayers(protocol)
 	for _, o := range occupants {
@@ -26,9 +26,6 @@ func findPortConflict(occupants []store.PortOccupant, protocol string, port int,
 			continue
 		}
 		if excludeChainID != 0 && o.ChainID == excludeChainID {
-			continue
-		}
-		if o.Source == "endpoint" && protocol == shared.ProtocolVLESS {
 			continue
 		}
 		source := portOccupantSourceNames[o.Source]

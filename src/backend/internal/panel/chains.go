@@ -349,9 +349,14 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("出口节点端口 %d 不在出口机可用段内", *req.Node.Port))
 			return
 		}
-		if err := s.checkPortConflict(r.Context(), exitSrv.ID, req.Node.Protocol, *req.Node.Port, 0); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
+		// 单跳 vless 的节点端口即入口端口（上方已别名），由共享端点合并接管、编排后不实际
+		// 监听；冲突判定已由入口校验按 protocol != vless 门控，此处跳过避免重复误判。
+		singleHopShared := len(servers) == 1 && req.Node.Protocol == shared.ProtocolVLESS
+		if !singleHopShared {
+			if err := s.checkPortConflict(r.Context(), exitSrv.ID, req.Node.Protocol, *req.Node.Port, 0); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
 		}
 	}
 
@@ -615,7 +620,10 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		req.Node.Port = req.EntryPort
 	}
 	// 出口节点端口冲突前置校验（镜像创建路径），excludeChainID 排除本链既有占用。
-	if req.Node.Port != nil {
+	// 单跳 vless 的节点端口即入口端口（上方已别名），由共享端点合并接管、编排后不实际
+	// 监听；冲突判定已由入口校验按 protocol != vless 门控，此处跳过避免重复误判。
+	singleHopShared := len(servers) == 1 && req.Node.Protocol == shared.ProtocolVLESS
+	if req.Node.Port != nil && !singleHopShared {
 		if err := s.checkPortConflict(r.Context(), servers[len(servers)-1].ID, req.Node.Protocol, *req.Node.Port, req.ChainID); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

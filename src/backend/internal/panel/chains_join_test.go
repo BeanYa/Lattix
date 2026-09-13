@@ -93,4 +93,30 @@ func TestCreateChainsShareOccupiedEntryPort(t *testing.T) {
 	if len(endpoints) != 1 {
 		t.Fatalf("shared_endpoints rows = %d, want 1", len(endpoints))
 	}
+
+	// 编辑链 B 且入口端口不变：单跳 vless 的节点端口即入口端口，由共享端点合并接管，
+	// 不得因撞共享端点占用被前置校验误判冲突。
+	entryPort := 443
+	node := createNodeRequest{Name: "b", ServerID: serverID, Protocol: shared.ProtocolVLESS,
+		ShortID: "short-b", Dest: "dl.google.com:443", ServerNames: []string{"dl.google.com"},
+		Fingerprint: shared.FingerprintChrome, Network: shared.NetworkTCP, Flow: shared.FlowVision}
+	if err := node.normalize(); err != nil {
+		t.Fatal(err)
+	}
+	editBody, _ := json.Marshal(editChainRequest{ChainID: chainB.ID, Name: "b",
+		Hops: []chainHopRef{{ServerID: serverID}}, EntryPort: &entryPort,
+		Node: node, TrafficMultiplier: "1.000"})
+	editRecorder := httptest.NewRecorder()
+	serverAPI.handleEditChain(editRecorder, httptest.NewRequest("POST", "/api/chain/edit", bytes.NewReader(editBody)))
+	editEnv := decodeRPC(t, editRecorder)
+	if editRecorder.Code != http.StatusOK || editEnv.Code != shared.CodeAccepted {
+		t.Fatalf("edit b = %d %s %s", editRecorder.Code, editEnv.Code, editRecorder.Body.String())
+	}
+	endpoints, err = st.SharedEndpointsByServer(ctx, serverID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(endpoints) != 1 {
+		t.Fatalf("edit 后 shared_endpoints rows = %d, want 1", len(endpoints))
+	}
 }

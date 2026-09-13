@@ -34,9 +34,10 @@ func TestFindPortConflict(t *testing.T) {
 	if err := findPortConflict(occupants, shared.ProtocolTrojan, 443, 1); err != nil {
 		t.Errorf("排除自身链后不应冲突: %v", err)
 	}
-	// vless 加入共享端点 → 放行（共享语义）
-	if err := findPortConflict(occupants, shared.ProtocolVLESS, 10080, 0); err != nil {
-		t.Errorf("vless 共享端点合并不应冲突: %v", err)
+	// vless 撞共享端点 → 冲突：共享合并语义仅存在于链路入口路径（由 chains.go 调用点
+	// 按 protocol != vless 门控，不进本函数）；节点创建/出口节点路径不得放行。
+	if err := findPortConflict(occupants, shared.ProtocolVLESS, 10080, 0); err == nil {
+		t.Error("vless 撞共享端点应冲突（共享合并门控在 chains.go 调用点，不在此函数）")
 	}
 	// 非 vless 撞共享端点 → 冲突
 	if err := findPortConflict(occupants, shared.ProtocolTrojan, 10080, 0); err == nil {
