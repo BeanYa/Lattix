@@ -29,15 +29,31 @@ var Protocols = []string{
 	ProtocolSocks, ProtocolHTTP, ProtocolDokodemo,
 }
 
-// 传输方式（network）：Reality 仅支持这三种。
+// 传输方式（network）：ws/httpupgrade 在 xray 25.x+ 有弃用警告但仍可用；
+// Reality 仅与 tcp/grpc/xhttp 组合（xray 官方约束，见 RealityNetworks）。
 const (
-	NetworkTCP   = "tcp"
-	NetworkGRPC  = "grpc"
-	NetworkXHTTP = "xhttp"
+	NetworkTCP         = "tcp"
+	NetworkGRPC        = "grpc"
+	NetworkXHTTP       = "xhttp"
+	NetworkWS          = "ws"
+	NetworkHTTPUpgrade = "httpupgrade"
 )
 
-// Networks 是 reality 协议可选的传输方式。
-var Networks = []string{NetworkTCP, NetworkGRPC, NetworkXHTTP}
+// Networks 是向导可选的全部传输方式。
+var Networks = []string{NetworkTCP, NetworkGRPC, NetworkXHTTP, NetworkWS, NetworkHTTPUpgrade}
+
+// RealityNetworks 是 Reality 安全层兼容的传输子集（xray 官方约束）。
+var RealityNetworks = []string{NetworkTCP, NetworkGRPC, NetworkXHTTP}
+
+// 安全层（security）：tls 属 P3（自签/ACME 证书），本期仅 reality/none 可用。
+const (
+	SecurityReality = "reality"
+	SecurityTLS     = "tls"
+	SecurityNone    = "none"
+)
+
+// Securities 是设计矩阵中的全部安全层取值（normalize 对 tls 单独 400 引导）。
+var Securities = []string{SecurityReality, SecurityTLS, SecurityNone}
 
 // XHTTP 的 mode 可选值（xray xhttpSettings.mode）。
 var XHTTPModes = []string{"auto", "packet-up", "stream-up"}
@@ -207,10 +223,11 @@ type VirtualConfig struct {
 	Port          int                `json:"port,omitempty"` // 0 = Agent 自动挑选空闲端口
 	Flow          string             `json:"flow,omitempty"` // vless：xtls-rprx-vision 或空（仅 tcp）
 	Network       string             `json:"network,omitempty"`
+	Security      string             `json:"security,omitempty"`       // reality/none（tls 属 P3）；空 = 按 network 推导
 	ServiceName   string             `json:"service_name,omitempty"`   // grpc
-	Path          string             `json:"path,omitempty"`           // xhttp
+	Path          string             `json:"path,omitempty"`           // xhttp/ws/httpupgrade
 	Mode          string             `json:"mode,omitempty"`           // xhttp
-	Host          string             `json:"host,omitempty"`           // xhttp
+	Host          string             `json:"host,omitempty"`           // xhttp/ws/httpupgrade
 	Method        string             `json:"method,omitempty"`         // shadowsocks
 	Fingerprint   string             `json:"fingerprint,omitempty"`    // 客户端 uTLS 指纹（订阅侧参数，Agent 回显）
 	Encryption    string             `json:"encryption,omitempty"`     // vless：VLESS Encryption 认证方式（x25519/mlkem768）
@@ -237,6 +254,7 @@ type RealizedConfig struct {
 	Flow        string `json:"flow,omitempty"`
 	Fingerprint string `json:"fingerprint,omitempty"`
 	Network     string `json:"network,omitempty"`
+	Security    string `json:"security,omitempty"` // 生效安全层（reality/none；tls 属 P3）
 	ServiceName string `json:"service_name,omitempty"`
 	Path        string `json:"path,omitempty"`
 	Mode        string `json:"mode,omitempty"`
@@ -244,4 +262,16 @@ type RealizedConfig struct {
 	Method      string `json:"method,omitempty"`
 	PSK         string `json:"psk,omitempty"`        // ss 2022-blake3 节点级 PSK（订阅拼接 "PSK:用户密钥"）
 	Encryption  string `json:"encryption,omitempty"` // vless：VLESS Encryption 客户端字符串（订阅 encryption 字段）
+}
+
+// EffectiveSecurity 返回生效安全层：显式值优先；旧 realized（无 security 字段）
+// 按 reality 指纹（public_key 非空）回退推导（订阅输出兼容存量数据）。
+func (rc RealizedConfig) EffectiveSecurity() string {
+	if rc.Security != "" {
+		return rc.Security
+	}
+	if rc.PublicKey != "" {
+		return SecurityReality
+	}
+	return SecurityNone
 }
