@@ -163,6 +163,35 @@ func TestBuildProxyWSPlain(t *testing.T) {
 	}
 }
 
+// TestBuildProxyGRPCXHTTPPlain 验证 mihomo 输出：security=none 下 grpc/xhttp
+// 也要填传输选项（panel normalize 放行 tcp/grpc/xhttp × none），否则
+// serviceName/path 丢失。写法与 reality 分支一致。
+func TestBuildProxyGRPCXHTTPPlain(t *testing.T) {
+	rc := shared.RealizedConfig{Port: 8443, Network: shared.NetworkGRPC,
+		ServiceName: "svc", Security: shared.SecurityNone}
+	p, err := buildProxy(testNode("1.2.3.4", shared.ProtocolVMess), rc, "uuid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.TLS || p.RealityOpts != nil {
+		t.Errorf("明文 grpc 不应带 tls/reality-opts: %+v", p)
+	}
+	if p.Network != "grpc" || p.GrpcOpts == nil || p.GrpcOpts.ServiceName != "svc" {
+		t.Errorf("grpc-opts 不符: network=%q opts=%+v", p.Network, p.GrpcOpts)
+	}
+
+	rc = shared.RealizedConfig{Port: 8443, Network: shared.NetworkXHTTP,
+		Path: "/xh", Mode: "auto", Host: "h.example.com", Security: shared.SecurityNone}
+	p, err = buildProxy(testNode("1.2.3.4", shared.ProtocolVMess), rc, "uuid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Network != "xhttp" || p.XhttpOpts == nil || p.XhttpOpts.Path != "/xh" ||
+		p.XhttpOpts.Mode != "auto" || p.XhttpOpts.Host != "h.example.com" {
+		t.Errorf("xhttp-opts 不符: network=%q opts=%+v", p.Network, p.XhttpOpts)
+	}
+}
+
 // TestBuildSbOutboundWSPlain 验证 sing-box 输出：security=none 无 tls 块；
 // ws 用 headers.Host，httpupgrade 用原生 httpupgrade transport（host 平铺）。
 func TestBuildSbOutboundWSPlain(t *testing.T) {

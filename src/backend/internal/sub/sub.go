@@ -853,10 +853,14 @@ func applyReality(p *clashProxy, rc shared.RealizedConfig) {
 	}
 }
 
-// applyPlainTransport 填充 security=none 节点的传输选项（ws/httpupgrade；tcp 无选项）。
+// applyPlainTransport 填充 security=none 节点的传输选项（ws/httpupgrade/grpc/xhttp；tcp 无选项）。
 // mihomo 无独立 httpupgrade network：映射为 network=ws + ws-opts.v2ray-http-upgrade。
 func applyPlainTransport(p *clashProxy, rc shared.RealizedConfig) {
 	switch rc.Network {
+	case shared.NetworkGRPC:
+		p.GrpcOpts = &clashGrpcOpts{ServiceName: rc.ServiceName}
+	case shared.NetworkXHTTP:
+		p.XhttpOpts = &clashXHTTPOpts{Path: rc.Path, Mode: rc.Mode, Host: rc.Host}
 	case shared.NetworkWS:
 		opts := clashWsOpts{Path: rc.Path}
 		if rc.Host != "" {
