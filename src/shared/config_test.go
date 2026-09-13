@@ -1,6 +1,10 @@
 package shared
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestPortLayers(t *testing.T) {
 	cases := map[string]string{
@@ -75,5 +79,45 @@ func TestEffectiveSecurity(t *testing.T) {
 	}
 	if got := (RealizedConfig{}).EffectiveSecurity(); got != SecurityNone {
 		t.Errorf("空 realized 应为 none，实际 %q", got)
+	}
+}
+
+func TestCertModes(t *testing.T) {
+	if !ValidValue(CertModeSelfSign, CertModes) || !ValidValue(CertModeACME, CertModes) {
+		t.Error("CertModes 应包含 selfsign/acme")
+	}
+}
+
+// TestTLSConfigFieldsRoundTrip 验证 TLS 证书字段 JSON 往返（panel 模板落库与
+// agent realized 上报共用同一结构体，键名是面板/agent 契约）。
+func TestTLSConfigFieldsRoundTrip(t *testing.T) {
+	vc := VirtualConfig{Protocol: ProtocolVMess, Security: SecurityTLS,
+		CertMode: CertModeSelfSign, TLSDomain: "www.example.com"}
+	b, err := json.Marshal(vc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back VirtualConfig
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.CertMode != CertModeSelfSign || back.TLSDomain != "www.example.com" {
+		t.Errorf("VirtualConfig TLS 字段往返不符: %+v", back)
+	}
+	rc := RealizedConfig{Port: 443, Security: SecurityTLS, SNI: "www.example.com",
+		CertSHA256: strings.Repeat("ab", 32)}
+	b, err = json.Marshal(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rcBack RealizedConfig
+	if err := json.Unmarshal(b, &rcBack); err != nil {
+		t.Fatal(err)
+	}
+	if rcBack.SNI != "www.example.com" || len(rcBack.CertSHA256) != 64 {
+		t.Errorf("RealizedConfig TLS 字段往返不符: %+v", rcBack)
+	}
+	if PlaceholderTLSCertFile != "{{TLS_CERT_FILE}}" || PlaceholderTLSKeyFile != "{{TLS_KEY_FILE}}" {
+		t.Error("TLS 证书占位符与 spec §3.1 不一致")
 	}
 }

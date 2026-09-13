@@ -45,7 +45,7 @@ var Networks = []string{NetworkTCP, NetworkGRPC, NetworkXHTTP, NetworkWS, Networ
 // RealityNetworks 是 Reality 安全层兼容的传输子集（xray 官方约束）。
 var RealityNetworks = []string{NetworkTCP, NetworkGRPC, NetworkXHTTP}
 
-// 安全层（security）：tls 属 P3（自签/ACME 证书），本期仅 reality/none 可用。
+// 安全层（security）：reality（仅 tcp/grpc/xhttp）/ tls（自签或 ACME 证书，§3.3）/ none。
 const (
 	SecurityReality = "reality"
 	SecurityTLS     = "tls"
@@ -54,6 +54,16 @@ const (
 
 // Securities 是设计矩阵中的全部安全层取值（normalize 对 tls 单独 400 引导）。
 var Securities = []string{SecurityReality, SecurityTLS, SecurityNone}
+
+// 证书模式（cert_mode）：仅 security=tls 有效。
+// selfsign=伪装域名自签 + 证书 pin（默认）；acme=落地服务器域名 + acme.sh 真实签发（§3.3）。
+const (
+	CertModeSelfSign = "selfsign"
+	CertModeACME     = "acme"
+)
+
+// CertModes 是向导可选的全部证书模式。
+var CertModes = []string{CertModeSelfSign, CertModeACME}
 
 // XHTTP 的 mode 可选值（xray xhttpSettings.mode）。
 var XHTTPModes = []string{"auto", "packet-up", "stream-up"}
@@ -197,7 +207,7 @@ func NodeTag(nodeID int64) string { return fmt.Sprintf("node_%d", nodeID) }
 // 模板占位符（§7）：Agent 填值后原样写入，不存在任何"翻译层"。
 // 约定：PORT/CLIENTS 在模板中以带引号的字符串形式出现（如 "port": "{{PORT}}"、
 // "clients": "{{CLIENTS}}"），Agent 连引号一起替换为对应的 JSON 值；
-// PRIVATE_KEY/TAG 为纯字符串替换。
+// PRIVATE_KEY/TAG/TLS_CERT_FILE/TLS_KEY_FILE 为纯字符串替换。
 const (
 	// PlaceholderPort 端口占位符；向导中端口留空时由 Agent 挑空闲端口并随 apply_result 上报。
 	PlaceholderPort = "{{PORT}}"
@@ -213,6 +223,11 @@ const (
 	PlaceholderVLessDecryption = "{{DECRYPTION}}"
 	// PlaceholderTag inbound tag 占位符；Agent 替换为 NodeTag(nodeID)。
 	PlaceholderTag = "{{TAG}}"
+	// PlaceholderTLSCertFile/PlaceholderTLSKeyFile TLS 证书文件路径占位符（仅
+	// security=tls 模板含有）：Agent 按 CertMode 落地证书（selfsign=`xray tls cert`
+	// 自签 / acme=acme.sh 签发）后以绝对路径纯字符串替换（§3.3）。
+	PlaceholderTLSCertFile = "{{TLS_CERT_FILE}}"
+	PlaceholderTLSKeyFile  = "{{TLS_KEY_FILE}}"
 )
 
 // VirtualConfig 是面板侧虚拟配置（nodes.config_template）：xray inbound JSON 模板 + 占位符。
@@ -223,7 +238,9 @@ type VirtualConfig struct {
 	Port          int                `json:"port,omitempty"` // 0 = Agent 自动挑选空闲端口
 	Flow          string             `json:"flow,omitempty"` // vless：xtls-rprx-vision 或空（仅 tcp）
 	Network       string             `json:"network,omitempty"`
-	Security      string             `json:"security,omitempty"`       // reality/none（tls 属 P3）；空 = 按 network 推导
+	Security      string             `json:"security,omitempty"`       // reality/tls/none；空 = 按 network 推导
+	CertMode      string             `json:"cert_mode,omitempty"`      // security=tls：selfsign（默认）/acme
+	TLSDomain     string             `json:"tls_domain,omitempty"`     // selfsign=伪装域名；acme=落地服务器域名（panel 检测填充）
 	ServiceName   string             `json:"service_name,omitempty"`   // grpc
 	Path          string             `json:"path,omitempty"`           // xhttp/ws/httpupgrade
 	Mode          string             `json:"mode,omitempty"`           // xhttp
@@ -254,7 +271,9 @@ type RealizedConfig struct {
 	Flow        string `json:"flow,omitempty"`
 	Fingerprint string `json:"fingerprint,omitempty"`
 	Network     string `json:"network,omitempty"`
-	Security    string `json:"security,omitempty"` // 生效安全层（reality/none；tls 属 P3）
+	Security    string `json:"security,omitempty"` // 生效安全层（reality/tls/none）
+	SNI         string `json:"sni,omitempty"`        // security=tls 的 serverName（伪装域名/落地域名）
+	CertSHA256  string `json:"cert_sha256,omitempty"` // 自签证书 DER 的 sha256 hex（订阅 pin / xray pinnedPeerCertSha256）；ACME 留空
 	ServiceName string `json:"service_name,omitempty"`
 	Path        string `json:"path,omitempty"`
 	Mode        string `json:"mode,omitempty"`
@@ -266,6 +285,7 @@ type RealizedConfig struct {
 
 // EffectiveSecurity 返回生效安全层：显式值优先；旧 realized（无 security 字段）
 // 按 reality 指纹（public_key 非空）回退推导（订阅输出兼容存量数据）。
+// 回退推导只覆盖 reality/none——tls 是 P3 新数据，必然显式携带 security 字段。
 func (rc RealizedConfig) EffectiveSecurity() string {
 	if rc.Security != "" {
 		return rc.Security
