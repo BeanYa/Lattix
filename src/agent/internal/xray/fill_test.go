@@ -2,6 +2,7 @@ package xray
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"lattix/shared"
@@ -121,5 +122,54 @@ func TestTemplateSecurity(t *testing.T) {
 	}
 	if got := templateSecurity(map[string]json.RawMessage{}); got != "" {
 		t.Errorf("无 streamSettings 应为空串，实际 %q", got)
+	}
+}
+
+// TestFillTemplateTLSSelfSign 验证 tls 模板填充：占位符替换为证书绝对路径、
+// realized 上报 security=tls + SNI + CertSHA256（hex pin），且无 reality 字段。
+func TestFillTemplateTLSSelfSign(t *testing.T) {
+	stubTLSCert(t)
+	vc := shared.VirtualConfig{
+		Protocol: shared.ProtocolVMess, Security: shared.SecurityTLS,
+		CertMode: shared.CertModeSelfSign, TLSDomain: "cdn.example.com",
+		Template: json.RawMessage(`{
+			"tag": "{{TAG}}", "protocol": "vmess", "port": "{{PORT}}",
+			"settings": {"clients": "{{CLIENTS}}"},
+			"streamSettings": {"network": "ws", "security": "tls",
+				"tlsSettings": {"serverName": "cdn.example.com",
+					"certificates": [{"certificateFile": "{{TLS_CERT_FILE}}", "keyFile": "{{TLS_KEY_FILE}}"}]},
+				"wsSettings": {"path": "/p"}}
+		}`),
+	}
+	m, _ := newRebuildTestManager(t)
+	inbound, realized, err := m.fillTemplate(23411, "node_11", vc, []string{"u1"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if realized.Security != shared.SecurityTLS {
+		t.Errorf("security 应为 tls，实际 %q", realized.Security)
+	}
+	if realized.SNI != "cdn.example.com" || len(realized.CertSHA256) != 64 {
+		t.Errorf("SNI/pin 上报不符: %+v", realized)
+	}
+	if realized.PublicKey != "" || realized.ShortID != "" {
+		t.Errorf("tls 模板不应有 reality 字段: %+v", realized)
+	}
+	if realized.Network != "ws" || realized.Path != "/p" {
+		t.Errorf("ws 传输提取回归: %+v", realized)
+	}
+	s := string(inbound)
+	if strings.Contains(s, "{{TLS_") || !strings.Contains(s, "certs/node_11/cert.pem") {
+		t.Errorf("证书占位符未被绝对路径替换: %s", s)
+	}
+}
+
+// TestTemplateSecurityTLS 验证 templateSecurity 识别 tls（streamSettings.security=="tls"）。
+func TestTemplateSecurityTLS(t *testing.T) {
+	tlsT := map[string]json.RawMessage{
+		"streamSettings": json.RawMessage(`{"network":"tcp","security":"tls","tlsSettings":{}}`),
+	}
+	if got := templateSecurity(tlsT); got != shared.SecurityTLS {
+		t.Errorf("应为 tls，实际 %q", got)
 	}
 }

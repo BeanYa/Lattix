@@ -345,3 +345,36 @@ func TestRenderSharedEndpointOutboundPlain(t *testing.T) {
 		t.Errorf("隧道身份应携带 Encryption 客户端字符串: %v", user)
 	}
 }
+
+// TestRenderSharedEndpointOutboundTLS 验证隧道段 tls 分派：自签出口（CertSHA256 非空）
+// 用 pinnedPeerCertSha256 钉住证书（xray 26.x hex 字符串，allowInsecure 已移除）；
+// ACME 出口（CertSHA256 空）走系统根验证，不带 pin。
+func TestRenderSharedEndpointOutboundTLS(t *testing.T) {
+	route := shared.SharedEndpointRoute{
+		ChainID: 1, TargetAddress: "127.0.0.1", TargetPort: 1443, TunnelUUID: "t-uuid",
+		Target: shared.RealizedConfig{Network: shared.NetworkTCP, Security: shared.SecurityTLS,
+			SNI: "exit.example.com", CertSHA256: strings.Repeat("ab", 32)},
+	}
+	ob := renderSharedEndpointOutbound(route, "shared_endpoint_route_1_1")
+	stream := nested(ob, "streamSettings")
+	if stream["security"] != "tls" {
+		t.Fatalf("tls 出口应为 security=tls: %v", stream)
+	}
+	tlsSettings, ok := stream["tlsSettings"].(map[string]any)
+	if !ok || tlsSettings["serverName"] != "exit.example.com" {
+		t.Fatalf("tlsSettings 不符: %v", stream)
+	}
+	if tlsSettings["pinnedPeerCertSha256"] != strings.Repeat("ab", 32) {
+		t.Errorf("自签出口应带 hex pin: %v", tlsSettings)
+	}
+	if _, ok := stream["realitySettings"]; ok {
+		t.Error("tls 分支不应输出 realitySettings")
+	}
+	// ACME：无 pin 键
+	route.Target.CertSHA256 = ""
+	ob = renderSharedEndpointOutbound(route, "shared_endpoint_route_1_1")
+	tlsSettings, _ = nested(ob, "streamSettings")["tlsSettings"].(map[string]any)
+	if _, ok := tlsSettings["pinnedPeerCertSha256"]; ok {
+		t.Errorf("ACME 出口不应带 pin: %v", tlsSettings)
+	}
+}

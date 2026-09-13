@@ -54,6 +54,18 @@ func (m *Manager) fillTemplate(port int, tag string, vc shared.VirtualConfig, us
 		encClient = enc
 		t = strings.ReplaceAll(t, shared.PlaceholderVLessDecryption, dec)
 	}
+	// TLS 证书占位符（仅 security=tls 模板含有）：按 CertMode 落地证书后以绝对路径替换；
+	// 自签 pin（hex）随 realized 上报（订阅与隧道段 pinnedPeerCertSha256 用）。
+	certPin := ""
+	if strings.Contains(t, shared.PlaceholderTLSCertFile) {
+		certFile, keyFile, pin, err := m.ensureTLSCertificate(tag, vc)
+		if err != nil {
+			return nil, nil, err
+		}
+		certPin = pin
+		t = strings.ReplaceAll(t, shared.PlaceholderTLSCertFile, certFile)
+		t = strings.ReplaceAll(t, shared.PlaceholderTLSKeyFile, keyFile)
+	}
 
 	// PORT/CLIENTS 约定为带引号的字符串占位符，连引号一起替换为 JSON 值；
 	// 同时兜底未加引号的写法。dokodemo 模板不含 CLIENTS 占位符。
@@ -108,6 +120,9 @@ func (m *Manager) fillTemplate(port int, tag string, vc shared.VirtualConfig, us
 				ServerNames []string `json:"serverNames"`
 				ShortIDs    []string `json:"shortIds"`
 			} `json:"realitySettings"`
+			TLSSettings struct {
+				ServerName string `json:"serverName"`
+			} `json:"tlsSettings"`
 			GrpcSettings struct {
 				ServiceName string `json:"serviceName"`
 			} `json:"grpcSettings"`
@@ -154,6 +169,8 @@ func (m *Manager) fillTemplate(port int, tag string, vc shared.VirtualConfig, us
 		PSK:         probe.Settings.Password,
 		Encryption:  encClient,
 		Security:    templateSecurity(tmpl),
+		SNI:         probe.StreamSettings.TLSSettings.ServerName,
+		CertSHA256:  certPin,
 	}
 	// ws/httpupgrade 的 path/host 在各自子段（ws 的 host 在 headers.Host），
 	// 与 xhttp 平铺字段不同源，按 network 分派覆盖。
@@ -242,7 +259,8 @@ func pinRealityMinClientVer(tmpl map[string]json.RawMessage) {
 }
 
 // templateSecurity 从填充后的模板推导安全层：streamSettings 含 realitySettings → reality；
-// 有 streamSettings 但无 realitySettings → none；无 streamSettings（ss/socks/http/dokodemo）→ ""。
+// 否则按 streamSettings.security 字段（tls → tls）；其余有 streamSettings → none；
+// 无 streamSettings（ss/socks/http/dokodemo）→ ""。
 func templateSecurity(tmpl map[string]json.RawMessage) string {
 	ssRaw, ok := tmpl["streamSettings"]
 	if !ok {
@@ -254,6 +272,10 @@ func templateSecurity(tmpl map[string]json.RawMessage) string {
 	}
 	if _, ok := ss["realitySettings"]; ok {
 		return shared.SecurityReality
+	}
+	var sec string
+	if err := json.Unmarshal(ss["security"], &sec); err == nil && sec == shared.SecurityTLS {
+		return shared.SecurityTLS
 	}
 	return shared.SecurityNone
 }

@@ -138,15 +138,27 @@ func renderSharedEndpointOutbound(route shared.SharedEndpointRoute, tag string) 
 		network = shared.NetworkTCP
 	}
 	// 隧道段安全层跟随出口业务 inbound：reality 出口（公钥非空）→ reality；
-	// ws/httpupgrade + none 出口（VLESS Encryption 认证）→ 明文传输（spec §3.2/P2）。
+	// tls 出口（SNI 非空）→ tls（自签用 pinnedPeerCertSha256 钉住证书——xray 26.x 起为
+	// hex 字符串，allowInsecure 已移除；ACME 走系统根验证）；其余 → 明文（spec §3.2/P3）。
 	stream := map[string]any{"network": network}
-	if route.Target.PublicKey != "" {
+	switch {
+	case route.Target.PublicKey != "":
 		stream["security"] = "reality"
 		stream["realitySettings"] = map[string]any{
 			"serverName": route.Target.ServerName, "publicKey": route.Target.PublicKey,
 			"shortId": route.Target.ShortID, "fingerprint": shared.FingerprintChrome,
 		}
-	} else {
+	case route.Target.SNI != "":
+		stream["security"] = "tls"
+		tlsSettings := map[string]any{
+			"serverName":  route.Target.SNI,
+			"fingerprint": shared.FingerprintChrome,
+		}
+		if route.Target.CertSHA256 != "" {
+			tlsSettings["pinnedPeerCertSha256"] = route.Target.CertSHA256
+		}
+		stream["tlsSettings"] = tlsSettings
+	default:
 		stream["security"] = "none"
 	}
 	switch network {
