@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -21,11 +22,12 @@ const (
 	ProtocolSocks       = "socks"
 	ProtocolHTTP        = "http"
 	ProtocolDokodemo    = "dokodemo-door" // xray inbound 协议名
+	ProtocolHysteria2   = "hysteria"      // xray 26.x hy2 入站协议名（非 "hysteria2"；订阅层再映射客户端类型名）
 )
 
 // Protocols 是向导可选的全部协议。
 var Protocols = []string{
-	ProtocolVLESS, ProtocolVMess, ProtocolTrojan, ProtocolShadowsocks,
+	ProtocolVLESS, ProtocolVMess, ProtocolTrojan, ProtocolShadowsocks, ProtocolHysteria2,
 	ProtocolSocks, ProtocolHTTP, ProtocolDokodemo,
 }
 
@@ -138,11 +140,13 @@ func HasUserList(protocol string) bool {
 }
 
 // PortLayers 返回协议监听占用的传输层（端口冲突治理的分层依据）：
-// shadowsocks/dokodemo-door 同时监听 tcp+udp，其余仅 tcp；hy2（P4）将引入 udp-only。
+// shadowsocks/dokodemo-door 同时监听 tcp+udp，hysteria 为 udp-only（QUIC），其余仅 tcp。
 func PortLayers(protocol string) string {
 	switch protocol {
 	case ProtocolShadowsocks, ProtocolDokodemo:
 		return "tcp,udp"
+	case ProtocolHysteria2:
+		return "udp"
 	default:
 		return "tcp"
 	}
@@ -234,7 +238,7 @@ const (
 // Flow/Network/ServiceName/Path/Mode/Host/Method 为协议参数，
 // Agent 据此构造用户条目并随 realized_config 回显（订阅生成依赖）。
 type VirtualConfig struct {
-	Protocol      string             `json:"protocol"`       // vless/vmess/trojan/shadowsocks/socks/http/dokodemo
+	Protocol      string             `json:"protocol"`       // vless/vmess/trojan/shadowsocks/hysteria/socks/http/dokodemo
 	Port          int                `json:"port,omitempty"` // 0 = Agent 自动挑选空闲端口
 	Flow          string             `json:"flow,omitempty"` // vless：xtls-rprx-vision 或空（仅 tcp）
 	Network       string             `json:"network,omitempty"`
@@ -249,6 +253,10 @@ type VirtualConfig struct {
 	Fingerprint   string             `json:"fingerprint,omitempty"`    // 客户端 uTLS 指纹（订阅侧参数，Agent 回显）
 	Encryption    string             `json:"encryption,omitempty"`     // vless：VLESS Encryption 认证方式（x25519/mlkem768）
 	Cipher        string             `json:"cipher,omitempty"`         // vmess 客户端 cipher 提示（默认 auto）
+	ObfsPassword  string             `json:"obfs_password,omitempty"`  // hy2 salamander 混淆密码（panel 生成，模板内固定值）
+	UpMbps        int                `json:"up_mbps,omitempty"`        // hy2 brutal 上行声明（0=不输出 brutalUp，回退 BBR）
+	DownMbps      int                `json:"down_mbps,omitempty"`      // hy2 brutal 下行声明
+	PortHop       string             `json:"port_hop,omitempty"`       // hy2 udpHop 段 "a-b"（空=关闭跳跃；DNAT 治理见 spec §3.2）
 	StaticClients []ClientCredential `json:"static_clients,omitempty"` // 技术隧道身份，不属于业务用户
 	Template      json.RawMessage    `json:"template"`                 // xray inbound JSON 模板，含占位符
 }
@@ -264,23 +272,27 @@ type ClientCredential struct {
 // RealizedConfig 是 Agent 上报的实际生效值（nodes.realized_config），
 // 面板生成订阅（§9）依赖这些字段；reality 字段对非 reality 协议为空。
 type RealizedConfig struct {
-	Port        int    `json:"port"`
-	PublicKey   string `json:"public_key,omitempty"`
-	ShortID     string `json:"short_id,omitempty"`
-	ServerName  string `json:"server_name,omitempty"`
-	Flow        string `json:"flow,omitempty"`
-	Fingerprint string `json:"fingerprint,omitempty"`
-	Network     string `json:"network,omitempty"`
-	Security    string `json:"security,omitempty"` // 生效安全层（reality/tls/none）
-	SNI         string `json:"sni,omitempty"`        // security=tls 的 serverName（伪装域名/落地域名）
-	CertSHA256  string `json:"cert_sha256,omitempty"` // 自签证书 DER 的 sha256 hex（订阅 pin / xray pinnedPeerCertSha256）；ACME 留空
-	ServiceName string `json:"service_name,omitempty"`
-	Path        string `json:"path,omitempty"`
-	Mode        string `json:"mode,omitempty"`
-	Host        string `json:"host,omitempty"`
-	Method      string `json:"method,omitempty"`
-	PSK         string `json:"psk,omitempty"`        // ss 2022-blake3 节点级 PSK（订阅拼接 "PSK:用户密钥"）
-	Encryption  string `json:"encryption,omitempty"` // vless：VLESS Encryption 客户端字符串（订阅 encryption 字段）
+	Port         int    `json:"port"`
+	PublicKey    string `json:"public_key,omitempty"`
+	ShortID      string `json:"short_id,omitempty"`
+	ServerName   string `json:"server_name,omitempty"`
+	Flow         string `json:"flow,omitempty"`
+	Fingerprint  string `json:"fingerprint,omitempty"`
+	Network      string `json:"network,omitempty"`
+	Security     string `json:"security,omitempty"`    // 生效安全层（reality/tls/none）
+	SNI          string `json:"sni,omitempty"`         // security=tls 的 serverName（伪装域名/落地域名）
+	CertSHA256   string `json:"cert_sha256,omitempty"` // 自签证书 DER 的 sha256 hex（订阅 pin / xray pinnedPeerCertSha256）；ACME 留空
+	ServiceName  string `json:"service_name,omitempty"`
+	Path         string `json:"path,omitempty"`
+	Mode         string `json:"mode,omitempty"`
+	Host         string `json:"host,omitempty"`
+	Method       string `json:"method,omitempty"`
+	PSK          string `json:"psk,omitempty"`           // ss 2022-blake3 节点级 PSK（订阅拼接 "PSK:用户密钥"）
+	Encryption   string `json:"encryption,omitempty"`    // vless：VLESS Encryption 客户端字符串（订阅 encryption 字段）
+	ObfsPassword string `json:"obfs_password,omitempty"` // hy2 salamander 混淆密码（回显，订阅 obfs-password）
+	UpMbps       int    `json:"up_mbps,omitempty"`       // hy2 brutal 上行（回显，订阅 up/upmbps）
+	DownMbps     int    `json:"down_mbps,omitempty"`
+	PortHop      string `json:"port_hop,omitempty"` // hy2 跳跃段回显（订阅 ports/mport）
 }
 
 // EffectiveSecurity 返回生效安全层：显式值优先；旧 realized（无 security 字段）
@@ -295,3 +307,38 @@ func (rc RealizedConfig) EffectiveSecurity() string {
 	}
 	return SecurityNone
 }
+
+// hy2 端口跳跃段长边界（spec §2）：默认 32，可用公共端口不足最小段长（8）时允许关闭
+// 跳跃退回固定单端口，上限 200（配置膨胀可控）。XrayMinVersionHy2 为 hy2 inbound 引入
+// 版本（agent 版本门控）；Hy2PortHopInterval 为 udpHop.interval 默认区间（秒，字符串区间）。
+const (
+	Hy2PortHopDefaultLen = 32
+	Hy2PortHopMinLen     = 8
+	Hy2PortHopMaxLen     = 200
+	Hy2PortHopInterval   = "10-30"
+	XrayMinVersionHy2    = "26.3.27"
+)
+
+// Hy2UserPassword 从用户 UUID 确定性派生 hy2 口令（auth 字符串）：
+// panel 订阅、agent clients 填充、入口终结 outbound 三端共用（仿 SSUserPassword）。
+func Hy2UserPassword(uuid string) string {
+	sum := sha256.Sum256([]byte("lattix/hy2:" + uuid))
+	return base64.RawURLEncoding.EncodeToString(sum[:24])
+}
+
+// ParsePortHop 解析 hy2 端口跳跃段 "a-b"（finalmask quicParams udpHop.ports 同形）；
+// 1-65535 且 a<b。FormatPortHop 为其逆操作。
+func ParsePortHop(s string) (start, end int, err error) {
+	a, b, ok := strings.Cut(s, "-")
+	if !ok {
+		return 0, 0, fmt.Errorf("端口跳跃段应为 \"a-b\" 形式: %q", s)
+	}
+	start, err1 := strconv.Atoi(strings.TrimSpace(a))
+	end, err2 := strconv.Atoi(strings.TrimSpace(b))
+	if err1 != nil || err2 != nil || start < 1 || end > 65535 || start >= end {
+		return 0, 0, fmt.Errorf("端口跳跃段非法: %q（须 1-65535 且 a<b）", s)
+	}
+	return start, end, nil
+}
+
+func FormatPortHop(start, end int) string { return fmt.Sprintf("%d-%d", start, end) }

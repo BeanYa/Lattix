@@ -121,3 +121,53 @@ func TestTLSConfigFieldsRoundTrip(t *testing.T) {
 		t.Error("TLS 证书占位符与 spec §3.1 不一致")
 	}
 }
+
+// TestHysteria2Protocol 验证 hy2 协议常量入向导集合且分层为 udp-only（P4）。
+func TestHysteria2Protocol(t *testing.T) {
+	if !ValidValue(ProtocolHysteria2, Protocols) {
+		t.Fatal("Protocols 缺少 hysteria")
+	}
+	if got := PortLayers(ProtocolHysteria2); got != "udp" {
+		t.Fatalf("PortLayers(hysteria) = %q, want udp", got)
+	}
+	// 存量回归：ss/dokodemo tcp,udp；vless tcp。
+	if got := PortLayers(ProtocolShadowsocks); got != "tcp,udp" {
+		t.Fatalf("PortLayers(ss) 回归: %q", got)
+	}
+	if got := PortLayers(ProtocolVLESS); got != "tcp" {
+		t.Fatalf("PortLayers(vless) 回归: %q", got)
+	}
+	// hy2 不是 reality 协议（无 dest/密钥对），但有用户列表。
+	if IsRealityProtocol(ProtocolHysteria2) {
+		t.Fatal("hysteria 不应为 reality 协议")
+	}
+	if !HasUserList(ProtocolHysteria2) {
+		t.Fatal("hysteria 应有用户列表")
+	}
+}
+
+// TestHy2UserPassword 验证口令派生确定性与两端一致（agent 填充与订阅共用）。
+func TestHy2UserPassword(t *testing.T) {
+	a := Hy2UserPassword("11111111-2222-3333-4444-555555555555")
+	b := Hy2UserPassword("11111111-2222-3333-4444-555555555555")
+	c := Hy2UserPassword("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	if a == "" || a != b || a == c {
+		t.Fatalf("派生应确定且随输入变化: %q %q %q", a, b, c)
+	}
+}
+
+// TestParsePortHop 验证端口段解析/格式化往返与非法输入。
+func TestParsePortHop(t *testing.T) {
+	start, end, err := ParsePortHop("20000-20031")
+	if err != nil || start != 20000 || end != 20031 {
+		t.Fatalf("ParsePortHop = %d,%d,%v", start, end, err)
+	}
+	if got := FormatPortHop(start, end); got != "20000-20031" {
+		t.Fatalf("FormatPortHop = %q", got)
+	}
+	for _, bad := range []string{"", "abc", "20000", "20031-20000", "0-100", "20000-70000", "20000-20000"} {
+		if _, _, err := ParsePortHop(bad); err == nil {
+			t.Fatalf("ParsePortHop(%q) 应报错", bad)
+		}
+	}
+}

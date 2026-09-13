@@ -277,6 +277,7 @@ type SharedEndpointRoute struct {
 	TargetPort    int            `json:"target_port,omitempty"`
 	TunnelUUID    string         `json:"tunnel_uuid,omitempty"`
 	Target        RealizedConfig `json:"target,omitempty"`
+	ExitProtocol  string         `json:"exit_protocol,omitempty"` // 出口业务协议（hysteria 时 agent 渲染 hy2 outbound；空=vless 现状）
 }
 
 type RemoveSharedEndpointPayload struct {
@@ -402,15 +403,31 @@ type BridgeSpec struct {
 // 反向段：经 ViaTunnelDomain 走 reverse portal，目标为下一跳回环地址与监听端口。
 // Network 由 panel 按出口业务协议推导（shared.PortLayers）：ss 出口为 tcp,udp，其余 tcp（§3.2 UDP 中转管道）。
 type ForwardSpec struct {
-	Tag             string `json:"tag"`
-	Port            int    `json:"port"` // 0 = 自动（从 PortCandidates 挑空闲）
-	PortCandidates  []int  `json:"port_candidates,omitempty"`
-	TargetAddress   string `json:"target_address"`
-	TargetPort      int    `json:"target_port"`
-	ViaTunnelDomain string `json:"via_tunnel_domain,omitempty"`
-	LocalOnly       bool   `json:"local_only,omitempty"`
-	Network         string `json:"network,omitempty"`      // dokodemo 管道监听层（"tcp"/"tcp,udp"）；空 = tcp（兼容旧面板）
-	ListenFamily    string `json:"listen_family,omitempty"` // "ipv6" → 监听 ::（双栈）；空 = 0.0.0.0（§9）
+	Tag             string       `json:"tag"`
+	Port            int          `json:"port"` // 0 = 自动（从 PortCandidates 挑空闲）
+	PortCandidates  []int        `json:"port_candidates,omitempty"`
+	TargetAddress   string       `json:"target_address"`
+	TargetPort      int          `json:"target_port"`
+	ViaTunnelDomain string       `json:"via_tunnel_domain,omitempty"`
+	LocalOnly       bool         `json:"local_only,omitempty"`
+	Network         string       `json:"network,omitempty"`       // dokodemo 管道监听层（"tcp"/"tcp,udp"）；空 = tcp（兼容旧面板）
+	ListenFamily    string       `json:"listen_family,omitempty"` // "ipv6" → 监听 ::（双栈）；空 = 0.0.0.0（§9）
+	HopPortEnd      int          `json:"hop_port_end,omitempty"`  // hy2 端到端跳跃段终点（段起点=Port；0=单端口现状，逐端口 dokodemo UDP 1:1）
+	Hy2Target       *Hy2DialSpec `json:"hy2_target,omitempty"`    // 入口终结模式末段 hy2 拨号参数（非空时代替 freedom 直连）
+}
+
+// Hy2DialSpec 是入口终结模式末段（入口/末跳 → 出口）的 hy2 拨号参数（§3.2 异构入口协议）：
+// 由 panel/dispatch 从出口 RealizedConfig + 公网地址组装；Auth = Hy2UserPassword(链 serviceUUID)。
+type Hy2DialSpec struct {
+	Address      string `json:"address"`
+	Port         int    `json:"port"` // PortHop 非空时为段起点（客户端 udpHop 在段内换端口，出口 DNAT 收敛到监听端口）
+	Auth         string `json:"auth"`
+	SNI          string `json:"sni"`
+	CertSHA256   string `json:"cert_sha256,omitempty"`   // 自签证书 pin（hex；ACME 留空走系统根验证）
+	ObfsPassword string `json:"obfs_password,omitempty"` // salamander 混淆密码（空=不启用）
+	UpMbps       int    `json:"up_mbps,omitempty"`
+	DownMbps     int    `json:"down_mbps,omitempty"`
+	PortHop      string `json:"port_hop,omitempty"` // 客户端 udpHop 段 "a-b"（空=不跳跃）
 }
 
 // RemoveChainHopPayload 是 remove_chain_hop 的载荷（§21.1）：删链逐跳反向下发。

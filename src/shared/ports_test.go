@@ -70,3 +70,22 @@ func TestParsePortRanges(t *testing.T) {
 		t.Errorf("坏 JSON 应报错")
 	}
 }
+
+// TestSpanInListenRanges 验证段整体落段判定（hy2 跳跃段 NAT 校验，P4）。
+func TestSpanInListenRanges(t *testing.T) {
+	rs := []PortRange{{PubStart: 20000, PubEnd: 20099}, {PubStart: 30000, PubEnd: 30010}}
+	if !SpanInListenRanges(rs, 20000, 20031) {
+		t.Fatal("[20000,20031] 应整体落在第一段内")
+	}
+	if SpanInListenRanges(rs, 20090, 20110) {
+		t.Fatal("跨段间隙的段不应通过（段须连续落在同一段内）")
+	}
+	if SpanInListenRanges(nil, 20000, 20031) {
+		t.Fatal("无端口段（非 NAT）不应通过——调用方对 direct 机走全端口空间分支")
+	}
+	// 非 1:1 映射按监听侧判定。
+	mapped := []PortRange{{PubStart: 40000, PubEnd: 40099, ListenStart: 50000, ListenEnd: 50099}}
+	if !SpanInListenRanges(mapped, 50000, 50031) || SpanInListenRanges(mapped, 40000, 40031) {
+		t.Fatal("非 1:1 段应按监听侧区间判定")
+	}
+}

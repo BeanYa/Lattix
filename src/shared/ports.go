@@ -112,3 +112,15 @@ func PublicPort(rs []PortRange, listen int) (pub int, ok bool) {
 	}
 	return 0, false
 }
+
+// SpanInListenRanges 报告段 [start,end] 是否整体落在某一段的监听侧区间内
+// （hy2 跳跃段须连续完整落段，跨段间隙不通过，spec §2/§3.2）。
+func SpanInListenRanges(rs []PortRange, start, end int) bool {
+	for _, r := range rs {
+		s, e := r.listenRange()
+		if start >= s && end <= e {
+			return true
+		}
+	}
+	return false
+}
