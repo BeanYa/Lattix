@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,7 +76,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 
 // createNodeRequest 是节点创建向导的提交（§10）：端口可空 = 自动（§7）。
 // 各协议有效字段见设计文档"全协议向导"：reality 系（vless/vmess/trojan）使用
-// short_id/dest/server_names/fingerprint/network 及 grpc/xhttp/ws/httpupgrade 子选项；security 仅 reality 系协议有效（reality/none，tls 属 P3）；flow 仅 vless+tcp；
+// short_id/dest/server_names/fingerprint/network 及 grpc/xhttp/ws/httpupgrade 子选项；security 仅 reality 系协议有效（reality/tls/none）；tls 的 cert_mode/tls_domain 见 §3.3 证书策略；flow 仅 vless+tcp；
 // method 仅 shadowsocks；cipher 仅 vmess；target_address/target_port 仅 dokodemo-door。
 type createNodeRequest struct {
 	Name          string   `json:"name"`
@@ -87,7 +88,9 @@ type createNodeRequest struct {
 	ServerNames   []string `json:"server_names"`   // 默认 [dl.google.com]
 	Fingerprint   string   `json:"fingerprint"`    // 默认 chrome
 	Network       string   `json:"network"`        // tcp（默认）/ grpc / xhttp / ws / httpupgrade
-	Security      string   `json:"security"`       // reality（默认推导）/ none；tls 属 P3（400 引导）
+	Security      string   `json:"security"`       // reality（默认推导）/ tls / none
+	CertMode      string   `json:"cert_mode"`      // security=tls：selfsign（默认）/ acme
+	TLSDomain     string   `json:"tls_domain"`     // selfsign=伪装域名（留空随机）；acme=落地服务器域名（处理器检测填充）
 	ServiceName   string   `json:"service_name"`   // grpc，默认 "grpc"
 	Path          string   `json:"path"`           // xhttp/ws/httpupgrade，默认 "/"
 	Mode          string   `json:"mode"`           // xhttp，默认 auto
@@ -132,9 +135,6 @@ func (req *createNodeRequest) normalize() error {
 		if !shared.ValidValue(req.Security, shared.Securities) {
 			return fmt.Errorf("不支持的 security: %s", req.Security)
 		}
-		if req.Security == shared.SecurityTLS {
-			return fmt.Errorf("security=tls 将在 P3 阶段提供，当前请选择 reality 或 none")
-		}
 		if req.Security == shared.SecurityReality && !shared.ValidValue(req.Network, shared.RealityNetworks) {
 			return fmt.Errorf("network=%s 与 security=reality 冲突：Reality 仅支持 tcp/grpc/xhttp", req.Network)
 		}
@@ -163,7 +163,8 @@ func (req *createNodeRequest) normalize() error {
 		default: // tcp
 			req.ServiceName, req.Path, req.Mode, req.Host = "", "", "", ""
 		}
-		if req.Security == shared.SecurityReality {
+		switch req.Security {
+		case shared.SecurityReality:
 			if req.Fingerprint == "" {
 				req.Fingerprint = shared.FingerprintChrome
 			}
@@ -179,11 +180,37 @@ func (req *createNodeRequest) normalize() error {
 			if len(req.ServerNames) == 0 {
 				req.ServerNames = []string{"dl.google.com"}
 			}
-		} else {
+		case shared.SecurityTLS:
+			// reality 专有字段无意义一律清空；fingerprint 保留（tls 客户端同样下发 uTLS 指纹）。
+			req.ShortID, req.Dest, req.ServerNames = "", "", nil
+			if req.Fingerprint == "" {
+				req.Fingerprint = shared.FingerprintChrome
+			}
+			if !shared.ValidValue(req.Fingerprint, shared.Fingerprints) {
+				return fmt.Errorf("不支持的 uTLS 指纹: %s", req.Fingerprint)
+			}
+			if req.CertMode == "" {
+				req.CertMode = shared.CertModeSelfSign
+			}
+			if !shared.ValidValue(req.CertMode, shared.CertModes) {
+				return fmt.Errorf("不支持的证书模式: %s", req.CertMode)
+			}
+			if req.CertMode == shared.CertModeSelfSign {
+				if req.TLSDomain == "" {
+					req.TLSDomain = tlsCamouflagePool[randomInt(len(tlsCamouflagePool))]
+				}
+				if err := validateTLSDomain(req.TLSDomain); err != nil {
+					return err
+				}
+			} else {
+				// acme：域名由处理器从落地服务器公网地址检测填充（applyACMEDomain），用户输入忽略。
+				req.TLSDomain = ""
+			}
+		default: // none
 			// security=none：Reality 专有字段无意义，一律清空；并按协议执行矩阵约束。
 			req.ShortID, req.Dest, req.ServerNames, req.Fingerprint = "", "", nil, ""
 			if req.Protocol == shared.ProtocolTrojan {
-				return fmt.Errorf("trojan 不允许 security=none（protocol 与 security 冲突；trojan 需 reality，tls 将在 P3 提供）")
+				return fmt.Errorf("trojan 不允许 security=none（protocol 与 security 冲突；trojan 需 reality 或 tls）")
 			}
 			if req.Protocol == shared.ProtocolVLESS && req.Encryption == "" {
 				return fmt.Errorf("vless 在 security=none 下必须启用 VLESS Encryption（security 与 encryption 冲突）")
@@ -214,8 +241,8 @@ func (req *createNodeRequest) normalize() error {
 		if req.Flow == shared.FlowVision && req.Network != shared.NetworkTCP {
 			return fmt.Errorf("flow=%s 仅适用于 tcp 传输（grpc/xhttp/ws/httpupgrade 请选择无 flow）", shared.FlowVision)
 		}
-		if req.Flow == shared.FlowVision && req.Security != shared.SecurityReality {
-			return fmt.Errorf("flow=%s 与 security=%s 冲突：vision 仅 reality（tls 将在 P3 提供）", shared.FlowVision, req.Security)
+		if req.Flow == shared.FlowVision && req.Security == shared.SecurityNone {
+			return fmt.Errorf("flow=%s 与 security=none 冲突：vision 仅 reality/tls（§2）", shared.FlowVision)
 		}
 		if req.Encryption != "" {
 			if !shared.ValidValue(req.Encryption, shared.VLessEncMethods) {
@@ -269,6 +296,11 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// ACME 证书模式：落地服务器须有域名型公网地址（§3.3 模式 B，无则 400）。
+	if err := applyACMEDomain(&req, srv); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	// 受限直连 NAT 机（allowed_ports 非空）：用户指定端口必须在段内（§21，400）；
@@ -525,9 +557,12 @@ func buildVirtualConfig(req createNodeRequest) shared.VirtualConfig {
 		"settings": settings,
 	}
 	if shared.IsRealityProtocol(req.Protocol) {
-		if req.Security == shared.SecurityNone {
+		switch req.Security {
+		case shared.SecurityNone:
 			inbound["streamSettings"] = plainStreamSettings(req)
-		} else {
+		case shared.SecurityTLS:
+			inbound["streamSettings"] = tlsStreamSettings(req)
+		default:
 			inbound["streamSettings"] = realityStreamSettings(req)
 		}
 	}
@@ -546,6 +581,8 @@ func buildVirtualConfig(req createNodeRequest) shared.VirtualConfig {
 		Flow:        req.Flow,
 		Network:     req.Network,
 		Security:    req.Security,
+		CertMode:    req.CertMode,
+		TLSDomain:   req.TLSDomain,
 		ServiceName: req.ServiceName,
 		Path:        req.Path,
 		Mode:        req.Mode,
@@ -614,5 +651,81 @@ func networkSubSettings(req createNodeRequest) map[string]any {
 		}
 		return map[string]any{"httpupgradeSettings": h}
 	}
+	return nil
+}
+
+// tlsStreamSettings 构造 tls 安全层的 streamSettings（§3.2）：serverName 为 TLS 域名
+// （selfsign=伪装域名 / acme=落地服务器域名），证书文件路径为占位符，由 agent 按
+// CertMode 落地后替换（§3.3）；传输子段与 reality/none 共用 networkSubSettings。
+func tlsStreamSettings(req createNodeRequest) map[string]any {
+	ss := map[string]any{
+		"network":  req.Network,
+		"security": "tls",
+		"tlsSettings": map[string]any{
+			"serverName": req.TLSDomain,
+			"certificates": []map[string]any{{
+				"certificateFile": shared.PlaceholderTLSCertFile,
+				"keyFile":         shared.PlaceholderTLSKeyFile,
+			}},
+		},
+	}
+	for k, v := range networkSubSettings(req) {
+		ss[k] = v
+	}
+	return ss
+}
+
+// tlsCamouflagePool 是自签证书的伪装域名预设池（§3.3 模式 A，复用 RealityDestPicker
+// 预设思路）：仅作 TLS 伪装身份（证书 CN/SAN 与客户端 SNI），不要求指向本机。
+var tlsCamouflagePool = []string{
+	"dl.google.com", "www.amazon.com", "gateway.icloud.com", "developer.apple.com",
+	"cdn.discord.com", "github.com", "www.samsung.com", "www.tesla.com",
+	"www.bing.com", "www.yahoo.com",
+}
+
+// validateTLSDomain 校验伪装域名形态：纯主机名（不含端口/路径/空白，长度 ≤253）。
+func validateTLSDomain(d string) error {
+	if d == "" || len(d) > 253 || strings.ContainsAny(d, "/: \t\r\n") {
+		return fmt.Errorf("伪装域名不合法: %q（应为纯域名，如 www.example.com）", d)
+	}
+	return nil
+}
+
+// randomInt 返回 [0,n) 的均匀随机数（伪装域名池选取；拒绝采样去偏，
+// crypto/rand 失败与 randomHex 同语义 panic）。
+func randomInt(n int) int {
+	var b [1]byte
+	limit := 256 / n * n
+	for {
+		if _, err := rand.Read(b[:]); err != nil {
+			panic(err)
+		}
+		if int(b[0]) < limit {
+			return int(b[0]) % n
+		}
+	}
+}
+
+// serverDomain 返回服务器公网地址列表中的首个域名条目（无则空串）。
+func serverDomain(srv *store.Server) string {
+	for _, a := range store.ParseServerAddresses(srv.Addresses) {
+		if shared.AddressFamily(a) == shared.AddressFamilyDomain {
+			return a
+		}
+	}
+	return ""
+}
+
+// applyACMEDomain 校验并填充 ACME 模式的 TLS 域名（§3.3 模式 B；§4 前端镜像同一判定）：
+// 落地服务器公网地址须含域名条目，无则 400 并给出指向性提示；有则沿用该域名。
+func applyACMEDomain(req *createNodeRequest, srv *store.Server) error {
+	if req.Security != shared.SecurityTLS || req.CertMode != shared.CertModeACME {
+		return nil
+	}
+	d := serverDomain(srv)
+	if d == "" {
+		return fmt.Errorf("落地服务器 %s 未设置域名，请先在服务器地址中配置域名或改用自签模式", srv.Alias)
+	}
+	req.TLSDomain = d
 	return nil
 }

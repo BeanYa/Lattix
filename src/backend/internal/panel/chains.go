@@ -299,6 +299,11 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		servers = append(servers, srv)
 	}
 	entrySrv, exitSrv := servers[0], servers[len(servers)-1]
+	// ACME 证书模式：落地（出口）服务器须有域名型公网地址（§3.3 模式 B，无则 400）。
+	if err := applyACMEDomain(&req.Node, exitSrv); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	nameServers := make([]nameTemplateServer, 0, len(servers))
 	for _, srv := range servers {
 		nameServers = append(nameServers, nameServer(srv))
@@ -585,6 +590,11 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(servers) > 1 && req.Node.Protocol == shared.ProtocolDokodemo {
 		writeError(w, http.StatusBadRequest, "dokodemo-door 不能作为中转链出口")
+		return
+	}
+	// ACME 证书模式：落地（出口）服务器须有域名型公网地址（镜像创建路径）。
+	if err := applyACMEDomain(&req.Node, servers[len(servers)-1]); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	nameServers := make([]nameTemplateServer, 0, len(servers))

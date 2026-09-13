@@ -1585,6 +1585,8 @@ export interface components {
             fingerprint?: string;
             encryption?: string;
             cipher?: string;
+            cert_mode?: string;
+            tls_domain?: string;
             template: {
                 [key: string]: unknown;
             };

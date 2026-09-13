@@ -917,6 +917,8 @@ components:
         fingerprint: {type: string}
         encryption: {type: string}
         cipher: {type: string}
+        cert_mode: {type: string}
+        tls_domain: {type: string}
         template:
           type: object
           additionalProperties: true
