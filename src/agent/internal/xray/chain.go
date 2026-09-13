@@ -379,9 +379,9 @@ func (m *Manager) renderForward(p shared.ApplyChainHopPayload, cur fullConfig) (
 	return &shared.RealizedConfig{Port: port}, rec, nil
 }
 
-// renderForwardInbound 渲染 forward 的 dokodemo-door 透传 inbound（对照 PoC entry inbound；
+// renderForwardInbound 渲染 forward 的 dokodemo-door 透传 inbound（对照 PoC entry inbound）：
 // 默认监听 0.0.0.0：固定目标无滥用面，§21.1；listen_family=ipv6 时监听 :: 双栈同听，§9；
-// network 按出口协议分层（ss 出口 tcp,udp），空回退 tcp 兼容旧面板载荷）。
+// network 按出口协议分层（ss 出口 tcp,udp），空回退 tcp 兼容旧面板载荷。
 func renderForwardInbound(spec *shared.ForwardSpec, tag string, port int) map[string]any {
 	listen := "0.0.0.0"
 	if spec.LocalOnly {
