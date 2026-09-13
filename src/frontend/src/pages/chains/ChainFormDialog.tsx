@@ -38,6 +38,7 @@ import {
   VMESS_CIPHERS,
   XHTTP_MODES,
   inboundCapable,
+  isPlainNetwork,
   type ChainFormController,
 } from './use-chain-form'
 
@@ -154,12 +155,14 @@ export function ChainFormDialog({
     strictNameResult,
     onOpenChange,
     onTypeChange,
+    onNetworkChange,
     onProtocolChange,
     setMiddle,
     setMiddleAddr,
     onSubmit,
   } = controller
   const serverSelectItems = servers.map((s) => ({ value: String(s.id), label: serverLabel(s) }))
+  const plainNetwork = isPlainNetwork(form.network)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto">
@@ -391,7 +394,7 @@ export function ChainFormDialog({
             <>
               <div className="space-y-2">
                 <Label>传输（network）</Label>
-                <Select value={form.network} onValueChange={(v) => v && patch({ network: v })}>
+                <Select value={form.network} onValueChange={onNetworkChange}>
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
@@ -452,6 +455,36 @@ export function ChainFormDialog({
                   />
                 </div>
               )}
+              {plainNetwork && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="plainPath">
+                      {form.network === 'ws' ? 'WS path' : 'HTTPUpgrade path'}
+                    </Label>
+                    <Input
+                      id="plainPath"
+                      value={form.path}
+                      onChange={(e) => patch({ path: e.target.value })}
+                      placeholder="/"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="plainHost">
+                      {form.network === 'ws' ? 'WS host（可空）' : 'HTTPUpgrade host（可空）'}
+                    </Label>
+                    <Input
+                      id="plainHost"
+                      value={form.host}
+                      onChange={(e) => patch({ host: e.target.value })}
+                      placeholder="留空不设置"
+                    />
+                  </div>
+                  <p className="cg-chain-hint">
+                    ws/httpupgrade 为明文传输（security=none），适合套 CDN；vless 需启用 VLESS
+                    Encryption，trojan 暂不支持（需 TLS，后续版本提供）。
+                  </p>
+                </>
+              )}
               {form.protocol === 'vless' && (
                 <div className="space-y-2">
                   <Label>VLESS Encryption（可与 flow 组合）</Label>
@@ -494,42 +527,48 @@ export function ChainFormDialog({
                   </Select>
                 </div>
               )}
-              <div className="space-y-2">
-                <Label>uTLS 指纹（客户端）</Label>
-                <Select
-                  value={form.fingerprint}
-                  onValueChange={(v) => v && patch({ fingerprint: v })}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {FINGERPRINTS.map((f) => (
-                      <SelectItem key={f} value={f}>
-                        {f}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="shortId">short_id</Label>
-                <Input
-                  id="shortId"
-                  value={form.shortId}
-                  onChange={(e) => patch({ shortId: e.target.value })}
-                  placeholder="留空随机生成"
+              {!plainNetwork && (
+                <div className="space-y-2">
+                  <Label>uTLS 指纹（客户端）</Label>
+                  <Select
+                    value={form.fingerprint}
+                    onValueChange={(v) => v && patch({ fingerprint: v })}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {FINGERPRINTS.map((f) => (
+                        <SelectItem key={f} value={f}>
+                          {f}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {!plainNetwork && (
+                <div className="space-y-2">
+                  <Label htmlFor="shortId">short_id</Label>
+                  <Input
+                    id="shortId"
+                    value={form.shortId}
+                    onChange={(e) => patch({ shortId: e.target.value })}
+                    placeholder="留空随机生成"
+                  />
+                </div>
+              )}
+              {!plainNetwork && (
+                <RealityDestPicker
+                  idPrefix="chain"
+                  preset={form.destPreset}
+                  onPresetChange={(value) => patch({ destPreset: value })}
+                  dest={form.dest}
+                  onDestChange={(value) => patch({ dest: value })}
+                  serverNames={form.serverNames}
+                  onServerNamesChange={(value) => patch({ serverNames: value })}
                 />
-              </div>
-              <RealityDestPicker
-                idPrefix="chain"
-                preset={form.destPreset}
-                onPresetChange={(value) => patch({ destPreset: value })}
-                dest={form.dest}
-                onDestChange={(value) => patch({ dest: value })}
-                serverNames={form.serverNames}
-                onServerNamesChange={(value) => patch({ serverNames: value })}
-              />
+              )}
             </>
           )}
 

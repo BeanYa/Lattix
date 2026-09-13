@@ -24,7 +24,8 @@ export const DIRECT_PROTOCOLS = [
   'dokodemo-door',
 ] as const
 export const RELAY_PROTOCOLS = ['vless', 'vmess', 'trojan', 'shadowsocks', 'socks', 'http'] as const
-export const NETWORKS = ['tcp', 'xhttp', 'grpc']
+// 与后端 shared 包保持一致（ws/httpupgrade 为 security=none 明文传输；reality 仅 tcp/grpc/xhttp）。
+export const NETWORKS = ['tcp', 'xhttp', 'grpc', 'ws', 'httpupgrade']
 export const SS_METHODS = [
   { value: '2022-blake3-aes-128-gcm', label: '2022-blake3-aes-128-gcm（推荐）' },
   { value: '2022-blake3-aes-256-gcm', label: '2022-blake3-aes-256-gcm' },
@@ -69,6 +70,11 @@ export const VLESS_ENCS = [
 export const XHTTP_MODES = ['auto', 'packet-up', 'stream-up']
 
 const REALITY_PROTOCOLS = ['vless', 'vmess', 'trojan']
+
+/** ws/httpupgrade 为明文传输（security=none，无 reality 字段）。 */
+export function isPlainNetwork(network: string): boolean {
+  return network === 'ws' || network === 'httpupgrade'
+}
 
 /** 入站能力（§21）：direct 或 NAT 受限直连（有端口段）。仅出口档 NAT 不能作入口/中间跳。 */
 export function inboundCapable(s: Server): boolean {
@@ -321,6 +327,21 @@ export function useChainForm({
     }))
   }
 
+  const onNetworkChange = (value: string | null) => {
+    if (!value) return
+    setForm((current) => ({
+      ...current,
+      network: value,
+      // 跨传输纠偏：vision flow 仅 tcp+reality
+      flow: value === 'tcp' ? current.flow : 'none',
+      // vless 明文传输必须有 VLESS Encryption 兜底（后端矩阵，前端即时纠正）
+      encryption:
+        current.protocol === 'vless' && isPlainNetwork(value) && current.encryption === 'none'
+          ? 'mlkem768'
+          : current.encryption,
+    }))
+  }
+
   const onProtocolChange = (value: string | null) => {
     if (!value) return
     setForm((current) => ({
@@ -328,7 +349,12 @@ export function useChainForm({
       protocol: value,
       // 跨协议纠偏：flow/encryption 仅 vless 有意义
       flow: value === 'vless' ? current.flow : 'none',
-      encryption: value === 'vless' ? current.encryption : 'none',
+      encryption:
+        value === 'vless'
+          ? isPlainNetwork(current.network) && current.encryption === 'none'
+            ? 'mlkem768'
+            : current.encryption
+          : 'none',
     }))
   }
 
@@ -394,20 +420,36 @@ export function useChainForm({
       nodeBody.port = Number(form.chainType === 'direct' ? form.entryPort : form.port)
     }
     if (isReality) {
-      nodeBody.fingerprint = form.fingerprint
       nodeBody.network = form.network
-      if (form.shortId.trim()) {
-        nodeBody.short_id = form.shortId.trim()
-      }
-      if (form.dest.trim()) {
-        nodeBody.dest = form.dest.trim()
-      }
-      const names = form.serverNames
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-      if (names.length > 0) {
-        nodeBody.server_names = names
+      if (isPlainNetwork(form.network)) {
+        // ws/httpupgrade = security=none（后端按 network 推导）：不带 reality 字段
+        nodeBody.path = form.path.trim() || '/'
+        if (form.host.trim()) {
+          nodeBody.host = form.host.trim()
+        }
+        if (form.protocol === 'trojan') {
+          setCreateError('trojan 使用 ws/httpupgrade 传输需 TLS 安全层（将在后续版本提供）')
+          return
+        }
+        if (form.protocol === 'vless' && form.encryption === 'none') {
+          setCreateError('vless 使用 ws/httpupgrade 传输时必须启用 VLESS Encryption')
+          return
+        }
+      } else {
+        nodeBody.fingerprint = form.fingerprint
+        if (form.shortId.trim()) {
+          nodeBody.short_id = form.shortId.trim()
+        }
+        if (form.dest.trim()) {
+          nodeBody.dest = form.dest.trim()
+        }
+        const names = form.serverNames
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+        if (names.length > 0) {
+          nodeBody.server_names = names
+        }
       }
       if (form.network === 'xhttp') {
         nodeBody.path = form.path.trim() || '/'
@@ -420,7 +462,7 @@ export function useChainForm({
         nodeBody.service_name = form.serviceName.trim() || 'grpc'
       }
       if (form.protocol === 'vless') {
-        // vision 仅 tcp；xhttp 必须无 flow；vision + Encryption 允许组合（§15）
+        // vision 仅 tcp；xhttp/ws/httpupgrade 必须无 flow；vision + Encryption 允许组合（§15）
         nodeBody.flow = form.network === 'tcp' ? form.flow : 'none'
         if (form.encryption !== 'none') {
           nodeBody.encryption = form.encryption
@@ -503,6 +545,7 @@ export function useChainForm({
     openEdit,
     onOpenChange,
     onTypeChange,
+    onNetworkChange,
     onProtocolChange,
     setMiddle,
     setMiddleAddr,
