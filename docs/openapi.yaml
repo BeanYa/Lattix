@@ -919,6 +919,10 @@ components:
         cipher: {type: string}
         cert_mode: {type: string}
         tls_domain: {type: string}
+        obfs_password: {type: string}
+        up_mbps: {type: integer, minimum: 0}
+        down_mbps: {type: integer, minimum: 0}
+        port_hop: {type: string}
         template:
           type: object
           additionalProperties: true

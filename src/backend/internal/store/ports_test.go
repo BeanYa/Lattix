@@ -155,3 +155,135 @@ func TestPortOccupantsChainSources(t *testing.T) {
 		t.Error("软删链 portal 端口不应出现")
 	}
 }
+
+// TestPortOccupantsHy2HopRange 验证 hy2 节点/共享端点的跳跃段以段行形式进入占用画像（P4 §3.2）。
+func TestPortOccupantsHy2HopRange(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	// hy2 节点：port=21000，port_hop="30000-30031" → 单端口行 + 段行。
+	hy2Port := 21000
+	if _, err := st.InsertNode(ctx, "n-hy2", 1, shared.ProtocolHysteria2, &hy2Port,
+		json.RawMessage(`{"protocol":"hysteria","port":21000,"port_hop":"30000-30031","template":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	// 无 port_hop 的 hy2 节点只产单端口行；vless 节点不受影响。
+	plainPort := 21001
+	if _, err := st.InsertNode(ctx, "n-hy2-plain", 1, shared.ProtocolHysteria2, &plainPort,
+		json.RawMessage(`{"protocol":"hysteria","port":21001,"template":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+	vlessPort := 21002
+	if _, err := st.InsertNode(ctx, "n-vless", 1, shared.ProtocolVLESS, &vlessPort, json.RawMessage(`{"protocol":"vless"}`)); err != nil {
+		t.Fatal(err)
+	}
+	// hy2 共享端点带跳跃段 → 段行（endpoint）。
+	if _, _, err := st.EnsureSharedEndpoint(ctx, 1, shared.ProtocolHysteria2, 21003, "profile-hy2",
+		json.RawMessage(`{"protocol":"hysteria","port":21003,"port_hop":"31000-31031","template":{}}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	occ, err := st.PortOccupants(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var single, nodeSpan, epSpan *PortOccupant
+	for i := range occ {
+		o := &occ[i]
+		switch {
+		case o.Port == 21000 && o.PortEnd == 0 && o.Layers == "udp":
+			single = o
+		case o.Port == 30000 && o.PortEnd == 30031 && o.Layers == "udp":
+			nodeSpan = o
+		case o.Port == 31000 && o.PortEnd == 31031 && o.Layers == "udp":
+			epSpan = o
+		}
+		if o.Port == 21001 && o.PortEnd != 0 {
+			t.Errorf("无 port_hop 的 hy2 节点不应产段行: %+v", o)
+		}
+		if o.PortEnd != 0 && o.Protocol == shared.ProtocolVLESS {
+			t.Errorf("vless 节点不应产段行: %+v", o)
+		}
+	}
+	if single == nil || nodeSpan == nil || epSpan == nil {
+		t.Fatalf("hy2 占用画像缺行（单端口/节点段/端点段）: %+v", occ)
+	}
+	if nodeSpan.Source != "node" || nodeSpan.RefName != "n-hy2" || nodeSpan.Protocol != shared.ProtocolHysteria2 {
+		t.Errorf("节点段行来源不符: %+v", nodeSpan)
+	}
+	if epSpan.Source != "endpoint" {
+		t.Errorf("端点段行来源不符: %+v", epSpan)
+	}
+}
+
+// TestPortOccupantsHy2ChainHopSpan 验证 hy2 出口链的逐跳转发保留段（端到端跳跃）：
+// 段 = [forward_port, forward_port + 段长 - 1]，段长取出口节点 config_template 的 port_hop。
+func TestPortOccupantsHy2ChainHopSpan(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+
+	entryID, err := st.CreateServer(ctx, ServerDraft{Alias: "entry", Address: "entry.example.com", BootstrapToken: "entry-token", MachineType: MachineTypeDirect, CountryCode: "US"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exitID, err := st.CreateServer(ctx, ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "exit-token", MachineType: MachineTypeDirect, CountryCode: "US"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hy2Chain, err := st.CreateInitialChainDeployment(ctx, InitialChainDeployment{
+		Name: "链HY2", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig:          json.RawMessage(`{"protocol":"hysteria","port_hop":"30000-30031","template":{}}`),
+		TrafficMultiplierMilli: 1000,
+		Hops: []InitialChainHop{
+			{ServerID: entryID, Role: HopRoleEntry, Transport: "reverse", ForwardPort: 40000, TunnelUUID: "tunnel-hy2"},
+			{ServerID: exitID, Role: HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// vless 出口链：即使 forward_port 相同形态也不产段行（段长来源非 hy2）。
+	if _, err := st.CreateInitialChainDeployment(ctx, InitialChainDeployment{
+		Name: "链VLESS", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolVLESS,
+		ServiceConfig: json.RawMessage(`{"protocol":"vless"}`), TrafficMultiplierMilli: 1000,
+		Hops: []InitialChainHop{
+			{ServerID: entryID, Role: HopRoleEntry, Transport: "reverse", ForwardPort: 41000, TunnelUUID: "tunnel-v"},
+			{ServerID: exitID, Role: HopRoleExit},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	occ, err := st.PortOccupants(ctx, entryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fwd, span *PortOccupant
+	for i := range occ {
+		o := &occ[i]
+		switch {
+		case o.Port == 40000 && o.PortEnd == 0:
+			fwd = o
+		case o.Port == 40000 && o.PortEnd == 40031:
+			span = o
+		}
+		if o.Port == 41000 && o.PortEnd != 0 {
+			t.Errorf("vless 出口链不应产段行: %+v", o)
+		}
+	}
+	if fwd == nil || span == nil {
+		t.Fatalf("hy2 链占用画像缺行（单端口 forward/跳跃段）: %+v", occ)
+	}
+	if span.Source != "chain_forward" || span.ChainID != hy2Chain.ChainID || span.Layers != "udp" || span.RefName != "链HY2" {
+		t.Errorf("链段行不符: %+v", span)
+	}
+}

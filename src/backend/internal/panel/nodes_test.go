@@ -318,3 +318,94 @@ func TestApplyACMEDomain(t *testing.T) {
 		t.Errorf("selfsign 应直通: err=%v domain=%q", err, req.TLSDomain)
 	}
 }
+
+// TestNormalizeHysteria2 验证 hy2 矩阵（spec §2）：无 network/security 选择，
+// 恒 tls + 证书模式复用；带宽/混淆/跳跃默认值；矩阵外组合 400。
+func TestNormalizeHysteria2(t *testing.T) {
+	req := &createNodeRequest{Protocol: "hysteria"}
+	if err := req.normalize(); err != nil {
+		t.Fatalf("默认 hy2 应合法: %v", err)
+	}
+	if req.Security != shared.SecurityTLS || req.CertMode != shared.CertModeSelfSign {
+		t.Fatalf("hy2 应强制 tls/selfsign: %+v", req)
+	}
+	if req.TLSDomain == "" || req.Fingerprint != shared.FingerprintChrome {
+		t.Fatalf("hy2 伪装域/指纹默认值缺失: %+v", req)
+	}
+	if req.ObfsPassword == "" || req.UpMbps != 50 || req.DownMbps != 100 || req.PortHop != "" {
+		t.Fatalf("hy2 默认值不符（obfs 自动生成、50/100、port_hop 留待分配）: %+v", req)
+	}
+	// 矩阵外：network/reality/none 一律 400 并指明冲突字段。
+	for _, bad := range []createNodeRequest{
+		{Protocol: "hysteria", Network: "tcp"},
+		{Protocol: "hysteria", Security: "reality"},
+		{Protocol: "hysteria", Security: "none"},
+		{Protocol: "hysteria", PortHop: "abc"},
+		{Protocol: "hysteria", PortHop: "20000-20001"}, // 段长 < 8
+		{Protocol: "hysteria", UpMbps: -1},
+	} {
+		if err := bad.normalize(); err == nil {
+			t.Fatalf("非法组合应 400: %+v", bad)
+		}
+	}
+	// off 保留哨兵（由 resolveHy2PortHop 归一为空，避免与"默认空=自动分配"混淆）；显式段保留。
+	off := &createNodeRequest{Protocol: "hysteria", PortHop: "off"}
+	if err := off.normalize(); err != nil || off.PortHop != "off" {
+		t.Fatalf("port_hop=off 应保留哨兵: %v %+v", err, off)
+	}
+	explicit := &createNodeRequest{Protocol: "hysteria", PortHop: "31000-31031"}
+	if err := explicit.normalize(); err != nil || explicit.PortHop != "31000-31031" {
+		t.Fatalf("显式段应保留: %v %+v", err, explicit)
+	}
+}
+
+// TestBuildVirtualConfigHysteria2 验证 hy2 模板形态（Task 1 定稿）：settings.clients +
+// tls 证书占位符 + hysteriaSettings + finalmask（salamander/quicParams）+
+// network:"hysteria" + alpn h3（后两者缺了会退化为 TCP 承载/握手失败，见事实区）。
+func TestBuildVirtualConfigHysteria2(t *testing.T) {
+	req := createNodeRequest{Protocol: "hysteria", Security: "tls", CertMode: "selfsign",
+		TLSDomain: "www.example.com", ObfsPassword: "obfs-pw", UpMbps: 50, DownMbps: 100,
+		PortHop: "20000-20031"}
+	vc := buildVirtualConfig(req)
+	var inbound map[string]any
+	if err := json.Unmarshal(vc.Template, &inbound); err != nil {
+		t.Fatal(err)
+	}
+	if inbound["protocol"] != "hysteria" {
+		t.Fatalf("协议名须为 hysteria: %v", inbound["protocol"])
+	}
+	settings := inbound["settings"].(map[string]any)
+	if settings["version"].(float64) != 2 || settings["clients"] != shared.PlaceholderClients {
+		t.Fatalf("settings 不符: %v", settings)
+	}
+	ss := inbound["streamSettings"].(map[string]any)
+	if ss["network"] != "hysteria" {
+		t.Fatal("hy2 模板必须显式 network=hysteria（缺省 tcp 会退化为 TCP 承载，Task 1 实测）")
+	}
+	if ss["security"] != "tls" || ss["hysteriaSettings"].(map[string]any)["version"].(float64) != 2 {
+		t.Fatalf("streamSettings 不符: %v", ss)
+	}
+	fm := ss["finalmask"].(map[string]any)
+	udp := fm["udp"].([]any)[0].(map[string]any)
+	if udp["type"] != "salamander" || udp["settings"].(map[string]any)["password"] != "obfs-pw" {
+		t.Fatalf("salamander 段不符: %v", udp)
+	}
+	quic := fm["quicParams"].(map[string]any)
+	if quic["congestion"] != "brutal" || quic["brutalUp"] != "50 mbps" || quic["brutalDown"] != "100 mbps" {
+		t.Fatalf("quicParams 不符: %v", quic)
+	}
+	if _, hasHop := quic["udpHop"]; hasHop {
+		t.Fatal("服务端模板不含 udpHop（DNAT 路径：段由 iptables 收敛，客户端侧才声明 udpHop）")
+	}
+	tlsS := ss["tlsSettings"].(map[string]any)
+	if alpn, ok := tlsS["alpn"].([]any); !ok || len(alpn) != 1 || alpn[0] != "h3" {
+		t.Fatalf("tlsSettings 必须 alpn=[h3]（否则握手 no application protocol）: %v", tlsS)
+	}
+	certs := tlsS["certificates"].([]any)[0].(map[string]any)
+	if certs["certificateFile"] != shared.PlaceholderTLSCertFile || certs["keyFile"] != shared.PlaceholderTLSKeyFile {
+		t.Fatalf("证书占位符缺失: %v", certs)
+	}
+	if vc.ObfsPassword != "obfs-pw" || vc.UpMbps != 50 || vc.DownMbps != 100 || vc.PortHop != "20000-20031" {
+		t.Fatalf("VirtualConfig 字段透传不符: %+v", vc)
+	}
+}

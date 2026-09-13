@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -77,7 +78,8 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 // createNodeRequest 是节点创建向导的提交（§10）：端口可空 = 自动（§7）。
 // 各协议有效字段见设计文档"全协议向导"：reality 系（vless/vmess/trojan）使用
 // short_id/dest/server_names/fingerprint/network 及 grpc/xhttp/ws/httpupgrade 子选项；security 仅 reality 系协议有效（reality/tls/none）；tls 的 cert_mode/tls_domain 见 §3.3 证书策略；flow 仅 vless+tcp；
-// method 仅 shadowsocks；cipher 仅 vmess；target_address/target_port 仅 dokodemo-door。
+// method 仅 shadowsocks；cipher 仅 vmess；target_address/target_port 仅 dokodemo-door；
+// obfs_password/up_mbps/down_mbps/port_hop 仅 hysteria（恒 QUIC+TLS，无 network/security 选择）。
 type createNodeRequest struct {
 	Name          string   `json:"name"`
 	ServerID      int64    `json:"server_id"`
@@ -101,6 +103,10 @@ type createNodeRequest struct {
 	Cipher        string   `json:"cipher"`         // vmess 客户端 cipher，默认 auto
 	TargetAddress string   `json:"target_address"` // dokodemo-door 转发目标
 	TargetPort    *int     `json:"target_port"`
+	ObfsPassword  string   `json:"obfs_password"` // hysteria：salamander 混淆密码，留空自动生成
+	UpMbps        int      `json:"up_mbps"`       // hysteria：brutal 上行声明，默认 50（0=不声明，回退 BBR）
+	DownMbps      int      `json:"down_mbps"`     // hysteria：brutal 下行声明，默认 100
+	PortHop       string   `json:"port_hop"`      // hysteria："off"=关闭跳跃；""=自动分配 32 段；"a-b"=显式段
 }
 
 // normalize 填默认值并校验协议参数组合，返回用户可读的校验错误。
@@ -115,6 +121,66 @@ func (req *createNodeRequest) normalize() error {
 	// cipher 仅 vmess 有效：其他协议一律清空（单一真相点，vmess 分支只做默认值/校验）。
 	if req.Protocol != shared.ProtocolVMess {
 		req.Cipher = ""
+	}
+
+	// hysteria：无 network 概念、恒 QUIC+TLS（spec §2 矩阵）；证书模式复用 TLS 双模式。
+	if req.Protocol == shared.ProtocolHysteria2 {
+		if req.Network != "" {
+			return fmt.Errorf("hysteria2 无传输层选项（protocol 与 network 冲突，自带 QUIC）")
+		}
+		if req.Security != "" && req.Security != shared.SecurityTLS {
+			return fmt.Errorf("hysteria2 强制 TLS 安全层（protocol 与 security 冲突）")
+		}
+		req.Security = shared.SecurityTLS
+		req.Flow, req.Method, req.Cipher, req.Encryption = "", "", "", ""
+		req.ShortID, req.Dest, req.ServerNames = "", "", nil
+		req.ServiceName, req.Path, req.Mode, req.Host = "", "", "", ""
+		if req.Fingerprint == "" {
+			req.Fingerprint = shared.FingerprintChrome
+		}
+		if !shared.ValidValue(req.Fingerprint, shared.Fingerprints) {
+			return fmt.Errorf("不支持的 uTLS 指纹: %s", req.Fingerprint)
+		}
+		if req.CertMode == "" {
+			req.CertMode = shared.CertModeSelfSign
+		}
+		if !shared.ValidValue(req.CertMode, shared.CertModes) {
+			return fmt.Errorf("不支持的证书模式: %s", req.CertMode)
+		}
+		if req.CertMode == shared.CertModeSelfSign {
+			if req.TLSDomain == "" {
+				req.TLSDomain = tlsCamouflagePool[randomInt(len(tlsCamouflagePool))]
+			}
+			if err := validateTLSDomain(req.TLSDomain); err != nil {
+				return err
+			}
+		} else {
+			req.TLSDomain = "" // acme：由 applyACMEDomain 从落地服务器地址检测填充
+		}
+		if req.ObfsPassword == "" {
+			req.ObfsPassword = randomHex(16) // salamander 混淆密码（panel 生成，订阅回显）
+		}
+		if req.UpMbps == 0 && req.DownMbps == 0 {
+			req.UpMbps, req.DownMbps = 50, 100
+		}
+		if req.UpMbps < 0 || req.DownMbps < 0 {
+			return fmt.Errorf("hy2 带宽声明须为非负整数（up_mbps/down_mbps）")
+		}
+		// port_hop 三段语义：off 保留哨兵（由 resolveHy2PortHop 归一为空，与"默认空=自动
+		// 分配"区分）；""→默认开启，由 resolveHy2PortHop 自动分配（需服务器上下文，不在
+		// normalize 内）；显式段此处做语法与长度校验。
+		if req.PortHop != "" && req.PortHop != "off" {
+			start, end, err := shared.ParsePortHop(req.PortHop)
+			if err != nil {
+				return err
+			}
+			if end-start+1 < shared.Hy2PortHopMinLen || end-start+1 > shared.Hy2PortHopMaxLen {
+				return fmt.Errorf("端口跳跃段长须为 %d-%d（当前 %d）",
+					shared.Hy2PortHopMinLen, shared.Hy2PortHopMaxLen, end-start+1)
+			}
+			req.PortHop = shared.FormatPortHop(start, end)
+		}
+		return nil
 	}
 
 	if shared.IsRealityProtocol(req.Protocol) {
@@ -303,6 +369,11 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// hy2 端口跳跃：自动分配 / 显式段 NAT+冲突校验（spec §2/§3.2）。
+	if err := s.resolveHy2PortHop(r.Context(), &req, srv, 0); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	// 受限直连 NAT 机（allowed_ports 非空）：用户指定端口必须在段内（§21，400）；
 	// 留空则由 enqueueApply 把监听侧候选展开进 port_candidates 下发。
 	if req.Port != nil {
@@ -310,7 +381,7 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("端口 %d 不在该 NAT 服务器可用段内", *req.Port))
 			return
 		}
-		if err := s.checkPortConflict(r.Context(), req.ServerID, req.Protocol, *req.Port, 0); err != nil {
+		if err := s.checkPortConflict(r.Context(), req.ServerID, req.Protocol, *req.Port, 0, 0); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -548,6 +619,9 @@ func buildVirtualConfig(req createNodeRequest) shared.VirtualConfig {
 		settings["address"] = req.TargetAddress
 		settings["port"] = *req.TargetPort
 		settings["network"] = "tcp,udp"
+	case shared.ProtocolHysteria2:
+		settings["version"] = 2
+		settings["clients"] = shared.PlaceholderClients // hy2 用户列表键为 clients（非 users，Task 1 实测）
 	}
 
 	inbound := map[string]any{
@@ -556,7 +630,9 @@ func buildVirtualConfig(req createNodeRequest) shared.VirtualConfig {
 		"port":     shared.PlaceholderPort,
 		"settings": settings,
 	}
-	if shared.IsRealityProtocol(req.Protocol) {
+	if req.Protocol == shared.ProtocolHysteria2 {
+		inbound["streamSettings"] = hy2StreamSettings(req)
+	} else if shared.IsRealityProtocol(req.Protocol) {
 		switch req.Security {
 		case shared.SecurityNone:
 			inbound["streamSettings"] = plainStreamSettings(req)
@@ -566,7 +642,7 @@ func buildVirtualConfig(req createNodeRequest) shared.VirtualConfig {
 			inbound["streamSettings"] = realityStreamSettings(req)
 		}
 	}
-	if req.Protocol != shared.ProtocolDokodemo {
+	if req.Protocol != shared.ProtocolDokodemo && req.Protocol != shared.ProtocolHysteria2 {
 		inbound["sniffing"] = map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}}
 	}
 	template, _ := json.Marshal(inbound) // map 序列化不会失败
@@ -576,22 +652,26 @@ func buildVirtualConfig(req createNodeRequest) shared.VirtualConfig {
 		port = *req.Port
 	}
 	return shared.VirtualConfig{
-		Protocol:    req.Protocol,
-		Port:        port,
-		Flow:        req.Flow,
-		Network:     req.Network,
-		Security:    req.Security,
-		CertMode:    req.CertMode,
-		TLSDomain:   req.TLSDomain,
-		ServiceName: req.ServiceName,
-		Path:        req.Path,
-		Mode:        req.Mode,
-		Host:        req.Host,
-		Method:      req.Method,
-		Fingerprint: req.Fingerprint,
-		Encryption:  req.Encryption,
-		Cipher:      req.Cipher,
-		Template:    json.RawMessage(template),
+		Protocol:     req.Protocol,
+		Port:         port,
+		Flow:         req.Flow,
+		Network:      req.Network,
+		Security:     req.Security,
+		CertMode:     req.CertMode,
+		TLSDomain:    req.TLSDomain,
+		ServiceName:  req.ServiceName,
+		Path:         req.Path,
+		Mode:         req.Mode,
+		Host:         req.Host,
+		Method:       req.Method,
+		Fingerprint:  req.Fingerprint,
+		Encryption:   req.Encryption,
+		Cipher:       req.Cipher,
+		ObfsPassword: req.ObfsPassword,
+		UpMbps:       req.UpMbps,
+		DownMbps:     req.DownMbps,
+		PortHop:      req.PortHop,
+		Template:     json.RawMessage(template),
 	}
 }
 
@@ -728,4 +808,87 @@ func applyACMEDomain(req *createNodeRequest, srv *store.Server) error {
 	}
 	req.TLSDomain = d
 	return nil
+}
+
+// hy2StreamSettings 构造 hy2 的 streamSettings（Task 1 实测定稿）：network 恒 "hysteria"
+// （缺省 tcp 会退化为 TCP 承载）；tlsSettings 带 alpn [h3]（否则握手 no application
+// protocol），证书占位符复用 P3 双模式；hysteriaSettings 仅声明 version=2（用户口令在
+// settings.clients，见 Task 1 事实区）；salamander 混淆与 brutal 带宽在 finalmask。
+// 服务端模板不含 udpHop——udpHop 仅客户端实现，服务端段收敛走 iptables DNAT（spec §3.2）。
+func hy2StreamSettings(req createNodeRequest) map[string]any {
+	ss := map[string]any{
+		"network":  "hysteria",
+		"security": "tls",
+		"tlsSettings": map[string]any{
+			"serverName": req.TLSDomain,
+			"alpn":       []string{"h3"},
+			"certificates": []map[string]any{{
+				"certificateFile": shared.PlaceholderTLSCertFile,
+				"keyFile":         shared.PlaceholderTLSKeyFile,
+			}},
+		},
+		"hysteriaSettings": map[string]any{"version": 2},
+	}
+	fm := map[string]any{}
+	if req.ObfsPassword != "" {
+		fm["udp"] = []map[string]any{{
+			"type":     "salamander",
+			"settings": map[string]any{"password": req.ObfsPassword},
+		}}
+	}
+	quic := map[string]any{}
+	if req.UpMbps > 0 || req.DownMbps > 0 {
+		quic["congestion"] = "brutal"
+		if req.UpMbps > 0 {
+			quic["brutalUp"] = fmt.Sprintf("%d mbps", req.UpMbps)
+		}
+		if req.DownMbps > 0 {
+			quic["brutalDown"] = fmt.Sprintf("%d mbps", req.DownMbps)
+		}
+	}
+	if len(quic) > 0 {
+		fm["quicParams"] = quic
+	}
+	if len(fm) > 0 {
+		ss["finalmask"] = fm
+	}
+	return ss
+}
+
+// resolveHy2PortHop 落地 port_hop 三段语义的服务器侧部分（normalize 只做语法校验）：
+// off（normalize 保留的哨兵）→ 归一为空 = 关闭跳跃；""（默认开）→ 按服务器空闲 udp 段
+// 自动分配 32 段（避开全部已保留段与端口；NAT 机段整体落在监听侧段内，可用段不足最小
+// 段长 8 时关闭跳跃——功能可用，仅失去跳跃的抗 QoS 能力，spec §2）；显式段 → NAT 落段
+// 校验 + 段冲突校验。多跳链的"全跳同段"逐跳校验在链处理器（Task 4）做，这里只管落地机。
+func (s *Server) resolveHy2PortHop(ctx context.Context, req *createNodeRequest, srv *store.Server, excludeChainID int64) error {
+	if req.Protocol != shared.ProtocolHysteria2 {
+		return nil
+	}
+	if req.PortHop == "off" {
+		req.PortHop = ""
+		return nil
+	}
+	ranges, err := shared.ParsePortRanges(srv.AllowedPorts)
+	if err != nil {
+		return err
+	}
+	occupants, err := s.st.PortOccupants(ctx, srv.ID)
+	if err != nil {
+		return err
+	}
+	if req.PortHop == "" {
+		start, end, ok := allocUDPPortHop(occupants, ranges, shared.Hy2PortHopDefaultLen)
+		if !ok {
+			start, end, ok = allocUDPPortHop(occupants, ranges, shared.Hy2PortHopMinLen)
+		}
+		if ok {
+			req.PortHop = shared.FormatPortHop(start, end)
+		}
+		return nil // 段不足：保持空 = 关闭跳跃（spec §2 允许降级）
+	}
+	start, end, _ := shared.ParsePortHop(req.PortHop)
+	if len(ranges) > 0 && !shared.SpanInListenRanges(ranges, start, end) {
+		return fmt.Errorf("端口跳跃段 %s 不在该 NAT 服务器可用段内", req.PortHop)
+	}
+	return findPortConflict(occupants, req.Protocol, start, end, excludeChainID)
 }

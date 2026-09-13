@@ -1587,6 +1587,10 @@ export interface components {
             cipher?: string;
             cert_mode?: string;
             tls_domain?: string;
+            obfs_password?: string;
+            up_mbps?: number;
+            down_mbps?: number;
+            port_hop?: string;
             template: {
                 [key: string]: unknown;
             };
