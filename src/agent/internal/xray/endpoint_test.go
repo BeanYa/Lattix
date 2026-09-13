@@ -243,3 +243,36 @@ func TestApplySharedEndpointRestartFailureReportsDetail(t *testing.T) {
 		t.Fatal("失败后配置应回滚到上一份")
 	}
 }
+
+// TestRenderSharedEndpointOutboundPlain 验证端点路由 outbound 按出口 realized 分派：
+// 出口无 reality 公钥（ws/httpupgrade + none）时不输出 realitySettings，
+// 传输子段走 wsSettings/httpupgradeSettings；VLESS Encryption 随 user.encryption 携带。
+func TestRenderSharedEndpointOutboundPlain(t *testing.T) {
+	route := shared.SharedEndpointRoute{
+		ChainID: 1, TargetAddress: "127.0.0.1", TargetPort: 1443, TunnelUUID: "t-uuid",
+		Target: shared.RealizedConfig{Network: shared.NetworkWS, Path: "/p", Host: "h.example.com",
+			Security: shared.SecurityNone, Encryption: "mlkem768x25519plus.0rtt.XXX"},
+	}
+	ob := renderSharedEndpointOutbound(route, "shared_endpoint_route_1_1")
+	stream := nested(ob, "streamSettings")
+	if stream["security"] != "none" {
+		t.Errorf("无公钥出口应为 security=none: %v", stream)
+	}
+	if _, ok := stream["realitySettings"]; ok {
+		t.Error("security=none 不应输出 realitySettings")
+	}
+	ws, ok := stream["wsSettings"].(map[string]any)
+	if !ok || ws["path"] != "/p" {
+		t.Fatalf("wsSettings 不符: %v", stream)
+	}
+	headers, _ := ws["headers"].(map[string]any)
+	if headers["Host"] != "h.example.com" {
+		t.Errorf("ws headers.Host 不符: %v", ws)
+	}
+	settings := nested(ob, "settings")
+	vnext := settings["vnext"].([]map[string]any)[0]
+	user := vnext["users"].([]map[string]any)[0]
+	if user["encryption"] != "mlkem768x25519plus.0rtt.XXX" {
+		t.Errorf("隧道身份应携带 Encryption 客户端字符串: %v", user)
+	}
+}

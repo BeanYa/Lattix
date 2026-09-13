@@ -116,6 +116,16 @@ func (m *Manager) fillTemplate(port int, tag string, vc shared.VirtualConfig, us
 				Mode string `json:"mode"`
 				Host string `json:"host"`
 			} `json:"xhttpSettings"`
+			WsSettings struct {
+				Path    string `json:"path"`
+				Headers struct {
+					Host string `json:"Host"`
+				} `json:"headers"`
+			} `json:"wsSettings"`
+			HTTPUpgradeSettings struct {
+				Path string `json:"path"`
+				Host string `json:"host"`
+			} `json:"httpupgradeSettings"`
 		} `json:"streamSettings"`
 	}
 	if err := json.Unmarshal(final, &probe); err != nil {
@@ -143,6 +153,19 @@ func (m *Manager) fillTemplate(port int, tag string, vc shared.VirtualConfig, us
 		Method:      vc.Method,
 		PSK:         probe.Settings.Password,
 		Encryption:  encClient,
+		Security:    templateSecurity(tmpl),
+	}
+	// ws/httpupgrade 的 path/host 在各自子段（ws 的 host 在 headers.Host），
+	// 与 xhttp 平铺字段不同源，按 network 分派覆盖。
+	switch realized.Network {
+	case shared.NetworkWS:
+		realized.Path = probe.StreamSettings.WsSettings.Path
+		realized.Host = probe.StreamSettings.WsSettings.Headers.Host
+		realized.Mode = ""
+	case shared.NetworkHTTPUpgrade:
+		realized.Path = probe.StreamSettings.HTTPUpgradeSettings.Path
+		realized.Host = probe.StreamSettings.HTTPUpgradeSettings.Host
+		realized.Mode = ""
 	}
 	return json.RawMessage(final), realized, nil
 }
@@ -216,6 +239,23 @@ func pinRealityMinClientVer(tmpl map[string]json.RawMessage) {
 		return
 	}
 	tmpl["streamSettings"] = ssRaw
+}
+
+// templateSecurity 从填充后的模板推导安全层：streamSettings 含 realitySettings → reality；
+// 有 streamSettings 但无 realitySettings → none；无 streamSettings（ss/socks/http/dokodemo）→ ""。
+func templateSecurity(tmpl map[string]json.RawMessage) string {
+	ssRaw, ok := tmpl["streamSettings"]
+	if !ok {
+		return ""
+	}
+	var ss map[string]json.RawMessage
+	if err := json.Unmarshal(ssRaw, &ss); err != nil {
+		return ""
+	}
+	if _, ok := ss["realitySettings"]; ok {
+		return shared.SecurityReality
+	}
+	return shared.SecurityNone
 }
 
 // ensureDestReachable 检查模板 realitySettings.dest 的 TCP+TLS1.3 可达性：
@@ -342,12 +382,23 @@ func (m *Manager) pickPort(preferred int, candidates []int, tag string, layers s
 		}
 		return 0, fmt.Errorf("候选端口全部被占用（%d 个）", len(candidates))
 	}
-	l, err := net.Listen("tcp", ":0")
-	if err != nil {
-		return 0, err
+	return pickRandomFreePort(layers)
+}
+
+// pickRandomFreePort 无候选时的 :0 兜底：TCP/UDP 是独立端口空间，
+// OS 随机端口须指定层全部空闲（P2 修复：原只监听 tcp，ss/UDP 型协议可能撞上 UDP 占用）。
+func pickRandomFreePort(layers string) (int, error) {
+	for {
+		l, err := net.Listen("tcp", ":0")
+		if err != nil {
+			return 0, err
+		}
+		port := l.Addr().(*net.TCPAddr).Port
+		l.Close()
+		if err := probePortFree(layers, port); err == nil {
+			return port, nil
+		}
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
 // probePortFree 按传输层探测端口是否空闲（UDP/TCP 是独立端口空间，分层探测）。

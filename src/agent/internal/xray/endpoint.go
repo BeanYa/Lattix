@@ -134,12 +134,17 @@ func renderSharedEndpointOutbound(route shared.SharedEndpointRoute, tag string) 
 	if network == "" {
 		network = shared.NetworkTCP
 	}
-	stream := map[string]any{
-		"network": network, "security": "reality",
-		"realitySettings": map[string]any{
+	// 隧道段安全层跟随出口业务 inbound：reality 出口（公钥非空）→ reality；
+	// ws/httpupgrade + none 出口（VLESS Encryption 认证）→ 明文传输（spec §3.2/P2）。
+	stream := map[string]any{"network": network}
+	if route.Target.PublicKey != "" {
+		stream["security"] = "reality"
+		stream["realitySettings"] = map[string]any{
 			"serverName": route.Target.ServerName, "publicKey": route.Target.PublicKey,
 			"shortId": route.Target.ShortID, "fingerprint": shared.FingerprintChrome,
-		},
+		}
+	} else {
+		stream["security"] = "none"
 	}
 	switch network {
 	case shared.NetworkGRPC:
@@ -148,6 +153,18 @@ func renderSharedEndpointOutbound(route shared.SharedEndpointRoute, tag string) 
 		stream["xhttpSettings"] = map[string]any{
 			"path": route.Target.Path, "mode": route.Target.Mode, "host": route.Target.Host,
 		}
+	case shared.NetworkWS:
+		w := map[string]any{"path": route.Target.Path}
+		if route.Target.Host != "" {
+			w["headers"] = map[string]any{"Host": route.Target.Host}
+		}
+		stream["wsSettings"] = w
+	case shared.NetworkHTTPUpgrade:
+		h := map[string]any{"path": route.Target.Path}
+		if route.Target.Host != "" {
+			h["host"] = route.Target.Host
+		}
+		stream["httpupgradeSettings"] = h
 	}
 	return map[string]any{
 		"tag": tag, "protocol": "vless",
