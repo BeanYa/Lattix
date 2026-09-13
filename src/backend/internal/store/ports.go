@@ -59,10 +59,12 @@ func (s *Store) PortOccupants(ctx context.Context, serverID int64) ([]PortOccupa
 		"endpoint", "", serverID); err != nil {
 		return nil, fmt.Errorf("query endpoint occupants: %w", err)
 	}
-	// 链路逐跳 forward（dokodemo 管道，本期 tcp-only）与 portal（vless+reality，tcp）。
-	if err := appendRows(`SELECT h.forward_port, 'dokodemo-door', c.id, c.name
+	// 链路逐跳 forward：dokodemo 管道按出口业务协议分层（ss 出口 tcp,udp，其余 tcp，§3.2）；
+	// 服务节点缺失（异常数据）回退 vless=tcp 保持保守。portal 为 vless+reality，恒 tcp。
+	if err := appendRows(`SELECT h.forward_port, COALESCE(n.protocol, 'vless'), c.id, c.name
 		FROM chain_hops h JOIN chains c ON c.id=h.chain_id AND c.deleted_at IS NULL
-		WHERE h.server_id=? AND h.forward_port>0`, "chain_forward", "tcp", serverID); err != nil {
+		LEFT JOIN nodes n ON n.id=c.service_node_id
+		WHERE h.server_id=? AND h.forward_port>0`, "chain_forward", "", serverID); err != nil {
 		return nil, fmt.Errorf("query forward occupants: %w", err)
 	}
 	if err := appendRows(`SELECT h.portal_port, 'vless', c.id, c.name

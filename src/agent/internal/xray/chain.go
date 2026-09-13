@@ -188,7 +188,7 @@ func (m *Manager) renderPortal(p shared.ApplyChainHopPayload) (*shared.RealizedC
 	}
 	prev := m.findChainPiece(p.HopID, p.Kind)
 	tag := shared.ChainPortalTag(p.HopID)
-	port, err := m.pickChainPort(spec.Port, spec.PortCandidates, prev, tag)
+	port, err := m.pickChainPort(spec.Port, spec.PortCandidates, prev, tag, "tcp")
 	if err != nil {
 		return nil, state.ChainPiece{}, err
 	}
@@ -348,7 +348,7 @@ func (m *Manager) renderForward(p shared.ApplyChainHopPayload, cur fullConfig) (
 	}
 	prev := m.findChainPiece(p.HopID, p.Kind)
 	tag := shared.ChainForwardTag(p.HopID)
-	port, err := m.pickChainPort(spec.Port, spec.PortCandidates, prev, tag)
+	port, err := m.pickChainPort(spec.Port, spec.PortCandidates, prev, tag, forwardLayers(spec))
 	if err != nil {
 		return nil, state.ChainPiece{}, err
 	}
@@ -380,7 +380,8 @@ func (m *Manager) renderForward(p shared.ApplyChainHopPayload, cur fullConfig) (
 }
 
 // renderForwardInbound 渲染 forward 的 dokodemo-door 透传 inbound（对照 PoC entry inbound；
-// 默认监听 0.0.0.0：固定目标无滥用面，§21.1；listen_family=ipv6 时监听 :: 双栈同听，§9）。
+// 默认监听 0.0.0.0：固定目标无滥用面，§21.1；listen_family=ipv6 时监听 :: 双栈同听，§9；
+// network 按出口协议分层（ss 出口 tcp,udp），空回退 tcp 兼容旧面板载荷）。
 func renderForwardInbound(spec *shared.ForwardSpec, tag string, port int) map[string]any {
 	listen := "0.0.0.0"
 	if spec.LocalOnly {
@@ -391,26 +392,35 @@ func renderForwardInbound(spec *shared.ForwardSpec, tag string, port int) map[st
 	return map[string]any{
 		"tag": tag, "listen": listen, "port": port, "protocol": "dokodemo-door",
 		"settings": map[string]any{
-			"address": spec.TargetAddress, "port": spec.TargetPort, "network": "tcp",
+			"address": spec.TargetAddress, "port": spec.TargetPort, "network": forwardLayers(spec),
 		},
 	}
+}
+
+// forwardLayers 返回 forward 管道的监听层（空 = tcp，兼容旧面板载荷）。
+func forwardLayers(spec *shared.ForwardSpec) string {
+	if spec.Network != "" {
+		return spec.Network
+	}
+	return "tcp"
 }
 
 // pickChainPort 挑选链 piece 监听端口：同一 piece 复用自己已记录的端口；
 // 新的指定端口校验占用与段内归属（自身受管 xray 持有的端口可复用，§21），
 // 未指定且无记录时从候选段挑空闲端口。tag 为本次 apply 的 inbound tag
-// （同 tag 受管端口可复用，见 pickPort）。
-func (m *Manager) pickChainPort(preferred int, candidates []int, prev *state.ChainPiece, tag string) (int, error) {
+// （同 tag 受管端口可复用，见 pickPort）；layers 为监听层（endpoint/portal 恒 tcp，
+// forward 随出口协议）。
+func (m *Manager) pickChainPort(preferred int, candidates []int, prev *state.ChainPiece, tag string, layers string) (int, error) {
 	if preferred != 0 {
 		if prev != nil && prev.Port == preferred {
 			return preferred, nil
 		}
-		return m.pickPort(preferred, candidates, tag, "tcp")
+		return m.pickPort(preferred, candidates, tag, layers)
 	}
 	if prev != nil && prev.Port != 0 {
 		return prev.Port, nil
 	}
-	return m.pickPort(0, candidates, tag, "tcp")
+	return m.pickPort(0, candidates, tag, layers)
 }
 
 // realityServerName 提取 inbound realitySettings.serverNames[0]（dest 预检后的实际上报值）。

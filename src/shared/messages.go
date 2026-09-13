@@ -400,6 +400,7 @@ type BridgeSpec struct {
 // ForwardSpec 是入口/中间跳的配置件（§21.1）：dokodemo-door 透传 inbound + 路由。
 // 直连段：freedom 拨下一跳 TargetAddress:TargetPort（公网侧端口）；
 // 反向段：经 ViaTunnelDomain 走 reverse portal，目标为下一跳回环地址与监听端口。
+// Network 由 panel 按出口业务协议推导（shared.PortLayers）：ss 出口为 tcp,udp，其余 tcp（§3.2 UDP 中转管道）。
 type ForwardSpec struct {
 	Tag             string `json:"tag"`
 	Port            int    `json:"port"` // 0 = 自动（从 PortCandidates 挑空闲）
@@ -408,6 +409,7 @@ type ForwardSpec struct {
 	TargetPort      int    `json:"target_port"`
 	ViaTunnelDomain string `json:"via_tunnel_domain,omitempty"`
 	LocalOnly       bool   `json:"local_only,omitempty"`
+	Network         string `json:"network,omitempty"`      // dokodemo 管道监听层（"tcp"/"tcp,udp"）；空 = tcp（兼容旧面板）
 	ListenFamily    string `json:"listen_family,omitempty"` // "ipv6" → 监听 ::（双栈）；空 = 0.0.0.0（§9）
 }
 

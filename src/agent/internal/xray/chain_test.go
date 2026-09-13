@@ -190,6 +190,40 @@ func TestRenderForwardInbound(t *testing.T) {
 	}
 }
 
+// TestRenderForwardInboundUDPLayers 验证 forward 管道按出口协议分层：
+// spec.Network="tcp,udp"（ss 出口）→ dokodemo 监听双层；空 → 回退 tcp（旧载荷兼容）。
+func TestRenderForwardInboundUDPLayers(t *testing.T) {
+	spec := &shared.ForwardSpec{TargetAddress: "127.0.0.1", TargetPort: 21001, Network: "tcp,udp"}
+	ib := renderForwardInbound(spec, shared.ChainForwardTag(9), 11009)
+	if got := nested(ib, "settings")["network"]; got != "tcp,udp" {
+		t.Fatalf("ss 出口管道应监听 tcp,udp，实际 %v", got)
+	}
+	legacy := &shared.ForwardSpec{TargetAddress: "127.0.0.1", TargetPort: 21001}
+	ib = renderForwardInbound(legacy, shared.ChainForwardTag(10), 11010)
+	if got := nested(ib, "settings")["network"]; got != "tcp" {
+		t.Fatalf("空 Network 应回退 tcp，实际 %v", got)
+	}
+}
+
+// TestPickChainPortLayered 验证 forward 端口探测分层：UDP 被外部占用时
+// layers=tcp,udp 报冲突、layers=tcp 放行。
+func TestPickChainPortLayered(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pc.Close()
+	udpPort := pc.LocalAddr().(*net.UDPAddr).Port
+
+	m := &Manager{}
+	if _, err := m.pickChainPort(udpPort, nil, nil, "", "tcp,udp"); err == nil {
+		t.Error("UDP 占用时 layers=tcp,udp 应报冲突")
+	}
+	if got, err := m.pickChainPort(udpPort, nil, nil, "", "tcp"); err != nil || got != udpPort {
+		t.Errorf("UDP 占用不影响 tcp 层: got=%d err=%v", got, err)
+	}
+}
+
 // pieceForTest 构造一个 portal piece 记录（合并/移除测试用）。
 func pieceForTest(t *testing.T, hopID int64) state.ChainPiece {
 	t.Helper()
@@ -296,7 +330,7 @@ func TestPickChainPort(t *testing.T) {
 	m := NewManager("xray", "/nonexistent/config.json", "127.0.0.1:10085", nil)
 	// 复用已记录端口（重发幂等）。
 	prev := &state.ChainPiece{Port: 0}
-	p, err := m.pickChainPort(0, nil, prev, "")
+	p, err := m.pickChainPort(0, nil, prev, "", "tcp")
 	if err != nil || p == 0 {
 		t.Fatalf("无候选无记录应挑随机空闲端口: %d %v", p, err)
 	}
@@ -307,7 +341,7 @@ func TestPickChainPort(t *testing.T) {
 	}
 	l := listenOn(t, hold)
 	defer l.Close()
-	if _, err := m.pickChainPort(0, []int{hold}, nil, ""); err == nil {
+	if _, err := m.pickChainPort(0, []int{hold}, nil, "", "tcp"); err == nil {
 		t.Fatal("候选全占用应报错")
 	}
 }
@@ -322,10 +356,10 @@ func TestPickChainPortReusesPortOwnedByExistingPiece(t *testing.T) {
 	defer listener.Close()
 	previous := &state.ChainPiece{HopID: 7, Kind: shared.HopKindForward, Port: port}
 
-	if got, err := m.pickChainPort(port, nil, previous, ""); err != nil || got != port {
+	if got, err := m.pickChainPort(port, nil, previous, "", "tcp"); err != nil || got != port {
 		t.Fatalf("显式复用已有配置件端口 = %d, %v；期望 %d", got, err, port)
 	}
-	if got, err := m.pickChainPort(0, nil, previous, ""); err != nil || got != port {
+	if got, err := m.pickChainPort(0, nil, previous, "", "tcp"); err != nil || got != port {
 		t.Fatalf("自动复用已有配置件端口 = %d, %v；期望 %d", got, err, port)
 	}
 }
@@ -396,7 +430,7 @@ func TestPickPortManualPortValidatedAgainstCandidates(t *testing.T) {
 		t.Fatal("候选段外手动端口应报错")
 	}
 	// pickChainPort 透传候选做同样校验（链 piece 入口）。
-	if _, err := mgr.pickChainPort(other, []int{free}, nil, ""); err == nil {
+	if _, err := mgr.pickChainPort(other, []int{free}, nil, "", "tcp"); err == nil {
 		t.Fatal("pickChainPort 候选段外手动端口应报错")
 	}
 }

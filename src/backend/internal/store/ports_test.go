@@ -112,6 +112,19 @@ func TestPortOccupantsChainSources(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// ss 出口链：forward 管道应按出口协议标记 tcp,udp（§3.2 UDP 中转管道）。
+	ssChain, err := st.CreateInitialChainDeployment(ctx, InitialChainDeployment{
+		Name: "链SS", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolShadowsocks,
+		ServiceConfig: json.RawMessage(`{"protocol":"shadowsocks"}`), TrafficMultiplierMilli: 1000,
+		Hops: []InitialChainHop{
+			{ServerID: entryID, Role: HopRoleEntry, Transport: "reverse", ForwardPort: 21003, TunnelUUID: "tunnel-c"},
+			{ServerID: exitID, Role: HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	occupants, err := st.PortOccupants(ctx, entryID)
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +143,10 @@ func TestPortOccupantsChainSources(t *testing.T) {
 	portal, ok := byPort[21002]
 	if !ok || portal.Source != "chain_portal" || portal.Layers != "tcp" || portal.ChainID != active.ChainID || portal.RefName != "链活" {
 		t.Errorf("portal 占用不符: %+v", portal)
+	}
+	ssFwd, ok := byPort[21003]
+	if !ok || ssFwd.Source != "chain_forward" || ssFwd.Layers != "tcp,udp" || ssFwd.ChainID != ssChain.ChainID {
+		t.Errorf("ss 出口链 forward 应为 tcp,udp 双层: %+v", ssFwd)
 	}
 	if _, ok := byPort[22001]; ok {
 		t.Error("软删链 forward 端口不应出现")

@@ -323,6 +323,8 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		spec := &shared.ForwardSpec{
 			Tag:  shared.ChainForwardTag(hop.ID),
 			Port: hop.ForwardPort, // 0 = 自动（用户未指定的入口/中间跳）
+			// dokodemo 管道按出口协议分层：ss 出口监听 tcp,udp（UDP 中转），其余 tcp（§3.2）。
+			Network: shared.PortLayers(node.Protocol),
 		}
 		if i == 0 && endpointID != 0 {
 			spec.LocalOnly = true

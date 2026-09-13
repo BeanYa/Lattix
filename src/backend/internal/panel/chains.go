@@ -336,7 +336,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			entryPort = *req.Node.Port
 		}
 	}
-	// 入口监听是 dokodemo 管道（P1 恒 tcp 层）；vless 入口走共享端点合并，跳过前置校验。
+	// 入口监听是 dokodemo 管道（层随出口协议：ss 为 tcp,udp，其余 tcp）；vless 入口走共享端点合并，跳过前置校验。
 	if entryPort > 0 && req.Node.Protocol != shared.ProtocolVLESS {
 		if err := s.checkPortConflict(r.Context(), entrySrv.ID, req.Node.Protocol, entryPort, 0); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -846,11 +846,20 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 
 func revisionTopology(revisionID int64, snapshot store.ChainRevisionSnapshot) dispatch.RevisionTopology {
 	hops := make([]dispatch.RevisionHopSpec, 0, len(snapshot.Hops))
+	// UDP 中转管道分层（§3.2）：出口协议纳入 hop settings 哈希——协议编辑变更
+	// （如 trojan→ss）时触发 forward piece 重发以切换 tcp/tcp,udp；协议不变时
+	// current/desired 同函数计算，哈希相等不误重发。
+	var svc struct {
+		Protocol string `json:"protocol"`
+	}
+	_ = json.Unmarshal(snapshot.ServiceConfig, &svc)
+	forwardLayers := shared.PortLayers(svc.Protocol)
 	for index, hop := range snapshot.Hops {
 		settings, _ := json.Marshal(map[string]any{
-			"tunnel_uuid": hop.TunnelUUID,
-			"local_only":  index == 0 && snapshot.EndpointID != 0,
-			"address":     hop.Address, // 地址引用（§9）：选择变更须触发本跳 piece 重发并沿下游哈希传播
+			"tunnel_uuid":    hop.TunnelUUID,
+			"local_only":     index == 0 && snapshot.EndpointID != 0,
+			"address":        hop.Address, // 地址引用（§9）：选择变更须触发本跳 piece 重发并沿下游哈希传播
+			"forward_layers": forwardLayers,
 		})
 		hops = append(hops, dispatch.RevisionHopSpec{HopID: hop.HopID, ServerID: hop.ServerID,
 			Transport: hop.Transport, ListenPort: hop.ForwardPort, Settings: settings})
