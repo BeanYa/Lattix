@@ -22,8 +22,9 @@ JAR="$WORK/cookies.txt"
 CSRF=""
 
 cleanup() {
-    kill ${BPID:-} ${APID:-} 2>/dev/null || true
+    kill ${BPID:-} ${APID:-} ${TLSXPID:-} 2>/dev/null || true
     pkill -f "xray run -config $XRAY_CONFIG" 2>/dev/null || true
+    pkill -f "xray run -config $WORK/client-tls.json" 2>/dev/null || true
     wait 2>/dev/null || true
     rm -rf "$WORK"
 }

@@ -18,9 +18,9 @@ import (
 	"lattix/shared"
 )
 
-// writeTestCert 用 Go 标准库生成测试自签证书（execTLSCert 测试桩的落盘实现，
-// §6：fill 测试自签证书生成 mock——桩掉 xray 外部命令，证书本身真实可解析）。
-func writeTestCert(t *testing.T, domain, prefix string) {
+// genTestCert 用 Go 标准库生成测试自签证书，返回 cert/key 的 PEM 字节
+//（桩掉 xray/acme.sh 外部命令，证书本身真实可解析，§6）。
+func genTestCert(t *testing.T, domain string) (certPEM, keyPEM []byte) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -37,26 +37,25 @@ func writeTestCert(t *testing.T, domain, prefix string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	certOut, err := os.Create(prefix + ".crt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: der}); err != nil {
-		t.Fatal(err)
-	}
-	certOut.Close()
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 	keyDER, err := x509.MarshalECPrivateKey(key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyOut, err := os.Create(prefix + ".key")
-	if err != nil {
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
+	return certPEM, keyPEM
+}
+
+// writeTestCert 把测试证书落盘为 <prefix>.crt/<prefix>.key（execTLSCert 测试桩的落盘实现）。
+func writeTestCert(t *testing.T, domain, prefix string) {
+	t.Helper()
+	certPEM, keyPEM := genTestCert(t, domain)
+	if err := os.WriteFile(prefix+".crt", certPEM, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}); err != nil {
+	if err := os.WriteFile(prefix+".key", keyPEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	keyOut.Close()
 }
 
 // stubTLSCert 把 execTLSCert 替换为本地证书生成，返回调用计数（幂等复用断言用）。
@@ -167,5 +166,79 @@ func TestIssueACMECertificateGuards(t *testing.T) {
 	}
 	if issued != 2 {
 		t.Errorf("应依次调用 --issue 与 --install-cert，实际 %d 次", issued)
+	}
+}
+
+// TestEnsureTLSCertificateACMEReissueOnDomainChange 验证 ACME 幂等分支的域名校验：
+// 同域名复用既有证书（不重复 issue）；域名变更（编辑链路换 tls_domain）后旧证书
+// 与 realized.SNI 不符，须重新走签发流程——否则客户端系统根+SNI 校验握手必败。
+func TestEnsureTLSCertificateACMEReissueOnDomainChange(t *testing.T) {
+	origLookup, origAddrs, origPort, origExec := lookupHostIPs, localIfaceAddrs, acmePort80Free, execACMESh
+	t.Cleanup(func() {
+		lookupHostIPs, localIfaceAddrs, acmePort80Free, execACMESh = origLookup, origAddrs, origPort, origExec
+	})
+	// /32 同 TestIssueACMECertificateGuards：ipNet.IP 即主机地址本身。
+	_, ipNet, _ := net.ParseCIDR("203.0.113.7/32")
+	localIfaceAddrs = func() ([]net.Addr, error) { return []net.Addr{ipNet}, nil }
+	lookupHostIPs = func(string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.7")}, nil }
+	acmePort80Free = func() error { return nil }
+	issued := 0
+	execACMESh = func(home string, args ...string) error {
+		if args[0] == "--issue" {
+			issued++
+			return nil
+		}
+		// --install-cert -d <domain> --key-file <k> --fullchain-file <c>：落盘对应域名证书。
+		var domain, keyFile, certFile string
+		for i, a := range args {
+			switch a {
+			case "-d":
+				domain = args[i+1]
+			case "--key-file":
+				keyFile = args[i+1]
+			case "--fullchain-file":
+				certFile = args[i+1]
+			}
+		}
+		certPEM, keyPEM := genTestCert(t, domain)
+		if err := os.WriteFile(certFile, certPEM, 0o644); err != nil {
+			return err
+		}
+		return os.WriteFile(keyFile, keyPEM, 0o600)
+	}
+	m, _ := newRebuildTestManager(t)
+	// acme.sh 已安装（跳过下载）：放一个假 acme.sh。
+	home := m.acmeHome()
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "acme.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	vc := shared.VirtualConfig{Security: shared.SecurityTLS,
+		CertMode: shared.CertModeACME, TLSDomain: "a.example.com"}
+	certFile, _, pin, err := m.ensureTLSCertificate("node_1", vc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pin != "" || issued != 1 {
+		t.Fatalf("首次签发: pin=%q issued=%d", pin, issued)
+	}
+	if _, _, _, err := m.ensureTLSCertificate("node_1", vc); err != nil {
+		t.Fatal(err)
+	}
+	if issued != 1 {
+		t.Errorf("同域名应幂等复用，不应重复 issue（实际 %d 次）", issued)
+	}
+	vc.TLSDomain = "b.example.com"
+	certFile2, _, _, err := m.ensureTLSCertificate("node_1", vc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if issued != 2 || certFile2 != certFile {
+		t.Errorf("域名变更应重新签发并复用同一路径: issued=%d cert=%q→%q", issued, certFile, certFile2)
+	}
+	if !certCoversDomain(certFile2, "b.example.com") {
+		t.Errorf("重新签发后证书应覆盖新域名 b.example.com")
 	}
 }

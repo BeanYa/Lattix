@@ -29,7 +29,7 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 		return nil, fmt.Errorf("endpoint_id 缺失")
 	}
 	if p.Config.Protocol != shared.ProtocolVLESS {
-		return nil, fmt.Errorf("共享端点仅支持 VLESS+REALITY")
+		return nil, fmt.Errorf("共享端点仅支持 VLESS")
 	}
 	prev := m.findChainPiece(p.EndpointID, sharedEndpointPieceKind)
 	config := p.Config

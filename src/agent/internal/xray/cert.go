@@ -2,6 +2,7 @@ package xray
 
 import (
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
@@ -29,16 +30,23 @@ func (m *Manager) acmeHome() string {
 // ensureTLSCertificate 确保 TLS 证书就位，返回证书/私钥绝对路径与自签 pin
 //（证书 DER 的 sha256 hex；ACME 模式为空串——公共 CA 走系统根验证，无需 pin）。
 // 幂等：证书文件已存在则直接复用（重新生成会轮换 pin、失效已下发订阅）。
+// 例外：ACME 模式下服务器域名变更后，旧证书与 realized.SNI 不符（客户端系统根
+// +SNI 校验必败），复用前校验证书 DNSNames/CN 覆盖 vc.TLSDomain，不符则重新签发
+//（acme.sh 同域名重复 issue 有自身缓存/限频）。自签分支不校验主机名（pin 语义）。
 func (m *Manager) ensureTLSCertificate(tag string, vc shared.VirtualConfig) (certFile, keyFile, pin string, err error) {
 	dir := m.certsDir(tag)
 	certFile = filepath.Join(dir, "cert.pem")
 	keyFile = filepath.Join(dir, "key.pem")
 	if fileExists(certFile) && fileExists(keyFile) {
 		if vc.CertMode == shared.CertModeACME {
-			return certFile, keyFile, "", nil
+			if certCoversDomain(certFile, vc.TLSDomain) {
+				return certFile, keyFile, "", nil
+			}
+			// 域名已变更：落入下方重新签发（install-cert 覆盖旧文件）。
+		} else {
+			pin, err = certPinHex(certFile)
+			return certFile, keyFile, pin, err
 		}
-		pin, err = certPinHex(certFile)
-		return certFile, keyFile, pin, err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", "", "", err
@@ -96,6 +104,24 @@ func certPinHex(certFile string) (string, error) {
 	}
 	sum := sha256.Sum256(block.Bytes)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// certCoversDomain 判断现有证书是否覆盖 domain（SAN 优先，无 SAN 回退 CN，
+// 与 TLS 主机名校验语义一致）；文件缺失/不可解析一律视为不覆盖 → 重新签发。
+func certCoversDomain(certFile, domain string) bool {
+	b, err := os.ReadFile(certFile)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(b)
+	if block == nil {
+		return false
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	return cert.VerifyHostname(domain) == nil
 }
 
 // issueACMECertificate 走 acme.sh standalone 全流程（§3.3 模式 B）：

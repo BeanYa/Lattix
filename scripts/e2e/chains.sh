@@ -495,7 +495,11 @@ EP5_SNI="$(py "d.get('sni') or ''" "$EP5_RC")"
 EP5_PIN="$(py "d.get('cert_sha256') or ''" "$EP5_RC")"
 [[ -n "$EP5_SNI" && "${#EP5_PIN}" == "64" ]] || { echo "FAIL: 链5 端点 tls realized 缺失: $EP5_RC"; exit 1; }
 # 出口 realized 也是 tls（隧道段 outbound 的 pin 来源）
-CH5_EXIT_SNI="$(chain_field "$CH5" "json.loads(c['hops'][-1].get('service_realized') or '{}').get('sni','')" 2>/dev/null || true)"
+NID5="$(py "d['hops'][-1]['node_id']" "$CHAIN5")"
+CH5_EXIT_RC="$(db "SELECT realized_config FROM nodes WHERE id=$NID5")"
+CH5_EXIT_SNI="$(py "d.get('sni') or ''" "$CH5_EXIT_RC")"
+CH5_EXIT_PIN="$(py "d.get('cert_sha256') or ''" "$CH5_EXIT_RC")"
+[[ -n "$CH5_EXIT_SNI" && "${#CH5_EXIT_PIN}" == "64" ]] || { echo "FAIL: 链5 出口 tls realized 缺失: $CH5_EXIT_RC"; exit 1; }
 if [[ "${CHAINS_SKIP_EXTERNAL:-0}" != "1" ]]; then
 python3 - "$WORK/client-tls-chain.json" "$EP5_PORT" "$ACCESS_UUID5" "$EP5_SNI" "$EP5_PIN" <<'PY'
 import json, sys
