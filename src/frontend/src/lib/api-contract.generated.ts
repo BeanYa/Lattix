@@ -1576,6 +1576,7 @@ export interface components {
             port?: number;
             flow?: string;
             network?: string;
+            security?: string;
             service_name?: string;
             path?: string;
             mode?: string;

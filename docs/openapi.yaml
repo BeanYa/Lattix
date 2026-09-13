@@ -908,6 +908,7 @@ components:
         port: {type: integer, minimum: 1, maximum: 65535}
         flow: {type: string}
         network: {type: string}
+        security: {type: string}
         service_name: {type: string}
         path: {type: string}
         mode: {type: string}

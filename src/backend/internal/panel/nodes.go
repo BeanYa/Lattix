@@ -75,7 +75,7 @@ func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
 
 // createNodeRequest 是节点创建向导的提交（§10）：端口可空 = 自动（§7）。
 // 各协议有效字段见设计文档"全协议向导"：reality 系（vless/vmess/trojan）使用
-// short_id/dest/server_names/fingerprint/network 及 grpc/xhttp 子选项；flow 仅 vless+tcp；
+// short_id/dest/server_names/fingerprint/network 及 grpc/xhttp/ws/httpupgrade 子选项；security 仅 reality 系协议有效（reality/none，tls 属 P3）；flow 仅 vless+tcp；
 // method 仅 shadowsocks；cipher 仅 vmess；target_address/target_port 仅 dokodemo-door。
 type createNodeRequest struct {
 	Name          string   `json:"name"`
@@ -86,11 +86,12 @@ type createNodeRequest struct {
 	Dest          string   `json:"dest"`           // 默认 dl.google.com:443
 	ServerNames   []string `json:"server_names"`   // 默认 [dl.google.com]
 	Fingerprint   string   `json:"fingerprint"`    // 默认 chrome
-	Network       string   `json:"network"`        // tcp（默认）/ grpc / xhttp
+	Network       string   `json:"network"`        // tcp（默认）/ grpc / xhttp / ws / httpupgrade
+	Security      string   `json:"security"`       // reality（默认推导）/ none；tls 属 P3（400 引导）
 	ServiceName   string   `json:"service_name"`   // grpc，默认 "grpc"
-	Path          string   `json:"path"`           // xhttp，默认 "/"
+	Path          string   `json:"path"`           // xhttp/ws/httpupgrade，默认 "/"
 	Mode          string   `json:"mode"`           // xhttp，默认 auto
-	Host          string   `json:"host"`           // xhttp，可空
+	Host          string   `json:"host"`           // xhttp/ws/httpupgrade，可空
 	Flow          string   `json:"flow"`           // vless 默认 xtls-rprx-vision（仅 tcp）
 	Encryption    string   `json:"encryption"`     // vless：VLESS Encryption 认证方式（x25519/mlkem768），可与 flow 组合（§15）
 	Method        string   `json:"method"`         // shadowsocks，默认 2022-blake3-aes-128-gcm
@@ -118,7 +119,24 @@ func (req *createNodeRequest) normalize() error {
 			req.Network = shared.NetworkTCP
 		}
 		if !shared.ValidValue(req.Network, shared.Networks) {
-			return fmt.Errorf("Reality 仅支持 tcp/grpc/xhttp 传输，不支持: %s", req.Network)
+			return fmt.Errorf("不支持的传输方式: %s", req.Network)
+		}
+		// security 缺省推导：reality 兼容传输默认 reality；ws/httpupgrade 只能 none（矩阵）。
+		if req.Security == "" {
+			if shared.ValidValue(req.Network, shared.RealityNetworks) {
+				req.Security = shared.SecurityReality
+			} else {
+				req.Security = shared.SecurityNone
+			}
+		}
+		if !shared.ValidValue(req.Security, shared.Securities) {
+			return fmt.Errorf("不支持的 security: %s", req.Security)
+		}
+		if req.Security == shared.SecurityTLS {
+			return fmt.Errorf("security=tls 将在 P3 阶段提供，当前请选择 reality 或 none")
+		}
+		if req.Security == shared.SecurityReality && !shared.ValidValue(req.Network, shared.RealityNetworks) {
+			return fmt.Errorf("network=%s 与 security=reality 冲突：Reality 仅支持 tcp/grpc/xhttp", req.Network)
 		}
 		switch req.Network {
 		case shared.NetworkGRPC:
@@ -137,30 +155,54 @@ func (req *createNodeRequest) normalize() error {
 				return fmt.Errorf("不支持的 xhttp mode: %s", req.Mode)
 			}
 			req.ServiceName = ""
+		case shared.NetworkWS, shared.NetworkHTTPUpgrade:
+			if req.Path == "" {
+				req.Path = "/"
+			}
+			req.ServiceName, req.Mode = "", ""
 		default: // tcp
 			req.ServiceName, req.Path, req.Mode, req.Host = "", "", "", ""
 		}
-		if req.Fingerprint == "" {
-			req.Fingerprint = shared.FingerprintChrome
+		if req.Security == shared.SecurityReality {
+			if req.Fingerprint == "" {
+				req.Fingerprint = shared.FingerprintChrome
+			}
+			if !shared.ValidValue(req.Fingerprint, shared.Fingerprints) {
+				return fmt.Errorf("不支持的 uTLS 指纹: %s", req.Fingerprint)
+			}
+			if req.ShortID == "" {
+				req.ShortID = randomHex(8)
+			}
+			if req.Dest == "" {
+				req.Dest = "dl.google.com:443"
+			}
+			if len(req.ServerNames) == 0 {
+				req.ServerNames = []string{"dl.google.com"}
+			}
+		} else {
+			// security=none：Reality 专有字段无意义，一律清空；并按协议执行矩阵约束。
+			req.ShortID, req.Dest, req.ServerNames, req.Fingerprint = "", "", nil, ""
+			if req.Protocol == shared.ProtocolTrojan {
+				return fmt.Errorf("trojan 不允许 security=none（protocol 与 security 冲突；trojan 需 reality，tls 将在 P3 提供）")
+			}
+			if req.Protocol == shared.ProtocolVLESS && req.Encryption == "" {
+				return fmt.Errorf("vless 在 security=none 下必须启用 VLESS Encryption（security 与 encryption 冲突）")
+			}
 		}
-		if !shared.ValidValue(req.Fingerprint, shared.Fingerprints) {
-			return fmt.Errorf("不支持的 uTLS 指纹: %s", req.Fingerprint)
+	} else {
+		// ss/socks/http/dokodemo 无传输/安全层选项（矩阵外组合 400 并指明冲突字段）。
+		if req.Network != "" {
+			return fmt.Errorf("协议 %s 无传输层选项（protocol 与 network 冲突）", req.Protocol)
 		}
-		if req.ShortID == "" {
-			req.ShortID = randomHex(8)
-		}
-		if req.Dest == "" {
-			req.Dest = "dl.google.com:443"
-		}
-		if len(req.ServerNames) == 0 {
-			req.ServerNames = []string{"dl.google.com"}
+		if req.Security != "" {
+			return fmt.Errorf("协议 %s 无安全层选项（protocol 与 security 冲突）", req.Protocol)
 		}
 	}
 
 	switch req.Protocol {
 	case shared.ProtocolVLESS:
-		// flow 语义：未填 + tcp → 默认 vision；显式 "none" → 无 flow；grpc/xhttp 必须无 flow。
-		if req.Flow == "" && req.Network == shared.NetworkTCP {
+		// flow 语义：未填 + tcp + reality → 默认 vision；显式 "none" → 无 flow；其余组合必须无 flow。
+		if req.Flow == "" && req.Network == shared.NetworkTCP && req.Security == shared.SecurityReality {
 			req.Flow = shared.FlowVision
 		}
 		if req.Flow == "none" {
@@ -170,7 +212,10 @@ func (req *createNodeRequest) normalize() error {
 			return fmt.Errorf("不支持的 flow: %s", req.Flow)
 		}
 		if req.Flow == shared.FlowVision && req.Network != shared.NetworkTCP {
-			return fmt.Errorf("flow=%s 仅适用于 tcp 传输（grpc/xhttp 请选择无 flow）", shared.FlowVision)
+			return fmt.Errorf("flow=%s 仅适用于 tcp 传输（grpc/xhttp/ws/httpupgrade 请选择无 flow）", shared.FlowVision)
+		}
+		if req.Flow == shared.FlowVision && req.Security != shared.SecurityReality {
+			return fmt.Errorf("flow=%s 与 security=%s 冲突：vision 仅 reality（tls 将在 P3 提供）", shared.FlowVision, req.Security)
 		}
 		if req.Encryption != "" {
 			if !shared.ValidValue(req.Encryption, shared.VLessEncMethods) {
@@ -480,7 +525,11 @@ func buildVirtualConfig(req createNodeRequest) shared.VirtualConfig {
 		"settings": settings,
 	}
 	if shared.IsRealityProtocol(req.Protocol) {
-		inbound["streamSettings"] = realityStreamSettings(req)
+		if req.Security == shared.SecurityNone {
+			inbound["streamSettings"] = plainStreamSettings(req)
+		} else {
+			inbound["streamSettings"] = realityStreamSettings(req)
+		}
 	}
 	if req.Protocol != shared.ProtocolDokodemo {
 		inbound["sniffing"] = map[string]any{"enabled": true, "destOverride": []string{"http", "tls", "quic"}}
@@ -496,6 +545,7 @@ func buildVirtualConfig(req createNodeRequest) shared.VirtualConfig {
 		Port:        port,
 		Flow:        req.Flow,
 		Network:     req.Network,
+		Security:    req.Security,
 		ServiceName: req.ServiceName,
 		Path:        req.Path,
 		Mode:        req.Mode,
@@ -508,7 +558,7 @@ func buildVirtualConfig(req createNodeRequest) shared.VirtualConfig {
 	}
 }
 
-// realityStreamSettings 构造 reality 系协议共用的 streamSettings（Reality 仅支持 tcp/grpc/xhttp）。
+// realityStreamSettings 构造 reality 安全层的 streamSettings（Reality 仅支持 tcp/grpc/xhttp）。
 func realityStreamSettings(req createNodeRequest) map[string]any {
 	ss := map[string]any{
 		"network":  req.Network,
@@ -523,15 +573,46 @@ func realityStreamSettings(req createNodeRequest) map[string]any {
 			"shortIds":     []string{req.ShortID},
 		},
 	}
+	for k, v := range networkSubSettings(req) {
+		ss[k] = v
+	}
+	return ss
+}
+
+// plainStreamSettings 构造 security=none 的 streamSettings（无 realitySettings）：
+// vmess 自带 AEAD；vless 由 VLESS Encryption 提供认证（spec §2 脚注 1）。
+func plainStreamSettings(req createNodeRequest) map[string]any {
+	ss := map[string]any{"network": req.Network, "security": "none"}
+	for k, v := range networkSubSettings(req) {
+		ss[k] = v
+	}
+	return ss
+}
+
+// networkSubSettings 返回各传输的子配置段（tcp 无子段）：
+// xray 25.x 起 ws 在 wsSettings（host 在 headers.Host）、httpupgrade 在 httpupgradeSettings。
+func networkSubSettings(req createNodeRequest) map[string]any {
 	switch req.Network {
 	case shared.NetworkGRPC:
-		ss["grpcSettings"] = map[string]any{"serviceName": req.ServiceName}
+		return map[string]any{"grpcSettings": map[string]any{"serviceName": req.ServiceName}}
 	case shared.NetworkXHTTP:
 		x := map[string]any{"path": req.Path, "mode": req.Mode}
 		if req.Host != "" {
 			x["host"] = req.Host
 		}
-		ss["xhttpSettings"] = x
+		return map[string]any{"xhttpSettings": x}
+	case shared.NetworkWS:
+		w := map[string]any{"path": req.Path}
+		if req.Host != "" {
+			w["headers"] = map[string]any{"Host": req.Host}
+		}
+		return map[string]any{"wsSettings": w}
+	case shared.NetworkHTTPUpgrade:
+		h := map[string]any{"path": req.Path}
+		if req.Host != "" {
+			h["host"] = req.Host
+		}
+		return map[string]any{"httpupgradeSettings": h}
 	}
-	return ss
+	return nil
 }
