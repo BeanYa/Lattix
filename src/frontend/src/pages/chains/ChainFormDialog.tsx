@@ -498,11 +498,14 @@ export function ChainFormDialog({
                         订阅以证书指纹（pin）校验，客户端无需信任系统 CA。
                       </p>
                     </>
-                  ) : (
+                  ) : landingDomain ? (
                     <p className="cg-chain-hint">
-                      {landingDomain
-                        ? `将沿用落地服务器域名 ${landingDomain}，由节点自动安装 acme.sh 签发并续期（需域名解析指向本机、80 端口空闲）。`
-                        : '落地服务器未设置域名，请先在服务器地址中配置域名或改用自签模式。'}
+                      {`将沿用落地服务器域名 ${landingDomain}，由节点自动安装 acme.sh 签发并续期（需域名解析指向本机、80 端口空闲）。`}
+                    </p>
+                  ) : null}
+                  {!landingDomain && (
+                    <p className="cg-chain-hint">
+                      落地服务器未设置域名，请先在服务器地址中配置域名或改用自签模式。
                     </p>
                   )}
                 </div>

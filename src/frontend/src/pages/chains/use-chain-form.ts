@@ -374,7 +374,12 @@ export function useChainForm({
 
   const onSecurityChange = (value: string | null) => {
     if (!value) return
-    setForm((current) => ({ ...current, security: value }))
+    setForm((current) => ({
+      ...current,
+      security: value,
+      // vision flow 与安全层 none 不兼容（后端矩阵，前端即时纠正）；reality/tls 不动用户已选 flow
+      flow: value === 'none' && current.flow !== 'none' ? 'none' : current.flow,
+    }))
   }
 
   const onProtocolChange = (value: string | null) => {
