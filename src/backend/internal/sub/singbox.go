@@ -28,11 +28,12 @@ type sbTLS struct {
 }
 
 type sbTransport struct {
-	Type        string `json:"type"`
-	ServiceName string `json:"service_name,omitempty"` // grpc
-	Path        string `json:"path,omitempty"`         // xhttp/ws
-	Mode        string `json:"mode,omitempty"`         // xhttp
-	Host        string `json:"host,omitempty"`         // xhttp
+	Type        string            `json:"type"`
+	ServiceName string            `json:"service_name,omitempty"` // grpc
+	Path        string            `json:"path,omitempty"`         // xhttp/ws/httpupgrade
+	Mode        string            `json:"mode,omitempty"`         // xhttp
+	Host        string            `json:"host,omitempty"`         // xhttp/httpupgrade
+	Headers     map[string]string `json:"headers,omitempty"`      // ws
 }
 
 type sbOutbound struct {
@@ -117,7 +118,12 @@ func buildSbOutbound(n store.Node, rc shared.RealizedConfig, uuid string) (sbOut
 	return ob, nil
 }
 
+// buildSbTLS 构造 sing-box TLS 配置；security=none 返回 nil（普通 tls 变体属 P3，
+// 届时按 spec §3.4 拆分为 reality/普通 tls 两个构造函数）。
 func buildSbTLS(rc shared.RealizedConfig) *sbTLS {
+	if rc.EffectiveSecurity() != shared.SecurityReality {
+		return nil
+	}
 	tls := &sbTLS{
 		Enabled:    true,
 		ServerName: rc.ServerName,
@@ -140,6 +146,14 @@ func buildSbTransport(rc shared.RealizedConfig) *sbTransport {
 		return &sbTransport{Type: "grpc", ServiceName: rc.ServiceName}
 	case shared.NetworkXHTTP:
 		return &sbTransport{Type: "xhttp", Path: rc.Path, Mode: rc.Mode, Host: rc.Host}
+	case shared.NetworkWS:
+		tr := &sbTransport{Type: "ws", Path: rc.Path}
+		if rc.Host != "" {
+			tr.Headers = map[string]string{"Host": rc.Host}
+		}
+		return tr
+	case shared.NetworkHTTPUpgrade:
+		return &sbTransport{Type: "httpupgrade", Path: rc.Path, Host: rc.Host}
 	default:
 		return nil // tcp/raw 不需要 transport
 	}

@@ -791,20 +791,28 @@ func buildProxy(n store.Node, rc shared.RealizedConfig, uuid string) (clashProxy
 	case shared.ProtocolVLESS:
 		p.UUID = uuid
 		p.Network = rc.Network
-		p.TLS = true
-		p.Servername = rc.ServerName
 		p.Flow = rc.Flow
 		p.Encryption = rc.Encryption
-		applyReality(&p, rc)
+		if rc.EffectiveSecurity() == shared.SecurityReality {
+			p.TLS = true
+			p.Servername = rc.ServerName
+			applyReality(&p, rc)
+		} else {
+			applyPlainTransport(&p, rc)
+		}
 	case shared.ProtocolVMess:
 		zero := 0
 		p.UUID = uuid
 		p.AlterID = &zero
 		p.Cipher = vmessCipher(n.ConfigTemplate)
 		p.Network = rc.Network
-		p.TLS = true
-		p.Servername = rc.ServerName
-		applyReality(&p, rc)
+		if rc.EffectiveSecurity() == shared.SecurityReality {
+			p.TLS = true
+			p.Servername = rc.ServerName
+			applyReality(&p, rc)
+		} else {
+			applyPlainTransport(&p, rc)
+		}
 	case shared.ProtocolTrojan:
 		p.Password = uuid
 		p.Network = rc.Network
@@ -842,5 +850,25 @@ func applyReality(p *clashProxy, rc shared.RealizedConfig) {
 		p.GrpcOpts = &clashGrpcOpts{ServiceName: rc.ServiceName}
 	case shared.NetworkXHTTP:
 		p.XhttpOpts = &clashXHTTPOpts{Path: rc.Path, Mode: rc.Mode, Host: rc.Host}
+	}
+}
+
+// applyPlainTransport 填充 security=none 节点的传输选项（ws/httpupgrade；tcp 无选项）。
+// mihomo 无独立 httpupgrade network：映射为 network=ws + ws-opts.v2ray-http-upgrade。
+func applyPlainTransport(p *clashProxy, rc shared.RealizedConfig) {
+	switch rc.Network {
+	case shared.NetworkWS:
+		opts := clashWsOpts{Path: rc.Path}
+		if rc.Host != "" {
+			opts.Headers = map[string]string{"Host": rc.Host}
+		}
+		p.WsOpts = &opts
+	case shared.NetworkHTTPUpgrade:
+		p.Network = "ws"
+		opts := clashWsOpts{Path: rc.Path, V2rayHTTPUpgrade: true}
+		if rc.Host != "" {
+			opts.Headers = map[string]string{"Host": rc.Host}
+		}
+		p.WsOpts = &opts
 	}
 }

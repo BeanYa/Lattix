@@ -27,11 +27,14 @@ func buildShareLink(n store.Node, rc shared.RealizedConfig, uuid string) (string
 	case shared.ProtocolVLESS:
 		q := url.Values{}
 		q.Set("type", rc.Network)
-		q.Set("security", "reality")
-		q.Set("pbk", rc.PublicKey)
-		q.Set("sid", rc.ShortID)
-		q.Set("sni", rc.ServerName)
-		q.Set("fp", rc.Fingerprint)
+		security := rc.EffectiveSecurity()
+		q.Set("security", security)
+		if security == shared.SecurityReality {
+			q.Set("pbk", rc.PublicKey)
+			q.Set("sid", rc.ShortID)
+			q.Set("sni", rc.ServerName)
+			q.Set("fp", rc.Fingerprint)
+		}
 		if rc.Flow != "" {
 			q.Set("flow", rc.Flow)
 		}
@@ -60,7 +63,7 @@ func buildShareLink(n store.Node, rc shared.RealizedConfig, uuid string) (string
 			"id": uuid, "aid": "0", "scy": vmessCipher(n.ConfigTemplate),
 			"net": rc.Network, "type": "none",
 			"host": rc.Host, "path": rc.Path,
-			"tls": "reality", "sni": rc.ServerName, "fp": rc.Fingerprint,
+			"tls": vmessTLS(rc), "sni": rc.ServerName, "fp": rc.Fingerprint,
 			"pbk": rc.PublicKey, "sid": rc.ShortID,
 		})
 		return "vmess://" + base64.StdEncoding.EncodeToString(j), true
@@ -76,7 +79,7 @@ func buildShareLink(n store.Node, rc shared.RealizedConfig, uuid string) (string
 	return "", false
 }
 
-// setTransportQuery 写入 grpc/xhttp 的传输参数。
+// setTransportQuery 写入 grpc/xhttp/ws/httpupgrade 的传输参数。
 func setTransportQuery(q url.Values, rc shared.RealizedConfig) {
 	switch rc.Network {
 	case shared.NetworkGRPC:
@@ -87,7 +90,20 @@ func setTransportQuery(q url.Values, rc shared.RealizedConfig) {
 		if rc.Host != "" {
 			q.Set("host", rc.Host)
 		}
+	case shared.NetworkWS, shared.NetworkHTTPUpgrade:
+		q.Set("path", rc.Path)
+		if rc.Host != "" {
+			q.Set("host", rc.Host)
+		}
 	}
+}
+
+// vmessTLS 是 vmess 分享 JSON 的 tls 字段：reality → "reality"，无安全层 → 空串。
+func vmessTLS(rc shared.RealizedConfig) string {
+	if rc.EffectiveSecurity() == shared.SecurityReality {
+		return "reality"
+	}
+	return ""
 }
 
 // shareName 是分享链接的节点名（URL fragment 编码）。

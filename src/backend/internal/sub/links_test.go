@@ -93,3 +93,107 @@ func TestVMessShareLinkCipher(t *testing.T) {
 		t.Errorf("空模板 scy 应回退 auto，实际 %q", got)
 	}
 }
+
+// TestBuildShareLinkWSPlain 验证 ws/httpupgrade + security=none 的分享链接：
+// vmess JSON 的 tls 为空、net/host/path 正确；vless 链接无 pbk/sid/sni、带 type/encryption。
+func TestBuildShareLinkWSPlain(t *testing.T) {
+	rc := shared.RealizedConfig{Port: 8443, Network: shared.NetworkWS,
+		Path: "/p", Host: "h.example.com", Security: shared.SecurityNone}
+	n := testNode("1.2.3.4", shared.ProtocolVMess)
+	link, ok := buildShareLink(n, rc, "uuid")
+	if !ok {
+		t.Fatal("vmess ws link unsupported")
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(link, "vmess://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["net"] != "ws" || m["host"] != "h.example.com" || m["path"] != "/p" {
+		t.Errorf("vmess ws 字段不符: %v", m)
+	}
+	if m["tls"] != "" {
+		t.Errorf("security=none 的 vmess tls 字段应为空，实际 %q", m["tls"])
+	}
+
+	rc2 := shared.RealizedConfig{Port: 8443, Network: shared.NetworkHTTPUpgrade, Path: "/hu",
+		Security: shared.SecurityNone, Encryption: "mlkem768x25519plus.0rtt.XXX"}
+	link2, ok := buildShareLink(testNode("1.2.3.4", shared.ProtocolVLESS), rc2, "uuid")
+	if !ok {
+		t.Fatal("vless httpupgrade link unsupported")
+	}
+	for _, want := range []string{"type=httpupgrade", "security=none", "encryption=mlkem768x25519plus", "path=%2Fhu"} {
+		if !strings.Contains(link2, want) {
+			t.Errorf("vless httpupgrade 链接缺 %q: %s", want, link2)
+		}
+	}
+	for _, absent := range []string{"pbk=", "sid=", "sni="} {
+		if strings.Contains(link2, absent) {
+			t.Errorf("security=none 链接不应含 %q: %s", absent, link2)
+		}
+	}
+}
+
+// TestBuildProxyWSPlain 验证 mihomo 输出：security=none 无 tls/reality-opts；
+// ws → ws-opts；httpupgrade → network=ws + v2ray-http-upgrade（mihomo 惯例）。
+func TestBuildProxyWSPlain(t *testing.T) {
+	rc := shared.RealizedConfig{Port: 8443, Network: shared.NetworkWS,
+		Path: "/p", Host: "h.example.com", Security: shared.SecurityNone}
+	p, err := buildProxy(testNode("1.2.3.4", shared.ProtocolVMess), rc, "uuid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.TLS || p.RealityOpts != nil || p.Servername != "" {
+		t.Errorf("明文 ws 不应带 tls/reality-opts/servername: %+v", p)
+	}
+	if p.Network != "ws" || p.WsOpts == nil || p.WsOpts.Path != "/p" || p.WsOpts.Headers["Host"] != "h.example.com" {
+		t.Errorf("ws-opts 不符: %+v", p.WsOpts)
+	}
+
+	rc.Network = shared.NetworkHTTPUpgrade
+	p, err = buildProxy(testNode("1.2.3.4", shared.ProtocolVMess), rc, "uuid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Network != "ws" || p.WsOpts == nil || !p.WsOpts.V2rayHTTPUpgrade {
+		t.Errorf("httpupgrade 应映射为 network=ws + v2ray-http-upgrade: network=%q opts=%+v", p.Network, p.WsOpts)
+	}
+}
+
+// TestBuildSbOutboundWSPlain 验证 sing-box 输出：security=none 无 tls 块；
+// ws 用 headers.Host，httpupgrade 用原生 httpupgrade transport（host 平铺）。
+func TestBuildSbOutboundWSPlain(t *testing.T) {
+	rc := shared.RealizedConfig{Port: 8443, Network: shared.NetworkWS,
+		Path: "/p", Host: "h.example.com", Security: shared.SecurityNone}
+	ob, err := buildSbOutbound(testNode("1.2.3.4", shared.ProtocolVMess), rc, "uuid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ob.TLS != nil {
+		t.Errorf("security=none 不应输出 tls 块: %+v", ob.TLS)
+	}
+	if ob.Transport == nil || ob.Transport.Type != "ws" || ob.Transport.Path != "/p" ||
+		ob.Transport.Headers["Host"] != "h.example.com" {
+		t.Errorf("sing-box ws transport 不符: %+v", ob.Transport)
+	}
+
+	rc.Network = shared.NetworkHTTPUpgrade
+	ob, err = buildSbOutbound(testNode("1.2.3.4", shared.ProtocolVMess), rc, "uuid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ob.Transport == nil || ob.Transport.Type != "httpupgrade" || ob.Transport.Host != "h.example.com" {
+		t.Errorf("sing-box httpupgrade transport 不符: %+v", ob.Transport)
+	}
+}
+
+// TestQuanXSkipsPlainVLESS 验证 QuanX 对 security=none 节点尽力而为：跳过不输出。
+func TestQuanXSkipsPlainVLESS(t *testing.T) {
+	rc := shared.RealizedConfig{Port: 8443, Network: shared.NetworkWS, Security: shared.SecurityNone}
+	if line := buildQuanXLine(testNode("1.2.3.4", shared.ProtocolVLESS), rc, "uuid"); line != "" {
+		t.Errorf("QuanX 应跳过明文 vless，实际输出 %q", line)
+	}
+}

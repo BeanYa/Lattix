@@ -23,6 +23,9 @@ func buildQuanXLine(n store.Node, rc shared.RealizedConfig, uuid string) string 
 
 	switch n.Protocol {
 	case shared.ProtocolVLESS:
+		if rc.EffectiveSecurity() != shared.SecurityReality {
+			return "" // QuanX 仅输出 reality 形态（ws/httpupgrade + none 跳过，§3.4 尽力而为）
+		}
 		// Quantumult X vless 格式（1.5.0+）
 		parts := []string{
 			fmt.Sprintf("vless=%s", addr),
@@ -47,6 +50,9 @@ func buildQuanXLine(n store.Node, rc shared.RealizedConfig, uuid string) string 
 		}
 		return strings.Join(parts, ", ")
 	case shared.ProtocolTrojan:
+		if rc.EffectiveSecurity() != shared.SecurityReality {
+			return "" // QuanX 仅输出 reality 形态（ws/httpupgrade + none 跳过，§3.4 尽力而为）
+		}
 		parts := []string{
 			fmt.Sprintf("trojan=%s", addr),
 			fmt.Sprintf("password=%s", uuid),
