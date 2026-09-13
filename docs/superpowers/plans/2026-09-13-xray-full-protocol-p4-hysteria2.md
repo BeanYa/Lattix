@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 落地 Hysteria2（xray 26.3.27 原生 inbound/outbound，协议名 `hysteria`）全链路：panel 模板（settings.users + tlsSettings 复用 P3 证书占位符 + finalmask salamander/quicParams）→ agent 填充（hy2 用户分支 + 版本门控 + iptables DNAT 端口跳跃）→ dispatch（出口侧共享监听 + 入口终结模式末段 hy2 outbound + 端到端逐跳 UDP 端口段）→ 订阅四格式（hysteria2 链接 / mihomo / sing-box / quanx 跳过）→ 前端（hy2 字段区 + 可勾选的"入口协议"独立配置区块）。**硬性要求（沿用 P1-P3 红线）：存量链路（vless 共享端点链、reality/tls/none 各组合、ws/httpupgrade 明文链、dokodemo 转发链、reverse/encrypted 隧道链、ss UDP 中转链）全部不失效，以完整 e2e 回归证明。**
+**Goal:** 落地 Hysteria2（xray 26.3.27 原生 inbound/outbound，协议名 `hysteria`）全链路：panel 模板（settings.clients + network:hysteria + alpn h3 + tlsSettings 复用 P3 证书占位符 + finalmask salamander/quicParams）→ agent 填充（hy2 用户分支 + 版本门控 + iptables DNAT 端口跳跃）→ dispatch（出口侧共享监听 + 入口终结模式末段 hy2 outbound + 端到端逐跳 UDP 端口段）→ 订阅四格式（hysteria2 链接 / mihomo / sing-box / quanx 跳过）→ 前端（hy2 字段区 + 可勾选的"入口协议"独立配置区块）。**硬性要求（沿用 P1-P3 红线）：存量链路（vless 共享端点链、reality/tls/none 各组合、ws/httpupgrade 明文链、dokodemo 转发链、reverse/encrypted 隧道链、ss UDP 中转链）全部不失效，以完整 e2e 回归证明。**
 
 **Architecture:** 沿用"panel 模板 → agent 填充 → xray run -test → 热更新/重启回退"管线。三个结构性决策（均已源码核实/实测，见下）：
 1. **端口跳跃 = DNAT 路径**：xray hy2 服务端只监听单端口（`transport/internet/hysteria/hub.go` Listen 仅 `ListenSystemPacket`），udpHop 仅客户端实现（`dialer.go` 在段内随机换目标端口）——出口 agent 用 iptables DNAT 把跳跃段映射到 hy2 监听端口（官方 hysteria 同款做法）；中转逐跳仍用逐端口 dokodemo UDP inbound 1:1 转发（P2 已验证、无需特权）。
@@ -15,12 +15,14 @@
 
 **关键已验证事实**（xray 26.3.27 源码 + 本机活体实测，作为实现依据；module cache `github.com/xtls/xray-core@v1.260327.1-0.20260717222851-6e3322d21914`）：
 
-- **协议名与 settings**：inbound/outbound 协议名均为 `"hysteria"`（非 hysteria2）。inbound settings = `{"version":2,"users":[{"auth":"...","level":0,"email":"..."}]}`，`version != 2` 直接报错（`infra/conf/hysteria.go:20,46`）。outbound settings 只有 `{"version":2,"address":"<host>","port":<int>}`（无用户概念）。
-- **客户端口令在 transport 层**：hy2 出站把 `streamSettings.hysteriaSettings.auth` 作为 `Hysteria-Auth` 头发送（`dialer.go:198`）；服务端有用户列表时走 validator 按 auth 匹配用户，无用户列表时回退比对 `hysteriaSettings.auth`（`hub.go:43-110` AuthHTTP）。因此：入站模板 hysteriaSettings 只需 `{"version":2}`（口令在 settings.users）；出站 hysteriaSettings.auth = 用户口令。
+- **协议名与 settings**：inbound/outbound 协议名均为 `"hysteria"`（非 hysteria2）。inbound settings = `{"version":2,"clients":[{"auth":"...","level":0,"email":"..."}]}`——**用户列表键是 `clients` 不是 `users`**（`infra/conf/hysteria.go:38` `json:"clients"`；写 `users` 被静默忽略 → 空 validator → 所有 auth 失败，Task 1 实测踩中）。outbound settings 只有 `{"version":2,"address":"<host>","port":<int>}`（无用户概念）。
+- **streamSettings 必须显式 `"network":"hysteria"`**（Task 1 实测新事实）：缺省 `network` 为 `"tcp"`（`infra/conf/transport_internet.go` StreamConfig.Build `ProtocolName:"tcp"`），hysteriaSettings 仅填充 TransportSettings、不改变传输选择——此时 QUIC 跑在 TCP 承载上（服务端 TCP LISTEN 单端口、客户端 TCP ESTAB，数据面也能通但 UDP 跳跃/salamander 语义全失）。模板（inbound 与 outbound）必须携带 `"network":"hysteria"` 才是真 QUIC/UDP。
+- **tlsSettings 必须 `alpn:["h3"]`**（Task 1 实测新事实）：服务端用 quic-go http3.Server（`hub.go`），客户端不提供 h3 ALPN 时握手报 `CRYPTO_ERROR 0x178: tls: no application protocol`。
+- **客户端口令在 transport 层**：hy2 出站把 `streamSettings.hysteriaSettings.auth` 作为 `Hysteria-Auth` 头发送（`dialer.go:198`）；服务端有用户列表时走 validator 按 auth 匹配用户，无用户列表时回退比对 `hysteriaSettings.auth`（`hub.go:43-110` AuthHTTP）。因此：入站模板 hysteriaSettings 只需 `{"version":2}`（口令在 settings.clients）；出站 hysteriaSettings.auth = 用户口令。
 - **salamander 混淆 = finalmask udp mask**（不是 hysteriaSettings 字段）：`"finalmask":{"udp":[{"type":"salamander","settings":{"password":"..."}}]}`（`transport_finalmask.go:629-647` Salamander{Password, PacketSize}）。
 - **带宽/拥塞/udpHop = finalmask.quicParams**：`{"congestion":"brutal","brutalUp":"50 mbps","brutalDown":"100 mbps","udpHop":{"ports":"20000-20031","interval":"10-30"}}`（`transport_finalmask.go:888` QuicParamsConfig）。`ports`/`interval` 必须是**字符串区间形式**（PortList/Int32Range 自定义 UnmarshalJSON，`common.go:244,313`；对象写法报 "Invalid integer range"）；带宽下限 65536 B/s；congestion 合法值 reno/bbr/brutal/force-brutal；hysteriaSettings 里的旧式 congestion/up/down/udphop 仅 LogWarning "move to finalmask/quicParams"。
-- **udpHop 仅客户端实现**：`hub.go` Listen() 只 `ListenSystemPacket` 单端口；`dialer.go:142-163` 客户端在 UdpHop.Ports 内随机换目标端口。服务端不绑定跳跃段 → 必须 iptables DNAT。spec §3.2 端口跳跃方案的开放问题由此收敛为 DNAT 路径。
-- **活体数据面已通过**：本机起 xray hy2 服务端（127.0.0.1 自签证书）+ xray 客户端（socks → hysteria outbound，tlsSettings.pinnedPeerCertSha256 钉证书），`curl -x socks5h://… https://example.com/` 返回 200 → xray↔xray hy2 出入站互操作可用，SS-2022 保底（spec §3.2 版本风险条款）预计不启用，仍作风险预案保留在 Task 1/Task 6。
+- **udpHop 仅客户端实现**：`hub.go` Listen() 只 `ListenSystemPacket` 单端口（Task 1 复核：服务端 finalmask 声明 udpHop 段后 `ss` 仍只见 UDP 14439 单端口，段内无监听）；`dialer.go:142-163` 客户端在 UdpHop.Ports 内随机换目标端口，**且首包（QUIC 握手）即落段内随机端口**——无 DNAT 时客户端声明 udpHop 必然握手失败，故无跳跃场景客户端不得声明 udpHop。服务端不绑定跳跃段 → 必须 iptables DNAT。spec §3.2 端口跳跃方案的开放问题由此收敛为 DNAT 路径。
+- **活体数据面已通过（2026-09-14 复核修正）**：早期一次性实测的 200 实为**缺省 network=tcp 的 TCP 承载**（偶然可用但非设计目标）；按定稿模板（`network:"hysteria"` + settings.clients + alpn h3）重测，服务端 UDP 14439 单端口监听、客户端 UDP QUIC 拨号、`curl -x socks5h://… https://example.com/` 返回 200（服务端日志带 `email: u1`，clients 键鉴权生效）→ xray↔xray hy2 真 QUIC/UDP 数据面可用。实测固化为 `scripts/dev/hy2-probe.sh`（幂等可重复，含 TCP 监听/段内绑定反向断言）。SS-2022 保底（spec §3.2 版本风险条款）预计不启用，仍作风险预案保留在 Task 1/Task 6。
 - **本机 uid=1000 无 iptables 权限**：DNAT 用例在 e2e 中加 root/iptables 守卫跳过；逐跳 dokodemo UDP 转发用例不受影响（无需特权）。
 
 ## Global Constraints
@@ -29,7 +31,7 @@
 - 协议/字段常量必须与 `src/shared/config.go` 保持一致，前端常量注释沿用"与后端 shared 包保持一致"。hy2 在面板/API/DB 层的协议值一律是 `"hysteria"`（xray 协议名）；仅订阅输出层映射为客户端类型名（mihomo/sing-box `hysteria2`、链接 scheme `hysteria2://`）。
 - 后端 API 字段变更必须同步改 `docs/openapi.yaml` 并在 `src/frontend` 跑 `npm run generate:api`（`npm run build` 内含 `--check` 会拦截不一致）。
 - **P4 新增合法组合矩阵**（spec §2；矩阵外一律 400 并指明冲突字段）：
-  - hysteria：无 network 概念（显式传 network → 400）；security 仅允许缺省/tls（内部恒为 tls，显式传 reality/none → 400）；cert_mode/tls_domain 复用 P3 证书双模式（selfsign 默认伪装域 / acme 落地服务器域名）；flow/method/cipher/encryption/short_id/dest/server_names 一律清空。
+  - hysteria：无 network 概念（API 显式传 network → 400；生成的 xray 模板内部 `streamSettings.network` 恒为 `"hysteria"`，见事实区）；security 仅允许缺省/tls（内部恒为 tls，显式传 reality/none → 400）；cert_mode/tls_domain 复用 P3 证书双模式（selfsign 默认伪装域 / acme 落地服务器域名）；flow/method/cipher/encryption/short_id/dest/server_names 一律清空。
   - hy2 协议级选项：`obfs_password`（salamander，留空自动生成随机串；显式空语义不存在——要关混淆只能不传字段且关闭自动生成的路径不存在，v1 恒开启混淆）、`up_mbps`/`down_mbps`（默认 50/100，≥1；0=不声明 brutal 带宽回退 BBR）、`port_hop`（`"off"`=关闭跳跃；`""`=默认开启、panel 自动分配 32 段；`"a-b"`=显式段，长度 8-200）。
   - 入口协议区块（`entry_node`）：v1 仅允许 vless + reality（子参数全部可空自动生成）；仅多跳链可勾选（单跳 400）；勾选时出口协议仅允许 hysteria/vless（其他 400「入口协议区块 v1 仅支持 hysteria2/vless 出口」）。
   - 存量矩阵（reality/none/tls × 五传输、ss/socks/http/dokodemo 无传输/安全层）全部不变。
@@ -64,88 +66,49 @@
 
 **背景**：关键事实区的结论已经由一次性实测得出（xray↔xray 数据面 200、udpHop 仅客户端、salamander=finalmask）。本任务把这些实测固化为可重复脚本并补齐两个未覆盖点：(a) 服务端 udpHop 行为的实测复核（起带 quicParams.udpHop 的服务端，`ss -ulnp` 确认仅单端口监听）；(b) iptables DNAT 冒烟（rootful 环境；非 root 记录跳过原因）。**若任何实测与上文结论相反**（例如 xray 服务端真的绑定整个段），停止后续任务，把本文件 Task 3/5/6 的 DNAT 方案替换为「xray 自绑段」方案（agent 不再管理 iptables，forward 逐端口 dokodemo 不变，端口段治理不变）再继续。
 
-- [ ] **Step 1: 写 scripts/dev/hy2-probe.sh（server+client 数据面 + udpHop 监听复核）**
+> **Task 1 已完成（2026-09-14）**：核心结论全部成立（服务端仅 UDP 单端口监听、udpHop 仅客户端、salamander=finalmask、DNAT 路径），但原脚本模板有四处实测出入，已回填上方事实区并修正 Task 3/5/6 模板：`network:"hysteria"` 必须显式（原脚本缺省走 TCP 承载）、用户列表键 `clients`（非 `users`）、`tlsSettings.alpn:["h3"]` 必须、客户端 udpHop 首包即落段内随机端口（无 DNAT 不可声明）。DNAT 冒烟因本机 uid=1000 无 iptables 按守卫 SKIP（rootful 环境复跑 `scripts/dev/hy2-probe.sh` 即覆盖，Step 3 内置客户端带 udpHop 重测）。
+
+- [x] **Step 1: 写 scripts/dev/hy2-probe.sh（server+client 数据面 + udpHop 监听复核）**
+
+最终脚本（仓库内 `scripts/dev/hy2-probe.sh`，以此为准；相对原计划脚本的关键修正：server/client streamSettings 加 `"network":"hysteria"`、server settings `users`→`clients`、双侧 tlsSettings 加 `"alpn":["h3"]`、客户端基线不含 udpHop）：
 
 ```bash
-#!/usr/bin/env bash
-# hy2 数据面一次性验证（P4 Task 1）：
-#   1) xray hy2 服务端（自签证书 + salamander + brutal + udpHop 段）监听 127.0.0.1:14439
-#   2) 复核服务端 udpHop 行为：ss -ulnp 应只见 14439 单端口（段内其余端口不监听 → DNAT 路径成立）
-#   3) xray 客户端（socks → hysteria outbound + pinnedPeerCertSha256 pin + udpHop 段）
-#   4) curl 经 socks 数据面断言 200
-# 依赖：xray（XRAY_BIN 可覆盖）、openssl、curl、ss。仅本机回环，不需要特权。
-set -euo pipefail
-XRAY_BIN="${XRAY_BIN:-/usr/local/bin/xray}"
-WORK="$(mktemp -d)"; trap 'kill ${SRVPID:-} ${CLIPID:-} 2>/dev/null || true; rm -rf "$WORK"' EXIT
-"$XRAY_BIN" tls cert -domain=www.example.com -name=www.example.com -file="$WORK/cert" >/dev/null
-PIN="$(openssl x509 -in "$WORK/cert.crt" -outform DER | openssl dgst -sha256 -hex | awk '{print $2}')"
-cat >"$WORK/server.json" <<EOF
-{"log":{"loglevel":"warning"},"inbounds":[{"tag":"hy2","listen":"127.0.0.1","port":14439,
- "protocol":"hysteria",
- "settings":{"version":2,"users":[{"auth":"test-auth","level":0,"email":"u1"}]},
- "streamSettings":{"security":"tls",
-  "tlsSettings":{"serverName":"www.example.com","certificates":[{"certificateFile":"$WORK/cert.crt","keyFile":"$WORK/cert.key"}]},
-  "hysteriaSettings":{"version":2},
-  "finalmask":{"udp":[{"type":"salamander","settings":{"password":"obfs-pw"}}],
-   "quicParams":{"congestion":"brutal","brutalUp":"50 mbps","brutalDown":"100 mbps",
-    "udpHop":{"ports":"20000-20031","interval":"10-30"}}}}}],
-"outbounds":[{"protocol":"freedom","tag":"direct"}]}
-EOF
-cat >"$WORK/client.json" <<EOF
-{"log":{"loglevel":"warning"},
-"inbounds":[{"tag":"socks","listen":"127.0.0.1","port":11080,"protocol":"socks","settings":{"udp":true}}],
-"outbounds":[{"tag":"hy2","protocol":"hysteria",
- "settings":{"version":2,"address":"127.0.0.1","port":14439},
- "streamSettings":{"security":"tls",
-  "tlsSettings":{"serverName":"www.example.com","pinnedPeerCertSha256":"$PIN"},
-  "hysteriaSettings":{"version":2,"auth":"test-auth"},
-  "finalmask":{"udp":[{"type":"salamander","settings":{"password":"obfs-pw"}}],
-   "quicParams":{"congestion":"brutal","brutalUp":"50 mbps","brutalDown":"100 mbps",
-    "udpHop":{"ports":"20000-20031","interval":"10-30"}}}}}]}
-EOF
-"$XRAY_BIN" run -config "$WORK/server.json" & SRVPID=$!
-sleep 1
-echo "== 服务端 UDP 监听（期望仅 14439；若段内端口全部出现则改为 xray 自绑段方案）=="
-ss -ulnp | grep -E '14439|200[0-3][0-9]' || true
-"$XRAY_BIN" run -config "$WORK/client.json" & CLIPID=$!
-sleep 1
-code="$(curl -s -o /dev/null -w '%{http_code}' -x socks5h://127.0.0.1:11080 --max-time 10 https://example.com/)"
-echo "data plane http_code=$code"
-[[ "$code" == "200" ]]
-echo "OK: xray↔xray hy2 数据面可用；udpHop 服务端行为见上方 ss 输出"
+# 结构（完整脚本见仓库）：
+#   Step 1) 服务端（自签证书 + network:hysteria + alpn h3 + settings.clients
+#           + salamander + brutal + finalmask 声明 udpHop 段）起听后：
+#           ss -tuanp 断言仅 UDP 14439 单端口（TCP 监听或段内端口出现 → FAIL 并提示换方案）
+#   Step 2) 客户端（socks → hysteria outbound + pinnedPeerCertSha256 pin，无 udpHop）
+#           curl 经 socks 断言 200
+#   Step 3) root+iptables 守卫内：DNAT（REDIRECT 20000:20031→14439，PREROUTING+OUTPUT
+#           双链挂 LATTIX_UDPHOP）下发后，客户端带 udpHop 段重测断言 200；
+#           非 root 输出 SKIP（不假绿）
+# 幂等：mktemp 临时目录 + EXIT trap 清理进程/iptables 规则/临时文件。
 ```
 
 Run: `bash scripts/dev/hy2-probe.sh`
-Expected: PASS（http_code=200；ss 输出仅 14439——若列出 20000-20031 全部端口，按上文「结论相反」分支处理）
+Expected: PASS（Step 1 仅 UDP 14439；Step 2 http_code=200。2026-09-14 本机实测通过，服务端日志 `accepted … [hy2 >> direct] email: u1` 证明 clients 键鉴权生效）
 
-- [ ] **Step 2: iptables DNAT 冒烟（rootful；非 root 记录跳过）**
+- [x] **Step 2: iptables DNAT 冒烟（rootful；非 root 记录跳过）**
 
 ```bash
 # 需要 root（或 CAP_NET_ADMIN）。在非特权环境执行会失败并跳过——记录原因即可。
-if [[ "$(id -u)" != "0" ]] || ! command -v iptables >/dev/null; then
-  echo "SKIP: DNAT 冒烟需要 root + iptables（e2e 同款守卫，Task 9 复用）"
-else
-  iptables -t nat -N LATTIX_UDPHOP 2>/dev/null || true
-  iptables -t nat -A LATTIX_UDPHOP -p udp --dport 20000:20031 -j REDIRECT --to-ports 14439 \
-    -m comment --comment "lattix:probe"
-  iptables -t nat -A PREROUTING -p udp --dport 20000:20031 -j LATTIX_UDPHOP
-  # 再起 Step 1 服务端（监听 14439），客户端 udpHop 段指向 20000-20031、address=127.0.0.1，
-  # curl 数据面断言 200（DNAT 把段内任意端口流量映射到 14439）。
-  # 清理：iptables -t nat -D PREROUTING ...；iptables -t nat -F LATTIX_UDPHOP
-fi
+# 脚本内嵌守卫：非 root 或无 iptables → 输出 "SKIP: DNAT 冒烟需要 root + iptables（当前 uid=…）"
+# rootful 路径：iptables -t nat 建 LATTIX_UDPHOP 链（REDIRECT --to-ports 14439，
+# comment "lattix:probe"），PREROUTING+OUTPUT 挂链；客户端带 udpHop 段重测断言 200；
+# EXIT trap 负责 -D/-F/-X 清理（OUTPUT 链是本机回环探针流量所需，生产外部流量走 PREROUTING）。
 ```
 
 Run: 同上脚本内嵌守卫执行
-Expected: rootful 环境数据面 200；非 root 输出 SKIP（记录到本任务完成说明）
+Expected: rootful 环境数据面 200；非 root 输出 SKIP（2026-09-14 本机 uid=1000 无 iptables → SKIP，已记录；rootful 环境复跑脚本即覆盖）
 
-- [ ] **Step 3: 结论回填**
+- [x] **Step 3: 结论回填**
 
-把实测输出与上方「关键已验证事实」逐条对账；如有出入修改本文件并在 Task 3/5/6 相应分支调整。无需提交代码变更时，本任务以 `scripts/dev/hy2-probe.sh` 单文件提交。
+已回填：事实区修正 settings.clients / network:"hysteria" / alpn h3 / udpHop 首包随机端口四条；Task 3（buildVirtualConfig 模板键、hy2StreamSettings、测试断言）、Task 5（fill 测试模板、mutateClients 键）、Task 6（renderHy2Outbound network/alpn）相应调整。
 
 Run: `git diff --stat`
-Expected: 仅新增 scripts/dev/hy2-probe.sh（+ 必要时本文件修订）
+Expected: 新增 scripts/dev/hy2-probe.sh + 本文件结论回填修订
 
-提交：`git add scripts/dev && git commit -m "test(dev): P4 hy2 数据面探针脚本"`
+提交：`git add scripts/dev && git commit -m "test(dev): P4 hy2 数据面探针脚本"`；计划回填单独 `docs(plan)` 提交。
 
 ---
 
@@ -744,8 +707,9 @@ func TestNormalizeHysteria2(t *testing.T) {
 	}
 }
 
-// TestBuildVirtualConfigHysteria2 验证 hy2 模板形态（Task 1 定稿）：settings.users +
-// tls 证书占位符 + hysteriaSettings + finalmask（salamander/quicParams），无 network 键。
+// TestBuildVirtualConfigHysteria2 验证 hy2 模板形态（Task 1 定稿）：settings.clients +
+// tls 证书占位符 + hysteriaSettings + finalmask（salamander/quicParams）+
+// network:"hysteria" + alpn h3（后两者缺了会退化为 TCP 承载/握手失败，见事实区）。
 func TestBuildVirtualConfigHysteria2(t *testing.T) {
 	req := createNodeRequest{Protocol: "hysteria", Security: "tls", CertMode: "selfsign",
 		TLSDomain: "www.example.com", ObfsPassword: "obfs-pw", UpMbps: 50, DownMbps: 100,
@@ -759,12 +723,12 @@ func TestBuildVirtualConfigHysteria2(t *testing.T) {
 		t.Fatalf("协议名须为 hysteria: %v", inbound["protocol"])
 	}
 	settings := inbound["settings"].(map[string]any)
-	if settings["version"].(float64) != 2 || settings["users"] != shared.PlaceholderClients {
+	if settings["version"].(float64) != 2 || settings["clients"] != shared.PlaceholderClients {
 		t.Fatalf("settings 不符: %v", settings)
 	}
 	ss := inbound["streamSettings"].(map[string]any)
-	if _, hasNetwork := ss["network"]; hasNetwork {
-		t.Fatal("hy2 模板不应携带 network（自带 QUIC）")
+	if ss["network"] != "hysteria" {
+		t.Fatal("hy2 模板必须显式 network=hysteria（缺省 tcp 会退化为 TCP 承载，Task 1 实测）")
 	}
 	if ss["security"] != "tls" || ss["hysteriaSettings"].(map[string]any)["version"].(float64) != 2 {
 		t.Fatalf("streamSettings 不符: %v", ss)
@@ -782,6 +746,9 @@ func TestBuildVirtualConfigHysteria2(t *testing.T) {
 		t.Fatal("服务端模板不含 udpHop（DNAT 路径：段由 iptables 收敛，客户端侧才声明 udpHop）")
 	}
 	tlsS := ss["tlsSettings"].(map[string]any)
+	if alpn, ok := tlsS["alpn"].([]any); !ok || len(alpn) != 1 || alpn[0] != "h3" {
+		t.Fatalf("tlsSettings 必须 alpn=[h3]（否则握手 no application protocol）: %v", tlsS)
+	}
 	certs := tlsS["certificates"].([]any)[0].(map[string]any)
 	if certs["certificateFile"] != shared.PlaceholderTLSCertFile || certs["keyFile"] != shared.PlaceholderTLSKeyFile {
 		t.Fatalf("证书占位符缺失: %v", certs)
@@ -873,7 +840,7 @@ Expected: FAIL（分支不存在）
 ```go
 	case shared.ProtocolHysteria2:
 		settings["version"] = 2
-		settings["users"] = shared.PlaceholderClients
+		settings["clients"] = shared.PlaceholderClients // hy2 用户列表键为 clients（非 users，Task 1 实测）
 ```
 streamSettings 块（:559-568）改为：
 ```go
@@ -903,15 +870,18 @@ sniffing 块（:569-571）条件追加 hy2 排除（QUIC 流量无需 sniffing�
 ```
 4. 文件尾（`applyACMEDomain` 之后）追加：
 ```go
-// hy2StreamSettings 构造 hy2 的 streamSettings（Task 1 实测定稿）：tls 证书占位符复用
-// P3 双模式；hysteriaSettings 仅声明 version=2（用户口令在 settings.users，见 Task 1
-// 事实区）；salamander 混淆与 brutal 带宽在 finalmask。服务端模板不含 udpHop——
-// udpHop 仅客户端实现，服务端段收敛走 iptables DNAT（spec §3.2 DNAT 路径）。
+// hy2StreamSettings 构造 hy2 的 streamSettings（Task 1 实测定稿）：network 恒 "hysteria"
+// （缺省 tcp 会退化为 TCP 承载）；tlsSettings 带 alpn [h3]（否则握手 no application
+// protocol），证书占位符复用 P3 双模式；hysteriaSettings 仅声明 version=2（用户口令在
+// settings.clients，见 Task 1 事实区）；salamander 混淆与 brutal 带宽在 finalmask。
+// 服务端模板不含 udpHop——udpHop 仅客户端实现，服务端段收敛走 iptables DNAT（spec §3.2）。
 func hy2StreamSettings(req createNodeRequest) map[string]any {
 	ss := map[string]any{
+		"network":  "hysteria",
 		"security": "tls",
 		"tlsSettings": map[string]any{
 			"serverName": req.TLSDomain,
+			"alpn":       []string{"h3"},
 			"certificates": []map[string]any{{
 				"certificateFile": shared.PlaceholderTLSCertFile,
 				"keyFile":         shared.PlaceholderTLSKeyFile,
@@ -1471,7 +1441,7 @@ Expected: PASS
 `src/agent/internal/xray/fill_test.go` 追加：
 
 ```go
-// TestClientCredentialEntryHysteria 验证 hy2 用户条目形态（settings.users 元素，P4）。
+// TestClientCredentialEntryHysteria 验证 hy2 用户条目形态（settings.clients 元素，P4）。
 func TestClientCredentialEntryHysteria(t *testing.T) {
 	e := clientCredentialEntry(shared.ProtocolHysteria2, "", "",
 		shared.ClientCredential{ID: "uuid-1", Email: "access:7"})
@@ -1490,9 +1460,9 @@ func TestFillTemplateHysteriaRealized(t *testing.T) {
 		CertMode: shared.CertModeSelfSign, TLSDomain: "www.example.com",
 		ObfsPassword: "obfs-pw", UpMbps: 50, DownMbps: 100, PortHop: "20000-20031",
 		Template: json.RawMessage(`{"tag":"{{TAG}}","protocol":"hysteria","port":"{{PORT}}",
-			"settings":{"version":2,"users":"{{CLIENTS}}"},
-			"streamSettings":{"security":"tls",
-			"tlsSettings":{"serverName":"www.example.com","certificates":[{"certificateFile":"{{TLS_CERT_FILE}}","keyFile":"{{TLS_KEY_FILE}}"}]},
+			"settings":{"version":2,"clients":"{{CLIENTS}}"},
+			"streamSettings":{"network":"hysteria","security":"tls",
+			"tlsSettings":{"serverName":"www.example.com","alpn":["h3"],"certificates":[{"certificateFile":"{{TLS_CERT_FILE}}","keyFile":"{{TLS_KEY_FILE}}"}]},
 			"hysteriaSettings":{"version":2},
 			"finalmask":{"udp":[{"type":"salamander","settings":{"password":"obfs-pw"}}],
 			"quicParams":{"congestion":"brutal","brutalUp":"50 mbps","brutalDown":"100 mbps"}}}}`),
@@ -1519,7 +1489,7 @@ Expected: FAIL（分支/字段不存在）
 1. `clientCredentialEntry`（:197-222）switch 内 `case shared.ProtocolShadowsocks:` 行前插入：
 ```go
 	case shared.ProtocolHysteria2:
-		// hy2 用户条目（settings.users 元素）：auth 为确定性派生口令（订阅/入口终结 outbound 同源）。
+		// hy2 用户条目（settings.clients 元素）：auth 为确定性派生口令（订阅/入口终结 outbound 同源）。
 		return map[string]any{"auth": shared.Hy2UserPassword(credential.ID), "email": email, "level": 0}
 ```
 2. `fillTemplate` realized 结构体字面量（:156-174）`CertSHA256: certPin,` 行后追加：
@@ -1531,16 +1501,7 @@ Expected: FAIL（分支/字段不存在）
 ```
 （hy2 这四个参数是模板内固定值，直接以 vc 回显——与 Method/Flow 同款"vc 透传"语义；SNI/CertSHA256 由 P3 证书管线已填。）
 
-3. `config.go` `mutateClients` 键选择（:130-133）改为：
-```go
-	key := "clients"
-	if protocol == shared.ProtocolSocks || protocol == shared.ProtocolHTTP {
-		key = "accounts"
-	}
-	if protocol == shared.ProtocolHysteria2 {
-		key = "users" // hy2 inbound 用户列表键（settings.users）
-	}
-```
+3. `config.go` `mutateClients` 键选择（:130-133）保持默认 `clients` 即可——hy2 用户列表键也是 `settings.clients`（Task 1 实测修正：xray hy2 inbound 用 `json:"clients"`，无需为 hysteria 特判；原计划 `key = "users"` 分支删除）：
 
 Run: `cd src/agent && go test ./internal/xray/ -v && go build ./...`
 Expected: PASS
@@ -1788,9 +1749,9 @@ func TestApplySharedEndpointHysteria(t *testing.T) {
 			CertMode: shared.CertModeSelfSign, TLSDomain: "www.example.com",
 			ObfsPassword: "obfs-pw", UpMbps: 50, DownMbps: 100,
 			Template: json.RawMessage(`{"tag":"{{TAG}}","protocol":"hysteria","port":"{{PORT}}",
-				"settings":{"version":2,"users":"{{CLIENTS}}"},
-				"streamSettings":{"security":"tls","tlsSettings":{"serverName":"www.example.com",
-				"certificates":[{"certificateFile":"{{TLS_CERT_FILE}}","keyFile":"{{TLS_KEY_FILE}}"}]},
+				"settings":{"version":2,"clients":"{{CLIENTS}}"},
+				"streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"serverName":"www.example.com",
+				"alpn":["h3"],"certificates":[{"certificateFile":"{{TLS_CERT_FILE}}","keyFile":"{{TLS_KEY_FILE}}"}]},
 				"hysteriaSettings":{"version":2}}`),
 		},
 		Clients: []shared.ClientCredential{{ID: "uuid-1", Email: "tunnel:uuid-1"}},
@@ -1802,7 +1763,7 @@ func TestApplySharedEndpointHysteria(t *testing.T) {
 	if realized.Port == 0 || realized.ObfsPassword != "obfs-pw" {
 		t.Fatalf("realized 不符: %+v", realized)
 	}
-	// 配置含 hy2 inbound，users 条目为 {auth,email,level:0}。
+	// 配置含 hy2 inbound，clients 条目为 {auth,email,level:0}。
 	cur, _ := m.loadConfig()
 	found := false
 	for _, raw := range cur.inbounds() {
@@ -1839,6 +1800,9 @@ func TestRenderSharedEndpointOutboundHy2(t *testing.T) {
 		t.Fatalf("settings 不符: %v", settings)
 	}
 	ss := ob["streamSettings"].(map[string]any)
+	if ss["network"] != "hysteria" {
+		t.Fatal("hy2 outbound 必须显式 network=hysteria（Task 1 实测：缺省 tcp 退化为 TCP 承载）")
+	}
 	tlsS := ss["tlsSettings"].(map[string]any)
 	if tlsS["serverName"] != "www.example.com" || tlsS["pinnedPeerCertSha256"] != "deadbeef" {
 		t.Fatalf("tlsSettings 不符: %v", tlsS)
@@ -1914,12 +1878,14 @@ func renderSharedEndpointOutbound(route shared.SharedEndpointRoute, tag string) 
 6. 文件尾追加：
 ```go
 // renderHy2Outbound 渲染 hy2 直拨 outbound（Task 1 实测定稿形态）：
-// 客户端口令在 transport hysteriaSettings.auth；salamander/brutal/udpHop 在 finalmask；
-// 自签证书以 pinnedPeerCertSha256 钉住（hex），ACME 走系统根验证。
+// network 恒 "hysteria"、tlsSettings 带 alpn [h3]（两者缺失分别退化为 TCP 承载/
+// 握手失败）；客户端口令在 transport hysteriaSettings.auth；salamander/brutal/udpHop
+// 在 finalmask；自签证书以 pinnedPeerCertSha256 钉住（hex），ACME 走系统根验证。
 // 入口共享端点路由与链末段 forward（chain.go）共用。
 func renderHy2Outbound(tag string, dial shared.Hy2DialSpec) map[string]any {
 	tlsSettings := map[string]any{
 		"serverName":  dial.SNI,
+		"alpn":        []string{"h3"},
 		"fingerprint": shared.FingerprintChrome,
 	}
 	if dial.CertSHA256 != "" {
@@ -1954,6 +1920,7 @@ func renderHy2Outbound(tag string, dial shared.Hy2DialSpec) map[string]any {
 		fm["quicParams"] = quic
 	}
 	stream := map[string]any{
+		"network":          "hysteria",
 		"security":         "tls",
 		"tlsSettings":      tlsSettings,
 		"hysteriaSettings": map[string]any{"version": 2, "auth": dial.Auth},
