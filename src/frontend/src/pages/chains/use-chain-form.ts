@@ -77,6 +77,23 @@ export function isPlainNetwork(network: string): boolean {
   return network === 'ws' || network === 'httpupgrade'
 }
 
+// 与后端 shared 包保持一致（RealityNetworks）。
+const REALITY_NETWORKS = ['tcp', 'grpc', 'xhttp']
+
+/** 安全层可选项（镜像后端 normalize 矩阵）：trojan 不允许 none；reality 仅 tcp/grpc/xhttp。 */
+export function securityOptions(protocol: string, network: string): string[] {
+  const realityOK = REALITY_NETWORKS.includes(network)
+  if (protocol === 'trojan') return realityOK ? ['reality', 'tls'] : ['tls']
+  return realityOK ? ['reality', 'tls', 'none'] : ['tls', 'none']
+}
+
+/** 安全层纠偏：当前值不在可选项中时回退到首个（reality 兼容传输首选 reality，否则 tls 系首选 none/trojan 强制 tls）。 */
+export function coerceSecurity(protocol: string, network: string, security: string): string {
+  const options = securityOptions(protocol, network)
+  if (options.includes(security)) return security
+  return options.includes('reality') ? 'reality' : options.includes('none') ? 'none' : 'tls'
+}
+
 /** 入站能力（§21）：direct 或 NAT 受限直连（有端口段）。仅出口档 NAT 不能作入口/中间跳。 */
 export function inboundCapable(s: Server): boolean {
   return s.machine_type === 'direct' || s.allowed_ports.length > 0
@@ -128,6 +145,9 @@ export interface ChainFormState {
   host: string
   flow: string
   encryption: string
+  security: string
+  certMode: string
+  tlsDomain: string
   serviceName: string
   method: string
   cipher: string
@@ -159,6 +179,9 @@ const initialChainForm: ChainFormState = {
   host: '',
   flow: 'xtls-rprx-vision',
   encryption: 'none',
+  security: 'reality',
+  certMode: 'selfsign',
+  tlsDomain: '',
   serviceName: 'grpc',
   method: '2022-blake3-aes-128-gcm',
   cipher: 'auto',
@@ -293,6 +316,11 @@ export function useChainForm({
       protocol: String(virtual.protocol ?? service?.protocol ?? 'vless'),
       port: virtual.port ? String(virtual.port) : '',
       network: String(virtual.network || 'tcp'),
+      security: String(
+        virtual.security || (isPlainNetwork(String(virtual.network || 'tcp')) ? 'none' : 'reality'),
+      ),
+      certMode: String(virtual.cert_mode || 'selfsign'),
+      tlsDomain: String(virtual.tls_domain || ''),
       fingerprint: String(virtual.fingerprint || 'chrome'),
       flow: String(virtual.flow || 'none'),
       encryption: String(virtual.encryption || 'none'),
@@ -333,8 +361,9 @@ export function useChainForm({
     setForm((current) => ({
       ...current,
       network: value,
-      // 跨传输纠偏：vision flow 仅 tcp+reality
+      // 跨传输纠偏：vision flow 仅 tcp；security 按矩阵即时纠正（清理 #3）
       flow: value === 'tcp' ? current.flow : 'none',
+      security: coerceSecurity(current.protocol, value, current.security),
       // vless 明文传输必须有 VLESS Encryption 兜底（后端矩阵，前端即时纠正）
       encryption:
         current.protocol === 'vless' && isPlainNetwork(value) && current.encryption === 'none'
@@ -343,13 +372,19 @@ export function useChainForm({
     }))
   }
 
+  const onSecurityChange = (value: string | null) => {
+    if (!value) return
+    setForm((current) => ({ ...current, security: value }))
+  }
+
   const onProtocolChange = (value: string | null) => {
     if (!value) return
     setForm((current) => ({
       ...current,
       protocol: value,
-      // 跨协议纠偏：flow/encryption 仅 vless 有意义
+      // 跨协议纠偏：flow/encryption 仅 vless 有意义；security 按矩阵即时纠正（清理 #3）
       flow: value === 'vless' ? current.flow : 'none',
+      security: coerceSecurity(value, current.network, current.security),
       encryption:
         value === 'vless'
           ? isPlainNetwork(current.network) && current.encryption === 'none'
@@ -422,21 +457,24 @@ export function useChainForm({
     }
     if (isReality) {
       nodeBody.network = form.network
-      if (isPlainNetwork(form.network)) {
-        // ws/httpupgrade = security=none（后端按 network 推导）：不带 reality 字段
+      nodeBody.security = form.security
+      if (form.network === 'ws' || form.network === 'httpupgrade') {
         nodeBody.path = form.path.trim() || '/'
         if (form.host.trim()) {
           nodeBody.host = form.host.trim()
         }
-        if (form.protocol === 'trojan') {
-          setCreateError('trojan 使用 ws/httpupgrade 传输需 TLS 安全层（将在后续版本提供）')
-          return
+      }
+      if (form.network === 'xhttp') {
+        nodeBody.path = form.path.trim() || '/'
+        nodeBody.mode = form.mode
+        if (form.host.trim()) {
+          nodeBody.host = form.host.trim()
         }
-        if (form.protocol === 'vless' && form.encryption === 'none') {
-          setCreateError('vless 使用 ws/httpupgrade 传输时必须启用 VLESS Encryption')
-          return
-        }
-      } else {
+      }
+      if (form.network === 'grpc') {
+        nodeBody.service_name = form.serviceName.trim() || 'grpc'
+      }
+      if (form.security === 'reality') {
         nodeBody.fingerprint = form.fingerprint
         if (form.shortId.trim()) {
           nodeBody.short_id = form.shortId.trim()
@@ -452,18 +490,20 @@ export function useChainForm({
           nodeBody.server_names = names
         }
       }
-      if (form.network === 'xhttp') {
-        nodeBody.path = form.path.trim() || '/'
-        nodeBody.mode = form.mode
-        if (form.host.trim()) {
-          nodeBody.host = form.host.trim()
+      if (form.security === 'tls') {
+        nodeBody.fingerprint = form.fingerprint
+        nodeBody.cert_mode = form.certMode
+        // acme 的 tls_domain 由后端从落地服务器地址检测填充（前端不传）
+        if (form.certMode === 'selfsign' && form.tlsDomain.trim()) {
+          nodeBody.tls_domain = form.tlsDomain.trim()
         }
       }
-      if (form.network === 'grpc') {
-        nodeBody.service_name = form.serviceName.trim() || 'grpc'
+      if (form.security === 'none' && form.protocol === 'vless' && form.encryption === 'none') {
+        setCreateError('vless 在安全层 none 下必须启用 VLESS Encryption')
+        return
       }
       if (form.protocol === 'vless') {
-        // vision 仅 tcp；xhttp/ws/httpupgrade 必须无 flow；vision + Encryption 允许组合（§15）
+        // vision 仅 tcp；vision + Encryption 允许组合（§15）；tls 下 vision 同样合法（§2）
         nodeBody.flow = form.network === 'tcp' ? form.flow : 'none'
         if (form.encryption !== 'none') {
           nodeBody.encryption = form.encryption
@@ -547,6 +587,7 @@ export function useChainForm({
     onOpenChange,
     onTypeChange,
     onNetworkChange,
+    onSecurityChange,
     onProtocolChange,
     setMiddle,
     setMiddleAddr,

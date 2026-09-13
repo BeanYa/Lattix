@@ -39,6 +39,7 @@ import {
   XHTTP_MODES,
   inboundCapable,
   isPlainNetwork,
+  securityOptions,
   type ChainFormController,
 } from './use-chain-form'
 
@@ -156,6 +157,7 @@ export function ChainFormDialog({
     onOpenChange,
     onTypeChange,
     onNetworkChange,
+    onSecurityChange,
     onProtocolChange,
     setMiddle,
     setMiddleAddr,
@@ -163,6 +165,12 @@ export function ChainFormDialog({
   } = controller
   const serverSelectItems = servers.map((s) => ({ value: String(s.id), label: serverLabel(s) }))
   const plainNetwork = isPlainNetwork(form.network)
+  // 落地服务器（ACME 域名检测对象，§4）：直连=唯一服务器，中转=出口服务器。
+  const landingServer =
+    form.chainType === 'direct'
+      ? servers.find((s) => String(s.id) === form.entryId)
+      : servers.find((s) => String(s.id) === form.exitId)
+  const landingDomain = landingServer?.addresses.find((a) => addressFamily(a) === 'domain')
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto">
@@ -407,6 +415,98 @@ export function ChainFormDialog({
                   </SelectContent>
                 </Select>
               </div>
+              <div className="space-y-2">
+                <Label>安全层（security）</Label>
+                <Select
+                  value={form.security}
+                  onValueChange={onSecurityChange}
+                  items={securityOptions(form.protocol, form.network).map((s) => ({
+                    value: s,
+                    label:
+                      s === 'reality'
+                        ? 'Reality（推荐 · 抗封锁最强）'
+                        : s === 'tls'
+                          ? 'TLS（证书：自签伪装 / ACME 真实域名）'
+                          : 'none（明文 · 仅适合套 CDN）',
+                  }))}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {securityOptions(form.protocol, form.network).map((s) => (
+                      <SelectItem key={s} value={s}>
+                        {s === 'reality'
+                          ? 'Reality（推荐 · 抗封锁最强）'
+                          : s === 'tls'
+                            ? 'TLS（证书：自签伪装 / ACME 真实域名）'
+                            : 'none（明文 · 仅适合套 CDN）'}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {form.security === 'tls' && (
+                <div className="space-y-2">
+                  <Label id="cert-mode-label">证书模式</Label>
+                  <div
+                    role="radiogroup"
+                    aria-labelledby="cert-mode-label"
+                    className="grid grid-cols-2 gap-2"
+                  >
+                    <label className={cn('cg-chain-type', form.certMode === 'selfsign' && 'is-selected')}>
+                      <input
+                        type="radio"
+                        name="cert-mode"
+                        value="selfsign"
+                        checked={form.certMode === 'selfsign'}
+                        onChange={() => patch({ certMode: 'selfsign' })}
+                        className="sr-only"
+                      />
+                      伪装域名自签
+                    </label>
+                    <label
+                      className={cn(
+                        'cg-chain-type',
+                        form.certMode === 'acme' && 'is-selected',
+                        !landingDomain && 'opacity-50 pointer-events-none',
+                      )}
+                    >
+                      <input
+                        type="radio"
+                        name="cert-mode"
+                        value="acme"
+                        checked={form.certMode === 'acme'}
+                        disabled={!landingDomain}
+                        onChange={() => patch({ certMode: 'acme' })}
+                        className="sr-only"
+                      />
+                      使用落地服务器域名（ACME）
+                    </label>
+                  </div>
+                  {form.certMode === 'selfsign' ? (
+                    <>
+                      <Label htmlFor="tlsDomain">伪装域名（可空）</Label>
+                      <Input
+                        id="tlsDomain"
+                        value={form.tlsDomain}
+                        onChange={(e) => patch({ tlsDomain: e.target.value })}
+                        placeholder="留空从常见域名预设池随机选取"
+                      />
+                      <p className="cg-chain-hint">
+                        仅作 TLS 伪装身份（证书 CN/SAN 与客户端 SNI），不要求指向本机；
+                        订阅以证书指纹（pin）校验，客户端无需信任系统 CA。
+                      </p>
+                    </>
+                  ) : (
+                    <p className="cg-chain-hint">
+                      {landingDomain
+                        ? `将沿用落地服务器域名 ${landingDomain}，由节点自动安装 acme.sh 签发并续期（需域名解析指向本机、80 端口空闲）。`
+                        : '落地服务器未设置域名，请先在服务器地址中配置域名或改用自签模式。'}
+                    </p>
+                  )}
+                </div>
+              )}
               {form.network === 'xhttp' && (
                 <>
                   <div className="space-y-2">
@@ -480,8 +580,8 @@ export function ChainFormDialog({
                     />
                   </div>
                   <p className="cg-chain-hint">
-                    ws/httpupgrade 为明文传输（security=none），适合套 CDN；vless 需启用 VLESS
-                    Encryption，trojan 暂不支持（需 TLS，后续版本提供）。
+                    ws/httpupgrade 支持 none（明文 · 套 CDN）与 tls（证书）安全层；
+                    vless 选 none 时需启用 VLESS Encryption。
                   </p>
                 </>
               )}
@@ -527,7 +627,7 @@ export function ChainFormDialog({
                   </Select>
                 </div>
               )}
-              {!plainNetwork && (
+              {form.security !== 'none' && (
                 <div className="space-y-2">
                   <Label>uTLS 指纹（客户端）</Label>
                   <Select
@@ -547,7 +647,7 @@ export function ChainFormDialog({
                   </Select>
                 </div>
               )}
-              {!plainNetwork && (
+              {form.security === 'reality' && (
                 <div className="space-y-2">
                   <Label htmlFor="shortId">short_id</Label>
                   <Input
@@ -558,7 +658,7 @@ export function ChainFormDialog({
                   />
                 </div>
               )}
-              {!plainNetwork && (
+              {form.security === 'reality' && (
                 <RealityDestPicker
                   idPrefix="chain"
                   preset={form.destPreset}

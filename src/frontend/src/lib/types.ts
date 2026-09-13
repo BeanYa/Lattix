@@ -418,6 +418,9 @@ export interface CreateNodeRequest {
   server_names?: string[]
   fingerprint?: string
   network?: string
+  security?: string
+  cert_mode?: string
+  tls_domain?: string
   service_name?: string
   path?: string
   mode?: string
