@@ -16,6 +16,10 @@ WORK="$(mktemp -d)"
 XRAY_BIN="${XRAY_BIN:-$HOME/.cache/lattix-dev/xray-core/xray}"
 [[ -x "$XRAY_BIN" ]] || { echo "xray 不存在: $XRAY_BIN"; exit 1; }
 
+# VLESS Encryption 需带 vlessenc 子命令的 xray（§15）；缺失时跳过链4（vless+httpupgrade）。
+HAS_VLESSENC=true
+"$XRAY_BIN" vlessenc >/dev/null 2>&1 || HAS_VLESSENC=false
+
 ADDR="127.0.0.1:18116"
 API_A="127.0.0.1:14216"
 API_C="127.0.0.1:14226"
@@ -30,10 +34,12 @@ JAR="$WORK/cookies.txt"
 CSRF=""
 
 cleanup() {
-    kill ${BPID:-} ${APID_A:-} ${APID_C:-} ${XPID:-} ${BLOCKPID:-} 2>/dev/null || true
+    kill ${BPID:-} ${APID_A:-} ${APID_C:-} ${XPID:-} ${BLOCKPID:-} ${WSXPID:-} ${HUXPID:-} 2>/dev/null || true
     pkill -f "xray run -config $XRAY_CONFIG_A" 2>/dev/null || true
     pkill -f "xray run -config $XRAY_CONFIG_C" 2>/dev/null || true
     pkill -f "xray run -config $CLIENT_CONFIG" 2>/dev/null || true
+    pkill -f "xray run -config $WORK/client-ws.json" 2>/dev/null || true
+    pkill -f "xray run -config $WORK/client-hu.json" 2>/dev/null || true
     wait 2>/dev/null || true
     rm -rf "$WORK"
 }
@@ -105,16 +111,18 @@ wait_chain() {
 
 start_agent_a() {
     : > "$WORK/agent-a.log"
-    "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" ${1:+-token "$1"} -state "$WORK/agent-a.state.json" \
-        -settings "$WORK/agent-a.settings.json" \
+    mkdir -p "$WORK/agent-a"
+    "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" ${1:+-token "$1"} -state "$WORK/agent-a/state.json" \
+        -settings "$WORK/agent-a/settings.json" \
         -xray-bin "$XRAY_BIN" -xray-config "$XRAY_CONFIG_A" -xray-api "$API_A" -xray-runner exec \
         >>"$WORK/agent-a.log" 2>&1 &
     APID_A=$!
 }
 start_agent_c() {
     : > "$WORK/agent-c.log"
-    "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" ${1:+-token "$1"} -state "$WORK/agent-c.state.json" \
-        -settings "$WORK/agent-c.settings.json" \
+    mkdir -p "$WORK/agent-c"
+    "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" ${1:+-token "$1"} -state "$WORK/agent-c/state.json" \
+        -settings "$WORK/agent-c/settings.json" \
         -xray-bin "$XRAY_BIN" -xray-config "$XRAY_CONFIG_C" -xray-api "$API_C" -xray-runner exec \
         >>"$WORK/agent-c.log" 2>&1 &
     APID_C=$!
@@ -316,19 +324,163 @@ RETRY_CODE="$(rpc_code POST /api/chain/retry "{\"chain_id\":$CH2}")"
 [[ "$RETRY_CODE" == "INVALID_ARGUMENT" ]] && echo "OK: 非 failed 状态 retry 幂等拒绝（INVALID_ARGUMENT）" \
     || { echo "FAIL: 重复 retry 返回 $RETRY_CODE"; exit 1; }
 
-echo ">> 删链：链2 与链1"
+echo ">> UDP 中转管道：forward inbound 按出口协议分层"
+CH1_HOP="$(chain_field "$CH1" "c['hops'][0]['id']")"
+CH2_HOP="$(chain_field "$CH2" "c['hops'][0]['id']")"
+python3 - "$XRAY_CONFIG_A" "$CH1_HOP" "$CH2_HOP" <<'PY'
+import json, sys
+cfg = json.load(open(sys.argv[1]))
+def fwd(tag):
+    return next((i for i in cfg["inbounds"] if i.get("tag") == tag), None)
+vless_fwd = fwd(f"chainfwd_{sys.argv[2]}")
+ss_fwd = fwd(f"chainfwd_{sys.argv[3]}")
+assert vless_fwd and vless_fwd["settings"].get("network") == "tcp", vless_fwd
+assert ss_fwd and ss_fwd["settings"].get("network") == "tcp,udp", ss_fwd
+PY
+echo "OK: vless 链管道 tcp / ss 链管道 tcp,udp"
+# ss 链入口 UDP 层确在监听：同号 UDP 端口绑定应冲突
+python3 -c "import socket; socket.socket(socket.AF_INET, socket.SOCK_DGRAM).bind(('0.0.0.0', $BLOCK_PORT))" \
+    2>/dev/null && { echo "FAIL: ss 链入口 UDP $BLOCK_PORT 未被监听"; exit 1; } \
+    || echo "OK: ss 链入口 UDP 层已监听（绑定冲突证明）"
+
+echo ">> 链3（vmess+ws 中继，A=入口、C=出口）→ active → 真实流量"
+CHAIN3="$(rpc_data POST /api/chain/create "{\"entry\":{\"server_id\":$AID},\"exit\":{\"server_id\":$CID},\"node\":{\"protocol\":\"vmess\",\"network\":\"ws\",\"path\":\"/wsp\"}}")"
+CH3="$(py "d['id']" "$CHAIN3")"
+NID3="$(py "d['hops'][-1]['node_id']" "$CHAIN3")"
+wait_chain "$CH3" active 90 && echo "OK: vmess+ws 中继链 active"
+ENTRY3_PORT="$(chain_field "$CH3" "c['hops'][0]['forward_port']")"
+[[ "$ENTRY3_PORT" != "0" && -n "$ENTRY3_PORT" ]] || { echo "FAIL: 链3 入口端口"; exit 1; }
+# 非 vless 链无共享端点，不可经 chain_ids 分配（ValidateAssignableChains）；
+# 订阅链条件 = 出口 service node 在用户 node_ids 内（sub.go chainSubscriptionItem），
+# 条目凭据即用户自身 UUID（客户端经入口管道直连出口 vmess 入站）。
+rpc_data POST /api/user/set-nodes "{\"user_id\":$USER_ID1,\"node_ids\":[$NID3],\"chain_ids\":[$CH1]}" >/dev/null
+# 订阅断言：vmess 链条目 network=ws + ws-opts、无 reality-opts
+SUB3=""
+for _ in $(seq 1 20); do
+    SUB3="$(curl -s "http://$ADDR/sub/$SUB_TOKEN?format=clash")"
+    grep -q "type: vmess" <<<"$SUB3" && break
+    sleep 0.5
+done
+python3 - "$SUB3" "$ENTRY3_PORT" "$UUID1" <<'PY'
+import sys, yaml
+doc = yaml.safe_load(sys.argv[1])
+port, uuid = int(sys.argv[2]), sys.argv[3]
+vm = next(p for p in doc["proxies"] if p["type"] == "vmess")
+assert vm["network"] == "ws" and vm["port"] == port and vm["uuid"] == uuid, vm
+assert vm.get("ws-opts", {}).get("path") == "/wsp", vm
+assert "reality-opts" not in vm and not vm.get("tls"), vm
+PY
+echo "OK: 订阅 vmess+ws 条目（入口端口/用户 UUID/ws-opts/无 reality）"
+if [[ "${CHAINS_SKIP_EXTERNAL:-0}" != "1" ]]; then
+python3 - "$WORK/client-ws.json" "$ENTRY3_PORT" "$UUID1" <<'PY'
+import json, sys
+path, port, uuid = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+cfg = {
+    "log": {"loglevel": "warning"},
+    "inbounds": [{"tag": "socks", "listen": "127.0.0.1", "port": 11810,
+                  "protocol": "socks", "settings": {"auth": "noauth"}}],
+    "outbounds": [{
+        "tag": "proxy", "protocol": "vmess",
+        "settings": {"vnext": [{"address": "127.0.0.1", "port": port,
+                                "users": [{"id": uuid, "security": "auto"}]}]},
+        "streamSettings": {"network": "ws", "security": "none",
+                           "wsSettings": {"path": "/wsp"}}}],
+}
+json.dump(cfg, open(path, "w"), indent=2)
+PY
+"$XRAY_BIN" run -test -config "$WORK/client-ws.json" >/dev/null || { echo "FAIL: ws 客户端配置校验"; exit 1; }
+"$XRAY_BIN" run -config "$WORK/client-ws.json" >"$WORK/client-ws.log" 2>&1 &
+WSXPID=$!
+ok200=""
+for _ in $(seq 1 20); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' -x "socks5h://127.0.0.1:11810" --max-time 8 "$PROBE_URL" || true)"
+    [[ "$code" == "200" ]] && { ok200=1; break; }
+    sleep 2
+done
+kill $WSXPID 2>/dev/null || true
+[[ -n "$ok200" ]] && echo "OK: vmess+ws 中继链路 200（client→入口管道→reverse 隧道→出口）" \
+    || { echo "FAIL: vmess+ws 链路未通"; tail -n 5 "$WORK/client-ws.log"; exit 1; }
+fi
+
+if [[ "$HAS_VLESSENC" == "true" ]]; then
+echo ">> 链4（vless+httpupgrade+Encryption 中继，共享端点入口）→ active → 真实流量"
+CHAIN4="$(rpc_data POST /api/chain/create "{\"entry\":{\"server_id\":$AID},\"exit\":{\"server_id\":$CID},\"node\":{\"protocol\":\"vless\",\"network\":\"httpupgrade\",\"path\":\"/hu\",\"encryption\":\"mlkem768\"}}")"
+CH4="$(py "d['id']" "$CHAIN4")"
+wait_chain "$CH4" active 90
+for _ in $(seq 1 30); do
+    [[ "$(chain_field "$CH4" "c.get('endpoint_status','')")" == "active" ]] && break
+    sleep 1
+done
+EP4_PORT="$(chain_field "$CH4" "c['entry_port']")"
+EP4_ID="$(chain_field "$CH4" "c['endpoint_id']")"
+[[ -n "$EP4_PORT" && "$EP4_PORT" != "0" ]] || { echo "FAIL: 链4 端点未就绪: $(chain_field "$CH4" "c.get('endpoint_error','')")"; exit 1; }
+wait_chain "$CH4" active 30
+rpc_data POST /api/user/set-nodes "{\"user_id\":$USER_ID1,\"node_ids\":[$NID3],\"chain_ids\":[$CH1,$CH4]}" >/dev/null
+ACCESS_UUID4=""
+for _ in $(seq 1 15); do
+    ACCESS_UUID4="$(rpc_data GET /api/user/list | python3 -c "
+import json,sys
+u=next((x for x in json.load(sys.stdin) if x['id']==$USER_ID1), {})
+ca=[a for a in (u.get('chain_assignments') or []) if a.get('chain_id')==$CH4]
+print(ca[0]['access_uuid'] if ca else '')")"
+    [[ -n "$ACCESS_UUID4" ]] && break
+    sleep 1
+done
+[[ -n "$ACCESS_UUID4" ]] || { echo "FAIL: 未取到链4 assignment"; exit 1; }
+EP4_RC="$(db "SELECT realized_config FROM shared_endpoints WHERE id=$EP4_ID")"
+EP4_ENC="$(py "d.get('encryption') or ''" "$EP4_RC")"
+[[ "$EP4_ENC" == mlkem768x25519plus.* ]] || { echo "FAIL: 链4 端点 encryption 缺失: $EP4_RC"; exit 1; }
+if [[ "${CHAINS_SKIP_EXTERNAL:-0}" != "1" ]]; then
+python3 - "$WORK/client-hu.json" "$EP4_PORT" "$ACCESS_UUID4" "$EP4_ENC" <<'PY'
+import json, sys
+path, port, uuid, enc = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
+cfg = {
+    "log": {"loglevel": "warning"},
+    "inbounds": [{"tag": "socks", "listen": "127.0.0.1", "port": 11811,
+                  "protocol": "socks", "settings": {"auth": "noauth"}}],
+    "outbounds": [{
+        "tag": "proxy", "protocol": "vless",
+        "settings": {"vnext": [{"address": "127.0.0.1", "port": port,
+                                "users": [{"id": uuid, "encryption": enc}]}]},
+        "streamSettings": {"network": "httpupgrade", "security": "none",
+                           "httpupgradeSettings": {"path": "/hu"}}}],
+}
+json.dump(cfg, open(path, "w"), indent=2)
+PY
+"$XRAY_BIN" run -test -config "$WORK/client-hu.json" >/dev/null || { echo "FAIL: httpupgrade 客户端配置校验"; exit 1; }
+"$XRAY_BIN" run -config "$WORK/client-hu.json" >"$WORK/client-hu.log" 2>&1 &
+HUXPID=$!
+ok200=""
+for _ in $(seq 1 20); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' -x "socks5h://127.0.0.1:11811" --max-time 8 "$PROBE_URL" || true)"
+    [[ "$code" == "200" ]] && { ok200=1; break; }
+    sleep 2
+done
+kill $HUXPID 2>/dev/null || true
+[[ -n "$ok200" ]] && echo "OK: vless+httpupgrade 中继链路 200（client→端点→加密隧道→出口）" \
+    || { echo "FAIL: vless+httpupgrade 链路未通"; tail -n 5 "$WORK/client-hu.log"; exit 1; }
+fi
+else
+    echo "SKIP: xray 缺 vlessenc，跳过链4（vless+httpupgrade）"
+fi
+
+echo ">> 删链：链3（与链4，若创建）、链2 与链1"
+rpc_data POST /api/chain/delete "{\"chain_id\":$CH3}" >/dev/null
+[[ "$HAS_VLESSENC" == "true" ]] && rpc_data POST /api/chain/delete "{\"chain_id\":$CH4}" >/dev/null
 rpc_data POST /api/chain/delete "{\"chain_id\":$CH2}" >/dev/null
 rpc_data POST /api/chain/delete "{\"chain_id\":$CH1}" >/dev/null
+EXPECT_REMOVE=9
+[[ "$HAS_VLESSENC" == "true" ]] && EXPECT_REMOVE=12
 [[ "$(rpc_data GET /api/chain/list | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')" == "0" ]] \
     && echo "OK: 链行已消失" || { echo "FAIL: 链列表非空"; exit 1; }
 for _ in $(seq 1 30); do
     [[ "$(db "SELECT COUNT(*) FROM commands WHERE type IN ('chain-hop.remove','node.remove') AND status != 'acked'")" == "0" ]] && break
     sleep 1
 done
-[[ "$(db "SELECT COUNT(*) FROM commands WHERE type='chain-hop.remove'")" == "6" \
-&& "$(db "SELECT COUNT(*) FROM commands WHERE type='chain-hop.remove' AND status='acked'")" == "6" ]] \
-    && echo "OK: chain-hop.remove 全部 acked（两链 × forward/portal/bridge）" \
-    || { echo "FAIL: chain-hop.remove 未全部 acked"; db "SELECT type,status FROM commands"; exit 1; }
+[[ "$(db "SELECT COUNT(*) FROM commands WHERE type='chain-hop.remove'")" == "$EXPECT_REMOVE" \
+&& "$(db "SELECT COUNT(*) FROM commands WHERE type='chain-hop.remove' AND status='acked'")" == "$EXPECT_REMOVE" ]] \
+    && echo "OK: chain-hop.remove 全部 acked（$EXPECT_REMOVE 件）" \
+    || { echo "FAIL: chain-hop.remove 未全部 acked"; db "SELECT id,type,status,error,data FROM commands WHERE status='failed'"; exit 1; }
 [[ "$(rpc_data GET /api/node/list | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')" == "0" ]] \
     && echo "OK: 出口业务节点已删除" || { echo "FAIL: 节点残留"; exit 1; }
 sleep 1

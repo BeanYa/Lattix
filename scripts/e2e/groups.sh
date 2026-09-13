@@ -88,10 +88,11 @@ BOOT_A="$(py "d['bootstrap_token']" "$RA")"
 RC="$(rpc_data POST /api/server/create '{"country_code":"US","location":"Test","alias":"grp-c","address":"127.0.0.1"}')"
 CID="$(py "d['server']['id']" "$RC")"
 BOOT_C="$(py "d['bootstrap_token']" "$RC")"
-"$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "$BOOT_A" -state "$WORK/agent-a.state.json" \
+mkdir -p "$WORK/agent-a" "$WORK/agent-c"
+"$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "$BOOT_A" -state "$WORK/agent-a/state.json" \
     -xray-bin "$XRAY_BIN" -xray-config "$XRAY_CONFIG_A" -xray-api "$API_A" -xray-runner exec >"$WORK/agent-a.log" 2>&1 &
 APID_A=$!
-"$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "$BOOT_C" -state "$WORK/agent-c.state.json" \
+"$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -token "$BOOT_C" -state "$WORK/agent-c/state.json" \
     -xray-bin "$XRAY_BIN" -xray-config "$XRAY_CONFIG_C" -xray-api "$API_C" -xray-runner exec >"$WORK/agent-c.log" 2>&1 &
 APID_C=$!
 sleep 2

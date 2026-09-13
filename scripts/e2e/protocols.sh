@@ -11,6 +11,10 @@ WORK="$(mktemp -d)"
 XRAY_BIN="${XRAY_BIN:-$HOME/.cache/lattix-dev/xray-core/xray}"
 [[ -x "$XRAY_BIN" ]] || { echo "xray 不存在: $XRAY_BIN"; exit 1; }
 
+# VLESS Encryption 需带 vlessenc 子命令的 xray（§15）；缺失时跳过 vless+httpupgrade 用例。
+HAS_VLESSENC=true
+"$XRAY_BIN" vlessenc >/dev/null 2>&1 || HAS_VLESSENC=false
+
 ADDR="127.0.0.1:18099"
 API="127.0.0.1:14201"
 XRAY_CONFIG="$WORK/xray-config.json"
@@ -166,6 +170,26 @@ echo ">> vmess cipher=chacha20-poly1305"
 R="$(create_node '{"server_id":1,"protocol":"vmess","cipher":"chacha20-poly1305"}')"
 check_port "$R"
 
+echo ">> vmess ws（security=none 明文传输）"
+R="$(create_node '{"server_id":1,"protocol":"vmess","network":"ws","path":"/wsp","host":"cdn.example.com"}')"
+python3 -c 'import json,sys; rc=json.loads(sys.argv[1]); assert rc["network"]=="ws" and rc["path"]=="/wsp" and rc["host"]=="cdn.example.com" and rc.get("public_key","")=="" and rc.get("security")=="none", rc' "$R" && check_port "$R"
+
+echo ">> vless httpupgrade + VLESS Encryption（security=none 须带 Encryption，§2 脚注 1）"
+if [[ "$HAS_VLESSENC" == "true" ]]; then
+    R="$(create_node '{"server_id":1,"protocol":"vless","network":"httpupgrade","path":"/hu","encryption":"mlkem768"}')"
+    python3 -c 'import json,sys; rc=json.loads(sys.argv[1]); assert rc["network"]=="httpupgrade" and rc["path"]=="/hu" and rc.get("security")=="none" and rc.get("encryption","").startswith("mlkem768x25519plus."), rc' "$R" && check_port "$R"
+else
+    echo "SKIP: xray 缺 vlessenc 子命令，跳过 vless+httpupgrade 用例"
+fi
+
+echo ">> 矩阵外组合 400（reality×ws / trojan×ws / vless+ws 无 Encryption / ss 带传输层 / tls 未开放）"
+rpc_expect_fail POST /api/node/create '{"server_id":1,"protocol":"vmess","network":"ws","security":"reality"}'
+rpc_expect_fail POST /api/node/create '{"server_id":1,"protocol":"trojan","network":"ws"}'
+rpc_expect_fail POST /api/node/create '{"server_id":1,"protocol":"vless","network":"ws"}'
+rpc_expect_fail POST /api/node/create '{"server_id":1,"protocol":"shadowsocks","network":"ws"}'
+rpc_expect_fail POST /api/node/create '{"server_id":1,"protocol":"vmess","security":"tls"}'
+echo "   矩阵外组合均被 400 拦截 OK"
+
 echo ">> 端口冲突前置校验"
 CLASH_PORT=23456
 R="$(create_node "{\"server_id\":1,\"protocol\":\"trojan\",\"port\":$CLASH_PORT}")"
@@ -207,9 +231,30 @@ check "cipher: 2022-blake3-aes-128-gcm"
 check "cipher: aes-256-gcm"
 check "cipher: auto"
 check "cipher: chacha20-poly1305"
+check "ws-opts:"
+if [[ "$HAS_VLESSENC" == "true" ]]; then
+    check "v2ray-http-upgrade: true"
+fi
+LINKS_OUT="$(curl -s "http://$ADDR/sub/$SUB_TOKEN?format=links" | base64 -d)"
+# vmess:// 为 base64 JSON 整体编码，ws 传输需解码后断言 net=ws（vless/trojan 才是查询串 type=）。
+python3 - "$LINKS_OUT" <<'PY'
+import base64, json, sys
+links = sys.argv[1].splitlines()
+vmess = []
+for l in links:
+    if l.startswith("vmess://"):
+        s = l[len("vmess://"):]
+        vmess.append(json.loads(base64.b64decode(s + "=" * (-len(s) % 4))))
+assert any(v.get("net") == "ws" for v in vmess), links
+PY
+if [[ "$HAS_VLESSENC" == "true" ]]; then
+    grep -q "type=httpupgrade" <<<"$LINKS_OUT" || { echo "FAIL: links 缺 type=httpupgrade"; echo "$LINKS_OUT"; exit 1; }
+fi
 if grep -q "dokodemo" <<<"$SUB"; then echo "FAIL: 订阅不应包含 dokodemo 节点"; exit 1; fi
 PROXY_COUNT="$(grep -c 'server: ' <<<"$SUB")"
-[[ "$PROXY_COUNT" -eq 11 ]] || { echo "FAIL: 订阅应有 11 个代理（dokodemo 除外），实际 $PROXY_COUNT"; echo "$SUB"; exit 1; }
-echo "   11 个代理项、各协议字段 OK，dokodemo 已排除"
+EXPECTED=12
+[[ "$HAS_VLESSENC" == "true" ]] && EXPECTED=13
+[[ "$PROXY_COUNT" -eq "$EXPECTED" ]] || { echo "FAIL: 订阅应有 $EXPECTED 个代理（dokodemo 除外），实际 $PROXY_COUNT"; echo "$SUB"; exit 1; }
+echo "   $EXPECTED 个代理项、ws/httpupgrade 字段 OK，dokodemo 已排除"
 
 echo "E2E-PROTOCOLS PASS"
