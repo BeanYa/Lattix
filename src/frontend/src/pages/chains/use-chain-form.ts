@@ -24,8 +24,9 @@ export const DIRECT_PROTOCOLS = [
   'dokodemo-door',
 ] as const
 export const RELAY_PROTOCOLS = ['vless', 'vmess', 'trojan', 'shadowsocks', 'socks', 'http'] as const
-// 与后端 shared 包保持一致（ws/httpupgrade 为 security=none 明文传输；reality 仅 tcp/grpc/xhttp）。
-export const NETWORKS = ['tcp', 'xhttp', 'grpc', 'ws', 'httpupgrade']
+// 与后端 shared 包保持一致（顺序即 shared.Networks：tcp/grpc/xhttp 为 reality 兼容传输，
+// ws/httpupgrade 支持 tls/none 安全层）。
+export const NETWORKS = ['tcp', 'grpc', 'xhttp', 'ws', 'httpupgrade']
 export const SS_METHODS = [
   { value: '2022-blake3-aes-128-gcm', label: '2022-blake3-aes-128-gcm（推荐）' },
   { value: '2022-blake3-aes-256-gcm', label: '2022-blake3-aes-256-gcm' },

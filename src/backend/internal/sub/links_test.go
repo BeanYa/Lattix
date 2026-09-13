@@ -226,3 +226,44 @@ func TestQuanXSkipsPlainVLESS(t *testing.T) {
 		t.Errorf("QuanX 应跳过明文 vless，实际输出 %q", line)
 	}
 }
+
+// TestVMessShareLinkOmitsEmptySecurityKeys 验证 v2rayN 惯例：security=none 的 vmess
+// 分享 JSON 不携带空串 sni/fp/pbk/sid 键（P2 遗留清理 #5）。
+func TestVMessShareLinkOmitsEmptySecurityKeys(t *testing.T) {
+	rc := shared.RealizedConfig{Port: 8443, Network: shared.NetworkWS,
+		Path: "/p", Host: "h.example.com", Security: shared.SecurityNone}
+	link, ok := buildShareLink(testNode("1.2.3.4", shared.ProtocolVMess), rc, "uuid")
+	if !ok {
+		t.Fatal("vmess link unsupported")
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(link, "vmess://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"sni", "fp", "pbk", "sid"} {
+		if _, exists := m[k]; exists {
+			t.Errorf("security=none 不应携带空键 %q: %v", k, m)
+		}
+	}
+	if m["net"] != "ws" || m["host"] != "h.example.com" || m["path"] != "/p" {
+		t.Errorf("传输字段回归不符: %v", m)
+	}
+	// reality 回归：四个键必须仍在且非空。
+	rc2 := shared.RealizedConfig{Port: 8443, Network: shared.NetworkTCP,
+		Security: shared.SecurityReality, PublicKey: "pk", ShortID: "sid", ServerName: "dl.google.com"}
+	link2, _ := buildShareLink(testNode("1.2.3.4", shared.ProtocolVMess), rc2, "uuid")
+	raw2, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(link2, "vmess://"))
+	var m2 map[string]string
+	if err := json.Unmarshal(raw2, &m2); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"sni", "fp", "pbk", "sid"} {
+		if m2[k] == "" {
+			t.Errorf("reality 应携带非空 %q: %v", k, m2)
+		}
+	}
+}

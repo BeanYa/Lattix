@@ -161,6 +161,14 @@ func (s *Store) SetSharedEndpointActive(ctx context.Context, id int64, realized 
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	// 保留合并（P2 遗留清理）：新一轮 realized 未携带 encryption（非 Encryption 模板重发
+	// 或旧 agent 回写）时沿用库中已生效值，避免清空订阅依赖的 encryption 字段。
+	var prevRealized string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(realized_config,'') FROM shared_endpoints WHERE id=?`, id).Scan(&prevRealized); err != nil {
+		return err
+	}
+	realized = mergeEndpointRealized(realized, json.RawMessage(prevRealized))
 	result, err := tx.ExecContext(ctx, `UPDATE shared_endpoints SET port=?, realized_config=?, status=?,
 		error='', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN (?, ?)`,
 		value.Port, string(realized), EndpointStatusActive, id, EndpointStatusPending, EndpointStatusApplying)
@@ -173,6 +181,30 @@ func (s *Store) SetSharedEndpointActive(ctx context.Context, id int64, realized 
 		return fmt.Errorf("%w: endpoint %d cannot transition to active", ErrStateTransition, id)
 	}
 	return tx.Commit()
+}
+
+// mergeEndpointRealized 回写端点 realized 时保留既有 encryption：新值为空且旧值非空则沿用。
+func mergeEndpointRealized(next, prev json.RawMessage) json.RawMessage {
+	var n, p struct {
+		Encryption string `json:"encryption"`
+	}
+	if json.Unmarshal(next, &n) != nil || n.Encryption != "" {
+		return next
+	}
+	if json.Unmarshal(prev, &p) != nil || p.Encryption == "" {
+		return next
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(next, &m) != nil {
+		return next
+	}
+	enc, _ := json.Marshal(p.Encryption)
+	m["encryption"] = enc
+	merged, err := json.Marshal(m)
+	if err != nil {
+		return next
+	}
+	return merged
 }
 
 // SetSharedEndpointFailed 端点部署失败，携带错误详情。

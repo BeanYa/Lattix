@@ -317,3 +317,48 @@ func jsonNumber(value int64) string {
 	encoded, _ := json.Marshal(value)
 	return string(encoded)
 }
+
+// TestSetSharedEndpointActivePreservesEncryption 验证清理 #7：新一轮 realized 未携带
+// encryption 时沿用库中已生效值，不清空（订阅 encryption 字段依赖）。
+func TestSetSharedEndpointActivePreservesEncryption(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, ServerDraft{Alias: "entry", Address: "10.0.0.9",
+		BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"})
+	endpoint, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 14433,
+		"hash-enc", json.RawMessage(`{"protocol":"vless","template":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSharedEndpointApplying(ctx, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSharedEndpointActive(ctx, endpoint.ID,
+		json.RawMessage(`{"port":14433,"encryption":"mlkem768x25519plus.0rtt.XXX"}`)); err != nil {
+		t.Fatal(err)
+	}
+	// 重部署回写不含 encryption → 库中值必须保留。
+	if err := st.SetSharedEndpointApplying(ctx, endpoint.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSharedEndpointActive(ctx, endpoint.ID, json.RawMessage(`{"port":14433}`)); err != nil {
+		t.Fatal(err)
+	}
+	ep, err := st.SharedEndpointByID(ctx, endpoint.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rc struct {
+		Encryption string `json:"encryption"`
+	}
+	if err := json.Unmarshal(ep.RealizedConfig, &rc); err != nil {
+		t.Fatal(err)
+	}
+	if rc.Encryption != "mlkem768x25519plus.0rtt.XXX" {
+		t.Errorf("encryption 应保留，实际 %q（realized=%s）", rc.Encryption, ep.RealizedConfig)
+	}
+}

@@ -56,16 +56,22 @@ func buildShareLink(n store.Node, rc shared.RealizedConfig, uuid string) (string
 		setTransportQuery(q, rc)
 		return fmt.Sprintf("trojan://%s@%s?%s#%s", uuid, addr, q.Encode(), name), true
 	case shared.ProtocolVMess:
-		// vmess 分享为 base64(JSON)；reality 扩展字段按 v2rayN 惯例携带。
+		// vmess 分享为 base64(JSON)；空值的 sni/fp/pbk/sid 键按 v2rayN 惯例省略（P2 遗留清理）。
 		port := fmt.Sprintf("%d", rc.Port)
-		j, _ := json.Marshal(map[string]string{
+		fields := map[string]string{
 			"v": "2", "ps": name, "add": n.ServerAddress, "port": port,
 			"id": uuid, "aid": "0", "scy": vmessCipher(n.ConfigTemplate),
 			"net": rc.Network, "type": "none",
 			"host": rc.Host, "path": rc.Path,
-			"tls": vmessTLS(rc), "sni": rc.ServerName, "fp": rc.Fingerprint,
-			"pbk": rc.PublicKey, "sid": rc.ShortID,
-		})
+			"tls": vmessTLS(rc),
+		}
+		if rc.EffectiveSecurity() == shared.SecurityReality {
+			fields["sni"] = rc.ServerName
+			fields["fp"] = rc.Fingerprint
+			fields["pbk"] = rc.PublicKey
+			fields["sid"] = rc.ShortID
+		}
+		j, _ := json.Marshal(fields)
 		return "vmess://" + base64.StdEncoding.EncodeToString(j), true
 	case shared.ProtocolShadowsocks:
 		password := shared.SSUserPassword(uuid, rc.Method)

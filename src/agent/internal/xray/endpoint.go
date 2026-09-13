@@ -3,7 +3,6 @@ package xray
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"lattix/agent/internal/state"
 	"lattix/shared"
@@ -39,16 +38,9 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 		if prev.Port != 0 {
 			config.Port = prev.Port
 		}
-		if prev.PrivateKey != "" {
-			config.Template = json.RawMessage(strings.ReplaceAll(string(config.Template),
-				shared.PlaceholderRealityPrivateKey, prev.PrivateKey))
-		}
-		// VLESS Encryption 同理：decryption 预替换后 fillTemplate 不再轮换密钥对，
-		// 客户端字符串经 prev.Encryption 随 realized 稳定上报。
-		if _, _, decryption := extractPrevInbound(prev.Inbound); decryption != "" {
-			config.Template = json.RawMessage(strings.ReplaceAll(string(config.Template),
-				shared.PlaceholderVLessDecryption, decryption))
-		}
+		// 密钥对保留（重建同构，rebuild.go preserveTemplate）：占位符预替换后
+		// fillTemplate 不再轮换 Reality/VLESS Encryption 密钥对，既有订阅不失效。
+		config.Template = json.RawMessage(preserveTemplate(config, prev.Inbound))
 	}
 	portCandidates := endpointPortCandidates(config.Port, p.PortCandidates, prev)
 	// 重发幂等：同端点已落地端口直接复用（xray 运行中本就持有该端口，
