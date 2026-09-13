@@ -182,13 +182,25 @@ else
     echo "SKIP: xray 缺 vlessenc 子命令，跳过 vless+httpupgrade 用例"
 fi
 
-echo ">> 矩阵外组合 400（reality×ws / trojan×ws / vless+ws 无 Encryption / ss 带传输层 / tls 未开放）"
+echo ">> vless tls 自签（tcp；伪装域名留空=预设池随机）"
+R="$(create_node '{"server_id":1,"protocol":"vless","security":"tls","flow":"none"}')"
+python3 -c 'import json,sys,re; rc=json.loads(sys.argv[1]); assert rc.get("security")=="tls" and rc.get("sni") and re.fullmatch(r"[0-9a-f]{64}", rc.get("cert_sha256","")) and rc.get("public_key","")=="" , rc' "$R" && check_port "$R"
+
+echo ">> trojan ws + tls 自签（自定义伪装域名；P3 起合法）"
+R="$(create_node '{"server_id":1,"protocol":"trojan","network":"ws","path":"/tw","security":"tls","tls_domain":"cdn.example.com"}')"
+python3 -c 'import json,sys; rc=json.loads(sys.argv[1]); assert rc["network"]=="ws" and rc["path"]=="/tw" and rc.get("security")=="tls" and rc.get("sni")=="cdn.example.com" and len(rc.get("cert_sha256",""))==64, rc' "$R" && check_port "$R"
+TLS_NODE_ID="$(db "SELECT id FROM nodes WHERE protocol='vless' AND json_extract(realized_config,'$.security')='tls' ORDER BY id LIMIT 1")"
+TLS_SNI="$(db "SELECT json_extract(realized_config,'$.sni') FROM nodes WHERE id=$TLS_NODE_ID")"
+TLS_PIN="$(db "SELECT json_extract(realized_config,'$.cert_sha256') FROM nodes WHERE id=$TLS_NODE_ID")"
+
+echo ">> 矩阵外组合 400（reality×ws / trojan×ws 推导 none / vless+ws 无 Encryption / ss 带传输层 / acme 无域名 / cert_mode 未知）"
 rpc_expect_fail POST /api/node/create '{"server_id":1,"protocol":"vmess","network":"ws","security":"reality"}'
 rpc_expect_fail POST /api/node/create '{"server_id":1,"protocol":"trojan","network":"ws"}'
 rpc_expect_fail POST /api/node/create '{"server_id":1,"protocol":"vless","network":"ws"}'
 rpc_expect_fail POST /api/node/create '{"server_id":1,"protocol":"shadowsocks","network":"ws"}'
-rpc_expect_fail POST /api/node/create '{"server_id":1,"protocol":"vmess","security":"tls"}'
-echo "   矩阵外组合均被 400 拦截 OK"
+rpc_expect_fail POST /api/node/create '{"server_id":1,"protocol":"vmess","security":"tls","cert_mode":"acme"}'
+rpc_expect_fail POST /api/node/create '{"server_id":1,"protocol":"vmess","security":"tls","cert_mode":"bogus"}'
+echo "   矩阵外组合均被 400 拦截 OK（trojan×ws 仍需显式 tls；acme 在无域名服务器上前置 400）"
 
 echo ">> 端口冲突前置校验"
 CLASH_PORT=23456
@@ -236,6 +248,8 @@ if [[ "$HAS_VLESSENC" == "true" ]]; then
     check "v2ray-http-upgrade: true"
 fi
 LINKS_OUT="$(curl -s "http://$ADDR/sub/$SUB_TOKEN?format=links" | base64 -d)"
+grep -q "security=tls" <<<"$LINKS_OUT" || { echo "FAIL: links 缺 security=tls"; echo "$LINKS_OUT"; exit 1; }
+grep -q "allowInsecure=1" <<<"$LINKS_OUT" || { echo "FAIL: links 缺自签 allowInsecure=1"; echo "$LINKS_OUT"; exit 1; }
 # vmess:// 为 base64 JSON 整体编码，ws 传输需解码后断言 net=ws（vless/trojan 才是查询串 type=）。
 python3 - "$LINKS_OUT" <<'PY'
 import base64, json, sys
@@ -246,15 +260,72 @@ for l in links:
         s = l[len("vmess://"):]
         vmess.append(json.loads(base64.b64decode(s + "=" * (-len(s) % 4))))
 assert any(v.get("net") == "ws" for v in vmess), links
+# security=none 的 vmess 不携带空值 sni/fp/pbk/sid 键（清理 #5）
+plain = [v for v in vmess if v.get("tls") in ("", None)]
+assert all(not v.get("sni") and "pbk" not in v for v in plain), plain
+PY
+# mihomo pin 精确断言（64 位 hex fingerprint 与 realized 一致；勿用 grep "fingerprint: "——
+# reality 节点的 client-fingerprint: chrome 行含该子串，grep 恒真）
+python3 - "$SUB" "$TLS_PIN" <<'PY'
+import sys, yaml
+doc = yaml.safe_load(sys.argv[1])
+pin = sys.argv[2]
+pins = [p.get("fingerprint") for p in doc["proxies"]]
+assert pin in pins, (pin, pins)
 PY
 if [[ "$HAS_VLESSENC" == "true" ]]; then
     grep -q "type=httpupgrade" <<<"$LINKS_OUT" || { echo "FAIL: links 缺 type=httpupgrade"; echo "$LINKS_OUT"; exit 1; }
 fi
 if grep -q "dokodemo" <<<"$SUB"; then echo "FAIL: 订阅不应包含 dokodemo 节点"; exit 1; fi
 PROXY_COUNT="$(grep -c 'server: ' <<<"$SUB")"
-EXPECTED=12
-[[ "$HAS_VLESSENC" == "true" ]] && EXPECTED=13
+EXPECTED=14
+[[ "$HAS_VLESSENC" == "true" ]] && EXPECTED=15
 [[ "$PROXY_COUNT" -eq "$EXPECTED" ]] || { echo "FAIL: 订阅应有 $EXPECTED 个代理（dokodemo 除外），实际 $PROXY_COUNT"; echo "$SUB"; exit 1; }
 echo "   $EXPECTED 个代理项、ws/httpupgrade 字段 OK，dokodemo 已排除"
+
+echo ">> vless tls 自签数据面（pinnedPeerCertSha256 钉住证书）"
+TLS_PORT="$(db "SELECT json_extract(realized_config,'$.port') FROM nodes WHERE id=$TLS_NODE_ID")"
+UUID1="$(db "SELECT uuid FROM users WHERE id=1")"
+python3 - "$WORK/client-tls.json" "$TLS_PORT" "$UUID1" "$TLS_SNI" "$TLS_PIN" <<'PY'
+import json, sys
+path, port, uuid, sni, pin = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+cfg = {
+    "log": {"loglevel": "warning"},
+    "inbounds": [{"tag": "socks", "listen": "127.0.0.1", "port": 11812,
+                  "protocol": "socks", "settings": {"auth": "noauth"}}],
+    "outbounds": [{
+        "tag": "proxy", "protocol": "vless",
+        "settings": {"vnext": [{"address": "127.0.0.1", "port": port,
+                                "users": [{"id": uuid, "encryption": "none"}]}]},
+        "streamSettings": {"network": "tcp", "security": "tls",
+                           "tlsSettings": {"serverName": sni, "fingerprint": "chrome",
+                                           "pinnedPeerCertSha256": pin}}}],
+}
+json.dump(cfg, open(path, "w"), indent=2)
+PY
+"$XRAY_BIN" run -test -config "$WORK/client-tls.json" >/dev/null || { echo "FAIL: tls 客户端配置校验"; exit 1; }
+"$XRAY_BIN" run -config "$WORK/client-tls.json" >"$WORK/client-tls.log" 2>&1 &
+TLSXPID=$!
+ok200=""
+for _ in $(seq 1 20); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' -x "socks5h://127.0.0.1:11812" --max-time 8 https://example.com/ || true)"
+    [[ "$code" == "200" ]] && { ok200=1; break; }
+    sleep 2
+done
+kill $TLSXPID 2>/dev/null || true
+[[ -n "$ok200" ]] && echo "OK: vless tls 自签链路 200（pin 校验通过）" \
+    || { echo "FAIL: vless tls 链路未通"; tail -n 5 "$WORK/client-tls.log"; exit 1; }
+
+echo ">> ACME 模式：域名自检失败路径（落地服务器有域名但解析不含本机 → 节点 failed，错误指向性）"
+rpc_data POST /api/server/update '{"server_id":1,"address":"127.0.0.1","addresses":["127.0.0.1","acme-e2e.invalid"]}' >/dev/null
+ACME_RES="$(rpc_data POST /api/node/create '{"server_id":1,"protocol":"vmess","security":"tls","cert_mode":"acme"}')"
+ACME_ID="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["id"])' "$ACME_RES")"
+ACME_OUT="$(wait_node "$ACME_ID")"
+[[ "$ACME_OUT" == failed\|* ]] || { echo "FAIL: acme 节点应 failed: $ACME_OUT"; tail -5 "$WORK/agent.log"; exit 1; }
+python3 -c 'import sys; err=sys.argv[1].split("|")[2]; assert ("解析" in err) or ("acme" in err.lower()), err' "$ACME_OUT" \
+    && echo "OK: acme 节点 failed，错误指向域名解析/acme.sh（$(cut -d'|' -f3 <<<"$ACME_OUT" | head -c 80)…）"
+# 清理：删除失败节点并还原服务器地址，避免污染后续断言
+rpc_data POST /api/node/delete "{\"node_id\":$ACME_ID}" >/dev/null
+rpc_data POST /api/server/update '{"server_id":1,"address":"127.0.0.1","addresses":["127.0.0.1"]}' >/dev/null
 
 echo "E2E-PROTOCOLS PASS"

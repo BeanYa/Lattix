@@ -34,12 +34,13 @@ JAR="$WORK/cookies.txt"
 CSRF=""
 
 cleanup() {
-    kill ${BPID:-} ${APID_A:-} ${APID_C:-} ${XPID:-} ${BLOCKPID:-} ${WSXPID:-} ${HUXPID:-} 2>/dev/null || true
+    kill ${BPID:-} ${APID_A:-} ${APID_C:-} ${XPID:-} ${BLOCKPID:-} ${WSXPID:-} ${HUXPID:-} ${TCXPID:-} 2>/dev/null || true
     pkill -f "xray run -config $XRAY_CONFIG_A" 2>/dev/null || true
     pkill -f "xray run -config $XRAY_CONFIG_C" 2>/dev/null || true
     pkill -f "xray run -config $CLIENT_CONFIG" 2>/dev/null || true
     pkill -f "xray run -config $WORK/client-ws.json" 2>/dev/null || true
     pkill -f "xray run -config $WORK/client-hu.json" 2>/dev/null || true
+    pkill -f "xray run -config $WORK/client-tls-chain.json" 2>/dev/null || true
     wait 2>/dev/null || true
     rm -rf "$WORK"
 }
@@ -464,13 +465,77 @@ else
     echo "SKIP: xray 缺 vlessenc，跳过链4（vless+httpupgrade）"
 fi
 
-echo ">> 删链：链3（与链4，若创建）、链2 与链1"
+echo ">> 链5（vless+tcp+tls 中继，共享端点 tls 自签 + 出口 tls pin 隧道）→ active → 真实流量"
+CHAIN5="$(rpc_data POST /api/chain/create "{\"entry\":{\"server_id\":$AID},\"exit\":{\"server_id\":$CID},\"node\":{\"protocol\":\"vless\",\"security\":\"tls\",\"flow\":\"none\"}}")"
+CH5="$(py "d['id']" "$CHAIN5")"
+wait_chain "$CH5" active 90
+for _ in $(seq 1 30); do
+    [[ "$(chain_field "$CH5" "c.get('endpoint_status','')")" == "active" ]] && break
+    sleep 1
+done
+EP5_PORT="$(chain_field "$CH5" "c['entry_port']")"
+EP5_ID="$(chain_field "$CH5" "c['endpoint_id']")"
+[[ -n "$EP5_PORT" && "$EP5_PORT" != "0" ]] || { echo "FAIL: 链5 端点未就绪: $(chain_field "$CH5" "c.get('endpoint_error','')")"; exit 1; }
+wait_chain "$CH5" active 30
+# CH3（vmess）无共享端点，不可经 chain_ids 分配（ValidateAssignableChains）；其订阅条件由 node_ids 维持
+rpc_data POST /api/user/set-nodes "{\"user_id\":$USER_ID1,\"node_ids\":[$NID3],\"chain_ids\":[$CH1,$CH5]}" >/dev/null
+ACCESS_UUID5=""
+for _ in $(seq 1 15); do
+    ACCESS_UUID5="$(rpc_data GET /api/user/list | python3 -c "
+import json,sys
+u=next((x for x in json.load(sys.stdin) if x['id']==$USER_ID1), {})
+ca=[a for a in (u.get('chain_assignments') or []) if a.get('chain_id')==$CH5]
+print(ca[0]['access_uuid'] if ca else '')")"
+    [[ -n "$ACCESS_UUID5" ]] && break
+    sleep 1
+done
+[[ -n "$ACCESS_UUID5" ]] || { echo "FAIL: 未取到链5 assignment"; exit 1; }
+EP5_RC="$(db "SELECT realized_config FROM shared_endpoints WHERE id=$EP5_ID")"
+EP5_SNI="$(py "d.get('sni') or ''" "$EP5_RC")"
+EP5_PIN="$(py "d.get('cert_sha256') or ''" "$EP5_RC")"
+[[ -n "$EP5_SNI" && "${#EP5_PIN}" == "64" ]] || { echo "FAIL: 链5 端点 tls realized 缺失: $EP5_RC"; exit 1; }
+# 出口 realized 也是 tls（隧道段 outbound 的 pin 来源）
+CH5_EXIT_SNI="$(chain_field "$CH5" "json.loads(c['hops'][-1].get('service_realized') or '{}').get('sni','')" 2>/dev/null || true)"
+if [[ "${CHAINS_SKIP_EXTERNAL:-0}" != "1" ]]; then
+python3 - "$WORK/client-tls-chain.json" "$EP5_PORT" "$ACCESS_UUID5" "$EP5_SNI" "$EP5_PIN" <<'PY'
+import json, sys
+path, port, uuid, sni, pin = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+cfg = {
+    "log": {"loglevel": "warning"},
+    "inbounds": [{"tag": "socks", "listen": "127.0.0.1", "port": 11813,
+                  "protocol": "socks", "settings": {"auth": "noauth"}}],
+    "outbounds": [{
+        "tag": "proxy", "protocol": "vless",
+        "settings": {"vnext": [{"address": "127.0.0.1", "port": port,
+                                "users": [{"id": uuid, "encryption": "none"}]}]},
+        "streamSettings": {"network": "tcp", "security": "tls",
+                           "tlsSettings": {"serverName": sni, "fingerprint": "chrome",
+                                           "pinnedPeerCertSha256": pin}}}],
+}
+json.dump(cfg, open(path, "w"), indent=2)
+PY
+"$XRAY_BIN" run -test -config "$WORK/client-tls-chain.json" >/dev/null || { echo "FAIL: 链5 客户端配置校验"; exit 1; }
+"$XRAY_BIN" run -config "$WORK/client-tls-chain.json" >"$WORK/client-tls-chain.log" 2>&1 &
+TCXPID=$!
+ok200=""
+for _ in $(seq 1 20); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' -x "socks5h://127.0.0.1:11813" --max-time 8 "$PROBE_URL" || true)"
+    [[ "$code" == "200" ]] && { ok200=1; break; }
+    sleep 2
+done
+kill $TCXPID 2>/dev/null || true
+[[ -n "$ok200" ]] && echo "OK: vless tls 中继链路 200（client→tls 端点→pin 隧道段→tls 出口）" \
+    || { echo "FAIL: vless tls 中继链路未通"; tail -n 5 "$WORK/client-tls-chain.log"; exit 1; }
+fi
+
+echo ">> 删链：链3（与链4，若创建）、链5、链2 与链1"
 rpc_data POST /api/chain/delete "{\"chain_id\":$CH3}" >/dev/null
 [[ "$HAS_VLESSENC" == "true" ]] && rpc_data POST /api/chain/delete "{\"chain_id\":$CH4}" >/dev/null
+rpc_data POST /api/chain/delete "{\"chain_id\":$CH5}" >/dev/null
 rpc_data POST /api/chain/delete "{\"chain_id\":$CH2}" >/dev/null
 rpc_data POST /api/chain/delete "{\"chain_id\":$CH1}" >/dev/null
-EXPECT_REMOVE=9
-[[ "$HAS_VLESSENC" == "true" ]] && EXPECT_REMOVE=12
+EXPECT_REMOVE=12
+[[ "$HAS_VLESSENC" == "true" ]] && EXPECT_REMOVE=15
 [[ "$(rpc_data GET /api/chain/list | python3 -c 'import json,sys;print(len(json.load(sys.stdin)))')" == "0" ]] \
     && echo "OK: 链行已消失" || { echo "FAIL: 链列表非空"; exit 1; }
 for _ in $(seq 1 30); do
