@@ -20,8 +20,9 @@ func sharedEndpointRouteTag(endpointID, chainID int64) string {
 }
 
 // ApplySharedEndpoint atomically replaces a server-level listener and all of
-// its chain routes. Reapplying preserves the Reality key pair and realized
-// port, so assignment changes do not invalidate existing subscriptions.
+// its chain routes. Reapplying preserves the Reality key pair, the VLESS
+// Encryption pair and realized port, so assignment changes do not invalidate
+// existing subscriptions.
 func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*shared.RealizedConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -41,6 +42,12 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 		if prev.PrivateKey != "" {
 			config.Template = json.RawMessage(strings.ReplaceAll(string(config.Template),
 				shared.PlaceholderRealityPrivateKey, prev.PrivateKey))
+		}
+		// VLESS Encryption 同理：decryption 预替换后 fillTemplate 不再轮换密钥对，
+		// 客户端字符串经 prev.Encryption 随 realized 稳定上报。
+		if _, _, decryption := extractPrevInbound(prev.Inbound); decryption != "" {
+			config.Template = json.RawMessage(strings.ReplaceAll(string(config.Template),
+				shared.PlaceholderVLessDecryption, decryption))
 		}
 	}
 	portCandidates := endpointPortCandidates(config.Port, p.PortCandidates, prev)
@@ -63,10 +70,14 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 		if realized.PublicKey == "" {
 			realized.PublicKey = prev.PublicKey
 		}
+		if realized.Encryption == "" {
+			realized.Encryption = prev.Encryption
+		}
 	}
 	rec := state.ChainPiece{
 		HopID: p.EndpointID, Kind: sharedEndpointPieceKind, Port: realized.Port,
-		PrivateKey: privateKey, PublicKey: realized.PublicKey, Inbound: inbound,
+		PrivateKey: privateKey, PublicKey: realized.PublicKey, Encryption: realized.Encryption,
+		Inbound: inbound,
 	}
 	for _, route := range p.Routes {
 		if route.ChainID <= 0 || len(route.Users) == 0 {

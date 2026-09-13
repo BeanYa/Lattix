@@ -97,6 +97,7 @@ type ChainPiece struct {
 	Port       int               `json:"port,omitempty"`        // portal/forward：已分配端口
 	PrivateKey string            `json:"private_key,omitempty"` // portal：Reality 私钥（不出本机）
 	PublicKey  string            `json:"public_key,omitempty"`  // portal：对应公钥（回执值）
+	Encryption string            `json:"encryption,omitempty"`  // shared endpoint：VLESS Encryption 客户端字符串（回执值，重发复用）
 	Inbound    json.RawMessage   `json:"inbound,omitempty"`     // portal/forward 的 inbound
 	Outbound   json.RawMessage   `json:"outbound,omitempty"`    // bridge 的 interconn outbound
 	Outbounds  []json.RawMessage `json:"outbounds,omitempty"`   // shared endpoint 的逐链 outbound

@@ -145,6 +145,75 @@ func TestApplySharedEndpointReapplyWhilePortHeld(t *testing.T) {
 	}
 }
 
+// TestApplySharedEndpointPreservesEncryption 验证重发保留 VLESS Encryption 密钥对：
+// 用户分配扇出会整端点重发 apply_shared_endpoint（ReconcileSharedEndpoint），
+// 若每次重发都重新执行 xray vlessenc，realized 的客户端字符串随之轮换，
+// 已发布订阅立即失效。decryption 须随 prev inbound 预替换进模板，客户端字符串
+// 随 state 复用——重发后 realized.Encryption 不变且不再调用 vlessenc。
+func TestApplySharedEndpointPreservesEncryption(t *testing.T) {
+	dir := t.TempDir()
+	counter := filepath.Join(dir, "vlessenc.count")
+	bin := filepath.Join(dir, "xray")
+	script := fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  vlessenc)
+    n=$(cat "%[1]s" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "%[1]s"
+    echo 'Authentication: ML-KEM-768'
+    echo "\"decryption\": \"dec$n\""
+    echo "\"encryption\": \"enc$n\"";;
+  *) exit 0;;
+esac
+`, counter)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mgr := NewManager(bin, filepath.Join(dir, "xray.json"), "127.0.0.1:19085", &telemetryTestRunner{})
+	payload := shared.ApplySharedEndpointPayload{
+		EndpointID: 11,
+		Config: shared.VirtualConfig{
+			Protocol:   shared.ProtocolVLESS,
+			Encryption: shared.VLessEncMLKEM768,
+			Template: json.RawMessage(`{
+				"tag": "{{TAG}}", "listen": "0.0.0.0", "port": "{{PORT}}",
+				"protocol": "vless",
+				"settings": {"clients": "{{CLIENTS}}", "decryption": "{{DECRYPTION}}"},
+				"streamSettings": {"network": "httpupgrade", "httpupgradeSettings": {"path": "/hu"}}
+			}`),
+		},
+	}
+
+	first, err := mgr.ApplySharedEndpoint(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Encryption != "enc1" {
+		t.Fatalf("首发应使用 vlessenc 生成的客户端字符串，实际 %q", first.Encryption)
+	}
+
+	// 模拟用户分配扇出触发的重发（仅 Clients 变化）。
+	payload.Clients = []shared.ClientCredential{{ID: "access-1", Email: "access:1"}}
+	again, err := mgr.ApplySharedEndpoint(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Encryption != first.Encryption {
+		t.Fatalf("重发不得轮换 Encryption 客户端字符串：%q → %q", first.Encryption, again.Encryption)
+	}
+	if n, _ := os.ReadFile(counter); strings.TrimSpace(string(n)) != "1" {
+		t.Fatalf("重发不应再执行 xray vlessenc，计数 = %q", strings.TrimSpace(string(n)))
+	}
+	// 落地 inbound 的 decryption 同样稳定（服务端私钥侧未轮换）。
+	var ib struct {
+		Settings struct {
+			Decryption string `json:"decryption"`
+		} `json:"settings"`
+	}
+	piece := mgr.findChainPiece(11, sharedEndpointPieceKind)
+	if piece == nil || json.Unmarshal(piece.Inbound, &ib) != nil || ib.Settings.Decryption != "dec1" {
+		t.Fatalf("重发后 inbound decryption 应仍为 dec1: %+v", piece)
+	}
+}
+
 // TestApplySharedEndpointHonorsNatCandidates 验证 NAT 受限机：面板下发段内候选时按序挑选。
 func TestApplySharedEndpointHonorsNatCandidates(t *testing.T) {
 	mgr := newTestEndpointManager(t)
