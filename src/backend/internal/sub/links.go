@@ -29,11 +29,19 @@ func buildShareLink(n store.Node, rc shared.RealizedConfig, uuid string) (string
 		q.Set("type", rc.Network)
 		security := rc.EffectiveSecurity()
 		q.Set("security", security)
-		if security == shared.SecurityReality {
+		switch security {
+		case shared.SecurityReality:
 			q.Set("pbk", rc.PublicKey)
 			q.Set("sid", rc.ShortID)
 			q.Set("sni", rc.ServerName)
 			q.Set("fp", rc.Fingerprint)
+		case shared.SecurityTLS:
+			q.Set("sni", rc.SNI)
+			q.Set("fp", rc.Fingerprint)
+			if rc.CertSHA256 != "" {
+				// 自签：URI 无 pin 表达，回退 allowInsecure（§3.4 开箱即用）。
+				q.Set("allowInsecure", "1")
+			}
 		}
 		if rc.Flow != "" {
 			q.Set("flow", rc.Flow)
@@ -48,11 +56,21 @@ func buildShareLink(n store.Node, rc shared.RealizedConfig, uuid string) (string
 	case shared.ProtocolTrojan:
 		q := url.Values{}
 		q.Set("type", rc.Network)
-		q.Set("security", "reality")
-		q.Set("pbk", rc.PublicKey)
-		q.Set("sid", rc.ShortID)
-		q.Set("sni", rc.ServerName)
-		q.Set("fp", rc.Fingerprint)
+		security := rc.EffectiveSecurity()
+		q.Set("security", security)
+		if security == shared.SecurityReality {
+			q.Set("pbk", rc.PublicKey)
+			q.Set("sid", rc.ShortID)
+			q.Set("sni", rc.ServerName)
+			q.Set("fp", rc.Fingerprint)
+		} else {
+			// tls（矩阵不允许 trojan×none）：sni=SNI；自签回退 allowInsecure。
+			q.Set("sni", rc.SNI)
+			q.Set("fp", rc.Fingerprint)
+			if rc.CertSHA256 != "" {
+				q.Set("allowInsecure", "1")
+			}
+		}
 		setTransportQuery(q, rc)
 		return fmt.Sprintf("trojan://%s@%s?%s#%s", uuid, addr, q.Encode(), name), true
 	case shared.ProtocolVMess:
@@ -70,6 +88,10 @@ func buildShareLink(n store.Node, rc shared.RealizedConfig, uuid string) (string
 			fields["fp"] = rc.Fingerprint
 			fields["pbk"] = rc.PublicKey
 			fields["sid"] = rc.ShortID
+		}
+		if rc.EffectiveSecurity() == shared.SecurityTLS {
+			fields["sni"] = rc.SNI
+			fields["fp"] = rc.Fingerprint
 		}
 		j, _ := json.Marshal(fields)
 		return "vmess://" + base64.StdEncoding.EncodeToString(j), true
@@ -104,10 +126,13 @@ func setTransportQuery(q url.Values, rc shared.RealizedConfig) {
 	}
 }
 
-// vmessTLS 是 vmess 分享 JSON 的 tls 字段：reality → "reality"，无安全层 → 空串。
+// vmessTLS 是 vmess 分享 JSON 的 tls 字段：reality/tls 原样，无安全层 → 空串。
 func vmessTLS(rc shared.RealizedConfig) string {
-	if rc.EffectiveSecurity() == shared.SecurityReality {
+	switch rc.EffectiveSecurity() {
+	case shared.SecurityReality:
 		return "reality"
+	case shared.SecurityTLS:
+		return "tls"
 	}
 	return ""
 }

@@ -50,18 +50,34 @@ func buildQuanXLine(n store.Node, rc shared.RealizedConfig, uuid string) string 
 		}
 		return strings.Join(parts, ", ")
 	case shared.ProtocolTrojan:
-		if rc.EffectiveSecurity() != shared.SecurityReality {
-			return "" // QuanX 仅输出 reality 形态（ws/httpupgrade + none 跳过，§3.4 尽力而为）
+		security := rc.EffectiveSecurity()
+		if security == shared.SecurityTLS && rc.CertSHA256 != "" {
+			return "" // 自签无 pin/insecure 表达，跳过（§3.4 尽力而为）
+		}
+		if security != shared.SecurityReality && security != shared.SecurityTLS {
+			return "" // QuanX 仅输出 reality/tls 形态（none 跳过）
+		}
+		sni := rc.ServerName
+		if security == shared.SecurityTLS {
+			sni = rc.SNI
 		}
 		parts := []string{
 			fmt.Sprintf("trojan=%s", addr),
 			fmt.Sprintf("password=%s", uuid),
 			"obfs=over-tls",
-			fmt.Sprintf("obfs-host=%s", rc.ServerName),
+			fmt.Sprintf("obfs-host=%s", sni),
 			"tls13=true",
 			"fast-open=false",
 			"udp-relay=true",
 			fmt.Sprintf("tag=%s", name),
+		}
+		if security == shared.SecurityReality {
+			if rc.PublicKey != "" {
+				parts = append(parts, fmt.Sprintf("reality-pubkey=%s", rc.PublicKey))
+			}
+			if rc.ShortID != "" {
+				parts = append(parts, fmt.Sprintf("reality-hexid=%s", rc.ShortID))
+			}
 		}
 		return strings.Join(parts, ", ")
 	case shared.ProtocolShadowsocks:

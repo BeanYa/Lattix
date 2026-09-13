@@ -293,6 +293,7 @@ type clashProxy struct {
 
 	RealityOpts       *clashRealityOpts `yaml:"reality-opts,omitempty"`
 	ClientFingerprint string            `yaml:"client-fingerprint,omitempty"`
+	Fingerprint       string            `yaml:"fingerprint,omitempty"` // 证书 sha256 pin（自签 tls）
 	GrpcOpts          *clashGrpcOpts    `yaml:"grpc-opts,omitempty"`
 	XhttpOpts         *clashXHTTPOpts   `yaml:"xhttp-opts,omitempty"`
 	H2Opts            *clashH2Opts      `yaml:"h2-opts,omitempty"`
@@ -793,11 +794,14 @@ func buildProxy(n store.Node, rc shared.RealizedConfig, uuid string) (clashProxy
 		p.Network = rc.Network
 		p.Flow = rc.Flow
 		p.Encryption = rc.Encryption
-		if rc.EffectiveSecurity() == shared.SecurityReality {
+		switch rc.EffectiveSecurity() {
+		case shared.SecurityReality:
 			p.TLS = true
 			p.Servername = rc.ServerName
 			applyReality(&p, rc)
-		} else {
+		case shared.SecurityTLS:
+			applyTLS(&p, rc)
+		default:
 			applyPlainTransport(&p, rc)
 		}
 	case shared.ProtocolVMess:
@@ -806,18 +810,26 @@ func buildProxy(n store.Node, rc shared.RealizedConfig, uuid string) (clashProxy
 		p.AlterID = &zero
 		p.Cipher = vmessCipher(n.ConfigTemplate)
 		p.Network = rc.Network
-		if rc.EffectiveSecurity() == shared.SecurityReality {
+		switch rc.EffectiveSecurity() {
+		case shared.SecurityReality:
 			p.TLS = true
 			p.Servername = rc.ServerName
 			applyReality(&p, rc)
-		} else {
+		case shared.SecurityTLS:
+			applyTLS(&p, rc)
+		default:
 			applyPlainTransport(&p, rc)
 		}
 	case shared.ProtocolTrojan:
 		p.Password = uuid
 		p.Network = rc.Network
-		p.SNI = rc.ServerName
-		applyReality(&p, rc)
+		if rc.EffectiveSecurity() == shared.SecurityReality {
+			p.SNI = rc.ServerName
+			applyReality(&p, rc)
+		} else {
+			// tls（矩阵不允许 trojan×none）：普通 TLS 输出（清理 #2：不再无条件 applyReality）。
+			applyTLS(&p, rc)
+		}
 	case shared.ProtocolShadowsocks:
 		p.Type = "ss" // mihomo 类型名
 		p.Cipher = rc.Method
@@ -875,4 +887,20 @@ func applyPlainTransport(p *clashProxy, rc shared.RealizedConfig) {
 		}
 		p.WsOpts = &opts
 	}
+}
+
+// applyTLS 填充普通 tls（非 reality）安全层：servername/sni=SNI + uTLS 指纹 + 传输选项；
+// 自签（CertSHA256 非空）输出证书 pin（mihomo fingerprint），ACME 走系统根验证（§3.4）。
+func applyTLS(p *clashProxy, rc shared.RealizedConfig) {
+	p.TLS = true
+	if p.Type == shared.ProtocolTrojan {
+		p.SNI = rc.SNI // mihomo trojan 的 SNI 字段名为 sni
+	} else {
+		p.Servername = rc.SNI
+	}
+	p.ClientFingerprint = rc.Fingerprint
+	if rc.CertSHA256 != "" {
+		p.Fingerprint = rc.CertSHA256
+	}
+	applyPlainTransport(p, rc)
 }

@@ -267,3 +267,139 @@ func TestVMessShareLinkOmitsEmptySecurityKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildShareLinkTLS 验证 tls 分享链接：vless/trojan URI 带 security=tls+sni，
+// 自签（CertSHA256 非空）回退 allowInsecure=1（URI 无 pin 表达）；ACME 无 insecure。
+func TestBuildShareLinkTLS(t *testing.T) {
+	rc := shared.RealizedConfig{Port: 8443, Network: shared.NetworkTCP, Security: shared.SecurityTLS,
+		SNI: "cdn.example.com", CertSHA256: strings.Repeat("ab", 32), Fingerprint: shared.FingerprintChrome}
+	link, ok := buildShareLink(testNode("1.2.3.4", shared.ProtocolVLESS), rc, "uuid")
+	if !ok {
+		t.Fatal("vless tls link unsupported")
+	}
+	for _, want := range []string{"security=tls", "sni=cdn.example.com", "allowInsecure=1"} {
+		if !strings.Contains(link, want) {
+			t.Errorf("vless tls 自签链接缺 %q: %s", want, link)
+		}
+	}
+	if strings.Contains(link, "pbk=") {
+		t.Errorf("tls 链接不应含 reality 参数: %s", link)
+	}
+	// trojan + ws + tls（P3 合法化组合）
+	rc.Network = shared.NetworkWS
+	rc.Path = "/tw"
+	link, ok = buildShareLink(testNode("1.2.3.4", shared.ProtocolTrojan), rc, "uuid")
+	if !ok {
+		t.Fatal("trojan tls link unsupported")
+	}
+	for _, want := range []string{"trojan://", "security=tls", "sni=cdn.example.com", "type=ws", "path=%2Ftw", "allowInsecure=1"} {
+		if !strings.Contains(link, want) {
+			t.Errorf("trojan ws tls 链接缺 %q: %s", want, link)
+		}
+	}
+	// ACME：无 allowInsecure
+	rc.CertSHA256 = ""
+	link, _ = buildShareLink(testNode("1.2.3.4", shared.ProtocolVLESS), rc, "uuid")
+	if strings.Contains(link, "allowInsecure") {
+		t.Errorf("ACME 链接不应含 allowInsecure: %s", link)
+	}
+	// vmess JSON：tls=tls + sni（无 pin/insecure 表达）
+	rc.Security = shared.SecurityTLS
+	rc.CertSHA256 = strings.Repeat("ab", 32)
+	link, ok = buildShareLink(testNode("1.2.3.4", shared.ProtocolVMess), rc, "uuid")
+	if !ok {
+		t.Fatal("vmess tls link unsupported")
+	}
+	raw, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(link, "vmess://"))
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["tls"] != "tls" || m["sni"] != "cdn.example.com" {
+		t.Errorf("vmess tls JSON 不符: %v", m)
+	}
+	if _, exists := m["pbk"]; exists {
+		t.Errorf("tls 的 vmess JSON 不应含 pbk: %v", m)
+	}
+}
+
+// TestBuildProxyTLS 验证 mihomo 输出：tls + servername + client-fingerprint；
+// 自签输出证书 pin（fingerprint）；trojan 走 sni 字段（清理 #2 分流）。
+func TestBuildProxyTLS(t *testing.T) {
+	rc := shared.RealizedConfig{Port: 8443, Network: shared.NetworkWS, Path: "/p",
+		Security: shared.SecurityTLS, SNI: "cdn.example.com",
+		CertSHA256: strings.Repeat("ab", 32), Fingerprint: shared.FingerprintChrome}
+	p, err := buildProxy(testNode("1.2.3.4", shared.ProtocolVMess), rc, "uuid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.TLS || p.Servername != "cdn.example.com" || p.RealityOpts != nil {
+		t.Errorf("vmess tls 代理项不符: %+v", p)
+	}
+	if p.Fingerprint != strings.Repeat("ab", 32) {
+		t.Errorf("自签应输出 pin: %+v", p)
+	}
+	if p.WsOpts == nil || p.WsOpts.Path != "/p" {
+		t.Errorf("tls+ws 传输选项不符: %+v", p.WsOpts)
+	}
+	// trojan：sni 字段 + pin（清理 #2：不再无条件 applyReality）
+	p, err = buildProxy(testNode("1.2.3.4", shared.ProtocolTrojan), rc, "uuid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.TLS || p.SNI != "cdn.example.com" || p.RealityOpts != nil || p.Fingerprint == "" {
+		t.Errorf("trojan tls 代理项不符: %+v", p)
+	}
+	// ACME：无 pin、无 skip-cert-verify
+	rc.CertSHA256 = ""
+	p, err = buildProxy(testNode("1.2.3.4", shared.ProtocolVMess), rc, "uuid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Fingerprint != "" || p.SkipCertVerify != nil {
+		t.Errorf("ACME 应走系统根验证: %+v", p)
+	}
+}
+
+// TestBuildSbOutboundTLS 验证 sing-box 输出：普通 tls 变体（server_name=SNI，无 reality 块）；
+// 自签回退 insecure:true（sing-box 无 cert pin 表达，§3.4）。
+func TestBuildSbOutboundTLS(t *testing.T) {
+	rc := shared.RealizedConfig{Port: 8443, Network: shared.NetworkTCP, Security: shared.SecurityTLS,
+		SNI: "cdn.example.com", CertSHA256: strings.Repeat("ab", 32), Fingerprint: shared.FingerprintChrome}
+	ob, err := buildSbOutbound(testNode("1.2.3.4", shared.ProtocolTrojan), rc, "uuid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ob.TLS == nil || ob.TLS.ServerName != "cdn.example.com" || ob.TLS.Reality != nil {
+		t.Fatalf("sing-box tls 不符: %+v", ob.TLS)
+	}
+	if !ob.TLS.Insecure {
+		t.Errorf("自签应回退 insecure: %+v", ob.TLS)
+	}
+	rc.CertSHA256 = ""
+	ob, err = buildSbOutbound(testNode("1.2.3.4", shared.ProtocolTrojan), rc, "uuid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ob.TLS == nil || ob.TLS.Insecure {
+		t.Errorf("ACME 不应带 insecure: %+v", ob.TLS)
+	}
+}
+
+// TestQuanXTrojanTLS 验证 QuanX 尽力而为：trojan×tls（ACME）输出 over-tls；
+// 自签无 pin/insecure 表达 → 跳过（§3.4）。
+func TestQuanXTrojanTLS(t *testing.T) {
+	rc := shared.RealizedConfig{Port: 8443, Network: shared.NetworkTCP, Security: shared.SecurityTLS,
+		SNI: "exit.example.com"}
+	line := buildQuanXLine(testNode("1.2.3.4", shared.ProtocolTrojan), rc, "uuid")
+	if !strings.Contains(line, "obfs=over-tls") || !strings.Contains(line, "obfs-host=exit.example.com") {
+		t.Errorf("trojan tls（ACME）应输出 over-tls: %q", line)
+	}
+	if strings.Contains(line, "reality-pubkey") {
+		t.Errorf("tls 不应含 reality 参数: %q", line)
+	}
+	rc.CertSHA256 = strings.Repeat("ab", 32)
+	if line := buildQuanXLine(testNode("1.2.3.4", shared.ProtocolTrojan), rc, "uuid"); line != "" {
+		t.Errorf("自签 trojan QuanX 无 pin 表达，应跳过: %q", line)
+	}
+}

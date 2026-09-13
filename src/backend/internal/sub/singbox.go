@@ -23,6 +23,7 @@ type sbUTLS struct {
 type sbTLS struct {
 	Enabled    bool          `json:"enabled"`
 	ServerName string        `json:"server_name,omitempty"`
+	Insecure   bool          `json:"insecure,omitempty"` // 自签回退（sing-box 无 cert pin 表达，§3.4）
 	Reality    *sbTLSReality `json:"reality,omitempty"`
 	UTLS       *sbUTLS       `json:"utls,omitempty"`
 }
@@ -118,26 +119,37 @@ func buildSbOutbound(n store.Node, rc shared.RealizedConfig, uuid string) (sbOut
 	return ob, nil
 }
 
-// buildSbTLS 构造 sing-box TLS 配置；security=none 返回 nil（普通 tls 变体属 P3，
-// 届时按 spec §3.4 拆分为 reality/普通 tls 两个构造函数）。
+// buildSbTLS 构造 sing-box TLS 配置：reality / 普通 tls 两个变体；security=none 返回 nil。
+// 普通 tls：server_name=SNI + uTLS；自签（CertSHA256 非空）回退 insecure（无 pin 表达），
+// ACME 走系统根验证。
 func buildSbTLS(rc shared.RealizedConfig) *sbTLS {
-	if rc.EffectiveSecurity() != shared.SecurityReality {
-		return nil
+	switch rc.EffectiveSecurity() {
+	case shared.SecurityReality:
+		return &sbTLS{
+			Enabled:    true,
+			ServerName: rc.ServerName,
+			Reality: &sbTLSReality{
+				Enabled:   true,
+				PublicKey: rc.PublicKey,
+				ShortID:   rc.ShortID,
+			},
+			UTLS: &sbUTLS{
+				Enabled:     true,
+				Fingerprint: rc.Fingerprint,
+			},
+		}
+	case shared.SecurityTLS:
+		return &sbTLS{
+			Enabled:    true,
+			ServerName: rc.SNI,
+			Insecure:   rc.CertSHA256 != "",
+			UTLS: &sbUTLS{
+				Enabled:     true,
+				Fingerprint: rc.Fingerprint,
+			},
+		}
 	}
-	tls := &sbTLS{
-		Enabled:    true,
-		ServerName: rc.ServerName,
-		Reality: &sbTLSReality{
-			Enabled:   true,
-			PublicKey: rc.PublicKey,
-			ShortID:   rc.ShortID,
-		},
-		UTLS: &sbUTLS{
-			Enabled:     true,
-			Fingerprint: rc.Fingerprint,
-		},
-	}
-	return tls
+	return nil
 }
 
 func buildSbTransport(rc shared.RealizedConfig) *sbTransport {
