@@ -495,3 +495,131 @@ func listenOn(t *testing.T, port int) net.Listener {
 	}
 	return l
 }
+
+// TestRenderForwardHy2Target 验证入口终结末段 piece：dokodemo-udp inbound + hy2 outbound
+// （routing 指向 hy2 outbound 而非 freedom）。
+func TestRenderForwardHy2Target(t *testing.T) {
+	p := shared.ApplyChainHopPayload{
+		ChainID: 1, HopID: 7, Kind: shared.HopKindForward,
+		Forward: &shared.ForwardSpec{
+			Tag: shared.ChainForwardTag(7), Port: 22000, Network: "udp",
+			TargetAddress: "203.0.113.9", TargetPort: 21000,
+			Hy2Target: &shared.Hy2DialSpec{
+				Address: "203.0.113.9", Port: 21000, Auth: "auth-x",
+				SNI: "www.example.com", CertSHA256: "deadbeef",
+			},
+		},
+	}
+	m, _ := newRebuildTestManager(t)
+	cur, _ := m.loadConfig()
+	_, rec, err := m.renderForward(p, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Outbounds) != 1 {
+		t.Fatalf("应含 1 条 hy2 outbound: %+v", rec)
+	}
+	var ob map[string]any
+	if err := json.Unmarshal(rec.Outbounds[0], &ob); err != nil {
+		t.Fatal(err)
+	}
+	if ob["protocol"] != "hysteria" {
+		t.Fatalf("outbound 应为 hysteria: %v", ob["protocol"])
+	}
+	// 路由规则指向 hy2 outbound tag（= forward tag）。
+	var rule struct {
+		OutboundTag string `json:"outboundTag"`
+	}
+	if err := json.Unmarshal(rec.Rules[0], &rule); err != nil || rule.OutboundTag != shared.ChainForwardTag(7) {
+		t.Fatalf("路由应指向 hy2 outbound: %+v", rec.Rules[0])
+	}
+}
+
+// TestRenderForwardHopPorts 验证端到端跳跃段：主 inbound 外逐端口附加 dokodemo inbound
+// （[Port+1, HopPortEnd]，目标下一跳同号端口，udp-only）。
+func TestRenderForwardHopPorts(t *testing.T) {
+	p := shared.ApplyChainHopPayload{
+		ChainID: 1, HopID: 8, Kind: shared.HopKindForward,
+		Forward: &shared.ForwardSpec{
+			Tag: shared.ChainForwardTag(8), Port: 30000, HopPortEnd: 30002,
+			Network: "udp", TargetAddress: "198.51.100.2", TargetPort: 30000,
+		},
+	}
+	m, _ := newRebuildTestManager(t)
+	cur, _ := m.loadConfig()
+	_, rec, err := m.renderForward(p, cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Inbounds) != 2 { // 30001, 30002（主 inbound = 30000）
+		t.Fatalf("附加 inbound 数不符: %+v", rec.Inbounds)
+	}
+	for i, raw := range rec.Inbounds {
+		var ib struct {
+			Tag      string `json:"tag"`
+			Port     int    `json:"port"`
+			Settings struct {
+				Port    int    `json:"port"`
+				Network string `json:"network"`
+			} `json:"settings"`
+		}
+		if err := json.Unmarshal(raw, &ib); err != nil {
+			t.Fatal(err)
+		}
+		want := 30001 + i
+		if ib.Port != want || ib.Settings.Port != want || ib.Settings.Network != "udp" {
+			t.Fatalf("附加 inbound 应 1:1 同号转发: %+v", ib)
+		}
+	}
+}
+
+// TestRemoveForwardHopPiece 验证 forward piece 移除覆盖 Hy2Target 的 hy2 outbound
+// 与跳跃段附加 inbound（<tag>_hop_<port>），且骨架 freedom 不受影响。
+func TestRemoveForwardHopPiece(t *testing.T) {
+	m := NewManager("xray", "/nonexistent/config.json", "127.0.0.1:10085", nil)
+	fc := m.skeleton()
+	rec := state.ChainPiece{HopID: 8, Kind: shared.HopKindForward, Port: 30000}
+	mainInbound, _ := json.Marshal(renderForwardInbound(&shared.ForwardSpec{
+		TargetAddress: "198.51.100.2", TargetPort: 30000, Network: "udp",
+	}, shared.ChainForwardTag(8), 30000))
+	rec.Inbound = mainInbound
+	for hp := 30001; hp <= 30002; hp++ {
+		extra, _ := json.Marshal(renderForwardInbound(&shared.ForwardSpec{
+			TargetAddress: "198.51.100.2", TargetPort: hp, Network: "udp",
+		}, fmt.Sprintf("%s_hop_%d", shared.ChainForwardTag(8), hp), hp))
+		rec.Inbounds = append(rec.Inbounds, extra)
+	}
+	hy2Outbound, _ := json.Marshal(renderHy2Outbound(shared.ChainForwardTag(8), shared.Hy2DialSpec{
+		Address: "203.0.113.9", Port: 21000, Auth: "auth-x", SNI: "www.example.com",
+	}))
+	rec.Outbounds = []json.RawMessage{hy2Outbound}
+	rule, _ := json.Marshal(map[string]any{
+		"type": "field", "inboundTag": []string{shared.ChainForwardTag(8)},
+		"outboundTag": shared.ChainForwardTag(8),
+	})
+	rec.Rules = []json.RawMessage{rule}
+
+	fc = applyChainPiece(fc, rec)
+	if n := len(fc.inbounds()); n != 3 {
+		t.Fatalf("合并后应有 3 个 inbound（主+2 附加），实际 %d", n)
+	}
+	nc, changed := removeChainPieceItems(fc, 8, shared.HopKindForward)
+	if !changed {
+		t.Fatal("应有配置件被移除")
+	}
+	if n := len(nc.inbounds()); n != 0 {
+		t.Fatalf("附加 inbound 应一并清除，剩余 %d 个", n)
+	}
+	for _, raw := range nc.outbounds() {
+		var ob struct {
+			Tag string `json:"tag"`
+		}
+		json.Unmarshal(raw, &ob)
+		if ob.Tag == shared.ChainForwardTag(8) {
+			t.Fatal("hy2 outbound 应随 piece 一并清除")
+		}
+	}
+	if _, ok := nc["routing"]; ok {
+		t.Fatalf("routing 段应清空: %s", nc["routing"])
+	}
+}

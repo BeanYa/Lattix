@@ -28,8 +28,16 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 	if p.EndpointID <= 0 {
 		return nil, fmt.Errorf("endpoint_id 缺失")
 	}
-	if p.Config.Protocol != shared.ProtocolVLESS {
-		return nil, fmt.Errorf("共享端点仅支持 VLESS")
+	if p.Config.Protocol != shared.ProtocolVLESS && p.Config.Protocol != shared.ProtocolHysteria2 {
+		return nil, fmt.Errorf("共享端点仅支持 VLESS/hysteria2")
+	}
+	// hy2 出口共享监听同版本门控（ApplyNode 同款）。
+	if p.Config.Protocol == shared.ProtocolHysteria2 {
+		version, _ := m.Version()
+		if !xrayVersionAtLeast(version, shared.XrayMinVersionHy2) {
+			return nil, fmt.Errorf("节点 xray 版本过低（hysteria2 需要 xray ≥ %s，当前 %s），请先在节点页升级 xray",
+				shared.XrayMinVersionHy2, version)
+		}
 	}
 	prev := m.findChainPiece(p.EndpointID, sharedEndpointPieceKind)
 	config := p.Config
@@ -45,7 +53,7 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 	portCandidates := endpointPortCandidates(config.Port, p.PortCandidates, prev)
 	// 重发幂等：同端点已落地端口直接复用（xray 运行中本就持有该端口，
 	// 重复占用探测会误判冲突——与 pickChainPort 语义一致）；新端口才做占用检查。
-	port, err := m.pickChainPort(config.Port, portCandidates, prev, shared.SharedEndpointTag(p.EndpointID), "tcp")
+	port, err := m.pickChainPort(config.Port, portCandidates, prev, shared.SharedEndpointTag(p.EndpointID), shared.PortLayers(config.Protocol))
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +111,17 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 	if err := m.commitConfig(applyChainPiece(cur, rec)); err != nil {
 		return nil, err
 	}
+	// hy2 端口跳跃：段 → 监听端口的 DNAT（spec §3.2 DNAT 路径；空段 no-op）。
+	if config.Protocol == shared.ProtocolHysteria2 {
+		if err := m.ensureUdpHopDNAT(shared.SharedEndpointTag(p.EndpointID), config.PortHop, realized.Port); err != nil {
+			return nil, err
+		}
+	}
 	if err := m.restartApply(); err != nil {
+		if config.Protocol == shared.ProtocolHysteria2 {
+			// 配置已回滚（inbound 不存在），DNAT 规则与 inbound 同生共死，一并回收。
+			_ = m.removeUdpHopDNAT(shared.SharedEndpointTag(p.EndpointID))
+		}
 		return nil, err
 	}
 	m.upsertChainPiece(rec)
@@ -111,6 +129,9 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 }
 
 func (m *Manager) RemoveSharedEndpoint(endpointID int64) error {
+	if err := m.removeUdpHopDNAT(shared.SharedEndpointTag(endpointID)); err != nil {
+		return err
+	}
 	return m.RemoveChainHop(endpointID, sharedEndpointPieceKind)
 }
 
@@ -126,6 +147,19 @@ func endpointPortCandidates(configPort int, panelCandidates []int, prev *state.C
 }
 
 func renderSharedEndpointOutbound(route shared.SharedEndpointRoute, tag string) map[string]any {
+	// 入口终结模式（P4 §3.2）：出口为 hy2 时末段以 hy2 outbound 直拨出口（UDP）。
+	if route.ExitProtocol == shared.ProtocolHysteria2 {
+		return renderHy2Outbound(tag, shared.Hy2DialSpec{
+			Address: route.TargetAddress, Port: route.TargetPort,
+			Auth:         shared.Hy2UserPassword(route.TunnelUUID),
+			SNI:          route.Target.SNI,
+			CertSHA256:   route.Target.CertSHA256,
+			ObfsPassword: route.Target.ObfsPassword,
+			UpMbps:       route.Target.UpMbps,
+			DownMbps:     route.Target.DownMbps,
+			PortHop:      route.Target.PortHop,
+		})
+	}
 	user := map[string]any{"id": route.TunnelUUID, "encryption": "none"}
 	if route.Target.Flow != "" {
 		user["flow"] = route.Target.Flow
@@ -187,6 +221,63 @@ func renderSharedEndpointOutbound(route shared.SharedEndpointRoute, tag string) 
 			"address": route.TargetAddress, "port": route.TargetPort,
 			"users": []map[string]any{user},
 		}}},
+		"streamSettings": stream,
+	}
+}
+
+// renderHy2Outbound 渲染 hy2 直拨 outbound（Task 1 实测定稿形态）：
+// network 恒 "hysteria"、tlsSettings 带 alpn [h3]（两者缺失分别退化为 TCP 承载/
+// 握手失败）；客户端口令在 transport hysteriaSettings.auth；salamander/brutal/udpHop
+// 在 finalmask；自签证书以 pinnedPeerCertSha256 钉住（hex），ACME 走系统根验证。
+// 入口共享端点路由与链末段 forward（chain.go）共用。
+func renderHy2Outbound(tag string, dial shared.Hy2DialSpec) map[string]any {
+	tlsSettings := map[string]any{
+		"serverName":  dial.SNI,
+		"alpn":        []string{"h3"},
+		"fingerprint": shared.FingerprintChrome,
+	}
+	if dial.CertSHA256 != "" {
+		tlsSettings["pinnedPeerCertSha256"] = dial.CertSHA256
+	}
+	fm := map[string]any{}
+	if dial.ObfsPassword != "" {
+		fm["udp"] = []map[string]any{{
+			"type":     "salamander",
+			"settings": map[string]any{"password": dial.ObfsPassword},
+		}}
+	}
+	quic := map[string]any{}
+	if dial.UpMbps > 0 || dial.DownMbps > 0 {
+		quic["congestion"] = "brutal"
+		if dial.UpMbps > 0 {
+			quic["brutalUp"] = fmt.Sprintf("%d mbps", dial.UpMbps)
+		}
+		if dial.DownMbps > 0 {
+			quic["brutalDown"] = fmt.Sprintf("%d mbps", dial.DownMbps)
+		}
+	}
+	// PortHop 非空时 dial.Port 即段起点（契约见 shared.Hy2DialSpec.Port；
+	// dispatch 保证），客户端 udpHop 在段内换端口，出口 DNAT 收敛到监听端口。
+	if dial.PortHop != "" {
+		if _, _, err := shared.ParsePortHop(dial.PortHop); err == nil {
+			quic["udpHop"] = map[string]any{"ports": dial.PortHop, "interval": shared.Hy2PortHopInterval}
+		}
+	}
+	if len(quic) > 0 {
+		fm["quicParams"] = quic
+	}
+	stream := map[string]any{
+		"network":          "hysteria",
+		"security":         "tls",
+		"tlsSettings":      tlsSettings,
+		"hysteriaSettings": map[string]any{"version": 2, "auth": dial.Auth},
+	}
+	if len(fm) > 0 {
+		stream["finalmask"] = fm
+	}
+	return map[string]any{
+		"tag": tag, "protocol": "hysteria",
+		"settings":       map[string]any{"version": 2, "address": dial.Address, "port": dial.Port},
 		"streamSettings": stream,
 	}
 }

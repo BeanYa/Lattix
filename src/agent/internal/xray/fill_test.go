@@ -173,3 +173,44 @@ func TestTemplateSecurityTLS(t *testing.T) {
 		t.Errorf("应为 tls，实际 %q", got)
 	}
 }
+
+// TestClientCredentialEntryHysteria 验证 hy2 用户条目形态（settings.clients 元素，P4）。
+func TestClientCredentialEntryHysteria(t *testing.T) {
+	e := clientCredentialEntry(shared.ProtocolHysteria2, "", "",
+		shared.ClientCredential{ID: "uuid-1", Email: "access:7"})
+	if e["auth"] != shared.Hy2UserPassword("uuid-1") || e["email"] != "access:7" || e["level"] != 0 {
+		t.Fatalf("hy2 用户条目不符: %v", e)
+	}
+	if _, hasID := e["id"]; hasID {
+		t.Fatal("hy2 条目不应携带 id 键（auth 为凭据）")
+	}
+}
+
+// TestFillTemplateHysteriaRealized 验证 hy2 模板的 realized 回显（SNI/pin/obfs/带宽/段）。
+func TestFillTemplateHysteriaRealized(t *testing.T) {
+	stubTLSCert(t)
+	vc := shared.VirtualConfig{
+		Protocol: shared.ProtocolHysteria2, Security: shared.SecurityTLS,
+		CertMode: shared.CertModeSelfSign, TLSDomain: "www.example.com",
+		ObfsPassword: "obfs-pw", UpMbps: 50, DownMbps: 100, PortHop: "20000-20031",
+		Template: json.RawMessage(`{"tag":"{{TAG}}","protocol":"hysteria","port":"{{PORT}}",
+			"settings":{"version":2,"clients":"{{CLIENTS}}"},
+			"streamSettings":{"network":"hysteria","security":"tls",
+			"tlsSettings":{"serverName":"www.example.com","alpn":["h3"],"certificates":[{"certificateFile":"{{TLS_CERT_FILE}}","keyFile":"{{TLS_KEY_FILE}}"}]},
+			"hysteriaSettings":{"version":2},
+			"finalmask":{"udp":[{"type":"salamander","settings":{"password":"obfs-pw"}}],
+			"quicParams":{"congestion":"brutal","brutalUp":"50 mbps","brutalDown":"100 mbps"}}}}`),
+	}
+	m, _ := newRebuildTestManager(t)
+	_, realized, err := m.fillTemplate(21000, "node_1", vc, []string{"uuid-1"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if realized.Security != "tls" || realized.SNI != "www.example.com" {
+		t.Fatalf("SNI/security 回显不符: %+v", realized)
+	}
+	if realized.ObfsPassword != "obfs-pw" || realized.UpMbps != 50 || realized.DownMbps != 100 ||
+		realized.PortHop != "20000-20031" {
+		t.Fatalf("hy2 字段回显不符: %+v", realized)
+	}
+}

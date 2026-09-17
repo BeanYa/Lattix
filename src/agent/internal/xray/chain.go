@@ -353,7 +353,9 @@ func (m *Manager) renderForward(p shared.ApplyChainHopPayload, cur fullConfig) (
 		return nil, state.ChainPiece{}, err
 	}
 	outboundTag := directOutboundTag
-	if spec.ViaTunnelDomain != "" {
+	if spec.Hy2Target != nil {
+		outboundTag = tag // 入口终结末段：路由指向本 piece 的 hy2 outbound
+	} else if spec.ViaTunnelDomain != "" {
 		outboundTag = reversePortalTagByDomain(cur, spec.ViaTunnelDomain)
 		if outboundTag == "" {
 			return nil, state.ChainPiece{}, fmt.Errorf("via_tunnel_domain %q 对应的上游 portal 尚未就绪", spec.ViaTunnelDomain)
@@ -375,6 +377,25 @@ func (m *Manager) renderForward(p shared.ApplyChainHopPayload, cur fullConfig) (
 		HopID: p.HopID, Kind: p.Kind, Port: port,
 		Inbound: inboundRaw,
 		Rules:   []json.RawMessage{ruleRaw},
+	}
+	if spec.Hy2Target != nil {
+		outbound, err := json.Marshal(renderHy2Outbound(tag, *spec.Hy2Target))
+		if err != nil {
+			return nil, state.ChainPiece{}, err
+		}
+		rec.Outbounds = append(rec.Outbounds, outbound)
+	}
+	// hy2 端到端跳跃段（spec §3.2）：段内其余端口逐端口 dokodemo UDP 1:1 转发
+	// （主 inbound 覆盖段起点；目标 = 下一跳同号端口）。
+	for hp := port + 1; hp <= spec.HopPortEnd && spec.HopPortEnd > 0; hp++ {
+		extra, err := json.Marshal(renderForwardInbound(&shared.ForwardSpec{
+			TargetAddress: spec.TargetAddress, TargetPort: spec.TargetPort - port + hp,
+			Network: "udp", LocalOnly: spec.LocalOnly, ListenFamily: spec.ListenFamily,
+		}, fmt.Sprintf("%s_hop_%d", tag, hp), hp))
+		if err != nil {
+			return nil, state.ChainPiece{}, err
+		}
+		rec.Inbounds = append(rec.Inbounds, extra)
 	}
 	return &shared.RealizedConfig{Port: port}, rec, nil
 }
@@ -596,6 +617,7 @@ func chainPieceTags(hopID int64, kind string) (inboundTags, outboundTags map[str
 		inboundTags[chainBridgeReverseTag(hopID)] = true // routing 的 inboundTag 引用
 	case shared.HopKindForward:
 		inboundTags[shared.ChainForwardTag(hopID)] = true
+		outboundTags[shared.ChainForwardTag(hopID)] = true // 入口终结末段 hy2 outbound（与主 inbound 同 tag）
 	}
 	return inboundTags, outboundTags, reverseKey, reverseTags
 }
@@ -607,10 +629,18 @@ func removeChainPieceItems(fc fullConfig, hopID int64, kind string) (fullConfig,
 	changed := false
 	nc := fc.clone()
 
+	// forward 的 hy2 端到端跳跃段附加 inbound 以 <tag>_hop_<port> 命名（P4），
+	// 按前缀随主 inbound 一并清除。
+	hopInboundPrefix := ""
+	if kind == shared.HopKindForward {
+		hopInboundPrefix = shared.ChainForwardTag(hopID) + "_hop_"
+	}
+
 	if len(inboundTags) > 0 {
 		out := make([]json.RawMessage, 0, len(nc.inbounds()))
 		for _, raw := range nc.inbounds() {
-			if inboundTags[inboundTag(raw)] {
+			tag := inboundTag(raw)
+			if inboundTags[tag] || hopInboundPrefix != "" && strings.HasPrefix(tag, hopInboundPrefix) {
 				changed = true
 				continue
 			}
@@ -686,6 +716,9 @@ func applyChainPiece(fc fullConfig, rec state.ChainPiece) fullConfig {
 	nc, _ := removeChainPieceItems(fc, rec.HopID, rec.Kind)
 	if len(rec.Inbound) > 0 {
 		nc = nc.upsertInbound(inboundTag(rec.Inbound), rec.Inbound)
+	}
+	for _, raw := range rec.Inbounds {
+		nc = nc.upsertInbound(inboundTag(raw), raw)
 	}
 	if len(rec.Outbound) > 0 {
 		var p struct {

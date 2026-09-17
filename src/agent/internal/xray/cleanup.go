@@ -3,6 +3,8 @@ package xray
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
 
 	"lattix/agent/internal/state"
 	"lattix/shared"
@@ -75,6 +77,14 @@ func (m *Manager) CleanupXray(p shared.CleanupXrayPayload) (*shared.CleanupXrayR
 		return nil, err
 	}
 	m.chainPieces = keptPieces
+	// DNAT 规则随被移除的 hy2 inbound 一并回收（同生共死；best-effort：规则缺失/无权限不阻断清理）。
+	for _, removed := range result.RemovedInbounds {
+		if strings.HasPrefix(removed.Tag, "node_") || strings.HasPrefix(removed.Tag, "shared_endpoint_") {
+			if err := m.removeUdpHopDNAT(removed.Tag); err != nil {
+				log.Printf("xray: cleanup 回收 DNAT 规则 %s 失败: %v", removed.Tag, err)
+			}
+		}
+	}
 	return result, nil
 }
 

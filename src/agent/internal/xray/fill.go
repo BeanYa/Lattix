@@ -154,23 +154,27 @@ func (m *Manager) fillTemplate(port int, tag string, vc shared.VirtualConfig, us
 		fingerprint = shared.FingerprintChrome
 	}
 	realized := &shared.RealizedConfig{
-		Port:        probe.Port,
-		PublicKey:   pub,
-		ShortID:     firstOrEmpty(probe.StreamSettings.RealitySettings.ShortIDs),
-		ServerName:  firstOrEmpty(probe.StreamSettings.RealitySettings.ServerNames),
-		Flow:        vc.Flow,
-		Fingerprint: fingerprint,
-		Network:     probe.StreamSettings.Network,
-		ServiceName: probe.StreamSettings.GrpcSettings.ServiceName,
-		Path:        probe.StreamSettings.XHTTPSettings.Path,
-		Mode:        probe.StreamSettings.XHTTPSettings.Mode,
-		Host:        probe.StreamSettings.XHTTPSettings.Host,
-		Method:      vc.Method,
-		PSK:         probe.Settings.Password,
-		Encryption:  encClient,
-		Security:    templateSecurity(tmpl),
-		SNI:         probe.StreamSettings.TLSSettings.ServerName,
-		CertSHA256:  certPin,
+		Port:         probe.Port,
+		PublicKey:    pub,
+		ShortID:      firstOrEmpty(probe.StreamSettings.RealitySettings.ShortIDs),
+		ServerName:   firstOrEmpty(probe.StreamSettings.RealitySettings.ServerNames),
+		Flow:         vc.Flow,
+		Fingerprint:  fingerprint,
+		Network:      probe.StreamSettings.Network,
+		ServiceName:  probe.StreamSettings.GrpcSettings.ServiceName,
+		Path:         probe.StreamSettings.XHTTPSettings.Path,
+		Mode:         probe.StreamSettings.XHTTPSettings.Mode,
+		Host:         probe.StreamSettings.XHTTPSettings.Host,
+		Method:       vc.Method,
+		PSK:          probe.Settings.Password,
+		Encryption:   encClient,
+		Security:     templateSecurity(tmpl),
+		SNI:          probe.StreamSettings.TLSSettings.ServerName,
+		CertSHA256:   certPin,
+		ObfsPassword: vc.ObfsPassword,
+		UpMbps:       vc.UpMbps,
+		DownMbps:     vc.DownMbps,
+		PortHop:      vc.PortHop,
 	}
 	// ws/httpupgrade 的 path/host 在各自子段（ws 的 host 在 headers.Host），
 	// 与 xhttp 平铺字段不同源，按 network 分派覆盖。
@@ -204,6 +208,9 @@ func clientCredentialEntry(protocol, flow, method string, credential shared.Clie
 		return map[string]any{"id": credential.ID, "email": email, "level": 0} // 新版 xray 已移除 alterId
 	case shared.ProtocolTrojan:
 		return map[string]any{"password": credential.ID, "email": email, "level": 0}
+	case shared.ProtocolHysteria2:
+		// hy2 用户条目（settings.clients 元素）：auth 为确定性派生口令（订阅/入口终结 outbound 同源）。
+		return map[string]any{"auth": shared.Hy2UserPassword(credential.ID), "email": email, "level": 0}
 	case shared.ProtocolShadowsocks:
 		if shared.Is2022Method(method) {
 			// 2022-blake3 多用户：clients 不带 method，password 为定长 base64 密钥。

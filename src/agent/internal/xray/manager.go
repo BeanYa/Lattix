@@ -95,6 +95,29 @@ func (m *Manager) Version() (string, bool) {
 	return ver, m.runner.IsRunning(context.Background())
 }
 
+// xrayVersionAtLeast 三段数字版本比较（"26.3.27" ≥ min）；解析失败返回 false（门控拒绝）。
+func xrayVersionAtLeast(version, min string) bool {
+	parse := func(s string) (int, int, int, bool) {
+		var a, b, c int
+		if n, err := fmt.Sscanf(s, "%d.%d.%d", &a, &b, &c); err != nil || n != 3 {
+			return 0, 0, 0, false
+		}
+		return a, b, c, true
+	}
+	a1, b1, c1, ok1 := parse(version)
+	a2, b2, c2, ok2 := parse(min)
+	if !ok1 || !ok2 {
+		return false
+	}
+	if a1 != a2 {
+		return a1 > a2
+	}
+	if b1 != b2 {
+		return b1 > b2
+	}
+	return c1 >= c2
+}
+
 // StatsInstanceID identifies the current Xray process for absolute traffic
 // counters. It remains stable across Agent/Panel reconnects and changes after
 // Xray restarts.
@@ -111,6 +134,15 @@ func (m *Manager) StatsInstanceID() string {
 func (m *Manager) ApplyNode(nodeID int64, vc shared.VirtualConfig, userUUIDs, destCandidates []string, portCandidates []int) (*shared.RealizedConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// hy2 版本门控（spec §3.3/§5）：xray < 26.3.27 无 hy2 inbound，明确拒绝并指向升级链路。
+	if vc.Protocol == shared.ProtocolHysteria2 {
+		version, _ := m.Version()
+		if !xrayVersionAtLeast(version, shared.XrayMinVersionHy2) {
+			return nil, fmt.Errorf("节点 xray 版本过低（hysteria2 需要 xray ≥ %s，当前 %s），请先在节点页升级 xray",
+				shared.XrayMinVersionHy2, version)
+		}
+	}
 
 	tag := shared.NodeTag(nodeID)
 	// 1. 填充模板占位符（§7）+ dest 预检（§6 步骤 2）
@@ -137,6 +169,13 @@ func (m *Manager) ApplyNode(nodeID int64, vc shared.VirtualConfig, userUUIDs, de
 	}, "apply %s", "热操作", tag); err != nil {
 		return nil, err
 	}
+	// hy2 端口跳跃 DNAT（spec §3.2；空段 no-op）。不变式：客户端声明 udpHop ⟺ DNAT
+	// 已就绪——建立失败整体报错，不上报 realized（realized.PortHop 会驱动订阅声明跳跃段）。
+	if vc.Protocol == shared.ProtocolHysteria2 {
+		if err := m.ensureUdpHopDNAT(tag, vc.PortHop, realized.Port); err != nil {
+			return nil, err
+		}
+	}
 	return realized, nil
 }
 
@@ -151,18 +190,18 @@ func (m *Manager) RemoveNode(nodeID int64) error {
 		return err
 	}
 	cand, existed := cur.removeInbound(tag)
-	if !existed {
-		return nil // 已不存在
+	if existed {
+		if err := m.commitConfig(cand); err != nil {
+			return err
+		}
+		if _, err := m.withRestartFallback(func() error {
+			return m.hot.RemoveInbound(tag)
+		}, "remove %s", "热删除", tag); err != nil {
+			return err
+		}
 	}
-	if err := m.commitConfig(cand); err != nil {
-		return err
-	}
-	if _, err := m.withRestartFallback(func() error {
-		return m.hot.RemoveInbound(tag)
-	}, "remove %s", "热删除", tag); err != nil {
-		return err
-	}
-	return nil
+	// hy2 端口跳跃 DNAT 清理（与 inbound 同生共死；幂等：无规则/未开跳跃 = no-op）。
+	return m.removeUdpHopDNAT(tag)
 }
 
 // AddUser 向 params 列出的节点 inbound 热加入一个用户（§5、§8、§16）；

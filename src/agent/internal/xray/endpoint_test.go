@@ -378,3 +378,177 @@ func TestRenderSharedEndpointOutboundTLS(t *testing.T) {
 		t.Errorf("ACME 出口不应带 pin: %v", tlsSettings)
 	}
 }
+
+// hy2EndpointTemplate 是 hy2 出口共享监听的测试模板（Task 1 定稿形态：
+// settings.clients + network:"hysteria" + alpn h3 + 证书占位符）。
+const hy2EndpointTemplate = `{"tag":"{{TAG}}","protocol":"hysteria","port":"{{PORT}}",
+	"settings":{"version":2,"clients":"{{CLIENTS}}"},
+	"streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"serverName":"www.example.com",
+	"alpn":["h3"],"certificates":[{"certificateFile":"{{TLS_CERT_FILE}}","keyFile":"{{TLS_KEY_FILE}}"}]},
+	"hysteriaSettings":{"version":2}}}`
+
+// TestApplySharedEndpointHysteria 验证 hy2 出口共享监听落地（P4）：放行 hysteria、
+// udp 层端口探测、realized 携带 hy2 字段、无路由时零 outbound。
+func TestApplySharedEndpointHysteria(t *testing.T) {
+	stubTLSCert(t)
+	m := newVersionedTestManager(t, "26.10.1")
+	p := shared.ApplySharedEndpointPayload{
+		EndpointID: 5,
+		Config: shared.VirtualConfig{
+			Protocol: shared.ProtocolHysteria2, Security: shared.SecurityTLS,
+			CertMode: shared.CertModeSelfSign, TLSDomain: "www.example.com",
+			ObfsPassword: "obfs-pw", UpMbps: 50, DownMbps: 100,
+			Template: json.RawMessage(hy2EndpointTemplate),
+		},
+		Clients: []shared.ClientCredential{{ID: "uuid-1", Email: "tunnel:uuid-1"}},
+	}
+	realized, err := m.ApplySharedEndpoint(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if realized.Port == 0 || realized.ObfsPassword != "obfs-pw" {
+		t.Fatalf("realized 不符: %+v", realized)
+	}
+	// 配置含 hy2 inbound，clients 条目为 {auth,email,level:0}。
+	cur, _ := m.loadConfig()
+	found := false
+	for _, raw := range cur.inbounds() {
+		var ib struct {
+			Tag      string `json:"tag"`
+			Protocol string `json:"protocol"`
+		}
+		if json.Unmarshal(raw, &ib) == nil && ib.Protocol == "hysteria" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("受管配置缺 hy2 inbound")
+	}
+	if n := len(m.findChainPiece(5, sharedEndpointPieceKind).Outbounds); n != 0 {
+		t.Fatalf("无路由时应零 outbound，实际 %d", n)
+	}
+}
+
+// TestApplySharedEndpointHysteriaDNATLifecycle 验证 DNAT 与共享监听同生共死：
+// apply 带 PortHop → 建立 lattix:<tag> 注释的 DNAT；remove → 按注释清除。
+func TestApplySharedEndpointHysteriaDNATLifecycle(t *testing.T) {
+	stubTLSCert(t)
+	calls := stubIPTables(t, "")
+	m := newVersionedTestManager(t, "26.10.1")
+	p := shared.ApplySharedEndpointPayload{
+		EndpointID: 5,
+		Config: shared.VirtualConfig{
+			Protocol: shared.ProtocolHysteria2, Security: shared.SecurityTLS,
+			CertMode: shared.CertModeSelfSign, TLSDomain: "www.example.com",
+			PortHop:  "20000-20031",
+			Template: json.RawMessage(hy2EndpointTemplate),
+		},
+		Clients: []shared.ClientCredential{{ID: "uuid-1", Email: "tunnel:uuid-1"}},
+	}
+	realized, err := m.ApplySharedEndpoint(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(*calls, "\n")
+	if !strings.Contains(joined, "--dport 20000:20031") ||
+		!strings.Contains(joined, fmt.Sprintf("--to-ports %d", realized.Port)) ||
+		!strings.Contains(joined, "lattix:shared_endpoint_5") {
+		t.Fatalf("apply 应建立跳跃段 DNAT:\n%s", joined)
+	}
+	// 删除：按 tag 注释清除 DNAT。
+	*calls = nil
+	listIPTablesRules = func(table, chain string) string {
+		return fmt.Sprintf("-A PREROUTING -p udp --dport 20000:20031 -m comment --comment lattix:shared_endpoint_5 -j REDIRECT --to-ports %d\n", realized.Port)
+	}
+	if err := m.RemoveSharedEndpoint(5); err != nil {
+		t.Fatal(err)
+	}
+	if joined = strings.Join(*calls, "\n"); !strings.Contains(joined, "-D PREROUTING") {
+		t.Fatalf("remove 应清除 DNAT 规则:\n%s", joined)
+	}
+}
+
+// TestApplySharedEndpointHysteriaDNATRollback 验证失败回滚路径的 DNAT 回收：
+// DNAT 建立后重启失败 → 配置回滚（inbound 不存在），规则须一并回收。
+// 测试缝模拟内核规则表（-A 增 / -D 删 / -S 列举），残留即 FAIL。
+func TestApplySharedEndpointHysteriaDNATRollback(t *testing.T) {
+	stubTLSCert(t)
+	origRun, origList := runIPTables, listIPTablesRules
+	t.Cleanup(func() { runIPTables, listIPTablesRules = origRun, origList })
+	var rules []string
+	runIPTables = func(bin string, args ...string) error {
+		joined := strings.Join(args, " ")
+		if i := strings.Index(joined, "-A PREROUTING "); i >= 0 {
+			rules = append(rules, joined[i:])
+		} else if i := strings.Index(joined, "-D PREROUTING "); i >= 0 {
+			del := "-A PREROUTING " + joined[i+len("-D PREROUTING "):]
+			for j, r := range rules {
+				if r == del {
+					rules = append(rules[:j], rules[j+1:]...)
+					break
+				}
+			}
+		}
+		return nil
+	}
+	listIPTablesRules = func(table, chain string) string { return strings.Join(rules, "\n") }
+	m := newVersionedTestManager(t, "26.10.1")
+	m.runner = &failingRestartRunner{}
+	p := shared.ApplySharedEndpointPayload{
+		EndpointID: 6,
+		Config: shared.VirtualConfig{
+			Protocol: shared.ProtocolHysteria2, Security: shared.SecurityTLS,
+			CertMode: shared.CertModeSelfSign, TLSDomain: "www.example.com",
+			PortHop:  "20000-20031",
+			Template: json.RawMessage(hy2EndpointTemplate),
+		},
+		Clients: []shared.ClientCredential{{ID: "uuid-1", Email: "tunnel:uuid-1"}},
+	}
+	if _, err := m.ApplySharedEndpoint(p); err == nil {
+		t.Fatal("重启失败应返回错误")
+	}
+	if len(rules) != 0 {
+		t.Fatalf("回滚后不应残留 DNAT 规则: %v", rules)
+	}
+}
+
+// TestRenderSharedEndpointOutboundHy2 验证入口终结模式的 hy2 outbound 渲染
+// （route.ExitProtocol=hysteria：protocol/address/port + pin + auth + salamander + udpHop）。
+func TestRenderSharedEndpointOutboundHy2(t *testing.T) {
+	route := shared.SharedEndpointRoute{
+		ChainID: 3, ExitProtocol: shared.ProtocolHysteria2,
+		TargetAddress: "203.0.113.9", TargetPort: 21000, TunnelUUID: "svc-uuid",
+		Target: shared.RealizedConfig{
+			SNI: "www.example.com", CertSHA256: "deadbeef", ObfsPassword: "obfs-pw",
+			UpMbps: 50, DownMbps: 100, PortHop: "20000-20031",
+		},
+	}
+	ob := renderSharedEndpointOutbound(route, "shared_endpoint_route_5_3")
+	if ob["protocol"] != "hysteria" {
+		t.Fatalf("outbound 协议应为 hysteria: %v", ob["protocol"])
+	}
+	settings := ob["settings"].(map[string]any)
+	if settings["version"] != 2 || settings["address"] != "203.0.113.9" || settings["port"] != 21000 {
+		t.Fatalf("settings 不符: %v", settings)
+	}
+	ss := ob["streamSettings"].(map[string]any)
+	if ss["network"] != "hysteria" {
+		t.Fatal("hy2 outbound 必须显式 network=hysteria（Task 1 实测：缺省 tcp 退化为 TCP 承载）")
+	}
+	tlsS := ss["tlsSettings"].(map[string]any)
+	if tlsS["serverName"] != "www.example.com" || tlsS["pinnedPeerCertSha256"] != "deadbeef" {
+		t.Fatalf("tlsSettings 不符: %v", tlsS)
+	}
+	if alpn, ok := tlsS["alpn"].([]string); !ok || len(alpn) != 1 || alpn[0] != "h3" {
+		t.Fatalf("tlsSettings 必须 alpn=[h3]（否则握手 no application protocol）: %v", tlsS)
+	}
+	if ss["hysteriaSettings"].(map[string]any)["auth"] != shared.Hy2UserPassword("svc-uuid") {
+		t.Fatalf("auth 应为派生口令: %v", ss["hysteriaSettings"])
+	}
+	fm := ss["finalmask"].(map[string]any)
+	quic := fm["quicParams"].(map[string]any)
+	hop := quic["udpHop"].(map[string]any)
+	if hop["ports"] != "20000-20031" || hop["interval"] != shared.Hy2PortHopInterval {
+		t.Fatalf("udpHop 不符: %v", hop)
+	}
+}

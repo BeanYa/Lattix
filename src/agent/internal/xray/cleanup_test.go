@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"lattix/agent/internal/state"
@@ -307,5 +308,37 @@ func TestCleanupXrayRestartFailureRollsBack(t *testing.T) {
 	}
 	if n := len(m.ChainPieces()); n != 1 {
 		t.Fatalf("回滚后记录应保持原样，实际 %d", n)
+	}
+}
+
+// TestCleanupXrayReclaimsDNAT 验证 cleanup 移除 hy2 inbound 时一并回收其 DNAT 规则
+// （与 inbound 同生共死；dry-run 不触碰 iptables）。
+func TestCleanupXrayReclaimsDNAT(t *testing.T) {
+	calls := stubIPTables(t, "-A PREROUTING -p udp --dport 20000:20031 -m comment --comment lattix:node_9 -j REDIRECT --to-ports 14439\n")
+	m := newCleanupTestManager(t)
+	seedCleanupConfig(t, m, []json.RawMessage{cleanupInbound(t, "node_9", 14439)}, nil)
+
+	// dry-run：只报告，不回收规则。
+	if _, err := m.CleanupXray(shared.CleanupXrayPayload{DryRun: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("dry-run 不应执行 iptables: %v", *calls)
+	}
+
+	// 执行：node_9 不在期望集 → 移除 inbound 且回收 lattix:node_9 规则。
+	result, err := m.CleanupXray(shared.CleanupXrayPayload{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.RemovedInbounds) != 1 || result.RemovedInbounds[0].Tag != "node_9" {
+		t.Fatalf("应移除 node_9: %+v", result.RemovedInbounds)
+	}
+	joined := ""
+	for _, c := range *calls {
+		joined += c + "\n"
+	}
+	if !strings.Contains(joined, "-D PREROUTING") || !strings.Contains(joined, "lattix:node_9") {
+		t.Fatalf("cleanup 应回收 node_9 的 DNAT 规则:\n%s", joined)
 	}
 }
