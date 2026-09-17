@@ -424,6 +424,7 @@ CREATE TABLE IF NOT EXISTS chains (
     name                     TEXT    NOT NULL DEFAULT '',
     service_node_id          INTEGER NOT NULL DEFAULT 0,
     endpoint_id              INTEGER NOT NULL DEFAULT 0,
+    service_endpoint_id      INTEGER NOT NULL DEFAULT 0, -- hy2 出口侧共享监听（P4，0=无出口侧共享监听）
     service_uuid             TEXT    NOT NULL DEFAULT '',
     published_revision_id    INTEGER NOT NULL DEFAULT 0,
     desired_revision_id      INTEGER NOT NULL DEFAULT 0,

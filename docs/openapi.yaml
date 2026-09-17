@@ -1175,6 +1175,10 @@ components:
         node:
           type: object
           additionalProperties: true
+        entry_node:
+          type: object
+          additionalProperties: true
+          description: Optional entry protocol block (P4). When present, the entry hop terminates a vless+reality shared endpoint independent of the exit protocol; v1 only supports vless entry with hysteria/vless exits on multi-hop chains.
         traffic_multiplier: {type: string}
     ChainEditRequest:
       type: object
@@ -1191,6 +1195,10 @@ components:
         node:
           type: object
           additionalProperties: true
+        entry_node:
+          type: object
+          additionalProperties: true
+          description: Optional entry protocol block (P4). Same semantics as ChainCreateRequest.entry_node; omitted keeps the end-to-end topology.
         traffic_multiplier: {type: string}
     CustomExchangeRate:
       type: object

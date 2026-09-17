@@ -90,3 +90,18 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// TestValidateTopologyHy2Transport 验证末段 hy2 transport 白名单（P4 入口终结）。
+func TestValidateTopologyHy2Transport(t *testing.T) {
+	topo := RevisionTopology{RevisionID: 1, ServiceID: 9, Hops: []RevisionHopSpec{
+		{HopID: 1, ServerID: 1, Transport: "hy2"},
+		{HopID: 2, ServerID: 2},
+	}}
+	if err := validateTopology(topo); err != nil {
+		t.Fatalf("hy2 transport 应合法: %v", err)
+	}
+	topo.Hops[0].Transport = "bogus"
+	if err := validateTopology(topo); err == nil {
+		t.Fatal("未知 transport 应拒绝")
+	}
+}

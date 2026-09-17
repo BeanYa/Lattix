@@ -11,7 +11,7 @@ import (
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
-const schemaVersion = 17
+const schemaVersion = 18
 
 type columnMigration struct {
 	name       string
@@ -147,6 +147,7 @@ func migrateSchema(tx *sql.Tx) error {
 			{"traffic_multiplier_milli", "INTEGER NOT NULL DEFAULT 1000"},
 			{"deleted_at", "DATETIME"},
 			{"updated_at", "DATETIME"},
+			{"service_endpoint_id", "INTEGER NOT NULL DEFAULT 0"}, // hy2 出口侧共享监听（P4，0=无）
 		},
 		"chain_hops": {
 			{"address", "TEXT NOT NULL DEFAULT ''"},

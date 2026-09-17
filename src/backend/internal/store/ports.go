@@ -111,7 +111,10 @@ func (s *Store) PortOccupants(ctx context.Context, serverID int64) ([]PortOccupa
 		hopStart("n.config_template"), hopEnd("n.config_template"), hopExpr("n.config_template")), serverID); err != nil {
 		return nil, fmt.Errorf("query hy2 node hop spans: %w", err)
 	}
-	if err := appendSpan(fmt.Sprintf(`SELECT %s, %s, 0, 'shared-endpoint #' || e.id, 'endpoint'
+	if err := appendSpan(fmt.Sprintf(`SELECT %s, %s,
+		COALESCE((SELECT c.id FROM chains c WHERE c.service_endpoint_id=e.id AND c.deleted_at IS NULL
+			ORDER BY c.id LIMIT 1),0),
+		'shared-endpoint #' || e.id, 'endpoint'
 		FROM shared_endpoints e WHERE e.server_id=? AND e.protocol='hysteria'
 		AND e.status IN ('pending','applying','active') AND %s <> ''`,
 		hopStart("e.config_template"), hopEnd("e.config_template"), hopExpr("e.config_template")), serverID); err != nil {

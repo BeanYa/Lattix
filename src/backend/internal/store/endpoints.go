@@ -63,11 +63,10 @@ func (s *Store) SharedEndpointByID(ctx context.Context, id int64) (*SharedEndpoi
 	return endpoint, err
 }
 
-// EnsureSharedEndpoint returns the shared listener for a server/port pair:
-// an existing VLESS listener on the port is joined regardless of profile
-// (entry params come from the first claimant); a listener of a different
-// protocol is a conflict; an unmanaged OS listener is detected later by the
-// Agent's bind probe.
+// EnsureSharedEndpoint 入口侧 vless 共享端点用（hy2 出口共享见
+// EnsureProtocolSharedEndpoint）：返回服务器上某端口的共享监听——同端口已有
+// vless 监听时无论 profile 一律并入（入口参数以首位占用者为准）；同端口不同
+// 协议视为冲突；未受管的 OS 监听由 Agent 绑定探测事后发现。
 func (s *Store) EnsureSharedEndpoint(ctx context.Context, serverID int64, protocol string, port int,
 	profileHash string, config json.RawMessage) (*SharedEndpoint, bool, error) {
 	if serverID <= 0 || profileHash == "" || !json.Valid(config) {
@@ -106,6 +105,39 @@ func (s *Store) EnsureSharedEndpoint(ctx context.Context, serverID int64, protoc
 	result, err := s.db.ExecContext(ctx, `INSERT INTO shared_endpoints
 		(server_id, protocol, port, profile_hash, config_template) VALUES (?, ?, ?, ?, ?)`,
 		serverID, protocol, port, profileHash, string(config))
+	if err != nil {
+		return nil, false, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return nil, false, err
+	}
+	endpoint, err := s.SharedEndpointByID(ctx, id)
+	return endpoint, true, err
+}
+
+// EnsureProtocolSharedEndpoint 返回服务器上指定协议的共享监听（hy2 出口侧共享，
+// spec §3.2：同机多条 hy2 链共享同一监听与端口段，首条链路的证书/混淆/带宽/段参数
+// 为准）：存在 pending/applying/active 的同协议端点即并入（显式 port 也并入，
+// 端口以既有监听为准），否则以 config 创建。返回 (endpoint, created, error)。
+func (s *Store) EnsureProtocolSharedEndpoint(ctx context.Context, serverID int64, protocol string,
+	port int, config json.RawMessage) (*SharedEndpoint, bool, error) {
+	if serverID <= 0 || protocol == "" || !json.Valid(config) {
+		return nil, false, fmt.Errorf("invalid protocol shared endpoint")
+	}
+	existing, err := scanEndpoint(s.db.QueryRowContext(ctx, `SELECT `+endpointCols+`
+		FROM shared_endpoints WHERE server_id=? AND protocol=? AND status IN ('pending','applying','active')
+		ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'applying' THEN 1 ELSE 2 END, id LIMIT 1`,
+		serverID, protocol))
+	if err == nil {
+		return existing, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, false, err
+	}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO shared_endpoints
+		(server_id, protocol, port, profile_hash, config_template) VALUES (?, ?, ?, ?, ?)`,
+		serverID, protocol, port, protocol, string(config)) // profile_hash 无并入语义，存协议名占位
 	if err != nil {
 		return nil, false, err
 	}

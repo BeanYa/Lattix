@@ -54,6 +54,7 @@ type ChainRevisionSnapshot struct {
 	ServiceNodeID          int64              `json:"service_node_id"`
 	ServiceServerID        int64              `json:"service_server_id"`
 	EndpointID             int64              `json:"endpoint_id,omitempty"`
+	ServiceEndpointID      int64              `json:"service_endpoint_id,omitempty"` // hy2 出口侧共享监听（P4）
 	ServiceUUID            string             `json:"service_uuid,omitempty"`
 	ServiceConfig          json.RawMessage    `json:"service_config"`
 	ServiceRealized        json.RawMessage    `json:"service_realized,omitempty"`
@@ -104,6 +105,7 @@ type InitialChainDeployment struct {
 	ServicePort            *int
 	ServiceConfig          json.RawMessage
 	EndpointID             int64
+	ServiceEndpointID      int64
 	ServiceUUID            string
 	TrafficMultiplierMilli int
 	Hops                   []InitialChainHop
@@ -149,9 +151,9 @@ func (s *Store) CreateInitialChainDeployment(
 	}
 
 	chainResult, err := tx.ExecContext(ctx,
-		`INSERT INTO chains (name, service_node_id, endpoint_id, service_uuid, traffic_multiplier_milli)
-		 VALUES (?, ?, ?, ?, ?)`,
-		input.Name, out.NodeID, input.EndpointID, input.ServiceUUID, input.TrafficMultiplierMilli)
+		`INSERT INTO chains (name, service_node_id, endpoint_id, service_endpoint_id, service_uuid, traffic_multiplier_milli)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		input.Name, out.NodeID, input.EndpointID, input.ServiceEndpointID, input.ServiceUUID, input.TrafficMultiplierMilli)
 	if err != nil {
 		return out, fmt.Errorf("insert initial chain: %w", err)
 	}
@@ -205,7 +207,7 @@ func (s *Store) CreateInitialChainDeployment(
 
 	snapshot := ChainRevisionSnapshot{
 		Name: input.Name, ServiceNodeID: out.NodeID, ServiceServerID: input.ServiceServerID,
-		EndpointID: input.EndpointID, ServiceUUID: input.ServiceUUID,
+		EndpointID: input.EndpointID, ServiceEndpointID: input.ServiceEndpointID, ServiceUUID: input.ServiceUUID,
 		ServiceConfig: input.ServiceConfig, TrafficMultiplierMilli: input.TrafficMultiplierMilli,
 		Hops: out.Hops, ApplyKeys: out.ApplyKeys,
 	}
@@ -740,11 +742,11 @@ func (s *Store) PublishChainRevision(ctx context.Context, revisionID int64, forc
 	if forced {
 		desiredRevisionID = revisionID
 	}
-	chainQuery := `UPDATE chains SET name=?, service_node_id=?, endpoint_id=?, service_uuid=?, traffic_multiplier_milli=?,
+	chainQuery := `UPDATE chains SET name=?, service_node_id=?, endpoint_id=?, service_endpoint_id=?, service_uuid=?, traffic_multiplier_milli=?,
 		published_revision_id=?, desired_revision_id=?, status=?, error='', updated_at=CURRENT_TIMESTAMP WHERE id=?`
 	chainArgs := []any{
 		revision.Snapshot.Name, revision.Snapshot.ServiceNodeID, revision.Snapshot.EndpointID,
-		revision.Snapshot.ServiceUUID, revision.Snapshot.TrafficMultiplierMilli,
+		revision.Snapshot.ServiceEndpointID, revision.Snapshot.ServiceUUID, revision.Snapshot.TrafficMultiplierMilli,
 		revisionID, desiredRevisionID, chainStatus, revision.ChainID,
 	}
 	if len(fromStatus) > 0 {

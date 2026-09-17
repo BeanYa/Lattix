@@ -341,8 +341,8 @@ func TestMigrateLegacyPreservesSubToken(t *testing.T) {
 	if err := st.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 17 {
-		t.Fatalf("schema version = %d, want 17", version)
+	if version != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
 	}
 	var token string
 	if err := st.db.QueryRowContext(ctx, `SELECT sub_token FROM users WHERE name='a'`).Scan(&token); err != nil {
@@ -480,8 +480,8 @@ func TestMigrateUserGroupMembersUnique(t *testing.T) {
 	if err := st.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 17 {
-		t.Fatalf("schema version = %d, want 17", version)
+	if version != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
 	}
 	var count int
 	if err := st.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_group_members WHERE user_id = 10`).Scan(&count); err != nil {
@@ -499,6 +499,44 @@ func TestMigrateUserGroupMembersUnique(t *testing.T) {
 	}
 	if _, err := st.db.ExecContext(ctx, `INSERT INTO user_group_members (user_group_id, user_id) VALUES (2, 11)`); err == nil {
 		t.Fatal("唯一索引应拒绝同一用户加入第二个分组")
+	}
+}
+
+// TestMigrateV18ServiceEndpointID 验证 chains.service_endpoint_id 列迁移（P4）：
+// 存量库（v17）升级后列存在且存量行为 0（端到端现状）。
+func TestMigrateV18ServiceEndpointID(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(Schema); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 17`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO chains (name, status) VALUES ('legacy', 'active')`); err != nil {
+		t.Fatal(err)
+	}
+	st := &Store{db: db}
+	if err := initializeSchema(db); err != nil {
+		t.Fatal(err)
+	}
+	_ = st
+	var version, serviceEndpointID int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != schemaVersion {
+		t.Fatalf("schema version = %d, want %d", version, schemaVersion)
+	}
+	if err := db.QueryRow(`SELECT service_endpoint_id FROM chains WHERE name='legacy'`).
+		Scan(&serviceEndpointID); err != nil {
+		t.Fatalf("迁移后列缺失或读失败: %v", err)
+	}
+	if serviceEndpointID != 0 {
+		t.Fatalf("存量行应为 0: %d", serviceEndpointID)
 	}
 }
 

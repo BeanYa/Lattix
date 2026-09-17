@@ -24,6 +24,9 @@ type RevisionTopology struct {
 	ServiceID  int64
 	Service    json.RawMessage
 	Hops       []RevisionHopSpec
+	// ServiceEndpointID 纯携带字段（hy2 出口侧共享监听，P4）：不进 piece 哈希，
+	// 供编排/发布路径把链挂到出口共享监听。
+	ServiceEndpointID int64
 	// DirectShared means the shared endpoint is also the one-hop exit. There
 	// is no separate service listener to deploy in that topology.
 	DirectShared bool
@@ -124,7 +127,7 @@ func validateTopology(topology RevisionTopology) error {
 		seenHop[hop.HopID] = true
 		seenServer[hop.ServerID] = true
 		switch hop.Transport {
-		case "", "direct", "encrypted", "reverse":
+		case "", "direct", "encrypted", "reverse", "hy2": // hy2：入口终结模式末段（P4）
 		default:
 			return fmt.Errorf("unsupported transport %q", hop.Transport)
 		}

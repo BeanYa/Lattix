@@ -362,3 +362,62 @@ func TestSetSharedEndpointActivePreservesEncryption(t *testing.T) {
 		t.Errorf("encryption 应保留，实际 %q（realized=%s）", rc.Encryption, ep.RealizedConfig)
 	}
 }
+
+// TestEnsureProtocolSharedEndpoint 验证 hy2 出口共享：同机同协议仅一个活跃监听，
+// 第二链并入（首链 profile/端口为准）；不同服务器互不影响；删除态不复用。
+func TestEnsureProtocolSharedEndpoint(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"})
+	otherID, _ := st.CreateServer(ctx, ServerDraft{Alias: "other", Address: "other.test", BootstrapToken: "token2", MachineType: MachineTypeDirect, CountryCode: "JP"})
+
+	cfg1 := json.RawMessage(`{"protocol":"hysteria","port":0,"port_hop":"30000-30031","template":{}}`)
+	ep1, created, err := st.EnsureProtocolSharedEndpoint(ctx, serverID, shared.ProtocolHysteria2, 0, cfg1)
+	if err != nil || !created {
+		t.Fatalf("首链应创建: created=%v err=%v", created, err)
+	}
+	// 第二链不同 profile/段：并入首链监听（首链为准）。
+	cfg2 := json.RawMessage(`{"protocol":"hysteria","port":0,"port_hop":"40000-40031","template":{}}`)
+	ep2, created, err := st.EnsureProtocolSharedEndpoint(ctx, serverID, shared.ProtocolHysteria2, 0, cfg2)
+	if err != nil || created || ep2.ID != ep1.ID {
+		t.Fatalf("第二链应并入首链监听: id=%d created=%v err=%v", ep2.ID, created, err)
+	}
+	// 显式端口创建；后续 port=0 的链也并入（端口以既有为准）。
+	ep3, created, err := st.EnsureProtocolSharedEndpoint(ctx, otherID, shared.ProtocolHysteria2, 14433, cfg1)
+	if err != nil || !created || ep3.ID == ep1.ID || ep3.Port != 14433 {
+		t.Fatalf("其他服务器应独立创建: ep=%+v created=%v err=%v", ep3, created, err)
+	}
+	ep4, created, err := st.EnsureProtocolSharedEndpoint(ctx, otherID, shared.ProtocolHysteria2, 0, cfg2)
+	if err != nil || created || ep4.ID != ep3.ID {
+		t.Fatalf("port=0 应并入同机既有监听: id=%d created=%v err=%v", ep4.ID, created, err)
+	}
+	// 不同协议互不影响。
+	if _, created, err := st.EnsureProtocolSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 0, cfg1); err != nil || !created {
+		t.Fatalf("不同协议应独立创建: created=%v err=%v", created, err)
+	}
+	// 失败态端点不复用：failed 后再次 Ensure 应新建。
+	if err := st.SetSharedEndpointFailed(ctx, ep1.ID, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	ep5, created, err := st.EnsureProtocolSharedEndpoint(ctx, serverID, shared.ProtocolHysteria2, 0, cfg2)
+	if err != nil || !created || ep5.ID == ep1.ID {
+		t.Fatalf("failed 端点不应复用: id=%d created=%v err=%v", ep5.ID, created, err)
+	}
+	// 非法参数报错。
+	if _, _, err := st.EnsureProtocolSharedEndpoint(ctx, 0, "hysteria", 0, cfg1); err == nil {
+		t.Fatal("serverID=0 应报错")
+	}
+	if _, _, err := st.EnsureProtocolSharedEndpoint(ctx, serverID, "", 0, cfg1); err == nil {
+		t.Fatal("空 protocol 应报错")
+	}
+	if _, _, err := st.EnsureProtocolSharedEndpoint(ctx, serverID, "hysteria", 0, json.RawMessage(`not json`)); err == nil {
+		t.Fatal("非法 JSON 应报错")
+	}
+	if _, _, err := st.EnsureProtocolSharedEndpoint(ctx, serverID, "hysteria", 0, nil); err == nil {
+		t.Fatal("空 config 应报错")
+	}
+}

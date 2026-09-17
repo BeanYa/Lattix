@@ -84,6 +84,7 @@ type chainDTO struct {
 	RevisionForced      bool                   `json:"revision_forced"`
 	RevisionTasks       []chainRevisionTaskDTO `json:"revision_tasks"`
 	ServiceConfig       json.RawMessage        `json:"service_config,omitempty"`
+	EntryConfig         *shared.VirtualConfig  `json:"entry_config,omitempty"` // 入口协议区块配置回填（P4，前端编辑回填用）
 }
 
 // toChainDTO 组装链 DTO（跳按 seq 升序：首位入口，末位出口）。
@@ -125,6 +126,11 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 			out.EntryPort = endpoint.Port
 			out.EndpointStatus = endpoint.Status
 			out.EndpointError = endpoint.Error
+			// 入口端点配置回填（P4 入口协议区块，前端编辑回填用；取不到则留 nil，不阻断列表）。
+			var entryConfig shared.VirtualConfig
+			if err := json.Unmarshal(endpoint.ConfigTemplate, &entryConfig); err == nil {
+				out.EntryConfig = &entryConfig
+			}
 		}
 		if count, err := s.st.EndpointChainCount(r.Context(), out.EndpointID); err == nil {
 			out.EntryShared = count >= 2
@@ -208,14 +214,15 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 // createChainRequest 是链路构图的提交（§10/§21）：依次入口 / 中间跳（0-2）/ 出口，
 // 出口携带业务节点的协议表单（复用建节点请求），入口端口可空 = 自动。
 type createChainRequest struct {
-	Name              string            `json:"name"`
-	Hops              []chainHopRef     `json:"hops,omitempty"`
-	Entry             chainHopRef       `json:"entry"`
-	Middle            []chainHopRef     `json:"middle"` // 0-2 个
-	Exit              chainHopRef       `json:"exit"`
-	EntryPort         *int              `json:"entry_port"` // 留空 = 自动；须在入口机可用段内
-	Node              createNodeRequest `json:"node"`       // 出口业务节点表单（server_id 忽略，取 exit.server_id）
-	TrafficMultiplier string            `json:"traffic_multiplier"`
+	Name              string             `json:"name"`
+	Hops              []chainHopRef      `json:"hops,omitempty"`
+	Entry             chainHopRef        `json:"entry"`
+	Middle            []chainHopRef      `json:"middle"` // 0-2 个
+	Exit              chainHopRef        `json:"exit"`
+	EntryPort         *int               `json:"entry_port"`           // 留空 = 自动；须在入口机可用段内
+	Node              createNodeRequest  `json:"node"`                 // 出口业务节点表单（server_id 忽略，取 exit.server_id）
+	EntryNode         *createNodeRequest `json:"entry_node,omitempty"` // 入口协议区块（P4；nil=端到端现状，v1 仅 vless+reality）
+	TrafficMultiplier string             `json:"traffic_multiplier"`
 }
 
 type chainHopRef struct {
@@ -224,12 +231,13 @@ type chainHopRef struct {
 }
 
 type editChainRequest struct {
-	ChainID           int64             `json:"chain_id"`
-	Name              string            `json:"name"`
-	Hops              []chainHopRef     `json:"hops"`
-	EntryPort         *int              `json:"entry_port"`
-	Node              createNodeRequest `json:"node"`
-	TrafficMultiplier string            `json:"traffic_multiplier"`
+	ChainID           int64              `json:"chain_id"`
+	Name              string             `json:"name"`
+	Hops              []chainHopRef      `json:"hops"`
+	EntryPort         *int               `json:"entry_port"`
+	Node              createNodeRequest  `json:"node"`
+	EntryNode         *createNodeRequest `json:"entry_node,omitempty"` // 入口协议区块（P4；nil=端到端现状）
+	TrafficMultiplier string             `json:"traffic_multiplier"`
 }
 
 // handleCreateChain 处理 POST /api/chains：构图校验 → 落库出口业务节点（pending）+
@@ -264,6 +272,29 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	if len(refs) > 1 && req.Node.Protocol == shared.ProtocolDokodemo {
 		writeError(w, http.StatusBadRequest, "dokodemo-door 不能作为链出口节点")
 		return
+	}
+	// 入口协议区块（P4 §3.2 异构入口）：v1 仅 vless+reality；仅多跳；出口仅 hy2/vless。
+	if req.EntryNode != nil {
+		if len(refs) < 2 {
+			writeError(w, http.StatusBadRequest, "入口协议区块仅用于多跳链路（单跳客户端直连出口即可）")
+			return
+		}
+		if req.EntryNode.Protocol != "" && req.EntryNode.Protocol != shared.ProtocolVLESS {
+			writeError(w, http.StatusBadRequest, "入口协议区块 v1 仅支持 VLESS+Reality")
+			return
+		}
+		if req.Node.Protocol != shared.ProtocolHysteria2 && req.Node.Protocol != shared.ProtocolVLESS {
+			writeError(w, http.StatusBadRequest, "入口协议区块 v1 仅支持 hysteria2/vless 出口")
+			return
+		}
+		req.EntryNode.Protocol = shared.ProtocolVLESS
+		req.EntryNode.Security = shared.SecurityReality // 固定 reality（子参数可空自动生成）
+		req.EntryNode.Name = req.Name
+		req.EntryNode.ServerID = refs[0].ServerID
+		if err := req.EntryNode.normalize(); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("入口协议参数: %v", err))
+			return
+		}
 	}
 
 	// 逐跳加载服务器并校验：同 server 不重复（O(n) 查重即环检测）；
@@ -304,6 +335,33 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// hy2 端口跳跃（spec §2/§3.2）：先对出口机做分配/显式段校验（复用 Task 3 助手）；
+	// 端到端（无入口区块）时逐跳校验段整体落在各跳 NAT 段内且与各跳既有占用无冲突。
+	if req.Node.Protocol == shared.ProtocolHysteria2 {
+		if err := s.resolveHy2PortHop(r.Context(), &req.Node, exitSrv, 0); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if req.Node.PortHop != "" && req.EntryNode == nil {
+			start, end, _ := shared.ParsePortHop(req.Node.PortHop)
+			for _, hopSrv := range servers[:len(servers)-1] {
+				ranges, err := shared.ParsePortRanges(hopSrv.AllowedPorts)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				if len(ranges) > 0 && !shared.SpanInListenRanges(ranges, start, end) {
+					writeError(w, http.StatusBadRequest,
+						fmt.Sprintf("端口跳跃段 %s 不在服务器 %s 可用段内", req.Node.PortHop, hopSrv.Alias))
+					return
+				}
+				if err := s.checkPortConflict(r.Context(), hopSrv.ID, req.Node.Protocol, start, end, 0); err != nil {
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+			}
+		}
+	}
 	nameServers := make([]nameTemplateServer, 0, len(servers))
 	for _, srv := range servers {
 		nameServers = append(nameServers, nameServer(srv))
@@ -341,8 +399,10 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			entryPort = *req.Node.Port
 		}
 	}
-	// 入口监听是 dokodemo 管道（层随出口协议：ss 为 tcp,udp，其余 tcp）；vless 入口走共享端点合并，跳过前置校验。
-	if entryPort > 0 && req.Node.Protocol != shared.ProtocolVLESS {
+	// 入口监听是 dokodemo 管道（层随出口协议：ss 为 tcp,udp，hy2 为 udp，其余 tcp）；
+	// vless 出口或勾选入口协议区块时入口走共享端点合并，跳过前置校验。
+	entryShared := req.Node.Protocol == shared.ProtocolVLESS || req.EntryNode != nil
+	if entryPort > 0 && !entryShared {
 		if err := s.checkPortConflict(r.Context(), entrySrv.ID, req.Node.Protocol, entryPort, 0, 0); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -372,8 +432,13 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	vc := buildVirtualConfig(req.Node)
 	endpointID := int64(0)
 	serviceUUID := ""
-	if vc.Protocol == shared.ProtocolVLESS {
-		endpointConfig := vc
+	// 入口端点：vless 出口（现状）或勾选入口协议区块（P4，入口协议配置独立于出口）。
+	if req.Node.Protocol == shared.ProtocolVLESS || req.EntryNode != nil {
+		endpointSource := vc
+		if req.EntryNode != nil {
+			endpointSource = buildVirtualConfig(*req.EntryNode)
+		}
+		endpointConfig := endpointSource
 		endpointConfig.Port = entryPort
 		endpointConfig.StaticClients = nil
 		endpointJSON, err := json.Marshal(endpointConfig)
@@ -386,7 +451,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		profile.Port = 0
 		profileJSON, _ := json.Marshal(profile)
 		profileHash := fmt.Sprintf("%x", sha256.Sum256(profileJSON))
-		endpoint, _, err := s.st.EnsureSharedEndpoint(r.Context(), entrySrv.ID, vc.Protocol,
+		endpoint, _, err := s.st.EnsureSharedEndpoint(r.Context(), entrySrv.ID, shared.ProtocolVLESS,
 			entryPort, profileHash, endpointJSON)
 		if err != nil {
 			o.Fail(err)
@@ -402,6 +467,31 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			vc.Port = 0
 			req.Node.Port = nil
 		}
+	}
+	// hy2 出口共享监听（P4 §3.2）：同机多链并入同一 hy2 监听与端口段（首链 profile 为准）。
+	serviceEndpointID := int64(0)
+	if vc.Protocol == shared.ProtocolHysteria2 {
+		endpointJSON, err := json.Marshal(vc)
+		if err != nil {
+			o.Fail(err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		port := 0
+		if req.Node.Port != nil {
+			port = *req.Node.Port
+		}
+		svcEndpoint, _, err := s.st.EnsureProtocolSharedEndpoint(r.Context(), exitSrv.ID,
+			shared.ProtocolHysteria2, port, endpointJSON)
+		if err != nil {
+			o.Fail(err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		serviceEndpointID = svcEndpoint.ID
+		// 出口节点自身不再监听（共享监听承载）；端口/实现参数以共享端点 realized 为准（Task 6 镜像）。
+		vc.Port = 0
+		req.Node.Port = nil
 	}
 	vcJSON, err := json.Marshal(vc)
 	if err != nil {
@@ -429,6 +519,12 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		transport := ""
 		if i < len(servers)-1 {
 			transport = transportForServers(servers[i+1], plaintext)
+			// 入口终结模式末段：出口为 hy2 且可直连时由本跳 xray 以 hy2 outbound 直拨（§3.2）；
+			// 出口无入站能力（零公共端口 NAT）保持 reverse（功能可用，失去 UDP 收益）。
+			if i == len(servers)-2 && req.EntryNode != nil &&
+				req.Node.Protocol == shared.ProtocolHysteria2 && inboundCapable(servers[i+1]) {
+				transport = "hy2"
+			}
 		}
 		tunnelUUID := ""
 		if transport == "reverse" || transport == "encrypted" {
@@ -441,7 +537,8 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	}
 	deployment, err := s.st.CreateInitialChainDeployment(r.Context(), store.InitialChainDeployment{
 		Name: req.Name, ServiceServerID: exitSrv.ID, ServiceProtocol: vc.Protocol,
-		ServicePort: req.Node.Port, ServiceConfig: vcJSON, EndpointID: endpointID, ServiceUUID: serviceUUID,
+		ServicePort: req.Node.Port, ServiceConfig: vcJSON, EndpointID: endpointID,
+		ServiceEndpointID: serviceEndpointID, ServiceUUID: serviceUUID,
 		TrafficMultiplierMilli: trafficMultiplierMilli, Hops: initialHops,
 	})
 	if err != nil {
@@ -592,10 +689,60 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "dokodemo-door 不能作为中转链出口")
 		return
 	}
+	// 入口协议区块（P4 §3.2 异构入口）：v1 仅 vless+reality；仅多跳；出口仅 hy2/vless。
+	if req.EntryNode != nil {
+		if len(req.Hops) < 2 {
+			writeError(w, http.StatusBadRequest, "入口协议区块仅用于多跳链路（单跳客户端直连出口即可）")
+			return
+		}
+		if req.EntryNode.Protocol != "" && req.EntryNode.Protocol != shared.ProtocolVLESS {
+			writeError(w, http.StatusBadRequest, "入口协议区块 v1 仅支持 VLESS+Reality")
+			return
+		}
+		if req.Node.Protocol != shared.ProtocolHysteria2 && req.Node.Protocol != shared.ProtocolVLESS {
+			writeError(w, http.StatusBadRequest, "入口协议区块 v1 仅支持 hysteria2/vless 出口")
+			return
+		}
+		req.EntryNode.Protocol = shared.ProtocolVLESS
+		req.EntryNode.Security = shared.SecurityReality // 固定 reality（子参数可空自动生成）
+		req.EntryNode.Name = req.Name
+		req.EntryNode.ServerID = servers[0].ID
+		if err := req.EntryNode.normalize(); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("入口协议参数: %v", err))
+			return
+		}
+	}
 	// ACME 证书模式：落地（出口）服务器须有域名型公网地址（镜像创建路径）。
 	if err := applyACMEDomain(&req.Node, servers[len(servers)-1]); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	// hy2 端口跳跃（spec §2/§3.2，镜像创建路径）：先对出口机做分配/显式段校验；
+	// 端到端（无入口区块）时逐跳校验段整体落在各跳 NAT 段内且与各跳既有占用无冲突。
+	if req.Node.Protocol == shared.ProtocolHysteria2 {
+		if err := s.resolveHy2PortHop(r.Context(), &req.Node, servers[len(servers)-1], req.ChainID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if req.Node.PortHop != "" && req.EntryNode == nil {
+			start, end, _ := shared.ParsePortHop(req.Node.PortHop)
+			for _, hopSrv := range servers[:len(servers)-1] {
+				ranges, err := shared.ParsePortRanges(hopSrv.AllowedPorts)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				if len(ranges) > 0 && !shared.SpanInListenRanges(ranges, start, end) {
+					writeError(w, http.StatusBadRequest,
+						fmt.Sprintf("端口跳跃段 %s 不在服务器 %s 可用段内", req.Node.PortHop, hopSrv.Alias))
+					return
+				}
+				if err := s.checkPortConflict(r.Context(), hopSrv.ID, req.Node.Protocol, start, end, req.ChainID); err != nil {
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+			}
+		}
 	}
 	nameServers := make([]nameTemplateServer, 0, len(servers))
 	for _, server := range servers {
@@ -618,8 +765,10 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "入口端口不在可用范围内")
 			return
 		}
-		// vless 入口走共享端点合并，跳过前置校验；excludeChainID 排除本链既有占用。
-		if req.Node.Protocol != shared.ProtocolVLESS {
+		// vless 出口或勾选入口协议区块时入口走共享端点合并，跳过前置校验；
+		// excludeChainID 排除本链既有占用。
+		entryShared := req.Node.Protocol == shared.ProtocolVLESS || req.EntryNode != nil
+		if !entryShared {
 			if err := s.checkPortConflict(r.Context(), servers[0].ID, req.Node.Protocol, *req.EntryPort, 0, req.ChainID); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
@@ -642,7 +791,7 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	vc := buildVirtualConfig(req.Node)
 	endpointID := int64(0)
 	serviceUUID := current.Snapshot.ServiceUUID
-	if vc.Protocol == shared.ProtocolVLESS && current.Snapshot.EndpointID != 0 {
+	if (vc.Protocol == shared.ProtocolVLESS || req.EntryNode != nil) && current.Snapshot.EndpointID != 0 {
 		if serviceUUID == "" {
 			serviceUUID = uuid.NewString()
 		}
@@ -650,7 +799,12 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		if req.EntryPort != nil {
 			endpointPort = *req.EntryPort
 		}
-		endpointConfig := vc
+		// 入口协议区块（P4）：入口端点配置独立于出口协议。
+		endpointSource := vc
+		if req.EntryNode != nil {
+			endpointSource = buildVirtualConfig(*req.EntryNode)
+		}
+		endpointConfig := endpointSource
 		endpointConfig.Port = endpointPort
 		endpointJSON, _ := json.Marshal(endpointConfig)
 		profile := endpointConfig
@@ -666,7 +820,7 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		}
 		if endpointID == 0 {
 			endpoint, _, err := s.st.EnsureSharedEndpoint(r.Context(), servers[0].ID,
-				vc.Protocol, endpointPort, profileHash, endpointJSON)
+				shared.ProtocolVLESS, endpointPort, profileHash, endpointJSON)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, err.Error())
 				return
@@ -678,6 +832,29 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			vc.Port = 0
 			req.Node.Port = nil
 		}
+	}
+	// hy2 出口共享监听（P4 §3.2，镜像创建路径）：同机多链并入同一 hy2 监听与端口段。
+	serviceEndpointID := int64(0)
+	if vc.Protocol == shared.ProtocolHysteria2 {
+		endpointJSON, err := json.Marshal(vc)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		port := 0
+		if req.Node.Port != nil {
+			port = *req.Node.Port
+		}
+		svcEndpoint, _, err := s.st.EnsureProtocolSharedEndpoint(r.Context(), servers[len(servers)-1].ID,
+			shared.ProtocolHysteria2, port, endpointJSON)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		serviceEndpointID = svcEndpoint.ID
+		// 出口节点自身不再监听（共享监听承载）；端口/实现参数以共享端点 realized 为准（Task 6 镜像）。
+		vc.Port = 0
+		req.Node.Port = nil
 	}
 	serviceConfig, err := json.Marshal(vc)
 	if err != nil {
@@ -722,6 +899,11 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		} else if plaintext {
 			transport = "encrypted"
 		}
+		// 入口终结模式末段（P4 §3.2）：出口 hy2 且可直连 → 本跳 hy2 outbound 直拨。
+		if i == len(desiredHops)-2 && req.EntryNode != nil &&
+			req.Node.Protocol == shared.ProtocolHysteria2 && inboundCapable(servers[i+1]) {
+			transport = "hy2"
+		}
 		old := desiredHops[i]
 		if old.Transport != transport || old.TunnelUUID == "" && transport != "direct" {
 			desiredHops[i].PortalPort = 0
@@ -729,7 +911,7 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			desiredHops[i].PortalServerName = ""
 		}
 		desiredHops[i].Transport = transport
-		if transport == "direct" {
+		if transport == "direct" || transport == "hy2" {
 			desiredHops[i].TunnelUUID = ""
 		} else if desiredHops[i].TunnelUUID == "" {
 			desiredHops[i].TunnelUUID = uuid.NewString()
@@ -737,7 +919,7 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	}
 	desired := store.ChainRevisionSnapshot{Name: req.Name, ServiceNodeID: current.Snapshot.ServiceNodeID,
 		ServiceServerID: servers[len(servers)-1].ID, ServiceConfig: serviceConfig,
-		EndpointID: endpointID, ServiceUUID: serviceUUID,
+		EndpointID: endpointID, ServiceEndpointID: serviceEndpointID, ServiceUUID: serviceUUID,
 		TrafficMultiplierMilli: multiplier, Hops: desiredHops}
 	currentPlanTopology := revisionTopology(1, current.Snapshot)
 	desiredPlanTopology := revisionTopology(2, desired)
@@ -876,7 +1058,8 @@ func revisionTopology(revisionID int64, snapshot store.ChainRevisionSnapshot) di
 	}
 	return dispatch.RevisionTopology{RevisionID: revisionID, ServiceID: snapshot.ServiceNodeID,
 		Service: snapshot.ServiceConfig, Hops: hops,
-		DirectShared: snapshot.EndpointID != 0 && len(snapshot.Hops) == 1}
+		ServiceEndpointID: snapshot.ServiceEndpointID,
+		DirectShared:      snapshot.EndpointID != 0 && len(snapshot.Hops) == 1}
 }
 
 func (s *Server) handleForcePublishChain(w http.ResponseWriter, r *http.Request) {

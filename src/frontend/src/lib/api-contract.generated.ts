@@ -1847,6 +1847,10 @@ export interface components {
             node?: {
                 [key: string]: unknown;
             };
+            /** @description Optional entry protocol block (P4). When present, the entry hop terminates a vless+reality shared endpoint independent of the exit protocol; v1 only supports vless entry with hysteria/vless exits on multi-hop chains. */
+            entry_node?: {
+                [key: string]: unknown;
+            };
             traffic_multiplier?: string;
         } & {
             [key: string]: unknown;
@@ -1858,6 +1862,10 @@ export interface components {
             hops: components["schemas"]["ChainHopRef"][];
             entry_port?: number;
             node?: {
+                [key: string]: unknown;
+            };
+            /** @description Optional entry protocol block (P4). Same semantics as ChainCreateRequest.entry_node; omitted keeps the end-to-end topology. */
+            entry_node?: {
                 [key: string]: unknown;
             };
             traffic_multiplier?: string;
