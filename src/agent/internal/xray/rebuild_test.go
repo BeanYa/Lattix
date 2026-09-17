@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"lattix/agent/internal/state"
@@ -294,6 +295,112 @@ func TestRebuildXrayRestartFailureRollsBack(t *testing.T) {
 	}
 	if got := readRebuildFile(t, m); !jsonContains(got, `"port":12345`) {
 		t.Fatalf("回滚后应恢复原配置: %s", got)
+	}
+}
+
+// TestRebuildXrayRebuildsDNAT 回归（评审 Important #2b）：主机重启丢 iptables 规则后，
+// rebuild 必须对含 PortHop 的 hy2 inbound 按期望状态重建 DNAT（ensure 语义），
+// 否则客户端声明 udpHop 但 DNAT 不存在（静默违反不变式）。端口复用 prev（21000）。
+func TestRebuildXrayRebuildsDNAT(t *testing.T) {
+	calls := stubIPTables(t, "") // 模拟主机重启：规则全丢
+	m, _ := newRebuildTestManager(t)
+	seedRebuildConfig(t, m, `{"inbounds":[{"tag":"node_1","port":21000,"protocol":"hysteria","settings":{"version":2,"clients":[]}}],"outbounds":[{"protocol":"freedom","tag":"direct"}]}`)
+	payload := rebuildPayload(shared.ApplyNodePayload{NodeID: 1, Config: hy2DNATTemplate("20000-20031")})
+
+	result, err := m.RebuildXray(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RolledBack {
+		t.Fatal("不应回滚")
+	}
+	joined := strings.Join(*calls, "\n")
+	if !strings.Contains(joined, "-A PREROUTING") || !strings.Contains(joined, "--dport 20000:20031") ||
+		!strings.Contains(joined, "--to-ports 21000") || !strings.Contains(joined, "--comment lattix:node_1 ") {
+		t.Fatalf("rebuild 应重建 node_1 的跳跃段 DNAT:\n%s", joined)
+	}
+}
+
+// TestRebuildXrayReconcilesStaleDNAT 回归（评审 Important #2a/#3 的 rebuild 面）：
+// 端口冲突换端口/规则指向旧端口 → 清旧加新；port_hop 已改 off → 只清不加。
+func TestRebuildXrayReconcilesStaleDNAT(t *testing.T) {
+	calls := stubIPTables(t,
+		"-A PREROUTING -p udp --dport 20000:20031 -m comment --comment lattix:node_1 -j REDIRECT --to-ports 19999\n"+
+			"-A PREROUTING -p udp --dport 30000:30031 -m comment --comment lattix:node_2 -j REDIRECT --to-ports 12345\n")
+	m, _ := newRebuildTestManager(t)
+	seedRebuildConfig(t, m, `{"inbounds":[
+		{"tag":"node_1","port":21000,"protocol":"hysteria","settings":{"version":2,"clients":[]}},
+		{"tag":"node_2","port":12345,"protocol":"hysteria","settings":{"version":2,"clients":[]}}
+	],"outbounds":[{"protocol":"freedom","tag":"direct"}]}`)
+	payload := rebuildPayload(
+		shared.ApplyNodePayload{NodeID: 1, Config: hy2DNATTemplate("20000-20031")},
+		shared.ApplyNodePayload{NodeID: 2, Config: hy2DNATTemplate("")}, // port_hop 已改 off
+	)
+
+	if _, err := m.RebuildXray(payload); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(*calls, "\n")
+	// node_1：旧规则（to-ports 19999）清除，新规则指向保留端口 21000。
+	if !strings.Contains(joined, "-D PREROUTING -p udp --dport 20000:20031 -m comment --comment lattix:node_1 -j REDIRECT --to-ports 19999") {
+		t.Fatalf("应清除 node_1 指向旧端口的规则:\n%s", joined)
+	}
+	if !strings.Contains(joined, "--to-ports 21000") {
+		t.Fatalf("应按新端口重建 node_1 规则:\n%s", joined)
+	}
+	// node_2：port_hop 已 off → 清旧规则且不再建立。
+	if !strings.Contains(joined, "-D PREROUTING -p udp --dport 30000:30031 -m comment --comment lattix:node_2 -j REDIRECT --to-ports 12345") {
+		t.Fatalf("应清除 node_2 的陈旧规则:\n%s", joined)
+	}
+	if strings.Contains(joined, "--dport 30000:30031 -m comment --comment lattix:node_2 -j REDIRECT --to-ports 12345\niptables -t nat -A") ||
+		strings.Contains(joined, "-A PREROUTING -p udp --dport 30000:30031") {
+		t.Fatalf("port_hop off 不得再建立规则:\n%s", joined)
+	}
+}
+
+// TestRebuildXrayRebuildsSharedEndpointDNAT 回归（评审 Important #2 的重放面）：
+// 共享端点 piece 重放后按其记录的 PortHop/Port 重建 DNAT。
+func TestRebuildXrayRebuildsSharedEndpointDNAT(t *testing.T) {
+	calls := stubIPTables(t, "")
+	m, _ := newRebuildTestManager(t)
+	inbound := json.RawMessage(`{"tag":"shared_endpoint_5","port":23000,"protocol":"hysteria","settings":{"version":2,"clients":[]}}`)
+	m.SetChainPieces([]state.ChainPiece{{HopID: 5, Kind: sharedEndpointPieceKind, Port: 23000,
+		PortHop: "24000-24031", Inbound: inbound}})
+	payload := shared.RebuildXrayPayload{
+		ExpectedInboundTags: []string{"shared_endpoint_5"},
+		ExpectedPieces:      []string{"shared-endpoint/5"},
+	}
+
+	result, err := m.RebuildXray(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RolledBack {
+		t.Fatal("不应回滚")
+	}
+	joined := strings.Join(*calls, "\n")
+	if !strings.Contains(joined, "--dport 24000:24031") || !strings.Contains(joined, "--to-ports 23000") ||
+		!strings.Contains(joined, "--comment lattix:shared_endpoint_5 ") {
+		t.Fatalf("rebuild 应重建共享端点的跳跃段 DNAT:\n%s", joined)
+	}
+}
+
+// TestRebuildXrayDNATFailureReportsError 验证 rebuild 后 DNAT 重建失败显式报错
+// （配置已生效不回滚；重试 rebuild 幂等覆盖），不回执假成功。
+func TestRebuildXrayDNATFailureReportsError(t *testing.T) {
+	origRun, origList := runIPTables, listIPTablesRules
+	t.Cleanup(func() { runIPTables, listIPTablesRules = origRun, origList })
+	runIPTables = func(bin string, args ...string) error { return errTestIPTables }
+	listIPTablesRules = func(table, chain string) string { return "" }
+	m, _ := newRebuildTestManager(t)
+	payload := rebuildPayload(shared.ApplyNodePayload{NodeID: 1, Config: hy2DNATTemplate("20000-20031")})
+
+	result, err := m.RebuildXray(payload)
+	if err == nil || !strings.Contains(err.Error(), "DNAT") {
+		t.Fatalf("DNAT 失败应显式报错: %v", err)
+	}
+	if result.RolledBack {
+		t.Fatal("配置已生效，不应回滚")
 	}
 }
 

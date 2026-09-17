@@ -100,6 +100,7 @@ type ChainPiece struct {
 	Encryption string            `json:"encryption,omitempty"`  // shared endpoint：VLESS Encryption 客户端字符串（回执值，重发复用）
 	Inbound    json.RawMessage   `json:"inbound,omitempty"`     // portal/forward 的 inbound
 	Inbounds   []json.RawMessage `json:"inbounds,omitempty"`    // forward：hy2 端到端跳跃段逐端口附加 inbound（P4）
+	PortHop    string            `json:"port_hop,omitempty"`    // shared endpoint：hy2 跳跃段（P4，rebuild 重建 DNAT 的依据）
 	Outbound   json.RawMessage   `json:"outbound,omitempty"`    // bridge 的 interconn outbound
 	Outbounds  []json.RawMessage `json:"outbounds,omitempty"`   // shared endpoint 的逐链 outbound
 	Reverse    json.RawMessage   `json:"reverse,omitempty"`     // reverse.portals/bridges 条目

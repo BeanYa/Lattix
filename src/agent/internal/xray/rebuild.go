@@ -156,6 +156,9 @@ func (m *Manager) RebuildXray(p shared.RebuildXrayPayload) (*shared.RebuildXrayR
 	for _, raw := range prevByTag {
 		usedPorts[inboundPort(raw)] = true
 	}
+	// dnatWanted 收集本次重建期望的端口跳跃 DNAT 状态（节点按最终生效端口；
+	// 共享端点 piece 在重放后补入），自检通过后统一收敛。
+	dnatWanted := []udpHopSpec{}
 	cand := m.skeleton()
 	for _, spec := range p.Nodes {
 		tag := shared.NodeTag(spec.NodeID)
@@ -189,8 +192,26 @@ func (m *Manager) RebuildXray(p shared.RebuildXrayPayload) (*shared.RebuildXrayR
 		}
 		usedPorts[inboundPort(inbound)] = true
 		cand = cand.upsertInbound(tag, inbound)
+		portHop := ""
+		if spec.Config.Protocol == shared.ProtocolHysteria2 {
+			portHop = spec.Config.PortHop
+		}
+		dnatWanted = append(dnatWanted, udpHopSpec{tag: tag, portHop: portHop, port: inboundPort(inbound)})
 	}
 	cand, replayedPieces := m.mergeExpectedPieces(cand, p.ExpectedPieces)
+	// 重放的 hy2 出口共享监听同样收敛 DNAT（PortHop 随 piece 落盘，ApplySharedEndpoint 记录）。
+	replayedSet := make(map[string]bool, len(replayedPieces))
+	for _, key := range replayedPieces {
+		replayedSet[key] = true
+	}
+	for _, rec := range m.chainPieces {
+		if rec.Kind != sharedEndpointPieceKind || !replayedSet[fmt.Sprintf("%s/%d", rec.Kind, rec.HopID)] {
+			continue
+		}
+		dnatWanted = append(dnatWanted, udpHopSpec{
+			tag: shared.SharedEndpointTag(rec.HopID), portHop: rec.PortHop, port: rec.Port,
+		})
+	}
 	// 3b. 规范化扫描：补全 xray 版本升级后缺省的字段（minClientVer 等，全配置生效）。
 	cand = normalizeRebuiltConfig(cand)
 	// 4-5. 校验 + 原子落盘。
@@ -211,6 +232,15 @@ func (m *Manager) RebuildXray(p shared.RebuildXrayPayload) (*shared.RebuildXrayR
 	}
 	if !m.runner.IsRunning(context.Background()) {
 		return rollback(fmt.Errorf("重建后 xray 未在运行"))
+	}
+	// 7b. 端口跳跃 DNAT 按期望状态收敛（评审 Important #2）：主机重启丢规则、
+	// 端口冲突换端口后旧规则指向旧端口、跳跃段关闭/协议变更的陈旧规则，全部由
+	// ensure 语义覆盖（先清后加；空段 = 清理）。失败显式报错：配置已生效不回滚
+	// （回滚会恢复旧端口使规则更错位），重试 rebuild 幂等覆盖。
+	for _, d := range dnatWanted {
+		if err := m.ensureUdpHopDNAT(d.tag, d.portHop, d.port); err != nil {
+			return result, fmt.Errorf("重建已生效，但 %s 的端口跳跃 DNAT 重建失败: %w", d.tag, err)
+		}
 	}
 	// 8. 成功：清理备份，汇总回执。
 	if hadPrev {

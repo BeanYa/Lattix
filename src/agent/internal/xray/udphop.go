@@ -13,6 +13,13 @@ import (
 // 规则以 --comment "lattix:<tag>" 标识，生命周期跟随对应 inbound（建立幂等=先清后加；
 // 清理按注释匹配删除）。仅有 IPv4 治理（v1；IPv6 跳跃段后续版本补 ip6tables）。
 
+// udpHopSpec 是 rebuild 时期望收敛的一条 DNAT 状态（tag + 跳跃段 + 监听端口）。
+type udpHopSpec struct {
+	tag     string
+	portHop string
+	port    int
+}
+
 // runIPTables 测试缝：单测捕获调用序列，不执行真实 iptables。
 var runIPTables = runIPTablesImpl
 

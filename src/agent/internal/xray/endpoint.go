@@ -77,6 +77,7 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 	rec := state.ChainPiece{
 		HopID: p.EndpointID, Kind: sharedEndpointPieceKind, Port: realized.Port,
 		PrivateKey: privateKey, PublicKey: realized.PublicKey, Encryption: realized.Encryption,
+		PortHop: config.PortHop,
 		Inbound: inbound,
 	}
 	for _, route := range p.Routes {
