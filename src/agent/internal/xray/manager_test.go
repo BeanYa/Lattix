@@ -112,3 +112,66 @@ func TestApplyNodeHysteriaDNATFailure(t *testing.T) {
 		t.Fatalf("DNAT 失败应报指向性错误: %v", err)
 	}
 }
+
+// hy2DNATTemplate / vlessPlainTemplate 是原地变更测试的极简模板。
+func hy2DNATTemplate(portHop string) shared.VirtualConfig {
+	return shared.VirtualConfig{
+		Protocol: shared.ProtocolHysteria2, PortHop: portHop,
+		Template: json.RawMessage(`{"tag":"{{TAG}}","protocol":"hysteria","port":"{{PORT}}",
+			"settings":{"version":2,"clients":"{{CLIENTS}}"}}`),
+	}
+}
+
+func vlessPlainTemplate() shared.VirtualConfig {
+	return shared.VirtualConfig{
+		Protocol: shared.ProtocolVLESS,
+		Template: json.RawMessage(`{"tag":"{{TAG}}","protocol":"vless","port":"{{PORT}}",
+			"settings":{"clients":"{{CLIENTS}}","decryption":"none"}}`),
+	}
+}
+
+// TestApplyNodeHysteriaPortHopOffCleansDNAT 回归（评审 Important #3a）：port_hop
+// 改 off（空段）的原地变更必须清掉旧 DNAT，否则陈旧规则把跳跃段 REDIRECT 到旧监听。
+func TestApplyNodeHysteriaPortHopOffCleansDNAT(t *testing.T) {
+	calls := stubIPTables(t, "")
+	m := newVersionedTestManager(t, "26.10.1")
+	if _, err := m.ApplyNode(1, hy2DNATTemplate("20000-20031"), nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	// 原地变更：port_hop 改 off。规则表返回此前建立的规则（模拟真实主机状态）。
+	*calls = nil
+	listIPTablesRules = func(table, chain string) string {
+		return "-A PREROUTING -p udp --dport 20000:20031 -m comment --comment lattix:node_1 -j REDIRECT --to-ports 14439\n"
+	}
+	if _, err := m.ApplyNode(1, hy2DNATTemplate(""), nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(*calls, "\n")
+	if !strings.Contains(joined, "-D PREROUTING") || !strings.Contains(joined, "--comment lattix:node_1 ") {
+		t.Fatalf("port_hop 改 off 应清理旧 DNAT:\n%s", joined)
+	}
+	if strings.Contains(joined, "-A PREROUTING") {
+		t.Fatalf("空段不得再建立规则:\n%s", joined)
+	}
+}
+
+// TestApplyNodeProtocolChangeCleansDNAT 回归（评审 Important #3b）：hy2→其他协议的
+// 原地 ApplyNode 必须清掉旧 hy2 DNAT（陈旧规则会让 panel 误判段已释放→跨节点劫持）。
+func TestApplyNodeProtocolChangeCleansDNAT(t *testing.T) {
+	calls := stubIPTables(t, "")
+	m := newVersionedTestManager(t, "26.10.1")
+	if _, err := m.ApplyNode(1, hy2DNATTemplate("20000-20031"), nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	// 原地变更为 vless：规则表仍含 hy2 时代的 DNAT。
+	*calls = nil
+	listIPTablesRules = func(table, chain string) string {
+		return "-A PREROUTING -p udp --dport 20000:20031 -m comment --comment lattix:node_1 -j REDIRECT --to-ports 14439\n"
+	}
+	if _, err := m.ApplyNode(1, vlessPlainTemplate(), []string{"u1"}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if joined := strings.Join(*calls, "\n"); !strings.Contains(joined, "-D PREROUTING") {
+		t.Fatalf("协议变更应清理旧 DNAT:\n%s", joined)
+	}
+}

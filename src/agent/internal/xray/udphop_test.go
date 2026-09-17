@@ -61,10 +61,40 @@ func TestEnsureUdpHopDNAT(t *testing.T) {
 	if strings.Contains(joined, "lattix:node_2") {
 		t.Fatalf("不得删除其他 tag 的规则:\n%s", joined)
 	}
-	// portHop 空 = no-op。
+	// portHop 空 = 清理旧规则（评审 Important #3：port_hop 改 off 不得留陈旧
+	// DNAT 把跳跃段 REDIRECT 到旧监听）。
 	*calls = nil
+	if err := m.ensureUdpHopDNAT("node_1", "", 14439); err != nil {
+		t.Fatal(err)
+	}
+	if joined = strings.Join(*calls, "\n"); !strings.Contains(joined, "-D PREROUTING") {
+		t.Fatalf("空跳跃段应清理旧规则:\n%s", joined)
+	}
+	// 无旧规则时清理幂等（无任何 iptables 调用）。
+	*calls = nil
+	listIPTablesRules = func(table, chain string) string { return "" }
 	if err := m.ensureUdpHopDNAT("node_1", "", 14439); err != nil || len(*calls) != 0 {
-		t.Fatal("空跳跃段应为 no-op")
+		t.Fatal("空跳跃段且无旧规则应无调用")
+	}
+}
+
+// TestRemoveUdpHopDNATExactTag 回归：comment 精确匹配——清理 lattix:node_1 不得
+// 子串命中 lattix:node_11/node_100（评审 Critical #1：误删他节点规则且无法自愈）。
+func TestRemoveUdpHopDNATExactTag(t *testing.T) {
+	calls := stubIPTables(t,
+		"-A PREROUTING -p udp --dport 20000:20031 -m comment --comment lattix:node_1 -j REDIRECT --to-ports 14439\n"+
+			"-A PREROUTING -p udp --dport 21000:21031 -m comment --comment lattix:node_11 -j REDIRECT --to-ports 14440\n"+
+			"-A PREROUTING -p udp --dport 22000:22031 -m comment --comment lattix:node_100 -j REDIRECT --to-ports 14441\n")
+	m := &Manager{}
+	if err := m.removeUdpHopDNAT("node_1"); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(*calls, "\n")
+	if !strings.Contains(joined, "-D PREROUTING") || !strings.Contains(joined, "--comment lattix:node_1 ") {
+		t.Fatalf("应删除 node_1 的规则:\n%s", joined)
+	}
+	if strings.Contains(joined, "node_11") || strings.Contains(joined, "node_100") {
+		t.Fatalf("子串匹配误删他节点规则:\n%s", joined)
 	}
 }
 

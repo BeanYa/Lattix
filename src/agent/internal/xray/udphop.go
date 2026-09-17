@@ -35,11 +35,12 @@ var listIPTablesRules = func(table, chain string) string {
 	return string(out)
 }
 
-// ensureUdpHopDNAT 建立 tag 对应 inbound 的跳跃段 DNAT（portHop 空 = no-op）。
-// 幂等：先按 tag 清理既有规则再添加。
+// ensureUdpHopDNAT 把 tag 对应 inbound 的跳跃段 DNAT 收敛到期望状态：
+// portHop 非空 = 先清后加（幂等）；portHop 空 = 清理旧规则（port_hop 改 off 的
+// 原地变更不得留陈旧规则把跳跃段 REDIRECT 到旧监听）。
 func (m *Manager) ensureUdpHopDNAT(tag string, portHop string, listenPort int) error {
 	if portHop == "" {
-		return nil
+		return m.removeUdpHopDNAT(tag)
 	}
 	start, end, err := shared.ParsePortHop(portHop)
 	if err != nil {
@@ -60,12 +61,14 @@ func (m *Manager) ensureUdpHopDNAT(tag string, portHop string, listenPort int) e
 }
 
 // removeUdpHopDNAT 按 tag 注释清理 DNAT 规则（逐条列出后删除；无规则 = 幂等成功）。
+// comment 精确匹配（ruleComment）：子串匹配会把 lattix:node_11/node_100 误判为
+// lattix:node_1 的规则连带删除，且他节点无自愈路径（评审 Critical #1）。
 func (m *Manager) removeUdpHopDNAT(tag string) error {
 	comment := "lattix:" + tag
 	// -S 列出规则，逐条把 -A 替换为 -D 删除。
 	out := listIPTablesRules("nat", "PREROUTING")
 	for _, rule := range strings.Split(out, "\n") {
-		if !strings.Contains(rule, comment) {
+		if ruleComment(rule) != comment {
 			continue
 		}
 		del := strings.Replace(rule, "-A PREROUTING", "-D PREROUTING", 1)
@@ -75,4 +78,15 @@ func (m *Manager) removeUdpHopDNAT(tag string) error {
 		}
 	}
 	return nil
+}
+
+// ruleComment 提取 -S 规则行中 --comment 后的值（容忍引号包裹）；无注释返回空串。
+func ruleComment(rule string) string {
+	fields := strings.Fields(rule)
+	for i, f := range fields {
+		if f == "--comment" && i+1 < len(fields) {
+			return strings.Trim(fields[i+1], `"`)
+		}
+	}
+	return ""
 }

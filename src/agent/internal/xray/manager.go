@@ -169,8 +169,12 @@ func (m *Manager) ApplyNode(nodeID int64, vc shared.VirtualConfig, userUUIDs, de
 	}, "apply %s", "热操作", tag); err != nil {
 		return nil, err
 	}
-	// hy2 端口跳跃 DNAT（spec §3.2；空段 no-op）。不变式：客户端声明 udpHop ⟺ DNAT
+	// hy2 端口跳跃 DNAT（spec §3.2）。不变式：客户端声明 udpHop ⟺ DNAT
 	// 已就绪——建立失败整体报错，不上报 realized（realized.PortHop 会驱动订阅声明跳跃段）。
+	// 无条件先按 tag 清陈旧规则（原地协议变更 hy2→其他 / 重发幂等），再按期望状态建立。
+	if err := m.removeUdpHopDNAT(tag); err != nil {
+		return nil, err
+	}
 	if vc.Protocol == shared.ProtocolHysteria2 {
 		if err := m.ensureUdpHopDNAT(tag, vc.PortHop, realized.Port); err != nil {
 			return nil, err

@@ -111,17 +111,19 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 	if err := m.commitConfig(applyChainPiece(cur, rec)); err != nil {
 		return nil, err
 	}
-	// hy2 端口跳跃：段 → 监听端口的 DNAT（spec §3.2 DNAT 路径；空段 no-op）。
+	// hy2 端口跳跃：段 → 监听端口的 DNAT（spec §3.2 DNAT 路径）。无条件先清
+	// 陈旧规则（端点重发/协议或跳跃段变更），再按期望状态建立（空段 ensure = 清理）。
+	if err := m.removeUdpHopDNAT(shared.SharedEndpointTag(p.EndpointID)); err != nil {
+		return nil, err
+	}
 	if config.Protocol == shared.ProtocolHysteria2 {
 		if err := m.ensureUdpHopDNAT(shared.SharedEndpointTag(p.EndpointID), config.PortHop, realized.Port); err != nil {
 			return nil, err
 		}
 	}
 	if err := m.restartApply(); err != nil {
-		if config.Protocol == shared.ProtocolHysteria2 {
-			// 配置已回滚（inbound 不存在），DNAT 规则与 inbound 同生共死，一并回收。
-			_ = m.removeUdpHopDNAT(shared.SharedEndpointTag(p.EndpointID))
-		}
+		// 配置已回滚（inbound 不存在），DNAT 规则与 inbound 同生共死，一并回收。
+		_ = m.removeUdpHopDNAT(shared.SharedEndpointTag(p.EndpointID))
 		return nil, err
 	}
 	m.upsertChainPiece(rec)
