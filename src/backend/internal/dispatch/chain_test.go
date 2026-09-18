@@ -726,6 +726,11 @@ func TestAdvanceChainHy2HopPorts(t *testing.T) {
 	if fwd.Forward == nil || fwd.Forward.Port != 30000 || fwd.Forward.HopPortEnd != 30031 || fwd.Forward.Network != "udp" {
 		t.Fatalf("跳跃段 forward spec 不符: %+v", fwd.Forward)
 	}
+	// 评审 #1：末段目标须为段起点（agent 段内附加 inbound 按 TargetPort 同号换算，
+	// 出口 DNAT 只覆盖段；沿用 realized 监听端口 1443 时段内仅起点端口可通）。
+	if fwd.Forward.TargetAddress != "exit.test" || fwd.Forward.TargetPort != 30000 {
+		t.Fatalf("末段目标应为出口段起点 30000: %+v", fwd.Forward)
+	}
 	if fwd.Forward.Hy2Target != nil {
 		t.Fatalf("端到端链入口跳不应携带 Hy2Target: %+v", fwd.Forward)
 	}

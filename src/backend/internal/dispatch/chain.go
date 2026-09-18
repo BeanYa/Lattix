@@ -347,6 +347,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	// 段长；跳 transport 取自 revision 快照（chain_hops 表不存 transport 列）。
 	hopTransports := map[int64]string{}
 	hopSpanLen := 0
+	hopSpanStart := 0
 	serviceUUID := ""
 	if snapshot != nil {
 		for _, h := range snapshot.Hops {
@@ -359,6 +360,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		if err := json.Unmarshal(snapshot.ServiceConfig, &svcVirtual); err == nil && svcVirtual.PortHop != "" {
 			if start, end, err := shared.ParsePortHop(svcVirtual.PortHop); err == nil {
 				hopSpanLen = end - start + 1
+				hopSpanStart = start
 			}
 		}
 	}
@@ -430,6 +432,12 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			} else {
 				spec.TargetAddress = store.ResolveServerAddress(servers[next.ServerID], next.Address)
 				spec.TargetPort = publicPortOf(servers[next.ServerID], rc.Port)
+				// hy2 端到端跳跃段（评审 #1）：agent 段内附加 inbound 按 TargetPort 同号
+				// 换算目标端口，而出口 DNAT 只覆盖段——末段目标须为段起点，否则段内
+				// 仅起点端口可通（入口终结末段与端点 route 路径无此换算，不受影响）。
+				if hopSpanLen > 0 && transport != "hy2" {
+					spec.TargetPort = publicPortOf(servers[next.ServerID], hopSpanStart)
+				}
 			}
 		} else {
 			// 下一跳为中间跳：目标 = 其 forward 端口（反向取回环监听侧，直连取公网侧）。
