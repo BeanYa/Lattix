@@ -596,8 +596,8 @@ export function ChainFormDialog({
                     />
                   </div>
                   <p className="cg-chain-hint">
-                    ws/httpupgrade 支持 none（明文 · 套 CDN）与 tls（证书）安全层；
-                    vless 选 none 时需启用 VLESS Encryption。
+                    ws/httpupgrade 支持 none（明文 · 套 CDN）与 tls（证书）安全层； vless 选 none
+                    时需启用 VLESS Encryption。
                   </p>
                 </>
               )}

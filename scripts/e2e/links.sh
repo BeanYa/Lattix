@@ -204,8 +204,9 @@ SUB="$(curl -s "http://$ADDR/sub/$TOK?format=clash")"
     && echo "OK: YAML 订阅含 hysteria2 项" || { echo "FAIL: YAML 缺 hysteria2"; echo "$SUB"; exit 1; }
 
 echo ">> subscription-userinfo / profile-update-interval 响应头（§9）"
-# period_start 置当月月初，避免 1s 周期的流量重置 sweeper 清零（period_start 为空会被视为待初始化）。
-PERIOD_START="$(python3 -c 'import datetime;print(datetime.datetime.now(datetime.timezone.utc).replace(day=1,hour=0,minute=0,second=0,microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
+# period_start 置当前时刻，避免 1s 周期的流量重置 sweeper 清零：sweeper 的重置边界取用户
+# 创建日（reset_day=0 默认），当月月初早于该边界会被判定为过期周期而清零（v0.1.5 CI 踩中）。
+PERIOD_START="$(python3 -c 'import datetime;print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
 db "INSERT INTO traffic (node_id, user_uuid, up, down, period_start) VALUES (0, '$UUID1', 1234, 5678, '$PERIOD_START')" >/dev/null
 HDRS="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK?format=clash")"
 grep -qi '^subscription-userinfo: upload=1234; download=5678' <<<"$HDRS" \
