@@ -456,3 +456,107 @@ func TestEditChainEntryBlockWithoutEndpointPortConflict(t *testing.T) {
 		t.Fatalf("edit = %d %s %s（期望 400 端口冲突）", recorder.Code, editEnv.Code, editEnv.Message)
 	}
 }
+
+// TestCreateChainHy2HopPortBinding 验证端到端 hy2 链各跳 forward 端口绑定段起点
+//（评审 #3）：自动分配路径中间跳不再为 0——否则 dispatch 下发 HopPortEnd=段长-1，
+// agent 自选端口后段 inbound 循环为空，端口跳跃在自动分配路径全断；显式入口端口时
+// 入口跳保留用户端口（段随跳平移，目标按同号换算仍对齐）。
+func TestCreateChainHy2HopPortBinding(t *testing.T) {
+	ctx := context.Background()
+	st, serverAPI, aID, cID := hy2ChainFixture(t)
+	bID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "mid-b", Address: "mid-b.example.com",
+		BootstrapToken: "token-b", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, env := postCreateChain(t, serverAPI, createChainRequest{
+		Name: "hy2-3hop", Hops: []chainHopRef{{ServerID: aID}, {ServerID: bID}, {ServerID: cID}},
+		Node:              createNodeRequest{Protocol: shared.ProtocolHysteria2},
+		TrafficMultiplier: "1.000",
+	})
+	if code != http.StatusOK || env.Code != shared.CodeOK {
+		t.Fatalf("create = %d %s %s", code, env.Code, env.Message)
+	}
+	var dto chainDTO
+	if err := json.Unmarshal(env.Data, &dto); err != nil {
+		t.Fatal(err)
+	}
+	chain, err := st.ChainByID(ctx, dto.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev, err := st.ChainRevisionByID(ctx, chain.DesiredRevisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vc shared.VirtualConfig
+	if err := json.Unmarshal(rev.Snapshot.ServiceConfig, &vc); err != nil {
+		t.Fatal(err)
+	}
+	start, _, err := shared.ParsePortHop(vc.PortHop)
+	if err != nil {
+		t.Fatalf("自动分配应给出合法段: %q", vc.PortHop)
+	}
+	hops, err := st.ChainHops(ctx, chain.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hops) != 3 {
+		t.Fatalf("hops = %d, want 3", len(hops))
+	}
+	for i, h := range hops[:2] {
+		if h.ForwardPort != start {
+			t.Fatalf("hop %d forward_port = %d, want 段起点 %d", i, h.ForwardPort, start)
+		}
+	}
+	if hops[2].ForwardPort != 0 {
+		t.Fatalf("出口跳无 forward 管道，forward_port 应为 0: %d", hops[2].ForwardPort)
+	}
+	// 快照同源（piece 哈希输入），编辑后经 ReplaceWorkingChainTopology 回写不漂移。
+	for i, h := range rev.Snapshot.Hops[:2] {
+		if h.ForwardPort != start {
+			t.Fatalf("快照 hop %d forward_port = %d, want %d", i, h.ForwardPort, start)
+		}
+	}
+
+	// 显式入口端口：入口跳保留用户端口，中间跳仍绑段起点。
+	entryPort := 38443
+	code, env = postCreateChain(t, serverAPI, createChainRequest{
+		Name: "hy2-3hop-explicit", Hops: []chainHopRef{{ServerID: aID}, {ServerID: bID}, {ServerID: cID}},
+		EntryPort:         &entryPort,
+		Node:              createNodeRequest{Protocol: shared.ProtocolHysteria2},
+		TrafficMultiplier: "1.000",
+	})
+	if code != http.StatusOK || env.Code != shared.CodeOK {
+		t.Fatalf("create explicit = %d %s %s", code, env.Code, env.Message)
+	}
+	if err := json.Unmarshal(env.Data, &dto); err != nil {
+		t.Fatal(err)
+	}
+	chain2, err := st.ChainByID(ctx, dto.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev2, err := st.ChainRevisionByID(ctx, chain2.DesiredRevisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vc2 shared.VirtualConfig
+	if err := json.Unmarshal(rev2.Snapshot.ServiceConfig, &vc2); err != nil {
+		t.Fatal(err)
+	}
+	start2, _, err := shared.ParsePortHop(vc2.PortHop)
+	if err != nil {
+		t.Fatalf("自动分配应给出合法段: %q", vc2.PortHop)
+	}
+	hops2, err := st.ChainHops(ctx, chain2.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hops2[0].ForwardPort != entryPort {
+		t.Fatalf("显式入口端口应保留: %d, want %d", hops2[0].ForwardPort, entryPort)
+	}
+	if hops2[1].ForwardPort != start2 {
+		t.Fatalf("中间跳 forward_port = %d, want 段起点 %d", hops2[1].ForwardPort, start2)
+	}
+}

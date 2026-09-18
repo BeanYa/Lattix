@@ -514,6 +514,16 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		if (role == store.HopRoleEntry || len(servers) == 1) && endpointID == 0 {
 			hopForwardPort = entryPort
 		}
+		// hy2 端到端跳跃段"全跳同段"（评审 #3）：非用户指定的入口/中间跳 forward 端口
+		// 绑定段起点——否则自动端口下 dispatch 下发 HopPortEnd=0+段长-1，agent 自选
+		// 端口后段 inbound 循环为空，端口跳跃在自动分配路径全断。入口区块链末段由
+		// hy2 outbound 拨号（客户端不跨链跳跃），不参与段绑定。
+		if hopForwardPort == 0 && req.EntryNode == nil && req.Node.Protocol == shared.ProtocolHysteria2 &&
+			req.Node.PortHop != "" && role != store.HopRoleExit {
+			if start, _, err := shared.ParsePortHop(req.Node.PortHop); err == nil {
+				hopForwardPort = start
+			}
+		}
 		// 反向链标记（§21.1）：下游无入站能力（nat 且 allowed_ports 空）→ 本跳为 portal 所在上游机，
 		// 预生成 tunnel_uuid（面板下发；short_id 由编排器确定性派生）。
 		transport := ""
@@ -891,6 +901,15 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		}
 		if i == 0 && endpointID != 0 {
 			hop.ForwardPort = 0
+		}
+		// hy2 端到端跳跃段（评审 #3，镜像创建路径）：非用户指定的入口/中间跳绑定段起点，
+		// 收敛旧链（快照 forward_port=0 自动端口）到"全跳同段"；经
+		// ReplaceWorkingChainTopology 回写 chain_hops 后由 dispatch 按绑定端口下发。
+		if hop.ForwardPort == 0 && req.EntryNode == nil && req.Node.Protocol == shared.ProtocolHysteria2 &&
+			req.Node.PortHop != "" && hop.Role != store.HopRoleExit {
+			if start, _, err := shared.ParsePortHop(req.Node.PortHop); err == nil {
+				hop.ForwardPort = start
+			}
 		}
 		hop.Address = req.Hops[i].Address // 地址引用以本次编辑提交为准（§9）
 		desiredHops = append(desiredHops, hop)

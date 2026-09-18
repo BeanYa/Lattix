@@ -422,6 +422,29 @@ func (s *Store) ChainExitNodeIDs(ctx context.Context) (map[int64]bool, error) {
 	return out, rows.Err()
 }
 
+// ServiceSharedExitNodeIDs 返回 hy2 出口共享链（service_endpoint_id != 0）的出口业务
+// 节点 id 集合（P4，评审 #2）：这些节点的监听由共享端点承载（节点自身 vc.Port=0、
+// 经阶段 1 镜像 realized 转 active），repair/rebuild 的 apply_node 重放必须排除，
+// 否则 agent 会建第二个 hy2 inbound 并对同一 port_hop 段重复建 DNAT。
+func (s *Store) ServiceSharedExitNodeIDs(ctx context.Context) (map[int64]bool, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT service_node_id FROM chains
+			WHERE service_node_id != 0 AND service_endpoint_id != 0 AND deleted_at IS NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("list service-shared exit nodes: %w", err)
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan service-shared exit node: %w", err)
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // CommandsByType 列出指定类型的全部命令（链编排器从 commands 表推导 piece 进度用，§21.1）。
 func (s *Store) CommandsByType(ctx context.Context, typ string) ([]Command, error) {
 	rows, err := s.db.QueryContext(ctx,

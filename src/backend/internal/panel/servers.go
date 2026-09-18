@@ -823,9 +823,16 @@ func (s *Server) handleRepairServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o.Report("db", 100, "节点清单已就绪")
+	// hy2 出口共享链（P4，评审 #2）：出口节点监听由共享端点承载，不属于 apply_node 重放范围。
+	sharedExits, err := s.st.ServiceSharedExitNodeIDs(r.Context())
+	if err != nil {
+		o.Fail(err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	reapplied := 0
 	for _, n := range nodes {
-		if n.ServerID != id || n.Status != store.NodeStatusActive {
+		if n.ServerID != id || n.Status != store.NodeStatusActive || sharedExits[n.ID] {
 			continue
 		}
 		var vc shared.VirtualConfig
@@ -942,8 +949,16 @@ func (s *Server) handleRebuildXray(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := shared.RebuildXrayPayload{}
+	// hy2 出口共享链（P4，评审 #2）：出口节点监听由共享端点承载（piece 重放恢复），
+	// 不作为普通节点进重建清单，否则 agent 会建第二个 hy2 inbound 并重复建段 DNAT。
+	sharedExits, err := s.st.ServiceSharedExitNodeIDs(r.Context())
+	if err != nil {
+		o.Fail(err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	for _, n := range nodes {
-		if n.ServerID != id || n.Status != store.NodeStatusActive {
+		if n.ServerID != id || n.Status != store.NodeStatusActive || sharedExits[n.ID] {
 			continue
 		}
 		var vc shared.VirtualConfig
