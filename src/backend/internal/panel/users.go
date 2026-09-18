@@ -850,7 +850,20 @@ func (s *Server) handleSetUserExternalSubscriptions(w http.ResponseWriter, r *ht
 }
 
 func (s *Server) reconcileAssignmentEndpoints(ctx context.Context, groups ...[]store.UserChainAssignment) {
-	for _, endpointID := range s.st.SharedEndpointIDsForAssignments(groups...) {
+	endpointIDs := map[int64]bool{}
+	for _, id := range s.st.SharedEndpointIDsForAssignments(groups...) {
+		endpointIDs[id] = true
+	}
+	// 端到端 hy2 链（P4）：业务用户在出口共享监听上，分配变更须 reconcile 出口端点。
+	for _, group := range groups {
+		for _, a := range group {
+			if chain, err := s.st.ChainByID(ctx, a.ChainID); err == nil &&
+				chain.ServiceEndpointID != 0 && chain.EndpointID == 0 {
+				endpointIDs[chain.ServiceEndpointID] = true
+			}
+		}
+	}
+	for endpointID := range endpointIDs {
 		if err := s.disp.ReconcileSharedEndpoint(ctx, endpointID); err != nil {
 			log.Printf("panel: reconcile shared endpoint %d: %v", endpointID, err)
 		}
@@ -877,6 +890,26 @@ func (s *Server) fanoutUserDiff(ctx context.Context, uuid string, nodes []store.
 			removeNodes = append(removeNodes, n)
 		}
 	}
+	// hy2 出口共享链（P4）：出口监听由共享端点承载，add/remove_user 不扇出到这些节点
+	//（其用户由 reconcileAssignmentEndpoints 的出口端点 reconcile 承载）。
+	// 只查实际扇出的差量节点，避免全量节点的 N+1 反查。
+	exclude := map[int64]bool{}
+	for _, n := range append(addNodes, removeNodes...) {
+		if chain, err := s.st.ChainByServiceNode(ctx, n.ID); err == nil && chain != nil &&
+			chain.ServiceEndpointID != 0 {
+			exclude[n.ID] = true
+		}
+	}
+	filter := func(in []store.Node) []store.Node {
+		out := in[:0]
+		for _, n := range in {
+			if !exclude[n.ID] {
+				out = append(out, n)
+			}
+		}
+		return out
+	}
+	addNodes, removeNodes = filter(addNodes), filter(removeNodes)
 	for srvID, params := range nodeParamsByServer(addNodes) {
 		if _, err := s.disp.Enqueue(ctx, srvID, shared.TypeAddUser,
 			shared.AddUserPayload{UUID: uuid, Nodes: params}); err != nil {

@@ -122,29 +122,32 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	}
 	revisionID := int64(0)
 	endpointID := chain.EndpointID
+	serviceEndpointID := chain.ServiceEndpointID
+	var snapshot *store.ChainRevisionSnapshot
 	if revision, revisionErr := d.st.DesiredChainRevision(ctx, chainID); revisionErr == nil {
 		revisionID = revision.ID
 		endpointID = revision.Snapshot.EndpointID
+		serviceEndpointID = revision.Snapshot.ServiceEndpointID
+		snap := revision.Snapshot
+		snapshot = &snap
 	}
 	pieces, err := d.chainPieces(ctx, chainID, revisionID)
 	if err != nil {
 		log.Printf("dispatch: chain %d pieces: %v", chainID, err)
 		return
 	}
-	if revisionID != 0 {
-		if revision, revisionErr := d.st.ChainRevisionByID(ctx, revisionID); revisionErr == nil {
-			applyKeys := map[string]bool{}
-			for _, key := range revision.Snapshot.ApplyKeys {
-				applyKeys[key] = true
-			}
-			for _, hop := range revision.Snapshot.Hops {
-				for _, kind := range []string{RevisionPieceForward, RevisionPiecePortal, RevisionPieceBridge} {
-					// 复用 piece（不在 apply_keys）：标记为已 acked，编排不得重发。
-					// pieces 的读取键为 pieceKey（"<hopID>|<kind>"），apply_keys 为
-					// revisionPieceKey（"<kind>/<hopID>"）——两者命名空间不同，须分别使用。
-					if !applyKeys[revisionPieceKey(kind, hop.HopID)] {
-						pieces[pieceKey(hop.HopID, kind)] = store.CommandStatusAcked
-					}
+	if snapshot != nil {
+		applyKeys := map[string]bool{}
+		for _, key := range snapshot.ApplyKeys {
+			applyKeys[key] = true
+		}
+		for _, hop := range snapshot.Hops {
+			for _, kind := range []string{RevisionPieceForward, RevisionPiecePortal, RevisionPieceBridge} {
+				// 复用 piece（不在 apply_keys）：标记为已 acked，编排不得重发。
+				// pieces 的读取键为 pieceKey（"<hopID>|<kind>"），apply_keys 为
+				// revisionPieceKey（"<kind>/<hopID>"）——两者命名空间不同，须分别使用。
+				if !applyKeys[revisionPieceKey(kind, hop.HopID)] {
+					pieces[pieceKey(hop.HopID, kind)] = store.CommandStatusAcked
 				}
 			}
 		}
@@ -165,6 +168,34 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	if err != nil {
 		log.Printf("dispatch: chain %d exit node %d: %v", chainID, exit.NodeID, err)
 		return
+	}
+	// hy2 出口共享监听（P4）：出口监听由共享端点承载，不走 apply_node。
+	// 端点未 active → 触发 reconcile 并等待回执（端点状态机 onEnter 触发受影响链的
+	// advance）；active → 镜像 realized 到出口节点（幂等）后继续本调用内的后续阶段
+	//（store 层 SetNodeActive 不触发编排推进，故镜像后重读节点直接下落）。
+	if serviceEndpointID != 0 && node.Status != store.NodeStatusActive {
+		svcEndpoint, err := d.st.SharedEndpointByID(ctx, serviceEndpointID)
+		if err != nil {
+			log.Printf("dispatch: chain %d service endpoint %d: %v", chainID, serviceEndpointID, err)
+			return
+		}
+		if svcEndpoint.Status != store.EndpointStatusActive {
+			if svcEndpoint.Status != store.EndpointStatusApplying {
+				if err := d.ReconcileSharedEndpoint(ctx, serviceEndpointID); err != nil {
+					log.Printf("dispatch: chain %d reconcile service endpoint: %v", chainID, err)
+				}
+			}
+			return // 等端点 apply 回执
+		}
+		if err := d.st.SetNodeActive(ctx, node.ID, svcEndpoint.RealizedConfig); err != nil {
+			log.Printf("dispatch: chain %d mirror service endpoint realized: %v", chainID, err)
+			return
+		}
+		node, err = d.st.NodeByID(ctx, node.ID)
+		if err != nil {
+			log.Printf("dispatch: chain %d exit node %d reload: %v", chainID, exit.NodeID, err)
+			return
+		}
 	}
 	if endpointID != 0 && len(hops) == 1 {
 		if hops[0].Status != store.HopStatusActive {
@@ -312,8 +343,33 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	// 阶段 4：forward（出口→入口方向：中间跳先，入口最后——客户端永不见到半成品入口）。
 	// 目标：反向链 → 127.0.0.1:下一跳监听端口 + via_tunnel_domain；
 	// 直连 → 下一跳 server.address:公网端口（出口跳 = 出口业务 realized 端口）。
+	// hy2 段治理与末段拨号参数（P4 §3.2）：快照 ServiceConfig 的 port_hop 决定逐跳保留
+	// 段长；跳 transport 取自 revision 快照（chain_hops 表不存 transport 列）。
+	hopTransports := map[int64]string{}
+	hopSpanLen := 0
+	serviceUUID := ""
+	if snapshot != nil {
+		for _, h := range snapshot.Hops {
+			hopTransports[h.HopID] = h.Transport
+		}
+		serviceUUID = snapshot.ServiceUUID
+		var svcVirtual struct {
+			PortHop string `json:"port_hop"`
+		}
+		if err := json.Unmarshal(snapshot.ServiceConfig, &svcVirtual); err == nil && svcVirtual.PortHop != "" {
+			if start, end, err := shared.ParsePortHop(svcVirtual.PortHop); err == nil {
+				hopSpanLen = end - start + 1
+			}
+		}
+	}
 	for i := len(hops) - 2; i >= 0; i-- {
 		hop := hops[i]
+		transport := hopTransports[hop.ID]
+		// 入口终结 2 跳 hy2（P4 §3.2）：入口即末跳，共享端点直接以 hy2 outbound 拨出口，
+		// hop0 无 forward 管道（piece 亦不在 apply_keys，双保险）。
+		if i == 0 && len(hops) == 2 && transport == "hy2" {
+			continue
+		}
 		if hop.ForwardPort != 0 && pieces[pieceKey(hop.ID, shared.HopKindForward)] == store.CommandStatusAcked {
 			continue
 		}
@@ -335,6 +391,33 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			spec.PortCandidates = listenCandidatesOf(servers[hop.ServerID])
 			// 监听族按本跳解析后的公网地址派生：IPv6 字面量 → 监听 ::（§9）。
 			spec.ListenFamily = listenFamilyOf(store.ResolveServerAddress(servers[hop.ServerID], hop.Address))
+		}
+		// hy2 端到端跳跃段（P4 §3.2）：出口 port_hop 非空时，各跳保留段
+		// [forward_port, forward_port+段长-1]（全跳同段，逐端口 1:1；段终点随 spec 下发）。
+		if hopSpanLen > 0 && transport != "hy2" {
+			spec.HopPortEnd = hop.ForwardPort + hopSpanLen - 1
+		}
+		// 入口终结末段（transport="hy2"）：本跳 xray 以 hy2 outbound 直拨出口（UDP），
+		// 不再生成 freedom 直连；拨号参数 = 出口公网地址 + realized + 派生 tunnel 口令。
+		if transport == "hy2" {
+			dial := &shared.Hy2DialSpec{
+				Address:      store.ResolveServerAddress(servers[exit.ServerID], exit.Address),
+				Port:         publicPortOf(servers[exit.ServerID], rc.Port),
+				Auth:         shared.Hy2UserPassword(serviceUUID),
+				SNI:          rc.SNI,
+				CertSHA256:   rc.CertSHA256,
+				ObfsPassword: rc.ObfsPassword,
+				UpMbps:       rc.UpMbps,
+				DownMbps:     rc.DownMbps,
+				PortHop:      rc.PortHop,
+			}
+			if rc.PortHop != "" {
+				if start, _, err := shared.ParsePortHop(rc.PortHop); err == nil {
+					dial.Port = publicPortOf(servers[exit.ServerID], start) // 段起点为基址
+				}
+			}
+			spec.Hy2Target = dial
+			spec.Network = "udp" // 本跳 dokodemo 只接 UDP（入口侧流量已是 UDP 隧道包）
 		}
 		reverse := hop.TunnelUUID != "" // 本跳 → 下一跳为反向链
 		next := hops[i+1]
@@ -459,6 +542,19 @@ func (d *Dispatcher) reconcilePublishedEndpoints(ctx context.Context, previous, 
 	}
 	if revision.Snapshot.EndpointID != 0 {
 		if err := d.ReconcileSharedEndpoint(ctx, revision.Snapshot.EndpointID); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	// hy2 出口共享监听（P4）：与入口端点同模式 reconcile（0 跳过、新旧去重）。
+	if previous != nil && previous.Snapshot.ServiceEndpointID != 0 &&
+		previous.Snapshot.ServiceEndpointID != revision.Snapshot.ServiceEndpointID {
+		if err := d.ReconcileSharedEndpoint(ctx, previous.Snapshot.ServiceEndpointID); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if revision.Snapshot.ServiceEndpointID != 0 &&
+		revision.Snapshot.ServiceEndpointID != revision.Snapshot.EndpointID {
+		if err := d.ReconcileSharedEndpoint(ctx, revision.Snapshot.ServiceEndpointID); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -603,6 +699,10 @@ func forcedServiceRealized(serviceConfig, previousRealized json.RawMessage) (jso
 	realized.Host = virtual.Host
 	realized.Method = virtual.Method
 	realized.Fingerprint = virtual.Fingerprint
+	realized.ObfsPassword = virtual.ObfsPassword
+	realized.UpMbps = virtual.UpMbps
+	realized.DownMbps = virtual.DownMbps
+	realized.PortHop = virtual.PortHop
 	if shared.IsRealityProtocol(virtual.Protocol) && realized.PublicKey == "" {
 		return nil, fmt.Errorf("强制发布失败：新 Reality 配置尚无 Agent 生成的 public_key，请等待出口 Agent 在线")
 	}
@@ -611,6 +711,9 @@ func forcedServiceRealized(serviceConfig, previousRealized json.RawMessage) (jso
 	}
 	if virtual.Protocol == shared.ProtocolShadowsocks && shared.Is2022Method(virtual.Method) && realized.PSK == "" {
 		return nil, fmt.Errorf("强制发布失败：Shadowsocks 2022 尚无 Agent 生成的 PSK，请等待出口 Agent 在线")
+	}
+	if virtual.Protocol == shared.ProtocolHysteria2 && realized.SNI == "" {
+		return nil, fmt.Errorf("强制发布失败：hysteria2 尚无 Agent 上报的 TLS 参数，请等待出口 Agent 在线")
 	}
 	raw, err := json.Marshal(realized)
 	if err != nil {

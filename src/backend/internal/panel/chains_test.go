@@ -254,3 +254,205 @@ func TestEditChainHy2KeepPortHop(t *testing.T) {
 			desired.Snapshot.ServiceEndpointID, chain.ServiceEndpointID)
 	}
 }
+
+// TestDeleteChainReconcilesHy2ServiceEndpoint 验证删链释放 hy2 出口共享监听引用
+// （评审移交①）：删除引用链后 reconcile 出口共享端点（重算 clients / 保留监听）。
+func TestDeleteChainReconcilesHy2ServiceEndpoint(t *testing.T) {
+	ctx := context.Background()
+	st, serverAPI, aID, cID := hy2ChainFixture(t)
+	code, env := postCreateChain(t, serverAPI, createChainRequest{
+		Name: "hy2-del", Hops: []chainHopRef{{ServerID: aID}, {ServerID: cID}},
+		Node:              createNodeRequest{Protocol: shared.ProtocolHysteria2},
+		TrafficMultiplier: "1.000",
+	})
+	if code != http.StatusOK || env.Code != shared.CodeOK {
+		t.Fatalf("create = %d %s", code, env.Code)
+	}
+	var dto chainDTO
+	if err := json.Unmarshal(env.Data, &dto); err != nil {
+		t.Fatal(err)
+	}
+	chain, err := st.ChainByID(ctx, dto.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chain.ServiceEndpointID == 0 {
+		t.Fatal("hy2 链应挂出口共享监听")
+	}
+	before, err := st.CommandsByType(ctx, shared.TypeApplySharedEndpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	delBody, _ := json.Marshal(map[string]any{"chain_id": dto.ID})
+	rec := httptest.NewRecorder()
+	serverAPI.handleDeleteChain(rec, httptest.NewRequest("POST", "/api/chain/delete", bytes.NewReader(delBody)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete = %d %s", rec.Code, rec.Body.String())
+	}
+	after, err := st.CommandsByType(ctx, shared.TypeApplySharedEndpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before)+1 {
+		t.Fatalf("删链后应补一次出口共享端点 reconcile: before=%d after=%d", len(before), len(after))
+	}
+	var payload shared.ApplySharedEndpointPayload
+	if err := json.Unmarshal(after[len(after)-1].Data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.EndpointID != chain.ServiceEndpointID {
+		t.Fatalf("reconcile 端点 = %d, want %d", payload.EndpointID, chain.ServiceEndpointID)
+	}
+}
+
+// TestCreateChainHy2ExplicitSamePortHop 验证显式同段第二链 400（评审移交③）：
+// 同机 hy2 链共享同一监听与段（首链 profile 为准，显式段并入即被忽略），因此显式
+// 指定与既有保留段重叠的段视为冲突 → 400；留空自动分配错开既有保留段。
+func TestCreateChainHy2ExplicitSamePortHop(t *testing.T) {
+	ctx := context.Background()
+	st, serverAPI, aID, cID := hy2ChainFixture(t)
+	create := func(name, portHop string) (int, rpcEnvelope) {
+		t.Helper()
+		return postCreateChain(t, serverAPI, createChainRequest{
+			Name: name, Hops: []chainHopRef{{ServerID: aID}, {ServerID: cID}},
+			Node:              createNodeRequest{Protocol: shared.ProtocolHysteria2, PortHop: portHop},
+			TrafficMultiplier: "1.000",
+		})
+	}
+	code, env := create("hy2-seg-a", "30000-30031")
+	if code != http.StatusOK || env.Code != shared.CodeOK {
+		t.Fatalf("首链 = %d %s %s", code, env.Code, env.Message)
+	}
+	var dto chainDTO
+	if err := json.Unmarshal(env.Data, &dto); err != nil {
+		t.Fatal(err)
+	}
+	chain1, err := st.ChainByID(ctx, dto.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev1, err := st.ChainRevisionByID(ctx, chain1.DesiredRevisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vc1 shared.VirtualConfig
+	if err := json.Unmarshal(rev1.Snapshot.ServiceConfig, &vc1); err != nil {
+		t.Fatal(err)
+	}
+	if vc1.PortHop != "30000-30031" {
+		t.Fatalf("首链显式段 = %q, want 30000-30031", vc1.PortHop)
+	}
+	// 显式同段/重叠段第二链 → 400。
+	for _, seg := range []string{"30000-30031", "30005-30020"} {
+		code, env = create("hy2-seg-b", seg)
+		if code != http.StatusOK || env.Code != shared.CodeInvalidArgument {
+			t.Fatalf("显式重叠段 %s 应 400: %d %s %s", seg, code, env.Code, env.Message)
+		}
+	}
+	// 留空自动分配 → 错开首链保留段。
+	code, env = create("hy2-seg-c", "")
+	if code != http.StatusOK || env.Code != shared.CodeOK {
+		t.Fatalf("自动分配链 = %d %s %s", code, env.Code, env.Message)
+	}
+	if err := json.Unmarshal(env.Data, &dto); err != nil {
+		t.Fatal(err)
+	}
+	chain3, err := st.ChainByID(ctx, dto.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rev3, err := st.ChainRevisionByID(ctx, chain3.DesiredRevisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vc3 shared.VirtualConfig
+	if err := json.Unmarshal(rev3.Snapshot.ServiceConfig, &vc3); err != nil {
+		t.Fatal(err)
+	}
+	start, end, err := shared.ParsePortHop(vc3.PortHop)
+	if err != nil {
+		t.Fatalf("自动分配应给出合法段: %q", vc3.PortHop)
+	}
+	if start <= 30031 && end >= 30000 {
+		t.Fatalf("自动分配段 %s 与首链段 30000-30031 重叠", vc3.PortHop)
+	}
+}
+
+// TestEditChainEntryBlockWithoutEndpointPortConflict 验证 entryShared 门控收紧
+// （评审移交②）：编辑把链改为 vless 出口但快照无入口端点（不会挂端点，入口为
+// dokodemo 实监听）时，入口端口必须做冲突校验。
+func TestEditChainEntryBlockWithoutEndpointPortConflict(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	server := func(alias string) int64 {
+		id, err := st.CreateServer(ctx, store.ServerDraft{Alias: alias, Address: alias + ".example.com",
+			BootstrapToken: "token-" + alias, MachineType: store.MachineTypeDirect, CountryCode: "US"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	aID, cID := server("a"), server("c")
+	// 占用者：入口机 a 上 18443 的存量节点。
+	occPort := 18443
+	occCfg, _ := json.Marshal(buildVirtualConfig(createNodeRequest{Protocol: shared.ProtocolTrojan,
+		Network: shared.NetworkWS, Security: shared.SecurityTLS, TLSDomain: "cdn.example.com"}))
+	if _, err := st.InsertNode(ctx, "occ", aID, shared.ProtocolTrojan, &occPort, occCfg); err != nil {
+		t.Fatal(err)
+	}
+	// 目标链：trojan 出口、无入口区块（快照 endpoint_id=0）。
+	trojanReq := createNodeRequest{Protocol: shared.ProtocolTrojan, Network: shared.NetworkWS,
+		Security: shared.SecurityTLS, TLSDomain: "cdn.example.com"}
+	if err := trojanReq.normalize(); err != nil {
+		t.Fatal(err)
+	}
+	config, _ := json.Marshal(buildVirtualConfig(trojanReq))
+	nodeID, _ := st.InsertNode(ctx, "tgt", cID, shared.ProtocolTrojan, nil, config)
+	realized, _ := json.Marshal(shared.RealizedConfig{Port: 2096, Network: shared.NetworkWS})
+	if err := st.SetNodeActive(ctx, nodeID, realized); err != nil {
+		t.Fatal(err)
+	}
+	chainID, _ := st.InsertChain(ctx, "tgt")
+	aHop, _ := st.InsertChainHop(ctx, chainID, 0, aID, store.HopRoleEntry, 0, 0, "")
+	cHop, _ := st.InsertChainHop(ctx, chainID, 1, cID, store.HopRoleExit, nodeID, 0, "")
+	if err := st.SetChainServiceNode(ctx, chainID, nodeID); err != nil {
+		t.Fatal(err)
+	}
+	revision, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{
+		Name: "tgt", ServiceNodeID: nodeID, ServiceServerID: cID,
+		ServiceConfig: config, ServiceRealized: realized, TrafficMultiplierMilli: 1000,
+		Hops: []store.ChainRevisionHop{
+			{HopID: aHop, ServerID: aID, Role: store.HopRoleEntry, Transport: "direct"},
+			{HopID: cHop, ServerID: cID, Role: store.HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PublishChainRevision(ctx, revision.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	requester := &chainEditRequester{online: map[int64]bool{aID: true, cID: true}}
+	serverAPI := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester}
+
+	// 编辑改 vless 出口 + 显式入口端口 18443：快照 endpoint_id=0 → 不会挂端点，
+	// 入口端口按 dokodemo 实监听校验 → 与存量节点 18443 冲突 → 400。
+	//（旧门控按"vless 出口即共享"跳过校验，本用例在收紧前应放行、收紧后 400。）
+	vlessReq := createNodeRequest{Protocol: shared.ProtocolVLESS, ShortID: "0123456789abcdef",
+		Dest: "dl.google.com:443", ServerNames: []string{"dl.google.com"},
+		Fingerprint: shared.FingerprintChrome, Network: shared.NetworkTCP, Flow: shared.FlowVision}
+	editBody, _ := json.Marshal(editChainRequest{ChainID: chainID, Name: "tgt",
+		Hops: []chainHopRef{{ServerID: aID}, {ServerID: cID}}, EntryPort: &occPort,
+		Node: vlessReq, TrafficMultiplier: "1.000"})
+	recorder := httptest.NewRecorder()
+	serverAPI.handleEditChain(recorder, httptest.NewRequest("POST", "/api/chain/edit", bytes.NewReader(editBody)))
+	editEnv := decodeRPC(t, recorder)
+	if recorder.Code != http.StatusOK || editEnv.Code != shared.CodeInvalidArgument {
+		t.Fatalf("edit = %d %s %s（期望 400 端口冲突）", recorder.Code, editEnv.Code, editEnv.Message)
+	}
+}

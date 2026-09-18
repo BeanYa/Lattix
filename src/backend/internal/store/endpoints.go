@@ -391,6 +391,7 @@ func (s *Store) UserChainIDs(ctx context.Context, userID int64) ([]int64, error)
 
 // ValidateAssignableChains verifies the complete requested set before the
 // panel changes any legacy node assignments in the same request.
+// 可分配 = 入口共享端点链（endpoint_id）或端到端 hy2 出口共享链（service_endpoint_id，P4）。
 func (s *Store) ValidateAssignableChains(ctx context.Context, chainIDs []int64) error {
 	seen := make(map[int64]bool, len(chainIDs))
 	for _, chainID := range chainIDs {
@@ -398,12 +399,12 @@ func (s *Store) ValidateAssignableChains(ctx context.Context, chainIDs []int64) 
 			continue
 		}
 		seen[chainID] = true
-		var endpointID int64
-		if err := s.db.QueryRowContext(ctx, `SELECT endpoint_id FROM chains
-			WHERE id=? AND deleted_at IS NULL`, chainID).Scan(&endpointID); err != nil {
+		var endpointID, serviceEndpointID int64
+		if err := s.db.QueryRowContext(ctx, `SELECT endpoint_id, service_endpoint_id FROM chains
+			WHERE id=? AND deleted_at IS NULL`, chainID).Scan(&endpointID, &serviceEndpointID); err != nil {
 			return fmt.Errorf("chain %d is not assignable: %w", chainID, err)
 		}
-		if endpointID == 0 {
+		if endpointID == 0 && serviceEndpointID == 0 {
 			return fmt.Errorf("chain %d has no shared endpoint", chainID)
 		}
 	}
@@ -559,4 +560,80 @@ func (s *Store) SharedEndpointIDsForAssignments(assignments ...[]UserChainAssign
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	return ids
+}
+
+// ChainsByServiceEndpoint 返回引用指定出口共享监听（service_endpoint_id）的未删链（P4）。
+func (s *Store) ChainsByServiceEndpoint(ctx context.Context, endpointID int64) ([]Chain, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+chainCols+` FROM chains WHERE service_endpoint_id=? AND deleted_at IS NULL ORDER BY id`, endpointID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Chain
+	for rows.Next() {
+		c, err := scanChain(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *c)
+	}
+	return out, rows.Err()
+}
+
+// ActiveServiceEndpointUsers 返回端到端 hy2 链（引用该出口共享监听且无入口端点）的
+// 业务用户 UUID 全集：直接分配 + 分组派生（镜像 ActiveEndpointAssignments 的生效规则：
+// 排除 expired/disabled，分组成员的直接分配被分组派生遮蔽），供出口监听 users 填充。
+func (s *Store) ActiveServiceEndpointUsers(ctx context.Context, endpointID int64) ([]string, error) {
+	set := map[string]bool{}
+	rows, err := s.db.QueryContext(ctx, `SELECT u.uuid FROM user_chain_assignments a
+		JOIN chains c ON c.id=a.chain_id
+		JOIN users u ON u.id=a.user_id
+		WHERE c.service_endpoint_id=? AND c.endpoint_id=0 AND c.deleted_at IS NULL
+		AND u.expired=0 AND u.disabled=0
+		AND NOT EXISTS (SELECT 1 FROM user_group_members g WHERE g.user_id = a.user_id)`, endpointID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var uuid string
+		if err := rows.Scan(&uuid); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		set[uuid] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	groupRows, err := s.db.QueryContext(ctx, `SELECT DISTINCT u.uuid
+		FROM user_group_members ugm
+		JOIN user_group_links ugl ON ugl.user_group_id = ugm.user_group_id
+		JOIN link_group_chains lgc ON lgc.group_id = ugl.link_group_id
+		JOIN chains c ON c.id = lgc.chain_id
+		JOIN users u ON u.id = ugm.user_id
+		WHERE c.service_endpoint_id=? AND c.endpoint_id=0 AND c.deleted_at IS NULL
+		AND u.expired=0 AND u.disabled=0`, endpointID)
+	if err != nil {
+		return nil, err
+	}
+	for groupRows.Next() {
+		var uuid string
+		if err := groupRows.Scan(&uuid); err != nil {
+			groupRows.Close()
+			return nil, err
+		}
+		set[uuid] = true
+	}
+	groupRows.Close()
+	if err := groupRows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(set))
+	for uuid := range set {
+		out = append(out, uuid)
+	}
+	sort.Strings(out)
+	return out, nil
 }

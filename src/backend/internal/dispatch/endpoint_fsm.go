@@ -117,6 +117,17 @@ func (f *endpointFSM) onEnter(ctx context.Context, ep *store.SharedEndpoint, to 
 				f.d.fsm.Evaluate(ctx, cid)
 			}
 		}
+		if to == store.EndpointStatusActive {
+			// hy2 出口共享监听（P4）：端点 active 回执 → 推进引用它的链编排
+			//（阶段 1 镜像 realized 后继续后续阶段）。
+			chains, err := f.d.st.ChainsByServiceEndpoint(ctx, ep.ID)
+			if err != nil {
+				log.Printf("endpoint_fsm: endpoint %d service chains: %v", ep.ID, err)
+			}
+			for _, chain := range chains {
+				f.d.advanceChain(ctx, chain.ID)
+			}
+		}
 		if f.d.events.OnEndpointPublished != nil {
 			if err := f.d.events.OnEndpointPublished(ctx, ep.ID); err != nil {
 				log.Printf("endpoint_fsm: enqueue subscriptions for endpoint %d: %v", ep.ID, err)

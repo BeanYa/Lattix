@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"lattix/shared"
@@ -55,15 +56,45 @@ func (s *Store) ExpectedXrayState(ctx context.Context, serverID int64) ([]string
 			j++
 		}
 		chain := hops[i:j]
+		// hy2 段画像（P4，镜像 dispatch 阶段 4 / materializeRevision 的同源判定）：
+		// 快照 ServiceConfig 的 port_hop 决定逐跳保留段长；跳 transport 取自 revision 快照。
+		span := 0
+		transports := map[int64]string{}
+		skipEntryForward := false
+		snapshot := s.chainSnapshotForExpected(ctx, chain[0].ChainID)
+		if snapshot != nil {
+			var svc struct {
+				PortHop string `json:"port_hop"`
+			}
+			if err := json.Unmarshal(snapshot.ServiceConfig, &svc); err == nil && svc.PortHop != "" {
+				if start, end, err := shared.ParsePortHop(svc.PortHop); err == nil {
+					span = end - start + 1
+				}
+			}
+			for _, h := range snapshot.Hops {
+				transports[h.HopID] = h.Transport
+			}
+			skipEntryForward = len(snapshot.Hops) == 2 && snapshot.Hops[0].Transport == "hy2"
+		}
 		for k, h := range chain {
 			if h.ServerID != serverID {
 				continue
 			}
 			for _, kind := range ChainHopPieces(chain, k) {
+				if kind == shared.HopKindForward && k == 0 && skipEntryForward {
+					continue // 入口终结 2 跳 hy2：hop0 免管道（无 piece、无 inbound）
+				}
 				pieces = append(pieces, fmt.Sprintf("%s/%d", kind, h.ID))
 				switch kind {
 				case shared.HopKindForward:
 					tags = append(tags, shared.ChainForwardTag(h.ID))
+					// hy2 端到端跳跃段：段内其余端口的附加 inbound（<tag>_hop_<port>，
+					// 段长随出口 port_hop，hy2 末段跳自身不保留段）。
+					if span > 0 && transports[h.ID] != "hy2" && h.ForwardPort > 0 {
+						for p := h.ForwardPort + 1; p <= h.ForwardPort+span-1; p++ {
+							tags = append(tags, fmt.Sprintf("%s_hop_%d", shared.ChainForwardTag(h.ID), p))
+						}
+					}
 				case shared.HopKindPortal:
 					tags = append(tags, shared.ChainPortalTag(h.ID))
 				}
@@ -72,12 +103,15 @@ func (s *Store) ExpectedXrayState(ctx context.Context, serverID int64) ([]string
 		i = j
 	}
 
-	// 3.3 共享端点：仅计链引用的端点（chains.endpoint_id 关联、链未删除）。
+	// 3.3 共享端点：仅计链引用的端点（chains.endpoint_id / service_endpoint_id 关联、
+	// 链未删除——后者为 hy2 出口共享监听，P4）。
 	// 链删除时端点记录不删（流量/审计引用），孤儿端点（无存活链引用）不在面板有效
 	// 管理范围内，xray.cleanup 应将其从 config.json 中清理。
 	epRows, err := s.db.QueryContext(ctx, `SELECT id FROM shared_endpoints
-		WHERE server_id = ? AND id IN (SELECT endpoint_id FROM chains
-			WHERE deleted_at IS NULL AND endpoint_id <> 0)`, serverID)
+		WHERE server_id = ? AND (id IN (SELECT endpoint_id FROM chains
+			WHERE deleted_at IS NULL AND endpoint_id <> 0)
+		OR id IN (SELECT service_endpoint_id FROM chains
+			WHERE deleted_at IS NULL AND service_endpoint_id <> 0))`, serverID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("expected xray shared endpoints: %w", err)
 	}
@@ -94,4 +128,16 @@ func (s *Store) ExpectedXrayState(ctx context.Context, serverID int64) ([]string
 		return nil, nil, fmt.Errorf("expected xray shared endpoints: %w", err)
 	}
 	return tags, pieces, nil
+}
+
+// chainSnapshotForExpected 取链当前生效的 revision 快照（期望状态归因用，镜像 dispatch
+// 的取值顺序：desired 优先，无 desired 回退 published）；取不到返回 nil（按无 hy2 段处理）。
+func (s *Store) chainSnapshotForExpected(ctx context.Context, chainID int64) *ChainRevisionSnapshot {
+	if revision, err := s.DesiredChainRevision(ctx, chainID); err == nil {
+		return &revision.Snapshot
+	}
+	if revision, err := s.PublishedChainRevision(ctx, chainID); err == nil {
+		return &revision.Snapshot
+	}
+	return nil
 }

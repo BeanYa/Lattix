@@ -194,8 +194,11 @@ func (s *Store) CreateInitialChainDeployment(
 	if input.EndpointID == 0 || len(out.Hops) > 1 {
 		out.ApplyKeys = append(out.ApplyKeys, fmt.Sprintf("%s/%d", RevisionPieceService, out.NodeID))
 	}
+	// 入口终结 2 跳 hy2（P4 §3.2）：hop0 免 forward 管道，与 dispatch.materializeRevision
+	// 同源（编辑路径 PlanRevision 与创建路径初始 ApplyKeys 必须一致，否则误重发）。
+	skipEntryForward := len(out.Hops) == 2 && out.Hops[0].Transport == "hy2"
 	for i, hop := range out.Hops {
-		if i < len(out.Hops)-1 {
+		if i < len(out.Hops)-1 && !(i == 0 && skipEntryForward) {
 			out.ApplyKeys = append(out.ApplyKeys, fmt.Sprintf("%s/%d", RevisionPieceForward, hop.HopID))
 		}
 		if hop.TunnelUUID != "" {

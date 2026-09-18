@@ -517,3 +517,187 @@ func TestReconcileSharedEndpointAggregatesJoinedChains(t *testing.T) {
 		t.Fatalf("routes missing chains: %+v", seen)
 	}
 }
+
+// TestReconcileHy2ServiceEndpoint 验证出口侧 hy2 端点 reconcile：routes 为空；
+// clients = 入口终结链的 tunnel 身份 ∪ 端到端链的业务用户 UUID（spec §3.2 出口共享）。
+func TestReconcileHy2ServiceEndpoint(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "tok1", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "tok2", MachineType: store.MachineTypeDirect, CountryCode: "JP"})
+	hy2cfg := json.RawMessage(`{"protocol":"hysteria","port_hop":"30000-30031","template":{}}`)
+	epE, _, err := st.EnsureProtocolSharedEndpoint(ctx, exitID, shared.ProtocolHysteria2, 0, hy2cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epE2, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 443, "profile", json.RawMessage(`{"protocol":"vless","template":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 链1：端到端（无入口端点），业务用户 u1 直接分配。
+	dep1, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+		Name: "e2e", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig: hy2cfg, ServiceEndpointID: epE.ID,
+		TrafficMultiplierMilli: 1000,
+		Hops: []store.InitialChainHop{
+			{ServerID: entryID, Role: store.HopRoleEntry, Transport: "direct", ForwardPort: 25000},
+			{ServerID: exitID, Role: store.HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 链2：入口终结（挂入口端点 E2，service_uuid=svc2 → tunnel 身份）。
+	if _, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+		Name: "entry-term", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig: hy2cfg, EndpointID: epE2.ID, ServiceEndpointID: epE.ID, ServiceUUID: "svc2",
+		TrafficMultiplierMilli: 1000,
+		Hops: []store.InitialChainHop{
+			{ServerID: entryID, Role: store.HopRoleEntry, Transport: "hy2"},
+			{ServerID: exitID, Role: store.HopRoleExit},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	u1uuid := "11111111-1111-1111-1111-111111111111"
+	u1, _ := st.InsertUser(ctx, "u1", u1uuid, "sub1", nil)
+	if _, _, err := st.SetUserChains(ctx, u1, []int64{dep1.ChainID}); err != nil {
+		t.Fatal(err)
+	}
+
+	d := New(st, &fakeRequester{online: map[int64]bool{exitID: true}}, Options{}, Events{})
+	if err := d.ReconcileSharedEndpoint(ctx, epE.ID); err != nil {
+		t.Fatal(err)
+	}
+	payload := latestEndpointPayload(t, st)
+	if payload.EndpointID != epE.ID {
+		t.Fatalf("endpoint = %d", payload.EndpointID)
+	}
+	if len(payload.Routes) != 0 {
+		t.Fatalf("出口侧 hy2 端点不应有路由: %+v", payload.Routes)
+	}
+	want := map[string]string{u1uuid: u1uuid, "svc2": "tunnel:svc2"}
+	if len(payload.Clients) != len(want) {
+		t.Fatalf("clients = %+v，期望 %v", payload.Clients, want)
+	}
+	for _, c := range payload.Clients {
+		if want[c.ID] != c.Email {
+			t.Fatalf("client 不符: %+v（期望 %v）", c, want)
+		}
+		delete(want, c.ID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("缺少 clients: %v", want)
+	}
+	if ep, _ := st.SharedEndpointByID(ctx, epE.ID); ep.Status != store.EndpointStatusApplying {
+		t.Fatalf("reconcile 后端点应为 applying，实际 %s", ep.Status)
+	}
+}
+
+// TestReconcileEntryEndpointHy2Route 验证入口端点 route 的出口协议分派：
+// 2 跳入口终结 hy2 链 → route.ExitProtocol=hysteria、TargetAddress=出口公网地址、
+// TargetPort=出口 realized 公网端口、Target=出口 realized（spec §3.2）；
+// vless 链 route 保持 127.0.0.1 回环（回归）。
+func TestReconcileEntryEndpointHy2Route(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "tok1", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "tok2", MachineType: store.MachineTypeDirect, CountryCode: "JP"})
+	epE2, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 443, "profile", json.RawMessage(`{"protocol":"vless","template":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hy2cfg := json.RawMessage(`{"protocol":"hysteria","template":{}}`)
+	epE, _, err := st.EnsureProtocolSharedEndpoint(ctx, exitID, shared.ProtocolHysteria2, 0, hy2cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hy2Realized := json.RawMessage(`{"port":1443,"sni":"cdn.example.com","port_hop":"30000-30031"}`)
+
+	// 2 跳入口终结 hy2 链（hop0 transport=hy2，端点直拨出口）。
+	depHy2, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+		Name: "hy2-2hop", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig: hy2cfg, EndpointID: epE2.ID, ServiceEndpointID: epE.ID, ServiceUUID: "svc-r",
+		TrafficMultiplierMilli: 1000,
+		Hops: []store.InitialChainHop{
+			{ServerID: entryID, Role: store.HopRoleEntry, Transport: "hy2"},
+			{ServerID: exitID, Role: store.HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 存量 vless 多跳链（回归对照）：入口 forward 回环。
+	vlessCfg := json.RawMessage(`{"protocol":"vless","template":{}}`)
+	depVless, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+		Name: "vless-2hop", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolVLESS,
+		ServiceConfig: vlessCfg, EndpointID: epE2.ID, ServiceUUID: "svc-v",
+		TrafficMultiplierMilli: 1000,
+		Hops: []store.InitialChainHop{
+			{ServerID: entryID, Role: store.HopRoleEntry, Transport: "direct", ForwardPort: 18443},
+			{ServerID: exitID, Role: store.HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 发布两条链的 revision（携带出口 realized）。
+	publishWithRealized := func(revisionID int64, realized json.RawMessage) {
+		t.Helper()
+		rev, err := st.ChainRevisionByID(ctx, revisionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rev.Snapshot.ServiceRealized = realized
+		if err := st.UpdateChainRevision(ctx, rev.ID, store.RevisionStatusActive, "", rev.Snapshot); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.PublishChainRevision(ctx, rev.ID, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publishWithRealized(depHy2.RevisionID, hy2Realized)
+	publishWithRealized(depVless.RevisionID, json.RawMessage(`{"port":4433,"public_key":"k"}`))
+	u1, _ := st.InsertUser(ctx, "u1", "11111111-1111-1111-1111-111111111111", "sub1", nil)
+	if _, _, err := st.SetUserChains(ctx, u1, []int64{depHy2.ChainID, depVless.ChainID}); err != nil {
+		t.Fatal(err)
+	}
+
+	d := New(st, &fakeRequester{online: map[int64]bool{entryID: true}}, Options{}, Events{})
+	if err := d.ReconcileSharedEndpoint(ctx, epE2.ID); err != nil {
+		t.Fatal(err)
+	}
+	payload := latestEndpointPayload(t, st)
+	routes := map[int64]shared.SharedEndpointRoute{}
+	for _, r := range payload.Routes {
+		routes[r.ChainID] = r
+	}
+	hy2Route, ok := routes[depHy2.ChainID]
+	if !ok {
+		t.Fatalf("缺少 hy2 链路由: %+v", payload.Routes)
+	}
+	if hy2Route.ExitProtocol != shared.ProtocolHysteria2 {
+		t.Fatalf("ExitProtocol = %q，期望 hysteria", hy2Route.ExitProtocol)
+	}
+	if hy2Route.TargetAddress != "exit.test" || hy2Route.TargetPort != 1443 {
+		t.Fatalf("hy2 route 目标 = %s:%d，期望 exit.test:1443", hy2Route.TargetAddress, hy2Route.TargetPort)
+	}
+	if hy2Route.Target.Port != 1443 || hy2Route.Target.SNI != "cdn.example.com" || hy2Route.Target.PortHop != "30000-30031" {
+		t.Fatalf("hy2 route Target realized 不符: %+v", hy2Route.Target)
+	}
+	vlessRoute, ok := routes[depVless.ChainID]
+	if !ok {
+		t.Fatalf("缺少 vless 链路由: %+v", payload.Routes)
+	}
+	if vlessRoute.ExitProtocol != "" || vlessRoute.TargetAddress != "127.0.0.1" || vlessRoute.TargetPort != 18443 {
+		t.Fatalf("vless route 应保持回环现状: %+v", vlessRoute)
+	}
+}

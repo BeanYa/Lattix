@@ -760,14 +760,18 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Name = name
 	req.Node.Name = name
+	// 入口共享门控（评审移交②）：对齐"实际会挂端点"的条件——编辑路径仅在快照已有
+	// 入口端点（Snapshot.EndpointID != 0）时挂载/保留端点（见下方 endpointID 解析）；
+	// 无端点链改 vless 出口或勾选入口区块并不会挂端点，入口端口仍是 dokodemo 实监听，
+	// 必须照常做冲突校验。
+	entryShared := (req.Node.Protocol == shared.ProtocolVLESS || req.EntryNode != nil) &&
+		current.Snapshot.EndpointID != 0
 	if req.EntryPort != nil {
 		if *req.EntryPort < 1 || *req.EntryPort > 65535 || checkPortInRanges(servers[0], *req.EntryPort) != nil {
 			writeError(w, http.StatusBadRequest, "入口端口不在可用范围内")
 			return
 		}
-		// vless 出口或勾选入口协议区块时入口走共享端点合并，跳过前置校验；
-		// excludeChainID 排除本链既有占用。
-		entryShared := req.Node.Protocol == shared.ProtocolVLESS || req.EntryNode != nil
+		// 入口走共享端点合并时跳过前置校验；excludeChainID 排除本链既有占用。
 		if !entryShared {
 			if err := s.checkPortConflict(r.Context(), servers[0].ID, req.Node.Protocol, *req.EntryPort, 0, req.ChainID); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
@@ -779,9 +783,9 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		req.Node.Port = req.EntryPort
 	}
 	// 出口节点端口冲突前置校验（镜像创建路径），excludeChainID 排除本链既有占用。
-	// 单跳 vless 的节点端口即入口端口（上方已别名），由共享端点合并接管、编排后不实际
-	// 监听；冲突判定已由入口校验按 protocol != vless 门控，此处跳过避免重复误判。
-	singleHopShared := len(servers) == 1 && req.Node.Protocol == shared.ProtocolVLESS
+	// 单跳 vless 且实际挂共享端点时节点端口即入口端口（上方已别名），由共享端点合并
+	// 接管、编排后不实际监听；冲突判定已由入口校验门控，此处跳过避免重复误判。
+	singleHopShared := len(servers) == 1 && entryShared
 	if req.Node.Port != nil && !singleHopShared {
 		if err := s.checkPortConflict(r.Context(), servers[len(servers)-1].ID, req.Node.Protocol, *req.Node.Port, 0, req.ChainID); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -1336,6 +1340,13 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 	if chain.EndpointID != 0 {
 		if err := s.disp.ReconcileSharedEndpoint(r.Context(), chain.EndpointID); err != nil {
 			log.Printf("panel: reconcile shared endpoint %d after chain delete: %v", chain.EndpointID, err)
+		}
+	}
+	// hy2 出口共享监听（P4，评审移交①）：删链释放引用后 reconcile 出口端点，
+	// 重算 clients（tunnel 身份/业务用户），监听本身保留给其余引用链。
+	if chain.ServiceEndpointID != 0 {
+		if err := s.disp.ReconcileSharedEndpoint(r.Context(), chain.ServiceEndpointID); err != nil {
+			log.Printf("panel: reconcile service endpoint %d after chain delete: %v", chain.ServiceEndpointID, err)
 		}
 	}
 	if s.subscriptions != nil {

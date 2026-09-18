@@ -321,3 +321,76 @@ func TestHandleListUsersOnlineConnectionsWithSnapshot(t *testing.T) {
 		t.Fatalf("carol online_connections = %d, want 0", got["11111111-2222-3333-4444-555555555557"])
 	}
 }
+
+// TestHy2ServiceSharedUserFanout 验证 hy2 出口共享链的用户扇出改道（P4）：
+// 出口监听由共享端点承载，add/remove_user 不扇出到出口节点；分配变更改为
+// reconcile 出口共享端点（业务用户 UUID 进入端点 clients）。
+func TestHy2ServiceSharedUserFanout(t *testing.T) {
+	ctx := context.Background()
+	st, serverAPI, _, cID := hy2ChainFixture(t)
+	hy2cfg := json.RawMessage(`{"protocol":"hysteria","template":{}}`)
+	epE, _, err := st.EnsureProtocolSharedEndpoint(ctx, cID, shared.ProtocolHysteria2, 0, hy2cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+		Name: "hy2-e2e", ServiceServerID: cID, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig: hy2cfg, ServiceEndpointID: epE.ID,
+		TrafficMultiplierMilli: 1000,
+		Hops:                   []store.InitialChainHop{{ServerID: cID, Role: store.HopRoleExit}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	userUUID := "11111111-1111-1111-1111-111111111111"
+	userID, _ := st.InsertUser(ctx, "u1", userUUID, "sub1", nil)
+	added, _, err := st.SetUserChains(ctx, userID, []int64{dep.ChainID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := st.NodeByID(ctx, dep.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 扇出改道：add_user 不下发到 hy2 出口共享链的出口节点。
+	serverAPI.fanoutUserDiff(ctx, userUUID, []store.Node{*node}, []int64{node.ID}, nil)
+	if cmds, err := st.CommandsByType(ctx, shared.TypeAddUser); err != nil || len(cmds) != 0 {
+		t.Fatalf("hy2 出口共享节点不应收到 add_user: %d 条 err=%v", len(cmds), err)
+	}
+
+	// 分配变更 reconcile 出口共享监听（业务用户 UUID 进入 clients）。
+	serverAPI.reconcileAssignmentEndpoints(ctx, added, nil)
+	cmds, err := st.CommandsByType(ctx, shared.TypeApplySharedEndpoint)
+	if err != nil || len(cmds) != 1 {
+		t.Fatalf("应 reconcile 出口共享端点一次: %d 条 err=%v", len(cmds), err)
+	}
+	var payload shared.ApplySharedEndpointPayload
+	if err := json.Unmarshal(cmds[0].Data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.EndpointID != epE.ID {
+		t.Fatalf("reconcile 端点 = %d, want %d", payload.EndpointID, epE.ID)
+	}
+	found := false
+	for _, c := range payload.Clients {
+		if c.ID == userUUID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("出口端点 clients 应含业务用户 %s: %+v", userUUID, payload.Clients)
+	}
+
+	// 对照回归：普通（非出口共享）链的出口节点仍收到 add_user。
+	vlessCfg := json.RawMessage(`{"protocol":"vless","template":{}}`)
+	plainNode, err := st.InsertNode(ctx, "plain", cID, shared.ProtocolVLESS, nil, vlessCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	node2, _ := st.NodeByID(ctx, plainNode)
+	serverAPI.fanoutUserDiff(ctx, userUUID, []store.Node{*node2}, []int64{plainNode}, nil)
+	if cmds, _ := st.CommandsByType(ctx, shared.TypeAddUser); len(cmds) != 1 {
+		t.Fatalf("普通节点应收到 add_user: %d 条", len(cmds))
+	}
+}

@@ -105,3 +105,41 @@ func TestValidateTopologyHy2Transport(t *testing.T) {
 		t.Fatal("未知 transport 应拒绝")
 	}
 }
+
+// TestMaterializeHy2TwoHopNoEntryForward 验证 2 跳入口终结链 hop0 免管道（P4 §3.2）：
+// 入口即末跳，共享端点直接以 hy2 outbound 拨出口，hop0 不生成 forward piece；
+// 3 跳及以上保留 hop0 回环管道接中段。
+func TestMaterializeHy2TwoHopNoEntryForward(t *testing.T) {
+	pieces, err := materializeRevision(RevisionTopology{RevisionID: 1, ServiceID: 9,
+		Service: json.RawMessage(`{"protocol":"hysteria"}`),
+		Hops: []RevisionHopSpec{
+			{HopID: 1, ServerID: 1, Transport: "hy2"},
+			{HopID: 2, ServerID: 2},
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range pieces {
+		if p.Kind == RevisionPieceForward && p.HopID == 1 {
+			t.Fatalf("2 跳 hy2 链 hop0 不应产 forward piece: %+v", pieces)
+		}
+	}
+	// 3 跳链 hop0 仍有 forward piece（回环管道接中段）。
+	pieces3, err := materializeRevision(RevisionTopology{RevisionID: 1, ServiceID: 9,
+		Service: json.RawMessage(`{"protocol":"hysteria"}`),
+		Hops: []RevisionHopSpec{
+			{HopID: 1, ServerID: 1, Transport: "direct"},
+			{HopID: 2, ServerID: 2, Transport: "hy2"},
+			{HopID: 3, ServerID: 3},
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, p := range pieces3 {
+		seen[p.Key] = true
+	}
+	if !seen["forward/1"] || !seen["forward/2"] {
+		t.Fatalf("3 跳链两跳均应有 forward piece: %+v", pieces3)
+	}
+}

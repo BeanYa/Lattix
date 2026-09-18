@@ -144,6 +144,9 @@ func materializeRevision(topology RevisionTopology) ([]RevisionPiece, error) {
 	}
 	pieces := make([]RevisionPiece, 0, len(topology.Hops)*3+1)
 	exit := topology.Hops[len(topology.Hops)-1]
+	// 入口终结 2 跳 hy2（P4 §3.2）：入口即末跳，共享端点直接以 hy2 outbound 拨出口，
+	// hop0 不再生成 forward 管道（3 跳及以上保留 hop0 回环管道接中段）。
+	skipEntryForward := len(topology.Hops) == 2 && topology.Hops[0].Transport == "hy2"
 	serviceHash, err := hashNormalized(map[string]any{
 		"service_id": topology.ServiceID,
 		"server_id":  exit.ServerID,
@@ -191,6 +194,9 @@ func materializeRevision(topology RevisionTopology) ([]RevisionPiece, error) {
 				HopID: next.HopID, ServerID: next.ServerID, RevisionID: topology.RevisionID,
 				SpecHash: bridgeHash, DependsHash: portalHash,
 			})
+		}
+		if i == 0 && skipEntryForward {
+			continue // hop0 免管道（入口端点直拨出口）
 		}
 		forwardHash, err := hashNormalized(map[string]any{
 			"kind": RevisionPieceForward, "hop_id": hop.HopID, "server_id": hop.ServerID,

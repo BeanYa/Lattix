@@ -421,3 +421,149 @@ func TestEnsureProtocolSharedEndpoint(t *testing.T) {
 		t.Fatal("空 config 应报错")
 	}
 }
+
+// createHy2ServiceChain 建一条引用出口共享监听 endpointID 的 hy2 链（P4 测试夹具）。
+func createHy2ServiceChain(t *testing.T, st *Store, serverID, endpointID, serviceEndpointID int64, name string) InitialChainDeploymentResult {
+	t.Helper()
+	deployment, err := st.CreateInitialChainDeployment(context.Background(), InitialChainDeployment{
+		Name: name, ServiceServerID: serverID, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig: json.RawMessage(`{"protocol":"hysteria","template":{}}`),
+		EndpointID: endpointID, ServiceEndpointID: serviceEndpointID, ServiceUUID: "svc-" + name,
+		TrafficMultiplierMilli: 1000,
+		Hops:                   []InitialChainHop{{ServerID: serverID, Role: HopRoleExit}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return deployment
+}
+
+// TestChainsByServiceEndpoint 验证出口共享监听的引用链枚举（P4）：返回全部未删
+// 引用链（端到端 + 入口终结），已删除链排除。
+func TestChainsByServiceEndpoint(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"})
+	hy2cfg := json.RawMessage(`{"protocol":"hysteria","template":{}}`)
+	epE, _, err := st.EnsureProtocolSharedEndpoint(ctx, serverID, shared.ProtocolHysteria2, 0, hy2cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epE2, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", json.RawMessage(`{"protocol":"vless","template":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep1 := createHy2ServiceChain(t, st, serverID, 0, epE.ID, "e2e")
+	dep2 := createHy2ServiceChain(t, st, serverID, epE2.ID, epE.ID, "entry")
+	dep3 := createHy2ServiceChain(t, st, serverID, 0, epE.ID, "deleted")
+	if err := st.DeleteChain(ctx, dep3.ChainID); err != nil {
+		t.Fatal(err)
+	}
+
+	chains, err := st.ChainsByServiceEndpoint(ctx, epE.ID)
+	if err != nil || len(chains) != 2 {
+		t.Fatalf("应返回两条未删引用链: %v %d", err, len(chains))
+	}
+	if chains[0].ID != dep1.ChainID || chains[1].ID != dep2.ChainID {
+		t.Fatalf("引用链 = %+v，期望 [%d %d]", chains, dep1.ChainID, dep2.ChainID)
+	}
+	// 不引用该端点的链不计入。
+	other, _, err := st.EnsureProtocolSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 0, hy2cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chains, err := st.ChainsByServiceEndpoint(ctx, other.ID); err != nil || len(chains) != 0 {
+		t.Fatalf("无引用端点应返回空: %v %d", err, len(chains))
+	}
+}
+
+// TestActiveServiceEndpointUsers 验证端到端 hy2 链（引用出口共享监听且无入口端点）的
+// 业务用户 UUID 全集：直接分配 + 分组派生并入，排除 expired/disabled；入口终结链的
+// 用户归属入口端点，不计入出口监听。
+func TestActiveServiceEndpointUsers(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"})
+	hy2cfg := json.RawMessage(`{"protocol":"hysteria","template":{}}`)
+	epE, _, err := st.EnsureProtocolSharedEndpoint(ctx, serverID, shared.ProtocolHysteria2, 0, hy2cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epE2, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 443, "profile", json.RawMessage(`{"protocol":"vless","template":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e2e := createHy2ServiceChain(t, st, serverID, 0, epE.ID, "e2e")
+	entry := createHy2ServiceChain(t, st, serverID, epE2.ID, epE.ID, "entry")
+
+	u1, _ := st.InsertUser(ctx, "u1", "11111111-1111-1111-1111-111111111111", "sub1", nil)
+	u2, _ := st.InsertUser(ctx, "u2", "22222222-2222-2222-2222-222222222222", "sub2", nil)
+	u3, _ := st.InsertUser(ctx, "u3", "33333333-3333-3333-3333-333333333333", "sub3", nil)
+	u4, _ := st.InsertUser(ctx, "u4", "44444444-4444-4444-4444-444444444444", "sub4", nil)
+	if _, _, err := st.SetUserChains(ctx, u1, []int64{e2e.ChainID}); err != nil {
+		t.Fatalf("端到端 hy2 链应可分配: %v", err)
+	}
+	if _, _, err := st.SetUserChains(ctx, u2, []int64{e2e.ChainID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserDisabled(ctx, u2, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetUserChains(ctx, u4, []int64{entry.ChainID}); err != nil {
+		t.Fatal(err)
+	}
+	lgID, err := st.CreateLinkGroup(ctx, "组", []int64{e2e.ChainID}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUserGroup(ctx, "青铜", []int64{u3}, []int64{lgID}); err != nil {
+		t.Fatal(err)
+	}
+
+	uuids, err := st.ActiveServiceEndpointUsers(ctx, epE.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"11111111-1111-1111-1111-111111111111", "33333333-3333-3333-3333-333333333333"}
+	if len(uuids) != len(want) {
+		t.Fatalf("用户全集 = %v，期望 %v（u2 disabled、u4 入口终结链均排除）", uuids, want)
+	}
+	for i := range want {
+		if uuids[i] != want[i] {
+			t.Fatalf("用户全集 = %v，期望 %v", uuids, want)
+		}
+	}
+}
+
+// TestChainByServiceNode 验证按出口业务节点反查未删链（P4 用户扇出改道用）。
+func TestChainByServiceNode(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	serverID, _ := st.CreateServer(ctx, ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"})
+	dep := createHy2ServiceChain(t, st, serverID, 0, 0, "lookup")
+	chain, err := st.ChainByServiceNode(ctx, dep.NodeID)
+	if err != nil || chain == nil || chain.ID != dep.ChainID {
+		t.Fatalf("chain = %+v err = %v", chain, err)
+	}
+	if chain, err := st.ChainByServiceNode(ctx, 9999); err != nil || chain != nil {
+		t.Fatalf("未命中应返回 nil, nil: %+v %v", chain, err)
+	}
+	if err := st.DeleteChain(ctx, dep.ChainID); err != nil {
+		t.Fatal(err)
+	}
+	if chain, err := st.ChainByServiceNode(ctx, dep.NodeID); err != nil || chain != nil {
+		t.Fatalf("已删链应返回 nil, nil: %+v %v", chain, err)
+	}
+}

@@ -450,3 +450,283 @@ func TestNatPortsCarryCandidatesForManualPorts(t *testing.T) {
 		t.Fatalf("forward 手动端口候选不符: %+v", fwd.Forward)
 	}
 }
+
+// chainHopCommands 返回指定链的全部 apply_chain_hop 命令（按 id 升序）。
+func chainHopCommands(t *testing.T, st *store.Store, chainID int64) []store.Command {
+	t.Helper()
+	cmds, err := st.CommandsByType(context.Background(), shared.TypeApplyChainHop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []store.Command
+	for _, c := range cmds {
+		var p shared.ApplyChainHopPayload
+		if err := json.Unmarshal(c.Data, &p); err == nil && p.ChainID == chainID {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// TestAdvanceChainHy2SharedExit 验证 hy2 出口共享链的阶段 1：不发 apply_node，
+// 先 reconcile 出口共享端点，端点 active 后出口节点镜像 realized 并推进后续阶段。
+func TestAdvanceChainHy2SharedExit(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "tok1", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Entry"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "tok2", MachineType: store.MachineTypeDirect, CountryCode: "JP", Location: "Exit"})
+	svcCfg := json.RawMessage(`{"protocol":"hysteria","template":{}}`)
+	epE, _, err := st.EnsureProtocolSharedEndpoint(ctx, exitID, shared.ProtocolHysteria2, 0, svcCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+		Name: "hy2-e2e", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig: svcCfg, ServiceEndpointID: epE.ID, ServiceUUID: "svc-hy2",
+		TrafficMultiplierMilli: 1000,
+		Hops: []store.InitialChainHop{
+			{ServerID: entryID, Role: store.HopRoleEntry, Transport: "direct", ForwardPort: 25000},
+			{ServerID: exitID, Role: store.HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := &fakeRequester{online: map[int64]bool{entryID: true, exitID: true}}
+	d := New(st, req, Options{}, Events{})
+	if err := d.StartChain(ctx, dep.ChainID); err != nil {
+		t.Fatal(err)
+	}
+	// 出口不走 apply_node；改为 reconcile 出口共享端点。
+	if cmds, _ := st.CommandsByType(ctx, shared.TypeApplyNode); len(cmds) != 0 {
+		t.Fatalf("hy2 出口共享链不应下发 apply_node（%d 条）", len(cmds))
+	}
+	epCmds, err := st.CommandsByType(ctx, shared.TypeApplySharedEndpoint)
+	if err != nil || len(epCmds) != 1 {
+		t.Fatalf("应下发一次 apply_shared_endpoint: %v %d", err, len(epCmds))
+	}
+	var epPayload shared.ApplySharedEndpointPayload
+	if err := json.Unmarshal(epCmds[0].Data, &epPayload); err != nil {
+		t.Fatal(err)
+	}
+	if epPayload.EndpointID != epE.ID || epCmds[0].ServerID != exitID {
+		t.Fatalf("端点命令不符: endpoint=%d server=%d", epPayload.EndpointID, epCmds[0].ServerID)
+	}
+	if node, _ := st.NodeByID(ctx, dep.NodeID); node.Status != store.NodeStatusPending {
+		t.Fatalf("端点未 active 前节点应保持 pending，实际 %s", node.Status)
+	}
+
+	// 端点回执 active → 出口节点镜像 realized 并继续推进到阶段 4。
+	epRealized := json.RawMessage(`{"port":1443,"sni":"cdn.example.com","obfs_password":"ob","up_mbps":100,"down_mbps":200}`)
+	if err := d.efsm.Transition(ctx, epE.ID, store.EndpointStatusActive, "部署回执确认", epRealized); err != nil {
+		t.Fatal(err)
+	}
+	node, err := st.NodeByID(ctx, dep.NodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node.Status != store.NodeStatusActive {
+		t.Fatalf("端点 active 后节点应镜像为 active，实际 %s", node.Status)
+	}
+	var rc shared.RealizedConfig
+	if err := json.Unmarshal(node.RealizedConfig, &rc); err != nil || rc.Port != 1443 || rc.SNI != "cdn.example.com" {
+		t.Fatalf("节点 realized_config 应为端点 realized 镜像: %s", node.RealizedConfig)
+	}
+	fc := lastHopCommand(t, st, shared.TypeApplyChainHop, entryID)
+	var fwd shared.ApplyChainHopPayload
+	if err := json.Unmarshal(fc.Data, &fwd); err != nil {
+		t.Fatal(err)
+	}
+	if fwd.Kind != shared.HopKindForward || fwd.Forward == nil {
+		t.Fatalf("期望 forward piece: %+v", fwd)
+	}
+	if fwd.Forward.Network != "udp" || fwd.Forward.Port != 25000 ||
+		fwd.Forward.TargetAddress != "exit.test" || fwd.Forward.TargetPort != 1443 {
+		t.Fatalf("末段 forward spec 不符: %+v", fwd.Forward)
+	}
+	ackHop(t, st, d, entryID, dep.Hops[0].HopID, shared.HopKindForward, &shared.RealizedConfig{Port: 25000})
+	chain, _ := st.ChainByID(ctx, dep.ChainID)
+	if chain.Status != store.ChainStatusActive {
+		t.Fatalf("链状态 %s，期望 active（error=%s）", chain.Status, chain.Error)
+	}
+	published, err := st.PublishedChainRevision(ctx, dep.ChainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pubRC shared.RealizedConfig
+	if err := json.Unmarshal(published.Snapshot.ServiceRealized, &pubRC); err != nil || pubRC.Port != 1443 {
+		t.Fatalf("发布快照 realized 应为端点镜像: %s", published.Snapshot.ServiceRealized)
+	}
+}
+
+// TestAdvanceChainHy2LastMile 验证入口终结末段（transport="hy2"）：
+// 末段 forward spec 携带 Hy2Target（地址=出口公网、端口=段起点/realized、auth=派生、
+// SNI/pin/obfs/带宽/段透传）；2 跳链（入口即末跳）不产 forward piece（端点直拨）。
+func TestAdvanceChainHy2LastMile(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "tok1", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Entry"})
+	midID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "mid", Address: "mid.test", BootstrapToken: "tok2", MachineType: store.MachineTypeDirect, CountryCode: "SG", Location: "Mid"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "tok3", MachineType: store.MachineTypeDirect, CountryCode: "JP", Location: "Exit"})
+	svcCfg := json.RawMessage(`{"protocol":"hysteria","template":{}}`)
+	epE, _, err := st.EnsureProtocolSharedEndpoint(ctx, exitID, shared.ProtocolHysteria2, 0, svcCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epE2, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 443, "profile", json.RawMessage(`{"protocol":"vless","template":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 出口共享端点预置 active（realized 携带完整 hy2 参数）。
+	epRealized := json.RawMessage(`{"port":1443,"sni":"cdn.example.com","cert_sha256":"ab12","obfs_password":"ob","up_mbps":100,"down_mbps":200,"port_hop":"30000-30031"}`)
+	if err := st.SetSharedEndpointActive(ctx, epE.ID, epRealized); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+		Name: "hy2-entry", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig: svcCfg, EndpointID: epE2.ID, ServiceEndpointID: epE.ID, ServiceUUID: "svc-3hop",
+		TrafficMultiplierMilli: 1000,
+		Hops: []store.InitialChainHop{
+			{ServerID: entryID, Role: store.HopRoleEntry, Transport: "direct"},
+			{ServerID: midID, Role: store.HopRoleMiddle, Transport: "hy2"},
+			{ServerID: exitID, Role: store.HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := &fakeRequester{online: map[int64]bool{entryID: true, midID: true, exitID: true}}
+	d := New(st, req, Options{}, Events{})
+	if err := d.StartChain(ctx, dep.ChainID); err != nil {
+		t.Fatal(err)
+	}
+
+	// 阶段 4：mid（末段，transport=hy2）的 forward 携带 Hy2Target。
+	mc := lastHopCommand(t, st, shared.TypeApplyChainHop, midID)
+	var fwdMid shared.ApplyChainHopPayload
+	if err := json.Unmarshal(mc.Data, &fwdMid); err != nil {
+		t.Fatal(err)
+	}
+	if fwdMid.Kind != shared.HopKindForward || fwdMid.Forward == nil {
+		t.Fatalf("期望 mid forward piece: %+v", fwdMid)
+	}
+	fm := fwdMid.Forward
+	if fm.Hy2Target == nil {
+		t.Fatalf("末段 forward 应携带 Hy2Target: %+v", fm)
+	}
+	dial := fm.Hy2Target
+	if dial.Address != "exit.test" || dial.Auth != shared.Hy2UserPassword("svc-3hop") ||
+		dial.SNI != "cdn.example.com" || dial.CertSHA256 != "ab12" || dial.ObfsPassword != "ob" ||
+		dial.UpMbps != 100 || dial.DownMbps != 200 || dial.PortHop != "30000-30031" {
+		t.Fatalf("Hy2Target 字段不符: %+v", dial)
+	}
+	if dial.Port != 30000 {
+		t.Fatalf("PortHop 非空时 Hy2Target.Port 应为段起点 30000，实际 %d", dial.Port)
+	}
+	if fm.Network != "udp" {
+		t.Fatalf("末段 forward Network 应为 udp，实际 %q", fm.Network)
+	}
+	if fm.TargetAddress == "" || fm.TargetPort == 0 {
+		t.Fatalf("dokodemo 必填目标字段应保留: %+v", fm)
+	}
+	ackHop(t, st, d, midID, dep.Hops[1].HopID, shared.HopKindForward, &shared.RealizedConfig{Port: 25001})
+
+	// 入口跳（非末段）forward 不携带 Hy2Target（回环管道接入口端点）。
+	ec := lastHopCommand(t, st, shared.TypeApplyChainHop, entryID)
+	var fwdEntry shared.ApplyChainHopPayload
+	if err := json.Unmarshal(ec.Data, &fwdEntry); err != nil {
+		t.Fatal(err)
+	}
+	if fwdEntry.Forward == nil || fwdEntry.Forward.Hy2Target != nil {
+		t.Fatalf("入口跳 forward 不应携带 Hy2Target: %+v", fwdEntry.Forward)
+	}
+	if !fwdEntry.Forward.LocalOnly {
+		t.Fatalf("入口端点链 hop0 forward 应 LocalOnly: %+v", fwdEntry.Forward)
+	}
+
+	// 2 跳入口终结链（入口即末跳）：不产 forward piece（端点直拨出口）。
+	dep2, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+		Name: "hy2-entry-2hop", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig: svcCfg, EndpointID: epE2.ID, ServiceEndpointID: epE.ID, ServiceUUID: "svc-2hop",
+		TrafficMultiplierMilli: 1000,
+		Hops: []store.InitialChainHop{
+			{ServerID: entryID, Role: store.HopRoleEntry, Transport: "hy2"},
+			{ServerID: exitID, Role: store.HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range dep2.ApplyKeys {
+		if key == fmt.Sprintf("forward/%d", dep2.Hops[0].HopID) {
+			t.Fatalf("2 跳 hy2 链 hop0 不应在 apply_keys 中: %v", dep2.ApplyKeys)
+		}
+	}
+	if err := d.StartChain(ctx, dep2.ChainID); err != nil {
+		t.Fatal(err)
+	}
+	if cmds := chainHopCommands(t, st, dep2.ChainID); len(cmds) != 0 {
+		t.Fatalf("2 跳 hy2 链不应下发任何 apply_chain_hop（%d 条）", len(cmds))
+	}
+	if _, err := st.PublishedChainRevision(ctx, dep2.ChainID); err != nil {
+		t.Fatalf("2 跳 hy2 链应直接发布: %v", err)
+	}
+}
+
+// TestAdvanceChainHy2HopPorts 验证端到端跳跃段下发：exit port_hop="30000-30031" 时
+// 各跳 forward spec.Port=段起点（forward_port）、HopPortEnd=30031、Network="udp"。
+func TestAdvanceChainHy2HopPorts(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "tok1", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Entry"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "tok2", MachineType: store.MachineTypeDirect, CountryCode: "JP", Location: "Exit"})
+	svcCfg := json.RawMessage(`{"protocol":"hysteria","port_hop":"30000-30031","template":{}}`)
+	epE, _, err := st.EnsureProtocolSharedEndpoint(ctx, exitID, shared.ProtocolHysteria2, 0, svcCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSharedEndpointActive(ctx, epE.ID, json.RawMessage(`{"port":1443,"port_hop":"30000-30031"}`)); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+		Name: "hy2-hop", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig: svcCfg, ServiceEndpointID: epE.ID, ServiceUUID: "svc-hop",
+		TrafficMultiplierMilli: 1000,
+		Hops: []store.InitialChainHop{
+			{ServerID: entryID, Role: store.HopRoleEntry, Transport: "direct", ForwardPort: 30000},
+			{ServerID: exitID, Role: store.HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := &fakeRequester{online: map[int64]bool{entryID: true, exitID: true}}
+	d := New(st, req, Options{}, Events{})
+	if err := d.StartChain(ctx, dep.ChainID); err != nil {
+		t.Fatal(err)
+	}
+	fc := lastHopCommand(t, st, shared.TypeApplyChainHop, entryID)
+	var fwd shared.ApplyChainHopPayload
+	if err := json.Unmarshal(fc.Data, &fwd); err != nil {
+		t.Fatal(err)
+	}
+	if fwd.Forward == nil || fwd.Forward.Port != 30000 || fwd.Forward.HopPortEnd != 30031 || fwd.Forward.Network != "udp" {
+		t.Fatalf("跳跃段 forward spec 不符: %+v", fwd.Forward)
+	}
+	if fwd.Forward.Hy2Target != nil {
+		t.Fatalf("端到端链入口跳不应携带 Hy2Target: %+v", fwd.Forward)
+	}
+}

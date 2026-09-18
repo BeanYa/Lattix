@@ -195,6 +195,20 @@ func (s *Store) ListChains(ctx context.Context) ([]Chain, error) {
 	return out, rows.Err()
 }
 
+// ChainByServiceNode 返回以指定节点为出口业务节点的未删链（P4 用户扇出改道用）；
+// 未命中返回 nil, nil（独立节点不属于任何链）。
+func (s *Store) ChainByServiceNode(ctx context.Context, nodeID int64) (*Chain, error) {
+	c, err := scanChain(s.db.QueryRowContext(ctx,
+		`SELECT `+chainCols+` FROM chains WHERE service_node_id=? AND deleted_at IS NULL ORDER BY id LIMIT 1`, nodeID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query chain by service node: %w", err)
+	}
+	return c, nil
+}
+
 // ChainHops 列出一条链的全部跳（按 seq 升序：seq 0 = 入口，末位 = 出口）。
 func (s *Store) ChainHops(ctx context.Context, chainID int64) ([]ChainHop, error) {
 	rows, err := s.db.QueryContext(ctx,

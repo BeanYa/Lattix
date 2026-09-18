@@ -138,3 +138,97 @@ func assertStringSet(t *testing.T, label string, got, want []string) {
 		}
 	}
 }
+
+// TestExpectedXrayStateHy2 验证 P4 hy2 出口共享链的期望状态：
+// 出口共享监听经 service_endpoint_id 引用计入期望（cleanup 不误删、rebuild 重放）；
+// 端到端 port_hop 链的 forward 跳附加 <tag>_hop_<port> inbound 计入期望（Task 5 硬约束：
+// 缺了会被 agent cleanup 当作孤儿配置件误删）；入口终结 2 跳 hy2 链 hop0 免管道
+//（镜像 materializeRevision 的 skipEntryForward，否则 rebuild 自检因缺失误回滚）。
+func TestExpectedXrayStateHy2(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	serverA, err := st.CreateServer(ctx, ServerDraft{Alias: "entry", BootstrapToken: "token-a", MachineType: MachineTypeDirect})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverC, err := st.CreateServer(ctx, ServerDraft{Alias: "exit", BootstrapToken: "token-c", MachineType: MachineTypeDirect})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// hy2 出口共享监听（C 机，经 service_endpoint_id 被引用）。
+	hy2cfg := json.RawMessage(`{"protocol":"hysteria","port_hop":"30000-30003"}`)
+	svcEndpoint, _, err := st.EnsureProtocolSharedEndpoint(ctx, serverC, shared.ProtocolHysteria2, 0, hy2cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 端到端 hy2 链：A(entry, forward 30000, 段长 4) → C(exit)。
+	deploy, err := st.CreateInitialChainDeployment(ctx, InitialChainDeployment{
+		Name: "hy2-e2e", ServiceServerID: serverC, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig: hy2cfg, ServiceEndpointID: svcEndpoint.ID, TrafficMultiplierMilli: 1000,
+		Hops: []InitialChainHop{
+			{ServerID: serverA, Role: HopRoleEntry, Transport: "direct", ForwardPort: 30000},
+			{ServerID: serverC, Role: HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hopA := deploy.Hops[0]
+
+	// 入口终结 2 跳 hy2 链：入口端点 E2（A 机 vless），hop0 transport=hy2 → 免管道。
+	entryEndpoint, _, err := st.EnsureSharedEndpoint(ctx, serverA, "vless", 0, "profile-hash", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploy2, err := st.CreateInitialChainDeployment(ctx, InitialChainDeployment{
+		Name: "hy2-entry", ServiceServerID: serverC, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig: hy2cfg, ServiceEndpointID: svcEndpoint.ID, EndpointID: entryEndpoint.ID,
+		ServiceUUID: "svc-2", TrafficMultiplierMilli: 1000,
+		Hops: []InitialChainHop{
+			{ServerID: serverA, Role: HopRoleEntry, Transport: "hy2"},
+			{ServerID: serverC, Role: HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hopA2 := deploy2.Hops[0]
+
+	// A 机：链1 forward 主 inbound + 段内附加 _hop_ inbound（30001-30003）+ 入口端点；
+	// 链2 hop0 免 forward（tag 与 piece 均不计入）。
+	tagsA, piecesA, err := st.ExpectedXrayState(ctx, serverA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fwdTag := shared.ChainForwardTag(hopA.HopID)
+	assertStringSet(t, "A inbound", tagsA, []string{
+		fwdTag,
+		fwdTag + "_hop_30001", fwdTag + "_hop_30002", fwdTag + "_hop_30003",
+		shared.SharedEndpointTag(entryEndpoint.ID),
+	})
+	assertStringSet(t, "A piece", piecesA, []string{
+		"forward/" + itoa(hopA.HopID),
+		"shared-endpoint/" + itoa(entryEndpoint.ID),
+	})
+	if containsTag(tagsA, shared.ChainForwardTag(hopA2.HopID)) {
+		t.Fatalf("2 跳 hy2 链 hop0 不应期望 forward inbound: %v", tagsA)
+	}
+
+	// C 机：出口共享监听经 service_endpoint_id 计入期望（两条链引用同一监听）。
+	tagsC, piecesC, err := st.ExpectedXrayState(ctx, serverC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertStringSet(t, "C inbound", tagsC, []string{
+		shared.NodeTag(deploy.NodeID), shared.NodeTag(deploy2.NodeID),
+		shared.SharedEndpointTag(svcEndpoint.ID),
+	})
+	assertStringSet(t, "C piece", piecesC, []string{"shared-endpoint/" + itoa(svcEndpoint.ID)})
+}
