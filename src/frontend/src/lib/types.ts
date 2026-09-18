@@ -431,6 +431,10 @@ export interface CreateNodeRequest {
   encryption?: string
   target_address?: string
   target_port?: number
+  obfs_password?: string
+  up_mbps?: number
+  down_mbps?: number
+  port_hop?: string
 }
 
 export type ChainStatus =
@@ -508,6 +512,7 @@ export interface Chain {
   revision_forced: boolean
   revision_tasks: ChainRevisionTask[]
   service_config?: VirtualConfig
+  entry_config?: VirtualConfig | null
 }
 
 // 链路构图提交（§21）：依次入口 / 中间跳（0-2）/ 出口，出口携带业务节点协议表单，
@@ -526,6 +531,7 @@ export interface CreateChainRequest {
   exit: ChainHopInput
   entry_port?: number
   node: Omit<CreateNodeRequest, 'server_id' | 'name'>
+  entry_node?: Omit<CreateNodeRequest, 'server_id' | 'name'>
   traffic_multiplier?: string
 }
 
@@ -535,6 +541,7 @@ export interface EditChainRequest {
   hops: ChainHopInput[]
   entry_port?: number
   node: Omit<CreateNodeRequest, 'server_id' | 'name'>
+  entry_node?: Omit<CreateNodeRequest, 'server_id' | 'name'>
   traffic_multiplier: string
 }
 

@@ -19,11 +19,20 @@ export const DIRECT_PROTOCOLS = [
   'vmess',
   'trojan',
   'shadowsocks',
+  'hysteria',
   'socks',
   'http',
   'dokodemo-door',
 ] as const
-export const RELAY_PROTOCOLS = ['vless', 'vmess', 'trojan', 'shadowsocks', 'socks', 'http'] as const
+export const RELAY_PROTOCOLS = [
+  'vless',
+  'vmess',
+  'trojan',
+  'shadowsocks',
+  'hysteria',
+  'socks',
+  'http',
+] as const
 // 与后端 shared 包保持一致（顺序即 shared.Networks：tcp/grpc/xhttp 为 reality 兼容传输，
 // ws/httpupgrade 支持 tls/none 安全层）。
 export const NETWORKS = ['tcp', 'grpc', 'xhttp', 'ws', 'httpupgrade']
@@ -46,6 +55,7 @@ export const PROTOCOL_LABELS: Record<string, string> = {
   vmess: 'VMess（兼容性广）',
   trojan: 'Trojan（兼容性广）',
   shadowsocks: 'Shadowsocks（轻量 · 特征明显）',
+  hysteria: 'Hysteria2（UDP 高速 · 需服务商放行 UDP）',
   socks: 'SOCKS5（明文 · 特殊用途）',
   http: 'HTTP（明文 · 特殊用途）',
   'dokodemo-door': '端口转发',
@@ -122,6 +132,26 @@ function parseConfigRecord(value: unknown): Record<string, unknown> {
   return record
 }
 
+/** 从 xray 模板提取 reality 参数（出口 service_config 与入口 entry_config 回填共用）。 */
+function parseRealityTemplate(template: Record<string, unknown>): {
+  shortId: string
+  dest: string
+  serverNames: string[]
+} {
+  const streamSettings = asRecord(template.streamSettings) ?? {}
+  const reality = asRecord(streamSettings.realitySettings) ?? {}
+  const shortIds = Array.isArray(reality.shortIds) ? reality.shortIds : []
+  const configuredServerNames = Array.isArray(reality.serverNames)
+    ? reality.serverNames.filter((value): value is string => typeof value === 'string')
+    : []
+  const configuredDest = String(reality.dest || `${DEFAULT_REALITY_DEST}:443`)
+  return {
+    shortId: typeof shortIds[0] === 'string' ? shortIds[0] : '',
+    dest: configuredDest,
+    serverNames: configuredServerNames.length > 0 ? configuredServerNames : [DEFAULT_REALITY_DEST],
+  }
+}
+
 export interface ChainFormState {
   chainType: 'direct' | 'relay'
   name: string
@@ -151,6 +181,16 @@ export interface ChainFormState {
   serviceName: string
   method: string
   cipher: string
+  obfsPassword: string
+  upMbps: string
+  downMbps: string
+  portHop: string // ''=默认开（自动分配 32 段）；'off'=关闭；'a-b'=显式段
+  entryProtocolEnabled: boolean
+  entryShortId: string
+  entryDestPreset: string
+  entryDest: string
+  entryServerNames: string
+  entryFingerprint: string
   targetAddress: string
   targetPort: string
   trafficMultiplier: string
@@ -185,6 +225,16 @@ const initialChainForm: ChainFormState = {
   serviceName: 'grpc',
   method: '2022-blake3-aes-128-gcm',
   cipher: 'auto',
+  obfsPassword: '',
+  upMbps: '50',
+  downMbps: '100',
+  portHop: '',
+  entryProtocolEnabled: false,
+  entryShortId: '',
+  entryDestPreset: DEFAULT_REALITY_DEST,
+  entryDest: 'dl.google.com:443',
+  entryServerNames: 'dl.google.com',
+  entryFingerprint: 'chrome',
   targetAddress: '',
   targetPort: '',
   trafficMultiplier: '1.000',
@@ -219,6 +269,7 @@ export function useChainForm({
     setForm((current) => ({ ...current, ...partial }))
 
   const isReality = REALITY_PROTOCOLS.includes(form.protocol)
+  const isHy2 = form.protocol === 'hysteria'
   const selectedEntry = servers.find((s) => String(s.id) === form.entryId)
   const selectedExit = servers.find((s) => String(s.id) === form.exitId)
   const selectedMiddleServers = form.middleIds.flatMap((id) => {
@@ -279,27 +330,34 @@ export function useChainForm({
       return
     }
     let virtual: Record<string, unknown>
-    let reality: Record<string, unknown>
+    let template: Record<string, unknown>
     let settings: Record<string, unknown>
     try {
       const rawVirtual: unknown = service?.config_template ?? chain.service_config
       virtual = parseConfigRecord(rawVirtual)
-      const template = virtual.template === undefined ? {} : parseConfigRecord(virtual.template)
-      const streamSettings = asRecord(template.streamSettings) ?? {}
-      reality = asRecord(streamSettings.realitySettings) ?? {}
+      template = virtual.template === undefined ? {} : parseConfigRecord(virtual.template)
       settings = asRecord(template.settings) ?? {}
     } catch {
       onError('链路出口配置无法解析')
       return
     }
 
-    const shortIds = Array.isArray(reality.shortIds) ? reality.shortIds : []
-    const configuredServerNames = Array.isArray(reality.serverNames)
-      ? reality.serverNames.filter((value): value is string => typeof value === 'string')
-      : []
-    const configuredDest = String(reality.dest || `${DEFAULT_REALITY_DEST}:443`)
-    const effectiveServerNames =
-      configuredServerNames.length > 0 ? configuredServerNames : [DEFAULT_REALITY_DEST]
+    const mainReality = parseRealityTemplate(template)
+    // 入口协议区块回填（P4）：vless 出口链的 entry_config 即主协议端点，不算独立入口区块；
+    // 其余协议存在 entry_config 时勾选回填，子参数解析失败退回默认（留空自动生成）。
+    const hasEntryBlock = chain.entry_config != null && String(virtual.protocol ?? '') !== 'vless'
+    let entryReality: ReturnType<typeof parseRealityTemplate> | null = null
+    if (hasEntryBlock) {
+      try {
+        const entryTemplate =
+          chain.entry_config!.template === undefined
+            ? {}
+            : parseConfigRecord(chain.entry_config!.template)
+        entryReality = parseRealityTemplate(entryTemplate)
+      } catch {
+        entryReality = null
+      }
+    }
     setEditingChainId(chain.id)
     // 逐跳地址回填：空串 = 跟随服务器默认地址；已失效值由选择器内标注。
     setForm({
@@ -327,13 +385,25 @@ export function useChainForm({
       serviceName: String(virtual.service_name || 'grpc'),
       method: String(virtual.method || '2022-blake3-aes-128-gcm'),
       cipher: String(virtual.cipher || 'auto'),
+      obfsPassword: String(virtual.obfs_password || ''),
+      upMbps: virtual.up_mbps ? String(virtual.up_mbps) : '50',
+      downMbps: virtual.down_mbps ? String(virtual.down_mbps) : '100',
+      portHop: String(virtual.port_hop || ''),
+      entryProtocolEnabled: hasEntryBlock,
+      entryShortId: entryReality?.shortId ?? '',
+      entryDestPreset: entryReality
+        ? inferRealityDestPreset(entryReality.dest, entryReality.serverNames)
+        : DEFAULT_REALITY_DEST,
+      entryDest: entryReality?.dest ?? 'dl.google.com:443',
+      entryServerNames: entryReality?.serverNames.join(',') ?? 'dl.google.com',
+      entryFingerprint: String(chain.entry_config?.fingerprint || 'chrome'),
       path: String(virtual.path || '/'),
       mode: String(virtual.mode || 'auto'),
       host: String(virtual.host || ''),
-      shortId: typeof shortIds[0] === 'string' ? shortIds[0] : '',
-      destPreset: inferRealityDestPreset(configuredDest, effectiveServerNames),
-      dest: configuredDest,
-      serverNames: effectiveServerNames.join(','),
+      shortId: mainReality.shortId,
+      destPreset: inferRealityDestPreset(mainReality.dest, mainReality.serverNames),
+      dest: mainReality.dest,
+      serverNames: mainReality.serverNames.join(','),
       targetAddress: String(settings.address || ''),
       targetPort: settings.port ? String(settings.port) : '',
     })
@@ -388,6 +458,7 @@ export function useChainForm({
       ...current,
       protocol: value,
       // 跨协议纠偏：flow/encryption 仅 vless 有意义；security 按矩阵即时纠正（清理 #3）
+      // hy2 无 network/security 概念：选择后隐藏对应选择器（提交载荷不携带）。
       flow: value === 'vless' ? current.flow : 'none',
       security: coerceSecurity(value, current.network, current.security),
       encryption:
@@ -459,6 +530,42 @@ export function useChainForm({
     }
     if ((form.chainType === 'direct' ? form.entryPort : form.port).trim()) {
       nodeBody.port = Number(form.chainType === 'direct' ? form.entryPort : form.port)
+    }
+    // 入口协议区块（P4，v1 固定 vless+reality，子参数留空自动生成）；仅多跳链可勾选。
+    let entryNode: EditChainRequest['entry_node']
+    if (form.protocol === 'hysteria') {
+      // hy2 恒 QUIC+TLS：证书模式复用 TLS 区域；矩阵外字段一律不提交（后端 400 兜底）。
+      nodeBody.cert_mode = form.certMode
+      if (form.certMode === 'selfsign' && form.tlsDomain.trim()) {
+        nodeBody.tls_domain = form.tlsDomain.trim()
+      }
+      if (form.obfsPassword.trim()) {
+        nodeBody.obfs_password = form.obfsPassword.trim()
+      }
+      if (form.upMbps.trim()) {
+        nodeBody.up_mbps = Number(form.upMbps)
+      }
+      if (form.downMbps.trim()) {
+        nodeBody.down_mbps = Number(form.downMbps)
+      }
+      if (form.portHop === 'off' || form.portHop.trim()) {
+        nodeBody.port_hop = form.portHop.trim() // 'off' 或 'a-b'；'' = 默认开（后端自动分配）
+      }
+    }
+    if (
+      (isHy2 || form.protocol === 'vless') &&
+      form.chainType === 'relay' &&
+      form.entryProtocolEnabled
+    ) {
+      entryNode = { protocol: 'vless', security: 'reality' }
+      if (form.entryShortId.trim()) entryNode.short_id = form.entryShortId.trim()
+      if (form.entryDest.trim()) entryNode.dest = form.entryDest.trim()
+      const entryNames = form.entryServerNames
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+      if (entryNames.length > 0) entryNode.server_names = entryNames
+      entryNode.fingerprint = form.entryFingerprint
     }
     if (isReality) {
       nodeBody.network = form.network
@@ -547,6 +654,7 @@ export function useChainForm({
           traffic_multiplier: form.trafficMultiplier,
         }
         if (form.entryPort.trim()) body.entry_port = Number(form.entryPort)
+        if (entryNode) body.entry_node = entryNode
         const { observeId } = await api.editChain(body)
         if (observeId) showOperation({ observeId })
       } else {
@@ -563,6 +671,7 @@ export function useChainForm({
           traffic_multiplier: form.trafficMultiplier,
         }
         if (form.entryPort.trim()) body.entry_port = Number(form.entryPort)
+        if (entryNode) body.entry_node = entryNode
         const { observeId } = await api.createChain(body)
         if (observeId) showOperation({ observeId })
       }
@@ -583,6 +692,7 @@ export function useChainForm({
     form,
     patch,
     isReality,
+    isHy2,
     topologyServers,
     hopIndexes,
     entryPortHint,

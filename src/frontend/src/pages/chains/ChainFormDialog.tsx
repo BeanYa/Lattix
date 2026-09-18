@@ -24,6 +24,7 @@ import {
 import { addressFamily } from '@/lib/address'
 import { isServerOnline } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
+import { xrayVersionAtLeast } from '@/lib/xray-version'
 import type { Server } from '@/lib/types'
 
 import {
@@ -152,6 +153,7 @@ export function ChainFormDialog({
     form,
     patch,
     isReality,
+    isHy2,
     entryPortHint,
     strictNameResult,
     onOpenChange,
@@ -375,14 +377,78 @@ export function ChainFormDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {(form.chainType === 'direct' ? DIRECT_PROTOCOLS : RELAY_PROTOCOLS).map((p) => (
-                  <SelectItem key={p} value={p}>
-                    {PROTOCOL_LABELS[p] ?? p}
-                  </SelectItem>
-                ))}
+                {(form.chainType === 'direct' ? DIRECT_PROTOCOLS : RELAY_PROTOCOLS).map((p) => {
+                  // hy2 需要 xray ≥ 26.3.27（后端 shared.XrayMinVersionHy2）：落地服务器版本过低时禁用。
+                  const hy2Blocked =
+                    p === 'hysteria' &&
+                    !xrayVersionAtLeast(
+                      landingServer?.effective_xray_version ?? landingServer?.xray_version,
+                    )
+                  return (
+                    <SelectItem key={p} value={p} disabled={hy2Blocked}>
+                      {PROTOCOL_LABELS[p] ?? p}
+                      {hy2Blocked ? '（节点 xray 版本过低，请先在节点页升级 xray）' : ''}
+                    </SelectItem>
+                  )
+                })}
               </SelectContent>
             </Select>
           </div>
+
+          {form.chainType === 'relay' &&
+            (form.protocol === 'hysteria' || form.protocol === 'vless') && (
+              <div className="space-y-2">
+                <label className={cn('cg-chain-type', form.entryProtocolEnabled && 'is-selected')}>
+                  <input
+                    type="checkbox"
+                    className="sr-only"
+                    checked={form.entryProtocolEnabled}
+                    onChange={(e) => patch({ entryProtocolEnabled: e.target.checked })}
+                  />
+                  使用独立入口协议（VLESS + Reality）
+                </label>
+                {form.protocol === 'hysteria' && !form.entryProtocolEnabled && (
+                  <p className="cg-chain-hint">
+                    推荐：勾选后 UDP 只在服务器间流动，规避运营商 UDP QoS。
+                  </p>
+                )}
+                {form.entryProtocolEnabled && (
+                  <>
+                    <p className="cg-chain-hint">
+                      入口以 VLESS+Reality 终结客户端流量后按出口协议转发；客户端仅见入口协议参数。
+                      以下参数全部可留空自动生成。
+                    </p>
+                    <div className="space-y-2">
+                      <Label htmlFor="entryShortId">入口 short_id（可空）</Label>
+                      <Input
+                        id="entryShortId"
+                        value={form.entryShortId}
+                        onChange={(e) => patch({ entryShortId: e.target.value })}
+                        placeholder="留空自动生成"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="entryDest">入口 dest（可空）</Label>
+                      <Input
+                        id="entryDest"
+                        value={form.entryDest}
+                        onChange={(e) => patch({ entryDest: e.target.value })}
+                        placeholder="dl.google.com:443"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="entryServerNames">入口 server_names（逗号分隔，可空）</Label>
+                      <Input
+                        id="entryServerNames"
+                        value={form.entryServerNames}
+                        onChange={(e) => patch({ entryServerNames: e.target.value })}
+                        placeholder="dl.google.com"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           {form.chainType === 'relay' ? (
             <div className="space-y-2">
               <Label htmlFor="exitNodePort">出口节点端口</Label>
@@ -446,70 +512,6 @@ export function ChainFormDialog({
                   </SelectContent>
                 </Select>
               </div>
-              {form.security === 'tls' && (
-                <div className="space-y-2">
-                  <Label id="cert-mode-label">证书模式</Label>
-                  <div
-                    role="radiogroup"
-                    aria-labelledby="cert-mode-label"
-                    className="grid grid-cols-2 gap-2"
-                  >
-                    <label className={cn('cg-chain-type', form.certMode === 'selfsign' && 'is-selected')}>
-                      <input
-                        type="radio"
-                        name="cert-mode"
-                        value="selfsign"
-                        checked={form.certMode === 'selfsign'}
-                        onChange={() => patch({ certMode: 'selfsign' })}
-                        className="sr-only"
-                      />
-                      伪装域名自签
-                    </label>
-                    <label
-                      className={cn(
-                        'cg-chain-type',
-                        form.certMode === 'acme' && 'is-selected',
-                        !landingDomain && 'opacity-50 pointer-events-none',
-                      )}
-                    >
-                      <input
-                        type="radio"
-                        name="cert-mode"
-                        value="acme"
-                        checked={form.certMode === 'acme'}
-                        disabled={!landingDomain}
-                        onChange={() => patch({ certMode: 'acme' })}
-                        className="sr-only"
-                      />
-                      使用落地服务器域名（ACME）
-                    </label>
-                  </div>
-                  {form.certMode === 'selfsign' ? (
-                    <>
-                      <Label htmlFor="tlsDomain">伪装域名（可空）</Label>
-                      <Input
-                        id="tlsDomain"
-                        value={form.tlsDomain}
-                        onChange={(e) => patch({ tlsDomain: e.target.value })}
-                        placeholder="留空从常见域名预设池随机选取"
-                      />
-                      <p className="cg-chain-hint">
-                        仅作 TLS 伪装身份（证书 CN/SAN 与客户端 SNI），不要求指向本机；
-                        订阅以证书指纹（pin）校验，客户端无需信任系统 CA。
-                      </p>
-                    </>
-                  ) : landingDomain ? (
-                    <p className="cg-chain-hint">
-                      {`将沿用落地服务器域名 ${landingDomain}，由节点自动安装 acme.sh 签发并续期（需域名解析指向本机、80 端口空闲）。`}
-                    </p>
-                  ) : null}
-                  {!landingDomain && (
-                    <p className="cg-chain-hint">
-                      落地服务器未设置域名，请先在服务器地址中配置域名或改用自签模式。
-                    </p>
-                  )}
-                </div>
-              )}
               {form.network === 'xhttp' && (
                 <>
                   <div className="space-y-2">
@@ -672,6 +674,121 @@ export function ChainFormDialog({
                   onServerNamesChange={(value) => patch({ serverNames: value })}
                 />
               )}
+            </>
+          )}
+
+          {((isReality && form.security === 'tls') || isHy2) && (
+            <div className="space-y-2">
+              <Label id="cert-mode-label">证书模式</Label>
+              <div
+                role="radiogroup"
+                aria-labelledby="cert-mode-label"
+                className="grid grid-cols-2 gap-2"
+              >
+                <label
+                  className={cn('cg-chain-type', form.certMode === 'selfsign' && 'is-selected')}
+                >
+                  <input
+                    type="radio"
+                    name="cert-mode"
+                    value="selfsign"
+                    checked={form.certMode === 'selfsign'}
+                    onChange={() => patch({ certMode: 'selfsign' })}
+                    className="sr-only"
+                  />
+                  伪装域名自签
+                </label>
+                <label
+                  className={cn(
+                    'cg-chain-type',
+                    form.certMode === 'acme' && 'is-selected',
+                    !landingDomain && 'opacity-50 pointer-events-none',
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="cert-mode"
+                    value="acme"
+                    checked={form.certMode === 'acme'}
+                    disabled={!landingDomain}
+                    onChange={() => patch({ certMode: 'acme' })}
+                    className="sr-only"
+                  />
+                  使用落地服务器域名（ACME）
+                </label>
+              </div>
+              {form.certMode === 'selfsign' ? (
+                <>
+                  <Label htmlFor="tlsDomain">伪装域名（可空）</Label>
+                  <Input
+                    id="tlsDomain"
+                    value={form.tlsDomain}
+                    onChange={(e) => patch({ tlsDomain: e.target.value })}
+                    placeholder="留空从常见域名预设池随机选取"
+                  />
+                  <p className="cg-chain-hint">
+                    仅作 TLS 伪装身份（证书 CN/SAN 与客户端 SNI），不要求指向本机；
+                    订阅以证书指纹（pin）校验，客户端无需信任系统 CA。
+                  </p>
+                </>
+              ) : landingDomain ? (
+                <p className="cg-chain-hint">
+                  {`将沿用落地服务器域名 ${landingDomain}，由节点自动安装 acme.sh 签发并续期（需域名解析指向本机、80 端口空闲）。`}
+                </p>
+              ) : null}
+              {!landingDomain && (
+                <p className="cg-chain-hint">
+                  落地服务器未设置域名，请先在服务器地址中配置域名或改用自签模式。
+                </p>
+              )}
+            </div>
+          )}
+
+          {isHy2 && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="obfsPassword">混淆密码（salamander，留空自动生成）</Label>
+                <Input
+                  id="obfsPassword"
+                  value={form.obfsPassword}
+                  onChange={(e) => patch({ obfsPassword: e.target.value })}
+                  placeholder="留空自动生成"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-2">
+                  <Label htmlFor="upMbps">上行带宽（Mbps）</Label>
+                  <Input
+                    id="upMbps"
+                    type="number"
+                    min={0}
+                    value={form.upMbps}
+                    onChange={(e) => patch({ upMbps: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="downMbps">下行带宽（Mbps）</Label>
+                  <Input
+                    id="downMbps"
+                    type="number"
+                    min={0}
+                    value={form.downMbps}
+                    onChange={(e) => patch({ downMbps: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="portHop">端口跳跃段（留空自动分配 32 段；off 关闭）</Label>
+                <Input
+                  id="portHop"
+                  value={form.portHop}
+                  onChange={(e) => patch({ portHop: e.target.value })}
+                  placeholder="如 20000-20031；NAT 公共端口不足时自动关闭并降级"
+                />
+                <p className="cg-chain-hint">
+                  客户端在段内逐包换端口以抗 QoS；公共端口不足 8 个的机器自动退回固定单端口。
+                </p>
+              </div>
             </>
           )}
 
