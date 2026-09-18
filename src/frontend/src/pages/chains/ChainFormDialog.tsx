@@ -155,6 +155,7 @@ export function ChainFormDialog({
     isReality,
     isHy2,
     entryPortHint,
+    entryBlockLocked,
     strictNameResult,
     onOpenChange,
     onTypeChange,
@@ -398,15 +399,25 @@ export function ChainFormDialog({
           {form.chainType === 'relay' &&
             (form.protocol === 'hysteria' || form.protocol === 'vless') && (
               <div className="space-y-2">
-                <label className={cn('cg-chain-type', form.entryProtocolEnabled && 'is-selected')}>
+                <label
+                  className={cn(
+                    'cg-chain-type',
+                    form.entryProtocolEnabled && 'is-selected',
+                    entryBlockLocked && 'opacity-50 pointer-events-none',
+                  )}
+                >
                   <input
                     type="checkbox"
                     className="sr-only"
                     checked={form.entryProtocolEnabled}
+                    disabled={entryBlockLocked}
                     onChange={(e) => patch({ entryProtocolEnabled: e.target.checked })}
                   />
                   使用独立入口协议（VLESS + Reality）
                 </label>
+                {entryBlockLocked && (
+                  <p className="cg-chain-hint">存量链路不能新增入口协议区块，请新建链路。</p>
+                )}
                 {form.protocol === 'hysteria' && !form.entryProtocolEnabled && (
                   <p className="cg-chain-hint">
                     推荐：勾选后 UDP 只在服务器间流动，规避运营商 UDP QoS。

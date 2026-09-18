@@ -126,6 +126,8 @@ function relayChain(serviceConfig: VirtualConfig, entryConfig?: VirtualConfig | 
     ],
     service_node_id: 99,
     entry_port: 1443,
+    // 入口区块存在 ⟺ 链挂共享入口端点（后端 toChainDTO：entry_config 由 endpoint 回填）。
+    endpoint_id: entryConfig ? 5 : 0,
     traffic_multiplier: '1.000',
     service_config: serviceConfig,
     entry_config: entryConfig,
@@ -260,6 +262,28 @@ describe('useChainForm hy2', () => {
     expect(form.entryDest).toBe('dl.google.com:443')
     expect(form.entryServerNames).toBe('dl.google.com')
     expect(form.entryFingerprint).toBe('chrome')
+  })
+
+  it('编辑无端点存量链：入口区块锁定，直接勾选后提交也不携带 entry_node（终审修复 I-2）', async () => {
+    const t = setup()
+    t.act((c) => c.openEdit(relayChain(hy2ServiceConfig())))
+    expect(t.controller.entryBlockLocked).toBe(true)
+    // 模拟绕过禁用态直接勾选：提交载荷仍不得携带 entry_node（后端 400 兜底的前端镜像）。
+    t.act((c) => c.patch({ entryProtocolEnabled: true }))
+    await t.submit()
+    const body = editBody()
+    expect(body.entry_node).toBeUndefined()
+  })
+
+  it('编辑带入口区块（有端点）的链：入口区块不锁定，取消勾选提交不携带 entry_node', async () => {
+    const t = setup()
+    t.act((c) => c.openEdit(relayChain(hy2ServiceConfig(), entryRealityConfig())))
+    expect(t.controller.entryBlockLocked).toBe(false)
+    expect(t.controller.form.entryProtocolEnabled).toBe(true)
+    t.act((c) => c.patch({ entryProtocolEnabled: false }))
+    await t.submit()
+    const body = editBody()
+    expect(body.entry_node).toBeUndefined()
   })
 
   it('编辑回填：vless 出口链即使存在 entry_config 也不勾选入口区块（endpoint 即主协议）', () => {

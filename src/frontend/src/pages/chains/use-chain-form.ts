@@ -264,6 +264,8 @@ export function useChainForm({
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const [form, setForm] = useState<ChainFormState>(initialChainForm)
+  // 终审修复 I-2：无入口端点的存量链不能补勾入口协议区块（后端同样 400，镜像文案）。
+  const [entryBlockLocked, setEntryBlockLocked] = useState(false)
 
   const patch = (partial: Partial<ChainFormState>) =>
     setForm((current) => ({ ...current, ...partial }))
@@ -310,6 +312,7 @@ export function useChainForm({
     setEditingChainId(null)
     setForm(initialChainForm)
     setCreateError('')
+    setEntryBlockLocked(false)
   }
 
   const openCreate = () => {
@@ -359,6 +362,8 @@ export function useChainForm({
       }
     }
     setEditingChainId(chain.id)
+    // 无入口端点的存量链锁定入口区块勾选（v1 不支持编辑新增；取消勾选不受影响）。
+    setEntryBlockLocked(chain.endpoint_id === 0)
     // 逐跳地址回填：空串 = 跟随服务器默认地址；已失效值由选择器内标注。
     setForm({
       chainType: chain.hops.length === 1 ? 'direct' : 'relay',
@@ -532,6 +537,7 @@ export function useChainForm({
       nodeBody.port = Number(form.chainType === 'direct' ? form.entryPort : form.port)
     }
     // 入口协议区块（P4，v1 固定 vless+reality，子参数留空自动生成）；仅多跳链可勾选。
+    // 存量无端点链锁定勾选（终审修复 I-2）：锁定时即使状态被绕过也不携带 entry_node。
     let entryNode: EditChainRequest['entry_node']
     if (form.protocol === 'hysteria') {
       // hy2 恒 QUIC+TLS：证书模式复用 TLS 区域；矩阵外字段一律不提交（后端 400 兜底）。
@@ -555,7 +561,8 @@ export function useChainForm({
     if (
       (isHy2 || form.protocol === 'vless') &&
       form.chainType === 'relay' &&
-      form.entryProtocolEnabled
+      form.entryProtocolEnabled &&
+      !entryBlockLocked
     ) {
       entryNode = { protocol: 'vless', security: 'reality' }
       if (form.entryShortId.trim()) entryNode.short_id = form.entryShortId.trim()
@@ -696,6 +703,7 @@ export function useChainForm({
     topologyServers,
     hopIndexes,
     entryPortHint,
+    entryBlockLocked,
     strictNameResult,
     openCreate,
     openEdit,
