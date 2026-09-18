@@ -162,7 +162,10 @@ else
     N2="$(rpc_data POST /api/node/create '{"server_id":1,"protocol":"vless"}' | python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["id"])')"
 fi
 wait_active "$N1"; wait_active "$N2"
-rpc_data POST /api/user/set-nodes "{\"user_id\":1,\"node_ids\":[$N1,$N2]}" >/dev/null
+# hy2 节点（P4）：port_hop=off 同 protocols.sh 特权前提（非 root 环境 DNAT 不可用）。
+N3="$(rpc_data POST /api/node/create '{"server_id":1,"protocol":"hysteria","port_hop":"off"}' | python3 -c 'import json,sys;print(json.loads(sys.stdin.read())["id"])')"
+wait_active "$N3"
+rpc_data POST /api/user/set-nodes "{\"user_id\":1,\"node_ids\":[$N1,$N2,$N3]}" >/dev/null
 wait_sub_vless "$TOK" 2 || exit 1
 
 echo ">> /sub/{token}?format=links 校验"
@@ -179,11 +182,26 @@ if [[ "$HAS_VLESSENC" == "true" ]]; then
         && echo "OK: 加密节点 encryption 客户端字符串" || { echo "FAIL: 缺 encryption 字符串"; echo "$LINKS"; exit 1; }
 fi
 grep -q '#lk01-vless-' <<<"$LINKS" && echo "OK: 节点命名 fragment" || { echo "FAIL: 命名异常"; echo "$LINKS"; exit 1; }
+HY2_LINE="$(grep '^hysteria2://' <<<"$LINKS" | head -1)"
+[[ -n "$HY2_LINE" ]] && echo "OK: hysteria2 分享链接存在" || { echo "FAIL: 缺 hysteria2 链接"; echo "$LINKS"; exit 1; }
+python3 - "$HY2_LINE" <<'PY'
+import sys, urllib.parse
+u = urllib.parse.urlparse(sys.argv[1])
+q = urllib.parse.parse_qs(u.query)
+assert u.username, sys.argv[1]                                    # 派生口令
+assert q.get("sni"), sys.argv[1]
+assert q.get("insecure") == ["1"], sys.argv[1]                    # 自签回退
+assert q.get("obfs") == ["salamander"] and q.get("obfs-password"), sys.argv[1]
+assert "mport" not in q, sys.argv[1]                              # port_hop=off 无段
+assert u.fragment.startswith("lk01-hysteria-"), sys.argv[1]       # 节点命名
+PY
 
 echo ">> /sub/{token}?format=clash（mihomo YAML）回归"
 SUB="$(curl -s "http://$ADDR/sub/$TOK?format=clash")"
 [[ "$(grep -c 'type: vless' <<<"$SUB")" == "2" ]] \
     && echo "OK: YAML 订阅正常" || { echo "FAIL: YAML 订阅异常"; echo "$SUB"; exit 1; }
+[[ "$(grep -c 'type: hysteria2' <<<"$SUB")" == "1" ]] \
+    && echo "OK: YAML 订阅含 hysteria2 项" || { echo "FAIL: YAML 缺 hysteria2"; echo "$SUB"; exit 1; }
 
 echo ">> subscription-userinfo / profile-update-interval 响应头（§9）"
 # period_start 置当月月初，避免 1s 周期的流量重置 sweeper 清零（period_start 为空会被视为待初始化）。
@@ -293,8 +311,8 @@ rpc_data POST /api/user/update '{"user_id":1,"disabled":true}' >/dev/null
     && echo "OK: disabled=1 已置位" || { echo "FAIL: disabled 未置位"; exit 1; }
 rpc_data GET /api/user/list | grep -q '"disabled":true' \
     && echo "OK: 用户列表 DTO 带 disabled" || { echo "FAIL: DTO 缺 disabled"; exit 1; }
-wait_clients "$N1" "$UUID1" absent && wait_clients "$N2" "$UUID1" absent \
-    && echo "OK: 停用扇出 remove_user 生效（两节点）"
+wait_clients "$N1" "$UUID1" absent && wait_clients "$N2" "$UUID1" absent && wait_clients "$N3" "$UUID1" absent \
+    && echo "OK: 停用扇出 remove_user 生效（三节点）"
 # 停用重发布经订阅队列异步完成，轮询等待（同到期停权段）。
 DIS_YAML_EMPTY=0
 DIS_LINKS_EMPTY=0
@@ -323,8 +341,8 @@ echo ">> 启用：disabled:false → 扇出 add_user 恢复"
 rpc_data POST /api/user/update '{"user_id":1,"disabled":false}' >/dev/null
 [[ "$(db "SELECT disabled FROM users WHERE id=1")" == "0" ]] \
     && echo "OK: disabled 已清除" || { echo "FAIL: disabled 未清除"; exit 1; }
-wait_clients "$N1" "$UUID1" present && wait_clients "$N2" "$UUID1" present \
-    && echo "OK: 启用扇出 add_user 生效（两节点）"
+wait_clients "$N1" "$UUID1" present && wait_clients "$N2" "$UUID1" present && wait_clients "$N3" "$UUID1" present \
+    && echo "OK: 启用扇出 add_user 生效（三节点）"
 wait_sub_vless "$TOK" 2 \
     && echo "OK: 启用后订阅含 2 节点" || exit 1
 

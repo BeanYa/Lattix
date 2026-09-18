@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # 代理链与 NAT 支持端到端验收（设计文档 §21/§21.1）：
-#   同机双 agent（A=direct 当入口、C=NAT 仅出口档 machine_type=nat/allowed_ports=[] 当出口）
+#   同机三 agent（A=direct 当入口、C=NAT 仅出口档 machine_type=nat/allowed_ports=[] 当出口、
+#   B=direct 当 hy2 入口区块链接8 的出口——入口终结末段 hy2 outbound 落在入口机，
+#   直拨出口监听，零段 NAT 的 C 只能走 reverse 不承担该拓扑）
 #   → 建链（A=入口、C=出口，vless+reality 出口节点）→ 五阶段编排 active
 #   （vless 链入口落在入口机共享端点上：客户端连端点端口，链 forward 仅为本机回环转发）
 #   → 分配（chain_ids → user_chain_assignments：access_uuid 扇出到共享端点；
@@ -22,25 +24,30 @@ HAS_VLESSENC=true
 
 ADDR="127.0.0.1:18116"
 API_A="127.0.0.1:14216"
+API_B="127.0.0.1:14236"
 API_C="127.0.0.1:14226"
 SOCKS_PORT=11808
 BLOCK_PORT=11809
 PROBE_URL="https://www.cloudflare.com/cdn-cgi/trace"
 ADMIN_PASS="testpass123"
 XRAY_CONFIG_A="$WORK/xray-a.json"
+XRAY_CONFIG_B="$WORK/xray-b.json"
 XRAY_CONFIG_C="$WORK/xray-c.json"
 CLIENT_CONFIG="$WORK/client.json"
 JAR="$WORK/cookies.txt"
 CSRF=""
 
 cleanup() {
-    kill ${BPID:-} ${APID_A:-} ${APID_C:-} ${XPID:-} ${BLOCKPID:-} ${WSXPID:-} ${HUXPID:-} ${TCXPID:-} 2>/dev/null || true
+    kill ${BPID:-} ${APID_A:-} ${APID_B:-} ${APID_C:-} ${XPID:-} ${BLOCKPID:-} ${WSXPID:-} ${HUXPID:-} ${TCXPID:-} ${HY2XPID6:-} ${HY2CXPID:-} 2>/dev/null || true
     pkill -f "xray run -config $XRAY_CONFIG_A" 2>/dev/null || true
+    pkill -f "xray run -config $XRAY_CONFIG_B" 2>/dev/null || true
     pkill -f "xray run -config $XRAY_CONFIG_C" 2>/dev/null || true
     pkill -f "xray run -config $CLIENT_CONFIG" 2>/dev/null || true
     pkill -f "xray run -config $WORK/client-ws.json" 2>/dev/null || true
     pkill -f "xray run -config $WORK/client-hu.json" 2>/dev/null || true
     pkill -f "xray run -config $WORK/client-tls-chain.json" 2>/dev/null || true
+    pkill -f "xray run -config $WORK/client-hy2-chain6.json" 2>/dev/null || true
+    pkill -f "xray run -config $WORK/client-hy2-chain8.json" 2>/dev/null || true
     wait 2>/dev/null || true
     rm -rf "$WORK"
 }
@@ -128,6 +135,15 @@ start_agent_c() {
         >>"$WORK/agent-c.log" 2>&1 &
     APID_C=$!
 }
+start_agent_b() {
+    : > "$WORK/agent-b.log"
+    mkdir -p "$WORK/agent-b"
+    "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" ${1:+-token "$1"} -state "$WORK/agent-b/state.json" \
+        -settings "$WORK/agent-b/settings.json" \
+        -xray-bin "$XRAY_BIN" -xray-config "$XRAY_CONFIG_B" -xray-api "$API_B" -xray-runner exec \
+        >>"$WORK/agent-b.log" 2>&1 &
+    APID_B=$!
+}
 
 echo ">> start backend"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" -admin-pass "$ADMIN_PASS" \
@@ -140,7 +156,9 @@ LOGIN="$(rpc_data POST /api/auth/login "{\"username\":\"admin\",\"password\":\"$
 CSRF="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["csrf_token"])' "$LOGIN")"
 [[ -n "$CSRF" ]] || { echo "FAIL: 未取到 CSRF 令牌"; exit 1; }
 
-echo ">> 两台服务器：A（direct 入口）、C（NAT 仅出口档）"
+echo ">> 三台服务器：A（direct 入口）、C（NAT 仅出口档）、B（direct，hy2 链8 出口）"
+# B 存在的理由：hy2 入口区块（链8）的末段 outbound 落在入口机 A、直拨出口监听，
+# 出口须为 inbound 可达的 direct 机——C 是零段 NAT（末段只能走 reverse），不满足。
 RA="$(rpc_data POST /api/server/create '{"country_code":"US","location":"Test","alias":"chain-a","address":"127.0.0.1"}')"
 AID="$(py "d['server']['id']" "$RA")"
 BOOT_A="$(py "d['bootstrap_token']" "$RA")"
@@ -149,10 +167,13 @@ CID="$(py "d['server']['id']" "$RC")"
 BOOT_C="$(py "d['bootstrap_token']" "$RC")"
 [[ "$(py "d['server']['machine_type']" "$RC")" == "nat" && "$(py "d['server']['allowed_ports']" "$RC")" == "[]" ]] \
     && echo "OK: C 为 NAT 仅出口档（machine_type=nat，无端口段）" || { echo "FAIL: C 建档: $RC"; exit 1; }
-start_agent_a "$BOOT_A"; start_agent_c "$BOOT_C"
+RB="$(rpc_data POST /api/server/create '{"country_code":"US","location":"Test","alias":"chain-b","address":"127.0.0.1"}')"
+BID="$(py "d['server']['id']" "$RB")"
+BOOT_B="$(py "d['bootstrap_token']" "$RB")"
+start_agent_a "$BOOT_A"; start_agent_c "$BOOT_C"; start_agent_b "$BOOT_B"
 sleep 2
-[[ "$(rpc_data GET /api/server/list | python3 -c "import json,sys; print(sum(1 for s in json.load(sys.stdin) if s['connection_state']=='online'))")" == "2" ]] \
-    && echo "OK: 双 agent 上线" || { echo "FAIL: agent 上线"; exit 1; }
+[[ "$(rpc_data GET /api/server/list | python3 -c "import json,sys; print(sum(1 for s in json.load(sys.stdin) if s['connection_state']=='online'))")" == "3" ]] \
+    && echo "OK: 三 agent 上线" || { echo "FAIL: agent 上线"; exit 1; }
 
 echo ">> 用户 + 建链（A=入口、C=出口，vless 出口节点）"
 U1="$(rpc_data POST /api/user/create '{"name":"chain-user"}')"
@@ -561,5 +582,227 @@ sleep 1
     || { echo "FAIL: A 配置件残留"; exit 1; }
 ! grep -q "chainbr_" "$XRAY_CONFIG_C" && echo "OK: C bridge 配置件已清空" \
     || { echo "FAIL: C 配置件残留"; exit 1; }
+
+echo ">> 链6（hy2 端到端：A=入口、C=零段 NAT 出口，出口共享监听）→ active"
+# 特权前提同 protocols.sh：非 root 环境 DNAT 不可用；链6/7 出口 C 为零公共端口 NAT，
+# 端口跳跃段语义自动回退关闭（spec §3.2），显式段/DNAT 由下方 root 守卫块覆盖。
+CHAIN6="$(rpc_data POST /api/chain/create "{\"entry\":{\"server_id\":$AID},\"exit\":{\"server_id\":$CID},\"node\":{\"protocol\":\"hysteria\"}}")"
+CH6="$(py "d['id']" "$CHAIN6")"
+wait_chain "$CH6" active 90
+# chainDTO 无 service_endpoint_id 字段（panel/chains.go chainDTO），共享监听归属直接查库。
+SEP6="$(db "SELECT COALESCE(service_endpoint_id,0) FROM chains WHERE id=$CH6")"
+[[ -n "$SEP6" && "$SEP6" != "0" ]] \
+    && echo "OK: 链6 出口走 hy2 共享监听（service_endpoint_id=$SEP6）" \
+    || { echo "FAIL: hy2 链未挂共享监听: $CHAIN6"; exit 1; }
+for _ in $(seq 1 30); do
+    [[ "$(db "SELECT status FROM shared_endpoints WHERE id=$SEP6")" == "active" ]] && break
+    sleep 1
+done
+[[ "$(db "SELECT status FROM shared_endpoints WHERE id=$SEP6")" == "active" ]] \
+    && echo "OK: hy2 出口共享端点 active（UDP 不探活）" \
+    || { echo "FAIL: hy2 共享端点: $(db "SELECT status||'|'||COALESCE(error,'') FROM shared_endpoints WHERE id=$SEP6")"; exit 1; }
+wait_chain "$CH6" active 30
+NID6="$(py "d['hops'][-1]['node_id']" "$CHAIN6")"
+CH6_EXIT_RC="$(db "SELECT realized_config FROM nodes WHERE id=$NID6")"
+CH6_EXIT_SNI="$(py "d.get('sni') or ''" "$CH6_EXIT_RC")"
+CH6_EXIT_PIN="$(py "d.get('cert_sha256') or ''" "$CH6_EXIT_RC")"
+CH6_EXIT_OBFS="$(py "d.get('obfs_password') or ''" "$CH6_EXIT_RC")"
+CH6_EXIT_HOP="$(py "d.get('port_hop') or ''" "$CH6_EXIT_RC")"
+[[ -n "$CH6_EXIT_SNI" && "${#CH6_EXIT_PIN}" == "64" && -n "$CH6_EXIT_OBFS" ]] \
+    && echo "OK: 链6 出口 hy2 realized 经端点镜像就绪（sni/pin/obfs）" \
+    || { echo "FAIL: 链6 出口 realized 缺失: $CH6_EXIT_RC"; exit 1; }
+[[ -z "$CH6_EXIT_HOP" ]] \
+    && echo "OK: 零公共端口 NAT 出口自动关闭端口跳跃（功能可用，spec §3.2 回退语义）" \
+    || { echo "FAIL: 零段 NAT 不应携带 port_hop: $CH6_EXIT_HOP"; exit 1; }
+grep -q "chainfwd_" "$XRAY_CONFIG_A" && echo "OK: A 配置含端到端 forward 配置件（逐跳 UDP）" \
+    || { echo "FAIL: A 配置件"; exit 1; }
+grep -qE '"protocol":\s*"hysteria"' "$XRAY_CONFIG_C" && echo "OK: C 配置含 hy2 共享监听 inbound" \
+    || { echo "FAIL: C 配置缺 hy2 inbound"; exit 1; }
+
+echo ">> 链7（同机第二条 hy2 链 → 共享监听合并：service_endpoint_id 相同）"
+CHAIN7="$(rpc_data POST /api/chain/create "{\"entry\":{\"server_id\":$AID},\"exit\":{\"server_id\":$CID},\"node\":{\"protocol\":\"hysteria\"}}")"
+CH7="$(py "d['id']" "$CHAIN7")"
+wait_chain "$CH7" active 90
+SEP7="$(db "SELECT COALESCE(service_endpoint_id,0) FROM chains WHERE id=$CH7")"
+[[ "$SEP7" == "$SEP6" ]] \
+    && echo "OK: 链7 与链6 合并到同一 hy2 共享监听（endpoint $SEP6）" \
+    || { echo "FAIL: 共享监听未合并（$SEP6 vs $SEP7）"; exit 1; }
+NID7="$(py "d['hops'][-1]['node_id']" "$CHAIN7")"
+
+echo ">> 链8（入口协议区块：entry_node=vless+reality 入口终结 + hy2 出口 B）→ active"
+CHAIN8="$(rpc_data POST /api/chain/create "{\"entry\":{\"server_id\":$AID},\"exit\":{\"server_id\":$BID},\"node\":{\"protocol\":\"hysteria\",\"port_hop\":\"off\"},\"entry_node\":{\"protocol\":\"vless\",\"security\":\"reality\",\"flow\":\"xtls-rprx-vision\"}}")"
+CH8="$(py "d['id']" "$CHAIN8")"
+wait_chain "$CH8" active 90
+for _ in $(seq 1 30); do
+    [[ "$(chain_field "$CH8" "c.get('endpoint_status','')")" == "active" ]] && break
+    sleep 1
+done
+EP8_PORT="$(chain_field "$CH8" "c['entry_port']")"
+EP8_ID="$(chain_field "$CH8" "c['endpoint_id']")"
+[[ -n "$EP8_PORT" && "$EP8_PORT" != "0" && "$EP8_PORT" != "None" && -n "$EP8_ID" && "$EP8_ID" != "0" && "$EP8_ID" != "None" ]] \
+    && echo "OK: 链8 入口区块端点 active（entry_port=$EP8_PORT）" \
+    || { echo "FAIL: 链8 入口区块端点未就绪: $(chain_field "$CH8" "c.get('endpoint_error','')")"; exit 1; }
+wait_chain "$CH8" active 30
+
+echo ">> 分配用户到 hy2 三条链（端到端链订阅门控沿用非端点链逻辑：出口节点须在 node_ids 内）"
+rpc_data POST /api/user/set-nodes "{\"user_id\":$USER_ID1,\"node_ids\":[$NID6,$NID7],\"chain_ids\":[$CH6,$CH7,$CH8]}" >/dev/null
+ACCESS_UUID8=""
+for _ in $(seq 1 15); do
+    ACCESS_UUID8="$(rpc_data GET /api/user/list | python3 -c "
+import json,sys
+u=next((x for x in json.load(sys.stdin) if x['id']==$USER_ID1), {})
+ca=[a for a in (u.get('chain_assignments') or []) if a.get('chain_id')==$CH8]
+print(ca[0]['access_uuid'] if ca else '')")"
+    [[ -n "$ACCESS_UUID8" ]] && break
+    sleep 1
+done
+[[ -n "$ACCESS_UUID8" ]] || { echo "FAIL: 未取到链8 assignment"; exit 1; }
+# 入口终结模式的末段 hy2 outbound 由 A 的入口端点路由渲染，仅在存在用户分配后落地
+#（agent endpoint.go：无用户的 route 不渲染 outbound/rule）。
+for _ in $(seq 1 20); do
+    grep -qE '"protocol":\s*"hysteria"' "$XRAY_CONFIG_A" && break
+    sleep 1
+done
+grep -qE '"protocol":\s*"hysteria"' "$XRAY_CONFIG_A" \
+    && echo "OK: 入口终结模式末段 hy2 outbound 落在 A（端点路由直拨出口 B）" \
+    || { echo "FAIL: A 配置缺末段 hy2 outbound"; exit 1; }
+
+if [[ "${CHAINS_SKIP_EXTERNAL:-0}" != "1" ]]; then
+echo ">> 链6 端到端 hy2 数据面（订阅 hysteria2:// 链接直连，逐跳 UDP 转发到出口共享监听）"
+LINK6=""
+for _ in $(seq 1 20); do
+    LINK6="$(curl -s "http://$ADDR/sub/$SUB_TOKEN?format=links" | base64 -d | grep '^hysteria2://' | head -1 || true)"
+    [[ -n "$LINK6" ]] && break
+    sleep 1
+done
+[[ -n "$LINK6" ]] || { echo "FAIL: 订阅缺端到端 hy2 链条目"; exit 1; }
+# 客户端形态以 Task 1 探针实测为准：streamSettings 必须显式 network=hysteria、
+# tlsSettings 必须 alpn=[h3]（缺失分别退化为 TCP 承载/握手 no application protocol）。
+python3 - "$WORK/client-hy2-chain6.json" "$LINK6" "$CH6_EXIT_PIN" <<'PY'
+import json, sys, urllib.parse
+path, link, pin = sys.argv[1], sys.argv[2], sys.argv[3]
+u = urllib.parse.urlparse(link)
+q = urllib.parse.parse_qs(u.query)
+password = urllib.parse.unquote(u.username)
+sni = q["sni"][0]
+obfs = q.get("obfs-password", [""])[0]
+up = q.get("upmbps", ["50"])[0]
+down = q.get("downmbps", ["100"])[0]
+assert q.get("obfs") == ["salamander"] and obfs, link
+assert "mport" not in q, link  # 零段 NAT 出口：无跳跃段
+cfg = {
+    "log": {"loglevel": "warning"},
+    "inbounds": [{"tag": "socks", "listen": "127.0.0.1", "port": 11816,
+                  "protocol": "socks", "settings": {"auth": "noauth", "udp": True}}],
+    "outbounds": [{
+        "tag": "hy2", "protocol": "hysteria",
+        "settings": {"version": 2, "address": "127.0.0.1", "port": u.port},
+        "streamSettings": {"network": "hysteria", "security": "tls",
+            "tlsSettings": {"serverName": sni, "fingerprint": "chrome", "alpn": ["h3"],
+                            "pinnedPeerCertSha256": pin},
+            "hysteriaSettings": {"version": 2, "auth": password},
+            "finalmask": {"udp": [{"type": "salamander", "settings": {"password": obfs}}],
+                          "quicParams": {"congestion": "brutal",
+                                         "brutalUp": f"{up} mbps", "brutalDown": f"{down} mbps"}}}}],
+}
+json.dump(cfg, open(path, "w"), indent=2)
+PY
+"$XRAY_BIN" run -test -config "$WORK/client-hy2-chain6.json" >/dev/null || { echo "FAIL: 链6 客户端配置校验"; exit 1; }
+"$XRAY_BIN" run -config "$WORK/client-hy2-chain6.json" >"$WORK/client-hy2-chain6.log" 2>&1 &
+HY2XPID6=$!
+ok200=""
+for _ in $(seq 1 20); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' -x "socks5h://127.0.0.1:11816" --max-time 8 "$PROBE_URL" || true)"
+    [[ "$code" == "200" ]] && { ok200=1; break; }
+    sleep 2
+done
+kill $HY2XPID6 2>/dev/null || true
+[[ -n "$ok200" ]] && echo "OK: 端到端 hy2 链路 200（client→A 逐跳 UDP→C 共享监听→出口）" \
+    || { echo "FAIL: 链6 链路未通"; tail -n 5 "$WORK/client-hy2-chain6.log"; exit 1; }
+
+echo ">> 链8 入口区块数据面（vless+reality 客户端 → 入口区块 → 末段 hy2 隧道 → 出口）"
+EP8_RC="$(db "SELECT realized_config FROM shared_endpoints WHERE id=$EP8_ID")"
+EP8_PUB="$(py "d['public_key']" "$EP8_RC")"
+EP8_SID="$(py "d['short_id']" "$EP8_RC")"
+EP8_SNAME="$(py "d['server_name']" "$EP8_RC")"
+python3 - "$WORK/client-hy2-chain8.json" "$EP8_PORT" "$ACCESS_UUID8" "$EP8_PUB" "$EP8_SID" "$EP8_SNAME" <<'PY'
+import json, sys
+path, port, uuid, pbk, sid, sname = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
+cfg = {
+    "log": {"loglevel": "warning"},
+    "inbounds": [{"tag": "socks", "listen": "127.0.0.1", "port": 11817,
+                  "protocol": "socks", "settings": {"auth": "noauth"}}],
+    "outbounds": [{
+        "tag": "proxy", "protocol": "vless",
+        "settings": {"vnext": [{"address": "127.0.0.1", "port": port,
+                                "users": [{"id": uuid, "encryption": "none",
+                                           "flow": "xtls-rprx-vision"}]}]},
+        "streamSettings": {"network": "tcp", "security": "reality",
+                           "realitySettings": {"serverName": sname, "fingerprint": "chrome",
+                                               "publicKey": pbk, "shortId": sid}}}],
+}
+json.dump(cfg, open(path, "w"), indent=2)
+PY
+"$XRAY_BIN" run -test -config "$WORK/client-hy2-chain8.json" >/dev/null || { echo "FAIL: 链8 客户端配置校验"; exit 1; }
+"$XRAY_BIN" run -config "$WORK/client-hy2-chain8.json" >"$WORK/client-hy2-chain8.log" 2>&1 &
+HY2CXPID=$!
+ok200=""
+for _ in $(seq 1 20); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' -x "socks5h://127.0.0.1:11817" --max-time 8 "$PROBE_URL" || true)"
+    [[ "$code" == "200" ]] && { ok200=1; break; }
+    sleep 2
+done
+kill $HY2CXPID 2>/dev/null || true
+[[ -n "$ok200" ]] && echo "OK: 入口区块+hy2 出口链路 200（client→vless+reality 入口区块→hy2 隧道→出口）" \
+    || { echo "FAIL: 链8 链路未通"; tail -n 5 "$WORK/client-hy2-chain8.log"; exit 1; }
+else
+    echo "SKIP: CHAINS_SKIP_EXTERNAL=1，跳过链6/链8 外网数据面"
+fi
+
+echo ">> DNAT 端口跳跃冒烟（root + iptables 才执行；在 direct 机 A 上建显式段 hy2 节点）"
+if [[ "$(id -u)" == "0" ]] && command -v iptables >/dev/null; then
+    DNAT_RES="$(rpc_data POST /api/node/create "{\"server_id\":$AID,\"protocol\":\"hysteria\",\"port_hop\":\"41000-41031\"}")"
+    DNAT_NID="$(py "d['id']" "$DNAT_RES")"
+    ok_active=""
+    for _ in $(seq 1 30); do
+        [[ "$(db "SELECT status FROM nodes WHERE id=$DNAT_NID")" == "active" ]] && { ok_active=1; break; }
+        sleep 1
+    done
+    [[ -n "$ok_active" ]] || { echo "FAIL: DNAT hy2 节点未 active: $(db "SELECT status||'|'||COALESCE(error,'') FROM nodes WHERE id=$DNAT_NID")"; exit 1; }
+    if iptables -t nat -S 2>/dev/null | grep -q "lattix:node_$DNAT_NID"; then
+        echo "OK: A agent 已下发 udpHop DNAT（comment lattix:node_$DNAT_NID）"
+    else
+        echo "FAIL: 未见 lattix DNAT 规则"; iptables -t nat -S; exit 1
+    fi
+    rpc_data POST /api/node/delete "{\"node_id\":$DNAT_NID}" >/dev/null
+    for _ in $(seq 1 15); do
+        iptables -t nat -S 2>/dev/null | grep -q "lattix:node_$DNAT_NID" || break
+        sleep 1
+    done
+    ! iptables -t nat -S 2>/dev/null | grep -q "lattix:node_$DNAT_NID" \
+        && echo "OK: 删除节点后 DNAT 规则已清除" \
+        || { echo "FAIL: DNAT 规则残留"; iptables -t nat -S; exit 1; }
+else
+    echo "SKIP: 非 root 或无 iptables，跳过 DNAT 断言（Task 1 冒烟 + Task 5 单测覆盖）"
+fi
+
+echo ">> 删 hy2 链：链8/7 → 共享监听保留（链6 仍引用）→ 链6 → 端点 users 清空"
+# shared_endpoints 行从不物理删除（reconcile + 保留复用，与 vless 入口端点同设计）；
+# 释放语义 = 引用计数归零 + 端点 clients 清空。
+rpc_data POST /api/chain/delete "{\"chain_id\":$CH8}" >/dev/null
+rpc_data POST /api/chain/delete "{\"chain_id\":$CH7}" >/dev/null
+[[ "$(db "SELECT COUNT(*) FROM chains WHERE service_endpoint_id=$SEP6 AND deleted_at IS NULL")" == "1" ]] \
+    && echo "OK: 链6 仍引用，hy2 共享监听保留" || { echo "FAIL: 共享监听引用计数异常"; exit 1; }
+rpc_data POST /api/chain/delete "{\"chain_id\":$CH6}" >/dev/null
+[[ "$(db "SELECT COUNT(*) FROM chains WHERE service_endpoint_id=$SEP6 AND deleted_at IS NULL")" == "0" ]] \
+    && echo "OK: 最后一条 hy2 链已删（shared_endpoints 行保留复用）" \
+    || { echo "FAIL: 链删除未生效"; exit 1; }
+for _ in $(seq 1 30); do
+    grep -q "$UUID1" "$XRAY_CONFIG_C" 2>/dev/null || break
+    sleep 1
+done
+! grep -q "$UUID1" "$XRAY_CONFIG_C" \
+    && echo "OK: 链删除后 hy2 共享监听 users 已清空（数据面释放）" \
+    || { echo "FAIL: hy2 端点 users 残留"; exit 1; }
 
 echo "E2E-CHAINS PASS"
