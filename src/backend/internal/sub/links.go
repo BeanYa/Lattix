@@ -103,6 +103,30 @@ func buildShareLink(n store.Node, rc shared.RealizedConfig, uuid string) (string
 		// SIP002：ss://base64(method:password)@host:port#name
 		userinfo := base64.RawURLEncoding.EncodeToString([]byte(rc.Method + ":" + password))
 		return fmt.Sprintf("ss://%s@%s#%s", userinfo, addr, name), true
+	case shared.ProtocolHysteria2:
+		// hysteria2://password@host:port?params#name；口令 = Hy2UserPassword(uuid)。
+		// 端口跳跃段以 mport 表达（v2rayN/NekoBox 惯例；主端口 = 段起点由链订阅组装保证）。
+		// 自签：URI 无 pin 表达，回退 insecure=1（§3.4 开箱即用）；ACME 按普通 TLS。
+		q := url.Values{}
+		q.Set("sni", rc.SNI)
+		if rc.CertSHA256 != "" {
+			q.Set("insecure", "1")
+		}
+		if rc.ObfsPassword != "" {
+			q.Set("obfs", "salamander")
+			q.Set("obfs-password", rc.ObfsPassword)
+		}
+		if rc.UpMbps > 0 {
+			q.Set("upmbps", fmt.Sprintf("%d", rc.UpMbps))
+		}
+		if rc.DownMbps > 0 {
+			q.Set("downmbps", fmt.Sprintf("%d", rc.DownMbps))
+		}
+		if rc.PortHop != "" {
+			q.Set("mport", rc.PortHop)
+		}
+		return fmt.Sprintf("hysteria2://%s@%s?%s#%s",
+			url.QueryEscape(shared.Hy2UserPassword(uuid)), addr, q.Encode(), name), true
 	}
 	return "", false
 }

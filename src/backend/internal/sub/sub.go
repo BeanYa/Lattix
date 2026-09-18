@@ -847,6 +847,26 @@ func buildProxy(n store.Node, rc shared.RealizedConfig, uuid string) (clashProxy
 		p.Username = uuid
 		p.Password = uuid
 		p.UDP = false
+	case shared.ProtocolHysteria2:
+		p.Type = "hysteria2" // mihomo 类型名
+		p.Password = shared.Hy2UserPassword(uuid)
+		p.SNI = rc.SNI
+		if rc.CertSHA256 != "" {
+			p.Fingerprint = rc.CertSHA256 // 自签：证书 sha256 pin（mihomo fingerprint）
+		}
+		if rc.ObfsPassword != "" {
+			p.Obfs = "salamander"
+			p.ObfsPassword = rc.ObfsPassword
+		}
+		if rc.UpMbps > 0 {
+			p.Up = fmt.Sprintf("%d Mbps", rc.UpMbps)
+		}
+		if rc.DownMbps > 0 {
+			p.Down = fmt.Sprintf("%d Mbps", rc.DownMbps)
+		}
+		if rc.PortHop != "" {
+			p.Ports = rc.PortHop // mihomo ports 多端口段
+		}
 	default:
 		return clashProxy{}, fmt.Errorf("未知协议: %s", n.Protocol)
 	}

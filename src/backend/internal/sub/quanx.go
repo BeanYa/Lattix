@@ -94,6 +94,8 @@ func buildQuanXLine(n store.Node, rc shared.RealizedConfig, uuid string) string 
 			fmt.Sprintf("tag=%s", name),
 		}
 		return strings.Join(parts, ", ")
+	case shared.ProtocolHysteria2:
+		return "" // QuanX 不输出 hy2（尽力而为条款：v1 跳过，spec §3.4）
 	default:
 		return "" // vmess/socks/http 暂不支持 QuanX 格式
 	}

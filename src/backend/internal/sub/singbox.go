@@ -49,9 +49,19 @@ type sbOutbound struct {
 	Username   string       `json:"username,omitempty"`   // socks / http
 	Password   string       `json:"password,omitempty"`
 	Method     string       `json:"method,omitempty"` // shadowsocks
+	Obfs       *sbHy2Obfs   `json:"obfs,omitempty"`        // hysteria2 salamander
+	ServerPorts []string    `json:"server_ports,omitempty"` // hysteria2 端口段
+	UpMbps     int          `json:"up_mbps,omitempty"`      // hysteria2
+	DownMbps   int          `json:"down_mbps,omitempty"`    // hysteria2
 	TLS        *sbTLS       `json:"tls,omitempty"`
 	Transport  *sbTransport `json:"transport,omitempty"`
 	Outbounds  []string     `json:"outbounds,omitempty"` // selector
+}
+
+// sbHy2Obfs 是 sing-box hysteria2 的 salamander 混淆段。
+type sbHy2Obfs struct {
+	Type     string `json:"type"`
+	Password string `json:"password"`
 }
 
 // buildSbOutbound 按协议构造 sing-box outbound；预留协议分支。
@@ -113,6 +123,22 @@ func buildSbOutbound(n store.Node, rc shared.RealizedConfig, uuid string) (sbOut
 		ob.Type = "http"
 		ob.Username = uuid
 		ob.Password = uuid
+	case shared.ProtocolHysteria2:
+		ob.Type = "hysteria2"
+		ob.Password = shared.Hy2UserPassword(uuid)
+		ob.TLS = &sbTLS{
+			Enabled:    true,
+			ServerName: rc.SNI,
+			Insecure:   rc.CertSHA256 != "", // 自签：sing-box 无 pin 表达，回退 insecure（§3.4）
+		}
+		if rc.ObfsPassword != "" {
+			ob.Obfs = &sbHy2Obfs{Type: "salamander", Password: rc.ObfsPassword}
+		}
+		if rc.PortHop != "" {
+			ob.ServerPorts = []string{rc.PortHop}
+		}
+		ob.UpMbps = rc.UpMbps
+		ob.DownMbps = rc.DownMbps
 	default:
 		return sbOutbound{}, fmt.Errorf("sing-box 不支持协议: %s", n.Protocol)
 	}

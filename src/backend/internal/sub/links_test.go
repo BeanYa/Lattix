@@ -3,6 +3,7 @@ package sub
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -401,5 +402,58 @@ func TestQuanXTrojanTLS(t *testing.T) {
 	rc.CertSHA256 = strings.Repeat("ab", 32)
 	if line := buildQuanXLine(testNode("1.2.3.4", shared.ProtocolTrojan), rc, "uuid"); line != "" {
 		t.Errorf("自签 trojan QuanX 无 pin 表达，应跳过: %q", line)
+	}
+}
+
+// TestHysteria2ShareLink 验证 hysteria2:// 链接（P4 §3.4）：口令派生、跳跃段端口表达、
+// salamander/带宽参数、自签 insecure 回退与 ACME 干净输出。
+func TestHysteria2ShareLink(t *testing.T) {
+	rc := shared.RealizedConfig{Port: 21000, SNI: "www.example.com", CertSHA256: "deadbeef",
+		ObfsPassword: "obfs-pw", UpMbps: 50, DownMbps: 100, PortHop: "20000-20031"}
+	link, ok := buildShareLink(testNode("1.2.3.4", shared.ProtocolHysteria2), rc, "uuid-1")
+	if !ok || !strings.HasPrefix(link, "hysteria2://") {
+		t.Fatalf("hy2 链接缺失: %q", link)
+	}
+	u, err := url.Parse(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.User.String() != shared.Hy2UserPassword("uuid-1") {
+		t.Fatalf("口令应为派生值: %q", u.User.String())
+	}
+	q := u.Query()
+	if q.Get("sni") != "www.example.com" || q.Get("insecure") != "1" {
+		t.Fatalf("自签应回退 insecure=1: %v", q)
+	}
+	if q.Get("obfs") != "salamander" || q.Get("obfs-password") != "obfs-pw" {
+		t.Fatalf("obfs 参数缺失: %v", q)
+	}
+	if q.Get("mport") != "20000-20031" {
+		t.Fatalf("跳跃段应以 mport 表达: %v", q)
+	}
+	// ACME（无 pin）：不输出 insecure。
+	rcACME := rc
+	rcACME.CertSHA256 = ""
+	linkACME, _ := buildShareLink(testNode("1.2.3.4", shared.ProtocolHysteria2), rcACME, "uuid-1")
+	u2, _ := url.Parse(linkACME)
+	if u2.Query().Get("insecure") != "" {
+		t.Fatalf("ACME 不应携带 insecure: %s", linkACME)
+	}
+	// 无跳跃段：无 mport、端口为主端口。
+	rcNoHop := rcACME
+	rcNoHop.PortHop = ""
+	linkNoHop, _ := buildShareLink(testNode("1.2.3.4", shared.ProtocolHysteria2), rcNoHop, "uuid-1")
+	u3, _ := url.Parse(linkNoHop)
+	if u3.Query().Get("mport") != "" || u3.Port() != "21000" {
+		t.Fatalf("无段链接形态不符: %s", linkNoHop)
+	}
+}
+
+// TestQuanXSkipsHysteria2 验证 QuanX 不输出 hy2（尽力而为条款：v1 跳过，spec §3.4）。
+func TestQuanXSkipsHysteria2(t *testing.T) {
+	rc := shared.RealizedConfig{Port: 21000, Security: shared.SecurityTLS,
+		SNI: "www.example.com", CertSHA256: "deadbeef", ObfsPassword: "obfs-pw"}
+	if line := buildQuanXLine(testNode("1.2.3.4", shared.ProtocolHysteria2), rc, "uuid-1"); line != "" {
+		t.Errorf("QuanX 应跳过 hy2，实际输出 %q", line)
 	}
 }
