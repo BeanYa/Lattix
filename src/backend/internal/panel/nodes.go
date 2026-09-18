@@ -862,8 +862,9 @@ func hy2StreamSettings(req createNodeRequest) map[string]any {
 // 候选段，直接关闭，spec §3.2 回退）；显式段 → NAT 落段
 // 校验 + 段冲突校验。多跳链的"全跳同段"逐跳校验在链处理器（Task 4）做，这里只管落地机。
 // ownEndpointID 非零（链编辑路径，链已并入的 hy2 出口共享监听）时，显式段与该端点段
-// 一致不算冲突：端点段本就是本链的共有占用（首链 profile 为准的合并语义，编辑回填后
-// 原样提交），chains.go 在并入时以端点段覆盖本链段（终审修复 I-1）。
+// 一致且端点就在本机（srv）时不算冲突：端点段本就是本链的共有占用（首链 profile 为准
+// 的合并语义，编辑回填后原样提交），chains.go 在并入时以端点段覆盖本链段（终审修复 I-1）；
+// 出口迁到他机时豁免不生效，段对目标机照常校验（终审修复 N-1）。
 func (s *Server) resolveHy2PortHop(ctx context.Context, req *createNodeRequest, srv *store.Server, excludeChainID, ownEndpointID int64) error {
 	if req.Protocol != shared.ProtocolHysteria2 {
 		return nil
@@ -905,7 +906,10 @@ func (s *Server) resolveHy2PortHop(ctx context.Context, req *createNodeRequest, 
 			var own struct {
 				PortHop string `json:"port_hop"`
 			}
-			if json.Unmarshal(endpoint.ConfigTemplate, &own) == nil && own.PortHop == req.PortHop {
+			// 「共有占用」仅限同机：编辑把出口迁到他机时回填的段虽与旧端点一致，
+			// 也必须对目标机照常做冲突校验（否则新端点与既有占用双 DNAT 抢同段，N-1）。
+			if endpoint.ServerID == srv.ID &&
+				json.Unmarshal(endpoint.ConfigTemplate, &own) == nil && own.PortHop == req.PortHop {
 				return nil // 段与本链并入的共享监听段一致：共有占用，非冲突
 			}
 		}

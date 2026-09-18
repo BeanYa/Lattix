@@ -453,3 +453,56 @@ func TestResolveHy2PortHopZeroSpanNAT(t *testing.T) {
 		t.Fatalf("受限 NAT 应在段内分配: %q", req.PortHop)
 	}
 }
+
+// TestResolveHy2PortHopOwnEndpointSpanCrossServer 验证 ownEndpointID 段豁免仅限同机
+// （终审修复 N-1）：编辑链把出口迁到服务器 Y 时，前端回填的 port_hop 与旧端点
+//（X 上）段一致，但「共有占用」语义不跨机——段与 Y 上既有占用冲突必须照常报错，
+// 否则 EnsureProtocolSharedEndpoint 会在 Y 上以冲突段新建端点 → 双 DNAT 抢同段。
+func TestResolveHy2PortHopOwnEndpointSpanCrossServer(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	s := &Server{st: st}
+	server := func(alias string) int64 {
+		id, err := st.CreateServer(ctx, store.ServerDraft{Alias: alias, Address: alias + ".example.com",
+			BootstrapToken: "token-" + alias, MachineType: store.MachineTypeDirect, CountryCode: "US"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	xID, yID := server("exit-x"), server("exit-y")
+	// 旧端点在 X，段 40000-40031；Y 上既有 hy2 节点占同段。
+	epCfg, _ := json.Marshal(buildVirtualConfig(createNodeRequest{Protocol: shared.ProtocolHysteria2,
+		PortHop: "40000-40031"}))
+	endpoint, _, err := st.EnsureProtocolSharedEndpoint(ctx, xID, shared.ProtocolHysteria2, 0, epCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.InsertNode(ctx, "occ", yID, shared.ProtocolHysteria2, nil, epCfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// 跨机：段与 Y 上既有占用冲突 → 报错（旧端点在 X，豁免不跨机）。
+	srvY, err := st.ServerByID(ctx, yID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := createNodeRequest{Protocol: shared.ProtocolHysteria2, PortHop: "40000-40031"}
+	if err := s.resolveHy2PortHop(ctx, &req, srvY, 0, endpoint.ID); err == nil {
+		t.Fatal("段与目标机 Y 既有占用冲突应报错（ownEndpointID 豁免不应跨机生效）")
+	}
+
+	// 同机：回填本链端点段原样提交 → 豁免生效，不误判冲突。
+	srvX, err := st.ServerByID(ctx, xID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req = createNodeRequest{Protocol: shared.ProtocolHysteria2, PortHop: "40000-40031"}
+	if err := s.resolveHy2PortHop(ctx, &req, srvX, 0, endpoint.ID); err != nil {
+		t.Fatalf("同机端点段豁免应放行: %v", err)
+	}
+}
