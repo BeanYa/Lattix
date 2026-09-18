@@ -858,7 +858,8 @@ func hy2StreamSettings(req createNodeRequest) map[string]any {
 // resolveHy2PortHop 落地 port_hop 三段语义的服务器侧部分（normalize 只做语法校验）：
 // off（normalize 保留的哨兵）→ 归一为空 = 关闭跳跃；""（默认开）→ 按服务器空闲 udp 段
 // 自动分配 32 段（避开全部已保留段与端口；NAT 机段整体落在监听侧段内，可用段不足最小
-// 段长 8 时关闭跳跃——功能可用，仅失去跳跃的抗 QoS 能力，spec §2）；显式段 → NAT 落段
+// 段长 8 时关闭跳跃——功能可用，仅失去跳跃的抗 QoS 能力，spec §2；零公共端口 NAT 无
+// 候选段，直接关闭，spec §3.2 回退）；显式段 → NAT 落段
 // 校验 + 段冲突校验。多跳链的"全跳同段"逐跳校验在链处理器（Task 4）做，这里只管落地机。
 func (s *Server) resolveHy2PortHop(ctx context.Context, req *createNodeRequest, srv *store.Server, excludeChainID int64) error {
 	if req.Protocol != shared.ProtocolHysteria2 {
@@ -871,6 +872,12 @@ func (s *Server) resolveHy2PortHop(ctx context.Context, req *createNodeRequest, 
 	ranges, err := shared.ParsePortRanges(srv.AllowedPorts)
 	if err != nil {
 		return err
+	}
+	// 零公共端口 NAT：无候选段（空段在 direct 机上语义是"不限制"，候选 40000-61000，
+	// 两者必须区分），port_hop 保持空 = 自动关跳跃（spec §3.2 回退语义；该出口靠
+	// reverse 隧道工作，段本就无法从公网到达）。
+	if req.PortHop == "" && len(ranges) == 0 && srv.MachineType == store.MachineTypeNAT {
+		return nil
 	}
 	occupants, err := s.st.PortOccupants(ctx, srv.ID)
 	if err != nil {

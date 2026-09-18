@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -407,5 +408,48 @@ func TestBuildVirtualConfigHysteria2(t *testing.T) {
 	}
 	if vc.ObfsPassword != "obfs-pw" || vc.UpMbps != 50 || vc.DownMbps != 100 || vc.PortHop != "20000-20031" {
 		t.Fatalf("VirtualConfig 字段透传不符: %+v", vc)
+	}
+}
+
+// TestResolveHy2PortHopZeroSpanNAT 验证零公共端口 NAT（machine_type=nat 且无可用段）
+// 自动关闭端口跳跃（spec §3.2 回退语义）：空段不能与 direct 机（空段=不限制，候选
+// 40000-61000）混用同一候选池，否则零段 NAT 出口会被分配到公网不可达的跳跃段。
+func TestResolveHy2PortHopZeroSpanNAT(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	s := &Server{st: st}
+
+	nat := &store.Server{Alias: "nat-zero", MachineType: store.MachineTypeNAT, AllowedPorts: ""}
+	req := createNodeRequest{Protocol: shared.ProtocolHysteria2}
+	if err := s.resolveHy2PortHop(ctx, &req, nat, 0); err != nil {
+		t.Fatal(err)
+	}
+	if req.PortHop != "" {
+		t.Fatalf("零段 NAT 应自动关跳跃（PortHop 保持空）: %q", req.PortHop)
+	}
+
+	// direct 机（空段=不限制）照常自动分配。
+	direct := &store.Server{Alias: "direct", MachineType: store.MachineTypeDirect, AllowedPorts: ""}
+	req = createNodeRequest{Protocol: shared.ProtocolHysteria2}
+	if err := s.resolveHy2PortHop(ctx, &req, direct, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := shared.ParsePortHop(req.PortHop); err != nil {
+		t.Fatalf("direct 机应自动分配合法段: %q", req.PortHop)
+	}
+
+	// 受限 NAT（有段）仍在段内分配。
+	restricted := &store.Server{Alias: "nat-r", MachineType: store.MachineTypeNAT,
+		AllowedPorts: `[{"pub_start":50000,"pub_end":50099}]`}
+	req = createNodeRequest{Protocol: shared.ProtocolHysteria2}
+	if err := s.resolveHy2PortHop(ctx, &req, restricted, 0); err != nil {
+		t.Fatal(err)
+	}
+	if start, _, err := shared.ParsePortHop(req.PortHop); err != nil || start != 50000 {
+		t.Fatalf("受限 NAT 应在段内分配: %q", req.PortHop)
 	}
 }
