@@ -338,7 +338,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	// hy2 端口跳跃（spec §2/§3.2）：先对出口机做分配/显式段校验（复用 Task 3 助手）；
 	// 端到端（无入口区块）时逐跳校验段整体落在各跳 NAT 段内且与各跳既有占用无冲突。
 	if req.Node.Protocol == shared.ProtocolHysteria2 {
-		if err := s.resolveHy2PortHop(r.Context(), &req.Node, exitSrv, 0); err != nil {
+		if err := s.resolveHy2PortHop(r.Context(), &req.Node, exitSrv, 0, 0); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -481,7 +481,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		if req.Node.Port != nil {
 			port = *req.Node.Port
 		}
-		svcEndpoint, _, err := s.st.EnsureProtocolSharedEndpoint(r.Context(), exitSrv.ID,
+		svcEndpoint, created, err := s.st.EnsureProtocolSharedEndpoint(r.Context(), exitSrv.ID,
 			shared.ProtocolHysteria2, port, endpointJSON)
 		if err != nil {
 			o.Fail(err)
@@ -489,6 +489,12 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		serviceEndpointID = svcEndpoint.ID
+		// 并入既有共享监听（首链 profile 为准）：实现参数以端点 config_template 覆盖回本链，
+		// 否则自动分配的 port_hop 段与端点段分叉——dispatch 按本链段绑定逐跳 forward，
+		// 而出口 DNAT/订阅 mport 仅覆盖端点段，链必断（终审修复 I-1）。
+		if !created {
+			adoptHy2EndpointParams(&req.Node, &vc, svcEndpoint)
+		}
 		// 出口节点自身不再监听（共享监听承载）；端口/实现参数以共享端点 realized 为准（Task 6 镜像）。
 		vc.Port = 0
 		req.Node.Port = nil
@@ -603,6 +609,22 @@ func splitRevisionPieceKey(key string) (string, int64) {
 	return kind, id
 }
 
+// adoptHy2EndpointParams 并入既有 hy2 出口共享监听（EnsureProtocolSharedEndpoint
+// created=false，首链 profile 为准，spec §3.2）时，把端点 config_template 的实现参数
+// 覆盖回本链表单与虚拟配置：port_hop 驱动 dispatch 逐跳段绑定与 DNAT 覆盖段，
+// obfs/带宽/指纹经强制发布进入 realized（订阅源）——保留本链自身值会与端点实际监听
+// 分叉断链（终审修复 I-1）。证书/SNI 类参数不下发进这些路径，不纳入覆盖。
+func adoptHy2EndpointParams(req *createNodeRequest, vc *shared.VirtualConfig, endpoint *store.SharedEndpoint) {
+	var first shared.VirtualConfig
+	if err := json.Unmarshal(endpoint.ConfigTemplate, &first); err != nil {
+		return
+	}
+	req.PortHop, vc.PortHop = first.PortHop, first.PortHop
+	vc.ObfsPassword = first.ObfsPassword
+	vc.UpMbps, vc.DownMbps = first.UpMbps, first.DownMbps
+	vc.Fingerprint = first.Fingerprint
+}
+
 func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	var req editChainRequest
 	if err := readJSON(r, &req); err != nil {
@@ -705,6 +727,13 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "入口协议区块仅用于多跳链路（单跳客户端直连出口即可）")
 			return
 		}
+		// 存量端到端链（快照无入口端点）不能补勾入口区块（终审修复 I-2）：端点创建门控
+		// 要求快照已有端点，放行会把末段 transport 半应用为 hy2 而端点缺失 → 断链。
+		// v1 不支持新增入口区块；取消勾选（entry_node 省略，端点回收）不受影响。
+		if current.Snapshot.EndpointID == 0 {
+			writeError(w, http.StatusBadRequest, "存量链路不能新增入口协议区块，请新建链路")
+			return
+		}
 		if req.EntryNode.Protocol != "" && req.EntryNode.Protocol != shared.ProtocolVLESS {
 			writeError(w, http.StatusBadRequest, "入口协议区块 v1 仅支持 VLESS+Reality")
 			return
@@ -730,7 +759,7 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	// hy2 端口跳跃（spec §2/§3.2，镜像创建路径）：先对出口机做分配/显式段校验；
 	// 端到端（无入口区块）时逐跳校验段整体落在各跳 NAT 段内且与各跳既有占用无冲突。
 	if req.Node.Protocol == shared.ProtocolHysteria2 {
-		if err := s.resolveHy2PortHop(r.Context(), &req.Node, servers[len(servers)-1], req.ChainID); err != nil {
+		if err := s.resolveHy2PortHop(r.Context(), &req.Node, servers[len(servers)-1], req.ChainID, current.Snapshot.ServiceEndpointID); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -859,13 +888,18 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		if req.Node.Port != nil {
 			port = *req.Node.Port
 		}
-		svcEndpoint, _, err := s.st.EnsureProtocolSharedEndpoint(r.Context(), servers[len(servers)-1].ID,
+		svcEndpoint, created, err := s.st.EnsureProtocolSharedEndpoint(r.Context(), servers[len(servers)-1].ID,
 			shared.ProtocolHysteria2, port, endpointJSON)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 		serviceEndpointID = svcEndpoint.ID
+		// 并入既有共享监听（首链 profile 为准，镜像创建路径）：实现参数以端点
+		// config_template 覆盖回本链，避免 port_hop 段分叉断链（终审修复 I-1）。
+		if !created {
+			adoptHy2EndpointParams(&req.Node, &vc, svcEndpoint)
+		}
 		// 出口节点自身不再监听（共享监听承载）；端口/实现参数以共享端点 realized 为准（Task 6 镜像）。
 		vc.Port = 0
 		req.Node.Port = nil

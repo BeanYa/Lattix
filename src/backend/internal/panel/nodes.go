@@ -370,7 +370,7 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// hy2 端口跳跃：自动分配 / 显式段 NAT+冲突校验（spec §2/§3.2）。
-	if err := s.resolveHy2PortHop(r.Context(), &req, srv, 0); err != nil {
+	if err := s.resolveHy2PortHop(r.Context(), &req, srv, 0, 0); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -861,7 +861,10 @@ func hy2StreamSettings(req createNodeRequest) map[string]any {
 // 段长 8 时关闭跳跃——功能可用，仅失去跳跃的抗 QoS 能力，spec §2；零公共端口 NAT 无
 // 候选段，直接关闭，spec §3.2 回退）；显式段 → NAT 落段
 // 校验 + 段冲突校验。多跳链的"全跳同段"逐跳校验在链处理器（Task 4）做，这里只管落地机。
-func (s *Server) resolveHy2PortHop(ctx context.Context, req *createNodeRequest, srv *store.Server, excludeChainID int64) error {
+// ownEndpointID 非零（链编辑路径，链已并入的 hy2 出口共享监听）时，显式段与该端点段
+// 一致不算冲突：端点段本就是本链的共有占用（首链 profile 为准的合并语义，编辑回填后
+// 原样提交），chains.go 在并入时以端点段覆盖本链段（终审修复 I-1）。
+func (s *Server) resolveHy2PortHop(ctx context.Context, req *createNodeRequest, srv *store.Server, excludeChainID, ownEndpointID int64) error {
 	if req.Protocol != shared.ProtocolHysteria2 {
 		return nil
 	}
@@ -896,6 +899,16 @@ func (s *Server) resolveHy2PortHop(ctx context.Context, req *createNodeRequest, 
 	start, end, _ := shared.ParsePortHop(req.PortHop)
 	if len(ranges) > 0 && !shared.SpanInListenRanges(ranges, start, end) {
 		return fmt.Errorf("端口跳跃段 %s 不在该 NAT 服务器可用段内", req.PortHop)
+	}
+	if ownEndpointID != 0 {
+		if endpoint, err := s.st.SharedEndpointByID(ctx, ownEndpointID); err == nil {
+			var own struct {
+				PortHop string `json:"port_hop"`
+			}
+			if json.Unmarshal(endpoint.ConfigTemplate, &own) == nil && own.PortHop == req.PortHop {
+				return nil // 段与本链并入的共享监听段一致：共有占用，非冲突
+			}
+		}
 	}
 	return findPortConflict(occupants, req.Protocol, start, end, excludeChainID)
 }

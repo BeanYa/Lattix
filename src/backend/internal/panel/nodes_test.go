@@ -425,7 +425,7 @@ func TestResolveHy2PortHopZeroSpanNAT(t *testing.T) {
 
 	nat := &store.Server{Alias: "nat-zero", MachineType: store.MachineTypeNAT, AllowedPorts: ""}
 	req := createNodeRequest{Protocol: shared.ProtocolHysteria2}
-	if err := s.resolveHy2PortHop(ctx, &req, nat, 0); err != nil {
+	if err := s.resolveHy2PortHop(ctx, &req, nat, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if req.PortHop != "" {
@@ -435,7 +435,7 @@ func TestResolveHy2PortHopZeroSpanNAT(t *testing.T) {
 	// direct 机（空段=不限制）照常自动分配。
 	direct := &store.Server{Alias: "direct", MachineType: store.MachineTypeDirect, AllowedPorts: ""}
 	req = createNodeRequest{Protocol: shared.ProtocolHysteria2}
-	if err := s.resolveHy2PortHop(ctx, &req, direct, 0); err != nil {
+	if err := s.resolveHy2PortHop(ctx, &req, direct, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := shared.ParsePortHop(req.PortHop); err != nil {
@@ -446,7 +446,7 @@ func TestResolveHy2PortHopZeroSpanNAT(t *testing.T) {
 	restricted := &store.Server{Alias: "nat-r", MachineType: store.MachineTypeNAT,
 		AllowedPorts: `[{"pub_start":50000,"pub_end":50099}]`}
 	req = createNodeRequest{Protocol: shared.ProtocolHysteria2}
-	if err := s.resolveHy2PortHop(ctx, &req, restricted, 0); err != nil {
+	if err := s.resolveHy2PortHop(ctx, &req, restricted, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if start, _, err := shared.ParsePortHop(req.PortHop); err != nil || start != 50000 {
