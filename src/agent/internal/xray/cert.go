@@ -125,17 +125,18 @@ func certCoversDomain(certFile, domain string) bool {
 }
 
 // issueACMECertificate 走 acme.sh standalone 全流程（§3.3 模式 B）：
-// 安装 acme.sh（首次）→ 域名解析自检（须含本机地址）→ 80 端口自检 → 签发 → 安装到目标路径。
+// 域名解析自检（须含本机地址）→ 80 端口自检 → 安装 acme.sh（首次）→ 签发 → 安装到目标路径。
+// 廉价的指向性自检先于 acme.sh 网络安装：域名/端口不满足时不做下载，失败快且确定。
 // acme.sh 自注册续期 cron；xray 每小时热重载证书文件，续期后自动生效，无需 reloadcmd。
 func (m *Manager) issueACMECertificate(domain, certFile, keyFile string) error {
 	home := m.acmeHome()
-	if err := ensureACMESh(home); err != nil {
-		return err
-	}
 	if err := acmeDomainSelfCheck(domain); err != nil {
 		return err
 	}
 	if err := acmePort80Free(); err != nil {
+		return err
+	}
+	if err := ensureACMESh(home); err != nil {
 		return err
 	}
 	if err := execACMESh(home, "--issue", "--standalone", "-d", domain); err != nil {

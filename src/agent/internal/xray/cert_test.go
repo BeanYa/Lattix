@@ -242,3 +242,21 @@ func TestEnsureTLSCertificateACMEReissueOnDomainChange(t *testing.T) {
 		t.Errorf("重新签发后证书应覆盖新域名 b.example.com")
 	}
 }
+
+// TestIssueACMEDomainCheckBeforeInstall 锁定自检顺序：域名解析失败必须快速短路，
+// 不得先尝试 acme.sh 网络安装——否则 e2e 的"域名自检失败路径"会被安装下载拖住
+// 或以安装错误收场，失去指向性（acme home 不应被创建为证）。
+func TestIssueACMEDomainCheckBeforeInstall(t *testing.T) {
+	origLookup := lookupHostIPs
+	t.Cleanup(func() { lookupHostIPs = origLookup })
+	lookupHostIPs = func(string) ([]net.IP, error) { return nil, &net.DNSError{IsNotFound: true} }
+	m, _ := newRebuildTestManager(t)
+	dir := t.TempDir()
+	err := m.issueACMECertificate("absent.example.com", filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem"))
+	if err == nil || !strings.Contains(err.Error(), "解析失败") {
+		t.Fatalf("域名解析失败应报指向性错误: %v", err)
+	}
+	if _, statErr := os.Stat(m.acmeHome()); !os.IsNotExist(statErr) {
+		t.Error("域名自检失败不应触发 acme.sh 安装（acme home 不应被创建）")
+	}
+}
