@@ -55,7 +55,7 @@ export const PROTOCOL_LABELS: Record<string, string> = {
   vmess: 'VMess（兼容性广）',
   trojan: 'Trojan（兼容性广）',
   shadowsocks: 'Shadowsocks（轻量 · 特征明显）',
-  hysteria: 'Hysteria2（UDP 高速 · 需服务商放行 UDP）',
+  hysteria: 'Hysteria2（UDP 高速）',
   socks: 'SOCKS5（明文 · 特殊用途）',
   http: 'HTTP（明文 · 特殊用途）',
   'dokodemo-door': '端口转发',

@@ -18,3 +18,12 @@ export function xrayVersionAtLeast(
   }
   return true
 }
+
+/** 版本已知且低于 min（未上报/空串返回 false：未知不拦，由 agent 部署时终审）。 */
+export function xrayVersionKnownBelow(
+  version: string | null | undefined,
+  min: string = XRAY_MIN_VERSION_HY2,
+): boolean {
+  if (!version?.trim()) return false
+  return !xrayVersionAtLeast(version, min)
+}

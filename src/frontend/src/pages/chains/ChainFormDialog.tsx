@@ -24,7 +24,7 @@ import {
 import { addressFamily } from '@/lib/address'
 import { isServerOnline } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
-import { xrayVersionAtLeast } from '@/lib/xray-version'
+import { xrayVersionKnownBelow } from '@/lib/xray-version'
 import type { Server } from '@/lib/types'
 
 import {
@@ -173,6 +173,9 @@ export function ChainFormDialog({
     form.chainType === 'direct'
       ? servers.find((s) => String(s.id) === form.entryId)
       : servers.find((s) => String(s.id) === form.exitId)
+  // 落地服务器生效 xray 版本：settings 覆盖优先（空 = 未设置），回退 agent 上报版本。
+  const landingXrayVersion =
+    landingServer?.effective_xray_version || landingServer?.xray_version || ''
   const landingDomain = landingServer?.addresses.find((a) => addressFamily(a) === 'domain')
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -379,16 +382,13 @@ export function ChainFormDialog({
               </SelectTrigger>
               <SelectContent>
                 {(form.chainType === 'direct' ? DIRECT_PROTOCOLS : RELAY_PROTOCOLS).map((p) => {
-                  // hy2 需要 xray ≥ 26.3.27（后端 shared.XrayMinVersionHy2）：落地服务器版本过低时禁用。
-                  const hy2Blocked =
-                    p === 'hysteria' &&
-                    !xrayVersionAtLeast(
-                      landingServer?.effective_xray_version ?? landingServer?.xray_version,
-                    )
+                  // hy2 需要 xray ≥ 26.3.27（后端 shared.XrayMinVersionHy2）：落地服务器版本已知且
+                  // 过低才禁用，未上报不拦（agent 部署时终审）。
+                  const hy2Blocked = p === 'hysteria' && xrayVersionKnownBelow(landingXrayVersion)
                   return (
                     <SelectItem key={p} value={p} disabled={hy2Blocked}>
                       {PROTOCOL_LABELS[p] ?? p}
-                      {hy2Blocked ? '（节点 xray 版本过低，请先在节点页升级 xray）' : ''}
+                      {hy2Blocked ? '（节点 xray 版本过低，请先升级）' : ''}
                     </SelectItem>
                   )
                 })}
@@ -757,6 +757,9 @@ export function ChainFormDialog({
 
           {isHy2 && (
             <>
+              <p className="cg-chain-hint">
+                hy2 全程走 UDP，需服务商放行 UDP；UDP 受限时改用 VLESS。
+              </p>
               <div className="space-y-2">
                 <Label htmlFor="obfsPassword">混淆密码（salamander，留空自动生成）</Label>
                 <Input
