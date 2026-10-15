@@ -81,23 +81,24 @@ func toCertInfoDTO(c *x509.Certificate) certInfoDTO {
 
 // settingsDTO 是 GET /api/settings 的响应：保存值 + 运行态 + 是否需要重启。
 type settingsDTO struct {
-	Timezone         string       `json:"timezone"`         // IANA 时区；空 = 浏览器本地
-	TrafficTimezone  string       `json:"traffic_timezone"` // 流量日/月桶边界使用的 IANA 时区
-	PublicURL        string       `json:"public_url"`       // 空 = 从请求推断
-	PanelShort       string       `json:"panel_short"`      // 面板缩写（链路命名模板/订阅分组名）；空 = 默认 Lattix
-	TrustedProxies   string       `json:"trusted_proxies"`  // 追加可信反代网段（CIDR 逗号分隔）；空 = 仅内建默认（回环+内网/容器网段）
-	TLSMode          string       `json:"tls_mode"`         // 保存的待生效模式；空 = 跟随启动参数
-	TLSCert          *certInfoDTO `json:"tls_cert"`         // 保存的证书摘要（cert 为 PEM，path 为目录文件）
-	TLSKeySet        bool         `json:"tls_key_set"`      // 已保存私钥
-	TLSDomain        string       `json:"tls_domain"`       // path 模式域名
-	TLSDir           string       `json:"tls_dir"`          // 证书根目录（绝对路径，path 模式）
-	ACMEDomain       string       `json:"acme_domain"`
-	ACMEEmail        string       `json:"acme_email"`
-	RunningTLSMode   string       `json:"running_tls_mode"` // 当前进程实际监听模式
-	RestartRequired  bool         `json:"restart_required"` // TLS/ACME 保存值与运行态不一致
-	AdminUser        string       `json:"admin_user"`
-	PanelVersion     string       `json:"panel_version"`     // 当前面板版本（构建注入）
-	PasswordOverride bool         `json:"password_override"` // 密码已被设置页覆盖（否则为启动参数）
+	Timezone                  string       `json:"timezone"`                     // IANA 时区；空 = 浏览器本地
+	TrafficTimezone           string       `json:"traffic_timezone"`             // 流量日/月桶边界使用的 IANA 时区
+	TrafficStatsRetentionDays int          `json:"traffic_stats_retention_days"` // 流量统计分钟桶保留天数（31–3650）；未设置回落默认 60
+	PublicURL                 string       `json:"public_url"`                   // 空 = 从请求推断
+	PanelShort                string       `json:"panel_short"`                  // 面板缩写（链路命名模板/订阅分组名）；空 = 默认 Lattix
+	TrustedProxies            string       `json:"trusted_proxies"`              // 追加可信反代网段（CIDR 逗号分隔）；空 = 仅内建默认（回环+内网/容器网段）
+	TLSMode                   string       `json:"tls_mode"`                     // 保存的待生效模式；空 = 跟随启动参数
+	TLSCert                   *certInfoDTO `json:"tls_cert"`                     // 保存的证书摘要（cert 为 PEM，path 为目录文件）
+	TLSKeySet                 bool         `json:"tls_key_set"`                  // 已保存私钥
+	TLSDomain                 string       `json:"tls_domain"`                   // path 模式域名
+	TLSDir                    string       `json:"tls_dir"`                      // 证书根目录（绝对路径，path 模式）
+	ACMEDomain                string       `json:"acme_domain"`
+	ACMEEmail                 string       `json:"acme_email"`
+	RunningTLSMode            string       `json:"running_tls_mode"` // 当前进程实际监听模式
+	RestartRequired           bool         `json:"restart_required"` // TLS/ACME 保存值与运行态不一致
+	AdminUser                 string       `json:"admin_user"`
+	PanelVersion              string       `json:"panel_version"`     // 当前面板版本（构建注入）
+	PasswordOverride          bool         `json:"password_override"` // 密码已被设置页覆盖（否则为启动参数）
 	// 事件告警（§19）：三项全空 = 告警关闭。bot token 不回显（与 tls_key 同风格），仅给置位标记。
 	AlertWebhookURL          string                       `json:"alert_webhook_url"`
 	AlertTelegramBotTokenSet bool                         `json:"alert_telegram_bot_token_set"`
@@ -122,33 +123,34 @@ type settingsDTO struct {
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	dto := settingsDTO{
-		Timezone:                 s.getSetting(ctx, store.SettingTimezone),
-		TrafficTimezone:          firstNonEmpty(s.getSetting(ctx, store.SettingTrafficTimezone), store.DefaultTrafficTimezone),
-		PublicURL:                s.getSetting(ctx, store.SettingPublicURL),
-		PanelShort:               store.EffectivePanelShort(s.getSetting(ctx, store.SettingPanelShort)),
-		TrustedProxies:           s.getSetting(ctx, store.SettingTrustedProxies),
-		TLSMode:                  s.getSetting(ctx, store.SettingTLSMode),
-		TLSKeySet:                s.getSetting(ctx, store.SettingTLSKeyPEM) != "",
-		TLSDomain:                s.getSetting(ctx, store.SettingTLSDomain),
-		TLSDir:                   s.cfg.TLSDir,
-		ACMEDomain:               s.getSetting(ctx, store.SettingACMEDomain),
-		ACMEEmail:                s.getSetting(ctx, store.SettingACMEEmail),
-		RunningTLSMode:           s.cfg.RunningTLS.Mode,
-		AdminUser:                s.cfg.AdminUser,
-		PanelVersion:             s.cfg.Version,
-		PasswordOverride:         s.getSetting(ctx, store.SettingAdminPassBcrypt) != "",
-		AlertWebhookURL:          s.getSetting(ctx, store.SettingAlertWebhookURL),
-		AlertTelegramBotTokenSet: s.getSetting(ctx, store.SettingAlertTelegramBotToken) != "",
-		AlertTelegramChatID:      s.getSetting(ctx, store.SettingAlertTelegramChatID),
-		OperationLogLimit:        settingInt(s.getSetting(ctx, store.SettingOperationLogLimit), 1000),
-		RequestLogMaxMB:          settingInt(s.getSetting(ctx, store.SettingRequestLogMaxMB), 10),
-		RequestLogLevel:          firstNonEmpty(s.getSetting(ctx, store.SettingRequestLogLevel), string(logging.SeverityDebug)),
-		LogDir:                   s.cfg.LogDir,
-		BackupIncludesLogs:       false,
-		ReleaseInspection:        s.releaseInspectionSettings(ctx),
-		BillingInspection:        s.billingInspectionSchedule(ctx),
-		ExchangeInspection:       s.exchangeInspectionSchedule(ctx),
-		ReportingCurrency:        firstNonEmpty(s.getSetting(ctx, store.SettingReportingCurrency), "CNY"),
+		Timezone:                  s.getSetting(ctx, store.SettingTimezone),
+		TrafficTimezone:           firstNonEmpty(s.getSetting(ctx, store.SettingTrafficTimezone), store.DefaultTrafficTimezone),
+		TrafficStatsRetentionDays: settingInt(s.getSetting(ctx, store.SettingTrafficStatsRetentionDays), store.DefaultTrafficStatsRetentionDays),
+		PublicURL:                 s.getSetting(ctx, store.SettingPublicURL),
+		PanelShort:                store.EffectivePanelShort(s.getSetting(ctx, store.SettingPanelShort)),
+		TrustedProxies:            s.getSetting(ctx, store.SettingTrustedProxies),
+		TLSMode:                   s.getSetting(ctx, store.SettingTLSMode),
+		TLSKeySet:                 s.getSetting(ctx, store.SettingTLSKeyPEM) != "",
+		TLSDomain:                 s.getSetting(ctx, store.SettingTLSDomain),
+		TLSDir:                    s.cfg.TLSDir,
+		ACMEDomain:                s.getSetting(ctx, store.SettingACMEDomain),
+		ACMEEmail:                 s.getSetting(ctx, store.SettingACMEEmail),
+		RunningTLSMode:            s.cfg.RunningTLS.Mode,
+		AdminUser:                 s.cfg.AdminUser,
+		PanelVersion:              s.cfg.Version,
+		PasswordOverride:          s.getSetting(ctx, store.SettingAdminPassBcrypt) != "",
+		AlertWebhookURL:           s.getSetting(ctx, store.SettingAlertWebhookURL),
+		AlertTelegramBotTokenSet:  s.getSetting(ctx, store.SettingAlertTelegramBotToken) != "",
+		AlertTelegramChatID:       s.getSetting(ctx, store.SettingAlertTelegramChatID),
+		OperationLogLimit:         settingInt(s.getSetting(ctx, store.SettingOperationLogLimit), 1000),
+		RequestLogMaxMB:           settingInt(s.getSetting(ctx, store.SettingRequestLogMaxMB), 10),
+		RequestLogLevel:           firstNonEmpty(s.getSetting(ctx, store.SettingRequestLogLevel), string(logging.SeverityDebug)),
+		LogDir:                    s.cfg.LogDir,
+		BackupIncludesLogs:        false,
+		ReleaseInspection:         s.releaseInspectionSettings(ctx),
+		BillingInspection:         s.billingInspectionSchedule(ctx),
+		ExchangeInspection:        s.exchangeInspectionSchedule(ctx),
+		ReportingCurrency:         firstNonEmpty(s.getSetting(ctx, store.SettingReportingCurrency), "CNY"),
 	}
 	agentSettings, err := s.st.AgentSettings(ctx)
 	if err != nil {
@@ -216,17 +218,18 @@ func (s *Server) tlsRestartRequired(ctx context.Context, mode, acmeDomain, acmeE
 // updateSettingsRequest 是 PUT /api/settings 的请求体。
 // TLS 段整体保存、重启生效；cert/key 留空表示保持已保存值不变。
 type updateSettingsRequest struct {
-	Timezone        string `json:"timezone"`
-	TrafficTimezone string `json:"traffic_timezone"`
-	PublicURL       string `json:"public_url"`
-	PanelShort      string `json:"panel_short"`     // 空 = 恢复默认 Lattix
-	TrustedProxies  string `json:"trusted_proxies"` // CIDR 逗号分隔；空 = 仅内建默认（回环+内网/容器网段）
-	TLSMode         string `json:"tls_mode"`        // ""=跟随启动参数 off|cert|acme|path
-	TLSCertPEM      string `json:"tls_cert_pem"`
-	TLSKeyPEM       string `json:"tls_key_pem"`
-	TLSDomain       string `json:"tls_domain"` // path 模式域名
-	ACMEDomain      string `json:"acme_domain"`
-	ACMEEmail       string `json:"acme_email"`
+	Timezone                  string `json:"timezone"`
+	TrafficTimezone           string `json:"traffic_timezone"`
+	TrafficStatsRetentionDays int    `json:"traffic_stats_retention_days"` // 流量统计分钟桶保留天数；0 = 默认 60
+	PublicURL                 string `json:"public_url"`
+	PanelShort                string `json:"panel_short"`     // 空 = 恢复默认 Lattix
+	TrustedProxies            string `json:"trusted_proxies"` // CIDR 逗号分隔；空 = 仅内建默认（回环+内网/容器网段）
+	TLSMode                   string `json:"tls_mode"`        // ""=跟随启动参数 off|cert|acme|path
+	TLSCertPEM                string `json:"tls_cert_pem"`
+	TLSKeyPEM                 string `json:"tls_key_pem"`
+	TLSDomain                 string `json:"tls_domain"` // path 模式域名
+	ACMEDomain                string `json:"acme_domain"`
+	ACMEEmail                 string `json:"acme_email"`
 	// 事件告警（§19）：webhook/chat_id 随表单覆盖（允许清空）；bot token 留空 = 保持已保存值。
 	AlertWebhookURL       string                        `json:"alert_webhook_url"`
 	AlertTelegramBotToken string                        `json:"alert_telegram_bot_token"`
@@ -255,6 +258,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	before := map[string]any{
 		"timezone":                     s.getSetting(ctx, store.SettingTimezone),
 		"traffic_timezone":             firstNonEmpty(s.getSetting(ctx, store.SettingTrafficTimezone), store.DefaultTrafficTimezone),
+		"traffic_stats_retention_days": settingInt(s.getSetting(ctx, store.SettingTrafficStatsRetentionDays), store.DefaultTrafficStatsRetentionDays),
 		"public_url":                   s.getSetting(ctx, store.SettingPublicURL),
 		"panel_short":                  store.EffectivePanelShort(s.getSetting(ctx, store.SettingPanelShort)),
 		"trusted_proxies":              s.getSetting(ctx, store.SettingTrustedProxies),
@@ -346,6 +350,15 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := time.LoadLocation(req.TrafficTimezone); err != nil {
 		writeError(w, http.StatusBadRequest, "无效的流量统计时区（须为 IANA 名称，如 Asia/Shanghai）")
+		return
+	}
+	// 流量统计分钟桶保留天数：最小 31 保证总览「月环比」的分钟桶可用（overview
+	// 依赖 ≤31 天前的分钟桶存在）；0（字段缺省）回落默认 60，与 operation_log_limit 同语义。
+	if req.TrafficStatsRetentionDays == 0 {
+		req.TrafficStatsRetentionDays = store.DefaultTrafficStatsRetentionDays
+	}
+	if req.TrafficStatsRetentionDays < 31 || req.TrafficStatsRetentionDays > 3650 {
+		writeError(w, http.StatusBadRequest, "流量统计保留天数须为 31-3650 天")
 		return
 	}
 
@@ -461,6 +474,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		set(store.SettingTimezone, req.Timezone)
 	}
 	set(store.SettingTrafficTimezone, req.TrafficTimezone)
+	set(store.SettingTrafficStatsRetentionDays, strconv.Itoa(req.TrafficStatsRetentionDays))
 	if req.PublicURL == "" {
 		del(store.SettingPublicURL)
 	} else {
@@ -537,7 +551,8 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	after := map[string]any{
 		"timezone": req.Timezone, "traffic_timezone": req.TrafficTimezone,
-		"public_url": req.PublicURL, "panel_short": store.EffectivePanelShort(req.PanelShort),
+		"traffic_stats_retention_days": req.TrafficStatsRetentionDays,
+		"public_url":                   req.PublicURL, "panel_short": store.EffectivePanelShort(req.PanelShort),
 		"trusted_proxies": req.TrustedProxies, "tls_mode": req.TLSMode,
 		"tls_domain": tlsDomain, "acme_domain": acmeDomain, "acme_email": strings.TrimSpace(req.ACMEEmail),
 		"alert_webhook_set":            req.AlertWebhookURL != "",

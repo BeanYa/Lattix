@@ -719,6 +719,7 @@ export interface ReleaseVersions {
 export interface PanelSettings {
   timezone: string
   traffic_timezone: string
+  traffic_stats_retention_days: number
   public_url: string
   panel_short: string
   trusted_proxies: string
@@ -756,6 +757,7 @@ export interface PanelSettings {
 export interface UpdateSettingsRequest {
   timezone: string
   traffic_timezone: string
+  traffic_stats_retention_days: number
   public_url: string
   panel_short: string
   trusted_proxies: string
