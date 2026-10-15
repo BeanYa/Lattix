@@ -24,6 +24,8 @@ import { CountryFlag } from '@/components/CountryFlag'
 import { addressFamily } from '@/lib/address'
 import { EmptyState } from '@/components/PagePrimitives'
 import { ServerTestPanel } from '@/components/ServerTestPanel'
+import { TrafficStatsDialog } from '@/components/traffic-stats/TrafficStatsDialog'
+import { useTrafficStatsDialog } from '@/components/traffic-stats/use-traffic-stats-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -65,6 +67,7 @@ import type {
   ServerConnectionState,
   ServerMetrics,
   ServerMetricSeries,
+  TrafficStatPoint,
 } from '@/lib/types'
 
 type Health = 'normal' | 'warning' | 'critical'
@@ -914,14 +917,17 @@ function DetailSheet({
   open,
   onOpenChange,
   timezone,
+  onOpenTrafficStats,
 }: {
   server: Server | null
   open: boolean
   onOpenChange: (open: boolean) => void
   timezone?: string
+  onOpenTrafficStats: (server: Server) => void
 }) {
   const [history, setHistory] = useState<ServerMetrics[]>([])
   const [loading, setLoading] = useState(false)
+  const [trafficHistory, setTrafficHistory] = useState<TrafficStatPoint[]>([])
 
   const load = useCallback(() => {
     if (!server) return
@@ -933,12 +939,28 @@ function DetailSheet({
       .finally(() => setLoading(false))
   }, [server])
 
+  // 流量统计历史与探针指标各自轮询（两类采样点不同步，流量图表使用自己的时间轴）。
+  const loadTraffic = useCallback(() => {
+    if (!server) return
+    api
+      .statsServerTrafficHistory(server.id)
+      .then(setTrafficHistory)
+      .catch(() => setTrafficHistory([]))
+  }, [server])
+
   useEffect(() => {
     if (!open || !server) return
     load()
     const timer = setInterval(load, 60000)
     return () => clearInterval(timer)
   }, [load, open, server])
+
+  useEffect(() => {
+    if (!open || !server) return
+    loadTraffic()
+    const timer = setInterval(loadTraffic, 60000)
+    return () => clearInterval(timer)
+  }, [loadTraffic, open, server])
 
   const cpu = history.map((sample) => sample.cpu_percent)
   const memory = history.map((sample) => percent(sample.mem_used, sample.mem_total))
@@ -951,6 +973,10 @@ function DetailSheet({
   )
   const latency = history.map((sample) => sample.latency_ms)
   const timestamps = history.map((sample) => sample.updated_at)
+  // 流量点为每分钟累计字节数：除以 60 秒得 B/s，再除以 1024 得 KB/s。
+  const trafficUpRate = trafficHistory.map((point) => point.up / 60 / 1024)
+  const trafficDownRate = trafficHistory.map((point) => point.down / 60 / 1024)
+  const trafficTimestamps = trafficHistory.map((point) => new Date(point.ts * 1000).toISOString())
   const metrics = server?.metrics
 
   return (
@@ -1129,7 +1155,7 @@ function DetailSheet({
             <Separator />
             {loading && history.length === 0 ? (
               <div className="flex flex-col gap-4">
-                {Array.from({ length: 5 }).map((_, index) => (
+                {Array.from({ length: 6 }).map((_, index) => (
                   <Skeleton key={index} className="h-32 w-full" />
                 ))}
               </div>
@@ -1173,6 +1199,28 @@ function DetailSheet({
                   timestamps={timestamps}
                   timezone={timezone}
                 />
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-end">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`查看 ${server.alias} 流量统计`}
+                      onClick={() => onOpenTrafficStats(server)}
+                    >
+                      流量统计
+                    </Button>
+                  </div>
+                  <TrendChart
+                    title="流量速率"
+                    unit="KB/s"
+                    series={[
+                      { label: '上传', color: 'success', values: trafficUpRate },
+                      { label: '下载', color: 'info', values: trafficDownRate },
+                    ]}
+                    timestamps={trafficTimestamps}
+                    timezone={timezone}
+                  />
+                </div>
               </div>
             )}
             <Separator />
@@ -1186,6 +1234,12 @@ function DetailSheet({
 
 export function ServerMonitorGrid(props: ServerMonitorProps) {
   const [selectedID, setSelectedID] = useState<number | null>(null)
+  // onError 以 useCallback 固定引用，避免 useTrafficStatsDialog 因回调变化重拉（同 AgentsStatsTab）；
+  // 错误仅在弹窗打开期间展示，下次打开时在点击事件里清除。
+  const [trafficStatsError, setTrafficStatsError] = useState('')
+  const onTrafficStatsError = useCallback((message: string) => setTrafficStatsError(message), [])
+  const trafficStatsDialog = useTrafficStatsDialog({ onError: onTrafficStatsError })
+
   const selected = props.servers.find((server) => server.id === selectedID) ?? null
   const samplesByServer = useMemo(
     () => new Map(props.samples.map((series) => [series.server_id, series.samples])),
@@ -1210,6 +1264,11 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
 
   return (
     <>
+      {trafficStatsDialog.scope !== null && trafficStatsError ? (
+        <p role="alert" className="mb-3 text-sm text-destructive">
+          流量统计加载失败：{trafficStatsError}
+        </p>
+      ) : null}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
         {props.servers.map((server) => (
           <ServerCard
@@ -1229,6 +1288,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
           />
         ))}
       </div>
+      <TrafficStatsDialog controller={trafficStatsDialog} />
       <DetailSheet
         server={selected}
         open={selected !== null}
@@ -1236,6 +1296,14 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
           if (!open) setSelectedID(null)
         }}
         timezone={props.timezone}
+        onOpenTrafficStats={(server) => {
+          setTrafficStatsError('')
+          trafficStatsDialog.open({
+            kind: 'server',
+            serverId: server.id,
+            serverName: server.alias,
+          })
+        }}
       />
     </>
   )
