@@ -62,7 +62,7 @@ func (r *Runner) Run(ctx context.Context, progress func(string)) (RunResult, err
 	progress("检查依赖")
 	if len(missing()) > 0 {
 		progress("安装依赖")
-		if err := InstallDependencies(ctx, scriptPath, missing); err != nil {
+		if err := InstallDependencies(ctx, missing); err != nil {
 			return RunResult{}, err
 		}
 	}

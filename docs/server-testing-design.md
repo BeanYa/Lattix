@@ -91,9 +91,13 @@ IP 质量检测执行上游 xykt/IPQuality 脚本 `ip.sh`，固定参数 `-p -j 
 测试前拉取钉版脚本并与缓存比对 `script_version`，相同且缓存校验通过则复用缓存，否则用已
 校验内容原子替换；拉取失败回退缓存并在报告中标记 `script_stale`。
 
-脚本依赖 `jq curl bc netcat dnsutils iproute2`。Agent 在测试前用 `exec.LookPath` 检测，
-缺失时运行脚本自身的 `-y` 自动安装轮次（120 秒窗口，轮询依赖就绪后立即终止进程组），
-安装失败或超时如实报错。
+脚本依赖 `jq curl bc nc dig ip`。Agent 在测试前用 `exec.LookPath` 检测，缺失时自行按
+`/etc/os-release` 选择系统包管理器安装（apt / dnf / yum / pacman / apk / zypper，按缺失
+命令只装对应包；RHEL 克隆系先装 `epel-release`，大版本 8 以上用 dnf 否则 yum）。索引刷新
+（`apt-get update`、`apk update`）失败不阻断后续安装命令，但安装命令失败时报错必须携带
+失败命令与输出的首尾片段。非 root 且无免密 sudo 时拒绝安装并如实报错；安装窗口 10 分钟
+超时，超时终止命令进程组。依赖就绪前不执行上游脚本；不委托 ip.sh 自带的 `-y` 安装流程
+（其实测会在安装失败后静默继续跑完整检测，刷屏且吞掉真实包管理器报错）。
 
 执行超时 15 分钟，超时后终止整个脚本进程组。脚本输出经流式 JSON 解码拆解为每个地址家族
 一份文档，在 Agent 侧（`src/agent/internal/servertest/ipquality/`）解析并映射为 Lattix 强
@@ -126,6 +130,7 @@ Panel 解析 `provinceBaseData`、`cityKeyList` 和 `extraCityNodeMeta`，生成
 - 管理员可以在 UI 手工刷新；首次有效缓存完成前不允许下发任何服务器测试；
 - 缓存不过期；后续抓取或解析失败保留最后一份有效缓存，同时展示最后错误；
 - 请求失败、解析失败与无有效缓存使用不同错误信息；
+- 目录地址固定钉住，不跟随任何重定向：重定向一律按请求失败处理，错误信息包含重定向目标；
 - 固定目录客户端使用系统 CA 并补入公开的 DigiCert Global Root G2，仍严格校验证书链、
   有效期和主机名，不使用 `InsecureSkipVerify`。
 
