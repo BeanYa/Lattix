@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCwIcon, Trash2Icon } from 'lucide-react'
+import { useLocation, useSearch } from 'wouter'
 
 import { Notice } from '@/components/PagePrimitives'
 import { Button } from '@/components/ui/button'
@@ -38,6 +39,7 @@ import {
   type OperationPageSize,
   type RefreshSeconds,
 } from '@/lib/log-preferences'
+import { initialSeverityFromSearch, stripSeverityParam } from '@/lib/log-severity-param'
 import { useTimezone } from '@/lib/timezone'
 import type { LogSeverity, OperationCategory, OperationLogEntry, Server } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -86,6 +88,8 @@ function toRFC3339(value: string): string | undefined {
 export default function OperationLogs() {
   const { timezone } = useTimezone()
   const { confirm } = useAppDialog()
+  const search = useSearch()
+  const [, navigate] = useLocation()
   const [items, setItems] = useState<OperationLogEntry[]>([])
   const [total, setTotal] = useState(0)
   const [servers, setServers] = useState<Server[]>([])
@@ -93,7 +97,7 @@ export default function OperationLogs() {
   const [error, setError] = useState('')
   const [detailEntry, setDetailEntry] = useState<OperationLogEntry | null>(null)
   const [offset, setOffset] = useState(0)
-  const [severity, setSeverity] = useState<LogSeverity | ''>('')
+  const [severity, setSeverity] = useState<LogSeverity | ''>(() => initialSeverityFromSearch(search))
   const [category, setCategory] = useState<OperationCategory | ''>('')
   const [serverId, setServerId] = useState('')
   const [operator, setOperator] = useState('')
@@ -140,6 +144,14 @@ export default function OperationLogs() {
       .then(setServers)
       .catch(() => {})
   }, [])
+
+  // Strip the severity param after applying it, so refresh and reset-filters
+  // behave like a plain visit while keeping unrelated params intact.
+  useEffect(() => {
+    const next = stripSeverityParam(search)
+    if (next === search) return
+    navigate(`/logs/operations${next}`, { replace: true })
+  }, [navigate, search])
 
   useEffect(() => {
     setLoading(true)
