@@ -34,6 +34,7 @@ src/backend/internal/web/dist/*
 /.qoder/
 /.worktree/
 /.superpowers/
+/.agents/
 
 # Build artifacts
 /backend
