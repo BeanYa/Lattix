@@ -24,6 +24,7 @@ import { CountryFlag } from '@/components/CountryFlag'
 import { addressFamily } from '@/lib/address'
 import { EmptyState } from '@/components/PagePrimitives'
 import { ServerTestPanel } from '@/components/ServerTestPanel'
+import { trendChartViewBoxPoint } from '@/components/trend-chart-pointer'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -728,9 +729,8 @@ function TrendChart({
   const updateActivePoint = (clientX: number, clientY: number) => {
     const bounds = chartRef.current?.getBoundingClientRect()
     if (!bounds || sampleCount === 0) return
-    const xRatio = Math.min(1, Math.max(0, (clientX - bounds.left) / bounds.width))
-    const yRatio = Math.min(1, Math.max(0, (clientY - bounds.top) / bounds.height))
-    setActivePoint({ index: Math.round(xRatio * (sampleCount - 1)), y: yRatio * height })
+    const point = trendChartViewBoxPoint(bounds, clientX, clientY, width, height)
+    setActivePoint({ index: Math.round((point.x / width) * (sampleCount - 1)), y: point.y })
   }
   const moveActivePoint = (offset: number) => {
     if (sampleCount === 0) return
