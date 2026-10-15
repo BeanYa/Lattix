@@ -506,6 +506,22 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		s.handleListRequestLog)
 	s.registerRPC(mux, http.MethodPost, "/api/log/clear-operations", write, s.handleClearOperationLog)
 	s.registerRPC(mux, http.MethodPost, "/api/log/clear-requests", write, s.handleClearRequestLog)
+
+	// 被控流量统计（只读轮询，polledRead 语义 + 逐参数 AllowedQuery 白名单）。
+	s.registerRPC(mux, http.MethodGet, "/api/stats/traffic/overview", polledRead, s.handleStatsTrafficOverview)
+	s.registerRPC(mux, http.MethodGet, "/api/stats/traffic/series",
+		rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly, Debug: true,
+			AllowedQuery: []string{"dim", "server_id", "user_uuid", "granularity", "from", "to"}},
+		s.handleStatsTrafficSeries)
+	s.registerRPC(mux, http.MethodGet, "/api/stats/traffic/breakdown",
+		rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly, Debug: true,
+			AllowedQuery: []string{"server_id", "user_uuid", "from", "to"}},
+		s.handleStatsTrafficBreakdown)
+	s.registerRPC(mux, http.MethodGet, "/api/stats/traffic/server-history",
+		rpcRouteOptions{Auth: true, LogPolicy: logging.LogFailuresOnly, Debug: true,
+			AllowedQuery: []string{"server_id", "hours"}},
+		s.handleStatsTrafficServerHistory)
+	s.registerRPC(mux, http.MethodGet, "/api/stats/errors/summary", polledRead, s.handleStatsErrorsSummary)
 }
 
 // Operator 返回当前请求对应的管理员名称，供外层请求日志中间件记录。

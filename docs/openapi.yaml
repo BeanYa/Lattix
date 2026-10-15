@@ -813,6 +813,41 @@ paths:
         - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/stats/traffic/overview:
+    get:
+      operationId: statsTrafficOverview
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/stats/traffic/series:
+    get:
+      operationId: statsTrafficSeries
+      parameters:
+        - {name: dim, in: query, required: true, schema: {type: string, enum: [fleet, server, user]}}
+        - {name: server_id, in: query, schema: {type: integer, minimum: 1}, description: Required when dim is server.}
+        - {name: user_uuid, in: query, schema: {type: string}, description: Required when dim is user.}
+        - {name: granularity, in: query, required: true, schema: {type: string, enum: [5m, 15m, 1h, day, month]}}
+        - {name: from, in: query, schema: {type: integer, format: int64}, description: 'Unix seconds; omitted from/to default per granularity (5m/15m→6h, 1h→24h, day→30d, month→12m, to=now).'}
+        - {name: to, in: query, schema: {type: integer, format: int64}, description: 'Unix seconds; must be greater than from.'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/stats/traffic/breakdown:
+    get:
+      operationId: statsTrafficBreakdown
+      parameters:
+        - {name: server_id, in: query, schema: {type: integer, minimum: 1}, description: 'Drill into one server; takes precedence over user_uuid.'}
+        - {name: user_uuid, in: query, schema: {type: string}, description: Drill into one user across servers.}
+        - {name: from, in: query, schema: {type: integer, format: int64}, description: 'Unix seconds; omitted from/to default to the last 24 hours.'}
+        - {name: to, in: query, schema: {type: integer, format: int64}, description: 'Unix seconds; must be greater than from.'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/stats/traffic/server-history:
+    get:
+      operationId: statsTrafficServerHistory
+      parameters:
+        - {name: server_id, in: query, required: true, schema: {type: integer, minimum: 1}}
+        - {name: hours, in: query, schema: {type: integer, minimum: 1, maximum: 168, default: 24}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/stats/errors/summary:
+    get:
+      operationId: statsErrorsSummary
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
 components:
   securitySchemes:
     sessionCookie:
