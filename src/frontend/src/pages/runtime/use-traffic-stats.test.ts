@@ -118,6 +118,8 @@ import { trafficSeriesWindow, useTrafficStats } from './use-traffic-stats'
 const NOW = new Date(2026, 9, 15, 14, 0).getTime()
 const HOUR = 3_600_000
 const DAY = 86_400_000
+// 窗口计算内部用 ms，出口契约为 Unix 秒：期望值统一以 sec() 换算。
+const sec = (ms: number) => Math.floor(ms / 1000)
 
 type Controller = ReturnType<typeof useTrafficStats>
 
@@ -154,21 +156,21 @@ afterEach(() => {
 })
 
 describe('trafficSeriesWindow', () => {
-  it('各粒度窗口：5m/15m→6h、1h→24h、day→30d、month→365d', () => {
-    expect(trafficSeriesWindow('5m', NOW)).toEqual({ from: NOW - 6 * HOUR, to: NOW })
-    expect(trafficSeriesWindow('15m', NOW)).toEqual({ from: NOW - 6 * HOUR, to: NOW })
-    expect(trafficSeriesWindow('1h', NOW)).toEqual({ from: NOW - 24 * HOUR, to: NOW })
-    expect(trafficSeriesWindow('day', NOW)).toEqual({ from: NOW - 30 * DAY, to: NOW })
-    expect(trafficSeriesWindow('month', NOW)).toEqual({ from: NOW - 365 * DAY, to: NOW })
+  it('各粒度窗口：5m/15m→6h、1h→24h、day→30d、month→365d（Unix 秒）', () => {
+    expect(trafficSeriesWindow('5m', NOW)).toEqual({ from: sec(NOW - 6 * HOUR), to: sec(NOW) })
+    expect(trafficSeriesWindow('15m', NOW)).toEqual({ from: sec(NOW - 6 * HOUR), to: sec(NOW) })
+    expect(trafficSeriesWindow('1h', NOW)).toEqual({ from: sec(NOW - 24 * HOUR), to: sec(NOW) })
+    expect(trafficSeriesWindow('day', NOW)).toEqual({ from: sec(NOW - 30 * DAY), to: sec(NOW) })
+    expect(trafficSeriesWindow('month', NOW)).toEqual({ from: sec(NOW - 365 * DAY), to: sec(NOW) })
   })
 
-  it('缺省 now 取当前时间', () => {
+  it('缺省 now 取当前时间（Unix 秒）', () => {
     const before = Date.now()
     const window = trafficSeriesWindow('1h')
     const after = Date.now()
-    expect(window.to).toBeGreaterThanOrEqual(before)
-    expect(window.to).toBeLessThanOrEqual(after)
-    expect(window.to - window.from).toBe(24 * HOUR)
+    expect(window.to).toBeGreaterThanOrEqual(sec(before))
+    expect(window.to).toBeLessThanOrEqual(sec(after))
+    expect(window.to - window.from).toBe(24 * 3600)
   })
 })
 
@@ -186,8 +188,8 @@ describe('useTrafficStats', () => {
     expect(h.statsTrafficSeries.mock.calls[0][0]).toEqual({
       dim: 'fleet',
       granularity: '1h',
-      from: NOW - 24 * HOUR,
-      to: NOW,
+      from: sec(NOW - 24 * HOUR),
+      to: sec(NOW),
     })
     expect(t.controller.overview).toEqual(h.overview)
     expect(t.controller.errors).toEqual({ today_error_count: 3 })
@@ -209,10 +211,23 @@ describe('useTrafficStats', () => {
     expect(h.statsTrafficSeries.mock.calls[0][0]).toEqual({
       dim: 'fleet',
       granularity: 'day',
-      from: NOW - 30 * DAY,
-      to: NOW,
+      from: sec(NOW - 30 * DAY),
+      to: sec(NOW),
     })
     expect(h.statsTrafficOverview).not.toHaveBeenCalled()
+    expect(t.controller.points).toEqual(h.points)
+  })
+
+  it('wire 契约：series 查询 from/to 为 Unix 秒（Math.floor(ms/1000)，防毫秒回归）', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(NOW)
+    const t = setup()
+    await t.settle()
+    const params = h.statsTrafficSeries.mock.calls[0][0]
+    expect(params.from).toBe(Math.floor((NOW - 24 * HOUR) / 1000))
+    expect(params.to).toBe(Math.floor(NOW / 1000))
+    // 秒级量程：2026-10-15 约 1.79e9；若误传毫秒（约 1.79e12）必然越界。
+    expect(params.from).toBeGreaterThan(0)
+    expect(params.to).toBeLessThan(1e11)
     expect(t.controller.points).toEqual(h.points)
   })
 })

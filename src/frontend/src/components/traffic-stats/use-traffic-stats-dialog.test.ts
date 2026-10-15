@@ -110,6 +110,8 @@ import {
 const NOW = new Date(2026, 9, 15, 14, 0).getTime()
 const HOUR = 3_600_000
 const DAY = 86_400_000
+// 区间计算内部用 ms，出口契约为 Unix 秒：期望值统一以 sec() 换算。
+const sec = (ms: number) => Math.floor(ms / 1000)
 
 function setup(onError: (msg: string) => void = () => {}) {
   h.reset()
@@ -144,32 +146,32 @@ afterEach(() => {
 })
 
 describe('trafficStatsRangeParams', () => {
-  it('预设区间：24h→15m、7d→1h、30d→day，窗口从 now 向前推且 to=now（忽略 customRange）', () => {
+  it('预设区间：24h→15m、7d→1h、30d→day，窗口从 now 向前推且 to=now（忽略 customRange，Unix 秒）', () => {
     const custom = { from: '', to: '' }
     expect(trafficStatsRangeParams('24h', custom, NOW)).toEqual({
       granularity: '15m',
-      from: NOW - 24 * HOUR,
-      to: NOW,
+      from: sec(NOW - 24 * HOUR),
+      to: sec(NOW),
     })
     expect(trafficStatsRangeParams('7d', custom, NOW)).toEqual({
       granularity: '1h',
-      from: NOW - 7 * DAY,
-      to: NOW,
+      from: sec(NOW - 7 * DAY),
+      to: sec(NOW),
     })
     expect(trafficStatsRangeParams('30d', custom, NOW)).toEqual({
       granularity: 'day',
-      from: NOW - 30 * DAY,
-      to: NOW,
+      from: sec(NOW - 30 * DAY),
+      to: sec(NOW),
     })
   })
 
-  it('custom 合法区间：day 粒度，from 当日零点、to 当日末（同日区间合法）', () => {
+  it('custom 合法区间：day 粒度，from 当日零点、to 当日末（同日区间合法，Unix 秒）', () => {
     expect(
       trafficStatsRangeParams('custom', { from: '2026-09-20', to: '2026-10-10' }, NOW),
     ).toEqual({
       granularity: 'day',
-      from: new Date('2026-09-20T00:00:00').getTime(),
-      to: new Date('2026-10-10T23:59:59.999').getTime(),
+      from: sec(new Date('2026-09-20T00:00:00').getTime()),
+      to: sec(new Date('2026-10-10T23:59:59.999').getTime()),
     })
     expect(
       trafficStatsRangeParams('custom', { from: '2026-10-10', to: '2026-10-10' }, NOW),
@@ -212,14 +214,14 @@ describe('useTrafficStatsDialog', () => {
       dim: 'server',
       server_id: 7,
       granularity: '1h',
-      from: NOW - 7 * DAY,
-      to: NOW,
+      from: sec(NOW - 7 * DAY),
+      to: sec(NOW),
     })
     expect(h.statsTrafficBreakdown).toHaveBeenCalledOnce()
     expect(h.statsTrafficBreakdown.mock.calls[0][0]).toEqual({
       server_id: 7,
-      from: NOW - 7 * DAY,
-      to: NOW,
+      from: sec(NOW - 7 * DAY),
+      to: sec(NOW),
     })
     expect(t.controller.scope).toEqual({ kind: 'server', serverId: 7, serverName: '节点A' })
     expect(t.controller.points).toEqual(h.points)
@@ -245,13 +247,13 @@ describe('useTrafficStatsDialog', () => {
       dim: 'server',
       server_id: 7,
       granularity: 'day',
-      from: NOW - 30 * DAY,
-      to: NOW,
+      from: sec(NOW - 30 * DAY),
+      to: sec(NOW),
     })
     expect(h.statsTrafficBreakdown.mock.calls[0][0]).toEqual({
       server_id: 7,
-      from: NOW - 30 * DAY,
-      to: NOW,
+      from: sec(NOW - 30 * DAY),
+      to: sec(NOW),
     })
 
     h.statsTrafficSeries.mockClear()
@@ -261,8 +263,8 @@ describe('useTrafficStatsDialog', () => {
       dim: 'server',
       server_id: 7,
       granularity: '15m',
-      from: NOW - 24 * HOUR,
-      to: NOW,
+      from: sec(NOW - 24 * HOUR),
+      to: sec(NOW),
     })
   })
 
@@ -283,13 +285,13 @@ describe('useTrafficStatsDialog', () => {
       dim: 'server',
       server_id: 7,
       granularity: 'day',
-      from: new Date('2026-09-20T00:00:00').getTime(),
-      to: new Date('2026-10-10T23:59:59.999').getTime(),
+      from: sec(new Date('2026-09-20T00:00:00').getTime()),
+      to: sec(new Date('2026-10-10T23:59:59.999').getTime()),
     })
     expect(h.statsTrafficBreakdown.mock.calls[0][0]).toEqual({
       server_id: 7,
-      from: new Date('2026-09-20T00:00:00').getTime(),
-      to: new Date('2026-10-10T23:59:59.999').getTime(),
+      from: sec(new Date('2026-09-20T00:00:00').getTime()),
+      to: sec(new Date('2026-10-10T23:59:59.999').getTime()),
     })
   })
 
@@ -330,13 +332,13 @@ describe('useTrafficStatsDialog', () => {
       dim: 'user',
       user_uuid: 'uuid-aaaa-bbbb',
       granularity: '1h',
-      from: NOW - 7 * DAY,
-      to: NOW,
+      from: sec(NOW - 7 * DAY),
+      to: sec(NOW),
     })
     expect(h.statsTrafficBreakdown.mock.calls.at(-1)![0]).toEqual({
       user_uuid: 'uuid-aaaa-bbbb',
-      from: NOW - 7 * DAY,
-      to: NOW,
+      from: sec(NOW - 7 * DAY),
+      to: sec(NOW),
     })
 
     // user 视图下 server 行 → 反向下钻回 server 视图（保留当前区间）。
@@ -346,8 +348,8 @@ describe('useTrafficStatsDialog', () => {
     expect(t.controller.scope).toEqual({ kind: 'server', serverId: 3, serverName: '节点C' })
     expect(h.statsTrafficBreakdown.mock.calls.at(-1)![0]).toEqual({
       server_id: 3,
-      from: NOW - 7 * DAY,
-      to: NOW,
+      from: sec(NOW - 7 * DAY),
+      to: sec(NOW),
     })
 
     // node 行与同视角行不可下钻：scope 引用不变、不重拉。

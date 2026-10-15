@@ -707,7 +707,7 @@ export default function RuntimeMonitor() {
         className="min-w-0"
       >
         <TabsList variant="line">
-          <TabsTrigger value="panel">面板运行时</TabsTrigger>
+          <TabsTrigger value="panel">Panel 运行</TabsTrigger>
           <TabsTrigger value="agents">被控统计</TabsTrigger>
         </TabsList>
         <TabsContent value="panel" className="cg-runtime-tab-panel">

@@ -56,23 +56,25 @@ function dayEnd(value: string): number | null {
  * trafficStatsRangeParams 把区间选择翻译为查询参数：
  * '24h'→15m/近24h、'7d'→1h/近7天、'30d'→day/近30天（to=now）；
  * 'custom'→day 粒度，from 当日零点、to 当日末；非法/倒置区间返回 null（调用方 onError 不发请求）。
+ * from/to 出口统一为 Unix 秒（后端 parseStatsUnixSeconds 契约）：内部以 ms 计算，仅在返回处换算。
  */
 export function trafficStatsRangeParams(
   range: TrafficStatsRangeKey,
   custom: TrafficStatsCustomRange,
   now = Date.now(),
 ): { granularity: TrafficStatGranularity; from: number; to: number } | null {
+  const toSeconds = (ms: number) => Math.floor(ms / 1000)
   if (range !== 'custom') {
     return {
       granularity: TRAFFIC_RANGE_GRANULARITY[range],
-      from: now - RANGE_SPAN_MS[range],
-      to: now,
+      from: toSeconds(now - RANGE_SPAN_MS[range]),
+      to: toSeconds(now),
     }
   }
   const from = dayStart(custom.from)
   const to = dayEnd(custom.to)
   if (from === null || to === null || from > to) return null
-  return { granularity: 'day', from, to }
+  return { granularity: 'day', from: toSeconds(from), to: toSeconds(to) }
 }
 
 // customRange 初始默认最近 30 天（切换到"自定义"即可用，无需先补日期）。

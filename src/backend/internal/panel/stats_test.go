@@ -149,7 +149,7 @@ func TestStatsTrafficSeriesDimsAndGranularities(t *testing.T) {
 
 	// server dim：实体维度（endpoint）合计，用户维度不计入。
 	env = callStatsHandler(t, serverAPI, serverAPI.handleStatsTrafficSeries,
-		"dim=server&server_id=1&granularity=5m&from="+itoa64(t0.Add(-time.Minute).Unix())+"&to="+itoa64(t0.Add(time.Minute).Unix()))
+		"dim=server&server_id="+itoa64(aID)+"&granularity=5m&from="+itoa64(t0.Add(-time.Minute).Unix())+"&to="+itoa64(t0.Add(time.Minute).Unix()))
 	points = decodePoints(t, env)
 	if len(points) != 1 || points[0].Up != 300 || points[0].Down != 600 {
 		t.Fatalf("server dim points = %+v, want {300 600}", points)
@@ -186,6 +186,8 @@ func TestStatsTrafficSeriesValidation(t *testing.T) {
 	_, serverAPI, aID, _, userUUID := statsFixture(t)
 	validFrom := itoa64(time.Now().Add(-time.Hour).Unix())
 	validTo := itoa64(time.Now().Unix())
+	// 毫秒级时间戳（2026-10 ≈ 1.79e12）远超 Unix 秒量程上界 1e11，必须被拒。
+	const msNow = "1790000000000"
 	cases := []struct {
 		name     string
 		rawQuery string
@@ -200,6 +202,11 @@ func TestStatsTrafficSeriesValidation(t *testing.T) {
 		{"from after to", "dim=fleet&granularity=5m&from=" + validTo + "&to=" + validFrom},
 		{"from equals to", "dim=fleet&granularity=5m&from=" + validTo + "&to=" + validTo},
 		{"invalid from", "dim=fleet&granularity=5m&from=abc&to=" + validTo},
+		{"from in milliseconds", "dim=fleet&granularity=5m&from=" + msNow + "&to=" + validTo},
+		{"to in milliseconds", "dim=fleet&granularity=5m&from=" + validFrom + "&to=" + msNow},
+		{"from zero", "dim=fleet&granularity=5m&from=0&to=" + validTo},
+		{"from negative", "dim=fleet&granularity=5m&from=-100&to=" + validTo},
+		{"from beyond year 5138", "dim=fleet&granularity=5m&from=100000000001&to=" + validTo},
 	}
 	for _, testCase := range cases {
 		env := callStatsHandler(t, serverAPI, serverAPI.handleStatsTrafficSeries, testCase.rawQuery)
@@ -271,12 +278,13 @@ func TestStatsTrafficBreakdown(t *testing.T) {
 		t.Fatalf("user breakdown default window rows = %+v, want 2", rows)
 	}
 
-	// 校验：缺 server_id/user_uuid、from>=to。
+	// 校验：缺 server_id/user_uuid、from>=to、非 Unix 秒单位（毫秒回归）。
 	for name, rawQuery := range map[string]string{
-		"missing target":    "",
-		"from equals to":    "server_id=" + itoa64(aID) + "&from=100&to=100",
-		"invalid server_id": "server_id=abc",
-		"invalid from":      "server_id=" + itoa64(aID) + "&from=abc&to=200",
+		"missing target":         "",
+		"from equals to":         "server_id=" + itoa64(aID) + "&from=100&to=100",
+		"invalid server_id":      "server_id=abc",
+		"invalid from":           "server_id=" + itoa64(aID) + "&from=abc&to=200",
+		"from in milliseconds":   "server_id=" + itoa64(aID) + "&from=1790000000000&to=1790000036000",
 	} {
 		env := callStatsHandler(t, serverAPI, serverAPI.handleStatsTrafficBreakdown, rawQuery)
 		if env.Code != "INVALID_ARGUMENT" {

@@ -41,12 +41,14 @@ func (s *Server) handleStatsTrafficOverview(w http.ResponseWriter, r *http.Reque
 }
 
 // parseStatsUnixSeconds 解析可选的 Unix 秒查询参数，返回（值, 是否提供, 是否合法）。
+// 量程校验：秒值须在 (0, 1e11]（约公元 5138 年），超出视为单位错误（如前端误传
+// 毫秒级时间戳），按非法参数拒绝而非静默返回空窗口。
 func parseStatsUnixSeconds(raw string) (time.Time, bool, bool) {
 	if raw == "" {
 		return time.Time{}, false, true
 	}
 	seconds, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
+	if err != nil || seconds <= 0 || seconds > 1e11 {
 		return time.Time{}, false, false
 	}
 	return time.Unix(seconds, 0), true, true

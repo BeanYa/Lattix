@@ -17,11 +17,13 @@ const WINDOW_HOURS: Record<TrafficStatGranularity, number> = {
   month: 24 * 365,
 }
 
+// 出口统一为 Unix 秒（后端 parseStatsUnixSeconds 契约）：内部以 ms 计算，仅在返回处换算。
 export function trafficSeriesWindow(
   g: TrafficStatGranularity,
   now = Date.now(),
 ): { from: number; to: number } {
-  return { from: now - WINDOW_HOURS[g] * 3_600_000, to: now }
+  const toSeconds = (ms: number) => Math.floor(ms / 1000)
+  return { from: toSeconds(now - WINDOW_HOURS[g] * 3_600_000), to: toSeconds(now) }
 }
 
 export interface TrafficStatsController {
