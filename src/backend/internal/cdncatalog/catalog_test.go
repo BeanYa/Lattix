@@ -69,6 +69,27 @@ func TestFetchBuildsReadableDualStackCatalogWithoutDNS(t *testing.T) {
 	}
 }
 
+func TestFetchRejectsRedirectInsteadOfParsingItsHTML(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<!DOCTYPE html><html><body>marketing page</body></html>"))
+	}))
+	defer target.Close()
+	redirecter := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	defer redirecter.Close()
+
+	client, err := newHTTPClient(time.Second, unavailableSystemRoots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Fetch(context.Background(), client, redirecter.URL, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "redirect") {
+		t.Fatalf("error = %v, want redirect rejection", err)
+	}
+}
+
 func TestParseSourceRejectsExecutableJavaScript(t *testing.T) {
 	_, err := parseSource([]byte(`window.nodeData = buildNodeData();`))
 	if err == nil || !strings.Contains(err.Error(), "not a literal value") {

@@ -69,7 +69,14 @@ func newHTTPClient(
 	transport := base.Clone()
 	transport.TLSClientConfig = cloneTLSConfig(transport.TLSClientConfig)
 	transport.TLSClientConfig.RootCAs = roots
-	return &http.Client{Transport: transport, Timeout: timeout}, nil
+	client := &http.Client{Transport: transport, Timeout: timeout}
+	// The source URL is pinned by design; a redirect means the endpoint moved
+	// and must be re-pinned, so report it instead of feeding the target's HTML
+	// to the literal parser.
+	client.CheckRedirect = func(req *http.Request, _ []*http.Request) error {
+		return fmt.Errorf("CDN catalog source must not redirect (Location %q)", req.URL)
+	}
+	return client, nil
 }
 
 func cloneTLSConfig(config *tls.Config) *tls.Config {
