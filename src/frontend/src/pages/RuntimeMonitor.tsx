@@ -31,6 +31,8 @@ import { humanizeBytes } from '@/lib/format'
 import type { PanelLifecycleState, PanelRuntimeSnapshot, ScheduledTaskRuntime } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
+import AgentsStatsTab from './runtime/AgentsStatsTab'
+
 import './runtime-monitor.css'
 
 const MAX_SAMPLES = 36
@@ -712,7 +714,7 @@ export default function RuntimeMonitor() {
           <PanelRuntimeSection />
         </TabsContent>
         <TabsContent value="agents" className="cg-runtime-tab-panel">
-          <div className="cg-runtime-tab-placeholder">被控统计（构建中）</div>
+          <AgentsStatsTab />
         </TabsContent>
       </Tabs>
     </Page>
