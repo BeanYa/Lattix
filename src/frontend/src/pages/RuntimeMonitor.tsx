@@ -51,6 +51,7 @@ const taskLabels: Record<string, string> = {
   'release.xray': 'Xray 版本巡检',
   'subscription.templates.refresh': '订阅模板刷新',
   'traffic.reset': '流量周期重置',
+  'traffic_stats.retention': '流量统计清理',
   'user.expiry': '用户到期巡检',
 }
 

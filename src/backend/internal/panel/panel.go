@@ -305,6 +305,11 @@ func (s *Server) registerCoreTasks() {
 		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(expiryInterval) },
 		Run:     s.sweepTrafficReset,
 	})
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "traffic_stats.retention", RunOnStart: false, Timeout: time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(time.Hour) },
+		Run:     s.cleanupTrafficStats,
+	})
 }
 
 // RegisterRoutes 注册面板路由（管理 API 均需登录）。

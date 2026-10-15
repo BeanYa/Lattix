@@ -361,3 +361,16 @@ func (s *Store) ServerTrafficBuckets(ctx context.Context, serverID int64, from, 
 	}
 	return scanTrafficStatPoints(rows)
 }
+
+// DeleteExpiredTrafficStatBuckets 删除保留期外的分钟明细桶（bucket_ts < now-days*86400，
+// UTC）。日汇总 traffic_stats_daily 是 day/month 粒度与 Top 榜的长期数据源，永不清理。
+// 返回删除行数。
+func (s *Store) DeleteExpiredTrafficStatBuckets(ctx context.Context, retentionDays int) (int64, error) {
+	cutoff := time.Now().UTC().Add(-time.Duration(retentionDays) * 24 * time.Hour)
+	result, err := s.db.ExecContext(ctx,
+		`DELETE FROM traffic_stats_bucket WHERE bucket_ts < ?`, cutoff.Unix())
+	if err != nil {
+		return 0, fmt.Errorf("delete expired traffic stat buckets: %w", err)
+	}
+	return result.RowsAffected()
+}

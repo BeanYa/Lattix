@@ -551,6 +551,92 @@ func TestTrafficStatBreakdownByServerAndUser(t *testing.T) {
 	}
 }
 
+// TestDeleteExpiredTrafficStatBucketsKeepsDaily 验证保留清理只删分钟桶（Review Focus #5
+// 后半）：61 天前的旧桶在 delete(60) 后消失，同笔数据的 daily 行仍在（日汇总永不清理），
+// 当前新桶不受影响。Store 无法注入时钟，截止线相对真实 now 构造（61 天 vs 60 天，留足余量）。
+func TestDeleteExpiredTrafficStatBucketsKeepsDaily(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	serverID, _ := st.CreateServer(ctx, ServerDraft{Alias: "server", Address: "server.test", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US", Location: "Test"})
+	now := time.Now()
+	old := now.Add(-61 * 24 * time.Hour)
+	if err := st.ApplyTrafficSnapshot(ctx, serverID, "instance-1",
+		[]TrafficCounterSnapshot{{User: "old-u", Up: 100, Down: 50}}, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ApplyTrafficSnapshot(ctx, serverID, "instance-1",
+		[]TrafficCounterSnapshot{{User: "new-u", Up: 30, Down: 20}}, now); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := st.DeleteExpiredTrafficStatBuckets(ctx, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("removed rows = %d, want 1 (only the 61-day-old bucket)", removed)
+	}
+	var expiredBuckets int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM traffic_stats_bucket WHERE dim_id='old-u'`).Scan(&expiredBuckets); err != nil {
+		t.Fatal(err)
+	}
+	if expiredBuckets != 0 {
+		t.Fatalf("expired bucket rows = %d, want 0", expiredBuckets)
+	}
+	var oldDaily int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM traffic_stats_daily WHERE dim_id='old-u'`).Scan(&oldDaily); err != nil {
+		t.Fatal(err)
+	}
+	if oldDaily != 1 {
+		t.Fatalf("old daily rows = %d, want 1 (daily rows are never pruned)", oldDaily)
+	}
+	var freshUp, freshDown int64
+	if err := st.db.QueryRow(`SELECT up, down FROM traffic_stats_bucket WHERE dim_id='new-u'`).Scan(&freshUp, &freshDown); err != nil {
+		t.Fatal(err)
+	}
+	if freshUp != 30 || freshDown != 20 {
+		t.Fatalf("fresh bucket up/down = %d/%d, want 30/20 (untouched)", freshUp, freshDown)
+	}
+}
+
+// TestTrafficStatsRetentionDaysFallback 验证保留天数设置读取：未设置、非数字与非正值
+// 均回落 DefaultTrafficStatsRetentionDays（60），合法数字原样返回。
+func TestTrafficStatsRetentionDaysFallback(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	for _, raw := range []string{"", "junk", "-5", "0"} {
+		if raw != "" {
+			if err := st.SetSetting(ctx, SettingTrafficStatsRetentionDays, raw); err != nil {
+				t.Fatal(err)
+			}
+		}
+		days, err := st.TrafficStatsRetentionDays(ctx)
+		if err != nil {
+			t.Fatalf("retention days (setting %q) err = %v", raw, err)
+		}
+		if days != DefaultTrafficStatsRetentionDays {
+			t.Fatalf("retention days (setting %q) = %d, want default %d", raw, days, DefaultTrafficStatsRetentionDays)
+		}
+	}
+	if err := st.SetSetting(ctx, SettingTrafficStatsRetentionDays, "90"); err != nil {
+		t.Fatal(err)
+	}
+	days, err := st.TrafficStatsRetentionDays(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if days != 90 {
+		t.Fatalf("retention days = %d, want 90", days)
+	}
+}
+
 // TestTrafficStatEmptyRangeReturnsEmpty 验证空范围（from>=to 或无数据）返回空切片而非
 // nil/error（Review Focus #5 前半）。
 func TestTrafficStatEmptyRangeReturnsEmpty(t *testing.T) {
