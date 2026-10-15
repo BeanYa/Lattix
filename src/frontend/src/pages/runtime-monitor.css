@@ -9,6 +9,29 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- Tab 外壳（panel / agents） ---------- */
+
+.cg-runtime-tab-panel {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+/* agents Tab 占位（构建中） */
+.cg-runtime-tab-placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 40vh;
+  border: var(--cg-border);
+  border-radius: var(--cg-r-control);
+  background: var(--cg-paper-soft);
+  font-family: var(--cg-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--cg-muted);
+}
+
 /* ---------- 顶部 Eyebrow 行 ---------- */
 
 .cg-runtime-topline {
