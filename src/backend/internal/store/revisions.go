@@ -499,7 +499,8 @@ func revisionStatusFromSet(status string) []string {
 	case RevisionStatusActiveFailed:
 		return []string{RevisionStatusApplying, RevisionStatusActiveUnconfirmed, RevisionStatusWaitingForAgent}
 	case RevisionStatusCancelled:
-		return []string{RevisionStatusFailed, RevisionStatusActiveFailed}
+		// 被新编辑取代：失败链、离线等待中的 revision 均可废弃。
+		return []string{RevisionStatusFailed, RevisionStatusActiveFailed, RevisionStatusWaitingForAgent}
 	}
 	return nil
 }
@@ -553,9 +554,9 @@ func (s *Store) SetChainRevisionStatus(ctx context.Context, revisionID int64, st
 	return s.updateChainRevisionCAS(ctx, revisionID, status, errorMessage, nil)
 }
 
-// AbandonChainRevision 废弃被新编辑取代的失败 revision（§21 失败后编辑）：
-// 未投递/在途的任务与命令置 abandoned（不再送达 Agent 产生过期配置），
-// revision 置 cancelled；acked/failed 等终态不受影响。
+// AbandonChainRevision 废弃被新编辑取代的失败/等待中 revision（§21 失败后编辑、
+// §21.1 离线等待后再编辑）：未投递/在途的任务与命令置 abandoned（不再送达 Agent
+// 产生过期配置），revision 置 cancelled；acked/failed 等终态不受影响。
 func (s *Store) AbandonChainRevision(ctx context.Context, revisionID int64, reason string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -572,8 +573,9 @@ func (s *Store) AbandonChainRevision(ctx context.Context, revisionID int64, reas
 		RevisionTaskAbandoned, reason, revisionID, RevisionTaskPending, RevisionTaskQueued); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE chain_revisions SET status=?, error=? WHERE id=? AND status IN (?, ?)`,
-		RevisionStatusCancelled, reason, revisionID, RevisionStatusFailed, RevisionStatusActiveFailed); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE chain_revisions SET status=?, error=? WHERE id=? AND status IN (?, ?, ?)`,
+		RevisionStatusCancelled, reason, revisionID, RevisionStatusFailed, RevisionStatusActiveFailed,
+		RevisionStatusWaitingForAgent); err != nil {
 		return err
 	}
 	return tx.Commit()

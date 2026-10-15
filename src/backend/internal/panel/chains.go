@@ -636,12 +636,18 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "链路不存在")
 		return
 	}
-	// 部署失败（failed/active_failed）的链允许编辑后重新编排（§21）；
-	// 其他在途状态（applying/waiting_for_agent/active_unconfirmed）仍拒绝并发编辑。
+	// 部署失败（failed/active_failed）的链允许编辑后重新编排（§21）；等待 Agent
+	//（waiting_for_agent）的链允许再编辑取代等待中的 revision——该状态尚未下发任何
+	// 命令（编排暂停），废弃安全（§21.1）；applying/active_unconfirmed 仍拒绝并发编辑。
 	failed := chain.Status == store.ChainStatusFailed || chain.Status == store.ChainStatusActiveFailed
-	if chain.DesiredRevisionID != 0 && !failed {
+	waitingForAgent := chain.Status == store.ChainStatusWaitingForAgent
+	if chain.DesiredRevisionID != 0 && !failed && !waitingForAgent {
 		writeError(w, http.StatusConflict, "链路已有部署中的编辑")
 		return
+	}
+	var waitingRevisionID int64
+	if waitingForAgent {
+		waitingRevisionID = chain.DesiredRevisionID
 	}
 	current, err := s.st.PublishedChainRevision(r.Context(), chain.ID)
 	if err != nil && !failed {
@@ -1058,6 +1064,15 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	// 废弃被取代的失败 revision：未投递/在途命令不再送达 Agent（§21 失败后编辑）。
 	if failedRevision != nil {
 		if err := s.st.AbandonChainRevision(r.Context(), failedRevision.ID, "被新编辑取代"); err != nil {
+			o.Fail(err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	// 废弃被取代的等待中 revision（Agent 离线期间的再编辑，§21.1）：等待中无在途
+	// 命令，仅落 revision 终态；Agent 上线后按新 revision 恢复编排。
+	if waitingRevisionID != 0 {
+		if err := s.st.AbandonChainRevision(r.Context(), waitingRevisionID, "被新编辑取代"); err != nil {
 			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return

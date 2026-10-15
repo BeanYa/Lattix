@@ -479,7 +479,9 @@ export default function Chains() {
                         disabled={
                           c.desired_revision_id !== 0 &&
                           c.status !== 'failed' &&
-                          c.status !== 'active_failed'
+                          c.status !== 'active_failed' &&
+                          // 等待 Agent 的编辑可再次编辑取代（无在途命令，废弃安全）
+                          c.status !== 'waiting_for_agent'
                         }
                         onClick={() => chainForm.openEdit(c)}
                       >

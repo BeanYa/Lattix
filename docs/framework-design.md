@@ -614,7 +614,8 @@ sysctl/modprobe/config 替身覆盖 BBR 已启用、`fq` 失败、内核不支�
 - 创建和编辑均由不可变 revision 驱动：出口向入口计算依赖并部署，入口最后切换，随后立即清理旧
   revision。无法证明配置等价时保守重建受影响范围。
 - Agent 离线仅代表控制通道不可达，已部署数据面继续运行。普通编辑等待必须修改的离线 Agent；
-  管理员可强制发布未确认 revision。已发布 active 链任一 hop 离线时由链路状态机（chainFSM）
+  等待中（`waiting_for_agent`）的编辑可再次编辑取代（无在途命令，废弃安全），管理员可强制发布
+  未确认 revision。已发布 active 链任一 hop 离线时由链路状态机（chainFSM）
   推导为 `degraded`，但不退出订阅；服务器删除经 FSM 校验后使引用链路 `invalid` 并退出订阅。
   状态重算由 Agent 连接状态跃迁、端点 ack、周期自愈三层触发；Panel 重启时 ResumeChains 全量
   恢复，运行时 Agent 重连由 ResumeChainsByServer 即时恢复。详见链路设计文档。

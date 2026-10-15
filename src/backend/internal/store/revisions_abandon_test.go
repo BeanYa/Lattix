@@ -91,3 +91,43 @@ func TestAbandonChainRevisionAbandonsQueuedWork(t *testing.T) {
 		t.Fatalf("abandoned command = %+v", command)
 	}
 }
+
+// TestAbandonChainRevisionCancelsWaitingForAgent 验证被新编辑取代的等待中 revision
+//（编辑所需 Agent 离线）同样置 cancelled：等待中无在途命令，废弃只落 revision 状态。
+func TestAbandonChainRevisionCancelsWaitingForAgent(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	exitID, _ := st.CreateServer(ctx, ServerDraft{Alias: "exit", Address: "exit.example.com", BootstrapToken: "exit-token", MachineType: MachineTypeDirect, CountryCode: "US"})
+	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Template: json.RawMessage(`{}`)})
+	nodeID, _ := st.InsertNode(ctx, "service", exitID, shared.ProtocolVLESS, nil, config)
+	chainID, _ := st.InsertChain(ctx, "chain")
+	exitHopID, _ := st.InsertChainHop(ctx, chainID, 0, exitID, HopRoleExit, nodeID, 2443, "")
+	_ = st.SetChainServiceNode(ctx, chainID, nodeID)
+	revision, err := st.CreateChainRevision(ctx, chainID, ChainRevisionSnapshot{
+		Name: "chain", ServiceNodeID: nodeID, ServiceServerID: exitID, ServiceConfig: config,
+		TrafficMultiplierMilli: 1000, Hops: []ChainRevisionHop{
+			{HopID: exitHopID, ServerID: exitID, Role: HopRoleExit, ForwardPort: 2443},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetChainRevisionStatus(ctx, revision.ID, RevisionStatusWaitingForAgent, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.AbandonChainRevision(ctx, revision.ID, "被新编辑取代"); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := st.ChainRevisionByID(ctx, revision.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Status != RevisionStatusCancelled || reloaded.Error != "被新编辑取代" {
+		t.Fatalf("superseded waiting revision = %+v", reloaded)
+	}
+}
