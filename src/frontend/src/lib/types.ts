@@ -719,6 +719,7 @@ export interface ReleaseVersions {
 export interface PanelSettings {
   timezone: string
   traffic_timezone: string
+  traffic_stats_retention_days: number
   public_url: string
   panel_short: string
   trusted_proxies: string
@@ -756,6 +757,7 @@ export interface PanelSettings {
 export interface UpdateSettingsRequest {
   timezone: string
   traffic_timezone: string
+  traffic_stats_retention_days: number
   public_url: string
   panel_short: string
   trusted_proxies: string
@@ -1136,4 +1138,45 @@ export interface UserGroupInput {
   name: string
   user_ids: number[]
   link_group_ids: number[]
+}
+
+// 流量统计（/api/stats/traffic/*）：纵览、时序与维度分解。
+export interface TrafficVolume {
+  up: number
+  down: number
+}
+
+export interface TrafficStatPoint {
+  ts: number
+  up: number
+  down: number
+}
+
+export type TrafficStatGranularity = '5m' | '15m' | '1h' | 'day' | 'month'
+
+export interface TrafficStatTopItem {
+  server_id: number
+  user_uuid: string
+  label: string
+  up: number
+  down: number
+}
+
+export interface TrafficStatsOverview {
+  today: TrafficVolume
+  today_prev: TrafficVolume
+  month: TrafficVolume
+  month_prev: TrafficVolume
+  agents_online: number
+  agents_total: number
+  top_servers: TrafficStatTopItem[]
+  top_users: TrafficStatTopItem[]
+}
+
+export interface TrafficStatBreakdownRow {
+  dim_type: 'user' | 'node' | 'chain_hop' | 'endpoint' | 'server'
+  dim_id: string
+  label: string
+  up: number
+  down: number
 }

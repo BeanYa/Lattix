@@ -1558,6 +1558,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/stats/traffic/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["statsTrafficOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stats/traffic/series": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["statsTrafficSeries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stats/traffic/breakdown": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["statsTrafficBreakdown"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stats/traffic/server-history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["statsTrafficServerHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stats/errors/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["statsErrorsSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3655,6 +3735,94 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    statsTrafficOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    statsTrafficSeries: {
+        parameters: {
+            query: {
+                dim: "fleet" | "server" | "user";
+                /** @description Required when dim is server. */
+                server_id?: number;
+                /** @description Required when dim is user. */
+                user_uuid?: string;
+                granularity: "5m" | "15m" | "1h" | "day" | "month";
+                /** @description Unix seconds; omitted from/to default per granularity (5m/15m→6h, 1h→24h, day→30d, month→12m, to=now). */
+                from?: number;
+                /** @description Unix seconds; must be greater than from. */
+                to?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    statsTrafficBreakdown: {
+        parameters: {
+            query?: {
+                /** @description Drill into one server; takes precedence over user_uuid. */
+                server_id?: number;
+                /** @description Drill into one user across servers. */
+                user_uuid?: string;
+                /** @description Unix seconds; omitted from/to default to the last 24 hours. */
+                from?: number;
+                /** @description Unix seconds; must be greater than from. */
+                to?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    statsTrafficServerHistory: {
+        parameters: {
+            query: {
+                server_id: number;
+                hours?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    statsErrorsSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
 }
 
 export type RPCCode = components['schemas']['RPCCode']
@@ -3773,6 +3941,11 @@ export const rpcOperations = {
   logClearOperations: { method: 'POST', path: '/api/log/clear-operations' },
   logListRequests: { method: 'GET', path: '/api/log/list-requests' },
   logClearRequests: { method: 'POST', path: '/api/log/clear-requests' },
+  statsTrafficOverview: { method: 'GET', path: '/api/stats/traffic/overview' },
+  statsTrafficSeries: { method: 'GET', path: '/api/stats/traffic/series' },
+  statsTrafficBreakdown: { method: 'GET', path: '/api/stats/traffic/breakdown' },
+  statsTrafficServerHistory: { method: 'GET', path: '/api/stats/traffic/server-history' },
+  statsErrorsSummary: { method: 'GET', path: '/api/stats/errors/summary' },
 } as const
 
 type RPCOperation = (typeof rpcOperations)[keyof typeof rpcOperations]

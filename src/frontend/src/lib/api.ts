@@ -51,6 +51,10 @@ import type {
   SubscriptionRuleCategory,
   SubscriptionTemplate,
   TrafficPlanInput,
+  TrafficStatBreakdownRow,
+  TrafficStatGranularity,
+  TrafficStatPoint,
+  TrafficStatsOverview,
   CustomExchangeRate,
   ExchangeRateSettings,
   SubUser,
@@ -470,6 +474,46 @@ export const api = {
     requester.get<BillingEstimatedStats>('/api/billing/stats/estimated', params, {
       display: 'silent',
       ...options,
+    }),
+
+  statsTrafficOverview: () =>
+    requester.get<TrafficStatsOverview>('/api/stats/traffic/overview', undefined, {
+      display: 'silent',
+    }),
+  statsTrafficSeries: (p: {
+    dim: 'fleet' | 'server' | 'user'
+    server_id?: number
+    user_uuid?: string
+    granularity: TrafficStatGranularity
+    from?: number
+    to?: number
+  }) =>
+    requester.get<TrafficStatPoint[]>('/api/stats/traffic/series', { ...p }, { display: 'silent' }),
+  statsTrafficBreakdown: (p: {
+    server_id?: number
+    user_uuid?: string
+    from?: number
+    to?: number
+  }) =>
+    requester.get<TrafficStatBreakdownRow[]>(
+      '/api/stats/traffic/breakdown',
+      { ...p },
+      { display: 'silent' },
+    ),
+  statsServerTrafficHistory: (serverId: number, hours = 24) =>
+    requester.get<TrafficStatPoint[]>(
+      '/api/stats/traffic/server-history',
+      {
+        server_id: serverId,
+        hours,
+      },
+      {
+        display: 'silent',
+      },
+    ),
+  statsErrorsSummary: () =>
+    requester.get<{ today_error_count: number }>('/api/stats/errors/summary', undefined, {
+      display: 'silent',
     }),
 
   panelVersion: () => requester.get<PanelVersionInfo>('/api/panel/get-version'),

@@ -108,6 +108,7 @@ export default function Settings() {
   const [trustedProxies, setTrustedProxies] = useState('')
   const [timezone, setTimezone] = useState('')
   const [trafficTimezone, setTrafficTimezone] = useState('Asia/Shanghai')
+  const [trafficStatsRetentionDays, setTrafficStatsRetentionDays] = useState(60)
   // TLS
   const [tlsMode, setTlsMode] = useState<TLSModeChoice>('flag')
   const [certPEM, setCertPEM] = useState('')
@@ -179,6 +180,7 @@ export default function Settings() {
         setTrustedProxies(s.trusted_proxies ?? '')
         setTimezone(s.timezone)
         setTrafficTimezone(s.traffic_timezone)
+        setTrafficStatsRetentionDays(s.traffic_stats_retention_days)
         setTlsMode(s.tls_mode === '' ? 'flag' : s.tls_mode)
         setTlsDomain(s.tls_domain)
         setAcmeDomain(s.acme_domain)
@@ -272,6 +274,7 @@ export default function Settings() {
       const s = await api.updateSettings({
         timezone: timezone.trim(),
         traffic_timezone: trafficTimezone.trim(),
+        traffic_stats_retention_days: trafficStatsRetentionDays,
         public_url: publicURL.trim(),
         panel_short: panelShort.trim(),
         trusted_proxies: trustedProxies.trim(),
@@ -744,6 +747,18 @@ export default function Settings() {
                 placeholder="Asia/Shanghai"
                 required
               />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="trafficStatsRetentionDays">流量统计保留（天）</Label>
+              <Input
+                id="trafficStatsRetentionDays"
+                type="number"
+                min={31}
+                max={3650}
+                value={trafficStatsRetentionDays}
+                onChange={(e) => setTrafficStatsRetentionDays(Number(e.target.value))}
+              />
+              <p className="cg-set-note">明细数据保留天数，最小 31</p>
             </div>
           </SettingsCard>
 

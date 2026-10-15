@@ -9,6 +9,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- Tab 外壳（panel / agents） ---------- */
+
+.cg-runtime-tab-panel {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
 /* ---------- 顶部 Eyebrow 行 ---------- */
 
 .cg-runtime-topline {

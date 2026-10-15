@@ -515,6 +515,30 @@ CREATE TABLE IF NOT EXISTS chain_multiplier_events (
     effective_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 流量统计明细桶（分钟级）与日汇总：多维度（user/node/endpoint/chain_hop）原始字节，
+-- 不乘链路倍率（计费口径归 chain_traffic_daily）；写入挂在 ApplyTrafficSnapshot 遥测入口。
+CREATE TABLE IF NOT EXISTS traffic_stats_bucket (
+    server_id INTEGER NOT NULL REFERENCES servers(id),
+    dim_type  TEXT    NOT NULL,
+    dim_id    TEXT    NOT NULL,
+    bucket_ts INTEGER NOT NULL,          -- 分钟对齐 Unix 秒
+    up        INTEGER NOT NULL DEFAULT 0,
+    down      INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (server_id, dim_type, dim_id, bucket_ts)
+);
+CREATE INDEX IF NOT EXISTS idx_traffic_stats_bucket_ts ON traffic_stats_bucket(bucket_ts);
+CREATE INDEX IF NOT EXISTS idx_traffic_stats_bucket_dim ON traffic_stats_bucket(dim_type, dim_id, bucket_ts);
+CREATE TABLE IF NOT EXISTS traffic_stats_daily (
+    server_id  INTEGER NOT NULL REFERENCES servers(id),
+    dim_type   TEXT    NOT NULL,
+    dim_id     TEXT    NOT NULL,
+    usage_date TEXT    NOT NULL,         -- SettingTrafficTimezone 本地日期 YYYY-MM-DD
+    up         INTEGER NOT NULL DEFAULT 0,
+    down       INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (server_id, dim_type, dim_id, usage_date)
+);
+CREATE INDEX IF NOT EXISTS idx_traffic_stats_daily_dim_date ON traffic_stats_daily(dim_type, dim_id, usage_date);
+
 CREATE TABLE IF NOT EXISTS chain_revisions (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     chain_id      INTEGER NOT NULL REFERENCES chains(id),

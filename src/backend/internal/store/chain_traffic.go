@@ -45,6 +45,7 @@ func (s *Store) ApplyTrafficSnapshot(ctx context.Context, serverID int64, instan
 	}
 	timezone, location := s.trafficLocation(ctx)
 	usageDate := sampledAt.In(location).Format("2006-01-02")
+	bucketTS := sampledAt.UTC().Truncate(time.Minute).Unix()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -82,6 +83,9 @@ func (s *Store) ApplyTrafficSnapshot(ctx context.Context, serverID int64, instan
 			if err := addTrafficTx(tx, 0, userUUID, up, down); err != nil {
 				return err
 			}
+			if err := s.addTrafficStatTx(tx, serverID, bucketTS, usageDate, "user", userUUID, up, down); err != nil {
+				return err
+			}
 			if access {
 				if err := addChainTrafficTx(tx, chainID, 0, revisionID, multiplier, up, down, usageDate, timezone); err != nil {
 					return err
@@ -90,6 +94,9 @@ func (s *Store) ApplyTrafficSnapshot(ctx context.Context, serverID int64, instan
 			continue
 		}
 		if counter.EndpointID != 0 {
+			if err := s.addTrafficStatTx(tx, serverID, bucketTS, usageDate, "endpoint", strconv.FormatInt(counter.EndpointID, 10), up, down); err != nil {
+				return err
+			}
 			if _, err := tx.Exec(`INSERT INTO endpoint_traffic_totals (endpoint_id, up, down, updated_at)
 				VALUES (?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(endpoint_id) DO UPDATE SET
 				up=up+excluded.up, down=down+excluded.down, updated_at=excluded.updated_at`,
@@ -100,6 +107,9 @@ func (s *Store) ApplyTrafficSnapshot(ctx context.Context, serverID int64, instan
 		}
 		if counter.NodeID != 0 {
 			if err := addTrafficTx(tx, counter.NodeID, "", up, down); err != nil {
+				return err
+			}
+			if err := s.addTrafficStatTx(tx, serverID, bucketTS, usageDate, "node", strconv.FormatInt(counter.NodeID, 10), up, down); err != nil {
 				return err
 			}
 			chainID, exitHopID, revisionID, multiplier, sharedEntry, err := publishedChainForCounter(tx, serverID, counter.NodeID, 0)
@@ -126,6 +136,9 @@ func (s *Store) ApplyTrafficSnapshot(ctx context.Context, serverID int64, instan
 			if err == sql.ErrNoRows {
 				continue
 			}
+			return err
+		}
+		if err := s.addTrafficStatTx(tx, serverID, bucketTS, usageDate, "chain_hop", strconv.FormatInt(counter.HopID, 10), up, down); err != nil {
 			return err
 		}
 		if err := addChainTrafficTx(tx, chainID, counter.HopID, revisionID, multiplier, up, down, usageDate, timezone); err != nil {

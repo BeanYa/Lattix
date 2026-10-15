@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"lattix/shared"
@@ -58,6 +59,11 @@ const (
 	SettingSubAppURL          = "sub_app_url"               // 默认客户端跳转链接（subscription-userinfo app_url）
 	SettingClientCacheTTL     = "client_cache_ttl_hours"    // 客户端安装包缓存时长（小时）
 	SettingTrafficHistoryKeep = "traffic_history_retention" // 历史保留周期数
+
+	// 流量统计分钟桶保留：清理任务每小时的删除截止线；设置合法范围（31–3650）由
+	// 设置 API 校验，存储读取侧未设置/非法值一律回落 DefaultTrafficStatsRetentionDays。
+	SettingTrafficStatsRetentionDays = "traffic_stats_retention_days"
+	DefaultTrafficStatsRetentionDays = 60
 )
 
 type SettingMutation struct {
@@ -105,6 +111,23 @@ func (s *Store) DeleteSetting(ctx context.Context, key string) error {
 		return fmt.Errorf("delete setting %s: %w", key, err)
 	}
 	return nil
+}
+
+// TrafficStatsRetentionDays 返回流量统计分钟桶保留天数：未设置、非数字或非正值均回落
+// DefaultTrafficStatsRetentionDays（与设置 API 的 31–3650 校验解耦，读取侧只做回退）。
+func (s *Store) TrafficStatsRetentionDays(ctx context.Context) (int, error) {
+	raw, err := s.GetSetting(ctx, SettingTrafficStatsRetentionDays)
+	if err != nil {
+		return 0, err
+	}
+	if raw == "" {
+		return DefaultTrafficStatsRetentionDays, nil
+	}
+	days, err := strconv.Atoi(raw)
+	if err != nil || days <= 0 {
+		return DefaultTrafficStatsRetentionDays, nil
+	}
+	return days, nil
 }
 
 // PanelInstanceID returns the stable identity of this logical panel. Database

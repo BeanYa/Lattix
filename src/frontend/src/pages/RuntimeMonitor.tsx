@@ -25,10 +25,13 @@ import {
 } from 'lucide-react'
 
 import { EmptyState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, errorMessage } from '@/lib/api'
 import { humanizeBytes } from '@/lib/format'
 import type { PanelLifecycleState, PanelRuntimeSnapshot, ScheduledTaskRuntime } from '@/lib/types'
 import { cn } from '@/lib/utils'
+
+import AgentsStatsTab from './runtime/AgentsStatsTab'
 
 import './runtime-monitor.css'
 
@@ -51,6 +54,7 @@ const taskLabels: Record<string, string> = {
   'release.xray': 'Xray 版本巡检',
   'subscription.templates.refresh': '订阅模板刷新',
   'traffic.reset': '流量周期重置',
+  'traffic_stats.retention': '流量统计清理',
   'user.expiry': '用户到期巡检',
 }
 
@@ -240,7 +244,7 @@ function TaskRow({ task }: { task: ScheduledTaskRuntime }) {
   )
 }
 
-export default function RuntimeMonitor() {
+function PanelRuntimeSection() {
   const [snapshot, setSnapshot] = useState<PanelRuntimeSnapshot | null>(null)
   const [samples, setSamples] = useState<PanelRuntimeSnapshot[]>([])
   const [live, setLive] = useState(true)
@@ -328,7 +332,7 @@ export default function RuntimeMonitor() {
     snapshot.services.request_log_dropped === 0
 
   return (
-    <Page className="cg-runtime">
+    <>
       {/* Eyebrow + 采样状态 */}
       <div className="cg-runtime-topline">
         <span className="cg-eyebrow">PANEL / RUNTIME MONITOR</span>
@@ -688,6 +692,31 @@ export default function RuntimeMonitor() {
           )}
         </div>
       </section>
+    </>
+  )
+}
+
+export default function RuntimeMonitor() {
+  const [tab, setTab] = useState<'panel' | 'agents'>('panel')
+
+  return (
+    <Page className="cg-runtime">
+      <Tabs
+        value={tab}
+        onValueChange={(value) => setTab(value === 'agents' ? 'agents' : 'panel')}
+        className="min-w-0"
+      >
+        <TabsList variant="line">
+          <TabsTrigger value="panel">Panel 运行</TabsTrigger>
+          <TabsTrigger value="agents">被控统计</TabsTrigger>
+        </TabsList>
+        <TabsContent value="panel" className="cg-runtime-tab-panel">
+          <PanelRuntimeSection />
+        </TabsContent>
+        <TabsContent value="agents" className="cg-runtime-tab-panel">
+          <AgentsStatsTab />
+        </TabsContent>
+      </Tabs>
     </Page>
   )
 }
