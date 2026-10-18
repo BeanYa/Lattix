@@ -1,170 +1,609 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-29T18:43:39+08:00",
-  "title": "Design System: Lattix Signal Rack",
+  "generatedAt": "2026-10-18T21:58:50+08:00",
+  "title": "Design System: Lattix Operations Desk",
   "extensions": {
+    "appearance": {
+      "default": "dark"
+    },
     "colorMeta": {
-      "signal-blue": {
-        "role": "primary",
-        "displayName": "Deep Signal Blue",
-        "canonical": "#315a70",
-        "tonalRamp": ["#07151c", "#102b39", "#1f4356", "#315a70", "#4e7890", "#7397a9", "#a7bbc4", "#e7eef0"]
-      },
-      "signal-blue-bright": {
-        "role": "primary",
-        "displayName": "Bright Trace Blue",
-        "canonical": "#4e91b4",
-        "tonalRamp": ["#071821", "#123246", "#25516d", "#3b7193", "#4e91b4", "#77aec8", "#a8cbd9", "#e8f1f4"]
-      },
-      "safety-orange": {
-        "role": "tertiary",
-        "displayName": "Safety Orange",
-        "canonical": "#f05a28",
-        "tonalRamp": ["#281006", "#54200d", "#843217", "#b9441e", "#f05a28", "#f4845c", "#f6b59c", "#fdece5"]
-      },
-      "signal-green": {
-        "role": "secondary",
-        "displayName": "Instrument Green",
-        "canonical": "#6f933d",
-        "tonalRamp": ["#111a08", "#273713", "#405723", "#58782f", "#6f933d", "#94af6b", "#bacb9b", "#edf2e3"]
-      },
-      "aluminum": {
+      "ground": {
         "role": "neutral",
-        "displayName": "Brushed Aluminum",
-        "canonical": "#d8d8d0",
-        "tonalRamp": ["#252622", "#44453f", "#666760", "#898a82", "#adaea6", "#c9c9c2", "#e2e2dc", "#f5f5f1"]
+        "displayName": "Night Ground",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#242526",
+          "#414243",
+          "#606163",
+          "#818284",
+          "#a4a5a7",
+          "#c8c9cb",
+          "#edeff0"
+        ],
+        "lightValue": "#f4f4f2",
+        "note": "Page ground. Daylight: paper ground #f4f4f2."
       },
-      "charcoal": {
+      "surface": {
         "role": "neutral",
-        "displayName": "Rack Charcoal",
-        "canonical": "#1d2528",
-        "tonalRamp": ["#090d0e", "#111719", "#1d2528", "#354044", "#566164", "#828b8c", "#b6bcbb", "#eef0ed"]
+        "displayName": "Module Surface",
+        "tonalRamp": [
+          "#0a0b0d",
+          "#242527",
+          "#414244",
+          "#606164",
+          "#818285",
+          "#a4a5a8",
+          "#c8c9cc",
+          "#edeef1"
+        ],
+        "lightValue": "#ffffff",
+        "note": "Module bodies, command bar, rail."
       },
-      "enamel": {
+      "raised": {
         "role": "neutral",
-        "displayName": "Enamel Black",
-        "canonical": "#111719",
-        "tonalRamp": ["#050809", "#0b1011", "#111719", "#293033", "#4b5355", "#778082", "#adb3b3", "#ebeded"]
+        "displayName": "Raised Step",
+        "tonalRamp": [
+          "#0a0b0e",
+          "#242528",
+          "#414245",
+          "#606165",
+          "#818286",
+          "#a3a5a9",
+          "#c7c9cd",
+          "#edeef3"
+        ],
+        "lightValue": "#fafaf8",
+        "note": "Hover fill and secondary chrome."
+      },
+      "inset": {
+        "role": "neutral",
+        "displayName": "Inset Recess",
+        "tonalRamp": [
+          "#0a0b0c",
+          "#242526",
+          "#414243",
+          "#606163",
+          "#818284",
+          "#a4a5a7",
+          "#c8c9cb",
+          "#edeff0"
+        ],
+        "lightValue": "#ededea",
+        "note": "Table heads, hop bay, metric wells."
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Hairline Rule",
+        "tonalRamp": [
+          "#0a0b0e",
+          "#242528",
+          "#414245",
+          "#606165",
+          "#818286",
+          "#a4a5a9",
+          "#c8c9cd",
+          "#edeef2"
+        ],
+        "lightValue": "#dededa",
+        "note": "The 1px boundary between modules, rows and sections."
+      },
+      "rule-strong": {
+        "role": "neutral",
+        "displayName": "Strong Hairline",
+        "tonalRamp": [
+          "#0a0b0e",
+          "#232529",
+          "#404246",
+          "#5f6166",
+          "#808287",
+          "#a3a5aa",
+          "#c7c9ce",
+          "#eceef4"
+        ],
+        "lightValue": "#bdbdb7",
+        "note": "Chips, comboboxes, drawers, hop strip."
       },
       "ink": {
         "role": "neutral",
-        "displayName": "Equipment Ink",
-        "canonical": "#1b2022",
-        "tonalRamp": ["#080b0c", "#111517", "#1b2022", "#353b3d", "#596062", "#858b8c", "#b9bdbc", "#f0f1ee"]
+        "displayName": "Ink",
+        "tonalRamp": [
+          "#0b0b08",
+          "#252522",
+          "#42423e",
+          "#61615d",
+          "#83837e",
+          "#a5a5a1",
+          "#c9c9c5",
+          "#efefea"
+        ],
+        "lightValue": "#111111",
+        "note": "Primary text and numerals."
+      },
+      "ink-2": {
+        "role": "neutral",
+        "displayName": "Ink Secondary",
+        "tonalRamp": [
+          "#0b0c08",
+          "#252621",
+          "#42433d",
+          "#61625c",
+          "#82837d",
+          "#a5a6a0",
+          "#c9cac4",
+          "#eeefe9"
+        ],
+        "lightValue": "#5a5b57",
+        "note": "Labels, meta, muted values; also the info tone."
+      },
+      "ink-3": {
+        "role": "neutral",
+        "displayName": "Ink Tertiary",
+        "tonalRamp": [
+          "#0b0c08",
+          "#252622",
+          "#42423e",
+          "#61625d",
+          "#82837e",
+          "#a5a6a0",
+          "#c9cac4",
+          "#eeefea"
+        ],
+        "lightValue": "#6b6c66",
+        "note": "Annotations, placeholders, dt captions."
+      },
+      "control": {
+        "role": "neutral",
+        "displayName": "Control Border",
+        "tonalRamp": [
+          "#090b0f",
+          "#22252a",
+          "#3f4247",
+          "#5e6267",
+          "#7e8388",
+          "#a1a5ab",
+          "#c5cacf",
+          "#eaeff5"
+        ],
+        "lightValue": "#8f8f89",
+        "note": "Outline-button and input border."
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Utility Red",
+        "tonalRamp": [
+          "#230000",
+          "#4e0000",
+          "#7f0705",
+          "#b80305",
+          "#ee241d",
+          "#ff7363",
+          "#ffb1a5",
+          "#ffdbd1"
+        ],
+        "lightValue": "#e60012",
+        "note": "Primary action, selection fill, live exception, module index tab. Never decoration."
+      },
+      "accent-ink": {
+        "role": "primary",
+        "displayName": "Red Contra Ink",
+        "lightValue": "#ffffff",
+        "note": "Text and glyphs on the red fill."
+      },
+      "accent-soft": {
+        "role": "primary",
+        "displayName": "Red Wash",
+        "lightValue": "rgba(230, 0, 18, 0.07)",
+        "note": "Transient red wash only: the hop reveal's opening frame, a highlighted combobox row, a checked-row wash. Selection itself is a solid fill."
+      },
+      "selection": {
+        "role": "primary",
+        "displayName": "Selection Wash",
+        "lightValue": "rgba(230, 0, 18, 0.06)",
+        "note": "Ambient selection wash token, defined but not used for selection; selected rows and chains take the solid utility red."
+      },
+      "focus": {
+        "role": "primary",
+        "displayName": "Focus Ring",
+        "tonalRamp": [
+          "#230000",
+          "#4e0000",
+          "#7f0705",
+          "#b80305",
+          "#ee241d",
+          "#ff7363",
+          "#ffb1a5",
+          "#ffdbd1"
+        ],
+        "lightValue": "#e60012",
+        "note": "2px outline at 1px offset; never removed."
+      },
+      "success": {
+        "role": "secondary",
+        "displayName": "State Green",
+        "tonalRamp": [
+          "#001003",
+          "#002f12",
+          "#005027",
+          "#00753a",
+          "#35985b",
+          "#5cbc7d",
+          "#82e2a0",
+          "#bcffcf"
+        ],
+        "lightValue": "#1f7a4a",
+        "note": "Healthy agent, chain, link and success notice. Always paired with a word."
+      },
+      "warning": {
+        "role": "tertiary",
+        "displayName": "State Amber",
+        "tonalRamp": [
+          "#150800",
+          "#332100",
+          "#583c00",
+          "#7e5a06",
+          "#a87906",
+          "#d09b30",
+          "#f6bf5a",
+          "#ffebc5"
+        ],
+        "lightValue": "#966000",
+        "note": "Degraded, stale, unconfirmed."
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Exception Red",
+        "tonalRamp": [
+          "#3a0000",
+          "#670003",
+          "#930025",
+          "#c13048",
+          "#ef5c6d",
+          "#ff8794",
+          "#ffa8b3",
+          "#ffb8c3"
+        ],
+        "lightValue": "#b3122f",
+        "note": "Failure text, danger borders, destructive actions, invalid fields. Crimson-pink family deliberately distinct from the utility red (dark #ff6b7a vs accent #ff3b2f; daylight #b3122f vs #e60012); never an ordinary action or a second accent."
+      },
+      "overlay": {
+        "role": "neutral",
+        "displayName": "Scrim",
+        "lightValue": "rgba(20, 20, 20, 0.36)",
+        "note": "Dialog, sheet and drawer scrim."
+      },
+      "brand-ink": {
+        "role": "neutral",
+        "displayName": "Lattix Mark Ink",
+        "tonalRamp": [
+          "#080d03",
+          "#222719",
+          "#3e4536",
+          "#5d6454",
+          "#7e8575",
+          "#a1a897",
+          "#c5ccba",
+          "#eaf2df"
+        ],
+        "note": "Preserved brand mark foreground."
+      },
+      "brand-yellow": {
+        "role": "secondary",
+        "displayName": "Lattix Mark Yellow",
+        "tonalRamp": [
+          "#050f00",
+          "#1d2a00",
+          "#364a03",
+          "#516d00",
+          "#6d9100",
+          "#8bb70c",
+          "#aadf13",
+          "#d6ff88"
+        ],
+        "note": "Preserved brand mark accent; brand material only, never a UI accent."
+      },
+      "brand-mint": {
+        "role": "secondary",
+        "displayName": "Lattix Mark Mint",
+        "tonalRamp": [
+          "#001005",
+          "#002e16",
+          "#00512b",
+          "#007543",
+          "#369763",
+          "#5dbc85",
+          "#83e1a8",
+          "#bdffd6"
+        ],
+        "note": "Preserved brand mark accent; brand material only, never a UI accent."
       }
     },
     "typographyMeta": {
-      "display": { "displayName": "Equipment Display", "purpose": "Page titles and major instrument headings." },
-      "title": { "displayName": "Module Title", "purpose": "Selected resources and module identities." },
-      "body": { "displayName": "Operational Body", "purpose": "Chinese explanations, forms, and long status copy." },
-      "label": { "displayName": "Engraved Label", "purpose": "Controls, state plates, table heads, and technical annotations." }
+      "display": {
+        "displayName": "Desk Display",
+        "purpose": "Dashboard title 28px/900 (22px below 768px); other page titles 24px/900; login statement 34px/900 and login form heading 20px/900. Chinese set in Noto Sans SC Black, Latin in Geist Variable."
+      },
+      "headline": {
+        "displayName": "Readout Headline",
+        "purpose": "The large figures: the 订阅用户 total at 30px/800 and 机群总计 cells at 22px/780, in Barlow Condensed with tabular figures."
+      },
+      "title": {
+        "displayName": "Module Title",
+        "purpose": "Card and drawer headings; module heads run at 11.5px/700."
+      },
+      "body": {
+        "displayName": "Operational Body",
+        "purpose": "Descriptions, forms, notices; page descriptions cap at 72ch. Chinese body copy stays on the system PingFang/Hiragino/YaHei/Noto CJK stack."
+      },
+      "label": {
+        "displayName": "Machinery Label",
+        "purpose": "Index tabs, column heads, status chips, dt captions; uppercase tracking +0.06em."
+      },
+      "control": {
+        "displayName": "Control Label",
+        "purpose": "Buttons, navigation items, tabs and segmented controls."
+      },
+      "numeric": {
+        "displayName": "Metric Figure",
+        "purpose": "Inline metric values such as throughput readouts (16px/750) in Barlow Condensed, tabular figures."
+      },
+      "mono": {
+        "displayName": "Data Figure",
+        "purpose": "Latency, addresses, byte counters and IDs in data rows; mono stack with tabular figures."
+      }
     },
     "shadows": [
-      { "name": "engraved-module", "value": "inset 0 1px 0 rgba(255,255,255,.74), inset 0 -1px 0 rgba(0,0,0,.22)", "purpose": "Stamped edge for aluminum controls and modules." },
-      { "name": "recessed-field", "value": "inset 0 1px 4px rgba(0,0,0,.34)", "purpose": "Recesses routing matrices and terminal surfaces." },
-      { "name": "raised-overlay", "value": "0 1px 2px rgba(12,17,18,.24), 0 8px 20px rgba(12,17,18,.12)", "purpose": "Separates dialogs and menus from the workbench." }
+      {
+        "name": "overlay-dark",
+        "value": "0 22px 48px -20px rgba(0, 0, 0, 0.8)",
+        "purpose": "Dialogs, sheets, menus, combobox popovers and the server drawer in the default dark appearance. Never an in-page module."
+      },
+      {
+        "name": "overlay-daylight",
+        "value": "0 18px 40px -18px rgba(20, 20, 20, 0.32)",
+        "purpose": "The same overlay role in the light appearance."
+      }
     ],
     "motion": [
-      { "name": "ease-standard", "value": "cubic-bezier(.16,1,.3,1)", "purpose": "Fast, controlled state transitions." },
-      { "name": "active-signal-flow", "value": "one translated pulse over 2.4s linear infinite", "purpose": "Only an active selected route may show continuous flow." },
-      { "name": "meter-response", "value": "transform 480ms cubic-bezier(.16,1,.3,1)", "purpose": "GPU-friendly instrument meter updates." }
+      {
+        "name": "ease-panel",
+        "value": "cubic-bezier(0.2, 0, 0, 1)",
+        "purpose": "Default easing for every state colour and background transition."
+      },
+      {
+        "name": "fast",
+        "value": "140ms",
+        "purpose": "Hover, active and border transitions on buttons, nav items and rows."
+      },
+      {
+        "name": "page-in",
+        "value": "180ms cubic-bezier(0.2, 0, 0, 1), opacity 0→1 and translateY(4px)→0",
+        "purpose": "The only page-level entrance; applied to the main content wrapper."
+      },
+      {
+        "name": "hop-reveal",
+        "value": "180ms cubic-bezier(0.2, 0, 0, 1), staggered 45ms per cell (max 135ms)",
+        "purpose": "Chain hop cells reveal once when the selected chain changes; there is no looping animation."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "animation: none; transition-duration: 0.01ms",
+        "purpose": "prefers-reduced-motion removes the page entrance, the hop stagger and all transitions."
+      }
     ],
     "breakpoints": [
-      { "name": "mobile-rack", "value": "760px" },
-      { "name": "compact-shell", "value": "900px" },
-      { "name": "two-column-readouts", "value": "1120px" }
+      {
+        "name": "mosaic-span-collapse",
+        "value": "1279px",
+        "purpose": "3/4-span modules become half width; 8-span modules go full width."
+      },
+      {
+        "name": "rail-to-sheet",
+        "value": "1023px",
+        "purpose": "The 200px rail is replaced by a sheet opened from the command bar; the mosaic drops to 6 columns."
+      },
+      {
+        "name": "single-column",
+        "value": "767px",
+        "purpose": "Every module spans the full grid; summary and runtime grids drop to two columns."
+      },
+      {
+        "name": "page-header-stack",
+        "value": "639px",
+        "purpose": "Page header and notice actions stack; the command bar name drops to 13px at 640px."
+      },
+      {
+        "name": "actions-full-width",
+        "value": "480px",
+        "purpose": "Header action rows take the full width."
+      }
     ]
   },
   "components": [
     {
-      "name": "Primary Control",
+      "name": "Primary Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "The immediate action in a compact operational control group.",
-      "html": "<button class=\"ds-btn-primary\">APPLY ROUTE</button>",
-      "css": ".ds-btn-primary{height:32px;padding:0 11px;border:1px solid #294d60;border-radius:5px;background:#315a70;color:#f7f7f2;font:650 12px/1.2 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.05em;box-shadow:inset 0 1px 0 rgba(255,255,255,.2),0 1px 2px rgba(10,16,18,.22);cursor:pointer;transition:background .18s,transform .18s}.ds-btn-primary:hover{background:#3a6b83}.ds-btn-primary:focus-visible{outline:2px solid #327aa2;outline-offset:2px}.ds-btn-primary:active{transform:translateY(1px);box-shadow:inset 0 2px 4px rgba(0,0,0,.28)}"
+      "description": "The single immediate action in a local control group; solid utility red, 30px high.",
+      "html": "<button class=\"ds-btn-primary\">应用变更</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:30px;padding:0 12px;border:1px solid var(--panel-accent);border-radius:var(--panel-radius);background:var(--panel-accent);color:var(--panel-accent-ink);font-family:var(--font-display);font-size:12px;font-weight:600;letter-spacing:.01em;line-height:1;white-space:nowrap;cursor:pointer;transition:background-color 140ms cubic-bezier(.2,0,0,1),border-color 140ms cubic-bezier(.2,0,0,1),color 140ms cubic-bezier(.2,0,0,1)}.ds-btn-primary:hover{filter:brightness(1.05)}.ds-btn-primary:active{filter:brightness(.98)}.ds-btn-primary:focus-visible{outline:2px solid var(--panel-focus);outline-offset:1px}.ds-btn-primary:disabled{opacity:.42;cursor:not-allowed}"
     },
     {
-      "name": "Secondary Control",
+      "name": "Outline Button",
       "kind": "button",
-      "refersTo": "button-secondary",
-      "description": "An engraved aluminum action that does not compete with the primary control.",
-      "html": "<button class=\"ds-btn-secondary\">VIEW DETAILS</button>",
-      "css": ".ds-btn-secondary{height:32px;padding:0 10px;border:1px solid rgba(20,27,29,.42);border-radius:5px;background:#c7c7c0;color:#1b2022;font:650 12px/1.2 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.04em;box-shadow:inset 0 1px 0 rgba(255,255,255,.74),inset 0 -1px 0 rgba(0,0,0,.22);cursor:pointer}.ds-btn-secondary:hover{background:#d8d8d0}.ds-btn-secondary:focus-visible{outline:2px solid #327aa2;outline-offset:2px}.ds-btn-secondary:active{transform:translateY(1px);box-shadow:inset 0 2px 3px rgba(0,0,0,.24)}"
+      "refersTo": "button-outline",
+      "description": "The default secondary action: transparent ground, 1px control border, no lift.",
+      "html": "<button class=\"ds-btn-outline\">刷新</button>",
+      "css": ".ds-btn-outline{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:30px;padding:0 12px;border:1px solid var(--panel-control);border-radius:var(--panel-radius);background:transparent;color:var(--panel-ink);font-family:var(--font-display);font-size:12px;font-weight:600;letter-spacing:.01em;line-height:1;white-space:nowrap;cursor:pointer;transition:background-color 140ms cubic-bezier(.2,0,0,1),border-color 140ms cubic-bezier(.2,0,0,1),color 140ms cubic-bezier(.2,0,0,1)}.ds-btn-outline:hover{border-color:var(--panel-ink);background:var(--panel-raised)}.ds-btn-outline:active{background:var(--panel-inset)}.ds-btn-outline:focus-visible{outline:2px solid var(--panel-focus);outline-offset:1px}.ds-btn-outline:disabled{opacity:.42;cursor:not-allowed}"
     },
     {
-      "name": "Operational Input",
+      "name": "Text Input",
       "kind": "input",
       "refersTo": "input",
-      "description": "A recessed field for configuration and search.",
-      "html": "<label class=\"ds-field\"><span>SERVER ALIAS</span><input value=\"Tokyo Edge 01\" aria-label=\"Server alias\"></label>",
-      "css": ".ds-field{display:grid;gap:5px;color:#50585a;font:650 11px/1.2 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.05em}.ds-field input{padding:8px 10px;border:1px solid rgba(20,27,29,.42);border-radius:4px;background:#f0efe9;color:#1b2022;font:400 13px/1.5 'Segoe UI',sans-serif;box-shadow:inset 0 1px 2px rgba(0,0,0,.12)}.ds-field input:focus-visible{outline:2px solid #327aa2;outline-offset:2px}"
+      "description": "A flat 32px field on the surface slot; focus shifts the border to the focus colour with a 1px ring.",
+      "html": "<label class=\"ds-field\"><span>服务器名称</span><input class=\"ds-input\" value=\"Tokyo Edge 01\" aria-label=\"服务器名称\"></label>",
+      "css": ".ds-field{display:grid;gap:4px;color:var(--panel-ink-2);font-family:var(--font-display);font-size:10.5px;font-weight:600;letter-spacing:.04em}.ds-input{height:32px;min-width:0;width:100%;padding:0 10px;border:1px solid var(--panel-control);border-radius:var(--panel-radius);background:var(--panel-surface);color:var(--panel-ink);font-family:var(--font-text);font-size:13px;line-height:1.5;outline:none}.ds-input::placeholder{color:var(--panel-ink-3)}.ds-input:focus-visible{border-color:var(--panel-focus);box-shadow:0 0 0 1px var(--panel-focus)}.ds-input:disabled{background:var(--panel-raised);opacity:.5;cursor:not-allowed}"
     },
     {
-      "name": "Equipment Module",
+      "name": "Module With Index Tab",
       "kind": "card",
       "refersTo": "module",
-      "description": "The canonical aluminum information surface.",
-      "html": "<article class=\"ds-module\"><span>SERVER</span><strong>06</strong><small>5 ONLINE</small></article>",
-      "css": ".ds-module{display:grid;grid-template-columns:auto 1fr;align-items:end;gap:3px 10px;padding:12px;border:1px solid rgba(20,27,29,.42);border-radius:7px;background:#d8d8d0;color:#1b2022;box-shadow:inset 0 1px 0 rgba(255,255,255,.74),inset 0 -1px 0 rgba(0,0,0,.22)}.ds-module span{grid-column:1/-1;color:#50585a;font:650 12px/1.2 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.05em}.ds-module strong{font:670 42px/.9 'Barlow Condensed','Arial Narrow',sans-serif}.ds-module small{color:#50585a;font:400 11px/1.2 'Segoe UI',sans-serif}"
+      "description": "The canonical rectangular module: red index tab flush left, Chinese title, doubled header hairline, 8px body, metric figure in Barlow Condensed.",
+      "html": "<section class=\"ds-mod\"><header class=\"ds-mod-head\"><span class=\"ds-mod-tab\">FLEET</span><h2 class=\"ds-mod-title\">机群总计</h2><span class=\"ds-mod-meta\">6 台</span></header><div class=\"ds-mod-body\"><div class=\"ds-mod-value\">06</div><div class=\"ds-mod-note\">5 在线 / 1 异常</div></div></section>",
+      "css": ".ds-mod{display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--panel-rule);border-radius:1px;background:var(--panel-surface);color:var(--panel-ink)}.ds-mod-head{position:relative;display:flex;align-items:center;gap:7px;min-height:30px;padding:0 8px 0 0;border-bottom:1px solid var(--panel-rule)}.ds-mod-head::after{content:'';position:absolute;right:0;bottom:2px;left:0;height:1px;background:var(--panel-rule-strong);opacity:.5;pointer-events:none}.ds-mod-tab{display:inline-flex;align-items:center;padding:0 8px;min-height:30px;background:var(--panel-accent);color:var(--panel-accent-ink);font-family:var(--font-display);font-size:9px;font-weight:750;letter-spacing:.12em;line-height:1}.ds-mod-title{margin:0;font-family:var(--font-display);font-size:11.5px;font-weight:700;letter-spacing:.04em;line-height:1}.ds-mod-meta{margin-left:auto;color:var(--panel-ink-3);font-size:10px;white-space:nowrap}.ds-mod-body{padding:8px}.ds-mod-value{font-family:var(--font-numeric);font-size:22px;font-weight:780;letter-spacing:-.03em;line-height:1.05;font-variant-numeric:tabular-nums}.ds-mod-note{margin-top:2px;color:var(--panel-ink-3);font-size:9.5px}"
     },
     {
-      "name": "Healthy Status Plate",
+      "name": "Status Chip",
       "kind": "chip",
-      "refersTo": "status-healthy",
-      "description": "A redundant lamp-and-label confirmation state.",
-      "html": "<span class=\"ds-status-healthy\"><i></i>ALL SYSTEMS STABLE</span>",
-      "css": ".ds-status-healthy{display:inline-flex;height:32px;align-items:center;gap:7px;padding:0 10px;border:1px solid rgba(111,147,61,.5);border-radius:4px;background:#f0efe9;color:#58782f;font:650 12px/1.2 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.04em;box-shadow:inset 0 1px 0 rgba(255,255,255,.74)}.ds-status-healthy i{width:8px;height:8px;border:1px solid #405723;border-radius:50%;background:#9bc356;box-shadow:0 0 0 2px rgba(111,147,61,.14)}"
+      "refersTo": "status-chip",
+      "description": "Read-only state tag: 1px current-colour border, 5px square marker, transparent fill, 10px label.",
+      "html": "<div class=\"ds-chips\"><span class=\"ds-chip is-ok\">正常</span><span class=\"ds-chip is-warn\">降级</span><span class=\"ds-chip is-red\">离线</span></div>",
+      "css": ".ds-chips{display:flex;flex-wrap:wrap;gap:6px}.ds-chip{display:inline-flex;align-items:center;gap:5px;padding:1px 6px;border:1px solid color-mix(in srgb,var(--tone) 48%,var(--panel-rule));border-radius:1px;background:transparent;color:var(--tone);font-family:var(--font-display);font-size:10px;font-weight:650;letter-spacing:.03em;line-height:1.5;white-space:nowrap}.ds-chip::before{content:'';width:5px;height:5px;flex:none;background:currentColor}.ds-chip.is-ok{--tone:var(--panel-success)}.ds-chip.is-warn{--tone:var(--panel-warning)}.ds-chip.is-red{--tone:var(--panel-danger);border-color:var(--panel-danger);background:var(--panel-danger-soft)}"
     },
     {
-      "name": "Active Navigation Channel",
+      "name": "Active Navigation Item",
       "kind": "nav",
-      "refersTo": "nav-active",
-      "description": "The selected destination within the charcoal equipment rail.",
-      "html": "<a class=\"ds-nav-active\" href=\"#\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z\"/></svg><span>仪表盘</span></a>",
-      "css": ".ds-nav-active{display:flex;width:168px;height:40px;align-items:center;gap:10px;padding:0 10px;border:1px solid #4e91b4;border-radius:4px;background:#263a43;color:#e9f6fa;box-shadow:inset 3px 0 0 #4e91b4;text-decoration:none;font:520 15px/1 'Barlow Condensed','PingFang SC',sans-serif}.ds-nav-active svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.5}.ds-nav-active:hover{background:#2d4651}.ds-nav-active:focus-visible{outline:2px solid #78b2cf;outline-offset:2px}"
+      "refersTo": "nav-item-active",
+      "description": "The current destination in the 200px rail: solid red fill, inverted text, 1px radius, 14px stroke icon.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"主导航\"><a class=\"ds-nav-item is-active\" href=\"#\" aria-current=\"page\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><rect x=\"3\" y=\"3\" width=\"7\" height=\"7\"/><rect x=\"14\" y=\"3\" width=\"7\" height=\"7\"/><rect x=\"3\" y=\"14\" width=\"7\" height=\"7\"/><rect x=\"14\" y=\"14\" width=\"7\" height=\"7\"/></svg><span>仪表盘</span></a><a class=\"ds-nav-item\" href=\"#\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" aria-hidden=\"true\"><rect x=\"3\" y=\"4\" width=\"18\" height=\"6\"/><rect x=\"3\" y=\"14\" width=\"18\" height=\"6\"/></svg><span>服务器</span></a></nav>",
+      "css": ".ds-nav{display:grid;gap:1px;width:200px;padding:8px;background:var(--panel-surface);color:var(--panel-ink)}.ds-nav-item{display:flex;align-items:center;gap:8px;min-height:30px;padding:0 8px;border:1px solid transparent;border-radius:1px;color:var(--panel-ink-2);font-family:var(--font-display);font-size:12.5px;font-weight:500;line-height:1;text-decoration:none;transition:background-color 140ms cubic-bezier(.2,0,0,1),color 140ms cubic-bezier(.2,0,0,1)}.ds-nav-item svg{width:14px;height:14px;flex:none;opacity:.72}.ds-nav-item:hover{border-color:var(--panel-rule);background:var(--panel-raised);color:var(--panel-ink)}.ds-nav-item:focus-visible{outline:2px solid var(--panel-focus);outline-offset:1px}.ds-nav-item.is-active{border-color:var(--panel-accent);background:var(--panel-accent);color:var(--panel-accent-ink);font-weight:650}.ds-nav-item.is-active svg{opacity:1}"
     },
     {
-      "name": "Chain-Driven Command Rail",
+      "name": "Readings Row (Selected)",
       "kind": "custom",
-      "description": "The Dashboard workbench: selecting an existing chain drives its ordered topology and the runtime instruments for that chain's entry server.",
-      "html": "<section class=\"ds-command-rail\" aria-label=\"链路工作台\"><button class=\"ds-chain-selected\" type=\"button\" aria-pressed=\"true\"><small>已有链路</small><strong>所选链路</strong><span>状态</span></button><ol class=\"ds-topology\" aria-label=\"所选链路的有序拓扑\"><li><b>01</b><span>ENTRY</span></li><li aria-hidden=\"true\">→</li><li><b>…</b><span>ORDERED HOPS</span></li></ol><dl class=\"ds-runtime\"><div><dt>入口服务器</dt><dd>—</dd></div><div><dt>CPU</dt><dd>—</dd></div><div><dt>上行</dt><dd>—</dd></div></dl></section>",
-      "css": ".ds-command-rail{display:grid;grid-template-columns:190px minmax(0,1fr);overflow:hidden;border:1px solid rgba(222,232,232,.2);border-radius:7px;background:#111719;color:#f7f7f2;box-shadow:inset 0 3px 9px rgba(0,0,0,.48);font-family:'Segoe UI','PingFang SC',sans-serif}.ds-chain-selected{display:grid;grid-template-columns:1fr auto;gap:4px;padding:12px;border:0;border-right:1px solid rgba(222,232,232,.2);background:rgba(49,90,112,.24);color:inherit;text-align:left;box-shadow:inset 0 0 0 1px #4e91b4;cursor:pointer}.ds-chain-selected small{grid-column:1/-1;color:#a7bbc4;font:600 11px/1.2 'Barlow Condensed','Arial Narrow',sans-serif;letter-spacing:.04em}.ds-chain-selected strong{font:600 15px/1.2 'Barlow Condensed','PingFang SC',sans-serif}.ds-chain-selected span{color:#9bc356;font-size:10px}.ds-chain-selected:hover{background:rgba(49,90,112,.34)}.ds-chain-selected:focus-visible{outline:2px solid #4e91b4;outline-offset:-3px}.ds-topology{display:flex;align-items:center;justify-content:center;gap:18px;margin:0;padding:20px;list-style:none}.ds-topology li:not([aria-hidden]){display:grid;min-width:78px;gap:5px;padding:10px;border:1px solid rgba(222,232,232,.2);border-radius:5px}.ds-topology b{font:700 18px/1 'Barlow Condensed','Arial Narrow',sans-serif}.ds-topology span{color:#a7bbc4;font:600 10px/1.2 'Barlow Condensed','Arial Narrow',sans-serif}.ds-runtime{display:grid;grid-column:1/-1;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;border-top:1px solid rgba(27,32,34,.24);background:#d8d8d0;color:#1b2022}.ds-runtime div{padding:10px 12px;border-right:1px solid rgba(27,32,34,.2)}.ds-runtime div:last-child{border-right:0}.ds-runtime dt{color:#596062;font-size:10px}.ds-runtime dd{margin:4px 0 0;font:700 22px/1 'Barlow Condensed','Arial Narrow',sans-serif}"
+      "refersTo": "row-selected",
+      "description": "The dashboard/server readings row: 27px dense row, tabular right-aligned figures, full utility-red fill with accent-ink text when selected — the same selection signal as the /servers row and the active chain row.",
+      "html": "<table class=\"ds-readings\"><thead><tr><th>服务器</th><th>位置</th><th>延迟</th><th>用量</th></tr></thead><tbody><tr class=\"is-selected\"><td><button class=\"ds-row-select\" type=\"button\" aria-pressed=\"true\">Tokyo Edge 01</button></td><td class=\"ds-muted mono\">JP</td><td class=\"num\">42 ms</td><td class=\"num\">68%</td></tr><tr><td><button class=\"ds-row-select\" type=\"button\" aria-pressed=\"false\">Frankfurt 02</button></td><td class=\"ds-muted mono\">DE</td><td class=\"num\">118 ms</td><td class=\"num\">31%</td></tr></tbody></table>",
+      "css": ".ds-readings{width:100%;border-collapse:collapse;background:var(--panel-surface);color:var(--panel-ink);font-size:11px}.ds-readings th{height:26px;padding:0 8px;border-bottom:1px solid var(--panel-rule);background:var(--panel-inset);color:var(--panel-ink-2);font-family:var(--font-display);font-size:9.5px;font-weight:650;letter-spacing:.05em;text-align:left;white-space:nowrap}.ds-readings th:nth-child(n+3){text-align:right}.ds-readings td{height:27px;padding:0 8px;border-bottom:1px solid var(--panel-rule);white-space:nowrap}.ds-readings tbody tr:hover{background:var(--panel-hover)}.ds-readings tr.is-selected{background:var(--panel-accent);color:var(--panel-accent-ink)}.ds-readings tr.is-selected .ds-muted{color:color-mix(in srgb,var(--panel-accent-ink) 72%,transparent)}.ds-readings .num{font-family:var(--panel-mono);font-size:10px;font-variant-numeric:tabular-nums;text-align:right}.ds-readings .mono{font-family:var(--panel-mono);font-size:9.5px;letter-spacing:.04em}.ds-readings .ds-muted{color:var(--panel-ink-3)}.ds-row-select{padding:0;border:0;background:transparent;color:inherit;font-family:var(--font-display);font-size:11px;font-weight:650;letter-spacing:.01em;cursor:pointer;white-space:nowrap}.ds-row-select:focus-visible{outline:2px solid var(--panel-focus);outline-offset:2px}"
+    },
+    {
+      "name": "Chain Hop Strip",
+      "kind": "custom",
+      "description": "The chain bench: one selected chain as a single hairline strip of hop cells with a per-hop top-border state colour.",
+      "html": "<div class=\"ds-bench\"><ol class=\"ds-hops\"><li class=\"ds-hop is-ok\"><span class=\"seq\">01</span><span class=\"alias\">Tokyo Edge 01</span><span class=\"role\">入口</span><span class=\"state\">正常</span></li><li class=\"ds-hop is-ok\"><span class=\"seq\">02</span><span class=\"alias\">Osaka Relay</span><span class=\"role\">中转</span><span class=\"state\">正常</span></li><li class=\"ds-hop is-warn\"><span class=\"seq\">03</span><span class=\"alias\">Frankfurt 02</span><span class=\"role\">出口</span><span class=\"state\">降级</span></li></ol></div>",
+      "css": ".ds-bench{padding:8px 9px 7px;border-top:1px solid var(--panel-rule);background:var(--panel-inset)}.ds-hops{display:flex;margin:0;padding:0;list-style:none}.ds-hop{display:flex;min-width:0;flex:1;flex-direction:column;gap:1px;padding:4px 7px 4px 8px;border:1px solid var(--panel-rule-strong);border-left:0;border-top-width:2px;background:var(--panel-surface);color:var(--panel-ink)}.ds-hop:first-child{border-left:1px solid var(--panel-rule-strong)}.ds-hop.is-ok{border-top-color:var(--panel-success)}.ds-hop.is-warn{border-top-color:var(--panel-warning)}.ds-hop .seq{font-family:var(--panel-mono);font-size:9px;color:var(--panel-ink-3);line-height:1}.ds-hop .alias{overflow:hidden;font-family:var(--font-display);font-size:10.5px;font-weight:650;letter-spacing:.01em;line-height:1.25;text-overflow:ellipsis;white-space:nowrap}.ds-hop .role{font-size:9px;line-height:1.2;color:var(--panel-ink-3)}.ds-hop .state{font-size:9px;font-weight:650;line-height:1.3}.ds-hop.is-ok .state{color:var(--panel-success)}.ds-hop.is-warn .state{color:var(--panel-warning)}"
     }
   ],
   "narrative": {
-    "northStar": "The Live Signal Rack",
-    "overview": "Lattix should feel like a purpose-built control instrument: tactile, dense, and calm enough for long operational sessions. Its visual world borrows from modular synthesizers and broadcast patchbays—not as decoration, but as a legible model for servers, routes, endpoints, state, and signal flow. Manufactured surfaces establish hierarchy. Pale anodized modules carry readable content; charcoal enamel holds routing and terminal work; engraved rules and condensed labels keep dense interfaces ordered. Color is operational evidence: blue identifies a live selected signal, green confirms health, and safety orange interrupts the surface only when attention is required.",
+    "northStar": "The Hairline Operations Desk",
+    "overview": "Lattix is one continuous ruled surface, not a page of cards. A near-black ground is divided by 1px rules into a mosaic of rectangular modules that tile edge to edge; the operator reads fleet totals, exceptions, server readings, throughput and runtime in one glance, then selects a server or chain and watches that selection take the one functional red. Nothing floats, nothing glows, and no decoration interrupts the scan. The world is Japanese contemporary high-density information web — small gothic type, dense rows, tabular numerals, and red used as a signal rather than a mood. Chinese headings speak in a self-hosted Noto Sans SC Black, Latin labels in Geist Variable, and changing metric figures in Barlow Condensed.\n\nDark is the default appearance and the primary rendering of the world; light is the same token system in daylight, not a second design language. Both appearances resolve identical slots (`--panel-*`), carry identical geometry (0–2px), identical rules (1px) and identical semantics, so a screen documented here is true in both. Both appearances add the same material concession: a 128px paper-grain tile on the page field — multiplied into the paper ground in daylight, screened faintly over the near-black ground in dark. In both appearances module heads close with a doubled hairline — a 1px rule plus a 50%-opacity inner rule — rather than a shaded band. The old `hig` / `cream` / `patchbay` themes and their cream paper, lime accents and equipment-metal metaphors are gone; there is a single visual language.\n\nHierarchy comes from three things only: rule weight (`--panel-rule` vs. `--panel-rule-strong`), tonal steps of the same hue (#0c0d0e ground → #111214 surface → #17181b raised → #0a0b0c inset), and the red index tab that names each module. Density is generous where it aids scanning (26–30px row heights, 8–10px cell padding) and never padded out for breathing room. Chinese copy stays Chinese; English uppercase appears only where it is a machine identifier — the module index tab, a column head, a panel state code.",
     "keyCharacteristics": [
-      "Physical rack modules instead of generic floating SaaS cards.",
-      "Condensed equipment typography paired with a neutral CJK-capable body face.",
-      "State-first hierarchy with redundant text, color, and shape cues.",
-      "Dense desktop workbenches that become deliberate vertical assemblies on narrow screens.",
-      "Motion reserved for real progress, loading, and active signal flow."
+      "Flat near-black ground in dark, paper-white with a 128px paper-grain tile in light; no gradients, no glass, no colored side stripes.",
+      "Every boundary is a 1px hairline rule, doubled at module heads; modules are rectangles with 0–2px corners and a red index tab.",
+      "One functional red, used only for primary action, selection, and live exception.",
+      "Chinese page and dashboard headings in self-hosted Noto Sans SC Black at 900, Latin in Geist Variable, metric figures in Barlow Condensed, data rows in tabular mono.",
+      "Dense rectangular modules tiled edge to edge on a 6px gutter, not floating cards or hero metrics.",
+      "Zero shadows at rest; only overlays lift.",
+      "Motion is a single 180ms entrance and a one-shot hop reveal; reduced motion removes both."
     ],
     "rules": [
-      { "name": "The Signal Truth Rule", "body": "Blue motion belongs only to an active selected route; pending, degraded, failed, and unassigned routes must retain their real state styling.", "section": "colors" },
-      { "name": "The Safety Orange Rule", "body": "Orange is an exception channel, not a brand flourish. If nothing needs attention, it should be almost absent.", "section": "colors" },
-      { "name": "The Engraved Label Rule", "body": "Use condensed type for short operational labels and metrics, not for paragraphs or long error explanations.", "section": "typography" },
-      { "name": "The Manufactured Depth Rule", "body": "Shadows describe assembly—raised plate, recessed bay, or temporary overlay. They never create decorative floating card stacks.", "section": "elevation" },
-      { "name": "The Chain Owns the Workbench Rule", "body": "On the Dashboard, one selected existing chain is the source of truth for both the central topology and the bottom entry-server instruments.", "section": "components" }
+      {
+        "name": "The One Functional Red Rule",
+        "body": "Red is a signal: primary action, current selection, live exception (carried by the danger step of the same family), and the module index tab. If red is not carrying one of those four meanings it is a defect — including decorative accents, section markers, gradients, and colored stripes.",
+        "section": "colors"
+      },
+      {
+        "name": "The Daylight Equivalence Rule",
+        "body": "Dark is the default appearance; light is the same token set in daylight, never a second palette. Any new surface must be built from `--panel-*` slots so it renders in both, and no component may be designed against one appearance only.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two-State Rule",
+        "body": "Green and amber describe infrastructure state, red describes operator intent and exceptions. State colors are always carried by a word as well as a hue; a colored square alone is never the message.",
+        "section": "colors"
+      },
+      {
+        "name": "The Black Display Rule",
+        "body": "Chinese display headings are set in the self-hosted Noto Sans SC Black subset (page and dashboard titles at 900, the login statement at 900; the face declares a 700–900 range), stacked after Geist Variable and before the system CJK faces. It is the only Chinese display voice — no CDN face, no system serif, no faux-bold; Chinese body copy stays on the PingFang/Hiragino/YaHei/Noto CJK stack.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Numeral Rule",
+        "body": "Every figure that can change, or that sits in a column, is tabular — totals, throughput, latency, quota, cost, timestamps. Proportional figures are not used for data anywhere in the panel.",
+        "section": "typography"
+      },
+      {
+        "name": "The Chinese Copy Rule",
+        "body": "Interface copy stays Chinese. Uppercase Latin is reserved for machine identifiers and classification codes (module index tabs such as `FLEET` / `SERVERS` / `RUNTIME`, column heads, `ACTIVE` / `FAULTED` panel states, `NETWORK CONTROL PANEL` in the command bar) — never as an English restatement of a Chinese heading, never as a decorative eyebrow above a title. The access screen's headings now stand alone: the former `ACCESS` / `SIGN IN` eyebrow tabs are gone and do not return.",
+        "section": "typography"
+      },
+      {
+        "name": "The Dense Label Rule",
+        "body": "Labels and annotations may run as small as 9–10.5px because they are short and set in the gothic face; body copy never goes below 12px and table cells never below 11px, so density never costs legibility.",
+        "section": "typography"
+      },
+      {
+        "name": "The Edge-To-Edge Mosaic Rule",
+        "body": "Information tiles: modules share gutters and rules, align to one 12-column grid, and fill their rows. Floating cards with outer margins, centered hero metrics, and decorative empty space between modules are not part of this system.",
+        "section": "layout"
+      },
+      {
+        "name": "The Module Owns Its Scroll Rule",
+        "body": "A module's body scrolls inside its own ruled rectangle. A page-level scroll that hides a module's header — the tab and title that identify it — is a layout defect.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat-At-Rest Rule",
+        "body": "Surfaces are flat until they are an overlay. No hover lift, no glow, no elevation animation; hover is a fill change (#17181b raised or the 4.5% hover wash) and active is a 1px downward shift on buttons.",
+        "section": "elevation"
+      },
+      {
+        "name": "The No-Fake-Depth Rule",
+        "body": "No gradients, no glass, no backdrop blur, no inset highlight/shadow used to imitate material. If a boundary is needed, it is a 1px rule; if a step is needed, it is a tonal slot.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Paper Grain Rule",
+        "body": "Texture belongs only to the page field — a 128px paper-grain tile, multiplied in daylight and screened faintly in dark; the shell, modules and components stay flat. Module heads close with the doubled hairline (1px `--panel-rule` outer edge plus a 50%-opacity 1px `--panel-rule-strong` inner rule), never with a fill or a shadow. Grain is atmosphere, not a surface treatment: never inside a module, never as decoration on a component.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Two-Pixel Ceiling Rule",
+        "body": "Nothing in the working surface exceeds a 2px corner radius. Pills, capsules, 8px cards and circular buttons are outside the world; if a control asks for a rounder shape, it asks for the wrong control.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Rule-Not-Stripe Rule",
+        "body": "Separation is a hairline on an edge, not a colored side bar, a left accent stripe, or a gradient edge. The only filled edge in the system is the red index tab at a module's top-left.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Tab Opens The Module Rule",
+        "body": "A module without its red index tab is unrecognizable in this system: tab, Chinese title, and the doubled header hairline travel together. The tab names what the module is; it is not a decorative kicker and never sits above a page heading.",
+        "section": "components"
+      },
+      {
+        "name": "The Selection Is Red Rule",
+        "body": "Current selection is expressed as a solid red fill across the entire row or chain, with inverted text and desaturated inner chips. Selection is never a border, a checkmark, a background tint plus stripe, or a hover-only state.",
+        "section": "components"
+      },
+      {
+        "name": "The Chain Bench Rule",
+        "body": "One selected chain drives the hop strip; the selected server drives the runtime module. Each selection updates its module in place without navigating, and the hop strip reveals once per change rather than looping.",
+        "section": "components"
+      }
     ],
     "dos": [
-      "Do lead dense screens with current health, actionable exceptions, and progress feedback.",
-      "Do derive route geometry, destination labels, and signal styling from real operational state.",
-      "Do use aluminum and enamel textures only where a physical surface helps hierarchy.",
-      "Do retain semantic controls, keyboard focus, redundant state labels, and reduced-motion behavior.",
-      "Do redesign narrow layouts as vertical operational assemblies instead of shrinking desktop geometry.",
-      "Do let Dashboard chain selection update both the central ordered topology and the bottom entry-server instruments."
+      "Do build every screen as ruled modules on the 12-column mosaic with the 6px gutter and `--panel-*` tokens, so it renders identically in dark and light.",
+      "Do give each module its red index tab plus a Chinese title, and keep the header at 30px with the doubled hairline.",
+      "Do set Chinese page and dashboard headings in the self-hosted Noto Sans SC Black (900) and metric figures in Barlow Condensed; keep Chinese body copy on the system CJK stack.",
+      "Do keep the paper grain to the daylight body field (128px tile, multiply) and leave dark flat.",
+      "Do use tabular numerals for every figure and keep Chinese product copy in Chinese.",
+      "Do express selection as a full red fill with inverted text, and primary action as the single red button in its local group.",
+      "Do keep rows dense (26–30px) and align columns to the table's right edge for numbers.",
+      "Do preserve keyboard focus (`outline: 2px`, 1px offset), semantic status text, and `prefers-reduced-motion` opt-outs whenever a new surface is added.",
+      "Do let the selected server/chain update its module in place rather than pushing a new route."
     ],
     "donts": [
-      "Don't turn every section into an interchangeable rounded card or floating glass panel.",
-      "Don't animate an inactive, failed, pending, or unassigned route as if it were carrying traffic.",
-      "Don't use safety orange for decoration, promotion, or ordinary selection.",
-      "Don't rasterize controls, text, sockets, diagrams, or routing geometry.",
-      "Don't render the entire route mesh when the operator is inspecting one selected chain.",
-      "Don't turn the Dashboard's left Command Rail into a server selector or detach its runtime rack from the selected chain's entry server.",
-      "Don't depend on external font or asset CDNs for a self-hosted control surface."
+      "Don't introduce a second accent hue beyond the utility red and its danger step, a tinted surface, a gradient, or a colored side stripe.",
+      "Don't put decorative English eyebrows or kickers above Chinese headings; uppercase belongs to the module tab and machine codes, and the removed `ACCESS` / `SIGN IN` tabs stay removed.",
+      "Don't use the danger crimson for ordinary action or decoration; it is the fault step, not a second accent.",
+      "Don't color chart series with state green or amber; data series are grayscale plus one red.",
+      "Don't round above 2px, use pills for status, or turn modules into floating cards with outer shadows and margins.",
+      "Don't add shadows, glows, glass, or backdrop blur to in-page surfaces; overlay shadow only.",
+      "Don't lead a page with a hero metric or a marketing-style header block; the first viewport is the desk.",
+      "Don't encode state with color alone — a label or state word must carry it.",
+      "Don't depend on external font or texture CDNs; the panel must render fully self-hosted.",
+      "Don't reintroduce theme variants beyond appearance: one design language, shipped dark by default and light as its daylight version."
     ]
   }
 }

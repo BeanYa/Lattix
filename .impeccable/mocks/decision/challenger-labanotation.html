@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Lattix · 动作谱</title>
+<style>
+  :root{--paper:#F6F2E8;--ink:#171717;--ink2:#5E5E58;--gray:#6F7F8C;--rule:#B9B3A6;--red:#C3563F;--band:#E7E2D5}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:1440px;height:900px;overflow:hidden}
+  body{font-family:"PingFang SC","Hiragino Sans GB","Segoe UI",sans-serif;background:var(--paper);color:var(--ink);display:grid;grid-template-columns:220px 1fr;grid-template-rows:58px 1fr}
+  header{grid-column:1/-1;display:flex;align-items:center;gap:16px;padding:0 22px;border-bottom:2px solid var(--ink)}
+  .mark{width:22px;height:22px;background:var(--ink)}
+  .word{font-family:"Arial Narrow",sans-serif;font-size:24px;font-weight:800;letter-spacing:.2em}
+  .no{font-family:Menlo,monospace;font-size:11.5px;color:var(--ink2);letter-spacing:.08em}
+  .meta{margin-left:auto;display:flex;gap:22px;align-items:center;font-size:12.5px;color:var(--ink2)}
+  .state{border:1.5px solid var(--ink);padding:4px 10px;font-family:Menlo,monospace;font-size:10.5px;letter-spacing:.08em}
+  nav{border-right:1.5px solid var(--rule);padding:18px 12px}
+  .sec{font-size:10.5px;letter-spacing:.16em;color:var(--ink2);margin:16px 8px 7px}
+  .nav-i{padding:8px 10px;font-size:14px;border-left:3px solid transparent;display:flex;align-items:center;gap:9px}
+  .nav-i::before{content:"";width:10px;height:3px;background:var(--rule)}
+  .nav-i.on{border-left-color:var(--red);background:rgba(195,86,63,.07);font-weight:700}
+  .nav-i.on::before{background:var(--red)}
+  main{padding:16px 24px 0;display:flex;flex-direction:column;gap:12px;min-height:0;overflow:hidden}
+  .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid var(--ink);padding-bottom:8px;flex:none}
+  h1{font-family:"Arial Narrow","PingFang SC",sans-serif;font-size:30px;font-weight:800;line-height:1}
+  .sub{font-family:Menlo,monospace;font-size:11px;color:var(--ink2);margin-top:6px;letter-spacing:.05em}
+  .acts{display:flex;gap:8px}
+  .act{border:1.5px solid var(--ink);padding:6px 12px;font-size:12px}
+  .act.pri{background:var(--ink);color:var(--paper)}
+  .split{display:grid;grid-template-columns:1fr 330px;gap:18px;flex:1;min-height:0;overflow:hidden}
+  .score{border:1.5px solid var(--ink);position:relative;display:grid;grid-template-columns:1fr 250px 1fr;background:#FBF9F2}
+  .staff-head{position:absolute;top:26px;left:50%;transform:translateX(-50%);font-family:"Arial Narrow",sans-serif;font-size:11.5px;letter-spacing:.16em;color:var(--ink2);white-space:nowrap}
+  .beat{position:absolute;left:0;right:0;border-top:1px dashed rgba(23,23,23,.28)}
+  .beat.now{background:var(--band);border-top:1.5px solid var(--ink)}
+  .beat .bn{position:absolute;left:8px;top:5px;font-family:Menlo,monospace;font-size:10px;color:var(--ink2)}
+  .beat .bt{position:absolute;right:8px;top:5px;font-family:Menlo,monospace;font-size:10px;color:var(--ink2)}
+  .lane{position:relative;border-right:1px solid var(--rule)}
+  .lane:last-child{border-right:0}
+  .lane-label{position:absolute;top:8px;font-family:"Arial Narrow",sans-serif;font-size:11px;letter-spacing:.12em;color:var(--ink2)}
+  .lane.left .lane-label{right:8px}
+  .lane.right .lane-label{left:8px}
+  .blk{position:absolute;border:1.5px solid var(--ink);background:var(--paper)}
+  .blk.hatch{background:repeating-linear-gradient(45deg,var(--ink) 0 1.5px,transparent 1.5px 6px);border-color:var(--ink)}
+  .blk.solid{background:var(--ink)}
+  .blk.solid span{color:#fff}
+  .blk.gray{background:var(--gray);border-color:var(--gray);color:#fff}
+  .blk.red{background:var(--red);border-color:var(--red);color:#fff}
+  .blk span{position:absolute;left:5px;top:4px;font-family:Menlo,monospace;font-size:9.5px;white-space:nowrap}
+  .blk.solid span,.blk.gray span,.blk.red span{color:#fff}
+  .future{position:absolute;left:0;right:0;bottom:0;height:74px;background:rgba(23,23,23,.04);border-top:1.5px solid var(--ink)}
+  .future span{position:absolute;left:10px;top:7px;font-family:Menlo,monospace;font-size:10px;color:var(--ink2);letter-spacing:.06em}
+  .ops{border-left:1.5px solid var(--ink);padding-left:16px;display:flex;flex-direction:column;min-height:0}
+  .ops h3{font-family:"Arial Narrow",sans-serif;font-size:12.5px;letter-spacing:.14em;margin-bottom:8px}
+  .op{border-bottom:1px solid var(--rule);padding:9px 0;font-size:12.5px}
+  .op b{display:block;font-size:13.5px;margin-bottom:3px}
+  .op span{font-family:Menlo,monospace;font-size:10.5px;color:var(--ink2)}
+  .op em{float:right;font-style:normal;font-family:Menlo,monospace;font-size:10.5px;color:var(--red)}
+  .keys{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:12px}
+  .keys div{border:1.5px solid var(--ink);padding:6px;text-align:center;font-size:11px}
+  .keys b{display:block;font-family:Menlo,monospace;font-size:14px;margin-bottom:2px}
+  .foot{display:grid;grid-template-columns:repeat(4,1fr);border-top:2px solid var(--ink);flex:none;height:76px;overflow:hidden}
+  .f{padding:7px 18px;border-right:1px solid var(--rule)}
+  .f:last-child{border-right:0}
+  .f em{font-family:"Arial Narrow",sans-serif;font-size:10.5px;letter-spacing:.14em;color:var(--ink2);font-style:normal}
+  .f b{display:block;font-family:"Arial Narrow",sans-serif;font-size:26px;line-height:1.1;margin-top:4px;font-weight:800}
+  .f b small{font-family:Menlo,monospace;font-size:10.5px;color:var(--ink2);margin-left:4px}
+  .f i{font-size:10.5px;color:var(--ink2);font-style:normal}
+</style>
+</head>
+<body>
+<header><span class="mark"></span><span class="word">LATTIX</span><span class="no">SCORE 0418 · 操作动作谱 · 节拍 = 10s</span>
+  <div class="meta"><span class="state">PANEL ACTIVE</span><span>2026-10-18 20:41</span><span>管理员 bean</span><span>外观 ◐</span></div></header>
+<nav>
+  <div class="sec">实时控制 / LIVE OPS</div>
+  <div class="nav-i on">仪表盘</div><div class="nav-i">运行监控</div><div class="nav-i">服务器</div><div class="nav-i">成本统计</div><div class="nav-i">链路</div>
+  <div class="sec">资源管理 / RESOURCES</div>
+  <div class="nav-i">用户</div><div class="nav-i">分组</div><div class="nav-i">订阅模板</div><div class="nav-i">外部订阅</div><div class="nav-i">操作日志</div>
+  <div class="sec">系统 / SYSTEM</div><div class="nav-i">设置</div>
+</nav>
+<main>
+  <div class="head">
+    <div><h1>进行中的操作 · 动作谱</h1><div class="sub">SCORE 01 · 4 条谱线 / 6 个动作 · 时间向上 · 最新 20:41:06</div></div>
+    <div class="acts"><span class="act">列出全部动作</span><span class="act">节拍 10s</span><span class="act pri">暂停谱面</span></div>
+  </div>
+  <div class="split">
+    <section class="score">
+      <span class="staff-head">左列：来源服务器 / 中轴：节拍 / 右列：目标服务器</span>
+      <div class="beat" style="top:14%"><span class="bn">B 037</span><span class="bt">20:41:06</span></div>
+      <div class="beat now" style="top:30%"><span class="bn">B 036</span><span class="bt">20:40:56</span></div>
+      <div class="beat" style="top:46%"><span class="bn">B 035</span><span class="bt">20:40:46</span></div>
+      <div class="beat" style="top:62%"><span class="bn">B 034</span><span class="bt">20:40:36</span></div>
+      <div class="beat" style="top:78%"><span class="bn">B 033</span><span class="bt">20:40:26</span></div>
+      <div class="lane left"><span class="lane-label">来源 · SOURCE</span></div>
+      <div class="lane"></div>
+      <div class="lane right"><span class="lane-label">目标 · TARGET</span></div>
+      <div class="blk solid" style="left:9%;top:20%;width:44%;height:15%"><span>部署配置 · 东京-01</span></div>
+      <div class="blk hatch" style="right:9%;top:20%;width:46%;height:15%"><span>等待 Agent 回报</span></div>
+      <div class="blk gray" style="right:12%;top:38%;width:34%;height:11%"><span>热更新 · 大阪-02</span></div>
+      <div class="blk solid" style="left:12%;top:40%;width:30%;height:8%"><span>下发</span></div>
+      <div class="blk red" style="right:14%;top:52%;width:30%;height:22%"><span>出口未接通 · 圣何塞-03</span></div>
+      <div class="blk hatch" style="left:10%;top:54%;width:36%;height:10%"><span>重试 2 / 3</span></div>
+      <div class="blk gray" style="left:22%;top:68%;width:28%;height:6%"><span>校验配置</span></div>
+      <div class="future"><span>未来 · 尚未发生的动作不绘制</span></div>
+    </section>
+    <aside class="ops">
+      <h3>动作清单 · 按谱线顺序</h3>
+      <div class="op"><em>进行中</em><b>部署配置 · 东京-01 → 洛杉矶-主</b><span>B 036 · 已持续 00:42 · 3 跳</span></div>
+      <div class="op"><em>进行中</em><b>热更新 · 大阪-02</b><span>B 035 · 00:31 · xray gRPC</span></div>
+      <div class="op"><em style="color:var(--red)">失败</em><b>重试连接 · 圣何塞-03</b><span>B 033 · 02:14 · 2 / 3 次</span></div>
+      <div class="op"><em style="color:var(--ink2)">完成</em><b>校验配置 · 香港-02</b><span>B 031 · 00:18 · 已生效</span></div>
+      <div class="keys"><div><b>↑</b>上移</div><div><b>↓</b>下移</div><div><b>Space</b>暂停</div><div><b>←</b>上一拍</div><div><b>→</b>下一拍</div></div>
+    </aside>
+  </div>
+  <div class="foot">
+    <div class="f"><em>机群测站 / SERVERS</em><b>12</b><i>11 在线 · 1 失联</i></div>
+    <div class="f"><em>进行中动作 / IN FLIGHT</em><b>4</b><i>2 部署 · 1 热更 · 1 重试</i></div>
+    <div class="f"><em>活跃用户 / USERS</em><b>312<small>/ 1,284</small></b><i>较昨日 +18</i></div>
+    <div class="f"><em>今日流量 / TRAFFIC</em><b>4.8<small>TB</small></b><i>TX 2.9 TB · RX 1.9 TB</i></div>
+  </div>
+</main>
+</body>
+</html>

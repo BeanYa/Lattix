@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Lattix · 成熟管理后台</title>
+<style>
+  :root{--bg:#F7F8FA;--card:#FFFFFF;--ink:#111827;--ink2:#6B7280;--line:#E5E7EB;--blue:#2563EB;--red:#DC2626;--amber:#D97706;--green:#059669}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:1440px;height:900px;overflow:hidden}
+  body{font-family:"PingFang SC","Hiragino Sans GB","Segoe UI",sans-serif;background:var(--bg);color:var(--ink);display:grid;grid-template-columns:240px 1fr;grid-template-rows:60px 1fr}
+  header{grid-column:1/-1;display:flex;align-items:center;gap:14px;padding:0 24px;background:var(--card);border-bottom:1px solid var(--line)}
+  .mark{width:26px;height:26px;border-radius:7px;background:var(--blue);position:relative}
+  .mark::after{content:"";position:absolute;inset:7px;border:2px solid #fff;border-radius:3px}
+  .word{font-size:18px;font-weight:700;letter-spacing:-.01em}
+  .crumb{font-size:13px;color:var(--ink2);margin-left:8px}
+  .meta{margin-left:auto;display:flex;align-items:center;gap:16px;font-size:13px;color:var(--ink2)}
+  .state{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--green);background:#ECFDF5;padding:5px 10px;border-radius:999px}
+  .state::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--green)}
+  .avatar{width:30px;height:30px;border-radius:50%;background:#E0E7FF;color:var(--blue);display:grid;place-items:center;font-size:12px;font-weight:600}
+  nav{background:var(--card);border-right:1px solid var(--line);padding:16px 12px}
+  .sec{font-size:11px;color:var(--ink2);padding:14px 12px 6px;letter-spacing:.04em}
+  .nav-i{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:8px;font-size:13.5px;color:#374151}
+  .nav-i::before{content:"";width:16px;height:16px;border:1.5px solid #9CA3AF;border-radius:4px}
+  .nav-i.on{background:#EFF6FF;color:var(--blue);font-weight:600}
+  .nav-i.on::before{background:var(--blue);border-color:var(--blue)}
+  main{padding:20px 24px;display:grid;grid-template-rows:auto auto 1fr;gap:18px;min-height:0}
+  .head{display:flex;justify-content:space-between;align-items:center}
+  h1{font-size:24px;font-weight:700;letter-spacing:-.015em}
+  .sub{font-size:13px;color:var(--ink2);margin-top:4px}
+  .actions{display:flex;gap:8px}
+  .btn{height:36px;padding:0 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);font-size:13px;color:#374151;display:flex;align-items:center}
+  .btn.pri{background:var(--blue);border-color:var(--blue);color:#fff;font-weight:500}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .kpi em{font-size:12.5px;color:var(--ink2);font-style:normal}
+  .kpi b{display:block;font-size:30px;font-weight:700;letter-spacing:-.02em;line-height:1.2;margin-top:6px}
+  .kpi b small{font-size:13px;font-weight:500;color:var(--ink2);margin-left:4px}
+  .kpi i{font-size:12px;color:var(--ink2);font-style:normal}
+  .kpi .up{color:var(--green)}
+  .kpi .down{color:var(--red)}
+  .grid{display:grid;grid-template-columns:1fr 340px;gap:16px;min-height:0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+  .card > header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line);height:auto}
+  .card h3{font-size:14.5px;font-weight:600}
+  .tabs{display:flex;gap:4px;background:var(--bg);border-radius:8px;padding:3px}
+  .tab{font-size:12px;padding:4px 10px;border-radius:6px;color:var(--ink2)}
+  .tab.on{background:var(--card);color:var(--ink);font-weight:500;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;font-size:11.5px;font-weight:500;color:var(--ink2);padding:10px 18px;background:#FAFBFC;border-bottom:1px solid var(--line)}
+  td{padding:11px 18px;border-bottom:1px solid #F3F4F6;white-space:nowrap}
+  td.n{font-variant-numeric:tabular-nums}
+  .name{font-weight:500}
+  .tag{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;padding:2px 8px;border-radius:999px;background:#F3F4F6;color:#374151}
+  .tag::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor}
+  .tag.ok{background:#ECFDF5;color:var(--green)}
+  .tag.warn{background:#FFFBEB;color:var(--amber)}
+  .tag.bad{background:#FEF2F2;color:var(--red)}
+  .mono{font-family:Menlo,monospace;font-size:12px;color:var(--ink2)}
+  .activity{display:flex;flex-direction:column;overflow:hidden}
+  .act{display:flex;gap:12px;padding:12px 18px;border-bottom:1px solid #F3F4F6;font-size:12.5px}
+  .dot{width:8px;height:8px;border-radius:50%;margin-top:4px;flex:none;background:var(--blue)}
+  .dot.red{background:var(--red)}.dot.amber{background:var(--amber)}.dot.green{background:var(--green)}
+  .act b{display:block;font-size:12.5px;font-weight:500;margin-bottom:2px}
+  .act span{font-size:11.5px;color:var(--ink2)}
+  .act em{font-size:11px;color:var(--ink2);font-style:normal;margin-left:auto;white-space:nowrap}
+  .empty{padding:16px 18px;font-size:12.5px;color:var(--ink2)}
+</style>
+</head>
+<body>
+<header>
+  <span class="mark"></span><span class="word">Lattix</span><span class="crumb">/ 仪表盘</span>
+  <div class="meta"><span class="state">面板运行中</span><span>2026-10-18 20:41</span><span class="avatar">be</span></div>
+</header>
+<nav>
+  <div class="sec">实时控制</div>
+  <div class="nav-i on">仪表盘</div><div class="nav-i">运行监控</div><div class="nav-i">服务器</div><div class="nav-i">成本统计</div><div class="nav-i">链路</div>
+  <div class="sec">资源管理</div>
+  <div class="nav-i">用户</div><div class="nav-i">分组</div><div class="nav-i">订阅模板</div><div class="nav-i">外部订阅</div><div class="nav-i">操作日志</div>
+  <div class="sec">系统</div><div class="nav-i">设置</div>
+</nav>
+<main>
+  <div class="head">
+    <div><h1>仪表盘</h1><div class="sub">机群状态、链路与订阅的实时概览</div></div>
+    <div class="actions"><span class="btn">导出</span><span class="btn">刷新</span><span class="btn pri">部署配置</span></div>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><em>服务器</em><b>12</b><i><span class="up">11 在线</span> · 1 失联</i></div>
+    <div class="kpi"><em>链路</em><b>5</b><i>3 运行 · 1 降级 · 1 部署中</i></div>
+    <div class="kpi"><em>活跃用户</em><b>312<small>/ 1,284</small></b><i><span class="up">+18</span> 较昨日</i></div>
+    <div class="kpi"><em>今日流量</em><b>4.8<small>TB</small></b><i><span class="down">1 条链路异常</span></i></div>
+  </div>
+  <div class="grid">
+    <section class="card">
+      <header><h3>服务器状态</h3><div class="tabs"><span class="tab on">全部</span><span class="tab">异常</span><span class="tab">在线</span></div></header>
+      <table><thead><tr><th>服务器</th><th>地区</th><th>状态</th><th>CPU</th><th>内存</th><th>延迟</th><th>今日流量</th></tr></thead>
+        <tbody>
+          <tr><td class="name">东京-01</td><td>JP</td><td><span class="tag ok">在线</span></td><td class="n">38%</td><td class="n">42%</td><td class="n">31 ms</td><td class="n">1.42 TB</td></tr>
+          <tr><td class="name">大阪-02</td><td>JP</td><td><span class="tag ok">在线</span></td><td class="n">61%</td><td class="n">58%</td><td class="n">48 ms</td><td class="n">0.86 TB</td></tr>
+          <tr><td class="name">洛杉矶-主</td><td>US</td><td><span class="tag ok">在线</span></td><td class="n">44%</td><td class="n">51%</td><td class="n">52 ms</td><td class="n">1.10 TB</td></tr>
+          <tr><td class="name">圣何塞-03</td><td>US</td><td><span class="tag bad">失联</span></td><td class="n">--</td><td class="n">--</td><td class="n">--</td><td class="n">--</td></tr>
+          <tr><td class="name">法兰克福-01</td><td>DE</td><td><span class="tag warn">降级</span></td><td class="n">72%</td><td class="n">66%</td><td class="n">218 ms</td><td class="n">0.44 TB</td></tr>
+          <tr><td class="name">香港-02</td><td>HK</td><td><span class="tag ok">在线</span></td><td class="n">29%</td><td class="n">37%</td><td class="n">44 ms</td><td class="n">0.71 TB</td></tr>
+          <tr><td class="name">首尔-01</td><td>KR</td><td><span class="tag ok">在线</span></td><td class="n">33%</td><td class="n">40%</td><td class="n">37 ms</td><td class="n">0.52 TB</td></tr>
+          <tr><td class="name">新加坡-01</td><td>SG</td><td><span class="tag ok">在线</span></td><td class="n">41%</td><td class="n">48%</td><td class="n">63 ms</td><td class="n">0.63 TB</td></tr>
+        </tbody></table>
+    </section>
+    <aside class="card activity">
+      <header><h3>近期事件</h3><span class="mono">最近 24 小时</span></header>
+      <div class="act"><span class="dot red"></span><div><b>圣何塞-03 未接通</b><span>出口服务器失联，影响 6 个节点</span></div><em>20:37</em></div>
+      <div class="act"><span class="dot amber"></span><div><b>新加坡 → 法兰克福降级</b><span>中转延迟 218 ms，超出基线</span></div><em>20:29</em></div>
+      <div class="act"><span class="dot amber"></span><div><b>大阪-02 磁盘 82%</b><span>建议清理访问日志</span></div><em>19:54</em></div>
+      <div class="act"><span class="dot green"></span><div><b>洛杉矶-主 已恢复</b><span>连通性恢复正常</span></div><em>19:31</em></div>
+      <div class="act"><span class="dot"></span><div><b>香港 → 圣何塞 部署中</b><span>配置已下发，等待生效回报</span></div><em>19:12</em></div>
+      <div class="empty">更早的事件请在操作日志中查看。</div>
+    </aside>
+  </div>
+</main>
+</body>
+</html>

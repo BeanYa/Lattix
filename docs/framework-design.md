@@ -48,7 +48,7 @@
 
 ```
 src/frontend/  # Vite + React + TypeScript + shadcn/ui，包管理器使用 bun
-               # 可插拔主题系统（src/frontend/src/themes/，默认 Apple HIG，见 frontend.md）
+               # 单一设计语言「高密度事务台」，默认深色外观（见 frontend.md）
 src/backend/   # Go：面板 HTTP API + Agent WS 端点 + SQLite
                # internal/panel 下另拆五个子包：scheduler（公共周期任务调度）、
                # releases（agent/xray 版本目录）、exchange（汇率目录与成本换算）、
@@ -62,9 +62,9 @@ scripts/
 install.sh           # 唯一面向用户的统一安装入口
 ```
 
-- 前端依赖安装与构建：`bun install` / `bun run build`，锁文件入库。设计语言由语义
-  令牌 + 主题注册表驱动：默认 Apple HIG，经典 Cream Grid 作为可选主题安装，设计主题
-  与浅色/深色外观两个维度运行时切换（约定见 [前端开发](frontend.md)）。
+- 前端依赖安装与构建：`bun install` / `bun run build`，锁文件入库。设计语言由
+  `src/styles/panel.css` 的语义令牌与组件层驱动，只有一套「高密度事务台」；深色是默认
+  外观，浅色为同一令牌体系的日间版（约定见 [前端开发](frontend.md)）。
 - 后端与 Agent 均为 Go，通过 Shared module 共享消息定义，保证协议两端类型一致。
 - 数据库：SQLite（规模假设下绰绰有余）。
 - 版本管理：git，monorepo。**项目初始化第一步即初始化 git 仓库**（`git init`），全部开发在 git 工作流中进行；`.gitignore`、前端锁文件（bun）、go.work 等随首次提交入库。

@@ -25,35 +25,27 @@ bun run preview       # 本地预览生产构建
 - `src/pages/` 每页一个入口组件；较大页面的表单对话框与配套 hook 拆入同名子目录
   （`chains/`、`servers/`、`settings/`、`users/`），入口文件只保留页面骨架。
 
-## 主题系统
+## 设计系统与外观
 
-前端支持多套设计主题运行时切换，由两个正交维度组成：
+前端只有一套设计语言「高密度事务台」，不再提供设计主题切换；外观模式是唯一可切换维度：
 
-- **外观模式**（浅色 / 深色）：`<html>` 上的 `dark` class，`lib/theme.tsx` 持久化到
-  localStorage（`lattix-theme`）。
-- **设计主题**（`hig` / `cream` / …）：`<html data-theme="<id>">`，持久化到
-  `lattix-design-theme`，由 `src/frontend/src/themes/registry.ts` 注册表驱动。
-
-默认主题是 **Apple HIG**（`index.css` 与 `styles/cream-grid.css` 的根令牌就是它的
-令牌）；**Cream Grid**（重构前的经典设计）作为可选主题安装，含全量令牌覆写与
-Dashboard 页面覆写。顶栏调色板按钮可同时切换两个维度，`index.html` 中的首屏脚本会在
-渲染前应用持久化的主题以避免闪白。
-
-主题 = 一个 `src/frontend/src/themes/<id>/` 目录 + 注册表中的一条记录：
-
-- `tokens.css` 用 `[data-theme="<id>"]` / `[data-theme="<id>"].dark` 覆写**同名语义令牌**
-  即可让全站换肤，组件类零改动；
-- 若主题重写了某页面的 DOM 结构，在清单 `overrides` 中声明插槽（当前支持
-  `dashboard`），对应页面入口（如 `pages/Dashboard.tsx`）会懒加载主题实现，否则回落
-  基础实现。
-
-安装与卸载主题的完整步骤和约定见
-[`src/frontend/src/themes/README.md`](../src/frontend/src/themes/README.md)。
+- **深色（默认）** / **浅色**：`<html>` 上的 `dark` class，`lib/theme.tsx` 持久化到
+  localStorage（`lattix-theme`），`index.html` 的首屏脚本在渲染前应用，避免闪白。
+- 令牌层：`src/styles/panel.css` 定义全部语义令牌（`--panel-ground`、`--panel-surface`、
+  `--panel-rule`、`--panel-ink*`、`--panel-accent`、状态色、字体与尺寸），并在 `.dark`
+  下提供深色覆写；旧页面的 `--cg-*` 名称保留为同一套令牌的别名。
+- 组件层：`src/index.css` 提供页面原语（`.page-shell`、`.page-header`、`.page-title`、
+  `.surface-frame`、`.notice`、`.empty-state` 等）与 shadcn 组件的统一外观；
+  `src/styles/panel.css` 提供 `.cg-button`、`.cg-panel`、`.cg-status` 等共享组件类。
+- 新页面必须使用令牌，不得硬编码颜色、圆角或阴影；模块是 1px 发丝线矩形，红色只用于
+  主操作、选中与异常；深浅两套外观都要检查。
+- 字体与图标全部本地打包（`@fontsource-variable/geist`、`flag-icons`、`lucide-react`），
+  不依赖外部字体或资源 CDN。
 
 ## CDN 与缓存
 
 生产环境可以把面板域名开启 Cloudflare Proxy（橙云），回源到 Lattix 面板。不要把
-React、Three.js 等依赖改成多个公共包 CDN URL：完整 Vite 构建产物版本一致、可回滚，
+React 等依赖改成多个公共包 CDN URL：完整 Vite 构建产物版本一致、可回滚，
 也不会因某个公共镜像不可用导致页面白屏。
 
 Cloudflare 标准网络覆盖全球，但中国大陆访问属于尽力而为，不承诺境内节点与稳定时延。

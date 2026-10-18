@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Lattix · 海图与航海通告</title>
+<style>
+  :root{
+    --paper:#F2EFE4; --water:#E9F0EC; --shoal:#CFE0DA; --deep:#1F4E5A;
+    --magenta:#C0447A; --ink:#223034; --ink-2:#5A6A6D; --line:#B9C4BE; --ochre:#D9A441;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:1440px;height:900px;overflow:hidden}
+  body{font-family:"PingFang SC","Hiragino Sans GB","Segoe UI",sans-serif;color:var(--ink);background:var(--paper);display:grid;grid-template-columns:220px 1fr;grid-template-rows:60px 1fr}
+  header{grid-column:1/-1;display:flex;align-items:center;gap:16px;padding:0 22px;border-bottom:2px solid var(--deep);background:var(--paper)}
+  .mark{width:24px;height:24px;border:2.5px solid var(--deep);border-radius:50%;position:relative}
+  .mark::after{content:"";position:absolute;inset:5px;border:1.5px solid var(--magenta);border-radius:50%}
+  .word{font-family:Georgia,"Songti SC",serif;font-size:25px;font-weight:700;letter-spacing:.2em;color:var(--deep)}
+  .chartno{font-family:Menlo,monospace;font-size:12px;color:var(--ink-2);letter-spacing:.06em}
+  .meta{margin-left:auto;display:flex;align-items:center;gap:24px;font-size:13px;color:var(--ink-2)}
+  .state{font-family:Menlo,monospace;font-size:11px;letter-spacing:.08em;border:1.5px solid var(--deep);color:var(--deep);padding:5px 10px}
+  nav{border-right:1.5px solid var(--line);background:#F7F4EA;padding:20px 14px}
+  .sec{font-size:11px;letter-spacing:.14em;color:var(--ink-2);margin:18px 8px 8px}
+  .nav-i{display:flex;align-items:center;gap:10px;padding:9px 10px;font-size:14.5px;border-left:3px solid transparent}
+  .nav-i::before{content:"";width:7px;height:7px;border:1.5px solid var(--ink-2);border-radius:50%}
+  .nav-i.on{border-left-color:var(--magenta);background:rgba(192,68,122,.08);font-weight:700;color:var(--deep)}
+  .nav-i.on::before{background:var(--magenta);border-color:var(--magenta)}
+  main{display:flex;flex-direction:column;padding:16px 22px 0;gap:12px;min-height:0;overflow:hidden}
+  .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:1.5px solid var(--line);padding-bottom:9px;flex:none}
+  h1{font-family:Georgia,"Songti SC",serif;font-size:31px;line-height:1.05;color:var(--deep);letter-spacing:.02em}
+  .sub{font-family:Menlo,monospace;font-size:11.5px;color:var(--ink-2);margin-top:6px;letter-spacing:.04em}
+  .actions{display:flex;gap:8px}
+  button{font-family:inherit;font-size:12.5px;padding:7px 12px;border:1.5px solid var(--deep);background:transparent;color:var(--deep);letter-spacing:.03em}
+  button.pri{background:var(--deep);color:var(--paper);border-color:var(--deep)}
+  .mid{display:grid;grid-template-columns:1fr 306px;gap:16px;flex:1;min-height:0;overflow:hidden}
+  .chart{position:relative;border:1.5px solid var(--deep);background:
+      linear-gradient(rgba(31,78,90,.07) 1px,transparent 1px) 0 0/56px 56px,
+      linear-gradient(90deg,rgba(31,78,90,.07) 1px,transparent 1px) 0 0/56px 56px,
+      radial-gradient(ellipse at 76% 30%,var(--shoal) 0 90px,transparent 92px),
+      radial-gradient(ellipse at 22% 74%,var(--shoal) 0 70px,transparent 72px),
+      var(--water);
+      overflow:hidden}
+  .land{position:absolute;left:0;top:0;width:170px;height:100%;background:linear-gradient(105deg,var(--paper) 68%,transparent 68.4%);}
+  .land2{position:absolute;right:0;bottom:0;width:230px;height:210px;background:linear-gradient(285deg,var(--paper) 66%,transparent 66.4%)}
+  .coast{position:absolute;left:168px;top:0;width:2px;height:100%;background:var(--ink-2);opacity:.5}
+  .chart .cap{position:absolute;z-index:3;left:14px;top:12px;font-family:Menlo,monospace;font-size:10.5px;letter-spacing:.1em;color:var(--ink-2)}
+  .chart .big{position:absolute;z-index:3;left:14px;top:28px;font-family:Georgia,"Songti SC",serif;font-size:24px;color:var(--deep);letter-spacing:.06em}
+  .route{position:absolute;left:0;top:0;width:100%;height:100%}
+  .wp{position:absolute;width:0;height:0}
+  .wp b{position:absolute;transform:translate(-50%,-50%);display:grid;place-items:center;width:34px;height:34px;border:2.5px solid var(--deep);border-radius:50%;background:var(--paper);font-family:Menlo,monospace;font-size:13px;color:var(--deep)}
+  .wp.on b{background:var(--deep);color:var(--paper)}
+  .wp span{position:absolute;transform:translate(-50%,26px);white-space:nowrap;font-size:13px;font-weight:700;color:var(--ink)}
+  .wp span small{display:block;text-align:center;font-family:Menlo,monospace;font-size:10px;font-weight:400;color:var(--ink-2);margin-top:2px}
+  .sound{position:absolute;font-family:Menlo,monospace;font-size:11px;color:var(--ink-2);white-space:nowrap}
+  .sound.mag{color:var(--magenta)}
+  .note{position:absolute;color:var(--magenta);font-size:11.5px;font-weight:700;letter-spacing:.02em}
+  .note::before{content:"";position:absolute;left:-8px;top:-8px;width:10px;height:10px;border:1.5px solid var(--magenta);border-radius:50%}
+  .rose{position:absolute;right:20px;top:18px;width:92px;height:92px;border:1.5px solid var(--ink-2);border-radius:50%;display:grid;place-items:center;color:var(--ink-2);font-family:Georgia,serif;font-size:13px}
+  .rose::before{content:"";position:absolute;width:1.5px;height:76px;background:var(--ink-2)}
+  .rose::after{content:"";position:absolute;width:76px;height:1.5px;background:var(--ink-2)}
+  .scale{position:absolute;left:16px;bottom:14px;font-family:Menlo,monospace;font-size:10.5px;color:var(--ink-2);display:flex;align-items:end;gap:6px}
+  .scale i{display:block;width:86px;height:8px;border:1.5px solid var(--ink-2);border-top:0}
+  .legend{position:absolute;right:16px;bottom:14px;font-family:Menlo,monospace;font-size:10.5px;color:var(--ink-2);text-align:right;line-height:1.7}
+  .notices{border:1.5px solid var(--deep);background:#F7F4EA;display:flex;flex-direction:column;min-height:0}
+  .notices h3{padding:10px 14px;border-bottom:1.5px solid var(--deep);font-family:Georgia,"Songti SC",serif;font-size:15px;color:var(--deep);display:flex;justify-content:space-between;letter-spacing:.04em}
+  .notices h3 span{font-family:Menlo,monospace;font-size:11px;color:var(--magenta)}
+  .notice{padding:11px 14px;border-bottom:1px solid var(--line);font-size:12.5px;line-height:1.5}
+  .notice em{font-family:Menlo,monospace;font-size:10.5px;color:var(--magenta);font-style:normal;display:block;margin-bottom:3px;letter-spacing:.06em}
+  .notice b{display:block;font-size:13.5px;margin-bottom:2px}
+  .notice span{color:var(--ink-2);font-size:11.5px}
+  .tide{display:grid;grid-template-columns:repeat(4,1fr);border-top:2px solid var(--deep);background:#F7F4EA;flex:none;height:84px}
+  .t{padding:8px 18px;border-right:1px solid var(--line)}
+  .t:last-child{border-right:0}
+  .t em{font-family:Menlo,monospace;font-size:10.5px;letter-spacing:.08em;color:var(--ink-2);font-style:normal}
+  .t b{display:block;font-family:Georgia,"Songti SC",serif;font-size:26px;color:var(--deep);line-height:1.1;margin-top:4px}
+  .t b small{font-family:Menlo,monospace;font-size:11px;color:var(--ink-2);margin-left:4px}
+  .t i{font-size:11px;color:var(--ink-2);font-style:normal}
+</style>
+</head>
+<body>
+<header>
+  <span class="mark"></span><span class="word">LATTIX</span>
+  <span class="chartno">CHART 0418 · 机群总图 · 比例 1:2400000</span>
+  <div class="meta"><span class="state">PANEL ACTIVE</span><span>2026-10-18 20:41</span><span>管理员 bean</span><span>外观 ◐</span></div>
+</header>
+<nav>
+  <div class="sec">实时控制 / LIVE OPS</div>
+  <div class="nav-i on">仪表盘</div><div class="nav-i">运行监控</div><div class="nav-i">服务器</div><div class="nav-i">成本统计</div><div class="nav-i">链路</div>
+  <div class="sec">资源管理 / RESOURCES</div>
+  <div class="nav-i">用户</div><div class="nav-i">分组</div><div class="nav-i">订阅模板</div><div class="nav-i">外部订阅</div><div class="nav-i">操作日志</div>
+  <div class="sec">系统 / SYSTEM</div>
+  <div class="nav-i">设置</div>
+</nav>
+<main>
+  <div class="head">
+    <div><h1>东京 → 洛杉矶 · 已标绘航路</h1><div class="sub">ROUTE 01 · 3 航段 / 4 航点 · 测深更新于 20:41</div></div>
+    <div class="actions"><button>标绘新航路</button><button>航路清单</button><button class="pri">重新测深</button></div>
+  </div>
+  <div class="mid">
+    <section class="chart">
+      <span class="cap">航路标绘 · ROUTE PLOT</span>
+      <span class="big">选定链路与实时水深</span>
+      <div class="land"></div><div class="land2"></div><div class="coast"></div>
+      <svg class="route" viewBox="0 0 900 520" preserveAspectRatio="none">
+        <path d="M150 360 L340 300 L600 250 L780 150" fill="none" stroke="#1F4E5A" stroke-width="2.5"/>
+        <path d="M150 360 L340 300 L600 250 L780 150" fill="none" stroke="#C0447A" stroke-width="1" stroke-dasharray="3 6"/>
+        <circle cx="340" cy="300" r="7" fill="none" stroke="#C0447A" stroke-width="2"/>
+        <circle cx="600" cy="250" r="7" fill="none" stroke="#C0447A" stroke-width="2"/>
+        <text x="362" y="290" font-family="Menlo,monospace" font-size="11" fill="#C0447A">S 041 · 48ms</text>
+        <text x="620" y="240" font-family="Menlo,monospace" font-size="11" fill="#C0447A">S 052 · 52ms</text>
+      </svg>
+      <div class="wp" style="left:150px;top:360px"><b class="on">01</b><span>东京-01<small>入口 · 31ms · 38%</small></span></div>
+      <div class="wp" style="left:340px;top:300px"><b>02</b><span>大阪-02<small>中转 · 48ms · 61%</small></span></div>
+      <div class="wp" style="left:600px;top:250px"><b>03</b><span>洛杉矶-主<small>中转 · 52ms · 44%</small></span></div>
+      <div class="wp" style="left:780px;top:150px"><b>04</b><span>圣何塞-03<small>出口 · 未接通</small></span></div>
+      <span class="sound" style="left:236px;top:392px">112</span><span class="sound" style="left:420px;top:330px">084</span>
+      <span class="sound" style="left:540px;top:322px">061</span><span class="sound" style="left:680px;top:206px">038</span>
+      <span class="sound mag" style="left:268px;top:236px">浅滩 · 高负载</span>
+      <span class="sound" style="left:96px;top:170px">224</span><span class="sound" style="left:112px;top:470px">097</span>
+      <span class="sound" style="left:742px;top:420px">153</span><span class="sound" style="left:836px;top:320px">078</span>
+      <span class="note" style="left:636px;top:398px">圣何塞-03 未接通 · 出口封锁</span>
+      <div class="rose">罗经</div>
+      <div class="scale"><span>0</span><i></i><span>10 km</span></div>
+      <div class="legend">水深 = 延迟 (ms)<br>紫红 = 航海通告 / 异常</div>
+    </section>
+    <aside class="notices">
+      <h3>航海通告 <span>NOTICE 2 / 4</span></h3>
+      <div class="notice"><em>Nº 041 · 20:37</em><b>圣何塞-03 出口未接通</b><span>影响 6 节点；等待 Agent 重连，勿重新下发配置。</span></div>
+      <div class="notice"><em>Nº 040 · 20:29</em><b>新加坡 → 法兰克福降级</b><span>中转延迟 218ms，超出基线 176ms；已标绘浅滩。</span></div>
+      <div class="notice"><em>Nº 039 · 20:12</em><b>香港 → 圣何塞 部署中</b><span>配置已下发，等待生效值回报。</span></div>
+      <div class="notice"><em>Nº 038 · 19:54</em><b>大阪-02 磁盘 82%</b><span>建议清理 xray 访问日志后重新测深。</span></div>
+      <div class="notice" style="border:0"><em>Nº 037 · 19:31</em><b>洛杉矶-主 已恢复</b><span>连通性恢复正常，通告保留 24 小时。</span></div>
+    </aside>
+  </div>
+  <div class="tide">
+    <div class="t"><em>机群测站 / SERVERS</em><b>12</b><i>11 在线 · 1 失联</i></div>
+    <div class="t"><em>已标绘航路 / CHAINS</em><b>5</b><i>3 运行 · 1 降级 · 1 部署中</i></div>
+    <div class="t"><em>活跃用户 / USERS</em><b>312<small>/ 1,284</small></b><i>较昨日 +18</i></div>
+    <div class="t"><em>今日流量 / TRAFFIC</em><b>4.8<small>TB</small></b><i>TX 2.9 TB · RX 1.9 TB</i></div>
+  </div>
+</main>
+</body>
+</html>

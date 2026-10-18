@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Lattix · 测线剖面簿</title>
+<style>
+  :root{
+    --paper:#EDE7D8; --paper-2:#E4DDCB; --ink:#2A2C2A; --ink-2:#565A52;
+    --ochre:#C2913A; --oxide:#B24A2F; --slate:#5C6B72; --line:#C9C3B2;
+    --moss:#7C8B5A; --grid:rgba(42,44,42,.055);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:1440px;height:900px;overflow:hidden}
+  body{
+    font-family:"PingFang SC","Hiragino Sans GB","Segoe UI",sans-serif;
+    color:var(--ink);
+    background:
+      linear-gradient(var(--grid) 1px,transparent 1px) 0 0/32px 32px,
+      linear-gradient(90deg,var(--grid) 1px,transparent 1px) 0 0/32px 32px,
+      var(--paper);
+    display:grid;grid-template-columns:220px 1fr;grid-template-rows:60px 1fr 104px;
+  }
+  .brand{grid-column:1/-1;display:flex;align-items:center;gap:18px;padding:0 22px;border-bottom:1.5px solid var(--ink);background:var(--paper)}
+  .mark{width:26px;height:26px;border:2.5px solid var(--ink);transform:rotate(45deg)}
+  .word{font-family:"Arial Narrow","PingFang SC",sans-serif;font-size:26px;font-weight:800;letter-spacing:.14em}
+  .survey-no{font-family:Menlo,monospace;font-size:13px;letter-spacing:.08em;color:var(--ink-2)}
+  .top-meta{margin-left:auto;display:flex;gap:26px;align-items:center;font-size:13px;color:var(--ink-2)}
+  .chip{border:1.5px solid var(--ink);padding:5px 12px;font-size:13px;letter-spacing:.06em}
+  .chip.live{background:var(--moss);color:#F5F1E6;border-color:var(--moss)}
+  nav{border-right:1.5px solid var(--ink);padding:20px 14px;background:var(--paper-2)}
+  .sec{font-family:"Arial Narrow",sans-serif;font-size:11px;letter-spacing:.16em;color:var(--ink-2);margin:18px 8px 8px}
+  .nav-i{display:flex;align-items:center;gap:10px;padding:9px 10px;font-size:14.5px;border-left:4px solid transparent}
+  .nav-i.on{border-left-color:var(--ochre);background:rgba(194,145,58,.14);font-weight:700}
+  .dot{width:9px;height:9px;border:1.5px solid var(--ink);border-radius:50%}
+  main{padding:20px 26px 0;display:grid;grid-template-columns:236px 1fr;gap:22px;min-height:0;overflow:hidden}
+  .index{border-right:1.5px solid var(--line);padding-right:18px}
+  .index h3{font-family:"Arial Narrow",sans-serif;font-size:13px;letter-spacing:.14em;color:var(--ink-2);margin-bottom:12px}
+  .chain{padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .chain.on{margin:0 -10px;padding:12px 10px;background:rgba(42,44,42,.06);border-bottom:1.5px solid var(--ink)}
+  .chain b{display:block;font-size:15.5px;margin-bottom:4px}
+  .chain span{font-family:Menlo,monospace;font-size:11.5px;color:var(--ink-2)}
+  .work{min-width:0;display:flex;flex-direction:column;min-height:0}
+  .work-head{display:flex;align-items:flex-end;justify-content:space-between;border-bottom:2px solid var(--ink);padding-bottom:10px}
+  h1{font-family:"Arial Narrow","PingFang SC",sans-serif;font-size:32px;font-weight:800;letter-spacing:.01em;line-height:1}
+  .sub{font-family:Menlo,monospace;font-size:12px;color:var(--ink-2);margin-top:6px;letter-spacing:.04em}
+  .acts{display:flex;gap:8px}
+  .act{border:1.5px solid var(--ink);background:transparent;color:var(--ink);padding:7px 12px;font-size:12.5px;letter-spacing:.05em}
+  .act.pri{background:var(--ink);color:var(--paper)}
+  .transect{position:relative;height:250px;margin-top:14px;flex:none;border:1.5px solid var(--ink);background:#F1ECDF;overflow:hidden}
+  .transect .ttl{position:absolute;left:12px;top:10px;font-family:"Arial Narrow",sans-serif;font-size:12px;letter-spacing:.16em;color:var(--ink-2)}
+  .transect .big{position:absolute;left:12px;top:26px;font-family:"Arial Narrow",sans-serif;font-size:24px;font-weight:800;letter-spacing:.02em}
+  .axis{position:absolute;left:0;right:0;top:150px;border-top:1px dashed rgba(42,44,42,.4)}
+  .axislabel{position:absolute;right:10px;top:126px;font-family:Menlo,monospace;font-size:10.5px;color:var(--ink-2)}
+  .band{position:absolute;height:54px;top:172px;opacity:.85}
+  .band.b1{left:180px;width:150px;background:var(--moss)}
+  .band.b2{left:330px;width:130px;background:var(--ochre)}
+  .band.b3{left:460px;width:150px;background:var(--moss)}
+  .band.b4{left:610px;width:120px;background:var(--slate);opacity:.55}
+  .station{position:absolute;top:120px;width:2px;height:130px;background:var(--ink)}
+  .station.s1{left:180px}.station.s2{left:330px}.station.s3{left:460px}.station.s4{left:610px}
+  .st{position:absolute;width:26px;height:26px;border:2.5px solid var(--ink);background:var(--paper);border-radius:50%;display:grid;place-items:center;font-family:Menlo,monospace;font-size:11px}
+  .st.s1{left:168px;top:107px}.st.s2{left:318px;top:107px}.st.s3{left:448px;top:107px}.st.s4{left:598px;top:107px}
+  .st-label{position:absolute;top:76px;font-size:13px;font-weight:700;white-space:nowrap}
+  .st-label small{display:block;font-family:Menlo,monospace;font-size:10.5px;font-weight:400;color:var(--ink-2);margin-top:3px}
+  .st-label.s1{left:140px}.st-label.s2{left:286px}.st-label.s3{left:420px}.st-label.s4{left:570px}
+  .pin{position:absolute;left:352px;top:196px;color:var(--oxide);font-size:12px;font-weight:700}
+  .pin::before{content:"";position:absolute;left:-2px;top:-14px;width:2px;height:14px;background:var(--oxide)}
+  .pin::after{content:"";position:absolute;left:-6px;top:-22px;width:10px;height:10px;border:2px solid var(--oxide);border-radius:50%}
+  .scale{position:absolute;right:14px;bottom:12px;font-family:Menlo,monospace;font-size:10px;color:var(--ink-2);display:flex;gap:6px;align-items:end}
+  .scale i{display:block;width:52px;height:7px;border:1.5px solid var(--ink-2);border-top:0}
+  .lower{display:grid;grid-template-columns:1fr 292px;gap:18px;margin-top:14px;flex:1;min-height:0;overflow:hidden}
+  .register{border-top:2px solid var(--ink);min-width:0;display:flex;flex-direction:column}
+  .register .rh{display:flex;justify-content:space-between;align-items:baseline;padding:8px 0 7px}
+  .register .rh b{font-family:"Arial Narrow",sans-serif;font-size:13px;letter-spacing:.15em}
+  .register .rh span{font-family:Menlo,monospace;font-size:10.5px;color:var(--ink-2)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{text-align:left;border-bottom:1.5px solid var(--ink);padding:6px 8px 6px 0;font-weight:600;font-size:11px;letter-spacing:.08em;color:var(--ink-2);white-space:nowrap}
+  td{padding:8px 8px 8px 0;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+  td.num{font-family:Menlo,monospace;font-size:12px}
+  .tag{display:inline-block;padding:2px 7px;font-size:11px;border:1.5px solid currentColor;letter-spacing:.04em}
+  .tag.ok{color:#5C6B3F}.tag.warn{color:#9A6A1E}.tag.bad{color:var(--oxide)}
+  .incidents{border-left:1.5px solid var(--ink);padding-left:16px;display:flex;flex-direction:column}
+  .incidents h3{font-family:"Arial Narrow",sans-serif;font-size:13px;letter-spacing:.15em;margin-bottom:8px}
+  .inc{border-bottom:1px dashed var(--line);padding:10px 0;font-size:12.5px}
+  .inc b{display:block;color:var(--oxide);font-size:13px;margin-bottom:3px}
+  .inc span{font-family:Menlo,monospace;font-size:10.5px;color:var(--ink-2)}
+  .foot{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);border-top:1.5px solid var(--ink);background:var(--paper-2);height:104px}
+  .read{padding:12px 20px;border-right:1px solid var(--line)}
+  .read:last-child{border-right:0}
+  .read em{font-family:"Arial Narrow",sans-serif;font-size:11px;letter-spacing:.16em;color:var(--ink-2);font-style:normal}
+  .read b{display:block;font-family:"Arial Narrow",sans-serif;font-size:34px;line-height:1.05;margin-top:6px;font-weight:800}
+  .read b small{font-size:12px;font-family:Menlo,monospace;font-weight:400;color:var(--ink-2);margin-left:4px}
+  .read i{font-size:11px;color:var(--ink-2);font-style:normal}
+</style>
+</head>
+<body>
+<header class="brand">
+  <span class="mark"></span><span class="word">LATTIX</span>
+  <span class="survey-no">测线登记 · SURVEY 0418 / 机群实时</span>
+  <div class="top-meta">
+    <span class="chip live">PANEL ACTIVE</span>
+    <span>2026-10-18 20:41</span><span>管理员 bean</span><span>外观 ◐</span>
+  </div>
+</header>
+<nav>
+  <div class="sec">实时控制 / LIVE OPS</div>
+  <div class="nav-i on"><span class="dot"></span>仪表盘</div>
+  <div class="nav-i"><span class="dot"></span>运行监控</div>
+  <div class="nav-i"><span class="dot"></span>服务器</div>
+  <div class="nav-i"><span class="dot"></span>成本统计</div>
+  <div class="nav-i"><span class="dot"></span>链路</div>
+  <div class="sec">资源管理 / RESOURCES</div>
+  <div class="nav-i"><span class="dot"></span>用户</div>
+  <div class="nav-i"><span class="dot"></span>分组</div>
+  <div class="nav-i"><span class="dot"></span>订阅模板</div>
+  <div class="nav-i"><span class="dot"></span>外部订阅</div>
+  <div class="nav-i"><span class="dot"></span>操作日志</div>
+  <div class="sec">系统 / SYSTEM</div>
+  <div class="nav-i"><span class="dot"></span>设置</div>
+</nav>
+<main>
+  <aside class="index">
+    <h3>测线索引 · 5 条已登记</h3>
+    <div class="chain on"><b>东京 → 洛杉矶</b><span>3 测站 · 运行中 · 12 节点</span></div>
+    <div class="chain"><b>新加坡 → 法兰克福</b><span>2 测站 · 降级 · 8 节点</span></div>
+    <div class="chain"><b>香港 → 圣何塞</b><span>2 测站 · 部署中 · 6 节点</span></div>
+    <div class="chain"><b>东京 → 首尔</b><span>2 测站 · 运行中 · 4 节点</span></div>
+    <div class="chain"><b>上海 → 洛杉矶</b><span>3 测站 · 运行中 · 9 节点</span></div>
+  </aside>
+  <section class="work">
+    <div class="work-head">
+      <div>
+        <h1>东京 → 洛杉矶 · 实测剖面</h1>
+        <div class="sub">TRANSECT 01 · 3 测站 / 2 区段 · 最近测量 20:41:06</div>
+      </div>
+      <div class="acts"><span class="act">登记新测线</span><span class="act">导出读数</span><span class="act pri">重新测量</span></div>
+    </div>
+    <div class="transect">
+      <span class="ttl">剖面 A—A′ · 逐跳实测</span>
+      <span class="big">链路健康剖面</span>
+      <div class="axis"></div><span class="axislabel">海平面 0m · 延迟基线 42ms</span>
+      <div class="band b1"></div><div class="band b2"></div><div class="band b3"></div><div class="band b4"></div>
+      <div class="station s1"></div><div class="station s2"></div><div class="station s3"></div><div class="station s4"></div>
+      <div class="st s1">01</div><div class="st s2">02</div><div class="st s3">03</div><div class="st s4">04</div>
+      <div class="st-label s1">东京-01<small>入口 · 38% · 31ms</small></div>
+      <div class="st-label s2">大阪-02<small>中转 · 61% · 48ms</small></div>
+      <div class="st-label s3">洛杉矶-主<small>中转 · 44% · 52ms</small></div>
+      <div class="st-label s4">圣何塞-03<small>出口 · -- · --</small></div>
+      <span class="pin">02 区段含水异常 · 已记入故障登记</span>
+      <div class="scale"><span>0</span><i></i><span>2400 km</span></div>
+    </div>
+    <div class="lower">
+      <div class="register">
+        <div class="rh"><b>测站登记表 · STATION REGISTER</b><span>按测站编号排序 · 12 条记录中 4 条</span></div>
+        <table>
+          <thead><tr><th>测站</th><th>角色</th><th>地层状态</th><th>CPU</th><th>延迟</th><th>今日流量</th><th>Agent</th></tr></thead>
+          <tbody>
+            <tr><td>东京-01</td><td>入口</td><td><span class="tag ok">稳定</span></td><td class="num">38%</td><td class="num">31ms</td><td class="num">1.42 TB</td><td class="num">v0.9.4</td></tr>
+            <tr><td>大阪-02</td><td>中转</td><td><span class="tag warn">含水层</span></td><td class="num">61%</td><td class="num">48ms</td><td class="num">0.86 TB</td><td class="num">v0.9.4</td></tr>
+            <tr><td>洛杉矶-主</td><td>中转</td><td><span class="tag ok">稳定</span></td><td class="num">44%</td><td class="num">52ms</td><td class="num">1.10 TB</td><td class="num">v0.9.4</td></tr>
+            <tr><td>圣何塞-03</td><td>出口</td><td><span class="tag bad">未接通</span></td><td class="num">--</td><td class="num">--</td><td class="num">--</td><td class="num">--</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <aside class="incidents">
+        <h3>异常注记 · 2</h3>
+        <div class="inc"><b>圣何塞-03 未接通</b><span>出口测站 · 20:37 起 · 影响 6 节点</span></div>
+        <div class="inc"><b>新加坡 → 法兰克福降级</b><span>中转延迟 218ms · 20:29 起</span></div>
+        <div class="inc" style="border:0"><b style="color:var(--slate)">香港 → 圣何塞 部署中</b><span>配置已下发 · 等待 Agent 回报</span></div>
+      </aside>
+    </div>
+  </section>
+</main>
+<footer class="foot">
+  <div class="read"><em>机群测站 · SERVERS</em><b>12</b><i>11 在线 · 1 失联</i></div>
+  <div class="read"><em>已登记测线 · CHAINS</em><b>5</b><i>3 运行 · 1 降级 · 1 部署中</i></div>
+  <div class="read"><em>活跃用户 · USERS</em><b>312<small>/ 1,284</small></b><i>较昨日 +18</i></div>
+  <div class="read"><em>今日流量 · TRAFFIC</em><b>4.8<small>TB</small></b><i>TX 2.9 TB · RX 1.9 TB</i></div>
+</footer>
+</body>
+</html>

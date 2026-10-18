@@ -1,13 +1,13 @@
 # 开发指南
 
-面向贡献者的构建、端到端验收与发版流程。前端命令、目录结构与主题系统约定见
+面向贡献者的构建、端到端验收与发版流程。前端命令、目录结构与设计系统约定见
 [前端开发](frontend.md)；总体设计见 [设计文档](framework-design.md)。
 
 ## 仓库结构
 
 ```
-src/frontend/  # Vite + React + TypeScript + shadcn/ui + Three.js（包管理器 bun）
-               # 含可插拔主题系统（src/frontend/src/themes/，默认 Apple HIG，可切换经典 Cream Grid）
+src/frontend/  # Vite + React + TypeScript + shadcn/ui（包管理器 bun）
+               # 单一设计语言「高密度事务台」，默认深色外观，浅色可切换
 src/backend/   # Go：面板 HTTP API + Agent WS 端点 + SQLite
 src/agent/     # Go：独立二进制，systemd 托管
 src/shared/    # Go module：WS 消息结构体、虚拟配置类型，backend/agent 共用

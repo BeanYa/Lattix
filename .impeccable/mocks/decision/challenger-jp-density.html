@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Lattix · 高密度模块墙</title>
+<style>
+  :root{--paper:#FFFFFF;--ink:#161616;--ink2:#6B7280;--red:#D22B2B;--line:#E4E4E4;--fill:#F6F6F6}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:1440px;height:900px;overflow:hidden}
+  body{font-family:"PingFang SC","Hiragino Sans GB","Helvetica Neue",sans-serif;font-size:12px;color:var(--ink);background:var(--paper);display:grid;grid-template-columns:196px 1fr;grid-template-rows:46px 1fr}
+  header{grid-column:1/-1;display:flex;align-items:center;gap:14px;padding:0 16px;border-bottom:1px solid var(--ink)}
+  .mark{width:18px;height:18px;background:var(--ink)}
+  .word{font-size:20px;font-weight:800;letter-spacing:.18em}
+  .no{font-size:10.5px;color:var(--ink2);letter-spacing:.1em}
+  .meta{margin-left:auto;display:flex;gap:14px;align-items:center;font-size:11px;color:var(--ink2)}
+  .state{background:var(--red);color:#fff;padding:3px 7px;font-size:10px;letter-spacing:.1em}
+  nav{border-right:1px solid var(--line);padding:10px 0}
+  .sec{font-size:10px;letter-spacing:.14em;color:var(--red);padding:10px 14px 4px}
+  .nav-i{padding:5px 14px;font-size:12.5px;border-left:3px solid transparent}
+  .nav-i.on{border-left-color:var(--red);background:var(--fill);font-weight:700}
+  main{padding:10px 12px 0;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:hidden}
+  .head{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--ink);padding-bottom:6px;flex:none}
+  h1{font-size:24px;font-weight:800;letter-spacing:.01em;line-height:1}
+  .sub{font-size:10.5px;color:var(--ink2);margin-top:3px}
+  .acts{display:flex;gap:5px}
+  .act{border:1px solid var(--ink);padding:4px 9px;font-size:11px}
+  .act.pri{background:var(--ink);color:#fff}
+  .mosaic{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:minmax(0,1fr);gap:6px;flex:1;min-height:0;overflow:hidden}
+  .mod{border:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .mod > .mh{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--line);padding:3px 7px;font-size:10.5px;letter-spacing:.05em;color:var(--ink2);font-weight:700}
+  .mod > .mh span{background:var(--red);color:#fff;font-size:9.5px;padding:1px 5px;letter-spacing:.08em}
+  .mod > .mb{padding:7px 8px;flex:1;min-height:0;overflow:hidden}
+  .big{font-size:32px;font-weight:800;line-height:1;letter-spacing:-.01em}
+  .big small{font-size:11px;color:var(--ink2);font-weight:400;margin-left:3px}
+  .kv{display:grid;grid-template-columns:repeat(2,1fr);gap:6px 10px}
+  .kv div em{display:block;font-size:9.5px;color:var(--ink2);font-style:normal;letter-spacing:.06em}
+  .kv div b{font-size:15px;font-variant-numeric:tabular-nums}
+  .kv div i{font-size:9.5px;color:var(--ink2);font-style:normal}
+  .rows{display:flex;flex-direction:column}
+  .row{display:grid;grid-template-columns:1fr auto;gap:6px;padding:3.5px 0;border-bottom:1px solid var(--fill);font-size:11.5px}
+  .row:last-child{border-bottom:0}
+  .row em{font-style:normal;color:var(--ink2);font-size:10px}
+  .row b{font-variant-numeric:tabular-nums}
+  .red{color:var(--red)}
+  .bar{height:5px;background:var(--fill);margin-top:3px}
+  .bar i{display:block;height:5px;background:var(--ink)}
+  .bar i.red{background:var(--red)}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th{text-align:left;color:var(--ink2);font-weight:600;font-size:9.5px;border-bottom:1px solid var(--line);padding:3px 4px 3px 0;letter-spacing:.04em}
+  td{padding:3.5px 4px 3.5px 0;border-bottom:1px solid var(--fill);white-space:nowrap}
+  td.n{font-variant-numeric:tabular-nums}
+  .tag{font-size:9.5px;padding:1px 4px;border:1px solid currentColor}
+  .tag.ok{color:#3F7A46}.tag.warn{color:#A86A00}.tag.bad{color:var(--red)}
+  .span2{grid-column:span 2}
+  .span3{grid-column:span 3}
+  .foot{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;border-top:1px solid var(--ink);padding-top:5px;flex:none;height:56px;overflow:hidden}
+  .f{border:1px solid var(--line);padding:5px 8px;background:var(--fill)}
+  .f em{display:block;font-size:9.5px;color:var(--ink2);font-style:normal;letter-spacing:.06em}
+  .f b{font-size:18px;font-weight:800;line-height:1.1}
+  .f b small{font-size:10px;color:var(--ink2);font-weight:400}
+</style>
+</head>
+<body>
+<header><span class="mark"></span><span class="word">LATTIX</span><span class="no">高密度控制台 / MOSAIC 0418 / 12 模块</span>
+  <div class="meta"><span class="state">ACTIVE</span><span>2026-10-18 20:41</span><span>bean</span><span>外观 ◐</span></div></header>
+<nav>
+  <div class="sec">实时控制 / LIVE OPS</div>
+  <div class="nav-i on">仪表盘</div><div class="nav-i">运行监控</div><div class="nav-i">服务器</div><div class="nav-i">成本统计</div><div class="nav-i">链路</div>
+  <div class="sec">资源管理 / RESOURCES</div>
+  <div class="nav-i">用户</div><div class="nav-i">分组</div><div class="nav-i">订阅模板</div><div class="nav-i">外部订阅</div><div class="nav-i">操作日志</div>
+  <div class="sec">系统 / SYSTEM</div><div class="nav-i">设置</div>
+</nav>
+<main>
+  <div class="head"><div><h1>机群总览</h1><div class="sub">12 服务器 · 5 链路 · 1,284 用户 · 最近刷新 20:41:06</div></div>
+    <div class="acts"><span class="act">刷新</span><span class="act">导出</span><span class="act pri">部署配置</span></div></div>
+  <div class="mosaic">
+    <div class="mod span2"><div class="mh">机群总计 <span>LIVE</span></div><div class="mb kv">
+      <div><em>服务器 SERVERS</em><b>12</b><i>11 在线 / 1 失联</i></div>
+      <div><em>链路 CHAINS</em><b>5</b><i>3 运行 / 1 降级 / 1 部署中</i></div>
+      <div><em>用户 USERS</em><b>1,284</b><i>活跃 312</i></div>
+      <div><em>今日流量 TRAFFIC</em><b>4.8 TB</b><i>TX 2.9 · RX 1.9</i></div>
+      <div><em>节点 NODES</em><b>46</b><i>43 正常</i></div>
+      <div><em>异常 EXCEPTIONS</em><b class="red">2</b><i>1 失联 / 1 降级</i></div>
+    </div></div>
+    <div class="mod"><div class="mh">Agent 状态 <span>12</span></div><div class="mb rows">
+      <div class="row"><span>东京-01 <em>v0.9.4</em></span><b class="tag ok">在线</b></div>
+      <div class="row"><span>大阪-02 <em>v0.9.4</em></span><b class="tag ok">在线</b></div>
+      <div class="row"><span>洛杉矶-主 <em>v0.9.4</em></span><b class="tag ok">在线</b></div>
+      <div class="row"><span>圣何塞-03 <em>--</em></span><b class="tag bad">失联</b></div>
+      <div class="row"><span>法兰克福-01 <em>v0.9.4</em></span><b class="tag warn">降级</b></div>
+    </div></div>
+    <div class="mod"><div class="mh">链路总览 <span>5</span></div><div class="mb rows">
+      <div class="row"><span>东京 → 洛杉矶 <em>3 跳</em></span><b class="tag ok">运行</b></div>
+      <div class="row"><span>新加坡 → 法兰克福 <em>2 跳</em></span><b class="tag warn">降级</b></div>
+      <div class="row"><span>香港 → 圣何塞 <em>2 跳</em></span><b class="tag warn">部署中</b></div>
+      <div class="row"><span>东京 → 首尔 <em>直连</em></span><b class="tag ok">运行</b></div>
+      <div class="row"><span>上海 → 洛杉矶 <em>3 跳</em></span><b class="tag ok">运行</b></div>
+    </div></div>
+    <div class="mod span3"><div class="mh">服务器读数 <span>按 CPU 排序</span></div><div class="mb">
+      <table><thead><tr><th>服务器</th><th>地区</th><th>状态</th><th>CPU</th><th>内存</th><th>磁盘</th><th>延迟</th><th>今日 TX</th></tr></thead>
+      <tbody>
+        <tr><td>东京-01</td><td>JP</td><td><span class="tag ok">在线</span></td><td class="n">38%</td><td class="n">42%</td><td class="n">61%</td><td class="n">31ms</td><td class="n">1.42 TB</td></tr>
+        <tr><td>大阪-02</td><td>JP</td><td><span class="tag ok">在线</span></td><td class="n">61%</td><td class="n">58%</td><td class="n">82%</td><td class="n">48ms</td><td class="n">0.86 TB</td></tr>
+        <tr><td>洛杉矶-主</td><td>US</td><td><span class="tag ok">在线</span></td><td class="n">44%</td><td class="n">51%</td><td class="n">47%</td><td class="n">52ms</td><td class="n">1.10 TB</td></tr>
+        <tr><td>圣何塞-03</td><td>US</td><td><span class="tag bad">失联</span></td><td class="n">--</td><td class="n">--</td><td class="n">--</td><td class="n">--</td><td class="n">--</td></tr>
+        <tr><td>法兰克福-01</td><td>DE</td><td><span class="tag warn">降级</span></td><td class="n">72%</td><td class="n">66%</td><td class="n">54%</td><td class="n">218ms</td><td class="n">0.44 TB</td></tr>
+      </tbody></table>
+    </div></div>
+    <div class="mod"><div class="mh">事件 <span class="red">2 新</span></div><div class="mb rows">
+      <div class="row"><span>圣何塞-03 未接通 <em>20:37</em></span><b class="tag bad">P1</b></div>
+      <div class="row"><span>法兰克福-01 延迟超基线 <em>20:29</em></span><b class="tag warn">P2</b></div>
+      <div class="row"><span>大阪-02 磁盘 82% <em>19:54</em></span><b class="tag warn">P2</b></div>
+      <div class="row"><span>洛杉矶-主 恢复 <em>19:31</em></span><b class="tag ok">已恢复</b></div>
+    </div></div>
+    <div class="mod"><div class="mh">流量 <span>24H</span></div><div class="mb">
+      <div class="row"><span>TX 发送</span><b>2.9 TB</b></div><div class="bar"><i style="width:72%"></i></div>
+      <div class="row" style="margin-top:6px"><span>RX 接收</span><b>1.9 TB</b></div><div class="bar"><i style="width:48%"></i></div>
+      <div class="row" style="margin-top:6px"><span>峰值时段</span><b>21:00</b></div>
+    </div></div>
+    <div class="mod"><div class="mh">订阅 <span>4 模板</span></div><div class="mb rows">
+      <div class="row"><span>Clash 模板 <em>已发布</em></span><b class="tag ok">正常</b></div>
+      <div class="row"><span>Sing-box 模板 <em>已发布</em></span><b class="tag ok">正常</b></div>
+      <div class="row"><span>外部订阅 <em>3 个来源</em></span><b class="tag ok">正常</b></div>
+      <div class="row"><span>公开订阅页 <em>今日 1.2k</em></span><b class="tag ok">正常</b></div>
+    </div></div>
+    <div class="mod"><div class="mh">用户 <span>1,284</span></div><div class="mb kv">
+      <div><em>活跃</em><b>312</b></div><div><em>今日新增</em><b>18</b></div>
+      <div><em>分组</em><b>7</b></div><div><em>过期</em><b class="red">4</b></div>
+    </div></div>
+  </div>
+  <div class="foot">
+    <div class="f"><em>机群测站 / SERVERS</em><b>12 <small>11 在线</small></b></div>
+    <div class="f"><em>已登记链路 / CHAINS</em><b>5 <small>3 运行</small></b></div>
+    <div class="f"><em>活跃用户 / USERS</em><b>312 <small>/ 1,284</small></b></div>
+    <div class="f"><em>今日流量 / TRAFFIC</em><b>4.8 <small>TB</small></b></div>
+  </div>
+</main>
+</body>
+</html>

@@ -78,7 +78,7 @@ Docker 模式默认只监听 `127.0.0.1:8080`，需经 Nginx/OpenResty 反向代
 | [Changelog](docs/CHANGELOG.md) | 版本变更记录 |
 | [设计文档](docs/framework-design.md) | 总体设计与实施契约：数据模型、控制通道、安全与各子系统 |
 | [开发指南](docs/development.md) | 构建、手动运行、e2e 验收、CI/CD 与发版流程 |
-| [前端开发](docs/frontend.md) | 前端命令、目录结构与可插拔主题系统 |
+| [前端开发](docs/frontend.md) | 前端命令、目录结构与设计系统约定 |
 | [Panel 生命周期与 Agent 连接状态机](docs/panel-lifecycle-state-machine-design.md) | 启动/更新/故障生命周期与 Agent 连接状态转换 |
 | [RPC API、Requester 与 Agent 通道](docs/rpc-api-design.md) | 面板 API 形态、requester 约定与 agent 动作协议 |
 | [OpenAPI](docs/openapi.yaml) | 面板 HTTP API 契约（前端类型由此生成） |

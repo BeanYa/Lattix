@@ -41,3 +41,6 @@ src/backend/internal/web/dist/*
 
 # Backend runtime logs (默认与 db 同级的 logs/)
 logs/
+
+# Impeccable local review captures
+.impeccable/review/
