@@ -74,7 +74,7 @@ export function CountryCombobox({
                 <Combobox.Item
                   key={country.code}
                   value={country}
-                  className="sv-combobox-item relative flex cursor-default items-center gap-2 rounded-md py-1.5 pr-8 pl-2 text-sm outline-none select-none"
+                  className="sv-combobox-item relative flex cursor-default items-center gap-2 rounded-[1px] py-1.5 pr-8 pl-2 text-sm outline-none select-none"
                 >
                   <CountryFlag code={country.code} label={`${country.label}国旗`} />
                   <span>{country.label}</span>

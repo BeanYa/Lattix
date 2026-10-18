@@ -1,4 +1,4 @@
-import { CoinsIcon, PlusIcon, RefreshCwIcon, SearchIcon, Trash2Icon } from 'lucide-react'
+import { PlusIcon, RefreshCwIcon, SearchIcon, Trash2Icon } from 'lucide-react'
 
 import { LoadingState, Notice } from '@/components/PagePrimitives'
 import { Button } from '@/components/ui/button'
@@ -72,12 +72,11 @@ export function ExchangeRatesCard({
   return (
     <>
       <SettingsCard
-        icon={CoinsIcon}
         tag="BILLING / EXCHANGE"
         title="费用换算"
         description="服务器保留原价和原币种，汇总及详情按统计币种折算。"
       >
-        <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="st-row st-row-end">
           <div className="flex flex-col gap-2">
             <Label>统计币种</Label>
             <Select
@@ -134,7 +133,7 @@ export function ExchangeRatesCard({
               </button>
             </div>
           </div>
-          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
+          <div className="st-row st-row-rate">
             <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-2">
               <Input
                 type="number"
@@ -213,9 +212,9 @@ export function ExchangeRatesCard({
                   className={cn(
                     'cg-status',
                     rate.enabled && rate.target_currency === reportingCurrency
-                      ? 'is-lime'
+                      ? 'is-ok'
                       : rate.enabled
-                        ? 'is-blue'
+                        ? undefined
                         : 'is-muted',
                   )}
                 >
@@ -269,7 +268,7 @@ export function ExchangeRatesCard({
           ) : publicRatesError ? (
             <Notice tone="danger">{publicRatesError}</Notice>
           ) : exchangeData?.rates.length ? (
-            <div className="max-h-[60vh] overflow-auto rounded-lg border">
+            <div className="st-rates-table">
               <Table>
                 <TableHeader className="sticky top-0 z-10 bg-popover">
                   <TableRow>

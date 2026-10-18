@@ -3,12 +3,12 @@ import { Link, useLocation } from 'wouter'
 import {
   ActivityIcon,
   CoinsIcon,
-  LayoutDashboardIcon,
-  LogOutIcon,
-  MenuIcon,
   FileCode2Icon,
   GlobeIcon,
   Layers as LayersIcon,
+  LayoutDashboardIcon,
+  LogOutIcon,
+  MenuIcon,
   RouteIcon,
   ScrollTextIcon,
   ServerIcon,
@@ -60,13 +60,13 @@ const navItems = [
 ]
 
 const navSections = [
-  { label: '实时控制 / LIVE OPS', items: navItems.slice(0, 5) },
-  { label: '资源管理 / RESOURCES', items: navItems.slice(5, 10) },
-  { label: '系统 / SYSTEM', items: navItems.slice(10) },
+  { label: '实时控制', code: 'LIVE OPS', items: navItems.slice(0, 5) },
+  { label: '资源管理', code: 'RESOURCES', items: navItems.slice(5, 10) },
+  { label: '系统', code: 'SYSTEM', items: navItems.slice(10) },
 ]
 
 const panelStateTone: Record<PanelLifecycleState, { label: string; className: string }> = {
-  startup: { label: 'STARTUP', className: 'is-blue' },
+  startup: { label: 'STARTUP', className: 'is-muted' },
   active: { label: 'ACTIVE', className: 'is-lime' },
   updating: { label: 'UPDATING', className: 'is-blue' },
   faulted: { label: 'FAULTED', className: 'is-red' },
@@ -91,7 +91,10 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
     <>
       {navSections.map((section) => (
         <div key={section.label} className="cg-nav-section">
-          <div className="cg-nav-section-label">{section.label}</div>
+          <div className="cg-nav-section-label">
+            {section.label}
+            <span className="cg-nav-section-code">{section.code}</span>
+          </div>
           <div className="cg-nav-list">
             {section.items.map((item) => {
               const isActive = item.end
@@ -105,7 +108,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
                   aria-current={isActive ? 'page' : undefined}
                   className={cn('cg-nav-item', isActive && 'is-active')}
                 >
-                  <item.icon strokeWidth={2} />
+                  <item.icon strokeWidth={1.8} />
                   <span className="truncate">{item.label}</span>
                 </Link>
               )
@@ -178,28 +181,56 @@ export default function Layout({ children }: { children: ReactNode }) {
           <div
             role="status"
             aria-label="请求处理中"
-            className="fixed inset-x-0 top-0 z-50 h-1 animate-pulse"
-            style={{ background: 'var(--cg-lime)' }}
+            className="fixed inset-x-0 top-0 z-50 h-0.5 animate-pulse"
+            style={{ background: 'var(--panel-accent)' }}
           />
         ) : null}
 
-        {/* 移动端顶栏 */}
-        <header className="cg-topbar">
-          <span className="flex items-center gap-3">
-            <span className="cg-sidebar-brand-icon" style={{ width: 36, height: 36 }}>
-              <LattixMark className="size-6 shrink-0" />
+        <header className="cg-commandbar">
+          <Link href="/" className="cg-commandbar-brand" aria-label="Lattix 仪表盘">
+            <span className="cg-commandbar-mark">
+              <LattixMark className="size-4 shrink-0" />
             </span>
-            <span className="cg-sidebar-brand-name" aria-label="Lattix">
-              LATTIX
+            <span className="min-w-0">
+              <span className="cg-commandbar-name" aria-label="Lattix">
+                LATTIX
+              </span>
+              <span className="cg-commandbar-sub">NETWORK CONTROL PANEL</span>
             </span>
-          </span>
-          <div className="flex items-center gap-2">
+          </Link>
+
+          <div className="cg-commandbar-meta">
             <PanelStateBadge snapshot={panelState} />
-            <ThemeToggle className="text-foreground hover:bg-accent" />
+            <span className="cg-commandbar-date">
+              {new Intl.DateTimeFormat('zh-CN', {
+                month: '2-digit',
+                day: '2-digit',
+                weekday: 'short',
+              }).format(new Date())}
+            </span>
+          </div>
+
+          <span className="cg-commandbar-spacer" />
+
+          <div className="cg-commandbar-actions">
+            <ThemeToggle />
+            <div className="cg-commandbar-user">
+              <span className="cg-commandbar-avatar">
+                {(username ?? 'A').slice(0, 1).toUpperCase()}
+              </span>
+              <span className="cg-commandbar-username" title={username ?? ''}>
+                {username}
+              </span>
+              {logoutButton}
+            </div>
             <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
               <SheetTrigger
                 render={
-                  <button type="button" className="cg-icon-button" aria-label="打开导航菜单" />
+                  <button
+                    type="button"
+                    className="cg-icon-button cg-menu-trigger"
+                    aria-label="打开导航菜单"
+                  />
                 }
               >
                 <MenuIcon />
@@ -207,17 +238,17 @@ export default function Layout({ children }: { children: ReactNode }) {
               <SheetContent
                 side="left"
                 showCloseButton={false}
-                className="w-72 border-[3px] border-[var(--cg-ink-soft)] bg-[var(--cg-paper-light)] p-0 text-[var(--cg-ink)]"
+                className="cg-sheet w-64 gap-0 border-r border-[var(--panel-rule)] bg-[var(--panel-surface)] p-0 text-[var(--panel-ink)]"
               >
                 <SheetTitle className="cg-sidebar-brand">
                   <span className="cg-sidebar-brand-icon">
-                    <LattixMark className="size-7 shrink-0" />
+                    <LattixMark className="size-5 shrink-0" />
                   </span>
                   <span>
                     <span className="cg-sidebar-brand-name" aria-label="Lattix">
                       LATTIX
                     </span>
-                    <span className="cg-sidebar-brand-sub">KNOWLEDGE NETWORK OS</span>
+                    <span className="cg-sidebar-brand-sub">NETWORK CONTROL PANEL</span>
                   </span>
                 </SheetTitle>
                 <nav className="cg-sidebar-nav" aria-label="主导航">
@@ -239,55 +270,32 @@ export default function Layout({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        {/* 桌面端侧边栏 */}
-        <aside className="cg-sidebar">
-          <div className="cg-sidebar-brand">
-            <span className="cg-sidebar-brand-icon">
-              <LattixMark className="size-7 shrink-0" />
-            </span>
-            <span className="min-w-0">
-              <span className="cg-sidebar-brand-name" aria-label="Lattix">
-                LATTIX
-              </span>
-              <span className="cg-sidebar-brand-sub">KNOWLEDGE NETWORK OS</span>
-            </span>
-          </div>
-          <nav className="cg-sidebar-nav no-scrollbar" aria-label="主导航">
-            <NavList />
-          </nav>
-          <div className="cg-sidebar-footer">
-            <div className="cg-sidebar-state">
-              <span className="cg-micro" style={{ color: 'var(--cg-subtle)' }}>
-                PANEL STATUS
-              </span>
-              <PanelStateBadge snapshot={panelState} />
+        <div className="cg-body">
+          <aside className="cg-sidebar">
+            <nav className="cg-sidebar-nav no-scrollbar" aria-label="主导航">
+              <NavList />
+            </nav>
+            <div className="cg-sidebar-footer">
+              <div className="cg-sidebar-state">
+                <span className="cg-micro">PANEL</span>
+                <PanelStateBadge snapshot={panelState} />
+              </div>
+              <p className="cg-sidebar-note">NETWORK CONTROL / SELF-HOSTED</p>
             </div>
-            <div className="cg-sidebar-user">
-              <span className="cg-sidebar-avatar">
-                {(username ?? 'A').slice(0, 1).toUpperCase()}
-              </span>
-              <span className="cg-sidebar-username" title={username ?? ''}>
-                {username}
-              </span>
-              <ThemeToggle className="size-8 text-muted-foreground hover:bg-accent" />
-              {logoutButton}
-            </div>
-          </div>
-        </aside>
+          </aside>
 
-        <main id="main-content" className="cg-main">
-          {logoutError ? (
-            <div
-              role="alert"
-              className="cg-semantic-card is-bad cg-main-inner"
-              style={{ marginBottom: 16 }}
-            >
-              <header>登出失败</header>
-              <div className="cg-semantic-body">{logoutError}</div>
-            </div>
-          ) : null}
-          <div className="cg-main-inner cg-page-in">{children}</div>
-        </main>
+          <main id="main-content" className="cg-main">
+            {logoutError ? (
+              <div role="alert" className="cg-main-inner" style={{ paddingBottom: 0 }}>
+                <div className="cg-semantic-card is-bad">
+                  <header>登出失败</header>
+                  <div className="cg-semantic-body">{logoutError}</div>
+                </div>
+              </div>
+            ) : null}
+            <div className="cg-main-inner cg-page-in">{children}</div>
+          </main>
+        </div>
         <UpdateOverlay />
       </div>
     </OperationProgressProvider>

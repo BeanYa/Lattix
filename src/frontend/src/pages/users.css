@@ -1,191 +1,326 @@
 /* ============================================================
-   Users — Cream Grid Tech 页面样式
-   覆盖 Users 页及其专属组件（QRDialog / SubscriptionRoutingFields /
-   TemplateAssignmentTab，均仅被 Users 页引用）。
+   Users — 发丝线用户读数板
    ============================================================ */
 
-/* ---------- 用户卡片列表 ---------- */
+/* ---------- 用户读数板 ---------- */
 
-.cg-users-list {
-  display: grid;
-  gap: 14px;
+.cg-users-board {
+  border: 1px solid var(--panel-rule);
+  border-radius: 2px;
+  background: var(--panel-surface);
+  overflow: hidden;
 }
 
-.cg-user-metrics {
-  display: grid;
-  gap: 12px;
-}
-
-@container cg-main (min-width: 640px) {
-  .cg-user-metrics {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@container cg-main (min-width: 1024px) {
-  .cg-user-metrics {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-  }
-}
-
-.cg-user-metric {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-  align-content: start;
-}
-
-.cg-user-metric-wide {
-  grid-column: 1 / -1;
-}
-
-.cg-user-metric-label {
-  font-family: var(--cg-mono);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  line-height: 1;
-  text-transform: uppercase;
-  color: var(--cg-muted);
-}
-
-.cg-user-metric-value {
-  font-size: 13px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--cg-ink);
-}
-
-.cg-user-metric-value.is-muted {
-  font-weight: 550;
-  color: var(--cg-muted);
-}
-
-.cg-user-suburl {
+.cg-users-board-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 0;
+  min-height: 30px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--panel-rule);
+}
+
+.cg-users-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 5px;
+  background: var(--panel-accent);
+  color: var(--panel-accent-ink);
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.cg-users-board-title {
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
+}
+
+.cg-users-board-meta {
+  margin-left: auto;
+  color: var(--panel-ink-3);
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cg-users-board-state {
+  min-height: 10rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.cg-users-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.cg-users-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--panel-ink);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cg-users-table thead th {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--panel-rule);
+  background: var(--panel-surface);
+  color: var(--panel-ink-3);
+  font-family: var(--font-display);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  line-height: 1.3;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.cg-users-table tbody tr {
+  border-bottom: 1px solid var(--panel-rule);
+}
+
+.cg-users-table tbody tr:last-child {
+  border-bottom: 0;
+}
+
+.cg-users-table tbody tr:hover {
+  background: var(--panel-hover);
+}
+
+.cg-users-table tbody tr[data-disabled] .cg-user-name {
+  color: var(--panel-ink-3);
+}
+
+.cg-users-table tbody th,
+.cg-users-table tbody td {
+  padding: 6px 8px;
+  vertical-align: middle;
+  text-align: left;
+}
+
+.cg-user-cell {
+  display: flex;
+  min-width: 150px;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cg-user-name {
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 720;
+  letter-spacing: -0.005em;
+  line-height: 1.3;
+}
+
+.cg-user-groups {
+  max-width: 190px;
+  overflow: hidden;
+  color: var(--panel-ink-3);
+  font-size: 9.5px;
+  font-weight: 550;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cg-user-states {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+}
+
+.cg-user-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cg-muted {
+  color: var(--panel-ink-3);
+  font-weight: 550;
+}
+
+.cg-user-traffic {
+  display: grid;
+  gap: 0;
+  color: var(--panel-ink-2);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.cg-user-online {
+  color: var(--panel-ink);
+  font-weight: 700;
+}
+
+.cg-user-date {
+  color: var(--panel-ink-2);
+  font-size: 10.5px;
+}
+
+.cg-user-sub {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 240px;
+  max-width: 380px;
 }
 
 .cg-user-suburl-text {
   min-width: 0;
   overflow: hidden;
+  color: var(--panel-ink-3);
+  font-family: var(--panel-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--cg-mono);
-  font-size: 11px;
-  font-weight: 650;
-  color: var(--cg-muted);
 }
 
 .cg-user-suburl-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   flex-shrink: 0;
 }
 
-/* ---------- 通用小件（对话框内） ---------- */
+.cg-user-suburl-actions > span {
+  display: inline-flex;
+}
+
+.cg-user-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* 窄屏：表格横向滚动，保留全部列与操作 */
+@media (max-width: 860px) {
+  .cg-users-table {
+    min-width: 1080px;
+  }
+}
+
+/* ---------- 对话框内小件 ---------- */
 
 .cg-hint {
-  font-size: 12px;
-  font-weight: 550;
-  color: var(--cg-muted);
+  color: var(--panel-ink-2);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
 }
 
 .cg-checkbox {
-  width: 16px;
-  height: 16px;
+  width: 13px;
+  height: 13px;
   flex-shrink: 0;
-  accent-color: var(--cg-blue);
+  border-radius: 1px;
+  accent-color: var(--panel-accent);
 }
 
 .cg-check-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
-  padding: 8px 10px;
-  border: var(--cg-border);
-  border-radius: var(--cg-r-control);
-  background: var(--cg-paper-light);
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--cg-ink);
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--panel-rule);
+  background: transparent;
+  color: var(--panel-ink);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.4;
   cursor: pointer;
-  transition:
-    transform 160ms var(--cg-ease),
-    background-color 160ms var(--cg-ease);
 }
 
 .cg-check-row:hover {
-  transform: translateY(-1px);
-  background: var(--cg-paper-soft);
+  background: var(--panel-raised);
+}
+
+.cg-check-row:last-child {
+  border-bottom: 0;
 }
 
 .cg-check-row-detail {
   min-width: 0;
   overflow: hidden;
+  color: var(--panel-ink-3);
+  font-size: 9.5px;
+  font-weight: 550;
+  letter-spacing: 0.02em;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--cg-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--cg-muted);
 }
 
-/* 创建成功后的订阅链接（lime-soft 强调块） */
-
+/* 创建成功后的订阅链接 */
 .cg-users-created-url {
-  padding: 12px;
-  border: var(--cg-border);
-  border-radius: var(--cg-r-control);
-  background: var(--cg-lime-soft);
-  font-family: var(--cg-mono);
-  font-size: 11px;
-  font-weight: 650;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 2px;
+  background: var(--panel-inset);
+  color: var(--panel-ink);
+  font-family: var(--panel-mono);
+  font-size: 10.5px;
+  font-weight: 550;
   line-height: 1.6;
   word-break: break-all;
-  color: var(--cg-ink);
 }
 
-/* 公告覆盖 textarea：对齐重主题 Input 的奶油描边 */
-
+/* 公告覆盖 textarea */
 .cg-textarea {
   width: 100%;
   min-width: 0;
-  padding: 8px 10px;
-  border: var(--cg-border);
-  border-radius: var(--cg-r-control);
-  background: var(--cg-paper-light);
-  color: var(--cg-ink);
-  font-family: var(--cg-mono);
+  padding: 6px 8px;
+  border: 1px solid var(--panel-rule-strong);
+  border-radius: 2px;
+  background: var(--panel-surface);
+  color: var(--panel-ink);
+  font-family: var(--panel-mono);
   font-size: 11px;
   line-height: 1.6;
   outline: none;
-  transition: border-color 160ms var(--cg-ease);
+  resize: vertical;
 }
 
-.cg-textarea:focus {
-  border-color: var(--cg-blue);
+.cg-textarea:focus-visible {
+  border-color: var(--panel-focus);
+  outline: 2px solid var(--panel-focus);
+  outline-offset: 1px;
 }
 
 .cg-textarea::placeholder {
-  color: var(--cg-subtle);
+  color: var(--panel-placeholder);
 }
 
-/* ---------- 订阅结果预览（Charcoal 技术面板） ---------- */
+/* ---------- 订阅结果预览（技术面板） ---------- */
 
 .cg-users-preview {
   height: min(65vh, 42rem);
   margin: 0;
   overflow: auto;
-  padding: 16px;
-  font-family: var(--cg-mono);
-  font-size: 11px;
-  line-height: 1.6;
+  padding: 12px;
+  font-family: var(--panel-mono);
+  font-size: 10.5px;
+  line-height: 1.55;
   white-space: pre;
 }
 
@@ -193,41 +328,45 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 20rem;
+  height: 18rem;
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
-/* ---------- 订阅二维码 ----------
-   二维码可读性优先：两种模式都保持固定白底 + 深色描边。 */
+/* ---------- 订阅二维码：始终白底保证可扫 ---------- */
 
 .cg-qr-box {
   display: grid;
   place-items: center;
-  padding: 16px;
-  border: 1px solid var(--cg-sep);
-  border-radius: var(--cg-r-card);
-  background: #fff; /* 固定白底：保证暗色模式下扫码可读 */
-  box-shadow: var(--cg-shadow-card);
+  padding: 14px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: none;
 }
 
 .cg-qr-img {
   display: block;
-  border-radius: var(--cg-r-xs);
+  border-radius: 1px;
 }
 
 /* ---------- 分流策略（SubscriptionRoutingFields） ---------- */
 
 .cg-routing-details {
-  padding: 10px 12px;
-  border: var(--cg-border);
-  border-radius: var(--cg-r-control);
-  background: var(--cg-paper-soft);
+  padding: 8px 10px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 2px;
+  background: var(--panel-inset);
 }
 
 .cg-routing-details > summary {
+  color: var(--panel-ink);
+  font-size: 12px;
+  font-weight: 650;
   cursor: pointer;
-  font-size: 13px;
-  font-weight: 800;
-  color: var(--cg-ink);
 }
 
 /* ---------- 模板指派（TemplateAssignmentTab） ---------- */
@@ -236,41 +375,44 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 10px;
+  padding: 8px 10px;
 }
 
 .cg-assign-users {
-  margin-top: 8px;
   display: grid;
-  gap: 4px;
-  max-height: 224px;
+  gap: 0;
+  max-height: 208px;
+  margin-top: 6px;
   overflow-y: auto;
-  padding: 8px;
-  border: var(--cg-border);
-  border-radius: var(--cg-r-control);
-  background: var(--cg-paper-soft);
+  border: 1px solid var(--panel-rule);
+  background: var(--panel-inset);
 }
 
 .cg-assign-user-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 8px;
-  border-radius: var(--cg-r-xs);
-  font-size: 13px;
-  font-weight: 650;
-  color: var(--cg-ink);
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--panel-rule);
+  color: var(--panel-ink);
+  font-size: 11.5px;
+  font-weight: 550;
   cursor: pointer;
-  transition: background-color 160ms var(--cg-ease);
+}
+
+.cg-assign-user-row:last-child {
+  border-bottom: 0;
 }
 
 .cg-assign-user-row:hover {
-  background: var(--cg-paper-light);
+  background: var(--panel-raised);
 }
 
 .cg-assign-group {
-  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
 }
 
 .cg-assign-group.is-dashed {
@@ -280,29 +422,37 @@
 .cg-assign-group-head {
   display: flex;
   align-items: center;
-  gap: 8px;
   flex-wrap: wrap;
+  gap: 6px;
 }
 
 .cg-assign-group-name {
-  font-size: 14px;
-  font-weight: 850;
-  color: var(--cg-ink);
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .cg-assign-group-count {
   margin-left: auto;
-  font-family: var(--cg-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  color: var(--panel-ink-3);
+  font-family: var(--font-display);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
   text-transform: uppercase;
-  color: var(--cg-muted);
 }
 
 .cg-assign-chips {
-  margin-top: 8px;
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 4px;
+}
+
+@media (max-width: 860px) {
+  .cg-user-sub {
+    max-width: none;
+  }
 }

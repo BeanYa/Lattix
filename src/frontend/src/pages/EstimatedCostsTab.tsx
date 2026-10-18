@@ -4,23 +4,15 @@ import { CoinsIcon } from 'lucide-react'
 import { CountryFlag } from '@/components/CountryFlag'
 import { Chart, type ChartOption } from '@/components/echarts'
 import { EmptyState, LoadingState, Notice } from '@/components/PagePrimitives'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { api, errorMessage } from '@/lib/api'
 import { useTheme } from '@/lib/theme-context'
+import { cn } from '@/lib/utils'
 import type {
   BillingEstimatedServerStats,
   BillingEstimatedStats,
   BillingStatsGranularity,
   BillingStatsRateMode,
 } from '@/lib/types'
-import { cn } from '@/lib/utils'
 import {
   GRANULARITY_LABEL,
   StatsControls,
@@ -271,7 +263,7 @@ export default function EstimatedCostsTab() {
   }, [stats, rows, totalAll, reportingCurrency, chartColors])
 
   return (
-    <div className="cg-costs-tab">
+    <div className="cost-tab-panel">
       <StatsControls
         granularity={granularity}
         from={from}
@@ -292,7 +284,7 @@ export default function EstimatedCostsTab() {
         </Notice>
       ) : null}
       {loading && !stats ? (
-        <LoadingState className="py-16">正在估算成本…</LoadingState>
+        <LoadingState className="cost-loading">正在估算成本…</LoadingState>
       ) : stats && stats.servers.length === 0 ? (
         <EmptyState
           icon={<CoinsIcon className="size-8" />}
@@ -301,233 +293,236 @@ export default function EstimatedCostsTab() {
         />
       ) : stats ? (
         <>
-          <section className="cg-costs-metrics" aria-label="估算成本汇总">
-            <article className="cg-metric">
-              <span className="cg-metric-value">{money(dailyTotal, reportingCurrency)}</span>
-              <span className="cg-metric-copy">
-                <span className="cg-metric-label">估算日成本</span>
-                <span className="cg-metric-detail">
+          <section className="cost-mod" aria-label="估算成本汇总">
+            <header className="cost-mod-head">
+              <span className="cost-tab">COST</span>
+              <h2 className="cost-mod-title">估算成本汇总</h2>
+              <span className="cost-mod-meta">{reportingCurrency} · 计算成本</span>
+            </header>
+            <div className="cost-summary">
+              <div className="cost-summary-cell">
+                <span className="cost-summary-label">估算日成本</span>
+                <strong className="cost-summary-value">
+                  {money(dailyTotal, reportingCurrency)}
+                  <small>{reportingCurrency}</small>
+                </strong>
+                <span className="cost-summary-detail">
                   PER DAY / {reportingCurrency} · 月成本 ÷ 30 天
                 </span>
-              </span>
-            </article>
-            <article className="cg-metric">
-              <span className="cg-metric-value">{money(monthlyTotal, reportingCurrency)}</span>
-              <span className="cg-metric-copy">
-                <span className="cg-metric-label">估算月成本</span>
-                <span className="cg-metric-detail">
+              </div>
+              <div className="cost-summary-cell">
+                <span className="cost-summary-label">估算月成本</span>
+                <strong className="cost-summary-value">
+                  {money(monthlyTotal, reportingCurrency)}
+                  <small>{reportingCurrency}</small>
+                </strong>
+                <span className="cost-summary-detail">
                   PER MONTH / {reportingCurrency} · 月付实价，其余估算折算
                 </span>
-              </span>
-            </article>
-            <article className="cg-metric">
-              <span className="cg-metric-value">{money(annualTotal, reportingCurrency)}</span>
-              <span className="cg-metric-copy">
-                <span className="cg-metric-label">估算年成本</span>
-                <span className="cg-metric-detail">
+              </div>
+              <div className="cost-summary-cell">
+                <span className="cost-summary-label">估算年成本</span>
+                <strong className="cost-summary-value">
+                  {money(annualTotal, reportingCurrency)}
+                  <small>{reportingCurrency}</small>
+                </strong>
+                <span className="cost-summary-detail">
                   PER YEAR / {reportingCurrency} · 年付实价，其余估算折算
                 </span>
-              </span>
-            </article>
-            <article className="cg-metric">
-              <span className="cg-metric-value">
-                {String(stats.servers.length).padStart(2, '0')}
-              </span>
-              <span className="cg-metric-copy">
-                <span className="cg-metric-label">启用计费服务器</span>
-                <span className="cg-metric-detail">SERVERS / 计费中</span>
-              </span>
-            </article>
-          </section>
-
-          <section
-            className="cg-card cg-costs-chart-card"
-            aria-labelledby="cg-costs-est-donut-heading"
-          >
-            <header className="cg-costs-card-head">
-              <div>
-                <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>
-                  COST / SHARE
-                </span>
-                <h2 className="cg-title cg-costs-card-title" id="cg-costs-est-donut-heading">
-                  成本占比
-                </h2>
               </div>
-            </header>
-            <p className="cg-costs-card-desc">范围内各服务器估算成本占比。</p>
-            <div className="cg-costs-chart-body">
-              {totalAll > 0 ? (
-                <Chart option={donutOption} className="h-80 w-full" />
-              ) : (
-                <EmptyState
-                  title="范围内暂无成本"
-                  description="调整时间范围后查看占比。"
-                  className="h-80"
-                />
-              )}
+              <div className="cost-summary-cell">
+                <span className="cost-summary-label">启用计费服务器</span>
+                <strong className="cost-summary-value">
+                  {String(stats.servers.length).padStart(2, '0')}
+                </strong>
+                <span className="cost-summary-detail">SERVERS / 计费中</span>
+              </div>
             </div>
           </section>
 
-          <section
-            className="cg-card cg-costs-table-card"
-            aria-labelledby="cg-costs-est-summary-heading"
-          >
-            <header className="cg-costs-card-head">
-              <div>
-                <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>
-                  SERVERS / SUMMARY
-                </span>
-                <h2 className="cg-title cg-costs-card-title" id="cg-costs-est-summary-heading">
+          <div className="cost-charts cost-charts-est">
+            <section className="cost-mod" aria-labelledby="cg-costs-est-summary-heading">
+              <header className="cost-mod-head">
+                <span className="cost-tab">SERVERS</span>
+                <h2 className="cost-mod-title" id="cg-costs-est-summary-heading">
                   服务器汇总
                 </h2>
-              </div>
-            </header>
-            <p className="cg-costs-card-desc">
-              估算总成本 = 年成本 × 整年数 + 月成本 × 整月数 + 日成本 × 剩余天数；月成本按 30
-              天/月、年成本按 360 天/年折算。原价与周期以服务器币种展示；其余数值按{' '}
-              {reportingCurrency} 估算，点击列头排序。
-            </p>
-            <div className="cg-costs-table-body">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{header('name', '服务器')}</TableHead>
-                    <TableHead className="text-right">原价 / 周期</TableHead>
-                    <TableHead className="text-right">
-                      {header(
-                        'daily',
-                        `估算${GRANULARITY_LABEL[granularity]}成本 (${reportingCurrency})`,
-                      )}
-                    </TableHead>
-                    <TableHead className="text-right">
-                      {header('total', `估算总成本 (${reportingCurrency})`)}
-                    </TableHead>
-                    <TableHead className="text-right">{header('share', '占比')}</TableHead>
-                    <TableHead className="text-right">状态</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((row) => {
-                    const { server } = row
-                    return (
-                      <TableRow key={server.server_id}>
-                        <TableCell>
-                          <span className="flex min-w-0 items-center gap-2">
-                            <CountryFlag
-                              code={server.country_code}
-                              label={server.country_code}
-                              className="rounded-[2px] text-base"
-                            />
-                            <span className="truncate font-medium" title={server.alias}>
-                              {server.alias}
+                <span className="cost-mod-meta">{rows.length} 台 · 点击列头排序</span>
+              </header>
+              <p className="cost-mod-desc">
+                估算总成本 = 年成本 × 整年数 + 月成本 × 整月数 + 日成本 × 剩余天数；月成本按 30
+                天/月、年成本按 360 天/年折算。原价与周期以服务器币种展示；其余数值按{' '}
+                {reportingCurrency} 估算，点击列头排序。
+              </p>
+              <div className="cost-table-wrap">
+                <table className="cost-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">{header('name', '服务器')}</th>
+                      <th scope="col" className="cost-num cost-col-secondary">
+                        原价 / 周期
+                      </th>
+                      <th scope="col" className="cost-num">
+                        {header(
+                          'daily',
+                          `估算${GRANULARITY_LABEL[granularity]}成本 (${reportingCurrency})`,
+                        )}
+                      </th>
+                      <th scope="col" className="cost-num">
+                        {header('total', `估算总成本 (${reportingCurrency})`)}
+                      </th>
+                      <th scope="col" className="cost-num">
+                        {header('share', '占比')}
+                      </th>
+                      <th scope="col" className="cost-num">
+                        状态
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => {
+                      const { server } = row
+                      return (
+                        <tr key={server.server_id}>
+                          <td>
+                            <span className="cost-server">
+                              <CountryFlag
+                                code={server.country_code}
+                                label={server.country_code}
+                                className="cost-flag"
+                              />
+                              <span className="cost-server-name" title={server.alias}>
+                                {server.alias}
+                              </span>
+                              {server.location ? (
+                                <span className="cost-server-loc" title={server.location}>
+                                  {server.location}
+                                </span>
+                              ) : null}
                             </span>
-                            {server.location ? (
-                              <span className="hidden truncate text-muted-foreground sm:inline">
-                                {server.location}
+                          </td>
+                          <td className="cost-num cost-col-secondary">
+                            <span className="cost-price">
+                              {money(server.amount_minor, server.currency)} {server.currency}
+                              <span className="cost-muted">
+                                {' '}
+                                / {server.interval_count} {GRANULARITY_LABEL[server.interval_unit]}
+                              </span>
+                            </span>
+                            <span className="cost-formula" title={formulaTitle(server)}>
+                              {formulaParts(server, rateMode, reportingCurrency, granularity)}
+                            </span>
+                          </td>
+                          <td className="cost-num">
+                            {money(estimateOf(server, rateMode, granularity), reportingCurrency)}
+                          </td>
+                          <td className="cost-num cost-strong">
+                            {money(row.total, reportingCurrency)}
+                          </td>
+                          <td className="cost-num">{(row.share * 100).toFixed(1)}%</td>
+                          <td className="cost-num">
+                            {billingStatusLabel[server.status] ? (
+                              <span
+                                className={cn(
+                                  'cg-status',
+                                  billingStatusTone[server.status] ?? 'is-muted',
+                                )}
+                              >
+                                {billingStatusLabel[server.status]}
                               </span>
                             ) : null}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right whitespace-nowrap">
-                          <div className="tabular-nums">
-                            {money(server.amount_minor, server.currency)} {server.currency}
-                            <span className="text-muted-foreground">
-                              {' '}
-                              / {server.interval_count} {GRANULARITY_LABEL[server.interval_unit]}
-                            </span>
-                          </div>
-                          <div
-                            className="text-xs text-muted-foreground tabular-nums"
-                            title={formulaTitle(server)}
-                          >
-                            {formulaParts(server, rateMode, reportingCurrency, granularity)}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {money(estimateOf(server, rateMode, granularity), reportingCurrency)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums font-medium">
-                          {money(row.total, reportingCurrency)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {(row.share * 100).toFixed(1)}%
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {billingStatusLabel[server.status] ? (
-                            <span
-                              className={cn(
-                                'cg-status',
-                                billingStatusTone[server.status] ?? 'is-muted',
-                              )}
-                            >
-                              {billingStatusLabel[server.status]}
-                            </span>
-                          ) : null}
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          </section>
-
-          <section
-            className="cg-card cg-costs-table-card"
-            aria-labelledby="cg-costs-est-matrix-heading"
-          >
-            <header className="cg-costs-card-head">
-              <div>
-                <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>
-                  COST / MATRIX
-                </span>
-                <h2 className="cg-title cg-costs-card-title" id="cg-costs-est-matrix-heading">
-                  周期明细矩阵
-                </h2>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
               </div>
+            </section>
+
+            <section
+              className="cost-mod cost-chart-card"
+              aria-labelledby="cg-costs-est-donut-heading"
+            >
+              <header className="cost-mod-head">
+                <span className="cost-tab">SHARE</span>
+                <h2 className="cost-mod-title" id="cg-costs-est-donut-heading">
+                  成本占比
+                </h2>
+                <span className="cost-mod-meta">{reportingCurrency}</span>
+              </header>
+              <p className="cost-mod-desc">范围内各服务器估算成本占比。</p>
+              <div className="cost-chart-body">
+                {totalAll > 0 ? (
+                  <Chart option={donutOption} className="cost-chart-canvas" />
+                ) : (
+                  <EmptyState
+                    title="范围内暂无成本"
+                    description="调整时间范围后查看占比。"
+                    className="cost-chart-empty"
+                  />
+                )}
+              </div>
+            </section>
+          </div>
+
+          <section className="cost-mod" aria-labelledby="cg-costs-est-matrix-heading">
+            <header className="cost-mod-head">
+              <span className="cost-tab">MATRIX</span>
+              <h2 className="cost-mod-title" id="cg-costs-est-matrix-heading">
+                周期明细矩阵
+              </h2>
+              <span className="cost-mod-meta">
+                {stats.periods.length} 周期 × {stats.servers.length} 服务器
+              </span>
             </header>
-            <p className="cg-costs-card-desc">
+            <p className="cost-mod-desc">
               行 = 周期，列 = 服务器；单元格为对应周期估算成本（{reportingCurrency}
               ），行尾为周期合计。
             </p>
-            <div className="cg-costs-table-body is-scroll">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="sticky left-0 bg-card">周期</TableHead>
+            <div className="cost-table-wrap cost-table-scroll">
+              <table className="cost-table cost-table-matrix">
+                <thead>
+                  <tr>
+                    <th scope="col" className="cost-sticky">
+                      周期
+                    </th>
                     {stats.servers.map((server) => (
-                      <TableHead
+                      <th
                         key={server.server_id}
-                        className="max-w-36 truncate text-right"
+                        scope="col"
+                        className="cost-num cost-matrix-server"
                         title={server.alias}
                       >
                         {server.alias}
-                      </TableHead>
+                      </th>
                     ))}
-                    <TableHead className="text-right">合计</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+                    <th scope="col" className="cost-num">
+                      合计
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
                   {stats.periods.map((period, index) => (
-                    <TableRow key={period}>
-                      <TableCell className="sticky left-0 bg-card font-medium whitespace-nowrap">
+                    <tr key={period}>
+                      <td className="cost-sticky cost-period">
                         {periodLabel(period, granularity)}
-                      </TableCell>
+                      </td>
                       {stats.servers.map((server) => {
                         const costs = costsOfEstimated(server, rateMode)
                         return (
-                          <TableCell key={server.server_id} className="text-right tabular-nums">
+                          <td key={server.server_id} className="cost-num">
                             {costs[index] ? money(costs[index], reportingCurrency) : '—'}
-                          </TableCell>
+                          </td>
                         )
                       })}
-                      <TableCell className="text-right font-medium tabular-nums">
+                      <td className="cost-num cost-strong">
                         {totals[index] ? money(totals[index], reportingCurrency) : '—'}
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                    </tr>
                   ))}
-                </TableBody>
-              </Table>
+                </tbody>
+              </table>
             </div>
           </section>
         </>

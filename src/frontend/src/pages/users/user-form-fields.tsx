@@ -23,6 +23,10 @@ export function ExternalModeSelect({
   return (
     <Select
       value={value}
+      items={(Object.keys(EXTERNAL_MODE_LABELS) as ExternalSubscriptionMode[]).map((mode) => ({
+        value: mode,
+        label: EXTERNAL_MODE_LABELS[mode],
+      }))}
       onValueChange={(next) => next && onChange(next as ExternalSubscriptionMode)}
       disabled={disabled}
     >

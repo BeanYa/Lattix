@@ -1,129 +1,471 @@
 /* ============================================================
-   Costs（成本统计）— Cream Grid Tech 页面样式
+   成本统计 — 高密度事务台
+   发丝线矩形模块 + 红色索引标签；金额与周期全部 tabular。
    ============================================================ */
 
-.cg-costs {
-  animation: cg-page-in 300ms var(--cg-ease) both;
+.costs {
+  gap: 6px;
 }
 
-.cg-costs-tab {
+.cost-tab-panel {
   display: grid;
-  gap: 16px;
+  gap: 6px;
+  min-width: 0;
 }
 
-/* ---------- 顶部 Eyebrow 行 ---------- */
+/* ---------- 模块外壳 ---------- */
 
-.cg-costs-topline {
+.cost-mod {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--panel-rule);
+  border-radius: 1px;
+  background: var(--panel-surface);
+}
+
+.cost-mod-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 0 8px 0 0;
+  border-bottom: 1px solid var(--panel-rule);
 }
 
-/* ---------- 统计条件控制条 ---------- */
+.cost-tab {
+  display: inline-flex;
+  min-height: 30px;
+  flex: none;
+  align-items: center;
+  padding: 0 8px;
+  background: var(--panel-accent);
+  color: var(--panel-accent-ink);
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  white-space: nowrap;
+}
 
-.cg-costs-controls {
+.cost-mod-title {
+  flex: none;
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.cost-mod-meta {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--panel-ink-3);
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cost-mod-meta svg {
+  width: 11px;
+  height: 11px;
+  flex: none;
+}
+
+.cost-mod-desc {
+  margin: 0;
+  padding: 7px 11px 0;
+  color: var(--panel-ink-2);
+  font-size: 10.5px;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+/* ---------- 统计条件 ---------- */
+
+.cost-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 12px 16px;
-  padding: 14px 16px;
+  gap: 10px 16px;
+  padding: 10px 11px 11px;
 }
 
-.cg-costs-control {
+.cost-control {
   display: grid;
-  gap: 8px;
+  gap: 4px;
+  min-width: 0;
 }
 
-.cg-costs-control-label {
-  font-family: var(--cg-mono);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
+.cost-control-label {
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
   line-height: 1;
-  text-transform: uppercase;
-  color: var(--cg-muted);
 }
 
-/* ---------- 汇总 Metric Tiles ---------- */
+.cost-controls [data-slot='tabs-list'] {
+  height: 28px;
+  gap: 0;
+  padding: 0;
+  border: 1px solid var(--panel-rule-strong);
+  border-radius: 1px;
+  background: transparent;
+}
 
-.cg-costs-metrics {
+.cost-controls [data-slot='tabs-trigger'] {
+  height: 100%;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 0;
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.cost-preset-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.cost-preset-group .cg-button,
+.cost-preset-group [data-slot='button'] {
+  height: 28px;
+}
+
+/* ---------- 汇总指标 ---------- */
+
+.cost-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
+  gap: 1px;
+  background: var(--panel-rule);
 }
 
-/* 金额较长，缩小深灰数字块字号防止溢出 */
-.cg-costs-metrics .cg-metric-value {
-  font-size: 18px;
+.cost-summary-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px 10px;
+  background: var(--panel-surface);
 }
 
-/* ---------- 图表卡片 ---------- */
+.cost-summary-label {
+  overflow: hidden;
+  color: var(--panel-ink-2);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.cg-costs-charts {
+.cost-summary-value {
+  overflow: hidden;
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 780;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cost-summary-value small {
+  margin-left: 3px;
+  color: var(--panel-ink-3);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.cost-summary-detail {
+  overflow: hidden;
+  color: var(--panel-ink-3);
+  font-size: 9.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- 图表 ---------- */
+
+.cost-charts {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  gap: 16px;
-  align-items: stretch;
+  gap: 6px;
+  min-width: 0;
 }
 
-.cg-costs-chart-card,
-.cg-costs-table-card {
+.cost-chart-card {
   display: flex;
   flex-direction: column;
 }
 
-.cg-costs-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 16px 0;
-  flex-wrap: wrap;
+.cost-chart-body {
+  min-height: 0;
+  flex: 1;
+  padding: 6px 10px 8px;
 }
 
-.cg-costs-card-title {
-  margin: 6px 0 0;
-  font-size: 20px;
+.cost-chart-canvas {
+  width: 100%;
+  height: 280px;
 }
 
-.cg-costs-card-desc {
-  margin: 0;
-  padding: 6px 16px 0;
-  font-size: 12px;
-  font-weight: 550;
-  color: var(--cg-muted);
+.cost-charts-est {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
 }
 
-.cg-costs-chart-body {
-  padding: 8px 12px 12px;
+.cost-chart-empty {
+  min-height: 260px;
+  border: 0;
+  background: transparent;
 }
 
-.cg-costs-table-body {
-  padding: 10px 12px 14px;
-}
+/* ---------- 表格 ---------- */
 
-.cg-costs-table-body.is-scroll {
+.cost-table-wrap {
   overflow-x: auto;
+}
+
+.cost-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.cost-table th {
+  height: 26px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--panel-rule);
+  background: var(--panel-inset);
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.cost-table td {
+  height: 28px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--panel-rule);
+  color: var(--panel-ink);
+  white-space: nowrap;
+}
+
+.cost-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.cost-table tbody tr:hover {
+  background: var(--panel-hover);
+}
+
+.cost-table th.cost-num,
+.cost-table td.cost-num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.cost-table th.cost-num {
+  font-family: var(--font-display);
+}
+
+.cost-table td.cost-num {
+  font-family: var(--panel-mono);
+  font-size: 10px;
+}
+
+.cost-table td.cost-strong {
+  color: var(--panel-ink);
+  font-weight: 700;
+}
+
+.cost-server {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.cost-flag {
+  width: 15px;
+  height: 11px;
+  flex: none;
+  border-radius: 1px;
+  font-size: 15px;
+  line-height: 11px;
+}
+
+.cost-server-name {
+  overflow: hidden;
+  max-width: 12rem;
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cost-server-loc {
+  overflow: hidden;
+  max-width: 8rem;
+  color: var(--panel-ink-3);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cost-muted {
+  color: var(--panel-ink-3);
+  font-weight: 500;
+}
+
+.cost-price {
+  display: inline-block;
+}
+
+.cost-formula {
+  display: block;
+  color: var(--panel-ink-3);
+  font-size: 9.5px;
+  line-height: 1.3;
+}
+
+/* 状态标签统一使用共享 .cg-status（is-ok / is-warn / is-red / is-muted） */
+
+/* ---------- 周期矩阵 ---------- */
+
+.cost-table-scroll {
+  overflow-x: auto;
+}
+
+.cost-table-matrix th.cost-sticky,
+.cost-table-matrix td.cost-sticky {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  border-right: 1px solid var(--panel-rule);
+  background: var(--panel-surface);
+  text-align: left;
+}
+
+.cost-table-matrix th.cost-sticky {
+  background: var(--panel-inset);
+}
+
+.cost-table-matrix .cost-matrix-server {
+  max-width: 7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cost-period {
+  color: var(--panel-ink-2);
+  font-family: var(--panel-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 加载态 ---------- */
+
+.cost-loading {
+  min-height: 280px;
 }
 
 /* ---------- 响应式 ---------- */
 
-@container cg-main (max-width: 1180px) {
-  .cg-costs-metrics {
+@media (max-width: 1279px) {
+  .cost-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@container cg-main (max-width: 1024px) {
-  .cg-costs-charts {
-    grid-template-columns: 1fr;
+@media (max-width: 1023px) {
+  .cost-charts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cost-chart-canvas {
+    height: 240px;
   }
 }
 
-@container cg-main (max-width: 640px) {
-  .cg-costs-metrics {
-    grid-template-columns: 1fr;
+@media (max-width: 767px) {
+  .cost-col-secondary {
+    display: none;
+  }
+
+  .cost-server-loc {
+    display: none;
+  }
+
+  .cost-summary-value {
+    font-size: 17px;
+  }
+
+  .cost-table th,
+  .cost-table td {
+    padding: 0 8px;
+  }
+
+  .cost-chart-canvas {
+    height: 210px;
+  }
+}
+
+@media (max-width: 639px) {
+  .cost-mod-meta {
+    display: none;
+  }
+
+  .cost-controls {
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .cost-control {
+    flex: 1 1 140px;
+  }
+
+  .cost-controls [data-slot='tabs-list'] {
+    width: 100%;
+  }
+
+  .cost-controls [data-slot='tabs-trigger'] {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .cost-mod-desc {
+    padding: 6px 9px 0;
+    font-size: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cost-table tbody tr {
+    transition: none;
   }
 }

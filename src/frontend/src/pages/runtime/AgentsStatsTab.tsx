@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link } from 'wouter'
-import { AlertTriangleIcon, ArrowDownIcon, ArrowUpIcon, ServerIcon, UsersIcon } from 'lucide-react'
+import {
+  AlertTriangleIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ServerIcon,
+  UsersIcon,
+  WaypointsIcon,
+} from 'lucide-react'
 
 import { TrafficStatsDialog } from '@/components/traffic-stats/TrafficStatsDialog'
 import { useTrafficStatsDialog } from '@/components/traffic-stats/use-traffic-stats-dialog'
@@ -41,19 +48,19 @@ function formatDelta(delta: number): string {
 
 function VolumeCard({ label, volume }: { label: string; volume: TrafficVolume }) {
   return (
-    <article className="cg-card cg-rstats-card">
-      <span className="cg-rstats-card-label">{label}</span>
-      <div className="cg-rstats-volume">
+    <article className="rt-stat-cell">
+      <span className="rt-stat-label">{label}</span>
+      <div className="rt-stat-volume">
         <span className="is-up">
-          <ArrowUpIcon />
+          <ArrowUpIcon aria-hidden="true" />
           {humanizeBytes(volume.up)}
         </span>
         <span className="is-down">
-          <ArrowDownIcon />
+          <ArrowDownIcon aria-hidden="true" />
           {humanizeBytes(volume.down)}
         </span>
       </div>
-      <small className="cg-rstats-card-detail">合计 {humanizeBytes(volume.up + volume.down)}</small>
+      <small className="rt-stat-detail">合计 {humanizeBytes(volume.up + volume.down)}</small>
     </article>
   )
 }
@@ -68,11 +75,41 @@ function DeltaCard({
   detail: string
 }) {
   return (
-    <article className="cg-card cg-rstats-card" title="与上一周期相同时间进度对比">
-      <span className="cg-rstats-card-label">{label}</span>
-      <strong className="cg-rstats-card-value">{delta === null ? '—' : formatDelta(delta)}</strong>
-      <small className="cg-rstats-card-detail">{detail}</small>
+    <article className="rt-stat-cell" title="与上一周期相同时间进度对比">
+      <span className="rt-stat-label">{label}</span>
+      <strong
+        className="rt-stat-value"
+        data-tone={delta !== null && delta < 0 ? 'warn' : undefined}
+      >
+        {delta === null ? '—' : formatDelta(delta)}
+      </strong>
+      <small className="rt-stat-detail">{detail}</small>
     </article>
+  )
+}
+
+function ModuleHead({
+  tab,
+  title,
+  id,
+  meta,
+  children,
+}: {
+  tab: string
+  title: string
+  id?: string
+  meta?: ReactNode
+  children?: ReactNode
+}) {
+  return (
+    <header className="rt-mod-head">
+      <span className="rt-tab">{tab}</span>
+      <h2 className="rt-mod-title" id={id}>
+        {title}
+      </h2>
+      {meta ? <span className="rt-mod-meta">{meta}</span> : null}
+      {children ? <div className="rt-head-actions">{children}</div> : null}
+    </header>
   )
 }
 
@@ -90,28 +127,29 @@ function TopList({
   onOpen: (item: TrafficStatTopItem) => void
 }) {
   return (
-    <section className="cg-card cg-rstats-top" aria-label={title}>
-      <header className="cg-rstats-top-head">
-        <h2>
-          {icon}
-          {title}
-        </h2>
-        <span className="cg-micro">BY VOLUME</span>
-      </header>
-      <div className="cg-rstats-top-list">
+    <section className="rt-mod rt-top" aria-label={title}>
+      <ModuleHead tab="TOP" title={title} meta="BY VOLUME" />
+      <div className="rt-top-list">
         {items.length === 0 ? (
-          <p className="cg-rstats-empty">暂无数据</p>
+          <p className="rt-top-empty">暂无数据</p>
         ) : (
           items.map((item, index) => (
             <button
               key={`${item.server_id}-${item.user_uuid}`}
               type="button"
-              className="cg-rstats-top-row"
+              className="rt-top-row"
               onClick={() => onOpen(item)}
             >
-              <span className="cg-rstats-top-rank">{index + 1}</span>
-              <span className="cg-rstats-top-name">{item.label || fallbackLabel(item)}</span>
-              <span className="cg-rstats-top-volume">
+              <span className="rt-top-rank" data-rank={index + 1}>
+                {index + 1}
+              </span>
+              <span className="rt-top-name">
+                <span className="rt-top-icon" aria-hidden="true">
+                  {icon}
+                </span>
+                {item.label || fallbackLabel(item)}
+              </span>
+              <span className="rt-top-volume">
                 <span className="is-up">↑ {humanizeBytes(item.up)}</span>
                 <span className="is-down">↓ {humanizeBytes(item.down)}</span>
               </span>
@@ -125,7 +163,7 @@ function TopList({
 
 /**
  * AgentsStatsTab 为「被控统计」Tab 的页面组装（纯展示层，数据全来自 hook）：
- * 概览六卡（今日/本月 ↑↓、今日与本月环比、在线 Agent、今日错误→运营日志）→
+ * 概览六格（今日/本月 ↑↓、今日与本月环比、在线 Agent、今日错误→运营日志）→
  * 粒度 Tabs + 全网流量堆叠柱图 → Top 服务器 / Top 用户 双列（行点击开下钻弹窗）→ 口径页脚。
  * onError 以 useCallback 固定引用，避免 useTrafficStats/useTrafficStatsDialog 因回调变化重拉。
  */
@@ -162,9 +200,9 @@ export default function AgentsStatsTab() {
       )
     }
     return (
-      <div className="cg-rstats-loading" role="status" aria-label="正在读取流量统计">
-        <span className="cg-micro">LOADING / AGENTS STATS</span>
-        <div className="cg-rstats-loading-bar">
+      <div className="rt-loading" role="status" aria-label="正在读取流量统计">
+        <span className="rt-loading-label">LOADING / AGENTS STATS</span>
+        <div className="rt-loading-bar" aria-hidden="true">
           <i />
           <i />
           <i />
@@ -187,43 +225,46 @@ export default function AgentsStatsTab() {
         </Notice>
       ) : null}
 
-      {/* 概览六卡 */}
-      <section className="cg-rstats-grid" aria-label="流量概览">
-        <VolumeCard label="今日流量" volume={overview.today} />
-        <VolumeCard label="本月流量" volume={overview.month} />
-        <DeltaCard label="今日环比" delta={todayDelta} detail="较昨日同进度" />
-        <DeltaCard label="本月环比" delta={monthDelta} detail="较上月同进度" />
-        <article className="cg-card cg-rstats-card">
-          <span className="cg-rstats-card-label">在线 Agent</span>
-          <strong className="cg-rstats-card-value">
-            {overview.agents_online}
-            <em> / {overview.agents_total}</em>
-          </strong>
-          <small className="cg-rstats-card-detail">在线 / 总数</small>
-        </article>
-        <Link
-          href="/logs/operations?severity=error"
-          className="cg-card cg-rstats-card cg-rstats-card-link"
-          data-tone={todayErrorCount !== null && todayErrorCount > 0 ? 'danger' : undefined}
-        >
-          <span className="cg-rstats-card-label">
-            <AlertTriangleIcon />
-            今日错误
-          </span>
-          <strong className="cg-rstats-card-value">{todayErrorCount ?? '--'}</strong>
-          <small className="cg-rstats-card-detail">查看运营日志 ›</small>
-        </Link>
+      {/* 概览六格 */}
+      <section className="rt-mod" aria-label="流量概览">
+        <ModuleHead tab="TRAFFIC" title="流量概览" meta="全网口径" />
+        <div className="rt-stat-grid">
+          <VolumeCard label="今日流量" volume={overview.today} />
+          <VolumeCard label="本月流量" volume={overview.month} />
+          <DeltaCard label="今日环比" delta={todayDelta} detail="较昨日同进度" />
+          <DeltaCard label="本月环比" delta={monthDelta} detail="较上月同进度" />
+          <article className="rt-stat-cell">
+            <span className="rt-stat-label">在线 Agent</span>
+            <strong className="rt-stat-value">
+              {overview.agents_online}
+              <em> / {overview.agents_total}</em>
+            </strong>
+            <small className="rt-stat-detail">
+              <WaypointsIcon aria-hidden="true" /> 在线 / 总数
+            </small>
+          </article>
+          <Link
+            href="/logs/operations?severity=error"
+            className="rt-stat-cell rt-stat-cell-link"
+            data-tone={todayErrorCount !== null && todayErrorCount > 0 ? 'danger' : undefined}
+          >
+            <span className="rt-stat-label">
+              <AlertTriangleIcon aria-hidden="true" /> 今日错误
+            </span>
+            <strong className="rt-stat-value">{todayErrorCount ?? '--'}</strong>
+            <small className="rt-stat-detail">查看运营日志 ›</small>
+          </Link>
+        </div>
       </section>
 
       {/* 粒度 + 全网趋势 */}
-      <section className="cg-card cg-rstats-chart" aria-labelledby="agents-stats-chart-heading">
-        <header className="cg-rstats-chart-head">
-          <div>
-            <span className="cg-micro">FLEET TRAFFIC</span>
-            <h2 className="cg-rstats-chart-title" id="agents-stats-chart-heading">
-              全网流量趋势
-            </h2>
-          </div>
+      <section className="rt-mod" aria-labelledby="agents-stats-chart-heading">
+        <ModuleHead
+          tab="FLEET"
+          title="全网流量趋势"
+          id="agents-stats-chart-heading"
+          meta={`${points.length} 个采样点`}
+        >
           <Tabs
             value={granularity}
             onValueChange={(value) => setGranularity(value as TrafficStatGranularity)}
@@ -236,18 +277,18 @@ export default function AgentsStatsTab() {
               ))}
             </TabsList>
           </Tabs>
-        </header>
-        <div className="cg-rstats-chart-body">
+        </ModuleHead>
+        <div className="rt-chart-body">
           {points.length === 0 ? (
-            <p className="cg-rstats-empty">暂无流量记录</p>
+            <p className="rt-chart-empty">暂无流量记录</p>
           ) : (
-            <Chart option={chartOption} className="cg-rstats-chart-canvas" />
+            <Chart option={chartOption} className="rt-chart-canvas" />
           )}
         </div>
       </section>
 
       {/* Top 双列（行点击开下钻弹窗） */}
-      <div className="cg-rstats-top-grid">
+      <div className="rt-top-grid">
         <TopList
           title="Top 服务器"
           icon={<ServerIcon />}
@@ -276,7 +317,7 @@ export default function AgentsStatsTab() {
         />
       </div>
 
-      <p className="cg-rstats-note">全网为用户端到端口径；单服务器为实体口径，两者含链路时不相等</p>
+      <p className="rt-note">全网为用户端到端口径；单服务器为实体口径，两者含链路时不相等</p>
     </>
   )
 }

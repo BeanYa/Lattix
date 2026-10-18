@@ -1,187 +1,369 @@
 /* ============================================================
-   ExternalSubscriptions — Cream Grid Tech 页面样式
+   外部订阅 — 高密度事务台
+   每个订阅是一个发丝线矩形模块：模块头 + 1px 分隔的四格读数。
    ============================================================ */
 
-.extsub-topline {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
+/* ---------- 状态修饰（成功；红色继续用共享 .is-red） ---------- */
+
+.cg-status.is-ok {
+  border-color: color-mix(in srgb, var(--panel-success) 46%, var(--panel-rule));
+  background: transparent;
+  color: var(--panel-success);
 }
 
-/* ---------- 订阅卡片 ---------- */
+/* ---------- 订阅模块列表 ---------- */
 
-.extsub-card {
-  display: flex;
-  flex-direction: column;
-}
-
-.extsub-card-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 14px 16px;
-  border-bottom: var(--cg-border);
-  flex-wrap: wrap;
-}
-
-.extsub-card-title {
-  min-width: 0;
+.extsub-list {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
-.extsub-card-name {
+.extsub-mod {
   display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border: 1px solid var(--panel-rule);
+  border-radius: 1px;
+  background: var(--panel-surface);
+}
+
+/* ---------- 模块头 ---------- */
+
+.extsub-mod-head {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-}
-
-.extsub-card-name strong {
-  font-size: 15px;
-  font-weight: 850;
-  color: var(--cg-ink);
-}
-
-.extsub-card-url {
-  display: block;
-  max-width: 100%;
+  min-height: 32px;
+  padding: 0 8px 0 0;
+  border-bottom: 1px solid var(--panel-rule);
   overflow: hidden;
+}
+
+.extsub-index {
+  display: inline-flex;
+  align-self: stretch;
+  align-items: center;
+  padding: 0 8px;
+  background: var(--panel-accent);
+  color: var(--panel-accent-ink);
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.extsub-mod-title {
+  min-width: 0;
+  max-width: 22rem;
+  margin: 0;
+  overflow: hidden;
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--cg-mono);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--cg-muted);
 }
 
-.extsub-card-actions {
+.extsub-url {
+  min-width: 0;
+  max-width: 34rem;
+  overflow: hidden;
+  color: var(--panel-ink-3);
+  font-family: var(--panel-mono);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.extsub-spacer {
+  flex: 1;
+}
+
+.extsub-mod-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   flex-wrap: wrap;
 }
 
-/* 删除：coral 危险按钮（cg-button 变体，页面级） */
-.extsub-danger {
-  background: var(--cg-red);
-  color: var(--cg-on-accent);
+.extsub-mod-actions .cg-button {
+  min-height: 24px;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
 }
 
-/* ---------- 统计格 ---------- */
+.extsub-mod-actions .cg-icon-button {
+  width: 24px;
+  height: 24px;
+}
 
-.extsub-card-stats {
+.extsub-mod-actions .cg-icon-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.extsub-danger {
+  border-color: color-mix(in srgb, var(--panel-danger) 46%, var(--panel-rule));
+  color: var(--panel-danger);
+}
+
+.extsub-danger:hover {
+  border-color: var(--panel-danger);
+  background: var(--panel-danger-soft);
+  color: var(--panel-danger);
+}
+
+/* ---------- 四格读数：1px 发丝线网格 ---------- */
+
+.extsub-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  padding: 14px 16px;
+  gap: 1px;
+  border-top: 1px solid var(--panel-rule);
+  background: var(--panel-rule);
 }
 
 .extsub-stat {
   display: grid;
-  gap: 6px;
+  gap: 2px;
   align-content: start;
-  padding: 10px 12px;
-  border: var(--cg-border);
-  border-radius: var(--cg-r-control);
-  background: var(--cg-paper-soft);
+  min-width: 0;
+  padding: 7px 9px;
+  background: var(--panel-surface);
 }
 
-.extsub-stat .cg-micro {
-  color: var(--cg-muted);
+.extsub-stat-label {
+  color: var(--panel-ink-3);
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
-.extsub-stat strong {
+.extsub-stat-value {
   overflow: hidden;
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 14px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  color: var(--cg-ink);
 }
 
-/* 流量用量条 */
+/* 流量用量条：无圆角、墨色填充 */
 .extsub-traffic-bar {
   display: block;
-  height: 8px;
-  border: none;
-  border-radius: var(--cg-r-pill);
-  background: var(--cg-paper-soft);
+  height: 4px;
+  margin-top: 2px;
   overflow: hidden;
+  background: var(--panel-inset);
 }
 
 .extsub-traffic-bar i {
   display: block;
   height: 100%;
-  background: var(--cg-lime);
-  transition: width 300ms var(--cg-ease);
+  background: var(--panel-ink);
+  transition: width 300ms var(--panel-ease);
 }
 
-/* 卡片内错误提示 */
+/* 模块内错误：贴底细线提示 */
 .extsub-error {
-  margin: 0 16px 14px;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--panel-danger) 46%, var(--panel-rule));
+  border-radius: 0;
+  font-size: 11px;
 }
 
-/* ---------- 节点弹窗 ---------- */
+/* ---------- 编辑对话框 ---------- */
 
-/* 配置指纹：mono 代码片 */
-.extsub-sha {
-  display: inline-block;
-  padding: 3px 7px;
-  border: var(--cg-border);
-  border-radius: var(--cg-r-xs);
-  background: var(--cg-paper-soft);
-  font-family: var(--cg-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--cg-ink);
+.extsub-dialog [data-slot='input'],
+.extsub-dialog [data-slot='select-trigger'] {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 1px;
+  background: var(--panel-surface);
+  color: var(--panel-ink);
+  font-size: 12px;
 }
 
-/* ---------- 编辑弹窗复选框 ---------- */
+.extsub-dialog [data-slot='label'] {
+  color: var(--panel-ink);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.extsub-form {
+  display: grid;
+  gap: 10px;
+}
+
+.extsub-form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.extsub-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.extsub-hint {
+  margin: 0;
+  color: var(--panel-ink-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* ---------- 复选框：矩形细线行 ---------- */
 
 .extsub-check {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  border: var(--cg-border);
-  border-radius: var(--cg-r-control);
-  background: var(--cg-paper-light);
-  font-size: 13px;
-  font-weight: 750;
-  color: var(--cg-ink);
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 1px;
+  background: var(--panel-surface);
+  color: var(--panel-ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.3;
   cursor: pointer;
-  transition:
-    transform 160ms var(--cg-ease),
-    background-color 160ms var(--cg-ease);
+  transition: background-color var(--panel-fast) var(--panel-ease);
 }
 
 .extsub-check:hover {
-  transform: translateY(-1px);
-  background: var(--cg-paper-soft);
+  background: var(--panel-raised);
 }
 
 .extsub-check:has(.extsub-check-input:checked) {
-  background: var(--cg-lime-soft);
+  border-color: color-mix(in srgb, var(--panel-accent) 42%, var(--panel-rule));
+  background: var(--panel-accent-soft);
 }
 
 .extsub-check-input {
-  width: 16px;
-  height: 16px;
+  width: 13px;
+  height: 13px;
   flex-shrink: 0;
-  accent-color: var(--cg-lime-dark);
+  accent-color: var(--panel-accent);
+}
+
+/* ---------- 节点弹窗表格 ---------- */
+
+.extsub-chains {
+  overflow: auto;
+  border: 1px solid var(--panel-rule);
+  border-radius: 1px;
+}
+
+.extsub-chains [data-slot='table-container'] {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.extsub-chains [data-slot='table-head'] {
+  height: 26px;
+}
+
+.extsub-chains [data-slot='table-cell'] {
+  padding: 5px 8px;
+  font-size: 11.5px;
+}
+
+.extsub-chain-name {
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.extsub-chain-addr {
+  color: var(--panel-ink-2);
+  font-family: var(--panel-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.extsub-sha {
+  display: inline-block;
+  padding: 1px 5px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 1px;
+  background: var(--panel-inset);
+  color: var(--panel-ink);
+  font-family: var(--panel-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.extsub-dialog-empty {
+  margin: 0;
+  padding: 24px 16px;
+  border: 1px solid var(--panel-rule);
+  color: var(--panel-ink-2);
+  font-size: 12px;
+  text-align: center;
 }
 
 /* ---------- 响应式 ---------- */
 
-@container cg-main (max-width: 900px) {
-  .extsub-card-stats {
+@media (max-width: 1100px) {
+  .extsub-url {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .extsub-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .extsub-list {
+    gap: 6px;
+  }
+
+  .extsub-mod-head {
+    padding-right: 6px;
+  }
+
+  .extsub-mod-title {
+    max-width: 100%;
+  }
+
+  .extsub-spacer {
+    display: none;
+  }
+
+  .extsub-mod-actions {
+    width: 100%;
+    padding: 0 0 5px;
+  }
+
+  .extsub-form-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

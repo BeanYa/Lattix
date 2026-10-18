@@ -76,6 +76,10 @@ export function SubscriptionRoutingFields({
           <Select
             value={value.mode}
             disabled={value.assign_forced_portable}
+            items={[
+              { value: 'suggested', label: '建议规则' },
+              { value: 'template', label: '自定义模板' },
+            ]}
             onValueChange={(mode) =>
               mode && set({ mode: mode as SubscriptionRoutingProfile['mode'] })
             }
@@ -95,6 +99,7 @@ export function SubscriptionRoutingFields({
             <Select
               value={value.preset}
               disabled={value.assign_forced_portable}
+              items={Object.entries(presetLabels).map(([value, label]) => ({ value, label }))}
               onValueChange={(preset) => {
                 if (!preset) return
                 const next = preset as SubscriptionRoutingProfile['preset']
@@ -119,6 +124,7 @@ export function SubscriptionRoutingFields({
             <Select
               value={value.portable_template_id}
               disabled={value.assign_forced_portable}
+              items={portable.map((template) => ({ value: template.id, label: template.name }))}
               onValueChange={(id) => id && set({ portable_template_id: id })}
             >
               <SelectTrigger className="w-full">
@@ -201,6 +207,13 @@ export function SubscriptionRoutingFields({
                 <Select
                   value={selected || 'none'}
                   disabled={forced}
+                  items={[
+                    { value: 'none', label: forced ? '跟随指派' : '跟随主策略' },
+                    ...native(kind).map((template) => ({
+                      value: template.id,
+                      label: template.name,
+                    })),
+                  ]}
                   onValueChange={(id) => id && set({ [field]: id === 'none' ? '' : id })}
                 >
                   <SelectTrigger className="w-full">

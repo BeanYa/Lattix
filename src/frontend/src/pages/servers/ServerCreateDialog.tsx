@@ -162,7 +162,7 @@ export function ServerCreateDialog({
             onManageProviders={onManageProviders}
           />
           {createError && <p className="text-sm text-destructive">{createError}</p>}
-          <DialogFooter>
+          <DialogFooter className="sticky bottom-0 z-10 -mx-4 -mb-4 border-t bg-[var(--panel-surface)] px-4 py-3">
             <Button
               type="submit"
               disabled={

@@ -32,14 +32,40 @@ export interface ChartThemeColors {
 export function chartThemeColors(): ChartThemeColors {
   const styles = getComputedStyle(document.documentElement)
   const read = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback
+  // 系列色：墨色到表面的七级灰阶 + 一处工具红；同屏七个服务器仍可区分，
+  // 不借用状态绿/琥珀做分类。
+  const ink = read('--panel-ink', '#f1f1ec')
+  const surface = read('--panel-surface', '#111214')
+  const accent = read('--panel-accent', '#ff3b2f')
+  const mix = (from: string, to: string, ratio: number) => {
+    const parse = (value: string) => {
+      const hex = value.replace('#', '').trim()
+      if (hex.length === 3) {
+        return [0, 1, 2].map((index) => parseInt(hex[index] + hex[index], 16))
+      }
+      return [0, 2, 4].map((index) => parseInt(hex.slice(index, index + 2), 16))
+    }
+    const fromRgb = parse(from)
+    const toRgb = parse(to)
+    const channels = fromRgb.map((channel, index) =>
+      Math.round(channel + (toRgb[index] - channel) * ratio),
+    )
+    return `#${channels.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`
+  }
   return {
-    palette: ['--chart-1', '--chart-2', '--chart-3', '--chart-4', '--chart-5'].map((name) =>
-      read(name, '#3568D7'),
-    ),
-    textColor: read('--cg-muted', '#7F7A69'),
-    axisColor: read('--cg-subtle', '#A09A89'),
-    gridColor: read('--cg-grid-line', 'rgba(60, 55, 42, .1)'),
-    surfaceColor: read('--cg-paper-light', '#FFFDF7'),
+    palette: [
+      ink,
+      accent,
+      mix(ink, surface, 0.72),
+      mix(ink, surface, 0.55),
+      mix(ink, surface, 0.38),
+      mix(ink, surface, 0.22),
+      mix(ink, surface, 0.08),
+    ],
+    textColor: read('--panel-ink-2', '#5a5b57'),
+    axisColor: read('--panel-ink-3', '#8b8c86'),
+    gridColor: read('--panel-rule', '#dededa'),
+    surfaceColor: read('--panel-surface', '#ffffff'),
   }
 }
 
@@ -49,9 +75,9 @@ export const GRANULARITY_LABEL: Record<BillingStatsGranularity, string> = {
   year: '年',
 }
 
-export const billingStatusTone: Record<string, 'is-lime' | 'is-blue' | 'is-muted' | 'is-red'> = {
-  active: 'is-lime',
-  due_today: 'is-blue',
+export const billingStatusTone: Record<string, 'is-ok' | 'is-warn' | 'is-muted' | 'is-red'> = {
+  active: 'is-ok',
+  due_today: 'is-warn',
   assumed_valid: 'is-muted',
   expired: 'is-red',
 }
@@ -148,13 +174,17 @@ export function buildBarOption(options: {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
+      backgroundColor: colors.surfaceColor,
+      borderColor: colors.axisColor,
+      borderWidth: 1,
+      textStyle: { color: colors.textColor, fontSize: 11 },
       valueFormatter: (value: unknown) =>
         `${money(Number(value), options.currency)} ${options.currency}`,
     },
     legend: {
       type: 'scroll',
       bottom: 0,
-      textStyle: { color: colors.textColor },
+      textStyle: { color: colors.textColor, fontSize: 9.5 },
       data: options.servers.map((server) => server.alias),
     },
     grid: {
@@ -167,13 +197,13 @@ export function buildBarOption(options: {
     xAxis: {
       type: 'category',
       data: options.periods,
-      axisLabel: { color: colors.textColor },
+      axisLabel: { color: colors.textColor, fontSize: 9.5 },
       axisLine: { lineStyle: { color: colors.axisColor } },
       axisTick: { show: false },
     },
     yAxis: {
       type: 'value',
-      axisLabel: { color: colors.textColor },
+      axisLabel: { color: colors.textColor, fontSize: 9.5 },
       splitLine: { lineStyle: { color: colors.gridColor } },
     },
     dataZoom:
@@ -203,6 +233,10 @@ export function buildDonutOption(
     color: colors.palette,
     tooltip: {
       trigger: 'item',
+      backgroundColor: colors.surfaceColor,
+      borderColor: colors.axisColor,
+      borderWidth: 1,
+      textStyle: { color: colors.textColor, fontSize: 11 },
       valueFormatter: (value: unknown) => `${money(Number(value), currency)} ${currency}`,
     },
     legend: {
@@ -210,20 +244,21 @@ export function buildDonutOption(
       orient: 'vertical',
       right: 8,
       top: 'middle',
-      textStyle: { color: colors.textColor },
+      textStyle: { color: colors.textColor, fontSize: 9.5 },
     },
     series: [
       {
         name: '成本占比',
         type: 'pie',
-        radius: ['42%', '68%'],
-        center: ['38%', '50%'],
+        radius: ['44%', '70%'],
+        center: ['40%', '50%'],
         avoidLabelOverlap: true,
         itemStyle: {
           borderColor: colors.surfaceColor,
-          borderWidth: 2,
+          borderWidth: 1,
         },
-        label: { color: colors.textColor, formatter: '{b}\n{d}%' },
+        label: { show: false },
+        labelLine: { show: false },
         data,
       },
     ],
@@ -260,82 +295,91 @@ export function StatsControls({
   onRateMode,
 }: StatsControlsProps) {
   return (
-    <section className="cg-card cg-costs-controls" aria-label="统计条件">
-      <div className="cg-costs-control">
-        <span className="cg-costs-control-label">统计粒度</span>
-        <Tabs value={granularity} onValueChange={onGranularity}>
-          <TabsList>
-            {(Object.keys(GRANULARITY_LABEL) as BillingStatsGranularity[]).map((gran) => (
-              <TabsTrigger key={gran} value={gran}>
-                {GRANULARITY_LABEL[gran]}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-      </div>
-      <div className="cg-costs-control">
-        <span className="cg-costs-control-label">起始日期</span>
-        <Input
-          type="date"
-          value={from}
-          max={to}
-          onChange={(event) => onFrom(event.target.value)}
-          className="w-40"
-        />
-      </div>
-      <div className="cg-costs-control">
-        <span className="cg-costs-control-label">结束日期</span>
-        <Input
-          type="date"
-          value={to}
-          min={from}
-          onChange={(event) => onTo(event.target.value)}
-          className="w-40"
-        />
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={() => onPreset('month')}>
-          本月
-        </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => onPreset('12months')}>
-          近 12 个月
-        </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => onPreset('3years')}>
-          近 3 年
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={presetsDisabled}
-          onClick={() => onPreset('all')}
-        >
-          全部
-        </Button>
-      </div>
-      {customAvailable ? (
-        <div className="cg-costs-control">
-          <span className="cg-costs-control-label">换算方式</span>
-          <Select
-            value={rateMode}
-            onValueChange={(value) => value && onRateMode(value as BillingStatsRateMode)}
-          >
-            <SelectTrigger className="w-40" size="sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="custom">自定义锚点</SelectItem>
-              <SelectItem value="public">公共汇率</SelectItem>
-            </SelectContent>
-          </Select>
+    <section className="cost-mod" aria-label="统计条件">
+      <header className="cost-mod-head">
+        <span className="cost-tab">QUERY</span>
+        <h2 className="cost-mod-title">统计条件</h2>
+        {rateDate ? (
+          <span className="cost-mod-meta">
+            <CoinsIcon size={11} aria-hidden="true" />
+            汇率日期 {rateDate}
+          </span>
+        ) : null}
+      </header>
+      <div className="cost-controls">
+        <div className="cost-control">
+          <span className="cost-control-label">统计粒度</span>
+          <Tabs value={granularity} onValueChange={onGranularity}>
+            <TabsList>
+              {(Object.keys(GRANULARITY_LABEL) as BillingStatsGranularity[]).map((gran) => (
+                <TabsTrigger key={gran} value={gran}>
+                  {GRANULARITY_LABEL[gran]}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
         </div>
-      ) : null}
-      {rateDate ? (
-        <span className="cg-pill">
-          <CoinsIcon size={14} />
-          汇率日期 {rateDate}
-        </span>
-      ) : null}
+        <div className="cost-control">
+          <span className="cost-control-label">起始日期</span>
+          <Input
+            type="date"
+            value={from}
+            max={to}
+            onChange={(event) => onFrom(event.target.value)}
+            className="w-40"
+          />
+        </div>
+        <div className="cost-control">
+          <span className="cost-control-label">结束日期</span>
+          <Input
+            type="date"
+            value={to}
+            min={from}
+            onChange={(event) => onTo(event.target.value)}
+            className="w-40"
+          />
+        </div>
+        <div className="cost-control">
+          <span className="cost-control-label">快捷范围</span>
+          <div className="cost-preset-group">
+            <Button type="button" variant="outline" size="sm" onClick={() => onPreset('month')}>
+              本月
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => onPreset('12months')}>
+              近 12 个月
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => onPreset('3years')}>
+              近 3 年
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={presetsDisabled}
+              onClick={() => onPreset('all')}
+            >
+              全部
+            </Button>
+          </div>
+        </div>
+        {customAvailable ? (
+          <div className="cost-control">
+            <span className="cost-control-label">换算方式</span>
+            <Select
+              value={rateMode}
+              onValueChange={(value) => value && onRateMode(value as BillingStatsRateMode)}
+            >
+              <SelectTrigger className="w-40" size="sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="custom">自定义锚点</SelectItem>
+                <SelectItem value="public">公共汇率</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        ) : null}
+      </div>
     </section>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownToLine,
   ArrowUpRight,
@@ -6,19 +6,16 @@ import {
   CircleAlertIcon,
   CopyIcon,
   DownloadIcon,
-  GaugeIcon,
-  RadioIcon,
+  QrCodeIcon,
   RefreshCwIcon,
-  ShieldCheckIcon,
   WifiIcon,
   XIcon,
 } from 'lucide-react'
 
 import LattixMark from '@/components/LattixMark'
-import MagicRings from '@/components/MagicRings'
-import AnimatedContent from '@/components/react-bits/AnimatedContent'
-import DotGrid from '@/components/react-bits/DotGrid'
-import ElectricBorder from '@/components/react-bits/ElectricBorder'
+import { Notice } from '@/components/PagePrimitives'
+import { QRDialog } from '@/components/QRDialog'
+import ThemeToggle from '@/components/ThemeToggle'
 import { humanizeBytes } from '@/lib/format'
 import { RequestError, requester } from '@/lib/requester'
 
@@ -185,6 +182,15 @@ const platformLabels: Record<string, string> = {
 
 const platformOrder = ['ios', 'android', 'windows', 'macos', 'universal']
 
+const formatOrder = ['clash', 'singbox', 'links', 'quanx']
+
+const formatLabels: Record<string, string> = {
+  clash: 'Clash / Mihomo',
+  singbox: 'Sing-box',
+  links: 'V2Ray / Links',
+  quanx: 'Quantumult X',
+}
+
 function formatExpiry(timestamp?: number): string {
   if (!timestamp) return '长期有效'
   return new Intl.DateTimeFormat('zh-CN', {
@@ -217,6 +223,19 @@ function formatSampleTime(value: string): string {
   }).format(date)
 }
 
+/** 客户端矩阵按断点换列，最后一行的单元格去掉底边，让模块外框充当收口线。 */
+function lastRowClass(index: number, total: number): string {
+  const lastRowOfThree = total - (total % 3 || 3)
+  const lastRowOfTwo = total - (total % 2 || 2)
+  return [
+    index >= lastRowOfThree ? 'is-last-3' : '',
+    index >= lastRowOfTwo ? 'is-last-2' : '',
+    index === total - 1 ? 'is-last-1' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+}
+
 function LatencyHistory({ label, samples }: { label: string; samples: LatencySample[] }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const values = samples.slice(-30)
@@ -226,8 +245,8 @@ function LatencyHistory({ label, samples }: { label: string; samples: LatencySam
   ]
 
   return (
-    <div className="link-hop">
-      <span className="link-hop-label">{label}</span>
+    <div className="sub-hop">
+      <span className="sub-hop-label">{label}</span>
       <div
         className="latency-history"
         role="group"
@@ -293,25 +312,36 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
+function BrandLockup() {
+  return (
+    <span className="sub-brand">
+      <span className="sub-mark">
+        <LattixMark className="size-4 shrink-0" />
+      </span>
+      <span className="sub-brand-name">LATTIX</span>
+      <span className="sub-brand-sub">订阅 / SUBSCRIPTION</span>
+    </span>
+  )
+}
+
 function LoadingState() {
   return (
-    <main
-      className="subscription-page subscription-loading"
-      aria-busy="true"
-      aria-label="正在加载订阅"
-    >
-      <div className="subscription-noise" />
-      <div className="subscription-skeleton">
-        <div className="skeleton-line skeleton-brand" />
-        <div className="skeleton-grid">
-          <div>
-            <div className="skeleton-line skeleton-title" />
-            <div className="skeleton-line skeleton-copy" />
-            <div className="skeleton-line skeleton-copy short" />
+    <main className="sub-page" aria-busy="true" aria-label="正在加载订阅">
+      <header className="sub-bar">
+        <BrandLockup />
+        <span className="sub-bar-spacer" />
+        <span className="sub-bar-meta">正在读取订阅凭证</span>
+      </header>
+      <div className="sub-frame sub-frame-state">
+        <section className="sub-mod" aria-label="正在加载订阅">
+          <header className="sub-mod-head">
+            <span className="sub-tab">LOADING</span>
+            <h1 className="sub-mod-title">正在加载订阅</h1>
+          </header>
+          <div className="sub-mod-body">
+            <div className="loading-state sub-loading">正在读取订阅信息…</div>
           </div>
-          <div className="skeleton-orbit" />
-        </div>
-        <div className="skeleton-line skeleton-panel" />
+        </section>
       </div>
     </main>
   )
@@ -319,20 +349,35 @@ function LoadingState() {
 
 function ErrorState({ message }: { message: string }) {
   return (
-    <main className="subscription-page subscription-error-page">
-      <div className="subscription-noise" />
-      <section className="subscription-error" role="alert">
-        <div className="error-icon">
-          <CircleAlertIcon />
-        </div>
-        <span className="section-kicker">CONNECTION FAILED</span>
-        <h1>订阅暂时无法打开</h1>
-        <p>{message}</p>
-        <button type="button" className="primary-action" onClick={() => window.location.reload()}>
-          <RefreshCwIcon />
-          重新连接
-        </button>
-      </section>
+    <main className="sub-page">
+      <header className="sub-bar">
+        <BrandLockup />
+        <span className="sub-bar-spacer" />
+        <span className="sub-bar-meta">公开订阅页</span>
+      </header>
+      <div className="sub-frame sub-frame-state">
+        <section className="sub-mod sub-error" role="alert">
+          <header className="sub-mod-head">
+            <span className="sub-tab">ERROR</span>
+            <span className="sub-mod-title">订阅访问失败</span>
+          </header>
+          <div className="sub-mod-body sub-error-body">
+            <div className="sub-error-icon">
+              <CircleAlertIcon size={16} aria-hidden="true" />
+            </div>
+            <h1 className="sub-error-title">订阅暂时无法打开</h1>
+            <p className="sub-error-message">{message}</p>
+            <button
+              type="button"
+              className="cg-button is-primary"
+              onClick={() => window.location.reload()}
+            >
+              <RefreshCwIcon aria-hidden="true" />
+              重新连接
+            </button>
+          </div>
+        </section>
+      </div>
     </main>
   )
 }
@@ -346,6 +391,8 @@ export default function SubscriptionPage() {
   const [error, setError] = useState('')
   const [copied, setCopied] = useState('')
   const [activePlatform, setActivePlatform] = useState('all')
+  const [activeFormat, setActiveFormat] = useState('')
+  const [qrOpen, setQrOpen] = useState(false)
   const [downloadClient, setDownloadClient] = useState<ClientInfo | null>(null)
   const [downloadVariant, setDownloadVariant] = useState('')
   const [downloadTask, setDownloadTask] = useState<DownloadTask | null>(null)
@@ -510,6 +557,14 @@ export default function SubscriptionPage() {
       platformOrder.filter((platform) => clients.some((client) => client.platform === platform)),
     [clients],
   )
+
+  const availableFormats = useMemo(() => {
+    const seen = new Set(clients.map((client) => client.format))
+    const known = formatOrder.filter((format) => seen.has(format))
+    const extra = [...seen].filter((format) => !formatOrder.includes(format))
+    return [...known, ...extra]
+  }, [clients])
+
   const visibleClients =
     activePlatform === 'all'
       ? clients
@@ -523,6 +578,7 @@ export default function SubscriptionPage() {
   const usagePercent =
     info.traffic_limit > 0 ? Math.min(100, (usedTotal / info.traffic_limit) * 100) : 0
   const overLimit = info.traffic_limit > 0 && usedTotal > info.traffic_limit
+  const unlimited = info.traffic_limit <= 0
   const unavailable = info.disabled || info.expired || overLimit
   const statusLabel = info.disabled
     ? '已停用'
@@ -532,181 +588,421 @@ export default function SubscriptionPage() {
         ? '已超额'
         : '网络就绪'
   const statusDetail = unavailable ? '节点当前不可用' : '订阅与节点均可用'
+  const credentialDetail = info.disabled
+    ? '已被管理员停用'
+    : info.expired
+      ? '续期后恢复服务'
+      : overLimit
+        ? '流量已超出配额'
+        : '凭证状态正常'
   const primaryClient = clients.find((client) => client.deeplink)
-  const ringStyle = { '--usage-angle': `${usagePercent * 3.6}deg` } as CSSProperties
+  const currentFormat = activeFormat && availableFormats.includes(activeFormat) ? activeFormat : ''
+  const currentFormatLabel = currentFormat
+    ? (formatLabels[currentFormat] ?? currentFormat.toUpperCase())
+    : '通用'
+  const endpointURL = currentFormat ? `${subURL}?format=${currentFormat}` : subURL
+  const endpointCopied = copied === `endpoint-${currentFormat}`
 
   return (
-    <main className="subscription-page" data-status={unavailable ? 'warning' : 'ready'}>
-      <div className="subscription-noise" />
-      <div className="react-bits-background" aria-hidden="true">
-        <DotGrid
-          dotSize={2}
-          gap={24}
-          baseColor="#263129"
-          activeColor="#bdf33b"
-          proximity={130}
-          shockRadius={220}
-          shockStrength={3.5}
-          returnDuration={1.2}
-        />
-      </div>
+    <main className="sub-page" data-status={unavailable ? 'warning' : 'ready'}>
+      <header className="sub-bar">
+        <a className="sub-brand" href={subURL} aria-label="Lattix 订阅主页">
+          <span className="sub-mark">
+            <LattixMark className="size-4 shrink-0" />
+          </span>
+          <span className="sub-brand-name">LATTIX</span>
+          <span className="sub-brand-sub">订阅 / SUBSCRIPTION</span>
+        </a>
+        <span className="sub-bar-meta">自托管代理编排 / SELF-HOSTED</span>
+        <span className="sub-bar-spacer" />
+        <ThemeToggle />
+        <div
+          className="sub-status"
+          data-tone={unavailable ? 'bad' : 'ok'}
+          aria-label={`订阅状态：${statusLabel}`}
+        >
+          {statusLabel}
+        </div>
+      </header>
 
-      <div className="subscription-frame">
-        <header className="subscription-nav">
-          <a className="brand-lockup" href={subURL} aria-label="Lattix 订阅主页">
-            <LattixMark className="brand-mark" />
-            <span>LATTIX</span>
-          </a>
-          <div className="nav-status" aria-label={`订阅状态：${statusLabel}`}>
-            <span className="status-pulse" />
-            {statusLabel}
+      <div className="sub-frame">
+        <header className="page-header sub-head">
+          <div className="page-header-copy sub-head-copy">
+            <h1 className="page-title">{info.title}</h1>
+            <div className="page-description sub-meta" role="group" aria-label="订阅基本信息">
+              <span>{info.name}</span>
+              <span className="sub-meta-sep" aria-hidden="true">
+                /
+              </span>
+              <span>{info.nodes_count} 个节点</span>
+              <span className="sub-meta-sep" aria-hidden="true">
+                /
+              </span>
+              <span>到期 {formatExpiry(info.expires_at)}</span>
+              <span className="sub-meta-sep" aria-hidden="true">
+                /
+              </span>
+              <span>每 {info.update_interval} 小时自动更新</span>
+            </div>
+          </div>
+          <div className="page-actions sub-actions">
+            {primaryClient ? (
+              <a className="cg-button is-primary" href={primaryClient.deeplink}>
+                <ArrowDownToLine aria-hidden="true" />
+                导入到 {primaryClient.name}
+                <ArrowUpRight aria-hidden="true" />
+              </a>
+            ) : null}
+            <button
+              type="button"
+              className="cg-button"
+              onClick={() => handleCopy(subURL, 'hero-url')}
+            >
+              {copied === 'hero-url' ? (
+                <CheckIcon aria-hidden="true" />
+              ) : (
+                <CopyIcon aria-hidden="true" />
+              )}
+              {copied === 'hero-url' ? '链接已复制' : '复制订阅地址'}
+            </button>
+            <button
+              type="button"
+              className="cg-button"
+              aria-label="显示订阅二维码"
+              title="显示订阅二维码"
+              onClick={() => setQrOpen(true)}
+            >
+              <QrCodeIcon aria-hidden="true" />
+              二维码
+            </button>
           </div>
         </header>
 
-        <section className="subscription-stage">
-          <div className="stage-copy">
-            <h1>{info.title}</h1>
-            <div className="stage-meta" aria-label="订阅基本信息">
-              <span>{info.name}</span>
-              <span>{info.nodes_count} 个节点</span>
-              <span>{formatExpiry(info.expires_at)}</span>
-            </div>
-            <div className="stage-actions">
-              {primaryClient ? (
-                <a className="primary-action magnetic-action" href={primaryClient.deeplink}>
-                  <ArrowDownToLine />
-                  导入到 {primaryClient.name}
-                  <ArrowUpRight className="action-tail" />
-                </a>
-              ) : null}
-              <button
-                type="button"
-                className="secondary-action"
-                onClick={() => handleCopy(subURL, 'hero-url')}
-              >
-                {copied === 'hero-url' ? <CheckIcon /> : <CopyIcon />}
-                {copied === 'hero-url' ? '链接已复制' : '复制订阅地址'}
-              </button>
-            </div>
-          </div>
+        {unavailable ? (
+          <Notice tone="danger" title={statusLabel} className="sub-alert">
+            {info.disabled
+              ? '订阅已被管理员停用。'
+              : info.expired
+                ? '订阅有效期已结束。'
+                : '流量已超出当前配额。'}
+          </Notice>
+        ) : null}
 
-          {info.traffic_limit > 0 ? (
-            <ElectricBorder
-              className="traffic-electric"
-              color={unavailable ? '#ff7059' : '#bdf33b'}
-              speed={0.8}
-              chaos={0.08}
-              borderRadius={8}
-            >
-              <div
-                className="traffic-orbit"
-                style={ringStyle}
-                aria-label={`流量已使用 ${usagePercent.toFixed(1)}%`}
-              >
-                <div className="orbit-track">
-                  <div className="orbit-core">
-                    <span>剩余流量</span>
-                    <strong>{humanizeBytes(remaining)}</strong>
-                    <small>{usagePercent.toFixed(1)}% 已使用</small>
-                  </div>
-                </div>
-                <span className="orbit-node node-a" />
-                <span className="orbit-node node-b" />
-                <span className="orbit-node node-c" />
-              </div>
-            </ElectricBorder>
-          ) : (
+        <section className="sub-mosaic" aria-label="订阅摘要">
+          <article className="sub-mod sub-span-5">
+            <header className="sub-mod-head">
+              <span className="sub-tab">QUOTA</span>
+              <h2 className="sub-mod-title">本期流量</h2>
+              <span className="sub-mod-meta">
+                {unlimited ? '无配额限制' : `${usagePercent.toFixed(1)}% 已使用`}
+              </span>
+            </header>
             <div
-              className="traffic-orbit traffic-orbit-unlimited"
-              aria-label="无限流量，无配额限制"
+              className="sub-mod-body sub-quota"
+              aria-label={unlimited ? '无限流量，无配额限制' : undefined}
             >
-              <div className="unlimited-rings" aria-hidden="true">
-                <MagicRings
-                  color="#bdf33b"
-                  colorTwo="#f0f4ee"
-                  speed={0.72}
-                  ringCount={7}
-                  attenuation={9}
-                  lineThickness={1.8}
-                  baseRadius={0.18}
-                  radiusStep={0.075}
-                  scaleRate={0.46}
-                  opacity={0.72}
-                  noiseAmount={0.025}
-                  ringGap={1.35}
-                  fadeIn={0.58}
-                  fadeOut={2.5}
-                  followMouse
-                  mouseInfluence={0.08}
-                  hoverScale={1.06}
-                  parallax={0.018}
-                  clickBurst
-                />
-              </div>
-              <div className="unlimited-core">
-                <span className="unlimited-symbol" aria-hidden="true">
-                  ∞
+              <div className="sub-quota-main">
+                <span className="sub-quota-label">剩余流量 / REMAINING</span>
+                <strong className="sub-quota-value">
+                  {unlimited ? '无限流量' : humanizeBytes(remaining)}
+                </strong>
+                <span className="sub-quota-detail">
+                  {unlimited
+                    ? `本期已用 ${humanizeBytes(usedTotal)} · 无配额限制`
+                    : `本期已用 ${humanizeBytes(usedTotal)} · 上限 ${humanizeBytes(info.traffic_limit)}`}
                 </span>
-                <strong>无限流量</strong>
-                <small>本期已用 {humanizeBytes(usedTotal)}</small>
               </div>
+              {unlimited ? null : (
+                <div
+                  className="sub-meter"
+                  role="img"
+                  aria-label={`流量已使用 ${usagePercent.toFixed(1)}%`}
+                >
+                  <span
+                    className="sub-meter-fill"
+                    data-tone={overLimit ? 'bad' : 'ok'}
+                    style={{ width: `${usagePercent}%` }}
+                  />
+                </div>
+              )}
+              <dl className="sub-figures">
+                <div>
+                  <dt>上行 / UP</dt>
+                  <dd className="tabular">{humanizeBytes(info.used_up)}</dd>
+                </div>
+                <div>
+                  <dt>下行 / DOWN</dt>
+                  <dd className="tabular">{humanizeBytes(info.used_down)}</dd>
+                </div>
+                <div>
+                  <dt>{unlimited ? '本期已用 / USED' : '已用占比 / RATIO'}</dt>
+                  <dd className="tabular">
+                    {unlimited ? humanizeBytes(usedTotal) : `${usagePercent.toFixed(1)}%`}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          </article>
+
+          <article className="sub-mod sub-span-4">
+            <header className="sub-mod-head">
+              <span className="sub-tab">SUBSCRIPTION</span>
+              <h2 className="sub-mod-title">订阅信息</h2>
+              <span className="sub-mod-meta">LATTIX / {info.update_interval}H</span>
+            </header>
+            <div className="sub-mod-body sub-mod-body-flush">
+              <dl className="sub-ledger">
+                <div>
+                  <dt>账户</dt>
+                  <dd>{info.name}</dd>
+                </div>
+                <div>
+                  <dt>有效期至</dt>
+                  <dd className="tabular">{formatExpiry(info.expires_at)}</dd>
+                </div>
+                <div>
+                  <dt>凭证状态</dt>
+                  <dd className={unavailable ? 'is-bad' : 'is-ok'}>{credentialDetail}</dd>
+                </div>
+                <div>
+                  <dt>节点数量</dt>
+                  <dd className="tabular">{info.nodes_count} 个</dd>
+                </div>
+                <div>
+                  <dt>自动更新</dt>
+                  <dd>每 {info.update_interval} 小时</dd>
+                </div>
+              </dl>
+            </div>
+          </article>
+
+          <article className="sub-mod sub-span-3">
+            <header className="sub-mod-head">
+              <span className="sub-tab">STATUS</span>
+              <h2 className="sub-mod-title">状态</h2>
+              <span className="sub-mod-meta">LIVE</span>
+            </header>
+            <div className="sub-mod-body sub-state">
+              <strong className="sub-state-value" data-tone={unavailable ? 'bad' : 'ok'}>
+                {statusLabel}
+              </strong>
+              <span className="sub-state-detail">{statusDetail}</span>
+              <dl className="sub-facts">
+                <div>
+                  <dt>客户端</dt>
+                  <dd className="tabular">{clients.length}</dd>
+                </div>
+                <div>
+                  <dt>格式</dt>
+                  <dd className="tabular">{availableFormats.length}</dd>
+                </div>
+                <div>
+                  <dt>链路</dt>
+                  <dd className="tabular">{linkStatus?.length ?? 0}</dd>
+                </div>
+              </dl>
+            </div>
+          </article>
+        </section>
+
+        <section className="sub-mod sub-clients" aria-label="客户端">
+          <header className="sub-mod-head">
+            <span className="sub-tab">CLIENTS</span>
+            <h2 className="sub-mod-title">客户端</h2>
+            <span className="sub-mod-meta">
+              共 {clients.length} 个 · {availableFormats.length} 种格式
+            </span>
+          </header>
+
+          {clients.length > 0 ? (
+            <div className="sub-clients-body">
+              <div className="sub-tabs" role="tablist" aria-label="客户端平台">
+                {['all', ...availablePlatforms].map((platform) => (
+                  <button
+                    key={platform}
+                    type="button"
+                    role="tab"
+                    aria-selected={activePlatform === platform}
+                    onClick={() => setActivePlatform(platform)}
+                  >
+                    {platformLabels[platform] ?? platform}
+                  </button>
+                ))}
+              </div>
+              <p className="sub-guide">
+                选择客户端一键导入；无法直接导入的客户端会复制对应格式的订阅地址。
+              </p>
+
+              <div className="sub-client-grid">
+                {visibleClients.map((client, index) => {
+                  const label = `${client.platform}-${client.name}`
+                  const isAppStore = Boolean(client.app_store_url)
+                  const isDownloadable = !isAppStore && Boolean(client.download_variants?.length)
+                  const cellClass =
+                    `sub-client-cell ${lastRowClass(index, visibleClients.length)}`.trim()
+                  const content = (
+                    <>
+                      <span className="sub-client-copy">
+                        <strong>{client.name}</strong>
+                        <small>
+                          {platformLabels[client.platform] ?? client.platform} · {client.format}
+                        </small>
+                      </span>
+                      <span
+                        className={`sub-client-icon${copied === label ? ' is-copied' : ''}`}
+                        aria-hidden="true"
+                      >
+                        {copied === label ? (
+                          <CheckIcon size={13} />
+                        ) : isAppStore ? (
+                          <ArrowUpRight size={13} />
+                        ) : client.deeplink ? (
+                          <ArrowUpRight size={13} />
+                        ) : isDownloadable ? (
+                          <DownloadIcon size={13} />
+                        ) : (
+                          <CopyIcon size={13} />
+                        )}
+                      </span>
+                    </>
+                  )
+                  if (isAppStore) {
+                    return (
+                      <a
+                        key={label}
+                        className={cellClass}
+                        href={client.app_store_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`在 App Store 打开 ${client.name}`}
+                      >
+                        {content}
+                      </a>
+                    )
+                  }
+                  if (isDownloadable) {
+                    if (client.deeplink) {
+                      return (
+                        <div key={label} className={`${cellClass} is-dual`}>
+                          <a
+                            className="sub-client-main"
+                            href={client.deeplink}
+                            aria-label={`导入到 ${client.name}`}
+                          >
+                            {content}
+                          </a>
+                          <button
+                            type="button"
+                            className="sub-client-download"
+                            onClick={() => openDownload(client)}
+                            aria-label={`下载 ${client.name}`}
+                          >
+                            <DownloadIcon size={13} aria-hidden="true" />
+                          </button>
+                        </div>
+                      )
+                    }
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        className={cellClass}
+                        onClick={() => openDownload(client)}
+                        aria-label={`下载 ${client.name}`}
+                      >
+                        {content}
+                      </button>
+                    )
+                  }
+                  return client.deeplink ? (
+                    <a key={label} className={cellClass} href={client.deeplink}>
+                      {content}
+                    </a>
+                  ) : (
+                    <button
+                      key={label}
+                      type="button"
+                      className={cellClass}
+                      onClick={() => handleCopy(`${subURL}?format=${client.format}`, label)}
+                    >
+                      {content}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="sub-empty">
+              <span className="sub-empty-icon">
+                <WifiIcon size={15} aria-hidden="true" />
+              </span>
+              <strong className="sub-empty-title">暂无一键导入客户端</strong>
+              <span className="sub-empty-desc">仍可复制通用订阅地址，在客户端中手动添加。</span>
             </div>
           )}
         </section>
 
-        {unavailable ? (
-          <div className="status-alert" role="alert">
-            <CircleAlertIcon />
-            <div>
-              <strong>{statusLabel}</strong>
-              <span>
-                {info.disabled
-                  ? '订阅已被管理员停用。'
-                  : info.expired
-                    ? '订阅有效期已结束。'
-                    : '流量已超出当前配额。'}
-              </span>
+        <section className="sub-mod sub-endpoint" aria-label="订阅地址">
+          <header className="sub-mod-head">
+            <span className="sub-tab">ENDPOINT</span>
+            <h2 className="sub-mod-title">订阅地址</h2>
+            <span className="sub-mod-meta">选择格式后复制对应地址</span>
+          </header>
+          <div className="sub-mod-body sub-endpoint-body">
+            <div className="sub-formats" role="group" aria-label="订阅格式">
+              <button
+                type="button"
+                aria-pressed={currentFormat === ''}
+                onClick={() => setActiveFormat('')}
+              >
+                通用
+              </button>
+              {availableFormats.map((format) => (
+                <button
+                  key={format}
+                  type="button"
+                  aria-pressed={currentFormat === format}
+                  onClick={() => setActiveFormat(format)}
+                >
+                  {formatLabels[format] ?? format.toUpperCase()}
+                </button>
+              ))}
             </div>
+            <div className="sub-endpoint-row">
+              <code className="sub-endpoint-code">{endpointURL}</code>
+              <button
+                type="button"
+                className="cg-button is-primary is-icon"
+                aria-label={
+                  currentFormat ? `复制${currentFormatLabel}格式订阅地址` : '复制通用订阅地址'
+                }
+                title="复制订阅地址"
+                onClick={() => handleCopy(endpointURL, `endpoint-${currentFormat}`)}
+              >
+                {endpointCopied ? (
+                  <CheckIcon aria-hidden="true" />
+                ) : (
+                  <CopyIcon aria-hidden="true" />
+                )}
+              </button>
+            </div>
+            <p className="sub-endpoint-hint">在客户端中手动添加订阅；不同客户端请选择对应格式。</p>
           </div>
-        ) : null}
+        </section>
 
-        <AnimatedContent distance={28} duration={0.65} threshold={0.08}>
-          <section className="signal-strip" aria-label="订阅摘要">
-            <div className="signal-item">
-              <GaugeIcon />
-              <span>本期流量</span>
-              <strong>{humanizeBytes(usedTotal)}</strong>
-              <small>
-                上行 {humanizeBytes(info.used_up)} · 下行 {humanizeBytes(info.used_down)}
-              </small>
-            </div>
-            <div className="signal-item">
-              <ShieldCheckIcon />
-              <span>有效期</span>
-              <strong>{formatExpiry(info.expires_at)}</strong>
-              <small>{info.expired ? '续期后恢复服务' : '凭证状态正常'}</small>
-            </div>
-            <div className="signal-item">
-              <RadioIcon />
-              <span>节点</span>
-              <strong>{info.nodes_count} 个</strong>
-              <small>每 {info.update_interval} 小时自动同步</small>
-            </div>
-          </section>
-        </AnimatedContent>
-
-        <AnimatedContent distance={36} duration={0.7} threshold={0.12}>
-          <section className="link-monitor" aria-label="链路状态">
-            <div className="section-heading">
-              <h2>链路状态</h2>
-              <span>最近 30 次延迟（节点到面板服务器）</span>
-            </div>
+        <section className="sub-mod sub-links" aria-label="链路状态">
+          <header className="sub-mod-head">
+            <span className="sub-tab">LINKS</span>
+            <h2 className="sub-mod-title">链路状态</h2>
+            <span className="sub-mod-meta">最近 30 次延迟（节点到面板服务器）</span>
+          </header>
+          <div className="sub-mod-body sub-mod-body-flush">
             {linkStatus && linkStatus.length > 0 ? (
-              <div className="link-monitor-list">
+              <div className="sub-link-list">
                 {linkStatus.map((link) => (
-                  <article key={link.label} className="link-monitor-row">
-                    <span className="link-monitor-name">{link.label}</span>
-                    <div className="link-hop-list">
+                  <article key={link.label} className="sub-link-row">
+                    <span className="sub-link-name">{link.label}</span>
+                    <div className="sub-hop-list">
                       {link.hops.map((hop) => (
                         <LatencyHistory key={hop.label} label={hop.label} samples={hop.samples} />
                       ))}
@@ -715,204 +1011,61 @@ export default function SubscriptionPage() {
                 ))}
               </div>
             ) : linkStatus ? (
-              <div className="link-monitor-empty">暂无已采集的链路状态</div>
+              <div className="sub-empty-line">暂无已采集的链路状态</div>
             ) : null}
-          </section>
-        </AnimatedContent>
+          </div>
+        </section>
 
-        <AnimatedContent distance={36} duration={0.7} threshold={0.12}>
-          <section className="client-section">
-            <div className="section-heading">
-              <h2>客户端</h2>
-            </div>
-
-            {clients.length > 0 ? (
-              <>
-                <div className="platform-tabs" role="tablist" aria-label="客户端平台">
-                  {['all', ...availablePlatforms].map((platform) => (
-                    <button
-                      key={platform}
-                      type="button"
-                      role="tab"
-                      aria-selected={activePlatform === platform}
-                      onClick={() => setActivePlatform(platform)}
-                    >
-                      {platformLabels[platform] ?? platform}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="client-grid">
-                  {visibleClients.map((client, index) => {
-                    const label = `${client.platform}-${client.name}`
-                    const isAppStore = Boolean(client.app_store_url)
-                    const isDownloadable = !isAppStore && Boolean(client.download_variants?.length)
-                    const content = (
-                      <>
-                        <span className="client-index">{String(index + 1).padStart(2, '0')}</span>
-                        <span className="client-name">
-                          <strong>{client.name}</strong>
-                          <small>
-                            {platformLabels[client.platform] ?? client.platform} · {client.format}
-                          </small>
-                        </span>
-                        <span className="client-action-icon">
-                          {copied === label ? (
-                            <CheckIcon />
-                          ) : isAppStore ? (
-                            <ArrowUpRight />
-                          ) : client.deeplink ? (
-                            <ArrowUpRight />
-                          ) : isDownloadable ? (
-                            <DownloadIcon />
-                          ) : (
-                            <CopyIcon />
-                          )}
-                        </span>
-                      </>
-                    )
-                    if (isAppStore) {
-                      return (
-                        <a
-                          key={label}
-                          className="client-row"
-                          href={client.app_store_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          aria-label={`在 App Store 打开 ${client.name}`}
-                        >
-                          {content}
-                        </a>
-                      )
-                    }
-                    if (isDownloadable) {
-                      if (client.deeplink) {
-                        return (
-                          <div key={label} className="client-row client-row-dual">
-                            <a
-                              className="client-row-main"
-                              href={client.deeplink}
-                              aria-label={`导入到 ${client.name}`}
-                            >
-                              {content}
-                            </a>
-                            <button
-                              type="button"
-                              className="client-row-download"
-                              onClick={() => openDownload(client)}
-                              aria-label={`下载 ${client.name}`}
-                            >
-                              <DownloadIcon />
-                            </button>
-                          </div>
-                        )
-                      }
-                      return (
-                        <button
-                          key={label}
-                          type="button"
-                          className="client-row"
-                          onClick={() => openDownload(client)}
-                          aria-label={`下载 ${client.name}`}
-                        >
-                          {content}
-                        </button>
-                      )
-                    }
-                    return client.deeplink ? (
-                      <a key={label} className="client-row" href={client.deeplink}>
-                        {content}
-                      </a>
-                    ) : (
-                      <button
-                        key={label}
-                        type="button"
-                        className="client-row"
-                        onClick={() => handleCopy(`${subURL}?format=${client.format}`, label)}
-                      >
-                        {content}
-                      </button>
-                    )
-                  })}
-                </div>
-              </>
-            ) : (
-              <div className="client-empty">
-                <WifiIcon />
-                <strong>暂无一键导入客户端</strong>
-                <span>仍可复制通用订阅地址，在客户端中手动添加。</span>
-              </div>
-            )}
-          </section>
-        </AnimatedContent>
-
-        <AnimatedContent distance={28} duration={0.65} threshold={0.16}>
-          <section className="subscription-endpoint">
-            <div className="endpoint-copy">
-              <h2>订阅地址</h2>
-            </div>
-            <div className="endpoint-value">
-              <code>{subURL}</code>
-              <button
-                type="button"
-                aria-label="复制通用订阅地址"
-                title="复制通用订阅地址"
-                onClick={() => handleCopy(subURL, 'endpoint-url')}
-              >
-                {copied === 'endpoint-url' ? <CheckIcon /> : <CopyIcon />}
-              </button>
-            </div>
-          </section>
-        </AnimatedContent>
-
-        <footer className="subscription-footer">
-          <span>Lattix</span>
+        <footer className="sub-foot">
+          <span>LATTIX</span>
           <span>
             每 {info.update_interval} 小时自动更新 · {statusDetail}
           </span>
         </footer>
+      </div>
 
-        {downloadClient ? (
-          <div
-            className="download-modal-backdrop"
-            role="presentation"
-            onMouseDown={() => {
-              if (!downloadTask || !['queued', 'downloading'].includes(downloadTask.status))
-                closeDownload()
-            }}
+      {downloadClient ? (
+        <div
+          className="sub-modal-backdrop"
+          role="presentation"
+          onMouseDown={() => {
+            if (!downloadTask || !['queued', 'downloading'].includes(downloadTask.status))
+              closeDownload()
+          }}
+        >
+          <section
+            className="sub-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="download-modal-title"
+            onMouseDown={(event) => event.stopPropagation()}
           >
-            <section
-              className="download-modal"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="download-modal-title"
-              onMouseDown={(event) => event.stopPropagation()}
-            >
-              <div className="download-modal-header">
-                <div>
-                  <span className="section-kicker">CLIENT PACKAGE</span>
-                  <h2 id="download-modal-title">下载 {downloadClient.name}</h2>
-                </div>
-                <button
-                  type="button"
-                  className="download-modal-close"
-                  aria-label="关闭下载窗口"
-                  title="关闭"
-                  disabled={Boolean(
-                    downloadTask && ['queued', 'downloading'].includes(downloadTask.status),
-                  )}
-                  onClick={closeDownload}
-                >
-                  <XIcon />
-                </button>
-              </div>
+            <header className="sub-modal-head">
+              <span className="sub-tab">PACKAGE</span>
+              <h2 className="sub-modal-title" id="download-modal-title">
+                下载 {downloadClient.name}
+              </h2>
+              <button
+                type="button"
+                className="cg-icon-button sub-modal-close"
+                aria-label="关闭下载窗口"
+                title="关闭"
+                disabled={Boolean(
+                  downloadTask && ['queued', 'downloading'].includes(downloadTask.status),
+                )}
+                onClick={closeDownload}
+              >
+                <XIcon aria-hidden="true" />
+              </button>
+            </header>
 
-              <label className="download-variant-label" htmlFor="download-variant">
+            <div className="sub-modal-body">
+              <label className="sub-field-label" htmlFor="download-variant">
                 安装包架构
               </label>
               <select
                 id="download-variant"
-                className="download-variant-select"
+                className="sub-select"
                 value={downloadVariant}
                 disabled={Boolean(
                   downloadTask && ['queued', 'downloading'].includes(downloadTask.status),
@@ -927,8 +1080,8 @@ export default function SubscriptionPage() {
               </select>
 
               {downloadTask ? (
-                <div className="download-progress" aria-live="polite">
-                  <div className="download-progress-label">
+                <div className="sub-progress" aria-live="polite">
+                  <div className="sub-progress-label">
                     <span>
                       {downloadTask.status === 'downloaded'
                         ? '已开始浏览器下载'
@@ -940,20 +1093,23 @@ export default function SubscriptionPage() {
                               ? '等待下载'
                               : '正在下载'}
                     </span>
-                    <strong>
+                    <strong className="tabular">
                       {Math.round(Math.max(0, Math.min(1, downloadTask.progress)) * 100)}%
                     </strong>
                   </div>
-                  <div className="download-progress-track">
+                  <div className="sub-progress-track">
                     <span
+                      className="sub-progress-fill"
                       style={{
                         width: `${Math.round(Math.max(0, Math.min(1, downloadTask.progress)) * 100)}%`,
                       }}
                     />
                   </div>
-                  {downloadTask.filename ? <small>{downloadTask.filename}</small> : null}
+                  {downloadTask.filename ? (
+                    <small className="sub-progress-meta">{downloadTask.filename}</small>
+                  ) : null}
                   {downloadTask.source_url ? (
-                    <small className="download-source">
+                    <small className="sub-progress-meta">
                       下载源：
                       <a href={downloadTask.source_url} target="_blank" rel="noreferrer">
                         {downloadTask.source_url}
@@ -961,16 +1117,20 @@ export default function SubscriptionPage() {
                     </small>
                   ) : null}
                   {downloadTask.sha256 ? (
-                    <small className="download-sha256">
+                    <small className="sub-sha">
                       <span>SHA-256</span>
                       <code>{downloadTask.sha256}</code>
                       <button
                         type="button"
-                        className="download-sha256-copy"
+                        className="sub-sha-copy"
                         aria-label="复制 SHA-256 校验码"
                         onClick={() => void handleCopy(downloadTask.sha256 ?? '', 'sha256')}
                       >
-                        {copied === 'sha256' ? <CheckIcon /> : <CopyIcon />}
+                        {copied === 'sha256' ? (
+                          <CheckIcon size={12} aria-hidden="true" />
+                        ) : (
+                          <CopyIcon size={12} aria-hidden="true" />
+                        )}
                       </button>
                     </small>
                   ) : null}
@@ -978,25 +1138,25 @@ export default function SubscriptionPage() {
               ) : null}
 
               {downloadError || downloadTask?.error ? (
-                <p className="download-modal-error" role="alert">
+                <p className="sub-modal-error" role="alert">
                   {downloadError || downloadTask?.error}
                 </p>
               ) : null}
 
-              <div className="download-modal-actions">
+              <div className="sub-modal-actions">
                 {downloadTask?.status === 'failed' && downloadTask.source_url ? (
                   <button
                     type="button"
-                    className="secondary-action"
+                    className="cg-button"
                     onClick={() => window.open(downloadTask.source_url, '_blank', 'noreferrer')}
                   >
-                    <ArrowUpRight />
+                    <ArrowUpRight aria-hidden="true" />
                     自行下载
                   </button>
                 ) : null}
                 <button
                   type="button"
-                  className="primary-action"
+                  className="cg-button is-primary"
                   disabled={
                     !downloadVariant ||
                     Boolean(
@@ -1007,9 +1167,9 @@ export default function SubscriptionPage() {
                   onClick={() => void startDownload()}
                 >
                   {downloadTask && ['queued', 'downloading'].includes(downloadTask.status) ? (
-                    <RefreshCwIcon className="download-spin" />
+                    <RefreshCwIcon className="sub-spin" aria-hidden="true" />
                   ) : (
-                    <DownloadIcon />
+                    <DownloadIcon aria-hidden="true" />
                   )}
                   {downloadTask && ['queued', 'downloading'].includes(downloadTask.status)
                     ? '下载中'
@@ -1018,10 +1178,12 @@ export default function SubscriptionPage() {
                       : '开始下载'}
                 </button>
               </div>
-            </section>
-          </div>
-        ) : null}
-      </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      <QRDialog text={subURL} open={qrOpen} onClose={() => setQrOpen(false)} />
     </main>
   )
 }

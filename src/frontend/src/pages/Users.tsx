@@ -10,6 +10,7 @@ import {
   QrCodeIcon,
   RefreshCwIcon,
   Settings2Icon,
+  EllipsisIcon,
   Trash2Icon,
   UsersIcon,
 } from 'lucide-react'
@@ -18,7 +19,6 @@ import { CopyButton } from '@/components/CopyButton'
 import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { QRDialog } from '@/components/QRDialog'
 import { TemplateAssignmentTab } from '@/components/TemplateAssignmentTab'
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -27,6 +27,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -49,10 +58,12 @@ import { useAppDialog } from '@/lib/app-dialog'
 import { useOperationProgress } from '@/lib/operation-progress-context'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { buildLinkOptions } from '@/lib/links'
+import { chainStatusStyle } from '@/lib/status'
 import { useTimezone } from '@/lib/timezone'
 import { usePolling } from '@/lib/use-polling'
 import type {
   Chain,
+  ChainStatus,
   ExternalSubscription,
   SubUser,
   SubscriptionPreview,
@@ -153,6 +164,8 @@ export default function Users() {
     const effectiveIds = assignTarget.effective_chain_ids ?? assignTarget.chain_ids
     return linkOptions.filter((link) => effectiveIds.includes(link.chainId))
   }, [assignTarget, linkOptions])
+
+  const onlineUsers = users.filter((user) => user.online_connections > 0).length
 
   const onDelete = async (user: SubUser) => {
     if (
@@ -279,8 +292,7 @@ export default function Users() {
   }
 
   return (
-    <Page>
-      <span className="cg-eyebrow">ACCESS / USERS</span>
+    <Page className="cg-page-in">
       <PageHeader
         title="用户"
         description="订阅用户的创建、链路分配、订阅策略与用量概览。"
@@ -311,212 +323,216 @@ export default function Users() {
           onChanged={() => load(true)}
         />
       ) : (
-        <>
-          {!loading && users.length === 0 ? (
+        <section className="cg-users-board">
+          <header className="cg-users-board-head">
+            <span className="cg-users-tab">USERS</span>
+            <span className="cg-users-board-title">用户读数</span>
+            <span className="cg-users-board-meta">
+              {loading ? '同步中…' : `${users.length} 用户 · 在线 ${onlineUsers}`}
+            </span>
+          </header>
+          {loading ? (
+            <LoadingState className="cg-users-board-state" />
+          ) : users.length === 0 ? (
             <EmptyState
+              className="cg-users-board-state"
               icon={<UsersIcon />}
               title="暂无用户"
               description="点击上方“创建用户”开始"
             />
-          ) : null}
-          {!loading && users.length === 0 ? null : (
-            <div className="cg-users-list">
-              {loading ? (
-                <LoadingState />
-              ) : (
-                users.map((u) => {
-                  const effectiveChainIds = u.effective_chain_ids ?? u.chain_ids
-                  const effectiveLinks = effectiveChainIds.filter((id) =>
-                    linkOptions.some((link) => link.chainId === id),
-                  )
-                  return (
-                    <Card key={u.id}>
-                      <CardHeader className="border-b">
-                        <CardTitle className="flex min-w-0 flex-wrap items-center gap-2">
-                          <span className="truncate">{u.name}</span>
-                          {u.user_group_ids.length > 0 && (
-                            <span className="cg-status is-blue" title="订阅由用户分组派生">
-                              {u.user_group_ids
-                                .map((id) => userGroups.find((g) => g.id === id)?.name ?? `#${id}`)
-                                .join('、')}
+          ) : (
+            <div className="cg-users-scroll">
+              <table className="cg-users-table">
+                <thead>
+                  <tr>
+                    <th scope="col">用户</th>
+                    <th scope="col">状态</th>
+                    <th scope="col">链路</th>
+                    <th scope="col">流量</th>
+                    <th scope="col">在线</th>
+                    <th scope="col">有效期</th>
+                    <th scope="col">订阅地址</th>
+                    <th scope="col">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((u) => {
+                    const effectiveChainIds = u.effective_chain_ids ?? u.chain_ids
+                    const effectiveLinks = effectiveChainIds.filter((id) =>
+                      linkOptions.some((link) => link.chainId === id),
+                    )
+                    const groupNames = u.user_group_ids.map(
+                      (id) => userGroups.find((g) => g.id === id)?.name ?? `#${id}`,
+                    )
+                    return (
+                      <tr
+                        key={u.id}
+                        className="cg-user-row"
+                        data-disabled={u.disabled || undefined}
+                      >
+                        <th scope="row" className="cg-user-cell">
+                          <span className="cg-user-name">{u.name}</span>
+                          {groupNames.length > 0 && (
+                            <span className="cg-user-groups" title="订阅由用户分组派生">
+                              {groupNames.join('、')}
                             </span>
                           )}
-                          {u.disabled && <span className="cg-status is-red">已停用</span>}
-                          {u.expired && <span className="cg-status is-red">已到期</span>}
-                          {u.subscription_snapshot.status === 'ready' ? (
-                            <span className="cg-status is-lime">
-                              订阅 r{u.subscription_snapshot.revision}
-                            </span>
-                          ) : (
-                            <span
-                              className="cg-status is-red"
-                              title={u.subscription_snapshot.error}
-                            >
-                              订阅异常
-                            </span>
-                          )}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="cg-user-metrics">
-                        <div className="cg-user-metric">
-                          <span className="cg-user-metric-label">链路 / LINKS</span>
-                          {effectiveLinks.length === 0 ? (
-                            <span className="cg-user-metric-value is-muted">未分配</span>
-                          ) : (
-                            <span className="cg-user-metric-value">
-                              {effectiveLinks.length} / {linkOptions.length}
-                            </span>
-                          )}
-                        </div>
-                        <div className="cg-user-metric">
-                          <span className="cg-user-metric-label">流量 / TRAFFIC</span>
-                          {u.traffic ? (
-                            <span className="cg-user-metric-value whitespace-nowrap">
-                              ↑{humanizeBytes(u.traffic.up)} ↓{humanizeBytes(u.traffic.down)}
-                            </span>
-                          ) : (
-                            <span className="cg-user-metric-value is-muted">-</span>
-                          )}
-                        </div>
-                        <div className="cg-user-metric">
-                          <span className="cg-user-metric-label">在线 / ONLINE</span>
-                          {u.online_connections > 0 ? (
-                            <span>
-                              <span className="cg-status is-lime">{u.online_connections}</span>
-                            </span>
-                          ) : (
-                            <span className="cg-user-metric-value is-muted">-</span>
-                          )}
-                        </div>
-                        <div className="cg-user-metric">
-                          <span className="cg-user-metric-label">有效期 / EXPIRES</span>
-                          {u.expires_at ? (
-                            <span className="cg-user-metric-value">
-                              {formatDateTime(u.expires_at, timezone)}
-                            </span>
-                          ) : (
-                            <span className="cg-user-metric-value is-muted">长期</span>
-                          )}
-                        </div>
-                        <div className="cg-user-metric">
-                          <span className="cg-user-metric-label">创建时间 / CREATED</span>
-                          <span className="cg-user-metric-value">
-                            {formatDateTime(u.created_at, timezone)}
-                          </span>
-                        </div>
-                        <div className="cg-user-metric cg-user-metric-wide">
-                          <span className="cg-user-metric-label">订阅链接 / SUB URL</span>
-                          <div className="cg-user-suburl">
-                            <span className="cg-user-suburl-text" title={u.sub_url}>
-                              {u.sub_url}
-                            </span>
-                            <span className="cg-user-suburl-actions">
-                              <CopyButton text={u.sub_url} />
-                              <span title="复制分享链接订阅（vless:// 等链接集合）">
-                                <CopyButton text={u.sub_links_url} />
+                        </th>
+                        <td>
+                          <span className="cg-user-states">
+                            {u.disabled && <span className="cg-status is-red">已停用</span>}
+                            {u.expired && <span className="cg-status is-red">已到期</span>}
+                            {u.subscription_snapshot.status === 'ready' ? (
+                              <span className="cg-status is-muted">
+                                订阅 r{u.subscription_snapshot.revision}
                               </span>
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                title="订阅二维码"
-                                onClick={() => setQrText(u.sub_url)}
+                            ) : (
+                              <span
+                                className="cg-status is-red"
+                                title={u.subscription_snapshot.error}
                               >
-                                <QrCodeIcon />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                title="打开订阅落地页（浏览器）"
-                                onClick={() => window.open(u.sub_url, '_blank', 'noopener')}
-                              >
-                                <ExternalLinkIcon />
-                              </Button>
+                                订阅异常
+                              </span>
+                            )}
+                          </span>
+                        </td>
+                        <td className="cg-user-num">
+                          {effectiveLinks.length === 0 ? (
+                            <span className="cg-muted">未分配</span>
+                          ) : (
+                            <>
+                              {effectiveLinks.length} / {linkOptions.length}
+                            </>
+                          )}
+                        </td>
+                        <td className="cg-user-num cg-user-traffic">
+                          {u.traffic ? (
+                            <>
+                              <span>↑ {humanizeBytes(u.traffic.up)}</span>
+                              <span>↓ {humanizeBytes(u.traffic.down)}</span>
+                            </>
+                          ) : (
+                            <span className="cg-muted">-</span>
+                          )}
+                        </td>
+                        <td className="cg-user-num">
+                          {u.online_connections > 0 ? (
+                            <span className="cg-user-online">{u.online_connections}</span>
+                          ) : (
+                            <span className="cg-muted">-</span>
+                          )}
+                        </td>
+                        <td className="cg-user-num cg-user-date">
+                          {u.expires_at ? formatDateTime(u.expires_at, timezone) : '长期'}
+                        </td>
+                        <td className="cg-user-sub">
+                          <span className="cg-user-suburl-text" title={u.sub_url}>
+                            {u.sub_url}
+                          </span>
+                          <span className="cg-user-suburl-actions">
+                            <CopyButton text={u.sub_url} />
+                            <span title="复制分享链接订阅（vless:// 等链接集合）">
+                              <CopyButton text={u.sub_links_url} />
                             </span>
-                          </div>
-                        </div>
-                      </CardContent>
-                      <CardFooter className="flex flex-wrap gap-2">
-                        <Button variant="outline" size="sm" onClick={() => onOpenAssign(u)}>
-                          查看链路
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title="订阅设置"
-                          onClick={() => subSettings.open(u)}
-                        >
-                          <Settings2Icon />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title="重新生成全部订阅格式"
-                          disabled={regenerating === u.id}
-                          onClick={() => onRegenerate(u)}
-                        >
-                          <RefreshCwIcon
-                            className={regenerating === u.id ? 'animate-spin' : undefined}
-                          />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title="重置订阅地址（更换链接，旧链接立即失效）"
-                          disabled={resettingToken === u.id}
-                          onClick={() => onResetToken(u)}
-                        >
-                          <KeyRoundIcon
-                            className={resettingToken === u.id ? 'animate-spin' : undefined}
-                          />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title="结果预览"
-                          onClick={() => onOpenPreview(u)}
-                        >
-                          <EyeIcon />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title="流量历史"
-                          onClick={() => onOpenHistory(u)}
-                        >
-                          <HistoryIcon />
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title={
-                            u.disabled
-                              ? '启用（恢复链路下发与订阅）'
-                              : '停用（立即停权，订阅链路清空）'
-                          }
-                          disabled={toggling === u.id}
-                          onClick={() => onToggleDisabled(u)}
-                        >
-                          {u.disabled ? <CircleCheckIcon /> : <BanIcon />}
-                          {toggling === u.id ? '处理中…' : u.disabled ? '启用' : '停用'}
-                        </Button>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          className="ml-auto"
-                          disabled={deleting === u.id}
-                          onClick={() => onDelete(u)}
-                        >
-                          <Trash2Icon />
-                          {deleting === u.id ? '删除中…' : '删除'}
-                        </Button>
-                      </CardFooter>
-                    </Card>
-                  )
-                })
-              )}
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              title="订阅二维码"
+                              onClick={() => setQrText(u.sub_url)}
+                            >
+                              <QrCodeIcon />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              title="打开订阅落地页（浏览器）"
+                              onClick={() => window.open(u.sub_url, '_blank', 'noopener')}
+                            >
+                              <ExternalLinkIcon />
+                            </Button>
+                          </span>
+                        </td>
+                        <td>
+                          <span className="cg-user-actions">
+                            <Button variant="outline" size="sm" onClick={() => onOpenAssign(u)}>
+                              查看链路
+                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label={`管理用户 ${u.name}`}
+                                  />
+                                }
+                              >
+                                <EllipsisIcon />
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuGroup>
+                                  <DropdownMenuLabel>用户管理</DropdownMenuLabel>
+                                  <DropdownMenuItem onClick={() => subSettings.open(u)}>
+                                    <Settings2Icon />
+                                    订阅设置
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    disabled={regenerating === u.id}
+                                    onClick={() => onRegenerate(u)}
+                                  >
+                                    <RefreshCwIcon />
+                                    {regenerating === u.id ? '重新生成中…' : '重新生成全部订阅格式'}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    disabled={resettingToken === u.id}
+                                    onClick={() => onResetToken(u)}
+                                  >
+                                    <KeyRoundIcon />
+                                    {resettingToken === u.id
+                                      ? '重置中…'
+                                      : '重置订阅地址（更换链接，旧链接立即失效）'}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => onOpenPreview(u)}>
+                                    <EyeIcon />
+                                    结果预览
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem onClick={() => onOpenHistory(u)}>
+                                    <HistoryIcon />
+                                    流量历史
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    disabled={toggling === u.id}
+                                    onClick={() => onToggleDisabled(u)}
+                                  >
+                                    {u.disabled ? <CircleCheckIcon /> : <BanIcon />}
+                                    {toggling === u.id
+                                      ? '处理中…'
+                                      : u.disabled
+                                        ? '启用（恢复链路下发与订阅）'
+                                        : '停用（立即停权，订阅链路清空）'}
+                                  </DropdownMenuItem>
+                                </DropdownMenuGroup>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  disabled={deleting === u.id}
+                                  onClick={() => onDelete(u)}
+                                >
+                                  <Trash2Icon />
+                                  {deleting === u.id ? '删除中…' : '删除用户'}
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
-        </>
+        </section>
       )}
 
       <CreateUserDialog
@@ -563,7 +579,9 @@ export default function Users() {
                   <span>{link.name}</span>
                   <span className="cg-check-row-detail ml-auto text-right">{link.detail}</span>
                   {link.status !== 'active' && (
-                    <span className="cg-check-row-detail">（{link.status}）</span>
+                    <span className="cg-check-row-detail">
+                      （{chainStatusStyle[link.status as ChainStatus]?.label ?? link.status}）
+                    </span>
                   )}
                 </div>
               ))

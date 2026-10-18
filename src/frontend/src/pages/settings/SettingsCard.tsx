@@ -1,34 +1,34 @@
 import type { ReactNode } from 'react'
-import type { LucideIcon } from 'lucide-react'
 
-// 设置分区卡片：左列描述/图标，右列实际配置控件（纯展示组件，无逻辑）。
+// 设置分区模块：1px 发丝线矩形 + 红色索引标签；描述行贴顶，配置控件在下方密排。
+// 纯展示组件，无逻辑；标签统一按「INDEX / SECTION」拆成模块索引与右侧 meta。
 export function SettingsCard({
-  icon: Icon,
   tag,
   title,
   description,
   aside,
   children,
 }: {
-  icon: LucideIcon
   tag: string
   title: ReactNode
   description?: ReactNode
   aside?: ReactNode
   children: ReactNode
 }) {
+  const [index, ...rest] = tag.split('/').map((part) => part.trim())
+  const meta = rest.join(' / ')
+
   return (
-    <section className="cg-card cg-set-card">
-      <aside className="cg-set-card-aside">
-        <span className="cg-set-card-icon">
-          <Icon />
-        </span>
-        <span className="cg-micro cg-set-card-tag">{tag}</span>
-        <h2 className="cg-title cg-set-card-title">{title}</h2>
-        {description ? <p className="cg-set-card-desc">{description}</p> : null}
-        {aside}
-      </aside>
-      <div className="cg-set-card-body">{children}</div>
+    <section className="st-mod">
+      <header className="st-mod-head">
+        <span className="st-index">{index}</span>
+        <h2 className="st-mod-title">{title}</h2>
+        <span className="st-mod-spacer" />
+        {meta ? <span className="st-mod-meta">{meta}</span> : null}
+        {aside ? <span className="st-mod-aside">{aside}</span> : null}
+      </header>
+      {description ? <p className="st-mod-desc">{description}</p> : null}
+      <div className="st-mod-body">{children}</div>
     </section>
   )
 }

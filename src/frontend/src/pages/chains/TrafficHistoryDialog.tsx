@@ -248,7 +248,7 @@ export function TrafficHistoryDialog({ controller }: { controller: TrafficHistor
                     key={range}
                     type="button"
                     size="sm"
-                    variant={trafficRange === range ? 'secondary' : 'ghost'}
+                    variant={trafficRange === range ? 'default' : 'ghost'}
                     onClick={() => selectRange(range)}
                   >
                     {range === 'day' ? '日' : '月'}

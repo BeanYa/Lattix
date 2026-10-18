@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { CopyIcon, EyeIcon, FileCode2Icon, PlusIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
 
-import { EmptyState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
+import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -165,11 +165,7 @@ export default function SubscriptionTemplates() {
   }
 
   return (
-    <Page className="cg-page-in">
-      <div className="subtpl-topline">
-        <span className="cg-eyebrow">SUBSCRIPTION / TEMPLATES</span>
-        <span className="cg-pill">{String(templates.length).padStart(2, '0')} TEMPLATES</span>
-      </div>
+    <Page className="subtpl-page">
       <PageHeader
         title="订阅模板"
         description="管理订阅转换模板：本地 YAML / INI / CONF 内容或公开 GitHub 文件，支持刷新缓存与克隆。"
@@ -192,124 +188,137 @@ export default function SubscriptionTemplates() {
         }
       />
       {error ? <Notice tone="danger">{error}</Notice> : null}
-      {!loading && templates.length === 0 ? (
+      {loading ? (
+        <LoadingState />
+      ) : templates.length === 0 ? (
         <EmptyState
           icon={<FileCode2Icon />}
           title="暂无模板"
           description="创建本地模板或添加公开 GitHub 文件"
         />
-      ) : null}
-      <div className={!loading && templates.length === 0 ? 'hidden' : undefined}>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>模板</TableHead>
-              <TableHead>类型</TableHead>
-              <TableHead>来源</TableHead>
-              <TableHead>缓存状态</TableHead>
-              <TableHead>许可证</TableHead>
-              <TableHead>操作</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {templates.map((template) => (
-              <TableRow key={template.id}>
-                <TableCell>
-                  <div className="font-medium">{template.name}</div>
-                  <div className="subtpl-id">{template.id}</div>
-                </TableCell>
-                <TableCell>
-                  <span className="cg-status is-blue">{template.kind}</span>
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={
-                        template.origin === 'github' ? 'cg-status is-blue' : 'cg-status is-muted'
-                      }
-                    >
-                      {template.origin === 'github' ? 'GitHub' : '本地'}
-                    </span>
-                    {template.readonly ? <span className="cg-status is-muted">只读</span> : null}
-                  </div>
-                </TableCell>
-                <TableCell className="text-xs">
-                  {template.last_error ? (
-                    <span className="cg-status is-red" title={template.last_error}>
-                      刷新失败，沿用缓存
-                    </span>
-                  ) : template.fetched_at ? (
-                    <div className="subtpl-cache">
-                      <span className="cg-status is-lime">已缓存</span>
-                      <span className="subtpl-cache-time">
-                        {formatDateTime(template.fetched_at, timezone)}
+      ) : (
+        <section className="subtpl-mod" aria-label="订阅模板清单">
+          <header className="subtpl-mod-head">
+            <span className="subtpl-index">TEMPLATES</span>
+            <h2 className="subtpl-mod-title">模板清单</h2>
+            <span className="subtpl-spacer" />
+            <span className="subtpl-mod-meta">
+              {String(templates.length).padStart(2, '0')} TEMPLATES
+            </span>
+          </header>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>模板</TableHead>
+                <TableHead>类型</TableHead>
+                <TableHead>来源</TableHead>
+                <TableHead>缓存状态</TableHead>
+                <TableHead>许可证</TableHead>
+                <TableHead>操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {templates.map((template) => (
+                <TableRow key={template.id}>
+                  <TableCell>
+                    <div className="subtpl-name">{template.name}</div>
+                    <div className="subtpl-id">{template.id}</div>
+                  </TableCell>
+                  <TableCell>
+                    <span className="cg-status">{template.kind}</span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="subtpl-cell-group">
+                      <span
+                        className={
+                          template.origin === 'github' ? 'cg-status' : 'cg-status is-muted'
+                        }
+                      >
+                        {template.origin === 'github' ? 'GitHub' : '本地'}
                       </span>
+                      {template.readonly ? <span className="cg-status is-muted">只读</span> : null}
                     </div>
-                  ) : template.content ? (
-                    <span className="cg-status is-muted">本地内容</span>
-                  ) : (
-                    <span className="cg-status is-muted">尚未缓存</span>
-                  )}
-                </TableCell>
-                <TableCell className="text-xs">{template.license || '-'}</TableCell>
-                <TableCell>
-                  <div className="flex gap-1">
-                    <button
-                      type="button"
-                      className="cg-icon-button"
-                      title="模板预览"
-                      onClick={() => setPreview(template)}
-                    >
-                      <EyeIcon />
-                    </button>
-                    {template.origin === 'github' ? (
+                  </TableCell>
+                  <TableCell>
+                    {template.last_error ? (
+                      <span className="cg-status is-red" title={template.last_error}>
+                        刷新失败，沿用缓存
+                      </span>
+                    ) : template.fetched_at ? (
+                      <div className="subtpl-cache">
+                        <span className="cg-status is-ok">已缓存</span>
+                        <span className="subtpl-cache-time">
+                          {formatDateTime(template.fetched_at, timezone)}
+                        </span>
+                      </div>
+                    ) : template.content ? (
+                      <span className="cg-status is-muted">本地内容</span>
+                    ) : (
+                      <span className="cg-status is-muted">尚未缓存</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <span className="subtpl-license">{template.license || '-'}</span>
+                  </TableCell>
+                  <TableCell>
+                    <div className="subtpl-row-actions">
                       <button
                         type="button"
                         className="cg-icon-button"
-                        title="刷新"
-                        onClick={() => refresh(template.id)}
-                        disabled={Boolean(refreshing)}
+                        title="模板预览"
+                        onClick={() => setPreview(template)}
                       >
-                        <RefreshCwIcon
-                          className={refreshing === template.id ? 'animate-spin' : undefined}
-                        />
+                        <EyeIcon />
                       </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="cg-icon-button"
-                      title="克隆"
-                      onClick={() => clone(template)}
-                    >
-                      <CopyIcon />
-                    </button>
-                    {!template.readonly ? (
-                      <>
+                      {template.origin === 'github' ? (
                         <button
                           type="button"
                           className="cg-icon-button"
-                          title="编辑"
-                          onClick={() => beginEdit(template)}
+                          title="刷新"
+                          onClick={() => refresh(template.id)}
+                          disabled={Boolean(refreshing)}
                         >
-                          <FileCode2Icon />
+                          <RefreshCwIcon
+                            className={refreshing === template.id ? 'animate-spin' : undefined}
+                          />
                         </button>
-                        <button
-                          type="button"
-                          className="cg-icon-button"
-                          title="删除"
-                          onClick={() => remove(template)}
-                        >
-                          <Trash2Icon />
-                        </button>
-                      </>
-                    ) : null}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="cg-icon-button"
+                        title="克隆"
+                        onClick={() => clone(template)}
+                      >
+                        <CopyIcon />
+                      </button>
+                      {!template.readonly ? (
+                        <>
+                          <button
+                            type="button"
+                            className="cg-icon-button"
+                            title="编辑"
+                            onClick={() => beginEdit(template)}
+                          >
+                            <FileCode2Icon />
+                          </button>
+                          <button
+                            type="button"
+                            className="cg-icon-button is-danger"
+                            title="删除"
+                            onClick={() => remove(template)}
+                          >
+                            <Trash2Icon />
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </section>
+      )}
 
       <Dialog
         open={open}
@@ -318,20 +327,20 @@ export default function SubscriptionTemplates() {
           if (!next) resetForm()
         }}
       >
-        <DialogContent className="max-h-[90vh] sm:max-w-4xl overflow-y-auto">
+        <DialogContent className="subtpl-dialog max-h-[90vh] overflow-y-auto sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle>{editing ? '编辑模板' : '新建模板'}</DialogTitle>
             <DialogDescription>
               本地内容保存前会解析校验；GitHub 源仅接受公开的具体文件地址。
             </DialogDescription>
           </DialogHeader>
-          <form onSubmit={save} className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
+          <form onSubmit={save} className="subtpl-form">
+            <div className="subtpl-form-row">
+              <div className="subtpl-field">
                 <Label>名称</Label>
                 <Input value={name} onChange={(event) => setName(event.target.value)} required />
               </div>
-              <div className="space-y-2">
+              <div className="subtpl-field">
                 <Label>类型</Label>
                 <Select
                   value={kind}
@@ -350,7 +359,7 @@ export default function SubscriptionTemplates() {
                 </Select>
               </div>
             </div>
-            <div className="space-y-2">
+            <div className="subtpl-field">
               <Label>公开 GitHub 文件地址（留空则使用本地内容）</Label>
               <Input
                 value={sourceURL}
@@ -359,7 +368,7 @@ export default function SubscriptionTemplates() {
               />
             </div>
             {!sourceURL ? (
-              <div className="space-y-2">
+              <div className="subtpl-field">
                 <Label>模板内容</Label>
                 <textarea
                   className="subtpl-code-input"
@@ -370,7 +379,7 @@ export default function SubscriptionTemplates() {
                 />
               </div>
             ) : null}
-            <div className="space-y-2">
+            <div className="subtpl-field">
               <Label>许可证</Label>
               <Input
                 value={license}
@@ -388,7 +397,7 @@ export default function SubscriptionTemplates() {
       </Dialog>
 
       <Dialog open={preview !== null} onOpenChange={(next) => !next && setPreview(null)}>
-        <DialogContent className="max-h-[90vh] sm:max-w-5xl overflow-y-auto">
+        <DialogContent className="subtpl-dialog max-h-[90vh] overflow-y-auto sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle>模板预览</DialogTitle>
             <DialogDescription>{preview?.name} · 未填充 Lattix 用户和链路数据</DialogDescription>

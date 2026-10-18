@@ -1,4 +1,4 @@
-import { CheckIcon, MoonIcon, PaletteIcon, SunIcon } from 'lucide-react'
+import { CheckIcon, MoonIcon, SunIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -7,12 +7,10 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useTheme } from '@/lib/theme-context'
 import type { Theme } from '@/lib/theme-context'
-import { DEFAULT_DESIGN, DESIGN_THEMES } from '@/themes/registry'
 import { cn } from '@/lib/utils'
 
 interface ThemeToggleProps {
@@ -25,7 +23,7 @@ const MODE_LABELS: Record<Theme, string> = {
 }
 
 export default function ThemeToggle({ className }: ThemeToggleProps) {
-  const { theme, setTheme, design, setDesign } = useTheme()
+  const { theme, setTheme } = useTheme()
 
   return (
     <DropdownMenu>
@@ -34,43 +32,25 @@ export default function ThemeToggle({ className }: ThemeToggleProps) {
           <Button
             type="button"
             variant="ghost"
-            size="icon"
-            className={cn(className)}
-            aria-label="切换主题"
-            title="切换主题"
+            size="icon-sm"
+            className={cn('text-muted-foreground', className)}
+            aria-label={`切换外观（当前${MODE_LABELS[theme]}）`}
+            title={`外观：${MODE_LABELS[theme]}`}
           >
-            <PaletteIcon />
+            {theme === 'dark' ? <MoonIcon /> : <SunIcon />}
           </Button>
         }
       />
-      <DropdownMenuContent align="end" className="w-44">
+      <DropdownMenuContent align="end" className="w-36">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>外观模式</DropdownMenuLabel>
-          {(['light', 'dark'] as const).map((mode) => (
+          <DropdownMenuLabel>外观</DropdownMenuLabel>
+          {(['dark', 'light'] as const).map((mode) => (
             <DropdownMenuItem key={mode} onClick={() => setTheme(mode)} className="justify-between">
               <span className="flex items-center gap-2">
                 {mode === 'light' ? <SunIcon /> : <MoonIcon />}
                 {MODE_LABELS[mode]}
               </span>
-              {theme === mode && <CheckIcon className="size-4 opacity-60" />}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuGroup>
-          <DropdownMenuLabel>设计主题</DropdownMenuLabel>
-          {DESIGN_THEMES.map(({ id, label, description }) => (
-            <DropdownMenuItem
-              key={id}
-              onClick={() => setDesign(id)}
-              title={description}
-              className="justify-between"
-            >
-              <span className="truncate">
-                {label}
-                {id === DEFAULT_DESIGN && <span className="ml-1 text-xs opacity-50">默认</span>}
-              </span>
-              {design === id && <CheckIcon className="size-4 opacity-60" />}
+              {theme === mode && <CheckIcon className="size-3.5 opacity-60" />}
             </DropdownMenuItem>
           ))}
         </DropdownMenuGroup>

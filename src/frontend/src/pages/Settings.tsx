@@ -1,19 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import {
-  BellIcon,
-  CalendarClockIcon,
-  CpuIcon,
-  GlobeIcon,
-  RssIcon,
-  ScrollTextIcon,
-  ServerIcon,
-  Settings2Icon,
-  ShieldCheckIcon,
-  SlidersHorizontalIcon,
-  WrenchIcon,
-} from 'lucide-react'
+import { CpuIcon, ShieldCheckIcon, SlidersHorizontalIcon, WrenchIcon } from 'lucide-react'
 
-import { LoadingState, Notice, Page } from '@/components/PagePrimitives'
+import { LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -87,7 +75,7 @@ const INSPECTION_UNITS: { value: InspectionUnit; label: string }[] = [
   { value: 'year', label: '年' },
 ]
 
-// 设置分区（横向 cg-pill 按钮组，active = lime）
+// 设置分区（分段 Tabs，选中红底）
 const SETTINGS_TABS = [
   { value: 'agent', label: 'Agent', icon: CpuIcon },
   { value: 'runtime', label: '运行设置', icon: SlidersHorizontalIcon },
@@ -367,45 +355,28 @@ export default function Settings() {
   }
 
   return (
-    <Page className="cg-settings">
-      {/* Eyebrow + 环境信息 */}
-      <div className="cg-set-topline">
-        <span className="cg-eyebrow">PANEL / SETTINGS</span>
-        <div className="cg-set-topline-side">
-          <span className="cg-pill">{accessProtocol} 访问</span>
-          <span className="cg-pill is-dark">v{settings.panel_version}</span>
-        </div>
-      </div>
+    <Page className="st-page">
+      <PageHeader
+        title="设置"
+        description="面板、Agent、订阅与安全的全局配置集中管理；保存后在线 Agent 立即同步，离线 Agent 重连后拉取。"
+        actions={
+          <>
+            <span className="cg-pill">{accessProtocol} 访问</span>
+            <span className="cg-pill">v{settings.panel_version}</span>
+            <span className={cn('cg-status', settings.restart_required ? 'is-red' : 'is-ok')}>
+              {settings.restart_required ? 'RESTART REQUIRED' : 'CONFIG APPLIED'}
+            </span>
+          </>
+        }
+      />
 
-      {/* Header Card */}
-      <header className="cg-card-raised cg-set-header">
-        <div className="cg-set-header-main">
-          <span className="cg-set-header-icon">
-            <Settings2Icon />
-          </span>
-          <div className="min-w-0">
-            <span className="cg-micro cg-set-header-tag">CONFIGURATION / 全局配置</span>
-            <h1 className="cg-title cg-set-title">设置</h1>
-            <p className="cg-set-subtitle">
-              面板、Agent、订阅与安全的全局配置集中管理；保存后在线 Agent 立即同步，离线 Agent
-              重连后拉取。
-            </p>
-          </div>
-        </div>
-        <div className="cg-set-header-side">
-          <span className={cn('cg-status', settings.restart_required ? 'is-red' : 'is-lime')}>
-            {settings.restart_required ? 'RESTART REQUIRED' : 'CONFIG APPLIED'}
-          </span>
-        </div>
-      </header>
-
-      {/* 横向 Category Tabs（cg-pill 按钮组，active = lime） */}
-      <nav className="cg-set-tabs" aria-label="设置分类">
+      {/* 分类 Tabs：标准分段控件，选中红底 */}
+      <nav className="st-tabs" aria-label="设置分类">
         {SETTINGS_TABS.map((tab) => (
           <button
             key={tab.value}
             type="button"
-            className={cn('cg-pill cg-set-tab', settingsTab === tab.value && 'is-active')}
+            className={cn('st-tabs-btn', settingsTab === tab.value && 'is-active')}
             aria-pressed={settingsTab === tab.value}
             onClick={() => setSettingsTab(tab.value)}
           >
@@ -418,15 +389,14 @@ export default function Settings() {
       {error && <Notice tone="danger">{error}</Notice>}
       {message && <Notice tone="success">{message}</Notice>}
 
-      <form onSubmit={onSave} className="cg-set-form">
+      <form onSubmit={onSave} className="st-form">
         {/* Agent 分区 */}
-        <div className="cg-set-panel" hidden={settingsTab !== 'agent'}>
+        <div className="st-panel" hidden={settingsTab !== 'agent'}>
           <SettingsCard
-            icon={CpuIcon}
             tag="AGENT / POLICY"
             title="Agent"
             description="所有 Agent 使用同一份设置。保存后 revision 自动递增，在线 Agent 会立即拉取，离线 Agent 在重连后同步。"
-            aside={<span className="cg-status is-blue">REVISION {settings.agent.revision}</span>}
+            aside={<span className="cg-status">REVISION {settings.agent.revision}</span>}
           >
             <div className="flex flex-col gap-2">
               <Label>重连策略</Label>
@@ -468,7 +438,7 @@ export default function Settings() {
               />
               <p className="cg-set-note">范围 1-100；无限重试模式会保存但忽略该值。</p>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="st-row">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="telemetrySeconds">遥测间隔（秒）</Label>
                 <Input
@@ -495,15 +465,10 @@ export default function Settings() {
           </SettingsCard>
 
           <SettingsCard
-            icon={ServerIcon}
             tag="SERVER / DEFAULTS"
             title="服务器设置"
             description="面板级默认设置（defaultsetting）。服务器未单独覆盖时采用该值；xray 版本为具体版本时，agent 收到后会自动对齐升级到该版本；latest 保持现状（仅手动升级）。"
-            aside={
-              <span className="cg-status is-blue">
-                REV {settings?.server_settings_revision ?? 1}
-              </span>
-            }
+            aside={<span className="cg-status">REV {settings?.server_settings_revision ?? 1}</span>}
           >
             <div className="flex flex-col gap-2">
               <Label htmlFor="serverXrayVersion">xray 版本（默认）</Label>
@@ -528,14 +493,13 @@ export default function Settings() {
           </SettingsCard>
 
           <SettingsCard
-            icon={CalendarClockIcon}
             tag="INSPECTION / SCHEDULE"
             title="巡检任务"
             description="定期从 GitHub 更新升级弹窗使用的 release 版本缓存。GitHub 暂时不可用时继续使用最近一次成功缓存。"
           >
             <div className="cg-set-group">
               <span className="cg-set-group-title">Agent 版本</span>
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="st-row st-row-3">
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="agentInspectionEvery" className="cg-set-sublabel">
                     每隔
@@ -588,7 +552,7 @@ export default function Settings() {
             <div className="cg-set-divider" />
             <div className="cg-set-group">
               <span className="cg-set-group-title">xray 版本</span>
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="st-row st-row-3">
                 <div className="flex flex-col gap-2">
                   <Label htmlFor="xrayInspectionEvery" className="cg-set-sublabel">
                     每隔
@@ -640,7 +604,7 @@ export default function Settings() {
               <p className="cg-set-note">默认每天 03:00 巡检一次。</p>
             </div>
             <div className="cg-set-divider" />
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="st-row">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="billingInspectionAt">计费状态巡检</Label>
                 <Input
@@ -666,7 +630,7 @@ export default function Settings() {
         </div>
 
         {/* 运行设置分区 */}
-        <div className="cg-set-panel" hidden={settingsTab !== 'runtime'}>
+        <div className="st-panel" hidden={settingsTab !== 'runtime'}>
           <ExchangeRatesCard
             controller={exchange}
             reportingCurrency={reportingCurrency}
@@ -675,7 +639,6 @@ export default function Settings() {
           />
 
           <SettingsCard
-            icon={GlobeIcon}
             tag="PANEL / GENERAL"
             title="基本设置"
             description="对外地址与时区保存后立即生效。"
@@ -763,7 +726,6 @@ export default function Settings() {
           </SettingsCard>
 
           <SettingsCard
-            icon={RssIcon}
             tag="SUBSCRIPTION / PORTAL"
             title="订阅"
             description="订阅落地页与客户端流量信息全局配置。用户级覆盖在用户页“订阅设置”中配置。"
@@ -796,7 +758,7 @@ export default function Settings() {
                 placeholder="注入到订阅落地页的额外样式"
               />
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="st-row">
               <div className="flex flex-col gap-2">
                 <Label>默认更新间隔（小时）</Label>
                 <Input
@@ -829,7 +791,7 @@ export default function Settings() {
                 <p className="cg-set-note">默认 72 小时。每个客户端与架构只保留最新版本。</p>
               </div>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="st-row">
               <div className="flex flex-col gap-2">
                 <Label>默认套餐名</Label>
                 <Input
@@ -862,7 +824,6 @@ export default function Settings() {
           </SettingsCard>
 
           <SettingsCard
-            icon={ScrollTextIcon}
             tag="LOGGING / RETENTION"
             title="日志缓存"
             description="操作日志与业务数据隔离存储；请求日志按行追加到分段 JSONL 文件。修改后立即清理超出限制的最旧记录。"
@@ -925,17 +886,14 @@ export default function Settings() {
         </div>
 
         {/* 安全通知分区 */}
-        <div className="cg-set-panel" hidden={settingsTab !== 'security'}>
+        <div className="st-panel" hidden={settingsTab !== 'security'}>
           <SettingsCard
-            icon={ShieldCheckIcon}
             tag="SECURITY / TLS"
             title="面板证书（TLS）"
             description="TLS 设置保存后写入配置，重启面板进程后生效；当前访问协议与面板监听模式见下方贴纸。"
             aside={
               <div className="cg-set-facts">
-                <span
-                  className={cn('cg-status', accessProtocol === 'HTTPS' ? 'is-lime' : 'is-blue')}
-                >
+                <span className={cn('cg-status', accessProtocol === 'HTTPS' ? 'is-ok' : '')}>
                   访问 {accessProtocol}
                 </span>
                 <span className="cg-status is-muted">
@@ -1115,7 +1073,6 @@ export default function Settings() {
           </SettingsCard>
 
           <SettingsCard
-            icon={BellIcon}
             tag="ALERTS / NOTIFY"
             title="告警"
             description="服务器离线、配置漂移、节点失败时推送通知（仅状态跃迁触发，同一服务器同一事件 5 分钟内不重复）。三项全空 = 关闭；测试使用已保存的配置，请先保存。"
@@ -1176,7 +1133,7 @@ export default function Settings() {
                         <span
                           className={cn(
                             'cg-status',
-                            !r.configured ? 'is-muted' : r.ok ? 'is-lime' : 'is-red',
+                            !r.configured ? 'is-muted' : r.ok ? 'is-ok' : 'is-red',
                           )}
                         >
                           {ch === 'webhook' ? 'WEBHOOK' : 'TELEGRAM'}
@@ -1199,8 +1156,8 @@ export default function Settings() {
 
         {/* 保存栏：固定在分区底部，lime 主按钮 */}
         {settingsTab !== 'system' && (
-          <div className="cg-set-save-bar">
-            <span className="cg-micro cg-set-save-hint">SAVE / 保存后全局生效，TLS 变更需重启</span>
+          <div className="st-save">
+            <span className="st-save-hint">SAVE / 保存后全局生效，TLS 变更需重启</span>
             <button type="submit" className="cg-button is-primary" disabled={saving}>
               {saving ? '保存中…' : '保存设置'}
             </button>

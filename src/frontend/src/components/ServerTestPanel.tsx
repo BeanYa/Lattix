@@ -144,7 +144,7 @@ function carrierLabel(value: unknown): string {
 function ErrorNotice({ code, message }: { code?: string; message?: string }) {
   if (!code && !message) return null
   return (
-    <div className="flex items-start gap-2 border-l-2 border-destructive bg-destructive/5 px-3 py-2 text-xs text-destructive">
+    <div className="sv-inline-warning is-danger">
       <XCircleIcon className="mt-0.5 size-3.5 shrink-0" />
       <span>
         <span className="font-mono">{code || 'error'}</span>
@@ -438,7 +438,7 @@ function IPQualityReport({ category }: { category: ServerTestCategoryResult }) {
   return (
     <div className="space-y-4">
       {result.script_stale ? (
-        <div className="flex items-start gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
+        <div className="sv-inline-warning">
           <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
           <span>脚本版本可能过期（script_version={result.script_version}），本次复用缓存</span>
         </div>
@@ -548,13 +548,13 @@ function TestReport({ report, timezone }: { report: ServerTestReport; timezone?:
         </div>
       </div>
       {report.environment.degraded || report.environment.sandbox_reason ? (
-        <div className="flex items-start gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
+        <div className="sv-inline-warning">
           <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
           <span>{report.environment.degraded_reason || report.environment.sandbox_reason}</span>
         </div>
       ) : null}
       {ipv6Off ? (
-        <div className="flex items-start gap-2 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+        <div className="sv-inline-note">
           <WifiIcon className="mt-0.5 size-3.5 shrink-0" />
           <span>IPv6 不可用，IPv6 相关章节已隐藏</span>
         </div>

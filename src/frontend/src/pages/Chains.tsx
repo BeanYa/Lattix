@@ -35,6 +35,10 @@ import { roleLabel, useTrafficHistory } from './chains/use-traffic-history'
 
 import './chains.css'
 
+function statusTone(tone: CgStatusStyle['cg']): string {
+  return tone === 'is-lime' ? 'is-ok' : tone
+}
+
 function ChainStateMark({
   status,
   style,
@@ -296,296 +300,307 @@ export default function Chains() {
   )
   return (
     <Page className="cg-chains">
-      <div className="cg-chains-topline">
-        <span className="cg-eyebrow">LINKS / ROUTING</span>
-        <span className="cg-micro cg-chains-topline-note">入口 → 中转 → 出口 · 客户端仅见入口</span>
-      </div>
-
       <PageHeader
         title="链路"
         description="直连与中转链路的部署状态、跳点拓扑与累计流量，统一在此编排与维护。"
         actions={
-          <>
-            <span className="cg-pill">{loading ? '同步中…' : `${entries.length} 条链路`}</span>
-            <button type="button" className="cg-button is-primary" onClick={chainForm.openCreate}>
-              <PlusIcon />
-              创建链路
-            </button>
-          </>
+          <button type="button" className="cg-button is-primary" onClick={chainForm.openCreate}>
+            <PlusIcon />
+            创建链路
+          </button>
         }
       />
 
       {error && <Notice tone="danger">{error}</Notice>}
 
-      <div className="cg-chain-list">
+      <section className="cg-chain-board">
+        <header className="cg-chain-board-head">
+          <span className="cg-chain-tab">ROUTES</span>
+          <span className="cg-chain-board-title">链路读数</span>
+          <span className="cg-chain-board-meta">
+            {loading ? '同步中…' : `${entries.length} 条链路`}
+          </span>
+        </header>
         {loading ? (
-          <LoadingState />
+          <LoadingState className="cg-board-state" />
         ) : entries.length === 0 ? (
-          <EmptyState icon={<RouteIcon />} title="暂无链路" description="点击上方“创建链路”开始" />
+          <EmptyState
+            className="cg-board-state"
+            icon={<RouteIcon />}
+            title="暂无链路"
+            description="点击上方“创建链路”开始"
+          />
         ) : (
-          entries.map((entry) => {
-            if (entry.type === 'direct') {
-              const node = entry.node
-              const st = chainStatusStyle[node.status] ?? chainStatusStyle.pending
-              const server = servers.find((candidate) => candidate.id === node.server_id)
-              const displayPort = node.realized_config?.port ?? node.port
-              return (
-                <article
-                  key={`direct-${node.id}`}
-                  className="cg-card cg-chain-card"
-                  data-tone={st.cg}
-                >
-                  <header className="cg-chain-card-head">
-                    <div className="cg-chain-card-title">
-                      <ChainStateMark status={node.status} style={st} />
-                      <strong className="cg-chain-name">{node.name || `直连 #${node.id}`}</strong>
-                      <span className="cg-chain-id">#{node.id}</span>
-                      <span className="cg-chain-tag">直连</span>
-                      <span className={cn('cg-status', st.cg)}>{st.label}</span>
-                    </div>
-                    <div className="cg-chain-card-side">
-                      <span className="cg-chain-meta">
-                        <Clock3Icon />
-                        创建于 {formatDateTime(node.created_at, timezone)}
-                      </span>
-                      <div className="cg-chain-actions">
-                        {node.status === 'failed' ? (
+          <div className="cg-chain-rows">
+            {entries.map((entry) => {
+              if (entry.type === 'direct') {
+                const node = entry.node
+                const st = chainStatusStyle[node.status] ?? chainStatusStyle.pending
+                const server = servers.find((candidate) => candidate.id === node.server_id)
+                const displayPort = node.realized_config?.port ?? node.port
+                return (
+                  <article key={`direct-${node.id}`} className="cg-chain-entry" data-tone={st.cg}>
+                    <header className="cg-chain-entry-head">
+                      <div className="cg-chain-entry-title">
+                        <ChainStateMark status={node.status} style={st} />
+                        <strong className="cg-chain-name">{node.name || `直连 #${node.id}`}</strong>
+                        <span className="cg-chain-id">#{node.id}</span>
+                        <span className="cg-chain-tag">直连</span>
+                        <span className={cn('cg-status', statusTone(st.cg))}>{st.label}</span>
+                      </div>
+                      <div className="cg-chain-entry-side">
+                        <span className="cg-chain-meta">
+                          <Clock3Icon />
+                          创建于 {formatDateTime(node.created_at, timezone)}
+                        </span>
+                        <div className="cg-chain-actions">
+                          {node.status === 'failed' ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={retrying === `direct-${node.id}`}
+                              onClick={() => onRetryDirect(node.id)}
+                            >
+                              {retrying === `direct-${node.id}` ? '重试中…' : '重试链路'}
+                            </Button>
+                          ) : null}
                           <Button
                             variant="outline"
                             size="sm"
-                            disabled={retrying === `direct-${node.id}`}
-                            onClick={() => onRetryDirect(node.id)}
+                            onClick={() => onDeleteDirect(node.id)}
                           >
-                            {retrying === `direct-${node.id}` ? '重试中…' : '重试链路'}
+                            删除链路
+                          </Button>
+                        </div>
+                      </div>
+                    </header>
+                    <div className="cg-chain-entry-body">
+                      {node.error ? <p className="cg-chain-error">{node.error}</p> : null}
+                      <div className="cg-chain-split">
+                        <div className="cg-chain-direct">
+                          <span
+                            className={cn(
+                              'cg-hop-dot',
+                              server && isServerOnline(server) ? 'is-lime' : 'is-red',
+                            )}
+                          />
+                          <div className="cg-chain-direct-copy">
+                            <span className="cg-chain-direct-label">直连服务器</span>
+                            <strong className="cg-chain-direct-name">{node.server_alias}</strong>
+                            {displayPort ? (
+                              <span className="cg-chain-direct-port">:{displayPort}</span>
+                            ) : null}
+                          </div>
+                          <span
+                            className={cn(
+                              'cg-status',
+                              server ? (isServerOnline(server) ? 'is-ok' : 'is-red') : 'is-muted',
+                            )}
+                          >
+                            {server
+                              ? isServerOnline(server)
+                                ? 'Agent 在线'
+                                : 'Agent 离线'
+                              : 'Agent 未知'}
+                          </span>
+                        </div>
+                        <TrafficSummary up={node.traffic?.up} down={node.traffic?.down} />
+                      </div>
+                    </div>
+                  </article>
+                )
+              }
+              const c = entry.chain
+              const st = chainStatusStyle[c.status] ?? chainStatusStyle.pending
+              const hasFailedHop = c.hops.some((h) => h.status === 'failed')
+              const isDirect = c.hops.length === 1
+              const pendingTasks = c.revision_tasks.filter(
+                (task) => task.status === 'pending' || task.status === 'queued',
+              )
+              return (
+                <article key={`relay-${c.id}`} className="cg-chain-entry" data-tone={st.cg}>
+                  <header className="cg-chain-entry-head">
+                    <div className="cg-chain-entry-title">
+                      <ChainStateMark status={c.status} style={st} />
+                      <strong className="cg-chain-name">{c.name || `中转 #${c.id}`}</strong>
+                      <span className="cg-chain-id">#{c.id}</span>
+                      <span className="cg-chain-tag">{isDirect ? '直连' : '中转'}</span>
+                      <span className={cn('cg-status', statusTone(st.cg))}>{st.label}</span>
+                      {c.status === 'degraded' ? (
+                        c.endpoint_status === 'failed' ? (
+                          <span className="cg-chain-note is-red">
+                            共享入口部署失败，已发布链路仍保留
+                          </span>
+                        ) : c.endpoint_status === 'applying' || c.endpoint_status === 'pending' ? (
+                          <span className="cg-chain-note is-blue">
+                            共享入口部署中，已发布链路仍保留
+                          </span>
+                        ) : (
+                          <span className="cg-chain-note is-red">Agent 离线，已发布链路仍保留</span>
+                        )
+                      ) : null}
+                      {c.revision_forced ? (
+                        <span className="cg-chain-note is-blue">
+                          订阅已发布，配置等待 Agent 确认
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="cg-chain-entry-side">
+                      <span className="cg-chain-meta">
+                        <Clock3Icon />
+                        创建于 {formatDateTime(c.created_at, timezone)}
+                      </span>
+                      <div className="cg-chain-actions">
+                        {c.status === 'failed' || c.status === 'active_failed' || hasFailedHop ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={retrying === `relay-${c.id}`}
+                            onClick={() => onRetry(c.id)}
+                          >
+                            {retrying === `relay-${c.id}` ? '重试中…' : '重试链路'}
                           </Button>
                         ) : null}
-                        <Button variant="outline" size="sm" onClick={() => onDeleteDirect(node.id)}>
+                        {c.desired_revision_id !== 0 ? (
+                          <Button variant="outline" size="sm" onClick={() => onForcePublish(c)}>
+                            <SendIcon />
+                            强制发布
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
+                          title="流量历史"
+                          onClick={() => traffic.openTraffic(c)}
+                        >
+                          <BarChart3Icon />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
+                          title="重置流量"
+                          onClick={() => onResetTraffic(c)}
+                        >
+                          <RotateCcwIcon />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
+                          title="编辑链路"
+                          disabled={
+                            c.desired_revision_id !== 0 &&
+                            c.status !== 'failed' &&
+                            c.status !== 'active_failed' &&
+                            // 等待 Agent 的编辑可再次编辑取代（无在途命令，废弃安全）
+                            c.status !== 'waiting_for_agent'
+                          }
+                          onClick={() => chainForm.openEdit(c)}
+                        >
+                          <PencilIcon />
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => onDelete(c.id)}>
                           删除链路
                         </Button>
                       </div>
                     </div>
                   </header>
-                  <div className="cg-chain-card-body">
-                    {node.error ? <p className="cg-chain-error">{node.error}</p> : null}
+                  <div className="cg-chain-entry-body">
+                    {c.error ? <p className="cg-chain-error">{c.error}</p> : null}
                     <div className="cg-chain-split">
-                      <div className="cg-chain-direct">
-                        <span
-                          className={cn(
-                            'cg-hop-dot',
-                            server && isServerOnline(server) ? 'is-lime' : 'is-red',
-                          )}
-                        />
-                        <div className="cg-chain-direct-copy">
-                          <span className="cg-chain-direct-label">直连服务器</span>
-                          <strong className="cg-chain-direct-name">{node.server_alias}</strong>
-                          {displayPort ? (
-                            <span className="cg-chain-direct-port">:{displayPort}</span>
-                          ) : null}
+                      <div className="cg-hop-scroll">
+                        <div className="cg-hop-flow">
+                          {c.hops.map((h, i) => {
+                            const hst = hopStatusStyle[h.status] ?? hopStatusStyle.pending
+                            const offline = !serverOnline(h.server_id)
+                            const exitNode =
+                              h.role === 'exit' ? nodes.find((n) => n.id === h.node_id) : undefined
+                            const hopPort =
+                              h.role === 'entry'
+                                ? c.entry_port !== 0
+                                  ? c.entry_port
+                                  : h.forward_port
+                                : h.role === 'middle'
+                                  ? h.forward_port
+                                  : (exitNode?.realized_config?.port ??
+                                    exitNode?.port ??
+                                    h.forward_port)
+                            return (
+                              <div key={h.id} className="cg-hop-seg" title={h.error || undefined}>
+                                {i > 0 ? (
+                                  <span className="cg-hop-link" aria-hidden="true">
+                                    <i />
+                                    <ArrowDownIcon className="cg-hop-link-v" />
+                                    <ArrowRightIcon className="cg-hop-link-h" />
+                                  </span>
+                                ) : null}
+                                <div className="cg-hop">
+                                  <span className="cg-hop-head">
+                                    <span className="cg-hop-num">
+                                      {String(i + 1).padStart(2, '0')}
+                                    </span>
+                                    <span
+                                      className={cn('cg-hop-dot', offline ? 'is-red' : hst.cg)}
+                                    />
+                                    <span className="cg-hop-role">
+                                      {roleLabel[h.role]} · {hst.label}
+                                    </span>
+                                  </span>
+                                  <strong className="cg-hop-name">{h.server_alias}</strong>
+                                  <span className="cg-hop-meta">
+                                    {hopPort !== 0 ? <span>端口 {hopPort}</span> : null}
+                                    {(h.role === 'entry' || c.hops.length === 1) &&
+                                    c.entry_shared ? (
+                                      <span className="cg-hop-shared">共享入口</span>
+                                    ) : null}
+                                    <span className={offline ? 'is-red' : 'is-lime'}>
+                                      {offline ? 'Agent 离线' : 'Agent 在线'}
+                                    </span>
+                                    {h.traffic ? (
+                                      <span>
+                                        ↑ {humanizeBytes(h.traffic.effective_up)} · ↓{' '}
+                                        {humanizeBytes(h.traffic.effective_down)}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                </div>
+                              </div>
+                            )
+                          })}
                         </div>
-                        <span
-                          className={cn(
-                            'cg-status',
-                            server ? (isServerOnline(server) ? 'is-lime' : 'is-red') : 'is-muted',
-                          )}
-                        >
-                          {server
-                            ? isServerOnline(server)
-                              ? 'Agent 在线'
-                              : 'Agent 离线'
-                            : 'Agent 未知'}
-                        </span>
                       </div>
-                      <TrafficSummary up={node.traffic?.up} down={node.traffic?.down} />
+                      <TrafficSummary
+                        up={c.traffic?.effective_up}
+                        down={c.traffic?.effective_down}
+                        rawUp={c.traffic?.raw_up}
+                        rawDown={c.traffic?.raw_down}
+                        multiplier={c.traffic_multiplier}
+                      />
                     </div>
+                    {pendingTasks.length > 0 ? (
+                      <p className="cg-chain-queue">
+                        {pendingTasks.filter((task) => task.phase === 'apply').length} 个部署任务、
+                        {pendingTasks.filter((task) => task.phase === 'cleanup').length}{' '}
+                        个清理任务在队列中
+                      </p>
+                    ) : null}
+                    {c.hops.some((h) => h.error) ? (
+                      <div className="cg-chain-hop-errors">
+                        {c.hops
+                          .filter((h) => h.error)
+                          .map((h) => (
+                            <p key={h.id}>
+                              {roleLabel[h.role]}（{h.server_alias}）：{h.error}
+                            </p>
+                          ))}
+                      </div>
+                    ) : null}
                   </div>
                 </article>
               )
-            }
-            const c = entry.chain
-            const st = chainStatusStyle[c.status] ?? chainStatusStyle.pending
-            const hasFailedHop = c.hops.some((h) => h.status === 'failed')
-            const isDirect = c.hops.length === 1
-            const pendingTasks = c.revision_tasks.filter(
-              (task) => task.status === 'pending' || task.status === 'queued',
-            )
-            return (
-              <article key={`relay-${c.id}`} className="cg-card cg-chain-card" data-tone={st.cg}>
-                <header className="cg-chain-card-head">
-                  <div className="cg-chain-card-title">
-                    <ChainStateMark status={c.status} style={st} />
-                    <strong className="cg-chain-name">{c.name || `中转 #${c.id}`}</strong>
-                    <span className="cg-chain-id">#{c.id}</span>
-                    <span className="cg-chain-tag">{isDirect ? '直连' : '中转'}</span>
-                    <span className={cn('cg-status', st.cg)}>{st.label}</span>
-                    {c.status === 'degraded' ? (
-                      c.endpoint_status === 'failed' ? (
-                        <span className="cg-chain-note is-red">
-                          共享入口部署失败，已发布链路仍保留
-                        </span>
-                      ) : c.endpoint_status === 'applying' || c.endpoint_status === 'pending' ? (
-                        <span className="cg-chain-note is-blue">
-                          共享入口部署中，已发布链路仍保留
-                        </span>
-                      ) : (
-                        <span className="cg-chain-note is-red">Agent 离线，已发布链路仍保留</span>
-                      )
-                    ) : null}
-                    {c.revision_forced ? (
-                      <span className="cg-chain-note is-blue">订阅已发布，配置等待 Agent 确认</span>
-                    ) : null}
-                  </div>
-                  <div className="cg-chain-card-side">
-                    <span className="cg-chain-meta">
-                      <Clock3Icon />
-                      创建于 {formatDateTime(c.created_at, timezone)}
-                    </span>
-                    <div className="cg-chain-actions">
-                      {c.status === 'failed' || c.status === 'active_failed' || hasFailedHop ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={retrying === `relay-${c.id}`}
-                          onClick={() => onRetry(c.id)}
-                        >
-                          {retrying === `relay-${c.id}` ? '重试中…' : '重试链路'}
-                        </Button>
-                      ) : null}
-                      {c.desired_revision_id !== 0 ? (
-                        <Button variant="outline" size="sm" onClick={() => onForcePublish(c)}>
-                          <SendIcon />
-                          强制发布
-                        </Button>
-                      ) : null}
-                      <Button
-                        variant="outline"
-                        size="icon-sm"
-                        title="流量历史"
-                        onClick={() => traffic.openTraffic(c)}
-                      >
-                        <BarChart3Icon />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="icon-sm"
-                        title="重置流量"
-                        onClick={() => onResetTraffic(c)}
-                      >
-                        <RotateCcwIcon />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="icon-sm"
-                        title="编辑链路"
-                        disabled={
-                          c.desired_revision_id !== 0 &&
-                          c.status !== 'failed' &&
-                          c.status !== 'active_failed' &&
-                          // 等待 Agent 的编辑可再次编辑取代（无在途命令，废弃安全）
-                          c.status !== 'waiting_for_agent'
-                        }
-                        onClick={() => chainForm.openEdit(c)}
-                      >
-                        <PencilIcon />
-                      </Button>
-                      <Button variant="outline" size="sm" onClick={() => onDelete(c.id)}>
-                        删除链路
-                      </Button>
-                    </div>
-                  </div>
-                </header>
-                <div className="cg-chain-card-body">
-                  {c.error ? <p className="cg-chain-error">{c.error}</p> : null}
-                  <div className="cg-chain-split">
-                    <div className="cg-hop-scroll">
-                      <div className="cg-hop-flow">
-                        {c.hops.map((h, i) => {
-                          const hst = hopStatusStyle[h.status] ?? hopStatusStyle.pending
-                          const offline = !serverOnline(h.server_id)
-                          const exitNode =
-                            h.role === 'exit' ? nodes.find((n) => n.id === h.node_id) : undefined
-                          const hopPort =
-                            h.role === 'entry'
-                              ? c.entry_port !== 0
-                                ? c.entry_port
-                                : h.forward_port
-                              : h.role === 'middle'
-                                ? h.forward_port
-                                : (exitNode?.realized_config?.port ??
-                                  exitNode?.port ??
-                                  h.forward_port)
-                          return (
-                            <div key={h.id} className="cg-hop-seg" title={h.error || undefined}>
-                              {i > 0 ? (
-                                <span className="cg-hop-link" aria-hidden="true">
-                                  <i />
-                                  <ArrowDownIcon className="cg-hop-link-v" />
-                                  <ArrowRightIcon className="cg-hop-link-h" />
-                                </span>
-                              ) : null}
-                              <div className="cg-hop">
-                                <span className="cg-hop-head">
-                                  <span className="cg-hop-num">
-                                    {String(i + 1).padStart(2, '0')}
-                                  </span>
-                                  <span className={cn('cg-hop-dot', offline ? 'is-red' : hst.cg)} />
-                                  <span className="cg-hop-role">
-                                    {roleLabel[h.role]} · {hst.label}
-                                  </span>
-                                </span>
-                                <strong className="cg-hop-name">{h.server_alias}</strong>
-                                <span className="cg-hop-meta">
-                                  {hopPort !== 0 ? <span>端口 {hopPort}</span> : null}
-                                  {(h.role === 'entry' || c.hops.length === 1) && c.entry_shared ? (
-                                    <span className="cg-hop-shared">共享入口</span>
-                                  ) : null}
-                                  <span className={offline ? 'is-red' : 'is-lime'}>
-                                    {offline ? 'Agent 离线' : 'Agent 在线'}
-                                  </span>
-                                  {h.traffic ? (
-                                    <span>
-                                      ↑ {humanizeBytes(h.traffic.effective_up)} · ↓{' '}
-                                      {humanizeBytes(h.traffic.effective_down)}
-                                    </span>
-                                  ) : null}
-                                </span>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                    <TrafficSummary
-                      up={c.traffic?.effective_up}
-                      down={c.traffic?.effective_down}
-                      rawUp={c.traffic?.raw_up}
-                      rawDown={c.traffic?.raw_down}
-                      multiplier={c.traffic_multiplier}
-                    />
-                  </div>
-                  {pendingTasks.length > 0 ? (
-                    <p className="cg-chain-queue">
-                      {pendingTasks.filter((task) => task.phase === 'apply').length} 个部署任务、
-                      {pendingTasks.filter((task) => task.phase === 'cleanup').length}{' '}
-                      个清理任务在队列中
-                    </p>
-                  ) : null}
-                  {c.hops.some((h) => h.error) ? (
-                    <div className="cg-chain-hop-errors">
-                      {c.hops
-                        .filter((h) => h.error)
-                        .map((h) => (
-                          <p key={h.id}>
-                            {roleLabel[h.role]}（{h.server_alias}）：{h.error}
-                          </p>
-                        ))}
-                    </div>
-                  ) : null}
-                </div>
-              </article>
-            )
-          })
+            })}
+          </div>
         )}
-      </div>
+      </section>
 
       <ChainFormDialog controller={chainForm} servers={servers} panelShort={panelShort} />
       <TrafficHistoryDialog controller={traffic} />

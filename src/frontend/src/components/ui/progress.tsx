@@ -24,7 +24,7 @@ function ProgressTrack({ className, ...props }: ProgressPrimitive.Track.Props) {
   return (
     <ProgressPrimitive.Track
       className={cn(
-        'relative flex h-2.5 w-full items-center overflow-hidden rounded-full border-2 bg-secondary',
+        'relative flex h-2.5 w-full items-center overflow-hidden rounded-[1px] border bg-secondary',
         className,
       )}
       data-slot="progress-track"
@@ -37,7 +37,7 @@ function ProgressIndicator({ className, ...props }: ProgressPrimitive.Indicator.
   return (
     <ProgressPrimitive.Indicator
       data-slot="progress-indicator"
-      className={cn('h-full rounded-full bg-primary transition-all', className)}
+      className={cn('h-full rounded-[1px] bg-primary transition-all', className)}
       {...props}
     />
   )

@@ -1,19 +1,12 @@
 import { createContext, useContext } from 'react'
 
+/** 外观模式。深色是默认外观；浅色是同一设计语言的日间版。 */
 export type Theme = 'light' | 'dark'
-
-/**
- * 设计主题 id（<html data-theme> 取值）。内置主题有字面量提示，
- * 经注册表安装的自定义主题同样接受任意合法 id。
- */
-export type DesignTheme = 'hig' | 'cream' | 'patchbay' | (string & {})
 
 export interface ThemeState {
   theme: Theme
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
-  design: string
-  setDesign: (design: DesignTheme) => void
 }
 
 export const ThemeContext = createContext<ThemeState | undefined>(undefined)

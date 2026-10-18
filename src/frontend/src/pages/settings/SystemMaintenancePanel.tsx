@@ -1,5 +1,4 @@
 import { useState, type FormEvent } from 'react'
-import { DatabaseBackupIcon, KeyRoundIcon, RocketIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -126,43 +125,44 @@ export function SystemMaintenancePanel({
   }
 
   return (
-    <div className="cg-set-panel" hidden={hidden}>
+    <div className="st-panel" hidden={hidden}>
       <SettingsCard
-        icon={KeyRoundIcon}
         tag="ACCOUNT / PASSWORD"
         title="修改密码"
         description={`账号 ${settings.admin_user}${settings.password_override ? '（密码已被设置页覆盖）' : '（当前使用启动参数密码）'}；修改后所有会话失效，需重新登录。`}
       >
         <form onSubmit={onChangePassword} className="cg-set-group">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="currentPassword">当前密码</Label>
-            <Input
-              id="currentPassword"
-              type="password"
-              value={currentPassword}
-              onChange={(e) => setCurrentPassword(e.target.value)}
-              autoComplete="current-password"
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="newPassword">新密码（至少 8 位）</Label>
-            <Input
-              id="newPassword"
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="confirmPassword">确认新密码</Label>
-            <Input
-              id="confirmPassword"
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              autoComplete="new-password"
-            />
+          <div className="st-row st-row-3">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="currentPassword">当前密码</Label>
+              <Input
+                id="currentPassword"
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                autoComplete="current-password"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="newPassword">新密码（至少 8 位）</Label>
+              <Input
+                id="newPassword"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="confirmPassword">确认新密码</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
           </div>
           {passwordError && <p className="cg-set-msg-err">{passwordError}</p>}
           {passwordMessage && <p className="cg-set-msg-ok">{passwordMessage}</p>}
@@ -178,92 +178,74 @@ export function SystemMaintenancePanel({
         </form>
       </SettingsCard>
 
-      <section className="cg-semantic-card is-info">
-        <header>
-          <span className="cg-set-semantic-title">
-            <RocketIcon size={15} />
-            面板更新
-          </span>
-          <span className="cg-micro cg-set-semantic-tag">SYSTEM / UPDATE</span>
-        </header>
-        <div className="cg-semantic-body cg-set-semantic-body">
-          <p className="cg-set-note">
-            以 GitHub release 最新版本为标准检测更新；更新过程中面板操作将被锁定，
-            下载/校验/解压/替换进度实时可见，完成后自动重启生效。
-          </p>
-          <div className="cg-set-facts">
-            <span className="cg-set-note">当前版本</span>
-            <span className="cg-pill">{settings.panel_version}</span>
-            {versionInfo && versionInfo.latest && (
-              <>
-                <span className="cg-set-note">最新版本</span>
-                <span className={cn('cg-pill', versionInfo.update_available && 'is-active')}>
-                  {versionInfo.latest}
-                </span>
-              </>
-            )}
-          </div>
-          <div className="cg-set-actions">
-            <Button
-              variant="outline"
-              disabled={checkingUpdate || startingUpdate}
-              onClick={onCheckUpdate}
-            >
-              {checkingUpdate ? '检查中…' : '检查更新'}
-            </Button>
-            {versionInfo?.update_available && (
-              <button
-                type="button"
-                className="cg-button is-primary"
-                disabled={startingUpdate}
-                onClick={onStartUpdate}
-              >
-                {startingUpdate ? '启动中…' : `更新到 ${versionInfo.latest}`}
-              </button>
-            )}
-            {versionInfo && !versionInfo.update_available && versionInfo.can_update && (
-              <Button variant="destructive" disabled={startingUpdate} onClick={onForceUpdate}>
-                {startingUpdate ? '启动中…' : '强制更新'}
-              </Button>
-            )}
-          </div>
-          {updateError && <p className="cg-set-msg-err">{updateError}</p>}
-          {versionInfo && !versionInfo.update_available && !updateError && (
-            <p className="cg-set-note">{versionInfo.message || '已是最新版本'}</p>
+      <SettingsCard
+        tag="SYSTEM / UPDATE"
+        title="面板更新"
+        description="以 GitHub release 最新版本为标准检测更新；更新过程中面板操作将被锁定，下载/校验/解压/替换进度实时可见，完成后自动重启生效。"
+      >
+        <div className="cg-set-facts">
+          <span className="cg-set-note">当前版本</span>
+          <span className="cg-pill">{settings.panel_version}</span>
+          {versionInfo && versionInfo.latest && (
+            <>
+              <span className="cg-set-note">最新版本</span>
+              <span className={cn('cg-pill', versionInfo.update_available && 'is-active')}>
+                {versionInfo.latest}
+              </span>
+            </>
           )}
         </div>
-      </section>
-
-      <section className="cg-semantic-card is-bad">
-        <header>
-          <span className="cg-set-semantic-title">
-            <DatabaseBackupIcon size={15} />
-            面板维护
-          </span>
-          <span className="cg-micro cg-set-semantic-tag">SYSTEM / MAINTENANCE</span>
-        </header>
-        <div className="cg-semantic-body cg-set-semantic-body">
-          <p className="cg-set-note">
-            重启面板进程：TLS 等重启生效项、以及后续面板版本更新都经此生效。 Docker 模式由容器
-            restart policy 拉起，原生安装由 systemd 拉起； 仅非托管运行时由面板自派生新进程接管。
-          </p>
-          <div className="cg-set-actions">
-            <Button variant="destructive" disabled={restarting} onClick={onRestart}>
-              {restarting ? '重启中，请稍候…' : '重启面板'}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => void api.downloadBackup().catch((err) => onError(errorMessage(err)))}
+        <div className="cg-set-actions">
+          <Button
+            variant="outline"
+            disabled={checkingUpdate || startingUpdate}
+            onClick={onCheckUpdate}
+          >
+            {checkingUpdate ? '检查中…' : '检查更新'}
+          </Button>
+          {versionInfo?.update_available && (
+            <button
+              type="button"
+              className="cg-button is-primary"
+              disabled={startingUpdate}
+              onClick={onStartUpdate}
             >
-              下载备份
+              {startingUpdate ? '启动中…' : `更新到 ${versionInfo.latest}`}
+            </button>
+          )}
+          {versionInfo && !versionInfo.update_available && versionInfo.can_update && (
+            <Button variant="destructive" disabled={startingUpdate} onClick={onForceUpdate}>
+              {startingUpdate ? '启动中…' : '强制更新'}
             </Button>
-          </div>
-          <p className="cg-set-note">
-            备份为业务 SQLite 数据库快照（VACUUM INTO），可直接替换数据文件恢复；
-            <strong>不包含操作日志和请求日志</strong>。
-          </p>
+          )}
         </div>
-      </section>
+        {updateError && <p className="cg-set-msg-err">{updateError}</p>}
+        {versionInfo && !versionInfo.update_available && !updateError && (
+          <p className="cg-set-note">{versionInfo.message || '已是最新版本'}</p>
+        )}
+      </SettingsCard>
+
+      <SettingsCard
+        tag="SYSTEM / MAINTENANCE"
+        title="面板维护"
+        description="重启面板进程：TLS 等重启生效项、以及后续面板版本更新都经此生效。 Docker 模式由容器 restart policy 拉起，原生安装由 systemd 拉起； 仅非托管运行时由面板自派生新进程接管。"
+      >
+        <div className="cg-set-actions">
+          <Button variant="destructive" disabled={restarting} onClick={onRestart}>
+            {restarting ? '重启中，请稍候…' : '重启面板'}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => void api.downloadBackup().catch((err) => onError(errorMessage(err)))}
+          >
+            下载备份
+          </Button>
+        </div>
+        <p className="cg-set-note">
+          备份为业务 SQLite 数据库快照（VACUUM INTO），可直接替换数据文件恢复；
+          <strong>不包含操作日志和请求日志</strong>。
+        </p>
+      </SettingsCard>
     </div>
   )
 }

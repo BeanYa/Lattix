@@ -24,7 +24,7 @@ import {
   WaypointsIcon,
 } from 'lucide-react'
 
-import { EmptyState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
+import { Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, errorMessage } from '@/lib/api'
 import { humanizeBytes } from '@/lib/format'
@@ -94,10 +94,36 @@ function metricTone(value: number, warning = 75, critical = 90): 'normal' | 'war
   return 'normal'
 }
 
-function panelStateTone(state: PanelLifecycleState): 'is-lime' | 'is-blue' | 'is-red' {
-  if (state === 'active') return 'is-lime'
+function panelStateTone(state: PanelLifecycleState): 'is-ok' | 'is-warn' | 'is-red' {
+  if (state === 'active') return 'is-ok'
   if (state === 'faulted') return 'is-red'
-  return 'is-blue'
+  return 'is-warn'
+}
+
+/** 模块头：红色索引标签 + 中文标题 + 右侧 meta / 操作。 */
+function ModuleHead({
+  tab,
+  title,
+  id,
+  meta,
+  children,
+}: {
+  tab: string
+  title: string
+  id?: string
+  meta?: ReactNode
+  children?: ReactNode
+}) {
+  return (
+    <header className="rt-mod-head">
+      <span className="rt-tab">{tab}</span>
+      <h2 className="rt-mod-title" id={id}>
+        {title}
+      </h2>
+      {meta ? <span className="rt-mod-meta">{meta}</span> : null}
+      {children ? <div className="rt-head-actions">{children}</div> : null}
+    </header>
+  )
 }
 
 function MetricTile({
@@ -115,19 +141,17 @@ function MetricTile({
 }) {
   const tone = metricTone(progress)
   return (
-    <article className="cg-card cg-runtime-metric" data-tone={tone}>
-      <div className="cg-runtime-metric-main">
-        <span className="cg-metric-value">{value}</span>
-        <span className="cg-metric-copy">
-          <span className="cg-metric-label">
-            {icon}
-            {label}
-          </span>
-          <span className="cg-metric-detail">{detail}</span>
-        </span>
+    <article className="rt-metric" data-tone={tone}>
+      <span className="rt-metric-label">
+        {icon}
+        {label}
+      </span>
+      <div className="rt-metric-row">
+        <strong className="rt-metric-value">{value}</strong>
+        <span className="rt-metric-detail">{detail}</span>
       </div>
       <div
-        className="cg-runtime-meter"
+        className="rt-meter"
         role="progressbar"
         aria-label={`${label} ${value}`}
         aria-valuemin={0}
@@ -144,24 +168,22 @@ function TrendStrip({
   label,
   values,
   formatter,
-  color,
 }: {
   label: string
   values: Array<number | null>
   formatter: (value: number | null) => string
-  color: string
 }) {
   const padded = [
     ...Array.from<null>({ length: Math.max(0, MAX_SAMPLES - values.length) }).fill(null),
     ...values,
   ].slice(-MAX_SAMPLES)
   return (
-    <figure className="cg-runtime-trend" style={{ '--trend-color': color } as CSSProperties}>
+    <figure className="rt-trend">
       <figcaption>
         <span>{label}</span>
         <strong>{formatter(values.at(-1) ?? null)}</strong>
       </figcaption>
-      <div className="cg-runtime-trend-bars" aria-label={`${label}最近 ${values.length} 次采样`}>
+      <div className="rt-trend-bars" aria-label={`${label}最近 ${values.length} 次采样`}>
         {padded.map((value, index) => (
           <i
             key={`${index}-${value ?? 'empty'}`}
@@ -191,12 +213,12 @@ function ProcessMetric({
   progress: number
 }) {
   return (
-    <div className="cg-runtime-process-metric">
-      <div>
+    <div className="rt-process-metric">
+      <div className="rt-process-top">
         <span>{label}</span>
         <strong>{value}</strong>
       </div>
-      <div className="cg-runtime-process-track">
+      <div className="rt-meter">
         <i style={{ '--meter-value': `${progress}%` } as CSSProperties} />
       </div>
       <small>{detail}</small>
@@ -208,39 +230,42 @@ function TaskRow({ task }: { task: ScheduledTaskRuntime }) {
   const failed = Boolean(task.last_error)
   const status = task.running ? '运行中' : failed ? '上次失败' : task.runs > 0 ? '正常' : '等待执行'
   const statusTone = task.running
-    ? 'is-lime'
+    ? 'is-ok'
     : failed
       ? 'is-red'
       : task.runs > 0
-        ? 'is-blue'
+        ? 'is-ok'
         : 'is-muted'
   return (
-    <div
-      className="cg-runtime-task-row"
-      data-status={task.running ? 'running' : failed ? 'failed' : 'idle'}
-    >
-      <div className="cg-runtime-task-name">
-        <span className="cg-runtime-task-dot" />
-        <div>
-          <strong>{taskLabels[task.name] ?? task.name}</strong>
-          <small>{task.name}</small>
-        </div>
-      </div>
-      <span className={cn('cg-status', statusTone)}>{status}</span>
-      <span>
-        <small>上次完成</small>
-        {formatTaskTime(task.last_finished_at)}
-      </span>
-      <span>
-        <small>耗时</small>
-        {task.runs > 0 ? `${task.last_duration_ms.toLocaleString()} ms` : '--'}
-      </span>
-      <span>
-        <small>下次执行</small>
-        {formatTaskTime(task.next_run_at)}
-      </span>
-      {failed ? <p title={task.last_error}>{task.last_error}</p> : null}
-    </div>
+    <>
+      <tr
+        className="rt-task-row"
+        data-status={task.running ? 'running' : failed ? 'failed' : 'idle'}
+      >
+        <td className="rt-task-name">
+          <span className="rt-task-dot" aria-hidden="true" />
+          <span className="rt-task-copy">
+            <strong>{taskLabels[task.name] ?? task.name}</strong>
+            <small>{task.name}</small>
+          </span>
+        </td>
+        <td>
+          <span className={cn('cg-status', statusTone)}>{status}</span>
+        </td>
+        <td className="rt-task-time">{formatTaskTime(task.last_finished_at)}</td>
+        <td className="rt-task-time">
+          {task.runs > 0 ? `${task.last_duration_ms.toLocaleString()} ms` : '--'}
+        </td>
+        <td className="rt-task-time">{formatTaskTime(task.next_run_at)}</td>
+      </tr>
+      {failed ? (
+        <tr className="rt-task-error-row">
+          <td colSpan={5} className="rt-task-error" title={task.last_error}>
+            <span className="rt-task-error-text">{task.last_error}</span>
+          </td>
+        </tr>
+      ) : null}
+    </>
   )
 }
 
@@ -302,9 +327,9 @@ function PanelRuntimeSection() {
 
   if (!snapshot) {
     return (
-      <div className="cg-runtime-loading" role="status" aria-label="正在读取运行状态">
-        <span className="cg-micro">LOADING / RUNTIME</span>
-        <div className="cg-runtime-loading-bar">
+      <div className="rt-loading" role="status" aria-label="正在读取运行状态">
+        <span className="rt-loading-label">LOADING / RUNTIME</span>
+        <div className="rt-loading-bar" aria-hidden="true">
           <i />
           <i />
           <i />
@@ -330,204 +355,172 @@ function PanelRuntimeSection() {
     snapshot.services.database_healthy &&
     failedTasks === 0 &&
     snapshot.services.request_log_dropped === 0
+  const syncedLabel = lastSyncedAt
+    ? `${lastSyncedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} 已同步`
+    : '正在同步'
 
   return (
     <>
-      {/* Eyebrow + 采样状态 */}
-      <div className="cg-runtime-topline">
-        <span className="cg-eyebrow">PANEL / RUNTIME MONITOR</span>
-        <div className="cg-runtime-topline-side">
-          <span className="cg-pill">
-            {lastSyncedAt
-              ? `${lastSyncedAt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })} 已同步`
-              : '正在同步'}
-          </span>
-          <span className={cn('cg-pill cg-runtime-live', live && 'is-active')}>
-            {live ? '实时采样' : '已暂停'}
-          </span>
-        </div>
-      </div>
-
-      <PageHeader
-        title="运行监控"
-        description="面板进程、宿主资源与后台任务的实时状态。"
-        actions={
-          <>
-            <button
-              type="button"
-              className="cg-button is-icon"
-              onClick={() => setLive((current) => !current)}
-              aria-label={live ? '暂停自动刷新' : '继续自动刷新'}
-              title={live ? '暂停自动刷新' : '继续自动刷新'}
-            >
-              {live ? <PauseIcon /> : <PlayIcon />}
-            </button>
-            <button
-              type="button"
-              className="cg-button is-icon"
-              onClick={() => void load()}
-              aria-label="立即刷新"
-              title="立即刷新"
-            >
-              <RefreshCwIcon />
-            </button>
-          </>
-        }
-      />
-
       {error ? (
         <Notice tone="warning" title="本次刷新失败">
           正在显示上一次有效快照：{error}
         </Notice>
       ) : null}
 
-      {/* Hero：面板运行时（浅色数据卡） */}
+      {/* 面板运行时：状态 + 版本/运行时间/PID/Go Runtime */}
       <section
-        className="cg-card-raised cg-runtime-band"
+        className="rt-mod"
         data-state={snapshot.panel.state}
         aria-labelledby="runtime-panel-heading"
       >
-        <div className="cg-runtime-band-main">
-          <div className="cg-runtime-band-primary">
-            <span className="cg-runtime-band-icon">
-              <ActivityIcon />
-            </span>
-            <div className="cg-runtime-band-copy">
-              <span className="cg-micro">PANEL RUNTIME</span>
-              <h2 id="runtime-panel-heading">{stateLabel[snapshot.panel.state]}</h2>
-              <p>
-                {snapshot.host.hostname || 'Lattix Panel'} · {snapshot.host.os}/{snapshot.host.arch}
-              </p>
-            </div>
-          </div>
-          <span className={cn('cg-status', panelStateTone(snapshot.panel.state))}>
-            {snapshot.panel.state}
+        <ModuleHead
+          tab="PANEL"
+          title="面板运行时"
+          id="runtime-panel-heading"
+          meta={`${snapshot.host.hostname || 'Lattix Panel'} · ${snapshot.host.os}/${snapshot.host.arch}`}
+        >
+          <span className="rt-sync">{syncedLabel}</span>
+          <span className={cn('cg-status', live ? 'is-ok' : 'is-muted')}>
+            {live ? '实时采样' : '已暂停'}
           </span>
-        </div>
-        <dl className="cg-runtime-band-meta">
-          <div>
-            <dt>版本 Version</dt>
-            <dd>{snapshot.panel.version || 'dev'}</dd>
+          <button
+            type="button"
+            className="cg-icon-button"
+            onClick={() => setLive((current) => !current)}
+            aria-label={live ? '暂停自动刷新' : '继续自动刷新'}
+            title={live ? '暂停自动刷新' : '继续自动刷新'}
+          >
+            {live ? <PauseIcon /> : <PlayIcon />}
+          </button>
+          <button
+            type="button"
+            className="cg-icon-button"
+            onClick={() => void load()}
+            aria-label="立即刷新"
+            title="立即刷新"
+          >
+            <RefreshCwIcon />
+          </button>
+        </ModuleHead>
+        <div className="rt-panel-body">
+          <div className="rt-panel-state">
+            <span className="rt-beacon" aria-hidden="true" />
+            <strong>{stateLabel[snapshot.panel.state]}</strong>
+            <span className={cn('cg-status', panelStateTone(snapshot.panel.state))}>
+              {snapshot.panel.state}
+            </span>
           </div>
-          <div>
-            <dt>运行时间 Uptime</dt>
-            <dd>{formatDuration(snapshot.panel.uptime_seconds)}</dd>
-          </div>
-          <div>
-            <dt>进程 PID</dt>
-            <dd>{snapshot.panel.pid}</dd>
-          </div>
-          <div>
-            <dt>Go Runtime</dt>
-            <dd>{snapshot.process.go_version}</dd>
-          </div>
-        </dl>
-        <div className="cg-runtime-signal" aria-hidden="true">
-          {Array.from({ length: 18 }).map((_, index) => (
-            <i
-              key={index}
-              style={{ '--signal-height': `${20 + (index % 6) * 12}%` } as CSSProperties}
-            />
-          ))}
+          <dl className="rt-kv">
+            <div>
+              <dt>版本 Version</dt>
+              <dd>{snapshot.panel.version || 'dev'}</dd>
+            </div>
+            <div>
+              <dt>运行时间 Uptime</dt>
+              <dd>{formatDuration(snapshot.panel.uptime_seconds)}</dd>
+            </div>
+            <div>
+              <dt>进程 PID</dt>
+              <dd>{snapshot.panel.pid}</dd>
+            </div>
+            <div>
+              <dt>Go Runtime</dt>
+              <dd>{snapshot.process.go_version}</dd>
+            </div>
+          </dl>
         </div>
       </section>
 
       {/* 资源指标 */}
-      <section className="cg-runtime-metric-grid" aria-label="资源概览">
-        <MetricTile
-          icon={<CpuIcon />}
-          label="CPU 使用率"
-          value={formatPercent(snapshot.host.cpu_percent)}
-          detail={`${snapshot.host.cpu_cores} 核 · Load ${snapshot.host.load1.toFixed(2)}`}
-          progress={cpuPercent}
+      <section className="rt-mod" aria-label="资源概览">
+        <ModuleHead
+          tab="RESOURCE"
+          title="资源概览"
+          meta={`${snapshot.host.cpu_cores} 核 · Load ${snapshot.host.load1.toFixed(2)}`}
         />
-        <MetricTile
-          icon={<MemoryStickIcon />}
-          label="主机内存"
-          value={`${memoryPercent.toFixed(0)}%`}
-          detail={`${humanizeBytes(snapshot.host.memory_active)} / ${humanizeBytes(snapshot.host.memory_total)}`}
-          progress={memoryPercent}
-        />
-        <MetricTile
-          icon={<HardDriveIcon />}
-          label="进程驻留内存"
-          value={humanizeBytes(snapshot.process.rss_bytes)}
-          detail={`虚拟内存 ${humanizeBytes(snapshot.process.virtual_bytes)}`}
-          progress={rssPercent}
-        />
-        <MetricTile
-          icon={<DatabaseIcon />}
-          label="数据库响应"
-          value={
-            snapshot.services.database_healthy
-              ? `${snapshot.services.database_latency_ms.toFixed(2)} ms`
-              : '不可用'
-          }
-          detail={snapshot.services.database_healthy ? 'SQLite 探测正常' : '探测未通过'}
-          progress={
-            snapshot.services.database_healthy
-              ? Math.min(100, snapshot.services.database_latency_ms)
-              : 100
-          }
-        />
+        <div className="rt-metric-grid">
+          <MetricTile
+            icon={<CpuIcon />}
+            label="CPU 使用率"
+            value={formatPercent(snapshot.host.cpu_percent)}
+            detail={`${snapshot.host.cpu_cores} 核 · Load ${snapshot.host.load1.toFixed(2)}`}
+            progress={cpuPercent}
+          />
+          <MetricTile
+            icon={<MemoryStickIcon />}
+            label="主机内存"
+            value={`${memoryPercent.toFixed(0)}%`}
+            detail={`${humanizeBytes(snapshot.host.memory_active)} / ${humanizeBytes(snapshot.host.memory_total)}`}
+            progress={memoryPercent}
+          />
+          <MetricTile
+            icon={<HardDriveIcon />}
+            label="进程驻留内存"
+            value={humanizeBytes(snapshot.process.rss_bytes)}
+            detail={`虚拟内存 ${humanizeBytes(snapshot.process.virtual_bytes)}`}
+            progress={rssPercent}
+          />
+          <MetricTile
+            icon={<DatabaseIcon />}
+            label="数据库响应"
+            value={
+              snapshot.services.database_healthy
+                ? `${snapshot.services.database_latency_ms.toFixed(2)} ms`
+                : '不可用'
+            }
+            detail={snapshot.services.database_healthy ? 'SQLite 探测正常' : '探测未通过'}
+            progress={
+              snapshot.services.database_healthy
+                ? Math.min(100, snapshot.services.database_latency_ms)
+                : 100
+            }
+          />
+        </div>
       </section>
 
-      <div className="cg-runtime-main-grid">
-        <section className="cg-card cg-runtime-section" aria-labelledby="runtime-resource-heading">
-          <header className="cg-runtime-section-head">
-            <div>
-              <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>
-                RESOURCE WINDOW
-              </span>
-              <h2 className="cg-title cg-runtime-section-title" id="runtime-resource-heading">
-                资源趋势
-              </h2>
-            </div>
-            <span className="cg-status is-blue">
-              {samples.length} / {MAX_SAMPLES} SAMPLES
-            </span>
-          </header>
-          <div className="cg-runtime-trend-list">
+      <div className="rt-main-grid">
+        <section className="rt-mod rt-span-7" aria-labelledby="runtime-resource-heading">
+          <ModuleHead
+            tab="TREND"
+            title="资源趋势"
+            id="runtime-resource-heading"
+            meta={`${samples.length} / ${MAX_SAMPLES} 采样`}
+          />
+          <div className="rt-trend-list">
             <TrendStrip
               label="CPU"
               values={trends.map((sample) => sample.cpu)}
               formatter={formatPercent}
-              color="var(--chart-1)"
             />
             <TrendStrip
               label="主机内存"
               values={trends.map((sample) => sample.memory)}
               formatter={(value) => formatPercent(value)}
-              color="var(--chart-2)"
             />
             <TrendStrip
               label="进程 RSS / 主机"
               values={trends.map((sample) => sample.rss)}
               formatter={(value) => formatPercent(value)}
-              color="var(--chart-3)"
             />
           </div>
         </section>
 
-        <aside className="cg-card cg-runtime-section" aria-labelledby="runtime-service-heading">
-          <header className="cg-runtime-section-head">
-            <div>
-              <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>
-                SERVICE HEALTH
+        <aside className="rt-mod rt-span-5" aria-labelledby="runtime-service-heading">
+          <ModuleHead
+            tab="SERVICE"
+            title="服务状态"
+            id="runtime-service-heading"
+            meta={
+              <span className="rt-meta-tone" data-tone={servicesOk ? 'ok' : 'bad'}>
+                {servicesOk ? 'ALL OK' : 'ATTENTION'}
               </span>
-              <h2 className="cg-title cg-runtime-section-title" id="runtime-service-heading">
-                服务状态
-              </h2>
-            </div>
-            <span className={cn('cg-status', servicesOk ? 'is-lime' : 'is-red')}>
-              {servicesOk ? 'ALL OK' : 'ATTENTION'}
-            </span>
-          </header>
-          <div className="cg-runtime-service-list">
-            <div className="cg-runtime-service-row">
+            }
+          />
+          <div className="rt-service-list">
+            <div className="rt-service-row">
               <span
                 className={cn(
-                  'cg-runtime-service-icon',
+                  'rt-service-icon',
                   snapshot.services.database_healthy && 'is-ok',
                   !snapshot.services.database_healthy && 'is-warning',
                 )}
@@ -539,18 +532,15 @@ function PanelRuntimeSection() {
                 <small>主数据存储</small>
               </p>
               <span
-                className={cn(
-                  'cg-status',
-                  snapshot.services.database_healthy ? 'is-lime' : 'is-red',
-                )}
+                className={cn('cg-status', snapshot.services.database_healthy ? 'is-ok' : 'is-red')}
               >
                 {snapshot.services.database_healthy ? '正常' : '异常'}
               </span>
             </div>
-            <div className="cg-runtime-service-row">
+            <div className="rt-service-row">
               <span
                 className={cn(
-                  'cg-runtime-service-icon',
+                  'rt-service-icon',
                   failedTasks === 0 && 'is-ok',
                   failedTasks > 0 && 'is-warning',
                 )}
@@ -559,12 +549,14 @@ function PanelRuntimeSection() {
               </span>
               <p>
                 <strong>后台调度</strong>
-                <small>{snapshot.tasks.length} 项任务</small>
+                <small>
+                  {snapshot.tasks.length} 项任务 · {runningTasks} 项运行中
+                </small>
               </p>
               <span
                 className={cn(
                   'cg-status',
-                  failedTasks > 0 ? 'is-red' : runningTasks > 0 ? 'is-blue' : 'is-muted',
+                  failedTasks > 0 ? 'is-red' : runningTasks > 0 ? 'is-ok' : 'is-muted',
                 )}
               >
                 {failedTasks > 0
@@ -574,10 +566,10 @@ function PanelRuntimeSection() {
                     : '待命'}
               </span>
             </div>
-            <div className="cg-runtime-service-row">
+            <div className="rt-service-row">
               <span
                 className={cn(
-                  'cg-runtime-service-icon',
+                  'rt-service-icon',
                   onlinePercent === 100 && 'is-ok',
                   onlinePercent < 100 && 'is-warning',
                 )}
@@ -588,14 +580,14 @@ function PanelRuntimeSection() {
                 <strong>Agent 会话</strong>
                 <small>控制通道</small>
               </p>
-              <span className={cn('cg-status', onlinePercent === 100 ? 'is-lime' : 'is-blue')}>
+              <span className={cn('cg-status', onlinePercent === 100 ? 'is-ok' : 'is-warn')}>
                 {snapshot.services.agents_online} / {snapshot.services.agents_total}
               </span>
             </div>
-            <div className="cg-runtime-service-row">
+            <div className="rt-service-row">
               <span
                 className={cn(
-                  'cg-runtime-service-icon',
+                  'rt-service-icon',
                   snapshot.services.request_log_dropped === 0 && 'is-ok',
                   snapshot.services.request_log_dropped > 0 && 'is-warning',
                 )}
@@ -609,7 +601,7 @@ function PanelRuntimeSection() {
               <span
                 className={cn(
                   'cg-status',
-                  snapshot.services.request_log_dropped ? 'is-red' : 'is-lime',
+                  snapshot.services.request_log_dropped ? 'is-red' : 'is-ok',
                 )}
               >
                 {snapshot.services.request_log_dropped
@@ -621,21 +613,15 @@ function PanelRuntimeSection() {
         </aside>
       </div>
 
-      {/* Go 进程详情（浅色数据卡） */}
-      <section className="cg-card cg-runtime-process" aria-labelledby="runtime-process-heading">
-        <header className="cg-runtime-terminal-head">
-          <div>
-            <span className="cg-micro" style={{ color: 'var(--cg-lime-dark)' }}>
-              GO PROCESS
-            </span>
-            <h2 className="cg-runtime-terminal-title" id="runtime-process-heading">
-              <BracesIcon size={15} style={{ color: 'var(--cg-lime-dark)' }} />
-              进程详情
-            </h2>
-          </div>
-          <span className="cg-status is-lime">{snapshot.process.goroutines} GOROUTINES</span>
-        </header>
-        <div className="cg-runtime-process-grid">
+      {/* Go 进程详情 */}
+      <section className="rt-mod" aria-labelledby="runtime-process-heading">
+        <ModuleHead
+          tab="GO"
+          title="进程详情"
+          id="runtime-process-heading"
+          meta={`${snapshot.process.goroutines} GOROUTINES`}
+        />
+        <div className="rt-process-grid">
           <ProcessMetric
             label="Heap Alloc"
             value={humanizeBytes(snapshot.process.heap_alloc)}
@@ -671,27 +657,55 @@ function PanelRuntimeSection() {
       </section>
 
       {/* 后台任务 */}
-      <section className="cg-card cg-runtime-section" aria-labelledby="runtime-task-heading">
-        <header className="cg-runtime-section-head">
-          <div>
-            <span className="cg-micro" style={{ color: 'var(--cg-blue)' }}>
-              SCHEDULED WORK
-            </span>
-            <h2 className="cg-title cg-runtime-section-title" id="runtime-task-heading">
-              <TimerResetIcon size={15} />
-              后台任务
-            </h2>
-          </div>
-          <span className="cg-status is-blue">{snapshot.tasks.length} REGISTERED</span>
-        </header>
-        <div className="cg-runtime-task-list">
-          {snapshot.tasks.length ? (
-            snapshot.tasks.map((task) => <TaskRow key={task.name} task={task} />)
-          ) : (
-            <EmptyState icon={<Clock3Icon />} title="尚无已注册任务" />
-          )}
+      <section className="rt-mod" aria-labelledby="runtime-task-heading">
+        <ModuleHead
+          tab="TASKS"
+          title="后台任务"
+          id="runtime-task-heading"
+          meta={`${snapshot.tasks.length} REGISTERED${failedTasks > 0 ? ` · ${failedTasks} 异常` : ''}`}
+        />
+        <div className="rt-task-wrap">
+          <table className="rt-task-table">
+            <thead>
+              <tr>
+                <th scope="col">任务</th>
+                <th scope="col">状态</th>
+                <th scope="col">上次完成</th>
+                <th scope="col">耗时</th>
+                <th scope="col">下次执行</th>
+              </tr>
+            </thead>
+            <tbody>
+              {snapshot.tasks.length ? (
+                snapshot.tasks.map((task) => <TaskRow key={task.name} task={task} />)
+              ) : (
+                <tr>
+                  <td colSpan={5}>
+                    <span className="rt-task-empty">
+                      <Clock3Icon aria-hidden="true" />
+                      尚无已注册任务
+                    </span>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </section>
+
+      <footer className="rt-foot" aria-label="运行时采样状态">
+        <span>
+          <ActivityIcon aria-hidden="true" /> {live ? '每 5 秒自动采样' : '自动采样已暂停'}
+        </span>
+        <span>
+          <TimerResetIcon aria-hidden="true" /> 最多保留 {MAX_SAMPLES} 个样本
+        </span>
+        <span>
+          <BracesIcon aria-hidden="true" /> {snapshot.process.goroutines} Goroutine ·{' '}
+          {snapshot.process.gc_cycles.toLocaleString()} 次 GC
+        </span>
+        <span className="rt-foot-end">{syncedLabel}</span>
+      </footer>
     </>
   )
 }
@@ -700,20 +714,21 @@ export default function RuntimeMonitor() {
   const [tab, setTab] = useState<'panel' | 'agents'>('panel')
 
   return (
-    <Page className="cg-runtime">
+    <Page className="rt">
+      <PageHeader title="运行监控" description="面板进程、宿主资源与后台任务的实时状态。" />
       <Tabs
         value={tab}
         onValueChange={(value) => setTab(value === 'agents' ? 'agents' : 'panel')}
-        className="min-w-0"
+        className="rt-tabs"
       >
-        <TabsList variant="line">
+        <TabsList>
           <TabsTrigger value="panel">Panel 运行</TabsTrigger>
           <TabsTrigger value="agents">被控统计</TabsTrigger>
         </TabsList>
-        <TabsContent value="panel" className="cg-runtime-tab-panel">
+        <TabsContent value="panel" className="rt-tab-panel">
           <PanelRuntimeSection />
         </TabsContent>
-        <TabsContent value="agents" className="cg-runtime-tab-panel">
+        <TabsContent value="agents" className="rt-tab-panel">
           <AgentsStatsTab />
         </TabsContent>
       </Tabs>

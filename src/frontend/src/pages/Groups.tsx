@@ -22,8 +22,10 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { api, errorMessage } from '@/lib/api'
 import { buildLinkOptions } from '@/lib/links'
+import { chainStatusStyle } from '@/lib/status'
 import type {
   Chain,
+  ChainStatus,
   ExternalSubscription,
   ExternalSubscriptionMode,
   LinkGroup,
@@ -55,6 +57,10 @@ function ModeSelect({
     <Select
       value={value}
       disabled={disabled}
+      items={(Object.keys(EXTERNAL_MODE_LABELS) as ExternalSubscriptionMode[]).map((mode) => ({
+        value: mode,
+        label: EXTERNAL_MODE_LABELS[mode],
+      }))}
       onValueChange={(v) => v && onChange(v as ExternalSubscriptionMode)}
     >
       <SelectTrigger className="h-7 w-24 text-xs">
@@ -74,8 +80,7 @@ function ModeSelect({
 export default function Groups() {
   const [tab, setTab] = useState<'links' | 'users'>('links')
   return (
-    <Page>
-      <span className="cg-eyebrow">ACCESS / GROUPS</span>
+    <Page className="cg-page-in">
       <PageHeader
         title="分组"
         description="链路分组编排链路与外部订阅；用户分组把链路分组分配给用户。"
@@ -144,49 +149,62 @@ function LinkGroupsTab() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button onClick={() => setEditing('new')}>
-          <PlusIcon className="size-4" />
-          新建链路分组
-        </Button>
-      </div>
+    <>
       {error && <Notice tone="danger">{error}</Notice>}
-      {groups === null ? (
-        <LoadingState />
-      ) : groups.length === 0 ? (
-        <EmptyState title="暂无链路分组" description="创建链路分组，把链路与外部订阅编排到一起。" />
-      ) : (
-        <div className="cg-groups-list">
-          {groups.map((g) => (
-            <div key={g.id} className="cg-card cg-group-card">
-              <div className="cg-group-card-main">
-                <span className="cg-group-card-name">{g.name}</span>
-                <span className="cg-status is-blue">{g.chain_count} 链路</span>
-                <span className="cg-status is-blue">{g.external_subscription_count} 外部订阅</span>
-                {(g.user_group_names ?? []).map((n) => (
-                  <span key={n} className="cg-status is-muted">
-                    {n}
+      <section className="cg-groups-board">
+        <header className="cg-groups-board-head">
+          <span className="cg-groups-tab">LINKS</span>
+          <span className="cg-groups-board-title">链路分组</span>
+          <span className="cg-groups-board-meta">
+            {groups === null ? '同步中…' : `${groups.length} 分组`}
+          </span>
+          <Button className="cg-groups-create" onClick={() => setEditing('new')}>
+            <PlusIcon />
+            新建链路分组
+          </Button>
+        </header>
+        {groups === null ? (
+          <LoadingState className="cg-groups-board-state" />
+        ) : groups.length === 0 ? (
+          <EmptyState
+            className="cg-groups-board-state"
+            title="暂无链路分组"
+            description="创建链路分组，把链路与外部订阅编排到一起。"
+          />
+        ) : (
+          <div className="cg-groups-rows">
+            {groups.map((g) => (
+              <div key={g.id} className="cg-group-row">
+                <div className="cg-group-row-main">
+                  <span className="cg-group-row-name">{g.name}</span>
+                  <span className="cg-status is-blue">{g.chain_count} 链路</span>
+                  <span className="cg-status is-blue">
+                    {g.external_subscription_count} 外部订阅
                   </span>
-                ))}
+                  {(g.user_group_names ?? []).map((n) => (
+                    <span key={n} className="cg-status is-muted">
+                      {n}
+                    </span>
+                  ))}
+                </div>
+                <div className="cg-group-row-actions">
+                  <Button variant="outline" size="sm" onClick={() => setEditing(g)}>
+                    编辑
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    title="删除链路分组"
+                    onClick={() => onDelete(g)}
+                  >
+                    <Trash2Icon className="size-4" />
+                  </Button>
+                </div>
               </div>
-              <div className="cg-group-card-actions">
-                <Button variant="outline" size="sm" onClick={() => setEditing(g)}>
-                  编辑
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  title="删除链路分组"
-                  onClick={() => onDelete(g)}
-                >
-                  <Trash2Icon className="size-4" />
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </section>
       {editing && (
         <LinkGroupDialog
           group={editing === 'new' ? null : editing}
@@ -201,7 +219,7 @@ function LinkGroupsTab() {
           }}
         />
       )}
-    </div>
+    </>
   )
 }
 
@@ -274,7 +292,7 @@ function LinkGroupDialog({
 
   return (
     <Dialog open onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{group ? '编辑链路分组' : '新建链路分组'}</DialogTitle>
           <DialogDescription>勾选链路与外部订阅；外部订阅整体原子参与分组。</DialogDescription>
@@ -304,12 +322,14 @@ function LinkGroupDialog({
                   <span className="cg-status is-blue">
                     {link.type === 'direct' ? '直连' : '中转'}
                   </span>
-                  <span>{link.name}</span>
+                  <span className="cg-groups-check-row-name">{link.name}</span>
                   <span className="cg-groups-check-row-detail ml-auto text-right">
                     {link.detail}
                   </span>
                   {link.status !== 'active' && (
-                    <span className="cg-groups-check-row-detail">（{link.status}）</span>
+                    <span className="cg-groups-check-row-detail">
+                      （{chainStatusStyle[link.status as ChainStatus]?.label ?? link.status}）
+                    </span>
                   )}
                 </label>
               ))
@@ -337,7 +357,7 @@ function LinkGroupDialog({
                         })
                       }
                     />
-                    <span>{sub.name}</span>
+                    <span className="cg-groups-check-row-name">{sub.name}</span>
                     <span className="cg-groups-check-row-detail">
                       {sub.total > 0
                         ? `${humanizeBytes(sub.total)} / 已用 ${humanizeBytes(sub.upload + sub.download)}`
@@ -418,44 +438,55 @@ function UserGroupsTab() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button onClick={() => setEditing('new')}>
-          <PlusIcon className="size-4" />
-          新建用户分组
-        </Button>
-      </div>
+    <>
       {error && <Notice tone="danger">{error}</Notice>}
-      {groups === null ? (
-        <LoadingState />
-      ) : groups.length === 0 ? (
-        <EmptyState title="暂无用户分组" description="创建用户分组，把链路分组分配给一批用户。" />
-      ) : (
-        <div className="cg-groups-list">
-          {groups.map((g) => (
-            <div key={g.id} className="cg-card cg-group-card">
-              <div className="cg-group-card-main">
-                <span className="cg-group-card-name">{g.name}</span>
-                <span className="cg-status is-blue">{g.member_count} 用户</span>
-                <span className="cg-status is-blue">{g.link_group_count} 链路分组</span>
+      <section className="cg-groups-board">
+        <header className="cg-groups-board-head">
+          <span className="cg-groups-tab">USERS</span>
+          <span className="cg-groups-board-title">用户分组</span>
+          <span className="cg-groups-board-meta">
+            {groups === null ? '同步中…' : `${groups.length} 分组`}
+          </span>
+          <Button className="cg-groups-create" onClick={() => setEditing('new')}>
+            <PlusIcon />
+            新建用户分组
+          </Button>
+        </header>
+        {groups === null ? (
+          <LoadingState className="cg-groups-board-state" />
+        ) : groups.length === 0 ? (
+          <EmptyState
+            className="cg-groups-board-state"
+            title="暂无用户分组"
+            description="创建用户分组，把链路分组分配给一批用户。"
+          />
+        ) : (
+          <div className="cg-groups-rows">
+            {groups.map((g) => (
+              <div key={g.id} className="cg-group-row">
+                <div className="cg-group-row-main">
+                  <span className="cg-group-row-name">{g.name}</span>
+                  <span className="cg-status is-blue">{g.member_count} 用户</span>
+                  <span className="cg-status is-blue">{g.link_group_count} 链路分组</span>
+                </div>
+                <div className="cg-group-row-actions">
+                  <Button variant="outline" size="sm" onClick={() => setEditing(g)}>
+                    编辑
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    title="删除用户分组"
+                    onClick={() => onDelete(g)}
+                  >
+                    <Trash2Icon className="size-4" />
+                  </Button>
+                </div>
               </div>
-              <div className="cg-group-card-actions">
-                <Button variant="outline" size="sm" onClick={() => setEditing(g)}>
-                  编辑
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  title="删除用户分组"
-                  onClick={() => onDelete(g)}
-                >
-                  <Trash2Icon className="size-4" />
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </section>
       {editing && (
         <UserGroupDialog
           group={editing === 'new' ? null : editing}
@@ -471,7 +502,7 @@ function UserGroupsTab() {
           }}
         />
       )}
-    </div>
+    </>
   )
 }
 
@@ -548,7 +579,7 @@ function UserGroupDialog({
 
   return (
     <Dialog open onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{group ? '编辑用户分组' : '新建用户分组'}</DialogTitle>
           <DialogDescription>
@@ -590,7 +621,7 @@ function UserGroupDialog({
                           )
                         }
                       />
-                      <span>{u.name}</span>
+                      <span className="cg-groups-check-row-name">{u.name}</span>
                     </label>
                   ))
                 )}
@@ -614,7 +645,7 @@ function UserGroupDialog({
                       )
                     }
                   />
-                  <span>{g.name}</span>
+                  <span className="cg-groups-check-row-name">{g.name}</span>
                   <span className="cg-groups-check-row-detail ml-auto">
                     {g.chain_count} 链路 / {g.external_subscription_count} 外部订阅
                   </span>

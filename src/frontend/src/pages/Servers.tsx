@@ -462,12 +462,6 @@ export default function Servers() {
 
   return (
     <Page className="cg-page-in">
-      <div className="sv-topline">
-        <span className="cg-eyebrow">SERVERS / FLEET</span>
-        <span className="cg-pill">
-          {loading ? '正在同步' : `${String(servers.length).padStart(2, '0')} NODES`}
-        </span>
-      </div>
       <PageHeader
         title="服务器"
         description="接入机器的在线状态、资源指标与生命周期管理。"
@@ -523,7 +517,7 @@ export default function Servers() {
             <p className="text-sm font-medium">Agent 安装命令</p>
             <pre className="sv-code-block max-h-40">{cmdView?.command}</pre>
             {cmdView?.insecure ? (
-              <div className="flex items-start gap-2 bg-warning/10 px-3 py-2 text-xs text-warning">
+              <div className="sv-inline-warning">
                 <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
                 <span>
                   面板地址为明文 http：Agent 与面板间的控制流量可被窃听或篡改。跨公网部署请改用

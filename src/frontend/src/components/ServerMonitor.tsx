@@ -22,21 +22,13 @@ import {
 
 import { CountryFlag } from '@/components/CountryFlag'
 import { addressFamily } from '@/lib/address'
-import { EmptyState } from '@/components/PagePrimitives'
+import { EmptyState, LoadingState } from '@/components/PagePrimitives'
 import { ServerTestPanel } from '@/components/ServerTestPanel'
 import { trendChartViewBoxPoint } from '@/components/trend-chart-pointer'
 import { TrafficStatsDialog } from '@/components/traffic-stats/TrafficStatsDialog'
 import { useTrafficStatsDialog } from '@/components/traffic-stats/use-traffic-stats-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,7 +39,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
 import {
   Sheet,
@@ -181,21 +172,16 @@ function TrafficUsage({ server }: { server: Server }) {
   const ratio = traffic.quota_bytes ? (traffic.used_bytes / traffic.quota_bytes) * 100 : 0
   const alert = traffic.complete && ratio >= 60
   return (
-    <div className="space-y-1.5" aria-label="本周期流量">
-      <div className="flex items-center justify-between gap-3 text-xs tabular-nums">
-        <span
-          className={cn(
-            'font-medium',
-            alert && (ratio >= 80 ? 'text-destructive' : 'text-warning'),
-          )}
-        >
+    <div className="sv-traffic" aria-label="本周期流量">
+      <div className="sv-traffic-line">
+        <span className={cn('sv-traffic-used', alert && (ratio >= 80 ? 'is-crit' : 'is-warn'))}>
           {formatTrafficBytes(traffic.used_bytes)}
         </span>
-        <span className="text-muted-foreground">
+        <span className="sv-traffic-quota">
           <span aria-label={traffic.quota_bytes === null ? '无限额度' : undefined}>
             {traffic.quota_bytes === null ? '∞' : formatTrafficBytes(traffic.quota_bytes)}
           </span>
-          <span className="ml-1">· {traffic.next_reset_on} 重置</span>
+          <span className="sv-traffic-reset">· {traffic.next_reset_on} 重置</span>
         </span>
       </div>
       <TrafficSegmentBar
@@ -203,9 +189,7 @@ function TrafficUsage({ server }: { server: Server }) {
         complete={traffic.complete}
         unlimited={traffic.quota_bytes === null}
       />
-      {!traffic.complete ? (
-        <span className="text-[11px] text-muted-foreground">本周期数据不完整</span>
-      ) : null}
+      {!traffic.complete ? <span className="sv-traffic-note">本周期数据不完整</span> : null}
     </div>
   )
 }
@@ -220,15 +204,6 @@ function health(value: number, warning = 80, critical = 90): Health {
   return 'normal'
 }
 
-function healthIndicatorClass(value: number, warning = 80, critical = 90): string {
-  const state = health(value, warning, critical)
-  return cn(
-    'sv-progress-ok',
-    state === 'warning' && 'sv-progress-warn',
-    state === 'critical' && 'sv-progress-crit',
-  )
-}
-
 function formatUptime(seconds: number): string {
   const days = Math.floor(seconds / 86400)
   const hours = Math.floor((seconds % 86400) / 3600)
@@ -238,7 +213,47 @@ function formatUptime(seconds: number): string {
   return `${minutes} 分钟`
 }
 
-function MetricBlock({
+function UsageCell({
+  label,
+  value,
+  detail,
+  warning = 80,
+  critical = 90,
+}: {
+  label: string
+  value: number | null
+  detail: string
+  warning?: number
+  critical?: number
+}) {
+  const state = value === null ? null : health(value, warning, critical)
+  return (
+    <div className="sv-usage">
+      <span className="sv-usage-value">{value === null ? '--' : `${value.toFixed(1)}%`}</span>
+      <span
+        className="sv-usage-bar"
+        role="progressbar"
+        aria-label={`${label} ${value === null ? '无数据' : `${value.toFixed(1)}%`}`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={value === null ? undefined : Math.round(value)}
+      >
+        <i
+          aria-hidden="true"
+          className={cn(
+            'sv-usage-fill',
+            state === 'warning' && 'is-warn',
+            state === 'critical' && 'is-crit',
+          )}
+          style={{ width: `${value ?? 0}%` }}
+        />
+      </span>
+      <span className="sv-usage-detail">{detail}</span>
+    </div>
+  )
+}
+
+function RuntimeMetric({
   label,
   value,
   detail,
@@ -253,23 +268,30 @@ function MetricBlock({
   warning?: number
   critical?: number
 }) {
+  const state = progress === null ? null : health(progress, warning, critical)
   return (
-    <div className="flex min-w-0 flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-medium tabular-nums">{value}</span>
-      </div>
-      <Progress
-        value={progress ?? 0}
-        className={cn(
-          'gap-0',
-          progress === null
-            ? 'sv-progress-idle'
-            : healthIndicatorClass(progress, warning, critical),
-        )}
+    <div className="sv-metric">
+      <span className="sv-metric-label">{label}</span>
+      <span className="sv-metric-value">{value}</span>
+      <span
+        className="sv-metric-bar"
+        role="progressbar"
         aria-label={`${label} ${value}`}
-      />
-      <span className="truncate text-xs text-muted-foreground tabular-nums">{detail}</span>
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress === null ? undefined : Math.round(progress)}
+      >
+        <i
+          aria-hidden="true"
+          className={cn(
+            'sv-metric-fill',
+            state === 'warning' && 'is-warn',
+            state === 'critical' && 'is-crit',
+          )}
+          style={{ width: `${progress ?? 0}%` }}
+        />
+      </span>
+      <span className="sv-metric-detail">{detail}</span>
     </div>
   )
 }
@@ -283,7 +305,7 @@ function LatencyStrip({ samples, timezone }: { samples: ServerMetrics[]; timezon
   ]
   return (
     <div
-      className="relative grid h-3 grid-cols-[repeat(30,minmax(0,1fr))] gap-px overflow-visible rounded-[2px] outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      className="sv-lat-strip"
       role="group"
       tabIndex={0}
       aria-label="最近 30 次延迟趋势，使用左右方向键查看采样数据"
@@ -322,38 +344,31 @@ function LatencyStrip({ samples, timezone }: { samples: ServerMetrics[]; timezon
             aria-label={label}
             onMouseEnter={() => setActiveIndex(index)}
             className={cn(
-              'group relative h-3 min-w-0 rounded-[1px] outline-none',
-              distance === 0 && 'z-30',
-              distance === 1 && 'z-20',
-              distance === 2 && 'z-10',
+              'sv-lat-cell',
+              distance === 0 && 'is-active',
+              distance === 1 && 'is-near',
             )}
           >
             {activeIndex === index ? (
               <span
                 role="tooltip"
                 className={cn(
-                  'pointer-events-none absolute bottom-[calc(100%+10px)] z-50 min-w-28 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1.5 text-popover-foreground shadow-lg',
-                  index < 3
-                    ? 'left-0'
-                    : index >= cells.length - 3
-                      ? 'right-0'
-                      : 'left-1/2 -translate-x-1/2',
+                  'sv-lat-tip',
+                  index < 3 ? 'is-start' : index >= cells.length - 3 ? 'is-end' : 'is-center',
                 )}
               >
-                <span className="flex items-center gap-1.5 text-xs font-semibold tabular-nums">
-                  <span
-                    aria-hidden="true"
-                    className={cn(
-                      'size-1.5 shrink-0 rounded-full bg-muted-foreground',
-                      timedOut && 'bg-destructive',
-                      state === 'normal' && 'bg-success',
-                      state === 'warning' && 'bg-warning',
-                      state === 'critical' && 'bg-destructive',
-                    )}
-                  />
+                <span
+                  className={cn(
+                    'sv-lat-tip-value',
+                    timedOut && 'is-crit',
+                    state === 'normal' && 'is-ok',
+                    state === 'warning' && 'is-warn',
+                    state === 'critical' && 'is-crit',
+                  )}
+                >
                   {missing ? '无数据' : timedOut ? '探测超时' : `${Math.round(latencyValue)} ms`}
                 </span>
-                <span className="mt-0.5 block text-[10px] text-muted-foreground tabular-nums">
+                <span className="sv-lat-tip-time">
                   {sample ? formatDateTime(sample.updated_at, timezone) : '尚无采样记录'}
                 </span>
               </span>
@@ -361,15 +376,11 @@ function LatencyStrip({ samples, timezone }: { samples: ServerMetrics[]; timezon
             <span
               aria-hidden="true"
               className={cn(
-                'sv-lat absolute inset-0 origin-bottom rounded-[1px] transition-[transform,box-shadow] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none',
+                'sv-lat-fill',
                 timedOut && 'is-crit',
                 state === 'normal' && 'is-ok',
                 state === 'warning' && 'is-warn',
                 state === 'critical' && 'is-crit',
-                distance === 0 &&
-                  '-translate-y-1 scale-x-[1.45] scale-y-[1.8] ring-1 ring-background shadow-md',
-                distance === 1 && '-translate-y-0.5 scale-x-[1.2] scale-y-[1.4]',
-                distance === 2 && 'scale-x-[1.08] scale-y-[1.15]',
               )}
             />
           </span>
@@ -473,17 +484,59 @@ function ServerActions({
   )
 }
 
-function ServerCard({
+function QuotaCell({ server }: { server: Server }) {
+  const traffic = server.traffic_plan
+  const unlimited = traffic.quota_bytes === null
+  const ratio = traffic.quota_bytes ? (traffic.used_bytes / traffic.quota_bytes) * 100 : 0
+  const clamped = Math.min(100, Math.max(0, ratio))
+  const tone = !traffic.complete
+    ? null
+    : clamped >= 80
+      ? 'is-crit'
+      : clamped >= 60
+        ? 'is-warn'
+        : null
+  return (
+    <div className="sv-quota">
+      <span className="sv-quota-line">
+        <span className={cn('sv-quota-used', tone)}>{formatTrafficBytes(traffic.used_bytes)}</span>
+        <span className="sv-quota-cap">
+          <span aria-label={unlimited ? '无限额度' : undefined}>
+            {unlimited ? '∞' : formatTrafficBytes(traffic.quota_bytes ?? 0)}
+          </span>
+        </span>
+      </span>
+      <span
+        className="sv-quota-bar"
+        role="progressbar"
+        aria-label="流量额度使用率"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={unlimited ? undefined : Math.round(clamped)}
+        aria-valuetext={unlimited ? '无限额度' : undefined}
+      >
+        <i
+          aria-hidden="true"
+          className={cn('sv-quota-fill', tone)}
+          style={{ width: `${unlimited ? 100 : clamped}%` }}
+        />
+      </span>
+      {!traffic.complete ? <span className="sv-cell-note">本周期数据不完整</span> : null}
+    </div>
+  )
+}
+
+function ServerRow({
   server,
-  samples,
+  selected,
   timezone,
-  onOpen,
+  onSelect,
   ...actions
 }: Omit<ServerMonitorProps, 'servers' | 'samples' | 'loading' | 'timezone'> & {
   server: Server
-  samples: ServerMetrics[]
+  selected: boolean
   timezone?: string
-  onOpen: () => void
+  onSelect: () => void
 }) {
   const metrics = server.metrics
   const online = isServerOnline(server)
@@ -494,195 +547,302 @@ function ServerCard({
   const diskPercent = metrics ? percent(metrics.disk_used, metrics.disk_total) : 0
   const cpuPercent = metrics?.cpu_percent ?? null
   const latency = metrics?.latency_ms ?? null
-
+  const billingLabel =
+    server.billing.enabled && server.billing.status in billingStatusLabel
+      ? billingStatusLabel[server.billing.status as keyof typeof billingStatusLabel]
+      : null
   return (
-    <Card
-      size="sm"
-      role="button"
-      tabIndex={0}
-      aria-label={`查看 ${server.alias} 监控详情，${serverConnectionLabel(server.connection_state)}`}
-      className={cn(
-        'sv-server-card relative cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        online && 'is-online',
-        transitioning && 'is-transitioning',
-        !online && !transitioning && 'is-offline',
-      )}
-      onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') onOpen()
-      }}
+    <tr
+      className={cn('sv-row', selected && 'is-selected')}
+      data-state={selected ? 'selected' : undefined}
+      aria-selected={selected}
+      onClick={onSelect}
     >
-      <CardHeader className="sv-card-head">
-        <CardTitle className="flex min-w-0 items-center gap-2">
-          <span
-            className={cn(
-              'sv-icon-chip',
-              online && 'is-online',
-              transitioning && 'is-transitioning',
-              !online && !transitioning && 'is-offline',
-            )}
-            aria-hidden="true"
-          >
-            {online ? (
-              <CircleCheckIcon className="size-4" />
-            ) : transitioning ? (
-              <LoaderCircleIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
-            ) : (
-              <WifiOffIcon className="size-3.5" />
-            )}
-          </span>
-          <span className="truncate">{server.alias}</span>
-          <span
-            className={cn(
-              'cg-status ml-auto shrink-0',
-              online ? 'is-lime' : transitioning ? 'is-blue' : 'is-red',
-            )}
-          >
-            Agent {serverConnectionLabel(server.connection_state)}
-          </span>
-        </CardTitle>
-        <CardDescription className="flex min-w-0 flex-col gap-1 text-xs">
-          <span className="flex min-w-0 items-center gap-2">
-            <CountryFlag code={server.country_code} />
-            <span className="truncate">
-              {server.location || server.country_code || '未设置地区'}
-            </span>
-          </span>
-          {server.config_drift ? (
-            <span className="cg-status is-muted mt-1 w-fit">DRIFT / 配置漂移</span>
-          ) : null}
-          {server.billing.enabled && server.billing.status in billingStatusLabel ? (
-            <Badge
-              variant={server.billing.status === 'expired' ? 'destructive' : 'outline'}
-              className="mt-1 w-fit"
+      <th scope="row" className="sv-cell-server">
+        <button
+          type="button"
+          className="sv-row-select"
+          aria-pressed={selected}
+          aria-label={`查看 ${server.alias} 的运行时读数，${serverConnectionLabel(server.connection_state)}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            onSelect()
+          }}
+        >
+          <CountryFlag code={server.country_code} />
+          <span className="sv-row-alias">{server.alias}</span>
+        </button>
+        <span className="sv-row-flags">
+          {server.config_drift ? <span className="sv-flag is-alert">DRIFT</span> : null}
+          {billingLabel ? (
+            <span
+              className={cn(
+                'sv-flag',
+                server.billing.status === 'expired' && 'is-alert',
+                server.billing.status === 'due_today' && 'is-warn',
+              )}
             >
-              {billingStatusLabel[server.billing.status as keyof typeof billingStatusLabel]}
-            </Badge>
+              {billingLabel}
+            </span>
           ) : null}
-          <span
-            className="flex min-w-0 items-center gap-1.5 font-mono text-[11px]"
-            title={publicAddress || '公网地址待学习'}
-            aria-label={`公网地址 ${publicAddress || '待学习'}`}
-          >
-            <Globe2Icon className="size-3 shrink-0" />
-            <span className="truncate">{publicAddress || '公网地址待学习'}</span>
-            {server.addresses.length > 1 ? (
-              <span
-                className="shrink-0 text-muted-foreground"
-                title={`共 ${server.addresses.length} 个公网地址`}
-              >
-                +{server.addresses.length - 1}
-              </span>
-            ) : null}
-          </span>
-        </CardDescription>
-        <CardAction>
-          <ServerActions server={server} {...actions} />
-        </CardAction>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <div
+        </span>
+      </th>
+      <td className="sv-cell-agent">
+        <span
           className={cn(
-            'sv-banner -mx-3 -mt-3 flex min-h-11 items-center gap-2.5 border-b px-3 py-2 text-xs',
-            online && 'is-online',
-            transitioning && 'is-transitioning',
-            !online && !transitioning && 'is-offline',
+            'sv-agent',
+            online ? 'is-online' : transitioning ? 'is-loading' : 'is-offline',
           )}
         >
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background/50">
-            {online ? (
-              <CircleCheckIcon className="size-3.5" />
-            ) : transitioning ? (
-              <LoaderCircleIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
-            ) : (
-              <WifiOffIcon className="size-3.5" />
-            )}
-          </span>
-          <span className="min-w-0">
-            <strong className="block font-semibold">
-              {online ? 'Agent 连接正常' : serverConnectionNotice(server.connection_state)}
-            </strong>
-            <span className="block truncate text-[10px] text-muted-foreground tabular-nums">
-              {online
-                ? metrics
-                  ? `已运行 ${formatUptime(metrics.uptime_seconds)} · 遥测 ${formatDateTime(metrics.updated_at, timezone)}`
-                  : '连接已建立，等待首次遥测'
-                : metrics
-                  ? `上次遥测 ${formatDateTime(metrics.updated_at, timezone)}`
-                  : '暂无可用遥测'}
+          {online ? (
+            <CircleCheckIcon />
+          ) : transitioning ? (
+            <LoaderCircleIcon className="sv-spin" />
+          ) : (
+            <WifiOffIcon />
+          )}
+          <span>Agent {serverConnectionLabel(server.connection_state)}</span>
+        </span>
+        <span className="sv-cell-note">
+          {online
+            ? metrics
+              ? `已运行 ${formatUptime(metrics.uptime_seconds)}`
+              : '等待首次遥测'
+            : metrics
+              ? `上次遥测 ${formatDateTime(metrics.updated_at, timezone)}`
+              : serverConnectionNotice(server.connection_state)}
+        </span>
+      </td>
+      <td className="sv-cell-addr">
+        <span className="sv-addr-loc">
+          {server.location || server.country_code || '未设置地区'}
+        </span>
+        <span
+          className="sv-addr"
+          title={publicAddress || '公网地址待学习'}
+          aria-label={`公网地址 ${publicAddress || '待学习'}`}
+        >
+          <Globe2Icon />
+          <span className="sv-addr-text">{publicAddress || '公网地址待学习'}</span>
+          {server.addresses.length > 1 ? (
+            <span className="sv-addr-count" title={`共 ${server.addresses.length} 个公网地址`}>
+              +{server.addresses.length - 1}
             </span>
-          </span>
-          {!online && metrics ? (
-            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">历史数据</span>
           ) : null}
+        </span>
+      </td>
+      <td className="sv-cell-metric">
+        <UsageCell
+          label="CPU"
+          value={cpuPercent}
+          detail={
+            metrics
+              ? `${metrics.load1.toFixed(2)} / ${metrics.load5.toFixed(2)} / ${metrics.load15.toFixed(2)}`
+              : '--'
+          }
+        />
+      </td>
+      <td className="sv-cell-metric">
+        <UsageCell
+          label="内存"
+          value={metrics ? memoryPercent : null}
+          detail={
+            metrics
+              ? `${humanizeBytes(metrics.mem_used)} / ${humanizeBytes(metrics.mem_total)}`
+              : '--'
+          }
+        />
+      </td>
+      <td className="sv-cell-metric">
+        <UsageCell
+          label="磁盘"
+          value={metrics ? diskPercent : null}
+          detail={
+            metrics
+              ? `${humanizeBytes(metrics.disk_used)} / ${humanizeBytes(metrics.disk_total)}`
+              : '--'
+          }
+        />
+      </td>
+      <td className="sv-cell-latency">
+        <span className="sv-latency-value">
+          {latency === null ? '--' : `${Math.round(latency)} ms`}
+        </span>
+        <span className="sv-cell-note">最近一次探针</span>
+      </td>
+      <td className="sv-cell-rate">
+        <span className="sv-rate">
+          <span className="sv-rate-line">
+            <ArrowUpIcon />
+            {metrics ? formatByteRate(metrics.network_tx_bps) : '--'}
+          </span>
+          <span className="sv-rate-line">
+            <ArrowDownIcon />
+            {metrics ? formatByteRate(metrics.network_rx_bps) : '--'}
+          </span>
+        </span>
+      </td>
+      <td className="sv-cell-quota">
+        <QuotaCell server={server} />
+      </td>
+      <td className="sv-cell-versions">
+        <span className="sv-versions">
+          <span>Agent {server.agent_version ?? '--'}</span>
+          <span>Xray {server.xray_version ?? '--'}</span>
+        </span>
+      </td>
+      <td className="sv-cell-actions" onClick={(event) => event.stopPropagation()}>
+        <ServerActions server={server} {...actions} />
+      </td>
+    </tr>
+  )
+}
+
+function ServerRuntime({
+  server,
+  samples,
+  timezone,
+  onOpenDetail,
+  onOpenTrafficStats,
+}: {
+  server: Server
+  samples: ServerMetrics[]
+  timezone?: string
+  onOpenDetail: () => void
+  onOpenTrafficStats: () => void
+}) {
+  const metrics = server.metrics
+  const online = isServerOnline(server)
+  const cpuPercent = metrics?.cpu_percent ?? null
+  const memoryPercent = metrics ? percent(metrics.mem_used, metrics.mem_total) : 0
+  const diskPercent = metrics ? percent(metrics.disk_used, metrics.disk_total) : 0
+  const latency = metrics?.latency_ms ?? null
+  return (
+    <section className="sv-runtime" aria-label={`${server.alias} 运行时读数`}>
+      <header className="sv-runtime-head">
+        <span className="sv-tab">RUNTIME</span>
+        <span className="sv-runtime-title">{server.alias}</span>
+        <span className={cn('sv-agent', online ? 'is-online' : 'is-offline')}>
+          {online ? <CircleCheckIcon /> : <WifiOffIcon />}
+          <span>{online ? 'Agent 连接正常' : serverConnectionNotice(server.connection_state)}</span>
+        </span>
+        <span className="sv-runtime-meta">
+          {online && metrics
+            ? `已运行 ${formatUptime(metrics.uptime_seconds)} · 遥测 ${formatDateTime(metrics.updated_at, timezone)}`
+            : metrics
+              ? `上次遥测 ${formatDateTime(metrics.updated_at, timezone)} · 历史数据`
+              : '暂无可用遥测'}
+        </span>
+        <div className="sv-runtime-actions">
+          <Button variant="outline" size="sm" onClick={onOpenDetail}>
+            详情与历史
+          </Button>
+          <Button variant="outline" size="sm" onClick={onOpenTrafficStats}>
+            流量统计
+          </Button>
         </div>
-        {metrics ? (
-          <>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-              <MetricBlock
-                label="CPU"
-                value={cpuPercent === null ? '--' : `${cpuPercent.toFixed(1)}%`}
-                detail={`${metrics.load1.toFixed(2)} / ${metrics.load5.toFixed(2)} / ${metrics.load15.toFixed(2)}`}
-                progress={cpuPercent}
-              />
-              <MetricBlock
-                label="内存"
-                value={`${memoryPercent.toFixed(1)}%`}
-                detail={`${humanizeBytes(metrics.mem_used)} / ${humanizeBytes(metrics.mem_total)}`}
-                progress={memoryPercent}
-              />
-              <MetricBlock
-                label="磁盘"
-                value={`${diskPercent.toFixed(1)}%`}
-                detail={`${humanizeBytes(metrics.disk_used)} / ${humanizeBytes(metrics.disk_total)}`}
-                progress={diskPercent}
-              />
-              <div className="flex min-w-0 flex-col gap-1.5">
-                <span className="text-xs text-muted-foreground">网络</span>
-                <div className="flex min-w-0 items-center gap-3 text-xs tabular-nums">
-                  <span className="sv-rate-up flex min-w-0 items-center gap-1 truncate">
-                    <ArrowUpIcon className="size-3" />
-                    {formatByteRate(metrics.network_tx_bps)}
-                  </span>
-                  <span className="sv-rate-down flex min-w-0 items-center gap-1 truncate">
-                    <ArrowDownIcon className="size-3" />
-                    {formatByteRate(metrics.network_rx_bps)}
-                  </span>
-                </div>
-              </div>
-            </div>
-            <Separator />
-            <div className="grid grid-cols-[88px_1fr] items-end gap-3">
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">延迟</span>
-                <span className="text-base font-semibold tabular-nums">
-                  {latency === null ? '--' : `${Math.round(latency)} ms`}
+      </header>
+      {metrics ? (
+        <div className="sv-runtime-body">
+          <div className="sv-runtime-metrics">
+            <RuntimeMetric
+              label="CPU"
+              value={cpuPercent === null ? '--' : `${cpuPercent.toFixed(1)}%`}
+              detail={`${metrics.load1.toFixed(2)} / ${metrics.load5.toFixed(2)} / ${metrics.load15.toFixed(2)}`}
+              progress={cpuPercent}
+            />
+            <RuntimeMetric
+              label="内存"
+              value={`${memoryPercent.toFixed(1)}%`}
+              detail={`${humanizeBytes(metrics.mem_used)} / ${humanizeBytes(metrics.mem_total)}`}
+              progress={memoryPercent}
+            />
+            <RuntimeMetric
+              label="磁盘"
+              value={`${diskPercent.toFixed(1)}%`}
+              detail={`${humanizeBytes(metrics.disk_used)} / ${humanizeBytes(metrics.disk_total)}`}
+              progress={diskPercent}
+            />
+            <div className="sv-metric">
+              <span className="sv-metric-label">网络</span>
+              <span className="sv-metric-rate">
+                <span>
+                  <ArrowUpIcon />
+                  {formatByteRate(metrics.network_tx_bps)}
                 </span>
-              </div>
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">最近 30 次</span>
-                <LatencyStrip samples={samples} timezone={timezone} />
-              </div>
-            </div>
-            <Separator />
-            <TrafficUsage server={server} />
-          </>
-        ) : (
-          <>
-            <div className="flex min-h-28 flex-col items-center justify-center gap-2 text-center">
-              <ServerCogIcon className="size-6 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">
-                {isServerOnline(server)
-                  ? '等待 Agent 首次遥测'
-                  : serverConnectionLabel(server.connection_state)}
+                <span>
+                  <ArrowDownIcon />
+                  {formatByteRate(metrics.network_rx_bps)}
+                </span>
+              </span>
+              <span className="sv-metric-detail">
+                累计 ↑ {humanizeBytes(metrics.network_tx_bytes)} · ↓{' '}
+                {humanizeBytes(metrics.network_rx_bytes)}
               </span>
             </div>
-            <Separator />
+          </div>
+          <div className="sv-runtime-lat">
+            <span className="sv-runtime-label">延迟 / 最近 30 次</span>
+            <span className="sv-runtime-latvalue">
+              {latency === null ? '--' : `${Math.round(latency)} ms`}
+            </span>
+            <LatencyStrip samples={samples} timezone={timezone} />
+          </div>
+          <div className="sv-runtime-quota">
+            <span className="sv-runtime-label">本周期流量额度</span>
             <TrafficUsage server={server} />
-          </>
-        )}
-      </CardContent>
-    </Card>
+          </div>
+          <dl className="sv-runtime-facts">
+            <div>
+              <dt>地区</dt>
+              <dd>{server.location || server.country_code || '-'}</dd>
+            </div>
+            <div>
+              <dt>地址</dt>
+              <dd className="sv-mono">{server.address || server.learned_addr || '-'}</dd>
+            </div>
+            <div>
+              <dt>Agent / Xray</dt>
+              <dd>
+                {server.agent_version ?? '-'} / {server.xray_version ?? '-'}
+              </dd>
+            </div>
+            <div>
+              <dt>配置状态</dt>
+              <dd>{server.config_drift ? '配置漂移' : '正常'}</dd>
+            </div>
+            <div>
+              <dt>机器类型</dt>
+              <dd>
+                {server.machine_type === 'direct'
+                  ? '直连'
+                  : `NAT · ${server.allowed_ports.map(formatPortRange).join(', ') || '仅出口'}`}
+              </dd>
+            </div>
+            {server.billing.enabled ? (
+              <div>
+                <dt>服务商</dt>
+                <dd>{server.billing.provider?.name ?? '-'}</dd>
+              </div>
+            ) : null}
+            {server.billing.enabled ? (
+              <div>
+                <dt>下次续费</dt>
+                <dd>{server.billing.next_renewal_on || '-'}</dd>
+              </div>
+            ) : null}
+          </dl>
+        </div>
+      ) : (
+        <div className="sv-runtime-empty">
+          <ServerCogIcon />
+          <span>
+            {online ? '等待 Agent 首次遥测' : serverConnectionLabel(server.connection_state)}
+          </span>
+          <TrafficUsage server={server} />
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -756,7 +916,7 @@ function TrendChart({
               <span key={item.label} className="flex items-center gap-1">
                 <span
                   className={cn(
-                    'size-2 rounded-full bg-current',
+                    'size-2 bg-current',
                     item.color === 'success' && 'sv-line-ok',
                     item.color === 'info' && 'sv-line-info',
                     item.color === 'warning' && 'sv-line-warn',
@@ -872,8 +1032,8 @@ function TrendChart({
         {activePoint ? (
           <div
             className={cn(
-              'pointer-events-none absolute top-2 z-10 min-w-32 rounded-md border bg-popover px-2.5 py-2 text-xs text-popover-foreground shadow-md',
-              activePoint.index < sampleCount / 2 ? 'right-2' : 'left-2',
+              'sv-trend-tip',
+              activePoint.index < sampleCount / 2 ? 'is-right' : 'is-left',
             )}
           >
             <div className="mb-1 whitespace-nowrap text-muted-foreground">
@@ -981,15 +1141,10 @@ function DetailSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
+      <SheetContent className="sv-sheet w-full overflow-y-auto sm:max-w-2xl">
         <SheetHeader className="border-b">
           <SheetTitle className="flex items-center gap-2">
-            <span
-              className={cn(
-                'size-2 rounded-full bg-muted-foreground',
-                isServerOnline(server) && 'bg-success',
-              )}
-            />
+            <span className={cn('sv-state-dot', isServerOnline(server) && 'is-online')} />
             {server?.alias ?? '服务器详情'}
           </SheetTitle>
           <SheetDescription>主机信息与最近 24 小时探针指标</SheetDescription>
@@ -1234,76 +1389,132 @@ function DetailSheet({
 
 export function ServerMonitorGrid(props: ServerMonitorProps) {
   const [selectedID, setSelectedID] = useState<number | null>(null)
+  const [detailServerID, setDetailServerID] = useState<number | null>(null)
   // onError 以 useCallback 固定引用，避免 useTrafficStatsDialog 因回调变化重拉（同 AgentsStatsTab）；
   // 错误仅在弹窗打开期间展示，下次打开时在点击事件里清除。
   const [trafficStatsError, setTrafficStatsError] = useState('')
   const onTrafficStatsError = useCallback((message: string) => setTrafficStatsError(message), [])
   const trafficStatsDialog = useTrafficStatsDialog({ onError: onTrafficStatsError })
 
-  const selected = props.servers.find((server) => server.id === selectedID) ?? null
   const samplesByServer = useMemo(
     () => new Map(props.samples.map((series) => [series.server_id, series.samples])),
     [props.samples],
   )
+  // 默认选中第一台，让读数表下方始终有可读的运行时模块；点击任意行就地切换。
+  const selected =
+    props.servers.find((server) => server.id === selectedID) ?? props.servers[0] ?? null
+  const detailServer = props.servers.find((server) => server.id === detailServerID) ?? null
+  const onlineCount = props.servers.filter((server) => isServerOnline(server)).length
+
+  const openTrafficStats = (server: Server) => {
+    setTrafficStatsError('')
+    trafficStatsDialog.open({ kind: 'server', serverId: server.id, serverName: server.alias })
+  }
 
   if (props.loading) {
     return (
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        {Array.from({ length: 8 }).map((_, index) => (
-          <Skeleton key={index} className="h-80 w-full" />
-        ))}
-      </div>
+      <section className="sv-board">
+        <header className="sv-board-head">
+          <span className="sv-tab">FLEET</span>
+          <span className="sv-board-title">服务器读数</span>
+          <span className="sv-board-meta">同步中…</span>
+        </header>
+        <LoadingState className="sv-board-state" />
+      </section>
     )
   }
 
   if (props.servers.length === 0) {
     return (
-      <EmptyState icon={<ServerCogIcon />} description="暂无服务器，点击右上角“添加服务器”开始" />
+      <section className="sv-board">
+        <header className="sv-board-head">
+          <span className="sv-tab">FLEET</span>
+          <span className="sv-board-title">服务器读数</span>
+          <span className="sv-board-meta">0 台</span>
+        </header>
+        <EmptyState
+          className="sv-board-state"
+          icon={<ServerCogIcon />}
+          description="暂无服务器，点击右上角“添加服务器”开始"
+        />
+      </section>
     )
   }
 
   return (
     <>
       {trafficStatsDialog.scope !== null && trafficStatsError ? (
-        <p role="alert" className="mb-3 text-sm text-destructive">
+        <p role="alert" className="sv-board-alert">
           流量统计加载失败：{trafficStatsError}
         </p>
       ) : null}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-        {props.servers.map((server) => (
-          <ServerCard
-            key={server.id}
-            server={server}
-            samples={samplesByServer.get(server.id) ?? []}
+      <section className="sv-board">
+        <header className="sv-board-head">
+          <span className="sv-tab">FLEET</span>
+          <span className="sv-board-title">服务器读数</span>
+          <span className="sv-board-meta">
+            {onlineCount} 在线 / {props.servers.length} 台
+          </span>
+        </header>
+        <div className="sv-table-scroll">
+          <table className="sv-table">
+            <thead>
+              <tr>
+                <th scope="col">服务器</th>
+                <th scope="col">状态</th>
+                <th scope="col">地区 / 地址</th>
+                <th scope="col">CPU</th>
+                <th scope="col">内存</th>
+                <th scope="col">磁盘</th>
+                <th scope="col">延迟</th>
+                <th scope="col">速率 ↑ / ↓</th>
+                <th scope="col">流量额度</th>
+                <th scope="col">版本</th>
+                <th scope="col">
+                  <span className="sr-only">操作</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {props.servers.map((server) => (
+                <ServerRow
+                  key={server.id}
+                  server={server}
+                  selected={selected?.id === server.id}
+                  timezone={props.timezone}
+                  onSelect={() => setSelectedID(server.id)}
+                  onEdit={props.onEdit}
+                  onRepair={props.onRepair}
+                  onCleanupXray={props.onCleanupXray}
+                  onRebuildXray={props.onRebuildXray}
+                  onRotateToken={props.onRotateToken}
+                  onUpgrade={props.onUpgrade}
+                  onRenew={props.onRenew}
+                  onDelete={props.onDelete}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {selected ? (
+          <ServerRuntime
+            server={selected}
+            samples={samplesByServer.get(selected.id) ?? []}
             timezone={props.timezone}
-            onOpen={() => setSelectedID(server.id)}
-            onEdit={props.onEdit}
-            onRepair={props.onRepair}
-            onCleanupXray={props.onCleanupXray}
-            onRebuildXray={props.onRebuildXray}
-            onRotateToken={props.onRotateToken}
-            onUpgrade={props.onUpgrade}
-            onRenew={props.onRenew}
-            onDelete={props.onDelete}
+            onOpenDetail={() => setDetailServerID(selected.id)}
+            onOpenTrafficStats={() => openTrafficStats(selected)}
           />
-        ))}
-      </div>
+        ) : null}
+      </section>
       <TrafficStatsDialog controller={trafficStatsDialog} />
       <DetailSheet
-        server={selected}
-        open={selected !== null}
+        server={detailServer}
+        open={detailServer !== null}
         onOpenChange={(open) => {
-          if (!open) setSelectedID(null)
+          if (!open) setDetailServerID(null)
         }}
         timezone={props.timezone}
-        onOpenTrafficStats={(server) => {
-          setTrafficStatsError('')
-          trafficStatsDialog.open({
-            kind: 'server',
-            serverId: server.id,
-            serverName: server.alias,
-          })
-        }}
+        onOpenTrafficStats={openTrafficStats}
       />
     </>
   )

@@ -1,4 +1,12 @@
-import type { DashboardStats, Server, ServerMetrics } from './types'
+import type {
+  Chain,
+  ChainHop,
+  ChainStatus,
+  DashboardStats,
+  NodeStatus,
+  Server,
+  ServerMetrics,
+} from './types'
 
 const GIB = 1024 ** 3
 
@@ -106,10 +114,10 @@ function createDemoServer(input: DemoServerInput): Server {
 export const DEMO_DASHBOARD_STATS: DashboardStats = {
   servers: 6,
   servers_online: 5,
-  links: 8,
-  links_active: 7,
+  links: 5,
+  links_active: 3,
   links_degraded: 1,
-  users: 24,
+  users: 1284,
 }
 
 export const DEMO_SERVERS: Server[] = [
@@ -198,4 +206,78 @@ export const DEMO_SERVERS: Server[] = [
     latency: 184,
     tags: ['edge', 'oceania'],
   }),
+]
+
+function createDemoHop(
+  id: number,
+  seq: number,
+  serverId: number,
+  serverAlias: string,
+  role: ChainHop['role'],
+  status: NodeStatus = 'active',
+): ChainHop {
+  return {
+    id,
+    seq,
+    server_id: serverId,
+    server_alias: serverAlias,
+    role,
+    address: '',
+    node_id: 4000 + id,
+    status,
+    error: '',
+    forward_port: 20000 + id,
+    portal_port: 30000 + id,
+  }
+}
+
+function createDemoChain(
+  id: number,
+  name: string,
+  status: ChainStatus,
+  hops: ChainHop[],
+  error = '',
+): Chain {
+  return {
+    id,
+    name,
+    status,
+    error,
+    created_at: '2026-01-01T00:00:00.000Z',
+    hops,
+    service_node_id: 4000 + id,
+    endpoint_id: 5000 + id,
+    entry_port: 20000 + id,
+    traffic_multiplier: '1',
+    published_revision_id: 1,
+    desired_revision_id: 1,
+    revision_forced: false,
+    revision_tasks: [],
+  }
+}
+
+export const DEMO_CHAINS: Chain[] = [
+  createDemoChain(8001, '东京 → 洛杉矶', 'active', [
+    createDemoHop(1, 1, 9001, 'Tokyo Edge 01', 'entry'),
+    createDemoHop(2, 2, 9002, 'Singapore Relay', 'middle'),
+    createDemoHop(3, 3, 9004, 'Los Angeles Exit', 'exit'),
+  ]),
+  createDemoChain(
+    8002,
+    '新加坡 → 法兰克福',
+    'degraded',
+    [
+      createDemoHop(4, 1, 9002, 'Singapore Relay', 'entry'),
+      createDemoHop(5, 2, 9003, 'Frankfurt Core', 'exit', 'failed'),
+    ],
+    '中转延迟超出基线 176ms',
+  ),
+  createDemoChain(8003, '香港 → 圣何塞', 'applying', [
+    createDemoHop(6, 1, 9005, 'Hong Kong Gateway', 'entry'),
+    createDemoHop(7, 2, 9004, 'Los Angeles Exit', 'exit', 'applying'),
+  ]),
+  createDemoChain(8004, '悉尼 → 东京', 'active', [
+    createDemoHop(8, 1, 9006, 'Sydney Edge', 'entry'),
+    createDemoHop(9, 2, 9001, 'Tokyo Edge 01', 'exit'),
+  ]),
 ]

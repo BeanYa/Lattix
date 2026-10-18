@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { LockKeyholeIcon, ServerIcon, ShieldCheckIcon } from 'lucide-react'
+import { LockKeyholeIcon, RouteIcon, ServerIcon, ShieldCheckIcon } from 'lucide-react'
 import { useLocation } from 'wouter'
 
 import LattixMark from '@/components/LattixMark'
@@ -35,97 +35,110 @@ export default function Login() {
   }
 
   return (
-    <div className="cg-login">
-      <ThemeToggle className="cg-login-theme" />
-      <div className="cg-card-raised cg-login-card">
-        {/* 品牌区（桌面端左侧 Charcoal 技术面板） */}
-        <aside className="cg-login-brand">
-          <div className="cg-login-brand-row">
-            <span className="cg-login-brand-mark">
-              <LattixMark className="size-6" />
-            </span>
-            <div>
-              <strong className="cg-login-brand-name" aria-label="Lattix">
-                LATTIX
-              </strong>
-              <span className="cg-login-brand-sub">NETWORK CONTROL</span>
-            </div>
-          </div>
-
-          <div className="cg-login-brand-hero">
-            <span className="cg-micro" style={{ color: 'var(--cg-lime)' }}>
-              OPS MANUAL / VOL.01
-            </span>
-            <p className="cg-login-brand-tag">CHAIN ROUTING · SUBSCRIPTION OPS</p>
-            <p className="cg-login-brand-desc">代理链路、订阅访问与运行审计的工程手册式控制台。</p>
-          </div>
-
-          <div className="cg-login-brand-foot">
-            <span className="cg-login-status">
-              <i />
-              控制服务可用
-            </span>
-            <span className="cg-login-brand-line">
-              <ShieldCheckIcon />
-              安全会话 / SECURE SESSION
-            </span>
-            <span className="cg-login-brand-line">
-              <ServerIcon />
-              LATTIX PANEL
-            </span>
-          </div>
-        </aside>
-
-        {/* 登录卡 */}
-        <section className="cg-login-form">
-          <div className="cg-login-form-mobile">
-            <LattixMark className="size-9" />
-            <strong>LATTIX</strong>
-          </div>
-          <span className="cg-login-form-icon">
-            <LockKeyholeIcon />
+    <div className="login">
+      <header className="login-bar">
+        <span className="login-brand">
+          <span className="login-brand-mark">
+            <LattixMark className="size-4 shrink-0" />
           </span>
-          <div className="cg-login-form-head">
-            <span className="cg-eyebrow">ACCESS / SIGN IN</span>
-            <h1 className="cg-title cg-login-form-title">欢迎回来</h1>
-            <p className="cg-login-form-sub">登录 Lattix 管理面板 / ADMIN CONSOLE</p>
-          </div>
-          <form onSubmit={onSubmit} className="cg-login-fields">
-            <div className="cg-login-field">
-              <Label htmlFor="username">用户名</Label>
-              <Input
-                id="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                autoComplete="username"
-                required
-                autoFocus
-                className="h-10"
-              />
+          <span className="login-brand-name">LATTIX</span>
+          <span className="login-brand-sub">NETWORK CONTROL PANEL</span>
+        </span>
+        <span className="login-bar-meta">自托管代理编排 / SELF-HOSTED</span>
+        <span className="login-bar-spacer" />
+        <ThemeToggle />
+      </header>
+
+      <main className="login-main">
+        <section className="login-card" aria-label="Lattix 登录">
+          <aside className="login-brief" aria-label="控制台说明">
+            <h2 className="login-brief-title">
+              一条长连接
+              <br />
+              管理整支机群
+            </h2>
+            <ul className="login-facts">
+              <li>
+                <RouteIcon size={13} strokeWidth={1.8} aria-hidden="true" />
+                <span>
+                  <strong>逐跳链路</strong>
+                  入口、中转与出口服务器的有序拓扑
+                </span>
+              </li>
+              <li>
+                <ServerIcon size={13} strokeWidth={1.8} aria-hidden="true" />
+                <span>
+                  <strong>Agent 主动外连</strong>
+                  面板无需开放反向端口
+                </span>
+              </li>
+              <li>
+                <ShieldCheckIcon size={13} strokeWidth={1.8} aria-hidden="true" />
+                <span>
+                  <strong>单管理员控制台</strong>
+                  节点与用户热操作、失败回滚
+                </span>
+              </li>
+            </ul>
+            <p className="login-brief-foot">LATTIX — 多服务器 xray 代理管理面板</p>
+          </aside>
+
+          <section className="login-form" aria-labelledby="login-title">
+            <div className="login-form-head">
+              <h1 className="login-title" id="login-title">
+                登录控制台
+              </h1>
+              <p className="login-sub">使用管理员凭据进入 Lattix 面板。</p>
             </div>
-            <div className="cg-login-field">
-              <Label htmlFor="password">密码</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                autoComplete="current-password"
-                required
-                className="h-10"
-              />
-            </div>
-            {error && <Notice tone="danger">{error}</Notice>}
-            <button
-              type="submit"
-              className="cg-button is-primary cg-login-submit"
-              disabled={submitting}
-            >
-              {submitting ? '登录中…' : '登录'}
-            </button>
-          </form>
+            <form onSubmit={onSubmit} className="login-fields">
+              <div className="login-field">
+                <Label htmlFor="username">用户名</Label>
+                <Input
+                  id="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoComplete="username"
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="login-field">
+                <Label htmlFor="password">密码</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  required
+                />
+              </div>
+              {error ? (
+                <Notice tone="danger" title="登录失败">
+                  {error}
+                </Notice>
+              ) : null}
+              <button
+                type="submit"
+                className="cg-button is-primary login-submit"
+                disabled={submitting}
+              >
+                <LockKeyholeIcon size={13} strokeWidth={2} aria-hidden="true" />
+                {submitting ? '正在验证…' : '进入控制台'}
+              </button>
+            </form>
+            <p className="login-hint">
+              <ShieldCheckIcon size={11} strokeWidth={2} aria-hidden="true" />
+              会话保存在本机浏览器；管理员密码由部署时设置。
+            </p>
+          </section>
         </section>
-      </div>
+      </main>
+
+      <footer className="login-foot">
+        <span>LATTIX / NETWORK CONTROL PANEL</span>
+        <span className="login-foot-end">SECURE SESSION</span>
+      </footer>
     </div>
   )
 }

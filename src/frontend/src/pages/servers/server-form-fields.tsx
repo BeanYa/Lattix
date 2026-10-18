@@ -50,6 +50,7 @@ export function BillingTrafficFields({
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
+            className="sv-checkbox"
             checked={traffic.limited}
             onChange={(e) => setTraffic({ ...traffic, limited: e.target.checked })}
           />
@@ -121,6 +122,7 @@ export function BillingTrafficFields({
         <label className="flex items-center gap-2 text-sm font-medium">
           <input
             type="checkbox"
+            className="sv-checkbox"
             checked={billing.enabled}
             onChange={(e) => setBilling({ ...billing, enabled: e.target.checked })}
           />
