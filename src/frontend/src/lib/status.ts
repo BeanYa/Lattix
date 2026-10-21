@@ -20,7 +20,7 @@ export const chainStatusStyle: Record<ChainStatus, CgStatusStyle> = {
   waiting_for_agent: { label: '等待 Agent', cg: 'is-blue', loading: true },
   active_unconfirmed: { label: '已强制发布', cg: 'is-muted', loading: false },
   active_failed: { label: '发布后失败', cg: 'is-red', loading: false },
-  cleanup_pending: { label: '等待清理', cg: 'is-blue', loading: true },
+  cleanup_pending: { label: '等待清理', cg: 'is-blue', loading: false },
   invalid: { label: '已失效', cg: 'is-red', loading: false },
   deleted: { label: '已删除', cg: 'is-muted', loading: false },
 }

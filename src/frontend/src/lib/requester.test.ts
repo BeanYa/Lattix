@@ -268,4 +268,131 @@ describe('Requester', () => {
     expect(result.data).toEqual({ id: 42 })
     expect(result.observeId).toBeUndefined()
   })
+
+  it('maps a timeout while reading the body to a request timeout', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal
+      if (!signal) throw new Error('missing request signal')
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+        json: () =>
+          new Promise((_resolve, reject) => {
+            const rejectAbort = () => reject(signal.reason)
+            if (signal.aborted) rejectAbort()
+            else signal.addEventListener('abort', rejectAbort, { once: true })
+          }),
+      } as Response)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const failure = new Requester()
+      .post('/api/auth/login', {}, { timeoutMs: 100, traceId: TRACE_ID })
+      .catch((reason: unknown) => reason)
+
+    await vi.advanceTimersByTimeAsync(100)
+
+    const error = await failure
+    expect(error).toBeInstanceOf(RequestError)
+    expect(error).toMatchObject({
+      kind: 'transport',
+      code: 'REQUEST_TIMEOUT',
+      traceId: TRACE_ID,
+    })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('maps a parent cancellation while reading the body to a cancelled request', async () => {
+    const controller = new AbortController()
+    let notifyBodyStarted: () => void = () => {}
+    const bodyStarted = new Promise<void>((resolve) => {
+      notifyBodyStarted = () => resolve()
+    })
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      const signal = init?.signal
+      if (!signal) throw new Error('missing request signal')
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+        json: () => {
+          notifyBodyStarted()
+          return new Promise((_resolve, reject) => {
+            const rejectAbort = () => reject(signal.reason)
+            if (signal.aborted) rejectAbort()
+            else signal.addEventListener('abort', rejectAbort, { once: true })
+          })
+        },
+      } as Response)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const failure = new Requester()
+      .post('/api/auth/login', {}, { signal: controller.signal, traceId: TRACE_ID })
+      .catch((reason: unknown) => reason)
+
+    await bodyStarted
+    controller.abort()
+
+    const error = await failure
+    expect(error).toBeInstanceOf(RequestError)
+    expect(error).toMatchObject({
+      kind: 'cancelled',
+      code: 'REQUEST_CANCELLED',
+      traceId: TRACE_ID,
+    })
+  })
+
+  it('reports a non-JSON proxy error page with its HTTP status', async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response('<html><body>502 Bad Gateway</body></html>', {
+          status: 502,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const error = await new Requester()
+      .post('/api/auth/login', {}, { traceId: TRACE_ID })
+      .catch((reason: unknown) => reason)
+
+    expect(error).toBeInstanceOf(RequestError)
+    expect(error).toMatchObject({
+      kind: 'transport',
+      code: 'HTTP_502',
+      httpStatus: 502,
+      message: '服务端返回了非 JSON 响应（HTTP 502）',
+    })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a malformed JSON body as a protocol failure', async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        new Response('{"title": ', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const error = await new Requester()
+      .getJSON('/api/sub/token/info', { traceId: TRACE_ID })
+      .catch((reason: unknown) => reason)
+
+    expect(error).toBeInstanceOf(RequestError)
+    expect(error).toMatchObject({
+      kind: 'protocol',
+      code: 'INVALID_RESPONSE',
+      httpStatus: 200,
+      message: '服务端返回了无效 JSON',
+      traceId: TRACE_ID,
+    })
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
 })

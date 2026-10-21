@@ -124,6 +124,8 @@ export default function Chains() {
   const [panelShort, setPanelShort] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // 轮询错误单独存放：刷新成功即可自动清除，不覆盖操作类错误横幅。
+  const [loadError, setLoadError] = useState('')
   const [retrying, setRetrying] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<ChainFilter>('all')
@@ -147,9 +149,10 @@ export default function Chains() {
       setChains(nextChains)
       setNodes(nextNodes)
       setServers(nextServers)
+      setLoadError('')
     } catch (err) {
       if (signal?.aborted || request !== loadRequest.current) return
-      setError(errorMessage(err))
+      setLoadError(errorMessage(err))
     } finally {
       if (!signal?.aborted && request === loadRequest.current) setLoading(false)
     }
@@ -408,7 +411,7 @@ export default function Chains() {
         }
       />
 
-      {error && <Notice tone="danger">{error}</Notice>}
+      {(error || loadError) && <Notice tone="danger">{error || loadError}</Notice>}
 
       <section className="cg-chain-board">
         <header className="cg-chain-board-head">

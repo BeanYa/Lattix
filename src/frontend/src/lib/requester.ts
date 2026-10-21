@@ -139,7 +139,7 @@ export class Requester {
       })
       const contentType = response.headers.get('Content-Type') ?? ''
       if (contentType.includes('json')) {
-        const envelope = await parseEnvelope<never>(response, requestId, traceId)
+        const envelope = await parseEnvelope<never>(response, requestId, traceId, signal)
         const error = businessError(envelope, response.status)
         if (error.code === 'AUTH_REQUIRED') this.unauthorizedHandler?.()
         throw error
@@ -198,6 +198,8 @@ export class Requester {
           headers: { 'X-Request-ID': requestId, 'X-Trace-ID': traceId },
         })
         if (!response.ok) {
+          // 反代/网关错误页（HTML）优先按 Content-Type 给出清晰、带状态码的错误。
+          ensureJSONResponse(response, requestId, traceId)
           throw new RequestError({
             kind: 'transport',
             code: `HTTP_${response.status}`,
@@ -207,7 +209,7 @@ export class Requester {
             traceId,
           })
         }
-        const result = await parseJSON<T>(response, requestId, traceId)
+        const result = await parseJSON<T>(response, requestId, traceId, signal)
         this.emit({ phase: 'finish', ...lifecycle })
         cleanup()
         return result
@@ -264,7 +266,7 @@ export class Requester {
           body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
           signal,
         })
-        const envelope = await parseEnvelope<T>(response, requestId, traceId)
+        const envelope = await parseEnvelope<T>(response, requestId, traceId, signal)
         if (!response.ok) {
           throw new RequestError({
             kind: 'protocol',
@@ -330,7 +332,7 @@ export class Requester {
         body: JSON.stringify(body ?? {}),
         signal,
       })
-      const envelope = await parseEnvelope<T>(response, requestId, traceId)
+      const envelope = await parseEnvelope<T>(response, requestId, traceId, signal)
       if (!response.ok) {
         throw new RequestError({
           kind: 'protocol',
@@ -366,19 +368,17 @@ async function parseEnvelope<T>(
   response: Response,
   fallbackRequestId: string,
   fallbackTraceId: string,
+  signal?: AbortSignal,
 ): Promise<RPCEnvelope<T> & { observe_id?: string }> {
+  if (signal?.aborted) throw signal.reason
+  ensureJSONResponse(response, fallbackRequestId, fallbackTraceId)
   let value: unknown
   try {
     value = await response.json()
-  } catch {
-    throw new RequestError({
-      kind: 'protocol',
-      code: 'INVALID_RESPONSE',
-      message: '服务端返回了无效 JSON',
-      httpStatus: response.status,
-      requestId: response.headers.get('X-Request-ID') ?? fallbackRequestId,
-      traceId: response.headers.get('X-Trace-ID') ?? fallbackTraceId,
-    })
+  } catch (error) {
+    // 超时/取消不是协议错误：原样抛出，交给 normalizeError(abortSource) 归类。
+    if (isAbortError(error, signal)) throw error
+    throw invalidJSONError(response, fallbackRequestId, fallbackTraceId)
   }
   if (!isRecord(value)) {
     throw invalidEnvelope(response.status, fallbackRequestId, fallbackTraceId)
@@ -410,19 +410,60 @@ async function parseEnvelope<T>(
   }
 }
 
-async function parseJSON<T>(response: Response, requestId: string, traceId: string): Promise<T> {
+async function parseJSON<T>(
+  response: Response,
+  requestId: string,
+  traceId: string,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal?.aborted) throw signal.reason
+  ensureJSONResponse(response, requestId, traceId)
   try {
     return (await response.json()) as T
-  } catch {
-    throw new RequestError({
-      kind: 'protocol',
-      code: 'INVALID_RESPONSE',
-      message: '服务端返回了无效 JSON',
-      httpStatus: response.status,
-      requestId,
-      traceId,
-    })
+  } catch (error) {
+    if (isAbortError(error, signal)) throw error
+    throw invalidJSONError(response, requestId, traceId)
   }
+}
+
+/** 反代/网关错误页（如 nginx 502 HTML）不是 JSON：按传输错误上报并带上 HTTP 状态。 */
+function ensureJSONResponse(response: Response, requestId: string, traceId: string): void {
+  const contentType = response.headers.get('Content-Type')
+  if (!contentType || isJSONContentType(contentType)) return
+  throw new RequestError({
+    kind: 'transport',
+    code: `HTTP_${response.status}`,
+    message: `服务端返回了非 JSON 响应（HTTP ${response.status}）`,
+    httpStatus: response.status,
+    requestId: response.headers.get('X-Request-ID') ?? requestId,
+    traceId: response.headers.get('X-Trace-ID') ?? traceId,
+  })
+}
+
+function isJSONContentType(contentType: string): boolean {
+  return contentType.toLowerCase().includes('json')
+}
+
+/** AbortError（超时/父级取消）必须原样抛出，由 normalizeError 结合 abortSource 归类。 */
+function isAbortError(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true
+  if (error instanceof DOMException) return error.name === 'AbortError'
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+function invalidJSONError(
+  response: Response,
+  fallbackRequestId: string,
+  fallbackTraceId: string,
+): RequestError {
+  return new RequestError({
+    kind: 'protocol',
+    code: 'INVALID_RESPONSE',
+    message: '服务端返回了无效 JSON',
+    httpStatus: response.status,
+    requestId: response.headers.get('X-Request-ID') ?? fallbackRequestId,
+    traceId: response.headers.get('X-Trace-ID') ?? fallbackTraceId,
+  })
 }
 
 function invalidEnvelope(httpStatus: number, requestId: string, traceId: string): RequestError {
