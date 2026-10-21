@@ -407,7 +407,9 @@ type clashConfig struct {
 
 // ServeHTTP 处理 GET /sub/{token}：按 UA / ?format= 返回对应格式订阅内容；
 // 浏览器（Accept 含 text/html 且无 ?format=）返回 SPA 壳（index.html）。
-// 有效停权态（expired=1 或 disabled=1）的用户订阅照常返回但节点为空。
+// 已到期（含试用流量用尽）或尚未生效（§9）的用户拒绝订阅内容（403）：
+// 客户端无法再经旧链接更新订阅，浏览器仍可打开状态页查看；停用（disabled）维持
+// 既有语义：订阅照常返回但节点为空。
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	user, err := s.st.UserBySubToken(r.Context(), r.PathValue("token"))
 	if err != nil {
@@ -418,16 +420,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, "serve subscription", err)
 		return
 	}
-	s.setSubHeaders(w, r, user)
 
 	format := r.URL.Query().Get("format")
 	if format == "" {
 		format = detectFormat(r)
 	}
 	if format == "browser" {
+		s.setSubHeaders(w, r, user)
 		s.serveSPA(w)
 		return
 	}
+	if blocked, reason := subscriptionBlocked(user, time.Now()); blocked {
+		http.Error(w, reason+"\n", http.StatusForbidden)
+		return
+	}
+	s.setSubHeaders(w, r, user)
 	if format != "clash" && format != "singbox" && format != "quanx" && format != "quanx-config" && format != "links" {
 		format = "links"
 	}
@@ -494,6 +501,23 @@ func (s *Server) ServeRuleHTTP(w http.ResponseWriter, r *http.Request) {
 func writeInternalError(w http.ResponseWriter, op string, err error) {
 	log.Printf("sub: %s: %v", op, err)
 	http.Error(w, "internal error\n", http.StatusInternalServerError)
+}
+
+// subscriptionBlocked 报告给定时刻是否必须拒绝该用户的订阅内容（§9）：
+// 已到期（expired 标记，或 expires_at 已越过来不及等 sweeper —— 精确到秒立即拦截）、
+// 流量配额停权（quota_exhausted，试用与普通用户一致）或尚未生效（effective_at 在未来）。
+// 文案面向客户端展示，不回显内部细节。
+func subscriptionBlocked(u *store.User, now time.Time) (bool, string) {
+	if u.Expired || (u.ExpiresAt != nil && !u.ExpiresAt.After(now)) {
+		return true, "subscription expired"
+	}
+	if u.QuotaExhausted {
+		return true, "subscription quota exhausted"
+	}
+	if u.NotYetEffective(now) {
+		return true, "subscription not yet effective"
+	}
+	return false, ""
 }
 
 func validHex(value string) bool {
@@ -574,7 +598,7 @@ type proxyItem struct {
 //     非分组用户走直接分配（user_nodes + user_chain_assignments）；
 //     共享入口链需链分配，订阅凭据取 assignment 的 AccessUUID。
 func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []store.Node) ([]proxyItem, []string) {
-	if user.Expired || user.Disabled {
+	if user.Expired || user.Disabled || user.QuotaExhausted || user.NotYetEffective(time.Now()) {
 		return nil, nil
 	}
 	var warnings []string

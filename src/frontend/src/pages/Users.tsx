@@ -9,6 +9,8 @@ import {
   PlusIcon,
   QrCodeIcon,
   RefreshCwIcon,
+  RotateCcwIcon,
+  RotateCwIcon,
   Settings2Icon,
   EllipsisIcon,
   Trash2Icon,
@@ -76,7 +78,9 @@ import type {
 
 import { CreateUserDialog } from './users/CreateUserDialog'
 import { EXTERNAL_MODE_LABELS } from './users/external-mode'
+import { ReactivateUserDialog } from './users/ReactivateUserDialog'
 import { useCreateUserForm } from './users/use-create-user-form'
+import { useReactivateUser } from './users/use-reactivate-user'
 import { useUserSubSettings } from './users/use-user-sub-settings'
 import { UserSubSettingsDialog } from './users/UserSubSettingsDialog'
 
@@ -103,6 +107,7 @@ export default function Users() {
 
   const [regenerating, setRegenerating] = useState<number | null>(null)
   const [resettingToken, setResettingToken] = useState<number | null>(null)
+  const [resettingTraffic, setResettingTraffic] = useState<number | null>(null)
   const [previewTarget, setPreviewTarget] = useState<SubUser | null>(null)
   const [previewFormat, setPreviewFormat] = useState<SubscriptionPreviewFormat>('clash')
   const [previewStage, setPreviewStage] = useState<SubscriptionPreviewStage>('final')
@@ -156,6 +161,7 @@ export default function Users() {
 
   const createForm = useCreateUserForm({ onSaved: load, showOperation })
   const subSettings = useUserSubSettings({ onSaved: load, showOperation })
+  const reactivate = useReactivateUser({ onSaved: load, showOperation })
 
   const linkOptions = useMemo(() => buildLinkOptions(chains), [chains])
 
@@ -199,6 +205,32 @@ export default function Users() {
       setError(errorMessage(err))
     } finally {
       setToggling(null)
+    }
+  }
+
+  const onResetTraffic = async (user: SubUser) => {
+    if (
+      !(await confirm({
+        title: '流量重置',
+        description: `确认重置「${user.name}」的当期流量？用量将清零并归档到历史${
+          user.quota_exhausted ? '，用户将立即恢复访问（节点与订阅）' : ''
+        }。`,
+        confirmLabel: '重置流量',
+        destructive: true,
+      }))
+    ) {
+      return
+    }
+    setResettingTraffic(user.id)
+    setError('')
+    try {
+      const { observeId } = await api.resetUserTraffic(user.id)
+      if (observeId) showOperation({ observeId })
+      load()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setResettingTraffic(null)
     }
   }
 
@@ -364,6 +396,9 @@ export default function Users() {
                     const groupNames = u.user_group_ids.map(
                       (id) => userGroups.find((g) => g.id === id)?.name ?? `#${id}`,
                     )
+                    const notYetEffective =
+                      !!u.effective_at && new Date(u.effective_at).getTime() > Date.now()
+                    const trialUsed = (u.traffic?.up ?? 0) + (u.traffic?.down ?? 0)
                     return (
                       <tr
                         key={u.id}
@@ -372,6 +407,7 @@ export default function Users() {
                       >
                         <th scope="row" className="cg-user-cell">
                           <span className="cg-user-name">{u.name}</span>
+                          {u.is_trial && <span className="cg-status is-blue">试用</span>}
                           {groupNames.length > 0 && (
                             <span className="cg-user-groups" title="订阅由用户分组派生">
                               {groupNames.join('、')}
@@ -382,6 +418,10 @@ export default function Users() {
                           <span className="cg-user-states">
                             {u.disabled && <span className="cg-status is-red">已停用</span>}
                             {u.expired && <span className="cg-status is-red">已到期</span>}
+                            {u.quota_exhausted && <span className="cg-status is-warn">流量用尽</span>}
+                            {notYetEffective && !u.expired && (
+                              <span className="cg-status is-warn">未生效</span>
+                            )}
                             {u.subscription_snapshot.status === 'ready' ? (
                               <span className="cg-status is-muted">
                                 订阅 r{u.subscription_snapshot.revision}
@@ -410,6 +450,14 @@ export default function Users() {
                             <>
                               <span>↑ {humanizeBytes(u.traffic.up)}</span>
                               <span>↓ {humanizeBytes(u.traffic.down)}</span>
+                              {u.traffic_limit > 0 && (
+                                <span
+                                  className="cg-muted"
+                                  title="当期已用 / 配额（用尽即停权，周期重置或手动重置后恢复）"
+                                >
+                                  {humanizeBytes(trialUsed)} / {humanizeBytes(u.traffic_limit)}
+                                </span>
+                              )}
                             </>
                           ) : (
                             <span className="cg-muted">-</span>
@@ -423,7 +471,11 @@ export default function Users() {
                           )}
                         </td>
                         <td className="cg-user-num cg-user-date">
-                          {u.expires_at ? formatDateTime(u.expires_at, timezone) : '长期'}
+                          {notYetEffective
+                            ? `未生效 · ${u.effective_at ? formatDateTime(u.effective_at, timezone) : ''} 起`
+                            : u.expires_at
+                              ? formatDateTime(u.expires_at, timezone)
+                              : '长期'}
                         </td>
                         <td className="cg-user-sub">
                           <span className="cg-user-suburl-text" title={u.sub_url}>
@@ -472,6 +524,12 @@ export default function Users() {
                               <DropdownMenuContent align="end">
                                 <DropdownMenuGroup>
                                   <DropdownMenuLabel>用户管理</DropdownMenuLabel>
+                                  {u.expired && (
+                                    <DropdownMenuItem onClick={() => reactivate.open(u)}>
+                                      <RotateCwIcon />
+                                      重新激活（重设流量与有效期）
+                                    </DropdownMenuItem>
+                                  )}
                                   <DropdownMenuItem onClick={() => subSettings.open(u)}>
                                     <Settings2Icon />
                                     订阅设置
@@ -499,6 +557,17 @@ export default function Users() {
                                   <DropdownMenuItem onClick={() => onOpenHistory(u)}>
                                     <HistoryIcon />
                                     流量历史
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    disabled={resettingTraffic === u.id}
+                                    onClick={() => onResetTraffic(u)}
+                                  >
+                                    <RotateCcwIcon />
+                                    {resettingTraffic === u.id
+                                      ? '重置中…'
+                                      : u.quota_exhausted
+                                        ? '流量重置（清零用量并恢复访问）'
+                                        : '流量重置（清零当期用量）'}
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     disabled={toggling === u.id}
@@ -662,6 +731,8 @@ export default function Users() {
         ruleCategories={ruleCategories}
         templates={templates}
       />
+
+      <ReactivateUserDialog controller={reactivate} />
 
       <Dialog
         open={previewTarget !== null}

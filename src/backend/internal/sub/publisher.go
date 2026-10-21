@@ -49,7 +49,7 @@ func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) 
 	if err != nil {
 		return PublishResult{}, err
 	}
-	if user.Expired || user.Disabled {
+	if user.Expired || user.Disabled || user.QuotaExhausted || user.NotYetEffective(time.Now()) {
 		items = nil
 	}
 	nodes, compileWarnings, err := s.compileNodes(ctx, items, user.UUID)

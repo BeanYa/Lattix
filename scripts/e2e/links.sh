@@ -4,8 +4,9 @@
 #   /sub/{token}（mihomo YAML）回归。
 # 另覆盖 §9 订阅三件套：subscription-userinfo / profile-update-interval 响应头
 #   （含扩展字段 total / reset_day / plan_name / app_url：用户级设置、全局默认回退、
-#   用户级覆盖全局），订阅落地页 Accept 分流、用户有效期（到期停权 sweeper 扇出
-#   remove_user、延长恢复 add_user、过期用户订阅/links 为空），以及 §16 显式停用/启用
+#   用户级覆盖全局），订阅落地页 Accept 分流、用户有效期与生命周期（到期停权 sweeper 扇出
+#   remove_user、延长恢复 add_user、过期用户订阅更新 403 拦截；§9 流量配额强制（试用与
+#   普通一致）：quota_exhausted 停权、节点不可达、订阅 403、手动 reset-traffic 恢复），以及 §16 显式停用/启用
 #   开关（disabled → remove_user 扇出、订阅/links 为空、落地页"已停用"、启用恢复、
 #   过去有效期被拒、disabled+expired 复合不重复扇出）。
 # 管理 API 均为 RPC 信封（feat(api)! 后无 REST 端点）：写操作需 Idempotency-Key 与
@@ -257,22 +258,17 @@ done
 [[ "$(db "SELECT expired FROM users WHERE id=$UID2")" == "1" ]] \
     && echo "OK: sweeper 已置 expired=1" || { echo "FAIL: sweeper 未停权"; exit 1; }
 wait_clients "$N1" "$UUID2" absent && echo "OK: 到期扇出 remove_user 生效"
-# 到期重发布经订阅队列异步完成（sweeper → EnqueueUsers → regenerator），轮询等待。
-YAML_EMPTY=0
-LINKS_EMPTY=0
+# 到期拦截（§9）：订阅内容 403 —— 旧链接无法再更新（无状态判定，精确到秒，
+# 不等 sweeper）；浏览器落地页仍可查看状态。
+SUB_BLOCKED=0
 for _ in $(seq 1 20); do
-    [[ -z "$(curl -s "http://$ADDR/sub/$TOK2?format=clash" | grep 'type: vless')" ]] && YAML_EMPTY=1
-    [[ -z "$(curl -s "http://$ADDR/sub/$TOK2?format=links")" ]] && LINKS_EMPTY=1
-    [[ "$YAML_EMPTY" == "1" && "$LINKS_EMPTY" == "1" ]] && break
+    [[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/sub/$TOK2?format=clash")" == "403" ]] && SUB_BLOCKED=1 && break
     sleep 0.5
 done
-[[ "$YAML_EMPTY" == "1" ]] \
-    && echo "OK: 过期用户 YAML proxies 为空" || { echo "FAIL: 过期订阅应为空"; exit 1; }
-[[ "$LINKS_EMPTY" == "1" ]] \
-    && echo "OK: 过期用户 links 为空" || { echo "FAIL: 过期 links 应为空"; exit 1; }
-HDRS2="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK2?format=clash")"
-grep -qi "^subscription-userinfo: upload=0; download=0; expire=$EXPIRE2" <<<"$HDRS2" \
-    && echo "OK: 过期用户 userinfo 头保留 expire" || { echo "FAIL: 过期 userinfo 头异常"; echo "$HDRS2"; exit 1; }
+[[ "$SUB_BLOCKED" == "1" ]] \
+    && echo "OK: 过期用户订阅更新被拒（clash 403）" || { echo "FAIL: 过期订阅应 403"; exit 1; }
+[[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/sub/$TOK2?format=links")" == "403" ]] \
+    && echo "OK: 过期用户 links 同样被拒（403）" || { echo "FAIL: 过期 links 应 403"; exit 1; }
 LAND2="$(curl -s -H 'Accept: text/html' -H 'User-Agent: Mozilla/5.0' "http://$ADDR/sub/$TOK2")"
 grep -q '<div id="root"' <<<"$LAND2" && echo "OK: 过期用户落地页返回 SPA" || { echo "FAIL: 过期用户落地页异常"; exit 1; }
 
@@ -293,6 +289,62 @@ HDRS3="$(curl -s -D - -o /dev/null "http://$ADDR/sub/$TOK2?format=clash" | tr -d
 grep -qi '^subscription-userinfo: upload=0; download=0$' <<<"$HDRS3" \
     && ! grep -qi 'expire=' <<<"$HDRS3" \
     && echo "OK: 长期用户 userinfo 头无 expire" || { echo "FAIL: 清除后 userinfo 头异常"; echo "$HDRS3"; exit 1; }
+
+echo ">> 试用用户（§9）：duration_days 折算到期 + 未生效拦截 + 到点激活"
+EFFECTIVE_AT="$(python3 -c 'import datetime;print((datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(seconds=3)).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
+U3="$(rpc_data POST /api/user/create "{\"name\":\"trial1\",\"is_trial\":true,\"effective_at\":\"$EFFECTIVE_AT\",\"duration_days\":1,\"traffic_limit\":1000000}")"
+UID3="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["id"])' "$U3")"
+UUID3="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["uuid"])' "$U3")"
+TOK3="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["sub_token"])' "$U3")"
+python3 - "$U3" "$EFFECTIVE_AT" <<'PY'
+import json, sys, datetime
+u = json.loads(sys.argv[1])
+assert u["is_trial"] is True, "is_trial 应为 true"
+eff = datetime.datetime.fromisoformat(u["effective_at"].replace("Z", "+00:00"))
+exp = datetime.datetime.fromisoformat(u["expires_at"].replace("Z", "+00:00"))
+base = datetime.datetime.fromisoformat(sys.argv[2].replace("Z", "+00:00"))
+assert eff == base, f"effective_at 应原样入库: {eff} != {base}"
+assert abs((exp - eff).total_seconds() - 86400) <= 1, f"duration_days=1 应自生效时刻 +86400s: {exp}"
+print("OK: is_trial=true，expires_at = 生效时刻 + 1 天（精确到秒）")
+PY
+rpc_data POST /api/user/set-nodes "{\"user_id\":$UID3,\"node_ids\":[$N1]}" >/dev/null
+sleep 0.3
+[[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/sub/$TOK3?format=links")" == "403" ]] \
+    && echo "OK: 未生效用户订阅更新被拒（403）" || { echo "FAIL: 未生效订阅应 403"; exit 1; }
+wait_clients "$N1" "$UUID3" absent && echo "OK: 未生效用户未下发节点"
+for _ in $(seq 1 30); do
+    [[ -n "$(db "SELECT started_at FROM users WHERE id=$UID3")" ]] && break
+    sleep 0.5
+done
+[[ -n "$(db "SELECT started_at FROM users WHERE id=$UID3")" ]] \
+    && echo "OK: sweeper 到点置 started_at" || { echo "FAIL: sweeper 未激活"; exit 1; }
+wait_clients "$N1" "$UUID3" present && echo "OK: 到点激活扇出 add_user"
+wait_sub_vless "$TOK3" 1 && echo "OK: 激活后订阅含 1 节点" || exit 1
+
+echo ">> 试用流量用尽：达配额即停权，手动流量重置恢复"
+db "INSERT INTO traffic (node_id, user_uuid, up, down) VALUES (0, '$UUID3', 600000, 500000)" >/dev/null
+for _ in $(seq 1 30); do
+    [[ "$(db "SELECT quota_exhausted FROM users WHERE id=$UID3")" == "1" ]] && break
+    sleep 0.5
+done
+[[ "$(db "SELECT quota_exhausted FROM users WHERE id=$UID3")" == "1" ]] \
+    && echo "OK: 试用流量用尽置 quota_exhausted=1" || { echo "FAIL: 试用配额未停权"; exit 1; }
+[[ "$(db "SELECT expired FROM users WHERE id=$UID3")" == "0" ]] \
+    && echo "OK: 配额停权与到期正交（expired 仍为 0）" || { echo "FAIL: 配额停权不应置 expired"; exit 1; }
+wait_clients "$N1" "$UUID3" absent && echo "OK: 试用配额停权扇出 remove_user"
+[[ "$(curl -s -o /dev/null -w '%{http_code}' "http://$ADDR/sub/$TOK3?format=links")" == "403" ]] \
+    && echo "OK: 试用流量用尽后订阅更新被拒（403）" || { echo "FAIL: 试用停权后应 403"; exit 1; }
+rpc_data POST /api/user/reset-traffic "{\"user_id\":$UID3}" >/dev/null
+[[ "$(db "SELECT quota_exhausted FROM users WHERE id=$UID3")" == "0" ]] \
+    && echo "OK: 手动流量重置解除配额停权" || { echo "FAIL: 流量重置未恢复"; exit 1; }
+for _ in $(seq 1 20); do
+    [[ -z "$(db "SELECT up+down FROM traffic WHERE user_uuid='$UUID3' AND node_id=0")" ]] && break
+    sleep 0.5
+done
+[[ -z "$(db "SELECT up+down FROM traffic WHERE user_uuid='$UUID3' AND node_id=0")" ]] \
+    && echo "OK: 流量重置清零当期用量（history 留痕）" || { echo "FAIL: 流量未清零"; exit 1; }
+wait_clients "$N1" "$UUID3" present && echo "OK: 流量重置扇出 add_user"
+wait_sub_vless "$TOK3" 1 && echo "OK: 流量重置后订阅恢复 1 节点" || exit 1
 
 echo ">> 全局默认套餐名/跳转链接回退（用户级为空 → 取全局，§9）"
 rpc_data POST /api/setting/sub '{"plan_name":"GLOBAL-PLAN","app_url":"https://global.example.com"}' >/dev/null

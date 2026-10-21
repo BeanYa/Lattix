@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"lattix/backend/internal/store"
 	"lattix/shared"
@@ -43,7 +44,7 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 					ID: chain.ServiceUUID, Email: "tunnel:" + chain.ServiceUUID})
 			}
 		}
-		uuids, err := d.st.ActiveServiceEndpointUsers(ctx, endpointID)
+		uuids, err := d.st.ActiveServiceEndpointUsers(ctx, endpointID, time.Now())
 		if err != nil {
 			return err
 		}
@@ -57,7 +58,7 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 		_, err = d.Enqueue(ctx, endpoint.ServerID, shared.TypeApplySharedEndpoint, payload)
 		return err
 	}
-	assignments, err := d.st.ActiveEndpointAssignments(ctx, endpointID)
+	assignments, err := d.st.ActiveEndpointAssignments(ctx, endpointID, time.Now())
 	if err != nil {
 		return err
 	}

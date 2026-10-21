@@ -965,7 +965,7 @@ func (s *Server) handleRebuildXray(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal(n.ConfigTemplate, &vc); err != nil {
 			continue // 模板损坏的节点跳过（异常留在 nodes 表）
 		}
-		uuids, err := s.st.NodeUserUUIDs(r.Context(), n.ID)
+		uuids, err := s.st.NodeUserUUIDs(r.Context(), n.ID, time.Now())
 		if err != nil {
 			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())

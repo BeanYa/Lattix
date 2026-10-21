@@ -12,6 +12,13 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { humanizeBytes } from '@/lib/format'
 import type { LinkOption } from '@/lib/links'
 import type {
@@ -43,6 +50,7 @@ export function CreateUserDialog({
     createError,
     created,
     form,
+    groups,
     patch,
     onOpenChange,
     onToggleCreateLink,
@@ -83,17 +91,138 @@ export function CreateUserDialog({
                 autoFocus
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="expires-at">
-                有效期（可选，留空为长期；选日期则当天 23:59 到期）
-              </Label>
-              <Input
-                id="expires-at"
-                type="date"
-                value={form.expiresAt}
-                onChange={(e) => onExpiresAtChange(e.target.value)}
+            <label className="cg-check-row">
+              <input
+                type="checkbox"
+                className="cg-checkbox"
+                checked={form.isTrial}
+                onChange={(e) => patch({ isTrial: e.target.checked })}
               />
-              {form.expiresAt && <p className="cg-hint">重置日默认取到期日（可修改）。</p>}
+              <span className="cg-status is-blue">试用</span>
+              <span>试用用户（临时账号；试用流量用尽即到期停权）</span>
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>用户分组（可选）</Label>
+                <Select
+                  value={form.userGroupId || 'none'}
+                  onValueChange={(next) => next && patch({ userGroupId: next === 'none' ? '' : next })}
+                  items={[
+                    { value: 'none', label: '无分组' },
+                    ...groups.map((g) => ({ value: String(g.id), label: g.name })),
+                  ]}
+                >
+                  <SelectTrigger aria-label="用户分组">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">无分组</SelectItem>
+                    {groups.map((g) => (
+                      <SelectItem key={g.id} value={String(g.id)}>
+                        {g.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {form.userGroupId && (
+                  <p className="cg-hint">已选分组：链路绑定与外部订阅由该分组派生（直接分配被遮蔽）。</p>
+                )}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>生效时间</Label>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-1">
+                  <input
+                    type="radio"
+                    name="effective-mode"
+                    checked={form.effectiveMode === 'now'}
+                    onChange={() => patch({ effectiveMode: 'now' })}
+                  />
+                  立即
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="radio"
+                    name="effective-mode"
+                    checked={form.effectiveMode === 'scheduled'}
+                    onChange={() => patch({ effectiveMode: 'scheduled' })}
+                  />
+                  定时
+                </label>
+                {form.effectiveMode === 'scheduled' && (
+                  <Input
+                    type="datetime-local"
+                    step={1}
+                    className="flex-1"
+                    value={form.effectiveAt}
+                    onChange={(e) => patch({ effectiveAt: e.target.value })}
+                    required
+                  />
+                )}
+              </div>
+              {form.effectiveMode === 'scheduled' && (
+                <p className="cg-hint">生效前订阅与链路均不可用；到生效时刻自动上线（精确到秒）。</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label>有效期</Label>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-1">
+                  <input
+                    type="radio"
+                    name="expiry-mode"
+                    checked={form.expiryMode === 'never'}
+                    onChange={() => patch({ expiryMode: 'never' })}
+                  />
+                  长期
+                </label>
+                <label className="flex items-center gap-1">
+                  <input
+                    type="radio"
+                    name="expiry-mode"
+                    checked={form.expiryMode === 'until'}
+                    onChange={() => patch({ expiryMode: 'until' })}
+                  />
+                  到期时间
+                </label>
+                {form.expiryMode === 'until' && (
+                  <Input
+                    type="datetime-local"
+                    step={1}
+                    className="flex-1"
+                    value={form.expiresAt}
+                    onChange={(e) => onExpiresAtChange(e.target.value)}
+                    required
+                  />
+                )}
+                <label className="flex items-center gap-1">
+                  <input
+                    type="radio"
+                    name="expiry-mode"
+                    checked={form.expiryMode === 'days'}
+                    onChange={() => patch({ expiryMode: 'days' })}
+                  />
+                  按天数
+                </label>
+                {form.expiryMode === 'days' && (
+                  <Input
+                    type="number"
+                    min={1}
+                    step={1}
+                    className="w-28"
+                    value={form.durationDays}
+                    onChange={(e) => patch({ durationDays: e.target.value })}
+                    placeholder="天数"
+                    required
+                  />
+                )}
+              </div>
+              <p className="cg-hint">
+                {form.expiryMode === 'days'
+                  ? '自生效时刻起算（立即生效则自创建时刻起算），精确到秒。'
+                  : '到期精确到秒；到期后节点连接与订阅更新同时失效，可延长有效期重新生效。'}
+              </p>
             </div>
             <div className="space-y-2">
               <Label>分配链路（可选）</Label>
@@ -118,7 +247,11 @@ export function CreateUserDialog({
               )}
             </div>
             <div className="space-y-2">
-              <Label>订阅设置（可选，留空跟随全局）</Label>
+              <Label>
+                {form.isTrial
+                  ? '订阅设置（试用流量用尽即停权；其余留空跟随全局）'
+                  : '订阅设置（可选，留空跟随全局）'}
+              </Label>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1">
                   <TrafficLimitInput
@@ -126,7 +259,9 @@ export function CreateUserDialog({
                     unit={form.trafficUnit}
                     onValueChange={(value) => patch({ trafficLimit: value })}
                     onUnitChange={(unit) => patch({ trafficUnit: unit })}
+                    placeholder={form.isTrial ? '试用流量' : '流量配额'}
                   />
+                  {form.isTrial && <p className="cg-hint">试用流量用尽即到期停权（重新生效会清零重计）。</p>}
                 </div>
                 <div className="space-y-1">
                   <Input

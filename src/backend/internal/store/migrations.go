@@ -11,7 +11,7 @@ import (
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
-const schemaVersion = 19
+const schemaVersion = 21
 
 type columnMigration struct {
 	name       string
@@ -126,6 +126,10 @@ func migrateSchema(tx *sql.Tx) error {
 			{"expires_at", "INTEGER"},
 			{"expired", "INTEGER NOT NULL DEFAULT 0"},
 			{"disabled", "INTEGER NOT NULL DEFAULT 0"},
+			{"effective_at", "INTEGER"},
+			{"started_at", "INTEGER"},
+			{"is_trial", "INTEGER NOT NULL DEFAULT 0"},
+			{"quota_exhausted", "INTEGER NOT NULL DEFAULT 0"},
 			{"traffic_limit", "INTEGER NOT NULL DEFAULT 0"},
 			{"traffic_reset_day", "INTEGER NOT NULL DEFAULT 0"},
 			{"sub_title", "TEXT NOT NULL DEFAULT ''"},

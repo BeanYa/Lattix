@@ -45,6 +45,9 @@ type userDTO struct {
 	ExpiresAt             *time.Time                       `json:"expires_at"`
 	Expired               bool                             `json:"expired"`
 	Disabled              bool                             `json:"disabled"`
+	EffectiveAt           *time.Time                       `json:"effective_at"` // 生效时刻（null=立即生效）
+	IsTrial               bool                             `json:"is_trial"`
+	QuotaExhausted        bool                             `json:"quota_exhausted"` // 流量配额停权（§9）
 	TrafficLimit          int64                            `json:"traffic_limit"`
 	TrafficResetDay       int                              `json:"traffic_reset_day"`
 	SubTitle              string                           `json:"sub_title"`
@@ -96,6 +99,9 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 		ExpiresAt:       u.ExpiresAt,
 		Expired:         u.Expired,
 		Disabled:        u.Disabled,
+		EffectiveAt:     u.EffectiveAt,
+		IsTrial:         u.IsTrial,
+		QuotaExhausted:  u.QuotaExhausted,
 		TrafficLimit:    u.TrafficLimit,
 		TrafficResetDay: u.TrafficResetDay,
 		SubTitle:        u.SubTitle,
@@ -358,12 +364,22 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 // 新用户默认全关（§16）：不分配任何节点，不下发 add_user；
 // 管理员经 PUT /api/users/{id}/nodes 分配后才增量扇出。
 // 创建时可选带 node_ids 预选产品层链路（内部仍映射业务 node_id），省略则维持默认全关（§16）。
+// 试用用户（is_trial，§9）：生效时刻 effective_at（RFC3339，省略=立即）、有效期可用
+// duration_days（自生效时刻起算，精确到秒）或 expires_at 二选一表达、可直选用户分组
+// user_group_id；traffic_limit 对试用用户强制执行（用尽即停权）。
+// 生效时刻在未来的用户为未生效态：预选节点/链路照常入库，但不扇出 add_user（到点由 sweeper 激活）。
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name      string  `json:"name"`
 		ExpiresAt *string `json:"expires_at"` // RFC3339，省略/null = 长期
 		NodeIDs   []int64 `json:"node_ids"`   // 可选：预选链路对应的业务节点
 		ChainIDs  []int64 `json:"chain_ids"`
+		// 试用调度（§9）：IsTrial + EffectiveAt（省略=立即生效）；DurationDays 与
+		// ExpiresAt 二选一（同时给出 = 400），天数自生效时刻起算、精确到秒。
+		IsTrial      bool    `json:"is_trial"`
+		EffectiveAt  *string `json:"effective_at"` // RFC3339，省略 = 立即生效
+		DurationDays int     `json:"duration_days"`
+		UserGroupID  int64   `json:"user_group_id"` // 0 = 不入组
 		// 可选订阅设置（省略保持默认；用户级覆盖全局，§9）。
 		TrafficLimit          int64                           `json:"traffic_limit"`
 		TrafficResetDay       int                             `json:"traffic_reset_day"`
@@ -380,13 +396,42 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name 不能为空")
 		return
 	}
+	effectiveAt, err := parseEffectiveAt(req.EffectiveAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.DurationDays < 0 {
+		writeError(w, http.StatusBadRequest, "duration_days 不能为负")
+		return
+	}
 	expiresAt, err := parseExpiresAt(req.ExpiresAt)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if req.DurationDays > 0 && req.ExpiresAt != nil && *req.ExpiresAt != "" {
+		writeError(w, http.StatusBadRequest, "expires_at 与 duration_days 只能二选一")
+		return
+	}
+	base := time.Now()
+	if effectiveAt != nil && effectiveAt.After(base) {
+		base = *effectiveAt
+	}
+	if req.DurationDays > 0 {
+		t := base.Add(time.Duration(req.DurationDays) * 24 * time.Hour)
+		expiresAt = &t
+	}
 	if expiresAt != nil && !expiresAt.After(time.Now()) {
 		writeError(w, http.StatusBadRequest, "expires_at 不能是过去的时间")
+		return
+	}
+	if effectiveAt != nil && expiresAt != nil && !expiresAt.After(*effectiveAt) {
+		writeError(w, http.StatusBadRequest, "expires_at 必须晚于生效时间")
+		return
+	}
+	if req.IsTrial && req.TrafficLimit <= 0 && expiresAt == nil {
+		writeError(w, http.StatusBadRequest, "试用用户须设置试用流量或有效期")
 		return
 	}
 	if req.TrafficLimit < 0 {
@@ -396,18 +441,33 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	var userGroup *store.UserGroup
+	if req.UserGroupID > 0 {
+		userGroup, err = s.st.UserGroupByID(r.Context(), req.UserGroupID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusBadRequest, "用户分组不存在")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	if err := s.st.ValidateAssignableChains(r.Context(), req.ChainIDs); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	u := store.User{
-		Name:     req.Name,
-		UUID:     uuid.NewString(),
-		SubToken: randomHex(16), // 128-bit（评审 P3：订阅 URL 为长期 bearer 凭据）
+		Name:        req.Name,
+		UUID:        uuid.NewString(),
+		SubToken:    randomHex(16), // 128-bit（评审 P3：订阅 URL 为长期 bearer 凭据）
+		ExpiresAt:   expiresAt,
+		EffectiveAt: effectiveAt,
+		IsTrial:     req.IsTrial,
 	}
 	o := s.observeStart(r, "user.create", "创建用户", userPublishObserveStages)
 	defer o.CloseIfPending()
-	id, err := s.st.InsertUser(r.Context(), u.Name, u.UUID, u.SubToken, expiresAt)
+	id, err := s.st.InsertUserFull(r.Context(), u)
 	if err != nil {
 		o.Fail(err)
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -456,6 +516,21 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		created.AppURL = strings.TrimSpace(req.AppURL)
 	}
 
+	// 直选用户分组（§分组）：一用户一组，加入即按分组派生链路（直接分配被遮蔽）。
+	// 关联链路分组的共享端点随后 reconcile，使分组派生凭据到点生效。
+	if userGroup != nil {
+		if err := s.st.SetUserGroupMembership(r.Context(), id, userGroup.ID); err != nil {
+			o.Fail(err)
+			_ = s.st.DeleteUser(r.Context(), id)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.triggerGroupChange(r.Context(), nil, s.endpointIDsForLinkGroups(r.Context(), userGroup.LinkGroupIDs))
+	}
+
+	// 未生效态（§9）：分配照常入库，但不扇出 add_user —— 生效时刻到点由 sweeper 激活。
+	notYetEffective := created.NotYetEffective(time.Now())
+
 	// 可选预选链路（§16）：校验底层业务节点存在后按差量扇出 add_user。
 	nodeIDs := []int64{}
 	if len(req.NodeIDs) > 0 {
@@ -488,7 +563,9 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		s.fanoutUserDiff(r.Context(), created.UUID, nodes, added, nil)
+		if !notYetEffective {
+			s.fanoutUserDiff(r.Context(), created.UUID, nodes, added, nil)
+		}
 	}
 	if len(req.ChainIDs) > 0 {
 		added, _, err := s.st.SetUserChains(r.Context(), id, req.ChainIDs)
@@ -526,6 +603,7 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "user.create", nil, nil, map[string]any{
 		"user_id": created.ID, "name": created.Name, "node_count": len(nodeIDs),
+		"is_trial": created.IsTrial, "effective_at": logTime(created.EffectiveAt),
 	})
 	writeJSON(w, http.StatusCreated, s.toUserDTO(r, *created, nodeIDs))
 }
@@ -549,12 +627,26 @@ func parseExpiresAt(raw *string) (*time.Time, error) {
 	return &t, nil
 }
 
+// parseEffectiveAt 解析 RFC3339 生效时刻（§9）；nil/空串 = 立即生效。
+// 允许过去时刻：语义上等同立即生效（不回退管理员已错过的计划时间）。
+func parseEffectiveAt(raw *string) (*time.Time, error) {
+	if raw == nil || *raw == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, *raw)
+	if err != nil {
+		return nil, fmt.Errorf("effective_at 格式无效（需 RFC3339）")
+	}
+	return &t, nil
+}
+
 // handleUpdateUser 处理 PATCH /api/users/{id}：修改/清除有效期（§9）与显式停用/启用（§16）。
 // 载荷 {"expires_at": "RFC3339" 或 null, "disabled": bool}，省略的字段保持不变；
 // expires_at 传 null = 清除（长期）。与创建一致，expires_at 不允许设为过去时间（400）——
 // "借到期立即停权"由 disabled 开关承担。
-// 有效停权态 = disabled OR expired（§9/§16）：add_user/remove_user 扇出只在有效停权态
-// 跃迁时发生——已 expired 的用户再 disable（或反之）不重复扇出；恢复需两者都解除。
+// 有效停权态 = disabled OR expired OR 未生效（effective_at 在未来，§9）：add_user/remove_user
+// 扇出只在有效停权态跃迁时发生——已 expired 的用户再 disable（或反之）不重复扇出；
+// 恢复需全部解除（未生效态的解除由生效时刻到点 sweeper 激活，不经本端点）。
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID    int64           `json:"user_id"`
@@ -580,7 +672,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
-	stoppedBefore := u.Disabled || u.Expired
+	stoppedBefore := u.Disabled || u.Expired || u.QuotaExhausted || u.NotYetEffective(now)
 
 	expiryTouched := len(req.ExpiresAt) > 0
 	if expiryTouched {
@@ -617,11 +709,12 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		disabledAfter = *req.Disabled
 	}
 
-	// 有效停权态跃迁才扇出（§9/§16）：expiry 被修改后只可能是未来/清除，expired 必已复位。
+	// 有效停权态跃迁才扇出（§9/§16）：expiry 被修改后只可能是未来/清除，expired 必已复位；
+	// 未生效/配额停权不经本端点改变，两侧同值不触发跃迁。
 	// 停权跃迁需重发布订阅：此时注册观察（nil 安全，未注册时方法全为 no-op），发布转异步。
 	var o *progress.Observation
 	defer func() { o.CloseIfPending() }()
-	stoppedAfter := disabledAfter || (u.Expired && !expiryTouched)
+	stoppedAfter := disabledAfter || (u.Expired && !expiryTouched) || u.QuotaExhausted || u.NotYetEffective(now)
 	if stoppedBefore != stoppedAfter {
 		nodes, err := s.st.ListNodes(r.Context())
 		if err != nil {
@@ -641,7 +734,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			log.Printf("panel: user %d (%s) 已恢复，扇出 add_user (%d 节点)", id, u.Name, len(assigned))
 		}
 		if assignments, err := s.st.UserChainAssignments(r.Context(), id); err == nil {
-			s.reconcileAssignmentEndpoints(r.Context(), assignments, nil)
+			s.reconcileUserEndpoints(r.Context(), id, assignments)
 		}
 		o = s.observeStart(r, "user.update", "更新用户状态", userPublishObserveStages)
 		o.Report("db", 100, "已保存")
@@ -740,7 +833,14 @@ func (s *Server) handleSetUserNodes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.fanoutUserDiff(r.Context(), u.UUID, nodes, added, removed)
+	// 有效停权态（disabled/expired/配额停权/未生效，§9/§16）只扇出 remove 侧：
+	// add 侧留给停权解除（含 sweeper 到点激活/周期配额恢复），否则停权用户会被提前推上节点。
+	now := time.Now()
+	if u.Disabled || u.Expired || u.QuotaExhausted || u.NotYetEffective(now) {
+		s.fanoutUserDiff(r.Context(), u.UUID, nodes, nil, removed)
+	} else {
+		s.fanoutUserDiff(r.Context(), u.UUID, nodes, added, removed)
+	}
 	addedChains, removedChains, err := s.st.SetUserChains(r.Context(), id, req.ChainIDs)
 	if err != nil {
 		o.Fail(err)
@@ -867,6 +967,24 @@ func (s *Server) reconcileAssignmentEndpoints(ctx context.Context, groups ...[]s
 		if err := s.disp.ReconcileSharedEndpoint(ctx, endpointID); err != nil {
 			log.Printf("panel: reconcile shared endpoint %d: %v", endpointID, err)
 		}
+	}
+}
+
+// reconcileUserEndpoints reconcile 用户直连分配与其所在用户分组派生的共享端点。
+// 分组成员的生效链路来自分组派生（直接分配被遮蔽），仅按直接分配反查会漏掉分组端点
+// ——生命周期停权/激活（§9）与重新生效都必须覆盖两侧。
+func (s *Server) reconcileUserEndpoints(ctx context.Context, userID int64, assignments []store.UserChainAssignment) {
+	s.reconcileAssignmentEndpoints(ctx, assignments, nil)
+	groupIDs, err := s.st.UserGroupIDsForUser(ctx, userID)
+	if err != nil {
+		return
+	}
+	for _, groupID := range groupIDs {
+		g, err := s.st.UserGroupByID(ctx, groupID)
+		if err != nil {
+			continue
+		}
+		s.triggerGroupChange(ctx, nil, s.endpointIDsForLinkGroups(ctx, g.LinkGroupIDs))
 	}
 }
 
@@ -1009,6 +1127,8 @@ func (s *Server) fanoutRemoveUser(r *http.Request, uuid string) {
 
 // handleUpdateUserSubSettings 处理 POST /api/user/sub-settings：更新用户级订阅配置。
 // 可带 expires_at（RFC3339 或 null，§9）：省略 = 不变；null = 清除（长期）。
+// 可带 effective_at（RFC3339 或 null，§9）：省略 = 不变；null = 立即生效；
+// 推迟到未来即转为未生效态（已激活的会被扇出摘除，到点由 sweeper 重新激活）。
 // 与 handleUpdateUser 一致，expires_at 不允许设为过去时间（400）。
 func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -1020,7 +1140,8 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 		PlanName        string                    `json:"plan_name"` // 套餐名（空=用全局）
 		AppURL          string                    `json:"app_url"`   // 客户端跳转链接（空=用全局）
 		Routing         *subscriptionProfileInput `json:"routing"`
-		ExpiresAt       json.RawMessage           `json:"expires_at"` // 省略 = 不变；null = 清除（长期）
+		ExpiresAt       json.RawMessage           `json:"expires_at"`   // 省略 = 不变；null = 清除（长期）
+		EffectiveAt     json.RawMessage           `json:"effective_at"` // 省略 = 不变；null = 立即生效
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -1072,10 +1193,35 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 		routingProfile = &profile
 	}
 
-	// 有效期（§9）：改动可能复位 expired 停权标记，有效停权态跃迁时扇出 add_user 恢复。
+	// 有效期/生效时刻（§9）：改动可能复位 expired 停权标记或进出未生效态，
+	// 有效停权态跃迁时扇出 add_user 恢复 / remove_user 摘除。配额停权（quota_exhausted）
+	// 不经本端点解除——由周期重置或手动流量重置恢复。
 	now := time.Now()
 	expiryTouched := len(req.ExpiresAt) > 0
-	stoppedBefore := u.Disabled || u.Expired
+	effectiveTouched := len(req.EffectiveAt) > 0
+	stoppedBefore := u.Disabled || u.Expired || u.QuotaExhausted || u.NotYetEffective(now)
+	var effectiveAfter *time.Time
+	if effectiveTouched {
+		if string(req.EffectiveAt) != "null" {
+			var raw string
+			if err := json.Unmarshal(req.EffectiveAt, &raw); err != nil {
+				writeError(w, http.StatusBadRequest, "effective_at 格式无效（需 RFC3339 或 null）")
+				return
+			}
+			t, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "effective_at 格式无效（需 RFC3339）")
+				return
+			}
+			effectiveAfter = &t
+		}
+		if err := s.st.SetUserEffective(r.Context(), req.UserID, effectiveAfter, now); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	} else {
+		effectiveAfter = u.EffectiveAt
+	}
 	if expiryTouched {
 		var expiresAt *time.Time
 		if string(req.ExpiresAt) != "null" {
@@ -1100,7 +1246,8 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
-	stoppedAfter := u.Disabled || (u.Expired && !expiryTouched)
+	notYetAfter := effectiveAfter != nil && effectiveAfter.After(now)
+	stoppedAfter := u.Disabled || (u.Expired && !expiryTouched) || u.QuotaExhausted || notYetAfter
 	if stoppedBefore != stoppedAfter {
 		nodes, err := s.st.ListNodes(r.Context())
 		if err != nil {
@@ -1120,7 +1267,7 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 			log.Printf("panel: user %d (%s) 已恢复，扇出 add_user (%d 节点)", req.UserID, u.Name, len(assigned))
 		}
 		if assignments, err := s.st.UserChainAssignments(r.Context(), req.UserID); err == nil {
-			s.reconcileAssignmentEndpoints(r.Context(), assignments, nil)
+			s.reconcileUserEndpoints(r.Context(), req.UserID, assignments)
 		}
 	}
 
@@ -1162,6 +1309,8 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 		"traffic_limit":     req.TrafficLimit,
 		"traffic_reset_day": req.TrafficResetDay,
 		"expires_at":        logTime(updated.ExpiresAt),
+		"effective_at":      logTime(updated.EffectiveAt),
+		"is_trial":          updated.IsTrial,
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -1268,6 +1417,79 @@ func (s *Server) handleResetUserSubscriptionToken(w http.ResponseWriter, r *http
 		"sub_url":       fmt.Sprintf("%s/sub/%s", base, token),
 		"sub_links_url": fmt.Sprintf("%s/sub/%s?format=links", base, token),
 	})
+}
+
+// handleResetUserTraffic 处理 POST /api/user/reset-traffic：手动重置当期流量（§9）。
+// 归档并清零当期用量（traffic_history 留痕）；因配额停权（quota_exhausted）的用户立即
+// 恢复——扇出 add_user + 重发布订阅（多重停权时仅解除配额侧，不扇出）；未停权用户仅
+// 清零用量并重发布（subscription-userinfo 头更新）。试用/普通用户一致。
+func (s *Server) handleResetUserTraffic(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserID int64 `json:"user_id"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.UserID <= 0 {
+		writeError(w, http.StatusBadRequest, "invalid user id")
+		return
+	}
+	u, err := s.st.UserByID(r.Context(), req.UserID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "用户不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	now := time.Now()
+	stoppedBefore := u.Disabled || u.Expired || u.QuotaExhausted || u.NotYetEffective(now)
+	o := s.observeStart(r, "user.reset_traffic", "重置流量", userPublishObserveStages)
+	defer o.CloseIfPending()
+	if err := s.st.ArchiveUserTraffic(r.Context(), u.UUID, now); err != nil {
+		o.Fail(err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if u.QuotaExhausted {
+		if err := s.st.SetUserQuotaExhausted(r.Context(), req.UserID, false); err != nil {
+			o.Fail(err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	o.Report("db", 100, "流量已重置")
+	stoppedAfter := u.Disabled || u.Expired || u.NotYetEffective(now)
+	if stoppedBefore != stoppedAfter {
+		nodes, err := s.st.ListNodes(r.Context())
+		if err != nil {
+			o.Fail(err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		assigned, err := s.st.UserNodeIDs(r.Context(), req.UserID)
+		if err != nil {
+			o.Fail(err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.fanoutUserDiff(r.Context(), u.UUID, nodes, assigned, nil)
+		log.Printf("panel: user %d (%s) 流量重置后恢复，扇出 add_user (%d 节点)", req.UserID, u.Name, len(assigned))
+		if assignments, err := s.st.UserChainAssignments(r.Context(), req.UserID); err == nil {
+			s.reconcileUserEndpoints(r.Context(), req.UserID, assignments)
+		}
+	}
+	if s.subscriptions != nil {
+		o.WatchUsers([]int64{req.UserID})
+		s.subscriptions.EnqueueUsers([]int64{req.UserID}, s.panelBase(r))
+		o.Report("regenerate", 0, "等待订阅重生成")
+	}
+	s.audit(r, "user.traffic.reset", nil, nil, map[string]any{
+		"user_id": req.UserID, "quota_released": u.QuotaExhausted,
+	})
+	writeJSON(w, http.StatusOK, nil)
 }
 
 func (s *Server) handleUserSubscriptionPreview(w http.ResponseWriter, r *http.Request) {

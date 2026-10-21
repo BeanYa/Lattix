@@ -26,6 +26,9 @@ interface SubInfo {
   expires_at?: number
   expired: boolean
   disabled: boolean
+  quota_exhausted?: boolean
+  effective_at?: number
+  not_effective?: boolean
   used_up: number
   used_down: number
   traffic_limit: number
@@ -577,24 +580,28 @@ export default function SubscriptionPage() {
   const remaining = Math.max(0, info.traffic_limit - usedTotal)
   const usagePercent =
     info.traffic_limit > 0 ? Math.min(100, (usedTotal / info.traffic_limit) * 100) : 0
-  const overLimit = info.traffic_limit > 0 && usedTotal > info.traffic_limit
+  const overLimit = (info.traffic_limit > 0 && usedTotal > info.traffic_limit) || info.quota_exhausted
   const unlimited = info.traffic_limit <= 0
-  const unavailable = info.disabled || info.expired || overLimit
+  const unavailable = info.disabled || info.expired || info.not_effective || overLimit
   const statusLabel = info.disabled
     ? '已停用'
-    : info.expired
-      ? '已到期'
-      : overLimit
-        ? '已超额'
-        : '网络就绪'
+    : info.not_effective
+      ? '尚未生效'
+      : info.expired
+        ? '已到期'
+        : overLimit
+          ? '已超额'
+          : '网络就绪'
   const statusDetail = unavailable ? '节点当前不可用' : '订阅与节点均可用'
   const credentialDetail = info.disabled
     ? '已被管理员停用'
-    : info.expired
-      ? '续期后恢复服务'
-      : overLimit
-        ? '流量已超出配额'
-        : '凭证状态正常'
+    : info.not_effective
+      ? '等待到达生效时刻'
+      : info.expired
+        ? '续期后恢复服务'
+        : overLimit
+          ? '流量配额已用尽，重置后恢复'
+          : '凭证状态正常'
   const primaryClient = clients.find((client) => client.deeplink)
   const currentFormat = activeFormat && availableFormats.includes(activeFormat) ? activeFormat : ''
   const currentFormatLabel = currentFormat
@@ -682,9 +689,11 @@ export default function SubscriptionPage() {
           <Notice tone="danger" title={statusLabel} className="sub-alert">
             {info.disabled
               ? '订阅已被管理员停用。'
-              : info.expired
-                ? '订阅有效期已结束。'
-                : '流量已超出当前配额。'}
+              : info.not_effective
+                ? `订阅尚未生效${info.effective_at ? `，${formatExpiry(info.effective_at)} 起可用` : ''}。`
+                : info.expired
+                  ? '订阅有效期已结束。'
+                  : '流量已超出当前配额。'}
           </Notice>
         ) : null}
 
@@ -760,6 +769,12 @@ export default function SubscriptionPage() {
                   <dt>有效期至</dt>
                   <dd className="tabular">{formatExpiry(info.expires_at)}</dd>
                 </div>
+                {info.effective_at ? (
+                  <div>
+                    <dt>生效时刻</dt>
+                    <dd className="tabular">{formatExpiry(info.effective_at)}</dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt>凭证状态</dt>
                   <dd className={unavailable ? 'is-bad' : 'is-ok'}>{credentialDetail}</dd>

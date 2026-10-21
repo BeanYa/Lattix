@@ -74,7 +74,7 @@ install.sh           # 唯一面向用户的统一安装入口
 | 表 | 字段（要点） |
 |---|---|
 | `servers` | id, alias, country_code(ISO 3166-1 alpha-2), location(城市/机房位置), address(公网地址), learned_addr(拨入学习地址), nic_addresses(agent 上报网卡地址 JSON), tags(有序标签 JSON，名称模板 `TAG[n]` 来源), token(长期凭证), last_seen_at, xray_version, config_drift(§17), created_at |
-| `users` | id, name, uuid, sub_token, expires_at(可空，unix 秒，NULL=长期), expired(0/1 到期停权标记，§9), disabled(0/1 显式停用标记，§16), created_at |
+| `users` | id, name, uuid, sub_token, expires_at(可空，unix 秒，NULL=长期), expired(0/1 到期停权标记，§9), disabled(0/1 显式停用标记，§16), effective_at(可空，unix 秒，NULL=创建即生效，§9), started_at(可空，unix 秒，激活扇出标记：sweeper 越过生效时刻后置位), is_trial(0/1 试用标记), quota_exhausted(0/1 流量配额停权标记，§9), created_at |
 | `nodes` | id, name(解析后的管理/订阅名称), server_id, protocol, port, config_template(JSON), realized_config(JSON), status, error, created_at |
 | `commands` | id, request_id, trace_id, server_id, type, data(JSON), status(queued/sent/acked/failed/abandoned), error, attempts, created_at, updated_at |
 | `user_nodes` | user_id, node_id（§16 逐节点用户分配，默认全关） |
@@ -213,6 +213,38 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
 - **mihomo 开箱即用**：`clash` 格式内置 fake-ip DNS（`enhanced-mode: fake-ip`、198.18.0.1/16、本地域名 filter 与默认/DoH nameserver；节点域名经 `proxy-server-nameserver` 用国内可达解析器直查，不设境外回退，避免节点测速超时）；策略含 GEOSITE/GEOIP 规则时另输出 `geodata-mode` + `geo-auto-update` 与 `geox-url`（MetaCubeX/meta-rules-dat），规则在客户端直接生效。
 - **响应头**：`/sub/{token}` 的所有文件格式返回 `subscription-userinfo`，包含 upload、download 以及可选 total、expire、reset_day、plan_name、app_url；同时返回 `profile-update-interval`。
 - **用户有效期**：创建或更新用户可带 `expires_at`；过去时间返回 `HTTP 200 + INVALID_ARGUMENT`。`POST /api/user/update` 可修改或清除（null = 长期；省略字段保持不变）。列表 DTO 带 `expires_at`/`expired`/`disabled`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `user.remove`（显式 nodes 载荷；已 disabled 的用户只补记标记不重复扇出）；管理员延长/清除有效期（expired 1→0）→ 扇出 `user.add` 恢复（disabled 用户除外，见 §16 有效停权态）。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`node.apply` 的 `NodeUserUUIDs` 不下发 expired/disabled 用户。
+- **用户生命周期（试用/生效时刻/流量配额，§9）**：`users` 另有 `effective_at`
+  （NULL=创建即生效）、`is_trial` 与 `quota_exhausted`。生命周期扫描（原到期扫描扩展，
+  同一 `user.expiry` 任务）按序处理三段：
+  ① **激活**——`effective_at` 已越过后且 `started_at` 为空：置位标记（幂等去重），
+  未停权者扇出 `user.add` 并重发布订阅（已 disabled/expired/quota_exhausted/同轮将到期者
+  只补标记）；② **到期**——同上段既有逻辑；③ **流量配额**——所有设置 `traffic_limit>0`
+  的用户（试用与普通一致）当期用量（`traffic` 表 node_id=0 行，与订阅 userinfo 同口径）
+  达到配额 → 置 `quota_exhausted=1` 停权（与 `expired` 正交：周期重置后可区分停权原因），
+  扇出 remove_user + 重发布，与到期同一停权路径。
+  **未生效、到期与配额停权均为有效停权态**（§16）：`NodeUserUUIDs`、共享端点用户查询
+  （`ActiveEndpointAssignments` / `ActiveServiceEndpointUsers` 含分组派生分支）按
+  `effective_at`/`quota_exhausted` 过滤——面板离线跨过边界后由 apply 全量下发自愈。
+  **订阅更新拦截**：`/sub/{token}` 对已到期（含 `expires_at` 刚越过来不及等 sweeper，
+  无状态判定，精确到秒）、配额停权或未生效用户拒绝内容（403 `subscription expired` /
+  `subscription quota exhausted` / `subscription not yet effective`），客户端无法再经
+  旧链接更新；浏览器状态页与 `/api/sub/{token}/info`（含 `effective_at`/`not_effective`/
+  `quota_exhausted`）保持可见。client-download 端点同样拒绝。**创建用户**支持试用参数：
+  `is_trial`、`effective_at`（RFC3339，省略=立即；过去时刻视作立即）、`duration_days`
+  （与 `expires_at` 二选一，自生效时刻起算天数×24h）与 `user_group_id`（创建时直选用户
+  分组，一用户一组）。未生效用户创建时的节点/链分配照常入库但不扇出。
+  **配额恢复两条路**：① **周期自动恢复**——`traffic.reset` 任务按各用户
+  `traffic_reset_day` 边界归档清零当期流量，配额停权随之解除并扇出 `user.add` 恢复
+  （多重停权仅解除配额侧，到期/停用仍需管理员处理）；② **手动重置**——
+  `POST /api/user/reset-traffic`（用户列表「流量重置」入口，确认弹窗）：归档清零当期
+  用量（`traffic_history` 留痕），配额停权立即解除并恢复；未停权用户仅清零用量并重发布
+  （userinfo 头更新）。
+  **重新生效**：延长/清除有效期复位 `expired`（既有逻辑）；用户列表对到期用户提供
+  「重新激活」入口——弹窗重设流量（默认沿用原配额）与有效期，走 `/api/user/sub-settings`
+  触发恢复，订阅链接不变、客户端无感续用；试用用户从 `expired=1` 恢复时归档并清零当期
+  流量并一并解除配额停权（重新生效 = 全新试用期，`ArchiveUserTraffic`），普通用户仅复位
+  `expired`、配额停权独立恢复；生效时刻可在订阅设置中编辑（`effective_at` 省略=不变/
+  null=立即），推迟即转未生效态并扇出摘除。
 - 分享链接集合已实现：`GET /sub/{token}?format=links`（§14，仅含分配的 active 节点）。
 - **落地页客户端下载**：面板代取 GitHub Release 客户端安装包并校验发布方 SHA-256
   （缓存 72 小时、流式上限 512 MiB，校验失败即失败并删件）；落地页经
@@ -418,8 +450,10 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，由面板 Agent 设置�
 - **订阅**：YAML 与 links 端点均只含分配到该用户的 active 节点。
 - **显式停用/启用开关**：`users.disabled`（`POST /api/user/update` 带 `disabled` 字段，
   用户列表行内"停用/启用"按钮）。停用 → 对其已分配节点扇出 user.remove；启用 → 扇出 user.add 恢复。
-  disabled 与 expired（§9）正交，**有效停权态 = disabled OR expired**：user.add/user.remove 扇出只在
-  有效停权态跃迁时发生（已 expired 再 disable 不重复扇出；恢复需两者都解除）；有效停权态下
+  disabled 与 expired（§9）正交，**有效停权态 = disabled OR expired OR quota_exhausted
+  （流量配额用尽，§9）OR 未生效（effective_at 在未来，§9）**：user.add/user.remove 扇出只在
+  有效停权态跃迁时发生（已 expired 再 disable 不重复扇出；恢复需全部解除，未生效态由
+  sweeper 到点激活解除、配额停权由周期重置/手动重置解除）；有效停权态下
   订阅 YAML/links proxies 为空、userinfo 头照常、落地页显示"已停用"，`NodeUserUUIDs` 不下发。
 - Agent 侧无新增状态：`AddUserPayload.Nodes`（tag → 协议参数）驱动精确落点；
   `Nodes` 必须明确给出，不存在“作用于全部节点”的隐式语义。

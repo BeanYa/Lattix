@@ -197,7 +197,7 @@ func TestActiveEndpointAssignmentsIncludesGroupUsers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assignments, err := st.ActiveEndpointAssignments(ctx, endpointA)
+	assignments, err := st.ActiveEndpointAssignments(ctx, endpointA, time.Now())
 	if err != nil || len(assignments) != 1 {
 		t.Fatalf("endpoint A assignments = %+v err %v", assignments, err)
 	}
@@ -215,7 +215,7 @@ func TestActiveEndpointAssignmentsIncludesGroupUsers(t *testing.T) {
 		t.Fatalf("group identity = %q want %q", got, wantIdentity)
 	}
 	// endpointB：直接用户可见；分组用户不在其链路上
-	assignments, err = st.ActiveEndpointAssignments(ctx, endpointB)
+	assignments, err = st.ActiveEndpointAssignments(ctx, endpointB, time.Now())
 	if err != nil || len(assignments) != 1 || assignments[0].UserID != direct {
 		t.Fatalf("endpoint B assignments = %+v err %v", assignments, err)
 	}
@@ -228,7 +228,7 @@ func TestActiveEndpointAssignmentsIncludesGroupUsers(t *testing.T) {
 	if _, _, err := st.SetUserChains(ctx, member, []int64{chainA}); err != nil {
 		t.Fatal(err)
 	}
-	assignments, err = st.ActiveEndpointAssignments(ctx, endpointA)
+	assignments, err = st.ActiveEndpointAssignments(ctx, endpointA, time.Now())
 	if err != nil || len(assignments) != 1 {
 		t.Fatalf("after direct assign, endpoint A = %+v err %v", assignments, err)
 	}
@@ -528,7 +528,7 @@ func TestActiveServiceEndpointUsers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	uuids, err := st.ActiveServiceEndpointUsers(ctx, epE.ID)
+	uuids, err := st.ActiveServiceEndpointUsers(ctx, epE.ID, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

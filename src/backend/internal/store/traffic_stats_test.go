@@ -65,7 +65,7 @@ func TestTrafficStatsUserDimUsesResolvedOwner(t *testing.T) {
 	if _, err := st.CreateUserGroup(ctx, "ug", []int64{member}, []int64{lgID}); err != nil {
 		t.Fatal(err)
 	}
-	assignments, err := st.ActiveEndpointAssignments(ctx, endpointID)
+	assignments, err := st.ActiveEndpointAssignments(ctx, endpointID, time.Now())
 	if err != nil || len(assignments) != 1 {
 		t.Fatalf("assignments = %+v err %v", assignments, err)
 	}

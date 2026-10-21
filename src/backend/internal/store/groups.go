@@ -313,6 +313,24 @@ func (s *Store) UpdateUserGroup(ctx context.Context, id int64, name string, user
 	return nil
 }
 
+// SetUserGroupMembership 把单个用户加入指定用户分组（一用户一组：加入前先移出其他组）。
+// 供创建用户时直接选组使用，语义与 insertUserGroupMembers 的移组行为一致。
+func (s *Store) SetUserGroupMembership(ctx context.Context, userID, groupID int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin set user group membership: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM user_group_members WHERE user_id = ?`, userID); err != nil {
+		return fmt.Errorf("clear user group membership: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO user_group_members (user_group_id, user_id) VALUES (?, ?)`, groupID, userID); err != nil {
+		return fmt.Errorf("insert user group membership: %w", err)
+	}
+	return tx.Commit()
+}
+
 // insertUserGroupMembers 先清空再写入用户分组（成员 + 关联链路分组，同一事务内）。
 // 一用户一组约束：本组写入前把所选用户从其他用户分组移出（移组语义）。
 func insertUserGroupMembers(ctx context.Context, tx *sql.Tx, groupID int64, userIDs, linkGroupIDs []int64) error {

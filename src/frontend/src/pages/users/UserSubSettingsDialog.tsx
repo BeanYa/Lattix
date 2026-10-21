@@ -26,8 +26,19 @@ export function UserSubSettingsDialog({
   ruleCategories: SubscriptionRuleCategory[]
   templates: SubscriptionTemplate[]
 }) {
-  const { target, saving, err, form, patch, close, onExpiresAtChange, clearExpiresAt, onSave } =
-    controller
+  const {
+    target,
+    saving,
+    err,
+    form,
+    patch,
+    close,
+    onExpiresAtChange,
+    clearExpiresAt,
+    onEffectiveAtChange,
+    clearEffectiveAt,
+    onSave,
+  } = controller
   return (
     <Dialog open={target !== null} onOpenChange={(next) => !next && close()}>
       <DialogContent className="max-h-[90vh] sm:max-w-5xl overflow-y-auto">
@@ -80,7 +91,28 @@ export function UserSubSettingsDialog({
               )}
             </div>
             <p className="cg-hint">
-              到期后自动停权（订阅保留但链路为空）；延长或清除有效期会恢复其链路。
+              到期后节点连接与订阅更新同时失效；延长或清除有效期会恢复其链路（试用用户同时清零流量重计）。
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="sub-effective-at">生效时间（留空为立即生效）</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="sub-effective-at"
+                type="datetime-local"
+                step={1}
+                className="flex-1"
+                value={form.effectiveAt}
+                onChange={(e) => onEffectiveAtChange(e.target.value)}
+              />
+              {form.effectiveAt && (
+                <Button type="button" variant="outline" onClick={clearEffectiveAt}>
+                  立即生效
+                </Button>
+              )}
+            </div>
+            <p className="cg-hint">
+              推迟到未来即转未生效态（链路立即摘除），到生效时刻自动上线；精确到秒。
             </p>
           </div>
           <div className="space-y-2">

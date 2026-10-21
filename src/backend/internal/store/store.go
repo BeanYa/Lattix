@@ -126,6 +126,10 @@ CREATE TABLE IF NOT EXISTS users (
     expires_at INTEGER,
     expired    INTEGER NOT NULL DEFAULT 0,
     disabled   INTEGER NOT NULL DEFAULT 0,
+    effective_at INTEGER, -- 生效时刻（§9；NULL=创建即生效）
+    started_at   INTEGER, -- 激活扇出标记（sweeper 越过生效时刻后置位；NULL=待激活）
+    is_trial     INTEGER NOT NULL DEFAULT 0, -- 试用用户标记（面板徽标/语义提示）
+    quota_exhausted INTEGER NOT NULL DEFAULT 0, -- 流量配额停权（§9；周期/手动重置后清位恢复）
     traffic_limit     INTEGER NOT NULL DEFAULT 0, -- 流量配额（字节），0=不限
     traffic_reset_day INTEGER NOT NULL DEFAULT 0, -- 每月重置日（day-of-month，0=创建日，1-31）
     sub_title         TEXT    NOT NULL DEFAULT '', -- 订阅落地页标题覆盖（空=用全局）

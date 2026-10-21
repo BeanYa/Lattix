@@ -567,6 +567,9 @@ export interface SubUser {
   expires_at: string | null
   expired: boolean
   disabled: boolean
+  effective_at: string | null
+  is_trial: boolean
+  quota_exhausted: boolean
   traffic_limit: number
   traffic_reset_day: number
   sub_title: string

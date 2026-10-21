@@ -6,9 +6,11 @@ import {
   expiryDateDay,
   formatTrafficLimit,
   localDateToRFC3339EndOfDay,
+  localDateTimeToRFC3339,
   parseTrafficLimit,
   parseTrafficResetDay,
   toLocalDateInput,
+  toLocalDateTimeInput,
   type TrafficUnit,
 } from '@/lib/user-subscription'
 import type { SubUser, SubscriptionRoutingProfile } from '@/lib/types'
@@ -16,6 +18,8 @@ import type { SubUser, SubscriptionRoutingProfile } from '@/lib/types'
 export interface UserSubSettingsFormState {
   expiresAt: string
   expiryTouched: boolean
+  effectiveAt: string
+  effectiveTouched: boolean
   trafficLimit: string
   trafficUnit: TrafficUnit
   resetDay: string
@@ -43,6 +47,8 @@ export function useUserSubSettings({
   const [form, setForm] = useState<UserSubSettingsFormState>({
     expiresAt: '',
     expiryTouched: false,
+    effectiveAt: '',
+    effectiveTouched: false,
     trafficLimit: '',
     trafficUnit: 'GB',
     resetDay: '',
@@ -62,6 +68,8 @@ export function useUserSubSettings({
     setForm({
       expiresAt: u.expires_at ? toLocalDateInput(u.expires_at) : '',
       expiryTouched: false,
+      effectiveAt: u.effective_at ? toLocalDateTimeInput(u.effective_at) : '',
+      effectiveTouched: false,
       trafficLimit: trafficLimit.value,
       trafficUnit: trafficLimit.unit,
       resetDay: u.traffic_reset_day > 0 ? String(u.traffic_reset_day) : '',
@@ -89,6 +97,14 @@ export function useUserSubSettings({
     setForm((current) => ({ ...current, expiresAt: '', expiryTouched: true }))
   }
 
+  const onEffectiveAtChange = (value: string) => {
+    setForm((current) => ({ ...current, effectiveAt: value, effectiveTouched: true }))
+  }
+
+  const clearEffectiveAt = () => {
+    setForm((current) => ({ ...current, effectiveAt: '', effectiveTouched: true }))
+  }
+
   const onSave = async () => {
     if (!target) return
     setErr('')
@@ -108,6 +124,9 @@ export function useUserSubSettings({
         expires_at: form.expiryTouched
           ? localDateToRFC3339EndOfDay(form.expiresAt)
           : target.expires_at,
+        effective_at: form.effectiveTouched
+          ? localDateTimeToRFC3339(form.effectiveAt)
+          : target.effective_at,
       })
       if (observeId) showOperation({ observeId })
       setTarget(null)
@@ -129,6 +148,8 @@ export function useUserSubSettings({
     close,
     onExpiresAtChange,
     clearExpiresAt,
+    onEffectiveAtChange,
+    clearEffectiveAt,
     onSave,
   }
 }

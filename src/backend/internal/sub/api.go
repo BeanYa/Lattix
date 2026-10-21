@@ -19,6 +19,9 @@ type SubInfoResponse struct {
 	ExpiresAt      *int64 `json:"expires_at,omitempty"` // unix 秒
 	Expired        bool   `json:"expired"`
 	Disabled       bool   `json:"disabled"`
+	QuotaExhausted bool   `json:"quota_exhausted"`        // 流量配额停权（§9）
+	EffectiveAt    *int64 `json:"effective_at,omitempty"` // unix 秒（null=立即生效）
+	NotEffective   bool   `json:"not_effective"`          // 尚未到达生效时刻（§9）
 	UsedUp         int64  `json:"used_up"`
 	UsedDown       int64  `json:"used_down"`
 	TrafficLimit   int64  `json:"traffic_limit"` // 0=不限
@@ -127,6 +130,8 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 		Name:           user.Name,
 		Expired:        user.Expired,
 		Disabled:       user.Disabled,
+		QuotaExhausted: user.QuotaExhausted,
+		NotEffective:   user.NotYetEffective(time.Now()),
 		UsedUp:         merged.Upload,
 		UsedDown:       merged.Download,
 		TrafficLimit:   merged.Total,
@@ -138,6 +143,10 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 	if merged.Expire != nil {
 		v := *merged.Expire
 		resp.ExpiresAt = &v
+	}
+	if user.EffectiveAt != nil {
+		v := user.EffectiveAt.Unix()
+		resp.EffectiveAt = &v
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -212,7 +221,7 @@ func (s *Server) HandleSubStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User) ([]SubLinkStatus, error) {
-	if user.Expired || user.Disabled {
+	if user.Expired || user.Disabled || user.QuotaExhausted || user.NotYetEffective(time.Now()) {
 		return []SubLinkStatus{}, nil
 	}
 	samplesByServer, err := s.st.RecentServerMetricSamples(r.Context(), 30)

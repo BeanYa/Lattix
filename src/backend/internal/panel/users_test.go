@@ -180,7 +180,7 @@ func TestExpirySweepRepublishesUserSubscription(t *testing.T) {
 	requester := &chainEditRequester{online: map[int64]bool{serverID: false}}
 	server := &Server{st: st, disp: dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{}), req: requester, subscriptions: subSrv}
 
-	server.sweepExpiredUsers(ctx)
+	server.sweepUserLifecycles(ctx)
 
 	// 到期停权后必须触发订阅重发布：发布文件出现且节点清空（评审发现的原缺失路径）。
 	deadline := time.Now().Add(5 * time.Second)

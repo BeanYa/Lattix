@@ -263,7 +263,7 @@ func (s *Server) registerCoreTasks() {
 	s.scheduler.Register(scheduler.ScheduledTask{
 		Name: "user.expiry", RunOnStart: true, Timeout: time.Minute,
 		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(expiryInterval) },
-		Run:     func(ctx context.Context) error { s.sweepExpiredUsers(ctx); return nil },
+		Run:     func(ctx context.Context) error { s.sweepUserLifecycles(ctx); return nil },
 	})
 	s.scheduler.Register(scheduler.ScheduledTask{
 		Name: "metrics.retention", RunOnStart: true, Timeout: time.Minute,
@@ -438,6 +438,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/user/reset-subscription-token",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
 		s.handleResetUserSubscriptionToken)
+	s.registerRPC(mux, http.MethodPost, "/api/user/reset-traffic",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
+		s.handleResetUserTraffic)
 	s.registerRPC(mux, http.MethodGet, "/api/user/subscription-preview",
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"user_id", "format", "stage"}},
 		s.handleUserSubscriptionPreview)

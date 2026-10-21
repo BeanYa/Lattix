@@ -773,7 +773,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** @description 创建真实用户；chain_ids 为直接链路分配，每项生成独立 access_uuid。 */
+        /**
+         * @description 创建真实用户；chain_ids 为直接链路分配，每项生成独立 access_uuid。
+         *     试用用户：is_trial=true 时 traffic_limit 强制执行（用尽即到期停权）；effective_at
+         *     （RFC3339，省略=立即生效）与 duration_days（自生效时刻起算的天数，精确到秒）
+         *     或 expires_at 二选一；user_group_id 可在创建时直选用户分组（一用户一组）。
+         */
         post: operations["userCreate"];
         delete?: never;
         options?: never;
@@ -862,6 +867,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /**
+         * @description 更新用户级订阅设置。expires_at / effective_at 均可省略（不变）或传 null
+         *     （expires_at=清除为长期；effective_at=立即生效）；推迟 effective_at 到未来
+         *     即转未生效态并扇出摘除，到点由生命周期扫描激活。
+         */
         post: operations["userSubSettings"];
         delete?: never;
         options?: never;
@@ -911,6 +921,27 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["userResetSubscriptionToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/reset-traffic": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 手动重置用户当期流量（§9）：归档并清零用量（traffic_history 留痕）；
+         *     因流量配额停权（quota_exhausted）的用户立即恢复——扇出 add_user 并重发布订阅
+         *     （多重停权时仅解除配额侧）；未停权用户仅清零用量并重发布（userinfo 头更新）。
+         */
+        post: operations["userResetTraffic"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3034,6 +3065,24 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    userResetTraffic: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     userSubscriptionPreview: {
         parameters: {
             query: {
@@ -3900,6 +3949,7 @@ export const rpcOperations = {
   userTrafficHistory: { method: 'GET', path: '/api/user/traffic-history' },
   userRegenerateSubscription: { method: 'POST', path: '/api/user/regenerate-subscription' },
   userResetSubscriptionToken: { method: 'POST', path: '/api/user/reset-subscription-token' },
+  userResetTraffic: { method: 'POST', path: '/api/user/reset-traffic' },
   userSubscriptionPreview: { method: 'GET', path: '/api/user/subscription-preview' },
   subscriptionCategoryList: { method: 'GET', path: '/api/subscription/categories' },
   subscriptionTemplateList: { method: 'GET', path: '/api/subscription/templates' },

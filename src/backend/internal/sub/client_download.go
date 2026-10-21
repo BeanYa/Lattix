@@ -364,7 +364,16 @@ func (s *Server) subDownloadUser(r *http.Request) (*store.User, error) {
 		log.Printf("sub: client download user: %v", err)
 		return nil, errors.New("internal error")
 	}
-	if user.Expired || user.Disabled {
+	if user.Expired || (user.ExpiresAt != nil && !user.ExpiresAt.After(time.Now())) {
+		return nil, errors.New("订阅已到期")
+	}
+	if user.QuotaExhausted {
+		return nil, errors.New("流量配额已用尽")
+	}
+	if user.NotYetEffective(time.Now()) {
+		return nil, errors.New("订阅尚未生效")
+	}
+	if user.Disabled {
 		return nil, errors.New("订阅不可用")
 	}
 	return user, nil

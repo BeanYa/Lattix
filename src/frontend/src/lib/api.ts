@@ -294,6 +294,10 @@ export const api = {
       app_url?: string
       routing?: SubscriptionRoutingProfile
       external_subscriptions?: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }>
+      is_trial?: boolean
+      effective_at?: string | null
+      duration_days?: number
+      user_group_id?: number
     },
   ) =>
     requester.postObserved<SubUser>('/api/user/create', {
@@ -312,6 +316,8 @@ export const api = {
       items: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }>
     }>('/api/user/set-external-subscriptions', { user_id: userId, items }),
   deleteUser: (userId: number) => requester.post<void>('/api/user/delete', { user_id: userId }),
+  resetUserTraffic: (userId: number) =>
+    requester.postObserved<void>('/api/user/reset-traffic', { user_id: userId }),
   updateUserSubSettings: (body: {
     user_id: number
     traffic_limit: number
@@ -322,6 +328,7 @@ export const api = {
     app_url: string
     routing: SubscriptionRoutingProfile
     expires_at: string | null
+    effective_at: string | null
   }) => requester.postObserved<void>('/api/user/sub-settings', body),
   regenerateUserSubscription: (userId: number) =>
     requester.postObserved<void>('/api/user/regenerate-subscription', { user_id: userId }),

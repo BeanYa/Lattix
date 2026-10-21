@@ -319,14 +319,15 @@ func (s *Store) UserChainAssignments(ctx context.Context, userID int64) ([]UserC
 // reconciliation, so it must not scale queries with the number of users.
 // 分组用户（属于任意用户分组）的生效客户端来自分组派生链路（确定性 UUIDv5）；
 // 其直接 user_chain_assignments 行被遮蔽。直接分配部分排除分组成员避免重复。
-func (s *Store) ActiveEndpointAssignments(ctx context.Context, endpointID int64) ([]UserChainAssignment, error) {
+func (s *Store) ActiveEndpointAssignments(ctx context.Context, endpointID int64, now time.Time) ([]UserChainAssignment, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT a.id, a.user_id, a.chain_id, c.endpoint_id,
 		a.access_uuid, u.uuid, a.created_at FROM user_chain_assignments a
 		JOIN chains c ON c.id=a.chain_id
 		JOIN users u ON u.id=a.user_id
-		WHERE c.endpoint_id=? AND c.deleted_at IS NULL AND u.expired=0 AND u.disabled=0
+		WHERE c.endpoint_id=? AND c.deleted_at IS NULL AND u.expired=0 AND u.disabled=0 AND u.quota_exhausted=0
+		AND (u.effective_at IS NULL OR u.effective_at <= ?)
 		AND NOT EXISTS (SELECT 1 FROM user_group_members g WHERE g.user_id = a.user_id)
-		ORDER BY a.chain_id, a.id`, endpointID)
+		ORDER BY a.chain_id, a.id`, endpointID, now.Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -349,8 +350,9 @@ func (s *Store) ActiveEndpointAssignments(ctx context.Context, endpointID int64)
 		JOIN link_group_chains lgc ON lgc.group_id = ugl.link_group_id
 		JOIN chains c ON c.id = lgc.chain_id
 		JOIN users u ON u.id = ugm.user_id
-		WHERE c.endpoint_id=? AND c.deleted_at IS NULL AND u.expired=0 AND u.disabled=0
-		ORDER BY lgc.chain_id, u.id`, endpointID)
+		WHERE c.endpoint_id=? AND c.deleted_at IS NULL AND u.expired=0 AND u.disabled=0 AND u.quota_exhausted=0
+		AND (u.effective_at IS NULL OR u.effective_at <= ?)
+		ORDER BY lgc.chain_id, u.id`, endpointID, now.Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -583,15 +585,16 @@ func (s *Store) ChainsByServiceEndpoint(ctx context.Context, endpointID int64) (
 
 // ActiveServiceEndpointUsers 返回端到端 hy2 链（引用该出口共享监听且无入口端点）的
 // 业务用户 UUID 全集：直接分配 + 分组派生（镜像 ActiveEndpointAssignments 的生效规则：
-// 排除 expired/disabled，分组成员的直接分配被分组派生遮蔽），供出口监听 users 填充。
-func (s *Store) ActiveServiceEndpointUsers(ctx context.Context, endpointID int64) ([]string, error) {
+// 排除 expired/disabled/quota_exhausted/未生效，分组成员的直接分配被分组派生遮蔽），供出口监听 users 填充。
+func (s *Store) ActiveServiceEndpointUsers(ctx context.Context, endpointID int64, now time.Time) ([]string, error) {
 	set := map[string]bool{}
 	rows, err := s.db.QueryContext(ctx, `SELECT u.uuid FROM user_chain_assignments a
 		JOIN chains c ON c.id=a.chain_id
 		JOIN users u ON u.id=a.user_id
 		WHERE c.service_endpoint_id=? AND c.endpoint_id=0 AND c.deleted_at IS NULL
-		AND u.expired=0 AND u.disabled=0
-		AND NOT EXISTS (SELECT 1 FROM user_group_members g WHERE g.user_id = a.user_id)`, endpointID)
+		AND u.expired=0 AND u.disabled=0 AND u.quota_exhausted=0 AND (u.effective_at IS NULL OR u.effective_at <= ?)
+		AND NOT EXISTS (SELECT 1 FROM user_group_members g WHERE g.user_id = a.user_id)`,
+		endpointID, now.Unix())
 	if err != nil {
 		return nil, err
 	}
@@ -614,7 +617,8 @@ func (s *Store) ActiveServiceEndpointUsers(ctx context.Context, endpointID int64
 		JOIN chains c ON c.id = lgc.chain_id
 		JOIN users u ON u.id = ugm.user_id
 		WHERE c.service_endpoint_id=? AND c.endpoint_id=0 AND c.deleted_at IS NULL
-		AND u.expired=0 AND u.disabled=0`, endpointID)
+		AND u.expired=0 AND u.disabled=0 AND u.quota_exhausted=0 AND (u.effective_at IS NULL OR u.effective_at <= ?)`,
+		endpointID, now.Unix())
 	if err != nil {
 		return nil, err
 	}

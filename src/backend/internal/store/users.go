@@ -11,6 +11,11 @@ import (
 // User 是 users 表的一行（§4）：独立 UUID（跨服务器同一 UUID，§7）与独立 sub_token（§8）。
 // ExpiresAt 为到期时刻（NULL=长期）；Expired 是到期停权标记（sweeper 置位后已扇出 remove_user，§9）。
 // Disabled 是管理员显式停用标记（§16），与 Expired 正交：任一成立即为有效停权态。
+// EffectiveAt 为生效时刻（NULL=创建即生效）；未生效用户与停权用户同等不下发/不出订阅（§9）。
+// StartedAt 是激活扇出标记（sweeper 越过生效时刻后置位，避免重复扇出 add_user）。
+// IsTrial 标记试用用户（面板徽标/语义提示；试用流量用尽在订阅设置与落地页有专属提示）。
+// QuotaExhausted 是流量配额停权标记（§9）：所有设置 traffic_limit 的用户当期用量达配额
+// 即置位（节点摘除+订阅 403），周期流量重置或管理员手动重置后清位恢复；与 Expired 正交。
 type User struct {
 	ID              int64
 	Name            string
@@ -19,6 +24,10 @@ type User struct {
 	ExpiresAt       *time.Time
 	Expired         bool
 	Disabled        bool
+	EffectiveAt     *time.Time
+	StartedAt       *time.Time
+	IsTrial         bool
+	QuotaExhausted  bool
 	TrafficLimit    int64  // 流量配额（字节），0=不限
 	TrafficResetDay int    // 每月重置日（day-of-month，0=创建日，1-31）
 	SubTitle        string // 订阅落地页标题覆盖
@@ -26,6 +35,12 @@ type User struct {
 	PlanName        string // 套餐名（subscription-userinfo plan_name，空=用全局）
 	AppURL          string // 客户端跳转链接（subscription-userinfo app_url，空=用全局）
 	CreatedAt       time.Time
+}
+
+// NotYetEffective 报告用户是否尚未到达生效时刻（§9）。判定是无状态的：
+// 生效时刻已过但激活 sweeper 尚未运行的窗口内，按已生效处理（NodeUserUUIDs 等过滤同步自愈）。
+func (u User) NotYetEffective(now time.Time) bool {
+	return u.EffectiveAt != nil && u.EffectiveAt.After(now)
 }
 
 // TrafficResetAt returns this user's reset boundary for a calendar month.
@@ -49,13 +64,38 @@ func (u User) TrafficResetAt(year int, month time.Month, loc *time.Location) tim
 
 // InsertUser 插入一个用户；expiresAt 为 nil 表示长期有效。
 func (s *Store) InsertUser(ctx context.Context, name, uuid, subToken string, expiresAt *time.Time) (int64, error) {
-	var exp *int64
-	if expiresAt != nil {
-		v := expiresAt.Unix()
+	return s.InsertUserFull(ctx, User{Name: name, UUID: uuid, SubToken: subToken, ExpiresAt: expiresAt})
+}
+
+// InsertUserFull 插入带完整调度信息的用户：ExpiresAt（nil=长期）、EffectiveAt（nil=立即生效）、
+// IsTrial。生效时刻已过（含 nil）时 StartedAt 直接置为 now —— 激活扇出无需 sweeper 再补；
+// 生效时刻在未来则 StartedAt 留空，由 sweeper 到点激活（§9）。
+func (s *Store) InsertUserFull(ctx context.Context, u User) (int64, error) {
+	now := time.Now()
+	var exp, eff, started *int64
+	if u.ExpiresAt != nil {
+		v := u.ExpiresAt.Unix()
 		exp = &v
 	}
+	isTrial := 0
+	if u.IsTrial {
+		isTrial = 1
+	}
+	if u.EffectiveAt != nil {
+		v := u.EffectiveAt.Unix()
+		eff = &v
+		if !u.EffectiveAt.After(now) {
+			t := now.Unix()
+			started = &t
+		}
+	} else {
+		t := now.Unix()
+		started = &t
+	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO users (name, uuid, sub_token, expires_at) VALUES (?, ?, ?, ?)`, name, uuid, subToken, exp)
+		`INSERT INTO users (name, uuid, sub_token, expires_at, effective_at, started_at, is_trial, quota_exhausted)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
+		u.Name, u.UUID, u.SubToken, exp, eff, started, isTrial)
 	if err != nil {
 		return 0, fmt.Errorf("insert user: %w", err)
 	}
@@ -64,9 +104,10 @@ func (s *Store) InsertUser(ctx context.Context, name, uuid, subToken string, exp
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
-	var exp sql.NullInt64
-	var expired, disabled int
+	var exp, eff, started sql.NullInt64
+	var expired, disabled, isTrial, quotaExhausted int
 	if err := row.Scan(&u.ID, &u.Name, &u.UUID, &u.SubToken, &exp, &expired, &disabled,
+		&eff, &started, &isTrial, &quotaExhausted,
 		&u.TrafficLimit, &u.TrafficResetDay, &u.SubTitle, &u.SubAnnouncement, &u.PlanName, &u.AppURL, &u.CreatedAt); err != nil {
 		return nil, err
 	}
@@ -74,12 +115,22 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 		t := time.Unix(exp.Int64, 0)
 		u.ExpiresAt = &t
 	}
+	if eff.Valid {
+		t := time.Unix(eff.Int64, 0)
+		u.EffectiveAt = &t
+	}
+	if started.Valid {
+		t := time.Unix(started.Int64, 0)
+		u.StartedAt = &t
+	}
 	u.Expired = expired != 0
 	u.Disabled = disabled != 0
+	u.IsTrial = isTrial != 0
+	u.QuotaExhausted = quotaExhausted != 0
 	return &u, nil
 }
 
-const userCols = `id, name, uuid, sub_token, expires_at, expired, disabled, traffic_limit, traffic_reset_day, sub_title, sub_announcement, plan_name, app_url, created_at`
+const userCols = `id, name, uuid, sub_token, expires_at, expired, disabled, effective_at, started_at, is_trial, quota_exhausted, traffic_limit, traffic_reset_day, sub_title, sub_announcement, plan_name, app_url, created_at`
 
 // ListUsers 列出全部用户（按 id 升序）。
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
@@ -170,6 +221,43 @@ func (s *Store) ListExpiryDue(ctx context.Context, now time.Time) ([]User, error
 	return out, rows.Err()
 }
 
+// ListActivationDue 返回生效时刻已到但尚未激活（started_at 为空）的用户（§9 sweeper 扫描）。
+// 不按 expired/disabled 过滤：激活标记记录的是"生效时刻已越过"这一事实，
+// 是否扇出 add_user 由调用方按有效停权态决定。
+func (s *Store) ListActivationDue(ctx context.Context, now time.Time) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+userCols+` FROM users
+		 WHERE started_at IS NULL AND effective_at IS NOT NULL AND effective_at <= ? ORDER BY id`, now.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("list activation due users: %w", err)
+	}
+	defer rows.Close()
+	out := []User{}
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan activation due user: %w", err)
+		}
+		out = append(out, *u)
+	}
+	return out, rows.Err()
+}
+
+// MarkUserStarted 置位激活标记（幂等：仅在 started_at 为空时写入）。
+func (s *Store) MarkUserStarted(ctx context.Context, id int64, now time.Time) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE users SET started_at = ? WHERE id = ? AND started_at IS NULL`, now.Unix(), id)
+	if err != nil {
+		return fmt.Errorf("mark user started: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, err := s.UserByID(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SetUserExpired 更新用户的到期停权标记（§9）。
 func (s *Store) SetUserExpired(ctx context.Context, id int64, expired bool) error {
 	v := 0
@@ -179,6 +267,22 @@ func (s *Store) SetUserExpired(ctx context.Context, id int64, expired bool) erro
 	res, err := s.db.ExecContext(ctx, `UPDATE users SET expired = ? WHERE id = ?`, v, id)
 	if err != nil {
 		return fmt.Errorf("set user expired: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetUserQuotaExhausted 更新用户的流量配额停权标记（§9）；扇出由调用方按有效停权态跃迁负责。
+func (s *Store) SetUserQuotaExhausted(ctx context.Context, id int64, exhausted bool) error {
+	v := 0
+	if exhausted {
+		v = 1
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE users SET quota_exhausted = ? WHERE id = ?`, v, id)
+	if err != nil {
+		return fmt.Errorf("set user quota exhausted: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
@@ -204,21 +308,67 @@ func (s *Store) SetUserDisabled(ctx context.Context, id int64, disabled bool) er
 
 // SetUserExpiry 修改/清除用户有效期（§9）：expiresAt 为 nil 表示长期。
 // 有效期被清除或延长到未来时清除停权标记（由调用方负责扇出 add_user 恢复）。
+// 试用用户从已到期恢复（重新生效）时归档并清零当期流量、一并清除配额停权标记：
+// 重新生效 = 全新试用期，配额按新周期重新计数（§9）；普通用户仅复位 expired，
+// 配额停权独立于有效期，仍由周期重置或手动重置恢复。
 func (s *Store) SetUserExpiry(ctx context.Context, id int64, expiresAt *time.Time, now time.Time) error {
+	before, err := s.UserByID(ctx, id)
+	if err != nil {
+		return err
+	}
 	var exp *int64
 	if expiresAt != nil {
 		v := expiresAt.Unix()
 		exp = &v
 	}
 	restore := 0
+	clearQuota := 0
 	if expiresAt == nil || expiresAt.After(now) {
 		restore = 1
+		if before.Expired && before.IsTrial {
+			clearQuota = 1
+		}
 	}
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE users SET expires_at = ?, expired = CASE WHEN ? = 1 THEN 0 ELSE expired END WHERE id = ?`,
-		exp, restore, id)
+		`UPDATE users SET expires_at = ?,
+			expired = CASE WHEN ? = 1 THEN 0 ELSE expired END,
+			quota_exhausted = CASE WHEN ? = 1 THEN 0 ELSE quota_exhausted END
+		 WHERE id = ?`,
+		exp, restore, clearQuota, id)
 	if err != nil {
 		return fmt.Errorf("set user expiry: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if clearQuota == 1 {
+		if err := s.ArchiveUserTraffic(ctx, before.UUID, now); err != nil {
+			return fmt.Errorf("reset trial traffic on restore: %w", err)
+		}
+	}
+	return nil
+}
+
+// SetUserEffective 修改/清除用户生效时刻（§9）：effectiveAt 为 nil 表示立即生效。
+// 生效时刻被推迟到未来时清空激活标记（sweeper 到点重新激活）；设为当前/过去时刻
+// 或清除时视作已激活（立即生效，无需 sweeper 补激活）。
+func (s *Store) SetUserEffective(ctx context.Context, id int64, effectiveAt *time.Time, now time.Time) error {
+	var eff, started *int64
+	if effectiveAt != nil {
+		v := effectiveAt.Unix()
+		eff = &v
+		if !effectiveAt.After(now) {
+			t := now.Unix()
+			started = &t
+		}
+	} else {
+		t := now.Unix()
+		started = &t
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE users SET effective_at = ?, started_at = ? WHERE id = ?`, eff, started, id)
+	if err != nil {
+		return fmt.Errorf("set user effective: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
@@ -324,12 +474,15 @@ func (s *Store) SetUserNodes(ctx context.Context, userID int64, nodeIDs []int64)
 }
 
 // NodeUserUUIDs 返回分配到该节点的用户 UUID 列表（apply_node 下发，§16）。
-// 已到期停权（expired=1）或显式停用（disabled=1）的用户不下发（§9/§16）：
-// 恢复时由有效期/停用开关扇出 add_user 补回。
-func (s *Store) NodeUserUUIDs(ctx context.Context, nodeID int64) ([]string, error) {
+// 已到期停权（expired=1）、显式停用（disabled=1）、流量配额停权（quota_exhausted=1）
+// 或尚未生效（effective_at 在未来，§9）的用户不下发：恢复时由相应标记的解除路径
+// 扇出 add_user 补回。
+func (s *Store) NodeUserUUIDs(ctx context.Context, nodeID int64, now time.Time) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT u.uuid FROM user_nodes un JOIN users u ON u.id = un.user_id
-		 WHERE un.node_id = ? AND u.expired = 0 AND u.disabled = 0 ORDER BY u.id`, nodeID)
+		 WHERE un.node_id = ? AND u.expired = 0 AND u.disabled = 0 AND u.quota_exhausted = 0
+		   AND (u.effective_at IS NULL OR u.effective_at <= ?) ORDER BY u.id`,
+		nodeID, now.Unix())
 	if err != nil {
 		return nil, fmt.Errorf("list node user uuids: %w", err)
 	}

@@ -543,7 +543,7 @@ func (s *Server) enqueueApply(r *http.Request, serverID, nodeID int64, vc shared
 	if err := s.st.SetNodeApplying(r.Context(), nodeID); err != nil {
 		return err
 	}
-	uuids, err := s.st.NodeUserUUIDs(r.Context(), nodeID)
+	uuids, err := s.st.NodeUserUUIDs(r.Context(), nodeID, time.Now())
 	if err != nil {
 		return err
 	}

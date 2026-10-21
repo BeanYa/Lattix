@@ -52,6 +52,31 @@ export function toLocalDateInput(t: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+/** toLocalDateTimeInput 把 RFC3339 时间转成 datetime-local 输入值（本地，含秒）；无效返回空串。 */
+export function toLocalDateTimeInput(t: string): string {
+  const d = new Date(t)
+  if (Number.isNaN(d.getTime())) {
+    return ''
+  }
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  )
+}
+
+/** localDateTimeToRFC3339 把 datetime-local 输入值（本地，可含秒）转成秒级 RFC3339（UTC）；空串/无效返回 null。 */
+export function localDateTimeToRFC3339(v: string): string | null {
+  if (!v) {
+    return null
+  }
+  const d = new Date(v)
+  if (Number.isNaN(d.getTime())) {
+    return null
+  }
+  return d.toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
 /** localDateToRFC3339EndOfDay 把 date 输入框值（yyyy-MM-dd）转成所选日期当天结束（本地 23:59:59）的 RFC3339（UTC）；空串/无效返回 null。 */
 export function localDateToRFC3339EndOfDay(v: string): string | null {
   if (!v) {
@@ -68,4 +93,22 @@ export function expiryDateDay(v: string): string {
   }
   const d = new Date(`${v}T00:00:00`)
   return Number.isNaN(d.getTime()) ? '' : String(d.getDate())
+}
+
+/** expiryDateTimeDay 返回 datetime-local 值中的“日”（1-31）；无效/空值返回空串。 */
+export function expiryDateTimeDay(v: string): string {
+  if (!v) {
+    return ''
+  }
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? '' : String(d.getDate())
+}
+
+/** parseDurationDays 解析天数（正整数，试用期/有效期按天计）；非法抛错。 */
+export function parseDurationDays(v: string): number {
+  const days = Number(v)
+  if (!v.trim() || !Number.isInteger(days) || days < 1) {
+    throw new Error('天数须为正整数')
+  }
+  return days
 }

@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"time"
 
 	"lattix/backend/internal/logging"
 	"lattix/backend/internal/store"
@@ -217,7 +218,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			log.Printf("dispatch: chain %d node %d 虚拟配置损坏: %v", chainID, node.ID, err)
 			return
 		}
-		uuids, err := d.st.NodeUserUUIDs(ctx, node.ID)
+		uuids, err := d.st.NodeUserUUIDs(ctx, node.ID, time.Now())
 		if err != nil {
 			log.Printf("dispatch: chain %d node %d users: %v", chainID, node.ID, err)
 			return
