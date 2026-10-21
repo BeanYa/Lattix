@@ -49,7 +49,7 @@
   background: var(--panel-accent);
   color: var(--panel-accent-ink);
   font-family: var(--font-display);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 750;
   letter-spacing: 0.12em;
   line-height: 1;
@@ -60,7 +60,7 @@
   margin: 0;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.03em;
   line-height: 1;
@@ -74,7 +74,7 @@
 .subtpl-mod-meta {
   color: var(--panel-ink-3);
   font-family: var(--font-display);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.08em;
   white-space: nowrap;
@@ -93,7 +93,7 @@
 
 .subtpl-mod [data-slot='table-cell'] {
   padding: 5px 8px;
-  font-size: 12.5px;
+  font-size: 13.5px;
 }
 
 /* ---------- 单元格内容 ---------- */
@@ -101,7 +101,7 @@
 .subtpl-name {
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 650;
   line-height: 1.25;
 }
@@ -111,7 +111,7 @@
   overflow: hidden;
   color: var(--panel-ink-3);
   font-family: var(--panel-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   letter-spacing: 0.04em;
   line-height: 1.3;
   text-overflow: ellipsis;
@@ -134,7 +134,7 @@
 .subtpl-cache-time {
   color: var(--panel-ink-3);
   font-family: var(--panel-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.03em;
   white-space: nowrap;
@@ -142,7 +142,7 @@
 
 .subtpl-license {
   color: var(--panel-ink-2);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .subtpl-row-actions {
@@ -172,12 +172,12 @@
   border-radius: 1px;
   background: var(--panel-surface);
   color: var(--panel-ink);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .subtpl-dialog [data-slot='label'] {
   color: var(--panel-ink);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
   line-height: 1.3;
 }
@@ -212,7 +212,7 @@
   color: var(--cg-on-charcoal);
   caret-color: var(--panel-accent);
   font-family: var(--panel-mono);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   outline: none;
   transition: border-color var(--panel-fast) var(--panel-ease);
@@ -234,7 +234,7 @@
   overflow: auto;
   padding: 10px 12px;
   font-family: var(--panel-mono);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;

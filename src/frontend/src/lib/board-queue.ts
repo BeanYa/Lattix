@@ -5,7 +5,7 @@ import type { Chain, Server } from '@/lib/types'
 import { usePolling } from '@/lib/use-polling'
 
 /**
- * 值班板待处理队列的数据派生层（方案 3.1 / 5.1.1）。
+ * 控制台待处理队列的数据派生层（方案 3.1 / 5.1.1）。
  *
  * 数据源：仅复用现有 api.servers（GET /api/server/list）与 api.chains（GET /api/chain/list），
  * 由 requester 统一处理重试、取消与错误；不新增请求库，也不请求 dashboard / user 等其它接口。
@@ -32,7 +32,7 @@ import { usePolling } from '@/lib/use-polling'
 /** 队列严重度：critical = 故障，warning = 降级 / 待处理。 */
 export type BoardSeverity = 'critical' | 'warning'
 
-/** 值班板单条待处理事项；同一对象（服务器或链路）最多一条。 */
+/** 控制台单条待处理事项；同一对象（服务器或链路）最多一条。 */
 export type BoardItem = {
   /** 稳定标识，形如 server-12 / chain-7，可直接作为列表 key。 */
   id: string
@@ -62,7 +62,7 @@ export type BoardSummary = {
   updatedAt: string | null
 }
 
-/** 值班板轮询间隔：30 秒静默刷新一次。 */
+/** 控制台轮询间隔：30 秒静默刷新一次。 */
 const POLL_INTERVAL_MS = 30_000
 /** 队列最多展示 8 条；计数仍基于全部条目。 */
 const MAX_ITEMS = 8
@@ -201,7 +201,7 @@ function deriveBoardItems(servers: Server[], chains: Chain[]): BoardItem[] {
 }
 
 /**
- * 值班板队列控制器：
+ * 控制台队列控制器：
  * - 挂载即加载，之后每 30 秒静默轮询；document.hidden 时跳过请求（暂停），
  *   回到前台立即补一次静默刷新；
  * - servers / chains 两路请求用 Promise.allSettled 并行，单路失败保留该路上一轮数据，

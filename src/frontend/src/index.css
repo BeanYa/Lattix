@@ -251,7 +251,7 @@
     margin-top: 3px;
     max-width: 72ch;
     color: var(--panel-ink-2);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.55;
     text-wrap: pretty;
   }
@@ -279,7 +279,7 @@
     background: var(--panel-surface);
     color: var(--panel-ink-2);
     font-family: var(--font-display);
-    font-size: 11.5px;
+    font-size: 12.5px;
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
@@ -316,7 +316,7 @@
 
   .empty-state-title {
     color: var(--panel-ink);
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 700;
   }
 
@@ -324,7 +324,7 @@
     margin-top: 4px;
     max-width: 48ch;
     color: var(--panel-ink-2);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.5;
     text-wrap: pretty;
   }
@@ -364,7 +364,7 @@
     background: color-mix(in srgb, var(--tone-color) 6%, var(--panel-surface));
     padding: 8px 10px;
     color: var(--panel-ink);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.5;
   }
 
@@ -382,7 +382,7 @@
     margin-bottom: 1px;
     color: var(--tone-color);
     font-family: var(--font-display);
-    font-size: 12.5px;
+    font-size: 13.5px;
     font-weight: 700;
     letter-spacing: 0.02em;
   }
@@ -408,7 +408,7 @@
     padding: 1px 6px;
     color: var(--tone-color);
     font-family: var(--font-display);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 650;
     letter-spacing: 0.03em;
     line-height: 1.5;
@@ -450,7 +450,7 @@
     height: 1.75rem;
     color: var(--panel-ink-2);
     font-family: var(--font-display);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 650;
     letter-spacing: 0.05em;
     text-transform: uppercase;
@@ -483,7 +483,7 @@
 
   [data-slot='tabs-trigger'] {
     border-radius: 1px;
-    font-size: 13px;
+    font-size: 14px;
     font-weight: 600;
   }
 
@@ -497,7 +497,7 @@
     gap: 6px;
     color: var(--panel-ink);
     font-family: var(--font-display);
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.05em;
     line-height: 1;

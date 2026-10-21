@@ -50,7 +50,7 @@ export const PRIMARY_NAV: PrimaryNavItem[] = [
   {
     key: 'board',
     to: '/board',
-    label: '值班板',
+    label: '控制台',
     description: '现在哪里坏了、影响谁、先做什么',
     icon: LayoutDashboardIcon,
     keywords: ['board', 'dashboard', '值班', '看板', '队列'],

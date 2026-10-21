@@ -119,7 +119,7 @@ function QueueRow({
       >
         <span
           className={cn(
-            'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[12px] font-semibold',
+            'inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[13px] font-semibold',
             severity.chip,
           )}
         >
@@ -134,21 +134,21 @@ function QueueRow({
             ) : (
               <WaypointsIcon aria-hidden="true" className="size-3.5 shrink-0 text-ink-3" />
             )}
-            <span className="truncate text-[15px] font-medium text-ink">{item.title}</span>
-            <span className="shrink-0 rounded border border-rule px-1.5 text-[11px] font-semibold text-ink-3">
+            <span className="truncate text-[16px] font-medium text-ink">{item.title}</span>
+            <span className="shrink-0 rounded border border-rule px-1.5 text-[12px] font-semibold text-ink-3">
               {item.kind === 'server' ? '服务器' : '链路'}
             </span>
           </span>
-          <span className="truncate text-[13px] text-ink-3 md:hidden">{item.reason}</span>
+          <span className="truncate text-[14px] text-ink-3 md:hidden">{item.reason}</span>
         </span>
 
-        <span className="hidden min-w-0 truncate text-[13px] text-ink-2 md:block">
+        <span className="hidden min-w-0 truncate text-[14px] text-ink-2 md:block">
           {item.reason}
         </span>
-        <span className="hidden whitespace-nowrap text-[13px] text-ink-3 md:block">
+        <span className="hidden whitespace-nowrap text-[14px] text-ink-3 md:block">
           {item.impact ?? '影响面未知'}
         </span>
-        <span className="hidden items-center gap-1 whitespace-nowrap text-[13px] text-ink-3 sm:flex">
+        <span className="hidden items-center gap-1 whitespace-nowrap text-[14px] text-ink-3 sm:flex">
           <Clock3Icon aria-hidden="true" className="size-3.5" />
           {formatDuration(item.since, now)}
         </span>
@@ -164,7 +164,7 @@ function QueueRow({
 
       {expanded ? (
         <div id={panelId} className="border-t border-rule bg-inset/50 px-4 py-3">
-          <dl className="grid gap-3 text-[13px] sm:grid-cols-[120px_minmax(0,1fr)]">
+          <dl className="grid gap-3 text-[14px] sm:grid-cols-[120px_minmax(0,1fr)]">
             <dt className="font-semibold text-ink-2">为什么</dt>
             <dd className="text-ink">{item.reason}</dd>
             <dt className="font-semibold text-ink-2">影响</dt>
@@ -181,7 +181,7 @@ function QueueRow({
                 key={action.href + action.label}
                 href={action.href}
                 className={cn(
-                  'inline-flex min-h-8 items-center gap-1 rounded-md border px-3 text-[13px] font-medium',
+                  'inline-flex min-h-8 items-center gap-1 rounded-md border px-3 text-[14px] font-medium',
                   action.tone === 'primary'
                     ? 'border-signal bg-signal text-signal-ink hover:bg-signal/90'
                     : 'border-rule text-ink-2 hover:bg-raised',
@@ -266,13 +266,13 @@ export default function Board() {
     <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-[12px] font-semibold tracking-[0.14em] text-ink-3">
-            值班板 · LINE BOARD
+          <p className="text-[13px] font-semibold tracking-[0.14em] text-ink-3">
+            控制台 · LINE BOARD
           </p>
-          <h1 className="mt-1 text-[30px] font-black leading-[34px] tracking-tight text-ink">
+          <h1 className="mt-1 text-[32px] font-black leading-[34px] tracking-tight text-ink">
             {today}
           </h1>
-          <p className="mt-1 text-[14px] leading-5 text-ink-2">
+          <p className="mt-1 text-[15px] leading-5 text-ink-2">
             更新于 {formatClock(summary.updatedAt)} · 每 30 秒自动刷新
           </p>
         </div>
@@ -280,7 +280,7 @@ export default function Board() {
           <p
             aria-live="polite"
             className={cn(
-              'rounded-md border px-3 py-1.5 text-[13px] font-semibold',
+              'rounded-md border px-3 py-1.5 text-[14px] font-semibold',
               pending > 0
                 ? 'border-failed/40 bg-failed/10 text-failed'
                 : 'border-rule bg-surface text-ink-2',
@@ -293,7 +293,7 @@ export default function Board() {
             onClick={refreshAll}
             disabled={loading}
             className={cn(
-              'inline-flex min-h-9 items-center gap-2 rounded-md border border-rule bg-surface px-3 text-[13px] font-medium text-ink-2 transition-colors hover:bg-raised disabled:opacity-60',
+              'inline-flex min-h-9 items-center gap-2 rounded-md border border-rule bg-surface px-3 text-[14px] font-medium text-ink-2 transition-colors hover:bg-raised disabled:opacity-60',
               focusRing,
             )}
           >
@@ -309,7 +309,7 @@ export default function Board() {
       {error ? (
         <div
           role="alert"
-          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-degraded/40 bg-degraded/10 px-4 py-3 text-[13px] text-ink"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-degraded/40 bg-degraded/10 px-4 py-3 text-[14px] text-ink"
         >
           <span className="flex items-center gap-2">
             <CircleAlertIcon aria-hidden="true" className="size-4 text-degraded" />
@@ -335,17 +335,17 @@ export default function Board() {
         >
           <div className="flex items-center justify-between gap-3 border-b border-rule px-4 py-3">
             <div>
-              <h2 id="board-queue-title" className="text-[16px] font-semibold text-ink">
+              <h2 id="board-queue-title" className="text-[17px] font-semibold text-ink">
                 待处理
               </h2>
-              <p className="mt-0.5 text-[13px] text-ink-3">
+              <p className="mt-0.5 text-[14px] text-ink-3">
                 {counts.critical} 项故障 · {counts.warning} 项降级 · 按影响与时间排序
               </p>
             </div>
             <Link
               href="/run/logs/operations"
               className={cn(
-                'inline-flex items-center gap-1 text-[13px] font-medium text-signal hover:underline',
+                'inline-flex items-center gap-1 text-[14px] font-medium text-signal hover:underline',
                 focusRing,
               )}
             >
@@ -359,15 +359,15 @@ export default function Board() {
           ) : items.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
               <CircleAlertIcon aria-hidden="true" className="size-6 text-ok" />
-              <p className="text-[15px] font-medium text-ink">当前无待处理事项</p>
-              <p className="max-w-[38ch] text-[13px] leading-5 text-ink-3">
+              <p className="text-[16px] font-medium text-ink">当前无待处理事项</p>
+              <p className="max-w-[38ch] text-[14px] leading-5 text-ink-3">
                 最近一次检查于 {formatClock(summary.updatedAt)}
                 ；服务器与链路状态每次刷新都会重新派生。
               </p>
               <Link
                 href="/run/logs/operations"
                 className={cn(
-                  'mt-1 text-[13px] font-medium text-signal hover:underline',
+                  'mt-1 text-[14px] font-medium text-signal hover:underline',
                   focusRing,
                 )}
               >
@@ -396,25 +396,25 @@ export default function Board() {
           className="flex flex-col gap-4 rounded-xl border border-rule bg-surface p-4"
         >
           <div>
-            <h2 id="board-pulse-title" className="text-[16px] font-semibold text-ink">
+            <h2 id="board-pulse-title" className="text-[17px] font-semibold text-ink">
               机群脉搏
             </h2>
-            <p className="mt-0.5 text-[13px] text-ink-3">同步于 {formatClock(summary.updatedAt)}</p>
+            <p className="mt-0.5 text-[14px] text-ink-3">同步于 {formatClock(summary.updatedAt)}</p>
           </div>
 
           <dl className="grid grid-cols-2 gap-4">
             <div>
-              <dt className="text-[12px] font-semibold tracking-[0.08em] text-ink-3">服务器在线</dt>
-              <dd className="mt-1 [font-family:var(--font-readout)] text-[26px] leading-7 text-ink">
+              <dt className="text-[13px] font-semibold tracking-[0.08em] text-ink-3">服务器在线</dt>
+              <dd className="mt-1 [font-family:var(--font-readout)] text-[28px] leading-7 text-ink">
                 {summary.serversOnline}
-                <span className="text-[15px] text-ink-3">/{summary.serversTotal}</span>
+                <span className="text-[16px] text-ink-3">/{summary.serversTotal}</span>
               </dd>
             </div>
             <div>
-              <dt className="text-[12px] font-semibold tracking-[0.08em] text-ink-3">配置漂移</dt>
+              <dt className="text-[13px] font-semibold tracking-[0.08em] text-ink-3">配置漂移</dt>
               <dd
                 className={cn(
-                  'mt-1 [font-family:var(--font-readout)] text-[26px] leading-7',
+                  'mt-1 [font-family:var(--font-readout)] text-[28px] leading-7',
                   summary.serversDrift > 0 ? 'text-degraded' : 'text-ink',
                 )}
               >
@@ -422,22 +422,22 @@ export default function Board() {
               </dd>
             </div>
             <div>
-              <dt className="text-[12px] font-semibold tracking-[0.08em] text-ink-3">链路正常</dt>
-              <dd className="mt-1 [font-family:var(--font-readout)] text-[26px] leading-7 text-ink">
+              <dt className="text-[13px] font-semibold tracking-[0.08em] text-ink-3">链路正常</dt>
+              <dd className="mt-1 [font-family:var(--font-readout)] text-[28px] leading-7 text-ink">
                 {summary.chainsHealthy}
-                <span className="text-[15px] text-ink-3">/{summary.chainsTotal}</span>
+                <span className="text-[16px] text-ink-3">/{summary.chainsTotal}</span>
               </dd>
             </div>
             <div>
-              <dt className="text-[12px] font-semibold tracking-[0.08em] text-ink-3">待处理</dt>
-              <dd className="mt-1 [font-family:var(--font-readout)] text-[26px] leading-7 text-ink">
+              <dt className="text-[13px] font-semibold tracking-[0.08em] text-ink-3">待处理</dt>
+              <dd className="mt-1 [font-family:var(--font-readout)] text-[28px] leading-7 text-ink">
                 {pending}
               </dd>
             </div>
           </dl>
 
           <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between text-[12px] text-ink-3">
+            <div className="flex items-center justify-between text-[13px] text-ink-3">
               <span>在线比例</span>
               <span>{onlineRatio === null ? '暂无数据' : `${onlineRatio}%`}</span>
             </div>
@@ -456,7 +456,7 @@ export default function Board() {
               />
             </div>
             {summary.serversTotal === 0 ? (
-              <p className="text-[13px] text-ink-3">
+              <p className="text-[14px] text-ink-3">
                 还没有服务器；添加服务器后这里会显示在线比例。
               </p>
             ) : null}
@@ -470,15 +470,15 @@ export default function Board() {
       >
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-rule px-4 py-3">
           <div>
-            <h2 id="board-changes-title" className="text-[16px] font-semibold text-ink">
+            <h2 id="board-changes-title" className="text-[17px] font-semibold text-ink">
               最近变更
             </h2>
-            <p className="mt-0.5 text-[13px] text-ink-3">过去 20 条操作日志，按时间倒序</p>
+            <p className="mt-0.5 text-[14px] text-ink-3">过去 20 条操作日志，按时间倒序</p>
           </div>
           <Link
             href="/run/logs/operations"
             className={cn(
-              'inline-flex items-center gap-1 text-[13px] font-medium text-signal hover:underline',
+              'inline-flex items-center gap-1 text-[14px] font-medium text-signal hover:underline',
               focusRing,
             )}
           >
@@ -497,7 +497,7 @@ export default function Board() {
             ))}
           </ul>
         ) : logsError ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-4 text-[13px] text-ink">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-4 text-[14px] text-ink">
             <span className="flex items-center gap-2">
               <CircleAlertIcon aria-hidden="true" className="size-4 text-degraded" />
               操作日志加载失败：{logsError}
@@ -514,13 +514,13 @@ export default function Board() {
             </button>
           </div>
         ) : logs.length === 0 ? (
-          <p className="px-4 py-8 text-center text-[13px] text-ink-3">最近没有操作记录。</p>
+          <p className="px-4 py-8 text-center text-[14px] text-ink-3">最近没有操作记录。</p>
         ) : (
           <ul className="divide-y divide-rule">
             {logs.map((log) => (
               <li
                 key={log.event_id}
-                className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-[13px]"
+                className="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-[14px]"
               >
                 <span
                   aria-hidden="true"
@@ -529,7 +529,7 @@ export default function Board() {
                 <time dateTime={log.timestamp} className="w-20 shrink-0 tabular-nums text-ink-3">
                   {formatClock(log.timestamp)}
                 </time>
-                <span className="shrink-0 rounded border border-rule px-1.5 text-[11px] font-semibold text-ink-3">
+                <span className="shrink-0 rounded border border-rule px-1.5 text-[12px] font-semibold text-ink-3">
                   {CATEGORY_LABEL[log.category]}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-ink">{log.action}</span>

@@ -40,7 +40,7 @@
   gap: 6px;
   margin-top: 5px;
   color: var(--panel-ink-2);
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: 0.01em;
 }
 
@@ -63,7 +63,7 @@
   border: 1px solid var(--panel-rule-strong);
   border-radius: 1px;
   font-family: var(--font-display);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 650;
   letter-spacing: 0.03em;
   white-space: nowrap;
@@ -149,7 +149,7 @@
   background: var(--panel-accent);
   color: var(--panel-accent-ink);
   font-family: var(--font-display);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 750;
   letter-spacing: 0.12em;
   line-height: 1;
@@ -159,7 +159,7 @@
 .dash-mod-title {
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 700;
   letter-spacing: 0.04em;
   line-height: 1;
@@ -170,7 +170,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--panel-ink-3);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -182,7 +182,7 @@
   gap: 1px;
   margin-left: auto;
   color: var(--panel-ink-2);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-decoration: none;
@@ -255,7 +255,7 @@
 
 .dash-summary-label {
   color: var(--panel-ink-2);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.03em;
 }
@@ -284,7 +284,7 @@
 .dash-summary-detail {
   overflow: hidden;
   color: var(--panel-ink-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -335,7 +335,7 @@
   overflow: hidden;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 650;
   letter-spacing: 0.01em;
   line-height: 1.25;
@@ -346,7 +346,7 @@
 .dash-agent-copy span {
   overflow: hidden;
   color: var(--panel-ink-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -354,7 +354,7 @@
 
 .dash-agent-state {
   font-family: var(--font-display);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 650;
   letter-spacing: 0.03em;
   white-space: nowrap;
@@ -376,7 +376,7 @@
   min-width: 42px;
   color: var(--panel-ink-3);
   font-family: var(--panel-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
@@ -410,7 +410,7 @@
   border: 1px solid currentColor;
   border-radius: 1px;
   font-family: var(--font-display);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 650;
   letter-spacing: 0.02em;
   line-height: 1.5;
@@ -448,7 +448,7 @@
   background: transparent;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
@@ -485,7 +485,7 @@
 
 .dash-chain-hops {
   color: var(--panel-ink-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -550,7 +550,7 @@
 .dash-hop-seq {
   color: var(--panel-ink-3);
   font-family: var(--panel-mono);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1;
 }
 
@@ -558,7 +558,7 @@
   overflow: hidden;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 650;
   letter-spacing: 0.01em;
   line-height: 1.25;
@@ -568,12 +568,12 @@
 
 .dash-hop-role {
   color: var(--panel-ink-3);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.2;
 }
 
 .dash-hop-state {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 650;
   line-height: 1.3;
 }
@@ -594,7 +594,7 @@
   margin-top: 6px;
   overflow: hidden;
   color: var(--panel-ink-2);
-  font-size: 10.5px;
+  font-size: 11.5px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -608,7 +608,7 @@
 .dash-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .dash-table th {
@@ -618,7 +618,7 @@
   background: var(--panel-inset);
   color: var(--panel-ink-2);
   font-family: var(--font-display);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 650;
   letter-spacing: 0.05em;
   text-align: left;
@@ -675,7 +675,7 @@
   background: transparent;
   color: inherit;
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
   letter-spacing: 0.01em;
   cursor: pointer;
@@ -689,19 +689,19 @@
 
 .dash-cell-muted {
   color: var(--panel-ink-2);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .dash-country {
   color: var(--panel-ink-3);
   font-family: var(--panel-mono);
-  font-size: 10.5px;
+  font-size: 11.5px;
   letter-spacing: 0.04em;
 }
 
 .dash-cell-num {
   font-family: var(--panel-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
@@ -765,7 +765,7 @@
 .dash-event-copy strong {
   overflow: hidden;
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
   letter-spacing: 0.01em;
   line-height: 1.3;
@@ -776,7 +776,7 @@
 .dash-event-copy span {
   overflow: hidden;
   color: var(--panel-ink-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -805,14 +805,14 @@
   align-items: center;
   gap: 4px;
   color: var(--panel-ink-2);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .dash-rate-value {
   color: var(--panel-ink);
   font-family: var(--font-numeric);
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 750;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
@@ -840,7 +840,7 @@
 
 .dash-rate-note {
   color: var(--panel-ink-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
   line-height: 1.4;
 }
 
@@ -873,7 +873,7 @@
   align-items: center;
   gap: 4px;
   color: var(--panel-ink-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -883,7 +883,7 @@
   margin: 0;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: -0.01em;
   line-height: 1.2;
@@ -894,14 +894,14 @@
 
 .dash-runtime-tags {
   font-family: var(--font-text);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
 .dash-runtime-addr {
   font-family: var(--panel-mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 500;
 }
 
@@ -938,7 +938,7 @@
 
 .dash-users-label {
   color: var(--panel-ink-3);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .dash-users-note {
@@ -947,7 +947,7 @@
   gap: 4px;
   margin-top: 8px;
   color: var(--panel-success);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -957,7 +957,7 @@
   gap: 2px;
   margin-top: 7px;
   color: var(--panel-ink-2);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-decoration: none;
 }
@@ -981,7 +981,7 @@
   min-height: 24px;
   border-bottom: 1px solid var(--panel-rule);
   color: var(--panel-ink-2);
-  font-size: 11.5px;
+  font-size: 12.5px;
   text-decoration: none;
 }
 
@@ -1009,13 +1009,13 @@
 .dash-empty strong {
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 700;
 }
 
 .dash-empty span {
   color: var(--panel-ink-3);
-  font-size: 11.5px;
+  font-size: 12.5px;
   line-height: 1.4;
 }
 
@@ -1038,7 +1038,7 @@
   border-top: 1px solid var(--panel-rule);
   color: var(--panel-ink-3);
   font-family: var(--font-display);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.03em;
 }
@@ -1079,7 +1079,7 @@
 .dash-loading-label {
   color: var(--panel-ink-2);
   font-family: var(--font-display);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;

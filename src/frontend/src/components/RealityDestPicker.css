@@ -10,7 +10,7 @@
   border-radius: var(--cg-r-control);
   background: var(--cg-paper-light);
   color: var(--cg-ink);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 650;
   outline: none;
   cursor: pointer;
@@ -23,7 +23,7 @@
 
 .cg-reality-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--cg-muted);
 }
 
@@ -34,7 +34,7 @@
   border-radius: var(--cg-r-control);
   background: var(--cg-blue-soft);
   font-family: var(--cg-mono);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--cg-ink);
   overflow-wrap: anywhere;

@@ -94,13 +94,13 @@ function NotFound() {
         页面不存在
       </h1>
       <p className="max-w-md text-sm leading-6 text-ink-2">
-        这个地址可能已经移动或输入有误。请返回值班板，或从左侧导航重新选择入口。
+        这个地址可能已经移动或输入有误。请返回控制台，或从左侧导航重新选择入口。
       </p>
       <Link
         href="/board"
         className="mt-3 inline-flex min-h-11 w-fit items-center rounded-[2px] bg-signal px-4 text-sm font-semibold text-signal-ink transition-[filter] hover:brightness-105 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--panel-focus)]"
       >
-        返回值班板
+        返回控制台
       </Link>
     </section>
   )
@@ -164,7 +164,7 @@ function ProtectedRoutes() {
               <Moved to="/run/logs/operations" />
             </Route>
 
-            {/* 值班板 */}
+            {/* 控制台 */}
             <Route path="/board">
               <SuspendedRoute>
                 <Board />

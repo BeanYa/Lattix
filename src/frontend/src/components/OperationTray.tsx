@@ -70,8 +70,8 @@ export default function OperationTray({
           aria-hidden="true"
           className={cn('size-4 shrink-0', statusTone, running && 'animate-spin')}
         />
-        <p className="min-w-0 flex-1 truncate text-[14px] font-semibold text-ink">{title}</p>
-        <span className={cn('shrink-0 text-[12px] font-semibold', statusTone)}>
+        <p className="min-w-0 flex-1 truncate text-[15px] font-semibold text-ink">{title}</p>
+        <span className={cn('shrink-0 text-[13px] font-semibold', statusTone)}>
           {PHASE_LABEL[phase]}
         </span>
         <button
@@ -112,7 +112,7 @@ export default function OperationTray({
                 style={{ width: `${percent}%` }}
               />
             </div>
-            <div className="flex items-center justify-between text-[12px] text-ink-3">
+            <div className="flex items-center justify-between text-[13px] text-ink-3">
               <span className="min-w-0 truncate">{message}</span>
               <span className="shrink-0 tabular-nums">{percent}%</span>
             </div>
@@ -134,7 +134,7 @@ export default function OperationTray({
                 <CircleIcon className="size-3.5 text-ink-3/50" aria-hidden="true" />
               )
               return (
-                <li key={stage.key} className="flex items-center gap-2 text-[13px]">
+                <li key={stage.key} className="flex items-center gap-2 text-[14px]">
                   {icon}
                   <span
                     className={cn(
@@ -152,9 +152,9 @@ export default function OperationTray({
 
         {done ? (
           <div className="mt-2 flex flex-col gap-2">
-            {message ? <p className="text-[13px] text-ink-2">{message}</p> : null}
+            {message ? <p className="text-[14px] text-ink-2">{message}</p> : null}
             {warnings.length > 0 ? (
-              <ul className="max-h-28 space-y-1 overflow-y-auto rounded-md border border-degraded/40 bg-degraded/10 p-2 text-[12px] text-ink">
+              <ul className="max-h-28 space-y-1 overflow-y-auto rounded-md border border-degraded/40 bg-degraded/10 p-2 text-[13px] text-ink">
                 {warnings.map((warning) => (
                   <li key={warning} className="flex items-start gap-1.5">
                     <span aria-hidden="true">•</span>
@@ -167,10 +167,10 @@ export default function OperationTray({
         ) : null}
 
         {failed ? (
-          <p className="mt-2 text-[13px] text-failed">{observation?.error || '未知错误'}</p>
+          <p className="mt-2 text-[14px] text-failed">{observation?.error || '未知错误'}</p>
         ) : null}
 
-        {lost ? <p className="mt-2 text-[13px] text-ink-2">{LOST_MESSAGE}</p> : null}
+        {lost ? <p className="mt-2 text-[14px] text-ink-2">{LOST_MESSAGE}</p> : null}
 
         {done || failed || lost ? (
           <div className="mt-3 flex items-center justify-between gap-2 border-t border-rule pt-2">
@@ -178,7 +178,7 @@ export default function OperationTray({
               href="/run/logs/operations"
               onClick={onClose}
               className={cn(
-                'inline-flex items-center gap-1 text-[12px] font-medium text-signal hover:underline',
+                'inline-flex items-center gap-1 text-[13px] font-medium text-signal hover:underline',
                 focusRing,
               )}
             >
@@ -189,7 +189,7 @@ export default function OperationTray({
               type="button"
               onClick={onClose}
               className={cn(
-                'h-7 rounded-md border border-rule bg-raised px-2.5 text-[12px] font-semibold text-ink-2 transition-colors hover:bg-inset hover:text-ink',
+                'h-7 rounded-md border border-rule bg-raised px-2.5 text-[13px] font-semibold text-ink-2 transition-colors hover:bg-inset hover:text-ink',
                 focusRing,
               )}
             >
