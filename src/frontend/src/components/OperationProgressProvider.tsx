@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useReducer, type ReactNode } from 'react'
 
-import OperationProgress from '@/components/OperationProgress'
+import OperationTray from '@/components/OperationTray'
 import { api, isRequestError } from '@/lib/api'
 import { OperationProgressContext } from '@/lib/operation-progress-context'
 import { INITIAL_PROGRESS_STATE, progressTransition } from '@/lib/operation-progress-state'
 
 const POLL_INTERVAL_MS = 400
-const AUTO_CLOSE_DELAY_MS = 1000
 
 export function OperationProgressProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(progressTransition, INITIAL_PROGRESS_STATE)
@@ -42,12 +41,7 @@ export function OperationProgressProvider({ children }: { children: ReactNode })
     }
   }, [observeId])
 
-  const autoClose = state.phase === 'done' && state.autoClose
-  useEffect(() => {
-    if (!autoClose) return
-    const timer = window.setTimeout(() => dispatch({ type: 'autoClose' }), AUTO_CLOSE_DELAY_MS)
-    return () => window.clearTimeout(timer)
-  }, [autoClose])
+  // 方案 4.4：终态保留到用户手动关闭，不再 1 秒自动消失。
 
   const close = useCallback(() => dispatch({ type: 'close' }), [])
   const value = useMemo(() => ({ showOperation }), [showOperation])
@@ -55,7 +49,7 @@ export function OperationProgressProvider({ children }: { children: ReactNode })
   return (
     <OperationProgressContext.Provider value={value}>
       {children}
-      <OperationProgress state={state} onClose={close} />
+      <OperationTray state={state} onClose={close} />
     </OperationProgressContext.Provider>
   )
 }

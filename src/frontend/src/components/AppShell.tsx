@@ -10,6 +10,7 @@ import {
 import { Link, useLocation } from 'wouter'
 
 import CommandPalette from '@/components/CommandPalette'
+import { OperationProgressProvider } from '@/components/OperationProgressProvider'
 import LattixMark from '@/components/LattixMark'
 import ThemeToggle from '@/components/ThemeToggle'
 import {
@@ -524,7 +525,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <span>{logoutError}</span>
               </div>
             ) : null}
-            {children}
+            <OperationProgressProvider>{children}</OperationProgressProvider>
           </main>
         </div>
       </div>
