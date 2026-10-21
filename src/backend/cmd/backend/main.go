@@ -552,7 +552,8 @@ func run() error {
 			log.Printf("main: flush startup command queues: %v", listErr)
 		}
 	}
-	// 周期性自愈：每 60s 检查未 active 的共享端点并重新下发部署命令。
+	// 周期性自愈：每 60s 检查未 active 的共享端点并重新下发部署命令；
+	// 同时自愈旧 revision 清理任务（离线/已删除目标不再阻塞链，队列补入/复位）。
 	go func() {
 		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
@@ -562,6 +563,7 @@ func run() error {
 				return
 			case <-ticker.C:
 				dispatcher.ReconcileStaleEndpoints(runCtx)
+				dispatcher.ReconcileChainCleanups(runCtx)
 			}
 		}
 	}()

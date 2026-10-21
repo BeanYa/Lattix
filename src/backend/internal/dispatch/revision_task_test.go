@@ -277,7 +277,9 @@ func TestCleanupPendingReturnsActiveAfterAllCleanupTasksAck(t *testing.T) {
 	if err := st.PublishChainRevision(ctx, revision.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	d := New(st, &fakeRequester{online: map[int64]bool{serverID: false}}, Options{}, Events{})
+	// 目标服务器在线时清理任务参与链状态（cleanup_pending），回执齐全后恢复 active；
+	// 离线/删除目标不阻塞链状态的场景见 cleanup_reconcile_test.go。
+	d := New(st, &fakeRequester{online: map[int64]bool{serverID: true}}, Options{}, Events{})
 	d.refreshCleanupStatus(ctx, revision.ID)
 	if chain, _ := st.ChainByID(ctx, chainID); chain.Status != store.ChainStatusCleanupPending {
 		t.Fatalf("chain status = %s, want cleanup_pending", chain.Status)

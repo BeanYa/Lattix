@@ -66,6 +66,9 @@ func (d *Dispatcher) ResumeChains(ctx context.Context) error {
 			continue
 		}
 	}
+	// 清理任务自愈（启动入口）：废弃已删服务器任务、补入/复位清理队列并按可达性
+	// 重算链状态（避免重启后旧 revision 清理任务继续卡住 cleanup_pending）。
+	d.ReconcileChainCleanups(ctx)
 	return nil
 }
 
@@ -748,23 +751,54 @@ func (d *Dispatcher) enqueueCleanupTasks(ctx context.Context, current *store.Cha
 		if task.Phase != "cleanup" || task.Status != store.RevisionTaskPending {
 			continue
 		}
-		var commandID int64
-		if task.Kind == RevisionPieceService {
-			commandID, err = d.enqueueRevisionTask(ctx, task.ServerID, shared.TypeRemoveNode,
-				shared.RemoveNodePayload{NodeID: task.HopID}, current.ID, task.TaskKey)
-		} else {
-			commandID, err = d.enqueueRevisionTask(ctx, task.ServerID, shared.TypeRemoveChainHop,
-				shared.RemoveChainHopPayload{HopID: task.HopID, Kind: task.Kind}, current.ID, task.TaskKey)
-		}
-		if err != nil {
-			log.Printf("dispatch: revision %d enqueue cleanup %s: %v", current.ID, task.TaskKey, err)
-			continue
-		}
-		_ = commandID
+		d.enqueueCleanupTask(ctx, current, task)
 	}
 	d.refreshCleanupStatus(ctx, current.ID)
 }
 
+// enqueueCleanupTask 入队单条 pending 清理任务（remove_node / remove_chain_hop）。
+// 目标服务器已删除时直接废弃任务：既无投递目标，也不应再参与链状态推导。
+func (d *Dispatcher) enqueueCleanupTask(ctx context.Context, revision *store.ChainRevision, task store.ChainRevisionTask) {
+	if _, err := d.st.ServerByID(ctx, task.ServerID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			d.abandonCleanupTask(ctx, task, "服务器已删除")
+		} else {
+			log.Printf("dispatch: revision %d cleanup task %s server %d: %v",
+				revision.ID, task.TaskKey, task.ServerID, err)
+		}
+		return
+	}
+	var err error
+	if task.Kind == RevisionPieceService {
+		_, err = d.enqueueRevisionTask(ctx, task.ServerID, shared.TypeRemoveNode,
+			shared.RemoveNodePayload{NodeID: task.HopID}, revision.ID, task.TaskKey)
+	} else {
+		_, err = d.enqueueRevisionTask(ctx, task.ServerID, shared.TypeRemoveChainHop,
+			shared.RemoveChainHopPayload{HopID: task.HopID, Kind: task.Kind}, revision.ID, task.TaskKey)
+	}
+	if err != nil {
+		log.Printf("dispatch: revision %d enqueue cleanup %s: %v", revision.ID, task.TaskKey, err)
+	}
+}
+
+// abandonCleanupTask 废弃清理任务（目标服务器已删除等无投递目标场景）。
+func (d *Dispatcher) abandonCleanupTask(ctx context.Context, task store.ChainRevisionTask, reason string) {
+	abandoned, err := d.st.AbandonRevisionTask(ctx, task.ID, reason)
+	if err != nil {
+		log.Printf("dispatch: abandon cleanup task %d: %v", task.ID, err)
+		return
+	}
+	if abandoned {
+		log.Printf("dispatch: cleanup task %d (%s) abandoned: %s", task.ID, task.TaskKey, reason)
+	}
+}
+
+// refreshCleanupStatus 按清理任务可达性刷新链状态（§21.1 清理阶段）。阻塞语义：
+//   - 仅 pending/queued 且目标服务器存在并在线时阻塞（链 → cleanup_pending，展示清理进度）；
+//   - 目标服务器离线/已删除不阻塞：remove 命令保留在 commands 队列，Agent 重连后照常下发；
+//   - acked/failed/abandoned 为终态，不阻塞（死信/回执失败不得让链永久等待）。
+//
+// 无阻塞任务（含已无清理任务的历史残留）时 cleanup_pending → active 并经 Evaluate 恢复运行时状态。
 func (d *Dispatcher) refreshCleanupStatus(ctx context.Context, revisionID int64) {
 	revision, err := d.st.ChainRevisionByID(ctx, revisionID)
 	if err != nil {
@@ -772,35 +806,52 @@ func (d *Dispatcher) refreshCleanupStatus(ctx context.Context, revisionID int64)
 	}
 	tasks, err := d.st.RevisionTasks(ctx, revisionID)
 	if err != nil {
+		log.Printf("dispatch: revision %d cleanup tasks: %v", revisionID, err)
 		return
 	}
-	hasCleanup, complete := false, true
+	blocking := false
 	for _, task := range tasks {
 		if task.Phase != "cleanup" {
 			continue
 		}
-		hasCleanup = true
-		if task.Status != store.RevisionTaskAcked && task.Status != store.RevisionTaskAbandoned {
-			complete = false
+		if d.cleanupTaskBlocks(ctx, task) {
+			blocking = true
+			break
 		}
-	}
-	if !hasCleanup {
-		return
 	}
 	chain, err := d.st.ChainByID(ctx, revision.ChainID)
 	if err != nil || chain.DesiredRevisionID != 0 {
 		return
 	}
-	if !complete {
+	if blocking {
 		if chain.Status == store.ChainStatusActive || chain.Status == store.ChainStatusDegraded {
 			_ = d.fsm.Transition(ctx, chain.ID, store.ChainStatusCleanupPending, "旧 revision 配置等待清理")
 		}
 		return
 	}
 	if chain.Status == store.ChainStatusCleanupPending {
-		_ = d.fsm.Transition(ctx, chain.ID, store.ChainStatusActive, "清理完成")
+		if err := d.fsm.Transition(ctx, chain.ID, store.ChainStatusActive,
+			"清理任务不再阻塞（完成/终态/目标离线或已删除）"); err != nil {
+			return
+		}
 		d.fsm.Evaluate(ctx, chain.ID)
 	}
+}
+
+// cleanupTaskBlocks 报告清理任务是否仍阻塞链状态：仅 pending/queued 且目标服务器
+// 存在并在线时阻塞（命令可实际下发）。离线/已删除目标不阻塞，由 reconcile 收敛队列。
+func (d *Dispatcher) cleanupTaskBlocks(ctx context.Context, task store.ChainRevisionTask) bool {
+	switch task.Status {
+	case store.RevisionTaskAcked, store.RevisionTaskFailed, store.RevisionTaskAbandoned:
+		return false
+	}
+	if _, err := d.st.ServerByID(ctx, task.ServerID); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			log.Printf("dispatch: cleanup task %d server %d: %v", task.ID, task.ServerID, err)
+		}
+		return false
+	}
+	return d.req.IsOnline(task.ServerID)
 }
 
 // enqueueHop 跳进入 applying 并下发 apply_chain_hop（离线留 commands 队列补发，§2）。

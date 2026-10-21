@@ -695,6 +695,39 @@ func (s *Store) SetRevisionTaskResult(ctx context.Context, taskID int64, success
 	return nil
 }
 
+// AbandonRevisionTask 把仍未终结（pending/queued）的 revision 任务置 abandoned。
+// CAS 守卫：仅当任务仍为未终结状态时生效（并发回执/级联不得翻写终态），返回是否实际废弃。
+func (s *Store) AbandonRevisionTask(ctx context.Context, taskID int64, reason string) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE chain_revision_tasks SET status=?, error=?, updated_at=CURRENT_TIMESTAMP
+		WHERE id=? AND status IN (?, ?)`,
+		RevisionTaskAbandoned, reason, taskID, RevisionTaskPending, RevisionTaskQueued)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// ResetQueuedRevisionTask 把 queued revision 任务复位为 pending 并解绑命令（清理任务自愈：
+// command_id 悬空或命令已终态时重新入队）。CAS 守卫：command_id 必须仍为调用方观察到的值，
+// 避免覆盖并发的入队/回写；返回是否实际复位。
+func (s *Store) ResetQueuedRevisionTask(ctx context.Context, taskID, commandID int64) (bool, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE chain_revision_tasks SET status=?, command_id=0, error='',
+		updated_at=CURRENT_TIMESTAMP WHERE id=? AND status=? AND command_id=?`,
+		RevisionTaskPending, taskID, RevisionTaskQueued, commandID)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 func (s *Store) ResetFailedRevisionTasks(ctx context.Context, revisionID int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE chain_revision_tasks SET status=?, command_id=0, error='',
 		updated_at=CURRENT_TIMESTAMP WHERE revision_id=? AND phase='apply' AND status=?`,

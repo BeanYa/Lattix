@@ -620,6 +620,13 @@ func (s *Store) DeleteServerCascade(ctx context.Context, id int64) error {
 		return err
 	}
 	defer tx.Rollback()
+	// 先废弃该服务器上未终结的 revision 任务（旧 revision 清理任务等），
+	// 与命令删除同一事务：避免删除后遗留 queued 任务与悬空 command_id 永久阻塞链状态。
+	if _, err := tx.ExecContext(ctx, `UPDATE chain_revision_tasks SET status=?, error=?, updated_at=CURRENT_TIMESTAMP
+		WHERE server_id=? AND status IN (?, ?)`,
+		RevisionTaskAbandoned, "服务器已删除", id, RevisionTaskPending, RevisionTaskQueued); err != nil {
+		return fmt.Errorf("delete server cascade: abandon revision tasks: %w", err)
+	}
 	for _, q := range []string{
 		`DELETE FROM user_nodes WHERE node_id IN (SELECT id FROM nodes WHERE server_id = ?
 			AND id NOT IN (SELECT service_node_id FROM chains WHERE deleted_at IS NULL))`,

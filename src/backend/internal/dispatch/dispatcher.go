@@ -67,6 +67,10 @@ type Dispatcher struct {
 	mu      sync.Mutex
 	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
 
+	// cleanupReconcileMu 清理任务自愈并发守卫：60s ticker 与 Agent 重连可能同时触发，
+	// 重叠运行无意义（单次运行已覆盖全部链），用 TryLock 抑制重入。
+	cleanupReconcileMu sync.Mutex
+
 	testProgressMu sync.RWMutex
 	testProgress   map[int64]shared.ServerTestProgressPayload
 
@@ -674,6 +678,9 @@ func (d *Dispatcher) OnAgentConnect(ctx context.Context, serverID int64) {
 	}
 	// 恢复编排：该服务器上 applying/waiting_for_agent/active_unconfirmed 的链重新推进。
 	d.fsm.ResumeChainsByServer(ctx, serverID)
+	// 清理任务自愈：重连后清理命令恢复可达，补入队/复位队列并按可达性重算链状态，
+	// 覆盖 cleanup_pending 卡死场景。
+	d.ReconcileChainCleanups(ctx)
 }
 
 // ReconcileStaleEndpoints 周期性自愈：遍历所有未 active 的共享端点，对服务器在线的重新下发部署命令。

@@ -1158,6 +1158,9 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 级联事务已废弃该服务器的未终结 revision 任务（旧 revision 清理任务等）；
+	// 随后自愈受影响链，让 cleanup_pending 链按“无阻塞清理任务”回到 active。
+	s.disp.ReconcileChainCleanups(r.Context())
 	if forgetter, ok := s.req.(interface {
 		ForgetAgent(int64, int, string)
 	}); ok {

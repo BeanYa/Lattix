@@ -112,6 +112,24 @@ func (s *Store) CommandByRequestID(ctx context.Context, requestID string) (*Comm
 	return &c, nil
 }
 
+// CommandByID 按主键取命令（清理任务自愈判定命令悬空/终态用）。
+func (s *Store) CommandByID(ctx context.Context, id int64) (*Command, error) {
+	var c Command
+	var data string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, request_id, trace_id, server_id, type, data, status, error, attempts, updated_at
+		 FROM commands WHERE id = ?`, id).
+		Scan(&c.ID, &c.RequestID, &c.TraceID, &c.ServerID, &c.Type, &data, &c.Status, &c.Error, &c.Attempts, &c.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query command by id: %w", err)
+	}
+	c.Data = json.RawMessage(data)
+	return &c, nil
+}
+
 // MarkCommandAcked 标记命令已被对端确认执行成功（仅 sent → acked，§4）。
 // 返回 false 表示命令不在 sent 状态（如已死信），迟到的回执不得翻回终态。
 func (s *Store) MarkCommandAcked(ctx context.Context, id int64) (bool, error) {
