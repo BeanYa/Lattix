@@ -106,7 +106,9 @@ export function CreateUserDialog({
                 <Label>用户分组（可选）</Label>
                 <Select
                   value={form.userGroupId || 'none'}
-                  onValueChange={(next) => next && patch({ userGroupId: next === 'none' ? '' : next })}
+                  onValueChange={(next) =>
+                    next && patch({ userGroupId: next === 'none' ? '' : next })
+                  }
                   items={[
                     { value: 'none', label: '无分组' },
                     ...groups.map((g) => ({ value: String(g.id), label: g.name })),
@@ -125,7 +127,9 @@ export function CreateUserDialog({
                   </SelectContent>
                 </Select>
                 {form.userGroupId && (
-                  <p className="cg-hint">已选分组：链路绑定与外部订阅由该分组派生（直接分配被遮蔽）。</p>
+                  <p className="cg-hint">
+                    已选分组：链路绑定与外部订阅由该分组派生（直接分配被遮蔽）。
+                  </p>
                 )}
               </div>
             </div>
@@ -162,7 +166,9 @@ export function CreateUserDialog({
                 )}
               </div>
               {form.effectiveMode === 'scheduled' && (
-                <p className="cg-hint">生效前订阅与链路均不可用；到生效时刻自动上线（精确到秒）。</p>
+                <p className="cg-hint">
+                  生效前订阅与链路均不可用；到生效时刻自动上线（精确到秒）。
+                </p>
               )}
             </div>
             <div className="space-y-2">
@@ -261,7 +267,9 @@ export function CreateUserDialog({
                     onUnitChange={(unit) => patch({ trafficUnit: unit })}
                     placeholder={form.isTrial ? '试用流量' : '流量配额'}
                   />
-                  {form.isTrial && <p className="cg-hint">试用流量用尽即到期停权（重新生效会清零重计）。</p>}
+                  {form.isTrial && (
+                    <p className="cg-hint">试用流量用尽即到期停权（重新生效会清零重计）。</p>
+                  )}
                 </div>
                 <div className="space-y-1">
                   <Input

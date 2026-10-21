@@ -580,7 +580,8 @@ export default function SubscriptionPage() {
   const remaining = Math.max(0, info.traffic_limit - usedTotal)
   const usagePercent =
     info.traffic_limit > 0 ? Math.min(100, (usedTotal / info.traffic_limit) * 100) : 0
-  const overLimit = (info.traffic_limit > 0 && usedTotal > info.traffic_limit) || info.quota_exhausted
+  const overLimit =
+    (info.traffic_limit > 0 && usedTotal > info.traffic_limit) || info.quota_exhausted
   const unlimited = info.traffic_limit <= 0
   const unavailable = info.disabled || info.expired || info.not_effective || overLimit
   const statusLabel = info.disabled

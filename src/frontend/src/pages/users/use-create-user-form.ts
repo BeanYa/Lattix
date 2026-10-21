@@ -152,8 +152,7 @@ export function useCreateUserForm({
     try {
       const effectiveAt =
         form.effectiveMode === 'scheduled' ? localDateTimeToRFC3339(form.effectiveAt) : null
-      const expiresAt =
-        form.expiryMode === 'until' ? localDateTimeToRFC3339(form.expiresAt) : null
+      const expiresAt = form.expiryMode === 'until' ? localDateTimeToRFC3339(form.expiresAt) : null
       const { data: res, observeId } = await api.createUser(
         form.name.trim(),
         expiresAt,

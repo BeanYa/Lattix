@@ -418,7 +418,9 @@ export default function Users() {
                           <span className="cg-user-states">
                             {u.disabled && <span className="cg-status is-red">已停用</span>}
                             {u.expired && <span className="cg-status is-red">已到期</span>}
-                            {u.quota_exhausted && <span className="cg-status is-warn">流量用尽</span>}
+                            {u.quota_exhausted && (
+                              <span className="cg-status is-warn">流量用尽</span>
+                            )}
                             {notYetEffective && !u.expired && (
                               <span className="cg-status is-warn">未生效</span>
                             )}
