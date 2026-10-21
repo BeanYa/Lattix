@@ -322,7 +322,10 @@ wait_clients "$N1" "$UUID3" present && echo "OK: 到点激活扇出 add_user"
 wait_sub_vless "$TOK3" 1 && echo "OK: 激活后订阅含 1 节点" || exit 1
 
 echo ">> 试用流量用尽：达配额即停权，手动流量重置恢复"
-db "INSERT INTO traffic (node_id, user_uuid, up, down) VALUES (0, '$UUID3', 600000, 500000)" >/dev/null
+# period_start 取当前时刻：空值会被 traffic.reset 任务视为"待初始化"立即归档清零，
+# 与配额停权扫描（同为 1s 周期）竞态导致配额永远不触发。
+PERIOD_START="$(python3 -c 'import datetime;print(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00"))')"
+db "INSERT INTO traffic (node_id, user_uuid, up, down, period_start) VALUES (0, '$UUID3', 600000, 500000, '$PERIOD_START')" >/dev/null
 for _ in $(seq 1 30); do
     [[ "$(db "SELECT quota_exhausted FROM users WHERE id=$UID3")" == "1" ]] && break
     sleep 0.5
