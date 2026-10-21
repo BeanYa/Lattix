@@ -32,6 +32,7 @@ import {
 import { api, errorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useBoardQueue } from '@/lib/board-queue'
+import { useRequestState } from '@/lib/request-state'
 import type { PanelLifecycleSnapshot, PanelLifecycleState } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -40,10 +41,13 @@ const focusRing =
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--panel-focus)]'
 
 /** 面板状态文案沿用 Layout.tsx 的英文状态词，颜色只作辅助，状态词始终可读。 */
-const panelTone: Record<PanelLifecycleState | 'offline', { label: string; className: string }> = {
+const panelTone: Record<
+  PanelLifecycleState | 'offline',
+  { label: string; className: string; pulse?: boolean }
+> = {
   startup: { label: 'STARTUP', className: 'text-waiting' },
-  active: { label: 'ACTIVE', className: 'text-ok' },
-  updating: { label: 'UPDATING', className: 'text-signal' },
+  active: { label: 'ACTIVE', className: 'text-ok', pulse: true },
+  updating: { label: 'UPDATING', className: 'text-signal', pulse: true },
   faulted: { label: 'FAULTED', className: 'text-failed' },
   offline: { label: 'OFFLINE', className: 'text-ink-3' },
 }
@@ -89,11 +93,14 @@ function PanelStateChip({ snapshot }: { snapshot: PanelLifecycleSnapshot | null 
       aria-label={title}
       title={title}
       className={cn(
-        'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[2px] border border-rule bg-raised px-2 text-[12px] font-semibold tracking-[0.08em]',
+        'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-sm border border-rule bg-raised px-2 text-[12px] font-semibold tracking-[0.08em]',
         tone.className,
       )}
     >
-      <span aria-hidden="true" className="size-1.5 shrink-0 bg-current" />
+      <span
+        aria-hidden="true"
+        className={cn('size-1.5 shrink-0 rounded-full bg-current', tone.pulse && 'cg-beacon-live')}
+      />
       <span lang="en">{tone.label}</span>
     </span>
   )
@@ -108,6 +115,8 @@ interface NavRowProps {
   active: boolean
   /** 当前一级域：只负责把一级入口文字提到 ink 色。 */
   domainActive?: boolean
+  badgeCount?: number
+  badgeTone?: 'critical' | 'warning'
   onNavigate?: () => void
 }
 
@@ -118,6 +127,8 @@ function NavRow({
   parentLabel,
   active,
   domainActive = false,
+  badgeCount,
+  badgeTone,
   onNavigate,
 }: NavRowProps) {
   const Icon = destination.icon
@@ -132,7 +143,7 @@ function NavRow({
       aria-label={name}
       title={isDesktop ? name : undefined}
       className={cn(
-        'relative flex h-10 w-full items-center gap-3 rounded-[2px] text-[15px] transition-colors duration-[var(--duration-1)]',
+        'group relative flex h-10 w-full items-center gap-3 rounded-sm text-[15px] transition-all duration-[var(--duration-2)]',
         secondary ? 'font-medium' : 'font-semibold',
         isDesktop
           ? secondary
@@ -142,20 +153,41 @@ function NavRow({
             ? 'justify-start pl-7 pr-3'
             : 'justify-start px-3',
         active
-          ? 'bg-signal-soft text-ink'
+          ? 'bg-signal-soft text-ink shadow-2xs'
           : domainActive
             ? 'text-ink hover:bg-raised'
             : 'text-ink-2 hover:bg-raised hover:text-ink',
         focusRing,
       )}
     >
-      {active ? (
-        <span aria-hidden="true" className="absolute inset-y-2 left-0 w-0.5 bg-signal" />
-      ) : null}
-      <Icon className="size-4 shrink-0" strokeWidth={1.8} aria-hidden="true" />
+      <span
+        aria-hidden="true"
+        className={cn(
+          'absolute inset-y-2 left-0 w-0.5 origin-center rounded-full bg-signal transition-transform duration-[var(--duration-2)]',
+          active ? 'scale-y-100' : 'scale-y-0',
+        )}
+      />
+      <Icon
+        className={cn(
+          'size-4 shrink-0 transition-transform duration-[var(--duration-1)] group-hover:scale-105',
+          active && 'text-signal',
+        )}
+        strokeWidth={1.8}
+        aria-hidden="true"
+      />
       <span className={cn('min-w-0 flex-1 truncate', isDesktop && 'hidden xl:block')}>
         {destination.label}
       </span>
+      {badgeCount !== undefined && badgeCount > 0 ? (
+        <span
+          className={cn(
+            'hidden h-4 min-w-4 items-center justify-center rounded-xs px-1 font-mono text-[11px] font-semibold tabular-nums xl:inline-flex',
+            badgeTone === 'critical' ? 'bg-failed/15 text-failed' : 'bg-degraded/15 text-degraded',
+          )}
+        >
+          {badgeCount}
+        </span>
+      ) : null}
     </Link>
   )
 }
@@ -165,7 +197,17 @@ function NavRow({
  * desktop 用于 1024–1279 的 72px 图标栏与 ≥1280 的 224px 侧栏：
  * 1024–1279 只留图标（title/aria-label 兜底），≥1280 恢复文字与 32px 二级缩进。
  */
-function NavList({ mode, onNavigate }: { mode: 'desktop' | 'sheet'; onNavigate?: () => void }) {
+function NavList({
+  mode,
+  pendingCount,
+  criticalCount,
+  onNavigate,
+}: {
+  mode: 'desktop' | 'sheet'
+  pendingCount: number
+  criticalCount: number
+  onNavigate?: () => void
+}) {
   const [location] = useLocation()
 
   return (
@@ -190,6 +232,8 @@ function NavList({ mode, onNavigate }: { mode: 'desktop' | 'sheet'; onNavigate?:
                 mode={mode}
                 active={current}
                 domainActive={domainActive}
+                badgeCount={item.key === 'board' ? pendingCount : undefined}
+                badgeTone={criticalCount > 0 ? 'critical' : 'warning'}
                 onNavigate={onNavigate}
               />
 
@@ -245,13 +289,13 @@ function AccountMenu({
             aria-label={username ? `账户菜单：${username}` : '账户菜单'}
             title={username ?? '账户'}
             className={cn(
-              'flex h-8 items-center gap-1.5 rounded-[2px] px-1 text-ink-2 transition-colors hover:bg-raised hover:text-ink',
+              'flex h-8 items-center gap-1.5 rounded-sm px-1.5 text-ink-2 transition-colors hover:bg-raised hover:text-ink',
               focusRing,
             )}
           >
             <span
               aria-hidden="true"
-              className="grid size-6 place-items-center rounded-full bg-inset text-[13px] font-semibold text-ink"
+              className="grid size-6 place-items-center rounded-full border border-rule-strong bg-inset text-[13px] font-semibold text-ink"
             >
               {displayName}
             </span>
@@ -265,7 +309,7 @@ function AccountMenu({
       <DropdownMenuContent
         align="end"
         sideOffset={6}
-        className="w-56 border border-rule bg-surface p-1 text-ink shadow-[var(--panel-shadow-overlay)]"
+        className="w-56 rounded-md border border-rule-strong bg-surface p-1 text-ink shadow-[var(--panel-shadow-overlay)]"
       >
         <DropdownMenuLabel className="px-2 py-1.5 text-[12px] font-semibold tracking-[0.12em] text-ink-3">
           账户
@@ -279,7 +323,7 @@ function AccountMenu({
           onClick={onLogout}
           disabled={loggingOut}
           className={cn(
-            'flex h-9 cursor-default items-center gap-2 rounded-[1px] px-2 text-xs text-ink-2 focus:bg-signal-soft focus:text-ink',
+            'flex h-9 cursor-default items-center gap-2 rounded-sm px-2 text-xs text-ink-2 focus:bg-signal-soft focus:text-ink',
             focusRing,
           )}
         >
@@ -294,6 +338,7 @@ function AccountMenu({
 export function AppShell({ children }: { children: ReactNode }) {
   const [location, navigate] = useLocation()
   const { username, logout } = useAuth()
+  const { foregroundPendingCount } = useRequestState()
   const panelSnapshot = usePanelLifecycleSnapshot()
   const { counts } = useBoardQueue()
   const criticalCount = counts?.critical ?? 0
@@ -334,16 +379,33 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   const pendingTone =
-    criticalCount > 0 ? 'text-failed' : warningCount > 0 ? 'text-degraded' : 'text-ink-3'
+    criticalCount > 0
+      ? 'border-failed/40 bg-failed/10 text-failed'
+      : warningCount > 0
+        ? 'border-degraded/40 bg-degraded/10 text-degraded'
+        : 'border-rule bg-raised text-ink-3'
 
   return (
-    <div className="flex h-[100dvh] flex-col overflow-hidden bg-ground text-ink">
+    <div
+      data-slot="app-shell"
+      className="relative flex h-[100dvh] flex-col overflow-hidden bg-ground text-ink"
+    >
+      {/* 顶部 2px 前台请求加载条（方案 9.10） */}
+      {foregroundPendingCount > 0 ? (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed inset-x-0 top-0 z-[90] h-0.5 overflow-hidden bg-signal/20"
+        >
+          <div className="h-full w-1/3 animate-pulse bg-signal" />
+        </div>
+      ) : null}
+
       {/* 跳转链接必须是 DOM 中第一个可聚焦元素，且只在键盘聚焦时出现。 */}
       <div className="fixed left-4 top-4 z-[100]">
         <a
           href="#main-content"
           className={cn(
-            'sr-only focus:not-sr-only focus:inline-flex focus:h-9 focus:items-center focus:rounded-[2px] focus:border focus:border-rule-strong focus:bg-surface focus:px-3 focus:text-sm focus:font-semibold focus:text-ink',
+            'sr-only focus:not-sr-only focus:inline-flex focus:h-9 focus:items-center focus:rounded-sm focus:border focus:border-rule-strong focus:bg-surface focus:px-3 focus:text-sm focus:font-semibold focus:text-ink',
             focusRing,
           )}
         >
@@ -357,12 +419,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           href="/board"
           aria-label="Lattix 控制台"
           className={cn(
-            'flex min-w-0 shrink-0 items-center gap-2 rounded-[2px] text-ink',
+            'group flex min-w-0 shrink-0 items-center gap-2.5 rounded-sm text-ink',
             focusRing,
           )}
         >
-          <span className="grid size-8 place-items-center border border-rule bg-raised">
-            <LattixMark className="size-4 shrink-0" />
+          <span className="grid size-8 place-items-center rounded-sm border border-rule bg-raised transition-colors group-hover:border-rule-strong">
+            <LattixMark className="size-4 shrink-0 transition-transform duration-150 group-hover:scale-105" />
           </span>
           <span className="hidden text-[15px] font-bold tracking-[0.16em] sm:block" lang="en">
             LATTIX
@@ -383,13 +445,13 @@ export function AppShell({ children }: { children: ReactNode }) {
             aria-expanded={paletteOpen}
             aria-keyshortcuts="Meta+K Control+K"
             className={cn(
-              'hidden h-9 shrink-0 items-center gap-2 rounded-[2px] border border-rule bg-raised px-2.5 text-left text-xs text-ink-3 transition-colors hover:border-rule-strong hover:text-ink-2 lg:inline-flex lg:w-60 xl:w-80',
+              'hidden h-9 shrink-0 items-center gap-2 rounded-sm border border-rule bg-raised px-3 text-left text-xs text-ink-3 transition-all hover:border-rule-strong hover:bg-inset/50 hover:text-ink-2 lg:inline-flex lg:w-64 xl:w-80',
               focusRing,
             )}
           >
             <SearchIcon className="size-3.5 shrink-0" aria-hidden="true" />
-            <span className="min-w-0 flex-1 truncate">搜索或跳转…</span>
-            <kbd className="ml-auto inline-flex h-5 shrink-0 items-center rounded-[2px] border border-rule bg-surface px-1 font-mono text-[12px] font-semibold text-ink-3">
+            <span className="min-w-0 flex-1 truncate">搜索页面、服务器、链路或用户…</span>
+            <kbd className="ml-auto inline-flex h-5 shrink-0 items-center rounded-xs border border-rule bg-surface px-1.5 font-mono text-[11px] font-semibold text-ink-3">
               ⌘K
             </kbd>
           </button>
@@ -401,7 +463,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             aria-expanded={paletteOpen}
             aria-keyshortcuts="Meta+K Control+K"
             className={cn(
-              'grid size-9 place-items-center rounded-[2px] text-ink-2 transition-colors hover:bg-raised hover:text-ink lg:hidden',
+              'grid size-9 place-items-center rounded-sm text-ink-2 transition-colors hover:bg-raised hover:text-ink lg:hidden',
               focusRing,
             )}
           >
@@ -415,7 +477,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             aria-label={`${pendingCount} 项待处理，前往控制台`}
             title={`严重 ${criticalCount} 项 / 警告 ${warningCount} 项`}
             className={cn(
-              'inline-flex h-8 items-center gap-1.5 rounded-[2px] border border-rule bg-raised px-2 text-xs font-medium transition-colors hover:border-rule-strong hover:bg-inset',
+              'inline-flex h-8 items-center gap-1.5 rounded-sm border px-2.5 text-xs font-medium transition-colors hover:brightness-105',
               pendingTone,
               focusRing,
             )}
@@ -427,7 +489,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           <ThemeToggle
             className={cn(
-              'size-8 text-ink-2 hover:bg-raised hover:text-ink focus-visible:ring-0',
+              'size-8 rounded-sm text-ink-2 hover:bg-raised hover:text-ink focus-visible:ring-0',
               focusRing,
             )}
           />
@@ -444,7 +506,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <button
                   type="button"
                   className={cn(
-                    'grid size-9 place-items-center rounded-[2px] text-ink-2 transition-colors hover:bg-raised hover:text-ink lg:hidden',
+                    'grid size-9 place-items-center rounded-sm text-ink-2 transition-colors hover:bg-raised hover:text-ink lg:hidden',
                     focusRing,
                   )}
                   aria-label="打开导航菜单"
@@ -457,7 +519,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <SheetContent
               side="left"
               showCloseButton={false}
-              className="w-[280px] gap-0 border-r border-rule bg-surface p-0 text-ink sm:max-w-[280px]"
+              className="w-[280px] gap-0 rounded-none border-r border-rule bg-surface p-0 text-ink sm:max-w-[280px]"
             >
               <div className="flex h-14 shrink-0 items-center justify-between border-b border-rule px-4">
                 <SheetTitle className="flex items-center gap-2 text-[15px] font-bold tracking-[0.16em] text-ink">
@@ -470,7 +532,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <button
                       type="button"
                       className={cn(
-                        'grid size-8 place-items-center rounded-[2px] text-ink-2 transition-colors hover:bg-raised hover:text-ink',
+                        'grid size-8 place-items-center rounded-sm text-ink-2 transition-colors hover:bg-raised hover:text-ink',
                         focusRing,
                       )}
                       aria-label="关闭导航菜单"
@@ -480,10 +542,15 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <XIcon className="size-4" aria-hidden="true" />
                 </SheetClose>
               </div>
-              <NavList mode="sheet" onNavigate={() => setMobileNavOpen(false)} />
+              <NavList
+                mode="sheet"
+                pendingCount={pendingCount}
+                criticalCount={criticalCount}
+                onNavigate={() => setMobileNavOpen(false)}
+              />
               <div className="shrink-0 border-t border-rule px-4 py-3">
                 <p className="text-[12px] font-semibold tracking-[0.08em] text-ink-3">
-                  自托管 · NETWORK CONTROL
+                  自托管 · LINE BOARD
                 </p>
               </div>
             </SheetContent>
@@ -494,15 +561,19 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* 侧栏：<1024 隐藏，1024–1279 为 72px 图标栏，≥1280 为 224px 展开栏。 */}
         <aside className="hidden min-h-0 shrink-0 flex-col border-r border-rule bg-surface lg:flex lg:w-[72px] xl:w-56">
-          <div className="hidden h-10 shrink-0 items-center border-b border-rule px-4 text-[12px] font-semibold tracking-[0.12em] text-ink-3 xl:flex">
-            导航
+          <div className="hidden h-10 shrink-0 items-center justify-between border-b border-rule px-4 text-[11px] font-semibold tracking-[0.14em] text-ink-3 xl:flex">
+            <span>导航 · NAVIGATION</span>
+            <span className="size-1.5 rounded-full bg-signal" aria-hidden="true" />
           </div>
-          <NavList mode="desktop" />
+          <NavList mode="desktop" pendingCount={pendingCount} criticalCount={criticalCount} />
           <div className="shrink-0 border-t border-rule p-3">
-            <p className="hidden text-[12px] font-medium leading-4 tracking-[0.06em] text-ink-3 xl:block">
-              自托管 · NETWORK CONTROL
+            <p className="hidden text-[11px] font-semibold leading-4 tracking-[0.08em] text-ink-3 xl:block">
+              自托管 · LINE BOARD
             </p>
-            <span aria-hidden="true" className="mx-auto block size-1.5 bg-signal xl:hidden" />
+            <span
+              aria-hidden="true"
+              className="mx-auto block size-1.5 rounded-full bg-signal xl:hidden"
+            />
           </div>
         </aside>
 
@@ -516,7 +587,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             {logoutError ? (
               <div
                 role="alert"
-                className="mb-4 flex items-start gap-2 border border-failed/40 bg-failed/10 px-3 py-2 text-sm text-ink"
+                className="mb-4 flex items-start gap-2 rounded-md border border-failed/40 bg-failed/10 px-3 py-2 text-sm text-ink"
               >
                 <TriangleAlertIcon
                   className="mt-0.5 size-4 shrink-0 text-failed"

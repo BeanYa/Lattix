@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useLocation } from 'wouter'
 import { PlusIcon, Trash2Icon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -78,14 +79,32 @@ function ModeSelect({
 }
 
 export default function Groups() {
-  const [tab, setTab] = useState<'links' | 'users'>('links')
+  const [location, navigate] = useLocation()
+  const routeTab: 'links' | 'users' = location.startsWith('/access/user-groups') ? 'users' : 'links'
+  const [tab, setTab] = useState<'links' | 'users'>(routeTab)
+
+  useEffect(() => {
+    setTab(routeTab)
+  }, [routeTab])
+
+  const handleTabChange = (value: string | null) => {
+    if (!value) return
+    const next = value as 'links' | 'users'
+    setTab(next)
+    if (next === 'users' && location !== '/access/user-groups') {
+      navigate('/access/user-groups')
+    } else if (next === 'links' && location !== '/network/link-groups') {
+      navigate('/network/link-groups')
+    }
+  }
+
   return (
     <Page className="cg-page-in">
       <PageHeader
         title="分组"
         description="链路分组编排链路与外部订阅；用户分组把链路分组分配给用户。"
       />
-      <Tabs value={tab} onValueChange={(value) => value && setTab(value as 'links' | 'users')}>
+      <Tabs value={tab} onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="links">链路分组</TabsTrigger>
           <TabsTrigger value="users">用户分组</TabsTrigger>
@@ -174,8 +193,22 @@ function LinkGroupsTab() {
         ) : (
           <div className="cg-groups-rows">
             {groups.map((g) => (
-              <div key={g.id} className="cg-group-row">
+              <div
+                key={g.id}
+                className="cg-group-row"
+                style={
+                  {
+                    '--group-line-color': `var(--panel-line-${g.id % 9})`,
+                  } as React.CSSProperties
+                }
+              >
                 <div className="cg-group-row-main">
+                  <span
+                    className="cg-line-badge"
+                    style={{ background: `var(--panel-line-${g.id % 9})` }}
+                  >
+                    G{g.id}
+                  </span>
                   <span className="cg-group-row-name">{g.name}</span>
                   <span className="cg-status is-blue">{g.chain_count} 链路</span>
                   <span className="cg-status is-blue">
@@ -319,6 +352,12 @@ function LinkGroupDialog({
                     checked={chainSel.includes(link.chainId)}
                     onChange={(e) => toggleChain(link.chainId, e.target.checked)}
                   />
+                  <span
+                    className="cg-line-badge"
+                    style={{ background: `var(--panel-line-${link.chainId % 9})` }}
+                  >
+                    L{link.chainId % 9}
+                  </span>
                   <span className="cg-status is-blue">
                     {link.type === 'direct' ? '直连' : '中转'}
                   </span>
@@ -463,8 +502,22 @@ function UserGroupsTab() {
         ) : (
           <div className="cg-groups-rows">
             {groups.map((g) => (
-              <div key={g.id} className="cg-group-row">
+              <div
+                key={g.id}
+                className="cg-group-row"
+                style={
+                  {
+                    '--group-line-color': `var(--panel-line-${(g.id + 3) % 9})`,
+                  } as React.CSSProperties
+                }
+              >
                 <div className="cg-group-row-main">
+                  <span
+                    className="cg-line-badge"
+                    style={{ background: `var(--panel-line-${(g.id + 3) % 9})` }}
+                  >
+                    U{g.id}
+                  </span>
                   <span className="cg-group-row-name">{g.name}</span>
                   <span className="cg-status is-blue">{g.member_count} 用户</span>
                   <span className="cg-status is-blue">{g.link_group_count} 链路分组</span>

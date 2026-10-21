@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useLocation } from 'wouter'
 import { CpuIcon, ShieldCheckIcon, SlidersHorizontalIcon, WrenchIcon } from 'lucide-react'
 
 import { LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
@@ -84,11 +85,25 @@ const SETTINGS_TABS = [
 ] as const
 
 export default function Settings() {
+  const [location, navigate] = useLocation()
   const { refresh: refreshTimezone } = useTimezone()
   const accessProtocol = window.location.protocol === 'https:' ? 'HTTPS' : 'HTTP'
   const [settings, setSettings] = useState<PanelSettings | null>(null)
   const [loadError, setLoadError] = useState('')
-  const [settingsTab, setSettingsTab] = useState('agent')
+  const routeSection =
+    location.match(/^\/settings\/(agent|runtime|security|system)$/)?.[1] ?? 'agent'
+  const [settingsTab, setSettingsTab] = useState(routeSection)
+
+  useEffect(() => {
+    setSettingsTab(routeSection)
+  }, [routeSection])
+
+  const handleSettingsTabChange = (next: string) => {
+    setSettingsTab(next)
+    if (location.startsWith('/settings/') && location !== `/settings/${next}`) {
+      navigate(`/settings/${next}`)
+    }
+  }
 
   // 基本设置
   const [publicURL, setPublicURL] = useState('')
@@ -378,7 +393,7 @@ export default function Settings() {
             type="button"
             className={cn('st-tabs-btn', settingsTab === tab.value && 'is-active')}
             aria-pressed={settingsTab === tab.value}
-            onClick={() => setSettingsTab(tab.value)}
+            onClick={() => handleSettingsTabChange(tab.value)}
           >
             <tab.icon />
             {tab.label}

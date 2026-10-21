@@ -25,9 +25,11 @@
   width: fit-content;
   max-width: 100%;
   overflow-x: auto;
+  padding: 3px;
+  gap: 2px;
   border: 1px solid var(--panel-rule);
-  border-radius: 1px;
-  background: var(--panel-surface);
+  border-radius: var(--radius-md, 8px);
+  background: var(--panel-inset);
 }
 
 .st-tabs-btn {
@@ -35,15 +37,14 @@
   flex: none;
   align-items: center;
   gap: 6px;
-  height: 28px;
+  height: 30px;
   padding: 0 12px;
   border: 0;
-  border-right: 1px solid var(--panel-rule);
-  border-radius: 0;
+  border-radius: 6px;
   background: transparent;
   color: var(--panel-ink-2);
   font-family: var(--font-display);
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1;
@@ -51,7 +52,8 @@
   cursor: pointer;
   transition:
     background-color var(--panel-fast) var(--panel-ease),
-    color var(--panel-fast) var(--panel-ease);
+    color var(--panel-fast) var(--panel-ease),
+    box-shadow var(--panel-fast) var(--panel-ease);
 }
 
 .st-tabs-btn:last-child {
@@ -64,8 +66,9 @@
 }
 
 .st-tabs-btn.is-active {
-  background: var(--panel-accent);
-  color: var(--panel-accent-ink);
+  background: var(--panel-surface);
+  color: var(--panel-ink);
+  box-shadow: var(--panel-shadow-raised);
 }
 
 .st-tabs-btn svg {
@@ -77,13 +80,13 @@
 
 .st-form {
   display: grid;
-  gap: 6px;
+  gap: 10px;
   min-width: 0;
 }
 
 .st-panel {
   display: grid;
-  gap: 6px;
+  gap: 10px;
   min-width: 0;
   align-content: start;
 }
@@ -99,8 +102,10 @@
   min-width: 0;
   flex-direction: column;
   border: 1px solid var(--panel-rule);
-  border-radius: 1px;
+  border-radius: var(--radius-lg, 12px);
   background: var(--panel-surface);
+  box-shadow: var(--panel-shadow-raised);
+  overflow: hidden;
 }
 
 .st-mod-head {

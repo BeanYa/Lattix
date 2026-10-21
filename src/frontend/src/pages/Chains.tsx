@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useSearch } from 'wouter'
 import {
   ArrowDownIcon,
   ArrowRightIcon,
@@ -11,6 +12,7 @@ import {
   PlusIcon,
   RotateCcwIcon,
   RouteIcon,
+  SearchIcon,
   SendIcon,
   TriangleAlertIcon,
 } from 'lucide-react'
@@ -34,6 +36,8 @@ import { useChainForm } from './chains/use-chain-form'
 import { roleLabel, useTrafficHistory } from './chains/use-traffic-history'
 
 import './chains.css'
+
+type ChainFilter = 'all' | 'active' | 'issue' | 'relay' | 'direct'
 
 function statusTone(tone: CgStatusStyle['cg']): string {
   return tone === 'is-lime' ? 'is-ok' : tone
@@ -109,6 +113,8 @@ function TrafficSummary({
 }
 
 export default function Chains() {
+  const [location] = useLocation()
+  const searchString = useSearch()
   const { timezone } = useTimezone()
   const { confirm } = useAppDialog()
   const { showOperation } = useOperationProgress()
@@ -119,7 +125,10 @@ export default function Chains() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [retrying, setRetrying] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<ChainFilter>('all')
   const loadRequest = useRef(0)
+  const autoOpenedRoute = useRef('')
 
   const load = useCallback(async (silent = false, signal?: AbortSignal) => {
     const request = ++loadRequest.current
@@ -165,6 +174,31 @@ export default function Chains() {
     showOperation,
   })
   const traffic = useTrafficHistory({ onError: setError })
+
+  // 支持从命令面板或控制台深链到 /network/chains/new、/network/chains/:id、/network/chains/:id/edit
+  const highlightedChainId = useMemo(() => {
+    const selParam = new URLSearchParams(searchString).get('sel')
+    if (selParam && /^\d+$/.test(selParam)) return Number(selParam)
+    const match = location.match(/^\/network\/chains\/(\d+)(?:\/edit)?$/)
+    return match ? Number(match[1]) : null
+  }, [location, searchString])
+
+  useEffect(() => {
+    if (loading) return
+    if (location === '/network/chains/new' && autoOpenedRoute.current !== location) {
+      autoOpenedRoute.current = location
+      chainForm.openCreate()
+      return
+    }
+    const editMatch = location.match(/^\/network\/chains\/(\d+)\/edit$/)
+    if (editMatch && autoOpenedRoute.current !== location) {
+      const target = chains.find((c) => c.id === Number(editMatch[1]))
+      if (target) {
+        autoOpenedRoute.current = location
+        chainForm.openEdit(target)
+      }
+    }
+  }, [chains, chainForm, loading, location])
 
   const onForcePublish = async (chain: Chain) => {
     if (
@@ -298,6 +332,69 @@ export default function Chains() {
       ].toSorted((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [chains, directNodes],
   )
+
+  const filterCounts = useMemo(() => {
+    let active = 0
+    let issue = 0
+    let relay = 0
+    let direct = 0
+    for (const entry of entries) {
+      if (entry.type === 'direct') {
+        direct += 1
+        if (entry.node.status === 'active') active += 1
+        if (entry.node.status === 'failed') issue += 1
+      } else {
+        const isSingleHop = entry.chain.hops.length === 1
+        if (isSingleHop) direct += 1
+        else relay += 1
+        if (entry.chain.status === 'active') active += 1
+        if (
+          entry.chain.status === 'failed' ||
+          entry.chain.status === 'active_failed' ||
+          entry.chain.status === 'degraded' ||
+          entry.chain.hops.some((h) => h.status === 'failed')
+        ) {
+          issue += 1
+        }
+      }
+    }
+    return { all: entries.length, active, issue, relay, direct }
+  }, [entries])
+
+  const filteredEntries = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return entries.filter((entry) => {
+      if (entry.type === 'direct') {
+        const n = entry.node
+        if (filter === 'active' && n.status !== 'active') return false
+        if (filter === 'issue' && n.status !== 'failed') return false
+        if (filter === 'relay') return false
+        if (q) {
+          const hay = `${n.name} ${n.server_alias} #${n.id} 直连`.toLowerCase()
+          if (!hay.includes(q)) return false
+        }
+        return true
+      }
+      const c = entry.chain
+      const isDirect = c.hops.length === 1
+      const hasIssue =
+        c.status === 'failed' ||
+        c.status === 'active_failed' ||
+        c.status === 'degraded' ||
+        c.hops.some((h) => h.status === 'failed')
+      if (filter === 'active' && c.status !== 'active') return false
+      if (filter === 'issue' && !hasIssue) return false
+      if (filter === 'relay' && isDirect) return false
+      if (filter === 'direct' && !isDirect) return false
+      if (q) {
+        const hopsText = c.hops.map((h) => h.server_alias).join(' ')
+        const hay = `${c.name} ${hopsText} #${c.id} L${c.id % 9}`.toLowerCase()
+        if (!hay.includes(q)) return false
+      }
+      return true
+    })
+  }, [entries, filter, query])
+
   return (
     <Page className="cg-chains">
       <PageHeader
@@ -318,9 +415,50 @@ export default function Chains() {
           <span className="cg-chain-tab">ROUTES</span>
           <span className="cg-chain-board-title">链路读数</span>
           <span className="cg-chain-board-meta">
-            {loading ? '同步中…' : `${entries.length} 条链路`}
+            {loading
+              ? '同步中…'
+              : filteredEntries.length !== entries.length
+                ? `${filteredEntries.length} / ${entries.length} 条链路`
+                : `${entries.length} 条链路`}
           </span>
         </header>
+        {!loading && entries.length > 0 ? (
+          <div className="cg-chain-toolbar">
+            <div className="cg-search-wrap">
+              <SearchIcon />
+              <input
+                type="search"
+                className="cg-search-input"
+                placeholder="搜索链路名称、跳点机器、线路编号 L0–L8…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                aria-label="搜索链路"
+              />
+            </div>
+            <div className="cg-filter-pills" role="group" aria-label="链路筛选">
+              {(
+                [
+                  { id: 'all', label: '全部', count: filterCounts.all },
+                  { id: 'active', label: '正常', count: filterCounts.active },
+                  { id: 'issue', label: '异常/降级', count: filterCounts.issue },
+                  { id: 'relay', label: '中转', count: filterCounts.relay },
+                  { id: 'direct', label: '直连', count: filterCounts.direct },
+                ] as const
+              ).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="cg-filter-pill"
+                  data-active={filter === item.id ? 'true' : 'false'}
+                  onClick={() => setFilter(item.id)}
+                >
+                  <span>{item.label}</span>
+                  <span className="cg-filter-pill-count">{item.count}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         {loading ? (
           <LoadingState className="cg-board-state" />
         ) : entries.length === 0 ? (
@@ -330,18 +468,41 @@ export default function Chains() {
             title="暂无链路"
             description="点击上方“创建链路”开始"
           />
+        ) : filteredEntries.length === 0 ? (
+          <EmptyState
+            className="cg-board-state"
+            icon={<RouteIcon />}
+            title="未找到匹配的链路"
+            description="尝试调整搜索词或切换上方筛选条件"
+          />
         ) : (
           <div className="cg-chain-rows">
-            {entries.map((entry) => {
+            {filteredEntries.map((entry) => {
               if (entry.type === 'direct') {
                 const node = entry.node
                 const st = chainStatusStyle[node.status] ?? chainStatusStyle.pending
                 const server = servers.find((candidate) => candidate.id === node.server_id)
                 const displayPort = node.realized_config?.port ?? node.port
+                const lineIdx = node.id % 9
                 return (
-                  <article key={`direct-${node.id}`} className="cg-chain-entry" data-tone={st.cg}>
+                  <article
+                    key={`direct-${node.id}`}
+                    className="cg-chain-entry"
+                    data-tone={st.cg}
+                    style={
+                      {
+                        '--entry-line-color': `var(--panel-line-${lineIdx})`,
+                      } as React.CSSProperties
+                    }
+                  >
                     <header className="cg-chain-entry-head">
                       <div className="cg-chain-entry-title">
+                        <span
+                          className="cg-line-badge"
+                          style={{ background: `var(--panel-line-${lineIdx})` }}
+                        >
+                          L{lineIdx}
+                        </span>
                         <ChainStateMark status={node.status} style={st} />
                         <strong className="cg-chain-name">{node.name || `直连 #${node.id}`}</strong>
                         <span className="cg-chain-id">#{node.id}</span>
@@ -414,13 +575,30 @@ export default function Chains() {
               const st = chainStatusStyle[c.status] ?? chainStatusStyle.pending
               const hasFailedHop = c.hops.some((h) => h.status === 'failed')
               const isDirect = c.hops.length === 1
+              const lineIdx = c.id % 9
+              const isHighlighted = highlightedChainId === c.id
               const pendingTasks = c.revision_tasks.filter(
                 (task) => task.status === 'pending' || task.status === 'queued',
               )
               return (
-                <article key={`relay-${c.id}`} className="cg-chain-entry" data-tone={st.cg}>
+                <article
+                  key={`relay-${c.id}`}
+                  className={cn('cg-chain-entry', isHighlighted && 'is-highlighted')}
+                  data-tone={st.cg}
+                  style={
+                    {
+                      '--entry-line-color': `var(--panel-line-${lineIdx})`,
+                    } as React.CSSProperties
+                  }
+                >
                   <header className="cg-chain-entry-head">
                     <div className="cg-chain-entry-title">
+                      <span
+                        className="cg-line-badge"
+                        style={{ background: `var(--panel-line-${lineIdx})` }}
+                      >
+                        L{lineIdx}
+                      </span>
                       <ChainStateMark status={c.status} style={st} />
                       <strong className="cg-chain-name">{c.name || `中转 #${c.id}`}</strong>
                       <span className="cg-chain-id">#{c.id}</span>
@@ -527,7 +705,13 @@ export default function Chains() {
                             return (
                               <div key={h.id} className="cg-hop-seg" title={h.error || undefined}>
                                 {i > 0 ? (
-                                  <span className="cg-hop-link" aria-hidden="true">
+                                  <span
+                                    className={cn(
+                                      'cg-hop-link',
+                                      c.status === 'active' && !offline && 'is-flowing',
+                                    )}
+                                    aria-hidden="true"
+                                  >
                                     <i />
                                     <ArrowDownIcon className="cg-hop-link-v" />
                                     <ArrowRightIcon className="cg-hop-link-h" />

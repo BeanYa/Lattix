@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { useSearch } from 'wouter'
 import {
   BanIcon,
   CircleCheckIcon,
@@ -11,6 +12,7 @@ import {
   RefreshCwIcon,
   RotateCcwIcon,
   RotateCwIcon,
+  SearchIcon,
   Settings2Icon,
   EllipsisIcon,
   Trash2Icon,
@@ -121,6 +123,13 @@ export default function Users() {
   >([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [usersTab, setUsersTab] = useState<'users' | 'assign'>('users')
+  const [query, setQuery] = useState('')
+  const [userFilter, setUserFilter] = useState<'all' | 'online' | 'trial' | 'issue'>('all')
+  const searchString = useSearch()
+  const highlightedUserId = useMemo(() => {
+    const raw = new URLSearchParams(searchString).get('sel')
+    return raw && /^\d+$/.test(raw) ? Number(raw) : null
+  }, [searchString])
 
   const load = useCallback(async (silent = false, signal?: AbortSignal) => {
     const request = ++loadRequest.current
@@ -172,6 +181,36 @@ export default function Users() {
   }, [assignTarget, linkOptions])
 
   const onlineUsers = users.filter((user) => user.online_connections > 0).length
+  const trialUsers = users.filter((user) => user.is_trial).length
+  const issueUsers = users.filter(
+    (user) =>
+      user.disabled ||
+      user.expired ||
+      user.quota_exhausted ||
+      user.subscription_snapshot.status !== 'ready',
+  ).length
+
+  const filteredUsers = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return users.filter((user) => {
+      const hasIssue =
+        user.disabled ||
+        user.expired ||
+        user.quota_exhausted ||
+        user.subscription_snapshot.status !== 'ready'
+      if (userFilter === 'online' && user.online_connections <= 0) return false
+      if (userFilter === 'trial' && !user.is_trial) return false
+      if (userFilter === 'issue' && !hasIssue) return false
+      if (q) {
+        const groupNames = user.user_group_ids
+          .map((id) => userGroups.find((g) => g.id === id)?.name ?? `#${id}`)
+          .join(' ')
+        const hay = `${user.name} ${groupNames} ${user.sub_url}`.toLowerCase()
+        if (!hay.includes(q)) return false
+      }
+      return true
+    })
+  }, [query, userFilter, userGroups, users])
 
   const onDelete = async (user: SubUser) => {
     if (
@@ -363,6 +402,42 @@ export default function Users() {
               {loading ? '同步中…' : `${users.length} 用户 · 在线 ${onlineUsers}`}
             </span>
           </header>
+          {!loading && users.length > 0 ? (
+            <div className="cg-users-toolbar">
+              <div className="cg-search-wrap">
+                <SearchIcon />
+                <input
+                  type="search"
+                  className="cg-search-input"
+                  placeholder="搜索用户名、用户分组、订阅令牌…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  aria-label="搜索用户"
+                />
+              </div>
+              <div className="cg-filter-pills" role="group" aria-label="用户筛选">
+                {(
+                  [
+                    { id: 'all', label: '全部', count: users.length },
+                    { id: 'online', label: '在线', count: onlineUsers },
+                    { id: 'trial', label: '试用', count: trialUsers },
+                    { id: 'issue', label: '异常/到期', count: issueUsers },
+                  ] as const
+                ).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="cg-filter-pill"
+                    data-active={userFilter === item.id ? 'true' : 'false'}
+                    onClick={() => setUserFilter(item.id)}
+                  >
+                    <span>{item.label}</span>
+                    <span className="cg-filter-pill-count">{item.count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
           {loading ? (
             <LoadingState className="cg-users-board-state" />
           ) : users.length === 0 ? (
@@ -371,6 +446,13 @@ export default function Users() {
               icon={<UsersIcon />}
               title="暂无用户"
               description="点击上方“创建用户”开始"
+            />
+          ) : filteredUsers.length === 0 ? (
+            <EmptyState
+              className="cg-users-board-state"
+              icon={<UsersIcon />}
+              title="未找到匹配的用户"
+              description="尝试调整搜索词或切换上方状态筛选"
             />
           ) : (
             <div className="cg-users-scroll">
@@ -388,7 +470,7 @@ export default function Users() {
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((u) => {
+                  {filteredUsers.map((u) => {
                     const effectiveChainIds = u.effective_chain_ids ?? u.chain_ids
                     const effectiveLinks = effectiveChainIds.filter((id) =>
                       linkOptions.some((link) => link.chainId === id),
@@ -399,15 +481,28 @@ export default function Users() {
                     const notYetEffective =
                       !!u.effective_at && new Date(u.effective_at).getTime() > Date.now()
                     const trialUsed = (u.traffic?.up ?? 0) + (u.traffic?.down ?? 0)
+                    const quotaRatio =
+                      u.traffic_limit > 0
+                        ? Math.min(100, Math.round((trialUsed / u.traffic_limit) * 100))
+                        : 0
                     return (
                       <tr
                         key={u.id}
                         className="cg-user-row"
                         data-disabled={u.disabled || undefined}
+                        data-highlighted={highlightedUserId === u.id ? 'true' : undefined}
                       >
                         <th scope="row" className="cg-user-cell">
-                          <span className="cg-user-name">{u.name}</span>
-                          {u.is_trial && <span className="cg-status is-blue">试用</span>}
+                          <span className="cg-user-head-line">
+                            <span
+                              className="cg-line-badge"
+                              style={{ background: `var(--panel-line-${u.id % 9})` }}
+                            >
+                              {u.name.slice(0, 1).toUpperCase()}
+                            </span>
+                            <span className="cg-user-name">{u.name}</span>
+                            {u.is_trial && <span className="cg-status is-blue">试用</span>}
+                          </span>
                           {groupNames.length > 0 && (
                             <span className="cg-user-groups" title="订阅由用户分组派生">
                               {groupNames.join('、')}
@@ -453,12 +548,26 @@ export default function Users() {
                               <span>↑ {humanizeBytes(u.traffic.up)}</span>
                               <span>↓ {humanizeBytes(u.traffic.down)}</span>
                               {u.traffic_limit > 0 && (
-                                <span
-                                  className="cg-muted"
-                                  title="当期已用 / 配额（用尽即停权，周期重置或手动重置后恢复）"
-                                >
-                                  {humanizeBytes(trialUsed)} / {humanizeBytes(u.traffic_limit)}
-                                </span>
+                                <>
+                                  <span
+                                    className="cg-muted"
+                                    title="当期已用 / 配额（用尽即停权，周期重置或手动重置后恢复）"
+                                  >
+                                    {humanizeBytes(trialUsed)} / {humanizeBytes(u.traffic_limit)}
+                                  </span>
+                                  <span className="cg-user-quota-bar" aria-hidden="true">
+                                    <i
+                                      className={
+                                        quotaRatio >= 90
+                                          ? 'is-crit'
+                                          : quotaRatio >= 75
+                                            ? 'is-warn'
+                                            : undefined
+                                      }
+                                      style={{ width: `${quotaRatio}%` }}
+                                    />
+                                  </span>
+                                </>
                               )}
                             </>
                           ) : (
@@ -467,7 +576,10 @@ export default function Users() {
                         </td>
                         <td className="cg-user-num">
                           {u.online_connections > 0 ? (
-                            <span className="cg-user-online">{u.online_connections}</span>
+                            <span className="cg-user-online">
+                              <i className="cg-beacon-live" aria-hidden="true" />
+                              {u.online_connections}
+                            </span>
                           ) : (
                             <span className="cg-muted">-</span>
                           )}

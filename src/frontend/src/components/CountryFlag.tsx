@@ -1,3 +1,4 @@
+import 'flag-icons/css/flag-icons.min.css'
 import { cn } from '@/lib/utils'
 
 export function CountryFlag({

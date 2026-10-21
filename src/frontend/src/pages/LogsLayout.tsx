@@ -15,7 +15,7 @@ export default function LogsLayout({ children }: { children: ReactNode }) {
       <PageHeader title="日志" description="审阅系统操作与最近的 API 请求流量。" />
       <Tabs
         value={active}
-        onValueChange={(value) => navigate(`/logs/${value}`)}
+        onValueChange={(value) => value && navigate(`/run/logs/${value}`)}
         className="logs-tabs"
       >
         <TabsList>

@@ -25,8 +25,9 @@
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--panel-rule);
-  border-radius: 1px;
+  border-radius: var(--radius-lg, 12px);
   background: var(--panel-surface);
+  box-shadow: var(--panel-shadow-raised);
 }
 
 .rt-mod-head {

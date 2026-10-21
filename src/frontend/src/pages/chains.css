@@ -1,15 +1,14 @@
 /* ============================================================
-   Chains（链路页）— 发丝线模块拼贴
-   模块 = 1px 灰线矩形；模块头 = 红色索引标签 + 中文标题 + 右侧 meta；
-   内容以 9–13px 小字号高密度排布，数字 tabular。
+   Chains（链路页）— Line Board 线路拓扑与流量读数板
    ============================================================ */
 
-/* ---------- 链路读数板（页面唯一模块） ---------- */
+/* ---------- 链路读数板 ---------- */
 
 .cg-chain-board {
   border: 1px solid var(--panel-rule);
-  border-radius: 2px;
+  border-radius: var(--radius-lg, 12px);
   background: var(--panel-surface);
+  box-shadow: var(--panel-shadow-raised);
   overflow: hidden;
 }
 
@@ -17,31 +16,33 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 36px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--panel-rule);
+  background: color-mix(in srgb, var(--panel-raised) 55%, var(--panel-surface));
 }
 
 .cg-chain-tab {
   display: inline-flex;
   align-items: center;
-  padding: 2px 5px;
+  padding: 2px 6px;
+  border-radius: 4px;
   background: var(--panel-accent);
   color: var(--panel-accent-ink);
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.09em;
-  line-height: 1.2;
+  line-height: 1.25;
   text-transform: uppercase;
 }
 
 .cg-chain-board-title {
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.03em;
   line-height: 1.2;
 }
 
@@ -56,6 +57,17 @@
   white-space: nowrap;
 }
 
+.cg-chain-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--panel-rule);
+  background: var(--panel-surface);
+}
+
 .cg-chain-board-state {
   min-height: 10rem;
   border: 0;
@@ -67,7 +79,18 @@
   display: grid;
 }
 
-/* ---------- 单条链路（模块内发丝线分节） ---------- */
+/* ---------- 单条链路（左侧 3px 线路色带） ---------- */
+
+.cg-chain-entry {
+  position: relative;
+  box-shadow: inset 3px 0 0 var(--entry-line-color, var(--panel-rule-strong));
+  transition: background-color 160ms var(--panel-ease);
+}
+
+.cg-chain-entry.is-highlighted {
+  background: color-mix(in srgb, var(--panel-signal) 7%, var(--panel-surface));
+  box-shadow: inset 3px 0 0 var(--panel-signal);
+}
 
 .cg-chain-entry + .cg-chain-entry {
   border-top: 1px solid var(--panel-rule);
@@ -79,9 +102,9 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 6px 14px;
-  padding: 6px 10px;
+  padding: 8px 12px 8px 14px;
   border-bottom: 1px solid var(--panel-rule);
-  background: var(--panel-raised);
+  background: color-mix(in srgb, var(--panel-raised) 75%, var(--panel-surface));
 }
 
 .cg-chain-entry-title {
@@ -118,38 +141,39 @@
 .cg-chain-tag {
   display: inline-flex;
   align-items: center;
-  padding: 1px 4px;
+  padding: 1px 6px;
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 2px;
+  border-radius: 999px;
   color: var(--panel-ink-2);
   font-family: var(--font-display);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.04em;
   line-height: 1.5;
   white-space: nowrap;
 }
 
-/* 状态图标块：去底色，仅保留语义描边 */
+/* 状态图标块 */
 .cg-chain-mark {
   display: inline-grid;
   place-items: center;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   flex: none;
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 1px;
+  border-radius: 4px;
   color: var(--panel-ink-2);
 }
 
 .cg-chain-mark svg {
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
   stroke-width: 2.2;
 }
 
 .cg-chain-mark.is-lime {
   border-color: color-mix(in srgb, var(--panel-success) 42%, var(--panel-rule));
+  background: var(--panel-success-soft);
   color: var(--panel-success);
 }
 
@@ -160,6 +184,7 @@
 
 .cg-chain-mark.is-red {
   border-color: color-mix(in srgb, var(--panel-danger) 46%, var(--panel-rule));
+  background: var(--panel-danger-soft);
   color: var(--panel-danger);
 }
 
@@ -172,7 +197,7 @@
 .cg-chain-note {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   font-size: 12.5px;
   font-weight: 600;
   letter-spacing: 0.01em;
@@ -180,8 +205,9 @@
 
 .cg-chain-note::before {
   content: '';
-  width: 4px;
-  height: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
   flex: none;
   background: currentColor;
 }
@@ -226,14 +252,14 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 5px;
   justify-content: flex-end;
 }
 
 .cg-chain-entry-body {
   display: grid;
-  gap: 8px;
-  padding: 8px 10px 10px;
+  gap: 10px;
+  padding: 10px 12px 12px 14px;
 }
 
 .cg-chain-error {
@@ -249,8 +275,9 @@
 
 .cg-chain-error::before {
   content: '';
-  width: 4px;
-  height: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
   margin-top: 7px;
   flex: none;
   background: currentColor;
@@ -259,12 +286,12 @@
 /* 内容区：跳点拓扑 + 流量摘要 双栏 */
 .cg-chain-split {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 @media (min-width: 1024px) {
   .cg-chain-split {
-    grid-template-columns: minmax(0, 1fr) 236px;
+    grid-template-columns: minmax(0, 1fr) 244px;
     align-items: start;
   }
 }
@@ -276,8 +303,9 @@
   align-items: center;
   gap: 10px;
   min-width: 0;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-inset);
 }
 
@@ -318,7 +346,7 @@
   flex-shrink: 0;
 }
 
-/* ---------- 跳点流程：单条发丝线串联的紧凑格 ---------- */
+/* ---------- 跳点流程：Line Board 站点串联 ---------- */
 
 .cg-hop-scroll {
   min-width: 0;
@@ -353,25 +381,29 @@
   }
 }
 
-/* 发丝连接线与箭头（竖排 = 窄屏，横排 = 宽屏） */
+/* 连接线与箭头 */
 .cg-hop-link {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin: 3px 0 3px 15px;
+  margin: 3px 0 3px 16px;
   color: var(--panel-rule-strong);
+}
+
+.cg-hop-link.is-flowing {
+  color: var(--entry-line-color, var(--panel-success));
 }
 
 .cg-hop-link i {
   display: block;
-  width: 1px;
+  width: 1.5px;
   height: 12px;
   background: currentColor;
 }
 
 .cg-hop-link svg {
-  width: 10px;
-  height: 10px;
+  width: 11px;
+  height: 11px;
 }
 
 .cg-hop-link-h {
@@ -381,12 +413,12 @@
 @media (min-width: 768px) {
   .cg-hop-link {
     flex-direction: row;
-    margin: 0 6px;
+    margin: 0 7px;
   }
 
   .cg-hop-link i {
-    width: 12px;
-    height: 1px;
+    width: 16px;
+    height: 1.5px;
   }
 
   .cg-hop-link-v {
@@ -395,21 +427,32 @@
 
   .cg-hop-link-h {
     display: block;
-    margin-left: -1px;
+    margin-left: -2px;
   }
 }
 
 .cg-hop {
   min-width: 0;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-surface);
+  transition:
+    border-color 150ms var(--panel-ease),
+    background-color 150ms var(--panel-ease),
+    transform 150ms var(--panel-ease);
+}
+
+.cg-hop:hover {
+  border-color: var(--panel-rule-strong);
+  background: var(--panel-raised);
+  transform: translateY(-1px);
 }
 
 @media (min-width: 768px) {
   .cg-hop {
-    min-width: 150px;
-    max-width: 230px;
+    min-width: 156px;
+    max-width: 236px;
   }
 }
 
@@ -419,30 +462,30 @@
   gap: 5px;
 }
 
-/* 编号：矩形发丝线小格，等宽数字 */
+/* 编号：等宽数字贴纸 */
 .cg-hop-num {
   display: inline-grid;
   place-items: center;
-  min-width: 17px;
-  height: 16px;
-  padding: 0 3px;
+  min-width: 19px;
+  height: 17px;
+  padding: 0 4px;
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 1px;
-  background: transparent;
+  border-radius: 4px;
+  background: var(--panel-inset);
   color: var(--panel-ink-2);
   font-family: var(--panel-mono);
-  font-size: 11px;
-  font-weight: 650;
+  font-size: 10.5px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
 .cg-hop-dot {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   flex-shrink: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: 999px;
   background: var(--panel-ink-3);
 }
 
@@ -468,7 +511,7 @@
 
 .cg-hop-name {
   display: block;
-  margin-top: 3px;
+  margin-top: 4px;
   max-width: 210px;
   overflow: hidden;
   color: var(--panel-ink);
@@ -483,8 +526,8 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 8px;
-  margin-top: 3px;
+  gap: 3px 8px;
+  margin-top: 4px;
   color: var(--panel-ink-3);
   font-size: 11.5px;
   font-weight: 550;
@@ -500,8 +543,9 @@
 }
 
 .cg-hop-shared {
-  padding: 0 4px;
+  padding: 0 5px;
   border: 1px solid var(--panel-rule);
+  border-radius: 4px;
   color: var(--panel-ink-2);
   font-size: 11px;
   font-weight: 600;
@@ -515,9 +559,9 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px 14px;
-  padding: 8px 10px;
+  padding: 8px 12px;
   border: 1px solid var(--panel-rule);
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-inset);
 }
 
@@ -592,8 +636,9 @@
 
 .cg-chain-queue::before {
   content: '';
-  width: 4px;
-  height: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
   flex: none;
   background: var(--panel-warning);
 }
@@ -602,7 +647,7 @@
   display: grid;
   gap: 3px;
   padding-left: 8px;
-  border-left: 1px solid var(--panel-rule);
+  border-left: 2px solid var(--panel-danger);
 }
 
 .cg-chain-hop-errors p {
@@ -621,7 +666,7 @@
   justify-content: center;
   height: 32px;
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: transparent;
   color: var(--panel-ink);
   font-size: 14px;
@@ -661,7 +706,7 @@
   display: inline-flex;
   gap: 0;
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-surface);
   overflow: hidden;
 }
@@ -725,7 +770,7 @@
   width: 6px;
   height: 6px;
   border: 0;
-  border-radius: 0;
+  border-radius: 999px;
 }
 
 .cg-chain-chart-key-dot.is-up {
@@ -738,9 +783,9 @@
 
 .cg-chain-chart-frame {
   position: relative;
-  padding: 6px;
+  padding: 8px;
   border: 1px solid var(--panel-rule);
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-inset);
 }
 
@@ -792,9 +837,9 @@
   min-width: 180px;
   padding: 6px 8px;
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 2px;
+  border-radius: var(--radius-sm, 4px);
   background: var(--panel-surface);
-  box-shadow: none;
+  box-shadow: var(--panel-shadow-overlay);
   pointer-events: none;
   color: var(--panel-ink);
   font-size: 12.5px;

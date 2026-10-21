@@ -1,11 +1,12 @@
 /* ============================================================
-   Groups — 发丝线分组读数板
+   Groups — Line Board 分组读数板
    ============================================================ */
 
 .cg-groups-board {
   border: 1px solid var(--panel-rule);
-  border-radius: 2px;
+  border-radius: var(--radius-lg, 12px);
   background: var(--panel-surface);
+  box-shadow: var(--panel-shadow-raised);
   overflow: hidden;
 }
 
@@ -13,31 +14,33 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 36px;
+  padding: 4px 12px;
   border-bottom: 1px solid var(--panel-rule);
+  background: color-mix(in srgb, var(--panel-raised) 55%, var(--panel-surface));
 }
 
 .cg-groups-tab {
   display: inline-flex;
   align-items: center;
-  padding: 2px 5px;
+  padding: 2px 6px;
+  border-radius: 4px;
   background: var(--panel-accent);
   color: var(--panel-accent-ink);
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.09em;
-  line-height: 1.2;
+  line-height: 1.25;
   text-transform: uppercase;
 }
 
 .cg-groups-board-title {
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.03em;
   line-height: 1.2;
 }
 
@@ -53,9 +56,9 @@
 }
 
 .cg-groups-create {
-  min-height: 24px;
-  padding: 0 9px;
-  font-size: 13.5px;
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 13px;
 }
 
 .cg-groups-board-state {
@@ -75,7 +78,9 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px 12px;
-  padding: 7px 10px;
+  padding: 10px 12px 10px 15px;
+  box-shadow: inset 3px 0 0 var(--group-line-color, var(--panel-rule-strong));
+  transition: background-color 140ms var(--panel-ease);
 }
 
 .cg-group-row + .cg-group-row {
@@ -90,7 +95,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 5px 6px;
+  gap: 6px 8px;
   min-width: 0;
 }
 
@@ -106,7 +111,7 @@
 .cg-group-row-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -120,10 +125,10 @@
 }
 
 .cg-groups-checkbox {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
   flex-shrink: 0;
-  border-radius: 1px;
+  border-radius: 3px;
   accent-color: var(--panel-accent);
 }
 
@@ -131,16 +136,18 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 7px;
+  gap: 6px 8px;
   min-width: 0;
-  padding: 5px 8px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--panel-rule);
+  border-radius: var(--radius-sm, 4px);
   background: transparent;
   color: var(--panel-ink);
   font-size: 14px;
   font-weight: 550;
   line-height: 1.4;
   cursor: pointer;
+  transition: background-color 120ms var(--panel-ease);
 }
 
 .cg-groups-check-row:hover {

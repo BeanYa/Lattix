@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearch } from 'wouter'
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -13,6 +14,7 @@ import {
   RefreshCwIcon,
   RotateCcwIcon,
   RotateCcwKeyIcon,
+  SearchIcon,
   ServerCogIcon,
   SparklesIcon,
   Trash2Icon,
@@ -1388,8 +1390,20 @@ function DetailSheet({
 }
 
 export function ServerMonitorGrid(props: ServerMonitorProps) {
-  const [selectedID, setSelectedID] = useState<number | null>(null)
+  const searchString = useSearch()
+  const urlSelId = useMemo(() => {
+    const raw = new URLSearchParams(searchString).get('sel')
+    return raw && /^\d+$/.test(raw) ? Number(raw) : null
+  }, [searchString])
+  const [selectedID, setSelectedID] = useState<number | null>(urlSelId)
   const [detailServerID, setDetailServerID] = useState<number | null>(null)
+  const [query, setQuery] = useState('')
+  const [filter, setFilter] = useState<'all' | 'online' | 'offline' | 'drift'>('all')
+
+  useEffect(() => {
+    if (urlSelId !== null) setSelectedID(urlSelId)
+  }, [urlSelId])
+
   // onError 以 useCallback 固定引用，避免 useTrafficStatsDialog 因回调变化重拉（同 AgentsStatsTab）；
   // 错误仅在弹窗打开期间展示，下次打开时在点击事件里清除。
   const [trafficStatsError, setTrafficStatsError] = useState('')
@@ -1400,11 +1414,43 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
     () => new Map(props.samples.map((series) => [series.server_id, series.samples])),
     [props.samples],
   )
+
+  const onlineCount = props.servers.filter((server) => isServerOnline(server)).length
+  const offlineCount = props.servers.length - onlineCount
+  const driftCount = props.servers.filter((server) => server.config_drift).length
+
+  const filteredServers = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return props.servers.filter((server) => {
+      const online = isServerOnline(server)
+      if (filter === 'online' && !online) return false
+      if (filter === 'offline' && online) return false
+      if (filter === 'drift' && !server.config_drift) return false
+      if (q) {
+        const hay = [
+          server.alias,
+          server.location,
+          server.country_code,
+          server.address,
+          server.learned_addr,
+          ...(server.tags ?? []),
+          server.billing.provider?.name ?? '',
+        ]
+          .join(' ')
+          .toLowerCase()
+        if (!hay.includes(q)) return false
+      }
+      return true
+    })
+  }, [filter, props.servers, query])
+
   // 默认选中第一台，让读数表下方始终有可读的运行时模块；点击任意行就地切换。
   const selected =
-    props.servers.find((server) => server.id === selectedID) ?? props.servers[0] ?? null
+    props.servers.find((server) => server.id === selectedID) ??
+    filteredServers[0] ??
+    props.servers[0] ??
+    null
   const detailServer = props.servers.find((server) => server.id === detailServerID) ?? null
-  const onlineCount = props.servers.filter((server) => isServerOnline(server)).length
 
   const openTrafficStats = (server: Server) => {
     setTrafficStatsError('')
@@ -1456,46 +1502,89 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
             {onlineCount} 在线 / {props.servers.length} 台
           </span>
         </header>
-        <div className="sv-table-scroll">
-          <table className="sv-table">
-            <thead>
-              <tr>
-                <th scope="col">服务器</th>
-                <th scope="col">状态</th>
-                <th scope="col">地区 / 地址</th>
-                <th scope="col">CPU</th>
-                <th scope="col">内存</th>
-                <th scope="col">磁盘</th>
-                <th scope="col">延迟</th>
-                <th scope="col">速率 ↑ / ↓</th>
-                <th scope="col">流量额度</th>
-                <th scope="col">版本</th>
-                <th scope="col">
-                  <span className="sr-only">操作</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {props.servers.map((server) => (
-                <ServerRow
-                  key={server.id}
-                  server={server}
-                  selected={selected?.id === server.id}
-                  timezone={props.timezone}
-                  onSelect={() => setSelectedID(server.id)}
-                  onEdit={props.onEdit}
-                  onRepair={props.onRepair}
-                  onCleanupXray={props.onCleanupXray}
-                  onRebuildXray={props.onRebuildXray}
-                  onRotateToken={props.onRotateToken}
-                  onUpgrade={props.onUpgrade}
-                  onRenew={props.onRenew}
-                  onDelete={props.onDelete}
-                />
-              ))}
-            </tbody>
-          </table>
+        <div className="sv-board-toolbar">
+          <div className="cg-search-wrap">
+            <SearchIcon />
+            <input
+              type="search"
+              className="cg-search-input"
+              placeholder="搜索服务器别名、地区、公网地址、服务商…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="搜索服务器"
+            />
+          </div>
+          <div className="cg-filter-pills" role="group" aria-label="服务器状态筛选">
+            {(
+              [
+                { id: 'all', label: '全部', count: props.servers.length },
+                { id: 'online', label: '在线', count: onlineCount },
+                { id: 'offline', label: '离线/异常', count: offlineCount },
+                { id: 'drift', label: '配置漂移', count: driftCount },
+              ] as const
+            ).map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="cg-filter-pill"
+                data-active={filter === item.id ? 'true' : 'false'}
+                onClick={() => setFilter(item.id)}
+              >
+                <span>{item.label}</span>
+                <span className="cg-filter-pill-count">{item.count}</span>
+              </button>
+            ))}
+          </div>
         </div>
+        {filteredServers.length === 0 ? (
+          <EmptyState
+            className="sv-board-state"
+            icon={<ServerCogIcon />}
+            title="未找到匹配的服务器"
+            description="尝试调整搜索词或切换上方状态筛选"
+          />
+        ) : (
+          <div className="sv-table-scroll">
+            <table className="sv-table">
+              <thead>
+                <tr>
+                  <th scope="col">服务器</th>
+                  <th scope="col">状态</th>
+                  <th scope="col">地区 / 地址</th>
+                  <th scope="col">CPU</th>
+                  <th scope="col">内存</th>
+                  <th scope="col">磁盘</th>
+                  <th scope="col">延迟</th>
+                  <th scope="col">速率 ↑ / ↓</th>
+                  <th scope="col">流量额度</th>
+                  <th scope="col">版本</th>
+                  <th scope="col">
+                    <span className="sr-only">操作</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredServers.map((server) => (
+                  <ServerRow
+                    key={server.id}
+                    server={server}
+                    selected={selected?.id === server.id}
+                    timezone={props.timezone}
+                    onSelect={() => setSelectedID(server.id)}
+                    onEdit={props.onEdit}
+                    onRepair={props.onRepair}
+                    onCleanupXray={props.onCleanupXray}
+                    onRebuildXray={props.onRebuildXray}
+                    onRotateToken={props.onRotateToken}
+                    onUpgrade={props.onUpgrade}
+                    onRenew={props.onRenew}
+                    onDelete={props.onDelete}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
         {selected ? (
           <ServerRuntime
             server={selected}

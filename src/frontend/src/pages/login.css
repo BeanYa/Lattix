@@ -80,7 +80,10 @@
   max-width: 840px;
   grid-template-columns: 1fr 1fr;
   border: 1px solid var(--panel-rule-strong);
+  border-radius: var(--radius-lg, 12px);
   background: var(--panel-surface);
+  box-shadow: var(--panel-shadow-overlay);
+  overflow: hidden;
 }
 
 .login-brief {

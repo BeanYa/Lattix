@@ -149,7 +149,7 @@ export default function OperationLogs() {
   useEffect(() => {
     const next = stripSeverityParam(search)
     if (next === search) return
-    navigate(`/logs/operations${next}`, { replace: true })
+    navigate(`/run/logs/operations${next}`, { replace: true })
   }, [navigate, search])
 
   useEffect(() => {

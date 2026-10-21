@@ -1,5 +1,5 @@
 /* ============================================================
-   Servers — 发丝线机群读数台
+   Servers — Line Board 机群读数台
    ============================================================ */
 
 /* ---------- 服务器读数板 ---------- */
@@ -7,8 +7,9 @@
 .sv-board {
   min-width: 0;
   border: 1px solid var(--panel-rule);
-  border-radius: 2px;
+  border-radius: var(--radius-lg, 12px);
   background: var(--panel-surface);
+  box-shadow: var(--panel-shadow-raised);
   overflow: hidden;
 }
 
@@ -16,31 +17,33 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 36px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--panel-rule);
+  background: color-mix(in srgb, var(--panel-raised) 55%, var(--panel-surface));
 }
 
 .sv-tab {
   display: inline-flex;
   align-items: center;
-  padding: 2px 5px;
+  padding: 2px 6px;
+  border-radius: 4px;
   background: var(--panel-accent);
   color: var(--panel-accent-ink);
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.09em;
-  line-height: 1.2;
+  line-height: 1.25;
   text-transform: uppercase;
 }
 
 .sv-board-title {
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.03em;
   line-height: 1.2;
 }
 
@@ -55,6 +58,17 @@
   white-space: nowrap;
 }
 
+.sv-board-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--panel-rule);
+  background: var(--panel-surface);
+}
+
 .sv-board-state {
   min-height: 10rem;
   border: 0;
@@ -64,9 +78,9 @@
 
 .sv-board-alert {
   margin: 0;
-  padding: 6px 10px;
+  padding: 8px 12px;
   border: 1px solid color-mix(in srgb, var(--panel-danger) 42%, var(--panel-rule));
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-danger-soft);
   color: var(--panel-danger);
   font-size: 13.5px;
@@ -91,7 +105,7 @@
 }
 
 .sv-table thead th {
-  padding: 5px 7px;
+  padding: 7px 9px;
   border-bottom: 1px solid var(--panel-rule);
   background: var(--panel-surface);
   color: var(--panel-ink-3);
@@ -108,6 +122,9 @@
 .sv-table tbody tr {
   border-bottom: 1px solid var(--panel-rule);
   cursor: pointer;
+  transition:
+    background-color 140ms var(--panel-ease),
+    box-shadow 140ms var(--panel-ease);
 }
 
 .sv-table tbody tr:last-child {
@@ -116,7 +133,7 @@
 
 .sv-table tbody th,
 .sv-table tbody td {
-  padding: 5px 7px;
+  padding: 7px 9px;
   vertical-align: middle;
   text-align: left;
 }
@@ -125,74 +142,23 @@
   background: var(--panel-hover);
 }
 
-/* 选中行 = 红色填充（本世界唯一的选中信号） */
+/* 选中行 = Line Board 左侧 3px 信号竖条 + 柔光底色，保留全部语义状态色 */
 .sv-row.is-selected {
-  background: var(--panel-accent);
-  color: var(--panel-accent-ink);
+  background: var(--panel-accent-soft);
+  box-shadow: inset 3px 0 0 var(--panel-signal);
 }
 
-.sv-row.is-selected .sv-cell-note,
-.sv-row.is-selected .sv-usage-detail,
-.sv-row.is-selected .sv-addr,
-.sv-row.is-selected .sv-addr-loc,
-.sv-row.is-selected .sv-addr-count,
-.sv-row.is-selected .sv-quota-cap,
-.sv-row.is-selected .sv-versions,
-.sv-row.is-selected .sv-runtime-meta {
-  color: color-mix(in srgb, var(--panel-accent-ink) 78%, transparent);
+.sv-row.is-selected:hover {
+  background: color-mix(in srgb, var(--panel-signal) 15%, var(--panel-surface));
 }
 
-.sv-row.is-selected .sv-row-alias,
-.sv-row.is-selected .sv-usage-value,
-.sv-row.is-selected .sv-latency-value,
-.sv-row.is-selected .sv-quota-used,
-.sv-row.is-selected .sv-rate {
-  color: var(--panel-accent-ink);
-}
-
-.sv-row.is-selected .cg-status,
-.sv-row.is-selected .sv-flag {
-  border-color: color-mix(in srgb, var(--panel-accent-ink) 45%, transparent);
-  background: transparent;
-  color: var(--panel-accent-ink);
-}
-
-.sv-row.is-selected .sv-flag.is-alert,
-.sv-row.is-selected .sv-flag.is-warn {
-  color: var(--panel-accent-ink);
-  border-color: color-mix(in srgb, var(--panel-accent-ink) 45%, transparent);
-}
-
-.sv-row.is-selected .sv-usage-bar,
-.sv-row.is-selected .sv-quota-bar {
-  background: color-mix(in srgb, var(--panel-accent-ink) 25%, transparent);
-}
-
-.sv-row.is-selected .sv-usage-fill,
-.sv-row.is-selected .sv-quota-fill,
-.sv-row.is-selected .sv-usage-fill.is-warn,
-.sv-row.is-selected .sv-usage-fill.is-crit,
-.sv-row.is-selected .sv-quota-fill.is-warn,
-.sv-row.is-selected .sv-quota-fill.is-crit {
-  background: var(--panel-accent-ink);
-}
-
-.sv-row.is-selected .sv-agent {
-  color: var(--panel-accent-ink);
-}
-
-.sv-row.is-selected [data-slot='button'] {
-  color: var(--panel-accent-ink);
-}
-
-.sv-row.is-selected [data-slot='button']:hover {
-  border-color: color-mix(in srgb, var(--panel-accent-ink) 45%, transparent);
-  background: color-mix(in srgb, var(--panel-accent-ink) 14%, transparent);
+.sv-row.is-selected .sv-row-alias {
+  color: var(--panel-ink);
 }
 
 /* 服务器名（行选择按钮，键盘可达） */
 .sv-cell-server {
-  min-width: 150px;
+  min-width: 156px;
 }
 
 .sv-row-select {
@@ -211,7 +177,8 @@
 
 .sv-row-select:focus-visible {
   outline: 2px solid var(--panel-focus);
-  outline-offset: 1px;
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 .sv-row-alias {
@@ -229,14 +196,14 @@
 .sv-row-flags {
   display: flex;
   flex-wrap: wrap;
-  gap: 3px;
+  gap: 4px;
   margin-top: 2px;
 }
 
 .sv-flag {
-  padding: 0 4px;
+  padding: 0 5px;
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 1px;
+  border-radius: 4px;
   color: var(--panel-ink-2);
   font-family: var(--font-display);
   font-size: 10.5px;
@@ -248,11 +215,13 @@
 
 .sv-flag.is-alert {
   border-color: color-mix(in srgb, var(--panel-danger) 46%, var(--panel-rule));
+  background: var(--panel-danger-soft);
   color: var(--panel-danger);
 }
 
 .sv-flag.is-warn {
   border-color: color-mix(in srgb, var(--panel-warning) 46%, var(--panel-rule));
+  background: var(--panel-warning-soft);
   color: var(--panel-warning);
 }
 
@@ -260,7 +229,7 @@
 .sv-agent {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   color: var(--panel-ink-2);
   font-size: 12.5px;
   font-weight: 650;
@@ -363,13 +332,13 @@
 
 /* 资源指标（CPU / 内存 / 磁盘） */
 .sv-cell-metric {
-  min-width: 78px;
+  min-width: 82px;
 }
 
 .sv-usage {
   display: grid;
-  gap: 2px;
-  min-width: 64px;
+  gap: 3px;
+  min-width: 66px;
 }
 
 .sv-usage-value {
@@ -382,14 +351,20 @@
 
 .sv-usage-bar {
   display: block;
-  height: 3px;
+  height: 4px;
+  border-radius: 999px;
   background: var(--panel-rule);
+  overflow: hidden;
 }
 
 .sv-usage-fill {
   display: block;
   height: 100%;
+  border-radius: 999px;
   background: var(--panel-ink-2);
+  transition:
+    width 280ms var(--panel-ease),
+    background-color 180ms var(--panel-ease);
 }
 
 .sv-usage-fill.is-warn {
@@ -452,12 +427,12 @@
 
 /* 流量额度 */
 .sv-cell-quota {
-  min-width: 132px;
+  min-width: 136px;
 }
 
 .sv-quota {
   display: grid;
-  gap: 2px;
+  gap: 3px;
 }
 
 .sv-quota-line {
@@ -490,14 +465,20 @@
 
 .sv-quota-bar {
   display: block;
-  height: 3px;
+  height: 4px;
+  border-radius: 999px;
   background: var(--panel-rule);
+  overflow: hidden;
 }
 
 .sv-quota-fill {
   display: block;
   height: 100%;
+  border-radius: 999px;
   background: var(--panel-ink-3);
+  transition:
+    width 280ms var(--panel-ease),
+    background-color 180ms var(--panel-ease);
 }
 
 .sv-quota-fill.is-warn {
@@ -534,7 +515,7 @@
 
 .sv-runtime {
   border-top: 1px solid var(--panel-rule);
-  background: var(--panel-surface);
+  background: color-mix(in srgb, var(--panel-inset) 50%, var(--panel-surface));
 }
 
 .sv-runtime-head {
@@ -542,8 +523,8 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  min-height: 30px;
-  padding: 0 10px;
+  min-height: 36px;
+  padding: 4px 12px;
   border-bottom: 1px solid var(--panel-rule);
   background: var(--panel-raised);
 }
@@ -569,25 +550,25 @@
 .sv-runtime-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   margin-left: auto;
 }
 
 .sv-runtime-body {
   display: grid;
-  gap: 10px;
-  padding: 9px 10px 10px;
+  gap: 12px;
+  padding: 12px;
 }
 
 .sv-runtime-metrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px 16px;
+  gap: 10px 18px;
 }
 
 .sv-metric {
   display: grid;
-  gap: 2px;
+  gap: 3px;
   align-content: start;
   min-width: 0;
 }
@@ -615,15 +596,21 @@
 
 .sv-metric-bar {
   display: block;
-  height: 3px;
+  height: 4px;
   margin-top: 1px;
+  border-radius: 999px;
   background: var(--panel-rule);
+  overflow: hidden;
 }
 
 .sv-metric-fill {
   display: block;
   height: 100%;
+  border-radius: 999px;
   background: var(--panel-ink-2);
+  transition:
+    width 280ms var(--panel-ease),
+    background-color 180ms var(--panel-ease);
 }
 
 .sv-metric-fill.is-warn {
@@ -690,9 +677,9 @@
 .sv-runtime-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 5px 16px;
+  gap: 6px 16px;
   margin: 0;
-  padding-top: 8px;
+  padding-top: 10px;
   border-top: 1px solid var(--panel-rule);
 }
 
@@ -725,7 +712,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 10px;
+  padding: 14px 12px;
   color: var(--panel-ink-2);
   font-size: 13.5px;
 }
@@ -753,7 +740,7 @@
 
   .sv-runtime-lat,
   .sv-runtime-quota {
-    padding-left: 10px;
+    padding-left: 12px;
     border-left: 1px solid var(--panel-rule);
   }
 
@@ -769,20 +756,21 @@
   position: relative;
   display: grid;
   grid-template-columns: repeat(30, minmax(0, 1fr));
-  gap: 1px;
-  height: 10px;
+  gap: 2px;
+  height: 12px;
   outline: none;
 }
 
 .sv-lat-strip:focus-visible {
   outline: 2px solid var(--panel-focus);
-  outline-offset: 1px;
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 .sv-lat-cell {
   position: relative;
   display: block;
-  height: 10px;
+  height: 12px;
   min-width: 0;
 }
 
@@ -798,6 +786,7 @@
   position: absolute;
   inset: 0;
   display: block;
+  border-radius: 2px;
   background: var(--panel-rule-strong);
   transform-origin: bottom;
   transition: transform 140ms var(--panel-ease);
@@ -816,11 +805,11 @@
 }
 
 .sv-lat-cell.is-active .sv-lat-fill {
-  transform: scaleY(1.8);
+  transform: scaleY(1.65);
 }
 
 .sv-lat-cell.is-near .sv-lat-fill {
-  transform: scaleY(1.3);
+  transform: scaleY(1.25);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -833,11 +822,12 @@
   position: absolute;
   bottom: calc(100% + 8px);
   z-index: 50;
-  min-width: 118px;
-  padding: 4px 6px;
+  min-width: 122px;
+  padding: 5px 8px;
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 2px;
+  border-radius: var(--radius-sm, 4px);
   background: var(--panel-surface);
+  box-shadow: var(--panel-shadow-overlay);
   color: var(--panel-ink);
   font-size: 12px;
   pointer-events: none;
@@ -860,15 +850,16 @@
 .sv-lat-tip-value {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
 
 .sv-lat-tip-value::before {
   content: '';
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
   flex: none;
   background: var(--panel-ink-3);
 }
@@ -897,7 +888,7 @@
 
 .sv-traffic {
   display: grid;
-  gap: 3px;
+  gap: 4px;
   min-width: 0;
 }
 
@@ -941,12 +932,13 @@
 }
 
 .sv-traffic > [role='progressbar'] {
-  height: 4px !important;
+  height: 5px !important;
   gap: 2px;
 }
 
 .sv-seg {
   height: 100%;
+  border-radius: 1px;
   background: var(--panel-rule);
 }
 
@@ -970,9 +962,9 @@
 
 .sv-chart-box {
   position: relative;
-  padding: 6px;
+  padding: 8px;
   border: 1px solid var(--panel-rule);
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-inset);
 }
 
@@ -993,10 +985,11 @@
   top: 6px;
   z-index: 10;
   min-width: 128px;
-  padding: 5px 7px;
+  padding: 5px 8px;
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 2px;
+  border-radius: var(--radius-sm, 4px);
   background: var(--panel-surface);
+  box-shadow: var(--panel-shadow-overlay);
   color: var(--panel-ink);
   font-size: 12px;
   pointer-events: none;
@@ -1014,6 +1007,7 @@
   display: inline-block;
   width: 6px;
   height: 6px;
+  border-radius: 999px;
   flex: none;
   background: var(--panel-ink-3);
 }
@@ -1043,9 +1037,9 @@
 
 .sv-code-block {
   overflow: auto;
-  padding: 8px 10px;
+  padding: 10px 12px;
   border: 1px solid var(--panel-rule);
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: var(--cg-charcoal);
   color: var(--cg-on-charcoal);
   font-family: var(--panel-mono);
@@ -1059,9 +1053,9 @@
 /* ---------- 清理 / 重建回执 mono 列表 ---------- */
 
 .sv-mono-list {
-  padding: 6px 8px;
+  padding: 8px 10px;
   border: 1px solid var(--panel-rule);
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-inset);
 }
 
@@ -1071,9 +1065,9 @@
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border: 1px solid color-mix(in srgb, var(--panel-warning) 42%, var(--panel-rule));
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-warning-soft);
   color: var(--panel-warning);
   font-size: 13px;
@@ -1086,9 +1080,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 30px;
+  height: 32px;
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: transparent;
   color: var(--panel-ink);
   font-size: 14px;
@@ -1119,7 +1113,7 @@
 
 .sv-combobox {
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-surface);
 }
 
@@ -1129,14 +1123,14 @@
 
 .sv-combobox-popup {
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-surface);
   color: var(--panel-ink);
   box-shadow: var(--panel-shadow-overlay);
 }
 
 .sv-combobox-item {
-  border-radius: 1px;
+  border-radius: var(--radius-sm, 4px);
 }
 
 .sv-combobox-item[data-highlighted] {
@@ -1148,7 +1142,7 @@
 
 .sv-tag-input {
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-surface);
 }
 
@@ -1160,10 +1154,10 @@
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  height: 20px;
-  padding: 0 2px 0 6px;
+  height: 22px;
+  padding: 0 3px 0 7px;
   border: 1px solid var(--panel-rule-strong);
-  border-radius: 2px;
+  border-radius: var(--radius-sm, 4px);
   background: transparent;
   color: var(--panel-ink);
   font-size: 13px;
@@ -1173,9 +1167,9 @@
 .sv-tag-chip-remove {
   display: inline-grid;
   place-items: center;
-  width: 14px;
-  height: 14px;
-  border-radius: 1px;
+  width: 15px;
+  height: 15px;
+  border-radius: 3px;
   color: var(--panel-ink-3);
   cursor: pointer;
 }
@@ -1188,10 +1182,10 @@
 /* ---------- 原生复选框 ---------- */
 
 .sv-checkbox {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
   flex: none;
-  border-radius: 1px;
+  border-radius: 3px;
   accent-color: var(--panel-accent);
 }
 
@@ -1207,9 +1201,9 @@
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border: 1px solid var(--panel-rule);
-  border-radius: 2px;
+  border-radius: var(--radius-md, 8px);
   background: var(--panel-inset);
   color: var(--panel-ink-2);
   font-size: 13px;
