@@ -340,12 +340,15 @@ wait_clients "$N1" "$UUID3" absent && echo "OK: 试用配额停权扇出 remove_
 rpc_data POST /api/user/reset-traffic "{\"user_id\":$UID3}" >/dev/null
 [[ "$(db "SELECT quota_exhausted FROM users WHERE id=$UID3")" == "0" ]] \
     && echo "OK: 手动流量重置解除配额停权" || { echo "FAIL: 流量重置未恢复"; exit 1; }
+# reset-traffic 清零行（保留 0 值行），telemetry 亦可能补回 0 值行：按数值判定而非判空。
 for _ in $(seq 1 20); do
-    [[ -z "$(db "SELECT up+down FROM traffic WHERE user_uuid='$UUID3' AND node_id=0")" ]] && break
+    TRAFFIC_NOW="$(db "SELECT COALESCE(SUM(up+down), 0) FROM traffic WHERE user_uuid='$UUID3' AND node_id=0")"
+    [[ -z "$TRAFFIC_NOW" || "$TRAFFIC_NOW" == "0" ]] && break
     sleep 0.5
 done
-[[ -z "$(db "SELECT up+down FROM traffic WHERE user_uuid='$UUID3' AND node_id=0")" ]] \
-    && echo "OK: 流量重置清零当期用量（history 留痕）" || { echo "FAIL: 流量未清零"; exit 1; }
+TRAFFIC_NOW="$(db "SELECT COALESCE(SUM(up+down), 0) FROM traffic WHERE user_uuid='$UUID3' AND node_id=0")"
+[[ -z "$TRAFFIC_NOW" || "$TRAFFIC_NOW" == "0" ]] \
+    && echo "OK: 流量重置清零当期用量（history 留痕）" || { echo "FAIL: 流量未清零（sum=$TRAFFIC_NOW）"; exit 1; }
 wait_clients "$N1" "$UUID3" present && echo "OK: 流量重置扇出 add_user"
 wait_sub_vless "$TOK3" 1 && echo "OK: 流量重置后订阅恢复 1 节点" || exit 1
 
