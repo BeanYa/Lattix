@@ -12,9 +12,10 @@ const colors: ChartThemeColors = {
   surfaceColor: '#FFFDF7',
 }
 
-// 标签按浏览器本地时区格式化：以本地时间构造时间戳，跨时区机器断言一致。
+// 后端 ts 契约为 Unix 秒（store.TrafficStatPoint.TS）：按本地时间构造后再换算成秒，
+// 跨时区机器断言一致。
 const ts = (month: number, day: number, hour: number, minute: number) =>
-  new Date(2026, month - 1, day, hour, minute).getTime()
+  Math.floor(new Date(2026, month - 1, day, hour, minute).getTime() / 1000)
 
 const points = [
   { ts: ts(10, 13, 14, 5), up: 1024, down: 2048 },
@@ -53,6 +54,14 @@ describe('buildTrafficBarOption', () => {
     expect(labels('1h')).toEqual(['10/13 14:05', '10/14 14:10', '10/15 14:15'])
     expect(labels('day')).toEqual(['10/13', '10/14', '10/15'])
     expect(labels('month')).toEqual(['2026/10', '2026/10', '2026/10'])
+  })
+
+  // 回归：后端 ts 为 Unix 秒，误按毫秒解析会落到 1970 年（图表曾整轴显示 "1/22"）。
+  it('ts 按后端契约以 Unix 秒解析，而非毫秒', () => {
+    const at = new Date(2026, 9, 13, 14, 5)
+    const single = [{ ts: Math.floor(at.getTime() / 1000), up: 1, down: 1 }]
+    const labels = (buildTrafficBarOption(single, 'month', colors).xAxis as { data: string[] }).data
+    expect(labels).toEqual(['2026/10'])
   })
 
   it('dataZoom 仅在点数 > 60 时开启（inside + slider）', () => {

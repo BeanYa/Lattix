@@ -5,6 +5,8 @@ import type { ChartThemeColors } from '@/pages/costs-shared'
 
 // x 轴标签按粒度格式化（Intl zh-CN，浏览器本地时区）：
 // 5m/15m→HH:mm；1h→M/d HH:mm（24h 窗口跨日）；day→M/d；month→yyyy/M。
+// 后端 ts 契约为 Unix 秒（store.TrafficStatPoint.TS），格式化前须换算为毫秒，
+// 否则会按 1970 年解析（曾导致整轴固定显示 "1/22"）。
 const LABEL_FORMATS: Record<TrafficStatGranularity, Intl.DateTimeFormat> = {
   '5m': new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }),
   '15m': new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }),
@@ -54,7 +56,7 @@ export function buildTrafficBarOption(
     grid: { left: 8, right: 16, top: 24, bottom: zoomed ? 56 : 28, containLabel: true },
     xAxis: {
       type: 'category',
-      data: points.map((point) => formatter.format(new Date(point.ts))),
+      data: points.map((point) => formatter.format(new Date(point.ts * 1000))),
       axisLabel: { color: colors.textColor },
       axisLine: { lineStyle: { color: colors.axisColor } },
       axisTick: { show: false },
