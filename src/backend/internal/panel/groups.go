@@ -119,6 +119,10 @@ func (s *Server) handleListLinkGroups(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// 空列表编码为 []（而不是 null）：前端直接把 data 当作数组使用。
+	if groups == nil {
+		groups = []store.LinkGroup{}
+	}
 	writeJSON(w, http.StatusOK, groups)
 }
 
@@ -265,6 +269,10 @@ func (s *Server) handleListUserGroups(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// 空列表编码为 []（而不是 null）：前端直接把 data 当作数组使用。
+	if groups == nil {
+		groups = []store.UserGroup{}
 	}
 	writeJSON(w, http.StatusOK, groups)
 }

@@ -212,16 +212,20 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
 - **跳过原因可见**：发布时收集已分配但未纳入订阅的链的原因（未发布有效修订 / 条目构造失败），持久化在订阅快照 `warnings`（schema v10 新增列），经预览与"重新生成"API 返回，前端以"部分条目未纳入本次订阅"提示，不再静默丢弃。
 - **mihomo 开箱即用**：`clash` 格式内置 fake-ip DNS（`enhanced-mode: fake-ip`、198.18.0.1/16、本地域名 filter 与默认/DoH nameserver；节点域名经 `proxy-server-nameserver` 用国内可达解析器直查，不设境外回退，避免节点测速超时）；策略含 GEOSITE/GEOIP 规则时另输出 `geodata-mode` + `geo-auto-update` 与 `geox-url`（MetaCubeX/meta-rules-dat），规则在客户端直接生效。
 - **响应头**：`/sub/{token}` 的所有文件格式返回 `subscription-userinfo`，包含 upload、download 以及可选 total、expire、reset_day、plan_name、app_url；同时返回 `profile-update-interval`。
-- **用户有效期**：创建或更新用户可带 `expires_at`；过去时间返回 `HTTP 200 + INVALID_ARGUMENT`。`POST /api/user/update` 可修改或清除（null = 长期；省略字段保持不变）。列表 DTO 带 `expires_at`/`expired`/`disabled`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `user.remove`（显式 nodes 载荷；已 disabled 的用户只补记标记不重复扇出）；管理员延长/清除有效期（expired 1→0）→ 扇出 `user.add` 恢复（disabled 用户除外，见 §16 有效停权态）。过期用户订阅照常返回但 proxies 为空（links 同样空），userinfo 头保留 expire；`node.apply` 的 `NodeUserUUIDs` 不下发 expired/disabled 用户。
+- **用户有效期**：创建或更新用户可带 `expires_at`；过去时间返回 `HTTP 200 + INVALID_ARGUMENT`。`POST /api/user/update` 可修改或清除（null = 长期；省略字段保持不变）。列表 DTO 带 `expires_at`/`expired`/`disabled`。backend sweeper（1 分钟周期，`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖）：`expires_at` 已过且 `expired=0` → 置 1 → 对其已分配节点所在服务器扇出 `user.remove`（显式 nodes 载荷；已 disabled 的用户只补记标记不重复扇出）；管理员延长/清除有效期（expired 1→0）→ 扇出 `user.add` 恢复（disabled 用户除外，见 §16 有效停权态）。过期用户订阅内容请求返回 403（见下方 §9 订阅更新拦截），浏览器状态页与 info API 仍可见；`node.apply` 的 `NodeUserUUIDs` 不下发 expired/disabled/quota_exhausted 或未生效用户。
 - **用户生命周期（试用/生效时刻/流量配额，§9）**：`users` 另有 `effective_at`
-  （NULL=创建即生效）、`is_trial` 与 `quota_exhausted`。生命周期扫描（原到期扫描扩展，
-  同一 `user.expiry` 任务）按序处理三段：
-  ① **激活**——`effective_at` 已越过后且 `started_at` 为空：置位标记（幂等去重），
-  未停权者扇出 `user.add` 并重发布订阅（已 disabled/expired/quota_exhausted/同轮将到期者
-  只补标记）；② **到期**——同上段既有逻辑；③ **流量配额**——所有设置 `traffic_limit>0`
+  （NULL=创建即生效）、`started_at`、`is_trial` 与 `quota_exhausted`。生命周期扫描
+  （同一 `user.expiry` 任务）按序处理四段：
+  ① **试用到期删除**——`is_trial=1` 且 `expires_at <= now`（含旧版本已置 expired=1
+  的存量行）：删除前重读用户避免与管理员延长有效期并发误删，随后扇出 remove_user、
+  reconcile 分组/共享端点凭证，并删除用户记录与订阅快照（`DeleteUser` 级联），写操作
+  日志 `user.trial_expired_deleted`；② **激活**——`effective_at` 已越过后且 `started_at`
+  为空：置位标记（幂等去重），未停权者扇出 `user.add` 并重发布订阅（已
+  disabled/expired/quota_exhausted/同轮将到期者只补标记）；③ **普通用户到期停权**——
+  置 expired 并按既有逻辑扇出 remove_user；④ **流量配额**——所有设置 `traffic_limit>0`
   的用户（试用与普通一致）当期用量（`traffic` 表 node_id=0 行，与订阅 userinfo 同口径）
   达到配额 → 置 `quota_exhausted=1` 停权（与 `expired` 正交：周期重置后可区分停权原因），
-  扇出 remove_user + 重发布，与到期同一停权路径。
+  扇出 remove_user + 重发布，与到期同一停权路径；**流量用尽只停用，不删除账号**。
   **未生效、到期与配额停权均为有效停权态**（§16）：`NodeUserUUIDs`、共享端点用户查询
   （`ActiveEndpointAssignments` / `ActiveServiceEndpointUsers` 含分组派生分支）按
   `effective_at`/`quota_exhausted` 过滤——面板离线跨过边界后由 apply 全量下发自愈。
@@ -232,18 +236,21 @@ Agent 收到 `node.apply` 后的落地流水线（顺序固定）：
   `quota_exhausted`）保持可见。client-download 端点同样拒绝。**创建用户**支持试用参数：
   `is_trial`、`effective_at`（RFC3339，省略=立即；过去时刻视作立即）、`duration_days`
   （与 `expires_at` 二选一，自生效时刻起算天数×24h）与 `user_group_id`（创建时直选用户
-  分组，一用户一组）。未生效用户创建时的节点/链分配照常入库但不扇出。
+  分组，一用户一组）。`is_trial=true` 时**必须**用 `duration_days` 或 `expires_at`
+  指定有效期（否则 INVALID_ARGUMENT），到期由生命周期扫描自动删除；未生效用户创建时
+  的节点/链分配照常入库但不扇出。
   **配额恢复两条路**：① **周期自动恢复**——`traffic.reset` 任务按各用户
   `traffic_reset_day` 边界归档清零当期流量，配额停权随之解除并扇出 `user.add` 恢复
   （多重停权仅解除配额侧，到期/停用仍需管理员处理）；② **手动重置**——
   `POST /api/user/reset-traffic`（用户列表「流量重置」入口，确认弹窗）：归档清零当期
   用量（`traffic_history` 留痕），配额停权立即解除并恢复；未停权用户仅清零用量并重发布
   （userinfo 头更新）。
-  **重新生效**：延长/清除有效期复位 `expired`（既有逻辑）；用户列表对到期用户提供
-  「重新激活」入口——弹窗重设流量（默认沿用原配额）与有效期，走 `/api/user/sub-settings`
-  触发恢复，订阅链接不变、客户端无感续用；试用用户从 `expired=1` 恢复时归档并清零当期
-  流量并一并解除配额停权（重新生效 = 全新试用期，`ArchiveUserTraffic`），普通用户仅复位
-  `expired`、配额停权独立恢复；生效时刻可在订阅设置中编辑（`effective_at` 省略=不变/
+  **重新生效**：普通用户延长/清除有效期复位 `expired`（既有逻辑）；用户列表对到期
+  普通用户提供「重新激活」入口——弹窗重设流量（默认沿用原配额）与有效期，走
+  `/api/user/sub-settings` 触发恢复，订阅链接不变、客户端无感续用；普通用户仅复位
+  `expired`、配额停权独立恢复。试用用户到期即删除、无法重新激活，如需续期必须在到期前
+  于订阅设置延长有效期（扫描删除前被续期时仍归档清零当期流量并解除配额停权，即全新
+  试用期，`ArchiveUserTraffic`）。生效时刻可在订阅设置中编辑（`effective_at` 省略=不变/
   null=立即），推迟即转未生效态并扇出摘除。
 - 分享链接集合已实现：`GET /sub/{token}?format=links`（§14，仅含分配的 active 节点）。
 - **落地页客户端下载**：面板代取 GitHub Release 客户端安装包并校验发布方 SHA-256

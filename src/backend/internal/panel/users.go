@@ -364,9 +364,9 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 // 新用户默认全关（§16）：不分配任何节点，不下发 add_user；
 // 管理员经 PUT /api/users/{id}/nodes 分配后才增量扇出。
 // 创建时可选带 node_ids 预选产品层链路（内部仍映射业务 node_id），省略则维持默认全关（§16）。
-// 试用用户（is_trial，§9）：生效时刻 effective_at（RFC3339，省略=立即）、有效期可用
+// 试用用户（is_trial，§9）：生效时刻 effective_at（RFC3339，省略=立即）、有效期必须用
 // duration_days（自生效时刻起算，精确到秒）或 expires_at 二选一表达、可直选用户分组
-// user_group_id；traffic_limit 对试用用户强制执行（用尽即停权）。
+// user_group_id；traffic_limit 对试用用户强制执行（用尽即停权、不删除），到期由 sweeper 自动删除。
 // 生效时刻在未来的用户为未生效态：预选节点/链路照常入库，但不扇出 add_user（到点由 sweeper 激活）。
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -430,8 +430,8 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "expires_at 必须晚于生效时间")
 		return
 	}
-	if req.IsTrial && req.TrafficLimit <= 0 && expiresAt == nil {
-		writeError(w, http.StatusBadRequest, "试用用户须设置试用流量或有效期")
+	if req.IsTrial && expiresAt == nil {
+		writeError(w, http.StatusBadRequest, "试用用户必须设置有效期（按天数或到期时间）")
 		return
 	}
 	if req.TrafficLimit < 0 {
@@ -700,21 +700,24 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	disabledAfter := u.Disabled
 	if req.Disabled != nil && *req.Disabled != u.Disabled {
 		if err := s.st.SetUserDisabled(r.Context(), id, *req.Disabled); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		disabledAfter = *req.Disabled
 	}
 
-	// 有效停权态跃迁才扇出（§9/§16）：expiry 被修改后只可能是未来/清除，expired 必已复位；
-	// 未生效/配额停权不经本端点改变，两侧同值不触发跃迁。
+	// 有效停权态跃迁才扇出（§9/§16）。恢复判定基于写入后的状态：SetUserExpiry 对
+	// 到期试用用户会一并解除配额停权，用变更前的 u 计算会漏发 add_user。
+	after, err := s.st.UserByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	// 停权跃迁需重发布订阅：此时注册观察（nil 安全，未注册时方法全为 no-op），发布转异步。
 	var o *progress.Observation
 	defer func() { o.CloseIfPending() }()
-	stoppedAfter := disabledAfter || (u.Expired && !expiryTouched) || u.QuotaExhausted || u.NotYetEffective(now)
+	stoppedAfter := after.Disabled || after.Expired || after.QuotaExhausted || after.NotYetEffective(now)
 	if stoppedBefore != stoppedAfter {
 		nodes, err := s.st.ListNodes(r.Context())
 		if err != nil {
@@ -1195,7 +1198,8 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 
 	// 有效期/生效时刻（§9）：改动可能复位 expired 停权标记或进出未生效态，
 	// 有效停权态跃迁时扇出 add_user 恢复 / remove_user 摘除。配额停权（quota_exhausted）
-	// 不经本端点解除——由周期重置或手动流量重置恢复。
+	// 一般由周期重置或手动流量重置解除；试用用户从 expired 恢复时 SetUserExpiry
+	// 会一并归档清零流量并解除配额停权（"重新生效 = 全新试用期"）。
 	now := time.Now()
 	expiryTouched := len(req.ExpiresAt) > 0
 	effectiveTouched := len(req.EffectiveAt) > 0
@@ -1219,8 +1223,6 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-	} else {
-		effectiveAfter = u.EffectiveAt
 	}
 	if expiryTouched {
 		var expiresAt *time.Time
@@ -1246,8 +1248,16 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
-	notYetAfter := effectiveAfter != nil && effectiveAfter.After(now)
-	stoppedAfter := u.Disabled || (u.Expired && !expiryTouched) || u.QuotaExhausted || notYetAfter
+	// 恢复判定必须基于写入后的状态：SetUserExpiry 在试用用户从 expired 恢复时
+	// 会一并归档清零流量并解除 quota_exhausted；若继续用变更前的 u 计算，复合停权
+	// （到期 + 配额）会被误判为仍停权，只发 remove_user 而漏发 add_user，
+	// 客户端订阅恢复但节点凭证缺失。
+	after, err := s.st.UserByID(r.Context(), req.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	stoppedAfter := after.Disabled || after.Expired || after.QuotaExhausted || after.NotYetEffective(now)
 	if stoppedBefore != stoppedAfter {
 		nodes, err := s.st.ListNodes(r.Context())
 		if err != nil {

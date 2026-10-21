@@ -21,10 +21,11 @@ import type {
 export type EffectiveMode = 'now' | 'scheduled'
 /** 有效期模式：长期、指定到期时间（精确到秒）或按天数（自生效时刻起算）。 */
 export type ExpiryMode = 'never' | 'until' | 'days'
+/** 创建模式：普通用户（长期/到期可选）或试用用户（必须有效期，到期自动删除）。 */
+export type CreateUserMode = 'normal' | 'trial'
 
 export interface CreateUserFormState {
   name: string
-  isTrial: boolean
   userGroupId: string
   effectiveMode: EffectiveMode
   effectiveAt: string
@@ -41,15 +42,15 @@ export interface CreateUserFormState {
   ext: Record<number, ExternalSubscriptionMode>
 }
 
-const initialCreateUserForm: CreateUserFormState = {
+const initialCreateUserForm = (mode: CreateUserMode): CreateUserFormState => ({
   name: '',
-  isTrial: false,
   userGroupId: '',
   effectiveMode: 'now',
   effectiveAt: '',
-  expiryMode: 'never',
+  // 试用用户必须设置有效期；默认按天数 1 天，普通用户默认长期。
+  expiryMode: mode === 'trial' ? 'days' : 'never',
   expiresAt: '',
-  durationDays: '',
+  durationDays: mode === 'trial' ? '1' : '',
   linkSel: [],
   trafficLimit: '',
   trafficUnit: 'GB',
@@ -58,7 +59,7 @@ const initialCreateUserForm: CreateUserFormState = {
   appURL: '',
   routing: defaultSubscriptionRouting,
   ext: {},
-}
+})
 
 /**
  * 创建用户对话框的表单状态与提交逻辑。
@@ -72,10 +73,11 @@ export function useCreateUserForm({
   showOperation: (opts: { observeId: string }) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [mode, setMode] = useState<CreateUserMode>('normal')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const [created, setCreated] = useState<SubUser | null>(null)
-  const [form, setForm] = useState<CreateUserFormState>(initialCreateUserForm)
+  const [form, setForm] = useState<CreateUserFormState>(() => initialCreateUserForm('normal'))
   const [groups, setGroups] = useState<UserGroup[]>([])
 
   const patch = (partial: Partial<CreateUserFormState>) =>
@@ -84,13 +86,16 @@ export function useCreateUserForm({
   const onOpenChange = (next: boolean) => {
     setOpen(next)
     if (!next) {
-      setForm(initialCreateUserForm)
+      setMode('normal')
+      setForm(initialCreateUserForm('normal'))
       setCreateError('')
       setCreated(null)
     }
   }
 
-  const openCreate = () => {
+  const openCreate = (nextMode: CreateUserMode = 'normal') => {
+    setMode(nextMode)
+    setForm(initialCreateUserForm(nextMode))
     setOpen(true)
     // 打开即拉取用户分组（创建时直选分组，§分组）；失败静默，分组选项留空。
     api
@@ -144,8 +149,8 @@ export function useCreateUserForm({
       setCreateError(errorMessage(err))
       return
     }
-    if (form.isTrial && trafficLimit <= 0 && form.expiryMode === 'never') {
-      setCreateError('试用用户须设置试用流量或有效期')
+    if (mode === 'trial' && form.expiryMode === 'never') {
+      setCreateError('试用用户必须设置有效期（按天数或到期时间）')
       return
     }
     setCreating(true)
@@ -163,11 +168,11 @@ export function useCreateUserForm({
           plan_name: form.planName.trim(),
           app_url: form.appURL.trim(),
           routing: form.routing,
-          external_subscriptions: Object.entries(form.ext).map(([id, mode]) => ({
+          external_subscriptions: Object.entries(form.ext).map(([id, extMode]) => ({
             subscription_id: Number(id),
-            mode,
+            mode: extMode,
           })),
-          is_trial: form.isTrial,
+          is_trial: mode === 'trial',
           ...(effectiveAt ? { effective_at: effectiveAt } : {}),
           ...(form.expiryMode === 'days' ? { duration_days: durationDays } : {}),
           ...(form.userGroupId ? { user_group_id: Number(form.userGroupId) } : {}),
@@ -185,6 +190,7 @@ export function useCreateUserForm({
 
   return {
     open,
+    mode,
     creating,
     createError,
     created,

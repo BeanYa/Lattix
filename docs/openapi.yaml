@@ -419,9 +419,11 @@ paths:
       operationId: userCreate
       description: |
         创建真实用户；chain_ids 为直接链路分配，每项生成独立 access_uuid。
-        试用用户：is_trial=true 时 traffic_limit 强制执行（用尽即到期停权）；effective_at
-        （RFC3339，省略=立即生效）与 duration_days（自生效时刻起算的天数，精确到秒）
-        或 expires_at 二选一；user_group_id 可在创建时直选用户分组（一用户一组）。
+        试用用户：is_trial=true 时必须设置有效期（duration_days 自生效时刻起算的天数，
+        精确到秒；或 expires_at，二者二选一），到期后由生命周期扫描自动删除；
+        traffic_limit 强制执行，用尽只停用（quota_exhausted）不删除，可流量重置恢复；
+        effective_at（RFC3339，省略=立即生效）；user_group_id 可在创建时直选用户分组
+        （一用户一组）。
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}

@@ -201,11 +201,12 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	return tx.Commit()
 }
 
-// ListExpiryDue 返回已到期但尚未停权（expired=0）的用户（§9 sweeper 扫描）。
+// ListExpiryDue 返回已到期的普通用户（expired=0，且非试用；§9 sweeper 扫描）。
+// 试用用户到期走自动删除（ListTrialExpiryDue），不进入停权路径。
 func (s *Store) ListExpiryDue(ctx context.Context, now time.Time) ([]User, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+userCols+` FROM users
-		 WHERE expired = 0 AND expires_at IS NOT NULL AND expires_at <= ? ORDER BY id`, now.Unix())
+		 WHERE expired = 0 AND is_trial = 0 AND expires_at IS NOT NULL AND expires_at <= ? ORDER BY id`, now.Unix())
 	if err != nil {
 		return nil, fmt.Errorf("list expiry due users: %w", err)
 	}
@@ -215,6 +216,28 @@ func (s *Store) ListExpiryDue(ctx context.Context, now time.Time) ([]User, error
 		u, err := scanUser(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scan expiry due user: %w", err)
+		}
+		out = append(out, *u)
+	}
+	return out, rows.Err()
+}
+
+// ListTrialExpiryDue 返回已过期的试用用户（含旧版本已置 expired=1 的存量行；§9）。
+// 到期即自动删除，因此在扫描时不做 expired 过滤；调用方仍需重读用户，避免与
+// 管理员延长有效期/重新激活并发时误删。
+func (s *Store) ListTrialExpiryDue(ctx context.Context, now time.Time) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+userCols+` FROM users
+		 WHERE is_trial = 1 AND expires_at IS NOT NULL AND expires_at <= ? ORDER BY id`, now.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("list trial expiry due users: %w", err)
+	}
+	defer rows.Close()
+	out := []User{}
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan trial expiry due user: %w", err)
 		}
 		out = append(out, *u)
 	}

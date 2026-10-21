@@ -5,6 +5,7 @@ import {
   CircleCheckIcon,
   ExternalLinkIcon,
   EyeIcon,
+  FlaskConicalIcon,
   HistoryIcon,
   KeyRoundIcon,
   PlusIcon,
@@ -368,10 +369,16 @@ export default function Users() {
         title="用户"
         description="订阅用户的创建、链路分配、订阅策略与用量概览。"
         actions={
-          <Button onClick={createForm.openCreate}>
-            <PlusIcon />
-            创建用户
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={() => createForm.openCreate('trial')}>
+              <FlaskConicalIcon />
+              创建试用用户
+            </Button>
+            <Button onClick={() => createForm.openCreate('normal')}>
+              <PlusIcon />
+              创建用户
+            </Button>
+          </div>
         }
       />
 
@@ -445,7 +452,7 @@ export default function Users() {
               className="cg-users-board-state"
               icon={<UsersIcon />}
               title="暂无用户"
-              description="点击上方“创建用户”开始"
+              description="点击上方“创建用户”或“创建试用用户”开始"
             />
           ) : filteredUsers.length === 0 ? (
             <EmptyState

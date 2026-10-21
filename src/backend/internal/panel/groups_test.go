@@ -336,3 +336,42 @@ func TestUserDTOEffectiveChainIDs(t *testing.T) {
 		t.Fatalf("非分组用户 effective_chain_ids = %v, want []", dto2.EffectiveChainIDs)
 	}
 }
+
+// TestGroupListEmptyResponsesAreArrays 空列表必须编码为 [] 而不是 null。
+// 前端把 data 直接写入数组状态，null 会在渲染 .map 时抛错并让整页白屏
+// （用户页点击"创建用户"触发的回归即来自 user-group/list）。
+func TestGroupListEmptyResponsesAreArrays(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	srv := &Server{st: st}
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		path    string
+	}{
+		{"link-groups", srv.handleListLinkGroups, "/api/link-group/list"},
+		{"user-groups", srv.handleListUserGroups, "/api/user-group/list"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			tc.handler(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+			var env struct {
+				Code string          `json:"code"`
+				Data json.RawMessage `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+				t.Fatal(err)
+			}
+			if env.Code != "OK" {
+				t.Fatalf("code = %q, body = %s", env.Code, rec.Body.String())
+			}
+			if string(env.Data) != "[]" {
+				t.Fatalf("data = %s, want []", env.Data)
+			}
+		})
+	}
+}

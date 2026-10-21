@@ -5,20 +5,77 @@ import (
 	"log"
 	"time"
 
+	"lattix/backend/internal/logging"
 	"lattix/backend/internal/store"
 )
 
 // expirySweepIntervalDefault 是用户生命周期扫描（激活/到期/流量配额）的默认周期（§9）。
 const expirySweepIntervalDefault = time.Minute
 
-// sweepUserLifecycles 用户生命周期扫描（§9）：生效时刻到点激活 add_user、
-// 到期停权 remove_user、流量配额用尽停权。三段互不重叠，同一周期内按序执行：
-// 激活先行，使"生效与到期同时越过"的用户直接走停权路径而不产生 add→remove 抖动。
+// sweepUserLifecycles 用户生命周期扫描（§9）：试用到期删除、生效时刻到点激活、
+// 普通用户到期停权、流量配额用尽停权。四段互不重叠，同一周期内按序执行：
+// 试用删除先行，避免给已过期的试用用户补发 add_user；激活先于停权，使
+// "生效与到期同时越过"的普通用户直接走停权路径而不产生 add→remove 抖动。
 func (s *Server) sweepUserLifecycles(ctx context.Context) {
 	now := time.Now()
+	s.sweepTrialExpiries(ctx, now)
 	s.sweepActivations(ctx, now)
 	s.sweepExpiries(ctx, now)
 	s.sweepQuotaExhaustions(ctx, now)
+}
+
+// sweepTrialExpiries 试用用户到期自动删除（§9）：删除用户记录、订阅快照以及
+// 节点/共享端点上的用户凭证。流量用尽只置 quota_exhausted 停权、不删除
+// （见 sweepQuotaExhaustions）。
+func (s *Server) sweepTrialExpiries(ctx context.Context, now time.Time) {
+	due, err := s.st.ListTrialExpiryDue(ctx, now)
+	if err != nil {
+		log.Printf("panel: lifecycle sweep: list trial expiry due users: %v", err)
+		return
+	}
+	if len(due) == 0 {
+		return
+	}
+	nodes, err := s.st.ListNodes(ctx)
+	if err != nil {
+		log.Printf("panel: lifecycle sweep: list nodes: %v", err)
+		return
+	}
+	for _, u := range due {
+		// 重读后再删：管理员可能在扫描与删除之间延长有效期或执行了重新激活。
+		current, err := s.st.UserByID(ctx, u.ID)
+		if err != nil {
+			continue // 已被删除
+		}
+		if !current.IsTrial || current.ExpiresAt == nil || current.ExpiresAt.After(now) {
+			continue
+		}
+		assigned, err := s.st.UserNodeIDs(ctx, current.ID)
+		if err != nil {
+			log.Printf("panel: trial expiry: user %d list nodes: %v", current.ID, err)
+			continue
+		}
+		assignments, _ := s.st.UserChainAssignments(ctx, current.ID)
+		// 先摘除节点与共享端点上的用户凭证，再删用户记录（订阅快照随 DeleteUser 级联删除）。
+		s.fanoutUserDiff(ctx, current.UUID, nodes, nil, assigned)
+		s.reconcileUserEndpoints(ctx, current.ID, assignments)
+		if err := s.st.DeleteUser(ctx, current.ID); err != nil {
+			log.Printf("panel: trial expiry: delete user %d: %v", current.ID, err)
+			continue
+		}
+		if err := s.recordOperation(ctx, logging.OperationEvent{
+			Severity: logging.SeverityInfo,
+			Category: logging.CategoryUser,
+			Action:   "user.trial_expired_deleted",
+			Detail: map[string]any{
+				"user_id": current.ID, "name": current.Name, "expires_at": current.ExpiresAt,
+			},
+			Operator: "system",
+		}); err != nil {
+			log.Printf("panel: audit user.trial_expired_deleted: %v", err)
+		}
+		log.Printf("panel: trial user %d (%s) 已到期，自动删除（节点 %d）", current.ID, current.Name, len(assigned))
+	}
 }
 
 // sweepActivations 生效时刻已到但尚未激活的用户：置位激活标记后按有效停权态扇出 add_user。

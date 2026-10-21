@@ -173,7 +173,8 @@ func TestCreateTrialUserValidation(t *testing.T) {
 	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
 	sooner := time.Now().Add(30 * time.Minute).UTC().Format(time.RFC3339)
 	for name, body := range map[string]string{
-		"试用须有流量或有效期": `{"name":"x","is_trial":true}`,
+		"试用须有有效期":    `{"name":"x","is_trial":true}`,
+		"试用仅有流量不够":   `{"name":"x","is_trial":true,"traffic_limit":1000}`,
 		"天数与到期时间二选一": `{"name":"x","is_trial":true,"duration_days":3,"expires_at":"` + future + `"}`,
 		"到期须晚于生效":    `{"name":"x","is_trial":true,"effective_at":"` + future + `","expires_at":"` + sooner + `"}`,
 		"天数不能为负":     `{"name":"x","is_trial":true,"duration_days":-1}`,
@@ -684,5 +685,240 @@ func TestReactivateExpiredUserRestoresService(t *testing.T) {
 	}
 	if got := addUserCmds(); got != before {
 		t.Fatalf("未停权用户重置不应扇出 add_user，before=%d got=%d", before, got)
+	}
+}
+
+// TestReactivateTrialUserClearsCompoundStopAndReaddsNodes 复合停权（到期+配额）的
+// 试用用户重新激活：SetUserExpiry 会一并清零流量并解除 quota_exhausted，因此
+// 恢复判定必须基于更新后的用户状态——否则会把"已恢复"误判为仍停权，只发
+// remove_user 而不发 add_user，客户端订阅恢复但节点凭证缺失。
+func TestReactivateTrialUserClearsCompoundStopAndReaddsNodes(t *testing.T) {
+	server, st, cancel := newSweepServer(t)
+	defer cancel()
+	defer st.Close()
+	ctx := context.Background()
+
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeID, err := st.InsertNode(ctx, "n1", serverID, shared.ProtocolVLESS, nil, json.RawMessage(`{"protocol":"vless","template":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	userID, err := st.InsertUserFull(ctx, store.User{Name: "trial-compound", UUID: "tc-uuid", SubToken: "tc-token", IsTrial: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserSubSettings(ctx, userID, store.UserSubSettings{TrafficLimit: 1000}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetUserNodes(ctx, userID, []int64{nodeID}); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟已经历到期扫描 + 配额扫描的复合停权。
+	if err := st.SetUserExpired(ctx, userID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserQuotaExhausted(ctx, userID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"user_id":           userID,
+		"traffic_limit":     1000,
+		"traffic_reset_day": 0,
+		"sub_title":         "",
+		"sub_announcement":  "",
+		"plan_name":         "",
+		"app_url":           "",
+		"expires_at":        time.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	server.handleUpdateUserSubSettings(rec, httptest.NewRequest(http.MethodPost,
+		"/api/user/sub-settings", bytes.NewReader(payload)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reactivate status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	u, err := st.UserByID(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Expired || u.QuotaExhausted {
+		t.Fatalf("重新激活后应同时复位 expired/quota_exhausted，got expired=%v quota=%v", u.Expired, u.QuotaExhausted)
+	}
+	cmds, err := st.RecentCommands(ctx, serverID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adds := 0
+	for _, cmd := range cmds {
+		if cmd.Type == shared.TypeAddUser {
+			adds++
+		}
+	}
+	if adds == 0 {
+		t.Fatal("复合停权恢复必须扇出 add_user 补回节点凭证")
+	}
+}
+
+// TestUpdateUserExpiryClearsCompoundTrialStopAndReaddsNodes 与 sub-settings 相同：
+// 通过 POST /api/user/update 延长到期时间时，到期试用用户的配额停权也会被
+// SetUserExpiry 解除，恢复判定必须读写入后的状态，不能漏发 add_user。
+func TestUpdateUserExpiryClearsCompoundTrialStopAndReaddsNodes(t *testing.T) {
+	server, st, cancel := newSweepServer(t)
+	defer cancel()
+	defer st.Close()
+	ctx := context.Background()
+
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeID, err := st.InsertNode(ctx, "n1", serverID, shared.ProtocolVLESS, nil, json.RawMessage(`{"protocol":"vless","template":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	userID, err := st.InsertUserFull(ctx, store.User{Name: "trial-compound-update", UUID: "tc2-uuid", SubToken: "tc2-token", IsTrial: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetUserNodes(ctx, userID, []int64{nodeID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserExpired(ctx, userID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserQuotaExhausted(ctx, userID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	expires := time.Now().Add(30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	rec := httptest.NewRecorder()
+	server.handleUpdateUser(rec, httptest.NewRequest(http.MethodPost, "/api/user/update",
+		strings.NewReader(`{"user_id":`+strconv.FormatInt(userID, 10)+`,"expires_at":"`+expires+`"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	u, err := st.UserByID(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Expired || u.QuotaExhausted {
+		t.Fatalf("延长有效期后应复位 expired/quota_exhausted，got expired=%v quota=%v", u.Expired, u.QuotaExhausted)
+	}
+	cmds, err := st.RecentCommands(ctx, serverID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range cmds {
+		if cmd.Type == shared.TypeAddUser {
+			return
+		}
+	}
+	t.Fatal("复合停权恢复必须扇出 add_user 补回节点凭证")
+}
+
+// TestLifecycleSweepAutoDeletesExpiredTrialUsers 试用用户到期自动删除（§9）：
+// 含历史 expired=1 的存量试用用户一并清理；普通到期用户保持"停权不删除"。
+func TestLifecycleSweepAutoDeletesExpiredTrialUsers(t *testing.T) {
+	server, st, cancel := newSweepServer(t)
+	defer cancel()
+	defer st.Close()
+	ctx := context.Background()
+
+	serverID, err := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "token", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeID, err := st.InsertNode(ctx, "n1", serverID, shared.ProtocolVLESS, nil, json.RawMessage(`{"protocol":"vless","template":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().Add(-time.Minute)
+	trialID, err := st.InsertUserFull(ctx, store.User{Name: "trial-expired", UUID: "te-uuid", SubToken: "te-token", IsTrial: true, ExpiresAt: &past})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyID, err := st.InsertUserFull(ctx, store.User{Name: "trial-legacy", UUID: "tl-uuid", SubToken: "tl-token", IsTrial: true, ExpiresAt: &past})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 旧版本已置 expired=1 的试用用户也应被自动删除。
+	if err := st.SetUserExpired(ctx, legacyID, true); err != nil {
+		t.Fatal(err)
+	}
+	normalID, err := st.InsertUser(ctx, "normal-expired", "ne-uuid", "ne-token", &past)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{trialID, legacyID, normalID} {
+		if _, _, err := st.SetUserNodes(ctx, id, []int64{nodeID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	server.sweepUserLifecycles(ctx)
+
+	for _, tc := range []struct {
+		id   int64
+		name string
+	}{{trialID, "试用用户"}, {legacyID, "存量 expired 试用用户"}} {
+		if _, err := st.UserByID(ctx, tc.id); err == nil {
+			t.Fatalf("%s 到期后应被自动删除", tc.name)
+		}
+	}
+	normal, err := st.UserByID(ctx, normalID)
+	if err != nil {
+		t.Fatalf("普通用户到期不应被删除: %v", err)
+	}
+	if !normal.Expired {
+		t.Fatal("普通用户到期应置 expired=1")
+	}
+
+	cmds, err := st.RecentCommands(ctx, serverID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removes := 0
+	for _, cmd := range cmds {
+		if cmd.Type == shared.TypeRemoveUser {
+			removes++
+		}
+	}
+	if removes < 2 {
+		t.Fatalf("两个试用用户删除应各扇出 remove_user，got %d", removes)
+	}
+}
+
+// TestLifecycleSweepKeepsQuotaExhaustedTrialUser 流量用尽只停用不删除：
+// 试用用户仍在列表中，等待到期删除或手动流量重置恢复。
+func TestLifecycleSweepKeepsQuotaExhaustedTrialUser(t *testing.T) {
+	server, st, cancel := newSweepServer(t)
+	defer cancel()
+	defer st.Close()
+	ctx := context.Background()
+
+	future := time.Now().Add(time.Hour)
+	userID, err := st.InsertUserFull(ctx, store.User{Name: "trial-quota", UUID: "tq-uuid", SubToken: "tq-token", IsTrial: true, ExpiresAt: &future})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserSubSettings(ctx, userID, store.UserSubSettings{TrafficLimit: 100}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddTraffic(ctx, 0, "tq-uuid", 60, 40); err != nil {
+		t.Fatal(err)
+	}
+	server.sweepQuotaExhaustions(ctx, time.Now())
+	u, err := st.UserByID(ctx, userID)
+	if err != nil {
+		t.Fatalf("流量用尽的试用用户不应被删除: %v", err)
+	}
+	if !u.QuotaExhausted {
+		t.Fatal("流量用尽应置 quota_exhausted=1")
 	}
 }

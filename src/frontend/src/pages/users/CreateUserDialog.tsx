@@ -46,6 +46,7 @@ export function CreateUserDialog({
 }) {
   const {
     open,
+    mode,
     creating,
     createError,
     created,
@@ -63,11 +64,22 @@ export function CreateUserDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] sm:max-w-4xl overflow-y-auto [&>*]:min-w-0">
         <DialogHeader>
-          <DialogTitle>创建用户</DialogTitle>
+          <DialogTitle>{mode === 'trial' ? '创建试用用户' : '创建用户'}</DialogTitle>
           <DialogDescription>
-            {created ? '用户已创建，请将订阅链接发给用户。' : '输入姓名创建用户。'}
+            {created
+              ? mode === 'trial'
+                ? '试用用户已创建，请将订阅链接发给用户；到期后账号将自动删除。'
+                : '用户已创建，请将订阅链接发给用户。'
+              : mode === 'trial'
+                ? '填写姓名、试用流量与有效期创建临时账号。'
+                : '输入姓名创建用户。'}
           </DialogDescription>
         </DialogHeader>
+        {!created && mode === 'trial' && (
+          <Notice tone="warning" role="alert" title="试用用户规则">
+            试用用户到期后将自动删除（账号、订阅与节点访问一并移除，无法恢复）；流量用尽仅停用、不会删除，可在用户列表执行「流量重置」恢复。如需继续使用，请在到期前于「订阅设置」延长有效期。
+          </Notice>
+        )}
         {created ? (
           <div className="space-y-3">
             <div className="space-y-2">
@@ -91,16 +103,6 @@ export function CreateUserDialog({
                 autoFocus
               />
             </div>
-            <label className="cg-check-row">
-              <input
-                type="checkbox"
-                className="cg-checkbox"
-                checked={form.isTrial}
-                onChange={(e) => patch({ isTrial: e.target.checked })}
-              />
-              <span className="cg-status is-blue">试用</span>
-              <span>试用用户（临时账号；试用流量用尽即到期停权）</span>
-            </label>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>用户分组（可选）</Label>
@@ -174,15 +176,17 @@ export function CreateUserDialog({
             <div className="space-y-2">
               <Label>有效期</Label>
               <div className="flex flex-wrap items-center gap-3">
-                <label className="flex items-center gap-1">
-                  <input
-                    type="radio"
-                    name="expiry-mode"
-                    checked={form.expiryMode === 'never'}
-                    onChange={() => patch({ expiryMode: 'never' })}
-                  />
-                  长期
-                </label>
+                {mode === 'normal' && (
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      name="expiry-mode"
+                      checked={form.expiryMode === 'never'}
+                      onChange={() => patch({ expiryMode: 'never' })}
+                    />
+                    长期
+                  </label>
+                )}
                 <label className="flex items-center gap-1">
                   <input
                     type="radio"
@@ -225,9 +229,11 @@ export function CreateUserDialog({
                 )}
               </div>
               <p className="cg-hint">
-                {form.expiryMode === 'days'
-                  ? '自生效时刻起算（立即生效则自创建时刻起算），精确到秒。'
-                  : '到期精确到秒；到期后节点连接与订阅更新同时失效，可延长有效期重新生效。'}
+                {mode === 'trial'
+                  ? '试用用户必须设置有效期：到期后账号自动删除；如需继续使用请在到期前延长有效期。'
+                  : form.expiryMode === 'days'
+                    ? '自生效时刻起算（立即生效则自创建时刻起算），精确到秒。'
+                    : '到期精确到秒；到期后节点连接与订阅更新同时失效，可延长有效期重新生效。'}
               </p>
             </div>
             <div className="space-y-2">
@@ -254,8 +260,8 @@ export function CreateUserDialog({
             </div>
             <div className="space-y-2">
               <Label>
-                {form.isTrial
-                  ? '订阅设置（试用流量用尽即停权；其余留空跟随全局）'
+                {mode === 'trial'
+                  ? '订阅设置（试用流量用尽即停权、不删除；其余留空跟随全局）'
                   : '订阅设置（可选，留空跟随全局）'}
               </Label>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -265,10 +271,12 @@ export function CreateUserDialog({
                     unit={form.trafficUnit}
                     onValueChange={(value) => patch({ trafficLimit: value })}
                     onUnitChange={(unit) => patch({ trafficUnit: unit })}
-                    placeholder={form.isTrial ? '试用流量' : '流量配额'}
+                    placeholder={mode === 'trial' ? '试用流量' : '流量配额'}
                   />
-                  {form.isTrial && (
-                    <p className="cg-hint">试用流量用尽即到期停权（重新生效会清零重计）。</p>
+                  {mode === 'trial' && (
+                    <p className="cg-hint">
+                      试用流量用尽即停用（不删除），可在用户列表执行「流量重置」恢复。
+                    </p>
                   )}
                 </div>
                 <div className="space-y-1">
