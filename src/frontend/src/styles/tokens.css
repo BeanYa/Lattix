@@ -147,19 +147,19 @@
   --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 
   /* 字号 / 行高 / 字重组合；组件可直接用于 font 简写或拆成三个属性 */
-  --type-display: 900 28px/34px var(--font-title);
-  --type-h2: 700 18px/26px var(--font-title);
-  --type-h3: 650 15px/22px var(--font-ui);
-  --type-body: 400 14px/22px var(--font-text);
-  --type-body-sm: 400 13px/20px var(--font-text);
-  --type-table: 450 13px/20px var(--font-ui);
-  --type-table-compact: 450 12.5px/18px var(--font-ui);
-  --type-label: 600 11px/16px var(--font-ui);
-  --type-micro: 600 10px/14px var(--font-ui);
-  --type-readout-lg: 700 32px/34px var(--font-readout);
-  --type-readout: 700 20px/24px var(--font-readout);
-  --type-readout-sm: 600 14px/18px var(--font-readout);
-  --type-code: 400 12px/18px var(--font-mono);
+  --type-display: 900 30px/38px var(--font-title);
+  --type-h2: 700 20px/28px var(--font-title);
+  --type-h3: 650 16px/24px var(--font-ui);
+  --type-body: 400 15px/24px var(--font-text);
+  --type-body-sm: 400 14px/22px var(--font-text);
+  --type-table: 450 14px/22px var(--font-ui);
+  --type-table-compact: 450 13.5px/20px var(--font-ui);
+  --type-label: 600 12px/17px var(--font-ui);
+  --type-micro: 600 11px/15px var(--font-ui);
+  --type-readout-lg: 700 36px/38px var(--font-readout);
+  --type-readout: 700 22px/26px var(--font-readout);
+  --type-readout-sm: 600 16px/20px var(--font-readout);
+  --type-code: 400 13px/20px var(--font-mono);
   --tracking-tight: -0.02em;
   --tracking-wide: 0.04em;
   --tracking-code: 0.06em;

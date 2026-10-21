@@ -89,7 +89,7 @@ function PanelStateChip({ snapshot }: { snapshot: PanelLifecycleSnapshot | null 
       aria-label={title}
       title={title}
       className={cn(
-        'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[2px] border border-rule bg-raised px-2 text-[10px] font-semibold tracking-[0.08em]',
+        'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-[2px] border border-rule bg-raised px-2 text-[11px] font-semibold tracking-[0.08em]',
         tone.className,
       )}
     >
@@ -132,7 +132,7 @@ function NavRow({
       aria-label={name}
       title={isDesktop ? name : undefined}
       className={cn(
-        'relative flex h-10 w-full items-center gap-3 rounded-[2px] text-[13px] transition-colors duration-[var(--duration-1)]',
+        'relative flex h-10 w-full items-center gap-3 rounded-[2px] text-[14px] transition-colors duration-[var(--duration-1)]',
         secondary ? 'font-medium' : 'font-semibold',
         isDesktop
           ? secondary
@@ -251,7 +251,7 @@ function AccountMenu({
           >
             <span
               aria-hidden="true"
-              className="grid size-6 place-items-center rounded-full bg-inset text-[11px] font-semibold text-ink"
+              className="grid size-6 place-items-center rounded-full bg-inset text-[12px] font-semibold text-ink"
             >
               {displayName}
             </span>
@@ -267,7 +267,7 @@ function AccountMenu({
         sideOffset={6}
         className="w-56 border border-rule bg-surface p-1 text-ink shadow-[var(--panel-shadow-overlay)]"
       >
-        <DropdownMenuLabel className="px-2 py-1.5 text-[10px] font-semibold tracking-[0.12em] text-ink-3">
+        <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-semibold tracking-[0.12em] text-ink-3">
           账户
         </DropdownMenuLabel>
         <div className="px-2 pb-2 text-xs text-ink-2">
@@ -364,7 +364,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span className="grid size-8 place-items-center border border-rule bg-raised">
             <LattixMark className="size-4 shrink-0" />
           </span>
-          <span className="hidden text-[13px] font-bold tracking-[0.16em] sm:block" lang="en">
+          <span className="hidden text-[14px] font-bold tracking-[0.16em] sm:block" lang="en">
             LATTIX
           </span>
         </Link>
@@ -389,7 +389,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             <SearchIcon className="size-3.5 shrink-0" aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">搜索或跳转…</span>
-            <kbd className="ml-auto inline-flex h-5 shrink-0 items-center rounded-[2px] border border-rule bg-surface px-1 font-mono text-[10px] font-semibold text-ink-3">
+            <kbd className="ml-auto inline-flex h-5 shrink-0 items-center rounded-[2px] border border-rule bg-surface px-1 font-mono text-[11px] font-semibold text-ink-3">
               ⌘K
             </kbd>
           </button>
@@ -421,7 +421,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             )}
           >
             <TriangleAlertIcon className="size-3.5 shrink-0" aria-hidden="true" />
-            <span className="font-mono text-[11px] font-semibold tabular-nums">{pendingCount}</span>
+            <span className="font-mono text-[12px] font-semibold tabular-nums">{pendingCount}</span>
             <span className="hidden md:inline">项待处理</span>
           </Link>
 
@@ -460,7 +460,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               className="w-[280px] gap-0 border-r border-rule bg-surface p-0 text-ink sm:max-w-[280px]"
             >
               <div className="flex h-14 shrink-0 items-center justify-between border-b border-rule px-4">
-                <SheetTitle className="flex items-center gap-2 text-[13px] font-bold tracking-[0.16em] text-ink">
+                <SheetTitle className="flex items-center gap-2 text-[14px] font-bold tracking-[0.16em] text-ink">
                   <LattixMark className="size-4 shrink-0" />
                   <span lang="en">LATTIX</span>
                   <span className="sr-only">导航菜单</span>
@@ -482,7 +482,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </div>
               <NavList mode="sheet" onNavigate={() => setMobileNavOpen(false)} />
               <div className="shrink-0 border-t border-rule px-4 py-3">
-                <p className="text-[10px] font-semibold tracking-[0.08em] text-ink-3">
+                <p className="text-[11px] font-semibold tracking-[0.08em] text-ink-3">
                   自托管 · NETWORK CONTROL
                 </p>
               </div>
@@ -494,12 +494,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* 侧栏：<1024 隐藏，1024–1279 为 72px 图标栏，≥1280 为 224px 展开栏。 */}
         <aside className="hidden min-h-0 shrink-0 flex-col border-r border-rule bg-surface lg:flex lg:w-[72px] xl:w-56">
-          <div className="hidden h-10 shrink-0 items-center border-b border-rule px-4 text-[10px] font-semibold tracking-[0.12em] text-ink-3 xl:flex">
+          <div className="hidden h-10 shrink-0 items-center border-b border-rule px-4 text-[11px] font-semibold tracking-[0.12em] text-ink-3 xl:flex">
             导航
           </div>
           <NavList mode="desktop" />
           <div className="shrink-0 border-t border-rule p-3">
-            <p className="hidden text-[10px] font-medium leading-4 tracking-[0.06em] text-ink-3 xl:block">
+            <p className="hidden text-[11px] font-medium leading-4 tracking-[0.06em] text-ink-3 xl:block">
               自托管 · NETWORK CONTROL
             </p>
             <span aria-hidden="true" className="mx-auto block size-1.5 bg-signal xl:hidden" />

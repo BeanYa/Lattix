@@ -48,7 +48,7 @@
   background: var(--panel-accent);
   color: var(--panel-accent-ink);
   font-family: var(--font-display);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.12em;
   line-height: 1;
@@ -59,7 +59,7 @@
   flex: none;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 700;
   letter-spacing: 0.04em;
   line-height: 1;
@@ -70,7 +70,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--panel-ink-3);
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -93,7 +93,7 @@
 .rt-sync {
   color: var(--panel-ink-3);
   font-family: var(--panel-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   letter-spacing: 0.01em;
   white-space: nowrap;
 }
@@ -135,7 +135,7 @@
   overflow: hidden;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 780;
   letter-spacing: -0.02em;
   line-height: 1.1;
@@ -176,7 +176,7 @@
 .rt-kv dt {
   overflow: hidden;
   color: var(--panel-ink-3);
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-overflow: ellipsis;
@@ -188,7 +188,7 @@
   margin: 0;
   color: var(--panel-ink);
   font-family: var(--panel-mono);
-  font-size: 12px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -223,7 +223,7 @@
   gap: 5px;
   overflow: hidden;
   color: var(--panel-ink-2);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-overflow: ellipsis;
@@ -250,7 +250,7 @@
   overflow: hidden;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 780;
   letter-spacing: -0.025em;
   line-height: 1.05;
@@ -263,7 +263,7 @@
   overflow: hidden;
   color: var(--panel-ink-3);
   font-family: var(--panel-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -341,7 +341,7 @@
 .rt-trend figcaption span {
   overflow: hidden;
   color: var(--panel-ink-2);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-overflow: ellipsis;
@@ -351,7 +351,7 @@
 .rt-trend figcaption strong {
   color: var(--panel-ink);
   font-family: var(--panel-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -428,7 +428,7 @@
   overflow: hidden;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 650;
   letter-spacing: 0.01em;
   line-height: 1.3;
@@ -441,7 +441,7 @@
   overflow: hidden;
   margin-top: 1px;
   color: var(--panel-ink-3);
-  font-size: 9.5px;
+  font-size: 10.5px;
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -461,7 +461,7 @@
   overflow: hidden;
   color: var(--panel-ink);
   font-family: var(--panel-mono);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
@@ -473,7 +473,7 @@
   overflow: hidden;
   color: var(--panel-ink-3);
   font-family: var(--panel-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -488,7 +488,7 @@
 .rt-task-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .rt-task-table th {
@@ -498,7 +498,7 @@
   background: var(--panel-inset);
   color: var(--panel-ink-2);
   font-family: var(--font-display);
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 650;
   letter-spacing: 0.05em;
   text-align: left;
@@ -558,7 +558,7 @@
   max-width: 22rem;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 650;
   letter-spacing: 0.01em;
   line-height: 1.3;
@@ -571,7 +571,7 @@
   max-width: 22rem;
   color: var(--panel-ink-3);
   font-family: var(--panel-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -580,7 +580,7 @@
 .rt-task-time {
   color: var(--panel-ink-2);
   font-family: var(--panel-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -590,7 +590,7 @@
   background: var(--panel-danger-soft);
   color: var(--panel-danger);
   font-family: var(--panel-mono);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.45;
 }
 
@@ -612,7 +612,7 @@
   align-items: center;
   gap: 6px;
   color: var(--panel-ink-2);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .rt-task-empty svg {
@@ -632,7 +632,7 @@
   border-top: 1px solid var(--panel-rule);
   color: var(--panel-ink-3);
   font-family: var(--font-display);
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.03em;
 }
@@ -672,7 +672,7 @@
 .rt-loading-label {
   color: var(--panel-ink-2);
   font-family: var(--font-display);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.08em;
 }
@@ -788,11 +788,11 @@
   }
 
   .rt-panel-state strong {
-    font-size: 15px;
+    font-size: 16px;
   }
 
   .rt-metric-value {
-    font-size: 16px;
+    font-size: 17px;
   }
 
   .rt-metric-row {

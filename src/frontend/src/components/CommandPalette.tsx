@@ -303,7 +303,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
               spellCheck={false}
               className="h-full min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-3"
             />
-            <kbd className="hidden h-6 items-center rounded-[var(--radius-sm)] border border-rule bg-raised px-1.5 font-mono text-[10px] font-semibold text-ink-3 sm:inline-flex">
+            <kbd className="hidden h-6 items-center rounded-[var(--radius-sm)] border border-rule bg-raised px-1.5 font-mono text-[11px] font-semibold text-ink-3 sm:inline-flex">
               Esc
             </kbd>
           </div>
@@ -350,7 +350,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                     <div key={group.label} className="flex flex-col">
                       <div
                         role="presentation"
-                        className="sticky top-0 z-10 flex h-7 items-center justify-between bg-surface px-2 text-[10px] font-semibold tracking-[0.14em] text-ink-3"
+                        className="sticky top-0 z-10 flex h-7 items-center justify-between bg-surface px-2 text-[11px] font-semibold tracking-[0.14em] text-ink-3"
                       >
                         <span>{group.label}</span>
                         <span className="font-mono tabular-nums">{group.items.length}</span>
@@ -390,7 +390,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
                             <span className="hidden min-w-0 max-w-[240px] truncate text-xs text-ink-3 sm:block">
                               {item.description}
                             </span>
-                            <span className="hidden shrink-0 font-mono text-[10px] text-ink-3 lg:block">
+                            <span className="hidden shrink-0 font-mono text-[11px] text-ink-3 lg:block">
                               {item.meta}
                             </span>
                           </div>
@@ -403,20 +403,20 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
             )}
           </div>
 
-          <div className="flex h-9 shrink-0 items-center justify-between border-t border-rule px-3 text-[11px] text-ink-3">
+          <div className="flex h-9 shrink-0 items-center justify-between border-t border-rule px-3 text-[12px] text-ink-3">
             <span className="flex items-center gap-2">
               <span className="flex items-center gap-1">
-                <kbd className="rounded-[var(--radius-xs)] border border-rule bg-raised px-1 font-mono text-[10px]">
+                <kbd className="rounded-[var(--radius-xs)] border border-rule bg-raised px-1 font-mono text-[11px]">
                   ↑
                 </kbd>
-                <kbd className="rounded-[var(--radius-xs)] border border-rule bg-raised px-1 font-mono text-[10px]">
+                <kbd className="rounded-[var(--radius-xs)] border border-rule bg-raised px-1 font-mono text-[11px]">
                   ↓
                 </kbd>
                 <span>选择</span>
               </span>
               <span className="text-rule">/</span>
               <span className="flex items-center gap-1">
-                <kbd className="rounded-[var(--radius-xs)] border border-rule bg-raised px-1 font-mono text-[10px]">
+                <kbd className="rounded-[var(--radius-xs)] border border-rule bg-raised px-1 font-mono text-[11px]">
                   <CornerDownLeftIcon className="inline size-3" aria-hidden="true" />
                 </kbd>
                 <span>打开</span>

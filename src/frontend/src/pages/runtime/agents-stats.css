@@ -28,7 +28,7 @@
   gap: 4px;
   overflow: hidden;
   color: var(--panel-ink-2);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
   text-overflow: ellipsis;
@@ -54,7 +54,7 @@
   gap: 4px;
   color: var(--panel-ink);
   font-family: var(--panel-mono);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1.25;
@@ -76,7 +76,7 @@
   overflow: hidden;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 780;
   letter-spacing: -0.025em;
   line-height: 1.1;
@@ -91,7 +91,7 @@
 
 .rt-stat-value em {
   color: var(--panel-ink-3);
-  font-size: 11px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 600;
 }
@@ -103,7 +103,7 @@
   gap: 4px;
   overflow: hidden;
   color: var(--panel-ink-3);
-  font-size: 9.5px;
+  font-size: 10.5px;
   line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -150,7 +150,7 @@
   border-radius: 0;
   color: var(--panel-ink-2);
   font-family: var(--font-display);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.01em;
 }
@@ -174,7 +174,7 @@
   place-items: center;
   margin: 0;
   color: var(--panel-ink-3);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* ---------- Top 双列 ---------- */
@@ -222,7 +222,7 @@
 .rt-top-rank {
   color: var(--panel-ink-3);
   font-family: var(--panel-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
@@ -239,7 +239,7 @@
   gap: 6px;
   overflow: hidden;
   font-family: var(--font-display);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 650;
   letter-spacing: 0.01em;
   line-height: 1.3;
@@ -265,7 +265,7 @@
   justify-items: end;
   color: var(--panel-ink-2);
   font-family: var(--panel-mono);
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   line-height: 1.3;
   white-space: nowrap;
@@ -279,7 +279,7 @@
   margin: 0;
   padding: 14px 11px;
   color: var(--panel-ink-3);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 /* ---------- 口径说明 ---------- */
@@ -287,7 +287,7 @@
 .rt-note {
   margin: 0;
   color: var(--panel-ink-3);
-  font-size: 9.5px;
+  font-size: 10.5px;
   letter-spacing: 0.01em;
   line-height: 1.5;
 }
@@ -331,7 +331,7 @@
   }
 
   .rt-stat-value {
-    font-size: 17px;
+    font-size: 18px;
   }
 
   .rt-stat-cell {

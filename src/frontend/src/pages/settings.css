@@ -43,7 +43,7 @@
   background: transparent;
   color: var(--panel-ink-2);
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1;
@@ -121,7 +121,7 @@
   background: var(--panel-accent);
   color: var(--panel-accent-ink);
   font-family: var(--font-display);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.12em;
   line-height: 1;
@@ -134,7 +134,7 @@
   overflow: hidden;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.03em;
   line-height: 1;
@@ -149,7 +149,7 @@
 .st-mod-meta {
   color: var(--panel-ink-3);
   font-family: var(--font-display);
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.08em;
   white-space: nowrap;
@@ -167,7 +167,7 @@
   padding: 6px 10px;
   border-bottom: 1px solid var(--panel-rule);
   color: var(--panel-ink-2);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.55;
   text-wrap: pretty;
 }
@@ -229,7 +229,7 @@
 
 .st-page [data-slot='label'] {
   color: var(--panel-ink);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
   line-height: 1.3;
 }
@@ -243,7 +243,7 @@
   border-radius: 1px;
   background: var(--panel-surface);
   color: var(--panel-ink);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .st-page [data-slot='select-trigger'] {
@@ -263,7 +263,7 @@
 .st-page .cg-set-sublabel {
   color: var(--panel-ink-3);
   font-family: var(--font-text);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.02em;
   line-height: 1;
@@ -275,7 +275,7 @@
 .cg-set-note {
   margin: 0;
   color: var(--panel-ink-2);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.55;
   text-wrap: pretty;
 }
@@ -287,7 +287,7 @@
   background: var(--panel-inset);
   color: var(--panel-ink);
   font-family: var(--panel-mono);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .cg-set-inline-row {
@@ -326,7 +326,7 @@
   gap: 6px;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.03em;
   line-height: 1.2;
@@ -356,7 +356,7 @@
   background: var(--panel-surface);
   color: var(--panel-ink);
   font-family: var(--panel-mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   line-height: 1.55;
   outline: none;
   resize: vertical;
@@ -389,7 +389,7 @@
   background: transparent;
   color: var(--panel-ink-2);
   font-family: var(--font-text);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
   white-space: nowrap;
@@ -417,7 +417,7 @@
 .cg-set-ratio {
   color: var(--panel-ink-3);
   font-family: var(--panel-mono);
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   text-align: center;
 }
@@ -433,7 +433,7 @@
   background: var(--panel-inset);
   color: var(--panel-ink);
   font-family: var(--panel-mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -466,7 +466,7 @@
 .cg-set-rate-text {
   color: var(--panel-ink);
   font-family: var(--panel-mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -508,21 +508,21 @@
 .cg-set-msg-ok {
   margin: 0;
   color: var(--panel-success);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 600;
 }
 
 .cg-set-msg-err {
   margin: 0;
   color: var(--panel-danger);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 600;
 }
 
 .cg-set-msg-info {
   margin: 0;
   color: var(--panel-ink-2);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 600;
 }
 
@@ -543,7 +543,7 @@
 .st-save-hint {
   color: var(--panel-ink-3);
   font-family: var(--font-display);
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.08em;
   line-height: 1.2;
@@ -567,7 +567,7 @@
 
 .st-rates-table [data-slot='table-cell'] {
   padding: 5px 8px;
-  font-size: 11.5px;
+  font-size: 12.5px;
 }
 
 .st-rates-table [data-slot='table-head'] {
@@ -581,7 +581,7 @@
   padding: 24px 16px;
   border: 1px solid var(--panel-rule);
   color: var(--panel-ink-2);
-  font-size: 12px;
+  font-size: 13px;
   text-align: center;
 }
 

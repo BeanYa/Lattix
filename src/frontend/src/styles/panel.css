@@ -210,7 +210,7 @@ body {
   background-color: var(--panel-ground);
   color: var(--panel-ink);
   font-family: var(--font-text);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -254,7 +254,7 @@ body {
 .cg-title {
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 900;
   letter-spacing: -0.01em;
   line-height: 1.2;
@@ -262,7 +262,7 @@ body {
 
 .cg-micro {
   font-family: var(--font-display);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 650;
   letter-spacing: 0.06em;
   line-height: 1.2;
@@ -271,7 +271,7 @@ body {
 
 .cg-mono {
   font-family: var(--panel-mono);
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -338,7 +338,7 @@ body {
   background: transparent;
   color: var(--panel-ink-2);
   font-family: var(--font-display);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.03em;
   line-height: 1.5;
@@ -419,7 +419,7 @@ body {
   background: transparent;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1;
@@ -544,14 +544,14 @@ body {
 
 .cg-metric-label {
   color: var(--panel-ink-2);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
 .cg-metric-detail {
   color: var(--panel-ink-3);
-  font-size: 10.5px;
+  font-size: 11.5px;
 }
 
 /* ---------- 语义标题卡（good/bad/info） ---------- */
@@ -563,7 +563,7 @@ body {
   padding: 7px 10px;
   border-bottom: 1px solid var(--panel-rule);
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
@@ -660,7 +660,7 @@ html.dark .sub-page {
 
 .cg-commandbar-name {
   font-family: var(--font-display);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 800;
   letter-spacing: 0.14em;
   line-height: 1;
@@ -669,7 +669,7 @@ html.dark .sub-page {
 .cg-commandbar-sub {
   color: var(--panel-ink-3);
   font-family: var(--font-display);
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.12em;
   line-height: 1;
@@ -700,7 +700,7 @@ html.dark .sub-page {
   padding: 0 2px 0 10px;
   border-left: 1px solid var(--panel-rule);
   color: var(--panel-ink-2);
-  font-size: 11.5px;
+  font-size: 12.5px;
 }
 
 .cg-commandbar-avatar {
@@ -711,7 +711,7 @@ html.dark .sub-page {
   border: 1px solid var(--panel-rule-strong);
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -753,7 +753,7 @@ html.dark .sub-page {
   display: block;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.12em;
   line-height: 1.1;
@@ -764,7 +764,7 @@ html.dark .sub-page {
   margin-top: 2px;
   color: var(--panel-ink-3);
   font-family: var(--font-display);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.1em;
   line-height: 1.2;
@@ -787,7 +787,7 @@ html.dark .sub-page {
   padding: 6px 6px 4px;
   color: var(--panel-ink-3);
   font-family: var(--font-display);
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 650;
   letter-spacing: 0.08em;
   line-height: 1;
@@ -814,7 +814,7 @@ html.dark .sub-page {
   border: 1px solid transparent;
   border-radius: 1px;
   color: var(--panel-ink-2);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 500;
   line-height: 1;
   text-decoration: none;
@@ -863,7 +863,7 @@ html.dark .sub-page {
 .cg-sidebar-note {
   color: var(--panel-ink-3);
   font-family: var(--font-display);
-  font-size: 8.5px;
+  font-size: 9.5px;
   font-weight: 600;
   letter-spacing: 0.08em;
   line-height: 1.4;
@@ -886,7 +886,7 @@ html.dark .sub-page {
   border: 1px solid var(--panel-rule-strong);
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
@@ -895,7 +895,7 @@ html.dark .sub-page {
   flex: 1;
   overflow: hidden;
   color: var(--panel-ink-2);
-  font-size: 11.5px;
+  font-size: 12.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -967,7 +967,7 @@ html.dark .sub-page {
 
 @media (max-width: 640px) {
   .cg-commandbar-name {
-    font-size: 13px;
+    font-size: 14px;
   }
 }
 
@@ -982,7 +982,7 @@ html.dark .sub-page {
 .cg-commandbar-date {
   color: var(--panel-ink-3);
   font-family: var(--font-display);
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 600;
   letter-spacing: 0.04em;
   white-space: nowrap;
@@ -992,7 +992,7 @@ html.dark .sub-page {
   max-width: 120px;
   overflow: hidden;
   color: var(--panel-ink-2);
-  font-size: 11.5px;
+  font-size: 12.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1006,7 +1006,7 @@ html.dark .sub-page {
 .cg-nav-section-code {
   overflow: hidden;
   color: var(--panel-ink-3);
-  font-size: 8.5px;
+  font-size: 9.5px;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-overflow: clip;
