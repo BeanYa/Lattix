@@ -4,6 +4,7 @@
 @import '@fontsource/barlow-condensed/600.css';
 @import '@fontsource/barlow-condensed/700.css';
 @import './styles/panel.css';
+@import './styles/tokens.css';
 
 /* ejected from shadcn@4.13.1 */
 @theme inline {
@@ -536,4 +537,32 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ------------------------------------------------------------
+   P0 设计令牌：必须在 panel.css 之后引入，才能覆盖旧令牌值。
+   注意：Tailwind v4 的 dark 变体无法匹配 html.dark 自身，
+   所以深浅切换只依赖 tokens.css 的 :root / .dark 变量层。
+   ------------------------------------------------------------ */
+
+/* 语义令牌 → Tailwind v4 工具类：bg-surface、text-ink、border-rule、bg-signal 等 */
+@theme inline {
+  --color-ground: var(--panel-ground);
+  --color-surface: var(--panel-surface);
+  --color-raised: var(--panel-raised);
+  --color-inset: var(--panel-inset);
+  --color-rule: var(--panel-rule);
+  --color-rule-strong: var(--panel-rule-strong);
+  --color-ink: var(--panel-ink);
+  --color-ink-2: var(--panel-ink-2);
+  --color-ink-3: var(--panel-ink-3);
+  --color-control: var(--panel-control);
+  --color-signal: var(--panel-signal);
+  --color-signal-soft: var(--panel-signal-soft);
+  --color-signal-ink: var(--panel-signal-ink);
+  --color-ok: var(--panel-status-ok);
+  --color-degraded: var(--panel-status-degraded);
+  --color-failed: var(--panel-status-failed);
+  --color-waiting: var(--panel-status-waiting);
+  --color-unknown: var(--panel-status-unknown);
 }

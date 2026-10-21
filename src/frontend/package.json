@@ -8,6 +8,8 @@
     "build": "node scripts/generate-api-types.mjs --check && tsc -b && vite build && node scripts/check-build-chunks.mjs",
     "generate:api": "node scripts/generate-api-types.mjs",
     "check:api": "node scripts/generate-api-types.mjs --check",
+    "check:budget": "node scripts/check-bundle-budget.mjs",
+    "check:tokens": "node scripts/check-token-contrast.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",

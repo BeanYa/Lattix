@@ -1,0 +1,268 @@
+/* ============================================================
+   Lattix — P0 设计令牌（docs/ui-refactor-proposal.md 第 7 节）
+   分层：语义令牌（本文件）→ 组件局部变量 → 原始值。
+   命名：沿用 --panel-* 前缀；令牌名只描述角色，不包含颜色名。
+   深浅：浅色（暖纸）写在 :root，深色（夜板，默认外观）写在 .dark。
+   顺序：本文件由 index.css 在 panel.css 之后引入，用于覆盖旧令牌值。
+   ============================================================ */
+
+/* ---------- 浅色（暖纸） ---------- */
+:root {
+  /* 7.2.1 表面与文本 */
+  --panel-ground: #f2ede3;
+  --panel-surface: #fbf8f1;
+  --panel-raised: #f6f1e7;
+  --panel-inset: #eae3d5;
+  --panel-rule: #ddd4c3;
+  --panel-rule-strong: #b6aa95;
+  --panel-ink: #1c1914;
+  --panel-ink-2: #585044;
+  --panel-ink-3: #6e675a;
+  --panel-control: #8b8272;
+  --panel-placeholder: #6e675a;
+  --panel-hover: rgba(28, 25, 20, 0.04);
+  --panel-scrim: rgba(28, 25, 20, 0.38);
+
+  /* 7.2.2 信号蓝：只承担交互（主按钮、链接、焦点、选中、进行中） */
+  --panel-signal: #0b5fce;
+  --panel-signal-ink: #ffffff;
+  --panel-signal-soft: rgba(11, 95, 206, 0.08);
+  --panel-signal-hover: #0a54b8;
+  --panel-focus: #0b5fce;
+
+  /* 7.2.3 线路色：只承担链路身份，按 id % 9 稳定分配 */
+  --panel-line-1: #a83a24; /* 朱砂 */
+  --panel-line-2: #8a6400; /* 琥珀 */
+  --panel-line-3: #55650f; /* 橄榄 */
+  --panel-line-4: #2f6e3f; /* 苔绿 */
+  --panel-line-5: #0e6a78; /* 青瓷 */
+  --panel-line-6: #7a3fa8; /* 紫藤 */
+  --panel-line-7: #9c2f6b; /* 品红 */
+  --panel-line-8: #7a4a28; /* 赭石 */
+  --panel-line-0: #6b645a; /* 石墨（超出 8 条时的复用色） */
+
+  /* 7.2.4 状态色：只承担状态，必须与形状、状态词同时出现 */
+  --panel-status-ok: #0c7058; /* 通行 */
+  --panel-status-progress: #0b5fce; /* 部署中 / 进行中 */
+  --panel-status-degraded: #a25a00; /* 降级 */
+  --panel-status-failed: #b01e40; /* 异常 */
+  --panel-status-waiting: #6e6759; /* 待确认 / 等待 */
+  --panel-status-unknown: #6b645a; /* 未知 / 停用 */
+  --panel-status-ok-soft: rgba(12, 112, 88, 0.1);
+  --panel-status-progress-soft: rgba(11, 95, 206, 0.08);
+  --panel-status-degraded-soft: rgba(162, 90, 0, 0.1);
+  --panel-status-failed-soft: rgba(176, 30, 64, 0.1);
+  --panel-status-waiting-soft: rgba(110, 103, 89, 0.08);
+  --panel-status-unknown-soft: rgba(107, 100, 90, 0.08);
+
+  /* 7.2.5 图表：聚合序列只用中性阶梯；链路序列用线路色 */
+  --panel-chart-1: #1c1914;
+  --panel-chart-2: #585044;
+  --panel-chart-3: #6e675a;
+  --panel-chart-4: #8b8272;
+  --panel-chart-5: #b6aa95;
+
+  /* 7.4 阴影与纹理（随外观变化的部分） */
+  --panel-shadow-card: 0 1px 2px rgba(74, 58, 36, 0.06), 0 1px 1px rgba(74, 58, 36, 0.04);
+  --panel-shadow-overlay:
+    0 24px 48px -24px rgba(60, 46, 24, 0.28), 0 4px 12px -6px rgba(60, 46, 24, 0.12);
+  --panel-texture-fiber: url('/textures/paper-grain.png');
+  --texture-opacity: 0.04;
+}
+
+/* ---------- 深色（夜板，默认外观） ---------- */
+.dark {
+  /* 7.2.1 表面与文本 */
+  --panel-ground: #131210;
+  --panel-surface: #1b1916;
+  --panel-raised: #24211c;
+  --panel-inset: #0d0c0a;
+  --panel-rule: #332f28;
+  --panel-rule-strong: #4b453b;
+  --panel-ink: #f3eee3;
+  --panel-ink-2: #bfb6a5;
+  --panel-ink-3: #968d7d;
+  --panel-control: #6f675b;
+  --panel-placeholder: #968d7d;
+  --panel-hover: rgba(243, 238, 227, 0.05);
+  --panel-scrim: rgba(8, 7, 5, 0.66);
+
+  /* 7.2.2 信号蓝：只承担交互（主按钮、链接、焦点、选中、进行中） */
+  --panel-signal: #64b5ff;
+  --panel-signal-ink: #131210;
+  --panel-signal-soft: rgba(100, 181, 255, 0.14);
+  --panel-signal-hover: #7cc2ff;
+  --panel-focus: #64b5ff;
+
+  /* 7.2.3 线路色：只承担链路身份，按 id % 9 稳定分配 */
+  --panel-line-1: #e07462; /* 朱砂 */
+  --panel-line-2: #d6ac48; /* 琥珀 */
+  --panel-line-3: #a3bc5e; /* 橄榄 */
+  --panel-line-4: #6fbf88; /* 苔绿 */
+  --panel-line-5: #4fb6c6; /* 青瓷 */
+  --panel-line-6: #ae8ce6; /* 紫藤 */
+  --panel-line-7: #de86b4; /* 品红 */
+  --panel-line-8: #c08a64; /* 赭石 */
+  --panel-line-0: #a79e90; /* 石墨（超出 8 条时的复用色） */
+
+  /* 7.2.4 状态色：只承担状态，必须与形状、状态词同时出现 */
+  --panel-status-ok: #45c79b; /* 通行 */
+  --panel-status-progress: #64b5ff; /* 部署中 / 进行中 */
+  --panel-status-degraded: #eda23d; /* 降级 */
+  --panel-status-failed: #f06a7e; /* 异常 */
+  --panel-status-waiting: #b8af9f; /* 待确认 / 等待 */
+  --panel-status-unknown: #a79e90; /* 未知 / 停用 */
+  --panel-status-ok-soft: rgba(69, 199, 155, 0.14);
+  --panel-status-progress-soft: rgba(100, 181, 255, 0.14);
+  --panel-status-degraded-soft: rgba(237, 162, 61, 0.14);
+  --panel-status-failed-soft: rgba(240, 106, 126, 0.14);
+  --panel-status-waiting-soft: rgba(184, 175, 159, 0.1);
+  --panel-status-unknown-soft: rgba(167, 158, 144, 0.1);
+
+  /* 7.2.5 图表：聚合序列只用中性阶梯；链路序列用线路色 */
+  --panel-chart-1: #f3eee3;
+  --panel-chart-2: #bfb6a5;
+  --panel-chart-3: #968d7d;
+  --panel-chart-4: #6f675b;
+  --panel-chart-5: #4b453b;
+
+  /* 7.4 阴影与纹理（随外观变化的部分） */
+  --panel-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.45), 0 1px 0 rgba(0, 0, 0, 0.3);
+  --panel-shadow-overlay: 0 24px 48px -20px rgba(0, 0, 0, 0.72), 0 4px 12px -4px rgba(0, 0, 0, 0.5);
+  --panel-texture-fiber: url('/textures/paper-grain-dark.png');
+  --texture-opacity: 0.03;
+}
+
+/* ---------- 7.3 字体令牌（与外观无关，两套外观共用） ---------- */
+:root,
+.dark {
+  --font-title:
+    'Geist Variable', 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    'Noto Sans CJK SC', sans-serif;
+  --font-ui:
+    'Geist Variable', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC',
+    sans-serif;
+  --font-text: var(--font-ui);
+  --font-readout: 'Barlow Condensed', 'Geist Variable', 'PingFang SC', sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+  /* 字号 / 行高 / 字重组合；组件可直接用于 font 简写或拆成三个属性 */
+  --type-display: 900 28px/34px var(--font-title);
+  --type-h2: 700 18px/26px var(--font-title);
+  --type-h3: 650 15px/22px var(--font-ui);
+  --type-body: 400 14px/22px var(--font-text);
+  --type-body-sm: 400 13px/20px var(--font-text);
+  --type-table: 450 13px/20px var(--font-ui);
+  --type-table-compact: 450 12.5px/18px var(--font-ui);
+  --type-label: 600 11px/16px var(--font-ui);
+  --type-micro: 600 10px/14px var(--font-ui);
+  --type-readout-lg: 700 32px/34px var(--font-readout);
+  --type-readout: 700 20px/24px var(--font-readout);
+  --type-readout-sm: 600 14px/18px var(--font-readout);
+  --type-code: 400 12px/18px var(--font-mono);
+  --tracking-tight: -0.02em;
+  --tracking-wide: 0.04em;
+  --tracking-code: 0.06em;
+}
+
+/* ---------- 7.4 间距、尺寸、圆角、描边（与外观无关） ---------- */
+:root,
+.dark {
+  /* 8pt 主网格 + 4px 子网格 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 40px;
+  --space-8: 48px;
+  --space-9: 64px;
+  --space-10: 80px;
+  --space-11: 96px;
+
+  /* 行高与控件尺寸 */
+  --row: 44px;
+  --row-compact: 36px;
+  --row-board: 56px;
+  --row-head: 36px;
+  --row-head-compact: 32px;
+  --row-mobile: 52px;
+  --nav-item: 40px;
+  --control-xs: 28px;
+  --control-sm: 32px;
+  --control: 40px;
+  --control-lg: 48px;
+  --touch-min: 44px;
+
+  /* 圆角阶梯：组件写法与实际渲染保持一致 */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --radius: 4px; /* shadcn 控件默认圆角 */
+
+  /* 描边 */
+  --border-hairline: 1px;
+  --border-emphasis: 2px;
+  --line-band: 3px;
+
+  /* 纹理平铺尺寸（明暗两套纹理地址见上方各外观块） */
+  --texture-tile: 128px;
+
+  /* 7.4 阴影的文档别名；实际值随外观定义在 :root / .dark */
+  --shadow-card: var(--panel-shadow-card);
+  --shadow-overlay: var(--panel-shadow-overlay);
+  --texture-fiber: var(--panel-texture-fiber);
+}
+
+/* ---------- 7.5 动效与层级（与外观无关） ---------- */
+:root,
+.dark {
+  --duration-1: 80ms;
+  --duration-2: 140ms;
+  --duration-3: 180ms;
+  --duration-4: 240ms;
+  --duration-5: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --stagger: 40ms;
+  --z-sticky: 20;
+  --z-nav: 30;
+  --z-overlay: 40;
+  --z-tray: 50;
+  --z-toast: 60;
+}
+
+/* ---------- 旧变量兼容（P5 前保留；新组件禁止引用） ---------- */
+:root,
+.dark {
+  /* 红色主色 → 信号蓝：主按钮、链接、焦点、选中跟随 */
+  --panel-accent: var(--panel-signal);
+  --panel-accent-ink: var(--panel-signal-ink);
+  --panel-accent-soft: var(--panel-signal-soft);
+  --panel-selection: var(--panel-signal-soft);
+
+  /* 旧状态名 → 新状态角色；info 过渡期映射到“进行中”，不再作独立状态色 */
+  --panel-success: var(--panel-status-ok);
+  --panel-success-soft: var(--panel-status-ok-soft);
+  --panel-warning: var(--panel-status-degraded);
+  --panel-warning-soft: var(--panel-status-degraded-soft);
+  --panel-danger: var(--panel-status-failed);
+  --panel-danger-soft: var(--panel-status-failed-soft);
+  --panel-info: var(--panel-status-progress);
+  --panel-info-soft: var(--panel-status-progress-soft);
+  --panel-overlay: var(--panel-scrim);
+
+  /* 图表：改回中性阶梯，移除 accent/success/warning 映射 */
+  --chart-1: var(--panel-chart-1);
+  --chart-2: var(--panel-chart-2);
+  --chart-3: var(--panel-chart-3);
+  --chart-4: var(--panel-chart-4);
+  --chart-5: var(--panel-chart-5);
+  --chart-accent: var(--panel-signal);
+  --chart-success: var(--panel-status-ok);
+  --chart-warning: var(--panel-status-degraded);
+}
