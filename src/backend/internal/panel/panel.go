@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -605,11 +606,24 @@ func writeRPC(w http.ResponseWriter, code, message string, data any) {
 	if rw, ok := w.(rpcResponseWriter); ok {
 		observeID = rw.ObserveID()
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(rpcResponse{
+	// 先完整序列化，成功后再写 header/body：一旦提前 WriteHeader(200)，编码失败
+	//（如非法 json.RawMessage、NaN）就只会留下截断的 JSON，前端只能报
+	// “服务端返回了无效 JSON”。失败时改写合法的协议错误信封。
+	body, err := json.Marshal(rpcResponse{
 		Code: code, Message: message, Data: data, RequestID: requestID, TraceID: traceID, ObserveID: observeID,
 	})
+	if err != nil {
+		log.Printf("panel: encode RPC response failed: %v", err)
+		writeProtocolError(w, http.StatusInternalServerError, "response encoding failed")
+		if rw, ok := w.(rpcResponseWriter); ok {
+			// 覆盖先前的成功 outcome：请求日志据此记录 error 级别与安全摘要。
+			rw.SetRPCOutcome(fmt.Sprintf("HTTP_%d", http.StatusInternalServerError), "response encoding failed")
+		}
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(append(body, '\n'))
 }
 
 func writeError(w http.ResponseWriter, legacyCode int, msg string) {
@@ -646,9 +660,8 @@ func writeProtocolError(w http.ResponseWriter, status int, message string) {
 	if rw, ok := w.(rpcResponseWriter); ok {
 		observeID = rw.ObserveID()
 	}
-	w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(rpcResponse{
+	// 与 writeRPC 一致：先序列化再写 header，保证响应体永远是完整 JSON。
+	body := protocolErrorBody(status, rpcResponse{
 		Code:      fmt.Sprintf("HTTP_%d", status),
 		Message:   message,
 		Data:      nil,
@@ -656,7 +669,36 @@ func writeProtocolError(w http.ResponseWriter, status int, message string) {
 		TraceID:   traceID,
 		ObserveID: observeID,
 	})
+	w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
+
+// protocolErrorBody 序列化协议错误信封（保留 JSON 结尾换行，兼容原 Encoder 输出）。
+// 信封自身编码失败时记录日志并退回最小信封，绝不写出截断的 JSON。
+func protocolErrorBody(status int, envelope rpcResponse) []byte {
+	encoded, err := json.Marshal(envelope)
+	if err == nil {
+		return append(encoded, '\n')
+	}
+	log.Printf("panel: encode protocol error response failed: %v", err)
+	// 最小信封只含字符串与 nil，json.Marshal 不可能失败；仍失败时退回静态常量，
+	// 确保最后兜底也是合法 JSON 信封。
+	fallback, fallbackErr := json.Marshal(rpcResponse{
+		Code:      fmt.Sprintf("HTTP_%d", status),
+		Message:   "response encoding failed",
+		Data:      nil,
+		RequestID: envelope.RequestID,
+		TraceID:   envelope.TraceID,
+	})
+	if fallbackErr != nil {
+		return []byte(protocolErrorFallbackBody)
+	}
+	return append(fallback, '\n')
+}
+
+// protocolErrorFallbackBody 是协议错误信封的最后兜底：静态 ASCII 合法 JSON。
+const protocolErrorFallbackBody = `{"code":"HTTP_500","message":"response encoding failed","data":null,"request_id":"","trace_id":""}` + "\n"
 
 // WriteProtocolError writes the protocol envelope used by API fallbacks outside Server routes.
 func WriteProtocolError(w http.ResponseWriter, status int, message string) {
