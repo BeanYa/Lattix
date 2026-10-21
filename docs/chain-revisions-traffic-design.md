@@ -118,7 +118,7 @@ Panel 的 Agent 在线状态只表示 Agent→Panel 控制通道可达，不代�
 | `waiting_for_agent` | 编辑所需的任一 Agent 不可达，编排暂停（revision 同步置 waiting_for_agent） |
 | `active_unconfirmed` | 管理员强制发布了未确认配置 |
 | `active_failed` | 已发布链的部署失败：强制发布后的任务失败，或已发布链编辑（applying/waiting_for_agent）期间的失败 |
-| `cleanup_pending` | 新 revision 已生效，旧配置仍待清理 |
+| `cleanup_pending` | 新 revision 已生效，旧配置仍在清理（仅由目标在线且未终结的清理任务维持） |
 | `invalid` | 引用的服务器已被删除 |
 | `deleted` | 链路已软删除（终态） |
 
@@ -133,7 +133,7 @@ failed             → applying（重试）| active_unconfirmed（强制发布�
 active_unconfirmed → active（agent 确认）| applying（重试）| failed | active_failed（强制发布后任务失败）| invalid | deleted
 active_failed      → applying（重试）| active（重新评估恢复）| active_unconfirmed（强制发布）| invalid | deleted
 waiting_for_agent  → applying（Agent 上线恢复编排）| active_unconfirmed（强制发布）| failed | active_failed（等待期间在途命令失败回执）| invalid | deleted
-cleanup_pending    → active（清理完成）| applying（编辑）| deleted | invalid
+cleanup_pending    → active（清理完成或无阻塞清理任务）| applying（编辑）| deleted | invalid
 invalid            → applying（替换缺失 hop 重新发布）| deleted
 deleted            →（终态，无出边）
 ```
@@ -146,13 +146,13 @@ CAS 形式再次断言，并发修改返回 `ErrChainStatusChanged`（TOCTOU 防
 
 | 事件 | 接线 | FSM 处理 |
 |------|------|----------|
-| Agent 上线 | hub.OnConnect → OnAgentConnect | Evaluate（恢复 degraded→active）+ ResumeChainsByServer（续编排） |
+| Agent 上线/重连 | hub.OnConnect → OnAgentConnect | Evaluate（恢复 degraded→active）+ ResumeChainsByServer（续编排）+ ReconcileChainCleanups（清理队列自愈） |
 | Agent 离线 | hub.OnDisconnect → RecomputeChainsByServer | Evaluate（active→degraded + 告警） |
 | 共享端点 ack | handleCommandResponse | Evaluate（端点就绪 → degraded→active 恢复） |
 | 编排推进 | advanceChain / handleChainHopResult | Transition（applying→active/failed 等） |
 | 管理员操作 | RetryChain / 删链 | Transition（failed→applying / *→deleted） |
 | 服务器删除 | panel.handleDeleteServer | InvalidateForServerDeletion（事务级联 → invalid） |
-| 周期自愈 | 60s ticker → ReconcileStaleEndpoints | 间接触发 Evaluate |
+| 周期自愈 | 60s ticker → ReconcileStaleEndpoints / ReconcileChainCleanups | 间接触发 Evaluate；清理任务补入队、悬空命令复位、已删服务器任务废弃 |
 
 ### 条件评估（Evaluate）
 
@@ -169,6 +169,7 @@ Evaluate 仅对 `active` 或 `degraded` 状态的链生效，按优先级检查�
 | 即时重试 | Evaluate 检测端点未 active 且服务器在线 | 命令丢失、首次 reconcile 失败 |
 | 连接自愈 | OnAgentConnect → reconcile 该服务器全部未 active 端点 + 恢复编排 | 死信命令、Agent 重启、编排停滞 |
 | 周期兜底 | 60s ReconcileStaleEndpoints 遍历所有在线服务器 | 上述两层未覆盖的边缘情况 |
+| 清理任务自愈 | 启动 ResumeChains / Agent 重连 / 60s ticker → ReconcileChainCleanups | 旧 revision 清理命令丢失、目标服务器删除或离线、cleanup_pending 残留 |
 
 ### 共享端点状态机（endpointFSM）
 
@@ -202,6 +203,22 @@ failed    → applying（重试）| pending（重置复用）
 表示控制面无法确认该跳，不撤销订阅，也不推断数据面已经中断。全部 Agent 恢复在线且 hop 均为
 `active` 后自动恢复为 `active`。Panel 重启时 `ResumeChains` 全量恢复编排中的链；运行时 Agent
 重连由 `ResumeChainsByServer` 即时恢复。
+
+### 清理阶段语义（cleanup_pending）
+
+清理阶段只拆除旧 revision 不再引用的 piece，命令复用 `commands` 队列的离线排队语义：
+
+- `cleanup_pending` 仅由「目标服务器存在且在线、任务仍为 `pending`/`queued`」的清理任务维持；
+  目标服务器离线（命令滞留队列）或已删除时不再阻塞链状态，链回到 `active`/`degraded`，
+  滞留命令在 Agent 重连后照常下发；
+- `acked`、`failed`（死信或 Agent 报错）与 `abandoned` 均为终态，不阻塞链状态；清理残留
+  由服务器页的「清理 Xray 缓存」兜底；
+- 删除服务器时，级联事务把该服务器的 `pending`/`queued` revision 任务置 `abandoned`，
+  删除后自愈受影响链；
+- 自愈入口 `ReconcileChainCleanups` 在面板启动（`ResumeChains`）、Agent 重连
+  （`OnAgentConnect`）与 60s ticker 运行：废弃目标服务器已删除的任务、补入 `pending`
+  任务、对 `command_id` 悬空或关联命令已终态的 `queued` 任务复位后重新入队，最后按
+  可达性重算链状态。周期入口意味着最长约 60s 的自愈滞后。
 
 ## 删除语义
 
