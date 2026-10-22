@@ -71,6 +71,16 @@ wait_cmd() {
     echo "TIMEOUT"; return 1
 }
 
+# wait_node <id> <status> [tries]：轮询节点状态。命令 acked 与 apply_result 回写节点
+# 状态之间有一个很短的窗口，直接读取会偶发 applying，故按目标状态轮询。
+wait_node() {
+    for _ in $(seq 1 "${3:-40}"); do
+        [[ "$(db "SELECT status FROM nodes WHERE id=$1")" == "$2" ]] && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
 port_open() { python3 -c "import socket,sys; s=socket.socket(); sys.exit(0 if s.connect_ex(('127.0.0.1', int(sys.argv[1])))==0 else 1)" "$1"; }
 
 xray_pid() { pgrep -f "xray run -config $XRAY_CONFIG" | head -1; }
@@ -153,8 +163,9 @@ PY
 start_agent
 [[ "$(wait_cmd "$CID1")" == "acked" ]] || { echo "FAIL: apply_node 未成功"; cat "$WORK/agent.log"; exit 1; }
 
+wait_node 1 active || true
 REALIZED="$(db "SELECT status || '|' || COALESCE(realized_config, '') FROM nodes WHERE id=1")"
-[[ "$REALIZED" == active\|* ]] || { echo "FAIL: 节点未 active: $REALIZED"; exit 1; }
+[[ "$REALIZED" == active\|* ]] || { echo "FAIL: 节点未 active: $REALIZED"; cat "$WORK/agent.log"; exit 1; }
 PORT="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1].split("|",1)[1])["port"])' "$REALIZED")"
 PUBKEY="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1].split("|",1)[1])["public_key"])' "$REALIZED")"
 [[ "$PORT" -gt 0 && -n "$PUBKEY" ]] || { echo "FAIL: realized_config 不完整: $REALIZED"; exit 1; }

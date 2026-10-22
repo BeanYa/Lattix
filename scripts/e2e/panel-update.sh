@@ -46,12 +46,42 @@ cp "$WORK/lattix-backend-new" "$REL/pkg/lattix-panel/lattix-backend"
 sed -e "s|{{LATTIX_VERSION}}|$NEW_VER|g" -e 's|{{GITHUB_REPO}}|BeanYa/Lattix|g' \
     "$ROOT/scripts/latx.sh" > "$REL/pkg/lattix-panel/latx"
 chmod 0755 "$REL/pkg/lattix-panel/latx"
-# 面板包垫到 ~64MB：本地镜像下载极快，保证轮询能观察到 download 阶段与进度百分比。
+# 面板包垫到 ~64MB，并由本地镜像限速下载（约 5-6s）：保证进度轮询能稳定观察到
+# download 阶段与百分比（runner 的 localhost 可瞬时下载 64MB，不限速会偶发错过该阶段）。
 head -c 67108864 /dev/urandom > "$REL/pkg/lattix-panel/pad.bin"
 tar -C "$REL/pkg" -czf "$REL/lattix-panel-linux-amd64.tar.gz" lattix-panel
 (cd "$REL" && sha256sum lattix-panel-linux-amd64.tar.gz > checksums.txt)
 echo "$NEW_VER" > "$WORK/releases/latest.txt"
-(cd "$WORK/releases" && exec python3 -m http.server "$MIRROR_PORT") >/dev/null 2>&1 &
+cat > "$WORK/mirror.py" <<'PY'
+import http.server, sys, time
+
+root, port = sys.argv[1], int(sys.argv[2])
+
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=root, **kwargs)
+
+    def copyfile(self, source, outputfile):
+        # 仅对面板包限速；latest.txt / checksums.txt 保持即时返回。
+        if self.path.endswith('.tar.gz'):
+            while True:
+                chunk = source.read(256 * 1024)
+                if not chunk:
+                    break
+                outputfile.write(chunk)
+                outputfile.flush()
+                time.sleep(0.02)
+            return
+        super().copyfile(source, outputfile)
+
+    def log_message(self, *args):
+        pass
+
+
+http.server.ThreadingHTTPServer(('127.0.0.1', port), Handler).serve_forever()
+PY
+python3 "$WORK/mirror.py" "$WORK/releases" "$MIRROR_PORT" >/dev/null 2>&1 &
 MIRRORPID=$!
 MIRROR_READY=0
 for _ in $(seq 1 30); do
@@ -121,8 +151,12 @@ for _ in $(seq 1 200); do
     echo "$ST" | grep -q '"running":false' && { echo "FAIL: 更新意外终止: $ST"; exit 1; }
     sleep 0.1
 done
-[[ "$SAW_DOWNLOAD" -eq 1 && "$SAW_PROGRESS" -eq 1 ]] \
-    || { echo "FAIL: 未观察到 download 阶段进度（download=$SAW_DOWNLOAD progress=$SAW_PROGRESS）"; exit 1; }
+if [[ "$SAW_DOWNLOAD" -ne 1 || "$SAW_PROGRESS" -ne 1 ]]; then
+    echo "FAIL: 未观察到 download 阶段进度（download=$SAW_DOWNLOAD progress=$SAW_PROGRESS）"
+    echo "--- 面板日志 ---"
+    cat "$WORK/panel.log"
+    exit 1
+fi
 
 echo ">> 等待面板重启恢复"
 BACK=0
