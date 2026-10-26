@@ -238,7 +238,8 @@ function NavList({
                 onNavigate={onNavigate}
               />
 
-              {domainActive && children.length > 0 ? (
+              {/* 子菜单默认全部展开：仅当前域高亮，不再按域折叠。 */}
+              {children.length > 0 ? (
                 <ul
                   aria-label={`${item.label}二级导航`}
                   className={cn(
