@@ -191,13 +191,14 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 }
 
 type subscriptionProfileInput struct {
-	Mode               string   `json:"mode"`
-	Preset             string   `json:"preset"`
-	Categories         []string `json:"categories"`
-	PortableTemplateID string   `json:"portable_template_id"`
-	MihomoTemplateID   string   `json:"mihomo_template_id"`
-	SingboxTemplateID  string   `json:"singbox_template_id"`
-	QuanXTemplateID    string   `json:"quanx_template_id"`
+	RegionGroupsEnabled *bool    `json:"region_groups_enabled"`
+	Mode                string   `json:"mode"`
+	Preset              string   `json:"preset"`
+	Categories          []string `json:"categories"`
+	PortableTemplateID  string   `json:"portable_template_id"`
+	MihomoTemplateID    string   `json:"mihomo_template_id"`
+	SingboxTemplateID   string   `json:"singbox_template_id"`
+	QuanXTemplateID     string   `json:"quanx_template_id"`
 	// 以下为 GET DTO 的只读回显字段：前端把 routing 对象原样回传，
 	// 本接口忽略它们（管理员指派槽位在保存时从现有 profile 原样保留）。
 	AssignedPortableTemplateID  string   `json:"assigned_portable_template_id"`
@@ -212,6 +213,7 @@ type subscriptionProfileInput struct {
 }
 
 type subscriptionProfileDTO struct {
+	RegionGroupsEnabled         bool     `json:"region_groups_enabled"`
 	Mode                        string   `json:"mode"`
 	Preset                      string   `json:"preset"`
 	Categories                  []string `json:"categories"`
@@ -240,7 +242,8 @@ func subscriptionProfileToDTO(profile store.SubscriptionProfile) subscriptionPro
 	var categories []string
 	_ = json.Unmarshal([]byte(profile.CategoriesJSON), &categories)
 	return subscriptionProfileDTO{
-		Mode: profile.Mode, Preset: profile.Preset, Categories: categories,
+		RegionGroupsEnabled: !profile.DisableRegionGroups,
+		Mode:                profile.Mode, Preset: profile.Preset, Categories: categories,
 		PortableTemplateID: profile.PortableTemplateID, MihomoTemplateID: profile.MihomoTemplateID,
 		SingboxTemplateID: profile.SingboxTemplateID, QuanXTemplateID: profile.QuanXTemplateID,
 		AssignedPortableTemplateID:  profile.AssignedPortableTemplateID,
@@ -262,6 +265,9 @@ func profileFromInput(userID int64, input *subscriptionProfileInput) (store.Subs
 	}
 	categories := append([]string(nil), store.DefaultBalancedCategories...)
 	if input != nil {
+		if input.RegionGroupsEnabled != nil {
+			profile.DisableRegionGroups = !*input.RegionGroupsEnabled
+		}
 		profile.Mode = strings.TrimSpace(input.Mode)
 		profile.Preset = strings.TrimSpace(input.Preset)
 		categories = input.Categories
@@ -1192,6 +1198,7 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 			profile.AssignedQuanXTemplateID = current.AssignedQuanXTemplateID
 			profile.AssignForcedQuanX = current.AssignForcedQuanX
 			profile.AssignedSuggestedCategories = current.AssignedSuggestedCategories
+			profile.DisableRegionGroups = current.DisableRegionGroups
 		}
 		routingProfile = &profile
 	}
@@ -1325,8 +1332,7 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// handleRegenerateUserSubscription 重新发布用户订阅：发布转异步（regenerator 去抖执行），
-// 观察跟踪至发布完成，失败以警告呈现（前端进度弹窗展示，不再干等同步响应）。
+// handleRegenerateUserSubscription 根据当前设置重新发布用户订阅，成功响应确认全部格式已落盘。
 func (s *Server) handleRegenerateUserSubscription(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		UserID int64 `json:"user_id"`
@@ -1350,10 +1356,14 @@ func (s *Server) handleRegenerateUserSubscription(w http.ResponseWriter, r *http
 	o := s.observeStart(r, "user.regenerate", "重新生成订阅", []progress.Stage{
 		{Key: "regenerate", Label: "重新生成订阅文件"},
 	})
-	defer o.CloseIfPending()
-	o.WatchUsers([]int64{req.UserID})
-	s.subscriptions.EnqueueUsers([]int64{req.UserID}, s.panelBase(r))
-	o.Report("regenerate", 0, "等待订阅重生成")
+	defer o.Close()
+	o.Report("regenerate", 0, "正在重新生成订阅快照")
+	if err := s.subscriptions.RegenerateUser(r.Context(), req.UserID, s.panelBase(r)); err != nil {
+		o.Fail(err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	o.Report("regenerate", 100, "全部订阅格式已发布")
 	s.audit(r, "user.subscription.regenerated", nil, nil, map[string]any{
 		"user_id": req.UserID,
 	})

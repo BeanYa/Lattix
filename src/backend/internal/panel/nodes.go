@@ -508,8 +508,8 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 	}
 	o.Report("db", 100, "节点已删除")
 	if s.subscriptions != nil {
-		s.subscriptions.EnqueueUsers(affectedUsers, s.panelBase(r))
 		o.WatchUsers(affectedUsers)
+		s.subscriptions.EnqueueUsers(affectedUsers, s.panelBase(r))
 	}
 	o.Report("regenerate", 0, "等待订阅重生成")
 	// 删除后对象不存在，审计行存 protocol/port 快照留痕（§log）。

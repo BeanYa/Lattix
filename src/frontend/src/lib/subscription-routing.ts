@@ -1,6 +1,7 @@
 import type { SubscriptionRoutingProfile } from '@/lib/types'
 
 export const defaultSubscriptionRouting: SubscriptionRoutingProfile = {
+  region_groups_enabled: true,
   mode: 'suggested',
   preset: 'balanced',
   categories: ['ai', 'youtube', 'google', 'private', 'domestic', 'telegram', 'github', 'overseas'],

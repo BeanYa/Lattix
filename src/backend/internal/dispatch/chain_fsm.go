@@ -262,6 +262,7 @@ func (f *chainFSM) InvalidateForServerDeletion(ctx context.Context, chainID, ser
 		return fmt.Errorf("chain_fsm: chain %d invalidate: %w", chainID, err)
 	}
 	log.Printf("chain_fsm: chain %d: %s → invalid (server %d deleted: %s)", chainID, chain.Status, serverID, reason)
+	f.onEnter(ctx, chain, store.ChainStatusInvalid, reason)
 	f.d.recordOperation(logging.OperationEvent{
 		Severity: logging.SeverityWarning, Category: logging.CategoryChain, Action: "chain.invalidated",
 		ServerID: &serverID, Detail: map[string]any{"chain_id": chainID, "reason": reason},
@@ -314,6 +315,12 @@ func (f *chainFSM) ResumeChainsByServer(ctx context.Context, serverID int64) {
 // 注意：详细的失败日志/告警由调用方（failChain）处理，此处仅做轻量级通用副作用。
 func (f *chainFSM) onEnter(ctx context.Context, chain *store.Chain, state, detail string) {
 	switch state {
+	case store.ChainStatusInvalid:
+		if f.d.events.OnChainPublished != nil {
+			if err := f.d.events.OnChainPublished(ctx, chain.ID); err != nil {
+				log.Printf("chain_fsm: enqueue subscriptions for invalid chain %d: %v", chain.ID, err)
+			}
+		}
 	case store.ChainStatusApplying:
 		// 重试进入 applying：记录操作日志。
 		if chain.Status == store.ChainStatusFailed || chain.Status == store.ChainStatusActiveFailed {

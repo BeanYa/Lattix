@@ -145,7 +145,7 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 				}
 				hops = append(hops, store.ChainHop{ID: hop.HopID, ChainID: c.ID, Seq: seq,
 					ServerID: hop.ServerID, Role: hop.Role, NodeID: nodeID, ForwardPort: hop.ForwardPort,
-					Address: hop.Address,
+					Address:    hop.Address,
 					PortalPort: hop.PortalPort, PortalPublicKey: hop.PortalPublicKey,
 					PortalServerName: hop.PortalServerName, TunnelUUID: hop.TunnelUUID})
 			}
@@ -1418,8 +1418,8 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if s.subscriptions != nil {
-		s.subscriptions.EnqueueUsers(affectedUsers, s.panelBase(r))
 		o.WatchUsers(affectedUsers)
+		s.subscriptions.EnqueueUsers(affectedUsers, s.panelBase(r))
 	}
 	o.Report("regenerate", 0, "等待订阅重生成")
 	s.audit(r, "chain.delete", nil, nil, map[string]any{"chain_id": id, "hops": len(hops)})

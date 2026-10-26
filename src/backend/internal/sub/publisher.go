@@ -32,6 +32,11 @@ func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) 
 	lock := s.publishLock(userID)
 	lock.Lock()
 	defer lock.Unlock()
+	return s.publishUserLocked(ctx, userID, baseURL)
+}
+
+// publishUserLocked 的调用方必须持有用户发布锁。
+func (s *Server) publishUserLocked(ctx context.Context, userID int64, baseURL string) (PublishResult, error) {
 	user, err := s.st.UserByID(ctx, userID)
 	if err != nil {
 		return PublishResult{}, err
@@ -45,6 +50,7 @@ func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) 
 	if err != nil {
 		return s.publishFailure(ctx, userID, err)
 	}
+	policy.disableRegionGroups = profile.DisableRegionGroups
 	items, chainWarnings, err := s.itemsForUser(ctx, user)
 	if err != nil {
 		return PublishResult{}, err
@@ -298,7 +304,7 @@ func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid strin
 			}
 			out = append(out, compiledNode{
 				Name: clash.Name, CountryCode: inferNodeCountry(clash.Name), // 与面板节点同级参与区域分组
-				Group: item.group, // 来源分组：外部订阅名
+				Group: item.group,              // 来源分组：外部订阅名
 				Clash: clash, Singbox: singbox, // 失败时 nil，renderSingbox 跳过
 				QuanX: buildExternalQuanX(*item.external),
 			})
@@ -395,16 +401,18 @@ func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort strin
 		leafGroups = append(leafGroups, group.Name)
 		policy.Groups = append(policy.Groups, group)
 	}
-	for _, country := range countries {
-		name := countryFlag(country) + " " + country
-		leafGroups = append(leafGroups, name)
-		policy.Groups = append(policy.Groups, policyGroup{Name: name, Type: "select", Options: []string{placeholderRegionPrefix + country + "__"}})
-	}
-	// 无地区标识的节点（如名称无法推断国家的外部订阅节点）收进固定的无地区分组，
-	// 随 __LATTIX_REGIONS__ 一起展开，保证所有节点在分组层都可达。
-	if len(noRegion) > 0 {
-		leafGroups = append(leafGroups, noRegionGroupName)
-		policy.Groups = append(policy.Groups, policyGroup{Name: noRegionGroupName, Type: "select", Options: []string{placeholderRegionNone}})
+	if !policy.disableRegionGroups {
+		for _, country := range countries {
+			name := countryFlag(country) + " " + country
+			leafGroups = append(leafGroups, name)
+			policy.Groups = append(policy.Groups, policyGroup{Name: name, Type: "select", Options: []string{placeholderRegionPrefix + country + "__"}})
+		}
+		// 无地区标识的节点（如名称无法推断国家的外部订阅节点）收进固定的无地区分组，
+		// 随 __LATTIX_REGIONS__ 一起展开，保证所有节点在分组层都可达。
+		if len(noRegion) > 0 {
+			leafGroups = append(leafGroups, noRegionGroupName)
+			policy.Groups = append(policy.Groups, policyGroup{Name: noRegionGroupName, Type: "select", Options: []string{placeholderRegionNone}})
+		}
 	}
 	// 选项级占位符（__LATTIX_ALL__ / __LATTIX_REGIONS__ / __LATTIX_REGION_*__）
 	// 在中间态保持原样，到最终渲染阶段才按 expansion 解析为节点/分组名字；
@@ -1307,7 +1315,7 @@ func applyNativeTemplateFull(format, content string, policy portablePolicy, node
 			document["proxies"] = []any{placeholderLattixNodes, placeholderOuterSubsNodes}
 		}
 		if groups, ok := document["proxy-groups"].([]any); ok {
-			document["proxy-groups"] = expandNativeGroupsPre(groups, "proxies", nodes, "name", "select", panelShort)
+			document["proxy-groups"] = expandNativeGroupsPre(groups, "proxies", nodes, "name", "select", panelShort, policy.disableRegionGroups)
 		} else {
 			pre := renderMihomoPre(policy)
 			document["proxy-groups"], err = pre.groupMaps()
@@ -1323,7 +1331,7 @@ func applyNativeTemplateFull(format, content string, policy portablePolicy, node
 			return nil, nil, err
 		}
 		document["proxies"] = spliceEntryPlaceholders(document["proxies"].([]any), nodePayload)
-		document["proxy-groups"] = materializeNativeGroups(document["proxy-groups"].([]any), "proxies", nodes, "name", "select", panelShort)
+		document["proxy-groups"] = materializeNativeGroups(document["proxy-groups"].([]any), "proxies", nodes, "name", "select", panelShort, policy.disableRegionGroups)
 		final, err = yaml.Marshal(document)
 		return pre, final, err
 	case "singbox":
@@ -1363,7 +1371,7 @@ func applyNativeTemplateFull(format, content string, policy portablePolicy, node
 					map[string]any{"type": "direct", "tag": "DIRECT"},
 					map[string]any{"type": "block", "tag": "REJECT"},
 				}
-				outbounds = append(injected, expandNativeGroupsPre(outbounds, "outbounds", nodes, "tag", "selector", panelShort)...)
+				outbounds = append(injected, expandNativeGroupsPre(outbounds, "outbounds", nodes, "tag", "selector", panelShort, policy.disableRegionGroups)...)
 			}
 			document["outbounds"] = outbounds
 		} else {
@@ -1378,7 +1386,7 @@ func applyNativeTemplateFull(format, content string, policy portablePolicy, node
 		}
 		outbounds := document["outbounds"].([]any)
 		outbounds = spliceEntryPlaceholders(outbounds, nodePayload)
-		outbounds = materializeNativeGroups(outbounds, "outbounds", nodes, "tag", "selector", panelShort)
+		outbounds = materializeNativeGroups(outbounds, "outbounds", nodes, "tag", "selector", panelShort, policy.disableRegionGroups)
 		document["outbounds"] = uniqueNativeGroups(outbounds, "tag")
 		final, err = json.MarshalIndent(document, "", "  ")
 		return pre, final, err
@@ -1458,8 +1466,11 @@ func uniqueNativeGroups(groups []any, nameKey string) []any {
 // 单地区占位符 __LATTIX_REGION_XX__（无地区分组为 __LATTIX_REGION_NONE__）。
 // 模板组选项中的选项级占位符在中间态保持原样，到 materializeNativeGroups
 // 才展开为真实节点/分组名。
-func expandNativeGroupsPre(groups []any, optionKey string, nodes []compiledNode, nameKey, regionType, panelShort string) []any {
+func expandNativeGroupsPre(groups []any, optionKey string, nodes []compiledNode, nameKey, regionType, panelShort string, disableRegionGroups bool) []any {
 	_, regions, _ := nativeNodeOptions(nodes)
+	if disableRegionGroups {
+		regions = nil
+	}
 	expanded := make([]any, 0, len(groups)+len(regions)+2)
 	existing := map[string]bool{}
 	lattixSeen, outerSeen := false, false
@@ -1517,8 +1528,11 @@ func expandNativeGroupsPre(groups []any, optionKey string, nodes []compiledNode,
 // 选项级占位符（__LATTIX_ALL__ / __LATTIX_REGIONS__ / __LATTIX_REGION_XX__ /
 // __LATTIX_REGION_NONE__）展开为真实节点/分组名，来源分组占位符解压为真实
 // 分组条目；与既有组重名的来源分组跳过（与 expandNativeGroupsPre 语义一致）。
-func materializeNativeGroups(groups []any, optionKey string, nodes []compiledNode, nameKey, regionType, panelShort string) []any {
+func materializeNativeGroups(groups []any, optionKey string, nodes []compiledNode, nameKey, regionType, panelShort string, disableRegionGroups bool) []any {
 	all, regions, byCountry := nativeNodeOptions(nodes)
+	if disableRegionGroups {
+		regions = nil
+	}
 	// __LATTIX_REGIONS__ 展开为叶子分组：来源分组（面板分组 + 各外部订阅分组）
 	// 与地区分组同级，一同出现、一同剔除。
 	leafGroups := make([]string, 0, len(regions)+2)

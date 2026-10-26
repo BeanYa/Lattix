@@ -145,7 +145,10 @@ func TestRegenerateUserSubscriptionCarriesObserveID(t *testing.T) {
 	if rec.Code != http.StatusOK || env.Code != "OK" {
 		t.Fatalf("regenerate status = %d code = %q body = %s", rec.Code, env.Code, rec.Body.String())
 	}
-	assertObserveAwaitingRegenerate(t, srv, env, "user.regenerate", []int64{userID})
+	obs, ok := srv.observes.Get(env.ObserveID)
+	if !ok || obs.Kind != "user.regenerate" || obs.Status != progress.StatusDone || obs.Percent != 100 {
+		t.Fatalf("manual regeneration should complete before returning: %+v", obs)
+	}
 }
 
 func TestAssignSubscriptionTemplateCarriesObserveID(t *testing.T) {

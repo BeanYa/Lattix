@@ -69,6 +69,7 @@ export function TemplateAssignmentTab({
   const [categoryOpen, setCategoryOpen] = useState(true)
   const [templateId, setTemplateId] = useState('')
   const [forced, setForced] = useState(false)
+  const [regionGroupsEnabled, setRegionGroupsEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -150,6 +151,7 @@ export function TemplateAssignmentTab({
     setCategoryOpen(true)
     setTemplateId('')
     setForced(false)
+    setRegionGroupsEnabled(true)
     setDialogOpen(true)
   }
 
@@ -164,7 +166,12 @@ export function TemplateAssignmentTab({
         ruleMode === 'template'
           ? { template_id: templateId }
           : { suggested_categories: selectedCategories }
-      const { observeId } = await api.assignSubscriptionTemplate([...selected], target, forced)
+      const { observeId } = await api.assignSubscriptionTemplate(
+        [...selected],
+        target,
+        forced,
+        regionGroupsEnabled,
+      )
       if (observeId) showOperation({ observeId })
       setDialogOpen(false)
       setSelected(new Set())
@@ -245,6 +252,9 @@ export function TemplateAssignmentTab({
                     {user.routing.assign_forced_portable && (
                       <span className="cg-status is-red">强制</span>
                     )}
+                    {user.routing.region_groups_enabled === false && (
+                      <span className="cg-status">地区分组关闭</span>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon-xs"
@@ -277,6 +287,9 @@ export function TemplateAssignmentTab({
                     <span key={user.id} className="cg-pill">
                       {user.name}
                       {isForced && <span className="cg-status is-red">强制</span>}
+                      {user.routing.region_groups_enabled === false && (
+                        <span className="cg-status">地区分组关闭</span>
+                      )}
                       <Button
                         variant="ghost"
                         size="icon-xs"
@@ -441,6 +454,23 @@ export function TemplateAssignmentTab({
               </div>
             )}
 
+            <div className="space-y-1">
+              <label className="cg-check-row">
+                <input
+                  type="checkbox"
+                  role="switch"
+                  className="cg-checkbox"
+                  checked={regionGroupsEnabled}
+                  onChange={(event) => setRegionGroupsEnabled(event.target.checked)}
+                  aria-describedby="assignment-region-groups-hint"
+                  disabled={saving}
+                />
+                开启地区分组
+              </label>
+              <p id="assignment-region-groups-hint" className="cg-hint">
+                按节点地区自动添加分组（含无地区分组）；关闭后保留节点和来源分组。
+              </p>
+            </div>
             <label className="cg-check-row">
               <input
                 type="checkbox"

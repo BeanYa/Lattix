@@ -136,6 +136,7 @@ func (s *Server) handleTemplateAssignment(w http.ResponseWriter, r *http.Request
 		TemplateID          string   `json:"template_id"`
 		SuggestedCategories []string `json:"suggested_categories"`
 		Forced              bool     `json:"forced"`
+		RegionGroupsEnabled *bool    `json:"region_groups_enabled"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -175,6 +176,9 @@ func (s *Server) handleTemplateAssignment(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if assign {
+			if req.RegionGroupsEnabled != nil {
+				profile.DisableRegionGroups = !*req.RegionGroupsEnabled
+			}
 			if categories != nil {
 				// 建议规则指派与模板指派同为主策略槽位，互斥。
 				profile.AssignedPortableTemplateID = ""
@@ -215,7 +219,7 @@ func (s *Server) handleTemplateAssignment(w http.ResponseWriter, r *http.Request
 	}
 	if assign {
 		s.audit(r, "subscription.template.assigned", nil, nil, map[string]any{
-			"template_id": req.TemplateID, "suggested_categories": categories, "user_ids": userIDs, "forced": req.Forced,
+			"template_id": req.TemplateID, "suggested_categories": categories, "user_ids": userIDs, "forced": req.Forced, "region_groups_enabled": req.RegionGroupsEnabled,
 		})
 		writeJSON(w, http.StatusOK, map[string]any{
 			"user_ids": userIDs, "template_id": req.TemplateID, "suggested_categories": categories, "forced": req.Forced,

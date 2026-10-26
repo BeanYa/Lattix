@@ -630,6 +630,17 @@ export default function Users() {
                             <Button variant="outline" size="sm" onClick={() => onOpenAssign(u)}>
                               查看链路
                             </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              title="根据当前用户组、链路组和模板设置重新生成全部订阅格式"
+                              aria-label={`刷新 ${u.name} 的订阅快照`}
+                              disabled={regenerating === u.id}
+                              onClick={() => onRegenerate(u)}
+                            >
+                              <RefreshCwIcon />
+                              {regenerating === u.id ? '刷新中…' : '刷新订阅快照'}
+                            </Button>
                             <DropdownMenu>
                               <DropdownMenuTrigger
                                 render={
@@ -654,13 +665,6 @@ export default function Users() {
                                   <DropdownMenuItem onClick={() => subSettings.open(u)}>
                                     <Settings2Icon />
                                     订阅设置
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    disabled={regenerating === u.id}
-                                    onClick={() => onRegenerate(u)}
-                                  >
-                                    <RefreshCwIcon />
-                                    {regenerating === u.id ? '重新生成中…' : '重新生成全部订阅格式'}
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     disabled={resettingToken === u.id}

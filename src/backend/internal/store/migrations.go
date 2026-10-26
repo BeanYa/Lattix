@@ -176,6 +176,7 @@ func migrateSchema(tx *sql.Tx) error {
 			{"warnings", "TEXT NOT NULL DEFAULT ''"},
 		},
 		"user_subscription_profiles": {
+			{"disable_region_groups", "INTEGER NOT NULL DEFAULT 0"},
 			{"assigned_portable_template_id", "TEXT NOT NULL DEFAULT ''"},
 			{"assigned_mihomo_template_id", "TEXT NOT NULL DEFAULT ''"},
 			{"assigned_singbox_template_id", "TEXT NOT NULL DEFAULT ''"},

@@ -584,6 +584,7 @@ export interface SubUser {
 }
 
 export interface SubscriptionRoutingProfile {
+  region_groups_enabled: boolean
   mode: 'suggested' | 'template'
   preset: 'minimal' | 'balanced' | 'comprehensive'
   categories: string[]

@@ -39,6 +39,8 @@ type Server struct {
 
 	queueMu   sync.Mutex
 	queued    map[int64]string
+	pending   map[int64]pendingPublication // 已取走但尚未发布的任务也保持版本和地址
+	queueSeq  uint64
 	queueWake chan struct{}
 	queueWG   sync.WaitGroup
 	startOnce sync.Once
@@ -84,6 +86,7 @@ func NewWithCacheDir(st *store.Store, base func(*http.Request) string, spaHTML [
 		files:         external.ExternalFileRequester{Doer: external.NewExternalHTTPClient(30 * time.Second)},
 		downloadFiles: external.ExternalFileRequester{Doer: external.NewExternalHTTPClient(30 * time.Minute)},
 		queued:        make(map[int64]string), queueWake: make(chan struct{}, 1),
+		pending:       make(map[int64]pendingPublication),
 		downloadTasks: make(map[string]*clientDownloadTask), activeDownloads: make(map[string]string),
 		downloadTickets: make(map[string]*clientDownloadTicket),
 		downloadLimiter: newClientDownloadLimiter(),
@@ -441,6 +444,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 下载文件名（Content-Disposition）：{套餐名|Lattix}，Clash Party 等客户端按该
 	// 文件名命名订阅并展示套餐别名；面板侧缓存按 user_id 隔离，不依赖此名。
 	w.Header().Set("Content-Disposition", s.subContentDisposition(r, user))
+	s.rememberBaseURL(s.base(r))
+	if err := s.publishPendingUser(r.Context(), user.ID); err != nil {
+		w.Header().Set("Retry-After", "5")
+		http.Error(w, "subscription snapshot refresh failed; please retry\n", http.StatusServiceUnavailable)
+		return
+	}
 	file, err := s.st.PublishedSubscriptionFile(r.Context(), user.ID, format)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
