@@ -232,6 +232,14 @@ func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User) ([]Su
 	if err != nil {
 		return nil, err
 	}
+	groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), user.ID)
+	if err != nil {
+		return nil, err
+	}
+	// 与订阅生成一致：分组用户只使用分组派生链路，遮蔽直接分配的节点。
+	if len(groupIDs) > 0 {
+		assignedNodes = nil
+	}
 	allowedNodes := make(map[int64]bool, len(assignedNodes))
 	for _, nodeID := range assignedNodes {
 		allowedNodes[nodeID] = true
@@ -261,7 +269,7 @@ func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User) ([]Su
 		})
 	}
 
-	assignments, err := s.st.UserChainAssignments(r.Context(), user.ID)
+	assignments, err := s.st.EffectiveUserChainAssignments(r.Context(), user.ID)
 	if err != nil {
 		return nil, err
 	}
