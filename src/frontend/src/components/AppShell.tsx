@@ -13,6 +13,7 @@ import CommandPalette from '@/components/CommandPalette'
 import { OperationProgressProvider } from '@/components/OperationProgressProvider'
 import LattixMark from '@/components/LattixMark'
 import ThemeToggle from '@/components/ThemeToggle'
+import UpdateOverlay from '@/components/UpdateOverlay'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -602,6 +603,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <UpdateOverlay />
     </div>
   )
 }

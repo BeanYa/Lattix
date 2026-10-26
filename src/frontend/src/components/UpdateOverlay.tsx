@@ -23,6 +23,7 @@ export default function UpdateOverlay() {
   // 本会话内观察到的更新：running→终态（done/failed）时展示结果，直到用户关闭。
   const [result, setResult] = useState<PanelUpdateStatus | null>(null)
   const [reloadSeconds, setReloadSeconds] = useState(5)
+  const [watchSession, setWatchSession] = useState(0)
   const wasRunning = useRef(false)
   const lastRunningStatus = useRef<PanelUpdateStatus | null>(null)
 
@@ -130,7 +131,7 @@ export default function UpdateOverlay() {
       stopped = true
       clearTimeout(timer)
     }
-  }, [])
+  }, [watchSession])
 
   const updateDone = result?.stage === 'done'
   useEffect(() => {
@@ -216,7 +217,15 @@ export default function UpdateOverlay() {
             <p className="mb-4 text-xs text-muted-foreground">
               面板仍运行旧版本，可重试更新或查看日志排查。
             </p>
-            <Button variant="outline" size="sm" onClick={() => setResult(null)}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setResult(null)
+                // 终态会停止轮询；关闭失败结果后恢复监听，才能跟踪下一次更新。
+                setWatchSession((session) => session + 1)
+              }}
+            >
               关闭
             </Button>
           </>

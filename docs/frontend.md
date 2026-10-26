@@ -19,6 +19,7 @@ bun run preview       # 本地预览生产构建
 
 ## 结构约定
 
+- 登录后的实际页面壳为 `components/AppShell.tsx`；全局 `UpdateOverlay` 必须在此挂载，负责面板更新进度、重启恢复后的目标版本确认和倒计时整页刷新。关闭失败结果后会恢复监听，以便再次更新。
 - `src/lib/` 为跨页共享设施；展示辅助集中归并：`use-polling.ts`（统一的周期轮询
   hook）、`status.ts`（状态枚举到展示样式/文案的映射）、`format.ts`
   （humanizeBytes/formatBytes/CURRENCIES 等格式化助手）。
