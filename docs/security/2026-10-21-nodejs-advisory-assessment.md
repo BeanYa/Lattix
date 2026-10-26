@@ -160,7 +160,7 @@ $ go version -m lattix-backend
 +# 注意：本镜像内 node 是指向 bun 的兼容符号链接（/usr/local/bun-node-fallback-bin/node），
 +# 因此 build 脚本实际由 Bun 执行；这是有意为之，非疏忽。
  RUN bun run build
- 
+
 -FROM golang:1.26.6-alpine AS backend
 +FROM golang:1.26.10-alpine AS backend
 ```
