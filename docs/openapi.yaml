@@ -493,6 +493,18 @@ paths:
         - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/user/regenerate-all-subscriptions:
+    post:
+      operationId: userRegenerateAllSubscriptions
+      description: |
+        触发全部用户的订阅快照重发布。与批量模板指派同构：发布转异步，观察先登记
+        全部用户再入队，由 regenerator 完成回调推进百分比并收口；单个用户发布失败
+        计入观察警告，不阻断其余用户。data.user_count 为登记的用户数。
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/user/reset-subscription-token:
     post:
       operationId: userResetSubscriptionToken

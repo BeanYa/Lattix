@@ -913,6 +913,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/regenerate-all-subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 触发全部用户的订阅快照重发布。与批量模板指派同构：发布转异步，观察先登记
+         *     全部用户再入队，由 regenerator 完成回调推进百分比并收口；单个用户发布失败
+         *     计入观察警告，不阻断其余用户。data.user_count 为登记的用户数。
+         */
+        post: operations["userRegenerateAllSubscriptions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/reset-subscription-token": {
         parameters: {
             query?: never;
@@ -3049,6 +3070,24 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    userRegenerateAllSubscriptions: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     userResetSubscriptionToken: {
         parameters: {
             query?: never;
@@ -3950,6 +3989,7 @@ export const rpcOperations = {
   userSubSettings: { method: 'POST', path: '/api/user/sub-settings' },
   userTrafficHistory: { method: 'GET', path: '/api/user/traffic-history' },
   userRegenerateSubscription: { method: 'POST', path: '/api/user/regenerate-subscription' },
+  userRegenerateAllSubscriptions: { method: 'POST', path: '/api/user/regenerate-all-subscriptions' },
   userResetSubscriptionToken: { method: 'POST', path: '/api/user/reset-subscription-token' },
   userResetTraffic: { method: 'POST', path: '/api/user/reset-traffic' },
   userSubscriptionPreview: { method: 'GET', path: '/api/user/subscription-preview' },

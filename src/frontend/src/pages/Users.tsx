@@ -110,6 +110,7 @@ export default function Users() {
   const loadRequest = useRef(0)
 
   const [regenerating, setRegenerating] = useState<number | null>(null)
+  const [regeneratingAll, setRegeneratingAll] = useState(false)
   const [resettingToken, setResettingToken] = useState<number | null>(null)
   const [resettingTraffic, setResettingTraffic] = useState<number | null>(null)
   const [previewTarget, setPreviewTarget] = useState<SubUser | null>(null)
@@ -293,6 +294,29 @@ export default function Users() {
     }
   }
 
+  const onRegenerateAll = async () => {
+    if (
+      !(await confirm({
+        title: '刷新全部订阅快照',
+        description: `确认刷新全部 ${users.length} 个用户的订阅快照？将按各用户当前设置重新生成并发布所有订阅格式，逐个用户推进；单个用户失败不影响其余，失败详情见操作进度。`,
+        confirmLabel: '刷新全部快照',
+      }))
+    ) {
+      return
+    }
+    setRegeneratingAll(true)
+    setError('')
+    try {
+      const { observeId } = await api.regenerateAllUserSubscriptions()
+      if (observeId) showOperation({ observeId })
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setRegeneratingAll(false)
+      void load(true)
+    }
+  }
+
   const onResetToken = async (user: SubUser) => {
     if (
       !(await confirm({
@@ -371,6 +395,15 @@ export default function Users() {
         description="订阅用户的创建、链路分配、订阅策略与用量概览。"
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              title="按各用户当前设置重新生成并发布全部用户的订阅快照"
+              disabled={regeneratingAll || loading || users.length === 0}
+              onClick={onRegenerateAll}
+            >
+              <RefreshCwIcon />
+              {regeneratingAll ? '刷新中…' : '刷新全部快照'}
+            </Button>
             <Button variant="outline" onClick={() => createForm.openCreate('trial')}>
               <FlaskConicalIcon />
               创建试用用户

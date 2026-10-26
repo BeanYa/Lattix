@@ -1375,6 +1375,38 @@ func (s *Server) handleRegenerateUserSubscription(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, nil)
 }
 
+// handleRegenerateAllUserSubscriptions 处理 POST /api/user/regenerate-all-subscriptions：
+// 触发全部用户的订阅快照重发布。与批量模板指派同构：发布转异步，观察先登记全部
+// 用户再入队（消除完成回调竞态），由 regenerator 完成回调推进百分比并收口；
+// 单个用户发布失败计入观察警告，不阻断其余用户。
+func (s *Server) handleRegenerateAllUserSubscriptions(w http.ResponseWriter, r *http.Request) {
+	if s.subscriptions == nil {
+		writeError(w, http.StatusServiceUnavailable, "subscription service unavailable")
+		return
+	}
+	users, err := s.st.ListUsers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	userIDs := make([]int64, 0, len(users))
+	for _, u := range users {
+		userIDs = append(userIDs, u.ID)
+	}
+	o := s.observeStart(r, "user.regenerate_all", "刷新全部订阅快照", userPublishObserveStages)
+	defer o.CloseIfPending()
+	o.Report("db", 100, fmt.Sprintf("已登记 %d 个用户", len(userIDs)))
+	if len(userIDs) > 0 {
+		o.WatchUsers(userIDs)
+		s.subscriptions.EnqueueUsers(userIDs, s.panelBase(r))
+		o.Report("regenerate", 0, "等待订阅重生成")
+	}
+	s.audit(r, "user.subscription.regenerated_all", nil, nil, map[string]any{
+		"user_count": len(userIDs),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"user_count": len(userIDs)})
+}
+
 // handleResetUserSubscriptionToken 处理 POST /api/user/reset-subscription-token：
 // 更换 sub_token 生成全新订阅地址（旧链接立即失效），并重新发布全部格式。
 // UUID 不变，不触发节点扇出（§7/§8）。

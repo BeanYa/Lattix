@@ -10,6 +10,7 @@ import (
 	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
+	"lattix/shared"
 )
 
 // 用户/模板指派类操作的旁路观察测试：发布已转异步，handler 返回后观察停在
@@ -148,6 +149,62 @@ func TestRegenerateUserSubscriptionCarriesObserveID(t *testing.T) {
 	obs, ok := srv.observes.Get(env.ObserveID)
 	if !ok || obs.Kind != "user.regenerate" || obs.Status != progress.StatusDone || obs.Percent != 100 {
 		t.Fatalf("manual regeneration should complete before returning: %+v", obs)
+	}
+}
+
+// 全量刷新：观察登记全部用户后入队，handler 立即返回（观察停在 regenerate 等待
+// regenerator 完成回调），全部回调完成后收口 done；响应携带登记用户数。
+func TestRegenerateAllUserSubscriptionsCarriesObserveID(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	srv := &Server{st: st, subscriptions: sub.New(st, nil, nil), observes: progress.NewRegistry()}
+	u1, _ := st.InsertUser(ctx, "a", "00000000-0000-0000-0000-000000000020", "tok-a", nil)
+	u2, _ := st.InsertUser(ctx, "b", "00000000-0000-0000-0000-000000000021", "tok-b", nil)
+
+	env, rec := postGroupObserve(t, srv, srv.handleRegenerateAllUserSubscriptions, `{}`)
+	if rec.Code != http.StatusOK || env.Code != "OK" {
+		t.Fatalf("regenerate-all status = %d code = %q body = %s", rec.Code, env.Code, rec.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			UserCount int64 `json:"user_count"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Data.UserCount != 2 {
+		t.Fatalf("user_count = %d, want 2", resp.Data.UserCount)
+	}
+	assertObserveAwaitingRegenerate(t, srv, env, "user.regenerate_all", []int64{u1, u2})
+}
+
+// 无用户时全量刷新直接收口 done；订阅服务不可用返回 envelope SERVICE_UNAVAILABLE
+// （面板 RPC 错误恒为 HTTP 200 + code）。
+func TestRegenerateAllUserSubscriptionsEmptyAndUnavailable(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	srv := &Server{st: st, subscriptions: sub.New(st, nil, nil), observes: progress.NewRegistry()}
+	env, rec := postGroupObserve(t, srv, srv.handleRegenerateAllUserSubscriptions, `{}`)
+	if rec.Code != http.StatusOK || env.Code != "OK" {
+		t.Fatalf("regenerate-all status = %d code = %q body = %s", rec.Code, env.Code, rec.Body.String())
+	}
+	obs, ok := srv.observes.Get(env.ObserveID)
+	if !ok || obs.Kind != "user.regenerate_all" || obs.Status != progress.StatusDone {
+		t.Fatalf("空用户集应立即收口 done: %+v (ok = %v)", obs, ok)
+	}
+
+	unavailable := &Server{st: st, observes: progress.NewRegistry()}
+	env2, rec2 := postGroupObserve(t, unavailable, unavailable.handleRegenerateAllUserSubscriptions, `{}`)
+	if env2.Code != shared.CodeServiceUnavailable {
+		t.Fatalf("无订阅服务 code = %q, want %q (body = %s)", env2.Code, shared.CodeServiceUnavailable, rec2.Body.String())
 	}
 }
 

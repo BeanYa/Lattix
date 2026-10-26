@@ -437,6 +437,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/user/regenerate-subscription",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
 		s.handleRegenerateUserSubscription)
+	s.registerRPC(mux, http.MethodPost, "/api/user/regenerate-all-subscriptions",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true},
+		s.handleRegenerateAllUserSubscriptions)
 	s.registerRPC(mux, http.MethodPost, "/api/user/reset-subscription-token",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
 		s.handleResetUserSubscriptionToken)

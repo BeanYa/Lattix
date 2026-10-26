@@ -332,6 +332,11 @@ export const api = {
   }) => requester.postObserved<void>('/api/user/sub-settings', body),
   regenerateUserSubscription: (userId: number) =>
     requester.postObserved<void>('/api/user/regenerate-subscription', { user_id: userId }),
+  regenerateAllUserSubscriptions: () =>
+    requester.postObserved<{ user_count: number }>(
+      '/api/user/regenerate-all-subscriptions',
+      {},
+    ),
   resetUserSubscriptionToken: (userId: number) =>
     requester.post<{ sub_token: string; sub_url: string; sub_links_url: string }>(
       '/api/user/reset-subscription-token',

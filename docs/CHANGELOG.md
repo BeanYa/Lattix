@@ -43,6 +43,10 @@
 
 ### Added
 
+- 用户页新增「刷新全部快照」入口（`POST /api/user/regenerate-all-subscriptions`）：
+  一键触发全部用户的订阅快照重发布。与批量模板指派同构：发布转异步，操作观察
+  登记全部用户后入队，由 regenerator 完成回调推进百分比并收口；单个用户发布失败
+  计入观察警告，不阻断其余用户。
 - 试用用户与用户生命周期调度（§9）：创建用户支持 `is_trial`、`effective_at`
   （生效时刻，省略=立即，精确到秒）、`duration_days`（与 `expires_at` 二选一，
   自生效时刻起算）与 `user_group_id`（创建时直选用户分组）；生命周期扫描

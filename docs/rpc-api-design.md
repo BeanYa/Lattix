@@ -210,6 +210,7 @@ POST /api/user/delete
 POST /api/user/sub-settings
 GET  /api/user/traffic-history?user_id={id}
 POST /api/user/regenerate-subscription
+POST /api/user/regenerate-all-subscriptions
 POST /api/user/reset-subscription-token
 GET  /api/user/subscription-preview?user_id={id}&format={format}
 
