@@ -163,6 +163,83 @@ func TestOpenMigratesLegacySchemaAndPreservesData(t *testing.T) {
 	}
 }
 
+// 存量库已是前一版本（21）时也必须补列；仅用 v2 旧库会掩盖漏升 schemaVersion。
+func TestOpenMigratesV21SubscriptionRegionGroupsAndPreservesSnapshots(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "v21.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userID, err := st.InsertUser(ctx, "existing", "existing-uuid", "existing-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile.CategoriesJSON = `["private"]`
+	profile.AssignedPortableTemplateID, profile.AssignForcedPortable = "existing-template", true
+	if err := st.SaveUserSubscriptionProfile(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.PublishSubscriptionSnapshot(ctx, userID, "existing-source", "existing-sha", map[string]SubscriptionFile{
+		"links": {Format: "links", ContentType: "text/plain", Content: []byte("existing-subscription")},
+	}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	// 还原本次功能前已存在的表与版本号，模拟线上 v0.1.12 数据库。
+	if _, err := st.db.Exec(`ALTER TABLE user_subscription_profiles DROP COLUMN disable_region_groups; PRAGMA user_version = 21;`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	profile, err = st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatalf("v21 upgrade left subscription profile unreadable: %v", err)
+	}
+	if profile.DisableRegionGroups || profile.CategoriesJSON != `["private"]` || profile.AssignedPortableTemplateID != "existing-template" || !profile.AssignForcedPortable {
+		t.Fatalf("migration changed existing subscription settings: %+v", profile)
+	}
+	var version int
+	if err := st.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 22 {
+		t.Fatalf("schema version=%d, want 22", version)
+	}
+	file, err := st.PublishedSubscriptionFile(ctx, userID, "links")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if file.Revision != 1 || string(file.Content) != "existing-subscription" {
+		t.Fatalf("migration changed existing snapshot: %+v", file)
+	}
+	profile.DisableRegionGroups = true
+	if err := st.SaveUserSubscriptionProfile(ctx, profile); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err = st.UserSubscriptionProfile(ctx, userID)
+	if err != nil || !profile.DisableRegionGroups {
+		t.Fatalf("second start lost region setting: %+v, err=%v", profile, err)
+	}
+}
+
 func TestOpenRollsBackFailedMigration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "invalid.db")
 	db, err := sql.Open("sqlite", path)
@@ -540,7 +617,8 @@ func TestMigrateV18ServiceEndpointID(t *testing.T) {
 	}
 }
 
-func assertColumns(t *testing.T, db *sql.DB, table string, expected ...string) {	t.Helper()
+func assertColumns(t *testing.T, db *sql.DB, table string, expected ...string) {
+	t.Helper()
 	columns := columnNames(t, db, table)
 	for _, name := range expected {
 		if !columns[name] {

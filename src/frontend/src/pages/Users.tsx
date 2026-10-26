@@ -86,6 +86,7 @@ import { useCreateUserForm } from './users/use-create-user-form'
 import { useReactivateUser } from './users/use-reactivate-user'
 import { useUserSubSettings } from './users/use-user-sub-settings'
 import { UserSubSettingsDialog } from './users/UserSubSettingsDialog'
+import { UserSubscriptionStatus } from './users/UserSubscriptionStatus'
 
 import './users.css'
 
@@ -284,11 +285,11 @@ export default function Users() {
     try {
       const { observeId } = await api.regenerateUserSubscription(user.id)
       if (observeId) showOperation({ observeId })
-      load()
     } catch (err) {
       setError(errorMessage(err))
     } finally {
       setRegenerating(null)
+      void load(true)
     }
   }
 
@@ -517,7 +518,7 @@ export default function Users() {
                           )}
                         </th>
                         <td>
-                          <span className="cg-user-states">
+                          <div className="cg-user-states">
                             {u.disabled && <span className="cg-status is-red">已停用</span>}
                             {u.expired && <span className="cg-status is-red">已到期</span>}
                             {u.quota_exhausted && (
@@ -526,19 +527,8 @@ export default function Users() {
                             {notYetEffective && !u.expired && (
                               <span className="cg-status is-warn">未生效</span>
                             )}
-                            {u.subscription_snapshot.status === 'ready' ? (
-                              <span className="cg-status is-muted">
-                                订阅 r{u.subscription_snapshot.revision}
-                              </span>
-                            ) : (
-                              <span
-                                className="cg-status is-red"
-                                title={u.subscription_snapshot.error}
-                              >
-                                订阅异常
-                              </span>
-                            )}
-                          </span>
+                            <UserSubscriptionStatus snapshot={u.subscription_snapshot} />
+                          </div>
                         </td>
                         <td className="cg-user-num">
                           {effectiveLinks.length === 0 ? (

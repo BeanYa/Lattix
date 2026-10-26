@@ -173,6 +173,33 @@
   gap: 4px;
 }
 
+.cg-user-subscription-error {
+  max-width: 22rem;
+}
+
+.cg-user-subscription-error[open] {
+  min-width: 20rem;
+}
+
+.cg-user-subscription-error summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cg-user-subscription-error-detail {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--panel-danger);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .cg-user-num {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;

@@ -3,12 +3,14 @@ package panel
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -19,6 +21,110 @@ import (
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/sub"
 )
+
+func TestUserListIncludesSubscriptionStatusReadFailure(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "broken-profile.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if _, err := st.InsertUser(ctx, "existing", "existing-uuid", "existing-token", nil); err != nil {
+		t.Fatal(err)
+	}
+	// 模拟运行中的库缺少订阅列：列表仍应可用，并给出可诊断的原因。
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE user_subscription_profiles DROP COLUMN disable_region_groups`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	(&Server{st: st}).handleListUsers(w, httptest.NewRequest(http.MethodGet, "/api/users", nil))
+	var response struct {
+		Code string    `json:"code"`
+		Data []userDTO `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != "OK" || len(response.Data) != 1 {
+		t.Fatalf("user list failed: %s", w.Body.String())
+	}
+	status := response.Data[0].SubscriptionSnapshot
+	if status.Status != store.SubscriptionGenerationError || !strings.Contains(status.Error, "no such column: disable_region_groups") {
+		t.Fatalf("user list hid subscription read failure: %+v", status)
+	}
+}
+
+func TestV21UpgradeRestoresManualRefreshAndClashDownload(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "upgrade.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chainID, _ := newTestEndpointChainStore(t, st, "upgraded-chain")
+	userID, err := st.InsertUser(ctx, "existing", "existing-uuid", "existing-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetUserChains(ctx, userID, []int64{chainID}); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := sub.New(st, nil, nil).PublishUser(ctx, userID, "https://panel.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE user_subscription_profiles DROP COLUMN disable_region_groups; PRAGMA user_version = 21`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err = store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	srv := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+	code, status := postGroup(t, srv, srv.handleRegenerateUserSubscription, "/api/user/regenerate-subscription", fmt.Sprintf(`{"user_id":%d}`, userID))
+	if status != http.StatusOK || code != "OK" {
+		t.Fatalf("manual refresh failed after upgrade: status=%d code=%s", status, code)
+	}
+	r := httptest.NewRequest(http.MethodGet, "https://panel.example/sub/existing-token?format=clash", nil)
+	r.SetPathValue("token", "existing-token")
+	w := httptest.NewRecorder()
+	srv.subscriptions.ServeHTTP(w, r)
+	var config struct {
+		Proxies []struct {
+			Name string `yaml:"name"`
+		} `yaml:"proxies"`
+	}
+	if err := yaml.Unmarshal(w.Body.Bytes(), &config); err != nil {
+		t.Fatal(err)
+	}
+	if w.Code != http.StatusOK || len(config.Proxies) != 1 || config.Proxies[0].Name != "upgraded-chain" {
+		t.Fatalf("Clash download failed or lost assigned chain after migration: status=%d\n%s", w.Code, w.Body.String())
+	}
+	snapshot, err := st.SubscriptionSnapshotStatus(ctx, userID)
+	if err != nil || snapshot.Status != store.SubscriptionGenerationReady || snapshot.Revision <= initial.Revision {
+		t.Fatalf("snapshot not recovered: %+v, err=%v", snapshot, err)
+	}
+}
 
 // 手动刷新返回成功时，订阅地址必须已经交付当前分组的全部格式，而非仅入队。
 func TestManualRefreshPublishesCurrentGroupsBeforeReturning(t *testing.T) {
@@ -204,6 +310,9 @@ func TestManualRefreshReportsGenerationFailure(t *testing.T) {
 	}
 	if status.Status != store.SubscriptionGenerationError || status.Revision != initial.Revision {
 		t.Fatalf("generation failure must be visible and preserve previous snapshot: %+v", status)
+	}
+	if !strings.Contains(status.Error, "missing") {
+		t.Fatalf("generation error must identify the missing template: %q", status.Error)
 	}
 }
 

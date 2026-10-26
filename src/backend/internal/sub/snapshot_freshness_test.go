@@ -2,14 +2,51 @@ package sub
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
 	"lattix/backend/internal/store"
 )
+
+func TestPublishUserPersistsNodeReadFailure(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "failed-read.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	userID, err := st.InsertUser(ctx, "existing", "existing-uuid", "existing-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(st, nil, nil)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DROP TABLE nodes`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.PublishUser(ctx, userID, "https://panel.example"); err == nil {
+		t.Fatal("expected node read failure")
+	}
+	status, err := st.SubscriptionSnapshotStatus(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Status != store.SubscriptionGenerationError || !strings.Contains(status.Error, "no such table: nodes") {
+		t.Fatalf("node read failure was not persisted for panel display: %+v", status)
+	}
+}
 
 func TestSubscriptionRequestRefreshesQueuedChainChanges(t *testing.T) {
 	for _, change := range []string{"add", "edit", "delete"} {

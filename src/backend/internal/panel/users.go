@@ -139,6 +139,11 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 	}
 	if snapshot, err := s.st.SubscriptionSnapshotStatus(r.Context(), u.ID); err == nil {
 		dto.SubscriptionSnapshot = snapshot
+	} else {
+		dto.SubscriptionSnapshot = store.SubscriptionSnapshotStatus{
+			Status: store.SubscriptionGenerationError,
+			Error:  fmt.Sprintf("读取订阅快照状态失败：%v", err),
+		}
 	}
 	attached, err := s.st.EffectiveUserExternalSubscriptions(r.Context(), u.ID)
 	if err == nil && len(attached) > 0 {

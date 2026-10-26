@@ -53,14 +53,14 @@ func (s *Server) publishUserLocked(ctx context.Context, userID int64, baseURL st
 	policy.disableRegionGroups = profile.DisableRegionGroups
 	items, chainWarnings, err := s.itemsForUser(ctx, user)
 	if err != nil {
-		return PublishResult{}, err
+		return s.publishFailure(ctx, userID, fmt.Errorf("读取订阅节点失败：%w", err))
 	}
 	if user.Expired || user.Disabled || user.QuotaExhausted || user.NotYetEffective(time.Now()) {
 		items = nil
 	}
 	nodes, compileWarnings, err := s.compileNodes(ctx, items, user.UUID)
 	if err != nil {
-		return PublishResult{}, err
+		return s.publishFailure(ctx, userID, fmt.Errorf("编译订阅节点失败：%w", err))
 	}
 	panelShort := s.panelShort(ctx)
 	warnings := append(append([]string{}, chainWarnings...), compileWarnings...)
@@ -233,7 +233,7 @@ func (s *Server) resolvePolicy(ctx context.Context, profile store.SubscriptionPr
 	}
 	template, err := s.st.SubscriptionTemplateByID(ctx, profile.PortableTemplateID)
 	if err != nil {
-		return portablePolicy{}, "", nil, err
+		return portablePolicy{}, "", nil, fmt.Errorf("读取订阅模板 %q 失败：%w", profile.PortableTemplateID, err)
 	}
 	switch template.Kind {
 	case "portable":
