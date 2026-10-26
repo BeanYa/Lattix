@@ -120,6 +120,7 @@ func (s *Server) SetExternalSubscriptionService(service *extsub.Service) {
 func (s *Server) StartBackgroundTasks(ctx context.Context) {
 	if s.subscriptions != nil {
 		s.subscriptions.StartRegenerator(ctx)
+		s.reconcileSubscriptionDeliveries(ctx)
 	}
 	s.tasks.Add(1)
 	go func() {

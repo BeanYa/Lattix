@@ -383,6 +383,13 @@ func (s *Store) SubscriptionUserIDsForNode(ctx context.Context, nodeID int64) ([
 	return querySubscriptionUserIDs(ctx, s.db, `SELECT user_id FROM user_nodes WHERE node_id=? ORDER BY user_id`, nodeID)
 }
 
+// SubscriptionUserIDsGenerationErrored 返回订阅生成处于错误状态的用户（启动对账
+// 用：每次启动无条件重发布，底层故障修复后重启即自愈）。
+func (s *Store) SubscriptionUserIDsGenerationErrored(ctx context.Context) ([]int64, error) {
+	return querySubscriptionUserIDs(ctx, s.db,
+		`SELECT user_id FROM user_subscription_profiles WHERE generation_status='error' ORDER BY user_id`)
+}
+
 func (s *Store) SubscriptionUserIDsForChain(ctx context.Context, chainID int64) ([]int64, error) {
 	return querySubscriptionUserIDs(ctx, s.db, `SELECT user_id FROM (
 		SELECT user_id FROM user_chain_assignments WHERE chain_id=?

@@ -26,26 +26,27 @@ const (
 	SettingAdminPassBcrypt = "admin_pass_bcrypt" // 管理员密码 bcrypt 哈希；空 = 使用 -admin-pass
 	SettingSessionSecret   = "session_secret"    // 会话签名密钥（独立随机值 hex，不派生自口令材料）；空 = 首次使用时生成；改密后轮换
 	// 事件告警（§19）：三项全空 = 告警关闭；webhook 单独可发，telegram 需 token+chat_id 同时具备。
-	SettingAlertWebhookURL       = "alert_webhook_url"        // Webhook 接收端（POST JSON）
-	SettingAlertTelegramBotToken = "alert_telegram_bot_token" // Telegram Bot token（不回显，仅置位标记）
-	SettingAlertTelegramChatID   = "alert_telegram_chat_id"   // Telegram 会话 ID
-	SettingOperationLogLimit     = "operation_log_limit"      // 操作日志最多保留条数，默认 1000
-	SettingRequestLogMaxMB       = "request_log_max_mb"       // 请求日志 JSONL 总容量 MiB，默认 10
-	SettingRequestLogLevel       = "request_log_level"        // 请求日志最低记录级别 debug|info|warning|error，默认 debug
-	SettingPanelInstanceID       = "panel_instance_id"
-	SettingAgentSettings         = "agent_settings"
-	SettingServerSettings        = "server_settings" // 面板级服务器设置默认值（JSON：{revision, xray_version}）
-	SettingReleaseInspection     = "release_inspection"
-	SettingAgentReleaseCache     = "agent_release_cache"
-	SettingXrayReleaseCache      = "xray_release_cache"
-	SettingBillingInspection     = "billing_inspection"
-	SettingExchangeInspection    = "exchange_rate_inspection"
-	SettingReportingCurrency     = "reporting_currency"
-	SettingExchangeRateCache     = "exchange_rate_cache"
-	SettingCDNNodeCatalog        = "cdn_node_catalog"
-	SettingCDNNodeCatalogStatus  = "cdn_node_catalog_status"
-	SettingTrafficTimezone       = "traffic_timezone"
-	SettingPanelShort            = "panel_short" // 面板缩写：链路命名模板 {{PANEL_SHORT}} 与订阅「<PanelShort> 分组」组名；空 = 默认 DefaultPanelShort
+	SettingAlertWebhookURL              = "alert_webhook_url"        // Webhook 接收端（POST JSON）
+	SettingAlertTelegramBotToken        = "alert_telegram_bot_token" // Telegram Bot token（不回显，仅置位标记）
+	SettingAlertTelegramChatID          = "alert_telegram_chat_id"   // Telegram 会话 ID
+	SettingOperationLogLimit            = "operation_log_limit"      // 操作日志最多保留条数，默认 1000
+	SettingRequestLogMaxMB              = "request_log_max_mb"       // 请求日志 JSONL 总容量 MiB，默认 10
+	SettingRequestLogLevel              = "request_log_level"        // 请求日志最低记录级别 debug|info|warning|error，默认 debug
+	SettingPanelInstanceID              = "panel_instance_id"
+	SettingAgentSettings                = "agent_settings"
+	SettingServerSettings               = "server_settings" // 面板级服务器设置默认值（JSON：{revision, xray_version}）
+	SettingReleaseInspection            = "release_inspection"
+	SettingAgentReleaseCache            = "agent_release_cache"
+	SettingXrayReleaseCache             = "xray_release_cache"
+	SettingBillingInspection            = "billing_inspection"
+	SettingExchangeInspection           = "exchange_rate_inspection"
+	SettingReportingCurrency            = "reporting_currency"
+	SettingExchangeRateCache            = "exchange_rate_cache"
+	SettingCDNNodeCatalog               = "cdn_node_catalog"
+	SettingCDNNodeCatalogStatus         = "cdn_node_catalog_status"
+	SettingTrafficTimezone              = "traffic_timezone"
+	SettingPanelShort                   = "panel_short"                    // 面板缩写：链路命名模板 {{PANEL_SHORT}} 与订阅「<PanelShort> 分组」组名；空 = 默认 DefaultPanelShort
+	SettingSubscriptionReconcileVersion = "subscription_reconcile_version" // 启动对账标记：上次完成全员订阅重发布的面板版本
 
 	// DefaultPanelShort 是 panel_short 未设置时的默认面板缩写。
 	DefaultPanelShort = "Lattix"
