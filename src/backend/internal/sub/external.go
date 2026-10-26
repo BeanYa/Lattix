@@ -2,6 +2,7 @@ package sub
 
 import (
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -156,25 +157,23 @@ var tlsConsumedKeys = []string{
 	"path", "host", "mode", "serviceName", "service_name",
 }
 
-// clashProxyYamlKeys 是 clashProxy 全部类型化字段的 yaml 键名。
-// 用途：inline Raw 与类型化字段同名键会在 yaml.v3 marshal 时 panic，
-// 因此 Raw 回填必须排除这些键（它们未被协议消费时按 schema 字段处理，静默丢弃）。
+// clashProxyYamlKeys 是 clashProxy 全部类型化字段的 yaml 键名（反射派生，
+// 新增字段自动跟随）。用途：inline Raw 与类型化字段同名键会在 yaml.v3 marshal
+// 时 panic（进程崩溃），因此 Raw 回填必须排除这些键（它们未被协议消费时按
+// schema 字段处理，静默丢弃）。
 var clashProxyYamlKeys = func() map[string]bool {
-	keys := []string{
-		"name", "type", "server", "port",
-		"uuid", "alterId", "cipher", "password", "username",
-		"network", "packet-encoding", "tls", "servername", "sni", "flow", "encryption",
-		"alpn", "udp", "reality-opts", "client-fingerprint", "grpc-opts", "xhttp-opts",
-		"h2-opts", "http-opts", "ws-opts", "plugin", "plugin-opts", "smux", "obfs-opts",
-		"fragment", "dialer-proxy", "ip-version", "ports", "skip-cert-verify", "obfs",
-		"obfs-password", "up", "down", "protocol", "protocol-param", "obfs-param", "psk",
-		"version", "ip", "ipv6", "reserved", "private-key", "public-key", "preshared-key",
-		"mtu", "congestion-controller", "udp-relay-mode", "reduce-rtt",
-		"idle-session-check-interval", "idle-session-timeout", "min-idle-session",
-	}
-	out := make(map[string]bool, len(keys))
-	for _, k := range keys {
-		out[k] = true
+	t := reflect.TypeOf(clashProxy{})
+	out := make(map[string]bool, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		tag, ok := t.Field(i).Tag.Lookup("yaml")
+		if !ok {
+			continue
+		}
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		out[name] = true
 	}
 	return out
 }()

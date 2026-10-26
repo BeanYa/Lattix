@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http/httptest"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
@@ -35,8 +36,16 @@ func (s *Server) PublishUser(ctx context.Context, userID int64, baseURL string) 
 	return s.publishUserLocked(ctx, userID, baseURL)
 }
 
-// publishUserLocked 的调用方必须持有用户发布锁。
-func (s *Server) publishUserLocked(ctx context.Context, userID int64, baseURL string) (PublishResult, error) {
+// publishUserLocked 的调用方必须持有用户发布锁。渲染库对病态数据可能直接
+// panic（yaml.v3 对 inline 键与类型化字段冲突即 panic 整个进程），发布必须
+// 把 panic 转化为错误落库并返回，绝不允许带崩面板进程。
+func (s *Server) publishUserLocked(ctx context.Context, userID int64, baseURL string) (result PublishResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("subscription: publish user %d panic: %v\n%s", userID, r, debug.Stack())
+			result, err = s.publishFailure(ctx, userID, fmt.Errorf("发布渲染异常：%v", r))
+		}
+	}()
 	user, err := s.st.UserByID(ctx, userID)
 	if err != nil {
 		return PublishResult{}, err
