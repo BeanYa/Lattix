@@ -407,3 +407,63 @@ func TestTemplateAssignmentControlsRegionGroups(t *testing.T) {
 		})
 	}
 }
+
+func TestDisableTemplateRegionsRegeneratesDeliveredContent(t *testing.T) {
+	for _, kind := range []string{"acl4ssr", "portable", "mihomo", "singbox"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			st, chainID, _, _, userID, _ := groupsFixture(t)
+			if _, _, err := st.SetUserChains(ctx, userID, []int64{chainID}); err != nil {
+				t.Fatal(err)
+			}
+			content := strings.Join([]string{
+				"custom_proxy_group=🚀 节点选择`select`[]日本节点`[]DIRECT",
+				"custom_proxy_group=日本节点`url-test`(JP|日本)`https://example.com/check`300",
+				"custom_proxy_group=服务`select`[]日本节点`[]🚀 节点选择",
+				"ruleset=服务,[]GEOSITE,youtube",
+				"ruleset=日本节点,[]GEOIP,JP",
+				"ruleset=🚀 节点选择,[]FINAL",
+			}, "\n")
+			if kind == "portable" {
+				content = "name: Regions\nfinal: Proxy\ngroups:\n  - {name: Proxy, type: select, options: [__LATTIX_REGIONS__, __LATTIX_ALL__, 日本节点]}\n  - {name: 日本节点, type: url-test, options: [__LATTIX_REGION_JP__]}\n  - {name: 服务, type: select, options: [日本节点, Proxy]}\nrules:\n  - {kind: GEOIP, value: JP, outbound: 日本节点}\n"
+			}
+			if kind == "mihomo" {
+				content = "proxy-groups:\n  - {name: Proxy, type: select, proxies: [__LATTIX_ALL__, 日本节点]}\n  - {name: 日本节点, type: url-test, proxies: [__LATTIX_REGION_JP__]}\n  - {name: 服务, type: select, proxies: [日本节点, Proxy]}\nrules: [\"DOMAIN-SUFFIX,region.example,日本节点\", \"MATCH,Proxy\"]\n"
+			}
+			if kind == "singbox" {
+				content = `{"outbounds":["__LATTIX-NODES__","__LATTIX-GROUP__",{"tag":"Proxy","type":"selector","outbounds":["__LATTIX_ALL__","日本节点"]},{"tag":"日本节点","type":"urltest","outbounds":["__LATTIX_REGION_JP__"]},{"tag":"服务","type":"selector","outbounds":["日本节点","Proxy"]}],"route":{"rules":[{"domain_suffix":["region.example"],"outbound":"日本节点"}],"final":"Proxy"}}`
+			}
+			upsertTestTemplate(t, st, store.SubscriptionTemplate{ID: "regional-template", Name: "regional", Kind: kind, Origin: "local", Content: content})
+			srv := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+			for _, enabled := range []bool{true, false, true} {
+				status, code := assignRequest(t, srv, fmt.Sprintf(`{"user_ids":[%d],"template_id":"regional-template","forced":true,"region_groups_enabled":%t}`, userID, enabled))
+				if status != http.StatusOK || code != "OK" {
+					t.Fatalf("assign: %d %s", status, code)
+				}
+				for _, format := range []string{"clash", "singbox", "quanx-config"} {
+					r := httptest.NewRequest(http.MethodGet, "https://panel.example/sub/tok-a?format="+format, nil)
+					r.SetPathValue("token", "tok-a")
+					w := httptest.NewRecorder()
+					srv.subscriptions.ServeHTTP(w, r)
+					if w.Code != http.StatusOK {
+						t.Fatalf("%s download: %d %s", format, w.Code, w.Body.String())
+					}
+					body := w.Body.String()
+					if !enabled && (strings.Contains(body, "日本节点") || strings.Contains(body, "🇯🇵 JP")) {
+						t.Fatalf("disabled regions remain in delivered %s:\n%s", format, body)
+					}
+					nativeFormat := kind == "mihomo" && format == "clash" || kind == "singbox" && format == "singbox"
+					if (kind == "acl4ssr" || kind == "portable" || nativeFormat) && (!strings.Contains(body, "服务") || strings.Contains(body, "日本节点") != enabled) {
+						t.Fatalf("%s lost service group or failed to toggle template regions: enabled=%t\n%s", format, enabled, body)
+					}
+					if !strings.Contains(body, "h-a") || !strings.Contains(body, "Lattix 分组") {
+						t.Fatalf("%s lost nodes or source group", format)
+					}
+					if nativeFormat && !strings.Contains(body, "region.example") {
+						t.Fatalf("%s lost routing rule", format)
+					}
+				}
+			}
+		})
+	}
+}

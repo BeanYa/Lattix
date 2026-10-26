@@ -337,6 +337,9 @@ func (s *Server) compileNodes(ctx context.Context, items []proxyItem, uuid strin
 }
 
 func expandPolicy(policy *portablePolicy, nodes []compiledNode, panelShort string) ([]string, error) {
+	if policy.disableRegionGroups {
+		removePolicyRegionGroups(policy)
+	}
 	// 模板自带分组数与地区组/节点池组标记须在追加自动生成分组前捕获。
 	templateCount := len(policy.Groups)
 	regionLike := make([]bool, templateCount) // 选项全部为 __LATTIX_REGION*__ 占位符的模板组 = 地区组
@@ -1288,6 +1291,9 @@ func applyNativeTemplateFull(format, content string, policy portablePolicy, node
 		if err := yaml.Unmarshal([]byte(content), &document); err != nil {
 			return nil, nil, fmt.Errorf("parse Mihomo native template: %w", err)
 		}
+		if policy.disableRegionGroups {
+			removeNativeRegionGroups(document, format, policy.Final)
+		}
 		generated, err := renderMihomo(policy, nodes)
 		if err != nil {
 			return nil, nil, err
@@ -1338,6 +1344,9 @@ func applyNativeTemplateFull(format, content string, policy portablePolicy, node
 		var document map[string]any
 		if err := json.Unmarshal([]byte(content), &document); err != nil {
 			return nil, nil, fmt.Errorf("parse sing-box native template: %w", err)
+		}
+		if policy.disableRegionGroups {
+			removeNativeRegionGroups(document, format, policy.Final)
 		}
 		generated, err := renderSingbox(policy, nodes)
 		if err != nil {
