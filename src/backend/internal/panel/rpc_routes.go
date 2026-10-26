@@ -2,6 +2,7 @@ package panel
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -196,20 +197,30 @@ func (s *Server) requireIdempotency(route string, next http.HandlerFunc) http.Ha
 		requestHash := hex.EncodeToString(sum[:])
 		operator, _ := s.currentUser(r)
 
+		// 幂等状态的清理与持久化不能依赖请求 context：客户端超时断开后 context
+		// 被取消，预留会滞留成"只有预留、没有结果"的悬空记录，同键重试将永远
+		// 拿到 outcome unknown。
+		dbCtx := context.WithoutCancel(r.Context())
+
 		s.idempotencyMu.Lock()
 		defer s.idempotencyMu.Unlock()
 
 		for {
-			record, err := s.st.IdempotencyRecord(r.Context(), operator, route, key)
+			record, err := s.st.IdempotencyRecord(dbCtx, operator, route, key)
 			switch {
 			case err == nil:
+				if record.ResponseJSON == "" {
+					// 持锁期间同进程不可能存在在途请求：空响应记录必然是上次进程
+					// 中断或结果未持久化遗留的悬空预留。接管它并按本次请求重新
+					// 执行（即使请求体不同），而不是把调用方锁死在"结果未知"上。
+					if err := s.st.DeleteIdempotencyReservation(dbCtx, operator, route, key, record.RequestHash); err != nil {
+						writeRPC(w, shared.CodeInternalError, "failed to release stale idempotency reservation", nil)
+						return
+					}
+					continue
+				}
 				if record.RequestHash != requestHash {
 					writeRPC(w, shared.CodeConflict, "Idempotency-Key was already used with a different request", nil)
-					return
-				}
-				if record.ResponseJSON == "" {
-					writeRPC(w, shared.CodeOperationLocked,
-						"the previous operation outcome is unknown; do not repeat it automatically", nil)
 					return
 				}
 				var cached cachedRPCResponse
@@ -226,7 +237,7 @@ func (s *Server) requireIdempotency(route string, next http.HandlerFunc) http.Ha
 				writeRPC(w, shared.CodeInternalError, "failed to read idempotency state", nil)
 				return
 			}
-			err = s.st.ReserveIdempotencyRecord(r.Context(), operator, route, key, requestHash)
+			err = s.st.ReserveIdempotencyRecord(dbCtx, operator, route, key, requestHash)
 			if err == nil {
 				break
 			}
@@ -237,10 +248,19 @@ func (s *Server) requireIdempotency(route string, next http.HandlerFunc) http.Ha
 		}
 
 		capture := newRPCCapture(w)
-		next(capture, r)
+		func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					// handler panic：先释放预留再向外抛，交给外层恢复中间件记录。
+					_ = s.st.DeleteIdempotencyReservation(dbCtx, operator, route, key, requestHash)
+					panic(rec)
+				}
+			}()
+			next(capture, r)
+		}()
 
 		if capture.status != http.StatusOK {
-			_ = s.st.DeleteIdempotencyReservation(r.Context(), operator, route, key, requestHash)
+			_ = s.st.DeleteIdempotencyReservation(dbCtx, operator, route, key, requestHash)
 			capture.flushTo(w)
 			return
 		}
@@ -256,13 +276,13 @@ func (s *Server) requireIdempotency(route string, next http.HandlerFunc) http.Ha
 		cached := cachedRPCResponse{Code: response.Code, Message: response.Message, Data: response.Data}
 		encoded, _ := json.Marshal(cached)
 		if err := s.st.CompleteIdempotencyRecord(
-			r.Context(), operator, route, key, requestHash, string(encoded),
+			dbCtx, operator, route, key, requestHash, string(encoded),
 		); err != nil {
 			writeRPC(w, shared.CodeInternalError, "failed to persist idempotency result", nil)
 			return
 		}
 		capture.flushTo(w)
-		_ = s.st.DeleteExpiredIdempotencyRecords(r.Context())
+		_ = s.st.DeleteExpiredIdempotencyRecords(dbCtx)
 	}
 }
 
