@@ -404,6 +404,14 @@ paths:
         - {name: hop_id, in: query, schema: {type: integer, minimum: 0, default: 0}}
         - {name: days, in: query, schema: {type: integer, minimum: 1, maximum: 730, default: 30}}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/chain/get-stats:
+    get:
+      operationId: chainGetStats
+      description: |
+        链路一览统计（全量链路一次取齐）：每链段探测明细（跳间 TCP 握手 RTT，
+        失败样本 latency_ms 为 null）、链路总延迟（各段之和；任一段缺新鲜样本时为 null）
+        与今日流量（流量统计时区口径，含原始与折算字节）；今日合计为各链折算口径之和。
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/share-link:
     get:
       operationId: chainShareLink

@@ -99,6 +99,10 @@ func (s *Server) handleGetMetricHistory(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) cleanupMetricHistory(ctx context.Context) error {
-	_, err := s.st.DeleteExpiredServerMetricHistory(ctx, metricHistoryRetention)
+	if _, err := s.st.DeleteExpiredServerMetricHistory(ctx, metricHistoryRetention); err != nil {
+		return err
+	}
+	// 链跳段探测历史与主机指标同窗口（§链路统计）。
+	_, err := s.st.DeleteExpiredChainHopProbeHistory(ctx, metricHistoryRetention)
 	return err
 }

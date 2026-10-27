@@ -357,6 +357,13 @@ func (s *Store) DeleteChain(ctx context.Context, id int64, fromStatus ...string)
 		RevisionTaskAbandoned, reason, id, RevisionTaskPending, RevisionTaskQueued); err != nil {
 		return fmt.Errorf("delete chain: %w", err)
 	}
+	// 链跳段探测随跳删除（历史行由保留窗口清理兜底；须在 chain_hops 删除前联查）。
+	for _, table := range []string{"chain_hop_probes", "chain_hop_probe_history"} {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE hop_id IN
+			(SELECT id FROM chain_hops WHERE chain_id=?)`, id); err != nil {
+			return fmt.Errorf("delete chain: %w", err)
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_hops WHERE chain_id=?`, id); err != nil {
 		return fmt.Errorf("delete chain: %w", err)
 	}

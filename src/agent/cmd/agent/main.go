@@ -396,7 +396,7 @@ func run(panel, token string, saveConnectionStatus func(connected bool, stateNam
 
 	// Telemetry does not wait for a latency sample.
 	go func() {
-		t := newTelemetry(ctx.mgr, latency.snapshot)
+		t := newTelemetry(ctx.mgr, latency.snapshot, chainProbeSampler(ctx.mgr))
 		send := func() bool {
 			messageID := shared.NewMessageID()
 			env := shared.Envelope{

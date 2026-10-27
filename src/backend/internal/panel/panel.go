@@ -416,6 +416,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodGet, "/api/chain/get-traffic-history",
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"chain_id", "hop_id", "days"}},
 		s.handleGetChainTrafficHistory)
+	s.registerRPC(mux, http.MethodGet, "/api/chain/get-stats", polledRead, s.handleGetChainStats)
 	s.registerRPC(mux, http.MethodGet, "/api/chain/share-link",
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"chain_id", "user_id"}},
 		s.handleChainShareLink)

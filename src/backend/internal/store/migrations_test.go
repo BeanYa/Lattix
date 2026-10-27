@@ -213,8 +213,8 @@ func TestOpenMigratesV21SubscriptionRegionGroupsAndPreservesSnapshots(t *testing
 	if err := st.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 22 {
-		t.Fatalf("schema version=%d, want 22", version)
+	if version != schemaVersion {
+		t.Fatalf("schema version=%d, want %d", version, schemaVersion)
 	}
 	file, err := st.PublishedSubscriptionFile(ctx, userID, "links")
 	if err != nil {

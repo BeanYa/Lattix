@@ -301,6 +301,27 @@ type TelemetryPayload struct {
 	// OnlineUsers 该服务器在线用户全量快照；无 omitempty 以便区分
 	// "成功空查询"（[]，序列化为 []）与"查询失败/不支持"（nil，序列化为 null）。
 	OnlineUsers []OnlineUserStat `json:"online_users"`
+	// ChainProbes 本机链跳段探测结果（§链路统计）：每个可探测段一条；
+	// 无链路 piece 或全部探测禁用时缺省。
+	ChainProbes []ChainProbeStat `json:"chain_probes,omitempty"`
+}
+
+// ChainProbeStat 的 Kind 取值：forward = 直连段（拨下一跳 forward 监听端口），
+// bridge = 反向段（bridge 拨上游 portal 监听端口）。
+const (
+	ChainProbeKindForward = "forward"
+	ChainProbeKindBridge  = "bridge"
+)
+
+// ChainProbeStat 是一个链跳段（本跳 → 下一跳物理路径）的单次 TCP 握手探测结果：
+// HopID 为执行探测的本跳，Kind 区分段类型（同跳可有两条：bridge 反向段 + forward 直连段）。
+// LatencyMS 为 TCP 握手 RTT；nil = 本次失败/超时（连通性参考，同 server latency_ms 约定）。
+type ChainProbeStat struct {
+	HopID         int64    `json:"hop_id"`
+	Kind          string   `json:"kind"` // forward|bridge
+	TargetAddress string   `json:"target_address"`
+	TargetPort    int      `json:"target_port"`
+	LatencyMS     *float64 `json:"latency_ms"`
 }
 
 // HostMetrics 是主机指标（/proc 采集）。

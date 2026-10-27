@@ -10,6 +10,7 @@ import type {
   BillingStatsRateMode,
   Chain,
   ChainShareLink,
+  ChainStatsResponse,
   CleanupXrayResult,
   CommandLog,
   RebuildXrayResult,
@@ -268,6 +269,8 @@ export const api = {
       hop_id: hopId,
       days,
     }),
+  chainStats: (options?: RequestOptions) =>
+    requester.get<ChainStatsResponse>('/api/chain/get-stats', undefined, options),
   chainShareLink: (chainId: number, userId: number) =>
     requester.get<ChainShareLink>('/api/chain/share-link', { chain_id: chainId, user_id: userId }),
   retryChain: (chainId: number) =>

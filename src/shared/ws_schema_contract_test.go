@@ -493,6 +493,13 @@ func TestWSSchemaTelemetryContract(t *testing.T) {
 	for _, name := range []string{"node_id", "endpoint_id", "hop_id", "user"} {
 		propertyOf(t, "$defs.trafficCounter", counter, name)
 	}
+
+	// chainProbeStat：hop_id/kind/target 必填标识段；latency_ms 允许缺省（探测失败样本，
+	// 同 host.latency_ms 的连通性参考约定）。
+	probe := defOf(t, schema, "chainProbeStat")
+	assertRequired(t, "$defs.chainProbeStat", probe,
+		[]string{"hop_id", "kind", "target_address", "target_port"}, wireFields(t, ChainProbeStat{}))
+	assertWireCovered(t, "$defs.chainProbeStat", probe, wireFields(t, ChainProbeStat{}))
 }
 
 func TestWSSchemaCleanupContract(t *testing.T) {

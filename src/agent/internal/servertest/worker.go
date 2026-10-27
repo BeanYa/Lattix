@@ -108,18 +108,16 @@ func RunWorker(ctx context.Context, dataDir, agentVersion string, payload shared
 	defer os.RemoveAll(tempDir)
 
 	state, reason := "isolated", ""
-	cloneFlags := uintptr(0)
-	if runtime.GOOS == "linux" {
-		cloneFlags = syscall.CLONE_NEWPID | syscall.CLONE_NEWNS | syscall.CLONE_NEWIPC
-	} else {
+	namespaced := workerNamespacesSupported()
+	if !namespaced {
 		state, reason = "degraded", "namespace isolation is unavailable on "+runtime.GOOS
 	}
-	report, stderr, err := runWorkerProcess(ctx, executable, tempDir, dataDir, agentVersion, payload, state, reason, cloneFlags, progress)
-	if err == nil || cloneFlags == 0 || (!errors.Is(err, syscall.EPERM) && !strings.Contains(strings.ToLower(err.Error()), "operation not permitted")) {
+	report, stderr, err := runWorkerProcess(ctx, executable, tempDir, dataDir, agentVersion, payload, state, reason, namespaced, progress)
+	if err == nil || !namespaced || (!errors.Is(err, syscall.EPERM) && !strings.Contains(strings.ToLower(err.Error()), "operation not permitted")) {
 		return report, err
 	}
 	state, reason = "degraded", "PID/mount/IPC namespaces were denied; using process, temp-dir and rlimit isolation"
-	report, fallbackStderr, fallbackErr := runWorkerProcess(ctx, executable, tempDir, dataDir, agentVersion, payload, state, reason, 0, progress)
+	report, fallbackStderr, fallbackErr := runWorkerProcess(ctx, executable, tempDir, dataDir, agentVersion, payload, state, reason, false, progress)
 	if fallbackErr != nil {
 		return report, fmt.Errorf("sandbox fallback failed: %w (isolated stderr=%s; fallback stderr=%s)", fallbackErr, stderr, fallbackStderr)
 	}
@@ -131,7 +129,7 @@ func runWorkerProcess(
 	executable, tempDir, dataDir, agentVersion string,
 	payload shared.ServerTestRunPayload,
 	sandboxState, sandboxReason string,
-	cloneFlags uintptr,
+	namespaced bool,
 	progress ProgressFunc,
 ) (shared.ServerTestReport, string, error) {
 	input, err := json.Marshal(workerInput{
@@ -144,7 +142,7 @@ func runWorkerProcess(
 	cmd := exec.CommandContext(ctx, executable, "--server-test-worker")
 	cmd.Dir = tempDir
 	cmd.Stdin = strings.NewReader(string(input))
-	cmd.SysProcAttr = &syscall.SysProcAttr{Cloneflags: cloneFlags, Pdeathsig: syscall.SIGKILL}
+	applyWorkerSandbox(cmd, namespaced)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return shared.ServerTestReport{}, "", err

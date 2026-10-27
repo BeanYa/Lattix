@@ -736,6 +736,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chain/get-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 链路一览统计（全量链路一次取齐）：每链段探测明细（跳间 TCP 握手 RTT，
+         *     失败样本 latency_ms 为 null）、链路总延迟（各段之和；任一段缺新鲜样本时为 null）
+         *     与今日流量（流量统计时区口径，含原始与折算字节）；今日合计为各链折算口径之和。
+         */
+        get: operations["chainGetStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chain/share-link": {
         parameters: {
             query?: never;
@@ -2936,6 +2957,19 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    chainGetStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     chainShareLink: {
         parameters: {
             query: {
@@ -4051,6 +4085,7 @@ export const rpcOperations = {
   chainSetTrafficMultiplier: { method: 'POST', path: '/api/chain/set-traffic-multiplier' },
   chainResetTraffic: { method: 'POST', path: '/api/chain/reset-traffic' },
   chainGetTrafficHistory: { method: 'GET', path: '/api/chain/get-traffic-history' },
+  chainGetStats: { method: 'GET', path: '/api/chain/get-stats' },
   chainShareLink: { method: 'GET', path: '/api/chain/share-link' },
   chainRetry: { method: 'POST', path: '/api/chain/retry' },
   chainDelete: { method: 'POST', path: '/api/chain/delete' },

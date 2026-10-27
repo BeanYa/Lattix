@@ -11,7 +11,8 @@ import (
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
-const schemaVersion = 22
+// v23: chain_hop_probes / chain_hop_probe_history（链跳段探测，§链路统计）。
+const schemaVersion = 23
 
 type columnMigration struct {
 	name       string

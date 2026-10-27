@@ -520,6 +520,31 @@ CREATE TABLE IF NOT EXISTS chain_multiplier_events (
     effective_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 链跳段探测最新值（agent 随遥测上报的下一跳 TCP 握手 RTT，§链路统计）：
+-- (hop_id, kind) 唯一——同跳可有 bridge 反向段 + forward 直连段两条出向探测；
+-- latency_ms 为 NULL 表示已接受但失败/超时的连通性参考样本（同 server latency_ms 约定）。
+CREATE TABLE IF NOT EXISTS chain_hop_probes (
+    hop_id         INTEGER NOT NULL,
+    kind           TEXT    NOT NULL,
+    server_id      INTEGER NOT NULL REFERENCES servers(id),
+    target_address TEXT    NOT NULL DEFAULT '',
+    target_port    INTEGER NOT NULL DEFAULT 0,
+    latency_ms     REAL,
+    sampled_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (hop_id, kind)
+);
+
+-- 链跳段探测历史（24 小时保留，供段级趋势与排查；每小时后台清理）。
+CREATE TABLE IF NOT EXISTS chain_hop_probe_history (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    hop_id     INTEGER NOT NULL,
+    kind       TEXT    NOT NULL,
+    server_id  INTEGER NOT NULL,
+    latency_ms REAL,
+    sampled_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_chain_hop_probe_history_time ON chain_hop_probe_history (sampled_at);
+
 -- 流量统计明细桶（分钟级）与日汇总：多维度（user/node/endpoint/chain_hop）原始字节，
 -- 不乘链路倍率（计费口径归 chain_traffic_daily）；写入挂在 ApplyTrafficSnapshot 遥测入口。
 CREATE TABLE IF NOT EXISTS traffic_stats_bucket (

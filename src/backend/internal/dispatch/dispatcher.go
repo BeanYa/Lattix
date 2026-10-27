@@ -1058,6 +1058,20 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 			log.Printf("dispatch: server %d: apply traffic snapshot: %v", serverID, err)
 		}
 	}
+	// 链跳段探测（§链路统计）：覆盖最新值 + 插入历史；失败/超时样本（latency 缺省）照常落库。
+	if len(p.ChainProbes) > 0 {
+		probes := make([]store.ChainProbeSample, 0, len(p.ChainProbes))
+		for _, probe := range p.ChainProbes {
+			probes = append(probes, store.ChainProbeSample{
+				HopID: probe.HopID, Kind: probe.Kind,
+				TargetAddress: probe.TargetAddress, TargetPort: probe.TargetPort,
+				LatencyMS: probe.LatencyMS,
+			})
+		}
+		if err := d.st.SaveChainHopProbes(ctx, serverID, probes, time.Now().UTC()); err != nil {
+			log.Printf("dispatch: server %d: save chain hop probes: %v", serverID, err)
+		}
+	}
 	// 在线用户快照：每帧全量覆盖该服务器记录（空快照 [] = 清除，保留在线时为 0 的语义）。
 	// nil = 该帧未携带在线数据（agent 查询失败/不支持），保留旧快照直至新鲜度窗口过期。
 	if p.OnlineUsers != nil && d.events.OnOnlineUsers != nil {

@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"runtime"
+	"testing"
+)
 
 func TestIgnoredNetworkInterface(t *testing.T) {
 	for _, name := range []string{"", "lo", "docker0", "veth123", "br-abcd", "virbr0", "tun0", "tap1"} {
@@ -16,6 +19,9 @@ func TestIgnoredNetworkInterface(t *testing.T) {
 }
 
 func TestLinuxHostSourcesAvailable(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("host sources are Linux-specific")
+	}
 	if total, used, ok := rootDiskUsage(); !ok || total == 0 || used > total {
 		t.Fatalf("root disk = total %d used %d ok %v", total, used, ok)
 	}

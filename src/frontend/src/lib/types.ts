@@ -523,6 +523,30 @@ export interface ChainShareLink {
   link: string
 }
 
+// 链路一览统计（§链路统计）：跳间段延迟（TCP 握手 RTT）与今日负载。
+// latency_ms 为各段之和；任一段缺新鲜样本（10 分钟窗口）时为 null。
+export interface ChainSegmentStat {
+  hop_id: number
+  kind: 'forward' | 'bridge'
+  target_address: string
+  target_port: number
+  latency_ms: number | null
+  sampled_at: string
+}
+
+export interface ChainStats {
+  chain_id: number
+  latency_ms: number | null
+  segments: ChainSegmentStat[]
+  today?: ChainTraffic
+}
+
+export interface ChainStatsResponse {
+  chains: ChainStats[]
+  today_up: number
+  today_down: number
+}
+
 // 链路构图提交（§21）：依次入口 / 中间跳（0-2）/ 出口，出口携带业务节点协议表单，
 // 入口端口可空 = 自动。node.server_id 由后端按 exit.server_id 覆盖。
 // hop 引用可携带 address：空/省略 = 跟随服务器默认地址。
