@@ -8,8 +8,8 @@
 }
 
 /* ============================================================
-   Lattix — 线路值班台 / Line Board Design System
-   浅色为暖纸日间版，深色为夜板默认版；两套令牌完全等价。
+   Lattix — 液态玻璃设计系统 / Liquid Glass Design System
+   浅色为暖纸晚霞玻璃，深色为夜幕玻璃（默认外观）；两套令牌完全等价。
    ============================================================ */
 
 :root {
@@ -75,7 +75,7 @@
   --foreground: var(--panel-ink);
   --card: var(--panel-surface);
   --card-foreground: var(--panel-ink);
-  --popover: var(--panel-surface);
+  --popover: var(--panel-popover);
   --popover-foreground: var(--panel-ink);
   --primary: var(--panel-accent);
   --primary-foreground: var(--panel-accent-ink);
@@ -219,6 +219,16 @@ body {
   background: var(--panel-signal);
 }
 
+/* ---------- 玻璃表面共享层 ---------- */
+.cg-panel,
+.cg-card,
+.cg-card-raised,
+.cg-semantic-card,
+.surface-frame {
+  backdrop-filter: var(--panel-backdrop);
+  -webkit-backdrop-filter: var(--panel-backdrop);
+}
+
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--panel-rule-strong) transparent;
@@ -275,13 +285,13 @@ body {
   letter-spacing: -0.01em;
 }
 
-/* ---------- 容器原语：现代卡片与面板（Line Board 规范 6.5 / 8.2） ---------- */
+/* ---------- 容器原语：玻璃卡片与面板 ---------- */
 .cg-panel,
 .cg-card,
 .cg-card-raised,
 .cg-semantic-card {
-  border: 1px solid var(--panel-rule);
-  border-radius: var(--radius-lg, 12px);
+  border: 1px solid var(--panel-edge);
+  border-radius: var(--radius-lg, 20px);
   background: var(--panel-surface);
   box-shadow: var(--panel-shadow-card);
   transition: border-color var(--duration-1, 80ms) var(--ease-standard);
@@ -342,9 +352,9 @@ body {
 
 .cg-pill.is-active,
 .cg-pill.is-dark {
-  border-color: var(--panel-ink);
-  background: var(--panel-ink);
-  color: var(--panel-ground);
+  border-color: var(--panel-signal);
+  background: var(--panel-signal);
+  color: var(--panel-signal-ink);
 }
 
 .cg-pill.is-info {
@@ -599,7 +609,7 @@ body {
   animation: panel-in var(--duration-3, 180ms) var(--ease-enter, cubic-bezier(0.16, 1, 0.3, 1)) both;
 }
 
-/* ---------- 应用外壳：顶部命令条 + 左导轨 ---------- */
+/* ---------- 应用外壳：顶部命令条 + 左导轨 + 晚霞渐变地 ---------- */
 .cg-shell {
   display: grid;
   height: 100dvh;
@@ -607,20 +617,23 @@ body {
   background-color: var(--panel-ground);
 }
 
+/* 晚霞渐变：浅色为暖纸日间版，深色为夜幕铜晕版（默认）。 */
 html:not(.dark) .cg-shell,
 html:not(.dark) .login,
 html:not(.dark) .sub-page,
 html:not(.dark) [data-slot='app-shell'] {
-  background-image: url('/textures/paper-grain.png');
-  background-size: 128px 128px;
-  background-blend-mode: multiply;
+  background-image:
+    radial-gradient(120% 90% at 8% 0%, rgba(228, 192, 166, 0.75) 0%, rgba(228, 192, 166, 0) 60%),
+    radial-gradient(150% 120% at 52% 46%, rgba(212, 184, 172, 0.55) 0%, rgba(212, 184, 172, 0) 70%),
+    radial-gradient(130% 100% at 82% 100%, rgba(235, 215, 204, 0.8) 0%, rgba(230, 204, 187, 0.6) 62%);
 }
 
 html.dark .cg-shell,
 html.dark .login,
 html.dark .sub-page,
 html.dark [data-slot='app-shell'] {
-  background-image: url('/textures/paper-grain-dark.png');
-  background-size: 128px 128px;
-  background-blend-mode: screen;
+  background-image:
+    radial-gradient(120% 90% at 8% 0%, rgba(182, 109, 68, 0.3) 0%, rgba(182, 109, 68, 0) 62%),
+    radial-gradient(150% 120% at 52% 46%, #221a14 0%, rgba(34, 26, 20, 0) 72%),
+    radial-gradient(130% 100% at 82% 100%, #2a2018 0%, #191310 62%);
 }

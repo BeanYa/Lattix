@@ -50,7 +50,7 @@
   height: 26px;
   flex: none;
   border: 1px solid var(--panel-ink);
-  background: #f7f7f2;
+  background: var(--panel-raised);
 }
 
 .sub-brand-name {

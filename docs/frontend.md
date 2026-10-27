@@ -28,20 +28,28 @@ bun run preview       # 本地预览生产构建
 
 ## 设计系统与外观
 
-前端只有一套设计语言「高密度事务台」，不再提供设计主题切换；外观模式是唯一可切换维度：
+前端只有一套设计语言「液态玻璃」，不再提供设计主题切换；外观模式是唯一可切换维度：
 
-- **深色（默认）** / **浅色**：`<html>` 上的 `dark` class，`lib/theme.tsx` 持久化到
-  localStorage（`lattix-theme`），`index.html` 的首屏脚本在渲染前应用，避免闪白。
-- 令牌层：`src/styles/panel.css` 定义全部语义令牌（`--panel-ground`、`--panel-surface`、
-  `--panel-rule`、`--panel-ink*`、`--panel-accent`、状态色、字体与尺寸），并在 `.dark`
-  下提供深色覆写；旧页面的 `--cg-*` 名称保留为同一套令牌的别名。
+- **深色（默认，夜幕玻璃）** / **浅色（暖纸晚霞玻璃）**：`<html>` 上的 `dark` class，
+  `lib/theme.tsx` 持久化到 localStorage（`lattix-theme`），`index.html` 的首屏脚本在渲染
+  前应用，避免闪白。
+- 令牌层：`src/styles/tokens.css` 定义深浅两套语义令牌（`--panel-ground`、
+  `--panel-surface`（半透明玻璃）、`--panel-edge`（卡描边）、`--panel-rule`（内容分隔）、
+  `--panel-signal`（铜橙强调）、状态色、字体与圆角阶梯），并新增 `--panel-backdrop`
+  （`blur(28px) saturate(140%)`）与 `--panel-popover`（弹层实色）；旧页面的 `--cg-*`
+  名称保留为同一套令牌的别名。
+- 表面层：`src/styles/panel.css` 提供玻璃原语（`.cg-panel`、`.cg-card`、`.cg-button`、
+  `.cg-status` 等共享组件类）与壳层晚霞渐变背景；卡面为半透明表面 + 背景 blur +
+  edge 描边 + 20px 圆角。
 - 组件层：`src/index.css` 提供页面原语（`.page-shell`、`.page-header`、`.page-title`、
-  `.surface-frame`、`.notice`、`.empty-state` 等）与 shadcn 组件的统一外观；
-  `src/styles/panel.css` 提供 `.cg-button`、`.cg-panel`、`.cg-status` 等共享组件类。
-- 新页面必须使用令牌，不得硬编码颜色、圆角或阴影；模块是 1px 发丝线矩形，红色只用于
-  主操作、选中与异常；深浅两套外观都要检查。
-- 字体与图标全部本地打包（`@fontsource-variable/geist`、`flag-icons`、`lucide-react`），
-  不依赖外部字体或资源 CDN。
+  `.surface-frame`、`.notice`、`.empty-state` 等）与 shadcn 组件的统一外观。
+- 新页面必须使用令牌，不得硬编码颜色、圆角或阴影；铜橙只用于当前项、主操作、选中与
+  进行中，状态由状态色 + 状态词双表达；深浅两套外观都要检查（`npm run check:tokens`
+  为对比度门禁）。
+- 字体与图标全部本地打包（`@fontsource-variable/manrope`、`@fontsource-variable/geist`、
+  `flag-icons`、`lucide-react`），不依赖外部字体或资源 CDN。
+- 应用壳（`components/AppShell.tsx`）：顶部命令栏与左导轨玻璃化外，底部另有玻璃
+  停靠栏（dock），承载五个一级入口的图标快捷切换，当前入口有铜橙圆点。
 
 ## CDN 与缓存
 

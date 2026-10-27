@@ -32,7 +32,7 @@
   width: 26px;
   height: 26px;
   border: 1px solid var(--panel-ink);
-  background: #f7f7f2;
+  background: var(--panel-raised);
   color: var(--panel-ink);
 }
 
