@@ -108,6 +108,26 @@ function HopLatency({ segment }: { segment: ChainSegmentStat | null }) {
   )
 }
 
+// HopLink 是相邻两跳之间的连线：长箭头 + 段延迟标注。有延迟样本时整条箭头
+// （线体 + 箭头头）跟随延迟状态色，与标注一致；无样本保持中性/线路色。
+function HopLink({ segment, flowing }: { segment: ChainSegmentStat | null; flowing: boolean }) {
+  const tone = segment
+    ? segment.latency_ms === null
+      ? 'fail'
+      : latencyTone(segment.latency_ms)
+    : null
+  return (
+    <span className={cn('cg-hop-link', flowing && 'is-flowing')} data-tone={tone}>
+      <HopLatency segment={segment} />
+      <span className="cg-hop-link-track" aria-hidden="true">
+        <i />
+        <ChevronDownIcon className="cg-hop-link-arrow-v" strokeWidth={3} />
+        <ChevronRightIcon className="cg-hop-link-arrow-h" strokeWidth={3} />
+      </span>
+    </span>
+  )
+}
+
 function TrafficSummary({
   up,
   down,
@@ -872,27 +892,10 @@ export default function Chains() {
                               return (
                                 <div key={h.id} className="cg-hop-seg" title={h.error || undefined}>
                                   {i > 0 ? (
-                                    <span
-                                      className={cn(
-                                        'cg-hop-link',
-                                        c.status === 'active' && !offline && 'is-flowing',
-                                      )}
-                                    >
-                                      <HopLatency
-                                        segment={segmentForLink(statsIndex, c.hops[i - 1].id, h.id)}
-                                      />
-                                      <span className="cg-hop-link-track" aria-hidden="true">
-                                        <i />
-                                        <ChevronDownIcon
-                                          className="cg-hop-link-arrow-v"
-                                          strokeWidth={3}
-                                        />
-                                        <ChevronRightIcon
-                                          className="cg-hop-link-arrow-h"
-                                          strokeWidth={3}
-                                        />
-                                      </span>
-                                    </span>
+                                    <HopLink
+                                      segment={segmentForLink(statsIndex, c.hops[i - 1].id, h.id)}
+                                      flowing={c.status === 'active' && !offline}
+                                    />
                                   ) : null}
                                   <div className="cg-hop">
                                     <span className="cg-hop-head">

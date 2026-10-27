@@ -395,6 +395,19 @@
   color: var(--entry-line-color, var(--panel-success));
 }
 
+/* 有延迟样本的段：整条箭头（线体+箭头头）跟随延迟状态色，与标注一致 */
+.cg-hop-link[data-tone='ok'] {
+  color: var(--panel-status-ok);
+}
+
+.cg-hop-link[data-tone='warn'] {
+  color: var(--panel-status-degraded);
+}
+
+.cg-hop-link[data-tone='fail'] {
+  color: var(--panel-status-failed);
+}
+
 .cg-hop-link-track {
   display: flex;
   flex-direction: column;
