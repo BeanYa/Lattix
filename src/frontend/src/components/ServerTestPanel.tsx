@@ -743,28 +743,31 @@ export function ServerTestPanel({
               : '尚无测试结果'}
           </p>
         </div>
-        <Button
-          variant={task?.result ? 'outline' : 'default'}
-          onClick={primaryAction}
-          disabled={loading}
-        >
-          {loading ? (
-            <LoaderCircleIcon className="animate-spin motion-reduce:animate-none" />
-          ) : task && !isTerminal(task.status) ? (
-            <LoaderCircleIcon className="animate-spin motion-reduce:animate-none" />
-          ) : task ? (
-            <FlaskConicalIcon />
-          ) : (
-            <CircleDotIcon />
-          )}
-          {loading
-            ? '读取状态'
-            : task && !isTerminal(task.status)
-              ? '查看测试进度'
-              : task
-                ? '查看测试结果'
-                : '点击运行测试'}
-        </Button>
+        {task && isTerminal(task.status) ? (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setReportOpen(true)} disabled={loading}>
+              {loading ? (
+                <LoaderCircleIcon className="animate-spin motion-reduce:animate-none" />
+              ) : (
+                <FlaskConicalIcon />
+              )}
+              查看测试结果
+            </Button>
+            <Button onClick={openSelection}>
+              <CircleDotIcon />
+              运行测试
+            </Button>
+          </div>
+        ) : (
+          <Button onClick={primaryAction} disabled={loading}>
+            {loading || (task && !isTerminal(task.status)) ? (
+              <LoaderCircleIcon className="animate-spin motion-reduce:animate-none" />
+            ) : (
+              <CircleDotIcon />
+            )}
+            {loading ? '读取状态' : task ? '查看测试进度' : '点击运行测试'}
+          </Button>
+        )}
       </div>
       {task?.error_message && !task.result ? (
         <ErrorNotice code={task.error_code} message={task.error_message} />
@@ -1006,15 +1009,6 @@ export function ServerTestPanel({
           <DialogFooter className="grid grid-cols-1 gap-2 sm:flex">
             <Button variant="outline" onClick={() => setReportOpen(false)}>
               关闭
-            </Button>
-            <Button
-              onClick={() => {
-                setReportOpen(false)
-                openSelection()
-              }}
-            >
-              <RefreshCwIcon />
-              重新测试
             </Button>
           </DialogFooter>
         </DialogContent>
