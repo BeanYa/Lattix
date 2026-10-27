@@ -105,15 +105,25 @@
         {"required": ["user"]}
       ]
     },
-    "chainProbeStat": {
+    "latencyProbeTarget": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["hop_id", "kind", "target_address", "target_port"],
+      "required": ["server_id", "address", "kind"],
       "properties": {
-        "hop_id": {"type": "integer", "minimum": 1},
-        "kind": {"type": "string", "enum": ["forward", "bridge"]},
-        "target_address": {"type": "string"},
-        "target_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "server_id": {"type": "integer", "minimum": 1},
+        "address": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "enum": ["tcp", "icmp"]},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      }
+    },
+    "latencyProbeResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["server_id", "kind"],
+      "properties": {
+        "server_id": {"type": "integer", "minimum": 1},
+        "kind": {"type": "string", "enum": ["tcp", "icmp"]},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
         "latency_ms": {"type": "number"}
       }
     }
@@ -428,11 +438,6 @@
                     }
                   }
                 ]
-              },
-              "chain_probes": {
-                "type": "array",
-                "items": {"$ref": "#/$defs/chainProbeStat"},
-                "description": "链跳出向段 TCP 握手探测（§链路统计）；latency_ms 缺省 = 失败/超时样本（连通性参考）"
               }
             }
           }
@@ -499,6 +504,45 @@
                 }
               },
               "removed_pieces": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "request"}, "type": {"const": "latency.probe"}},
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["round_id", "timeout_ms", "targets"],
+            "properties": {
+              "round_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 120000},
+              "targets": {"type": "array", "items": {"$ref": "#/$defs/latencyProbeTarget"}}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"kind": {"const": "event"}, "type": {"const": "latency.report"}},
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["round_id", "results"],
+            "properties": {
+              "round_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "results": {"type": "array", "items": {"$ref": "#/$defs/latencyProbeResult"}}
             }
           }
         }

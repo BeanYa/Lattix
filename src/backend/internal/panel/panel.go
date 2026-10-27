@@ -272,6 +272,17 @@ func (s *Server) registerCoreTasks() {
 		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(time.Hour) },
 		Run:     s.cleanupMetricHistory,
 	})
+	// 服务器间延迟测速（§链路统计）：5 分钟一轮，启动即先测一轮；
+	// 链路发布成功由 dispatcher 内部立即追加触发。
+	latencyProbeInterval := envDuration("LATTIX_LATENCY_PROBE_INTERVAL", 5*time.Minute)
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "chain-latency.probe", RunOnStart: true, Timeout: time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(latencyProbeInterval) },
+		Run: func(ctx context.Context) error {
+			s.disp.RunLatencyProbeRound(ctx)
+			return nil
+		},
+	})
 	for _, kind := range []string{releases.KindAgent, releases.KindXray} {
 		kind := kind
 		s.scheduler.Register(scheduler.ScheduledTask{

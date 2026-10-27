@@ -86,8 +86,8 @@ function ChainStateMark({
   )
 }
 
-// HopLatency 是跳间连线上的段延迟标注（§链路统计）：直连段由上游探测、反向段由
-// 下游 bridge 探测；失败/超时样本保留"超时"字样作连通性参考。
+// HopLatency 是跳间连线上的段延迟标注（§链路统计）：来源优先 tcp（复用链路
+// 监听端口）、回退 icmp；失败/超时样本保留"超时"字样作连通性参考。
 function HopLatency({ segment }: { segment: ChainSegmentStat | null }) {
   if (!segment) return null
   if (segment.latency_ms === null) {
@@ -101,7 +101,7 @@ function HopLatency({ segment }: { segment: ChainSegmentStat | null }) {
     <span
       className="cg-hop-latency"
       data-tone={latencyTone(segment.latency_ms)}
-      title={`跳间${segment.kind === 'forward' ? '直连' : '反向'}段探测 RTT`}
+      title={`跳间 ${segment.kind.toUpperCase()} 探测 RTT`}
     >
       {formatLatency(segment.latency_ms)}
     </span>

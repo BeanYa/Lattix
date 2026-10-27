@@ -1,100 +1,101 @@
-# 链路延迟与负载统计设计（链路一览）
+# 链路延迟与负载统计设计（链路一览 · 服务器对测速架构）
 
 ## 1. 目标
 
-在现有周期遥测与链路流量统计之上，补齐链路维度的两类统计，供链路一览视图消费：
+在周期遥测与链路流量统计之上，提供链路维度的两类统计，供链路一览视图消费：
 
-- **段延迟**：链内相邻两跳之间的 TCP 握手往返（RTT），按段采样、按链聚合；
+- **段延迟**：链内相邻两跳之间物理路径的网络往返，按 **有向服务器对** 维护
+  （A→B、A→C、B→A…），来源区分 **TCP**（复用链路监听端口，含端口号）与 **ICMP**；
 - **负载**：每条链当日上/下行流量（原始与折算字节），以及全部链的当日合计。
 
-本次范围：Agent 段探测与遥测上报、Panel 落库与保留、全量链路统计 API、前端 API client。
-不包含链路延迟历史趋势图、丢包率、按用户/按跳的延迟拆分，以及前端页面改动
-（视觉重构另行进行，仅消费本 API）。
+数据由各 Agent 对其关联线路的下跳服务器测速上报；panel 维护延迟数据表并调度轮次。
 
-## 2. 段探测（Agent）
+本次范围：测速架构（目标计算、下发、执行、上报、存储）、链路一览统计 API 与前端展示。
+不包含延迟历史趋势图、丢包率、按用户拆分，以及延迟告警。
 
-每个持有链跳配置件的 Agent，在每次遥测采样前对本机的**出向段**做一轮 TCP 握手测速：
+## 2. 测速目标（服务器对模型）
 
-- **forward 直连段**：拨 dokodemo inbound 的透传目标（`settings.address/port`，即下一跳
-  forward 监听端口）。经 reverse portal 的 forward（路由 outboundTag 为 `portal_*`）不探测——
-  与同跳 bridge 段同物理路径，避免重复计量；
-- **bridge 反向段**：拨 interconn outbound 的 `settings.vnext[0]`（上游 portal 监听端口）；
-- **hy2 段**（forward 带 hysteria2 outbound，入口终结末段）：UDP/QUIC 无 TCP 握手可测，不探测；
-- **portal piece**：为反向段被拨侧，无出向探测。
+测速目标按 **服务器** 维度推导，与链路解耦：agent 所在服务器 S 的目标集 = S 在全部
+已发布链路中作为 **物理发起方** 的出向边去重后的 m 个目标服务器。
 
-握手在对端 xray 监听处立即完成，RTT 即段网络往返；连接建立即关闭，不发送业务数据。
-单段超时 5 秒，超时记为**失败样本**（`latency_ms` 缺省，保留作连通性参考，同 server
-`latency_ms` 约定）。探测目标从落盘 ChainPiece 的自有渲染配置推导（§21.1），存量 piece
-无需重新下发即可获得段延迟。探测随遥测帧上报（`chain_probes`，逐段一条，同跳可含
-forward 与 bridge 两条），遥测间隔即可探测间隔，不引入新的周期配置。
+对链的每个相邻跳对（hop[i] → hop[i+1]，取已发布 revision 快照）：
 
-每个物理段恰好由一侧 Agent 探测一次：直连段由上游探测，反向段由下游 bridge 探测。
-单跳链无段，不上报。
+| 段类型 | 物理发起方 | TCP 目标端口 | 说明 |
+| --- | --- | --- | --- |
+| direct | 上游 hop[i] | 下跳 forward 监听端口（末段=出口业务 realized 端口，NAT 受限机按 allowed_ports 换算公网侧） | dokodemo 透传的真实路径 |
+| reverse / encrypted | 下游 hop[i+1]（bridge） | 上游 hop[i] 的 portal 监听端口（方向反转：B→A） | 反向段物理路径由下游发起 |
+| hy2（入口终结末段） | — | 无（UDP/QUIC） | 仅 ICMP |
 
-## 3. 协议
+- **TCP 复用链路端口**：握手在对端 xray 监听立即完成，测得的是业务数据真实路径的
+  网络往返；链路部署后端口必然在线，无需额外监听面。端口随测量数据入库。
+- **ICMP**：每个出向段同时携带 icmp 目标，作为 TCP 不可用（如 hy2 段、端口未就绪）时的回退来源。
+- **目标地址**：目标跳的设置公网地址（hop 地址引用 §9 可用则用之，否则跟随服务器
+  默认地址；可能是域名也可能是 IP）。
+- **去重**：同一 (from, to, kind, port) 多链共享只测一次——如 Case 3 中 A 测 A→B 与
+  A→D，B 测 B→C 与 B→D；B→C 同时属于链 A→B→C 与链 B→C，去重后仅一条。
 
-`telemetry.report` 事件数据新增可选字段 `chain_probes[]`（`ws-protocol.schema.json` 已同步，
-`$defs.chainProbeStat`；旧 Agent 缺省该字段，Panel 忽略）：
+## 3. 调度与队列
 
-- `hop_id`（执行探测的本跳）、`kind`（`forward|bridge`）、`target_address`、`target_port` 必填；
-- `latency_ms` 可缺省：失败/超时样本。
+- **触发**：① 面板调度器每 5 分钟一轮（`LATTIX_LATENCY_PROBE_INTERVAL` 可覆盖），
+  启动即先测一轮；② 链路发布成功（`publishDesiredRevision`）立即追加触发全量一轮
+  （链路变更的下一次测速任务进入队列）。
+- **队列与原子性**：同一服务器同时仅一轮在途（panel 侧 per-server 在途登记，命令
+  Accepted 前登记、回报/失败/死信/TTL 2 分钟放行），轮次依次执行。
+- **单轮原子任务**：panel 下发 `latency.probe`（round_id + 全部目标），agent 对 m 个
+  目标 **并行** 测速，单目标超时 TCP 5s / ICMP 3s，整轮硬截止 60s；全部完成/失败/
+  超时即视为本轮完成。离线服务器本轮跳过（无补发语义）。
+- Agent 侧另有进程内单飞守卫兜底（忙时回 Conflict，panel 下轮重发）；命令 handler
+  立即回 Accepted 后异步执行，不阻塞命令队列中的其余命令。
 
-## 4. 存储（Panel）
+## 4. 协议
 
-- `chain_hop_probes`：每段最新值，主键 `(hop_id, kind)`（同跳最多两条出向段）；
-  `latency_ms REAL NULL`，`sampled_at` 为 Panel 服务端时间；
-- `chain_hop_probe_history`：每次采样一行，保留 24 小时，与主机指标历史同任务
-  （`metrics.retention`，每小时）清理；
-- 删除链路时在 `DeleteChain` 事务内随 `chain_hops` 删除两表的段行（历史行由保留窗口兜底）；
-- schema v22 → v23（新表随 `CREATE TABLE IF NOT EXISTS` 启动建表，无数据迁移）。
+- `latency.probe`（request）：`{round_id, timeout_ms, targets: [{server_id, address, kind, port}]}`
+  → Accepted；
+- `latency.report`（event，无需回执）：`{round_id, results: [{server_id, kind, port,
+  latency_ms?}]}`；`latency_ms` 缺省 = 失败/超时样本（连通性参考，同 server
+  `latency_ms` 约定）。panel 只接受在途轮次归属的回报（round_id 校验）。
+- `ws-protocol.schema.json` 同步（$defs.latencyProbeTarget / latencyProbeResult）。
+- 旧遥测字段 `chain_probes` 已移除（旧 Agent 上报被忽略）。
 
-新鲜度窗口 **10 分钟**：读取段统计时，`sampled_at` 超窗的最新值视为失效（Agent 离线、
-拓扑变更后未再刷新的旧段自动退出聚合，链路延迟如实降级为不完整）。
+## 5. 存储（panel）
 
-## 5. API
+- `server_latency_probes`：有向服务器对最新值，主键 `(from_server, to_server, kind,
+  port)`；`latency_ms REAL NULL` + `measured_at`；
+- `server_latency_history`：每次采样一行，保留 24 小时，与主机指标历史同任务
+  （`metrics.retention`，每小时）清理；两表随服务器级联删除清理（双向）；
+- schema v23 → v24：按跳的旧探测表（chain_hop_probes / chain_hop_probe_history）
+  整体废弃，迁移直接 DROP（24h 保留的遥测数据，无迁移价值）；
+- **新鲜度窗口 15 分钟**（> 2 轮间隔）：窗口外样本视为失效，链路延迟如实降级。
 
-`GET /api/chain/get-stats`（登录，链路一览轮询口径，一次取全量链路）：
+## 6. API 与前端
+
+`GET /api/chain/get-stats`：一次返回全量链路。每链 `segments[]` 为各段（上游跳
+归属）的最新样本——同段含 tcp 与 icmp 两条来源行，前端取 **首选来源**（tcp 优先，
+与业务路径同端口口径）：
 
 ```json
 {
-  "chains": [
-    {
-      "chain_id": 1,
-      "latency_ms": 64.5,
-      "segments": [
-        {"hop_id": 3, "kind": "forward", "target_address": "203.0.113.2",
-         "target_port": 9101, "latency_ms": 12.5, "sampled_at": "..."}
-      ],
-      "today": {"raw_up": 0, "raw_down": 0, "effective_up": 150, "effective_down": 300}
-    }
-  ],
-  "today_up": 300,
-  "today_down": 600
+  "chains": [{
+    "chain_id": 1,
+    "latency_ms": 64.5,
+    "segments": [{"hop_id": 3, "kind": "tcp", "target_address": "…",
+                  "target_port": 9101, "latency_ms": 12.5, "sampled_at": "…"}],
+    "today": {"raw_up": 0, "raw_down": 0, "effective_up": 150, "effective_down": 300}
+  }],
+  "today_up": 300, "today_down": 600
 }
 ```
 
-- `latency_ms`：各段 RTT 之和；段数不足（任一段缺新鲜样本）或单跳链为 `null`；
-- `segments`：新鲜窗口内的段明细（含失败样本），按跳 seq 排列；段→跳的映射由
-  `hop_id` + 目标地址/端口表达，前端可据此标注上下游；
-- `today`：`chain_traffic_daily` 当日桶（流量统计时区口径，`hop_id=0` 链级），含原始
-  与折算字节；无数据缺省；
-- `today_up/today_down`：各链折算口径合计。
+- 链路 `latency_ms` = 各段首选来源 RTT 之和；任一段缺新鲜样本时为 `null`；
+- 段延迟展示/状态分级沿用 <100/100–300/>300ms（ok/warn/fail），箭头与标注同色；
+- 前端 client：`api.chainStats()`；段匹配 `segmentForLink`（上游跳索引 + tcp 优先）。
 
-前端 client：`api.chainStats()`（类型 `ChainStatsResponse`，lib/types.ts）。
+## 7. 验证
 
-## 6. 验证
-
-- Agent：目标推导（直连/反向/hy2/portal 各形态）、本地拨测成功与失败样本、
-  遥测帧携带与缺省（`chainprobe_test.go`、`telemetry_test.go`）；
-- Store：最新值 upsert 与历史保留、新鲜度过滤、保留清理、删链级联、
-  日桶按链/跳合并（`chain_probes_test.go`）；
-- Panel：get-stats 段聚合、不完整链 null、失败样本保留、今日合计（`chains_stats_test.go`）；
-- 契约：`ws_schema_contract_test.go` 固化 `chainProbeStat` wire 形状；
-  OpenAPI 路由契约测试覆盖新路由；前端 `generate:api` 产物同步提交。
-
-## 7. 已知边界
-
-- hy2 入口终结末段无延迟样本：该链段数不完整，`latency_ms` 为 `null`（段列表仍展示其余段）；
-- 存量链路的段延迟**即刻可用**（目标从落盘配置推导），仅反向链 bridge 段依赖 bridge piece
-  已就绪；hop 重编（编辑换服务器）后旧 hop 行随删链/新鲜度窗口自然淘汰；
-- 探测在遥测采样线程内串行执行，单段 5 秒超时上限；段数极少（每跳 ≤2），不阻塞遥测发送节奏。
+- Agent：并行整轮语义（每目标一条结果、不可达样本 nil）、整轮截止、单飞守卫
+  （`serverprobe_test.go`）；TCP 真拨本地监听。
+- Store：最新值 upsert（端口入键）/新鲜度/保留清理/服务器级联、直连与反向链的
+  边推导与去重（`server_latency_test.go`）。
+- Panel：get-stats 的 tcp 首选、icmp 回退、过期降级、失败样本、今日合计
+  （`chains_stats_test.go`）。
+- 契约：`ws_schema_contract_test.go` 固化 latency.probe/report wire 形状。

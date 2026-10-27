@@ -23,7 +23,7 @@ type telemetryManager interface {
 }
 
 // telemetry 采集周期遥测（§13）：xray 版本/运行状态、主机指标（/proc）、
-// xray 绝对流量计数器（出口 node、每跳 forward 与用户维度）、链跳段探测与在线用户快照。
+// xray 绝对流量计数器（出口 node、每跳 forward 与用户维度）与在线用户快照。
 type telemetry struct {
 	mgr telemetryManager
 
@@ -34,18 +34,16 @@ type telemetry struct {
 	lastNetworkRX           uint64
 	lastNetworkAt           time.Time
 	latency                 func() (*float64, bool)
-	chainProbes             func() []shared.ChainProbeStat
 }
 
-func newTelemetry(mgr *xray.Manager, latency func() (*float64, bool),
-	chainProbes func() []shared.ChainProbeStat) *telemetry {
-	return &telemetry{mgr: mgr, latency: latency, chainProbes: chainProbes}
+func newTelemetry(mgr *xray.Manager, latency func() (*float64, bool)) *telemetry {
+	return &telemetry{mgr: mgr, latency: latency}
 }
 
 // collect 组装一帧遥测载荷。
 func (t *telemetry) collect() shared.TelemetryPayload {
 	ver, running := t.mgr.Version()
-	payload := shared.TelemetryPayload{
+	return shared.TelemetryPayload{
 		XrayVersion:    ver,
 		XrayRunning:    running,
 		XrayInstanceID: t.mgr.StatsInstanceID(),
@@ -53,10 +51,6 @@ func (t *telemetry) collect() shared.TelemetryPayload {
 		Traffic:        t.trafficCounters(),
 		OnlineUsers:    t.onlineUsers(),
 	}
-	if t.chainProbes != nil {
-		payload.ChainProbes = t.chainProbes()
-	}
-	return payload
 }
 
 // onlineUsers 采集在线用户快照（§13 遥测）。xray 无 GetUsersStats 时 hot client 回退

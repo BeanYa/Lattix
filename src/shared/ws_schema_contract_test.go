@@ -493,13 +493,37 @@ func TestWSSchemaTelemetryContract(t *testing.T) {
 	for _, name := range []string{"node_id", "endpoint_id", "hop_id", "user"} {
 		propertyOf(t, "$defs.trafficCounter", counter, name)
 	}
+}
 
-	// chainProbeStat：hop_id/kind/target 必填标识段；latency_ms 允许缺省（探测失败样本，
+func TestWSSchemaLatencyProbeContract(t *testing.T) {
+	schema := loadWSSchema(t)
+
+	// latency.probe 请求：round_id/timeout_ms/targets 必填。
+	ctx := "latency.probe request data"
+	req := dataRule(t, schema, KindRequest, TypeLatencyProbe, "")
+	reqWire := wireFields(t, LatencyProbePayload{})
+	assertRequired(t, ctx, req, []string{"round_id", "timeout_ms", "targets"}, reqWire)
+	assertWireCovered(t, ctx, req, reqWire)
+
+	// latency.report 事件：round_id/results 必填。
+	ctx = "latency.report event data"
+	report := dataRule(t, schema, KindEvent, TypeLatencyReport, "")
+	reportWire := wireFields(t, LatencyProbeReportPayload{})
+	assertRequired(t, ctx, report, []string{"round_id", "results"}, reportWire)
+	assertWireCovered(t, ctx, report, reportWire)
+
+	// latencyProbeTarget：server_id/address/kind 必填；port 仅 tcp 携带。
+	target := defOf(t, schema, "latencyProbeTarget")
+	targetWire := wireFields(t, LatencyProbeTarget{})
+	assertRequired(t, "$defs.latencyProbeTarget", target, []string{"server_id", "address", "kind"}, targetWire)
+	assertWireCovered(t, "$defs.latencyProbeTarget", target, targetWire)
+
+	// latencyProbeResult：server_id/kind 必填；latency_ms 允许缺省（失败/超时样本，
 	// 同 host.latency_ms 的连通性参考约定）。
-	probe := defOf(t, schema, "chainProbeStat")
-	assertRequired(t, "$defs.chainProbeStat", probe,
-		[]string{"hop_id", "kind", "target_address", "target_port"}, wireFields(t, ChainProbeStat{}))
-	assertWireCovered(t, "$defs.chainProbeStat", probe, wireFields(t, ChainProbeStat{}))
+	result := defOf(t, schema, "latencyProbeResult")
+	resultWire := wireFields(t, LatencyProbeResult{})
+	assertRequired(t, "$defs.latencyProbeResult", result, []string{"server_id", "kind"}, resultWire)
+	assertWireCovered(t, "$defs.latencyProbeResult", result, resultWire)
 }
 
 func TestWSSchemaCleanupContract(t *testing.T) {

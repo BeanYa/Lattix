@@ -74,6 +74,11 @@ type Dispatcher struct {
 	testProgressMu sync.RWMutex
 	testProgress   map[int64]shared.ServerTestProgressPayload
 
+	// latencyRounds 在途测速轮次（§链路统计）：serverID → 轮次；panel 侧串行保证，
+	// 同一服务器仅一轮在途，TTL 过期自动放行下一轮。
+	latencyMu     sync.Mutex
+	latencyRounds map[int64]latencyRound
+
 	endpointRetryMu   sync.Mutex
 	endpointRetriedAt map[int64]time.Time // 端点自动重试退避：key endpointID → 上次自动补发时间
 
@@ -136,6 +141,7 @@ func New(st *store.Store, req ws.AgentRequester, opts Options, events Events) *D
 	d := &Dispatcher{
 		st: st, req: req, opts: opts, events: events, flushMu: make(map[int64]*sync.Mutex),
 		testProgress:      make(map[int64]shared.ServerTestProgressPayload),
+		latencyRounds:     make(map[int64]latencyRound),
 		cleanupWaiters:    newSyncWaiters[shared.CleanupXrayResult](),
 		rebuildWaiters:    newSyncWaiters[shared.RebuildXrayResult](),
 		endpointRetriedAt: make(map[int64]time.Time),
@@ -409,7 +415,7 @@ func isBusinessCommand(env shared.Envelope) bool {
 		shared.TypeUninstall, shared.TypeUpgradeXray, shared.TypeUpgradeAgent,
 		shared.TypeApplySharedEndpoint, shared.TypeRemoveSharedEndpoint,
 		shared.TypeCleanupXray, shared.TypeRebuildXray,
-		shared.TypeServerTestRun:
+		shared.TypeServerTestRun, shared.TypeLatencyProbe:
 		return true
 	default:
 		return false
@@ -746,6 +752,8 @@ func (d *Dispatcher) HandleMessage(serverID int64, env shared.Envelope) {
 			d.handleDriftReport(serverID, env)
 		case shared.TypeServerTestProgress:
 			d.handleServerTestProgress(serverID, env)
+		case shared.TypeLatencyReport:
+			d.handleLatencyReport(serverID, env)
 		default:
 			log.Printf("dispatch: server %d: ignore event type=%s request_id=%s",
 				serverID, env.Type, env.RequestID)
@@ -1058,20 +1066,7 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 			log.Printf("dispatch: server %d: apply traffic snapshot: %v", serverID, err)
 		}
 	}
-	// 链跳段探测（§链路统计）：覆盖最新值 + 插入历史；失败/超时样本（latency 缺省）照常落库。
-	if len(p.ChainProbes) > 0 {
-		probes := make([]store.ChainProbeSample, 0, len(p.ChainProbes))
-		for _, probe := range p.ChainProbes {
-			probes = append(probes, store.ChainProbeSample{
-				HopID: probe.HopID, Kind: probe.Kind,
-				TargetAddress: probe.TargetAddress, TargetPort: probe.TargetPort,
-				LatencyMS: probe.LatencyMS,
-			})
-		}
-		if err := d.st.SaveChainHopProbes(ctx, serverID, probes, time.Now().UTC()); err != nil {
-			log.Printf("dispatch: server %d: save chain hop probes: %v", serverID, err)
-		}
-	}
+	// 链路延迟探测已重构为面板调度的 latency.probe 轮次（§链路统计，dispatch/latency.go）。
 	// 在线用户快照：每帧全量覆盖该服务器记录（空快照 [] = 清除，保留在线时为 0 的语义）。
 	// nil = 该帧未携带在线数据（agent 查询失败/不支持），保留旧快照直至新鲜度窗口过期。
 	if p.OnlineUsers != nil && d.events.OnOnlineUsers != nil {
@@ -1316,6 +1311,15 @@ func init() {
 					log.Printf("dispatch: server %d: rebuild xray command %d acked", serverID, cmd.ID)
 				} else {
 					log.Printf("dispatch: server %d: rebuild xray command %d failed: %s", serverID, cmd.ID, errorMessage)
+				}
+			},
+		},
+		// latency.probe：Accepted 即接管（结果经 latency.report 事件异步落库，
+		// §链路统计）；失败/死信立即放行该服务器的下一轮。
+		shared.TypeLatencyProbe: {
+			takeover: func(d *Dispatcher, serverID int64, cmd *store.Command, env shared.Envelope, success bool, errorMessage string) {
+				if !success {
+					d.clearLatencyRound(serverID)
 				}
 			},
 		},

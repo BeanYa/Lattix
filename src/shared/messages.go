@@ -94,6 +94,8 @@ const (
 	TypeRemoveSharedEndpoint = "shared-endpoint.remove"
 	TypeCleanupXray          = "xray.cleanup"
 	TypeRebuildXray          = "xray.rebuild"
+	TypeLatencyProbe         = "latency.probe"
+	TypeLatencyReport        = "latency.report"
 )
 
 // NewMessageID 返回用于 request_id/trace_id 的 32 位小写十六进制随机值。
@@ -301,27 +303,45 @@ type TelemetryPayload struct {
 	// OnlineUsers 该服务器在线用户全量快照；无 omitempty 以便区分
 	// "成功空查询"（[]，序列化为 []）与"查询失败/不支持"（nil，序列化为 null）。
 	OnlineUsers []OnlineUserStat `json:"online_users"`
-	// ChainProbes 本机链跳段探测结果（§链路统计）：每个可探测段一条；
-	// 无链路 piece 或全部探测禁用时缺省。
-	ChainProbes []ChainProbeStat `json:"chain_probes,omitempty"`
 }
 
-// ChainProbeStat 的 Kind 取值：forward = 直连段（拨下一跳 forward 监听端口），
-// bridge = 反向段（bridge 拨上游 portal 监听端口）。
+// 服务器间延迟测速（§链路统计）的探测来源取值。
 const (
-	ChainProbeKindForward = "forward"
-	ChainProbeKindBridge  = "bridge"
+	LatencyKindTCP  = "tcp" // TCP 握手测速（复用链路监听端口，Port 必填）
+	LatencyKindICMP = "icmp" // ICMP Echo 测速（Port 恒 0）
 )
 
-// ChainProbeStat 是一个链跳段（本跳 → 下一跳物理路径）的单次 TCP 握手探测结果：
-// HopID 为执行探测的本跳，Kind 区分段类型（同跳可有两条：bridge 反向段 + forward 直连段）。
-// LatencyMS 为 TCP 握手 RTT；nil = 本次失败/超时（连通性参考，同 server latency_ms 约定）。
-type ChainProbeStat struct {
-	HopID         int64    `json:"hop_id"`
-	Kind          string   `json:"kind"` // forward|bridge
-	TargetAddress string   `json:"target_address"`
-	TargetPort    int      `json:"target_port"`
-	LatencyMS     *float64 `json:"latency_ms"`
+// LatencyProbeTarget 是单个探测目标：agent 所在服务器 → 目标服务器的一次测量。
+// Address 为目标服务器的设置公网地址（域名或 IP）；Kind=tcp 时 Port 为复用的
+// 链路监听端口（forward/portal），Kind=icmp 时 Port 为 0。
+type LatencyProbeTarget struct {
+	ServerID int64  `json:"server_id"`
+	Address  string `json:"address"`
+	Kind     string `json:"kind"` // tcp|icmp
+	Port     int    `json:"port,omitempty"`
+}
+
+// LatencyProbePayload 是 latency.probe 的载荷：一轮探测的全部目标，agent 并行
+// 测量并在整轮截止（TimeoutMS，panel 固定 60s）内完成/失败/超时后回报。
+type LatencyProbePayload struct {
+	RoundID   string               `json:"round_id"`
+	TimeoutMS int                  `json:"timeout_ms"`
+	Targets   []LatencyProbeTarget `json:"targets"`
+}
+
+// LatencyProbeResult 是单目标的测量结果；LatencyMS 为 nil = 失败/超时（连通性参考）。
+type LatencyProbeResult struct {
+	ServerID  int64    `json:"server_id"`
+	Kind      string   `json:"kind"` // tcp|icmp
+	Port      int      `json:"port,omitempty"`
+	LatencyMS *float64 `json:"latency_ms"`
+}
+
+// LatencyProbeReportPayload 是 latency.report 事件的载荷（无需回执）；
+// RoundID 对应下发轮次，panel 只接受在途轮次的回报。
+type LatencyProbeReportPayload struct {
+	RoundID string               `json:"round_id"`
+	Results []LatencyProbeResult `json:"results"`
 }
 
 // HostMetrics 是主机指标（/proc 采集）。

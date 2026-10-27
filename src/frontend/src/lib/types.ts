@@ -523,11 +523,11 @@ export interface ChainShareLink {
   link: string
 }
 
-// 链路一览统计（§链路统计）：跳间段延迟（TCP 握手 RTT）与今日负载。
-// latency_ms 为各段之和；任一段缺新鲜样本（10 分钟窗口）时为 null。
+// 链路一览统计（§链路统计）：跳间段延迟（服务器对测速，tcp=复用链路监听端口 /
+// icmp=回退来源）与今日负载。latency_ms 为 null = 最近一次该来源探测失败/超时。
 export interface ChainSegmentStat {
   hop_id: number
-  kind: 'forward' | 'bridge'
+  kind: 'tcp' | 'icmp'
   target_address: string
   target_port: number
   latency_ms: number | null

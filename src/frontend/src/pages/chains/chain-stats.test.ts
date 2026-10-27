@@ -18,17 +18,25 @@ const response: ChainStatsResponse = {
       segments: [
         {
           hop_id: 10,
-          kind: 'forward',
+          kind: 'tcp',
           target_address: 'a',
-          target_port: 1,
+          target_port: 30000,
           latency_ms: 12.5,
           sampled_at: 't1',
         },
         {
+          hop_id: 10,
+          kind: 'icmp',
+          target_address: 'a',
+          target_port: 0,
+          latency_ms: 13.8,
+          sampled_at: 't1b',
+        },
+        {
           hop_id: 12,
-          kind: 'bridge',
+          kind: 'icmp',
           target_address: 'b',
-          target_port: 2,
+          target_port: 0,
           latency_ms: 52,
           sampled_at: 't2',
         },
@@ -42,11 +50,19 @@ const response: ChainStatsResponse = {
         // 失败样本（latency 缺省）保留为连通性参考
         {
           hop_id: 20,
-          kind: 'forward',
+          kind: 'tcp',
           target_address: 'c',
           target_port: 3,
           latency_ms: null,
           sampled_at: 't3',
+        },
+        {
+          hop_id: 20,
+          kind: 'icmp',
+          target_address: 'c',
+          target_port: 0,
+          latency_ms: 20,
+          sampled_at: 't3b',
         },
       ],
       today: { raw_up: 0, raw_down: 0, effective_up: 0, effective_down: 0 },
@@ -77,12 +93,12 @@ describe('formatLatency', () => {
 })
 
 describe('buildChainStatsIndex', () => {
-  it('按链与按探测跳双向索引', () => {
+  it('按链与按段上游跳索引', () => {
     const index = buildChainStatsIndex(response)
-    expect(index.byChain.get(1)?.segments).toHaveLength(2)
+    expect(index.byChain.get(1)?.segments).toHaveLength(3)
     expect(index.byChain.get(2)?.latency_ms).toBeNull()
-    expect(index.byHop.get(10)?.[0].kind).toBe('forward')
-    expect(index.byHop.get(12)?.[0].kind).toBe('bridge')
+    expect(index.byHop.get(10)).toHaveLength(2)
+    expect(index.byHop.get(12)?.[0].kind).toBe('icmp')
     expect(index.byHop.get(99)).toBeUndefined()
   })
 
@@ -96,16 +112,22 @@ describe('buildChainStatsIndex', () => {
 describe('segmentForLink', () => {
   const index = buildChainStatsIndex(response)
 
-  it('直连段取上游 forward 探测', () => {
-    expect(segmentForLink(index, 10, 11)?.latency_ms).toBe(12.5)
+  it('tcp 样本优先（与业务路径同端口）', () => {
+    const segment = segmentForLink(index, 10, 11)
+    expect(segment?.kind).toBe('tcp')
+    expect(segment?.latency_ms).toBe(12.5)
   })
 
-  it('反向段取下游 bridge 探测', () => {
-    expect(segmentForLink(index, 11, 12)?.latency_ms).toBe(52)
+  it('无 tcp 样本回退 icmp', () => {
+    const segment = segmentForLink(index, 12, 13)
+    expect(segment?.kind).toBe('icmp')
+    expect(segment?.latency_ms).toBe(52)
   })
 
-  it('失败样本兜底返回（连通性参考）', () => {
-    expect(segmentForLink(index, 20, 21)?.latency_ms).toBeNull()
+  it('tcp 失败样本优先于 icmp 成功样本（连通性参考，显示超时）', () => {
+    const segment = segmentForLink(index, 20, 21)
+    expect(segment?.kind).toBe('tcp')
+    expect(segment?.latency_ms).toBeNull()
   })
 
   it('无新鲜样本返回 null', () => {

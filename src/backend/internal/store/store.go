@@ -520,30 +520,31 @@ CREATE TABLE IF NOT EXISTS chain_multiplier_events (
     effective_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 链跳段探测最新值（agent 随遥测上报的下一跳 TCP 握手 RTT，§链路统计）：
--- (hop_id, kind) 唯一——同跳可有 bridge 反向段 + forward 直连段两条出向探测；
--- latency_ms 为 NULL 表示已接受但失败/超时的连通性参考样本（同 server latency_ms 约定）。
-CREATE TABLE IF NOT EXISTS chain_hop_probes (
-    hop_id         INTEGER NOT NULL,
-    kind           TEXT    NOT NULL,
-    server_id      INTEGER NOT NULL REFERENCES servers(id),
-    target_address TEXT    NOT NULL DEFAULT '',
-    target_port    INTEGER NOT NULL DEFAULT 0,
-    latency_ms     REAL,
-    sampled_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (hop_id, kind)
+-- 服务器间延迟最新值（§链路统计）：有向对 from→to + 探测来源（tcp 复用链路监听端口，
+-- port 为该端口；icmp 的 port=0）。latency_ms 为 NULL 表示已接受但失败/超时的
+-- 连通性参考样本（同 server latency_ms 约定）。数据由各 Agent 按面板下发的
+-- latency.probe 轮次并行测速上报（5 分钟一轮，链路发布后立即触发）。
+CREATE TABLE IF NOT EXISTS server_latency_probes (
+    from_server INTEGER NOT NULL REFERENCES servers(id),
+    to_server   INTEGER NOT NULL REFERENCES servers(id),
+    kind        TEXT    NOT NULL,
+    port        INTEGER NOT NULL DEFAULT 0,
+    latency_ms  REAL,
+    measured_at DATETIME NOT NULL,
+    PRIMARY KEY (from_server, to_server, kind, port)
 );
 
--- 链跳段探测历史（24 小时保留，供段级趋势与排查；每小时后台清理）。
-CREATE TABLE IF NOT EXISTS chain_hop_probe_history (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    hop_id     INTEGER NOT NULL,
-    kind       TEXT    NOT NULL,
-    server_id  INTEGER NOT NULL,
-    latency_ms REAL,
-    sampled_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+-- 服务器间延迟历史（24 小时保留，供趋势与排查；每小时后台清理）。
+CREATE TABLE IF NOT EXISTS server_latency_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_server INTEGER NOT NULL,
+    to_server   INTEGER NOT NULL,
+    kind        TEXT    NOT NULL,
+    port        INTEGER NOT NULL DEFAULT 0,
+    latency_ms  REAL,
+    measured_at DATETIME NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_chain_hop_probe_history_time ON chain_hop_probe_history (sampled_at);
+CREATE INDEX IF NOT EXISTS idx_server_latency_history_time ON server_latency_history (measured_at);
 
 -- 流量统计明细桶（分钟级）与日汇总：多维度（user/node/endpoint/chain_hop）原始字节，
 -- 不乘链路倍率（计费口径归 chain_traffic_daily）；写入挂在 ApplyTrafficSnapshot 遥测入口。

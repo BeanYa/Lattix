@@ -11,8 +11,8 @@ import (
 
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
-// v23: chain_hop_probes / chain_hop_probe_history（链跳段探测，§链路统计）。
-const schemaVersion = 23
+// v24: 链路统计重构——延迟按有向服务器对（tcp/icmp+端口）保存；丢弃 v23 按跳探测表。
+const schemaVersion = 24
 
 type columnMigration struct {
 	name       string
@@ -192,6 +192,12 @@ func migrateSchema(tx *sql.Tx) error {
 		if _, err := ensureColumns(tx, table, columns); err != nil {
 			return err
 		}
+	}
+	// v24 链路统计重构：延迟改按有向服务器对保存（server_latency_probes，随 Schema 建表），
+	// v23 的按跳探测表整体废弃（24h 保留的遥测数据，无迁移价值）。
+	if _, err := tx.Exec(`DROP TABLE IF EXISTS chain_hop_probes;
+		DROP TABLE IF EXISTS chain_hop_probe_history;`); err != nil {
+		return fmt.Errorf("drop legacy chain hop probe tables: %w", err)
 	}
 	if err := migrateServerMetrics(tx); err != nil {
 		return err

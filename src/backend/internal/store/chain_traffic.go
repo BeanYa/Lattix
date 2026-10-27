@@ -406,3 +406,35 @@ func (s *Store) ChainTrafficDaily(ctx context.Context, chainID, hopID int64, sin
 	}
 	return out, rows.Err()
 }
+
+// ChainDailyTraffic 是某日一条链（或其单跳）的流量桶（原始与折算字节）。
+type ChainDailyTraffic struct {
+	ChainID       int64 `json:"chain_id"`
+	HopID         int64 `json:"hop_id"`
+	RawUp         int64 `json:"raw_up"`
+	RawDown       int64 `json:"raw_down"`
+	EffectiveUp   int64 `json:"effective_up"`
+	EffectiveDown int64 `json:"effective_down"`
+}
+
+// ChainDailyTrafficByDate 返回指定日期（流量统计时区口径）的逐链逐跳流量桶，
+// hop_id=0 为链合计（入口用户口径），hop_id>0 为各跳转发口径（链路一览负载列）。
+func (s *Store) ChainDailyTrafficByDate(ctx context.Context, usageDate string) ([]ChainDailyTraffic, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT chain_id, hop_id, SUM(raw_up), SUM(raw_down),
+		SUM(effective_up), SUM(effective_down) FROM chain_traffic_daily
+		WHERE usage_date=? GROUP BY chain_id, hop_id ORDER BY chain_id, hop_id`, usageDate)
+	if err != nil {
+		return nil, fmt.Errorf("chain daily traffic: %w", err)
+	}
+	defer rows.Close()
+	out := make([]ChainDailyTraffic, 0)
+	for rows.Next() {
+		var item ChainDailyTraffic
+		if err := rows.Scan(&item.ChainID, &item.HopID, &item.RawUp, &item.RawDown,
+			&item.EffectiveUp, &item.EffectiveDown); err != nil {
+			return nil, fmt.Errorf("scan chain daily traffic: %w", err)
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}

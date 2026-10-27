@@ -14,8 +14,9 @@ import (
 	"lattix/backend/internal/store"
 )
 
-// chainStatsFixture 在临时文件库上直建两跳链 A/B 与服务器，返回独立 sqlite 连接
-// 供测试落流量日桶（面板侧无 dispatcher 依赖；handleGetChainStats 只读 store）。
+// chainStatsFixture 建一台直连两跳链（entry→exit，realized 端口 30000）并发布，
+// 返回独立 sqlite 连接供测试落流量日桶（面板侧无 dispatcher 依赖；
+// handleGetChainStats 只读 store）。
 func chainStatsFixture(t *testing.T) (*store.Store, *sql.DB, *Server) {
 	t.Helper()
 	ctx := context.Background()
@@ -39,23 +40,37 @@ func chainStatsFixture(t *testing.T) (*store.Store, *sql.DB, *Server) {
 		return id
 	}
 	aID, cID := server("entry"), server("exit")
-	for _, name := range []string{"链A", "链B"} {
-		chainID, err := st.InsertChain(ctx, name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.InsertChainHop(ctx, chainID, 0, aID, store.HopRoleEntry, 0, 10000, ""); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.InsertChainHop(ctx, chainID, 1, cID, store.HopRoleExit, 0, 0, ""); err != nil {
-			t.Fatal(err)
-		}
+	chainID, err := st.InsertChain(ctx, "链A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entryHop, err := st.InsertChainHop(ctx, chainID, 0, aID, store.HopRoleEntry, 0, 10000, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exitHop, err := st.InsertChainHop(ctx, chainID, 1, cID, store.HopRoleExit, 0, 0, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{
+		Name: "链A", ServiceServerID: cID,
+		ServiceConfig: []byte(`{"protocol":"vless"}`), ServiceRealized: []byte(`{"port":30000}`),
+		Hops: []store.ChainRevisionHop{
+			{HopID: entryHop, ServerID: aID, Transport: "direct", ForwardPort: 10000},
+			{HopID: exitHop, ServerID: cID, Role: store.HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PublishChainRevision(ctx, revision.ID, false, store.ChainStatusPending); err != nil {
+		t.Fatal(err)
 	}
 	return st, raw, &Server{st: st}
 }
 
-// TestGetChainStats 建两跳链 A/B，验证 get-stats 的段延迟聚合、失败样本
-// 与今日负载口径（§链路统计）。
+// TestGetChainStats 验证 get-stats 的服务器对测速聚合（§链路统计）：
+// tcp 首选 / icmp 回退、新鲜度过期、失败样本与今日负载口径。
 func TestGetChainStats(t *testing.T) {
 	ctx := context.Background()
 	st, raw, serverAPI := chainStatsFixture(t)
@@ -63,35 +78,35 @@ func TestGetChainStats(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(chains) != 2 {
-		t.Fatalf("expected 2 chains, got %d", len(chains))
+	if len(chains) != 1 {
+		t.Fatalf("expected 1 chain, got %d", len(chains))
 	}
-	// 链A 的入口跳上报一段有效 RTT；链B 不上报（段不完整 → 链路延迟 null）。
+	chain := chains[0]
+	edges, err := st.PublishedLatencyEdges(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 2 { // tcp（复用出口 realized 端口）+ icmp
+		t.Fatalf("edges = %+v, want tcp+icmp", edges)
+	}
+	fromServer, toServer := edges[0].FromServer, edges[0].ToServer
+
+	// tcp（复用出口 realized 端口 30000）与 icmp 同段各有新鲜样本：首选 tcp。
 	latency := 12.25
-	for _, chain := range chains {
-		hops, err := st.ChainHops(ctx, chain.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if chain.Name != "链A" {
-			continue
-		}
-		if err := st.SaveChainHopProbes(ctx, hops[0].ServerID, []store.ChainProbeSample{
-			{HopID: hops[0].ID, Kind: "forward", TargetAddress: "203.0.113.9", TargetPort: 9109,
-				LatencyMS: &latency},
-		}, time.Now().UTC()); err != nil {
-			t.Fatal(err)
-		}
+	now := time.Now().UTC()
+	if err := st.SaveServerLatencyProbes(ctx, fromServer, []store.ServerLatencySample{
+		{ToServer: toServer, Kind: "tcp", Port: 30000, LatencyMS: &latency},
+		{ToServer: toServer, Kind: "icmp", Port: 0, LatencyMS: &latency},
+	}, now); err != nil {
+		t.Fatal(err)
 	}
 	// 今日负载：直接落链级日桶（折算口径 1.5 倍）。
 	_, location := st.TrafficLocation(ctx)
 	today := time.Now().In(location).Format("2006-01-02")
-	for _, chain := range chains {
-		if _, err := raw.Exec(`INSERT INTO chain_traffic_daily
-			(chain_id, hop_id, revision_id, usage_date, timezone, raw_up, raw_down, effective_up, effective_down)
-			VALUES (?, 0, 1, ?, 'Asia/Shanghai', 100, 200, 150, 300)`, chain.ID, today); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := raw.Exec(`INSERT INTO chain_traffic_daily
+		(chain_id, hop_id, revision_id, usage_date, timezone, raw_up, raw_down, effective_up, effective_down)
+		VALUES (?, 0, 1, ?, 'Asia/Shanghai', 100, 200, 150, 300)`, chain.ID, today); err != nil {
+		t.Fatal(err)
 	}
 
 	recorder := httptest.NewRecorder()
@@ -104,52 +119,46 @@ func TestGetChainStats(t *testing.T) {
 	if err := json.Unmarshal(env.Data, &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Chains) != 2 {
+	if len(response.Chains) != 1 {
 		t.Fatalf("got %d chains: %+v", len(response.Chains), response.Chains)
 	}
-	measured, full := 0, 0
-	for _, chain := range response.Chains {
-		if chain.ChainID == 0 {
-			t.Fatalf("chain_id missing in stats: %+v", chain)
-		}
-		if chain.Today == nil || chain.Today.EffectiveUp != 150 || chain.Today.EffectiveDown != 300 {
-			t.Fatalf("today traffic mismatch: %+v", chain)
-		}
-		if chain.LatencyMS != nil {
-			full++
-			if *chain.LatencyMS != 12.25 {
-				t.Fatalf("chain latency = %v, want 12.25", *chain.LatencyMS)
-			}
-			if len(chain.Segments) != 1 || chain.Segments[0].Kind != "forward" ||
-				chain.Segments[0].TargetPort != 9109 || chain.Segments[0].LatencyMS == nil {
-				t.Fatalf("segments mismatch: %+v", chain.Segments)
-			}
-			measured++
-		} else if len(chain.Segments) != 0 {
-			t.Fatalf("unmeasured chain must have no fresh segments: %+v", chain)
+	dto := response.Chains[0]
+	if dto.ChainID != chain.ID {
+		t.Fatalf("chain_id = %d, want %d", dto.ChainID, chain.ID)
+	}
+	if dto.LatencyMS == nil || *dto.LatencyMS != 12.25 {
+		t.Fatalf("chain latency = %+v, want 12.25", dto.LatencyMS)
+	}
+	if len(dto.Segments) != 2 {
+		t.Fatalf("segments = %+v, want tcp+icmp", dto.Segments)
+	}
+	if dto.Today == nil || dto.Today.EffectiveUp != 150 || dto.Today.EffectiveDown != 300 {
+		t.Fatalf("today mismatch: %+v", dto.Today)
+	}
+	if response.TodayUp != 150 || response.TodayDown != 300 {
+		t.Fatalf("today totals = %d/%d, want 150/300", response.TodayUp, response.TodayDown)
+	}
+	var tcpSegment, icmpSegment *chainSegmentStatDTO
+	for i := range dto.Segments {
+		switch dto.Segments[i].Kind {
+		case "tcp":
+			tcpSegment = &dto.Segments[i]
+		case "icmp":
+			icmpSegment = &dto.Segments[i]
 		}
 	}
-	if measured != 1 || full != 1 {
-		t.Fatalf("expected exactly one fully measured chain, got measured=%d full=%d", measured, full)
+	if tcpSegment == nil || tcpSegment.TargetPort != 30000 || tcpSegment.LatencyMS == nil {
+		t.Fatalf("tcp segment mismatch: %+v", tcpSegment)
 	}
-	if response.TodayUp != 300 || response.TodayDown != 600 {
-		t.Fatalf("today totals = %d/%d, want 300/600", response.TodayUp, response.TodayDown)
+	if icmpSegment == nil || icmpSegment.LatencyMS == nil {
+		t.Fatalf("icmp segment mismatch: %+v", icmpSegment)
 	}
 
-	// 失败样本（latency 缺省）：段保留在段列表中作连通性参考，链路延迟转为 null。
-	for _, chain := range chains {
-		if chain.Name != "链A" {
-			continue
-		}
-		hops, err := st.ChainHops(ctx, chain.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := st.SaveChainHopProbes(ctx, hops[0].ServerID, []store.ChainProbeSample{
-			{HopID: hops[0].ID, Kind: "forward", TargetAddress: "203.0.113.9", TargetPort: 9109},
-		}, time.Now().UTC()); err != nil {
-			t.Fatal(err)
-		}
+	// tcp 样本过期（写回过期时间戳）：段回退到 icmp，链路延迟取 icmp 值。
+	if err := st.SaveServerLatencyProbes(ctx, fromServer, []store.ServerLatencySample{
+		{ToServer: toServer, Kind: "tcp", Port: 30000, LatencyMS: &latency},
+	}, now.Add(-16*time.Minute)); err != nil {
+		t.Fatal(err)
 	}
 	recorder = httptest.NewRecorder()
 	serverAPI.handleGetChainStats(recorder, httptest.NewRequest("GET", "/api/chain/get-stats", nil))
@@ -157,14 +166,32 @@ func TestGetChainStats(t *testing.T) {
 	if err := json.Unmarshal(env.Data, &response); err != nil {
 		t.Fatal(err)
 	}
-	for _, chain := range response.Chains {
-		if chain.LatencyMS != nil {
-			t.Fatalf("failed probe must null chain latency: %+v", chain)
-		}
+	dto = response.Chains[0]
+	if len(dto.Segments) != 1 || dto.Segments[0].Kind != "icmp" {
+		t.Fatalf("segments after tcp expiry = %+v, want icmp only", dto.Segments)
 	}
-	for _, chain := range response.Chains {
-		if len(chain.Segments) == 1 && chain.Segments[0].LatencyMS != nil {
-			t.Fatalf("failed sample kept with latency: %+v", chain.Segments)
-		}
+	if dto.LatencyMS == nil || *dto.LatencyMS != 12.25 {
+		t.Fatalf("chain latency after fallback = %+v", dto.LatencyMS)
+	}
+
+	// 失败样本（tcp 在、latency 缺省）：段保留为连通性参考，链路延迟转为 null。
+	if err := st.SaveServerLatencyProbes(ctx, fromServer, []store.ServerLatencySample{
+		{ToServer: toServer, Kind: "tcp", Port: 30000},
+		{ToServer: toServer, Kind: "icmp", Port: 0, LatencyMS: &latency},
+	}, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	recorder = httptest.NewRecorder()
+	serverAPI.handleGetChainStats(recorder, httptest.NewRequest("GET", "/api/chain/get-stats", nil))
+	env = decodeRPC(t, recorder)
+	if err := json.Unmarshal(env.Data, &response); err != nil {
+		t.Fatal(err)
+	}
+	dto = response.Chains[0]
+	if dto.LatencyMS != nil {
+		t.Fatalf("failed tcp sample must null chain latency: %+v", dto)
+	}
+	if len(dto.Segments) != 2 {
+		t.Fatalf("segments after failure = %+v, want tcp+icmp", dto.Segments)
 	}
 }

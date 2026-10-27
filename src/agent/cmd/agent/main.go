@@ -110,6 +110,7 @@ func main() {
 		panel:              panelRuntime,
 		tests:              testManager,
 		queue:              commandQueue,
+		probes:             newProbeRunner(),
 	}
 	connectionPath := filepath.Join(filepath.Dir(*statePath), "connection.json")
 	// 连接状态机（state.ConnState*）：进程内跟踪当前状态并校验每次写入的转换，
@@ -231,6 +232,7 @@ type agentContext struct {
 	panel              *panelStateTracker
 	tests              *servertest.Manager
 	queue              *persistentCommandQueue
+	probes             *probeRunner
 }
 
 // run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因；到达 online
@@ -396,7 +398,7 @@ func run(panel, token string, saveConnectionStatus func(connected bool, stateNam
 
 	// Telemetry does not wait for a latency sample.
 	go func() {
-		t := newTelemetry(ctx.mgr, latency.snapshot, chainProbeSampler(ctx.mgr))
+		t := newTelemetry(ctx.mgr, latency.snapshot)
 		send := func() bool {
 			messageID := shared.NewMessageID()
 			env := shared.Envelope{
@@ -682,6 +684,45 @@ func handle(sc *safeConn, env shared.Envelope, latency *latencyTracker, ctx *age
 		return
 	}
 	switch env.Type {
+	case shared.TypeLatencyProbe:
+		var p shared.LatencyProbePayload
+		if !parseData(sc, env, &p) {
+			return
+		}
+		if len(p.Targets) == 0 {
+			replyCode(sc, env, shared.CodeInvalidArgument, "empty probe targets", struct{}{})
+			return
+		}
+		// 单飞：同一时刻仅一轮（§链路统计）。忙时回 Conflict，panel 下一轮重发。
+		if !ctx.probes.tryStart(p.RoundID) {
+			replyCode(sc, env, shared.CodeConflict, "latency probe round already running", struct{}{})
+			return
+		}
+		log.Printf("latency.probe request_id=%s round=%s targets=%d", env.RequestID, p.RoundID, len(p.Targets))
+		replyCode(sc, env, shared.CodeAccepted, "", struct{}{})
+		timeout := time.Duration(p.TimeoutMS) * time.Millisecond
+		if timeout <= 0 || timeout > 2*time.Minute {
+			timeout = time.Minute
+		}
+		// 异步执行（Accepted 已应答）：并行测 m 个目标，整轮截止后经 latency.report
+		// 事件回报，不阻塞命令队列中的其余命令。
+		go func() {
+			defer ctx.probes.done()
+			results := runLatencyProbeRound(p.Targets, timeout)
+			messageID := shared.NewMessageID()
+			if err := sc.writeJSON(shared.Envelope{
+				Kind:      shared.KindEvent,
+				Type:      shared.TypeLatencyReport,
+				RequestID: messageID,
+				TraceID:   messageID,
+				Data: mustJSON(shared.LatencyProbeReportPayload{
+					RoundID: p.RoundID, Results: results,
+				}),
+			}); err != nil {
+				log.Printf("latency.report round=%s: %v", p.RoundID, err)
+			}
+		}()
+
 	case shared.TypeServerTestRun:
 		var p shared.ServerTestRunPayload
 		if !parseData(sc, env, &p) {

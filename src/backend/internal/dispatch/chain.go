@@ -505,6 +505,8 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 		log.Printf("dispatch: chain %d publish revision: %v", chainID, err)
 		return
 	}
+	// 链路拓扑变化（§链路统计）：立即触发一轮全量延迟测速（在途轮次完成后依次执行）。
+	go d.RunLatencyProbeRound(context.WithoutCancel(ctx))
 	if d.events.OnChainPublished != nil {
 		if err := d.events.OnChainPublished(ctx, chainID); err != nil {
 			log.Printf("dispatch: enqueue subscriptions for chain %d: %v", chainID, err)

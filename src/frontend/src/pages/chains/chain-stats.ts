@@ -16,8 +16,8 @@ export function formatLatency(ms: number): string {
 
 export interface ChainStatsIndex {
   byChain: Map<number, ChainStats>
-  // 段探测按"执行探测的本跳"索引：直连段由上游 forward 探测、反向段由下游
-  // bridge 探测，完整链路的每个相邻跳对恰好一条。
+  // 段探测按段所属的上游跳索引；同一段可含 tcp（复用链路监听端口）与 icmp（回退）
+  // 两条来源样本，segmentForLink 取首选（tcp 优先）。
   byHop: Map<number, ChainSegmentStat[]>
 }
 
@@ -35,19 +35,18 @@ export function buildChainStatsIndex(response: ChainStatsResponse | null): Chain
   return { byChain, byHop }
 }
 
-// segmentForLink 返回相邻两跳之间物理段的最新探测：上游 forward 探测或
-// 下游 bridge 探测任一存在即用（完整链路恰一条；带 RTT 的优先，失败样本兜底展示）。
+// segmentForLink 返回相邻两跳之间物理段的最新测速样本：来源优先 tcp（复用链路
+// 端口、口径与业务路径一致，失败样本如实显示"超时"以凸显业务路径故障），
+// 无 tcp 行回退 icmp。
 export function segmentForLink(
   index: ChainStatsIndex,
   upstreamHopId: number,
-  downstreamHopId: number,
+  _downstreamHopId?: number,
 ): ChainSegmentStat | null {
-  const candidates = [
-    ...(index.byHop.get(upstreamHopId) ?? []).filter((s) => s.kind === 'forward'),
-    ...(index.byHop.get(downstreamHopId) ?? []).filter((s) => s.kind === 'bridge'),
-  ]
+  const candidates = index.byHop.get(upstreamHopId) ?? []
   if (candidates.length === 0) return null
-  return candidates.find((s) => s.latency_ms !== null) ?? candidates[0]
+  const byKind = (kind: ChainSegmentStat['kind']) => candidates.find((s) => s.kind === kind)
+  return byKind('tcp') ?? byKind('icmp') ?? candidates[0]
 }
 
 // chainTodayBytes 是链路今日负载（折算口径上/下行之和）。

@@ -627,6 +627,15 @@ func (s *Store) DeleteServerCascade(ctx context.Context, id int64) error {
 		RevisionTaskAbandoned, "服务器已删除", id, RevisionTaskPending, RevisionTaskQueued); err != nil {
 		return fmt.Errorf("delete server cascade: abandon revision tasks: %w", err)
 	}
+	// 服务器间延迟（§链路统计）：本机发起与对端（其他服务器测本机）的双向样本一并清除。
+	for _, q := range []string{
+		`DELETE FROM server_latency_probes WHERE from_server = ? OR to_server = ?`,
+		`DELETE FROM server_latency_history WHERE from_server = ? OR to_server = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, id, id); err != nil {
+			return fmt.Errorf("delete server cascade: %w", err)
+		}
+	}
 	for _, q := range []string{
 		`DELETE FROM user_nodes WHERE node_id IN (SELECT id FROM nodes WHERE server_id = ?
 			AND id NOT IN (SELECT service_node_id FROM chains WHERE deleted_at IS NULL))`,
