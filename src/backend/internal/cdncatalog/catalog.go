@@ -20,10 +20,20 @@ import (
 	"unicode"
 )
 
+var (
+	// DefaultSourceURLs 是依序尝试的目录源：官网公开 API 优先，旧版散装 JS 文件兜底。
+	// 源地址按设计钉住；一旦全部失效必须重新钉住，而不是跟随重定向或动态发现。
+	DefaultSourceURLs = []string{
+		"https://www.zstaticcdn.com/api/v1/DescribeAllNodes",
+		"https://lf3-ips.zstaticcdn.com/nodes_data.js",
+	}
+)
+
 const (
-	DefaultSourceURL = "https://lf3-ips.zstaticcdn.com/nodes_data.js"
-	SchemaVersion    = 1
-	ParserVersion    = "zstatic-node-data-v2"
+	SchemaVersion = 1
+	// ParserVersion 标记 window.nodeData JS 字面量源；JSONParserVersion 标记 DescribeAllNodes JSON 源。
+	ParserVersion     = "zstatic-node-data-v2"
+	JSONParserVersion = "zstatic-node-data-v3"
 
 	maxSourceBytes = 2 << 20
 	targetSuffix   = ".ip.zstaticcdn.com"
@@ -156,7 +166,7 @@ func Fetch(ctx context.Context, client *http.Client, sourceURL string, now time.
 	if err != nil {
 		return Document{}, fmt.Errorf("create CDN catalog request: %w", err)
 	}
-	req.Header.Set("Accept", "application/javascript, text/javascript;q=0.9")
+	req.Header.Set("Accept", "application/json, application/javascript;q=0.9, text/javascript;q=0.8")
 	req.Header.Set("Accept-Encoding", "identity")
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("User-Agent", "Lattix-panel")
@@ -178,7 +188,7 @@ func Fetch(ctx context.Context, client *http.Client, sourceURL string, now time.
 	if len(body) > maxSourceBytes {
 		return Document{}, fmt.Errorf("CDN catalog exceeds %d bytes", maxSourceBytes)
 	}
-	source, err := parseSource(body)
+	source, parserVersion, err := parseSource(body)
 	if err != nil {
 		return Document{}, fmt.Errorf("parse CDN catalog: %w", err)
 	}
@@ -189,7 +199,7 @@ func Fetch(ctx context.Context, client *http.Client, sourceURL string, now time.
 	sourceSum := sha256.Sum256(body)
 	document.Version = SchemaVersion
 	document.Source = SourceMetadata{
-		URL: sourceURL, FetchedAt: now.UTC(), ParserVersion: ParserVersion,
+		URL: sourceURL, FetchedAt: now.UTC(), ParserVersion: parserVersion,
 		SourceSHA256: hex.EncodeToString(sourceSum[:]),
 	}
 	normalized, err := json.Marshal(struct {
@@ -383,7 +393,104 @@ func cityCodes(key string) (provinceCode, cityCode, carrierCode string, ok bool)
 	return parts[0], cityCode, carrierCode, true
 }
 
-func parseSource(source []byte) (sourceDocument, error) {
+// parseSource auto-detects the upstream format: the DescribeAllNodes JSON
+// document served by the official site starts with `{`, while the legacy
+// nodes_data.js file is a `window.nodeData = {...}` JavaScript literal.
+func parseSource(source []byte) (sourceDocument, string, error) {
+	if trimmed := bytes.TrimSpace(source); len(trimmed) > 0 && trimmed[0] == '{' {
+		parsed, err := parseJSONSource(trimmed)
+		return parsed, JSONParserVersion, err
+	}
+	parsed, err := parseLiteralSource(source)
+	return parsed, ParserVersion, err
+}
+
+// jsonSource mirrors the public DescribeAllNodes response of
+// https://www.zstaticcdn.com (the node directory page's backend API).
+type jsonSource struct {
+	ProvinceNodes []jsonProvince `json:"ProvinceNodes"`
+	CityNodes     []jsonCity     `json:"CityNodes"`
+}
+
+type jsonProvince struct {
+	Province string            `json:"province"`
+	Carriers map[string]string `json:"carriers"`
+}
+
+type jsonCity struct {
+	City     string `json:"city"`
+	Carrier  string `json:"carrier"`
+	Endpoint string `json:"endpoint"`
+}
+
+// parseJSONSource adapts the DescribeAllNodes document onto the same
+// intermediate representation as the legacy JavaScript literal, so
+// buildDocument performs identical validation for both formats. A city's
+// province is intentionally derived from its endpoint key (via buildDocument)
+// rather than the API's province field: the key is the routing identity.
+func parseJSONSource(source []byte) (sourceDocument, error) {
+	var parsed jsonSource
+	if err := json.Unmarshal(source, &parsed); err != nil {
+		return sourceDocument{}, fmt.Errorf("invalid DescribeAllNodes JSON: %w", err)
+	}
+	document := sourceDocument{
+		ProvinceBaseData: make([]sourceProvince, 0, len(parsed.ProvinceNodes)),
+		CityKeyList:      make([]string, 0, len(parsed.CityNodes)),
+		ExtraCityMeta:    make(map[string]string, len(parsed.CityNodes)),
+	}
+	for _, province := range parsed.ProvinceNodes {
+		document.ProvinceBaseData = append(document.ProvinceBaseData, sourceProvince{
+			Province: province.Province, Carriers: province.Carriers,
+		})
+	}
+	for _, city := range parsed.CityNodes {
+		key, err := cityKeyFromEndpoint(city.Endpoint)
+		if err != nil {
+			return sourceDocument{}, err
+		}
+		_, _, keyCarrier, ok := cityCodes(key)
+		if !ok {
+			return sourceDocument{}, fmt.Errorf("invalid city endpoint %q", city.Endpoint)
+		}
+		declared := carrierCode(city.Carrier)
+		if declared == "" {
+			return sourceDocument{}, fmt.Errorf("city endpoint %q declares unknown carrier %q", city.Endpoint, city.Carrier)
+		}
+		if declared != keyCarrier {
+			return sourceDocument{}, fmt.Errorf("city endpoint %q declares carrier %q but its key indicates %q", city.Endpoint, city.Carrier, keyCarrier)
+		}
+		document.CityKeyList = append(document.CityKeyList, key)
+		document.ExtraCityMeta[key] = strings.TrimSpace(city.City)
+	}
+	return document, nil
+}
+
+func cityKeyFromEndpoint(endpoint string) (string, error) {
+	host, rawPort, err := net.SplitHostPort(strings.TrimSpace(endpoint))
+	if err != nil {
+		return "", fmt.Errorf("invalid city endpoint %q: %w", endpoint, err)
+	}
+	port, err := strconv.Atoi(rawPort)
+	if err != nil || port != cityPort {
+		return "", fmt.Errorf("city endpoint %q must use port %d", endpoint, cityPort)
+	}
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if !strings.HasSuffix(host, targetSuffix) {
+		return "", fmt.Errorf("city endpoint %q is outside zstaticcdn.com", endpoint)
+	}
+	return strings.TrimSuffix(host, targetSuffix), nil
+}
+
+func carrierCode(name string) string {
+	for _, carrier := range carriers {
+		if carrier.Key == name {
+			return carrier.Code
+		}
+	}
+	return ""
+}
+
+func parseLiteralSource(source []byte) (sourceDocument, error) {
 	p := newLiteralParser(source)
 	if err := p.expectIdentifier("window"); err != nil {
 		return sourceDocument{}, err

@@ -91,14 +91,14 @@ func TestFetchRejectsRedirectInsteadOfParsingItsHTML(t *testing.T) {
 }
 
 func TestParseSourceRejectsExecutableJavaScript(t *testing.T) {
-	_, err := parseSource([]byte(`window.nodeData = buildNodeData();`))
+	_, _, err := parseSource([]byte(`window.nodeData = buildNodeData();`))
 	if err == nil || !strings.Contains(err.Error(), "not a literal value") {
 		t.Fatalf("error = %v, want restricted literal rejection", err)
 	}
 }
 
 func TestBuildDocumentRejectsMalformedCarrierAndCity(t *testing.T) {
-	source, err := parseSource([]byte(sampleSource))
+	source, _, err := parseSource([]byte(sampleSource))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,9 +106,106 @@ func TestBuildDocumentRejectsMalformedCarrierAndCity(t *testing.T) {
 	if _, err := buildDocument(source); err == nil || !strings.Contains(err.Error(), "outside zstaticcdn.com") {
 		t.Fatalf("error = %v, want target policy failure", err)
 	}
-	source, _ = parseSource([]byte(sampleSource))
+	source, _, _ = parseSource([]byte(sampleSource))
 	source.CityKeyList = append(source.CityKeyList, "bad-key")
 	if _, err := buildDocument(source); err == nil || !strings.Contains(err.Error(), "invalid city node key") {
 		t.Fatalf("error = %v, want city key failure", err)
+	}
+}
+
+// 与 https://www.zstaticcdn.com/api/v1/DescribeAllNodes 的实际返回结构一致（字段名大小写敏感）。
+const sampleJSONSource = `{
+  "UpdatedAt": "2026-09-15T12:27:24Z",
+  "ProvinceNodes": [
+    {
+      "province": "河北",
+      "carriers": {
+        "mobile": "he-cm-v4.ip.zstaticcdn.com:80",
+        "unicom": "he-cu-v4.ip.zstaticcdn.com:80",
+        "telecom": "he-ct-v4.ip.zstaticcdn.com:80"
+      }
+    }
+  ],
+  "CityNodes": [
+    {"city": "雄安", "province": "河北", "carrier": "telecom", "endpoint": "he-xiongan-ct-v4.ip.zstaticcdn.com:443"},
+    {"city": "石家庄", "province": "河北", "carrier": "mobile", "endpoint": "he-shijiazhuang-cm-v4.ip.zstaticcdn.com:443"}
+  ]
+}`
+
+func TestFetchParsesDescribeAllNodesJSONCatalog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(sampleJSONSource))
+	}))
+	defer server.Close()
+
+	now := time.Date(2026, time.October, 27, 8, 0, 0, 0, time.UTC)
+	document, err := Fetch(context.Background(), server.Client(), server.URL, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Source.ParserVersion != JSONParserVersion {
+		t.Fatalf("ParserVersion = %q, want %q", document.Source.ParserVersion, JSONParserVersion)
+	}
+	if document.Counts != (Counts{Provinces: 1, ProvinceTargets: 9, CityIPv4Targets: 2}) {
+		t.Fatalf("unexpected counts: %+v", document.Counts)
+	}
+	telecom := document.Provinces[0].Carriers.Telecom
+	if telecom.IPv4.Host != "he-ct-v4.ip.zstaticcdn.com" || telecom.IPv4.Port != 80 || telecom.IPv4.Label != "河北电信" {
+		t.Fatalf("unexpected IPv4 endpoint: %+v", telecom.IPv4)
+	}
+	if telecom.IPv4.Backup == nil || telecom.IPv4.Backup.Host != "he-xiongan-ct-v4.ip.zstaticcdn.com" || telecom.IPv4.Backup.Label != "河北雄安电信" {
+		t.Fatalf("unexpected IPv4 backup: %+v", telecom.IPv4.Backup)
+	}
+	if telecom.IPv6.Host != "he-ct-v6.ip.zstaticcdn.com" || telecom.IPv6.Backup == nil || telecom.IPv6.Backup.Host != "he-ct-dualstack.ip.zstaticcdn.com" {
+		t.Fatalf("unexpected IPv6 endpoints: %+v", telecom.IPv6)
+	}
+	if got := document.Provinces[0].Carriers.Mobile.IPv4.Backup; got == nil || got.Label != "河北石家庄移动" {
+		t.Fatalf("city label from API metadata = %+v", got)
+	}
+}
+
+func TestParseSourceReportsParserVersionPerFormat(t *testing.T) {
+	if _, version, err := parseSource([]byte(sampleSource)); err != nil || version != ParserVersion {
+		t.Fatalf("literal version = %q err = %v", version, err)
+	}
+	if _, version, err := parseSource([]byte(sampleJSONSource)); err != nil || version != JSONParserVersion {
+		t.Fatalf("json version = %q err = %v", version, err)
+	}
+}
+
+func TestParseJSONSourceRejectsInvalidDocuments(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		want string
+	}{
+		"truncated json": {body: `{"ProvinceNodes": [`, want: "invalid DescribeAllNodes JSON"},
+		"city endpoint outside suffix": {
+			body: `{"ProvinceNodes":[{"province":"河北","carriers":{"telecom":"he-ct-v4.ip.zstaticcdn.com:80"}}],
+			       "CityNodes":[{"city":"外地","carrier":"telecom","endpoint":"example.com:443"}]}`,
+			want: "outside zstaticcdn.com",
+		},
+		"city endpoint wrong port": {
+			body: `{"ProvinceNodes":[{"province":"河北","carriers":{"telecom":"he-ct-v4.ip.zstaticcdn.com:80"}}],
+			       "CityNodes":[{"city":"雄安","carrier":"telecom","endpoint":"he-xiongan-ct-v4.ip.zstaticcdn.com:80"}]}`,
+			want: "must use port 443",
+		},
+		"city carrier mismatch": {
+			body: `{"ProvinceNodes":[{"province":"河北","carriers":{"telecom":"he-ct-v4.ip.zstaticcdn.com:80"}}],
+			       "CityNodes":[{"city":"雄安","carrier":"mobile","endpoint":"he-xiongan-ct-v4.ip.zstaticcdn.com:443"}]}`,
+			want: `declares carrier "mobile"`,
+		},
+		"city unknown carrier": {
+			body: `{"ProvinceNodes":[{"province":"河北","carriers":{"telecom":"he-ct-v4.ip.zstaticcdn.com:80"}}],
+			       "CityNodes":[{"city":"雄安","carrier":"broadband","endpoint":"he-xiongan-ct-v4.ip.zstaticcdn.com:443"}]}`,
+			want: "unknown carrier",
+		},
+	}
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := parseSource([]byte(testCase.body)); err == nil || !strings.Contains(err.Error(), testCase.want) {
+				t.Fatalf("error = %v, want %q", err, testCase.want)
+			}
+		})
 	}
 }
