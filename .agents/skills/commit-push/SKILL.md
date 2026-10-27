@@ -16,9 +16,9 @@ Commit everything, tag the latest commit with the next patch version, push, and 
 - **No explicit release instruction from the user** (no mention of releasing, tagging, publishing, or pushing): run in **commit-only mode**:
   - Stage and commit **only the changes produced by the current session** (the files this session created or modified). Identify them from the session's own edit history, and verify against `git status --porcelain` / `git diff`.
   - **Leave changes from other sessions untouched** — do not stage, commit, revert, or tag over them.
-  - **Do not tag and do not push.** Skip steps 4–7 entirely.
+  - **Do not tag and do not push.** Skip steps 4–8 entirely.
   - After committing, report to the user: the commit message(s) used, and a summary of the other sessions' changes that were left uncommitted (files and what they appear to be, based on `git status` / `git diff --stat`).
-- **Explicit release instruction**: run the full workflow below (steps 1–7).
+- **Explicit release instruction**: run the full workflow below (steps 1–8).
 
 ### 1. Check for unmerged branches/worktrees
 
@@ -45,31 +45,39 @@ Commit everything, tag the latest commit with the next patch version, push, and 
 - If anything is outdated or missing, update the docs, then commit the documentation changes (step 2 style: Conventional Commits message describing the doc updates). The tree must be clean again before tagging.
 - If the docs already match the current project design (nothing to update), continue directly to step 4: tag and push as usual.
 
-### 4. Bump the version tag
+### 4. Push main and wait for CI (before any tag exists)
+
+- `git push` main first. **Never tag a commit whose main CI has not passed** — commits that sit locally un-pushed are never CI-validated, and format/lint drift only surfaces at release time.
+- Find the ci run for the pushed commit: `gh run list --workflow=ci --commit <sha> --limit 1` (if not yet created, wait and re-check; push events are occasionally lost — re-push an empty commit to re-trigger).
+- Watch it: `gh run watch <run-id> --exit-status` (non-zero exit means failure).
+- On failure: pull failed logs (`gh run view <run-id> --log-failed`), fix, commit (step 2 style), push again, and loop — while still **tag-free**. A tag-move loop is unnecessary when the failure is caught here.
+- release.yml enforces the same rule as a gate (fails fast if the tag's commit lacks a green main ci run), so this step is not optional.
+
+### 5. Bump the version tag
 
 - Find the latest tag: `git tag -l 'v*' --sort=-v:refname | head -n 1`.
 - If none exists, start at `v0.0.0`.
 - **Milestone release** (explicitly indicated by the user): bump minor, reset patch: `vX.Y.Z` -> `vX.Y+1.0`.
 - Otherwise bump only the patch segment: `vX.Y.Z` -> `vX.Y.Z+1` (never major).
-- Tag HEAD: `git tag vX.Y.Z`.
+- Tag HEAD (already CI-green from step 4): `git tag vX.Y.Z`.
 
-### 5. Push
+### 6. Push the tag
 
-- `git push` and `git push origin vX.Y.Z` (plain `git push` does not push tags).
+- `git push origin vX.Y.Z` (plain `git push` does not push tags; main was already pushed in step 4).
 
-### 6. Wait for the build
+### 7. Wait for the release build
 
-- Find the run for the pushed commit: `gh run list --commit <sha> --limit 1`.
+- Find the run for the pushed tag: `gh run list --commit <sha> --limit 1`.
 - Watch it: `gh run watch <run-id> --exit-status` (non-zero exit means failure).
 - Success -> report and stop.
 
-### 7. Fix on failure (loop)
+### 8. Fix on failure (loop)
 
 - Pull failed logs: `gh run view <run-id> --log-failed`, diagnose the failure, fix the code.
-- Commit the fix (workflow step 2), then **move the tag to the fixed commit**:
+- Commit the fix (workflow step 2), push main, wait for its ci run to pass (step 4), then **move the tag to the fixed commit**:
   - `git tag -f vX.Y.Z <fixed-sha>` (or HEAD after the fix commit)
-  - `git push origin :refs/tags/vX.Y.Z && git push origin vX.Y.Z` (or `git push --force origin vX.Y.Z`)
-- Push commits, then repeat step 6. Loop until the build passes.
+  - `git push --force origin vX.Y.Z` (force-move, never delete: deleting and re-pushing the tag turns an existing release into a draft)
+- Repeat step 7. Loop until the build passes.
 
 ## Common Mistakes
 
@@ -80,6 +88,7 @@ Commit everything, tag the latest commit with the next patch version, push, and 
 | Merging branches without asking | Ask first; only merge on confirmation (step 1) |
 | Missing worktree branches | Check each worktree's branch in `git worktree list` too |
 | Tagging while files remain uncommitted | Drain the tree first (step 2) |
+| Tagging a commit whose main CI never ran or failed | Two-phase release: push main, watch ci to success, only then tag (step 4) |
 | Forgetting untracked files | `git status --porcelain` includes `??` entries — stage them |
 | Bumping major/minor | Only patch: `vX.Y.Z` -> `vX.Y.Z+1`; minor only for explicitly marked milestone releases (`vX.Y+1.0`) |
 | Milestone release got patch bump | User said milestone -> bump minor and reset patch: `vX.Y+1.0` |
