@@ -8,298 +8,122 @@
     "agentSettings": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "revision",
-        "reconnect",
-        "telemetry",
-        "drift_detection"
-      ],
+      "required": ["revision", "reconnect", "telemetry", "drift_detection"],
       "properties": {
-        "revision": {
-          "type": "integer",
-          "minimum": 1
-        },
+        "revision": {"type": "integer", "minimum": 1},
         "reconnect": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "mode",
-            "max_retries"
-          ],
+          "required": ["mode", "max_retries"],
           "properties": {
-            "mode": {
-              "enum": [
-                "infinite",
-                "limited"
-              ]
-            },
-            "max_retries": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            }
+            "mode": {"enum": ["infinite", "limited"]},
+            "max_retries": {"type": "integer", "minimum": 1, "maximum": 100}
           }
         },
         "telemetry": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "interval_seconds"
-          ],
-          "properties": {
-            "interval_seconds": {
-              "type": "integer",
-              "minimum": 10,
-              "maximum": 3600
-            }
-          }
+          "required": ["interval_seconds"],
+          "properties": {"interval_seconds": {"type": "integer", "minimum": 10, "maximum": 3600}}
         },
         "drift_detection": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "interval_seconds"
-          ],
-          "properties": {
-            "interval_seconds": {
-              "type": "integer",
-              "minimum": 5,
-              "maximum": 3600
-            }
-          }
+          "required": ["interval_seconds"],
+          "properties": {"interval_seconds": {"type": "integer", "minimum": 5, "maximum": 3600}}
         }
       }
     },
     "settingsDocument": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "schema_version",
-        "panel",
-        "agent"
-      ],
+      "required": ["schema_version", "panel", "agent"],
       "properties": {
-        "schema_version": {
-          "const": 1
-        },
+        "schema_version": {"const": 1},
         "panel": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "instance_id",
-            "version",
-            "public_url",
-            "ws_url"
-          ],
+          "required": ["instance_id", "version", "public_url", "ws_url"],
           "properties": {
-            "instance_id": {
-              "type": "string",
-              "pattern": "^p_[0-9a-f]{32}$"
-            },
-            "version": {
-              "type": "string"
-            },
-            "public_url": {
-              "type": "string"
-            },
-            "ws_url": {
-              "type": "string"
-            }
+            "instance_id": {"type": "string", "pattern": "^p_[0-9a-f]{32}$"},
+            "version": {"type": "string"},
+            "public_url": {"type": "string"},
+            "ws_url": {"type": "string"}
           }
         },
-        "agent": {
-          "$ref": "#/$defs/agentSettings"
-        }
+        "agent": {"$ref": "#/$defs/agentSettings"}
       }
     },
     "lifecycleVersion": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "epoch",
-        "revision"
-      ],
+      "required": ["epoch", "revision"],
       "properties": {
-        "epoch": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{32}$"
-        },
-        "revision": {
-          "type": "integer",
-          "minimum": 1
-        }
+        "epoch": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "revision": {"type": "integer", "minimum": 1}
       }
     },
     "panelLifecycle": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "panel_instance_id",
-        "state",
-        "epoch",
-        "revision",
-        "entered_at",
-        "retry_policy",
-        "latency_resume_window_ms"
-      ],
+      "required": ["panel_instance_id", "state", "epoch", "revision", "entered_at", "retry_policy", "latency_resume_window_ms"],
       "properties": {
-        "panel_instance_id": {
-          "type": "string",
-          "pattern": "^p_[0-9a-f]{32}$"
-        },
-        "state": {
-          "enum": [
-            "startup",
-            "active",
-            "updating",
-            "faulted"
-          ]
-        },
-        "epoch": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{32}$"
-        },
-        "revision": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "entered_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "fault": {
-          "type": "string"
-        },
+        "panel_instance_id": {"type": "string", "pattern": "^p_[0-9a-f]{32}$"},
+        "state": {"enum": ["startup", "active", "updating", "faulted"]},
+        "epoch": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "revision": {"type": "integer", "minimum": 1},
+        "entered_at": {"type": "string", "format": "date-time"},
+        "fault": {"type": "string"},
         "retry_policy": {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "min_ms",
-            "max_ms"
-          ],
+          "required": ["min_ms", "max_ms"],
           "properties": {
-            "min_ms": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "max_ms": {
-              "type": "integer",
-              "minimum": 0
-            }
+            "min_ms": {"type": "integer", "minimum": 0},
+            "max_ms": {"type": "integer", "minimum": 0}
           }
         },
-        "latency_resume_window_ms": {
-          "type": "integer",
-          "minimum": 0
-        }
+        "latency_resume_window_ms": {"type": "integer", "minimum": 0}
       }
     },
     "trafficCounter": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "up",
-        "down"
-      ],
+      "required": ["up", "down"],
       "properties": {
-        "node_id": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "endpoint_id": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "hop_id": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "user": {
-          "type": "string"
-        },
-        "up": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "down": {
-          "type": "integer",
-          "minimum": 0
-        }
+        "node_id": {"type": "integer", "minimum": 1},
+        "endpoint_id": {"type": "integer", "minimum": 1},
+        "hop_id": {"type": "integer", "minimum": 1},
+        "user": {"type": "string"},
+        "up": {"type": "integer", "minimum": 0},
+        "down": {"type": "integer", "minimum": 0}
       },
       "oneOf": [
-        {
-          "required": [
-            "node_id"
-          ]
-        },
-        {
-          "required": [
-            "endpoint_id"
-          ]
-        },
-        {
-          "required": [
-            "hop_id"
-          ]
-        },
-        {
-          "required": [
-            "user"
-          ]
-        }
+        {"required": ["node_id"]},
+        {"required": ["endpoint_id"]},
+        {"required": ["hop_id"]},
+        {"required": ["user"]}
       ]
     },
     "chainProbeStat": {
       "type": "object",
       "additionalProperties": false,
-      "required": [
-        "hop_id",
-        "kind",
-        "target_address",
-        "target_port"
-      ],
+      "required": ["hop_id", "kind", "target_address", "target_port"],
       "properties": {
-        "hop_id": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "kind": {
-          "type": "string",
-          "enum": [
-            "forward",
-            "bridge"
-          ]
-        },
-        "target_address": {
-          "type": "string"
-        },
-        "target_port": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 65535
-        },
-        "latency_ms": {
-          "type": "number"
-        }
+        "hop_id": {"type": "integer", "minimum": 1},
+        "kind": {"type": "string", "enum": ["forward", "bridge"]},
+        "target_address": {"type": "string"},
+        "target_port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "latency_ms": {"type": "number"}
       }
     }
   },
   "additionalProperties": false,
-  "required": [
-    "kind",
-    "type",
-    "request_id",
-    "trace_id",
-    "data"
-  ],
+  "required": ["kind", "type", "request_id", "trace_id", "data"],
   "properties": {
     "kind": {
       "type": "string",
-      "enum": [
-        "request",
-        "response",
-        "event"
-      ]
+      "enum": ["request", "response", "event"]
     },
     "type": {
       "type": "string",
@@ -318,124 +142,51 @@
       "type": "string",
       "pattern": "^[A-Z][A-Z0-9_]*$"
     },
-    "message": {
-      "type": "string"
-    },
+    "message": {"type": "string"},
     "data": {}
   },
   "allOf": [
     {
       "if": {
-        "properties": {
-          "kind": {
-            "const": "request"
-          },
-          "type": {
-            "const": "shared-endpoint.apply"
-          }
-        },
-        "required": [
-          "kind",
-          "type"
-        ]
+        "properties": {"kind": {"const": "request"}, "type": {"const": "shared-endpoint.apply"}},
+        "required": ["kind", "type"]
       },
       "then": {
         "properties": {
           "data": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "endpoint_id",
-              "config",
-              "clients",
-              "routes"
-            ],
+            "required": ["endpoint_id", "config", "clients", "routes"],
             "properties": {
-              "endpoint_id": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "config": {
-                "type": "object"
-              },
+              "endpoint_id": {"type": "integer", "minimum": 1},
+              "config": {"type": "object"},
               "clients": {
-                "type": [
-                  "array",
-                  "null"
-                ],
+                "type": ["array", "null"],
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": [
-                    "id",
-                    "email"
-                  ],
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "email": {
-                      "type": "string",
-                      "pattern": "^access:[1-9][0-9]*$"
-                    }
-                  }
+                  "required": ["id", "email"],
+                  "properties": {"id": {"type": "string"}, "email": {"type": "string", "pattern": "^access:[1-9][0-9]*$"}}
                 }
               },
               "routes": {
-                "type": [
-                  "array",
-                  "null"
-                ],
+                "type": ["array", "null"],
                 "items": {
                   "type": "object",
-                  "required": [
-                    "chain_id",
-                    "users"
-                  ],
+                  "required": ["chain_id", "users"],
                   "properties": {
-                    "chain_id": {
-                      "type": "integer",
-                      "minimum": 1
-                    },
-                    "users": {
-                      "type": "array",
-                      "items": {
-                        "type": "string"
-                      }
-                    },
-                    "direct": {
-                      "type": "boolean"
-                    },
-                    "target_address": {
-                      "type": "string"
-                    },
-                    "target_port": {
-                      "type": "integer",
-                      "minimum": 1
-                    },
-                    "tunnel_uuid": {
-                      "type": "string"
-                    },
-                    "target": {
-                      "type": "object"
-                    }
+                    "chain_id": {"type": "integer", "minimum": 1},
+                    "users": {"type": "array", "items": {"type": "string"}},
+                    "direct": {"type": "boolean"},
+                    "target_address": {"type": "string"},
+                    "target_port": {"type": "integer", "minimum": 1},
+                    "tunnel_uuid": {"type": "string"},
+                    "target": {"type": "object"}
                   }
                 }
               },
-              "dest_candidates": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "port_candidates": {
-                "type": "array",
-                "items": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 65535
-                }
-              }
+              "dest_candidates": {"type": "array", "items": {"type": "string"}},
+              "port_candidates": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}}
             }
           }
         }
@@ -443,52 +194,22 @@
     },
     {
       "if": {
-        "properties": {
-          "kind": {
-            "const": "request"
-          },
-          "type": {
-            "const": "agent.session.open"
-          }
-        },
-        "required": [
-          "kind",
-          "type"
-        ]
+        "properties": {"kind": {"const": "request"}, "type": {"const": "agent.session.open"}},
+        "required": ["kind", "type"]
       },
       "then": {
         "properties": {
           "data": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "protocol_version",
-              "agent_version",
-              "xray_version",
-              "xray_running"
-            ],
+            "required": ["protocol_version", "agent_version", "xray_version", "xray_running"],
             "properties": {
-              "protocol_version": {
-                "const": 1
-              },
-              "agent_version": {
-                "type": "string"
-              },
-              "xray_version": {
-                "type": "string"
-              },
-              "xray_running": {
-                "type": "boolean"
-              },
-              "nic_addresses": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "last_lifecycle": {
-                "$ref": "#/$defs/lifecycleVersion"
-              }
+              "protocol_version": {"const": 1},
+              "agent_version": {"type": "string"},
+              "xray_version": {"type": "string"},
+              "xray_running": {"type": "boolean"},
+              "nic_addresses": {"type": "array", "items": {"type": "string"}},
+              "last_lifecycle": {"$ref": "#/$defs/lifecycleVersion"}
             }
           }
         }
@@ -496,59 +217,22 @@
     },
     {
       "if": {
-        "properties": {
-          "kind": {
-            "const": "response"
-          },
-          "type": {
-            "const": "agent.session.open"
-          },
-          "code": {
-            "const": "OK"
-          }
-        },
-        "required": [
-          "kind",
-          "type",
-          "code"
-        ]
+        "properties": {"kind": {"const": "response"}, "type": {"const": "agent.session.open"}, "code": {"const": "OK"}},
+        "required": ["kind", "type", "code"]
       },
       "then": {
         "properties": {
           "data": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "server_id",
-              "session_id",
-              "session_kind",
-              "panel_state"
-            ],
+            "required": ["server_id", "session_id", "session_kind", "panel_state"],
             "properties": {
-              "server_id": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "session_id": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{32}$"
-              },
-              "session_kind": {
-                "enum": [
-                  "initial",
-                  "reconnect"
-                ]
-              },
-              "issued_token": {
-                "type": "string"
-              },
-              "credential_exchange_id": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{32}$"
-              },
-              "panel_state": {
-                "$ref": "#/$defs/panelLifecycle"
-              }
+              "server_id": {"type": "integer", "minimum": 1},
+              "session_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "session_kind": {"enum": ["initial", "reconnect"]},
+              "issued_token": {"type": "string"},
+              "credential_exchange_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "panel_state": {"$ref": "#/$defs/panelLifecycle"}
             }
           }
         }
@@ -556,69 +240,34 @@
     },
     {
       "if": {
-        "properties": {
-          "kind": {
-            "const": "request"
-          },
-          "type": {
-            "const": "agent.credential.commit"
-          }
-        },
-        "required": [
-          "kind",
-          "type"
-        ]
+        "properties": {"kind": {"const": "request"}, "type": {"const": "agent.credential.commit"}},
+        "required": ["kind", "type"]
       },
       "then": {
         "properties": {
           "data": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "exchange_id"
-            ],
-            "properties": {
-              "exchange_id": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{32}$"
-              }
-            }
+            "required": ["exchange_id"],
+            "properties": {"exchange_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"}}
           }
         }
       }
     },
     {
       "if": {
-        "properties": {
-          "kind": {
-            "const": "request"
-          },
-          "type": {
-            "const": "agent.session.ready"
-          }
-        },
-        "required": [
-          "kind",
-          "type"
-        ]
+        "properties": {"kind": {"const": "request"}, "type": {"const": "agent.session.ready"}},
+        "required": ["kind", "type"]
       },
       "then": {
         "properties": {
           "data": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "session_id",
-              "lifecycle"
-            ],
+            "required": ["session_id", "lifecycle"],
             "properties": {
-              "session_id": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{32}$"
-              },
-              "lifecycle": {
-                "$ref": "#/$defs/lifecycleVersion"
-              }
+              "session_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "lifecycle": {"$ref": "#/$defs/lifecycleVersion"}
             }
           }
         }
@@ -626,81 +275,37 @@
     },
     {
       "if": {
-        "properties": {
-          "kind": {
-            "const": "request"
-          },
-          "type": {
-            "const": "panel.lifecycle.changed"
-          }
-        },
-        "required": [
-          "kind",
-          "type"
-        ]
+        "properties": {"kind": {"const": "request"}, "type": {"const": "panel.lifecycle.changed"}},
+        "required": ["kind", "type"]
       },
       "then": {
         "properties": {
           "data": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "panel_state"
-            ],
-            "properties": {
-              "panel_state": {
-                "$ref": "#/$defs/panelLifecycle"
-              }
-            }
+            "required": ["panel_state"],
+            "properties": {"panel_state": {"$ref": "#/$defs/panelLifecycle"}}
           }
         }
       }
     },
     {
       "if": {
-        "properties": {
-          "kind": {
-            "const": "response"
-          }
-        },
-        "required": [
-          "kind"
-        ]
+        "properties": {"kind": {"const": "response"}},
+        "required": ["kind"]
       },
-      "then": {
-        "required": [
-          "code",
-          "message"
-        ]
-      }
+      "then": {"required": ["code", "message"]}
     },
     {
       "if": {
-        "properties": {
-          "kind": {
-            "enum": [
-              "request",
-              "event"
-            ]
-          }
-        },
-        "required": [
-          "kind"
-        ]
+        "properties": {"kind": {"enum": ["request", "event"]}},
+        "required": ["kind"]
       },
       "then": {
         "not": {
           "anyOf": [
-            {
-              "required": [
-                "code"
-              ]
-            },
-            {
-              "required": [
-                "message"
-              ]
-            }
+            {"required": ["code"]},
+            {"required": ["message"]}
           ]
         }
       }
@@ -708,39 +313,21 @@
     {
       "if": {
         "properties": {
-          "kind": {
-            "const": "request"
-          },
-          "type": {
-            "const": "agent.settings.sync"
-          }
+          "kind": {"const": "request"},
+          "type": {"const": "agent.settings.sync"}
         },
-        "required": [
-          "kind",
-          "type"
-        ]
+        "required": ["kind", "type"]
       },
       "then": {
         "properties": {
           "data": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "panel_instance_id",
-              "applied_revision"
-            ],
+            "required": ["panel_instance_id", "applied_revision"],
             "properties": {
-              "panel_instance_id": {
-                "type": "string"
-              },
-              "applied_revision": {
-                "type": "integer",
-                "minimum": 0
-              },
-              "last_apply_error": {
-                "type": "string",
-                "maxLength": 512
-              }
+              "panel_instance_id": {"type": "string"},
+              "applied_revision": {"type": "integer", "minimum": 0},
+              "last_apply_error": {"type": "string", "maxLength": 512}
             }
           }
         }
@@ -749,33 +336,20 @@
     {
       "if": {
         "properties": {
-          "kind": {
-            "const": "response"
-          },
-          "type": {
-            "const": "agent.settings.sync"
-          }
+          "kind": {"const": "response"},
+          "type": {"const": "agent.settings.sync"}
         },
-        "required": [
-          "kind",
-          "type"
-        ]
+        "required": ["kind", "type"]
       },
       "then": {
         "properties": {
           "data": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "changed"
-            ],
+            "required": ["changed"],
             "properties": {
-              "changed": {
-                "type": "boolean"
-              },
-              "settings": {
-                "$ref": "#/$defs/settingsDocument"
-              }
+              "changed": {"type": "boolean"},
+              "settings": {"$ref": "#/$defs/settingsDocument"}
             }
           }
         }
@@ -784,179 +358,72 @@
     {
       "if": {
         "properties": {
-          "kind": {
-            "const": "event"
-          },
-          "type": {
-            "const": "agent.settings.changed"
-          }
+          "kind": {"const": "event"},
+          "type": {"const": "agent.settings.changed"}
         },
-        "required": [
-          "kind",
-          "type"
-        ]
+        "required": ["kind", "type"]
       },
       "then": {
         "properties": {
           "data": {
             "type": "object",
             "additionalProperties": false,
-            "required": [
-              "revision"
-            ],
-            "properties": {
-              "revision": {
-                "type": "integer",
-                "minimum": 1
-              }
-            }
+            "required": ["revision"],
+            "properties": {"revision": {"type": "integer", "minimum": 1}}
           }
         }
       }
     },
     {
       "if": {
-        "properties": {
-          "kind": {
-            "const": "event"
-          },
-          "type": {
-            "const": "telemetry.report"
-          }
-        },
-        "required": [
-          "kind",
-          "type"
-        ]
+        "properties": {"kind": {"const": "event"}, "type": {"const": "telemetry.report"}},
+        "required": ["kind", "type"]
       },
       "then": {
         "properties": {
           "data": {
             "type": "object",
-            "required": [
-              "xray_version",
-              "xray_running",
-              "online_users"
-            ],
+            "required": ["xray_version", "xray_running", "online_users"],
             "properties": {
-              "xray_version": {
-                "type": "string"
-              },
-              "xray_running": {
-                "type": "boolean"
-              },
-              "xray_instance_id": {
-                "type": "string",
-                "minLength": 1
-              },
+              "xray_version": {"type": "string"},
+              "xray_running": {"type": "boolean"},
+              "xray_instance_id": {"type": "string", "minLength": 1},
               "host": {
-                "type": [
-                  "object",
-                  "null"
-                ],
+                "type": ["object", "null"],
                 "additionalProperties": false,
-                "required": [
-                  "load1",
-                  "load5",
-                  "load15",
-                  "mem_total",
-                  "mem_used",
-                  "disk_total",
-                  "disk_used",
-                  "network_tx_bytes",
-                  "network_rx_bytes",
-                  "uptime_seconds"
-                ],
+                "required": ["load1", "load5", "load15", "mem_total", "mem_used", "disk_total", "disk_used", "network_tx_bytes", "network_rx_bytes", "uptime_seconds"],
                 "properties": {
-                  "load1": {
-                    "type": "number"
-                  },
-                  "load5": {
-                    "type": "number"
-                  },
-                  "load15": {
-                    "type": "number"
-                  },
-                  "cpu_percent": {
-                    "type": "number"
-                  },
-                  "mem_total": {
-                    "type": "integer",
-                    "minimum": 0
-                  },
-                  "mem_used": {
-                    "type": "integer",
-                    "minimum": 0
-                  },
-                  "disk_total": {
-                    "type": "integer",
-                    "minimum": 0
-                  },
-                  "disk_used": {
-                    "type": "integer",
-                    "minimum": 0
-                  },
-                  "network_interface": {
-                    "type": "string"
-                  },
-                  "network_tx_bytes": {
-                    "type": "integer",
-                    "minimum": 0
-                  },
-                  "network_rx_bytes": {
-                    "type": "integer",
-                    "minimum": 0
-                  },
-                  "network_tx_bps": {
-                    "type": "number"
-                  },
-                  "network_rx_bps": {
-                    "type": "number"
-                  },
-                  "uptime_seconds": {
-                    "type": "integer",
-                    "minimum": 0
-                  },
-                  "latency_ms": {
-                    "type": "number"
-                  },
-                  "latency_probe_active": {
-                    "type": "boolean"
-                  }
+                  "load1": {"type": "number"},
+                  "load5": {"type": "number"},
+                  "load15": {"type": "number"},
+                  "cpu_percent": {"type": "number"},
+                  "mem_total": {"type": "integer", "minimum": 0},
+                  "mem_used": {"type": "integer", "minimum": 0},
+                  "disk_total": {"type": "integer", "minimum": 0},
+                  "disk_used": {"type": "integer", "minimum": 0},
+                  "network_interface": {"type": "string"},
+                  "network_tx_bytes": {"type": "integer", "minimum": 0},
+                  "network_rx_bytes": {"type": "integer", "minimum": 0},
+                  "network_tx_bps": {"type": "number"},
+                  "network_rx_bps": {"type": "number"},
+                  "uptime_seconds": {"type": "integer", "minimum": 0},
+                  "latency_ms": {"type": "number"},
+                  "latency_probe_active": {"type": "boolean"}
                 }
               },
-              "traffic": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/$defs/trafficCounter"
-                }
-              },
+              "traffic": {"type": "array", "items": {"$ref": "#/$defs/trafficCounter"}},
               "online_users": {
                 "oneOf": [
-                  {
-                    "type": "null"
-                  },
+                  {"type": "null"},
                   {
                     "type": "array",
                     "items": {
                       "type": "object",
                       "additionalProperties": false,
-                      "required": [
-                        "user"
-                      ],
+                      "required": ["user"],
                       "properties": {
-                        "user": {
-                          "type": "string"
-                        },
-                        "ips": {
-                          "type": [
-                            "array",
-                            "null"
-                          ],
-                          "items": {
-                            "type": "string"
-                          }
-                        }
+                        "user": {"type": "string"},
+                        "ips": {"type": ["array", "null"], "items": {"type": "string"}}
                       }
                     }
                   }
@@ -964,9 +431,8 @@
               },
               "chain_probes": {
                 "type": "array",
-                "items": {
-                  "$ref": "#/$defs/chainProbeStat"
-                }
+                "items": {"$ref": "#/$defs/chainProbeStat"},
+                "description": "链跳出向段 TCP 握手探测（§链路统计）；latency_ms 缺省 = 失败/超时样本（连通性参考）"
               }
             }
           }
@@ -975,49 +441,19 @@
     },
     {
       "if": {
-        "properties": {
-          "kind": {
-            "const": "request"
-          },
-          "type": {
-            "const": "chain-hop.apply"
-          }
-        },
-        "required": [
-          "kind",
-          "type"
-        ]
+        "properties": {"kind": {"const": "request"}, "type": {"const": "chain-hop.apply"}},
+        "required": ["kind", "type"]
       },
       "then": {
         "properties": {
           "data": {
             "type": "object",
-            "required": [
-              "chain_id",
-              "hop_id",
-              "kind"
-            ],
+            "required": ["chain_id", "hop_id", "kind"],
             "properties": {
-              "chain_id": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "revision_id": {
-                "type": "integer",
-                "minimum": 1,
-                "description": "Go 侧为 omitempty；运行期总会赋值"
-              },
-              "hop_id": {
-                "type": "integer",
-                "minimum": 1
-              },
-              "kind": {
-                "enum": [
-                  "portal",
-                  "bridge",
-                  "forward"
-                ]
-              }
+              "chain_id": {"type": "integer", "minimum": 1},
+              "revision_id": {"type": "integer", "minimum": 1, "description": "Go 侧为 omitempty；运行期总会赋值"},
+              "hop_id": {"type": "integer", "minimum": 1},
+              "kind": {"enum": ["portal", "bridge", "forward"]}
             }
           }
         }
@@ -1025,42 +461,18 @@
     },
     {
       "if": {
-        "properties": {
-          "kind": {
-            "const": "request"
-          },
-          "type": {
-            "const": "xray.cleanup"
-          }
-        },
-        "required": [
-          "kind",
-          "type"
-        ]
+        "properties": {"kind": {"const": "request"}, "type": {"const": "xray.cleanup"}},
+        "required": ["kind", "type"]
       },
       "then": {
         "properties": {
           "data": {
             "type": "object",
-            "required": [
-              "dry_run"
-            ],
+            "required": ["dry_run"],
             "properties": {
-              "dry_run": {
-                "type": "boolean"
-              },
-              "expected_inbound_tags": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              },
-              "expected_pieces": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
+              "dry_run": {"type": "boolean"},
+              "expected_inbound_tags": {"type": "array", "items": {"type": "string"}},
+              "expected_pieces": {"type": "array", "items": {"type": "string"}}
             }
           }
         }
@@ -1068,18 +480,8 @@
     },
     {
       "if": {
-        "properties": {
-          "kind": {
-            "const": "response"
-          },
-          "type": {
-            "const": "xray.cleanup"
-          }
-        },
-        "required": [
-          "kind",
-          "type"
-        ]
+        "properties": {"kind": {"const": "response"}, "type": {"const": "xray.cleanup"}},
+        "required": ["kind", "type"]
       },
       "then": {
         "properties": {
@@ -1091,21 +493,12 @@
                 "items": {
                   "type": "object",
                   "properties": {
-                    "tag": {
-                      "type": "string"
-                    },
-                    "port": {
-                      "type": "integer"
-                    }
+                    "tag": {"type": "string"},
+                    "port": {"type": "integer"}
                   }
                 }
               },
-              "removed_pieces": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
+              "removed_pieces": {"type": "array", "items": {"type": "string"}}
             }
           }
         }
