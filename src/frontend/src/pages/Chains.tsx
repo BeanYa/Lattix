@@ -817,22 +817,21 @@ export default function Chains() {
                               return (
                                 <div key={h.id} className="cg-hop-seg" title={h.error || undefined}>
                                   {i > 0 ? (
-                                    <>
-                                      <span
-                                        className={cn(
-                                          'cg-hop-link',
-                                          c.status === 'active' && !offline && 'is-flowing',
-                                        )}
-                                        aria-hidden="true"
-                                      >
-                                        <i />
-                                        <ArrowDownIcon className="cg-hop-link-v" />
-                                        <ArrowRightIcon className="cg-hop-link-h" />
-                                      </span>
+                                    <span
+                                      className={cn(
+                                        'cg-hop-link',
+                                        c.status === 'active' && !offline && 'is-flowing',
+                                      )}
+                                    >
                                       <HopLatency
                                         segment={segmentForLink(statsIndex, c.hops[i - 1].id, h.id)}
                                       />
-                                    </>
+                                      <span className="cg-hop-link-track" aria-hidden="true">
+                                        <i />
+                                        <ArrowDownIcon className="cg-hop-link-arrow-v" />
+                                        <ArrowRightIcon className="cg-hop-link-arrow-h" />
+                                      </span>
+                                    </span>
                                   ) : null}
                                   <div className="cg-hop">
                                     <span className="cg-hop-head">

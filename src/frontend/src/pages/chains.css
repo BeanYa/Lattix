@@ -364,7 +364,6 @@
   .cg-hop-flow {
     flex-direction: row;
     align-items: center;
-    min-width: max-content;
   }
 }
 
@@ -378,15 +377,17 @@
   .cg-hop-seg {
     flex-direction: row;
     align-items: center;
+    flex: 1 1 auto;
   }
 }
 
-/* 连接线与箭头 */
+/* 跳间连线：长箭头撑满前后两跳之间的空间，段延迟标注在箭头上方（竖排时嵌于长线正中） */
 .cg-hop-link {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin: 3px 0 3px 16px;
+  gap: 3px;
+  margin: 4px 0 4px 16px;
   color: var(--panel-rule-strong);
 }
 
@@ -394,40 +395,79 @@
   color: var(--entry-line-color, var(--panel-success));
 }
 
-.cg-hop-link i {
+.cg-hop-link-track {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  height: 64px;
+}
+
+.cg-hop-link-track i {
   display: block;
   width: 1.5px;
-  height: 12px;
+  flex: 1;
+  min-height: 10px;
   background: currentColor;
 }
 
-.cg-hop-link svg {
+.cg-hop-link-track svg {
   width: 11px;
   height: 11px;
+  flex-shrink: 0;
 }
 
-.cg-hop-link-h {
+/* 窄屏竖排：向下长箭头贯穿两卡之间，延迟值嵌于长线正中（实色底遮线） */
+@media (max-width: 767.98px) {
+  .cg-hop-link {
+    position: relative;
+    margin: 8px 0;
+  }
+
+  .cg-hop-link-track {
+    width: 11px;
+  }
+
+  .cg-hop-latency {
+    --hop-latency-backdrop: var(--panel-popover);
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1;
+  }
+}
+
+.cg-hop-link-arrow-h {
   display: none;
 }
 
 @media (min-width: 768px) {
   .cg-hop-link {
+    flex: 1;
+    min-width: 64px;
+    margin: 0 10px;
+  }
+
+  .cg-hop-link-track {
     flex-direction: row;
-    margin: 0 7px;
+    align-items: center;
+    flex: 1;
+    height: auto;
   }
 
-  .cg-hop-link i {
-    width: 16px;
+  .cg-hop-link-track i {
+    width: auto;
     height: 1.5px;
+    min-height: 0;
   }
 
-  .cg-hop-link-v {
+  .cg-hop-link-arrow-v {
     display: none;
   }
 
-  .cg-hop-link-h {
+  .cg-hop-link-arrow-h {
     display: block;
-    margin-left: -2px;
   }
 }
 
@@ -1061,13 +1101,14 @@
   }
 }
 
-/* 跳间连线上的段延迟标注：状态色 + 文字双表达 */
+/* 跳间箭头上的段延迟标注：状态色 + 文字双表达；底色可换实色以遮住穿过的长线 */
 .cg-hop-latency {
-  align-self: center;
+  --hop-latency-backdrop: var(--panel-surface);
+  max-width: 100%;
   padding: 1px 7px;
   border: 1px solid color-mix(in srgb, var(--panel-status-ok) 45%, var(--panel-rule));
   border-radius: 999px;
-  background: color-mix(in srgb, var(--panel-status-ok) 10%, var(--panel-surface));
+  background: color-mix(in srgb, var(--panel-status-ok) 10%, var(--hop-latency-backdrop));
   color: var(--panel-status-ok);
   font-family: var(--font-display);
   font-size: 11px;
@@ -1076,22 +1117,18 @@
   line-height: 1.6;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cg-hop-latency[data-tone='warn'] {
   border-color: color-mix(in srgb, var(--panel-status-degraded) 45%, var(--panel-rule));
-  background: color-mix(in srgb, var(--panel-status-degraded) 10%, var(--panel-surface));
+  background: color-mix(in srgb, var(--panel-status-degraded) 10%, var(--hop-latency-backdrop));
   color: var(--panel-status-degraded);
 }
 
 .cg-hop-latency[data-tone='fail'] {
   border-color: color-mix(in srgb, var(--panel-status-failed) 45%, var(--panel-rule));
-  background: color-mix(in srgb, var(--panel-status-failed) 10%, var(--panel-surface));
+  background: color-mix(in srgb, var(--panel-status-failed) 10%, var(--hop-latency-backdrop));
   color: var(--panel-status-failed);
-}
-
-@media (max-width: 767.98px) {
-  .cg-hop-latency {
-    margin: 2px 0 2px 16px;
-  }
 }
