@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react'
 import {
   ChevronDownIcon,
   LogOutIcon,
@@ -71,10 +77,7 @@ function Dock({ pathname }: { pathname: string }) {
   }
 
   return (
-    <nav
-      aria-label="快捷导航"
-      className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2"
-    >
+    <nav aria-label="快捷导航" className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2">
       <div
         ref={dockRef}
         onMouseMove={handleMove}
@@ -622,9 +625,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 onNavigate={() => setMobileNavOpen(false)}
               />
               <div className="shrink-0 border-t border-rule px-4 py-3">
-                <p className="text-[12px] font-semibold tracking-[0.08em] text-ink-3">
-                  自托管面板
-                </p>
+                <p className="text-[12px] font-semibold tracking-[0.08em] text-ink-3">自托管面板</p>
               </div>
             </SheetContent>
           </Sheet>

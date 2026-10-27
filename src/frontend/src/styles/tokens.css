@@ -140,8 +140,7 @@
   --panel-chart-5: #6f675b;
 
   /* 阴影与纹理 */
-  --panel-shadow-card:
-    0 18px 44px -20px rgba(0, 0, 0, 0.5), 0 2px 8px -4px rgba(0, 0, 0, 0.35);
+  --panel-shadow-card: 0 18px 44px -20px rgba(0, 0, 0, 0.5), 0 2px 8px -4px rgba(0, 0, 0, 0.35);
   --panel-shadow-overlay: 0 32px 64px -24px rgba(0, 0, 0, 0.7), 0 8px 20px -10px rgba(0, 0, 0, 0.5);
   --panel-texture-fiber: none;
   --texture-opacity: 0;

@@ -625,7 +625,11 @@ html:not(.dark) [data-slot='app-shell'] {
   background-image:
     radial-gradient(120% 90% at 8% 0%, rgba(228, 192, 166, 0.75) 0%, rgba(228, 192, 166, 0) 60%),
     radial-gradient(150% 120% at 52% 46%, rgba(212, 184, 172, 0.55) 0%, rgba(212, 184, 172, 0) 70%),
-    radial-gradient(130% 100% at 82% 100%, rgba(235, 215, 204, 0.8) 0%, rgba(230, 204, 187, 0.6) 62%);
+    radial-gradient(
+      130% 100% at 82% 100%,
+      rgba(235, 215, 204, 0.8) 0%,
+      rgba(230, 204, 187, 0.6) 62%
+    );
 }
 
 html.dark .cg-shell,
