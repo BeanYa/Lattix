@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import {
   ChevronDownIcon,
   LogOutIcon,
@@ -40,6 +40,77 @@ import { cn } from '@/lib/utils'
 /** 所有可交互元素共用的焦点环，颜色跟随 tokens.css 的 --panel-focus。 */
 const focusRing =
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--panel-focus)]'
+
+const reducedMotion =
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+/**
+ * 底部玻璃停靠栏（液态玻璃语言）：一级入口的图标快捷切换。
+ * 悬停时按光标距离放大图标（macOS dock 手感），当前入口下方有铜橙圆点。
+ */
+function Dock({ pathname }: { pathname: string }) {
+  const dockRef = useRef<HTMLDivElement>(null)
+
+  const handleMove = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const dock = dockRef.current
+    if (!dock || reducedMotion) return
+    for (const item of dock.querySelectorAll<HTMLElement>('.dock-item')) {
+      const rect = item.getBoundingClientRect()
+      const distance = Math.abs(event.clientX - (rect.left + rect.width / 2))
+      const scale = 1 + 0.38 * Math.max(0, 1 - distance / 96)
+      item.style.transform = `scale(${scale.toFixed(3)}) translateY(${(-(scale - 1) * 8).toFixed(1)}px)`
+    }
+  }
+
+  const handleLeave = () => {
+    dockRef.current
+      ?.querySelectorAll<HTMLElement>('.dock-item')
+      .forEach((item) => (item.style.transform = ''))
+  }
+
+  return (
+    <nav
+      aria-label="快捷导航"
+      className="fixed bottom-4 left-1/2 z-40 -translate-x-1/2"
+    >
+      <div
+        ref={dockRef}
+        onMouseMove={handleMove}
+        onMouseLeave={handleLeave}
+        className="flex items-center gap-1 rounded-2xl border border-edge bg-surface/70 px-2 py-1.5 shadow-[var(--panel-shadow-overlay)] backdrop-blur-2xl"
+      >
+        {PRIMARY_NAV.map((item) => {
+          const Icon = item.icon
+          const active = isPrimaryActive(pathname, item)
+          return (
+            <Link
+              key={item.key}
+              href={item.to}
+              aria-label={item.label}
+              aria-current={active ? 'page' : undefined}
+              title={item.label}
+              className={cn(
+                'dock-item relative grid size-11 place-items-center rounded-xl text-ink-2 transition-transform duration-150 hover:text-ink',
+                active && 'text-ink',
+                focusRing,
+              )}
+            >
+              <Icon className="size-5" strokeWidth={1.8} aria-hidden="true" />
+              {active ? (
+                <span
+                  aria-hidden="true"
+                  className="absolute bottom-0 size-1 rounded-full bg-signal"
+                />
+              ) : null}
+            </Link>
+          )
+        })}
+      </div>
+    </nav>
+  )
+}
 
 /** 面板状态文案沿用 Layout.tsx 的英文状态词，颜色只作辅助，状态词始终可读。 */
 const panelTone: Record<
@@ -416,7 +487,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </div>
 
       {/* 顶栏固定 56px；<1024 的抽屉触发器在右侧动作区。 */}
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-rule bg-surface px-3 sm:px-4">
+      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-rule bg-surface/70 px-3 backdrop-blur-2xl sm:px-4">
         <Link
           href="/board"
           aria-label="Lattix 控制台"
@@ -552,7 +623,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               />
               <div className="shrink-0 border-t border-rule px-4 py-3">
                 <p className="text-[12px] font-semibold tracking-[0.08em] text-ink-3">
-                  自托管 · LINE BOARD
+                  自托管面板
                 </p>
               </div>
             </SheetContent>
@@ -562,7 +633,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {/* 侧栏：<1024 隐藏，1024–1279 为 72px 图标栏，≥1280 为 224px 展开栏。 */}
-        <aside className="hidden min-h-0 shrink-0 flex-col border-r border-rule bg-surface lg:flex lg:w-[72px] xl:w-56">
+        <aside className="hidden min-h-0 shrink-0 flex-col border-r border-rule bg-surface/55 backdrop-blur-2xl lg:flex lg:w-[72px] xl:w-56">
           <div className="hidden h-10 shrink-0 items-center justify-between border-b border-rule px-4 text-[11px] font-semibold tracking-[0.14em] text-ink-3 xl:flex">
             <span>导航 · NAVIGATION</span>
             <span className="size-1.5 rounded-full bg-signal" aria-hidden="true" />
@@ -570,7 +641,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <NavList mode="desktop" pendingCount={pendingCount} criticalCount={criticalCount} />
           <div className="shrink-0 border-t border-rule p-3">
             <p className="hidden text-[11px] font-semibold leading-4 tracking-[0.08em] text-ink-3 xl:block">
-              自托管 · LINE BOARD
+              自托管面板
             </p>
             <span
               aria-hidden="true"
@@ -584,7 +655,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <main
             id="main-content"
             tabIndex={-1}
-            className="mx-auto w-full max-w-[1600px] px-4 py-6 lg:px-6"
+            className="mx-auto w-full max-w-[1600px] px-4 pb-28 pt-6 lg:px-6 lg:pb-24"
           >
             {logoutError ? (
               <div
@@ -603,6 +674,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </div>
 
+      <Dock pathname={location} />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
       <UpdateOverlay />
     </div>

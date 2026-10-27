@@ -1,8 +1,7 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
+@import '@fontsource-variable/manrope';
 @import '@fontsource-variable/geist';
-@import '@fontsource/barlow-condensed/600.css';
-@import '@fontsource/barlow-condensed/700.css';
 @import './styles/panel.css';
 @import './styles/tokens.css';
 
@@ -138,14 +137,14 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
-  --radius-xs: 2px;
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 12px;
-  --radius-2xl: 14px;
-  --radius-3xl: 16px;
-  --radius-4xl: 20px;
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 18px;
+  --radius-2xl: 22px;
+  --radius-3xl: 24px;
+  --radius-4xl: 28px;
 }
 
 @layer base {
@@ -290,8 +289,8 @@
   .page-title {
     color: var(--panel-ink);
     font-family: var(--font-display);
-    font-size: 26px;
-    font-weight: 900;
+    font-size: 30px;
+    font-weight: 800;
     letter-spacing: -0.02em;
     line-height: 1.1;
   }
@@ -314,10 +313,12 @@
 
   .surface-frame {
     overflow: hidden;
-    border: 1px solid var(--panel-rule);
-    border-radius: var(--radius-lg, 12px);
+    border: 1px solid var(--panel-edge);
+    border-radius: var(--radius-lg, 20px);
     background: var(--panel-surface);
     box-shadow: var(--panel-shadow-card);
+    backdrop-filter: var(--panel-backdrop);
+    -webkit-backdrop-filter: var(--panel-backdrop);
   }
 
   .loading-state {
@@ -478,10 +479,12 @@
   }
 
   [data-slot='card'] {
-    border: 1px solid var(--panel-rule);
-    border-radius: var(--radius-lg, 12px);
+    border: 1px solid var(--panel-edge);
+    border-radius: var(--radius-lg, 20px);
     background: var(--panel-surface);
     box-shadow: var(--panel-shadow-card);
+    backdrop-filter: var(--panel-backdrop);
+    -webkit-backdrop-filter: var(--panel-backdrop);
   }
 
   [data-slot='button'] {
@@ -792,6 +795,8 @@
   --color-inset: var(--panel-inset);
   --color-rule: var(--panel-rule);
   --color-rule-strong: var(--panel-rule-strong);
+  --color-edge: var(--panel-edge);
+  --color-edge-strong: var(--panel-edge-strong);
   --color-ink: var(--panel-ink);
   --color-ink-2: var(--panel-ink-2);
   --color-ink-3: var(--panel-ink-3);
