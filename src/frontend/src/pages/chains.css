@@ -412,9 +412,18 @@
 }
 
 .cg-hop-link-track svg {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
   flex-shrink: 0;
+}
+
+/* chevron 头与 CSS 线体无缝衔接：12px 渲染 × stroke 3 ≈ 1.5px 线宽，微重叠消缝隙 */
+.cg-hop-link-arrow-v {
+  margin-top: -2px;
+}
+
+.cg-hop-link-arrow-h {
+  margin-left: -2px;
 }
 
 /* 窄屏竖排：向下长箭头贯穿两卡之间，延迟值嵌于长线正中（实色底遮线） */

@@ -3,9 +3,10 @@ import { useLocation, useSearch } from 'wouter'
 import {
   ActivityIcon,
   ArrowDownIcon,
-  ArrowRightIcon,
   ArrowUpIcon,
   BarChart3Icon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CircleCheckIcon,
   Clock3Icon,
   LinkIcon,
@@ -882,8 +883,14 @@ export default function Chains() {
                                       />
                                       <span className="cg-hop-link-track" aria-hidden="true">
                                         <i />
-                                        <ArrowDownIcon className="cg-hop-link-arrow-v" />
-                                        <ArrowRightIcon className="cg-hop-link-arrow-h" />
+                                        <ChevronDownIcon
+                                          className="cg-hop-link-arrow-v"
+                                          strokeWidth={3}
+                                        />
+                                        <ChevronRightIcon
+                                          className="cg-hop-link-arrow-h"
+                                          strokeWidth={3}
+                                        />
                                       </span>
                                     </span>
                                   ) : null}
