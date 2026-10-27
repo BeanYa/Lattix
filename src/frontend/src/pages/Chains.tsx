@@ -21,6 +21,7 @@ import {
 
 import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
@@ -58,6 +59,7 @@ import { roleLabel, useTrafficHistory } from './chains/use-traffic-history'
 import './chains.css'
 
 type ChainFilter = 'all' | 'active' | 'issue' | 'relay' | 'direct'
+type ChainTab = 'overview' | 'details'
 
 function statusTone(tone: CgStatusStyle['cg']): string {
   return tone === 'is-lime' ? 'is-ok' : tone
@@ -185,6 +187,8 @@ export default function Chains() {
   const [retrying, setRetrying] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<ChainFilter>('all')
+  // 链路页双 tab：概览（链路一览，默认）/ 详情（链路读数板）。
+  const [tab, setTab] = useState<ChainTab>('overview')
   // 链路一览点行定位（URL 深链优先，见 highlightedChainId）。
   const [selectedChainId, setSelectedChainId] = useState<number | null>(null)
   const loadRequest = useRef(0)
@@ -241,11 +245,10 @@ export default function Chains() {
   const share = useShareLink()
 
   const statsIndex = useMemo(() => buildChainStatsIndex(chainStats), [chainStats])
+  // 概览点行 → 切到详情 tab 并定位高亮（滚动等详情渲染后由下方 effect 执行）。
   const onSelectChain = (chainId: number) => {
     setSelectedChainId(chainId)
-    document
-      .getElementById(`chain-entry-${chainId}`)
-      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setTab('details')
   }
 
   // 支持从命令面板或控制台深链到 /network/chains/new、/network/chains/:id、/network/chains/:id/edit
@@ -255,6 +258,19 @@ export default function Chains() {
     const match = location.match(/^\/network\/chains\/(\d+)(?:\/edit)?$/)
     return match ? Number(match[1]) : null
   }, [location, searchString])
+
+  // 深链指向具体链路或新建：详情在概览之后，强制切到详情 tab。
+  useEffect(() => {
+    if (highlightedChainId !== null || location === '/network/chains/new') setTab('details')
+  }, [highlightedChainId, location])
+
+  // 详情渲染完成后滚动定位选中的链路卡。
+  useEffect(() => {
+    if (tab !== 'details' || selectedChainId === null || loading) return
+    document
+      .getElementById(`chain-entry-${selectedChainId}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [tab, selectedChainId, loading])
 
   useEffect(() => {
     if (loading) return
@@ -483,73 +499,111 @@ export default function Chains() {
 
       {(error || loadError) && <Notice tone="danger">{error || loadError}</Notice>}
 
-      <section className="cg-chain-board">
-        <header className="cg-chain-board-head">
-          <span className="cg-chain-tab">ROUTES</span>
-          <span className="cg-chain-board-title">链路读数</span>
-          <span className="cg-chain-board-meta">
-            {loading
-              ? '同步中…'
-              : filteredEntries.length !== entries.length
-                ? `${filteredEntries.length} / ${entries.length} 条链路`
-                : `${entries.length} 条链路`}
-          </span>
-        </header>
-        {!loading && entries.length > 0 ? (
-          <div className="cg-chain-toolbar">
-            <div className="cg-search-wrap">
-              <SearchIcon />
-              <input
-                type="search"
-                className="cg-search-input"
-                placeholder="搜索链路名称、跳点机器、线路编号 L0–L8…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                aria-label="搜索链路"
-              />
+      <Tabs value={tab} onValueChange={(value) => value && setTab(value as ChainTab)}>
+        <TabsList>
+          <TabsTrigger value="overview">概览</TabsTrigger>
+          <TabsTrigger value="details">详情</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {tab === 'overview' ? (
+        <section className="cg-chain-board">
+          <header className="cg-chain-board-head">
+            <span className="cg-chain-tab">OVERVIEW</span>
+            <span className="cg-chain-board-title">链路一览</span>
+            <span className="cg-chain-board-meta">
+              {loading
+                ? '同步中…'
+                : `${chains.length} 条链路 · 今日共 ${humanizeBytes(
+                    (chainStats?.today_up ?? 0) + (chainStats?.today_down ?? 0),
+                  )}`}
+            </span>
+          </header>
+          {loading ? (
+            <LoadingState className="cg-board-state" />
+          ) : chains.length === 0 ? (
+            <EmptyState
+              className="cg-board-state"
+              icon={<RouteIcon />}
+              title="暂无链路"
+              description="点击右上角“创建链路”开始"
+            />
+          ) : (
+            <ChainOverviewPanel
+              chains={chains}
+              index={statsIndex}
+              statsLoaded={chainStats !== null}
+              onSelect={onSelectChain}
+            />
+          )}
+        </section>
+      ) : (
+        <section className="cg-chain-board">
+          <header className="cg-chain-board-head">
+            <span className="cg-chain-tab">ROUTES</span>
+            <span className="cg-chain-board-title">链路读数</span>
+            <span className="cg-chain-board-meta">
+              {loading
+                ? '同步中…'
+                : filteredEntries.length !== entries.length
+                  ? `${filteredEntries.length} / ${entries.length} 条链路`
+                  : `${entries.length} 条链路`}
+            </span>
+          </header>
+          {!loading && entries.length > 0 ? (
+            <div className="cg-chain-toolbar">
+              <div className="cg-search-wrap">
+                <SearchIcon />
+                <input
+                  type="search"
+                  className="cg-search-input"
+                  placeholder="搜索链路名称、跳点机器、线路编号 L0–L8…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  aria-label="搜索链路"
+                />
+              </div>
+              <div className="cg-filter-pills" role="group" aria-label="链路筛选">
+                {(
+                  [
+                    { id: 'all', label: '全部', count: filterCounts.all },
+                    { id: 'active', label: '正常', count: filterCounts.active },
+                    { id: 'issue', label: '异常/降级', count: filterCounts.issue },
+                    { id: 'relay', label: '中转', count: filterCounts.relay },
+                    { id: 'direct', label: '直连', count: filterCounts.direct },
+                  ] as const
+                ).map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    className="cg-filter-pill"
+                    data-active={filter === item.id ? 'true' : 'false'}
+                    onClick={() => setFilter(item.id)}
+                  >
+                    <span>{item.label}</span>
+                    <span className="cg-filter-pill-count">{item.count}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="cg-filter-pills" role="group" aria-label="链路筛选">
-              {(
-                [
-                  { id: 'all', label: '全部', count: filterCounts.all },
-                  { id: 'active', label: '正常', count: filterCounts.active },
-                  { id: 'issue', label: '异常/降级', count: filterCounts.issue },
-                  { id: 'relay', label: '中转', count: filterCounts.relay },
-                  { id: 'direct', label: '直连', count: filterCounts.direct },
-                ] as const
-              ).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className="cg-filter-pill"
-                  data-active={filter === item.id ? 'true' : 'false'}
-                  onClick={() => setFilter(item.id)}
-                >
-                  <span>{item.label}</span>
-                  <span className="cg-filter-pill-count">{item.count}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-        {loading ? (
-          <LoadingState className="cg-board-state" />
-        ) : entries.length === 0 ? (
-          <EmptyState
-            className="cg-board-state"
-            icon={<RouteIcon />}
-            title="暂无链路"
-            description="点击上方“创建链路”开始"
-          />
-        ) : filteredEntries.length === 0 ? (
-          <EmptyState
-            className="cg-board-state"
-            icon={<RouteIcon />}
-            title="未找到匹配的链路"
-            description="尝试调整搜索词或切换上方筛选条件"
-          />
-        ) : (
-          <div className="cg-chain-content">
+          ) : null}
+          {loading ? (
+            <LoadingState className="cg-board-state" />
+          ) : entries.length === 0 ? (
+            <EmptyState
+              className="cg-board-state"
+              icon={<RouteIcon />}
+              title="暂无链路"
+              description="点击上方“创建链路”开始"
+            />
+          ) : filteredEntries.length === 0 ? (
+            <EmptyState
+              className="cg-board-state"
+              icon={<RouteIcon />}
+              title="未找到匹配的链路"
+              description="尝试调整搜索词或切换上方筛选条件"
+            />
+          ) : (
             <div className="cg-chain-rows">
               {filteredEntries.map((entry) => {
                 if (entry.type === 'direct') {
@@ -901,17 +955,9 @@ export default function Chains() {
                 )
               })}
             </div>
-            <ChainOverviewPanel
-              chains={chains}
-              index={statsIndex}
-              todayUp={chainStats?.today_up ?? 0}
-              todayDown={chainStats?.today_down ?? 0}
-              statsLoaded={chainStats !== null}
-              onSelect={onSelectChain}
-            />
-          </div>
-        )}
-      </section>
+          )}
+        </section>
+      )}
 
       <ChainFormDialog controller={chainForm} servers={servers} panelShort={panelShort} />
       <TrafficHistoryDialog controller={traffic} />

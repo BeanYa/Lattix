@@ -930,62 +930,25 @@
   }
 }
 
-/* ---------- 链路统计（§链路统计）：链路一览侧栏 + 跳间段延迟 + 今日负载 ---------- */
+/* ---------- 链路统计（§链路统计）：概览 tab（链路一览）+ 跳间段延迟 + 今日负载 ---------- */
 
-.cg-chain-content {
-  display: grid;
-  gap: 12px;
-  padding: 12px;
-  background: var(--panel-surface);
-}
-
+/* 概览 tab：board 内的页级一览列表（标题与今日合计由 board 头承载） */
 .cg-chain-overview {
-  order: -1;
-  align-self: start;
-  border: 1px solid var(--panel-rule);
-  border-radius: var(--radius-md, 8px);
-  background: var(--panel-inset);
-}
-
-.cg-chain-overview-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 12px 8px;
-}
-
-.cg-chain-overview-title {
-  color: var(--panel-ink);
-  font-family: var(--font-display);
-  font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  line-height: 1.2;
-}
-
-.cg-chain-overview-total {
-  color: var(--panel-ink-3);
-  font-family: var(--font-display);
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.03em;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  padding: 6px 8px 10px;
 }
 
 .cg-chain-overview-rows {
   display: grid;
-  padding: 0 6px;
 }
 
 .cg-chain-overview-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  padding: 6px 8px;
+  min-height: 44px;
+  padding: 8px 12px;
   border: 0;
   border-radius: var(--radius-sm, 6px);
   background: transparent;
@@ -993,6 +956,18 @@
   text-align: left;
   cursor: pointer;
   transition: background-color 140ms var(--panel-ease);
+}
+
+.cg-chain-overview-row + .cg-chain-overview-row {
+  position: relative;
+}
+
+.cg-chain-overview-row + .cg-chain-overview-row::before {
+  content: '';
+  position: absolute;
+  inset: 0 12px auto;
+  height: 1px;
+  background: var(--panel-rule);
 }
 
 .cg-chain-overview-row:hover {
@@ -1009,7 +984,7 @@
   overflow: hidden;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 650;
   letter-spacing: 0.01em;
   line-height: 1.35;
@@ -1023,7 +998,7 @@
   gap: 5px;
   color: var(--panel-ink);
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 650;
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
@@ -1055,10 +1030,10 @@
 }
 
 .cg-chain-overview-today {
-  min-width: 64px;
+  min-width: 72px;
   color: var(--panel-ink-2);
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 650;
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
@@ -1071,7 +1046,7 @@
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  margin: 4px 12px 10px;
+  margin: 6px 12px 4px;
   color: var(--panel-ink-3);
   font-family: var(--font-display);
   font-size: 11.5px;
@@ -1086,19 +1061,6 @@
   margin-top: 2px;
   flex-shrink: 0;
   stroke-width: 2;
-}
-
-@media (min-width: 1024px) {
-  .cg-chain-content {
-    grid-template-columns: minmax(0, 1fr) 296px;
-    align-items: start;
-  }
-
-  .cg-chain-overview {
-    order: 0;
-    grid-column: 2;
-    grid-row: 1;
-  }
 }
 
 /* 跳间箭头上的段延迟标注：状态色 + 文字双表达；底色可换实色以遮住穿过的长线 */

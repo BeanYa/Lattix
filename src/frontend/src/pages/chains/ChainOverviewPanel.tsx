@@ -9,31 +9,21 @@ import { chainTodayBytes, formatLatency, latencyTone, type ChainStatsIndex } fro
 interface ChainOverviewPanelProps {
   chains: Chain[]
   index: ChainStatsIndex
-  todayUp: number
-  todayDown: number
   statsLoaded: boolean
   onSelect: (chainId: number) => void
 }
 
-// ChainOverviewPanel 是链路一览侧栏（§链路统计）：每链跳间延迟与今日负载，
-// 点行定位到下方链路卡。chains 由页面按列表同序传入（仅链路条目，直连节点无段探测）。
+// ChainOverviewPanel 是「概览」tab 的链路一览列表（§链路统计）：每链跳间延迟与
+// 今日负载；点行切到详情 tab 定位对应链路卡。chains 由页面按列表同序传入
+//（直连节点无段探测不列入）。标题与今日合计由外层 board 头承载。
 export function ChainOverviewPanel({
   chains,
   index,
-  todayUp,
-  todayDown,
   statsLoaded,
   onSelect,
 }: ChainOverviewPanelProps) {
-  if (chains.length === 0) return null
   return (
-    <aside className="cg-chain-overview" aria-label="链路一览">
-      <header className="cg-chain-overview-head">
-        <span className="cg-chain-overview-title">链路一览</span>
-        <span className="cg-chain-overview-total" aria-label="今日流量合计">
-          今日共 {humanizeBytes(todayUp + todayDown)}
-        </span>
-      </header>
+    <div className="cg-chain-overview">
       <div className="cg-chain-overview-rows">
         {chains.map((chain) => {
           const stats = index.byChain.get(chain.id)
@@ -77,8 +67,8 @@ export function ChainOverviewPanel({
       </div>
       <p className="cg-chain-overview-hint">
         <EyeIcon />
-        点行定位下方链路卡；延迟为跳间探测之和，负载为今日流量，经 Agent 段探测上报。
+        点行前往详情查看拓扑与维护操作；延迟为跳间探测之和，负载为今日流量，经 Agent 段探测上报。
       </p>
-    </aside>
+    </div>
   )
 }
