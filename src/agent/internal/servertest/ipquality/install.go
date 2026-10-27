@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // installTimeout is generous because it only applies on a fresh host where an
@@ -119,6 +121,8 @@ func joinCommand(prefix, argv []string) []string {
 // combined output; the child runs in its own process group so the timeout can
 // kill the whole tree.
 func runInstallCommand(ctx context.Context, argv []string) (string, error) {
+	restoreFileSizeCap := liftFileSizeCap()
+	defer restoreFileSizeCap()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var output limitedBuffer
@@ -136,6 +140,32 @@ func runInstallCommand(ctx context.Context, argv []string) (string, error) {
 		return output.buf.String(), ctx.Err()
 	case err := <-done:
 		return output.buf.String(), err
+	}
+}
+
+// liftFileSizeCap raises the soft file-size cap back to the hard limit for one
+// package-manager command. The sandbox worker caps soft writes at 32 MiB, and
+// apt rebuilds pkgcache.bin (tens of MB) during both update and install, so
+// without the lift the child dies with SIGXFSZ mid-run and leaves partial
+// lists behind. The hard limit is never touched; the returned func restores
+// the previous soft cap so the test script run stays capped.
+func liftFileSizeCap() (restore func()) {
+	var rlim unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_FSIZE, &rlim); err != nil || rlim.Cur >= rlim.Max {
+		return func() {}
+	}
+	previous := rlim.Cur
+	rlim.Cur = rlim.Max
+	if err := unix.Setrlimit(unix.RLIMIT_FSIZE, &rlim); err != nil {
+		return func() {}
+	}
+	return func() {
+		var back unix.Rlimit
+		if err := unix.Getrlimit(unix.RLIMIT_FSIZE, &back); err != nil || back.Cur == previous {
+			return
+		}
+		back.Cur = previous
+		_ = unix.Setrlimit(unix.RLIMIT_FSIZE, &back)
 	}
 }
 

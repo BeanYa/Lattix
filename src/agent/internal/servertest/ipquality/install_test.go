@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestParseOSRelease(t *testing.T) {
@@ -229,6 +231,38 @@ func TestRunInstallCommandExecutesFromPATH(t *testing.T) {
 	}
 	if _, err := runInstallCommand(context.Background(), []string{"fake-pkg", "fail"}); err == nil {
 		t.Fatal("failing command was accepted")
+	}
+}
+
+func TestRunInstallCommandLiftsFileSizeCapForChild(t *testing.T) {
+	var orig unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_FSIZE, &orig); err != nil {
+		t.Skipf("getrlimit unavailable: %v", err)
+	}
+	if orig.Max < 4<<20 {
+		t.Skipf("hard limit %d too small to exercise the lift", orig.Max)
+	}
+	defer func() { _ = unix.Setrlimit(unix.RLIMIT_FSIZE, &orig) }()
+	lowered := orig
+	lowered.Cur = 1 << 20
+	if err := unix.Setrlimit(unix.RLIMIT_FSIZE, &lowered); err != nil {
+		t.Skipf("setrlimit unavailable: %v", err)
+	}
+
+	// With the soft cap at 1 MiB the 3 MB write below dies with SIGXFSZ unless
+	// runInstallCommand lifts the soft cap to the hard limit for the child.
+	outputFile := filepath.Join(t.TempDir(), "payload.bin")
+	if _, err := runInstallCommand(context.Background(), []string{
+		"dd", "if=/dev/zero", "of=" + outputFile, "bs=1048576", "count=3",
+	}); err != nil {
+		t.Fatalf("runInstallCommand: %v", err)
+	}
+	var restored unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_FSIZE, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.Cur != lowered.Cur {
+		t.Fatalf("soft cap after restore = %d, want %d", restored.Cur, lowered.Cur)
 	}
 }
 

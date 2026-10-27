@@ -116,12 +116,15 @@ Panel，由前端报告表渲染（基础信息、风险评分、因子矩阵、
 
 ### 5.1 动态 Zstatic 目录
 
-Panel 固定请求：
+Panel 依序尝试固定钉住的候选源，首个成功者胜出：
 
-`https://lf3-ips.zstaticcdn.com/nodes_data.js`
+1. `https://www.zstaticcdn.com/api/v1/DescribeAllNodes` —— 官网节点查询页的公开 JSON
+   接口（`ProvinceNodes`/`CityNodes`，城市名直接取自 `city` 字段）；
+2. `https://lf3-ips.zstaticcdn.com/nodes_data.js` —— 旧版 `window.nodeData` 散装文件兜底。
 
-Panel 解析 `provinceBaseData`、`cityKeyList` 和 `extraCityNodeMeta`，生成可读字段
-`telecom`、`unicom`、`mobile` 及 `ipv4`、`ipv6`、`dualstack`。省级目标显示如“广东电信”，
+管理员可用 `LATTIX_CDN_SOURCE_URL`（逗号分隔）覆盖候选列表。面板按响应体自动识别
+JSON 或字面量格式，统一解析 `province`、`carriers`（`telecom`/`unicom`/`mobile`）与
+城市键，生成可读字段及 `ipv4`、`ipv6`、`dualstack`。省级目标显示如“广东电信”，
 城市备用目标显示如“广东深圳电信”。Agent 只收到已经解析、校验并带 hash 的快照。
 
 - 不调用 `tcpquality.ibsgss.uk/getNodes`；
@@ -130,7 +133,7 @@ Panel 解析 `provinceBaseData`、`cityKeyList` 和 `extraCityNodeMeta`，生成
 - 管理员可以在 UI 手工刷新；首次有效缓存完成前不允许下发任何服务器测试；
 - 缓存不过期；后续抓取或解析失败保留最后一份有效缓存，同时展示最后错误；
 - 请求失败、解析失败与无有效缓存使用不同错误信息；
-- 目录地址固定钉住，不跟随任何重定向：重定向一律按请求失败处理，错误信息包含重定向目标；
+- 候选源列表固定钉住，不跟随任何重定向：重定向一律按该源失败处理并尝试下一候选，错误信息包含重定向目标；
 - 固定目录客户端使用系统 CA 并补入公开的 DigiCert Global Root G2，仍严格校验证书链、
   有效期和主机名，不使用 `InsecureSkipVerify`。
 
@@ -187,11 +190,13 @@ Linux 首选为 worker 创建 PID、mount、IPC namespace；网络 namespace 刻
 否则测到的不是服务器实际出口。若系统、容器或非 root 用户拒绝 namespace，自动降级为独立
 进程、私有 `0700` 临时目录和 rlimit 隔离，并在报告写入 `sandbox=degraded` 与具体原因。
 
-Worker 设置 `RLIMIT_NOFILE=1024`、`RLIMIT_NPROC=128`、禁止 core dump、文件大小上限 32 MiB；
-Linux 使用 `Pdeathsig=SIGKILL`，父 Agent 消失时 worker 不会成为孤儿。常规测试不安装依赖、不
-改 sysctl/hosts/防火墙/Xray 配置，不创建常驻服务；IP 质量测试在脚本依赖缺失时经脚本 `-y`
-自动安装所需命令。默认按 root 能力运行；缺少 raw socket 权限时只降级相关动作，不要求管理
-员额外部署 root helper。
+Worker 设置 `RLIMIT_NOFILE=1024`、`RLIMIT_NPROC=128`、禁止 core dump、文件大小软上限
+32 MiB（只压软限制、不动硬上限，否则子进程永远无法抬回）。依赖安装命令执行前把软限制临时
+抬回硬限制并在结束后恢复：apt 在 update/install 时会重建 `pkgcache.bin`（数十 MB），不抬
+升会被 SIGXFSZ 杀死并留下残缺的列表文件。Linux 使用 `Pdeathsig=SIGKILL`，父 Agent 消失时
+worker 不会成为孤儿。常规测试不安装依赖、不改 sysctl/hosts/防火墙/Xray 配置，不创建常驻服
+务；IP 质量测试在脚本依赖缺失时由 agent 按发行版调用系统包管理器直接安装所需命令。默认按
+root 能力运行；缺少 raw socket 权限时只降级相关动作，不要求管理员额外部署 root helper。
 
 ## 9. 进度与最终结果
 

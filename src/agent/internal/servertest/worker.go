@@ -51,6 +51,13 @@ func WorkerMain(stdin io.Reader, stdout io.Writer) error {
 	return encoder.Encode(workerMessage{Kind: "result", Result: &report})
 }
 
+// workerFileSizeCap bounds the bytes a server test may write to any single
+// file. Only the soft limit is lowered: a lowered hard limit would be
+// inherited by every child and could never be raised again, and the
+// dependency installer needs to lift the cap for package managers (apt alone
+// rebuilds pkgcache.bin well past this size).
+const workerFileSizeCap = 32 << 20
+
 func applyWorkerLimits() {
 	limits := []struct {
 		resource int
@@ -59,10 +66,21 @@ func applyWorkerLimits() {
 		{unix.RLIMIT_NOFILE, unix.Rlimit{Cur: 1024, Max: 1024}},
 		{unix.RLIMIT_NPROC, unix.Rlimit{Cur: 128, Max: 128}},
 		{unix.RLIMIT_CORE, unix.Rlimit{Cur: 0, Max: 0}},
-		{unix.RLIMIT_FSIZE, unix.Rlimit{Cur: 32 << 20, Max: 32 << 20}},
 	}
 	for _, item := range limits {
 		_ = unix.Setrlimit(item.resource, &item.limit)
+	}
+	capFileSize()
+}
+
+func capFileSize() {
+	var rlim unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_FSIZE, &rlim); err != nil {
+		return
+	}
+	if cap := min(rlim.Max, uint64(workerFileSizeCap)); rlim.Cur > cap {
+		rlim.Cur = cap
+		_ = unix.Setrlimit(unix.RLIMIT_FSIZE, &rlim)
 	}
 }
 
