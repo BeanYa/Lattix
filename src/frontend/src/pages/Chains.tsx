@@ -7,6 +7,7 @@ import {
   BarChart3Icon,
   CircleCheckIcon,
   Clock3Icon,
+  LinkIcon,
   LoaderCircleIcon,
   PencilIcon,
   PlusIcon,
@@ -31,8 +32,10 @@ import { cn } from '@/lib/utils'
 import type { Chain, ChainStatus, NodeStatus, Server, XrayNode } from '@/lib/types'
 
 import { ChainFormDialog } from './chains/ChainFormDialog'
+import { ShareLinkDialog } from './chains/ShareLinkDialog'
 import { TrafficHistoryDialog } from './chains/TrafficHistoryDialog'
 import { useChainForm } from './chains/use-chain-form'
+import { useShareLink } from './chains/use-share-link'
 import { roleLabel, useTrafficHistory } from './chains/use-traffic-history'
 
 import './chains.css'
@@ -177,6 +180,7 @@ export default function Chains() {
     showOperation,
   })
   const traffic = useTrafficHistory({ onError: setError })
+  const share = useShareLink()
 
   // 支持从命令面板或控制台深链到 /network/chains/new、/network/chains/:id、/network/chains/:id/edit
   const highlightedChainId = useMemo(() => {
@@ -518,6 +522,20 @@ export default function Chains() {
                           创建于 {formatDateTime(node.created_at, timezone)}
                         </span>
                         <div className="cg-chain-actions">
+                          <Button
+                            variant="outline"
+                            size="icon-sm"
+                            title="导出分享链接"
+                            onClick={() =>
+                              void share.open({
+                                kind: 'node',
+                                id: node.id,
+                                name: node.name || `直连 #${node.id}`,
+                              })
+                            }
+                          >
+                            <LinkIcon />
+                          </Button>
                           {node.status === 'failed' ? (
                             <Button
                               variant="outline"
@@ -667,6 +685,21 @@ export default function Chains() {
                         <Button
                           variant="outline"
                           size="icon-sm"
+                          title="导出分享链接"
+                          onClick={() =>
+                            void share.open({
+                              kind: 'chain',
+                              id: c.id,
+                              name: c.name || `中转 #${c.id}`,
+                              exitNodeId: c.hops.find((h) => h.role === 'exit')?.node_id,
+                            })
+                          }
+                        >
+                          <LinkIcon />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
                           title="编辑链路"
                           disabled={
                             c.desired_revision_id !== 0 &&
@@ -791,6 +824,7 @@ export default function Chains() {
 
       <ChainFormDialog controller={chainForm} servers={servers} panelShort={panelShort} />
       <TrafficHistoryDialog controller={traffic} />
+      <ShareLinkDialog controller={share} />
     </Page>
   )
 }

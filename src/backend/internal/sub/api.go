@@ -296,7 +296,7 @@ func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User) ([]Su
 		}
 		// Reuse the subscription compiler's eligibility checks so the monitor
 		// cannot reveal a chain that was omitted from the actual subscription.
-		if _, err := s.chainSubscriptionItem(r, chain, allowedNodes, assignmentArgs...); err != nil {
+		if _, err := s.chainSubscriptionItem(r.Context(), chain, allowedNodes, assignmentArgs...); err != nil {
 			continue
 		}
 		revision, err := s.st.PublishedChainRevision(r.Context(), chain.ID)

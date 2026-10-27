@@ -628,24 +628,7 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 	}
 	// 用户维度分配（§16）：分组用户只按分组派生（直接分配被遮蔽）；
 	// 非分组用户走直接分配（user_nodes + user_chain_assignments）。
-	groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), user.ID)
-	if err != nil {
-		return items, warnings
-	}
-	allowed := map[int64]bool{}
-	var chainAssignments []store.UserChainAssignment
-	if len(groupIDs) > 0 {
-		chainAssignments, err = s.st.EffectiveUserChainAssignments(r.Context(), user.ID)
-	} else {
-		assigned, err := s.st.UserNodeIDs(r.Context(), user.ID)
-		if err != nil {
-			return items, warnings
-		}
-		for _, id := range assigned {
-			allowed[id] = true
-		}
-		chainAssignments, err = s.st.UserChainAssignments(r.Context(), user.ID)
-	}
+	allowed, chainAssignments, err := s.userAccess(r.Context(), user)
 	if err != nil {
 		return items, warnings
 	}
@@ -671,7 +654,7 @@ func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []st
 		if c.EndpointID != 0 && !hasAssignment {
 			continue
 		}
-		item, err := s.chainSubscriptionItem(r, c, allowed, assignment)
+		item, err := s.chainSubscriptionItem(r.Context(), c, allowed, assignment)
 		if err != nil {
 			if hasAssignment {
 				warnings = append(warnings, fmt.Sprintf("链路「%s」未纳入订阅：%v", chainDisplayName(c), err))
@@ -710,14 +693,14 @@ func chainDisplayName(c store.Chain) string {
 }
 
 // chainSubscriptionItem 构造单条链的订阅条目；不满足输出条件返回错误（调用方跳过）。
-func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allowed map[int64]bool,
+func (s *Server) chainSubscriptionItem(ctx context.Context, chain store.Chain, allowed map[int64]bool,
 	assignments ...store.UserChainAssignment) (*proxyItem, error) {
 	assignment := store.UserChainAssignment{}
 	if len(assignments) > 0 {
 		assignment = assignments[0]
 	}
 	chainID := chain.ID
-	revision, err := s.st.PublishedChainRevision(r.Context(), chainID)
+	revision, err := s.st.PublishedChainRevision(ctx, chainID)
 	if err != nil {
 		return nil, err
 	}
@@ -727,7 +710,7 @@ func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allow
 	}
 	entry := snapshot.Hops[0]
 	if snapshot.EndpointID != 0 {
-		endpoint, err := s.st.SharedEndpointByID(r.Context(), snapshot.EndpointID)
+		endpoint, err := s.st.SharedEndpointByID(ctx, snapshot.EndpointID)
 		if err != nil {
 			return nil, fmt.Errorf("链 %d 共享入口不存在", chainID)
 		}
@@ -741,7 +724,7 @@ func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allow
 		if err := json.Unmarshal(endpoint.RealizedConfig, &rc); err != nil || rc.Port == 0 {
 			return nil, fmt.Errorf("链 %d 共享入口 realized_config 不可用", chainID)
 		}
-		entrySrv, err := s.st.ServerByID(r.Context(), endpoint.ServerID)
+		entrySrv, err := s.st.ServerByID(ctx, endpoint.ServerID)
 		if err != nil || entrySrv.Address == "" {
 			return nil, fmt.Errorf("链 %d 入口地址不可用", chainID)
 		}
@@ -761,7 +744,7 @@ func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allow
 	if !allowed[snapshot.ServiceNodeID] {
 		return nil, fmt.Errorf("链 %d 出口节点未分配给该用户", chainID)
 	}
-	node, err := s.st.NodeByID(r.Context(), snapshot.ServiceNodeID)
+	node, err := s.st.NodeByID(ctx, snapshot.ServiceNodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -773,7 +756,7 @@ func (s *Server) chainSubscriptionItem(r *http.Request, chain store.Chain, allow
 	if err := json.Unmarshal(snapshot.ServiceRealized, &rc); err != nil || rc.Port == 0 {
 		return nil, fmt.Errorf("链 %d 出口 realized_config 不可用", chainID)
 	}
-	entrySrv, err := s.st.ServerByID(r.Context(), entry.ServerID)
+	entrySrv, err := s.st.ServerByID(ctx, entry.ServerID)
 	if err != nil {
 		return nil, err
 	}

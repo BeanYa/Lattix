@@ -9,6 +9,7 @@ import type {
   BillingStatsGranularity,
   BillingStatsRateMode,
   Chain,
+  ChainShareLink,
   CleanupXrayResult,
   CommandLog,
   RebuildXrayResult,
@@ -267,6 +268,8 @@ export const api = {
       hop_id: hopId,
       days,
     }),
+  chainShareLink: (chainId: number, userId: number) =>
+    requester.get<ChainShareLink>('/api/chain/share-link', { chain_id: chainId, user_id: userId }),
   retryChain: (chainId: number) =>
     requester.postObserved<Chain>('/api/chain/retry', { chain_id: chainId }),
   deleteChain: (chainId: number) =>
@@ -280,6 +283,8 @@ export const api = {
     requester.postObserved<XrayNode>('/api/node/retry', { node_id: nodeId }),
   deleteNode: (nodeId: number) =>
     requester.postObserved<void>('/api/node/delete', { node_id: nodeId }),
+  nodeShareLink: (nodeId: number, userId: number) =>
+    requester.get<ChainShareLink>('/api/node/share-link', { node_id: nodeId, user_id: userId }),
 
   users: (options?: RequestOptions) =>
     requester.get<SubUser[]>('/api/user/list', undefined, options),

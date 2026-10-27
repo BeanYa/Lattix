@@ -515,6 +515,14 @@ export interface Chain {
   entry_config?: VirtualConfig | null
 }
 
+// 管理端导出的分享链接：与订阅交付一致的协议 URI（凭据取所选用户）。
+export interface ChainShareLink {
+  protocol: string
+  address: string
+  port: number
+  link: string
+}
+
 // 链路构图提交（§21）：依次入口 / 中间跳（0-2）/ 出口，出口携带业务节点协议表单，
 // 入口端口可空 = 自动。node.server_id 由后端按 exit.server_id 覆盖。
 // hop 引用可携带 address：空/省略 = 跟随服务器默认地址。

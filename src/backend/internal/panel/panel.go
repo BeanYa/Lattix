@@ -397,6 +397,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/node/delete",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"node_id"}},
 		s.handleDeleteNode)
+	s.registerRPC(mux, http.MethodGet, "/api/node/share-link",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"node_id", "user_id"}},
+		s.handleNodeShareLink)
 
 	s.registerRPC(mux, http.MethodGet, "/api/chain/list", polledRead, s.handleListChains)
 	s.registerRPC(mux, http.MethodPost, "/api/chain/create", write, s.handleCreateChain)
@@ -413,6 +416,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodGet, "/api/chain/get-traffic-history",
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"chain_id", "hop_id", "days"}},
 		s.handleGetChainTrafficHistory)
+	s.registerRPC(mux, http.MethodGet, "/api/chain/share-link",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"chain_id", "user_id"}},
+		s.handleChainShareLink)
 
 	s.registerRPC(mux, http.MethodGet, "/api/user/list", polledRead, s.handleListUsers)
 	s.registerRPC(mux, http.MethodPost, "/api/user/create", write, s.handleCreateUser)

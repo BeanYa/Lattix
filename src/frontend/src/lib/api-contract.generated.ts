@@ -602,6 +602,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/node/share-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 导出指定用户视角下单机节点的分享链接（与订阅交付一致的协议 URI）；
+         *     链路出口节点只能经链路消费，不单独导出。
+         */
+        get: operations["nodeShareLink"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chain/list": {
         parameters: {
             query?: never;
@@ -708,6 +728,26 @@ export interface paths {
             cookie?: never;
         };
         get: operations["chainGetTrafficHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chain/share-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 导出指定用户视角下链路的分享链接：以已发布修订快照为准，入口地址/端口 +
+         *     出口业务协议参数 + 用户订阅凭据，与订阅交付一致。
+         */
+        get: operations["chainShareLink"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2752,6 +2792,22 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    nodeShareLink: {
+        parameters: {
+            query: {
+                node_id: number;
+                user_id: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     chainList: {
         parameters: {
             query?: never;
@@ -2869,6 +2925,22 @@ export interface operations {
                 chain_id: number;
                 hop_id?: number;
                 days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    chainShareLink: {
+        parameters: {
+            query: {
+                chain_id: number;
+                user_id: number;
             };
             header?: never;
             path?: never;
@@ -3971,6 +4043,7 @@ export const rpcOperations = {
   nodeCreate: { method: 'POST', path: '/api/node/create' },
   nodeRetry: { method: 'POST', path: '/api/node/retry' },
   nodeDelete: { method: 'POST', path: '/api/node/delete' },
+  nodeShareLink: { method: 'GET', path: '/api/node/share-link' },
   chainList: { method: 'GET', path: '/api/chain/list' },
   chainCreate: { method: 'POST', path: '/api/chain/create' },
   chainEdit: { method: 'POST', path: '/api/chain/edit' },
@@ -3978,6 +4051,7 @@ export const rpcOperations = {
   chainSetTrafficMultiplier: { method: 'POST', path: '/api/chain/set-traffic-multiplier' },
   chainResetTraffic: { method: 'POST', path: '/api/chain/reset-traffic' },
   chainGetTrafficHistory: { method: 'GET', path: '/api/chain/get-traffic-history' },
+  chainShareLink: { method: 'GET', path: '/api/chain/share-link' },
   chainRetry: { method: 'POST', path: '/api/chain/retry' },
   chainDelete: { method: 'POST', path: '/api/chain/delete' },
   userList: { method: 'GET', path: '/api/user/list' },

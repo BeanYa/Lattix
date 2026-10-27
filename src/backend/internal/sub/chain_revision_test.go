@@ -66,7 +66,7 @@ func TestSubscriptionUsesPublishedRevisionWhileEditApplies(t *testing.T) {
 	}
 
 	chain, _ := st.ChainByID(ctx, chainID)
-	item, err := New(st, nil, nil).chainSubscriptionItem(httptest.NewRequest("GET", "/sub/test", nil), *chain, map[int64]bool{nodeID: true})
+	item, err := New(st, nil, nil).chainSubscriptionItem(ctx, *chain, map[int64]bool{nodeID: true})
 	if err != nil {
 		t.Fatal(err)
 	}

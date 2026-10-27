@@ -190,6 +190,7 @@ GET  /api/node/list
 POST /api/node/create
 POST /api/node/retry
 POST /api/node/delete
+GET  /api/node/share-link?node_id={id}&user_id={id}
 
 GET  /api/chain/list
 POST /api/chain/create
@@ -200,6 +201,7 @@ POST /api/chain/delete
 POST /api/chain/set-traffic-multiplier
 POST /api/chain/reset-traffic
 GET  /api/chain/get-traffic-history?chain_id={id}&hop_id={id|0}&days={1..730}
+GET  /api/chain/share-link?chain_id={id}&user_id={id}
 
 GET  /api/user/list
 POST /api/user/create

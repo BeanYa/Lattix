@@ -332,6 +332,16 @@ paths:
         - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/node/share-link:
+    get:
+      operationId: nodeShareLink
+      description: |
+        导出指定用户视角下单机节点的分享链接（与订阅交付一致的协议 URI）；
+        链路出口节点只能经链路消费，不单独导出。
+      parameters:
+        - {name: node_id, in: query, required: true, schema: {type: integer, minimum: 1}}
+        - {name: user_id, in: query, required: true, schema: {type: integer, minimum: 1}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/list:
     get:
       operationId: chainList
@@ -393,6 +403,16 @@ paths:
         - {name: chain_id, in: query, required: true, schema: {type: integer, minimum: 1}}
         - {name: hop_id, in: query, schema: {type: integer, minimum: 0, default: 0}}
         - {name: days, in: query, schema: {type: integer, minimum: 1, maximum: 730, default: 30}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/chain/share-link:
+    get:
+      operationId: chainShareLink
+      description: |
+        导出指定用户视角下链路的分享链接：以已发布修订快照为准，入口地址/端口 +
+        出口业务协议参数 + 用户订阅凭据，与订阅交付一致。
+      parameters:
+        - {name: chain_id, in: query, required: true, schema: {type: integer, minimum: 1}}
+        - {name: user_id, in: query, required: true, schema: {type: integer, minimum: 1}}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/chain/retry:
     post:
