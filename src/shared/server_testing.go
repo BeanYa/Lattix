@@ -28,7 +28,7 @@ const (
 	ServerTestCERNET2IPv6     ServerTestCategory = "cernet2_ipv6"
 	ServerTestReturnRouteIPv4 ServerTestCategory = "return_route_ipv4"
 	ServerTestReturnRouteIPv6 ServerTestCategory = "return_route_ipv6"
-	ServerTestInternational   ServerTestCategory = "international"
+	ServerTestConnectivity    ServerTestCategory = "connectivity"
 	ServerTestSpeed           ServerTestCategory = "speed"
 )
 
@@ -41,7 +41,7 @@ var serverTestCategoryOrder = []ServerTestCategory{
 	ServerTestCERNET2IPv6,
 	ServerTestReturnRouteIPv4,
 	ServerTestReturnRouteIPv6,
-	ServerTestInternational,
+	ServerTestConnectivity,
 	ServerTestSpeed,
 }
 

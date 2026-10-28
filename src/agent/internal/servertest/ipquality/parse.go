@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/netip"
+	"regexp"
 	"strings"
 
 	"lattix/shared"
@@ -175,16 +176,35 @@ func cleanStrings(values map[string]string) map[string]string {
 	return cleaned
 }
 
+// mediaRegionPattern / mediaTypePattern accept only the well-formed values the
+// upstream script is expected to emit (ISO-3166-like codes and Native/DNS).
+// The script occasionally leaks raw JSON fragments into Region or Type; those
+// are dropped instead of surfacing as garbage in report badges.
+var (
+	mediaRegionPattern = regexp.MustCompile(`^[A-Za-z]{2,3}$`)
+	mediaTypePattern   = regexp.MustCompile(`^[A-Za-z]{2,16}$`)
+)
+
 func cleanMedia(media map[string]shared.IPQualityMediaStatus) map[string]shared.IPQualityMediaStatus {
 	if len(media) == 0 {
 		return nil
 	}
 	cleaned := make(map[string]shared.IPQualityMediaStatus, len(media))
 	for name, status := range media {
+		region := norm(status.Region)
+		if !mediaRegionPattern.MatchString(region) {
+			region = ""
+		} else {
+			region = strings.ToUpper(region)
+		}
+		mediaType := norm(status.Type)
+		if !mediaTypePattern.MatchString(mediaType) {
+			mediaType = ""
+		}
 		cleaned[name] = shared.IPQualityMediaStatus{
 			Status: norm(status.Status),
-			Region: norm(status.Region),
-			Type:   norm(status.Type),
+			Region: region,
+			Type:   mediaType,
 		}
 	}
 	return cleaned

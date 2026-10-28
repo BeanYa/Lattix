@@ -61,14 +61,19 @@ SHA-256；每台服务器只允许一个非终态任务；按 generation 接收�
 | `large_packet_ipv4` | 大 SYN 回程可达性；先做 Cloudflare 环境预检，再对三网目标发送 23 个大包与 7 个小包 |
 | `cernet_ipv4` | 31 个公开高校 IPv4 目标的 TCP 延迟与丢包 |
 | `cernet2_ipv6` | 同一批教育网目标的 IPv6/CERNET2 连通性 |
-| `international` | 44 个国际站点/CDN 的 TCP 延迟与丢包，已排除 NodeSeek |
+| `connectivity` | 76 个知名站点（中国 12 / 日本 4 / 美国 32 / 全球 28）的 HTTPS 连通与延迟，按地区分组展示；目标为 ip.net.coffee 站点与原国际连通（TcpQuality，已排除 NodeSeek）的并集，同品牌去重保留连通性条目 |
 | `return_route_ipv4` | 对省级三网 IPv4 目标执行 TCP error-queue traceroute（逐跳 SYN 到目标服务端口），最多 30 跳，每跳 3 包；前段完全无响应时连续 5 跳提前终止；每目标独立 120s 预算，类别总预算 20 分钟 |
 | `return_route_ipv6` | IPv6 回程，口径同 IPv4 |
 | `speed` | Apple CDN IPv4/IPv6 单线程下载与上传（agent 直连）；大陆三网目标走 Ookla 官方 speedtest CLI（版本与 SHA256 锁定），节点表参照 xykt/NetQuality `ref/speedtest_cn.json` 的 speedtest.net 公共服务器 |
 
-普通 TCP 目标发送 30 次探测，国际目标发送 15 次，目标并发上限 16，单目标窗口 30 秒。
+普通 TCP 目标发送 30 次探测，目标并发上限 16，单目标窗口 30 秒。
 有 `CAP_NET_RAW`（通常为 root）时使用原始 SYN，权限不足时自动降级为 TCP connect，并在
 环境与单目标结果中标记降级原因。零响应不是成功，使用 `probe_no_response` 回报。
+
+网络连通性目标并发上限 12，每站点先发一次不计分的预热请求（建立 TCP+TLS），随后 4 次计量
+请求复用同连接，间隔 120ms，单请求 3 秒超时，取成功轮次中位数作为站点延迟；任何 HTTP 响应
+（含 3xx/4xx）都算可达，拨号/TLS/超时算丢轮。探测不走环境代理（`Proxy: nil`），报告按
+中国/日本/美国/全球分组，延迟色阶：<100ms 优，<400ms 良，其余慢，全部轮次失败为超时。
 
 大包测试必须具备 raw socket；Cloudflare 1200-byte SYN 预检 20 次，收包不超过 4 次时以
 `large_syn_environment_filtered` 停止该分类，避免把系统或运营商过滤误判为目标质量。
@@ -105,8 +110,10 @@ IP 质量检测执行上游 xykt/IPQuality 脚本 `ip.sh`，固定参数 `-p -j 
 Info（ASN/组织/城市/地区/注册地/时区/IP 类型）、Type（用途与公司类型 per 数据库）、
 Score（各库评分，保留原始字符串）、Factor（国家代码与代理/Tor/VPN/机房/滥用/爬虫因子
 per 数据库）、Media（流媒体与 AI 解锁状态/地区/类型）、Mail（25 端口与邮局连通性、
-DNSBL 汇总）。脚本的字面 `"null"` 字符串规范化为空值；未知服务或新增字段不丢失，每个
-家族同时携带规范化后的原始 JSON 副本（`raw`）。
+DNSBL 汇总）。脚本的字面 `"null"` 字符串规范化为空值；Media 的 Region 仅保留 ISO-3166
+形如 `US`/`JP` 的取值、Type 仅保留 `Native`/`DNS` 一类的字母值——上游脚本偶发把原始
+JSON 片段写进这两个字段，直接透传会污染报告（前端渲染历史脏数据报告时也做同样清洗）；
+未知服务或新增字段不丢失，每个家族同时携带规范化后的原始 JSON 副本（`raw`）。
 
 单栈主机只输出一个家族文档，缺失家族在报告中不出现；无任何公网地址时分类状态为
 `unavailable`（错误码 `no_public_address`）。最终报告经 `server-test.result` 分片协议回传
@@ -145,7 +152,11 @@ JSON 或字面量格式，统一解析 `province`、`carriers`（`telecom`/`unic
 - `international_targets.json`：TcpQuality commit
   `a1423e634e81b71ac468150265804f3efdc59a78` 的国际站点/CDN，去除 NodeSeek；
 - `education_targets.json`：依据相同上游分类自行维护的 31 个公开高校域名，替代私有 helper；
-- `speed_targets.json`：只保留官方服务端点，不带 tosutil、内置凭据、hosts 修改或私有代理。
+- `speed_targets.json`：只保留官方服务端点，不带 tosutil、内置凭据、hosts 修改或私有代理；
+- `connectivity_targets.json`：网络连通性站点列表（分组 `cn/jp/us/gl`），为 `ip.net.coffee/link/`
+  的 48 站点与原国际连通目录（TcpQuality commit
+  `a1423e634e81b71ac468150265804f3efdc59a78`，已排除 NodeSeek）的并集，同品牌去重保留
+  连通性条目；探测端点为 HTTPS 轻量路径（`/favicon.ico`、`/generate_204`、`/cdn-cgi/trace` 等）。
 
 Panel 对每份静态目录计算 SHA-256，与 Zstatic catalog hash 一起形成任务的
 `catalog_version`。目录变化不会改变已下发任务的目标集合。
@@ -213,13 +224,18 @@ Panel 每片返回 `accepted | complete | superseded`，Agent 单片等待 20 �
 
 ## 10. UI 与 NAT 机型
 
-完整独立 IP 机型默认勾选 IP 质量、IPv4/IPv6 TCP、IPv4/IPv6 回程和国际连通。NAT 机型
-默认只勾选 IP 质量；TCP、大包、教育网、国际、回程或测速均允许管理员主动勾选，但首次勾选
-时必须提示可能因系统、端口映射或运营商限制失败，确认后才加入任务。测速另显示流量警告。
+完整独立 IP 机型默认勾选 IP 质量、IPv4/IPv6 TCP、IPv4/IPv6 回程和网络连通性。
+NAT 机型默认只勾选 IP 质量；TCP、大包、教育网、回程或测速均允许管理员主动勾选，但
+首次勾选时必须提示可能因系统、端口映射或运营商限制失败，确认后才加入任务。网络连通性是
+纯 HTTPS 出站探测，NAT 机可勾选且不触发 NAT 警告。测速另显示流量警告。
 
-运行对话框展示各分类的 best-effort 进度。终态后入口变为“测试结果”按钮，报告对话框按分类
-显示目标、运营商、延迟、丢包、探测方法、路由、IP 质量报告（基础信息、风险评分、因子矩阵、
-流媒体徽章、邮局检测与 DNSBL）与具体错误，不显示目标 URL、广告、上游项目标题或外部报告链接。
+运行对话框展示各分类的 best-effort 进度；任务进入终态后同一总览窗口切换为模块列表，
+每个模块一行（终态图标 + 状态标签），点击一行打开仅含该模块的报告，全部完成时总览底部
+提供“查看完整报告”进入完整报告对话框。完整报告按分类显示目标、运营商、延迟、丢包、探测
+方法、路由、IP 质量报告（基础信息、风险评分、因子矩阵、流媒体解锁表、邮局检测与 DNSBL）、
+网络连通性分组视图（地区旗标、可达率、站点品牌图标、逐轮延迟色点）与具体错误，不显示目标
+URL、广告、上游项目标题或外部报告链接。品牌图标打包在 `public/logos/` 由浏览器本地加载，
+缺失时回退首字母占位。
 
 ## 11. API、协议与错误口径
 
@@ -245,7 +261,7 @@ IPregistry 临时 key；IP 质量报告包含完整出口 IP（用户要求展�
 | --- | --- |
 | `src/shared/server_testing.go` | Panel/Agent 共享协议、状态、manifest 与报告结构 |
 | `src/backend/internal/cdncatalog/` | Zstatic 抓取、受限 JS 解析、可读 schema、专用 TLS client |
-| `src/backend/internal/testcatalog/` | 国际、教育网、测速静态目录及来源元数据 |
+| `src/backend/internal/testcatalog/` | 国际、教育网、测速、连通性静态目录及来源元数据 |
 | `src/backend/internal/panel/server_tests.go` | API、目录快照与任务下发 |
 | `src/backend/internal/store/server_tests.go` | 每服务器最新任务、generation 与分片原子提交 |
 | `src/backend/internal/dispatch/dispatcher.go` | WS 下发、进度去重与结果 ACK |

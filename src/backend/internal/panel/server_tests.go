@@ -219,12 +219,14 @@ func (s *Server) serverTestCatalogSnapshot(ctx context.Context, categories []sha
 			}
 		}
 	}
-	if selected[shared.ServerTestInternational] {
-		for index, target := range staticCatalog.International {
+	if selected[shared.ServerTestConnectivity] {
+		for _, target := range staticCatalog.Connectivity {
 			targets = append(targets, shared.ServerTestTarget{
-				ID: fmt.Sprintf("international:%02d", index+1), Category: shared.ServerTestInternational,
-				Label: target.Label, AddressFamily: shared.ServerTestIPv4,
-				Host: target.Host, Port: 443, Source: "international",
+				ID: "connectivity:" + target.Group + ":" + target.Slug,
+				Category: shared.ServerTestConnectivity, Label: target.Label,
+				Province:      connectivityGroupLabel(target.Group),
+				AddressFamily: shared.ServerTestDualStack,
+				Host:          target.Host, Port: 443, Path: target.Path, Source: "connectivity",
 			})
 		}
 	}
@@ -244,9 +246,9 @@ func (s *Server) serverTestCatalogSnapshot(ctx context.Context, categories []sha
 	hashes := map[string]string{"zstatic": document.Source.CatalogSHA256}
 	versionParts := []string{"zstatic-v1:" + document.Source.CatalogSHA256[:12]}
 	for name, selectedCatalog := range map[string]bool{
-		"education":     selected[shared.ServerTestCERNETIPv4] || selected[shared.ServerTestCERNET2IPv6],
-		"international": selected[shared.ServerTestInternational],
-		"speed":         selected[shared.ServerTestSpeed],
+		"education":    selected[shared.ServerTestCERNETIPv4] || selected[shared.ServerTestCERNET2IPv6],
+		"connectivity": selected[shared.ServerTestConnectivity],
+		"speed":        selected[shared.ServerTestSpeed],
 	} {
 		if selectedCatalog {
 			hashes[name] = staticCatalog.Hashes[name]
@@ -277,4 +279,21 @@ func catalogEndpointTarget(category shared.ServerTestCategory, province cdncatal
 		}
 	}
 	return target
+}
+
+// connectivityGroupLabel maps a static catalog region group to the display
+// label stored on the target (and rendered as the report section heading).
+func connectivityGroupLabel(group string) string {
+	switch group {
+	case "cn":
+		return "中国"
+	case "jp":
+		return "日本"
+	case "us":
+		return "美国"
+	case "gl":
+		return "全球"
+	default:
+		return group
+	}
 }

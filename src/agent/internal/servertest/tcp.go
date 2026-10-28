@@ -14,11 +14,10 @@ import (
 )
 
 const (
-	standardProbeCount      = 30
-	internationalProbeCount = 15
-	targetConcurrency       = 16
-	connectTimeout          = 10 * time.Second
-	targetTimeout           = 30 * time.Second
+	standardProbeCount = 30
+	targetConcurrency  = 16
+	connectTimeout     = 10 * time.Second
+	targetTimeout      = 30 * time.Second
 )
 
 type tcpTargetResult struct {
@@ -47,9 +46,6 @@ func (r *Runner) runTCP(ctx context.Context, category shared.ServerTestCategory,
 		return unsupportedResult(category, "catalog_targets_unavailable", "no targets were supplied for this test category")
 	}
 	probeCount := standardProbeCount
-	if category == shared.ServerTestInternational {
-		probeCount = internationalProbeCount
-	}
 	results := make([]tcpTargetResult, len(targets))
 	jobs := make(chan int)
 	var wg sync.WaitGroup

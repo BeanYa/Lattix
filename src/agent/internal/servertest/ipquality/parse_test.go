@@ -135,6 +135,26 @@ func TestParseEdges(t *testing.T) {
 	}
 }
 
+func TestParseMediaGarbageRegion(t *testing.T) {
+	// The upstream script occasionally leaks JSON fragments into Media
+	// Region/Type; they must not survive into the report.
+	document := `{"Head":{"IP":"203.0.113.9"},"Media":{"AmazonPrimeVideo":{"Status":"Yes","Region":"},PROGRAM:{DATATYPE:A.MINERVAVALUEDATATYPE.STRING,VAL:O","Type":"Native"},"Netflix":{"Status":"Restricted","Region":"jp","Type":"DNS"}},"Mail":null}`
+	families, err := ParseScriptOutput(document)
+	if err != nil {
+		t.Fatalf("ParseScriptOutput: %v", err)
+	}
+	media := families[0].Media
+	if got := media["AmazonPrimeVideo"].Region; got != "" {
+		t.Errorf("garbage region = %q, want dropped", got)
+	}
+	if got := media["AmazonPrimeVideo"].Type; got != "Native" {
+		t.Errorf("type = %q, want Native", got)
+	}
+	if got := media["Netflix"]; got.Region != "JP" || got.Type != "DNS" {
+		t.Errorf("netflix = %+v, want region JP type DNS", got)
+	}
+}
+
 func TestParseNoDocument(t *testing.T) {
 	if _, err := ParseScriptOutput(""); !errors.Is(err, ErrNoFamily) {
 		t.Errorf("err = %v, want ErrNoFamily", err)

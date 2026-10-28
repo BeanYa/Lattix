@@ -11,25 +11,23 @@ import (
 	"strings"
 )
 
-//go:embed international_targets.json
-var internationalJSON []byte
-
 //go:embed education_targets.json
 var educationJSON []byte
 
 //go:embed speed_targets.json
 var speedJSON []byte
 
+//go:embed connectivity_targets.json
+var connectivityJSON []byte
+
+// ConnectivityGroups is the fixed set of region groups in display order.
+var ConnectivityGroups = []string{"cn", "jp", "us", "gl"}
+
 type Source struct {
 	Repository string `json:"repository"`
 	Commit     string `json:"commit"`
 	Path       string `json:"path,omitempty"`
 	Note       string `json:"note"`
-}
-
-type InternationalTarget struct {
-	Label string `json:"label"`
-	Host  string `json:"host"`
 }
 
 type EducationTarget struct {
@@ -49,19 +47,22 @@ type SpeedTarget struct {
 	OoklaServerID string `json:"ookla_server_id,omitempty"`
 }
 
+type ConnectivityTarget struct {
+	Group string `json:"group"`
+	Slug  string `json:"slug"`
+	Label string `json:"label"`
+	Host  string `json:"host"`
+	Path  string `json:"path"`
+}
+
 type Catalog struct {
-	International []InternationalTarget
-	Education     []EducationTarget
-	Speed         []SpeedTarget
-	Hashes        map[string]string
+	Education    []EducationTarget
+	Speed        []SpeedTarget
+	Connectivity []ConnectivityTarget
+	Hashes       map[string]string
 }
 
 func Load() (Catalog, error) {
-	type internationalDocument struct {
-		Version int                   `json:"version"`
-		Source  Source                `json:"source"`
-		Targets []InternationalTarget `json:"targets"`
-	}
 	type educationDocument struct {
 		Version int               `json:"version"`
 		Source  Source            `json:"source"`
@@ -72,24 +73,41 @@ func Load() (Catalog, error) {
 		Source  Source        `json:"source"`
 		Targets []SpeedTarget `json:"targets"`
 	}
-	var international internationalDocument
+	type connectivityDocument struct {
+		Version int                  `json:"version"`
+		Source  Source               `json:"source"`
+		Targets []ConnectivityTarget `json:"targets"`
+	}
 	var education educationDocument
 	var speed speedDocument
-	if err := json.Unmarshal(internationalJSON, &international); err != nil {
-		return Catalog{}, fmt.Errorf("decode international targets: %w", err)
-	}
+	var connectivity connectivityDocument
 	if err := json.Unmarshal(educationJSON, &education); err != nil {
 		return Catalog{}, fmt.Errorf("decode education targets: %w", err)
 	}
 	if err := json.Unmarshal(speedJSON, &speed); err != nil {
 		return Catalog{}, fmt.Errorf("decode speed targets: %w", err)
 	}
-	if international.Version != 1 || education.Version != 1 || speed.Version != 1 {
+	if err := json.Unmarshal(connectivityJSON, &connectivity); err != nil {
+		return Catalog{}, fmt.Errorf("decode connectivity targets: %w", err)
+	}
+	if education.Version != 1 || speed.Version != 1 || connectivity.Version != 1 {
 		return Catalog{}, errors.New("unsupported static test catalog version")
 	}
-	if len(international.Targets) != 44 || len(education.Targets) != 31 || len(speed.Targets) != 14 {
-		return Catalog{}, fmt.Errorf("unexpected static catalog counts: international=%d education=%d speed=%d",
-			len(international.Targets), len(education.Targets), len(speed.Targets))
+	if len(education.Targets) != 31 || len(speed.Targets) != 14 {
+		return Catalog{}, fmt.Errorf("unexpected static catalog counts: education=%d speed=%d",
+			len(education.Targets), len(speed.Targets))
+	}
+	// 76 = ip.net.coffee 48 站点 ∪ TcpQuality 国际站点（同品牌去重，见目录 source.note）。
+	if len(connectivity.Targets) != 76 {
+		return Catalog{}, fmt.Errorf("unexpected connectivity catalog count: %d", len(connectivity.Targets))
+	}
+	validGroup := func(group string) bool {
+		for _, candidate := range ConnectivityGroups {
+			if group == candidate {
+				return true
+			}
+		}
+		return false
 	}
 	seen := make(map[string]struct{})
 	validateHost := func(host string) error {
@@ -103,14 +121,6 @@ func Load() (Catalog, error) {
 		}
 		seen[host] = struct{}{}
 		return nil
-	}
-	for _, target := range international.Targets {
-		if target.Label == "" {
-			return Catalog{}, errors.New("international target label is empty")
-		}
-		if err := validateHost(target.Host); err != nil {
-			return Catalog{}, err
-		}
 	}
 	for _, target := range education.Targets {
 		if target.Province == "" || target.Label == "" || !strings.HasSuffix(target.Host, ".edu.cn") {
@@ -139,10 +149,24 @@ func Load() (Catalog, error) {
 			return Catalog{}, err
 		}
 	}
+	connectivitySlugs := make(map[string]struct{}, len(connectivity.Targets))
+	for _, target := range connectivity.Targets {
+		if !validGroup(target.Group) || target.Slug == "" || target.Label == "" || !strings.HasPrefix(target.Path, "/") {
+			return Catalog{}, fmt.Errorf("invalid connectivity target %+v", target)
+		}
+		if err := validateHost(target.Host); err != nil {
+			return Catalog{}, err
+		}
+		if _, exists := connectivitySlugs[target.Slug]; exists {
+			return Catalog{}, fmt.Errorf("duplicate connectivity slug %q", target.Slug)
+		}
+		connectivitySlugs[target.Slug] = struct{}{}
+	}
 	return Catalog{
-		International: international.Targets, Education: education.Targets, Speed: speed.Targets,
+		Education: education.Targets, Speed: speed.Targets, Connectivity: connectivity.Targets,
 		Hashes: map[string]string{
-			"international": hash(internationalJSON), "education": hash(educationJSON), "speed": hash(speedJSON),
+			"education": hash(educationJSON), "speed": hash(speedJSON),
+			"connectivity": hash(connectivityJSON),
 		},
 	}, nil
 }

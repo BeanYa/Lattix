@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangleIcon,
   CheckIcon,
+  ChevronRightIcon,
   CircleDotIcon,
+  FileTextIcon,
   FlaskConicalIcon,
   GaugeIcon,
   LoaderCircleIcon,
@@ -26,9 +28,19 @@ import {
 import { Progress } from '@/components/ui/progress'
 import { api, errorMessage } from '@/lib/api'
 import { formatDateTime } from '@/lib/format'
+import { asRecords, number, text } from '@/lib/records'
 import { cn } from '@/lib/utils'
 import { isIpv6Category, ipv6Unavailable, withoutIpv6Categories } from '@/lib/server-test-ipv6'
+import {
+  mediaMethodText,
+  mediaRegionText,
+  mediaStatusText,
+  mediaVendorDisplayName,
+  mediaVendorLogo,
+  orderedMediaVendors,
+} from '@/lib/server-test-logos'
 import { serverTestStatusBadge, serverTestStatusLabel } from '@/lib/status'
+import { BrandMark, ConnectivityReport } from '@/components/ServerTestConnectivityReport'
 import type {
   IPQualityFactor,
   IPQualityFamily,
@@ -64,9 +76,9 @@ const categoryOptions: Array<{
   { category: 'cernet_ipv4', label: '教育网 IPv4', description: 'CERNET 节点延迟', group: 'tcp' },
   { category: 'cernet2_ipv6', label: '教育网 IPv6', description: 'CERNET2 节点延迟', group: 'tcp' },
   {
-    category: 'international',
-    label: '国际连通',
-    description: '国际站点与 CDN 延迟',
+    category: 'connectivity',
+    label: '网络连通性',
+    description: '知名站点 HTTP 连通与延迟',
     group: 'tcp',
   },
   {
@@ -91,7 +103,15 @@ const categoryOptions: Array<{
 
 const categoryLabels = Object.fromEntries(
   categoryOptions.map((option) => [option.category, option.label]),
-) as Record<ServerTestCategory, string>
+) as Record<string, string>
+
+// 已退役类别的历史报告仍可能存储在库中，展示时保留原名称。
+const legacyCategoryLabels: Record<string, string> = { international: '国际连通' }
+Object.assign(categoryLabels, legacyCategoryLabels)
+
+function categoryLabel(category: string): string {
+  return categoryLabels[category] ?? category
+}
 
 const groupMeta = {
   quality: { label: 'IP 质量', icon: ShieldCheckIcon },
@@ -106,31 +126,11 @@ const directDefaults: ServerTestCategory[] = [
   'tcp_ipv6',
   'return_route_ipv4',
   'return_route_ipv6',
-  'international',
+  'connectivity',
 ]
 
 function isTerminal(status: ServerTestTaskStatus): boolean {
   return status === 'succeeded' || status === 'completed_with_errors' || status === 'failed'
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {}
-}
-
-function asRecords(value: unknown): Array<Record<string, unknown>> {
-  return Array.isArray(value) ? value.map(asRecord) : []
-}
-
-function text(value: unknown, fallback = '-'): string {
-  if (typeof value === 'string' && value !== '') return value
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  return fallback
-}
-
-function number(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 function carrierLabel(value: unknown): string {
@@ -264,6 +264,14 @@ function ipText(value: string | undefined): string {
   return value && value !== 'null' ? value : '-'
 }
 
+/** 流媒体解锁状态徽片的配色（解锁/仅自制/屏蔽/未知）。 */
+const mediaStatusChipClass: Record<'success' | 'warning' | 'destructive' | 'muted', string> = {
+  success: 'border border-success/40 bg-success/10 px-1.5 py-0.5 text-success',
+  warning: 'border border-warning/30 bg-warning/10 px-1.5 py-0.5 text-warning',
+  destructive: 'border border-destructive/40 bg-destructive/15 px-1.5 py-0.5 text-destructive',
+  muted: 'border border-rule bg-muted/40 px-1.5 py-0.5 text-muted-foreground',
+}
+
 function IPQualityFamilySection({ family }: { family: IPQualityFamily }) {
   const info = family.Info ?? {}
   const scoreRows = Object.entries(family.Score ?? {})
@@ -274,7 +282,7 @@ function IPQualityFamilySection({ family }: { family: IPQualityFamily }) {
     }
     return Array.from(names)
   })()
-  const mediaRows = Object.entries(family.Media ?? {})
+  const mediaRows = orderedMediaVendors(family.Media ?? {})
   const mailRows = Object.entries(family.Mail?.Providers ?? {})
   const dnsbl = family.Mail?.DNSBlacklist
   return (
@@ -386,47 +394,68 @@ function IPQualityFamilySection({ family }: { family: IPQualityFamily }) {
           </tbody>
         </table>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="border p-3">
-          <div className="mb-2 text-xs font-medium">流媒体与 AI</div>
-          {mediaRows.length === 0 ? (
-            <div className="text-xs text-muted-foreground">无数据</div>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {mediaRows.map(([name, media]) => (
-                <Badge
-                  key={name}
-                  variant={serverTestStatusBadge(media.Status ?? '')}
-                  title={`${media.Type ?? ''}${media.Region ? ` · ${media.Region}` : ''}`}
-                >
-                  {name}
-                  {media.Region ? ` · ${media.Region}` : ''}
-                </Badge>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="border p-3">
-          <div className="mb-2 text-xs font-medium">邮局检测</div>
-          <div className="flex flex-wrap gap-1.5">
-            <Badge variant={family.Mail?.Port25 ? 'secondary' : 'outline'}>
-              {family.Mail?.Port25 == null
-                ? '25 端口未知'
-                : `25 端口${family.Mail.Port25 ? '开放' : '受限'}`}
-            </Badge>
-            {mailRows.map(([name, open]) => (
-              <Badge key={name} variant={open ? 'secondary' : 'outline'}>
-                {name}
-              </Badge>
-            ))}
+      <div className="border p-3">
+        <div className="mb-2 text-xs font-medium">流媒体与 AI 解锁</div>
+        {mediaRows.length === 0 ? (
+          <div className="text-xs text-muted-foreground">无数据</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[440px] text-left text-xs">
+              <thead className="border-b text-muted-foreground">
+                <tr>
+                  <th className="px-2 py-1.5 font-medium">服务</th>
+                  <th className="px-2 py-1.5 font-medium">状态</th>
+                  <th className="px-2 py-1.5 font-medium">地区</th>
+                  <th className="px-2 py-1.5 font-medium">方式</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {mediaRows.map(({ key, rawName, status }) => {
+                  const statusInfo = mediaStatusText(status)
+                  const displayName = mediaVendorDisplayName(key, rawName)
+                  return (
+                    <tr key={key}>
+                      <td className="px-2 py-1.5">
+                        <span className="flex items-center gap-2 font-medium">
+                          <BrandMark src={mediaVendorLogo(key)} label={displayName} />
+                          {displayName}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <span className={mediaStatusChipClass[statusInfo.tone]}>
+                          {statusInfo.label}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 font-mono">{mediaRegionText(status)}</td>
+                      <td className="px-2 py-1.5">{mediaMethodText(status)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
-          {dnsbl ? (
-            <div className="mt-2 text-xs text-muted-foreground">
-              DNSBL {dnsbl.Total} 库 · 正常 {dnsbl.Clean} · 标记 {dnsbl.Marked} · 黑名单{' '}
-              {dnsbl.Blacklisted}
-            </div>
-          ) : null}
+        )}
+      </div>
+      <div className="border p-3">
+        <div className="mb-2 text-xs font-medium">邮局检测</div>
+        <div className="flex flex-wrap gap-1.5">
+          <Badge variant={family.Mail?.Port25 ? 'secondary' : 'outline'}>
+            {family.Mail?.Port25 == null
+              ? '25 端口未知'
+              : `25 端口${family.Mail.Port25 ? '开放' : '受限'}`}
+          </Badge>
+          {mailRows.map(([name, open]) => (
+            <Badge key={name} variant={open ? 'secondary' : 'outline'}>
+              {name}
+            </Badge>
+          ))}
         </div>
+        {dnsbl ? (
+          <div className="mt-2 text-xs text-muted-foreground">
+            DNSBL {dnsbl.Total} 库 · 正常 {dnsbl.Clean} · 标记 {dnsbl.Marked} · 黑名单{' '}
+            {dnsbl.Blacklisted}
+          </div>
+        ) : null}
       </div>
     </section>
   )
@@ -500,10 +529,11 @@ function ReportCategory({ category }: { category: ServerTestCategoryResult }) {
     category.category === 'return_route_ipv4' || category.category === 'return_route_ipv6'
   const isIP = category.category === 'ip_quality'
   const isSpeed = category.category === 'speed'
+  const isConnectivity = category.category === 'connectivity'
   return (
     <section className="min-w-0 border-b py-5 last:border-0">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-semibold">{categoryLabels[category.category]}</h3>
+        <h3 className="text-sm font-semibold">{categoryLabel(category.category)}</h3>
         <Badge variant={serverTestStatusBadge(category.status)}>
           {serverTestStatusLabel(category.status)}
         </Badge>
@@ -515,6 +545,8 @@ function ReportCategory({ category }: { category: ServerTestCategoryResult }) {
         <RouteReport category={category} />
       ) : isSpeed ? (
         <SpeedReport category={category} />
+      ) : isConnectivity ? (
+        <ConnectivityReport category={category} />
       ) : (
         <TCPReport category={category} />
       )}
@@ -581,8 +613,10 @@ export function ServerTestPanel({
   const [task, setTask] = useState<ServerTestTask | null>(null)
   const [loading, setLoading] = useState(false)
   const [selectionOpen, setSelectionOpen] = useState(false)
-  const [progressOpen, setProgressOpen] = useState(false)
+  const [overviewOpen, setOverviewOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
+  // 'full' 表示完整报告；具体类别表示仅查看该模块。
+  const [reportScope, setReportScope] = useState<ServerTestCategory | 'full' | null>(null)
   const [warningOpen, setWarningOpen] = useState(false)
   const [pendingCategory, setPendingCategory] = useState<ServerTestCategory | null>(null)
   const [selected, setSelected] = useState<ServerTestCategory[]>(
@@ -605,6 +639,20 @@ export function ServerTestPanel({
     })) ??
     []
   const visibleProgressRows = ipv6Off ? withoutIpv6Categories(progressRows) : progressRows
+  // 任务终态后 progress 不再存在（进度不持久化），模块列表从最终报告构建。
+  const overviewTerminal = Boolean(task && isTerminal(task.status))
+  const resultRows =
+    task && overviewTerminal && task.result
+      ? task.result.categories.map((category) => ({
+          category: category.category,
+          result: category,
+        }))
+      : []
+  const visibleResultRows = ipv6Off ? withoutIpv6Categories(resultRows) : resultRows
+  const scopedMode = reportScope !== null && reportScope !== 'full'
+  const scopedCategoryResult = scopedMode
+    ? task?.result?.categories.find((category) => category.category === reportScope)
+    : undefined
 
   const loadTask = useCallback(async () => {
     const latest = await api.serverTest(server.id, { display: 'silent' })
@@ -634,15 +682,9 @@ export function ServerTestPanel({
 
   useEffect(() => {
     if (!active || !task || isTerminal(task.status)) return
+    // 终态后总览窗口自动切换为模块列表（含查看完整报告入口），无需切换弹窗。
     const timer = setInterval(() => {
-      loadTask()
-        .then((latest) => {
-          if (latest && isTerminal(latest.status)) {
-            setProgressOpen(false)
-            setReportOpen(true)
-          }
-        })
-        .catch(() => undefined)
+      loadTask().catch(() => undefined)
     }, 1000)
     return () => clearInterval(timer)
   }, [active, loadTask, task])
@@ -672,7 +714,10 @@ export function ServerTestPanel({
       return
     }
     if (
-      (server.machine_type === 'nat' && category !== 'ip_quality') ||
+      (server.machine_type === 'nat' &&
+        category !== 'ip_quality' &&
+        // 网络连通性是纯 HTTPS 出站探测，NAT 机不受端口映射限制，可直接勾选。
+        category !== 'connectivity') ||
       category === 'speed' ||
       (ipv6Off && isIpv6Category(category))
     ) {
@@ -699,7 +744,7 @@ export function ServerTestPanel({
       const created = await api.runServerTest(server.id, selected)
       setTask(created)
       setSelectionOpen(false)
-      setProgressOpen(true)
+      setOverviewOpen(true)
     } catch (reason) {
       setError(errorMessage(reason))
     } finally {
@@ -724,10 +769,19 @@ export function ServerTestPanel({
     }
   }
 
+  const openModuleReport = (category: ServerTestCategory) => {
+    setReportScope(category)
+    setReportOpen(true)
+  }
+
+  const openFullReport = () => {
+    setReportScope('full')
+    setReportOpen(true)
+  }
+
   const primaryAction = () => {
     if (!task) return openSelection()
-    if (!isTerminal(task.status)) return setProgressOpen(true)
-    setReportOpen(true)
+    setOverviewOpen(true)
   }
 
   return (
@@ -745,7 +799,7 @@ export function ServerTestPanel({
         </div>
         {task && isTerminal(task.status) ? (
           <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => setReportOpen(true)} disabled={loading}>
+            <Button variant="outline" onClick={() => setOverviewOpen(true)} disabled={loading}>
               {loading ? (
                 <LoaderCircleIcon className="animate-spin motion-reduce:animate-none" />
               ) : (
@@ -774,103 +828,110 @@ export function ServerTestPanel({
       ) : null}
 
       <Dialog open={selectionOpen} onOpenChange={setSelectionOpen}>
-        <DialogContent className="max-h-[88vh] w-[calc(100%-2rem)] overflow-y-auto sm:max-w-3xl">
+        <DialogContent className="flex max-h-[88vh] w-[calc(100%-2rem)] flex-col overflow-hidden sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>运行服务器测试</DialogTitle>
             <DialogDescription>选择本次原子任务包含的测试项目</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            {(Object.keys(groupMeta) as Array<keyof typeof groupMeta>).map((group) => {
-              const meta = groupMeta[group]
-              const Icon = meta.icon
-              return (
-                <fieldset key={group} className="border-t pt-3 first:border-0 first:pt-0">
-                  <legend className="mb-2 flex items-center gap-2 text-xs font-medium">
-                    <Icon className="size-3.5" />
-                    {meta.label}
-                  </legend>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {categoryOptions
-                      .filter((option) => option.group === group)
-                      .map((option) => {
-                        const greyed = ipv6Off && isIpv6Category(option.category)
-                        return (
-                          <label
-                            key={option.category}
-                            className={cn(
-                              'flex cursor-pointer items-start gap-3 border px-3 py-2.5 transition-colors hover:bg-muted/40',
-                              selected.includes(option.category) &&
-                                'border-primary/40 bg-primary/[0.04]',
-                              greyed && 'opacity-60',
-                            )}
-                          >
-                            <input
-                              type="checkbox"
-                              className="mt-0.5 size-4 accent-primary"
-                              checked={selected.includes(option.category)}
-                              onChange={(event) =>
-                                toggleCategory(option.category, event.target.checked)
-                              }
-                            />
-                            <span className="min-w-0">
-                              <span className="block text-sm font-medium">{option.label}</span>
-                              <span className="mt-0.5 block text-xs text-muted-foreground">
-                                {option.description}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="space-y-4">
+              {(Object.keys(groupMeta) as Array<keyof typeof groupMeta>).map((group) => {
+                const meta = groupMeta[group]
+                const Icon = meta.icon
+                return (
+                  <fieldset key={group} className="border-t pt-3 first:border-0 first:pt-0">
+                    <legend className="mb-2 flex items-center gap-2 text-xs font-medium">
+                      <Icon className="size-3.5" />
+                      {meta.label}
+                    </legend>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {categoryOptions
+                        .filter((option) => option.group === group)
+                        .map((option) => {
+                          const greyed = ipv6Off && isIpv6Category(option.category)
+                          return (
+                            <label
+                              key={option.category}
+                              className={cn(
+                                'flex cursor-pointer items-start gap-3 border px-3 py-2.5 transition-colors hover:bg-muted/40',
+                                selected.includes(option.category) &&
+                                  'border-primary/40 bg-primary/[0.04]',
+                                greyed && 'opacity-60',
+                              )}
+                            >
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 size-4 accent-primary"
+                                checked={selected.includes(option.category)}
+                                onChange={(event) =>
+                                  toggleCategory(option.category, event.target.checked)
+                                }
+                              />
+                              <span className="min-w-0">
+                                <span className="block text-sm font-medium">{option.label}</span>
+                                <span className="mt-0.5 block text-xs text-muted-foreground">
+                                  {option.description}
+                                </span>
                               </span>
-                            </span>
-                          </label>
-                        )
-                      })}
-                  </div>
-                </fieldset>
-              )
-            })}
-            <div
-              className={cn(
-                'flex items-start gap-2 border px-3 py-2 text-xs',
-                catalog?.available
-                  ? 'border-success/30 bg-success/5'
-                  : 'border-warning/30 bg-warning/5',
-              )}
-            >
-              {catalogLoading || catalog?.refreshing ? (
-                <LoaderCircleIcon className="mt-0.5 size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
-              ) : catalog?.available ? (
-                <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-success" />
-              ) : (
-                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-              )}
-              <div className="min-w-0 flex-1">
-                <span className="font-medium">
-                  {catalogLoading
-                    ? '读取节点目录'
-                    : catalog?.available
-                      ? '节点目录可用'
-                      : '节点目录不可用'}
-                </span>
-                {catalog?.fetched_at ? (
-                  <span className="ml-2 text-muted-foreground">
-                    {formatDateTime(catalog.fetched_at, timezone)}
+                            </label>
+                          )
+                        })}
+                    </div>
+                  </fieldset>
+                )
+              })}
+              <div
+                className={cn(
+                  'flex items-start gap-2 border px-3 py-2 text-xs',
+                  catalog?.available
+                    ? 'border-success/30 bg-success/5'
+                    : 'border-warning/30 bg-warning/5',
+                )}
+              >
+                {catalogLoading || catalog?.refreshing ? (
+                  <LoaderCircleIcon className="mt-0.5 size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+                ) : catalog?.available ? (
+                  <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-success" />
+                ) : (
+                  <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
+                )}
+                <div className="min-w-0 flex-1">
+                  <span className="font-medium">
+                    {catalogLoading
+                      ? '读取节点目录'
+                      : catalog?.available
+                        ? '节点目录可用'
+                        : '节点目录不可用'}
                   </span>
-                ) : null}
-                {catalog?.last_error ? (
-                  <p className="mt-1 break-words text-warning">
-                    最近刷新失败：{catalog.last_error}
-                  </p>
+                  {catalog?.fetched_at ? (
+                    <span className="ml-2 text-muted-foreground">
+                      {formatDateTime(catalog.fetched_at, timezone)}
+                    </span>
+                  ) : null}
+                  {catalog?.last_error ? (
+                    <p className="mt-1 break-words text-warning">
+                      最近刷新失败：{catalog.last_error}
+                    </p>
+                  ) : null}
+                </div>
+                {!catalogLoading ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={refreshCatalog}
+                    disabled={refreshing}
+                  >
+                    {refreshing ? (
+                      <LoaderCircleIcon className="animate-spin motion-reduce:animate-none" />
+                    ) : (
+                      <RefreshCwIcon />
+                    )}
+                    刷新
+                  </Button>
                 ) : null}
               </div>
-              {!catalogLoading ? (
-                <Button size="sm" variant="outline" onClick={refreshCatalog} disabled={refreshing}>
-                  {refreshing ? (
-                    <LoaderCircleIcon className="animate-spin motion-reduce:animate-none" />
-                  ) : (
-                    <RefreshCwIcon />
-                  )}
-                  刷新
-                </Button>
-              ) : null}
+              {error ? <ErrorNotice code="request_failed" message={error} /> : null}
             </div>
-            {error ? <ErrorNotice code="request_failed" message={error} /> : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSelectionOpen(false)}>
@@ -901,7 +962,7 @@ export function ServerTestPanel({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
-              确认运行 {pendingCategory ? categoryLabels[pendingCategory] : '测试'}
+              确认运行 {pendingCategory ? categoryLabel(pendingCategory) : '测试'}
             </DialogTitle>
             <DialogDescription>
               {pendingCategory && isIpv6Category(pendingCategory) && ipv6Off
@@ -929,83 +990,167 @@ export function ServerTestPanel({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={progressOpen} onOpenChange={setProgressOpen}>
+      <Dialog open={overviewOpen} onOpenChange={setOverviewOpen}>
         <DialogContent className="w-[calc(100%-2rem)] sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>服务器测试进行中</DialogTitle>
-            <DialogDescription>进度为尽力上报，最终报告为权威结果</DialogDescription>
+            <DialogTitle>{overviewTerminal ? '服务器测试报告' : '服务器测试进行中'}</DialogTitle>
+            <DialogDescription>
+              {overviewTerminal
+                ? `${server.alias} · 点击模块查看对应报告`
+                : '进度为尽力上报，最终报告为权威结果'}
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <div className="mb-2 flex items-center justify-between text-xs">
-                <span>{task ? serverTestStatusLabel(task.status) : '读取状态'}</span>
-                <span className="tabular-nums">{Math.round(progressPercent)}%</span>
-              </div>
-              <Progress value={progressPercent} />
-            </div>
-            <div className="divide-y border-y">
-              {visibleProgressRows.map((progress) => (
-                <div key={progress.category} className="flex items-center gap-3 py-3">
-                  <span
-                    className={cn(
-                      'flex size-7 shrink-0 items-center justify-center border',
-                      progress.status === 'running' && 'border-info text-info',
-                      ['available', 'limited', 'succeeded'].includes(progress.status) &&
-                        'border-success text-success',
-                      ['unavailable', 'failed'].includes(progress.status) &&
-                        'border-destructive text-destructive',
-                    )}
+          {overviewTerminal ? (
+            task?.result ? (
+              <div className="divide-y border-y">
+                {visibleResultRows.map(({ category, result }) => (
+                  <button
+                    key={category}
+                    type="button"
+                    onClick={() => openModuleReport(category)}
+                    className="flex w-full items-center gap-3 py-3 text-left transition-colors hover:bg-muted/40"
                   >
-                    {progress.status === 'running' ? (
-                      <LoaderCircleIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
-                    ) : ['available', 'limited', 'succeeded'].includes(progress.status) ? (
-                      <CheckIcon className="size-3.5" />
-                    ) : ['unavailable', 'failed'].includes(progress.status) ? (
-                      <XCircleIcon className="size-3.5" />
-                    ) : (
-                      <CircleDotIcon className="size-3.5" />
-                    )}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-3 text-xs">
-                      <span className="font-medium">{categoryLabels[progress.category]}</span>
-                      <span className="tabular-nums text-muted-foreground">
-                        {progress.completed}/{progress.total}
+                    <span
+                      className={cn(
+                        'flex size-7 shrink-0 items-center justify-center border',
+                        ['available', 'limited', 'succeeded'].includes(result.status) &&
+                          'border-success text-success',
+                        ['unavailable', 'failed'].includes(result.status) &&
+                          'border-destructive text-destructive',
+                      )}
+                    >
+                      {['available', 'limited', 'succeeded'].includes(result.status) ? (
+                        <CheckIcon className="size-3.5" />
+                      ) : ['unavailable', 'failed'].includes(result.status) ? (
+                        <XCircleIcon className="size-3.5" />
+                      ) : (
+                        <CircleDotIcon className="size-3.5" />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center justify-between gap-3 text-xs">
+                        <span className="font-medium">{categoryLabel(category)}</span>
+                        <span className="text-muted-foreground">
+                          {serverTestStatusLabel(result.status)}
+                        </span>
                       </span>
-                    </div>
-                    {progress.message ? (
-                      <p className="mt-1 truncate text-xs text-muted-foreground">
-                        {progress.message}
-                      </p>
-                    ) : null}
-                  </div>
+                    </span>
+                    <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <ErrorNotice
+                code={task?.error_code || 'result_unavailable'}
+                message={task?.error_message || '测试已结束，但结果报告不可用'}
+              />
+            )
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <div className="mb-2 flex items-center justify-between text-xs">
+                  <span>{task ? serverTestStatusLabel(task.status) : '读取状态'}</span>
+                  <span className="tabular-nums">{Math.round(progressPercent)}%</span>
                 </div>
-              ))}
+                <Progress value={progressPercent} />
+              </div>
+              <div className="divide-y border-y">
+                {visibleProgressRows.map((progress) => (
+                  <div key={progress.category} className="flex items-center gap-3 py-3">
+                    <span
+                      className={cn(
+                        'flex size-7 shrink-0 items-center justify-center border',
+                        progress.status === 'running' && 'border-info text-info',
+                        ['available', 'limited', 'succeeded'].includes(progress.status) &&
+                          'border-success text-success',
+                        ['unavailable', 'failed'].includes(progress.status) &&
+                          'border-destructive text-destructive',
+                      )}
+                    >
+                      {progress.status === 'running' ? (
+                        <LoaderCircleIcon className="size-3.5 animate-spin motion-reduce:animate-none" />
+                      ) : ['available', 'limited', 'succeeded'].includes(progress.status) ? (
+                        <CheckIcon className="size-3.5" />
+                      ) : ['unavailable', 'failed'].includes(progress.status) ? (
+                        <XCircleIcon className="size-3.5" />
+                      ) : (
+                        <CircleDotIcon className="size-3.5" />
+                      )}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-3 text-xs">
+                        <span className="font-medium">{categoryLabel(progress.category)}</span>
+                        <span className="tabular-nums text-muted-foreground">
+                          {progress.completed}/{progress.total}
+                        </span>
+                      </div>
+                      {progress.message ? (
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
+                          {progress.message}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {task?.error_message ? (
+                <ErrorNotice code={task.error_code} message={task.error_message} />
+              ) : null}
             </div>
-            {task?.error_message ? (
-              <ErrorNotice code={task.error_code} message={task.error_message} />
-            ) : null}
-          </div>
+          )}
+          {overviewTerminal ? (
+            <DialogFooter className="grid grid-cols-1 gap-2 sm:flex">
+              <Button variant="outline" onClick={() => setOverviewOpen(false)}>
+                关闭
+              </Button>
+              {task?.result ? (
+                <Button onClick={openFullReport}>
+                  <FileTextIcon />
+                  查看完整报告
+                </Button>
+              ) : null}
+            </DialogFooter>
+          ) : null}
         </DialogContent>
       </Dialog>
 
-      <Dialog open={reportOpen} onOpenChange={setReportOpen}>
+      <Dialog
+        open={reportOpen}
+        onOpenChange={(open) => {
+          setReportOpen(open)
+          if (!open) setReportScope(null)
+        }}
+      >
         <DialogContent
           initialFocus={false}
-          className="max-h-[90vh] w-[calc(100%-1rem)] min-w-0 overflow-x-hidden overflow-y-auto p-5 sm:max-w-5xl"
+          className="flex max-h-[90vh] w-[calc(100%-1rem)] min-w-0 flex-col overflow-hidden p-5 sm:max-w-5xl"
         >
           <DialogHeader>
-            <DialogTitle>服务器测试报告</DialogTitle>
+            <DialogTitle>
+              {scopedMode && reportScope
+                ? `服务器测试报告 · ${categoryLabel(reportScope)}`
+                : '服务器测试报告'}
+            </DialogTitle>
             <DialogDescription>{server.alias} · 仅保留最近一次测试结果</DialogDescription>
           </DialogHeader>
-          {task?.result ? (
-            <TestReport report={task.result} timezone={timezone} />
-          ) : (
-            <ErrorNotice
-              code={task?.error_code || 'result_unavailable'}
-              message={task?.error_message || '测试已结束，但结果报告不可用'}
-            />
-          )}
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {!task?.result ? (
+              <ErrorNotice
+                code={task?.error_code || 'result_unavailable'}
+                message={task?.error_message || '测试已结束，但结果报告不可用'}
+              />
+            ) : scopedMode ? (
+              scopedCategoryResult ? (
+                <div className="min-w-0">
+                  <ReportCategory category={scopedCategoryResult} />
+                </div>
+              ) : (
+                <ErrorNotice code="result_unavailable" message="该模块的报告不可用" />
+              )
+            ) : (
+              <TestReport report={task.result} timezone={timezone} />
+            )}
+          </div>
           <DialogFooter className="grid grid-cols-1 gap-2 sm:flex">
             <Button variant="outline" onClick={() => setReportOpen(false)}>
               关闭

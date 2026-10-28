@@ -99,7 +99,7 @@ func (r *Runner) Run(parent context.Context, payload shared.ServerTestRunPayload
 		{name: "tcp", categories: []shared.ServerTestCategory{shared.ServerTestTCPIPv4, shared.ServerTestTCPIPv6, shared.ServerTestCERNETIPv4, shared.ServerTestCERNET2IPv6}, run: r.runTCP},
 		{name: "large_packet", categories: []shared.ServerTestCategory{shared.ServerTestLargePacketIPv4}, run: r.runLargePacket},
 		{name: "routes", categories: []shared.ServerTestCategory{shared.ServerTestReturnRouteIPv4, shared.ServerTestReturnRouteIPv6}, run: r.runRoute},
-		{name: "international", categories: []shared.ServerTestCategory{shared.ServerTestInternational}, run: r.runTCP},
+		{name: "connectivity", categories: []shared.ServerTestCategory{shared.ServerTestConnectivity}, run: r.runConnectivity},
 		{name: "speed", categories: []shared.ServerTestCategory{shared.ServerTestSpeed}, run: r.runSpeed},
 	}
 	selected := make(map[shared.ServerTestCategory]bool, len(payload.Categories))

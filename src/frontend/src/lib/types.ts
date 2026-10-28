@@ -231,7 +231,7 @@ export type ServerTestCategory =
   | 'cernet2_ipv6'
   | 'return_route_ipv4'
   | 'return_route_ipv6'
-  | 'international'
+  | 'connectivity'
   | 'speed'
 
 export type ServerTestTaskStatus =
