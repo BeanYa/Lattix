@@ -22,6 +22,7 @@ export interface ServerCreateFormState {
   tags: string[]
   countryCode: string
   location: string
+  nonDirect: boolean
   portRows: string[]
   billing: BillingFormState
   traffic: TrafficFormState
@@ -35,6 +36,7 @@ function initialServerCreateForm(): ServerCreateFormState {
     tags: [],
     countryCode: '',
     location: '',
+    nonDirect: false,
     portRows: [''],
     billing: defaultBilling(),
     traffic: defaultTraffic(),
@@ -104,6 +106,7 @@ export function useServerCreateForm({
       machine_type: form.machineType,
       country_code: form.countryCode,
       location: form.location.trim(),
+      non_direct: form.nonDirect,
       billing: billingPayload(form.billing),
       traffic_plan: trafficPayload(form.traffic),
     }

@@ -782,6 +782,32 @@
   white-space: nowrap;
 }
 
+/* 告警分类标签（§告警分类：运行警告/到期预警/Ban告警） */
+.dash-event-cat {
+  margin-right: 6px;
+  padding: 1px 5px;
+  border: 1px solid var(--panel-rule-strong);
+  border-radius: 4px;
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
+}
+
+.dash-event-mark.is-bad + .dash-event-copy .dash-event-cat {
+  border-color: color-mix(in srgb, var(--panel-danger) 46%, var(--panel-rule));
+  background: var(--panel-danger-soft);
+  color: var(--panel-danger);
+}
+
+.dash-event-mark.is-warn + .dash-event-copy .dash-event-cat {
+  border-color: color-mix(in srgb, var(--panel-warning) 46%, var(--panel-rule));
+  background: var(--panel-warning-soft);
+  color: var(--panel-warning);
+}
+
 .dash-event-row > svg {
   color: var(--panel-ink-3);
 }

@@ -61,6 +61,13 @@ function pct(value: number, total: number) {
   return Math.min(100, Math.max(0, Math.round((value / total) * 100)))
 }
 
+function daysUntil(dateStr: string): number {
+  const target = new Date(`${dateStr}T00:00:00`)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Math.round((target.getTime() - today.getTime()) / 86400000)
+}
+
 function formatUptime(seconds: number | undefined) {
   if (seconds === undefined) return '--'
   const days = Math.floor(seconds / 86400)
@@ -88,14 +95,49 @@ function serverTone(server: Server) {
   return 'ok'
 }
 
+// 到期预警判定（§告警分类）：与后端 billingExpiryEvent 同口径——7 天内预警、
+// 今日到期、已过期（计费未开启不提醒）。
+function billingExpiryTone(server: Server): 'bad' | 'warn' | null {
+  if (!server.billing.enabled) return null
+  if (server.billing.status === 'expired') return 'bad'
+  if (!server.billing.next_renewal_on) return null
+  const days = daysUntil(server.billing.next_renewal_on)
+  if (days === 0) return 'warn'
+  if (days > 0 && days <= 7) return 'warn'
+  return null
+}
+
+// serverBanTone 是 Ban 告警的事件等级：判定被 Ban 最严重，疑似/解除中次之。
+function serverBanTone(server: Server): 'bad' | 'warn' | null {
+  switch (server.ban_watch?.state) {
+    case 'banned':
+      return 'bad'
+    case 'suspected':
+    case 'recovering':
+      return 'warn'
+    default:
+      return null
+  }
+}
+
 function hopTone(status: NodeStatus) {
   if (status === 'active') return 'ok'
   if (status === 'failed') return 'bad'
   return 'warn'
 }
 
+// 告警分类（§告警分类）：与后端 alert 包的 category 对应。
+type AlertCategory = 'runtime' | 'expiry' | 'ban'
+
+const ALERT_CATEGORY_LABEL: Record<AlertCategory, string> = {
+  runtime: '运行警告',
+  expiry: '到期预警',
+  ban: 'Ban告警',
+}
+
 interface DashEvent {
   key: string
+  category: AlertCategory
   tone: 'bad' | 'warn' | 'ok'
   title: string
   detail: string
@@ -249,13 +291,19 @@ export default function Dashboard() {
   const degenerateChains = displayChains.filter(
     (chain) => chain.status === 'degraded' || chain.status === 'failed',
   )
-  const exceptionCount = degenerateChains.length + offlineCount + driftCount
+  const exceptionCount =
+    degenerateChains.length +
+    offlineCount +
+    driftCount +
+    displayServers.filter((server) => serverBanTone(server) !== null).length +
+    displayServers.filter((server) => billingExpiryTone(server) !== null).length
 
   const events: DashEvent[] = []
   for (const server of displayServers) {
     if (!isServerOnline(server)) {
       events.push({
         key: `server-offline-${server.id}`,
+        category: 'runtime',
         tone: 'bad',
         title: `${server.alias} ${serverConnectionLabel(server.connection_state)}`,
         detail: `${server.country_code || '--'} · ${server.location || '位置待补充'}`,
@@ -264,9 +312,58 @@ export default function Dashboard() {
     } else if (server.config_drift) {
       events.push({
         key: `server-drift-${server.id}`,
+        category: 'runtime',
         tone: 'warn',
         title: `${server.alias} 配置漂移`,
         detail: 'Agent 上报值与期望配置不一致',
+        href: '/servers',
+      })
+    }
+    // Ban 告警（§告警分类）：ban-watch 巡检的三网全丢包观察阶段。
+    const banState = server.ban_watch?.state
+    if (banState === 'banned') {
+      events.push({
+        key: `server-ban-${server.id}`,
+        category: 'ban',
+        tone: 'bad',
+        title: `${server.alias} 已被 Ban`,
+        detail: `三网测速连续 ${server.ban_watch?.loss_streak ?? 0} 轮 100% 丢包，恢复在线后自动解除`,
+        href: '/servers',
+      })
+    } else if (banState === 'suspected') {
+      events.push({
+        key: `server-ban-${server.id}`,
+        category: 'ban',
+        tone: 'warn',
+        title: `${server.alias} 疑似被 Ban`,
+        detail: `三网测速连续 ${server.ban_watch?.loss_streak ?? 0} 轮 100% 丢包，持续观察中`,
+        href: '/servers',
+      })
+    } else if (banState === 'recovering') {
+      events.push({
+        key: `server-ban-${server.id}`,
+        category: 'ban',
+        tone: 'warn',
+        title: `${server.alias} Ban 解除确认中`,
+        detail: '三网测速已恢复在线，下一轮评估取消被 Ban 告警',
+        href: '/servers',
+      })
+    }
+    // 到期预警（§告警分类）：计费 7 天内到期 / 今日到期 / 已过期。
+    const expiryTone = billingExpiryTone(server)
+    if (expiryTone !== null && server.billing.next_renewal_on) {
+      const days = daysUntil(server.billing.next_renewal_on)
+      events.push({
+        key: `server-expiry-${server.id}`,
+        category: 'expiry',
+        tone: expiryTone,
+        title:
+          server.billing.status === 'expired'
+            ? `${server.alias} 计费已过期`
+            : days === 0
+              ? `${server.alias} 计费今日到期`
+              : `${server.alias} 计费 ${days} 天后到期`,
+        detail: `续费日 ${server.billing.next_renewal_on}`,
         href: '/servers',
       })
     }
@@ -274,6 +371,7 @@ export default function Dashboard() {
   for (const chain of degenerateChains) {
     events.push({
       key: `chain-${chain.id}`,
+      category: 'runtime',
       tone: 'bad',
       title: `${chain.name} ${CHAIN_STATUS_LABEL[chain.status]}`,
       detail: chain.error || `${chain.hops.length} 跳 · 需要重新部署或排查`,
@@ -632,7 +730,12 @@ export default function Dashboard() {
                         aria-hidden="true"
                       />
                       <span className="dash-event-copy">
-                        <strong>{event.title}</strong>
+                        <strong>
+                          <span className="dash-event-cat">
+                            {ALERT_CATEGORY_LABEL[event.category]}
+                          </span>
+                          {event.title}
+                        </strong>
                         <span>{event.detail}</span>
                       </span>
                       <ChevronRightIcon size={12} strokeWidth={2} aria-hidden="true" />

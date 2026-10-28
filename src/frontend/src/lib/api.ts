@@ -152,6 +152,7 @@ export const api = {
     tags?: string[]
     country_code: string
     location: string
+    non_direct?: boolean
     billing?: BillingInput
     traffic_plan?: TrafficPlanInput
   }) => requester.post<CreateServerResponse>('/api/server/create', body),
@@ -200,6 +201,7 @@ export const api = {
     trafficPlan?: TrafficPlanInput,
     customSettings?: ServerSettings,
     addresses?: string[],
+    nonDirect?: boolean,
   ) =>
     requester.post<Server>('/api/server/update', {
       server_id: serverId,
@@ -212,6 +214,7 @@ export const api = {
       traffic_plan: trafficPlan,
       ...(customSettings !== undefined ? { custom_settings: customSettings } : {}),
       ...(addresses !== undefined ? { addresses } : {}),
+      ...(nonDirect !== undefined ? { non_direct: nonDirect } : {}),
     }),
   updateServerPorts: (
     serverId: number,
@@ -225,6 +228,7 @@ export const api = {
     trafficPlan?: TrafficPlanInput,
     customSettings?: ServerSettings,
     addresses?: string[],
+    nonDirect?: boolean,
   ) =>
     requester.post<Server>('/api/server/update', {
       server_id: serverId,
@@ -238,6 +242,7 @@ export const api = {
       traffic_plan: trafficPlan,
       ...(customSettings !== undefined ? { custom_settings: customSettings } : {}),
       ...(addresses !== undefined ? { addresses } : {}),
+      ...(nonDirect !== undefined ? { non_direct: nonDirect } : {}),
     }),
   deleteServer: (serverId: number, purge: 'xray' | 'agent') =>
     requester.post<void>('/api/server/delete', { server_id: serverId, purge }),

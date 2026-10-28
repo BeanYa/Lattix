@@ -25,6 +25,7 @@ export interface ServerEditFormState {
   tags: string[]
   countryCode: string
   location: string
+  nonDirect: boolean
   billing: BillingFormState
   traffic: TrafficFormState
   xrayOverride: string
@@ -41,6 +42,7 @@ function initialServerEditForm(): ServerEditFormState {
     tags: [],
     countryCode: '',
     location: '',
+    nonDirect: false,
     billing: {
       enabled: false,
       providerId: '',
@@ -143,6 +145,7 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
       tags: s.tags,
       countryCode: s.country_code,
       location: s.location,
+      nonDirect: s.non_direct,
       billing: {
         enabled: s.billing.enabled,
         providerId: s.billing.provider ? String(s.billing.provider.id) : '',
@@ -226,6 +229,7 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
           trafficPayload(form.traffic),
           form.xrayOverride ? { xray_version: form.xrayOverride } : {},
           nextAddresses,
+          form.nonDirect,
         )
       } else {
         await api.updateServerAddress(
@@ -239,6 +243,7 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
           trafficPayload(form.traffic),
           form.xrayOverride ? { xray_version: form.xrayOverride } : {},
           nextAddresses,
+          form.nonDirect,
         )
       }
       setTarget(null)

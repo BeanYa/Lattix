@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"lattix/backend/internal/alert"
 	"lattix/backend/internal/store"
 )
 
@@ -78,5 +79,52 @@ func TestBillingManualTransitions(t *testing.T) {
 		if validBillingTransition(c.from, c.to) {
 			t.Errorf("非法手动转换未被拒绝 %s → %s", c.from, c.to)
 		}
+	}
+}
+
+// TestBillingExpiryEvent 校验到期预警事件判定（§告警分类）：7 天内每日提醒、
+// 跃迁今日到期/已过期各一次、assumed_valid 与远期 active 不告警。
+func TestBillingExpiryEvent(t *testing.T) {
+	cases := []struct {
+		name     string
+		previous string
+		current  string
+		renewal  string
+		today    string
+		want     string
+	}{
+		{"7 天内每日提醒", store.BillingActive, store.BillingActive, "2026-04-07", "2026-04-01", alert.EventBillingDueSoon},
+		{"提醒窗口边界 7 天", store.BillingActive, store.BillingActive, "2026-04-08", "2026-04-01", alert.EventBillingDueSoon},
+		{"8 天外不提醒", store.BillingActive, store.BillingActive, "2026-04-09", "2026-04-01", ""},
+		{"进入今日到期", store.BillingActive, store.BillingDueToday, "2026-04-10", "2026-04-10", alert.EventBillingDueToday},
+		{"今日到期不重复", store.BillingDueToday, store.BillingDueToday, "2026-04-10", "2026-04-10", ""},
+		{"跃迁已过期", store.BillingDueToday, store.BillingExpired, "2026-04-10", "2026-04-11", alert.EventBillingExpired},
+		{"已过期不重复", store.BillingExpired, store.BillingExpired, "2026-04-10", "2026-04-12", ""},
+		{"assumed_valid 不告警", store.BillingDueToday, store.BillingAssumedValid, "2026-04-10", "2026-04-11", ""},
+		{"续费后远期不告警", store.BillingExpired, store.BillingActive, "2026-11-10", "2026-04-11", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			event, detail := billingExpiryEvent(c.previous, c.current, c.renewal, c.today)
+			if event != c.want {
+				t.Fatalf("event = %q, want %q", event, c.want)
+			}
+			if event != "" && detail == "" {
+				t.Fatalf("event %q has empty detail", event)
+			}
+		})
+	}
+}
+
+// TestDaysUntilRenewal 校验日历天数差。
+func TestDaysUntilRenewal(t *testing.T) {
+	if days, ok := daysUntilRenewal("2026-04-08", "2026-04-01"); !ok || days != 7 {
+		t.Fatalf("days = %d ok=%v, want 7", days, ok)
+	}
+	if days, ok := daysUntilRenewal("2026-04-01", "2026-04-11"); !ok || days != -10 {
+		t.Fatalf("days = %d ok=%v, want -10", days, ok)
+	}
+	if _, ok := daysUntilRenewal("not-a-date", "2026-04-01"); ok {
+		t.Fatal("invalid renewal date should not parse")
 	}
 }

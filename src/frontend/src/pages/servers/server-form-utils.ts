@@ -38,6 +38,7 @@ export interface ServerFormPayload {
   tags?: string[]
   country_code: string
   location: string
+  non_direct: boolean
   billing: BillingInput
   traffic_plan: TrafficPlanInput
 }

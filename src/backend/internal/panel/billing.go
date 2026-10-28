@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"lattix/backend/internal/alert"
 	"lattix/backend/internal/panel/exchange"
 	"lattix/backend/internal/panel/scheduler"
 	"lattix/backend/internal/store"
@@ -185,9 +187,14 @@ func (s *Server) inspectBilling(ctx context.Context) error {
 		if item.LastInspectedOn == today {
 			continue
 		}
+		previous := item.Status
 		item.Status = billingStatus(true, item.NextRenewalOn, today, s.req.IsOnline(item.ServerID))
 		if item.Status == store.BillingAssumedValid {
 			item.AssumedValidThrough = today
+		}
+		// 到期预警推送（§告警分类）：7 天内每日提醒，进入今日到期/已过期各推送一次。
+		if event, detail := billingExpiryEvent(previous, item.Status, item.NextRenewalOn, today); event != "" {
+			s.notifyAlert(item.ServerID, event, detail)
 		}
 		item.LastInspectedOn = today
 		if err := s.st.UpsertServerBilling(ctx, item); err != nil {
@@ -195,6 +202,43 @@ func (s *Server) inspectBilling(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// billingDueSoonDays 是到期预警的提前提醒窗口（天数）。
+const billingDueSoonDays = 7
+
+// billingExpiryEvent 返回本轮计费巡检应推送的到期预警事件与文案（无推送返回空）：
+// active 且续费日在 7 天内每日提醒（巡检每日一次天然去重），跃迁至 due_today /
+// expired 各推送一次；assumed_valid（服务器在线但未确认续费）不告警。
+func billingExpiryEvent(previous, current, renewal, today string) (string, string) {
+	switch current {
+	case store.BillingActive:
+		if days, ok := daysUntilRenewal(renewal, today); ok && days > 0 && days <= billingDueSoonDays {
+			return alert.EventBillingDueSoon, fmt.Sprintf("服务器计费将于 %d 天后到期（%s），请及时续费", days, renewal)
+		}
+	case store.BillingDueToday:
+		if previous != store.BillingDueToday {
+			return alert.EventBillingDueToday, fmt.Sprintf("服务器计费今日到期（%s），请确认续费", renewal)
+		}
+	case store.BillingExpired:
+		if previous != store.BillingExpired {
+			return alert.EventBillingExpired, fmt.Sprintf("服务器离线且续费日已过（%s），计费已标记为过期", renewal)
+		}
+	}
+	return "", ""
+}
+
+// daysUntilRenewal 计算续费日距 today 的日历天数（renewal-today；日期非法返回 false）。
+func daysUntilRenewal(renewal, today string) (int, bool) {
+	renewalDate, err := store.ParseDate(renewal)
+	if err != nil {
+		return 0, false
+	}
+	todayDate, err := store.ParseDate(today)
+	if err != nil {
+		return 0, false
+	}
+	return int(math.Round(renewalDate.Sub(todayDate).Hours() / 24)), true
 }
 
 func (s *Server) billingInspectionSchedule(ctx context.Context) scheduler.InspectionSchedule {

@@ -13,7 +13,9 @@ import (
 // before the rest of the backend starts, in the same transaction as schema setup.
 // v24: 链路统计重构——延迟按有向服务器对（tcp/icmp+端口）保存；丢弃 v23 按跳探测表。
 // v25: 三网目录测速——新增 server_catalog_probes(+history)，随 Schema 建表（无存量迁移）。
-const schemaVersion = 25
+// v26: 告警分类——新增 server_ban_watch（Ban 观察状态机快照），随 Schema 建表（无存量迁移）。
+// v27: 非直连属性——servers.non_direct（大陆不可直连，Ban 告警巡检跳过）。
+const schemaVersion = 27
 
 type columnMigration struct {
 	name       string
@@ -71,6 +73,7 @@ func migrateSchema(tx *sql.Tx) error {
 		{"tags", "TEXT NOT NULL DEFAULT ''"},
 		{"country_code", "TEXT NOT NULL DEFAULT ''"},
 		{"location", "TEXT NOT NULL DEFAULT ''"},
+		{"non_direct", "INTEGER NOT NULL DEFAULT 0"},
 		{"credential_epoch", "INTEGER NOT NULL DEFAULT 1"},
 		{"credential_committed", "INTEGER NOT NULL DEFAULT 0"},
 		{"credential_pending_token", "TEXT NOT NULL DEFAULT ''"},

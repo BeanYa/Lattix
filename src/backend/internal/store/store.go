@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS servers (
     tags         TEXT    NOT NULL DEFAULT '', -- JSON 字符串数组；名称模板 {{TAG_n}} 的来源
     country_code TEXT    NOT NULL DEFAULT '', -- ISO 3166-1 alpha-2；名称模板国家/国旗来源
     location     TEXT    NOT NULL DEFAULT '', -- 管理员填写的城市/机房位置
+    non_direct   INTEGER NOT NULL DEFAULT 0, -- 非直连（大陆不可直连）：Ban 告警巡检跳过该服务器
     credential_epoch INTEGER NOT NULL DEFAULT 1,
     credential_committed INTEGER NOT NULL DEFAULT 0,
     credential_pending_token TEXT NOT NULL DEFAULT '',
@@ -569,6 +570,21 @@ CREATE TABLE IF NOT EXISTS server_catalog_probe_history (
     measured_at DATETIME NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_server_catalog_probe_history_time ON server_catalog_probe_history (measured_at);
+
+-- 服务器 Ban 观察状态（§告警分类 Ban告警）：ban-watch 巡检按三网目录测速逐轮评估，
+-- 连续全丢包轮次达到 5 轮进入 suspected（疑似被 Ban），10 轮进入 banned（已被 Ban）；
+-- banned 后每半小时确认一次，确认在线进入 recovering，下一轮评估在线即取消告警归 normal。
+-- 状态机归 panel 维护，此处仅持久化当前快照。
+CREATE TABLE IF NOT EXISTS server_ban_watch (
+    server_id         INTEGER PRIMARY KEY REFERENCES servers(id),
+    loss_streak       INTEGER NOT NULL DEFAULT 0,
+    state             TEXT    NOT NULL DEFAULT 'normal', -- normal|suspected|banned|recovering
+    streak_started_at DATETIME,
+    suspected_at      DATETIME,
+    banned_at         DATETIME,
+    last_confirm_at   DATETIME,
+    updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 -- 流量统计明细桶（分钟级）与日汇总：多维度（user/node/endpoint/chain_hop）原始字节，
 -- 不乘链路倍率（计费口径归 chain_traffic_daily）；写入挂在 ApplyTrafficSnapshot 遥测入口。

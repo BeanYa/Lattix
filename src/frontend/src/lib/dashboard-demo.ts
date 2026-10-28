@@ -69,6 +69,7 @@ function createDemoServer(input: DemoServerInput): Server {
     addresses: [input.address],
     config_drift: false,
     machine_type: 'direct',
+    non_direct: false,
     allowed_ports: [{ pub_start: 10000, pub_end: 29999 }],
     tags: input.tags,
     country_code: input.countryCode,

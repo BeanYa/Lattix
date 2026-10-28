@@ -248,6 +248,20 @@ function daysUntil(dateStr: string): number {
   return Math.round((target.getTime() - today.getTime()) / 86400000)
 }
 
+// serverBanFlag 渲染 Ban 告警徽标（§告警分类）：banned 用警示色，疑似/解除中用提醒色。
+function serverBanFlag(server: Server): { label: string; tone: 'is-alert' | 'is-warn' } | null {
+  switch (server.ban_watch?.state) {
+    case 'banned':
+      return { label: '已被 BAN', tone: 'is-alert' }
+    case 'suspected':
+      return { label: '疑似 BAN', tone: 'is-warn' }
+    case 'recovering':
+      return { label: 'BAN 解除中', tone: 'is-warn' }
+    default:
+      return null
+  }
+}
+
 // DotBar 是资源占用的分段点阵条（20 段）：内存/磁盘/负载/流量共用。
 function DotBar({
   ratio,
@@ -569,6 +583,7 @@ function ServerCard({
       : null
   const renewalTone =
     renewalDays === null ? null : renewalDays < 0 ? 'crit' : renewalDays <= 7 ? 'warn' : 'ok'
+  const banFlag = serverBanFlag(server)
   return (
     <article
       className={cn('sv-card', selected && 'is-selected', !online && 'is-offline')}
@@ -617,7 +632,9 @@ function ServerCard({
         <span className="sv-flag">{server.location || server.country_code || '未设置地区'}</span>
         {families.has('ipv4') ? <span className="sv-flag is-v4">V4</span> : null}
         {families.has('ipv6') ? <span className="sv-flag is-v6">V6</span> : null}
+        {server.non_direct ? <span className="sv-flag">非直连</span> : null}
         {server.config_drift ? <span className="sv-flag is-alert">DRIFT</span> : null}
+        {banFlag ? <span className={cn('sv-flag', banFlag.tone)}>{banFlag.label}</span> : null}
       </div>
       <CardOverviewSections server={server} samples={samples} />
       <CardProbesSection rows={probeRows} title={probeTitle} />
@@ -983,6 +1000,7 @@ function DetailDialog({
   const families = new Set((server?.addresses ?? []).map((addr) => addressFamily(addr)))
   const traffic = server?.traffic_plan
   const billing = server?.billing
+  const banFlag = server ? serverBanFlag(server) : null
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sv-detail flex max-h-[88vh] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
@@ -998,7 +1016,11 @@ function DetailDialog({
                 </span>
                 {families.has('ipv4') ? <span className="sv-flag is-v4">V4</span> : null}
                 {families.has('ipv6') ? <span className="sv-flag is-v6">V6</span> : null}
+                {server.non_direct ? <span className="sv-flag">非直连</span> : null}
                 {server.config_drift ? <span className="sv-flag is-alert">DRIFT</span> : null}
+                {banFlag ? (
+                  <span className={cn('sv-flag', banFlag.tone)}>{banFlag.label}</span>
+                ) : null}
               </span>
             ) : null}
             {server ? (

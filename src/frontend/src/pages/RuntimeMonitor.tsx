@@ -52,6 +52,7 @@ const taskLabels: Record<string, string> = {
   'metrics.retention': '指标数据清理',
   'release.agent': 'Agent 版本巡检',
   'release.xray': 'Xray 版本巡检',
+  'server.ban-watch': 'Ban 告警巡检',
   'subscription.templates.refresh': '订阅模板刷新',
   'traffic.reset': '流量周期重置',
   'traffic_stats.retention': '流量统计清理',

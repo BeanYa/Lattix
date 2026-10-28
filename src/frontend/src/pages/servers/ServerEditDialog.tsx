@@ -113,6 +113,20 @@ export function ServerEditDialog({
               回车或逗号确认；新建链路时可通过 {'{{TAG[0]}}'} 等参数引用。
             </p>
           </div>
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="sv-checkbox mt-0.5"
+              checked={form.nonDirect}
+              onChange={(e) => patch({ nonDirect: e.target.checked })}
+            />
+            <span>
+              非直连（大陆不可直连）
+              <span className="block text-xs text-muted-foreground">
+                勾选后该服务器不参与 Ban 告警判定（三网测速丢包属预期，巡检将忽略）。
+              </span>
+            </span>
+          </label>
           <div className="space-y-2">
             <Label>公网地址{target?.machine_type === 'nat' ? '（必填）' : ''}</Label>
             {form.addresses.length > 0 ? (

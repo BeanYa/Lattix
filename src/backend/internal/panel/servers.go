@@ -52,6 +52,13 @@ const (
 	settingsStatusSynced  = "synced"
 )
 
+// serverBanWatchDTO 是服务器 Ban 观察状态的 API 表示（§告警分类 Ban告警）。
+type serverBanWatchDTO struct {
+	State      string     `json:"state"`               // normal|suspected|banned|recovering
+	LossStreak int64      `json:"loss_streak"`         // 连续三网 100% 丢包轮次
+	BannedAt   *time.Time `json:"banned_at,omitempty"` // 判定已被 Ban 的时刻
+}
+
 // serverDTO 是服务器对象的 API 表示。
 type serverDTO struct {
 	ID                           int64                  `json:"id"`
@@ -77,6 +84,7 @@ type serverDTO struct {
 	Tags                         []string               `json:"tags"`                   // 管理标签；按顺序供名称模板 {{TAG_n}} 使用
 	CountryCode                  string                 `json:"country_code"`           // ISO 3166-1 alpha-2
 	Location                     string                 `json:"location"`               // 城市或机房位置
+	NonDirect                    bool                   `json:"non_direct"`             // 非直连（大陆不可直连）：Ban 告警巡检跳过（§告警分类）
 	CustomSettings               *shared.ServerSettings `json:"custom_settings"`        // 服务器覆盖（customsetting），nil = 跟随面板默认
 	EffectiveXrayVersion         string                 `json:"effective_xray_version"` // 合并后的生效 xray 版本，空 = 未设置
 	AgentSettingsStatus          string                 `json:"agent_settings_status"`
@@ -87,6 +95,7 @@ type serverDTO struct {
 	Metrics                      *metricsDTO            `json:"metrics"` // 主机遥测最新值（§13），无数据为 null
 	Billing                      *billingDTO            `json:"billing"`
 	TrafficPlan                  trafficPlanDTO         `json:"traffic_plan"`
+	BanWatch                     *serverBanWatchDTO     `json:"ban_watch"` // Ban 告警观察（§告警分类），null = 从未进入观察
 	CreatedAt                    time.Time              `json:"created_at"`
 }
 
@@ -156,6 +165,7 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		Tags:                         decodeServerTags(srv.Tags),
 		CountryCode:                  srv.CountryCode,
 		Location:                     srv.Location,
+		NonDirect:                    srv.NonDirect,
 		EffectiveXrayVersion:         effectiveXrayVersion(s, srv.ID),
 		CustomSettings:               customServerSettings(s, srv.ID),
 		AgentSettingsStatus:          settingsStatus,
@@ -234,12 +244,20 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	providers := providerMap(providerItems)
+	banWatches, err := s.st.ServerBanWatchMap(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	out := make([]serverDTO, 0, len(servers))
 	for _, srv := range servers {
 		dto := s.toServerDTO(srv)
 		if m, ok := metrics[srv.ID]; ok {
 			value := toMetricsDTO(m)
 			dto.Metrics = &value
+		}
+		if watch, ok := banWatches[srv.ID]; ok {
+			dto.BanWatch = &serverBanWatchDTO{State: watch.State, LossStreak: watch.LossStreak, BannedAt: watch.BannedAt}
 		}
 		if err := s.enrichServerBilling(r.Context(), &dto, billing, plans, providers); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -263,6 +281,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		Tags         []string           `json:"tags"`
 		CountryCode  string             `json:"country_code"`
 		Location     string             `json:"location"`
+		NonDirect    bool               `json:"non_direct"` // 非直连（大陆不可直连）：Ban 告警巡检跳过
 		Billing      *billingInput      `json:"billing"`
 		TrafficPlan  *trafficPlanInput  `json:"traffic_plan"`
 	}
@@ -340,6 +359,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	id, err := s.st.CreateServerWithPlans(r.Context(), store.ServerDraft{
 		Alias: req.Alias, Address: req.Address, BootstrapToken: bootstrap, MachineType: req.MachineType,
 		AllowedPorts: allowedJSON, Tags: tagsJSON, CountryCode: countryCode, Location: location,
+		NonDirect: req.NonDirect,
 	}, billing, traffic)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -453,6 +473,7 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		Tags           *[]string              `json:"tags"`          // 省略 = 不变；数组 = 整体替换
 		CountryCode    *string                `json:"country_code"`  // 省略 = 不变
 		Location       *string                `json:"location"`      // 省略 = 不变
+		NonDirect      *bool                  `json:"non_direct"`    // 省略 = 不变；非直连（大陆不可直连），Ban 告警巡检跳过
 		Billing        *billingInput          `json:"billing"`
 		TrafficPlan    *trafficPlanInput      `json:"traffic_plan"`
 		CustomSettings *shared.ServerSettings `json:"custom_settings"` // 省略 = 不变；{} 或 null = 清除覆盖；非空 = 覆盖
@@ -573,6 +594,12 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	if err := s.st.UpdateServerGeography(r.Context(), id, countryCode, location); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if req.NonDirect != nil {
+		if err := s.st.UpdateServerNonDirect(r.Context(), id, *req.NonDirect); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	settingsChanged := false
 	if req.CustomSettings != nil {

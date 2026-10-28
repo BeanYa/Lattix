@@ -185,6 +185,16 @@ export interface TrafficPlanInput {
   reset_unit: IntervalUnit
 }
 
+export type ServerBanWatchState = 'normal' | 'suspected' | 'banned' | 'recovering'
+
+// Ban 告警观察快照（§告警分类）：三网测速连续全丢包轮次与当前告警阶段
+// （suspected ≥5 轮疑似被 Ban，banned ≥10 轮判定被 Ban，recovering 待取消告警）。
+export interface ServerBanWatch {
+  state: ServerBanWatchState
+  loss_streak: number
+  banned_at?: string | null
+}
+
 export interface Server {
   id: number
   alias: string
@@ -209,6 +219,7 @@ export interface Server {
   tags: string[]
   country_code: string
   location: string
+  non_direct: boolean // 非直连（大陆不可直连）：Ban 告警巡检跳过该服务器
   agent_settings_status: 'synced' | 'pending' | 'failed'
   agent_settings_revision: number
   agent_settings_desired_revision: number
@@ -219,6 +230,7 @@ export interface Server {
   metrics: ServerMetrics | null
   billing: BillingProfile
   traffic_plan: TrafficPlan
+  ban_watch?: ServerBanWatch | null // Ban 告警观察（§告警分类），null/缺省 = 从未进入观察
   created_at: string
 }
 

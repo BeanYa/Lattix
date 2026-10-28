@@ -50,6 +50,7 @@ type Server struct {
 	Tags                     string // 管理标签 JSON 数组；名称模板 {{TAG_n}} 的来源
 	CountryCode              string // ISO 3166-1 alpha-2；管理员在服务器资料中选择
 	Location                 string // 城市或机房位置；管理员填写
+	NonDirect                bool   // 非直连（大陆不可直连）：Ban 告警巡检跳过该服务器（§告警分类）
 	CredentialEpoch          int64
 	CredentialCommitted      bool
 	CredentialPendingToken   string
@@ -70,13 +71,13 @@ type Server struct {
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, addresses, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, credential_epoch, credential_committed, credential_pending_token, credential_exchange_id, last_connected_at, last_disconnected_at, last_reconnected_at, reconnect_count, last_disconnect_reason, agent_settings_revision, agent_settings_error, agent_settings_reported_at, custom_settings, server_settings_revision, server_settings_error, server_settings_reported_at, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, addresses, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, non_direct, credential_epoch, credential_committed, credential_pending_token, credential_exchange_id, last_connected_at, last_disconnected_at, last_reconnected_at, reconnect_count, last_disconnect_reason, agent_settings_revision, agent_settings_error, agent_settings_reported_at, custom_settings, server_settings_revision, server_settings_error, server_settings_reported_at, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
 	var lastSeen, lastConnected, lastDisconnected, lastReconnected, settingsReported, serverSettingsReported sql.NullTime
 	var xrayVer, agentVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.Addresses, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.CredentialEpoch, &srv.CredentialCommitted, &srv.CredentialPendingToken, &srv.CredentialExchangeID, &lastConnected, &lastDisconnected, &lastReconnected, &srv.ReconnectCount, &srv.LastDisconnectReason, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CustomSettings, &srv.ServerSettingsRevision, &srv.ServerSettingsError, &serverSettingsReported, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.Addresses, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.NonDirect, &srv.CredentialEpoch, &srv.CredentialCommitted, &srv.CredentialPendingToken, &srv.CredentialExchangeID, &lastConnected, &lastDisconnected, &lastReconnected, &srv.ReconnectCount, &srv.LastDisconnectReason, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CustomSettings, &srv.ServerSettingsRevision, &srv.ServerSettingsError, &serverSettingsReported, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -122,6 +123,7 @@ type ServerDraft struct {
 	Tags           string
 	CountryCode    string
 	Location       string
+	NonDirect      bool // 非直连（大陆不可直连）：Ban 告警巡检跳过（§告警分类）
 }
 
 // CreateServer 插入一台服务器（§11），返回服务器 id。
@@ -143,8 +145,8 @@ func (s *Store) createServer(ctx context.Context, exec contextExecer, draft Serv
 		}
 	}
 	res, err := exec.ExecContext(ctx,
-		`INSERT INTO servers (alias, address, addresses, address_mode, token, machine_type, allowed_ports, tags, country_code, location, credential_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		draft.Alias, draft.Address, addresses, addressMode, draft.BootstrapToken, draft.MachineType, draft.AllowedPorts, draft.Tags, draft.CountryCode, draft.Location, epoch)
+		`INSERT INTO servers (alias, address, addresses, address_mode, token, machine_type, allowed_ports, tags, country_code, location, non_direct, credential_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		draft.Alias, draft.Address, addresses, addressMode, draft.BootstrapToken, draft.MachineType, draft.AllowedPorts, draft.Tags, draft.CountryCode, draft.Location, draft.NonDirect, epoch)
 	if err != nil {
 		return 0, fmt.Errorf("insert server: %w", err)
 	}
@@ -458,6 +460,16 @@ func (s *Store) UpdateServerGeography(ctx context.Context, id int64, countryCode
 	return err
 }
 
+// UpdateServerNonDirect 更新「非直连」属性（大陆不可直连）：启用后 Ban 告警巡检
+// 跳过该服务器（§告警分类）；既有观察状态由巡检下一轮清除。
+func (s *Store) UpdateServerNonDirect(ctx context.Context, id int64, nonDirect bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE servers SET non_direct = ? WHERE id = ?`, nonDirect, id)
+	if err != nil {
+		return fmt.Errorf("update server non_direct: %w", err)
+	}
+	return nil
+}
+
 // TouchServer 更新 last_seen_at、xray 版本与 agent 版本（session.open 携带，§13）及公网地址（§9）：
 // address 为生效公网地址（管理员已指定时与库中一致），learnedAddr 为本次拨入学习的地址，
 // nicAddrs 为 agent 上报的网卡非回环地址 JSON 数组（空串 = 本次未上报，保留旧值）。
@@ -652,6 +664,7 @@ func (s *Store) DeleteServerCascade(ctx context.Context, id int64) error {
 		`DELETE FROM server_network_usage_daily WHERE server_id = ?`,
 		`DELETE FROM server_traffic_plans WHERE server_id = ?`,
 		`DELETE FROM server_billing WHERE server_id = ?`,
+		`DELETE FROM server_ban_watch WHERE server_id = ?`,
 		`DELETE FROM servers WHERE id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {

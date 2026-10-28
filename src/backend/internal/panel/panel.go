@@ -56,26 +56,27 @@ type Config struct {
 
 // Server 聚合面板 API 的依赖。
 type Server struct {
-	st            *store.Store
-	disp          *dispatch.Dispatcher
-	req           ws.AgentRequester
-	lifecycle     *lifecycle.Manager
-	cfg           Config
-	alerter       *alert.Notifier
-	upd           *selfupdate.Updater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
-	releases      *releases.Catalog
-	exchange      *exchange.Catalog
-	cdn           *cdn.Catalog
-	subscriptions *sub.Server
-	extSubs       *extsub.Service
-	onlineUsers   *OnlineUsersTracker // 在线用户快照聚合（telemetry 喂入，用户列表 API 读取）
-	scheduler     *scheduler.TaskScheduler
-	opLog         *logging.OperationStore
-	reqLog        *logging.RequestLog
-	observes      *progress.Registry // 旁路操作进度观察（nil = 关闭）
-	startedAt     time.Time
-	runtimeMu     sync.Mutex
-	lastCPU       runtimeCPUSample
+	st               *store.Store
+	disp             *dispatch.Dispatcher
+	req              ws.AgentRequester
+	lifecycle        *lifecycle.Manager
+	cfg              Config
+	alerter          *alert.Notifier
+	upd              *selfupdate.Updater // 面板自更新状态机（版本检测 + 下载/替换/自重启）
+	releases         *releases.Catalog
+	exchange         *exchange.Catalog
+	cdn              *cdn.Catalog
+	subscriptions    *sub.Server
+	extSubs          *extsub.Service
+	onlineUsers      *OnlineUsersTracker // 在线用户快照聚合（telemetry 喂入，用户列表 API 读取）
+	scheduler        *scheduler.TaskScheduler
+	opLog            *logging.OperationStore
+	reqLog           *logging.RequestLog
+	observes         *progress.Registry // 旁路操作进度观察（nil = 关闭）
+	startedAt        time.Time
+	runtimeMu        sync.Mutex
+	lastCPU          runtimeCPUSample
+	banWatchLastEval time.Time // Ban 观察上轮评估时刻（仅 server.ban-watch 任务读写，调度器保证不重叠）
 
 	routePolicies         map[string]logging.LogPolicy
 	debugRoutes           map[string]bool // 轮询/状态类路由：成功请求记录为 debug 级别
@@ -274,7 +275,7 @@ func (s *Server) registerCoreTasks() {
 	})
 	// 服务器间延迟测速（§链路统计）：5 分钟一轮，启动即先测一轮；
 	// 链路发布成功由 dispatcher 内部立即追加触发。
-	latencyProbeInterval := envDuration("LATTIX_LATENCY_PROBE_INTERVAL", 5*time.Minute)
+	latencyProbeInterval := latencyProbeRoundInterval()
 	s.scheduler.Register(scheduler.ScheduledTask{
 		Name: "chain-latency.probe", RunOnStart: true, Timeout: time.Minute,
 		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(latencyProbeInterval) },
@@ -282,6 +283,13 @@ func (s *Server) registerCoreTasks() {
 			s.disp.RunLatencyProbeRound(ctx)
 			return nil
 		},
+	})
+	// Ban 告警巡检（§告警分类 Ban告警）：与三网测速同频逐轮评估全丢包连续轮次
+	// （5 轮疑似、10 轮判定被 Ban）；banned 后每半小时确认一次恢复，下一轮取消告警。
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "server.ban-watch", RunOnStart: true, Timeout: time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(latencyProbeInterval) },
+		Run:     s.runBanWatch,
 	})
 	for _, kind := range []string{releases.KindAgent, releases.KindXray} {
 		kind := kind

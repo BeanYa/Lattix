@@ -21,7 +21,53 @@ const (
 	EventConfigDrift   = "config_drift"   // drift_report 上报漂移
 	EventNodeFailed    = "node_failed"    // apply 失败 / 死信导致节点置 failed
 	EventChainDegraded = "chain_degraded" // 链任一跳 server 离线导致 active→degraded（§21）
+
+	// Ban 告警（§告警分类）：三网目录测速连续全丢包驱动，由 panel 的 ban-watch 巡检发出。
+	EventServerBanSuspected = "server_ban_suspected" // 连续 5 轮三网 100% 丢包，疑似被 Ban
+	EventServerBanned       = "server_banned"        // 连续 10 轮以上，判定已被 Ban
+	EventServerBanRecovered = "server_ban_recovered" // 三网恢复在线，取消被 Ban 告警
+
+	// 到期预警：billing.lifecycle 每日巡检按状态跃迁/预警窗口发出。
+	EventBillingDueSoon  = "billing_due_soon"  // 续费日 7 天内（每日提醒直至到期或续费）
+	EventBillingDueToday = "billing_due_today" // 续费日为今天
+	EventBillingExpired  = "billing_expired"   // 续费日已过且服务器离线，标记已过期
 )
+
+// 告警分类（webhook JSON 的 category 字段；Telegram 文案前缀）。
+const (
+	CategoryRuntime = "runtime" // 运行警告：离线/漂移/节点失败/链路降级（未知事件默认归此类）
+	CategoryExpiry  = "expiry"  // 到期预警：服务器计费到期相关
+	CategoryBan     = "ban"     // Ban 告警：三网测速判定疑似/已被 Ban
+)
+
+// eventCategories 是事件→分类的登记表（新增事件须在此登记分类）。
+var eventCategories = map[string]string{
+	EventServerOffline:      CategoryRuntime,
+	EventConfigDrift:        CategoryRuntime,
+	EventNodeFailed:         CategoryRuntime,
+	EventChainDegraded:      CategoryRuntime,
+	EventServerBanSuspected: CategoryBan,
+	EventServerBanned:       CategoryBan,
+	EventServerBanRecovered: CategoryBan,
+	EventBillingDueSoon:     CategoryExpiry,
+	EventBillingDueToday:    CategoryExpiry,
+	EventBillingExpired:     CategoryExpiry,
+}
+
+// categoryOf 返回事件的告警分类；未登记事件按运行警告处理。
+func categoryOf(event string) string {
+	if category, ok := eventCategories[event]; ok {
+		return category
+	}
+	return CategoryRuntime
+}
+
+// categoryLabels 是分类的中文展示名（Telegram 文案前缀）。
+var categoryLabels = map[string]string{
+	CategoryRuntime: "运行警告",
+	CategoryExpiry:  "到期预警",
+	CategoryBan:     "Ban告警",
+}
 
 // debounceDefault 是默认防抖动窗口：同一服务器同一事件在该窗口内不重复发送。
 const debounceDefault = 5 * time.Minute
@@ -96,11 +142,12 @@ func (n *Notifier) loadConfig(ctx context.Context) config {
 
 // payload 是 webhook 的 JSON 载荷。
 type payload struct {
-	Event  string `json:"event"`
-	Server string `json:"server"`
-	Node   string `json:"node,omitempty"`
-	Detail string `json:"detail"`
-	Time   string `json:"time"`
+	Event    string `json:"event"`
+	Category string `json:"category"` // runtime|expiry|ban（§告警分类）
+	Server   string `json:"server"`
+	Node     string `json:"node,omitempty"`
+	Detail   string `json:"detail"`
+	Time     string `json:"time"`
 }
 
 // Notify 上报一次状态跃迁事件：防抖动命中则丢弃；否则异步发送到各已配置通道。
@@ -119,11 +166,12 @@ func (n *Notifier) Notify(serverID int64, event, node, detail string) {
 		server = srv.Alias
 	}
 	p := payload{
-		Event:  event,
-		Server: server,
-		Node:   node,
-		Detail: detail,
-		Time:   time.Now().Format(time.RFC3339),
+		Event:    event,
+		Category: categoryOf(event),
+		Server:   server,
+		Node:     node,
+		Detail:   detail,
+		Time:     time.Now().Format(time.RFC3339),
 	}
 	n.wg.Add(1)
 	go func() {
@@ -143,9 +191,13 @@ func (n *Notifier) allow(key string) bool {
 	return true
 }
 
-// text 渲染 Telegram 纯文本消息。
+// text 渲染 Telegram 纯文本消息（首行带告警分类前缀）。
 func (p payload) text() string {
-	s := fmt.Sprintf("[Lattix] %s\n服务器: %s", p.Event, p.Server)
+	label := categoryLabels[p.Category]
+	if label == "" {
+		label = p.Category
+	}
+	s := fmt.Sprintf("[Lattix·%s] %s\n服务器: %s", label, p.Event, p.Server)
 	if p.Node != "" {
 		s += "\n节点: " + p.Node
 	}
