@@ -1,24 +1,36 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useSearch } from 'wouter'
 import {
+  ActivityIcon,
   ArrowDownIcon,
+  ArrowDownUpIcon,
+  ArrowLeftRightIcon,
   ArrowUpIcon,
+  Building2Icon,
   CalendarCheckIcon,
-  CircleCheckIcon,
+  CableIcon,
+  ClockIcon,
+  CpuIcon,
+  CreditCardIcon,
   EllipsisIcon,
   ExternalLinkIcon,
+  GaugeIcon,
   Globe2Icon,
+  HardDriveIcon,
   LoaderCircleIcon,
   Maximize2Icon,
+  MemoryStickIcon,
+  NetworkIcon,
   PencilIcon,
   RefreshCwIcon,
   RotateCcwIcon,
   RotateCcwKeyIcon,
   SearchIcon,
   ServerCogIcon,
+  SettingsIcon,
+  ShieldCheckIcon,
   SparklesIcon,
   Trash2Icon,
-  WifiOffIcon,
   WrenchIcon,
 } from 'lucide-react'
 
@@ -42,13 +54,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
@@ -58,19 +63,19 @@ import { providerWebsiteUrl } from '@/lib/provider-website'
 import { isServerOnline, serverConnectionLabel } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
 import type {
+  CatalogProbeRow,
+  CatalogProbeStats,
   ConvertedCost,
   Server,
-  ServerConnectionState,
   ServerMetrics,
   ServerMetricSeries,
   TrafficStatPoint,
 } from '@/lib/types'
 
-type Health = 'normal' | 'warning' | 'critical'
-
 interface ServerMonitorProps {
   servers: Server[]
   samples: ServerMetricSeries[]
+  probes: CatalogProbeStats | null
   loading: boolean
   timezone?: string
   onEdit: (server: Server) => void
@@ -94,30 +99,6 @@ function formatTrafficBytes(bytes: number): string {
   return `${value.toLocaleString(undefined, { maximumFractionDigits: value >= 100 ? 0 : 2 })} ${units[unit]}`
 }
 
-const billingStatusLabel = {
-  active: '有效',
-  due_today: '今日到期',
-  assumed_valid: '推定有效',
-  expired: '已过期',
-} as const
-
-function serverConnectionNotice(state: ServerConnectionState): string {
-  switch (state) {
-    case 'never_connected':
-      return 'Agent 尚未连接'
-    case 'connecting':
-      return '正在建立 Agent 连接'
-    case 'reconnecting':
-      return '正在重新连接 Agent'
-    case 'offline':
-      return 'Agent 连接已中断'
-    case 'auth_rejected':
-      return 'Agent 凭据验证失败'
-    case 'online':
-      return ''
-  }
-}
-
 function openExternalUrl(url: string) {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
@@ -137,79 +118,8 @@ function formatConvertedCost(cost: ConvertedCost): string {
   return `${(cost.amount_minor / divisor).toLocaleString()} ${cost.currency}`
 }
 
-function TrafficSegmentBar({
-  ratio,
-  complete,
-  unlimited,
-}: {
-  ratio: number
-  complete: boolean
-  unlimited: boolean
-}) {
-  const segments = 24
-  const clamped = Math.min(100, Math.max(0, ratio))
-  const filled = unlimited ? segments : clamped === 0 ? 0 : Math.ceil((clamped / 100) * segments)
-  const fillClass = unlimited
-    ? 'sv-seg-ok'
-    : !complete
-      ? 'sv-seg-idle'
-      : clamped >= 80
-        ? 'sv-seg-crit'
-        : clamped >= 60
-          ? 'sv-seg-warn'
-          : 'sv-seg-ok'
-  return (
-    <div
-      className="grid h-2 grid-cols-[repeat(24,minmax(0,1fr))] gap-[2px]"
-      role="progressbar"
-      aria-label="流量额度使用率"
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={unlimited ? undefined : Math.round(clamped)}
-      aria-valuetext={unlimited ? '无限额度' : undefined}
-    >
-      {Array.from({ length: segments }).map((_, index) => (
-        <span key={index} className={cn('sv-seg', index < filled && fillClass)} />
-      ))}
-    </div>
-  )
-}
-
-function TrafficUsage({ server }: { server: Server }) {
-  const traffic = server.traffic_plan
-  const ratio = traffic.quota_bytes ? (traffic.used_bytes / traffic.quota_bytes) * 100 : 0
-  const alert = traffic.complete && ratio >= 60
-  return (
-    <div className="sv-traffic" aria-label="本周期流量">
-      <div className="sv-traffic-line">
-        <span className={cn('sv-traffic-used', alert && (ratio >= 80 ? 'is-crit' : 'is-warn'))}>
-          {formatTrafficBytes(traffic.used_bytes)}
-        </span>
-        <span className="sv-traffic-quota">
-          <span aria-label={traffic.quota_bytes === null ? '无限额度' : undefined}>
-            {traffic.quota_bytes === null ? '∞' : formatTrafficBytes(traffic.quota_bytes)}
-          </span>
-          <span className="sv-traffic-reset">· {traffic.next_reset_on} 重置</span>
-        </span>
-      </div>
-      <TrafficSegmentBar
-        ratio={ratio}
-        complete={traffic.complete}
-        unlimited={traffic.quota_bytes === null}
-      />
-      {!traffic.complete ? <span className="sv-traffic-note">本周期数据不完整</span> : null}
-    </div>
-  )
-}
-
 function percent(used: number, total: number): number {
   return total > 0 ? Math.min(100, Math.max(0, (used / total) * 100)) : 0
-}
-
-function health(value: number, warning = 80, critical = 90): Health {
-  if (value > critical) return 'critical'
-  if (value >= warning) return 'warning'
-  return 'normal'
 }
 
 function formatUptime(seconds: number): string {
@@ -219,183 +129,6 @@ function formatUptime(seconds: number): string {
   if (days > 0) return `${days} 天 ${hours} 小时`
   if (hours > 0) return `${hours} 小时 ${minutes} 分`
   return `${minutes} 分钟`
-}
-
-function UsageCell({
-  label,
-  value,
-  detail,
-  warning = 80,
-  critical = 90,
-}: {
-  label: string
-  value: number | null
-  detail: string
-  warning?: number
-  critical?: number
-}) {
-  const state = value === null ? null : health(value, warning, critical)
-  return (
-    <div className="sv-usage">
-      <span className="sv-usage-value">{value === null ? '--' : `${value.toFixed(1)}%`}</span>
-      <span
-        className="sv-usage-bar"
-        role="progressbar"
-        aria-label={`${label} ${value === null ? '无数据' : `${value.toFixed(1)}%`}`}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={value === null ? undefined : Math.round(value)}
-      >
-        <i
-          aria-hidden="true"
-          className={cn(
-            'sv-usage-fill',
-            state === 'warning' && 'is-warn',
-            state === 'critical' && 'is-crit',
-          )}
-          style={{ width: `${value ?? 0}%` }}
-        />
-      </span>
-      <span className="sv-usage-detail">{detail}</span>
-    </div>
-  )
-}
-
-function RuntimeMetric({
-  label,
-  value,
-  detail,
-  progress,
-  warning,
-  critical,
-}: {
-  label: string
-  value: string
-  detail: string
-  progress: number | null
-  warning?: number
-  critical?: number
-}) {
-  const state = progress === null ? null : health(progress, warning, critical)
-  return (
-    <div className="sv-metric">
-      <span className="sv-metric-label">{label}</span>
-      <span className="sv-metric-value">{value}</span>
-      <span
-        className="sv-metric-bar"
-        role="progressbar"
-        aria-label={`${label} ${value}`}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={progress === null ? undefined : Math.round(progress)}
-      >
-        <i
-          aria-hidden="true"
-          className={cn(
-            'sv-metric-fill',
-            state === 'warning' && 'is-warn',
-            state === 'critical' && 'is-crit',
-          )}
-          style={{ width: `${progress ?? 0}%` }}
-        />
-      </span>
-      <span className="sv-metric-detail">{detail}</span>
-    </div>
-  )
-}
-
-function LatencyStrip({ samples, timezone }: { samples: ServerMetrics[]; timezone?: string }) {
-  const [activeIndex, setActiveIndex] = useState<number | null>(null)
-  const values = samples.slice(-30)
-  const cells: Array<ServerMetrics | null> = [
-    ...values,
-    ...Array.from<null>({ length: Math.max(0, 30 - values.length) }).fill(null),
-  ]
-  return (
-    <div
-      className="sv-lat-strip"
-      role="group"
-      tabIndex={0}
-      aria-label="最近 30 次延迟趋势，使用左右方向键查看采样数据"
-      onMouseLeave={(event) => {
-        if (document.activeElement !== event.currentTarget) setActiveIndex(null)
-      }}
-      onFocus={() => setActiveIndex((current) => current ?? cells.length - 1)}
-      onBlur={() => setActiveIndex(null)}
-      onKeyDown={(event) => {
-        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-        event.preventDefault()
-        event.stopPropagation()
-        const direction = event.key === 'ArrowLeft' ? -1 : 1
-        setActiveIndex((current) =>
-          Math.min(cells.length - 1, Math.max(0, (current ?? cells.length - 1) + direction)),
-        )
-      }}
-    >
-      {cells.map((sample, index) => {
-        const latency = sample?.latency_ms ?? null
-        const latencyValue = latency ?? 0
-        const missing = sample === null
-        const timedOut = !missing && latency === null
-        const state = missing || timedOut ? null : health(latencyValue, 100, 300)
-        const distance =
-          activeIndex === null ? Number.POSITIVE_INFINITY : Math.abs(activeIndex - index)
-        const label = missing
-          ? '无数据'
-          : timedOut
-            ? '探测超时'
-            : `${Math.round(latencyValue)} 毫秒`
-        return (
-          <span
-            key={sample ? `${sample.updated_at}-${index}` : `empty-${index}`}
-            role="img"
-            aria-label={label}
-            onMouseEnter={() => setActiveIndex(index)}
-            className={cn(
-              'sv-lat-cell',
-              distance === 0 && 'is-active',
-              distance === 1 && 'is-near',
-            )}
-          >
-            {activeIndex === index ? (
-              <span
-                role="tooltip"
-                className={cn(
-                  'sv-lat-tip',
-                  index < 3 ? 'is-start' : index >= cells.length - 3 ? 'is-end' : 'is-center',
-                )}
-              >
-                <span
-                  className={cn(
-                    'sv-lat-tip-value',
-                    timedOut && 'is-crit',
-                    state === 'normal' && 'is-ok',
-                    state === 'warning' && 'is-warn',
-                    state === 'critical' && 'is-crit',
-                  )}
-                >
-                  {missing ? '无数据' : timedOut ? '探测超时' : `${Math.round(latencyValue)} ms`}
-                </span>
-                <span className="sv-lat-tip-time">
-                  {sample ? formatDateTime(sample.updated_at, timezone) : '尚无采样记录'}
-                </span>
-              </span>
-            ) : null}
-            <span
-              aria-hidden="true"
-              className={cn(
-                'sv-lat-fill',
-                timedOut && 'is-crit',
-                state === 'normal' && 'is-ok',
-                state === 'warning' && 'is-warn',
-                state === 'critical' && 'is-crit',
-              )}
-            />
-          </span>
-        )
-      })}
-    </div>
-  )
 }
 
 function ServerActions({
@@ -408,7 +141,7 @@ function ServerActions({
   onUpgrade,
   onRenew,
   onDelete,
-}: Omit<ServerMonitorProps, 'servers' | 'samples' | 'loading' | 'timezone'> & {
+}: Omit<ServerMonitorProps, 'servers' | 'samples' | 'probes' | 'loading' | 'timezone'> & {
   server: Server
 }) {
   return (
@@ -493,365 +226,444 @@ function ServerActions({
   )
 }
 
-function QuotaCell({ server }: { server: Server }) {
-  const traffic = server.traffic_plan
-  const unlimited = traffic.quota_bytes === null
-  const ratio = traffic.quota_bytes ? (traffic.used_bytes / traffic.quota_bytes) * 100 : 0
+// ---------- 服务器卡片（§三网测速） ----------
+
+function formatLatency(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return '—'
+  if (ms >= 100) return `${Math.round(ms)} ms`
+  return `${ms.toFixed(1)} ms`
+}
+
+function lossTone(loss: number | null): 'ok' | 'warn' | 'crit' | null {
+  if (loss === null) return null
+  if (loss <= 5) return 'ok'
+  if (loss <= 30) return 'warn'
+  return 'crit'
+}
+
+function daysUntil(dateStr: string): number {
+  const target = new Date(`${dateStr}T00:00:00`)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Math.round((target.getTime() - today.getTime()) / 86400000)
+}
+
+// DotBar 是资源占用的分段点阵条（20 段）：内存/磁盘/负载/流量共用。
+function DotBar({
+  ratio,
+  tone,
+  label,
+}: {
+  ratio: number
+  tone: 'ok' | 'warn' | 'crit' | 'info' | 'signal'
+  label: string
+}) {
+  const segments = 20
   const clamped = Math.min(100, Math.max(0, ratio))
-  const tone = !traffic.complete
-    ? null
-    : clamped >= 80
-      ? 'is-crit'
-      : clamped >= 60
-        ? 'is-warn'
-        : null
+  const filled = clamped === 0 ? 0 : Math.max(1, Math.round((clamped / 100) * segments))
   return (
-    <div className="sv-quota">
-      <span className="sv-quota-line">
-        <span className={cn('sv-quota-used', tone)}>{formatTrafficBytes(traffic.used_bytes)}</span>
-        <span className="sv-quota-cap">
-          <span aria-label={unlimited ? '无限额度' : undefined}>
-            {unlimited ? '∞' : formatTrafficBytes(traffic.quota_bytes ?? 0)}
-          </span>
-        </span>
-      </span>
-      <span
-        className="sv-quota-bar"
-        role="progressbar"
-        aria-label="流量额度使用率"
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={unlimited ? undefined : Math.round(clamped)}
-        aria-valuetext={unlimited ? '无限额度' : undefined}
-      >
+    <span
+      className="sv-dotbar"
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(clamped)}
+    >
+      {Array.from({ length: segments }).map((_, index) => (
+        <i key={index} className={cn('sv-dotbar-seg', index < filled && `is-${tone}`)} />
+      ))}
+    </span>
+  )
+}
+
+// DotTrend 是速率的点阵趋势（每点一次采样，亮度随数值相对峰值变化）。
+function DotTrend({ values, tone }: { values: Array<number | null>; tone: 'ok' | 'info' }) {
+  const recent = values.slice(-24)
+  const peak = Math.max(0, ...recent.filter((value): value is number => value !== null))
+  const padded: Array<number | null> = [
+    ...Array.from<null>({ length: Math.max(0, 24 - recent.length) }).fill(null),
+    ...recent,
+  ]
+  return (
+    <span className="sv-dot-trend" aria-hidden="true">
+      {padded.map((value, index) => (
         <i
-          aria-hidden="true"
-          className={cn('sv-quota-fill', tone)}
-          style={{ width: `${unlimited ? 100 : clamped}%` }}
+          key={index}
+          className={cn('sv-dot-cell', `is-${tone}`, value === null && 'is-idle')}
+          style={
+            value === null || peak <= 0
+              ? undefined
+              : { opacity: 0.35 + 0.65 * Math.min(1, value / peak) }
+          }
         />
+      ))}
+    </span>
+  )
+}
+
+function ResCell({
+  icon,
+  label,
+  value,
+  detail,
+  barRatio,
+  barTone = 'ok',
+}: {
+  icon: ReactNode
+  label: string
+  value: string
+  detail: string
+  barRatio: number | null
+  barTone?: 'ok' | 'warn' | 'crit' | 'info' | 'signal'
+}) {
+  return (
+    <div className="sv-res">
+      <span className="sv-res-top">
+        <span className="sv-res-label">
+          {icon}
+          {label}
+        </span>
+        <span className="sv-res-value">{value}</span>
       </span>
-      {!traffic.complete ? <span className="sv-cell-note">本周期数据不完整</span> : null}
+      <span className="sv-res-detail">{detail}</span>
+      {barRatio !== null ? <DotBar ratio={barRatio} tone={barTone} label={`${label}占用`} /> : null}
     </div>
   )
 }
 
-function ServerRow({
-  server,
-  selected,
-  timezone,
-  onSelect,
-  ...actions
-}: Omit<ServerMonitorProps, 'servers' | 'samples' | 'loading' | 'timezone'> & {
-  server: Server
-  selected: boolean
-  timezone?: string
-  onSelect: () => void
-}) {
-  const metrics = server.metrics
-  const online = isServerOnline(server)
-  const transitioning =
-    server.connection_state === 'connecting' || server.connection_state === 'reconnecting'
-  const publicAddress = server.address || server.learned_addr
-  const memoryPercent = metrics ? percent(metrics.mem_used, metrics.mem_total) : 0
-  const diskPercent = metrics ? percent(metrics.disk_used, metrics.disk_total) : 0
-  const cpuPercent = metrics?.cpu_percent ?? null
-  const latency = metrics?.latency_ms ?? null
-  const billingLabel =
-    server.billing.enabled && server.billing.status in billingStatusLabel
-      ? billingStatusLabel[server.billing.status as keyof typeof billingStatusLabel]
-      : null
+// ProbeRow 是三网测速的一行：目标标签 / 延迟 / 丢包条 / 丢包率。
+function ProbeRow({ row }: { row: CatalogProbeRow }) {
+  const tone = lossTone(row.loss_percent)
+  const loss = row.loss_percent
+  const width = loss === null ? 0 : loss <= 0 ? 0 : Math.max(4, Math.min(100, loss))
   return (
-    <tr
-      className={cn('sv-row', selected && 'is-selected')}
-      data-state={selected ? 'selected' : undefined}
-      aria-selected={selected}
-      onClick={onSelect}
+    <div
+      className="sv-probe-row"
+      title={`${row.label}${row.latency_ms !== null ? ` · 延迟 ${formatLatency(row.latency_ms)}` : ''}${
+        loss === null ? '' : ` · 丢包 ${loss.toFixed(1)}%`
+      }`}
     >
-      <th scope="row" className="sv-cell-server">
-        <button
-          type="button"
-          className="sv-row-select"
-          aria-pressed={selected}
-          aria-label={`查看 ${server.alias} 的运行时读数，${serverConnectionLabel(server.connection_state)}`}
-          onClick={(event) => {
-            event.stopPropagation()
-            onSelect()
-          }}
-        >
-          <CountryFlag code={server.country_code} />
-          <span className="sv-row-alias">{server.alias}</span>
-        </button>
-        <span className="sv-row-flags">
-          {server.config_drift ? <span className="sv-flag is-alert">DRIFT</span> : null}
-          {billingLabel ? (
-            <span
-              className={cn(
-                'sv-flag',
-                server.billing.status === 'expired' && 'is-alert',
-                server.billing.status === 'due_today' && 'is-warn',
-              )}
-            >
-              {billingLabel}
-            </span>
-          ) : null}
-        </span>
-      </th>
-      <td className="sv-cell-agent">
-        <span
+      <span className="sv-probe-label">{row.label}</span>
+      <span className="sv-probe-latency">{formatLatency(row.latency_ms)}</span>
+      <span
+        className="sv-probe-lossbar"
+        role="img"
+        aria-label={`${row.label} 丢包率 ${loss === null ? '无数据' : `${loss.toFixed(1)}%`}`}
+      >
+        <i
+          aria-hidden="true"
           className={cn(
-            'sv-agent',
-            online ? 'is-online' : transitioning ? 'is-loading' : 'is-offline',
+            'sv-probe-lossfill',
+            tone === 'ok' && 'is-ok',
+            tone === 'warn' && 'is-warn',
+            tone === 'crit' && 'is-crit',
           )}
-        >
-          {online ? (
-            <CircleCheckIcon />
-          ) : transitioning ? (
-            <LoaderCircleIcon className="sv-spin" />
-          ) : (
-            <WifiOffIcon />
-          )}
-          <span>Agent {serverConnectionLabel(server.connection_state)}</span>
-        </span>
-        <span className="sv-cell-note">
-          {online
-            ? metrics
-              ? `已运行 ${formatUptime(metrics.uptime_seconds)}`
-              : '等待首次遥测'
-            : metrics
-              ? `上次遥测 ${formatDateTime(metrics.updated_at, timezone)}`
-              : serverConnectionNotice(server.connection_state)}
-        </span>
-      </td>
-      <td className="sv-cell-addr">
-        <span className="sv-addr-loc">
-          {server.location || server.country_code || '未设置地区'}
-        </span>
-        <span
-          className="sv-addr"
-          title={publicAddress || '公网地址待学习'}
-          aria-label={`公网地址 ${publicAddress || '待学习'}`}
-        >
-          <Globe2Icon />
-          <span className="sv-addr-text">{publicAddress || '公网地址待学习'}</span>
-          {server.addresses.length > 1 ? (
-            <span className="sv-addr-count" title={`共 ${server.addresses.length} 个公网地址`}>
-              +{server.addresses.length - 1}
-            </span>
-          ) : null}
-        </span>
-      </td>
-      <td className="sv-cell-metric">
-        <UsageCell
-          label="CPU"
-          value={cpuPercent}
-          detail={
-            metrics
-              ? `${metrics.load1.toFixed(2)} / ${metrics.load5.toFixed(2)} / ${metrics.load15.toFixed(2)}`
-              : '--'
-          }
+          style={{ width: `${width}%` }}
         />
-      </td>
-      <td className="sv-cell-metric">
-        <UsageCell
+      </span>
+      <span
+        className={cn(
+          'sv-probe-loss',
+          tone === 'ok' && 'is-ok',
+          tone === 'warn' && 'is-warn',
+          tone === 'crit' && 'is-crit',
+        )}
+      >
+        {loss === null ? '—' : `${loss.toFixed(1)}%`}
+      </span>
+    </div>
+  )
+}
+
+// ---------- 卡片 / 详情弹窗共用的概览区（§服务器详情复用卡片样式） ----------
+
+// CardOverviewSections 渲染资源四宫格、网络速率与剩余流量三段。
+function CardOverviewSections({ server, samples }: { server: Server; samples: ServerMetrics[] }) {
+  const metrics = server.metrics
+  const cpuPercent = metrics?.cpu_percent ?? null
+  const memoryPercent = metrics ? percent(metrics.mem_used, metrics.mem_total) : null
+  const diskPercent = metrics ? percent(metrics.disk_used, metrics.disk_total) : null
+  const load1 = metrics?.load1 ?? null
+  const traffic = server.traffic_plan
+  const quotaRatio = traffic.quota_bytes ? (traffic.used_bytes / traffic.quota_bytes) * 100 : 0
+  const remaining =
+    traffic.quota_bytes === null ? null : Math.max(0, traffic.quota_bytes - traffic.used_bytes)
+  const quotaTone = !traffic.complete
+    ? 'ok'
+    : quotaRatio >= 80
+      ? 'crit'
+      : quotaRatio >= 60
+        ? 'warn'
+        : 'ok'
+  return (
+    <>
+      <div className="sv-card-res">
+        <ResCell
+          icon={<CpuIcon />}
+          label="CPU"
+          value={cpuPercent === null ? '--' : `${cpuPercent.toFixed(1)}%`}
+          detail={metrics ? `Agent ${server.agent_version ?? '--'}` : '--'}
+          barRatio={cpuPercent}
+          barTone="ok"
+        />
+        <ResCell
+          icon={<MemoryStickIcon />}
           label="内存"
-          value={metrics ? memoryPercent : null}
+          value={memoryPercent === null ? '--' : `${memoryPercent.toFixed(1)}%`}
           detail={
             metrics
               ? `${humanizeBytes(metrics.mem_used)} / ${humanizeBytes(metrics.mem_total)}`
               : '--'
           }
+          barRatio={memoryPercent}
+          barTone="info"
         />
-      </td>
-      <td className="sv-cell-metric">
-        <UsageCell
+        <ResCell
+          icon={<HardDriveIcon />}
           label="磁盘"
-          value={metrics ? diskPercent : null}
+          value={diskPercent === null ? '--' : `${diskPercent.toFixed(1)}%`}
           detail={
             metrics
               ? `${humanizeBytes(metrics.disk_used)} / ${humanizeBytes(metrics.disk_total)}`
               : '--'
           }
+          barRatio={diskPercent}
+          barTone="signal"
         />
-      </td>
-      <td className="sv-cell-latency">
-        <span className="sv-latency-value">
-          {latency === null ? '--' : `${Math.round(latency)} ms`}
-        </span>
-        <span className="sv-cell-note">最近一次探针</span>
-      </td>
-      <td className="sv-cell-rate">
-        <span className="sv-rate">
-          <span className="sv-rate-line">
+        <ResCell
+          icon={<GaugeIcon />}
+          label="负载"
+          value={load1 === null ? '--' : load1.toFixed(2)}
+          detail={
+            metrics ? `5/15 分钟 ${metrics.load5.toFixed(2)} / ${metrics.load15.toFixed(2)}` : '--'
+          }
+          barRatio={load1 === null ? null : Math.min(100, load1 * 20)}
+          barTone="ok"
+        />
+      </div>
+      <section className="sv-card-net" aria-label="网络速率">
+        <div className="sv-net-row">
+          <span className="sv-net-label">
             <ArrowUpIcon />
-            {metrics ? formatByteRate(metrics.network_tx_bps) : '--'}
+            上行
           </span>
-          <span className="sv-rate-line">
+          <span className="sv-net-rate">
+            {metrics?.network_tx_bps != null ? formatByteRate(metrics.network_tx_bps) : '--'}
+          </span>
+          <DotTrend values={samples.map((sample) => sample.network_tx_bps)} tone="ok" />
+        </div>
+        <div className="sv-net-row">
+          <span className="sv-net-label">
             <ArrowDownIcon />
-            {metrics ? formatByteRate(metrics.network_rx_bps) : '--'}
+            下行
+          </span>
+          <span className="sv-net-rate">
+            {metrics?.network_rx_bps != null ? formatByteRate(metrics.network_rx_bps) : '--'}
+          </span>
+          <DotTrend values={samples.map((sample) => sample.network_rx_bps)} tone="info" />
+        </div>
+        <div className="sv-net-totals">
+          <span className="sv-net-total">
+            <Globe2Icon />
+            出站 {metrics ? humanizeBytes(metrics.network_tx_bytes) : '--'}
+          </span>
+          <span className="sv-net-total">
+            <Globe2Icon />
+            入站 {metrics ? humanizeBytes(metrics.network_rx_bytes) : '--'}
+          </span>
+        </div>
+      </section>
+      <section className="sv-card-quota" aria-label="流量额度">
+        <span className="sv-quota2-line">
+          <span className="sv-quota2-label">剩余流量</span>
+          <span className="sv-quota2-remaining">
+            {remaining === null ? '∞' : formatTrafficBytes(remaining)}
           </span>
         </span>
-      </td>
-      <td className="sv-cell-quota">
-        <QuotaCell server={server} />
-      </td>
-      <td className="sv-cell-versions">
-        <span className="sv-versions">
-          <span>Agent {server.agent_version ?? '--'}</span>
-          <span>Xray {server.xray_version ?? '--'}</span>
+        <DotBar
+          ratio={traffic.quota_bytes === null ? 100 : quotaRatio}
+          tone={quotaTone}
+          label="流量额度使用率"
+        />
+        <span className="sv-quota2-detail">
+          {formatTrafficBytes(traffic.used_bytes)} /{' '}
+          {traffic.quota_bytes === null ? '∞' : formatTrafficBytes(traffic.quota_bytes)}
+          {traffic.next_reset_on ? ` · ${traffic.next_reset_on} 重置` : ''}
         </span>
-      </td>
-      <td className="sv-cell-actions" onClick={(event) => event.stopPropagation()}>
-        <ServerActions server={server} {...actions} />
-      </td>
-    </tr>
+      </section>
+    </>
   )
 }
 
-function ServerRuntime({
-  server,
-  samples,
-  timezone,
-  onOpenDetail,
-  onOpenTrafficStats,
+// CardProbesSection 渲染三网测速区（卡片与详情弹窗共用）。
+function CardProbesSection({ rows, title }: { rows: CatalogProbeRow[]; title: string | null }) {
+  return (
+    <section className="sv-card-probes" aria-label="三网测速">
+      <span className="sv-probe-head">
+        三网测速
+        {title ? <span className="sv-probe-region"> · {title}</span> : null}
+      </span>
+      {rows.length > 0 ? (
+        <div className="sv-probe-rows">
+          {rows.map((row) => (
+            <ProbeRow key={`${row.carrier}:${row.label}`} row={row} />
+          ))}
+        </div>
+      ) : (
+        <span className="sv-probe-empty">{title ? '暂无测速数据' : '测速目录未配置'}</span>
+      )}
+    </section>
+  )
+}
+
+// FactItem 是详情弹窗信息区的单条事实（图标 + 标签 + 值）。
+function FactItem({
+  icon,
+  label,
+  children,
 }: {
+  icon: ReactNode
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <div className="sv-fact-item">
+      <dt className="sv-fact-label">
+        {icon}
+        {label}
+      </dt>
+      <dd className="sv-fact-text">{children}</dd>
+    </div>
+  )
+}
+
+function ServerCard({
+  server,
+  probeRows,
+  probeTitle,
+  samples,
+  selected,
+  timezone,
+  onSelect,
+  onOpenDetail,
+  ...actions
+}: Omit<ServerMonitorProps, 'servers' | 'samples' | 'probes' | 'loading' | 'timezone'> & {
   server: Server
+  probeRows: CatalogProbeRow[]
+  probeTitle: string | null
   samples: ServerMetrics[]
+  selected: boolean
   timezone?: string
+  onSelect: () => void
   onOpenDetail: () => void
-  onOpenTrafficStats: () => void
 }) {
   const metrics = server.metrics
   const online = isServerOnline(server)
-  const cpuPercent = metrics?.cpu_percent ?? null
-  const memoryPercent = metrics ? percent(metrics.mem_used, metrics.mem_total) : 0
-  const diskPercent = metrics ? percent(metrics.disk_used, metrics.disk_total) : 0
-  const latency = metrics?.latency_ms ?? null
+  const transitioning =
+    server.connection_state === 'connecting' || server.connection_state === 'reconnecting'
+  const families = new Set(server.addresses.map((addr) => addressFamily(addr)))
+  const renewalDays =
+    server.billing.enabled && server.billing.next_renewal_on
+      ? daysUntil(server.billing.next_renewal_on)
+      : null
+  const renewalTone =
+    renewalDays === null ? null : renewalDays < 0 ? 'crit' : renewalDays <= 7 ? 'warn' : 'ok'
   return (
-    <section className="sv-runtime" aria-label={`${server.alias} 运行时读数`}>
-      <header className="sv-runtime-head">
-        <span className="sv-tab">RUNTIME</span>
-        <span className="sv-runtime-title">{server.alias}</span>
-        <span className={cn('sv-agent', online ? 'is-online' : 'is-offline')}>
-          {online ? <CircleCheckIcon /> : <WifiOffIcon />}
-          <span>{online ? 'Agent 连接正常' : serverConnectionNotice(server.connection_state)}</span>
-        </span>
-        <span className="sv-runtime-meta">
-          {online && metrics
-            ? `已运行 ${formatUptime(metrics.uptime_seconds)} · 遥测 ${formatDateTime(metrics.updated_at, timezone)}`
-            : metrics
-              ? `上次遥测 ${formatDateTime(metrics.updated_at, timezone)} · 历史数据`
-              : '暂无可用遥测'}
-        </span>
-        <div className="sv-runtime-actions">
-          <Button variant="outline" size="sm" onClick={onOpenDetail}>
-            详情与历史
+    <article
+      className={cn('sv-card', selected && 'is-selected', !online && 'is-offline')}
+      data-state={selected ? 'selected' : undefined}
+      aria-selected={selected}
+      onClick={onSelect}
+    >
+      <header className="sv-card-head">
+        {transitioning ? (
+          <LoaderCircleIcon
+            className="sv-spin sv-card-conn"
+            aria-label={serverConnectionLabel(server.connection_state)}
+          />
+        ) : (
+          <span
+            className={cn('sv-state-dot sv-card-conn', online && 'is-online')}
+            title={serverConnectionLabel(server.connection_state)}
+          />
+        )}
+        <CountryFlag code={server.country_code} />
+        <button
+          type="button"
+          className="sv-card-title"
+          aria-pressed={selected}
+          aria-label={`选择 ${server.alias}，${serverConnectionLabel(server.connection_state)}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            onSelect()
+          }}
+        >
+          {server.alias}
+        </button>
+        <span className="sv-card-head-actions" onClick={(event) => event.stopPropagation()}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`查看 ${server.alias} 详情与历史`}
+            onClick={() => onOpenDetail()}
+          >
+            <Maximize2Icon />
           </Button>
-          <Button variant="outline" size="sm" onClick={onOpenTrafficStats}>
-            流量统计
-          </Button>
-        </div>
+          <ServerActions server={server} {...actions} />
+        </span>
       </header>
-      {metrics ? (
-        <div className="sv-runtime-body">
-          <div className="sv-runtime-metrics">
-            <RuntimeMetric
-              label="CPU"
-              value={cpuPercent === null ? '--' : `${cpuPercent.toFixed(1)}%`}
-              detail={`${metrics.load1.toFixed(2)} / ${metrics.load5.toFixed(2)} / ${metrics.load15.toFixed(2)}`}
-              progress={cpuPercent}
-            />
-            <RuntimeMetric
-              label="内存"
-              value={`${memoryPercent.toFixed(1)}%`}
-              detail={`${humanizeBytes(metrics.mem_used)} / ${humanizeBytes(metrics.mem_total)}`}
-              progress={memoryPercent}
-            />
-            <RuntimeMetric
-              label="磁盘"
-              value={`${diskPercent.toFixed(1)}%`}
-              detail={`${humanizeBytes(metrics.disk_used)} / ${humanizeBytes(metrics.disk_total)}`}
-              progress={diskPercent}
-            />
-            <div className="sv-metric">
-              <span className="sv-metric-label">网络</span>
-              <span className="sv-metric-rate">
-                <span>
-                  <ArrowUpIcon />
-                  {formatByteRate(metrics.network_tx_bps)}
-                </span>
-                <span>
-                  <ArrowDownIcon />
-                  {formatByteRate(metrics.network_rx_bps)}
-                </span>
-              </span>
-              <span className="sv-metric-detail">
-                累计 ↑ {humanizeBytes(metrics.network_tx_bytes)} · ↓{' '}
-                {humanizeBytes(metrics.network_rx_bytes)}
-              </span>
-            </div>
-          </div>
-          <div className="sv-runtime-lat">
-            <span className="sv-runtime-label">延迟 / 最近 30 次</span>
-            <span className="sv-runtime-latvalue">
-              {latency === null ? '--' : `${Math.round(latency)} ms`}
-            </span>
-            <LatencyStrip samples={samples} timezone={timezone} />
-          </div>
-          <div className="sv-runtime-quota">
-            <span className="sv-runtime-label">本周期流量额度</span>
-            <TrafficUsage server={server} />
-          </div>
-          <dl className="sv-runtime-facts">
-            <div>
-              <dt>地区</dt>
-              <dd>{server.location || server.country_code || '-'}</dd>
-            </div>
-            <div>
-              <dt>地址</dt>
-              <dd className="sv-mono">{server.address || server.learned_addr || '-'}</dd>
-            </div>
-            <div>
-              <dt>Agent / Xray</dt>
-              <dd>
-                {server.agent_version ?? '-'} / {server.xray_version ?? '-'}
-              </dd>
-            </div>
-            <div>
-              <dt>配置状态</dt>
-              <dd>{server.config_drift ? '配置漂移' : '正常'}</dd>
-            </div>
-            <div>
-              <dt>机器类型</dt>
-              <dd>
-                {server.machine_type === 'direct'
-                  ? '直连'
-                  : `NAT · ${server.allowed_ports.map(formatPortRange).join(', ') || '仅出口'}`}
-              </dd>
-            </div>
-            {server.billing.enabled ? (
-              <div>
-                <dt>服务商</dt>
-                <dd>{server.billing.provider?.name ?? '-'}</dd>
-              </div>
-            ) : null}
-            {server.billing.enabled ? (
-              <div>
-                <dt>下次续费</dt>
-                <dd>{server.billing.next_renewal_on || '-'}</dd>
-              </div>
-            ) : null}
-          </dl>
-        </div>
-      ) : (
-        <div className="sv-runtime-empty">
-          <ServerCogIcon />
-          <span>
-            {online ? '等待 Agent 首次遥测' : serverConnectionLabel(server.connection_state)}
+      <div className="sv-card-badges">
+        <span className="sv-flag">{server.location || server.country_code || '未设置地区'}</span>
+        {families.has('ipv4') ? <span className="sv-flag is-v4">V4</span> : null}
+        {families.has('ipv6') ? <span className="sv-flag is-v6">V6</span> : null}
+        {server.config_drift ? <span className="sv-flag is-alert">DRIFT</span> : null}
+      </div>
+      <CardOverviewSections server={server} samples={samples} />
+      <CardProbesSection rows={probeRows} title={probeTitle} />
+      <footer className="sv-card-foot">
+        <span className="sv-fact">
+          <ActivityIcon />
+          在线
+          <span className="sv-fact-value">
+            {metrics ? formatUptime(metrics.uptime_seconds) : '--'}
           </span>
-          <TrafficUsage server={server} />
+        </span>
+        {renewalDays !== null ? (
+          <span className="sv-fact">
+            <CalendarCheckIcon />
+            到期
+            <span
+              className={cn(
+                'sv-fact-value',
+                renewalTone === 'ok' && 'is-ok',
+                renewalTone === 'warn' && 'is-warn',
+                renewalTone === 'crit' && 'is-crit',
+              )}
+            >
+              {renewalDays < 0 ? '已过期' : `${renewalDays} 天`}
+            </span>
+          </span>
+        ) : (
+          <span className="sv-fact">
+            <CalendarCheckIcon />
+            遥测
+            <span className="sv-fact-value">
+              {metrics ? formatDateTime(metrics.updated_at, timezone) : '--'}
+            </span>
+          </span>
+        )}
+      </footer>
+      {server.tags.length > 0 ? (
+        <div className="sv-card-tags">
+          {server.tags.map((tag) => (
+            <span key={tag} className="sv-flag is-tag">
+              {tag}
+            </span>
+          ))}
         </div>
-      )}
-    </section>
+      ) : null}
+    </article>
   )
 }
 
@@ -1081,14 +893,21 @@ function TrendChart({
   )
 }
 
-function DetailSheet({
+// DetailDialog 是服务器详情弹窗（卡片「扩大」按钮打开）：固定头部 + 内部滚动体，
+// 概览区直接复用卡片样式（CardOverviewSections / CardProbesSection），
+// 其下为主机信息、计费、24 小时趋势与服务器测试。
+function DetailDialog({
   server,
+  probeRows,
+  probeTitle,
   open,
   onOpenChange,
   timezone,
   onOpenTrafficStats,
 }: {
   server: Server | null
+  probeRows: CatalogProbeRow[]
+  probeTitle: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
   timezone?: string
@@ -1160,263 +979,260 @@ function DetailSheet({
   const trafficDownRate = trafficHistory.map((point) => point.down / 60 / 1024)
   const trafficTimestamps = trafficHistory.map((point) => new Date(point.ts * 1000).toISOString())
   const metrics = server?.metrics
-
+  const online = server ? isServerOnline(server) : false
+  const families = new Set((server?.addresses ?? []).map((addr) => addressFamily(addr)))
+  const traffic = server?.traffic_plan
+  const billing = server?.billing
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sv-sheet w-full overflow-y-auto sm:max-w-2xl">
-        <SheetHeader className="border-b">
-          <SheetTitle className="flex items-center gap-2">
-            <span className={cn('sv-state-dot', isServerOnline(server) && 'is-online')} />
-            {server?.alias ?? '服务器详情'}
-          </SheetTitle>
-          <SheetDescription>主机信息与最近 24 小时探针指标</SheetDescription>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sv-detail flex max-h-[88vh] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
+        <header className="sv-detail-head">
+          <div className="sv-detail-head-row">
+            <span className={cn('sv-state-dot', online && 'is-online')} />
+            {server ? <CountryFlag code={server.country_code} /> : null}
+            <DialogTitle className="sv-detail-title">{server?.alias ?? '服务器详情'}</DialogTitle>
+            {server ? (
+              <span className="sv-detail-badges">
+                <span className="sv-flag">
+                  {server.location || server.country_code || '未设置地区'}
+                </span>
+                {families.has('ipv4') ? <span className="sv-flag is-v4">V4</span> : null}
+                {families.has('ipv6') ? <span className="sv-flag is-v6">V6</span> : null}
+                {server.config_drift ? <span className="sv-flag is-alert">DRIFT</span> : null}
+              </span>
+            ) : null}
+            {server ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mr-8 ml-auto shrink-0"
+                onClick={openProviderPage}
+              >
+                <ExternalLinkIcon />
+                服务商官网
+              </Button>
+            ) : null}
+          </div>
+          <DialogDescription className="sv-detail-desc">
+            运行概览、主机信息、最近 24 小时趋势与服务器测试
+          </DialogDescription>
+        </header>
+        <div className="sv-detail-body">
           {server ? (
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-1 self-start"
-              onClick={openProviderPage}
-            >
-              <ExternalLinkIcon />
-              打开服务商官网
-            </Button>
-          ) : null}
-        </SheetHeader>
-        {server ? (
-          <div className="flex flex-col gap-5 px-4 pb-6">
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-              <div>
-                <dt className="text-xs text-muted-foreground">地区</dt>
-                <dd className="mt-1 flex items-center gap-2">
-                  <CountryFlag code={server.country_code} />
+            <>
+              <div className="sv-card is-static">
+                <CardOverviewSections server={server} samples={history} />
+                <CardProbesSection rows={probeRows} title={probeTitle} />
+              </div>
+              <dl className="sv-detail-facts">
+                <FactItem icon={<Globe2Icon />} label="地区">
                   {server.location || '-'}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">地址</dt>
-                <dd className="mt-1 font-mono text-xs">
-                  {server.address || server.learned_addr || '-'}
-                </dd>
-                {server.addresses.length > 0 ? (
-                  <ul className="mt-1.5 space-y-1">
-                    {server.addresses.map((addr) => {
-                      const family = addressFamily(addr)
-                      return (
-                        <li key={addr} className="flex items-center gap-2 font-mono text-xs">
-                          <span className="truncate">{addr}</span>
-                          <Badge variant="outline" className="shrink-0">
-                            {family === 'ipv4' ? 'IPv4' : family === 'ipv6' ? 'IPv6' : '域名'}
-                          </Badge>
-                          {addr === server.address ? (
-                            <span className="shrink-0 text-[10px] text-muted-foreground">默认</span>
-                          ) : null}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                ) : null}
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">默认网卡</dt>
-                <dd className="mt-1">{metrics?.network_interface || '-'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">运行时间</dt>
-                <dd className="mt-1">{metrics ? formatUptime(metrics.uptime_seconds) : '-'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">累计发送 / 接收</dt>
-                <dd className="mt-1 tabular-nums">
-                  {metrics
-                    ? `${humanizeBytes(metrics.network_tx_bytes)} / ${humanizeBytes(metrics.network_rx_bytes)}`
-                    : '-'}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">最近采样</dt>
-                <dd className="mt-1">{formatDateTime(metrics?.updated_at, timezone)}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">Agent / Xray</dt>
-                <dd className="mt-1">
-                  {server.agent_version ?? '-'} / {server.xray_version ?? '-'}
-                </dd>
-                {server.effective_xray_version && (
-                  <span className="text-xs text-muted-foreground">
-                    期望 {server.effective_xray_version}
-                    {server.custom_settings ? '（服务器覆盖）' : '（面板默认）'}
+                </FactItem>
+                <FactItem icon={<NetworkIcon />} label="地址">
+                  <span className="sv-mono">{server.address || server.learned_addr || '-'}</span>
+                  {server.addresses.length > 0 ? (
+                    <ul className="sv-fact-list">
+                      {server.addresses.map((addr) => {
+                        const family = addressFamily(addr)
+                        return (
+                          <li key={addr} className="sv-fact-addr">
+                            <span className="sv-mono">{addr}</span>
+                            <Badge variant="outline">
+                              {family === 'ipv4' ? 'IPv4' : family === 'ipv6' ? 'IPv6' : '域名'}
+                            </Badge>
+                            {addr === server.address ? (
+                              <span className="sv-fact-note">默认</span>
+                            ) : null}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  ) : null}
+                </FactItem>
+                <FactItem icon={<CableIcon />} label="默认网卡">
+                  {metrics?.network_interface || '-'}
+                </FactItem>
+                <FactItem icon={<ActivityIcon />} label="运行时间">
+                  {metrics ? formatUptime(metrics.uptime_seconds) : '-'}
+                </FactItem>
+                <FactItem icon={<ClockIcon />} label="最近采样">
+                  {formatDateTime(metrics?.updated_at, timezone)}
+                </FactItem>
+                <FactItem icon={<ServerCogIcon />} label="Agent / Xray">
+                  <span>
+                    {server.agent_version ?? '-'} / {server.xray_version ?? '-'}
                   </span>
-                )}
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">机器类型 / 端口</dt>
-                <dd className="mt-1">
+                  {server.effective_xray_version ? (
+                    <span className="sv-fact-note">
+                      期望 {server.effective_xray_version}
+                      {server.custom_settings ? '（服务器覆盖）' : '（面板默认）'}
+                    </span>
+                  ) : null}
+                </FactItem>
+                <FactItem icon={<ArrowLeftRightIcon />} label="机器类型 / 端口">
                   {server.machine_type === 'direct'
                     ? '直连'
                     : `NAT · ${server.allowed_ports.map(formatPortRange).join(', ') || '仅出口'}`}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">配置状态</dt>
-                <dd className="mt-1">{server.config_drift ? '配置漂移' : '正常'}</dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">流量额度</dt>
-                <dd className="mt-1">
-                  {server.traffic_plan.quota_bytes === null
-                    ? '无限'
-                    : formatTrafficBytes(server.traffic_plan.quota_bytes)}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs text-muted-foreground">本周期流量</dt>
-                <dd className="mt-1">
-                  {formatTrafficBytes(server.traffic_plan.used_bytes)} ·{' '}
-                  {server.traffic_plan.accounting_mode === 'bidirectional'
-                    ? '双向合计'
-                    : server.traffic_plan.accounting_mode === 'max'
-                      ? '取较大方向'
-                      : '仅出站'}
-                </dd>
-              </div>
-              {server.billing.enabled ? (
-                <>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">服务商</dt>
-                    <dd className="mt-1">{server.billing.provider?.name ?? '-'}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">费用</dt>
-                    <dd className="mt-1 tabular-nums">
-                      {(
-                        server.billing.amount_minor /
-                        (['JPY', 'KRW', 'ISK'].includes(server.billing.currency) ? 1 : 100)
-                      ).toLocaleString()}{' '}
-                      {server.billing.currency} / {server.billing.interval_count}{' '}
-                      {server.billing.interval_unit === 'day'
-                        ? '天'
-                        : server.billing.interval_unit === 'year'
-                          ? '年'
-                          : '月'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-muted-foreground">下次续费</dt>
-                    <dd className="mt-1">{server.billing.next_renewal_on}</dd>
-                  </div>
-                </>
-              ) : null}
-              <div>
-                <dt className="text-xs text-muted-foreground">Agent 设置</dt>
-                <dd className="mt-1">
+                </FactItem>
+                <FactItem icon={<ShieldCheckIcon />} label="配置状态">
+                  <span className={cn(server.config_drift && 'sv-fact-alert')}>
+                    {server.config_drift ? '配置漂移' : '正常'}
+                  </span>
+                </FactItem>
+                <FactItem icon={<SettingsIcon />} label="Agent 设置">
                   {server.agent_settings_status === 'synced'
                     ? '已同步'
                     : server.agent_settings_status === 'failed'
                       ? '同步失败'
                       : '待同步'}
-                </dd>
-              </div>
-              {server.billing.enabled && server.billing.public_converted ? (
-                <div className="col-span-2 mt-1 border-t pt-3">
-                  <dt className="text-xs font-medium text-muted-foreground">费用折算</dt>
-                  <dd className="mt-2 grid gap-2 sm:grid-cols-2">
+                </FactItem>
+                <FactItem icon={<CreditCardIcon />} label="流量额度">
+                  {traffic
+                    ? traffic.quota_bytes === null
+                      ? '无限'
+                      : formatTrafficBytes(traffic.quota_bytes)
+                    : '-'}
+                </FactItem>
+                <FactItem icon={<ArrowDownUpIcon />} label="本周期流量">
+                  {traffic
+                    ? `${formatTrafficBytes(traffic.used_bytes)} · ${
+                        traffic.accounting_mode === 'bidirectional'
+                          ? '双向合计'
+                          : traffic.accounting_mode === 'max'
+                            ? '取较大方向'
+                            : '仅出站'
+                      }`
+                    : '-'}
+                </FactItem>
+                {billing?.enabled ? (
+                  <FactItem icon={<Building2Icon />} label="服务商">
+                    {billing.provider?.name ?? '-'}
+                  </FactItem>
+                ) : null}
+                {billing?.enabled ? (
+                  <FactItem icon={<CreditCardIcon />} label="费用">
+                    {(
+                      billing.amount_minor /
+                      (['JPY', 'KRW', 'ISK'].includes(billing.currency) ? 1 : 100)
+                    ).toLocaleString()}{' '}
+                    {billing.currency} / {billing.interval_count}{' '}
+                    {billing.interval_unit === 'day'
+                      ? '天'
+                      : billing.interval_unit === 'year'
+                        ? '年'
+                        : '月'}
+                  </FactItem>
+                ) : null}
+                {billing?.enabled ? (
+                  <FactItem icon={<CalendarCheckIcon />} label="下次续费">
+                    {billing.next_renewal_on || '-'}
+                  </FactItem>
+                ) : null}
+              </dl>
+              {billing?.enabled && billing.public_converted ? (
+                <div className="sv-detail-converted">
+                  <dt className="sv-fact-label">
+                    <CreditCardIcon />
+                    费用折算
+                  </dt>
+                  <dd className="sv-converted-grid">
                     <div>
                       <span className="block text-xs text-muted-foreground">公共汇率结果</span>
                       <span className="mt-0.5 block tabular-nums">
-                        {formatConvertedCost(server.billing.public_converted)} ·{' '}
-                        {convertedRateLabel(server.billing.public_converted)}
+                        {formatConvertedCost(billing.public_converted)} ·{' '}
+                        {convertedRateLabel(billing.public_converted)}
                       </span>
                     </div>
-                    {server.billing.custom_converted ? (
+                    {billing.custom_converted ? (
                       <div>
                         <span className="block text-xs text-muted-foreground">自定义汇率结果</span>
                         <span className="mt-0.5 block tabular-nums">
-                          {formatConvertedCost(server.billing.custom_converted)} ·{' '}
-                          {convertedRateLabel(server.billing.custom_converted)}
+                          {formatConvertedCost(billing.custom_converted)} ·{' '}
+                          {convertedRateLabel(billing.custom_converted)}
                         </span>
                       </div>
                     ) : null}
                   </dd>
                 </div>
               ) : null}
-            </dl>
-            <Separator />
-            {loading && history.length === 0 ? (
-              <div className="flex flex-col gap-4">
-                {Array.from({ length: 6 }).map((_, index) => (
-                  <Skeleton key={index} className="h-32 w-full" />
-                ))}
-              </div>
-            ) : (
-              <div className="flex flex-col gap-5">
-                <TrendChart
-                  title="CPU 使用率"
-                  unit="%"
-                  series={[{ label: 'CPU', color: 'success', values: cpu }]}
-                  timestamps={timestamps}
-                  timezone={timezone}
-                />
-                <TrendChart
-                  title="内存使用率"
-                  unit="%"
-                  series={[{ label: '内存', color: 'success', values: memory }]}
-                  timestamps={timestamps}
-                  timezone={timezone}
-                />
-                <TrendChart
-                  title="磁盘使用率"
-                  unit="%"
-                  series={[{ label: '磁盘', color: 'warning', values: disk }]}
-                  timestamps={timestamps}
-                  timezone={timezone}
-                />
-                <TrendChart
-                  title="网络速率"
-                  unit="KB/s"
-                  series={[
-                    { label: '上传', color: 'success', values: tx },
-                    { label: '下载', color: 'info', values: rx },
-                  ]}
-                  timestamps={timestamps}
-                  timezone={timezone}
-                />
-                <TrendChart
-                  title="Agent 延迟"
-                  unit="ms"
-                  series={[{ label: '延迟', color: 'info', values: latency }]}
-                  timestamps={timestamps}
-                  timezone={timezone}
-                />
-                <div className="flex flex-col gap-2">
-                  <div className="flex justify-end">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`查看 ${server.alias} 流量统计`}
-                      onClick={() => onOpenTrafficStats(server)}
-                    >
-                      流量统计
-                    </Button>
-                  </div>
+              <Separator />
+              {loading && history.length === 0 ? (
+                <div className="flex flex-col gap-4">
+                  {Array.from({ length: 6 }).map((_, index) => (
+                    <Skeleton key={index} className="h-32 w-full" />
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col gap-5">
                   <TrendChart
-                    title="流量速率"
-                    unit="KB/s"
-                    series={[
-                      { label: '上传', color: 'success', values: trafficUpRate },
-                      { label: '下载', color: 'info', values: trafficDownRate },
-                    ]}
-                    timestamps={trafficTimestamps}
+                    title="CPU 使用率"
+                    unit="%"
+                    series={[{ label: 'CPU', color: 'success', values: cpu }]}
+                    timestamps={timestamps}
                     timezone={timezone}
                   />
+                  <TrendChart
+                    title="内存使用率"
+                    unit="%"
+                    series={[{ label: '内存', color: 'success', values: memory }]}
+                    timestamps={timestamps}
+                    timezone={timezone}
+                  />
+                  <TrendChart
+                    title="磁盘使用率"
+                    unit="%"
+                    series={[{ label: '磁盘', color: 'warning', values: disk }]}
+                    timestamps={timestamps}
+                    timezone={timezone}
+                  />
+                  <TrendChart
+                    title="网络速率"
+                    unit="KB/s"
+                    series={[
+                      { label: '上传', color: 'success', values: tx },
+                      { label: '下载', color: 'info', values: rx },
+                    ]}
+                    timestamps={timestamps}
+                    timezone={timezone}
+                  />
+                  <TrendChart
+                    title="Agent 延迟"
+                    unit="ms"
+                    series={[{ label: '延迟', color: 'info', values: latency }]}
+                    timestamps={timestamps}
+                    timezone={timezone}
+                  />
+                  <div className="flex flex-col gap-2">
+                    <div className="flex justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`查看 ${server.alias} 流量统计`}
+                        onClick={() => onOpenTrafficStats(server)}
+                      >
+                        流量统计
+                      </Button>
+                    </div>
+                    <TrendChart
+                      title="流量速率"
+                      unit="KB/s"
+                      series={[
+                        { label: '上传', color: 'success', values: trafficUpRate },
+                        { label: '下载', color: 'info', values: trafficDownRate },
+                      ]}
+                      timestamps={trafficTimestamps}
+                      timezone={timezone}
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
-            <Separator />
-            <ServerTestPanel server={server} active={open} timezone={timezone} />
-          </div>
-        ) : null}
-      </SheetContent>
-    </Sheet>
+              )}
+              <Separator />
+              <ServerTestPanel server={server} active={open} timezone={timezone} />
+            </>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -1445,6 +1261,19 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
     () => new Map(props.samples.map((series) => [series.server_id, series.samples])),
     [props.samples],
   )
+
+  const probesByServer = useMemo(() => {
+    const map = new Map<number, CatalogProbeRow[]>()
+    if (props.probes) {
+      for (const [id, entry] of Object.entries(props.probes.servers)) {
+        map.set(Number(id), entry.rows)
+      }
+    }
+    return map
+  }, [props.probes])
+  const probeTitle = props.probes
+    ? `${props.probes.province}${props.probes.city ? ` · ${props.probes.city}` : ''}`
+    : null
 
   const onlineCount = props.servers.filter((server) => isServerOnline(server)).length
   const offlineCount = props.servers.length - onlineCount
@@ -1575,60 +1404,36 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
             description="尝试调整搜索词或切换上方状态筛选"
           />
         ) : (
-          <div className="sv-table-scroll">
-            <table className="sv-table">
-              <thead>
-                <tr>
-                  <th scope="col">服务器</th>
-                  <th scope="col">状态</th>
-                  <th scope="col">地区 / 地址</th>
-                  <th scope="col">CPU</th>
-                  <th scope="col">内存</th>
-                  <th scope="col">磁盘</th>
-                  <th scope="col">延迟</th>
-                  <th scope="col">速率 ↑ / ↓</th>
-                  <th scope="col">流量额度</th>
-                  <th scope="col">版本</th>
-                  <th scope="col">
-                    <span className="sr-only">操作</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredServers.map((server) => (
-                  <ServerRow
-                    key={server.id}
-                    server={server}
-                    selected={selected?.id === server.id}
-                    timezone={props.timezone}
-                    onSelect={() => setSelectedID(server.id)}
-                    onEdit={props.onEdit}
-                    onRepair={props.onRepair}
-                    onCleanupXray={props.onCleanupXray}
-                    onRebuildXray={props.onRebuildXray}
-                    onRotateToken={props.onRotateToken}
-                    onUpgrade={props.onUpgrade}
-                    onRenew={props.onRenew}
-                    onDelete={props.onDelete}
-                  />
-                ))}
-              </tbody>
-            </table>
+          <div className="sv-cards">
+            {filteredServers.map((server) => (
+              <ServerCard
+                key={server.id}
+                server={server}
+                probeRows={probesByServer.get(server.id) ?? []}
+                probeTitle={probeTitle}
+                samples={samplesByServer.get(server.id) ?? []}
+                selected={selected?.id === server.id}
+                timezone={props.timezone}
+                onSelect={() => setSelectedID(server.id)}
+                onOpenDetail={() => setDetailServerID(server.id)}
+                onEdit={props.onEdit}
+                onRepair={props.onRepair}
+                onCleanupXray={props.onCleanupXray}
+                onRebuildXray={props.onRebuildXray}
+                onRotateToken={props.onRotateToken}
+                onUpgrade={props.onUpgrade}
+                onRenew={props.onRenew}
+                onDelete={props.onDelete}
+              />
+            ))}
           </div>
         )}
-        {selected ? (
-          <ServerRuntime
-            server={selected}
-            samples={samplesByServer.get(selected.id) ?? []}
-            timezone={props.timezone}
-            onOpenDetail={() => setDetailServerID(selected.id)}
-            onOpenTrafficStats={() => openTrafficStats(selected)}
-          />
-        ) : null}
       </section>
       <TrafficStatsDialog controller={trafficStatsDialog} />
-      <DetailSheet
+      <DetailDialog
         server={detailServer}
+        probeRows={detailServer ? (probesByServer.get(detailServer.id) ?? []) : []}
+        probeTitle={probeTitle}
         open={detailServer !== null}
         onOpenChange={(open) => {
           if (!open) setDetailServerID(null)

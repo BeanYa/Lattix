@@ -38,6 +38,7 @@ import { addInterval, localDate } from './servers/server-form-utils'
 import { useServerCreateForm } from './servers/use-server-create-form'
 import { useServerEditForm } from './servers/use-server-edit-form'
 import type {
+  CatalogProbeStats,
   CleanupXrayResult,
   Provider,
   ReleaseVersions,
@@ -54,6 +55,7 @@ export default function Servers() {
   const { showOperation } = useOperationProgress()
   const [servers, setServers] = useState<Server[]>([])
   const [metricSamples, setMetricSamples] = useState<ServerMetricSeries[]>([])
+  const [probes, setProbes] = useState<CatalogProbeStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [providers, setProviders] = useState<Provider[]>([])
@@ -178,6 +180,15 @@ export default function Servers() {
         })
         .catch(() => {
           if (active) setMetricSamples([])
+        })
+      // 三网测速统计（§三网测速）：与主机指标采样同步轮询（探测 5 分钟一轮，60s 拉取足够）。
+      api
+        .catalogProbes()
+        .then((result) => {
+          if (active) setProbes(result)
+        })
+        .catch(() => {
+          if (active) setProbes(null)
         })
     }
     loadSamples()
@@ -482,6 +493,7 @@ export default function Servers() {
       <ServerMonitorGrid
         servers={servers}
         samples={metricSamples}
+        probes={probes}
         loading={loading}
         timezone={timezone}
         onEdit={editForm.openEdit}

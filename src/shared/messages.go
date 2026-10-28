@@ -71,31 +71,31 @@ const (
 
 // 消息类型使用 domain.action，响应沿用对应请求的 Type。
 const (
-	TypeSessionOpen          = "agent.session.open"
-	TypeSessionReady         = "agent.session.ready"
-	TypeCredentialCommit     = "agent.credential.commit"
-	TypeLifecycleChanged     = "panel.lifecycle.changed"
-	TypeSettingsSync         = "agent.settings.sync"
-	TypeSettingsChanged      = "agent.settings.changed"
+	TypeSessionOpen           = "agent.session.open"
+	TypeSessionReady          = "agent.session.ready"
+	TypeCredentialCommit      = "agent.credential.commit"
+	TypeLifecycleChanged      = "panel.lifecycle.changed"
+	TypeSettingsSync          = "agent.settings.sync"
+	TypeSettingsChanged       = "agent.settings.changed"
 	TypeServerSettingsSync    = "server.settings.sync"
 	TypeServerSettingsChanged = "server.settings.changed"
-	TypeApplyNode            = "node.apply"
-	TypeRemoveNode           = "node.remove"
-	TypeAddUser              = "user.add"
-	TypeRemoveUser           = "user.remove"
-	TypeUninstall            = "agent.uninstall"
-	TypeUpgradeXray          = "xray.upgrade"
-	TypeUpgradeAgent         = "agent.upgrade"
-	TypeTelemetry            = "telemetry.report"
-	TypeDriftReport          = "config.drift"
-	TypeApplyChainHop        = "chain-hop.apply"
-	TypeRemoveChainHop       = "chain-hop.remove"
-	TypeApplySharedEndpoint  = "shared-endpoint.apply"
-	TypeRemoveSharedEndpoint = "shared-endpoint.remove"
-	TypeCleanupXray          = "xray.cleanup"
-	TypeRebuildXray          = "xray.rebuild"
-	TypeLatencyProbe         = "latency.probe"
-	TypeLatencyReport        = "latency.report"
+	TypeApplyNode             = "node.apply"
+	TypeRemoveNode            = "node.remove"
+	TypeAddUser               = "user.add"
+	TypeRemoveUser            = "user.remove"
+	TypeUninstall             = "agent.uninstall"
+	TypeUpgradeXray           = "xray.upgrade"
+	TypeUpgradeAgent          = "agent.upgrade"
+	TypeTelemetry             = "telemetry.report"
+	TypeDriftReport           = "config.drift"
+	TypeApplyChainHop         = "chain-hop.apply"
+	TypeRemoveChainHop        = "chain-hop.remove"
+	TypeApplySharedEndpoint   = "shared-endpoint.apply"
+	TypeRemoveSharedEndpoint  = "shared-endpoint.remove"
+	TypeCleanupXray           = "xray.cleanup"
+	TypeRebuildXray           = "xray.rebuild"
+	TypeLatencyProbe          = "latency.probe"
+	TypeLatencyReport         = "latency.report"
 )
 
 // NewMessageID 返回用于 request_id/trace_id 的 32 位小写十六进制随机值。
@@ -194,11 +194,11 @@ type UninstallPayload struct {
 // HopID/Kind 为链跳配置件（apply_chain_hop/remove_chain_hop）回执（§21）：
 // portal/forward 复用 RealizedConfig 的 port/public_key 字段上报生效值。
 type ApplyResultPayload struct {
-	NodeID         int64           `json:"node_id"`
-	EndpointID     int64           `json:"endpoint_id,omitempty"`
-	RealizedConfig *RealizedConfig `json:"realized_config,omitempty"`
-	HopID          int64           `json:"hop_id,omitempty"`
-	Kind           string          `json:"kind,omitempty"`
+	NodeID         int64              `json:"node_id"`
+	EndpointID     int64              `json:"endpoint_id,omitempty"`
+	RealizedConfig *RealizedConfig    `json:"realized_config,omitempty"`
+	HopID          int64              `json:"hop_id,omitempty"`
+	Kind           string             `json:"kind,omitempty"`
 	Cleanup        *CleanupXrayResult `json:"cleanup,omitempty"` // xray.cleanup 回执
 	Rebuild        *RebuildXrayResult `json:"rebuild,omitempty"` // xray.rebuild 回执
 }
@@ -206,7 +206,7 @@ type ApplyResultPayload struct {
 // CleanupXrayPayload 是 xray.cleanup 的载荷：面板下发的期望状态快照。
 // DryRun=true 时 agent 只报告差异，不改动配置（预览）。
 type CleanupXrayPayload struct {
-	DryRun             bool     `json:"dry_run"`
+	DryRun              bool     `json:"dry_run"`
 	ExpectedInboundTags []string `json:"expected_inbound_tags"` // node_/chainfwd_/chainportal_/shared_endpoint_
 	ExpectedPieces      []string `json:"expected_pieces"`       // "forward/7"、"portal/9"、"bridge/3"、"shared-endpoint/5"
 }
@@ -307,18 +307,21 @@ type TelemetryPayload struct {
 
 // 服务器间延迟测速（§链路统计）的探测来源取值。
 const (
-	LatencyKindTCP  = "tcp" // TCP 握手测速（复用链路监听端口，Port 必填）
+	LatencyKindTCP  = "tcp"  // TCP 握手测速（复用链路监听端口，Port 必填）
 	LatencyKindICMP = "icmp" // ICMP Echo 测速（Port 恒 0）
 )
 
 // LatencyProbeTarget 是单个探测目标：agent 所在服务器 → 目标服务器的一次测量。
 // Address 为目标服务器的设置公网地址（域名或 IP）；Kind=tcp 时 Port 为复用的
 // 链路监听端口（forward/portal），Kind=icmp 时 Port 为 0。
+// Key 非空表示目录测速目标（§三网测速：zstatic 省市+运营商节点，ServerID=0，
+// Address/Port 来自目录端点），空 = 服务器对目标（ServerID 为目标服务器 ID）。
 type LatencyProbeTarget struct {
 	ServerID int64  `json:"server_id"`
 	Address  string `json:"address"`
 	Kind     string `json:"kind"` // tcp|icmp
 	Port     int    `json:"port,omitempty"`
+	Key      string `json:"key,omitempty"`
 }
 
 // LatencyProbePayload 是 latency.probe 的载荷：一轮探测的全部目标，agent 并行
@@ -330,11 +333,13 @@ type LatencyProbePayload struct {
 }
 
 // LatencyProbeResult 是单目标的测量结果；LatencyMS 为 nil = 失败/超时（连通性参考）。
+// Key 与目标侧对应：非空 = 目录测速目标（ServerID 恒 0），空 = 服务器对目标。
 type LatencyProbeResult struct {
 	ServerID  int64    `json:"server_id"`
 	Kind      string   `json:"kind"` // tcp|icmp
 	Port      int      `json:"port,omitempty"`
 	LatencyMS *float64 `json:"latency_ms"`
+	Key       string   `json:"key,omitempty"`
 }
 
 // LatencyProbeReportPayload 是 latency.report 事件的载荷（无需回执）；

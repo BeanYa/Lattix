@@ -322,6 +322,28 @@ export interface ServerTestCatalogStatus {
   last_attempt_at: string
   last_error?: string
   last_error_at?: string
+  // 目录省市选项（§三网测速设置）：目录未就绪时省略。
+  provinces?: string[]
+  cities?: Record<string, string[]>
+}
+
+// 三网目录测速（§三网测速）：面板按测速省市设置推导目标并随 latency.probe 轮次
+// 下发，agent 测速上报。latency_ms 为 null = 最近一轮失败/超时；loss_percent 为
+// 统计窗口内失败占比（null = 窗口内无样本）。
+export interface CatalogProbeRow {
+  label: string
+  carrier: 'telecom' | 'unicom' | 'mobile'
+  latency_ms: number | null
+  loss_percent: number | null
+  samples: number
+  measured_at: string
+}
+
+export interface CatalogProbeStats {
+  province: string
+  city: string
+  // 以服务器 ID（十进制字符串）为键；只含新鲜窗口内有样本的服务器。
+  servers: Record<string, { rows: CatalogProbeRow[] }>
 }
 
 // 命令日志条目（GET /api/server/list-commands，§4）。
@@ -788,6 +810,13 @@ export interface PanelSettings {
   billing_inspection: InspectionSchedule
   exchange_rate_inspection: InspectionSchedule
   reporting_currency: string
+  catalog_probe_region: CatalogProbeRegion
+}
+
+// 三网测速目标省市（§三网测速）：city 非空测该市城市节点，否则测省份节点。
+export interface CatalogProbeRegion {
+  province: string
+  city: string
 }
 
 export interface UpdateSettingsRequest {
@@ -815,6 +844,7 @@ export interface UpdateSettingsRequest {
   billing_inspection: InspectionSchedule
   exchange_rate_inspection: InspectionSchedule
   reporting_currency: string
+  catalog_probe_region?: CatalogProbeRegion
 }
 
 export interface SubSettings {

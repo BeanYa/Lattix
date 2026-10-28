@@ -11,6 +11,7 @@ import type {
   Chain,
   ChainShareLink,
   ChainStatsResponse,
+  CatalogProbeStats,
   CleanupXrayResult,
   CommandLog,
   RebuildXrayResult,
@@ -138,6 +139,11 @@ export const api = {
     requester.get<ServerTestCatalogStatus>('/api/server-test/catalog-status', undefined, options),
   refreshServerTestCatalog: () =>
     requester.post<ServerTestCatalogStatus>('/api/server-test/refresh-catalog', {}),
+  catalogProbes: (options?: RequestOptions) =>
+    requester.get<CatalogProbeStats>('/api/server/catalog-probes', undefined, {
+      display: 'silent',
+      ...options,
+    }),
   createServer: (body: {
     alias: string
     address?: string

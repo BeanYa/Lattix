@@ -512,14 +512,15 @@ func TestWSSchemaLatencyProbeContract(t *testing.T) {
 	assertRequired(t, ctx, report, []string{"round_id", "results"}, reportWire)
 	assertWireCovered(t, ctx, report, reportWire)
 
-	// latencyProbeTarget：server_id/address/kind 必填；port 仅 tcp 携带。
+	// latencyProbeTarget：server_id/address/kind 必填；port 仅 tcp 携带；key 仅目录
+	// 测速目标携带（§三网测速，key 非空时 server_id=0），服务器对目标缺省。
 	target := defOf(t, schema, "latencyProbeTarget")
 	targetWire := wireFields(t, LatencyProbeTarget{})
 	assertRequired(t, "$defs.latencyProbeTarget", target, []string{"server_id", "address", "kind"}, targetWire)
 	assertWireCovered(t, "$defs.latencyProbeTarget", target, targetWire)
 
 	// latencyProbeResult：server_id/kind 必填；latency_ms 允许缺省（失败/超时样本，
-	// 同 host.latency_ms 的连通性参考约定）。
+	// 同 host.latency_ms 的连通性参考约定）；key 与目标侧对应。
 	result := defOf(t, schema, "latencyProbeResult")
 	resultWire := wireFields(t, LatencyProbeResult{})
 	assertRequired(t, "$defs.latencyProbeResult", result, []string{"server_id", "kind"}, resultWire)

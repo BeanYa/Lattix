@@ -111,17 +111,23 @@ func (s *Server) serverTestDTO(task *store.ServerTestTask) serverTestDTO {
 }
 
 func (s *Server) handleCDNCatalogStatus(w http.ResponseWriter, r *http.Request) {
-	status, err := s.cdn.Status(r.Context())
+	ctx := r.Context()
+	status, err := s.cdn.Status(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, status)
+	dto := cdnCatalogStatusDTO{Status: status}
+	if document := s.loadCDNCatalogDocument(ctx); document != nil {
+		dto.Provinces, dto.Cities = catalogRegionOptions(document)
+	}
+	writeJSON(w, http.StatusOK, dto)
 }
 
 func (s *Server) handleRefreshCDNCatalog(w http.ResponseWriter, r *http.Request) {
-	err := s.cdn.Refresh(r.Context())
-	status, statusErr := s.cdn.Status(r.Context())
+	ctx := r.Context()
+	err := s.cdn.Refresh(ctx)
+	status, statusErr := s.cdn.Status(ctx)
 	if statusErr != nil {
 		writeError(w, http.StatusInternalServerError, statusErr.Error())
 		return
@@ -130,6 +136,8 @@ func (s *Server) handleRefreshCDNCatalog(w http.ResponseWriter, r *http.Request)
 		writeRPC(w, shared.CodeUpstreamError, err.Error(), status)
 		return
 	}
+	// 目录刷新成功即触发一轮测速（§三网测速）：目标可能已随目录更新。
+	go s.disp.RunLatencyProbeRound(context.WithoutCancel(ctx))
 	writeJSON(w, http.StatusOK, status)
 }
 
@@ -222,7 +230,7 @@ func (s *Server) serverTestCatalogSnapshot(ctx context.Context, categories []sha
 	if selected[shared.ServerTestConnectivity] {
 		for _, target := range staticCatalog.Connectivity {
 			targets = append(targets, shared.ServerTestTarget{
-				ID: "connectivity:" + target.Group + ":" + target.Slug,
+				ID:       "connectivity:" + target.Group + ":" + target.Slug,
 				Category: shared.ServerTestConnectivity, Label: target.Label,
 				Province:      connectivityGroupLabel(target.Group),
 				AddressFamily: shared.ServerTestDualStack,

@@ -117,6 +117,7 @@ type settingsDTO struct {
 	BillingInspection        scheduler.InspectionSchedule `json:"billing_inspection"`
 	ExchangeInspection       scheduler.InspectionSchedule `json:"exchange_rate_inspection"`
 	ReportingCurrency        string                       `json:"reporting_currency"`
+	CatalogProbeRegion       store.CatalogProbeRegion     `json:"catalog_probe_region"` // 三网测速目标省市（§三网测速）
 }
 
 // handleGetSettings 处理 GET /api/settings。
@@ -158,6 +159,10 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dto.Agent = agentSettings
+	if dto.CatalogProbeRegion, err = s.st.CatalogProbeRegion(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	dto.ServerSettings, dto.ServerSettingsRevision, err = s.st.DefaultServerSettings(ctx)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -243,6 +248,7 @@ type updateSettingsRequest struct {
 	BillingInspection     *scheduler.InspectionSchedule `json:"billing_inspection"`
 	ExchangeInspection    *scheduler.InspectionSchedule `json:"exchange_rate_inspection"`
 	ReportingCurrency     string                        `json:"reporting_currency"`
+	CatalogProbeRegion    *store.CatalogProbeRegion     `json:"catalog_probe_region"` // nil = 不变
 }
 
 // handleUpdateSettings 处理 PUT /api/settings：校验后落库。
@@ -277,6 +283,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"exchange_rate_inspection":     s.exchangeInspectionSchedule(ctx),
 		"server_settings":              func() shared.ServerSettings { v, _, _ := s.st.DefaultServerSettings(ctx); return v }(),
 		"reporting_currency":           firstNonEmpty(s.getSetting(ctx, store.SettingReportingCurrency), "CNY"),
+		"catalog_probe_region":         func() store.CatalogProbeRegion { v, _ := s.st.CatalogProbeRegion(ctx); return v }(),
 	}
 
 	if req.OperationLogLimit == 0 {
@@ -335,6 +342,37 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if !exchange.SupportedCurrencies[req.ReportingCurrency] {
 		writeError(w, http.StatusBadRequest, "不支持的统计币种")
 		return
+	}
+
+	// 三网测速省市（§三网测速）：nil = 不变；目录可用时校验省市存在于目录，
+	// 目录不可用则放行（目标推导按无目标处理，目录刷新后再测）。
+	if req.CatalogProbeRegion != nil {
+		*req.CatalogProbeRegion = req.CatalogProbeRegion.Normalized()
+		if document := s.loadCDNCatalogDocument(ctx); document != nil {
+			provinceFound := false
+			cityFound := req.CatalogProbeRegion.City == ""
+			for _, province := range document.Provinces {
+				if province.Name != req.CatalogProbeRegion.Province {
+					continue
+				}
+				provinceFound = true
+				for _, city := range document.Cities {
+					if city.Province == province.Name && city.City == req.CatalogProbeRegion.City {
+						cityFound = true
+						break
+					}
+				}
+				break
+			}
+			if !provinceFound {
+				writeError(w, http.StatusBadRequest, "测速目录中不存在省份「"+req.CatalogProbeRegion.Province+"」，请先刷新测速目录")
+				return
+			}
+			if !cityFound {
+				writeError(w, http.StatusBadRequest, "测速目录中省份「"+req.CatalogProbeRegion.Province+"」不存在城市「"+req.CatalogProbeRegion.City+"」")
+				return
+			}
+		}
 	}
 
 	req.Timezone = strings.TrimSpace(req.Timezone)
@@ -548,6 +586,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		set(store.SettingExchangeInspection, string(raw))
 	}
 	set(store.SettingReportingCurrency, req.ReportingCurrency)
+	if req.CatalogProbeRegion != nil {
+		raw, err := json.Marshal(*req.CatalogProbeRegion)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		set(store.SettingCatalogProbeRegion, string(raw))
+	}
 
 	after := map[string]any{
 		"timezone": req.Timezone, "traffic_timezone": req.TrafficTimezone,
@@ -565,6 +611,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		"server_settings":    before["server_settings"],
 		"reporting_currency": req.ReportingCurrency,
 	}
+	if req.CatalogProbeRegion != nil {
+		after["catalog_probe_region"] = *req.CatalogProbeRegion
+	}
+	catalogProbeRegionChanged := req.CatalogProbeRegion != nil &&
+		*req.CatalogProbeRegion != before["catalog_probe_region"].(store.CatalogProbeRegion)
 	var serverSettingsRevision int64
 	var err error
 	if req.ServerSettings != nil {
@@ -619,6 +670,10 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ServerSettings != nil {
 		s.disp.NotifyServerSettingsChanged(ctx, 0, serverSettingsRevision)
+	}
+	// 测速省市变更即触发一轮测速（§三网测速）：新目标立即可见，不等下一轮调度。
+	if catalogProbeRegionChanged {
+		go s.disp.RunLatencyProbeRound(context.WithoutCancel(ctx))
 	}
 
 	if req.ReleaseInspection != nil {

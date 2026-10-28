@@ -12,7 +12,8 @@ import (
 // schemaVersion must be incremented whenever Schema changes. Migrations run
 // before the rest of the backend starts, in the same transaction as schema setup.
 // v24: 链路统计重构——延迟按有向服务器对（tcp/icmp+端口）保存；丢弃 v23 按跳探测表。
-const schemaVersion = 24
+// v25: 三网目录测速——新增 server_catalog_probes(+history)，随 Schema 建表（无存量迁移）。
+const schemaVersion = 25
 
 type columnMigration struct {
 	name       string

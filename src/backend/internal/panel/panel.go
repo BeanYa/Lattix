@@ -311,7 +311,14 @@ func (s *Server) registerCoreTasks() {
 	s.scheduler.Register(scheduler.ScheduledTask{
 		Name: "cdn.catalog.refresh", Timeout: 2 * time.Minute,
 		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(cdnRefreshInterval) },
-		Run:     s.cdn.Refresh,
+		Run: func(ctx context.Context) error {
+			if err := s.cdn.Refresh(ctx); err != nil {
+				return err
+			}
+			// 目录刷新成功即触发一轮测速（§三网测速）：目标可能已随目录更新。
+			go s.disp.RunLatencyProbeRound(context.WithoutCancel(ctx))
+			return nil
+		},
 	})
 	s.scheduler.Register(scheduler.ScheduledTask{
 		Name: "traffic.reset", RunOnStart: true, Timeout: time.Minute,
@@ -357,6 +364,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 		s.handleRunServerTest)
 	s.registerRPC(mux, http.MethodGet, "/api/server-test/catalog-status", read, s.handleCDNCatalogStatus)
 	s.registerRPC(mux, http.MethodPost, "/api/server-test/refresh-catalog", write, s.handleRefreshCDNCatalog)
+	s.registerRPC(mux, http.MethodGet, "/api/server/catalog-probes", polledRead, s.handleGetServerCatalogProbes)
 	s.registerRPC(mux, http.MethodPost, "/api/server/create", write, s.handleCreateServer)
 	s.registerRPC(mux, http.MethodPost, "/api/server/update",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id"}},

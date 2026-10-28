@@ -17,7 +17,14 @@ import {
 import { api, errorMessage } from '@/lib/api'
 import { formatBytes, formatDateTime } from '@/lib/format'
 import { useTimezone } from '@/lib/timezone'
-import type { AlertTestResult, InspectionUnit, LogSeverity, PanelSettings } from '@/lib/types'
+import type {
+  AlertTestResult,
+  CatalogProbeRegion,
+  InspectionUnit,
+  LogSeverity,
+  PanelSettings,
+  ServerTestCatalogStatus,
+} from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 import { ExchangeRatesCard } from './settings/ExchangeRatesCard'
@@ -112,6 +119,10 @@ export default function Settings() {
   const [timezone, setTimezone] = useState('')
   const [trafficTimezone, setTrafficTimezone] = useState('Asia/Shanghai')
   const [trafficStatsRetentionDays, setTrafficStatsRetentionDays] = useState(60)
+  // 三网测速省市（§三网测速）：保存后立即触发一轮测速（面板侧）。
+  const [probeProvince, setProbeProvince] = useState('广东')
+  const [probeCity, setProbeCity] = useState('')
+  const [catalogStatus, setCatalogStatus] = useState<ServerTestCatalogStatus | null>(null)
   // TLS
   const [tlsMode, setTlsMode] = useState<TLSModeChoice>('flag')
   const [certPEM, setCertPEM] = useState('')
@@ -207,8 +218,18 @@ export default function Settings() {
         setExchangeInspectionAt(s.exchange_rate_inspection.at ?? '02:30')
         setReportingCurrency(s.reporting_currency)
         setServerXrayVersion(s.server_settings.xray_version ?? 'latest')
+        const region: CatalogProbeRegion = s.catalog_probe_region ?? { province: '广东', city: '' }
+        setProbeProvince(region.province)
+        setProbeCity(region.city)
       })
       .catch((err) => setLoadError(errorMessage(err)))
+  }, [])
+
+  useEffect(() => {
+    api
+      .serverTestCatalogStatus()
+      .then(setCatalogStatus)
+      .catch(() => setCatalogStatus(null))
   }, [])
 
   useEffect(() => {
@@ -321,6 +342,7 @@ export default function Settings() {
         billing_inspection: { every: 1, unit: 'day', at: billingInspectionAt },
         exchange_rate_inspection: { every: 1, unit: 'day', at: exchangeInspectionAt },
         reporting_currency: reportingCurrency,
+        catalog_probe_region: { province: probeProvince.trim(), city: probeCity.trim() },
         server_settings: { xray_version: serverXrayVersion },
         // bot token 留空 = 保持已保存值（后端语义，与 tls key 一致）
         ...(alertBotToken.trim() ? { alert_telegram_bot_token: alertBotToken.trim() } : {}),
@@ -652,6 +674,70 @@ export default function Settings() {
             onReportingCurrencyChange={setReportingCurrency}
             timezone={timezone}
           />
+
+          <SettingsCard
+            tag="SERVERS / PROBE"
+            title="三网测速"
+            description="服务器卡片按所选省市展示到电信/联通/移动节点的延迟与丢包；保存后立即触发一轮测速。"
+          >
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="probeProvince">测速省份</Label>
+                <Select
+                  value={probeProvince}
+                  onValueChange={(next) => {
+                    if (next === null) return
+                    setProbeProvince(next)
+                    const cities = catalogStatus?.cities?.[next] ?? []
+                    if (!cities.includes(probeCity)) setProbeCity('')
+                  }}
+                >
+                  <SelectTrigger id="probeProvince" className="w-full">
+                    <SelectValue placeholder="选择省份" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {(catalogStatus?.provinces ?? []).map((province) => (
+                        <SelectItem key={province} value={province}>
+                          {province}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="probeCity">测速城市（可选）</Label>
+                <Select
+                  value={probeCity === '' ? '__all__' : probeCity}
+                  onValueChange={(next) =>
+                    setProbeCity(next === '__all__' || next === null ? '' : next)
+                  }
+                >
+                  <SelectTrigger id="probeCity" className="w-full">
+                    <SelectValue placeholder="全省节点">
+                      {probeCity === '' ? '全省节点' : probeCity}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="__all__">全省节点</SelectItem>
+                      {(catalogStatus?.cities?.[probeProvince] ?? []).map((city) => (
+                        <SelectItem key={city} value={city}>
+                          {city}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <p className="cg-set-note">
+              {catalogStatus?.available
+                ? `目标来自测速目录（${(catalogStatus.provinces ?? []).length} 个省市可选）；目录刷新成功后面板会自动重测一轮。`
+                : '测速目录尚未就绪：请先在服务器详情的「服务器测试」中刷新测速目录，目录可用后即可选择省市。'}
+            </p>
+          </SettingsCard>
 
           <SettingsCard
             tag="PANEL / GENERAL"

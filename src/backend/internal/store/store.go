@@ -546,6 +546,30 @@ CREATE TABLE IF NOT EXISTS server_latency_history (
 );
 CREATE INDEX IF NOT EXISTS idx_server_latency_history_time ON server_latency_history (measured_at);
 
+-- 三网目录测速最新值（§三网测速）：from_server → 目录目标 key（省市+运营商，
+-- 形如 catalog:广东:*:telecom）。latency_ms 为 NULL 表示已接受但失败/超时的
+-- 样本（与 server_latency_probes 的连通性参考约定一致）。目标由面板按测速省市
+-- 设置从 cdn_node_catalog 推导，随 latency.probe 轮次统一下发。
+CREATE TABLE IF NOT EXISTS server_catalog_probes (
+    from_server INTEGER NOT NULL REFERENCES servers(id),
+    target_key  TEXT    NOT NULL,
+    kind        TEXT    NOT NULL,
+    latency_ms  REAL,
+    measured_at DATETIME NOT NULL,
+    PRIMARY KEY (from_server, target_key, kind)
+);
+
+-- 三网目录测速历史（与服务器间延迟同窗口保留，供丢包率统计与排查；每小时后台清理）。
+CREATE TABLE IF NOT EXISTS server_catalog_probe_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_server INTEGER NOT NULL,
+    target_key  TEXT    NOT NULL,
+    kind        TEXT    NOT NULL,
+    latency_ms  REAL,
+    measured_at DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_server_catalog_probe_history_time ON server_catalog_probe_history (measured_at);
+
 -- 流量统计明细桶（分钟级）与日汇总：多维度（user/node/endpoint/chain_hop）原始字节，
 -- 不乘链路倍率（计费口径归 chain_traffic_daily）；写入挂在 ApplyTrafficSnapshot 遥测入口。
 CREATE TABLE IF NOT EXISTS traffic_stats_bucket (

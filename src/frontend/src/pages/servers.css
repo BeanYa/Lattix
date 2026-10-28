@@ -1209,3 +1209,687 @@
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* ============================================================
+   服务器卡片（§三网测速）：卡片式机群读数
+   ============================================================ */
+
+.sv-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(340px, 100%), 1fr));
+  gap: 12px;
+  padding: 12px;
+}
+
+.sv-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-lg, 20px);
+  background: var(--panel-surface);
+  box-shadow: var(--panel-shadow-card);
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    border-color 160ms var(--panel-ease),
+    box-shadow 160ms var(--panel-ease);
+}
+
+.sv-card:hover {
+  border-color: var(--panel-rule-strong);
+}
+
+.sv-card.is-selected {
+  border-color: color-mix(in srgb, var(--panel-accent) 55%, var(--panel-rule));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--panel-accent) 35%, transparent),
+    var(--panel-shadow-card);
+}
+
+.sv-card.is-offline .sv-card-title {
+  color: var(--panel-ink-3);
+}
+
+/* ---------- 卡片头 ---------- */
+
+.sv-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 12px 10px 0 16px;
+}
+
+.sv-card-conn {
+  flex: none;
+}
+
+.sv-card-title {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sv-card-title:focus-visible {
+  outline: 2px solid var(--panel-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.sv-card-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  opacity: 0.4;
+  transition: opacity 160ms var(--panel-ease);
+}
+
+.sv-card:hover .sv-card-head-actions,
+.sv-card:focus-within .sv-card-head-actions {
+  opacity: 1;
+}
+
+.sv-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 16px 0;
+}
+
+.sv-flag.is-v4 {
+  border-color: color-mix(in srgb, var(--panel-success) 46%, var(--panel-rule));
+  background: var(--panel-success-soft);
+  color: var(--panel-success);
+}
+
+.sv-flag.is-v6 {
+  border-color: color-mix(in srgb, var(--panel-info) 46%, var(--panel-rule));
+  background: var(--panel-info-soft);
+  color: var(--panel-info);
+}
+
+.sv-flag.is-tag {
+  border-color: color-mix(in srgb, var(--panel-accent) 40%, var(--panel-rule));
+  background: var(--panel-accent-soft);
+  color: var(--panel-accent);
+}
+
+/* ---------- 资源四宫格 ---------- */
+
+.sv-card-res {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
+  padding: 12px 16px 14px;
+}
+
+.sv-res {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sv-res-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sv-res-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--panel-ink-3);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sv-res-label svg {
+  width: 12px;
+  height: 12px;
+}
+
+.sv-res-value {
+  color: var(--panel-ink);
+  font-family: var(--font-readout, var(--font-display));
+  font-size: 15px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.sv-res-detail {
+  overflow: hidden;
+  color: var(--panel-ink-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sv-dotbar {
+  display: grid;
+  grid-template-columns: repeat(20, minmax(0, 1fr));
+  gap: 2px;
+  height: 4px;
+  margin-top: 2px;
+}
+
+.sv-dotbar-seg {
+  height: 100%;
+  border-radius: 1px;
+  background: var(--panel-rule);
+}
+
+.sv-dotbar-seg.is-ok {
+  background: var(--panel-ink-2);
+}
+
+.sv-dotbar-seg.is-info {
+  background: var(--panel-info);
+}
+
+.sv-dotbar-seg.is-signal {
+  background: var(--panel-signal);
+}
+
+.sv-dotbar-seg.is-warn {
+  background: var(--panel-warning);
+}
+
+.sv-dotbar-seg.is-crit {
+  background: var(--panel-danger);
+}
+
+/* ---------- 速率 ---------- */
+
+.sv-card-net {
+  display: grid;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--panel-rule);
+}
+
+.sv-net-row {
+  display: grid;
+  grid-template-columns: 52px 84px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.sv-net-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--panel-ink-3);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sv-net-label svg {
+  width: 12px;
+  height: 12px;
+}
+
+.sv-net-rate {
+  color: var(--panel-ink);
+  font-family: var(--font-readout, var(--font-display));
+  font-size: 14px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sv-dot-trend {
+  display: grid;
+  grid-template-columns: repeat(24, minmax(0, 1fr));
+  gap: 2px;
+  height: 8px;
+}
+
+.sv-dot-cell {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--panel-success);
+}
+
+.sv-dot-cell.is-info {
+  background: var(--panel-info);
+}
+
+.sv-dot-cell.is-idle {
+  background: var(--panel-rule);
+  opacity: 1 !important;
+}
+
+.sv-net-totals {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sv-net-total {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sv-net-total svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* ---------- 流量额度 ---------- */
+
+.sv-card-quota {
+  display: grid;
+  gap: 6px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--panel-rule);
+}
+
+.sv-quota2-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sv-quota2-label {
+  color: var(--panel-ink-3);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sv-quota2-remaining {
+  color: var(--panel-ink);
+  font-family: var(--font-readout, var(--font-display));
+  font-size: 14px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.sv-quota2-detail {
+  color: var(--panel-ink-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 三网测速 ---------- */
+
+.sv-card-probes {
+  display: grid;
+  gap: 6px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--panel-rule);
+}
+
+.sv-probe-head {
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.sv-probe-region {
+  color: var(--panel-ink-3);
+  font-weight: 500;
+}
+
+.sv-probe-rows {
+  display: grid;
+  gap: 4px;
+}
+
+.sv-probe-row {
+  display: grid;
+  grid-template-columns: minmax(72px, 38%) minmax(52px, auto) minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+  height: 16px;
+}
+
+.sv-probe-label {
+  overflow: hidden;
+  color: var(--panel-ink-2);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sv-probe-latency {
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sv-probe-lossbar {
+  position: relative;
+  display: block;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--panel-inset);
+  overflow: hidden;
+}
+
+.sv-probe-lossfill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: block;
+  border-radius: 999px;
+  background: var(--panel-ink-2);
+  transition: width 200ms var(--panel-ease);
+}
+
+.sv-probe-lossfill.is-ok {
+  background: var(--panel-success);
+}
+
+.sv-probe-lossfill.is-warn {
+  background: var(--panel-warning);
+}
+
+.sv-probe-lossfill.is-crit {
+  background: var(--panel-danger);
+}
+
+.sv-probe-loss {
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sv-probe-loss.is-ok {
+  color: var(--panel-ink-2);
+}
+
+.sv-probe-loss.is-warn {
+  color: var(--panel-warning);
+}
+
+.sv-probe-loss.is-crit {
+  color: var(--panel-danger);
+}
+
+.sv-probe-empty {
+  color: var(--panel-ink-3);
+  font-size: 12px;
+}
+
+/* ---------- 卡片脚 ---------- */
+
+.sv-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--panel-rule);
+}
+
+.sv-fact {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--panel-ink-3);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.sv-fact svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.sv-fact-value {
+  overflow: hidden;
+  color: var(--panel-ink);
+  font-weight: 650;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sv-fact-value.is-ok {
+  color: var(--panel-info);
+}
+
+.sv-fact-value.is-warn {
+  color: var(--panel-warning);
+}
+
+.sv-fact-value.is-crit {
+  color: var(--panel-danger);
+}
+
+.sv-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 16px 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sv-probe-lossfill {
+    transition: none;
+  }
+}
+
+/* ============================================================
+   服务器详情弹窗（卡片「扩大」按钮）：固定头部 + 内部滚动体
+   ============================================================ */
+
+.sv-detail-head {
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid var(--panel-rule);
+  background: color-mix(in srgb, var(--panel-raised) 55%, var(--panel-surface));
+}
+
+.sv-detail-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-right: 32px; /* 给右上角绝对定位的关闭按钮留位 */
+}
+
+.sv-detail-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sv-detail-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.sv-detail-desc {
+  margin-top: 2px;
+  color: var(--panel-ink-3);
+  font-size: 12px;
+}
+
+.sv-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  flex: 1;
+  padding: 14px 18px 18px;
+  overflow-y: auto;
+}
+
+/* 滚动容器内的 flex 子项不参与压缩（否则概览卡被挤成 2px），由 body 整体滚动 */
+.sv-detail-body > * {
+  flex: none;
+}
+
+/* 弹窗内嵌的静态卡片（复用卡片概览样式，去掉可点击观感） */
+.sv-card.is-static {
+  cursor: default;
+}
+
+.sv-card.is-static:hover {
+  border-color: var(--panel-rule);
+}
+
+/* 宽弹窗下资源四宫格一行四列，窄屏回退两列 */
+.sv-detail .sv-card-res {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 760px) {
+  .sv-detail .sv-card-res {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------- 信息区（图标 + 标签 + 值） ---------- */
+
+.sv-detail-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 24px;
+  margin: 0;
+}
+
+@media (min-width: 900px) {
+  .sv-detail-facts {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.sv-fact-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sv-fact-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.sv-fact-label svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.sv-fact-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  color: var(--panel-ink);
+  font-size: 13px;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.sv-fact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sv-fact-addr {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.sv-fact-addr > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sv-fact-note {
+  color: var(--panel-ink-3);
+  font-size: 11px;
+}
+
+.sv-fact-alert {
+  color: var(--panel-danger);
+}
+
+.sv-detail-converted {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-md, 8px);
+  background: var(--panel-inset);
+}
+
+.sv-detail-converted dd {
+  margin: 0;
+}
+
+.sv-converted-grid {
+  display: grid;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+@media (min-width: 720px) {
+  .sv-converted-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sv-detail-body {
+    scroll-behavior: auto;
+  }
+}

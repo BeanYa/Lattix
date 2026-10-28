@@ -88,10 +88,13 @@ func (s *Store) DeleteExpiredServerLatencyHistory(ctx context.Context, retention
 	return result.RowsAffected()
 }
 
-// ServerLatencyTarget 是面板下发给某 Agent 的一个探测目标（本服务器 → 目标服务器）。
+// ServerLatencyTarget 是面板下发给某 Agent 的一个探测目标。
+// 服务器对目标：ToServer 为目标服务器 ID；目录测速目标（§三网测速）：ToServer=0、
+// Key 为目录目标键（所有服务器同集）。
 type ServerLatencyTarget struct {
 	ToServer int64
-	Address  string // 目标服务器的设置公网地址（域名或 IP，§9 地址引用回退）
+	Key      string // 非空 = 目录测速目标（省市+运营商），空 = 服务器对目标
+	Address  string // 服务器对：目标服务器的设置公网地址；目录目标：目录端点主机
 	Kind     string // tcp|icmp
 	Port     int    // tcp 为复用的链路监听端口；icmp 恒 0
 }

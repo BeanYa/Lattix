@@ -148,6 +148,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/server/catalog-probes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 三网目录测速统计（§三网测速，服务器卡片轮询）：面板按「测速省市」设置从
+         *     CDN 目录推导目标并随 latency.probe 轮次下发；此处返回各服务器到目录目标
+         *     （省市 × 电信/联通/移动）的最新 TCP 握手 RTT（失败样本 latency_ms 为 null）、
+         *     统计窗口内丢包率（失败样本占比；无样本为 null）与样本数。servers 只含新鲜
+         *     窗口内有样本的服务器（键为服务器 ID 十进制字符串）。
+         */
+        get: operations["serverCatalogProbes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/server/run-test": {
         parameters: {
             query?: never;
@@ -2320,6 +2343,19 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    serverCatalogProbes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     serverRunTest: {
         parameters: {
             query?: never;
@@ -4049,6 +4085,7 @@ export const rpcOperations = {
   serverGetMetricHistory: { method: 'GET', path: '/api/server/get-metric-history' },
   serverListCommands: { method: 'GET', path: '/api/server/list-commands' },
   serverGetTest: { method: 'GET', path: '/api/server/get-test' },
+  serverCatalogProbes: { method: 'GET', path: '/api/server/catalog-probes' },
   serverRunTest: { method: 'POST', path: '/api/server/run-test' },
   serverTestCatalogStatus: { method: 'GET', path: '/api/server-test/catalog-status' },
   serverTestRefreshCatalog: { method: 'POST', path: '/api/server-test/refresh-catalog' },

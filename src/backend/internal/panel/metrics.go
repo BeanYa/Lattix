@@ -102,7 +102,10 @@ func (s *Server) cleanupMetricHistory(ctx context.Context) error {
 	if _, err := s.st.DeleteExpiredServerMetricHistory(ctx, metricHistoryRetention); err != nil {
 		return err
 	}
-	// 服务器间延迟历史与主机指标同窗口（§链路统计）。
-	_, err := s.st.DeleteExpiredServerLatencyHistory(ctx, metricHistoryRetention)
+	// 服务器间延迟历史与主机指标同窗口（§链路统计）；三网目录测速历史同窗口（§三网测速）。
+	if _, err := s.st.DeleteExpiredServerLatencyHistory(ctx, metricHistoryRetention); err != nil {
+		return err
+	}
+	_, err := s.st.DeleteExpiredServerCatalogProbeHistory(ctx, metricHistoryRetention)
 	return err
 }

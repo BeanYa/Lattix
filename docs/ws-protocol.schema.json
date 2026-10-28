@@ -110,10 +110,11 @@
       "additionalProperties": false,
       "required": ["server_id", "address", "kind"],
       "properties": {
-        "server_id": {"type": "integer", "minimum": 1},
+        "server_id": {"type": "integer", "minimum": 0},
         "address": {"type": "string", "minLength": 1},
         "kind": {"type": "string", "enum": ["tcp", "icmp"]},
-        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "key": {"type": "string", "minLength": 1}
       }
     },
     "latencyProbeResult": {
@@ -121,10 +122,11 @@
       "additionalProperties": false,
       "required": ["server_id", "kind"],
       "properties": {
-        "server_id": {"type": "integer", "minimum": 1},
+        "server_id": {"type": "integer", "minimum": 0},
         "kind": {"type": "string", "enum": ["tcp", "icmp"]},
         "port": {"type": "integer", "minimum": 1, "maximum": 65535},
-        "latency_ms": {"type": "number"}
+        "latency_ms": {"type": "number"},
+        "key": {"type": "string", "minLength": 1}
       }
     }
   },

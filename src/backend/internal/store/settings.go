@@ -44,6 +44,7 @@ const (
 	SettingExchangeRateCache            = "exchange_rate_cache"
 	SettingCDNNodeCatalog               = "cdn_node_catalog"
 	SettingCDNNodeCatalogStatus         = "cdn_node_catalog_status"
+	SettingCatalogProbeRegion           = "catalog_probe_region" // 三网测速目标省市（JSON：{province, city}），§三网测速
 	SettingTrafficTimezone              = "traffic_timezone"
 	SettingPanelShort                   = "panel_short"                    // 面板缩写：链路命名模板 {{PANEL_SHORT}} 与订阅「<PanelShort> 分组」组名；空 = 默认 DefaultPanelShort
 	SettingSubscriptionReconcileVersion = "subscription_reconcile_version" // 启动对账标记：上次完成全员订阅重发布的面板版本

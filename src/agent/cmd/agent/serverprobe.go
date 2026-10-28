@@ -31,7 +31,7 @@ func runLatencyProbeRound(targets []shared.LatencyProbeTarget, roundTimeout time
 		wg.Add(1)
 		go func(i int, target shared.LatencyProbeTarget) {
 			defer wg.Done()
-			results[i] = shared.LatencyProbeResult{ServerID: target.ServerID, Kind: target.Kind, Port: target.Port}
+			results[i] = shared.LatencyProbeResult{ServerID: target.ServerID, Kind: target.Kind, Port: target.Port, Key: target.Key}
 			remaining := time.Until(deadline)
 			if remaining <= 0 {
 				return
