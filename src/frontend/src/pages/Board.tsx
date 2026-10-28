@@ -14,7 +14,8 @@ import {
 } from 'lucide-react'
 import { Link } from 'wouter'
 
-import { useBoardQueue, type BoardItem, type BoardSeverity } from '@/lib/board-queue'
+import { useBoardQueueContext } from '@/lib/board-queue-context'
+import type { BoardItem, BoardSeverity } from '@/lib/board-queue'
 import { api, errorMessage } from '@/lib/api'
 import { humanizeBytes } from '@/lib/format'
 import type {
@@ -396,7 +397,7 @@ function QueueSkeleton() {
 }
 
 export default function Board() {
-  const { items, counts, summary, loading, error, refresh } = useBoardQueue()
+  const { items, counts, summary, loading, error, refresh } = useBoardQueueContext()
   const [now, setNow] = useState(() => Date.now())
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [severityFilter, setSeverityFilter] = useState<'all' | BoardSeverity>('all')
@@ -405,6 +406,11 @@ export default function Board() {
   const [logsError, setLogsError] = useState<string | null>(null)
   const [pulseSeries, setPulseSeries] = useState<TrafficStatPoint[]>([])
   const logsRequest = useRef(0)
+
+  // 进入控制台时立即前台刷新共享队列：页面与侧栏角标同步到最新状态。
+  useEffect(() => {
+    refresh()
+  }, [refresh])
 
   // 持续时长与「更新于」每 30 秒推进一次，与轮询节奏一致。
   useEffect(() => {

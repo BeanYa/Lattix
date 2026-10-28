@@ -38,7 +38,8 @@ import {
 } from '@/components/nav-config'
 import { api, errorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { useBoardQueue } from '@/lib/board-queue'
+import { useBoardQueueContext } from '@/lib/board-queue-context'
+import { BoardQueueProvider } from '@/lib/board-queue-provider'
 import { useRequestState } from '@/lib/request-state'
 import type { PanelLifecycleSnapshot, PanelLifecycleState } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -411,12 +412,24 @@ function AccountMenu({
   )
 }
 
+/**
+ * 壳层入口：BoardQueueProvider 挂在壳层顶层，顶栏/侧栏角标与控制台页
+ * 共享同一份队列实例，页面内 refresh 后角标立即跟随，不再各持私有副本。
+ */
 export function AppShell({ children }: { children: ReactNode }) {
+  return (
+    <BoardQueueProvider>
+      <Shell>{children}</Shell>
+    </BoardQueueProvider>
+  )
+}
+
+function Shell({ children }: { children: ReactNode }) {
   const [location, navigate] = useLocation()
   const { username, logout } = useAuth()
   const { foregroundPendingCount } = useRequestState()
   const panelSnapshot = usePanelLifecycleSnapshot()
-  const { counts } = useBoardQueue()
+  const { counts } = useBoardQueueContext()
   const criticalCount = counts?.critical ?? 0
   const warningCount = counts?.warning ?? 0
   const pendingCount = criticalCount + warningCount
