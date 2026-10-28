@@ -532,6 +532,13 @@
   text-transform: uppercase;
 }
 
+/* 组卡片右上角的批量操作（勾选已指派用户后出现：修改模板 / 取消覆盖）。 */
+.cg-assign-group-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .cg-assign-chips {
   display: flex;
   flex-wrap: wrap;

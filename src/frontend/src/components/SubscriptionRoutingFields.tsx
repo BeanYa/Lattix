@@ -19,12 +19,6 @@ const presetLabels = {
   comprehensive: 'Comprehensive',
 } as const
 
-function suggestedCategoryLabels(ids: string[], categories: SubscriptionRuleCategory[]): string {
-  const byId = new Map(categories.map((category) => [category.id, category.label]))
-  const labels = ids.map((id) => byId.get(id) ?? id)
-  return labels.length === 0 ? '未指定分组' : labels.join('、')
-}
-
 function categoriesForPreset(
   preset: SubscriptionRoutingProfile['preset'],
   categories: SubscriptionRuleCategory[],
@@ -35,6 +29,11 @@ function categoriesForPreset(
     .map((category) => category.id)
 }
 
+/**
+ * SubscriptionRoutingFields 是用户订阅设置中的路由表单，编辑的是面板级/强制级槽位：
+ * 勾选「强制覆盖」保存为强制级，不勾选保存为面板级。用户级配置（订阅页自选）
+ * 面板侧只读，仅在 value.user_configured 时提示。
+ */
 export function SubscriptionRoutingFields({
   value,
   onChange,
@@ -46,107 +45,112 @@ export function SubscriptionRoutingFields({
   categories: SubscriptionRuleCategory[]
   templates: SubscriptionTemplate[]
 }) {
+  const forced = Boolean(value.forced)
   const portable = templates.filter(
     (template) => ['portable', 'acl4ssr'].includes(template.kind) && template.content,
   )
   const native = (kind: SubscriptionTemplate['kind']) =>
     templates.filter((template) => template.kind === kind && template.content)
   const set = (patch: Partial<SubscriptionRoutingProfile>) => onChange({ ...value, ...patch })
-  const templateName = (id: string) => templates.find((template) => template.id === id)?.name ?? id
+  const hasPanelMain =
+    value.mode === 'template' ? Boolean(value.portable_template_id) : value.categories.length > 0
 
   return (
     <div className="space-y-4 border-t pt-4">
-      {value.assigned_portable_template_id && (
+      {value.user_configured && (
         <Notice tone="info">
-          {value.assign_forced_portable
-            ? `已强制指派模板「${templateName(value.assigned_portable_template_id)}」，以下自选设置暂不生效。`
-            : `已指派模板「${templateName(value.assigned_portable_template_id)}」（自选优先，可在此覆盖）。`}
+          该用户已在订阅页自定义模板配置（用户级，优先于面板级与默认级）。此处保存不影响用户级配置；
+          如需让其设置立即失效，请勾选下方「强制覆盖」。
         </Notice>
       )}
-      {value.assigned_suggested_categories?.length > 0 && (
-        <Notice tone="info">
-          {value.assign_forced_portable
-            ? `已强制指派建议规则（${suggestedCategoryLabels(value.assigned_suggested_categories, categories)}），以下自选设置暂不生效。`
-            : `已指派建议规则（${suggestedCategoryLabels(value.assigned_suggested_categories, categories)}）（自选优先，可在此覆盖）。`}
-        </Notice>
-      )}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label>规则来源</Label>
-          <Select
-            value={value.mode}
-            disabled={value.assign_forced_portable}
-            items={[
-              { value: 'suggested', label: '建议规则' },
-              { value: 'template', label: '自定义模板' },
-            ]}
-            onValueChange={(mode) =>
-              mode && set({ mode: mode as SubscriptionRoutingProfile['mode'] })
-            }
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="suggested">建议规则</SelectItem>
-              <SelectItem value="template">自定义模板</SelectItem>
-            </SelectContent>
-          </Select>
+
+      <div className="space-y-2">
+        <div className="flex items-baseline justify-between gap-2">
+          <Label>面板级模板配置</Label>
+          <span className="cg-hint">
+            {forced ? '覆盖勾选：保存写入强制级，立即生效' : '未勾选覆盖：保存写入面板级，用户自选优先'}
+          </span>
         </div>
-        {value.mode === 'suggested' ? (
+        <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-2">
-            <Label>规则预设</Label>
+            <Label>规则来源</Label>
             <Select
-              value={value.preset}
-              disabled={value.assign_forced_portable}
-              items={Object.entries(presetLabels).map(([value, label]) => ({ value, label }))}
-              onValueChange={(preset) => {
-                if (!preset) return
-                const next = preset as SubscriptionRoutingProfile['preset']
-                set({ preset: next, categories: categoriesForPreset(next, categories) })
-              }}
+              value={value.mode}
+              items={[
+                { value: 'suggested', label: '建议规则' },
+                { value: 'template', label: '自定义模板' },
+              ]}
+              onValueChange={(mode) =>
+                mode && set({ mode: mode as SubscriptionRoutingProfile['mode'] })
+              }
             >
               <SelectTrigger className="w-full">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(presetLabels).map(([id, label]) => (
-                  <SelectItem key={id} value={id}>
-                    {label}
-                  </SelectItem>
-                ))}
+                <SelectItem value="suggested">建议规则</SelectItem>
+                <SelectItem value="template">自定义模板</SelectItem>
               </SelectContent>
             </Select>
           </div>
-        ) : (
-          <div className="space-y-2">
-            <Label>中立 / ACL4SSR 模板</Label>
-            <Select
-              value={value.portable_template_id}
-              disabled={value.assign_forced_portable}
-              items={portable.map((template) => ({ value: template.id, label: template.name }))}
-              onValueChange={(id) => id && set({ portable_template_id: id })}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue
-                  placeholder={value.assign_forced_portable ? '已强制指派' : '选择模板'}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {portable.map((template) => (
-                  <SelectItem key={template.id} value={template.id}>
-                    {template.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {value.mode === 'suggested' ? (
+            <div className="space-y-2">
+              <Label>规则预设</Label>
+              <Select
+                value={value.preset}
+                items={Object.entries(presetLabels).map(([value, label]) => ({ value, label }))}
+                onValueChange={(preset) => {
+                  if (!preset) return
+                  const next = preset as SubscriptionRoutingProfile['preset']
+                  set({ preset: next, categories: categoriesForPreset(next, categories) })
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(presetLabels).map(([id, label]) => (
+                    <SelectItem key={id} value={id}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label>中立 / ACL4SSR 模板</Label>
+              <Select
+                value={value.portable_template_id}
+                items={portable.map((template) => ({ value: template.id, label: template.name }))}
+                onValueChange={(id) => set({ portable_template_id: id ?? '' })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="选择模板" />
+                </SelectTrigger>
+                <SelectContent>
+                  {portable.map((template) => (
+                    <SelectItem key={template.id} value={template.id}>
+                      {template.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
+        {!hasPanelMain && (
+          <p className="cg-hint">
+            主策略未配置：保存后该级不生效，用户将回落到系统默认级配置（模板指派页维护）。
+          </p>
         )}
       </div>
 
       {value.mode === 'suggested' ? (
-        <fieldset disabled={value.assign_forced_portable} className="space-y-2">
-          <legend className="text-sm font-medium">生效分类</legend>
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium">
+            生效分组 <span className="cg-hint">（不选任何分组 = 不设置面板级主策略）</span>
+          </legend>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {categories.map((category) => (
               <label key={category.id} className="cg-check-row">
@@ -170,76 +174,75 @@ export function SubscriptionRoutingFields({
         </fieldset>
       ) : null}
 
+      <div className="space-y-1">
+        <label className="cg-check-row">
+          <input
+            type="checkbox"
+            role="switch"
+            className="cg-checkbox"
+            checked={value.region_groups_enabled}
+            onChange={(event) => set({ region_groups_enabled: event.target.checked })}
+            aria-describedby="routing-region-groups-hint"
+          />
+          开启地区分组
+        </label>
+        <p id="routing-region-groups-hint" className="cg-hint">
+          按节点地区自动添加分组（含无地区分组）；关闭后保留节点和来源分组。
+        </p>
+      </div>
+
       <details className="cg-routing-details">
         <summary>客户端原生模板覆盖</summary>
         <div className="mt-3 grid gap-3 sm:grid-cols-3">
           {(
             [
-              [
-                'mihomo_template_id',
-                'assigned_mihomo_template_id',
-                'assign_forced_mihomo',
-                'Mihomo',
-                'mihomo',
-              ],
-              [
-                'singbox_template_id',
-                'assigned_singbox_template_id',
-                'assign_forced_singbox',
-                'Sing-box',
-                'singbox',
-              ],
-              [
-                'quanx_template_id',
-                'assigned_quanx_template_id',
-                'assign_forced_quanx',
-                'Quantumult X',
-                'quanx',
-              ],
+              ['mihomo_template_id', 'Mihomo', 'mihomo'],
+              ['singbox_template_id', 'Sing-box', 'singbox'],
+              ['quanx_template_id', 'Quantumult X', 'quanx'],
             ] as const
-          ).map(([field, assignedField, forcedField, label, kind]) => {
-            const selected = value[field] as string
-            const assigned = value[assignedField] as string
-            const forced = Boolean(value[forcedField])
-            return (
-              <div key={field} className="space-y-2">
-                <Label>{label}</Label>
-                <Select
-                  value={selected || 'none'}
-                  disabled={forced}
-                  items={[
-                    { value: 'none', label: forced ? '跟随指派' : '跟随主策略' },
-                    ...native(kind).map((template) => ({
-                      value: template.id,
-                      label: template.name,
-                    })),
-                  ]}
-                  onValueChange={(id) => id && set({ [field]: id === 'none' ? '' : id })}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">{forced ? '跟随指派' : '跟随主策略'}</SelectItem>
-                    {native(kind).map((template) => (
-                      <SelectItem key={template.id} value={template.id}>
-                        {template.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {assigned ? (
-                  <p className="cg-hint">
-                    {forced
-                      ? `已强制指派「${templateName(assigned)}」`
-                      : `已指派「${templateName(assigned)}」，自选优先`}
-                  </p>
-                ) : null}
-              </div>
-            )
-          })}
+          ).map(([field, label, kind]) => (
+            <div key={field} className="space-y-2">
+              <Label>{label}</Label>
+              <Select
+                value={value[field] || 'none'}
+                items={[
+                  { value: 'none', label: '跟随主策略' },
+                  ...native(kind).map((template) => ({
+                    value: template.id,
+                    label: template.name,
+                  })),
+                ]}
+                onValueChange={(id) => set({ [field]: id === 'none' ? '' : id })}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">跟随主策略</SelectItem>
+                  {native(kind).map((template) => (
+                    <SelectItem key={template.id} value={template.id}>
+                      {template.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ))}
         </div>
       </details>
+
+      <label className="cg-check-row">
+        <input
+          type="checkbox"
+          className="cg-checkbox"
+          checked={forced}
+          onChange={(event) => set({ forced: event.target.checked })}
+        />
+        强制覆盖用户自选（写入强制级，立即对用户生效）
+      </label>
+      <p className="cg-hint">
+        不勾选时写入面板级：用户自选优先，用户未自定义且无此配置时回落默认级；勾选后写入强制级，覆盖用户的一切自选。
+      </p>
     </div>
   )
 }

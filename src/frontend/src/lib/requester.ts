@@ -107,6 +107,60 @@ export class Requester {
     return this.executeJSON<T>(path, options, GET_MAX_ATTEMPTS)
   }
 
+  /** postJSON 面向无 RPC 信封的公开 JSON 端点（/api/sub/{token}/...，token 即鉴权）：
+   * 请求/响应均为裸 JSON，错误体形如 {"error":"..."}。 */
+  async postJSON<T>(path: string, body: object = {}, options?: RequestOptions): Promise<T> {
+    const requestId = newRequestId()
+    const traceId = newRequestId()
+    const display = options?.display ?? 'foreground'
+    const lifecycle = { requestId, traceId, method: 'POST' as const, path, display }
+    this.emit({ phase: 'start', ...lifecycle })
+    const { signal, cleanup, abortSource } = combinedSignal(
+      options?.signal,
+      options?.timeoutMs ?? 15_000,
+    )
+    try {
+      const response = await fetch(path, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'X-Request-ID': requestId,
+          'X-Trace-ID': traceId,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal,
+      })
+      if (!response.ok) {
+        let message = `请求失败（HTTP ${response.status}）`
+        if (isJSONContentType(response.headers.get('Content-Type') ?? '')) {
+          try {
+            const payload = (await response.json()) as { error?: unknown }
+            if (typeof payload.error === 'string' && payload.error) message = payload.error
+          } catch {
+            // 错误体不是 JSON：保留默认提示。
+          }
+        }
+        throw new RequestError({
+          kind: 'protocol',
+          code: `HTTP_${response.status}`,
+          message,
+          httpStatus: response.status,
+          requestId,
+          traceId,
+        })
+      }
+      const result = await parseJSON<T>(response, requestId, traceId, signal)
+      this.emit({ phase: 'finish', ...lifecycle })
+      return result
+    } catch (error) {
+      cleanup()
+      const normalized = normalizeError(error, requestId, traceId, abortSource())
+      this.emit({ phase: 'finish', ...lifecycle, error: normalized })
+      throw normalized
+    }
+  }
+
   post<T>(path: RPCPathByMethod<'POST'>, body: object = {}, options?: RequestOptions): Promise<T> {
     return this.execute<T>('POST', path, body, options, 1)
   }

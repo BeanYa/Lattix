@@ -1449,3 +1449,147 @@
     padding: 8px;
   }
 }
+
+/* ---------- 模板配置（用户级自选，三级优先级：强制级 > 用户级 > 面板级） ---------- */
+.sub-cfg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sub-cfg-hint {
+  color: var(--panel-ink-2);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.sub-cfg-lock {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid var(--panel-rule-strong);
+  border-left: 2px solid var(--panel-accent);
+  background: var(--panel-inset);
+  padding: 10px 12px;
+  color: var(--panel-ink-2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.sub-cfg-lock svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--panel-accent);
+}
+
+.sub-cfg-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sub-cfg-seg {
+  display: inline-flex;
+  border: 1px solid var(--panel-rule-strong);
+}
+
+.sub-cfg-seg button {
+  flex: 1;
+  min-height: 30px;
+  border: 0;
+  background: var(--panel-ground);
+  padding: 0 14px;
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.sub-cfg-seg button + button {
+  border-left: 1px solid var(--panel-rule-strong);
+}
+
+.sub-cfg-seg button[aria-pressed='true'] {
+  background: var(--panel-ink);
+  color: var(--panel-ground);
+}
+
+.sub-cfg-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.sub-cfg-fieldset legend {
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+.sub-cfg-cats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px 12px;
+}
+
+.sub-cfg-cat {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--panel-ink-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sub-cfg-cat:hover {
+  color: var(--panel-ink);
+}
+
+.sub-cfg-native {
+  border: 1px solid var(--panel-rule);
+  padding: 8px 10px;
+}
+
+.sub-cfg-native summary {
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+}
+
+.sub-cfg-native-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.sub-cfg-native-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sub-cfg-error {
+  color: var(--panel-danger, #e5484d);
+  font-size: 12.5px;
+}
+
+.sub-cfg-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.sub-cfg-note {
+  color: var(--panel-ink-3);
+  font-size: 12px;
+  line-height: 1.5;
+}

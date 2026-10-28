@@ -1199,6 +1199,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/subscription/template/unforce": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["subscriptionTemplateUnforce"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/subscription/template/default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["subscriptionTemplateDefaultGet"];
+        put?: never;
+        post: operations["subscriptionTemplateDefaultSave"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/external-subscription/list": {
         parameters: {
             query?: never;
@@ -3418,6 +3450,55 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    subscriptionTemplateUnforce: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    subscriptionTemplateDefaultGet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    subscriptionTemplateDefaultSave: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     externalSubscriptionList: {
         parameters: {
             query?: never;
@@ -4147,6 +4228,9 @@ export const rpcOperations = {
   subscriptionTemplateRefresh: { method: 'POST', path: '/api/subscription/template/refresh' },
   subscriptionTemplateAssign: { method: 'POST', path: '/api/subscription/template/assign' },
   subscriptionTemplateUnassign: { method: 'POST', path: '/api/subscription/template/unassign' },
+  subscriptionTemplateUnforce: { method: 'POST', path: '/api/subscription/template/unforce' },
+  subscriptionTemplateDefaultGet: { method: 'GET', path: '/api/subscription/template/default' },
+  subscriptionTemplateDefaultSave: { method: 'POST', path: '/api/subscription/template/default' },
   externalSubscriptionList: { method: 'GET', path: '/api/external-subscription/list' },
   externalSubscriptionCreate: { method: 'POST', path: '/api/external-subscription/create' },
   externalSubscriptionUpdate: { method: 'POST', path: '/api/external-subscription/update' },

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 import { api, errorMessage } from '@/lib/api'
-import { defaultSubscriptionRouting } from '@/lib/subscription-routing'
+import { defaultSubscriptionRouting, routingFormFromProfile } from '@/lib/subscription-routing'
 import {
   expiryDateDay,
   formatTrafficLimit,
@@ -77,7 +77,7 @@ export function useUserSubSettings({
       announcementOverride: u.sub_announcement,
       planName: u.plan_name,
       appURL: u.app_url,
-      routing: u.routing,
+      routing: routingFormFromProfile(u.routing),
     })
     setErr('')
   }

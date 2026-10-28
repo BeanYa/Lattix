@@ -658,6 +658,7 @@ export interface SubscriptionRoutingProfile {
   mihomo_template_id: string
   singbox_template_id: string
   quanx_template_id: string
+  user_configured: boolean
   assigned_portable_template_id: string
   assign_forced_portable: boolean
   assigned_mihomo_template_id: string
@@ -667,6 +668,14 @@ export interface SubscriptionRoutingProfile {
   assigned_quanx_template_id: string
   assign_forced_quanx: boolean
   assigned_suggested_categories: string[]
+  /** 表单字段：勾选覆盖 → 保存写入强制级，不勾选 → 面板级（仅路由表单提交时携带）。 */
+  forced?: boolean
+}
+
+/** SubscriptionDefaultConfig 是默认级模板配置（全局一份，模板指派页维护）。 */
+export interface SubscriptionDefaultConfig {
+  suggested_categories: string[]
+  portable_template_id: string
 }
 
 export interface SubscriptionSnapshotStatus {

@@ -22,6 +22,7 @@ import ThemeToggle from '@/components/ThemeToggle'
 import { humanizeBytes } from '@/lib/format'
 import { RequestError, requester } from '@/lib/requester'
 import { formatLatency, latencyTone } from '@/pages/chains/chain-stats'
+import { TemplateConfigCard } from '@/pages/subscription/TemplateConfigCard'
 
 import './subscription.css'
 
@@ -444,6 +445,9 @@ export default function SubscriptionPage() {
   const [downloadVariant, setDownloadVariant] = useState('')
   const [downloadTask, setDownloadTask] = useState<DownloadTask | null>(null)
   const [downloadError, setDownloadError] = useState('')
+  // 模板配置保存后轻量刷新订阅信息（节点数等随快照重生成变化）；首渲染跳过。
+  const [infoTick, setInfoTick] = useState(0)
+  const infoLoaded = useRef(false)
   const copyTimer = useRef<number | undefined>(undefined)
   const downloadTriggered = useRef('')
 
@@ -492,6 +496,21 @@ export default function SubscriptionPage() {
   }, [isPreview, token])
 
   useEffect(() => () => window.clearTimeout(copyTimer.current), [])
+
+  useEffect(() => {
+    if (isPreview || !token) return
+    if (!infoLoaded.current) {
+      // 首次渲染的 info 已由上方 Promise.all 加载。
+      infoLoaded.current = true
+      return
+    }
+    const controller = new AbortController()
+    requester
+      .getJSON<SubInfo>(`/api/sub/${token}/info`, { signal: controller.signal, display: 'silent' })
+      .then(setInfo)
+      .catch(() => {})
+    return () => controller.abort()
+  }, [infoTick, isPreview, token])
 
   useEffect(() => {
     if (
@@ -1049,6 +1068,10 @@ export default function SubscriptionPage() {
             <p className="sub-endpoint-hint">在客户端中手动添加订阅；不同客户端请选择对应格式。</p>
           </div>
         </section>
+
+        {!isPreview ? (
+          <TemplateConfigCard token={token} onSaved={() => setInfoTick((tick) => tick + 1)} />
+        ) : null}
 
         <section className="sub-mod sub-links" aria-label="链路状态">
           <header className="sub-mod-head">

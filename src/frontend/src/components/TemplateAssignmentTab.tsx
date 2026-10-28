@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ChevronDownIcon, ChevronUpIcon, ClipboardCheckIcon, XIcon } from 'lucide-react'
 
 import { EmptyState, Notice } from '@/components/PagePrimitives'
@@ -21,7 +21,12 @@ import {
 } from '@/components/ui/select'
 import { api, errorMessage } from '@/lib/api'
 import { useOperationProgress } from '@/lib/operation-progress-context'
-import type { SubUser, SubscriptionRuleCategory, SubscriptionTemplate } from '@/lib/types'
+import type {
+  SubUser,
+  SubscriptionDefaultConfig,
+  SubscriptionRuleCategory,
+  SubscriptionTemplate,
+} from '@/lib/types'
 
 const SLOTS = [
   ['assigned_portable_template_id', 'assign_forced_portable'],
@@ -63,6 +68,7 @@ export function TemplateAssignmentTab({
   const { showOperation } = useOperationProgress()
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [dialogSource, setDialogSource] = useState<'batch' | 'group'>('batch')
   const [ruleMode, setRuleMode] = useState<'suggested' | 'template'>('suggested')
   const [preset, setPreset] = useState<PresetId>('balanced')
   const [selectedCategories, setSelectedCategories] = useState<string[]>([])
@@ -72,6 +78,26 @@ export function TemplateAssignmentTab({
   const [regionGroupsEnabled, setRegionGroupsEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  // 已指派组卡片内的勾选（`${cardKey}:${userId}`），用于组内批量修改模板/取消覆盖。
+  const [groupChecked, setGroupChecked] = useState<Set<string>>(new Set())
+  // 默认级配置（全局兜底：面板级与用户级均缺席时生效）。编辑器内联在卡片上，
+  // 保存按钮仅在配置相对已保存值发生变化时可用。
+  const [defaultCfg, setDefaultCfg] = useState<SubscriptionDefaultConfig | null>(null)
+  const [defaultMode, setDefaultMode] = useState<'suggested' | 'template'>('suggested')
+  const [defaultCategories, setDefaultCategories] = useState<string[]>([])
+  const [defaultTemplateId, setDefaultTemplateId] = useState('')
+  const [defaultSaving, setDefaultSaving] = useState(false)
+  const [defaultError, setDefaultError] = useState('')
+
+  useEffect(() => {
+    api
+      .subscriptionTemplateDefault({ display: 'silent' })
+      .then((cfg) => {
+        setDefaultCfg(cfg)
+        syncDefaultEditor(cfg)
+      })
+      .catch(() => setDefaultCfg({ suggested_categories: [], portable_template_id: '' }))
+  }, [])
 
   const categoryById = useMemo(
     () => new Map(categories.map((category) => [category.id, category])),
@@ -139,11 +165,35 @@ export function TemplateAssignmentTab({
     })
   }
 
+  const toggleGroupChecked = (cardKey: string, id: number, checked: boolean) => {
+    setGroupChecked((cur) => {
+      const next = new Set(cur)
+      const composite = `${cardKey}:${id}`
+      if (checked) {
+        next.add(composite)
+      } else {
+        next.delete(composite)
+      }
+      return next
+    })
+  }
+
+  const groupCheckedUsers = (cardKey: string, ids: number[]) =>
+    ids.filter((id) => groupChecked.has(`${cardKey}:${id}`))
+
+  const clearGroupChecked = (cardKey: string, ids: number[]) => {
+    setGroupChecked((cur) => {
+      const next = new Set(cur)
+      for (const id of ids) next.delete(`${cardKey}:${id}`)
+      return next
+    })
+  }
+
   const toggleCategory = (id: string, checked: boolean) => {
     setSelectedCategories((cur) => (checked ? [...cur, id] : cur.filter((item) => item !== id)))
   }
 
-  const openDialog = () => {
+  const resetDialogDefaults = () => {
     setError('')
     setRuleMode('suggested')
     setPreset('balanced')
@@ -152,6 +202,19 @@ export function TemplateAssignmentTab({
     setTemplateId('')
     setForced(false)
     setRegionGroupsEnabled(true)
+  }
+
+  const openDialog = () => {
+    resetDialogDefaults()
+    setDialogSource('batch')
+    setDialogOpen(true)
+  }
+
+  // 组卡片右上角「修改模板」：复用指派弹窗，预选该组勾选的用户。
+  const openGroupDialog = (userIds: number[]) => {
+    resetDialogDefaults()
+    setDialogSource('group')
+    setSelected(new Set(userIds))
     setDialogOpen(true)
   }
 
@@ -201,10 +264,172 @@ export function TemplateAssignmentTab({
   const unassignSuggested = (user: SubUser, ids: string[]) =>
     unassign(user, { suggested_categories: ids })
 
+  // 取消覆盖：清除选中用户对应槽位的强制标记（强制级 → 面板级），指派保留为兜底。
+  const unforceUsers = async (
+    userIds: number[],
+    target: { template_id?: string; suggested_categories?: string[] },
+    cardKey: string,
+  ) => {
+    setError('')
+    try {
+      const { observeId } = await api.unforceSubscriptionTemplate(userIds, target)
+      if (observeId) showOperation({ observeId })
+      clearGroupChecked(cardKey, userIds)
+      onChanged()
+    } catch (err) {
+      setError(errorMessage(err))
+    }
+  }
+
   const templateOf = (id: string) => templates.find((template) => template.id === id)
+
+  const syncDefaultEditor = (cfg: SubscriptionDefaultConfig) => {
+    if ((cfg.suggested_categories ?? []).length > 0) {
+      setDefaultMode('suggested')
+      setDefaultCategories([...cfg.suggested_categories])
+      setDefaultTemplateId('')
+    } else if (cfg.portable_template_id) {
+      setDefaultMode('template')
+      setDefaultCategories([])
+      setDefaultTemplateId(cfg.portable_template_id)
+    } else {
+      setDefaultMode('suggested')
+      setDefaultCategories([])
+      setDefaultTemplateId('')
+    }
+  }
+
+  // 编辑器当前值折算为待保存配置，与已保存值比较得出 dirty。
+  const defaultDirty = useMemo(() => {
+    if (!defaultCfg) return false
+    const draftCategories = defaultMode === 'suggested' ? defaultCategories : []
+    const draftPortable = defaultMode === 'template' ? defaultTemplateId : ''
+    const savedCategories = defaultCfg.suggested_categories ?? []
+    if (draftCategories.length !== savedCategories.length) return true
+    if (draftCategories.some((id, index) => id !== savedCategories[index])) return true
+    return draftPortable !== defaultCfg.portable_template_id
+  }, [defaultCfg, defaultMode, defaultCategories, defaultTemplateId])
+
+  const defaultDraft = (): SubscriptionDefaultConfig =>
+    defaultMode === 'suggested'
+      ? { suggested_categories: defaultCategories, portable_template_id: '' }
+      : { suggested_categories: [], portable_template_id: defaultTemplateId }
+
+  const saveDefault = async () => {
+    setDefaultSaving(true)
+    setDefaultError('')
+    try {
+      const { observeId } = await api.saveSubscriptionTemplateDefault(defaultDraft())
+      if (observeId) showOperation({ observeId })
+      const { suggested_categories, portable_template_id } = await api.subscriptionTemplateDefault()
+      const saved = { suggested_categories, portable_template_id }
+      setDefaultCfg(saved)
+      syncDefaultEditor(saved)
+    } catch (err) {
+      setDefaultError(errorMessage(err))
+    } finally {
+      setDefaultSaving(false)
+    }
+  }
 
   return (
     <div className="space-y-4">
+      <div className="cg-card cg-assign-group is-dashed">
+        <div className="cg-assign-group-head">
+          <span className="cg-assign-group-name">默认级配置</span>
+          <span className="cg-status">最低优先级</span>
+          <span className="cg-assign-group-actions">
+            {defaultError && <span className="cg-status is-red">{defaultError}</span>}
+            <Button
+              size="xs"
+              onClick={saveDefault}
+              disabled={!defaultDirty || defaultSaving}
+              title={defaultDirty ? '保存默认级配置' : '配置未修改'}
+            >
+              {defaultSaving ? '保存中…' : '保存默认级'}
+            </Button>
+          </span>
+        </div>
+        <div className="mt-2 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="xs"
+              variant={defaultMode === 'suggested' ? 'default' : 'outline'}
+              onClick={() => setDefaultMode('suggested')}
+            >
+              建议规则
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant={defaultMode === 'template' ? 'default' : 'outline'}
+              onClick={() => setDefaultMode('template')}
+            >
+              使用模板
+            </Button>
+            {defaultMode === 'template' ? (
+              <span className="cg-hint">
+                {defaultTemplateId
+                  ? `模板「${templateOf(defaultTemplateId)?.name ?? defaultTemplateId}」`
+                  : '未选择模板（= 清除默认级）'}
+              </span>
+            ) : defaultCategories.length === 0 ? (
+              <span className="cg-hint">未选分组（= 清除默认级）</span>
+            ) : (
+              <span className="cg-hint">已选 {defaultCategories.length} 个分组</span>
+            )}
+          </div>
+          {defaultMode === 'suggested' ? (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {categories.map((category) => (
+                <label key={category.id} className="cg-check-row">
+                  <input
+                    type="checkbox"
+                    className="cg-checkbox"
+                    checked={defaultCategories.includes(category.id)}
+                    onChange={(event) =>
+                      setDefaultCategories((cur) =>
+                        event.target.checked
+                          ? [...cur, category.id]
+                          : cur.filter((item) => item !== category.id),
+                      )
+                    }
+                  />
+                  <span aria-hidden="true">{category.icon}</span>
+                  <span className="min-w-0 break-words">{category.label}</span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <div className="max-w-md">
+              <Select
+                value={defaultTemplateId}
+                onValueChange={(id) => setDefaultTemplateId(id ?? '')}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="选择模板（清空 = 清除默认级）" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(['portable', 'acl4ssr'] as const).map((kind) =>
+                    assignable
+                      .filter((template) => template.kind === kind && template.content)
+                      .map((template) => (
+                        <SelectItem key={template.id} value={template.id}>
+                          {template.name}（主策略）
+                        </SelectItem>
+                      )),
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <p className="cg-hint">
+            初始默认值：仅当面板未为用户配置模板（面板级/强制级均无）且用户未在订阅页自选（用户级为空）时生效。
+          </p>
+        </div>
+      </div>
+
       <div className="cg-card cg-assign-panel">
         <div className="min-w-0 flex-1">
           <Label>指派用户（勾选后批量指派模板）</Label>
@@ -238,16 +463,45 @@ export function TemplateAssignmentTab({
       <div className="space-y-3">
         {[...suggestedBySet.entries()].map(([key, groupUsers]) => {
           const ids = JSON.parse(key) as string[]
+          const cardKey = `s:${key}`
+          const checkedIds = groupCheckedUsers(
+            cardKey,
+            groupUsers.map((user) => user.id),
+          )
           return (
             <div key={key} className="cg-card cg-assign-group">
               <div className="cg-assign-group-head">
                 <span className="cg-assign-group-name">建议规则 · {suggestedTitle(ids)}</span>
                 <span className="cg-status is-blue">主策略</span>
                 <span className="cg-assign-group-count">{groupUsers.length} 个用户</span>
+                {checkedIds.length > 0 && (
+                  <span className="cg-assign-group-actions">
+                    <Button size="xs" onClick={() => openGroupDialog(checkedIds)}>
+                      修改模板（{checkedIds.length}）
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      title="取消强制覆盖：指派保留为面板级默认，用户自选立即生效"
+                      onClick={() => unforceUsers(checkedIds, { suggested_categories: ids }, cardKey)}
+                    >
+                      取消覆盖（{checkedIds.length}）
+                    </Button>
+                  </span>
+                )}
               </div>
               <div className="cg-assign-chips">
                 {groupUsers.map((user) => (
                   <span key={user.id} className="cg-pill">
+                    <input
+                      type="checkbox"
+                      className="cg-checkbox"
+                      aria-label={`勾选 ${user.name}`}
+                      checked={groupChecked.has(`${cardKey}:${user.id}`)}
+                      onChange={(event) =>
+                        toggleGroupChecked(cardKey, user.id, event.target.checked)
+                      }
+                    />
                     {user.name}
                     {user.routing.assign_forced_portable && (
                       <span className="cg-status is-red">强制</span>
@@ -273,6 +527,11 @@ export function TemplateAssignmentTab({
           .sort(([a], [b]) => (templateOf(a)?.name ?? a).localeCompare(templateOf(b)?.name ?? b))
           .map(([id, entries]) => {
             const template = templateOf(id)
+            const cardKey = `t:${id}`
+            const checkedIds = groupCheckedUsers(
+              cardKey,
+              entries.map((entry) => entry.user.id),
+            )
             return (
               <div key={id} className="cg-card cg-assign-group">
                 <div className="cg-assign-group-head">
@@ -281,10 +540,34 @@ export function TemplateAssignmentTab({
                     <span className="cg-status is-blue">{KIND_LABELS[template.kind]}</span>
                   )}
                   <span className="cg-assign-group-count">{entries.length} 个用户</span>
+                  {checkedIds.length > 0 && (
+                    <span className="cg-assign-group-actions">
+                      <Button size="xs" onClick={() => openGroupDialog(checkedIds)}>
+                        修改模板（{checkedIds.length}）
+                      </Button>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        title="取消强制覆盖：指派保留为面板级默认，用户自选立即生效"
+                        onClick={() => unforceUsers(checkedIds, { template_id: id }, cardKey)}
+                      >
+                        取消覆盖（{checkedIds.length}）
+                      </Button>
+                    </span>
+                  )}
                 </div>
                 <div className="cg-assign-chips">
                   {entries.map(({ user, forced: isForced }) => (
                     <span key={user.id} className="cg-pill">
+                      <input
+                        type="checkbox"
+                        className="cg-checkbox"
+                        aria-label={`勾选 ${user.name}`}
+                        checked={groupChecked.has(`${cardKey}:${user.id}`)}
+                        onChange={(event) =>
+                          toggleGroupChecked(cardKey, user.id, event.target.checked)
+                        }
+                      />
                       {user.name}
                       {isForced && <span className="cg-status is-red">强制</span>}
                       {user.routing.region_groups_enabled === false && (
@@ -339,9 +622,10 @@ export function TemplateAssignmentTab({
       <Dialog open={dialogOpen} onOpenChange={(next) => !next && setDialogOpen(false)}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>指派模板</DialogTitle>
+            <DialogTitle>{dialogSource === 'group' ? '修改模板' : '指派模板'}</DialogTitle>
             <DialogDescription>
-              为选中的 {selected.size} 个用户指派模板；未强制时用户自选优先，强制后用户自选失效。
+              为选中的 {selected.size} 个用户
+              {dialogSource === 'group' ? '更换' : '指派'}模板；未强制时用户自选优先，强制后覆盖用户配置。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

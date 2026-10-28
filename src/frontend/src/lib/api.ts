@@ -47,6 +47,7 @@ import type {
   ServerTestCategory,
   ServerTestTask,
   SubSettings,
+  SubscriptionDefaultConfig,
   SubscriptionRoutingProfile,
   SubscriptionPreview,
   SubscriptionPreviewFormat,
@@ -415,6 +416,19 @@ export const api = {
       template_id?: string
       suggested_categories?: string[]
     }>('/api/subscription/template/unassign', { user_ids: userIds, ...target }),
+  unforceSubscriptionTemplate: (
+    userIds: number[],
+    target: { template_id?: string; suggested_categories?: string[] },
+  ) =>
+    requester.postObserved<{
+      user_ids: number[]
+      template_id?: string
+      suggested_categories?: string[]
+    }>('/api/subscription/template/unforce', { user_ids: userIds, ...target }),
+  subscriptionTemplateDefault: (options?: RequestOptions) =>
+    requester.get<SubscriptionDefaultConfig>('/api/subscription/template/default', undefined, options),
+  saveSubscriptionTemplateDefault: (input: SubscriptionDefaultConfig) =>
+    requester.postObserved<SubscriptionDefaultConfig>('/api/subscription/template/default', input),
   externalSubscriptions: (options?: RequestOptions) =>
     requester.get<ExternalSubscription[]>('/api/external-subscription/list', undefined, options),
   linkGroups: (options?: RequestOptions) =>
