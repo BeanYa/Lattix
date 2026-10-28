@@ -54,6 +54,13 @@ type Server struct {
 	downloadLimiter *clientDownloadLimiter
 
 	observer *progress.Registry // 旁路观察（nil = 关闭，发布循环零开销）
+
+	// 链路状态缓存（§订阅页链路状态）：入口三网目录延迟 + 链路内部延迟加总的
+	// 全局快照，仅每 5 分钟（TTL）或订阅文件快照更新后重建，读请求只查缓存。
+	linkMu      sync.Mutex
+	linkData    *linkStatusData
+	linkDirty   bool
+	linkBuildMu sync.Mutex
 }
 
 // SetObserver 注入旁路观察注册表（panel 初始化时调用；可多次调用，最后者生效）。

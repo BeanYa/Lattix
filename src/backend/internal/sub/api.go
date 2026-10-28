@@ -41,30 +41,7 @@ type ClientInfo struct {
 	DownloadVariants []ClientDownloadVariant `json:"download_variants,omitempty"`
 }
 
-// SubLatencySample 是订阅状态页使用的一次延迟探测结果。服务器标识不对外暴露，
-// 以免订阅链接持有者据此枚举面板基础设施。
-type SubLatencySample struct {
-	LatencyMS *float64 `json:"latency_ms"`
-	UpdatedAt string   `json:"updated_at"`
-}
-
-// SubLinkHopStatus 是订阅中一台服务器的匿名化状态。链路内仅以入口、出口和
-// 中转序号标识；直连节点统一标为“服务器”。
-type SubLinkHopStatus struct {
-	Label   string             `json:"label"`
-	Samples []SubLatencySample `json:"samples"`
-}
-
-// SubLinkStatus 是一个实际出现在订阅内的直连或中转链路，Label 为链路名称。
-type SubLinkStatus struct {
-	Label string             `json:"label"`
-	Hops  []SubLinkHopStatus `json:"hops"`
-}
-
-// SubLinkStatusResponse 是 GET /api/sub/{token}/status 的响应。
-type SubLinkStatusResponse struct {
-	Links []SubLinkStatus `json:"links"`
-}
+// SubLinkStatus / SubLinkStatusResponse 见 link_status.go（链路状态数据结构）。
 
 func disableSharedCache(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "private, no-store")
@@ -197,7 +174,8 @@ func (s *Server) HandleSubClients(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleSubStatus 处理 GET /api/sub/{token}/status。该接口只返回订阅实际可用
-// 路径上的匿名拓扑标签和既有延迟探测样本，不返回服务器名称、地址或内部 ID。
+// 路径上的匿名拓扑标签与既有测速结果（入口三网目录延迟 + 链路内部段延迟加总，
+// 读全局缓存），不返回服务器名称、地址或内部 ID。
 func (s *Server) HandleSubStatus(w http.ResponseWriter, r *http.Request) {
 	disableSharedCache(w)
 	token := r.PathValue("token")
@@ -211,22 +189,23 @@ func (s *Server) HandleSubStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	links, err := s.subscriptionLinkStatus(r, user)
+	data, err := s.linkStatus(r.Context())
+	if err != nil {
+		writeInternalError(w, "serve sub status", err)
+		return
+	}
+	links, err := s.subscriptionLinkStatus(r, user, data)
 	if err != nil {
 		writeInternalError(w, "serve sub status", err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(SubLinkStatusResponse{Links: links})
+	json.NewEncoder(w).Encode(SubLinkStatusResponse{UpdatedAt: data.builtAt, Links: links})
 }
 
-func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User) ([]SubLinkStatus, error) {
+func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User, data *linkStatusData) ([]SubLinkStatus, error) {
 	if user.Expired || user.Disabled || user.QuotaExhausted || user.NotYetEffective(time.Now()) {
 		return []SubLinkStatus{}, nil
-	}
-	samplesByServer, err := s.st.RecentServerMetricSamples(r.Context(), 30)
-	if err != nil {
-		return nil, err
 	}
 	assignedNodes, err := s.st.UserNodeIDs(r.Context(), user.ID)
 	if err != nil {
@@ -264,8 +243,10 @@ func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User) ([]Su
 			name = fmt.Sprintf("直连链路 %d", len(links)+1)
 		}
 		links = append(links, SubLinkStatus{
-			Label: name,
-			Hops:  []SubLinkHopStatus{{Label: "服务器", Samples: subLatencySamples(samplesByServer[node.ServerID])}},
+			Label:      name,
+			Entry:      "服务器",
+			Carriers:   linkCarriers(data, node.ServerID),
+			InternalMS: float64Ptr(0), // 单跳直连无内部段
 		})
 	}
 
@@ -304,41 +285,35 @@ func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User) ([]Su
 			continue
 		}
 		chainNumber++
-		hops := make([]SubLinkHopStatus, 0, len(revision.Snapshot.Hops))
-		for index, hop := range revision.Snapshot.Hops {
-			hops = append(hops, SubLinkHopStatus{
-				Label:   subscriptionHopLabel(index, len(revision.Snapshot.Hops)),
-				Samples: subLatencySamples(samplesByServer[hop.ServerID]),
-			})
+		entry := revision.Snapshot.Hops[0]
+		internal := data.internalByChain[chain.ID]
+		if len(revision.Snapshot.Hops) == 1 {
+			internal = float64Ptr(0) // 单跳链路无内部段
 		}
 		name := strings.TrimSpace(chain.Name)
 		if name == "" {
 			name = fmt.Sprintf("中转链路 %d", chainNumber)
 		}
-		links = append(links, SubLinkStatus{Label: name, Hops: hops})
+		links = append(links, SubLinkStatus{
+			Label:      name,
+			Entry:      subscriptionEntryLabel(len(revision.Snapshot.Hops)),
+			Carriers:   linkCarriers(data, entry.ServerID),
+			InternalMS: internal,
+		})
 	}
 	return links, nil
 }
 
-func subLatencySamples(samples []store.ServerMetrics) []SubLatencySample {
-	out := make([]SubLatencySample, 0, len(samples))
-	for _, sample := range samples {
-		out = append(out, SubLatencySample{LatencyMS: sample.LatencyMS, UpdatedAt: sample.UpdatedAt})
+// subscriptionEntryLabel 返回链路入口的角色标签（直连节点统一标为“服务器”）。
+func subscriptionEntryLabel(hopCount int) string {
+	if hopCount == 1 {
+		return "服务器"
 	}
-	return out
+	return "入口"
 }
 
-func subscriptionHopLabel(index, count int) string {
-	if count == 1 {
-		return "入口 / 出口"
-	}
-	if index == 0 {
-		return "入口"
-	}
-	if index == count-1 {
-		return "出口"
-	}
-	return fmt.Sprintf("中转 %d", index)
+func float64Ptr(v float64) *float64 {
+	return &v
 }
 
 // HandleSubHistory 处理 GET /api/sub/{token}/history（返回用户流量历史）。

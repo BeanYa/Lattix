@@ -214,6 +214,8 @@ func (s *Server) publishUserLocked(ctx context.Context, userID int64, baseURL st
 	if err != nil {
 		return s.publishFailure(ctx, userID, err)
 	}
+	// 订阅文件快照更新：链路状态缓存随之失效（下一次 /status 读取时重建）。
+	s.invalidateLinkStatus()
 	return PublishResult{SubscriptionSnapshotStatus: status, Files: visible, Warnings: warnings}, nil
 }
 

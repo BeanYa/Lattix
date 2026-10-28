@@ -767,9 +767,9 @@
 .sub-link-row {
   display: grid;
   grid-template-columns: 170px minmax(0, 1fr);
-  align-items: start;
+  align-items: center;
   gap: 14px;
-  padding: 7px 10px;
+  padding: 9px 10px;
   border-bottom: 1px solid var(--panel-rule);
 }
 
@@ -789,100 +789,175 @@
   white-space: nowrap;
 }
 
-.sub-hop-list {
+/* 链路流：各地公开 CDN 测速源（左）汇入入口服务器，经内部延迟加总箭头指向
+ * Internet（右），与面板链路详情的段延迟口径一致。 */
+.sub-link-flow {
+  --sub-link-gap: 10px;
   display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.sub-hop {
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: var(--sub-link-gap);
   min-width: 0;
 }
 
-.sub-hop-label {
+.sub-link-sources {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* 行高与行距对应 TSX 的 SOURCE_ROW_H / SOURCE_ROW_GAP（汇流 SVG 依赖该几何）。 */
+.sub-link-source {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  min-width: 0;
+}
+
+.sub-link-source + .sub-link-source {
+  margin-top: 8px;
+}
+
+.sub-link-source.is-empty {
+  height: auto;
+  color: var(--panel-ink-3);
+  font-size: 12px;
+}
+
+.sub-link-source-name {
+  overflow: hidden;
   color: var(--panel-ink-2);
   font-size: 12px;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.latency-history {
-  display: grid;
-  grid-template-columns: repeat(30, minmax(0, 1fr));
-  height: 12px;
-  min-width: 0;
-  gap: 2px;
-  outline: none;
-}
-
-.latency-cell {
-  position: relative;
-  min-width: 0;
-  background: var(--panel-rule);
-}
-
-.latency-cell.is-healthy {
-  background: var(--panel-success);
-}
-
-.latency-cell.is-warning {
-  background: var(--panel-warning);
-}
-
-.latency-cell.is-critical,
-.latency-cell.is-timeout {
-  background: var(--panel-danger);
-}
-
-.latency-cell:hover {
-  z-index: 2;
-  outline: 1px solid var(--panel-ink);
-}
-
-.latency-tooltip {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  display: grid;
-  z-index: 5;
-  min-width: max-content;
-  gap: 2px;
-  border: 1px solid var(--panel-rule-strong);
-  border-radius: 1px;
-  background: var(--panel-surface);
-  padding: 4px 7px;
-  color: var(--panel-ink);
-  font-size: 12px;
-  line-height: 1.3;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-  transform: translateX(-50%);
-}
-
-.latency-tooltip strong {
-  font-family: var(--font-display);
-  font-size: 12.5px;
-  font-weight: 700;
-}
-
-.latency-tooltip small {
+.sub-link-node-glyph {
+  display: inline-flex;
+  flex-shrink: 0;
   color: var(--panel-ink-3);
+}
+
+.sub-link-merge {
+  flex-shrink: 0;
+}
+
+.sub-link-merge path {
+  fill: none;
+  stroke: var(--panel-rule-strong);
+  stroke-width: 1;
+}
+
+.sub-link-node {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border: 1px solid var(--panel-rule-strong);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--panel-surface) 55%, transparent);
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.sub-link-node .sub-link-node-glyph {
+  color: var(--panel-ink-2);
+}
+
+.sub-link-node.is-wan .sub-link-node-glyph {
+  color: var(--panel-status-ok);
+}
+
+/* 段延迟标注胶囊：与链路详情 cg-hop-latency 同款（口径 <100 / 100–300 / >300ms）。 */
+.sub-link-latency {
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-status-ok) 45%, var(--panel-rule));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-status-ok) 10%, var(--panel-surface));
+  color: var(--panel-status-ok);
+  font-family: var(--font-display);
   font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.latency-cell:nth-child(-n + 3) .latency-tooltip {
-  left: 0;
-  transform: none;
+.sub-link-latency[data-tone='warn'] {
+  border-color: color-mix(in srgb, var(--panel-status-degraded) 45%, var(--panel-rule));
+  background: color-mix(in srgb, var(--panel-status-degraded) 10%, var(--panel-surface));
+  color: var(--panel-status-degraded);
 }
 
-.latency-cell:nth-child(n + 28) .latency-tooltip {
-  right: 0;
-  left: auto;
-  transform: none;
+.sub-link-latency[data-tone='fail'] {
+  border-color: color-mix(in srgb, var(--panel-status-failed) 45%, var(--panel-rule));
+  background: color-mix(in srgb, var(--panel-status-failed) 10%, var(--panel-surface));
+  color: var(--panel-status-failed);
+}
+
+.sub-link-latency[data-tone='idle'] {
+  border-color: var(--panel-rule-strong);
+  background: transparent;
+  color: var(--panel-ink-3);
+}
+
+/* 内部延迟加总箭头：线体 + 箭头头跟随延迟状态色，标注胶囊悬浮在线体上方；
+ * 右缘吃掉与 Internet 框的列间距，让箭尖正好抵住框边。 */
+.sub-link-internal {
+  display: flex;
+  flex: 1;
+  min-width: 96px;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-right: calc(-1 * var(--sub-link-gap, 10px));
+}
+
+.sub-link-internal[data-tone='idle'] {
+  --sub-internal-tone: var(--panel-ink-3);
+}
+
+.sub-link-internal[data-tone='ok'] {
+  --sub-internal-tone: var(--panel-status-ok);
+}
+
+.sub-link-internal[data-tone='warn'] {
+  --sub-internal-tone: var(--panel-status-degraded);
+}
+
+.sub-link-internal[data-tone='fail'] {
+  --sub-internal-tone: var(--panel-status-failed);
+}
+
+.sub-link-internal-track {
+  position: relative;
+  display: block;
+  align-self: stretch;
+  height: 1px;
+  background: color-mix(
+    in srgb,
+    var(--sub-internal-tone, var(--panel-rule-strong)) 70%,
+    transparent
+  );
+}
+
+.sub-link-internal-track::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -1px;
+  width: 0;
+  height: 0;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  border-left: 6px solid var(--sub-internal-tone, var(--panel-rule-strong));
+  transform: translateY(-50%);
 }
 
 .sub-empty-line {
@@ -1256,14 +1331,45 @@
     font-size: 13px;
   }
 
-  .sub-hop {
-    grid-template-columns: 56px minmax(0, 1fr);
-    gap: 8px;
+  .sub-link-flow {
+    --sub-link-gap: 8px;
   }
 
-  .latency-history {
-    height: 11px;
-    gap: 1px;
+  /* 窄屏单行布局：入口 / Internet 框收成纯图标，给三网源和延迟让出宽度。 */
+  .sub-link-node {
+    padding: 5px;
+  }
+
+  .sub-link-node-label {
+    display: none;
+  }
+
+  .sub-link-internal {
+    min-width: 56px;
+  }
+
+  .sub-link-source {
+    gap: 5px;
+  }
+
+  .sub-link-source-name {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 379px) {
+  /* 极窄屏兜底：三网源整行铺开，入口 → 内部箭头 → Internet 换行，汇流曲线隐藏。 */
+  .sub-link-flow {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .sub-link-sources {
+    flex-basis: 100%;
+  }
+
+  .sub-link-merge {
+    display: none;
   }
 }
 

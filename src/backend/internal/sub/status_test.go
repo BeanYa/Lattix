@@ -75,13 +75,14 @@ func TestSubStatusUsesEffectiveGroupAssignments(t *testing.T) {
 			var labels []string
 			for _, link := range status.Links {
 				labels = append(labels, link.Label)
-				if len(link.Hops) != 2 {
-					t.Fatalf("hops=%+v, want entry and exit even without samples", link.Hops)
+				if link.Entry != "入口" {
+					t.Fatalf("entry=%q, want 入口 role label", link.Entry)
 				}
-				for _, hop := range link.Hops {
-					if hop.Samples == nil || len(hop.Samples) != 0 {
-						t.Fatalf("samples=%+v, want empty array", hop.Samples)
-					}
+				if link.Carriers == nil {
+					t.Fatalf("carriers=%+v, want empty array (no catalog configured)", link.Carriers)
+				}
+				if link.InternalMS != nil {
+					t.Fatalf("internal_ms=%v, want null without fresh probe samples", *link.InternalMS)
 				}
 			}
 			slices.Sort(labels)
@@ -106,7 +107,11 @@ func TestSubStatusUsesEffectiveGroupAssignments(t *testing.T) {
 	if _, _, err := st.SetUserNodes(ctx, userID, []int64{directNode}); err != nil {
 		t.Fatal(err)
 	}
-	links, err := server.subscriptionLinkStatus(httptest.NewRequest("GET", "/", nil), user)
+	statusData, err := server.linkStatus(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	links, err := server.subscriptionLinkStatus(httptest.NewRequest("GET", "/", nil), user, statusData)
 	if err != nil || len(links) != 2 {
 		t.Fatalf("grouped user with direct node: links=%+v err=%v, want only 2 grouped chains", links, err)
 	}
@@ -126,7 +131,7 @@ func TestSubStatusUsesEffectiveGroupAssignments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	links, err = server.subscriptionLinkStatus(httptest.NewRequest("GET", "/", nil), outsideUser)
+	links, err = server.subscriptionLinkStatus(httptest.NewRequest("GET", "/", nil), outsideUser, statusData)
 	if err != nil || len(links) != 2 {
 		t.Fatalf("ungrouped user: links=%+v err=%v, want direct node and assigned chain", links, err)
 	}

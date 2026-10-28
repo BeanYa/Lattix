@@ -187,12 +187,11 @@ func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
 	if err := json.NewDecoder(statusRec.Body).Decode(&status); err != nil {
 		t.Fatal(err)
 	}
-	if len(status.Links) != 1 || status.Links[0].Label != "shared" || len(status.Links[0].Hops) != 2 {
+	if len(status.Links) != 1 || status.Links[0].Label != "shared" {
 		t.Fatalf("status links = %+v", status.Links)
 	}
-	if status.Links[0].Hops[0].Label != "入口" || status.Links[0].Hops[1].Label != "出口" ||
-		len(status.Links[0].Hops[0].Samples) != 1 || len(status.Links[0].Hops[1].Samples) != 1 {
-		t.Fatalf("status hops = %+v", status.Links[0].Hops)
+	if status.Links[0].Entry != "入口" || status.Links[0].Carriers == nil || status.Links[0].InternalMS != nil {
+		t.Fatalf("status link = %+v, want anonymized entry, empty carriers, null internal latency", status.Links[0])
 	}
 	if err := st.SetUserDisabled(ctx, userID, true); err != nil {
 		t.Fatal(err)

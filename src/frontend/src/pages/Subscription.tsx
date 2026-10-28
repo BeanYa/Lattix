@@ -6,8 +6,11 @@ import {
   CircleAlertIcon,
   CopyIcon,
   DownloadIcon,
+  GlobeIcon,
   QrCodeIcon,
+  RadioTowerIcon,
   RefreshCwIcon,
+  ServerIcon,
   WifiIcon,
   XIcon,
 } from 'lucide-react'
@@ -18,6 +21,7 @@ import { QRDialog } from '@/components/QRDialog'
 import ThemeToggle from '@/components/ThemeToggle'
 import { humanizeBytes } from '@/lib/format'
 import { RequestError, requester } from '@/lib/requester'
+import { formatLatency, latencyTone } from '@/pages/chains/chain-stats'
 
 import './subscription.css'
 
@@ -57,20 +61,23 @@ interface DownloadTask {
   error?: string
 }
 
-interface LatencySample {
+/** CarrierStatus 是入口服务器到一个三网公开 CDN 测速点的最新延迟。 */
+interface CarrierStatus {
+  label: string
   latency_ms: number | null
-  updated_at: string
+  sampled_at?: string
 }
 
+/** LinkStatus 是一条链路的匿名状态：入口三网延迟 + 内部段延迟加总（无服务器标识）。 */
 interface LinkStatus {
   label: string
-  hops: Array<{
-    label: string
-    samples: LatencySample[]
-  }>
+  entry: string
+  carriers: CarrierStatus[]
+  internal_ms: number | null
 }
 
 interface LinkStatusResponse {
+  updated_at: string
   links: LinkStatus[]
 }
 
@@ -133,44 +140,40 @@ const previewClients: ClientInfo[] = [
   { name: '通用订阅', platform: 'universal', deeplink: '', format: 'base64' },
 ]
 
+function previewSampledAt(): string {
+  return new Date().toISOString()
+}
+
 const previewLinkStatus: LinkStatus[] = [
   {
     label: '🇯🇵东京-Out',
-    hops: [
-      {
-        label: '入口',
-        samples: [
-          42, 38, 45, 39, 41, 44, 40, 43, 46, 48, 44, 39, 42, 41, 43, 46, 40, 38, 41, 44, 45, 43,
-          47, 42, 41, 39, 44, 40, 42, 45,
-        ].map(previewLatencySample),
-      },
-      {
-        label: '中转 1',
-        samples: [
-          82, 88, 91, 85, 92, 103, 97, 89, 84, 90, 94, 87, 98, 101, 93, 88, 95, 99, 86, 91, 88, 97,
-          102, 90, 89, 94, 98, 92, 87, 91,
-        ].map(previewLatencySample),
-      },
-      {
-        label: '出口',
-        samples: [
-          128, 142, 158, 135, 129, 144, 151, 137, 132, 148, 139, 130, 145, 152, 136, 142, 155, 149,
-          134, 141, 138, 147, 159, 143, 132, 146, 151, 139, 145, 148,
-        ].map(previewLatencySample),
-      },
+    entry: '入口',
+    carriers: [
+      { label: '广东电信', latency_ms: 23.4, sampled_at: previewSampledAt() },
+      { label: '广东联通', latency_ms: 41.2, sampled_at: previewSampledAt() },
+      { label: '广东移动', latency_ms: 156, sampled_at: previewSampledAt() },
     ],
+    internal_ms: 87.3,
   },
   {
     label: '🇸🇬新加坡-Direct',
-    hops: [
-      {
-        label: '服务器',
-        samples: [
-          61, 58, 63, 59, 67, 64, 62, 70, 66, 61, 57, 64, 69, 60, 63, 65, 59, 68, 71, 62, 60, 66,
-          64, 58, 63, 67, 61, 59, 65, 62,
-        ].map(previewLatencySample),
-      },
+    entry: '服务器',
+    carriers: [
+      { label: '广东电信', latency_ms: 61, sampled_at: previewSampledAt() },
+      { label: '广东联通', latency_ms: null, sampled_at: previewSampledAt() },
+      { label: '广东移动', latency_ms: 58, sampled_at: previewSampledAt() },
     ],
+    internal_ms: 0,
+  },
+  {
+    label: '🇺🇸洛杉矶-AI',
+    entry: '入口',
+    carriers: [
+      { label: '广东电信', latency_ms: 48, sampled_at: previewSampledAt() },
+      { label: '广东联通', latency_ms: null },
+      { label: '广东移动', latency_ms: 92, sampled_at: previewSampledAt() },
+    ],
+    internal_ms: null,
   },
 ]
 
@@ -203,17 +206,6 @@ function formatExpiry(timestamp?: number): string {
   }).format(new Date(timestamp * 1000))
 }
 
-function previewLatencySample(latency_ms: number): LatencySample {
-  return { latency_ms, updated_at: new Date().toISOString() }
-}
-
-function latencyTone(latency: number | null): 'healthy' | 'warning' | 'critical' | 'timeout' {
-  if (latency === null) return 'timeout'
-  if (latency >= 300) return 'critical'
-  if (latency >= 100) return 'warning'
-  return 'healthy'
-}
-
 function formatSampleTime(value: string): string {
   if (!value) return '采样时间未知'
   const date = new Date(value)
@@ -239,61 +231,113 @@ function lastRowClass(index: number, total: number): string {
     .join(' ')
 }
 
-function LatencyHistory({ label, samples }: { label: string; samples: LatencySample[] }) {
-  const [activeIndex, setActiveIndex] = useState<number | null>(null)
-  const values = samples.slice(-30)
-  const cells: Array<LatencySample | null> = [
-    ...values,
-    ...Array.from<null>({ length: Math.max(0, 30 - values.length) }).fill(null),
-  ]
+// SOURCE_ROW_H / SOURCE_ROW_GAP 是三网源行的几何参数（与 CSS 行高一致，供汇流
+// SVG 计算路径）；汇流曲线把各 CDN 测速源汇聚到入口服务器。
+const SOURCE_ROW_H = 24
+const SOURCE_ROW_GAP = 8
 
-  return (
-    <div className="sub-hop">
-      <span className="sub-hop-label">{label}</span>
-      <div
-        className="latency-history"
-        role="group"
-        tabIndex={0}
-        aria-label={`${label} 最近 30 次延迟状态，使用左右方向键查看采样数据`}
-        onMouseLeave={(event) => {
-          if (document.activeElement !== event.currentTarget) setActiveIndex(null)
-        }}
-        onFocus={() => setActiveIndex((current) => current ?? cells.length - 1)}
-        onBlur={() => setActiveIndex(null)}
-        onKeyDown={(event) => {
-          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-          event.preventDefault()
-          const direction = event.key === 'ArrowLeft' ? -1 : 1
-          setActiveIndex((current) =>
-            Math.min(cells.length - 1, Math.max(0, (current ?? cells.length - 1) + direction)),
-          )
-        }}
+/** CarrierLatency 是三网源延迟标注：口径与链路详情段延迟一致（<100/100–300/>300ms），
+ * 失败样本如实显示「超时」，无样本显示「—」。 */
+function CarrierLatency({ carrier }: { carrier: CarrierStatus }) {
+  if (carrier.latency_ms === null) {
+    const missing = !carrier.sampled_at
+    return (
+      <span
+        className="sub-link-latency"
+        data-tone={missing ? 'idle' : 'fail'}
+        title={missing ? '暂无三网测速样本' : '最近一次三网探测失败/超时'}
       >
-        {cells.map((sample, index) => {
-          const tone = sample ? latencyTone(sample.latency_ms) : 'missing'
-          const labelText =
-            sample === null
-              ? '无数据'
-              : sample.latency_ms === null
-                ? '探测超时'
-                : `${Math.round(sample.latency_ms)} ms`
-          return (
-            <span
-              key={sample ? `${sample.updated_at}-${index}` : `empty-${index}`}
-              className={`latency-cell is-${tone}`}
-              onMouseEnter={() => setActiveIndex(index)}
-            >
-              {activeIndex === index ? (
-                <span className="latency-tooltip" role="tooltip">
-                  <strong>{labelText}</strong>
-                  <small>{sample ? formatSampleTime(sample.updated_at) : '尚无采样记录'}</small>
+        {missing ? '—' : '超时'}
+      </span>
+    )
+  }
+  return (
+    <span
+      className="sub-link-latency"
+      data-tone={latencyTone(carrier.latency_ms)}
+      title={carrier.sampled_at ? `采样 ${formatSampleTime(carrier.sampled_at)}` : undefined}
+    >
+      {formatLatency(carrier.latency_ms)}
+    </span>
+  )
+}
+
+/** LinkFlowRow 是一条链路的流式状态行：各地公开 CDN 测速源（电信/联通/移动）汇入
+ * 入口服务器，中部箭头标注链路内部段延迟加总（x ms），右侧 Internet 表示出口
+ * 落地接入互联网。 */
+function LinkFlowRow({ link }: { link: LinkStatus }) {
+  const count = Math.max(1, link.carriers.length)
+  const stackHeight = count * SOURCE_ROW_H + (count - 1) * SOURCE_ROW_GAP
+  const mid = stackHeight / 2
+  const centers = Array.from(
+    { length: count },
+    (_, i) => i * (SOURCE_ROW_H + SOURCE_ROW_GAP) + SOURCE_ROW_H / 2,
+  )
+  const internal = link.internal_ms
+  const internalTone = internal === null || internal === 0 ? 'idle' : latencyTone(internal)
+  const internalLabel = internal === null ? '—' : internal === 0 ? '直连' : formatLatency(internal)
+  return (
+    <article className="sub-link-row">
+      <span className="sub-link-name">{link.label}</span>
+      <div className="sub-link-flow">
+        <div className="sub-link-sources" style={{ height: stackHeight }}>
+          {link.carriers.length > 0 ? (
+            link.carriers.map((carrier) => (
+              <span className="sub-link-source" key={carrier.label}>
+                <span className="sub-link-node-glyph" title="公共 CDN 测速源">
+                  <RadioTowerIcon size={12} aria-hidden="true" />
                 </span>
-              ) : null}
-            </span>
-          )
-        })}
+                <span className="sub-link-source-name">{carrier.label}</span>
+                <CarrierLatency carrier={carrier} />
+              </span>
+            ))
+          ) : (
+            <span className="sub-link-source is-empty">暂无三网测速数据</span>
+          )}
+        </div>
+        {link.carriers.length > 0 ? (
+          <svg
+            className="sub-link-merge"
+            width={26}
+            height={stackHeight}
+            viewBox={`0 0 26 ${stackHeight}`}
+            aria-hidden="true"
+          >
+            {centers.map((cy) => (
+              <path key={cy} d={`M 0 ${cy} C 14 ${cy}, 12 ${mid}, 26 ${mid}`} />
+            ))}
+          </svg>
+        ) : null}
+        <span className="sub-link-node">
+          <span className="sub-link-node-glyph">
+            <ServerIcon size={13} aria-hidden="true" />
+          </span>
+          <span className="sub-link-node-label">{link.entry}</span>
+        </span>
+        <span className="sub-link-internal" data-tone={internalTone}>
+          <span
+            className="sub-link-latency"
+            data-tone={internalTone}
+            title={
+              internal === null
+                ? '内部段延迟不完整（缺新鲜测速样本）'
+                : internal === 0
+                  ? '单跳直连，无内部链路段'
+                  : '链路内部各段首选 RTT 之和'
+            }
+          >
+            {internalLabel}
+          </span>
+          <i className="sub-link-internal-track" aria-hidden="true" />
+        </span>
+        <span className="sub-link-node is-wan">
+          <span className="sub-link-node-glyph">
+            <GlobeIcon size={13} aria-hidden="true" />
+          </span>
+          <span className="sub-link-node-label">Internet</span>
+        </span>
       </div>
-    </div>
+    </article>
   )
 }
 
@@ -1010,20 +1054,13 @@ export default function SubscriptionPage() {
           <header className="sub-mod-head">
             <span className="sub-tab">LINKS</span>
             <h2 className="sub-mod-title">链路状态</h2>
-            <span className="sub-mod-meta">最近 30 次延迟（节点到面板服务器）</span>
+            <span className="sub-mod-meta">入口三网延迟 → 链路 → Internet · 每 5 分钟更新</span>
           </header>
           <div className="sub-mod-body sub-mod-body-flush">
             {linkStatus && linkStatus.length > 0 ? (
               <div className="sub-link-list">
                 {linkStatus.map((link) => (
-                  <article key={link.label} className="sub-link-row">
-                    <span className="sub-link-name">{link.label}</span>
-                    <div className="sub-hop-list">
-                      {link.hops.map((hop) => (
-                        <LatencyHistory key={hop.label} label={hop.label} samples={hop.samples} />
-                      ))}
-                    </div>
-                  </article>
+                  <LinkFlowRow key={link.label} link={link} />
                 ))}
               </div>
             ) : linkStatus ? (
