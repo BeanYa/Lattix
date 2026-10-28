@@ -51,8 +51,10 @@ import {
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api } from '@/lib/api'
+import { useAppDialog } from '@/lib/app-dialog'
 import { formatByteRate, formatDateTime, humanizeBytes } from '@/lib/format'
 import { formatPortRange } from '@/lib/ports'
+import { providerWebsiteUrl } from '@/lib/provider-website'
 import { isServerOnline, serverConnectionLabel } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
 import type {
@@ -114,6 +116,10 @@ function serverConnectionNotice(state: ServerConnectionState): string {
     case 'online':
       return ''
   }
+}
+
+function openExternalUrl(url: string) {
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
 
 function convertedRateLabel(cost: ConvertedCost): string {
@@ -465,9 +471,10 @@ function ServerActions({
           ) : null}
           {server.billing.provider?.website_url ? (
             <DropdownMenuItem
-              onClick={() =>
-                window.open(server.billing.provider?.website_url, '_blank', 'noopener,noreferrer')
-              }
+              onClick={() => {
+                const url = providerWebsiteUrl(server.billing.provider?.website_url)
+                if (url) openExternalUrl(url)
+              }}
             >
               <ExternalLinkIcon />
               打开服务商官网
@@ -1090,6 +1097,19 @@ function DetailSheet({
   const [history, setHistory] = useState<ServerMetrics[]>([])
   const [loading, setLoading] = useState(false)
   const [trafficHistory, setTrafficHistory] = useState<TrafficStatPoint[]>([])
+  const { notify } = useAppDialog()
+
+  const openProviderPage = () => {
+    const url = providerWebsiteUrl(server?.billing.provider?.website_url)
+    if (url) {
+      openExternalUrl(url)
+      return
+    }
+    void notify({
+      title: '未设置服务商官网',
+      description: '该服务器未绑定服务商或服务商未填写官网，可在服务器编辑或「服务商管理」中设置。',
+    })
+  }
 
   const load = useCallback(() => {
     if (!server) return
@@ -1150,6 +1170,17 @@ function DetailSheet({
             {server?.alias ?? '服务器详情'}
           </SheetTitle>
           <SheetDescription>主机信息与最近 24 小时探针指标</SheetDescription>
+          {server ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-1 self-start"
+              onClick={openProviderPage}
+            >
+              <ExternalLinkIcon />
+              打开服务商官网
+            </Button>
+          ) : null}
         </SheetHeader>
         {server ? (
           <div className="flex flex-col gap-5 px-4 pb-6">
