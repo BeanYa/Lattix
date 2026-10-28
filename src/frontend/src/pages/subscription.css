@@ -907,16 +907,22 @@
   color: var(--panel-ink-3);
 }
 
-/* 内部延迟加总箭头：线体 + 箭头头跟随延迟状态色，标注胶囊悬浮在线体上方；
+/* 内部延迟加总箭头：线体 + 箭头头跟随延迟状态色；线体作为唯一在流子元素，
+ * 与入口 / Internet 框同轴居中；标注胶囊绝对定位悬浮在线体上方，不参与行内
+ * 布局（否则列整体居中会把线体压低半个胶囊，箭尖偏离 Internet 框中心）。
  * 右缘吃掉与 Internet 框的列间距，让箭尖正好抵住框边。 */
 .sub-link-internal {
-  display: flex;
+  position: relative;
   flex: 1;
   min-width: 96px;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
   margin-right: calc(-1 * var(--sub-link-gap, 10px));
+}
+
+.sub-link-internal .sub-link-latency {
+  position: absolute;
+  left: 50%;
+  bottom: calc(50% + 4px);
+  transform: translateX(-50%);
 }
 
 .sub-link-internal[data-tone='idle'] {
@@ -938,7 +944,6 @@
 .sub-link-internal-track {
   position: relative;
   display: block;
-  align-self: stretch;
   height: 1px;
   background: color-mix(
     in srgb,
