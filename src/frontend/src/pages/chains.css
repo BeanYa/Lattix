@@ -292,7 +292,7 @@
 @media (min-width: 1024px) {
   .cg-chain-split {
     grid-template-columns: minmax(0, 1fr) 244px;
-    align-items: start;
+    align-items: center; /* 服务器卡片相对较高的流量面板垂直居中 */
   }
 }
 
@@ -377,6 +377,11 @@
   .cg-hop-seg {
     flex-direction: row;
     align-items: center;
+    flex: 0 0 auto;
+  }
+
+  /* 富余空间只给携带连线的段：连线两端吸附前后卡片（首跳段无连线不伸展） */
+  .cg-hop-seg.has-link {
     flex: 1 1 auto;
   }
 }

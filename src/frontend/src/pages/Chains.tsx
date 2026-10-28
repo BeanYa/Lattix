@@ -890,7 +890,11 @@ export default function Chains() {
                                       exitNode?.port ??
                                       h.forward_port)
                               return (
-                                <div key={h.id} className="cg-hop-seg" title={h.error || undefined}>
+                                <div
+                                  key={h.id}
+                                  className={cn('cg-hop-seg', i > 0 && 'has-link')}
+                                  title={h.error || undefined}
+                                >
                                   {i > 0 ? (
                                     <HopLink
                                       segment={segmentForLink(statsIndex, c.hops[i - 1].id, h.id)}
