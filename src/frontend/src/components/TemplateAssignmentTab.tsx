@@ -483,7 +483,9 @@ export function TemplateAssignmentTab({
                       size="xs"
                       variant="outline"
                       title="取消强制覆盖：指派保留为面板级默认，用户自选立即生效"
-                      onClick={() => unforceUsers(checkedIds, { suggested_categories: ids }, cardKey)}
+                      onClick={() =>
+                        unforceUsers(checkedIds, { suggested_categories: ids }, cardKey)
+                      }
                     >
                       取消覆盖（{checkedIds.length}）
                     </Button>
@@ -625,7 +627,8 @@ export function TemplateAssignmentTab({
             <DialogTitle>{dialogSource === 'group' ? '修改模板' : '指派模板'}</DialogTitle>
             <DialogDescription>
               为选中的 {selected.size} 个用户
-              {dialogSource === 'group' ? '更换' : '指派'}模板；未强制时用户自选优先，强制后覆盖用户配置。
+              {dialogSource === 'group' ? '更换' : '指派'}
+              模板；未强制时用户自选优先，强制后覆盖用户配置。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

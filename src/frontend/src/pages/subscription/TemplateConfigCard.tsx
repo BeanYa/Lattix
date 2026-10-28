@@ -97,13 +97,7 @@ function effectiveSummary(config: SubRoutingConfig, templates: SubTemplateOption
  * TemplateConfigCard 是订阅页的用户级模板配置卡（三级优先级：强制级 > 用户级 > 面板级）。
  * 管理员强制指派期间显示锁定提示；用户保存后立即重生成订阅快照。
  */
-export function TemplateConfigCard({
-  token,
-  onSaved,
-}: {
-  token: string
-  onSaved: () => void
-}) {
+export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved: () => void }) {
   const [config, setConfig] = useState<SubTemplateConfig | null>(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [mode, setMode] = useState<'suggested' | 'template'>('suggested')
@@ -236,7 +230,9 @@ export function TemplateConfigCard({
               <p className="sub-cfg-hint">{config.panel_assigned_summary}。</p>
             )}
             {config.default_summary && !config.panel_assigned_summary && (
-              <p className="sub-cfg-hint">{config.default_summary}，你可以在下方设置自己的模板配置。</p>
+              <p className="sub-cfg-hint">
+                {config.default_summary}，你可以在下方设置自己的模板配置。
+              </p>
             )}
             {config.user_configured ? (
               <p className="sub-cfg-hint">
@@ -299,9 +295,7 @@ export function TemplateConfigCard({
                         <input
                           type="checkbox"
                           checked={categories.includes(category.id)}
-                          onChange={(event) =>
-                            toggleCategory(category.id, event.target.checked)
-                          }
+                          onChange={(event) => toggleCategory(category.id, event.target.checked)}
                         />
                         <span aria-hidden="true">{category.icon}</span>
                         <span>{category.label}</span>
@@ -336,9 +330,27 @@ export function TemplateConfigCard({
               <div className="sub-cfg-native-grid">
                 {(
                   [
-                    ['mihomo', mihomoId, setMihomoId, config.forced_mihomo, config.assigned_mihomo_template_id],
-                    ['singbox', singboxId, setSingboxId, config.forced_singbox, config.assigned_singbox_template_id],
-                    ['quanx', quanxId, setQuanxId, config.forced_quanx, config.assigned_quanx_template_id],
+                    [
+                      'mihomo',
+                      mihomoId,
+                      setMihomoId,
+                      config.forced_mihomo,
+                      config.assigned_mihomo_template_id,
+                    ],
+                    [
+                      'singbox',
+                      singboxId,
+                      setSingboxId,
+                      config.forced_singbox,
+                      config.assigned_singbox_template_id,
+                    ],
+                    [
+                      'quanx',
+                      quanxId,
+                      setQuanxId,
+                      config.forced_quanx,
+                      config.assigned_quanx_template_id,
+                    ],
                   ] as const
                 ).map(([kind, value, setValue, isForced, assignedId]) => {
                   const assigned = assignedId
@@ -398,12 +410,7 @@ export function TemplateConfigCard({
                 {saving ? '保存中…' : savedAt ? '已保存，订阅更新中' : '保存模板配置'}
               </button>
               {config.user_configured ? (
-                <button
-                  type="button"
-                  className="cg-button"
-                  disabled={resetting}
-                  onClick={reset}
-                >
+                <button type="button" className="cg-button" disabled={resetting} onClick={reset}>
                   {resetting ? (
                     <RefreshCwIcon aria-hidden="true" />
                   ) : (

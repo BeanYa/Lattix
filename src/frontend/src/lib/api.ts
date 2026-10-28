@@ -426,7 +426,11 @@ export const api = {
       suggested_categories?: string[]
     }>('/api/subscription/template/unforce', { user_ids: userIds, ...target }),
   subscriptionTemplateDefault: (options?: RequestOptions) =>
-    requester.get<SubscriptionDefaultConfig>('/api/subscription/template/default', undefined, options),
+    requester.get<SubscriptionDefaultConfig>(
+      '/api/subscription/template/default',
+      undefined,
+      options,
+    ),
   saveSubscriptionTemplateDefault: (input: SubscriptionDefaultConfig) =>
     requester.postObserved<SubscriptionDefaultConfig>('/api/subscription/template/default', input),
   externalSubscriptions: (options?: RequestOptions) =>

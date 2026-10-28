@@ -68,7 +68,9 @@ export function SubscriptionRoutingFields({
         <div className="flex items-baseline justify-between gap-2">
           <Label>面板级模板配置</Label>
           <span className="cg-hint">
-            {forced ? '覆盖勾选：保存写入强制级，立即生效' : '未勾选覆盖：保存写入面板级，用户自选优先'}
+            {forced
+              ? '覆盖勾选：保存写入强制级，立即生效'
+              : '未勾选覆盖：保存写入面板级，用户自选优先'}
           </span>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
