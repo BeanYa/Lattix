@@ -158,7 +158,7 @@ export default function UpdateOverlay() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-xl border bg-card p-6 shadow-lg">
+      <div className="w-full max-w-md rounded-xl border bg-dialog p-6 shadow-lg">
         <div className="mb-1 flex items-center gap-2">
           {failed ? (
             <XCircleIcon className="size-5 text-destructive" />

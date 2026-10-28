@@ -30,6 +30,10 @@
   --panel-backdrop: blur(28px) saturate(140%);
   --panel-popover: #fffaf4;
 
+  /* 模态容器实色表面：弹窗/抽屉/命令面板的内容必须不透明，可读性优先；
+     取玻璃 surface 在地面色上的实色近似，与玻璃语言同调 */
+  --panel-dialog: #f7ebe1;
+
   /* 铜橙强调：主操作、链接、焦点、选中、进行中 */
   --panel-signal: #8f5329;
   --panel-signal-ink: #fff4e8;
@@ -99,6 +103,7 @@
   --panel-edge-strong: rgba(255, 255, 255, 0.24);
   --panel-backdrop: blur(28px) saturate(140%);
   --panel-popover: #211a15;
+  --panel-dialog: #1d1813;
 
   /* 铜橙强调：主操作、链接、焦点、选中、进行中 */
   --panel-signal: #c9804f;

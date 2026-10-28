@@ -364,7 +364,7 @@ export default function CommandPalette({ open, onOpenChange }: CommandPalettePro
         <DialogPrimitive.Popup
           data-slot="command-palette"
           aria-label="命令面板"
-          className="fixed top-[12vh] left-1/2 z-[70] flex max-h-[min(560px,70vh)] w-[min(640px,calc(100vw-32px))] -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-rule-strong bg-surface text-ink shadow-[var(--panel-shadow-overlay)] outline-none transition-[opacity,translate] duration-[var(--duration-3)] data-starting-style:opacity-0 data-ending-style:opacity-0 motion-reduce:transition-none"
+          className="fixed top-[12vh] left-1/2 z-[70] flex max-h-[min(560px,70vh)] w-[min(640px,calc(100vw-32px))] -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-rule-strong bg-dialog text-ink shadow-[var(--panel-shadow-overlay)] outline-none transition-[opacity,translate] duration-[var(--duration-3)] data-starting-style:opacity-0 data-ending-style:opacity-0 motion-reduce:transition-none"
         >
           <DialogPrimitive.Title className="sr-only">命令面板</DialogPrimitive.Title>
           <DialogPrimitive.Description className="sr-only">

@@ -791,6 +791,7 @@
 @theme inline {
   --color-ground: var(--panel-ground);
   --color-surface: var(--panel-surface);
+  --color-dialog: var(--panel-dialog);
   --color-raised: var(--panel-raised);
   --color-inset: var(--panel-inset);
   --color-rule: var(--panel-rule);
