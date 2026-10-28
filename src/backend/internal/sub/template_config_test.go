@@ -188,7 +188,7 @@ func TestSubTemplateConfigValidation(t *testing.T) {
 		{"unknown category", `{"mode":"suggested","preset":"balanced","categories":["nope"]}`},
 		{"unknown template", `{"mode":"template","portable_template_id":"missing","categories":["ai"]}`},
 		{"kind mismatch", `{"mode":"template","portable_template_id":"tpl-mihomo","categories":["ai"]}`},
-		{"unknown field", `{"mode":"suggested","region_groups_enabled":true,"categories":["ai"]}`},
+		{"unknown field", `{"mode":"suggested","region_groups":true,"categories":["ai"]}`},
 	}
 	for _, testCase := range cases {
 		status, _ := subConfigRequest(t, server, http.MethodPost, "carl-token", testCase.body)

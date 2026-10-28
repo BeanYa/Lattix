@@ -14,6 +14,7 @@ import (
 type subscriptionDefaultDTO struct {
 	SuggestedCategories []string `json:"suggested_categories"`
 	PortableTemplateID  string   `json:"portable_template_id"`
+	RegionGroupsEnabled bool     `json:"region_groups_enabled"`
 }
 
 func defaultConfigToDTO(cfg store.SubscriptionDefaultConfig) subscriptionDefaultDTO {
@@ -24,6 +25,7 @@ func defaultConfigToDTO(cfg store.SubscriptionDefaultConfig) subscriptionDefault
 	return subscriptionDefaultDTO{
 		SuggestedCategories: ids,
 		PortableTemplateID:  cfg.PortableTemplateID,
+		RegionGroupsEnabled: !cfg.DisableRegionGroups,
 	}
 }
 
@@ -41,7 +43,11 @@ func (s *Server) handleGetSubscriptionTemplateDefault(w http.ResponseWriter, r *
 // 保存默认级模板配置（建议规则分组或中立模板二选一，均空 = 清除默认级）。
 // 默认级影响所有未配置面板级/用户级的回落用户，保存后全量重发订阅快照。
 func (s *Server) handleSaveSubscriptionTemplateDefault(w http.ResponseWriter, r *http.Request) {
-	var req subscriptionDefaultDTO
+	var req struct {
+		SuggestedCategories []string `json:"suggested_categories"`
+		PortableTemplateID  string   `json:"portable_template_id"`
+		RegionGroupsEnabled *bool    `json:"region_groups_enabled"`
+	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -83,6 +89,9 @@ func (s *Server) handleSaveSubscriptionTemplateDefault(w http.ResponseWriter, r 
 			return
 		}
 		cfg.PortableTemplateID = id
+	}
+	if req.RegionGroupsEnabled != nil {
+		cfg.DisableRegionGroups = !*req.RegionGroupsEnabled
 	}
 	if err := s.st.SaveSubscriptionDefaultConfig(r.Context(), cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

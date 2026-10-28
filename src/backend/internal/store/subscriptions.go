@@ -122,10 +122,12 @@ var presetCategorySets = map[string][]string{
 }
 
 // SubscriptionDefaultConfig 是默认级模板配置（全局一份，模板指派页维护）：
-// 建议规则分组与中立模板二选一，均空 = 未配置默认级。
+// 建议规则分组与中立模板二选一，均空 = 未配置默认级。地区分组开关随默认级
+// 一并生效（未设置 = 开启）。
 type SubscriptionDefaultConfig struct {
 	SuggestedCategories string // JSON 字符串数组，与 PortableTemplateID 互斥
 	PortableTemplateID  string // "" = 未配置
+	DisableRegionGroups bool   // 零值 = 开启地区分组
 }
 
 func (c SubscriptionDefaultConfig) Empty() bool {
@@ -185,9 +187,11 @@ func EffectiveProfile(p SubscriptionProfile, def SubscriptionDefaultConfig) Subs
 			p.Mode = SubscriptionModeSuggested
 			p.Preset = "balanced"
 			p.CategoriesJSON = def.SuggestedCategories
+			p.DisableRegionGroups = def.DisableRegionGroups
 		case def.PortableTemplateID != "":
 			p.Mode = SubscriptionModeTemplate
 			p.PortableTemplateID = def.PortableTemplateID
+			p.DisableRegionGroups = def.DisableRegionGroups
 		}
 	}
 	// 客户端原生槽位保持兜底语义：强制指派最高；用户未选（跟随主策略）时

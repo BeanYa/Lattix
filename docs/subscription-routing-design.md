@@ -27,8 +27,9 @@
   管理员的任何面板侧保存都不触碰用户级；
 - **面板级**：管理员不勾选覆盖的配置（批量指派不勾选 / 用户订阅设置表单不勾选）——写入指派槽位
   （非强制），用户级缺席时生效；
-- **默认级**：全局初始默认值，模板指派页「默认级配置」卡维护（建议规则分组或中立模板二选一）。
-  仅当面板未为该用户配置模板、用户也未自选时生效；未配置默认级时回落内置均衡规则。
+- **默认级**：全局初始默认值，模板指派页「默认级配置」卡维护（建议规则分组或中立模板二选一，
+  含地区分组开关）。仅当面板未为该用户配置模板、用户也未自选时生效（地区分组开关随默认级
+  一并生效）；未配置默认级时回落内置均衡规则。
 
 主策略槽位按上述顺序逐级取值；客户端原生模板槽位保持兜底语义（用户未选「跟随主策略」时，
 非强制指派仍生效）。用户订阅设置表单中建议规则分组留空（或模板模式不选模板）= 清除该级
@@ -69,7 +70,7 @@ GET /sub/{token}/rules/{source_sha256}/{mihomo|singbox|quanx}/{rule_name}
 
 ```text
 GET  /api/sub/{token}/template-config        用户级/生效配置、各级摘要（effective_source 标注当前生效级别）
-POST /api/sub/{token}/template-config        保存用户级模板配置并立即重生成订阅快照
+POST /api/sub/{token}/template-config        保存用户级模板配置（含地区分组开关）并立即重生成订阅快照
 POST /api/sub/{token}/template-config/reset  清除用户级配置（回落面板级 → 默认级）并立即重生成
 ```
 
@@ -77,8 +78,11 @@ POST /api/sub/{token}/template-config/reset  清除用户级配置（回落面�
 
 ```text
 GET  /api/subscription/template/default      读取默认级配置
-POST /api/subscription/template/default      保存默认级配置并全量重发订阅快照
+POST /api/subscription/template/default      保存默认级配置（含地区分组开关）并全量重发订阅快照
 ```
+
+批量指派可带 `copy_to_user`（仅勾选覆盖时生效）：清空原用户自选，把指派内容写入用户级，
+解除强制后用户仍沿用同一配置。
 
 POST 只写用户级槽位：面板侧各级配置不受影响；错误返回 `{"error": "..."}`。强制级生效期间
 页面显示锁定提示，用户配置仍可保存（待解除强制后即生效）。

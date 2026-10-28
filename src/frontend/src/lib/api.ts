@@ -395,16 +395,19 @@ export const api = {
     target: { template_id?: string; suggested_categories?: string[] },
     forced: boolean,
     regionGroupsEnabled = true,
+    copyToUser = false,
   ) =>
     requester.postObserved<{
       user_ids: number[]
       template_id?: string
       suggested_categories?: string[]
       forced: boolean
+      copy_to_user: boolean
     }>('/api/subscription/template/assign', {
       user_ids: userIds,
       ...target,
       forced,
+      copy_to_user: copyToUser,
       region_groups_enabled: regionGroupsEnabled,
     }),
   unassignSubscriptionTemplate: (

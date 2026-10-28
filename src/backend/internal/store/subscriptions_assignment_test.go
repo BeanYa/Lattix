@@ -324,3 +324,19 @@ func TestDeleteSubscriptionTemplateRejectsAssigned(t *testing.T) {
 		t.Fatal("assigned template deletion unexpectedly succeeded")
 	}
 }
+
+func TestEffectiveProfileDefaultLevelAppliesRegionGroups(t *testing.T) {
+	def := SubscriptionDefaultConfig{
+		SuggestedCategories: `["private","domestic"]`,
+		DisableRegionGroups: true,
+	}
+	profile := SubscriptionProfile{
+		Mode: SubscriptionModeSuggested, Preset: "balanced",
+		CategoriesJSON: `["ai"]`,
+	}
+	got := EffectiveProfile(profile, def)
+	if got.CategoriesJSON != `["private","domestic"]` || !got.DisableRegionGroups {
+		t.Fatalf("default region groups not applied: categories=%q disable=%v",
+			got.CategoriesJSON, got.DisableRegionGroups)
+	}
+}

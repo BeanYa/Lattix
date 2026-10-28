@@ -35,6 +35,8 @@ type SubTemplateConfigResponse struct {
 	UserConfigured bool `json:"user_configured"`
 	// EffectiveSource：forced / user / panel / default / unset。
 	EffectiveSource string `json:"effective_source"`
+	// 地区分组开关（用户可在订阅页调整；面板各级配置保存不覆盖它，指派除外）。
+	RegionGroupsEnabled bool `json:"region_groups_enabled"`
 	// 强制级（覆盖一切用户设置）。
 	ForcedPortable bool   `json:"forced_portable"`
 	ForcedMihomo   bool   `json:"forced_mihomo"`
@@ -112,16 +114,17 @@ func (s *Server) templateConfigResponse(r *http.Request, user *store.User) (SubT
 		return SubTemplateConfigResponse{}, err
 	}
 	resp := SubTemplateConfigResponse{
-		UserConfigured:    profile.UserConfigured,
-		ForcedPortable:    profile.AssignForcedPortable,
-		ForcedMihomo:      profile.AssignForcedMihomo,
-		ForcedSingbox:     profile.AssignForcedSingbox,
-		ForcedQuanX:       profile.AssignForcedQuanX,
-		AssignedMihomoID:  profile.AssignedMihomoTemplateID,
-		AssignedSingboxID: profile.AssignedSingboxTemplateID,
-		AssignedQuanXID:   profile.AssignedQuanXTemplateID,
-		User:              subRoutingConfigOf(profile),
-		Categories:        Categories(),
+		UserConfigured:      profile.UserConfigured,
+		RegionGroupsEnabled: !profile.DisableRegionGroups,
+		ForcedPortable:      profile.AssignForcedPortable,
+		ForcedMihomo:        profile.AssignForcedMihomo,
+		ForcedSingbox:       profile.AssignForcedSingbox,
+		ForcedQuanX:         profile.AssignForcedQuanX,
+		AssignedMihomoID:    profile.AssignedMihomoTemplateID,
+		AssignedSingboxID:   profile.AssignedSingboxTemplateID,
+		AssignedQuanXID:     profile.AssignedQuanXTemplateID,
+		User:                subRoutingConfigOf(profile),
+		Categories:          Categories(),
 	}
 	// 强制级摘要（主策略槽位）。
 	if profile.AssignForcedPortable {
@@ -217,13 +220,14 @@ func writeSubError(w http.ResponseWriter, status int, message string) {
 func (s *Server) HandleSubUpdateTemplateConfig(w http.ResponseWriter, r *http.Request) {
 	disableSharedCache(w)
 	var input struct {
-		Mode               string   `json:"mode"`
-		Preset             string   `json:"preset"`
-		Categories         []string `json:"categories"`
-		PortableTemplateID string   `json:"portable_template_id"`
-		MihomoTemplateID   string   `json:"mihomo_template_id"`
-		SingboxTemplateID  string   `json:"singbox_template_id"`
-		QuanXTemplateID    string   `json:"quanx_template_id"`
+		Mode                string   `json:"mode"`
+		Preset              string   `json:"preset"`
+		Categories          []string `json:"categories"`
+		PortableTemplateID  string   `json:"portable_template_id"`
+		MihomoTemplateID    string   `json:"mihomo_template_id"`
+		SingboxTemplateID   string   `json:"singbox_template_id"`
+		QuanXTemplateID     string   `json:"quanx_template_id"`
+		RegionGroupsEnabled *bool    `json:"region_groups_enabled"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -236,7 +240,8 @@ func (s *Server) HandleSubUpdateTemplateConfig(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := s.saveUserRouting(r, user.ID, input.Mode, input.Preset, input.Categories,
-		input.PortableTemplateID, input.MihomoTemplateID, input.SingboxTemplateID, input.QuanXTemplateID); err != nil {
+		input.PortableTemplateID, input.MihomoTemplateID, input.SingboxTemplateID,
+		input.QuanXTemplateID, input.RegionGroupsEnabled); err != nil {
 		writeSubError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -249,6 +254,7 @@ func (s *Server) HandleSubUpdateTemplateConfig(w http.ResponseWriter, r *http.Re
 func (s *Server) saveUserRouting(r *http.Request, userID int64,
 	mode, preset string, categories []string,
 	portableID, mihomoID, singboxID, quanxID string,
+	regionGroupsEnabled *bool,
 ) error {
 	current, err := s.st.UserSubscriptionProfile(r.Context(), userID)
 	if err != nil {
@@ -282,6 +288,9 @@ func (s *Server) saveUserRouting(r *http.Request, userID int64,
 	profile.AssignForcedQuanX = current.AssignForcedQuanX
 	profile.AssignedSuggestedCategories = current.AssignedSuggestedCategories
 	profile.DisableRegionGroups = current.DisableRegionGroups
+	if regionGroupsEnabled != nil {
+		profile.DisableRegionGroups = !*regionGroupsEnabled
+	}
 	profile.UserConfigured = true
 	return s.st.SaveUserSubscriptionProfile(r.Context(), profile)
 }

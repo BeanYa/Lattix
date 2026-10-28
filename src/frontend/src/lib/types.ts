@@ -676,6 +676,7 @@ export interface SubscriptionRoutingProfile {
 export interface SubscriptionDefaultConfig {
   suggested_categories: string[]
   portable_template_id: string
+  region_groups_enabled: boolean
 }
 
 export interface SubscriptionSnapshotStatus {

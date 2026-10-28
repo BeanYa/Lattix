@@ -570,3 +570,47 @@ func TestUnforceSubscriptionTemplateValidation(t *testing.T) {
 		t.Fatalf("empty user_ids: code=%q", code)
 	}
 }
+
+func TestAssignSubscriptionTemplateCopyToUser(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	upsertTestTemplate(t, st, store.SubscriptionTemplate{
+		ID: "tpl-portable", Name: "Portable", Kind: "portable", Origin: "local",
+		Content: portableTemplateBody, ContentSHA256: "sha-copy",
+	})
+	userID, _ := st.InsertUser(ctx, "a", "00000000-0000-0000-0000-000000000023", "tok-cu", nil)
+	// 原用户级非空：拷贝应整体替换。
+	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
+		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "minimal",
+		CategoriesJSON: `["ai","gaming"]`, UserConfigured: true,
+		MihomoTemplateID: "user-mihomo", GenerationStatus: store.SubscriptionGenerationMissing,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+	startTestRegenerator(t, server.subscriptions)
+
+	status, code := assignRequest(t, server, fmt.Sprintf(
+		`{"user_ids":[%d],"template_id":"tpl-portable","forced":true,"copy_to_user":true}`, userID))
+	if status != http.StatusOK || code != shared.CodeOK {
+		t.Fatalf("status=%d code=%q", status, code)
+	}
+	profile, err := st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !profile.UserConfigured {
+		t.Fatalf("copy_to_user did not mark user_configured: %+v", profile)
+	}
+	if profile.Mode != store.SubscriptionModeTemplate || profile.PortableTemplateID != "tpl-portable" {
+		t.Fatalf("user config not copied from assignment: %+v", profile)
+	}
+	if profile.MihomoTemplateID != "" {
+		t.Fatalf("user native not cleared by copy: %+v", profile)
+	}
+	awaitSnapshotReady(t, st, userID)
+}

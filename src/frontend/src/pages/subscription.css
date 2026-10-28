@@ -1586,6 +1586,15 @@
   font-size: 12.5px;
 }
 
+/* 保存/恢复成功提示：提交后短暂显示，等待快照刷新。 */
+.sub-cfg-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--panel-status-ok);
+  font-size: 12.5px;
+}
+
 .sub-cfg-actions {
   display: flex;
   align-items: center;

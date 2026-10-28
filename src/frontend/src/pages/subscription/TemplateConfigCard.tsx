@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckIcon, CircleAlertIcon, RefreshCwIcon, RotateCcwIcon, SlidersIcon } from 'lucide-react'
 
 import { RequestError, requester } from '@/lib/requester'
@@ -32,6 +32,7 @@ interface SubRuleCategory {
 interface SubTemplateConfig {
   user_configured: boolean
   effective_source: 'forced' | 'user' | 'panel' | 'default' | 'unset'
+  region_groups_enabled: boolean
   forced_portable: boolean
   forced_mihomo: boolean
   forced_singbox: boolean
@@ -107,10 +108,36 @@ export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved:
   const [mihomoId, setMihomoId] = useState('')
   const [singboxId, setSingboxId] = useState('')
   const [quanxId, setQuanxId] = useState('')
+  const [regionGroups, setRegionGroups] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [savedAt, setSavedAt] = useState(0)
+  const [savedNotice, setSavedNotice] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [error, setError] = useState('')
+  const noticeTimer = useRef<number | undefined>(undefined)
+
+  useEffect(() => () => window.clearTimeout(noticeTimer.current), [])
+
+  const showSavedNotice = () => {
+    setSavedNotice(true)
+    window.clearTimeout(noticeTimer.current)
+    noticeTimer.current = window.setTimeout(() => setSavedNotice(false), 4000)
+  }
+
+  const applyConfig = (next: SubTemplateConfig) => {
+    setConfig(next)
+    setRegionGroups(next.region_groups_enabled !== false)
+  }
+
+  const applyFormValues = (next: SubTemplateConfig) => {
+    setMode(next.user.mode)
+    setPreset(presetOfCategories(next.user.categories, next.categories))
+    setCategories(next.user.categories)
+    setPortableId(next.user.portable_template_id)
+    setMihomoId(next.user.mihomo_template_id)
+    setSingboxId(next.user.singbox_template_id)
+    setQuanxId(next.user.quanx_template_id)
+    setRegionGroups(next.region_groups_enabled !== false)
+  }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -121,13 +148,7 @@ export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved:
       })
       .then((next) => {
         setConfig(next)
-        setMode(next.user.mode)
-        setPreset(presetOfCategories(next.user.categories, next.categories))
-        setCategories(next.user.categories)
-        setPortableId(next.user.portable_template_id)
-        setMihomoId(next.user.mihomo_template_id)
-        setSingboxId(next.user.singbox_template_id)
-        setQuanxId(next.user.quanx_template_id)
+        applyFormValues(next)
       })
       .catch((reason: unknown) => {
         if (reason instanceof RequestError && reason.code === 'REQUEST_CANCELLED') return
@@ -169,10 +190,12 @@ export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved:
           mihomo_template_id: mihomoId,
           singbox_template_id: singboxId,
           quanx_template_id: quanxId,
+          region_groups_enabled: regionGroups,
         },
       )
-      setConfig(next)
-      setSavedAt(Date.now())
+      applyConfig(next)
+      applyFormValues(next)
+      showSavedNotice()
       onSaved()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '保存失败，请稍后重试。')
@@ -190,15 +213,9 @@ export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved:
       const next = await requester.postJSON<SubTemplateConfig>(
         `/api/sub/${token}/template-config/reset`,
       )
-      setConfig(next)
-      setMode(next.user.mode)
-      setPreset(presetOfCategories(next.user.categories, next.categories))
-      setCategories(next.user.categories)
-      setPortableId(next.user.portable_template_id)
-      setMihomoId(next.user.mihomo_template_id)
-      setSingboxId(next.user.singbox_template_id)
-      setQuanxId(next.user.quanx_template_id)
-      setSavedAt(0)
+      applyConfig(next)
+      applyFormValues(next)
+      showSavedNotice()
       onSaved()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '恢复默认失败，请稍后重试。')
@@ -384,9 +401,30 @@ export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved:
               </div>
             </details>
 
+            <div className="space-y-1">
+              <label className="sub-cfg-cat">
+                <input
+                  type="checkbox"
+                  checked={regionGroups}
+                  onChange={(event) => setRegionGroups(event.target.checked)}
+                  aria-describedby="sub-cfg-region-groups-hint"
+                />
+                <span>开启地区分组</span>
+              </label>
+              <p id="sub-cfg-region-groups-hint" className="sub-cfg-hint">
+                按节点地区自动添加分组（含无地区分组）；关闭后保留节点和来源分组。
+              </p>
+            </div>
+
             {error && (
               <p className="sub-cfg-error" role="alert">
                 {error}
+              </p>
+            )}
+            {savedNotice && (
+              <p className="sub-cfg-saved" role="status">
+                <CheckIcon size={13} aria-hidden="true" />
+                变更已经提交，等待快照刷新
               </p>
             )}
             <div className="sub-cfg-actions">
@@ -400,14 +438,8 @@ export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved:
                 }
                 onClick={save}
               >
-                {saving ? (
-                  <RefreshCwIcon aria-hidden="true" />
-                ) : savedAt ? (
-                  <CheckIcon aria-hidden="true" />
-                ) : (
-                  <SlidersIcon aria-hidden="true" />
-                )}
-                {saving ? '保存中…' : savedAt ? '已保存，订阅更新中' : '保存模板配置'}
+                {saving ? <RefreshCwIcon aria-hidden="true" /> : <SlidersIcon aria-hidden="true" />}
+                {saving ? '保存中…' : '保存'}
               </button>
               {config.user_configured ? (
                 <button type="button" className="cg-button" disabled={resetting} onClick={reset}>

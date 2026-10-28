@@ -75,6 +75,7 @@ export function TemplateAssignmentTab({
   const [categoryOpen, setCategoryOpen] = useState(true)
   const [templateId, setTemplateId] = useState('')
   const [forced, setForced] = useState(false)
+  const [copyToUser, setCopyToUser] = useState(false)
   const [regionGroupsEnabled, setRegionGroupsEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -86,6 +87,7 @@ export function TemplateAssignmentTab({
   const [defaultMode, setDefaultMode] = useState<'suggested' | 'template'>('suggested')
   const [defaultCategories, setDefaultCategories] = useState<string[]>([])
   const [defaultTemplateId, setDefaultTemplateId] = useState('')
+  const [defaultRegionGroups, setDefaultRegionGroups] = useState(true)
   const [defaultSaving, setDefaultSaving] = useState(false)
   const [defaultError, setDefaultError] = useState('')
 
@@ -96,7 +98,13 @@ export function TemplateAssignmentTab({
         setDefaultCfg(cfg)
         syncDefaultEditor(cfg)
       })
-      .catch(() => setDefaultCfg({ suggested_categories: [], portable_template_id: '' }))
+      .catch(() =>
+        setDefaultCfg({
+          suggested_categories: [],
+          portable_template_id: '',
+          region_groups_enabled: true,
+        }),
+      )
   }, [])
 
   const categoryById = useMemo(
@@ -201,6 +209,7 @@ export function TemplateAssignmentTab({
     setCategoryOpen(true)
     setTemplateId('')
     setForced(false)
+    setCopyToUser(false)
     setRegionGroupsEnabled(true)
   }
 
@@ -234,10 +243,12 @@ export function TemplateAssignmentTab({
         target,
         forced,
         regionGroupsEnabled,
+        copyToUser,
       )
       if (observeId) showOperation({ observeId })
       setDialogOpen(false)
       setSelected(new Set())
+      setCopyToUser(false)
       onChanged()
     } catch (err) {
       setError(errorMessage(err))
@@ -297,6 +308,7 @@ export function TemplateAssignmentTab({
       setDefaultCategories([])
       setDefaultTemplateId('')
     }
+    setDefaultRegionGroups(cfg.region_groups_enabled !== false)
   }
 
   // 编辑器当前值折算为待保存配置，与已保存值比较得出 dirty。
@@ -307,13 +319,22 @@ export function TemplateAssignmentTab({
     const savedCategories = defaultCfg.suggested_categories ?? []
     if (draftCategories.length !== savedCategories.length) return true
     if (draftCategories.some((id, index) => id !== savedCategories[index])) return true
-    return draftPortable !== defaultCfg.portable_template_id
-  }, [defaultCfg, defaultMode, defaultCategories, defaultTemplateId])
+    if (draftPortable !== defaultCfg.portable_template_id) return true
+    return defaultRegionGroups !== (defaultCfg.region_groups_enabled !== false)
+  }, [defaultCfg, defaultMode, defaultCategories, defaultTemplateId, defaultRegionGroups])
 
   const defaultDraft = (): SubscriptionDefaultConfig =>
     defaultMode === 'suggested'
-      ? { suggested_categories: defaultCategories, portable_template_id: '' }
-      : { suggested_categories: [], portable_template_id: defaultTemplateId }
+      ? {
+          suggested_categories: defaultCategories,
+          portable_template_id: '',
+          region_groups_enabled: defaultRegionGroups,
+        }
+      : {
+          suggested_categories: [],
+          portable_template_id: defaultTemplateId,
+          region_groups_enabled: defaultRegionGroups,
+        }
 
   const saveDefault = async () => {
     setDefaultSaving(true)
@@ -321,8 +342,7 @@ export function TemplateAssignmentTab({
     try {
       const { observeId } = await api.saveSubscriptionTemplateDefault(defaultDraft())
       if (observeId) showOperation({ observeId })
-      const { suggested_categories, portable_template_id } = await api.subscriptionTemplateDefault()
-      const saved = { suggested_categories, portable_template_id }
+      const saved = await api.subscriptionTemplateDefault()
       setDefaultCfg(saved)
       syncDefaultEditor(saved)
     } catch (err) {
@@ -424,6 +444,15 @@ export function TemplateAssignmentTab({
               </Select>
             </div>
           )}
+          <label className="cg-check-row">
+            <input
+              type="checkbox"
+              className="cg-checkbox"
+              checked={defaultRegionGroups}
+              onChange={(event) => setDefaultRegionGroups(event.target.checked)}
+            />
+            开启地区分组
+          </label>
           <p className="cg-hint">
             初始默认值：仅当面板未为用户配置模板（面板级/强制级均无）且用户未在订阅页自选（用户级为空）时生效。
           </p>
@@ -763,10 +792,24 @@ export function TemplateAssignmentTab({
                 type="checkbox"
                 className="cg-checkbox"
                 checked={forced}
-                onChange={(event) => setForced(event.target.checked)}
+                onChange={(event) => {
+                  setForced(event.target.checked)
+                  if (!event.target.checked) setCopyToUser(false)
+                }}
               />
-              强制覆盖用户自选（指派后用户自选选项失效，显示跟随指派）
+              强制覆盖用户自选（写入强制级，立即对用户生效）
             </label>
+            {forced && (
+              <label className="cg-check-row">
+                <input
+                  type="checkbox"
+                  className="cg-checkbox"
+                  checked={copyToUser}
+                  onChange={(event) => setCopyToUser(event.target.checked)}
+                />
+                拷贝到用户配置（清空原用户自选，写入同一模板；解除强制后用户沿用）
+              </label>
+            )}
           </div>
           {error && <Notice tone="danger">{error}</Notice>}
           <DialogFooter>

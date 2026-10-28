@@ -256,6 +256,7 @@ func (s *Server) handleTemplateAssignment(w http.ResponseWriter, r *http.Request
 		TemplateID          string   `json:"template_id"`
 		SuggestedCategories []string `json:"suggested_categories"`
 		Forced              bool     `json:"forced"`
+		CopyToUser          bool     `json:"copy_to_user"`
 		RegionGroupsEnabled *bool    `json:"region_groups_enabled"`
 	}
 	if err := readJSON(r, &req); err != nil {
@@ -313,6 +314,26 @@ func (s *Server) handleTemplateAssignment(w http.ResponseWriter, r *http.Request
 				}
 				profile.AssignedSuggestedCategories = ""
 			}
+			// 勾选覆盖时可选「拷贝到用户配置」：清空原用户自选，把指派内容写入
+			// 用户级（原生模板槽位一并清空 = 跟随主策略），解除强制后用户仍沿用同一配置。
+			if req.Forced && req.CopyToUser {
+				profile.UserConfigured = true
+				if categories != nil {
+					profile.Mode = store.SubscriptionModeSuggested
+					profile.Preset = "balanced"
+					rawUser, _ := json.Marshal(categories)
+					profile.CategoriesJSON = string(rawUser)
+					profile.PortableTemplateID = ""
+				} else {
+					profile.Mode = store.SubscriptionModeTemplate
+					profile.PortableTemplateID = template.ID
+					balanced, _ := json.Marshal(store.DefaultBalancedCategories)
+					profile.CategoriesJSON = string(balanced)
+				}
+				profile.MihomoTemplateID = ""
+				profile.SingboxTemplateID = ""
+				profile.QuanXTemplateID = ""
+			}
 		} else {
 			if categories != nil {
 				profile.AssignedSuggestedCategories = ""
@@ -339,10 +360,12 @@ func (s *Server) handleTemplateAssignment(w http.ResponseWriter, r *http.Request
 	}
 	if assign {
 		s.audit(r, "subscription.template.assigned", nil, nil, map[string]any{
-			"template_id": req.TemplateID, "suggested_categories": categories, "user_ids": userIDs, "forced": req.Forced, "region_groups_enabled": req.RegionGroupsEnabled,
+			"template_id": req.TemplateID, "suggested_categories": categories, "user_ids": userIDs,
+			"forced": req.Forced, "copy_to_user": req.CopyToUser, "region_groups_enabled": req.RegionGroupsEnabled,
 		})
 		writeJSON(w, http.StatusOK, map[string]any{
-			"user_ids": userIDs, "template_id": req.TemplateID, "suggested_categories": categories, "forced": req.Forced,
+			"user_ids": userIDs, "template_id": req.TemplateID, "suggested_categories": categories,
+			"forced": req.Forced, "copy_to_user": req.CopyToUser,
 		})
 		return
 	}
