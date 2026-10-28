@@ -57,3 +57,25 @@ Docker 部署的证书目录为：
 ## 仅支持 Linux
 
 面板原生包和 Docker 镜像支持 `linux/amd64`、`linux/arm64`。安装脚本不支持 macOS、Windows 或其他内核；Docker Desktop 也不属于正式支持的生产部署环境。
+
+## Agent ≤0.1.22 的 server test journal 导致 ≥0.1.23 启动崩溃（已加迁移）
+
+0.1.23 将服务器测试类别 `international` 更名为 `connectivity`（网络连通性并入国际连通目标），
+但 schema_version 未变。≤0.1.22 Agent 执行过服务器测试后落盘的
+`/opt/lattix-agent/data/server-test-task.json` 携带旧类别名，在 ≥0.1.23 的
+`Payload.Validate()` 下不合法；而 Agent 启动时把 journal 加载失败视为致命错误，于是升级后
+进程启动即退出，systemd 因 `StartLimitBurst` 很快放弃拉起（日志表现为
+`load server test task: invalid server test journal: %!w(<nil>)`——`%w` 包住 nil 错误的
+格式化缺陷掩盖了真实原因，属语义校验失败而非 JSON 损坏）。只升级了二进制、没跑过服务器
+测试的节点不受影响；xray 独立运行，代理流量不中断。
+
+升级脚本已内置兼容性迁移框架（`latx-ag migrate`，注册表随新版 latx-ag 发布）：
+`latx-ag update`、install.sh 重装、面板触发的 Agent 自升级三条路径都会在新版 Agent
+首次启动前清掉旧格式 journal（未交付的测试结果一并丢弃，面板可重新派发任务）。
+
+已停在崩溃循环的节点（Agent 已是 0.1.23、迁移窗口已错过）二选一手动恢复：
+
+```bash
+rm /opt/lattix-agent/data/server-test-task.json && systemctl restart lattix-agent
+# 或发布 ≥0.1.24 后：latx-ag update v0.1.24（更新流程自动执行迁移）
+```

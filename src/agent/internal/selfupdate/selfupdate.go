@@ -121,6 +121,12 @@ func applyTo(version, releaseBase, currentVersion, defaultRepo, executable strin
 		return false, fmt.Errorf("新 latx-ag 赋可执行权限失败: %w", err)
 	}
 
+	// pre 相兼容性迁移：替换二进制之前执行（旧 agent 仍在运行，迁移条目须容忍并发）。
+	// 失败时任何东西都尚未替换，旧 agent 继续运行。
+	if err := runMigrations(cliPath, currentVersion, "pre", executable); err != nil {
+		return false, err
+	}
+
 	// 先备份两件套，再替换管理命令和 agent。任一步失败都恢复到同一旧版本。
 	agentBackup := executable + ".bak"
 	cliTarget := filepath.Join(filepath.Dir(executable), "latx-ag")
@@ -150,7 +156,30 @@ func applyTo(version, releaseBase, currentVersion, defaultRepo, executable strin
 		_ = fileutil.CopyFileAtomic(agentBackup, executable, 0o755)
 		return false, fmt.Errorf("替换 agent 二进制失败: %w", err)
 	}
+	// post 相兼容性迁移：新二进制就位后、服务管理器拉起新 agent 前执行——
+	// 这是旧数据格式弄崩新 agent 的唯一窗口（journal 不兼容事故）。迁移失败回滚
+	// 两件套到旧版本（已执行的迁移须对旧版本无害，注册表条目约定幂等自守卫）。
+	if err := runMigrations(cliPath, currentVersion, "post", executable); err != nil {
+		rollbackCLI()
+		_ = fileutil.CopyFileAtomic(agentBackup, executable, 0o755)
+		return false, err
+	}
 	return true, nil
+}
+
+// runMigrations 执行 latx-ag 内注册的兼容性迁移（phase=pre|post）。迁移注册表以新版
+// latx-ag 为单一来源（migrate 子命令），agent 自升级与 install.sh / latx-ag update
+// 三条升级路径共享；dataDir 按安装布局推导（应用根/bin 的上一级 data）。
+func runMigrations(cliPath, fromVersion, phase, executable string) error {
+	dataDir := filepath.Clean(filepath.Join(filepath.Dir(executable), "..", "data"))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, cliPath, "migrate",
+		"--from", fromVersion, "--phase", phase, "--data-dir", dataDir).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("兼容性迁移失败（phase=%s）: %v: %s", phase, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // validateReleaseBase 校验升级下载基址：必须为 http(s) URL，且非回环地址的

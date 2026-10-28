@@ -58,9 +58,15 @@ src/agent/     # Go：独立二进制，systemd 托管；internal/fileutil 为�
 src/shared/    # Go module：WS 消息结构体、虚拟配置类型，backend/agent 共用
 scripts/
   install-panel.sh   # 面板原生/Docker 安装实现
-  install-agent.sh   # Agent 安装实现
+  install-agent.sh   # Agent 安装实现（含兼容性迁移：新版 latx-ag 注册表，服务启动前执行）
 install.sh           # 唯一面向用户的统一安装入口
 ```
+
+- **兼容性迁移**：节点侧数据格式跨版本不兼容时（如 0.1.23 更名服务器测试类别），在
+  latx-ag.sh 维护迁移注册表（`MIGRATION_REGISTRY`，条目 = 标识 | 触发版本窗口 | pre/post
+  相位），`latx-ag update`、install.sh 重装、Agent 面板自升级（internal/selfupdate）三条
+  升级路径统一以「新 latx-ag」子进程在旧新版交接点执行；条目必须幂等自守卫，完成落
+  `data/migrations/<id>.done` 标记。详见 latx-ag.sh 注释与 `latx-ag migrate`。
 
 - 前端依赖安装与构建：`bun install` / `bun run build`，锁文件入库。设计语言由
   `src/styles/panel.css` 的语义令牌与组件层驱动，只有一套「高密度事务台」；深色是默认

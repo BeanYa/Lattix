@@ -183,6 +183,7 @@ jobs:
           - script: event-log.sh
           - script: reconcile.sh
           - script: upgrade.sh
+          - script: agent-migrate.sh
           - script: panel-update.sh
           - script: protocols.sh
           # chains.sh 的真实流量断言打 cloudflare 外网，CI 中跳过（其余断言全量保留）。

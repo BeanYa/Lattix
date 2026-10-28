@@ -9,7 +9,8 @@
 # 与同目录 checksums.txt 校验，获取不到即中止），统一从 GitHub Release 下载。
 #
 # 流程：解析/下载指定版本 xray-core（校验官方 .dgst SHA2-256）→ 下载/安装 Agent 二进制
-# 与 latx-ag 节点管理程序 → 注册 systemd（user 用户态模式改为守护脚本常驻，见下）→
+# 与 latx-ag 节点管理程序 → 兼容性迁移（重装场景：新版 latx-ag 注册表，服务启动前执行，
+# 见 latx-ag migrate）→ 注册 systemd（user 用户态模式改为守护脚本常驻，见下）→
 # 写入面板地址与 bootstrap token（保留旧 state，认证成功后由 Agent 判断重绑）。
 # Agent 首连后以 bootstrap token 换发长期凭证。
 #
@@ -374,6 +375,13 @@ else
     stop_user_processes
 fi
 
+# 升级/重装场景：覆盖二进制前记录旧 agent 版本（兼容性迁移据此判定触发窗口；
+# 全新安装时为空，自动跳过迁移）。
+PREVIOUS_AGENT_VERSION=""
+if [[ -x "$AGENT_BIN" ]]; then
+    PREVIOUS_AGENT_VERSION="$("$AGENT_BIN" -version 2>/dev/null || true)"
+fi
+
 install -d -m 0755 "$BIN_DIR" "$LOG_DIR"
 install -d -m 0700 "$CONFIG_DIR" "$DATA_DIR"
 TMP_DIR="$(mktemp -d)"
@@ -462,6 +470,16 @@ echo ">> latx-ag 已安装到 $LATX_AG_BIN"
 if [[ "$USER_MODE" -eq 0 || "$(id -u)" -eq 0 ]]; then
     mkdir -p "$(dirname "$LATX_AG_LINK")"
     ln -sfn "$LATX_AG_BIN" "$LATX_AG_LINK"
+fi
+
+# 兼容性迁移：注册表在新 latx-ag 内（单一来源），此时旧服务已停、新二进制就位，
+# 在新 agent 首次启动前执行 post 相迁移。失败即中止——带着不兼容数据启动新版
+# agent 只会进入崩溃循环（如 0.1.23 的 server test journal 事故）。
+if [[ -n "$PREVIOUS_AGENT_VERSION" ]]; then
+    echo ">> running compatibility migrations（from ${PREVIOUS_AGENT_VERSION}）"
+    LATX_DEV="$DEV_MODE" "$LATX_AG_BIN" migrate \
+        --from "$PREVIOUS_AGENT_VERSION" --phase post --data-dir "$DATA_DIR" \
+        || die "兼容性迁移失败，中止安装（可修复后重试；完成标记见 $DATA_DIR/migrations）"
 fi
 
 # http→ws / https→wss；先去结尾斜杠——PANEL_URL 带尾斜杠会拼出 //api/agent/ws，

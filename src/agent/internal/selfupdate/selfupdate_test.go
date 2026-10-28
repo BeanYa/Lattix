@@ -18,12 +18,18 @@ import (
 // makeAgentTarball 打包 release 形态的 agent 与 latx-ag 两件套。
 func makeAgentTarball(t *testing.T, content []byte) []byte {
 	t.Helper()
+	return makeAgentTarballWithCLI(t, content, []byte("#!/bin/sh\necho 'latx-ag 版本: v0.0.9'\n"))
+}
+
+// makeAgentTarballWithCLI 同上，但 latx-ag 内容可定制（兼容性迁移调用测试用）。
+func makeAgentTarballWithCLI(t *testing.T, content, cli []byte) []byte {
+	t.Helper()
 	var buf bytes.Buffer
 	gw := gzip.NewWriter(&buf)
 	tw := tar.NewWriter(gw)
 	files := map[string][]byte{
 		"lattix-agent/lattix-agent": content,
-		"lattix-agent/latx-ag":      []byte("#!/bin/sh\necho 'latx-ag 版本: v0.0.9'\n"),
+		"lattix-agent/latx-ag":      cli,
 	}
 	for name, body := range files {
 		if err := tw.WriteHeader(&tar.Header{
@@ -43,8 +49,13 @@ func makeAgentTarball(t *testing.T, content []byte) []byte {
 // newFakeRelease 起一个本地 HTTP 服务，托管指定版本的 agent tarball 资产与 checksums.txt。
 func newFakeRelease(t *testing.T, version string, content []byte) (base string) {
 	t.Helper()
+	return newFakeReleaseWithCLI(t, version, content, []byte("#!/bin/sh\necho 'latx-ag 版本: v0.0.9'\n"))
+}
+
+func newFakeReleaseWithCLI(t *testing.T, version string, content, cli []byte) (base string) {
+	t.Helper()
 	asset := "lattix-agent-linux-" + runtime.GOARCH + ".tar.gz"
-	tarball := makeAgentTarball(t, content)
+	tarball := makeAgentTarballWithCLI(t, content, cli)
 	sum := sha256.Sum256(tarball)
 	sums := fmt.Sprintf("%x  %s\n%x  %s\n", sum, asset, sum, "lattix-panel-linux-amd64.tar.gz")
 	mux := http.NewServeMux()
@@ -127,6 +138,71 @@ func TestApplyForceReplacesSameVersion(t *testing.T) {
 	got, err := os.ReadFile(exe)
 	if err != nil || string(got) != string(content) {
 		t.Fatalf("强制更新后 agent 内容异常: %q, %v", got, err)
+	}
+}
+
+func TestApplyRunsMigrationsAroundSwap(t *testing.T) {
+	// 兼容性迁移以新 latx-ag 为单一来源：换二进制前后各调用一次（pre/post），
+	// 数据目录指向安装布局的应用根 data。
+	logFile := filepath.Join(t.TempDir(), "migrate.log")
+	cli := []byte("#!/bin/sh\necho \"$*\" >> \"$LATX_TEST_MIGRATE_LOG\"\n")
+	base := newFakeReleaseWithCLI(t, "v0.0.9", []byte("#!/bin/sh\necho v0.0.9\n"), cli)
+	t.Setenv("LATX_TEST_MIGRATE_LOG", logFile)
+
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "bin", "lattix-agent") // 应用根/bin，与 install.sh 布局一致
+	if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exe, []byte("old agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := applyTo("v0.0.9", base, "v0.0.2", "unused/repo", exe, false); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	log, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("迁移未被调用: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(log)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("pre/post 应各调用一次迁移，实际 %d 次: %q", len(lines), log)
+	}
+	wantDataDir := filepath.Join(dir, "data")
+	for i, phase := range []string{"pre", "post"} {
+		for _, want := range []string{"--phase " + phase, "--from v0.0.2", "--data-dir " + wantDataDir} {
+			if !strings.Contains(lines[i], want) {
+				t.Fatalf("第 %d 次迁移（期望 %s 相）参数缺 %q: %q", i+1, phase, want, lines[i])
+			}
+		}
+	}
+}
+
+func TestApplyMigrationFailureRollsBack(t *testing.T) {
+	// post 相迁移失败：报错并回滚两件套到旧版本（面板收到失败回执，旧 agent 继续运行）。
+	cli := []byte("#!/bin/sh\ncase \"$*\" in *--phase pre*) exit 0 ;; *) exit 1 ;; esac\n")
+	base := newFakeReleaseWithCLI(t, "v0.0.9", []byte("#!/bin/sh\necho v0.0.9\n"), cli)
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "lattix-agent")
+	cliTarget := filepath.Join(dir, "latx-ag")
+	if err := os.WriteFile(exe, []byte("old agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cliTarget, []byte("old cli"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := applyTo("v0.0.9", base, "v0.0.2", "unused/repo", exe, false); err == nil {
+		t.Fatal("post 相迁移失败应报错")
+	} else if !strings.Contains(err.Error(), "兼容性迁移") {
+		t.Fatalf("错误应标注迁移失败: %v", err)
+	}
+	if got, err := os.ReadFile(exe); err != nil || string(got) != "old agent" {
+		t.Fatalf("迁移失败后 agent 未回滚: %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(cliTarget); err != nil || string(got) != "old cli" {
+		t.Fatalf("迁移失败后 latx-ag 未回滚: %q, %v", got, err)
 	}
 }
 

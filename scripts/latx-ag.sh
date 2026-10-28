@@ -10,8 +10,12 @@
 #   latx-ag enable|disable          systemctl 包装（systemd 模式需 root）；用户态模式增删 crontab @reboot
 #   latx-ag log [-n N]              journalctl -u lattix-agent -f（-n N 时不跟随）；用户态读日志文件
 #   latx-ag log-xray [-n N]         journalctl -u xray -f（同上）
-#   latx-ag update [version]        从 GitHub release 更新 agent（默认 latest；预检 -version）
+#   latx-ag update [version]        从 GitHub release 更新 agent（默认 latest；预检 -version；
+#                                   停服务前/启动前自动执行兼容性迁移，见 migrate）
 #   latx-ag xray-update [version]   更新 xray（官方 .dgst 校验 SHA2-256，失败回滚 .bak）
+#   latx-ag migrate [--from V] [--phase pre|post] [--data-dir DIR]
+#                                   兼容性迁移：升级流程自动调用；裸执行为修复模式
+#                                   （跳过版本窗口过滤，仅靠条目自守卫判定）
 #   latx-ag uninstall [--purge-xray] [--yes]   卸载 agent（默认保留 xray 与节点运行）
 #   latx-ag version                 latx-ag 自身、agent 与 xray 版本
 #   latx-ag help                    本帮助
@@ -65,6 +69,7 @@ AGENT_BIN="${LATX_AG_AGENT_BIN:-$APP_ROOT/bin/lattix-agent}"
 RUN_SCRIPT="$(dirname "$AGENT_BIN")/lattix-agent-run"
 XRAY_BIN="${LATX_AG_XRAY_BIN:-$APP_ROOT/bin/xray}"
 XRAY_CONFIG="$APP_ROOT/config/xray.json"
+DATA_DIR="${LATX_AG_DATA:-$APP_ROOT/data}"
 STATE_FILE="${LATX_AG_STATE:-$APP_ROOT/data/state.json}"
 CONNECTION_FILE="${LATX_AG_CONNECTION:-$APP_ROOT/data/connection.json}"
 SETTINGS_FILE="$APP_ROOT/data/settings.json"
@@ -80,6 +85,105 @@ use_systemd() { [[ "${LATX_DEV:-0}" != "1" && -f "$UNIT_FILE" ]] && command -v s
 
 need_root() {
     [[ "$(id -u)" -eq 0 ]] || die "该操作需要 root 权限（systemctl 类命令），请用 sudo 执行"
+}
+
+# ===== 兼容性迁移框架 =====
+# 注册表条目形如 "<id>|<applies_below>|<phase>"：
+#   id            迁移标识（动作函数 migrate_<id>；完成标记 DATA_DIR/migrations/<id>.done）
+#   applies_below 来源版本低于该值时自动触发（如 v0.1.21 < v0.1.24）；动作函数自身必须
+#                 幂等且自守卫（条件不满足时无副作用直接返回），版本过滤只是策略层
+#   phase         pre  = 停旧服务/换二进制之前（旧 agent 可能仍在运行，须容忍并发）；
+#                 post = 新二进制就位后、新 agent 首次启动之前
+# 触发点（三条升级路径共享同一注册表，均以「新」latx-ag 子进程执行，保证注册表为最新）：
+#   latx-ag update（pre 于停服务前、post 于启动服务前）；install.sh 重装（post）；
+#   agent 面板自升级 internal/selfupdate（pre 换二进制前、post 换二进制后，失败回滚）。
+# 裸 `latx-ag migrate`（不带 --from）为修复模式：跳过版本窗口过滤，仅靠自守卫判定，
+# 用于修复升级窗口已错过（如已停在崩溃循环）的节点。
+MIGRATION_REGISTRY=(
+    "server_test_journal_international|v0.1.24|post"
+)
+
+# version_lt A B：A < B（忽略前导 v，按点分段数值比较；缺段/非数字段按 0）。
+version_lt() {
+    local a="${1#v}" b="${2#v}"
+    [[ -n "$a" && -n "$b" ]] || return 1
+    local IFS=.
+    local -a A B
+    read -ra A <<<"$a"
+    read -ra B <<<"$b"
+    local i x y
+    for ((i = 0; i < ${#A[@]} || i < ${#B[@]}; i++)); do
+        x="${A[i]:-0}"; y="${B[i]:-0}"
+        [[ "$x" =~ ^[0-9]+$ ]] || x=0
+        [[ "$y" =~ ^[0-9]+$ ]] || y=0
+        (( x < y )) && return 0
+        (( x > y )) && return 1
+    done
+    return 1
+}
+
+# 迁移条目 server_test_journal_international：
+# 0.1.23 将服务器测试类别 international 更名为 connectivity（shared/server_testing.go），
+# ≤0.1.22 agent 写下的 server-test-task.json 在新版 Payload.Validate() 下不合法，
+# ≥0.1.23 agent 启动即 log.Fatalf 崩溃循环（systemd StartLimit 很快放弃拉起）。
+# 处置（本次事故处置）：删除旧 journal 与配套待回传结果文件——结果本就未交付，
+# 面板可重新派发任务；已 completed 的 journal 删除无任何影响；旧版 agent 对
+# journal 缺省容忍（接受任务时重建）。applies_below 取 v0.1.24：同时覆盖
+# ≤0.1.22 升级与已停在 0.1.23 崩溃循环节点的 0.1.23→0.1.24 修复升级。
+migrate_server_test_journal_international() {
+    local journal="$DATA_DIR/server-test-task.json"
+    [[ -f "$journal" ]] || return 0
+    if [[ ! -r "$journal" ]]; then
+        echo "latx-ag: 无法读取 $journal（权限不足？），迁移无法判定" >&2
+        return 1
+    fi
+    grep -q '"international"' "$journal" || return 0
+    rm -f "$journal" "$DATA_DIR/server-test-result.json.gz"
+    echo ">> [migrate] 已清理旧格式 server test journal（international → connectivity 不兼容；未交付结果丢弃，面板可重新派发任务）"
+}
+
+# cmd_migrate [--from V] [--phase pre|post] [--data-dir DIR]
+cmd_migrate() {
+    local from="" want_phase="" data_dir_override=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from)     from="${2:?--from requires a value}"; shift 2 ;;
+            --phase)    want_phase="${2:?--phase requires a value}"; shift 2 ;;
+            --data-dir) data_dir_override="${2:?--data-dir requires a value}"; shift 2 ;;
+            *)          die "未知参数: $1（用法: latx-ag migrate [--from V] [--phase pre|post] [--data-dir DIR]）" ;;
+        esac
+    done
+    # 裸调用（无 --data-dir）作用于本机 agent 数据目录，systemd 模式需要 root；
+    # 显式 --data-dir 为升级流程程序化调用，权限由调用方负责。
+    [[ -n "$data_dir_override" ]] && DATA_DIR="$data_dir_override"
+    if [[ -z "$data_dir_override" ]] && use_systemd; then need_root; fi
+    mkdir -p "$DATA_DIR/migrations"
+    local entry id below phase migrate_fn
+    for entry in "${MIGRATION_REGISTRY[@]}"; do
+        IFS='|' read -r id below phase <<<"$entry"
+        [[ -f "$DATA_DIR/migrations/$id.done" ]] && continue
+        if [[ -n "$want_phase" && "$phase" != "$want_phase" ]]; then
+            continue
+        fi
+        # --from 为空（修复模式）时跳过版本窗口过滤，交由条目自守卫判定。
+        if [[ -n "$from" ]] && ! version_lt "$from" "$below"; then
+            continue
+        fi
+        echo ">> [migrate] ${id}（来源 ${from:-repair}，phase ${phase}）"
+        migrate_fn="migrate_$id"
+        if ! "$migrate_fn"; then
+            die "兼容性迁移 $id 执行失败（未写完成标记，可修复后重试；本次更新已中止）"
+        fi
+        printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ) from=${from:-repair}" >"$DATA_DIR/migrations/$id.done"
+    done
+}
+
+# run_updater_migrations <new_latx_ag> <from_version> <phase> <data_dir>：
+# 升级流程专用入口——必须用「新」latx-ag（本次下载包内、已过预检）执行，
+# 旧脚本内存中的注册表不包含新增条目。
+run_updater_migrations() {
+    "$1" migrate --from "$2" --phase "$3" --data-dir "$4" \
+        || die "兼容性迁移失败（phase=${3}），已中止更新"
 }
 
 agent_version() {
@@ -318,23 +422,33 @@ cmd_update() {
 	[[ "$new_cli_version" == "$version" ]] \
 		|| die "预检失败：新 latx-ag 版本不符（期望 ${version}，实际 ${new_cli_version:-unknown}），放弃更新"
 
+	# pre 相兼容性迁移：停服务/换二进制之前执行（旧 agent 仍在运行，条目须容忍并发）。
+	run_updater_migrations "$tmp/lattix-agent/latx-ag" "$current" pre "$DATA_DIR"
+
 	if use_systemd; then
 		systemctl stop "$UNIT"
-		install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
-		install -m 0755 "$tmp/lattix-agent/latx-ag" "$LATX_AG_APP_BIN"
-		if [[ "$LATX_AG_BIN" != "$LATX_AG_APP_BIN" && ! -L "$LATX_AG_BIN" ]]; then
-			install -m 0755 "$tmp/lattix-agent/latx-ag" "$LATX_AG_BIN"
-		fi
+	else
+		# 用户态：守护循环会在 agent 退出后约 1s 拉起新版，必须连守护脚本一起停，
+		# 待迁移完成后再重新拉起，避免新版 agent 在迁移前被启动。
+		pkill -f "$RUN_SCRIPT" 2>/dev/null || true
+	fi
+	pkill -f "$AGENT_BIN -panel" 2>/dev/null || true
+	if ! use_systemd; then
+		wait_user_processes_stopped || die "无法停止守护脚本或 agent 进程，已中止更新"
+	fi
+	install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
+	install -m 0755 "$tmp/lattix-agent/latx-ag" "$LATX_AG_APP_BIN"
+	if [[ "$LATX_AG_BIN" != "$LATX_AG_APP_BIN" && ! -L "$LATX_AG_BIN" ]]; then
+		install -m 0755 "$tmp/lattix-agent/latx-ag" "$LATX_AG_BIN"
+	fi
+
+	# post 相兼容性迁移：新旧二进制交接完成、新 agent 首次启动之前（关键窗口）。
+	run_updater_migrations "$tmp/lattix-agent/latx-ag" "$current" post "$DATA_DIR"
+
+	if use_systemd; then
 		systemctl start "$UNIT"
 	else
-        # 用户态：先停 agent 释放二进制占用（守护循环约 1s 拉起新版），再替换。
-        pkill -f "$AGENT_BIN -panel" 2>/dev/null || true
-		sleep 1
-		install -m 0755 "$tmp/lattix-agent/lattix-agent" "$AGENT_BIN"
-		install -m 0755 "$tmp/lattix-agent/latx-ag" "$LATX_AG_APP_BIN"
-		if [[ "$LATX_AG_BIN" != "$LATX_AG_APP_BIN" && ! -L "$LATX_AG_BIN" ]]; then
-			install -m 0755 "$tmp/lattix-agent/latx-ag" "$LATX_AG_BIN"
-		fi
+		user_start
 	fi
 
 	local running_version connected=0
@@ -648,6 +762,7 @@ main() {
         log-xray)             cmd_log "$XRAY_UNIT" "$@" ;;
         update)               cmd_update "$@" ;;
         xray-update)          cmd_xray_update "$@" ;;
+        migrate)              cmd_migrate "$@" ;;
         uninstall)            cmd_uninstall "$@" ;;
         version)              cmd_version ;;
         help|-h|--help)       cmd_help ;;
