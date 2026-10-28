@@ -24,18 +24,29 @@ function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
 }
 
 function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) {
+  // 显式挂载 Close：遮罩点击直接走关闭动作，不依赖 floating-ui 的 outside-press 链路。
   return (
-    <DialogPrimitive.Backdrop
-      data-slot="dialog-overlay"
-      className={cn(
-        'fixed inset-0 isolate z-50 bg-[var(--panel-overlay)] duration-150 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0',
-        className,
-      )}
-      {...props}
+    <DialogPrimitive.Close
+      render={
+        <DialogPrimitive.Backdrop
+          data-slot="dialog-overlay"
+          className={cn(
+            'fixed inset-0 isolate z-50 bg-[var(--panel-overlay)] duration-150 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0',
+            className,
+          )}
+          {...props}
+        />
+      }
     />
   )
 }
 
+/**
+ * DialogContent 自身不要作为滚动容器（勿加 overflow-y-auto）：右上角的关闭按钮
+ * 是绝对定位在弹窗上的，弹窗滚动会让它随内容滚走。长内容弹窗用
+ * `flex max-h-[…vh] flex-col overflow-hidden` + 内部 `min-h-0 flex-1 overflow-y-auto`
+ * 的滚动体（固定头部与 footer，参见服务器测试报告弹窗）。
+ */
 function DialogContent({
   className,
   children,
