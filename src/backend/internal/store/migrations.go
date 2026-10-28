@@ -15,7 +15,9 @@ import (
 // v25: 三网目录测速——新增 server_catalog_probes(+history)，随 Schema 建表（无存量迁移）。
 // v26: 告警分类——新增 server_ban_watch（Ban 观察状态机快照），随 Schema 建表（无存量迁移）。
 // v27: 非直连属性——servers.non_direct（大陆不可直连，Ban 告警巡检跳过）。
-const schemaVersion = 27
+// v28: 模板配置三级化——user_subscription_profiles.user_configured 标记用户级自选
+// （订阅页自助保存），生效优先级 强制级 > 用户级 > 面板级（非强制指派/默认）。
+const schemaVersion = 28
 
 type columnMigration struct {
 	name       string
@@ -182,6 +184,7 @@ func migrateSchema(tx *sql.Tx) error {
 		},
 		"user_subscription_profiles": {
 			{"disable_region_groups", "INTEGER NOT NULL DEFAULT 0"},
+			{"user_configured", "INTEGER NOT NULL DEFAULT 0"},
 			{"assigned_portable_template_id", "TEXT NOT NULL DEFAULT ''"},
 			{"assigned_mihomo_template_id", "TEXT NOT NULL DEFAULT ''"},
 			{"assigned_singbox_template_id", "TEXT NOT NULL DEFAULT ''"},

@@ -8,26 +8,79 @@ import (
 	"lattix/backend/internal/store"
 )
 
-func TestProfileFromInputPreservesEmptySuggestedCategories(t *testing.T) {
-	profile, err := profileFromInput(1, &subscriptionProfileInput{
-		Mode: store.SubscriptionModeSuggested, Preset: "balanced", Categories: []string{},
+func TestRoutingSlotsSuggestedCategories(t *testing.T) {
+	slots, err := routingSlotsFromInput(&subscriptionProfileInput{
+		Mode: store.SubscriptionModeSuggested, Categories: []string{"ai", "gaming"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.CategoriesJSON != "[]" {
-		t.Fatalf("categories = %s, want []", profile.CategoriesJSON)
+	if slots.assignedSuggested != `["ai","gaming"]` || slots.assignedPortable != "" {
+		t.Fatalf("suggested slots = %+v", slots)
+	}
+	if slots.forcedPortable {
+		t.Fatalf("forced defaulted true: %+v", slots)
 	}
 }
 
-func TestProfileFromInputRejectsUnknownCategoryAndPreset(t *testing.T) {
+func TestRoutingSlotsEmptyCategoriesClearsPanelMain(t *testing.T) {
+	// 建议模式 + 空分组 = 清除面板级主策略（用户回落默认级），不是错误。
+	slots, err := routingSlotsFromInput(&subscriptionProfileInput{
+		Mode: store.SubscriptionModeSuggested, Categories: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slots.assignedSuggested != "" || slots.assignedPortable != "" {
+		t.Fatalf("expected cleared main slot, got %+v", slots)
+	}
+}
+
+func TestRoutingSlotsForcedFlagFollowsCheckbox(t *testing.T) {
+	slots, err := routingSlotsFromInput(&subscriptionProfileInput{
+		Mode: store.SubscriptionModeTemplate, PortableTemplateID: "tpl-1", Forced: true,
+		MihomoTemplateID: "tpl-mihomo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slots.assignedPortable != "tpl-1" || slots.assignedSuggested != "" {
+		t.Fatalf("template slots = %+v", slots)
+	}
+	if !slots.forcedPortable || !slots.forcedMihomo {
+		t.Fatalf("forced flags not set: %+v", slots)
+	}
+}
+
+func TestRoutingSlotsRejectsUnknownCategoryAndMode(t *testing.T) {
 	for _, input := range []subscriptionProfileInput{
-		{Mode: store.SubscriptionModeSuggested, Preset: "unknown"},
-		{Mode: store.SubscriptionModeSuggested, Preset: "balanced", Categories: []string{"unknown"}},
+		{Mode: "weird"},
+		{Mode: store.SubscriptionModeSuggested, Categories: []string{"unknown"}},
 	} {
-		if _, err := profileFromInput(1, &input); err == nil {
-			t.Fatalf("invalid profile accepted: %+v", input)
+		if _, err := routingSlotsFromInput(&input); err == nil {
+			t.Fatalf("invalid routing accepted: %+v", input)
 		}
+	}
+}
+
+func TestApplyRoutingSlotsPreservesUserLevel(t *testing.T) {
+	profile := store.SubscriptionProfile{
+		Mode: store.SubscriptionModeTemplate, PortableTemplateID: "user-own",
+		UserConfigured: true,
+	}
+	slots := routingSlotValues{
+		assignedPortable: "panel-tpl", forcedPortable: true,
+		disableRegionGroups: true, regionGroupsTouched: true,
+	}
+	applyRoutingSlots(&profile, slots)
+	if profile.PortableTemplateID != "user-own" || !profile.UserConfigured {
+		t.Fatalf("user-level fields touched by panel save: %+v", profile)
+	}
+	if profile.AssignedPortableTemplateID != "panel-tpl" || !profile.AssignForcedPortable {
+		t.Fatalf("panel slots not applied: %+v", profile)
+	}
+	if !profile.DisableRegionGroups {
+		t.Fatalf("region groups flag not applied: %+v", profile)
 	}
 }
 

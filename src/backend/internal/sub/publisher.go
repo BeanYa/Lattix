@@ -54,7 +54,11 @@ func (s *Server) publishUserLocked(ctx context.Context, userID int64, baseURL st
 	if err != nil {
 		return PublishResult{}, err
 	}
-	profile = store.EffectiveProfile(profile)
+	defaultCfg, err := s.st.SubscriptionDefaultConfig(ctx)
+	if err != nil {
+		return PublishResult{}, err
+	}
+	profile = store.EffectiveProfile(profile, defaultCfg)
 	policy, sourceLabel, template, err := s.resolvePolicy(ctx, profile)
 	if err != nil {
 		return s.publishFailure(ctx, userID, err)

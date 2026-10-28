@@ -151,7 +151,7 @@ func TestUnassignSubscriptionTemplateClearsSlotKeepsUserChoice(t *testing.T) {
 		{ID: "tpl-portable", Name: "Portable", Kind: "portable", Origin: "local",
 			Content: portableTemplateBody, ContentSHA256: "sha-1"},
 		{ID: "user-own", Name: "UserOwn", Kind: "portable", Origin: "local",
-			Content: "name: U\ngroups:\n  - name: UGroup\n    type: select\n    options: [DIRECT]\nrules: []\nfinal: UGroup\n",
+			Content:       "name: U\ngroups:\n  - name: UGroup\n    type: select\n    options: [DIRECT]\nrules: []\nfinal: UGroup\n",
 			ContentSHA256: "sha-3"},
 	} {
 		upsertTestTemplate(t, st, template)
@@ -160,7 +160,7 @@ func TestUnassignSubscriptionTemplateClearsSlotKeepsUserChoice(t *testing.T) {
 	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
 		UserID: userID, Mode: store.SubscriptionModeTemplate, Preset: "balanced",
 		CategoriesJSON: `[]`, PortableTemplateID: "user-own",
-		GenerationStatus: store.SubscriptionGenerationMissing,
+		GenerationStatus:           store.SubscriptionGenerationMissing,
 		AssignedPortableTemplateID: "tpl-portable", AssignForcedPortable: true,
 	}); err != nil {
 		t.Fatal(err)
@@ -296,14 +296,14 @@ func TestUnassignSubscriptionTemplateSuggestedKeepsUserChoice(t *testing.T) {
 	defer st.Close()
 	upsertTestTemplate(t, st, store.SubscriptionTemplate{
 		ID: "user-own", Name: "UserOwn", Kind: "portable", Origin: "local",
-		Content: "name: U\ngroups:\n  - name: UGroup\n    type: select\n    options: [DIRECT]\nrules: []\nfinal: UGroup\n",
+		Content:       "name: U\ngroups:\n  - name: UGroup\n    type: select\n    options: [DIRECT]\nrules: []\nfinal: UGroup\n",
 		ContentSHA256: "sha-3",
 	})
 	userID, _ := st.InsertUser(ctx, "a", "00000000-0000-0000-0000-000000000017", "tok-h", nil)
 	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
 		UserID: userID, Mode: store.SubscriptionModeTemplate, Preset: "balanced",
 		CategoriesJSON: `[]`, PortableTemplateID: "user-own",
-		GenerationStatus: store.SubscriptionGenerationMissing,
+		GenerationStatus:            store.SubscriptionGenerationMissing,
 		AssignedSuggestedCategories: `["ai","youtube","google","private","domestic","telegram","github","overseas"]`, AssignForcedPortable: true,
 	}); err != nil {
 		t.Fatal(err)
@@ -332,23 +332,30 @@ func TestUnassignSubscriptionTemplateSuggestedKeepsUserChoice(t *testing.T) {
 	awaitSnapshotReady(t, st, userID)
 }
 
-func TestUpdateUserSubSettingsPreservesAssignment(t *testing.T) {
+func TestUpdateUserSubSettingsWritesPanelSlotsKeepsUserLevel(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	upsertTestTemplate(t, st, store.SubscriptionTemplate{
+		ID: "tpl-portable", Name: "Portable", Kind: "portable", Origin: "local",
+		Content: portableTemplateBody, ContentSHA256: "sha-ss1",
+	})
 	userID, _ := st.InsertUser(ctx, "a", "00000000-0000-0000-0000-000000000014", "tok-e", nil)
+	// 用户级自选（订阅页保存）：面板侧保存不得触碰。
 	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
-		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
-		CategoriesJSON: `["ai"]`, GenerationStatus: store.SubscriptionGenerationMissing,
-		AssignedPortableTemplateID: "acl4ssr-standard", AssignForcedPortable: true,
+		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "minimal",
+		CategoriesJSON: `["ai","gaming"]`, UserConfigured: true,
+		GenerationStatus:            store.SubscriptionGenerationMissing,
+		AssignedSuggestedCategories: `["private","domestic"]`,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
 
+	// 不勾选覆盖：表单写入面板级槽位（suggested → 替换原建议规则指派），用户级原样。
 	rec := httptest.NewRecorder()
 	server.handleUpdateUserSubSettings(rec, httptest.NewRequest(http.MethodPost,
 		"/api/user/sub-settings", strings.NewReader(fmt.Sprintf(
@@ -361,7 +368,205 @@ func TestUpdateUserSubSettingsPreservesAssignment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.AssignedPortableTemplateID != "acl4ssr-standard" || !profile.AssignForcedPortable {
-		t.Fatalf("assignment lost after sub-settings save: %+v", profile)
+	if profile.AssignedSuggestedCategories != `["ai"]` || profile.AssignedPortableTemplateID != "" {
+		t.Fatalf("panel slots not replaced by form: %+v", profile)
+	}
+	if profile.AssignForcedPortable {
+		t.Fatalf("forced flag set without override checkbox: %+v", profile)
+	}
+	if !profile.UserConfigured || profile.Preset != "minimal" || profile.CategoriesJSON != `["ai","gaming"]` {
+		t.Fatalf("user-level fields touched by panel save: %+v", profile)
+	}
+
+	// 勾选覆盖：表单写入强制级。
+	rec = httptest.NewRecorder()
+	server.handleUpdateUserSubSettings(rec, httptest.NewRequest(http.MethodPost,
+		"/api/user/sub-settings", strings.NewReader(fmt.Sprintf(
+			`{"user_id":%d,"traffic_limit":0,"traffic_reset_day":0,"sub_title":"","sub_announcement":"","plan_name":"","app_url":"","routing":{"mode":"template","portable_template_id":"tpl-portable","forced":true,"categories":[],"mihomo_template_id":"","singbox_template_id":"","quanx_template_id":""}}`,
+			userID))))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("forced save status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	profile, err = st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.AssignedPortableTemplateID != "tpl-portable" || !profile.AssignForcedPortable {
+		t.Fatalf("forced slots not applied: %+v", profile)
+	}
+	if profile.AssignedSuggestedCategories != "" {
+		t.Fatalf("stale suggested assignment kept: %+v", profile)
+	}
+	if !profile.UserConfigured {
+		t.Fatalf("user_configured cleared by panel save: %+v", profile)
+	}
+
+	// 建议模式 + 空分组：清除面板级主策略，用户级仍保留。
+	rec = httptest.NewRecorder()
+	server.handleUpdateUserSubSettings(rec, httptest.NewRequest(http.MethodPost,
+		"/api/user/sub-settings", strings.NewReader(fmt.Sprintf(
+			`{"user_id":%d,"traffic_limit":0,"traffic_reset_day":0,"sub_title":"","sub_announcement":"","plan_name":"","app_url":"","routing":{"mode":"suggested","categories":[],"portable_template_id":"","mihomo_template_id":"","singbox_template_id":"","quanx_template_id":""}}`,
+			userID))))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear save status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	profile, err = st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.AssignedPortableTemplateID != "" || profile.AssignForcedPortable {
+		t.Fatalf("panel main not cleared: %+v", profile)
+	}
+	if !profile.UserConfigured {
+		t.Fatalf("user_configured cleared: %+v", profile)
+	}
+}
+
+func unforceRequest(t *testing.T, server *Server, body string) (int, string, []int64) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	server.handleUnforceSubscriptionTemplate(rec, httptest.NewRequest(http.MethodPost,
+		"/api/subscription/template/unforce", strings.NewReader(body)))
+	var resp struct {
+		Code string          `json:"code"`
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		UserIDs []int64 `json:"user_ids"`
+	}
+	if len(resp.Data) > 0 {
+		if err := json.Unmarshal(resp.Data, &payload); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return rec.Code, resp.Code, payload.UserIDs
+}
+
+func TestUnforceSubscriptionTemplateKeepsAssignmentClearsForced(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	upsertTestTemplate(t, st, store.SubscriptionTemplate{
+		ID: "tpl-portable", Name: "Portable", Kind: "portable", Origin: "local",
+		Content: portableTemplateBody, ContentSHA256: "sha-u1",
+	})
+	userID, _ := st.InsertUser(ctx, "a", "00000000-0000-0000-0000-000000000020", "tok-u1", nil)
+	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
+		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
+		CategoriesJSON: `["ai"]`, GenerationStatus: store.SubscriptionGenerationMissing,
+		AssignedPortableTemplateID: "tpl-portable", AssignForcedPortable: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+	startTestRegenerator(t, server.subscriptions)
+
+	status, code, unforced := unforceRequest(t, server, fmt.Sprintf(
+		`{"user_ids":[%d],"template_id":"tpl-portable"}`, userID))
+	if status != http.StatusOK || code != shared.CodeOK {
+		t.Fatalf("status=%d code=%q", status, code)
+	}
+	if len(unforced) != 1 || unforced[0] != userID {
+		t.Fatalf("unforced user_ids = %v", unforced)
+	}
+	profile, err := st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.AssignForcedPortable {
+		t.Fatalf("forced flag still set: %+v", profile)
+	}
+	if profile.AssignedPortableTemplateID != "tpl-portable" {
+		t.Fatalf("assignment dropped by unforce: %+v", profile)
+	}
+	// 强制解除后重发订阅快照。
+	awaitSnapshotReady(t, st, userID)
+}
+
+func TestUnforceSubscriptionTemplateSuggestedSlot(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	userID, _ := st.InsertUser(ctx, "a", "00000000-0000-0000-0000-000000000021", "tok-u2", nil)
+	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
+		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
+		CategoriesJSON: `["ai"]`, GenerationStatus: store.SubscriptionGenerationMissing,
+		AssignedSuggestedCategories: `["private","domestic"]`, AssignForcedPortable: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+
+	status, code, unforced := unforceRequest(t, server, fmt.Sprintf(
+		`{"user_ids":[%d],"suggested_categories":["private","domestic"]}`, userID))
+	if status != http.StatusOK || code != shared.CodeOK {
+		t.Fatalf("status=%d code=%q", status, code)
+	}
+	if len(unforced) != 1 {
+		t.Fatalf("unforced user_ids = %v", unforced)
+	}
+	profile, err := st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.AssignForcedPortable || profile.AssignedSuggestedCategories != `["private","domestic"]` {
+		t.Fatalf("suggested slot after unforce: %+v", profile)
+	}
+}
+
+func TestUnforceSubscriptionTemplateSkipsNonForced(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	upsertTestTemplate(t, st, store.SubscriptionTemplate{
+		ID: "tpl-portable", Name: "Portable", Kind: "portable", Origin: "local",
+		Content: portableTemplateBody, ContentSHA256: "sha-u3",
+	})
+	userID, _ := st.InsertUser(ctx, "a", "00000000-0000-0000-0000-000000000022", "tok-u3", nil)
+	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
+		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
+		CategoriesJSON: `["ai"]`, GenerationStatus: store.SubscriptionGenerationMissing,
+		AssignedPortableTemplateID: "tpl-portable",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+
+	// 未被强制的用户：成功返回但无变更、不进入重发布名单。
+	status, code, unforced := unforceRequest(t, server, fmt.Sprintf(
+		`{"user_ids":[%d],"template_id":"tpl-portable"}`, userID))
+	if status != http.StatusOK || code != shared.CodeOK {
+		t.Fatalf("status=%d code=%q", status, code)
+	}
+	if len(unforced) != 0 {
+		t.Fatalf("non-forced user reported unforced: %v", unforced)
+	}
+}
+
+func TestUnforceSubscriptionTemplateValidation(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	server := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
+
+	if _, code, _ := unforceRequest(t, server, `{"user_ids":[1]}`); code != shared.CodeInvalidArgument {
+		t.Fatalf("missing target: code=%q", code)
+	}
+	if _, code, _ := unforceRequest(t, server, `{"user_ids":[]}`); code != shared.CodeInvalidArgument {
+		t.Fatalf("empty user_ids: code=%q", code)
 	}
 }

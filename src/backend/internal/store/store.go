@@ -298,6 +298,7 @@ CREATE TABLE IF NOT EXISTS user_subscription_profiles (
     assigned_suggested_preset    TEXT NOT NULL DEFAULT '', -- 已废弃，保留兼容；新指派使用 assigned_suggested_categories
     assigned_suggested_categories TEXT NOT NULL DEFAULT '', -- 建议规则分组指派（JSON 数组，与模板指派互斥）
     disable_region_groups INTEGER NOT NULL DEFAULT 0,
+    user_configured INTEGER NOT NULL DEFAULT 0, -- 用户已在订阅页自选模板配置（用户级，优先于非强制指派）
     assign_forced_portable INTEGER NOT NULL DEFAULT 0,
     assign_forced_mihomo  INTEGER NOT NULL DEFAULT 0,
     assign_forced_singbox INTEGER NOT NULL DEFAULT 0,

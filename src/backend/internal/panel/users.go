@@ -16,7 +16,6 @@ import (
 	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
-	"lattix/backend/internal/sub"
 	"lattix/shared"
 )
 
@@ -204,8 +203,9 @@ type subscriptionProfileInput struct {
 	MihomoTemplateID    string   `json:"mihomo_template_id"`
 	SingboxTemplateID   string   `json:"singbox_template_id"`
 	QuanXTemplateID     string   `json:"quanx_template_id"`
-	// 以下为 GET DTO 的只读回显字段：前端把 routing 对象原样回传，
-	// 本接口忽略它们（管理员指派槽位在保存时从现有 profile 原样保留）。
+	Forced              bool     `json:"forced"` // 勾选覆盖 → 强制级；不勾选 → 面板级
+	// 以下为 GET DTO 的只读回显字段：前端把 routing 对象原样回传，本接口忽略它们
+	//（用户级字段仅在订阅页修改，面板侧只读，保存时原样保留）。
 	AssignedPortableTemplateID  string   `json:"assigned_portable_template_id"`
 	AssignForcedPortable        bool     `json:"assign_forced_portable"`
 	AssignedMihomoTemplateID    string   `json:"assigned_mihomo_template_id"`
@@ -226,6 +226,7 @@ type subscriptionProfileDTO struct {
 	MihomoTemplateID            string   `json:"mihomo_template_id"`
 	SingboxTemplateID           string   `json:"singbox_template_id"`
 	QuanXTemplateID             string   `json:"quanx_template_id"`
+	UserConfigured              bool     `json:"user_configured"`
 	AssignedPortableTemplateID  string   `json:"assigned_portable_template_id"`
 	AssignForcedPortable        bool     `json:"assign_forced_portable"`
 	AssignedMihomoTemplateID    string   `json:"assigned_mihomo_template_id"`
@@ -251,6 +252,7 @@ func subscriptionProfileToDTO(profile store.SubscriptionProfile) subscriptionPro
 		Mode:                profile.Mode, Preset: profile.Preset, Categories: categories,
 		PortableTemplateID: profile.PortableTemplateID, MihomoTemplateID: profile.MihomoTemplateID,
 		SingboxTemplateID: profile.SingboxTemplateID, QuanXTemplateID: profile.QuanXTemplateID,
+		UserConfigured:              profile.UserConfigured,
 		AssignedPortableTemplateID:  profile.AssignedPortableTemplateID,
 		AssignForcedPortable:        profile.AssignForcedPortable,
 		AssignedMihomoTemplateID:    profile.AssignedMihomoTemplateID,
@@ -263,83 +265,94 @@ func subscriptionProfileToDTO(profile store.SubscriptionProfile) subscriptionPro
 	}
 }
 
-func profileFromInput(userID int64, input *subscriptionProfileInput) (store.SubscriptionProfile, error) {
-	profile := store.SubscriptionProfile{
-		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
-		GenerationStatus: store.SubscriptionGenerationPending,
+// routingSlotValues 是管理员路由表单折算出的面板级/强制级槽位写入值。
+type routingSlotValues struct {
+	assignedPortable    string
+	assignedSuggested   string
+	assignedMihomo      string
+	assignedSingbox     string
+	assignedQuanx       string
+	forcedPortable      bool
+	forcedMihomo        bool
+	forcedSingbox       bool
+	forcedQuanx         bool
+	disableRegionGroups bool
+	regionGroupsTouched bool
+}
+
+// templateCheckProfile 把槽位值折叠为用户槽位视图以复用模板存在性校验。
+func (v routingSlotValues) templateCheckProfile() store.SubscriptionProfile {
+	return store.SubscriptionProfile{
+		PortableTemplateID: v.assignedPortable,
+		MihomoTemplateID:   v.assignedMihomo,
+		SingboxTemplateID:  v.assignedSingbox,
+		QuanXTemplateID:    v.assignedQuanx,
 	}
-	categories := append([]string(nil), store.DefaultBalancedCategories...)
-	if input != nil {
-		if input.RegionGroupsEnabled != nil {
-			profile.DisableRegionGroups = !*input.RegionGroupsEnabled
+}
+
+// routingSlotsFromInput 把管理员路由表单折算为指派槽位写入值（不含用户级字段）：
+// 勾选覆盖 → 强制级（forced=1），不勾选 → 面板级（forced=0）。主策略建议规则分组与
+// 中立模板互斥；两者均空 = 清除该级主策略配置（用户回落默认级）。
+func routingSlotsFromInput(input *subscriptionProfileInput) (routingSlotValues, error) {
+	if input == nil {
+		return routingSlotValues{}, nil
+	}
+	var slots routingSlotValues
+	switch mode := strings.TrimSpace(input.Mode); mode {
+	case "", store.SubscriptionModeSuggested:
+		// 空分组 = 清除面板级主策略（用户回落面板级指派空缺 → 默认级），不是错误。
+		var categories []string
+		if len(input.Categories) > 0 {
+			normalized, err := normalizeSuggestedCategories(input.Categories)
+			if err != nil {
+				return routingSlotValues{}, err
+			}
+			categories = normalized
+			raw, err := json.Marshal(categories)
+			if err != nil {
+				return routingSlotValues{}, err
+			}
+			slots.assignedSuggested = string(raw)
 		}
-		profile.Mode = strings.TrimSpace(input.Mode)
-		profile.Preset = strings.TrimSpace(input.Preset)
-		categories = input.Categories
-		profile.PortableTemplateID = strings.TrimSpace(input.PortableTemplateID)
-		profile.MihomoTemplateID = strings.TrimSpace(input.MihomoTemplateID)
-		profile.SingboxTemplateID = strings.TrimSpace(input.SingboxTemplateID)
-		profile.QuanXTemplateID = strings.TrimSpace(input.QuanXTemplateID)
+		slots.forcedPortable = input.Forced && slots.assignedSuggested != ""
+	case store.SubscriptionModeTemplate:
+		slots.assignedPortable = strings.TrimSpace(input.PortableTemplateID)
+		slots.forcedPortable = input.Forced && slots.assignedPortable != ""
+	default:
+		return routingSlotValues{}, errors.New("订阅规则模式无效")
 	}
-	if profile.Mode == "" {
-		profile.Mode = store.SubscriptionModeSuggested
+	slots.assignedMihomo = strings.TrimSpace(input.MihomoTemplateID)
+	slots.assignedSingbox = strings.TrimSpace(input.SingboxTemplateID)
+	slots.assignedQuanx = strings.TrimSpace(input.QuanXTemplateID)
+	slots.forcedMihomo = input.Forced && slots.assignedMihomo != ""
+	slots.forcedSingbox = input.Forced && slots.assignedSingbox != ""
+	slots.forcedQuanx = input.Forced && slots.assignedQuanx != ""
+	if input.RegionGroupsEnabled != nil {
+		slots.disableRegionGroups = !*input.RegionGroupsEnabled
+		slots.regionGroupsTouched = true
 	}
-	if profile.Preset == "" {
-		profile.Preset = "balanced"
+	return slots, nil
+}
+
+// applyRoutingSlots 把表单折算的槽位写入 profile：仅覆盖面板级/强制级槽位与地区分组
+// 开关（表单显式给出时），用户级字段与 user_configured 原样保留（面板侧只读）。
+func applyRoutingSlots(profile *store.SubscriptionProfile, slots routingSlotValues) {
+	profile.AssignedPortableTemplateID = slots.assignedPortable
+	profile.AssignedSuggestedCategories = slots.assignedSuggested
+	profile.AssignedMihomoTemplateID = slots.assignedMihomo
+	profile.AssignedSingboxTemplateID = slots.assignedSingbox
+	profile.AssignedQuanXTemplateID = slots.assignedQuanx
+	profile.AssignForcedPortable = slots.forcedPortable
+	profile.AssignForcedMihomo = slots.forcedMihomo
+	profile.AssignForcedSingbox = slots.forcedSingbox
+	profile.AssignForcedQuanX = slots.forcedQuanx
+	if slots.regionGroupsTouched {
+		profile.DisableRegionGroups = slots.disableRegionGroups
 	}
-	if profile.Mode != store.SubscriptionModeSuggested && profile.Mode != store.SubscriptionModeTemplate {
-		return store.SubscriptionProfile{}, errors.New("订阅规则模式无效")
-	}
-	if profile.Mode == store.SubscriptionModeTemplate && profile.PortableTemplateID == "" {
-		return store.SubscriptionProfile{}, errors.New("自定义模板模式须选择中立或 ACL4SSR 模板")
-	}
-	if profile.Preset != "minimal" && profile.Preset != "balanced" && profile.Preset != "comprehensive" {
-		return store.SubscriptionProfile{}, errors.New("订阅规则预设无效")
-	}
-	knownCategories := map[string]bool{}
-	for _, category := range sub.Categories() {
-		knownCategories[category.ID] = true
-	}
-	for _, category := range categories {
-		if !knownCategories[category] {
-			return store.SubscriptionProfile{}, fmt.Errorf("未知订阅规则分类 %q", category)
-		}
-	}
-	raw, err := json.Marshal(categories)
-	if err != nil {
-		return store.SubscriptionProfile{}, err
-	}
-	profile.CategoriesJSON = string(raw)
-	return profile, nil
 }
 
 func (s *Server) validateSubscriptionProfileTemplates(ctx context.Context, profile store.SubscriptionProfile) error {
-	selections := []struct {
-		id    string
-		kinds map[string]bool
-	}{
-		{profile.PortableTemplateID, map[string]bool{"portable": true, "acl4ssr": true}},
-		{profile.MihomoTemplateID, map[string]bool{"mihomo": true}},
-		{profile.SingboxTemplateID, map[string]bool{"singbox": true}},
-		{profile.QuanXTemplateID, map[string]bool{"quanx": true}},
-	}
-	for _, selection := range selections {
-		id, kinds := selection.id, selection.kinds
-		if id == "" {
-			continue
-		}
-		template, err := s.st.SubscriptionTemplateByID(ctx, id)
-		if err != nil {
-			return fmt.Errorf("订阅模板 %q 不存在", id)
-		}
-		if !kinds[template.Kind] {
-			return fmt.Errorf("订阅模板 %q 类型不匹配", template.Name)
-		}
-		if strings.TrimSpace(template.Content) == "" {
-			return fmt.Errorf("订阅模板 %q 尚无有效缓存", template.Name)
-		}
-	}
-	return nil
+	return s.st.ValidateSubscriptionProfileTemplates(ctx, profile)
 }
 
 // handleListUsers 处理 GET /api/users。
@@ -491,18 +504,28 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	profile, err := profileFromInput(id, req.Routing)
-	if err != nil {
-		o.Fail(err)
-		_ = s.st.DeleteUser(r.Context(), id)
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	// 路由表单写入面板级/强制级槽位；用户级字段保持初始默认（suggested/balanced），
+	// 未配置面板级时新用户回落默认级。主策略建议规则分组与中立模板互斥。
+	profile := store.SubscriptionProfile{
+		UserID: id, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
+		CategoriesJSON:   `["ai","youtube","google","private","domestic","telegram","github","overseas"]`,
+		GenerationStatus: store.SubscriptionGenerationPending,
 	}
-	if err := s.validateSubscriptionProfileTemplates(r.Context(), profile); err != nil {
-		o.Fail(err)
-		_ = s.st.DeleteUser(r.Context(), id)
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	if req.Routing != nil {
+		slots, err := routingSlotsFromInput(req.Routing)
+		if err != nil {
+			o.Fail(err)
+			_ = s.st.DeleteUser(r.Context(), id)
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.validateSubscriptionProfileTemplates(r.Context(), slots.templateCheckProfile()); err != nil {
+			o.Fail(err)
+			_ = s.st.DeleteUser(r.Context(), id)
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		applyRoutingSlots(&profile, slots)
 	}
 	if err := s.st.SaveUserSubscriptionProfile(r.Context(), profile); err != nil {
 		o.Fail(err)
@@ -1139,7 +1162,8 @@ func (s *Server) fanoutRemoveUser(r *http.Request, uuid string) {
 	}
 }
 
-// handleUpdateUserSubSettings 处理 POST /api/user/sub-settings：更新用户级订阅配置。
+// handleUpdateUserSubSettings 处理 POST /api/user/sub-settings：更新用户订阅设置。
+// 路由表单写入面板级/强制级槽位（forced 勾选决定级别），用户级字段只读保留；
 // 可带 expires_at（RFC3339 或 null，§9）：省略 = 不变；null = 清除（长期）。
 // 可带 effective_at（RFC3339 或 null，§9）：省略 = 不变；null = 立即生效；
 // 推迟到未来即转为未生效态（已激活的会被扇出摘除，到点由 sweeper 重新激活）。
@@ -1183,28 +1207,25 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 	}
 	var routingProfile *store.SubscriptionProfile
 	if req.Routing != nil {
-		profile, err := profileFromInput(req.UserID, req.Routing)
+		// 路由表单只写面板级/强制级槽位：勾选覆盖 → 强制级，不勾选 → 面板级；
+		// 用户级字段与 user_configured 原样保留（仅订阅页可清除和修改）。
+		current, err := s.st.UserSubscriptionProfile(r.Context(), req.UserID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		slots, err := routingSlotsFromInput(req.Routing)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if err := s.validateSubscriptionProfileTemplates(r.Context(), profile); err != nil {
+		if err := s.validateSubscriptionProfileTemplates(r.Context(), slots.templateCheckProfile()); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		// 订阅设置只改用户自选；管理员指派槽位与强制标记原样保留。
-		if current, err := s.st.UserSubscriptionProfile(r.Context(), req.UserID); err == nil {
-			profile.AssignedPortableTemplateID = current.AssignedPortableTemplateID
-			profile.AssignForcedPortable = current.AssignForcedPortable
-			profile.AssignedMihomoTemplateID = current.AssignedMihomoTemplateID
-			profile.AssignForcedMihomo = current.AssignForcedMihomo
-			profile.AssignedSingboxTemplateID = current.AssignedSingboxTemplateID
-			profile.AssignForcedSingbox = current.AssignForcedSingbox
-			profile.AssignedQuanXTemplateID = current.AssignedQuanXTemplateID
-			profile.AssignForcedQuanX = current.AssignForcedQuanX
-			profile.AssignedSuggestedCategories = current.AssignedSuggestedCategories
-			profile.DisableRegionGroups = current.DisableRegionGroups
-		}
+		profile := current
+		applyRoutingSlots(&profile, slots)
+		profile.GenerationStatus = store.SubscriptionGenerationPending
 		routingProfile = &profile
 	}
 

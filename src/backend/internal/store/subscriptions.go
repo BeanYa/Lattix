@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -39,6 +40,7 @@ type SubscriptionProfile struct {
 	AssignedQuanXTemplateID     string
 	AssignedSuggestedCategories string // 建议规则分组指派（JSON 数组），与 AssignedPortableTemplateID 互斥
 	DisableRegionGroups         bool   // 零值保留现有自动生成地区分组的行为
+	UserConfigured              bool   // 用户已在订阅页自选模板配置（用户级生效，非强制指派的主策略槽位让位）
 	AssignForcedPortable        bool
 	AssignForcedMihomo          bool
 	AssignForcedSingbox         bool
@@ -119,17 +121,77 @@ var presetCategorySets = map[string][]string{
 	"comprehensive": {"ads", "ai", "bilibili", "youtube", "google", "private", "domestic", "telegram", "github", "microsoft", "apple", "social", "streaming", "gaming", "education", "finance", "cloud", "overseas"},
 }
 
-// EffectiveProfile 合并管理员指派与用户自选，返回订阅构建实际使用的 profile：
-// 指派槽位在用户未自选（或强制覆盖）时生效；用户自选优先于普通指派。
-func EffectiveProfile(p SubscriptionProfile) SubscriptionProfile {
-	if p.AssignedSuggestedCategories != "" && (p.AssignForcedPortable || p.Mode != SubscriptionModeTemplate || p.PortableTemplateID == "") {
-		p.Mode = SubscriptionModeSuggested
-		p.Preset = "balanced" // 占位值；发布标签不再依赖 preset 名。
-		p.CategoriesJSON = p.AssignedSuggestedCategories
-	} else if p.AssignedPortableTemplateID != "" && (p.AssignForcedPortable || p.Mode != SubscriptionModeTemplate || p.PortableTemplateID == "") {
-		p.Mode = SubscriptionModeTemplate
-		p.PortableTemplateID = p.AssignedPortableTemplateID
+// SubscriptionDefaultConfig 是默认级模板配置（全局一份，模板指派页维护）：
+// 建议规则分组与中立模板二选一，均空 = 未配置默认级。
+type SubscriptionDefaultConfig struct {
+	SuggestedCategories string // JSON 字符串数组，与 PortableTemplateID 互斥
+	PortableTemplateID  string // "" = 未配置
+}
+
+func (c SubscriptionDefaultConfig) Empty() bool {
+	return c.SuggestedCategories == "" && c.PortableTemplateID == ""
+}
+
+// SubscriptionDefaultConfig 读取默认级模板配置（未配置返回零值，不视为错误）。
+func (s *Store) SubscriptionDefaultConfig(ctx context.Context) (SubscriptionDefaultConfig, error) {
+	var cfg SubscriptionDefaultConfig
+	raw, err := s.GetSetting(ctx, SettingSubDefaultConfig)
+	if err != nil || raw == "" {
+		return cfg, err
 	}
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return SubscriptionDefaultConfig{}, fmt.Errorf("parse sub default config: %w", err)
+	}
+	return cfg, nil
+}
+
+// SaveSubscriptionDefaultConfig 写入默认级模板配置（空配置 = 清除默认级）。
+func (s *Store) SaveSubscriptionDefaultConfig(ctx context.Context, cfg SubscriptionDefaultConfig) error {
+	if cfg.Empty() {
+		return s.SetSetting(ctx, SettingSubDefaultConfig, "")
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.SetSetting(ctx, SettingSubDefaultConfig, string(raw))
+}
+
+// EffectiveProfile 按四级优先级合并模板配置，返回订阅构建实际使用的 profile：
+// 强制级（强制指派）> 用户级（订阅页自选，UserConfigured）> 面板级（非强制指派）
+// > 默认级（全局默认配置 def）；四级均缺席时保留 profile 原值（内置默认）。
+func EffectiveProfile(p SubscriptionProfile, def SubscriptionDefaultConfig) SubscriptionProfile {
+	// 主策略槽位逐级解析；用户级生效（UserConfigured）时非强制指派与默认级让位。
+	switch {
+	case p.AssignForcedPortable && (p.AssignedSuggestedCategories != "" || p.AssignedPortableTemplateID != ""):
+		if p.AssignedSuggestedCategories != "" {
+			p.Mode = SubscriptionModeSuggested
+			p.Preset = "balanced" // 占位值；发布标签不再依赖 preset 名。
+			p.CategoriesJSON = p.AssignedSuggestedCategories
+		} else {
+			p.Mode = SubscriptionModeTemplate
+			p.PortableTemplateID = p.AssignedPortableTemplateID
+		}
+	case !p.UserConfigured:
+		switch {
+		case p.AssignedSuggestedCategories != "":
+			p.Mode = SubscriptionModeSuggested
+			p.Preset = "balanced"
+			p.CategoriesJSON = p.AssignedSuggestedCategories
+		case p.AssignedPortableTemplateID != "":
+			p.Mode = SubscriptionModeTemplate
+			p.PortableTemplateID = p.AssignedPortableTemplateID
+		case def.SuggestedCategories != "":
+			p.Mode = SubscriptionModeSuggested
+			p.Preset = "balanced"
+			p.CategoriesJSON = def.SuggestedCategories
+		case def.PortableTemplateID != "":
+			p.Mode = SubscriptionModeTemplate
+			p.PortableTemplateID = def.PortableTemplateID
+		}
+	}
+	// 客户端原生槽位保持兜底语义：强制指派最高；用户未选（跟随主策略）时
+	// 非强制指派仍生效，未指派则保留用户原值。
 	if p.AssignedMihomoTemplateID != "" && (p.AssignForcedMihomo || p.MihomoTemplateID == "") {
 		p.MihomoTemplateID = p.AssignedMihomoTemplateID
 	}
@@ -144,18 +206,18 @@ func EffectiveProfile(p SubscriptionProfile) SubscriptionProfile {
 
 func (s *Store) UserSubscriptionProfile(ctx context.Context, userID int64) (SubscriptionProfile, error) {
 	var profile SubscriptionProfile
-	var forcedPortable, forcedMihomo, forcedSingbox, forcedQuanx int
+	var forcedPortable, forcedMihomo, forcedSingbox, forcedQuanx, userConfigured int
 	err := s.db.QueryRowContext(ctx, `SELECT user_id, mode, preset, categories, portable_template_id,
 		mihomo_template_id, singbox_template_id, quanx_template_id,
 		assigned_portable_template_id, assigned_mihomo_template_id, assigned_singbox_template_id, assigned_quanx_template_id,
-		assigned_suggested_categories, disable_region_groups,
+		assigned_suggested_categories, disable_region_groups, user_configured,
 		assign_forced_portable, assign_forced_mihomo, assign_forced_singbox, assign_forced_quanx,
 		generation_status, generation_error, updated_at FROM user_subscription_profiles WHERE user_id = ?`, userID).Scan(
 		&profile.UserID, &profile.Mode, &profile.Preset, &profile.CategoriesJSON,
 		&profile.PortableTemplateID, &profile.MihomoTemplateID, &profile.SingboxTemplateID,
 		&profile.QuanXTemplateID, &profile.AssignedPortableTemplateID, &profile.AssignedMihomoTemplateID,
 		&profile.AssignedSingboxTemplateID, &profile.AssignedQuanXTemplateID,
-		&profile.AssignedSuggestedCategories, &profile.DisableRegionGroups,
+		&profile.AssignedSuggestedCategories, &profile.DisableRegionGroups, &userConfigured,
 		&forcedPortable, &forcedMihomo, &forcedSingbox, &forcedQuanx,
 		&profile.GenerationStatus, &profile.GenerationError, &profile.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -167,6 +229,7 @@ func (s *Store) UserSubscriptionProfile(ctx context.Context, userID int64) (Subs
 	if err != nil {
 		return SubscriptionProfile{}, fmt.Errorf("query user subscription profile: %w", err)
 	}
+	profile.UserConfigured = userConfigured != 0
 	profile.AssignForcedPortable = forcedPortable != 0
 	profile.AssignForcedMihomo = forcedMihomo != 0
 	profile.AssignForcedSingbox = forcedSingbox != 0
@@ -177,6 +240,7 @@ func (s *Store) UserSubscriptionProfile(ctx context.Context, userID int64) (Subs
 func (s *Store) SaveUserSubscriptionProfile(ctx context.Context, profile SubscriptionProfile) error {
 	forcedPortable, forcedMihomo := 0, 0
 	forcedSingbox, forcedQuanx := 0, 0
+	userConfigured := 0
 	if profile.AssignForcedPortable {
 		forcedPortable = 1
 	}
@@ -189,14 +253,17 @@ func (s *Store) SaveUserSubscriptionProfile(ctx context.Context, profile Subscri
 	if profile.AssignForcedQuanX {
 		forcedQuanx = 1
 	}
+	if profile.UserConfigured {
+		userConfigured = 1
+	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO user_subscription_profiles
 		(user_id, mode, preset, categories, portable_template_id, mihomo_template_id,
 		 singbox_template_id, quanx_template_id, assigned_portable_template_id, assigned_mihomo_template_id,
 		 assigned_singbox_template_id, assigned_quanx_template_id,
-		 assigned_suggested_categories, disable_region_groups,
+		 assigned_suggested_categories, disable_region_groups, user_configured,
 		 assign_forced_portable, assign_forced_mihomo,
 		 assign_forced_singbox, assign_forced_quanx, generation_status, generation_error, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', CURRENT_TIMESTAMP)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', CURRENT_TIMESTAMP)
 		ON CONFLICT(user_id) DO UPDATE SET mode=excluded.mode, preset=excluded.preset,
 		categories=excluded.categories, portable_template_id=excluded.portable_template_id,
 		mihomo_template_id=excluded.mihomo_template_id, singbox_template_id=excluded.singbox_template_id,
@@ -207,6 +274,7 @@ func (s *Store) SaveUserSubscriptionProfile(ctx context.Context, profile Subscri
 		assigned_quanx_template_id=excluded.assigned_quanx_template_id,
 		assigned_suggested_categories=excluded.assigned_suggested_categories,
 		disable_region_groups=excluded.disable_region_groups,
+		user_configured=excluded.user_configured,
 		assign_forced_portable=excluded.assign_forced_portable,
 		assign_forced_mihomo=excluded.assign_forced_mihomo,
 		assign_forced_singbox=excluded.assign_forced_singbox,
@@ -217,10 +285,41 @@ func (s *Store) SaveUserSubscriptionProfile(ctx context.Context, profile Subscri
 		profile.PortableTemplateID, profile.MihomoTemplateID, profile.SingboxTemplateID,
 		profile.QuanXTemplateID, profile.AssignedPortableTemplateID, profile.AssignedMihomoTemplateID,
 		profile.AssignedSingboxTemplateID, profile.AssignedQuanXTemplateID,
-		profile.AssignedSuggestedCategories, profile.DisableRegionGroups,
+		profile.AssignedSuggestedCategories, profile.DisableRegionGroups, userConfigured,
 		forcedPortable, forcedMihomo, forcedSingbox, forcedQuanx, profile.GenerationStatus)
 	if err != nil {
 		return fmt.Errorf("save user subscription profile: %w", err)
+	}
+	return nil
+}
+
+// ValidateSubscriptionProfileTemplates 校验用户自选（用户级）模板槽位：模板存在、
+// 类型匹配且有缓存内容。panel 与 sub 的配置入口共用。
+func (s *Store) ValidateSubscriptionProfileTemplates(ctx context.Context, profile SubscriptionProfile) error {
+	selections := []struct {
+		id    string
+		kinds map[string]bool
+	}{
+		{profile.PortableTemplateID, map[string]bool{"portable": true, "acl4ssr": true}},
+		{profile.MihomoTemplateID, map[string]bool{"mihomo": true}},
+		{profile.SingboxTemplateID, map[string]bool{"singbox": true}},
+		{profile.QuanXTemplateID, map[string]bool{"quanx": true}},
+	}
+	for _, selection := range selections {
+		id, kinds := selection.id, selection.kinds
+		if id == "" {
+			continue
+		}
+		template, err := s.SubscriptionTemplateByID(ctx, id)
+		if err != nil {
+			return fmt.Errorf("订阅模板 %q 不存在", id)
+		}
+		if !kinds[template.Kind] {
+			return fmt.Errorf("订阅模板 %q 类型不匹配", template.Name)
+		}
+		if strings.TrimSpace(template.Content) == "" {
+			return fmt.Errorf("订阅模板 %q 尚无有效缓存", template.Name)
+		}
 	}
 	return nil
 }
@@ -659,6 +758,10 @@ func (s *Store) DeleteSubscriptionTemplate(ctx context.Context, id string) error
 	}
 	if refs > 0 {
 		return fmt.Errorf("template is used by %d user profiles", refs)
+	}
+	// 默认级模板同样受保护：删除会让回落用户失去兜底配置。
+	if cfg, err := s.SubscriptionDefaultConfig(ctx); err == nil && cfg.PortableTemplateID == id {
+		return fmt.Errorf("template is used by the subscription default config")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

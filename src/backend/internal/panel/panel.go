@@ -496,6 +496,12 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/subscription/template/unassign",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_ids", "template_id"}},
 		s.handleUnassignSubscriptionTemplate)
+	s.registerRPC(mux, http.MethodPost, "/api/subscription/template/unforce",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_ids", "template_id"}},
+		s.handleUnforceSubscriptionTemplate)
+	s.registerRPC(mux, http.MethodGet, "/api/subscription/template/default", read, s.handleGetSubscriptionTemplateDefault)
+	s.registerRPC(mux, http.MethodPost, "/api/subscription/template/default",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true}, s.handleSaveSubscriptionTemplateDefault)
 
 	s.registerRPC(mux, http.MethodGet, "/api/external-subscription/list", read, s.handleListExternalSubscriptions)
 	s.registerRPC(mux, http.MethodPost, "/api/external-subscription/create", write, s.handleCreateExternalSubscription)

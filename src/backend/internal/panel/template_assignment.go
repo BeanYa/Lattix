@@ -46,6 +46,39 @@ func clearTemplateAssignment(profile *store.SubscriptionProfile, kind string) er
 	return nil
 }
 
+// unforceTemplateSlot 仅清除模板 kind 对应槽位的强制标记，指派保留为面板级配置
+// （用户级自选仍优先，只有无用户级/面板级时才落到该指派）。
+func unforceTemplateSlot(profile *store.SubscriptionProfile, kind string) error {
+	switch kind {
+	case "portable", "acl4ssr":
+		profile.AssignForcedPortable = false
+	case "mihomo":
+		profile.AssignForcedMihomo = false
+	case "singbox":
+		profile.AssignForcedSingbox = false
+	case "quanx":
+		profile.AssignForcedQuanX = false
+	default:
+		return fmt.Errorf("不支持的模板类型 %q", kind)
+	}
+	return nil
+}
+
+// templateSlotForced 返回模板 kind 对应槽位当前是否处于强制覆盖。
+func templateSlotForced(profile store.SubscriptionProfile, kind string) bool {
+	switch kind {
+	case "portable", "acl4ssr":
+		return profile.AssignForcedPortable
+	case "mihomo":
+		return profile.AssignForcedMihomo
+	case "singbox":
+		return profile.AssignForcedSingbox
+	case "quanx":
+		return profile.AssignForcedQuanX
+	}
+	return false
+}
+
 // dedupeUserIDs 过滤非法用户 id（≤0）后去重，保留首次出现顺序。
 func dedupeUserIDs(ids []int64) []int64 {
 	valid := make([]int64, 0, len(ids))
@@ -126,6 +159,93 @@ func (s *Server) handleAssignSubscriptionTemplate(w http.ResponseWriter, r *http
 // 清除用户对应指派（模板或建议规则），用户自选值保留，并重发订阅快照。
 func (s *Server) handleUnassignSubscriptionTemplate(w http.ResponseWriter, r *http.Request) {
 	s.handleTemplateAssignment(w, r, false)
+}
+
+// handleUnforceSubscriptionTemplate 处理 POST /api/subscription/template/unforce：
+// 取消选中用户对应槽位的强制覆盖（强制级 → 面板级），指派本身保留为兜底配置；
+// 用户级自选立即恢复优先，仅对实际解除强制的用户重发订阅快照。
+func (s *Server) handleUnforceSubscriptionTemplate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UserIDs             []int64  `json:"user_ids"`
+		TemplateID          string   `json:"template_id"`
+		SuggestedCategories []string `json:"suggested_categories"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	userIDs := dedupeUserIDs(req.UserIDs)
+	if len(userIDs) == 0 {
+		writeError(w, http.StatusBadRequest, "user_ids 不能为空")
+		return
+	}
+	// 建议规则指派与模板指派共用主策略槽位的强制标记。
+	slotKind := "portable"
+	if len(req.SuggestedCategories) == 0 {
+		templateID := strings.TrimSpace(req.TemplateID)
+		if templateID == "" {
+			writeError(w, http.StatusBadRequest, "template_id 与 suggested_categories 必须二选一")
+			return
+		}
+		template, err := s.st.SubscriptionTemplateByID(r.Context(), templateID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "订阅模板不存在")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		slotKind = template.Kind
+	}
+	o := s.observeStart(r, "subscription.template.unforce", "取消强制覆盖", userPublishObserveStages)
+	defer o.CloseIfPending()
+	unforced := make([]int64, 0, len(userIDs))
+	for _, userID := range userIDs {
+		if _, err := s.st.UserByID(r.Context(), userID); err != nil {
+			o.Fail(err)
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "用户不存在")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		profile, err := s.st.UserSubscriptionProfile(r.Context(), userID)
+		if err != nil {
+			o.Fail(err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if !templateSlotForced(profile, slotKind) {
+			continue
+		}
+		if err := unforceTemplateSlot(&profile, slotKind); err != nil {
+			o.Fail(err)
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.st.SaveUserSubscriptionProfile(r.Context(), profile); err != nil {
+			o.Fail(err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		unforced = append(unforced, userID)
+	}
+	o.Report("db", 100, "强制覆盖已取消")
+	if len(unforced) > 0 && s.subscriptions != nil {
+		o.WatchUsers(unforced)
+		s.subscriptions.EnqueueUsers(unforced, s.panelBase(r))
+		o.Report("regenerate", 0, "等待订阅重生成")
+	}
+	s.audit(r, "subscription.template.unforced", nil, nil, map[string]any{
+		"template_id": req.TemplateID, "suggested_categories": req.SuggestedCategories,
+		"user_ids": unforced, "slot_kind": slotKind,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_ids": unforced, "template_id": req.TemplateID,
+		"suggested_categories": req.SuggestedCategories,
+	})
 }
 
 // handleTemplateAssignment 是指派/取消指派的共用实现：两者流程逐行同构，仅槽位写入
