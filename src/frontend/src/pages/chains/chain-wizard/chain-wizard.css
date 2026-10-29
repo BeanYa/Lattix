@@ -1,0 +1,1015 @@
+/* 链路画布：卡片与连线的尺寸、端口位置由 chain-canvas.ts 统一提供。 */
+
+.cw-layout {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  /* page-shell 为 grid：网格条目需 min-width:0 才不会被世界坐标内容撑破首屏宽 */
+  min-width: 0;
+  /* 第一步画布整体约束在首屏内：工具条/画布/问题条同屏可见，不出现页面级滚动 */
+  height: calc(100vh - 208px);
+  min-height: 460px;
+}
+
+/* ---------- 左侧服务器面板 ---------- */
+
+.cw-server-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 288px;
+  flex-shrink: 0;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-md);
+  background: var(--panel-surface);
+  box-shadow: var(--panel-shadow-card);
+  backdrop-filter: var(--panel-backdrop);
+  padding: 10px;
+  min-height: 0;
+}
+
+.cw-server-panel-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--panel-ink-3);
+}
+
+.cw-server-panel-search svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.cw-server-panel-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--panel-ink-3);
+}
+
+.cw-server-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 2px 4px 6px 0;
+  list-style: none;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* 服务器卡：参考服务器详情卡样式简化（名称 + 三网测速），整卡可拖拽 */
+.cw-server-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-xs);
+  background: var(--panel-raised);
+  box-shadow: var(--panel-shadow-card);
+  cursor: grab;
+  transition:
+    border-color var(--duration-1) var(--ease-standard),
+    box-shadow var(--duration-1) var(--ease-standard);
+}
+
+.cw-server-item:hover {
+  border-color: color-mix(in srgb, var(--panel-signal) 45%, var(--panel-rule));
+}
+
+.cw-server-item:active {
+  cursor: grabbing;
+}
+
+.cw-server-item.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.cw-server-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cw-server-item-alias {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--panel-ink);
+}
+
+.cw-server-item-exitonly,
+.cw-node-exitonly {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 4px;
+  color: var(--panel-ink-2);
+  border: 1px solid var(--panel-rule);
+  flex-shrink: 0;
+}
+
+.cw-server-item-count {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--panel-signal);
+  flex-shrink: 0;
+}
+
+.cw-server-item-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--panel-ink-2);
+  cursor: pointer;
+}
+
+.cw-server-item-add svg {
+  width: 13px;
+  height: 13px;
+}
+
+.cw-server-item-add:hover:not(:disabled) {
+  background: var(--panel-signal-soft);
+  color: var(--panel-signal);
+}
+
+.cw-server-item-add:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.cw-server-panel-empty {
+  padding: 12px 6px;
+  font-size: 12px;
+  color: var(--panel-ink-3);
+  list-style: none;
+}
+
+/* ---------- 画布区 ---------- */
+
+.cw-canvas-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cw-canvas-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--panel-ink-2);
+}
+
+.cw-canvas-toolbar-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--panel-ink);
+}
+
+.cw-canvas {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-md);
+  background:
+    radial-gradient(circle at 1px 1px, var(--panel-rule) 1px, transparent 0) 0 0 / 24px 24px,
+    var(--panel-surface);
+  box-shadow: var(--panel-shadow-card);
+  overflow: hidden;
+  position: relative;
+  cursor: grab;
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
+.cw-canvas.is-panning {
+  cursor: grabbing;
+}
+.cw-canvas:focus-visible {
+  outline: 2px solid var(--panel-focus);
+  outline-offset: 2px;
+}
+
+.cw-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  transform-origin: 0 0;
+}
+
+.cw-wires {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.cw-wire {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cw-wire-entry {
+  stroke: var(--panel-signal);
+}
+
+.cw-wire-link {
+  stroke: var(--panel-line-2);
+}
+
+.cw-wire-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.cw-wire-rubber {
+  stroke: var(--panel-signal);
+  stroke-dasharray: 7 5;
+  animation: cg-hop-dash 0.9s linear infinite;
+  opacity: 0.85;
+}
+
+/* One packet per committed cable; CSS motion follows the same A → B path as the wire. */
+.cw-wire-packet {
+  pointer-events: none;
+  offset-position: 0 0;
+  offset-anchor: 0 0;
+  offset-rotate: auto;
+  offset-distance: 50%;
+  animation: cw-packet-flow 3.2s linear infinite;
+}
+
+.cw-wire-packet > rect {
+  fill: var(--panel-popover);
+}
+
+.cw-wire-packet svg {
+  stroke-width: 1.75;
+}
+
+.cw-canvas.is-motion-paused .cw-wire-packet,
+.cw-wire-packet.is-rewiring {
+  animation-play-state: paused;
+}
+
+@keyframes cw-packet-flow {
+  from {
+    offset-distance: 0%;
+  }
+  to {
+    offset-distance: 100%;
+  }
+}
+
+/* ---------- 节点卡 ---------- */
+
+.cw-node {
+  position: absolute;
+  width: var(--cw-card-w);
+  height: var(--cw-card-h);
+  user-select: none;
+  touch-action: none;
+}
+
+.cw-node-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border: 1px solid var(--panel-edge-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel-popover);
+  box-shadow: var(--panel-shadow-card);
+  cursor: grab;
+}
+
+.cw-node-body {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 calc(var(--cw-body-h) - 1px);
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px;
+}
+
+.cw-node-config {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--panel-rule);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  background: var(--panel-surface);
+}
+
+/* 原生拖拽截图复用真实卡片，预留端口与阴影，不受列表卡尺寸裁切。 */
+.cw-drag-image {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  padding: 12px;
+  pointer-events: none;
+}
+
+.cw-drag-image .cw-node {
+  position: relative;
+}
+
+.cw-node:active .cw-node-card {
+  cursor: grabbing;
+}
+
+.cw-node.is-issue .cw-node-card {
+  border-color: var(--panel-status-failed);
+}
+
+.cw-node.is-orphan .cw-node-card {
+  border-style: dashed;
+}
+
+.cw-node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cw-node-alias {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--panel-ink);
+}
+
+.cw-node-role {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--panel-rule);
+  color: var(--panel-ink-2);
+}
+
+.cw-node-role.is-entry,
+.cw-node-role.is-exit {
+  color: var(--panel-signal);
+  border-color: color-mix(in srgb, var(--panel-signal) 45%, transparent);
+  background: var(--panel-signal-soft);
+}
+
+.cw-node-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--panel-ink-3);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.cw-node-remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+.cw-node-remove:hover {
+  background: var(--panel-status-failed-soft);
+  color: var(--panel-status-failed);
+}
+
+.cw-node-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--panel-ink-2);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.cw-node-state {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cw-node-state.is-online {
+  background: var(--panel-status-ok);
+}
+
+.cw-node-state.is-offline {
+  background: var(--panel-ink-3);
+}
+
+/* 三网测速 mini 色块条（复用 sv-probe 的语义：12 槽、末位最新、tone 三档） */
+
+.cw-node-probes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  margin-top: auto;
+}
+
+.cw-probe-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cw-probe-label {
+  font-size: 9.5px;
+  color: var(--panel-ink-3);
+  flex-shrink: 0;
+  width: 16px;
+}
+
+.cw-probe-rounds {
+  display: flex;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+
+.cw-probe-rounds i {
+  flex: 1;
+  height: 7px;
+  border-radius: 1.5px;
+  background: var(--panel-inset);
+}
+
+.cw-probe-rounds i.is-ok {
+  background: var(--panel-success);
+}
+
+.cw-probe-rounds i.is-warn {
+  background: var(--panel-warning);
+}
+
+.cw-probe-rounds i.is-fail {
+  background: var(--panel-danger);
+}
+
+.cw-probe-latency {
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--panel-ink-3);
+  flex-shrink: 0;
+  min-width: 22px;
+  text-align: right;
+}
+
+.cw-probe-latency.is-ok {
+  color: var(--panel-success);
+}
+
+.cw-probe-latency.is-warn {
+  color: var(--panel-warning);
+}
+
+.cw-probe-latency.is-fail {
+  color: var(--panel-danger);
+}
+
+.cw-node-traffic {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--panel-ink-2);
+}
+
+/* 地址在入口圆点上方，端口数字在其右侧。 */
+.cw-node-address-row {
+  display: flex;
+  align-items: center;
+  flex: 0 0 var(--cw-address-h);
+  padding: 2px 14px 0;
+  min-width: 0;
+}
+
+.cw-node-port-row {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 10px;
+  padding: 0 14px;
+  min-width: 0;
+}
+
+.cw-node-port-label {
+  color: var(--panel-ink-2);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.cw-node-address {
+  display: block;
+  width: 100%;
+  min-width: 0;
+}
+
+.cw-node-address-trigger {
+  width: 100%;
+  height: 24px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+  color: var(--panel-ink-2);
+}
+
+.cw-node-address.is-empty {
+  font-size: 10.5px;
+  color: var(--panel-ink-3);
+}
+
+/* ---------- 端口 ---------- */
+
+.cw-port {
+  position: absolute;
+  width: calc(var(--cw-port-r, 9px) * 2);
+  height: calc(var(--cw-port-r, 9px) * 2);
+  padding: 0;
+  border: 2px solid var(--panel-ink-2);
+  border-radius: 50%;
+  background: var(--panel-popover);
+  cursor: pointer;
+  z-index: 2;
+  transition:
+    border-color var(--duration-1) var(--ease-standard),
+    box-shadow var(--duration-1) var(--ease-standard),
+    transform var(--duration-1) var(--ease-standard);
+}
+
+/* 出口圆点与服务器信息区居中对齐。 */
+.cw-port-exit {
+  right: calc(-1 * var(--cw-port-r));
+  top: calc(var(--cw-exit-y) - var(--cw-port-r));
+}
+
+.cw-port-exit.is-connected {
+  border-color: var(--panel-signal);
+  background: var(--panel-signal);
+  box-shadow: 0 0 0 3px var(--panel-signal-soft);
+}
+
+.cw-port-exit:hover {
+  border-color: var(--panel-signal);
+}
+
+/* 入口圆点骑左边缘，与端口行居中对齐。 */
+.cw-port-entry {
+  left: calc(-1 * var(--cw-port-r) - 1px);
+  top: calc(var(--cw-entry-y) - var(--cw-port-r) - 1px);
+}
+
+.cw-node-port-value {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  justify-content: center;
+  min-width: 100px;
+  min-height: 30px;
+  margin-left: auto;
+  padding: 0 10px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 5px;
+  background: var(--panel-surface);
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--panel-ink);
+  cursor: pointer;
+}
+
+.cw-node-port-value.is-auto {
+  color: var(--panel-ink-3);
+  font-weight: 400;
+  border-style: dashed;
+  cursor: default;
+}
+
+.cw-node-port-input {
+  height: 30px;
+  width: 100px;
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 11.5px;
+}
+
+/* NAT 可用端口下拉（chip 化触发器 + 截断提示） */
+.cw-node-port-select {
+  display: block;
+  flex-shrink: 0;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.cw-node-port-trigger {
+  gap: 4px;
+  min-width: 96px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 5px;
+  background: var(--panel-surface);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.cw-node-port-trigger svg {
+  width: 11px;
+  height: 11px;
+}
+
+.cw-node-port-truncated {
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--panel-ink-3);
+}
+
+.cw-port.is-target {
+  border-color: var(--panel-signal);
+  box-shadow: 0 0 0 4px var(--panel-signal-soft);
+  transform: scale(1.15);
+}
+
+.cw-port.is-internet {
+  position: absolute;
+  left: -9px;
+  top: 52px;
+  transform: translateY(-50%);
+}
+
+.cw-port.is-internet.is-target {
+  transform: translateY(-50%) scale(1.15);
+}
+
+/* ---------- Internet 圆球 ---------- */
+
+.cw-internet {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.cw-internet.is-dragging {
+  cursor: grabbing;
+}
+
+.cw-internet-ball {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--panel-edge-strong);
+  background:
+    radial-gradient(
+      circle at 32% 28%,
+      color-mix(in srgb, var(--cw-terminal-tone, var(--panel-status-ok)) 26%, transparent),
+      transparent 62%
+    ),
+    var(--panel-raised);
+  box-shadow: var(--panel-shadow-card);
+  backdrop-filter: var(--panel-backdrop);
+  color: var(--cw-terminal-tone, var(--panel-status-ok));
+}
+
+.cw-internet-ball svg {
+  width: 34px;
+  height: 34px;
+}
+
+.cw-internet-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--panel-ink-2);
+}
+
+/* 来源与 Internet 共享终端样式，以铜色标识流量进入。 */
+.cw-ingress {
+  --cw-terminal-tone: var(--panel-signal);
+}
+
+.cw-ingress-port {
+  right: -9px;
+  top: 43px;
+  cursor: pointer;
+}
+
+.cw-ingress-port.is-connected {
+  border-color: var(--panel-signal);
+  background: var(--panel-signal);
+}
+
+/* ---------- 校验问题条 ---------- */
+
+.cw-issues {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cw-issues:empty {
+  display: none;
+}
+
+.cw-issue {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--panel-status-failed);
+}
+
+.cw-issue svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.cw-issue.is-hint {
+  color: var(--panel-ink-3);
+}
+
+/* ---------- 第二步：协议与细节 ---------- */
+
+.cw-details {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 720px;
+}
+
+.cw-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-sm);
+  background: var(--panel-surface);
+  font-size: 12.5px;
+}
+
+.cw-summary-entry {
+  color: var(--panel-signal);
+}
+
+.cw-summary-hop {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-pill);
+  background: var(--panel-raised);
+  font-weight: 600;
+  color: var(--panel-ink);
+}
+
+.cw-summary-arrow {
+  color: var(--panel-ink-3);
+}
+
+.cw-summary-internet {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--panel-status-ok);
+  font-weight: 700;
+}
+
+.cw-summary-port {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--panel-ink-3);
+}
+
+/* ---------- 步骤指示 ---------- */
+
+.cw-steps {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--panel-ink-3);
+}
+
+.cw-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--panel-rule);
+  font-weight: 600;
+}
+
+.cw-step.is-active {
+  color: var(--panel-signal);
+  border-color: color-mix(in srgb, var(--panel-signal) 50%, transparent);
+  background: var(--panel-signal-soft);
+}
+
+.cw-step.is-done {
+  color: var(--panel-status-ok);
+}
+
+.cw-step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cw-port:focus-visible,
+.cw-node-remove:focus-visible,
+.cw-server-item-add:focus-visible,
+.cw-node-port-value:focus-visible {
+  outline: 2px solid var(--panel-focus);
+  outline-offset: 3px;
+}
+
+@media (max-width: 900px) {
+  .cw-layout {
+    flex-direction: column;
+    height: auto;
+    min-height: 0;
+  }
+  .cw-server-panel {
+    width: 100%;
+    max-height: 240px;
+  }
+  .cw-server-list {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+  .cw-server-item {
+    flex: 0 0 232px;
+  }
+  .cw-canvas-col {
+    flex: none;
+    height: 560px;
+    min-height: 0;
+  }
+  .cw-canvas {
+    min-height: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cw-wire-packet,
+  .cw-wire-rubber {
+    animation: none;
+  }
+  .cw-port,
+  .cw-server-item {
+    transition: none;
+  }
+}
+
+.cw-wire.is-rewiring {
+  opacity: 0.45;
+}
+.cw-wire-hit:focus-visible {
+  stroke: var(--panel-signal-soft);
+}
+.cw-port-entry.is-connected,
+.cw-port.is-internet.is-connected {
+  border-color: var(--panel-signal);
+}
+.cw-view-controls {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--panel-edge-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-popover);
+  color: var(--panel-ink-2);
+  box-shadow: var(--panel-shadow-card);
+  cursor: default;
+}
+.cw-view-controls button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--panel-ink-2);
+  cursor: pointer;
+}
+.cw-view-controls button:hover {
+  background: var(--panel-signal-soft);
+  color: var(--panel-signal);
+}
+.cw-view-controls button:focus-visible {
+  outline: 2px solid var(--panel-focus);
+}
+.cw-view-controls button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.cw-view-controls svg {
+  width: 16px;
+  height: 16px;
+}
+.cw-view-controls span {
+  min-width: 44px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.cw-connect-hint,
+.cw-connect-error {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100% - 28px);
+  padding: 8px 12px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-sm);
+  background: var(--panel-popover);
+  color: var(--panel-ink-2);
+  font-size: 12px;
+  cursor: default;
+}
+.cw-connect-hint button {
+  border: 0;
+  background: transparent;
+  color: var(--panel-signal);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.cw-connect-error {
+  top: 62px;
+  color: var(--panel-status-failed);
+}

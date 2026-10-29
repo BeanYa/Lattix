@@ -50,11 +50,9 @@ import {
   latencyTone,
   segmentForLink,
 } from './chains/chain-stats'
-import { ChainFormDialog } from './chains/ChainFormDialog'
 import { ChainOverviewPanel } from './chains/ChainOverviewPanel'
 import { ShareLinkDialog } from './chains/ShareLinkDialog'
 import { TrafficHistoryDialog } from './chains/TrafficHistoryDialog'
-import { useChainForm } from './chains/use-chain-form'
 import { useShareLink } from './chains/use-share-link'
 import { roleLabel, useTrafficHistory } from './chains/use-traffic-history'
 
@@ -192,7 +190,7 @@ function TrafficSummary({
 }
 
 export default function Chains() {
-  const [location] = useLocation()
+  const [location, navigate] = useLocation()
   const searchString = useSearch()
   const { timezone } = useTimezone()
   const { confirm } = useAppDialog()
@@ -201,7 +199,6 @@ export default function Chains() {
   const [nodes, setNodes] = useState<XrayNode[]>([])
   const [servers, setServers] = useState<Server[]>([])
   const [chainStats, setChainStats] = useState<ChainStatsResponse | null>(null)
-  const [panelShort, setPanelShort] = useState('')
   // 三网测速目标省市（§三网测速）：Ban 标签随之显示「{市|省}不可达」。
   const [probeRegion, setProbeRegion] = useState<CatalogProbeRegion | null>(null)
   const [loading, setLoading] = useState(true)
@@ -216,7 +213,6 @@ export default function Chains() {
   // 链路一览点行定位（URL 深链优先，见 highlightedChainId）。
   const [selectedChainId, setSelectedChainId] = useState<number | null>(null)
   const loadRequest = useRef(0)
-  const autoOpenedRoute = useRef('')
 
   const load = useCallback(async (silent = false, signal?: AbortSignal) => {
     const request = ++loadRequest.current
@@ -249,25 +245,14 @@ export default function Chains() {
 
   usePolling(load, loadRequest)
 
-  // 名称模板 {{PANEL_SHORT}} 预览值；读取失败由 naming 层回退默认缩写。
+  // 三网测速目标省市（§三网测速）：Ban 标签随之显示「{市|省}不可达」。
   useEffect(() => {
     api
       .settings()
-      .then((s) => {
-        setPanelShort(s.panel_short)
-        setProbeRegion(s.catalog_probe_region)
-      })
+      .then((s) => setProbeRegion(s.catalog_probe_region))
       .catch(() => {})
   }, [])
 
-  const chainForm = useChainForm({
-    chains,
-    nodes,
-    servers,
-    onError: setError,
-    onSaved: load,
-    showOperation,
-  })
   const traffic = useTrafficHistory({ onError: setError })
   const share = useShareLink()
 
@@ -278,18 +263,18 @@ export default function Chains() {
     setTab('details')
   }
 
-  // 支持从命令面板或控制台深链到 /network/chains/new、/network/chains/:id、/network/chains/:id/edit
+  // 支持从命令面板或控制台深链到 /network/chains/:id（new 与 :id/edit 由向导页承载）
   const highlightedChainId = useMemo(() => {
     const selParam = new URLSearchParams(searchString).get('sel')
     if (selParam && /^\d+$/.test(selParam)) return Number(selParam)
-    const match = location.match(/^\/network\/chains\/(\d+)(?:\/edit)?$/)
+    const match = location.match(/^\/network\/chains\/(\d+)$/)
     return match ? Number(match[1]) : null
   }, [location, searchString])
 
-  // 深链指向具体链路或新建：详情在概览之后，强制切到详情 tab。
+  // 深链指向具体链路：详情在概览之后，强制切到详情 tab。
   useEffect(() => {
-    if (highlightedChainId !== null || location === '/network/chains/new') setTab('details')
-  }, [highlightedChainId, location])
+    if (highlightedChainId !== null) setTab('details')
+  }, [highlightedChainId])
 
   // 详情渲染完成后滚动定位选中的链路卡。
   useEffect(() => {
@@ -298,23 +283,6 @@ export default function Chains() {
       .getElementById(`chain-entry-${selectedChainId}`)
       ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [tab, selectedChainId, loading])
-
-  useEffect(() => {
-    if (loading) return
-    if (location === '/network/chains/new' && autoOpenedRoute.current !== location) {
-      autoOpenedRoute.current = location
-      chainForm.openCreate()
-      return
-    }
-    const editMatch = location.match(/^\/network\/chains\/(\d+)\/edit$/)
-    if (editMatch && autoOpenedRoute.current !== location) {
-      const target = chains.find((c) => c.id === Number(editMatch[1]))
-      if (target) {
-        autoOpenedRoute.current = location
-        chainForm.openEdit(target)
-      }
-    }
-  }, [chains, chainForm, loading, location])
 
   const onForcePublish = async (chain: Chain) => {
     if (
@@ -532,7 +500,11 @@ export default function Chains() {
         title="链路"
         description="直连与中转链路的部署状态、跳点拓扑与累计流量，统一在此编排与维护。"
         actions={
-          <button type="button" className="cg-button is-primary" onClick={chainForm.openCreate}>
+          <button
+            type="button"
+            className="cg-button is-primary"
+            onClick={() => navigate('/network/chains/new')}
+          >
             <PlusIcon />
             创建链路
           </button>
@@ -896,7 +868,7 @@ export default function Chains() {
                               // 等待 Agent 的编辑可再次编辑取代（无在途命令，废弃安全）
                               c.status !== 'waiting_for_agent'
                             }
-                            onClick={() => chainForm.openEdit(c)}
+                            onClick={() => navigate(`/network/chains/${c.id}/edit`)}
                           >
                             <PencilIcon />
                           </Button>
@@ -1012,7 +984,6 @@ export default function Chains() {
         </section>
       )}
 
-      <ChainFormDialog controller={chainForm} servers={servers} panelShort={panelShort} />
       <TrafficHistoryDialog controller={traffic} />
       <ShareLinkDialog controller={share} />
     </Page>

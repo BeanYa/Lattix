@@ -12,6 +12,11 @@ const AppShell = lazy(() =>
 )
 const Board = lazy(() => import('@/pages/Board'))
 const Chains = lazy(() => import('@/pages/Chains'))
+const ChainWizardPage = lazy(() =>
+  import('@/pages/chains/chain-wizard/ChainWizardPage').then((module) => ({
+    default: module.ChainWizardPage,
+  })),
+)
 const Costs = lazy(() => import('@/pages/Costs'))
 const ExternalSubscriptions = lazy(() => import('@/pages/ExternalSubscriptions'))
 const Groups = lazy(() => import('@/pages/Groups'))
@@ -185,12 +190,12 @@ function ProtectedRoutes() {
             {/* 顺序要求：new 与 :id/edit 必须先于 :id，避免被详情路由截获。 */}
             <Route path="/network/chains/new">
               <SuspendedRoute>
-                <Chains />
+                <ChainWizardPage />
               </SuspendedRoute>
             </Route>
             <Route path="/network/chains/:id/edit">
               <SuspendedRoute>
-                <Chains />
+                <ChainWizardPage />
               </SuspendedRoute>
             </Route>
             {/* P2 再拆分：链路详情与独立节点详情暂由列表页承载深链接。 */}

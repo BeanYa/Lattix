@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { Chain, VirtualConfig } from '@/lib/types'
 
+import { EMPTY_FORM_TOPOLOGY, type ChainFormTopology } from './chain-wizard/chain-canvas'
+
 // useChainForm 仅用 useState：以最小状态表替代 React 渲染器，在无 DOM 的 node 环境驱动 hook。
 /* eslint-disable react-hooks/rules-of-hooks -- 测试以手动"渲染"循环调用 hook，无 React 渲染器可用 */
 const h = vi.hoisted(() => {
@@ -37,11 +39,19 @@ vi.mock('@/lib/api', () => ({
   errorMessage: (err: unknown) => String(err),
 }))
 
-import { useChainForm } from './use-chain-form'
+import { parseChainEdit, useChainForm } from './use-chain-form'
 
 type Controller = ReturnType<typeof useChainForm>
 
-function setup() {
+function directTopology(entryId = '1'): ChainFormTopology {
+  return { ...EMPTY_FORM_TOPOLOGY, entryId }
+}
+
+function relayTopology(entryId = '1', exitId = '2'): ChainFormTopology {
+  return { ...EMPTY_FORM_TOPOLOGY, chainType: 'relay', entryId, exitId }
+}
+
+function setup(topology: ChainFormTopology = directTopology()) {
   h.states.length = 0
   h.createChain.mockClear()
   h.editChain.mockClear()
@@ -50,8 +60,8 @@ function setup() {
     h.beginRender()
     controller = useChainForm({
       chains: [],
-      nodes: [],
       servers: [],
+      topology,
       onError: () => {},
       onSaved: () => {},
       showOperation: () => {},
@@ -134,14 +144,19 @@ function relayChain(serviceConfig: VirtualConfig, entryConfig?: VirtualConfig | 
   } as unknown as Chain
 }
 
+function beginEditAct(t: ReturnType<typeof setup>, chain: Chain) {
+  t.act((c) => {
+    const parsed = parseChainEdit(chain, [])
+    if (!parsed.ok) throw new Error(parsed.error)
+    c.beginEdit(chain, parsed.value)
+  })
+}
+
 describe('useChainForm hy2', () => {
   it('hy2 提交载荷：证书模式/混淆/带宽/跳跃段透传，矩阵外字段不携带，入口区块挂载 entry_node', async () => {
-    const t = setup()
+    const t = setup(relayTopology())
     t.act((c) =>
       c.patch({
-        chainType: 'relay',
-        entryId: '1',
-        exitId: '2',
         protocol: 'hysteria',
         certMode: 'selfsign',
         tlsDomain: 'cdn.example.com',
@@ -184,8 +199,8 @@ describe('useChainForm hy2', () => {
   })
 
   it('hy2 默认值：带宽默认 50/100 透传；obfs/port_hop 留空不携带；未勾选入口区块不带 entry_node', async () => {
-    const t = setup()
-    t.act((c) => c.patch({ chainType: 'relay', entryId: '1', exitId: '2', protocol: 'hysteria' }))
+    const t = setup(relayTopology())
+    t.act((c) => c.patch({ protocol: 'hysteria' }))
     await t.submit()
     const body = createBody()
     expect(body.node).toMatchObject({
@@ -201,10 +216,9 @@ describe('useChainForm hy2', () => {
   })
 
   it('hy2 显式跳跃段透传；单跳不携带 entry_node（入口区块仅多跳）', async () => {
-    const t = setup()
+    const t = setup(directTopology())
     t.act((c) =>
       c.patch({
-        entryId: '1',
         protocol: 'hysteria',
         portHop: '30000-30015',
         entryProtocolEnabled: true,
@@ -217,8 +231,9 @@ describe('useChainForm hy2', () => {
   })
 
   it('编辑回填：service_config(hysteria) → hy2 字段；entry_config 存在 → 入口区块勾选与子参数回填', async () => {
-    const t = setup()
-    t.act((c) => c.openEdit(relayChain(hy2ServiceConfig(), entryRealityConfig())))
+    const t = setup(relayTopology())
+    const chain = relayChain(hy2ServiceConfig(), entryRealityConfig())
+    beginEditAct(t, chain)
     const form = t.controller.form
     expect(form.protocol).toBe('hysteria')
     expect(form.certMode).toBe('acme')
@@ -254,8 +269,8 @@ describe('useChainForm hy2', () => {
   })
 
   it('编辑回填：hy2 链无 entry_config → 入口区块不勾选，字段取默认', () => {
-    const t = setup()
-    t.act((c) => c.openEdit(relayChain(hy2ServiceConfig())))
+    const t = setup(relayTopology())
+    beginEditAct(t, relayChain(hy2ServiceConfig()))
     const form = t.controller.form
     expect(form.entryProtocolEnabled).toBe(false)
     expect(form.entryShortId).toBe('')
@@ -265,8 +280,8 @@ describe('useChainForm hy2', () => {
   })
 
   it('编辑无端点存量链：入口区块锁定，直接勾选后提交也不携带 entry_node（终审修复 I-2）', async () => {
-    const t = setup()
-    t.act((c) => c.openEdit(relayChain(hy2ServiceConfig())))
+    const t = setup(relayTopology())
+    beginEditAct(t, relayChain(hy2ServiceConfig()))
     expect(t.controller.entryBlockLocked).toBe(true)
     // 模拟绕过禁用态直接勾选：提交载荷仍不得携带 entry_node（后端 400 兜底的前端镜像）。
     t.act((c) => c.patch({ entryProtocolEnabled: true }))
@@ -276,8 +291,8 @@ describe('useChainForm hy2', () => {
   })
 
   it('编辑带入口区块（有端点）的链：入口区块不锁定，取消勾选提交不携带 entry_node', async () => {
-    const t = setup()
-    t.act((c) => c.openEdit(relayChain(hy2ServiceConfig(), entryRealityConfig())))
+    const t = setup(relayTopology())
+    beginEditAct(t, relayChain(hy2ServiceConfig(), entryRealityConfig()))
     expect(t.controller.entryBlockLocked).toBe(false)
     expect(t.controller.form.entryProtocolEnabled).toBe(true)
     t.act((c) => c.patch({ entryProtocolEnabled: false }))
@@ -287,7 +302,7 @@ describe('useChainForm hy2', () => {
   })
 
   it('编辑回填：vless 出口链即使存在 entry_config 也不勾选入口区块（endpoint 即主协议）', () => {
-    const t = setup()
+    const t = setup(relayTopology())
     const vlessConfig = {
       protocol: 'vless',
       network: 'tcp',
@@ -296,19 +311,16 @@ describe('useChainForm hy2', () => {
         streamSettings: { realitySettings: { shortIds: ['aa'], dest: 'dl.google.com:443' } },
       },
     } as unknown as VirtualConfig
-    t.act((c) => c.openEdit(relayChain(vlessConfig, entryRealityConfig())))
+    beginEditAct(t, relayChain(vlessConfig, entryRealityConfig()))
     const form = t.controller.form
     expect(form.protocol).toBe('vless')
     expect(form.entryProtocolEnabled).toBe(false)
   })
 
   it('vless 出口勾选入口区块时同样携带 entry_node（UI 对 hysteria/vless 出口开放该区块）', async () => {
-    const t = setup()
+    const t = setup(relayTopology())
     t.act((c) =>
       c.patch({
-        chainType: 'relay',
-        entryId: '1',
-        exitId: '2',
         protocol: 'vless',
         entryProtocolEnabled: true,
         entryShortId: 'ee11',

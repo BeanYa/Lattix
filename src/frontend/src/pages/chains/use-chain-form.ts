@@ -13,6 +13,8 @@ import type {
   XrayNode,
 } from '@/lib/types'
 
+import { MAX_HOPS, inboundCapable, type ChainFormTopology } from './chain-wizard/chain-canvas'
+
 // 与后端 shared 包保持一致的协议/选项常量（出口节点协议表单复用 Nodes 向导的 vless+reality 字段）。
 export const DIRECT_PROTOCOLS = [
   'vless',
@@ -104,11 +106,6 @@ export function coerceSecurity(protocol: string, network: string, security: stri
   return options.includes('reality') ? 'reality' : options.includes('none') ? 'none' : 'tls'
 }
 
-/** 入站能力（§21）：direct 或 NAT 受限直连（有端口段）。仅出口档 NAT 不能作入口/中间跳。 */
-export function inboundCapable(s: Server): boolean {
-  return s.machine_type === 'direct' || s.allowed_ports.length > 0
-}
-
 const chainNameAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
 
 function randomChainName(): string {
@@ -152,18 +149,10 @@ function parseRealityTemplate(template: Record<string, unknown>): {
   }
 }
 
+/** 表单只承载协议/细节字段；拓扑（服务器序列、端口、地址）由向导画布注入。 */
 export interface ChainFormState {
-  chainType: 'direct' | 'relay'
   name: string
-  entryId: string
-  middleIds: string[]
-  exitId: string
-  entryAddr: string
-  middleAddrs: string[]
-  exitAddr: string
-  entryPort: string
   protocol: string
-  port: string
   shortId: string
   destPreset: string
   dest: string
@@ -197,17 +186,8 @@ export interface ChainFormState {
 }
 
 const initialChainForm: ChainFormState = {
-  chainType: 'direct',
   name: '',
-  entryId: '',
-  middleIds: [],
-  exitId: '',
-  entryAddr: '',
-  middleAddrs: [],
-  exitAddr: '',
-  entryPort: '',
   protocol: 'vless',
-  port: '',
   shortId: '',
   destPreset: DEFAULT_REALITY_DEST,
   dest: 'dl.google.com:443',
@@ -240,26 +220,114 @@ const initialChainForm: ChainFormState = {
   trafficMultiplier: '1.000',
 }
 
+/** 编辑模式回填解析：出口配置 → 细节表单字段 + 出口节点监听端口（画布末节点端口回填用）。 */
+export interface ChainEditParse {
+  details: Partial<ChainFormState>
+  exitPort: string
+}
+
+export function parseChainEdit(
+  chain: Chain,
+  nodes: XrayNode[],
+): { ok: true; value: ChainEditParse } | { ok: false; error: string } {
+  const service = nodes.find((node) => node.id === chain.service_node_id)
+  if (!service && !chain.service_config) {
+    return { ok: false, error: '链路出口配置不存在' }
+  }
+  let virtual: Record<string, unknown>
+  let template: Record<string, unknown>
+  let settings: Record<string, unknown>
+  try {
+    const rawVirtual: unknown = service?.config_template ?? chain.service_config
+    virtual = parseConfigRecord(rawVirtual)
+    template = virtual.template === undefined ? {} : parseConfigRecord(virtual.template)
+    settings = asRecord(template.settings) ?? {}
+  } catch {
+    return { ok: false, error: '链路出口配置无法解析' }
+  }
+
+  const mainReality = parseRealityTemplate(template)
+  // 入口协议区块回填（P4）：vless 出口链的 entry_config 即主协议端点，不算独立入口区块；
+  // 其余协议存在 entry_config 时勾选回填，子参数解析失败退回默认（留空自动生成）。
+  const hasEntryBlock = chain.entry_config != null && String(virtual.protocol ?? '') !== 'vless'
+  let entryReality: ReturnType<typeof parseRealityTemplate> | null = null
+  if (hasEntryBlock) {
+    try {
+      const entryTemplate =
+        chain.entry_config!.template === undefined
+          ? {}
+          : parseConfigRecord(chain.entry_config!.template)
+      entryReality = parseRealityTemplate(entryTemplate)
+    } catch {
+      entryReality = null
+    }
+  }
+  return {
+    ok: true,
+    value: {
+      exitPort: virtual.port ? String(virtual.port) : '',
+      details: {
+        name: chain.name,
+        protocol: String(virtual.protocol ?? service?.protocol ?? 'vless'),
+        network: String(virtual.network || 'tcp'),
+        security: String(
+          virtual.security ||
+            (isPlainNetwork(String(virtual.network || 'tcp')) ? 'none' : 'reality'),
+        ),
+        certMode: String(virtual.cert_mode || 'selfsign'),
+        tlsDomain: String(virtual.tls_domain || ''),
+        fingerprint: String(virtual.fingerprint || 'chrome'),
+        flow: String(virtual.flow || 'none'),
+        encryption: String(virtual.encryption || 'none'),
+        serviceName: String(virtual.service_name || 'grpc'),
+        method: String(virtual.method || '2022-blake3-aes-128-gcm'),
+        cipher: String(virtual.cipher || 'auto'),
+        obfsPassword: String(virtual.obfs_password || ''),
+        upMbps: virtual.up_mbps ? String(virtual.up_mbps) : '50',
+        downMbps: virtual.down_mbps ? String(virtual.down_mbps) : '100',
+        portHop: String(virtual.port_hop || ''),
+        entryProtocolEnabled: hasEntryBlock,
+        entryShortId: entryReality?.shortId ?? '',
+        entryDestPreset: entryReality
+          ? inferRealityDestPreset(entryReality.dest, entryReality.serverNames)
+          : DEFAULT_REALITY_DEST,
+        entryDest: entryReality?.dest ?? 'dl.google.com:443',
+        entryServerNames: entryReality?.serverNames.join(',') ?? 'dl.google.com',
+        entryFingerprint: String(chain.entry_config?.fingerprint || 'chrome'),
+        path: String(virtual.path || '/'),
+        mode: String(virtual.mode || 'auto'),
+        host: String(virtual.host || ''),
+        shortId: mainReality.shortId,
+        destPreset: inferRealityDestPreset(mainReality.dest, mainReality.serverNames),
+        dest: mainReality.dest,
+        serverNames: mainReality.serverNames.join(','),
+        targetAddress: String(settings.address || ''),
+        targetPort: settings.port ? String(settings.port) : '',
+        trafficMultiplier: chain.traffic_multiplier || '1.000',
+      },
+    },
+  }
+}
+
 /**
- * 创建/编辑链路对话框的表单状态与提交逻辑。
- * 原为 Chains 页内约 26 个扁平 useState，拆分时装订为单一表单状态对象。
+ * 链路向导第二步（协议/细节）的表单状态与提交逻辑。
+ * 拓扑由第一步画布推导后经 topology 注入，本 hook 不再持有服务器选择状态。
  */
 export function useChainForm({
   chains,
-  nodes,
   servers,
+  topology,
   onError,
   onSaved,
   showOperation,
 }: {
   chains: Chain[]
-  nodes: XrayNode[]
   servers: Server[]
+  topology: ChainFormTopology
   onError: (message: string) => void
   onSaved: () => void
   showOperation: (opts: { observeId: string }) => void
 }) {
-  const [open, setOpen] = useState(false)
   const [editingChainId, setEditingChainId] = useState<number | null>(null)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
@@ -272,26 +340,26 @@ export function useChainForm({
 
   const isReality = REALITY_PROTOCOLS.includes(form.protocol)
   const isHy2 = form.protocol === 'hysteria'
-  const selectedEntry = servers.find((s) => String(s.id) === form.entryId)
-  const selectedExit = servers.find((s) => String(s.id) === form.exitId)
-  const selectedMiddleServers = form.middleIds.flatMap((id) => {
+  const { chainType, entryId, middleIds, exitId, entryPort } = topology
+  const selectedEntry = servers.find((s) => String(s.id) === entryId)
+  const selectedExit = servers.find((s) => String(s.id) === exitId)
+  const selectedMiddleServers = middleIds.flatMap((id) => {
     const server = servers.find((candidate) => String(candidate.id) === id)
     return server ? [server] : []
   })
   const topologyServers = [
     ...(selectedEntry ? [selectedEntry] : []),
     ...selectedMiddleServers,
-    ...(form.chainType === 'relay' && selectedExit ? [selectedExit] : []),
+    ...(chainType === 'relay' && selectedExit ? [selectedExit] : []),
   ]
-  const hopIndexes =
-    form.chainType === 'relay' ? selectedMiddleServers.map((_, index) => index + 1) : []
+  const hopIndexes = chainType === 'relay' ? selectedMiddleServers.map((_, index) => index + 1) : []
   const entryPortHint = (() => {
-    const value = Number(form.entryPort)
-    if (!value || !form.entryId) return ''
+    const value = Number(entryPort)
+    if (!value || !entryId) return ''
     const owner = chains.find(
       (c) =>
         c.entry_port === value &&
-        c.hops[0]?.server_id === Number(form.entryId) &&
+        c.hops[0]?.server_id === Number(entryId) &&
         c.endpoint_id !== 0 &&
         c.status !== 'deleted',
     )
@@ -304,131 +372,25 @@ export function useChainForm({
   const strictNameResult = validateNameTemplate(form.name, {
     servers: topologyServers,
     protocol: form.protocol,
-    port: form.entryPort,
+    port: entryPort,
     hopIndexes,
   })
 
-  const resetChainForm = () => {
+  const beginCreate = () => {
     setEditingChainId(null)
     setForm(initialChainForm)
     setCreateError('')
     setEntryBlockLocked(false)
   }
 
-  const openCreate = () => {
-    resetChainForm()
-    onError('')
-    setOpen(true)
-  }
-
-  const onOpenChange = (next: boolean) => {
-    setOpen(next)
-    if (!next) resetChainForm()
-  }
-
-  const openEdit = (chain: Chain) => {
-    const service = nodes.find((node) => node.id === chain.service_node_id)
-    if (!service && !chain.service_config) {
-      onError('链路出口配置不存在')
-      return
-    }
-    let virtual: Record<string, unknown>
-    let template: Record<string, unknown>
-    let settings: Record<string, unknown>
-    try {
-      const rawVirtual: unknown = service?.config_template ?? chain.service_config
-      virtual = parseConfigRecord(rawVirtual)
-      template = virtual.template === undefined ? {} : parseConfigRecord(virtual.template)
-      settings = asRecord(template.settings) ?? {}
-    } catch {
-      onError('链路出口配置无法解析')
-      return
-    }
-
-    const mainReality = parseRealityTemplate(template)
-    // 入口协议区块回填（P4）：vless 出口链的 entry_config 即主协议端点，不算独立入口区块；
-    // 其余协议存在 entry_config 时勾选回填，子参数解析失败退回默认（留空自动生成）。
-    const hasEntryBlock = chain.entry_config != null && String(virtual.protocol ?? '') !== 'vless'
-    let entryReality: ReturnType<typeof parseRealityTemplate> | null = null
-    if (hasEntryBlock) {
-      try {
-        const entryTemplate =
-          chain.entry_config!.template === undefined
-            ? {}
-            : parseConfigRecord(chain.entry_config!.template)
-        entryReality = parseRealityTemplate(entryTemplate)
-      } catch {
-        entryReality = null
-      }
-    }
+  /** 进入编辑：解析结果由向导页经 parseChainEdit 预先取得（顺带回填画布）。 */
+  const beginEdit = (chain: Chain, parsed: ChainEditParse) => {
     setEditingChainId(chain.id)
     // 无入口端点的存量链锁定入口区块勾选（v1 不支持编辑新增；取消勾选不受影响）。
     setEntryBlockLocked(chain.endpoint_id === 0)
-    // 逐跳地址回填：空串 = 跟随服务器默认地址；已失效值由选择器内标注。
-    setForm({
-      chainType: chain.hops.length === 1 ? 'direct' : 'relay',
-      name: chain.name,
-      entryId: String(chain.hops[0]?.server_id ?? ''),
-      middleIds: chain.hops.slice(1, -1).map((hop) => String(hop.server_id)),
-      exitId: chain.hops.length > 1 ? String(chain.hops.at(-1)?.server_id ?? '') : '',
-      entryAddr: chain.hops[0]?.address ?? '',
-      middleAddrs: chain.hops.slice(1, -1).map((hop) => hop.address ?? ''),
-      exitAddr: chain.hops.length > 1 ? (chain.hops.at(-1)?.address ?? '') : '',
-      entryPort: chain.entry_port ? String(chain.entry_port) : '',
-      trafficMultiplier: chain.traffic_multiplier || '1.000',
-      protocol: String(virtual.protocol ?? service?.protocol ?? 'vless'),
-      port: virtual.port ? String(virtual.port) : '',
-      network: String(virtual.network || 'tcp'),
-      security: String(
-        virtual.security || (isPlainNetwork(String(virtual.network || 'tcp')) ? 'none' : 'reality'),
-      ),
-      certMode: String(virtual.cert_mode || 'selfsign'),
-      tlsDomain: String(virtual.tls_domain || ''),
-      fingerprint: String(virtual.fingerprint || 'chrome'),
-      flow: String(virtual.flow || 'none'),
-      encryption: String(virtual.encryption || 'none'),
-      serviceName: String(virtual.service_name || 'grpc'),
-      method: String(virtual.method || '2022-blake3-aes-128-gcm'),
-      cipher: String(virtual.cipher || 'auto'),
-      obfsPassword: String(virtual.obfs_password || ''),
-      upMbps: virtual.up_mbps ? String(virtual.up_mbps) : '50',
-      downMbps: virtual.down_mbps ? String(virtual.down_mbps) : '100',
-      portHop: String(virtual.port_hop || ''),
-      entryProtocolEnabled: hasEntryBlock,
-      entryShortId: entryReality?.shortId ?? '',
-      entryDestPreset: entryReality
-        ? inferRealityDestPreset(entryReality.dest, entryReality.serverNames)
-        : DEFAULT_REALITY_DEST,
-      entryDest: entryReality?.dest ?? 'dl.google.com:443',
-      entryServerNames: entryReality?.serverNames.join(',') ?? 'dl.google.com',
-      entryFingerprint: String(chain.entry_config?.fingerprint || 'chrome'),
-      path: String(virtual.path || '/'),
-      mode: String(virtual.mode || 'auto'),
-      host: String(virtual.host || ''),
-      shortId: mainReality.shortId,
-      destPreset: inferRealityDestPreset(mainReality.dest, mainReality.serverNames),
-      dest: mainReality.dest,
-      serverNames: mainReality.serverNames.join(','),
-      targetAddress: String(settings.address || ''),
-      targetPort: settings.port ? String(settings.port) : '',
-    })
+    setForm({ ...initialChainForm, ...parsed.details })
     setCreateError('')
     onError('')
-    setOpen(true)
-  }
-
-  const onTypeChange = (value: string | null) => {
-    if (value !== 'direct' && value !== 'relay') return
-    setForm((current) => ({
-      ...current,
-      chainType: value,
-      middleIds: [],
-      exitId: '',
-      middleAddrs: [],
-      exitAddr: '',
-      protocol:
-        value === 'relay' && current.protocol === 'dokodemo-door' ? 'vless' : current.protocol,
-    }))
   }
 
   const onNetworkChange = (value: string | null) => {
@@ -475,24 +437,6 @@ export function useChainForm({
     }))
   }
 
-  const setMiddle = (i: number, value: string) => {
-    setForm((current) => {
-      const middleIds = current.middleIds.slice()
-      middleIds[i] = value
-      const middleAddrs = current.middleAddrs.slice()
-      middleAddrs[i] = ''
-      return { ...current, middleIds, middleAddrs }
-    })
-  }
-
-  const setMiddleAddr = (i: number, value: string) => {
-    setForm((current) => {
-      const middleAddrs = current.middleAddrs.slice()
-      middleAddrs[i] = value
-      return { ...current, middleAddrs }
-    })
-  }
-
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setCreateError('')
@@ -501,26 +445,21 @@ export function useChainForm({
       setCreateError(strictNameResult.error)
       return
     }
-    if (!form.entryId) {
-      setCreateError('请选择入口服务器')
+    if (!entryId || (chainType === 'relay' && (!exitId || middleIds.some((m) => !m)))) {
+      setCreateError('链路拓扑不完整，请回第一步画布补全')
       return
     }
-    if (form.chainType === 'relay' && (!form.exitId || form.middleIds.some((m) => !m))) {
-      setCreateError('请完整选择入口、中间跳与出口服务器')
-      return
-    }
-    const hopIds =
-      form.chainType === 'direct' ? [form.entryId] : [form.entryId, ...form.middleIds, form.exitId]
-    if (hopIds.length > 4) {
-      setCreateError('链长上限 4 跳（入口 + 中间跳 ≤2 + 出口）')
+    const hopIds = chainType === 'direct' ? [entryId] : [entryId, ...middleIds, exitId]
+    if (hopIds.length > MAX_HOPS) {
+      setCreateError(`链长上限 ${MAX_HOPS} 跳（入口 + 中间跳 ≤2 + 出口）`)
       return
     }
     if (new Set(hopIds).size !== hopIds.length) {
       setCreateError('同一服务器在一条链中不重复')
       return
     }
-    // 直连唯一服务器、或中转的入口与中转跳必须有入站能力；中转出口任意。
-    const inboundIds = form.chainType === 'direct' ? hopIds : hopIds.slice(0, -1)
+    // 直连唯一服务器、或中转的入口与中转跳必须有入站能力；中转出口任意（画布校验的提交前兜底）。
+    const inboundIds = chainType === 'direct' ? hopIds : hopIds.slice(0, -1)
     for (const id of inboundIds) {
       const srv = servers.find((s) => String(s.id) === id)
       if (srv && !inboundCapable(srv)) {
@@ -530,11 +469,12 @@ export function useChainForm({
     }
     const nodeBody: CreateNodeRequest = {
       name: resolvedName,
-      server_id: Number(form.chainType === 'direct' ? form.entryId : form.exitId),
+      server_id: Number(chainType === 'direct' ? entryId : exitId),
       protocol: form.protocol,
     }
-    if ((form.chainType === 'direct' ? form.entryPort : form.port).trim()) {
-      nodeBody.port = Number(form.chainType === 'direct' ? form.entryPort : form.port)
+    const exitPort = topology.port
+    if ((chainType === 'direct' ? entryPort : exitPort).trim()) {
+      nodeBody.port = Number(chainType === 'direct' ? entryPort : exitPort)
     }
     // 入口协议区块（P4，v1 固定 vless+reality，子参数留空自动生成）；仅多跳链可勾选。
     // 存量无端点链锁定勾选（终审修复 I-2）：锁定时即使状态被绕过也不携带 entry_node。
@@ -560,7 +500,7 @@ export function useChainForm({
     }
     if (
       (isHy2 || form.protocol === 'vless') &&
-      form.chainType === 'relay' &&
+      chainType === 'relay' &&
       form.entryProtocolEnabled &&
       !entryBlockLocked
     ) {
@@ -646,9 +586,9 @@ export function useChainForm({
     setCreating(true)
     // 逐跳地址：空串 = 跟随服务器默认地址，提交时不携带 address 字段。
     const hopAddrList =
-      form.chainType === 'direct'
-        ? [form.entryAddr]
-        : [form.entryAddr, ...form.middleAddrs, form.exitAddr]
+      chainType === 'direct'
+        ? [topology.entryAddr]
+        : [topology.entryAddr, ...topology.middleAddrs, topology.exitAddr]
     const mkHop = (id: string, addr: string | undefined): ChainHopInput =>
       addr ? { server_id: Number(id), address: addr } : { server_id: Number(id) }
     try {
@@ -660,7 +600,7 @@ export function useChainForm({
           node: nodeBody,
           traffic_multiplier: form.trafficMultiplier,
         }
-        if (form.entryPort.trim()) body.entry_port = Number(form.entryPort)
+        if (entryPort.trim()) body.entry_port = Number(entryPort)
         if (entryNode) body.entry_node = entryNode
         const { observeId } = await api.editChain(body)
         if (observeId) showOperation({ observeId })
@@ -668,21 +608,20 @@ export function useChainForm({
         const body: CreateChainRequest = {
           name: resolvedName,
           hops: hopIds.map((id, i) => mkHop(id, hopAddrList[i])),
-          entry: mkHop(form.entryId, form.entryAddr),
-          middle: form.middleIds.map((id, i) => mkHop(id, form.middleAddrs[i])),
+          entry: mkHop(entryId, topology.entryAddr),
+          middle: middleIds.map((id, i) => mkHop(id, topology.middleAddrs[i])),
           exit: mkHop(
-            form.chainType === 'direct' ? form.entryId : form.exitId,
-            form.chainType === 'direct' ? form.entryAddr : form.exitAddr,
+            chainType === 'direct' ? entryId : exitId,
+            chainType === 'direct' ? topology.entryAddr : topology.exitAddr,
           ),
           node: nodeBody,
           traffic_multiplier: form.trafficMultiplier,
         }
-        if (form.entryPort.trim()) body.entry_port = Number(form.entryPort)
+        if (entryPort.trim()) body.entry_port = Number(entryPort)
         if (entryNode) body.entry_node = entryNode
         const { observeId } = await api.createChain(body)
         if (observeId) showOperation({ observeId })
       }
-      onOpenChange(false)
       onSaved()
     } catch (err) {
       setCreateError(errorMessage(err))
@@ -692,7 +631,6 @@ export function useChainForm({
   }
 
   return {
-    open,
     editingChainId,
     creating,
     createError,
@@ -705,15 +643,11 @@ export function useChainForm({
     entryPortHint,
     entryBlockLocked,
     strictNameResult,
-    openCreate,
-    openEdit,
-    onOpenChange,
-    onTypeChange,
+    beginCreate,
+    beginEdit,
     onNetworkChange,
     onSecurityChange,
     onProtocolChange,
-    setMiddle,
-    setMiddleAddr,
     onSubmit,
   }
 }
