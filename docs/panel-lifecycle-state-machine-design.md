@@ -69,7 +69,8 @@ Agent 进程另有自身的连接循环状态机（`state.ConnectionStatus.State
 
 Agent 自身卸载不属于 Panel 生命周期。`agent.uninstall` 成功后 Agent 先回执再自毁：
 系统安装经独立 systemd unit 执行清理（避免 service cgroup 带走 cleaner）；用户态安装
-停 runner/crontab 后删文件。详见 framework-design §5 `agent.uninstall` 行。卸载后
+停 runner/crontab 后删文件。详见 [framework/control-channel.md](framework/control-channel.md)
+（框架文档拆分后的路径）的 `agent.uninstall`。卸载后
 不再维护 Panel 观测状态。
 
 ## 3. 生命周期版本
@@ -84,8 +85,13 @@ Agent 对同一 epoch 只接受更大的 revision；重复 revision 幂等确认
 新 epoch 只能从一条新建且已鉴权会话的 `agent.session.open` 响应中接受。随机 epoch 不依赖
 数据库单调计数，因此旧备份恢复不会造成版本倒退歧义。
 
-当前生命周期快照在进程内存中权威维护。数据库只保存尽力写入的迁移审计记录，不能从备份
-中的旧状态跳过 `startup`。
+完整生命周期快照字段为 `panel_instance_id`、`state`、`epoch`、`revision`、`entered_at`
+（进入当前状态的时间）、`fault`（`faulted` 时的安全故障摘要，可缺省）、`retry_policy`
+（受边界约束的重连提示）与 `latency_resume_window_ms`（恢复 `active` 后延迟探测的随机
+恢复窗口上限）。
+
+当前生命周期快照在进程内存中权威维护（`lifecycle.Manager` 纯内存、不落库，store 无相关
+表）；每次进程启动都从 `startup` 重新执行初始化检查。
 
 ## 4. HTTP Upgrade 鉴权与会话
 

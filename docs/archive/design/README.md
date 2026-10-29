@@ -1,8 +1,13 @@
-# 设计文档索引
+# 设计文档索引（已归档）
 
-## 合稿（唯一权威）
+> **归档说明**（2026-10-29）：本套分稿与合稿提案均已归档。提案的 IA 与交互模式已实施，
+> 但视觉与令牌口径已被「液态玻璃」取代；现行设计语言的权威是仓库根
+> [DESIGN.md](../../../DESIGN.md) 与 `src/frontend/src/styles/tokens.css`，
+> 不再以本目录与合稿为权威。
 
-- [../ui-refactor-proposal.md](../ui-refactor-proposal.md) — Lattix 重构级 UI/UX 设计方案 v1.0（13 节 + 附录 A）。跨稿口径以该文 13.3 为准。
+## 合稿
+
+- [../ui-refactor-proposal.md](../ui-refactor-proposal.md) — Lattix 重构级 UI/UX 设计方案 v1.0（13 节 + 附录 A），已归档。跨稿口径以该文 13.3 为准（历史口径）。
 
 ## 分稿存档（已并入合稿，仅作追溯）
 

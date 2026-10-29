@@ -87,6 +87,12 @@ Panel、Agent 和前端直接使用同一数据结构：
 范围 10–3600 秒，漂移检测范围 5–3600 秒。路径、固定连接地址、token、Xray API、runner、
 下载镜像和实际二进制版本属于 Agent 本地或运行态信息，不进入全局设置。
 
+服务器设置走第二条同构同步链（`server.settings.sync` / `server.settings.changed`，独立
+revision）：当前承载 xray 版本锁定，采用「面板默认 + 单服务器覆盖」两级合并，覆盖中未
+设置的字段继承默认值；面板按 servers 表的 `server_settings_revision` /
+`server_settings_error` / `server_settings_reported_at` 列推导每台服务器的同步状态。完整契约见
+[框架设计·控制通道](framework/control-channel.md)。
+
 ## 5. pull 同步状态机
 
 1. 管理员保存 Agent 设置；面板整体替换 `agent` 对象并在同一事务中递增 revision。
@@ -104,6 +110,12 @@ Panel、Agent 和前端直接使用同一数据结构：
 
 服务器同步状态由面板期望 revision 与 Agent 最后上报值推导：
 `synced`、`pending` 或 `failed`，不单独维护可漂移的布尔值。
+
+`server.settings.sync` / `server.settings.changed` 复用同一状态机，机制与
+`agent.settings.sync` 同构：面板下发生效文档（两级合并后的服务器设置），Agent 校验后
+原子写入 `data/server-settings.json` 并整体应用，再同步确认。固定版本对齐失败后进入
+30 分钟冷却，冷却期内不重试、面板持续显示 `failed`；跨面板重新绑定
+（`resetForPanelRebind`）时清空本地已应用的服务器设置状态。
 
 ## 6. 面板身份、凭证与重新绑定
 
@@ -152,10 +164,14 @@ system 模式：
   config/xray.json
   data/state.json
   data/settings.json
+  data/server-settings.json
+  data/connection.json
   logs/agent.log
 /usr/local/bin/latx-ag -> /opt/lattix-agent/bin/latx-ag
 ```
 
 用户模式使用 `~/.lattix-agent/{bin,config,data,logs}`。systemd unit 仍位于
 `/etc/systemd/system`，BBR 配置仍位于 `/etc/sysctl.d`。`state.json` 保存 token、面板身份、
-credential epoch、server ID 和链配置件；`settings.json` 保存完整统一同步文档。
+credential epoch、server ID 和链配置件；`settings.json` 保存完整统一同步文档；
+`server-settings.json` 保存服务器设置同步文档；`connection.json` 保存连接状态机的最近
+状态（含连接状态、面板地址、版本与错误摘要，进程内校验转换后落盘）。

@@ -65,7 +65,7 @@ Panel 使用收到遥测的服务端时间作为采样时间，避免 Agent 系�
 
 `server_metrics` 每台服务器保留最新值，供服务器列表快速读取。`server_metric_history` 保存时间序列，并额外记录 `latency_probe_active`、`server_id`、`sampled_at`。Panel 结合自身当前生命周期和 Agent 标记确定该字段，任一方暂停即为 false，因此旧 Agent 在 Panel 更新期间也不会误入队列。最近延迟队列只排除 `latency_probe_active=false` 的生命周期暂停包；启用状态下 `latency_ms=null` 的超时包仍保留为连通性参考。
 
-每帧主机遥测在同一事务内更新最新值并插入历史。历史表按 `(server_id, sampled_at)` 建索引，后台每小时清理 24 小时以前的数据。删除服务器时同步删除最新指标与历史指标。
+每帧主机遥测在同一事务内更新最新值并插入历史。历史表按 `(server_id, sampled_at)` 建索引，后台每小时清理 24 小时以前的数据；该 `metrics.retention` 任务同时清理服务器间延迟历史与三网目录测速历史（分别见 [链路延迟与负载统计设计](chain-link-stats-design.md) 与 [服务器测试设计](server-testing-design.md)）。删除服务器时同步删除最新指标与历史指标。
 
 ## 6. API
 

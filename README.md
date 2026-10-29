@@ -76,20 +76,23 @@ Docker 模式默认只监听 `127.0.0.1:8080`，需经 Nginx/OpenResty 反向代
 | [安装与运维](docs/installation.md) | 脚本选项全表、模式对比、更新卸载、latx / latx-ag 命令、反代与 TLS |
 | [已知问题与部署边界](docs/KNOWN_ISSUES.md) | 部署模型边界与明确接受的限制 |
 | [Changelog](docs/CHANGELOG.md) | 版本变更记录 |
-| [设计文档](docs/framework-design.md) | 总体设计与实施契约：数据模型、控制通道、安全与各子系统 |
+| [框架设计](docs/framework-design.md) | 总体设计（目标/架构/仓库结构/页面/决策）与全部设计文档的索引地图；各子系统契约拆分在 [docs/framework/](docs/framework/) 专题文件 |
 | [开发指南](docs/development.md) | 构建、手动运行、e2e 验收、CI/CD 与发版流程 |
 | [前端开发](docs/frontend.md) | 前端命令、目录结构与设计系统约定 |
+| [设计语言](DESIGN.md) | 液态玻璃设计系统：颜色、字体、布局与组件规则 |
 | [Panel 生命周期与 Agent 连接状态机](docs/panel-lifecycle-state-machine-design.md) | 启动/更新/故障生命周期与 Agent 连接状态转换 |
 | [RPC API、Requester 与 Agent 通道](docs/rpc-api-design.md) | 面板 API 形态、requester 约定与 agent 动作协议 |
-| [OpenAPI](docs/openapi.yaml) | 面板 HTTP API 契约（前端类型由此生成） |
-| [WS 协议 Schema](docs/ws-protocol.schema.json) | Panel ↔ Agent WebSocket 消息结构 |
+| [OpenAPI](docs/openapi.yaml) | 面板 HTTP API 契约（前端类型由此生成，路由权威） |
+| [WS 协议 Schema](docs/ws-protocol.schema.json) | Panel ↔ Agent WebSocket 消息结构（部分参考） |
 | [链路 Revision 与流量统计](docs/chain-revisions-traffic-design.md) | 链路编辑、离线 revision 与流量口径 |
-| [订阅分流与模板](docs/subscription-routing-design.md) | 订阅模板、规则缓存与原子发布 |
-| [代理链与 NAT](docs/framework-design.md#21-代理链与-nat-支持已实现v003) | 入口 → 中转 → 出口链路与 NAT 两档支持（设计文档 §21） |
-| [服务器测试](docs/server-testing-design.md) | IP 质量/回程/测速等服务器测试的设计与实现契约 |
+| [链路统计](docs/chain-link-stats-design.md) | 服务器对测速（latency.probe 轮次、有向延迟表）与链路一览统计 |
+| [订阅分流与模板](docs/subscription-routing-design.md) | 订阅模板四级配置、规则缓存与原子发布 |
+| [代理链与 NAT](docs/framework/chain-nat.md) | 入口 → 中转 → 出口链路、NAT 两档与实现契约 |
+| [服务器测试](docs/server-testing-design.md) | IP 质量/回程/测速/流媒体/连通性测试与三网目录测速的设计契约 |
 | [服务器探针监控](docs/server-probe-monitoring-design.md) | CPU/内存/磁盘/延迟探针与 24 小时历史 |
 | [日志系统](docs/logging-design.md) | 操作日志与请求日志的存储、过滤与容量限制 |
-| [后端调度与服务器计费](docs/billing-scheduler-design.md) | 周期调度器与服务器成本统计 |
+| [后端调度与服务器计费](docs/billing-scheduler-design.md) | 周期调度器、服务器成本统计与到期预警 |
 | [优雅停机与 Agent 设置同步](docs/graceful-shutdown-agent-settings-design.md) | WS 1012 排空重连与设置 revision 同步 |
 | [xray 缓存清理](docs/xray-cleanup-design.md) | agent 侧 xray 缓存清理契约 |
-| [CodeGraph 仓库分析](docs/codegraph-analysis.md) | 代码库结构与依赖的静态分析（英文） |
+
+历史提案与过时快照见 [docs/archive/](docs/archive/README.md)。

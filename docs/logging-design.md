@@ -206,9 +206,11 @@ RPC handler 成功解析 body 后，只能写入路由注册时显式声明的�
 改为自动高频轮询，必须同步调整它的 LogPolicy。健康状态不逐次记录；ready 状态变化
 分别写 `panel.not_ready` 和 `panel.ready` 操作日志。
 
-轮询/状态类路由（`/api/panel/state`、`/api/panel/get-update-status`、
-`/api/server/get-test`、`/api/auth/me`、`/api/dashboard/get`、`/api/server/list`、
-`/api/chain/list`、`/api/user/list`）在注册时声明 `Debug: true`：成功请求的
+轮询/状态类路由（`/api/panel/state`、`/api/panel/runtime`、`/api/panel/get-update-status`、
+`/api/observe-task/get`、`/api/server/get-test`、`/api/server/catalog-probes`、`/api/auth/me`、
+`/api/dashboard/get`、`/api/server/list`、`/api/chain/list`、`/api/chain/get-stats`、
+`/api/user/list`、`/api/stats/traffic/overview|series|breakdown|server-history`、
+`/api/stats/errors/summary`）在注册时声明 `Debug: true`：成功请求的
 `severity` 降级为 `debug`，失败仍按原级别记录。
 
 ### 4.4 请求重要程度
@@ -217,7 +219,8 @@ RPC handler 成功解析 body 后，只能写入路由注册时显式声明的�
 - `info`：协议正常且 RPC code 为 `OK` / `ACCEPTED`；
 - `warning`：HTTP 4xx、慢请求，或
   `AUTH_REQUIRED` / `AUTH_INVALID_CREDENTIALS` / `INVALID_ARGUMENT` /
-  `NOT_FOUND` / `CONFLICT` / `OPERATION_LOCKED` / `UNSUPPORTED_ACTION`；
+  `NOT_FOUND` / `CONFLICT` / `OPERATION_LOCKED` / `UNSUPPORTED_ACTION` /
+  `SERVER_OFFLINE` / `PORT_OUT_OF_RANGE` / `UPDATE_IN_PROGRESS`；
 - `error`：HTTP 5xx、panic，或
   `INTERNAL_ERROR` / `UPSTREAM_ERROR` / `SERVICE_UNAVAILABLE`。
 
@@ -270,7 +273,7 @@ token password secret key cookie authorization cert private
 - 达到单段目标后，将当前段重命名为带 UTC 时间的归档段并创建新当前段；
 - 超过总容量时按时间删除最旧归档段，不删除正在写入的当前段。
 
-日志页面只读取各分段尾部，不扫描完整文件。可选窗口为 10、30、50、100 行，默认 30 行。
+日志页面只读取各分段尾部，不扫描完整文件。可选窗口为 10、30、50、100、200、300、500 行，默认 30 行。
 筛选只作用于已经读取的当前窗口。
 
 ## 5. HTTP API

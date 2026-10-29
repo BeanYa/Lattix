@@ -159,6 +159,7 @@ GET  /api/server/get-metric-history?server_id=&hours=
 GET  /api/server/list-commands?server_id=&limit=
 GET  /api/server/get-test?server_id=
 POST /api/server/run-test
+GET  /api/server/catalog-probes
 GET  /api/server-test/catalog-status
 POST /api/server-test/refresh-catalog
 POST /api/server/create
@@ -201,6 +202,7 @@ POST /api/chain/delete
 POST /api/chain/set-traffic-multiplier
 POST /api/chain/reset-traffic
 GET  /api/chain/get-traffic-history?chain_id={id}&hop_id={id|0}&days={1..730}
+GET  /api/chain/get-stats
 GET  /api/chain/share-link?chain_id={id}&user_id={id}
 
 GET  /api/user/list
@@ -214,6 +216,7 @@ GET  /api/user/traffic-history?user_id={id}
 POST /api/user/regenerate-subscription
 POST /api/user/regenerate-all-subscriptions
 POST /api/user/reset-subscription-token
+POST /api/user/reset-traffic
 GET  /api/user/subscription-preview?user_id={id}&format={format}
 
 GET  /api/subscription/categories
@@ -224,6 +227,9 @@ POST /api/subscription/template/delete
 POST /api/subscription/template/refresh
 POST /api/subscription/template/assign
 POST /api/subscription/template/unassign
+POST /api/subscription/template/unforce
+GET  /api/subscription/template/default
+POST /api/subscription/template/default
 
 GET  /api/external-subscription/list
 POST /api/external-subscription/create
@@ -263,7 +269,19 @@ GET  /api/log/list-operations?severity=&category=&server_id=&operator=&q=&from=&
 POST /api/log/clear-operations
 GET  /api/log/list-requests?limit=
 POST /api/log/clear-requests
+
+GET  /api/stats/traffic/overview
+GET  /api/stats/traffic/series?dim=&server_id=&user_uuid=&granularity=&from=&to=
+GET  /api/stats/traffic/breakdown?server_id=&user_uuid=&from=&to=
+GET  /api/stats/traffic/server-history?server_id=&hours=
+GET  /api/stats/errors/summary
 ```
+
+其中 `catalog-probes` 返回三网目录测速统计（各服务器到目录目标的 RTT 与丢包率）；
+`chain/get-stats` 返回链路聚合统计；`user/reset-traffic` 清零指定用户流量计数；
+`subscription/template/unforce` 取消订阅模板的强制指派；`subscription/template/default`
+读写默认订阅模板；`stats/traffic` 四端点分别返回被控流量的总量概览、时间序列、维度拆分与
+单服务器历史；`stats/errors/summary` 汇总请求侧错误。
 
 端点以 `docs/openapi.yaml` 为权威（`panel/contract_test.go` 强制两者一致），本节仅作速览；query 参数为路由白名单，非全部可选组合。
 
@@ -442,6 +460,8 @@ server.settings.changed
 server-test.run
 server-test.progress
 server-test.result
+latency.probe
+latency.report
 telemetry.report
 config.drift
 ```
@@ -467,6 +487,8 @@ config.drift
 - 管理 HTTP RPC 使用 [OpenAPI 3.1 契约](openapi.yaml) 作为协议事实来源；
 - Frontend 类型从 OpenAPI 生成，Requester 和语义化 API 方法保持手写；
 - Backend 使用明确 Go struct，不生成业务 handler；
-- WS 使用独立 [JSON Schema](ws-protocol.schema.json) 和 Go 序列化契约测试；
+- WS 使用独立 [JSON Schema](ws-protocol.schema.json) 和 Go 序列化契约测试；schema 为
+  部分参考（仅建模部分消息类型，如 `latency.probe` / `latency.report`），协议事实以
+  Go 序列化与契约测试为准；
 - CI 校验生成类型无未提交差异；
 - Backend、Frontend、Agent、脚本、README 和设计文档必须在同一改动中更新。

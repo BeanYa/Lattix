@@ -69,6 +69,9 @@ Docker 部署的证书目录为：
 格式化缺陷掩盖了真实原因，属语义校验失败而非 JSON 损坏）。只升级了二进制、没跑过服务器
 测试的节点不受影响；xray 独立运行，代理流量不中断。
 
+注：该格式化缺陷已在当前代码修复（`src/agent/cmd/agent/main.go` 现为
+`log.Fatalf("load server test task: %v", err)`），本条目保留作历史记录。
+
 升级脚本已内置兼容性迁移框架（`latx-ag migrate`，注册表随新版 latx-ag 发布）：
 `latx-ag update`、install.sh 重装、面板触发的 Agent 自升级三条路径都会在新版 Agent
 首次启动前清掉旧格式 journal（未交付的测试结果一并丢弃，面板可重新派发任务）。

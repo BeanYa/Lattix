@@ -78,8 +78,10 @@ curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
   强制重建容器会恢复 `.env` 所钉版本，详见
   [已知问题与部署边界](KNOWN_ISSUES.md)。
 - Agent：面板服务器页"升级 agent"下发原子自替换；也可在节点上执行
-  `latx-ag update [version]`。`latx-ag uninstall [--purge-xray]` 卸载
-  （默认保留 xray 与节点运行；`--purge-xray` 连同 xray 删除）。
+  `latx-ag update [version]`。`latx-ag uninstall [--purge-xray] [--yes]` 卸载
+  （默认保留 xray 与节点运行；`--purge-xray` 连同 xray 删除）。面板自升级、
+  `latx-ag update`、install.sh 重装三条升级路径均自动执行兼容性迁移注册表
+  （见 `latx-ag migrate` 与 [已知问题与部署边界](KNOWN_ISSUES.md)）。
 
 ## 原生面板运维（latx）
 
@@ -98,7 +100,7 @@ curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
 | `latx acme <domain>` | 使用面板内置 ACME（TLS-ALPN-01）并切 HTTPS |
 | `latx bbr` | 开启 BBR 拥塞控制（需要 root） |
 | `latx reset-admin <newpass>` | 重置管理员密码并轮换会话密钥（重置即全部会话失效） |
-| `latx uninstall [--purge-db]` | 卸载面板（默认保留 DB） |
+| `latx uninstall [--purge-db] [--yes]` | 卸载面板（默认保留 DB；`--yes` 跳过确认） |
 | `latx version` | latx 与面板版本 |
 
 ## 安装 Agent（受控服务器）
@@ -128,11 +130,12 @@ BBR 是宿主内核能力。Podman/LXC 等容器按实际能力尝试：宿主�
 | 命令 | 说明 |
 | --- | --- |
 | `latx-ag status` | agent/xray 服务状态、版本、面板地址、服务器 ID 与配置指纹 |
-| `latx-ag start\|stop\|restart\|enable\|disable` | systemctl 包装（unit `lattix-agent`） |
+| `latx-ag start\|stop\|restart\|enable\|disable` | systemctl 包装（unit `lattix-agent`）；无 systemd 时自动按用户态模式管理守护脚本与 crontab `@reboot` 自启 |
 | `latx-ag log [-n N]` / `latx-ag log-xray [-n N]` | 跟随 agent / xray 日志（`-n N` 时不跟随） |
-| `latx-ag update [version]` | 从 GitHub release 更新 agent（默认 latest，预检 `-version` 后停服替换） |
+| `latx-ag update [version]` | 从 GitHub release 更新 agent（默认 latest，预检 `-version` 后停服替换；停服前/启动前自动执行兼容性迁移，见 `migrate`） |
 | `latx-ag xray-update [version]` | 更新 xray（官方 .dgst 校验 SHA2-256，失败回滚 .bak；`XRAY_RELEASE_BASE` 可指向镜像） |
-| `latx-ag uninstall [--purge-xray]` | 卸载 agent（默认保留 xray 与节点运行；`--purge-xray` 连同 xray 删除） |
+| `latx-ag migrate [--from V] [--phase pre\|post] [--data-dir DIR]` | 兼容性迁移：注册表条目为「标识\|触发版本窗口\|pre/post 相位」（首条 `server_test_journal_international\|v0.1.24\|post`）；三条升级路径自动执行，裸执行为修复模式（跳过版本窗口过滤，仅靠条目自守卫判定），供已停在崩溃循环的节点自救（见 [已知问题](KNOWN_ISSUES.md)） |
+| `latx-ag uninstall [--purge-xray] [--yes]` | 卸载 agent（默认保留 xray 与节点运行；`--purge-xray` 连同 xray 删除，`--yes` 跳过确认） |
 | `latx-ag version` | latx-ag、agent 与 xray 版本 |
 
 ## 反向代理与 TLS

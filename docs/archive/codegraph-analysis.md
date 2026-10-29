@@ -1,4 +1,9 @@
-# CodeGraph Repository Analysis
+# CodeGraph Repository Analysis（已归档）
+
+> **归档说明**（2026-10-29）：本文件是 2026-07-28 由 CodeGraph 工具生成的仓库快照分析，
+> 生成于另一工作区路径，其结构索引与代码规模相对当前仓库已严重失实（当时 go 文件 89 个，
+> 现已 380+；alert/servertest/sub/selfupdate 等大模块均未收录）。仅作历史快照保留；
+> 当前仓库结构见[框架设计·仓库结构](../framework-design.md)。
 
 - Generated: 2026-07-28 (Asia/Shanghai)
 - CodeGraph: 1.0.1

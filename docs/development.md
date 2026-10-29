@@ -7,7 +7,7 @@
 
 ```
 src/frontend/  # Vite + React + TypeScript + shadcn/ui（包管理器 bun）
-               # 单一设计语言「高密度事务台」，默认深色外观，浅色可切换
+               # 单一设计语言「液态玻璃」（见根 DESIGN.md），默认深色外观，浅色可切换
 src/backend/   # Go：面板 HTTP API + Agent WS 端点 + SQLite
 src/agent/     # Go：独立二进制，systemd 托管
 src/shared/    # Go module：WS 消息结构体、虚拟配置类型，backend/agent 共用
@@ -66,6 +66,7 @@ XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/usernodes.sh      # 逐节点用�
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/telemetry.sh      # 流量统计 + 主机遥测
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/reconcile.sh      # 配置漂移检测与修复
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/upgrade.sh        # xray 升级（本地镜像，无外网）
+bash scripts/e2e/agent-migrate.sh                               # latx-ag 兼容性迁移注册表：版本窗口/相位过滤/幂等/修复模式（无外网）
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/tls.sh            # 面板 TLS / wss
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/links.sh          # 分享链接订阅 + userinfo 头/落地页/用户有效期
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/settings.sh       # 设置页 / 改密 / TLS 域名路径模式 / 自重启
@@ -73,12 +74,14 @@ XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/alerts.sh         # 事件告警�
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/event-log.sh      # 操作日志 / 请求日志 / 容量与清空
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/panel-update.sh   # 面板更新状态机与原子替换
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/panel.sh          # 当前 Panel × Agent RPC 协议回归
+bash scripts/e2e/control-channel.sh                             # Agent 控制通道：凭证换发、离线命令滞留补发、apply_result 回写
 XRAY_BIN=/usr/local/bin/xray bash scripts/dev/poc-reverse.sh    # xray reverse bridge/portal 可行性 PoC（§21）
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/chains.sh         # 代理链 + NAT：建链/真实流量/降级自愈/重试/拆链
 bash scripts/e2e/install-panel.sh                               # 面板一键安装 + latx 管理程序（本地假 release，无外网）
 bash scripts/e2e/install-entry.sh                               # 根安装入口参数/版本转发（无外网）
 XRAY_BIN=/usr/local/bin/xray bash scripts/e2e/install-agent.sh  # Agent 引导安装 + latx-ag（本地假 release，LATX_DEV=1）
 bash scripts/dev/test-install-agent-bbr.sh                      # Agent 安装器 BBR 能力/权限/持久化隔离测试
+XRAY_BIN=/usr/local/bin/xray bash scripts/dev/hy2-probe.sh      # hy2 数据面验证（QUIC/UDP 承载 + udpHop DNAT 冒烟，DNAT 步骤需 root）
 ```
 
 `LATX_ALLOW_PRIVATE_OUTBOUND=1` 是仅用于测试的钩子（放行 SSRF 私网拨号），
@@ -90,14 +93,23 @@ Agent 常用参数：`-panel`（固定面板 WS 地址）、`-token`（bootstrap
 
 ## CI/CD 与版本发布
 
-- **发版**：push `v*` tag 触发 `.github/workflows/release.yml`——构建前后端并
+- **CI**：PR 与 main push 触发 `.github/workflows/ci.yml`——前端
+  `bun run format:check` / `test` / `lint` / `build` 与 `bun audit`；Go 侧
+  `go test`（含 `-race`）、`go vet`、`govulncheck`，并对 `install.sh` 与
+  `scripts/` 全部 shell 脚本做 `bash -n` 语法检查。
+- **发版**：push `v*` tag 触发 `.github/workflows/release.yml`——先过两段式
+  发布闸门：校验 tag 指向 `main` 上的提交，再等待该提交的 main CI 变绿
+  （至多 15 分钟；CI 结论非成功即快速失败，超时同样拒绝发布）。随后构建前后端并
   注入版本（前端嵌入单个 Go 面板二进制）、打包 amd64/arm64 的 panel 与 agent
   tarball、生成 `checksums.txt`，并以 matrix 执行 `scripts/e2e/` 中可在 CI
   环境运行的 e2e 回归（`telemetry.sh`、`vlessenc.sh` 依赖真实外网数据通路不进
-  CI；`groups.sh` 的外部订阅夹具起在 loopback，matrix 条目注入
-  `LATX_ALLOW_PRIVATE_OUTBOUND=1` 测试钩子放行 SSRF 私网拨号）。通过后先发布
-  `ghcr.io/beanya/lattix:<version>` 与 `latest` 多架构镜像，再发布 GitHub
-  Release。Release 另附带仓库原样的 `install-panel.sh` / `install-agent.sh` /
+  CI；`groups.sh`、`alerts.sh` 的外部夹具起在 loopback，matrix 条目注入
+  `LATX_ALLOW_PRIVATE_OUTBOUND=1` 测试钩子放行 SSRF 私网拨号；`chains.sh` 的
+  真实流量断言打外网，CI 注入 `skip_external=1` 跳过该断言、其余断言全量保留；
+  失败自动重试至多 3 次、间隔 20 秒，连续失败仍判失败；xray 统一用
+  `XRAY_E2E_VERSION` 钉版基线）。通过后先发布 GitHub Release，再发布
+  `ghcr.io/beanya/lattix:<version>` 与 `latest` 多架构镜像（image job 依赖
+  release 完成）。Release 另附带仓库原样的 `install-panel.sh` / `install-agent.sh` /
   `latx.sh` / `latx-ag.sh`，其 sha256 一并纳入 `checksums.txt`，供根安装器
   校验子安装脚本。Release notes 依次取自 `docs/CHANGELOG.md` 的对应版本段、
   `[Unreleased]` 段（皆空回退自动生成），`scripts/dev/changelog-cut.sh vX.Y.Z`

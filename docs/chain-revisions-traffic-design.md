@@ -7,7 +7,7 @@ Lattix 是控制面，用户流量不经过 Panel。所有代理入口统一建�
 
 受控链路只支持安装了 Lattix Agent 的服务器；外部订阅节点独立存储于
 `external_chains`，不参与链路状态机、Revision 与流量统计，仅作为订阅输出条目
-（见 [framework-design §9.1](framework-design.md#91-外部订阅导入与用户关联)）。
+（见 [框架设计·订阅](framework/subscription.md)）。
 不引入动态路由、负载均衡或商业化用户分组。Panel 与 Agent 使用完全相同的发布版本，
 不维护跨版本命令兼容层。
 

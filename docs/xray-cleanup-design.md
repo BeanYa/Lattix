@@ -148,7 +148,8 @@ type ApplyResultPayload struct {
    并删除该记录；
 4. `DryRun`：仅返回差异，不动配置、不落盘；
 5. 执行：`commitConfig`（xray -test 校验 + 原子落盘）→ `restartApply`（失败恢复上一份
-   并再次重启，§6 步骤 7-8）；
+   并再次重启，§6 步骤 7-8）；随后对被删除的 `node_` / `shared_endpoint_` 前缀 inbound，
+   best-effort 移除对应 udphop DNAT 规则（规则缺失或无权限只记日志，不阻断清理）；
 6. 差异为空 → 幂等返回空结果，不重启。
 
 `chainPieces` 记录同步清理是必要项：否则 agent 重启重建 config.json（§17 净化路径、
@@ -169,6 +170,9 @@ HTTP 200 业务信封；符合 [RPC API 设计](rpc-api-design.md) 的现行路�
      命令按现有流程 MarkCommandAcked；失败时投递错误；
    - HTTP handler 带超时（如 45s，与 uninstall 一致）；
 4. 返回 `CleanupXrayResult`（或错误信息）。
+
+handler 进入时接入旁路式 observe 进度上报（`server.cleanup_xray` 分阶段事件），响应信封
+携带 `observe_id`，前端经 `GET /api/observe-task/get` 轮询渲染清理进度。
 
 ## 7. 前端交互
 

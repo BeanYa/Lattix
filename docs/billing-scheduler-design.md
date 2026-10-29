@@ -12,10 +12,16 @@
 | `release.xray` | 间隔或日历计划 | 是 | 是 |
 | `billing.lifecycle` | 每日指定时间，默认 00:05 | 是 | 是 |
 | `exchange_rates.refresh` | 每日指定时间，默认 02:30 | 是 | 是 |
+| `subscription.templates.refresh` | 固定间隔 6 小时 | 是 | 否 |
+| `chain-latency.probe` | 固定间隔，默认 5 分钟（`LATTIX_LATENCY_PROBE_INTERVAL` 可覆盖） | 是 | 否 |
+| `server.ban-watch` | 固定间隔，与三网测速轮次同频 | 是 | 否 |
+| `cdn.catalog.refresh` | 固定间隔，默认 6 小时（`LATTIX_CDN_REFRESH_INTERVAL` 可覆盖） | 否 | 否 |
+| `traffic.reset` | 固定间隔，默认 1 分钟（`LATTIX_EXPIRY_SWEEP_INTERVAL` 可覆盖） | 是 | 否 |
+| `traffic_stats.retention` | 固定间隔 1 小时 | 否 | 否 |
 | `external_subscriptions.sync` | 固定间隔 15 分钟 | 否 | 每订阅配置 |
 
 `external_subscriptions.sync` 扫描所有到达各自更新间隔的外部订阅并同步（间隔每订阅
-可配，最小 1 小时、默认 24 小时，详见[框架设计 §9.1](framework-design.md)）；启动时
+可配，最小 1 小时、默认 24 小时，详见[框架设计·订阅](framework/subscription.md)）；启动时
 不补跑，新建订阅在创建时即时同步一次。
 
 调度器按面板时区计算日历计划。每项任务独立超时、禁止自身重叠；失败不阻止其他任务。设置变更通过 `NotifyChanged` 唤醒调度循环并重新计算执行时间。固定间隔任务从上次完成时间继续计算，避免慢任务堆积。
@@ -57,6 +63,8 @@ stateDiagram-v2
 
 续费日当天无论 Agent 是否在线均为 `DUE_TODAY`。逾期后在线只表示 `ASSUMED_VALID`，不是财务确认；离线为 `EXPIRED`，重新上线可恢复推定有效。转为已过期时保留最后的 `assumed_valid_through`。手动续费必须提交晚于今天的新续费日，且由 `validBillingTransition` 按上图校验前置状态（due_today/assumed_valid/expired → active；active → active 仅改期；disabled 必须先重新开启统计计费）。
 
+计费巡检（`billing.lifecycle`）按状态同时推送到期预警事件：`billing_due_soon`（active 且续费日进入 7 天窗口，每日提醒直至到期或续费）、`billing_due_today`（当日到期，跃迁时推送一次）、`billing_expired`（逾期且离线转为已过期，跃迁时推送一次）；`assumed_valid` 不推送到期预警。
+
 ## 汇率
 
 Frankfurter 是默认公开汇率源，成功结果按汇率日期持久化。刷新失败继续使用最近缓存，不阻止服务器新增或编辑。服务器详情同时显示原价、统计币种折算价、汇率来源和日期。
@@ -76,9 +84,11 @@ Frankfurter 是默认公开汇率源，成功结果按汇率日期持久化。�
   服务截止（含推定有效宽限），公共汇率与自定义锚点双口径字段并列返回
   （`actual_costs_public` / `actual_costs_custom` / `actual_totals_*`）。
 - `GET /api/billing/stats/estimated`（计算成本）：对启用统计计费且未过期的服务器按
-  日成本 × 周期天数（日 1 / 月 30 / 年 365）估算每周期成本；日成本按计费周期推导
-  （年付 = 年付价 ÷ 12 ÷ 30、月付 = 月付价 ÷ 30、季付 = 季付价 ÷ 3 ÷ 30），响应含
-  `monthly_minor` / `annual_minor`（及 custom 变体）精确折算值。
+  日成本 × 周期天数估算每周期成本；估算口径把周期折算为日 1 / 月 30 / 年 360 天
+  （12 × 30），使年付价可精确还原为年成本（月成本 = 年成本 ÷ 12、日成本 = 年成本 ÷ 360），
+  与已生效口径的 365 天年区分。响应除 `monthly_minor` / `annual_minor`（及 custom 变体）
+  折算值外，还含按统计周期展开的 `estimated_costs_public` / `estimated_costs_custom`
+  序列与 `estimated_totals_*` 汇总。
 
 完整 DTO 契约以 [OpenAPI](openapi.yaml) 的 `BillingActualStats` /
 `BillingEstimatedStats` schema 为准（`panel/contract_test.go` 强制两者一致）。

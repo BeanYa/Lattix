@@ -49,7 +49,7 @@
 
 内容来源为受控链路节点与用户关联的外部订阅节点两类：外部节点经独立构建器输出
 （mihomo YAML / sing-box JSON / Quantumult X / 分享链接，与解析器互逆），客户端格式
-无法表达的协议跳过并记入快照 warning；详见 [framework-design §9.1](framework-design.md#91-外部订阅导入与用户关联)。
+无法表达的协议跳过并记入快照 warning；详见 [框架设计·订阅](framework/subscription.md)。
 
 `clash` 输出为开箱即用配置：内置 fake-ip DNS（`enhanced-mode: fake-ip`、198.18.0.1/16、本地域名
 fake-ip-filter，默认/DoH nameserver；节点域名经 `proxy-server-nameserver` 用国内可达解析器直查，
