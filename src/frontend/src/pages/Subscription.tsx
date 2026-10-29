@@ -69,16 +69,19 @@ interface CarrierStatus {
   sampled_at?: string
 }
 
-/** LinkStatus 是一条链路的匿名状态：入口三网延迟 + 内部段延迟加总（无服务器标识）。 */
+/** LinkStatus 是一条链路的匿名状态：入口三网延迟 + 内部段延迟加总（无服务器标识）。
+ * entry_banned 表示入口（第一跳）服务器被 Ban 巡检判定且为可直连服务器（§告警分类）。 */
 interface LinkStatus {
   label: string
   entry: string
   carriers: CarrierStatus[]
   internal_ms: number | null
+  entry_banned?: boolean
 }
 
 interface LinkStatusResponse {
   updated_at: string
+  unreachable_region?: string // 不可达标地域文案：三网测速目标省市（市级优先，否则省）
   links: LinkStatus[]
 }
 
@@ -145,10 +148,13 @@ function previewSampledAt(): string {
   return new Date().toISOString()
 }
 
+const previewUnreachableRegion = '广东'
+
 const previewLinkStatus: LinkStatus[] = [
   {
     label: '🇯🇵东京-Out',
     entry: '入口',
+    entry_banned: true,
     carriers: [
       { label: '广东电信', latency_ms: 23.4, sampled_at: previewSampledAt() },
       { label: '广东联通', latency_ms: 41.2, sampled_at: previewSampledAt() },
@@ -265,8 +271,8 @@ function CarrierLatency({ carrier }: { carrier: CarrierStatus }) {
 
 /** LinkFlowRow 是一条链路的流式状态行：各地公开 CDN 测速源（电信/联通/移动）汇入
  * 入口服务器，中部箭头标注链路内部段延迟加总（x ms），右侧 Internet 表示出口
- * 落地接入互联网。 */
-function LinkFlowRow({ link }: { link: LinkStatus }) {
+ * 落地接入互联网。入口服务器被 Ban 判定时节点旁打「{目标省市}不可达」标。 */
+function LinkFlowRow({ link, unreachableRegion }: { link: LinkStatus; unreachableRegion: string }) {
   const count = Math.max(1, link.carriers.length)
   const stackHeight = count * SOURCE_ROW_H + (count - 1) * SOURCE_ROW_GAP
   const mid = stackHeight / 2
@@ -277,6 +283,7 @@ function LinkFlowRow({ link }: { link: LinkStatus }) {
   const internal = link.internal_ms
   const internalTone = internal === null || internal === 0 ? 'idle' : latencyTone(internal)
   const internalLabel = internal === null ? '—' : internal === 0 ? '直连' : formatLatency(internal)
+  const region = unreachableRegion || '大陆'
   return (
     <article className="sub-link-row">
       <span className="sub-link-name">{link.label}</span>
@@ -314,6 +321,14 @@ function LinkFlowRow({ link }: { link: LinkStatus }) {
             <ServerIcon size={13} aria-hidden="true" />
           </span>
           <span className="sub-link-node-label">{link.entry}</span>
+          {link.entry_banned ? (
+            <span
+              className="sub-link-unreachable"
+              title={`入口服务器三网测速（${region}）判定已被 Ban`}
+            >
+              {region}不可达
+            </span>
+          ) : null}
         </span>
         <span className="sub-link-internal" data-tone={internalTone}>
           <span
@@ -436,6 +451,8 @@ export default function SubscriptionPage() {
   const [info, setInfo] = useState<SubInfo | null>(null)
   const [clients, setClients] = useState<ClientInfo[]>([])
   const [linkStatus, setLinkStatus] = useState<LinkStatus[] | null>(null)
+  // 不可达标地域文案（三网测速目标省市），随 /status 载荷下发。
+  const [unreachableRegion, setUnreachableRegion] = useState('')
   const [error, setError] = useState('')
   const [copied, setCopied] = useState('')
   const [activePlatform, setActivePlatform] = useState('all')
@@ -460,6 +477,7 @@ export default function SubscriptionPage() {
       setInfo(previewInfo)
       setClients(previewClients)
       setLinkStatus(previewLinkStatus)
+      setUnreachableRegion(previewUnreachableRegion)
       return
     }
 
@@ -477,12 +495,13 @@ export default function SubscriptionPage() {
           signal: controller.signal,
           display: 'silent',
         })
-        .catch(() => ({ links: [] })),
+        .catch((): LinkStatusResponse => ({ updated_at: '', links: [], unreachable_region: '' })),
     ])
       .then(([nextInfo, nextClients, nextLinkStatus]) => {
         setInfo(nextInfo)
         setClients(nextClients)
         setLinkStatus(nextLinkStatus.links)
+        setUnreachableRegion(nextLinkStatus.unreachable_region ?? '')
       })
       .catch((reason: unknown) => {
         if (reason instanceof RequestError && reason.code === 'REQUEST_CANCELLED') return
@@ -1083,7 +1102,7 @@ export default function SubscriptionPage() {
             {linkStatus && linkStatus.length > 0 ? (
               <div className="sub-link-list">
                 {linkStatus.map((link) => (
-                  <LinkFlowRow key={link.label} link={link} />
+                  <LinkFlowRow key={link.label} link={link} unreachableRegion={unreachableRegion} />
                 ))}
               </div>
             ) : linkStatus ? (

@@ -6,6 +6,14 @@ export function isServerOnline(
   return server?.connection_state === 'online'
 }
 
+// isServerBanned 判定服务器已被 Ban 巡检判定（§告警分类 Ban告警）：ban-watch 状态
+// banned 且未标记非直连——非直连（大陆不可直连）服务器三网丢包属预期，不参与评估。
+export function isServerBanned(
+  server: Pick<Server, 'ban_watch' | 'non_direct'> | null | undefined,
+): boolean {
+  return server?.ban_watch?.state === 'banned' && !server.non_direct
+}
+
 export function serverConnectionLabel(state: ServerConnectionState): string {
   switch (state) {
     case 'never_connected':

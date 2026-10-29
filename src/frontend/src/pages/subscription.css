@@ -873,6 +873,21 @@
   color: var(--panel-status-ok);
 }
 
+/* 不可达标（§告警分类 Ban告警）：入口服务器被 Ban 判定的链路标，地域随测速省市 */
+.sub-link-unreachable {
+  padding: 1px 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-danger) 46%, var(--panel-rule));
+  border-radius: 999px;
+  background: var(--panel-danger-soft);
+  color: var(--panel-danger);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
 /* 段延迟标注胶囊：与链路详情 cg-hop-latency 同款（口径 <100 / 100–300 / >300ms）。 */
 .sub-link-latency {
   padding: 1px 7px;
@@ -910,12 +925,12 @@
 /* 内部延迟加总箭头：线体 + 箭头头跟随延迟状态色；线体作为唯一在流子元素，
  * 与入口 / Internet 框同轴居中；标注胶囊绝对定位悬浮在线体上方，不参与行内
  * 布局（否则列整体居中会把线体压低半个胶囊，箭尖偏离 Internet 框中心）。
- * 右缘吃掉与 Internet 框的列间距，让箭尖正好抵住框边。 */
+ * 右缘吃掉大部分列间距让箭尖贴近 Internet 框，仍保留 8px 呼吸间距不顶死框边。 */
 .sub-link-internal {
   position: relative;
   flex: 1;
   min-width: 96px;
-  margin-right: calc(-1 * var(--sub-link-gap, 10px));
+  margin-right: calc(-1 * var(--sub-link-gap, 10px) + 8px);
 }
 
 .sub-link-internal .sub-link-latency {

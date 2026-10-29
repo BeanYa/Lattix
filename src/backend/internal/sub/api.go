@@ -200,7 +200,11 @@ func (s *Server) HandleSubStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(SubLinkStatusResponse{UpdatedAt: data.builtAt, Links: links})
+	json.NewEncoder(w).Encode(SubLinkStatusResponse{
+		UpdatedAt:         data.builtAt,
+		UnreachableRegion: data.unreachableRegion,
+		Links:             links,
+	})
 }
 
 func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User, data *linkStatusData) ([]SubLinkStatus, error) {
@@ -243,10 +247,11 @@ func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User, data 
 			name = fmt.Sprintf("直连链路 %d", len(links)+1)
 		}
 		links = append(links, SubLinkStatus{
-			Label:      name,
-			Entry:      "服务器",
-			Carriers:   linkCarriers(data, node.ServerID),
-			InternalMS: float64Ptr(0), // 单跳直连无内部段
+			Label:       name,
+			Entry:       "服务器",
+			Carriers:    linkCarriers(data, node.ServerID),
+			InternalMS:  float64Ptr(0), // 单跳直连无内部段
+			EntryBanned: data.bannedByServer[node.ServerID],
 		})
 	}
 
@@ -295,10 +300,11 @@ func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User, data 
 			name = fmt.Sprintf("中转链路 %d", chainNumber)
 		}
 		links = append(links, SubLinkStatus{
-			Label:      name,
-			Entry:      subscriptionEntryLabel(len(revision.Snapshot.Hops)),
-			Carriers:   linkCarriers(data, entry.ServerID),
-			InternalMS: internal,
+			Label:       name,
+			Entry:       subscriptionEntryLabel(len(revision.Snapshot.Hops)),
+			Carriers:    linkCarriers(data, entry.ServerID),
+			InternalMS:  internal,
+			EntryBanned: data.bannedByServer[entry.ServerID],
 		})
 	}
 	return links, nil

@@ -183,6 +183,65 @@ func TestSubStatusSingleHopDirectNode(t *testing.T) {
 	}
 }
 
+func TestSubStatusEntryBannedFlag(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	fx := newLinkStatusFixture(t, st, "ban")
+	userID, err := st.InsertUser(ctx, "member", "00000000-0000-0000-0000-0000000000ff", "ban-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetUserChains(ctx, userID, []int64{fx.chainID}); err != nil {
+		t.Fatal(err)
+	}
+	server := New(st, nil, nil)
+
+	// 未进入 Ban 观察时不打标；区域缺省回默认省份（广东）。
+	status := subStatusLinks(t, server, "ban-token")
+	if status.Links[0].EntryBanned {
+		t.Fatalf("entry_banned=%v, want false without ban watch", status.Links[0].EntryBanned)
+	}
+	if status.UnreachableRegion != "广东" {
+		t.Fatalf("unreachable_region=%q, want default 广东", status.UnreachableRegion)
+	}
+
+	// 入口服务器判定 banned 后打标（缓存经失效重建后可见）。
+	if err := st.UpsertServerBanWatch(ctx, store.ServerBanWatch{
+		ServerID: fx.entryID, LossStreak: 12, State: store.BanStateBanned,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server.invalidateLinkStatus()
+	status = subStatusLinks(t, server, "ban-token")
+	if !status.Links[0].EntryBanned {
+		t.Fatalf("entry_banned=%v, want true for banned entry", status.Links[0].EntryBanned)
+	}
+
+	// 出口服务器 banned 不影响入口标。
+	if err := st.UpsertServerBanWatch(ctx, store.ServerBanWatch{
+		ServerID: fx.exitID, LossStreak: 12, State: store.BanStateBanned,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server.invalidateLinkStatus()
+	if got := subStatusLinks(t, server, "ban-token").Links[0].EntryBanned; !got {
+		t.Fatalf("entry_banned=false, want still true (exit banned is irrelevant)")
+	}
+
+	// 非直连豁免：入口标记非直连后不再打标。
+	if err := st.UpdateServerNonDirect(ctx, fx.entryID, true); err != nil {
+		t.Fatal(err)
+	}
+	server.invalidateLinkStatus()
+	if got := subStatusLinks(t, server, "ban-token").Links[0].EntryBanned; got {
+		t.Fatalf("entry_banned=%v, want false for non-direct entry", got)
+	}
+}
+
 func TestSubStatusCacheTTLAndInvalidation(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")

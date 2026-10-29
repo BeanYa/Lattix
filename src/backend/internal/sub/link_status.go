@@ -30,18 +30,22 @@ type SubLinkCarrierStatus struct {
 
 // SubLinkStatus 是一个实际出现在订阅内的直连或中转链路。服务器标识不对外暴露
 // （Entry 仅角色标签），InternalMS 为链路内部各段首选 RTT 之和，段不全时为 null；
-// 单跳直连链路无内部段，恒为 0。
+// 单跳直连链路无内部段，恒为 0。EntryBanned 表示入口（第一跳）服务器被 Ban 巡检
+// 判定（§告警分类）且为可直连服务器——与面板链路页的「{目标省市}不可达」标同口径。
 type SubLinkStatus struct {
-	Label      string                 `json:"label"`
-	Entry      string                 `json:"entry"`
-	Carriers   []SubLinkCarrierStatus `json:"carriers"`
-	InternalMS *float64               `json:"internal_ms"`
+	Label       string                 `json:"label"`
+	Entry       string                 `json:"entry"`
+	Carriers    []SubLinkCarrierStatus `json:"carriers"`
+	InternalMS  *float64               `json:"internal_ms"`
+	EntryBanned bool                   `json:"entry_banned,omitempty"`
 }
 
-// SubLinkStatusResponse 是 GET /api/sub/{token}/status 的响应。
+// SubLinkStatusResponse 是 GET /api/sub/{token}/status 的响应。UnreachableRegion
+// 是不可达标的地域文案（三网测速目标省市：市级目标显示市，否则省）。
 type SubLinkStatusResponse struct {
-	UpdatedAt time.Time       `json:"updated_at"`
-	Links     []SubLinkStatus `json:"links"`
+	UpdatedAt         time.Time       `json:"updated_at"`
+	UnreachableRegion string          `json:"unreachable_region,omitempty"`
+	Links             []SubLinkStatus `json:"links"`
 }
 
 // catalogSample 是一个（服务器, 目录目标）的最新探针样本。
@@ -56,6 +60,11 @@ type linkStatusData struct {
 	builtAt time.Time
 	// carriers 是当前测速区域的三网目录目标（Label 如「广东电信」，电信→联通→移动）。
 	carriers []store.CatalogProbeTarget
+	// unreachableRegion 是不可达标的地域文案（市级目标显示市，否则省）。
+	unreachableRegion string
+	// bannedByServer 是被 Ban 判定且可直连的服务器集合（§告警分类 Ban告警），
+	// 随缓存按 TTL 刷新，Ban 状态变化最迟一个 TTL 后反映到订阅页。
+	bannedByServer map[int64]bool
 	// catalogByServer 是服务器 → 目录目标 key → 最新样本。
 	catalogByServer map[int64]map[string]catalogSample
 	// internalByChain 是链路 → 内部段首选 RTT 加总（nil = 任一段缺新鲜样本/超时）。
@@ -106,15 +115,36 @@ func (s *Server) cachedLinkStatus() (*linkStatusData, bool) {
 
 // buildLinkStatus 从探针表构建全量链路测速数据。
 func (s *Server) buildLinkStatus(ctx context.Context) (*linkStatusData, error) {
-	carriers, _, err := s.st.CatalogProbeTargets(ctx)
+	carriers, region, err := s.st.CatalogProbeTargets(ctx)
 	if err != nil {
 		return nil, err
 	}
 	data := &linkStatusData{
-		builtAt:         time.Now(),
-		carriers:        carriers,
-		catalogByServer: make(map[int64]map[string]catalogSample),
-		internalByChain: make(map[int64]*float64),
+		builtAt:           time.Now(),
+		carriers:          carriers,
+		unreachableRegion: probeRegionLabel(region),
+		bannedByServer:    make(map[int64]bool),
+		catalogByServer:   make(map[int64]map[string]catalogSample),
+		internalByChain:   make(map[int64]*float64),
+	}
+	// 入口被 Ban 判定集合（§告警分类 Ban告警）：banned 且未标记非直连——与面板
+	// 链路页不可达标同口径；非直连服务器本就被巡检豁免，此处再防御一次。
+	banRows, err := s.st.ServerBanWatchMap(ctx)
+	if err != nil {
+		return nil, err
+	}
+	servers, err := s.st.ListServers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	nonDirect := make(map[int64]bool, len(servers))
+	for _, srv := range servers {
+		nonDirect[srv.ID] = srv.NonDirect
+	}
+	for id, row := range banRows {
+		if row.State == store.BanStateBanned && !nonDirect[id] {
+			data.bannedByServer[id] = true
+		}
 	}
 	catalogRows, err := s.st.FreshServerCatalogProbes(ctx, linkStatusFreshWindow)
 	if err != nil {
@@ -191,6 +221,14 @@ func (s *Server) buildLinkStatus(ctx context.Context) (*linkStatusData, error) {
 		}
 	}
 	return data, nil
+}
+
+// probeRegionLabel 返回测速区域的地域文案：市级目标显示市，否则省。
+func probeRegionLabel(region store.CatalogProbeRegion) string {
+	if region.City != "" {
+		return region.City
+	}
+	return region.Province
 }
 
 // linkCarriers 组装入口服务器对三网目录目标的最新延迟（顺序与目录目标一致）。

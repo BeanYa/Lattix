@@ -27,12 +27,13 @@ import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { useOperationProgress } from '@/lib/operation-progress-context'
-import { isServerOnline } from '@/lib/server-state'
+import { isServerBanned, isServerOnline } from '@/lib/server-state'
 import { chainStatusStyle, hopStatusStyle, type CgStatusStyle } from '@/lib/status'
 import { useTimezone } from '@/lib/timezone'
 import { usePolling } from '@/lib/use-polling'
 import { cn } from '@/lib/utils'
 import type {
+  CatalogProbeRegion,
   Chain,
   ChainSegmentStat,
   ChainStatsResponse,
@@ -201,6 +202,8 @@ export default function Chains() {
   const [servers, setServers] = useState<Server[]>([])
   const [chainStats, setChainStats] = useState<ChainStatsResponse | null>(null)
   const [panelShort, setPanelShort] = useState('')
+  // 三网测速目标省市（§三网测速）：Ban 标签随之显示「{市|省}不可达」。
+  const [probeRegion, setProbeRegion] = useState<CatalogProbeRegion | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   // 轮询错误单独存放：刷新成功即可自动清除，不覆盖操作类错误横幅。
@@ -250,7 +253,10 @@ export default function Chains() {
   useEffect(() => {
     api
       .settings()
-      .then((s) => setPanelShort(s.panel_short))
+      .then((s) => {
+        setPanelShort(s.panel_short)
+        setProbeRegion(s.catalog_probe_region)
+      })
       .catch(() => {})
   }, [])
 
@@ -417,6 +423,21 @@ export default function Chains() {
 
   const serverOnline = (id: number): boolean => isServerOnline(servers.find((s) => s.id === id))
 
+  // 入口（第一跳）服务器被 Ban 判定的链路集合：详情卡与概览行打「{目标省市}不可达」标
+  //（§告警分类 Ban告警；非直连服务器不参与评估，isServerBanned 内一并防御）。
+  const unreachableChainIds = useMemo(() => {
+    const ids = new Set<number>()
+    for (const chain of chains) {
+      const entry = chain.hops.find((h) => h.role === 'entry')
+      if (!entry) continue
+      const entryServer = servers.find((s) => s.id === entry.server_id)
+      if (entryServer && isServerBanned(entryServer)) ids.add(chain.id)
+    }
+    return ids
+  }, [chains, servers])
+  // 标签文案跟随三网测速目标省市：市级目标显示市，否则省（未就绪/缺省回「大陆」）。
+  const unreachableLabel = (probeRegion && (probeRegion.city || probeRegion.province)) || '大陆'
+
   const relayExitNodeIds = useMemo(
     () =>
       new Set(
@@ -554,6 +575,8 @@ export default function Chains() {
               chains={chains}
               index={statsIndex}
               statsLoaded={chainStats !== null}
+              unreachableChainIds={unreachableChainIds}
+              unreachableLabel={unreachableLabel}
               onSelect={onSelectChain}
             />
           )}
@@ -658,6 +681,14 @@ export default function Chains() {
                           </strong>
                           <span className="cg-chain-id">#{node.id}</span>
                           <span className="cg-chain-tag">直连</span>
+                          {server && isServerBanned(server) ? (
+                            <span
+                              className="cg-chain-tag is-unreachable"
+                              title={`入口服务器三网测速（${unreachableLabel}）判定已被 Ban`}
+                            >
+                              {unreachableLabel}不可达
+                            </span>
+                          ) : null}
                           <span className={cn('cg-status', statusTone(st.cg))}>{st.label}</span>
                         </div>
                         <div className="cg-chain-entry-side">
@@ -770,6 +801,14 @@ export default function Chains() {
                         <strong className="cg-chain-name">{c.name || `中转 #${c.id}`}</strong>
                         <span className="cg-chain-id">#{c.id}</span>
                         <span className="cg-chain-tag">{isDirect ? '直连' : '中转'}</span>
+                        {unreachableChainIds.has(c.id) ? (
+                          <span
+                            className="cg-chain-tag is-unreachable"
+                            title={`入口服务器三网测速（${unreachableLabel}）判定已被 Ban`}
+                          >
+                            {unreachableLabel}不可达
+                          </span>
+                        ) : null}
                         <span className={cn('cg-status', statusTone(st.cg))}>{st.label}</span>
                         {c.status === 'degraded' ? (
                           c.endpoint_status === 'failed' ? (

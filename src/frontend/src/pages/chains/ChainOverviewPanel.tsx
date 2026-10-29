@@ -10,6 +10,10 @@ interface ChainOverviewPanelProps {
   chains: Chain[]
   index: ChainStatsIndex
   statsLoaded: boolean
+  // 入口（第一跳）服务器被 Ban 判定的链路 id 集合（§告警分类 Ban告警）：行内打「xx不可达」标。
+  unreachableChainIds: Set<number>
+  // 标签地域文案：三网测速目标省市（市级优先，否则省）。
+  unreachableLabel: string
   onSelect: (chainId: number) => void
 }
 
@@ -20,6 +24,8 @@ export function ChainOverviewPanel({
   chains,
   index,
   statsLoaded,
+  unreachableChainIds,
+  unreachableLabel,
   onSelect,
 }: ChainOverviewPanelProps) {
   return (
@@ -43,7 +49,17 @@ export function ChainOverviewPanel({
                 L{lineIdx}
               </span>
               <span className="cg-chain-overview-name" title={chain.name}>
-                {chain.name || `中转 #${chain.id}`}
+                <span className="cg-chain-overview-name-text">
+                  {chain.name || `中转 #${chain.id}`}
+                </span>
+                {unreachableChainIds.has(chain.id) ? (
+                  <span
+                    className="cg-chain-tag is-unreachable"
+                    title={`入口服务器三网测速（${unreachableLabel}）判定已被 Ban`}
+                  >
+                    {unreachableLabel}不可达
+                  </span>
+                ) : null}
               </span>
               <span
                 className={cn('cg-chain-overview-latency', !stats?.latency_ms && 'is-muted')}
