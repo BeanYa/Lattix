@@ -271,7 +271,7 @@ function CarrierLatency({ carrier }: { carrier: CarrierStatus }) {
 
 /** LinkFlowRow 是一条链路的流式状态行：各地公开 CDN 测速源（电信/联通/移动）汇入
  * 入口服务器，中部箭头标注链路内部段延迟加总（x ms），右侧 Internet 表示出口
- * 落地接入互联网。入口服务器被 Ban 判定时节点旁打「{目标省市}不可达」标。 */
+ * 落地接入互联网。入口服务器被 Ban 判定时节点旁打「Banned」标（hover 详情带测速省市地域）。 */
 function LinkFlowRow({ link, unreachableRegion }: { link: LinkStatus; unreachableRegion: string }) {
   const count = Math.max(1, link.carriers.length)
   const stackHeight = count * SOURCE_ROW_H + (count - 1) * SOURCE_ROW_GAP
@@ -324,9 +324,9 @@ function LinkFlowRow({ link, unreachableRegion }: { link: LinkStatus; unreachabl
           {link.entry_banned ? (
             <span
               className="sub-link-unreachable"
-              title={`入口服务器三网测速（${region}）判定已被 Ban`}
+              title={`入口服务器三网测速（${region}）判定 Banned`}
             >
-              {region}不可达
+              Banned
             </span>
           ) : null}
         </span>

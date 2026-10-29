@@ -10,7 +10,7 @@ interface ChainOverviewPanelProps {
   chains: Chain[]
   index: ChainStatsIndex
   statsLoaded: boolean
-  // 入口（第一跳）服务器被 Ban 判定的链路 id 集合（§告警分类 Ban告警）：行内打「xx不可达」标。
+  // 入口（第一跳）服务器被 Ban 判定的链路 id 集合（§告警分类 Ban告警）：行内打「Banned」标。
   unreachableChainIds: Set<number>
   // 标签地域文案：三网测速目标省市（市级优先，否则省）。
   unreachableLabel: string
@@ -55,9 +55,9 @@ export function ChainOverviewPanel({
                 {unreachableChainIds.has(chain.id) ? (
                   <span
                     className="cg-chain-tag is-unreachable"
-                    title={`入口服务器三网测速（${unreachableLabel}）判定已被 Ban`}
+                    title={`入口服务器三网测速（${unreachableLabel}）判定 Banned`}
                   >
-                    {unreachableLabel}不可达
+                    Banned
                   </span>
                 ) : null}
               </span>

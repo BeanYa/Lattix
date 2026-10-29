@@ -199,7 +199,7 @@ export default function Chains() {
   const [nodes, setNodes] = useState<XrayNode[]>([])
   const [servers, setServers] = useState<Server[]>([])
   const [chainStats, setChainStats] = useState<ChainStatsResponse | null>(null)
-  // 三网测速目标省市（§三网测速）：Ban 标签随之显示「{市|省}不可达」。
+  // 三网测速目标省市（§三网测速）：Ban 标签 hover 详情随之显示测速省市地域。
   const [probeRegion, setProbeRegion] = useState<CatalogProbeRegion | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -245,7 +245,7 @@ export default function Chains() {
 
   usePolling(load, loadRequest)
 
-  // 三网测速目标省市（§三网测速）：Ban 标签随之显示「{市|省}不可达」。
+  // 三网测速目标省市（§三网测速）：Ban 标签 hover 详情随之显示测速省市地域。
   useEffect(() => {
     api
       .settings()
@@ -391,7 +391,7 @@ export default function Chains() {
 
   const serverOnline = (id: number): boolean => isServerOnline(servers.find((s) => s.id === id))
 
-  // 入口（第一跳）服务器被 Ban 判定的链路集合：详情卡与概览行打「{目标省市}不可达」标
+  // 入口（第一跳）服务器被 Ban 判定的链路集合：详情卡与概览行打「Banned」标
   //（§告警分类 Ban告警；非直连服务器不参与评估，isServerBanned 内一并防御）。
   const unreachableChainIds = useMemo(() => {
     const ids = new Set<number>()
@@ -656,9 +656,9 @@ export default function Chains() {
                           {server && isServerBanned(server) ? (
                             <span
                               className="cg-chain-tag is-unreachable"
-                              title={`入口服务器三网测速（${unreachableLabel}）判定已被 Ban`}
+                              title={`入口服务器三网测速（${unreachableLabel}）判定 Banned`}
                             >
-                              {unreachableLabel}不可达
+                              Banned
                             </span>
                           ) : null}
                           <span className={cn('cg-status', statusTone(st.cg))}>{st.label}</span>
@@ -776,9 +776,9 @@ export default function Chains() {
                         {unreachableChainIds.has(c.id) ? (
                           <span
                             className="cg-chain-tag is-unreachable"
-                            title={`入口服务器三网测速（${unreachableLabel}）判定已被 Ban`}
+                            title={`入口服务器三网测速（${unreachableLabel}）判定 Banned`}
                           >
-                            {unreachableLabel}不可达
+                            Banned
                           </span>
                         ) : null}
                         <span className={cn('cg-status', statusTone(st.cg))}>{st.label}</span>

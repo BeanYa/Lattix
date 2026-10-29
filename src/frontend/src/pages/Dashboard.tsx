@@ -326,7 +326,7 @@ export default function Dashboard() {
         key: `server-ban-${server.id}`,
         category: 'ban',
         tone: 'bad',
-        title: `${server.alias} 已被 Ban`,
+        title: `${server.alias} Banned`,
         detail: `三网测速连续 ${server.ban_watch?.loss_streak ?? 0} 轮 100% 丢包，恢复在线后自动解除`,
         href: '/servers',
       })

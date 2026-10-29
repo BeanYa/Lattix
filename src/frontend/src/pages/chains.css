@@ -153,7 +153,7 @@
   white-space: nowrap;
 }
 
-/* 大陆不可达（§告警分类 Ban告警）：入口服务器被 Ban 判定的链路标 */
+/* Banned（§告警分类 Ban告警）：入口服务器被 Ban 判定的链路标 */
 .cg-chain-tag.is-unreachable {
   border-color: color-mix(in srgb, var(--panel-danger) 46%, var(--panel-rule));
   background: var(--panel-danger-soft);

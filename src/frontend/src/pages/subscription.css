@@ -873,7 +873,7 @@
   color: var(--panel-status-ok);
 }
 
-/* 不可达标（§告警分类 Ban告警）：入口服务器被 Ban 判定的链路标，地域随测速省市 */
+/* Banned（§告警分类 Ban告警）：入口服务器被 Ban 判定的链路标，hover 详情带测速省市地域 */
 .sub-link-unreachable {
   padding: 1px 7px;
   border: 1px solid color-mix(in srgb, var(--panel-danger) 46%, var(--panel-rule));

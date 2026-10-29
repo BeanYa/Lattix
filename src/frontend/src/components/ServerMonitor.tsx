@@ -258,7 +258,7 @@ function daysUntil(dateStr: string): number {
 function serverBanFlag(server: Server): { label: string; tone: 'is-alert' | 'is-warn' } | null {
   switch (server.ban_watch?.state) {
     case 'banned':
-      return { label: '已被 BAN', tone: 'is-alert' }
+      return { label: 'Banned', tone: 'is-alert' }
     case 'suspected':
       return { label: '疑似 BAN', tone: 'is-warn' }
     case 'recovering':

@@ -158,7 +158,7 @@ func banEventDetail(event string, streak int64) string {
 	case alert.EventServerBanSuspected:
 		return fmt.Sprintf("三网测速连续 %d 轮 100%% 丢包，疑似被 Ban（可能被 ban），持续观察中", streak)
 	case alert.EventServerBanned:
-		return "三网测速连续 10 轮以上 100% 丢包，判定已被 Ban；面板每半小时复查一次，恢复在线后自动取消告警"
+		return "三网测速连续 10 轮以上 100% 丢包，判定 Banned；面板每半小时复查一次，恢复在线后自动取消告警"
 	case alert.EventServerBanRecovered:
 		return "三网测速恢复在线，取消该服务器的被 Ban 告警"
 	}

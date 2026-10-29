@@ -31,7 +31,7 @@ type SubLinkCarrierStatus struct {
 // SubLinkStatus 是一个实际出现在订阅内的直连或中转链路。服务器标识不对外暴露
 // （Entry 仅角色标签），InternalMS 为链路内部各段首选 RTT 之和，段不全时为 null；
 // 单跳直连链路无内部段，恒为 0。EntryBanned 表示入口（第一跳）服务器被 Ban 巡检
-// 判定（§告警分类）且为可直连服务器——与面板链路页的「{目标省市}不可达」标同口径。
+// 判定（§告警分类）且为可直连服务器——与面板链路页的「Banned」标同口径。
 type SubLinkStatus struct {
 	Label       string                 `json:"label"`
 	Entry       string                 `json:"entry"`
