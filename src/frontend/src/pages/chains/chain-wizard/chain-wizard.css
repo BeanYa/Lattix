@@ -450,28 +450,36 @@
   margin-top: auto;
 }
 
+/* 单行布局：完整标签优先（不换行、不截断），色块条吸收剩余宽度并优先压缩， */
+/* 最新延迟固定在行尾。标签长度由后端的「省份/城市名 + 运营商」约束（≤7 字）， */
+/* 现有卡宽（内容宽 ≥210px）下不会溢出；复用到更窄容器时需另加 ellipsis 兜底。 */
 .cw-probe-row {
   display: flex;
   align-items: center;
-  gap: 5px;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 0;
 }
 
 .cw-probe-label {
+  flex: 0 0 auto;
   font-size: 9.5px;
+  line-height: 1.2;
   color: var(--panel-ink-3);
-  flex-shrink: 0;
-  width: 16px;
+  white-space: nowrap;
 }
 
 .cw-probe-rounds {
   display: flex;
   gap: 1px;
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
 }
 
 .cw-probe-rounds i {
-  flex: 1;
+  flex: 1 1 0;
+  min-width: 0;
   height: 7px;
   border-radius: 1.5px;
   background: var(--panel-inset);
@@ -490,10 +498,10 @@
 }
 
 .cw-probe-latency {
+  flex: 0 0 auto;
   font-size: 9.5px;
   font-variant-numeric: tabular-nums;
   color: var(--panel-ink-3);
-  flex-shrink: 0;
   min-width: 22px;
   text-align: right;
 }

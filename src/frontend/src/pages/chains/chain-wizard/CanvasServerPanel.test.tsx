@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it } from 'vitest'
 
-import type { Server } from '@/lib/types'
+import type { CatalogProbeRow, Server } from '@/lib/types'
 import { CanvasServerPanel } from './CanvasServerPanel'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -22,6 +22,43 @@ document.body.append(container)
 const root = createRoot(container)
 afterEach(() => {
   act(() => root.render(null))
+})
+
+it('服务器卡的三网测速行显示完整标签（省份+运营商）', async () => {
+  const row = (label: string, latency: number): CatalogProbeRow =>
+    ({
+      label,
+      carrier: 'telecom',
+      latency_ms: latency,
+      loss_percent: 0,
+      samples: 1,
+      rounds: [{ latency_ms: latency, measured_at: '2026-10-30T02:00:00Z' }],
+      measured_at: '2026-10-30T02:00:00Z',
+    }) as CatalogProbeRow
+  const probesByServer = new Map<number, CatalogProbeRow[]>([
+    [server.id, [row('广东电信', 88), row('广东联通', 163.33), row('广东移动', 175.616)]],
+  ])
+  try {
+    await act(async () =>
+      root.render(
+        <CanvasServerPanel
+          servers={[server]}
+          probesByServer={probesByServer}
+          probeTitle="广东"
+          usedCount={() => 0}
+          canAddMore
+          onAdd={() => {}}
+          emptyCanvas
+        />,
+      ),
+    )
+    const labels = [...container.querySelectorAll('.cw-server-item .cw-probe-label')].map(
+      (element) => element.textContent,
+    )
+    expect(labels).toEqual(['广东电信', '广东联通', '广东移动'])
+  } finally {
+    await act(async () => root.render(null))
+  }
 })
 
 it('拖动服务器使用完整画布节点作为预览，光标在卡片中心', async () => {

@@ -7,7 +7,9 @@ import { humanizeBytes } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { CatalogProbeRow, Server } from '@/lib/types'
 
-/** 三网测速 mini 色块条（12 槽、末位最新、tone 三档）；无测速数据回退上下行速率行。 */
+/** 三网测速 mini 色块条（12 槽、末位最新、tone 三档）；无测速数据回退上下行速率行。
+ * 行内从左到右：完整目标标签（如「广东电信」）+ 最近 n 轮色块 + 最新延迟，单行不换行；
+ * 宽度不足时优先压缩色块条（标签与数值保持完整），不产生 overflow。 */
 export function ServerProbeMini({
   server,
   probeRows,
@@ -47,7 +49,7 @@ export function ServerProbeMini({
               latest ?? '—'
             }ms，丢包 ${row.loss_percent ?? '—'}%`}
           >
-            <span className="cw-probe-label">{row.label.slice(0, 2)}</span>
+            <span className="cw-probe-label">{row.label}</span>
             <span className="cw-probe-rounds">
               {probeStripRounds(row.rounds, PROBE_ROUND_SLOTS).map((round, index) => (
                 <i
