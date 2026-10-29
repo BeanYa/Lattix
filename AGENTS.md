@@ -11,6 +11,11 @@
 - Use the existing `requester` as the request client for all request-related code.
 - Reuse existing project infrastructure wherever possible before introducing new implementations, helpers, or dependencies.
 
+## UI Changes & Acceptance
+
+- For UI changes, the acceptance report must include actual screenshots taken during acceptance.
+- Screenshots are not committed to Git.
+
 ## State Machines
 
 - `panel` and `agent` each have their own state machine.
