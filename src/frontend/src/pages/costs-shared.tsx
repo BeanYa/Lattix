@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { CoinsIcon } from 'lucide-react'
 
-import { type ChartOption } from '@/components/echarts'
+import { type ChartOption, type ChartSize } from '@/components/echarts'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -224,11 +224,26 @@ export function buildBarOption(options: {
   }
 }
 
+function measureTextWidth(text: string, fontSize: number): number {
+  const context = document.createElement('canvas').getContext('2d')
+  if (!context) return text.length * fontSize
+  context.font = `${fontSize}px sans-serif`
+  return context.measureText(text).width
+}
+
 export function buildDonutOption(
   data: Array<{ name: string; value: number }>,
   currency: string,
   colors: ChartThemeColors,
+  size: ChartSize,
 ): ChartOption {
+  // 竖排图例固定在右侧：按最长别名预留宽度（图标 25 + 图标文字间隙 5 +
+  // padding 10 + right 8 + 余量），饼图在剩余区域内水平居中，
+  // 半径取剩余区域与高度的较小值——任何画布比例下都不与图例重叠。
+  const labelWidth = data.reduce((max, item) => Math.max(max, measureTextWidth(item.name, 9.5)), 0)
+  const reserved = Math.min(Math.max(labelWidth + 60, 140), size.width * 0.45)
+  const region = Math.max(size.width - reserved, 120)
+  const radius = (Math.min(region, size.height) / 2) * 0.92
   return {
     color: colors.palette,
     tooltip: {
@@ -250,8 +265,8 @@ export function buildDonutOption(
       {
         name: '成本占比',
         type: 'pie',
-        radius: ['44%', '70%'],
-        center: ['40%', '50%'],
+        radius: [Math.round(radius * 0.63), Math.round(radius)],
+        center: [Math.round(region / 2), '50%'],
         avoidLabelOverlap: true,
         itemStyle: {
           borderColor: colors.surfaceColor,

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CoinsIcon } from 'lucide-react'
 
 import { CountryFlag } from '@/components/CountryFlag'
-import { Chart, type ChartOption } from '@/components/echarts'
+import { Chart, type ChartOptionInput } from '@/components/echarts'
 import { EmptyState, LoadingState, Notice } from '@/components/PagePrimitives'
 import { api, errorMessage } from '@/lib/api'
 import { useTheme } from '@/lib/theme-context'
@@ -253,13 +253,15 @@ export default function EstimatedCostsTab() {
 
   const reportingCurrency = stats?.reporting_currency ?? 'CNY'
 
-  const donutOption = useMemo<ChartOption>(() => {
+  const donutOption = useMemo<ChartOptionInput>(() => {
     if (!stats || rows.length === 0 || totalAll <= 0) return {}
-    return buildDonutOption(
-      rows.map((row) => ({ name: row.server.alias, value: row.total })),
-      reportingCurrency,
-      chartColors,
-    )
+    return (size) =>
+      buildDonutOption(
+        rows.map((row) => ({ name: row.server.alias, value: row.total })),
+        reportingCurrency,
+        chartColors,
+        size,
+      )
   }, [stats, rows, totalAll, reportingCurrency, chartColors])
 
   return (
