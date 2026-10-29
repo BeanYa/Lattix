@@ -226,6 +226,96 @@ func TestCatalogProbeLossStatsWindow(t *testing.T) {
 	}
 }
 
+func TestRecentServerCatalogProbeSamples(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	now := time.Now().UTC()
+	// 服务器 1 telecom 累计 14 轮（含 1 轮失败），unicom 1 轮；服务器 2 telecom 1 轮。
+	for round := 0; round < 14; round++ {
+		latency := float64(10 + round)
+		samples := []CatalogProbeSample{
+			{Key: "catalog:广东:*:telecom", Kind: "tcp", LatencyMS: &latency},
+		}
+		if round == 3 {
+			samples[0].LatencyMS = nil // 一轮失败/超时
+		}
+		if round == 13 {
+			samples = append(samples, CatalogProbeSample{Key: "catalog:广东:*:unicom", Kind: "tcp", LatencyMS: &latency})
+		}
+		if err := st.SaveServerCatalogProbes(ctx, 1, samples, now.Add(-time.Duration(14-round)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 窗口外的更早轮次不参与。
+	old := 5.0
+	if err := st.SaveServerCatalogProbes(ctx, 2, []CatalogProbeSample{
+		{Key: "catalog:广东:*:telecom", Kind: "tcp", LatencyMS: &old},
+	}, now.Add(-2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveServerCatalogProbes(ctx, 2, []CatalogProbeSample{
+		{Key: "catalog:广东:*:telecom", Kind: "tcp", LatencyMS: &old},
+	}, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := st.RecentServerCatalogProbeSamples(ctx, 30*time.Minute, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var telecom, unicom, server2 []CatalogProbeSampleRow
+	for _, row := range rows {
+		switch {
+		case row.FromServer == 1 && row.TargetKey == "catalog:广东:*:telecom":
+			telecom = append(telecom, row)
+		case row.FromServer == 1 && row.TargetKey == "catalog:广东:*:unicom":
+			unicom = append(unicom, row)
+		case row.FromServer == 2:
+			server2 = append(server2, row)
+		}
+	}
+	// 14 轮都在 30 分钟窗口内，limit=12 截掉最旧 2 轮（now-14m / now-13m）。
+	if len(telecom) != 12 {
+		t.Fatalf("telecom rounds = %d, want 12", len(telecom))
+	}
+	// 升序且末位为最新轮；失败样本（round 3 = now-11m）在保留窗内照常返回。
+	for i := 1; i < len(telecom); i++ {
+		if !telecom[i-1].MeasuredAt.Before(telecom[i].MeasuredAt) {
+			t.Fatalf("telecom rounds not ascending at %d", i)
+		}
+	}
+	var failedRounds int
+	for _, row := range telecom {
+		if row.LatencyMS == nil {
+			failedRounds++
+			if !row.MeasuredAt.Equal(now.Add(-11 * time.Minute)) {
+				t.Fatalf("failed round at %v, want %v", row.MeasuredAt, now.Add(-11*time.Minute))
+			}
+		}
+	}
+	if failedRounds != 1 {
+		t.Fatalf("failed rounds = %d, want 1", failedRounds)
+	}
+	latest := telecom[len(telecom)-1]
+	if latest.LatencyMS == nil || *latest.LatencyMS != 23 {
+		t.Fatalf("latest telecom round mismatch: %+v", latest)
+	}
+	if !telecom[0].MeasuredAt.Equal(now.Add(-12 * time.Minute)) {
+		t.Fatalf("oldest kept round = %v, want %v", telecom[0].MeasuredAt, now.Add(-12*time.Minute))
+	}
+	if len(unicom) != 1 || unicom[0].LatencyMS == nil {
+		t.Fatalf("unicom rounds mismatch: %+v", unicom)
+	}
+	// 窗口外旧轮次被过滤，服务器 2 只剩窗口内 1 轮。
+	if len(server2) != 1 || !server2[0].MeasuredAt.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("server2 rounds mismatch: %+v", server2)
+	}
+}
+
 func TestDeleteExpiredServerCatalogProbeHistory(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(":memory:")

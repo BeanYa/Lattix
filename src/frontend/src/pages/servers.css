@@ -1566,7 +1566,7 @@
 
 .sv-probe-row {
   display: grid;
-  grid-template-columns: minmax(72px, 38%) minmax(52px, auto) minmax(0, 1fr) 44px;
+  grid-template-columns: minmax(72px, 32%) minmax(0, 1fr) auto 44px;
   align-items: center;
   gap: 8px;
   height: 16px;
@@ -1580,40 +1580,50 @@
   white-space: nowrap;
 }
 
+/* sv-probe-rounds 是逐轮测速色块条：末位为最新轮，与右侧数字对应。 */
+.sv-probe-rounds {
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+  height: 6px;
+}
+
+.sv-probe-round {
+  display: block;
+  flex: 1 1 0;
+  min-width: 2px;
+  border-radius: 1px;
+  background: var(--panel-success);
+}
+
+.sv-probe-round.is-warn {
+  background: var(--panel-warning);
+}
+
+.sv-probe-round.is-fail {
+  background: var(--panel-danger);
+}
+
+.sv-probe-round.is-idle {
+  background: var(--panel-inset);
+}
+
 .sv-probe-latency {
   color: var(--panel-ink-3);
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
 
-.sv-probe-lossbar {
-  position: relative;
-  display: block;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--panel-inset);
-  overflow: hidden;
+.sv-probe-latency.is-ok {
+  color: var(--panel-ink-2);
 }
 
-.sv-probe-lossfill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  display: block;
-  border-radius: 999px;
-  background: var(--panel-ink-2);
-  transition: width 200ms var(--panel-ease);
+.sv-probe-latency.is-warn {
+  color: var(--panel-warning);
 }
 
-.sv-probe-lossfill.is-ok {
-  background: var(--panel-success);
-}
-
-.sv-probe-lossfill.is-warn {
-  background: var(--panel-warning);
-}
-
-.sv-probe-lossfill.is-crit {
-  background: var(--panel-danger);
+.sv-probe-latency.is-fail {
+  color: var(--panel-danger);
 }
 
 .sv-probe-loss {
@@ -1694,12 +1704,6 @@
   flex-wrap: wrap;
   gap: 4px;
   padding: 0 16px 14px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sv-probe-lossfill {
-    transition: none;
-  }
 }
 
 /* ============================================================

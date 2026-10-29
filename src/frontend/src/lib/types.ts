@@ -341,13 +341,20 @@ export interface ServerTestCatalogStatus {
 
 // 三网目录测速（§三网测速）：面板按测速省市设置推导目标并随 latency.probe 轮次
 // 下发，agent 测速上报。latency_ms 为 null = 最近一轮失败/超时；loss_percent 为
-// 统计窗口内失败占比（null = 窗口内无样本）。
+// 统计窗口内失败占比（null = 窗口内无样本）；rounds 为最近约 1 小时内的逐轮结果
+// （时间升序，末位即最新轮），供卡片色块条展示。
+export interface CatalogProbeRound {
+  latency_ms: number | null
+  measured_at: string
+}
+
 export interface CatalogProbeRow {
   label: string
   carrier: 'telecom' | 'unicom' | 'mobile'
   latency_ms: number | null
   loss_percent: number | null
   samples: number
+  rounds: CatalogProbeRound[]
   measured_at: string
 }
 

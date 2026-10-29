@@ -269,6 +269,39 @@ func (s *Store) CatalogProbeLossStats(ctx context.Context, window time.Duration)
 	return out, rows.Err()
 }
 
+// CatalogProbeSampleRow 是一个 (服务器, 目录目标) 的单轮历史样本。
+type CatalogProbeSampleRow struct {
+	FromServer int64
+	TargetKey  string
+	LatencyMS  *float64
+	MeasuredAt time.Time
+}
+
+// RecentServerCatalogProbeSamples 返回窗口内各 (服务器, 目录目标) 最近 limit 轮
+// 样本（失败/超时样本 LatencyMS 为 nil 照常返回），按服务器、目标、时间升序排列，
+// 供服务器卡片三网测速色块条展示多次测速结果。
+func (s *Store) RecentServerCatalogProbeSamples(ctx context.Context, window time.Duration, limit int) ([]CatalogProbeSampleRow, error) {
+	cutoff := time.Now().UTC().Add(-window)
+	rows, err := s.db.QueryContext(ctx, `SELECT from_server, target_key, latency_ms, measured_at FROM (
+			SELECT from_server, target_key, latency_ms, measured_at,
+				ROW_NUMBER() OVER (PARTITION BY from_server, target_key ORDER BY measured_at DESC) AS rn
+			FROM server_catalog_probe_history WHERE measured_at >= ?
+		) WHERE rn <= ? ORDER BY from_server, target_key, measured_at`, cutoff, limit)
+	if err != nil {
+		return nil, fmt.Errorf("recent catalog probe samples: %w", err)
+	}
+	defer rows.Close()
+	out := make([]CatalogProbeSampleRow, 0)
+	for rows.Next() {
+		var row CatalogProbeSampleRow
+		if err := rows.Scan(&row.FromServer, &row.TargetKey, &row.LatencyMS, &row.MeasuredAt); err != nil {
+			return nil, fmt.Errorf("scan recent catalog probe sample: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 // DeleteExpiredServerCatalogProbeHistory 清理保留窗口外的历史（后台小时任务，
 // 与服务器间延迟历史同窗口）。
 func (s *Store) DeleteExpiredServerCatalogProbeHistory(ctx context.Context, retention time.Duration) (int64, error) {

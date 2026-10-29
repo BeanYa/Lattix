@@ -39,6 +39,11 @@ import { addressFamily } from '@/lib/address'
 import { EmptyState, LoadingState } from '@/components/PagePrimitives'
 import { ServerTestPanel } from '@/components/ServerTestPanel'
 import { trendChartViewBoxPoint } from '@/components/trend-chart-pointer'
+import {
+  PROBE_ROUND_SLOTS,
+  probeRoundTone,
+  probeStripRounds,
+} from '@/components/server-probe-strip'
 import { TrafficStatsDialog } from '@/components/traffic-stats/TrafficStatsDialog'
 import { useTrafficStatsDialog } from '@/components/traffic-stats/use-traffic-stats-dialog'
 import { Badge } from '@/components/ui/badge'
@@ -63,6 +68,7 @@ import { providerWebsiteUrl } from '@/lib/provider-website'
 import { isServerOnline, serverConnectionLabel } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
 import type {
+  CatalogProbeRound,
   CatalogProbeRow,
   CatalogProbeStats,
   ConvertedCost,
@@ -346,35 +352,47 @@ function ResCell({
   )
 }
 
-// ProbeRow 是三网测速的一行：目标标签 / 延迟 / 丢包条 / 丢包率。
-function ProbeRow({ row }: { row: CatalogProbeRow }) {
+// ProbeRow 是三网测速的一行：目标标签 / 逐轮色块条（hover 看单轮数值）/ 最新轮延迟 / 丢包率。
+function ProbeRow({ row, timezone }: { row: CatalogProbeRow; timezone?: string }) {
   const tone = lossTone(row.loss_percent)
   const loss = row.loss_percent
-  const width = loss === null ? 0 : loss <= 0 ? 0 : Math.max(4, Math.min(100, loss))
+  const latest = row.rounds.length > 0 ? row.rounds[row.rounds.length - 1] : null
+  const latestTone = latest ? probeRoundTone(latest.latency_ms) : null
+  const roundLabel = (round: CatalogProbeRound) =>
+    `${formatDateTime(round.measured_at, timezone)} · ${
+      round.latency_ms === null ? '超时' : formatLatency(round.latency_ms)
+    }`
   return (
     <div
       className="sv-probe-row"
-      title={`${row.label}${row.latency_ms !== null ? ` · 延迟 ${formatLatency(row.latency_ms)}` : ''}${
+      title={`${row.label}${latest ? ` · 延迟 ${latest.latency_ms === null ? '超时' : formatLatency(latest.latency_ms)}` : ''}${
         loss === null ? '' : ` · 丢包 ${loss.toFixed(1)}%`
       }`}
     >
       <span className="sv-probe-label">{row.label}</span>
-      <span className="sv-probe-latency">{formatLatency(row.latency_ms)}</span>
       <span
-        className="sv-probe-lossbar"
+        className="sv-probe-rounds"
         role="img"
-        aria-label={`${row.label} 丢包率 ${loss === null ? '无数据' : `${loss.toFixed(1)}%`}`}
+        aria-label={`${row.label} 最近 ${row.rounds.length} 轮测速色块，末位为最新轮`}
       >
-        <i
-          aria-hidden="true"
-          className={cn(
-            'sv-probe-lossfill',
-            tone === 'ok' && 'is-ok',
-            tone === 'warn' && 'is-warn',
-            tone === 'crit' && 'is-crit',
-          )}
-          style={{ width: `${width}%` }}
-        />
+        {probeStripRounds(row.rounds, PROBE_ROUND_SLOTS).map((round, index) => (
+          <i
+            key={index}
+            aria-hidden="true"
+            className={cn(
+              'sv-probe-round',
+              round === null ? 'is-idle' : `is-${probeRoundTone(round.latency_ms)}`,
+            )}
+            title={round === null ? undefined : roundLabel(round)}
+          />
+        ))}
+      </span>
+      <span className={cn('sv-probe-latency', latestTone !== null && `is-${latestTone}`)}>
+        {latest === null
+          ? '—'
+          : latest.latency_ms === null
+            ? '超时'
+            : formatLatency(latest.latency_ms)}
       </span>
       <span
         className={cn(
@@ -511,7 +529,15 @@ function CardOverviewSections({ server, samples }: { server: Server; samples: Se
 }
 
 // CardProbesSection 渲染三网测速区（卡片与详情弹窗共用）。
-function CardProbesSection({ rows, title }: { rows: CatalogProbeRow[]; title: string | null }) {
+function CardProbesSection({
+  rows,
+  title,
+  timezone,
+}: {
+  rows: CatalogProbeRow[]
+  title: string | null
+  timezone?: string
+}) {
   return (
     <section className="sv-card-probes" aria-label="三网测速">
       <span className="sv-probe-head">
@@ -521,7 +547,7 @@ function CardProbesSection({ rows, title }: { rows: CatalogProbeRow[]; title: st
       {rows.length > 0 ? (
         <div className="sv-probe-rows">
           {rows.map((row) => (
-            <ProbeRow key={`${row.carrier}:${row.label}`} row={row} />
+            <ProbeRow key={`${row.carrier}:${row.label}`} row={row} timezone={timezone} />
           ))}
         </div>
       ) : (
@@ -637,7 +663,7 @@ function ServerCard({
         {banFlag ? <span className={cn('sv-flag', banFlag.tone)}>{banFlag.label}</span> : null}
       </div>
       <CardOverviewSections server={server} samples={samples} />
-      <CardProbesSection rows={probeRows} title={probeTitle} />
+      <CardProbesSection rows={probeRows} title={probeTitle} timezone={timezone} />
       <footer className="sv-card-foot">
         <span className="sv-fact">
           <ActivityIcon />
@@ -1044,7 +1070,7 @@ function DetailDialog({
             <>
               <div className="sv-card is-static">
                 <CardOverviewSections server={server} samples={history} />
-                <CardProbesSection rows={probeRows} title={probeTitle} />
+                <CardProbesSection rows={probeRows} title={probeTitle} timezone={timezone} />
               </div>
               <dl className="sv-detail-facts">
                 <FactItem icon={<Globe2Icon />} label="地区">

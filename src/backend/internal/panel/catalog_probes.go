@@ -15,22 +15,33 @@ import (
 
 // 三网目录测速（§三网测速）的面板读取侧：目标新鲜度窗口与链路统计同窗
 // （约 3 轮测速间隔）；丢包率按更长的统计窗口计算（约 36 个 5 分钟样本），
-// 让单轮失败不会立刻把丢包率顶满。
+// 让单轮失败不会立刻把丢包率顶满。色块条展示最近 roundsWindow 内至多
+// roundsLimit 轮结果（约 1 小时，5 分钟一轮）。
 const (
-	catalogProbeFreshWindow = 15 * time.Minute
-	catalogProbeLossWindow  = 3 * time.Hour
+	catalogProbeFreshWindow  = 15 * time.Minute
+	catalogProbeLossWindow   = 3 * time.Hour
+	catalogProbeRoundsWindow = time.Hour
+	catalogProbeRoundsLimit  = 12
 )
 
-// catalogProbeRowDTO 是单台服务器到一个目录目标的最新测速行：
+// catalogProbeRoundDTO 是色块条上的单轮测速结果：LatencyMS 为 null = 该轮失败/超时。
+type catalogProbeRoundDTO struct {
+	LatencyMS  *float64  `json:"latency_ms"`
+	MeasuredAt time.Time `json:"measured_at"`
+}
+
+// catalogProbeRowDTO 是单台服务器到一个目录目标的测速行：
 // LatencyMS 为 null = 最近一次探测失败/超时；LossPercent 为窗口内失败占比
-// （null = 窗口内无样本）；Samples 为窗口内样本数（前端提示数据积累程度）。
+// （null = 窗口内无样本）；Samples 为窗口内样本数（前端提示数据积累程度）；
+// Rounds 为最近若干轮结果（时间升序，末位即最新轮）。
 type catalogProbeRowDTO struct {
-	Label       string    `json:"label"`
-	Carrier     string    `json:"carrier"`
-	LatencyMS   *float64  `json:"latency_ms"`
-	LossPercent *float64  `json:"loss_percent"`
-	Samples     int64     `json:"samples"`
-	MeasuredAt  time.Time `json:"measured_at"`
+	Label       string                 `json:"label"`
+	Carrier     string                 `json:"carrier"`
+	LatencyMS   *float64               `json:"latency_ms"`
+	LossPercent *float64               `json:"loss_percent"`
+	Samples     int64                  `json:"samples"`
+	Rounds      []catalogProbeRoundDTO `json:"rounds"`
+	MeasuredAt  time.Time              `json:"measured_at"`
 }
 
 type catalogProbeServerDTO struct {
@@ -77,6 +88,18 @@ func (s *Server) handleGetServerCatalogProbes(w http.ResponseWriter, r *http.Req
 	for _, row := range lossRows {
 		lossByKey[catalogProbeLossKey(row.FromServer, row.TargetKey)] = row
 	}
+	roundRows, err := s.st.RecentServerCatalogProbeSamples(ctx, catalogProbeRoundsWindow, catalogProbeRoundsLimit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	roundsByKey := make(map[string][]catalogProbeRoundDTO, len(roundRows))
+	for _, row := range roundRows {
+		key := catalogProbeLossKey(row.FromServer, row.TargetKey)
+		roundsByKey[key] = append(roundsByKey[key], catalogProbeRoundDTO{
+			LatencyMS: row.LatencyMS, MeasuredAt: row.MeasuredAt,
+		})
+	}
 	rowsByServer := make(map[int64][]catalogProbeRowDTO, len(fresh))
 	for _, target := range targets {
 		for _, row := range fresh {
@@ -88,6 +111,7 @@ func (s *Server) handleGetServerCatalogProbes(w http.ResponseWriter, r *http.Req
 				Label: target.Label, Carrier: target.Carrier,
 				LatencyMS: row.LatencyMS, LossPercent: loss.LossPercent(),
 				Samples: loss.Samples, MeasuredAt: row.MeasuredAt,
+				Rounds: roundsByKey[catalogProbeLossKey(row.FromServer, target.Key)],
 			})
 		}
 	}
