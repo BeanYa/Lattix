@@ -14,6 +14,7 @@
 ## UI Changes & Acceptance
 
 - For UI changes, the acceptance report must include actual screenshots taken during acceptance.
+- The final acceptance report must embed and display the screenshots inline; do not merely reference them by path or with pointers like "shown above".
 - Screenshots are not committed to Git.
 
 ## State Machines
