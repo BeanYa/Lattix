@@ -2,52 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { CheckIcon, CircleAlertIcon, RefreshCwIcon, RotateCcwIcon, SlidersIcon } from 'lucide-react'
 
 import { RequestError, requester } from '@/lib/requester'
-
-/** SubRoutingConfig 是订阅页模板配置的一级视图（用户级原始值 / 实际生效值）。 */
-interface SubRoutingConfig {
-  mode: 'suggested' | 'template'
-  preset: 'minimal' | 'balanced' | 'comprehensive'
-  categories: string[]
-  portable_template_id: string
-  mihomo_template_id: string
-  singbox_template_id: string
-  quanx_template_id: string
-}
-
-interface SubTemplateOption {
-  id: string
-  name: string
-  kind: 'portable' | 'acl4ssr' | 'mihomo' | 'singbox' | 'quanx'
-}
-
-interface SubRuleCategory {
-  id: string
-  label: string
-  icon: string
-  in_minimal: boolean
-  in_balanced: boolean
-}
-
-/** SubTemplateConfig 是 GET/POST /api/sub/{token}/template-config 的响应。 */
-interface SubTemplateConfig {
-  user_configured: boolean
-  effective_source: 'forced' | 'user' | 'panel' | 'default' | 'unset'
-  region_groups_enabled: boolean
-  forced_portable: boolean
-  forced_mihomo: boolean
-  forced_singbox: boolean
-  forced_quanx: boolean
-  forced_summary?: string
-  panel_assigned_summary?: string
-  default_summary?: string
-  assigned_mihomo_template_id?: string
-  assigned_singbox_template_id?: string
-  assigned_quanx_template_id?: string
-  user: SubRoutingConfig
-  effective: SubRoutingConfig
-  templates: SubTemplateOption[]
-  categories: SubRuleCategory[]
-}
+import {
+  PRESET_OPTIONS,
+  categoriesForPreset,
+  effectiveSummary,
+  formValuesOf,
+  type PresetId,
+  type SubTemplateConfig,
+  type SubTemplateOption,
+} from './template-config-form'
 
 const KIND_LABELS: Record<SubTemplateOption['kind'], string> = {
   portable: '主策略',
@@ -57,45 +20,8 @@ const KIND_LABELS: Record<SubTemplateOption['kind'], string> = {
   quanx: 'Quantumult X',
 }
 
-const PRESET_OPTIONS = [
-  ['minimal', '极简规则'],
-  ['balanced', '均衡规则'],
-  ['comprehensive', '完整规则'],
-] as const
-
-type PresetId = (typeof PRESET_OPTIONS)[number][0]
-
-function categoriesForPreset(preset: Exclude<PresetId, never>, categories: SubRuleCategory[]) {
-  if (preset === 'comprehensive') return categories.map((category) => category.id)
-  return categories
-    .filter((category) => (preset === 'minimal' ? category.in_minimal : category.in_balanced))
-    .map((category) => category.id)
-}
-
-function presetOfCategories(ids: string[], categories: SubRuleCategory[]): PresetId {
-  const set = new Set(ids)
-  for (const [preset] of PRESET_OPTIONS) {
-    if (
-      set.size === categoriesForPreset(preset, categories).length &&
-      categoriesForPreset(preset, categories).every((id) => set.has(id))
-    ) {
-      return preset
-    }
-  }
-  return 'balanced'
-}
-
-/** effectiveSummary 概括实际生效的主策略配置，供头部展示。 */
-function effectiveSummary(config: SubRoutingConfig, templates: SubTemplateOption[]): string {
-  if (config.mode === 'template') {
-    const template = templates.find((item) => item.id === config.portable_template_id)
-    return `模板「${template?.name ?? config.portable_template_id}」`
-  }
-  return `建议规则 · ${config.categories.length} 个分组`
-}
-
 /**
- * TemplateConfigCard 是订阅页的用户级模板配置卡（三级优先级：强制级 > 用户级 > 面板级）。
+ * TemplateConfigCard 是订阅页的用户级模板配置卡（四级优先级：强制级 > 用户级 > 面板级 > 默认级）。
  * 管理员强制指派期间显示锁定提示；用户保存后立即重生成订阅快照。
  */
 export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved: () => void }) {
@@ -123,20 +49,24 @@ export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved:
     noticeTimer.current = window.setTimeout(() => setSavedNotice(false), 4000)
   }
 
-  const applyConfig = (next: SubTemplateConfig) => {
-    setConfig(next)
-    setRegionGroups(next.region_groups_enabled !== false)
+  // applyFormValues 用后端返回的「表单初值」覆盖编辑态：主策略槽位与地区分组开关
+  // 取用户级已自选值或实际生效值；客户端原生模板槽位保持用户级原值（空 = 跟随主
+  // 策略），因此保存 / 恢复默认后页面展示与订阅文件一致（原生槽位由提示行说明）。
+  const applyFormValues = (next: SubTemplateConfig) => {
+    const values = formValuesOf(next)
+    setMode(values.mode)
+    setPreset(values.preset)
+    setCategories(values.categories)
+    setPortableId(values.portableId)
+    setMihomoId(values.mihomoId)
+    setSingboxId(values.singboxId)
+    setQuanxId(values.quanxId)
+    setRegionGroups(values.regionGroups)
   }
 
-  const applyFormValues = (next: SubTemplateConfig) => {
-    setMode(next.user.mode)
-    setPreset(presetOfCategories(next.user.categories, next.categories))
-    setCategories(next.user.categories)
-    setPortableId(next.user.portable_template_id)
-    setMihomoId(next.user.mihomo_template_id)
-    setSingboxId(next.user.singbox_template_id)
-    setQuanxId(next.user.quanx_template_id)
-    setRegionGroups(next.region_groups_enabled !== false)
+  const applyConfig = (next: SubTemplateConfig) => {
+    setConfig(next)
+    applyFormValues(next)
   }
 
   useEffect(() => {
@@ -146,10 +76,7 @@ export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved:
         signal: controller.signal,
         display: 'silent',
       })
-      .then((next) => {
-        setConfig(next)
-        applyFormValues(next)
-      })
+      .then(applyConfig)
       .catch((reason: unknown) => {
         if (reason instanceof RequestError && reason.code === 'REQUEST_CANCELLED') return
         setLoadFailed(true)
@@ -194,7 +121,6 @@ export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved:
         },
       )
       applyConfig(next)
-      applyFormValues(next)
       showSavedNotice()
       onSaved()
     } catch (reason) {
@@ -204,19 +130,22 @@ export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved:
     }
   }
 
-  // 恢复默认：清除用户级配置（仅订阅页可清除），回落面板级 → 默认级。
+  // 恢复默认：清除用户级配置（仅订阅页可清除），回落到面板级 → 默认级。
+  // 没有用户级配置时按钮仍可用：它会把表单重置回当前生效配置（撤销未保存的改动）。
   const reset = async () => {
     if (resetting) return
     setResetting(true)
     setError('')
+    const hadUserConfig = config?.user_configured === true
     try {
       const next = await requester.postJSON<SubTemplateConfig>(
         `/api/sub/${token}/template-config/reset`,
       )
       applyConfig(next)
-      applyFormValues(next)
-      showSavedNotice()
-      onSaved()
+      if (hadUserConfig) {
+        showSavedNotice()
+        onSaved()
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '恢复默认失败，请稍后重试。')
     } finally {
@@ -441,16 +370,24 @@ export function TemplateConfigCard({ token, onSaved }: { token: string; onSaved:
                 {saving ? <RefreshCwIcon aria-hidden="true" /> : <SlidersIcon aria-hidden="true" />}
                 {saving ? '保存中…' : '保存'}
               </button>
-              {config.user_configured ? (
-                <button type="button" className="cg-button" disabled={resetting} onClick={reset}>
-                  {resetting ? (
-                    <RefreshCwIcon aria-hidden="true" />
-                  ) : (
-                    <RotateCcwIcon aria-hidden="true" />
-                  )}
-                  {resetting ? '恢复中…' : '恢复默认（清除我的配置）'}
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="cg-button"
+                disabled={resetting}
+                onClick={reset}
+                title={
+                  config.user_configured
+                    ? '清除我在订阅页保存的模板配置，回落到管理员默认'
+                    : '把表单重置为当前生效配置'
+                }
+              >
+                {resetting ? (
+                  <RefreshCwIcon aria-hidden="true" />
+                ) : (
+                  <RotateCcwIcon aria-hidden="true" />
+                )}
+                {resetting ? '恢复中…' : '恢复默认（清除我的配置）'}
+              </button>
               <span className="sub-cfg-note">
                 保存后订阅文件立即重新生成；客户端下次刷新订阅即生效。
               </span>

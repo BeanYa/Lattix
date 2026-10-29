@@ -287,3 +287,223 @@ func TestSubTemplateConfigEffectiveSourceAndReset(t *testing.T) {
 		t.Fatalf("after reset source = %q, want panel", resp.EffectiveSource)
 	}
 }
+
+func subResetTemplateConfig(t *testing.T, server *Server, token string) (int, SubTemplateConfigResponse) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/sub/"+token+"/template-config/reset", strings.NewReader(""))
+	req.SetPathValue("token", token)
+	rec := httptest.NewRecorder()
+	server.HandleSubResetTemplateConfig(rec, req)
+	var resp SubTemplateConfigResponse
+	if rec.Code == http.StatusOK {
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return rec.Code, resp
+}
+
+// 用户级配置缺席时，模板配置卡展示的地区分组开关必须与订阅文件实际生效值一致：
+// 默认级开启地区分组时，即使用户列仍残留关闭标记，响应也应为开启。
+func TestSubTemplateConfigRegionGroupsFollowEffectiveLevel(t *testing.T) {
+	st, server := startTemplateConfigServer(t)
+	ctx := context.Background()
+	userID, err := st.InsertUser(ctx, "rhea", "00000000-0000-0000-0000-0000000000f5", "rhea-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveSubscriptionDefaultConfig(ctx, store.SubscriptionDefaultConfig{
+		SuggestedCategories: `["ai","private","domestic","overseas"]`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
+		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
+		CategoriesJSON:      `["ai","private","domestic","overseas"]`,
+		DisableRegionGroups: true,
+		GenerationStatus:    store.SubscriptionGenerationPending,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	status, resp := subConfigRequest(t, server, http.MethodGet, "rhea-token", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET status = %d", status)
+	}
+	if resp.UserConfigured {
+		t.Fatalf("user_configured 应为 false: %+v", resp)
+	}
+	if resp.EffectiveSource != "default" {
+		t.Fatalf("effective_source = %q, want default", resp.EffectiveSource)
+	}
+	if !resp.RegionGroupsEnabled {
+		t.Fatalf("region_groups_enabled 应与默认级实际生效值一致（开启）: %+v", resp)
+	}
+
+	// 默认级关闭地区分组时，用户级缺席的页面同样应显示关闭。
+	if err := st.SaveSubscriptionDefaultConfig(ctx, store.SubscriptionDefaultConfig{
+		SuggestedCategories: `["ai","private","domestic","overseas"]`,
+		DisableRegionGroups: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, resp = subConfigRequest(t, server, http.MethodGet, "rhea-token", "")
+	if resp.RegionGroupsEnabled {
+		t.Fatalf("region_groups_enabled 应跟随默认级（关闭）: %+v", resp)
+	}
+}
+
+// 恢复默认清除用户级配置后，地区分组开关应回到默认级/内置默认（开启），
+// 而不是保留用户之前的关闭选择。
+func TestSubResetTemplateConfigRestoresDefaultRegionGroups(t *testing.T) {
+	st, server := startTemplateConfigServer(t)
+	ctx := context.Background()
+	userID, err := st.InsertUser(ctx, "iris", "00000000-0000-0000-0000-0000000000f6", "iris-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, resp := subConfigRequest(t, server, http.MethodPost, "iris-token",
+		`{"mode":"suggested","preset":"minimal","categories":["private","domestic","overseas"],"region_groups_enabled":false}`)
+	if status != http.StatusOK || !resp.UserConfigured {
+		t.Fatalf("save status = %d configured %v", status, resp.UserConfigured)
+	}
+	if resp.RegionGroupsEnabled {
+		t.Fatalf("保存关闭地区分组后页面应为关闭: %+v", resp)
+	}
+
+	status, resp = subResetTemplateConfig(t, server, "iris-token")
+	if status != http.StatusOK || resp.UserConfigured {
+		t.Fatalf("reset status = %d configured %v", status, resp.UserConfigured)
+	}
+	if !resp.RegionGroupsEnabled {
+		t.Fatalf("恢复默认后地区分组应回到内置默认（开启）: %+v", resp)
+	}
+	profile, err := st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.DisableRegionGroups {
+		t.Fatalf("恢复默认未清除用户级地区分组开关: %+v", profile)
+	}
+}
+
+// 回归守卫：存在面板级/强制级指派时，恢复默认不得把地区分组列无条件重置为
+// 默认级的值。该列由管理员指派与用户共用（saveUserRouting 会覆盖），reset 只能
+// 保留其当前值；这里让默认级为「开启」而列当前为「关闭」，无条件回落会被本用例抓住。
+func TestSubResetTemplateConfigKeepsRegionGroupsColumnWithPanelAssignment(t *testing.T) {
+	st, server := startTemplateConfigServer(t)
+	ctx := context.Background()
+	userID, err := st.InsertUser(ctx, "juno", "00000000-0000-0000-0000-0000000000f7", "juno-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveSubscriptionDefaultConfig(ctx, store.SubscriptionDefaultConfig{
+		SuggestedCategories: `["ai","private","domestic","overseas"]`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveUserSubscriptionProfile(ctx, store.SubscriptionProfile{
+		UserID: userID, Mode: store.SubscriptionModeSuggested, Preset: "balanced",
+		CategoriesJSON:              `["ai"]`,
+		AssignedSuggestedCategories: `["private","domestic"]`,
+		DisableRegionGroups:         true,
+		GenerationStatus:            store.SubscriptionGenerationPending,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	status, _ := subConfigRequest(t, server, http.MethodPost, "juno-token",
+		`{"mode":"suggested","preset":"balanced","categories":["ai"],"region_groups_enabled":false}`)
+	if status != http.StatusOK {
+		t.Fatalf("save status = %d", status)
+	}
+	status, resp := subResetTemplateConfig(t, server, "juno-token")
+	if status != http.StatusOK {
+		t.Fatalf("reset status = %d", status)
+	}
+	if resp.RegionGroupsEnabled {
+		t.Fatalf("存在面板级指派时恢复默认不应无条件回落默认级的地区分组开关: %+v", resp)
+	}
+	profile, err := st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !profile.DisableRegionGroups {
+		t.Fatalf("恢复默认改动了面板级指派下的地区分组列: %+v", profile)
+	}
+	if profile.AssignedSuggestedCategories != `["private","domestic"]` {
+		t.Fatalf("恢复默认改动了面板级指派槽位: %+v", profile)
+	}
+}
+
+// 配置了默认级时也要正确回落：默认级「关闭地区分组」时，用户曾开启并保存，
+// 恢复默认后生效值应跟随默认级（关闭）；但共享列只写内置默认（开启），不把默认级
+// 值固化进去——否则管理员之后清除默认级，用户会残留关闭状态。
+func TestSubResetTemplateConfigFollowsConfiguredDefaultRegionGroups(t *testing.T) {
+	st, server := startTemplateConfigServer(t)
+	ctx := context.Background()
+	userID, err := st.InsertUser(ctx, "kylo", "00000000-0000-0000-0000-0000000000f8", "kylo-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveSubscriptionDefaultConfig(ctx, store.SubscriptionDefaultConfig{
+		SuggestedCategories: `["ai","private"]`,
+		DisableRegionGroups: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	status, _ := subConfigRequest(t, server, http.MethodPost, "kylo-token",
+		`{"mode":"suggested","preset":"balanced","categories":["ai","private"],"region_groups_enabled":true}`)
+	if status != http.StatusOK {
+		t.Fatalf("save status = %d", status)
+	}
+	status, resp := subResetTemplateConfig(t, server, "kylo-token")
+	if status != http.StatusOK {
+		t.Fatalf("reset status = %d", status)
+	}
+	if resp.RegionGroupsEnabled {
+		t.Fatalf("恢复默认生效值应跟随默认级的地区分组开关（关闭）: %+v", resp)
+	}
+	profile, err := st.UserSubscriptionProfile(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if profile.DisableRegionGroups {
+		t.Fatalf("恢复默认不应把默认级的开关固化进共享列: %+v", profile)
+	}
+
+	// 清除默认级后应回到内置默认（开启），验证共享列里没有残留默认级的关闭值。
+	if err := st.SaveSubscriptionDefaultConfig(ctx, store.SubscriptionDefaultConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	status, resp = subConfigRequest(t, server, http.MethodGet, "kylo-token", "")
+	if status != http.StatusOK || resp.EffectiveSource != "unset" {
+		t.Fatalf("清除默认级后 source = %q status %d", resp.EffectiveSource, status)
+	}
+	if !resp.RegionGroupsEnabled {
+		t.Fatalf("清除默认级后地区分组应回到内置默认（开启）: %+v", resp)
+	}
+}
+
+// panelRoutingConfigured 决定恢复默认是否保留地区分组列：管理员任何一级指派槽位
+// 或强制标记都算“面板已配置”。
+func TestPanelRoutingConfigured(t *testing.T) {
+	cases := []struct {
+		name    string
+		profile store.SubscriptionProfile
+		want    bool
+	}{
+		{"empty", store.SubscriptionProfile{}, false},
+		{"panel suggested categories", store.SubscriptionProfile{AssignedSuggestedCategories: `["ai"]`}, true},
+		{"panel portable template", store.SubscriptionProfile{AssignedPortableTemplateID: "tpl"}, true},
+		{"native mihomo assignment", store.SubscriptionProfile{AssignedMihomoTemplateID: "tpl"}, true},
+		{"native singbox assignment", store.SubscriptionProfile{AssignedSingboxTemplateID: "tpl"}, true},
+		{"native quanx assignment", store.SubscriptionProfile{AssignedQuanXTemplateID: "tpl"}, true},
+		{"forced flag without slot", store.SubscriptionProfile{AssignForcedPortable: true}, true},
+		{"forced native flag", store.SubscriptionProfile{AssignForcedQuanX: true}, true},
+	}
+	for _, testCase := range cases {
+		if got := panelRoutingConfigured(testCase.profile); got != testCase.want {
+			t.Errorf("%s: panelRoutingConfigured = %v, want %v", testCase.name, got, testCase.want)
+		}
+	}
+}

@@ -36,6 +36,8 @@ type SubTemplateConfigResponse struct {
 	// EffectiveSource：forced / user / panel / default / unset。
 	EffectiveSource string `json:"effective_source"`
 	// 地区分组开关（用户可在订阅页调整；面板各级配置保存不覆盖它，指派除外）。
+	// 取四级解析后的实际生效值：用户级缺席时随面板级/默认级一并生效，订阅页据此
+	// 展示表单初值，保证页面与订阅文件一致。
 	RegionGroupsEnabled bool `json:"region_groups_enabled"`
 	// 强制级（覆盖一切用户设置）。
 	ForcedPortable bool   `json:"forced_portable"`
@@ -49,7 +51,7 @@ type SubTemplateConfigResponse struct {
 	AssignedSingboxID    string `json:"assigned_singbox_template_id,omitempty"`
 	AssignedQuanXID      string `json:"assigned_quanx_template_id,omitempty"`
 	// 默认级（面板与用户均未配置时的全局兜底，模板指派页维护）。
-	DefaultSummary string `json:"default_summary,omitempty"`
+	DefaultSummary string              `json:"default_summary,omitempty"`
 	User           SubRoutingConfig    `json:"user"`
 	Effective      SubRoutingConfig    `json:"effective"`
 	Templates      []SubTemplateOption `json:"templates"`
@@ -113,9 +115,12 @@ func (s *Server) templateConfigResponse(r *http.Request, user *store.User) (SubT
 	if err != nil {
 		return SubTemplateConfigResponse{}, err
 	}
+	effective := store.EffectiveProfile(profile, defaultCfg)
 	resp := SubTemplateConfigResponse{
-		UserConfigured:      profile.UserConfigured,
-		RegionGroupsEnabled: !profile.DisableRegionGroups,
+		UserConfigured: profile.UserConfigured,
+		// 地区分组开关按实际生效值回显（用户级缺席时随面板级/默认级生效），
+		// 否则订阅页显示与订阅文件会不一致。
+		RegionGroupsEnabled: !effective.DisableRegionGroups,
 		ForcedPortable:      profile.AssignForcedPortable,
 		ForcedMihomo:        profile.AssignForcedMihomo,
 		ForcedSingbox:       profile.AssignForcedSingbox,
@@ -157,7 +162,7 @@ func (s *Server) templateConfigResponse(r *http.Request, user *store.User) (SubT
 		}
 	}
 	// 实际生效配置（含四级解析结果）。
-	resp.Effective = subRoutingConfigOf(store.EffectiveProfile(profile, defaultCfg))
+	resp.Effective = subRoutingConfigOf(effective)
 	// 可选模板目录：仅含有缓存内容的模板可被选为生效配置。
 	templates, err := s.st.ListSubscriptionTemplates(r.Context())
 	if err != nil {
@@ -189,6 +194,16 @@ func (s *Server) HandleSubTemplateConfig(w http.ResponseWriter, r *http.Request)
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// panelRoutingConfigured 报告管理员是否已为该用户写入面板级/强制级指派槽位：
+// 这些指派保存的地区分组开关属于管理员设置，用户「恢复默认」时不得覆盖。
+func panelRoutingConfigured(profile store.SubscriptionProfile) bool {
+	return profile.AssignedPortableTemplateID != "" || profile.AssignedSuggestedCategories != "" ||
+		profile.AssignedMihomoTemplateID != "" || profile.AssignedSingboxTemplateID != "" ||
+		profile.AssignedQuanXTemplateID != "" ||
+		profile.AssignForcedPortable || profile.AssignForcedMihomo ||
+		profile.AssignForcedSingbox || profile.AssignForcedQuanX
 }
 
 // userBySubToken 校验订阅 token 并返回用户；失败时已写好响应。
@@ -310,6 +325,14 @@ func (s *Server) HandleSubResetTemplateConfig(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if current.UserConfigured {
+		// 用户级的地区分组开关随「恢复默认」一并清除：无管理员指派时写内置默认
+		// （开启），默认级开关仍由 EffectiveProfile 在生效时覆盖，不把默认级的值
+		// 固化进共享列（否则之后清除默认级会残留旧状态）。该列由管理员指派与用户
+		// 共用，存在面板级/强制级指派时只能保留当前值、无法还原管理员写入值。
+		disableRegionGroups := false
+		if panelRoutingConfigured(current) {
+			disableRegionGroups = current.DisableRegionGroups
+		}
 		reset := store.SubscriptionProfile{
 			UserID:                      user.ID,
 			Mode:                        store.SubscriptionModeSuggested,
@@ -325,7 +348,7 @@ func (s *Server) HandleSubResetTemplateConfig(w http.ResponseWriter, r *http.Req
 			AssignedQuanXTemplateID:     current.AssignedQuanXTemplateID,
 			AssignForcedQuanX:           current.AssignForcedQuanX,
 			AssignedSuggestedCategories: current.AssignedSuggestedCategories,
-			DisableRegionGroups:         current.DisableRegionGroups,
+			DisableRegionGroups:         disableRegionGroups,
 		}
 		if err := s.st.SaveUserSubscriptionProfile(r.Context(), reset); err != nil {
 			writeSubError(w, http.StatusInternalServerError, "internal error")
