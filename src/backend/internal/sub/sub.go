@@ -732,7 +732,13 @@ func (s *Server) chainSubscriptionItem(ctx context.Context, chain store.Chain, a
 			return nil, fmt.Errorf("链 %d 共享入口 realized_config 不可用", chainID)
 		}
 		entrySrv, err := s.st.ServerByID(ctx, endpoint.ServerID)
-		if err != nil || entrySrv.Address == "" {
+		if err != nil {
+			return nil, fmt.Errorf("链 %d 入口地址不可用", chainID)
+		}
+		// 入口地址实时解析（§9）：共享入口链的客户端同样连接入口跳，地址按入口跳
+		// 所选引用解析（失效/空回退服务器默认地址），不做快照冻结。
+		entryAddr := store.ResolveServerAddress(entrySrv, entry.Address)
+		if entryAddr == "" {
 			return nil, fmt.Errorf("链 %d 入口地址不可用", chainID)
 		}
 		port := rc.Port
@@ -743,7 +749,7 @@ func (s *Server) chainSubscriptionItem(ctx context.Context, chain store.Chain, a
 		}
 		rc.Port = port
 		entryNode := store.Node{ID: snapshot.ServiceNodeID, Name: snapshot.Name,
-			ServerID: snapshot.ServiceServerID, ServerAlias: entrySrv.Alias, ServerAddress: entrySrv.Address,
+			ServerID: snapshot.ServiceServerID, ServerAlias: entrySrv.Alias, ServerAddress: entryAddr,
 			Protocol: shared.ProtocolVLESS, ConfigTemplate: endpoint.ConfigTemplate,
 			RealizedConfig: endpoint.RealizedConfig, Status: store.NodeStatusActive}
 		return &proxyItem{node: entryNode, rc: rc, credential: assignment.AccessUUID}, nil
@@ -767,7 +773,10 @@ func (s *Server) chainSubscriptionItem(ctx context.Context, chain store.Chain, a
 	if err != nil {
 		return nil, err
 	}
-	if entrySrv.Address == "" || entry.ForwardPort == 0 {
+	// 入口地址实时解析（§9）：hop 存的是对服务器地址列表的引用（随修订快照携带），
+	// 引用失效/空时回退服务器当前默认地址——管理员改服务器地址立即生效，不做快照冻结。
+	entryAddr := store.ResolveServerAddress(entrySrv, entry.Address)
+	if entryAddr == "" || entry.ForwardPort == 0 {
 		return nil, fmt.Errorf("链 %d 入口地址/端口未就绪", chainID)
 	}
 	// 订阅端口取入口公网侧（非 1:1 映射时经端口段助手换算，§21）。
@@ -783,9 +792,7 @@ func (s *Server) chainSubscriptionItem(ctx context.Context, chain store.Chain, a
 	entryNode.ConfigTemplate = append(json.RawMessage(nil), snapshot.ServiceConfig...)
 	entryNode.RealizedConfig = append(json.RawMessage(nil), snapshot.ServiceRealized...)
 	entryNode.ServerAlias = entrySrv.Alias
-	// 入口地址实时解析（§9）：hop 存的是对服务器地址列表的引用（随修订快照携带），
-	// 引用失效/空时回退服务器当前默认地址——管理员改服务器地址立即生效，不做快照冻结。
-	entryNode.ServerAddress = store.ResolveServerAddress(entrySrv, entry.Address)
+	entryNode.ServerAddress = entryAddr
 	rc.Port = port
 	return &proxyItem{node: entryNode, rc: rc}, nil
 }

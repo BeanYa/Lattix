@@ -5,7 +5,7 @@
 `GET /sub/{sub_token}` 按 User-Agent 或 `format` 返回 Mihomo、sing-box、Quantumult X 节点、Quantumult X 完整配置或 base64 分享链接。请求 `Accept` 含 `text/html`（浏览器）时返回订阅落地页。生成、模板缓存、规则制品和原子发布的完整约定见 [订阅分流与模板](../subscription-routing-design.md)。
 
 - 目标客户端：Mihomo 内核系、sing-box 和 Quantumult X。原版 Clash 不支持 VLESS+Reality，不在目标范围。
-- 内容：Lattix 节点、用户凭据和链路端点填入用户选择的分流策略；共享 Endpoint 的连接地址和端口取入口，凭据取该链 assignment 的 `access_uuid`，地区归属取出口。Mihomo、sing-box 与 Quantumult X 使用各自结构化渲染器，不做订阅格式互转；独立节点仍使用 `users.uuid`。
+- 内容：Lattix 节点、用户凭据和链路端点填入用户选择的分流策略；共享 Endpoint 的连接地址取链**入口跳**所选公网地址引用（`chain_hops.address`，空 = 跟随服务器默认地址；消费时 `ResolveServerAddress` 实时解析、引用失效回退默认，§9），端口取入口，凭据取该链 assignment 的 `access_uuid`，地区归属取出口。Mihomo、sing-box 与 Quantumult X 使用各自结构化渲染器，不做订阅格式互转；独立节点仍使用 `users.uuid`。
 - 链路命名在创建时解析并固化；服务器资料或自动端口后续变化不自动重命名。默认模板：
   直连 `{{COUNTRY_FLAG}}{{LOCATION}}-Direct`，中转 `{{EXIT.COUNTRY_FLAG}}-Out`。
 - 全局变量 `ID/NAME/COUNTRY/COUNTRY_CODE/COUNTRY_FLAG/LOCATION/ADDRESS/TAG[n]` 取客户端实际连接的服务器：

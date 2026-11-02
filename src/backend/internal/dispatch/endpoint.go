@@ -38,6 +38,29 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 		if server.MachineType == "nat" {
 			payload.PortCandidates = listenCandidatesOf(server)
 		}
+		// 监听族（§9）：拨入方按跳所选地址连接——入口终结链由入口端点直拨出口跳，
+		// 端到端链由上一跳直拨出口跳；单跳链客户端直接连本监听，取唯一跳。
+		listenFamily := ""
+		for _, chain := range chains {
+			if chain.PublishedRevisionID == 0 {
+				continue
+			}
+			revision, err := d.st.PublishedChainRevision(ctx, chain.ID)
+			if err != nil || len(revision.Snapshot.Hops) == 0 {
+				continue
+			}
+			hop := revision.Snapshot.Hops[0]
+			if len(revision.Snapshot.Hops) > 1 {
+				hop = revision.Snapshot.Hops[len(revision.Snapshot.Hops)-1]
+			}
+			if d.endpointHopAddressFamily(ctx, hop) == shared.AddressFamilyIPv6 {
+				listenFamily = shared.AddressFamilyIPv6
+				break
+			}
+		}
+		if payload.Config, err = withEndpointListenFamily(payload.Config, listenFamily); err != nil {
+			return err
+		}
 		for _, chain := range chains {
 			if chain.EndpointID != 0 && chain.ServiceUUID != "" {
 				payload.Clients = append(payload.Clients, shared.ClientCredential{
@@ -80,6 +103,9 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 	if server.MachineType == "nat" {
 		payload.PortCandidates = listenCandidatesOf(server)
 	}
+	// 监听族（§9）：客户端按入口跳所选公网地址拨入共享入口，任一成员链入口跳解析
+	// 为 IPv6 时端点须监听 "::"（双栈同听，IPv4 客户端不受影响）。
+	listenFamily := ""
 	for _, chain := range chains {
 		if chain.EndpointID != endpointID || chain.PublishedRevisionID == 0 ||
 			chain.Status == store.ChainStatusInvalid || chain.Status == store.ChainStatusDeleted {
@@ -88,6 +114,9 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 		revision, err := d.st.PublishedChainRevision(ctx, chain.ID)
 		if err != nil || len(revision.Snapshot.Hops) == 0 {
 			continue
+		}
+		if d.endpointHopAddressFamily(ctx, revision.Snapshot.Hops[0]) == shared.AddressFamilyIPv6 {
+			listenFamily = shared.AddressFamilyIPv6
 		}
 		route := shared.SharedEndpointRoute{ChainID: chain.ID, Direct: len(revision.Snapshot.Hops) == 1,
 			TunnelUUID: revision.Snapshot.ServiceUUID}
@@ -135,6 +164,9 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 	}
 	sort.Slice(payload.Clients, func(i, j int) bool { return payload.Clients[i].Email < payload.Clients[j].Email })
 	sort.Slice(payload.Routes, func(i, j int) bool { return payload.Routes[i].ChainID < payload.Routes[j].ChainID })
+	if payload.Config, err = withEndpointListenFamily(payload.Config, listenFamily); err != nil {
+		return err
+	}
 	// 建链即部署监听：即使 routes/clients 为空也下发 apply（端口 + Reality 密钥即刻生效）。
 	// 用户分配仅做增量用户添加，不再是部署前提。
 	// 端点状态机入口：pending/failed/applying/active → applying（重试/重部署/幂等自愈）。
@@ -143,4 +175,38 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 	}
 	_, err = d.Enqueue(ctx, endpoint.ServerID, shared.TypeApplySharedEndpoint, payload)
 	return err
+}
+
+// endpointHopAddressFamily 返回跳解析后的公网地址族（§9）：跳地址引用优先，引用
+// 失效/为空回退服务器默认地址；服务器或地址不可用时返回空串（不参与监听族推导）。
+func (d *Dispatcher) endpointHopAddressFamily(ctx context.Context, hop store.ChainRevisionHop) string {
+	server, err := d.st.ServerByID(ctx, hop.ServerID)
+	if err != nil {
+		return ""
+	}
+	address := store.ResolveServerAddress(server, hop.Address)
+	if address == "" {
+		return ""
+	}
+	return shared.AddressFamily(address)
+}
+
+// withEndpointListenFamily 按监听族注入共享端点监听地址（§9）：IPv6 字面量拨入要求
+// 监听 "::"（双栈同听，IPv4 客户端仍可连入）；其他族不注入，保持 xray 默认 0.0.0.0，
+// 不改动无需 IPv6 的既有部署。只影响下发副本，不写回端点 config_template。
+func withEndpointListenFamily(config shared.VirtualConfig, family string) (shared.VirtualConfig, error) {
+	if family != shared.AddressFamilyIPv6 {
+		return config, nil
+	}
+	var template map[string]any
+	if err := json.Unmarshal(config.Template, &template); err != nil {
+		return config, fmt.Errorf("decode endpoint template for listen family: %w", err)
+	}
+	template["listen"] = "::"
+	raw, err := json.Marshal(template)
+	if err != nil {
+		return config, err
+	}
+	config.Template = raw
+	return config, nil
 }

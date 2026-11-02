@@ -4,7 +4,7 @@
 
 | 表 | 字段（要点） |
 |---|---|
-| `servers` | id, alias, country_code(ISO 3166-1 alpha-2), location(城市/机房位置), address(公网地址), learned_addr(拨入学习地址), nic_addresses(agent 上报网卡地址 JSON), tags(有序标签 JSON，名称模板 `TAG[n]` 来源), token(长期凭证), last_seen_at, xray_version, config_drift(见[服务器维护](server-maintenance.md)), server_settings_revision/error/reported_at(见[控制通道](control-channel.md) server settings 同步链), created_at |
+| `servers` | id, alias, country_code(ISO 3166-1 alpha-2), location(城市/机房位置), address(默认公网地址), addresses(地址列表 JSON，多公网地址), address_mode(auto/manual), learned_addr(拨入学习地址), nic_addresses(agent 上报网卡地址 JSON), tags(有序标签 JSON，名称模板 `TAG[n]` 来源), token(长期凭证), last_seen_at, xray_version, config_drift(见[服务器维护](server-maintenance.md)), server_settings_revision/error/reported_at(见[控制通道](control-channel.md) server settings 同步链), created_at |
 | `users` | id, name, uuid, sub_token, expires_at(可空，unix 秒，NULL=长期), expired(0/1 到期停权标记，见[订阅](subscription.md)), disabled(0/1 显式停用标记，见[用户与分组](users-and-groups.md)), effective_at(可空，unix 秒，NULL=创建即生效), started_at(可空，unix 秒，激活扇出标记：sweeper 越过生效时刻后置位), is_trial(0/1 试用标记), quota_exhausted(0/1 流量配额停权标记，见[订阅](subscription.md)), created_at |
 | `nodes` | id, name(解析后的管理/订阅名称), server_id, protocol, port, config_template(JSON), realized_config(JSON), status, error, created_at |
 | `commands` | id, request_id, trace_id, server_id, type, data(JSON), status(queued/sent/acked/failed/abandoned), error, attempts, created_at, updated_at |
@@ -23,7 +23,7 @@
 | `traffic_history` | 用户流量周期归档（流量重置/配额恢复留痕，见[订阅](subscription.md)） |
 | `traffic_stats_bucket` / `traffic_stats_daily` | 流量统计时序桶（控制台/运行监控流量图表，`/api/stats/traffic/*`，契约见 [OpenAPI](../openapi.yaml)） |
 | `chains` | 稳定 chain/service/endpoint identity、published/desired revision、倍率、发布状态与软删除时间 |
-| `chain_hops` / `chain_hop_identities` | 当前期望工作拓扑与不会复用的稳定 hop identity |
+| `chain_hops` / `chain_hop_identities` | 当前期望工作拓扑（含逐跳所选公网地址引用 `address`）与不会复用的稳定 hop identity |
 | `chain_revisions` / `chain_revision_tasks` | 不可变拓扑快照及 apply/cleanup 任务状态机；任务关联离线命令队列 |
 | `traffic_cursors` | Agent Xray 实例绝对计数器游标，用于幂等补差 |
 | `chain_traffic_totals` / `chain_traffic_daily` | 链与逐跳 raw/effective 累计、倍率余数及按 revision/统计时区的日桶 |
@@ -48,6 +48,6 @@
   使用独立存储、容量和查询接口，详见 [日志系统设计](../logging-design.md)。
 - `nodes.config_template` 是面板侧虚拟配置（含占位符）；`nodes.realized_config` 是 Agent 上报的实际生效值（端口、public_key、short_id 等）。
 - `servers.country_code` 与 `servers.location` 在创建/编辑服务器时必填；国家通过选择器写入标准两位代码，`COUNTRY` 与 `COUNTRY_FLAG` 由代码派生。Location 提供按国家过滤的本地城市建议，同时允许管理员填写机房区域等自由文本。
-- `servers.address` 是订阅中节点地址的唯一来源（见[订阅](subscription.md)）：**创建服务器时由管理员填写公网地址，agent 不校验**；留空则按 agent WS 拨入的对端 IP 自动学习（可信反代——回环、内建内网/容器网段或 `trusted_proxies` 追加网段——时从 `X-Forwarded-For` 右向左取第一个非可信 IP，公网对端直连不信任该头以防伪造），一经写入不再被覆盖（地址变更由管理员通过 `POST /api/server/update` 修改）。每次 `agent.session.open` 另将拨入学习地址写入 `learned_addr`、将 agent 上报的网卡非回环地址写入 `nic_addresses`，二者仅作面板"编辑地址"的内置候选（可选内置地址或自定义），不参与自动学习决策。`servers` 同时保存机器类型与 NAT 可用端口段元数据（含非 1:1 映射的 public_port），NAT 类型 address 强制必填、禁用自动学习；引入链后订阅地址改取链**入口**的 address。
+- `servers.address` / `servers.addresses` 是多公网地址事实来源（见[订阅](subscription.md)）：**创建服务器时由管理员填写默认公网地址，agent 不校验**；`address_mode=manual` 时默认地址不被自动覆盖（地址变更由管理员通过 `POST /api/server/update` 修改），`auto` 时留空并按 agent WS 拨入的对端 IP 学习（可信反代——回环、内建内网/容器网段或 `trusted_proxies` 追加网段——时从 `X-Forwarded-For` 右向左取第一个非可信 IP，公网对端直连不信任该头以防伪造）。`addresses` 是地址列表 JSON：每次 `agent.session.open` 上报网卡地址时按「访问流学习地址居首 + NIC 上报公网地址 + 保留管理员手工条目」合并去重（同族不覆盖，采不到的族自然缺失）；`learned_addr` 记录最近一次拨入学习地址、`nic_addresses` 记录 agent 上报的网卡非回环地址，二者既参与地址列表学习，也作面板「编辑地址」的内置候选。独立节点订阅取服务器默认地址；链订阅取链**入口跳**所选地址引用（`chain_hops.address` / 修订快照 hop `address`，空 = 跟随服务器默认地址），消费时 `ResolveServerAddress` 实时解析，引用已不属于服务器当前地址集合（地址列表 ∪ 默认地址 ∪ 学习地址）时回退默认地址，不做快照冻结；共享端点监听族同样按拨入方跳引用派生（IPv6 字面量 → 监听 `::` 双栈），保证订阅交付的地址可连。`servers` 同时保存机器类型与 NAT 可用端口段元数据（含非 1:1 映射的 public_port），NAT 类型 address 强制必填、禁用自动学习。
 - 用户-节点关联：全新数据库中的新建用户和节点默认不关联，由管理员显式分配；结构迁移不会隐式补全或改变现有关联。
 - 服务器费用、生命周期状态机、流量额度、汇率换算及后端公共定时任务器的完整契约见[后端调度与服务器计费设计](../billing-scheduler-design.md)。费用原价和币种分列保存；关闭“统计计费”仅排除费用逻辑和状态展示，不删除资料。流量计划始终独立生效，默认无限额度。

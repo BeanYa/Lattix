@@ -41,6 +41,10 @@
   下游无入站能力 → 下游以 xray reverse bridge 反向上来（bridge/portal 对）。
 - **共享入口终止**：客户端 VLESS+Reality 在入口 Endpoint 终止，入口按 assignment identity 选择 chain；
   多跳时再用 chain 的 `service_uuid` 建立到出口的内部 VLESS+Reality 连接。
+  共享监听的监听地址族随拨入方跳地址引用派生（入口跳 IPv6 → 入口 Endpoint 监听 `::` 双栈；
+  hy2 出口监听按出口跳/单跳推导），与订阅交付地址保持一致（§9）。同一 server:port 只有
+  一条共享监听（与地址族无关）：IPv4 与 IPv6 链可同时并入，任一条链选 IPv6 即监听 `::`
+  同时服务两族；成员链各自按自己的入口跳地址输出订阅。
 - **隧道口安全**：portal = 每跳独立的 VLESS+Reality inbound（不共享，吊销粒度细）；
   密钥对由该跳 agent 生成、随 `RPC response` 上报，私钥不出服务器（沿用[虚拟配置](control-channel.md)原则）。
   无认证的隧道监听口会成为开放中继，明确禁止。
@@ -91,7 +95,7 @@
 - install.sh 与引导流程（见[引导与运维](onboarding-and-ops.md)）不变；机器类型与端口段是面板侧元数据，不下发到 agent
   （NAT 受限直连机经 `port_candidates` 下发段内监听候选：自动端口段内挑选、手动端口段内校验）。
 
-**订阅**：条目 = 入口 Endpoint 的 `address:public_port` + Endpoint 的 public_key/short_id + assignment `access_uuid`；
+**订阅**：条目 = 入口 Endpoint 的 `address:public_port`（address = 入口跳所选公网地址引用，空/失效回退服务器默认地址，§9）+ Endpoint 的 public_key/short_id + assignment `access_uuid`；
 命名沿用 `{入口别名}-{协议}-{端口}`；links 端点同构（见[订阅](subscription.md)）。
 
 **端口复用**：自动选端口只挑空闲端口——独立 IP 机挑随机空闲端口（443 不再是默认/首选），NAT 机
