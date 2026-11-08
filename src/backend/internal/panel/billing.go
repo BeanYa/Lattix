@@ -419,6 +419,35 @@ func trafficUsed(mode string, tx, rx int64) int64 {
 	return tx
 }
 
+// serverTrafficUsage 单台服务器当前计费周期的网络用量：Start/Next 为周期起止
+// （服务器时区本地零点），TX/RX 为周期内网卡增量，Used 按 accounting_mode 折算。
+type serverTrafficUsage struct {
+	Start time.Time
+	Next  time.Time
+	TX    int64
+	RX    int64
+	Used  int64
+}
+
+// serverTrafficUsageAt 解析 plan 在 today 所属的计费周期并读取该周期已发生网卡用量。
+// 单服务器 DTO（enrichServerBilling）与全网额度汇总（trafficQuotaSummary）共用这一
+// 口径，避免两处各写一份周期与折算逻辑；reset_anchor_on 非法时返回 *time.ParseError。
+func (s *Server) serverTrafficUsageAt(ctx context.Context, serverID int64, plan store.ServerTrafficPlan, loc *time.Location, today time.Time) (serverTrafficUsage, error) {
+	var usage serverTrafficUsage
+	anchor, err := time.ParseInLocation("2006-01-02", plan.ResetAnchorOn, loc)
+	if err != nil {
+		return usage, err
+	}
+	usage.Start, usage.Next = trafficPeriod(anchor, today, plan.ResetCount, plan.ResetUnit)
+	tx, rx, err := s.st.ServerNetworkUsage(ctx, serverID, usage.Start.Format("2006-01-02"), today.Format("2006-01-02"))
+	if err != nil {
+		return usage, err
+	}
+	usage.TX, usage.RX = tx, rx
+	usage.Used = trafficUsed(plan.AccountingMode, tx, rx)
+	return usage, nil
+}
+
 func (s *Server) enrichServerBilling(ctx context.Context, dto *serverDTO, billing map[int64]store.ServerBilling, plans map[int64]store.ServerTrafficPlan, providers map[int64]store.Provider) error {
 	if b, ok := billing[dto.ID]; ok {
 		value := billingDTO{Enabled: b.Enabled, AmountMinor: b.AmountMinor, Currency: b.Currency, ServiceStartedOn: b.ServiceStartedOn,
@@ -441,18 +470,13 @@ func (s *Server) enrichServerBilling(ctx context.Context, dto *serverDTO, billin
 	}
 	loc := s.inspectionLocation(ctx)
 	today := time.Now().In(loc)
-	anchor, err := time.ParseInLocation("2006-01-02", p.ResetAnchorOn, loc)
-	if err != nil {
-		return err
-	}
-	start, next := trafficPeriod(anchor, today, p.ResetCount, p.ResetUnit)
-	tx, rx, err := s.st.ServerNetworkUsage(ctx, dto.ID, start.Format("2006-01-02"), today.Format("2006-01-02"))
+	usage, err := s.serverTrafficUsageAt(ctx, dto.ID, p, loc, today)
 	if err != nil {
 		return err
 	}
 	dto.TrafficPlan = trafficPlanDTO{QuotaBytes: p.QuotaBytes, AccountingMode: p.AccountingMode, ResetAnchorOn: p.ResetAnchorOn,
-		ResetCount: p.ResetCount, ResetUnit: p.ResetUnit, PeriodStartedOn: start.Format("2006-01-02"), NextResetOn: next.Format("2006-01-02"),
-		TXBytes: tx, RXBytes: rx, UsedBytes: trafficUsed(p.AccountingMode, tx, rx), Complete: p.TrackingStartedOn <= start.Format("2006-01-02")}
+		ResetCount: p.ResetCount, ResetUnit: p.ResetUnit, PeriodStartedOn: usage.Start.Format("2006-01-02"), NextResetOn: usage.Next.Format("2006-01-02"),
+		TXBytes: usage.TX, RXBytes: usage.RX, UsedBytes: usage.Used, Complete: p.TrackingStartedOn <= usage.Start.Format("2006-01-02")}
 	return nil
 }
 

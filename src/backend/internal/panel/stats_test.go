@@ -280,11 +280,11 @@ func TestStatsTrafficBreakdown(t *testing.T) {
 
 	// 校验：缺 server_id/user_uuid、from>=to、非 Unix 秒单位（毫秒回归）。
 	for name, rawQuery := range map[string]string{
-		"missing target":         "",
-		"from equals to":         "server_id=" + itoa64(aID) + "&from=100&to=100",
-		"invalid server_id":      "server_id=abc",
-		"invalid from":           "server_id=" + itoa64(aID) + "&from=abc&to=200",
-		"from in milliseconds":   "server_id=" + itoa64(aID) + "&from=1790000000000&to=1790000036000",
+		"missing target":       "",
+		"from equals to":       "server_id=" + itoa64(aID) + "&from=100&to=100",
+		"invalid server_id":    "server_id=abc",
+		"invalid from":         "server_id=" + itoa64(aID) + "&from=abc&to=200",
+		"from in milliseconds": "server_id=" + itoa64(aID) + "&from=1790000000000&to=1790000036000",
 	} {
 		env := callStatsHandler(t, serverAPI, serverAPI.handleStatsTrafficBreakdown, rawQuery)
 		if env.Code != "INVALID_ARGUMENT" {
@@ -375,5 +375,98 @@ func TestStatsErrorsSummaryWithoutOperationLog(t *testing.T) {
 	env := callStatsHandler(t, serverAPI, serverAPI.handleStatsErrorsSummary, "")
 	if env.Code != "SERVICE_UNAVAILABLE" {
 		t.Fatalf("code = %q, want SERVICE_UNAVAILABLE", env.Code)
+	}
+}
+
+// seedTrafficPlan 写入服务器计划（锚点=今天、每 1 个月重置、今天开始跟踪），
+// 使 overview 的额度汇总按“今天所属周期”统计到本测试当天写的网卡增量。
+func seedTrafficPlan(t *testing.T, st *store.Store, serverID int64, quota *int64, mode string) {
+	t.Helper()
+	today := time.Now().In(time.Local).Format("2006-01-02")
+	if err := st.UpsertServerTrafficPlan(context.Background(), store.ServerTrafficPlan{
+		ServerID: serverID, QuotaBytes: quota, AccountingMode: mode,
+		ResetAnchorOn: today, ResetCount: 1, ResetUnit: "month", TrackingStartedOn: today,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedServerNetworkUsage 以两次主机遥测采样产生 server_network_usage_daily 增量：
+// 首次采样只落基线（无上一行，不产生增量），第二次相对基线产生 txDelta/rxDelta。
+func seedServerNetworkUsage(t *testing.T, st *store.Store, serverID int64, txDelta, rxDelta uint64) {
+	t.Helper()
+	ctx := context.Background()
+	if err := st.SaveServerMetrics(ctx, serverID, store.ServerMetrics{NetworkInterface: "eth0", UptimeSeconds: 1000}, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveServerMetrics(ctx, serverID, store.ServerMetrics{
+		NetworkInterface: "eth0", UptimeSeconds: 2000,
+		NetworkTXBytes: txDelta, NetworkRXBytes: rxDelta,
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStatsTrafficOverviewTrafficQuotaSummary(t *testing.T) {
+	st, serverAPI, aID, bID, userUUID := statsFixture(t)
+	seedStatsTraffic(t, st, aID, bID, userUUID)
+
+	quota := int64(10 << 30) // 10 GiB
+	seedTrafficPlan(t, st, aID, &quota, "outbound")
+	seedTrafficPlan(t, st, bID, nil, "bidirectional")
+	seedServerNetworkUsage(t, st, aID, 2000, 5000) // outbound → 已用 2000
+	seedServerNetworkUsage(t, st, bID, 1000, 3000) // bidirectional → 已用 4000
+
+	// decodeQuota 解析 overview 的 traffic_quota 嵌套对象。
+	decodeQuota := func(env rpcEnvelope) (total, current, used int64, limited int) {
+		t.Helper()
+		var data struct {
+			TrafficQuota struct {
+				TotalAvailableBytes   int64 `json:"total_available_bytes"`
+				CurrentAvailableBytes int64 `json:"current_available_bytes"`
+				UsedBytes             int64 `json:"used_bytes"`
+				LimitedServers        int   `json:"limited_servers"`
+			} `json:"traffic_quota"`
+		}
+		if err := json.Unmarshal(env.Data, &data); err != nil {
+			t.Fatalf("decode overview data: %v, data = %s", err, env.Data)
+		}
+		quota := data.TrafficQuota
+		return quota.TotalAvailableBytes, quota.CurrentAvailableBytes, quota.UsedBytes, quota.LimitedServers
+	}
+
+	env := callStatsHandler(t, serverAPI, serverAPI.handleStatsTrafficOverview, "")
+	if env.Code != "OK" {
+		t.Fatalf("code = %q message = %q, want OK", env.Code, env.Message)
+	}
+	total, current, used, limited := decodeQuota(env)
+	if total != quota {
+		t.Fatalf("total_available_bytes = %d, want %d（仅已设上限服务器）", total, quota)
+	}
+	if used != 6000 {
+		t.Fatalf("used_bytes = %d, want 6000（全部服务器，按各自 accounting_mode）", used)
+	}
+	if current != quota-6000 {
+		t.Fatalf("current_available_bytes = %d, want %d", current, quota-6000)
+	}
+	if limited != 1 {
+		t.Fatalf("limited_servers = %d, want 1", limited)
+	}
+
+	// 无限额（quota NULL）不计入总可用，但其已用仍计入 used → 当前可用为负。
+	seedTrafficPlan(t, st, aID, nil, "outbound")
+	env = callStatsHandler(t, serverAPI, serverAPI.handleStatsTrafficOverview, "")
+	if env.Code != "OK" {
+		t.Fatalf("code = %q message = %q, want OK", env.Code, env.Message)
+	}
+	total, current, used, limited = decodeQuota(env)
+	if total != 0 || limited != 0 {
+		t.Fatalf("无限额时 total/limited = %d/%d, want 0/0", total, limited)
+	}
+	if used != 6000 {
+		t.Fatalf("无限额时 used_bytes = %d, want 6000（无限额服务器已用仍计入）", used)
+	}
+	if current != -6000 {
+		t.Fatalf("无限额时 current_available_bytes = %d, want -6000", current)
 	}
 }

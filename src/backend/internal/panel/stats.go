@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -10,16 +11,28 @@ import (
 	"lattix/backend/internal/store"
 )
 
+// trafficQuotaSummaryDTO 是被控服务器流量额度汇总（被控统计页「服务器流量额度」三卡）：
+// 总可用仅累加已设上限服务器的上限；已用累加全部服务器当前计费周期已用，故当前可用
+// 可能为负（已用超出总上限）。
+type trafficQuotaSummaryDTO struct {
+	TotalAvailableBytes   int64 `json:"total_available_bytes"`
+	CurrentAvailableBytes int64 `json:"current_available_bytes"`
+	UsedBytes             int64 `json:"used_bytes"`
+	LimitedServers        int   `json:"limited_servers"`
+}
+
 // statsOverviewDTO 匿名嵌入 store 概览（JSON 打平），agents_online/agents_total
-// 与 runtime.go 的 services 快照同源（ListServers + AgentRequester.IsOnline）。
+// 与 runtime.go 的 services 快照同源（ListServers + AgentRequester.IsOnline）；
+// traffic_quota 为被控服务器流量额度汇总（与单机 traffic_plan 同口径）。
 type statsOverviewDTO struct {
 	*store.TrafficStatsOverview
-	AgentsOnline int `json:"agents_online"`
-	AgentsTotal  int `json:"agents_total"`
+	AgentsOnline int                    `json:"agents_online"`
+	AgentsTotal  int                    `json:"agents_total"`
+	TrafficQuota trafficQuotaSummaryDTO `json:"traffic_quota"`
 }
 
 // handleStatsTrafficOverview GET /api/stats/traffic/overview：今日/本月总量、
-// 环比与 Top 榜（store 内固定 Top 10）+ 被控在线/总数。
+// 环比与 Top 榜（store 内固定 Top 10）+ 被控在线/总数 + 被控服务器流量额度汇总。
 func (s *Server) handleStatsTrafficOverview(w http.ResponseWriter, r *http.Request) {
 	overview, err := s.st.TrafficStatsOverview(r.Context(), 10)
 	if err != nil {
@@ -27,17 +40,66 @@ func (s *Server) handleStatsTrafficOverview(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	dto := statsOverviewDTO{TrafficStatsOverview: overview}
-	if servers, err := s.st.ListServers(r.Context()); err == nil {
-		dto.AgentsTotal = len(servers)
-		if s.req != nil {
-			for _, server := range servers {
-				if s.req.IsOnline(server.ID) {
-					dto.AgentsOnline++
-				}
+	servers, err := s.st.ListServers(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	dto.AgentsTotal = len(servers)
+	if s.req != nil {
+		for _, server := range servers {
+			if s.req.IsOnline(server.ID) {
+				dto.AgentsOnline++
 			}
 		}
 	}
+	quota, err := s.trafficQuotaSummary(r.Context(), servers)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	dto.TrafficQuota = quota
 	writeJSON(w, http.StatusOK, dto)
+}
+
+// trafficQuotaSummary 汇总被控服务器流量额度：
+//   - 总可用流量 = 已设上限（quota_bytes 非空且 > 0）服务器的上限加总，无限/未设置
+//     上限的服务器不计入；
+//   - 已用流量 = 全部服务器当前计费周期已用字节加总（口径按各服务器 accounting_mode，
+//     与单机 traffic_plan.used_bytes 同源，无限额服务器的用量同样计入）；
+//   - 当前可用流量 = 总可用流量 − 已用流量（可为负 = 已用超出总上限）。
+//
+// traffic plan 缺失或 reset_anchor_on 损坏的服务器无法确定计费周期，跳过该服务器
+// 而非阻断监控页；存储读取失败仍向上返回错误。
+func (s *Server) trafficQuotaSummary(ctx context.Context, servers []store.Server) (trafficQuotaSummaryDTO, error) {
+	var summary trafficQuotaSummaryDTO
+	plans, err := s.st.ServerTrafficPlanMap(ctx)
+	if err != nil {
+		return summary, err
+	}
+	loc := s.inspectionLocation(ctx)
+	today := time.Now().In(loc)
+	for _, server := range servers {
+		plan, ok := plans[server.ID]
+		if !ok {
+			continue
+		}
+		usage, err := s.serverTrafficUsageAt(ctx, server.ID, plan, loc, today)
+		if err != nil {
+			var parseErr *time.ParseError
+			if errors.As(err, &parseErr) {
+				continue // 损坏的计费周期锚点：跳过该服务器，不阻断汇总
+			}
+			return summary, err
+		}
+		summary.UsedBytes += usage.Used
+		if plan.QuotaBytes != nil && *plan.QuotaBytes > 0 {
+			summary.TotalAvailableBytes += *plan.QuotaBytes
+			summary.LimitedServers++
+		}
+	}
+	summary.CurrentAvailableBytes = summary.TotalAvailableBytes - summary.UsedBytes
+	return summary, nil
 }
 
 // parseStatsUnixSeconds 解析可选的 Unix 秒查询参数，返回（值, 是否提供, 是否合法）。

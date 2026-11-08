@@ -132,6 +132,24 @@
   color: var(--panel-danger);
 }
 
+/* ---------- 服务器流量额度三卡 ---------- */
+
+.rt-quota-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--panel-rule);
+}
+
+.rt-stat-value[data-tone='danger'] {
+  color: var(--panel-danger);
+}
+
+.rt-quota-note {
+  padding: 7px 11px;
+  border-top: 1px solid var(--panel-rule);
+}
+
 /* ---------- 粒度 Tabs + 全网趋势 ---------- */
 
 .rt-head-actions [data-slot='tabs-list'] {
@@ -303,6 +321,10 @@
 @media (max-width: 767px) {
   .rt-stat-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .rt-quota-grid {
+    grid-template-columns: 1fr;
   }
 
   .rt-top-grid {

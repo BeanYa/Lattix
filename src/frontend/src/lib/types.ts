@@ -1257,6 +1257,18 @@ export interface TrafficStatTopItem {
   down: number
 }
 
+/** TrafficQuotaSummary 是被控服务器流量额度汇总（被控统计页「服务器流量额度」三卡）。 */
+export interface TrafficQuotaSummary {
+  /** 总可用流量：已设流量上限服务器的上限加总（无限/未设置上限的服务器不计入）。 */
+  total_available_bytes: number
+  /** 当前可用流量：总可用流量 − 已用流量（可为负，表示已用超出总上限）。 */
+  current_available_bytes: number
+  /** 已用流量：全部被控服务器当前计费周期已用字节加总（按各服务器计费口径）。 */
+  used_bytes: number
+  /** 计入总可用流量的服务器数（已设流量上限）。 */
+  limited_servers: number
+}
+
 export interface TrafficStatsOverview {
   today: TrafficVolume
   today_prev: TrafficVolume
@@ -1266,6 +1278,7 @@ export interface TrafficStatsOverview {
   agents_total: number
   top_servers: TrafficStatTopItem[]
   top_users: TrafficStatTopItem[]
+  traffic_quota: TrafficQuotaSummary
 }
 
 export interface TrafficStatBreakdownRow {

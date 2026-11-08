@@ -3,7 +3,10 @@ import { Link } from 'wouter'
 import {
   AlertTriangleIcon,
   ArrowDownIcon,
+  ArrowDownUpIcon,
   ArrowUpIcon,
+  DatabaseIcon,
+  GaugeIcon,
   ServerIcon,
   UsersIcon,
   WaypointsIcon,
@@ -22,6 +25,7 @@ import { buildTrafficBarOption } from '@/pages/runtime/traffic-chart'
 import { useTrafficStats, type TrafficStatGranularity } from '@/pages/runtime/use-traffic-stats'
 
 import './agents-stats.css'
+import { quotaCardViews, type QuotaCardView } from './agents-quota'
 
 const GRANULARITY_ORDER: TrafficStatGranularity[] = ['5m', '15m', '1h', 'day', 'month']
 
@@ -84,6 +88,23 @@ function DeltaCard({
         {delta === null ? '—' : formatDelta(delta)}
       </strong>
       <small className="rt-stat-detail">{detail}</small>
+    </article>
+  )
+}
+
+function QuotaCard({ icon, label, view }: { icon: ReactNode; label: string; view: QuotaCardView }) {
+  return (
+    <article className="rt-stat-cell">
+      <span className="rt-stat-label">
+        {icon}
+        {label}
+      </span>
+      <strong className="rt-stat-value" data-tone={view.tone}>
+        {view.value}
+      </strong>
+      <small className="rt-stat-detail" title={view.detail}>
+        {view.detail}
+      </small>
     </article>
   )
 }
@@ -213,6 +234,7 @@ export default function AgentsStatsTab() {
 
   const todayDelta = periodDelta(overview.today, overview.today_prev)
   const monthDelta = periodDelta(overview.month, overview.month_prev)
+  const quotaCards = quotaCardViews(overview.traffic_quota, overview.agents_total)
   const todayErrorCount = errors?.today_error_count ?? null
 
   return (
@@ -255,6 +277,19 @@ export default function AgentsStatsTab() {
             <small className="rt-stat-detail">查看运营日志 ›</small>
           </Link>
         </div>
+      </section>
+
+      {/* 被控服务器流量额度：上限加总 / 当前可用 / 已用 */}
+      <section className="rt-mod" aria-label="服务器流量额度">
+        <ModuleHead tab="QUOTA" title="服务器流量额度" meta="被控服务器口径" />
+        <div className="rt-quota-grid">
+          <QuotaCard icon={<DatabaseIcon />} label="总可用流量" view={quotaCards.total} />
+          <QuotaCard icon={<GaugeIcon />} label="当前可用流量" view={quotaCards.current} />
+          <QuotaCard icon={<ArrowDownUpIcon />} label="已用流量" view={quotaCards.used} />
+        </div>
+        <p className="rt-note rt-quota-note">
+          不限流量或未设置流量限制的服务器不计入总可用流量；已用流量为全部被控服务器当前计费周期已用。
+        </p>
       </section>
 
       {/* 粒度 + 全网趋势 */}
