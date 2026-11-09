@@ -45,6 +45,11 @@
 
 ### Fixed
 
+- 修复 GitHub release 资产直链偶发 504 导致 Agent 安装/升级在“agent 包下载失败”处中止：
+  安装器与 `latx`/`latx-ag` 更新在直链失败后先短暂重试，再回退到同一发布资产的 GitHub
+  API 端点下载（仍按 `checksums.txt` 校验，供应链边界不变）；根安装器还会预取 agent
+  包并以本地 `LATX_RELEASE_BASE` 交给已发布 tag 的子安装器，使钉版旧版本的安装命令
+  同样绕开 release CDN 故障。
 - 修复面板“xray 版本”设置在 Agent 引导安装阶段未生效：新建服务器与轮换凭证生成的
   安装命令现在按服务器生效设置（面板默认 + 单服务器覆盖）追加 `--xray-version`，
   安装即装指定版本，不再先装最新版等待首连后对齐；`latest`/未设置仍由安装脚本解析
