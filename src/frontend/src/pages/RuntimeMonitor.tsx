@@ -32,6 +32,7 @@ import type { PanelLifecycleState, PanelRuntimeSnapshot, ScheduledTaskRuntime } 
 import { cn } from '@/lib/utils'
 
 import AgentsStatsTab from './runtime/AgentsStatsTab'
+import ServerInspectionTab from './runtime/ServerInspectionTab'
 
 import './runtime-monitor.css'
 
@@ -53,6 +54,7 @@ const taskLabels: Record<string, string> = {
   'release.agent': 'Agent 版本巡检',
   'release.xray': 'Xray 版本巡检',
   'server.ban-watch': 'Ban 告警巡检',
+  'server.inspection': '服务器周体检',
   'subscription.templates.refresh': '订阅模板刷新',
   'traffic.reset': '流量周期重置',
   'traffic_stats.retention': '流量统计清理',
@@ -712,25 +714,34 @@ function PanelRuntimeSection() {
 }
 
 export default function RuntimeMonitor() {
-  const [tab, setTab] = useState<'panel' | 'agents'>('panel')
+  const [tab, setTab] = useState<'panel' | 'agents' | 'inspections'>('panel')
 
   return (
     <Page className="rt">
-      <PageHeader title="运行监控" description="面板进程、宿主资源与后台任务的实时状态。" />
+      <PageHeader
+        title="运行监控"
+        description="面板进程、宿主资源、被控统计与直连机周体检的实时状态。"
+      />
       <Tabs
         value={tab}
-        onValueChange={(value) => setTab(value === 'agents' ? 'agents' : 'panel')}
+        onValueChange={(value) =>
+          setTab(value === 'agents' ? 'agents' : value === 'inspections' ? 'inspections' : 'panel')
+        }
         className="rt-tabs"
       >
         <TabsList>
           <TabsTrigger value="panel">Panel 运行</TabsTrigger>
           <TabsTrigger value="agents">被控统计</TabsTrigger>
+          <TabsTrigger value="inspections">服务器体检</TabsTrigger>
         </TabsList>
         <TabsContent value="panel" className="rt-tab-panel">
           <PanelRuntimeSection />
         </TabsContent>
         <TabsContent value="agents" className="rt-tab-panel">
           <AgentsStatsTab />
+        </TabsContent>
+        <TabsContent value="inspections" className="rt-tab-panel">
+          <ServerInspectionTab />
         </TabsContent>
       </Tabs>
     </Page>

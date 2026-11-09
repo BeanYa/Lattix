@@ -309,6 +309,7 @@ export interface ServerTestTask {
   server_id: number
   task_id: string
   generation: number
+  source: 'manual' | 'inspection'
   status: ServerTestTaskStatus
   categories: ServerTestCategory[]
   catalog_version: string
@@ -1287,4 +1288,98 @@ export interface TrafficStatBreakdownRow {
   label: string
   up: number
   down: number
+}
+
+export type ServerInspectionStatus =
+  | 'queued'
+  | 'accepted'
+  | 'running'
+  | 'succeeded'
+  | 'completed_with_errors'
+  | 'failed'
+  | 'superseded'
+
+export interface ServerInspectionIPQualityFamily {
+  family: string
+  ip?: string
+  type?: string
+  asn?: string
+  organization?: string
+  country_code?: string
+  dnsbl_total: number
+  dnsbl_clean: number
+  dnsbl_marked: number
+  dnsbl_blacklisted: number
+  media_unlocked: number
+  media_total: number
+  risk_flags: number
+}
+
+export interface ServerInspectionIPQuality {
+  status: string
+  script_version?: string
+  script_stale?: boolean
+  families?: ServerInspectionIPQualityFamily[]
+}
+
+export interface ServerInspectionTCPIPv4 {
+  status: string
+  targets: number
+  failed: number
+  avg_rtt_ms?: number
+  max_loss_percent?: number
+  worst_target?: string
+}
+
+export interface ServerInspectionConnectivity {
+  status: string
+  targets: number
+  failed: number
+  avg_rtt_ms?: number
+}
+
+export interface ServerInspectionCatalogProbe {
+  label: string
+  carrier: string
+  latency_ms?: number | null
+  loss_percent?: number | null
+  measured_at?: string
+}
+
+export interface ServerInspectionCatalogProbes {
+  province: string
+  city?: string
+  rows: ServerInspectionCatalogProbe[]
+}
+
+export interface ServerInspectionSummary {
+  status: ServerTestTaskStatus
+  ip_quality?: ServerInspectionIPQuality
+  tcp_ipv4?: ServerInspectionTCPIPv4
+  connectivity?: ServerInspectionConnectivity
+  warnings?: string[]
+  catalog_probes?: ServerInspectionCatalogProbes
+}
+
+export interface ServerInspectionRun {
+  task_id: string
+  status: ServerInspectionStatus
+  started_at: string
+  completed_at?: string
+  error_code?: string
+  error_message?: string
+  summary?: ServerInspectionSummary
+}
+
+export interface ServerInspectionItem {
+  server_id: number
+  server_alias: string
+  machine_type: MachineType
+  latest?: ServerInspectionRun
+  history: ServerInspectionRun[]
+}
+
+export interface ServerInspectionsResponse {
+  generated_at: string
+  items: ServerInspectionItem[]
 }

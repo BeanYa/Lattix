@@ -1,0 +1,57 @@
+{
+  "name": "Lattix",
+  "short_name": "Lattix",
+  "description": "自托管代理基础设施运维面板：控制台、服务器、链路、用户与订阅。",
+  "lang": "zh-CN",
+  "start_url": "/board",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#0c0d0e",
+  "background_color": "#14100d",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "控制台",
+      "short_name": "控制台",
+      "url": "/board",
+      "description": "查看待处理请求与面板状态"
+    },
+    {
+      "name": "服务器",
+      "short_name": "服务器",
+      "url": "/network/servers",
+      "description": "查看服务器连接与状态"
+    },
+    {
+      "name": "链路",
+      "short_name": "链路",
+      "url": "/network/chains",
+      "description": "查看链路与部署状态"
+    }
+  ]
+}

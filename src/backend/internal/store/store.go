@@ -169,11 +169,13 @@ CREATE TABLE IF NOT EXISTS commands (
 
 -- 每台服务器仅保留最新一次原子测试任务与最终报告。进度是易失的，
 -- 由 Panel 进程内存维护；generation 决定迟到结果是否可覆盖。
+-- source 区分管理员手动测试与自动周体检；后者在面板侧另存摘要历史。
 CREATE TABLE IF NOT EXISTS server_test_tasks (
     server_id       INTEGER PRIMARY KEY REFERENCES servers(id),
     task_id         TEXT    NOT NULL UNIQUE,
     generation      INTEGER NOT NULL,
     request_id      TEXT    NOT NULL UNIQUE,
+    source          TEXT    NOT NULL DEFAULT 'manual', -- manual|inspection
     status          TEXT    NOT NULL DEFAULT 'queued',
     categories      TEXT    NOT NULL, -- JSON string array
     catalog_version TEXT    NOT NULL,
@@ -189,6 +191,24 @@ CREATE TABLE IF NOT EXISTS server_test_tasks (
     completed_at    DATETIME,
     updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- 服务器周体检的面板侧历史。每行对应一次自动体检（task_id 关联
+-- server_test_tasks 的当前任务）；summary_json 为压缩后的摘要，完整报告
+-- 仍只由 Agent/面板各保留最后一份。历史保留最近 26 次，供运行监控汇总。
+CREATE TABLE IF NOT EXISTS server_inspection_runs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_id     INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+    task_id       TEXT    NOT NULL UNIQUE,
+    status        TEXT    NOT NULL DEFAULT 'queued',
+    summary_json  TEXT    NOT NULL DEFAULT '',
+    error_code    TEXT    NOT NULL DEFAULT '',
+    error_message TEXT    NOT NULL DEFAULT '',
+    started_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at  DATETIME,
+    updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_server_inspection_runs_server_started
+    ON server_inspection_runs(server_id, started_at DESC);
 
 CREATE TABLE IF NOT EXISTS server_test_result_chunks (
     server_id   INTEGER NOT NULL REFERENCES servers(id),

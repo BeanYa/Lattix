@@ -173,6 +173,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/server/inspections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description 服务器周体检汇总（§server-testing，运行监控页轮询）：仅直连机型参与。
+         *     面板复用 server-test 原子任务，每周（或首次连上/重连且超过 7 天）自动执行
+         *     ip_quality、tcp_ipv4、connectivity 三类并保存紧凑摘要；latest 为最近一次
+         *     体检尝试（含失败/在途），history 为最近 8 次。summary 内另含完成时刻的
+         *     三网测速快照（catalog_probes）。NAT 机型不出现在 items 中。
+         */
+        get: operations["serverInspections"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/server/run-test": {
         parameters: {
             query?: never;
@@ -2390,6 +2413,19 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    serverInspections: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     serverRunTest: {
         parameters: {
             query?: never;
@@ -4169,6 +4205,7 @@ export const rpcOperations = {
   serverListCommands: { method: 'GET', path: '/api/server/list-commands' },
   serverGetTest: { method: 'GET', path: '/api/server/get-test' },
   serverCatalogProbes: { method: 'GET', path: '/api/server/catalog-probes' },
+  serverInspections: { method: 'GET', path: '/api/server/inspections' },
   serverRunTest: { method: 'POST', path: '/api/server/run-test' },
   serverTestCatalogStatus: { method: 'GET', path: '/api/server-test/catalog-status' },
   serverTestRefreshCatalog: { method: 'POST', path: '/api/server-test/refresh-catalog' },

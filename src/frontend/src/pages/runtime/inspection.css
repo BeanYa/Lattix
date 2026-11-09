@@ -1,0 +1,347 @@
+/* ============================================================
+   服务器体检（运行监控 Tab）— 与 runtime-monitor 同一世界。
+   复用 rt-mod / rt-note 模块壳，表格使用发丝线网格；
+   状态色只作信号，IP 质量与三网样本保持可扫描的密度。
+   ============================================================ */
+
+.rt-insp-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--panel-rule);
+  border-top: 1px solid var(--panel-rule);
+}
+
+.rt-insp-stat {
+  min-height: 64px;
+}
+
+.rt-insp-note {
+  margin: 0;
+  padding: 8px 11px 9px;
+  border-top: 1px solid var(--panel-rule);
+}
+
+.rt-insp-wrap {
+  overflow-x: auto;
+}
+
+.rt-insp-table {
+  width: 100%;
+  min-width: 1060px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.rt-insp-table th {
+  height: 27px;
+  padding: 0 9px;
+  border-bottom: 1px solid var(--panel-rule);
+  background: var(--panel-inset);
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.rt-insp-table td {
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--panel-rule);
+  color: var(--panel-ink);
+  vertical-align: top;
+}
+
+.rt-insp-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.rt-insp-table tbody tr:hover {
+  background: var(--panel-hover);
+}
+
+.rt-insp-server {
+  display: flex;
+  min-width: 150px;
+  align-items: center;
+  gap: 7px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.rt-insp-server > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--panel-ink-3);
+}
+
+.rt-insp-server > span {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.rt-insp-server strong {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rt-insp-server small {
+  color: var(--panel-ink-3);
+  font-family: var(--panel-mono);
+  font-size: 10.5px;
+}
+
+.rt-insp-server:hover strong {
+  color: var(--panel-signal);
+}
+
+.rt-insp-server:hover > svg:last-child {
+  color: var(--panel-signal);
+}
+
+.rt-insp-stack {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.rt-insp-primary {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--panel-mono);
+  font-size: 12.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rt-insp-muted {
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.rt-insp-error {
+  overflow: hidden;
+  color: var(--panel-danger);
+  font-family: var(--panel-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rt-insp-family {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  min-width: 0;
+}
+
+.rt-insp-family-text {
+  overflow: hidden;
+  max-width: 190px;
+  color: var(--panel-ink-2);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rt-insp-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 2px;
+  background: var(--panel-inset);
+  color: var(--panel-ink-2);
+  font-family: var(--panel-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+.rt-insp-chip[data-tone='danger'] {
+  border-color: color-mix(in srgb, var(--panel-danger) 42%, transparent);
+  background: var(--panel-danger-soft);
+  color: var(--panel-danger);
+}
+
+.rt-insp-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--panel-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rt-insp-dot.is-ok {
+  color: var(--panel-success);
+}
+
+.rt-insp-dot.is-warn {
+  color: var(--panel-warning);
+}
+
+.rt-insp-dot.is-danger {
+  color: var(--panel-danger);
+}
+
+.rt-insp-media {
+  color: var(--panel-ink-3);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.rt-insp-carrier-list {
+  display: grid;
+  gap: 2px;
+  min-width: 170px;
+}
+
+.rt-insp-carrier {
+  display: grid;
+  grid-template-columns: minmax(60px, 1fr) auto auto;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--panel-ink-3);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.rt-insp-carrier strong {
+  color: var(--panel-ink);
+  font-family: var(--panel-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rt-insp-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--panel-warning);
+  font-family: var(--panel-mono);
+  font-size: 10.5px;
+}
+
+.rt-insp-warn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.rt-insp-history-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--panel-ink-3);
+  cursor: pointer;
+  font-family: var(--panel-mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.rt-insp-history-toggle:hover {
+  color: var(--panel-signal);
+}
+
+.rt-insp-history-toggle svg {
+  width: 11px;
+  height: 11px;
+}
+
+.rt-insp-history-toggle svg:last-child {
+  transition: transform 120ms ease;
+}
+
+.rt-insp-history-toggle svg:last-child.is-open {
+  transform: rotate(180deg);
+}
+
+.rt-insp-history-line > td {
+  padding: 0 !important;
+  background: var(--panel-inset);
+}
+
+.rt-insp-history-panel {
+  display: grid;
+  gap: 1px;
+  padding: 6px 9px 8px 30px;
+  border-bottom: 1px solid var(--panel-rule);
+}
+
+.rt-insp-history-title {
+  color: var(--panel-ink-3);
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.rt-insp-history-row {
+  display: grid;
+  grid-template-columns: 128px 90px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  border-top: 1px solid color-mix(in srgb, var(--panel-rule) 55%, transparent);
+  font-size: 11px;
+}
+
+.rt-insp-history-row:first-of-type {
+  border-top: 0;
+}
+
+.rt-insp-history-time {
+  color: var(--panel-ink-2);
+  font-family: var(--panel-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.rt-insp-history-metrics {
+  overflow: hidden;
+  color: var(--panel-ink-3);
+  font-family: var(--panel-mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rt-insp-empty {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 16px 12px;
+  color: var(--panel-ink-2);
+  font-size: 13px;
+}
+
+.rt-insp-empty svg {
+  width: 15px;
+  height: 15px;
+  color: var(--panel-ink-3);
+}
+
+@media (max-width: 900px) {
+  .rt-insp-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

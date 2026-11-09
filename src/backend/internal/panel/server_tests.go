@@ -25,6 +25,7 @@ type serverTestDTO struct {
 	ServerID       int64                             `json:"server_id"`
 	TaskID         string                            `json:"task_id"`
 	Generation     int64                             `json:"generation"`
+	Source         string                            `json:"source"`
 	Status         shared.ServerTestTaskStatus       `json:"status"`
 	Categories     []shared.ServerTestCategory       `json:"categories"`
 	CatalogVersion string                            `json:"catalog_version"`
@@ -101,7 +102,7 @@ func (s *Server) handleGetServerTest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serverTestDTO(task *store.ServerTestTask) serverTestDTO {
 	return serverTestDTO{
 		ServerID: task.ServerID, TaskID: task.TaskID, Generation: task.Generation,
-		Status: task.Status, Categories: task.Categories,
+		Source: string(task.Source), Status: task.Status, Categories: task.Categories,
 		CatalogVersion: task.CatalogVersion, CatalogHashes: task.CatalogHashes,
 		Progress: s.disp.ServerTestProgress(task.ServerID), Result: task.Result,
 		ErrorCode: task.ErrorCode, ErrorMessage: task.ErrorMessage, AgentVersion: task.AgentVersion,

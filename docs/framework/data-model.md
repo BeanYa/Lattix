@@ -32,6 +32,7 @@
 | `server_latency_probes` / `server_latency_history` | 链路测速有向服务器对延迟（panel 调度 latency.probe 轮次）与历史，见[链路统计设计](../chain-link-stats-design.md) |
 | `server_catalog_probes` / `server_catalog_probe_history` | 三网目录测速（省市 × 电信/联通/移动 TCP 握手 RTT），见[服务器测试设计](../server-testing-design.md) |
 | `server_test_tasks` / `server_test_result_chunks` | 服务器测试原子任务与分块结果，见[服务器测试设计](../server-testing-design.md) |
+| `server_inspection_runs` | 直连机周体检的面板侧紧凑摘要历史（每台最近 26 次），见[服务器测试设计](../server-testing-design.md#13-自动周体检直连机型) |
 | `server_ban_watch` | Ban 观察状态机快照（normal/suspected/banned/recovering），见[服务器维护](server-maintenance.md) |
 | `link_groups` / `link_group_chains` / `link_group_external_subscriptions` | 链路分组及其成员（共享入口链路多条编排、外部订阅整体原子参与，见[用户与分组](users-and-groups.md)） |
 | `user_groups` / `user_group_members` / `user_group_links` | 用户分组、成员及「用户组 × 链路分组」关联（组内用户订阅由分组派生） |

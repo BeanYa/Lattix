@@ -339,6 +339,8 @@ func run() error {
 		dispatcher.OnAgentConnect(runCtx, serverID)
 		// 链 degraded 推导（§21.1）：重算受影响链，全部跳在线且跳 active 的恢复 active。
 		dispatcher.RecomputeChainsByServer(serverID)
+		// 周体检：首次加机/重连时若无记录或已过 7 天则立即排队（目录未就绪由调度补跑）。
+		go ps.StartServerInspectionOnConnect(runCtx, serverID)
 	}
 	hub.OnOnline = func(serverID int64) {
 		if err := st.RecordServerConnected(runCtx, serverID, false); err != nil {
@@ -717,6 +719,7 @@ func spaHandler(content fs.FS) http.Handler {
 		if name != "." && name != "" {
 			if info, err := fs.Stat(content, name); err == nil && !info.IsDir() {
 				setFrontendCacheHeaders(w, name)
+				setFrontendContentHeaders(w, name)
 				files.ServeHTTP(w, r)
 				return
 			}
@@ -738,6 +741,17 @@ func setFrontendCacheHeaders(w http.ResponseWriter, name string) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-cache")
+}
+
+// setFrontendContentHeaders 补充 PWA 特殊文件的 MIME 与 Service Worker 作用域。
+func setFrontendContentHeaders(w http.ResponseWriter, name string) {
+	switch name {
+	case "manifest.webmanifest":
+		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
+	case "sw.js":
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Header().Set("Service-Worker-Allowed", "/")
+	}
 }
 
 // settingIntFromStore 从 store 读取整型设置（与 panel 包内解析字符串的 settingInt 同名不同义，特此区分）。

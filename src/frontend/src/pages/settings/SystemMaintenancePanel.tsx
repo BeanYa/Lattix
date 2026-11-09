@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
+import { usePwaInstall } from '@/lib/pwa'
 import { cn } from '@/lib/utils'
 import type { PanelSettings, PanelVersionInfo } from '@/lib/types'
 
@@ -27,6 +28,7 @@ export function SystemMaintenancePanel({
   onError: (message: string) => void
 }) {
   const { confirm } = useAppDialog()
+  const { guide: pwaGuide, canPrompt, promptInstall } = usePwaInstall()
   // 密码
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -245,6 +247,21 @@ export function SystemMaintenancePanel({
           备份为业务 SQLite 数据库快照（VACUUM INTO），可直接替换数据文件恢复；
           <strong>不包含操作日志和请求日志</strong>。
         </p>
+      </SettingsCard>
+
+      <SettingsCard
+        tag="APP / INSTALL"
+        title="安装到桌面/APP"
+        description="把 Lattix 添加到手机或电脑的主屏幕，以独立窗口打开；界面壳可离线加载，数据仍需联网。"
+      >
+        {pwaGuide.mode === 'prompt' && canPrompt ? (
+          <div className="cg-set-actions">
+            <Button onClick={() => void promptInstall()}>
+              {pwaGuide.actionLabel ?? '安装到桌面'}
+            </Button>
+          </div>
+        ) : null}
+        <p className="cg-set-note">{pwaGuide.message}</p>
       </SettingsCard>
     </div>
   )
