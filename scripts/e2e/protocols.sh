@@ -23,7 +23,9 @@ CSRF=""
 
 cleanup() {
     mkdir -p /tmp/lattix-e2e-logs
-    cp -f "$WORK/backend.log" "$WORK/agent.log" /tmp/lattix-e2e-logs/ 2>/dev/null || true
+    if [[ -n "${APID:-}" ]]; then kill -QUIT "$APID" 2>/dev/null || true; sleep 2; fi
+    cp -f "$WORK/backend.log" "$WORK/agent.log" "$WORK/lattix.db" /tmp/lattix-e2e-logs/ 2>/dev/null || true
+    cp -f "$WORK"/agent.state.json* "$WORK"/command-queue.json "$WORK"/server-test-*.json* /tmp/lattix-e2e-logs/ 2>/dev/null || true
     ps -eo pid,ppid,args 2>/dev/null | grep -E "lattix|server-test|xray" | grep -v grep >> /tmp/lattix-e2e-logs/ps.txt || true
     kill ${BPID:-} ${APID:-} ${TLSXPID:-} ${HY2XPID:-} 2>/dev/null || true
     pkill -f "xray run -config $XRAY_CONFIG" 2>/dev/null || true
