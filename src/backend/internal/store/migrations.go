@@ -17,7 +17,9 @@ import (
 // v27: 非直连属性——servers.non_direct（大陆不可直连，Ban 告警巡检跳过）。
 // v28: 模板配置三级化——user_subscription_profiles.user_configured 标记用户级自选
 // （订阅页自助保存），生效优先级 强制级 > 用户级 > 面板级（非强制指派/默认）。
-const schemaVersion = 28
+// v29: 服务器周体检——server_test_tasks.source 区分手动/自动；新增
+// server_inspection_runs 保存面板侧摘要历史（Agent 仍只保留最后一份完整报告）。
+const schemaVersion = 29
 
 type columnMigration struct {
 	name       string
@@ -178,6 +180,9 @@ func migrateSchema(tx *sql.Tx) error {
 		},
 		"server_metric_history": {
 			{"latency_probe_active", "INTEGER NOT NULL DEFAULT 1"},
+		},
+		"server_test_tasks": {
+			{"source", "TEXT NOT NULL DEFAULT 'manual'"},
 		},
 		"subscription_snapshots": {
 			{"warnings", "TEXT NOT NULL DEFAULT ''"},

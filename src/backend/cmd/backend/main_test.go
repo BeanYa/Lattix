@@ -101,19 +101,40 @@ func TestResetAdminPasswordWritesHashAndRotatesSessionSecret(t *testing.T) {
 
 func TestSPAHandlerServesAssetAndFallsBackToIndex(t *testing.T) {
 	content := fstest.MapFS{
-		"index.html":       &fstest.MapFile{Data: []byte("<main>Lattix</main>")},
-		"assets/app.js":    &fstest.MapFile{Data: []byte("console.log('ok')")},
-		"assets/empty.css": &fstest.MapFile{Data: nil},
+		"index.html":           &fstest.MapFile{Data: []byte("<main>Lattix</main>")},
+		"assets/app.js":        &fstest.MapFile{Data: []byte("console.log('ok')")},
+		"assets/empty.css":     &fstest.MapFile{Data: nil},
+		"manifest.webmanifest": &fstest.MapFile{Data: []byte(`{"name":"Lattix"}`)},
+		"sw.js":                &fstest.MapFile{Data: []byte("self.addEventListener('fetch', () => {})")},
 	}
 	handler := spaHandler(fs.FS(content))
 
 	for _, tc := range []struct {
-		path      string
-		want      string
-		wantCache string
+		path        string
+		want        string
+		wantCache   string
+		wantType    string
+		wantSWScope string
 	}{
-		{path: "/assets/app.js", want: "console.log('ok')", wantCache: "public, max-age=31536000, immutable"},
+		{
+			path:      "/assets/app.js",
+			want:      "console.log('ok')",
+			wantCache: "public, max-age=31536000, immutable",
+		},
 		{path: "/settings", want: "<main>Lattix</main>", wantCache: "no-cache"},
+		{
+			path:      "/manifest.webmanifest",
+			want:      `{"name":"Lattix"}`,
+			wantCache: "no-cache",
+			wantType:  "application/manifest+json; charset=utf-8",
+		},
+		{
+			path:        "/sw.js",
+			want:        "self.addEventListener('fetch', () => {})",
+			wantCache:   "no-cache",
+			wantType:    "text/javascript; charset=utf-8",
+			wantSWScope: "/",
+		},
 	} {
 		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
 		rec := httptest.NewRecorder()
@@ -123,6 +144,14 @@ func TestSPAHandlerServesAssetAndFallsBackToIndex(t *testing.T) {
 		}
 		if got := rec.Header().Get("Cache-Control"); got != tc.wantCache {
 			t.Errorf("%s: Cache-Control=%q, want %q", tc.path, got, tc.wantCache)
+		}
+		if tc.wantType != "" {
+			if got := rec.Header().Get("Content-Type"); got != tc.wantType {
+				t.Errorf("%s: Content-Type=%q, want %q", tc.path, got, tc.wantType)
+			}
+		}
+		if got := rec.Header().Get("Service-Worker-Allowed"); got != tc.wantSWScope {
+			t.Errorf("%s: Service-Worker-Allowed=%q, want %q", tc.path, got, tc.wantSWScope)
 		}
 	}
 }

@@ -187,6 +187,12 @@ func New(st *store.Store, req ws.AgentRequester, cfg Config) (*Server, error) {
 		OnChainPublished:    s.onChainPublished,
 		OnEndpointPublished: s.onEndpointPublished,
 		OnOnlineUsers:       s.onlineUsers.ApplySnapshot,
+		OnServerTestCompleted: func(ctx context.Context, serverID int64, taskID string) {
+			s.onServerTestCompleted(ctx, serverID, taskID)
+		},
+		OnServerTestFailed: func(ctx context.Context, serverID int64, taskID, code, message string) {
+			s.onServerTestFailed(ctx, serverID, taskID, code, message)
+		},
 	})
 	// 观察 ID 读取器注入请求日志中间件（避免 logging → progress 反向依赖）。
 	logging.SetObserveIDReader(s.observes.ObserveIDFromContext)
@@ -338,6 +344,7 @@ func (s *Server) registerCoreTasks() {
 		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(time.Hour) },
 		Run:     s.cleanupTrafficStats,
 	})
+	s.registerServerInspectionTask()
 }
 
 // RegisterRoutes 注册面板路由（管理 API 均需登录）。
@@ -373,6 +380,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodGet, "/api/server-test/catalog-status", read, s.handleCDNCatalogStatus)
 	s.registerRPC(mux, http.MethodPost, "/api/server-test/refresh-catalog", write, s.handleRefreshCDNCatalog)
 	s.registerRPC(mux, http.MethodGet, "/api/server/catalog-probes", polledRead, s.handleGetServerCatalogProbes)
+	s.registerRPC(mux, http.MethodGet, "/api/server/inspections", polledRead, s.handleListServerInspections)
 	s.registerRPC(mux, http.MethodPost, "/api/server/create", write, s.handleCreateServer)
 	s.registerRPC(mux, http.MethodPost, "/api/server/update",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id"}},

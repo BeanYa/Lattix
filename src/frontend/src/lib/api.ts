@@ -42,6 +42,7 @@ import type {
   Server,
   ServerMetrics,
   ServerMetricSeries,
+  ServerInspectionsResponse,
   ServerSettings,
   ServerTestCatalogStatus,
   ServerTestCategory,
@@ -142,6 +143,11 @@ export const api = {
     requester.post<ServerTestCatalogStatus>('/api/server-test/refresh-catalog', {}),
   catalogProbes: (options?: RequestOptions) =>
     requester.get<CatalogProbeStats>('/api/server/catalog-probes', undefined, {
+      display: 'silent',
+      ...options,
+    }),
+  serverInspections: (options?: RequestOptions) =>
+    requester.get<ServerInspectionsResponse>('/api/server/inspections', undefined, {
       display: 'silent',
       ...options,
     }),

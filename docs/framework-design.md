@@ -85,7 +85,7 @@ install.sh           # 唯一面向用户的统一安装入口
 端口、Tag 与 xray 版本）/ 链路（概览/详情双 tab，见[代理链与 NAT](framework/chain-nat.md)）/
 链路分组 / 用户 / 用户分组 / 订阅模板（分流模板管理与分配，见
 [订阅分流与模板](subscription-routing-design.md)）/ 外部订阅（第三方订阅导入、同步与节点
-查看）/ 运行监控 / 成本统计（已生效成本 + 计算成本两个口径，见
+查看）/ 运行监控（面板/Agent 运行读数 + 直连机周体检汇总）/ 成本统计（已生效成本 + 计算成本两个口径，见
 [后端调度与服务器计费设计](billing-scheduler-design.md)）/ 操作日志 / 请求日志（见
 [日志系统设计](logging-design.md)）/ 设置。
 

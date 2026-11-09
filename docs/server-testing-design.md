@@ -263,15 +263,46 @@ IPregistry 临时 key；IP 质量报告包含完整出口 IP（用户要求展�
 | `src/backend/internal/cdncatalog/` | Zstatic 抓取、受限 JS 解析、可读 schema、专用 TLS client |
 | `src/backend/internal/testcatalog/` | 国际、教育网、测速、连通性静态目录及来源元数据 |
 | `src/backend/internal/panel/server_tests.go` | API、目录快照与任务下发 |
+| `src/backend/internal/panel/server_inspection.go` | 周体检调度、摘要快照、历史 API 与回调收敛 |
+| `src/backend/internal/inspection/summary.go` | 从完整报告折叠紧凑摘要（纯函数） |
 | `src/backend/internal/store/server_tests.go` | 每服务器最新任务、generation 与分片原子提交 |
+| `src/backend/internal/store/server_inspections.go` | 面板侧体检历史（每台最近 26 次） |
 | `src/backend/internal/dispatch/dispatcher.go` | WS 下发、进度去重与结果 ACK |
 | `src/agent/cmd/agent/command_queue.go` | 持久命令优先级与执行 barrier |
 | `src/agent/internal/servertest/` | worker、journal、探测分类与结果投递 |
 | `src/agent/internal/servertest/ipquality/` | ip.sh 缓存与版本校验、依赖处理、执行、JSON 解析映射 |
 | `src/frontend/src/components/ServerTestPanel.tsx` | 分类选择、NAT 警告、进度与报告 UI |
+| `src/frontend/src/pages/runtime/ServerInspectionTab.tsx` | 运行监控「服务器体检」汇总与历史 UI |
 
 修改目录时必须更新来源 commit/note、固定数量断言和 hash 测试；修改协议时必须同步 shared、
 Panel、Agent、OpenAPI/前端类型与 current-protocol e2e；修改探测次数、超时、并发或流量上限时
 必须同步本文和 UI 警告。验收至少运行 backend/agent/shared 的 `go test -race ./...`、`go vet ./...`
 以及 frontend 的 lint、build、test，并实测“无系统 CA 时刷新目录”“Agent 重启失败报告”与
 “断线完成后重连投递结果”。
+
+## 13. 自动周体检（直连机型）
+
+服务器周体检复用 §6 的原子 server-test 任务，不新增 Agent 协议或探测实现。它只服务直连
+机型（`servers.machine_type = direct`）；NAT 机型不参与自动体检，服务器页的手动测试入口
+与既有 NAT 限制保持不变。
+
+- **触发**：`server.inspection` 调度任务每 15 分钟检查一次，某台直连机没有体检记录或上次
+  尝试已超过 7 天时入队；Agent 首次连上或重连时也立即检查一次（`StartServerInspectionOnConnect`），
+  避免“加机后等一周”。目标目录为空时先补拉一次 CDN 目录；仍不可用则不入队，
+  由下一次调度在目录刷新后补跑。
+  在线状态是周调度入队的前提；离线节点在重连时补跑，避免把过期目标快照长时间排在队列里。
+- **分类**：固定为 `ip_quality`、`tcp_ipv4`、`connectivity`，不启用 IPv6、回程、大包、测速等
+  重任务。手动测试仍可选择全部分类；同一服务器同一时刻只允许一个 server-test 任务，
+  体检与手动测试共用该互斥（`ErrServerTestInProgress`）。
+- **结果与历史**：Agent 仍只保存最后一次任务/完整报告；`server_test_tasks.source` 标记
+  `manual`/`inspection`。Panel 在权威结果落库后由 dispatcher 回调
+  （`OnServerTestCompleted`/`OnServerTestFailed`），把 `ip_quality`、`tcp_ipv4`、
+  `connectivity` 折叠为紧凑摘要，并附上完成时刻新鲜窗口内的三网测速快照
+  （`server_catalog_probes`，不重复探测），写入 `server_inspection_runs`；每台保留最近 26 次，
+  面板重启后的待收敛 run 由启动/调度对账补写。完整分类明细仍以最新 `server_test_tasks.result`
+  为准，运行监控只展示摘要。
+- **展示**：`GET /api/server/inspections` 返回每台直连机的最近一次尝试与最近 8 次历史；
+  运行监控「服务器体检」Tab 汇总 IP 质量（类型/DNSBL/流媒体解锁）、IPv4 三网延迟与丢包、
+  连通性可达数与平均延迟、三网测速快照和告警计数，并链接回服务器页查看完整测试报告。
+- **边界**：摘要写入失败不阻断体检任务本身；失败/死信/被取代会关闭对应历史行，不会留下
+  永久 queued 的体检记录。三网测速样本缺失时对应格显示“暂无样本”，不影响其余摘要。

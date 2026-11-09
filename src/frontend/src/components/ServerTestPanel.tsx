@@ -793,7 +793,7 @@ export function ServerTestPanel({
           </h3>
           <p className="mt-1 text-xs text-muted-foreground">
             {task
-              ? `${serverTestStatusLabel(task.status)} · ${formatDateTime(task.updated_at, timezone)}`
+              ? `${serverTestStatusLabel(task.status)}${task.source === 'inspection' ? ' · 自动体检' : ''} · ${formatDateTime(task.updated_at, timezone)}`
               : '尚无测试结果'}
           </p>
         </div>

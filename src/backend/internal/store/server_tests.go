@@ -18,11 +18,26 @@ import (
 
 var ErrServerTestInProgress = errors.New("store: server test already in progress")
 
+// ServerTestSource distinguishes an administrator-triggered test from the
+// automatic weekly inspection. Both share the same task/result pipeline; only
+// the automatic runs are mirrored into server_inspection_runs history.
+type ServerTestSource string
+
+const (
+	ServerTestSourceManual     ServerTestSource = "manual"
+	ServerTestSourceInspection ServerTestSource = "inspection"
+)
+
+func (s ServerTestSource) Valid() bool {
+	return s == ServerTestSourceManual || s == ServerTestSourceInspection
+}
+
 type ServerTestTask struct {
 	ServerID       int64
 	TaskID         string
 	Generation     int64
 	RequestID      string
+	Source         ServerTestSource
 	Status         shared.ServerTestTaskStatus
 	Categories     []shared.ServerTestCategory
 	CatalogVersion string
@@ -48,6 +63,33 @@ func (s *Store) EnqueueServerTest(
 	categories []shared.ServerTestCategory,
 	catalog shared.ServerTestCatalogSnapshot,
 ) (*ServerTestTask, int64, error) {
+	return s.enqueueServerTest(ctx, serverID, traceID, categories, catalog, ServerTestSourceManual)
+}
+
+// EnqueueServerInspection is the automatic weekly inspection entry point. It
+// uses the same atomic task pipeline as a manual test, but marks the task so
+// the panel can snapshot its compact result into inspection history.
+func (s *Store) EnqueueServerInspection(
+	ctx context.Context,
+	serverID int64,
+	traceID string,
+	categories []shared.ServerTestCategory,
+	catalog shared.ServerTestCatalogSnapshot,
+) (*ServerTestTask, int64, error) {
+	return s.enqueueServerTest(ctx, serverID, traceID, categories, catalog, ServerTestSourceInspection)
+}
+
+func (s *Store) enqueueServerTest(
+	ctx context.Context,
+	serverID int64,
+	traceID string,
+	categories []shared.ServerTestCategory,
+	catalog shared.ServerTestCatalogSnapshot,
+	source ServerTestSource,
+) (*ServerTestTask, int64, error) {
+	if !source.Valid() {
+		source = ServerTestSourceManual
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, 0, err
@@ -96,16 +138,16 @@ func (s *Store) EnqueueServerTest(
 		return nil, 0, fmt.Errorf("supersede old server test command: %w", err)
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO server_test_tasks
-		(server_id, task_id, generation, request_id, status, categories, catalog_version, catalog_hashes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		(server_id, task_id, generation, request_id, source, status, categories, catalog_version, catalog_hashes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(server_id) DO UPDATE SET
 			task_id=excluded.task_id, generation=excluded.generation, request_id=excluded.request_id,
-			status=excluded.status, categories=excluded.categories,
+			source=excluded.source, status=excluded.status, categories=excluded.categories,
 			catalog_version=excluded.catalog_version, catalog_hashes=excluded.catalog_hashes,
 			result_json=NULL, result_sha256='', error_code='', error_message='', agent_version='',
 			created_at=CURRENT_TIMESTAMP, accepted_at=NULL, started_at=NULL, completed_at=NULL,
 			updated_at=CURRENT_TIMESTAMP`,
-		serverID, taskID, generation, requestID, shared.ServerTestQueued,
+		serverID, taskID, generation, requestID, string(source), shared.ServerTestQueued,
 		string(categoriesJSON), catalog.Version, string(hashesJSON))
 	if err != nil {
 		return nil, 0, fmt.Errorf("create server test task: %w", err)
@@ -129,14 +171,14 @@ func (s *Store) EnqueueServerTest(
 
 func (s *Store) ServerTestByServerID(ctx context.Context, serverID int64) (*ServerTestTask, error) {
 	var task ServerTestTask
-	var status, categoriesJSON, hashesJSON string
+	var status, source, categoriesJSON, hashesJSON string
 	var resultJSON sql.NullString
 	var acceptedAt, startedAt, completedAt sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT server_id, task_id, generation, request_id, status,
+	err := s.db.QueryRowContext(ctx, `SELECT server_id, task_id, generation, request_id, source, status,
 		categories, catalog_version, catalog_hashes, result_json, result_sha256,
 		error_code, error_message, agent_version, created_at, accepted_at, started_at,
 		completed_at, updated_at FROM server_test_tasks WHERE server_id = ?`, serverID).Scan(
-		&task.ServerID, &task.TaskID, &task.Generation, &task.RequestID, &status,
+		&task.ServerID, &task.TaskID, &task.Generation, &task.RequestID, &source, &status,
 		&categoriesJSON, &task.CatalogVersion, &hashesJSON, &resultJSON, &task.ResultSHA256,
 		&task.ErrorCode, &task.ErrorMessage, &task.AgentVersion, &task.CreatedAt,
 		&acceptedAt, &startedAt, &completedAt, &task.UpdatedAt,
@@ -146,6 +188,10 @@ func (s *Store) ServerTestByServerID(ctx context.Context, serverID int64) (*Serv
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read server test task: %w", err)
+	}
+	task.Source = ServerTestSource(source)
+	if !task.Source.Valid() {
+		task.Source = ServerTestSourceManual
 	}
 	task.Status = shared.ServerTestTaskStatus(status)
 	if err := json.Unmarshal([]byte(categoriesJSON), &task.Categories); err != nil {

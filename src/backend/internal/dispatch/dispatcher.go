@@ -52,6 +52,11 @@ type Events struct {
 	OnEndpointPublished func(context.Context, int64) error
 	// OnOnlineUsers 接收 telemetry 帧中的在线用户快照（panel.Server 注入；nil = 不记录）。
 	OnOnlineUsers func(serverID int64, users []shared.OnlineUserStat, now time.Time)
+	// OnServerTestCompleted 在一份服务器测试的权威结果落库后调用；
+	// panel 用它把自动体检的紧凑摘要镜像到历史表（手动测试同样收到，panel 自行忽略）。
+	OnServerTestCompleted func(context.Context, int64, string)
+	// OnServerTestFailed 在测试命令失败/死信/被取代时调用，用于收敛体检历史状态。
+	OnServerTestFailed func(context.Context, int64, string, string, string)
 }
 
 // Dispatcher 串联 store 与 Requester。
@@ -168,11 +173,33 @@ func (d *Dispatcher) EnqueueServerTest(
 	if err != nil {
 		return nil, err
 	}
+	d.finishServerTestEnqueue(ctx, serverID)
+	return task, nil
+}
+
+// EnqueueServerTestInspection queues the automatic weekly inspection. It shares
+// the same task/result pipeline as a manual test; the store marks its source so
+// the panel can keep a compact history row after completion.
+func (d *Dispatcher) EnqueueServerTestInspection(
+	ctx context.Context,
+	serverID int64,
+	categories []shared.ServerTestCategory,
+	catalog shared.ServerTestCatalogSnapshot,
+) (*store.ServerTestTask, error) {
+	traceID := logging.TraceID(ctx)
+	task, _, err := d.st.EnqueueServerInspection(ctx, serverID, traceID, categories, catalog)
+	if err != nil {
+		return nil, err
+	}
+	d.finishServerTestEnqueue(ctx, serverID)
+	return task, nil
+}
+
+func (d *Dispatcher) finishServerTestEnqueue(ctx context.Context, serverID int64) {
 	d.testProgressMu.Lock()
 	delete(d.testProgress, serverID)
 	d.testProgressMu.Unlock()
 	d.Flush(ctx, serverID)
-	return task, nil
 }
 
 func (d *Dispatcher) ServerTestProgress(serverID int64) *shared.ServerTestProgressPayload {
@@ -381,7 +408,7 @@ func (d *Dispatcher) enqueueRevisionTask(ctx context.Context, serverID int64, ty
 }
 
 // ErrPanelNotActive 表示面板处于 startup/faulted，业务命令暂缓下发
-//（门控自 ws 传输层上移至此，D7）；命令滞留 queued，待面板就绪后补发。
+// （门控自 ws 传输层上移至此，D7）；命令滞留 queued，待面板就绪后补发。
 var ErrPanelNotActive = errors.New("dispatch: panel not active")
 
 // send 是 Dispatcher 全部下发点的统一入口：startup/faulted 状态下按 isBusinessCommand
@@ -803,6 +830,16 @@ func (d *Dispatcher) handleServerTestResult(serverID int64, env shared.Envelope)
 		d.testProgressMu.Lock()
 		delete(d.testProgress, serverID)
 		d.testProgressMu.Unlock()
+	}
+	switch outcome {
+	case store.ServerTestChunkComplete:
+		if d.events.OnServerTestCompleted != nil {
+			d.events.OnServerTestCompleted(ctx, serverID, chunk.TaskID)
+		}
+	case store.ServerTestChunkSuperseded:
+		if d.events.OnServerTestFailed != nil {
+			d.events.OnServerTestFailed(ctx, serverID, chunk.TaskID, "superseded", "测试任务已被新的任务取代")
+		}
 	}
 	d.replyAgentRequest(ctx, serverID, env, shared.CodeOK, "", shared.ServerTestResultACK{Status: string(outcome)})
 }
@@ -1283,6 +1320,8 @@ func init() {
 						}
 					} else if err := d.st.FailServerTestCommand(ctx, serverID, testPayload.TaskID, testPayload.Generation, env.Code, errorMessage); err != nil {
 						log.Printf("dispatch: server %d: fail server test command: %v", serverID, err)
+					} else if d.events.OnServerTestFailed != nil {
+						d.events.OnServerTestFailed(ctx, serverID, testPayload.TaskID, env.Code, errorMessage)
 					}
 				}
 				if !success {
@@ -1290,6 +1329,26 @@ func init() {
 					delete(d.testProgress, serverID)
 					d.testProgressMu.Unlock()
 				}
+			},
+			// 死信与失败回执同路径收尾：测试任务不能停在 queued，
+			// 同时让自动体检历史关闭为 failed。
+			deadLetter: func(d *Dispatcher, ctx context.Context, serverID int64, cmd store.Command) {
+				var testPayload shared.ServerTestRunPayload
+				if json.Unmarshal(cmd.Data, &testPayload) != nil {
+					return
+				}
+				reason := "测试命令投递次数用尽（死信）"
+				if err := d.st.FailServerTestCommand(ctx, serverID, testPayload.TaskID, testPayload.Generation,
+					"command_dead_lettered", reason); err != nil {
+					log.Printf("dispatch: server %d: fail dead-lettered server test: %v", serverID, err)
+				}
+				if d.events.OnServerTestFailed != nil {
+					d.events.OnServerTestFailed(ctx, serverID, testPayload.TaskID,
+						"command_dead_lettered", reason)
+				}
+				d.testProgressMu.Lock()
+				delete(d.testProgress, serverID)
+				d.testProgressMu.Unlock()
 			},
 		},
 		// xray.cleanup：差异/结果投递给同步等待者（面板清理接口），不触碰节点状态机；

@@ -90,3 +90,20 @@ Cloudflare Dashboard 建议配置：
 不要为 `/sub/*` 配置“忽略源站强制缓存”。订阅地址本身是凭证，公开边缘缓存会造成
 用户数据泄露。城市数据、字体、3D 与图表依赖都位于带内容哈希的 `/assets/*` 下，首次
 下载后可长期复用；新版本文件名变化时会自然换新，无需清理旧缓存。
+
+## PWA（安装到桌面）
+
+- `public/manifest.webmanifest`：Lattix 身份、`start_url=/board`、`scope=/`、standalone、
+  深浅色主题色、192/512 普通与 maskable PNG 图标，以及控制台/服务器/链路三个快捷入口。
+- `public/sw.js`：无依赖 Service Worker。只预缓存静态壳、`/assets/*` 与图标；明确
+  绕过 `/api/*` 和 `/sub/*`（含订阅落地页与客户端下载），导航 network-first、静态
+  cache-first，activate 删除旧 `lattix-pwa-*` cache。预缓存资源变化时手动递增
+  `CACHE_VERSION`；当前不 `skipWaiting`，新 Worker 在旧客户端关闭后生效。
+- `src/lib/pwa.ts`：`beforeinstallprompt` 全局捕获、iOS/iPadOS 识别、四种安装引导状态与
+  生产环境 Service Worker 注册；`src/pages/settings/SystemMaintenancePanel.tsx` 的
+  “安装到桌面/APP”卡复用该 hook。
+- 仅生产构建注册 Service Worker；开发服务器（Vite）不注册，避免缓存未哈希模块。
+- 后端 `spaHandler` 为 `/manifest.webmanifest` 输出 `application/manifest+json`，为
+  `/sw.js` 输出 `text/javascript` 与 `Service-Worker-Allowed: /`；二者沿用 `no-cache`。
+- 安装入口不是安装本身：浏览器不支持 `beforeinstallprompt`（Safari/Firefox）时卡片只显示
+  分享菜单/浏览器菜单指引；PWA 壳可离线加载，但面板数据仍需联网。

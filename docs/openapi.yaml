@@ -93,6 +93,16 @@ paths:
         失败/超时），供卡片色块条展示多次测速结果。servers 只含新鲜窗口内有样本的
         服务器（键为服务器 ID 十进制字符串）。
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/server/inspections:
+    get:
+      operationId: serverInspections
+      description: |
+        服务器周体检汇总（§server-testing，运行监控页轮询）：仅直连机型参与。
+        面板复用 server-test 原子任务，每周（或首次连上/重连且超过 7 天）自动执行
+        ip_quality、tcp_ipv4、connectivity 三类并保存紧凑摘要；latest 为最近一次
+        体检尝试（含失败/在途），history 为最近 8 次。summary 内另含完成时刻的
+        三网测速快照（catalog_probes）。NAT 机型不出现在 items 中。
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/run-test:
     post:
       operationId: serverRunTest
