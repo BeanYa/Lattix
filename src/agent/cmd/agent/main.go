@@ -4,7 +4,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -87,13 +86,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("load server test task: %v", err)
 	}
+	// 服务器测试在 Agent 侧异步执行，Manager 自行持久化任务与结果；命令队列
+	// 不能在 after 中等待测试结束——一次体检可持续数分钟，阻塞队列会让节点、
+	// 用户配置与升级命令全部滞留，重连后的首连体检尤其明显。
 	commandQueue, err := newPersistentCommandQueue(
 		filepath.Join(filepath.Dir(*statePath), "command-queue.json"),
-		func(envelope shared.Envelope) {
-			if envelope.Type == shared.TypeServerTestRun {
-				_ = testManager.WaitIdle(context.Background())
-			}
-		},
+		nil,
 	)
 	if err != nil {
 		log.Fatalf("load command queue: %v", err)
