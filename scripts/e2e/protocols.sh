@@ -22,6 +22,9 @@ JAR="$WORK/cookies.txt"
 CSRF=""
 
 cleanup() {
+    mkdir -p /tmp/lattix-e2e-logs
+    cp -f "$WORK/backend.log" "$WORK/agent.log" /tmp/lattix-e2e-logs/ 2>/dev/null || true
+    ps -eo pid,ppid,args 2>/dev/null | grep -E "lattix|server-test|xray" | grep -v grep >> /tmp/lattix-e2e-logs/ps.txt || true
     kill ${BPID:-} ${APID:-} ${TLSXPID:-} ${HY2XPID:-} 2>/dev/null || true
     pkill -f "xray run -config $XRAY_CONFIG" 2>/dev/null || true
     pkill -f "xray run -config $WORK/client-tls.json" 2>/dev/null || true
@@ -96,8 +99,13 @@ create_node() {
     res="$(rpc_data POST /api/node/create "$1")"
     id="$(python3 -c 'import json,sys;print(json.loads(sys.argv[1])["id"])' "$res" 2>/dev/null)" \
         || { echo "FAIL: 创建节点响应异常: $res"; exit 1; }
-    out="$(wait_node "$id")"
-    [[ "$out" == active\|* ]] || { echo "FAIL: 节点 $id 未 active: $out"; tail -5 "$WORK/agent.log"; exit 1; }
+    out="$(wait_node "$id")" || true
+    [[ "$out" == active\|* ]] || {
+        echo "FAIL: 节点 $id 未 active: $out"
+        echo "--- agent.log (tail) ---"; tail -40 "$WORK/agent.log" 2>/dev/null
+        echo "--- ps ---"; ps -eo pid,ppid,args 2>/dev/null | grep -E "lattix|server-test|xray" | grep -v grep || true
+        exit 1
+    }
     echo "$out" | cut -d'|' -f2
 }
 

@@ -1,0 +1,67 @@
+name: e2e-debug
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protocols:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: baseline
+            cdn_source: ""
+          - name: no-inspection
+            cdn_source: "http://127.0.0.1:9/catalog.json"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.26.10'
+          cache-dependency-path: |
+            src/backend/go.sum
+            src/agent/go.sum
+      - name: Install xray-core
+        env:
+          GH_TOKEN: ${{ github.token }}
+          XRAY_E2E_VERSION: v26.3.27
+        run: |
+          TAG="${XRAY_E2E_VERSION}"
+          gh release download "$TAG" --repo XTLS/Xray-core \
+            --pattern Xray-linux-64.zip --output /tmp/xray.zip
+          gh release download "$TAG" --repo XTLS/Xray-core \
+            --pattern Xray-linux-64.zip.dgst --output /tmp/xray.zip.dgst
+          EXPECTED="$(grep 'SHA2-256=' /tmp/xray.zip.dgst | head -1 | cut -d' ' -f2)"
+          ACTUAL="$(sha256sum /tmp/xray.zip | cut -d' ' -f1)"
+          test -n "$EXPECTED" && test "$EXPECTED" = "$ACTUAL"
+          unzip -oq /tmp/xray.zip -d /tmp/xray
+          chmod +x /tmp/xray/xray
+          /tmp/xray/xray version
+      - name: Build
+        run: |
+          mkdir -p /tmp/out
+          LDFLAGS="-s -w -X main.version=v0.1.37-debug -X main.githubRepo=BeanYa/Lattix"
+          CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" \
+            -o /tmp/out/backend ./src/backend/cmd/backend
+          CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" \
+            -o /tmp/out/agent ./src/agent/cmd/agent
+      - name: Run protocols (${{ matrix.name }})
+        env:
+          PANEL_BIN: /tmp/out/backend
+          AGENT_BIN: /tmp/out/agent
+          XRAY_BIN: /tmp/xray/xray
+          LATTIX_CDN_SOURCE_URL: ${{ matrix.cdn_source }}
+        run: bash scripts/e2e/protocols.sh
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-logs-${{ matrix.name }}
+          path: /tmp/lattix-e2e-logs/
+          if-no-files-found: ignore
+          retention-days: 3
