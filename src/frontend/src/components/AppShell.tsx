@@ -23,6 +23,7 @@ import UpdateOverlay from '@/components/UpdateOverlay'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -388,25 +389,28 @@ function AccountMenu({
         sideOffset={6}
         className="w-56 rounded-md border border-rule-strong bg-surface p-1 text-ink shadow-[var(--panel-shadow-overlay)]"
       >
-        <DropdownMenuLabel className="px-2 py-1.5 text-[12px] font-semibold tracking-[0.12em] text-ink-3">
-          账户
-        </DropdownMenuLabel>
-        <div className="px-2 pb-2 text-xs text-ink-2">
-          <span className="block truncate font-medium text-ink">{username ?? '未登录'}</span>
-          <span className="mt-1 block text-ink-3">自托管管理员</span>
-        </div>
-        <DropdownMenuSeparator className="my-1 bg-rule" />
-        <DropdownMenuItem
-          onClick={onLogout}
-          disabled={loggingOut}
-          className={cn(
-            'flex h-9 cursor-default items-center gap-2 rounded-sm px-2 text-xs text-ink-2 focus:bg-signal-soft focus:text-ink',
-            focusRing,
-          )}
-        >
-          <LogOutIcon className="size-4" aria-hidden="true" />
-          {loggingOut ? '登出中…' : '登出'}
-        </DropdownMenuItem>
+        {/* Base UI 的 GroupLabel 必须挂在 Group 内；脱离 Group 会抛错并让整棵树卸载。 */}
+        <DropdownMenuGroup>
+          <DropdownMenuLabel className="px-2 py-1.5 text-[12px] font-semibold tracking-[0.12em] text-ink-3">
+            账户
+          </DropdownMenuLabel>
+          <div className="px-2 pb-2 text-xs text-ink-2">
+            <span className="block truncate font-medium text-ink">{username ?? '未登录'}</span>
+            <span className="mt-1 block text-ink-3">自托管管理员</span>
+          </div>
+          <DropdownMenuSeparator className="my-1 bg-rule" />
+          <DropdownMenuItem
+            onClick={onLogout}
+            disabled={loggingOut}
+            className={cn(
+              'flex h-9 cursor-default items-center gap-2 rounded-sm px-2 text-xs text-ink-2 focus:bg-signal-soft focus:text-ink',
+              focusRing,
+            )}
+          >
+            <LogOutIcon className="size-4" aria-hidden="true" />
+            {loggingOut ? '登出中…' : '登出'}
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
   )
