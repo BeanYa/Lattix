@@ -68,6 +68,18 @@ grep -Fq '>> 正在下载 install-agent.sh' "$work/agent.log" \
 grep -Fq '>> install-agent.sh SHA256 校验通过' "$work/agent.log" \
     || { echo "agent child installer checksum verification is missing" >&2; exit 1; }
 
+# The panel pins its effective xray version in the install command; the entrypoint
+# must forward it to the child installer instead of dropping it.
+LATX_TEST_OUTPUT="$work/agent-xray.args" \
+LATX_RAW_BASE="file://$work" \
+LATX_RELEASE_BASE="file://$release" \
+    bash "$repo_root/install.sh" agent --version v9.8.7 \
+        --panel https://panel.example.com --token bootstrap \
+        --xray-version v26.3.27 \
+    >"$work/agent-xray.log" 2>&1
+diff -u <(printf '%s\n' --version v9.8.7 --panel https://panel.example.com \
+    --token bootstrap --xray-version v26.3.27) "$work/agent-xray.args"
+
 # Release assets unavailable: warn about the missing checksums.txt, fall back to
 # the raw tagged file, and continue without verification (old releases).
 LATX_TEST_OUTPUT="$work/fallback.args" \

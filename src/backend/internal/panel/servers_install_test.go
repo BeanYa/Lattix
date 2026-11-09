@@ -10,29 +10,40 @@ import (
 	"testing"
 
 	"lattix/backend/internal/store"
+	"lattix/shared"
 )
 
 func TestInstallCommandUsesUnifiedGitHubEntrypoint(t *testing.T) {
 	server := &Server{cfg: Config{GitHubRepo: "BeanYa/Lattix", Version: "v1.2.3"}}
-	command := server.installCommand("https://panel.example.com", "bootstrap")
+	command := server.installCommand("https://panel.example.com", "bootstrap", "v26.3.27")
 	for _, want := range []string{
 		"curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh",
 		"| bash -s -- agent --version v1.2.3",
 		"--panel https://panel.example.com",
 		"--token bootstrap",
+		"--xray-version v26.3.27",
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("install command %q does not contain %q", command, want)
 		}
 	}
-	if strings.Contains(command, "--xray-version") {
-		t.Fatalf("install command unexpectedly pins an xray version: %q", command)
+}
+
+// TestInstallCommandOmitsUnsetXrayVersion：latest/空版本不附加参数，由安装脚本
+// 解析最新 release（保持面板默认行为与安装脚本回退语义）。
+func TestInstallCommandOmitsUnsetXrayVersion(t *testing.T) {
+	server := &Server{cfg: Config{GitHubRepo: "BeanYa/Lattix", Version: "v1.2.3"}}
+	for _, version := range []string{"", "latest"} {
+		command := server.installCommand("https://panel.example.com", "bootstrap", version)
+		if strings.Contains(command, "--xray-version") {
+			t.Fatalf("install command for %q unexpectedly pins an xray version: %q", version, command)
+		}
 	}
 }
 
 func TestDevInstallCommandDefaultsToLatest(t *testing.T) {
 	server := &Server{cfg: Config{GitHubRepo: "BeanYa/Lattix", Version: "dev"}}
-	command := server.installCommand("http://127.0.0.1:8080", "bootstrap")
+	command := server.installCommand("http://127.0.0.1:8080", "bootstrap", "")
 	if strings.Contains(command, "--version") {
 		t.Fatalf("dev install command unexpectedly pins a version: %q", command)
 	}
@@ -64,7 +75,7 @@ func TestPanelBaseInfersSchemeFromContainerProxy(t *testing.T) {
 	if got := server.panelBase(proxied); got != "https://lattix.example.com" {
 		t.Errorf("panelBase(proxied) = %q, want https://lattix.example.com", got)
 	}
-	if command := server.installCommand(server.panelBase(proxied), "bootstrap"); !strings.Contains(command, "--panel https://lattix.example.com") {
+	if command := server.installCommand(server.panelBase(proxied), "bootstrap", ""); !strings.Contains(command, "--panel https://lattix.example.com") {
 		t.Errorf("install command %q must carry the inferred https panel base", command)
 	}
 
@@ -163,5 +174,80 @@ func TestInstallInsecureHTTPResponse(t *testing.T) {
 	// 回环 http → 不告警。
 	if create("loopback", "127.0.0.1:52318", "127.0.0.1:8080", "") {
 		t.Error("install_insecure = true, want false（回环）")
+	}
+}
+
+// TestInstallCommandPinsEffectiveXrayVersion 在 HTTP 响应级断言安装命令使用服务器
+// 生效 xray 版本：新建时取面板默认，rotate 时优先单服务器覆盖，避免安装脚本回落 latest。
+func TestInstallCommandPinsEffectiveXrayVersion(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	server := &Server{st: st, cfg: Config{GitHubRepo: "BeanYa/Lattix", Version: "v1.2.3"},
+		req: &settingsRequester{online: map[int64]bool{}}}
+	versionPtr := func(v string) *string { return &v }
+	if _, err := st.UpdateDefaultServerSettings(ctx, shared.ServerSettings{XrayVersion: versionPtr("v1.8.24")}); err != nil {
+		t.Fatal(err)
+	}
+
+	create := func(alias string) (int64, string) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, "/api/server/create",
+			strings.NewReader(fmt.Sprintf(`{"alias":%q,"country_code":"US","location":"Test"}`, alias)))
+		r.RemoteAddr = "10.0.0.8:52318"
+		r.Host = "panel.example.com"
+		rec := httptest.NewRecorder()
+		server.handleCreateServer(rec, r)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("create %s status = %d, body = %s", alias, rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Server struct {
+				ID int64 `json:"id"`
+			} `json:"server"`
+			InstallCommand string `json:"install_command"`
+		}
+		if err := json.Unmarshal(decodeRPC(t, rec).Data, &resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp.Server.ID, resp.InstallCommand
+	}
+	rotate := func(id int64) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		server.handleRotateToken(rec, httptest.NewRequest(http.MethodPost, "/api/server/rotate-token",
+			strings.NewReader(fmt.Sprintf(`{"server_id":%d}`, id))))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("rotate status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			InstallCommand string `json:"install_command"`
+		}
+		if err := json.Unmarshal(decodeRPC(t, rec).Data, &resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp.InstallCommand
+	}
+
+	id, command := create("pin-default")
+	if !strings.Contains(command, "--xray-version v1.8.24") {
+		t.Fatalf("create install command %q does not pin the panel default xray version", command)
+	}
+
+	if err := st.UpdateServerCustomSettings(ctx, id, &shared.ServerSettings{XrayVersion: versionPtr("v1.8.10")}); err != nil {
+		t.Fatal(err)
+	}
+	if command := rotate(id); !strings.Contains(command, "--xray-version v1.8.10") {
+		t.Fatalf("rotate install command %q does not pin the server override", command)
+	}
+
+	if err := st.UpdateServerCustomSettings(ctx, id, nil); err != nil {
+		t.Fatal(err)
+	}
+	if command := rotate(id); !strings.Contains(command, "--xray-version v1.8.24") {
+		t.Fatalf("rotate install command %q does not fall back to the panel default", command)
 	}
 }
