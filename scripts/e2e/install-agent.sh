@@ -271,7 +271,9 @@ echo "$USER_REINSTALL_OUT" | grep -q "Agent 状态: \[user\] 进程运行中" \
 latx_ag_user stop
 sleep 1
 if pgrep -f "$USER_PREFIX/opt/lattix-agent/bin/lattix-agent" >/dev/null; then
-    echo "FAIL: stop 后守护脚本/agent 进程仍在"; exit 1
+    echo "FAIL: stop 后守护脚本/agent 进程仍在"
+    pgrep -af "$USER_PREFIX/opt/lattix-agent/bin/lattix-agent" || true
+    exit 1
 fi
 echo "OK: latx-ag stop 后守护脚本与 agent 进程消失"
 

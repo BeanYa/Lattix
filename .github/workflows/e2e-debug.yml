@@ -13,13 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         script:
-          - protocols.sh
-          - links.sh
-          - usernodes.sh
-          - event-log.sh
-          - upgrade.sh
           - install-agent.sh
-          - reconcile.sh
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
