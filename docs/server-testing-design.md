@@ -191,9 +191,11 @@ boot ID 为 `agent_restarted`，boot ID 改变为 `host_rebooted`，无法判定
 卸载 90、Xray 更新 70、普通命令 50、服务器测试 10；高优先级影响尚未开始命令的选择，
 不抢占已经运行的原子任务。
 
-`server-test.run` 处理器在任务被 Agent 接受后立即返回 `ACCEPTED`，但队列的 after barrier
-会一直等待任务完成并且最终结果获得 Panel ACK，之后才删除测试命令并执行后续更新。
-因此 Panel 更新后紧接着下发的 Agent 版本同步不会丢失，也不会在测试中途重启 Agent。
+`server-test.run` 处理器在任务被 Agent 接受后立即返回 `ACCEPTED`，测试由 Manager 异步
+执行并自行持久化 journal 与结果；命令队列在测试命令 `ACCEPTED` 后即删除该命令并继续
+执行后续命令，不等待测试结束。一次体检可能持续数分钟，若阻塞队列会拖住节点/用户配置、
+升级与卸载命令（首次接入的体检尤其明显）。Agent 升级与测试重叠时可能重启 Agent 并中断
+测试，Manager 会在重启后按 journal 收敛为 `execution_interrupted`，最终结果仍会投递。
 
 ## 8. 隔离、权限与残留
 
