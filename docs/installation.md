@@ -108,7 +108,9 @@ curl -fsSL https://raw.githubusercontent.com/BeanYa/Lattix/main/install.sh |
 Agent 不提供用户自行触发的安装入口。请在面板"添加服务器"后，将面板生成的
 完整安装命令原样放到受控机执行；不要手工拼装命令或复用其他服务器的命令。
 正式版本（release 构建）的下发命令通过根安装器钉到面板当前版本，安装实现与
-agent 二进制天然同版。
+agent 二进制天然同版；xray 版本同样在命令中钉住，取该服务器的生效设置
+（面板默认 + 单服务器覆盖，见设置页"xray 版本"），未设置或为 `latest` 时
+由安装脚本解析最新 release。
 
 脚本流程：安装指定版本 xray（校验官方 `.dgst`）→ 安装 agent 与 `latx-ag`
 节点管理程序（校验 SHA256）→ 注册 systemd → best-effort 开启 TCP BBR →

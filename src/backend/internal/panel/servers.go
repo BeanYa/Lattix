@@ -275,7 +275,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Alias        string             `json:"alias"`
 		Address      string             `json:"address"`       // 公网地址，留空自动学习（§4；NAT 必填）
-		XrayVersion  string             `json:"xray_version"`  // 兼容旧客户端；安装脚本默认 latest
+		XrayVersion  string             `json:"xray_version"`  // 兼容旧客户端（仅接受字段）；安装版本取服务器生效设置
 		MachineType  string             `json:"machine_type"`  // direct（默认）| nat（§21）
 		AllowedPorts []shared.PortRange `json:"allowed_ports"` // NAT 可用端口段（§21），留空 = 仅出口档
 		Tags         []string           `json:"tags"`
@@ -384,7 +384,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"server":           createdDTO,
 		"bootstrap_token":  bootstrap,
-		"install_command":  s.installCommand(base, bootstrap),
+		"install_command":  s.installCommand(base, bootstrap, effectiveXrayVersion(s, srv.ID)),
 		"install_insecure": installInsecure(base),
 	})
 }
@@ -453,7 +453,7 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"server":           rotatedDTO,
 		"bootstrap_token":  bootstrap,
-		"install_command":  s.installCommand(base, bootstrap),
+		"install_command":  s.installCommand(base, bootstrap, effectiveXrayVersion(s, srv.ID)),
 		"install_insecure": installInsecure(base),
 	})
 }
@@ -1060,15 +1060,21 @@ func (s *Server) handleRebuildXray(w http.ResponseWriter, r *http.Request) {
 }
 
 // installCommand 通过仓库根安装入口安装 Agent。Release 面板显式钉住自身版本；
-// dev 构建省略版本，由入口解析 latest。xray 版本由 Agent 安装脚本默认解析 latest。
-func (s *Server) installCommand(base, token string) string {
+// dev 构建省略版本，由入口解析 latest。xray 版本取服务器生效值（面板默认 + 单服务器
+// 覆盖），在安装阶段即钉住，避免先装 latest 再由 Agent 设置同步二次对齐；latest/空
+// 保持安装脚本默认解析行为。
+func (s *Server) installCommand(base, token, xrayVersion string) string {
 	versionArg := ""
 	if s.cfg.Version != "" && s.cfg.Version != "dev" {
 		versionArg = " --version " + s.cfg.Version
 	}
+	xrayArg := ""
+	if xrayVersion != "" && xrayVersion != "latest" {
+		xrayArg = " --xray-version " + xrayVersion
+	}
 	return fmt.Sprintf(
-		"curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | bash -s -- agent%s --panel %s --token %s",
-		s.cfg.GitHubRepo, versionArg, base, token)
+		"curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | bash -s -- agent%s --panel %s --token %s%s",
+		s.cfg.GitHubRepo, versionArg, base, token, xrayArg)
 }
 
 // installInsecure 报告安装命令是否走明文公网链路（审查 H1）：base 为 http 且其
