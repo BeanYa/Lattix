@@ -73,7 +73,13 @@
 
 - 防抖动：同一服务器同一事件 5 分钟内不重复发（内存 map 记上次发送时间，重启清零可接受；
   `LATTIX_ALERT_DEBOUNCE` 可覆盖窗口，dev/e2e 用）。
-- `POST /api/setting/test-alerts`：按已保存配置向两通道各发一条测试消息，返回各通道成败。
+- 合并发送（一类通知只发一次）：防抖动通过后进入合并队列，5s 窗口内同一分类的多条告警
+  合并为一条——单条仍是原单事件载荷；多条时 Webhook 收到一条
+  `{"event":"batch","category","count","events":[{...}],"time"}`（`events` 为各条原载荷），
+  Telegram 收到一条带「合并通知 N 条」的摘要（超长时截断条目并注明剩余条数）；不同分类
+  各自一条。窗口由 `LATTIX_ALERT_MERGE_WINDOW` 覆盖（Go duration，0 = 关闭合并、逐条发送）。
+- `POST /api/setting/test-alerts`：按已保存配置向两通道各发一条测试消息（不经合并队列），
+  返回各通道成败。
 
 ## SQLite 备份
 

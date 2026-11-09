@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"lattix/backend/internal/store"
 	external "lattix/shared/requester"
@@ -72,23 +73,35 @@ var categoryLabels = map[string]string{
 // debounceDefault 是默认防抖动窗口：同一服务器同一事件在该窗口内不重复发送。
 const debounceDefault = 5 * time.Minute
 
+// mergeWindowDefault 是默认合并窗口：窗口内同一分类的多条告警合并为一条发送
+// （一类通知只发一次），避免批量巡检或断连时一次刷屏。
+const mergeWindowDefault = 5 * time.Second
+
+// notifyQueueSize 是待合并告警的缓冲上限；写满时丢弃并记日志，绝不阻塞调用方主路径。
+const notifyQueueSize = 256
+
 // sendTimeout 是单通道发送超时；发送全程异步，失败仅记日志，不阻塞主路径。
 const sendTimeout = 5 * time.Second
 
 // Notifier 读取 settings 表配置并发送告警；内存 map 记上次发送时间做防抖动（重启清零可接受）。
+// 发送经单一 dispatcher 收敛：合并窗口内同分类通知合并为一条，不同分类各一条。
 type Notifier struct {
-	st        *store.Store
-	requester external.WebhookRequester
-	debounce  time.Duration
+	st          *store.Store
+	requester   external.WebhookRequester
+	debounce    time.Duration
+	mergeWindow time.Duration
 
 	mu       sync.Mutex
 	lastSent map[string]time.Time // key: "<serverID>|<event>"
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	events chan payload
+	done   chan struct{}
 }
 
-// New 创建 Notifier。LATTIX_ALERT_DEBOUNCE（Go duration）可覆盖防抖动窗口（dev/e2e 用）。
+// New 创建 Notifier。LATTIX_ALERT_DEBOUNCE（Go duration）可覆盖防抖动窗口，
+// LATTIX_ALERT_MERGE_WINDOW（Go duration，0 = 关闭合并）可覆盖合并窗口（dev/e2e 用）。
 func New(st *store.Store) *Notifier {
 	debounce := debounceDefault
 	if v := os.Getenv("LATTIX_ALERT_DEBOUNCE"); v != "" {
@@ -99,18 +112,32 @@ func New(st *store.Store) *Notifier {
 			debounce = d
 		}
 	}
+	mergeWindow := mergeWindowDefault
+	if v := os.Getenv("LATTIX_ALERT_MERGE_WINDOW"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 {
+			log.Printf("LATTIX_ALERT_MERGE_WINDOW invalid, using %s: %v", mergeWindow, err)
+		} else {
+			mergeWindow = d
+		}
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Notifier{
+	n := &Notifier{
 		st: st,
 		// webhook 是管理员配置 URL，同样走 SSRF 拨号防护（拒绝解析到内网/保留段）。
 		requester: external.ExternalWebhookRequester{
 			Doer: external.NewExternalHTTPClient(sendTimeout),
 		},
-		debounce: debounce,
-		lastSent: make(map[string]time.Time),
-		ctx:      ctx,
-		cancel:   cancel,
+		debounce:    debounce,
+		mergeWindow: mergeWindow,
+		lastSent:    make(map[string]time.Time),
+		ctx:         ctx,
+		cancel:      cancel,
+		events:      make(chan payload, notifyQueueSize),
+		done:        make(chan struct{}),
 	}
+	go n.run()
+	return n
 }
 
 // config 是 settings 表中的告警配置快照。
@@ -150,8 +177,9 @@ type payload struct {
 	Time     string `json:"time"`
 }
 
-// Notify 上报一次状态跃迁事件：防抖动命中则丢弃；否则异步发送到各已配置通道。
-// server/node 为空字符串表示该维度不适用。失败仅记日志，绝不阻塞调用方主路径。
+// Notify 上报一次状态跃迁事件：防抖动命中则丢弃；否则进入合并队列，由 dispatcher
+// 在合并窗口结束后按分类发送。server/node 为空字符串表示该维度不适用。
+// 队列满或已关停时丢弃并记日志，绝不阻塞调用方主路径。
 func (n *Notifier) Notify(serverID int64, event, node, detail string) {
 	ctx := n.ctx
 	cfg := n.loadConfig(ctx)
@@ -173,11 +201,60 @@ func (n *Notifier) Notify(serverID int64, event, node, detail string) {
 		Detail:   detail,
 		Time:     time.Now().Format(time.RFC3339),
 	}
-	n.wg.Add(1)
-	go func() {
-		defer n.wg.Done()
-		n.send(n.ctx, cfg, p)
-	}()
+	select {
+	case n.events <- p:
+	default:
+		log.Printf("alert: 合并队列已满，丢弃 %s（%s）", event, server)
+	}
+}
+
+// run 是唯一的发送 dispatcher：收集合并窗口内的告警，按分类聚合后每类发送一条。
+// 单条事件保持原单事件载荷；关闭合并窗口（0）时逐条立即发送。
+func (n *Notifier) run() {
+	defer close(n.done)
+	var pending map[string][]payload
+	var timer *time.Timer
+	var timerC <-chan time.Time
+	flush := func() {
+		batch := pending
+		pending = nil
+		if len(batch) == 0 {
+			return
+		}
+		cfg := n.loadConfig(n.ctx)
+		if !cfg.enabled() {
+			return
+		}
+		for category, events := range batch {
+			n.sendCategory(n.ctx, cfg, category, events)
+		}
+	}
+	for {
+		select {
+		case <-n.ctx.Done():
+			return
+		case p := <-n.events:
+			if n.mergeWindow <= 0 {
+				cfg := n.loadConfig(n.ctx)
+				if cfg.enabled() {
+					n.sendCategory(n.ctx, cfg, p.Category, []payload{p})
+				}
+				continue
+			}
+			if pending == nil {
+				pending = make(map[string][]payload)
+			}
+			pending[p.Category] = append(pending[p.Category], p)
+			if timer == nil {
+				timer = time.NewTimer(n.mergeWindow)
+				timerC = timer.C
+			}
+		case <-timerC:
+			timer = nil
+			timerC = nil
+			flush()
+		}
+	}
 }
 
 // allow 实现防抖动：窗口内同 key 已发过则返回 false。
@@ -224,6 +301,98 @@ func (n *Notifier) send(ctx context.Context, cfg config, p payload) map[string]e
 	return errs
 }
 
+// batchPayload 是同一分类多条告警合并后的 webhook 载荷：event 固定为 batch，
+// events 保留每条事件原字段。单条通知仍发送原 payload，不改变既有消费方契约。
+type batchPayload struct {
+	Event    string    `json:"event"`
+	Category string    `json:"category"`
+	Count    int       `json:"count"`
+	Events   []payload `json:"events"`
+	Time     string    `json:"time"`
+}
+
+// batchEvent 是合并通知在 webhook 载荷中的 event 值（单条通知保持原事件名）。
+const batchEvent = "batch"
+
+// sendCategory 发送一个分类的告警：单条走既有单事件载荷/文案，多条合并为一条。
+func (n *Notifier) sendCategory(ctx context.Context, cfg config, category string, events []payload) {
+	if len(events) == 0 {
+		return
+	}
+	if len(events) == 1 {
+		n.send(ctx, cfg, events[0])
+		return
+	}
+	if cfg.webhookURL != "" {
+		if err := n.sendWebhook(ctx, cfg.webhookURL, newBatchPayload(category, events)); err != nil {
+			log.Printf("alert: webhook 发送 %s 合并通知（%d 条）失败: %v", category, len(events), err)
+		}
+	}
+	if cfg.tgToken != "" && cfg.tgChatID != "" {
+		if err := n.sendTelegram(ctx, cfg.tgToken, cfg.tgChatID, batchText(category, events)); err != nil {
+			log.Printf("alert: telegram 发送 %s 合并通知（%d 条）失败: %v", category, len(events), err)
+		}
+	}
+}
+
+// newBatchPayload 组装合并通知的 webhook 载荷，时间取最后一条事件的时间。
+func newBatchPayload(category string, events []payload) batchPayload {
+	return batchPayload{
+		Event:    batchEvent,
+		Category: category,
+		Count:    len(events),
+		Events:   events,
+		Time:     events[len(events)-1].Time,
+	}
+}
+
+// telegramTextLimit 是单条 Telegram 文本的保守上限（官方上限 4096 字符）；超出时
+// 截断条目并注明剩余数量，保证一类通知仍只发一条。
+const telegramTextLimit = 3500
+
+// detailTextLimit 是单条详情在合并摘要中的上限，避免单条超长详情挤掉其余条目。
+const detailTextLimit = 300
+
+// batchText 渲染同一分类多条告警的 Telegram 摘要文案。
+func batchText(category string, events []payload) string {
+	label := categoryLabels[category]
+	if label == "" {
+		label = category
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "[Lattix·%s] 合并通知 %d 条\n", label, len(events))
+	shown := 0
+	for i, p := range events {
+		line := fmt.Sprintf("%d. %s · %s", i+1, p.Server, p.Event)
+		if p.Node != "" {
+			line += " · " + p.Node
+		}
+		line += "\n"
+		if p.Detail != "" {
+			line += "   " + truncateRunes(p.Detail, detailTextLimit) + "\n"
+		}
+		if utf8.RuneCountInString(b.String())+utf8.RuneCountInString(line) > telegramTextLimit-120 {
+			break
+		}
+		b.WriteString(line)
+		shown++
+	}
+	if shown < len(events) {
+		fmt.Fprintf(&b, "…另有 %d 条同类通知，请在面板操作日志中查看\n", len(events)-shown)
+	}
+	b.WriteString("时间: " + events[len(events)-1].Time)
+	return b.String()
+}
+
+// truncateRunes 按字符截断文本（超出时补省略号）。
+func truncateRunes(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) <= limit {
+		return s
+	}
+	return string(runes[:limit]) + "…"
+}
+
 // ChannelResult 是测试发送的单通道结果。
 type ChannelResult struct {
 	Configured bool   `json:"configured"`
@@ -257,8 +426,8 @@ func (n *Notifier) Test(ctx context.Context) map[string]ChannelResult {
 }
 
 // sendWebhook POST JSON 载荷到 webhook 接收端；非 2xx 视为失败。
-func (n *Notifier) sendWebhook(ctx context.Context, url string, p payload) error {
-	return n.requester.PostJSON(ctx, url, p)
+func (n *Notifier) sendWebhook(ctx context.Context, url string, body any) error {
+	return n.requester.PostJSON(ctx, url, body)
 }
 
 // sendTelegram 经 Bot API sendMessage 发送纯文本。
@@ -286,17 +455,12 @@ func (e *secretRedactedError) Error() string {
 
 func (e *secretRedactedError) Unwrap() error { return e.cause }
 
-// Close cancels in-flight alert delivery and waits within the caller's
-// shutdown budget.
+// Close 取消未发送与在途发送，并在调用方的关停预算内等待 dispatcher 退出。
+// 尚在合并窗口内、未发出的告警随之丢弃（告警投递本身是尽力而为）。
 func (n *Notifier) Close(ctx context.Context) error {
 	n.cancel()
-	done := make(chan struct{})
-	go func() {
-		n.wg.Wait()
-		close(done)
-	}()
 	select {
-	case <-done:
+	case <-n.done:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

@@ -42,6 +42,11 @@
   `EffectiveProfile` 按四级顺序解析主策略槽位；新增默认级（模板指派页「默认级配置」卡维护，
   `GET/POST /api/subscription/template/default`，保存后全量重发快照），仅当面板与用户均未
   配置时生效；删除被默认级引用的模板被拒绝。
+- 事件告警合并发送：防抖动通过后的通知进入合并队列，5s 窗口内同一分类（运行警告/到期
+  预警/Ban 告警）的多条告警合并为一条——单条保持原载荷；多条时 Webhook 收到一条
+  `event=batch` 批次（`count` + `events` 原载荷数组），Telegram 收到一条摘要（超长截断
+  并注明剩余条数）；不同分类各一条，避免批量巡检/断连时一次刷屏。窗口由
+  `LATTIX_ALERT_MERGE_WINDOW` 覆盖（0 = 关闭）。
 
 ### Fixed
 
