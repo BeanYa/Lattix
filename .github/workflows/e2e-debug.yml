@@ -8,15 +8,18 @@ permissions:
   contents: read
 
 jobs:
-  protocols:
+  e2e:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: baseline
-            cdn_source: ""
-          - name: no-inspection
-            cdn_source: "http://127.0.0.1:9/catalog.json"
+        script:
+          - protocols.sh
+          - links.sh
+          - usernodes.sh
+          - event-log.sh
+          - upgrade.sh
+          - install-agent.sh
+          - reconcile.sh
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -51,18 +54,17 @@ jobs:
             -o /tmp/out/backend ./src/backend/cmd/backend
           CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" \
             -o /tmp/out/agent ./src/agent/cmd/agent
-      - name: Run protocols (${{ matrix.name }})
+      - name: Run ${{ matrix.script }}
         env:
           PANEL_BIN: /tmp/out/backend
           AGENT_BIN: /tmp/out/agent
           XRAY_BIN: /tmp/xray/xray
-          LATTIX_CDN_SOURCE_URL: ${{ matrix.cdn_source }}
-        run: bash scripts/e2e/protocols.sh
+        run: bash "scripts/e2e/${{ matrix.script }}"
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: e2e-logs-${{ matrix.name }}
+          name: e2e-logs-${{ matrix.script }}
           path: /tmp/lattix-e2e-logs/
           if-no-files-found: ignore
           retention-days: 3
