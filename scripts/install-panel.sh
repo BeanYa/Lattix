@@ -17,14 +17,49 @@ CONFIG_DIR=""
 
 die() { echo "install-panel.sh: $*" >&2; exit 1; }
 
+# github_asset_api_url 把 release 资产直链改写为 GitHub API 资产端点：
+#   https://github.com/<repo>/releases/download/<tag>/<asset>
+# → https://api.github.com/repos/<repo>/releases/assets/<id>
+# 仅供 download_file 在直链失败时回退；非 GitHub 直链（镜像/file://）返回非零。
+github_asset_api_url() {
+    local url="$1" repo tag asset json id
+    [[ "$url" =~ ^https://github\.com/([^/]+/[^/]+)/releases/download/([^/]+)/([^/?#]+)$ ]] || return 1
+    repo="${BASH_REMATCH[1]}"
+    tag="${BASH_REMATCH[2]}"
+    asset="${BASH_REMATCH[3]}"
+    json="$(curl -fsSL --max-time 30 "https://api.github.com/repos/${repo}/releases/tags/${tag}")" || return 1
+    # release JSON 的资产对象形如 {"url": ".../releases/assets/<id>", ..., "name": "<asset>"}；
+    # 用 url 行取 id、后续 name 行匹配资产名，不依赖 jq。
+    id="$(printf '%s\n' "$json" | awk -v want="$asset" '
+        match($0, /releases\/assets\/[0-9]+/) { id = substr($0, RSTART + 16, RLENGTH - 16) }
+        /"name": / {
+            n = $0; sub(/^.*"name": "/, "", n); sub(/".*$/, "", n)
+            if (n == want && id != "") { print id; exit }
+        }')"
+    [[ -n "$id" ]] || return 1
+    printf 'https://api.github.com/repos/%s/releases/assets/%s' "$repo" "$id"
+}
+
 download_file() {
-    local label="$1" url="$2" destination="$3"
+    local label="$1" url="$2" destination="$3" api_url
+    command -v curl >/dev/null || die "curl is required"
     echo ">> 正在下载 $label"
-    if ! curl --fail --location --show-error --progress-bar \
-        --output "$destination" "$url"; then
-        return 1
+    if curl --fail --location --show-error --progress-bar \
+        --retry 1 --retry-delay 1 --output "$destination" "$url"; then
+        echo ">> $label 下载完成"
+        return 0
     fi
-    echo ">> $label 下载完成"
+    if api_url="$(github_asset_api_url "$url")" && [[ -n "$api_url" ]]; then
+        echo ">> 直连 release 下载失败，改走 GitHub API 资产端点重试 $label" >&2
+        if curl --fail --location --show-error --progress-bar \
+            --retry 1 --retry-delay 1 \
+            --header 'Accept: application/octet-stream' \
+            --output "$destination" "$api_url"; then
+            echo ">> $label 下载完成"
+            return 0
+        fi
+    fi
+    return 1
 }
 
 while [[ $# -gt 0 ]]; do

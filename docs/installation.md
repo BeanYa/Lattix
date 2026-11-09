@@ -39,7 +39,9 @@ Docker 模式不在宿主机安装 `latx`，也不注册 Lattix systemd unit；B
 不传 `--version` 时安装最新稳定 Release；追加 `--version vX.Y.Z` 钉版。根入口
 优先从该版本 Release 资产加载子安装器（无资产时回退对应 Git tag 的原始文件），
 执行前按同版本 `checksums.txt` 校验 SHA256，不匹配即中止；旧版本 Release 无
-脚本条目时警告并跳过校验，保持钉版旧版本可安装。
+脚本条目时警告并跳过校验，保持钉版旧版本可安装。GitHub release 直链偶发 5xx
+（如 504）时，安装器会先短重试，再改走同一发布资产的 GitHub API 端点下载
+（checksums 校验不变）；Agent 包子安装器仍按原 checksums.txt 校验。
 
 | 选项 | 是否必需 | 默认值 | 说明 |
 | --- | --- | --- | --- |

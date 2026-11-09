@@ -63,6 +63,52 @@ set -euo pipefail
 
 die() { echo "latx: $*" >&2; exit 1; }
 
+# github_asset_api_url 把 release 资产直链改写为 GitHub API 资产端点：
+#   https://github.com/<repo>/releases/download/<tag>/<asset>
+# → https://api.github.com/repos/<repo>/releases/assets/<id>
+# 仅供 download_file 在直链失败时回退；非 GitHub 直链（镜像/file://）返回非零。
+github_asset_api_url() {
+    local url="$1" repo tag asset json id
+    [[ "$url" =~ ^https://github\.com/([^/]+/[^/]+)/releases/download/([^/]+)/([^/?#]+)$ ]] || return 1
+    repo="${BASH_REMATCH[1]}"
+    tag="${BASH_REMATCH[2]}"
+    asset="${BASH_REMATCH[3]}"
+    json="$(curl -fsSL --max-time 30 "https://api.github.com/repos/${repo}/releases/tags/${tag}")" || return 1
+    # release JSON 的资产对象形如 {"url": ".../releases/assets/<id>", ..., "name": "<asset>"}；
+    # 用 url 行取 id、后续 name 行匹配资产名，不依赖 jq。
+    id="$(printf '%s\n' "$json" | awk -v want="$asset" '
+        match($0, /releases\/assets\/[0-9]+/) { id = substr($0, RSTART + 16, RLENGTH - 16) }
+        /"name": / {
+            n = $0; sub(/^.*"name": "/, "", n); sub(/".*$/, "", n)
+            if (n == want && id != "") { print id; exit }
+        }')"
+    [[ -n "$id" ]] || return 1
+    printf 'https://api.github.com/repos/%s/releases/assets/%s' "$repo" "$id"
+}
+
+# download_file 先走直链，失败后改走 GitHub API 资产端点（同一发布资产）。
+download_file() {
+    local label="$1" url="$2" destination="$3" api_url
+    command -v curl >/dev/null || die "curl is required"
+    echo ">> 正在下载 $label"
+    if curl --fail --location --show-error --progress-bar \
+        --retry 1 --retry-delay 1 --output "$destination" "$url"; then
+        echo ">> $label 下载完成"
+        return 0
+    fi
+    if api_url="$(github_asset_api_url "$url")" && [[ -n "$api_url" ]]; then
+        echo ">> 直连 release 下载失败，改走 GitHub API 资产端点重试 $label" >&2
+        if curl --fail --location --show-error --progress-bar \
+            --retry 1 --retry-delay 1 \
+            --header 'Accept: application/octet-stream' \
+            --output "$destination" "$api_url"; then
+            echo ">> $label 下载完成"
+            return 0
+        fi
+    fi
+    return 1
+}
+
 # use_systemd：非 DEV 模式且存在 systemctl 时走 systemd 管理。
 use_systemd() { [[ "${LATX_DEV:-0}" != "1" ]] && command -v systemctl >/dev/null; }
 
@@ -268,9 +314,9 @@ cmd_update() {
 
     local base="https://github.com/${GITHUB_REPO}/releases/download/${version}"
     local asset="lattix-panel-linux-${arch}.tar.gz"
-    curl -fsSL -o "$tmp/$asset" "$base/$asset" \
+    download_file "面板包 ${version}" "$base/$asset" "$tmp/$asset" \
         || die "下载失败：release ${version} 无 $asset"
-    curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt" \
+    download_file "面板校验文件" "$base/checksums.txt" "$tmp/checksums.txt" \
         || die "未获取到 release 校验文件 checksums.txt，中止更新"
     (cd "$tmp" && grep "lattix-panel-linux-${arch}.tar.gz$" checksums.txt | sha256sum -c - >/dev/null) \
         || die "面板包 SHA256 校验失败（release ${version} checksums.txt）"
