@@ -239,6 +239,10 @@ func (s *Server) reconcileServerInspectionRuns(ctx context.Context) {
 	}
 	for _, run := range pending {
 		task, err := s.st.ServerTestByServerID(ctx, run.ServerID)
+		if errors.Is(err, store.ErrNotFound) {
+			_ = s.st.SupersedeServerInspectionRun(ctx, run.ServerID, run.TaskID, "测试任务已不存在")
+			continue
+		}
 		if err != nil {
 			continue
 		}
