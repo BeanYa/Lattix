@@ -50,6 +50,9 @@
 
 ### Fixed
 
+- 修复点击顶栏头像打开账户菜单后整页空白、切换路由仍空白（刷新才恢复）：账户菜单里的
+  `DropdownMenuLabel` 脱离 `DropdownMenuGroup`，Base UI 抛错导致 React 卸载整棵应用树；
+  菜单改为在 `DropdownMenuGroup` 内渲染，并新增回归测试锁定「打开账户菜单不卸载壳层」。
 - 修复 GitHub release 资产直链偶发 504 导致 Agent 安装/升级在“agent 包下载失败”处中止：
   安装器与 `latx`/`latx-ag` 更新在直链失败后先短暂重试，再回退到同一发布资产的 GitHub
   API 端点下载（仍按 `checksums.txt` 校验，供应链边界不变）；根安装器还会预取 agent
