@@ -52,6 +52,7 @@
 
 ### Fixed
 
+- 构建工具链升级到 Go 1.26.11，修复标准库 `net/http` 漏洞 GO-2026-6859。
 - 修复点击顶栏头像打开账户菜单后整页空白、切换路由仍空白（刷新才恢复）：账户菜单里的
   `DropdownMenuLabel` 脱离 `DropdownMenuGroup`，Base UI 抛错导致 React 卸载整棵应用树；
   菜单改为在 `DropdownMenuGroup` 内渲染，并新增回归测试锁定「打开账户菜单不卸载壳层」。
