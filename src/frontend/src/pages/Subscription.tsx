@@ -6,11 +6,8 @@ import {
   CircleAlertIcon,
   CopyIcon,
   DownloadIcon,
-  GlobeIcon,
   QrCodeIcon,
-  RadioTowerIcon,
   RefreshCwIcon,
-  ServerIcon,
   WifiIcon,
   XIcon,
 } from 'lucide-react'
@@ -22,7 +19,7 @@ import ThemeToggle from '@/components/ThemeToggle'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { humanizeBytes } from '@/lib/format'
 import { RequestError, requester } from '@/lib/requester'
-import { formatLatency, latencyTone } from '@/pages/chains/chain-stats'
+import { LinkStatusGrid, type LinkStatus } from '@/pages/subscription/LinkStatusGrid'
 import { PublicationNotice } from '@/pages/subscription/PublicationNotice'
 import { TemplateConfigCard } from '@/pages/subscription/TemplateConfigCard'
 import { VisibilityCard } from '@/pages/subscription/VisibilityCard'
@@ -64,24 +61,6 @@ interface DownloadTask {
   source_url?: string
   sha256?: string
   error?: string
-}
-
-/** CarrierStatus 是入口服务器到一个三网公开 CDN 测速点的最新延迟。 */
-interface CarrierStatus {
-  label: string
-  latency_ms: number | null
-  sampled_at?: string
-}
-
-/** LinkStatus 是一条链路的匿名状态：入口三网延迟 + 内部段延迟加总（无服务器标识）。
- * entry_banned 表示入口（第一跳）服务器被 Ban 巡检判定且为可直连服务器（§告警分类）。 */
-interface LinkStatus {
-  id?: string
-  label: string
-  entry: string
-  carriers: CarrierStatus[]
-  internal_ms: number | null
-  entry_banned?: boolean
 }
 
 interface LinkStatusResponse {
@@ -218,18 +197,6 @@ function formatExpiry(timestamp?: number): string {
   }).format(new Date(timestamp * 1000))
 }
 
-function formatSampleTime(value: string): string {
-  if (!value) return '采样时间未知'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('zh-CN', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date)
-}
-
 /** 客户端矩阵按断点换列，最后一行的单元格去掉底边，让模块外框充当收口线。 */
 function lastRowClass(index: number, total: number): string {
   const lastRowOfThree = total - (total % 3 || 3)
@@ -241,125 +208,6 @@ function lastRowClass(index: number, total: number): string {
   ]
     .filter(Boolean)
     .join(' ')
-}
-
-// SOURCE_ROW_H / SOURCE_ROW_GAP 是三网源行的几何参数（与 CSS 行高一致，供汇流
-// SVG 计算路径）；汇流曲线把各 CDN 测速源汇聚到入口服务器。
-const SOURCE_ROW_H = 24
-const SOURCE_ROW_GAP = 8
-
-/** CarrierLatency 是三网源延迟标注：口径与链路详情段延迟一致（<100/100–300/>300ms），
- * 失败样本如实显示「超时」，无样本显示「—」。 */
-function CarrierLatency({ carrier }: { carrier: CarrierStatus }) {
-  if (carrier.latency_ms === null) {
-    const missing = !carrier.sampled_at
-    return (
-      <span
-        className="sub-link-latency"
-        data-tone={missing ? 'idle' : 'fail'}
-        title={missing ? '暂无三网测速样本' : '最近一次三网探测失败/超时'}
-      >
-        {missing ? '—' : '超时'}
-      </span>
-    )
-  }
-  return (
-    <span
-      className="sub-link-latency"
-      data-tone={latencyTone(carrier.latency_ms)}
-      title={carrier.sampled_at ? `采样 ${formatSampleTime(carrier.sampled_at)}` : undefined}
-    >
-      {formatLatency(carrier.latency_ms)}
-    </span>
-  )
-}
-
-/** LinkFlowRow 是一条链路的流式状态行：各地公开 CDN 测速源（电信/联通/移动）汇入
- * 入口服务器，中部箭头标注链路内部段延迟加总（x ms），右侧 Internet 表示出口
- * 落地接入互联网。入口服务器被 Ban 判定时节点旁打「Banned」标（hover 详情带测速省市地域）。 */
-function LinkFlowRow({ link, unreachableRegion }: { link: LinkStatus; unreachableRegion: string }) {
-  const count = Math.max(1, link.carriers.length)
-  const stackHeight = count * SOURCE_ROW_H + (count - 1) * SOURCE_ROW_GAP
-  const mid = stackHeight / 2
-  const centers = Array.from(
-    { length: count },
-    (_, i) => i * (SOURCE_ROW_H + SOURCE_ROW_GAP) + SOURCE_ROW_H / 2,
-  )
-  const internal = link.internal_ms
-  const internalTone = internal === null || internal === 0 ? 'idle' : latencyTone(internal)
-  const internalLabel = internal === null ? '—' : internal === 0 ? '直连' : formatLatency(internal)
-  const region = unreachableRegion || '大陆'
-  return (
-    <article className="sub-link-row">
-      <span className="sub-link-name">{link.label}</span>
-      <div className="sub-link-flow">
-        <div className="sub-link-sources" style={{ height: stackHeight }}>
-          {link.carriers.length > 0 ? (
-            link.carriers.map((carrier) => (
-              <span className="sub-link-source" key={carrier.label}>
-                <span className="sub-link-node-glyph" title="公共 CDN 测速源">
-                  <RadioTowerIcon size={12} aria-hidden="true" />
-                </span>
-                <span className="sub-link-source-name">{carrier.label}</span>
-                <CarrierLatency carrier={carrier} />
-              </span>
-            ))
-          ) : (
-            <span className="sub-link-source is-empty">暂无三网测速数据</span>
-          )}
-        </div>
-        {link.carriers.length > 0 ? (
-          <svg
-            className="sub-link-merge"
-            width={26}
-            height={stackHeight}
-            viewBox={`0 0 26 ${stackHeight}`}
-            aria-hidden="true"
-          >
-            {centers.map((cy) => (
-              <path key={cy} d={`M 0 ${cy} C 14 ${cy}, 12 ${mid}, 26 ${mid}`} />
-            ))}
-          </svg>
-        ) : null}
-        <span className="sub-link-node">
-          <span className="sub-link-node-glyph">
-            <ServerIcon size={13} aria-hidden="true" />
-          </span>
-          <span className="sub-link-node-label">{link.entry}</span>
-          {link.entry_banned ? (
-            <span
-              className="sub-link-unreachable"
-              title={`入口服务器三网测速（${region}）判定 Banned`}
-            >
-              Banned
-            </span>
-          ) : null}
-        </span>
-        <span className="sub-link-internal" data-tone={internalTone}>
-          <span
-            className="sub-link-latency"
-            data-tone={internalTone}
-            title={
-              internal === null
-                ? '内部段延迟不完整（缺新鲜测速样本）'
-                : internal === 0
-                  ? '单跳直连，无内部链路段'
-                  : '链路内部各段首选 RTT 之和'
-            }
-          >
-            {internalLabel}
-          </span>
-          <i className="sub-link-internal-track" aria-hidden="true" />
-        </span>
-        <span className="sub-link-node is-wan">
-          <span className="sub-link-node-glyph">
-            <GlobeIcon size={13} aria-hidden="true" />
-          </span>
-          <span className="sub-link-node-label">Internet</span>
-        </span>
-      </div>
-    </article>
-  )
 }
 
 async function copyText(text: string): Promise<void> {
@@ -1130,15 +978,7 @@ export default function SubscriptionPage() {
           </header>
           <div className="sub-mod-body sub-mod-body-flush">
             {linkStatus && linkStatus.length > 0 ? (
-              <div className="sub-link-list">
-                {linkStatus.map((link) => (
-                  <LinkFlowRow
-                    key={link.id ?? link.label}
-                    link={link}
-                    unreachableRegion={unreachableRegion}
-                  />
-                ))}
-              </div>
+              <LinkStatusGrid links={linkStatus} unreachableRegion={unreachableRegion} />
             ) : linkStatus ? (
               <div className="sub-empty-line">暂无已采集的链路状态</div>
             ) : null}

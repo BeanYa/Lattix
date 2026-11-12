@@ -1,0 +1,455 @@
+/* ============================================================
+   可见性管理（管理端工作区）
+   两栏操作工作区：左侧为订阅用户、可见范围与发布状态读数，
+   右侧是玻璃卡中的共享可见性编辑器与保存操作栏。
+   全部来自 tokens.css 的 --panel-* 令牌；深浅两套外观等价。
+   ============================================================ */
+
+/* ---------- 布局：≥1024 两栏，窄屏按 用户 → 编辑器 → 概览 → 发布 单列 ---------- */
+
+.vis-admin-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    'user'
+    'editor'
+    'scope'
+    'publish';
+  align-items: start;
+  gap: 14px;
+}
+
+.vis-admin-user {
+  grid-area: user;
+}
+
+.vis-admin-editor {
+  grid-area: editor;
+}
+
+.vis-admin-scope {
+  grid-area: scope;
+}
+
+.vis-admin-publish {
+  grid-area: publish;
+}
+
+@media (min-width: 1024px) {
+  .vis-admin-layout {
+    grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+    grid-template-areas:
+      'user editor'
+      'scope editor'
+      'publish editor';
+  }
+
+  /* 编辑器卡与左栏同高，操作栏贴底，形成稳定的工作区基线。 */
+  .vis-admin-editor {
+    align-self: stretch;
+  }
+}
+
+/* ---------- 左栏玻璃卡 ---------- */
+
+.vis-admin-card {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 12px;
+  padding: 14px 16px 15px;
+}
+
+.vis-admin-card-hint {
+  margin: 0;
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.vis-admin-field {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.vis-admin-field > label {
+  color: var(--panel-ink-3);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  line-height: 1.3;
+}
+
+/* ---------- 用户身份 ---------- */
+
+.vis-user-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--panel-rule);
+  padding-top: 12px;
+}
+
+.vis-user-avatar {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--panel-signal) 32%, var(--panel-rule));
+  border-radius: var(--radius-md);
+  background: var(--panel-signal-soft);
+  color: var(--panel-signal);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.vis-user-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.vis-user-name {
+  overflow-wrap: anywhere;
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  line-height: 1.3;
+}
+
+.vis-user-meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.vis-user-id {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.vis-user-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--vis-user-tone) 40%, var(--panel-rule));
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--vis-user-tone) 12%, transparent);
+  padding: 1px 7px;
+  color: var(--vis-user-tone);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.vis-user-status::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.vis-user-status[data-tone='ok'] {
+  --vis-user-tone: var(--panel-status-ok);
+}
+
+.vis-user-status[data-tone='warning'] {
+  --vis-user-tone: var(--panel-status-degraded);
+}
+
+.vis-user-status[data-tone='danger'] {
+  --vis-user-tone: var(--panel-status-failed);
+}
+
+.vis-user-status[data-tone='unknown'] {
+  --vis-user-tone: var(--panel-status-unknown);
+}
+
+/* ---------- 可见范围读数 ---------- */
+
+.vis-scope-readouts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.vis-scope-readout {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  border-left: 1px solid var(--panel-rule);
+  padding: 0 10px;
+}
+
+.vis-scope-readout:first-child {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.vis-scope-readout:last-child {
+  padding-right: 0;
+}
+
+.vis-scope-label {
+  color: var(--panel-ink-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.vis-scope-value {
+  margin: 0;
+  color: var(--panel-ink);
+  font-family: var(--font-readout);
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+
+.vis-scope-note {
+  margin: 0;
+  border-top: 1px solid var(--panel-rule);
+  padding-top: 10px;
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* ---------- 发布状态 ---------- */
+
+.vis-publish-empty {
+  margin: 0;
+  color: var(--panel-ink-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* ---------- 保存状态 chip（页头动作区） ---------- */
+
+.vis-save-chip {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--panel-rule-strong);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--panel-raised) 55%, transparent);
+  padding: 0 10px;
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease,
+    background-color 140ms ease;
+}
+
+.vis-save-chip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.vis-save-chip[data-tone='ok'] {
+  border-color: color-mix(in srgb, var(--panel-status-ok) 40%, var(--panel-rule));
+  background: var(--panel-status-ok-soft);
+  color: var(--panel-status-ok);
+}
+
+.vis-save-chip[data-tone='info'] {
+  border-color: color-mix(in srgb, var(--panel-signal) 42%, var(--panel-rule));
+  background: var(--panel-signal-soft);
+  color: var(--panel-signal);
+}
+
+.vis-save-chip[data-tone='dirty'] {
+  border-color: color-mix(in srgb, var(--panel-status-degraded) 42%, var(--panel-rule));
+  background: var(--panel-status-degraded-soft);
+  color: var(--panel-status-degraded);
+}
+
+.vis-save-chip[data-tone='danger'] {
+  border-color: color-mix(in srgb, var(--panel-status-failed) 42%, var(--panel-rule));
+  background: var(--panel-status-failed-soft);
+  color: var(--panel-status-failed);
+}
+
+.vis-save-chip[data-tone='info']::before {
+  animation: cg-beacon-pulse 1.8s var(--ease-standard) infinite;
+}
+
+/* ---------- 右栏编辑器卡 ---------- */
+
+.vis-admin-editor {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.vis-admin-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--panel-rule);
+  padding: 14px 16px 12px;
+}
+
+.vis-admin-editor-head-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.vis-admin-editor-title {
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+
+.vis-admin-editor-hint {
+  margin: 0;
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.vis-admin-editor-total {
+  flex: none;
+  padding-top: 1px;
+  color: var(--panel-ink-3);
+  font-family: var(--font-display);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.vis-admin-editor-total strong {
+  color: var(--panel-ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.vis-admin-editor-body {
+  display: grid;
+  flex: 1;
+  align-content: start;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
+.vis-admin-editor-placeholder {
+  display: grid;
+  min-height: 176px;
+  place-items: center;
+  margin: 0;
+  border: 1px dashed var(--panel-rule-strong);
+  border-radius: var(--radius-md);
+  padding: 20px;
+  color: var(--panel-ink-3);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.vis-admin-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--panel-rule);
+  background: color-mix(in srgb, var(--panel-raised) 42%, transparent);
+  padding: 10px 16px;
+}
+
+.vis-admin-actions-copy {
+  min-width: 0;
+  margin: 0;
+  color: var(--panel-ink-3);
+  font-size: 12px;
+  line-height: 1.45;
+  transition: color 140ms ease;
+}
+
+.vis-admin-actions-copy[data-tone='dirty'] {
+  color: var(--panel-ink-2);
+}
+
+.vis-admin-actions-copy[data-tone='info'] {
+  color: var(--panel-signal);
+}
+
+.vis-admin-actions-copy[data-tone='danger'] {
+  color: var(--panel-status-failed);
+}
+
+.vis-admin-actions-buttons {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---------- 窄屏：单列 + 操作按钮占满宽度 ---------- */
+
+@media (max-width: 639px) {
+  .vis-admin-card {
+    padding: 13px 14px 14px;
+  }
+
+  .vis-admin-editor-head {
+    padding: 13px 14px 11px;
+  }
+
+  .vis-admin-editor-body {
+    padding: 13px 14px 14px;
+  }
+
+  .vis-admin-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .vis-admin-actions-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .vis-admin-actions-buttons > * {
+    width: 100%;
+  }
+}

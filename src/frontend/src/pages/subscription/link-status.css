@@ -1,0 +1,202 @@
+/* ---------- 链路状态（紧凑小卡片网格） ---------- */
+/* 卡片是模块玻璃卡内的嵌套内容，按设计语言保持实色：--panel-inset 底 +
+ * --panel-rule 描边 + --radius-md 圆角；三网读数用状态色（tone）+ 数值双表达，
+ * 数字统一 tabular-nums。 */
+
+.sub-link-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 8px;
+  list-style: none;
+}
+
+.sub-link-grid-item {
+  display: flex;
+  min-width: 0;
+  margin: 0;
+}
+
+.sub-link-card {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 10px 10px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-md);
+  background: var(--panel-inset);
+}
+
+.sub-link-card-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.sub-link-card-name {
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub-link-card-role {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.sub-link-card-head .sub-link-unreachable {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+/* 三网读数：三列等宽，源名在上、延迟值在下；列数跟随数据条数（电信→联通→移动）。 */
+.sub-link-card-carriers {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.sub-link-card-carrier {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sub-link-card-carrier-name {
+  overflow: hidden;
+  color: var(--panel-ink-2);
+  font-size: 10.5px;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sub-link-card-latency {
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+/* 读数落在实色 inset 上：状态色向 --panel-ink 收 16%，保住色相的同时
+ * 让浅色外观也过 4.5:1（原始 degraded 在浅色 inset 上仅 3.94:1）。 */
+.sub-link-card-latency,
+.sub-link-card-tail .sub-link-latency {
+  color: color-mix(in srgb, var(--panel-status-ok) 84%, var(--panel-ink));
+}
+
+.sub-link-card-latency[data-tone='warn'],
+.sub-link-card-tail .sub-link-latency[data-tone='warn'] {
+  color: color-mix(in srgb, var(--panel-status-degraded) 84%, var(--panel-ink));
+}
+
+.sub-link-card-latency[data-tone='fail'],
+.sub-link-card-tail .sub-link-latency[data-tone='fail'] {
+  color: color-mix(in srgb, var(--panel-status-failed) 84%, var(--panel-ink));
+}
+
+.sub-link-card-latency[data-tone='idle'],
+.sub-link-card-tail .sub-link-latency[data-tone='idle'] {
+  color: var(--panel-ink-2);
+}
+
+.sub-link-card-empty {
+  margin: 0;
+  color: var(--panel-ink-2);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+/* 卡尾：内部段延迟胶囊 → 连接线 → Internet 终点，保留旧行的流向语义。 */
+.sub-link-card-tail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 7px;
+  border-top: 1px solid var(--panel-rule);
+}
+
+.sub-link-card-seg {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.sub-link-card-seg-label {
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.sub-link-card-track {
+  min-width: 12px;
+  flex: 1;
+  height: 1px;
+  background: var(--panel-rule-strong);
+}
+
+.sub-link-card-arrow {
+  flex-shrink: 0;
+  color: var(--panel-ink-3);
+}
+
+.sub-link-card-wan {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.sub-link-card-wan svg {
+  color: var(--panel-ink-3);
+}
+
+@media (max-width: 768px) {
+  .sub-link-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

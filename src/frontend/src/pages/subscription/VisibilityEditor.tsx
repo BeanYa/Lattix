@@ -1,7 +1,7 @@
-import { useId, useState } from 'react'
-import { ChevronDownIcon } from 'lucide-react'
+import { useId, useState, type ReactNode } from 'react'
+import { CheckIcon, ChevronDownIcon } from 'lucide-react'
 
-import '../subscription.css'
+import './visibility.css'
 
 export interface VisibilityLink {
   id: string
@@ -17,19 +17,53 @@ interface VisibilitySelection {
   onVisibilityChange: (id: string, visible: boolean) => void
 }
 
+/** 订阅项 ID 形如 chain:12 / node:7 / external:3，按前缀给出人类可读类型。 */
+function itemKind(id: string): string {
+  if (id.startsWith('chain:')) return '中转链路'
+  if (id.startsWith('node:')) return '直连节点'
+  if (id.startsWith('external:')) return '外部订阅'
+  return '订阅项'
+}
+
+/** 链路身份色按 id % 9 分配（DESIGN.md：线路身份色只出现在链路徽标与链路序列）。 */
+function identityColor(id: string): string | undefined {
+  const numeric = Number(id.slice(id.indexOf(':') + 1))
+  return id.startsWith('chain:') && Number.isFinite(numeric) && numeric >= 0
+    ? `var(--panel-line-${numeric % 9})`
+    : undefined
+}
+
 function VisibilityCheckbox({
   item,
   hiddenIds,
   onVisibilityChange,
 }: VisibilitySelection & { item: VisibilityLink }) {
+  const visible = !hiddenIds.has(item.id)
+  const color = identityColor(item.id)
   return (
-    <label className="sub-visibility-check">
-      <input
-        type="checkbox"
-        checked={!hiddenIds.has(item.id)}
-        onChange={(event) => onVisibilityChange(item.id, event.target.checked)}
-      />
-      <span>{item.label}</span>
+    <label className="vis-item-main">
+      <span className="vis-check">
+        <input
+          type="checkbox"
+          checked={visible}
+          onChange={(event) => onVisibilityChange(item.id, event.target.checked)}
+        />
+        <span className="vis-check-box" aria-hidden="true">
+          {visible ? <CheckIcon size={12} strokeWidth={3} /> : null}
+        </span>
+      </span>
+      <span className="vis-item-copy">
+        <span className="vis-item-label">{item.label}</span>
+        <span className="vis-item-meta">
+          {color ? (
+            <span className="vis-id-dot" style={{ background: color }} aria-hidden="true" />
+          ) : null}
+          {itemKind(item.id)}
+        </span>
+      </span>
+      <span className="vis-item-state" data-visible={visible}>
+        {visible ? '可见' : '已隐藏'}
+      </span>
     </label>
   )
 }
@@ -41,13 +75,13 @@ function ExternalVisibilityRow({
   const nodeListId = useId()
   const [expanded, setExpanded] = useState(false)
   return (
-    <li className="sub-visibility-item">
-      <div className="sub-visibility-row">
+    <li className="vis-item is-external" data-expanded={expanded || undefined}>
+      <div className="vis-item-head">
         <VisibilityCheckbox item={source} {...selection} />
         {source.nodes.length > 0 ? (
           <button
             type="button"
-            className="sub-visibility-disclosure"
+            className="vis-disclosure"
             aria-expanded={expanded}
             aria-controls={nodeListId}
             aria-label={`${source.label}的 ${source.nodes.length} 个节点`}
@@ -57,17 +91,73 @@ function ExternalVisibilityRow({
             <ChevronDownIcon size={14} aria-hidden="true" />
           </button>
         ) : (
-          <span className="sub-visibility-node-count">暂无节点</span>
+          <span className="vis-node-count">暂无节点</span>
         )}
       </div>
       {source.nodes.length > 0 ? (
-        <ul id={nodeListId} className="sub-visibility-nodes" hidden={!expanded}>
+        <ul id={nodeListId} className="vis-nodes sub-visibility-nodes" hidden={!expanded}>
           {source.nodes.map((node, index) => (
             <li key={`${node}-${index}`}>{node}</li>
           ))}
         </ul>
       ) : null}
     </li>
+  )
+}
+
+function SectionBulkToggle({
+  hiddenIds,
+  items,
+  onVisibilityChange,
+}: VisibilitySelection & { items: VisibilityLink[] }) {
+  const allVisible = items.every((item) => !hiddenIds.has(item.id))
+  if (items.length === 0) return null
+  return (
+    <button
+      type="button"
+      className="vis-bulk"
+      onClick={() => {
+        for (const item of items) onVisibilityChange(item.id, !allVisible)
+      }}
+    >
+      {allVisible ? '全部隐藏' : '全部显示'}
+    </button>
+  )
+}
+
+function Section({
+  title,
+  description,
+  items,
+  children,
+  ...selection
+}: VisibilitySelection & {
+  title: string
+  description: string
+  items: VisibilityLink[]
+  children: ReactNode
+}) {
+  const headingId = useId()
+  const visible = items.filter((item) => !selection.hiddenIds.has(item.id)).length
+  return (
+    <section className="vis-section" aria-labelledby={headingId}>
+      <header className="vis-section-head">
+        <div className="vis-section-copy">
+          <h3 className="vis-section-title" id={headingId}>
+            {title}
+          </h3>
+          <p className="vis-section-desc">{description}</p>
+        </div>
+        <div className="vis-section-tools">
+          <span className="vis-section-count">
+            <span className="vis-section-count-value">{visible}</span>
+            <span className="vis-section-count-total">/ {items.length} 可见</span>
+          </span>
+          <SectionBulkToggle items={items} {...selection} />
+        </div>
+      </header>
+      {children}
+    </section>
   )
 }
 
@@ -80,34 +170,40 @@ export function VisibilityEditor({
   externalSubscriptions: VisibilityExternalSubscription[]
 }) {
   if (links.length === 0 && externalSubscriptions.length === 0) {
-    return <p className="sub-cfg-hint">暂无可选的链路或外部订阅。</p>
+    return <p className="vis-empty">暂无可选的链路或外部订阅。</p>
   }
 
   return (
-    <div className="sub-visibility-editor">
+    <div className="vis-editor">
       {links.length > 0 ? (
-        <fieldset>
-          <legend>面板链路</legend>
-          <ul className="sub-visibility-list">
+        <Section
+          title="面板链路"
+          description="订阅中展示的入口链路与直连节点"
+          items={links}
+          {...selection}
+        >
+          <ul className="vis-list">
             {links.map((link) => (
-              <li className="sub-visibility-item" key={link.id}>
-                <div className="sub-visibility-row">
-                  <VisibilityCheckbox item={link} {...selection} />
-                </div>
+              <li className="vis-item" key={link.id}>
+                <VisibilityCheckbox item={link} {...selection} />
               </li>
             ))}
           </ul>
-        </fieldset>
+        </Section>
       ) : null}
       {externalSubscriptions.length > 0 ? (
-        <fieldset>
-          <legend>外部订阅</legend>
-          <ul className="sub-visibility-list">
+        <Section
+          title="外部订阅"
+          description="整份开关；展开可查看来源内的节点"
+          items={externalSubscriptions}
+          {...selection}
+        >
+          <ul className="vis-list is-external">
             {externalSubscriptions.map((source) => (
               <ExternalVisibilityRow key={source.id} source={source} {...selection} />
             ))}
           </ul>
-        </fieldset>
+        </Section>
       ) : null}
     </div>
   )
