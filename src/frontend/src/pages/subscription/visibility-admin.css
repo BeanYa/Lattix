@@ -5,48 +5,59 @@
    全部来自 tokens.css 的 --panel-* 令牌；深浅两套外观等价。
    ============================================================ */
 
-/* ---------- 布局：≥1024 两栏，窄屏按 用户 → 编辑器 → 概览 → 发布 单列 ---------- */
+/* ---------- 布局：≥1024 两栏；窄屏按 用户 → 编辑器 → 概览 → 发布 单列 ---------- */
+/* 左右两栏彼此独立：编辑器高度不再参与左侧卡片的行高分配，避免选中用户、链路
+ * 数量变化时左侧信息卡被拉伸或位置跳动。 */
 
 .vis-admin-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas:
-    'user'
-    'editor'
-    'scope'
-    'publish';
-  align-items: start;
+  display: flex;
+  flex-direction: column;
   gap: 14px;
 }
 
-.vis-admin-user {
-  grid-area: user;
-}
-
-.vis-admin-editor {
-  grid-area: editor;
-}
-
-.vis-admin-scope {
-  grid-area: scope;
-}
-
-.vis-admin-publish {
-  grid-area: publish;
+.vis-admin-side {
+  display: grid;
+  gap: 14px;
+  align-content: start;
 }
 
 @media (min-width: 1024px) {
   .vis-admin-layout {
-    grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
-    grid-template-areas:
-      'user editor'
-      'scope editor'
-      'publish editor';
+    flex-direction: row;
+    align-items: flex-start;
   }
 
-  /* 编辑器卡与左栏同高，操作栏贴底，形成稳定的工作区基线。 */
+  .vis-admin-side {
+    width: clamp(280px, 27%, 320px);
+    flex: none;
+  }
+
   .vis-admin-editor {
-    align-self: stretch;
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+/* 窄屏：左侧三卡拆开参与单列排序，编辑器紧跟用户卡之后。 */
+@media (max-width: 1023px) {
+  .vis-admin-side {
+    display: contents;
+  }
+
+  .vis-admin-user {
+    order: 0;
+  }
+
+  .vis-admin-editor {
+    order: 1;
+  }
+
+  .vis-admin-scope {
+    order: 2;
+  }
+
+  .vis-admin-publish {
+    order: 3;
   }
 }
 
@@ -89,6 +100,16 @@
   min-width: 0;
   align-items: center;
   gap: 10px;
+  border-top: 1px solid var(--panel-rule);
+  padding-top: 12px;
+}
+
+/* 未选择用户时的占位与身份区等高，选择用户前后左侧卡片不发生高度跳动。 */
+.vis-user-placeholder {
+  display: flex;
+  min-height: 57px;
+  align-items: center;
+  margin: 0;
   border-top: 1px solid var(--panel-rule);
   padding-top: 12px;
 }

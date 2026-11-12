@@ -276,48 +276,72 @@ function VisibilityWorkspace({
       />
 
       <div className="vis-admin-layout">
-        <Surface className="vis-admin-card vis-admin-user">
-          <h2 className="module-title">订阅用户</h2>
-          <div className="vis-admin-field">
-            <Label htmlFor="visibility-user">切换用户</Label>
-            <Select
-              value={user ? String(user.id) : null}
-              items={options}
-              onValueChange={onSelectUser}
-            >
-              <SelectTrigger id="visibility-user" className="w-full">
-                <SelectValue placeholder="选择用户" />
-              </SelectTrigger>
-              <SelectContent>
-                {options.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {user ? (
-            <div className="vis-user-identity">
-              <span className="vis-user-avatar" aria-hidden="true">
-                {userInitial(user.name)}
-              </span>
-              <div className="vis-user-copy">
-                <span className="vis-user-name">{user.name}</span>
-                <span className="vis-user-meta">
-                  <span className="vis-user-id">#{user.id}</span>
-                  {status ? (
-                    <span className="vis-user-status" data-tone={status.tone}>
-                      {status.label}
-                    </span>
-                  ) : null}
-                </span>
-              </div>
+        <div className="vis-admin-side">
+          <Surface className="vis-admin-card vis-admin-user">
+            <h2 className="module-title">订阅用户</h2>
+            <div className="vis-admin-field">
+              <Label htmlFor="visibility-user">切换用户</Label>
+              <Select
+                value={user ? String(user.id) : null}
+                items={options}
+                onValueChange={onSelectUser}
+              >
+                <SelectTrigger id="visibility-user" className="w-full">
+                  <SelectValue placeholder="选择用户" />
+                </SelectTrigger>
+                <SelectContent>
+                  {options.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          ) : (
-            <p className="vis-admin-card-hint">选择用户后显示其身份与订阅状态。</p>
-          )}
-        </Surface>
+            {user ? (
+              <div className="vis-user-identity">
+                <span className="vis-user-avatar" aria-hidden="true">
+                  {userInitial(user.name)}
+                </span>
+                <div className="vis-user-copy">
+                  <span className="vis-user-name">{user.name}</span>
+                  <span className="vis-user-meta">
+                    <span className="vis-user-id">#{user.id}</span>
+                    {status ? (
+                      <span className="vis-user-status" data-tone={status.tone}>
+                        {status.label}
+                      </span>
+                    ) : null}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <p className="vis-admin-card-hint vis-user-placeholder">
+                选择用户后显示其身份与订阅状态。
+              </p>
+            )}
+          </Surface>
+
+          <Surface className="vis-admin-card vis-admin-scope">
+            <h2 className="module-title">可见范围</h2>
+            <dl className="vis-scope-readouts">
+              <Readout label="可见项" value={catalog ? visibleCount : '—'} />
+              <Readout label="已隐藏" value={catalog ? hiddenCount : '—'} />
+              <Readout label="外部节点" value={catalog ? externalNodeCount : '—'} />
+            </dl>
+            <p className="vis-scope-note">隐藏项不会出现在该用户的订阅中。</p>
+          </Surface>
+
+          <Surface className="vis-admin-card vis-admin-publish">
+            <h2 className="module-title">发布状态</h2>
+            {pending.length > 0 || settled.length > 0 ? (
+              <PublicationNotice pending={pending} settled={settled} pollFailed={pollFailed} />
+            ) : (
+              <p className="vis-publish-empty">暂无发布记录</p>
+            )}
+            <p className="vis-admin-card-hint">保存后会重新发布订阅，客户端下次刷新时生效。</p>
+          </Surface>
+        </div>
 
         <form className="surface-frame vis-admin-editor" onSubmit={save}>
           <header className="vis-admin-editor-head">
@@ -391,26 +415,6 @@ function VisibilityWorkspace({
             </div>
           ) : null}
         </form>
-
-        <Surface className="vis-admin-card vis-admin-scope">
-          <h2 className="module-title">可见范围</h2>
-          <dl className="vis-scope-readouts">
-            <Readout label="可见项" value={catalog ? visibleCount : '—'} />
-            <Readout label="已隐藏" value={catalog ? hiddenCount : '—'} />
-            <Readout label="外部节点" value={catalog ? externalNodeCount : '—'} />
-          </dl>
-          <p className="vis-scope-note">隐藏项不会出现在该用户的订阅中。</p>
-        </Surface>
-
-        <Surface className="vis-admin-card vis-admin-publish">
-          <h2 className="module-title">发布状态</h2>
-          {pending.length > 0 || settled.length > 0 ? (
-            <PublicationNotice pending={pending} settled={settled} pollFailed={pollFailed} />
-          ) : (
-            <p className="vis-publish-empty">暂无发布记录</p>
-          )}
-          <p className="vis-admin-card-hint">保存后会重新发布订阅，客户端下次刷新时生效。</p>
-        </Surface>
       </div>
     </Page>
   )
