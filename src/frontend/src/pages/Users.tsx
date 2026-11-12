@@ -1,24 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { useSearch } from 'wouter'
-import {
-  BanIcon,
-  CircleCheckIcon,
-  ExternalLinkIcon,
-  EyeIcon,
-  FlaskConicalIcon,
-  HistoryIcon,
-  KeyRoundIcon,
-  PlusIcon,
-  QrCodeIcon,
-  RefreshCwIcon,
-  RotateCcwIcon,
-  RotateCwIcon,
-  SearchIcon,
-  Settings2Icon,
-  EllipsisIcon,
-  Trash2Icon,
-  UsersIcon,
-} from 'lucide-react'
+import { FlaskConicalIcon, PlusIcon, RefreshCwIcon, SearchIcon, UsersIcon } from 'lucide-react'
 
 import { CopyButton } from '@/components/CopyButton'
 import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
@@ -32,15 +14,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -61,7 +34,7 @@ import {
 import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { useOperationProgress } from '@/lib/operation-progress-context'
-import { formatDateTime, humanizeBytes } from '@/lib/format'
+import { humanizeBytes } from '@/lib/format'
 import { buildLinkOptions } from '@/lib/links'
 import { chainStatusStyle } from '@/lib/status'
 import { useTimezone } from '@/lib/timezone'
@@ -78,13 +51,13 @@ import type {
 } from '@/lib/types'
 
 import { CreateUserDialog } from './users/CreateUserDialog'
+import { UserCard, type UserCardActions } from './users/UserCard'
 import { EXTERNAL_MODE_LABELS } from './users/external-mode'
 import { ReactivateUserDialog } from './users/ReactivateUserDialog'
 import { useCreateUserForm } from './users/use-create-user-form'
 import { useReactivateUser } from './users/use-reactivate-user'
 import { useUserSubSettings } from './users/use-user-sub-settings'
 import { UserSubSettingsDialog } from './users/UserSubSettingsDialog'
-import { UserSubscriptionStatus } from './users/UserSubscriptionStatus'
 
 import './users.css'
 
@@ -365,6 +338,21 @@ export default function Users() {
     }
   }
 
+  const cardActions: UserCardActions = {
+    onOpenContent: setContentTarget,
+    onRegenerate: (user) => void onRegenerate(user),
+    onReactivate: reactivate.open,
+    onOpenSubSettings: subSettings.open,
+    onResetToken: (user) => void onResetToken(user),
+    onOpenPreview: onOpenPreview,
+    onOpenHistory: (user) => void onOpenHistory(user),
+    onResetTraffic: (user) => void onResetTraffic(user),
+    onToggleDisabled: (user) => void onToggleDisabled(user),
+    onDelete: (user) => void onDelete(user),
+    onShowQr: setQrText,
+    onOpenSubPage: (url) => window.open(url, '_blank', 'noopener'),
+  }
+
   return (
     <Page className="cg-page-in">
       <PageHeader
@@ -473,237 +461,21 @@ export default function Users() {
               description="尝试调整搜索词或切换上方状态筛选"
             />
           ) : (
-            <div className="cg-users-scroll">
-              <table className="cg-users-table">
-                <thead>
-                  <tr>
-                    <th scope="col">用户</th>
-                    <th scope="col">状态</th>
-                    <th scope="col">链路</th>
-                    <th scope="col">流量</th>
-                    <th scope="col">在线</th>
-                    <th scope="col">有效期</th>
-                    <th scope="col">订阅地址</th>
-                    <th scope="col">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredUsers.map((u) => {
-                    const notYetEffective =
-                      !!u.effective_at && new Date(u.effective_at).getTime() > Date.now()
-                    const trialUsed = (u.traffic?.up ?? 0) + (u.traffic?.down ?? 0)
-                    const quotaRatio =
-                      u.traffic_limit > 0
-                        ? Math.min(100, Math.round((trialUsed / u.traffic_limit) * 100))
-                        : 0
-                    return (
-                      <tr
-                        key={u.id}
-                        className="cg-user-row"
-                        data-disabled={u.disabled || undefined}
-                        data-highlighted={highlightedUserId === u.id ? 'true' : undefined}
-                      >
-                        <th scope="row" className="cg-user-cell">
-                          <span className="cg-user-head-line">
-                            <span
-                              className="cg-line-badge"
-                              style={{ background: `var(--panel-line-${u.id % 9})` }}
-                            >
-                              {u.name.slice(0, 1).toUpperCase()}
-                            </span>
-                            <span className="cg-user-name">{u.name}</span>
-                            {u.is_trial && <span className="cg-status is-blue">试用</span>}
-                          </span>
-                        </th>
-                        <td>
-                          <div className="cg-user-states">
-                            {u.disabled && <span className="cg-status is-red">已停用</span>}
-                            {u.expired && <span className="cg-status is-red">已到期</span>}
-                            {u.quota_exhausted && (
-                              <span className="cg-status is-warn">流量用尽</span>
-                            )}
-                            {notYetEffective && !u.expired && (
-                              <span className="cg-status is-warn">未生效</span>
-                            )}
-                            <UserSubscriptionStatus snapshot={u.subscription_snapshot} />
-                          </div>
-                        </td>
-                        <td className="cg-user-num">{u.effective_chain_ids.length}</td>
-                        <td className="cg-user-num cg-user-traffic">
-                          {u.traffic ? (
-                            <>
-                              <span>↑ {humanizeBytes(u.traffic.up)}</span>
-                              <span>↓ {humanizeBytes(u.traffic.down)}</span>
-                              {u.traffic_limit > 0 && (
-                                <>
-                                  <span
-                                    className="cg-muted"
-                                    title="当期已用 / 配额（用尽即停权，周期重置或手动重置后恢复）"
-                                  >
-                                    {humanizeBytes(trialUsed)} / {humanizeBytes(u.traffic_limit)}
-                                  </span>
-                                  <span className="cg-user-quota-bar" aria-hidden="true">
-                                    <i
-                                      className={
-                                        quotaRatio >= 90
-                                          ? 'is-crit'
-                                          : quotaRatio >= 75
-                                            ? 'is-warn'
-                                            : undefined
-                                      }
-                                      style={{ width: `${quotaRatio}%` }}
-                                    />
-                                  </span>
-                                </>
-                              )}
-                            </>
-                          ) : (
-                            <span className="cg-muted">-</span>
-                          )}
-                        </td>
-                        <td className="cg-user-num">
-                          {u.online_connections > 0 ? (
-                            <span className="cg-user-online">
-                              <i className="cg-beacon-live" aria-hidden="true" />
-                              {u.online_connections}
-                            </span>
-                          ) : (
-                            <span className="cg-muted">-</span>
-                          )}
-                        </td>
-                        <td className="cg-user-num cg-user-date">
-                          {notYetEffective
-                            ? `未生效 · ${u.effective_at ? formatDateTime(u.effective_at, timezone) : ''} 起`
-                            : u.expires_at
-                              ? formatDateTime(u.expires_at, timezone)
-                              : '长期'}
-                        </td>
-                        <td className="cg-user-sub">
-                          <span className="cg-user-suburl-text" title={u.sub_url}>
-                            {u.sub_url}
-                          </span>
-                          <span className="cg-user-suburl-actions">
-                            <CopyButton text={u.sub_url} />
-                            <span title="复制分享链接订阅（vless:// 等链接集合）">
-                              <CopyButton text={u.sub_links_url} />
-                            </span>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title="订阅二维码"
-                              onClick={() => setQrText(u.sub_url)}
-                            >
-                              <QrCodeIcon />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              title="打开订阅落地页（浏览器）"
-                              onClick={() => window.open(u.sub_url, '_blank', 'noopener')}
-                            >
-                              <ExternalLinkIcon />
-                            </Button>
-                          </span>
-                        </td>
-                        <td>
-                          <span className="cg-user-actions">
-                            <Button variant="outline" size="sm" onClick={() => setContentTarget(u)}>
-                              查看订阅内容
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              title="根据当前可见性和模板设置重新生成全部订阅格式"
-                              aria-label={`刷新 ${u.name} 的订阅快照`}
-                              disabled={regenerating === u.id}
-                              onClick={() => onRegenerate(u)}
-                            >
-                              <RefreshCwIcon />
-                              {regenerating === u.id ? '刷新中…' : '刷新订阅快照'}
-                            </Button>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger
-                                render={
-                                  <Button
-                                    variant="ghost"
-                                    size="icon-sm"
-                                    aria-label={`管理用户 ${u.name}`}
-                                  />
-                                }
-                              >
-                                <EllipsisIcon />
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuGroup>
-                                  <DropdownMenuLabel>用户管理</DropdownMenuLabel>
-                                  {u.expired && (
-                                    <DropdownMenuItem onClick={() => reactivate.open(u)}>
-                                      <RotateCwIcon />
-                                      重新激活（重设流量与有效期）
-                                    </DropdownMenuItem>
-                                  )}
-                                  <DropdownMenuItem onClick={() => subSettings.open(u)}>
-                                    <Settings2Icon />
-                                    订阅设置
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    disabled={resettingToken === u.id}
-                                    onClick={() => onResetToken(u)}
-                                  >
-                                    <KeyRoundIcon />
-                                    {resettingToken === u.id
-                                      ? '重置中…'
-                                      : '重置订阅地址（更换链接，旧链接立即失效）'}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => onOpenPreview(u)}>
-                                    <EyeIcon />
-                                    结果预览
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => onOpenHistory(u)}>
-                                    <HistoryIcon />
-                                    流量历史
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    disabled={resettingTraffic === u.id}
-                                    onClick={() => onResetTraffic(u)}
-                                  >
-                                    <RotateCcwIcon />
-                                    {resettingTraffic === u.id
-                                      ? '重置中…'
-                                      : u.quota_exhausted
-                                        ? '流量重置（清零用量并恢复访问）'
-                                        : '流量重置（清零当期用量）'}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    disabled={toggling === u.id}
-                                    onClick={() => onToggleDisabled(u)}
-                                  >
-                                    {u.disabled ? <CircleCheckIcon /> : <BanIcon />}
-                                    {toggling === u.id
-                                      ? '处理中…'
-                                      : u.disabled
-                                        ? '启用（恢复链路下发与订阅）'
-                                        : '停用（立即停权，订阅链路清空）'}
-                                  </DropdownMenuItem>
-                                </DropdownMenuGroup>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem
-                                  variant="destructive"
-                                  disabled={deleting === u.id}
-                                  onClick={() => onDelete(u)}
-                                >
-                                  <Trash2Icon />
-                                  {deleting === u.id ? '删除中…' : '删除用户'}
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </span>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+            <div className="cg-users-grid">
+              {filteredUsers.map((u) => (
+                <UserCard
+                  key={u.id}
+                  user={u}
+                  timezone={timezone}
+                  highlighted={highlightedUserId === u.id}
+                  regenerating={regenerating === u.id}
+                  resettingToken={resettingToken === u.id}
+                  resettingTraffic={resettingTraffic === u.id}
+                  toggling={toggling === u.id}
+                  deleting={deleting === u.id}
+                  actions={cardActions}
+                />
+              ))}
             </div>
           )}
         </section>
