@@ -79,7 +79,12 @@ function ChainStateMark({
         ? LoaderCircleIcon
         : TriangleAlertIcon
   return (
-    <span className={cn('cg-chain-mark', style.cg)} title={style.label} aria-label={style.label}>
+    <span
+      className={cn('cg-chain-mark', style.cg)}
+      role="img"
+      title={style.label}
+      aria-label={style.label}
+    >
       <Icon className={cn(style.loading && 'animate-spin motion-reduce:animate-none')} />
     </span>
   )
@@ -643,7 +648,7 @@ export default function Chains() {
                         <div className="cg-chain-entry-title">
                           <span
                             className="cg-line-badge"
-                            style={{ background: `var(--panel-line-${lineIdx})` }}
+                            style={{ ['--line-color' as string]: `var(--panel-line-${lineIdx})` }}
                           >
                             L{lineIdx}
                           </span>
@@ -765,7 +770,7 @@ export default function Chains() {
                       <div className="cg-chain-entry-title">
                         <span
                           className="cg-line-badge"
-                          style={{ background: `var(--panel-line-${lineIdx})` }}
+                          style={{ ['--line-color' as string]: `var(--panel-line-${lineIdx})` }}
                         >
                           L{lineIdx}
                         </span>
