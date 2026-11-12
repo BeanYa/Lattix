@@ -77,14 +77,20 @@ fi
 echo ">> agent goes offline; queue node.apply command"
 kill $APID; wait $APID 2>/dev/null || true
 sql "INSERT INTO nodes (id, server_id, config_template, status) VALUES (1, 1, '{}', 'applying')" >/dev/null
-python3 - "$WORK/lattix.db" <<'PY'
+APPLY_REQUEST="$(python3 - "$WORK/lattix.db" <<'PY'
 import json, sqlite3, secrets, sys
 con = sqlite3.connect(sys.argv[1])
+# A background command can be recorded first. The fixture must track its own request.
+con.execute("INSERT INTO commands (request_id, trace_id, server_id, type, data, status) VALUES (?, ?, 1, 'latency.probe', '{}', 'acked')",
+    (secrets.token_hex(16), secrets.token_hex(16)))
+request_id = secrets.token_hex(16)
 payload = {"node_id":1,"config":{"protocol":"vless","template":[]},"user_uuids":["u1"]}
 con.execute("INSERT INTO commands (request_id, trace_id, server_id, type, data) VALUES (?, ?, 1, 'node.apply', ?)",
-    (secrets.token_hex(16), secrets.token_hex(16), json.dumps(payload)))
+    (request_id, secrets.token_hex(16), json.dumps(payload)))
 con.commit()
+print(request_id)
 PY
+)"
 
 echo ">> agent reconnects with long-term token (from state file)"
 "$WORK/agent" -panel "ws://$ADDR/api/agent/ws" -state "$WORK/agent.state.json" \
@@ -92,7 +98,7 @@ echo ">> agent reconnects with long-term token (from state file)"
 APID=$!
 sleep 2
 
-grep -q "node.apply" "$WORK/agent.log" \
+grep -Fq "node.apply request_id=$APPLY_REQUEST " "$WORK/agent.log" \
     && echo "OK: 离线命令已补发" \
     || { echo "FAIL: 未收到补发命令"; cat "$WORK/agent.log" "$WORK/backend.log"; exit 1; }
 
@@ -101,18 +107,25 @@ DB_TOKEN2="$(sql "SELECT token FROM servers WHERE id = 1")"
     && echo "OK: 长期 token 未再轮换（仅 bootstrap 换发，§5）" \
     || { echo "FAIL: token 被重复换发"; exit 1; }
 
-sleep 1
-CMD_STATUS="$(sql "SELECT status FROM commands WHERE id = 1")"
+CMD_STATUS=""
+NODE_STATUS=""
+NODE_ERROR=""
+for _ in $(seq 1 25); do
+    IFS='|' read -r CMD_STATUS NODE_STATUS NODE_ERROR <<< "$(sql "SELECT c.status, n.status, n.error
+        FROM commands c JOIN nodes n ON n.id = 1 WHERE c.request_id = '$APPLY_REQUEST'")"
+    if [[ "$CMD_STATUS" == "acked" || ( "$CMD_STATUS" == "failed" && "$NODE_STATUS" == "failed" ) ]]; then
+        break
+    fi
+    sleep 0.2
+done
 [[ "$CMD_STATUS" == "failed" ]] \
     && echo "OK: 命令状态已回写 failed" \
     || { echo "FAIL: command status=$CMD_STATUS"; exit 1; }
 
-NODE_ROW="$(sql "SELECT status || '|' || COALESCE(error, '') FROM nodes WHERE id = 1")"
-# 阶段 2 起 apply 走真实流水线（dev 环境无 /usr/local/bin/xray，必然失败），
-# 本脚本聚焦控制通道：只要求状态机推进到 failed 且带错误详情。
-[[ "$NODE_ROW" == failed\|?* ]] \
+# 数组模板在填充时即失败，节点状态机应保留对应错误。
+[[ "$NODE_STATUS" == "failed" && "$NODE_ERROR" == *模板填充后* ]] \
     && echo "OK: 节点状态机已回写 failed + error" \
-    || { echo "FAIL: node=$NODE_ROW"; exit 1; }
+    || { echo "FAIL: node=$NODE_STATUS|$NODE_ERROR"; exit 1; }
 
 echo ">> sent 未终态命令重连重置重发（§2）"
 python3 - "$WORK/lattix.db" <<'PY'
