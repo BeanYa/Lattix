@@ -521,8 +521,8 @@ func (s *Store) NonActiveEndpointsByServer(ctx context.Context, serverID int64) 
 // ChainIDsByEndpoint 返回使用指定共享端点的链 ID 列表（端点→链状态联动用）。
 func (s *Store) ChainIDsByEndpoint(ctx context.Context, endpointID int64) ([]int64, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id FROM chains WHERE endpoint_id=? AND status IN (?, ?)`,
-		endpointID, ChainStatusActive, ChainStatusDegraded)
+		`SELECT id FROM chains WHERE endpoint_id=? AND status IN (?, ?, ?)`,
+		endpointID, ChainStatusActive, ChainStatusDegraded, ChainStatusCleanupPending)
 	if err != nil {
 		return nil, err
 	}
@@ -539,7 +539,7 @@ func (s *Store) ChainIDsByEndpoint(ctx context.Context, endpointID int64) ([]int
 }
 
 // EndpointChainCount 返回引用端点的未删链数量（entry_shared 聚合用；
-// 不沿用 ChainIDsByEndpoint——它只统计 active/degraded 链）。
+// 不沿用 ChainIDsByEndpoint——它只统计处于运行时状态的链）。
 func (s *Store) EndpointChainCount(ctx context.Context, endpointID int64) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx,

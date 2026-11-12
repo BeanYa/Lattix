@@ -118,7 +118,7 @@ Panel 的 Agent 在线状态只表示 Agent→Panel 控制通道可达，不代�
 | `waiting_for_agent` | 编辑所需的任一 Agent 不可达，编排暂停（revision 同步置 waiting_for_agent） |
 | `active_unconfirmed` | 管理员强制发布了未确认配置 |
 | `active_failed` | 已发布链的部署失败：强制发布后的任务失败，或已发布链编辑（applying/waiting_for_agent）期间的失败 |
-| `cleanup_pending` | 新 revision 已生效，旧配置仍在清理（仅由目标在线且未终结的清理任务维持） |
+| `cleanup_pending` | 新 revision 已生效，旧配置仍在清理（仅由「目标在线、命令可投递且未终结」的清理任务维持；运行时不健康优先表现为 `degraded`，不掩盖降级） |
 | `invalid` | 引用的服务器已被删除 |
 | `deleted` | 链路已软删除（终态） |
 
@@ -128,12 +128,12 @@ Panel 的 Agent 在线状态只表示 Agent→Panel 控制通道可达，不代�
 pending            → applying | invalid | deleted
 applying           → active | active_unconfirmed（强制发布）| failed | active_failed（已发布链编辑失败）| waiting_for_agent（编辑所需 Agent 离线）| invalid | deleted
 active             → degraded | active_failed | cleanup_pending | applying（编辑）| invalid | deleted
-degraded           → active | active_failed | cleanup_pending | applying（编辑）| invalid | deleted
+degraded           → active | active_failed | applying（编辑）| invalid | deleted
 failed             → applying（重试）| active_unconfirmed（强制发布失败编辑）| invalid | deleted
 active_unconfirmed → active（agent 确认）| applying（重试）| failed | active_failed（强制发布后任务失败）| invalid | deleted
 active_failed      → applying（重试）| active（重新评估恢复）| active_unconfirmed（强制发布）| invalid | deleted
 waiting_for_agent  → applying（Agent 上线恢复编排）| active_unconfirmed（强制发布）| failed | active_failed（等待期间在途命令失败回执）| invalid | deleted
-cleanup_pending    → active（清理完成或无阻塞清理任务）| applying（编辑）| deleted | invalid
+cleanup_pending    → active（清理完成或无阻塞清理任务）| degraded（运行时不健康优先可见）| applying（编辑）| deleted | invalid
 invalid            → applying（替换缺失 hop 重新发布）| deleted
 deleted            →（终态，无出边）
 ```
@@ -147,20 +147,23 @@ CAS 形式再次断言，并发修改返回 `ErrChainStatusChanged`（TOCTOU 防
 | 事件 | 接线 | FSM 处理 |
 |------|------|----------|
 | Agent 上线/重连 | hub.OnConnect → OnAgentConnect | Evaluate（恢复 degraded→active）+ ResumeChainsByServer（续编排）+ ReconcileChainCleanups（清理队列自愈） |
-| Agent 离线 | hub.OnDisconnect → RecomputeChainsByServer | Evaluate（active→degraded + 告警） |
+| Agent 离线 | hub.OnDisconnect → RecomputeChainsByServer | Evaluate（active/cleanup_pending→degraded + 告警；清理不掩盖降级） |
 | 共享端点 ack | handleCommandResponse | Evaluate（端点就绪 → degraded→active 恢复） |
 | 编排推进 | advanceChain / handleChainHopResult | Transition（applying→active/failed 等） |
 | 管理员操作 | RetryChain / 删链 | Transition（failed→applying / *→deleted） |
 | 服务器删除 | panel.handleDeleteServer | InvalidateForServerDeletion（事务级联 → invalid） |
-| 周期自愈 | 60s ticker → ReconcileStaleEndpoints / ReconcileChainCleanups | 间接触发 Evaluate；清理任务补入队、悬空命令复位、已删服务器任务废弃 |
+| 周期自愈 | 60s ticker → ReconcileStaleEndpoints / ReconcileChainCleanups / ReconcileAgentVersions | 间接触发 Evaluate；清理任务补入队、悬空命令重新入队、终态结果补写、超时命令重发、已删服务器任务废弃；版本门控补偿升级 |
 
 ### 条件评估（Evaluate）
 
-Evaluate 仅对 `active` 或 `degraded` 状态的链生效，按优先级检查：
+Evaluate 对 `active`、`degraded` 与 `cleanup_pending` 状态的链生效，按优先级检查：
 
-1. **跳服务器在线性**：任一跳 server 离线 → active→degraded（附定位描述）+ chain_degraded 告警；
-2. **共享端点就绪性**：端点未 active → active→degraded + 自动重试（服务器在线时立即 ReconcileSharedEndpoint）；
+1. **跳服务器在线性**：任一跳 server 离线 → active/cleanup_pending→degraded（附定位描述）+ chain_degraded 告警；
+2. **共享端点就绪性**：端点未 active → active/cleanup_pending→degraded + 自动重试（服务器在线时立即 ReconcileSharedEndpoint）；`cleanup_pending` 下已有生效配置的端点在 `applying` 期间继续显示清理状态。首次部署未就绪或重新部署失败时会触发降级。
 3. **恢复判定**：全部跳在线 + 端点 active + 全部跳 hop status 为 active → degraded→active + chain.recovered 日志。
+
+`cleanup_pending` 不参与「恢复」判定（清理仍在进行时保持该展示态，清理完成由 refreshCleanupStatus 回 active）；
+`degraded` 优先于 `cleanup_pending`，运行时不健康时清理进度让位于可操作原因与告警。
 
 ### 三层自愈保障
 
@@ -169,7 +172,7 @@ Evaluate 仅对 `active` 或 `degraded` 状态的链生效，按优先级检查�
 | 即时重试 | Evaluate 检测端点未 active 且服务器在线 | 命令丢失、首次 reconcile 失败 |
 | 连接自愈 | OnAgentConnect → reconcile 该服务器全部未 active 端点 + 恢复编排 | 死信命令、Agent 重启、编排停滞 |
 | 周期兜底 | 60s ReconcileStaleEndpoints 遍历所有在线服务器 | 上述两层未覆盖的边缘情况 |
-| 清理任务自愈 | 启动 ResumeChains / Agent 重连 / 60s ticker → ReconcileChainCleanups | 旧 revision 清理命令丢失、目标服务器删除或离线、cleanup_pending 残留 |
+| 清理任务自愈 | 启动 ResumeChains / Agent 重连 / 60s ticker → ReconcileChainCleanups（+ ReconcileAgentVersions 补偿升级） | 旧 revision 清理命令丢失/回执丢失/版本门控、目标服务器删除或离线、cleanup_pending 残留与降级不可见 |
 
 ### 共享端点状态机（endpointFSM）
 
@@ -208,17 +211,31 @@ failed    → applying（重试）| pending（重置复用）
 
 清理阶段只拆除旧 revision 不再引用的 piece，命令复用 `commands` 队列的离线排队语义：
 
-- `cleanup_pending` 仅由「目标服务器存在且在线、任务仍为 `pending`/`queued`」的清理任务维持；
-  目标服务器离线（命令滞留队列）或已删除时不再阻塞链状态，链回到 `active`/`degraded`，
-  滞留命令在 Agent 重连后照常下发；
+- `cleanup_pending` 仅由「目标服务器存在、在线、业务命令未被版本门控、任务仍为 `pending`/`queued`」
+  的清理任务维持；目标服务器离线（命令滞留队列）、已删除或 Agent 版本未同步（门控期间命令
+  一律不投递、`attempts` 不增长、也不会死信）时不再阻塞链状态，链回到 `active`/`degraded`，
+  滞留命令在 Agent 重连/版本同步后照常下发；
+- `cleanup_pending` 只是清理展示态，不得掩盖运行时健康：刷新后统一经 `chainFSM.Evaluate`
+  评估跳在线性与共享端点就绪性，不满足时转 `degraded`（带原因与告警）；`degraded` 优先于
+  `cleanup_pending`（仅 `active` 可进入 `cleanup_pending`，避免两者周期抖动），运行恢复后由
+  Evaluate 回到 `active`；
 - `acked`、`failed`（死信或 Agent 报错）与 `abandoned` 均为终态，不阻塞链状态；清理残留
   由服务器页的「清理 Xray 缓存」兜底；
+- 命令回执可落在 `queued`：`Flush` 的投递顺序是「先 send 再 MarkCommandSent」，回执可能
+  先于状态落库到达；存储层接受 `queued`/`sent` 回执落终态（终态到终态的翻写仍被拒绝），
+  避免命令永久停留 `sent`、任务永久 `queued`；
+- `sent` 且超过 `cleanupCommandSentTimeout`（2 分钟）仍无回执的清理命令视为丢失：同一条
+  命令复位为 `queued` 后立即重发（复用 `request_id`：Agent 命令队列按 `request_id` 去重，
+  且 `remove_*` 幂等），重发计入 `attempts`，达到上限后走既有死信 → 任务 `failed` 终态、
+  链不再被阻塞。超时重发要求投递次数与观察时一致，防止复位刚刚重连后发出的命令。
+  同一服务器按队列顺序处理投递和死信收尾。收尾触发的 `Flush` 请求交给下一轮处理；
 - 删除服务器时，级联事务把该服务器的 `pending`/`queued` revision 任务置 `abandoned`，
   删除后自愈受影响链；
 - 自愈入口 `ReconcileChainCleanups` 在面板启动（`ResumeChains`）、Agent 重连
   （`OnAgentConnect`）与 60s ticker 运行：废弃目标服务器已删除的任务、补入 `pending`
-  任务、对 `command_id` 悬空或关联命令已终态的 `queued` 任务复位后重新入队，最后按
-  可达性重算链状态。周期入口意味着最长约 60s 的自愈滞后。
+  任务、对 `command_id` 悬空的任务复位后重新入队、对已终态的命令补写关联任务结果、
+  补投递仍排队的命令并重发超时命令。最后按可达性重算链状态并 Evaluate 运行时健康。
+  周期入口在下一轮处理这些任务，通常间隔 60 秒。
 
 ## 删除语义
 
@@ -307,6 +324,11 @@ fake-ip DNS，策略含 GEOSITE/GEOIP 规则时另输出 geodata-mode + geox-url
 Panel 更新后向所有在线 Agent 下发同步到相同版本的更新命令；离线 Agent 重连后立即同步。版本不一致
 期间已有数据面继续运行，revision 命令可以入队但不得投递。强制发布不能绕过版本不一致。更新失败
 显示 `version_sync_failed` 并允许重试；Panel 更新不等待永久离线 Agent。
+
+版本门控是「命令不可投递」的权威判定（`commandGateBlocked`，`Flush` 与清理任务可达性共用）：
+门控期间清理任务不阻塞链状态。`ReconcileAgentVersions` 每 60 秒检查在线且版本不一致的
+服务器，尝试投递已排队的目标版本升级命令。已投递的命令超过 10 分钟仍无回执时，复用原命令
+重发。没有在途升级命令时，按服务器和目标版本至少间隔 10 分钟补建命令，面板版本变化时重新计时。
 
 ## 验收测试
 

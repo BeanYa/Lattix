@@ -54,12 +54,11 @@ var chainTransitions = map[string]map[string]bool{
 		store.ChainStatusDeleted:        true,
 	},
 	store.ChainStatusDegraded: {
-		store.ChainStatusActive:         true,
-		store.ChainStatusActiveFailed:   true,
-		store.ChainStatusCleanupPending: true,
-		store.ChainStatusApplying:       true, // 编辑
-		store.ChainStatusInvalid:        true,
-		store.ChainStatusDeleted:        true,
+		store.ChainStatusActive:       true,
+		store.ChainStatusActiveFailed: true,
+		store.ChainStatusApplying:     true, // 编辑
+		store.ChainStatusInvalid:      true,
+		store.ChainStatusDeleted:      true,
 	},
 	store.ChainStatusFailed: {
 		store.ChainStatusApplying:          true, // 重试
@@ -91,7 +90,8 @@ var chainTransitions = map[string]map[string]bool{
 		store.ChainStatusDeleted:           true,
 	},
 	store.ChainStatusCleanupPending: {
-		store.ChainStatusActive:   true, // 清理完成恢复
+		store.ChainStatusActive:   true, // 清理完成恢复（运行时健康）
+		store.ChainStatusDegraded: true, // 运行时不健康优先可见（跳离线/端点未生效），清理在后台继续
 		store.ChainStatusApplying: true, // 编辑
 		store.ChainStatusDeleted:  true,
 		store.ChainStatusInvalid:  true,
@@ -126,6 +126,11 @@ func (f *chainFSM) Transition(ctx context.Context, chainID int64, to, detail str
 	if err != nil {
 		return fmt.Errorf("chain_fsm: chain %d: %w", chainID, err)
 	}
+	return f.transitionFrom(ctx, chain, to, detail)
+}
+
+func (f *chainFSM) transitionFrom(ctx context.Context, chain *store.Chain, to, detail string) error {
+	chainID := chain.ID
 	from := chain.Status
 	if from == to {
 		return nil // 幂等，不触发副作用
@@ -147,21 +152,26 @@ func (f *chainFSM) Transition(ctx context.Context, chainID int64, to, detail str
 
 // Evaluate 条件驱动评估：根据当前运行时条件（服务器在线性 + 端点就绪性 + 跳状态）
 // 推导链应处于 active 还是 degraded，并在需要时执行转换与副作用。
-// 仅对 active/degraded 状态的链生效（其他状态由编排/管理员显式驱动）。
+// 对 active/degraded/cleanup_pending 生效（编排中/失败等状态由编排/管理员显式驱动）：
+// cleanup_pending 只是清理展示态，运行时不健康必须推导为 degraded 并告警，不得被掩盖。
 //
 // 触发时机：
 //   - Agent 上线/离线（RecomputeChainsByServer）
 //   - 端点 ack 后
-//   - 链路发布后（publishDesiredRevision）
+//   - 链路发布/清理状态刷新后（publishDesiredRevision / refreshCleanupStatus）
 //   - 周期自愈后
 func (f *chainFSM) Evaluate(ctx context.Context, chainID int64) {
 	chain, err := f.d.st.ChainByID(ctx, chainID)
 	if err != nil {
 		return
 	}
-	if chain.Status != store.ChainStatusActive && chain.Status != store.ChainStatusDegraded {
+	if chain.Status != store.ChainStatusActive && chain.Status != store.ChainStatusDegraded &&
+		chain.Status != store.ChainStatusCleanupPending {
 		return // 非运行时状态不参与条件评估
 	}
+	// active 与 cleanup_pending 在运行时不满足条件时都推导为 degraded（降级优先于清理展示）。
+	runtimeDegradable := chain.Status == store.ChainStatusActive ||
+		chain.Status == store.ChainStatusCleanupPending
 	hops, err := f.d.st.ChainHops(ctx, chainID)
 	if err != nil {
 		return
@@ -171,7 +181,7 @@ func (f *chainFSM) Evaluate(ctx context.Context, chainID int64) {
 	for i := range hops {
 		if !f.d.req.IsOnline(hops[i].ServerID) {
 			detail := fmt.Sprintf("跳 %d（%s，server %d）离线", hops[i].ID, hops[i].Role, hops[i].ServerID)
-			if chain.Status == store.ChainStatusActive {
+			if runtimeDegradable {
 				f.degrade(ctx, chain, hops[i].ServerID, detail)
 			}
 			return
@@ -182,12 +192,23 @@ func (f *chainFSM) Evaluate(ctx context.Context, chainID int64) {
 	if chain.EndpointID != 0 {
 		endpoint, err := f.d.st.SharedEndpointByID(ctx, chain.EndpointID)
 		if err != nil || endpoint.Status != store.EndpointStatusActive {
-			if chain.Status == store.ChainStatusActive {
+			// cleanup_pending 下的端点重部署窗口（applying）视为部署中，不据此降级：
+			// 否则每次发布/每 60s reconcile 都会 cleanup_pending→degraded→active 抖动并刷
+			// 操作日志。部署失败会转 failed（此时降级），回执丢失由 ReconcileStaleEndpoints 重试。
+			if chain.Status == store.ChainStatusCleanupPending && endpoint != nil &&
+				endpoint.Status == store.EndpointStatusApplying && len(endpoint.RealizedConfig) != 0 {
+				return
+			}
+			if runtimeDegradable {
 				detail := fmt.Sprintf("共享入口（endpoint %d）尚未生效", chain.EndpointID)
-				if endpoint != nil && endpoint.Status == store.EndpointStatusFailed {
-					detail = fmt.Sprintf("共享入口（endpoint %d）部署失败: %s", chain.EndpointID, endpoint.Error)
+				var serverID int64
+				if endpoint != nil {
+					serverID = endpoint.ServerID
+					if endpoint.Status == store.EndpointStatusFailed {
+						detail = fmt.Sprintf("共享入口（endpoint %d）部署失败: %s", chain.EndpointID, endpoint.Error)
+					}
 				}
-				f.degrade(ctx, chain, 0, detail)
+				f.degrade(ctx, chain, serverID, detail)
 			}
 			// 自动重试：端点服务器在线且无在途部署命令（applying）时重新下发部署命令。
 			// applying 意味着已有 apply_shared_endpoint 在途（回执会再触发 Evaluate），
@@ -214,7 +235,9 @@ func (f *chainFSM) Evaluate(ctx context.Context, chainID int64) {
 				return // 跳未就绪，不恢复
 			}
 		}
-		_ = f.Transition(ctx, chainID, store.ChainStatusActive, "")
+		if err := f.transitionFrom(ctx, chain, store.ChainStatusActive, ""); err != nil {
+			return
+		}
 		f.d.maybePublishReadyRevision(ctx, chainID)
 		f.d.recordOperation(logging.OperationEvent{
 			Severity: logging.SeverityInfo, Category: logging.CategoryChain, Action: "chain.recovered",
@@ -225,7 +248,7 @@ func (f *chainFSM) Evaluate(ctx context.Context, chainID int64) {
 
 // degrade 执行 active → degraded 转换并分派副作用（告警 + 日志）。
 func (f *chainFSM) degrade(ctx context.Context, chain *store.Chain, serverID int64, detail string) {
-	if err := f.Transition(ctx, chain.ID, store.ChainStatusDegraded, detail); err != nil {
+	if err := f.transitionFrom(ctx, chain, store.ChainStatusDegraded, detail); err != nil {
 		return
 	}
 	f.d.recordOperation(logging.OperationEvent{

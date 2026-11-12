@@ -147,7 +147,10 @@ func TestCleanupOfflineTargetDoesNotBlockChain(t *testing.T) {
 	if got := f.chainStatus(t); got != store.ChainStatusCleanupPending {
 		t.Fatalf("chain status after reconnect = %s, want cleanup_pending", got)
 	}
-	f.d.setRevisionTaskResult(ctx, cmds[0].ID, true, "")
+	f.d.handleCommandResponse(f.oldID, shared.Envelope{
+		Kind: shared.KindResponse, Type: cmds[0].Type, RequestID: cmds[0].RequestID, TraceID: cmds[0].TraceID,
+		Code: shared.CodeOK, Data: json.RawMessage(`{}`),
+	})
 	if got := f.chainStatus(t); got != store.ChainStatusActive {
 		t.Fatalf("chain status after ack = %s, want active", got)
 	}
@@ -185,7 +188,10 @@ func TestFailedCleanupTaskDoesNotBlockChain(t *testing.T) {
 	if len(cmds) != 1 {
 		t.Fatalf("cleanup commands = %+v", cmds)
 	}
-	f.d.setRevisionTaskResult(ctx, cmds[0].ID, false, "remove failed")
+	f.d.handleCommandResponse(f.oldID, shared.Envelope{
+		Kind: shared.KindResponse, Type: cmds[0].Type, RequestID: cmds[0].RequestID, TraceID: cmds[0].TraceID,
+		Code: shared.CodeInternalError, Message: "remove failed", Data: json.RawMessage(`{}`),
+	})
 	if task := f.cleanupTask(t); task.Status != store.RevisionTaskFailed {
 		t.Fatalf("cleanup task = %+v, want failed", task)
 	}
@@ -216,34 +222,42 @@ func TestReconcileEnqueuesPendingCleanupTask(t *testing.T) {
 	}
 }
 
-// TestReconcileReenqueuesCleanupTaskWithTerminalCommand 验证 queued 清理任务关联命令已终态
-// （回执先到、任务回写丢失的崩溃窗口）时，CAS 复位后重新入队。
-func TestReconcileReenqueuesCleanupTaskWithTerminalCommand(t *testing.T) {
-	ctx := context.Background()
-	f := newCleanupFixture(t, false, true)
-	oldCommandID, err := f.st.EnqueueRevisionTaskCommand(ctx, "req-old", "trace", f.oldID,
-		shared.TypeRemoveChainHop, json.RawMessage(`{}`), f.revision.ID, cleanupForwardKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := f.st.MarkCommandSent(ctx, oldCommandID); err != nil {
-		t.Fatal(err)
-	}
-	if ok, err := f.st.MarkCommandAcked(ctx, oldCommandID); err != nil || !ok {
-		t.Fatalf("ack old command: %v ok=%v", err, ok)
-	}
+func TestReconcileCompletesCleanupTaskFromTerminalCommand(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want string
+	}{
+		{name: "acknowledged", want: store.RevisionTaskAcked},
+		{name: "dead-lettered", want: store.RevisionTaskFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newCleanupFixture(t, true, true)
+			f.d.enqueueCleanupTasks(ctx, f.revision)
+			original := f.cleanupTask(t)
+			var changed bool
+			var err error
+			if tc.want == store.RevisionTaskAcked {
+				changed, err = f.st.MarkCommandAcked(ctx, original.CommandID)
+			} else {
+				changed, err = f.st.DeadLetterCommand(ctx, original.CommandID, "delivery attempts exhausted")
+			}
+			if err != nil || !changed {
+				t.Fatalf("terminalize command: changed=%v err=%v", changed, err)
+			}
 
-	f.d.ReconcileChainCleanups(ctx)
-	task := f.cleanupTask(t)
-	if task.Status != store.RevisionTaskQueued || task.CommandID == 0 || task.CommandID == oldCommandID {
-		t.Fatalf("cleanup task = %+v, want re-enqueued with new command", task)
-	}
-	command, err := f.st.CommandByID(ctx, task.CommandID)
-	if err != nil || command.Status != store.CommandStatusQueued {
-		t.Fatalf("re-enqueued command = %+v err=%v", command, err)
-	}
-	if cmds := f.removeCommands(t); len(cmds) != 2 {
-		t.Fatalf("cleanup commands = %d, want 2 (acked + re-enqueued)", len(cmds))
+			f.d.ReconcileChainCleanups(ctx)
+			task := f.cleanupTask(t)
+			if task.Status != tc.want || task.CommandID != original.CommandID {
+				t.Fatalf("cleanup task = %+v, want %s on original command %d", task, tc.want, original.CommandID)
+			}
+			if cmds := f.removeCommands(t); len(cmds) != 1 {
+				t.Fatalf("cleanup commands = %d, want one", len(cmds))
+			}
+			if got := f.chainStatus(t); got != store.ChainStatusActive {
+				t.Fatalf("chain status = %s, want active", got)
+			}
+		})
 	}
 }
 

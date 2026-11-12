@@ -695,6 +695,31 @@ func (s *Store) SetRevisionTaskResult(ctx context.Context, taskID int64, success
 	return nil
 }
 
+// SyncRevisionTaskResult copies a terminal command result to its still-linked task.
+// Retried or abandoned tasks are left alone. Only an updated cleanup task returns its revision ID.
+func (s *Store) SyncRevisionTaskResult(ctx context.Context, commandID int64) (int64, error) {
+	var revisionID int64
+	var phase string
+	err := s.db.QueryRowContext(ctx, `UPDATE chain_revision_tasks
+		SET status=cmd.status, error=cmd.error, updated_at=CURRENT_TIMESTAMP
+		FROM commands AS cmd
+		WHERE cmd.id=? AND chain_revision_tasks.command_id=cmd.id
+		  AND chain_revision_tasks.status=? AND cmd.status IN (?, ?, ?)
+		RETURNING revision_id, phase`,
+		commandID, RevisionTaskQueued, CommandStatusAcked, CommandStatusFailed, CommandStatusAbandoned).
+		Scan(&revisionID, &phase)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if phase == "cleanup" {
+		return revisionID, nil
+	}
+	return 0, nil
+}
+
 // AbandonRevisionTask 把仍未终结（pending/queued）的 revision 任务置 abandoned。
 // CAS 守卫：仅当任务仍为未终结状态时生效（并发回执/级联不得翻写终态），返回是否实际废弃。
 func (s *Store) AbandonRevisionTask(ctx context.Context, taskID int64, reason string) (bool, error) {
@@ -712,7 +737,7 @@ func (s *Store) AbandonRevisionTask(ctx context.Context, taskID int64, reason st
 }
 
 // ResetQueuedRevisionTask 把 queued revision 任务复位为 pending 并解绑命令（清理任务自愈：
-// command_id 悬空或命令已终态时重新入队）。CAS 守卫：command_id 必须仍为调用方观察到的值，
+// command_id 悬空时重新入队）。CAS 守卫：command_id 必须仍为调用方观察到的值，
 // 避免覆盖并发的入队/回写；返回是否实际复位。
 func (s *Store) ResetQueuedRevisionTask(ctx context.Context, taskID, commandID int64) (bool, error) {
 	result, err := s.db.ExecContext(ctx, `UPDATE chain_revision_tasks SET status=?, command_id=0, error='',

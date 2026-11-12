@@ -29,6 +29,7 @@ func TestChainTransitionTableCoversRealFlows(t *testing.T) {
 		{store.ChainStatusWaitingForAgent, store.ChainStatusApplying},          // Agent 上线恢复
 		{store.ChainStatusFailed, store.ChainStatusActiveUnconfirmed},          // 失败编辑强制发布
 		{store.ChainStatusActiveFailed, store.ChainStatusActiveUnconfirmed},    // 强制发布后失败再发布
+		{store.ChainStatusCleanupPending, store.ChainStatusDegraded},           // 清理期间运行时不健康优先可见
 	}
 	for _, c := range legal {
 		if !validChainTransition(c.from, c.to) {

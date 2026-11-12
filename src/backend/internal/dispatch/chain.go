@@ -796,11 +796,16 @@ func (d *Dispatcher) abandonCleanupTask(ctx context.Context, task store.ChainRev
 }
 
 // refreshCleanupStatus 按清理任务可达性刷新链状态（§21.1 清理阶段）。阻塞语义：
-//   - 仅 pending/queued 且目标服务器存在并在线时阻塞（链 → cleanup_pending，展示清理进度）；
+//   - 仅 pending/queued 且目标服务器存在、在线且业务命令未被版本门控时阻塞
+//     （链 → cleanup_pending，展示清理进度）；
 //   - 目标服务器离线/已删除不阻塞：remove 命令保留在 commands 队列，Agent 重连后照常下发；
+//   - 版本门控（Agent 版本未同步）期间业务命令一律不投递、attempts 不增长、也不会死信，
+//     按「在线」阻塞会让链永久停在 cleanup_pending，故不阻塞；
 //   - acked/failed/abandoned 为终态，不阻塞（死信/回执失败不得让链永久等待）。
 //
-// 无阻塞任务（含已无清理任务的历史残留）时 cleanup_pending → active 并经 Evaluate 恢复运行时状态。
+// cleanup_pending 只是清理展示态，不能掩盖运行时健康：结尾统一 Evaluate，让跳离线、
+// 端点未生效等运行时不满足条件时按既有 FSM 推导为 degraded（带告警与可操作原因）。
+// 无阻塞任务（含已无清理任务的历史残留）时 cleanup_pending → active 后再 Evaluate。
 func (d *Dispatcher) refreshCleanupStatus(ctx context.Context, revisionID int64) {
 	revision, err := d.st.ChainRevisionByID(ctx, revisionID)
 	if err != nil {
@@ -822,26 +827,33 @@ func (d *Dispatcher) refreshCleanupStatus(ctx context.Context, revisionID int64)
 		}
 	}
 	chain, err := d.st.ChainByID(ctx, revision.ChainID)
-	if err != nil || chain.DesiredRevisionID != 0 {
+	if err != nil || chain.DesiredRevisionID != 0 || chain.PublishedRevisionID != revisionID {
 		return
 	}
 	if blocking {
-		if chain.Status == store.ChainStatusActive || chain.Status == store.ChainStatusDegraded {
-			_ = d.fsm.Transition(ctx, chain.ID, store.ChainStatusCleanupPending, "旧 revision 配置等待清理")
+		// 仅从 active 进入 cleanup_pending：degraded 优先级更高（运行时不可用必须可见），
+		// 否则 cleanup_pending ↔ degraded 会在周期 refresh/Evaluate 之间来回抖动。
+		if chain.Status == store.ChainStatusActive {
+			if err := d.fsm.transitionFrom(ctx, chain, store.ChainStatusCleanupPending,
+				"旧 revision 配置等待清理"); err != nil {
+				return
+			}
 		}
+		d.fsm.Evaluate(ctx, chain.ID)
 		return
 	}
 	if chain.Status == store.ChainStatusCleanupPending {
-		if err := d.fsm.Transition(ctx, chain.ID, store.ChainStatusActive,
-			"清理任务不再阻塞（完成/终态/目标离线或已删除）"); err != nil {
+		if err := d.fsm.transitionFrom(ctx, chain, store.ChainStatusActive,
+			"清理任务不再阻塞（已结束或暂不可投递）"); err != nil {
 			return
 		}
-		d.fsm.Evaluate(ctx, chain.ID)
 	}
+	d.fsm.Evaluate(ctx, chain.ID)
 }
 
 // cleanupTaskBlocks 报告清理任务是否仍阻塞链状态：仅 pending/queued 且目标服务器
-// 存在并在线时阻塞（命令可实际下发）。离线/已删除目标不阻塞，由 reconcile 收敛队列。
+// 存在、在线、业务命令未被版本门控时阻塞（命令可实际下发）。离线/已删除目标与
+// 版本门控由 reconcile 收敛队列，不阻塞链状态。
 func (d *Dispatcher) cleanupTaskBlocks(ctx context.Context, task store.ChainRevisionTask) bool {
 	switch task.Status {
 	case store.RevisionTaskAcked, store.RevisionTaskFailed, store.RevisionTaskAbandoned:
@@ -853,7 +865,11 @@ func (d *Dispatcher) cleanupTaskBlocks(ctx context.Context, task store.ChainRevi
 		}
 		return false
 	}
-	return d.req.IsOnline(task.ServerID)
+	if !d.req.IsOnline(task.ServerID) {
+		return false
+	}
+	// 版本未同步期间命令永远投不出去（Flush 门控），不能作为「清理中」的阻塞依据。
+	return !d.commandGateBlocked(ctx, task.ServerID)
 }
 
 // enqueueHop 跳进入 applying 并下发 apply_chain_hop（离线留 commands 队列补发，§2）。

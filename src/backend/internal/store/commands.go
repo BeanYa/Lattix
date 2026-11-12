@@ -9,6 +9,12 @@ import (
 )
 
 // 命令状态（§4）：queued → sent → acked | failed。
+//
+// 回执可来自 queued：Flush 的投递顺序是 send → MarkCommandSent（dispatcher.Flush），
+// 两者之间存在落库窗口；Agent 回执可能先于 MarkCommandSent 到达，此时命令仍为 queued。
+// 这类回执必须照常落终态（否则命令永久停留 sent、任务永久 queued，重连前不再补发），
+// MarkCommandSent 的 queued → sent CAS 随后自然失效。终态到终态的翻写仍被禁止
+// （迟到/重复回执不改写已 acked/failed）。
 const (
 	CommandStatusQueued    = "queued"
 	CommandStatusSent      = "sent"
@@ -74,6 +80,32 @@ func (s *Store) QueuedCommands(ctx context.Context, serverID int64) ([]Command, 
 	return cmds, rows.Err()
 }
 
+// PendingCommandsByType lists commands still awaiting delivery or a receipt.
+func (s *Store) PendingCommandsByType(ctx context.Context, serverID int64, typ string) ([]Command, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, request_id, trace_id, data, status, error, attempts, updated_at FROM commands
+		 WHERE server_id = ? AND type = ? AND status IN (?, ?) ORDER BY status, id`,
+		serverID, typ, CommandStatusQueued, CommandStatusSent)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var commands []Command
+	for rows.Next() {
+		command := Command{ServerID: serverID, Type: typ}
+		var data string
+		if err := rows.Scan(
+			&command.ID, &command.RequestID, &command.TraceID, &data,
+			&command.Status, &command.Error, &command.Attempts, &command.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		command.Data = json.RawMessage(data)
+		commands = append(commands, command)
+	}
+	return commands, rows.Err()
+}
+
 // ResetSentCommands 重连时将 sent 未终态的命令重置为 queued 重新补发（§2 重发语义）。
 func (s *Store) ResetSentCommands(ctx context.Context, serverID int64) error {
 	_, err := s.db.ExecContext(ctx,
@@ -130,23 +162,24 @@ func (s *Store) CommandByID(ctx context.Context, id int64) (*Command, error) {
 	return &c, nil
 }
 
-// MarkCommandAcked 标记命令已被对端确认执行成功（仅 sent → acked，§4）。
-// 返回 false 表示命令不在 sent 状态（如已死信），迟到的回执不得翻回终态。
+// MarkCommandAcked 标记命令已被对端确认执行成功（queued/sent → acked，§4）。
+// 返回 false 表示命令已是终态（如已死信/已回执），迟到/重复回执不得翻回终态。
 func (s *Store) MarkCommandAcked(ctx context.Context, id int64) (bool, error) {
-	return s.transitionFromSent(ctx, id, CommandStatusAcked)
+	return s.transitionFromDeliverable(ctx, id, CommandStatusAcked)
 }
 
-// MarkCommandFailed 标记命令执行失败（仅 sent → failed，§4）；返回值语义同 MarkCommandAcked。
+// MarkCommandFailed 标记命令执行失败（queued/sent → failed，§4）；返回值语义同 MarkCommandAcked。
 func (s *Store) MarkCommandFailed(ctx context.Context, id int64) (bool, error) {
-	return s.transitionFromSent(ctx, id, CommandStatusFailed)
+	return s.transitionFromDeliverable(ctx, id, CommandStatusFailed)
 }
 
-// MarkCommandFailedWithError 标记命令失败并写入失败原因（仅 sent → failed）。
+// MarkCommandFailedWithError 标记命令失败并写入失败原因（queued/sent → failed）。
 // 失败原因来自 apply_result.error（agent 回执）或死信说明，供命令日志 API 展示。
 func (s *Store) MarkCommandFailedWithError(ctx context.Context, id int64, errMsg string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE commands SET status = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?`,
-		CommandStatusFailed, errMsg, id, CommandStatusSent)
+		`UPDATE commands SET status = ?, error = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND status IN (?, ?)`,
+		CommandStatusFailed, errMsg, id, CommandStatusQueued, CommandStatusSent)
 	if err != nil {
 		return false, err
 	}
@@ -184,11 +217,27 @@ func (s *Store) RecentCommands(ctx context.Context, serverID int64, limit int) (
 	return cmds, rows.Err()
 }
 
-// transitionFromSent 仅在 sent 状态下迁移命令至终态，返回是否实际迁移。
-func (s *Store) transitionFromSent(ctx context.Context, id int64, to string) (bool, error) {
+// transitionFromDeliverable 在命令仍可投递（queued/sent）时迁移至终态，返回是否实际迁移。
+// queued 分支覆盖 Flush 的 send → MarkCommandSent 落库窗口：回执先到的命令仍是 queued。
+func (s *Store) transitionFromDeliverable(ctx context.Context, id int64, to string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE commands SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ?`,
-		to, id, CommandStatusSent)
+		`UPDATE commands SET status = ?, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = ? AND status IN (?, ?)`,
+		to, id, CommandStatusQueued, CommandStatusSent)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// RequeueSentCommand 把「已投递但回执丢失」的 sent 命令复位为 queued（§2 重发语义）：
+// 清理任务自愈复用同一条命令重发（request_id 不变，remove_* 幂等），attempts 在下次
+// MarkCommandSent 时递增，也用于防止旧超时检查复位一次更新的投递。
+func (s *Store) RequeueSentCommand(ctx context.Context, id int64, attempts int) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE commands SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ? AND attempts = ?`,
+		CommandStatusQueued, id, CommandStatusSent, attempts)
 	if err != nil {
 		return false, err
 	}
@@ -197,9 +246,15 @@ func (s *Store) transitionFromSent(ctx context.Context, id int64, to string) (bo
 }
 
 // DeadLetterCommand 将超过投递上限的命令终态化（queued/sent → failed，§2 死信）。
-func (s *Store) DeadLetterCommand(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE commands SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN (?, ?)`,
-		CommandStatusFailed, id, CommandStatusQueued, CommandStatusSent)
-	return err
+// 返回是否实际迁移：并发回执可能已把命令落为 acked（queued 回执窗口），此时不得再按
+// 死信做后续状态机收尾。
+func (s *Store) DeadLetterCommand(ctx context.Context, id int64, reason string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE commands SET status = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status IN (?, ?)`,
+		CommandStatusFailed, reason, id, CommandStatusQueued, CommandStatusSent)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }

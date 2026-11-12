@@ -44,6 +44,8 @@
 - **无 fallback 实现**：Backend 侧定义 `requester` 接口隔离"发送命令"与"具体传输"，当前只有 WebSocket 一个实现；gRPC/HTTP 等其他实现属后续迭代。
 - **离线排队**：Agent 离线期间，发往它的命令滞留于 `commands` 表，重连后补发。
 - **重发与死信**：重连时将该服务器 `sent` 未终态的命令重置为 `queued` 重新补发（幂等性由 Agent 各处理器保证）；`attempts` 超过上限（10 次）标记 `failed` 死信，不再重发；`node.apply` 死信时对应节点同步置 `failed` 并记录原因（[控制通道](framework/control-channel.md)）。
+- **回执先于落库**：投递顺序为「先 send 再标记 `sent`」，Agent 回执可能先到而命令仍为 `queued`；存储层接受 `queued`/`sent` 回执落 `acked`/`failed`（终态到终态的迟到/重复回执仍被拒绝），否则命令会永久停留 `sent`、关联 revision 任务永久 `queued`，直到 Agent 重连才补发。
+- **版本门控**：Panel/Agent 版本不一致期间业务命令入队但不投递（见[链路 Revision 与流量统计](chain-revisions-traffic-design.md) §Panel / Agent 版本同步）；此时清理任务不阻塞链状态。`ReconcileAgentVersions` 每 60 秒检查在线且版本不一致的服务器，补投递排队的升级命令、重发超时命令，或按退避间隔补建升级命令。
 
 ## 3. 仓库结构与技术栈
 

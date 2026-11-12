@@ -69,8 +69,8 @@ type Dispatcher struct {
 	opts   Options // 不可变配置（New 注入）
 	events Events  // 事件回调（New 注入）
 
-	mu      sync.Mutex
-	flushMu map[int64]*sync.Mutex // 每服务器一把，避免并发 Flush 重复投递
+	flushMu      sync.Mutex
+	flushPending map[int64]bool // 存在即有投递在运行，true 表示需要再次扫描
 
 	// cleanupReconcileMu 清理任务自愈并发守卫：60s ticker 与 Agent 重连可能同时触发，
 	// 重叠运行无意义（单次运行已覆盖全部链），用 TryLock 抑制重入。
@@ -83,6 +83,12 @@ type Dispatcher struct {
 	// 同一服务器仅一轮在途，TTL 过期自动放行下一轮。
 	latencyMu     sync.Mutex
 	latencyRounds map[int64]latencyRound
+
+	// versionRetryMu/versionRetry 是 Agent 版本同步退避（§Panel/Agent 版本同步）：
+	// 60s ticker 的 ReconcileAgentVersions 按（serverID, 目标版本）记录最近一次升级
+	// 命令入队时间，退避窗口内不重复入队，避免无法升级的服务器每 60s 堆积升级命令。
+	versionRetryMu sync.Mutex
+	versionRetry   map[int64]versionRetryState
 
 	endpointRetryMu   sync.Mutex
 	endpointRetriedAt map[int64]time.Time // 端点自动重试退避：key endpointID → 上次自动补发时间
@@ -144,9 +150,10 @@ func New(st *store.Store, req ws.AgentRequester, opts Options, events Events) *D
 		opts.Context = context.Background()
 	}
 	d := &Dispatcher{
-		st: st, req: req, opts: opts, events: events, flushMu: make(map[int64]*sync.Mutex),
+		st: st, req: req, opts: opts, events: events, flushPending: make(map[int64]bool),
 		testProgress:      make(map[int64]shared.ServerTestProgressPayload),
 		latencyRounds:     make(map[int64]latencyRound),
+		versionRetry:      make(map[int64]versionRetryState),
 		cleanupWaiters:    newSyncWaiters[shared.CleanupXrayResult](),
 		rebuildWaiters:    newSyncWaiters[shared.RebuildXrayResult](),
 		endpointRetriedAt: make(map[int64]time.Time),
@@ -216,6 +223,15 @@ func (d *Dispatcher) ServerTestProgress(serverID int64) *shared.ServerTestProgre
 
 // Enqueue 将命令写入 commands 表（queued）并尽力立即投递；离线则滞留，待重连补发（§2）。
 func (d *Dispatcher) Enqueue(ctx context.Context, serverID int64, typ string, payload any) (int64, error) {
+	id, err := d.enqueueCommand(ctx, serverID, typ, payload)
+	if err != nil {
+		return 0, err
+	}
+	d.Flush(ctx, serverID)
+	return id, nil
+}
+
+func (d *Dispatcher) enqueueCommand(ctx context.Context, serverID int64, typ string, payload any) (int64, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return 0, fmt.Errorf("marshal payload: %w", err)
@@ -225,12 +241,7 @@ func (d *Dispatcher) Enqueue(ctx context.Context, serverID int64, typ string, pa
 	if traceID == "" {
 		traceID = shared.NewMessageID()
 	}
-	id, err := d.st.EnqueueCommand(ctx, requestID, traceID, serverID, typ, raw)
-	if err != nil {
-		return 0, err
-	}
-	d.Flush(ctx, serverID)
-	return id, nil
+	return d.st.EnqueueCommand(ctx, requestID, traceID, serverID, typ, raw)
 }
 
 // EnqueueAgentUpgradeAll 为所有已登记服务器入队 agent 自升级命令。
@@ -456,45 +467,47 @@ const maxCommandAttempts = 10
 // var 而非 const：测试可临时调小。
 var endpointAutoRetryMinInterval = 60 * time.Second
 
-// Flush 投递该服务器全部待发命令；agent 离线时停止并滞留（§2 离线排队）。
-// attempts 超过 maxCommandAttempts 的命令标记 failed（死信），不再重发。
+// Flush serializes delivery and dead-letter handlers for each server. A concurrent
+// or reentrant request schedules another pass using the dispatcher lifetime.
 func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
-	lock := d.serverLock(serverID)
-	lock.Lock()
-	defer lock.Unlock()
+	d.flushMu.Lock()
+	if _, active := d.flushPending[serverID]; active {
+		d.flushPending[serverID] = true
+		d.flushMu.Unlock()
+		return
+	}
+	d.flushPending[serverID] = false
+	d.flushMu.Unlock()
 
+	for {
+		d.flushCommands(ctx, serverID)
+
+		d.flushMu.Lock()
+		if !d.flushPending[serverID] {
+			delete(d.flushPending, serverID)
+			d.flushMu.Unlock()
+			return
+		}
+		d.flushPending[serverID] = false
+		d.flushMu.Unlock()
+		ctx = d.baseCtx()
+	}
+}
+
+func (d *Dispatcher) flushCommands(ctx context.Context, serverID int64) {
 	cmds, err := d.st.QueuedCommands(ctx, serverID)
 	if err != nil {
 		log.Printf("dispatch: flush server %d: %v", serverID, err)
 		return
 	}
-	versionMismatch := false
-	if target := strings.TrimSpace(d.opts.PanelVersion); target != "" && target != "dev" {
-		if server, err := d.st.ServerByID(ctx, serverID); err == nil {
-			versionMismatch = server.AgentVersion != target
-		}
-	}
+	versionMismatch := d.commandGateBlocked(ctx, serverID)
+	target := strings.TrimSpace(d.opts.PanelVersion)
 	for _, c := range cmds {
-		if versionMismatch && !isExactAgentUpgrade(c, d.opts.PanelVersion) {
+		if versionMismatch && !isExactAgentUpgrade(c, target) {
 			continue
 		}
 		if c.Attempts >= maxCommandAttempts {
-			log.Printf("dispatch: command %d dead-lettered after %d attempts", c.ID, c.Attempts)
-			if err := d.st.DeadLetterCommand(ctx, c.ID); err != nil {
-				log.Printf("dispatch: dead-letter command %d: %v", c.ID, err)
-			}
-			d.setRevisionTaskResult(ctx, c.ID, false,
-				fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts))
-			d.recordOperation(logging.OperationEvent{
-				Severity: logging.SeverityError, Category: logging.CategoryCommand,
-				Action: "command.dead_lettered", ServerID: &serverID,
-				Detail: d.commandDetail(ctx, c, 0,
-					fmt.Sprintf("command %d dead-lettered after %d attempts", c.ID, c.Attempts)),
-			})
-			// 死信的状态机收尾按命令类型查表分派（注册见 commandHandlers）。
-			if h, ok := commandHandlers[c.Type]; ok && h.deadLetter != nil {
-				h.deadLetter(d, ctx, serverID, c)
-			}
+			d.deadLetterCommand(ctx, serverID, c)
 			continue
 		}
 		env := shared.Envelope{
@@ -504,12 +517,81 @@ func (d *Dispatcher) Flush(ctx context.Context, serverID int64) {
 			TraceID:   c.TraceID,
 			Data:      c.Data,
 		}
+		// 先投递后落 sent（Agent 回执可能先到，store 接受 queued 回执）。
 		if err := d.send(ctx, serverID, env); err != nil {
 			return // 离线或面板未就绪：剩余命令滞留 queued，待重连/就绪后补发
 		}
 		if err := d.st.MarkCommandSent(ctx, c.ID); err != nil {
 			log.Printf("dispatch: mark sent %d: %v", c.ID, err)
 		}
+	}
+}
+
+func (d *Dispatcher) deadLetterCommand(ctx context.Context, serverID int64, cmd store.Command) {
+	reason := fmt.Sprintf("command %d dead-lettered after %d attempts", cmd.ID, cmd.Attempts)
+	changed, err := d.st.DeadLetterCommand(ctx, cmd.ID, reason)
+	if err != nil {
+		log.Printf("dispatch: dead-letter command %d: %v", cmd.ID, err)
+		return
+	}
+	if !changed {
+		return // 并发回执已落终态
+	}
+	log.Printf("dispatch: %s", reason)
+	d.syncRevisionTaskResult(ctx, cmd.ID)
+	d.recordOperation(logging.OperationEvent{
+		Severity: logging.SeverityError, Category: logging.CategoryCommand,
+		Action: "command.dead_lettered", ServerID: &serverID,
+		Detail: d.commandDetail(ctx, cmd, 0, reason),
+	})
+	if h, ok := commandHandlers[cmd.Type]; ok && h.deadLetter != nil {
+		h.deadLetter(d, ctx, serverID, cmd)
+	}
+}
+
+// commandGateBlocked 报告该服务器的业务命令是否因 Agent 版本未同步而被门控（Flush 跳过）。
+// 清理任务可达性判定必须复用同一门控：门控关闭时命令永远投不出去、attempts 不增长、
+// 也就永远不会死信，若仍按「在线」阻塞链，链会永久停在 cleanup_pending。
+func (d *Dispatcher) commandGateBlocked(ctx context.Context, serverID int64) bool {
+	target := strings.TrimSpace(d.opts.PanelVersion)
+	if target == "" || target == "dev" {
+		return false
+	}
+	server, err := d.st.ServerByID(ctx, serverID)
+	if err != nil {
+		return false
+	}
+	return server.AgentVersion != target
+}
+
+// versionUpgradeRetryInterval 是版本同步补偿的最小重试间隔（var 便于测试压缩）。
+var versionUpgradeRetryInterval = 10 * time.Minute
+
+// versionRetryState 记录某服务器针对某目标版本的最近一次补偿入队时间。
+type versionRetryState struct {
+	version string
+	at      time.Time
+}
+
+// ReconcileAgentVersions 周期补偿 Agent 版本同步（§Panel/Agent 版本同步）：OpenSession
+// 时的 ensureAgentVersion 若因升级命令失败/死信而未收敛，版本门控会一直关闭该服务器
+// 的全部业务命令投递，清理/编排命令滞留 queued。60s ticker 对在线且版本不一致的服务器
+// 重试；按（服务器, 目标版本）退避，避免无法升级的服务器每次 tick 都新增升级命令。
+func (d *Dispatcher) ReconcileAgentVersions(ctx context.Context) {
+	servers, err := d.st.ListServers(ctx)
+	if err != nil {
+		log.Printf("dispatch: reconcile agent versions: list servers: %v", err)
+		return
+	}
+	target := strings.TrimSpace(d.opts.PanelVersion)
+	if target == "" || target == "dev" {
+		return
+	}
+	for _, server := range servers {
+		if !d.req.IsOnline(server.ID) || server.AgentVersion == target {
+			continue
+		}
+		d.ensureAgentVersion(ctx, server.ID, server.AgentVersion, true)
 	}
 }
 
@@ -613,7 +695,7 @@ func (d *Dispatcher) OpenSession(ctx context.Context, auth ws.AuthResult, p shar
 			log.Printf("dispatch: refresh server %d addresses: %v", srv.ID, err)
 		}
 	}
-	d.ensureAgentVersion(ctx, srv.ID, p.AgentVersion)
+	d.ensureAgentVersion(ctx, srv.ID, p.AgentVersion, false)
 	return result, nil
 }
 
@@ -628,30 +710,54 @@ func (d *Dispatcher) CommitCredential(ctx context.Context, serverID int64, excha
 	return nil
 }
 
-func (d *Dispatcher) ensureAgentVersion(ctx context.Context, serverID int64, reported string) {
+func (d *Dispatcher) ensureAgentVersion(ctx context.Context, serverID int64, reported string, reconcile bool) {
 	target := strings.TrimSpace(d.opts.PanelVersion)
 	if target == "" || target == "dev" || reported == target {
 		return
 	}
-	commands, err := d.st.CommandsByType(ctx, shared.TypeUpgradeAgent)
+	flush, err := d.prepareAgentUpgrade(ctx, serverID, target, reconcile)
 	if err != nil {
-		log.Printf("dispatch: server %d inspect agent version commands: %v", serverID, err)
-		return
+		log.Printf("dispatch: server %d synchronize agent to %s: %v", serverID, target, err)
+	} else if flush {
+		d.Flush(ctx, serverID)
+	}
+}
+
+func (d *Dispatcher) prepareAgentUpgrade(ctx context.Context, serverID int64, target string, reconcile bool) (bool, error) {
+	// Session establishment and periodic recovery can both schedule an upgrade.
+	d.versionRetryMu.Lock()
+	defer d.versionRetryMu.Unlock()
+
+	commands, err := d.st.PendingCommandsByType(ctx, serverID, shared.TypeUpgradeAgent)
+	if err != nil {
+		return false, err
 	}
 	for _, command := range commands {
-		if command.ServerID != serverID || (command.Status != store.CommandStatusQueued && command.Status != store.CommandStatusSent) {
+		if !isExactAgentUpgrade(command, target) {
 			continue
 		}
-		var payload shared.UpgradeAgentPayload
-		if json.Unmarshal(command.Data, &payload) == nil && payload.Version == target {
-			return
+		switch command.Status {
+		case store.CommandStatusQueued:
+			return reconcile, nil // session.ready will flush for a new connection
+		case store.CommandStatusSent:
+			if reconcile && commandDeliveryTimedOut(&command, versionUpgradeRetryInterval) {
+				return d.st.RequeueSentCommand(ctx, command.ID, command.Attempts)
+			}
+			return false, nil
 		}
 	}
-	if _, err := d.Enqueue(ctx, serverID, shared.TypeUpgradeAgent, shared.UpgradeAgentPayload{
+
+	if state, ok := d.versionRetry[serverID]; ok && state.version == target &&
+		time.Since(state.at) < versionUpgradeRetryInterval {
+		return false, nil
+	}
+	if _, err := d.enqueueCommand(ctx, serverID, shared.TypeUpgradeAgent, shared.UpgradeAgentPayload{
 		Version: target, ReleaseBase: d.opts.AgentReleaseBase,
 	}); err != nil {
-		log.Printf("dispatch: server %d enqueue agent synchronization to %s: %v", serverID, target, err)
+		return false, err
 	}
+	d.versionRetry[serverID] = versionRetryState{version: target, at: time.Now()}
+	return true, nil
 }
 
 // preferredAgentAddress keeps a publicly routable socket peer when available.
@@ -1174,14 +1280,15 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 	}
 	d.logWebSocketRPC(serverID, *cmd, env)
 	if env.Code == shared.CodeOK || env.Code == shared.CodeAccepted {
-		// 仅 sent → acked；死信后迟到的 ack 不得翻回终态，也不得触碰节点状态机。
+		// queued/sent → acked：回执可能先于 MarkCommandSent 落库（Flush send→mark 窗口）；
+		// 死信后迟到的重复回执不得翻回终态，也不得触碰节点状态机。
 		acked, err := d.st.MarkCommandAcked(ctx, cmdID)
 		if err != nil {
 			log.Printf("dispatch: ack command %d: %v", cmdID, err)
 			return
 		}
 		if !acked {
-			log.Printf("dispatch: server %d: response for command %d not in sent state, ignored", serverID, cmdID)
+			log.Printf("dispatch: server %d: response for command %d already terminal, ignored", serverID, cmdID)
 			return
 		}
 		d.applyCommandOutcome(serverID, cmd, p, env, true, "")
@@ -1196,7 +1303,7 @@ func (d *Dispatcher) handleCommandResponse(serverID int64, env shared.Envelope) 
 			return
 		}
 		if !failed {
-			log.Printf("dispatch: server %d: response for command %d not in sent state, ignored", serverID, cmdID)
+			log.Printf("dispatch: server %d: response for command %d already terminal, ignored", serverID, cmdID)
 			return
 		}
 		d.applyCommandOutcome(serverID, cmd, p, env, false, errorMessage)
@@ -1214,7 +1321,7 @@ func (d *Dispatcher) applyCommandOutcome(serverID int64, cmd *store.Command, p s
 		h.takeover(d, serverID, cmd, env, success, errorMessage)
 		return
 	}
-	d.setRevisionTaskResult(ctx, cmd.ID, success, errorMessage)
+	d.syncRevisionTaskResult(ctx, cmd.ID)
 	d.recordCommandOutcome(ctx, serverID, cmd, p, env, success, errorMessage)
 	if h, ok := commandHandlers[cmd.Type]; ok && h.respond != nil {
 		h.respond(d, serverID, cmd, p, success, errorMessage)
@@ -1449,21 +1556,14 @@ func respondRemoveCommand(_ *Dispatcher, serverID int64, cmd *store.Command, _ s
 	}
 }
 
-func (d *Dispatcher) setRevisionTaskResult(ctx context.Context, commandID int64, success bool, errorMessage string) {
-	task, err := d.st.RevisionTaskByCommandID(ctx, commandID)
-	if errors.Is(err, store.ErrNotFound) {
-		return
-	}
+func (d *Dispatcher) syncRevisionTaskResult(ctx context.Context, commandID int64) {
+	revisionID, err := d.st.SyncRevisionTaskResult(ctx, commandID)
 	if err != nil {
-		log.Printf("dispatch: lookup revision task for command %d: %v", commandID, err)
+		log.Printf("dispatch: sync revision task result for command %d: %v", commandID, err)
 		return
 	}
-	if err := d.st.SetRevisionTaskResult(ctx, task.ID, success, errorMessage); err != nil {
-		log.Printf("dispatch: update revision task %d: %v", task.ID, err)
-		return
-	}
-	if task.Phase == "cleanup" {
-		d.refreshCleanupStatus(ctx, task.RevisionID)
+	if revisionID != 0 {
+		d.refreshCleanupStatus(ctx, revisionID)
 	}
 }
 
@@ -1547,17 +1647,6 @@ func (d *Dispatcher) alertNodeFailed(serverID, nodeID int64, reason string) {
 		return
 	}
 	d.opts.Alerter.Notify(serverID, alert.EventNodeFailed, fmt.Sprintf("node_%d", nodeID), reason)
-}
-
-func (d *Dispatcher) serverLock(serverID int64) *sync.Mutex {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	l, ok := d.flushMu[serverID]
-	if !ok {
-		l = &sync.Mutex{}
-		d.flushMu[serverID] = l
-	}
-	return l
 }
 
 func (d *Dispatcher) recordOperation(event logging.OperationEvent) {
