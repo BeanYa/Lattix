@@ -1,28 +1,18 @@
 import { useId, useState, type ReactNode } from 'react'
 import { CheckIcon, ChevronDownIcon } from 'lucide-react'
 
+import {
+  visibilityItemKind,
+  type VisibilityExternalSubscription,
+  type VisibilityLink,
+} from './visibility-items'
 import './visibility.css'
 
-export interface VisibilityLink {
-  id: string
-  label: string
-}
-
-export interface VisibilityExternalSubscription extends VisibilityLink {
-  nodes: string[]
-}
+export type { VisibilityExternalSubscription, VisibilityLink } from './visibility-items'
 
 interface VisibilitySelection {
   hiddenIds: ReadonlySet<string>
   onVisibilityChange: (id: string, visible: boolean) => void
-}
-
-/** 订阅项 ID 形如 chain:12 / node:7 / external:3，按前缀给出人类可读类型。 */
-function itemKind(id: string): string {
-  if (id.startsWith('chain:')) return '中转链路'
-  if (id.startsWith('node:')) return '直连节点'
-  if (id.startsWith('external:')) return '外部订阅'
-  return '订阅项'
 }
 
 /** 链路身份色按 id % 9 分配（DESIGN.md：线路身份色只出现在链路徽标与链路序列）。 */
@@ -58,7 +48,7 @@ function VisibilityCheckbox({
           {color ? (
             <span className="vis-id-dot" style={{ background: color }} aria-hidden="true" />
           ) : null}
-          {itemKind(item.id)}
+          {visibilityItemKind(item)}
         </span>
       </span>
       <span className="vis-item-state" data-visible={visible}>
@@ -178,7 +168,7 @@ export function VisibilityEditor({
       {links.length > 0 ? (
         <Section
           title="面板链路"
-          description="订阅中展示的入口链路与直连节点"
+          description="订阅中展示的中转与直连链路"
           items={links}
           {...selection}
         >
