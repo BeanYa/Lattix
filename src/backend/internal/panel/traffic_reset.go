@@ -59,15 +59,13 @@ func (s *Server) sweepTrafficReset(ctx context.Context) error {
 				continue
 			}
 		}
-		assigned, err := s.st.UserNodeIDs(ctx, u.ID)
+		assigned, err := s.st.CatalogUserNodeIDs(ctx, u.ID)
 		if err != nil {
 			log.Printf("panel: traffic reset: user %d list nodes: %v", u.ID, err)
 			continue
 		}
 		s.fanoutUserDiff(ctx, u.UUID, nodes, assigned, nil)
-		if assignments, err := s.st.UserChainAssignments(ctx, u.ID); err == nil {
-			s.reconcileUserEndpoints(ctx, u.ID, assignments)
-		}
+		s.reconcileUserEndpoints(ctx, u.ID)
 		if s.subscriptions != nil {
 			s.subscriptions.EnqueueUsers([]int64{u.ID}, "")
 		}

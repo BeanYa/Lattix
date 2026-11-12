@@ -50,19 +50,19 @@ func (s *Server) sweepTrialExpiries(ctx context.Context, now time.Time) {
 		if !current.IsTrial || current.ExpiresAt == nil || current.ExpiresAt.After(now) {
 			continue
 		}
-		assigned, err := s.st.UserNodeIDs(ctx, current.ID)
+		assigned, err := s.st.CatalogUserNodeIDs(ctx, current.ID)
 		if err != nil {
 			log.Printf("panel: trial expiry: user %d list nodes: %v", current.ID, err)
 			continue
 		}
-		assignments, _ := s.st.UserChainAssignments(ctx, current.ID)
+		assignments, _ := s.st.CatalogUserChainAssignments(ctx, current.ID)
 		// 先摘除节点与共享端点上的用户凭证，再删用户记录（订阅快照随 DeleteUser 级联删除）。
 		s.fanoutUserDiff(ctx, current.UUID, nodes, nil, assigned)
-		s.reconcileUserEndpoints(ctx, current.ID, assignments)
 		if err := s.st.DeleteUser(ctx, current.ID); err != nil {
 			log.Printf("panel: trial expiry: delete user %d: %v", current.ID, err)
 			continue
 		}
+		s.reconcileAssignmentEndpoints(ctx, assignments)
 		if err := s.recordOperation(ctx, logging.OperationEvent{
 			Severity: logging.SeverityInfo,
 			Category: logging.CategoryUser,
@@ -103,15 +103,13 @@ func (s *Server) sweepActivations(ctx context.Context, now time.Time) {
 			log.Printf("panel: user %d (%s) 已到生效时刻，置 started_at（停权/将到期，跳过扇出）", u.ID, u.Name)
 			continue
 		}
-		assigned, err := s.st.UserNodeIDs(ctx, u.ID)
+		assigned, err := s.st.CatalogUserNodeIDs(ctx, u.ID)
 		if err != nil {
 			log.Printf("panel: lifecycle sweep: user %d list nodes: %v", u.ID, err)
 			continue
 		}
 		s.fanoutUserDiff(ctx, u.UUID, nodes, assigned, nil)
-		if assignments, err := s.st.UserChainAssignments(ctx, u.ID); err == nil {
-			s.reconcileUserEndpoints(ctx, u.ID, assignments)
-		}
+		s.reconcileUserEndpoints(ctx, u.ID)
 		if s.subscriptions != nil {
 			s.subscriptions.EnqueueUsers([]int64{u.ID}, "")
 		}
@@ -195,15 +193,13 @@ func (s *Server) stopUser(ctx context.Context, u store.User, nodes []store.Node,
 		log.Printf("panel: user %d (%s) %s，置停权标记（已停用，跳过扇出）", u.ID, u.Name, reason)
 		return
 	}
-	assigned, err := s.st.UserNodeIDs(ctx, u.ID)
+	assigned, err := s.st.CatalogUserNodeIDs(ctx, u.ID)
 	if err != nil {
 		log.Printf("panel: lifecycle sweep: user %d list nodes: %v", u.ID, err)
 		return
 	}
 	s.fanoutUserDiff(ctx, u.UUID, nodes, nil, assigned)
-	if assignments, err := s.st.UserChainAssignments(ctx, u.ID); err == nil {
-		s.reconcileUserEndpoints(ctx, u.ID, assignments)
-	}
+	s.reconcileUserEndpoints(ctx, u.ID)
 	// 停权后重发布订阅（节点清空，§9）。此前该路径缺失重发布触发，
 	// 已到期的用户订阅文件仍残留旧节点（评审发现，links.sh e2e 复现）。
 	if s.subscriptions != nil {

@@ -67,7 +67,7 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 					ID: chain.ServiceUUID, Email: "tunnel:" + chain.ServiceUUID})
 			}
 		}
-		uuids, err := d.st.ActiveServiceEndpointUsers(ctx, endpointID, time.Now())
+		uuids, err := d.st.CatalogServiceEndpointUsers(ctx, endpointID, time.Now())
 		if err != nil {
 			return err
 		}
@@ -81,7 +81,7 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 		_, err = d.Enqueue(ctx, endpoint.ServerID, shared.TypeApplySharedEndpoint, payload)
 		return err
 	}
-	assignments, err := d.st.ActiveEndpointAssignments(ctx, endpointID, time.Now())
+	assignments, err := d.st.CatalogEndpointAssignments(ctx, endpointID, time.Now())
 	if err != nil {
 		return err
 	}
@@ -107,12 +107,12 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 	// 为 IPv6 时端点须监听 "::"（双栈同听，IPv4 客户端不受影响）。
 	listenFamily := ""
 	for _, chain := range chains {
-		if chain.EndpointID != endpointID || chain.PublishedRevisionID == 0 ||
+		if chain.PublishedRevisionID == 0 ||
 			chain.Status == store.ChainStatusInvalid || chain.Status == store.ChainStatusDeleted {
 			continue
 		}
 		revision, err := d.st.PublishedChainRevision(ctx, chain.ID)
-		if err != nil || len(revision.Snapshot.Hops) == 0 {
+		if err != nil || revision.Snapshot.EndpointID != endpointID || len(revision.Snapshot.Hops) == 0 {
 			continue
 		}
 		if d.endpointHopAddressFamily(ctx, revision.Snapshot.Hops[0]) == shared.AddressFamilyIPv6 {

@@ -2,10 +2,13 @@ package sub
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http/httptest"
 	"strings"
 	"time"
+
+	"lattix/backend/internal/store"
 )
 
 const regenerationDebounce = 150 * time.Millisecond
@@ -17,6 +20,10 @@ type pendingPublication struct {
 
 func (s *Server) StartRegenerator(ctx context.Context) {
 	s.startOnce.Do(func() {
+		if err := s.st.RecoverSubscriptionPublicationJobs(ctx); err != nil {
+			log.Printf("subscription: recover publication jobs: %v", err)
+		}
+		s.wakeRegenerator()
 		s.queueWG.Add(1)
 		go func() {
 			defer s.queueWG.Done()
@@ -53,6 +60,10 @@ func (s *Server) EnqueueUsers(userIDs []int64, baseURL string) {
 		}
 	}
 	s.queueMu.Unlock()
+	s.wakeRegenerator()
+}
+
+func (s *Server) wakeRegenerator() {
 	select {
 	case s.queueWake <- struct{}{}:
 	default:
@@ -66,6 +77,13 @@ func (s *Server) RegenerateUser(ctx context.Context, userID int64, baseURL strin
 }
 
 func (s *Server) EnqueueUsersForNode(ctx context.Context, nodeID int64) error {
+	chain, err := s.st.ChainByServiceNode(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	if chain != nil {
+		return s.EnqueueCatalogUsers(ctx, "")
+	}
 	ids, err := s.st.SubscriptionUserIDsForNode(ctx, nodeID)
 	if err != nil {
 		return err
@@ -74,26 +92,20 @@ func (s *Server) EnqueueUsersForNode(ctx context.Context, nodeID int64) error {
 	return nil
 }
 
-func (s *Server) EnqueueUsersForChain(ctx context.Context, chainID int64) error {
-	ids, err := s.st.SubscriptionUserIDsForChain(ctx, chainID)
-	if err != nil {
-		return err
-	}
-	s.EnqueueUsers(ids, "")
-	return nil
+func (s *Server) EnqueueUsersForChain(ctx context.Context, _ int64) error {
+	return s.EnqueueCatalogUsers(ctx, "")
 }
 
-func (s *Server) EnqueueUsersForEndpoint(ctx context.Context, endpointID int64) error {
-	ids, err := s.st.SubscriptionUserIDsForEndpoint(ctx, endpointID)
-	if err != nil {
-		return err
-	}
-	s.EnqueueUsers(ids, "")
-	return nil
+func (s *Server) EnqueueUsersForEndpoint(ctx context.Context, _ int64) error {
+	return s.EnqueueCatalogUsers(ctx, "")
 }
 
-func (s *Server) EnqueueUsersForServer(ctx context.Context, serverID int64, baseURL string) error {
-	ids, err := s.st.SubscriptionUserIDsForServer(ctx, serverID)
+func (s *Server) EnqueueUsersForServer(ctx context.Context, _ int64, baseURL string) error {
+	return s.EnqueueCatalogUsers(ctx, baseURL)
+}
+
+func (s *Server) EnqueueCatalogUsers(ctx context.Context, baseURL string) error {
+	ids, err := s.st.CatalogUserIDs(ctx)
 	if err != nil {
 		return err
 	}
@@ -102,11 +114,14 @@ func (s *Server) EnqueueUsersForServer(ctx context.Context, serverID int64, base
 }
 
 func (s *Server) runRegenerator(ctx context.Context) {
+	retry := time.NewTicker(15 * time.Second)
+	defer retry.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-s.queueWake:
+		case <-retry.C:
 		}
 		timer := time.NewTimer(regenerationDebounce)
 		select {
@@ -115,33 +130,116 @@ func (s *Server) runRegenerator(ctx context.Context) {
 			return
 		case <-timer.C:
 		}
-		for userID := range s.takeQueued() {
-			publishCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-			err := s.publishPendingUser(publishCtx, userID)
-			cancel()
-			if err != nil {
-				log.Printf("subscription: regenerate user %d: %v", userID, err)
+		for ctx.Err() == nil {
+			processed := s.processQueuedSubscriptionJobs(ctx)
+			for userID := range s.takeQueued() {
+				publishCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				err := s.publishPendingUser(publishCtx, userID)
+				cancel()
+				if err != nil {
+					log.Printf("subscription: regenerate user %d: %v", userID, err)
+				}
+			}
+			if !processed {
+				break
 			}
 		}
 	}
 }
 
+func (s *Server) processQueuedSubscriptionJobs(ctx context.Context) bool {
+	users, err := s.st.QueuedSubscriptionPublicationUserIDs(ctx)
+	if err != nil {
+		log.Printf("subscription: list queued publication users: %v", err)
+		return false
+	}
+	processed := false
+	for _, userID := range users {
+		if ctx.Err() != nil {
+			break
+		}
+		lock := s.publishLock(userID)
+		lock.Lock()
+		err := s.processNextSubscriptionJobLocked(ctx, userID)
+		lock.Unlock()
+		switch {
+		case err == nil:
+			processed = true
+		case !errors.Is(err, store.ErrNotFound):
+			log.Printf("subscription: process queued publication for user %d: %v", userID, err)
+		}
+	}
+	return processed
+}
+
+func (s *Server) processNextSubscriptionJobLocked(ctx context.Context, userID int64) error {
+	job, err := s.st.ClaimSubscriptionPublicationJob(ctx, userID)
+	if err != nil {
+		return err
+	}
+	pending := s.pendingPublication(userID)
+	baseURL := job.BaseURL
+	if baseURL == "" {
+		baseURL = s.currentBaseURL()
+	}
+	pendingBaseURL := pending.baseURL
+	if pendingBaseURL == "" {
+		pendingBaseURL = s.currentBaseURL()
+	}
+	publishCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	publishCtx, err = store.WithSubscriptionPublicationJob(publishCtx, job)
+	if err == nil {
+		_, err = s.publishUserLocked(publishCtx, userID, baseURL)
+	}
+	if err == nil {
+		if pending.version != 0 && strings.TrimRight(baseURL, "/") == pendingBaseURL &&
+			!s.clearPendingPublication(userID, pending.version) && s.observer != nil {
+			s.observer.NotifyUserPublished(userID, nil)
+		}
+		return nil
+	}
+	if ctx.Err() != nil {
+		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := s.st.RequeueSubscriptionPublicationJob(finishCtx, job); err != nil {
+			log.Printf("subscription: requeue interrupted publication %s: %v", job.ID, err)
+		}
+		s.wakeRegenerator()
+		return ctx.Err()
+	}
+	log.Printf("subscription: publish %s job %s for user %d: %v", job.Kind, job.ID, userID, err)
+	return s.st.FailSubscriptionPublicationJob(ctx, job, "订阅生成失败，请重试")
+}
+
+func (s *Server) pendingPublication(userID int64) pendingPublication {
+	s.queueMu.Lock()
+	defer s.queueMu.Unlock()
+	return s.pending[userID]
+}
+
+// clearPendingPublication reports whether a newer background request remains.
+func (s *Server) clearPendingPublication(userID int64, version uint64) bool {
+	s.queueMu.Lock()
+	defer s.queueMu.Unlock()
+	if s.pending[userID].version == version {
+		delete(s.pending, userID)
+		delete(s.queued, userID)
+	}
+	return s.pending[userID].version != 0
+}
+
 // publishPendingUser 使后台任务与订阅请求共用同一用户发布锁；读取待更新版本必须
 // 在锁内完成，防止后台已经发布后请求重复编译。发布中再次入队则继续生成新版本。
 func (s *Server) publishPendingUser(ctx context.Context, userID int64) error {
-	s.queueMu.Lock()
-	pending := s.pending[userID].version != 0
-	s.queueMu.Unlock()
-	if !pending {
+	if s.pendingPublication(userID).version == 0 {
 		return nil
 	}
 	lock := s.publishLock(userID)
 	lock.Lock()
 	defer lock.Unlock()
 	for {
-		s.queueMu.Lock()
-		job := s.pending[userID]
-		s.queueMu.Unlock()
+		job := s.pendingPublication(userID)
 		if job.version == 0 {
 			return nil
 		}
@@ -156,14 +254,7 @@ func (s *Server) publishPendingUser(ctx context.Context, userID int64) error {
 			}
 			return err
 		}
-		s.queueMu.Lock()
-		if s.pending[userID].version == job.version {
-			delete(s.pending, userID)
-			delete(s.queued, userID)
-		}
-		pending := s.pending[userID].version != 0
-		s.queueMu.Unlock()
-		if !pending {
+		if !s.clearPendingPublication(userID, job.version) {
 			if s.observer != nil {
 				s.observer.NotifyUserPublished(userID, nil)
 			}

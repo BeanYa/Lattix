@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowDownToLine,
   ArrowUpRight,
@@ -19,10 +19,14 @@ import LattixMark from '@/components/LattixMark'
 import { Notice } from '@/components/PagePrimitives'
 import { QRDialog } from '@/components/QRDialog'
 import ThemeToggle from '@/components/ThemeToggle'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { humanizeBytes } from '@/lib/format'
 import { RequestError, requester } from '@/lib/requester'
 import { formatLatency, latencyTone } from '@/pages/chains/chain-stats'
+import { PublicationNotice } from '@/pages/subscription/PublicationNotice'
 import { TemplateConfigCard } from '@/pages/subscription/TemplateConfigCard'
+import { VisibilityCard } from '@/pages/subscription/VisibilityCard'
+import { usePublicationJobs, type PublicationJob } from '@/pages/subscription/publication-jobs'
 
 import './subscription.css'
 
@@ -72,6 +76,7 @@ interface CarrierStatus {
 /** LinkStatus 是一条链路的匿名状态：入口三网延迟 + 内部段延迟加总（无服务器标识）。
  * entry_banned 表示入口（第一跳）服务器被 Ban 巡检判定且为可直连服务器（§告警分类）。 */
 interface LinkStatus {
+  id?: string
   label: string
   entry: string
   carriers: CarrierStatus[]
@@ -462,11 +467,25 @@ export default function SubscriptionPage() {
   const [downloadVariant, setDownloadVariant] = useState('')
   const [downloadTask, setDownloadTask] = useState<DownloadTask | null>(null)
   const [downloadError, setDownloadError] = useState('')
-  // 模板配置保存后轻量刷新订阅信息（节点数等随快照重生成变化）；首渲染跳过。
-  const [infoTick, setInfoTick] = useState(0)
-  const infoLoaded = useRef(false)
   const copyTimer = useRef<number | undefined>(undefined)
   const downloadTriggered = useRef('')
+  const usedTotal = info ? info.used_up + info.used_down : 0
+  const overLimit = Boolean(
+    info && ((info.traffic_limit > 0 && usedTotal > info.traffic_limit) || info.quota_exhausted),
+  )
+  const unavailable = !info || info.disabled || info.expired || info.not_effective || overLimit
+  const loadJobs = useCallback(
+    (signal: AbortSignal) =>
+      requester.getJSON<{ jobs: PublicationJob[] }>(`/api/sub/${token}/publication-jobs`, {
+        signal,
+        display: 'silent',
+      }),
+    [token],
+  )
+  const { pending, settled, pollFailed, addJob } = usePublicationJobs(
+    loadJobs,
+    !isPreview && !unavailable,
+  )
 
   useEffect(() => {
     if (!token) {
@@ -517,19 +536,22 @@ export default function SubscriptionPage() {
   useEffect(() => () => window.clearTimeout(copyTimer.current), [])
 
   useEffect(() => {
-    if (isPreview || !token) return
-    if (!infoLoaded.current) {
-      // 首次渲染的 info 已由上方 Promise.all 加载。
-      infoLoaded.current = true
-      return
-    }
+    if (isPreview || !token || settled.length === 0) return
     const controller = new AbortController()
+    const options = { signal: controller.signal, display: 'silent' as const }
     requester
-      .getJSON<SubInfo>(`/api/sub/${token}/info`, { signal: controller.signal, display: 'silent' })
+      .getJSON<SubInfo>(`/api/sub/${token}/info`, options)
       .then(setInfo)
       .catch(() => {})
+    requester
+      .getJSON<LinkStatusResponse>(`/api/sub/${token}/status`, options)
+      .then((next) => {
+        setLinkStatus(next.links)
+        setUnreachableRegion(next.unreachable_region ?? '')
+      })
+      .catch(() => {})
     return () => controller.abort()
-  }, [infoTick, isPreview, token])
+  }, [isPreview, settled, token])
 
   useEffect(() => {
     if (
@@ -658,14 +680,10 @@ export default function SubscriptionPage() {
   if (error) return <ErrorState message={error} />
   if (!info) return <LoadingState />
 
-  const usedTotal = info.used_up + info.used_down
   const remaining = Math.max(0, info.traffic_limit - usedTotal)
   const usagePercent =
     info.traffic_limit > 0 ? Math.min(100, (usedTotal / info.traffic_limit) * 100) : 0
-  const overLimit =
-    (info.traffic_limit > 0 && usedTotal > info.traffic_limit) || info.quota_exhausted
   const unlimited = info.traffic_limit <= 0
-  const unavailable = info.disabled || info.expired || info.not_effective || overLimit
   const statusLabel = info.disabled
     ? '已停用'
     : info.not_effective
@@ -1088,8 +1106,20 @@ export default function SubscriptionPage() {
           </div>
         </section>
 
-        {!isPreview ? (
-          <TemplateConfigCard token={token} onSaved={() => setInfoTick((tick) => tick + 1)} />
+        {!isPreview && !unavailable ? (
+          <Tabs className="sub-mod sub-config" defaultValue="visibility">
+            <TabsList className="sub-tabs sub-config-tabs" aria-label="订阅配置">
+              <TabsTrigger value="visibility">链路可见性</TabsTrigger>
+              <TabsTrigger value="template">模板配置</TabsTrigger>
+            </TabsList>
+            <PublicationNotice pending={pending} settled={settled} pollFailed={pollFailed} />
+            <TabsContent value="visibility" keepMounted>
+              <VisibilityCard token={token} settledJobs={settled} onSubmitted={addJob} />
+            </TabsContent>
+            <TabsContent value="template" keepMounted>
+              <TemplateConfigCard token={token} settledJobs={settled} onSubmitted={addJob} />
+            </TabsContent>
+          </Tabs>
         ) : null}
 
         <section className="sub-mod sub-links" aria-label="链路状态">
@@ -1102,7 +1132,11 @@ export default function SubscriptionPage() {
             {linkStatus && linkStatus.length > 0 ? (
               <div className="sub-link-list">
                 {linkStatus.map((link) => (
-                  <LinkFlowRow key={link.label} link={link} unreachableRegion={unreachableRegion} />
+                  <LinkFlowRow
+                    key={link.id ?? link.label}
+                    link={link}
+                    unreachableRegion={unreachableRegion}
+                  />
                 ))}
               </div>
             ) : linkStatus ? (

@@ -29,6 +29,7 @@ const Servers = lazy(() => import('@/pages/Servers'))
 const Settings = lazy(() => import('@/pages/Settings'))
 const Subscription = lazy(() => import('@/pages/Subscription'))
 const SubscriptionTemplates = lazy(() => import('@/pages/SubscriptionTemplates'))
+const UserSubscriptionVisibility = lazy(() => import('@/pages/UserSubscriptionVisibility'))
 const Users = lazy(() => import('@/pages/Users'))
 
 function SuspendedRoute({
@@ -133,6 +134,9 @@ function ProtectedRoutes() {
             <Route path="/users">
               <Moved to="/access/users" />
             </Route>
+            <Route path="/access/user-groups">
+              <Moved to="/access/sub-visibility" />
+            </Route>
             <Route path="/subscription-templates">
               <Moved to="/access/templates" />
             </Route>
@@ -221,10 +225,9 @@ function ProtectedRoutes() {
                 <Users />
               </SuspendedRoute>
             </Route>
-            {/* 旧「分组」页的两个 tab：链路分组归网络，用户分组归访问；P3 再拆页。 */}
-            <Route path="/access/user-groups">
+            <Route path="/access/sub-visibility">
               <SuspendedRoute>
-                <Groups />
+                <UserSubscriptionVisibility />
               </SuspendedRoute>
             </Route>
             <Route path="/access/templates">

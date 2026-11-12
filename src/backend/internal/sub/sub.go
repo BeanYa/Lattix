@@ -160,7 +160,7 @@ func (s *Server) mergedUserTraffic(ctx context.Context, user *store.User, t stor
 		v := user.ExpiresAt.Unix()
 		panelExpire = &v
 	}
-	attached, err := s.st.EffectiveUserExternalSubscriptions(ctx, user.ID)
+	attached, err := s.st.CatalogExternalSubscriptions(ctx, user.ID)
 	if err != nil {
 		attached = nil
 	}
@@ -604,91 +604,81 @@ type proxyItem struct {
 	group      string
 }
 
-// subscriptionItems 汇总单机节点与链条目（§21 订阅）：
-//   - 链出口业务节点不再作为单机条目出现（只能经链入口消费）；
-//   - 链条目：server/port 取入口（共享入口链取端点 realized_config；非 1:1 映射时
-//     经端口段助手换算 public 端口），命名优先使用链路名称；
-//   - 链以已发布修订快照为准（无已发布修订或 invalid/deleted 不出；
-//     applying/failed 的新修订不影响已发布快照）；
-//   - 用户维度分配（§16）：分组用户只按分组派生（直接分配被遮蔽）；
-//     非分组用户走直接分配（user_nodes + user_chain_assignments）；
-//     共享入口链需链分配，订阅凭据取 assignment 的 AccessUUID。
-func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []store.Node) ([]proxyItem, []string) {
-	if user.Expired || user.Disabled || user.QuotaExhausted || user.NotYetEffective(time.Now()) {
-		return nil, nil
+// subscriptionItems assembles one entry per visible panel item, and all
+// children of every visible external source. Visibility never changes credentials.
+func (s *Server) subscriptionItems(r *http.Request, user *store.User, nodes []store.Node, hidden map[string]bool) ([]proxyItem, []string, error) {
+	if blocked, _ := subscriptionBlocked(user, time.Now()); blocked || user.Disabled {
+		return nil, nil, nil
 	}
-	var warnings []string
-	exitIDs, err := s.st.ChainExitNodeIDs(r.Context())
+	ctx := r.Context()
+	exitIDs, err := s.st.ChainExitNodeIDs(ctx)
 	if err != nil {
-		exitIDs = map[int64]bool{} // 查询失败不阻断订阅
+		return nil, nil, err
 	}
 	items := []proxyItem{}
 	for _, n := range nodes {
-		if exitIDs[n.ID] {
+		id := subscriptionItemID("node", n.ID)
+		if exitIDs[n.ID] || hidden[id] {
 			continue
 		}
 		var rc shared.RealizedConfig
 		if err := json.Unmarshal(n.RealizedConfig, &rc); err != nil {
-			continue // 生效值损坏的节点跳过（异常留在 nodes 表）
+			continue
 		}
 		items = append(items, proxyItem{node: n, rc: rc})
 	}
-	// 用户维度分配（§16）：分组用户只按分组派生（直接分配被遮蔽）；
-	// 非分组用户走直接分配（user_nodes + user_chain_assignments）。
-	allowed, chainAssignments, err := s.userAccess(r.Context(), user)
+	allowed, assignments, err := s.userAccess(ctx, user)
 	if err != nil {
-		return items, warnings
+		return nil, nil, err
 	}
-	assignmentByChain := make(map[int64]store.UserChainAssignment, len(chainAssignments))
-	for _, assignment := range chainAssignments {
+	assignmentByChain := make(map[int64]store.UserChainAssignment, len(assignments))
+	for _, assignment := range assignments {
 		assignmentByChain[assignment.ChainID] = assignment
 	}
-	chains, err := s.st.ListChains(r.Context())
+	chains, err := s.st.ListChains(ctx)
 	if err != nil {
-		return items, warnings
+		return nil, nil, err
 	}
-	for _, c := range chains {
-		// A published snapshot remains the subscription authority while a newer
-		// revision is applying or has failed. Agent reachability is control-plane
-		// state and must not withdraw an otherwise usable data-plane endpoint.
-		if c.PublishedRevisionID == 0 || c.Status == store.ChainStatusInvalid || c.Status == store.ChainStatusDeleted {
-			if _, hasAssignment := assignmentByChain[c.ID]; hasAssignment {
-				warnings = append(warnings, fmt.Sprintf("链路「%s」已分配但未发布有效修订，未纳入订阅", chainDisplayName(c)))
-			}
+	var warnings []string
+	for _, chain := range chains {
+		id := subscriptionItemID("chain", chain.ID)
+		assignment, available := assignmentByChain[chain.ID]
+		if !available || hidden[id] {
 			continue
 		}
-		assignment, hasAssignment := assignmentByChain[c.ID]
-		if c.EndpointID != 0 && !hasAssignment {
-			continue
-		}
-		item, err := s.chainSubscriptionItem(r.Context(), c, allowed, assignment)
+		item, err := s.chainSubscriptionItem(ctx, chain, allowed, assignment)
 		if err != nil {
-			if hasAssignment {
-				warnings = append(warnings, fmt.Sprintf("链路「%s」未纳入订阅：%v", chainDisplayName(c), err))
-			}
+			warnings = append(warnings, fmt.Sprintf("链路「%s」未纳入订阅：%v", chainDisplayName(chain), err))
 			continue
 		}
 		items = append(items, *item)
 	}
-	attached, err := s.st.EffectiveUserExternalSubscriptions(r.Context(), user.ID)
+	sources, err := s.st.ListExternalSubscriptions(ctx)
 	if err != nil {
-		return items, warnings
+		return nil, nil, err
 	}
-	for _, sub := range attached {
-		chains, err := s.st.ListExternalChains(r.Context(), sub.SubscriptionID)
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("外部订阅「%s」节点读取失败：%v", sub.Name, err))
+	for _, source := range sources {
+		id := subscriptionItemID("external", source.ID)
+		if hidden[id] {
 			continue
+		}
+		chains, err := s.st.ListExternalChains(ctx, source.ID)
+		if err != nil {
+			return nil, nil, err
 		}
 		for _, chain := range chains {
 			var ext extsub.Node
 			if err := json.Unmarshal(chain.Config, &ext); err != nil {
 				continue
 			}
-			items = append(items, proxyItem{external: &ext, group: sub.Name})
+			items = append(items, proxyItem{external: &ext, group: source.Name})
 		}
 	}
-	return items, warnings
+	return items, warnings, nil
+}
+
+func subscriptionItemID(kind string, id int64) string {
+	return kind + ":" + strconv.FormatInt(id, 10)
 }
 
 // chainDisplayName 返回链路显示名（名称为空时回退到 ID）。
@@ -754,7 +744,7 @@ func (s *Server) chainSubscriptionItem(ctx context.Context, chain store.Chain, a
 			RealizedConfig: endpoint.RealizedConfig, Status: store.NodeStatusActive}
 		return &proxyItem{node: entryNode, rc: rc, credential: assignment.AccessUUID}, nil
 	}
-	if !allowed[snapshot.ServiceNodeID] {
+	if !allowed[snapshot.ServiceNodeID] && snapshot.ServiceEndpointID == 0 {
 		return nil, fmt.Errorf("链 %d 出口节点未分配给该用户", chainID)
 	}
 	node, err := s.st.NodeByID(ctx, snapshot.ServiceNodeID)

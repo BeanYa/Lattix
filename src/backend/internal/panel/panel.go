@@ -473,6 +473,15 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/user/sub-settings",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
 		s.handleUpdateUserSubSettings)
+	s.registerRPC(mux, http.MethodGet, "/api/user/sub-visibility",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"user_id"}},
+		s.handleUserSubscriptionVisibility)
+	s.registerRPC(mux, http.MethodPost, "/api/user/sub-visibility",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"user_id"}},
+		s.handleUpdateUserSubscriptionVisibility)
+	s.registerRPC(mux, http.MethodGet, "/api/user/sub-publication-jobs",
+		rpcRouteOptions{Auth: true, AllowedQuery: []string{"user_id"}, Debug: true, LogPolicy: logging.LogFailuresOnly},
+		s.handleUserSubscriptionPublicationJobs)
 	s.registerRPC(mux, http.MethodGet, "/api/user/traffic-history",
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"user_id"}},
 		s.handleUserTrafficHistory)
@@ -523,10 +532,6 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/link-group/create", write, s.handleCreateLinkGroup)
 	s.registerRPC(mux, http.MethodPost, "/api/link-group/update", write, s.handleUpdateLinkGroup)
 	s.registerRPC(mux, http.MethodPost, "/api/link-group/delete", write, s.handleDeleteLinkGroup)
-	s.registerRPC(mux, http.MethodGet, "/api/user-group/list", read, s.handleListUserGroups)
-	s.registerRPC(mux, http.MethodPost, "/api/user-group/create", write, s.handleCreateUserGroup)
-	s.registerRPC(mux, http.MethodPost, "/api/user-group/update", write, s.handleUpdateUserGroup)
-	s.registerRPC(mux, http.MethodPost, "/api/user-group/delete", write, s.handleDeleteUserGroup)
 
 	s.registerRPC(mux, http.MethodGet, "/api/setting/get", read, s.handleGetSettings)
 	s.registerRPC(mux, http.MethodPost, "/api/setting/update", write, s.handleUpdateSettings)

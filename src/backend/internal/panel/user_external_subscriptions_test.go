@@ -144,14 +144,14 @@ func TestUserDTOIncludesExternalSubscriptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	noSubDTO := server.toUserDTO(httptest.NewRequest(http.MethodGet, "/api/user/list", nil), *noSubUser, nil)
-	if noSubDTO.ExternalSubscriptions == nil {
-		t.Fatalf("external_subscriptions should be [] not nil, dto = %+v", noSubDTO)
+	if len(noSubDTO.ExternalSubscriptions) != 1 ||
+		noSubDTO.ExternalSubscriptions[0].SubscriptionID != subID ||
+		noSubDTO.ExternalSubscriptions[0].Mode != store.ExtSubModeNodes {
+		t.Fatalf("default external subscriptions = %+v", noSubDTO.ExternalSubscriptions)
 	}
-	if len(noSubDTO.ExternalSubscriptions) != 0 {
-		t.Fatalf("dto = %+v", noSubDTO)
-	}
-	if noSubDTO.MergedTraffic != nil {
-		t.Fatalf("merged should stay nil, dto = %+v", noSubDTO)
+	if noSubDTO.MergedTraffic == nil || noSubDTO.MergedTraffic.Total != 500 ||
+		noSubDTO.MergedTraffic.Upload != 0 || noSubDTO.MergedTraffic.Download != 0 {
+		t.Fatalf("nodes-only source should preserve panel traffic, merged = %+v", noSubDTO.MergedTraffic)
 	}
 }
 

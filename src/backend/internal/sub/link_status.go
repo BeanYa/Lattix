@@ -33,6 +33,7 @@ type SubLinkCarrierStatus struct {
 // 单跳直连链路无内部段，恒为 0。EntryBanned 表示入口（第一跳）服务器被 Ban 巡检
 // 判定（§告警分类）且为可直连服务器——与面板链路页的「Banned」标同口径。
 type SubLinkStatus struct {
+	ID          string                 `json:"id"`
 	Label       string                 `json:"label"`
 	Entry       string                 `json:"entry"`
 	Carriers    []SubLinkCarrierStatus `json:"carriers"`

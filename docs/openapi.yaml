@@ -472,8 +472,7 @@ paths:
         试用用户：is_trial=true 时必须设置有效期（duration_days 自生效时刻起算的天数，
         精确到秒；或 expires_at，二者二选一），到期后由生命周期扫描自动删除；
         traffic_limit 强制执行，用尽只停用（quota_exhausted）不删除，可流量重置恢复；
-        effective_at（RFC3339，省略=立即生效）；user_group_id 可在创建时直选用户分组
-        （一用户一组）。
+        effective_at（RFC3339，省略=立即生效）。
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -528,6 +527,27 @@ paths:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/user/sub-visibility:
+    get:
+      operationId: userSubscriptionVisibility
+      description: 读取用户可选的订阅内容与已隐藏项。
+      parameters:
+        - {name: user_id, in: query, required: true, schema: {type: integer, minimum: 1}}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+    post:
+      operationId: userUpdateSubscriptionVisibility
+      description: 提交用户的完整隐藏项列表（user_id、hidden_ids），并进入该用户的订阅发布队列。
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/user/sub-publication-jobs:
+    get:
+      operationId: userSubscriptionPublicationJobs
+      parameters:
+        - {name: user_id, in: query, required: true, schema: {type: integer, minimum: 1}}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/user/traffic-history:
     get:
@@ -727,34 +747,6 @@ paths:
   /api/link-group/delete:
     post:
       operationId: linkGroupDelete
-      parameters:
-        - {$ref: '#/components/parameters/CSRFToken'}
-        - {$ref: '#/components/parameters/IdempotencyKey'}
-      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
-  /api/user-group/list:
-    get:
-      operationId: userGroupList
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
-  /api/user-group/create:
-    post:
-      operationId: userGroupCreate
-      parameters:
-        - {$ref: '#/components/parameters/CSRFToken'}
-        - {$ref: '#/components/parameters/IdempotencyKey'}
-      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
-  /api/user-group/update:
-    post:
-      operationId: userGroupUpdate
-      parameters:
-        - {$ref: '#/components/parameters/CSRFToken'}
-        - {$ref: '#/components/parameters/IdempotencyKey'}
-      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
-      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
-  /api/user-group/delete:
-    post:
-      operationId: userGroupDelete
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}

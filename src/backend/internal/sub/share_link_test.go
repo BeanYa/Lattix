@@ -91,14 +91,14 @@ func TestUserChainShareLinkMirrorsSubscription(t *testing.T) {
 	}
 }
 
-func TestUserChainShareLinkRejectsUnassignedAndUnpublished(t *testing.T) {
+func TestUserChainShareLinkAllowsPublishedCatalogOnly(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	chainID, nodeID := shareLinkChainFixture(t, ctx, st)
+	chainID, _ := shareLinkChainFixture(t, ctx, st)
 	otherID, err := st.InsertChain(ctx, "unpublished")
 	if err != nil {
 		t.Fatal(err)
@@ -107,12 +107,9 @@ func TestUserChainShareLinkRejectsUnassignedAndUnpublished(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 用户未分配出口节点：不允许导出（与订阅一致）。
+	// Published catalog chains have credentials without a prior assignment.
 	srv := New(st, nil, nil)
-	if _, err := srv.UserChainShareLink(ctx, userID, chainID); err == nil {
-		t.Fatal("unassigned user chain share link = nil error, want error")
-	}
-	if _, _, err := st.SetUserNodes(ctx, userID, []int64{nodeID}); err != nil {
+	if _, err := srv.UserChainShareLink(ctx, userID, chainID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := srv.UserChainShareLink(ctx, userID, otherID); err == nil {

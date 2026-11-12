@@ -37,8 +37,8 @@ func groupsFixture(t *testing.T) (*store.Store, int64, int64, int64, int64, int6
 func newTestEndpointChainStore(t *testing.T, st *store.Store, name string) (int64, int64) {
 	t.Helper()
 	ctx := context.Background()
-	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: name+"-entry", Address: "entry.example.com", BootstrapToken: "tok-"+name+"-e", MachineType: store.MachineTypeDirect, CountryCode: "US"})
-	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: name+"-exit", Address: "exit.example.com", BootstrapToken: "tok-"+name+"-x", MachineType: store.MachineTypeDirect, CountryCode: "JP"})
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: name + "-entry", Address: "entry.example.com", BootstrapToken: "tok-" + name + "-e", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: name + "-exit", Address: "exit.example.com", BootstrapToken: "tok-" + name + "-x", MachineType: store.MachineTypeDirect, CountryCode: "JP"})
 	config, _ := json.Marshal(map[string]any{})
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, entryID, "vless", 30002, "profile", config)
 	if err != nil {
@@ -152,11 +152,10 @@ func TestLinkGroupRPCValidationAndList(t *testing.T) {
 	}
 }
 
-// TestGroupInputDedupesDuplicateIDs 重复的 chain_ids / external_subscriptions /
-// user_ids / link_group_ids 在入参校验时去重（保持首次出现），不再触发主键冲突 500。
+// 重复链路或外部订阅只保存首次出现的条目。
 func TestGroupInputDedupesDuplicateIDs(t *testing.T) {
 	ctx := context.Background()
-	st, chainA, _, subID, u1, _ := groupsFixture(t)
+	st, chainA, _, subID, _, _ := groupsFixture(t)
 	srv := &Server{st: st}
 	code, _ := postGroup(t, srv, srv.handleCreateLinkGroup, "/api/link-group/create",
 		`{"name":"去重组","chain_ids":[`+itoa(chainA)+`,`+itoa(chainA)+`],"external_subscriptions":[{"subscription_id":`+itoa(subID)+`,"mode":"stack"},{"subscription_id":`+itoa(subID)+`,"mode":"merge"}]}`)
@@ -170,62 +169,6 @@ func TestGroupInputDedupesDuplicateIDs(t *testing.T) {
 	if len(groups) != 1 || groups[0].ChainCount != 1 || groups[0].ExtSubCount != 1 ||
 		groups[0].ExternalSubscriptions[0].Mode != "stack" {
 		t.Fatalf("链路分组应去重存储（保留首次出现）: %+v", groups)
-	}
-	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	code, _ = postGroup(t, srv, srv.handleCreateUserGroup, "/api/user-group/create",
-		`{"name":"去重人组","user_ids":[`+itoa(u1)+`,`+itoa(u1)+`],"link_group_ids":[`+itoa(lgID)+`,`+itoa(lgID)+`]}`)
-	if code != "OK" {
-		t.Fatalf("重复用户 id 应去重成功, code = %q", code)
-	}
-	ugroups, err := st.ListUserGroups(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ugroups) != 1 || ugroups[0].MemberCount != 1 || ugroups[0].LinkGroupCount != 1 {
-		t.Fatalf("用户分组应去重存储: %+v", ugroups)
-	}
-}
-
-func TestUserGroupRPCAndUserDTOGroups(t *testing.T) {
-	ctx := context.Background()
-	st, chainA, _, _, u1, u2 := groupsFixture(t)
-	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := &Server{st: st}
-	rec := httptest.NewRecorder()
-	srv.handleCreateUserGroup(rec, httptest.NewRequest(http.MethodPost, "/api/user-group/create",
-		strings.NewReader(`{"name":"青铜会员","user_ids":[`+itoa(u1)+`,`+itoa(u2)+`],"link_group_ids":[`+itoa(lgID)+`]}`)))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("create status = %d body = %s", rec.Code, rec.Body.String())
-	}
-	code, _ := postGroup(t, srv, srv.handleCreateUserGroup, "/api/user-group/create", `{"name":"青铜会员"}`)
-	if code != "INVALID_ARGUMENT" {
-		t.Fatalf("重名应拒绝, code = %q", code)
-	}
-	code, _ = postGroup(t, srv, srv.handleCreateUserGroup, "/api/user-group/create", `{"name":"坏组","user_ids":[999]}`)
-	if code != "INVALID_ARGUMENT" {
-		t.Fatalf("不存在用户应拒绝, code = %q", code)
-	}
-	// userDTO 携带 user_group_ids
-	u, _ := st.UserByID(ctx, u1)
-	dto := srv.toUserDTO(httptest.NewRequest(http.MethodGet, "/", nil), *u, nil)
-	if len(dto.UserGroupIDs) != 1 {
-		t.Fatalf("dto.UserGroupIDs = %v", dto.UserGroupIDs)
-	}
-	// 删除分组后恢复
-	groups, _ := st.ListUserGroups(ctx)
-	if err := st.DeleteUserGroup(ctx, groups[0].ID); err != nil {
-		t.Fatal(err)
-	}
-	u, _ = st.UserByID(ctx, u1)
-	dto = srv.toUserDTO(httptest.NewRequest(http.MethodGet, "/", nil), *u, nil)
-	if len(dto.UserGroupIDs) != 0 {
-		t.Fatalf("删除后 dto.UserGroupIDs = %v", dto.UserGroupIDs)
 	}
 }
 
@@ -244,7 +187,8 @@ func TestSubURLStableAcrossGroupOps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateUserGroup(ctx, "青铜会员", []int64{u1}, []int64{lgID}); err != nil {
+	groupID, err := st.CreateUserGroup(ctx, "青铜会员", []int64{u1}, []int64{lgID})
+	if err != nil {
 		t.Fatal(err)
 	}
 	user, _ = st.UserByID(ctx, u1)
@@ -253,10 +197,7 @@ func TestSubURLStableAcrossGroupOps(t *testing.T) {
 		t.Fatalf("入组后 sub_url 变化: before %s / %s, after %s / %s",
 			before.SubURL, before.SubLinksURL, mid.SubURL, mid.SubLinksURL)
 	}
-	if len(mid.UserGroupIDs) != 1 {
-		t.Fatalf("入组后 user_group_ids = %v", mid.UserGroupIDs)
-	}
-	if err := st.DeleteUserGroup(ctx, mid.UserGroupIDs[0]); err != nil {
+	if err := st.DeleteUserGroup(ctx, groupID); err != nil {
 		t.Fatal(err)
 	}
 	user, _ = st.UserByID(ctx, u1)
@@ -266,48 +207,11 @@ func TestSubURLStableAcrossGroupOps(t *testing.T) {
 	}
 }
 
-// TestUserGroupCreateMovesUsersAcrossGroups 一用户一组约束：把已在「青铜会员」的
-// 用户分配到「白银会员」时自动移组，旧组不再包含该用户。
-func TestUserGroupCreateMovesUsersAcrossGroups(t *testing.T) {
-	ctx := context.Background()
-	st, chainA, _, _, u1, u2 := groupsFixture(t)
-	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv := &Server{st: st}
-	code, _ := postGroup(t, srv, srv.handleCreateUserGroup, "/api/user-group/create",
-		`{"name":"青铜会员","user_ids":[`+itoa(u1)+`],"link_group_ids":[`+itoa(lgID)+`]}`)
-	if code != "OK" {
-		t.Fatalf("创建青铜会员失败, code = %q", code)
-	}
-	code, _ = postGroup(t, srv, srv.handleCreateUserGroup, "/api/user-group/create",
-		`{"name":"白银会员","user_ids":[`+itoa(u1)+`,`+itoa(u2)+`],"link_group_ids":[`+itoa(lgID)+`]}`)
-	if code != "OK" {
-		t.Fatalf("创建白银会员失败, code = %q", code)
-	}
-	ids, err := st.UserGroupIDsForUser(ctx, u1)
-	if err != nil || len(ids) != 1 {
-		t.Fatalf("u1 应仅属于一个分组, ids = %v err %v", ids, err)
-	}
-	groups, err := st.ListUserGroups(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, g := range groups {
-		if g.Name == "青铜会员" && len(g.UserIDs) != 0 {
-			t.Fatalf("青铜会员应已移出 u1, members = %v", g.UserIDs)
-		}
-	}
-}
-
-// TestUserDTOEffectiveChainIDs 用户卡片链路数按生效分配展示：
-// 分组用户 effective_chain_ids 为分组派生链路（直接分配被遮蔽），
-// 非分组用户退化为直接分配（与 chain_ids 一致）。
+// 用户卡片按订阅中的可见链路展示，历史分组成员资格不影响默认范围。
 func TestUserDTOEffectiveChainIDs(t *testing.T) {
 	ctx := context.Background()
 	st, chainA, chainB, _, u1, u2 := groupsFixture(t)
-	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA, chainB}, nil)
+	lgID, err := st.CreateLinkGroup(ctx, "普通组", []int64{chainA}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,63 +219,39 @@ func TestUserDTOEffectiveChainIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := &Server{st: st}
-	grouped, err := st.UserByID(ctx, u1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dto := srv.toUserDTO(httptest.NewRequest(http.MethodGet, "/api/user/list", nil), *grouped, nil)
-	if len(dto.EffectiveChainIDs) != 2 ||
-		dto.EffectiveChainIDs[0] != chainA || dto.EffectiveChainIDs[1] != chainB {
-		t.Fatalf("分组用户 effective_chain_ids = %v, want [%d %d]", dto.EffectiveChainIDs, chainA, chainB)
-	}
-	if len(dto.ChainIDs) != 0 {
-		t.Fatalf("分组用户直接 chain_ids 应保持为空, got %v", dto.ChainIDs)
-	}
-	direct, err := st.UserByID(ctx, u2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dto2 := srv.toUserDTO(httptest.NewRequest(http.MethodGet, "/api/user/list", nil), *direct, nil)
-	if len(dto2.EffectiveChainIDs) != 0 {
-		t.Fatalf("非分组用户 effective_chain_ids = %v, want []", dto2.EffectiveChainIDs)
+	for _, id := range []int64{u1, u2} {
+		user, err := st.UserByID(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dto := srv.toUserDTO(httptest.NewRequest(http.MethodGet, "/api/user/list", nil), *user, nil)
+		if len(dto.EffectiveChainIDs) != 2 ||
+			dto.EffectiveChainIDs[0] != chainA || dto.EffectiveChainIDs[1] != chainB {
+			t.Fatalf("user %d effective_chain_ids = %v, want [%d %d]", id, dto.EffectiveChainIDs, chainA, chainB)
+		}
+		if len(dto.ChainIDs) != 0 {
+			t.Fatalf("user %d has unexpected legacy chain_ids %v", id, dto.ChainIDs)
+		}
 	}
 }
 
-// TestGroupListEmptyResponsesAreArrays 空列表必须编码为 [] 而不是 null。
-// 前端把 data 直接写入数组状态，null 会在渲染 .map 时抛错并让整页白屏
-// （用户页点击"创建用户"触发的回归即来自 user-group/list）。
-func TestGroupListEmptyResponsesAreArrays(t *testing.T) {
+func TestEmptyLinkGroupListReturnsArray(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
 	srv := &Server{st: st}
-	cases := []struct {
-		name    string
-		handler http.HandlerFunc
-		path    string
-	}{
-		{"link-groups", srv.handleListLinkGroups, "/api/link-group/list"},
-		{"user-groups", srv.handleListUserGroups, "/api/user-group/list"},
+	rec := httptest.NewRecorder()
+	srv.handleListLinkGroups(rec, httptest.NewRequest(http.MethodGet, "/api/link-group/list", nil))
+	var env struct {
+		Code string          `json:"code"`
+		Data json.RawMessage `json:"data"`
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			tc.handler(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
-			var env struct {
-				Code string          `json:"code"`
-				Data json.RawMessage `json:"data"`
-			}
-			if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
-				t.Fatal(err)
-			}
-			if env.Code != "OK" {
-				t.Fatalf("code = %q, body = %s", env.Code, rec.Body.String())
-			}
-			if string(env.Data) != "[]" {
-				t.Fatalf("data = %s, want []", env.Data)
-			}
-		})
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Code != "OK" || string(env.Data) != "[]" {
+		t.Fatalf("code = %q, data = %s, want OK with []", env.Code, env.Data)
 	}
 }

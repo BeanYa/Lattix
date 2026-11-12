@@ -50,6 +50,15 @@ type SubscriptionProfile struct {
 	UpdatedAt                   time.Time
 }
 
+// PanelRoutingConfigured reports whether the region setting belongs to an
+// administrator assignment and should be preserved during a user reset.
+func (p SubscriptionProfile) PanelRoutingConfigured() bool {
+	return p.AssignedPortableTemplateID != "" || p.AssignedSuggestedCategories != "" ||
+		p.AssignedMihomoTemplateID != "" || p.AssignedSingboxTemplateID != "" ||
+		p.AssignedQuanXTemplateID != "" || p.AssignForcedPortable ||
+		p.AssignForcedMihomo || p.AssignForcedSingbox || p.AssignForcedQuanX
+}
+
 type SubscriptionTemplate struct {
 	ID            string     `json:"id"`
 	Name          string     `json:"name"`
@@ -209,9 +218,23 @@ func EffectiveProfile(p SubscriptionProfile, def SubscriptionDefaultConfig) Subs
 }
 
 func (s *Store) UserSubscriptionProfile(ctx context.Context, userID int64) (SubscriptionProfile, error) {
+	profile, err := readUserSubscriptionProfile(ctx, s.db, userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		if _, err := s.UserByID(ctx, userID); err != nil {
+			return SubscriptionProfile{}, err
+		}
+		profile, err = defaultSubscriptionProfile(userID), nil
+	}
+	if err != nil {
+		return SubscriptionProfile{}, err
+	}
+	return subscriptionPublicationFromContext(ctx, userID).profile(profile), nil
+}
+
+func readUserSubscriptionProfile(ctx context.Context, db subscriptionPublicationQueryer, userID int64) (SubscriptionProfile, error) {
 	var profile SubscriptionProfile
 	var forcedPortable, forcedMihomo, forcedSingbox, forcedQuanx, userConfigured int
-	err := s.db.QueryRowContext(ctx, `SELECT user_id, mode, preset, categories, portable_template_id,
+	err := db.QueryRowContext(ctx, `SELECT user_id, mode, preset, categories, portable_template_id,
 		mihomo_template_id, singbox_template_id, quanx_template_id,
 		assigned_portable_template_id, assigned_mihomo_template_id, assigned_singbox_template_id, assigned_quanx_template_id,
 		assigned_suggested_categories, disable_region_groups, user_configured,
@@ -224,12 +247,6 @@ func (s *Store) UserSubscriptionProfile(ctx context.Context, userID int64) (Subs
 		&profile.AssignedSuggestedCategories, &profile.DisableRegionGroups, &userConfigured,
 		&forcedPortable, &forcedMihomo, &forcedSingbox, &forcedQuanx,
 		&profile.GenerationStatus, &profile.GenerationError, &profile.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		if _, userErr := s.UserByID(ctx, userID); userErr != nil {
-			return SubscriptionProfile{}, userErr
-		}
-		return defaultSubscriptionProfile(userID), nil
-	}
 	if err != nil {
 		return SubscriptionProfile{}, fmt.Errorf("query user subscription profile: %w", err)
 	}
@@ -329,6 +346,10 @@ func (s *Store) ValidateSubscriptionProfileTemplates(ctx context.Context, profil
 }
 
 func (s *Store) SetSubscriptionGenerationError(ctx context.Context, userID int64, message string) error {
+	// A failed proposal leaves the published configuration and its status intact.
+	if subscriptionPublicationFromContext(ctx, userID) != nil {
+		return nil
+	}
 	profile, err := s.UserSubscriptionProfile(ctx, userID)
 	if err != nil {
 		return err
@@ -415,6 +436,9 @@ func (s *Store) PublishSubscriptionSnapshot(
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM subscription_snapshots
 		WHERE user_id = ? AND id != ? AND revision < ?`, userID, snapshotID, revision-1); err != nil {
+		return SubscriptionSnapshotStatus{}, err
+	}
+	if err := subscriptionPublicationFromContext(ctx, userID).complete(ctx, tx); err != nil {
 		return SubscriptionSnapshotStatus{}, err
 	}
 	if err := tx.Commit(); err != nil {

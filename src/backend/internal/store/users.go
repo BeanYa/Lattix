@@ -188,6 +188,9 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 		`DELETE FROM subscription_files WHERE snapshot_id IN (SELECT id FROM subscription_snapshots WHERE user_id = ?)`,
 		`DELETE FROM published_subscription_snapshots WHERE user_id = ?`,
 		`DELETE FROM subscription_snapshots WHERE user_id = ?`,
+		`DELETE FROM subscription_publication_jobs WHERE user_id = ?`,
+		`DELETE FROM user_subscription_visibility WHERE user_id = ?`,
+		`DELETE FROM subscription_group_credentials WHERE user_id = ?`,
 		`DELETE FROM user_subscription_profiles WHERE user_id = ?`,
 		`DELETE FROM user_nodes WHERE user_id = ?`,
 		// SQLite 未开启 foreign_keys，手工级联分组成员（分组视图不再含已删用户）。

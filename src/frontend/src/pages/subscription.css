@@ -1470,7 +1470,171 @@
   }
 }
 
-/* ---------- 模板配置（用户级自选，三级优先级：强制级 > 用户级 > 面板级） ---------- */
+/* ---------- 订阅配置 ---------- */
+.sub-config {
+  gap: 0;
+}
+
+.sub-config .sub-config-tabs {
+  width: 100%;
+  height: auto;
+  justify-content: flex-start;
+  border: 0;
+  border-bottom: 1px solid var(--panel-rule);
+  border-radius: 0;
+  background: transparent;
+  padding: 7px 10px;
+}
+
+.sub-config-tabs button {
+  min-height: 30px;
+  flex: none;
+}
+
+.sub-config [role='tabpanel']:focus-visible {
+  outline: 1px solid var(--panel-accent);
+  outline-offset: -2px;
+}
+
+.sub-publication:not(:empty) {
+  display: grid;
+  gap: 4px;
+}
+
+.sub-config .sub-publication:not(:empty) {
+  padding: 8px 10px 0;
+}
+
+.sub-publication .notice {
+  padding: 6px 9px;
+  font-size: 13px;
+  animation: none;
+}
+
+.sub-publication .notice-content {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 10px;
+}
+
+.sub-publication .notice-title {
+  margin: 0;
+  font-size: 13px;
+}
+
+.sub-visibility-save:disabled {
+  background: light-dark(#dedede, #383838);
+  color: light-dark(#555, #aaa);
+  opacity: 1;
+}
+
+.sub-visibility-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.sub-visibility-editor fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.sub-visibility-editor legend {
+  margin-bottom: 5px;
+  color: var(--panel-ink-2);
+  font-family: var(--font-display);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.sub-visibility-list {
+  margin: 0;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-sm, 4px);
+  padding: 0;
+  list-style: none;
+}
+
+.sub-visibility-item + .sub-visibility-item {
+  border-top: 1px solid var(--panel-rule);
+}
+
+.sub-visibility-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding-right: 4px;
+}
+
+.sub-visibility-check {
+  display: flex;
+  min-width: 0;
+  min-height: 36px;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 9px;
+  color: var(--panel-ink);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.sub-visibility-check input {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin: 0;
+  accent-color: var(--panel-accent);
+  cursor: pointer;
+}
+
+.sub-visibility-check:hover,
+.sub-visibility-disclosure:hover {
+  background: var(--panel-raised);
+}
+
+.sub-visibility-disclosure,
+.sub-visibility-node-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  color: var(--panel-ink-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sub-visibility-disclosure {
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  cursor: pointer;
+}
+
+.sub-visibility-disclosure[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.sub-visibility-nodes {
+  margin: 0;
+  border-top: 1px solid var(--panel-rule);
+  background: var(--panel-inset);
+  padding: 6px 9px 6px 32px;
+  color: var(--panel-ink-2);
+  font-size: 12.5px;
+  line-height: 1.65;
+  list-style: none;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- 模板配置 ---------- */
 .sub-cfg-body {
   display: flex;
   flex-direction: column;
@@ -1598,15 +1762,6 @@
 
 .sub-cfg-error {
   color: var(--panel-danger, #e5484d);
-  font-size: 12.5px;
-}
-
-/* 保存/恢复成功提示：提交后短暂显示，等待快照刷新。 */
-.sub-cfg-saved {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--panel-status-ok);
   font-size: 12.5px;
 }
 

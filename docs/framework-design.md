@@ -85,7 +85,7 @@ install.sh           # 唯一面向用户的统一安装入口
 控制台（原仪表盘：服务器数、在线数、链路数、正常/降级数、用户数与流量图表）/ 服务器
 （列表 + 卡片视图，创建和编辑时填写别名、Country、Location、机器类型、公网地址、NAT 可用
 端口、Tag 与 xray 版本）/ 链路（概览/详情双 tab，见[代理链与 NAT](framework/chain-nat.md)）/
-链路分组 / 用户 / 用户分组 / 订阅模板（分流模板管理与分配，见
+链路分组 / 用户 / 可见性管理 / 订阅模板（分流模板管理与分配，见
 [订阅分流与模板](subscription-routing-design.md)）/ 外部订阅（第三方订阅导入、同步与节点
 查看）/ 运行监控（面板/Agent 运行读数 + 直连机周体检汇总）/ 成本统计（已生效成本 + 计算成本两个口径，见
 [后端调度与服务器计费设计](billing-scheduler-design.md)）/ 操作日志 / 请求日志（见
@@ -118,7 +118,7 @@ MVP 期列出的后续迭代目标均已完成（订阅链接/二维码、TLS、
 | [数据模型](framework/data-model.md) | SQLite 全库表清单与所属专题索引（§4） |
 | [控制通道](framework/control-channel.md) | WS 协议、节点生命周期与 apply 流水线、虚拟配置参数分工（§5–§7） |
 | [订阅](framework/subscription.md) | 订阅输出、用户生命周期（试用/生效/配额）、客户端下载、外部订阅导入与关联（§9、§9.1） |
-| [用户与分组](framework/users-and-groups.md) | 用户链路凭证、逐链路分配、有效停权态、链路/用户分组（§8、§16、§22） |
+| [用户与分组](framework/users-and-groups.md) | 用户链路凭据、订阅可见性、有效停权态与链路分组（§8、§16、§22） |
 | [引导与运维](framework/onboarding-and-ops.md) | 服务器引导流程、面板安装、latx / latx-ag 运维程序（§11、§20） |
 | [安全](framework/security.md) | TLS 四形态、会话与限流、SSRF 防护、完整性校验（§12） |
 | [遥测](framework/telemetry.md) | 遥测上报、主机指标、流量统计口径（§13） |

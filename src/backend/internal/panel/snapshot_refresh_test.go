@@ -126,42 +126,28 @@ func TestV21UpgradeRestoresManualRefreshAndClashDownload(t *testing.T) {
 	}
 }
 
-// 手动刷新返回成功时，订阅地址必须已经交付当前分组的全部格式，而非仅入队。
-func TestManualRefreshPublishesCurrentGroupsBeforeReturning(t *testing.T) {
+// 手动刷新返回成功时，订阅地址必须已经交付当前节点的全部格式，而非仅入队。
+func TestManualRefreshPublishesCurrentExternalNodesBeforeReturning(t *testing.T) {
 	ctx := context.Background()
-	st, chainA, chainB, _, userID, _ := groupsFixture(t)
+	st, _, _, sourceID, userID, _ := groupsFixture(t)
 	// VLESS 不支持 QuanX 节点输出；添加各客户端都支持的 SS 外部节点，验证全部格式。
-	seedExternal := func(name string) int64 {
+	replaceExternal := func(name string) {
 		t.Helper()
-		id, err := st.CreateExternalSubscription(ctx, store.ExternalSubscription{Name: "source-" + name, URL: "https://example.com/" + name, UpdateIntervalHours: 24})
-		if err != nil {
-			t.Fatal(err)
-		}
 		config, err := json.Marshal(extsub.Node{Name: name, Type: "ss", Server: "proxy.example.com", Port: 8388, Extra: map[string]any{"method": "aes-128-gcm", "password": "password"}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := st.ReplaceExternalChains(ctx, id, []store.ExternalChain{{SubscriptionID: id, Name: name, Protocol: "ss", Server: "proxy.example.com", Port: 8388, Config: config, ConfigSHA256: name}}); err != nil {
+		if _, err := st.ReplaceExternalChains(ctx, sourceID, []store.ExternalChain{{SubscriptionID: sourceID, Name: name, Protocol: "ss", Server: "proxy.example.com", Port: 8388, Config: config, ConfigSHA256: name}}); err != nil {
 			t.Fatal(err)
 		}
-		return id
 	}
-	oldExternal, newExternal := seedExternal("outer-old"), seedExternal("outer-new")
-	lg, err := st.CreateLinkGroup(ctx, "links", []int64{chainA}, []store.LinkGroupExternalSubscription{{SubscriptionID: oldExternal, Mode: store.ExtSubModeStack}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.CreateUserGroup(ctx, "users", []int64{userID}, []int64{lg}); err != nil {
-		t.Fatal(err)
-	}
+	replaceExternal("outer-old")
 	srv := &Server{st: st, subscriptions: sub.New(st, nil, nil)}
 	initial, err := srv.subscriptions.PublishUser(ctx, userID, "https://panel.example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.UpdateLinkGroup(ctx, lg, "links", []int64{chainB}, []store.LinkGroupExternalSubscription{{SubscriptionID: newExternal, Mode: store.ExtSubModeStack}}); err != nil {
-		t.Fatal(err)
-	}
+	replaceExternal("outer-new")
 	code, status := postGroup(t, srv, srv.handleRegenerateUserSubscription, "/api/user/regenerate-subscription", fmt.Sprintf(`{"user_id":%d}`, userID))
 	if status != http.StatusOK || code != "OK" {
 		t.Fatalf("refresh status=%d code=%s", status, code)
@@ -175,7 +161,7 @@ func TestManualRefreshPublishesCurrentGroupsBeforeReturning(t *testing.T) {
 			t.Fatalf("manual refresh returned success before publishing %s", format)
 		}
 		if bytes.Equal(file.Content, initial.Files[format]) {
-			t.Fatalf("%s content did not change after changing the link group", format)
+			t.Fatalf("%s content did not change after updating the external source", format)
 		}
 		r := httptest.NewRequest(http.MethodGet, "https://panel.example/sub/tok-a?format="+format, nil)
 		r.SetPathValue("token", "tok-a")
@@ -196,10 +182,9 @@ func TestManualRefreshPublishesCurrentGroupsBeforeReturning(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if w.Code != http.StatusOK || !strings.Contains(body, "outer-new") || strings.Contains(body, "outer-old") || strings.Contains(body, "h-a") || format != "quanx" && !strings.Contains(body, "h-b") {
-			t.Fatalf("%s subscription did not apply current group: status=%d\n%s", format, w.Code, body)
+		if w.Code != http.StatusOK || !strings.Contains(body, "outer-new") || strings.Contains(body, "outer-old") {
+			t.Fatalf("%s subscription did not apply the updated external source: status=%d\n%s", format, w.Code, body)
 		}
-		t.Logf("%s: content changed; old nodes removed, current group nodes present", format)
 	}
 }
 

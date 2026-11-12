@@ -71,14 +71,14 @@ func TestReconcileSharedEndpointGroupsUsersByChain(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := latestEndpointPayload(t, st)
-	if len(payload.Clients) != 3 || len(payload.Routes) != 2 {
+	if len(payload.Clients) != 4 || len(payload.Routes) != 2 {
 		t.Fatalf("payload clients/routes = %d/%d", len(payload.Clients), len(payload.Routes))
 	}
 	usersByChain := map[int64]int{}
 	for _, route := range payload.Routes {
 		usersByChain[route.ChainID] = len(route.Users)
 	}
-	if usersByChain[chainA.ChainID] != 2 || usersByChain[chainB.ChainID] != 1 {
+	if usersByChain[chainA.ChainID] != 2 || usersByChain[chainB.ChainID] != 2 {
 		t.Fatalf("route user counts = %+v", usersByChain)
 	}
 
@@ -506,8 +506,8 @@ func TestReconcileSharedEndpointAggregatesJoinedChains(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload := latestEndpointPayload(t, st)
-	if len(payload.Routes) != 2 || len(payload.Clients) != 2 {
-		t.Fatalf("payload routes/clients = %d/%d, want 2/2", len(payload.Routes), len(payload.Clients))
+	if len(payload.Routes) != 2 || len(payload.Clients) != 4 {
+		t.Fatalf("payload routes/clients = %d/%d, want 2/4", len(payload.Routes), len(payload.Clients))
 	}
 	seen := map[int64]bool{}
 	for _, route := range payload.Routes {

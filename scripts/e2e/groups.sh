@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# 分组端到端验收（2026-08-05 分组设计）：
-#   链路分组（共享入口链路 + 外部订阅，外部订阅整体原子）→ 用户分组（成员订阅由分组派生，
-#   遮蔽直接分配）→ 分组变更/外部订阅同步/链路重发布自动触发关联用户订阅重生成。
+# 链路分组与订阅可见性端到端验收：默认目录、管理员隐藏整份外部订阅、
+# 用户隐藏单条链路、分组变更独立，以及外部订阅同步后自动发布。
 # 管理 API 均为 RPC 信封：写操作需 Idempotency-Key 与 X-CSRF-Token。
 # 依赖：python3、curl、openssl、本机 xray 二进制（XRAY_BIN 可覆盖）。
 # 外部订阅夹具起在 loopback，运行需 LATX_ALLOW_PRIVATE_OUTBOUND=1 放行
@@ -70,7 +69,7 @@ wait_chain() {
 }
 
 # sub_count <token>：clash 格式订阅的节点行数。
-sub_count() { curl -s "http://$ADDR/sub/$1?format=clash" | grep -c 'server: ' || true; }
+sub_count() { curl -s "http://$ADDR/sub/$1?format=clash" | grep -c '^[[:space:]]*server: ' || true; }
 
 echo ">> start backend"
 "$WORK/backend" -addr "$ADDR" -db "$WORK/lattix.db" >"$WORK/backend.log" 2>&1 &
@@ -97,7 +96,7 @@ APID_A=$!
 APID_C=$!
 sleep 2
 
-echo ">> 用户 u1（入组）/ u2（不入组）+ 建链（A=入口、C=出口，vless → 自动共享入口）"
+echo ">> 创建两个用户并发布共享入口链路"
 U1="$(rpc_data POST /api/user/create '{"name":"grp-member"}')"
 U2="$(rpc_data POST /api/user/create '{"name":"grp-outside"}')"
 UID1="$(py "d['id']" "$U1")"; UID2="$(py "d['id']" "$U2")"
@@ -134,56 +133,67 @@ NODE_COUNT="$(rpc_data GET /api/external-subscription/list | python3 -c "import 
 echo ">> 链路分组（链 + 外部订阅）"
 LG="$(rpc_data POST /api/link-group/create "{\"name\":\"旗舰线路\",\"chain_ids\":[$CH1],\"external_subscriptions\":[{\"subscription_id\":$EXTID,\"mode\":\"stack\"}]}")"
 LGID="$(py "d['id']" "$LG")"
-echo ">> 用户分组（u1 入组）"
-UG="$(rpc_data POST /api/user-group/create "{\"name\":\"青铜会员\",\"user_ids\":[$UID1],\"link_group_ids\":[$LGID]}")"
-UGID="$(py "d['id']" "$UG")"
-sleep 2
+wait_sub_count() {
+    local token="$1" want="$2" count
+    for _ in $(seq 1 30); do
+        count="$(sub_count "$token")"
+        [[ "$count" == "$want" ]] && return 0
+        sleep 1
+    done
+    echo "FAIL: 实际订阅条目数为 $count，期望 $want"
+    return 1
+}
 
-echo ">> u1 订阅 = 1 链 + 2 外部节点 = 3；u2（无分配）订阅 = 0"
-[[ "$(sub_count "$TOK1")" == "3" ]] && echo "OK: 组用户订阅 3 条" || { echo "FAIL: u1 订阅数 $(sub_count "$TOK1")"; exit 1; }
-[[ "$(sub_count "$TOK2")" == "0" ]] && echo "OK: 非组用户不受影响" || { echo "FAIL: u2 订阅数 $(sub_count "$TOK2")"; exit 1; }
+wait_job() {
+    local token="$1" job="$2" status
+    for _ in $(seq 1 30); do
+        status="$(curl -fsS "http://$ADDR/api/sub/$token/publication-jobs" |
+            python3 -c 'import json,sys; print(next((job["status"] for job in json.load(sys.stdin)["jobs"] if job["id"] == sys.argv[1]), ""))' "$job")"
+        [[ "$status" == "completed" ]] && return 0
+        [[ "$status" == "failed" ]] && break
+        sleep 1
+    done
+    echo "FAIL: 发布任务 $job 状态为 $status"
+    return 1
+}
 
-echo ">> 直接分配被遮蔽：给 u1 直接分配真实节点（A 机新建 vless）+ 外部订阅，订阅不变"
-DNODE="$(py "d['id']" "$(rpc_data POST /api/node/create "{\"server_id\":$AID,\"protocol\":\"vless\"}")")"
-NODE_LIST="$(rpc_data GET /api/node/list)"
-for _ in $(seq 1 30); do
-    [[ "$(py "next(n['status'] for n in d if n['id']==$DNODE)" "$NODE_LIST")" == "active" ]] && break
-    NODE_LIST="$(rpc_data GET /api/node/list)"
-    sleep 1
-done
-[[ "$(py "next(n['status'] for n in d if n['id']==$DNODE)" "$NODE_LIST")" == "active" ]] \
-    || { echo "FAIL: 直连节点未 active"; exit 1; }
-rpc_data POST /api/user/set-nodes "{\"user_id\":$UID1,\"node_ids\":[$DNODE]}" >/dev/null
-rpc_data POST /api/user/set-external-subscriptions "{\"user_id\":$UID1,\"items\":[{\"subscription_id\":$EXTID,\"mode\":\"stack\"}]}" >/dev/null
-sleep 2
-[[ "$(sub_count "$TOK1")" == "3" ]] && echo "OK: 直接节点 + 直接外部订阅均被遮蔽" || { echo "FAIL: 遮蔽失败，订阅数 $(sub_count "$TOK1")"; exit 1; }
+echo ">> 两个用户默认看到已发布链路和两个外部节点"
+wait_sub_count "$TOK1" 3
+wait_sub_count "$TOK2" 3
 
-echo ">> 原子性：链路分组移除外部订阅 → u1 外部节点消失（2 条链条目→1 条）"
+echo ">> 管理员为 u1 隐藏整份外部订阅"
+JOB="$(rpc_data POST /api/user/sub-visibility "{\"user_id\":$UID1,\"hidden_ids\":[\"external:$EXTID\"]}")"
+wait_job "$TOK1" "$(py "d['id']" "$JOB")"
+wait_sub_count "$TOK1" 1
+wait_sub_count "$TOK2" 3
+
+echo ">> u2 隐藏单条面板链路"
+JOB="$(curl -fsS -H 'Content-Type: application/json' -d "{\"hidden_ids\":[\"chain:$CH1\"]}" "http://$ADDR/api/sub/$TOK2/visibility")"
+wait_job "$TOK2" "$(py "d['id']" "$JOB")"
+wait_sub_count "$TOK2" 2
+wait_sub_count "$TOK1" 1
+
+echo ">> 链路分组变更不影响用户可见性"
 rpc_data POST /api/link-group/update "{\"id\":$LGID,\"name\":\"旗舰线路\",\"chain_ids\":[$CH1],\"external_subscriptions\":[]}" >/dev/null
-sleep 2
-[[ "$(sub_count "$TOK1")" == "1" ]] && echo "OK: 外部订阅原子移除" || { echo "FAIL: 移除后订阅数 $(sub_count "$TOK1")"; exit 1; }
+wait_sub_count "$TOK1" 1
+wait_sub_count "$TOK2" 2
 
-echo ">> 恢复分组内外部订阅 → u1 订阅回到 3（分组变更触发重发布）"
-rpc_data POST /api/link-group/update "{\"id\":$LGID,\"name\":\"旗舰线路\",\"chain_ids\":[$CH1],\"external_subscriptions\":[{\"subscription_id\":$EXTID,\"mode\":\"stack\"}]}" >/dev/null
-sleep 2
-[[ "$(sub_count "$TOK1")" == "3" ]] || { echo "FAIL: 恢复后订阅数 $(sub_count "$TOK1")"; exit 1; }
-
-echo ">> 外部订阅内容变更同步 → 分组用户 u1 订阅自动重发布（3→2）"
+echo ">> 同步外部订阅内容后，已隐藏的来源保持隐藏"
 printf '%s\n' "$VMESS_A" > "$EXT_FILE"
 rpc_data POST /api/external-subscription/sync "{\"id\":$EXTID}" >/dev/null
-sleep 2
-[[ "$(sub_count "$TOK1")" == "2" ]] && echo "OK: 外部订阅内容变更同步后分组用户订阅自动重发布（3→2）" || { echo "FAIL: 内容变更同步后订阅数 $(sub_count "$TOK1")"; exit 1; }
+wait_sub_count "$TOK2" 1
+wait_sub_count "$TOK1" 1
 printf '%s\n' "$VMESS_A" "$VMESS_B" > "$EXT_FILE"
 rpc_data POST /api/external-subscription/sync "{\"id\":$EXTID}" >/dev/null
-sleep 2
-[[ "$(sub_count "$TOK1")" == "3" ]] && echo "OK: 外部订阅内容还原同步后分组用户订阅恢复（2→3）" || { echo "FAIL: 内容还原同步后订阅数 $(sub_count "$TOK1")"; exit 1; }
+wait_sub_count "$TOK2" 2
 
-echo ">> 清空 u1 直接外部订阅（保留直连节点）→ 删除用户分组 → 恢复直接分配（1 个直连节点）"
-rpc_data POST /api/user/set-external-subscriptions "{\"user_id\":$UID1,\"items\":[]}" >/dev/null
-sleep 1
-rpc_data POST /api/user-group/delete "{\"id\":$UGID}" >/dev/null
-sleep 2
-[[ "$(sub_count "$TOK1")" == "1" ]] && echo "OK: 删除用户分组后恢复直接分配（1 个直连节点）" || { echo "FAIL: 删除分组后订阅数 $(sub_count "$TOK1")"; exit 1; }
+echo ">> u1 清除隐藏名单，外部订阅整体恢复"
+JOB="$(curl -fsS -H 'Content-Type: application/json' -d '{"hidden_ids":[]}' "http://$ADDR/api/sub/$TOK1/visibility")"
+wait_job "$TOK1" "$(py "d['id']" "$JOB")"
+wait_sub_count "$TOK1" 3
+rpc_data POST /api/link-group/delete "{\"id\":$LGID}" >/dev/null
+wait_sub_count "$TOK1" 3
+wait_sub_count "$TOK2" 2
 
 echo ">> 用户硬约束：全部操作后订阅地址不变（sub_token 原样）"
 TOK1_LATER="$(rpc_data GET /api/user/list | python3 -c "import json,sys; users=json.load(sys.stdin); print(next(u['sub_token'] for u in users if u['id']==$UID1))")"

@@ -274,7 +274,7 @@ func TestSharedEndpointSubscriptionKeepsPerChainEntryAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	items, warnings := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/bean-token", nil), user, nil)
+	items, warnings, _ := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/bean-token", nil), user, nil, nil)
 	if len(warnings) != 0 {
 		t.Fatalf("unexpected warnings: %v", warnings)
 	}

@@ -221,7 +221,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			log.Printf("dispatch: chain %d node %d 虚拟配置损坏: %v", chainID, node.ID, err)
 			return
 		}
-		uuids, err := d.st.NodeUserUUIDs(ctx, node.ID, time.Now())
+		uuids, err := d.st.CatalogNodeUserUUIDs(ctx, node.ID, time.Now())
 		if err != nil {
 			log.Printf("dispatch: chain %d node %d users: %v", chainID, node.ID, err)
 			return

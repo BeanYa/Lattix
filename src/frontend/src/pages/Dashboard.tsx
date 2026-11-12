@@ -936,8 +936,8 @@ export default function Dashboard() {
                 <ChevronRightIcon size={12} strokeWidth={2} aria-hidden="true" />
               </Link>
               <nav className="dash-users-links" aria-label="用户与订阅快捷入口">
-                <Link href="/groups">
-                  用户分组
+                <Link href="/access/sub-visibility">
+                  可见性管理
                   <ChevronRightIcon size={12} strokeWidth={2} aria-hidden="true" />
                 </Link>
                 <Link href="/subscription-templates">

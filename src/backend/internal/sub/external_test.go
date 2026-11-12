@@ -69,7 +69,7 @@ func newExternalFixture(t *testing.T) (*store.Store, *Server, *store.User) {
 
 func TestSubscriptionItemsIncludesExternalChains(t *testing.T) {
 	st, server, user := newExternalFixture(t)
-	items, warnings := server.subscriptionItems(httptest.NewRequest("GET", "/sub/x", nil), user, nil)
+	items, warnings, _ := server.subscriptionItems(httptest.NewRequest("GET", "/sub/x", nil), user, nil, nil)
 	if len(items) != 1 || items[0].external == nil {
 		t.Fatalf("items = %+v warnings = %v", items, warnings)
 	}
@@ -79,7 +79,7 @@ func TestSubscriptionItemsIncludesExternalChains(t *testing.T) {
 
 	// 过期/禁用用户不出外部节点。
 	user.Expired = true
-	items, _ = server.subscriptionItems(httptest.NewRequest("GET", "/sub/x", nil), user, nil)
+	items, _, _ = server.subscriptionItems(httptest.NewRequest("GET", "/sub/x", nil), user, nil, nil)
 	if len(items) != 0 {
 		t.Fatalf("expired user items = %+v", items)
 	}
@@ -102,7 +102,7 @@ func TestSetSubHeadersMergesTraffic(t *testing.T) {
 func TestCompileNodesAndRenderIncludeExternal(t *testing.T) {
 	ctx := context.Background()
 	_, server, user := newExternalFixture(t)
-	items, _ := server.subscriptionItems(httptest.NewRequest("GET", "/sub/x", nil), user, nil)
+	items, _, _ := server.subscriptionItems(httptest.NewRequest("GET", "/sub/x", nil), user, nil, nil)
 	compiled, warnings, err := server.compileNodes(ctx, items, user.UUID)
 	if err != nil {
 		t.Fatal(err)

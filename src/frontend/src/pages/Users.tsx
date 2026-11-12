@@ -69,14 +69,12 @@ import { usePolling } from '@/lib/use-polling'
 import type {
   Chain,
   ChainStatus,
-  ExternalSubscription,
   SubUser,
   SubscriptionPreview,
   SubscriptionPreviewFormat,
   SubscriptionPreviewStage,
   SubscriptionRuleCategory,
   SubscriptionTemplate,
-  UserGroup,
 } from '@/lib/types'
 
 import { CreateUserDialog } from './users/CreateUserDialog'
@@ -98,14 +96,12 @@ export default function Users() {
   const [chains, setChains] = useState<Chain[]>([])
   const [ruleCategories, setRuleCategories] = useState<SubscriptionRuleCategory[]>([])
   const [templates, setTemplates] = useState<SubscriptionTemplate[]>([])
-  const [userGroups, setUserGroups] = useState<UserGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deleting, setDeleting] = useState<number | null>(null)
   const [toggling, setToggling] = useState<number | null>(null)
 
-  const [assignTarget, setAssignTarget] = useState<SubUser | null>(null)
-  const [extSubs, setExtSubs] = useState<ExternalSubscription[]>([])
+  const [contentTarget, setContentTarget] = useState<SubUser | null>(null)
   const [qrText, setQrText] = useState('')
   const loadRequest = useRef(0)
 
@@ -142,25 +138,17 @@ export default function Users() {
         ? { display: 'silent' as const }
         : undefined
     try {
-      const [nextUsers, nextChains, nextCategories, nextTemplates, nextUserGroups] =
-        await Promise.all([
-          api.users(options),
-          api.chains(options),
-          api.subscriptionCategories(options),
-          api.subscriptionTemplates(options),
-          api.userGroups(options),
-        ])
+      const [nextUsers, nextChains, nextCategories, nextTemplates] = await Promise.all([
+        api.users(options),
+        api.chains(options),
+        api.subscriptionCategories(options),
+        api.subscriptionTemplates(options),
+      ])
       if (signal?.aborted || request !== loadRequest.current) return
       setUsers(nextUsers)
       setChains(nextChains)
       setRuleCategories(nextCategories)
       setTemplates(nextTemplates)
-      setUserGroups(nextUserGroups)
-      try {
-        setExtSubs(await api.externalSubscriptions({ display: 'silent' }))
-      } catch {
-        // 外部订阅列表不可用不阻断用户页
-      }
     } catch (err) {
       if (signal?.aborted || request !== loadRequest.current) return
       setError(errorMessage(err))
@@ -177,11 +165,11 @@ export default function Users() {
 
   const linkOptions = useMemo(() => buildLinkOptions(chains), [chains])
 
-  const assignLinks = useMemo(() => {
-    if (!assignTarget) return []
-    const effectiveIds = assignTarget.effective_chain_ids ?? assignTarget.chain_ids
+  const visibleLinks = useMemo(() => {
+    if (!contentTarget) return []
+    const effectiveIds = contentTarget.effective_chain_ids
     return linkOptions.filter((link) => effectiveIds.includes(link.chainId))
-  }, [assignTarget, linkOptions])
+  }, [contentTarget, linkOptions])
 
   const onlineUsers = users.filter((user) => user.online_connections > 0).length
   const trialUsers = users.filter((user) => user.is_trial).length
@@ -204,16 +192,9 @@ export default function Users() {
       if (userFilter === 'online' && user.online_connections <= 0) return false
       if (userFilter === 'trial' && !user.is_trial) return false
       if (userFilter === 'issue' && !hasIssue) return false
-      if (q) {
-        const groupNames = user.user_group_ids
-          .map((id) => userGroups.find((g) => g.id === id)?.name ?? `#${id}`)
-          .join(' ')
-        const hay = `${user.name} ${groupNames} ${user.sub_url}`.toLowerCase()
-        if (!hay.includes(q)) return false
-      }
-      return true
+      return `${user.name} ${user.sub_url}`.toLowerCase().includes(q)
     })
-  }, [query, userFilter, userGroups, users])
+  }, [query, userFilter, users])
 
   const onDelete = async (user: SubUser) => {
     if (
@@ -274,10 +255,6 @@ export default function Users() {
     } finally {
       setResettingTraffic(null)
     }
-  }
-
-  const onOpenAssign = (u: SubUser) => {
-    setAssignTarget(u)
   }
 
   const onRegenerate = async (user: SubUser) => {
@@ -450,7 +427,7 @@ export default function Users() {
                 <input
                   type="search"
                   className="cg-search-input"
-                  placeholder="搜索用户名、用户分组、订阅令牌…"
+                  placeholder="搜索用户名、订阅令牌…"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   aria-label="搜索用户"
@@ -512,13 +489,6 @@ export default function Users() {
                 </thead>
                 <tbody>
                   {filteredUsers.map((u) => {
-                    const effectiveChainIds = u.effective_chain_ids ?? u.chain_ids
-                    const effectiveLinks = effectiveChainIds.filter((id) =>
-                      linkOptions.some((link) => link.chainId === id),
-                    )
-                    const groupNames = u.user_group_ids.map(
-                      (id) => userGroups.find((g) => g.id === id)?.name ?? `#${id}`,
-                    )
                     const notYetEffective =
                       !!u.effective_at && new Date(u.effective_at).getTime() > Date.now()
                     const trialUsed = (u.traffic?.up ?? 0) + (u.traffic?.down ?? 0)
@@ -544,11 +514,6 @@ export default function Users() {
                             <span className="cg-user-name">{u.name}</span>
                             {u.is_trial && <span className="cg-status is-blue">试用</span>}
                           </span>
-                          {groupNames.length > 0 && (
-                            <span className="cg-user-groups" title="订阅由用户分组派生">
-                              {groupNames.join('、')}
-                            </span>
-                          )}
                         </th>
                         <td>
                           <div className="cg-user-states">
@@ -563,15 +528,7 @@ export default function Users() {
                             <UserSubscriptionStatus snapshot={u.subscription_snapshot} />
                           </div>
                         </td>
-                        <td className="cg-user-num">
-                          {effectiveLinks.length === 0 ? (
-                            <span className="cg-muted">未分配</span>
-                          ) : (
-                            <>
-                              {effectiveLinks.length} / {linkOptions.length}
-                            </>
-                          )}
-                        </td>
+                        <td className="cg-user-num">{u.effective_chain_ids.length}</td>
                         <td className="cg-user-num cg-user-traffic">
                           {u.traffic ? (
                             <>
@@ -650,13 +607,13 @@ export default function Users() {
                         </td>
                         <td>
                           <span className="cg-user-actions">
-                            <Button variant="outline" size="sm" onClick={() => onOpenAssign(u)}>
-                              查看链路
+                            <Button variant="outline" size="sm" onClick={() => setContentTarget(u)}>
+                              查看订阅内容
                             </Button>
                             <Button
                               variant="outline"
                               size="sm"
-                              title="根据当前用户组、链路组和模板设置重新生成全部订阅格式"
+                              title="根据当前可见性和模板设置重新生成全部订阅格式"
                               aria-label={`刷新 ${u.name} 的订阅快照`}
                               disabled={regenerating === u.id}
                               onClick={() => onRegenerate(u)}
@@ -754,41 +711,28 @@ export default function Users() {
 
       <CreateUserDialog
         controller={createForm}
-        linkOptions={linkOptions}
         ruleCategories={ruleCategories}
         templates={templates}
-        extSubs={extSubs}
       />
       <QRDialog text={qrText} open={qrText !== ''} onClose={() => setQrText('')} />
 
-      <Dialog open={assignTarget !== null} onOpenChange={(next) => !next && setAssignTarget(null)}>
+      <Dialog
+        open={contentTarget !== null}
+        onOpenChange={(next) => !next && setContentTarget(null)}
+      >
         <DialogContent className="max-h-[85vh] overflow-y-auto [&>*]:min-w-0">
           <DialogHeader>
-            <DialogTitle>查看链路</DialogTitle>
+            <DialogTitle>查看订阅内容</DialogTitle>
             <DialogDescription>
-              「{assignTarget?.name}」实际生效的链路与外部订阅，仅供查看，不可在此修改。
+              「{contentTarget?.name}」当前订阅包含的链路与外部订阅。
             </DialogDescription>
           </DialogHeader>
-          {assignTarget && (
-            <Notice tone="info">
-              {assignTarget.user_group_ids.length > 0 && (
-                <>
-                  该用户位于用户分组「
-                  {assignTarget.user_group_ids
-                    .map((id) => userGroups.find((g) => g.id === id)?.name ?? `#${id}`)
-                    .join('、')}
-                  」中。
-                </>
-              )}
-              链路绑定与用户分组和链路分组有关，如需调整该用户可用链路，请在「分组」页为相应分组分配链路。
-            </Notice>
-          )}
           <div className="space-y-2">
             <Label>链路</Label>
-            {assignLinks.length === 0 ? (
-              <p className="cg-hint">未分配到链路。</p>
+            {visibleLinks.length === 0 ? (
+              <p className="cg-hint">订阅暂无可见链路。</p>
             ) : (
-              assignLinks.map((link) => (
+              visibleLinks.map((link) => (
                 <div key={link.chainId} className="cg-check-row">
                   <span className="cg-status is-blue">
                     {link.type === 'direct' ? '直连' : '中转'}
@@ -804,11 +748,11 @@ export default function Users() {
               ))
             )}
           </div>
-          {assignTarget && (
+          {contentTarget && (
             <div className="space-y-2 border-t pt-3">
               <Label>外部订阅</Label>
-              {assignTarget.external_subscriptions.length === 0 ? (
-                <p className="cg-hint">未分配外部订阅。</p>
+              {contentTarget.external_subscriptions.length === 0 ? (
+                <p className="cg-hint">订阅暂无可见的外部订阅。</p>
               ) : (
                 <Table>
                   <TableHeader>
@@ -821,7 +765,7 @@ export default function Users() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {assignTarget.external_subscriptions.map((s) => (
+                    {contentTarget.external_subscriptions.map((s) => (
                       <TableRow key={s.subscription_id}>
                         <TableCell className="text-xs">{s.name}</TableCell>
                         <TableCell className="text-xs">{EXTERNAL_MODE_LABELS[s.mode]}</TableCell>
@@ -836,30 +780,30 @@ export default function Users() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {assignTarget.merged_traffic ? (
+                    {contentTarget.merged_traffic ? (
                       <TableRow>
                         <TableCell className="text-xs font-medium" colSpan={2}>
                           合并后（含面板）
                         </TableCell>
                         <TableCell className="text-xs">
-                          {assignTarget.merged_traffic.total > 0
-                            ? humanizeBytes(assignTarget.merged_traffic.total)
+                          {contentTarget.merged_traffic.total > 0
+                            ? humanizeBytes(contentTarget.merged_traffic.total)
                             : '不限'}
                         </TableCell>
                         <TableCell className="text-xs">
                           {humanizeBytes(
-                            assignTarget.merged_traffic.upload +
-                              assignTarget.merged_traffic.download,
+                            contentTarget.merged_traffic.upload +
+                              contentTarget.merged_traffic.download,
                           )}
                         </TableCell>
                         <TableCell className="text-xs">
-                          {assignTarget.merged_traffic.total > 0
+                          {contentTarget.merged_traffic.total > 0
                             ? humanizeBytes(
                                 Math.max(
                                   0,
-                                  assignTarget.merged_traffic.total -
-                                    assignTarget.merged_traffic.upload -
-                                    assignTarget.merged_traffic.download,
+                                  contentTarget.merged_traffic.total -
+                                    contentTarget.merged_traffic.upload -
+                                    contentTarget.merged_traffic.download,
                                 ),
                               )
                             : '—'}

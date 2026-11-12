@@ -12,37 +12,20 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { humanizeBytes } from '@/lib/format'
-import type { LinkOption } from '@/lib/links'
-import type {
-  ExternalSubscription,
-  SubscriptionRuleCategory,
-  SubscriptionTemplate,
-} from '@/lib/types'
+import type { SubscriptionRuleCategory, SubscriptionTemplate } from '@/lib/types'
 
-import { ExternalModeSelect, TrafficLimitInput } from './user-form-fields'
+import { TrafficLimitInput } from './user-form-fields'
 import type { CreateUserFormController } from './use-create-user-form'
 
 /** 创建用户对话框（视图）；状态与提交逻辑在 useCreateUserForm。 */
 export function CreateUserDialog({
   controller,
-  linkOptions,
   ruleCategories,
   templates,
-  extSubs,
 }: {
   controller: CreateUserFormController
-  linkOptions: LinkOption[]
   ruleCategories: SubscriptionRuleCategory[]
   templates: SubscriptionTemplate[]
-  extSubs: ExternalSubscription[]
 }) {
   const {
     open,
@@ -51,13 +34,9 @@ export function CreateUserDialog({
     createError,
     created,
     form,
-    groups,
     patch,
     onOpenChange,
-    onToggleCreateLink,
     onExpiresAtChange,
-    toggleExt,
-    setExtMode,
     onCreate,
   } = controller
   return (
@@ -102,38 +81,6 @@ export function CreateUserDialog({
                 required
                 autoFocus
               />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label>用户分组（可选）</Label>
-                <Select
-                  value={form.userGroupId || 'none'}
-                  onValueChange={(next) =>
-                    next && patch({ userGroupId: next === 'none' ? '' : next })
-                  }
-                  items={[
-                    { value: 'none', label: '无分组' },
-                    ...groups.map((g) => ({ value: String(g.id), label: g.name })),
-                  ]}
-                >
-                  <SelectTrigger aria-label="用户分组">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">无分组</SelectItem>
-                    {groups.map((g) => (
-                      <SelectItem key={g.id} value={String(g.id)}>
-                        {g.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {form.userGroupId && (
-                  <p className="cg-hint">
-                    已选分组：链路绑定与外部订阅由该分组派生（直接分配被遮蔽）。
-                  </p>
-                )}
-              </div>
             </div>
             <div className="space-y-2">
               <Label>生效时间</Label>
@@ -237,28 +184,6 @@ export function CreateUserDialog({
               </p>
             </div>
             <div className="space-y-2">
-              <Label>分配链路（可选）</Label>
-              {linkOptions.length === 0 ? (
-                <p className="cg-hint">暂无链路，请先在「链路」页创建。</p>
-              ) : (
-                linkOptions.map((link) => (
-                  <label key={link.chainId} className="cg-check-row">
-                    <input
-                      type="checkbox"
-                      className="cg-checkbox"
-                      checked={form.linkSel.includes(link.chainId)}
-                      onChange={(e) => onToggleCreateLink(link.chainId, e.target.checked)}
-                    />
-                    <span className="cg-status is-blue">
-                      {link.type === 'direct' ? '直连' : '中转'}
-                    </span>
-                    <span>{link.name}</span>
-                    <span className="cg-check-row-detail">{link.detail}</span>
-                  </label>
-                ))
-              )}
-            </div>
-            <div className="space-y-2">
               <Label>
                 {mode === 'trial'
                   ? '订阅设置（试用流量用尽即停权、不删除；其余留空跟随全局）'
@@ -312,39 +237,6 @@ export function CreateUserDialog({
               categories={ruleCategories}
               templates={templates}
             />
-            <div className="space-y-2 border-t pt-3">
-              <Label>外部订阅（叠加 = 额度相加，并入 = 已用计入面板配额，附加 = 仅节点）</Label>
-              {extSubs.length === 0 ? (
-                <p className="cg-hint">暂无外部订阅，请先在「外部订阅」页添加。</p>
-              ) : (
-                extSubs.map((sub) => {
-                  const checked = form.ext[sub.id] !== undefined
-                  return (
-                    <label key={sub.id} className="cg-check-row">
-                      <input
-                        type="checkbox"
-                        className="cg-checkbox"
-                        checked={checked}
-                        onChange={(e) => toggleExt(sub.id, e.target.checked)}
-                      />
-                      <span>{sub.name}</span>
-                      <span className="cg-check-row-detail">
-                        {sub.total > 0
-                          ? `${humanizeBytes(sub.total)} / 已用 ${humanizeBytes(sub.upload + sub.download)}`
-                          : '额度未知'}
-                      </span>
-                      <span className="ml-auto">
-                        <ExternalModeSelect
-                          value={checked ? form.ext[sub.id] : 'stack'}
-                          disabled={!checked}
-                          onChange={(mode) => setExtMode(sub.id, mode)}
-                        />
-                      </span>
-                    </label>
-                  )
-                })
-              )}
-            </div>
             {createError && <Notice tone="danger">{createError}</Notice>}
             <DialogFooter>
               <Button type="submit" disabled={creating || !form.name.trim()}>

@@ -328,6 +328,27 @@ CREATE TABLE IF NOT EXISTS user_subscription_profiles (
     updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS user_subscription_visibility (
+    user_id     INTEGER PRIMARY KEY REFERENCES users(id),
+    hidden_ids  TEXT NOT NULL -- JSON array of stable subscription source IDs
+);
+
+CREATE TABLE IF NOT EXISTS subscription_publication_jobs (
+    sequence       INTEGER PRIMARY KEY AUTOINCREMENT,
+    id             TEXT NOT NULL UNIQUE,
+    user_id        INTEGER NOT NULL REFERENCES users(id),
+    kind           TEXT NOT NULL CHECK (kind IN ('visibility', 'template', 'template_reset')),
+    status         TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed')),
+    queued_behind  INTEGER NOT NULL,
+    base_url       TEXT NOT NULL,
+    payload        TEXT NOT NULL,
+    error          TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_subscription_publication_jobs_user
+    ON subscription_publication_jobs(user_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_subscription_publication_jobs_pending
+    ON subscription_publication_jobs(user_id, sequence) WHERE status IN ('queued', 'running');
+
 -- Every generation creates a complete immutable set of files. A single pointer
 -- switch publishes all formats atomically.
 CREATE TABLE IF NOT EXISTS subscription_snapshots (

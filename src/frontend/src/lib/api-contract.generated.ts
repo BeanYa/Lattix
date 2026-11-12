@@ -887,8 +887,7 @@ export interface paths {
          *     试用用户：is_trial=true 时必须设置有效期（duration_days 自生效时刻起算的天数，
          *     精确到秒；或 expires_at，二者二选一），到期后由生命周期扫描自动删除；
          *     traffic_limit 强制执行，用尽只停用（quota_exhausted）不删除，可流量重置恢复；
-         *     effective_at（RFC3339，省略=立即生效）；user_group_id 可在创建时直选用户分组
-         *     （一用户一组）。
+         *     effective_at（RFC3339，省略=立即生效）。
          */
         post: operations["userCreate"];
         delete?: never;
@@ -984,6 +983,40 @@ export interface paths {
          *     即转未生效态并扇出摘除，到点由生命周期扫描激活。
          */
         post: operations["userSubSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/sub-visibility": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 读取用户可选的订阅内容与已隐藏项。 */
+        get: operations["userSubscriptionVisibility"];
+        put?: never;
+        /** @description 提交用户的完整隐藏项列表（user_id、hidden_ids），并进入该用户的订阅发布队列。 */
+        post: operations["userUpdateSubscriptionVisibility"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/sub-publication-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["userSubscriptionPublicationJobs"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1410,70 +1443,6 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["linkGroupDelete"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/user-group/list": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["userGroupList"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/user-group/create": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["userGroupCreate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/user-group/update": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["userGroupUpdate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/user-group/delete": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["userGroupDelete"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3249,6 +3218,54 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    userSubscriptionVisibility: {
+        parameters: {
+            query: {
+                user_id: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    userUpdateSubscriptionVisibility: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    userSubscriptionPublicationJobs: {
+        parameters: {
+            query: {
+                user_id: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     userTrafficHistory: {
         parameters: {
             query: {
@@ -3687,73 +3704,6 @@ export interface operations {
         };
     };
     linkGroupDelete: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
-                "X-CSRF-Token": components["parameters"]["CSRFToken"];
-                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: components["requestBodies"]["RPCBody"];
-        responses: {
-            200: components["responses"]["RPCResponse"];
-            default: components["responses"]["ProtocolErrorResponse"];
-        };
-    };
-    userGroupList: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: components["responses"]["RPCResponse"];
-            default: components["responses"]["ProtocolErrorResponse"];
-        };
-    };
-    userGroupCreate: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
-                "X-CSRF-Token": components["parameters"]["CSRFToken"];
-                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: components["requestBodies"]["RPCBody"];
-        responses: {
-            200: components["responses"]["RPCResponse"];
-            default: components["responses"]["ProtocolErrorResponse"];
-        };
-    };
-    userGroupUpdate: {
-        parameters: {
-            query?: never;
-            header: {
-                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
-                "X-CSRF-Token": components["parameters"]["CSRFToken"];
-                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
-                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: components["requestBodies"]["RPCBody"];
-        responses: {
-            200: components["responses"]["RPCResponse"];
-            default: components["responses"]["ProtocolErrorResponse"];
-        };
-    };
-    userGroupDelete: {
         parameters: {
             query?: never;
             header: {
@@ -4253,6 +4203,9 @@ export const rpcOperations = {
   userSetExternalSubscriptions: { method: 'POST', path: '/api/user/set-external-subscriptions' },
   userDelete: { method: 'POST', path: '/api/user/delete' },
   userSubSettings: { method: 'POST', path: '/api/user/sub-settings' },
+  userSubscriptionVisibility: { method: 'GET', path: '/api/user/sub-visibility' },
+  userUpdateSubscriptionVisibility: { method: 'POST', path: '/api/user/sub-visibility' },
+  userSubscriptionPublicationJobs: { method: 'GET', path: '/api/user/sub-publication-jobs' },
   userTrafficHistory: { method: 'GET', path: '/api/user/traffic-history' },
   userRegenerateSubscription: { method: 'POST', path: '/api/user/regenerate-subscription' },
   userRegenerateAllSubscriptions: { method: 'POST', path: '/api/user/regenerate-all-subscriptions' },
@@ -4280,10 +4233,6 @@ export const rpcOperations = {
   linkGroupCreate: { method: 'POST', path: '/api/link-group/create' },
   linkGroupUpdate: { method: 'POST', path: '/api/link-group/update' },
   linkGroupDelete: { method: 'POST', path: '/api/link-group/delete' },
-  userGroupList: { method: 'GET', path: '/api/user-group/list' },
-  userGroupCreate: { method: 'POST', path: '/api/user-group/create' },
-  userGroupUpdate: { method: 'POST', path: '/api/user-group/update' },
-  userGroupDelete: { method: 'POST', path: '/api/user-group/delete' },
   settingGet: { method: 'GET', path: '/api/setting/get' },
   settingSubGet: { method: 'GET', path: '/api/setting/sub' },
   settingSubUpdate: { method: 'POST', path: '/api/setting/sub' },

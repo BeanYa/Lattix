@@ -168,10 +168,13 @@ func TestSubStatusSingleHopDirectNode(t *testing.T) {
 	server := New(st, nil, nil)
 
 	status := subStatusLinks(t, server, "direct-token")
-	if len(status.Links) != 1 {
-		t.Fatalf("links=%+v, want the direct node only", status.Links)
+	if len(status.Links) != 2 {
+		t.Fatalf("links=%+v, want direct node and published chain", status.Links)
 	}
 	link := status.Links[0]
+	if link.ID != subscriptionItemID("node", nodeID) {
+		t.Fatalf("first link = %+v, want the standalone node", link)
+	}
 	if link.Entry != "服务器" {
 		t.Fatalf("entry=%q, want 服务器 for single-hop node", link.Entry)
 	}

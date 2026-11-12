@@ -212,6 +212,9 @@ POST /api/user/set-nodes
 POST /api/user/set-external-subscriptions
 POST /api/user/delete
 POST /api/user/sub-settings
+GET  /api/user/sub-visibility?user_id={id}
+POST /api/user/sub-visibility
+GET  /api/user/sub-publication-jobs?user_id={id}
 GET  /api/user/traffic-history?user_id={id}
 POST /api/user/regenerate-subscription
 POST /api/user/regenerate-all-subscriptions
@@ -242,10 +245,6 @@ GET  /api/link-group/list
 POST /api/link-group/create
 POST /api/link-group/update
 POST /api/link-group/delete
-GET  /api/user-group/list
-POST /api/user-group/create
-POST /api/user-group/update
-POST /api/user-group/delete
 
 GET  /api/setting/get
 POST /api/setting/update
@@ -294,6 +293,12 @@ GET /sub/{token}/rules/{version}/{format}/{name}
 GET /api/sub/{token}/info
 GET /api/sub/{token}/clients
 GET /api/sub/{token}/status
+GET /api/sub/{token}/visibility
+POST /api/sub/{token}/visibility
+GET /api/sub/{token}/publication-jobs
+GET /api/sub/{token}/template-config
+POST /api/sub/{token}/template-config
+POST /api/sub/{token}/template-config/reset
 GET /api/sub/{token}/history
 GET /api/sub/{token}/client-download/start?variant=
 GET /api/sub/{token}/client-download/status?task=

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"lattix/backend/internal/extsub"
 	"lattix/backend/internal/store"
+	"lattix/shared"
 )
 
 // SubInfoResponse 是 GET /api/sub/{token}/info 的响应。
@@ -62,27 +62,13 @@ func (s *Server) HandleSubInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	t, _ := s.st.UserTraffic(r.Context(), user.UUID)
-	assigned, _ := s.st.UserNodeIDs(r.Context(), user.ID)
-	// 分组用户的直连节点被遮蔽，快照生成失败时回退不得计入直连节点数
-	// （itemsForUser 已反映真实计数，回退仅在快照生成失败时生效）。
-	if groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), user.ID); err == nil && len(groupIDs) > 0 {
-		assigned = []int64{}
+	items, _, err := s.itemsForUser(r.Context(), user)
+	if err != nil {
+		writeInternalError(w, "serve sub info", err)
+		return
 	}
-	// 节点数与订阅快照内容一致：直连节点 + 分配链路 + 外部订阅节点。
-	items, _, _ := s.itemsForUser(r.Context(), user)
 	nodesCount := len(items)
-	if nodesCount == 0 {
-		nodesCount = len(assigned) // 快照生成失败时回退到直连节点数
-	}
-	var panelExpire *int64
-	if user.ExpiresAt != nil {
-		v := user.ExpiresAt.Unix()
-		panelExpire = &v
-	}
-	attached, _ := s.st.EffectiveUserExternalSubscriptions(r.Context(), user.ID)
-	merged := extsub.MergeUserTraffic(time.Now(), extsub.Traffic{
-		Upload: t.Up, Download: t.Down, Total: user.TrafficLimit, Expire: panelExpire,
-	}, attached)
+	merged := s.mergedUserTraffic(r.Context(), user, t)
 
 	// 标题：用户级覆盖 > 全局设置 > 默认。
 	title := user.SubTitle
@@ -208,98 +194,100 @@ func (s *Server) HandleSubStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User, data *linkStatusData) ([]SubLinkStatus, error) {
-	if user.Expired || user.Disabled || user.QuotaExhausted || user.NotYetEffective(time.Now()) {
+	if blocked, _ := subscriptionBlocked(user, time.Now()); blocked || user.Disabled {
 		return []SubLinkStatus{}, nil
 	}
-	assignedNodes, err := s.st.UserNodeIDs(r.Context(), user.ID)
+	hidden, err := s.st.UserHiddenSubscriptionItems(r.Context(), user.ID)
 	if err != nil {
 		return nil, err
 	}
-	groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), user.ID)
+	return s.catalogLinkStatus(r, user, data, hidden)
+}
+
+func (s *Server) catalogLinkStatus(r *http.Request, user *store.User, data *linkStatusData, hidden map[string]bool) ([]SubLinkStatus, error) {
+	ctx := r.Context()
+	assignedNodes, err := s.st.UserNodeIDs(ctx, user.ID)
 	if err != nil {
 		return nil, err
 	}
-	// 与订阅生成一致：分组用户只使用分组派生链路，遮蔽直接分配的节点。
-	if len(groupIDs) > 0 {
-		assignedNodes = nil
+	allowedNodes, assignments, err := s.userAccess(ctx, user)
+	if err != nil {
+		return nil, err
 	}
-	allowedNodes := make(map[int64]bool, len(assignedNodes))
-	for _, nodeID := range assignedNodes {
-		allowedNodes[nodeID] = true
-	}
-	exitNodes, err := s.st.ChainExitNodeIDs(r.Context())
+	exitNodes, err := s.st.ChainExitNodeIDs(ctx)
 	if err != nil {
 		return nil, err
 	}
 	links := make([]SubLinkStatus, 0)
-	seenDirectServers := make(map[int64]bool)
+	directNumber := 0
 	for _, nodeID := range assignedNodes {
 		if exitNodes[nodeID] {
 			continue
 		}
-		node, err := s.st.NodeByID(r.Context(), nodeID)
-		if err != nil || len(node.RealizedConfig) == 0 || seenDirectServers[node.ServerID] {
+		node, err := s.st.NodeByID(ctx, nodeID)
+		if err != nil || node.Status != store.NodeStatusActive {
 			continue
 		}
-		seenDirectServers[node.ServerID] = true
+		var realized shared.RealizedConfig
+		if json.Unmarshal(node.RealizedConfig, &realized) != nil || realized.Port == 0 {
+			continue
+		}
+		directNumber++
+		id := subscriptionItemID("node", nodeID)
+		if hidden[id] {
+			continue
+		}
 		name := strings.TrimSpace(node.Name)
 		if name == "" {
-			name = fmt.Sprintf("直连链路 %d", len(links)+1)
+			name = fmt.Sprintf("直连链路 %d", directNumber)
 		}
 		links = append(links, SubLinkStatus{
+			ID:          id,
 			Label:       name,
 			Entry:       "服务器",
 			Carriers:    linkCarriers(data, node.ServerID),
-			InternalMS:  float64Ptr(0), // 单跳直连无内部段
+			InternalMS:  float64Ptr(0),
 			EntryBanned: data.bannedByServer[node.ServerID],
 		})
 	}
 
-	assignments, err := s.st.EffectiveUserChainAssignments(r.Context(), user.ID)
-	if err != nil {
-		return nil, err
-	}
 	assignmentByChain := make(map[int64]store.UserChainAssignment, len(assignments))
 	for _, assignment := range assignments {
 		assignmentByChain[assignment.ChainID] = assignment
 	}
-	chains, err := s.st.ListChains(r.Context())
+	chains, err := s.st.ListChains(ctx)
 	if err != nil {
 		return nil, err
 	}
 	chainNumber := 0
 	for _, chain := range chains {
-		if chain.PublishedRevisionID == 0 || chain.Status == store.ChainStatusInvalid || chain.Status == store.ChainStatusDeleted {
+		assignment, available := assignmentByChain[chain.ID]
+		if !available {
 			continue
 		}
-		assignment, assigned := assignmentByChain[chain.ID]
-		if chain.EndpointID != 0 && !assigned {
+		if _, err := s.chainSubscriptionItem(ctx, chain, allowedNodes, assignment); err != nil {
 			continue
 		}
-		var assignmentArgs []store.UserChainAssignment
-		if assigned {
-			assignmentArgs = []store.UserChainAssignment{assignment}
-		}
-		// Reuse the subscription compiler's eligibility checks so the monitor
-		// cannot reveal a chain that was omitted from the actual subscription.
-		if _, err := s.chainSubscriptionItem(r.Context(), chain, allowedNodes, assignmentArgs...); err != nil {
-			continue
-		}
-		revision, err := s.st.PublishedChainRevision(r.Context(), chain.ID)
+		revision, err := s.st.PublishedChainRevision(ctx, chain.ID)
 		if err != nil || len(revision.Snapshot.Hops) == 0 {
 			continue
 		}
 		chainNumber++
+		id := subscriptionItemID("chain", chain.ID)
+		if hidden[id] {
+			continue
+		}
 		entry := revision.Snapshot.Hops[0]
 		internal := data.internalByChain[chain.ID]
 		if len(revision.Snapshot.Hops) == 1 {
-			internal = float64Ptr(0) // 单跳链路无内部段
+			internal = float64Ptr(0)
 		}
 		name := strings.TrimSpace(chain.Name)
 		if name == "" {
 			name = fmt.Sprintf("中转链路 %d", chainNumber)
 		}
 		links = append(links, SubLinkStatus{
+			ID:          id,
 			Label:       name,
 			Entry:       subscriptionEntryLabel(len(revision.Snapshot.Hops)),
 			Carriers:    linkCarriers(data, entry.ServerID),
@@ -308,6 +296,44 @@ func (s *Server) subscriptionLinkStatus(r *http.Request, user *store.User, data 
 		})
 	}
 	return links, nil
+}
+
+type subscriptionExternalItem struct {
+	ID    string   `json:"id"`
+	Label string   `json:"label"`
+	Nodes []string `json:"nodes"`
+}
+
+func (s *Server) subscriptionVisibilityCatalog(r *http.Request, user *store.User) ([]SubLinkStatus, []subscriptionExternalItem, error) {
+	ctx := r.Context()
+	data, err := s.linkStatus(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	links, err := s.catalogLinkStatus(r, user, data, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	sources, err := s.st.ListExternalSubscriptions(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	external := make([]subscriptionExternalItem, 0, len(sources))
+	for _, source := range sources {
+		chains, err := s.st.ListExternalChains(ctx, source.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		item := subscriptionExternalItem{
+			ID: subscriptionItemID("external", source.ID), Label: source.Name,
+			Nodes: make([]string, 0, len(chains)),
+		}
+		for _, chain := range chains {
+			item.Nodes = append(item.Nodes, chain.Name)
+		}
+		external = append(external, item)
+	}
+	return links, external, nil
 }
 
 // subscriptionEntryLabel 返回链路入口的角色标签（直连节点统一标为“服务器”）。

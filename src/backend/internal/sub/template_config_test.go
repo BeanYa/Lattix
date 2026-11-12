@@ -502,7 +502,7 @@ func TestPanelRoutingConfigured(t *testing.T) {
 		{"forced native flag", store.SubscriptionProfile{AssignForcedQuanX: true}, true},
 	}
 	for _, testCase := range cases {
-		if got := panelRoutingConfigured(testCase.profile); got != testCase.want {
+		if got := testCase.profile.PanelRoutingConfigured(); got != testCase.want {
 			t.Errorf("%s: panelRoutingConfigured = %v, want %v", testCase.name, got, testCase.want)
 		}
 	}

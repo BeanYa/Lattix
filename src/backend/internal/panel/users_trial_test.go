@@ -37,23 +37,17 @@ func newSweepServer(t *testing.T) (*Server, *store.Store, context.CancelFunc) {
 	return server, st, cancel
 }
 
-// TestCreateTrialUserWithDaysAndGroup 试用创建主链路（§9）：is_trial + duration_days
-// 自生效时刻（缺省=立即）起算精确到秒 + 直选用户分组 + 试用流量入库。
-func TestCreateTrialUserWithDaysAndGroup(t *testing.T) {
-	ctx := context.Background()
+// TestCreateTrialUserWithDays 试用创建主链路（§9）：is_trial + duration_days
+// 自生效时刻（缺省=立即）起算精确到秒，保存试用流量。
+func TestCreateTrialUserWithDays(t *testing.T) {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	groupID, err := st.CreateUserGroup(ctx, "trial-group", nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
 	server := &Server{st: st, subscriptions: nil}
 
-	body := `{"name":"t1","is_trial":true,"duration_days":3,"user_group_id":` +
-		strconv.FormatInt(groupID, 10) + `,"traffic_limit":1073741824}`
+	body := `{"name":"t1","is_trial":true,"duration_days":3,"traffic_limit":1073741824}`
 	rec := httptest.NewRecorder()
 	before := time.Now()
 	server.handleCreateUser(rec, httptest.NewRequest(http.MethodPost, "/api/user/create", strings.NewReader(body)))
@@ -93,13 +87,6 @@ func TestCreateTrialUserWithDaysAndGroup(t *testing.T) {
 	}
 	if got.TrafficLimit != 1073741824 {
 		t.Fatalf("traffic_limit = %d", got.TrafficLimit)
-	}
-	ids, err := st.UserGroupIDsForUser(ctx, got.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ids) != 1 || ids[0] != groupID {
-		t.Fatalf("用户应直接加入分组 %d，got %v", groupID, ids)
 	}
 }
 
@@ -178,7 +165,6 @@ func TestCreateTrialUserValidation(t *testing.T) {
 		"天数与到期时间二选一": `{"name":"x","is_trial":true,"duration_days":3,"expires_at":"` + future + `"}`,
 		"到期须晚于生效":    `{"name":"x","is_trial":true,"effective_at":"` + future + `","expires_at":"` + sooner + `"}`,
 		"天数不能为负":     `{"name":"x","is_trial":true,"duration_days":-1}`,
-		"分组须存在":      `{"name":"x","user_group_id":999}`,
 	} {
 		rec := httptest.NewRecorder()
 		server.handleCreateUser(rec, httptest.NewRequest(http.MethodPost, "/api/user/create", strings.NewReader(body)))

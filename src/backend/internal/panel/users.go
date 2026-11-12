@@ -56,7 +56,6 @@ type userDTO struct {
 	Routing               subscriptionProfileDTO           `json:"routing"`
 	SubscriptionSnapshot  store.SubscriptionSnapshotStatus `json:"subscription_snapshot"`
 	OnlineConnections     int                              `json:"online_connections"` // 跨服务器去重后的在线连接数（telemetry 快照）
-	UserGroupIDs          []int64                          `json:"user_group_ids"`
 	CreatedAt             time.Time                        `json:"created_at"`
 }
 
@@ -118,10 +117,12 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 			})
 		}
 	}
-	// 生效链路（分组派生或直接，§分组）：用户卡片按此展示实际订阅内容。
-	if effective, err := s.st.EffectiveUserChainAssignments(r.Context(), u.ID); err == nil {
+	hidden, _ := s.st.UserHiddenSubscriptionItems(r.Context(), u.ID)
+	if effective, err := s.st.CatalogUserChainAssignments(r.Context(), u.ID); err == nil {
 		for _, assignment := range effective {
-			dto.EffectiveChainIDs = append(dto.EffectiveChainIDs, assignment.ChainID)
+			if !hidden[fmt.Sprintf("chain:%d", assignment.ChainID)] {
+				dto.EffectiveChainIDs = append(dto.EffectiveChainIDs, assignment.ChainID)
+			}
 		}
 	}
 	if dto.ChainIDs == nil {
@@ -144,7 +145,7 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 			Error:  fmt.Sprintf("读取订阅快照状态失败：%v", err),
 		}
 	}
-	attached, err := s.st.EffectiveUserExternalSubscriptions(r.Context(), u.ID)
+	attached, err := s.st.CatalogExternalSubscriptions(r.Context(), u.ID)
 	if err == nil && len(attached) > 0 {
 		dto.ExternalSubscriptions = make([]userExternalSubscriptionDTO, 0, len(attached))
 		var panelTraffic store.TrafficTotals
@@ -157,6 +158,9 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 			panelExpire = &v
 		}
 		for _, sub := range attached {
+			if hidden[fmt.Sprintf("external:%d", sub.SubscriptionID)] {
+				continue
+			}
 			var remaining *int64
 			if sub.Total > 0 {
 				v := sub.Total - sub.Upload - sub.Download
@@ -182,14 +186,6 @@ func (s *Server) toUserDTO(r *http.Request, u store.User, nodeIDs []int64) userD
 	}
 	if dto.ExternalSubscriptions == nil {
 		dto.ExternalSubscriptions = []userExternalSubscriptionDTO{}
-	}
-	if groupIDs, err := s.st.UserGroupIDsForUser(r.Context(), u.ID); err == nil {
-		dto.UserGroupIDs = groupIDs
-	} else {
-		dto.UserGroupIDs = []int64{}
-	}
-	if dto.UserGroupIDs == nil {
-		dto.UserGroupIDs = []int64{}
 	}
 	return dto
 }
@@ -389,8 +385,8 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 // 管理员经 PUT /api/users/{id}/nodes 分配后才增量扇出。
 // 创建时可选带 node_ids 预选产品层链路（内部仍映射业务 node_id），省略则维持默认全关（§16）。
 // 试用用户（is_trial，§9）：生效时刻 effective_at（RFC3339，省略=立即）、有效期必须用
-// duration_days（自生效时刻起算，精确到秒）或 expires_at 二选一表达、可直选用户分组
-// user_group_id；traffic_limit 对试用用户强制执行（用尽即停权、不删除），到期由 sweeper 自动删除。
+// duration_days（自生效时刻起算，精确到秒）或 expires_at 二选一表达。
+// traffic_limit 对试用用户强制执行（用尽即停权、不删除），到期由 sweeper 自动删除。
 // 生效时刻在未来的用户为未生效态：预选节点/链路照常入库，但不扇出 add_user（到点由 sweeper 激活）。
 func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -403,7 +399,6 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		IsTrial      bool    `json:"is_trial"`
 		EffectiveAt  *string `json:"effective_at"` // RFC3339，省略 = 立即生效
 		DurationDays int     `json:"duration_days"`
-		UserGroupID  int64   `json:"user_group_id"` // 0 = 不入组
 		// 可选订阅设置（省略保持默认；用户级覆盖全局，§9）。
 		TrafficLimit          int64                           `json:"traffic_limit"`
 		TrafficResetDay       int                             `json:"traffic_reset_day"`
@@ -464,18 +459,6 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if err := validateTrafficResetDay(req.TrafficResetDay); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
-	}
-	var userGroup *store.UserGroup
-	if req.UserGroupID > 0 {
-		userGroup, err = s.st.UserGroupByID(r.Context(), req.UserGroupID)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				writeError(w, http.StatusBadRequest, "用户分组不存在")
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
 	}
 	if err := s.st.ValidateAssignableChains(r.Context(), req.ChainIDs); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -550,18 +533,6 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		created.AppURL = strings.TrimSpace(req.AppURL)
 	}
 
-	// 直选用户分组（§分组）：一用户一组，加入即按分组派生链路（直接分配被遮蔽）。
-	// 关联链路分组的共享端点随后 reconcile，使分组派生凭据到点生效。
-	if userGroup != nil {
-		if err := s.st.SetUserGroupMembership(r.Context(), id, userGroup.ID); err != nil {
-			o.Fail(err)
-			_ = s.st.DeleteUser(r.Context(), id)
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		s.triggerGroupChange(r.Context(), nil, s.endpointIDsForLinkGroups(r.Context(), userGroup.LinkGroupIDs))
-	}
-
 	// 未生效态（§9）：分配照常入库，但不扇出 add_user —— 生效时刻到点由 sweeper 激活。
 	notYetEffective := created.NotYetEffective(time.Now())
 
@@ -627,6 +598,28 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+	}
+	if !notYetEffective {
+		catalogNodes, err := s.st.CatalogUserNodeIDs(r.Context(), id)
+		if err == nil {
+			var extra []int64
+			assigned := make(map[int64]bool, len(nodeIDs))
+			for _, nodeID := range nodeIDs {
+				assigned[nodeID] = true
+			}
+			for _, nodeID := range catalogNodes {
+				if !assigned[nodeID] {
+					extra = append(extra, nodeID)
+				}
+			}
+			if len(extra) > 0 {
+				nodes, err := s.st.ListNodes(r.Context())
+				if err == nil {
+					s.fanoutUserDiff(r.Context(), created.UUID, nodes, extra, nil)
+				}
+			}
+		}
+		s.reconcileUserEndpoints(r.Context(), id)
 	}
 	o.Report("db", 100, "用户已保存")
 	if s.subscriptions != nil {
@@ -758,7 +751,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		assigned, err := s.st.UserNodeIDs(r.Context(), id)
+		assigned, err := s.st.CatalogUserNodeIDs(r.Context(), id)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -770,9 +763,7 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			s.fanoutUserDiff(r.Context(), u.UUID, nodes, assigned, nil)
 			log.Printf("panel: user %d (%s) 已恢复，扇出 add_user (%d 节点)", id, u.Name, len(assigned))
 		}
-		if assignments, err := s.st.UserChainAssignments(r.Context(), id); err == nil {
-			s.reconcileUserEndpoints(r.Context(), id, assignments)
-		}
+		s.reconcileUserEndpoints(r.Context(), id)
 		o = s.observeStart(r, "user.update", "更新用户状态", userPublishObserveStages)
 		o.Report("db", 100, "已保存")
 		if s.subscriptions != nil {
@@ -1007,22 +998,14 @@ func (s *Server) reconcileAssignmentEndpoints(ctx context.Context, groups ...[]s
 	}
 }
 
-// reconcileUserEndpoints reconcile 用户直连分配与其所在用户分组派生的共享端点。
-// 分组成员的生效链路来自分组派生（直接分配被遮蔽），仅按直接分配反查会漏掉分组端点
-// ——生命周期停权/激活（§9）与重新生效都必须覆盖两侧。
-func (s *Server) reconcileUserEndpoints(ctx context.Context, userID int64, assignments []store.UserChainAssignment) {
-	s.reconcileAssignmentEndpoints(ctx, assignments, nil)
-	groupIDs, err := s.st.UserGroupIDsForUser(ctx, userID)
+// reconcileUserEndpoints updates the shared listeners on a user's lifecycle change.
+func (s *Server) reconcileUserEndpoints(ctx context.Context, userID int64) {
+	assignments, err := s.st.CatalogUserChainAssignments(ctx, userID)
 	if err != nil {
+		log.Printf("panel: reconcile catalog for user %d: %v", userID, err)
 		return
 	}
-	for _, groupID := range groupIDs {
-		g, err := s.st.UserGroupByID(ctx, groupID)
-		if err != nil {
-			continue
-		}
-		s.triggerGroupChange(ctx, nil, s.endpointIDsForLinkGroups(ctx, g.LinkGroupIDs))
-	}
+	s.reconcileAssignmentEndpoints(ctx, assignments)
 }
 
 // fanoutUserDiff 按分配差量扇出：新增节点 → add_user（仅含这些节点），
@@ -1102,7 +1085,7 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	assignments, _ := s.st.UserChainAssignments(r.Context(), id)
+	assignments, _ := s.st.CatalogUserChainAssignments(r.Context(), id)
 	s.fanoutRemoveUser(r, u.UUID)
 	if err := s.st.DeleteUser(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -1297,7 +1280,7 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		assigned, err := s.st.UserNodeIDs(r.Context(), req.UserID)
+		assigned, err := s.st.CatalogUserNodeIDs(r.Context(), req.UserID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -1309,9 +1292,7 @@ func (s *Server) handleUpdateUserSubSettings(w http.ResponseWriter, r *http.Requ
 			s.fanoutUserDiff(r.Context(), u.UUID, nodes, assigned, nil)
 			log.Printf("panel: user %d (%s) 已恢复，扇出 add_user (%d 节点)", req.UserID, u.Name, len(assigned))
 		}
-		if assignments, err := s.st.UserChainAssignments(r.Context(), req.UserID); err == nil {
-			s.reconcileUserEndpoints(r.Context(), req.UserID, assignments)
-		}
+		s.reconcileUserEndpoints(r.Context(), req.UserID)
 	}
 
 	o := s.observeStart(r, "user.sub_settings", "保存订阅设置", userPublishObserveStages)
@@ -1547,7 +1528,7 @@ func (s *Server) handleResetUserTraffic(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		assigned, err := s.st.UserNodeIDs(r.Context(), req.UserID)
+		assigned, err := s.st.CatalogUserNodeIDs(r.Context(), req.UserID)
 		if err != nil {
 			o.Fail(err)
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -1555,9 +1536,7 @@ func (s *Server) handleResetUserTraffic(w http.ResponseWriter, r *http.Request) 
 		}
 		s.fanoutUserDiff(r.Context(), u.UUID, nodes, assigned, nil)
 		log.Printf("panel: user %d (%s) 流量重置后恢复，扇出 add_user (%d 节点)", req.UserID, u.Name, len(assigned))
-		if assignments, err := s.st.UserChainAssignments(r.Context(), req.UserID); err == nil {
-			s.reconcileUserEndpoints(r.Context(), req.UserID, assignments)
-		}
+		s.reconcileUserEndpoints(r.Context(), req.UserID)
 	}
 	if s.subscriptions != nil {
 		o.WatchUsers([]int64{req.UserID})

@@ -187,23 +187,7 @@ func (s *Server) HandleSubTemplateConfig(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	resp, err := s.templateConfigResponse(r, user)
-	if err != nil {
-		writeInternalError(w, "serve sub template config", err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(resp)
-}
-
-// panelRoutingConfigured 报告管理员是否已为该用户写入面板级/强制级指派槽位：
-// 这些指派保存的地区分组开关属于管理员设置，用户「恢复默认」时不得覆盖。
-func panelRoutingConfigured(profile store.SubscriptionProfile) bool {
-	return profile.AssignedPortableTemplateID != "" || profile.AssignedSuggestedCategories != "" ||
-		profile.AssignedMihomoTemplateID != "" || profile.AssignedSingboxTemplateID != "" ||
-		profile.AssignedQuanXTemplateID != "" ||
-		profile.AssignForcedPortable || profile.AssignForcedMihomo ||
-		profile.AssignForcedSingbox || profile.AssignForcedQuanX
+	s.writeTemplateConfig(w, r, user)
 }
 
 // userBySubToken 校验订阅 token 并返回用户；失败时已写好响应。
@@ -224,9 +208,7 @@ func (s *Server) userBySubToken(w http.ResponseWriter, r *http.Request) (*store.
 // writeSubError 输出订阅公开 API 的 JSON 错误体（{"error": "..."}），
 // 供订阅页表单直接展示校验信息。
 func writeSubError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+	writeSubJSON(w, status, map[string]string{"error": message})
 }
 
 // HandleSubUpdateTemplateConfig 处理 POST /api/sub/{token}/template-config：
@@ -234,6 +216,10 @@ func writeSubError(w http.ResponseWriter, status int, message string) {
 // 保存后立即排队重生成订阅快照。面板侧各级配置不受影响。
 func (s *Server) HandleSubUpdateTemplateConfig(w http.ResponseWriter, r *http.Request) {
 	disableSharedCache(w)
+	user, ok := s.activeUserBySubToken(w, r)
+	if !ok {
+		return
+	}
 	var input struct {
 		Mode                string   `json:"mode"`
 		Preset              string   `json:"preset"`
@@ -244,70 +230,30 @@ func (s *Server) HandleSubUpdateTemplateConfig(w http.ResponseWriter, r *http.Re
 		QuanXTemplateID     string   `json:"quanx_template_id"`
 		RegionGroupsEnabled *bool    `json:"region_groups_enabled"`
 	}
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
+	if err := decodeSubscriptionRequest(w, r, &input); err != nil {
 		writeSubError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	user, ok := s.userBySubToken(w, r)
-	if !ok {
-		return
-	}
-	if err := s.saveUserRouting(r, user.ID, input.Mode, input.Preset, input.Categories,
-		input.PortableTemplateID, input.MihomoTemplateID, input.SingboxTemplateID,
-		input.QuanXTemplateID, input.RegionGroupsEnabled); err != nil {
+	profile, err := NormalizeRouting(store.SubscriptionProfile{
+		UserID:             user.ID,
+		Mode:               strings.TrimSpace(input.Mode),
+		Preset:             strings.TrimSpace(input.Preset),
+		PortableTemplateID: strings.TrimSpace(input.PortableTemplateID),
+		MihomoTemplateID:   strings.TrimSpace(input.MihomoTemplateID),
+		SingboxTemplateID:  strings.TrimSpace(input.SingboxTemplateID),
+		QuanXTemplateID:    strings.TrimSpace(input.QuanXTemplateID),
+	}, input.Categories)
+	if err != nil {
 		writeSubError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// 用户修改后立即刷新订阅文件快照（异步去抖，与面板指派同一管线）。
-	s.EnqueueUsers([]int64{user.ID}, s.base(r))
-	s.writeTemplateConfig(w, r, user)
-}
-
-// saveUserRouting 校验并写入用户级路由配置（user_configured=1）。
-func (s *Server) saveUserRouting(r *http.Request, userID int64,
-	mode, preset string, categories []string,
-	portableID, mihomoID, singboxID, quanxID string,
-	regionGroupsEnabled *bool,
-) error {
-	current, err := s.st.UserSubscriptionProfile(r.Context(), userID)
-	if err != nil {
-		return err
-	}
-	// 只写用户级槽位：面板侧的指派/强制标记与地区分组开关原样保留。
-	profile := store.SubscriptionProfile{
-		UserID:             userID,
-		Mode:               strings.TrimSpace(mode),
-		Preset:             strings.TrimSpace(preset),
-		PortableTemplateID: strings.TrimSpace(portableID),
-		MihomoTemplateID:   strings.TrimSpace(mihomoID),
-		SingboxTemplateID:  strings.TrimSpace(singboxID),
-		QuanXTemplateID:    strings.TrimSpace(quanxID),
-		GenerationStatus:   store.SubscriptionGenerationPending,
-	}
-	profile, err = NormalizeRouting(profile, categories)
-	if err != nil {
-		return err
-	}
 	if err := s.st.ValidateSubscriptionProfileTemplates(r.Context(), profile); err != nil {
-		return err
+		writeSubError(w, http.StatusBadRequest, err.Error())
+		return
 	}
-	profile.AssignedPortableTemplateID = current.AssignedPortableTemplateID
-	profile.AssignForcedPortable = current.AssignForcedPortable
-	profile.AssignedMihomoTemplateID = current.AssignedMihomoTemplateID
-	profile.AssignForcedMihomo = current.AssignForcedMihomo
-	profile.AssignedSingboxTemplateID = current.AssignedSingboxTemplateID
-	profile.AssignForcedSingbox = current.AssignForcedSingbox
-	profile.AssignedQuanXTemplateID = current.AssignedQuanXTemplateID
-	profile.AssignForcedQuanX = current.AssignForcedQuanX
-	profile.AssignedSuggestedCategories = current.AssignedSuggestedCategories
-	profile.DisableRegionGroups = current.DisableRegionGroups
-	if regionGroupsEnabled != nil {
-		profile.DisableRegionGroups = !*regionGroupsEnabled
-	}
-	profile.UserConfigured = true
-	return s.st.SaveUserSubscriptionProfile(r.Context(), profile)
+	baseURL := s.base(r)
+	job, err := s.st.EnqueueSubscriptionTemplate(r.Context(), profile, input.RegionGroupsEnabled, baseURL)
+	s.respondToTemplatePublication(w, r, user, baseURL, job, err)
 }
 
 // HandleSubResetTemplateConfig 处理 POST /api/sub/{token}/template-config/reset：
@@ -315,48 +261,66 @@ func (s *Server) saveUserRouting(r *http.Request, userID int64,
 // 回落到面板级 → 默认级；清除后立即重生成订阅快照。
 func (s *Server) HandleSubResetTemplateConfig(w http.ResponseWriter, r *http.Request) {
 	disableSharedCache(w)
-	user, ok := s.userBySubToken(w, r)
+	user, ok := s.activeUserBySubToken(w, r)
 	if !ok {
 		return
 	}
-	current, err := s.st.UserSubscriptionProfile(r.Context(), user.ID)
+	baseURL := s.base(r)
+	job, err := s.st.EnqueueSubscriptionTemplateReset(r.Context(), user.ID, baseURL)
+	s.respondToTemplatePublication(w, r, user, baseURL, job, err)
+}
+
+func (s *Server) respondToTemplatePublication(w http.ResponseWriter, r *http.Request, user *store.User, baseURL string, job store.SubscriptionPublicationJob, err error) {
 	if err != nil {
-		writeSubError(w, http.StatusInternalServerError, "internal error")
+		writePublicationEnqueueError(w, err)
 		return
 	}
-	if current.UserConfigured {
-		// 用户级的地区分组开关随「恢复默认」一并清除：无管理员指派时写内置默认
-		// （开启），默认级开关仍由 EffectiveProfile 在生效时覆盖，不把默认级的值
-		// 固化进共享列（否则之后清除默认级会残留旧状态）。该列由管理员指派与用户
-		// 共用，存在面板级/强制级指派时只能保留当前值、无法还原管理员写入值。
-		disableRegionGroups := false
-		if panelRoutingConfigured(current) {
-			disableRegionGroups = current.DisableRegionGroups
-		}
-		reset := store.SubscriptionProfile{
-			UserID:                      user.ID,
-			Mode:                        store.SubscriptionModeSuggested,
-			Preset:                      "balanced",
-			CategoriesJSON:              `["ai","youtube","google","private","domestic","telegram","github","overseas"]`,
-			GenerationStatus:            store.SubscriptionGenerationPending,
-			AssignedPortableTemplateID:  current.AssignedPortableTemplateID,
-			AssignForcedPortable:        current.AssignForcedPortable,
-			AssignedMihomoTemplateID:    current.AssignedMihomoTemplateID,
-			AssignForcedMihomo:          current.AssignForcedMihomo,
-			AssignedSingboxTemplateID:   current.AssignedSingboxTemplateID,
-			AssignForcedSingbox:         current.AssignForcedSingbox,
-			AssignedQuanXTemplateID:     current.AssignedQuanXTemplateID,
-			AssignForcedQuanX:           current.AssignForcedQuanX,
-			AssignedSuggestedCategories: current.AssignedSuggestedCategories,
-			DisableRegionGroups:         disableRegionGroups,
-		}
-		if err := s.st.SaveUserSubscriptionProfile(r.Context(), reset); err != nil {
-			writeSubError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		s.EnqueueUsers([]int64{user.ID}, s.base(r))
+	s.rememberBaseURL(baseURL)
+	s.wakeRegenerator()
+	if prefersAsyncPublication(r) {
+		w.Header().Set("Preference-Applied", "respond-async")
+		writeSubJSON(w, http.StatusAccepted, job)
+		return
 	}
-	s.writeTemplateConfig(w, r, user)
+	response, err := s.waitForTemplatePublication(r, user, job.ID)
+	if err != nil {
+		writeInternalError(w, "publish subscription template configuration", err)
+		return
+	}
+	writeSubJSON(w, http.StatusOK, response)
+}
+
+func prefersAsyncPublication(r *http.Request) bool {
+	for _, header := range r.Header.Values("Prefer") {
+		for preference := range strings.SplitSeq(header, ",") {
+			name, _, _ := strings.Cut(preference, ";")
+			if strings.EqualFold(strings.TrimSpace(name), "respond-async") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Server) waitForTemplatePublication(r *http.Request, user *store.User, jobID string) (SubTemplateConfigResponse, error) {
+	lock := s.publishLock(user.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	for {
+		job, err := s.st.SubscriptionPublicationJob(r.Context(), user.ID, jobID)
+		if err != nil {
+			return SubTemplateConfigResponse{}, err
+		}
+		switch job.Status {
+		case store.PublicationCompleted:
+			return s.templateConfigResponse(r, user)
+		case store.PublicationFailed:
+			return SubTemplateConfigResponse{}, errors.New(job.Error)
+		}
+		if err := s.processNextSubscriptionJobLocked(r.Context(), user.ID); err != nil {
+			return SubTemplateConfigResponse{}, err
+		}
+	}
 }
 
 // writeTemplateConfig 以 JSON 输出当前模板配置响应。
@@ -366,6 +330,5 @@ func (s *Server) writeTemplateConfig(w http.ResponseWriter, r *http.Request, use
 		writeInternalError(w, "serve sub template config", err)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	json.NewEncoder(w).Encode(resp)
+	writeSubJSON(w, http.StatusOK, resp)
 }

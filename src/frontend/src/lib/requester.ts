@@ -109,7 +109,11 @@ export class Requester {
 
   /** postJSON 面向无 RPC 信封的公开 JSON 端点（/api/sub/{token}/...，token 即鉴权）：
    * 请求/响应均为裸 JSON，错误体形如 {"error":"..."}。 */
-  async postJSON<T>(path: string, body: object = {}, options?: RequestOptions): Promise<T> {
+  async postJSON<T>(
+    path: string,
+    body: object = {},
+    options?: RequestOptions & { headers?: HeadersInit },
+  ): Promise<T> {
     const requestId = newRequestId()
     const traceId = newRequestId()
     const display = options?.display ?? 'foreground'
@@ -120,14 +124,14 @@ export class Requester {
       options?.timeoutMs ?? 15_000,
     )
     try {
+      const headers = new Headers(options?.headers)
+      headers.set('X-Request-ID', requestId)
+      headers.set('X-Trace-ID', traceId)
+      headers.set('Content-Type', 'application/json')
       const response = await fetch(path, {
         method: 'POST',
         credentials: 'include',
-        headers: {
-          'X-Request-ID': requestId,
-          'X-Trace-ID': traceId,
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify(body),
         signal,
       })
@@ -154,10 +158,11 @@ export class Requester {
       this.emit({ phase: 'finish', ...lifecycle })
       return result
     } catch (error) {
-      cleanup()
       const normalized = normalizeError(error, requestId, traceId, abortSource())
       this.emit({ phase: 'finish', ...lifecycle, error: normalized })
       throw normalized
+    } finally {
+      cleanup()
     }
   }
 

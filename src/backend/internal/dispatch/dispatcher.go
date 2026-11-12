@@ -69,6 +69,8 @@ type Dispatcher struct {
 	opts   Options // 不可变配置（New 注入）
 	events Events  // 事件回调（New 注入）
 
+	catalogAccessSynced sync.Map // first connection after panel startup provisions the full catalog
+
 	flushMu      sync.Mutex
 	flushPending map[int64]bool // 存在即有投递在运行，true 表示需要再次扫描
 
@@ -805,9 +807,21 @@ func (d *Dispatcher) OnAgentConnect(ctx context.Context, serverID int64) {
 	}
 	d.Flush(ctx, serverID)
 	// 自愈：服务器上有未生效的共享端点时重新 reconcile（覆盖命令丢失/死信场景）。
-	endpoints, err := d.st.NonActiveEndpointsByServer(ctx, serverID)
+	_, alreadySynced := d.catalogAccessSynced.LoadOrStore(serverID, true)
+	var endpoints []store.SharedEndpoint
+	var err error
+	if alreadySynced {
+		endpoints, err = d.st.NonActiveEndpointsByServer(ctx, serverID)
+	} else {
+		endpoints, err = d.st.SharedEndpointsByServer(ctx, serverID)
+		if nodeErr := d.provisionCatalogNodes(ctx, serverID); nodeErr != nil {
+			log.Printf("dispatch: provision catalog nodes on server %d: %v", serverID, nodeErr)
+			d.catalogAccessSynced.Delete(serverID)
+		}
+	}
 	if err != nil {
-		log.Printf("dispatch: list non-active endpoints for server %d: %v", serverID, err)
+		d.catalogAccessSynced.Delete(serverID)
+		log.Printf("dispatch: list shared endpoints for server %d: %v", serverID, err)
 		return
 	}
 	for _, ep := range endpoints {

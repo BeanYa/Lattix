@@ -7,42 +7,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { TRAFFIC_UNITS, type TrafficUnit } from '@/lib/user-subscription'
-import type { ExternalSubscriptionMode } from '@/lib/types'
-
-import { EXTERNAL_MODE_LABELS } from './external-mode'
-
-export function ExternalModeSelect({
-  value,
-  onChange,
-  disabled,
-}: {
-  value: ExternalSubscriptionMode
-  onChange: (mode: ExternalSubscriptionMode) => void
-  disabled?: boolean
-}) {
-  return (
-    <Select
-      value={value}
-      items={(Object.keys(EXTERNAL_MODE_LABELS) as ExternalSubscriptionMode[]).map((mode) => ({
-        value: mode,
-        label: EXTERNAL_MODE_LABELS[mode],
-      }))}
-      onValueChange={(next) => next && onChange(next as ExternalSubscriptionMode)}
-      disabled={disabled}
-    >
-      <SelectTrigger className="w-24" aria-label="引入模式">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {(Object.keys(EXTERNAL_MODE_LABELS) as ExternalSubscriptionMode[]).map((mode) => (
-          <SelectItem key={mode} value={mode}>
-            {EXTERNAL_MODE_LABELS[mode]}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  )
-}
 
 export function TrafficLimitInput({
   value,

@@ -51,6 +51,28 @@ describe('Requester', () => {
     expect(events[1]).toMatchObject({ phase: 'finish', method: 'GET' })
   })
 
+  it('sends async preferences with the raw JSON request headers', async () => {
+    const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
+      Promise.resolve(jsonResponse({ id: 'job-1', status: 'queued' }, 202)),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      new Requester().postJSON(
+        '/api/sub/token/template-config/reset',
+        {},
+        {
+          headers: { Prefer: 'respond-async' },
+        },
+      ),
+    ).resolves.toEqual({ id: 'job-1', status: 'queued' })
+
+    const headers = new Headers(fetchMock.mock.calls[0]?.[1]?.headers)
+    expect(headers.get('Prefer')).toBe('respond-async')
+    expect(headers.get('Content-Type')).toBe('application/json')
+    expect(headers.get('X-Request-ID')).toMatch(/^[0-9a-f]{32}$/)
+  })
+
   it('returns data from a valid envelope and emits a balanced lifecycle', async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) =>
       Promise.resolve(jsonResponse(envelope('OK', { username: 'admin' }))),
@@ -261,7 +283,7 @@ describe('Requester', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    const result = await new Requester().postObserved<{ id: number }>('/api/user-group/create', {
+    const result = await new Requester().postObserved<{ id: number }>('/api/link-group/create', {
       name: 'admin',
     })
 

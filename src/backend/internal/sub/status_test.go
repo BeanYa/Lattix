@@ -11,7 +11,7 @@ import (
 	"lattix/shared"
 )
 
-func TestSubStatusUsesEffectiveGroupAssignments(t *testing.T) {
+func TestSubStatusUsesCatalogAcrossLegacyAssignments(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -58,7 +58,7 @@ func TestSubStatusUsesEffectiveGroupAssignments(t *testing.T) {
 				t.Fatal(err)
 			}
 			items, warnings, err := server.itemsForUser(ctx, user)
-			if err != nil || len(warnings) != 0 || len(items) != 2 {
+			if err != nil || len(warnings) != 0 || len(items) != 3 {
 				t.Fatalf("subscription items=%+v warnings=%v err=%v", items, warnings, err)
 			}
 			rec := httptest.NewRecorder()
@@ -86,13 +86,13 @@ func TestSubStatusUsesEffectiveGroupAssignments(t *testing.T) {
 				}
 			}
 			slices.Sort(labels)
-			if !slices.Equal(labels, []string{"group-a", "group-b"}) {
-				t.Fatalf("status links=%v, want group-a and group-b exactly once", labels)
+			if !slices.Equal(labels, []string{"group-a", "group-b", "outside"}) {
+				t.Fatalf("status links=%v, want all three published chains exactly once", labels)
 			}
 		})
 	}
 
-	// Direct nodes retained on a grouped user must be hidden just as in the subscription.
+	// Standalone allocations coexist with the managed catalog.
 	directServer, err := st.CreateServer(ctx, store.ServerDraft{Alias: "direct", Address: "direct.example.com", BootstrapToken: "tok-direct", MachineType: store.MachineTypeDirect})
 	if err != nil {
 		t.Fatal(err)
@@ -112,11 +112,11 @@ func TestSubStatusUsesEffectiveGroupAssignments(t *testing.T) {
 		t.Fatal(err)
 	}
 	links, err := server.subscriptionLinkStatus(httptest.NewRequest("GET", "/", nil), user, statusData)
-	if err != nil || len(links) != 2 {
-		t.Fatalf("grouped user with direct node: links=%+v err=%v, want only 2 grouped chains", links, err)
+	if err != nil || len(links) != 4 {
+		t.Fatalf("grouped user with direct node: links=%+v err=%v, want three catalog chains and one standalone node", links, err)
 	}
 
-	// Users outside groups retain their directly assigned nodes and chains.
+	// The same catalog is visible to a user with no legacy group.
 	outsideUserID, err := st.InsertUser(ctx, "outside", "00000000-0000-0000-0000-0000000000bb", "outside-token", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -132,12 +132,15 @@ func TestSubStatusUsesEffectiveGroupAssignments(t *testing.T) {
 		t.Fatal(err)
 	}
 	links, err = server.subscriptionLinkStatus(httptest.NewRequest("GET", "/", nil), outsideUser, statusData)
-	if err != nil || len(links) != 2 {
-		t.Fatalf("ungrouped user: links=%+v err=%v, want direct node and assigned chain", links, err)
+	if err != nil || len(links) != 4 {
+		t.Fatalf("ungrouped user: links=%+v err=%v, want three catalog chains and one standalone node", links, err)
 	}
-	labels := []string{links[0].Label, links[1].Label}
+	var labels []string
+	for _, link := range links {
+		labels = append(labels, link.Label)
+	}
 	slices.Sort(labels)
-	if !slices.Equal(labels, []string{"direct-node", "outside"}) {
-		t.Fatalf("ungrouped user links=%v, want direct-node and outside", labels)
+	if !slices.Equal(labels, []string{"direct-node", "group-a", "group-b", "outside"}) {
+		t.Fatalf("ungrouped user links=%v, want standalone node and all catalog chains", labels)
 	}
 }

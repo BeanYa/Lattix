@@ -19,7 +19,8 @@ import (
 // （订阅页自助保存），生效优先级 强制级 > 用户级 > 面板级（非强制指派/默认）。
 // v29: 服务器周体检——server_test_tasks.source 区分手动/自动；新增
 // server_inspection_runs 保存面板侧摘要历史（Agent 仍只保留最后一份完整报告）。
-const schemaVersion = 29
+// v30: 用户订阅隐藏项与持久发布队列，随 Schema 建表。
+const schemaVersion = 30
 
 type columnMigration struct {
 	name       string
@@ -46,6 +47,11 @@ func initializeSchema(db *sql.DB) error {
 	if version < schemaVersion {
 		if err := migrateSchema(tx); err != nil {
 			return fmt.Errorf("migrate schema from version %d to %d: %w", version, schemaVersion, err)
+		}
+		if version < 30 {
+			if err := migrateSubscriptionCatalogAccess(tx); err != nil {
+				return fmt.Errorf("migrate subscription catalog access: %w", err)
+			}
 		}
 		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion)); err != nil {
 			return fmt.Errorf("record schema version: %w", err)

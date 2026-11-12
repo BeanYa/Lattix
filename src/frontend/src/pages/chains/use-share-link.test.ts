@@ -16,7 +16,6 @@ function user(overrides: Partial<SubUser>): SubUser {
     node_ids: [],
     chain_ids: [],
     effective_chain_ids: [],
-    user_group_ids: [],
     chain_assignments: [],
     traffic: null,
     expires_at: null,

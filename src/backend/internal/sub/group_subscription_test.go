@@ -11,7 +11,7 @@ import (
 	"lattix/shared"
 )
 
-func TestSubscriptionItemsUseGroups(t *testing.T) {
+func TestSubscriptionCatalogReplacesLegacyGroups(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(":memory:")
 	if err != nil {
@@ -43,18 +43,18 @@ func TestSubscriptionItemsUseGroups(t *testing.T) {
 	if _, err := st.CreateUserGroup(ctx, "青铜会员", []int64{member}, []int64{lgID}); err != nil {
 		t.Fatal(err)
 	}
-	// outside 直接分配 chainA（对照：非分组用户只含直接分配）
+	// A legacy direct assignment does not limit catalog visibility.
 	if _, _, err := st.SetUserChains(ctx, outside, []int64{chainA}); err != nil {
 		t.Fatal(err)
 	}
-	// 分组用户也预置直接分配（验证遮蔽）
+	// A legacy group member can also have a direct assignment.
 	if _, _, err := st.SetUserChains(ctx, member, []int64{chainA}); err != nil {
 		t.Fatal(err)
 	}
 
 	nodes, _ := st.ListNodes(ctx)
-	memberItems, memberWarnings := New(st, nil, nil).subscriptionItems(
-		httptest.NewRequest("GET", "/sub/test", nil), &store.User{ID: member, UUID: "00000000-0000-0000-0000-0000000000aa"}, nodes)
+	memberItems, memberWarnings, _ := New(st, nil, nil).subscriptionItems(
+		httptest.NewRequest("GET", "/sub/test", nil), &store.User{ID: member, UUID: "00000000-0000-0000-0000-0000000000aa"}, nodes, nil)
 	if len(memberWarnings) != 0 {
 		t.Fatalf("member warnings = %v", memberWarnings)
 	}
@@ -73,15 +73,13 @@ func TestSubscriptionItemsUseGroups(t *testing.T) {
 	if chainNames != 2 || extCount != 2 {
 		t.Fatalf("member chains=%d ext=%d, want 2/2", chainNames, extCount)
 	}
-	outsideItems, _ := New(st, nil, nil).subscriptionItems(
-		httptest.NewRequest("GET", "/sub/test", nil), &store.User{ID: outside, UUID: "00000000-0000-0000-0000-0000000000bb"}, nodes)
-	if len(outsideItems) != 1 {
-		t.Fatalf("outside items = %d, want 1: %+v", len(outsideItems), outsideItems)
+	outsideItems, _, _ := New(st, nil, nil).subscriptionItems(
+		httptest.NewRequest("GET", "/sub/test", nil), &store.User{ID: outside, UUID: "00000000-0000-0000-0000-0000000000bb"}, nodes, nil)
+	if len(outsideItems) != 4 {
+		t.Fatalf("outside items = %d, want 4: %+v", len(outsideItems), outsideItems)
 	}
 
-	// 直连节点遮蔽：给 member 直接分配一个普通 vless 节点（非链出口节点，避免被
-	// exitIDs 过滤使断言空洞），分组用户订阅仍为 4 条（直连节点不出现）；
-	// 非分组用户同一节点照常可见。
+	// Standalone allocations are visible for both users.
 	directServer, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "direct-srv", Address: "direct.example.com", BootstrapToken: "tok-d", MachineType: store.MachineTypeDirect, CountryCode: "US"})
 	directConfig, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Network: shared.NetworkTCP, Template: json.RawMessage(`{}`)})
 	directNode, _ := st.InsertNode(ctx, "direct-node", directServer, shared.ProtocolVLESS, nil, directConfig)
@@ -98,14 +96,10 @@ func TestSubscriptionItemsUseGroups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(memberItems) != 4 {
-		t.Fatalf("分组用户直连节点应被遮蔽: items = %d, want 4: %+v", len(memberItems), memberItems)
+	if len(memberItems) != 5 {
+		t.Fatalf("member items = %d, want 5", len(memberItems))
 	}
-	for _, item := range memberItems {
-		if item.node.ID == directNode {
-			t.Fatalf("分组用户订阅不应含直连节点: %+v", item.node)
-		}
-	}
+
 	outsideItems, _, err = New(st, nil, nil).itemsForUser(ctx, &store.User{ID: outside, UUID: "00000000-0000-0000-0000-0000000000bb"})
 	if err != nil {
 		t.Fatal(err)
@@ -120,19 +114,22 @@ func TestSubscriptionItemsUseGroups(t *testing.T) {
 		t.Fatalf("非分组用户应能看到直连节点: %+v", outsideItems)
 	}
 
-	// 原子性：从链路分组移除外部订阅 → 分组用户订阅外部节点消失
+	// Editing a link group does not change either user's catalog. Hiding the
+	// external source removes both of its child nodes in one operation.
 	if err := st.UpdateLinkGroup(ctx, lgID, "普通组", []int64{chainA, chainB}, nil); err != nil {
 		t.Fatal(err)
 	}
-	memberItems, _ = New(st, nil, nil).subscriptionItems(
-		httptest.NewRequest("GET", "/sub/test", nil), &store.User{ID: member, UUID: "00000000-0000-0000-0000-0000000000aa"}, nodes)
-	if len(memberItems) != 2 {
-		t.Fatalf("after remove ext sub, items = %d, want 2", len(memberItems))
+	s := New(st, nil, nil)
+	req := httptest.NewRequest("GET", "/sub/test", nil)
+	user := &store.User{ID: member}
+	visible, _, err := s.subscriptionItems(req, user, nil, nil)
+	if err != nil || len(visible) != 4 {
+		t.Fatalf("after legacy group edit: %d items, %v", len(visible), err)
 	}
-	for _, item := range memberItems {
-		if item.external != nil {
-			t.Fatalf("外部订阅应整体移除: %+v", item.external)
-		}
+	hidden := map[string]bool{subscriptionItemID("external", subID): true}
+	visible, _, err = s.subscriptionItems(req, user, nil, hidden)
+	if err != nil || len(visible) != 2 {
+		t.Fatalf("hiding external source: %d items, %v", len(visible), err)
 	}
 }
 
@@ -140,8 +137,8 @@ func TestSubscriptionItemsUseGroups(t *testing.T) {
 func newTestEndpointChain(t *testing.T, st *store.Store, name string) (int64, int64) {
 	t.Helper()
 	ctx := context.Background()
-	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: name+"-entry", Address: "entry.example.com", BootstrapToken: "tok-"+name+"-e", MachineType: store.MachineTypeDirect, CountryCode: "US"})
-	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: name+"-exit", Address: "exit.example.com", BootstrapToken: "tok-"+name+"-x", MachineType: store.MachineTypeDirect, CountryCode: "JP"})
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: name + "-entry", Address: "entry.example.com", BootstrapToken: "tok-" + name + "-e", MachineType: store.MachineTypeDirect, CountryCode: "US"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: name + "-exit", Address: "exit.example.com", BootstrapToken: "tok-" + name + "-x", MachineType: store.MachineTypeDirect, CountryCode: "JP"})
 	config, _ := json.Marshal(shared.VirtualConfig{Protocol: shared.ProtocolVLESS, Network: shared.NetworkTCP, Template: json.RawMessage(`{}`)})
 	endpoint, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 30001, "profile", config)
 	if err != nil {

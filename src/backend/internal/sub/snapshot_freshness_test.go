@@ -3,6 +3,7 @@ package sub
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -52,18 +53,13 @@ func TestSubscriptionRequestRefreshesQueuedChainChanges(t *testing.T) {
 	for _, change := range []string{"add", "edit", "delete"} {
 		t.Run(change, func(t *testing.T) {
 			ctx := context.Background()
-			st, userID := setupChainFixture(t, true)
+			st, userID := setupChainFixture(t, change != "add")
 			srv := New(st, nil, nil)
 			assignments, err := st.UserChainAssignments(ctx, userID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			chainID := assignments[0].ChainID
-			if change == "add" {
-				if _, _, err := st.SetUserChains(ctx, userID, nil); err != nil {
-					t.Fatal(err)
-				}
-			}
 			initial, err := srv.PublishUser(ctx, userID, "https://panel.example")
 			if err != nil {
 				t.Fatal(err)
@@ -71,7 +67,12 @@ func TestSubscriptionRequestRefreshesQueuedChainChanges(t *testing.T) {
 			want, unwanted := "JP直连Test", ""
 			switch change {
 			case "add":
-				if _, _, err := st.SetUserChains(ctx, userID, []int64{chainID}); err != nil {
+				chain, err := st.ChainByID(ctx, chainID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				realized := json.RawMessage(`{"port":443,"network":"tcp","public_key":"key","short_id":"short","server_name":"example.com"}`)
+				if err := st.SetSharedEndpointActive(ctx, chain.EndpointID, realized); err != nil {
 					t.Fatal(err)
 				}
 			case "edit":
@@ -130,7 +131,11 @@ func TestConcurrentSubscriptionRequestsPublishPendingVersionOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := st.SetUserChains(ctx, userID, nil); err != nil {
+	assignments, err := st.UserChainAssignments(ctx, userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteChain(ctx, assignments[0].ChainID); err != nil {
 		t.Fatal(err)
 	}
 	srv.EnqueueUsers([]int64{userID}, "https://panel.example")

@@ -19,7 +19,6 @@ import type {
   EditChainRequest,
   ExternalChain,
   ExternalSubscription,
-  ExternalSubscriptionMode,
   ChainTrafficBucket,
   CreateNodeRequest,
   CreateServerResponse,
@@ -64,8 +63,6 @@ import type {
   ExchangeRateSettings,
   SubUser,
   UpdateSettingsRequest,
-  UserGroup,
-  UserGroupInput,
   XrayNode,
 } from './types'
 
@@ -312,35 +309,24 @@ export const api = {
   createUser: (
     name: string,
     expiresAt?: string | null,
-    chainIds?: number[],
     sub?: {
       traffic_limit?: number
       traffic_reset_day?: number
       plan_name?: string
       app_url?: string
       routing?: SubscriptionRoutingProfile
-      external_subscriptions?: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }>
       is_trial?: boolean
       effective_at?: string | null
       duration_days?: number
-      user_group_id?: number
     },
   ) =>
     requester.postObserved<SubUser>('/api/user/create', {
       name,
       ...(expiresAt ? { expires_at: expiresAt } : {}),
-      ...(chainIds && chainIds.length ? { chain_ids: chainIds } : {}),
       ...(sub ?? {}),
     }),
   setUserDisabled: (userId: number, disabled: boolean) =>
     requester.postObserved<SubUser>('/api/user/update', { user_id: userId, disabled }),
-  setUserExternalSubscriptions: (
-    userId: number,
-    items: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }>,
-  ) =>
-    requester.postObserved<{
-      items: Array<{ subscription_id: number; mode: ExternalSubscriptionMode }>
-    }>('/api/user/set-external-subscriptions', { user_id: userId, items }),
   deleteUser: (userId: number) => requester.post<void>('/api/user/delete', { user_id: userId }),
   resetUserTraffic: (userId: number) =>
     requester.postObserved<void>('/api/user/reset-traffic', { user_id: userId }),
@@ -451,13 +437,6 @@ export const api = {
   linkGroupUpdate: (input: LinkGroupInput) =>
     requester.postObserved<{ id: number }>('/api/link-group/update', input),
   linkGroupDelete: (id: number) => requester.postObserved<null>('/api/link-group/delete', { id }),
-  userGroups: (options?: RequestOptions) =>
-    requester.get<UserGroup[]>('/api/user-group/list', undefined, options),
-  userGroupCreate: (input: UserGroupInput) =>
-    requester.postObserved<{ id: number }>('/api/user-group/create', input),
-  userGroupUpdate: (input: UserGroupInput) =>
-    requester.postObserved<{ id: number }>('/api/user-group/update', input),
-  userGroupDelete: (id: number) => requester.postObserved<null>('/api/user-group/delete', { id }),
   externalSubscriptionChains: (id: number, options?: RequestOptions) =>
     requester.get<ExternalChain[]>('/api/external-subscription/chains', { id }, options),
   createExternalSubscription: (body: {

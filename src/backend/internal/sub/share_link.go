@@ -19,31 +19,18 @@ type ShareLink struct {
 	Link     string `json:"link"`
 }
 
-// userAccess 解析用户视角的节点/链路可用性（§16）：分组用户只按分组派生
-// （allowed 恒空，单机节点不输出），非分组用户走直接分配（user_nodes +
-// user_chain_assignments）。订阅条目组装与分享链接导出共用。
+// userAccess returns legacy standalone allocations and credentials for the published catalog.
 func (s *Server) userAccess(ctx context.Context, user *store.User) (map[int64]bool, []store.UserChainAssignment, error) {
-	allowed := map[int64]bool{}
-	groupIDs, err := s.st.UserGroupIDsForUser(ctx, user.ID)
+	assigned, err := s.st.CatalogUserNodeIDs(ctx, user.ID)
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(groupIDs) > 0 {
-		chainAssignments, err := s.st.EffectiveUserChainAssignments(ctx, user.ID)
-		return allowed, chainAssignments, err
-	}
-	assigned, err := s.st.UserNodeIDs(ctx, user.ID)
-	if err != nil {
-		return nil, nil, err
-	}
+	allowed := make(map[int64]bool, len(assigned))
 	for _, id := range assigned {
 		allowed[id] = true
 	}
-	chainAssignments, err := s.st.UserChainAssignments(ctx, user.ID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return allowed, chainAssignments, nil
+	chainAssignments, err := s.st.CatalogUserChainAssignments(ctx, user.ID)
+	return allowed, chainAssignments, err
 }
 
 // shareUser 加载并校验导出目标用户：与订阅交付同一门槛
@@ -53,7 +40,7 @@ func (s *Server) shareUser(ctx context.Context, userID int64) (*store.User, erro
 	if err != nil {
 		return nil, err
 	}
-	if user.Expired || user.Disabled || user.QuotaExhausted || user.NotYetEffective(time.Now()) {
+	if blocked, _ := subscriptionBlocked(user, time.Now()); blocked || user.Disabled {
 		return nil, fmt.Errorf("用户不在订阅生效状态（过期/禁用/配额耗尽/未生效）")
 	}
 	return user, nil

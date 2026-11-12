@@ -124,7 +124,7 @@ func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	user, _ := st.UserByID(ctx, userID)
-	items, _ := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/sub", nil), user, nil)
+	items, _, _ := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/sub", nil), user, nil, nil)
 	if len(items) != 1 || items[0].credential != added[0].AccessUUID || items[0].credential == user.UUID {
 		t.Fatalf("subscription credential = %+v", items)
 	}
@@ -197,7 +197,7 @@ func TestSharedEndpointSubscriptionUsesAssignmentCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	disabled, _ := st.UserByID(ctx, userID)
-	if items, _ := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/sub", nil), disabled, nil); len(items) != 0 {
+	if items, _, _ := New(st, nil, nil).subscriptionItems(httptest.NewRequest("GET", "/sub/sub", nil), disabled, nil, nil); len(items) != 0 {
 		t.Fatalf("disabled user subscription contains %d items", len(items))
 	}
 }

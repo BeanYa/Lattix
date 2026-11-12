@@ -10,12 +10,7 @@ import {
   parseTrafficResetDay,
   type TrafficUnit,
 } from '@/lib/user-subscription'
-import type {
-  ExternalSubscriptionMode,
-  SubUser,
-  SubscriptionRoutingProfile,
-  UserGroup,
-} from '@/lib/types'
+import type { SubUser, SubscriptionRoutingProfile } from '@/lib/types'
 
 /** 生效模式：立即 或 定时（datetime-local，精确到秒）。 */
 export type EffectiveMode = 'now' | 'scheduled'
@@ -26,39 +21,33 @@ export type CreateUserMode = 'normal' | 'trial'
 
 export interface CreateUserFormState {
   name: string
-  userGroupId: string
   effectiveMode: EffectiveMode
   effectiveAt: string
   expiryMode: ExpiryMode
   expiresAt: string
   durationDays: string
-  linkSel: number[]
   trafficLimit: string
   trafficUnit: TrafficUnit
   resetDay: string
   planName: string
   appURL: string
   routing: SubscriptionRoutingProfile
-  ext: Record<number, ExternalSubscriptionMode>
 }
 
 const initialCreateUserForm = (mode: CreateUserMode): CreateUserFormState => ({
   name: '',
-  userGroupId: '',
   effectiveMode: 'now',
   effectiveAt: '',
   // 试用用户必须设置有效期；默认按天数 1 天，普通用户默认长期。
   expiryMode: mode === 'trial' ? 'days' : 'never',
   expiresAt: '',
   durationDays: mode === 'trial' ? '1' : '',
-  linkSel: [],
   trafficLimit: '',
   trafficUnit: 'GB',
   resetDay: '',
   planName: '',
   appURL: '',
   routing: defaultSubscriptionRouting,
-  ext: {},
 })
 
 /**
@@ -78,7 +67,6 @@ export function useCreateUserForm({
   const [createError, setCreateError] = useState('')
   const [created, setCreated] = useState<SubUser | null>(null)
   const [form, setForm] = useState<CreateUserFormState>(() => initialCreateUserForm('normal'))
-  const [groups, setGroups] = useState<UserGroup[]>([])
 
   const patch = (partial: Partial<CreateUserFormState>) =>
     setForm((current) => ({ ...current, ...partial }))
@@ -97,18 +85,6 @@ export function useCreateUserForm({
     setMode(nextMode)
     setForm(initialCreateUserForm(nextMode))
     setOpen(true)
-    // 打开即拉取用户分组（创建时直选分组，§分组）；失败静默，分组选项留空。
-    api
-      .userGroups()
-      .then(setGroups)
-      .catch(() => setGroups([]))
-  }
-
-  const onToggleCreateLink = (id: number, checked: boolean) => {
-    setForm((current) => ({
-      ...current,
-      linkSel: checked ? [...current.linkSel, id] : current.linkSel.filter((x) => x !== id),
-    }))
   }
 
   const onExpiresAtChange = (value: string) => {
@@ -117,22 +93,6 @@ export function useCreateUserForm({
       expiresAt: value,
       resetDay: current.resetDay ? current.resetDay : expiryDateTimeDay(value),
     }))
-  }
-
-  const toggleExt = (id: number, checked: boolean) => {
-    setForm((current) => {
-      const ext = { ...current.ext }
-      if (checked) {
-        ext[id] = 'stack'
-      } else {
-        delete ext[id]
-      }
-      return { ...current, ext }
-    })
-  }
-
-  const setExtMode = (id: number, mode: ExternalSubscriptionMode) => {
-    setForm((current) => ({ ...current, ext: { ...current.ext, [id]: mode } }))
   }
 
   const onCreate = async (e: FormEvent) => {
@@ -158,26 +118,16 @@ export function useCreateUserForm({
       const effectiveAt =
         form.effectiveMode === 'scheduled' ? localDateTimeToRFC3339(form.effectiveAt) : null
       const expiresAt = form.expiryMode === 'until' ? localDateTimeToRFC3339(form.expiresAt) : null
-      const { data: res, observeId } = await api.createUser(
-        form.name.trim(),
-        expiresAt,
-        form.linkSel,
-        {
-          traffic_limit: trafficLimit,
-          traffic_reset_day: parseTrafficResetDay(form.resetDay),
-          plan_name: form.planName.trim(),
-          app_url: form.appURL.trim(),
-          routing: form.routing,
-          external_subscriptions: Object.entries(form.ext).map(([id, extMode]) => ({
-            subscription_id: Number(id),
-            mode: extMode,
-          })),
-          is_trial: mode === 'trial',
-          ...(effectiveAt ? { effective_at: effectiveAt } : {}),
-          ...(form.expiryMode === 'days' ? { duration_days: durationDays } : {}),
-          ...(form.userGroupId ? { user_group_id: Number(form.userGroupId) } : {}),
-        },
-      )
+      const { data: res, observeId } = await api.createUser(form.name.trim(), expiresAt, {
+        traffic_limit: trafficLimit,
+        traffic_reset_day: parseTrafficResetDay(form.resetDay),
+        plan_name: form.planName.trim(),
+        app_url: form.appURL.trim(),
+        routing: form.routing,
+        is_trial: mode === 'trial',
+        ...(effectiveAt ? { effective_at: effectiveAt } : {}),
+        ...(form.expiryMode === 'days' ? { duration_days: durationDays } : {}),
+      })
       if (observeId) showOperation({ observeId })
       setCreated(res)
       onSaved()
@@ -195,14 +145,10 @@ export function useCreateUserForm({
     createError,
     created,
     form,
-    groups,
     patch,
     openCreate,
     onOpenChange,
-    onToggleCreateLink,
     onExpiresAtChange,
-    toggleExt,
-    setExtMode,
     onCreate,
   }
 }

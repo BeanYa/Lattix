@@ -630,7 +630,6 @@ export interface SubUser {
   node_ids: number[]
   chain_ids: number[]
   effective_chain_ids: number[]
-  user_group_ids: number[]
   chain_assignments: Array<{
     id: number
     chain_id: number
@@ -1208,7 +1207,6 @@ export interface LinkGroup {
   external_subscriptions: LinkGroupExternalSubscription[]
   chain_count: number
   external_subscription_count: number
-  user_group_names: string[]
   created_at: string
 }
 
@@ -1217,23 +1215,6 @@ export interface LinkGroupInput {
   name: string
   chain_ids: number[]
   external_subscriptions: { subscription_id: number; mode: ExternalSubscriptionMode }[]
-}
-
-export interface UserGroup {
-  id: number
-  name: string
-  user_ids: number[]
-  link_group_ids: number[]
-  member_count: number
-  link_group_count: number
-  created_at: string
-}
-
-export interface UserGroupInput {
-  id?: number
-  name: string
-  user_ids: number[]
-  link_group_ids: number[]
 }
 
 // 流量统计（/api/stats/traffic/*）：纵览、时序与维度分解。

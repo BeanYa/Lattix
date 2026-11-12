@@ -70,7 +70,7 @@ type ChainHop struct {
 	NodeID           int64 // 仅出口跳：业务 nodes.id
 	Status           string
 	Error            string
-	ForwardPort      int // entry 跳 = 订阅端口（监听侧）
+	ForwardPort      int    // entry 跳 = 订阅端口（监听侧）
 	Address          string // 本跳所选公网地址（空 = 跟随服务器默认地址；引用语义，消费时 ResolveServerAddress 实时校验回退）
 	PortalPort       int
 	PortalPublicKey  string
@@ -406,7 +406,10 @@ func ChainHopPieces(hops []ChainHop, i int) []string {
 // ChainExitNodeIDs 返回全部链出口业务节点 id 集合（订阅排除单机条目用，§21）。
 func (s *Store) ChainExitNodeIDs(ctx context.Context) (map[int64]bool, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT DISTINCT service_node_id FROM chains WHERE service_node_id != 0 AND deleted_at IS NULL`)
+		`SELECT service_node_id FROM chains WHERE service_node_id!=0 AND deleted_at IS NULL
+		UNION SELECT json_extract(r.snapshot,'$.service_node_id') FROM chains c
+		JOIN chain_revisions r ON r.id=c.published_revision_id
+		WHERE c.deleted_at IS NULL AND json_extract(r.snapshot,'$.service_node_id')>0`)
 	if err != nil {
 		return nil, fmt.Errorf("list chain exit nodes: %w", err)
 	}

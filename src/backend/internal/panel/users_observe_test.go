@@ -262,3 +262,39 @@ func TestCreateUserObservePublishFailureWarns(t *testing.T) {
 		t.Fatalf("发布失败应计入警告, obs = %+v", obs)
 	}
 }
+
+func assertObserveAwaitingRegenerate(t *testing.T, srv *Server, env groupEnv, kind string, watched []int64) {
+	t.Helper()
+	if env.ObserveID == "" {
+		t.Fatalf("envelope 未携带 observe_id: %+v", env)
+	}
+	if !shared.ValidMessageID(env.ObserveID) {
+		t.Fatalf("observe_id 非法: %q", env.ObserveID)
+	}
+	obs, ok := srv.observes.Get(env.ObserveID)
+	if !ok {
+		t.Fatalf("观察 %s 不存在", env.ObserveID)
+	}
+	if obs.Kind != kind {
+		t.Fatalf("观察 kind = %s, want %s", obs.Kind, kind)
+	}
+	if obs.Status != progress.StatusRunning {
+		t.Fatalf("handler 返回后观察应为 running（等待重生成回调）, status = %s (obs = %+v)", obs.Status, obs)
+	}
+	if obs.Stage != "regenerate" || obs.Percent != 0 {
+		t.Fatalf("观察应停在 regenerate 0%%: stage = %s percent = %d", obs.Stage, obs.Percent)
+	}
+	for _, id := range watched {
+		srv.observes.NotifyUserPublished(id, nil)
+	}
+	obs, ok = srv.observes.Get(env.ObserveID)
+	if !ok {
+		t.Fatalf("观察 %s 在通知后消失", env.ObserveID)
+	}
+	if obs.Status != progress.StatusDone {
+		t.Fatalf("全部 watched 用户通知后观察应 done, status = %s (obs = %+v)", obs.Status, obs)
+	}
+	if obs.Percent != 100 || obs.Stage != "regenerate" {
+		t.Fatalf("完成观察 percent/stage = %d/%s, want 100/regenerate", obs.Percent, obs.Stage)
+	}
+}
