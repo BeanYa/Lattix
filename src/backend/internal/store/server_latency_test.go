@@ -343,3 +343,102 @@ func TestLatencyProbeTargetsDeduplicate(t *testing.T) {
 		t.Fatalf("tcp targets = %d, want 1", tcpTargets)
 	}
 }
+
+// TestLatencyProbeTargetsAfterServerDeletionCascade 复现线上事故序列：
+// 删除服务器 → 链路被级联失效（invalid，published_revision_id 保留）→ 面板重启时
+// 测速轮展开已发布链路快照。快照仍引用已删除服务器，展开时必须跳过悬空边，
+// 不得解引用 nil 服务器（原缺陷：natPublicPort 空指针 panic 导致面板反复重启）。
+func TestLatencyProbeTargetsAfterServerDeletionCascade(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_, _, exitID := latencyTargetsFixture(t, st, false)
+	chains, err := st.ListChains(ctx)
+	if err != nil || len(chains) != 1 {
+		t.Fatalf("chains = %+v err=%v", chains, err)
+	}
+	if err := st.InvalidateChainForServerDeletion(ctx, chains[0].ID, exitID, "服务器已删除"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteServerCascade(ctx, exitID); err != nil {
+		t.Fatal(err)
+	}
+	targets, err := st.LatencyProbeTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 0 {
+		t.Fatalf("deleted-server probe targets must be skipped, got %+v", targets)
+	}
+}
+
+// TestPublishedLatencyEdgesSkipsDeletedServer 防御性覆盖：发布快照引用的服务器
+// 已不在 servers 表（级联删除/数据漂移），直连段（下游缺失）与反向段（上游缺失）
+// 的展开都必须跳过悬空边而不是 panic。
+func TestPublishedLatencyEdgesSkipsDeletedServer(t *testing.T) {
+	cases := []struct {
+		name    string
+		reverse bool
+		deleted func(entry, exit int64) int64
+	}{
+		{name: "direct downstream missing", reverse: false, deleted: func(_, exit int64) int64 { return exit }},
+		{name: "reverse upstream missing", reverse: true, deleted: func(entry, _ int64) int64 { return entry }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st, err := Open(":memory:")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			entryID, _, exitID := latencyTargetsFixture(t, st, tc.reverse)
+			if err := st.DeleteServerCascade(ctx, tc.deleted(entryID, exitID)); err != nil {
+				t.Fatal(err)
+			}
+			edges, err := st.PublishedLatencyEdges(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(edges) != 0 {
+				t.Fatalf("edges must skip deleted servers, got %+v", edges)
+			}
+		})
+	}
+}
+
+// TestPublishedLatencyEdgesExcludesInvalidChains 失效链的 published_revision_id 作为
+// 历史保留，但它不再是已发布（在跑）链路：不得再产出测速边（与订阅目录口径一致）。
+func TestPublishedLatencyEdgesExcludesInvalidChains(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	_, _, exitID := latencyTargetsFixture(t, st, false)
+	chains, err := st.ListChains(ctx)
+	if err != nil || len(chains) != 1 {
+		t.Fatalf("chains = %+v err=%v", chains, err)
+	}
+	if err := st.InvalidateChainForServerDeletion(ctx, chains[0].ID, exitID, "服务器已删除"); err != nil {
+		t.Fatal(err)
+	}
+	invalid, err := st.ChainByID(ctx, chains[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if invalid.Status != ChainStatusInvalid || invalid.PublishedRevisionID == 0 {
+		t.Fatalf("precondition: chain = %+v, want invalid with published revision", invalid)
+	}
+	edges, err := st.PublishedLatencyEdges(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 0 {
+		t.Fatalf("invalid chain must not export latency edges, got %+v", edges)
+	}
+}

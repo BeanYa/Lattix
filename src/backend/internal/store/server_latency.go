@@ -125,9 +125,13 @@ func (s *Store) PublishedLatencyEdges(ctx context.Context) ([]ServerLatencyEdge,
 	for i := range servers {
 		byID[servers[i].ID] = &servers[i]
 	}
+	// 仅展开仍在跑的已发布链路：invalid（如服务器删除后级联失效）与 deleted 链的
+	// published_revision_id 作为历史保留，但其快照不再是生效拓扑——继续展开会把
+	// 已删除服务器当作测速目标（与订阅目录 catalogChain 口径一致）。
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id, r.snapshot FROM chains c
 		JOIN chain_revisions r ON r.id=c.published_revision_id
-		WHERE c.deleted_at IS NULL AND c.published_revision_id != 0 ORDER BY c.id`)
+		WHERE c.deleted_at IS NULL AND c.status NOT IN (?, ?) AND c.published_revision_id != 0
+		ORDER BY c.id`, ChainStatusInvalid, ChainStatusDeleted)
 	if err != nil {
 		return nil, fmt.Errorf("query published chains: %w", err)
 	}
@@ -160,8 +164,10 @@ func (s *Store) PublishedLatencyEdges(ctx context.Context) ([]ServerLatencyEdge,
 				if port < 0 {
 					port = 0
 				}
-				toSrv := byID[to]
-				if toSrv == nil {
+				// 历史发布快照可能引用已删除服务器（删除服务器只清除工作行，revision
+				// 快照保留历史）：两端任一不在 servers 表时跳过该悬空边，不能解引用 nil。
+				toSrv, fromSrv := byID[to], byID[from]
+				if toSrv == nil || fromSrv == nil {
 					return
 				}
 				// hop 地址引用（§9）：目标跳所选公网地址可用则用之，否则跟随服务器默认地址。
@@ -227,7 +233,12 @@ func (s *Store) LatencyProbeTargets(ctx context.Context) (map[int64][]ServerLate
 }
 
 // natPublicPort 将监听端口按服务器 allowed_ports 段换算为公网侧端口（无段原样返回）。
+// srv 为空表示发布快照引用的服务器已不存在：无 NAT 信息，按原端口返回（调用方的
+// 悬空边过滤会跳过该边），保证展开快照时不会空指针崩溃。
 func natPublicPort(srv *Server, listen int) int {
+	if srv == nil {
+		return listen
+	}
 	ranges, err := shared.ParsePortRanges(srv.AllowedPorts)
 	if err != nil || len(ranges) == 0 {
 		return listen

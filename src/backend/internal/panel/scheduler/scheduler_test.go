@@ -144,3 +144,43 @@ func TestInspectionScheduleNextUsesCalendarTime(t *testing.T) {
 		t.Fatalf("next = %s, want %s", next, want)
 	}
 }
+
+// TestTaskSchedulerRecoversFromTaskPanic 验证单个任务 panic 不会拖垮面板进程：
+// 调度器 goroutine 位于 net/http 的 recover 之外，任务内缺陷必须被就地恢复并记为
+// 任务错误，其余任务与后续轮次继续运行（原事故：测速任务空指针 panic 使面板
+// 反复崩溃重启）。
+func TestTaskSchedulerRecoversFromTaskPanic(t *testing.T) {
+	scheduler := NewTaskScheduler(func(context.Context) *time.Location { return time.UTC })
+	var runs atomic.Int32
+	second := make(chan struct{}, 1)
+	scheduler.Register(ScheduledTask{
+		Name:       "panics",
+		RunOnStart: true,
+		Trigger:    func(context.Context) TaskTrigger { return IntervalTrigger(5 * time.Millisecond) },
+		Run: func(context.Context) error {
+			if runs.Add(1) == 1 {
+				panic("boom")
+			}
+			select {
+			case second <- struct{}{}:
+			default:
+			}
+			return nil
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan struct{})
+	go func() { scheduler.Run(ctx); close(finished) }()
+	select {
+	case <-second:
+	case <-time.After(time.Second):
+		cancel()
+		<-finished
+		t.Fatal("scheduler stopped after task panic")
+	}
+	cancel()
+	<-finished
+	if got := runs.Load(); got < 2 {
+		t.Fatalf("runs = %d, want scheduler to keep running after panic", got)
+	}
+}

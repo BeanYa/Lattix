@@ -5,7 +5,9 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"time"
@@ -192,6 +194,19 @@ func (s *TaskScheduler) markFinished(result taskResult, next time.Time) {
 	s.status[result.name] = status
 }
 
+// runTaskSafely 执行一轮任务并把 panic 转换为任务错误：调度器 goroutine 位于
+// net/http 的 recover 之外，任一任务 panic 都会终止整个面板进程（原事故：测速任务
+// 空指针 panic 导致面板反复崩溃重启）。就地恢复并记录堆栈，其余任务继续调度。
+func runTaskSafely(name string, run func(context.Context) error, ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("panel: scheduled task %s panicked: %v\n%s", name, r, debug.Stack())
+			err = fmt.Errorf("scheduled task %s panicked: %v", name, r)
+		}
+	}()
+	return run(ctx)
+}
+
 func (s *TaskScheduler) Run(ctx context.Context) {
 	tasks := s.Snapshot()
 	now := time.Now()
@@ -220,7 +235,7 @@ func (s *TaskScheduler) Run(ctx context.Context) {
 				runCtx, cancel = context.WithTimeout(ctx, task.Timeout)
 			}
 			defer cancel()
-			err := task.Run(runCtx)
+			err := runTaskSafely(name, task.Run, runCtx)
 			result := taskResult{name: name, started: started, finished: time.Now(), err: err}
 			select {
 			case results <- result:
