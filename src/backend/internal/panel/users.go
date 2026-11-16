@@ -201,7 +201,9 @@ type subscriptionProfileInput struct {
 	QuanXTemplateID     string   `json:"quanx_template_id"`
 	Forced              bool     `json:"forced"` // 勾选覆盖 → 强制级；不勾选 → 面板级
 	// 以下为 GET DTO 的只读回显字段：前端把 routing 对象原样回传，本接口忽略它们
-	//（用户级字段仅在订阅页修改，面板侧只读，保存时原样保留）。
+	//（用户级字段仅在订阅页修改，面板侧只读，保存时原样保留）。readJSON 使用
+	// DisallowUnknownFields，DTO 新增字段必须同步声明在这里，否则整个保存会 400。
+	UserConfigured              bool     `json:"user_configured"`
 	AssignedPortableTemplateID  string   `json:"assigned_portable_template_id"`
 	AssignForcedPortable        bool     `json:"assign_forced_portable"`
 	AssignedMihomoTemplateID    string   `json:"assigned_mihomo_template_id"`
