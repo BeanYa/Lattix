@@ -735,3 +735,93 @@ func TestAdvanceChainHy2HopPorts(t *testing.T) {
 		t.Fatalf("端到端链入口跳不应携带 Hy2Target: %+v", fwd.Forward)
 	}
 }
+
+// TestAdvanceChainHy2EntryTerminatedPublishesRealized 回归：2 跳入口终结 hy2 链（入口
+// endpoint + 出口共享监听、末段 transport=hy2、无 forward piece）在端点回执的同一次
+// 推进中镜像节点并发布快照。发布快照的 ServiceRealized 必须带出口 realized——曾因在
+// 镜像重读节点前绑定 exitNode 指针，把 pending/空 realized 的旧节点写进 revision，
+// 入口端点路由（ReconcileSharedEndpoint）取不到端口而不渲染 hy2 outbound。
+func TestAdvanceChainHy2EntryTerminatedPublishesRealized(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(t.TempDir() + "/t.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	entryID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "entry", Address: "entry.test", BootstrapToken: "tok1", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Entry"})
+	exitID, _ := st.CreateServer(ctx, store.ServerDraft{Alias: "exit", Address: "exit.test", BootstrapToken: "tok2", MachineType: store.MachineTypeDirect, CountryCode: "JP", Location: "Exit"})
+	svcCfg := json.RawMessage(`{"protocol":"hysteria","template":{}}`)
+	epSvc, _, err := st.EnsureProtocolSharedEndpoint(ctx, exitID, shared.ProtocolHysteria2, 0, svcCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entryCfg := json.RawMessage(`{"protocol":"vless","template":{}}`)
+	epEntry, _, err := st.EnsureSharedEndpoint(ctx, entryID, shared.ProtocolVLESS, 0, "entry-profile", entryCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 入口端点先落地（面板建链路径：端点 apply 回执后链才推进），避免发布后入口未生效降级。
+	if err := st.SetSharedEndpointActive(ctx, epEntry.ID, json.RawMessage(`{"port":8443,"public_key":"pk","short_id":"sid","server_name":"www.example.com"}`)); err != nil {
+		t.Fatal(err)
+	}
+	dep, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
+		Name: "hy2-entry", ServiceServerID: exitID, ServiceProtocol: shared.ProtocolHysteria2,
+		ServiceConfig: svcCfg, EndpointID: epEntry.ID, ServiceEndpointID: epSvc.ID,
+		ServiceUUID: "svc-hy2-entry", TrafficMultiplierMilli: 1000,
+		Hops: []store.InitialChainHop{
+			{ServerID: entryID, Role: store.HopRoleEntry, Transport: "hy2"},
+			{ServerID: exitID, Role: store.HopRoleExit},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := &fakeRequester{online: map[int64]bool{entryID: true, exitID: true}}
+	d := New(st, req, Options{}, Events{})
+	if err := d.StartChain(ctx, dep.ChainID); err != nil {
+		t.Fatal(err)
+	}
+	// 出口共享监听回执 active → 出口节点镜像 realized，同一次推进继续到发布。
+	epRealized := json.RawMessage(`{"port":1443,"sni":"cdn.example.com","cert_sha256":"ab12","obfs_password":"ob","up_mbps":100,"down_mbps":200}`)
+	if err := d.efsm.Transition(ctx, epSvc.ID, store.EndpointStatusActive, "部署回执确认", epRealized); err != nil {
+		t.Fatal(err)
+	}
+	// 发布会触发入口端点重新下发（路由/客户端变化）：回执后链恢复 active。
+	if err := d.efsm.Transition(ctx, epEntry.ID, store.EndpointStatusActive, "部署回执确认",
+		json.RawMessage("{\"port\":8443,\"public_key\":\"pk\",\"short_id\":\"sid\",\"server_name\":\"www.example.com\"}")); err != nil {
+		t.Fatal(err)
+	}
+	chain, err := st.ChainByID(ctx, dep.ChainID)
+	if err != nil || chain.Status != store.ChainStatusActive {
+		t.Fatalf("链状态 %s，期望 active（%v）", chain.Status, err)
+	}
+	published, err := st.PublishedChainRevision(ctx, dep.ChainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pubRC shared.RealizedConfig
+	if err := json.Unmarshal(published.Snapshot.ServiceRealized, &pubRC); err != nil || pubRC.Port != 1443 {
+		t.Fatalf("发布快照 realized 应为端点镜像: %s", published.Snapshot.ServiceRealized)
+	}
+	// 用户分配后入口端点路由必须以 hy2 outbound 直拨出口（e2e 断言 A 配置含 hysteria）。
+	userID, err := st.InsertUser(ctx, "alice", "11111111-2222-3333-4444-555555555555", "sub-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.SetUserChains(ctx, userID, []int64{dep.ChainID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.ReconcileSharedEndpoint(ctx, epEntry.ID); err != nil {
+		t.Fatal(err)
+	}
+	cmd := lastHopCommand(t, st, shared.TypeApplySharedEndpoint, entryID)
+	var payload shared.ApplySharedEndpointPayload
+	if err := json.Unmarshal(cmd.Data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Routes) != 1 || payload.Routes[0].ExitProtocol != shared.ProtocolHysteria2 ||
+		payload.Routes[0].TargetPort != 1443 || payload.Routes[0].TargetAddress != "exit.test" {
+		t.Fatalf("入口端点路由应为 hy2 直拨出口: %+v", payload.Routes)
+	}
+}
+

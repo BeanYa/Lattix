@@ -191,7 +191,6 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		log.Printf("dispatch: chain %d exit node %d: %v", chainID, exit.NodeID, err)
 		return
 	}
-	exitNode = node
 	// hy2 出口共享监听（P4）：出口监听由共享端点承载，不走 apply_node。
 	// 端点未 active → 触发 reconcile 并等待回执（端点状态机 onEnter 触发受影响链的
 	// advance）；active → 镜像 realized 到出口节点（幂等）后继续本调用内的后续阶段
@@ -220,6 +219,9 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			return
 		}
 	}
+	// 发布快照的 realized 取镜像后的最新节点（hy2 共享监听会在此重读节点，
+	// 提前绑定指针会把 pending/空 realized 的旧对象写进 revision，端点路由随之缺 outbound）。
+	exitNode = node
 	if endpointID != 0 && len(hops) == 1 {
 		if hops[0].Status != store.HopStatusActive {
 			if err := d.st.SetChainHopStatus(ctx, hops[0].ID, store.HopStatusActive, ""); err != nil {
