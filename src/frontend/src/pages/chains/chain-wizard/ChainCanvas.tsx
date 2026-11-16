@@ -10,7 +10,6 @@ import {
   INTERNET_R,
   entryPortPoint,
   exitPortPoint,
-  portEditableRole,
 } from './chain-canvas'
 import { fitViewport, panViewport, screenToWorld, zoomAt, type Point } from './canvas-viewport'
 import { routeCanvasEdge } from './canvas-edge-routing'
@@ -81,7 +80,9 @@ export function ChainCanvas({
       edges.flatMap((edge) => {
         const from = endpoint(edge.from, true),
           to = endpoint(edge.to, false)
-        return from && to ? [[edge.from, routeCanvasEdge(from, to, obstacles)] as const] : []
+        return from && to
+          ? [[edge.from + '->' + edge.to, routeCanvasEdge(from, to, obstacles)] as const]
+          : []
       }),
     )
     return { obstacles, endpoint, routes }
@@ -332,11 +333,12 @@ export function ChainCanvas({
       >
         <svg className="cw-wires" width="1" height="1" aria-label="拓扑连线">
           {edges.map((edge) => {
-            const r = geometry.routes.get(edge.from)
+            const edgeKey = edge.from + '->' + edge.to
+            const r = geometry.routes.get(edgeKey)
             if (!r) return null
             const label = `断开连线：${name(edge.from)} → ${name(edge.to)}`
             return (
-              <g key={edge.from}>
+              <g key={edgeKey}>
                 <path
                   className={cn(
                     'cw-wire',
@@ -354,12 +356,12 @@ export function ChainCanvas({
                   aria-label={label}
                   onClick={(event) => {
                     event.stopPropagation()
-                    controller.edgeClick(edge.from)
+                    controller.edgeClick(edge.from, edge.to)
                   }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault()
-                      controller.edgeClick(edge.from)
+                      controller.edgeClick(edge.from, edge.to)
                     }
                   }}
                 >
@@ -392,14 +394,23 @@ export function ChainCanvas({
         />
         {nodes.map((node) => {
           const role = controller.roleOf(node.id)
+          const roles = controller.rolesOf(node.id)
+          const portRole = controller.portRoleOf(node.id)
+          const roleLabel =
+            [roles.entry && '入口', roles.middle && '中转', roles.exit && '出口']
+              .filter(Boolean)
+              .join('·') || '未接入'
           return (
             <ChainNodeCard
               key={node.id}
               node={node}
               server={controller.serverById.get(node.serverId)}
               role={role}
-              portEditable={portEditableRole(role)}
+              roleLabel={roleLabel}
+              portEditable={portRole.editable}
+              portLabel={portRole.label}
               hasIssue={controller.issueNodeIds.has(node.id)}
+              hasWarning={controller.warningNodeIds.has(node.id)}
               isConnecting={Boolean(connecting && connecting.from !== node.id)}
               portEditing={controller.portEditingId === node.id}
               outgoingConnected={Boolean(controller.outgoingTargetOf(node.id))}

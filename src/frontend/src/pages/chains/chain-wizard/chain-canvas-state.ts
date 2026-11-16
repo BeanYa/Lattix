@@ -6,7 +6,7 @@ import {
   INTERNET_NODE_ID,
   INTERNET_POS,
   INTERNET_R,
-  MAX_HOPS,
+  MAX_CANVAS_NODES,
   exitPortPoint,
   type CanvasNode,
   type CanvasEdge,
@@ -39,7 +39,7 @@ export type CanvasAction =
   | { type: 'connect-move'; point: Point }
   | { type: 'connect-complete'; to: string }
   | { type: 'connect-cancel' }
-  | { type: 'disconnect'; from: string }
+  | { type: 'disconnect'; from: string; to: string }
   | { type: 'reset' }
   | { type: 'prefill'; nodes: CanvasNode[]; edges: CanvasEdge[] }
 
@@ -65,16 +65,19 @@ function connectionError(state: CanvasState, from: string, to: string): string {
     return '请选择服务器入口或 Internet 入口'
   if (from === INGRESS_NODE_ID && to === INTERNET_NODE_ID && state.nodes.length > 0)
     return '请先将入网流量连接到服务器'
-  // Cycle check precedes occupancy so cycles receive a meaningful error as well.
+  // 分支/汇合允许一个节点多条出边、多条入边；只拦环（from 可由 to 沿现有出边到达）。
+  const stack = [to]
   const seen = new Set<string>()
-  let cursor: string | undefined = to
-  while (cursor && !seen.has(cursor)) {
+  while (stack.length > 0) {
+    const cursor = stack.pop()
+    if (!cursor) break
     if (cursor === from) return '该连接会形成环路，请选择下游节点'
+    if (seen.has(cursor)) continue
     seen.add(cursor)
-    cursor = state.edges.find((e) => e.from === cursor)?.to
+    for (const edge of state.edges) {
+      if (edge.from === cursor) stack.push(edge.to)
+    }
   }
-  if (state.edges.some((e) => e.to === to && e.from !== from))
-    return '该入口已有连接，请先断开原连线'
   return ''
 }
 
@@ -82,7 +85,7 @@ function connectionError(state: CanvasState, from: string, to: string): string {
 export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasState {
   switch (action.type) {
     case 'add': {
-      if (state.nodes.length >= MAX_HOPS || !finite(action.point)) return state
+      if (state.nodes.length >= MAX_CANVAS_NODES || !finite(action.point)) return state
       const id = `n${state.nextNodeId}`
       const node: CanvasNode = {
         id,
@@ -167,11 +170,20 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
       const from = state.connecting.from
       const error = connectionError(state, from, action.to)
       if (error) return { ...state, connectionError: error }
+      if (state.edges.some((edge) => edge.from === from && edge.to === action.to)) {
+        return { ...state, connecting: null, connectionError: '' }
+      }
+      // 连到服务器即不再直通 Internet：移除自动生成的末端占位线；反向（连 Internet）
+      // 保留既有服务器出边，从而支持「A→B 且 A→Internet」的分支。
+      const kept =
+        action.to === INTERNET_NODE_ID
+          ? state.edges
+          : state.edges.filter((edge) => !(edge.from === from && edge.to === INTERNET_NODE_ID))
       return {
         ...state,
         connecting: null,
         connectionError: '',
-        edges: [...state.edges.filter((e) => e.from !== from), { from, to: action.to }],
+        edges: [...kept, { from, to: action.to }],
       }
     }
     case 'connect-cancel':
@@ -179,7 +191,7 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
     case 'disconnect':
       return {
         ...state,
-        edges: state.edges.filter((e) => e.from !== action.from),
+        edges: state.edges.filter((e) => !(e.from === action.from && e.to === action.to)),
         connecting: null,
         connectionError: '',
       }
@@ -193,9 +205,9 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
         nextNodeId:
           Math.max(0, ...action.nodes.map((n) => Number(n.id.replace(/^n/, '')) || 0)) + 1,
       }
-      // Imported connections obey the same one-input/one-output and cycle rules as editing.
+      // Imported connections obey the same cycle rule as editing；分支/汇合均允许。
       for (const edge of action.edges) {
-        if (imported.edges.some((e) => e.from === edge.from)) continue
+        if (imported.edges.some((e) => e.from === edge.from && e.to === edge.to)) continue
         if (!connectionError(imported, edge.from, edge.to)) imported.edges.push({ ...edge })
       }
       if (!imported.nodes.length) imported.edges = createCanvasState().edges

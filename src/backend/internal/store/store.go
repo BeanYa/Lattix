@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS servers (
     country_code TEXT    NOT NULL DEFAULT '', -- ISO 3166-1 alpha-2；名称模板国家/国旗来源
     location     TEXT    NOT NULL DEFAULT '', -- 管理员填写的城市/机房位置
     non_direct   INTEGER NOT NULL DEFAULT 0, -- 非直连（大陆不可直连）：Ban 告警巡检跳过该服务器
+    kind         TEXT    NOT NULL DEFAULT 'managed', -- managed（被控服务器）| external（外部直链未托管节点）
+    external_link TEXT  NOT NULL DEFAULT '', -- 外部直链原文（kind=external）
+    external_config TEXT NOT NULL DEFAULT '', -- 解析后的外部出口规格 JSON（shared.ExternalExit，kind=external）
     credential_epoch INTEGER NOT NULL DEFAULT 1,
     credential_committed INTEGER NOT NULL DEFAULT 0,
     credential_pending_token TEXT NOT NULL DEFAULT '',

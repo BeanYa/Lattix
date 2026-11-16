@@ -61,6 +61,40 @@ it('服务器卡的三网测速行显示完整标签（省份+运营商）', asy
   }
 })
 
+it('外部直链服务器标注「仅可作最后一跳」，仍可拖入画布', async () => {
+  const external = {
+    ...server,
+    id: 2,
+    alias: 'socks-us',
+    kind: 'external',
+    machine_type: 'nat',
+    connection_state: 'external',
+    external_exit: { protocol: 'socks', address: '198.51.100.9', port: 1080 },
+  } as unknown as Server
+  try {
+    await act(async () =>
+      root.render(
+        <CanvasServerPanel
+          servers={[server, external]}
+          probesByServer={new Map()}
+          probeTitle={null}
+          usedCount={() => 0}
+          canAddMore
+          onAdd={() => {}}
+          emptyCanvas
+        />,
+      ),
+    )
+    const items = [...container.querySelectorAll('.cw-server-item')]
+    expect(items[0].textContent).not.toContain('仅可作最后一跳')
+    expect(items[1].textContent).toContain('仅可作最后一跳')
+    // 校验会提示「只能作最后一跳」，因此服务器条目仍允许拖入画布。
+    expect(items[1].getAttribute('draggable')).toBe('true')
+  } finally {
+    await act(async () => root.render(null))
+  }
+})
+
 it('拖动服务器使用完整画布节点作为预览，光标在卡片中心', async () => {
   await act(async () =>
     root.render(

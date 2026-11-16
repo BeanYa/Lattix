@@ -9,11 +9,37 @@ import type {
   CreateChainRequest,
   CreateNodeRequest,
   EditChainRequest,
+  ExternalExit,
   Server,
   XrayNode,
 } from '@/lib/types'
 
-import { MAX_HOPS, inboundCapable, type ChainFormTopology } from './chain-wizard/chain-canvas'
+import {
+  MAX_HOPS,
+  inboundCapable,
+  isExternalServer,
+  normalizePortInput,
+  type CanvasNode,
+  type ChainFormTopology,
+} from './chain-wizard/chain-canvas'
+
+/** 结果预览的一跳：端口为编辑器中所见值（null = 自动分配，部署后才生成真实端口）。 */
+export interface ChainPreviewHop {
+  server: Server
+  role: 'entry' | 'middle' | 'exit'
+  /** 未托管外部直链节点（只能作末位跳）。 */
+  external: boolean
+  externalExit: ExternalExit | null
+  port: number | null
+}
+
+/** 结果预览的一条链路（由画布枚举出的路径 + 详情表单派生）。 */
+export interface ChainPreviewPath {
+  key: string
+  servers: Server[]
+  hops: ChainPreviewHop[]
+  externalExit: ExternalExit | null
+}
 
 // 与后端 shared 包保持一致的协议/选项常量（出口节点协议表单复用 Nodes 向导的 vless+reality 字段）。
 export const DIRECT_PROTOCOLS = [
@@ -226,10 +252,79 @@ export interface ChainEditParse {
   exitPort: string
 }
 
+/** 入口区块 reality 参数回填（entry_config 缺失/解析失败返回 null，退回默认值）。 */
+function parseEntryReality(chain: Chain): ReturnType<typeof parseRealityTemplate> | null {
+  if (!chain.entry_config) return null
+  try {
+    const entryTemplate =
+      chain.entry_config.template === undefined
+        ? {}
+        : parseConfigRecord(chain.entry_config.template)
+    return parseRealityTemplate(entryTemplate)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 外部直链出口链的编辑回填：没有出口业务节点（service_node_id=0）与 service_config；
+ * 入口服务器 A 与普通链路一样可配置协议细节，因此从 entry_config（入口共享端点配置）
+ * 回填传输/安全层/证书/flow/encryption 与 Reality 子参数；出口细节保持默认即可。
+ */
+function parseExternalExitEdit(chain: Chain): { ok: true; value: ChainEditParse } {
+  const entry = chain.entry_config
+  const entryReality = parseEntryReality(chain)
+  const network = String(entry?.network || 'tcp')
+  const security = String(entry?.security || (isPlainNetwork(network) ? 'none' : 'reality'))
+  const shortId = entryReality?.shortId ?? ''
+  const dest = entryReality?.dest ?? DEFAULT_REALITY_DEST
+  const serverNames = entryReality?.serverNames ?? ['dl.google.com']
+  const destPreset = inferRealityDestPreset(dest, serverNames)
+  return {
+    ok: true,
+    value: {
+      // 外部出口端口来自链接，画布末位不回填出口节点端口。
+      exitPort: '',
+      details: {
+        name: chain.name,
+        protocol: 'vless',
+        network,
+        security,
+        certMode: String(entry?.cert_mode || 'selfsign'),
+        tlsDomain: String(entry?.tls_domain || ''),
+        fingerprint: String(entry?.fingerprint || 'chrome'),
+        flow: String(
+          entry?.flow ||
+            (network === 'tcp' && security === 'reality' ? 'xtls-rprx-vision' : 'none'),
+        ),
+        encryption: String(entry?.encryption || 'none'),
+        serviceName: String(entry?.service_name || 'grpc'),
+        path: String(entry?.path || '/'),
+        mode: String(entry?.mode || 'auto'),
+        host: String(entry?.host || ''),
+        shortId,
+        destPreset,
+        dest,
+        serverNames: serverNames.join(','),
+        // 兼容入口协议区块字段（外部直链出口的入口协议已由主表单承载）。
+        entryProtocolEnabled: true,
+        entryShortId: shortId,
+        entryDestPreset: destPreset,
+        entryDest: dest,
+        entryServerNames: serverNames.join(','),
+        entryFingerprint: String(entry?.fingerprint || 'chrome'),
+        trafficMultiplier: chain.traffic_multiplier || '1.000',
+      },
+    },
+  }
+}
+
 export function parseChainEdit(
   chain: Chain,
   nodes: XrayNode[],
 ): { ok: true; value: ChainEditParse } | { ok: false; error: string } {
+  // 外部直链出口没有出口业务节点/ service_config，走外部出口分支（不能按出口配置不存在报错）。
+  if (chain.service_external) return parseExternalExitEdit(chain)
   const service = nodes.find((node) => node.id === chain.service_node_id)
   if (!service && !chain.service_config) {
     return { ok: false, error: '链路出口配置不存在' }
@@ -250,18 +345,7 @@ export function parseChainEdit(
   // 入口协议区块回填（P4）：vless 出口链的 entry_config 即主协议端点，不算独立入口区块；
   // 其余协议存在 entry_config 时勾选回填，子参数解析失败退回默认（留空自动生成）。
   const hasEntryBlock = chain.entry_config != null && String(virtual.protocol ?? '') !== 'vless'
-  let entryReality: ReturnType<typeof parseRealityTemplate> | null = null
-  if (hasEntryBlock) {
-    try {
-      const entryTemplate =
-        chain.entry_config!.template === undefined
-          ? {}
-          : parseConfigRecord(chain.entry_config!.template)
-      entryReality = parseRealityTemplate(entryTemplate)
-    } catch {
-      entryReality = null
-    }
-  }
+  const entryReality = hasEntryBlock ? parseEntryReality(chain) : null
   return {
     ok: true,
     value: {
@@ -309,21 +393,36 @@ export function parseChainEdit(
   }
 }
 
+/** 单条路径的提交载荷（create/edit 共用；外部出口路径的 node 为占位节点）。 */
+interface ChainPayload {
+  hops: ChainHopInput[]
+  entry: ChainHopInput
+  middle: ChainHopInput[]
+  exit: ChainHopInput
+  node: CreateNodeRequest
+  entry_port?: number
+  entry_node?: EditChainRequest['entry_node']
+}
+
 /**
  * 链路向导第二步（协议/细节）的表单状态与提交逻辑。
- * 拓扑由第一步画布推导后经 topology 注入，本 hook 不再持有服务器选择状态。
+ * 拓扑由第一步画布推导后经 topology/paths 注入，本 hook 不再持有服务器选择状态。
  */
 export function useChainForm({
   chains,
   servers,
   topology,
+  paths,
   onError,
   onSaved,
   showOperation,
 }: {
   chains: Chain[]
   servers: Server[]
+  /** 第一条合法链路的拓扑（名称模板/端口提示基准）。 */
   topology: ChainFormTopology
+  /** 画布校验枚举出的全部合法链路：每条简单路径创建一条链路。 */
+  paths: CanvasNode[][]
   onError: (message: string) => void
   onSaved: () => void
   showOperation: (opts: { observeId: string }) => void
@@ -338,11 +437,87 @@ export function useChainForm({
   const patch = (partial: Partial<ChainFormState>) =>
     setForm((current) => ({ ...current, ...partial }))
 
-  const isReality = REALITY_PROTOCOLS.includes(form.protocol)
-  const isHy2 = form.protocol === 'hysteria'
+  // 全部路径的末位都是外部直链节点（外部直链出口链）：此时协议表单承载入口服务器 A 的
+  // VLESS 参数（入口共享端点），协议固定 VLESS——与普通链路一样可配传输/安全层/证书。
+  const exitIsExternal =
+    paths.length > 0 &&
+    paths.every((path) => {
+      const exitNode = path[path.length - 1]
+      const server = exitNode
+        ? servers.find((candidate) => candidate.id === exitNode.serverId)
+        : undefined
+      return server !== undefined && isExternalServer(server)
+    })
+  const effectiveProtocol = exitIsExternal ? 'vless' : form.protocol
+  const isReality = REALITY_PROTOCOLS.includes(effectiveProtocol)
+  const isHy2 = effectiveProtocol === 'hysteria'
   const { chainType, entryId, middleIds, exitId, entryPort } = topology
   const selectedEntry = servers.find((s) => String(s.id) === entryId)
   const selectedExit = servers.find((s) => String(s.id) === exitId)
+  // 多链/外部出口：按每条路径的末位服务器聚合出口形态，并为结果预览准备好每一跳的
+  // 服务器、角色与「编辑器中所见」的端口（自动端口显示为自动，落地后才生成真实端口）。
+  const chainPaths: ChainPreviewPath[] = paths.map((path) => {
+    const pathServers: Server[] = []
+    const hops: ChainPreviewHop[] = []
+    path.forEach((node, index) => {
+      const server = servers.find((candidate) => candidate.id === node.serverId)
+      if (!server) return
+      pathServers.push(server)
+      const role: 'entry' | 'middle' | 'exit' =
+        path.length === 1
+          ? 'exit'
+          : index === 0
+            ? 'entry'
+            : index === path.length - 1
+              ? 'exit'
+              : 'middle'
+      const external = isExternalServer(server)
+      const externalExit = external ? (server.external_exit ?? null) : null
+      const typedPort = Number(normalizePortInput(node.port))
+      hops.push({
+        server,
+        role,
+        external,
+        externalExit,
+        // 外部节点端口来自链接；中间跳由后端自动分配；首/末跳取画布输入（空 = 自动）。
+        port: externalExit?.port ?? (role === 'middle' ? null : typedPort > 0 ? typedPort : null),
+      })
+    })
+    const exitServer = pathServers[pathServers.length - 1]
+    return {
+      key: path.map((node) => node.id).join('>'),
+      servers: pathServers,
+      hops,
+      externalExit:
+        exitServer && isExternalServer(exitServer) ? (exitServer.external_exit ?? null) : null,
+    }
+  })
+  // 结果预览名称：与提交时的派生规则一致（基准名 + 序号；留空显示自动生成）。
+  const previewBaseName = form.name.trim()
+  const chainPreviewNames = paths.map((_, index) => {
+    if (!previewBaseName) return paths.length > 1 ? `自动生成-${index + 1}` : '自动生成'
+    return paths.length > 1 ? `${previewBaseName}-${index + 1}` : previewBaseName
+  })
+  // 全部路径的末位都是外部直链节点时，详情步骤隐藏出口协议表单（协议取外部规格）。
+  const externalExits: ExternalExit[] = []
+  let exitConfigMissing = false
+  for (const entry of chainPaths) {
+    if (!entry.externalExit) {
+      const exitServer = entry.servers[entry.servers.length - 1]
+      if (exitServer && isExternalServer(exitServer)) exitConfigMissing = true
+      continue
+    }
+    const key = JSON.stringify(entry.externalExit)
+    if (!externalExits.some((exit) => JSON.stringify(exit) === key)) {
+      externalExits.push(entry.externalExit)
+    }
+  }
+  const externalExit: ExternalExit | null = externalExits[0] ?? null
+  // 入口共享端点预览：vless 出口 / 勾选入口协议区块的 hy2 / 外部直链出口链都会落到
+  // 入口共享监听（客户端以 VLESS+Reality 接入），预览据此在入口跳打「共享入口」标。
+  const entrySharedPreview =
+    !entryBlockLocked &&
+    (exitIsExternal || form.protocol === 'vless' || (isHy2 && form.entryProtocolEnabled))
   const selectedMiddleServers = middleIds.flatMap((id) => {
     const server = servers.find((candidate) => String(candidate.id) === id)
     return server ? [server] : []
@@ -393,6 +568,7 @@ export function useChainForm({
     onError('')
   }
 
+  // 外部直链出口链的表单承载入口 A 的 VLESS 细节，联动照常生效（协议固定 VLESS）。
   const onNetworkChange = (value: string | null) => {
     if (!value) return
     setForm((current) => ({
@@ -400,10 +576,10 @@ export function useChainForm({
       network: value,
       // 跨传输纠偏：vision flow 仅 tcp；security 按矩阵即时纠正（清理 #3）
       flow: value === 'tcp' ? current.flow : 'none',
-      security: coerceSecurity(current.protocol, value, current.security),
+      security: coerceSecurity(effectiveProtocol, value, current.security),
       // vless 明文传输必须有 VLESS Encryption 兜底（后端矩阵，前端即时纠正）
       encryption:
-        current.protocol === 'vless' && isPlainNetwork(value) && current.encryption === 'none'
+        effectiveProtocol === 'vless' && isPlainNetwork(value) && current.encryption === 'none'
           ? 'mlkem768'
           : current.encryption,
     }))
@@ -420,7 +596,7 @@ export function useChainForm({
   }
 
   const onProtocolChange = (value: string | null) => {
-    if (!value) return
+    if (!value || exitIsExternal) return
     setForm((current) => ({
       ...current,
       protocol: value,
@@ -437,190 +613,263 @@ export function useChainForm({
     }))
   }
 
-  const onSubmit = async (e: FormEvent) => {
-    e.preventDefault()
-    setCreateError('')
-    const resolvedName = form.name.trim() || randomChainName()
-    if (form.name.trim() && strictNameResult.error) {
-      setCreateError(strictNameResult.error)
-      return
-    }
-    if (!entryId || (chainType === 'relay' && (!exitId || middleIds.some((m) => !m)))) {
-      setCreateError('链路拓扑不完整，请回第一步画布补全')
-      return
-    }
-    const hopIds = chainType === 'direct' ? [entryId] : [entryId, ...middleIds, exitId]
-    if (hopIds.length > MAX_HOPS) {
-      setCreateError(`链长上限 ${MAX_HOPS} 跳（入口 + 中间跳 ≤2 + 出口）`)
-      return
-    }
-    if (new Set(hopIds).size !== hopIds.length) {
-      setCreateError('同一服务器在一条链中不重复')
-      return
-    }
-    // 直连唯一服务器、或中转的入口与中转跳必须有入站能力；中转出口任意（画布校验的提交前兜底）。
-    const inboundIds = chainType === 'direct' ? hopIds : hopIds.slice(0, -1)
-    for (const id of inboundIds) {
-      const srv = servers.find((s) => String(s.id) === id)
-      if (srv && !inboundCapable(srv)) {
-        setCreateError(`服务器 ${srv.alias} 无入站能力（仅出口档 NAT），不能作入口/中间跳`)
-        return
-      }
-    }
-    const nodeBody: CreateNodeRequest = {
-      name: resolvedName,
-      server_id: Number(chainType === 'direct' ? entryId : exitId),
-      protocol: form.protocol,
-    }
-    const exitPort = topology.port
-    if ((chainType === 'direct' ? entryPort : exitPort).trim()) {
-      nodeBody.port = Number(chainType === 'direct' ? entryPort : exitPort)
-    }
-    // 入口协议区块（P4，v1 固定 vless+reality，子参数留空自动生成）；仅多跳链可勾选。
-    // 存量无端点链锁定勾选（终审修复 I-2）：锁定时即使状态被绕过也不携带 entry_node。
-    let entryNode: EditChainRequest['entry_node']
-    if (form.protocol === 'hysteria') {
+  /** 把当前表单的协议细节写入节点载荷（protocol 显式传入：外部出口链用它构建入口 VLESS 端点）。 */
+  const applyProtocolDetails = (body: CreateNodeRequest, protocol: string): CreateNodeRequest => {
+    if (protocol === 'hysteria') {
       // hy2 恒 QUIC+TLS：证书模式复用 TLS 区域；矩阵外字段一律不提交（后端 400 兜底）。
-      nodeBody.cert_mode = form.certMode
+      body.cert_mode = form.certMode
       if (form.certMode === 'selfsign' && form.tlsDomain.trim()) {
-        nodeBody.tls_domain = form.tlsDomain.trim()
+        body.tls_domain = form.tlsDomain.trim()
       }
       if (form.obfsPassword.trim()) {
-        nodeBody.obfs_password = form.obfsPassword.trim()
+        body.obfs_password = form.obfsPassword.trim()
       }
       if (form.upMbps.trim()) {
-        nodeBody.up_mbps = Number(form.upMbps)
+        body.up_mbps = Number(form.upMbps)
       }
       if (form.downMbps.trim()) {
-        nodeBody.down_mbps = Number(form.downMbps)
+        body.down_mbps = Number(form.downMbps)
       }
       if (form.portHop === 'off' || form.portHop.trim()) {
-        nodeBody.port_hop = form.portHop.trim() // 'off' 或 'a-b'；'' = 默认开（后端自动分配）
+        body.port_hop = form.portHop.trim() // 'off' 或 'a-b'；'' = 默认开（后端自动分配）
       }
+      return body
     }
-    if (
-      (isHy2 || form.protocol === 'vless') &&
-      chainType === 'relay' &&
-      form.entryProtocolEnabled &&
-      !entryBlockLocked
-    ) {
-      entryNode = { protocol: 'vless', security: 'reality' }
-      if (form.entryShortId.trim()) entryNode.short_id = form.entryShortId.trim()
-      if (form.entryDest.trim()) entryNode.dest = form.entryDest.trim()
-      const entryNames = form.entryServerNames
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean)
-      if (entryNames.length > 0) entryNode.server_names = entryNames
-      entryNode.fingerprint = form.entryFingerprint
-    }
-    if (isReality) {
-      nodeBody.network = form.network
-      nodeBody.security = form.security
+    if (REALITY_PROTOCOLS.includes(protocol)) {
+      body.network = form.network
+      body.security = form.security
       if (form.network === 'ws' || form.network === 'httpupgrade') {
-        nodeBody.path = form.path.trim() || '/'
+        body.path = form.path.trim() || '/'
         if (form.host.trim()) {
-          nodeBody.host = form.host.trim()
+          body.host = form.host.trim()
         }
       }
       if (form.network === 'xhttp') {
-        nodeBody.path = form.path.trim() || '/'
-        nodeBody.mode = form.mode
+        body.path = form.path.trim() || '/'
+        body.mode = form.mode
         if (form.host.trim()) {
-          nodeBody.host = form.host.trim()
+          body.host = form.host.trim()
         }
       }
       if (form.network === 'grpc') {
-        nodeBody.service_name = form.serviceName.trim() || 'grpc'
+        body.service_name = form.serviceName.trim() || 'grpc'
       }
       if (form.security === 'reality') {
-        nodeBody.fingerprint = form.fingerprint
+        body.fingerprint = form.fingerprint
         if (form.shortId.trim()) {
-          nodeBody.short_id = form.shortId.trim()
+          body.short_id = form.shortId.trim()
         }
         if (form.dest.trim()) {
-          nodeBody.dest = form.dest.trim()
+          body.dest = form.dest.trim()
         }
         const names = form.serverNames
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean)
         if (names.length > 0) {
-          nodeBody.server_names = names
+          body.server_names = names
         }
       }
       if (form.security === 'tls') {
-        nodeBody.fingerprint = form.fingerprint
-        nodeBody.cert_mode = form.certMode
+        body.fingerprint = form.fingerprint
+        body.cert_mode = form.certMode
         // acme 的 tls_domain 由后端从落地服务器地址检测填充（前端不传）
         if (form.certMode === 'selfsign' && form.tlsDomain.trim()) {
-          nodeBody.tls_domain = form.tlsDomain.trim()
+          body.tls_domain = form.tlsDomain.trim()
         }
       }
+      if (protocol === 'vless') {
+        // vision 仅 tcp；vision + Encryption 允许组合（§15）；tls 下 vision 同样合法（§2）
+        body.flow = form.network === 'tcp' ? form.flow : 'none'
+        if (form.encryption !== 'none') {
+          body.encryption = form.encryption
+        }
+      }
+      return body
+    }
+    if (protocol === 'shadowsocks') {
+      body.method = form.method
+    }
+    if (protocol === 'vmess') {
+      body.cipher = form.cipher
+    }
+    if (protocol === 'dokodemo-door') {
+      body.target_address = form.targetAddress.trim()
+      body.target_port = Number(form.targetPort)
+    }
+    return body
+  }
+
+  /** 入口协议区块（托管出口链 / 混合图的外部路径）：v1 固定 VLESS+Reality 子参数。 */
+  const entryBlockPayload = (): NonNullable<EditChainRequest['entry_node']> => {
+    const entryNode: NonNullable<EditChainRequest['entry_node']> = {
+      protocol: 'vless',
+      security: 'reality',
+    }
+    if (form.entryShortId.trim()) entryNode.short_id = form.entryShortId.trim()
+    if (form.entryDest.trim()) entryNode.dest = form.entryDest.trim()
+    const entryNames = form.entryServerNames
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (entryNames.length > 0) entryNode.server_names = entryNames
+    entryNode.fingerprint = form.entryFingerprint
+    return entryNode
+  }
+
+  /** 单条路径 → 提交载荷（多链共享同一套协议参数；外部出口路径提交最小占位 node）。 */
+  const buildChainPayload = (path: CanvasNode[], name: string): ChainPayload => {
+    const first = path[0]
+    const last = path[path.length - 1]
+    const relay = path.length > 1
+    const exitNode = relay ? last : first
+    const exitServer = servers.find((server) => server.id === exitNode.serverId)
+    const exitExternal =
+      exitServer && isExternalServer(exitServer) ? exitServer.external_exit : undefined
+    // 外部直链出口：后端忽略 node 表单（协议/凭据取外部规格），只提交最小占位节点。
+    const nodeBody: CreateNodeRequest = exitExternal
+      ? { name, server_id: exitNode.serverId, protocol: 'vless' }
+      : applyProtocolDetails(
+          { name, server_id: exitNode.serverId, protocol: form.protocol },
+          form.protocol,
+        )
+    const entryPortValue = normalizePortInput(first.port)
+    if (!exitExternal) {
+      // 直连 = 入口端口复用为节点端口；中转 = 末位出口节点端口。
+      const exitPortValue = relay ? normalizePortInput(last.port) : entryPortValue
+      if (exitPortValue) nodeBody.port = Number(exitPortValue)
+    }
+    // 入口协议：外部直链出口恒挂入口共享端点，全部出口为外部时入口服务器 A 与普通链路
+    // 一样使用本表单的完整 VLESS 细节（传输/安全层/证书/reality 子参数）；混合图沿用
+    // 入口协议区块子参数（v1）。托管出口链保持原有入口区块行为。
+    let entryNode: EditChainRequest['entry_node']
+    if (relay && exitExternal !== undefined) {
+      entryNode = exitIsExternal
+        ? applyProtocolDetails({ name, server_id: exitNode.serverId, protocol: 'vless' }, 'vless')
+        : entryBlockPayload()
+    } else if (
+      relay &&
+      (isHy2 || form.protocol === 'vless') &&
+      form.entryProtocolEnabled &&
+      !entryBlockLocked
+    ) {
+      entryNode = entryBlockPayload()
+    }
+    // 逐跳地址：空串 = 跟随服务器默认地址，提交时不携带 address 字段。
+    const mkHop = (node: CanvasNode): ChainHopInput =>
+      node.address
+        ? { server_id: node.serverId, address: node.address }
+        : { server_id: node.serverId }
+    return {
+      hops: path.map(mkHop),
+      entry: mkHop(first),
+      middle: path.slice(1, -1).map(mkHop),
+      exit: mkHop(exitNode),
+      node: nodeBody,
+      entry_port: entryPortValue ? Number(entryPortValue) : undefined,
+      entry_node: entryNode,
+    }
+  }
+
+  const onSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    setCreateError('')
+    if (form.name.trim() && strictNameResult.error) {
+      setCreateError(strictNameResult.error)
+      return
+    }
+    if (paths.length === 0) {
+      setCreateError('没有可创建的链路，请回第一步画布补全拓扑')
+      return
+    }
+    // 编辑模式只维护既有单链：多路径请新建链路。
+    if (editingChainId !== null && paths.length > 1) {
+      setCreateError('编辑模式仅支持单条链路，多路径请新建链路')
+      return
+    }
+    // 画布校验的提交前兜底（镜像后端 400 文案）。
+    for (const path of paths) {
+      if (path.length > MAX_HOPS) {
+        setCreateError(`链长上限 ${MAX_HOPS} 跳（入口 + 中间跳 ≤2 + 出口）`)
+        return
+      }
+      for (let index = 0; index < path.length; index += 1) {
+        const node = path[index]
+        const srv = servers.find((candidate) => candidate.id === node.serverId)
+        // 服务器缺失由画布校验拦截；此处只做已知服务器的形态兜底。
+        if (!srv) continue
+        if (isExternalServer(srv)) {
+          if (index !== path.length - 1 || path.length === 1) {
+            setCreateError(`未托管服务器 ${srv.alias} 只能作为链路的最后一跳（出口）`)
+            return
+          }
+          if (!srv.external_exit) {
+            setCreateError(`未托管服务器 ${srv.alias} 的外部直链配置损坏，请重新保存该服务器`)
+            return
+          }
+          continue
+        }
+        if ((index === 0 || index < path.length - 1) && !inboundCapable(srv)) {
+          setCreateError(`服务器 ${srv.alias} 无入站能力（仅出口档 NAT），不能作入口/中间跳`)
+          return
+        }
+      }
+    }
+    // 出口节点表单只对托管出口链路生效：先做一次性校验，避免创建到一半才失败。
+    const hasManagedExit = paths.some((path) => {
+      const exitNode = path[path.length - 1]
+      const srv = servers.find((server) => server.id === exitNode.serverId)
+      return srv !== undefined && !isExternalServer(srv)
+    })
+    if (hasManagedExit && isReality) {
       if (form.security === 'none' && form.protocol === 'vless' && form.encryption === 'none') {
         setCreateError('vless 在安全层 none 下必须启用 VLESS Encryption')
         return
       }
-      if (form.protocol === 'vless') {
-        // vision 仅 tcp；vision + Encryption 允许组合（§15）；tls 下 vision 同样合法（§2）
-        nodeBody.flow = form.network === 'tcp' ? form.flow : 'none'
-        if (form.encryption !== 'none') {
-          nodeBody.encryption = form.encryption
-        }
-      }
     }
-    if (form.protocol === 'shadowsocks') {
-      nodeBody.method = form.method
-    }
-    if (form.protocol === 'vmess') {
-      nodeBody.cipher = form.cipher
-    }
-    if (form.protocol === 'dokodemo-door') {
+    if (hasManagedExit && form.protocol === 'dokodemo-door') {
       if (!form.targetAddress.trim() || !form.targetPort.trim()) {
         setCreateError('dokodemo-door 需要目标地址与目标端口')
         return
       }
-      nodeBody.target_address = form.targetAddress.trim()
-      nodeBody.target_port = Number(form.targetPort)
     }
+    // N>1 时每条链路名称 = 基准-1、基准-2……；基准为空时沿用随机名再拼序号。
+    const baseName = form.name.trim() || randomChainName()
+    const names =
+      paths.length > 1 ? paths.map((_, index) => `${baseName}-${index + 1}`) : [baseName]
+    const payloads = paths.map((path, index) => buildChainPayload(path, names[index]))
     setCreating(true)
-    // 逐跳地址：空串 = 跟随服务器默认地址，提交时不携带 address 字段。
-    const hopAddrList =
-      chainType === 'direct'
-        ? [topology.entryAddr]
-        : [topology.entryAddr, ...topology.middleAddrs, topology.exitAddr]
-    const mkHop = (id: string, addr: string | undefined): ChainHopInput =>
-      addr ? { server_id: Number(id), address: addr } : { server_id: Number(id) }
     try {
-      if (editingChainId !== null) {
-        const body: EditChainRequest = {
-          chain_id: editingChainId,
-          name: resolvedName,
-          hops: hopIds.map((id, i) => mkHop(id, hopAddrList[i])),
-          node: nodeBody,
-          traffic_multiplier: form.trafficMultiplier,
+      // 后端一次只接受一条链路：按预览顺序逐条入队，逐个展示观察进度。
+      for (let index = 0; index < payloads.length; index += 1) {
+        const payload = payloads[index]
+        if (editingChainId !== null) {
+          const body: EditChainRequest = {
+            chain_id: editingChainId,
+            name: names[index],
+            hops: payload.hops,
+            node: payload.node,
+            traffic_multiplier: form.trafficMultiplier,
+          }
+          if (payload.entry_port !== undefined) body.entry_port = payload.entry_port
+          if (payload.entry_node) body.entry_node = payload.entry_node
+          const { observeId } = await api.editChain(body)
+          if (observeId) showOperation({ observeId })
+        } else {
+          const body: CreateChainRequest = {
+            name: names[index],
+            hops: payload.hops,
+            entry: payload.entry,
+            middle: payload.middle,
+            exit: payload.exit,
+            node: payload.node,
+            traffic_multiplier: form.trafficMultiplier,
+          }
+          if (payload.entry_port !== undefined) body.entry_port = payload.entry_port
+          if (payload.entry_node) body.entry_node = payload.entry_node
+          const { observeId } = await api.createChain(body)
+          if (observeId) showOperation({ observeId })
         }
-        if (entryPort.trim()) body.entry_port = Number(entryPort)
-        if (entryNode) body.entry_node = entryNode
-        const { observeId } = await api.editChain(body)
-        if (observeId) showOperation({ observeId })
-      } else {
-        const body: CreateChainRequest = {
-          name: resolvedName,
-          hops: hopIds.map((id, i) => mkHop(id, hopAddrList[i])),
-          entry: mkHop(entryId, topology.entryAddr),
-          middle: middleIds.map((id, i) => mkHop(id, topology.middleAddrs[i])),
-          exit: mkHop(
-            chainType === 'direct' ? entryId : exitId,
-            chainType === 'direct' ? topology.entryAddr : topology.exitAddr,
-          ),
-          node: nodeBody,
-          traffic_multiplier: form.trafficMultiplier,
-        }
-        if (entryPort.trim()) body.entry_port = Number(entryPort)
-        if (entryNode) body.entry_node = entryNode
-        const { observeId } = await api.createChain(body)
-        if (observeId) showOperation({ observeId })
       }
       onSaved()
     } catch (err) {
@@ -638,10 +887,23 @@ export function useChainForm({
     patch,
     isReality,
     isHy2,
+    // 有效协议：全部出口为外部直链时固定 vless（表单承载入口 A 的 VLESS 细节）。
+    effectiveProtocol,
     topologyServers,
     hopIndexes,
     entryPortHint,
     entryBlockLocked,
+    // 多链：chainCount/chainPaths 供细节页展示将创建的链路列表；
+    // 外部直链出口：exitIsExternal 供细节页隐藏出口表单，externalExit(s) 提供只读摘要；
+    // entryBlockLocked 对这类链不适用（入口端点恒存在，entry_node 恒提交）。
+    chainCount: paths.length,
+    chainPaths,
+    chainPreviewNames,
+    entrySharedPreview,
+    exitIsExternal,
+    exitConfigMissing,
+    externalExit,
+    externalExits,
     strictNameResult,
     beginCreate,
     beginEdit,

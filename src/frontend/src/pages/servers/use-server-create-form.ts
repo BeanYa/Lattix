@@ -2,50 +2,27 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 
 import { api, errorMessage } from '@/lib/api'
 import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
-import type { CreateServerResponse, MachineType } from '@/lib/types'
+import type { CreateServerResponse } from '@/lib/types'
 
 import {
-  billingPayload,
-  defaultBilling,
-  defaultTraffic,
-  parsePortRows,
-  trafficPayload,
-  type BillingFormState,
-  type ServerFormPayload,
-  type TrafficFormState,
+  aliasAfterParse,
+  applyExternalLinkError,
+  applyExternalLinkPreview,
+  buildServerCreatePayload,
+  editExternalLink,
+  initialServerCreateForm,
+  switchServerType,
+  type ServerCreateFormState,
+  type ServerTypeChoice,
 } from './server-form-utils'
 
-export interface ServerCreateFormState {
-  alias: string
-  address: string
-  machineType: MachineType
-  tags: string[]
-  countryCode: string
-  location: string
-  nonDirect: boolean
-  portRows: string[]
-  billing: BillingFormState
-  traffic: TrafficFormState
-}
-
-function initialServerCreateForm(): ServerCreateFormState {
-  return {
-    alias: '',
-    address: '',
-    machineType: 'direct',
-    tags: [],
-    countryCode: '',
-    location: '',
-    nonDirect: false,
-    portRows: [''],
-    billing: defaultBilling(),
-    traffic: defaultTraffic(),
-  }
-}
+export type { ServerCreateFormState }
 
 /**
  * 添加服务器对话框的表单状态与提交逻辑。
- * 原为服务器页内一组扁平 useState，拆分时装订为单一表单状态对象。
+ * 原为服务器页内一组扁平 useState，拆分时装订为单一表单状态对象；
+ * 服务器类型三选一（独立 IP / NAT / 外部直链）与外部链接解析状态由
+ * server-form-utils 的纯函数驱动，便于测试。
  */
 export function useServerCreateForm({
   onCreated,
@@ -98,37 +75,54 @@ export function useServerCreateForm({
 
   const setCountry = (value: string) => patch({ countryCode: value, location: '' })
 
+  // 切换类型：清掉目标类型无关的输入（见 switchServerType），公共资料保留。
+  const setServerType = (serverType: ServerTypeChoice) =>
+    setForm((current) => switchServerType(current, serverType))
+
+  // 链接改动即视为未解析（回到已解析的原文时保留预览），提交时会被拦截；
+  // 同时清掉上一次提交的「请先解析链接」提示。
+  const setExternalLink = (link: string) => {
+    setCreateError('')
+    setForm((current) => ({ ...current, external: editExternalLink(current.external, link) }))
+  }
+
+  const parseExternalLink = async () => {
+    const link = form.external.link.trim()
+    if (!link) {
+      return
+    }
+    setForm((current) => ({
+      ...current,
+      external: { ...current.external, parsing: true, parseError: '' },
+    }))
+    try {
+      const preview = await api.parseExternalLink(link)
+      setCreateError('')
+      setForm((current) => {
+        const external = applyExternalLinkPreview(current.external, link, preview)
+        return external
+          ? { ...current, alias: aliasAfterParse(current.alias, preview.name), external }
+          : current
+      })
+    } catch (err) {
+      setForm((current) => {
+        const external = applyExternalLinkError(current.external, link, errorMessage(err))
+        return external ? { ...current, external } : current
+      })
+    }
+  }
+
   const onCreate = async (e: FormEvent) => {
     e.preventDefault()
     setCreateError('')
-    const body: ServerFormPayload = {
-      alias: form.alias.trim(),
-      machine_type: form.machineType,
-      country_code: form.countryCode,
-      location: form.location.trim(),
-      non_direct: form.nonDirect,
-      billing: billingPayload(form.billing),
-      traffic_plan: trafficPayload(form.traffic),
-    }
-    body.tags = form.tags
-    if (form.address.trim()) {
-      body.address = form.address.trim()
-    }
-    if (form.machineType === 'nat') {
-      if (!form.address.trim()) {
-        setCreateError('NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）')
-        return
-      }
-      const parsed = parsePortRows(form.portRows)
-      if ('error' in parsed) {
-        setCreateError(parsed.error)
-        return
-      }
-      body.allowed_ports = parsed.ranges
+    const result = buildServerCreatePayload(form)
+    if ('error' in result) {
+      setCreateError(result.error)
+      return
     }
     setCreating(true)
     try {
-      const res = await api.createServer(body)
+      const res = await api.createServer(result.body)
       onOpenChange(false)
       onCreated(res)
       reload()
@@ -150,6 +144,9 @@ export function useServerCreateForm({
     openCreate,
     onOpenChange,
     setCountry,
+    setServerType,
+    setExternalLink,
+    parseExternalLink,
     onCreate,
   }
 }

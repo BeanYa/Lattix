@@ -14,8 +14,11 @@ import { prefillCanvas } from './chain-canvas'
 import { CanvasServerPanel } from './CanvasServerPanel'
 import { ChainCanvas } from './ChainCanvas'
 import { ChainDetailsStep } from './ChainDetailsStep'
+import { ChainValidationSummary } from './ChainResultPreview'
 import { useChainCanvas } from './use-chain-canvas'
 
+// 结果预览复用链路详情（cg-chain-entry）的列表样式。
+import '../../chains.css'
 import './chain-wizard.css'
 
 /**
@@ -93,6 +96,7 @@ export function ChainWizardPage() {
     chains,
     servers,
     topology: canvas.formTopology,
+    paths: canvas.validation.paths,
     onError: setBootError,
     onSaved: () => navigate('/network/chains'),
     showOperation,
@@ -130,6 +134,9 @@ export function ChainWizardPage() {
   const linkColor = editingId ? `var(--panel-line-${editingId % 9})` : 'var(--panel-line-2)'
 
   const issues = useMemo(() => canvas.validation.issues, [canvas.validation])
+  // 编辑模式仍只维护一条既有链路：多路径画布不允许继续（请新建链路）。
+  const editMultiPath = editingId !== null && canvas.validation.paths.length > 1
+  const canProceed = canvas.validation.valid && !editMultiPath
   // 三网测速按服务器 ID 索引：节点卡与左侧服务器列表卡共用
   const probesByServer = useMemo(() => {
     const map = new Map<number, CatalogProbeRow[]>()
@@ -164,8 +171,10 @@ export function ChainWizardPage() {
         title={editingId ? '编辑链路' : '创建链路'}
         description={
           step === 1
-            ? '第一步：从左侧拖入服务器组建链路拓扑，从入网流量节点进入，末端连到 Internet 出口。'
-            : '第二步：配置出口协议与细节，保存后按出口到入口依次部署。'
+            ? '第一步：从左侧拖入服务器组建拓扑（可分支/汇合）；每条从入网流量通往 Internet 的路径都会创建一条链路。'
+            : editingId
+              ? '第二步：配置协议与细节；结果预览展示编辑后生效的链路。'
+              : `第二步：配置协议与细节；将按结果预览顺序创建 ${chainForm.chainCount} 条链路。`
         }
         actions={
           <>
@@ -184,8 +193,14 @@ export function ChainWizardPage() {
             {step === 1 ? (
               <Button
                 onClick={() => setStep(2)}
-                disabled={!canvas.validation.valid}
-                title={canvas.validation.valid ? undefined : '链路拓扑未通过校验，请先解决下方问题'}
+                disabled={!canProceed}
+                title={
+                  canProceed
+                    ? undefined
+                    : editMultiPath
+                      ? '编辑模式仅支持单条链路，请断开多余分支或新建链路'
+                      : '链路拓扑未通过校验，请先解决下方问题'
+                }
               >
                 下一步：协议与细节
               </Button>
@@ -219,9 +234,11 @@ export function ChainWizardPage() {
           <div className="cw-canvas-col">
             <div className="cw-canvas-toolbar">
               <span>
-                节点 <span className="cw-canvas-toolbar-count">{canvas.nodes.length}</span> / 4
+                节点 <span className="cw-canvas-toolbar-count">{canvas.nodes.length}</span>
               </span>
-              <span>拖动空白平移 · 点击出口再点入口连接 · 点击连线断开 · Esc 取消</span>
+              <span>
+                拖动空白平移 · 点击出口再点入口连接（可多路分支/汇合）· 点击连线断开 · Esc 取消
+              </span>
               <Button
                 variant="ghost"
                 size="xs"
@@ -238,7 +255,19 @@ export function ChainWizardPage() {
               probeTitle={probeTitle}
               linkColor={linkColor}
             />
+            <ChainValidationSummary
+              pathCount={canvas.validation.paths.length}
+              warnings={canvas.validation.warnings}
+              serverById={canvas.serverById}
+            />
             <div className="cw-issues" role="status">
+              {editMultiPath ? (
+                <span className="cw-issue">
+                  <TriangleAlertIcon aria-hidden />
+                  编辑模式仅支持单条链路：当前画布会生成 {canvas.validation.paths.length}{' '}
+                  条，请断开多余分支或新建链路
+                </span>
+              ) : null}
               {issues.map((issue, index) => (
                 <span
                   key={`${issue.code}-${issue.nodeId ?? 'canvas'}-${index}`}
@@ -257,8 +286,9 @@ export function ChainWizardPage() {
           panelShort={panelShort}
           chainType={canvas.formTopology.chainType}
           entryPort={canvas.formTopology.entryPort}
-          exitPort={canvas.formTopology.port}
           onBack={() => setStep(1)}
+          warnings={canvas.validation.warnings}
+          serverById={canvas.serverById}
         />
       )}
     </Page>

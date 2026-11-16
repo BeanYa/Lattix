@@ -65,8 +65,9 @@ import { useAppDialog } from '@/lib/app-dialog'
 import { formatByteRate, formatDateTime, humanizeBytes } from '@/lib/format'
 import { formatPortRange } from '@/lib/ports'
 import { providerWebsiteUrl } from '@/lib/provider-website'
-import { isServerOnline, serverConnectionLabel } from '@/lib/server-state'
+import { isServerOnline, serverConnectionLabel, supportsAgentActions } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
+import { externalExitTarget, externalTransportSummary } from '@/pages/servers/server-form-utils'
 import type {
   CatalogProbeRound,
   CatalogProbeRow,
@@ -150,6 +151,8 @@ function ServerActions({
 }: Omit<ServerMonitorProps, 'servers' | 'samples' | 'probes' | 'loading' | 'timezone'> & {
   server: Server
 }) {
+  // 未托管外部直链节点没有 Agent：相关动作整组隐藏（后端对这些动作一律返回 400）。
+  const agentActions = supportsAgentActions(server)
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -171,36 +174,42 @@ function ServerActions({
             <PencilIcon />
             编辑服务器
           </DropdownMenuItem>
-          {server.config_drift ? (
+          {agentActions && server.config_drift ? (
             <DropdownMenuItem onClick={() => onRepair(server)}>
               <WrenchIcon />
               修复配置漂移
             </DropdownMenuItem>
           ) : null}
-          {isServerOnline(server) ? (
+          {agentActions && isServerOnline(server) ? (
             <DropdownMenuItem onClick={() => onCleanupXray(server)}>
               <SparklesIcon />
               清理 Xray 缓存
             </DropdownMenuItem>
           ) : null}
-          {isServerOnline(server) ? (
+          {agentActions && isServerOnline(server) ? (
             <DropdownMenuItem onClick={() => onRebuildXray(server)}>
               <RotateCcwIcon />
               重建 Xray 配置
             </DropdownMenuItem>
           ) : null}
-          <DropdownMenuItem onClick={() => onUpgrade(server, 'xray')}>
-            <RefreshCwIcon />
-            升级 Xray
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onUpgrade(server, 'agent')}>
-            <ServerCogIcon />
-            升级 Agent
-          </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onRotateToken(server)}>
-            <RotateCcwKeyIcon />
-            {server.last_seen_at ? '刷新凭证' : '查看安装命令'}
-          </DropdownMenuItem>
+          {agentActions ? (
+            <DropdownMenuItem onClick={() => onUpgrade(server, 'xray')}>
+              <RefreshCwIcon />
+              升级 Xray
+            </DropdownMenuItem>
+          ) : null}
+          {agentActions ? (
+            <DropdownMenuItem onClick={() => onUpgrade(server, 'agent')}>
+              <ServerCogIcon />
+              升级 Agent
+            </DropdownMenuItem>
+          ) : null}
+          {agentActions ? (
+            <DropdownMenuItem onClick={() => onRotateToken(server)}>
+              <RotateCcwKeyIcon />
+              {server.last_seen_at ? '刷新凭证' : '查看安装命令'}
+            </DropdownMenuItem>
+          ) : null}
           {server.billing.enabled &&
           ['due_today', 'assumed_valid', 'expired'].includes(server.billing.status) ? (
             <DropdownMenuItem onClick={() => onRenew(server)}>
@@ -410,8 +419,45 @@ function ProbeRow({ row, timezone }: { row: CatalogProbeRow; timezone?: string }
 
 // ---------- 卡片 / 详情弹窗共用的概览区（§服务器详情复用卡片样式） ----------
 
-// CardOverviewSections 渲染资源四宫格、网络速率与剩余流量三段。
-function CardOverviewSections({ server, samples }: { server: Server; samples: ServerMetrics[] }) {
+// CardExternalSection 渲染未托管外部直链节点的出口摘要（无 Agent，无主机指标）。
+function CardExternalSection({ server }: { server: Server }) {
+  const exit = server.external_exit
+  return (
+    <section className="sv-card-net" aria-label="外部直链出口">
+      <div className="sv-net-row">
+        <span className="sv-net-label">
+          <CableIcon />
+          出口
+        </span>
+        <span className="sv-net-rate">{exit ? exit.protocol : '未解析'}</span>
+        <span className="sv-mono truncate text-xs">
+          {exit ? externalExitTarget(exit) : '分享链接未解析'}
+        </span>
+      </div>
+      <div className="sv-net-totals">
+        <span className="sv-net-total">
+          <Globe2Icon />
+          {exit ? externalTransportSummary(exit) : '—'}
+        </span>
+        <span className="sv-net-total">
+          <ServerCogIcon />无 Agent · 仅作链路出口
+        </span>
+      </div>
+    </section>
+  )
+}
+
+// CardOverviewSections 渲染资源四宫格、网络速率与剩余流量三段；
+// 外部直链节点没有 Agent 指标，资源与速率替换为出口摘要。
+function CardOverviewSections({
+  server,
+  samples,
+  external = false,
+}: {
+  server: Server
+  samples: ServerMetrics[]
+  external?: boolean
+}) {
   const metrics = server.metrics
   const cpuPercent = metrics?.cpu_percent ?? null
   const memoryPercent = metrics ? percent(metrics.mem_used, metrics.mem_total) : null
@@ -430,82 +476,90 @@ function CardOverviewSections({ server, samples }: { server: Server; samples: Se
         : 'ok'
   return (
     <>
-      <div className="sv-card-res">
-        <ResCell
-          icon={<CpuIcon />}
-          label="CPU"
-          value={cpuPercent === null ? '--' : `${cpuPercent.toFixed(1)}%`}
-          detail={metrics ? `Agent ${server.agent_version ?? '--'}` : '--'}
-          barRatio={cpuPercent}
-          barTone="ok"
-        />
-        <ResCell
-          icon={<MemoryStickIcon />}
-          label="内存"
-          value={memoryPercent === null ? '--' : `${memoryPercent.toFixed(1)}%`}
-          detail={
-            metrics
-              ? `${humanizeBytes(metrics.mem_used)} / ${humanizeBytes(metrics.mem_total)}`
-              : '--'
-          }
-          barRatio={memoryPercent}
-          barTone="info"
-        />
-        <ResCell
-          icon={<HardDriveIcon />}
-          label="磁盘"
-          value={diskPercent === null ? '--' : `${diskPercent.toFixed(1)}%`}
-          detail={
-            metrics
-              ? `${humanizeBytes(metrics.disk_used)} / ${humanizeBytes(metrics.disk_total)}`
-              : '--'
-          }
-          barRatio={diskPercent}
-          barTone="signal"
-        />
-        <ResCell
-          icon={<GaugeIcon />}
-          label="负载"
-          value={load1 === null ? '--' : load1.toFixed(2)}
-          detail={
-            metrics ? `5/15 分钟 ${metrics.load5.toFixed(2)} / ${metrics.load15.toFixed(2)}` : '--'
-          }
-          barRatio={load1 === null ? null : Math.min(100, load1 * 20)}
-          barTone="ok"
-        />
-      </div>
-      <section className="sv-card-net" aria-label="网络速率">
-        <div className="sv-net-row">
-          <span className="sv-net-label">
-            <ArrowUpIcon />
-            上行
-          </span>
-          <span className="sv-net-rate">
-            {metrics?.network_tx_bps != null ? formatByteRate(metrics.network_tx_bps) : '--'}
-          </span>
-          <DotTrend values={samples.map((sample) => sample.network_tx_bps)} tone="ok" />
-        </div>
-        <div className="sv-net-row">
-          <span className="sv-net-label">
-            <ArrowDownIcon />
-            下行
-          </span>
-          <span className="sv-net-rate">
-            {metrics?.network_rx_bps != null ? formatByteRate(metrics.network_rx_bps) : '--'}
-          </span>
-          <DotTrend values={samples.map((sample) => sample.network_rx_bps)} tone="info" />
-        </div>
-        <div className="sv-net-totals">
-          <span className="sv-net-total">
-            <Globe2Icon />
-            出站 {metrics ? humanizeBytes(metrics.network_tx_bytes) : '--'}
-          </span>
-          <span className="sv-net-total">
-            <Globe2Icon />
-            入站 {metrics ? humanizeBytes(metrics.network_rx_bytes) : '--'}
-          </span>
-        </div>
-      </section>
+      {external ? (
+        <CardExternalSection server={server} />
+      ) : (
+        <>
+          <div className="sv-card-res">
+            <ResCell
+              icon={<CpuIcon />}
+              label="CPU"
+              value={cpuPercent === null ? '--' : `${cpuPercent.toFixed(1)}%`}
+              detail={metrics ? `Agent ${server.agent_version ?? '--'}` : '--'}
+              barRatio={cpuPercent}
+              barTone="ok"
+            />
+            <ResCell
+              icon={<MemoryStickIcon />}
+              label="内存"
+              value={memoryPercent === null ? '--' : `${memoryPercent.toFixed(1)}%`}
+              detail={
+                metrics
+                  ? `${humanizeBytes(metrics.mem_used)} / ${humanizeBytes(metrics.mem_total)}`
+                  : '--'
+              }
+              barRatio={memoryPercent}
+              barTone="info"
+            />
+            <ResCell
+              icon={<HardDriveIcon />}
+              label="磁盘"
+              value={diskPercent === null ? '--' : `${diskPercent.toFixed(1)}%`}
+              detail={
+                metrics
+                  ? `${humanizeBytes(metrics.disk_used)} / ${humanizeBytes(metrics.disk_total)}`
+                  : '--'
+              }
+              barRatio={diskPercent}
+              barTone="signal"
+            />
+            <ResCell
+              icon={<GaugeIcon />}
+              label="负载"
+              value={load1 === null ? '--' : load1.toFixed(2)}
+              detail={
+                metrics
+                  ? `5/15 分钟 ${metrics.load5.toFixed(2)} / ${metrics.load15.toFixed(2)}`
+                  : '--'
+              }
+              barRatio={load1 === null ? null : Math.min(100, load1 * 20)}
+              barTone="ok"
+            />
+          </div>
+          <section className="sv-card-net" aria-label="网络速率">
+            <div className="sv-net-row">
+              <span className="sv-net-label">
+                <ArrowUpIcon />
+                上行
+              </span>
+              <span className="sv-net-rate">
+                {metrics?.network_tx_bps != null ? formatByteRate(metrics.network_tx_bps) : '--'}
+              </span>
+              <DotTrend values={samples.map((sample) => sample.network_tx_bps)} tone="ok" />
+            </div>
+            <div className="sv-net-row">
+              <span className="sv-net-label">
+                <ArrowDownIcon />
+                下行
+              </span>
+              <span className="sv-net-rate">
+                {metrics?.network_rx_bps != null ? formatByteRate(metrics.network_rx_bps) : '--'}
+              </span>
+              <DotTrend values={samples.map((sample) => sample.network_rx_bps)} tone="info" />
+            </div>
+            <div className="sv-net-totals">
+              <span className="sv-net-total">
+                <Globe2Icon />
+                出站 {metrics ? humanizeBytes(metrics.network_tx_bytes) : '--'}
+              </span>
+              <span className="sv-net-total">
+                <Globe2Icon />
+                入站 {metrics ? humanizeBytes(metrics.network_rx_bytes) : '--'}
+              </span>
+            </div>
+          </section>
+        </>
+      )}
       <section className="sv-card-quota" aria-label="流量额度">
         <span className="sv-quota2-line">
           <span className="sv-quota2-label">剩余流量</span>
@@ -610,9 +664,28 @@ function ServerCard({
   const renewalTone =
     renewalDays === null ? null : renewalDays < 0 ? 'crit' : renewalDays <= 7 ? 'warn' : 'ok'
   const banFlag = serverBanFlag(server)
+  // 未托管外部直链节点：无 Agent 指标，连接态恒为 external（不按离线呈现）。
+  const external = server.kind === 'external'
+  const renewalFact =
+    renewalDays !== null ? (
+      <span className="sv-fact">
+        <CalendarCheckIcon />
+        到期
+        <span
+          className={cn(
+            'sv-fact-value',
+            renewalTone === 'ok' && 'is-ok',
+            renewalTone === 'warn' && 'is-warn',
+            renewalTone === 'crit' && 'is-crit',
+          )}
+        >
+          {renewalDays < 0 ? '已过期' : `${renewalDays} 天`}
+        </span>
+      </span>
+    ) : null
   return (
     <article
-      className={cn('sv-card', selected && 'is-selected', !online && 'is-offline')}
+      className={cn('sv-card', selected && 'is-selected', !online && !external && 'is-offline')}
       data-state={selected ? 'selected' : undefined}
       aria-selected={selected}
       onClick={onSelect}
@@ -655,6 +728,7 @@ function ServerCard({
         </span>
       </header>
       <div className="sv-card-badges">
+        {external ? <span className="sv-flag is-external">外部直链</span> : null}
         <span className="sv-flag">{server.location || server.country_code || '未设置地区'}</span>
         {families.has('ipv4') ? <span className="sv-flag is-v4">V4</span> : null}
         {families.has('ipv6') ? <span className="sv-flag is-v6">V6</span> : null}
@@ -662,40 +736,36 @@ function ServerCard({
         {server.config_drift ? <span className="sv-flag is-alert">DRIFT</span> : null}
         {banFlag ? <span className={cn('sv-flag', banFlag.tone)}>{banFlag.label}</span> : null}
       </div>
-      <CardOverviewSections server={server} samples={samples} />
-      <CardProbesSection rows={probeRows} title={probeTitle} timezone={timezone} />
+      <CardOverviewSections server={server} samples={samples} external={external} />
+      {external ? null : (
+        <CardProbesSection rows={probeRows} title={probeTitle} timezone={timezone} />
+      )}
       <footer className="sv-card-foot">
-        <span className="sv-fact">
-          <ActivityIcon />
-          在线
-          <span className="sv-fact-value">
-            {metrics ? formatUptime(metrics.uptime_seconds) : '--'}
-          </span>
-        </span>
-        {renewalDays !== null ? (
+        {external ? (
           <span className="sv-fact">
-            <CalendarCheckIcon />
-            到期
-            <span
-              className={cn(
-                'sv-fact-value',
-                renewalTone === 'ok' && 'is-ok',
-                renewalTone === 'warn' && 'is-warn',
-                renewalTone === 'crit' && 'is-crit',
-              )}
-            >
-              {renewalDays < 0 ? '已过期' : `${renewalDays} 天`}
-            </span>
+            <CableIcon />
+            外部节点
+            <span className="sv-fact-value">无 Agent</span>
           </span>
         ) : (
           <span className="sv-fact">
-            <CalendarCheckIcon />
-            遥测
+            <ActivityIcon />
+            在线
             <span className="sv-fact-value">
-              {metrics ? formatDateTime(metrics.updated_at, timezone) : '--'}
+              {metrics ? formatUptime(metrics.uptime_seconds) : '--'}
             </span>
           </span>
         )}
+        {renewalFact ??
+          (external ? null : (
+            <span className="sv-fact">
+              <CalendarCheckIcon />
+              遥测
+              <span className="sv-fact-value">
+                {metrics ? formatDateTime(metrics.updated_at, timezone) : '--'}
+              </span>
+            </span>
+          ))}
       </footer>
       {server.tags.length > 0 ? (
         <div className="sv-card-tags">
@@ -1027,16 +1097,21 @@ function DetailDialog({
   const traffic = server?.traffic_plan
   const billing = server?.billing
   const banFlag = server ? serverBanFlag(server) : null
+  const external = server?.kind === 'external'
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sv-detail flex max-h-[88vh] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
         <header className="sv-detail-head">
           <div className="sv-detail-head-row">
-            <span className={cn('sv-state-dot', online && 'is-online')} />
+            <span
+              className={cn('sv-state-dot', online && 'is-online')}
+              title={server ? serverConnectionLabel(server.connection_state) : undefined}
+            />
             {server ? <CountryFlag code={server.country_code} /> : null}
             <DialogTitle className="sv-detail-title">{server?.alias ?? '服务器详情'}</DialogTitle>
             {server ? (
               <span className="sv-detail-badges">
+                {external ? <span className="sv-flag is-external">外部直链</span> : null}
                 <span className="sv-flag">
                   {server.location || server.country_code || '未设置地区'}
                 </span>
@@ -1062,78 +1137,110 @@ function DetailDialog({
             ) : null}
           </div>
           <DialogDescription className="sv-detail-desc">
-            运行概览、主机信息、最近 24 小时趋势与服务器测试
+            {external
+              ? '外部直链节点概览：出口目标、资料与计费信息'
+              : '运行概览、主机信息、最近 24 小时趋势与服务器测试'}
           </DialogDescription>
         </header>
         <div className="sv-detail-body">
           {server ? (
             <>
               <div className="sv-card is-static">
-                <CardOverviewSections server={server} samples={history} />
-                <CardProbesSection rows={probeRows} title={probeTitle} timezone={timezone} />
+                <CardOverviewSections server={server} samples={history} external={external} />
+                {external ? null : (
+                  <CardProbesSection rows={probeRows} title={probeTitle} timezone={timezone} />
+                )}
               </div>
               <dl className="sv-detail-facts">
                 <FactItem icon={<Globe2Icon />} label="地区">
                   {server.location || '-'}
                 </FactItem>
                 <FactItem icon={<NetworkIcon />} label="地址">
-                  <span className="sv-mono">{server.address || server.learned_addr || '-'}</span>
-                  {server.addresses.length > 0 ? (
-                    <ul className="sv-fact-list">
-                      {server.addresses.map((addr) => {
-                        const family = addressFamily(addr)
-                        return (
-                          <li key={addr} className="sv-fact-addr">
-                            <span className="sv-mono">{addr}</span>
-                            <Badge variant="outline">
-                              {family === 'ipv4' ? 'IPv4' : family === 'ipv6' ? 'IPv6' : '域名'}
-                            </Badge>
-                            {addr === server.address ? (
-                              <span className="sv-fact-note">默认</span>
-                            ) : null}
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  ) : null}
-                </FactItem>
-                <FactItem icon={<CableIcon />} label="默认网卡">
-                  {metrics?.network_interface || '-'}
-                </FactItem>
-                <FactItem icon={<ActivityIcon />} label="运行时间">
-                  {metrics ? formatUptime(metrics.uptime_seconds) : '-'}
-                </FactItem>
-                <FactItem icon={<ClockIcon />} label="最近采样">
-                  {formatDateTime(metrics?.updated_at, timezone)}
-                </FactItem>
-                <FactItem icon={<ServerCogIcon />} label="Agent / Xray">
-                  <span>
-                    {server.agent_version ?? '-'} / {server.xray_version ?? '-'}
-                  </span>
-                  {server.effective_xray_version ? (
-                    <span className="sv-fact-note">
-                      期望 {server.effective_xray_version}
-                      {server.custom_settings ? '（服务器覆盖）' : '（面板默认）'}
+                  {external ? (
+                    <span className="sv-mono">
+                      {server.external_exit
+                        ? externalExitTarget(server.external_exit)
+                        : server.address || '-'}
                     </span>
-                  ) : null}
+                  ) : (
+                    <>
+                      <span className="sv-mono">
+                        {server.address || server.learned_addr || '-'}
+                      </span>
+                      {server.addresses.length > 0 ? (
+                        <ul className="sv-fact-list">
+                          {server.addresses.map((addr) => {
+                            const family = addressFamily(addr)
+                            return (
+                              <li key={addr} className="sv-fact-addr">
+                                <span className="sv-mono">{addr}</span>
+                                <Badge variant="outline">
+                                  {family === 'ipv4' ? 'IPv4' : family === 'ipv6' ? 'IPv6' : '域名'}
+                                </Badge>
+                                {addr === server.address ? (
+                                  <span className="sv-fact-note">默认</span>
+                                ) : null}
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      ) : null}
+                    </>
+                  )}
+                </FactItem>
+                {external ? null : (
+                  <>
+                    <FactItem icon={<CableIcon />} label="默认网卡">
+                      {metrics?.network_interface || '-'}
+                    </FactItem>
+                    <FactItem icon={<ActivityIcon />} label="运行时间">
+                      {metrics ? formatUptime(metrics.uptime_seconds) : '-'}
+                    </FactItem>
+                    <FactItem icon={<ClockIcon />} label="最近采样">
+                      {formatDateTime(metrics?.updated_at, timezone)}
+                    </FactItem>
+                  </>
+                )}
+                <FactItem icon={<ServerCogIcon />} label="Agent / Xray">
+                  {external ? (
+                    <span>未托管（无 Agent）</span>
+                  ) : (
+                    <>
+                      <span>
+                        {server.agent_version ?? '-'} / {server.xray_version ?? '-'}
+                      </span>
+                      {server.effective_xray_version ? (
+                        <span className="sv-fact-note">
+                          期望 {server.effective_xray_version}
+                          {server.custom_settings ? '（服务器覆盖）' : '（面板默认）'}
+                        </span>
+                      ) : null}
+                    </>
+                  )}
                 </FactItem>
                 <FactItem icon={<ArrowLeftRightIcon />} label="机器类型 / 端口">
-                  {server.machine_type === 'direct'
-                    ? '直连'
-                    : `NAT · ${server.allowed_ports.map(formatPortRange).join(', ') || '仅出口'}`}
+                  {external
+                    ? '外部直链（无 Agent）'
+                    : server.machine_type === 'direct'
+                      ? '直连'
+                      : `NAT · ${server.allowed_ports.map(formatPortRange).join(', ') || '仅出口'}`}
                 </FactItem>
-                <FactItem icon={<ShieldCheckIcon />} label="配置状态">
-                  <span className={cn(server.config_drift && 'sv-fact-alert')}>
-                    {server.config_drift ? '配置漂移' : '正常'}
-                  </span>
-                </FactItem>
-                <FactItem icon={<SettingsIcon />} label="Agent 设置">
-                  {server.agent_settings_status === 'synced'
-                    ? '已同步'
-                    : server.agent_settings_status === 'failed'
-                      ? '同步失败'
-                      : '待同步'}
-                </FactItem>
+                {external ? null : (
+                  <>
+                    <FactItem icon={<ShieldCheckIcon />} label="配置状态">
+                      <span className={cn(server.config_drift && 'sv-fact-alert')}>
+                        {server.config_drift ? '配置漂移' : '正常'}
+                      </span>
+                    </FactItem>
+                    <FactItem icon={<SettingsIcon />} label="Agent 设置">
+                      {server.agent_settings_status === 'synced'
+                        ? '已同步'
+                        : server.agent_settings_status === 'failed'
+                          ? '同步失败'
+                          : '待同步'}
+                    </FactItem>
+                  </>
+                )}
                 <FactItem icon={<CreditCardIcon />} label="流量额度">
                   {traffic
                     ? traffic.quota_bytes === null
@@ -1204,7 +1311,15 @@ function DetailDialog({
                 </div>
               ) : null}
               <Separator />
-              {loading && history.length === 0 ? (
+              {external ? (
+                <div className="sv-inline-note">
+                  <CableIcon className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    外部直链节点没有
+                    Agent：不采集主机指标、延迟与服务器测试，出口目标由分享链接决定。
+                  </span>
+                </div>
+              ) : loading && history.length === 0 ? (
                 <div className="flex flex-col gap-4">
                   {Array.from({ length: 6 }).map((_, index) => (
                     <Skeleton key={index} className="h-32 w-full" />
@@ -1274,8 +1389,12 @@ function DetailDialog({
                   </div>
                 </div>
               )}
-              <Separator />
-              <ServerTestPanel server={server} active={open} timezone={timezone} />
+              {external ? null : (
+                <>
+                  <Separator />
+                  <ServerTestPanel server={server} active={open} timezone={timezone} />
+                </>
+              )}
             </>
           ) : null}
         </div>
@@ -1324,15 +1443,20 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
     : null
 
   const onlineCount = props.servers.filter((server) => isServerOnline(server)).length
-  const offlineCount = props.servers.length - onlineCount
+  // 外部直链节点没有 Agent，不计入「离线/异常」；其连接态恒为 external。
+  const externalCount = props.servers.filter((server) => server.kind === 'external').length
+  const offlineCount = props.servers.filter(
+    (server) => !isServerOnline(server) && server.kind !== 'external',
+  ).length
   const driftCount = props.servers.filter((server) => server.config_drift).length
 
   const filteredServers = useMemo(() => {
     const q = query.trim().toLowerCase()
     return props.servers.filter((server) => {
       const online = isServerOnline(server)
+      const external = server.kind === 'external'
       if (filter === 'online' && !online) return false
-      if (filter === 'offline' && online) return false
+      if (filter === 'offline' && (online || external)) return false
       if (filter === 'drift' && !server.config_drift) return false
       if (q) {
         const hay = [
@@ -1341,6 +1465,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
           server.country_code,
           server.address,
           server.learned_addr,
+          server.external_exit?.address ?? '',
           ...(server.tags ?? []),
           server.billing.provider?.name ?? '',
         ]
@@ -1408,6 +1533,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
           <span className="sv-board-title">服务器读数</span>
           <span className="sv-board-meta">
             {onlineCount} 在线 / {props.servers.length} 台
+            {externalCount > 0 ? ` · ${externalCount} 外部直链` : ''}
           </span>
         </header>
         <div className="sv-board-toolbar">

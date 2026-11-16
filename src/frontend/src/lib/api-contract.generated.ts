@@ -244,6 +244,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/server/parse-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 解析外部直链（vless://、vmess://、trojan://、ss://、socks://、http://）为未托管
+         *     服务器预览（新增/编辑服务器对话框的解析器），不落库。响应 data 含 name、protocol、
+         *     address、port、transport 摘要与 exit（凭据打码后的外部出口规格）；不可解析或协议
+         *     不支持时返回 400。
+         */
+        post: operations["serverParseLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/server/create": {
         parameters: {
             query?: never;
@@ -257,6 +279,8 @@ export interface paths {
          * @description 响应 data 含 server、bootstrap_token、install_command 与 install_insecure（boolean）；
          *     install_insecure 为 true 表示安装命令走明文公网链路（面板地址为 http 且 host 非回环/私网，
          *     域名按公网保守处理），Agent 控制流量明文传输，token 可嗅探、命令可伪造。
+         *     kind=external（未托管外部直链节点）时不返回安装命令：bootstrap_token 与
+         *     install_command 为空串，机器类型固定为仅出口档 NAT。
          */
         post: operations["serverCreate"];
         delete?: never;
@@ -2444,6 +2468,24 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    serverParseLink: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     serverCreate: {
         parameters: {
             query?: never;
@@ -4159,6 +4201,7 @@ export const rpcOperations = {
   serverRunTest: { method: 'POST', path: '/api/server/run-test' },
   serverTestCatalogStatus: { method: 'GET', path: '/api/server-test/catalog-status' },
   serverTestRefreshCatalog: { method: 'POST', path: '/api/server-test/refresh-catalog' },
+  serverParseLink: { method: 'POST', path: '/api/server/parse-link' },
   serverCreate: { method: 'POST', path: '/api/server/create' },
   serverUpdate: { method: 'POST', path: '/api/server/update' },
   serverConfirmRenewal: { method: 'POST', path: '/api/server/confirm-renewal' },

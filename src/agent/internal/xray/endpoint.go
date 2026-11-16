@@ -86,11 +86,26 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 		}
 		outboundTag := directOutboundTag
 		if !route.Direct {
-			if route.TargetAddress == "" || route.TargetPort == 0 || route.TunnelUUID == "" {
-				return nil, fmt.Errorf("链 %d 的共享端点路由缺少目标或 tunnel UUID", route.ChainID)
+			if route.TargetAddress == "" || route.TargetPort == 0 {
+				return nil, fmt.Errorf("链 %d 的共享端点路由缺少目标地址或端口", route.ChainID)
 			}
 			outboundTag = sharedEndpointRouteTag(p.EndpointID, route.ChainID)
-			outbound, err := json.Marshal(renderSharedEndpointOutbound(route, outboundTag))
+			var rendered map[string]any
+			if route.External != nil {
+				// 未托管外部直链出口：按外部协议渲染客户端 outbound，拨链入口回环端口，
+				// 由链跳以纯 TCP 管道转发到外部节点（外部节点用自己的凭据认证并出网）。
+				var err error
+				rendered, err = renderExternalOutbound(route, outboundTag)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				if route.TunnelUUID == "" {
+					return nil, fmt.Errorf("链 %d 的共享端点路由缺少 tunnel UUID", route.ChainID)
+				}
+				rendered = renderSharedEndpointOutbound(route, outboundTag)
+			}
+			outbound, err := json.Marshal(rendered)
 			if err != nil {
 				return nil, err
 			}
@@ -283,6 +298,132 @@ func renderHy2Outbound(tag string, dial shared.Hy2DialSpec) map[string]any {
 		"settings":       map[string]any{"version": 2, "address": dial.Address, "port": dial.Port},
 		"streamSettings": stream,
 	}
+}
+
+// renderExternalOutbound 渲染未托管外部出口（外部直链）的客户端 outbound：
+// 拨号地址取路由 target（入口 forward 回环端口，经链跳纯 TCP 管道到外部节点），
+// 协议参数取外部节点分享链接的凭据与传输/安全层。支持 vless/vmess/trojan/
+// shadowsocks/socks/http（TCP 承载；UDP 协议不入外部出口）。
+func renderExternalOutbound(route shared.SharedEndpointRoute, tag string) (map[string]any, error) {
+	exit := route.External
+	if exit == nil {
+		return nil, fmt.Errorf("链 %d 的外部出口规格缺失", route.ChainID)
+	}
+	address, port := route.TargetAddress, route.TargetPort
+	switch exit.Protocol {
+	case shared.ProtocolSocks, shared.ProtocolHTTP:
+		server := map[string]any{"address": address, "port": port}
+		if exit.Username != "" || exit.Password != "" {
+			server["users"] = []map[string]any{{"user": exit.Username, "pass": exit.Password}}
+		}
+		return map[string]any{
+			"tag": tag, "protocol": exit.Protocol,
+			"settings": map[string]any{"servers": []map[string]any{server}},
+		}, nil
+	case shared.ProtocolShadowsocks:
+		return map[string]any{
+			"tag": tag, "protocol": "shadowsocks",
+			"settings": map[string]any{"servers": []map[string]any{{
+				"address": address, "port": port, "method": exit.Method, "password": exit.Password,
+			}}},
+		}, nil
+	case shared.ProtocolTrojan:
+		return map[string]any{
+			"tag": tag, "protocol": "trojan",
+			"settings": map[string]any{"servers": []map[string]any{{
+				"address": address, "port": port, "password": exit.Password,
+			}}},
+			"streamSettings": externalStreamSettings(exit),
+		}, nil
+	case shared.ProtocolVMess:
+		return map[string]any{
+			"tag": tag, "protocol": "vmess",
+			"settings": map[string]any{"vnext": []map[string]any{{
+				"address": address, "port": port,
+				"users": []map[string]any{{
+					"id": exit.UUID, "alterId": 0, "security": externalVMessCipher(exit.Cipher),
+				}},
+			}}},
+			"streamSettings": externalStreamSettings(exit),
+		}, nil
+	case shared.ProtocolVLESS:
+		user := map[string]any{"id": exit.UUID, "encryption": "none"}
+		if exit.Encryption != "" {
+			user["encryption"] = exit.Encryption
+		}
+		if exit.Flow != "" {
+			user["flow"] = exit.Flow
+		}
+		return map[string]any{
+			"tag": tag, "protocol": "vless",
+			"settings": map[string]any{"vnext": []map[string]any{{
+				"address": address, "port": port, "users": []map[string]any{user},
+			}}},
+			"streamSettings": externalStreamSettings(exit),
+		}, nil
+	}
+	return nil, fmt.Errorf("链 %d 的外部出口协议 %q 暂不支持", route.ChainID, exit.Protocol)
+}
+
+// externalStreamSettings 渲染外部出口的传输/安全层（与共享端点 VLESS 隧道同款矩阵）：
+// reality（公钥非空）/ tls（SNI 非空）/ none；ws/grpc/xhttp/httpupgrade 参数对应填充。
+func externalStreamSettings(exit *shared.ExternalExit) map[string]any {
+	network := exit.Network
+	if network == "" {
+		network = shared.NetworkTCP
+	}
+	stream := map[string]any{"network": network}
+	security := exit.Security
+	if security == "" {
+		security = shared.SecurityNone
+	}
+	fingerprint := exit.Fingerprint
+	if fingerprint == "" {
+		fingerprint = shared.FingerprintChrome
+	}
+	switch security {
+	case shared.SecurityReality:
+		stream["security"] = "reality"
+		stream["realitySettings"] = map[string]any{
+			"serverName": exit.SNI, "publicKey": exit.PublicKey,
+			"shortId": exit.ShortID, "fingerprint": fingerprint,
+		}
+	case shared.SecurityTLS:
+		stream["security"] = "tls"
+		stream["tlsSettings"] = map[string]any{
+			"serverName": exit.SNI, "fingerprint": fingerprint,
+		}
+	}
+	switch network {
+	case shared.NetworkGRPC:
+		stream["grpcSettings"] = map[string]any{"serviceName": exit.ServiceName}
+	case shared.NetworkXHTTP:
+		stream["xhttpSettings"] = map[string]any{
+			"path": exit.Path, "mode": exit.Mode, "host": exit.Host,
+		}
+	case shared.NetworkWS:
+		ws := map[string]any{"path": exit.Path}
+		if exit.Host != "" {
+			ws["headers"] = map[string]any{"Host": exit.Host}
+		}
+		stream["wsSettings"] = ws
+	case shared.NetworkHTTPUpgrade:
+		hu := map[string]any{"path": exit.Path}
+		if exit.Host != "" {
+			hu["host"] = exit.Host
+		}
+		stream["httpupgradeSettings"] = hu
+	}
+	return stream
+}
+
+// externalVMessCipher 归一 vmess 客户端 cipher（空/xray 不支持的值回退 auto）。
+func externalVMessCipher(cipher string) string {
+	switch cipher {
+	case shared.VMessCipherAES128GCM, shared.VMessCipherChacha20:
+		return cipher
+	}
+	return shared.VMessCipherAuto
 }
 
 func endpointPrivateKey(inbound json.RawMessage) string {

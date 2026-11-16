@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { isServerBanned, isServerOnline } from './server-state'
+import {
+  isServerBanned,
+  isServerOnline,
+  serverConnectionLabel,
+  supportsAgentActions,
+} from './server-state'
 import type { Server, ServerBanWatch } from './types'
 
 function banWatch(state: ServerBanWatch['state'], lossStreak = 12): ServerBanWatch {
@@ -13,6 +18,7 @@ function serverWith(overrides: Partial<Server>): Server {
     non_direct: false,
     ban_watch: null,
     connection_state: 'online',
+    kind: 'managed',
     ...overrides,
   } as Server
 }
@@ -47,5 +53,36 @@ describe('isServerOnline', () => {
     expect(isServerOnline(serverWith({ connection_state: 'online' }))).toBe(true)
     expect(isServerOnline(serverWith({ connection_state: 'offline' }))).toBe(false)
     expect(isServerOnline(null)).toBe(false)
+  })
+
+  it('never treats an external node as online', () => {
+    expect(isServerOnline(serverWith({ kind: 'external', connection_state: 'external' }))).toBe(
+      false,
+    )
+  })
+})
+
+describe('serverConnectionLabel', () => {
+  it('maps every connection state to its Chinese label', () => {
+    expect(serverConnectionLabel('never_connected')).toBe('未连接')
+    expect(serverConnectionLabel('connecting')).toBe('连接中')
+    expect(serverConnectionLabel('reconnecting')).toBe('重连中')
+    expect(serverConnectionLabel('online')).toBe('在线')
+    expect(serverConnectionLabel('offline')).toBe('离线')
+    expect(serverConnectionLabel('auth_rejected')).toBe('凭据被拒绝')
+  })
+
+  it('labels external nodes as 外部节点 instead of 未连接', () => {
+    expect(serverConnectionLabel('external')).toBe('外部节点')
+  })
+})
+
+describe('supportsAgentActions', () => {
+  it('is true for managed servers', () => {
+    expect(supportsAgentActions({ kind: 'managed' })).toBe(true)
+  })
+
+  it('is false for unmanaged external links without an agent', () => {
+    expect(supportsAgentActions({ kind: 'external' })).toBe(false)
   })
 })

@@ -1,16 +1,18 @@
 import { useCallback, useMemo, useReducer, useRef, useState } from 'react'
 import type { Server } from '@/lib/types'
 import {
-  MAX_HOPS,
+  CARD_H,
+  CARD_W,
+  MAX_CANVAS_NODES,
+  analyzeCanvasGraph,
   nodeRole,
   toFormTopology,
-  validateTopology,
-  walkPath,
   type CanvasEdge,
   type CanvasNode,
+  type CanvasValidation,
 } from './chain-canvas'
 import { canvasReducer, createCanvasState } from './chain-canvas-state'
-import { screenToWorld, type CanvasViewport } from './canvas-viewport'
+import type { CanvasViewport } from './canvas-viewport'
 
 /** 图状态机与相机互相独立；所有拓扑变更只经过 reducer。 */
 export function useChainCanvas({ servers }: { servers: Server[] }) {
@@ -20,15 +22,31 @@ export function useChainCanvas({ servers }: { servers: Server[] }) {
   const [fitRevision, setFitRevision] = useState(0)
   const fitAppliedRevision = useRef(-1)
   const serverById = useMemo(() => new Map(servers.map((server) => [server.id, server])), [servers])
-  const walk = useMemo(() => walkPath(state.nodes, state.edges), [state.nodes, state.edges])
-  const validation = useMemo(
-    () => validateTopology(state.nodes, state.edges, serverById),
+  const analysis = useMemo(
+    () => analyzeCanvasGraph(state.nodes, state.edges, serverById),
     [state.nodes, state.edges, serverById],
   )
-  const formTopology = useMemo(() => toFormTopology(walk.order), [walk])
+  const validation = useMemo<CanvasValidation>(
+    () => ({
+      valid: analysis.valid,
+      issues: analysis.errors,
+      warnings: analysis.warnings,
+      paths: analysis.paths,
+    }),
+    [analysis],
+  )
+  // 名称模板/端口提示等仍以第一条合法链路为基准（多链共享名称基准）。
+  const formTopology = useMemo(
+    () => toFormTopology(analysis.paths[0] ?? [], serverById),
+    [analysis, serverById],
+  )
   const issueNodeIds = useMemo(
-    () => new Set(validation.issues.flatMap((issue) => (issue.nodeId ? [issue.nodeId] : []))),
-    [validation],
+    () => new Set(analysis.errors.flatMap((issue) => (issue.nodeId ? [issue.nodeId] : []))),
+    [analysis],
+  )
+  const warningNodeIds = useMemo(
+    () => new Set(analysis.warnings.flatMap((warning) => (warning.nodeId ? [warning.nodeId] : []))),
+    [analysis],
   )
   const addNode = useCallback(
     (serverId: number, x: number, y: number) => {
@@ -36,16 +54,17 @@ export function useChainCanvas({ servers }: { servers: Server[] }) {
     },
     [serverById],
   )
+  // 点选添加：按世界坐标 3 列网格铺开（避免斜向堆叠），添加后自动适应视图，
+  // 保证多节点编辑时所有新节点可见；拖拽添加仍落在指针位置。
   const addVisibleNode = useCallback(
     (serverId: number) => {
-      const point = screenToWorld(
-        { x: viewportSize.width / 2, y: viewportSize.height / 2 },
-        viewport,
-      )
-      const offset = state.nodes.length * 24
-      addNode(serverId, point.x + offset, point.y + offset)
+      const index = state.nodes.length
+      const col = index % 3
+      const row = Math.floor(index / 3)
+      addNode(serverId, 170 + col * (CARD_W + 66), 150 + row * (CARD_H + 70))
+      setFitRevision((revision) => revision + 1)
     },
-    [viewport, viewportSize, state.nodes.length, addNode],
+    [state.nodes.length, addNode],
   )
   const removeNode = useCallback((id: string) => dispatch({ type: 'remove', id }), [])
   const moveNode = useCallback(
@@ -75,7 +94,10 @@ export function useChainCanvas({ servers }: { servers: Server[] }) {
     [],
   )
   const cancelConnect = useCallback(() => dispatch({ type: 'connect-cancel' }), [])
-  const edgeClick = useCallback((from: string) => dispatch({ type: 'disconnect', from }), [])
+  const edgeClick = useCallback(
+    (from: string, to: string) => dispatch({ type: 'disconnect', from, to }),
+    [],
+  )
   const reset = useCallback(() => {
     dispatch({ type: 'reset' })
     setFitRevision((n) => n + 1)
@@ -87,22 +109,27 @@ export function useChainCanvas({ servers }: { servers: Server[] }) {
   return {
     ...state,
     serverById,
-    walk,
+    analysis,
     validation,
     formTopology,
     issueNodeIds,
+    warningNodeIds,
     viewport,
     setViewport,
     viewportSize,
     setViewportSize,
     fitRevision,
     fitAppliedRevision,
-    canAddMore: state.nodes.length < MAX_HOPS,
+    canAddMore: state.nodes.length < MAX_CANVAS_NODES,
     usedCount: (serverId: number) =>
       state.nodes.filter((node) => node.serverId === serverId).length,
     outgoingTargetOf: (id: string) => state.edges.find((edge) => edge.from === id)?.to,
     incomingFromOf: (id: string) => state.edges.find((edge) => edge.to === id)?.from,
     roleOf: (id: string) => nodeRole(state.nodes, state.edges, id),
+    rolesOf: (id: string) => analysis.roles.get(id) ?? { entry: false, middle: false, exit: false },
+    portRoleOf: (id: string) =>
+      analysis.portRoles.get(id) ?? { entry: false, exit: false, editable: false, label: '' },
+    paths: analysis.paths,
     addNode,
     addVisibleNode,
     removeNode,

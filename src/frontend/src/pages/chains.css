@@ -160,6 +160,27 @@
   color: var(--panel-danger);
 }
 
+/* 外部直链出口（未托管服务器）：链路标 + 外部协议 chip */
+.cg-chain-tag.is-external {
+  border-color: color-mix(in srgb, var(--panel-signal) 42%, var(--panel-rule));
+  background: var(--panel-signal-soft);
+  color: var(--panel-signal);
+}
+
+.cg-chain-external-proto {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--panel-inset);
+  color: var(--panel-ink-2);
+  font-family: var(--panel-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.6;
+}
+
 /* 状态图标块 */
 .cg-chain-mark {
   display: inline-grid;

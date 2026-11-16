@@ -130,7 +130,19 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 		if len(route.Users) == 0 {
 			continue
 		}
-		if !route.Direct {
+		if !route.Direct && revision.Snapshot.ServiceExternal != nil {
+			// 外部直链出口（未托管服务器）：入口端点按外部协议规格渲染 outbound，
+			// 拨本链入口 forward 回环端口——链跳把字节纯 TCP 转发到外部节点，
+			// 外部节点用自己的凭据认证客户端并出网（用户可见入口仍是本服务器）。
+			entry := revision.Snapshot.Hops[0]
+			if entry.ForwardPort == 0 {
+				continue
+			}
+			route.External = revision.Snapshot.ServiceExternal
+			route.TunnelUUID = ""
+			route.TargetAddress = "127.0.0.1"
+			route.TargetPort = entry.ForwardPort
+		} else if !route.Direct {
 			entry := revision.Snapshot.Hops[0]
 			if err := json.Unmarshal(revision.Snapshot.ServiceRealized, &route.Target); err != nil {
 				continue

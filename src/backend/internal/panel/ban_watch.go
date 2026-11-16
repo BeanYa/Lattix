@@ -206,6 +206,10 @@ func (s *Server) runBanWatch(ctx context.Context) error {
 	}
 	s.banWatchLastEval = now
 	for _, srv := range servers {
+		// 未托管外部直链节点没有 Agent、不参与三网测速：Ban 告警不适用，直接跳过。
+		if srv.IsExternal() {
+			continue
+		}
 		// 非直连服务器（大陆不可直连）：三网丢包属预期，Ban 告警不适用；
 		// 跳过评估并清除既有观察状态（含 suspected/banned 徽标与推送）。
 		if srv.NonDirect {

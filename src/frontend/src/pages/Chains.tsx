@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useSearch } from 'wouter'
 import {
-  ActivityIcon,
-  ArrowDownIcon,
-  ArrowUpIcon,
   BarChart3Icon,
-  ChevronDownIcon,
-  ChevronRightIcon,
   CircleCheckIcon,
   Clock3Icon,
   LinkIcon,
@@ -35,7 +30,6 @@ import { cn } from '@/lib/utils'
 import type {
   CatalogProbeRegion,
   Chain,
-  ChainSegmentStat,
   ChainStatsResponse,
   ChainStatus,
   NodeStatus,
@@ -43,15 +37,11 @@ import type {
   XrayNode,
 } from '@/lib/types'
 
-import {
-  buildChainStatsIndex,
-  chainTodayBytes,
-  formatLatency,
-  latencyTone,
-  segmentForLink,
-} from './chains/chain-stats'
+import { buildChainStatsIndex, chainTodayBytes, segmentForLink } from './chains/chain-stats'
 import { ChainOverviewPanel } from './chains/ChainOverviewPanel'
 import { ShareLinkDialog } from './chains/ShareLinkDialog'
+import { HopLink } from './chains/ChainHopLink'
+import { TrafficSummary } from './chains/ChainTrafficSummary'
 import { TrafficHistoryDialog } from './chains/TrafficHistoryDialog'
 import { useShareLink } from './chains/use-share-link'
 import { roleLabel, useTrafficHistory } from './chains/use-traffic-history'
@@ -87,110 +77,6 @@ function ChainStateMark({
     >
       <Icon className={cn(style.loading && 'animate-spin motion-reduce:animate-none')} />
     </span>
-  )
-}
-
-// HopLatency 是跳间连线上的段延迟标注（§链路统计）：来源优先 tcp（复用链路
-// 监听端口）、回退 icmp；失败/超时样本保留"超时"字样作连通性参考。
-function HopLatency({ segment }: { segment: ChainSegmentStat | null }) {
-  if (!segment) return null
-  if (segment.latency_ms === null) {
-    return (
-      <span className="cg-hop-latency" data-tone="fail" title="最近一次段探测失败/超时">
-        超时
-      </span>
-    )
-  }
-  return (
-    <span
-      className="cg-hop-latency"
-      data-tone={latencyTone(segment.latency_ms)}
-      title={`跳间 ${segment.kind.toUpperCase()} 探测 RTT`}
-    >
-      {formatLatency(segment.latency_ms)}
-    </span>
-  )
-}
-
-// HopLink 是相邻两跳之间的连线：长箭头 + 段延迟标注。有延迟样本时整条箭头
-// （线体 + 箭头头）跟随延迟状态色，与标注一致；无样本保持中性/线路色。
-function HopLink({ segment, flowing }: { segment: ChainSegmentStat | null; flowing: boolean }) {
-  const tone = segment
-    ? segment.latency_ms === null
-      ? 'fail'
-      : latencyTone(segment.latency_ms)
-    : null
-  return (
-    <span className={cn('cg-hop-link', flowing && 'is-flowing')} data-tone={tone}>
-      <HopLatency segment={segment} />
-      <span className="cg-hop-link-track" aria-hidden="true">
-        <i />
-        <ChevronDownIcon className="cg-hop-link-arrow-v" strokeWidth={3} />
-        <ChevronRightIcon className="cg-hop-link-arrow-h" strokeWidth={3} />
-      </span>
-    </span>
-  )
-}
-
-function TrafficSummary({
-  up,
-  down,
-  rawUp,
-  rawDown,
-  multiplier,
-  today,
-}: {
-  up?: number
-  down?: number
-  rawUp?: number
-  rawDown?: number
-  multiplier?: string
-  today?: number
-}) {
-  const hasTraffic = up !== undefined && down !== undefined
-  const adjusted =
-    hasTraffic && rawUp !== undefined && rawDown !== undefined && (rawUp !== up || rawDown !== down)
-  return (
-    <div className="cg-chain-traffic" aria-label="累计流量">
-      <div className="cg-chain-traffic-item is-up">
-        <span className="cg-chain-traffic-label">
-          <ArrowUpIcon />
-          累计上传
-        </span>
-        <strong className="cg-chain-traffic-value">
-          {hasTraffic ? humanizeBytes(up ?? 0) : '--'}
-        </strong>
-        {adjusted ? (
-          <span className="cg-chain-traffic-raw">原始 {humanizeBytes(rawUp ?? 0)}</span>
-        ) : null}
-      </div>
-      <div className="cg-chain-traffic-item is-down">
-        <span className="cg-chain-traffic-label">
-          <ArrowDownIcon />
-          累计下载
-        </span>
-        <strong className="cg-chain-traffic-value">
-          {hasTraffic ? humanizeBytes(down ?? 0) : '--'}
-        </strong>
-        {adjusted ? (
-          <span className="cg-chain-traffic-raw">原始 {humanizeBytes(rawDown ?? 0)}</span>
-        ) : null}
-      </div>
-      {today !== undefined ? (
-        <div className="cg-chain-traffic-item is-today" aria-label="今日负载">
-          <span className="cg-chain-traffic-label">
-            <ActivityIcon />
-            今日负载
-          </span>
-          <strong className="cg-chain-traffic-value">
-            {today > 0 ? humanizeBytes(today) : '--'}
-          </strong>
-        </div>
-      ) : null}
-      {multiplier ? (
-        <span className="cg-chain-traffic-multiplier">流量倍率 x{multiplier}</span>
-      ) : null}
-    </div>
   )
 }
 
@@ -778,6 +664,19 @@ export default function Chains() {
                         <strong className="cg-chain-name">{c.name || `中转 #${c.id}`}</strong>
                         <span className="cg-chain-id">#{c.id}</span>
                         <span className="cg-chain-tag">{isDirect ? '直连' : '中转'}</span>
+                        {c.service_external ? (
+                          <>
+                            <span
+                              className="cg-chain-tag is-external"
+                              title="出口为未托管外部直链节点（无出口业务节点）"
+                            >
+                              外部出口
+                            </span>
+                            <span className="cg-chain-external-proto" title="外部出口协议">
+                              {c.service_external.protocol}
+                            </span>
+                          </>
+                        ) : null}
                         {unreachableChainIds.has(c.id) ? (
                           <span
                             className="cg-chain-tag is-unreachable"
@@ -856,7 +755,9 @@ export default function Chains() {
                                 kind: 'chain',
                                 id: c.id,
                                 name: c.name || `中转 #${c.id}`,
-                                exitNodeId: c.hops.find((h) => h.role === 'exit')?.node_id,
+                                // 外部直链出口没有出口业务节点（node_id=0），不参与用户预选。
+                                exitNodeId: c.hops.find((h) => h.role === 'exit' && h.node_id !== 0)
+                                  ?.node_id,
                               })
                             }
                           >
@@ -902,9 +803,12 @@ export default function Chains() {
                                     : h.forward_port
                                   : h.role === 'middle'
                                     ? h.forward_port
-                                    : (exitNode?.realized_config?.port ??
-                                      exitNode?.port ??
-                                      h.forward_port)
+                                    : c.service_external
+                                      ? // 外部出口端口来自链接，不显示出口节点端口。
+                                        0
+                                      : (exitNode?.realized_config?.port ??
+                                        exitNode?.port ??
+                                        h.forward_port)
                               return (
                                 <div
                                   key={h.id}

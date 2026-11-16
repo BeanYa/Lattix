@@ -233,15 +233,18 @@ describe('rebuilt topology canvas interactions', () => {
     expect(host.textContent).toContain('入网流量')
     expect(host.textContent).toContain('Internet')
   })
-  it('选择占用入口显示原因并保留原线，取消可恢复空闲', async () => {
+  it('多入边汇合允许；形成环路时提示并保留原线，取消可恢复空闲', async () => {
     await act(async () => {
       controller.addNode(1, 380, 260)
       controller.addNode(2, 740, 400)
     })
+    await click('出口端口：HK')
+    await click('入口端口：SG')
+    expect(controller.edges).toContainEqual({ from: 'n1', to: 'n2' })
     await click('出口端口：SG')
     await click('入口端口：HK')
-    expect(host.querySelector('[role="alert"]')?.textContent).toContain('已有连接')
-    expect(controller.edges).toHaveLength(2)
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('环路')
+    expect(controller.edges).toContainEqual({ from: 'n1', to: 'n2' })
     await act(async () => controller.cancelConnect())
     expect(host.querySelector('[role="alert"]')).toBeNull()
   })

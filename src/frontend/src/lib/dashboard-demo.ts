@@ -52,6 +52,7 @@ function createDemoServer(input: DemoServerInput): Server {
   return {
     id: input.id,
     alias: input.alias,
+    kind: 'managed',
     connection_state: input.state ?? 'online',
     session_id: `demo-${input.id}`,
     session_kind: 'initial',

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 
-import { api, errorMessage } from '@/lib/api'
+import { ApiError, api, errorMessage } from '@/lib/api'
 import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange } from '@/lib/ports'
 import type { PortRange, Server } from '@/lib/types'
@@ -8,11 +8,18 @@ import type { PortRange, Server } from '@/lib/types'
 import {
   addInterval,
   addrCandidates,
+  aliasAfterParse,
+  applyExternalLinkError,
+  applyExternalLinkPreview,
   billingPayload,
+  editExternalLink,
+  externalLinkForSubmit,
+  initialExternalLink,
   localDate,
   parsePortRows,
   trafficPayload,
   type BillingFormState,
+  type ExternalLinkState,
   type TrafficFormState,
 } from './server-form-utils'
 
@@ -30,6 +37,7 @@ export interface ServerEditFormState {
   traffic: TrafficFormState
   xrayOverride: string
   xrayVersions: string[]
+  external: ExternalLinkState
 }
 
 function initialServerEditForm(): ServerEditFormState {
@@ -64,18 +72,21 @@ function initialServerEditForm(): ServerEditFormState {
     },
     xrayOverride: '',
     xrayVersions: ['latest'],
+    external: initialExternalLink(),
   }
 }
 
 /**
  * 编辑服务器对话框的表单状态与提交逻辑。
  * 原为服务器页内一组扁平 useState，拆分时装订为单一表单状态对象；
- * 打开对话框时由 openEdit 按目标服务器整体回填。
+ * 打开对话框时由 openEdit 按目标服务器整体回填。未托管外部直链节点（kind=external）
+ * 只维护链接与资料，保存走 updateServerExternal；被链路引用时的链接变更由后端 409 兜底。
  */
 export function useServerEditForm({ reload }: { reload: () => void }) {
   const [target, setTarget] = useState<Server | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [linkConflict, setLinkConflict] = useState(false)
   const [form, setForm] = useState<ServerEditFormState>(initialServerEditForm)
   const [countryOptions, setCountryOptions] = useState<CountryOption[]>([])
   const [cities, setCities] = useState<string[]>([])
@@ -126,6 +137,40 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
 
   const setCountry = (value: string) => patch({ countryCode: value, location: '' })
 
+  const setExternalLink = (link: string) => {
+    // 链接改动后清掉上一次提交的错误与冲突提示，避免与最新解析状态矛盾。
+    setError('')
+    setLinkConflict(false)
+    setForm((current) => ({ ...current, external: editExternalLink(current.external, link) }))
+  }
+
+  const parseExternalLink = async () => {
+    const link = form.external.link.trim()
+    if (!link) {
+      return
+    }
+    setForm((current) => ({
+      ...current,
+      external: { ...current.external, parsing: true, parseError: '' },
+    }))
+    try {
+      const preview = await api.parseExternalLink(link)
+      setError('')
+      setLinkConflict(false)
+      setForm((current) => {
+        const external = applyExternalLinkPreview(current.external, link, preview)
+        return external
+          ? { ...current, alias: aliasAfterParse(current.alias, preview.name), external }
+          : current
+      })
+    } catch (err) {
+      setForm((current) => {
+        const external = applyExternalLinkError(current.external, link, errorMessage(err))
+        return external ? { ...current, external } : current
+      })
+    }
+  }
+
   const openEdit = (s: Server) => {
     setTarget(s)
     // 地址列表回填：优先 server.addresses，空则回退默认/学习地址（去重保序）。
@@ -167,15 +212,53 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
       },
       xrayOverride: s.custom_settings?.xray_version ?? '',
       xrayVersions: ['latest'],
+      external: initialExternalLink(s.kind === 'external' ? (s.external_link ?? '') : ''),
     })
-    api
-      .releaseVersions('xray')
-      .then((versions) => patch({ xrayVersions: versions.versions }))
-      .catch(() => {})
+    if (s.kind !== 'external') {
+      api
+        .releaseVersions('xray')
+        .then((versions) => patch({ xrayVersions: versions.versions }))
+        .catch(() => {})
+    }
     setError('')
+    setLinkConflict(false)
   }
 
   const closeEdit = () => setTarget(null)
+
+  // 未托管外部直链节点：地址由链接派生，没有 Agent 字段；链接变更须先解析。
+  const saveExternal = async (s: Server, alias: string) => {
+    const link = externalLinkForSubmit({ ...form.external, savedLink: s.external_link ?? '' })
+    if ('error' in link) {
+      setError(link.error)
+      return
+    }
+    setSaving(true)
+    try {
+      await api.updateServerExternal(
+        s.id,
+        alias,
+        link.link,
+        form.tags,
+        form.countryCode,
+        form.location.trim(),
+        billingPayload(form.billing),
+        trafficPayload(form.traffic),
+        form.nonDirect,
+      )
+      setTarget(null)
+      reload()
+    } catch (err) {
+      // 被链路引用时的链接变更由后端 409 拒绝：原样展示服务端消息并提示处理方式。
+      // 后端把 HTTP 409 映射为 RPC 业务码 CONFLICT（信封走 HTTP 200），两种形态都识别。
+      setError(errorMessage(err))
+      setLinkConflict(
+        err instanceof ApiError && (err.code === 'CONFLICT' || err.httpStatus === 409),
+      )
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -183,9 +266,18 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
       return
     }
     setError('')
+    setLinkConflict(false)
     const finalAlias = form.alias.trim()
     if (!finalAlias) {
       setError('名称不能为空')
+      return
+    }
+    if (!form.countryCode) {
+      setError('国家/地区不能为空')
+      return
+    }
+    if (target.kind === 'external') {
+      await saveExternal(target, finalAlias)
       return
     }
     // 默认地址 = 列表中选中的条目；列表非空时提交 addresses 整体替换。
@@ -202,10 +294,6 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
     }
     let ranges: PortRange[] = []
     const nextTags = form.tags
-    if (!form.countryCode) {
-      setError('国家/地区不能为空')
-      return
-    }
     if (isNat) {
       const parsed = parsePortRows(form.portRows)
       if ('error' in parsed) {
@@ -259,6 +347,7 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
     target,
     saving,
     error,
+    linkConflict,
     form,
     patch,
     countryOptions,
@@ -266,6 +355,8 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
     addCandidates,
     addAddress,
     setCountry,
+    setExternalLink,
+    parseExternalLink,
     openEdit,
     closeEdit,
     onSubmit,

@@ -167,12 +167,31 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	}
 	exit := hops[len(hops)-1]
 
+	// 未托管外部直链出口（§未托管服务器与外部直链出口链路）：无出口业务节点、
+	// 无 apply_node，出口跳本身无配置件（forward 只到末位托管跳）——直接置 active。
+	external := snapshot != nil && snapshot.ServiceExternal != nil
+	var externalExit *shared.ExternalExit
+	if external {
+		externalExit = snapshot.ServiceExternal
+	}
+	var exitNode *store.Node
+	var rc shared.RealizedConfig
+	if external {
+		if exit.Status != store.HopStatusActive {
+			if err := d.st.SetChainHopStatus(ctx, exit.ID, store.HopStatusActive, ""); err != nil {
+				log.Printf("dispatch: chain %d external exit %d active: %v", chainID, exit.ID, err)
+				return
+			}
+		}
+		rc.Port = externalExit.Port
+	} else {
 	// 阶段 1：出口业务 inbound（apply_node；NAT 受限直连机自动端口时携带 port_candidates）。
 	node, err := d.st.NodeByID(ctx, exit.NodeID)
 	if err != nil {
 		log.Printf("dispatch: chain %d exit node %d: %v", chainID, exit.NodeID, err)
 		return
 	}
+	exitNode = node
 	// hy2 出口共享监听（P4）：出口监听由共享端点承载，不走 apply_node。
 	// 端点未 active → 触发 reconcile 并等待回执（端点状态机 onEnter 触发受影响链的
 	// advance）；active → 镜像 realized 到出口节点（幂等）后继续本调用内的后续阶段
@@ -210,7 +229,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		if err := d.fsm.Transition(ctx, chainID, store.ChainStatusActive, "单跳共享端点编排完成"); err != nil {
 			return
 		}
-		d.publishDesiredRevision(ctx, chainID, hops, *node)
+		d.publishDesiredRevision(ctx, chainID, hops, node)
 		return
 	}
 	switch node.Status {
@@ -254,7 +273,6 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	case store.NodeStatusApplying:
 		return // 等待回执
 	}
-	var rc shared.RealizedConfig
 	if err := json.Unmarshal(node.RealizedConfig, &rc); err != nil || rc.Port == 0 {
 		log.Printf("dispatch: chain %d: 出口节点 %d realized_config 不可用: %v", chainID, node.ID, err)
 		return
@@ -275,8 +293,9 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		if err := d.fsm.Transition(ctx, chainID, store.ChainStatusActive, "单跳编排完成"); err != nil {
 			log.Printf("dispatch: chain %d active: %v", chainID, err)
 		}
-		d.publishDesiredRevision(ctx, chainID, hops, *node)
+		d.publishDesiredRevision(ctx, chainID, hops, exitNode)
 		return
+	}
 	}
 
 	// 阶段 2：反向链 portal（出口→入口方向逐个；portal 在反向链上游机）。
@@ -386,7 +405,8 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			Tag:  shared.ChainForwardTag(hop.ID),
 			Port: hop.ForwardPort, // 0 = 自动（用户未指定的入口/中间跳）
 			// dokodemo 管道按出口协议分层：ss 出口监听 tcp,udp（UDP 中转），其余 tcp（§3.2）。
-			Network: shared.PortLayers(node.Protocol),
+			// 外部直链出口协议均为 TCP 承载（UDP 协议不入外部出口），管道恒 tcp。
+			Network: forwardPipeLayers(external, exitNode),
 		}
 		if i == 0 && endpointID != 0 {
 			spec.LocalOnly = true
@@ -428,8 +448,12 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		reverse := hop.TunnelUUID != "" // 本跳 → 下一跳为反向链
 		next := hops[i+1]
 		if i == len(hops)-2 {
-			// 下一跳为出口：目标 = 出口业务 realized 端口。
-			if reverse {
+			// 下一跳为出口：外部直链出口 → 拨外部节点 host:port；托管出口 → 出口业务
+			// realized 端口。
+			if external {
+				spec.TargetAddress = store.ResolveServerAddress(servers[next.ServerID], "")
+				spec.TargetPort = externalExit.Port
+			} else if reverse {
 				spec.TargetAddress = "127.0.0.1"
 				spec.TargetPort = rc.Port
 				spec.ViaTunnelDomain = shared.TunnelDomain(chainID, hop.ID)
@@ -478,16 +502,27 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		return
 	}
 	log.Printf("dispatch: chain %d active（%d 跳）", chainID, len(hops))
-	d.publishDesiredRevision(ctx, chainID, hops, *node)
+	d.publishDesiredRevision(ctx, chainID, hops, exitNode)
 	d.fsm.Evaluate(ctx, chainID)
 }
 
-func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, hops []store.ChainHop, node store.Node) {
+// forwardPipeLayers 返回 forward 管道的监听层：外部直链出口恒 tcp（外部协议均为
+// TCP 承载），托管出口按出口协议分层（ss 为 tcp,udp，§3.2）。
+func forwardPipeLayers(external bool, exitNode *store.Node) string {
+	if external || exitNode == nil {
+		return "tcp"
+	}
+	return shared.PortLayers(exitNode.Protocol)
+}
+
+func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, hops []store.ChainHop, node *store.Node) {
 	revision, err := d.st.DesiredChainRevision(ctx, chainID)
 	if err != nil {
 		return
 	}
-	revision.Snapshot.ServiceRealized = append(json.RawMessage(nil), node.RealizedConfig...)
+	if node != nil {
+		revision.Snapshot.ServiceRealized = append(json.RawMessage(nil), node.RealizedConfig...)
+	}
 	mergeSnapshotHopFields(&revision.Snapshot, hops, false)
 	if err := d.st.UpdateChainRevision(ctx, revision.ID, store.RevisionStatusActive, "", revision.Snapshot); err != nil {
 		log.Printf("dispatch: chain %d revision snapshot: %v", chainID, err)
@@ -587,10 +622,13 @@ func (d *Dispatcher) maybePublishReadyRevision(ctx context.Context, chainID int6
 	if err != nil || revision.Status != store.RevisionStatusActive {
 		return
 	}
-	node, err := d.st.NodeByID(ctx, revision.Snapshot.ServiceNodeID)
-	if err != nil {
-		log.Printf("dispatch: chain %d ready revision %d node: %v", chainID, revision.ID, err)
-		return
+	var node *store.Node
+	if revision.Snapshot.ServiceExternal == nil {
+		node, err = d.st.NodeByID(ctx, revision.Snapshot.ServiceNodeID)
+		if err != nil {
+			log.Printf("dispatch: chain %d ready revision %d node: %v", chainID, revision.ID, err)
+			return
+		}
 	}
 	hops, err := d.st.ChainHops(ctx, chainID)
 	if err != nil || len(hops) == 0 {
@@ -598,7 +636,7 @@ func (d *Dispatcher) maybePublishReadyRevision(ctx context.Context, chainID int6
 		return
 	}
 	log.Printf("dispatch: chain %d re-publishing ready revision %d", chainID, revision.ID)
-	d.publishDesiredRevision(ctx, chainID, hops, *node)
+	d.publishDesiredRevision(ctx, chainID, hops, node)
 }
 
 func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) error {
@@ -643,7 +681,8 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 	}
 	previous, _ := d.st.PublishedChainRevision(ctx, chainID)
 	directShared := revision.Snapshot.EndpointID != 0 && len(revision.Snapshot.Hops) == 1
-	if len(revision.Snapshot.ServiceRealized) == 0 && !directShared {
+	// 外部直链出口无出口业务节点：订阅入口恒为入口 Endpoint，不需要出口生效参数。
+	if revision.Snapshot.ServiceExternal == nil && len(revision.Snapshot.ServiceRealized) == 0 && !directShared {
 		var source json.RawMessage
 		if node, err := d.st.NodeByID(ctx, revision.Snapshot.ServiceNodeID); err == nil && len(node.RealizedConfig) > 0 {
 			source = node.RealizedConfig
@@ -674,6 +713,13 @@ func (d *Dispatcher) ForcePublishRevision(ctx context.Context, chainID int64) er
 	if err := d.st.UpdateChainRevision(ctx, revision.ID, store.RevisionStatusActiveUnconfirmed, "", revision.Snapshot); err != nil {
 		return err
 	}
+	return d.finishForcedPublish(ctx, chainID, chain, revision, previous)
+}
+
+// finishForcedPublish 强制发布的收尾（托管出口与外部直链出口共用）：发布 revision、
+// 通知订阅重建、清理旧 revision 并 reconcile 端点，最后推进编排。
+func (d *Dispatcher) finishForcedPublish(ctx context.Context, chainID int64, chain *store.Chain,
+	revision *store.ChainRevision, previous *store.ChainRevision) error {
 	if err := d.st.PublishChainRevision(ctx, revision.ID, true, chain.Status); err != nil {
 		if errors.Is(err, store.ErrChainStatusChanged) {
 			return fmt.Errorf("强制发布失败：链路状态已并发变化，请刷新后重试: %w", err)

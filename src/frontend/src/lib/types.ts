@@ -43,8 +43,15 @@ export interface PortRange {
 }
 
 export type MachineType = 'direct' | 'nat'
+// external：未托管外部直链节点（没有 Agent，不参与连接管理）。
 export type ServerConnectionState =
-  'never_connected' | 'connecting' | 'reconnecting' | 'online' | 'offline' | 'auth_rejected'
+  | 'never_connected'
+  | 'connecting'
+  | 'reconnecting'
+  | 'online'
+  | 'offline'
+  | 'auth_rejected'
+  | 'external'
 export type AgentSessionKind = 'initial' | 'reconnect'
 
 export interface Provider {
@@ -195,9 +202,50 @@ export interface ServerBanWatch {
   banned_at?: string | null
 }
 
+// 服务器类别：managed = 被控服务器（Agent 接入）；external = 未托管外部直链节点
+// （仅作链路最后一跳，无 Agent、无入站能力）。
+export type ServerKind = 'managed' | 'external'
+
+// 外部直链节点规格（服务器 DTO 预览，凭据已打码）：链路创建/编辑与服务器页解析器共用。
+export interface ExternalExit {
+  protocol: 'vless' | 'vmess' | 'trojan' | 'shadowsocks' | 'socks' | 'http'
+  address: string
+  port: number
+  uuid?: string
+  username?: string
+  password?: string
+  method?: string
+  cipher?: string
+  flow?: string
+  encryption?: string
+  network?: string
+  security?: string
+  sni?: string
+  fingerprint?: string
+  public_key?: string
+  short_id?: string
+  path?: string
+  host?: string
+  service_name?: string
+  mode?: string
+}
+
+// 外部直链解析预览（POST /api/server/parse-link）：不落库，仅用于新增/编辑服务器表单。
+export interface ParseExternalLinkResponse {
+  name: string
+  protocol: ExternalExit['protocol']
+  address: string
+  port: number
+  transport: string
+  exit: ExternalExit
+}
+
 export interface Server {
   id: number
   alias: string
+  kind: ServerKind
+  external_link?: string
+  external_exit?: ExternalExit
   connection_state: ServerConnectionState
   session_id?: string
   session_kind?: AgentSessionKind
@@ -554,6 +602,8 @@ export interface Chain {
   revision_forced: boolean
   revision_tasks: ChainRevisionTask[]
   service_config?: VirtualConfig
+  // 外部直链出口（未托管服务器）：非空时链路无出口业务节点，前端隐藏出口协议表单。
+  service_external?: ExternalExit
   entry_config?: VirtualConfig | null
 }
 

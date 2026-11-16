@@ -200,12 +200,17 @@ export default function Servers() {
   }, [])
 
   const createForm = useServerCreateForm({
-    onCreated: (res) =>
+    onCreated: (res) => {
+      // 外部直链节点没有 Agent：响应不返回安装命令，不弹安装对话框。
+      if (res.server.kind === 'external' || !res.install_command) {
+        return
+      }
       setCmdView({
         title: '服务器已创建，请在目标机器上执行安装命令',
         command: res.install_command,
         insecure: res.install_insecure,
-      }),
+      })
+    },
     reload: load,
   })
   const editForm = useServerEditForm({ reload: load })
@@ -839,9 +844,11 @@ export default function Servers() {
           <DialogHeader>
             <DialogTitle>删除服务器</DialogTitle>
             <DialogDescription>
-              {deleteTarget && isServerOnline(deleteTarget)
-                ? `确定删除「${deleteTarget.alias}」？将向 agent 发送卸载命令并删除记录，请选择卸载范围。`
-                : `确定删除「${deleteTarget?.alias}」？当前无可投递会话，仅删除记录；该机上的 agent 需手动清理。`}
+              {deleteTarget?.kind === 'external'
+                ? `确定删除外部直链节点「${deleteTarget.alias}」？仅删除面板记录，该节点本身不受影响；引用它的链路会失效。`
+                : deleteTarget && isServerOnline(deleteTarget)
+                  ? `确定删除「${deleteTarget.alias}」？将向 agent 发送卸载命令并删除记录，请选择卸载范围。`
+                  : `确定删除「${deleteTarget?.alias}」？当前无可投递会话，仅删除记录；该机上的 agent 需手动清理。`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

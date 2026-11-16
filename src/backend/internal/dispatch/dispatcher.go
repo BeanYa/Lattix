@@ -255,6 +255,9 @@ func (d *Dispatcher) EnqueueAgentUpgradeAll(ctx context.Context, version, releas
 	}
 	queued := 0
 	for _, server := range servers {
+		if server.IsExternal() {
+			continue // 未托管外部直链节点没有 Agent，无升级目标
+		}
 		if _, err := d.Enqueue(ctx, server.ID, shared.TypeUpgradeAgent, shared.UpgradeAgentPayload{
 			Version: version, ReleaseBase: releaseBase, Force: force,
 		}); err != nil {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { INGRESS_NODE_ID, INTERNET_NODE_ID } from './chain-canvas'
+import { INGRESS_NODE_ID, INTERNET_NODE_ID, MAX_CANVAS_NODES } from './chain-canvas'
 import { canvasReducer, createCanvasState, type CanvasState } from './chain-canvas-state'
 
 function add(state: CanvasState, serverId: number) {
@@ -31,11 +31,15 @@ describe('explicit canvas connection state', () => {
     ])
     expect(state.nodes).toHaveLength(2)
   })
-  it('断开香港出口只删除香港的出线，入网连接保持不变', () => {
-    const state = canvasReducer(pair(), { type: 'disconnect', from: 'n1' })
+  it('断开指定出线只删除该连线，入网连接保持不变', () => {
+    const state = canvasReducer(pair(), {
+      type: 'disconnect',
+      from: 'n1',
+      to: INTERNET_NODE_ID,
+    })
     expect(state.edges).toEqual([{ from: INGRESS_NODE_ID, to: 'n1' }])
   })
-  it('重连时保留旧线，完成才替换指定出口，其他入线不变', () => {
+  it('重连时保留旧线，完成才替换末端占位线，其他入线不变', () => {
     const state = canvasReducer(pair(), { type: 'connect-start', from: 'n1' })
     expect(state.edges).toHaveLength(2)
     const result = canvasReducer(state, { type: 'connect-complete', to: 'n2' })
@@ -44,6 +48,28 @@ describe('explicit canvas connection state', () => {
       { from: 'n1', to: 'n2' },
     ])
     expect(result.connecting).toBeNull()
+  })
+  it('允许分支与汇合：同一出口可拉多条线，同一入口可被多个上游连接', () => {
+    const state = add(pair(), 3)
+    const branched = connect(connect(state, 'n1', 'n2'), 'n1', 'n3')
+    expect(branched.edges).toContainEqual({ from: 'n1', to: 'n2' })
+    expect(branched.edges).toContainEqual({ from: 'n1', to: 'n3' })
+    const merged = connect(branched, 'n2', 'n3')
+    expect(merged.edges).toContainEqual({ from: 'n2', to: 'n3' })
+    // 断开只影响被点的那条线（n1→n3 保留）。
+    const unlinked = canvasReducer(merged, { type: 'disconnect', from: 'n1', to: 'n2' })
+    expect(unlinked.edges).toContainEqual({ from: 'n1', to: 'n3' })
+    expect(unlinked.edges.some((edge) => edge.from === 'n1' && edge.to === 'n2')).toBe(false)
+  })
+  it('可从 Internet 终端拉分支，且分支中的环仍被拒绝', () => {
+    const state = connect(pair(), 'n1', 'n2')
+    const both = connect(state, 'n1', INTERNET_NODE_ID)
+    expect(both.edges).toContainEqual({ from: 'n1', to: 'n2' })
+    expect(both.edges).toContainEqual({ from: 'n1', to: INTERNET_NODE_ID })
+    const cycle = connect(connect(add(pair(), 3), 'n1', 'n2'), 'n2', 'n3')
+    const rejected = connect(cycle, 'n3', 'n1')
+    expect(rejected.edges).toEqual(cycle.edges)
+    expect(rejected.connectionError).not.toBe('')
   })
   it('取消或再次点相同出口不丢失原连接', () => {
     const original = pair()
@@ -62,13 +88,14 @@ describe('explicit canvas connection state', () => {
       expect(result.connectionError).not.toBe('')
     }
   })
-  it('已占用入口不可被其他出口静默抢走', () => {
+  it('已占用入口可被其他上游汇合（多入边）', () => {
     const original = connect(add(pair(), 3), 'n1', 'n2')
     const result = connect(original, 'n3', 'n2')
-    expect(result.edges).toEqual(original.edges)
-    expect(result.connectionError).not.toBe('')
+    expect(result.edges).toContainEqual({ from: 'n1', to: 'n2' })
+    expect(result.edges).toContainEqual({ from: 'n3', to: 'n2' })
+    expect(result.connectionError).toBe('')
   })
-  it('导入拓扑也限制每个入口与出口只有一条线，忽略非法端点', () => {
+  it('导入拓扑允许分支/汇合，忽略环与非法端点', () => {
     const state = add(pair(), 3)
     const result = canvasReducer(state, {
       type: 'prefill',
@@ -90,12 +117,20 @@ describe('explicit canvas connection state', () => {
     })
     expect(result.edges).toEqual([
       { from: INGRESS_NODE_ID, to: 'n1' },
+      { from: INGRESS_NODE_ID, to: 'n2' },
       { from: 'n1', to: 'n2' },
+      { from: 'n1', to: 'n3' },
+      { from: 'n3', to: 'n2' },
       { from: 'n2', to: INTERNET_NODE_ID },
+      { from: 'n3', to: INTERNET_NODE_ID },
     ])
   })
   it('来源连接可显式断开和重连，服务器出线不会让来源自动恢复', () => {
-    const disconnected = canvasReducer(pair(), { type: 'disconnect', from: INGRESS_NODE_ID })
+    const disconnected = canvasReducer(pair(), {
+      type: 'disconnect',
+      from: INGRESS_NODE_ID,
+      to: 'n1',
+    })
     const state = connect(disconnected, 'n1', 'n2')
     expect(state.edges.some((e) => e.from === INGRESS_NODE_ID)).toBe(false)
     expect(connect(state, INGRESS_NODE_ID, 'n1').edges).toContainEqual({
@@ -111,9 +146,12 @@ describe('explicit canvas connection state', () => {
       canvasReducer(original, { type: 'connect-start', from: INTERNET_NODE_ID }).connecting,
     ).toBeNull()
   })
-  it('快速添加仍受4跳限制，移除仅清理相邻边，重置恢复初始状态', () => {
-    const full = [1, 2, 3, 4, 5].reduce(add, createCanvasState())
-    expect(full.nodes).toHaveLength(4)
+  it('画布节点受上限约束，移除仅清理相邻边，重置恢复初始状态', () => {
+    const full = Array.from({ length: MAX_CANVAS_NODES + 1 }, (_, index) => index + 1).reduce(
+      add,
+      createCanvasState(),
+    )
+    expect(full.nodes).toHaveLength(MAX_CANVAS_NODES)
     const linked = connect(connect(full, 'n1', 'n2'), 'n2', INTERNET_NODE_ID)
     const result = canvasReducer(linked, { type: 'remove', id: 'n2' })
     expect(result.edges).toEqual([{ from: INGRESS_NODE_ID, to: 'n1' }])

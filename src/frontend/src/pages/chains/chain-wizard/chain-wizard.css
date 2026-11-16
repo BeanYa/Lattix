@@ -117,6 +117,37 @@
   flex-shrink: 0;
 }
 
+/* 外部直链节点（未托管服务器）：协议摘要，端口只读 */
+.cw-node-external {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: auto;
+  font-size: 11px;
+  color: var(--panel-ink-2);
+}
+
+.cw-node-external-badge {
+  flex-shrink: 0;
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--panel-signal) 45%, transparent);
+  background: var(--panel-signal-soft);
+  color: var(--panel-signal);
+}
+
+.cw-node-external-proto {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .cw-server-item-count {
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
@@ -348,6 +379,10 @@
 
 .cw-node.is-issue .cw-node-card {
   border-color: var(--panel-status-failed);
+}
+
+.cw-node.is-warning .cw-node-card {
+  border-color: color-mix(in srgb, var(--panel-warning) 60%, var(--panel-rule));
 }
 
 .cw-node.is-orphan .cw-node-card {
@@ -639,6 +674,13 @@
   cursor: default;
 }
 
+/* 外部直链端口来自链接：只读展示，不可编辑 */
+.cw-node-port-value.is-locked {
+  color: var(--panel-ink-2);
+  border-style: dashed;
+  cursor: default;
+}
+
 .cw-node-port-input {
   height: 30px;
   width: 100px;
@@ -789,13 +831,237 @@
   color: var(--panel-ink-3);
 }
 
+/* ---------- 结果预览（多路径） ---------- */
+
+.cw-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-sm);
+  background: var(--panel-surface);
+}
+
+.cw-preview-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cw-preview-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--panel-ink-2);
+}
+
+.cw-preview-count {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--panel-signal);
+}
+
+.cw-preview-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--panel-ink-3);
+}
+
+.cw-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cw-preview-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--panel-ink);
+}
+
+.cw-preview-hop {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-pill);
+  background: var(--panel-raised);
+  white-space: nowrap;
+}
+
+.cw-preview-hop.is-entry {
+  border-color: color-mix(in srgb, var(--panel-signal) 45%, var(--panel-rule));
+}
+
+.cw-preview-hop.is-exit {
+  border-color: color-mix(in srgb, var(--panel-status-ok) 45%, var(--panel-rule));
+}
+
+.cw-preview-hop em {
+  font-style: normal;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--panel-ink-3);
+}
+
+.cw-preview-arrow {
+  color: var(--panel-ink-3);
+}
+
+.cw-preview-internet {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+  color: var(--panel-status-ok);
+}
+
+.cw-preview-internet svg {
+  width: 12px;
+  height: 12px;
+}
+
+.cw-preview-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 8px 0 0;
+  border-top: 1px dashed var(--panel-rule);
+  list-style: none;
+  font-size: 11.5px;
+  color: var(--panel-warning);
+}
+
+.cw-preview-warnings li {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.cw-preview-warnings svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
 /* ---------- 第二步：协议与细节 ---------- */
 
 .cw-details {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
+  /* 结果预览复用链路详情卡片（较宽），协议表单仍收在 720px 内保持可读。 */
+  max-width: 1180px;
+}
+
+.cw-details-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   max-width: 720px;
+}
+
+/* 外部直链出口链的入口协议只读标识（协议固定 VLESS，细节由下方表单承载） */
+.cw-entry-protocol {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+}
+
+.cw-entry-protocol strong {
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.cw-entry-protocol span {
+  color: var(--panel-ink-3);
+  font-size: 12px;
+}
+
+/* ---------- 结果预览（协议与细节步骤） ---------- */
+
+.cw-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cw-result-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.cw-result-title {
+  color: var(--panel-ink-2);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.cw-result-count {
+  color: var(--panel-signal);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.cw-result-note {
+  margin-left: auto;
+  color: var(--panel-ink-3);
+  font-size: 12px;
+}
+
+.cw-result-rows {
+  overflow: hidden;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-md, 8px);
+  background: var(--panel-surface);
+}
+
+.cw-result-rows > .cg-chain-entry:hover {
+  background: color-mix(in srgb, var(--panel-signal) 4%, var(--panel-surface));
+}
+
+.cw-result .cg-chain-name {
+  max-width: 260px;
+}
+
+.cw-result-warnings {
+  margin-top: 2px;
+}
+
+.cw-result-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cw-result-side > .cg-chain-hint {
+  margin: 0;
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
 .cw-summary {
@@ -812,6 +1078,66 @@
 
 .cw-summary-entry {
   color: var(--panel-signal);
+}
+
+/* 多链摘要：每条将创建的链路一行，带入口/出口标签 */
+.cw-chain-list {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.cw-chain-list-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.cw-chain-list-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--panel-ink);
+}
+
+.cw-chain-list-note {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--panel-ink-3);
+}
+
+.cw-chain-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cw-chain-list-item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cw-chain-list-index {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1px solid var(--panel-rule);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--panel-ink-3);
+}
+
+.cw-summary-hop em {
+  font-style: normal;
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--panel-ink-3);
 }
 
 .cw-summary-hop {
@@ -842,6 +1168,69 @@
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   color: var(--panel-ink-3);
+}
+
+/* 外部直链出口只读摘要（替代出口协议/传输/端口表单） */
+.cw-external-exit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--panel-signal) 30%, var(--panel-rule));
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+}
+
+.cw-external-exit-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cw-external-exit-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--panel-signal) 45%, transparent);
+  background: var(--panel-signal-soft);
+  color: var(--panel-signal);
+}
+
+.cw-external-exit-proto {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--panel-ink);
+}
+
+.cw-external-exit-grid {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.cw-external-exit-grid > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cw-external-exit-grid dt {
+  flex: 0 0 84px;
+  font-size: 11.5px;
+  color: var(--panel-ink-3);
+}
+
+.cw-external-exit-grid dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--panel-mono);
+  font-size: 11.5px;
+  color: var(--panel-ink);
 }
 
 /* ---------- 步骤指示 ---------- */

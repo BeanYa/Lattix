@@ -84,6 +84,7 @@ type chainDTO struct {
 	RevisionForced      bool                   `json:"revision_forced"`
 	RevisionTasks       []chainRevisionTaskDTO `json:"revision_tasks"`
 	ServiceConfig       json.RawMessage        `json:"service_config,omitempty"`
+	ServiceExternal     *shared.ExternalExit   `json:"service_external,omitempty"` // 外部直链出口规格（未托管出口链路）
 	EntryConfig         *shared.VirtualConfig  `json:"entry_config,omitempty"` // 入口协议区块配置回填（P4，前端编辑回填用）
 }
 
@@ -110,6 +111,8 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 			out.RevisionStatus = revision.Status
 			out.RevisionForced = revision.Forced
 			out.ServiceConfig = append(json.RawMessage(nil), revision.Snapshot.ServiceConfig...)
+			// 外部出口规格含凭据：DTO 只回显打码后的预览（数据面用快照原文）。
+			out.ServiceExternal = redactExternalExit(revision.Snapshot.ServiceExternal)
 			tasks, err := s.st.RevisionTasks(r.Context(), revisionID)
 			if err != nil {
 				return chainDTO{}, err
@@ -262,43 +265,9 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "链路须包含 1-4 台服务器")
 		return
 	}
-	// 出口节点协议表单校验（dokodemo 为端口转发，无用户概念，不能作链出口）。
-	req.Node.Name = req.Name
-	req.Node.ServerID = refs[len(refs)-1].ServerID
-	if err := req.Node.normalize(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if len(refs) > 1 && req.Node.Protocol == shared.ProtocolDokodemo {
-		writeError(w, http.StatusBadRequest, "dokodemo-door 不能作为链出口节点")
-		return
-	}
-	// 入口协议区块（P4 §3.2 异构入口）：v1 仅 vless+reality；仅多跳；出口仅 hy2/vless。
-	if req.EntryNode != nil {
-		if len(refs) < 2 {
-			writeError(w, http.StatusBadRequest, "入口协议区块仅用于多跳链路（单跳客户端直连出口即可）")
-			return
-		}
-		if req.EntryNode.Protocol != "" && req.EntryNode.Protocol != shared.ProtocolVLESS {
-			writeError(w, http.StatusBadRequest, "入口协议区块 v1 仅支持 VLESS+Reality")
-			return
-		}
-		if req.Node.Protocol != shared.ProtocolHysteria2 && req.Node.Protocol != shared.ProtocolVLESS {
-			writeError(w, http.StatusBadRequest, "入口协议区块 v1 仅支持 hysteria2/vless 出口")
-			return
-		}
-		req.EntryNode.Protocol = shared.ProtocolVLESS
-		req.EntryNode.Security = shared.SecurityReality // 固定 reality（子参数可空自动生成）
-		req.EntryNode.Name = req.Name
-		req.EntryNode.ServerID = refs[0].ServerID
-		if err := req.EntryNode.normalize(); err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("入口协议参数: %v", err))
-			return
-		}
-	}
-
-	// 逐跳加载服务器并校验：同 server 不重复（O(n) 查重即环检测）；
-	// 入口与中间跳必须有入站能力（direct 或 allowed_ports 非空），出口任意（§21）。
+	// 逐跳加载服务器并校验（先于出口节点表单：外部直链出口没有节点表单）：
+	// 同 server 不重复（O(n) 查重即环检测）；入口与中间跳必须有入站能力
+	// （direct 或 allowed_ports 非空，§21）；未托管外部直链节点只能作最后一跳。
 	servers := make([]*store.Server, 0, len(refs))
 	seen := map[int64]bool{}
 	for i, ref := range refs {
@@ -316,6 +285,13 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		// 未托管外部直链节点只能作链路最后一跳（出口）：它没有 Agent、
+		// 没有入站能力，也无法承载入口/中间跳的 forward 监听。
+		if srv.IsExternal() && (i < len(refs)-1 || len(refs) == 1) {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("未托管服务器 %s 只能作为链路的最后一跳（出口）", srv.Alias))
+			return
+		}
 		if i < len(refs)-1 && !inboundCapable(srv) {
 			writeError(w, http.StatusBadRequest,
 				fmt.Sprintf("服务器 %s 无入站能力（仅出口档 NAT），不能作入口/中间跳", srv.Alias))
@@ -330,10 +306,73 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		servers = append(servers, srv)
 	}
 	entrySrv, exitSrv := servers[0], servers[len(servers)-1]
-	// ACME 证书模式：落地（出口）服务器须有域名型公网地址（§3.3 模式 B，无则 400）。
-	if err := applyACMEDomain(&req.Node, exitSrv); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	externalExit := exitSrv.ParseExternalExit()
+	if exitSrv.IsExternal() && externalExit == nil {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("未托管服务器 %s 的外部直链配置损坏，请重新保存该服务器", exitSrv.Alias))
 		return
+	}
+	// 出口节点协议表单校验（dokodemo 为端口转发，无用户概念，不能作链出口）。
+	// 外部直链出口没有托管业务节点：忽略节点表单，协议取外部规格。
+	exitProtocol := ""
+	if externalExit != nil {
+		exitProtocol = externalExit.Protocol
+		req.Node = createNodeRequest{}
+	} else {
+		req.Node.Name = req.Name
+		req.Node.ServerID = exitSrv.ID
+		if err := req.Node.normalize(); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if len(refs) > 1 && req.Node.Protocol == shared.ProtocolDokodemo {
+			writeError(w, http.StatusBadRequest, "dokodemo-door 不能作为链出口节点")
+			return
+		}
+		exitProtocol = req.Node.Protocol
+	}
+	// 入口协议（客户端接入端点）：外部直链出口链恒由入口共享端点承载，入口服务器 A 与
+	// 普通链路一样可配置完整的 VLESS 协议细节（传输/安全层/flow/encryption/证书/reality
+	// 子参数），缺省 reality 自动生成；托管出口链沿用入口协议区块（v1 固定 VLESS+Reality）。
+	if req.EntryNode == nil && externalExit != nil {
+		req.EntryNode = &createNodeRequest{Protocol: shared.ProtocolVLESS}
+	}
+	if req.EntryNode != nil {
+		if len(refs) < 2 {
+			writeError(w, http.StatusBadRequest, "入口协议区块仅用于多跳链路（单跳客户端直连出口即可）")
+			return
+		}
+		if req.EntryNode.Protocol != "" && req.EntryNode.Protocol != shared.ProtocolVLESS {
+			writeError(w, http.StatusBadRequest, "入口协议仅支持 VLESS（入口共享端点）")
+			return
+		}
+		if externalExit == nil && exitProtocol != shared.ProtocolHysteria2 && exitProtocol != shared.ProtocolVLESS {
+			writeError(w, http.StatusBadRequest, "入口协议区块 v1 仅支持 hysteria2/vless 出口")
+			return
+		}
+		req.EntryNode.Protocol = shared.ProtocolVLESS
+		if externalExit == nil {
+			// 托管出口的入口协议区块 v1 固定 Reality（子参数可空自动生成）。
+			req.EntryNode.Security = shared.SecurityReality
+		}
+		req.EntryNode.Name = req.Name
+		req.EntryNode.ServerID = entrySrv.ID
+		if err := req.EntryNode.normalize(); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("入口协议参数: %v", err))
+			return
+		}
+	}
+	// ACME 证书模式：落地（出口）服务器须有域名型公网地址（§3.3 模式 B，无则 400）；
+	// 外部直链出口链的落地是入口服务器 A（客户端接入端点证书由 A 签发）。
+	if externalExit == nil {
+		if err := applyACMEDomain(&req.Node, exitSrv); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else if req.EntryNode != nil {
+		if err := applyACMEDomain(req.EntryNode, entrySrv); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("入口协议参数: %v", err))
+			return
+		}
 	}
 	// hy2 端口跳跃（spec §2/§3.2）：先对出口机做分配/显式段校验（复用 Task 3 助手）；
 	// 端到端（无入口区块）时逐跳校验段整体落在各跳 NAT 段内且与各跳既有占用无冲突。
@@ -433,9 +472,10 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	endpointID := int64(0)
 	serviceUUID := ""
 	// 入口端点：vless 出口（现状）或勾选入口协议区块（P4，入口协议配置独立于出口）。
-	if req.Node.Protocol == shared.ProtocolVLESS || req.EntryNode != nil {
+	if externalExit != nil || req.Node.Protocol == shared.ProtocolVLESS || req.EntryNode != nil {
 		endpointSource := vc
-		if req.EntryNode != nil {
+		if externalExit != nil || req.EntryNode != nil {
+			// 外部直链出口：入口端点承载客户端接入（VLESS+Reality），出站走外部协议。
 			endpointSource = buildVirtualConfig(*req.EntryNode)
 		}
 		endpointConfig := endpointSource
@@ -459,8 +499,11 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		endpointID = endpoint.ID
-		serviceUUID = uuid.NewString()
-		vc.StaticClients = []shared.ClientCredential{{ID: serviceUUID, Email: "tunnel:" + serviceUUID}}
+		if externalExit == nil {
+			// 托管出口：入口端点以 VLESS 隧道身份建立到出口业务 inbound 的内部连接。
+			serviceUUID = uuid.NewString()
+			vc.StaticClients = []shared.ClientCredential{{ID: serviceUUID, Email: "tunnel:" + serviceUUID}}
+		}
 		// A one-hop shared chain exits directly from the endpoint and does not
 		// need a second public listener on the same server.
 		if len(servers) == 1 {
@@ -470,7 +513,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	}
 	// hy2 出口共享监听（P4 §3.2）：同机多链并入同一 hy2 监听与端口段（首链 profile 为准）。
 	serviceEndpointID := int64(0)
-	if vc.Protocol == shared.ProtocolHysteria2 {
+	if externalExit == nil && vc.Protocol == shared.ProtocolHysteria2 {
 		endpointJSON, err := json.Marshal(vc)
 		if err != nil {
 			o.Fail(err)
@@ -506,6 +549,8 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	initialHops := make([]store.InitialChainHop, 0, len(servers))
+	// 明文出口协议（socks/http）经反向隧道时以加密段替代（§21.1 加密段）；
+	// 外部直链出口没有反向隧道，plaintext 不参与其 transport 推导。
 	plaintext := req.Node.Protocol == shared.ProtocolSocks || req.Node.Protocol == shared.ProtocolHTTP
 	for i, srv := range servers {
 		role := store.HopRoleMiddle
@@ -534,12 +579,18 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		// 预生成 tunnel_uuid（面板下发；short_id 由编排器确定性派生）。
 		transport := ""
 		if i < len(servers)-1 {
-			transport = transportForServers(servers[i+1], plaintext)
-			// 入口终结模式末段：出口为 hy2 且可直连时由本跳 xray 以 hy2 outbound 直拨（§3.2）；
-			// 出口无入站能力（零公共端口 NAT）保持 reverse（功能可用，失去 UDP 收益）。
-			if i == len(servers)-2 && req.EntryNode != nil &&
-				req.Node.Protocol == shared.ProtocolHysteria2 && inboundCapable(servers[i+1]) {
-				transport = "hy2"
+			if servers[i+1].IsExternal() {
+				// 下游是外部直链节点：本跳直接以 dokodemo 拨外部节点公网 host:port，
+				// 无需反向隧道（外部节点不承载我方 inbound，也不在我方控制面）。
+				transport = "direct"
+			} else {
+				transport = transportForServers(servers[i+1], plaintext)
+				// 入口终结模式末段：出口为 hy2 且可直连时由本跳 xray 以 hy2 outbound 直拨（§3.2）；
+				// 出口无入站能力（零公共端口 NAT）保持 reverse（功能可用，失去 UDP 收益）。
+				if i == len(servers)-2 && req.EntryNode != nil &&
+					req.Node.Protocol == shared.ProtocolHysteria2 && inboundCapable(servers[i+1]) {
+					transport = "hy2"
+				}
 			}
 		}
 		tunnelUUID := ""
@@ -551,11 +602,23 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			ForwardPort: hopForwardPort, Address: refs[i].Address, TunnelUUID: tunnelUUID,
 		})
 	}
+	serviceProtocol := vc.Protocol
+	serviceConfig := vcJSON
+	servicePort := req.Node.Port
+	var serviceExternal *shared.ExternalExit
+	if externalExit != nil {
+		// 外部直链出口：无出口业务节点；外部规格随修订冻结（ChainRevisionSnapshot）。
+		serviceProtocol = ""
+		serviceConfig = json.RawMessage(`{}`)
+		servicePort = nil
+		serviceExternal = externalExit
+	}
 	deployment, err := s.st.CreateInitialChainDeployment(r.Context(), store.InitialChainDeployment{
-		Name: req.Name, ServiceServerID: exitSrv.ID, ServiceProtocol: vc.Protocol,
-		ServicePort: req.Node.Port, ServiceConfig: vcJSON, EndpointID: endpointID,
+		Name: req.Name, ServiceServerID: exitSrv.ID, ServiceProtocol: serviceProtocol,
+		ServicePort: servicePort, ServiceConfig: serviceConfig, EndpointID: endpointID,
 		ServiceEndpointID: serviceEndpointID, ServiceUUID: serviceUUID,
 		TrafficMultiplierMilli: trafficMultiplierMilli, Hops: initialHops,
+		ServiceExternal: serviceExternal,
 	})
 	if err != nil {
 		o.Fail(err)
@@ -623,6 +686,41 @@ func adoptHy2EndpointParams(req *createNodeRequest, vc *shared.VirtualConfig, en
 	vc.ObfsPassword = first.ObfsPassword
 	vc.UpMbps, vc.DownMbps = first.UpMbps, first.DownMbps
 	vc.Fingerprint = first.Fingerprint
+}
+
+// adoptEntryProtocol 把入口共享端点已保存的 VLESS 配置回填到入口协议请求（外部直链
+// 出口编辑未提交入口参数时沿用原配置，避免 short_id/dest 重新随机生成导致订阅参数漂移）。
+func adoptEntryProtocol(req *createNodeRequest, config shared.VirtualConfig) {
+	req.Protocol = shared.ProtocolVLESS
+	req.Network = config.Network
+	req.Security = config.Security
+	req.CertMode = config.CertMode
+	req.TLSDomain = config.TLSDomain
+	req.ServiceName = config.ServiceName
+	req.Path = config.Path
+	req.Mode = config.Mode
+	req.Host = config.Host
+	req.Flow = config.Flow
+	req.Encryption = config.Encryption
+	req.Fingerprint = config.Fingerprint
+	var template struct {
+		StreamSettings struct {
+			RealitySettings struct {
+				ShortIDs    []string `json:"shortIds"`
+				Dest        string   `json:"dest"`
+				ServerNames []string `json:"serverNames"`
+			} `json:"realitySettings"`
+		} `json:"streamSettings"`
+	}
+	if json.Unmarshal(config.Template, &template) != nil {
+		return
+	}
+	reality := template.StreamSettings.RealitySettings
+	if len(reality.ShortIDs) > 0 {
+		req.ShortID = reality.ShortIDs[0]
+	}
+	req.Dest = reality.Dest
+	req.ServerNames = reality.ServerNames
 }
 
 func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
@@ -704,6 +802,11 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("服务器 %d 不存在", ref.ServerID))
 			return
 		}
+		if server.IsExternal() && (i < len(req.Hops)-1 || len(req.Hops) == 1) {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("未托管服务器 %s 只能作为链路的最后一跳（出口）", server.Alias))
+			return
+		}
 		if i < len(req.Hops)-1 && !inboundCapable(server) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("服务器 %s 无入站能力", server.Alias))
 			return
@@ -717,17 +820,53 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		servers = append(servers, server)
 	}
 	req.Name = strings.TrimSpace(req.Name)
-	req.Node.Name = req.Name
-	req.Node.ServerID = servers[len(servers)-1].ID
-	if err := req.Node.normalize(); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	exitSrv := servers[len(servers)-1]
+	externalExit := exitSrv.ParseExternalExit()
+	if exitSrv.IsExternal() && externalExit == nil {
+		writeError(w, http.StatusBadRequest,
+			fmt.Sprintf("未托管服务器 %s 的外部直链配置损坏，请重新保存该服务器", exitSrv.Alias))
 		return
 	}
-	if len(servers) > 1 && req.Node.Protocol == shared.ProtocolDokodemo {
-		writeError(w, http.StatusBadRequest, "dokodemo-door 不能作为中转链出口")
+	// 导出/出口形态切换不在 v1 编辑范围：已发布修订已冻结出口形态（业务节点或外部规格），
+	// 切换需要重建入口端点与全部下游 piece，请新建链路。
+	if (externalExit != nil) != (current.Snapshot.ServiceExternal != nil) {
+		writeError(w, http.StatusBadRequest, "暂不支持在托管出口与外部直链出口之间切换，请新建链路")
 		return
 	}
-	// 入口协议区块（P4 §3.2 异构入口）：v1 仅 vless+reality；仅多跳；出口仅 hy2/vless。
+	exitProtocol := ""
+	if externalExit != nil {
+		exitProtocol = externalExit.Protocol
+		req.Node = createNodeRequest{}
+	} else {
+		req.Node.Name = req.Name
+		req.Node.ServerID = exitSrv.ID
+		if err := req.Node.normalize(); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if len(servers) > 1 && req.Node.Protocol == shared.ProtocolDokodemo {
+			writeError(w, http.StatusBadRequest, "dokodemo-door 不能作为中转链出口")
+			return
+		}
+		exitProtocol = req.Node.Protocol
+	}
+	// 入口协议（客户端接入端点）：外部直链出口链恒挂在入口共享端点上，入口服务器 A 可
+	// 与普通链路一样配置完整 VLESS 协议细节（未提交时沿用当前端点配置）；托管出口链沿用
+	// 入口协议区块 v1（固定 VLESS+Reality）。
+	if req.EntryNode == nil && externalExit != nil {
+		if current.Snapshot.EndpointID == 0 {
+			writeError(w, http.StatusBadRequest, "该链路缺少入口共享端点，请新建链路后再使用外部直链出口")
+			return
+		}
+		req.EntryNode = &createNodeRequest{Protocol: shared.ProtocolVLESS}
+		if endpoint, err := s.st.SharedEndpointByID(r.Context(), current.Snapshot.EndpointID); err == nil {
+			// 入口协议细节沿用当前端点配置（服务端记住的完整 VLESS 参数）。
+			var currentEntry shared.VirtualConfig
+			if json.Unmarshal(endpoint.ConfigTemplate, &currentEntry) == nil {
+				adoptEntryProtocol(req.EntryNode, currentEntry)
+			}
+		}
+	}
 	if req.EntryNode != nil {
 		if len(req.Hops) < 2 {
 			writeError(w, http.StatusBadRequest, "入口协议区块仅用于多跳链路（单跳客户端直连出口即可）")
@@ -741,26 +880,37 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if req.EntryNode.Protocol != "" && req.EntryNode.Protocol != shared.ProtocolVLESS {
-			writeError(w, http.StatusBadRequest, "入口协议区块 v1 仅支持 VLESS+Reality")
+			writeError(w, http.StatusBadRequest, "入口协议仅支持 VLESS（入口共享端点）")
 			return
 		}
-		if req.Node.Protocol != shared.ProtocolHysteria2 && req.Node.Protocol != shared.ProtocolVLESS {
+		if externalExit == nil && exitProtocol != shared.ProtocolHysteria2 && exitProtocol != shared.ProtocolVLESS {
 			writeError(w, http.StatusBadRequest, "入口协议区块 v1 仅支持 hysteria2/vless 出口")
 			return
 		}
 		req.EntryNode.Protocol = shared.ProtocolVLESS
-		req.EntryNode.Security = shared.SecurityReality // 固定 reality（子参数可空自动生成）
+		if externalExit == nil {
+			req.EntryNode.Security = shared.SecurityReality // 托管出口入口块固定 reality（子参数可空自动生成）
+		}
 		req.EntryNode.Name = req.Name
 		req.EntryNode.ServerID = servers[0].ID
 		if err := req.EntryNode.normalize(); err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("入口协议参数: %v", err))
 			return
 		}
+		if externalExit != nil {
+			// 落地是入口服务器 A：ACME 证书域名按入口机地址检测填充。
+			if err := applyACMEDomain(req.EntryNode, servers[0]); err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("入口协议参数: %v", err))
+				return
+			}
+		}
 	}
 	// ACME 证书模式：落地（出口）服务器须有域名型公网地址（镜像创建路径）。
-	if err := applyACMEDomain(&req.Node, servers[len(servers)-1]); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	if externalExit == nil {
+		if err := applyACMEDomain(&req.Node, exitSrv); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	// hy2 端口跳跃（spec §2/§3.2，镜像创建路径）：先对出口机做分配/显式段校验；
 	// 端到端（无入口区块）时逐跳校验段整体落在各跳 NAT 段内且与各跳既有占用无冲突。
@@ -808,8 +958,8 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	// 入口共享门控（评审移交②）：对齐"实际会挂端点"的条件——编辑路径仅在快照已有
 	// 入口端点（Snapshot.EndpointID != 0）时挂载/保留端点（见下方 endpointID 解析）；
 	// 无端点链改 vless 出口或勾选入口区块并不会挂端点，入口端口仍是 dokodemo 实监听，
-	// 必须照常做冲突校验。
-	entryShared := (req.Node.Protocol == shared.ProtocolVLESS || req.EntryNode != nil) &&
+	// 必须照常做冲突校验。外部直链出口链恒有入口端点。
+	entryShared := (externalExit != nil || req.Node.Protocol == shared.ProtocolVLESS || req.EntryNode != nil) &&
 		current.Snapshot.EndpointID != 0
 	if req.EntryPort != nil {
 		if *req.EntryPort < 1 || *req.EntryPort > 65535 || checkPortInRanges(servers[0], *req.EntryPort) != nil {
@@ -840,8 +990,13 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	vc := buildVirtualConfig(req.Node)
 	endpointID := int64(0)
 	serviceUUID := current.Snapshot.ServiceUUID
-	if (vc.Protocol == shared.ProtocolVLESS || req.EntryNode != nil) && current.Snapshot.EndpointID != 0 {
-		if serviceUUID == "" {
+	if externalExit != nil {
+		// 外部直链出口：入口端点承载客户端接入（VLESS+Reality），不使用隧道身份。
+		serviceUUID = ""
+	}
+	if (externalExit != nil || vc.Protocol == shared.ProtocolVLESS || req.EntryNode != nil) &&
+		current.Snapshot.EndpointID != 0 {
+		if serviceUUID == "" && externalExit == nil {
 			serviceUUID = uuid.NewString()
 		}
 		endpointPort := 0
@@ -850,7 +1005,9 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		}
 		// 入口协议区块（P4）：入口端点配置独立于出口协议。
 		endpointSource := vc
-		if req.EntryNode != nil {
+		if externalExit != nil {
+			endpointSource = buildVirtualConfig(*req.EntryNode)
+		} else if req.EntryNode != nil {
 			endpointSource = buildVirtualConfig(*req.EntryNode)
 		}
 		endpointConfig := endpointSource
@@ -884,7 +1041,7 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	}
 	// hy2 出口共享监听（P4 §3.2，镜像创建路径）：同机多链并入同一 hy2 监听与端口段。
 	serviceEndpointID := int64(0)
-	if vc.Protocol == shared.ProtocolHysteria2 {
+	if externalExit == nil && vc.Protocol == shared.ProtocolHysteria2 {
 		endpointJSON, err := json.Marshal(vc)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
@@ -957,13 +1114,16 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	plaintext := req.Node.Protocol == shared.ProtocolSocks || req.Node.Protocol == shared.ProtocolHTTP
 	for i := 0; i+1 < len(desiredHops); i++ {
 		transport := "direct"
-		if !inboundCapable(servers[i+1]) {
+		if servers[i+1].IsExternal() {
+			// 下游是外部直链节点：本跳直接 dokodemo 拨外部 host:port，无反向隧道。
+			transport = "direct"
+		} else if !inboundCapable(servers[i+1]) {
 			transport = "reverse"
 		} else if plaintext {
 			transport = "encrypted"
 		}
 		// 入口终结模式末段（P4 §3.2）：出口 hy2 且可直连 → 本跳 hy2 outbound 直拨。
-		if i == len(desiredHops)-2 && req.EntryNode != nil &&
+		if externalExit == nil && i == len(desiredHops)-2 && req.EntryNode != nil &&
 			req.Node.Protocol == shared.ProtocolHysteria2 && inboundCapable(servers[i+1]) {
 			transport = "hy2"
 		}
@@ -983,7 +1143,13 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	desired := store.ChainRevisionSnapshot{Name: req.Name, ServiceNodeID: current.Snapshot.ServiceNodeID,
 		ServiceServerID: servers[len(servers)-1].ID, ServiceConfig: serviceConfig,
 		EndpointID: endpointID, ServiceEndpointID: serviceEndpointID, ServiceUUID: serviceUUID,
-		TrafficMultiplierMilli: multiplier, Hops: desiredHops}
+		TrafficMultiplierMilli: multiplier, Hops: desiredHops, ServiceExternal: externalExit}
+	if externalExit != nil {
+		// 外部直链出口：无出口业务节点与隧道身份；外部规格随修订冻结。
+		desired.ServiceNodeID = 0
+		desired.ServiceConfig = json.RawMessage(`{}`)
+		desired.ServiceUUID = ""
+	}
 	currentPlanTopology := revisionTopology(1, current.Snapshot)
 	desiredPlanTopology := revisionTopology(2, desired)
 	plan, err := dispatch.PlanRevision(currentPlanTopology, desiredPlanTopology)
@@ -1042,7 +1208,7 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			TaskKey: "cleanup/" + piece.Key, Phase: "cleanup", Action: "remove", Kind: piece.Kind,
 			HopID: piece.HopID, ServerID: piece.ServerID})
 	}
-	if current.Snapshot.ServiceServerID != desired.ServiceServerID {
+	if externalExit == nil && current.Snapshot.ServiceServerID != desired.ServiceServerID {
 		_, _ = s.st.AddRevisionTask(r.Context(), store.ChainRevisionTask{RevisionID: revision.ID,
 			TaskKey: fmt.Sprintf("cleanup/service/%d", desired.ServiceNodeID), Phase: "cleanup", Action: "remove",
 			Kind: dispatch.RevisionPieceService, HopID: desired.ServiceNodeID, ServerID: current.Snapshot.ServiceServerID})
@@ -1117,7 +1283,11 @@ func revisionTopology(revisionID int64, snapshot store.ChainRevisionSnapshot) di
 		Protocol string `json:"protocol"`
 	}
 	_ = json.Unmarshal(snapshot.ServiceConfig, &svc)
-	forwardLayers := shared.PortLayers(svc.Protocol)
+	// 外部直链出口协议均为 TCP 承载：管道层恒 tcp（不看外部协议名，socks/ss 也不开 UDP）。
+	forwardLayers := "tcp"
+	if snapshot.ServiceExternal == nil {
+		forwardLayers = shared.PortLayers(svc.Protocol)
+	}
 	for index, hop := range snapshot.Hops {
 		settings, _ := json.Marshal(map[string]any{
 			"tunnel_uuid":    hop.TunnelUUID,
@@ -1131,7 +1301,8 @@ func revisionTopology(revisionID int64, snapshot store.ChainRevisionSnapshot) di
 	return dispatch.RevisionTopology{RevisionID: revisionID, ServiceID: snapshot.ServiceNodeID,
 		Service: snapshot.ServiceConfig, Hops: hops,
 		ServiceEndpointID: snapshot.ServiceEndpointID,
-		DirectShared:      snapshot.EndpointID != 0 && len(snapshot.Hops) == 1}
+		DirectShared:      snapshot.EndpointID != 0 && len(snapshot.Hops) == 1,
+		External:          snapshot.ServiceExternal}
 }
 
 func (s *Server) handleForcePublishChain(w http.ResponseWriter, r *http.Request) {

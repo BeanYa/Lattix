@@ -20,7 +20,9 @@ import (
 // v29: 服务器周体检——server_test_tasks.source 区分手动/自动；新增
 // server_inspection_runs 保存面板侧摘要历史（Agent 仍只保留最后一份完整报告）。
 // v30: 用户订阅隐藏项与持久发布队列，随 Schema 建表。
-const schemaVersion = 30
+// v31: 未托管服务器（外部直链）——servers.kind/external_link/external_config；
+// 外部节点仅作链路最后一跳（无 Agent、无入站能力）。
+const schemaVersion = 31
 
 type columnMigration struct {
 	name       string
@@ -102,6 +104,9 @@ func migrateSchema(tx *sql.Tx) error {
 		{"server_settings_reported_at", "DATETIME"},
 		{"address_mode", "TEXT NOT NULL DEFAULT 'auto'"},
 		{"addresses", "TEXT NOT NULL DEFAULT ''"},
+		{"kind", "TEXT NOT NULL DEFAULT 'managed'"},
+		{"external_link", "TEXT NOT NULL DEFAULT ''"},
+		{"external_config", "TEXT NOT NULL DEFAULT ''"},
 	})
 	if err != nil {
 		return err

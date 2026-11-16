@@ -177,8 +177,12 @@ func (f *chainFSM) Evaluate(ctx context.Context, chainID int64) {
 		return
 	}
 
-	// 条件 1：全部跳 server 在线。
+	// 条件 1：全部跳 server 在线。未托管外部直链出口无 Agent（永不「在线」），
+	// 不参与在线性推导——它在链内只贡献末段拨号目标。
 	for i := range hops {
+		if f.d.hopServerExternal(ctx, hops[i].ServerID) {
+			continue
+		}
 		if !f.d.req.IsOnline(hops[i].ServerID) {
 			detail := fmt.Sprintf("跳 %d（%s，server %d）离线", hops[i].ID, hops[i].Role, hops[i].ServerID)
 			if runtimeDegradable {
@@ -244,6 +248,16 @@ func (f *chainFSM) Evaluate(ctx context.Context, chainID int64) {
 			Detail: map[string]any{"chain_id": chainID},
 		})
 	}
+}
+
+// hopServerExternal 报告跳所属服务器是否为未托管外部直链节点（无 Agent，
+// 不参与在线性/延迟/订阅可用性推导）。查询失败按托管处理（保持既有语义）。
+func (d *Dispatcher) hopServerExternal(ctx context.Context, serverID int64) bool {
+	server, err := d.st.ServerByID(ctx, serverID)
+	if err != nil {
+		return false
+	}
+	return server.IsExternal()
 }
 
 // degrade 执行 active → degraded 转换并分派副作用（告警 + 日志）。

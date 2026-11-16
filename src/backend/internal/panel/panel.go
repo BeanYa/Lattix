@@ -381,6 +381,7 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/server-test/refresh-catalog", write, s.handleRefreshCDNCatalog)
 	s.registerRPC(mux, http.MethodGet, "/api/server/catalog-probes", polledRead, s.handleGetServerCatalogProbes)
 	s.registerRPC(mux, http.MethodGet, "/api/server/inspections", polledRead, s.handleListServerInspections)
+	s.registerRPC(mux, http.MethodPost, "/api/server/parse-link", write, s.handleParseExternalLink)
 	s.registerRPC(mux, http.MethodPost, "/api/server/create", write, s.handleCreateServer)
 	s.registerRPC(mux, http.MethodPost, "/api/server/update",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"server_id"}},

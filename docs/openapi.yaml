@@ -123,6 +123,19 @@ paths:
         - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/server/parse-link:
+    post:
+      operationId: serverParseLink
+      description: |
+        解析外部直链（vless://、vmess://、trojan://、ss://、socks://、http://）为未托管
+        服务器预览（新增/编辑服务器对话框的解析器），不落库。响应 data 含 name、protocol、
+        address、port、transport 摘要与 exit（凭据打码后的外部出口规格）；不可解析或协议
+        不支持时返回 400。
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/server/create:
     post:
       operationId: serverCreate
@@ -130,6 +143,8 @@ paths:
         响应 data 含 server、bootstrap_token、install_command 与 install_insecure（boolean）；
         install_insecure 为 true 表示安装命令走明文公网链路（面板地址为 http 且 host 非回环/私网，
         域名按公网保守处理），Agent 控制流量明文传输，token 可嗅探、命令可伪造。
+        kind=external（未托管外部直链节点）时不返回安装命令：bootstrap_token 与
+        install_command 为空串，机器类型固定为仅出口档 NAT。
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}

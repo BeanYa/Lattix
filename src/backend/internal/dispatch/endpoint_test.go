@@ -185,7 +185,7 @@ func TestPublishReconcilesPreviousAndNewSharedEndpoints(t *testing.T) {
 	hops, _ := st.ChainHops(ctx, deployment.ChainID)
 	node, _ := st.NodeByID(ctx, deployment.NodeID)
 	d := New(st, &fakeRequester{online: map[int64]bool{}}, Options{}, Events{})
-	d.publishDesiredRevision(ctx, deployment.ChainID, hops, *node)
+	d.publishDesiredRevision(ctx, deployment.ChainID, hops, node)
 
 	commands, err := st.CommandsByType(ctx, shared.TypeApplySharedEndpoint)
 	if err != nil || len(commands) != 2 {

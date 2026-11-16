@@ -5,7 +5,9 @@ import type { Chain, Server } from '@/lib/types'
 import {
   INTERNET_NODE_ID,
   INGRESS_NODE_ID,
+  MAX_HOPS,
   NAT_PORT_LIST_LIMIT,
+  analyzeCanvasGraph,
   entryPortPoint,
   exitPortPoint,
   internetEntryPoint,
@@ -42,6 +44,19 @@ function natServer(id: number, ranges: Array<[number, number]>): Server {
     alias: `nat-${id}`,
     machine_type: 'nat',
     allowed_ports: ranges.map(([pub_start, pub_end]) => ({ pub_start, pub_end })),
+  } as unknown as Server
+}
+
+function externalServer(id: number, overrides: Partial<Server> = {}): Server {
+  return {
+    id,
+    alias: `ext-${id}`,
+    kind: 'external',
+    machine_type: 'nat',
+    allowed_ports: [],
+    addresses: [],
+    external_exit: { protocol: 'socks', address: '198.51.100.9', port: 1080 },
+    ...overrides,
   } as unknown as Server
 }
 
@@ -137,22 +152,32 @@ describe('validateTopology', () => {
     ).toBe(true)
   })
 
-  it('未连 Internet：not_linked', () => {
+  it('未连 Internet：出口侧空悬警告，且无合法链路（no_chain）', () => {
     const nodes = [node('a', 1)]
     const result = validateTopology(
       nodes,
       [{ from: INGRESS_NODE_ID, to: 'a' }],
       serverMap(directServer()),
     )
-    expect(result.issues.some((issue) => issue.code === 'not_linked')).toBe(true)
+    expect(result.issues.some((issue) => issue.code === 'no_chain')).toBe(true)
+    expect(
+      result.warnings.some(
+        (warning) => warning.code === 'exit_unreachable' && warning.nodeId === 'a',
+      ),
+    ).toBe(true)
   })
 
-  it('孤岛节点：orphan 定位到未接入节点', () => {
+  it('孤立节点：isolated 警告定位到未接入节点，其余链路仍合法', () => {
     const nodes = [node('a', 1), node('b', 2)]
-    const result = validateTopology(nodes, chainOf('a'), serverMap(directServer()))
-    expect(result.issues.some((issue) => issue.code === 'orphan' && issue.nodeId === 'b')).toBe(
-      true,
+    const result = validateTopology(
+      nodes,
+      chainOf('a'),
+      serverMap(directServer({ id: 1 }), directServer({ id: 2 })),
     )
+    expect(result.valid).toBe(true)
+    expect(
+      result.warnings.some((warning) => warning.code === 'isolated' && warning.nodeId === 'b'),
+    ).toBe(true)
   })
 
   it('中间跳无入站能力：inbound 定位到该节点；末节点不受限', () => {
@@ -205,6 +230,47 @@ describe('validateTopology', () => {
     expect(result.valid).toBe(true)
     expect(result.issues).toEqual([])
   })
+
+  it('未托管外部节点在中间：external_not_last 定位到该节点，且不重复报 inbound', () => {
+    const nodes = [node('a', 1), node('e', 2), node('b', 3)]
+    const result = validateTopology(
+      nodes,
+      chainOf('a', 'e', 'b'),
+      serverMap(directServer({ id: 1 }), externalServer(2), directServer({ id: 3 })),
+    )
+    expect(
+      result.issues.some(
+        (issue) =>
+          issue.code === 'external_not_last' &&
+          issue.nodeId === 'e' &&
+          issue.message === '未托管服务器 ext-2 只能作为链路的最后一跳（出口）',
+      ),
+    ).toBe(true)
+    expect(result.issues.some((issue) => issue.code === 'inbound' && issue.nodeId === 'e')).toBe(
+      false,
+    )
+  })
+
+  it('未托管外部节点在末位：通过校验；其端口不参与 1-65535 / NAT 段校验', () => {
+    const external = externalServer(2, { allowed_ports: [{ pub_start: 1, pub_end: 10 }] })
+    const nodes = [node('a', 1), node('e', 2, { port: '70000' })]
+    const result = validateTopology(
+      nodes,
+      chainOf('a', 'e'),
+      serverMap(directServer({ id: 1 }), external),
+    )
+    expect(result.valid).toBe(true)
+    expect(result.issues).toEqual([])
+  })
+
+  it('画布只有单个外部节点：external_not_last（外部节点不能作入口）', () => {
+    const result = validateTopology([node('e', 2)], chainOf('e'), serverMap(externalServer(2)))
+    expect(
+      result.issues.some((issue) => issue.code === 'external_not_last' && issue.nodeId === 'e'),
+    ).toBe(true)
+    // 只报 external_not_last，不再叠加「无入站能力」噪音。
+    expect(result.issues.some((issue) => issue.code === 'inbound')).toBe(false)
+  })
 })
 
 describe('toFormTopology', () => {
@@ -238,6 +304,16 @@ describe('toFormTopology', () => {
     expect(topology.entryPort).toBe('1443')
     expect(topology.port).toBe('8443')
   })
+
+  it('末位为未托管外部节点：出口端口不提交（port 为空）', () => {
+    const order = [node('a', 1, { port: '1443' }), node('e', 2, { port: '70000' })]
+    const topology = toFormTopology(order, serverMap(directServer({ id: 1 }), externalServer(2)))
+    expect(topology.chainType).toBe('relay')
+    expect(topology.entryId).toBe('1')
+    expect(topology.exitId).toBe('2')
+    expect(topology.entryPort).toBe('1443')
+    expect(topology.port).toBe('')
+  })
 })
 
 describe('prefillCanvas', () => {
@@ -262,6 +338,20 @@ describe('prefillCanvas', () => {
       { from: 'n2', to: 'n3' },
       { from: 'n3', to: INTERNET_NODE_ID },
     ])
+  })
+
+  it('外部直链出口链：末位端口不回填 exitPort（端口来自链接）', () => {
+    const chain = {
+      entry_port: 1443,
+      service_external: { protocol: 'socks', address: '198.51.100.9', port: 1080 },
+      hops: [
+        { server_id: 1, address: '' },
+        { server_id: 2, address: '' },
+      ],
+    } as unknown as Chain
+    const { nodes } = prefillCanvas(chain, '8443')
+    expect(nodes[0].port).toBe('1443')
+    expect(nodes[1].port).toBe('')
   })
 })
 
@@ -335,5 +425,130 @@ describe('几何与端口工具', () => {
     expect(portInServerRanges(server, 1200)).toBe(false)
     expect(portInServerRanges(server, 5050)).toBe(true)
     expect(portInServerRanges(server, 80)).toBe(false)
+  })
+})
+
+describe('analyzeCanvasGraph（多路径）', () => {
+  // 用户验收图：入口→X→A；A→B/C/D；入口→F；F→D；B/C/D→Internet；
+  // E→B/C 但 E 未接入入口；G 孤立。
+  function exampleGraph(): {
+    nodes: CanvasNode[]
+    edges: CanvasEdge[]
+    serverById: Map<number, Server>
+  } {
+    const ids = ['X', 'A', 'B', 'C', 'D', 'E', 'F', 'G'] as const
+    const nodes = ids.map((id, index) => node(id, index + 1))
+    const edges: CanvasEdge[] = [
+      { from: INGRESS_NODE_ID, to: 'X' },
+      { from: 'X', to: 'A' },
+      { from: 'A', to: 'B' },
+      { from: 'A', to: 'C' },
+      { from: 'A', to: 'D' },
+      { from: 'B', to: INTERNET_NODE_ID },
+      { from: 'C', to: INTERNET_NODE_ID },
+      { from: 'D', to: INTERNET_NODE_ID },
+      { from: INGRESS_NODE_ID, to: 'F' },
+      { from: 'F', to: 'D' },
+      { from: 'E', to: 'B' },
+      { from: 'E', to: 'C' },
+    ]
+    const serverById = new Map(
+      ids.map((_, index) => [index + 1, directServer({ id: index + 1, alias: ids[index] })]),
+    )
+    return { nodes, edges, serverById }
+  }
+
+  const pathIds = (paths: CanvasNode[][]) => paths.map((path) => path.map((n) => n.id).join('>'))
+
+  it('分支/汇合枚举出全部简单路径，入口/出口空悬与孤立节点只作警告', () => {
+    const { nodes, edges, serverById } = exampleGraph()
+    const analysis = analyzeCanvasGraph(nodes, edges, serverById)
+    expect(pathIds(analysis.paths)).toEqual(['X>A>B', 'X>A>C', 'X>A>D', 'F>D'])
+    expect(analysis.valid).toBe(true)
+    expect(analysis.errors).toEqual([])
+    const entryWarning = analysis.warnings.find((warning) => warning.nodeId === 'E')
+    expect(entryWarning?.code).toBe('entry_unreachable')
+    expect(entryWarning?.path?.map((n) => n.id)).toEqual(['E', 'B'])
+    expect(entryWarning?.reachesInternet).toBe(true)
+    const isolated = analysis.warnings.find((warning) => warning.nodeId === 'G')
+    expect(isolated?.code).toBe('isolated')
+    expect(analysis.warnings).toHaveLength(2)
+  })
+
+  it('环路是硬错误，检测不会死循环', () => {
+    const nodes = [node('a', 1), node('b', 2)]
+    const edges = [
+      { from: INGRESS_NODE_ID, to: 'a' },
+      { from: 'a', to: 'b' },
+      { from: 'b', to: 'a' },
+    ]
+    const analysis = analyzeCanvasGraph(
+      nodes,
+      edges,
+      serverMap(directServer({ id: 1 }), directServer({ id: 2 })),
+    )
+    expect(analysis.valid).toBe(false)
+    expect(analysis.errors.some((issue) => issue.code === 'cycle')).toBe(true)
+  })
+
+  it('路径超过 4 跳：hop_limit 且该路径不进入 paths', () => {
+    const nodes = [node('a', 1), node('b', 2), node('c', 3), node('d', 4), node('e', 5)]
+    const analysis = analyzeCanvasGraph(
+      nodes,
+      chainOf('a', 'b', 'c', 'd', 'e'),
+      serverMap(...nodes.map((n) => directServer({ id: n.serverId }))),
+    )
+    expect(analysis.errors.some((issue) => issue.code === 'hop_limit')).toBe(true)
+    expect(analysis.paths.every((path) => path.length <= MAX_HOPS)).toBe(true)
+    expect(analysis.paths).toEqual([])
+  })
+
+  it('外部直链节点非末位：硬错误且不进入任何路径', () => {
+    const nodes = [node('a', 1), node('e', 2), node('b', 3)]
+    const analysis = analyzeCanvasGraph(
+      nodes,
+      chainOf('a', 'e', 'b'),
+      serverMap(directServer({ id: 1 }), externalServer(2), directServer({ id: 3 })),
+    )
+    expect(
+      analysis.errors.some((issue) => issue.code === 'external_not_last' && issue.nodeId === 'e'),
+    ).toBe(true)
+    expect(analysis.paths.every((path) => path.every((n) => n.id !== 'e'))).toBe(true)
+    expect(analysis.errors.some((issue) => issue.code === 'inbound' && issue.nodeId === 'e')).toBe(
+      false,
+    )
+  })
+
+  it('多入边汇合（A 有 X、E 两条入边）时仍能从各入口分叉出全部路径', () => {
+    const nodes = [node('X', 1), node('A', 2), node('B', 3), node('C', 4), node('E', 5)]
+    const edges: CanvasEdge[] = [
+      { from: INGRESS_NODE_ID, to: 'X' },
+      { from: 'X', to: 'A' },
+      { from: INGRESS_NODE_ID, to: 'E' },
+      { from: 'E', to: 'A' },
+      { from: 'A', to: 'B' },
+      { from: 'A', to: 'C' },
+      { from: 'B', to: INTERNET_NODE_ID },
+      { from: 'C', to: INTERNET_NODE_ID },
+    ]
+    const analysis = analyzeCanvasGraph(
+      nodes,
+      edges,
+      serverMap(...nodes.map((n) => directServer({ id: n.serverId }))),
+    )
+    expect(pathIds(analysis.paths)).toEqual(['X>A>B', 'X>A>C', 'E>A>B', 'E>A>C'])
+    expect(analysis.valid).toBe(true)
+  })
+
+  it('同一节点既是入口又是出口：单节点路径合法且复用同一端口', () => {
+    const nodes = [node('a', 1, { port: '443' })]
+    const analysis = analyzeCanvasGraph(nodes, chainOf('a'), serverMap(directServer({ id: 1 })))
+    expect(analysis.paths.map((path) => path.length)).toEqual([1])
+    expect(analysis.portRoles.get('a')).toMatchObject({
+      entry: true,
+      exit: true,
+      editable: true,
+      label: '入口/出口端口',
+    })
   })
 })

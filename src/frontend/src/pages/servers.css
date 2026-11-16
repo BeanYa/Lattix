@@ -1074,6 +1074,61 @@
   line-height: 1.5;
 }
 
+/* ---------- 外部直链输入与解析预览（添加/编辑服务器） ---------- */
+
+.sv-textarea {
+  width: 100%;
+  min-height: 64px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-rule-strong);
+  border-radius: var(--radius-md, 8px);
+  background: var(--panel-surface);
+  color: var(--panel-ink);
+  font-family: var(--panel-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.sv-textarea::placeholder {
+  color: var(--panel-ink-3);
+}
+
+.sv-textarea:focus-visible {
+  outline: 2px solid var(--panel-focus);
+  outline-offset: 1px;
+}
+
+.sv-ext-preview {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-md, 8px);
+  background: var(--panel-inset);
+  font-size: 12.5px;
+}
+
+.sv-ext-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sv-ext-row dt {
+  color: var(--panel-ink-3);
+}
+
+.sv-ext-row dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--panel-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 /* ---------- 机器类型单选卡（添加服务器） ---------- */
 
 .sv-radio-card {
@@ -1328,6 +1383,12 @@
   border-color: color-mix(in srgb, var(--panel-accent) 40%, var(--panel-rule));
   background: var(--panel-accent-soft);
   color: var(--panel-accent);
+}
+
+.sv-flag.is-external {
+  border-color: color-mix(in srgb, var(--panel-info) 46%, var(--panel-rule));
+  background: var(--panel-info-soft);
+  color: var(--panel-info);
 }
 
 /* ---------- 资源四宫格 ---------- */

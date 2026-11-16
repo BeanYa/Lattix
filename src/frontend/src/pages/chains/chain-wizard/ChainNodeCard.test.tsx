@@ -74,3 +74,58 @@ it('地址弹层里的指针事件不会启动卡片拖动', async () => {
     host.remove()
   }
 })
+
+it('外部直链节点：外部直链徽标 + 协议摘要 + 只读端口', async () => {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const server = {
+    id: 2,
+    alias: 'SOCKS-US',
+    country_code: 'US',
+    kind: 'external',
+    connection_state: 'external',
+    machine_type: 'nat',
+    addresses: [],
+    allowed_ports: [],
+    external_exit: { protocol: 'socks', address: '198.51.100.9', port: 1080 },
+  } as unknown as Server
+  try {
+    await act(async () =>
+      root.render(
+        <ChainNodeCard
+          node={{ id: 'e1', serverId: 2, x: 0, y: 0, port: '', address: '' }}
+          server={server}
+          role="exit"
+          portEditable
+          hasIssue={false}
+          isConnecting={false}
+          portEditing={false}
+          outgoingConnected
+          probeRows={[]}
+          probeTitle={null}
+          toWorld={(x, y) => ({ x, y })}
+          onMove={() => {}}
+          onExitPortClick={() => {}}
+          onEntryPortClick={() => {}}
+          onRemove={() => {}}
+          onPortChange={() => {}}
+          onPortEditToggle={() => {}}
+          onAddressChange={() => {}}
+        />,
+      ),
+    )
+    expect(host.querySelector('.cw-node-external-badge')?.textContent).toBe('外部直链')
+    expect(host.querySelector('.cw-node-external-proto')?.textContent).toBe('socks · TCP')
+    // 端口来自链接：只读展示 external_exit.port，不提供编辑控件。
+    expect(host.textContent).toContain('节点端口')
+    const port = host.querySelector('.cw-node-port-value') as HTMLElement
+    expect(port.tagName).toBe('SPAN')
+    expect(port.textContent).toBe('1080')
+    expect(host.querySelector('.cw-node-port-input')).toBeNull()
+    expect(host.querySelector('.cw-node-exitonly')).toBeNull()
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+  }
+})

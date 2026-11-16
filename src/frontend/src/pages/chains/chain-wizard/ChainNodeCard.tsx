@@ -23,12 +23,15 @@ import {
   ADDRESS_ROW_H,
   ENTRY_PORT_OFFSET_Y,
   PORT_R,
+  externalPortFor,
   inboundCapable,
+  isExternalServer,
   natPortOptions,
   normalizePortInput,
   type CanvasNode,
   type CanvasNodeRole,
 } from './chain-canvas'
+import { externalExitSummary } from '../external-exit'
 import { ServerProbeMini } from './ServerProbeMini'
 
 const ROLE_LABEL: Record<CanvasNodeRole, string> = {
@@ -43,8 +46,11 @@ export function ChainNodeCard({
   node,
   server,
   role,
+  roleLabel,
   portEditable,
+  portLabel,
   hasIssue,
+  hasWarning = false,
   isConnecting,
   portEditing,
   outgoingConnected,
@@ -63,9 +69,14 @@ export function ChainNodeCard({
   node: CanvasNode
   server: Server | undefined
   role: CanvasNodeRole
-  /** 端口语义：仅入口（entry_port）与出口（出口节点端口）可指定，中间跳自动分配。 */
+  /** 角色文案：分支/汇合下可同时是入口与中转，由画布传入（默认单选角色）。 */
+  roleLabel?: string
+  /** 端口语义：有流量入口入边 = 入口端口；有 Internet 出边 = 出口端口；中间跳不显示端口。 */
   portEditable: boolean
+  portLabel?: string
   hasIssue: boolean
+  /** 空悬警告（黄色边框）：只提示不会生成，不是硬错误。 */
+  hasWarning?: boolean
   /** 橡皮筋连线进行中：入口端口高亮为可落点。 */
   isConnecting: boolean
   portEditing: boolean
@@ -87,6 +98,9 @@ export function ChainNodeCard({
 
   const online = isServerOnline(server)
   const natPorts = natPortOptions(server)
+  // 未托管外部直链节点：无 Agent、无入站能力，端口来自链接（只读展示）。
+  const external = isExternalServer(server)
+  const externalExit = external ? server.external_exit : undefined
 
   const portDisplay = normalizePortInput(node.port)
   const entryTitle = isConnecting ? '点击完成连线' : '先点击上游出口，再点击此入口连接'
@@ -97,6 +111,7 @@ export function ChainNodeCard({
         'cw-node',
         `is-${role}`,
         hasIssue && 'is-issue',
+        hasWarning && !hasIssue && 'is-warning',
         drag.dragging && 'is-dragging',
       )}
       style={
@@ -121,7 +136,9 @@ export function ChainNodeCard({
             <span className="cw-node-alias" title={server.alias}>
               {server.alias}
             </span>
-            <span className={cn('cw-node-role', `is-${role}`)}>{ROLE_LABEL[role]}</span>
+            <span className={cn('cw-node-role', `is-${role}`)}>
+              {roleLabel ?? ROLE_LABEL[role]}
+            </span>
             <button
               type="button"
               className="cw-node-remove"
@@ -137,27 +154,49 @@ export function ChainNodeCard({
           <div className="cw-node-meta">
             <i className={cn('cw-node-state', online ? 'is-online' : 'is-offline')} />
             <span>{server.location || server.country_code || '未设置地区'}</span>
-            {!inboundCapable(server) ? <em className="cw-node-exitonly">仅出口</em> : null}
+            {!external && !inboundCapable(server) ? (
+              <em className="cw-node-exitonly">仅出口</em>
+            ) : null}
           </div>
-          <ServerProbeMini server={server} probeRows={probeRows} probeTitle={probeTitle} />
+          {external ? (
+            <div
+              className="cw-node-external"
+              title={
+                externalExit
+                  ? `外部直链 ${externalExit.address}:${externalExit.port} · 仅可作最后一跳`
+                  : '外部直链配置缺失，请重新保存该服务器'
+              }
+            >
+              <em className="cw-node-external-badge">外部直链</em>
+              <span className="cw-node-external-proto">
+                {externalExit ? externalExitSummary(externalExit) : '配置缺失'}
+              </span>
+            </div>
+          ) : (
+            <ServerProbeMini server={server} probeRows={probeRows} probeTitle={probeTitle} />
+          )}
         </div>
         <div className="cw-node-config">
           <div className="cw-node-address-row">
             <NodeAddressSelect server={server} value={node.address} onChange={onAddressChange} />
           </div>
-          <div className="cw-node-port-row">
-            <span className="cw-node-port-label">入口端口</span>
-            <NodePortControl
-              server={server}
-              node={node}
-              portEditable={portEditable}
-              portEditing={portEditing}
-              portDisplay={portDisplay}
-              natPorts={natPorts}
-              onPortChange={onPortChange}
-              onPortEditToggle={onPortEditToggle}
-            />
-          </div>
+          {external || portEditable ? (
+            <div className="cw-node-port-row">
+              <span className="cw-node-port-label">
+                {external ? '节点端口' : (portLabel ?? '入口端口')}
+              </span>
+              <NodePortControl
+                server={server}
+                node={node}
+                portEditable={portEditable}
+                portEditing={portEditing}
+                portDisplay={portDisplay}
+                natPorts={natPorts}
+                onPortChange={onPortChange}
+                onPortEditToggle={onPortEditToggle}
+              />
+            </div>
+          ) : null}
         </div>
         {/* 入口圆点与右侧端口输入对齐；地址选择位于其上方。 */}
         <button
@@ -180,7 +219,7 @@ export function ChainNodeCard({
         type="button"
         className={cn('cw-port cw-port-exit', outgoingConnected && 'is-connected')}
         aria-label={`出口端口：${server.alias}`}
-        title={outgoingConnected ? '点击重新连接（完成前保留原线）' : '点击拉线到下一节点'}
+        title={outgoingConnected ? '点击继续拉线（可多路分支）' : '点击拉线到下一节点'}
         onClick={(event) => {
           event.stopPropagation()
           onExitPortClick()
@@ -210,6 +249,18 @@ function NodePortControl({
   onPortChange: (port: string) => void
   onPortEditToggle: () => void
 }) {
+  // 外部直链节点：端口由链接决定（external_exit.port），只读展示，不可编辑/自动分配。
+  if (isExternalServer(server)) {
+    const port = externalPortFor(server)
+    return (
+      <span
+        className="cw-node-port-value is-locked"
+        title={port ? '端口来自外部直链，不可修改' : '外部直链缺少端口，请重新保存该服务器'}
+      >
+        {port || '—'}
+      </span>
+    )
+  }
   if (!portEditable) {
     return (
       <button

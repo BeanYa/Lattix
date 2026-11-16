@@ -280,6 +280,10 @@ type SharedEndpointRoute struct {
 	TunnelUUID    string         `json:"tunnel_uuid,omitempty"`
 	Target        RealizedConfig `json:"target,omitempty"`
 	ExitProtocol  string         `json:"exit_protocol,omitempty"` // 出口业务协议（hysteria 时 agent 渲染 hy2 outbound；空=vless 现状）
+	// External 非空 = 未托管外部出口链路：agent 以该协议规格渲染 outbound，
+	// 拨号地址取 TargetAddress:TargetPort（入口 forward 端口，经链跳纯 TCP 管道
+	// 到达外部节点）。此时不需要 TunnelUUID（外部节点用自己的凭据认证客户端）。
+	External *ExternalExit `json:"external,omitempty"`
 }
 
 type RemoveSharedEndpointPayload struct {

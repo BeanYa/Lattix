@@ -28,5 +28,14 @@ export function serverConnectionLabel(state: ServerConnectionState): string {
       return '离线'
     case 'auth_rejected':
       return '凭据被拒绝'
+    case 'external':
+      return '外部节点'
   }
+}
+
+// supportsAgentActions 判定服务器可用的操作集：未托管外部直链节点（kind=external）
+// 只有分享链接派生的出口，没有 Agent，安装/轮换凭证/修复/清理/重建/升级/
+// 服务器测试/设置覆盖等动作一律不可用（后端返回 400）。
+export function supportsAgentActions(server: Pick<Server, 'kind'>): boolean {
+  return server.kind !== 'external'
 }

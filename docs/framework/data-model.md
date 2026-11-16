@@ -4,7 +4,7 @@
 
 | 表 | 字段（要点） |
 |---|---|
-| `servers` | id, alias, country_code(ISO 3166-1 alpha-2), location(城市/机房位置), address(默认公网地址), addresses(地址列表 JSON，多公网地址), address_mode(auto/manual), learned_addr(拨入学习地址), nic_addresses(agent 上报网卡地址 JSON), tags(有序标签 JSON，名称模板 `TAG[n]` 来源), token(长期凭证), last_seen_at, xray_version, config_drift(见[服务器维护](server-maintenance.md)), server_settings_revision/error/reported_at(见[控制通道](control-channel.md) server settings 同步链), created_at |
+| `servers` | id, alias, kind(managed 被控服务器 / external 未托管外部直链节点，见[代理链与 NAT](chain-nat.md#未托管服务器外部直链出口)), external_link(外部直链原文), external_config(解析后的外部出口规格 JSON), country_code(ISO 3166-1 alpha-2), location(城市/机房位置), address(默认公网地址；外部节点为链接 host), addresses(地址列表 JSON，多公网地址), address_mode(auto/manual), learned_addr(拨入学习地址), nic_addresses(agent 上报网卡地址 JSON), tags(有序标签 JSON，名称模板 `TAG[n]` 来源), token(长期凭证), last_seen_at, xray_version, config_drift(见[服务器维护](server-maintenance.md)), server_settings_revision/error/reported_at(见[控制通道](control-channel.md) server settings 同步链), created_at |
 | `users` | id, name, uuid, sub_token, expires_at(可空，unix 秒，NULL=长期), expired(0/1 到期停权标记，见[订阅](subscription.md)), disabled(0/1 显式停用标记，见[用户与分组](users-and-groups.md)), effective_at(可空，unix 秒，NULL=创建即生效), started_at(可空，unix 秒，激活扇出标记：sweeper 越过生效时刻后置位), is_trial(0/1 试用标记), quota_exhausted(0/1 流量配额停权标记，见[订阅](subscription.md)), created_at |
 | `nodes` | id, name(解析后的管理/订阅名称), server_id, protocol, port, config_template(JSON), realized_config(JSON), status, error, created_at |
 | `commands` | id, request_id, trace_id, server_id, type, data(JSON), status(queued/sent/acked/failed/abandoned), error, attempts, created_at, updated_at |
@@ -22,7 +22,7 @@
 | `traffic` | node_id, user_uuid, up, down, updated_at（[遥测](telemetry.md)流量累计：节点维度 user_uuid=''，用户维度 node_id=0） |
 | `traffic_history` | 用户流量周期归档（流量重置/配额恢复留痕，见[订阅](subscription.md)） |
 | `traffic_stats_bucket` / `traffic_stats_daily` | 流量统计时序桶（控制台/运行监控流量图表，`/api/stats/traffic/*`，契约见 [OpenAPI](../openapi.yaml)） |
-| `chains` | 稳定 chain/service/endpoint identity、published/desired revision、倍率、发布状态与软删除时间 |
+| `chains` | 稳定 chain/service/endpoint identity、published/desired revision、倍率、发布状态与软删除时间；外部直链出口链的 `service_node_id`=0（无出口业务节点，外部规格冻结在修订快照 `service_external`） |
 | `chain_hops` / `chain_hop_identities` | 当前期望工作拓扑（含逐跳所选公网地址引用 `address`）与不会复用的稳定 hop identity |
 | `chain_revisions` / `chain_revision_tasks` | 不可变拓扑快照及 apply/cleanup 任务状态机；任务关联离线命令队列 |
 | `traffic_cursors` | Agent Xray 实例绝对计数器游标，用于幂等补差 |

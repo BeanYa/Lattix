@@ -178,3 +178,34 @@ hub 注销/注册连接时由 FSM Evaluate 重算——链任一跳 server 离�
 （`chain_degraded`，防抖沿用，见[服务器维护](server-maintenance.md)）；全部跳 server 在线且跳均 active → active。
 服务器删除经 `InvalidateForServerDeletion` 事务级联失效。Agent 重连后 `ResumeChainsByServer`
 恢复编排中的链。完整转换表与三层自愈设计见[链路设计文档](../chain-revisions-traffic-design.md)。
+
+## 未托管服务器（外部直链出口）
+
+服务器页新增一类**未托管服务器**：来自外部直链（`vless://` / `vmess://` / `trojan://` /
+`ss://` / `socks://` / `http://`）的外部节点，通过新增/编辑服务器对话框里的解析器录入。
+它没有 Agent、没有入站能力，**只能作链路最后一跳（出口）**；创建/编辑链路时校验
+「只能作为链路的最后一跳（出口）」，不能作入口/中间跳（一条链最多一个，最少 2 跳）。
+
+- **数据建模与既有链路一致**：`servers.kind='external'` + `external_link`/`external_config`；
+  链路仍落 `chains`/`chain_hops`，末位跳是外部服务器（`node_id=0`），
+  `chains.service_node_id=0`，外部出口规格冻结在修订快照 `service_external`。
+  已发布修订不随服务器行变化（改链接须先解除引用）。
+- **数据面**：入口 A **总是**挂共享端点（VLESS，客户端仍以 assignment `access_uuid` 接入；
+  入口协议细节——传输/安全层/证书/flow/encryption/Reality 参数——与普通链路一样可配置，
+  默认 Reality 自动生成）。端点每条链一条路由，agent 按外部协议（vless/vmess/trojan/
+  shadowsocks/socks/http）渲染客户端 outbound，拨 `127.0.0.1:<入口 forward 端口>`；
+  链跳以 dokodemo 纯 TCP 管道转发，末位托管跳拨外部节点 `host:port`，外部节点用
+  自己的凭据认证客户端并出网。中间跳数量（0-2）不影响外部协议端到端语义。
+- **流量统计**：入口 A 的共享端点按 `access:<assignment_id>` 计入用户与链路总量
+  （用户可见入口为 A）；各跳 forward 另有逐跳计数。外部出口协议均为 TCP 承载，
+  dokodemo 管道按 tcp 分层（不开 UDP）。
+- **运维**：外部节点不参与安装/升级/遥测/体检/测速/Ban 巡检与延迟探测来源；
+  链状态「降级」判定跳过无 Agent 的跳。服务器删除前须先处理引用链路（沿用既有级联失效）。
+- **限制**：SIP003 插件（ss plugin）、自签证书 TLS 外部节点、UDP 协议
+  （hysteria2/tuic/wireguard 等）暂不支持；编辑链路不支持在托管出口与外部出口之间切换。
+
+**链路编辑器（多路径）**：画布允许分叉、汇合与多个入口节点；点击「下一步」时枚举所有
+「流量入口 → … → Internet」的简单路径，每条路径生成一条普通链路（数据模型不变，逐条
+调用既有建链 API）。入口不可达 / 未接到 Internet / 孤立节点是**空悬警告**（不生成、不阻断
+其余链路）；环、无合法路径、超过 4 跳、外部节点非末位、非末位跳无入站能力、端口非法是
+硬错误。有环检测先于路径枚举，路径内访问集剪枝避免重复节点与死循环。

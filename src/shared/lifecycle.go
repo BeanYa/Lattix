@@ -14,6 +14,8 @@ const (
 	ConnectionStateOnline         = "online"
 	ConnectionStateOffline        = "offline"
 	ConnectionStateAuthRejected   = "auth_rejected"
+	// ConnectionStateExternal 是未托管外部直链节点的连接态（无 Agent，不参与连接管理）。
+	ConnectionStateExternal = "external"
 
 	SessionKindInitial   = "initial"
 	SessionKindReconnect = "reconnect"

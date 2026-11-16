@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"lattix/backend/internal/store"
+	"lattix/shared"
 )
 
 const (
@@ -30,6 +31,9 @@ type RevisionTopology struct {
 	// DirectShared means the shared endpoint is also the one-hop exit. There
 	// is no separate service listener to deploy in that topology.
 	DirectShared bool
+	// External 非空 = 未托管外部直链出口：无出口业务节点（无 service piece），
+	// 外部规格本身参与下游哈希（规格变更使全部 forward piece 重发）。
+	External *shared.ExternalExit
 }
 
 type RevisionHopSpec struct {
@@ -103,11 +107,19 @@ func validateTopology(topology RevisionTopology) error {
 	if topology.RevisionID <= 0 {
 		return fmt.Errorf("revision id must be positive")
 	}
-	if topology.ServiceID <= 0 {
+	if topology.ServiceID <= 0 && topology.External == nil {
 		return fmt.Errorf("service id must be positive")
 	}
 	if len(topology.Hops) < 1 || len(topology.Hops) > 4 {
 		return fmt.Errorf("chain must contain between 1 and 4 hops")
+	}
+	if topology.External != nil {
+		if len(topology.Hops) < 2 {
+			return fmt.Errorf("external exit chain must contain at least two hops")
+		}
+		if err := topology.External.Validate(); err != nil {
+			return fmt.Errorf("invalid external exit: %w", err)
+		}
 	}
 	if topology.DirectShared && len(topology.Hops) != 1 {
 		return fmt.Errorf("direct shared topology must contain exactly one hop")
@@ -146,21 +158,34 @@ func materializeRevision(topology RevisionTopology) ([]RevisionPiece, error) {
 	exit := topology.Hops[len(topology.Hops)-1]
 	// 入口终结 2 跳 hy2（P4 §3.2）：入口即末跳，共享端点直接以 hy2 outbound 拨出口，
 	// hop0 不再生成 forward 管道（3 跳及以上保留 hop0 回环管道接中段）。
-	skipEntryForward := len(topology.Hops) == 2 && topology.Hops[0].Transport == "hy2"
-	serviceHash, err := hashNormalized(map[string]any{
-		"service_id": topology.ServiceID,
-		"server_id":  exit.ServerID,
-		"config":     json.RawMessage(topology.Service),
-	})
-	if err != nil {
-		return nil, err
+	skipEntryForward := topology.External == nil && len(topology.Hops) == 2 && topology.Hops[0].Transport == "hy2"
+	downstreamHash := ""
+	if topology.External != nil {
+		// 外部直链出口：无出口业务节点，外部规格即下游基值。
+		externalHash, err := hashNormalized(map[string]any{
+			"external": topology.External,
+			"server_id": exit.ServerID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		downstreamHash = externalHash
+	} else {
+		serviceHash, err := hashNormalized(map[string]any{
+			"service_id": topology.ServiceID,
+			"server_id":  exit.ServerID,
+			"config":     json.RawMessage(topology.Service),
+		})
+		if err != nil {
+			return nil, err
+		}
+		downstreamHash = serviceHash
+		pieces = append(pieces, RevisionPiece{
+			Key: revisionPieceKey(RevisionPieceService, topology.ServiceID), Kind: RevisionPieceService,
+			HopID: exit.HopID, ServerID: exit.ServerID, RevisionID: topology.RevisionID,
+			SpecHash: serviceHash, DependsHash: serviceHash,
+		})
 	}
-	downstreamHash := serviceHash
-	pieces = append(pieces, RevisionPiece{
-		Key: revisionPieceKey(RevisionPieceService, topology.ServiceID), Kind: RevisionPieceService,
-		HopID: exit.HopID, ServerID: exit.ServerID, RevisionID: topology.RevisionID,
-		SpecHash: serviceHash, DependsHash: serviceHash,
-	})
 
 	for i := len(topology.Hops) - 2; i >= 0; i-- {
 		hop := topology.Hops[i]

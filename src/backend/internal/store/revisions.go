@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"lattix/shared"
 )
 
 const (
@@ -61,6 +63,10 @@ type ChainRevisionSnapshot struct {
 	TrafficMultiplierMilli int                `json:"traffic_multiplier_milli"`
 	Hops                   []ChainRevisionHop `json:"hops"`
 	ApplyKeys              []string           `json:"apply_keys,omitempty"`
+	// ServiceExternal 非空 = 未托管外部直链出口：无出口业务节点（ServiceNodeID=0），
+	// 入口 Endpoint 的路由以该规格渲染外部协议 outbound，末位托管跳 forward 拨该节点。
+	// 随修订冻结，编辑服务器链接不影响已发布数据面。
+	ServiceExternal *shared.ExternalExit `json:"service_external,omitempty"`
 }
 
 type ChainRevision struct {
@@ -109,6 +115,9 @@ type InitialChainDeployment struct {
 	ServiceUUID            string
 	TrafficMultiplierMilli int
 	Hops                   []InitialChainHop
+	// ServiceExternal 非空 = 外部直链出口：不建出口业务节点（node_id=0，
+	// service_node_id=0，无 service piece），末位跳为外部服务器。
+	ServiceExternal *shared.ExternalExit
 }
 
 type InitialChainDeploymentResult struct {
@@ -139,15 +148,17 @@ func (s *Store) CreateInitialChainDeployment(
 	}
 	defer tx.Rollback()
 
-	nodeResult, err := tx.ExecContext(ctx,
-		`INSERT INTO nodes (name, server_id, protocol, port, config_template) VALUES (?, ?, ?, ?, ?)`,
-		input.Name, input.ServiceServerID, input.ServiceProtocol, input.ServicePort, string(input.ServiceConfig))
-	if err != nil {
-		return out, fmt.Errorf("insert initial chain service node: %w", err)
-	}
-	out.NodeID, err = nodeResult.LastInsertId()
-	if err != nil {
-		return out, fmt.Errorf("read initial chain service node id: %w", err)
+	if input.ServiceExternal == nil {
+		nodeResult, err := tx.ExecContext(ctx,
+			`INSERT INTO nodes (name, server_id, protocol, port, config_template) VALUES (?, ?, ?, ?, ?)`,
+			input.Name, input.ServiceServerID, input.ServiceProtocol, input.ServicePort, string(input.ServiceConfig))
+		if err != nil {
+			return out, fmt.Errorf("insert initial chain service node: %w", err)
+		}
+		out.NodeID, err = nodeResult.LastInsertId()
+		if err != nil {
+			return out, fmt.Errorf("read initial chain service node id: %w", err)
+		}
 	}
 
 	chainResult, err := tx.ExecContext(ctx,
@@ -165,7 +176,7 @@ func (s *Store) CreateInitialChainDeployment(
 	out.Hops = make([]ChainRevisionHop, 0, len(input.Hops))
 	for seq, hop := range input.Hops {
 		nodeID := int64(0)
-		if seq == len(input.Hops)-1 {
+		if seq == len(input.Hops)-1 && input.ServiceExternal == nil {
 			nodeID = out.NodeID
 		}
 		hopResult, err := tx.ExecContext(ctx,
@@ -191,7 +202,7 @@ func (s *Store) CreateInitialChainDeployment(
 	}
 
 	out.ApplyKeys = []string{}
-	if input.EndpointID == 0 || len(out.Hops) > 1 {
+	if input.ServiceExternal == nil && (input.EndpointID == 0 || len(out.Hops) > 1) {
 		out.ApplyKeys = append(out.ApplyKeys, fmt.Sprintf("%s/%d", RevisionPieceService, out.NodeID))
 	}
 	// 入口终结 2 跳 hy2（P4 §3.2）：hop0 免 forward 管道，与 dispatch.materializeRevision
@@ -212,7 +223,7 @@ func (s *Store) CreateInitialChainDeployment(
 		Name: input.Name, ServiceNodeID: out.NodeID, ServiceServerID: input.ServiceServerID,
 		EndpointID: input.EndpointID, ServiceEndpointID: input.ServiceEndpointID, ServiceUUID: input.ServiceUUID,
 		ServiceConfig: input.ServiceConfig, TrafficMultiplierMilli: input.TrafficMultiplierMilli,
-		Hops: out.Hops, ApplyKeys: out.ApplyKeys,
+		Hops: out.Hops, ApplyKeys: out.ApplyKeys, ServiceExternal: input.ServiceExternal,
 	}
 	rawSnapshot, err := json.Marshal(snapshot)
 	if err != nil {
@@ -872,10 +883,12 @@ func (s *Store) ReplaceWorkingChainTopology(ctx context.Context, revision *Chain
 	if serviceChanged {
 		nodeStatus = NodeStatusPending
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET name=?, server_id=?, protocol=?, port=?, config_template=?,
-		status=?, error=NULL WHERE id=?`, revision.Snapshot.Name, revision.Snapshot.ServiceServerID, protocol,
-		port, string(revision.Snapshot.ServiceConfig), nodeStatus, revision.Snapshot.ServiceNodeID); err != nil {
-		return err
+	if revision.Snapshot.ServiceExternal == nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE nodes SET name=?, server_id=?, protocol=?, port=?, config_template=?,
+			status=?, error=NULL WHERE id=?`, revision.Snapshot.Name, revision.Snapshot.ServiceServerID, protocol,
+			port, string(revision.Snapshot.ServiceConfig), nodeStatus, revision.Snapshot.ServiceNodeID); err != nil {
+			return err
+		}
 	}
 	chainQuery := `UPDATE chains SET name=?, status=?, error='', updated_at=CURRENT_TIMESTAMP WHERE id=?`
 	chainArgs := []any{revision.Snapshot.Name, ChainStatusApplying, revision.ChainID}

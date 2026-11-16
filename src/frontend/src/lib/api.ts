@@ -35,10 +35,12 @@ import type {
   PanelRuntimeSnapshot,
   PanelUpdateStatus,
   PanelVersionInfo,
+  ParseExternalLinkResponse,
   PortRange,
   RequestLogPage,
   ReleaseVersions,
   Server,
+  ServerKind,
   ServerMetrics,
   ServerMetricSeries,
   ServerInspectionsResponse,
@@ -157,9 +159,37 @@ export const api = {
     country_code: string
     location: string
     non_direct?: boolean
+    kind?: ServerKind
+    external_link?: string
     billing?: BillingInput
     traffic_plan?: TrafficPlanInput
   }) => requester.post<CreateServerResponse>('/api/server/create', body),
+  // 未托管外部直链节点：创建/编辑前的链接解析预览（不落库）。
+  parseExternalLink: (link: string) =>
+    requester.post<ParseExternalLinkResponse>('/api/server/parse-link', { link }),
+  // 未托管外部直链节点的编辑提交：地址由链接派生，其余资料与托管服务器共用。
+  updateServerExternal: (
+    serverId: number,
+    alias: string,
+    externalLink: string,
+    tags: string[],
+    countryCode: string,
+    location: string,
+    billing?: BillingInput,
+    trafficPlan?: TrafficPlanInput,
+    nonDirect?: boolean,
+  ) =>
+    requester.post<Server>('/api/server/update', {
+      server_id: serverId,
+      alias: alias.trim(),
+      external_link: externalLink.trim(),
+      tags,
+      country_code: countryCode,
+      location,
+      billing,
+      traffic_plan: trafficPlan,
+      ...(nonDirect !== undefined ? { non_direct: nonDirect } : {}),
+    }),
   rotateServerToken: (serverId: number) =>
     requester.post<CreateServerResponse>('/api/server/rotate-token', { server_id: serverId }),
   upgradeServer: (serverId: number, version: string) =>

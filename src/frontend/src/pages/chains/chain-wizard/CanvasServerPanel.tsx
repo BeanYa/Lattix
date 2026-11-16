@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import type { CatalogProbeRow, Server } from '@/lib/types'
 
-import { CARD_W, CARD_H } from './chain-canvas'
+import { CARD_W, CARD_H, isExternalServer } from './chain-canvas'
 import { ChainNodeDragPreview } from './ChainNodeCard'
 
 import { ServerProbeMini } from './ServerProbeMini'
@@ -54,9 +54,11 @@ export function CanvasServerPanel({
         />
       </div>
       {!canAddMore ? (
-        <p className="cw-server-panel-hint">已达链长上限（4 跳），先移除节点再添加</p>
+        <p className="cw-server-panel-hint">画布节点已达上限，先移除节点再添加</p>
       ) : (
-        <p className="cw-server-panel-hint">拖到画布添加节点；同一服务器可重复添加</p>
+        <p className="cw-server-panel-hint">
+          拖到画布添加节点；可分支/汇合，同一服务器在一张画布中只能出现一次
+        </p>
       )}
       <ul className="cw-server-list">
         {filtered.map((server) => {
@@ -81,6 +83,14 @@ export function CanvasServerPanel({
                 <span className="cw-server-item-alias" title={server.alias}>
                   {server.alias}
                 </span>
+                {isExternalServer(server) ? (
+                  <em
+                    className="cw-server-item-exitonly"
+                    title="未托管外部直链节点：只能作链路最后一跳（出口）"
+                  >
+                    仅可作最后一跳
+                  </em>
+                ) : null}
                 {count > 0 ? <span className="cw-server-item-count">×{count}</span> : null}
                 <button
                   type="button"

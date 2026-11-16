@@ -31,6 +31,13 @@ const (
 	AddressModeManual = "manual"
 )
 
+// 服务器类别：managed = 被控服务器（Agent 接入）；external = 未托管外部直链节点
+// （仅作链路最后一跳，无 Agent、无入站能力，§未托管服务器与外部直链出口链路）。
+const (
+	ServerKindManaged  = "managed"
+	ServerKindExternal = "external"
+)
+
 // Server 是 servers 表的一行（§4）。
 type Server struct {
 	ID                       int64
@@ -51,6 +58,9 @@ type Server struct {
 	CountryCode              string // ISO 3166-1 alpha-2；管理员在服务器资料中选择
 	Location                 string // 城市或机房位置；管理员填写
 	NonDirect                bool   // 非直连（大陆不可直连）：Ban 告警巡检跳过该服务器（§告警分类）
+	Kind                     string // managed|external（未托管外部直链节点）
+	ExternalLink             string // 外部直链原文（kind=external）
+	ExternalConfig           string // 外部出口规格 JSON（shared.ExternalExit，kind=external）
 	CredentialEpoch          int64
 	CredentialCommitted      bool
 	CredentialPendingToken   string
@@ -71,13 +81,13 @@ type Server struct {
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, addresses, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, non_direct, credential_epoch, credential_committed, credential_pending_token, credential_exchange_id, last_connected_at, last_disconnected_at, last_reconnected_at, reconnect_count, last_disconnect_reason, agent_settings_revision, agent_settings_error, agent_settings_reported_at, custom_settings, server_settings_revision, server_settings_error, server_settings_reported_at, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, addresses, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, non_direct, kind, external_link, external_config, credential_epoch, credential_committed, credential_pending_token, credential_exchange_id, last_connected_at, last_disconnected_at, last_reconnected_at, reconnect_count, last_disconnect_reason, agent_settings_revision, agent_settings_error, agent_settings_reported_at, custom_settings, server_settings_revision, server_settings_error, server_settings_reported_at, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
 	var lastSeen, lastConnected, lastDisconnected, lastReconnected, settingsReported, serverSettingsReported sql.NullTime
 	var xrayVer, agentVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.Addresses, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.NonDirect, &srv.CredentialEpoch, &srv.CredentialCommitted, &srv.CredentialPendingToken, &srv.CredentialExchangeID, &lastConnected, &lastDisconnected, &lastReconnected, &srv.ReconnectCount, &srv.LastDisconnectReason, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CustomSettings, &srv.ServerSettingsRevision, &srv.ServerSettingsError, &serverSettingsReported, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.Addresses, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.NonDirect, &srv.Kind, &srv.ExternalLink, &srv.ExternalConfig, &srv.CredentialEpoch, &srv.CredentialCommitted, &srv.CredentialPendingToken, &srv.CredentialExchangeID, &lastConnected, &lastDisconnected, &lastReconnected, &srv.ReconnectCount, &srv.LastDisconnectReason, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CustomSettings, &srv.ServerSettingsRevision, &srv.ServerSettingsError, &serverSettingsReported, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +133,25 @@ type ServerDraft struct {
 	Tags           string
 	CountryCode    string
 	Location       string
-	NonDirect      bool // 非直连（大陆不可直连）：Ban 告警巡检跳过（§告警分类）
+	NonDirect      bool   // 非直连（大陆不可直连）：Ban 告警巡检跳过（§告警分类）
+	Kind           string // managed（空值等价）| external：未托管外部直链节点
+	ExternalLink   string // 外部直链原文（kind=external）
+	ExternalConfig string // 外部出口规格 JSON（kind=external）
+}
+
+// IsExternal 报告服务器是否为未托管外部直链节点（无 Agent，仅作链路最后一跳）。
+func (srv *Server) IsExternal() bool { return srv.Kind == ServerKindExternal }
+
+// ParseExternalExit 解析外部出口规格（非外部服务器/解析失败返回 nil）。
+func (srv *Server) ParseExternalExit() *shared.ExternalExit {
+	if !srv.IsExternal() || srv.ExternalConfig == "" {
+		return nil
+	}
+	var exit shared.ExternalExit
+	if err := json.Unmarshal([]byte(srv.ExternalConfig), &exit); err != nil {
+		return nil
+	}
+	return &exit
 }
 
 // CreateServer 插入一台服务器（§11），返回服务器 id。
@@ -144,9 +172,21 @@ func (s *Store) createServer(ctx context.Context, exec contextExecer, draft Serv
 			addresses = string(raw)
 		}
 	}
+	kind := draft.Kind
+	if kind == "" {
+		kind = ServerKindManaged
+	}
+	machineType := draft.MachineType
+	allowedPorts := draft.AllowedPorts
+	if kind == ServerKindExternal {
+		// 外部节点无 Agent、无入站能力：强制仅出口档 NAT 语义（既有入站能力校验天然拒绝
+		// 其作入口/中间跳），端口段恒为空。
+		machineType = MachineTypeNAT
+		allowedPorts = ""
+	}
 	res, err := exec.ExecContext(ctx,
-		`INSERT INTO servers (alias, address, addresses, address_mode, token, machine_type, allowed_ports, tags, country_code, location, non_direct, credential_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		draft.Alias, draft.Address, addresses, addressMode, draft.BootstrapToken, draft.MachineType, draft.AllowedPorts, draft.Tags, draft.CountryCode, draft.Location, draft.NonDirect, epoch)
+		`INSERT INTO servers (alias, address, addresses, address_mode, token, machine_type, allowed_ports, tags, country_code, location, non_direct, kind, external_link, external_config, credential_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		draft.Alias, draft.Address, addresses, addressMode, draft.BootstrapToken, machineType, allowedPorts, draft.Tags, draft.CountryCode, draft.Location, draft.NonDirect, kind, draft.ExternalLink, draft.ExternalConfig, epoch)
 	if err != nil {
 		return 0, fmt.Errorf("insert server: %w", err)
 	}
@@ -444,6 +484,14 @@ func (s *Store) UpdateServerAlias(ctx context.Context, id int64, alias string) e
 func (s *Store) UpdateServerAllowedPorts(ctx context.Context, id int64, allowedPorts string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE servers SET allowed_ports = ? WHERE id = ?`, allowedPorts, id)
+	return err
+}
+
+// UpdateServerExternalLink 更新未托管服务器的外部直链与解析规格（仅 kind=external）。
+func (s *Store) UpdateServerExternalLink(ctx context.Context, id int64, link, config, address string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE servers SET external_link = ?, external_config = ?, address = ?, address_mode = ? WHERE id = ?`,
+		link, config, address, AddressModeManual, id)
 	return err
 }
 

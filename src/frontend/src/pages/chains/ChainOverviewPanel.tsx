@@ -87,14 +87,21 @@ function ChainOverviewCard({
         <span className={cn('cg-status', statusTone(style.cg))}>{style.label}</span>
       </span>
 
-      {unreachable ? (
+      {unreachable || chain.service_external ? (
         <span className="cg-chain-card-flags">
-          <span
-            className="cg-chain-tag is-unreachable"
-            title={`入口服务器三网测速（${unreachableLabel}）判定 Banned`}
-          >
-            Banned
-          </span>
+          {chain.service_external ? (
+            <span className="cg-chain-tag is-external" title="出口为未托管外部直链节点">
+              外部出口 · {chain.service_external.protocol}
+            </span>
+          ) : null}
+          {unreachable ? (
+            <span
+              className="cg-chain-tag is-unreachable"
+              title={`入口服务器三网测速（${unreachableLabel}）判定 Banned`}
+            >
+              Banned
+            </span>
+          ) : null}
         </span>
       ) : null}
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"lattix/backend/internal/external"
 	"lattix/backend/internal/progress"
 	"lattix/backend/internal/store"
 	"lattix/backend/internal/ws"
@@ -85,6 +86,9 @@ type serverDTO struct {
 	CountryCode                  string                 `json:"country_code"`           // ISO 3166-1 alpha-2
 	Location                     string                 `json:"location"`               // 城市或机房位置
 	NonDirect                    bool                   `json:"non_direct"`             // 非直连（大陆不可直连）：Ban 告警巡检跳过（§告警分类）
+	Kind                         string                 `json:"kind"`                   // managed|external（未托管外部直链节点）
+	ExternalLink                 string                 `json:"external_link,omitempty"`  // 外部直链原文（kind=external）
+	ExternalExit                 *shared.ExternalExit   `json:"external_exit,omitempty"`  // 外部出口规格预览（凭据已打码）
 	CustomSettings               *shared.ServerSettings `json:"custom_settings"`        // 服务器覆盖（customsetting），nil = 跟随面板默认
 	EffectiveXrayVersion         string                 `json:"effective_xray_version"` // 合并后的生效 xray 版本，空 = 未设置
 	AgentSettingsStatus          string                 `json:"agent_settings_status"`
@@ -134,12 +138,19 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 	if srv.LastConnectedAt != nil {
 		connection.State = shared.ConnectionStateOffline
 	}
-	if reader, ok := s.req.(interface {
+	if srv.IsExternal() {
+		// 未托管外部直链节点无 Agent：连接态恒为 external（前端据此隐藏 Agent 操作）。
+		connection = ws.ConnectionSnapshot{State: shared.ConnectionStateExternal}
+	} else if reader, ok := s.req.(interface {
 		ConnectionState(int64, bool) ws.ConnectionSnapshot
 	}); ok {
 		connection = reader.ConnectionState(srv.ID, srv.LastConnectedAt != nil)
 	} else if s.req.IsOnline(srv.ID) {
 		connection.State = shared.ConnectionStateOnline
+	}
+	kind := srv.Kind
+	if kind == "" {
+		kind = store.ServerKindManaged
 	}
 	return serverDTO{
 		ID:                           srv.ID,
@@ -166,6 +177,9 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		CountryCode:                  srv.CountryCode,
 		Location:                     srv.Location,
 		NonDirect:                    srv.NonDirect,
+		Kind:                         kind,
+		ExternalLink:                 srv.ExternalLink,
+		ExternalExit:                 redactExternalExit(srv.ParseExternalExit()),
 		EffectiveXrayVersion:         effectiveXrayVersion(s, srv.ID),
 		CustomSettings:               customServerSettings(s, srv.ID),
 		AgentSettingsStatus:          settingsStatus,
@@ -175,6 +189,30 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		AgentSettingsReportedAt:      srv.AgentSettingsReportedAt,
 		CreatedAt:                    srv.CreatedAt,
 	}
+}
+
+// redactExternalExit 打码外部出口规格中的凭据（列表/编辑预览用；实际拨号规格
+// 只存在于服务器行与链路修订快照，不经列表 API 回传）。
+func redactExternalExit(exit *shared.ExternalExit) *shared.ExternalExit {
+	if exit == nil {
+		return nil
+	}
+	masked := *exit
+	if masked.UUID != "" {
+		masked.UUID = maskCredential(masked.UUID)
+	}
+	if masked.Password != "" {
+		masked.Password = maskCredential(masked.Password)
+	}
+	masked.Username = exit.Username // 用户名非敏感（SOCKS/HTTP 需回显给管理员辨识）
+	return &masked
+}
+
+func maskCredential(value string) string {
+	if len(value) <= 4 {
+		return "****"
+	}
+	return value[:2] + "****" + value[len(value)-2:]
 }
 
 // effectiveXrayVersion 读取合并生效值（读失败按未设置处理，不阻断列表）。
@@ -268,6 +306,46 @@ func (s *Server) handleListServers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// requireManagedServer 加载服务器并拒绝针对未托管外部直链节点的 Agent 动作
+// （外部节点没有 Agent，任何下发/安装/测试/升级动作都无意义）。
+func (s *Server) requireManagedServer(w http.ResponseWriter, r *http.Request, id int64) (*store.Server, bool) {
+	srv, err := s.st.ServerByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "服务器不存在")
+			return nil, false
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return nil, false
+	}
+	if srv.IsExternal() {
+		writeError(w, http.StatusBadRequest, "未托管外部直链节点没有 Agent，不支持该操作")
+		return nil, false
+	}
+	return srv, true
+}
+
+// handleParseExternalLink 处理 POST /api/server/parse-link：把外部直链解析为
+// 未托管节点预览（新增/编辑服务器对话框的解析器），不落库。
+func (s *Server) handleParseExternalLink(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Link string `json:"link"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	exit, name, err := external.Parse(req.Link)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name": name, "protocol": exit.Protocol, "address": exit.Address, "port": exit.Port,
+		"transport": external.TransportSummary(exit), "exit": redactExternalExit(&exit),
+	})
+}
+
 // handleCreateServer 处理 POST /api/servers：生成一次性 bootstrap token 与一行安装命令（§11）。
 // 机器类型与 NAT 可用端口段为面板侧元数据（§21，不下发到 agent，引导流程不变）：
 // NAT 类型 address 强制必填（共享 IP 由 IDC 提供，禁用自动学习）。
@@ -282,11 +360,50 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		CountryCode  string             `json:"country_code"`
 		Location     string             `json:"location"`
 		NonDirect    bool               `json:"non_direct"` // 非直连（大陆不可直连）：Ban 告警巡检跳过
+		Kind         string             `json:"kind"`         // managed（默认）| external（未托管外部直链）
+		ExternalLink string             `json:"external_link"` // 外部直链原文（kind=external）
 		Billing      *billingInput      `json:"billing"`
 		TrafficPlan  *trafficPlanInput  `json:"traffic_plan"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Alias = strings.TrimSpace(req.Alias)
+	req.Kind = strings.TrimSpace(req.Kind)
+	if req.Kind == "" {
+		req.Kind = store.ServerKindManaged
+	}
+	if req.Kind != store.ServerKindManaged && req.Kind != store.ServerKindExternal {
+		writeError(w, http.StatusBadRequest, "kind 须为 managed 或 external")
+		return
+	}
+	req.ExternalLink = strings.TrimSpace(req.ExternalLink)
+	var externalExit *shared.ExternalExit
+	externalConfig := ""
+	if req.Kind == store.ServerKindExternal {
+		// 未托管外部直链节点：解析链接得到拨号规格与地址，机器类型/端口段固定为
+		// 仅出口档（NAT + 空段），无 Agent 与安装命令。
+		exit, parsedName, err := external.Parse(req.ExternalLink)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		externalExit = &exit
+		if req.Alias == "" {
+			req.Alias = parsedName
+		}
+		req.Address = exit.Address
+		req.MachineType = store.MachineTypeNAT
+		req.AllowedPorts = nil
+		raw, err := json.Marshal(exit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		externalConfig = string(raw)
+	} else if req.ExternalLink != "" {
+		writeError(w, http.StatusBadRequest, "托管服务器不支持外部直链（请选择未托管类型）")
 		return
 	}
 	if req.Alias == "" {
@@ -359,7 +476,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	id, err := s.st.CreateServerWithPlans(r.Context(), store.ServerDraft{
 		Alias: req.Alias, Address: req.Address, BootstrapToken: bootstrap, MachineType: req.MachineType,
 		AllowedPorts: allowedJSON, Tags: tagsJSON, CountryCode: countryCode, Location: location,
-		NonDirect: req.NonDirect,
+		NonDirect: req.NonDirect, Kind: req.Kind, ExternalLink: req.ExternalLink, ExternalConfig: externalConfig,
 	}, billing, traffic)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -373,12 +490,19 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	sid := srv.ID
 	s.audit(r, "server.create", &sid, nil, map[string]any{
 		"alias": req.Alias, "machine_type": req.MachineType, "address": req.Address, "tags": req.Tags,
-		"country_code": countryCode, "location": location,
+		"country_code": countryCode, "location": location, "kind": req.Kind,
 	})
 	base := s.panelBase(r)
 	createdDTO, err := s.toServerDTOWithPlans(r.Context(), *srv)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if externalExit != nil {
+		// 外部直链节点无 Agent：不返回安装命令（字段保留以维持响应形状）。
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"server": createdDTO, "bootstrap_token": "", "install_command": "", "install_insecure": false,
+		})
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -412,6 +536,10 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if srv.IsExternal() {
+		writeError(w, http.StatusBadRequest, "未托管外部直链节点没有 Agent，无需安装凭证")
 		return
 	}
 	panelID, err := s.st.PanelInstanceID(r.Context())
@@ -474,6 +602,7 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		CountryCode    *string                `json:"country_code"`  // 省略 = 不变
 		Location       *string                `json:"location"`      // 省略 = 不变
 		NonDirect      *bool                  `json:"non_direct"`    // 省略 = 不变；非直连（大陆不可直连），Ban 告警巡检跳过
+		ExternalLink   *string                `json:"external_link"` // 仅未托管节点：省略 = 不变；新链接须可解析
 		Billing        *billingInput          `json:"billing"`
 		TrafficPlan    *trafficPlanInput      `json:"traffic_plan"`
 		CustomSettings *shared.ServerSettings `json:"custom_settings"` // 省略 = 不变；{} 或 null = 清除覆盖；非空 = 覆盖
@@ -531,7 +660,48 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if srv.MachineType == store.MachineTypeNAT && req.Address == "" {
+	// 未托管外部直链节点：地址由链接派生，实例内不允许改机器类型/端口段；
+	// 链接变更须重新解析，且被链路引用时拒绝（已发布修订已冻结旧规格，避免静默分叉）。
+	if srv.IsExternal() {
+		if req.ExternalLink != nil {
+			link := strings.TrimSpace(*req.ExternalLink)
+			exit, _, parseErr := external.Parse(link)
+			if parseErr != nil {
+				writeError(w, http.StatusBadRequest, parseErr.Error())
+				return
+			}
+			raw, marshalErr := json.Marshal(exit)
+			if marshalErr != nil {
+				writeError(w, http.StatusInternalServerError, marshalErr.Error())
+				return
+			}
+			if string(raw) != srv.ExternalConfig {
+				chains, chainErr := s.st.ChainsReferencingServer(r.Context(), id)
+				if chainErr != nil {
+					writeError(w, http.StatusInternalServerError, chainErr.Error())
+					return
+				}
+				if len(chains) > 0 {
+					writeError(w, http.StatusConflict,
+						fmt.Sprintf("该外部节点正被 %d 条链路引用，修改链接前请先调整或删除这些链路", len(chains)))
+					return
+				}
+				if err := s.st.UpdateServerExternalLink(r.Context(), id, link, string(raw), exit.Address); err != nil {
+					writeError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+			}
+		}
+		if req.AllowedPorts != nil && len(*req.AllowedPorts) > 0 {
+			writeError(w, http.StatusBadRequest, "未托管节点无入站能力，不能设置可用端口")
+			return
+		}
+		req.Address = ""
+	} else if req.ExternalLink != nil {
+		writeError(w, http.StatusBadRequest, "托管服务器不支持外部直链")
+		return
+	}
+	if srv.MachineType == store.MachineTypeNAT && req.Address == "" && !srv.IsExternal() {
 		writeError(w, http.StatusBadRequest, "NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）")
 		return
 	}
@@ -581,7 +751,9 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if req.Addresses != nil {
+	if srv.IsExternal() {
+		// 外部节点地址恒为链接 host（上方的链接更新已写回），不接受手工地址编辑。
+	} else if req.Addresses != nil {
 		// 地址列表整体替换（§9）：默认地址须属于列表；旧调用（省略 addresses）保持原语义。
 		if err := s.st.UpdateServerAddresses(r.Context(), id, *req.Addresses, req.Address); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -746,12 +918,7 @@ func (s *Server) handleUpgradeXray(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid server id")
 		return
 	}
-	if _, err := s.st.ServerByID(r.Context(), id); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "服务器不存在")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if _, ok := s.requireManagedServer(w, r, id); !ok {
 		return
 	}
 	if req.Version == "" {
@@ -789,12 +956,7 @@ func (s *Server) handleUpgradeAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid server id")
 		return
 	}
-	if _, err := s.st.ServerByID(r.Context(), id); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "服务器不存在")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if _, ok := s.requireManagedServer(w, r, id); !ok {
 		return
 	}
 	if req.Version == "" {
@@ -833,12 +995,7 @@ func (s *Server) handleRepairServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid server id")
 		return
 	}
-	if _, err := s.st.ServerByID(r.Context(), id); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "服务器不存在")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if _, ok := s.requireManagedServer(w, r, id); !ok {
 		return
 	}
 	o := s.observeStart(r, "server.repair", "修复配置漂移", serverObserveStages)
@@ -897,12 +1054,7 @@ func (s *Server) handleCleanupXray(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid server id")
 		return
 	}
-	if _, err := s.st.ServerByID(r.Context(), id); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "服务器不存在")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if _, ok := s.requireManagedServer(w, r, id); !ok {
 		return
 	}
 	if !s.req.IsOnline(id) {
@@ -961,6 +1113,10 @@ func (s *Server) handleRebuildXray(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if srv.IsExternal() {
+		writeError(w, http.StatusBadRequest, "未托管外部直链节点没有 Agent，不支持该操作")
 		return
 	}
 	if !s.req.IsOnline(id) {
@@ -1161,7 +1317,8 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			if revision.Snapshot.ServiceServerID != id {
+			// 外部直链出口链没有出口业务节点（ServiceNodeID=0）：跳过 remove_node。
+			if revision.Snapshot.ServiceServerID != id && revision.Snapshot.ServiceNodeID != 0 {
 				key := fmt.Sprintf("node/%d/%d", revision.Snapshot.ServiceServerID, revision.Snapshot.ServiceNodeID)
 				if !seen[key] {
 					seen[key] = true

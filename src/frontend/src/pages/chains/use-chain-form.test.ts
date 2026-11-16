@@ -1,9 +1,13 @@
 import type { FormEvent } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { Chain, VirtualConfig } from '@/lib/types'
+import type { Chain, Server, VirtualConfig } from '@/lib/types'
 
-import { EMPTY_FORM_TOPOLOGY, type ChainFormTopology } from './chain-wizard/chain-canvas'
+import {
+  EMPTY_FORM_TOPOLOGY,
+  type CanvasNode,
+  type ChainFormTopology,
+} from './chain-wizard/chain-canvas'
 
 // useChainForm 仅用 useState：以最小状态表替代 React 渲染器，在无 DOM 的 node 环境驱动 hook。
 /* eslint-disable react-hooks/rules-of-hooks -- 测试以手动"渲染"循环调用 hook，无 React 渲染器可用 */
@@ -51,17 +55,44 @@ function relayTopology(entryId = '1', exitId = '2'): ChainFormTopology {
   return { ...EMPTY_FORM_TOPOLOGY, chainType: 'relay', entryId, exitId }
 }
 
-function setup(topology: ChainFormTopology = directTopology()) {
+function canvasNode(id: string, port = '', address = ''): CanvasNode {
+  return { id: 'n' + id, serverId: Number(id), x: 0, y: 0, port, address }
+}
+
+/** 单链拓扑 → 一条路径（兼容既有单链用例）。 */
+function topologyPaths(topology: ChainFormTopology): CanvasNode[][] {
+  if (!topology.entryId) return []
+  if (topology.chainType === 'direct') {
+    return [[canvasNode(topology.entryId, topology.entryPort, topology.entryAddr)]]
+  }
+  return [
+    [
+      canvasNode(topology.entryId, topology.entryPort, topology.entryAddr),
+      ...topology.middleIds.map((id, index) =>
+        canvasNode(id, '', topology.middleAddrs[index] ?? ''),
+      ),
+      canvasNode(topology.exitId, topology.port, topology.exitAddr),
+    ],
+  ]
+}
+
+function setup(
+  topology: ChainFormTopology = directTopology(),
+  servers: Server[] = [],
+  paths?: CanvasNode[][],
+) {
   h.states.length = 0
   h.createChain.mockClear()
   h.editChain.mockClear()
+  const resolvedPaths = paths ?? topologyPaths(topology)
   let controller!: Controller
   const render = () => {
     h.beginRender()
     controller = useChainForm({
       chains: [],
-      servers: [],
+      servers,
       topology,
+      paths: resolvedPaths,
       onError: () => {},
       onSaved: () => {},
       showOperation: () => {},
@@ -141,6 +172,47 @@ function relayChain(serviceConfig: VirtualConfig, entryConfig?: VirtualConfig | 
     traffic_multiplier: '1.000',
     service_config: serviceConfig,
     entry_config: entryConfig,
+  } as unknown as Chain
+}
+
+function managedServer(id: number): Server {
+  return {
+    id,
+    alias: `managed-${id}`,
+    kind: 'managed',
+    machine_type: 'direct',
+    allowed_ports: [],
+    addresses: [],
+  } as unknown as Server
+}
+
+function externalServer(id = 2): Server {
+  return {
+    id,
+    alias: `ext-${id}`,
+    kind: 'external',
+    machine_type: 'nat',
+    allowed_ports: [],
+    addresses: [],
+    external_exit: { protocol: 'socks', address: '198.51.100.9', port: 1080 },
+  } as unknown as Server
+}
+
+function externalChain(overrides: Partial<Chain> = {}): Chain {
+  return {
+    id: 8,
+    name: 'ext-chain',
+    hops: [
+      { server_id: 1, address: '' },
+      { server_id: 2, address: '' },
+    ],
+    service_node_id: 0,
+    entry_port: 1443,
+    endpoint_id: 5,
+    traffic_multiplier: '1.000',
+    service_external: { protocol: 'socks', address: '198.51.100.9', port: 1080 },
+    entry_config: entryRealityConfig(),
+    ...overrides,
   } as unknown as Chain
 }
 
@@ -336,5 +408,177 @@ describe('useChainForm hy2', () => {
       server_names: ['dl.google.com'],
       fingerprint: 'chrome',
     })
+  })
+})
+
+describe('useChainForm 外部直链出口', () => {
+  it('创建：提交最小占位 node 且恒提交 entry_node（出口表单不参与校验/提交）', async () => {
+    const t = setup(relayTopology('1', '2'), [managedServer(1), externalServer(2)])
+    t.act((c) =>
+      c.patch({
+        protocol: 'hysteria',
+        certMode: 'acme',
+        obfsPassword: 'should-not-submit',
+        portHop: '20000-20031',
+        shortId: 'aa11',
+      }),
+    )
+    expect(t.controller.exitIsExternal).toBe(true)
+    expect(t.controller.externalExit?.protocol).toBe('socks')
+    await t.submit()
+    expect(h.createChain).toHaveBeenCalledOnce()
+    const body = createBody()
+    expect(body.node).toEqual({ name: expect.any(String), server_id: 2, protocol: 'vless' })
+    expect(body.node.port).toBeUndefined()
+    expect(body.node.cert_mode).toBeUndefined()
+    expect(body.node.obfs_password).toBeUndefined()
+    expect(body.node.port_hop).toBeUndefined()
+    expect(body.node.network).toBeUndefined()
+    // 入口服务器 A 与普通链路一样携带完整 VLESS 协议细节（传输/安全层/flow）。
+    expect(body.entry_node).toMatchObject({
+      protocol: 'vless',
+      network: 'tcp',
+      security: 'reality',
+      flow: 'xtls-rprx-vision',
+      short_id: 'aa11',
+      dest: 'dl.google.com:443',
+      server_names: ['dl.google.com'],
+      fingerprint: 'chrome',
+    })
+  })
+
+  it('创建：外部节点不是末位 → 与后端一致文案，拒绝提交', async () => {
+    const topology: ChainFormTopology = {
+      ...EMPTY_FORM_TOPOLOGY,
+      chainType: 'relay',
+      entryId: '1',
+      middleIds: ['2'],
+      exitId: '3',
+    }
+    const t = setup(topology, [managedServer(1), externalServer(2), managedServer(3)])
+    await t.submit()
+    expect(h.createChain).not.toHaveBeenCalled()
+    expect(t.controller.createError).toBe('未托管服务器 ext-2 只能作为链路的最后一跳（出口）')
+  })
+
+  it('创建：单个外部节点（外部节点作入口）→ 拒绝提交', async () => {
+    const t = setup(directTopology('2'), [externalServer(2)])
+    await t.submit()
+    expect(h.createChain).not.toHaveBeenCalled()
+    expect(t.controller.createError).toBe('未托管服务器 ext-2 只能作为链路的最后一跳（出口）')
+  })
+
+  it('编辑：不因 service_config 缺失报错，回填入口参数并按占位 node 提交', async () => {
+    const t = setup(relayTopology('1', '2'), [managedServer(1), externalServer(2)])
+    const chain = externalChain()
+    const parsed = parseChainEdit(chain, [])
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) return
+    expect(parsed.value.exitPort).toBe('')
+    expect(parsed.value.details.entryProtocolEnabled).toBe(true)
+    expect(parsed.value.details.entryShortId).toBe('ff00')
+    t.act((c) => c.beginEdit(chain, parsed.value))
+    await t.submit()
+    expect(h.editChain).toHaveBeenCalledOnce()
+    const body = editBody()
+    expect(body.node).toEqual({ name: expect.any(String), server_id: 2, protocol: 'vless' })
+    expect(body.node.port).toBeUndefined()
+    expect(body.entry_node).toMatchObject({
+      protocol: 'vless',
+      network: 'tcp',
+      security: 'reality',
+      flow: 'xtls-rprx-vision',
+      short_id: 'ff00',
+      dest: 'www.amazon.com:443',
+      server_names: ['www.amazon.com'],
+      fingerprint: 'safari',
+    })
+  })
+
+  it('编辑：忽略 entryBlockLocked，仍提交 entry_node', async () => {
+    const t = setup(relayTopology('1', '2'), [managedServer(1), externalServer(2)])
+    const chain = externalChain({ endpoint_id: 0 })
+    const parsed = parseChainEdit(chain, [])
+    if (!parsed.ok) throw new Error(parsed.error)
+    t.act((c) => c.beginEdit(chain, parsed.value))
+    expect(t.controller.entryBlockLocked).toBe(true)
+    await t.submit()
+    expect(editBody().entry_node).toMatchObject({ protocol: 'vless', security: 'reality' })
+  })
+})
+
+describe('useChainForm 多链提交', () => {
+  interface MultiBody {
+    name: string
+    hops: { server_id: number; address?: string }[]
+    entry_port?: number
+    node: Record<string, unknown>
+  }
+
+  function multiPaths(): CanvasNode[][] {
+    return [
+      [canvasNode('1', '1443'), canvasNode('2', '8443')],
+      [canvasNode('1', '1444'), canvasNode('3')],
+      [canvasNode('4', '1445')],
+    ]
+  }
+
+  it('按顺序逐条创建：名称基准-1..N，每条链的 hops 与首尾端口独立', async () => {
+    const topology: ChainFormTopology = {
+      ...EMPTY_FORM_TOPOLOGY,
+      chainType: 'relay',
+      entryId: '1',
+      exitId: '2',
+    }
+    const t = setup(topology, [], multiPaths())
+    t.act((c) => c.patch({ name: '批量链' }))
+    expect(t.controller.chainCount).toBe(3)
+    await t.submit()
+    expect(h.createChain).toHaveBeenCalledTimes(3)
+    const bodies = h.createChain.mock.calls.map((call) => call[0] as unknown as MultiBody)
+    expect(bodies.map((body) => body.name)).toEqual(['批量链-1', '批量链-2', '批量链-3'])
+    // 链 1：入口 1443 / 出口节点端口 8443。
+    expect(bodies[0].hops).toEqual([{ server_id: 1 }, { server_id: 2 }])
+    expect(bodies[0].entry_port).toBe(1443)
+    expect(bodies[0].node).toMatchObject({ server_id: 2, port: 8443 })
+    // 链 2：入口 1444 / 出口端口留空（自动分配）。
+    expect(bodies[1].hops).toEqual([{ server_id: 1 }, { server_id: 3 }])
+    expect(bodies[1].entry_port).toBe(1444)
+    expect(bodies[1].node.port).toBeUndefined()
+    // 链 3：单节点直连，入口端口复用为节点端口。
+    expect(bodies[2].hops).toEqual([{ server_id: 4 }])
+    expect(bodies[2].entry_port).toBe(1445)
+    expect(bodies[2].node).toMatchObject({ server_id: 4, port: 1445 })
+  })
+
+  it('名称为空时沿用随机基准名再拼序号', async () => {
+    const topology: ChainFormTopology = {
+      ...EMPTY_FORM_TOPOLOGY,
+      chainType: 'relay',
+      entryId: '1',
+      exitId: '2',
+    }
+    const t = setup(topology, [], multiPaths())
+    await t.submit()
+    const bodies = h.createChain.mock.calls.map((call) => call[0] as unknown as MultiBody)
+    expect(bodies[0].name).toMatch(/^Chain #[A-Za-z]{4}-1$/)
+    expect(bodies[2].name).toMatch(/-3$/)
+  })
+
+  it('编辑模式遇到多路径：拒绝提交并提示新建链路', async () => {
+    const topology: ChainFormTopology = {
+      ...EMPTY_FORM_TOPOLOGY,
+      chainType: 'relay',
+      entryId: '1',
+      exitId: '2',
+    }
+    const t = setup(topology, [], multiPaths())
+    const chain = relayChain(hy2ServiceConfig(), entryRealityConfig())
+    const parsed = parseChainEdit(chain, [])
+    if (!parsed.ok) throw new Error(parsed.error)
+    t.act((c) => c.beginEdit(chain, parsed.value))
+    await t.submit()
+    expect(h.editChain).not.toHaveBeenCalled()
+    expect(t.controller.createError).toBe('编辑模式仅支持单条链路，多路径请新建链路')
   })
 })
