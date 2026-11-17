@@ -36,6 +36,7 @@ import {
 } from 'lucide-react'
 
 import { CountryFlag } from '@/components/CountryFlag'
+import { IconCopyButton } from '@/components/CopyButton'
 import { addressFamily } from '@/lib/address'
 import { EmptyState, LoadingState } from '@/components/PagePrimitives'
 import { ServerTestPanel } from '@/components/ServerTestPanel'
@@ -1407,7 +1408,7 @@ function DetailDialog({
 
 // ExternalServerCard 是未托管外部直链节点的简易卡片：没有 Agent，不做三网测速与
 // 性能监控，只展示协议/目标与「面板 → 节点」的 TCP 延迟（服务器页外部直链板使用）。
-function ExternalServerCard({
+export function ExternalServerCard({
   server,
   onEdit,
   onDelete,
@@ -1421,6 +1422,7 @@ function ExternalServerCard({
   const exit = server.external_exit
   const latency = server.panel_latency_ms
   const probed = Boolean(server.panel_probed_at)
+  const externalLink = server.external_link?.trim() ?? ''
   return (
     <article className="sv-ext-card" aria-label={'外部直链 ' + server.alias}>
       <header className="sv-ext-head">
@@ -1428,6 +1430,12 @@ function ExternalServerCard({
         {server.country_code ? <CountryFlag code={server.country_code} /> : null}
         <strong className="sv-ext-title">{server.alias}</strong>
         <span className="sv-ext-actions">
+          <IconCopyButton
+            text={externalLink}
+            label={'复制 ' + server.alias + ' 直链'}
+            disabled={!externalLink}
+            disabledTitle="该节点由手工协议参数创建，没有可复制的原始直链"
+          />
           <Button
             variant="ghost"
             size="icon-sm"
