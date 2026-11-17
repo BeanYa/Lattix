@@ -25,9 +25,13 @@
 | direct | 上游 hop[i] | 下跳 forward 监听端口（末段=出口业务 realized 端口，NAT 受限机按 allowed_ports 换算公网侧） | dokodemo 透传的真实路径 |
 | reverse / encrypted | 下游 hop[i+1]（bridge） | 上游 hop[i] 的 portal 监听端口（方向反转：B→A） | 反向段物理路径由下游发起 |
 | hy2（入口终结末段） | — | 无（UDP/QUIC） | 仅 ICMP |
+| 外部直链出口段 | 上游 hop[i]（末个托管跳；两跳链即入口） | 外部节点 `service_external.address:port` | 外部节点无 Agent/无托管 realized 端口，直接对链接端口测 TCP；同地址 ICMP Ping |
 
 - **TCP 复用链路端口**：握手在对端 xray 监听立即完成，测得的是业务数据真实路径的
   网络往返；链路部署后端口必然在线，无需额外监听面。端口随测量数据入库。
+  外部直链出口段的 TCP 端口取外部链接端口（vless/vmess/trojan/ss/socks/http 均为 TCP
+  承载），地址取修订快照冻结的 `service_external.address`，不依赖外部服务器行的
+  公网地址字段。
 - **ICMP**：每个出向段同时携带 icmp 目标，作为 TCP 不可用（如 hy2 段、端口未就绪）时的回退来源。
 - **目标地址**：目标跳的设置公网地址（hop 地址引用 §9 可用则用之，否则跟随服务器
   默认地址；可能是域名也可能是 IP）。

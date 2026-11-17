@@ -243,6 +243,42 @@ func TestLatencyProbeTargetsDirectChain(t *testing.T) {
 	}
 }
 
+// TestLatencyProbeTargetsExternalExitUsesNodeAddressAndPort 验证外部直链出口段：
+// 外部节点没有 Agent / 托管 realized 端口，测速目标取外部规格的 address:port
+// 作 TCP 握手，同地址作 ICMP Ping；由上游（两跳链即入口）Agent 发起。
+func TestLatencyProbeTargetsExternalExitUsesNodeAddressAndPort(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	entryID, externalID, _, _ := newTestExternalEndpointChain(t, st, "external-latency")
+	targets, err := st.LatencyProbeTargets(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list := targets[entryID]
+	if len(list) != 2 {
+		t.Fatalf("external exit targets = %+v, want tcp+icmp", list)
+	}
+	byKind := map[string]ServerLatencyTarget{}
+	for _, target := range list {
+		byKind[target.Kind] = target
+	}
+	tcp := byKind["tcp"]
+	if tcp.ToServer != externalID || tcp.Address != "203.0.113.10" || tcp.Port != 1080 {
+		t.Fatalf("external tcp target mismatch: %+v", tcp)
+	}
+	icmp := byKind["icmp"]
+	if icmp.ToServer != externalID || icmp.Address != "203.0.113.10" || icmp.Port != 0 {
+		t.Fatalf("external icmp target mismatch: %+v", icmp)
+	}
+	if list := targets[externalID]; len(list) != 0 {
+		t.Fatalf("external node must not probe outbound: %+v", list)
+	}
+}
+
 func TestLatencyProbeTargetsReverseChainReversesDirection(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(":memory:")

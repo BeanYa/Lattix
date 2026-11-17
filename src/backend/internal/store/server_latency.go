@@ -160,20 +160,39 @@ func (s *Store) PublishedLatencyEdges(ctx context.Context) ([]ServerLatencyEdge,
 				transport = "direct"
 			}
 			last := i == len(snapshot.Hops)-2
-			add := func(from, to int64, kind string, port int, addrRef string) {
+			addTarget := func(from, to int64, kind string, port int, address string) {
 				if port < 0 {
 					port = 0
 				}
+				if address == "" {
+					return
+				}
 				// 历史发布快照可能引用已删除服务器（删除服务器只清除工作行，revision
 				// 快照保留历史）：两端任一不在 servers 表时跳过该悬空边，不能解引用 nil。
-				toSrv, fromSrv := byID[to], byID[from]
-				if toSrv == nil || fromSrv == nil {
+				if byID[to] == nil || byID[from] == nil {
+					return
+				}
+				edges = append(edges, ServerLatencyEdge{ChainID: chainID, UpstreamHopID: up.HopID,
+					FromServer: from, ToServer: to, TargetAddress: address, Kind: kind, Port: port})
+			}
+			add := func(from, to int64, kind string, port int, addrRef string) {
+				toSrv := byID[to]
+				if toSrv == nil {
 					return
 				}
 				// hop 地址引用（§9）：目标跳所选公网地址可用则用之，否则跟随服务器默认地址。
-				edges = append(edges, ServerLatencyEdge{ChainID: chainID, UpstreamHopID: up.HopID,
-					FromServer: from, ToServer: to,
-					TargetAddress: ResolveServerAddress(toSrv, addrRef), Kind: kind, Port: port})
+				addTarget(from, to, kind, port, ResolveServerAddress(toSrv, addrRef))
+			}
+			if last && snapshot.ServiceExternal != nil {
+				// 外部直链出口没有 Agent，也没有托管出口 realized 端口：直接对
+				// 外部节点自身的 address:port 测 TCP 握手，并用同一地址 ICMP Ping。
+				// 探测仍由上游（最后一个托管跳；两跳链即入口）的 Agent 发起。
+				ext := snapshot.ServiceExternal
+				if ext.Port > 0 {
+					addTarget(up.ServerID, down.ServerID, "tcp", ext.Port, ext.Address)
+				}
+				addTarget(up.ServerID, down.ServerID, "icmp", 0, ext.Address)
+				continue
 			}
 			switch transport {
 			case "reverse", "encrypted":

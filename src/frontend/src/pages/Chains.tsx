@@ -793,7 +793,11 @@ export default function Chains() {
                               const hst = hopStatusStyle[h.status] ?? hopStatusStyle.pending
                               const hopServer = servers.find((server) => server.id === h.server_id)
                               // 外部直链出口没有 Agent：不参与在线性判断，也不显示「Agent 离线」。
-                              const externalHop = hopServer?.kind === 'external'
+                              // node_id=0 是外部出口的稳定判据（托管出口必有业务节点），
+                              // 不依赖服务器列表是否带 kind，兼容旧部署/缺列数据。
+                              const externalHop =
+                                h.role === 'exit' &&
+                                (h.node_id === 0 || hopServer?.kind === 'external')
                               const offline = !externalHop && !serverOnline(h.server_id)
                               const exitNode =
                                 h.role === 'exit'
@@ -821,6 +825,11 @@ export default function Chains() {
                                   {i > 0 ? (
                                     <HopLink
                                       segment={segmentForLink(statsIndex, c.hops[i - 1].id, h.id)}
+                                      segments={
+                                        externalHop
+                                          ? (statsIndex.byHop.get(c.hops[i - 1].id) ?? [])
+                                          : undefined
+                                      }
                                       flowing={c.status === 'active' && !offline}
                                     />
                                   ) : null}
@@ -844,7 +853,12 @@ export default function Chains() {
                                         <span className="cg-hop-shared">共享入口</span>
                                       ) : null}
                                       {externalHop ? (
-                                        <span className="cg-hop-external">外部出口</span>
+                                        <span
+                                          className="cg-hop-external"
+                                          title="外部直链节点没有 Agent，仅作链路出口"
+                                        >
+                                          未托管
+                                        </span>
                                       ) : (
                                         <span className={offline ? 'is-red' : 'is-lime'}>
                                           {offline ? 'Agent 离线' : 'Agent 在线'}

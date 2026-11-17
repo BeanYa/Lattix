@@ -192,6 +192,25 @@ CH2="$(py "d['id']" "$CHAIN2")"
 
 wait_chain "$CH1" active 90 && echo "OK: 链 1 active"
 wait_chain "$CH2" active 90 && echo "OK: 链 2 active"
+echo ">> 外部出口段延迟（上游托管跳 → 外部节点 Ping/TCP）"
+SEG_JSON="[]"
+for _ in $(seq 1 40); do
+    SEG_JSON="$(rpc_data GET /api/chain/get-stats | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+c=next((x for x in d.get('chains',[]) if x['chain_id']==$CH1), None)
+print(json.dumps(c.get('segments',[]) if c else []))")"
+    HAS_BOTH="$(py "len({s['kind'] for s in d if s['target_address']=='127.0.0.1'}) == 2" "$SEG_JSON")"
+    [[ "$HAS_BOTH" == "True" ]] && break
+    sleep 1
+done
+[[ "$(py "any(s['kind']=='icmp' and s['target_address']=='127.0.0.1' for s in d)" "$SEG_JSON")" == "True" ]] \
+    && echo "OK: 外部出口段含 ICMP Ping 目标（入口 → 外部节点）" \
+    || { echo "FAIL: 外部出口段缺 ICMP 目标: $SEG_JSON"; db "SELECT from_server,to_server,kind,port,latency_ms FROM server_latency_probes"; exit 1; }
+[[ "$(py "any(s['kind']=='tcp' and s['target_address']=='127.0.0.1' and s['target_port']==$SOCKS_EXT_PORT for s in d)" "$SEG_JSON")" == "True" ]] \
+    && echo "OK: 外部出口段含 TCP 目标（外部节点地址:端口）" \
+    || { echo "FAIL: 外部出口段缺 TCP 目标: $SEG_JSON"; db "SELECT from_server,to_server,kind,port,latency_ms FROM server_latency_probes"; exit 1; }
+
 for id in "$CH1" "$CH2"; do
     [[ "$(chain_field "$id" "c.get('endpoint_status','')")" == "active" ]] \
         && echo "OK: 链 $id 入口共享端点 active" || { echo "FAIL: 链 $id 端点未生效"; exit 1; }

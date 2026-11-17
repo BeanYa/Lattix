@@ -70,6 +70,14 @@
   已用流量，可为负）与已用流量（全部被控服务器当前计费周期已用加总，按各服务器
   计费口径）；汇总随 `GET /api/stats/traffic/overview` 的 `traffic_quota` 字段返回。
 
+### Fixed
+
+- **外部直链出口延迟与展示修正**：外部直链节点没有 Agent，链路详情不再把其显示为
+  「Agent 在线/离线」，改标「未托管」；末段延迟不再依赖托管出口 realized 端口，
+  改由上游托管跳（两跳链即入口）对 `service_external.address:port` 测 TCP 握手，
+  并以同一地址 ICMP Ping。链路详情并列展示 Ping 与 TCP 两个来源（缺失显示待探测/
+  超时），入口与中间跳的既有段延迟口径不变。
+
 ### Changed
 
 - 模板配置四级化（强制级 > 用户级 > 面板级 > 默认级，schema v28）：`user_subscription_profiles`

@@ -1288,3 +1288,39 @@
   background: color-mix(in srgb, var(--panel-status-failed) 10%, var(--hop-latency-backdrop));
   color: var(--panel-status-failed);
 }
+
+.cg-hop-latency[data-tone='idle'] {
+  border-color: var(--panel-rule);
+  background: color-mix(in srgb, var(--panel-rule) 12%, var(--hop-latency-backdrop));
+  color: var(--panel-ink-3);
+}
+
+/* 外部直链段同时展示 Ping/TCP 两个来源：并排胶囊，窄屏竖排居中覆盖长线 */
+.cg-hop-latency-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  max-width: 100%;
+}
+
+@media (max-width: 767.98px) {
+  .cg-hop-latency-group {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 1;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 3px;
+  }
+
+  .cg-hop-latency-group .cg-hop-latency {
+    position: static;
+    left: auto;
+    top: auto;
+    transform: none;
+  }
+}
