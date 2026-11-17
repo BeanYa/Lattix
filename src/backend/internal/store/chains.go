@@ -357,6 +357,12 @@ func (s *Store) DeleteChain(ctx context.Context, id int64, fromStatus ...string)
 		RevisionTaskAbandoned, reason, id, RevisionTaskPending, RevisionTaskQueued); err != nil {
 		return fmt.Errorf("delete chain: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_hop_candidates WHERE chain_id=?`, id); err != nil {
+		return fmt.Errorf("delete chain: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_auto_policies WHERE chain_id=?`, id); err != nil {
+		return fmt.Errorf("delete chain: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_hops WHERE chain_id=?`, id); err != nil {
 		return fmt.Errorf("delete chain: %w", err)
 	}

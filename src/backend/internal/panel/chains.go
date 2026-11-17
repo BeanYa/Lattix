@@ -26,22 +26,48 @@ var chainNodeObserveStages = []progress.Stage{
 	{Key: "regenerate", Label: "重新生成订阅文件"},
 }
 
+type chainHopCandidateDTO struct {
+	Priority    int    `json:"priority"`
+	ServerID    int64  `json:"server_id"`
+	ServerAlias string `json:"server_alias,omitempty"`
+	Address     string `json:"address,omitempty"`
+	ListenPort  int    `json:"listen_port,omitempty"`
+	Active      bool   `json:"active"`
+}
+
+type chainFailoverEventDTO struct {
+	ID              int64     `json:"id"`
+	Seq             int       `json:"seq"`
+	FromServerID    int64     `json:"from_server_id"`
+	FromServerAlias string    `json:"from_server_alias,omitempty"`
+	ToServerID      int64     `json:"to_server_id"`
+	ToServerAlias   string    `json:"to_server_alias,omitempty"`
+	ReasonCode      string    `json:"reason_code"`
+	ReasonDetail    string    `json:"reason_detail"`
+	RevisionID      int64     `json:"revision_id"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
 // chainHopDTO 是链跳对象的 API 表示（§21）。
 type chainHopDTO struct {
-	ID              int64            `json:"id"`
-	Seq             int              `json:"seq"`
-	ServerID        int64            `json:"server_id"`
-	ServerAlias     string           `json:"server_alias"`
-	Role            string           `json:"role"` // entry/middle/exit
-	NodeID          int64            `json:"node_id"`
-	Status          string           `json:"status"` // pending/applying/active/failed
-	Error           string           `json:"error"`
-	ForwardPort     int              `json:"forward_port"` // entry 跳 = 订阅端口（监听侧）
-	Address         string           `json:"address"`      // 本跳所选公网地址（空 = 跟随服务器默认地址，§9）
-	PortalPort      int              `json:"portal_port"`
-	PortalPublicKey string           `json:"portal_public_key,omitempty"`
-	TunnelUUID      string           `json:"tunnel_uuid,omitempty"`
-	Traffic         *chainTrafficDTO `json:"traffic,omitempty"`
+	ID                 int64                  `json:"id"`
+	Seq                int                    `json:"seq"`
+	ServerID           int64                  `json:"server_id"`
+	ServerAlias        string                 `json:"server_alias"`
+	Role               string                 `json:"role"` // entry/middle/exit
+	NodeID             int64                  `json:"node_id"`
+	Status             string                 `json:"status"` // pending/applying/active/failed
+	Error              string                 `json:"error"`
+	ForwardPort        int                    `json:"forward_port"` // entry 跳 = 订阅端口（监听侧）
+	Address            string                 `json:"address"`      // 本跳所选公网地址（空 = 跟随服务器默认地址，§9）
+	PortalPort         int                    `json:"portal_port"`
+	PortalPublicKey    string                 `json:"portal_public_key,omitempty"`
+	TunnelUUID         string                 `json:"tunnel_uuid,omitempty"`
+	Traffic            *chainTrafficDTO       `json:"traffic,omitempty"`
+	Candidates         []chainHopCandidateDTO `json:"candidates,omitempty"`
+	ActivePriority     int                    `json:"active_priority"`
+	PrimaryServerID    int64                  `json:"primary_server_id,omitempty"`
+	PrimaryServerAlias string                 `json:"primary_server_alias,omitempty"`
 }
 
 type chainTrafficDTO struct {
@@ -64,28 +90,30 @@ type chainRevisionTaskDTO struct {
 
 // chainDTO 是链对象的 API 表示（含逐跳状态，§21）。
 type chainDTO struct {
-	ID                  int64                  `json:"id"`
-	Name                string                 `json:"name"`
-	Status              string                 `json:"status"` // pending/applying/active/degraded/failed
-	Error               string                 `json:"error"`  // 失败时定位到跳
-	CreatedAt           time.Time              `json:"created_at"`
-	Hops                []chainHopDTO          `json:"hops"`
-	ServiceNodeID       int64                  `json:"service_node_id"`
-	EndpointID          int64                  `json:"endpoint_id"`
-	EntryPort           int                    `json:"entry_port"`
-	EntryShared         bool                   `json:"entry_shared,omitempty"`
-	EndpointStatus      string                 `json:"endpoint_status,omitempty"`
-	EndpointError       string                 `json:"endpoint_error,omitempty"`
-	TrafficMultiplier   string                 `json:"traffic_multiplier"`
-	Traffic             *chainTrafficDTO       `json:"traffic,omitempty"`
-	PublishedRevisionID int64                  `json:"published_revision_id"`
-	DesiredRevisionID   int64                  `json:"desired_revision_id"`
-	RevisionStatus      string                 `json:"revision_status,omitempty"`
-	RevisionForced      bool                   `json:"revision_forced"`
-	RevisionTasks       []chainRevisionTaskDTO `json:"revision_tasks"`
-	ServiceConfig       json.RawMessage        `json:"service_config,omitempty"`
-	ServiceExternal     *shared.ExternalExit   `json:"service_external,omitempty"` // 外部直链出口规格（未托管出口链路）
-	EntryConfig         *shared.VirtualConfig  `json:"entry_config,omitempty"`     // 入口协议区块配置回填（P4，前端编辑回填用）
+	ID                  int64                   `json:"id"`
+	Name                string                  `json:"name"`
+	Status              string                  `json:"status"` // pending/applying/active/degraded/failed
+	Error               string                  `json:"error"`  // 失败时定位到跳
+	CreatedAt           time.Time               `json:"created_at"`
+	Hops                []chainHopDTO           `json:"hops"`
+	ServiceNodeID       int64                   `json:"service_node_id"`
+	EndpointID          int64                   `json:"endpoint_id"`
+	EntryPort           int                     `json:"entry_port"`
+	EntryShared         bool                    `json:"entry_shared,omitempty"`
+	EndpointStatus      string                  `json:"endpoint_status,omitempty"`
+	EndpointError       string                  `json:"endpoint_error,omitempty"`
+	TrafficMultiplier   string                  `json:"traffic_multiplier"`
+	Traffic             *chainTrafficDTO        `json:"traffic,omitempty"`
+	PublishedRevisionID int64                   `json:"published_revision_id"`
+	DesiredRevisionID   int64                   `json:"desired_revision_id"`
+	RevisionStatus      string                  `json:"revision_status,omitempty"`
+	RevisionForced      bool                    `json:"revision_forced"`
+	RevisionTasks       []chainRevisionTaskDTO  `json:"revision_tasks"`
+	ServiceConfig       json.RawMessage         `json:"service_config,omitempty"`
+	ServiceExternal     *shared.ExternalExit    `json:"service_external,omitempty"` // 外部直链出口规格（未托管出口链路）
+	EntryConfig         *shared.VirtualConfig   `json:"entry_config,omitempty"`     // 入口协议区块配置回填（P4，前端编辑回填用）
+	AutoPolicy          *store.ChainAutoPolicy  `json:"auto_policy,omitempty"`
+	FailoverEvents      []chainFailoverEventDTO `json:"failover_events,omitempty"`
 }
 
 // toChainDTO 组装链 DTO（跳按 seq 升序：首位入口，末位出口）。
@@ -166,6 +194,11 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 	if total, ok := trafficByHop[0]; ok {
 		out.Traffic = &total
 	}
+	candidates, _ := s.st.ChainHopCandidates(r.Context(), c.ID)
+	candsBySeq := make(map[int][]store.ChainHopCandidate)
+	for _, cand := range candidates {
+		candsBySeq[cand.Seq] = append(candsBySeq[cand.Seq], cand)
+	}
 	for _, h := range hops {
 		dto := chainHopDTO{
 			ID:              h.ID,
@@ -187,10 +220,62 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 		if srv, err := s.st.ServerByID(r.Context(), h.ServerID); err == nil {
 			dto.ServerAlias = srv.Alias
 		}
+		if seqCands := candsBySeq[h.Seq]; len(seqCands) > 0 {
+			dto.Candidates = make([]chainHopCandidateDTO, 0, len(seqCands))
+			for _, sc := range seqCands {
+				alias := ""
+				if csrv, err := s.st.ServerByID(r.Context(), sc.ServerID); err == nil {
+					alias = csrv.Alias
+				}
+				active := sc.ServerID == h.ServerID
+				if sc.Priority == 0 {
+					dto.PrimaryServerID = sc.ServerID
+					dto.PrimaryServerAlias = alias
+				}
+				if active {
+					dto.ActivePriority = sc.Priority
+				}
+				dto.Candidates = append(dto.Candidates, chainHopCandidateDTO{
+					Priority:    sc.Priority,
+					ServerID:    sc.ServerID,
+					ServerAlias: alias,
+					Address:     sc.Address,
+					ListenPort:  sc.ListenPort,
+					Active:      active,
+				})
+			}
+		}
 		out.Hops = append(out.Hops, dto)
 	}
 	if out.EntryPort == 0 && len(out.Hops) > 0 {
 		out.EntryPort = out.Hops[0].ForwardPort
+	}
+	if policy, err := s.st.ChainAutoPolicyByID(r.Context(), c.ID); err == nil && (policy.Enabled || len(candidates) > 0) {
+		out.AutoPolicy = &policy
+	}
+	if events, err := s.st.ChainFailoverEvents(r.Context(), c.ID, 10); err == nil && len(events) > 0 {
+		out.FailoverEvents = make([]chainFailoverEventDTO, 0, len(events))
+		for _, ev := range events {
+			fromAlias, toAlias := "", ""
+			if srv, err := s.st.ServerByID(r.Context(), ev.FromServerID); err == nil {
+				fromAlias = srv.Alias
+			}
+			if srv, err := s.st.ServerByID(r.Context(), ev.ToServerID); err == nil {
+				toAlias = srv.Alias
+			}
+			out.FailoverEvents = append(out.FailoverEvents, chainFailoverEventDTO{
+				ID:              ev.ID,
+				Seq:             ev.Seq,
+				FromServerID:    ev.FromServerID,
+				FromServerAlias: fromAlias,
+				ToServerID:      ev.ToServerID,
+				ToServerAlias:   toAlias,
+				ReasonCode:      ev.ReasonCode,
+				ReasonDetail:    ev.ReasonDetail,
+				RevisionID:      ev.RevisionID,
+				CreatedAt:       ev.CreatedAt,
+			})
+		}
 	}
 	return out, nil
 }
@@ -214,33 +299,42 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+type chainHopCandidateInput struct {
+	ServerID   int64  `json:"server_id"`
+	Address    string `json:"address,omitempty"`
+	ListenPort *int   `json:"listen_port,omitempty"`
+}
+
 // createChainRequest 是链路构图的提交（§10/§21）：依次入口 / 中间跳（0-2）/ 出口，
 // 出口携带业务节点的协议表单（复用建节点请求），入口端口可空 = 自动。
 type createChainRequest struct {
-	Name              string             `json:"name"`
-	Hops              []chainHopRef      `json:"hops,omitempty"`
-	Entry             chainHopRef        `json:"entry"`
-	Middle            []chainHopRef      `json:"middle"` // 0-2 个
-	Exit              chainHopRef        `json:"exit"`
-	EntryPort         *int               `json:"entry_port"`           // 留空 = 自动；须在入口机可用段内
-	Node              createNodeRequest  `json:"node"`                 // 出口业务节点表单（server_id 忽略，取 exit.server_id）
-	EntryNode         *createNodeRequest `json:"entry_node,omitempty"` // 入口协议区块（P4；nil=端到端现状，v1 仅 vless+reality）
-	TrafficMultiplier string             `json:"traffic_multiplier"`
+	Name              string                 `json:"name"`
+	Hops              []chainHopRef          `json:"hops,omitempty"`
+	Entry             chainHopRef            `json:"entry"`
+	Middle            []chainHopRef          `json:"middle"` // 0-2 个
+	Exit              chainHopRef            `json:"exit"`
+	EntryPort         *int                   `json:"entry_port"`           // 留空 = 自动；须在入口机可用段内
+	Node              createNodeRequest      `json:"node"`                 // 出口业务节点表单（server_id 忽略，取 exit.server_id）
+	EntryNode         *createNodeRequest     `json:"entry_node,omitempty"` // 入口协议区块（P4；nil=端到端现状，v1 仅 vless+reality）
+	TrafficMultiplier string                 `json:"traffic_multiplier"`
+	AutoPolicy        *store.ChainAutoPolicy `json:"auto_policy,omitempty"`
 }
 
 type chainHopRef struct {
-	ServerID int64  `json:"server_id"`
-	Address  string `json:"address,omitempty"` // 所选公网地址（空 = 跟随服务器默认地址，§9）
+	ServerID   int64                    `json:"server_id"`
+	Address    string                   `json:"address,omitempty"`    // 所选公网地址（空 = 跟随服务器默认地址，§9）
+	Candidates []chainHopCandidateInput `json:"candidates,omitempty"` // 本跳备选服务器列表（按优先级顺序，不含主服务器）
 }
 
 type editChainRequest struct {
-	ChainID           int64              `json:"chain_id"`
-	Name              string             `json:"name"`
-	Hops              []chainHopRef      `json:"hops"`
-	EntryPort         *int               `json:"entry_port"`
-	Node              createNodeRequest  `json:"node"`
-	EntryNode         *createNodeRequest `json:"entry_node,omitempty"` // 入口协议区块（P4；nil=端到端现状）
-	TrafficMultiplier string             `json:"traffic_multiplier"`
+	ChainID           int64                  `json:"chain_id"`
+	Name              string                 `json:"name"`
+	Hops              []chainHopRef          `json:"hops"`
+	EntryPort         *int                   `json:"entry_port"`
+	Node              createNodeRequest      `json:"node"`
+	EntryNode         *createNodeRequest     `json:"entry_node,omitempty"` // 入口协议区块（P4；nil=端到端现状）
+	TrafficMultiplier string                 `json:"traffic_multiplier"`
+	AutoPolicy        *store.ChainAutoPolicy `json:"auto_policy,omitempty"`
 }
 
 // handleCreateChain 处理 POST /api/chains：构图校验 → 落库出口业务节点（pending）+
@@ -304,6 +398,10 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		servers = append(servers, srv)
+	}
+	if err := s.validateChainHopCandidates(r.Context(), refs, servers); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	entrySrv, exitSrv := servers[0], servers[len(servers)-1]
 	externalExit := exitSrv.ParseExternalExit()
@@ -634,6 +732,11 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	chainID := deployment.ChainID
+	if err := s.saveChainHopCandidatesAndPolicy(r.Context(), chainID, refs, entryPort, servicePort, req.AutoPolicy, false); err != nil {
+		o.Fail(err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	o.Report("db", 100, "链路已落库")
 	for _, task := range deployment.ApplyKeys {
 		_, id := splitRevisionPieceKey(task)
@@ -826,6 +929,10 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		servers = append(servers, server)
+	}
+	if err := s.validateChainHopCandidates(r.Context(), req.Hops, servers); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	exitSrv := servers[len(servers)-1]
@@ -1258,6 +1365,15 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+	}
+	editEntryPort := 0
+	if req.EntryPort != nil {
+		editEntryPort = *req.EntryPort
+	}
+	if err := s.saveChainHopCandidatesAndPolicy(r.Context(), chain.ID, req.Hops, editEntryPort, nodePort, req.AutoPolicy, true); err != nil {
+		o.Fail(err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 	o.Report("db", 100, "新 revision 已保存")
 	offline := false

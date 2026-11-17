@@ -1,6 +1,6 @@
-import { type CSSProperties } from 'react'
+import { useState, type CSSProperties } from 'react'
 import { useWorldDrag } from './use-world-drag'
-import { XIcon } from 'lucide-react'
+import { ArrowDownIcon, ArrowUpIcon, LayersIcon, PlusIcon, XIcon } from 'lucide-react'
 
 import { CountryFlag } from '@/components/CountryFlag'
 import { Input } from '@/components/ui/input'
@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { addressFamily } from '@/lib/address'
-import { isServerOnline } from '@/lib/server-state'
+import { isServerBanned, isServerOnline } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
 import type { CatalogProbeRow, Server } from '@/lib/types'
 
@@ -26,6 +26,7 @@ import {
   externalPortFor,
   inboundCapable,
   isExternalServer,
+  isUsableExternalServer,
   natPortOptions,
   normalizePortInput,
   type CanvasNode,
@@ -41,10 +42,12 @@ const ROLE_LABEL: Record<CanvasNodeRole, string> = {
   orphan: '未接入',
 }
 
-/** 画布节点与拖拽预览共享的完整卡片；上层服务器信息，下层地址与入口端口。 */
+/** 画布节点与拖拽预览共享的完整卡片；上层服务器信息，下层地址与入口端口，支持跳位备选池管理。 */
 export function ChainNodeCard({
   node,
   server,
+  allServers = [],
+  usedPrimaryIds,
   role,
   roleLabel,
   portEditable,
@@ -64,10 +67,15 @@ export function ChainNodeCard({
   onPortChange,
   onPortEditToggle,
   onAddressChange,
+  onAddCandidate,
+  onRemoveCandidate,
+  onMoveCandidate,
   onMove,
 }: {
   node: CanvasNode
   server: Server | undefined
+  allServers?: Server[]
+  usedPrimaryIds?: Set<number>
   role: CanvasNodeRole
   /** 角色文案：分支/汇合下可同时是入口与中转，由画布传入（默认单选角色）。 */
   roleLabel?: string
@@ -91,9 +99,13 @@ export function ChainNodeCard({
   onPortChange: (port: string) => void
   onPortEditToggle: () => void
   onAddressChange: (address: string) => void
+  onAddCandidate?: (serverId: number) => void
+  onRemoveCandidate?: (serverId: number) => void
+  onMoveCandidate?: (index: number, direction: -1 | 1) => void
   onMove: (x: number, y: number) => void
 }) {
   const drag = useWorldDrag(node, toWorld, onMove)
+  const [poolOpen, setPoolOpen] = useState(false)
   if (!server) return null
 
   const online = isServerOnline(server)
@@ -101,6 +113,20 @@ export function ChainNodeCard({
   // 未托管外部直链节点：无 Agent、无入站能力，端口来自链接（只读展示）。
   const external = isExternalServer(server)
   const externalExit = external ? server.external_exit : undefined
+  const candidates = node.candidates ?? []
+
+  // 过滤该跳位可添加的兼容备选服务器：排除本跳主节点、本跳已有备选、画布其他跳位的主节点，并按角色能力过滤。
+  const eligibleCandidates = allServers.filter((candidate) => {
+    if (candidate.id === server.id) return false
+    if (candidates.some((c) => c.serverId === candidate.id)) return false
+    if (usedPrimaryIds?.has(candidate.id)) return false
+    if (external) {
+      return isExternalServer(candidate) && isUsableExternalServer(candidate)
+    }
+    if (isExternalServer(candidate)) return false
+    if ((role === 'entry' || role === 'middle') && !inboundCapable(candidate)) return false
+    return true
+  })
 
   const portDisplay = normalizePortInput(node.port)
   const entryTitle = isConnecting ? '点击完成连线' : '先点击上游出口，再点击此入口连接'
@@ -136,6 +162,21 @@ export function ChainNodeCard({
             <span className="cw-node-alias" title={server.alias}>
               {server.alias}
             </span>
+            {onAddCandidate ? (
+              <button
+                type="button"
+                className={cn('cw-node-pool-btn', candidates.length > 0 && 'has-candidates')}
+                title="配置该跳位的替补候选服务器池（故障自动切换顺序）"
+                aria-label={`配置节点 ${server.alias} 的备选服务器池`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  setPoolOpen((v) => !v)
+                }}
+              >
+                <LayersIcon />
+                <span>{candidates.length > 0 ? `+${candidates.length} 备选` : '+ 备选'}</span>
+              </button>
+            ) : null}
             <span className={cn('cw-node-role', `is-${role}`)}>
               {roleLabel ?? ROLE_LABEL[role]}
             </span>
@@ -214,6 +255,118 @@ export function ChainNodeCard({
           }}
         />
       </div>
+
+      {poolOpen && onAddCandidate ? (
+        <div
+          className="cw-node-pool-popover"
+          role="dialog"
+          aria-label={`${server.alias} 跳位备选池`}
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <div className="cw-node-pool-head">
+            <strong>跳位备选池（{ROLE_LABEL[role]}）</strong>
+            <button
+              type="button"
+              className="cw-node-remove"
+              aria-label="关闭备选池弹窗"
+              onClick={() => setPoolOpen(false)}
+            >
+              <XIcon />
+            </button>
+          </div>
+          <p className="cw-node-pool-hint">
+            主节点不可达、被封禁、离线或流量耗尽时，按 P1 → P2 顺序自动替换。
+          </p>
+          <div className="cw-node-pool-list">
+            <div className="cw-node-pool-item is-primary">
+              <span className="cw-node-pool-prio">P0</span>
+              <CountryFlag code={server.country_code} />
+              <span className="cw-node-pool-name">{server.alias}</span>
+              <span className="cw-node-pool-tag">首选</span>
+            </div>
+            {candidates.map((cand, idx) => {
+              const candSrv = allServers.find((s) => s.id === cand.serverId)
+              const candOnline = candSrv ? isServerOnline(candSrv) : false
+              const candBanned = candSrv ? isServerBanned(candSrv) : false
+              return (
+                <div key={cand.serverId} className="cw-node-pool-item">
+                  <span className="cw-node-pool-prio">P{idx + 1}</span>
+                  {candSrv ? <CountryFlag code={candSrv.country_code} /> : null}
+                  <span className="cw-node-pool-name">
+                    {candSrv?.alias ?? `#${cand.serverId}`}
+                  </span>
+                  {candBanned ? (
+                    <span className="cw-node-pool-tag is-danger">Banned</span>
+                  ) : (
+                    <span className={cn('cw-node-pool-tag', candOnline ? 'is-ok' : 'is-muted')}>
+                      {candSrv?.kind === 'external' ? '外部' : candOnline ? '在线' : '离线'}
+                    </span>
+                  )}
+                  <div className="cw-node-pool-actions">
+                    <button
+                      type="button"
+                      disabled={idx === 0}
+                      title="上移优先级"
+                      aria-label={`上移备选 ${candSrv?.alias ?? cand.serverId}`}
+                      onClick={() => onMoveCandidate?.(idx, -1)}
+                    >
+                      <ArrowUpIcon />
+                    </button>
+                    <button
+                      type="button"
+                      disabled={idx === candidates.length - 1}
+                      title="下移优先级"
+                      aria-label={`下移备选 ${candSrv?.alias ?? cand.serverId}`}
+                      onClick={() => onMoveCandidate?.(idx, 1)}
+                    >
+                      <ArrowDownIcon />
+                    </button>
+                    <button
+                      type="button"
+                      title="移除备选"
+                      aria-label={`移除备选 ${candSrv?.alias ?? cand.serverId}`}
+                      onClick={() => onRemoveCandidate?.(cand.serverId)}
+                    >
+                      <XIcon />
+                    </button>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          {eligibleCandidates.length > 0 ? (
+            <div className="cw-node-pool-add">
+              <Select
+                value=""
+                onValueChange={(val) => {
+                  const id = Number(val)
+                  if (id > 0) onAddCandidate(id)
+                }}
+                items={eligibleCandidates.map((s) => ({
+                  value: String(s.id),
+                  label: `${s.alias}${s.location ? ` (${s.location})` : ''}`,
+                }))}
+              >
+                <SelectTrigger className="cw-node-pool-select" aria-label="添加备选服务器">
+                  <PlusIcon />
+                  <SelectValue placeholder="添加兼容备选服务器…" />
+                </SelectTrigger>
+                <SelectContent align="start" alignItemWithTrigger={false}>
+                  {eligibleCandidates.map((s) => (
+                    <SelectItem key={s.id} value={String(s.id)}>
+                      {s.alias}
+                      {s.location ? ` · ${s.location}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <p className="cw-node-pool-empty">暂无更多符合当前跳位角色的可用服务器</p>
+          )}
+        </div>
+      ) : null}
 
       <button
         type="button"

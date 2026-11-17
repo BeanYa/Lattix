@@ -543,6 +543,57 @@ export type ChainStatus =
   | 'deleted'
 export type ChainHopRole = 'entry' | 'middle' | 'exit'
 
+export interface ChainHopCandidate {
+  id?: number
+  chain_id?: number
+  seq: number
+  priority: number
+  server_id: number
+  server_alias: string
+  address?: string
+  port?: number
+  enabled: boolean
+}
+
+export interface ChainHopCandidateInput {
+  server_id: number
+  priority?: number
+  address?: string
+  port?: number
+  enabled?: boolean
+}
+
+export interface ChainAutoPolicy {
+  chain_id?: number
+  auto_enabled: boolean
+  on_ban: boolean
+  ban_trigger_level: 'suspected' | 'banned'
+  on_unreachable: boolean
+  unreachable_streak: number
+  on_quota_exhausted: boolean
+  on_agent_offline: boolean
+  offline_timeout_sec: number
+  failback_mode: 'none' | 'preemptive'
+  cooldown_sec: number
+  last_failover_at?: string | null
+  updated_at?: string
+}
+
+export interface ChainFailoverEvent {
+  id: number
+  chain_id: number
+  seq: number
+  from_server_id: number
+  from_server_alias?: string
+  to_server_id: number
+  to_server_alias?: string
+  reason: string
+  detail: string
+  revision_id: number
+  status: string
+  created_at: string
+}
+
 export interface ChainHop {
   id: number
   seq: number
@@ -558,6 +609,10 @@ export interface ChainHop {
   portal_public_key?: string
   tunnel_uuid?: string
   traffic?: ChainTraffic
+  candidates?: ChainHopCandidate[]
+  active_priority?: number
+  primary_server_id?: number
+  primary_server_alias?: string
 }
 
 export interface ChainTraffic {
@@ -607,6 +662,8 @@ export interface Chain {
   // 外部直链出口（未托管服务器）：非空时链路无出口业务节点，前端隐藏出口协议表单。
   service_external?: ExternalExit
   entry_config?: VirtualConfig | null
+  auto_policy?: ChainAutoPolicy | null
+  failover_events?: ChainFailoverEvent[]
 }
 
 // 管理端导出的分享链接：与订阅交付一致的协议 URI（凭据取所选用户）。
@@ -647,6 +704,7 @@ export interface ChainStatsResponse {
 export interface ChainHopInput {
   server_id: number
   address?: string
+  candidates?: ChainHopCandidateInput[]
 }
 
 export interface CreateChainRequest {
@@ -659,6 +717,7 @@ export interface CreateChainRequest {
   node: Omit<CreateNodeRequest, 'server_id' | 'name'>
   entry_node?: Omit<CreateNodeRequest, 'server_id' | 'name'>
   traffic_multiplier?: string
+  auto_policy?: Partial<ChainAutoPolicy>
 }
 
 export interface EditChainRequest {
@@ -669,6 +728,7 @@ export interface EditChainRequest {
   node: Omit<CreateNodeRequest, 'server_id' | 'name'>
   entry_node?: Omit<CreateNodeRequest, 'server_id' | 'name'>
   traffic_multiplier: string
+  auto_policy?: Partial<ChainAutoPolicy>
 }
 
 export interface SubUser {

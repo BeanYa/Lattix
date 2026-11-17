@@ -1324,3 +1324,70 @@
     transform: none;
   }
 }
+
+/* ---------- 跳位备选与自动编排状态展示 ---------- */
+
+.cg-hop-standby-badge {
+  margin-left: auto;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--panel-warning) 48%, var(--panel-rule));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--panel-warning) 12%, var(--panel-surface));
+  color: var(--panel-warning);
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.cg-hop-candidates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px dashed var(--panel-rule);
+}
+
+.cg-hop-cand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--panel-rule);
+  border-radius: 4px;
+  background: var(--panel-inset);
+  color: var(--panel-ink-2);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 140ms var(--panel-ease),
+    color 140ms var(--panel-ease);
+}
+
+.cg-hop-cand-btn svg {
+  width: 10px;
+  height: 10px;
+}
+
+.cg-hop-cand-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--panel-signal) 45%, var(--panel-rule));
+  color: var(--panel-signal);
+}
+
+.cg-hop-cand-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cg-chain-failover-log {
+  margin: 0;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-signal) 30%, var(--panel-rule));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-signal) 5%, var(--panel-surface));
+  color: var(--panel-ink-2);
+  font-size: 12px;
+  line-height: 1.45;
+}

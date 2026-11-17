@@ -883,6 +883,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chain/switch-hop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 切换链路指定跳位（seq）至目标候选服务器（server_id），复用差分 Revision Planner
+         *     执行 Make-Before-Break 编排并记录切换审计事件。
+         */
+        post: operations["chainSwitchHop"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/list": {
         parameters: {
             query?: never;
@@ -3150,6 +3170,24 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    chainSwitchHop: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     userList: {
         parameters: {
             query?: never;
@@ -4250,6 +4288,7 @@ export const rpcOperations = {
   chainShareLink: { method: 'GET', path: '/api/chain/share-link' },
   chainRetry: { method: 'POST', path: '/api/chain/retry' },
   chainDelete: { method: 'POST', path: '/api/chain/delete' },
+  chainSwitchHop: { method: 'POST', path: '/api/chain/switch-hop' },
   userList: { method: 'GET', path: '/api/user/list' },
   userCreate: { method: 'POST', path: '/api/user/create' },
   userUpdate: { method: 'POST', path: '/api/user/update' },

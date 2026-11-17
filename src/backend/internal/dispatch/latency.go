@@ -142,6 +142,8 @@ func (d *Dispatcher) handleLatencyReport(serverID int64, env shared.Envelope) {
 	if len(pairSamples) > 0 {
 		if err := d.st.SaveServerLatencyProbes(d.baseCtx(), serverID, pairSamples, time.Now().UTC()); err != nil {
 			log.Printf("dispatch: server %d: save latency report: %v", serverID, err)
+		} else if d.events.OnLatencyReport != nil {
+			d.events.OnLatencyReport(d.baseCtx(), serverID, pairSamples)
 		}
 	}
 	if len(catalogSamples) > 0 {

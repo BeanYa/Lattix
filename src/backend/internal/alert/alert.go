@@ -32,6 +32,10 @@ const (
 	EventBillingDueSoon  = "billing_due_soon"  // 续费日 7 天内（每日提醒直至到期或续费）
 	EventBillingDueToday = "billing_due_today" // 续费日为今天
 	EventBillingExpired  = "billing_expired"   // 续费日已过且服务器离线，标记已过期
+
+	// 链路自动编排：跳位发生故障切换/回切或候选池耗尽时发出。
+	EventChainAutoFailover      = "chain_auto_failover"      // 链路跳位自动切换至备选或回切至主节点
+	EventChainFailoverExhausted = "chain_failover_exhausted" // 链路跳位故障但无可用健康候选节点
 )
 
 // 告警分类（webhook JSON 的 category 字段；Telegram 文案前缀）。
@@ -43,16 +47,18 @@ const (
 
 // eventCategories 是事件→分类的登记表（新增事件须在此登记分类）。
 var eventCategories = map[string]string{
-	EventServerOffline:      CategoryRuntime,
-	EventConfigDrift:        CategoryRuntime,
-	EventNodeFailed:         CategoryRuntime,
-	EventChainDegraded:      CategoryRuntime,
-	EventServerBanSuspected: CategoryBan,
-	EventServerBanned:       CategoryBan,
-	EventServerBanRecovered: CategoryBan,
-	EventBillingDueSoon:     CategoryExpiry,
-	EventBillingDueToday:    CategoryExpiry,
-	EventBillingExpired:     CategoryExpiry,
+	EventServerOffline:          CategoryRuntime,
+	EventConfigDrift:            CategoryRuntime,
+	EventNodeFailed:             CategoryRuntime,
+	EventChainDegraded:          CategoryRuntime,
+	EventChainAutoFailover:      CategoryRuntime,
+	EventChainFailoverExhausted: CategoryRuntime,
+	EventServerBanSuspected:     CategoryBan,
+	EventServerBanned:           CategoryBan,
+	EventServerBanRecovered:     CategoryBan,
+	EventBillingDueSoon:         CategoryExpiry,
+	EventBillingDueToday:        CategoryExpiry,
+	EventBillingExpired:         CategoryExpiry,
 }
 
 // categoryOf 返回事件的告警分类；未登记事件按运行警告处理。

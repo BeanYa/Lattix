@@ -64,6 +64,7 @@ export function ChainResultPreview({
   mode,
   entryShared,
   trafficMultiplier,
+  autoEnabled = false,
 }: {
   chains: ChainPreviewPath[]
   names: string[]
@@ -72,6 +73,7 @@ export function ChainResultPreview({
   mode: 'create' | 'edit'
   entryShared: boolean
   trafficMultiplier: string
+  autoEnabled?: boolean
 }) {
   return (
     <section className="cw-result" aria-label="链路结果预览">
@@ -112,6 +114,11 @@ export function ChainResultPreview({
                   </span>
                   <strong className="cg-chain-name">{names[index] ?? `链路 ${index + 1}`}</strong>
                   <span className="cg-chain-tag">{direct ? '直连' : '中转'}</span>
+                  {autoEnabled ? (
+                    <span className="cg-chain-tag is-external" title="已开启自动编排容灾">
+                      自动编排
+                    </span>
+                  ) : null}
                   {chain.externalExit ? (
                     <>
                       <span className="cg-chain-tag is-external" title="出口为未托管外部直链节点">
@@ -163,6 +170,14 @@ export function ChainResultPreview({
                               )}
                               {(hop.role === 'entry' || direct) && entryShared ? (
                                 <span className="cg-hop-shared">共享入口</span>
+                              ) : null}
+                              {(hop.candidateServers?.length ?? 0) > 0 ? (
+                                <span
+                                  className="cg-hop-shared"
+                                  title={`备选顺序：${(hop.candidateServers ?? []).map((s, i) => `P${i + 1} ${s.alias}`).join(' → ')}`}
+                                >
+                                  +{hop.candidateServers?.length} 备选
+                                </span>
                               ) : null}
                               <span>未部署</span>
                             </span>

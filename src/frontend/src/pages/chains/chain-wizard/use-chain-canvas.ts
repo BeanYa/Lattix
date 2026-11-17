@@ -87,6 +87,19 @@ export function useChainCanvas({ servers }: { servers: Server[] }) {
     (id: string | null) => dispatch({ type: 'port-edit', id }),
     [],
   )
+  const addNodeCandidate = useCallback(
+    (id: string, serverId: number) => dispatch({ type: 'candidate-add', id, serverId }),
+    [],
+  )
+  const removeNodeCandidate = useCallback(
+    (id: string, serverId: number) => dispatch({ type: 'candidate-remove', id, serverId }),
+    [],
+  )
+  const moveNodeCandidate = useCallback(
+    (id: string, index: number, direction: -1 | 1) =>
+      dispatch({ type: 'candidate-move', id, index, direction }),
+    [],
+  )
   const exitPortClick = useCallback((from: string) => dispatch({ type: 'connect-start', from }), [])
   const entryPortClick = useCallback((to: string) => dispatch({ type: 'connect-complete', to }), [])
   const moveConnecting = useCallback(
@@ -122,7 +135,11 @@ export function useChainCanvas({ servers }: { servers: Server[] }) {
     fitAppliedRevision,
     canAddMore: state.nodes.length < MAX_CANVAS_NODES,
     usedCount: (serverId: number) =>
-      state.nodes.filter((node) => node.serverId === serverId).length,
+      state.nodes.filter(
+        (node) =>
+          node.serverId === serverId ||
+          (node.candidates ?? []).some((c) => c.serverId === serverId),
+      ).length,
     outgoingTargetOf: (id: string) => state.edges.find((edge) => edge.from === id)?.to,
     incomingFromOf: (id: string) => state.edges.find((edge) => edge.to === id)?.from,
     roleOf: (id: string) => nodeRole(state.nodes, state.edges, id),
@@ -138,6 +155,9 @@ export function useChainCanvas({ servers }: { servers: Server[] }) {
     setNodePort,
     setNodeAddress,
     setPortEditingId,
+    addNodeCandidate,
+    removeNodeCandidate,
+    moveNodeCandidate,
     exitPortClick,
     entryPortClick,
     moveConnecting,

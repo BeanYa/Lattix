@@ -477,6 +477,17 @@ paths:
         - {$ref: '#/components/parameters/IdempotencyKey'}
       requestBody: {$ref: '#/components/requestBodies/RPCBody'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/chain/switch-hop:
+    post:
+      operationId: chainSwitchHop
+      description: |
+        切换链路指定跳位（seq）至目标候选服务器（server_id），复用差分 Revision Planner
+        执行 Make-Before-Break 编排并记录切换审计事件。
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/user/list:
     get:
       operationId: userList

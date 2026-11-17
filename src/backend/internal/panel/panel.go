@@ -76,7 +76,8 @@ type Server struct {
 	startedAt        time.Time
 	runtimeMu        sync.Mutex
 	lastCPU          runtimeCPUSample
-	banWatchLastEval time.Time // Ban 观察上轮评估时刻（仅 server.ban-watch 任务读写，调度器保证不重叠）
+	banWatchLastEval time.Time         // Ban 观察上轮评估时刻（仅 server.ban-watch 任务读写，调度器保证不重叠）
+	orchestrator     *AutoOrchestrator // 链路自动编排与故障切换协调器
 
 	routePolicies         map[string]logging.LogPolicy
 	debugRoutes           map[string]bool // 轮询/状态类路由：成功请求记录为 debug 级别
@@ -128,6 +129,13 @@ func (s *Server) StartBackgroundTasks(ctx context.Context) {
 		defer s.tasks.Done()
 		s.scheduler.Run(ctx)
 	}()
+	if s.orchestrator != nil {
+		s.tasks.Add(1)
+		go func() {
+			defer s.tasks.Done()
+			s.orchestrator.Run(ctx)
+		}()
+	}
 }
 
 func (s *Server) WaitBackground(ctx context.Context) error {
@@ -164,6 +172,7 @@ func New(st *store.Store, req ws.AgentRequester, cfg Config) (*Server, error) {
 		debugRoutes:     make(map[string]bool),
 		methodFallbacks: make(map[string]bool),
 	}
+	s.orchestrator = newAutoOrchestrator(s)
 	// 链编排器与单机节点共用同一份 dest 白名单（§6/§21）。
 	opts := dispatch.Options{
 		Context:        cfg.LifecycleContext,
@@ -193,6 +202,12 @@ func New(st *store.Store, req ws.AgentRequester, cfg Config) (*Server, error) {
 		OnServerTestFailed: func(ctx context.Context, serverID int64, taskID, code, message string) {
 			s.onServerTestFailed(ctx, serverID, taskID, code, message)
 		},
+		OnLatencyReport: func(ctx context.Context, fromServerID int64, samples []store.ServerLatencySample) {
+			s.orchestrator.OnLatencyReport(ctx, fromServerID, samples)
+		},
+		OnTelemetryMetrics: func(ctx context.Context, serverID int64) {
+			s.orchestrator.OnTelemetryMetrics(ctx, serverID)
+		},
 	})
 	// 观察 ID 读取器注入请求日志中间件（避免 logging → progress 反向依赖）。
 	logging.SetObserveIDReader(s.observes.ObserveIDFromContext)
@@ -212,6 +227,9 @@ func New(st *store.Store, req ws.AgentRequester, cfg Config) (*Server, error) {
 	s.registerCoreTasks()
 	return s, nil
 }
+
+// Orchestrator 返回面板持有的链路自动编排器（供 main 接线 Agent 上下线观察事件）。
+func (s *Server) Orchestrator() *AutoOrchestrator { return s.orchestrator }
 
 // Dispatcher 返回面板持有的命令分发器（New 内部构造；main 据此接线 hub 认证/消息回调）。
 func (s *Server) Dispatcher() *dispatch.Dispatcher { return s.disp }
@@ -463,6 +481,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodGet, "/api/chain/share-link",
 		rpcRouteOptions{Auth: true, AllowedQuery: []string{"chain_id", "user_id"}},
 		s.handleChainShareLink)
+	s.registerRPC(mux, http.MethodPost, "/api/chain/switch-hop",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"chain_id", "seq", "server_id"}},
+		s.handleSwitchChainHop)
 
 	s.registerRPC(mux, http.MethodGet, "/api/user/list", polledRead, s.handleListUsers)
 	s.registerRPC(mux, http.MethodPost, "/api/user/create", write, s.handleCreateUser)

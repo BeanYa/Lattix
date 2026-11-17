@@ -240,6 +240,9 @@ func (s *Server) runBanWatch(ctx context.Context) error {
 			if err := s.st.UpsertServerBanWatch(ctx, next); err != nil {
 				return err
 			}
+			if s.orchestrator != nil && next.State != watches[srv.ID].State {
+				s.orchestrator.NotifyServerBanChanged(srv.ID, next.State)
+			}
 		}
 	}
 	return nil

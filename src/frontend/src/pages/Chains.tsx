@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useSearch } from 'wouter'
 import {
+  ArrowLeftRightIcon,
   BarChart3Icon,
   CircleCheckIcon,
   Clock3Icon,
@@ -30,6 +31,7 @@ import { cn } from '@/lib/utils'
 import type {
   CatalogProbeRegion,
   Chain,
+  ChainHop,
   ChainStatsResponse,
   ChainStatus,
   NodeStatus,
@@ -53,6 +55,15 @@ type ChainTab = 'overview' | 'details'
 
 function statusTone(tone: CgStatusStyle['cg']): string {
   return tone === 'is-lime' ? 'is-ok' : tone
+}
+
+const FAILOVER_REASON_LABELS: Record<string, string> = {
+  ban_detected: '三网测速封禁',
+  segment_unreachable: '段间连通超时',
+  quota_exhausted: '流量配额耗尽',
+  agent_offline: 'Agent 离线超时',
+  failback: '主节点恢复回切',
+  manual_switch: '管理员手动切换',
 }
 
 function ChainStateMark({
@@ -97,6 +108,7 @@ export default function Chains() {
   // 轮询错误单独存放：刷新成功即可自动清除，不覆盖操作类错误横幅。
   const [loadError, setLoadError] = useState('')
   const [retrying, setRetrying] = useState<string | null>(null)
+  const [switchingKey, setSwitchingKey] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<ChainFilter>('all')
   // 链路页双 tab：概览（链路一览，默认）/ 详情（链路读数板）。
@@ -191,6 +203,33 @@ export default function Chains() {
       load()
     } catch (err) {
       setError(errorMessage(err))
+    }
+  }
+
+  const onSwitchHop = async (chain: Chain, hop: ChainHop, targetServerId: number, targetAlias: string) => {
+    if (
+      !(await confirm({
+        title: '切换跳位运行节点',
+        description: `将链路「${chain.name}」第 ${hop.seq} 跳（${roleLabel[hop.role]}）从「${hop.server_alias}」平滑切换到候选服务器「${targetAlias}」？`,
+        confirmLabel: '立即切换',
+      }))
+    )
+      return
+    const key = `${chain.id}-${hop.seq}-${targetServerId}`
+    setSwitchingKey(key)
+    try {
+      const { observeId } = await api.switchChainHop({
+        chain_id: chain.id,
+        seq: hop.seq,
+        server_id: targetServerId,
+        reason: '管理员手动从候选池触发切换',
+      })
+      if (observeId) showOperation({ observeId })
+      load()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setSwitchingKey(null)
     }
   }
 
@@ -640,6 +679,7 @@ export default function Chains() {
                 const pendingTasks = c.revision_tasks.filter(
                   (task) => task.status === 'pending' || task.status === 'queued',
                 )
+                const latestFailover = c.failover_events?.[0]
                 return (
                   <article
                     key={`relay-${c.id}`}
@@ -664,6 +704,14 @@ export default function Chains() {
                         <strong className="cg-chain-name">{c.name || `中转 #${c.id}`}</strong>
                         <span className="cg-chain-id">#{c.id}</span>
                         <span className="cg-chain-tag">{isDirect ? '直连' : '中转'}</span>
+                        {c.auto_policy?.auto_enabled ? (
+                          <span
+                            className="cg-chain-tag is-external"
+                            title="已启用跳位自动编排容灾"
+                          >
+                            自动编排
+                          </span>
+                        ) : null}
                         {c.service_external ? (
                           <>
                             <span
@@ -816,6 +864,9 @@ export default function Chains() {
                                       : (exitNode?.realized_config?.port ??
                                         exitNode?.port ??
                                         h.forward_port)
+                              const standbyCands = (h.candidates ?? []).filter(
+                                (cand) => cand.server_id !== h.server_id,
+                              )
                               return (
                                 <div
                                   key={h.id}
@@ -844,6 +895,18 @@ export default function Chains() {
                                       <span className="cg-hop-role">
                                         {roleLabel[h.role]} · {hst.label}
                                       </span>
+                                      {h.active_priority !== undefined && h.active_priority > 0 ? (
+                                        <span
+                                          className="cg-hop-standby-badge"
+                                          title={
+                                            h.primary_server_alias
+                                              ? `当前运行替补 P${h.active_priority}，原主节点：${h.primary_server_alias}`
+                                              : `当前运行替补 P${h.active_priority}`
+                                          }
+                                        >
+                                          替补 P{h.active_priority}
+                                        </span>
+                                      ) : null}
                                     </span>
                                     <strong className="cg-hop-name">{h.server_alias}</strong>
                                     <span className="cg-hop-meta">
@@ -871,6 +934,39 @@ export default function Chains() {
                                         </span>
                                       ) : null}
                                     </span>
+                                    {standbyCands.length > 0 ? (
+                                      <div className="cg-hop-candidates" aria-label="备选节点">
+                                        {standbyCands.map((cand) => {
+                                          const swKey = `${c.id}-${h.seq}-${cand.server_id}`
+                                          return (
+                                            <button
+                                              key={cand.server_id}
+                                              type="button"
+                                              className="cg-hop-cand-btn"
+                                              disabled={
+                                                switchingKey === swKey ||
+                                                c.desired_revision_id !== 0
+                                              }
+                                              title={`手动切换到备选 P${cand.priority}：${cand.server_alias}`}
+                                              onClick={() =>
+                                                void onSwitchHop(
+                                                  c,
+                                                  h,
+                                                  cand.server_id,
+                                                  cand.server_alias,
+                                                )
+                                              }
+                                            >
+                                              <ArrowLeftRightIcon />
+                                              <span>
+                                                P{cand.priority}{' '}
+                                                {cand.server_alias || `#${cand.server_id}`}
+                                              </span>
+                                            </button>
+                                          )
+                                        })}
+                                      </div>
+                                    ) : null}
                                   </div>
                                 </div>
                               )
@@ -886,6 +982,15 @@ export default function Chains() {
                           today={chainTodayBytes(statsIndex.byChain.get(c.id))}
                         />
                       </div>
+                      {latestFailover ? (
+                        <p className="cg-chain-failover-log">
+                          最近容灾切换（第 {latestFailover.seq} 跳 ·{' '}
+                          {FAILOVER_REASON_LABELS[latestFailover.reason] ?? latestFailover.reason}
+                          ）：{latestFailover.from_server_alias || `#${latestFailover.from_server_id}`}{' '}
+                          → {latestFailover.to_server_alias || `#${latestFailover.to_server_id}`}（
+                          {formatDateTime(latestFailover.created_at, timezone)}）
+                        </p>
+                      ) : null}
                       {pendingTasks.length > 0 ? (
                         <p className="cg-chain-queue">
                           {pendingTasks.filter((task) => task.phase === 'apply').length}{' '}

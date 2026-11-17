@@ -309,6 +309,8 @@ export const api = {
   createChain: (body: CreateChainRequest) =>
     requester.postObserved<Chain>('/api/chain/create', body),
   editChain: (body: EditChainRequest) => requester.postObserved<Chain>('/api/chain/edit', body),
+  switchChainHop: (body: { chain_id: number; seq: number; server_id: number; reason?: string }) =>
+    requester.postObserved<Chain>('/api/chain/switch-hop', body),
   forcePublishChain: (chainId: number) =>
     requester.postObserved<Chain>('/api/chain/force-publish', { chain_id: chainId }),
   resetChainTraffic: (chainId: number) =>

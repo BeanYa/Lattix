@@ -339,6 +339,9 @@ func run() error {
 		dispatcher.OnAgentConnect(runCtx, serverID)
 		// 链 degraded 推导（§21.1）：重算受影响链，全部跳在线且跳 active 的恢复 active。
 		dispatcher.RecomputeChainsByServer(serverID)
+		if orch := ps.Orchestrator(); orch != nil {
+			orch.OnAgentConnect(serverID)
+		}
 		// 周体检：首次加机/重连时若无记录或已过 7 天则立即排队（目录未就绪由调度补跑）。
 		go ps.StartServerInspectionOnConnect(runCtx, serverID)
 	}
@@ -387,6 +390,9 @@ func run() error {
 			}
 			// 链 degraded 推导（§21.1）：任一跳 server 离线 → degraded + chain_degraded 告警。
 			dispatcher.RecomputeChainsByServer(serverID)
+			if orch := ps.Orchestrator(); orch != nil {
+				orch.OnAgentDisconnect(serverID)
+			}
 		})
 	}
 	hub.OnUpgrade = func(r *http.Request) {

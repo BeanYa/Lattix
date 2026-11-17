@@ -35,6 +35,9 @@ export type CanvasAction =
   | { type: 'port'; id: string; value: string }
   | { type: 'address'; id: string; value: string }
   | { type: 'port-edit'; id: string | null }
+  | { type: 'candidate-add'; id: string; serverId: number }
+  | { type: 'candidate-remove'; id: string; serverId: number }
+  | { type: 'candidate-move'; id: string; index: number; direction: -1 | 1 }
   | { type: 'connect-start'; from: string }
   | { type: 'connect-move'; point: Point }
   | { type: 'connect-complete'; to: string }
@@ -94,6 +97,7 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
         y: action.point.y - CARD_H / 2,
         port: '',
         address: '',
+        candidates: [],
       }
       return {
         ...state,
@@ -146,6 +150,53 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
       }
     case 'port-edit':
       return { ...state, portEditingId: action.id }
+    case 'candidate-add':
+      return {
+        ...state,
+        nodes: state.nodes.map((n) => {
+          if (n.id !== action.id) return n
+          const current = n.candidates ?? []
+          if (
+            n.serverId === action.serverId ||
+            current.some((c) => c.serverId === action.serverId)
+          )
+            return n
+          return {
+            ...n,
+            candidates: [...current, { serverId: action.serverId, address: '', port: '' }],
+          }
+        }),
+      }
+    case 'candidate-remove':
+      return {
+        ...state,
+        nodes: state.nodes.map((n) => {
+          if (n.id !== action.id) return n
+          return {
+            ...n,
+            candidates: (n.candidates ?? []).filter((c) => c.serverId !== action.serverId),
+          }
+        }),
+      }
+    case 'candidate-move':
+      return {
+        ...state,
+        nodes: state.nodes.map((n) => {
+          if (n.id !== action.id) return n
+          const current = [...(n.candidates ?? [])]
+          const nextIdx = action.index + action.direction
+          if (
+            action.index < 0 ||
+            action.index >= current.length ||
+            nextIdx < 0 ||
+            nextIdx >= current.length
+          )
+            return n
+          const [moved] = current.splice(action.index, 1)
+          current.splice(nextIdx, 0, moved)
+          return { ...n, candidates: current }
+        }),
+      }
     case 'connect-start': {
       const node = state.nodes.find((n) => n.id === action.from)
       if (action.from !== INGRESS_NODE_ID && !node) return state
@@ -200,7 +251,10 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
     case 'prefill': {
       const imported: CanvasState = {
         ...createCanvasState(),
-        nodes: action.nodes.map((n) => ({ ...n })),
+        nodes: action.nodes.map((n) => ({
+          ...n,
+          candidates: n.candidates ? [...n.candidates] : [],
+        })),
         edges: [],
         nextNodeId:
           Math.max(0, ...action.nodes.map((n) => Number(n.id.replace(/^n/, '')) || 0)) + 1,

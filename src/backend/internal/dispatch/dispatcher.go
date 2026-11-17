@@ -57,6 +57,10 @@ type Events struct {
 	OnServerTestCompleted func(context.Context, int64, string)
 	// OnServerTestFailed 在测试命令失败/死信/被取代时调用，用于收敛体检历史状态。
 	OnServerTestFailed func(context.Context, int64, string, string, string)
+	// OnLatencyReport 在一轮服务器间延迟探测结果落库后调用，供自动编排器推进段间可达性观察状态机。
+	OnLatencyReport func(context.Context, int64, []store.ServerLatencySample)
+	// OnTelemetryMetrics 在主机遥测（含网卡累计流量）落库后调用，供自动编排器检查服务器当期流量配额。
+	OnTelemetryMetrics func(context.Context, int64)
 }
 
 // Dispatcher 串联 store 与 Requester。
@@ -1212,6 +1216,8 @@ func (d *Dispatcher) handleTelemetry(serverID int64, env shared.Envelope) {
 		}
 		if err := d.st.SaveServerMetrics(ctx, serverID, metrics, latencyProbeActive); err != nil {
 			log.Printf("dispatch: server %d: upsert metrics: %v", serverID, err)
+		} else if d.events.OnTelemetryMetrics != nil {
+			d.events.OnTelemetryMetrics(ctx, serverID)
 		}
 	}
 	if len(p.Traffic) > 0 {

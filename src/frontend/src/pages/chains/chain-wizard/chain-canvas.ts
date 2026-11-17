@@ -25,6 +25,12 @@ export const INTERNET_R = 52
 /** 固定流量来源，与 Internet 终端共享圆球尺寸；不计入服务器跳数。 */
 export const INGRESS_POS = { x: 80, y: 80 }
 
+export interface CanvasNodeCandidate {
+  serverId: number
+  address: string
+  port: string
+}
+
 export interface CanvasNode {
   id: string
   serverId: number
@@ -34,6 +40,8 @@ export interface CanvasNode {
   port: string
   /** 该跳公网地址；'' = 跟随服务器默认地址（§9）。 */
   address: string
+  /** 该跳管理员手动挑选的备选服务器序列（按优先级升序）。 */
+  candidates?: CanvasNodeCandidate[]
 }
 
 /** from 的出口端口 → to 的入口端口；to 为 INTERNET_NODE_ID 表示最终跳通向 Internet。 */
@@ -688,6 +696,68 @@ export function analyzeCanvasGraph(
     }
   }
 
+  // 跳位备选池校验：角色能力匹配、不与本节点或其它主跳冲突。
+  for (const node of nodes) {
+    const cands = node.candidates ?? []
+    if (cands.length === 0) continue
+    const primaryServer = serverById.get(node.serverId)
+    const primaryIsExternal = primaryServer ? isExternalServer(primaryServer) : false
+    const role = roles.get(node.id)
+    const seenCandIds = new Set<number>([node.serverId])
+    for (const cand of cands) {
+      if (seenCandIds.has(cand.serverId)) {
+        errors.push({
+          code: 'duplicate_server',
+          nodeId: node.id,
+          message: '同一跳位内备选服务器不能重复',
+        })
+        continue
+      }
+      seenCandIds.add(cand.serverId)
+      if (seenServers.has(cand.serverId)) {
+        const candSrv = serverById.get(cand.serverId)
+        errors.push({
+          code: 'duplicate_server',
+          nodeId: node.id,
+          message: `备选服务器 ${candSrv?.alias ?? '#' + cand.serverId} 已被画布其他跳位占用`,
+        })
+        continue
+      }
+      const candSrv = serverById.get(cand.serverId)
+      if (!candSrv) {
+        errors.push({
+          code: 'server_missing',
+          nodeId: node.id,
+          message: `备选服务器 #${cand.serverId} 已不存在`,
+        })
+        continue
+      }
+      if (primaryIsExternal) {
+        if (!isExternalServer(candSrv) || !isUsableExternalServer(candSrv)) {
+          errors.push({
+            code: 'external_not_last',
+            nodeId: node.id,
+            message: `外部直链出口的备选节点 ${candSrv.alias} 必须也是配置完整的未托管外部节点`,
+          })
+        }
+      } else {
+        if (isExternalServer(candSrv)) {
+          errors.push({
+            code: 'external_not_last',
+            nodeId: node.id,
+            message: `被控跳位的备选节点 ${candSrv.alias} 不能是未托管外部节点`,
+          })
+        } else if (role && (role.entry || role.middle) && !inboundCapable(candSrv)) {
+          errors.push({
+            code: 'inbound',
+            nodeId: node.id,
+            message: `备选服务器 ${candSrv.alias} 无入站能力，不能作为入口/中转备选`,
+          })
+        }
+      }
+    }
+  }
+
   return { valid: errors.length === 0, errors, warnings, paths, roles, portRoles }
 }
 
@@ -774,23 +844,33 @@ export function prefillCanvas(
   // 预填行放在画布上部：常见可视高度内完整可见（含端口行），不依赖实际窗口尺寸
   const rowY = 240
   const externalExit = chain.service_external != null
-  const nodes = chain.hops.map((hop, index) => ({
-    id: `n${index + 1}`,
-    serverId: hop.server_id,
-    x: 240 + index * (CARD_W + 96),
-    y: rowY,
-    port:
-      index === 0
-        ? chain.entry_port
-          ? String(chain.entry_port)
-          : ''
-        : index === chain.hops.length - 1
-          ? externalExit
-            ? ''
-            : exitPort
-          : '',
-    address: hop.address ?? '',
-  }))
+  const nodes = chain.hops.map((hop, index) => {
+    const candidates: CanvasNodeCandidate[] = (hop.candidates ?? [])
+      .filter((cand) => cand.server_id !== hop.server_id)
+      .map((cand) => ({
+        serverId: cand.server_id,
+        address: cand.address ?? '',
+        port: cand.port ? String(cand.port) : '',
+      }))
+    return {
+      id: `n${index + 1}`,
+      serverId: hop.server_id,
+      x: 240 + index * (CARD_W + 96),
+      y: rowY,
+      port:
+        index === 0
+          ? chain.entry_port
+            ? String(chain.entry_port)
+            : ''
+          : index === chain.hops.length - 1
+            ? externalExit
+              ? ''
+              : exitPort
+            : '',
+      address: hop.address ?? '',
+      candidates,
+    }
+  })
   const edges: CanvasEdge[] = nodes.length ? [{ from: INGRESS_NODE_ID, to: nodes[0].id }] : []
   for (let i = 0; i < nodes.length - 1; i += 1) {
     edges.push({ from: nodes[i].id, to: nodes[i + 1].id })
