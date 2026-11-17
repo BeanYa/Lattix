@@ -85,7 +85,7 @@ type chainDTO struct {
 	RevisionTasks       []chainRevisionTaskDTO `json:"revision_tasks"`
 	ServiceConfig       json.RawMessage        `json:"service_config,omitempty"`
 	ServiceExternal     *shared.ExternalExit   `json:"service_external,omitempty"` // 外部直链出口规格（未托管出口链路）
-	EntryConfig         *shared.VirtualConfig  `json:"entry_config,omitempty"` // 入口协议区块配置回填（P4，前端编辑回填用）
+	EntryConfig         *shared.VirtualConfig  `json:"entry_config,omitempty"`     // 入口协议区块配置回填（P4，前端编辑回填用）
 }
 
 // toChainDTO 组装链 DTO（跳按 seq 升序：首位入口，末位出口）。
@@ -310,6 +310,14 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	if exitSrv.IsExternal() && externalExit == nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("未托管服务器 %s 的外部直链配置损坏，请重新保存该服务器", exitSrv.Alias))
 		return
+	}
+	if externalExit != nil {
+		// 服务器表单没有必填项：不完整的出口规格在这里拒绝（补全后即可建链）。
+		if err := externalExit.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("外部直链出口配置不可用：%v（请编辑服务器 %s 补全协议参数）", err, exitSrv.Alias))
+			return
+		}
 	}
 	// 出口节点协议表单校验（dokodemo 为端口转发，无用户概念，不能作链出口）。
 	// 外部直链出口没有托管业务节点：忽略节点表单，协议取外部规格。
@@ -826,6 +834,13 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest,
 			fmt.Sprintf("未托管服务器 %s 的外部直链配置损坏，请重新保存该服务器", exitSrv.Alias))
 		return
+	}
+	if externalExit != nil {
+		if err := externalExit.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest,
+				fmt.Sprintf("外部直链出口配置不可用：%v（请编辑服务器 %s 补全协议参数）", err, exitSrv.Alias))
+			return
+		}
 	}
 	// 导出/出口形态切换不在 v1 编辑范围：已发布修订已冻结出口形态（业务节点或外部规格），
 	// 切换需要重建入口端点与全部下游 piece，请新建链路。

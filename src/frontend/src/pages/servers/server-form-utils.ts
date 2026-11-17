@@ -12,6 +12,14 @@ import type {
   TrafficPlanInput,
 } from '@/lib/types'
 
+import {
+  defaultExternalExitForm,
+  externalExitFormError,
+  externalExitFormFromPreview,
+  externalExitFormPayload,
+  type ExternalExitFormState,
+} from './external-exit-form'
+
 export interface BillingFormState {
   enabled: boolean
   providerId: string
@@ -36,20 +44,20 @@ export interface TrafficFormState {
 // 添加服务器对话框的服务器类型三选一：外部直链（未托管）不属于机器类型。
 export type ServerTypeChoice = MachineType | 'external'
 
-// 外部直链输入与解析状态（添加/编辑服务器共用）：解析结果与链接原文绑定，
-// 链接改动即失效，避免把未解析/过期解析的链接提交给后端。
+// 外部直链输入与协议表单状态（添加/编辑服务器共用）：分享链接只用于「解析 →
+// 自动填写」，协议参数本身才是提交来源，因此链接改动不会清空已填参数。
 export interface ExternalLinkState {
   link: string
-  parsedLink: string
-  preview: ParseExternalLinkResponse | null
   parseError: string
   parsing: boolean
+  exit: ExternalExitFormState
 }
 
 export interface ServerFormPayload {
   alias: string
   kind?: ServerKind
   external_link?: string
+  external_exit?: ExternalExit
   address?: string
   machine_type?: MachineType
   allowed_ports?: PortRange[]
@@ -167,8 +175,11 @@ export function parsePortRows(rows: string[]): { ranges: PortRange[] } | { error
 
 // ---------- 外部直链（未托管服务器）：解析状态、预览与提交载荷 ----------
 
-export function initialExternalLink(link = ''): ExternalLinkState {
-  return { link, parsedLink: '', preview: null, parseError: '', parsing: false }
+export function initialExternalLink(
+  link = '',
+  exit: ExternalExitFormState = defaultExternalExitForm(),
+): ExternalLinkState {
+  return { link, parseError: '', parsing: false, exit }
 }
 
 export function initialServerCreateForm(): ServerCreateFormState {
@@ -202,48 +213,17 @@ export function switchServerType(
   return { ...state, serverType, external: initialExternalLink() }
 }
 
-/** 最近一次解析是否对应当前链接（去首尾空白后比较）。 */
-export function isExternalLinkParsed(
-  state: Pick<ExternalLinkState, 'link' | 'parsedLink'>,
-): boolean {
-  const link = state.link.trim()
-  return link !== '' && link === state.parsedLink.trim()
-}
-
-/**
- * 提交前校验外部链接：链接必填；未解析或解析后又改过链接一律拒绝。
- * savedLink 用于编辑：链接与已保存值一致时无需重新解析。
- */
-export function externalLinkForSubmit(
-  state: Pick<ExternalLinkState, 'link' | 'parsedLink'> & { savedLink?: string },
-): { link: string } | { error: string } {
-  const link = state.link.trim()
-  if (!link) {
-    return { error: '分享链接不能为空' }
-  }
-  if (state.savedLink !== undefined && link === state.savedLink.trim()) {
-    return { link }
-  }
-  if (!isExternalLinkParsed({ link, parsedLink: state.parsedLink })) {
-    return { error: '请先解析链接（链接已修改或尚未解析）' }
-  }
-  return { link }
-}
-
 /** 解析出节点名后，别名为空则回填（不覆盖用户已输入的名称）。 */
 export function aliasAfterParse(alias: string, parsedName: string): string {
   return alias.trim() ? alias : parsedName.trim()
 }
 
-/** 编辑分享链接：仍是最近一次解析的同一链接时保留预览，否则清空解析状态。 */
+/** 编辑分享链接：保留已填写的协议参数（链接只影响下一次解析）。 */
 export function editExternalLink(state: ExternalLinkState, link: string): ExternalLinkState {
-  if (state.parsedLink !== '' && state.parsedLink === link.trim()) {
-    return { ...state, link, parsing: false, parseError: '' }
-  }
-  return { ...state, link, parsedLink: '', preview: null, parseError: '', parsing: false }
+  return { ...state, link, parsing: false, parseError: '' }
 }
 
-/** 解析成功后的链接状态；解析期间链接被改动（与发起解析的原文不同）返回 null。 */
+/** 解析成功：把解析结果自动填进协议表单；解析期间链接被改动返回 null。 */
 export function applyExternalLinkPreview(
   state: ExternalLinkState,
   link: string,
@@ -252,7 +232,12 @@ export function applyExternalLinkPreview(
   if (state.link.trim() !== link.trim()) {
     return null
   }
-  return { ...state, parsedLink: link.trim(), preview, parseError: '', parsing: false }
+  return {
+    ...state,
+    parseError: '',
+    parsing: false,
+    exit: externalExitFormFromPreview(preview),
+  }
 }
 
 /** 解析失败后的链接状态；解析期间链接被改动返回 null（丢弃过期错误）。 */
@@ -264,7 +249,7 @@ export function applyExternalLinkError(
   if (state.link.trim() !== link.trim()) {
     return null
   }
-  return { ...state, parsedLink: '', preview: null, parseError: message, parsing: false }
+  return { ...state, parseError: message, parsing: false }
 }
 
 /** 外部直链 host:port（IPv6 字面量自动加方括号）。 */
@@ -284,23 +269,33 @@ export function externalTransportSummary(
   return `${exit.network?.trim() || 'tcp'} · ${exit.security?.trim() || 'none'}`
 }
 
-/** 已保存外部出口的解析预览（编辑对话框首次打开时回显当前节点）。 */
-export function externalExitPreview(exit: ExternalExit, name: string): ParseExternalLinkResponse {
-  return {
-    name,
-    protocol: exit.protocol,
-    address: exit.address,
-    port: exit.port,
-    transport: externalTransportSummary(exit),
-    exit,
-  }
-}
-
-/** 组装创建服务器的提交载荷（纯函数）：外部节点只提交 kind/external_link，
- *  机器类型/地址/端口段由后端按链接强制派生。 */
+/** 组装创建服务器的提交载荷（纯函数）：外部节点提交协议参数（external_exit），
+ *  别名/国家/地区均可空——服务器表单没有必填项，不完整规格由链路页提示补全。 */
 export function buildServerCreatePayload(
   state: ServerCreateFormState,
 ): { body: ServerFormPayload } | { error: string } {
+  if (state.serverType === 'external') {
+    const exitError = externalExitFormError(state.external.exit)
+    if (exitError) {
+      return { error: exitError }
+    }
+    const body: ServerFormPayload = {
+      alias: state.alias.trim(),
+      kind: 'external',
+      external_exit: externalExitFormPayload(state.external.exit),
+      country_code: state.countryCode,
+      location: state.location.trim(),
+      non_direct: state.nonDirect,
+      tags: state.tags,
+      billing: billingPayload(state.billing),
+      traffic_plan: trafficPayload(state.traffic),
+    }
+    const link = state.external.link.trim()
+    if (link) {
+      body.external_link = link
+    }
+    return { body }
+  }
   const alias = state.alias.trim()
   if (!alias) {
     return { error: '别名不能为空' }
@@ -316,15 +311,6 @@ export function buildServerCreatePayload(
     tags: state.tags,
     billing: billingPayload(state.billing),
     traffic_plan: trafficPayload(state.traffic),
-  }
-  if (state.serverType === 'external') {
-    const link = externalLinkForSubmit(state.external)
-    if ('error' in link) {
-      return link
-    }
-    body.kind = 'external'
-    body.external_link = link.link
-    return { body }
   }
   body.machine_type = state.serverType
   if (state.address.trim()) {

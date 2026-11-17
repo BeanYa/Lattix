@@ -254,10 +254,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * @description 解析外部直链（vless://、vmess://、trojan://、ss://、socks://、http://）为未托管
-         *     服务器预览（新增/编辑服务器对话框的解析器），不落库。响应 data 含 name、protocol、
-         *     address、port、transport 摘要与 exit（凭据打码后的外部出口规格）；不可解析或协议
-         *     不支持时返回 400。
+         * @description 解析外部直链（vless://、vmess://、trojan://、ss://、socks://、http://）为服务器
+         *     协议表单字段（新增/编辑服务器对话框：点击「解析」自动填写），不落库。响应 data
+         *     含 name、protocol、address、port、transport 摘要与 exit（完整外部出口规格，含凭据，
+         *     用于表单回填）；不可解析或协议不支持时返回 400。
          */
         post: operations["serverParseLink"];
         delete?: never;
@@ -280,7 +280,9 @@ export interface paths {
          *     install_insecure 为 true 表示安装命令走明文公网链路（面板地址为 http 且 host 非回环/私网，
          *     域名按公网保守处理），Agent 控制流量明文传输，token 可嗅探、命令可伪造。
          *     kind=external（未托管外部直链节点）时不返回安装命令：bootstrap_token 与
-         *     install_command 为空串，机器类型固定为仅出口档 NAT。
+         *     install_command 为空串，机器类型固定为仅出口档 NAT。外部节点的协议参数由
+         *     external_exit（协议表单，优先）或 external_link（分享链接解析）提供；两者都可
+         *     为空（服务器表单没有必填项），别名留空按 host:port 派生，国家/地区可空。
          */
         post: operations["serverCreate"];
         delete?: never;
@@ -2082,16 +2084,25 @@ export interface components {
         /** @description Panel-editable server fields. Only the declared fields are validated here; extra fields follow existing RPC semantics. */
         ServerUpdateRequest: {
             server_id: number;
-            alias: string;
+            /** @description Managed servers require a non-empty alias; external servers derive one from host:port when empty. */
+            alias?: string;
             /** @description Default public address. Must be a member of addresses when addresses is provided; required non-empty for NAT machines. */
-            address: string;
+            address?: string;
             /** @description Optional full replacement of the public address list. Omitted keeps legacy semantics (only address is maintained). When provided, address must be a member. */
             addresses?: string[];
-            tags: string[];
-            country_code: string;
-            location: string;
+            tags?: string[];
+            country_code?: string;
+            location?: string;
             billing?: components["schemas"]["BillingInput"];
             traffic_plan?: components["schemas"]["TrafficPlanInput"];
+            /** @description Only for kind=external servers; optional share link used to parse (and store) the external exit spec. Ignored when external_exit is provided. */
+            external_link?: string;
+            /** @description Only for kind=external servers; manual protocol form (protocol/address/port/credentials/transport/security). Changing it while a chain references the server is rejected with CONFLICT. */
+            external_exit?: {
+                [key: string]: unknown;
+            };
+            /** @description 非直连（大陆不可直连），Ban 告警巡检跳过。 */
+            non_direct?: boolean;
             custom_settings?: {
                 [key: string]: unknown;
             };

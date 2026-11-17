@@ -11,6 +11,19 @@ import (
 
 const maxServerLocationRunes = 100
 
+// normalizeServerGeographyOptional 允许国家/地区留空（未托管外部直链节点没有必填项），
+// 其余校验与 normalizeServerGeography 一致。
+func normalizeServerGeographyOptional(countryCode, location string) (string, string, error) {
+	if strings.TrimSpace(countryCode) == "" {
+		location = strings.TrimSpace(location)
+		if utf8.RuneCountInString(location) > maxServerLocationRunes {
+			return "", "", fmt.Errorf("location 不能超过 %d 个字符", maxServerLocationRunes)
+		}
+		return "", location, nil
+	}
+	return normalizeServerGeography(countryCode, location)
+}
+
 func normalizeServerGeography(countryCode, location string) (string, string, error) {
 	countryCode = strings.ToUpper(strings.TrimSpace(countryCode))
 	location = strings.TrimSpace(location)

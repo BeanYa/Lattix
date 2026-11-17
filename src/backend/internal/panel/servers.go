@@ -74,23 +74,25 @@ type serverDTO struct {
 	LastDisconnectReason         string                 `json:"last_disconnect_reason"`
 	LastSeenAt                   *time.Time             `json:"last_seen_at"`
 	XrayVersion                  string                 `json:"xray_version"`
-	AgentVersion                 string                 `json:"agent_version"`          // session.open 上报的 agent 版本
-	Address                      string                 `json:"address"`                // 默认公网地址（session.open 记录，订阅用，§9）
-	Addresses                    []string               `json:"addresses"`              // 公网地址列表（§9；首项通常为访问流学习地址，链路按跳引用）
-	LearnedAddr                  string                 `json:"learned_addr"`           // 拨入学习公网地址（容器网关回退到 agent 公网网卡，§9）
-	NICAddresses                 []string               `json:"nic_addresses"`          // agent 上报的网卡非回环地址（§9），编辑地址时的内置候选
-	ConfigDrift                  bool                   `json:"config_drift"`           // 配置漂移标志（§17）
-	MachineType                  string                 `json:"machine_type"`           // direct|nat（§21）
-	AllowedPorts                 []shared.PortRange     `json:"allowed_ports"`          // NAT 可用端口段（§21），空 = 无段（仅出口档/direct）
-	Tags                         []string               `json:"tags"`                   // 管理标签；按顺序供名称模板 {{TAG_n}} 使用
-	CountryCode                  string                 `json:"country_code"`           // ISO 3166-1 alpha-2
-	Location                     string                 `json:"location"`               // 城市或机房位置
-	NonDirect                    bool                   `json:"non_direct"`             // 非直连（大陆不可直连）：Ban 告警巡检跳过（§告警分类）
-	Kind                         string                 `json:"kind"`                   // managed|external（未托管外部直链节点）
-	ExternalLink                 string                 `json:"external_link,omitempty"`  // 外部直链原文（kind=external）
-	ExternalExit                 *shared.ExternalExit   `json:"external_exit,omitempty"`  // 外部出口规格预览（凭据已打码）
-	CustomSettings               *shared.ServerSettings `json:"custom_settings"`        // 服务器覆盖（customsetting），nil = 跟随面板默认
-	EffectiveXrayVersion         string                 `json:"effective_xray_version"` // 合并后的生效 xray 版本，空 = 未设置
+	AgentVersion                 string                 `json:"agent_version"`              // session.open 上报的 agent 版本
+	Address                      string                 `json:"address"`                    // 默认公网地址（session.open 记录，订阅用，§9）
+	Addresses                    []string               `json:"addresses"`                  // 公网地址列表（§9；首项通常为访问流学习地址，链路按跳引用）
+	LearnedAddr                  string                 `json:"learned_addr"`               // 拨入学习公网地址（容器网关回退到 agent 公网网卡，§9）
+	NICAddresses                 []string               `json:"nic_addresses"`              // agent 上报的网卡非回环地址（§9），编辑地址时的内置候选
+	ConfigDrift                  bool                   `json:"config_drift"`               // 配置漂移标志（§17）
+	MachineType                  string                 `json:"machine_type"`               // direct|nat（§21）
+	AllowedPorts                 []shared.PortRange     `json:"allowed_ports"`              // NAT 可用端口段（§21），空 = 无段（仅出口档/direct）
+	Tags                         []string               `json:"tags"`                       // 管理标签；按顺序供名称模板 {{TAG_n}} 使用
+	CountryCode                  string                 `json:"country_code"`               // ISO 3166-1 alpha-2
+	Location                     string                 `json:"location"`                   // 城市或机房位置
+	NonDirect                    bool                   `json:"non_direct"`                 // 非直连（大陆不可直连）：Ban 告警巡检跳过（§告警分类）
+	Kind                         string                 `json:"kind"`                       // managed|external（未托管外部直链节点）
+	ExternalLink                 string                 `json:"external_link,omitempty"`    // 外部直链原文（kind=external）
+	ExternalExit                 *shared.ExternalExit   `json:"external_exit,omitempty"`    // 外部出口规格（服务器编辑表单回填，管理员 API 同信任域）
+	PanelLatencyMS               *int                   `json:"panel_latency_ms,omitempty"` // 面板到外部节点的 TCP 延迟（毫秒；空 = 未探测/超时）
+	PanelProbedAt                *time.Time             `json:"panel_probed_at,omitempty"`  // 最近一次面板探测时间
+	CustomSettings               *shared.ServerSettings `json:"custom_settings"`            // 服务器覆盖（customsetting），nil = 跟随面板默认
+	EffectiveXrayVersion         string                 `json:"effective_xray_version"`     // 合并后的生效 xray 版本，空 = 未设置
 	AgentSettingsStatus          string                 `json:"agent_settings_status"`
 	AgentSettingsRevision        int64                  `json:"agent_settings_revision"`
 	AgentSettingsDesiredRevision int64                  `json:"agent_settings_desired_revision"`
@@ -179,7 +181,9 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		NonDirect:                    srv.NonDirect,
 		Kind:                         kind,
 		ExternalLink:                 srv.ExternalLink,
-		ExternalExit:                 redactExternalExit(srv.ParseExternalExit()),
+		ExternalExit:                 srv.ParseExternalExit(),
+		PanelLatencyMS:               srv.PanelLatencyMS,
+		PanelProbedAt:                srv.PanelProbedAt,
 		EffectiveXrayVersion:         effectiveXrayVersion(s, srv.ID),
 		CustomSettings:               customServerSettings(s, srv.ID),
 		AgentSettingsStatus:          settingsStatus,
@@ -189,6 +193,53 @@ func (s *Server) toServerDTO(srv store.Server) serverDTO {
 		AgentSettingsReportedAt:      srv.AgentSettingsReportedAt,
 		CreatedAt:                    srv.CreatedAt,
 	}
+}
+
+// normalizeExternalExit 归一外部出口规格：去空白、协议缺省 http，并按协议清理无关
+// 字段，保证手动填写与链接解析保存出同一份规范 JSON（编辑冲突判定依赖它）。
+func normalizeExternalExit(exit shared.ExternalExit) shared.ExternalExit {
+	exit.Protocol = strings.TrimSpace(exit.Protocol)
+	if exit.Protocol == "" {
+		exit.Protocol = shared.ProtocolHTTP
+	}
+	exit.Address = strings.TrimSpace(exit.Address)
+	fields := []*string{&exit.UUID, &exit.Username, &exit.Password, &exit.Method, &exit.Cipher,
+		&exit.Flow, &exit.Encryption, &exit.Network, &exit.Security, &exit.SNI,
+		&exit.Fingerprint, &exit.PublicKey, &exit.ShortID, &exit.Path, &exit.Host,
+		&exit.ServiceName, &exit.Mode}
+	for _, field := range fields {
+		*field = strings.TrimSpace(*field)
+	}
+	clearTransport := func() {
+		exit.Network, exit.Security, exit.SNI, exit.Fingerprint = "", "", "", ""
+		exit.PublicKey, exit.ShortID, exit.Path, exit.Host, exit.ServiceName, exit.Mode = "", "", "", "", "", ""
+	}
+	switch exit.Protocol {
+	case shared.ProtocolSocks, shared.ProtocolHTTP:
+		clearTransport()
+		exit.UUID, exit.Method, exit.Cipher, exit.Flow, exit.Encryption = "", "", "", "", ""
+	case shared.ProtocolShadowsocks:
+		clearTransport()
+		exit.UUID, exit.Username, exit.Cipher, exit.Flow, exit.Encryption = "", "", "", "", ""
+	case shared.ProtocolTrojan:
+		exit.UUID, exit.Username, exit.Method, exit.Cipher, exit.Encryption = "", "", "", "", ""
+	case shared.ProtocolVLESS:
+		exit.Username, exit.Method, exit.Cipher = "", "", ""
+	case shared.ProtocolVMess:
+		exit.Username, exit.Method = "", ""
+	}
+	return exit
+}
+
+// externalExitAlias 派生外部节点的展示名（别名留空时）：host:port > host > 外部直链。
+func externalExitAlias(exit shared.ExternalExit) string {
+	if exit.Address != "" && exit.Port > 0 {
+		return exit.HostPort()
+	}
+	if exit.Address != "" {
+		return exit.Address
+	}
+	return "外部直链"
 }
 
 // redactExternalExit 打码外部出口规格中的凭据（列表/编辑预览用；实际拨号规格
@@ -342,7 +393,7 @@ func (s *Server) handleParseExternalLink(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name": name, "protocol": exit.Protocol, "address": exit.Address, "port": exit.Port,
-		"transport": external.TransportSummary(exit), "exit": redactExternalExit(&exit),
+		"transport": external.TransportSummary(exit), "exit": exit,
 	})
 }
 
@@ -351,19 +402,20 @@ func (s *Server) handleParseExternalLink(w http.ResponseWriter, r *http.Request)
 // NAT 类型 address 强制必填（共享 IP 由 IDC 提供，禁用自动学习）。
 func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Alias        string             `json:"alias"`
-		Address      string             `json:"address"`       // 公网地址，留空自动学习（§4；NAT 必填）
-		XrayVersion  string             `json:"xray_version"`  // 兼容旧客户端（仅接受字段）；安装版本取服务器生效设置
-		MachineType  string             `json:"machine_type"`  // direct（默认）| nat（§21）
-		AllowedPorts []shared.PortRange `json:"allowed_ports"` // NAT 可用端口段（§21），留空 = 仅出口档
-		Tags         []string           `json:"tags"`
-		CountryCode  string             `json:"country_code"`
-		Location     string             `json:"location"`
-		NonDirect    bool               `json:"non_direct"` // 非直连（大陆不可直连）：Ban 告警巡检跳过
-		Kind         string             `json:"kind"`         // managed（默认）| external（未托管外部直链）
-		ExternalLink string             `json:"external_link"` // 外部直链原文（kind=external）
-		Billing      *billingInput      `json:"billing"`
-		TrafficPlan  *trafficPlanInput  `json:"traffic_plan"`
+		Alias        string               `json:"alias"`
+		Address      string               `json:"address"`       // 公网地址，留空自动学习（§4；NAT 必填）
+		XrayVersion  string               `json:"xray_version"`  // 兼容旧客户端（仅接受字段）；安装版本取服务器生效设置
+		MachineType  string               `json:"machine_type"`  // direct（默认）| nat（§21）
+		AllowedPorts []shared.PortRange   `json:"allowed_ports"` // NAT 可用端口段（§21），留空 = 仅出口档
+		Tags         []string             `json:"tags"`
+		CountryCode  string               `json:"country_code"`
+		Location     string               `json:"location"`
+		NonDirect    bool                 `json:"non_direct"`    // 非直连（大陆不可直连）：Ban 告警巡检跳过
+		Kind         string               `json:"kind"`          // managed（默认）| external（未托管外部直链）
+		ExternalLink string               `json:"external_link"` // 外部直链原文（kind=external，可选）
+		ExternalExit *shared.ExternalExit `json:"external_exit"` // 手动填写的外部出口规格（优先于 external_link）
+		Billing      *billingInput        `json:"billing"`
+		TrafficPlan  *trafficPlanInput    `json:"traffic_plan"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -382,16 +434,34 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 	var externalExit *shared.ExternalExit
 	externalConfig := ""
 	if req.Kind == store.ServerKindExternal {
-		// 未托管外部直链节点：解析链接得到拨号规格与地址，机器类型/端口段固定为
-		// 仅出口档（NAT + 空段），无 Agent 与安装命令。
-		exit, parsedName, err := external.Parse(req.ExternalLink)
-		if err != nil {
+		// 未托管外部直链节点：协议细节可手动填写（external_exit），也可粘贴分享链接
+		// 解析（external_link）；两者都为空时保存空占位配置——服务器表单没有必填项，
+		// 完整规格由链路创建/编辑时校验。机器类型/端口段固定为仅出口档（NAT + 空段）。
+		exit := shared.ExternalExit{Protocol: shared.ProtocolHTTP}
+		parsedName := ""
+		switch {
+		case req.ExternalExit != nil:
+			exit = normalizeExternalExit(*req.ExternalExit)
+		case req.ExternalLink != "":
+			parsed, name, err := external.Parse(req.ExternalLink)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			exit = normalizeExternalExit(parsed)
+			parsedName = strings.TrimSpace(name)
+		}
+		if err := exit.ValidateForSave(); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		externalExit = &exit
 		if req.Alias == "" {
-			req.Alias = parsedName
+			if parsedName != "" {
+				req.Alias = parsedName
+			} else {
+				req.Alias = externalExitAlias(exit)
+			}
 		}
 		req.Address = exit.Address
 		req.MachineType = store.MachineTypeNAT
@@ -402,7 +472,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		externalConfig = string(raw)
-	} else if req.ExternalLink != "" {
+	} else if req.ExternalLink != "" || req.ExternalExit != nil {
 		writeError(w, http.StatusBadRequest, "托管服务器不支持外部直链（请选择未托管类型）")
 		return
 	}
@@ -410,9 +480,15 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "alias 不能为空")
 		return
 	}
-	countryCode, location, err := normalizeServerGeography(req.CountryCode, req.Location)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	var countryCode, location string
+	var geoErr error
+	if req.Kind == store.ServerKindExternal {
+		countryCode, location, geoErr = normalizeServerGeographyOptional(req.CountryCode, req.Location)
+	} else {
+		countryCode, location, geoErr = normalizeServerGeography(req.CountryCode, req.Location)
+	}
+	if geoErr != nil {
+		writeError(w, http.StatusBadRequest, geoErr.Error())
 		return
 	}
 	if req.MachineType == "" {
@@ -426,7 +502,7 @@ func (s *Server) handleCreateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.MachineType == store.MachineTypeNAT && req.Address == "" {
+	if req.MachineType == store.MachineTypeNAT && req.Address == "" && req.Kind != store.ServerKindExternal {
 		writeError(w, http.StatusBadRequest, "NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）")
 		return
 	}
@@ -603,6 +679,7 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		Location       *string                `json:"location"`      // 省略 = 不变
 		NonDirect      *bool                  `json:"non_direct"`    // 省略 = 不变；非直连（大陆不可直连），Ban 告警巡检跳过
 		ExternalLink   *string                `json:"external_link"` // 仅未托管节点：省略 = 不变；新链接须可解析
+		ExternalExit   *shared.ExternalExit   `json:"external_exit"` // 仅未托管节点：省略 = 不变；手动协议参数（优先于 external_link）
 		Billing        *billingInput          `json:"billing"`
 		TrafficPlan    *trafficPlanInput      `json:"traffic_plan"`
 		CustomSettings *shared.ServerSettings `json:"custom_settings"` // 省略 = 不变；{} 或 null = 清除覆盖；非空 = 覆盖
@@ -651,7 +728,7 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	alias := srv.Alias
 	if req.Alias != nil {
 		alias = strings.TrimSpace(*req.Alias)
-		if alias == "" {
+		if alias == "" && !srv.IsExternal() {
 			writeError(w, http.StatusBadRequest, "alias 不能为空")
 			return
 		}
@@ -660,17 +737,34 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// 未托管外部直链节点：地址由链接派生，实例内不允许改机器类型/端口段；
-	// 链接变更须重新解析，且被链路引用时拒绝（已发布修订已冻结旧规格，避免静默分叉）。
+	// 未托管外部直链节点：协议参数可手动修改（external_exit）或重新解析链接，
+	// 地址由配置派生，实例内不允许改机器类型/端口段；协议参数变更且被链路引用时拒绝
+	//（已发布修订已冻结旧规格，避免静默分叉）。
 	if srv.IsExternal() {
-		if req.ExternalLink != nil {
-			link := strings.TrimSpace(*req.ExternalLink)
-			exit, _, parseErr := external.Parse(link)
+		var newExit *shared.ExternalExit
+		switch {
+		case req.ExternalExit != nil:
+			exit := normalizeExternalExit(*req.ExternalExit)
+			if err := exit.ValidateForSave(); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			newExit = &exit
+		case req.ExternalLink != nil && strings.TrimSpace(*req.ExternalLink) != "":
+			exit, _, parseErr := external.Parse(strings.TrimSpace(*req.ExternalLink))
 			if parseErr != nil {
 				writeError(w, http.StatusBadRequest, parseErr.Error())
 				return
 			}
-			raw, marshalErr := json.Marshal(exit)
+			exit = normalizeExternalExit(exit)
+			if err := exit.ValidateForSave(); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			newExit = &exit
+		}
+		if newExit != nil {
+			raw, marshalErr := json.Marshal(*newExit)
 			if marshalErr != nil {
 				writeError(w, http.StatusInternalServerError, marshalErr.Error())
 				return
@@ -683,13 +777,26 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 				}
 				if len(chains) > 0 {
 					writeError(w, http.StatusConflict,
-						fmt.Sprintf("该外部节点正被 %d 条链路引用，修改链接前请先调整或删除这些链路", len(chains)))
+						fmt.Sprintf("该外部节点正被 %d 条链路引用，修改协议参数前请先调整或删除这些链路", len(chains)))
 					return
 				}
-				if err := s.st.UpdateServerExternalLink(r.Context(), id, link, string(raw), exit.Address); err != nil {
+				link := ""
+				if req.ExternalLink != nil {
+					link = strings.TrimSpace(*req.ExternalLink)
+				}
+				if err := s.st.UpdateServerExternalLink(r.Context(), id, link, string(raw), newExit.Address); err != nil {
 					writeError(w, http.StatusInternalServerError, err.Error())
 					return
 				}
+			}
+			if alias == "" {
+				alias = externalExitAlias(*newExit)
+			}
+		} else if alias == "" {
+			if current := srv.ParseExternalExit(); current != nil {
+				alias = externalExitAlias(*current)
+			} else {
+				alias = "外部直链"
 			}
 		}
 		if req.AllowedPorts != nil && len(*req.AllowedPorts) > 0 {
@@ -697,7 +804,7 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.Address = ""
-	} else if req.ExternalLink != nil {
+	} else if req.ExternalLink != nil || req.ExternalExit != nil {
 		writeError(w, http.StatusBadRequest, "托管服务器不支持外部直链")
 		return
 	}
@@ -711,7 +818,11 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "country_code 与 location 须同时提供")
 			return
 		}
-		countryCode, location, err = normalizeServerGeography(*req.CountryCode, *req.Location)
+		if srv.IsExternal() {
+			countryCode, location, err = normalizeServerGeographyOptional(*req.CountryCode, *req.Location)
+		} else {
+			countryCode, location, err = normalizeServerGeography(*req.CountryCode, *req.Location)
+		}
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

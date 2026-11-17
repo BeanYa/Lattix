@@ -22,7 +22,9 @@ import (
 // v30: 用户订阅隐藏项与持久发布队列，随 Schema 建表。
 // v31: 未托管服务器（外部直链）——servers.kind/external_link/external_config；
 // 外部节点仅作链路最后一跳（无 Agent、无入站能力）。
-const schemaVersion = 31
+// v32: 外部节点面板探测——servers.panel_latency_ms/panel_probed_at（面板侧 TCP 连通
+// 延迟，替代无 Agent 时缺失的三网测速与性能监控）。
+const schemaVersion = 32
 
 type columnMigration struct {
 	name       string
@@ -107,6 +109,8 @@ func migrateSchema(tx *sql.Tx) error {
 		{"kind", "TEXT NOT NULL DEFAULT 'managed'"},
 		{"external_link", "TEXT NOT NULL DEFAULT ''"},
 		{"external_config", "TEXT NOT NULL DEFAULT ''"},
+		{"panel_latency_ms", "INTEGER"},
+		{"panel_probed_at", "DATETIME"},
 	})
 	if err != nil {
 		return err

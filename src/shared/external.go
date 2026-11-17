@@ -105,6 +105,23 @@ func (e ExternalExit) Validate() error {
 	return nil
 }
 
+// ValidateForSave 校验可保存到服务器的外部出口字段（服务器创建/编辑用）：
+// 协议、端口范围与地址字符集。地址与凭据允许留空（尚未配置的占位行），完整
+// 要求由 Validate 在链路创建/编辑时执行——服务器页因此没有必填项。
+func (e ExternalExit) ValidateForSave() error {
+	if !IsExternalExitProtocol(e.Protocol) {
+		return fmt.Errorf("外部出口协议 %q 暂不支持（支持 %s）", e.Protocol, strings.Join(ExternalExitProtocols, "/"))
+	}
+	host := strings.TrimSpace(e.Address)
+	if strings.ContainsAny(host, "/ ") || strings.ContainsRune(host, '\\') {
+		return fmt.Errorf("外部出口服务器地址非法: %q", e.Address)
+	}
+	if e.Port < 0 || e.Port > 65535 {
+		return fmt.Errorf("外部出口端口须为 1-65535")
+	}
+	return nil
+}
+
 // HostPort 返回外部节点的 host:port（IPv6 字面量自动加方括号）。
 func (e ExternalExit) HostPort() string {
 	return net.JoinHostPort(e.Address, strconv.Itoa(e.Port))

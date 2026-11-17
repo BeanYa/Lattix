@@ -18,6 +18,7 @@ import type {
   CreateChainRequest,
   EditChainRequest,
   ExternalChain,
+  ExternalExit,
   ExternalSubscription,
   ChainTrafficBucket,
   CreateNodeRequest,
@@ -151,44 +152,48 @@ export const api = {
       ...options,
     }),
   createServer: (body: {
-    alias: string
+    alias?: string
     address?: string
     machine_type?: MachineType
     allowed_ports?: PortRange[]
     tags?: string[]
-    country_code: string
-    location: string
+    country_code?: string
+    location?: string
     non_direct?: boolean
     kind?: ServerKind
     external_link?: string
+    external_exit?: ExternalExit
     billing?: BillingInput
     traffic_plan?: TrafficPlanInput
   }) => requester.post<CreateServerResponse>('/api/server/create', body),
   // 未托管外部直链节点：创建/编辑前的链接解析预览（不落库）。
   parseExternalLink: (link: string) =>
     requester.post<ParseExternalLinkResponse>('/api/server/parse-link', { link }),
-  // 未托管外部直链节点的编辑提交：地址由链接派生，其余资料与托管服务器共用。
+  // 未托管外部直链节点的编辑提交：协议参数为提交来源（external_exit），分享链接可选
+  //（用于溯源/再次解析）；地址由规格派生，其余资料与托管服务器共用。
   updateServerExternal: (
     serverId: number,
     alias: string,
-    externalLink: string,
     tags: string[],
     countryCode: string,
     location: string,
-    billing?: BillingInput,
-    trafficPlan?: TrafficPlanInput,
-    nonDirect?: boolean,
+    billing: BillingInput | undefined,
+    trafficPlan: TrafficPlanInput | undefined,
+    nonDirect: boolean,
+    externalExit: ExternalExit,
+    externalLink?: string,
   ) =>
     requester.post<Server>('/api/server/update', {
       server_id: serverId,
       alias: alias.trim(),
-      external_link: externalLink.trim(),
+      external_exit: externalExit,
+      ...(externalLink ? { external_link: externalLink } : {}),
       tags,
       country_code: countryCode,
       location,
       billing,
       traffic_plan: trafficPlan,
-      ...(nonDirect !== undefined ? { non_direct: nonDirect } : {}),
+      non_direct: nonDirect,
     }),
   rotateServerToken: (serverId: number) =>
     requester.post<CreateServerResponse>('/api/server/rotate-token', { server_id: serverId }),

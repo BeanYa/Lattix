@@ -12,12 +12,7 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { CURRENCIES } from '@/lib/format'
-import type {
-  IntervalUnit,
-  ParseExternalLinkResponse,
-  Provider,
-  TrafficAccountingMode,
-} from '@/lib/types'
+import type { IntervalUnit, Provider, TrafficAccountingMode } from '@/lib/types'
 
 import {
   addInterval,
@@ -275,86 +270,6 @@ export function BillingTrafficFields({
 }
 
 /** 外部直链输入 + 解析按钮 + 解析预览：添加与编辑服务器对话框共用。 */
-export function ExternalLinkField({
-  id = 'externalLink',
-  link,
-  preview,
-  previewNote,
-  parseError,
-  parsing,
-  onChange,
-  onParse,
-}: {
-  id?: string
-  link: string
-  preview: ParseExternalLinkResponse | null
-  previewNote?: string
-  parseError: string
-  parsing: boolean
-  onChange: (link: string) => void
-  onParse: () => void
-}) {
-  return (
-    <div className="space-y-2">
-      <Label htmlFor={id}>分享链接</Label>
-      <textarea
-        id={id}
-        className="sv-textarea"
-        rows={3}
-        value={link}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder="vless://uuid@host:443?type=tcp&security=reality&pbk=...&sid=...#名称"
-        spellCheck={false}
-      />
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-xs text-muted-foreground">
-          支持 vless / vmess / trojan / ss / socks / http 分享链接；地址与凭据由链接解析，节点没有
-          Agent。
-        </p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="shrink-0"
-          disabled={parsing || !link.trim()}
-          onClick={onParse}
-        >
-          {parsing ? '解析中…' : '解析'}
-        </Button>
-      </div>
-      {parseError ? <p className="text-sm text-destructive">{parseError}</p> : null}
-      {preview ? (
-        <div className="space-y-1">
-          {previewNote ? <p className="text-xs text-muted-foreground">{previewNote}</p> : null}
-          <dl className="sv-ext-preview" aria-label="解析预览">
-            <div className="sv-ext-row">
-              <dt>节点名</dt>
-              <dd>{preview.name || '—'}</dd>
-            </div>
-            <div className="sv-ext-row">
-              <dt>协议</dt>
-              <dd>{preview.protocol}</dd>
-            </div>
-            <div className="sv-ext-row">
-              <dt>地址</dt>
-              <dd>{preview.address}</dd>
-            </div>
-            <div className="sv-ext-row">
-              <dt>端口</dt>
-              <dd>{preview.port}</dd>
-            </div>
-            <div className="sv-ext-row">
-              <dt>传输 / 安全层</dt>
-              <dd>{preview.transport}</dd>
-            </div>
-          </dl>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-// 可用端口动态行（§21）：每行一个文本输入，支持 10000 / 10001-10010 / 20001-20010:10001-10010。
 export function PortRowsEditor({
   rows,
   onChange,

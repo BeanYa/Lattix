@@ -13,7 +13,6 @@ import {
   applyExternalLinkPreview,
   billingPayload,
   editExternalLink,
-  externalLinkForSubmit,
   initialExternalLink,
   localDate,
   parsePortRows,
@@ -22,6 +21,13 @@ import {
   type ExternalLinkState,
   type TrafficFormState,
 } from './server-form-utils'
+
+import {
+  defaultExternalExitForm,
+  externalExitFormError,
+  externalExitFormFromServer,
+  externalExitFormPayload,
+} from './external-exit-form'
 
 export interface ServerEditFormState {
   alias: string
@@ -144,6 +150,14 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
     setForm((current) => ({ ...current, external: editExternalLink(current.external, link) }))
   }
 
+  const setExternalExit = (partial: Partial<typeof form.external.exit>) => {
+    setError('')
+    setForm((current) => ({
+      ...current,
+      external: { ...current.external, exit: { ...current.external.exit, ...partial } },
+    }))
+  }
+
   const parseExternalLink = async () => {
     const link = form.external.link.trim()
     if (!link) {
@@ -212,7 +226,10 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
       },
       xrayOverride: s.custom_settings?.xray_version ?? '',
       xrayVersions: ['latest'],
-      external: initialExternalLink(s.kind === 'external' ? (s.external_link ?? '') : ''),
+      external:
+        s.kind === 'external'
+          ? initialExternalLink(s.external_link ?? '', externalExitFormFromServer(s))
+          : initialExternalLink('', defaultExternalExitForm()),
     })
     if (s.kind !== 'external') {
       api
@@ -226,11 +243,12 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
 
   const closeEdit = () => setTarget(null)
 
-  // 未托管外部直链节点：地址由链接派生，没有 Agent 字段；链接变更须先解析。
+  // 未托管外部直链节点：提交协议表单（地址由规格派生），没有 Agent 字段；
+  // 协议参数变更且被链路引用时由后端 409 拒绝。
   const saveExternal = async (s: Server, alias: string) => {
-    const link = externalLinkForSubmit({ ...form.external, savedLink: s.external_link ?? '' })
-    if ('error' in link) {
-      setError(link.error)
+    const exitError = externalExitFormError(form.external.exit)
+    if (exitError) {
+      setError(exitError)
       return
     }
     setSaving(true)
@@ -238,13 +256,14 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
       await api.updateServerExternal(
         s.id,
         alias,
-        link.link,
         form.tags,
         form.countryCode,
         form.location.trim(),
         billingPayload(form.billing),
         trafficPayload(form.traffic),
         form.nonDirect,
+        externalExitFormPayload(form.external.exit),
+        form.external.link.trim(),
       )
       setTarget(null)
       reload()
@@ -267,6 +286,11 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
     }
     setError('')
     setLinkConflict(false)
+    // 未托管节点没有必填项：别名留空由后端按地址派生，国家/地区可空。
+    if (target.kind === 'external') {
+      await saveExternal(target, form.alias.trim())
+      return
+    }
     const finalAlias = form.alias.trim()
     if (!finalAlias) {
       setError('名称不能为空')
@@ -274,10 +298,6 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
     }
     if (!form.countryCode) {
       setError('国家/地区不能为空')
-      return
-    }
-    if (target.kind === 'external') {
-      await saveExternal(target, finalAlias)
       return
     }
     // 默认地址 = 列表中选中的条目；列表非空时提交 addresses 整体替换。
@@ -356,6 +376,7 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
     addAddress,
     setCountry,
     setExternalLink,
+    setExternalExit,
     parseExternalLink,
     openEdit,
     closeEdit,

@@ -45,22 +45,24 @@ type Server struct {
 	Token                    string // 长期凭证；创建时先存 bootstrap token，session.open 后换发（§11）
 	LastSeenAt               *time.Time
 	XrayVersion              string
-	AgentVersion             string // session.open 上报的 agent 版本（§18 升级管理）
-	Address                  string // 默认公网地址（session.open 时按 WS RemoteAddr 记录，订阅用，§9）
-	Addresses                string // 公网地址列表 JSON 字符串数组（§9；含默认地址，访问流学习 + NIC 上报合并）
-	AddressMode              string // auto|manual；manual 地址不被后续 session.open 覆盖
-	LearnedAddr              string // 每次 session.open 学习的公网地址；容器网关对端回退到 agent 公网网卡（§9）
-	NICAddresses             string // agent 上报的网卡非回环地址 JSON 数组（§9 公网地址候选）；空串 = 无
-	ConfigDrift              bool   // 配置漂移标志（§17，agent drift_report 驱动）
-	MachineType              string // direct|nat（§21）
-	AllowedPorts             string // NAT 可用端口段 JSON（shared.PortRange 数组，§21）；空串 = 无段
-	Tags                     string // 管理标签 JSON 数组；名称模板 {{TAG_n}} 的来源
-	CountryCode              string // ISO 3166-1 alpha-2；管理员在服务器资料中选择
-	Location                 string // 城市或机房位置；管理员填写
-	NonDirect                bool   // 非直连（大陆不可直连）：Ban 告警巡检跳过该服务器（§告警分类）
-	Kind                     string // managed|external（未托管外部直链节点）
-	ExternalLink             string // 外部直链原文（kind=external）
-	ExternalConfig           string // 外部出口规格 JSON（shared.ExternalExit，kind=external）
+	AgentVersion             string     // session.open 上报的 agent 版本（§18 升级管理）
+	Address                  string     // 默认公网地址（session.open 时按 WS RemoteAddr 记录，订阅用，§9）
+	Addresses                string     // 公网地址列表 JSON 字符串数组（§9；含默认地址，访问流学习 + NIC 上报合并）
+	AddressMode              string     // auto|manual；manual 地址不被后续 session.open 覆盖
+	LearnedAddr              string     // 每次 session.open 学习的公网地址；容器网关对端回退到 agent 公网网卡（§9）
+	NICAddresses             string     // agent 上报的网卡非回环地址 JSON 数组（§9 公网地址候选）；空串 = 无
+	ConfigDrift              bool       // 配置漂移标志（§17，agent drift_report 驱动）
+	MachineType              string     // direct|nat（§21）
+	AllowedPorts             string     // NAT 可用端口段 JSON（shared.PortRange 数组，§21）；空串 = 无段
+	Tags                     string     // 管理标签 JSON 数组；名称模板 {{TAG_n}} 的来源
+	CountryCode              string     // ISO 3166-1 alpha-2；管理员在服务器资料中选择
+	Location                 string     // 城市或机房位置；管理员填写
+	NonDirect                bool       // 非直连（大陆不可直连）：Ban 告警巡检跳过该服务器（§告警分类）
+	Kind                     string     // managed|external（未托管外部直链节点）
+	ExternalLink             string     // 外部直链原文（kind=external）
+	ExternalConfig           string     // 外部出口规格 JSON（shared.ExternalExit，kind=external）
+	PanelLatencyMS           *int       // 面板到外部节点的 TCP 延迟（毫秒；nil = 未探测/超时）
+	PanelProbedAt            *time.Time // 最近一次面板探测时间
 	CredentialEpoch          int64
 	CredentialCommitted      bool
 	CredentialPendingToken   string
@@ -81,19 +83,28 @@ type Server struct {
 }
 
 // serverCols 是 Server 各字段对应的列清单。
-const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, addresses, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, non_direct, kind, external_link, external_config, credential_epoch, credential_committed, credential_pending_token, credential_exchange_id, last_connected_at, last_disconnected_at, last_reconnected_at, reconnect_count, last_disconnect_reason, agent_settings_revision, agent_settings_error, agent_settings_reported_at, custom_settings, server_settings_revision, server_settings_error, server_settings_reported_at, created_at`
+const serverCols = `id, alias, token, last_seen_at, xray_version, agent_version, address, addresses, address_mode, learned_addr, nic_addresses, config_drift, machine_type, allowed_ports, tags, country_code, location, non_direct, kind, external_link, external_config, panel_latency_ms, panel_probed_at, credential_epoch, credential_committed, credential_pending_token, credential_exchange_id, last_connected_at, last_disconnected_at, last_reconnected_at, reconnect_count, last_disconnect_reason, agent_settings_revision, agent_settings_error, agent_settings_reported_at, custom_settings, server_settings_revision, server_settings_error, server_settings_reported_at, created_at`
 
 func scanServer(row interface{ Scan(...any) error }) (*Server, error) {
 	var srv Server
-	var lastSeen, lastConnected, lastDisconnected, lastReconnected, settingsReported, serverSettingsReported sql.NullTime
+	var lastSeen, lastConnected, lastDisconnected, lastReconnected, settingsReported, serverSettingsReported, panelProbed sql.NullTime
+	var panelLatency sql.NullInt64
 	var xrayVer, agentVer sql.NullString
-	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.Addresses, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.NonDirect, &srv.Kind, &srv.ExternalLink, &srv.ExternalConfig, &srv.CredentialEpoch, &srv.CredentialCommitted, &srv.CredentialPendingToken, &srv.CredentialExchangeID, &lastConnected, &lastDisconnected, &lastReconnected, &srv.ReconnectCount, &srv.LastDisconnectReason, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CustomSettings, &srv.ServerSettingsRevision, &srv.ServerSettingsError, &serverSettingsReported, &srv.CreatedAt)
+	err := row.Scan(&srv.ID, &srv.Alias, &srv.Token, &lastSeen, &xrayVer, &agentVer, &srv.Address, &srv.Addresses, &srv.AddressMode, &srv.LearnedAddr, &srv.NICAddresses, &srv.ConfigDrift, &srv.MachineType, &srv.AllowedPorts, &srv.Tags, &srv.CountryCode, &srv.Location, &srv.NonDirect, &srv.Kind, &srv.ExternalLink, &srv.ExternalConfig, &panelLatency, &panelProbed, &srv.CredentialEpoch, &srv.CredentialCommitted, &srv.CredentialPendingToken, &srv.CredentialExchangeID, &lastConnected, &lastDisconnected, &lastReconnected, &srv.ReconnectCount, &srv.LastDisconnectReason, &srv.AgentSettingsRevision, &srv.AgentSettingsError, &settingsReported, &srv.CustomSettings, &srv.ServerSettingsRevision, &srv.ServerSettingsError, &serverSettingsReported, &srv.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 	if lastSeen.Valid {
 		t := lastSeen.Time
 		srv.LastSeenAt = &t
+	}
+	if panelLatency.Valid {
+		value := int(panelLatency.Int64)
+		srv.PanelLatencyMS = &value
+	}
+	if panelProbed.Valid {
+		t := panelProbed.Time
+		srv.PanelProbedAt = &t
 	}
 	if lastConnected.Valid {
 		t := lastConnected.Time
@@ -484,6 +495,14 @@ func (s *Store) UpdateServerAlias(ctx context.Context, id int64, alias string) e
 func (s *Store) UpdateServerAllowedPorts(ctx context.Context, id int64, allowedPorts string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE servers SET allowed_ports = ? WHERE id = ?`, allowedPorts, id)
+	return err
+}
+
+// UpdateServerPeerProbe 记录面板到该服务器的 TCP 连通延迟（外部直链节点用：
+// 无 Agent 时以面板侧拨号替代三网测速；latencyMS 为 nil 表示失败/超时，仍更新时间戳）。
+func (s *Store) UpdateServerPeerProbe(ctx context.Context, id int64, latencyMS *int, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE servers SET panel_latency_ms = ?, panel_probed_at = ? WHERE id = ?`,
+		latencyMS, at.UTC(), id)
 	return err
 }
 

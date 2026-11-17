@@ -14,7 +14,8 @@ import { Label } from '@/components/ui/label'
 import type { Provider } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
-import { BillingTrafficFields, ExternalLinkField, PortRowsEditor } from './server-form-fields'
+import { BillingTrafficFields, PortRowsEditor } from './server-form-fields'
+import { ExternalExitFields } from './ExternalExitFields'
 import type { ServerTypeChoice } from './server-form-utils'
 import type { ServerCreateFormController } from './use-server-create-form'
 
@@ -46,6 +47,7 @@ export function ServerCreateDialog({
     setCountry,
     setServerType,
     setExternalLink,
+    setExternalExit,
     parseExternalLink,
     onCreate,
   } = controller
@@ -57,7 +59,7 @@ export function ServerCreateDialog({
           <DialogTitle>添加服务器</DialogTitle>
           <DialogDescription>
             {external
-              ? '外部直链是未托管节点：地址与凭据来自分享链接，没有 Agent，只能作为链路的最后一跳出口。'
+              ? '外部直链是未托管节点：协议参数可粘贴分享链接解析或手动填写，没有 Agent，只能作为链路的最后一跳出口。'
               : '输入别名创建服务器。'}
           </DialogDescription>
         </DialogHeader>
@@ -88,13 +90,15 @@ export function ServerCreateDialog({
             </div>
           </div>
           {external ? (
-            <ExternalLinkField
+            <ExternalExitFields
+              idPrefix="createExternal"
               link={form.external.link}
-              preview={form.external.preview}
-              parseError={form.external.parseError}
               parsing={form.external.parsing}
-              onChange={setExternalLink}
+              parseError={form.external.parseError}
+              exit={form.external.exit}
+              onLinkChange={setExternalLink}
               onParse={parseExternalLink}
+              onExitChange={setExternalExit}
             />
           ) : null}
           <div className="space-y-2">
@@ -103,8 +107,8 @@ export function ServerCreateDialog({
               id="alias"
               value={form.alias}
               onChange={(e) => patch({ alias: e.target.value })}
-              placeholder="例如：hk-01"
-              required
+              placeholder={external ? '可留空（按节点地址自动生成）' : '例如：hk-01'}
+              required={!external}
               autoFocus={!external}
             />
             {external ? (
@@ -121,6 +125,7 @@ export function ServerCreateDialog({
                 value={form.countryCode}
                 options={countryOptions}
                 onValueChange={setCountry}
+                required={!external}
               />
             </div>
             <div className="space-y-2">
@@ -215,10 +220,8 @@ export function ServerCreateDialog({
               type="submit"
               disabled={
                 creating ||
-                !form.alias.trim() ||
-                !form.countryCode ||
-                (form.serverType === 'nat' && !form.address.trim()) ||
-                (external && !form.external.link.trim())
+                (!external && (!form.alias.trim() || !form.countryCode)) ||
+                (form.serverType === 'nat' && !form.address.trim())
               }
             >
               {creating ? '创建中…' : '创建'}

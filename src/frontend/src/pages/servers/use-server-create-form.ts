@@ -112,6 +112,14 @@ export function useServerCreateForm({
     }
   }
 
+  const setExternalExit = (partial: Partial<typeof form.external.exit>) => {
+    setCreateError('')
+    setForm((current) => ({
+      ...current,
+      external: { ...current.external, exit: { ...current.external.exit, ...partial } },
+    }))
+  }
+
   const onCreate = async (e: FormEvent) => {
     e.preventDefault()
     setCreateError('')
@@ -146,6 +154,7 @@ export function useServerCreateForm({
     setCountry,
     setServerType,
     setExternalLink,
+    setExternalExit,
     parseExternalLink,
     onCreate,
   }

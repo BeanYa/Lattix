@@ -290,6 +290,13 @@ func (s *Server) registerCoreTasks() {
 			return nil
 		},
 	})
+	// 外部直链节点的面板侧连通测速（§未托管服务器）：无 Agent，面板每 2 分钟
+	// 对节点 TCP 监听拨号一次，卡片展示「面板 → 节点」延迟（不参与三网测速/性能监控）。
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "server.external-probe", RunOnStart: true, Timeout: time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(externalProbeInterval) },
+		Run:     func(ctx context.Context) error { s.probeExternalServers(ctx); return nil },
+	})
 	// Ban 告警巡检（§告警分类 Ban告警）：与三网测速同频逐轮评估全丢包连续轮次
 	// （5 轮疑似、10 轮判定被 Ban）；banned 后每半小时确认一次恢复，下一轮取消告警。
 	s.scheduler.Register(scheduler.ScheduledTask{

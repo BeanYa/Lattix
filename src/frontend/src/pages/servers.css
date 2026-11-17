@@ -2,6 +2,127 @@
    Servers — Line Board 机群读数台
    ============================================================ */
 
+/* ---------- 外部直链板（未托管节点：无 Agent，仅面板测速） ---------- */
+.sv-board-hint {
+  margin: -4px 0 12px;
+  color: var(--panel-ink-3);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.sv-ext-board .sv-board-head {
+  margin-bottom: 10px;
+}
+
+.sv-ext-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+}
+
+.sv-ext-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--panel-raised);
+  box-shadow: var(--panel-shadow-card);
+}
+
+.sv-ext-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sv-ext-title {
+  overflow: hidden;
+  color: var(--panel-ink);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sv-ext-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.sv-ext-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.sv-ext-proto {
+  padding: 1px 8px;
+  border: 1px solid var(--panel-rule-strong);
+  border-radius: 999px;
+  color: var(--panel-ink-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.sv-ext-target {
+  color: var(--panel-ink-2);
+  font-size: 12px;
+}
+
+.sv-ext-transport {
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
+}
+
+.sv-ext-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--panel-rule);
+}
+
+.sv-ext-latency {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--panel-ink-3);
+  font-size: 12px;
+}
+
+.sv-ext-latency strong {
+  color: inherit;
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+.sv-ext-latency.is-ok strong {
+  color: var(--panel-success);
+}
+
+.sv-ext-latency.is-fail strong {
+  color: var(--panel-danger);
+}
+
+.sv-ext-note {
+  color: var(--panel-ink-3);
+  font-size: 11px;
+}
+
+.sv-ext-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 /* ---------- 服务器读数板 ---------- */
 
 .sv-board {

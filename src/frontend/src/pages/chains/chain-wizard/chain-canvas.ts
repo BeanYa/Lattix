@@ -78,6 +78,14 @@ export function externalPortFor(s: Server): number {
   return s.external_exit?.port ?? 0
 }
 
+/** 外部节点是否已配置可用规格：服务器表单没有必填项，地址/端口可留空占位；
+ *  未补全的节点不能进入链路（创建链时后端同样拒绝）。 */
+export function isUsableExternalServer(s: Server): boolean {
+  if (!isExternalServer(s)) return false
+  const exit = s.external_exit
+  return Boolean(exit && exit.address.trim() && exit.port > 0)
+}
+
 // ---------- 端口输入 ----------
 
 /** 归一化端口输入：'0'/空白 → ''（自动分配）。 */
@@ -258,6 +266,7 @@ export type CanvasIssueCode =
   | 'no_chain'
   | 'too_many_paths'
   | 'external_not_last'
+  | 'external_missing_config'
   | 'inbound'
   | 'port_range'
   | 'port_nat_span'
@@ -505,6 +514,20 @@ export function analyzeCanvasGraph(
           ' 只能作为链路的最后一跳（出口）',
       })
     }
+  }
+  // 外部节点未补全地址/端口（服务器表单没有必填项）：链路无法落地，硬错误。
+  for (const node of nodes) {
+    if (!isExternal(node.id)) continue
+    const server = serverById.get(node.serverId)
+    if (!server || isUsableExternalServer(server)) continue
+    errors.push({
+      code: 'external_missing_config',
+      nodeId: node.id,
+      message:
+        '未托管服务器 ' +
+        (server.alias || '#' + node.serverId) +
+        ' 缺少地址或端口，请先在服务器页补全协议参数',
+    })
   }
 
   // 可达性（外部节点只作为终点，不继续向下游遍历）。

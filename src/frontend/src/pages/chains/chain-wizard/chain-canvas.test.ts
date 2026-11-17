@@ -271,6 +271,22 @@ describe('validateTopology', () => {
     // 只报 external_not_last，不再叠加「无入站能力」噪音。
     expect(result.issues.some((issue) => issue.code === 'inbound')).toBe(false)
   })
+
+  it('外部节点未补全地址/端口：external_missing_config（服务器表单没有必填项）', () => {
+    const result = validateTopology(
+      [node('a', 1), node('e', 2)],
+      chainOf('a', 'e'),
+      serverMap(
+        directServer({ id: 1 }),
+        externalServer(2, { external_exit: { protocol: 'http', address: '', port: 0 } }),
+      ),
+    )
+    expect(
+      result.issues.some(
+        (issue) => issue.code === 'external_missing_config' && issue.nodeId === 'e',
+      ),
+    ).toBe(true)
+  })
 })
 
 describe('toFormTopology', () => {

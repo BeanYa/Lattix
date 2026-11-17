@@ -276,6 +276,8 @@ export interface Server {
   custom_settings: ServerSettings | null
   effective_xray_version: string | null
   metrics: ServerMetrics | null
+  panel_latency_ms?: number | null // 面板到外部节点的 TCP 延迟（毫秒；空 = 未探测/超时）
+  panel_probed_at?: string | null // 最近一次面板探测时间
   billing: BillingProfile
   traffic_plan: TrafficPlan
   ban_watch?: ServerBanWatch | null // Ban 告警观察（§告警分类），null/缺省 = 从未进入观察

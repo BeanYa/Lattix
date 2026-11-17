@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import type { CatalogProbeRow, Server } from '@/lib/types'
 
-import { CARD_W, CARD_H, isExternalServer } from './chain-canvas'
+import { CARD_W, CARD_H, isExternalServer, isUsableExternalServer } from './chain-canvas'
 import { ChainNodeDragPreview } from './ChainNodeCard'
 
 import { ServerProbeMini } from './ServerProbeMini'
@@ -63,11 +63,13 @@ export function CanvasServerPanel({
       <ul className="cw-server-list">
         {filtered.map((server) => {
           const count = usedCount(server.id)
+          // 外部节点未补全地址/端口（服务器表单没有必填项）：不能加入画布。
+          const unusable = isExternalServer(server) && !isUsableExternalServer(server)
           return (
             <li
               key={server.id}
-              className={cn('cw-server-item', !canAddMore && 'is-disabled')}
-              draggable={canAddMore}
+              className={cn('cw-server-item', (!canAddMore || unusable) && 'is-disabled')}
+              draggable={canAddMore && !unusable}
               onDragEnd={() => setDraggedServer(null)}
               onDragStart={(event) => {
                 event.dataTransfer.setData('text/x-lattix-server', String(server.id))
@@ -86,9 +88,13 @@ export function CanvasServerPanel({
                 {isExternalServer(server) ? (
                   <em
                     className="cw-server-item-exitonly"
-                    title="未托管外部直链节点：只能作链路最后一跳（出口）"
+                    title={
+                      unusable
+                        ? '未托管外部直链节点未配置地址/端口：请先在服务器页补全协议参数'
+                        : '未托管外部直链节点：只能作链路最后一跳（出口）'
+                    }
                   >
-                    仅可作最后一跳
+                    {unusable ? '未配置参数' : '仅可作最后一跳'}
                   </em>
                 ) : null}
                 {count > 0 ? <span className="cw-server-item-count">×{count}</span> : null}
@@ -96,7 +102,8 @@ export function CanvasServerPanel({
                   type="button"
                   className="cw-server-item-add"
                   aria-label={`添加 ${server.alias} 到画布`}
-                  disabled={!canAddMore}
+                  disabled={!canAddMore || unusable}
+                  title={unusable ? '请先在服务器页补全该外部节点的地址与端口' : undefined}
                   onClick={() => onAdd(server)}
                 >
                   <PlusIcon />

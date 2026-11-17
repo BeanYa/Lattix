@@ -67,6 +67,7 @@ import { formatPortRange } from '@/lib/ports'
 import { providerWebsiteUrl } from '@/lib/provider-website'
 import { isServerOnline, serverConnectionLabel, supportsAgentActions } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
+import { EXTERNAL_PROTOCOL_LABELS } from '@/pages/servers/external-exit-form'
 import { externalExitTarget, externalTransportSummary } from '@/pages/servers/server-form-utils'
 import type {
   CatalogProbeRound,
@@ -1403,6 +1404,81 @@ function DetailDialog({
   )
 }
 
+// ExternalServerCard 是未托管外部直链节点的简易卡片：没有 Agent，不做三网测速与
+// 性能监控，只展示协议/目标与「面板 → 节点」的 TCP 延迟（服务器页外部直链板使用）。
+function ExternalServerCard({
+  server,
+  onEdit,
+  onDelete,
+}: {
+  server: Server
+  onEdit: (server: Server) => void
+  onDelete: (server: Server) => void
+}) {
+  const exit = server.external_exit
+  const latency = server.panel_latency_ms
+  const probed = Boolean(server.panel_probed_at)
+  return (
+    <article className="sv-ext-card" aria-label={'外部直链 ' + server.alias}>
+      <header className="sv-ext-head">
+        <span className="sv-flag is-external">外部直链</span>
+        {server.country_code ? <CountryFlag code={server.country_code} /> : null}
+        <strong className="sv-ext-title">{server.alias}</strong>
+        <span className="sv-ext-actions">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={'编辑 ' + server.alias}
+            onClick={() => onEdit(server)}
+          >
+            <PencilIcon />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={'删除 ' + server.alias}
+            onClick={() => onDelete(server)}
+          >
+            <Trash2Icon />
+          </Button>
+        </span>
+      </header>
+      <div className="sv-ext-body">
+        <span className="sv-ext-proto">
+          {exit ? (EXTERNAL_PROTOCOL_LABELS[exit.protocol] ?? exit.protocol) : '未配置'}
+        </span>
+        <span className="sv-mono sv-ext-target">
+          {exit && exit.address ? externalExitTarget(exit) : '未填写地址'}
+        </span>
+        <span className="sv-ext-transport">{exit ? externalTransportSummary(exit) : '—'}</span>
+      </div>
+      <footer className="sv-ext-foot">
+        <span
+          className={cn(
+            'sv-ext-latency',
+            latency != null ? 'is-ok' : probed ? 'is-fail' : 'is-idle',
+          )}
+          title="面板到节点的 TCP 拨号延迟（每 2 分钟探测）"
+        >
+          <GaugeIcon />
+          面板 → 节点
+          <strong>{latency != null ? latency + ' ms' : probed ? '超时' : '未探测'}</strong>
+        </span>
+        <span className="sv-ext-note">未托管 · 仅作链路出口</span>
+      </footer>
+      {server.tags.length > 0 ? (
+        <div className="sv-ext-tags">
+          {server.tags.map((tag) => (
+            <span key={tag} className="sv-flag is-tag">
+              {tag}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </article>
+  )
+}
+
 export function ServerMonitorGrid(props: ServerMonitorProps) {
   const searchString = useSearch()
   const urlSelId = useMemo(() => {
@@ -1442,21 +1518,25 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
     ? `${props.probes.province}${props.probes.city ? ` · ${props.probes.city}` : ''}`
     : null
 
-  const onlineCount = props.servers.filter((server) => isServerOnline(server)).length
-  // 外部直链节点没有 Agent，不计入「离线/异常」；其连接态恒为 external。
-  const externalCount = props.servers.filter((server) => server.kind === 'external').length
-  const offlineCount = props.servers.filter(
-    (server) => !isServerOnline(server) && server.kind !== 'external',
-  ).length
-  const driftCount = props.servers.filter((server) => server.config_drift).length
+  // 未托管外部直链节点单独成板：没有 Agent，不做三网测速/性能监控，仅面板测速。
+  const externalServers = useMemo(
+    () => props.servers.filter((server) => server.kind === 'external'),
+    [props.servers],
+  )
+  const managedServers = useMemo(
+    () => props.servers.filter((server) => server.kind !== 'external'),
+    [props.servers],
+  )
+  const onlineCount = managedServers.filter((server) => isServerOnline(server)).length
+  const offlineCount = managedServers.filter((server) => !isServerOnline(server)).length
+  const driftCount = managedServers.filter((server) => server.config_drift).length
 
   const filteredServers = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return props.servers.filter((server) => {
+    return managedServers.filter((server) => {
       const online = isServerOnline(server)
-      const external = server.kind === 'external'
       if (filter === 'online' && !online) return false
-      if (filter === 'offline' && (online || external)) return false
+      if (filter === 'offline' && online) return false
       if (filter === 'drift' && !server.config_drift) return false
       if (q) {
         const hay = [
@@ -1475,13 +1555,13 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
       }
       return true
     })
-  }, [filter, props.servers, query])
+  }, [filter, managedServers, query])
 
-  // 默认选中第一台，让读数表下方始终有可读的运行时模块；点击任意行就地切换。
+  // 默认选中第一台托管服务器，让读数表下方始终有可读的运行时模块；点击任意行就地切换。
   const selected =
-    props.servers.find((server) => server.id === selectedID) ??
+    managedServers.find((server) => server.id === selectedID) ??
     filteredServers[0] ??
-    props.servers[0] ??
+    managedServers[0] ??
     null
   const detailServer = props.servers.find((server) => server.id === detailServerID) ?? null
 
@@ -1527,13 +1607,35 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
           流量统计加载失败：{trafficStatsError}
         </p>
       ) : null}
+      {externalServers.length > 0 ? (
+        <section className="sv-board sv-ext-board" aria-label="外部直链">
+          <header className="sv-board-head">
+            <span className="sv-tab">EXTERNAL</span>
+            <span className="sv-board-title">外部直链</span>
+            <span className="sv-board-meta">{externalServers.length} 个 · 未托管 · 仅面板测速</span>
+          </header>
+          <p className="sv-board-hint">
+            外部直链没有 Agent：不做三网测速与性能监控，仅展示面板到节点的 TCP 延迟；
+            节点只能作为链路的最后一跳出口。
+          </p>
+          <div className="sv-ext-grid">
+            {externalServers.map((server) => (
+              <ExternalServerCard
+                key={server.id}
+                server={server}
+                onEdit={props.onEdit}
+                onDelete={props.onDelete}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
       <section className="sv-board">
         <header className="sv-board-head">
           <span className="sv-tab">FLEET</span>
           <span className="sv-board-title">服务器读数</span>
           <span className="sv-board-meta">
-            {onlineCount} 在线 / {props.servers.length} 台
-            {externalCount > 0 ? ` · ${externalCount} 外部直链` : ''}
+            {onlineCount} 在线 / {managedServers.length} 台
           </span>
         </header>
         <div className="sv-board-toolbar">
@@ -1551,7 +1653,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
           <div className="cg-filter-pills" role="group" aria-label="服务器状态筛选">
             {(
               [
-                { id: 'all', label: '全部', count: props.servers.length },
+                { id: 'all', label: '全部', count: managedServers.length },
                 { id: 'online', label: '在线', count: onlineCount },
                 { id: 'offline', label: '离线/异常', count: offlineCount },
                 { id: 'drift', label: '配置漂移', count: driftCount },
@@ -1570,7 +1672,13 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
             ))}
           </div>
         </div>
-        {filteredServers.length === 0 ? (
+        {managedServers.length === 0 ? (
+          <EmptyState
+            className="sv-board-state"
+            icon={<ServerCogIcon />}
+            description="暂无面板托管服务器；外部直链节点在上方卡片中管理"
+          />
+        ) : filteredServers.length === 0 ? (
           <EmptyState
             className="sv-board-state"
             icon={<ServerCogIcon />}

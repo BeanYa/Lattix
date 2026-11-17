@@ -212,8 +212,8 @@ func TestParseExternalLinkHandler(t *testing.T) {
 	if preview.Name != "VLESS-Node" || preview.Transport != "tcp · reality" {
 		t.Fatalf("preview name/transport: %+v", preview)
 	}
-	if preview.Exit.UUID == "11111111-2222-3333-4444-555555555555" || !strings.Contains(preview.Exit.UUID, "****") {
-		t.Fatalf("预览凭据应打码: %q", preview.Exit.UUID)
+	if preview.Exit.UUID != "11111111-2222-3333-4444-555555555555" {
+		t.Fatalf("解析结果应回填真实凭据（服务器表单自动填写）: %q", preview.Exit.UUID)
 	}
 	code, env = postJSON(t, serverAPI.handleParseExternalLink, "/api/server/parse-link", map[string]string{
 		"link": "hysteria2://pass@example.com:443#hy2",

@@ -1,16 +1,20 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ParseExternalLinkResponse } from '@/lib/types'
+import type { ExternalExit, ParseExternalLinkResponse } from '@/lib/types'
 
+import {
+  defaultExternalExitForm,
+  externalExitFormFromExit,
+  externalExitFormPayload,
+  externalExitFormError,
+} from './external-exit-form'
 import {
   aliasAfterParse,
   applyExternalLinkError,
   applyExternalLinkPreview,
   buildServerCreatePayload,
   editExternalLink,
-  externalExitPreview,
   externalExitTarget,
-  externalLinkForSubmit,
   externalTransportSummary,
   initialExternalLink,
   initialServerCreateForm,
@@ -28,13 +32,26 @@ function preview(overrides: Partial<ParseExternalLinkResponse> = {}): ParseExter
     address: 'example.com',
     port: 443,
     transport: 'tcp · reality',
-    exit: { protocol: 'vless', address: 'example.com', port: 443, uuid: 'ab****cd' },
+    exit: {
+      protocol: 'vless',
+      address: 'example.com',
+      port: 443,
+      uuid: '11111111-2222-3333-4444-555555555555',
+      network: 'tcp',
+      security: 'reality',
+      public_key: 'PBK',
+      short_id: 'abcd',
+    },
     ...overrides,
   }
 }
 
 function parsedLink(link = LINK): ExternalLinkState {
-  return { ...initialExternalLink(), link, parsedLink: link.trim(), preview: preview() }
+  return {
+    ...initialExternalLink(),
+    link,
+    exit: externalExitFormFromExit(preview().exit),
+  }
 }
 
 function createState(overrides: Partial<ServerCreateFormState> = {}): ServerCreateFormState {
@@ -57,7 +74,7 @@ describe('switchServerType', () => {
     expect(next.address).toBe('')
     expect(next.portRows).toEqual([''])
     expect(next.external.link).toBe('')
-    expect(next.external.preview).toBeNull()
+    expect(next.external.exit).toEqual(defaultExternalExitForm())
     // 公共资料保留，切回托管时无需重填。
     expect(next.alias).toBe('hk-01')
     expect(next.countryCode).toBe('HK')
@@ -66,7 +83,7 @@ describe('switchServerType', () => {
     expect(next.nonDirect).toBe(true)
   })
 
-  it('drops the external link parse state when switching back to a managed type', () => {
+  it('drops the external state when switching back to a managed type', () => {
     const external = switchServerType(createState(), 'external')
     const withLink = { ...external, external: parsedLink() }
     const next = switchServerType(withLink, 'direct')
@@ -83,7 +100,7 @@ describe('switchServerType', () => {
 })
 
 describe('buildServerCreatePayload', () => {
-  it('submits kind/external_link for a parsed external link and no managed fields', () => {
+  it('submits the protocol form for an external node and no managed fields', () => {
     const state = createState({
       serverType: 'external',
       address: 'ignored.example.com',
@@ -95,6 +112,16 @@ describe('buildServerCreatePayload', () => {
     if (!('body' in result)) return
     expect(result.body.kind).toBe('external')
     expect(result.body.external_link).toBe(LINK)
+    expect(result.body.external_exit).toMatchObject({
+      protocol: 'vless',
+      address: 'example.com',
+      port: 443,
+      uuid: '11111111-2222-3333-4444-555555555555',
+      network: 'tcp',
+      security: 'reality',
+      public_key: 'PBK',
+      short_id: 'abcd',
+    })
     expect(result.body.alias).toBe('hk-01')
     expect(result.body.country_code).toBe('HK')
     expect(result.body.machine_type).toBeUndefined()
@@ -102,38 +129,52 @@ describe('buildServerCreatePayload', () => {
     expect(result.body.allowed_ports).toBeUndefined()
   })
 
-  it('trims the link before submitting', () => {
+  it('submits a manual protocol form with no link and no required fields', () => {
     const state = createState({
       serverType: 'external',
-      external: parsedLink(`  ${LINK}  `),
+      alias: '',
+      countryCode: '',
+      external: {
+        ...initialExternalLink(),
+        exit: {
+          ...defaultExternalExitForm(),
+          protocol: 'socks',
+          address: '198.51.100.7',
+          port: '1080',
+          username: 'alice',
+          password: 'secret',
+        },
+      },
     })
     const result = buildServerCreatePayload(state)
     if (!('body' in result)) throw new Error('expected body')
-    expect(result.body.external_link).toBe(LINK)
+    expect(result.body.alias).toBe('')
+    expect(result.body.country_code).toBe('')
+    expect(result.body.external_link).toBeUndefined()
+    expect(result.body.external_exit).toMatchObject({
+      protocol: 'socks',
+      address: '198.51.100.7',
+      port: 1080,
+      username: 'alice',
+      password: 'secret',
+    })
   })
 
-  it('rejects an external link that has not been parsed', () => {
-    const result = buildServerCreatePayload(
-      createState({ serverType: 'external', external: { ...initialExternalLink(), link: LINK } }),
-    )
-    expect(result).toEqual({ error: '请先解析链接（链接已修改或尚未解析）' })
+  it('allows an empty external config (placeholder row)', () => {
+    const result = buildServerCreatePayload(createState({ serverType: 'external' }))
+    if (!('body' in result)) throw new Error('expected body')
+    expect(result.body.external_exit).toMatchObject({ protocol: 'http', address: '', port: 0 })
   })
 
-  it('rejects an external link edited after parsing', () => {
+  it('rejects an out-of-range port', () => {
     const state = createState({
       serverType: 'external',
-      external: { ...parsedLink(), link: `${LINK}&edited=1` },
+      external: {
+        ...initialExternalLink(),
+        exit: { ...defaultExternalExitForm(), port: '70000' },
+      },
     })
-    expect(buildServerCreatePayload(state)).toEqual({
-      error: '请先解析链接（链接已修改或尚未解析）',
-    })
-  })
-
-  it('requires the external link to be present', () => {
-    const result = buildServerCreatePayload(
-      createState({ serverType: 'external', external: initialExternalLink() }),
-    )
-    expect(result).toEqual({ error: '分享链接不能为空' })
+    expect(buildServerCreatePayload(state)).toEqual({ error: '端口须为 1-65535' })
   })
 
   it('keeps the managed payload free of external fields', () => {
@@ -143,6 +184,7 @@ describe('buildServerCreatePayload', () => {
     expect(result.body.address).toBe('1.2.3.4')
     expect(result.body.kind).toBeUndefined()
     expect(result.body.external_link).toBeUndefined()
+    expect(result.body.external_exit).toBeUndefined()
   })
 
   it('requires a public address for NAT servers', () => {
@@ -152,63 +194,87 @@ describe('buildServerCreatePayload', () => {
   })
 })
 
-describe('externalLinkForSubmit', () => {
-  it('requires a link and a matching successful parse for creation', () => {
-    expect(externalLinkForSubmit({ link: '', parsedLink: '' })).toEqual({
-      error: '分享链接不能为空',
-    })
-    expect(externalLinkForSubmit({ link: LINK, parsedLink: '' })).toEqual({
-      error: '请先解析链接（链接已修改或尚未解析）',
-    })
-    expect(externalLinkForSubmit({ link: ` ${LINK} `, parsedLink: LINK })).toEqual({
-      link: LINK,
+describe('external protocol form', () => {
+  it('maps an ExternalExit to the form and back', () => {
+    const exit: ExternalExit = {
+      protocol: 'vmess',
+      address: 'gw.example.com',
+      port: 8443,
+      uuid: 'uuid-1',
+      cipher: 'auto',
+      network: 'ws',
+      security: 'tls',
+      sni: 'cdn.example.com',
+      path: '/ws',
+    }
+    const form = externalExitFormFromExit(exit)
+    expect(form.port).toBe('8443')
+    expect(form.network).toBe('ws')
+    const payload = externalExitFormPayload(form)
+    expect(payload).toMatchObject({
+      protocol: 'vmess',
+      address: 'gw.example.com',
+      port: 8443,
+      uuid: 'uuid-1',
+      network: 'ws',
+      security: 'tls',
+      sni: 'cdn.example.com',
+      path: '/ws',
     })
   })
 
-  it('accepts an unchanged saved link without re-parsing when editing', () => {
-    expect(externalLinkForSubmit({ link: ` ${LINK} `, parsedLink: '', savedLink: LINK })).toEqual({
-      link: LINK,
+  it('coerces reality away from ws/httpupgrade and keeps it for tcp', () => {
+    const ws = externalExitFormPayload({
+      ...defaultExternalExitForm(),
+      protocol: 'vless',
+      address: 'a.example.com',
+      port: '443',
+      network: 'ws',
+      security: 'reality',
     })
+    expect(ws.security).toBe('tls')
+    const tcp = externalExitFormPayload({
+      ...defaultExternalExitForm(),
+      protocol: 'vless',
+      address: 'a.example.com',
+      port: '443',
+      network: 'tcp',
+      security: 'reality',
+    })
+    expect(tcp.security).toBe('reality')
   })
 
-  it('requires a new parse when an edited link differs from the saved one', () => {
-    expect(
-      externalLinkForSubmit({ link: `${LINK}`, parsedLink: '', savedLink: 'trojan://x@y:443' }),
-    ).toEqual({ error: '请先解析链接（链接已修改或尚未解析）' })
+  it('validates only the filled port and address', () => {
+    expect(externalExitFormError(defaultExternalExitForm())).toBeNull()
+    expect(externalExitFormError({ ...defaultExternalExitForm(), port: 'abc' })).toBe(
+      '端口须为 1-65535',
+    )
+    expect(externalExitFormError({ ...defaultExternalExitForm(), address: 'a b' })).toBe(
+      '地址不能包含空格',
+    )
   })
 })
 
 describe('editExternalLink', () => {
-  it('keeps the preview when only surrounding whitespace changes', () => {
+  it('keeps the filled protocol parameters when the link changes', () => {
     const state = { ...parsedLink(), parsing: true, parseError: '旧错误' }
-    const next = editExternalLink(state, `  ${LINK}\n`)
-    expect(next.parsedLink).toBe(LINK)
-    expect(next.preview?.name).toBe('东京 01')
+    const next = editExternalLink(state, `  ${LINK}x`)
+    expect(next.link).toBe(`  ${LINK}x`)
     expect(next.parsing).toBe(false)
     expect(next.parseError).toBe('')
-  })
-
-  it('clears the parse state when the link content changes', () => {
-    const next = editExternalLink(parsedLink(), `${LINK}x`)
-    expect(next.parsedLink).toBe('')
-    expect(next.preview).toBeNull()
-    expect(next.link).toBe(`${LINK}x`)
-  })
-
-  it('keeps an unparsed state unparsed', () => {
-    const next = editExternalLink(initialExternalLink(), LINK)
-    expect(next.link).toBe(LINK)
-    expect(next.preview).toBeNull()
+    expect(next.exit.protocol).toBe('vless')
+    expect(next.exit.address).toBe('example.com')
   })
 })
 
 describe('external link state transitions', () => {
-  it('applies a parse preview only while the link is unchanged', () => {
+  it('fills the protocol form on parse and discards stale results', () => {
     const state = { ...initialExternalLink(), link: LINK, parsing: true }
     const applied = applyExternalLinkPreview(state, LINK, preview())
-    expect(applied?.parsedLink).toBe(LINK)
-    expect(applied?.preview?.name).toBe('东京 01')
     expect(applied?.parsing).toBe(false)
+    expect(applied?.exit.protocol).toBe('vless')
+    expect(applied?.exit.address).toBe('example.com')
+    expect(applied?.exit.uuid).toBe('11111111-2222-3333-4444-555555555555')
     expect(applyExternalLinkPreview({ ...state, link: `${LINK}x` }, LINK, preview())).toBeNull()
   })
 
@@ -216,7 +282,6 @@ describe('external link state transitions', () => {
     const state = { ...initialExternalLink(), link: LINK, parsing: true }
     const failed = applyExternalLinkError(state, LINK, '无法解析链接')
     expect(failed?.parseError).toBe('无法解析链接')
-    expect(failed?.parsedLink).toBe('')
     expect(failed?.parsing).toBe(false)
     expect(applyExternalLinkError({ ...state, link: `${LINK}x` }, LINK, '无法解析链接')).toBeNull()
   })
@@ -240,23 +305,5 @@ describe('external display helpers', () => {
       'ws · tls',
     )
     expect(externalTransportSummary({ protocol: 'socks' })).toBe('TCP')
-  })
-
-  it('builds a preview from a saved external exit', () => {
-    const result = externalExitPreview(
-      {
-        protocol: 'vless',
-        address: 'example.com',
-        port: 443,
-        network: 'tcp',
-        security: 'reality',
-        uuid: 'ab****cd',
-      },
-      '东京 01',
-    )
-    expect(result.name).toBe('东京 01')
-    expect(result.protocol).toBe('vless')
-    expect(result.transport).toBe('tcp · reality')
-    expect(result.exit.uuid).toBe('ab****cd')
   })
 })

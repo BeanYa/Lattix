@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"lattix/backend/internal/store"
 	"lattix/shared"
@@ -79,10 +81,16 @@ func TestCreateExternalServerEndpoint(t *testing.T) {
 	}
 }
 
-// TestCreateExternalServerRejectsBadLink 验证不可解析或不支持的链接被拒绝。
+// TestCreateExternalServerRejectsBadLink 验证不可解析或不支持的链接被拒绝；
+// 空链接不报错（服务器表单没有必填项，允许保存占位行）。
 func TestCreateExternalServerRejectsBadLink(t *testing.T) {
 	_, serverAPI, _, _ := externalChainFixture(t)
-	for _, link := range []string{"", "not-a-link", "hysteria2://pass@example.com:443#hy2"} {
+	if _, env := postJSON(t, serverAPI.handleCreateServer, "/api/server/create", map[string]any{
+		"alias": "bad", "kind": "external", "external_link": "", "country_code": "US", "location": "LA",
+	}); env.Code != shared.CodeOK {
+		t.Fatalf("空链接应允许保存占位行: %s %s", env.Code, env.Message)
+	}
+	for _, link := range []string{"not-a-link", "hysteria2://pass@example.com:443#hy2"} {
 		_, env := postJSON(t, serverAPI.handleCreateServer, "/api/server/create", map[string]any{
 			"alias": "bad", "kind": "external", "external_link": link, "country_code": "US", "location": "LA",
 		})
@@ -144,3 +152,162 @@ func TestUpdateExternalServerLinkWhileReferenced(t *testing.T) {
 		t.Fatalf("alias = %q", row.Alias)
 	}
 }
+
+// TestCreateExternalServerManualExit 验证未托管节点可手动填写协议参数（无链接、无别名、
+// 无国家/地区）：别名按 host:port 派生，规格落库，链路可直接使用。
+func TestCreateExternalServerManualExit(t *testing.T) {
+	ctx := context.Background()
+	st, serverAPI, aID, _ := externalChainFixture(t)
+	code, env := postJSON(t, serverAPI.handleCreateServer, "/api/server/create", map[string]any{
+		"kind": "external",
+		"external_exit": map[string]any{
+			"protocol": "vless", "address": "203.0.113.9", "port": 8443, "uuid": "uuid-1",
+			"network": "ws", "security": "tls", "sni": "cdn.example.com", "path": "/ws",
+		},
+	})
+	if code != http.StatusOK || env.Code != shared.CodeOK {
+		t.Fatalf("create manual external = %d %s %s", code, env.Code, env.Message)
+	}
+	var created struct {
+		Server serverDTO `json:"server"`
+	}
+	if err := json.Unmarshal(env.Data, &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Server.Alias != "203.0.113.9:8443" || created.Server.CountryCode != "" {
+		t.Fatalf("alias/country = %q / %q", created.Server.Alias, created.Server.CountryCode)
+	}
+	if created.Server.ExternalExit == nil || created.Server.ExternalExit.Network != "ws" ||
+		created.Server.ExternalExit.UUID != "uuid-1" {
+		t.Fatalf("manual exit dto: %+v", created.Server.ExternalExit)
+	}
+	row, err := st.ServerByID(ctx, created.Server.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exit := row.ParseExternalExit()
+	if exit == nil || exit.Protocol != shared.ProtocolVLESS || exit.Address != "203.0.113.9" ||
+		exit.Port != 8443 || exit.Network != "ws" || exit.Security != "tls" {
+		t.Fatalf("stored manual exit: %+v", exit)
+	}
+	if _, env := postCreateChain(t, serverAPI, createChainRequest{
+		Name: "manual-exit", Hops: []chainHopRef{{ServerID: aID}, {ServerID: created.Server.ID}},
+		TrafficMultiplier: "1.000",
+	}); env.Code != shared.CodeOK {
+		t.Fatalf("手动配置的外部出口应可建链: %s %s", env.Code, env.Message)
+	}
+}
+
+// TestCreateExternalServerWithoutConfig 验证服务器表单没有必填项：只提交 kind 也能保存
+//（链接/协议/地址/别名/国家/地区均可空），链路创建时再要求补全完整规格。
+func TestCreateExternalServerWithoutConfig(t *testing.T) {
+	_, serverAPI, aID, _ := externalChainFixture(t)
+	code, env := postJSON(t, serverAPI.handleCreateServer, "/api/server/create", map[string]any{
+		"kind": "external",
+	})
+	if code != http.StatusOK || env.Code != shared.CodeOK {
+		t.Fatalf("create empty external = %d %s %s", code, env.Code, env.Message)
+	}
+	var created struct {
+		Server serverDTO `json:"server"`
+	}
+	if err := json.Unmarshal(env.Data, &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Server.Alias != "外部直链" || created.Server.ExternalExit == nil ||
+		created.Server.ExternalExit.Protocol != shared.ProtocolHTTP {
+		t.Fatalf("empty external dto: %+v %+v", created.Server, created.Server.ExternalExit)
+	}
+	_, env = postCreateChain(t, serverAPI, createChainRequest{
+		Name: "empty-exit", Hops: []chainHopRef{{ServerID: aID}, {ServerID: created.Server.ID}},
+		TrafficMultiplier: "1.000",
+	})
+	if env.Code != shared.CodeInvalidArgument {
+		t.Fatalf("不完整出口应拒绝建链: %s %s", env.Code, env.Message)
+	}
+}
+
+// TestUpdateExternalServerManualExit 验证手动修改协议参数：未引用时写入新规格；
+// 被链路引用时拒绝（CONFLICT），仅改别名不受影响。
+func TestUpdateExternalServerManualExit(t *testing.T) {
+	ctx := context.Background()
+	st, serverAPI, aID, eID := externalChainFixture(t)
+	update := func(body map[string]any) rpcEnvelope {
+		body["server_id"] = eID
+		_, env := postJSON(t, serverAPI.handleUpdateServer, "/api/server/update", body)
+		return env
+	}
+	env := update(map[string]any{"external_exit": map[string]any{
+		"protocol": "http", "address": "198.51.100.20", "port": 8080, "username": "u", "password": "p",
+	}})
+	if env.Code != shared.CodeOK {
+		t.Fatalf("update manual exit = %s %s", env.Code, env.Message)
+	}
+	row, err := st.ServerByID(ctx, eID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exit := row.ParseExternalExit()
+	if exit == nil || exit.Protocol != shared.ProtocolHTTP || exit.Address != "198.51.100.20" ||
+		exit.Port != 8080 || exit.Username != "u" || exit.Password != "p" {
+		t.Fatalf("updated exit: %+v", exit)
+	}
+	// 直接造一条引用该外部节点的链（跳 0=既有入口、跳 1=外部节点）。
+	chainID, err := st.InsertChain(ctx, "ref-chain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.InsertChainHop(ctx, chainID, 0, aID, store.HopRoleEntry, 0, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.InsertChainHop(ctx, chainID, 1, eID, store.HopRoleExit, 0, 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	env = update(map[string]any{"external_exit": map[string]any{
+		"protocol": "http", "address": "198.51.100.21", "port": 8080,
+	}})
+	if env.Code != shared.CodeConflict {
+		t.Fatalf("被引用时应 CONFLICT: %s %s", env.Code, env.Message)
+	}
+	// 仅改别名不受影响。
+	env = update(map[string]any{"alias": "renamed"})
+	if env.Code != shared.CodeOK {
+		t.Fatalf("alias-only update = %s %s", env.Code, env.Message)
+	}
+}
+
+// TestExternalServerPanelProbeFields 验证面板侧探测结果落库并出现在列表 DTO。
+func TestExternalServerPanelProbeFields(t *testing.T) {
+	ctx := context.Background()
+	st, serverAPI, _, eID := externalChainFixture(t)
+	latency := 37
+	if err := st.UpdateServerPeerProbe(ctx, eID, &latency, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	row, err := st.ServerByID(ctx, eID)
+	if err != nil || row.PanelLatencyMS == nil || *row.PanelLatencyMS != 37 || row.PanelProbedAt == nil {
+		t.Fatalf("probe fields: %+v %v", row, err)
+	}
+	rec := httptest.NewRecorder()
+	serverAPI.handleListServers(rec, httptest.NewRequest(http.MethodGet, "/api/server/list", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list = %d", rec.Code)
+	}
+	var servers []serverDTO
+	if err := json.Unmarshal(decodeRPC(t, rec).Data, &servers); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range servers {
+		if item.ID == eID {
+			found = true
+			if item.PanelLatencyMS == nil || *item.PanelLatencyMS != 37 || item.PanelProbedAt == nil {
+				t.Fatalf("dto probe fields: %+v", item)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("external server missing from list")
+	}
+}
+

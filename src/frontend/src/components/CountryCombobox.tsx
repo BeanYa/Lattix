@@ -10,11 +10,14 @@ export function CountryCombobox({
   value,
   options,
   onValueChange,
+  required = true,
 }: {
   id: string
   value: string
   options: CountryOption[]
   onValueChange: (value: string) => void
+  /** 必填校验（原生 required）。外部直链节点没有必填项：创建时传 false。 */
+  required?: boolean
 }) {
   const selected = options.find((country) => country.code === value) ?? null
 
@@ -47,7 +50,7 @@ export function CountryCombobox({
         ) : null}
         <Combobox.Input
           id={id}
-          required
+          required={required}
           autoComplete="off"
           placeholder="输入国家、英文名或代码"
           className={cn(

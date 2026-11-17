@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS servers (
     kind         TEXT    NOT NULL DEFAULT 'managed', -- managed（被控服务器）| external（外部直链未托管节点）
     external_link TEXT  NOT NULL DEFAULT '', -- 外部直链原文（kind=external）
     external_config TEXT NOT NULL DEFAULT '', -- 解析后的外部出口规格 JSON（shared.ExternalExit，kind=external）
+    panel_latency_ms INTEGER, -- 面板到外部节点的 TCP 延迟（毫秒；NULL = 未探测/超时）
+    panel_probed_at DATETIME, -- 最近一次面板探测时间
     credential_epoch INTEGER NOT NULL DEFAULT 1,
     credential_committed INTEGER NOT NULL DEFAULT 0,
     credential_pending_token TEXT NOT NULL DEFAULT '',

@@ -141,8 +141,9 @@ PREVIEW="$(rpc_data POST /api/server/parse-link '{"link":"socks5://extuser:extpa
 [[ "$(py "d['protocol']" "$PREVIEW")" == "socks" && "$(py "d['port']" "$PREVIEW")" == "$SOCKS_EXT_PORT" ]] \
     && echo "OK: 解析器返回 socks5 规格（$(py "d['transport']" "$PREVIEW")）" \
     || { echo "FAIL: 解析预览: $PREVIEW"; exit 1; }
-[[ "$(py "d['exit']['password']" "$PREVIEW")" != "extpass" ]] \
-    && echo "OK: 预览中的凭据已打码" || { echo "FAIL: 凭据未打码"; exit 1; }
+# 解析结果用于服务器表单自动填写：凭据必须是真实值（管理员 API 同信任域）。
+[[ "$(py "d['exit']['password']" "$PREVIEW")" == "extpass" && "$(py "d['exit']['username']" "$PREVIEW")" == "extuser" ]] \
+    && echo "OK: 解析结果回填真实凭据（表单自动填写）" || { echo "FAIL: 解析凭据未回填"; exit 1; }
 
 echo ">> 服务器：A（托管直接入口）、B（托管中间跳）、E（未托管外部直链）"
 RA="$(rpc_data POST /api/server/create '{"country_code":"US","location":"Test","alias":"ext-entry-a","address":"127.0.0.1"}')"

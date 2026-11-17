@@ -2,7 +2,8 @@
 
 > 需求：服务器页新增一类**未托管服务器**（来自 `vless://` / `vmess://` / `socks://` /
 > `http://` 等外部直链的节点）。它们不能作为链路入口/中间跳，只能作为接入互联网的
-> 出口（最后一跳）。新增/编辑服务器处提供链接解析器。链路形态为
+> 出口（最后一跳）。新增/编辑服务器处提供协议表单（vless/vmess/trojan/ss/socks/http
+> 各自字段），分享链接仅用于「解析 → 自动填写」，服务器表单没有必填项。链路形态为
 > `托管入口 A → [托管中间跳 0-2] → 外部出口 E → Internet`，流量统计与「转发到
 > socks/vless」都发生在托管入口 A，用户订阅看到的仍是 A 的入口。链路数据建模与既有
 > 链路一致（charts/chains + chain_hops + chain_revisions）。
@@ -64,18 +65,22 @@ ALTER TABLE servers ADD COLUMN external_link TEXT NOT NULL DEFAULT '';      -- �
 ALTER TABLE servers ADD COLUMN external_config TEXT NOT NULL DEFAULT '';    -- 规范化外部出口规格 JSON
 ```
 
-- `external_config` 为 `shared.ExternalExit` 的 JSON；创建/更新时由解析器产出并校验，
-  链路创建/编辑时复制进修订快照（不可变），运行期不读 `servers.external_config`。
+- `external_config` 为 `shared.ExternalExit` 的 JSON；创建/更新时由协议表单（或解析器）产出，
+  仅做「可保存」校验（协议/端口/地址字符集），地址与凭据可留空占位；链路创建/编辑时
+  执行完整规格校验并复制进修订快照（不可变），运行期不读 `servers.external_config`。
 - 外部服务器的 `token` 仍写入一次性随机凭证（列约束），但永不用于拨入。
-- 修改外部链接：若解析结果与现值不同且被链路引用，则拒绝（409），提示先调整/删除
-  链路——避免已发布修订与服务器记录静默分叉。仅改别名/标签/地区不受影响。
+- 修改外部协议参数（表单或重新解析）：若规范化结果与现值不同且被链路引用，则拒绝
+  （409），提示先调整/删除链路——避免已发布修订与服务器记录静默分叉。仅改别名/
+  标签/地区不受影响。
 
 ## 4. 校验（面板）
 
 创建/编辑链路的逐跳校验新增：
 
 1. `i < len-1` 且 `server.kind == external` → 400「未托管服务器只能作为链路的最后一跳（出口）」。
-2. 最后一位为 external 时：必须 `len(hops) >= 2`；外部规格必须可解析且协议受支持。
+2. 最后一位为 external 时：必须 `len(hops) >= 2`；外部规格必须完整（协议/地址/端口/凭据，
+   `ExternalExit.Validate`），不完整时 400「外部直链出口配置不可用：…（请编辑服务器补全
+  协议参数）」——服务器表单没有必填项，补全入口在服务器编辑对话框。
 3. 外部出口链**强制**创建入口共享端点（VLESS）：入口服务器 A 与普通链路一样可配置完整
    协议细节（传输/安全层/证书/flow/encryption/Reality 子参数），缺省 Reality 自动生成；
    入口协议由详情步骤的主协议表单承载（出口协议表单隐藏），编辑时从 entry_config 回填。
@@ -97,19 +102,24 @@ ALTER TABLE servers ADD COLUMN external_config TEXT NOT NULL DEFAULT '';    -- �
 
 - `POST /api/server/parse-link` `{link}` → `{name, protocol, address, port, exit, summary}`；
   解析失败 400 并带原因。
-- `POST /api/server/create` 新增 `kind`（默认 managed）与 `external_link`；external 时
-  忽略 machine_type/allowed_ports 并强制 `nat` + 空段。
-- `POST /api/server/update` 支持 `external_link`（规则见 §3）。
-- 服务器 DTO 新增 `kind`、`external_link`、`external_exit`（脱敏后的规格预览）。
+- `POST /api/server/create` 新增 `kind`（默认 managed）、`external_exit`（协议表单）与可选
+  `external_link`；external 时忽略 machine_type/allowed_ports 并强制 `nat` + 空段；别名/国家/
+  地区可空（别名按 host:port 派生）。
+- `POST /api/server/update` 支持 `external_exit`（优先）与 `external_link`（规则见 §3）。
+- 服务器 DTO 新增 `kind`、`external_link`、`external_exit`（完整规格，管理员 API 同信任域，
+  编辑表单回填）与 `panel_latency_ms/panel_probed_at`（面板到节点的 TCP 延迟）。
 - 外部服务器上的 Agent 动作（install/rotate/repair/cleanup/rebuild/upgrade-xray/
   upgrade-agent/run-test/命令行/设置同步）一律 400「未托管服务器无 Agent」。
 
 ## 7. 前端
 
-- 服务器页：「添加服务器」类型选择新增「外部直链（未托管）」；选择后展示链接输入 +
-  「解析」按钮 + 解析预览（协议/地址/端口/传输/安全/凭据打码）。外部服务器卡片显示
-  「外部直链」徽标与外部连接态，隐藏安装命令/终端/Agent 操作。
-- 编辑服务器：外部服务器展示链接与解析器（被链路引用时链接只读并提示）。
+- 服务器页：「添加服务器」类型选择新增「外部直链（未托管）」；选择后展示可选分享链接
+  +「解析」按钮，以及按协议切换的完整协议表单（协议/地址/端口/UUID/密码/传输/安全层/
+  Reality/证书等）。服务器表单没有必填项（别名/国家/地区/地址/端口均可空，未补全的
+  节点由链路页与后端提示）。外部服务器不进入「服务器读数」主列表，单独成板展示在
+  上方：仅协议/目标/面板测得延迟，取消三网测试与性能监控。
+- 编辑服务器：外部服务器展示同一份协议表单（保存的是协议参数；被链路引用时修改
+  参数返回 409）。
 - 链路画布：外部服务器卡片可拖入，但只能是最后一跳；校验新增
   `external_not_last`（「未托管服务器只能作为最后一跳」）；外部节点不显示端口输入
   （端口来自链接，只读展示）。

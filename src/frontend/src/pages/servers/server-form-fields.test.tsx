@@ -3,24 +3,12 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ParseExternalLinkResponse } from '@/lib/types'
-
-import { ExternalLinkField } from './server-form-fields'
+import { ExternalExitFields } from './ExternalExitFields'
+import { defaultExternalExitForm } from './external-exit-form'
 
 const LINK = 'vless://uuid@example.com:443?security=reality#东京 01'
 
-function preview(): ParseExternalLinkResponse {
-  return {
-    name: '东京 01',
-    protocol: 'vless',
-    address: 'example.com',
-    port: 443,
-    transport: 'tcp · reality',
-    exit: { protocol: 'vless', address: 'example.com', port: 443, uuid: 'ab****cd' },
-  }
-}
-
-describe('ExternalLinkField', () => {
+describe('ExternalExitFields', () => {
   let container: HTMLDivElement
   let root: Root | undefined
 
@@ -35,17 +23,18 @@ describe('ExternalLinkField', () => {
     container.remove()
   })
 
-  function renderField(overrides: Partial<Parameters<typeof ExternalLinkField>[0]> = {}) {
+  function renderField(overrides: Partial<Parameters<typeof ExternalExitFields>[0]> = {}) {
     act(() => {
       root = createRoot(container)
       root.render(
-        <ExternalLinkField
+        <ExternalExitFields
           link={LINK}
-          preview={preview()}
-          parseError=""
           parsing={false}
-          onChange={() => {}}
+          parseError=""
+          exit={{ ...defaultExternalExitForm(), address: 'example.com', port: '443' }}
+          onLinkChange={() => {}}
           onParse={() => {}}
+          onExitChange={() => {}}
           {...overrides}
         />,
       )
@@ -58,15 +47,32 @@ describe('ExternalLinkField', () => {
     )
   }
 
-  it('renders the link and the parsed preview summary', () => {
+  it('renders the optional share link and the editable protocol form', () => {
     renderField()
-    expect(container.querySelector<HTMLTextAreaElement>('#externalLink')?.value).toBe(LINK)
-    const previewBlock = container.querySelector('[aria-label="解析预览"]')
-    expect(previewBlock?.textContent).toContain('东京 01')
-    expect(previewBlock?.textContent).toContain('vless')
-    expect(previewBlock?.textContent).toContain('example.com')
-    expect(previewBlock?.textContent).toContain('443')
-    expect(previewBlock?.textContent).toContain('tcp · reality')
+    expect(container.querySelector<HTMLTextAreaElement>('#external-link')?.value).toBe(LINK)
+    expect(container.textContent).toContain('分享链接（可选）')
+    expect(container.textContent).toContain('协议')
+    expect(container.querySelector<HTMLInputElement>('#external-address')?.value).toBe(
+      'example.com',
+    )
+    expect(container.querySelector<HTMLInputElement>('#external-port')?.value).toBe('443')
+    // 默认协议 http：展示 Basic 认证用户名/密码。
+    expect(container.querySelector('#external-username')).toBeTruthy()
+    expect(container.querySelector('#external-password')).toBeTruthy()
+  })
+
+  it('shows protocol-specific fields', () => {
+    renderField({
+      exit: { ...defaultExternalExitForm(), protocol: 'vless', security: 'reality' },
+    })
+    expect(container.querySelector('#external-uuid')).toBeTruthy()
+    expect(container.textContent).toContain('Reality 公钥（pbk）')
+    container.remove()
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    renderField({ exit: { ...defaultExternalExitForm(), protocol: 'shadowsocks' } })
+    expect(container.textContent).toContain('加密方式')
+    expect(container.querySelector('#external-ss-password')).toBeTruthy()
   })
 
   it('triggers parsing from the button', async () => {
@@ -77,7 +83,7 @@ describe('ExternalLinkField', () => {
   })
 
   it('disables parsing while empty or in flight', () => {
-    renderField({ link: '   ', preview: null })
+    renderField({ link: '   ' })
     expect(parseButton()?.disabled).toBe(true)
     container.remove()
     container = document.createElement('div')
@@ -87,9 +93,8 @@ describe('ExternalLinkField', () => {
     expect(parseButton()?.textContent).toContain('解析中')
   })
 
-  it('shows parse failures instead of a stale preview', () => {
-    renderField({ preview: null, parseError: '无法解析链接：需为分享链接' })
+  it('shows parse failures', () => {
+    renderField({ parseError: '无法解析链接：需为分享链接' })
     expect(container.textContent).toContain('无法解析链接：需为分享链接')
-    expect(container.querySelector('[aria-label="解析预览"]')).toBeNull()
   })
 })
