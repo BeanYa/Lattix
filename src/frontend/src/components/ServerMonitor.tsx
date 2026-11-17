@@ -6,6 +6,7 @@ import {
   ArrowDownUpIcon,
   ArrowLeftRightIcon,
   ArrowUpIcon,
+  BarChart3Icon,
   Building2Icon,
   CalendarCheckIcon,
   CableIcon,
@@ -1410,10 +1411,12 @@ function ExternalServerCard({
   server,
   onEdit,
   onDelete,
+  onOpenTrafficStats,
 }: {
   server: Server
   onEdit: (server: Server) => void
   onDelete: (server: Server) => void
+  onOpenTrafficStats: (server: Server) => void
 }) {
   const exit = server.external_exit
   const latency = server.panel_latency_ms
@@ -1425,6 +1428,15 @@ function ExternalServerCard({
         {server.country_code ? <CountryFlag code={server.country_code} /> : null}
         <strong className="sv-ext-title">{server.alias}</strong>
         <span className="sv-ext-actions">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            title="流量统计（由链路入口归属）"
+            aria-label={'查看 ' + server.alias + ' 流量统计'}
+            onClick={() => onOpenTrafficStats(server)}
+          >
+            <BarChart3Icon />
+          </Button>
           <Button
             variant="ghost"
             size="icon-sm"
@@ -1625,6 +1637,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
                 server={server}
                 onEdit={props.onEdit}
                 onDelete={props.onDelete}
+                onOpenTrafficStats={openTrafficStats}
               />
             ))}
           </div>

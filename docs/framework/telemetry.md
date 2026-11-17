@@ -12,7 +12,9 @@ Agent 以 `telemetry` 消息周期上报（默认 60s，由面板 Agent 设置�
   增量为零；实例变化按新计数器起点处理。增量写入 `traffic`（节点与用户维度）以及链路/逐跳统计。
   Agent 启动时确保 config.json 含 stats/policy 配置（缺失则落盘重启）。
   socks/http 的 accounts 无 email，仅覆盖节点维度。出口 service inbound 是链路权威流量；入口和
-  中间 hop 分别用于对账和展示。离线补差的 Xray 重启丢失窗口、日桶归属及倍率边界见
+  中间 hop 分别用于对账和展示。外部直链出口没有 Agent，其服务器维度流量由入口
+  `access:*` 计数归属写入（`dim_type=external`，`dim_id=chain_id`），并同步到外部出口跳的
+  链路流量。离线补差的 Xray 重启丢失窗口、日桶归属及倍率边界见
   [链路 Revision 与流量统计设计](../chain-revisions-traffic-design.md#控制通道离线时的补报)。
 
 在线/离线由 WS 连接推导，连接存亡由 Agent 主动心跳判定（30s Ping，90s 无流量判死，见[架构总览](../framework-design.md)）。

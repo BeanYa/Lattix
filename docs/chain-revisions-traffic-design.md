@@ -272,6 +272,23 @@ Xray 重启通过新 instance 区分。
 - portal、bridge 和内部 outbound 不计入 hop 业务流量；
 - 上下行始终以客户端视角定义，各 hop 流量不得相加。
 
+### 外部直链出口的流量归属
+
+未托管外部直链节点（`servers.kind='external'`）没有 Agent，无法自采流量；其统计完全依赖
+链路入口服务器，按已发布修订快照的 `service_external` 归属：
+
+- 入口 A 的 `access:*` 计数仍是用户与链路的权威总量，A、B 等托管跳的 node/hop/endpoint
+  实体统计照常累计（两条链 A→B→外部 与 A→B 在 A/B 上的消耗都各自计入 A/B）；
+- 写入链路总量（`hop_id=0`）的同一份增量，另记一份到外部出口：
+  - `traffic_stats_bucket/daily`：`server_id=外部服务器`，`dim_type='external'`，
+    `dim_id=chain_id`，原始字节（不乘倍率），供外部服务器的流量统计/下钻与 Top 服务器；
+  - `chain_traffic_totals/daily`：外部出口跳（末位 hop）记同一份链路流量，倍率与链路
+    总量一致，供链路逐跳流量、流量历史与重置；
+- 归属只发生在入口 `access:*` 路径（每 assignment 一次，合计即链路总量），不额外读取
+  中间 hop 计数，避免重复；外部出口协议均为 TCP，不引入 UDP 口径；
+- 托管出口不写 `external` 维度；出口修订变化（替换外部服务器）后新流量按新修订归属，
+  历史日桶保留在旧服务器/旧 hop 上，与 revision 冻结语义一致。
+
 ### 控制通道离线时的补报
 
 Agent→Panel 控制通道断开不会停止 Xray 绝对计数器。只要 Xray 实例未重启，Agent 重连后的首帧

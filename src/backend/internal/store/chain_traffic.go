@@ -39,6 +39,30 @@ type ChainTrafficBucket struct {
 	EffectiveDown int64  `json:"effective_down"`
 }
 
+// externalExitOwner 是链路已发布修订中的外部直链出口（服务器 + 末位跳）。
+// 外部节点没有 Agent，其流量只能由入口 access 计数归属，写入出口服务器的
+// traffic_stats 与外部出口跳的 chain_traffic（见 attributeExternalExit）。
+type externalExitOwner struct {
+	serverID int64
+	hopID    int64
+}
+
+// externalExitOwners 在单次遥测事务内缓存 chain_id → 外部出口，避免同一链路的
+// 多个 access 计数重复读取/解析修订快照。
+type externalExitOwners map[int64]externalExitOwner
+
+func (c externalExitOwners) lookup(tx *sql.Tx, chainID, revisionID int64) (externalExitOwner, error) {
+	if owner, ok := c[chainID]; ok {
+		return owner, nil
+	}
+	owner, err := publishedExternalExit(tx, chainID, revisionID)
+	if err != nil {
+		return externalExitOwner{}, err
+	}
+	c[chainID] = owner
+	return owner, nil
+}
+
 func (s *Store) ApplyTrafficSnapshot(ctx context.Context, serverID int64, instanceID string, counters []TrafficCounterSnapshot, sampledAt time.Time) error {
 	if instanceID == "" {
 		return fmt.Errorf("xray instance id is required")
@@ -51,6 +75,8 @@ func (s *Store) ApplyTrafficSnapshot(ctx context.Context, serverID int64, instan
 		return err
 	}
 	defer tx.Rollback()
+	// 外部直链出口归属在同一事务内按链缓存（仅 access 计数需要）。
+	externalExits := externalExitOwners{}
 	for _, counter := range counters {
 		if counter.Up < 0 || counter.Down < 0 {
 			continue
@@ -88,6 +114,13 @@ func (s *Store) ApplyTrafficSnapshot(ctx context.Context, serverID int64, instan
 			}
 			if access {
 				if err := addChainTrafficTx(tx, chainID, 0, revisionID, multiplier, up, down, usageDate, timezone); err != nil {
+					return err
+				}
+				// 入口 access 计数是链路权威总量；终点为外部直链时，同一份增量
+				// 归属到外部出口（服务器统计 + 外部出口跳），入口/中间跳的既有
+				// 统计不变。
+				if err := s.attributeExternalExit(tx, externalExits, chainID, revisionID,
+					bucketTS, usageDate, timezone, multiplier, up, down); err != nil {
 					return err
 				}
 			}
@@ -275,6 +308,56 @@ func accessTrafficOwner(tx *sql.Tx, serverID int64, identity string) (userUUID s
 		WHERE a.id=? AND e.server_id=? AND c.published_revision_id!=0 AND c.deleted_at IS NULL`,
 		assignmentID, serverID).Scan(&userUUID, &chainID, &revisionID, &multiplier)
 	return userUUID, chainID, revisionID, multiplier, err == nil, err
+}
+
+// publishedExternalExit 读取链路已发布修订的外部直链出口（服务器 + 末位跳）；
+// 托管出口返回零值。快照缺失/损坏时跳过归属（与 publishedChainForCounter 一致），
+// 不让单条链的修订数据问题中断整帧遥测入账。
+func publishedExternalExit(tx *sql.Tx, chainID, revisionID int64) (externalExitOwner, error) {
+	var raw string
+	if err := tx.QueryRow(`SELECT snapshot FROM chain_revisions WHERE id=? AND chain_id=?`, revisionID, chainID).Scan(&raw); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return externalExitOwner{}, nil
+		}
+		return externalExitOwner{}, err
+	}
+	var snapshot ChainRevisionSnapshot
+	if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return externalExitOwner{}, nil
+	}
+	if snapshot.ServiceExternal == nil || len(snapshot.Hops) == 0 {
+		return externalExitOwner{}, nil
+	}
+	exit := snapshot.Hops[len(snapshot.Hops)-1]
+	return externalExitOwner{serverID: exit.ServerID, hopID: exit.HopID}, nil
+}
+
+// attributeExternalExit 把入口侧链路权威流量（access:* 计数）归属到外部直链出口：
+//   - traffic_stats（dim_type=external，dim_id=chain_id）记到外部服务器：外部节点
+//     没有 Agent，这是其服务器流量统计的唯一来源；记录原始字节，不乘链路倍率
+//     （与全部服务器实体维度口径一致）；
+//   - 外部出口跳的 chain_traffic 记同一份链路流量（与链路总量同倍率），链路详情
+//     逐跳流量、流量历史与重置因此覆盖外部出口；
+//   - 入口/中间跳的既有 node/hop 统计保持不变（各节点正常统计自己的消耗）。
+//
+// 托管出口不写额外行。cache 为单次遥测事务内的链路 → 外部出口缓存。
+func (s *Store) attributeExternalExit(tx *sql.Tx, cache externalExitOwners, chainID, revisionID, bucketTS int64,
+	usageDate, timezone string, multiplier int, up, down int64) error {
+	owner, err := cache.lookup(tx, chainID, revisionID)
+	if err != nil {
+		return err
+	}
+	if owner.serverID == 0 {
+		return nil
+	}
+	if err := s.addTrafficStatTx(tx, owner.serverID, bucketTS, usageDate, trafficStatDimExternal,
+		strconv.FormatInt(chainID, 10), up, down); err != nil {
+		return err
+	}
+	if owner.hopID == 0 {
+		return nil
+	}
+	return addChainTrafficTx(tx, chainID, owner.hopID, revisionID, multiplier, up, down, usageDate, timezone)
 }
 
 func addChainTrafficTx(tx *sql.Tx, chainID, hopID, revisionID int64, multiplier int, up, down int64, usageDate, timezone string) error {

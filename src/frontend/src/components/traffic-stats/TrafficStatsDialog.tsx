@@ -15,10 +15,10 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { humanizeBytes } from '@/lib/format'
 import { useTheme } from '@/lib/theme-context'
-import type { TrafficStatBreakdownRow } from '@/lib/types'
 import { chartThemeColors } from '@/pages/costs-shared'
 import { buildTrafficBarOption } from '@/pages/runtime/traffic-chart'
 
+import { breakdownRowLabel, canDrillBreakdownRow } from './breakdown-labels'
 import {
   TRAFFIC_RANGE_GRANULARITY,
   type TrafficStatsDialogController,
@@ -31,26 +31,6 @@ const RANGE_LABEL: Record<TrafficStatsRangeKey, string> = {
   '7d': '近7天',
   '30d': '近30天',
   custom: '自定义',
-}
-
-// 非 user/server 维度行的标签前缀（server 行展示 label，缺省回退 #id）。
-const DIM_TYPE_LABEL: Record<
-  Exclude<TrafficStatBreakdownRow['dim_type'], 'user' | 'server'>,
-  string
-> = {
-  node: '节点',
-  endpoint: '端点',
-  chain_hop: '链路跳',
-}
-
-function rowLabel(row: TrafficStatBreakdownRow): string {
-  if (row.dim_type === 'user') return row.label || `用户 ${row.dim_id.slice(0, 8)}`
-  if (row.dim_type === 'server') return row.label || `节点 #${row.dim_id}`
-  return `${DIM_TYPE_LABEL[row.dim_type]} #${row.dim_id}`
-}
-
-function canDrill(row: TrafficStatBreakdownRow): boolean {
-  return row.dim_type === 'user' || row.dim_type === 'server'
 }
 
 /**
@@ -165,8 +145,8 @@ export function TrafficStatsDialog({ controller }: { controller: TrafficStatsDia
                     <TableRow key={`${row.dim_type}-${row.dim_id}`}>
                       <TableCell>
                         <span className="inline-flex items-center gap-2">
-                          {rowLabel(row)}
-                          {canDrill(row) ? (
+                          {breakdownRowLabel(row)}
+                          {canDrillBreakdownRow(row) ? (
                             <Button
                               type="button"
                               size="sm"

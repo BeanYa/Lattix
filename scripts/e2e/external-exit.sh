@@ -341,6 +341,32 @@ if [[ "${EXTERNAL_EXIT_SKIP_EXTERNAL:-0}" != "1" ]]; then
         grep -i "traffic\|telemetry" "$WORK/backend.log" | tail -20 || true
         exit 1
     fi
+
+    echo ">> 外部直链出口流量归属（入口 access:* → 外部服务器 + 外部出口跳）"
+    FROM_TS="$(python3 -c 'import time;print(int(time.time())-86400)')"
+    TO_TS="$(python3 -c 'import time;print(int(time.time())+60)')"
+    TRAFFIC=0
+    EXT_BYTES=0
+    EXT_HOP_BYTES=0
+    EXT_ROW_OK=False
+    for _ in $(seq 1 30); do
+        TRAFFIC="$(chain_field "$CH1" "(c.get('traffic') or {}).get('raw_up',0)+(c.get('traffic') or {}).get('raw_down',0)")"
+        SERIES="$(rpc_data GET "/api/stats/traffic/series?dim=server&server_id=$EID&granularity=day&from=$FROM_TS&to=$TO_TS")"
+        EXT_BYTES="$(py "sum(p['up']+p['down'] for p in d)" "$SERIES")"
+        EXT_HOP_BYTES="$(chain_field "$CH1" "next(((h.get('traffic') or {}).get('raw_up',0)+(h.get('traffic') or {}).get('raw_down',0) for h in c['hops'] if h['server_id']==$EID), 0)")"
+        BREAKDOWN="$(rpc_data GET "/api/stats/traffic/breakdown?server_id=$EID&from=$FROM_TS&to=$TO_TS")"
+        EXT_ROW_OK="$(py "any(r['dim_type']=='external' and r['dim_id']=='$CH1' and r['label']=='ext-2hop' and r['up']+r['down']==$TRAFFIC for r in d)" "$BREAKDOWN")"
+        if [[ "$TRAFFIC" != "0" && "$EXT_BYTES" == "$TRAFFIC" && "$EXT_HOP_BYTES" == "$TRAFFIC" && "$EXT_ROW_OK" == "True" ]]; then
+            break
+        fi
+        sleep 1
+    done
+    [[ "$EXT_BYTES" == "$TRAFFIC" ]] && echo "OK: 外部服务器流量统计 = 链路入口流量（$EXT_BYTES 字节）" \
+        || { echo "FAIL: 外部服务器流量归属（统计 $EXT_BYTES / 链路 $TRAFFIC）"; db "SELECT server_id,dim_type,dim_id,up,down FROM traffic_stats_daily"; exit 1; }
+    [[ "$EXT_HOP_BYTES" == "$TRAFFIC" ]] && echo "OK: 外部出口跳流量 = 链路入口流量（$EXT_HOP_BYTES 字节）" \
+        || { echo "FAIL: 外部出口跳流量（跳 $EXT_HOP_BYTES / 链路 $TRAFFIC）"; db "SELECT chain_id,hop_id,raw_up,raw_down FROM chain_traffic_totals"; exit 1; }
+    [[ "$EXT_ROW_OK" == "True" ]] && echo "OK: 外部服务器下钻按链路归因（dim_type=external，label=链路名）" \
+        || { echo "FAIL: 外部服务器下钻: $BREAKDOWN"; exit 1; }
 else
     echo "SKIP: EXTERNAL_EXIT_SKIP_EXTERNAL=1，跳过真实流量断言"
 fi

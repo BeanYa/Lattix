@@ -1316,7 +1316,9 @@ export interface TrafficStatsOverview {
 }
 
 export interface TrafficStatBreakdownRow {
-  dim_type: 'user' | 'node' | 'chain_hop' | 'endpoint' | 'server'
+  // external 为外部直链出口归属行（dim_id 为链路 id）：外部节点没有 Agent，
+  // 其服务器流量由入口 access 计数归属。
+  dim_type: 'user' | 'node' | 'chain_hop' | 'endpoint' | 'external' | 'server'
   dim_id: string
   label: string
   up: number

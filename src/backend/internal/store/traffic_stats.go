@@ -8,9 +8,14 @@ import (
 	"time"
 )
 
+// trafficStatDimExternal 是外部直链出口的服务器实体维度：外部节点没有 Agent，
+// 其流量由链路入口 access 计数归属写入（dim_id=chain_id，按链可下钻），与
+// node/chain_hop/endpoint 一样计入该服务器的实体流量。
+const trafficStatDimExternal = "external"
+
 // addTrafficStatTx 将一笔遥测增量同时累加进分钟明细桶与日汇总（同一事务）。
 // 记录原始字节，不乘链路倍率（计费口径归 chain_traffic_daily）。
-// dimType: "user" | "node" | "endpoint" | "chain_hop"；dimID: 用户UUID或十进制ID字符串。
+// dimType: "user" | "node" | "endpoint" | "chain_hop" | "external"；dimID: 用户UUID或十进制ID字符串。
 func (s *Store) addTrafficStatTx(tx *sql.Tx, serverID int64, bucketTS int64, usageDate, dimType, dimID string, up, down int64) error {
 	if _, err := tx.Exec(`INSERT INTO traffic_stats_bucket (server_id, dim_type, dim_id, bucket_ts, up, down)
 		VALUES (?, ?, ?, ?, ?, ?)
@@ -76,7 +81,8 @@ type TrafficStatBreakdownRow struct {
 }
 
 // trafficStatsDimWhere 返回 dim 口径的 WHERE 片段（不含 WHERE 关键字）：
-// fleet=仅用户维度（全网总量去重口径）；server=该服务器实体维度；user=该用户跨服务器。
+// fleet=仅用户维度（全网总量去重口径）；server=该服务器实体维度
+// （node/chain_hop/endpoint/external，外部出口归属计入其服务器）；user=该用户跨服务器。
 func trafficStatsDimWhere(dim string, serverID int64, userUUID string) (string, []any, error) {
 	switch dim {
 	case "fleet":
@@ -85,7 +91,7 @@ func trafficStatsDimWhere(dim string, serverID int64, userUUID string) (string, 
 		if serverID <= 0 {
 			return "", nil, fmt.Errorf("server dim requires server_id")
 		}
-		return "server_id=? AND dim_type IN ('node','chain_hop','endpoint')", []any{serverID}, nil
+		return "server_id=? AND dim_type IN ('node','chain_hop','endpoint','external')", []any{serverID}, nil
 	case "user":
 		if userUUID == "" {
 			return "", nil, fmt.Errorf("user dim requires user_uuid")
@@ -247,7 +253,7 @@ func (s *Store) TrafficStatsOverview(ctx context.Context, topN int) (*TrafficSta
 	// Top 服务器：实体维度按本月日汇总 GROUP BY server_id，label 取 servers.alias。
 	serverRows, err := s.db.QueryContext(ctx, `SELECT t.server_id, s.alias, SUM(t.up), SUM(t.down)
 		FROM traffic_stats_daily t JOIN servers s ON s.id=t.server_id
-		WHERE t.dim_type IN ('node','chain_hop','endpoint') AND substr(t.usage_date,1,7)=?
+		WHERE t.dim_type IN ('node','chain_hop','endpoint','external') AND substr(t.usage_date,1,7)=?
 		GROUP BY t.server_id ORDER BY SUM(t.up)+SUM(t.down) DESC, t.server_id LIMIT ?`,
 		startMonth.Format("2006-01"), topN)
 	if err != nil {
@@ -287,8 +293,9 @@ func (s *Store) TrafficStatsOverview(ctx context.Context, topN int) (*TrafficSta
 
 // TrafficStatBreakdown 下钻明细（分钟桶聚合 [from,to)，按 up+down 降序 LIMIT 50）：
 // serverID>0 → 该服务器全部维度行（user 行 JOIN users.name、node 行 JOIN nodes.name、
-// endpoint/chain_hop 行 label 为空串）；userUUID!="" → 该用户 GROUP BY server_id
-//（dim_type="server"，JOIN servers.alias）。两者同给时按服务器口径。
+// external 行 JOIN chains.name 作为外部出口的链路标签、endpoint/chain_hop 行 label
+// 为空串）；userUUID!="" → 该用户 GROUP BY server_id（dim_type="server"，JOIN
+// servers.alias）。两者同给时按服务器口径。
 func (s *Store) TrafficStatBreakdown(ctx context.Context, serverID int64, userUUID string, from, to time.Time) ([]TrafficStatBreakdownRow, error) {
 	rows := make([]TrafficStatBreakdownRow, 0)
 	if !to.After(from) {
@@ -298,11 +305,13 @@ func (s *Store) TrafficStatBreakdown(ctx context.Context, serverID int64, userUU
 		result, err := s.db.QueryContext(ctx, `SELECT t.dim_type, t.dim_id,
 			CASE WHEN t.dim_type='user' THEN COALESCE(u.name,'')
 			     WHEN t.dim_type='node' THEN COALESCE(n.name,'')
+			     WHEN t.dim_type='external' THEN COALESCE(c.name,'')
 			     ELSE '' END AS label,
 			SUM(t.up), SUM(t.down)
 			FROM traffic_stats_bucket t
 			LEFT JOIN users u ON t.dim_type='user' AND u.uuid=t.dim_id
 			LEFT JOIN nodes n ON t.dim_type='node' AND n.id=CAST(t.dim_id AS INTEGER)
+			LEFT JOIN chains c ON t.dim_type='external' AND c.id=CAST(t.dim_id AS INTEGER)
 			WHERE t.server_id=? AND t.bucket_ts>=? AND t.bucket_ts<?
 			GROUP BY t.dim_type, t.dim_id
 			ORDER BY SUM(t.up)+SUM(t.down) DESC, t.dim_type, t.dim_id LIMIT 50`,
@@ -354,7 +363,7 @@ func (s *Store) ServerTrafficBuckets(ctx context.Context, serverID int64, from, 
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT bucket_ts, SUM(up), SUM(down)
 		FROM traffic_stats_bucket
-		WHERE server_id=? AND dim_type IN ('node','chain_hop','endpoint') AND bucket_ts>=? AND bucket_ts<?
+		WHERE server_id=? AND dim_type IN ('node','chain_hop','endpoint','external') AND bucket_ts>=? AND bucket_ts<?
 		GROUP BY bucket_ts ORDER BY bucket_ts`, serverID, from.Unix(), to.Unix())
 	if err != nil {
 		return nil, err

@@ -637,7 +637,8 @@
   color: var(--panel-danger);
 }
 
-.cg-hop-shared {
+.cg-hop-shared,
+.cg-hop-external {
   padding: 0 5px;
   border: 1px solid var(--panel-rule);
   border-radius: 4px;

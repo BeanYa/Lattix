@@ -21,12 +21,12 @@
 | `custom_exchange_rates` | source_currency（唯一）+ source_amount, target_currency（保存时的展示币种）+ target_amount, enabled；至少一侧金额为 1，每个目标币种仅一个启用锚点 |
 | `traffic` | node_id, user_uuid, up, down, updated_at（[遥测](telemetry.md)流量累计：节点维度 user_uuid=''，用户维度 node_id=0） |
 | `traffic_history` | 用户流量周期归档（流量重置/配额恢复留痕，见[订阅](subscription.md)） |
-| `traffic_stats_bucket` / `traffic_stats_daily` | 流量统计时序桶（控制台/运行监控流量图表，`/api/stats/traffic/*`，契约见 [OpenAPI](../openapi.yaml)） |
+| `traffic_stats_bucket` / `traffic_stats_daily` | 流量统计时序桶（控制台/运行监控流量图表，`/api/stats/traffic/*`，契约见 [OpenAPI](../openapi.yaml)）。维度 `user/node/endpoint/chain_hop` 来自 Agent 计数；`external` 为外部直链出口归属（`server_id`=外部服务器，`dim_id`=chain_id，入口 `access:*` 计数写入） |
 | `chains` | 稳定 chain/service/endpoint identity、published/desired revision、倍率、发布状态与软删除时间；外部直链出口链的 `service_node_id`=0（无出口业务节点，外部规格冻结在修订快照 `service_external`） |
 | `chain_hops` / `chain_hop_identities` | 当前期望工作拓扑（含逐跳所选公网地址引用 `address`）与不会复用的稳定 hop identity |
 | `chain_revisions` / `chain_revision_tasks` | 不可变拓扑快照及 apply/cleanup 任务状态机；任务关联离线命令队列 |
 | `traffic_cursors` | Agent Xray 实例绝对计数器游标，用于幂等补差 |
-| `chain_traffic_totals` / `chain_traffic_daily` | 链与逐跳 raw/effective 累计、倍率余数及按 revision/统计时区的日桶 |
+| `chain_traffic_totals` / `chain_traffic_daily` | 链与逐跳 raw/effective 累计、倍率余数及按 revision/统计时区的日桶；外部直链出口跳由入口 `access:*` 计数归属（与链总量同倍率） |
 | `chain_traffic_baselines` / `chain_multiplier_events` | 流量重置 checkpoint 与倍率分段审计 |
 | `endpoint_traffic_totals` | 共享入口 inbound 的运维流量累计；用户/链权威流量另按 assignment identity 入账 |
 | `server_latency_probes` / `server_latency_history` | 链路测速有向服务器对延迟（panel 调度 latency.probe 轮次）与历史，见[链路统计设计](../chain-link-stats-design.md) |
