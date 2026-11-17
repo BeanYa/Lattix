@@ -156,10 +156,7 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
         nodes: state.nodes.map((n) => {
           if (n.id !== action.id) return n
           const current = n.candidates ?? []
-          if (
-            n.serverId === action.serverId ||
-            current.some((c) => c.serverId === action.serverId)
-          )
+          if (n.serverId === action.serverId || current.some((c) => c.serverId === action.serverId))
             return n
           return {
             ...n,

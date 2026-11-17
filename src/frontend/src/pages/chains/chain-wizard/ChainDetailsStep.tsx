@@ -739,8 +739,9 @@ export function ChainDetailsStep({
             <div>
               <Label>自动编排与容灾切换</Label>
               <p className="cg-chain-hint">
-                在第一步画布节点卡片上点击「+ 备选」可为入口、中转或出口节点指定替补服务器池（当前已配置{' '}
-                {totalCandidates} 台备选）。
+                在第一步画布节点卡片上点击「+
+                备选」可为入口、中转或出口节点指定替补服务器池（当前已配置 {totalCandidates}{' '}
+                台备选）。
               </p>
             </div>
             <button
@@ -847,9 +848,11 @@ export function ChainDetailsStep({
                   <Label>原主节点恢复后策略</Label>
                   <Select
                     value={form.failbackMode}
-                    onValueChange={(v) => v && patch({ failbackMode: v as 'none' | 'preemptive' })}
+                    onValueChange={(v) =>
+                      v && patch({ failbackMode: v as 'sticky' | 'preemptive' })
+                    }
                     items={[
-                      { value: 'none', label: '保持替补节点（不主动切回，避免抖动）' },
+                      { value: 'sticky', label: '保持替补节点（不主动切回，避免抖动）' },
                       { value: 'preemptive', label: '抢占式自动切回高优原节点（Preemptive）' },
                     ]}
                   >
@@ -857,7 +860,7 @@ export function ChainDetailsStep({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">保持替补节点（不主动切回，避免抖动）</SelectItem>
+                      <SelectItem value="sticky">保持替补节点（不主动切回，避免抖动）</SelectItem>
                       <SelectItem value="preemptive">
                         抢占式自动切回高优原节点（Preemptive）
                       </SelectItem>

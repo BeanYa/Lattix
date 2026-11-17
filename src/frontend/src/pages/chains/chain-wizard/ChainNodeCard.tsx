@@ -293,9 +293,7 @@ export function ChainNodeCard({
                 <div key={cand.serverId} className="cw-node-pool-item">
                   <span className="cw-node-pool-prio">P{idx + 1}</span>
                   {candSrv ? <CountryFlag code={candSrv.country_code} /> : null}
-                  <span className="cw-node-pool-name">
-                    {candSrv?.alias ?? `#${cand.serverId}`}
-                  </span>
+                  <span className="cw-node-pool-name">{candSrv?.alias ?? `#${cand.serverId}`}</span>
                   {candBanned ? (
                     <span className="cw-node-pool-tag is-danger">Banned</span>
                   ) : (

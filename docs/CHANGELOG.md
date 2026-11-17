@@ -8,6 +8,17 @@
 
 ### Added
 
+- 链路**跳位备选池与自动编排容灾**：入口/中转/出口每个跳位可在画布节点卡片上配置按
+  优先级排序的替补服务器池（P1..PN，主节点为 P0），链路级策略支持四类触发——三网测速
+  封禁（suspected/banned）、段间 TCP/ICMP 连续不可达、当期流量配额耗尽、Agent 离线
+  超时——并可选 sticky（保持在替补节点）/ preemptive（冷却期过后抢占回切）两种恢复策略
+  与切换冷却窗口。触发后复用差分 Revision Planner 执行 Make-Before-Break 单跳替换，
+  写 `chain_failover_events` 审计事件并发出 `chain_auto_failover` /
+  `chain_failover_exhausted` 告警；链路详情展示「自动编排」标记、逐跳 P1 手动切换
+  按钮与最近一次容灾切换记录，`POST /api/chain/switch-hop` 支持管理员手动切换。
+  schema v33（`chain_hop_candidates` / `chain_auto_policies` / `server_pair_watch` /
+  `chain_failover_events`）。
+
 - 服务器页新增一类**未托管服务器**（外部直链节点）：新增/编辑服务器对话框提供
   按协议切换的完整协议表单（vless/vmess/trojan/ss/socks/http：地址/端口/凭据/传输/
   安全层/Reality/证书），分享链接仅用于「解析 → 自动填写」，表单**没有必填项**。外部节点没有 Agent，只能作为链路的

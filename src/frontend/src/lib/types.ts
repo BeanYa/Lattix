@@ -557,15 +557,13 @@ export interface ChainHopCandidate {
 
 export interface ChainHopCandidateInput {
   server_id: number
-  priority?: number
   address?: string
-  port?: number
-  enabled?: boolean
+  listen_port?: number
 }
 
 export interface ChainAutoPolicy {
   chain_id?: number
-  auto_enabled: boolean
+  enabled: boolean
   on_ban: boolean
   ban_trigger_level: 'suspected' | 'banned'
   on_unreachable: boolean
@@ -573,7 +571,7 @@ export interface ChainAutoPolicy {
   on_quota_exhausted: boolean
   on_agent_offline: boolean
   offline_timeout_sec: number
-  failback_mode: 'none' | 'preemptive'
+  failback_mode: 'sticky' | 'preemptive'
   cooldown_sec: number
   last_failover_at?: string | null
   updated_at?: string
@@ -587,10 +585,9 @@ export interface ChainFailoverEvent {
   from_server_alias?: string
   to_server_id: number
   to_server_alias?: string
-  reason: string
-  detail: string
+  reason_code: string
+  reason_detail: string
   revision_id: number
-  status: string
   created_at: string
 }
 

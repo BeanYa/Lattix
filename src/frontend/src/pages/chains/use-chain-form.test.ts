@@ -622,15 +622,12 @@ describe('useChainForm 跳位备选池与自动编排策略', () => {
     expect(body.hops).toEqual([
       {
         server_id: 1,
-        candidates: [
-          { server_id: 3, priority: 1, enabled: true },
-          { server_id: 4, priority: 2, address: '203.0.113.4', enabled: true },
-        ],
+        candidates: [{ server_id: 3 }, { server_id: 4, address: '203.0.113.4' }],
       },
       { server_id: 2 },
     ])
     expect(body.auto_policy).toEqual({
-      auto_enabled: true,
+      enabled: true,
       on_ban: true,
       ban_trigger_level: 'suspected',
       on_unreachable: true,

@@ -58,8 +58,8 @@ function statusTone(tone: CgStatusStyle['cg']): string {
 }
 
 const FAILOVER_REASON_LABELS: Record<string, string> = {
-  ban_detected: '三网测速封禁',
-  segment_unreachable: '段间连通超时',
+  server_banned: '三网测速封禁',
+  pair_unreachable: '段间连通超时',
   quota_exhausted: '流量配额耗尽',
   agent_offline: 'Agent 离线超时',
   failback: '主节点恢复回切',
@@ -206,11 +206,16 @@ export default function Chains() {
     }
   }
 
-  const onSwitchHop = async (chain: Chain, hop: ChainHop, targetServerId: number, targetAlias: string) => {
+  const onSwitchHop = async (
+    chain: Chain,
+    hop: ChainHop,
+    targetServerId: number,
+    targetAlias: string,
+  ) => {
     if (
       !(await confirm({
         title: '切换跳位运行节点',
-        description: `将链路「${chain.name}」第 ${hop.seq} 跳（${roleLabel[hop.role]}）从「${hop.server_alias}」平滑切换到候选服务器「${targetAlias}」？`,
+        description: `将链路「${chain.name}」第 ${hop.seq + 1} 跳（${roleLabel[hop.role]}）从「${hop.server_alias}」平滑切换到候选服务器「${targetAlias}」？`,
         confirmLabel: '立即切换',
       }))
     )
@@ -704,11 +709,8 @@ export default function Chains() {
                         <strong className="cg-chain-name">{c.name || `中转 #${c.id}`}</strong>
                         <span className="cg-chain-id">#{c.id}</span>
                         <span className="cg-chain-tag">{isDirect ? '直连' : '中转'}</span>
-                        {c.auto_policy?.auto_enabled ? (
-                          <span
-                            className="cg-chain-tag is-external"
-                            title="已启用跳位自动编排容灾"
-                          >
+                        {c.auto_policy?.enabled ? (
+                          <span className="cg-chain-tag is-external" title="已启用跳位自动编排容灾">
                             自动编排
                           </span>
                         ) : null}
@@ -984,9 +986,12 @@ export default function Chains() {
                       </div>
                       {latestFailover ? (
                         <p className="cg-chain-failover-log">
-                          最近容灾切换（第 {latestFailover.seq} 跳 ·{' '}
-                          {FAILOVER_REASON_LABELS[latestFailover.reason] ?? latestFailover.reason}
-                          ）：{latestFailover.from_server_alias || `#${latestFailover.from_server_id}`}{' '}
+                          最近容灾切换（第 {latestFailover.seq + 1} 跳 ·{' '}
+                          {FAILOVER_REASON_LABELS[latestFailover.reason_code] ??
+                            latestFailover.reason_code}
+                          ）：
+                          {latestFailover.from_server_alias ||
+                            `#${latestFailover.from_server_id}`}{' '}
                           → {latestFailover.to_server_alias || `#${latestFailover.to_server_id}`}（
                           {formatDateTime(latestFailover.created_at, timezone)}）
                         </p>

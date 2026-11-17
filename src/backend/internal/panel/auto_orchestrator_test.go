@@ -3,7 +3,10 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,8 +77,12 @@ func setupAutoTestChain(t *testing.T) (*Server, *store.Store, *fakeAutoRequester
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = st.SetSharedEndpointStatus(ctx, ep.ID, store.EndpointStatusApplying, "", store.EndpointStatusPending)
-	_ = st.SetSharedEndpointStatus(ctx, ep.ID, store.EndpointStatusActive, "", store.EndpointStatusApplying)
+	if err := st.SetSharedEndpointApplying(ctx, ep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetSharedEndpointActive(ctx, ep.ID, json.RawMessage(`{"port":10443}`)); err != nil {
+		t.Fatal(err)
+	}
 
 	dep, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
 		Name:                   "AutoChain",
@@ -252,5 +259,75 @@ func TestAutoOrchestratorFailoverOnSegmentUnreachableAndQuotaExhausted(t *testin
 	hopsAfterQuota, _ := st.ChainHops(ctx, chainID)
 	if len(hopsAfterQuota) != 2 || hopsAfterQuota[0].ServerID != a2 {
 		t.Fatalf("expected entry hop switched to A2 (%d) on quota exhaustion, got %+v", a2, hopsAfterQuota)
+	}
+}
+
+// TestChainRequestPayloadsAcceptCandidatesAndAutoPolicy 固定前端提交的建链/编辑与手动切换载荷。
+// readJSON 开启 DisallowUnknownFields，字段名一旦与前端(use-chain-form.ts / api.ts)漂移即会 400。
+func TestChainRequestPayloadsAcceptCandidatesAndAutoPolicy(t *testing.T) {
+	createPayload := `{
+		"name": "ui-chain",
+		"entry": {"server_id": 1, "candidates": [
+			{"server_id": 3},
+			{"server_id": 4, "address": "203.0.113.4", "listen_port": 10444}
+		]},
+		"exit": {"server_id": 2, "candidates": [{"server_id": 5}]},
+		"node": {"protocol": "vless"},
+		"auto_policy": {
+			"enabled": true, "on_ban": true, "ban_trigger_level": "suspected",
+			"on_unreachable": true, "unreachable_streak": 4, "on_quota_exhausted": true,
+			"on_agent_offline": true, "offline_timeout_sec": 180,
+			"failback_mode": "sticky", "cooldown_sec": 300
+		}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/chain/create", strings.NewReader(createPayload))
+	var create createChainRequest
+	if err := readJSON(req, &create); err != nil {
+		t.Fatalf("decode chain create payload: %v", err)
+	}
+	if len(create.Entry.Candidates) != 2 || create.Entry.Candidates[0].ServerID != 3 {
+		t.Fatalf("unexpected entry candidates: %+v", create.Entry.Candidates)
+	}
+	second := create.Entry.Candidates[1]
+	if second.Address != "203.0.113.4" || second.ListenPort == nil || *second.ListenPort != 10444 {
+		t.Fatalf("unexpected second candidate: %+v", second)
+	}
+	if len(create.Exit.Candidates) != 1 || create.Exit.Candidates[0].ServerID != 5 {
+		t.Fatalf("unexpected exit candidates: %+v", create.Exit.Candidates)
+	}
+	if create.AutoPolicy == nil || !create.AutoPolicy.Enabled ||
+		create.AutoPolicy.UnreachableStreak != 4 ||
+		create.AutoPolicy.FailbackMode != store.FailbackSticky ||
+		create.AutoPolicy.OfflineTimeoutSec != 180 {
+		t.Fatalf("unexpected auto policy: %+v", create.AutoPolicy)
+	}
+
+	// 编辑请求携带同一份备选池与策略。
+	editPayload := `{
+		"chain_id": 7, "name": "ui-chain", "traffic_multiplier": "1.000",
+		"hops": [{"server_id": 2, "candidates": [{"server_id": 5}]}],
+		"node": {"protocol": "vless"},
+		"auto_policy": {"enabled": true, "failback_mode": "preemptive"}
+	}`
+	editReq := httptest.NewRequest(http.MethodPost, "/api/chain/edit", strings.NewReader(editPayload))
+	var edit editChainRequest
+	if err := readJSON(editReq, &edit); err != nil {
+		t.Fatalf("decode chain edit payload: %v", err)
+	}
+	if len(edit.Hops) != 1 || len(edit.Hops[0].Candidates) != 1 {
+		t.Fatalf("unexpected edit hops: %+v", edit.Hops)
+	}
+	if edit.AutoPolicy == nil || edit.AutoPolicy.FailbackMode != store.FailbackPreemptive {
+		t.Fatalf("unexpected edit auto policy: %+v", edit.AutoPolicy)
+	}
+
+	switchPayload := `{"chain_id": 7, "seq": 1, "server_id": 9, "reason": "manual"}`
+	switchReq := httptest.NewRequest(http.MethodPost, "/api/chain/switch-hop", strings.NewReader(switchPayload))
+	var sw chainSwitchHopRequest
+	if err := readJSON(switchReq, &sw); err != nil {
+		t.Fatalf("decode switch-hop payload: %v", err)
+	}
+	if sw.ChainID != 7 || sw.Seq != 1 || sw.ServerID != 9 || sw.Reason != "manual" {
+		t.Fatalf("unexpected switch-hop payload: %+v", sw)
 	}
 }

@@ -525,7 +525,7 @@ func (o *AutoOrchestrator) EvaluateChain(ctx context.Context, chainID int64) err
 		if reasonCode != "" {
 			chosen, ok := selectBestForSeq(seq, -1)
 			if !ok {
-				o.reportFailoverExhausted(chain, seq, hop.ServerID, reasonDetail)
+				o.reportFailoverExhausted(ctx, chain, seq, hop.ServerID, reasonDetail)
 				continue
 			}
 			_, err := o.s.switchChainHop(ctx, chain.ID, seq, *chosen, reasonCode, reasonDetail)
@@ -574,7 +574,7 @@ func (o *AutoOrchestrator) EvaluateChain(ctx context.Context, chainID int64) err
 			// 若配置了候选池但无健康替补，记录告警。
 			for _, seq := range targetSeqs {
 				if len(candsBySeq[seq]) > 1 {
-					o.reportFailoverExhausted(chain, seq, hops[seq].ServerID, detail)
+					o.reportFailoverExhausted(ctx, chain, seq, hops[seq].ServerID, detail)
 					break
 				}
 			}
@@ -611,7 +611,7 @@ func (o *AutoOrchestrator) EvaluateChain(ctx context.Context, chainID int64) err
 	return nil
 }
 
-func (o *AutoOrchestrator) reportFailoverExhausted(chain *store.Chain, seq int, serverID int64, reason string) {
+func (o *AutoOrchestrator) reportFailoverExhausted(ctx context.Context, chain *store.Chain, seq int, serverID int64, reason string) {
 	key := fmt.Sprintf("%d:%d", chain.ID, seq)
 	o.mu.Lock()
 	last, exists := o.exhaustAlertAt[key]
@@ -623,7 +623,7 @@ func (o *AutoOrchestrator) reportFailoverExhausted(chain *store.Chain, seq int, 
 	o.mu.Unlock()
 
 	msg := fmt.Sprintf("链路「%s」第 %d 跳触发自动切换（%s），但备选池中无可用健康服务器", chain.Name, seq+1, reason)
-	o.s.recordOperation(logging.OperationEvent{
+	o.s.recordOperation(ctx, logging.OperationEvent{
 		Severity: logging.SeverityWarning,
 		Category: logging.CategoryChain,
 		Action:   "chain.failover_exhausted",
@@ -693,7 +693,7 @@ func (s *Server) switchChainHop(
 			addr = "" // 所选地址失效时安全回退默认地址
 		}
 		if srv.IsExternal() && (i < hopCount-1 || hopCount == 1) {
-			return nil, fmt.Sprintf("未托管服务器 %s 只能作为链路最后一跳", srv.Alias)
+			return nil, fmt.Errorf("未托管服务器 %s 只能作为链路最后一跳", srv.Alias)
 		}
 		if i < hopCount-1 && !inboundCapable(srv) {
 			return nil, fmt.Errorf("服务器 %s 无入站能力", srv.Alias)
@@ -978,7 +978,7 @@ func (s *Server) switchChainHop(
 	}
 	alertMsg := fmt.Sprintf("链路「%s」第 %d 跳已由 %s 切换至 %s（原因：%s）",
 		chain.Name, seq+1, fromAlias, toAlias, reasonDetail)
-	s.recordOperation(logging.OperationEvent{
+	s.recordOperation(ctx, logging.OperationEvent{
 		Severity: logging.SeverityWarning,
 		Category: logging.CategoryChain,
 		Action:   "chain.auto_failover",
@@ -997,15 +997,18 @@ func (s *Server) switchChainHop(
 	return revision, nil
 }
 
+// chainSwitchHopRequest 是手动跳位切换的请求体。
+type chainSwitchHopRequest struct {
+	ChainID  int64  `json:"chain_id"`
+	Seq      int    `json:"seq"`
+	ServerID int64  `json:"server_id"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 // handleSwitchChainHop 处理 POST /api/chain/switch-hop：管理员手动从某跳的候选池中
 // 指定一台服务器立即切换（或切回主节点）。
 func (s *Server) handleSwitchChainHop(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ChainID  int64  `json:"chain_id"`
-		Seq      int    `json:"seq"`
-		ServerID int64  `json:"server_id"`
-		Reason   string `json:"reason,omitempty"`
-	}
+	var req chainSwitchHopRequest
 	if err := readJSON(r, &req); err != nil || req.ChainID <= 0 || req.ServerID <= 0 || req.Seq < 0 {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -1203,4 +1206,3 @@ func (s *Server) saveChainHopCandidatesAndPolicy(
 	}
 	return nil
 }
-

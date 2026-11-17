@@ -221,7 +221,7 @@ export interface ChainFormState {
   onQuotaExhausted: boolean
   onAgentOffline: boolean
   offlineTimeoutSec: string
-  failbackMode: 'none' | 'preemptive'
+  failbackMode: 'sticky' | 'preemptive'
   cooldownSec: string
 }
 
@@ -266,7 +266,7 @@ const initialChainForm: ChainFormState = {
   onQuotaExhausted: true,
   onAgentOffline: true,
   offlineTimeoutSec: '180',
-  failbackMode: 'none',
+  failbackMode: 'sticky',
   cooldownSec: '300',
 }
 
@@ -274,7 +274,7 @@ function parseAutoPolicyDetails(chain: Chain): Partial<ChainFormState> {
   const pol = chain.auto_policy
   if (!pol) return {}
   return {
-    autoEnabled: Boolean(pol.auto_enabled),
+    autoEnabled: Boolean(pol.enabled),
     onBan: Boolean(pol.on_ban),
     banTriggerLevel: pol.ban_trigger_level === 'suspected' ? 'suspected' : 'banned',
     onUnreachable: Boolean(pol.on_unreachable),
@@ -282,7 +282,7 @@ function parseAutoPolicyDetails(chain: Chain): Partial<ChainFormState> {
     onQuotaExhausted: Boolean(pol.on_quota_exhausted),
     onAgentOffline: Boolean(pol.on_agent_offline),
     offlineTimeoutSec: String(pol.offline_timeout_sec || 180),
-    failbackMode: pol.failback_mode === 'preemptive' ? 'preemptive' : 'none',
+    failbackMode: pol.failback_mode === 'preemptive' ? 'preemptive' : 'sticky',
     cooldownSec: String(pol.cooldown_sec || 300),
   }
 }
@@ -806,12 +806,10 @@ export function useChainForm({
     }
     // 逐跳地址与备选池：空串 = 跟随服务器默认地址，提交时不携带 address 字段；无备选时不携带 candidates。
     const mkHop = (node: CanvasNode): ChainHopInput => {
-      const candidates: ChainHopCandidateInput[] = (node.candidates ?? []).map((cand, idx) => ({
+      const candidates: ChainHopCandidateInput[] = (node.candidates ?? []).map((cand) => ({
         server_id: cand.serverId,
-        priority: idx + 1,
         ...(cand.address ? { address: cand.address } : {}),
-        ...(cand.port ? { port: Number(cand.port) } : {}),
-        enabled: true,
+        ...(cand.port ? { listen_port: Number(cand.port) } : {}),
       }))
       return {
         server_id: node.serverId,
@@ -823,7 +821,7 @@ export function useChainForm({
     const autoPolicy: Partial<ChainAutoPolicy> | undefined =
       form.autoEnabled || hasAnyCandidates || editingChainId !== null
         ? {
-            auto_enabled: form.autoEnabled,
+            enabled: form.autoEnabled,
             on_ban: form.onBan,
             ban_trigger_level: form.banTriggerLevel,
             on_unreachable: form.onUnreachable,
