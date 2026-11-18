@@ -1393,37 +1393,44 @@
 }
 
 /* ---------- 跳位堆叠（只读） ----------
-   前卡就是跳位自身的服务器卡片，备选以同款卡片叠在它后面（右上偏移），
+   前卡是跳位自身的服务器卡片，备选是同尺寸的服务器卡片，依次向右上偏移叠在它
+   后面；堆叠内的卡片用不透明表面（--panel-popover），避免文字互相穿透。
    没有备选的跳不包层，沿用原样式。编辑入口在链路编辑器画布的卡片上。 */
 .cg-hop-stack {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-top: calc(var(--cg-stack-depth, 0) * 24px + 2px);
-  padding-right: calc(var(--cg-stack-depth, 0) * 10px);
+  padding-top: calc(var(--cg-stack-depth, 0) * 26px + 2px);
+  padding-right: calc(var(--cg-stack-depth, 0) * 8px);
+}
+.cg-hop-stack-deck {
+  position: relative;
+}
+.cg-hop-stack .cg-hop {
+  background: var(--panel-popover);
 }
 .cg-hop-stack-front {
   position: relative;
-  z-index: 5;
+  z-index: 20;
 }
 .cg-hop-stack-back {
   position: absolute;
-  left: 0;
-  top: 0;
-  z-index: 1;
-  width: 100%;
-  padding: 6px 10px;
+  inset: 0;
+  z-index: calc(10 - var(--i));
   pointer-events: none;
-  transform: translate(
-    calc(var(--i) * 10px),
-    calc(var(--cg-stack-depth, 0) * 24px + 2px - var(--i) * 24px)
-  );
+  /* 每张备选向右上偏移一级：i=1 紧贴前卡后方，i=2 再往上一级。 */
+  transform: translate(calc(var(--i) * 8px), calc(var(--i) * -26px));
 }
 .cg-hop-stack-back .cg-hop-head {
   gap: 6px;
   white-space: nowrap;
   overflow: hidden;
+}
+/* 后层卡片只降文字层级，卡片表面保持不透明，避免穿透。 */
+.cg-hop-stack-back,
+.cg-hop-stack-back .cg-hop-name.is-inline {
+  color: var(--panel-ink-2);
 }
 .cg-hop-stack-back .cg-hop-name.is-inline {
   min-width: 0;

@@ -26,29 +26,31 @@ export function HopStack({
   const hidden = Math.max(0, hopStackTotal(orchestration) - 1 - backs.length)
   return (
     <div className="cg-hop-stack" style={{ '--cg-stack-depth': backs.length } as CSSProperties}>
-      {backs.map((item, index) => (
-        <div
-          key={item.node.id}
-          className={cn('cg-hop', 'cg-hop-stack-back', item.active && 'is-active')}
-          style={{ '--i': index + 1 } as CSSProperties}
-          title={
-            item.node.listen_port
-              ? `备选 · 端口 ${item.node.listen_port} · ${item.node.online ? '在线' : '离线'}`
-              : `备选 · ${item.node.online ? '在线' : '离线'}`
-          }
-          aria-hidden
-        >
-          <span className="cg-hop-head">
-            <span className="cg-hop-num">B{index + 1}</span>
-            <span className={cn('cg-hop-dot', item.node.online ? 'is-lime' : 'is-red')} />
-            <span className="cg-hop-role">备选</span>
-            <strong className="cg-hop-name is-inline">
-              {item.node.alias || `#${item.node.server_id}`}
-            </strong>
-          </span>
-        </div>
-      ))}
-      <div className="cg-hop-stack-front">{children}</div>
+      <div className="cg-hop-stack-deck">
+        {backs.map((item, index) => (
+          <div
+            key={item.node.id}
+            className={cn('cg-hop', 'cg-hop-stack-back', item.active && 'is-active')}
+            style={{ '--i': index + 1 } as CSSProperties}
+            title={
+              item.node.listen_port
+                ? `备选 · 端口 ${item.node.listen_port} · ${item.node.online ? '在线' : '离线'}`
+                : `备选 · ${item.node.online ? '在线' : '离线'}`
+            }
+            aria-hidden
+          >
+            <span className="cg-hop-head">
+              <span className="cg-hop-num">B{index + 1}</span>
+              <span className={cn('cg-hop-dot', item.node.online ? 'is-lime' : 'is-red')} />
+              <span className="cg-hop-role">备选</span>
+              <strong className="cg-hop-name is-inline">
+                {item.node.alias || `#${item.node.server_id}`}
+              </strong>
+            </span>
+          </div>
+        ))}
+        <div className="cg-hop-stack-front">{children}</div>
+      </div>
       {orchestration?.triggered && active ? (
         <span className="cg-hop-stack-badge">
           当前运行：{active.node.alias || `#${active.node.server_id}`}
