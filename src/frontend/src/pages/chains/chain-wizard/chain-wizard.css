@@ -353,6 +353,12 @@
   color: var(--panel-ink-1);
   border-color: color-mix(in oklab, #f5b301 45%, var(--panel-edge-strong));
 }
+/* 画布会缩放：胶囊视觉尺寸随缩放变小，这里补一圈透明命中区，保证好点。 */
+.cw-node-orch::after {
+  content: '';
+  position: absolute;
+  inset: -8px -8px 0;
+}
 .cw-node-orch em {
   font-style: normal;
   color: var(--panel-ink-3);
