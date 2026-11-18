@@ -8,29 +8,22 @@ import {
   addTrigger,
   connect,
   createEditorState,
+  moveNode,
+  removeEdge,
   removeNode,
   setPriority,
-  setServerField,
+  setServerAddress,
+  setServerListenPort,
   toSavePayload,
-  triggerLabel,
   validateGraph,
-  type EditorNode,
   type EditorState,
   type TriggerAction,
   type TriggerSubject,
 } from './orchestration-graph'
+import { OrchestrationCanvas } from './OrchestrationCanvas'
+// 与链路编辑器同源：卡片、端口圆点、世界层与连线样式全部复用链路画布样式表。
+import '../chain-wizard/chain-wizard.css'
 import './orchestration.css'
-
-const NODE_W = 186
-const TRIGGER_W = 168
-const NODE_H = 92
-
-function nodeCenter(node: EditorNode) {
-  return {
-    x: node.x + (node.kind === 'server' ? NODE_W / 2 : TRIGGER_W / 2),
-    y: node.y + NODE_H / 2,
-  }
-}
 
 export function OrchestrationEditor({
   chain,
@@ -54,6 +47,7 @@ export function OrchestrationEditor({
   const [servers, setServers] = useState<Server[]>([])
   const [tab, setTab] = useState<'trigger' | 'server'>('trigger')
   const [selected, setSelected] = useState<string | null>(null)
+  const [connecting, setConnecting] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const errors = useMemo(() => validateGraph(state), [state])
@@ -118,31 +112,46 @@ export function OrchestrationEditor({
     setState(next)
   }
 
-  const onNodeClick = (key: string) => {
-    if (!selected) {
-      setSelected(key)
-      return
-    }
-    if (selected === key) {
-      setSelected(null)
-      return
-    }
-    const from = state.nodes.find((node) => node.key === selected)
+  const startConnect = (key: string) => {
+    setSelected(null)
+    setConnecting((current) => (current === key ? null : key))
+  }
+
+  const completeConnect = (key: string) => {
+    if (!connecting || connecting === key) return
+    const from = state.nodes.find((node) => node.key === connecting)
     const to = state.nodes.find((node) => node.key === key)
     if (!from || !to) return
-    if (from.kind === to.kind) {
-      setSelected(key)
-      return
-    }
     const next =
-      from.kind === 'server' ? connect(state, selected, key) : connect(state, key, selected)
-    if (next.edges.length === state.edges.length) {
-      setError('无法连接：检查触发器的来源/目标限制')
+      from.kind === 'server' && to.kind === 'trigger'
+        ? connect(state, connecting, key)
+        : from.kind === 'trigger' && to.kind === 'server'
+          ? connect(state, connecting, key)
+          : state
+    // 触发器换目标时边数不变（替换出边），因此按「目标边是否存在」判断成功与否。
+    const linked = next.edges.some((edge) => edge.from === connecting && edge.to === key)
+    if (!linked) {
+      setError('无法连接：服务器只能连到触发器入口，触发器只能连到服务器入口')
     } else {
       setError('')
       setState(next)
     }
-    setSelected(null)
+    setConnecting(null)
+  }
+
+  const remove = (key: string) => {
+    if (key.includes('->')) {
+      const [from, to] = key.split('->')
+      setState(removeEdge(state, from, to))
+      return
+    }
+    const next = removeNode(state, key)
+    if (next === state) {
+      setError('根服务器与当前使用的服务器不能删除')
+      return
+    }
+    setError('')
+    setState(next)
   }
 
   const save = async () => {
@@ -157,92 +166,6 @@ export function OrchestrationEditor({
     } finally {
       setSaving(false)
     }
-  }
-
-  const renderNode = (node: EditorNode) => {
-    if (node.kind === 'server') {
-      const server = node.serverId ? serverMap.get(node.serverId) : undefined
-      const removable = !node.isRoot && node.serverId !== state.activeServerId
-      return (
-        <div
-          key={node.key}
-          className={cn(
-            'orch-node is-server',
-            selected === node.key && 'is-selected',
-            node.isRoot && 'is-root',
-          )}
-          style={{ left: node.x, top: node.y, width: NODE_W }}
-          onClick={() => onNodeClick(node.key)}
-        >
-          <div className="orch-node-head">
-            <strong>{server?.alias ?? `#${node.serverId ?? '?'}`}</strong>
-            {node.isRoot ? <em>根 · 原服务器</em> : null}
-            {node.serverId === state.activeServerId ? <em>当前使用</em> : null}
-          </div>
-          <div className="orch-node-fields" onClick={(event) => event.stopPropagation()}>
-            <input
-              value={node.address}
-              placeholder="跟随默认地址"
-              onChange={(event) =>
-                setState(setServerField(state, node.key, 'address', event.target.value))
-              }
-            />
-            <input
-              value={node.listenPort}
-              placeholder="自动端口"
-              inputMode="numeric"
-              onChange={(event) =>
-                setState(setServerField(state, node.key, 'listenPort', event.target.value))
-              }
-            />
-          </div>
-          {removable ? (
-            <button
-              type="button"
-              className="orch-node-remove"
-              aria-label="移除服务器"
-              onClick={(event) => {
-                event.stopPropagation()
-                setState(removeNode(state, node.key))
-              }}
-            >
-              ×
-            </button>
-          ) : null}
-        </div>
-      )
-    }
-    return (
-      <div
-        key={node.key}
-        className={cn('orch-node is-trigger', selected === node.key && 'is-selected')}
-        style={{ left: node.x, top: node.y, width: TRIGGER_W }}
-        onClick={() => onNodeClick(node.key)}
-      >
-        <div className="orch-node-head">
-          <strong>{triggerLabel(node)}</strong>
-          <button
-            type="button"
-            className="orch-node-remove"
-            aria-label="移除触发器"
-            onClick={(event) => {
-              event.stopPropagation()
-              setState(removeNode(state, node.key))
-            }}
-          >
-            ×
-          </button>
-        </div>
-        <label className="orch-priority" onClick={(event) => event.stopPropagation()}>
-          优先级
-          <input
-            value={node.priority}
-            inputMode="numeric"
-            onChange={(event) => setState(setPriority(state, node.key, event.target.value))}
-          />
-        </label>
-      </div>
-    )
   }
 
   return (
@@ -343,29 +266,20 @@ export function OrchestrationEditor({
               </div>
             )}
           </aside>
-          <div className="orch-canvas-wrap">
-            <div className="orch-canvas">
-              <svg className="orch-edges" aria-hidden="true">
-                {state.edges.map((edge) => {
-                  const from = state.nodes.find((node) => node.key === edge.from)
-                  const to = state.nodes.find((node) => node.key === edge.to)
-                  if (!from || !to) return null
-                  const a = nodeCenter(from)
-                  const b = nodeCenter(to)
-                  return (
-                    <line
-                      key={`${edge.from}->${edge.to}`}
-                      x1={from.x + (from.kind === 'server' ? NODE_W : TRIGGER_W)}
-                      y1={a.y}
-                      x2={to.x}
-                      y2={b.y}
-                    />
-                  )
-                })}
-              </svg>
-              {state.nodes.map(renderNode)}
-            </div>
-          </div>
+          <OrchestrationCanvas
+            state={state}
+            hopRole={hop.role}
+            serverMap={serverMap}
+            selected={selected}
+            connecting={connecting}
+            onStartConnect={startConnect}
+            onCompleteConnect={completeConnect}
+            onRemove={remove}
+            onMove={(key, x, y) => setState(moveNode(state, key, x, y))}
+            onPriority={(key, value) => setState(setPriority(state, key, value))}
+            onPort={(key, value) => setState(setServerListenPort(state, key, value))}
+            onAddress={(key, value) => setState(setServerAddress(state, key, value))}
+          />
         </div>
         <footer className="orch-foot">
           <div className="orch-errors" role="status">
@@ -381,7 +295,7 @@ export function OrchestrationEditor({
             )}
           </div>
           <span className="orch-hint">
-            点击两个节点连线（服务器→触发器→服务器）；黄点/堆叠来自详情页。恢复触发器添加即连根。
+            点服务器出口圆点 → 触发器入口圆点连线；恢复触发器添加即连根；拖动卡片可调整布局。
           </span>
         </footer>
       </div>

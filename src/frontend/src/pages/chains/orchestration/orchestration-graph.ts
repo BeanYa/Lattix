@@ -1,4 +1,5 @@
 import type { ChainOrchestration, HopOrchestrationSaveRequest } from '@/lib/types'
+import { CARD_H, CARD_W } from '../chain-wizard/chain-canvas'
 
 export type TriggerSubject = 'self' | 'prev' | 'next' | 'root'
 export type TriggerAction = 'ban_suspected' | 'ban_banned' | 'segment_timeout' | 'recovered'
@@ -34,8 +35,9 @@ export interface EditorState {
 
 export const MAX_SERVERS = 8
 export const MAX_TRIGGERS = 16
-export const CARD_X = 200
-export const CARD_Y = 132
+// 与链路画布同源：列间距/行间距由链路卡片尺寸推导，保证卡片不重叠。
+export const CARD_X = CARD_W + 72
+export const CARD_Y = CARD_H + 32
 
 export function createEditorState(input: {
   chainId: number
@@ -181,14 +183,16 @@ export function connect(state: EditorState, from: string, to: string): EditorSta
     if (target.subject === 'root') return state
     if (state.edges.some((edge) => edge.to === target.key)) return state
   }
+  let edges = state.edges
   if (source.kind === 'trigger' && target.kind === 'server') {
-    if (state.edges.some((edge) => edge.from === source.key)) return state
     if (source.subject === 'root') {
       const root = state.nodes.find((node) => node.kind === 'server' && node.isRoot)
       if (!root || target.key !== root.key) return state
     }
+    // 触发器出边唯一：改连到新的服务器时替换原出边（重指目标），而不是拒绝操作。
+    edges = edges.filter((edge) => edge.from !== source.key)
   }
-  return autoLayout({ ...state, edges: [...state.edges, { from, to }] })
+  return autoLayout({ ...state, edges: [...edges, { from, to }] })
 }
 
 export function disconnect(state: EditorState, from: string, to: string): EditorState {
@@ -286,11 +290,17 @@ export function autoLayout(state: EditorState): EditorState {
       queue.push({ key, level })
     }
   }
+  // 尚未接入图的节点（新添加、待连线）排到最后一列右侧，而不是散落在画布远处。
   const remaining = state.nodes.filter((node) => !positions.has(node.key))
-  const baseRow = Math.max(0, ...Array.from(levelRows.values()))
-  remaining.forEach((node, index) => {
-    positions.set(node.key, { x: COLUMN * 2, y: (baseRow + index + 1) * CARD_Y })
-  })
+  if (remaining.length > 0) {
+    const maxLevel = Math.max(0, ...Array.from(levelRows.keys()))
+    const column = maxLevel + 2
+    let row = levelRows.get(column) ?? 0
+    remaining.forEach((node) => {
+      positions.set(node.key, { x: column * COLUMN, y: row * CARD_Y })
+      row += 1
+    })
+  }
   return {
     ...state,
     nodes: state.nodes.map((node) => ({ ...node, ...(positions.get(node.key) ?? {}) })),
@@ -430,4 +440,32 @@ export function triggerLabel(node: Pick<EditorNode, 'subject' | 'action'>): stri
     (item) => item.subject === node.subject && item.action === node.action,
   )
   return found?.label ?? '触发器'
+}
+
+export function moveNode(state: EditorState, key: string, x: number, y: number): EditorState {
+  return {
+    ...state,
+    nodes: state.nodes.map((node) => (node.key === key ? { ...node, x, y } : node)),
+  }
+}
+
+export function setServerAddress(state: EditorState, key: string, value: string): EditorState {
+  return {
+    ...state,
+    nodes: state.nodes.map((node) => (node.key === key ? { ...node, address: value } : node)),
+  }
+}
+
+export function setServerListenPort(state: EditorState, key: string, value: string): EditorState {
+  return {
+    ...state,
+    nodes: state.nodes.map((node) => (node.key === key ? { ...node, listenPort: value } : node)),
+  }
+}
+
+export function removeEdge(state: EditorState, from: string, to: string): EditorState {
+  return {
+    ...state,
+    edges: state.edges.filter((edge) => !(edge.from === from && edge.to === to)),
+  }
 }

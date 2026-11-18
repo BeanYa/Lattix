@@ -12,8 +12,8 @@
 .orch-panel {
   display: flex;
   flex-direction: column;
-  width: min(1180px, 96vw);
-  height: min(780px, 92vh);
+  width: min(1320px, 97vw);
+  height: min(840px, 94vh);
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 18px;
@@ -42,7 +42,7 @@
 }
 .orch-body {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 250px minmax(0, 1fr);
   flex: 1;
   min-height: 0;
 }
@@ -110,103 +110,65 @@
   color: var(--muted-foreground);
   font-size: 12px;
 }
-.orch-canvas-wrap {
-  overflow: auto;
-  padding: 20px;
-}
+/* 画布：复用链路编辑器的世界层/连线样式（.cw-world/.cw-wires/.cw-wire）。 */
 .orch-canvas {
   position: relative;
-  min-width: 900px;
-  min-height: 640px;
-  border-radius: 14px;
+  overflow: hidden;
+  cursor: grab;
+  background: var(--panel-canvas, var(--background));
+}
+.orch-canvas:active {
+  cursor: grabbing;
+}
+.orch-canvas-bg {
+  position: absolute;
+  inset: 0;
   background-image: radial-gradient(
     circle,
-    color-mix(in oklab, var(--border) 70%, transparent) 1px,
+    color-mix(in oklab, var(--border) 65%, transparent) 1px,
     transparent 1px
   );
   background-size: 18px 18px;
 }
-.orch-edges {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-.orch-edges line {
-  stroke: color-mix(in oklab, var(--primary) 70%, var(--border));
-  stroke-width: 1.6;
-}
-.orch-node {
-  position: absolute;
-  min-height: 92px;
-  padding: 10px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: color-mix(in oklab, var(--card) 94%, transparent);
+.orch-trigger-card {
   cursor: pointer;
+  border-color: color-mix(in oklab, #f5b301 55%, var(--panel-edge-strong, var(--border)));
+  background: color-mix(in oklab, #f5b301 8%, var(--panel-popover, var(--card)));
 }
-.orch-node.is-server {
-  border-color: color-mix(in oklab, #3b82f6 40%, var(--border));
+.orch-trigger.is-selected .cw-node-card {
+  border-color: var(--panel-signal);
+  box-shadow: 0 0 0 3px var(--panel-signal-soft);
 }
-.orch-node.is-trigger {
-  border-color: color-mix(in oklab, #f5b301 55%, var(--border));
-  background: color-mix(in oklab, #f5b301 8%, var(--card));
-}
-.orch-node.is-root {
-  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
-}
-.orch-node.is-selected {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
-}
-.orch-node-head {
+/* 触发器下半区与链路卡片一致：配置行 + 数值框。 */
+.orch-trigger-priority-row {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  justify-content: space-between;
+  gap: 8px;
+  height: var(--cw-address-h, 24px);
+  padding: 0 2px;
 }
-.orch-node-head em {
-  font-style: normal;
-  font-size: 10px;
-  color: var(--muted-foreground);
-}
-.orch-node-remove {
-  margin-left: auto;
-  border: 0;
-  background: transparent;
-  color: var(--muted-foreground);
-  font-size: 16px;
-  line-height: 1;
-  cursor: pointer;
-}
-.orch-node-fields {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 72px;
-  gap: 6px;
-  margin-top: 10px;
-}
-.orch-node-fields input,
-.orch-priority input {
-  width: 100%;
-  padding: 4px 6px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--background);
+.orch-trigger-priority-input {
+  width: 96px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--panel-rule, var(--border));
+  border-radius: 8px;
+  background: var(--panel-popover, var(--card));
   color: var(--foreground);
-  font-size: 11px;
+  font-size: 12px;
+  text-align: right;
 }
-.orch-priority {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  color: var(--muted-foreground);
-  font-size: 11px;
+.orch-trigger-priority-input:focus-visible {
+  outline: 2px solid var(--panel-signal);
+  outline-offset: 1px;
 }
-.orch-priority input {
-  width: 64px;
+.orch-trigger-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #f5b301;
+  flex: none;
 }
 .orch-foot {
   display: flex;
@@ -234,13 +196,13 @@
   color: var(--muted-foreground);
   font-size: 11px;
 }
-@media (max-width: 860px) {
+@media (max-width: 900px) {
   .orch-body {
     grid-template-columns: 1fr;
   }
   .orch-side {
     border-right: 0;
     border-bottom: 1px solid var(--border);
-    max-height: 180px;
+    max-height: 170px;
   }
 }

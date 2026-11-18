@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CARD_X,
   addServer,
   addTrigger,
   connect,
@@ -52,7 +53,7 @@ describe('orchestration editor model', () => {
     expect(state.edges).toContainEqual({ from: recovery.key, to: state.nodes[0].key })
   })
 
-  it('触发器只能有一个目标，恢复触发器只能连根', () => {
+  it('触发器保持单目标：连到新服务器时重指，恢复触发器只能连根', () => {
     let state = createEditorState({ chainId: 1, seq: 0, activeServerId: 7 })
     state = addServer(state, 8)
     state = addServer(state, 9)
@@ -62,9 +63,15 @@ describe('orchestration editor model', () => {
     const [backupA, backupB] = state.nodes.filter((node) => node.kind === 'server' && !node.isRoot)
     state = connect(state, root.key, trigger.key)
     state = connect(state, trigger.key, backupA.key)
-    const before = state
     state = connect(state, trigger.key, backupB.key)
-    expect(state.edges).toEqual(before.edges)
+    const outgoing = state.edges.filter((edge) => edge.from === trigger.key)
+    expect(outgoing).toHaveLength(1)
+    expect(outgoing[0].to).toBe(backupB.key)
+    // 恢复触发器只能指向根。
+    state = addTrigger(state, { subject: 'root', action: 'recovered' })
+    const recovery = state.nodes.find((node) => node.subject === 'root')!
+    const blocked = connect(state, recovery.key, backupA.key)
+    expect(blocked.edges).toEqual(state.edges)
   })
 
   it('根与当前运行服务器不可删除', () => {
@@ -124,9 +131,9 @@ describe('orchestration editor model', () => {
     state = connect(state, root.key, trigger.key)
     state = connect(state, trigger.key, backup.key)
     const positioned = state.nodes
-    expect(positioned.find((node) => node.key === root.key)?.x).toBe(200)
-    expect(positioned.find((node) => node.key === trigger.key)?.x).toBe(400)
-    expect(positioned.find((node) => node.key === backup.key)?.x).toBe(600)
+    expect(positioned.find((node) => node.key === root.key)?.x).toBe(CARD_X)
+    expect(positioned.find((node) => node.key === trigger.key)?.x).toBe(CARD_X * 2)
+    expect(positioned.find((node) => node.key === backup.key)?.x).toBe(CARD_X * 3)
   })
 
   it('同一层的不同父节点子节点不会重叠', () => {
@@ -146,5 +153,39 @@ describe('orchestration editor model', () => {
     const posB = state.nodes.find((node) => node.key === b.key)!
     expect(posA.x).toBe(posB.x)
     expect(posA.y).not.toBe(posB.y)
+  })
+
+  it('未接入图的节点排到最后一列右侧且不与已布局节点重叠', () => {
+    let state = createEditorState({ chainId: 1, seq: 0, activeServerId: 7 })
+    state = addTrigger(state, { subject: 'self', action: 'ban_suspected' })
+    const root = state.nodes[0]
+    const trigger = state.nodes.find((node) => node.kind === 'trigger')!
+    state = connect(state, root.key, trigger.key)
+    state = addServer(state, 9)
+    const loose = state.nodes.find((node) => node.kind === 'server' && !node.isRoot)!
+    expect(loose.x).toBeGreaterThan(trigger.x)
+    const overlaps = state.nodes.some(
+      (other) =>
+        other.key !== loose.key &&
+        Math.abs(other.x - loose.x) < 1 &&
+        Math.abs(other.y - loose.y) < 1,
+    )
+    expect(overlaps).toBe(false)
+  })
+
+  it('触发器换目标服务器时替换出边而不是新增', () => {
+    let state = createEditorState({ chainId: 1, seq: 0, activeServerId: 7 })
+    state = addServer(state, 8)
+    state = addServer(state, 9)
+    state = addTrigger(state, { subject: 'self', action: 'ban_suspected' })
+    const root = state.nodes[0]
+    const trigger = state.nodes.find((node) => node.kind === 'trigger')!
+    const [first, second] = state.nodes.filter((node) => node.kind === 'server' && !node.isRoot)
+    state = connect(state, root.key, trigger.key)
+    state = connect(state, trigger.key, first.key)
+    state = connect(state, trigger.key, second.key)
+    const outgoing = state.edges.filter((edge) => edge.from === trigger.key)
+    expect(outgoing).toHaveLength(1)
+    expect(outgoing[0].to).toBe(second.key)
   })
 })
