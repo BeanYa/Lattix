@@ -841,6 +841,47 @@ CREATE TABLE IF NOT EXISTS chain_failover_events (
 CREATE INDEX IF NOT EXISTS idx_chain_failover_events_chain
     ON chain_failover_events(chain_id, created_at DESC, id DESC);
 
+-- 链路跳位编排图（v34）：每跳以原服务器为根的 DAG，server/trigger 交替节点。
+CREATE TABLE IF NOT EXISTS chain_hop_graphs (
+    chain_id       INTEGER NOT NULL REFERENCES chains(id),
+    seq            INTEGER NOT NULL,
+    cooldown_sec   INTEGER NOT NULL DEFAULT 300,
+    last_switch_at DATETIME,
+    updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chain_id, seq)
+);
+CREATE TABLE IF NOT EXISTS chain_hop_graph_nodes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain_id        INTEGER NOT NULL REFERENCES chains(id),
+    seq             INTEGER NOT NULL,
+    kind            TEXT NOT NULL,              -- server | trigger
+    server_id       INTEGER,
+    address         TEXT NOT NULL DEFAULT '',
+    listen_port     INTEGER NOT NULL DEFAULT 0,
+    trigger_subject TEXT,                      -- self | prev | next | root
+    trigger_action  TEXT,                      -- ban_suspected | ban_banned | segment_timeout | recovered
+    priority        INTEGER NOT NULL DEFAULT 0, -- 0=auto (ordinal), 1..9999 explicit
+    is_root         INTEGER NOT NULL DEFAULT 0,
+    ordinal         INTEGER NOT NULL DEFAULT 0,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_chain_hop_graph_nodes
+    ON chain_hop_graph_nodes(chain_id, seq, ordinal);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chain_hop_graph_root
+    ON chain_hop_graph_nodes(chain_id, seq) WHERE is_root = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chain_hop_graph_server
+    ON chain_hop_graph_nodes(chain_id, seq, server_id) WHERE kind = 'server';
+CREATE TABLE IF NOT EXISTS chain_hop_graph_edges (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain_id  INTEGER NOT NULL REFERENCES chains(id),
+    seq       INTEGER NOT NULL,
+    from_node INTEGER NOT NULL,
+    to_node   INTEGER NOT NULL,
+    UNIQUE (chain_id, seq, from_node, to_node)
+);
+CREATE INDEX IF NOT EXISTS idx_chain_hop_graph_edges
+    ON chain_hop_graph_edges(chain_id, seq);
+
 `
 
 // Store 封装 SQLite 数据访问。

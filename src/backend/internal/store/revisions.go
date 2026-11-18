@@ -67,6 +67,9 @@ type ChainRevisionSnapshot struct {
 	// 入口 Endpoint 的路由以该规格渲染外部协议 outbound，末位托管跳 forward 拨该节点。
 	// 随修订冻结，编辑服务器链接不影响已发布数据面。
 	ServiceExternal *shared.ExternalExit `json:"service_external,omitempty"`
+	// TopologyEdit = 该修订来自建链/编辑（而非故障切换）：工作拓扑替换时才需要
+	// 协调编排图（换跳清图/根不变保图），切换修订必须保留图。
+	TopologyEdit bool `json:"topology_edit,omitempty"`
 }
 
 type ChainRevision struct {
@@ -859,6 +862,11 @@ func (s *Store) ReplaceWorkingChainTopology(ctx context.Context, revision *Chain
 		return err
 	}
 	defer tx.Rollback()
+	if revision.Snapshot.TopologyEdit {
+		if err := reconcileChainHopGraphsTx(tx, revision.ChainID, revision.Snapshot.Hops); err != nil {
+			return fmt.Errorf("reconcile hop graphs: %w", err)
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_hops WHERE chain_id=?`, revision.ChainID); err != nil {
 		return err
 	}

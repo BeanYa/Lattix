@@ -716,6 +716,9 @@ func (s *Store) DeleteServerCascade(ctx context.Context, id int64) error {
 			return fmt.Errorf("delete server cascade: %w", err)
 		}
 	}
+	if _, err := clearChainHopGraphsForServerTx(tx, id); err != nil {
+		return fmt.Errorf("delete server cascade: %w", err)
+	}
 	for _, q := range []string{
 		`DELETE FROM user_nodes WHERE node_id IN (SELECT id FROM nodes WHERE server_id = ?
 			AND id NOT IN (SELECT service_node_id FROM chains WHERE deleted_at IS NULL))`,
