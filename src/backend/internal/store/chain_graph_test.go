@@ -194,3 +194,39 @@ func TestReconcileChainHopGraphsTx(t *testing.T) {
 		t.Fatalf("removed hop should clear graph: %+v", g)
 	}
 }
+
+func TestChainDeletionReferenceQueries(t *testing.T) {
+	ctx := context.Background()
+	st, chainID, ids := graphFixture(t)
+	a1, a2 := ids[0], ids[1]
+	if _, err := st.InsertChainHop(ctx, chainID, 0, a1, HopRoleEntry, 0, 443, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.ReplaceChainHopGraph(ctx, chainID, 0, []ChainHopGraphNode{
+		{Kind: HopGraphKindServer, ServerID: a1, IsRoot: true},
+		{Kind: HopGraphKindTrigger, Subject: TriggerSubjectSelf, Action: TriggerActionBanBanned},
+		{Kind: HopGraphKindServer, ServerID: a2},
+	}, []ChainHopGraphEdge{{FromNode: 0, ToNode: 1}, {FromNode: 1, ToNode: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	working, err := st.ChainsWithWorkingHopOnServer(ctx, a1)
+	if err != nil || len(working) != 1 || working[0].ID != chainID {
+		t.Fatalf("working refs: %v %+v", err, working)
+	}
+	graphOnly, err := st.ChainsWithWorkingHopOnServer(ctx, a2)
+	if err != nil || len(graphOnly) != 0 {
+		t.Fatalf("graph-only server must not be a working hop: %v %+v", err, graphOnly)
+	}
+	refs, err := st.ChainsWithGraphNodeOnServer(ctx, a2)
+	if err != nil || len(refs) != 1 || refs[0].ChainID != chainID || refs[0].Seq != 0 || refs[0].RootServerID != a1 {
+		t.Fatalf("graph refs: %v %+v", err, refs)
+	}
+	if _, err := st.ClearChainHopGraphsForServer(ctx, a2); err != nil {
+		t.Fatal(err)
+	}
+	refs, _ = st.ChainsWithGraphNodeOnServer(ctx, a2)
+	if len(refs) != 0 {
+		t.Fatalf("graph should be cleared: %+v", refs)
+	}
+}
+

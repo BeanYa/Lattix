@@ -1397,16 +1397,46 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	currentChains, err := s.st.ChainsWithWorkingHopOnServer(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	graphRefs, err := s.st.ChainsWithGraphNodeOnServer(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	currentSet := make(map[int64]bool, len(currentChains))
+	for _, chain := range currentChains {
+		currentSet[chain.ID] = true
+	}
+	graphSet := make(map[int64]bool, len(graphRefs))
+	for _, ref := range graphRefs {
+		graphSet[ref.ChainID] = true
+	}
+	if s.orchestrator != nil {
+		for _, chain := range affected {
+			s.orchestrator.PauseChain(chain.ID)
+			_ = s.orchestrator.WaitChainSettled(r.Context(), chain.ID, 2*time.Second)
+		}
+		for _, ref := range graphRefs {
+			s.orchestrator.PauseChain(ref.ChainID)
+			_ = s.orchestrator.WaitChainSettled(r.Context(), ref.ChainID, 2*time.Second)
+		}
+	}
 	for _, chain := range affected {
 		revisions, err := s.st.ChainDeploymentRevisions(r.Context(), chain.ID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		reason := fmt.Sprintf("服务器 %d（%s）已删除，链路失效", id, srv.Alias)
-		if err := s.disp.ChainFSM().InvalidateForServerDeletion(r.Context(), chain.ID, id, reason); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
+		if currentSet[chain.ID] {
+			reason := fmt.Sprintf("服务器 %d（%s）已删除，链路失效", id, srv.Alias)
+			if err := s.disp.ChainFSM().InvalidateForServerDeletion(r.Context(), chain.ID, id, reason); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 		}
 		seen := map[string]bool{}
 		for _, revision := range revisions {
@@ -1439,6 +1469,24 @@ func (s *Server) handleDeleteServer(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 				}
+			}
+		}
+	}
+	if _, err := s.st.ClearChainHopGraphsForServer(r.Context(), id); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if s.orchestrator != nil {
+		for _, chain := range affected {
+			if currentSet[chain.ID] {
+				s.orchestrator.StopChain(chain.ID)
+			} else if graphSet[chain.ID] {
+				s.orchestrator.ResumeChain(chain.ID)
+			}
+		}
+		for _, ref := range graphRefs {
+			if !currentSet[ref.ChainID] {
+				s.orchestrator.ResumeChain(ref.ChainID)
 			}
 		}
 	}
@@ -1488,3 +1536,34 @@ func revisionSnapshotHops(revision store.ChainRevision) []store.ChainHop {
 	}
 	return hops
 }
+
+type chainPieceRef struct {
+	ServerID int64
+	HopID    int64
+	Kind     string
+}
+
+// chainDeploymentPieces 返回全部部署修订里出现过的跳配置件（去重），供删链清理覆盖历史切换。
+func (s *Server) chainDeploymentPieces(ctx context.Context, chainID int64) ([]chainPieceRef, error) {
+	revisions, err := s.st.ChainDeploymentRevisions(ctx, chainID)
+	if err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool)
+	var out []chainPieceRef
+	for _, revision := range revisions {
+		hops := revisionSnapshotHops(revision)
+		for i, hop := range hops {
+			for _, kind := range store.ChainHopPieces(hops, i) {
+				key := fmt.Sprintf("%d/%d/%s", hop.ServerID, hop.ID, kind)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				out = append(out, chainPieceRef{ServerID: hop.ServerID, HopID: hop.ID, Kind: kind})
+			}
+		}
+	}
+	return out, nil
+}
+

@@ -463,3 +463,68 @@ func (s *Store) ChainIDsWithHopGraphs(ctx context.Context) ([]int64, error) {
 	return ids, rows.Err()
 }
 
+// ChainsWithWorkingHopOnServer 返回当前工作拓扑里用该服务器作跳的链（决定是否失效）。
+func (s *Store) ChainsWithWorkingHopOnServer(ctx context.Context, serverID int64) ([]Chain, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT chain_id FROM chain_hops WHERE server_id=?`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	var out []Chain
+	for _, id := range ids {
+		chain, err := s.ChainByID(ctx, id)
+		if err != nil || chain.Status == ChainStatusDeleted {
+			continue
+		}
+		out = append(out, *chain)
+	}
+	return out, nil
+}
+
+// ChainsWithGraphNodeOnServer 返回编排图里引用该服务器的跳位（图节点，非工作跳）。
+func (s *Store) ChainsWithGraphNodeOnServer(ctx context.Context, serverID int64) ([]ChainHopGraphRef, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT chain_id, seq FROM chain_hop_graph_nodes
+		WHERE kind='server' AND server_id=?`, serverID)
+	if err != nil {
+		return nil, err
+	}
+	type target struct{ chainID int64; seq int }
+	var targets []target
+	for rows.Next() {
+		var t target
+		if err := rows.Scan(&t.chainID, &t.seq); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		targets = append(targets, t)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	out := make([]ChainHopGraphRef, 0, len(targets))
+	for _, t := range targets {
+		var root sql.NullInt64
+		if err := s.db.QueryRowContext(ctx, `SELECT server_id FROM chain_hop_graph_nodes
+			WHERE chain_id=? AND seq=? AND is_root=1`, t.chainID, t.seq).Scan(&root); err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+		out = append(out, ChainHopGraphRef{ChainID: t.chainID, Seq: t.seq, RootServerID: root.Int64})
+	}
+	return out, nil
+}
+

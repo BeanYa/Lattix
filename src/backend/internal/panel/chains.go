@@ -1679,15 +1679,31 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 	}
 	o := s.observeStart(r, "chain.delete", "删除链路", chainNodeObserveStages)
 	defer o.CloseIfPending()
-	for i, h := range hops {
-		for _, kind := range store.ChainHopPieces(hops, i) {
-			if _, err := s.disp.Enqueue(r.Context(), h.ServerID, shared.TypeRemoveChainHop,
-				shared.RemoveChainHopPayload{HopID: h.ID, Kind: kind}); err != nil {
-				o.Fail(err)
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
+	if s.orchestrator != nil {
+		s.orchestrator.StopChain(id)
+	}
+	pieces, err := s.chainDeploymentPieces(r.Context(), id)
+	if err != nil {
+		o.Fail(err)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if len(pieces) == 0 {
+		for i, h := range hops {
+			for _, kind := range store.ChainHopPieces(hops, i) {
+				pieces = append(pieces, chainPieceRef{ServerID: h.ServerID, HopID: h.ID, Kind: kind})
 			}
 		}
+	}
+	for _, piece := range pieces {
+		if _, err := s.disp.Enqueue(r.Context(), piece.ServerID, shared.TypeRemoveChainHop,
+			shared.RemoveChainHopPayload{HopID: piece.HopID, Kind: piece.Kind}); err != nil {
+			o.Fail(err)
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	for _, h := range hops {
 		// 出口业务节点走现有删除流程（remove_node + 删行，§6）。
 		if h.Role == store.HopRoleExit && h.NodeID != 0 {
 			if _, err := s.disp.Enqueue(r.Context(), h.ServerID, shared.TypeRemoveNode,
@@ -1703,6 +1719,7 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	log.Printf("panel: chain %d delete: cleanup pieces=%d", id, len(pieces))
 	o.Report("publish", 100, "拆链命令已下发")
 	if err := s.disp.DeleteChain(r.Context(), id); err != nil {
 		o.Fail(err)
