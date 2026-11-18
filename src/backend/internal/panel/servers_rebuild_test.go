@@ -136,7 +136,7 @@ func TestRepairRebuildSkipHy2SharedExitNode(t *testing.T) {
 	dep, err := st.CreateInitialChainDeployment(ctx, store.InitialChainDeployment{
 		Name: "hy2-e2e", ServiceServerID: serverID, ServiceProtocol: shared.ProtocolHysteria2,
 		ServiceConfig: hy2cfg, ServiceEndpointID: epE.ID, TrafficMultiplierMilli: 1000,
-		Hops:                  []store.InitialChainHop{{ServerID: serverID, Role: store.HopRoleExit}},
+		Hops: []store.InitialChainHop{{ServerID: serverID, Role: store.HopRoleExit}},
 	})
 	if err != nil {
 		t.Fatal(err)

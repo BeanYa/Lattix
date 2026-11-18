@@ -56,10 +56,10 @@ type billingServerStatsDTO struct {
 // MonthlyMinor/AnnualMinor 为换算后月/年成本（= 日成本 × 30 / × 360，估算口径）。
 type estimatedBillingServerStatsDTO struct {
 	billingServerStatsBase
-	MonthlyMinor       int64   `json:"monthly_minor"`
-	AnnualMinor        int64   `json:"annual_minor"`
-	MonthlyCustomMinor int64   `json:"monthly_custom_minor,omitempty"`
-	AnnualCustomMinor  int64   `json:"annual_custom_minor,omitempty"`
+	MonthlyMinor         int64   `json:"monthly_minor"`
+	AnnualMinor          int64   `json:"annual_minor"`
+	MonthlyCustomMinor   int64   `json:"monthly_custom_minor,omitempty"`
+	AnnualCustomMinor    int64   `json:"annual_custom_minor,omitempty"`
 	EstimatedCostsPublic []int64 `json:"estimated_costs_public"`
 	EstimatedCostsCustom []int64 `json:"estimated_costs_custom,omitempty"`
 }
@@ -155,14 +155,14 @@ func estimateDays(from, to time.Time) int64 {
 // dailyPublic/dailyCustom 为已生效口径日成本（365 天年）；estDailyPublic/estDailyCustom
 // 为计算成本口径日成本（360 天年，月成本 × 30 / 年成本 × 360 精确）。
 type statsRow struct {
-	billing          store.ServerBilling
-	base             billingServerStatsBase
-	dailyPublic      *big.Rat
-	dailyCustom      *big.Rat
-	estDailyPublic   *big.Rat
-	estDailyCustom   *big.Rat
-	customDiffers    bool
-	rateDate         string
+	billing        store.ServerBilling
+	base           billingServerStatsBase
+	dailyPublic    *big.Rat
+	dailyCustom    *big.Rat
+	estDailyPublic *big.Rat
+	estDailyCustom *big.Rat
+	customDiffers  bool
+	rateDate       string
 }
 
 // errCostConversion 标记 convertCosts 换算失败（上游汇率获取错误，映射 502）。

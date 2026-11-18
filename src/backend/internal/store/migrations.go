@@ -24,9 +24,10 @@ import (
 // 外部节点仅作链路最后一跳（无 Agent、无入站能力）。
 // v32: 外部节点面板探测——servers.panel_latency_ms/panel_probed_at（面板侧 TCP 连通
 // 延迟，替代无 Agent 时缺失的三网测速与性能监控）。
-// v33: 链路跳位备选池与自动编排——新增 chain_hop_candidates、chain_auto_policies、
-// server_pair_watch、chain_failover_events，随 Schema 建表。
-const schemaVersion = 33
+// v33: 链路跳位备选池与自动编排（未发布，v34 取代，因此不建表）。
+// v34: 链路跳位编排图——新增 chain_hop_graphs/nodes/edges、chain_orchestration_states；
+// 保留 server_pair_watch / chain_failover_events。v33 的两张表从未发布，无需迁移。
+const schemaVersion = 34
 
 type columnMigration struct {
 	name       string

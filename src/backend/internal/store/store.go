@@ -783,39 +783,6 @@ CREATE TABLE IF NOT EXISTS user_group_links (
 CREATE INDEX IF NOT EXISTS idx_user_group_members_user
     ON user_group_members(user_id);
 
--- 链路跳位候选池：保存每个跳位（seq）按优先级排序的候选服务器（priority=0 为初始主节点，1..N 为备选节点）
-CREATE TABLE IF NOT EXISTS chain_hop_candidates (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    chain_id    INTEGER NOT NULL REFERENCES chains(id) ON DELETE CASCADE,
-    seq         INTEGER NOT NULL,
-    priority    INTEGER NOT NULL,
-    server_id   INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
-    address     TEXT    NOT NULL DEFAULT '',
-    listen_port INTEGER NOT NULL DEFAULT 0,
-    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (chain_id, seq, priority),
-    UNIQUE (chain_id, seq, server_id)
-);
-CREATE INDEX IF NOT EXISTS idx_chain_hop_candidates_chain
-    ON chain_hop_candidates(chain_id, seq, priority);
-
--- 链路自动编排策略表（1:1 关联 chains）
-CREATE TABLE IF NOT EXISTS chain_auto_policies (
-    chain_id            INTEGER PRIMARY KEY REFERENCES chains(id) ON DELETE CASCADE,
-    enabled             INTEGER NOT NULL DEFAULT 0,
-    on_ban              INTEGER NOT NULL DEFAULT 1,
-    ban_trigger_level   TEXT    NOT NULL DEFAULT 'banned', -- suspected|banned
-    on_unreachable      INTEGER NOT NULL DEFAULT 1,
-    unreachable_streak  INTEGER NOT NULL DEFAULT 3,
-    on_quota_exhausted  INTEGER NOT NULL DEFAULT 1,
-    on_agent_offline    INTEGER NOT NULL DEFAULT 0,
-    offline_timeout_sec INTEGER NOT NULL DEFAULT 900,
-    failback_mode       TEXT    NOT NULL DEFAULT 'sticky', -- sticky|preemptive
-    cooldown_sec        INTEGER NOT NULL DEFAULT 900,
-    last_failover_at    DATETIME,
-    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
 -- 有向服务器对连通性观察状态（段间 TCP/ICMP 连续超时状态机快照）
 CREATE TABLE IF NOT EXISTS server_pair_watch (
     from_server INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
@@ -840,6 +807,54 @@ CREATE TABLE IF NOT EXISTS chain_failover_events (
 );
 CREATE INDEX IF NOT EXISTS idx_chain_failover_events_chain
     ON chain_failover_events(chain_id, created_at DESC, id DESC);
+
+-- 链路跳位编排图（v34）：每跳以原服务器为根的 DAG，server/trigger 交替节点。
+CREATE TABLE IF NOT EXISTS chain_hop_graphs (
+    chain_id       INTEGER NOT NULL REFERENCES chains(id),
+    seq            INTEGER NOT NULL,
+    cooldown_sec   INTEGER NOT NULL DEFAULT 300,
+    last_switch_at DATETIME,
+    updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (chain_id, seq)
+);
+CREATE TABLE IF NOT EXISTS chain_hop_graph_nodes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain_id        INTEGER NOT NULL REFERENCES chains(id),
+    seq             INTEGER NOT NULL,
+    kind            TEXT NOT NULL,              -- server | trigger
+    server_id       INTEGER,
+    address         TEXT NOT NULL DEFAULT '',
+    listen_port     INTEGER NOT NULL DEFAULT 0,
+    trigger_subject TEXT,                      -- self | prev | next | root
+    trigger_action  TEXT,                      -- ban_suspected | ban_banned | segment_timeout | recovered
+    priority        INTEGER NOT NULL DEFAULT 0, -- 0=auto (ordinal), 1..9999 explicit
+    is_root         INTEGER NOT NULL DEFAULT 0,
+    ordinal         INTEGER NOT NULL DEFAULT 0,
+    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_chain_hop_graph_nodes
+    ON chain_hop_graph_nodes(chain_id, seq, ordinal);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chain_hop_graph_root
+    ON chain_hop_graph_nodes(chain_id, seq) WHERE is_root = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chain_hop_graph_server
+    ON chain_hop_graph_nodes(chain_id, seq, server_id) WHERE kind = 'server';
+CREATE TABLE IF NOT EXISTS chain_hop_graph_edges (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    chain_id  INTEGER NOT NULL REFERENCES chains(id),
+    seq       INTEGER NOT NULL,
+    from_node INTEGER NOT NULL,
+    to_node   INTEGER NOT NULL,
+    UNIQUE (chain_id, seq, from_node, to_node)
+);
+CREATE INDEX IF NOT EXISTS idx_chain_hop_graph_edges
+    ON chain_hop_graph_edges(chain_id, seq);
+
+-- 编排 worker 的失败现场（暂停提示）。保存图/编辑链路后清空。
+CREATE TABLE IF NOT EXISTS chain_orchestration_states (
+    chain_id   INTEGER PRIMARY KEY REFERENCES chains(id),
+    error      TEXT NOT NULL DEFAULT '',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 
 `
 

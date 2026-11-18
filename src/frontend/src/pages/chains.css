@@ -1391,3 +1391,89 @@
   font-size: 12px;
   line-height: 1.45;
 }
+
+.cg-hop-stack {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding-top: 32px;
+  margin-bottom: 10px;
+}
+.cg-hop-stack-cards {
+  position: relative;
+  width: 240px;
+  height: 30px;
+}
+.cg-hop-stack-card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: calc(20 - var(--i, 0));
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 210px;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+  transform: translate(calc(var(--i, 0) * 16px), calc(var(--i, 0) * -15px));
+}
+.cg-hop-stack-card.is-front {
+  transform: none;
+  z-index: 30;
+  pointer-events: auto;
+  cursor: pointer;
+  color: var(--foreground);
+  font-weight: 600;
+}
+.cg-hop-stack-card.is-front:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.cg-hop-stack-card em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.cg-hop-stack-card.is-active {
+  border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
+  color: var(--foreground);
+}
+.cg-hop-stack-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #f5b301;
+  box-shadow: 0 0 0 3px color-mix(in oklab, #f5b301 22%, transparent);
+  border: 0;
+  cursor: pointer;
+  flex: none;
+}
+.cg-hop-stack-badge,
+.cg-hop-stack-more,
+.cg-hop-stack-hint {
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.cg-hop-stack-badge {
+  color: var(--primary);
+}
+.cg-hop-stack.is-expanded .cg-hop-stack-card {
+  pointer-events: auto;
+  transform: translate(calc(var(--i, 0) * 30px), calc(var(--i, 0) * -26px));
+}
+.cg-hop-stack.is-expanded {
+  padding-top: 46px;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cg-hop-stack-card {
+    transition: transform 160ms ease;
+  }
+}

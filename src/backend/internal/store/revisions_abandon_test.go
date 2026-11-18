@@ -93,7 +93,7 @@ func TestAbandonChainRevisionAbandonsQueuedWork(t *testing.T) {
 }
 
 // TestAbandonChainRevisionCancelsWaitingForAgent 验证被新编辑取代的等待中 revision
-//（编辑所需 Agent 离线）同样置 cancelled：等待中无在途命令，废弃只落 revision 状态。
+// （编辑所需 Agent 离线）同样置 cancelled：等待中无在途命令，废弃只落 revision 状态。
 func TestAbandonChainRevisionCancelsWaitingForAgent(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(":memory:")

@@ -456,7 +456,7 @@ func TestResolveHy2PortHopZeroSpanNAT(t *testing.T) {
 
 // TestResolveHy2PortHopOwnEndpointSpanCrossServer 验证 ownEndpointID 段豁免仅限同机
 // （终审修复 N-1）：编辑链把出口迁到服务器 Y 时，前端回填的 port_hop 与旧端点
-//（X 上）段一致，但「共有占用」语义不跨机——段与 Y 上既有占用冲突必须照常报错，
+// （X 上）段一致，但「共有占用」语义不跨机——段与 Y 上既有占用冲突必须照常报错，
 // 否则 EnsureProtocolSharedEndpoint 会在 Y 上以冲突段新建端点 → 双 DNAT 抢同段。
 func TestResolveHy2PortHopOwnEndpointSpanCrossServer(t *testing.T) {
 	ctx := context.Background()

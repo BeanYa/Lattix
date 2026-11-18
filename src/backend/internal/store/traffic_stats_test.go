@@ -199,7 +199,7 @@ func TestTrafficStatsDailyTimezoneBoundary(t *testing.T) {
 
 // trafficStatSeedPoint 描述一笔测试种子增量及其采样时刻；
 // overview 同进度测试用它按窗口/日期谓词在 Go 侧重算期望值
-//（Store 无法注入时钟，窗口锚点只能相对真实 now 构造）。
+// （Store 无法注入时钟，窗口锚点只能相对真实 now 构造）。
 type trafficStatSeedPoint struct {
 	at   time.Time
 	up   int64
@@ -385,11 +385,11 @@ func TestTrafficStatOverviewSameProgress(t *testing.T) {
 	startLastMonth := startMonth.AddDate(0, -1, 0)
 	elapsed := now.Sub(startMonth)
 	seeds := []trafficStatSeedPoint{
-		{at: startToday.Add(-24 * time.Hour), up: 100, down: 40},               // 昨日 00:00：必在 TodayPrev 窗口
-		{at: now.Add(-24*time.Hour + 2*time.Minute), up: 999, down: 998},        // 昨日同时刻之后：必在 TodayPrev 窗口外
-		{at: startToday, up: 7, down: 3},                                       // 今日 00:00：计入 Today
-		{at: startLastMonth, up: 500, down: 250},                               // 上月 1 日：计入上月全月，不在同进度尾部窗口
-		{at: startMonth.Add(-2 * time.Hour), up: 300, down: 150},               // 上月末尾：落在尾部窗口内被扣除
+		{at: startToday.Add(-24 * time.Hour), up: 100, down: 40},         // 昨日 00:00：必在 TodayPrev 窗口
+		{at: now.Add(-24*time.Hour + 2*time.Minute), up: 999, down: 998}, // 昨日同时刻之后：必在 TodayPrev 窗口外
+		{at: startToday, up: 7, down: 3},                                 // 今日 00:00：计入 Today
+		{at: startLastMonth, up: 500, down: 250},                         // 上月 1 日：计入上月全月，不在同进度尾部窗口
+		{at: startMonth.Add(-2 * time.Hour), up: 300, down: 150},         // 上月末尾：落在尾部窗口内被扣除
 	}
 	for i, seed := range seeds {
 		if err := st.ApplyTrafficSnapshot(ctx, serverID, "instance-1",

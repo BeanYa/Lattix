@@ -845,13 +845,6 @@ export function prefillCanvas(
   const rowY = 240
   const externalExit = chain.service_external != null
   const nodes = chain.hops.map((hop, index) => {
-    const candidates: CanvasNodeCandidate[] = (hop.candidates ?? [])
-      .filter((cand) => cand.server_id !== hop.server_id)
-      .map((cand) => ({
-        serverId: cand.server_id,
-        address: cand.address ?? '',
-        port: cand.port ? String(cand.port) : '',
-      }))
     return {
       id: `n${index + 1}`,
       serverId: hop.server_id,
@@ -868,7 +861,6 @@ export function prefillCanvas(
               : exitPort
             : '',
       address: hop.address ?? '',
-      candidates,
     }
   })
   const edges: CanvasEdge[] = nodes.length ? [{ from: INGRESS_NODE_ID, to: nodes[0].id }] : []

@@ -3,12 +3,8 @@ package panel
 import (
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 
 	"lattix/backend/internal/store"
 	"lattix/shared"
@@ -110,224 +106,20 @@ func setupAutoTestChain(t *testing.T) (*Server, *store.Store, *fakeAutoRequester
 		t.Fatal(err)
 	}
 
-	candidates := []store.ChainHopCandidate{
-		{ChainID: dep.ChainID, Seq: 0, Priority: 0, ServerID: a1, ListenPort: 10443},
-		{ChainID: dep.ChainID, Seq: 0, Priority: 1, ServerID: a2, ListenPort: 10444},
-		{ChainID: dep.ChainID, Seq: 1, Priority: 0, ServerID: b1, ListenPort: 20443},
-		{ChainID: dep.ChainID, Seq: 1, Priority: 1, ServerID: b2, ListenPort: 20444},
-	}
-	if err := st.ReplaceChainHopCandidates(ctx, dep.ChainID, candidates); err != nil {
+	if _, err := st.ReplaceChainHopGraph(ctx, dep.ChainID, 0, []store.ChainHopGraphNode{
+		{Kind: store.HopGraphKindServer, ServerID: a1, IsRoot: true, ListenPort: 10443},
+		{Kind: store.HopGraphKindTrigger, Subject: store.TriggerSubjectSelf, Action: store.TriggerActionBanSuspected},
+		{Kind: store.HopGraphKindServer, ServerID: a2, ListenPort: 10444},
+	}, []store.ChainHopGraphEdge{{FromNode: 0, ToNode: 1}, {FromNode: 1, ToNode: 2}}); err != nil {
 		t.Fatal(err)
 	}
-	policy := store.DefaultChainAutoPolicy(dep.ChainID)
-	policy.Enabled = true
-	policy.CooldownSec = 0
-	if err := st.UpsertChainAutoPolicy(ctx, policy); err != nil {
+	if _, err := st.ReplaceChainHopGraph(ctx, dep.ChainID, 1, []store.ChainHopGraphNode{
+		{Kind: store.HopGraphKindServer, ServerID: b1, IsRoot: true, ListenPort: 20443},
+		{Kind: store.HopGraphKindTrigger, Subject: store.TriggerSubjectPrev, Action: store.TriggerActionSegmentTimeout},
+		{Kind: store.HopGraphKindServer, ServerID: b2, ListenPort: 20444},
+	}, []store.ChainHopGraphEdge{{FromNode: 0, ToNode: 1}, {FromNode: 1, ToNode: 2}}); err != nil {
 		t.Fatal(err)
 	}
 
 	return srv, st, req, dep.ChainID, a1, a2, b1, b2
-}
-
-func TestAutoOrchestratorFailoverOnEntryBannedAndPreemptiveFailback(t *testing.T) {
-	ctx := context.Background()
-	srv, st, _, chainID, a1, a2, b1, _ := setupAutoTestChain(t)
-
-	// 模拟入口 A1 三网连续 10 轮超时被判定为 banned。
-	now := time.Now().UTC()
-	if err := st.UpsertServerBanWatch(ctx, store.ServerBanWatch{
-		ServerID:   a1,
-		LossStreak: 10,
-		State:      store.BanStateBanned,
-		UpdatedAt:  now,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := srv.Orchestrator().EvaluateChain(ctx, chainID); err != nil {
-		t.Fatalf("EvaluateChain on ban: %v", err)
-	}
-
-	hops, err := st.ChainHops(ctx, chainID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(hops) != 2 || hops[0].ServerID != a2 || hops[1].ServerID != b1 {
-		t.Fatalf("expected entry hop switched to A2 (%d), got hops=%+v", a2, hops)
-	}
-	events, err := st.ChainFailoverEvents(ctx, chainID, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(events) != 1 || events[0].ReasonCode != store.FailoverReasonBanned ||
-		events[0].FromServerID != a1 || events[0].ToServerID != a2 {
-		t.Fatalf("unexpected failover event: %+v", events)
-	}
-
-	// 将新建的 desired revision 推向已发布 active，随后测试主节点 A1 恢复 normal 时的抢占式回切。
-	chain, _ := st.ChainByID(ctx, chainID)
-	for _, h := range hops {
-		_ = st.SetChainHopStatus(ctx, h.ID, store.HopStatusActive, "")
-	}
-	if err := st.PublishChainRevision(ctx, chain.DesiredRevisionID, false); err != nil {
-		t.Fatal(err)
-	}
-
-	policy, _ := st.ChainAutoPolicyByID(ctx, chainID)
-	policy.FailbackMode = store.FailbackPreemptive
-	policy.CooldownSec = 0
-	if err := st.UpsertChainAutoPolicy(ctx, policy); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.UpsertServerBanWatch(ctx, store.ServerBanWatch{
-		ServerID:   a1,
-		LossStreak: 0,
-		State:      store.BanStateNormal,
-		UpdatedAt:  time.Now().UTC(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := srv.Orchestrator().EvaluateChain(ctx, chainID); err != nil {
-		t.Fatalf("EvaluateChain on failback: %v", err)
-	}
-	hopsAfter, _ := st.ChainHops(ctx, chainID)
-	if len(hopsAfter) != 2 || hopsAfter[0].ServerID != a1 {
-		t.Fatalf("expected entry hop failed back to A1 (%d), got %+v", a1, hopsAfter)
-	}
-}
-
-func TestAutoOrchestratorFailoverOnSegmentUnreachableAndQuotaExhausted(t *testing.T) {
-	ctx := context.Background()
-	srv, st, _, chainID, a1, a2, b1, b2 := setupAutoTestChain(t)
-
-	// 1. 模拟 A1 -> B1 连续 3 轮探测超时（nil LatencyMS），触发下游 B1 替换为 B2。
-	for round := 0; round < 3; round++ {
-		srv.Orchestrator().OnLatencyReport(ctx, a1, []store.ServerLatencySample{
-			{ToServer: b1, Kind: "tcp", Port: 20443, LatencyMS: nil},
-		})
-	}
-	if err := srv.Orchestrator().EvaluateChain(ctx, chainID); err != nil {
-		t.Fatalf("EvaluateChain on segment unreachable: %v", err)
-	}
-	hops, _ := st.ChainHops(ctx, chainID)
-	if len(hops) != 2 || hops[1].ServerID != b2 {
-		t.Fatalf("expected exit hop switched to B2 (%d), got %+v", b2, hops)
-	}
-
-	// 发布该 revision 后，模拟入口 A1 当期流量耗尽。
-	chain, _ := st.ChainByID(ctx, chainID)
-	for _, h := range hops {
-		_ = st.SetChainHopStatus(ctx, h.ID, store.HopStatusActive, "")
-	}
-	if err := st.PublishChainRevision(ctx, chain.DesiredRevisionID, false); err != nil {
-		t.Fatal(err)
-	}
-
-	quota := int64(1000)
-	today := time.Now().Format("2006-01-02")
-	if err := st.UpsertServerTrafficPlan(ctx, store.ServerTrafficPlan{
-		ServerID:          a1,
-		QuotaBytes:        &quota,
-		AccountingMode:    "outbound",
-		ResetAnchorOn:     today,
-		ResetCount:        1,
-		ResetUnit:         "month",
-		TrackingStartedOn: today,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	// 两次 SaveServerMetrics 写入累计差值 1500 字节（超过 1000 字节配额）。
-	if err := st.SaveServerMetrics(ctx, a1, store.ServerMetrics{
-		NetworkInterface: "eth0",
-		NetworkTXBytes:   100,
-		UptimeSeconds:    100,
-	}, true); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SaveServerMetrics(ctx, a1, store.ServerMetrics{
-		NetworkInterface: "eth0",
-		NetworkTXBytes:   1600,
-		UptimeSeconds:    160,
-	}, true); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := srv.Orchestrator().EvaluateChain(ctx, chainID); err != nil {
-		t.Fatalf("EvaluateChain on quota exhausted: %v", err)
-	}
-	hopsAfterQuota, _ := st.ChainHops(ctx, chainID)
-	if len(hopsAfterQuota) != 2 || hopsAfterQuota[0].ServerID != a2 {
-		t.Fatalf("expected entry hop switched to A2 (%d) on quota exhaustion, got %+v", a2, hopsAfterQuota)
-	}
-}
-
-// TestChainRequestPayloadsAcceptCandidatesAndAutoPolicy 固定前端提交的建链/编辑与手动切换载荷。
-// readJSON 开启 DisallowUnknownFields，字段名一旦与前端(use-chain-form.ts / api.ts)漂移即会 400。
-func TestChainRequestPayloadsAcceptCandidatesAndAutoPolicy(t *testing.T) {
-	createPayload := `{
-		"name": "ui-chain",
-		"entry": {"server_id": 1, "candidates": [
-			{"server_id": 3},
-			{"server_id": 4, "address": "203.0.113.4", "listen_port": 10444}
-		]},
-		"exit": {"server_id": 2, "candidates": [{"server_id": 5}]},
-		"node": {"protocol": "vless"},
-		"auto_policy": {
-			"enabled": true, "on_ban": true, "ban_trigger_level": "suspected",
-			"on_unreachable": true, "unreachable_streak": 4, "on_quota_exhausted": true,
-			"on_agent_offline": true, "offline_timeout_sec": 180,
-			"failback_mode": "sticky", "cooldown_sec": 300
-		}
-	}`
-	req := httptest.NewRequest(http.MethodPost, "/api/chain/create", strings.NewReader(createPayload))
-	var create createChainRequest
-	if err := readJSON(req, &create); err != nil {
-		t.Fatalf("decode chain create payload: %v", err)
-	}
-	if len(create.Entry.Candidates) != 2 || create.Entry.Candidates[0].ServerID != 3 {
-		t.Fatalf("unexpected entry candidates: %+v", create.Entry.Candidates)
-	}
-	second := create.Entry.Candidates[1]
-	if second.Address != "203.0.113.4" || second.ListenPort == nil || *second.ListenPort != 10444 {
-		t.Fatalf("unexpected second candidate: %+v", second)
-	}
-	if len(create.Exit.Candidates) != 1 || create.Exit.Candidates[0].ServerID != 5 {
-		t.Fatalf("unexpected exit candidates: %+v", create.Exit.Candidates)
-	}
-	if create.AutoPolicy == nil || !create.AutoPolicy.Enabled ||
-		create.AutoPolicy.UnreachableStreak != 4 ||
-		create.AutoPolicy.FailbackMode != store.FailbackSticky ||
-		create.AutoPolicy.OfflineTimeoutSec != 180 {
-		t.Fatalf("unexpected auto policy: %+v", create.AutoPolicy)
-	}
-
-	// 编辑请求携带同一份备选池与策略。
-	editPayload := `{
-		"chain_id": 7, "name": "ui-chain", "traffic_multiplier": "1.000",
-		"hops": [{"server_id": 2, "candidates": [{"server_id": 5}]}],
-		"node": {"protocol": "vless"},
-		"auto_policy": {"enabled": true, "failback_mode": "preemptive"}
-	}`
-	editReq := httptest.NewRequest(http.MethodPost, "/api/chain/edit", strings.NewReader(editPayload))
-	var edit editChainRequest
-	if err := readJSON(editReq, &edit); err != nil {
-		t.Fatalf("decode chain edit payload: %v", err)
-	}
-	if len(edit.Hops) != 1 || len(edit.Hops[0].Candidates) != 1 {
-		t.Fatalf("unexpected edit hops: %+v", edit.Hops)
-	}
-	if edit.AutoPolicy == nil || edit.AutoPolicy.FailbackMode != store.FailbackPreemptive {
-		t.Fatalf("unexpected edit auto policy: %+v", edit.AutoPolicy)
-	}
-
-	switchPayload := `{"chain_id": 7, "seq": 1, "server_id": 9, "reason": "manual"}`
-	switchReq := httptest.NewRequest(http.MethodPost, "/api/chain/switch-hop", strings.NewReader(switchPayload))
-	var sw chainSwitchHopRequest
-	if err := readJSON(switchReq, &sw); err != nil {
-		t.Fatalf("decode switch-hop payload: %v", err)
-	}
-	if sw.ChainID != 7 || sw.Seq != 1 || sw.ServerID != 9 || sw.Reason != "manual" {
-		t.Fatalf("unexpected switch-hop payload: %+v", sw)
-	}
 }

@@ -171,14 +171,6 @@ export function ChainResultPreview({
                               {(hop.role === 'entry' || direct) && entryShared ? (
                                 <span className="cg-hop-shared">共享入口</span>
                               ) : null}
-                              {(hop.candidateServers?.length ?? 0) > 0 ? (
-                                <span
-                                  className="cg-hop-shared"
-                                  title={`备选顺序：${(hop.candidateServers ?? []).map((s, i) => `P${i + 1} ${s.alias}`).join(' → ')}`}
-                                >
-                                  +{hop.candidateServers?.length} 备选
-                                </span>
-                              ) : null}
                               <span>未部署</span>
                             </span>
                           </div>

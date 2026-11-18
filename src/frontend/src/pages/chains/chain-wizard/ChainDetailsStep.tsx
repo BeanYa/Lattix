@@ -127,10 +127,6 @@ export function ChainDetailsStep({
   const allDirectPaths =
     chainPaths.length > 0 && chainPaths.every((chain) => chain.servers.length === 1)
   const hasRelayPath = chainPaths.some((chain) => chain.servers.length > 1)
-  const totalCandidates = chainPaths.reduce(
-    (sum, c) => sum + c.hops.reduce((hSum, h) => hSum + (h.candidateServers?.length ?? 0), 0),
-    0,
-  )
   // 落地服务器（ACME 域名检测对象，§4）：直连=唯一服务器；中转=出口服务器；
   // 外部直链出口链的客户端接入端点在入口服务器 A（证书由 A 签发）。
   const landingServer = exitIsExternal
@@ -152,7 +148,6 @@ export function ChainDetailsStep({
         mode={editingChainId !== null ? 'edit' : 'create'}
         entryShared={entrySharedPreview}
         trafficMultiplier={form.trafficMultiplier}
-        autoEnabled={form.autoEnabled}
       />
       <form onSubmit={onSubmit} className="cw-details-form">
         <div className="space-y-2">
@@ -732,156 +727,6 @@ export function ChainDetailsStep({
             required
           />
         </div>
-
-        {/* 自动编排与故障切换策略（§链路自动编排） */}
-        <section className="cw-auto-policy" aria-label="自动编排与故障切换策略">
-          <div className="cw-auto-policy-head">
-            <div>
-              <Label>自动编排与容灾切换</Label>
-              <p className="cg-chain-hint">
-                在第一步画布节点卡片上点击「+
-                备选」可为入口、中转或出口节点指定替补服务器池（当前已配置 {totalCandidates}{' '}
-                台备选）。
-              </p>
-            </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={Boolean(form.autoEnabled)}
-              className={cn('cg-chain-type cw-auto-toggle', form.autoEnabled && 'is-selected')}
-              onClick={() => patch({ autoEnabled: !form.autoEnabled })}
-            >
-              {form.autoEnabled ? '已启用自动编排' : '启用自动编排'}
-            </button>
-          </div>
-          {form.autoEnabled ? (
-            <div className="cw-auto-policy-grid">
-              <div className="cw-auto-policy-row">
-                <label className="cw-auto-check">
-                  <input
-                    type="checkbox"
-                    checked={form.onBan}
-                    onChange={(e) => patch({ onBan: e.target.checked })}
-                  />
-                  <span>三网测速封禁触发切换</span>
-                </label>
-                <Select
-                  value={form.banTriggerLevel}
-                  onValueChange={(v) =>
-                    v && patch({ banTriggerLevel: v as 'suspected' | 'banned' })
-                  }
-                  disabled={!form.onBan}
-                  items={[
-                    { value: 'banned', label: '确认封禁（banned · ≥10 轮全丢包）' },
-                    { value: 'suspected', label: '疑似封禁（suspected · ≥5 轮全丢包）' },
-                  ]}
-                >
-                  <SelectTrigger className="w-64">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="banned">确认封禁（banned · ≥10 轮全丢包）</SelectItem>
-                    <SelectItem value="suspected">疑似封禁（suspected · ≥5 轮全丢包）</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="cw-auto-policy-row">
-                <label className="cw-auto-check">
-                  <input
-                    type="checkbox"
-                    checked={form.onUnreachable}
-                    onChange={(e) => patch({ onUnreachable: e.target.checked })}
-                  />
-                  <span>段间 TCP/ICMP 连续不可达切换</span>
-                </label>
-                <div className="cw-auto-inline-input">
-                  <span>连续失败轮数</span>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={20}
-                    className="w-24"
-                    disabled={!form.onUnreachable}
-                    value={form.unreachableStreak}
-                    onChange={(e) => patch({ unreachableStreak: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              <div className="cw-auto-policy-row">
-                <label className="cw-auto-check">
-                  <input
-                    type="checkbox"
-                    checked={form.onQuotaExhausted}
-                    onChange={(e) => patch({ onQuotaExhausted: e.target.checked })}
-                  />
-                  <span>当期流量配额耗尽（100%）自动切换</span>
-                </label>
-              </div>
-
-              <div className="cw-auto-policy-row">
-                <label className="cw-auto-check">
-                  <input
-                    type="checkbox"
-                    checked={form.onAgentOffline}
-                    onChange={(e) => patch({ onAgentOffline: e.target.checked })}
-                  />
-                  <span>Agent 离线超时自动切换</span>
-                </label>
-                <div className="cw-auto-inline-input">
-                  <span>离线超时（秒）</span>
-                  <Input
-                    type="number"
-                    min={30}
-                    max={86400}
-                    className="w-28"
-                    disabled={!form.onAgentOffline}
-                    value={form.offlineTimeoutSec}
-                    onChange={(e) => patch({ offlineTimeoutSec: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 pt-1">
-                <div className="space-y-1.5">
-                  <Label>原主节点恢复后策略</Label>
-                  <Select
-                    value={form.failbackMode}
-                    onValueChange={(v) =>
-                      v && patch({ failbackMode: v as 'sticky' | 'preemptive' })
-                    }
-                    items={[
-                      { value: 'sticky', label: '保持替补节点（不主动切回，避免抖动）' },
-                      { value: 'preemptive', label: '抢占式自动切回高优原节点（Preemptive）' },
-                    ]}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="sticky">保持替补节点（不主动切回，避免抖动）</SelectItem>
-                      <SelectItem value="preemptive">
-                        抢占式自动切回高优原节点（Preemptive）
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="autoCooldownSec">切换冷却窗口（秒）</Label>
-                  <Input
-                    id="autoCooldownSec"
-                    type="number"
-                    min={30}
-                    max={86400}
-                    value={form.cooldownSec}
-                    onChange={(e) => patch({ cooldownSec: e.target.value })}
-                  />
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </section>
 
         {createError && <p className="cg-chain-error">{createError}</p>}
         <div className="flex items-center justify-end gap-2">

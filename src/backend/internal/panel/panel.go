@@ -484,6 +484,9 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/chain/switch-hop",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"chain_id", "seq", "server_id"}},
 		s.handleSwitchChainHop)
+	s.registerRPC(mux, http.MethodPost, "/api/chain/hop-orchestration/save",
+		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"chain_id", "seq"}},
+		s.handleSaveHopOrchestration)
 
 	s.registerRPC(mux, http.MethodGet, "/api/user/list", polledRead, s.handleListUsers)
 	s.registerRPC(mux, http.MethodPost, "/api/user/create", write, s.handleCreateUser)

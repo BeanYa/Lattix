@@ -17,6 +17,7 @@ import type {
   RebuildXrayResult,
   CreateChainRequest,
   EditChainRequest,
+  HopOrchestrationSaveRequest,
   ExternalChain,
   ExternalExit,
   ExternalSubscription,
@@ -311,6 +312,8 @@ export const api = {
   editChain: (body: EditChainRequest) => requester.postObserved<Chain>('/api/chain/edit', body),
   switchChainHop: (body: { chain_id: number; seq: number; server_id: number; reason?: string }) =>
     requester.postObserved<Chain>('/api/chain/switch-hop', body),
+  saveHopOrchestration: (body: HopOrchestrationSaveRequest) =>
+    requester.postObserved<Chain>('/api/chain/hop-orchestration/save', body),
   forcePublishChain: (chainId: number) =>
     requester.postObserved<Chain>('/api/chain/force-publish', { chain_id: chainId }),
   resetChainTraffic: (chainId: number) =>

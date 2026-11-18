@@ -458,7 +458,7 @@ func TestEditChainEntryBlockWithoutEndpointPortConflict(t *testing.T) {
 }
 
 // TestCreateChainHy2HopPortBinding 验证端到端 hy2 链各跳 forward 端口绑定段起点
-//（评审 #3）：自动分配路径中间跳不再为 0——否则 dispatch 下发 HopPortEnd=段长-1，
+// （评审 #3）：自动分配路径中间跳不再为 0——否则 dispatch 下发 HopPortEnd=段长-1，
 // agent 自选端口后段 inbound 循环为空，端口跳跃在自动分配路径全断；显式入口端口时
 // 入口跳保留用户端口（段随跳平移，目标按同号换算仍对齐）。
 func TestCreateChainHy2HopPortBinding(t *testing.T) {

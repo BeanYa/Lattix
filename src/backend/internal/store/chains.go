@@ -329,6 +329,12 @@ func (s *Store) SetChainHopPortalRealized(ctx context.Context, id int64, port in
 }
 
 // SetChainHopForwardPort 写回 forward 回执的生效端口（entry 跳 = 订阅端口，监听侧）。
+// SetChainHopAddress 写回本跳所选公网地址（编排图当前节点同步用）。
+func (s *Store) SetChainHopAddress(ctx context.Context, id int64, address string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE chain_hops SET address = ? WHERE id = ?`, address, id)
+	return err
+}
+
 func (s *Store) SetChainHopForwardPort(ctx context.Context, id int64, port int) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE chain_hops SET forward_port = ? WHERE id = ?`, port, id)
@@ -357,10 +363,10 @@ func (s *Store) DeleteChain(ctx context.Context, id int64, fromStatus ...string)
 		RevisionTaskAbandoned, reason, id, RevisionTaskPending, RevisionTaskQueued); err != nil {
 		return fmt.Errorf("delete chain: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_hop_candidates WHERE chain_id=?`, id); err != nil {
+	if err := deleteChainHopGraphsForChainTx(tx, id); err != nil {
 		return fmt.Errorf("delete chain: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_auto_policies WHERE chain_id=?`, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_orchestration_states WHERE chain_id=?`, id); err != nil {
 		return fmt.Errorf("delete chain: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_hops WHERE chain_id=?`, id); err != nil {

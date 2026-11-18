@@ -106,7 +106,7 @@ func TestCreateServerWithPlansRollsBackTogether(t *testing.T) {
 	}
 
 	_, err = st.CreateServerWithPlans(ctx, ServerDraft{Alias: "partial", BootstrapToken: "token", MachineType: MachineTypeDirect, CountryCode: "US"}, nil, ServerTrafficPlan{
-			AccountingMode: "outbound", ResetAnchorOn: "2026-01-01", ResetCount: 1, ResetUnit: "month", TrackingStartedOn: "2026-01-01", })
+		AccountingMode: "outbound", ResetAnchorOn: "2026-01-01", ResetCount: 1, ResetUnit: "month", TrackingStartedOn: "2026-01-01"})
 	if err == nil {
 		t.Fatal("expected initial traffic plan insert to fail")
 	}

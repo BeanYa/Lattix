@@ -8,16 +8,13 @@
 
 ### Added
 
-- 链路**跳位备选池与自动编排容灾**：入口/中转/出口每个跳位可在画布节点卡片上配置按
-  优先级排序的替补服务器池（P1..PN，主节点为 P0），链路级策略支持四类触发——三网测速
-  封禁（suspected/banned）、段间 TCP/ICMP 连续不可达、当期流量配额耗尽、Agent 离线
-  超时——并可选 sticky（保持在替补节点）/ preemptive（冷却期过后抢占回切）两种恢复策略
-  与切换冷却窗口。触发后复用差分 Revision Planner 执行 Make-Before-Break 单跳替换，
-  写 `chain_failover_events` 审计事件并发出 `chain_auto_failover` /
-  `chain_failover_exhausted` 告警；链路详情展示「自动编排」标记、逐跳 P1 手动切换
-  按钮与最近一次容灾切换记录，`POST /api/chain/switch-hop` 支持管理员手动切换。
-  schema v33（`chain_hop_candidates` / `chain_auto_policies` / `server_pair_watch` /
-  `chain_failover_events`）。
+- 链路**跳位自动编排图**：每个跳位一张以「原服务器（根）」为起点的编排图，入口/中转/出口每跳独立配置。详情页以堆叠卡片展示该跳全部服务器（前卡固定为原服务器，当前运行的替补标注「编排已触发」，最多 4 张 + 剩余数）；黄点展开收起，点击堆叠打开编排器。
+  编排器沿用链路画布交互（无入网/Internet 端点、固定根卡片、左侧「触发动作 / 服务器」两个 tab），服务器卡片带地址与端口并可写回链路；节点以 server→trigger→server 交替连线。
+  内置触发器 5 类：疑似被 ban（三网连续 5 轮全丢包）、被 ban（10 轮）、上一跳超时、下一跳超时、原节点恢复（添加即连到根，默认最高优先级）。每个触发器可填优先级（0 = 自动：恢复 > 疑似 > 确认 > 上一跳 > 下一跳，再按添加顺序）。同一服务器可被多个触发器指向（疑似与确认可同时指向同一台替补），唯一允许的环是经触发器回到根（回切）。
+  保存时校验 DAG/环/度数/唯一性/优先级上限/当前运行服务器在图中/角色与地址端口合法，链路有在途修订时拒绝保存；保存把当前运行节点的地址/端口同步回链路工作拓扑。
+  编排执行：仅为含编排图的链路创建 worker，每链一个 worker + 状态机（idle/evaluating/deploying/cooldown/backoff/failed/paused/stopped），同一链同一时刻最多一个在途切换；按跳序 A→B→C 扫描，A 的修订发布完成后再评估 B；后续跳在新拓扑下失配或目标不可用即进入 failed：不回滚、不清图，写 orchestration_error（详情页红条提示）并发出 chain_orchestration_failed 告警，保存编排后恢复。
+  删除：链路编辑器删除已启用编排的节点会提示「编排配置将一并删除」；删服务器时只有当前工作跳命中才失效链路，仅出现在编排图或历史修订时只清图；删链路清理覆盖全部历史修订的配置件。
+  schema v34（chain_hop_graphs/nodes/edges、chain_orchestration_states），移除 v33 未发布的备选池/策略表。
 
 - 服务器页新增一类**未托管服务器**（外部直链节点）：新增/编辑服务器对话框提供
   按协议切换的完整协议表单（vless/vmess/trojan/ss/socks/http：地址/端口/凭据/传输/

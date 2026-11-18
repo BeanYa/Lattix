@@ -400,14 +400,11 @@ export function ChainCanvas({
             [roles.entry && '入口', roles.middle && '中转', roles.exit && '出口']
               .filter(Boolean)
               .join('·') || '未接入'
-          const usedPrimaryIds = new Set(nodes.map((n) => n.serverId))
           return (
             <ChainNodeCard
               key={node.id}
               node={node}
               server={controller.serverById.get(node.serverId)}
-              allServers={[...controller.serverById.values()]}
-              usedPrimaryIds={usedPrimaryIds}
               role={role}
               roleLabel={roleLabel}
               portEditable={portRole.editable}
@@ -423,17 +420,12 @@ export function ChainCanvas({
               toWorld={toWorld}
               onExitPortClick={() => controller.exitPortClick(node.id)}
               onEntryPortClick={() => controller.entryPortClick(node.id)}
-              onRemove={() => controller.removeNode(node.id)}
+              onRemove={() => controller.requestRemoveNode(node.id)}
               onPortChange={(port) => controller.setNodePort(node.id, port)}
               onPortEditToggle={() =>
                 controller.setPortEditingId(controller.portEditingId === node.id ? null : node.id)
               }
               onAddressChange={(address) => controller.setNodeAddress(node.id, address)}
-              onAddCandidate={(serverId) => controller.addNodeCandidate(node.id, serverId)}
-              onRemoveCandidate={(serverId) => controller.removeNodeCandidate(node.id, serverId)}
-              onMoveCandidate={(index, direction) =>
-                controller.moveNodeCandidate(node.id, index, direction)
-              }
               onMove={(x, y) => controller.moveNode(node.id, x, y)}
             />
           )

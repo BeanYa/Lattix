@@ -80,11 +80,11 @@ func TestResolveServerAddress(t *testing.T) {
 		selected string
 		want     string
 	}{
-		{"", "1.2.3.4"},                    // 空 = 跟随默认
-		{"2400:cb00::1", "2400:cb00::1"},   // 列表条目有效
-		{"example.com", "example.com"},     // 域名条目有效
-		{"1.2.3.4", "1.2.3.4"},             // 默认地址本身有效
-		{"9.9.9.9", "1.2.3.4"},             // 引用失效 → 回退默认
+		{"", "1.2.3.4"},                  // 空 = 跟随默认
+		{"2400:cb00::1", "2400:cb00::1"}, // 列表条目有效
+		{"example.com", "example.com"},   // 域名条目有效
+		{"1.2.3.4", "1.2.3.4"},           // 默认地址本身有效
+		{"9.9.9.9", "1.2.3.4"},           // 引用失效 → 回退默认
 	}
 	for _, c := range cases {
 		if got := ResolveServerAddress(srv, c.selected); got != c.want {
