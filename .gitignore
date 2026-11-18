@@ -44,3 +44,6 @@ logs/
 
 # Impeccable local review captures
 .impeccable/review/
+
+# 本地验收截图（不提交）
+/screenshots/
