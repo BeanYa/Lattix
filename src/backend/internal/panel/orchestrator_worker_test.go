@@ -23,10 +23,16 @@ func waitUntil(t *testing.T, timeout time.Duration, check func() bool) bool {
 func TestChainWorkerOnlyForGraphChains(t *testing.T) {
 	srv, st, _, chainID, a1, a2, _, b2 := setupAutoTestChain(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	o := srv.Orchestrator()
 	o.workerTick = 20 * time.Millisecond
 	o.workers.Start(ctx)
+	// worker goroutine 退出前不得关闭库：WAL 下仍存活的连接会在库文件删除后重建 -shm。
+	t.Cleanup(func() {
+		cancel()
+		if !o.workers.Wait(2 * time.Second) {
+			t.Errorf("worker goroutine did not exit after cancel")
+		}
+	})
 
 	// setupAutoTestChain 自带编排图：先清空，验证无图链不建 worker。
 	for seq := 0; seq < 4; seq++ {
@@ -58,10 +64,16 @@ func TestChainWorkerOnlyForGraphChains(t *testing.T) {
 func TestChainWorkerFailsAndPreservesScene(t *testing.T) {
 	srv, st, req, chainID, a1, a2, _, b2 := setupAutoTestChain(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	o := srv.Orchestrator()
 	o.workerTick = 20 * time.Millisecond
 	o.workers.Start(ctx)
+	// worker goroutine 退出前不得关闭库：WAL 下仍存活的连接会在库文件删除后重建 -shm。
+	t.Cleanup(func() {
+		cancel()
+		if !o.workers.Wait(2 * time.Second) {
+			t.Errorf("worker goroutine did not exit after cancel")
+		}
+	})
 	replaceEntryGraph(t, st, chainID, a1, a2, b2, false, false, false)
 	req.online[a2] = false
 	if err := st.UpsertServerBanWatch(context.Background(), store.ServerBanWatch{
@@ -99,10 +111,16 @@ func TestChainWorkerFailsAndPreservesScene(t *testing.T) {
 func TestChainWorkerPausedDoesNotSwitch(t *testing.T) {
 	srv, st, _, chainID, a1, a2, _, b2 := setupAutoTestChain(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	o := srv.Orchestrator()
 	o.workerTick = 20 * time.Millisecond
 	o.workers.Start(ctx)
+	// worker goroutine 退出前不得关闭库：WAL 下仍存活的连接会在库文件删除后重建 -shm。
+	t.Cleanup(func() {
+		cancel()
+		if !o.workers.Wait(2 * time.Second) {
+			t.Errorf("worker goroutine did not exit after cancel")
+		}
+	})
 	replaceEntryGraph(t, st, chainID, a1, a2, b2, false, false, false)
 	if err := st.UpsertServerBanWatch(context.Background(), store.ServerBanWatch{
 		ServerID: a1, LossStreak: 6, State: store.BanStateSuspected, UpdatedAt: time.Now().UTC(),

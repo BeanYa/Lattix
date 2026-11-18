@@ -26,6 +26,7 @@ type chainWorkerManager struct {
 	mu      sync.Mutex
 	workers map[int64]*chainWorker
 	ctx     context.Context
+	wg      sync.WaitGroup
 }
 
 func newChainWorkerManager(o *AutoOrchestrator) *chainWorkerManager {
@@ -58,7 +59,11 @@ func (m *chainWorkerManager) Ensure(chainID int64) bool {
 	worker := &chainWorker{chainID: chainID, o: m.o, wakeCh: make(chan struct{}, 1), state: workerIdle}
 	m.workers[chainID] = worker
 	m.mu.Unlock()
-	go worker.run(ctx)
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		worker.run(ctx)
+	}()
 	return true
 }
 
@@ -97,6 +102,22 @@ func (m *chainWorkerManager) Stop(chainID int64) {
 	m.mu.Unlock()
 	if w != nil {
 		w.setState(workerStopped)
+	}
+}
+
+// Wait 等待所有 worker goroutine 退出（调用方应先 cancel Start 传入的 ctx）。
+// 退出前不要关闭库：WAL 下仍存活的连接会在库文件删除后重建 -shm。
+func (m *chainWorkerManager) Wait(timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		m.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
 	}
 }
 
@@ -206,10 +227,14 @@ func (w *chainWorker) step(ctx context.Context) {
 
 func (w *chainWorker) fail(ctx context.Context, err error) {
 	message := err.Error()
+	// 先落库错误、再发布状态：面板与测试都以 state=failed 为信号去读错误，
+	// 反序会读到空错误（负载高的 CI 上偶发失败）。
+	if perr := w.o.s.st.SetChainOrchestrationError(ctx, w.chainID, message); perr != nil {
+		log.Printf("auto_orchestrator: chain %d persist orchestration error: %v", w.chainID, perr)
+	}
 	w.mu.Lock()
 	w.state = workerFailed
 	w.err = message
 	w.mu.Unlock()
-	_ = w.o.s.st.SetChainOrchestrationError(ctx, w.chainID, message)
 	log.Printf("auto_orchestrator: chain %d paused: %v", w.chainID, err)
 }
