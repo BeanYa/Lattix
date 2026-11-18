@@ -72,5 +72,12 @@ it('黄点切换展开态，无编排时仍显示入口', async () => {
   await act(async () => {
     root.render(<HopStack hopAlias="A1" />)
   })
-  expect(container.querySelector('.cg-hop-stack.is-bare')).toBeTruthy()
+  // 未配置编排：只有黄点入口，文案是「配置编排」（浮出显示），不能声称已自动编排。
+  const bare = container.querySelector('.cg-hop-stack.is-bare') as HTMLElement
+  expect(bare).toBeTruthy()
+  expect(bare.textContent).toContain('配置编排')
+  expect(bare.textContent).not.toContain('自动编排')
+  expect((bare.querySelector('.cg-hop-stack-dot') as HTMLElement).getAttribute('title')).toBe(
+    '配置自动编排',
+  )
 })

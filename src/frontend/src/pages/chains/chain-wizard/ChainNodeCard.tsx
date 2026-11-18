@@ -14,7 +14,7 @@ import {
 import { addressFamily } from '@/lib/address'
 import { isServerOnline } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
-import type { CatalogProbeRow, Server } from '@/lib/types'
+import type { CatalogProbeRow, ChainOrchestration, Server } from '@/lib/types'
 
 import {
   CARD_W,
@@ -57,6 +57,8 @@ export function ChainNodeCard({
   incomingConnected = false,
   probeRows,
   probeTitle,
+  orchestration,
+  onOrchestration,
   toWorld,
   onExitPortClick,
   onEntryPortClick,
@@ -84,6 +86,10 @@ export function ChainNodeCard({
   incomingConnected?: boolean
   probeRows: CatalogProbeRow[]
   probeTitle: string | null
+  /** 该跳的自动编排图：有图时入口高亮并显示备选数量（编辑既有链路才有）。 */
+  orchestration?: ChainOrchestration
+  /** 提供时在卡片上方浮动「自动编排」入口；新建链路尚无跳位，不传即不渲染。 */
+  onOrchestration?: () => void
   toWorld: (clientX: number, clientY: number) => { x: number; y: number }
   onExitPortClick: () => void
   onEntryPortClick: () => void
@@ -102,7 +108,15 @@ export function ChainNodeCard({
   const external = isExternalServer(server)
   const externalExit = external ? server.external_exit : undefined
 
-  // 过滤该跳位可添加的兼容备选服务器：排除本跳主节点、本跳已有备选、画布其他跳位的主节点，并按角色能力过滤。
+  // 编排图里的服务器节点数减去根（当前跳主服务器）= 该跳备选数量。
+  const backups = orchestration
+    ? Math.max(
+        0,
+        orchestration.nodes.filter(
+          (item) => item.kind === 'server' && item.server_id !== orchestration.root_server_id,
+        ).length,
+      )
+    : 0
   const portDisplay = normalizePortInput(node.port)
   const entryTitle = isConnecting ? '点击完成连线' : '先点击上游出口，再点击此入口连接'
 
@@ -130,6 +144,24 @@ export function ChainNodeCard({
       }
       {...drag.handlers}
     >
+      {onOrchestration ? (
+        <button
+          type="button"
+          className={cn('cw-node-orch', orchestration && 'is-configured')}
+          aria-label={`自动编排：${server.alias}`}
+          title={orchestration ? '编辑该跳自动编排' : '为该跳配置自动编排'}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation()
+            onOrchestration()
+          }}
+        >
+          <span className="cw-node-orch-dot" />
+          <span>自动编排</span>
+          {orchestration && backups > 0 ? <em>{backups} 备选</em> : null}
+          {orchestration?.triggered ? <em>已触发</em> : null}
+        </button>
+      ) : null}
       <div className="cw-node-card">
         <div className="cw-node-body">
           <div className="cw-node-head">

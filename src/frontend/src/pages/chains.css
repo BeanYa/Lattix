@@ -1465,6 +1465,15 @@
 .cg-hop-stack-badge {
   color: var(--primary);
 }
+.cg-hop-stack.is-bare .cg-hop-stack-hint {
+  opacity: 0;
+  transform: translateX(-3px);
+}
+.cg-hop-seg:hover .cg-hop-stack.is-bare .cg-hop-stack-hint,
+.cg-hop-stack.is-bare:focus-within .cg-hop-stack-hint {
+  opacity: 1;
+  transform: none;
+}
 .cg-hop-stack.is-expanded .cg-hop-stack-card {
   pointer-events: auto;
   transform: translate(calc(var(--i, 0) * 30px), calc(var(--i, 0) * -26px));
@@ -1475,5 +1484,10 @@
 @media (prefers-reduced-motion: no-preference) {
   .cg-hop-stack-card {
     transition: transform 160ms ease;
+  }
+  .cg-hop-stack.is-bare .cg-hop-stack-hint {
+    transition:
+      opacity 140ms ease,
+      transform 140ms ease;
   }
 }

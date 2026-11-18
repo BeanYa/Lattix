@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { LocateFixedIcon, MailIcon, MinusIcon, PlusIcon } from 'lucide-react'
-import type { CatalogProbeRow } from '@/lib/types'
+import type { CatalogProbeRow, ChainOrchestration } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import {
   CARD_H,
@@ -24,11 +24,16 @@ export function ChainCanvas({
   probesByServer,
   probeTitle,
   linkColor,
+  orchestrationFor,
+  onEditOrchestration,
 }: {
   controller: ChainCanvasController
   probesByServer: Map<number, CatalogProbeRow[]>
   probeTitle: string | null
   linkColor: string
+  /** 编辑既有链路时按服务器查该跳的编排图；新建链路不传，卡片不显示编排入口。 */
+  orchestrationFor?: (serverId: number) => ChainOrchestration | undefined
+  onEditOrchestration?: (serverId: number) => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const panRef = useRef<{ pointerId: number; last: Point; distance: number } | null>(null)
@@ -417,6 +422,10 @@ export function ChainCanvas({
               incomingConnected={Boolean(controller.incomingFromOf(node.id))}
               probeRows={probesByServer.get(node.serverId) ?? []}
               probeTitle={probeTitle}
+              orchestration={orchestrationFor?.(node.serverId)}
+              onOrchestration={
+                onEditOrchestration ? () => onEditOrchestration(node.serverId) : undefined
+              }
               toWorld={toWorld}
               onExitPortClick={() => controller.exitPortClick(node.id)}
               onEntryPortClick={() => controller.entryPortClick(node.id)}

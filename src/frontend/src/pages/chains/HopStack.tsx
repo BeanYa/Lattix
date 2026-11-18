@@ -34,15 +34,17 @@ export function HopStack({
   const active = stack.find((item) => item.active)
 
   if (!orchestration || stack.length === 0) {
+    // 未配置编排：只留黄点入口，文案按需浮出——普通链路不应被标注成「自动编排」。
     return (
       <div className="cg-hop-stack is-bare">
         <button
           type="button"
           className="cg-hop-stack-dot"
           aria-label="配置自动编排"
+          title="配置自动编排"
           onClick={openEditor}
         />
-        <span className="cg-hop-stack-hint">自动编排</span>
+        <span className="cg-hop-stack-hint">配置编排</span>
       </div>
     )
   }

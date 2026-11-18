@@ -54,6 +54,37 @@ afterEach(async () => {
   host.remove()
 })
 
+describe('canvas orchestration entry', () => {
+  it('编辑模式在卡片上方渲染自动编排入口，点击回调带服务器 ID', async () => {
+    const calls: number[] = []
+    function EntryHarness() {
+      controller = useChainCanvas({ servers })
+      return (
+        <ChainCanvas
+          controller={controller}
+          probesByServer={new Map()}
+          probeTitle={null}
+          linkColor="var(--panel-line-2)"
+          orchestrationFor={() => undefined}
+          onEditOrchestration={(serverId) => calls.push(serverId)}
+        />
+      )
+    }
+    await act(async () => root.render(<EntryHarness />))
+    await act(async () => controller.addNode(1, 200, 200))
+    const entry = host.querySelector('.cw-node-orch') as HTMLElement
+    expect(entry).toBeTruthy()
+    expect(entry.getAttribute('aria-label')).toBe('自动编排：HK')
+    await act(async () => entry.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(calls).toEqual([1])
+  })
+
+  it('新建链路不传入入口回调时卡片上没有编排入口', async () => {
+    await act(async () => controller.addNode(1, 200, 200))
+    expect(host.querySelector('.cw-node-orch')).toBeNull()
+  })
+})
+
 describe('rebuilt topology canvas interactions', () => {
   it('每条正式连线只有一个报文，跟随路径更新；预览不增加报文，断开即移除', async () => {
     await act(async () => {

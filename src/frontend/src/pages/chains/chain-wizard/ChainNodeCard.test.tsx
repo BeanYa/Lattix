@@ -2,7 +2,7 @@
 import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it } from 'vitest'
-import type { Server } from '@/lib/types'
+import type { ChainOrchestration, Server } from '@/lib/types'
 import { ChainNodeCard } from './ChainNodeCard'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
@@ -124,6 +124,82 @@ it('外部直链节点：外部直链徽标 + 协议摘要 + 只读端口', asyn
     expect(port.textContent).toBe('1080')
     expect(host.querySelector('.cw-node-port-input')).toBeNull()
     expect(host.querySelector('.cw-node-exitonly')).toBeNull()
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+  }
+})
+
+it('卡片上方的自动编排入口：有图时显示备选数，点击打开编排器', async () => {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const server = {
+    id: 3,
+    alias: 'KL',
+    country_code: 'MY',
+    machine_type: 'direct',
+    addresses: ['203.0.113.30'],
+    allowed_ports: [],
+  } as unknown as Server
+  const orchestration = {
+    root_server_id: 3,
+    active_server_id: 3,
+    triggered: false,
+    nodes: [
+      {
+        id: 1,
+        kind: 'server',
+        server_id: 3,
+        priority: 0,
+        is_root: true,
+        online: true,
+        banned: false,
+      },
+      { id: 2, kind: 'server', server_id: 4, priority: 1, online: true, banned: false },
+      { id: 3, kind: 'server', server_id: 5, priority: 2, online: true, banned: false },
+    ],
+    edges: [],
+  } as unknown as ChainOrchestration
+  let opened = 0
+  const card = (extra: { orchestration?: ChainOrchestration; onOrchestration?: () => void }) => (
+    <ChainNodeCard
+      node={{ id: 'o1', serverId: 3, x: 0, y: 0, port: '', address: '' }}
+      server={server}
+      role="entry"
+      portEditable
+      hasIssue={false}
+      isConnecting={false}
+      portEditing={false}
+      outgoingConnected
+      probeRows={[]}
+      probeTitle={null}
+      toWorld={(x, y) => ({ x, y })}
+      onMove={() => {}}
+      onExitPortClick={() => {}}
+      onEntryPortClick={() => {}}
+      onRemove={() => {}}
+      onPortChange={() => {}}
+      onPortEditToggle={() => {}}
+      onAddressChange={() => {}}
+      {...extra}
+    />
+  )
+  try {
+    // 新建链路还没有跳位：不传入就不渲染入口。
+    await act(async () => root.render(card({})))
+    expect(host.querySelector('.cw-node-orch')).toBeNull()
+
+    await act(async () =>
+      root.render(card({ orchestration, onOrchestration: () => (opened += 1) })),
+    )
+    const entry = host.querySelector('.cw-node-orch') as HTMLElement
+    expect(entry).toBeTruthy()
+    expect(entry.classList.contains('is-configured')).toBe(true)
+    expect(entry.textContent).toContain('自动编排')
+    expect(entry.textContent).toContain('2 备选')
+    await act(async () => entry.click())
+    expect(opened).toBe(1)
   } finally {
     await act(async () => root.unmount())
     host.remove()

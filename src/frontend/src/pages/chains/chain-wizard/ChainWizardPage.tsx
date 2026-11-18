@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useLocation } from 'wouter'
 import { ArrowLeftIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react'
 
@@ -8,8 +9,16 @@ import { api } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { useOperationProgress } from '@/lib/operation-progress-context'
 import { cn } from '@/lib/utils'
-import type { CatalogProbeRow, CatalogProbeStats, Chain, Server, XrayNode } from '@/lib/types'
+import type {
+  CatalogProbeRow,
+  CatalogProbeStats,
+  Chain,
+  ChainHop,
+  Server,
+  XrayNode,
+} from '@/lib/types'
 
+import { OrchestrationEditor } from '../orchestration/OrchestrationEditor'
 import { parseChainEdit, useChainForm } from '../use-chain-form'
 import { prefillCanvas } from './chain-canvas'
 import { CanvasServerPanel } from './CanvasServerPanel'
@@ -112,6 +121,34 @@ export function ChainWizardPage() {
       }),
     [confirm],
   )
+  // 编辑模式：画布卡片上方的自动编排入口。跳位按服务器 ID 定位（编辑只维护一条链路）。
+  const editChain = useMemo(
+    () => (editingId ? (chains.find((candidate) => candidate.id === editingId) ?? null) : null),
+    [chains, editingId],
+  )
+  const hopByServerId = useMemo(() => {
+    const map = new Map<number, ChainHop>()
+    for (const hop of editChain?.hops ?? []) map.set(hop.server_id, hop)
+    return map
+  }, [editChain])
+  const [orchestrationHop, setOrchestrationHop] = useState<ChainHop | null>(null)
+  const orchestrationFor = useCallback(
+    (serverId: number) => hopByServerId.get(serverId)?.orchestration,
+    [hopByServerId],
+  )
+  const editOrchestration = useCallback(
+    (serverId: number) => {
+      const hop = hopByServerId.get(serverId)
+      if (hop) setOrchestrationHop(hop)
+    },
+    [hopByServerId],
+  )
+  const refreshChains = useCallback(() => {
+    api
+      .chains()
+      .then(setChains)
+      .catch(() => undefined)
+  }, [])
   const canvas = useChainCanvas({ servers, orchestratedServerIds, confirmRemoveOrchestration })
   const chainForm = useChainForm({
     chains,
@@ -275,6 +312,8 @@ export function ChainWizardPage() {
               probesByServer={probesByServer}
               probeTitle={probeTitle}
               linkColor={linkColor}
+              orchestrationFor={editingId ? orchestrationFor : undefined}
+              onEditOrchestration={editingId ? editOrchestration : undefined}
             />
             <ChainValidationSummary
               pathCount={canvas.validation.paths.length}
@@ -312,6 +351,20 @@ export function ChainWizardPage() {
           serverById={canvas.serverById}
         />
       )}
+      {orchestrationHop && editChain
+        ? createPortal(
+            <OrchestrationEditor
+              chain={editChain}
+              hop={orchestrationHop}
+              onClose={() => setOrchestrationHop(null)}
+              onSaved={() => {
+                setOrchestrationHop(null)
+                refreshChains()
+              }}
+            />,
+            document.body,
+          )
+        : null}
     </Page>
   )
 }
