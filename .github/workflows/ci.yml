@@ -28,7 +28,10 @@ jobs:
       - run: bun run test
       - run: bun run lint
       - run: bun run build
-      - run: bun audit --audit-level high
+      # picomatch <= 4.0.7 的 ReDoS 通告 GHSA-fc5q-39xc-vjpf 目前没有修复版本（patched: null）；
+      # 该依赖只用于构建期的 glob 解析（vite/vitest -> tinyglobby -> fdir），不进入产物运行时。
+      # 待 picomatch > 4.0.7 发布后删除 --ignore 并升级依赖。
+      - run: bun audit --audit-level high --ignore=GHSA-fc5q-39xc-vjpf
 
   go:
     runs-on: ubuntu-latest
