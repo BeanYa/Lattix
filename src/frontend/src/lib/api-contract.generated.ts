@@ -903,6 +903,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chain/hop-orchestration/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description 保存一个跳位的自动编排图（整图替换；空节点=删除该跳编排）。服务端校验
+         *     DAG/回切环/触发唯一性/优先级/当前服务器在图中；链路有在途修订时拒绝。
+         */
+        post: operations["chainHopOrchestrationSave"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/list": {
         parameters: {
             query?: never;
@@ -3248,6 +3268,24 @@ export interface operations {
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
+    chainHopOrchestrationSave: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: components["requestBodies"]["RPCBody"];
+        responses: {
+            200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
     userList: {
         parameters: {
             query?: never;
@@ -4349,6 +4387,7 @@ export const rpcOperations = {
   chainRetry: { method: 'POST', path: '/api/chain/retry' },
   chainDelete: { method: 'POST', path: '/api/chain/delete' },
   chainSwitchHop: { method: 'POST', path: '/api/chain/switch-hop' },
+  chainHopOrchestrationSave: { method: 'POST', path: '/api/chain/hop-orchestration/save' },
   userList: { method: 'GET', path: '/api/user/list' },
   userCreate: { method: 'POST', path: '/api/user/create' },
   userUpdate: { method: 'POST', path: '/api/user/update' },

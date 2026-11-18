@@ -591,6 +591,57 @@ export interface ChainFailoverEvent {
   created_at: string
 }
 
+export interface OrchestrationNode {
+  id: number
+  kind: 'server' | 'trigger'
+  server_id?: number
+  address?: string
+  listen_port?: number
+  subject?: 'self' | 'prev' | 'next' | 'root'
+  action?: 'ban_suspected' | 'ban_banned' | 'segment_timeout' | 'recovered'
+  priority: number
+  is_root?: boolean
+  active?: boolean
+  owner_server_id?: number
+  alias?: string
+  country_code?: string
+  location?: string
+  kind_of_server?: 'managed' | 'external'
+  online: boolean
+  banned: boolean
+}
+
+export interface OrchestrationEdge {
+  from: number
+  to: number
+}
+
+export interface ChainOrchestration {
+  root_server_id: number
+  active_server_id: number
+  triggered: boolean
+  nodes: OrchestrationNode[]
+  edges: OrchestrationEdge[]
+}
+
+export interface HopOrchestrationNodeInput {
+  kind: 'server' | 'trigger'
+  server_id?: number
+  is_root?: boolean
+  address?: string
+  listen_port?: number
+  subject?: 'self' | 'prev' | 'next' | 'root'
+  action?: 'ban_suspected' | 'ban_banned' | 'segment_timeout' | 'recovered'
+  priority?: number
+}
+
+export interface HopOrchestrationSaveRequest {
+  chain_id: number
+  seq: number
+  nodes: HopOrchestrationNodeInput[]
+  edges: { from: number; to: number }[]
+}
+
 export interface ChainHop {
   id: number
   seq: number
@@ -607,6 +658,7 @@ export interface ChainHop {
   tunnel_uuid?: string
   traffic?: ChainTraffic
   candidates?: ChainHopCandidate[]
+  orchestration?: ChainOrchestration
   active_priority?: number
   primary_server_id?: number
   primary_server_alias?: string
@@ -661,6 +713,7 @@ export interface Chain {
   entry_config?: VirtualConfig | null
   auto_policy?: ChainAutoPolicy | null
   failover_events?: ChainFailoverEvent[]
+  orchestration_error?: string
 }
 
 // 管理端导出的分享链接：与订阅交付一致的协议 URI（凭据取所选用户）。
