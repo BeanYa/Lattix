@@ -420,7 +420,7 @@ type chainHopOrchestrationDTO struct {
 	Edges          []chainHopOrchestrationEdgeDTO `json:"edges"`
 }
 
-func (s *Server) buildHopOrchestrationDTO(ctx context.Context, hop store.ChainHop, graph *store.ChainHopGraph, bans map[int64]store.ServerBanWatch) *chainHopOrchestrationDTO {
+func (s *Server) buildHopOrchestrationDTO(hop store.ChainHop, graph *store.ChainHopGraph, cc *chainDTOContext) *chainHopOrchestrationDTO {
 	if graph == nil || len(graph.Nodes) == 0 {
 		return nil
 	}
@@ -456,14 +456,14 @@ func (s *Server) buildHopOrchestrationDTO(ctx context.Context, hop store.ChainHo
 		}
 		if node.Kind == store.HopGraphKindServer {
 			dto.Active = node.ServerID == hop.ServerID
-			if srv, err := s.st.ServerByID(ctx, node.ServerID); err == nil {
+			if srv, ok := cc.servers[node.ServerID]; ok {
 				dto.Alias = srv.Alias
 				dto.CountryCode = srv.CountryCode
 				dto.Location = srv.Location
 				dto.KindOfServer = srv.Kind
 				dto.Online = s.req.IsOnline(node.ServerID)
 			}
-			if bw, ok := bans[node.ServerID]; ok && bw.State == store.BanStateBanned {
+			if bw, ok := cc.bans[node.ServerID]; ok && bw.State == store.BanStateBanned {
 				dto.Banned = true
 			}
 		}

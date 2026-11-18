@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -117,8 +118,35 @@ type chainDTO struct {
 	OrchestrationError  string                  `json:"orchestration_error,omitempty"`
 }
 
+// chainDTOContext 是一次列表渲染共享的只读上下文：服务器别名与封禁状态。
+// 逐链重复查询会让列表页的查询数随链路数线性膨胀（实测 72 条链 ≈ 550 次查询），
+// 而这两张表在整页渲染期间是稳定的。
+type chainDTOContext struct {
+	servers map[int64]store.Server
+	bans    map[int64]store.ServerBanWatch
+}
+
+// chainDTOContext 加载列表渲染共用上下文（单链路调用点也可直接用）。
+func (s *Server) chainDTOContext(ctx context.Context) *chainDTOContext {
+	cc := &chainDTOContext{bans: map[int64]store.ServerBanWatch{}}
+	if servers, err := s.st.ListServers(ctx); err == nil {
+		cc.servers = make(map[int64]store.Server, len(servers))
+		for _, srv := range servers {
+			cc.servers[srv.ID] = srv
+		}
+	}
+	if bans, err := s.st.ServerBanWatchMap(ctx); err == nil {
+		cc.bans = bans
+	}
+	return cc
+}
+
 // toChainDTO 组装链 DTO（跳按 seq 升序：首位入口，末位出口）。
 func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
+	return s.toChainDTOWith(r, c, s.chainDTOContext(r.Context()))
+}
+
+func (s *Server) toChainDTOWith(r *http.Request, c store.Chain, cc *chainDTOContext) (chainDTO, error) {
 	hops, err := s.st.ChainHops(r.Context(), c.ID)
 	if err != nil {
 		return chainDTO{}, err
@@ -199,7 +227,6 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 		out.Traffic = &total
 	}
 	graphs, _ := s.st.ChainHopGraphs(r.Context(), c.ID)
-	banWatches, _ := s.st.ServerBanWatchMap(r.Context())
 	for _, h := range hops {
 		dto := chainHopDTO{
 			ID:              h.ID,
@@ -218,12 +245,12 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 		if traffic, ok := trafficByHop[h.ID]; ok {
 			dto.Traffic = &traffic
 		}
-		if srv, err := s.st.ServerByID(r.Context(), h.ServerID); err == nil {
+		if srv, ok := cc.servers[h.ServerID]; ok {
 			dto.ServerAlias = srv.Alias
 		}
 		if graph, ok := graphs[h.Seq]; ok {
 			graphCopy := graph
-			dto.Orchestration = s.buildHopOrchestrationDTO(r.Context(), h, &graphCopy, banWatches)
+			dto.Orchestration = s.buildHopOrchestrationDTO(h, &graphCopy, cc)
 		}
 		out.Hops = append(out.Hops, dto)
 	}
@@ -234,10 +261,10 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 		out.FailoverEvents = make([]chainFailoverEventDTO, 0, len(events))
 		for _, ev := range events {
 			fromAlias, toAlias := "", ""
-			if srv, err := s.st.ServerByID(r.Context(), ev.FromServerID); err == nil {
+			if srv, ok := cc.servers[ev.FromServerID]; ok {
 				fromAlias = srv.Alias
 			}
-			if srv, err := s.st.ServerByID(r.Context(), ev.ToServerID); err == nil {
+			if srv, ok := cc.servers[ev.ToServerID]; ok {
 				toAlias = srv.Alias
 			}
 			out.FailoverEvents = append(out.FailoverEvents, chainFailoverEventDTO{
@@ -265,8 +292,9 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]chainDTO, 0, len(chains))
+	cc := s.chainDTOContext(r.Context())
 	for _, c := range chains {
-		dto, err := s.toChainDTO(r, c)
+		dto, err := s.toChainDTOWith(r, c, cc)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
