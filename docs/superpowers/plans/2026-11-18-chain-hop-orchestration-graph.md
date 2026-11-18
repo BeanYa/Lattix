@@ -34,7 +34,7 @@
 ### Task 1: Schema v34 与编排图存储
 
 **Files:**
-- Modify: `src/backend/internal/store/store.go`（三张表 + 索引）
+- Modify: `src/backend/internal/store/store.go`（三张表 + 索引 + `chains.orchestration_error`）
 - Modify: `src/backend/internal/store/migrations.go`（`schemaVersion=34`、删 v33 表）
 - Create: `src/backend/internal/store/chain_graph.go`
 - Modify: `src/backend/internal/store/chains.go`（DeleteChain 级联）
@@ -85,7 +85,7 @@
 - Test: `src/backend/internal/panel/orchestration_handler_test.go`
 
 **Interfaces:**
-- DTO：`chainHopDTO.Orchestration *chainHopOrchestrationDTO`，节点含 id/kind/server_id/address/listen_port/subject/action/priority/is_root/active/alias/country_code/location/online/banned。
+- DTO：`chainHopDTO.Orchestration *chainHopOrchestrationDTO`，节点含 id/kind/server_id/address/listen_port/subject/action/priority/is_root/active/alias/country_code/location/online/banned；`chainDTO.OrchestrationError string`。
 - `POST /api/chain/hop-orchestration/save`：`{chain_id, seq, nodes:[{kind,server_id,is_root,address,listen_port,subject,action,priority}], edges:[{from,to}]}`，返回 chainDTO。
 - 保存时：校验 → 整图替换 → 若节点对应当前工作服务器，写回 `chain_hops.address/forward_port`；有在途修订返回 `INVALID_ARGUMENT`。
 - `switch-hop`：有图限图成员，无图允许任意合法服务器。
@@ -123,12 +123,15 @@
 - Test: `src/backend/internal/panel/orchestrator_worker_test.go`
 
 **Interfaces:**
-- `type chainWorkerState int`（idle/evaluating/switching/deploying/cooldown/backoff/paused/stopped）
+- `type chainWorkerState int`（idle/evaluating/switching/deploying/cooldown/backoff/failed/paused/stopped）
 - `func newChainWorkerManager(o *AutoOrchestrator) *chainWorkerManager`
 - `func (m *chainWorkerManager) Wake(chainID int64)`、`Pause(ctx, chainID, reason) error`、`Resume(chainID)`、`Stop(chainID)`、`WaitSettled(ctx, chainID, timeout) error`
+- **只为有图的链建 worker**（启动/保存图时 ensure，删最后一图时 Stop；无图链不建）。
+- 扫描顺序：每次唤醒按 seq 升序 A→B→C；一跳切换发布完成后再评估下一跳；跳内按 priority/类型序/ordinal。
+- 顺序冲突（B 的图在新拓扑下不合法）或目标不可用 → `failed`：不回滚、不自动重试、不清图，写 `chains.orchestration_error` + `chain_orchestration_failed` 告警；保存图/编辑链路清除并恢复。
 - 同链唤醒合并；任何时刻最多一个在途切换；重启从 chain status/desired/last_switch_at 推导。
 
-- [ ] Step 1: 失败测试：并发 Wake 只产生一个 revision；deploying 不重复；Pause 后不再切换；Resume 恢复；Stop 后不建 worker；重启推导。
+- [ ] Step 1: 失败测试：并发 Wake 只产生一个 revision；deploying 不重复；Pause 后不再切换；Resume 恢复；Stop 后不建 worker；无图链不建 worker；A→B 顺序；A 完成后 B 失配进入 failed 且保留现场；重启推导。
 - [ ] Step 2: 跑测试确认 FAIL。
 - [ ] Step 3: 实现 worker/manager 并接线事件。
 - [ ] Step 4: 测试通过；`go test -race ./internal/panel`。
@@ -203,6 +206,7 @@
 - 纯函数：`createEditorState(orchestration)`、`reduce(state, action)`、`validateGraph(state)`、`autoLayout(state)`、`toSavePayload(state)`
 - actions：add-server/remove-server/add-trigger/remove-trigger/connect/disconnect/move/set-priority/set-address/set-port
 - 触发器 5 类（恢复添加即连根、默认 priority=1）；服务器卡片复用 `ChainNodeCard` 变体；保存调用 `api.saveHopOrchestration`。
+- 链路详情展示 `orchestration_error` 红条（「自动编排已暂停：…；修改并保存编排后恢复」），保存图后清除。
 
 - [ ] Step 1: 失败测试：连接规则、DAG/环、多来源、priority 排序、布局、保存载荷、当前节点删除拒绝。
 - [ ] Step 2: 跑测试确认 FAIL。
@@ -217,7 +221,7 @@
 - Test: 对应组件测试
 
 **Interfaces:**
-- 删除启用编排的节点：确认框文案「该跳的自动编排配置将一并删除」。
+- 删除启用编排的节点：确认框文案「该跳的自动编排配置将一并删除」；删除最后一跳的图后 worker 停止。
 - 编排保存后：链路 DTO 的 `chain_hops` 地址/端口已更新，向导回填即看到。
 
 - [ ] Step 1: 失败测试：删除确认文案、删除后提交载荷不含该跳、编排保存后回填当前节点地址/端口。

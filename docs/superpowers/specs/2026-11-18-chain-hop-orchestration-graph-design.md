@@ -198,9 +198,9 @@ CREATE INDEX idx_chain_hop_graph_edges ON chain_hop_graph_edges(chain_id, seq);
    切换前再次校验目标节点的 address/listen_port：地址须仍属于该服务器（否则回退
    默认地址），端口须落在角色可用段内（入口/末跳），否则视为目标不可用——防止
    链路编辑后图里的旧端口把隧道打到服务器 NAT 段之外。
-5. 仲裁：同一轮最多切一跳。同一段超时同时命中两端时，优先**探测目标端**的那一跳
-   （沿用现有 `targetSeqs` 偏好）；其余情况按跳序号升序、触发器优先级、类型序、
-   ordinal；「原节点恢复」在同优先级下排最前。
+5. 扫描顺序：固定按跳序号 **A → B → C** 升序；先完成 A 的编排（切换修订发布完成），
+   再评估 B，保证多跳结果不互相打架。同一跳内按触发器优先级/类型序/ordinal 选一个。
+   同一轮最多一个在途切换。
 6. 冷却：每跳 `cooldown_sec`（默认 300s）从 `last_switch_at` 起算，冷却内不重复切换。
 7. 切换复用现有 `switchChainHop`（Make-Before-Break、新修订、审计、告警），
    目标节点的地址/端口来自图节点。原因码映射：
@@ -214,11 +214,15 @@ CREATE INDEX idx_chain_hop_graph_edges ON chain_hop_graph_edges(chain_id, seq);
 
 ### 5.1 每链 worker 与编排状态机
 
+- **只为含有编排图的链创建 worker**：无图的链不建、不占 worker；删除最后一跳的图
+  即停止并回收 worker；启动时只为有图的链建 worker。worker 池大小 = 有编排的链数，
+  一条有图 + 一条无图时池中只有 1 个 worker。
 - 每条链一个独立 worker（不是全局单循环）：ban 观察、延迟上报、遥测、Agent
   上下线、链路更新、周期 tick 都只向该链 worker 投递「唤醒」；同一链的唤醒合并，
   不并发执行。
-- worker 状态机：`idle → evaluating → switching → deploying → cooldown → idle`，
-  失败走 `backoff`。任何时刻同一链最多一个在途切换（同一跳/同一节点也因此最多
+- worker 状态机：`idle → evaluating → switching → deploying → cooldown → idle`；
+  瞬时错误走 `backoff`，顺序/目标冲突进入 `failed`（暂停，保留现场，需保存图或
+  编辑链路后恢复）。任何时刻同一链最多一个在途切换（同一跳/同一节点也因此最多
   一个），非 idle 期间到来的唤醒只做合并标记，回 idle 后再统一评估。
 - `switching`：调用 `switchChainHop` 生成 desired revision；进入 `deploying`
   后等链路回到 `active/degraded`（复用既有链路状态机事件/周期轮询），再进
@@ -226,9 +230,18 @@ CREATE INDEX idx_chain_hop_graph_edges ON chain_hop_graph_edges(chain_id, seq);
 - `backoff`：切换失败（校验/DB/网络）退避 30s 再评估，避免抖动与日志风暴。
 - 进程重启：从 `chains.status`/`desired_revision_id`/`chain_hop_graphs.last_switch_at`
   推导初始状态（deploying/cooldown/idle），worker 内存状态不持久化。
-- 链路删除/失活时回收 worker；不同链的 worker 互不阻塞（跨链并行）。
-- 测试：并发唤醒只产生一个 revision；deploying 中不重复切换；重启后不重复冷却；
-  状态迁移表驱动。
+- 扫描顺序：每次唤醒按 seq 升序扫描有图的跳；某跳命中并完成切换（修订发布完成）
+  后，**再继续下一跳**；跳内按触发器优先级选择。
+- **顺序冲突即停**：A 的切换完成后，用新拓扑重新校验 B 的图（根/当前服务器仍在图、
+  跨跳不复用、无环）。若 B 不再合法，worker 进入 `failed`（暂停）：
+  不回滚 A、不自动重试、不清图；写 `chains.orchestration_error` 并发出
+  `chain_orchestration_failed` 告警，保留现场供管理员检查。管理员保存该跳图或
+  编辑链路后清除错误并恢复 worker。
+- 某跳触发但没有可用目标（目标不健康/校验失败）：同样进入 `failed` 并提示 exhausted，
+  不再继续后面的跳，避免半套切换。
+- 链路删除/失活时回收 worker；不同链的 worker 互不阻塞（跨链并行）；无图链永远不建。
+- 测试：并发唤醒只产生一个 revision；deploying 中不重复切换；A→B 顺序；A 完成后
+  B 失配→failed 且保留现场；无图链不建 worker；重启后不重复冷却；状态迁移表驱动。
 
 ## 6. API
 
@@ -303,6 +316,8 @@ CREATE INDEX idx_chain_hop_graph_edges ON chain_hop_graph_edges(chain_id, seq);
 
 ## 7. 前端：详情页堆叠
 
+- 链路卡片/详情顶部展示 `orchestration_error`（红条）：「自动编排已暂停：…；
+  修改并保存编排后恢复」，保留现场不隐藏。
 - 新组件 `HopStack`（`src/frontend/src/pages/chains/HopStack.tsx`）：
   - props：`hop`、`orchestration`、`onEdit`、`onSwitch`；
   - 前卡复用现有 `.cg-hop` 内容；后卡为紧凑卡（别名、国家、角色、状态、
@@ -346,6 +361,8 @@ CREATE INDEX idx_chain_hop_graph_edges ON chain_hop_graph_edges(chain_id, seq);
 
 - v34 迁移：删除 v33 的两张表；创建图的三张表；`schemaVersion = 34`。
   新装/升级到 v32 的库都会得到新表。v33 从未发布，无需数据迁移。
+- `chains.orchestration_error`（v34 新列）：worker 失败时的错误文案；DTO 返回，
+  保存图/编辑链路后清空。
 - 移除：`chain_hop_candidates`/`chain_auto_policies` 相关 store、DTO、
   `auto_policy`/`candidates` 请求字段、向导里的自动编排开关与策略表单、
   P1 备选按钮、`ChainAutoPolicy`/备选类型。
@@ -405,7 +422,8 @@ CREATE INDEX idx_chain_hop_graph_edges ON chain_hop_graph_edges(chain_id, seq);
 12. 无图的跳仍可手动切换（沿用现状）；有图时目标限制为图成员。
 13. 原节点恢复是全局单例：入度 0、目标固定为根，默认 priority=1，添加时位于
     根左侧并自动连根。
-14. 每链一个 worker + 编排状态机（§5.1）；同一链/同一跳最多一个在途切换。
+14. 每链一个 worker + 编排状态机（§5.1）；只为有图的链创建，同一链/同一跳最多
+    一个在途切换；跳序 A→B→C，B 失配进入 failed 并保留现场。
 15. 保存图时把当前服务器的 address/listen_port 写回 `chain_hops`；链路有在途
     修订时拒绝保存（不同步、不部署）。
 16. priority：0 = 自动（类型序 + ordinal），1..9999 = 显式升序。
