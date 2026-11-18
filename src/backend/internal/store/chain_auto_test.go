@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-func TestChainHopCandidatesAndAutoPolicyCRUD(t *testing.T) {
+// 保留段间连通性观察与切换审计的存储契约（备选池/策略表已在 v34 移除）。
+func TestServerPairWatchAndFailoverEvents(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(filepath.Join(t.TempDir(), "auto.db"))
 	if err != nil {
@@ -31,52 +32,7 @@ func TestChainHopCandidatesAndAutoPolicyCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	candidates := []ChainHopCandidate{
-		{ChainID: chainID, Seq: 0, Priority: 0, ServerID: s1, Address: "203.0.113.1", ListenPort: 10080},
-		{ChainID: chainID, Seq: 0, Priority: 1, ServerID: s2, Address: "203.0.113.2", ListenPort: 10081},
-		{ChainID: chainID, Seq: 1, Priority: 0, ServerID: s3, Address: "", ListenPort: 20080},
-	}
-	if err := st.ReplaceChainHopCandidates(ctx, chainID, candidates); err != nil {
-		t.Fatalf("ReplaceChainHopCandidates: %v", err)
-	}
-	got, err := st.ChainHopCandidates(ctx, chainID)
-	if err != nil {
-		t.Fatalf("ChainHopCandidates: %v", err)
-	}
-	if len(got) != 3 || got[0].ServerID != s1 || got[1].ServerID != s2 || got[1].Priority != 1 || got[2].ServerID != s3 {
-		t.Fatalf("unexpected candidates: %+v", got)
-	}
-
-	policy := ChainAutoPolicy{
-		ChainID:           chainID,
-		Enabled:           true,
-		OnBan:             true,
-		BanTriggerLevel:   BanTriggerSuspected,
-		OnUnreachable:     true,
-		UnreachableStreak: 2,
-		OnQuotaExhausted:  true,
-		OnAgentOffline:    true,
-		OfflineTimeoutSec: 300,
-		FailbackMode:      FailbackPreemptive,
-		CooldownSec:       600,
-	}
-	if err := st.UpsertChainAutoPolicy(ctx, policy); err != nil {
-		t.Fatalf("UpsertChainAutoPolicy: %v", err)
-	}
 	now := time.Now().UTC().Truncate(time.Second)
-	if err := st.TouchChainFailoverAt(ctx, chainID, now); err != nil {
-		t.Fatalf("TouchChainFailoverAt: %v", err)
-	}
-	gotPolicy, err := st.ChainAutoPolicyByID(ctx, chainID)
-	if err != nil {
-		t.Fatalf("ChainAutoPolicyByID: %v", err)
-	}
-	if !gotPolicy.Enabled || gotPolicy.BanTriggerLevel != BanTriggerSuspected ||
-		gotPolicy.FailbackMode != FailbackPreemptive || gotPolicy.LastFailoverAt == nil {
-		t.Fatalf("unexpected policy: %+v", gotPolicy)
-	}
-
 	if err := st.UpsertServerPairWatch(ctx, ServerPairWatch{
 		FromServer: s1,
 		ToServer:   s3,

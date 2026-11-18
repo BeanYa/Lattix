@@ -21,7 +21,7 @@ type OnlineUsersTracker struct {
 	mu        sync.Mutex
 	servers   map[int64]map[string]map[string]struct{} // serverID → user → IP set
 	updatedAt map[int64]time.Time
-	resolve   IdentityResolver // 将 access:<assignment_id> 身份换算为用户 UUID（nil = 不换算）
+	resolve   IdentityResolver     // 将 access:<assignment_id> 身份换算为用户 UUID（nil = 不换算）
 	isRelay   func(ip string) bool // 过滤面板自身服务器的中继源地址（直连链路出口回环）；nil = 不过滤
 }
 

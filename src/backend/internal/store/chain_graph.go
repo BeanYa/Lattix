@@ -295,7 +295,10 @@ func clearChainHopGraphsForServerTx(tx *sql.Tx, serverID int64) ([]ChainHopGraph
 	if err != nil {
 		return nil, err
 	}
-	type target struct{ chainID int64; seq int }
+	type target struct {
+		chainID int64
+		seq     int
+	}
 	var targets []target
 	for rows.Next() {
 		var t target
@@ -410,6 +413,7 @@ func reconcileChainHopGraphsTx(tx *sql.Tx, chainID int64, hops []ChainRevisionHo
 	}
 	return nil
 }
+
 // TouchChainHopGraphSwitch 记录某跳最近一次自动切换时刻（冷却窗口）。
 func (s *Store) TouchChainHopGraphSwitch(ctx context.Context, chainID int64, seq int, at time.Time) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE chain_hop_graphs SET last_switch_at=?, updated_at=CURRENT_TIMESTAMP
@@ -501,7 +505,10 @@ func (s *Store) ChainsWithGraphNodeOnServer(ctx context.Context, serverID int64)
 	if err != nil {
 		return nil, err
 	}
-	type target struct{ chainID int64; seq int }
+	type target struct {
+		chainID int64
+		seq     int
+	}
 	var targets []target
 	for rows.Next() {
 		var t target
@@ -527,4 +534,3 @@ func (s *Store) ChainsWithGraphNodeOnServer(ctx context.Context, serverID int64)
 	}
 	return out, nil
 }
-

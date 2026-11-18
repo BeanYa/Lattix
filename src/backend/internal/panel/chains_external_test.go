@@ -288,4 +288,3 @@ func TestCreateChainExternalExitEntryProtocolDetails(t *testing.T) {
 		t.Fatalf("reality+ws 应拒绝: %s %s", env.Code, env.Message)
 	}
 }
-

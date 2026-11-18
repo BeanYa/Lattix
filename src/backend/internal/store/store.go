@@ -783,39 +783,6 @@ CREATE TABLE IF NOT EXISTS user_group_links (
 CREATE INDEX IF NOT EXISTS idx_user_group_members_user
     ON user_group_members(user_id);
 
--- 链路跳位候选池：保存每个跳位（seq）按优先级排序的候选服务器（priority=0 为初始主节点，1..N 为备选节点）
-CREATE TABLE IF NOT EXISTS chain_hop_candidates (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    chain_id    INTEGER NOT NULL REFERENCES chains(id) ON DELETE CASCADE,
-    seq         INTEGER NOT NULL,
-    priority    INTEGER NOT NULL,
-    server_id   INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
-    address     TEXT    NOT NULL DEFAULT '',
-    listen_port INTEGER NOT NULL DEFAULT 0,
-    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE (chain_id, seq, priority),
-    UNIQUE (chain_id, seq, server_id)
-);
-CREATE INDEX IF NOT EXISTS idx_chain_hop_candidates_chain
-    ON chain_hop_candidates(chain_id, seq, priority);
-
--- 链路自动编排策略表（1:1 关联 chains）
-CREATE TABLE IF NOT EXISTS chain_auto_policies (
-    chain_id            INTEGER PRIMARY KEY REFERENCES chains(id) ON DELETE CASCADE,
-    enabled             INTEGER NOT NULL DEFAULT 0,
-    on_ban              INTEGER NOT NULL DEFAULT 1,
-    ban_trigger_level   TEXT    NOT NULL DEFAULT 'banned', -- suspected|banned
-    on_unreachable      INTEGER NOT NULL DEFAULT 1,
-    unreachable_streak  INTEGER NOT NULL DEFAULT 3,
-    on_quota_exhausted  INTEGER NOT NULL DEFAULT 1,
-    on_agent_offline    INTEGER NOT NULL DEFAULT 0,
-    offline_timeout_sec INTEGER NOT NULL DEFAULT 900,
-    failback_mode       TEXT    NOT NULL DEFAULT 'sticky', -- sticky|preemptive
-    cooldown_sec        INTEGER NOT NULL DEFAULT 900,
-    last_failover_at    DATETIME,
-    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
 -- 有向服务器对连通性观察状态（段间 TCP/ICMP 连续超时状态机快照）
 CREATE TABLE IF NOT EXISTS server_pair_watch (
     from_server INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,

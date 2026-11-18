@@ -28,6 +28,12 @@ func TestChainWorkerOnlyForGraphChains(t *testing.T) {
 	o.workerTick = 20 * time.Millisecond
 	o.workers.Start(ctx)
 
+	// setupAutoTestChain 自带编排图：先清空，验证无图链不建 worker。
+	for seq := 0; seq < 4; seq++ {
+		if err := st.DeleteChainHopGraph(context.Background(), chainID, seq); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if o.workers.Ensure(chainID) {
 		t.Fatal("graph-less chain must not get a worker")
 	}

@@ -34,8 +34,8 @@ type hopOrchestrationEdgeInput struct {
 }
 
 type hopOrchestrationSaveRequest struct {
-	ChainID int64                      `json:"chain_id"`
-	Seq     int                        `json:"seq"`
+	ChainID int64                       `json:"chain_id"`
+	Seq     int                         `json:"seq"`
 	Nodes   []hopOrchestrationNodeInput `json:"nodes"`
 	Edges   []hopOrchestrationEdgeInput `json:"edges"`
 }
@@ -557,4 +557,3 @@ func (s *Server) handleSaveHopOrchestration(w http.ResponseWriter, r *http.Reque
 	}
 	writeJSON(w, http.StatusOK, dto)
 }
-

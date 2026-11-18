@@ -1329,25 +1329,6 @@ components:
         custom_settings:
           type: object
           additionalProperties: true
-    ChainHopCandidateRef:
-      type: object
-      description: |
-        One standby server in a hop's candidate pool. Pools are ordered by array position: the hop's
-        own server is P0 and candidates become P1..PN. A candidate must be compatible with the hop
-        role (inbound-capable for entry/middle; same managed/external class as the exit) and must not
-        be a primary or candidate of another hop.
-      additionalProperties: false
-      required: [server_id]
-      properties:
-        server_id: {type: integer, minimum: 1}
-        address:
-          type: string
-          description: Optional public address for the candidate; must be one of the server's addresses. Empty or omitted follows the server default address.
-        listen_port:
-          type: integer
-          minimum: 1
-          maximum: 65535
-          description: Optional listen/forward port on the candidate; must fall inside the server's allowed port ranges.
     ChainHopRef:
       type: object
       description: Reference to one chain hop server. Response-side chain hops carry the same address field (empty string means following the server default address).
@@ -1358,10 +1339,6 @@ components:
         address:
           type: string
           description: Optional selected public address for this hop. Empty or omitted follows the server default address; a non-empty value must be one of the server's addresses ∪ {address, learned_addr}, otherwise the request is rejected with 400.
-        candidates:
-          type: array
-          items: {$ref: '#/components/schemas/ChainHopCandidateRef'}
-          description: Standby pool for this hop, ordered by priority (index 0 becomes P1). Omitted or empty keeps the hop single-server.
     ChainCreateRequest:
       type: object
       description: Ordered hop topology (entry / 0-2 middle / exit) plus the exit-side service node form. Only hop references are validated here; the node form follows the existing RPC semantics.
@@ -1386,7 +1363,6 @@ components:
           additionalProperties: true
           description: Optional entry protocol block (P4). When present, the entry hop terminates a vless+reality shared endpoint independent of the exit protocol; v1 only supports vless entry with hysteria/vless exits on multi-hop chains.
         traffic_multiplier: {type: string}
-        auto_policy: {$ref: '#/components/schemas/ChainAutoPolicy'}
     ChainEditRequest:
       type: object
       description: Same hop semantics as ChainCreateRequest; creates a desired revision for the target chain.
@@ -1407,7 +1383,6 @@ components:
           additionalProperties: true
           description: Optional entry protocol block (P4). Same semantics as ChainCreateRequest.entry_node; omitted keeps the end-to-end topology.
         traffic_multiplier: {type: string}
-        auto_policy: {$ref: '#/components/schemas/ChainAutoPolicy'}
     ChainSwitchHopRequest:
       type: object
       description: Manual hop switch. Reuses the differential revision planner (make-before-break) and records a manual_switch failover audit event.
@@ -1426,44 +1401,6 @@ components:
         reason:
           type: string
           description: Optional operator note stored in the failover audit event detail.
-    ChainAutoPolicy:
-      type: object
-      description: |
-        Per-chain automatic orchestration and failover policy. The panel evaluates enabled policies
-        against a health snapshot (ban watch, segment reachability, traffic quota, agent presence) and
-        replaces one hop through the differential revision planner, recording a chain_failover_events row.
-      additionalProperties: false
-      properties:
-        enabled:
-          type: boolean
-          description: Master switch for automatic orchestration on this chain.
-        on_ban: {type: boolean}
-        ban_trigger_level:
-          type: string
-          enum: [suspected, banned]
-          description: Ban level that triggers a switch; defaults to banned when omitted.
-        on_unreachable: {type: boolean}
-        unreachable_streak:
-          type: integer
-          minimum: 1
-          maximum: 100
-          description: Consecutive failed probe rounds required to declare a segment unreachable; defaults to 3.
-        on_quota_exhausted: {type: boolean}
-        on_agent_offline: {type: boolean}
-        offline_timeout_sec:
-          type: integer
-          minimum: 30
-          maximum: 86400
-          description: Agent-offline duration in seconds before a switch is considered; defaults to 900.
-        failback_mode:
-          type: string
-          enum: [sticky, preemptive]
-          description: sticky keeps the standby after a failover (default); preemptive returns to a higher-priority healthy candidate after the cooldown window.
-        cooldown_sec:
-          type: integer
-          minimum: 0
-          maximum: 86400
-          description: Minimum seconds between two automatic switches; defaults to 900.
     CustomExchangeRate:
       type: object
       description: Source currency is unique. On create, target_currency is overwritten with the panel reporting currency. At least one amount must equal 1. A rate is applied only while enabled and its target matches the current reporting currency.

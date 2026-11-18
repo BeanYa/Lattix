@@ -143,7 +143,7 @@ func assertStringSet(t *testing.T, label string, got, want []string) {
 // 出口共享监听经 service_endpoint_id 引用计入期望（cleanup 不误删、rebuild 重放）；
 // 端到端 port_hop 链的 forward 跳附加 <tag>_hop_<port> inbound 计入期望（Task 5 硬约束：
 // 缺了会被 agent cleanup 当作孤儿配置件误删）；入口终结 2 跳 hy2 链 hop0 免管道
-//（镜像 materializeRevision 的 skipEntryForward，否则 rebuild 自检因缺失误回滚）。
+// （镜像 materializeRevision 的 skipEntryForward，否则 rebuild 自检因缺失误回滚）。
 func TestExpectedXrayStateHy2(t *testing.T) {
 	ctx := context.Background()
 	st, err := Open(filepath.Join(t.TempDir(), "test.db"))

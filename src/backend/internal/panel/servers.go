@@ -1566,4 +1566,3 @@ func (s *Server) chainDeploymentPieces(ctx context.Context, chainID int64) ([]ch
 	}
 	return out, nil
 }
-

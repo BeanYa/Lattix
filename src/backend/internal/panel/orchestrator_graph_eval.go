@@ -10,13 +10,13 @@ import (
 )
 
 type graphTriggerHit struct {
-	seq       int
-	trigger   store.ChainHopGraphNode
-	target    store.ChainHopGraphNode
-	class     int
-	priority  int
-	typeRank  int
-	ordinal   int
+	seq      int
+	trigger  store.ChainHopGraphNode
+	target   store.ChainHopGraphNode
+	class    int
+	priority int
+	typeRank int
+	ordinal  int
 }
 
 func graphTriggerTypeRank(t store.ChainHopGraphNode) int {
@@ -114,10 +114,10 @@ func (o *AutoOrchestrator) graphTriggerFires(snap *orchestratorSnapshot, trigger
 
 // graphTargetCandidate 校验图节点作为替换目标是否健康/兼容，返回可交给 switchChainHop 的目标。
 func (o *AutoOrchestrator) graphTargetCandidate(snap *orchestratorSnapshot, chainID int64, target store.ChainHopGraphNode,
-	seq int, hops []store.ChainHop, published store.ChainRevision, used map[int64]bool) (store.ChainHopCandidate, bool) {
+	seq int, hops []store.ChainHop, published store.ChainRevision, used map[int64]bool) (store.HopSwitchTarget, bool) {
 	srv := snap.servers[target.ServerID]
 	if srv == nil {
-		return store.ChainHopCandidate{}, false
+		return store.HopSwitchTarget{}, false
 	}
 	address := target.Address
 	if address != "" && !store.ServerAddressSet(srv)[address] {
@@ -126,7 +126,7 @@ func (o *AutoOrchestrator) graphTargetCandidate(snap *orchestratorSnapshot, chai
 	port := target.ListenPort
 	if port > 0 {
 		if err := checkPortInRanges(srv, port); err != nil {
-			return store.ChainHopCandidate{}, false
+			return store.HopSwitchTarget{}, false
 		}
 	}
 	var upID, downID int64
@@ -136,12 +136,8 @@ func (o *AutoOrchestrator) graphTargetCandidate(snap *orchestratorSnapshot, chai
 	if seq+1 < len(hops) {
 		downID = hops[seq+1].ServerID
 	}
-	policy := store.DefaultChainAutoPolicy(chainID)
-	policy.UnreachableStreak = defaultPairUnreachableStreak
-	candidate := store.ChainHopCandidate{
-		ChainID: chainID, Seq: seq, ServerID: target.ServerID,
-		Address: address, ListenPort: port,
-	}
+	policy := store.HopSwitchPolicy{UnreachableStreak: defaultPairUnreachableStreak}
+	candidate := store.HopSwitchTarget{ChainID: chainID, Seq: seq, ServerID: target.ServerID, Address: address, ListenPort: port}
 	ok, _ := o.isCandidateHealthy(snap, candidate, seq, len(hops),
 		published.Snapshot.ServiceExternal != nil, used, upID, downID, policy)
 	return candidate, ok

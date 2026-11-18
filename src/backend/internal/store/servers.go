@@ -729,7 +729,6 @@ func (s *Store) DeleteServerCascade(ctx context.Context, id int64) error {
 		`DELETE FROM nodes WHERE server_id = ?
 			AND id NOT IN (SELECT service_node_id FROM chains WHERE deleted_at IS NULL)`,
 		// 受影响链已先标记 invalid；这里只清除残余工作引用，revision 快照保留历史。
-		`DELETE FROM chain_hop_candidates WHERE server_id = ?`,
 		`DELETE FROM chain_hops WHERE server_id = ?`,
 		`DELETE FROM traffic_cursors WHERE server_id = ?`,
 		`DELETE FROM server_metric_history WHERE server_id = ?`,

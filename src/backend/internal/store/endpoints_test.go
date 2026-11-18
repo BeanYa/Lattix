@@ -428,7 +428,7 @@ func createHy2ServiceChain(t *testing.T, st *Store, serverID, endpointID, servic
 	deployment, err := st.CreateInitialChainDeployment(context.Background(), InitialChainDeployment{
 		Name: name, ServiceServerID: serverID, ServiceProtocol: shared.ProtocolHysteria2,
 		ServiceConfig: json.RawMessage(`{"protocol":"hysteria","template":{}}`),
-		EndpointID: endpointID, ServiceEndpointID: serviceEndpointID, ServiceUUID: "svc-" + name,
+		EndpointID:    endpointID, ServiceEndpointID: serviceEndpointID, ServiceUUID: "svc-" + name,
 		TrafficMultiplierMilli: 1000,
 		Hops:                   []InitialChainHop{{ServerID: serverID, Role: HopRoleExit}},
 	})

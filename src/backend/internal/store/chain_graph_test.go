@@ -229,4 +229,3 @@ func TestChainDeletionReferenceQueries(t *testing.T) {
 		t.Fatalf("graph should be cleared: %+v", refs)
 	}
 }
-

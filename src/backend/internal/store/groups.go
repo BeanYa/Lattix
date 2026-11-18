@@ -27,15 +27,15 @@ type LinkGroupExternalSubscription struct {
 
 // LinkGroup 是一个链路分组的完整视图（JSON 键为前端契约）。
 type LinkGroup struct {
-	ID                    int64                            `json:"id"`
-	Name                  string                           `json:"name"`
-	ChainIDs              []int64                          `json:"chain_ids"`
-	ExternalSubscriptions []LinkGroupExternalSubscription  `json:"external_subscriptions"`
-	ChainCount            int                              `json:"chain_count"`
-	ExtSubCount           int                              `json:"external_subscription_count"`
-	UserGroupNames        []string                         `json:"user_group_names"`
-	CreatedAt             time.Time                        `json:"created_at"`
-	UpdatedAt             time.Time                        `json:"updated_at"`
+	ID                    int64                           `json:"id"`
+	Name                  string                          `json:"name"`
+	ChainIDs              []int64                         `json:"chain_ids"`
+	ExternalSubscriptions []LinkGroupExternalSubscription `json:"external_subscriptions"`
+	ChainCount            int                             `json:"chain_count"`
+	ExtSubCount           int                             `json:"external_subscription_count"`
+	UserGroupNames        []string                        `json:"user_group_names"`
+	CreatedAt             time.Time                       `json:"created_at"`
+	UpdatedAt             time.Time                       `json:"updated_at"`
 }
 
 // UserGroup 是一个用户分组的完整视图（JSON 键为前端契约）。

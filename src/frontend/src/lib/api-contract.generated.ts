@@ -2149,26 +2149,11 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /**
-         * @description One standby server in a hop's candidate pool. Pools are ordered by array position: the hop's
-         *     own server is P0 and candidates become P1..PN. A candidate must be compatible with the hop
-         *     role (inbound-capable for entry/middle; same managed/external class as the exit) and must not
-         *     be a primary or candidate of another hop.
-         */
-        ChainHopCandidateRef: {
-            server_id: number;
-            /** @description Optional public address for the candidate; must be one of the server's addresses. Empty or omitted follows the server default address. */
-            address?: string;
-            /** @description Optional listen/forward port on the candidate; must fall inside the server's allowed port ranges. */
-            listen_port?: number;
-        };
         /** @description Reference to one chain hop server. Response-side chain hops carry the same address field (empty string means following the server default address). */
         ChainHopRef: {
             server_id: number;
             /** @description Optional selected public address for this hop. Empty or omitted follows the server default address; a non-empty value must be one of the server's addresses ∪ {address, learned_addr}, otherwise the request is rejected with 400. */
             address?: string;
-            /** @description Standby pool for this hop, ordered by priority (index 0 becomes P1). Omitted or empty keeps the hop single-server. */
-            candidates?: components["schemas"]["ChainHopCandidateRef"][];
         };
         /** @description Ordered hop topology (entry / 0-2 middle / exit) plus the exit-side service node form. Only hop references are validated here; the node form follows the existing RPC semantics. */
         ChainCreateRequest: {
@@ -2186,7 +2171,6 @@ export interface components {
                 [key: string]: unknown;
             };
             traffic_multiplier?: string;
-            auto_policy?: components["schemas"]["ChainAutoPolicy"];
         } & {
             [key: string]: unknown;
         };
@@ -2204,7 +2188,6 @@ export interface components {
                 [key: string]: unknown;
             };
             traffic_multiplier?: string;
-            auto_policy?: components["schemas"]["ChainAutoPolicy"];
         } & {
             [key: string]: unknown;
         };
@@ -2217,35 +2200,6 @@ export interface components {
             server_id: number;
             /** @description Optional operator note stored in the failover audit event detail. */
             reason?: string;
-        };
-        /**
-         * @description Per-chain automatic orchestration and failover policy. The panel evaluates enabled policies
-         *     against a health snapshot (ban watch, segment reachability, traffic quota, agent presence) and
-         *     replaces one hop through the differential revision planner, recording a chain_failover_events row.
-         */
-        ChainAutoPolicy: {
-            /** @description Master switch for automatic orchestration on this chain. */
-            enabled?: boolean;
-            on_ban?: boolean;
-            /**
-             * @description Ban level that triggers a switch; defaults to banned when omitted.
-             * @enum {string}
-             */
-            ban_trigger_level?: "suspected" | "banned";
-            on_unreachable?: boolean;
-            /** @description Consecutive failed probe rounds required to declare a segment unreachable; defaults to 3. */
-            unreachable_streak?: number;
-            on_quota_exhausted?: boolean;
-            on_agent_offline?: boolean;
-            /** @description Agent-offline duration in seconds before a switch is considered; defaults to 900. */
-            offline_timeout_sec?: number;
-            /**
-             * @description sticky keeps the standby after a failover (default); preemptive returns to a higher-priority healthy candidate after the cooldown window.
-             * @enum {string}
-             */
-            failback_mode?: "sticky" | "preemptive";
-            /** @description Minimum seconds between two automatic switches; defaults to 900. */
-            cooldown_sec?: number;
         };
         /** @description Source currency is unique. On create, target_currency is overwritten with the panel reporting currency. At least one amount must equal 1. A rate is applied only while enabled and its target matches the current reporting currency. */
         CustomExchangeRate: {

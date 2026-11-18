@@ -5,8 +5,6 @@ import { validateNameTemplate } from '@/lib/naming'
 import { DEFAULT_REALITY_DEST, inferRealityDestPreset } from '@/lib/reality'
 import type {
   Chain,
-  ChainAutoPolicy,
-  ChainHopCandidateInput,
   ChainHopInput,
   CreateChainRequest,
   CreateNodeRequest,
@@ -33,7 +31,6 @@ export interface ChainPreviewHop {
   external: boolean
   externalExit: ExternalExit | null
   port: number | null
-  candidateServers: Server[]
 }
 
 /** 结果预览的一条链路（由画布枚举出的路径 + 详情表单派生）。 */
@@ -213,16 +210,6 @@ export interface ChainFormState {
   targetPort: string
   trafficMultiplier: string
   // 自动编排策略（§链路自动编排）
-  autoEnabled: boolean
-  onBan: boolean
-  banTriggerLevel: 'suspected' | 'banned'
-  onUnreachable: boolean
-  unreachableStreak: string
-  onQuotaExhausted: boolean
-  onAgentOffline: boolean
-  offlineTimeoutSec: string
-  failbackMode: 'sticky' | 'preemptive'
-  cooldownSec: string
 }
 
 const initialChainForm: ChainFormState = {
@@ -258,33 +245,6 @@ const initialChainForm: ChainFormState = {
   targetAddress: '',
   targetPort: '',
   trafficMultiplier: '1.000',
-  autoEnabled: false,
-  onBan: true,
-  banTriggerLevel: 'banned',
-  onUnreachable: true,
-  unreachableStreak: '3',
-  onQuotaExhausted: true,
-  onAgentOffline: true,
-  offlineTimeoutSec: '180',
-  failbackMode: 'sticky',
-  cooldownSec: '300',
-}
-
-function parseAutoPolicyDetails(chain: Chain): Partial<ChainFormState> {
-  const pol = chain.auto_policy
-  if (!pol) return {}
-  return {
-    autoEnabled: Boolean(pol.enabled),
-    onBan: Boolean(pol.on_ban),
-    banTriggerLevel: pol.ban_trigger_level === 'suspected' ? 'suspected' : 'banned',
-    onUnreachable: Boolean(pol.on_unreachable),
-    unreachableStreak: String(pol.unreachable_streak || 3),
-    onQuotaExhausted: Boolean(pol.on_quota_exhausted),
-    onAgentOffline: Boolean(pol.on_agent_offline),
-    offlineTimeoutSec: String(pol.offline_timeout_sec || 180),
-    failbackMode: pol.failback_mode === 'preemptive' ? 'preemptive' : 'sticky',
-    cooldownSec: String(pol.cooldown_sec || 300),
-  }
 }
 
 /** 编辑模式回填解析：出口配置 → 细节表单字段 + 出口节点监听端口（画布末节点端口回填用）。 */
@@ -355,7 +315,6 @@ function parseExternalExitEdit(chain: Chain): { ok: true; value: ChainEditParse 
         entryServerNames: serverNames.join(','),
         entryFingerprint: String(entry?.fingerprint || 'chrome'),
         trafficMultiplier: chain.traffic_multiplier || '1.000',
-        ...parseAutoPolicyDetails(chain),
       },
     },
   }
@@ -430,7 +389,6 @@ export function parseChainEdit(
         targetAddress: String(settings.address || ''),
         targetPort: settings.port ? String(settings.port) : '',
         trafficMultiplier: chain.traffic_multiplier || '1.000',
-        ...parseAutoPolicyDetails(chain),
       },
     },
   }
@@ -445,7 +403,6 @@ interface ChainPayload {
   node: CreateNodeRequest
   entry_port?: number
   entry_node?: EditChainRequest['entry_node']
-  auto_policy?: Partial<ChainAutoPolicy>
 }
 
 /**
@@ -518,10 +475,6 @@ export function useChainForm({
       const external = isExternalServer(server)
       const externalExit = external ? (server.external_exit ?? null) : null
       const typedPort = Number(normalizePortInput(node.port))
-      const candidateServers = (node.candidates ?? []).flatMap((cand) => {
-        const s = servers.find((c) => c.id === cand.serverId)
-        return s ? [s] : []
-      })
       hops.push({
         server,
         role,
@@ -529,7 +482,6 @@ export function useChainForm({
         externalExit,
         // 外部节点端口来自链接；中间跳由后端自动分配；首/末跳取画布输入（空 = 自动）。
         port: externalExit?.port ?? (role === 'middle' ? null : typedPort > 0 ? typedPort : null),
-        candidateServers,
       })
     })
     const exitServer = pathServers[pathServers.length - 1]
@@ -804,35 +756,12 @@ export function useChainForm({
     ) {
       entryNode = entryBlockPayload()
     }
-    // 逐跳地址与备选池：空串 = 跟随服务器默认地址，提交时不携带 address 字段；无备选时不携带 candidates。
-    const mkHop = (node: CanvasNode): ChainHopInput => {
-      const candidates: ChainHopCandidateInput[] = (node.candidates ?? []).map((cand) => ({
-        server_id: cand.serverId,
-        ...(cand.address ? { address: cand.address } : {}),
-        ...(cand.port ? { listen_port: Number(cand.port) } : {}),
-      }))
-      return {
-        server_id: node.serverId,
-        ...(node.address ? { address: node.address } : {}),
-        ...(candidates.length > 0 ? { candidates } : {}),
-      }
-    }
-    const hasAnyCandidates = path.some((n) => (n.candidates?.length ?? 0) > 0)
-    const autoPolicy: Partial<ChainAutoPolicy> | undefined =
-      form.autoEnabled || hasAnyCandidates || editingChainId !== null
-        ? {
-            enabled: form.autoEnabled,
-            on_ban: form.onBan,
-            ban_trigger_level: form.banTriggerLevel,
-            on_unreachable: form.onUnreachable,
-            unreachable_streak: Math.max(1, Number(form.unreachableStreak) || 3),
-            on_quota_exhausted: form.onQuotaExhausted,
-            on_agent_offline: form.onAgentOffline,
-            offline_timeout_sec: Math.max(30, Number(form.offlineTimeoutSec) || 180),
-            failback_mode: form.failbackMode,
-            cooldown_sec: Math.max(30, Number(form.cooldownSec) || 300),
-          }
-        : undefined
+    // 逐跳地址：空串 = 跟随服务器默认地址，提交时不携带 address 字段。
+    // 自动编排改由「跳位编排图」维护（/api/chain/hop-orchestration/save），不再随建链/编辑提交。
+    const mkHop = (node: CanvasNode): ChainHopInput =>
+      node.address
+        ? { server_id: node.serverId, address: node.address }
+        : { server_id: node.serverId }
     return {
       hops: path.map(mkHop),
       entry: mkHop(first),
@@ -841,7 +770,6 @@ export function useChainForm({
       node: nodeBody,
       entry_port: entryPortValue ? Number(entryPortValue) : undefined,
       entry_node: entryNode,
-      auto_policy: autoPolicy,
     }
   }
 
@@ -924,7 +852,6 @@ export function useChainForm({
             hops: payload.hops,
             node: payload.node,
             traffic_multiplier: form.trafficMultiplier,
-            auto_policy: payload.auto_policy,
           }
           if (payload.entry_port !== undefined) body.entry_port = payload.entry_port
           if (payload.entry_node) body.entry_node = payload.entry_node
@@ -939,7 +866,6 @@ export function useChainForm({
             exit: payload.exit,
             node: payload.node,
             traffic_multiplier: form.trafficMultiplier,
-            auto_policy: payload.auto_policy,
           }
           if (payload.entry_port !== undefined) body.entry_port = payload.entry_port
           if (payload.entry_node) body.entry_node = payload.entry_node

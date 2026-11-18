@@ -93,39 +93,39 @@ func TestOverlapDaysAndLeapFebruary(t *testing.T) {
 func TestBillingServiceEnd(t *testing.T) {
 	loc := time.UTC
 	cases := []struct {
-		name   string
+		name    string
 		billing store.ServerBilling
-		want   string
+		want    string
 	}{
 		{
-			name: "active ends at renewal",
+			name:    "active ends at renewal",
 			billing: store.ServerBilling{Status: store.BillingActive, NextRenewalOn: "2026-04-15"},
-			want: "2026-04-15",
+			want:    "2026-04-15",
 		},
 		{
-			name: "due today ends at renewal",
+			name:    "due today ends at renewal",
 			billing: store.ServerBilling{Status: store.BillingDueToday, NextRenewalOn: "2026-04-15"},
-			want: "2026-04-15",
+			want:    "2026-04-15",
 		},
 		{
-			name: "assumed valid extends through last online day",
+			name:    "assumed valid extends through last online day",
 			billing: store.ServerBilling{Status: store.BillingAssumedValid, NextRenewalOn: "2026-03-15", AssumedValidThrough: "2026-03-20"},
-			want: "2026-03-21",
+			want:    "2026-03-21",
 		},
 		{
-			name: "expired falls back to renewal when never assumed valid",
+			name:    "expired falls back to renewal when never assumed valid",
 			billing: store.ServerBilling{Status: store.BillingExpired, NextRenewalOn: "2026-03-15"},
-			want: "2026-03-15",
+			want:    "2026-03-15",
 		},
 		{
-			name: "expired keeps later assumed valid through",
+			name:    "expired keeps later assumed valid through",
 			billing: store.ServerBilling{Status: store.BillingExpired, NextRenewalOn: "2026-03-15", AssumedValidThrough: "2026-04-01"},
-			want: "2026-04-02",
+			want:    "2026-04-02",
 		},
 		{
-			name: "grace before renewal never shrinks the paid period",
+			name:    "grace before renewal never shrinks the paid period",
 			billing: store.ServerBilling{Status: store.BillingExpired, NextRenewalOn: "2026-04-15", AssumedValidThrough: "2026-03-01"},
-			want: "2026-04-15",
+			want:    "2026-04-15",
 		},
 	}
 	for _, tc := range cases {
@@ -681,7 +681,7 @@ func TestEstimatedBillingStatsHandlerCustomRange(t *testing.T) {
 	}
 	// 季付 ¥100/季（3 个月）：年成本 = 100×4、月成本 = 100/3、日成本 = (100/3)/30。
 	quarterID, err := st.CreateServerWithPlans(ctx, store.ServerDraft{Alias: "QR-100", BootstrapToken: "token-qr100", MachineType: store.MachineTypeDirect, CountryCode: "US", Location: "Los Angeles"}, &store.ServerBilling{
-			Enabled: true, ProviderID: 1, AmountMinor: 10000, Currency: "CNY", ServiceStartedOn: "2023-01-01", IntervalCount: 3, IntervalUnit: "month", NextRenewalOn: "2030-01-01", Status: store.BillingActive, }, store.ServerTrafficPlan{AccountingMode: "outbound", ResetAnchorOn: "2023-01-01", ResetCount: 1, ResetUnit: "month", TrackingStartedOn: "2023-01-01"})
+		Enabled: true, ProviderID: 1, AmountMinor: 10000, Currency: "CNY", ServiceStartedOn: "2023-01-01", IntervalCount: 3, IntervalUnit: "month", NextRenewalOn: "2030-01-01", Status: store.BillingActive}, store.ServerTrafficPlan{AccountingMode: "outbound", ResetAnchorOn: "2023-01-01", ResetCount: 1, ResetUnit: "month", TrackingStartedOn: "2023-01-01"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -199,7 +199,7 @@ func TestCreateExternalServerManualExit(t *testing.T) {
 }
 
 // TestCreateExternalServerWithoutConfig 验证服务器表单没有必填项：只提交 kind 也能保存
-//（链接/协议/地址/别名/国家/地区均可空），链路创建时再要求补全完整规格。
+// （链接/协议/地址/别名/国家/地区均可空），链路创建时再要求补全完整规格。
 func TestCreateExternalServerWithoutConfig(t *testing.T) {
 	_, serverAPI, aID, _ := externalChainFixture(t)
 	code, env := postJSON(t, serverAPI.handleCreateServer, "/api/server/create", map[string]any{
@@ -310,4 +310,3 @@ func TestExternalServerPanelProbeFields(t *testing.T) {
 		t.Fatal("external server missing from list")
 	}
 }
-
