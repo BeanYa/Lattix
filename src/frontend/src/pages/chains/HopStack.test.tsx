@@ -45,31 +45,33 @@ const orchestration: ChainOrchestration = {
   ],
 }
 
-it('启用了编排的跳：堆叠展示原服务器与备选，点击展开收起', async () => {
+const front = <div className="cg-hop">Evoxt KL 原服务器卡片</div>
+
+it('有备选：前卡仍是跳位卡片，备选叠在其后', async () => {
   await act(async () => {
-    root.render(<HopStack orchestration={orchestration} hopAlias="A1" />)
+    root.render(<HopStack orchestration={orchestration}>{front}</HopStack>)
   })
-  const text = container.textContent ?? ''
-  expect(text).toContain('A1')
-  expect(text).toContain('原服务器')
-  expect(text).toContain('编排已触发')
-  expect(text).toContain('当前运行：A2')
-  // 只读展示：详情页不提供编排编辑入口。
-  expect(container.querySelector('[role="dialog"]')).toBeNull()
-  const stack = container.querySelector('.cg-hop-stack') as HTMLElement
-  expect(stack.getAttribute('aria-expanded')).toBe('false')
-  await act(async () => stack.click())
-  expect(stack.classList.contains('is-expanded')).toBe(true)
+  // 前卡就是原卡片本身，不额外复制一份。
+  const fronts = container.querySelectorAll('.cg-hop')
+  expect(fronts).toHaveLength(1)
+  expect(container.querySelector('.cg-hop-stack-front .cg-hop')).toBeTruthy()
+  const backs = [...container.querySelectorAll('.cg-hop-stack-back')]
+  expect(backs).toHaveLength(1)
+  expect(backs[0].textContent).toBe('A2')
+  // 备选正在运行：标注当前运行节点。
+  expect(container.textContent).toContain('当前运行：A2')
 })
 
-it('普通链路（未配置编排）保持原样：不渲染堆叠', async () => {
+it('未配置编排的跳保持原样：不包堆叠层', async () => {
   await act(async () => {
-    root.render(<HopStack hopAlias="A1" />)
+    root.render(<HopStack>{front}</HopStack>)
   })
+  expect(container.querySelector('.cg-hop')).toBeTruthy()
   expect(container.querySelector('.cg-hop-stack')).toBeNull()
+  expect(container.querySelector('.cg-hop-stack-back')).toBeNull()
 })
 
-it('图里只有根服务器：等同未配置，不渲染', async () => {
+it('图里只有根服务器：等同未配置，不包堆叠层', async () => {
   await act(async () => {
     root.render(
       <HopStack
@@ -80,8 +82,9 @@ it('图里只有根服务器：等同未配置，不渲染', async () => {
           nodes: [orchestration.nodes[0]],
           edges: [],
         }}
-        hopAlias="A1"
-      />,
+      >
+        {front}
+      </HopStack>,
     )
   })
   expect(container.querySelector('.cg-hop-stack')).toBeNull()

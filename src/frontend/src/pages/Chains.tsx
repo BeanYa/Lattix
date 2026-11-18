@@ -854,49 +854,47 @@ export default function Chains() {
                                       flowing={c.status === 'active' && !offline}
                                     />
                                   ) : null}
-                                  <HopStack
-                                    orchestration={h.orchestration}
-                                    hopAlias={h.server_alias}
-                                  />
-                                  <div className="cg-hop">
-                                    <span className="cg-hop-head">
-                                      <span className="cg-hop-num">
-                                        {String(i + 1).padStart(2, '0')}
-                                      </span>
-                                      <span
-                                        className={cn('cg-hop-dot', offline ? 'is-red' : hst.cg)}
-                                      />
-                                      <span className="cg-hop-role">
-                                        {roleLabel[h.role]} · {hst.label}
-                                      </span>
-                                    </span>
-                                    <strong className="cg-hop-name">{h.server_alias}</strong>
-                                    <span className="cg-hop-meta">
-                                      {hopPort !== 0 ? <span>端口 {hopPort}</span> : null}
-                                      {(h.role === 'entry' || c.hops.length === 1) &&
-                                      c.entry_shared ? (
-                                        <span className="cg-hop-shared">共享入口</span>
-                                      ) : null}
-                                      {externalHop ? (
+                                  <HopStack orchestration={h.orchestration}>
+                                    <div className="cg-hop">
+                                      <span className="cg-hop-head">
+                                        <span className="cg-hop-num">
+                                          {String(i + 1).padStart(2, '0')}
+                                        </span>
                                         <span
-                                          className="cg-hop-external"
-                                          title="外部直链节点没有 Agent，仅作链路出口"
-                                        >
-                                          未托管
+                                          className={cn('cg-hop-dot', offline ? 'is-red' : hst.cg)}
+                                        />
+                                        <span className="cg-hop-role">
+                                          {roleLabel[h.role]} · {hst.label}
                                         </span>
-                                      ) : (
-                                        <span className={offline ? 'is-red' : 'is-lime'}>
-                                          {offline ? 'Agent 离线' : 'Agent 在线'}
-                                        </span>
-                                      )}
-                                      {h.traffic ? (
-                                        <span>
-                                          ↑ {humanizeBytes(h.traffic.effective_up)} · ↓{' '}
-                                          {humanizeBytes(h.traffic.effective_down)}
-                                        </span>
-                                      ) : null}
-                                    </span>
-                                  </div>
+                                      </span>
+                                      <strong className="cg-hop-name">{h.server_alias}</strong>
+                                      <span className="cg-hop-meta">
+                                        {hopPort !== 0 ? <span>端口 {hopPort}</span> : null}
+                                        {(h.role === 'entry' || c.hops.length === 1) &&
+                                        c.entry_shared ? (
+                                          <span className="cg-hop-shared">共享入口</span>
+                                        ) : null}
+                                        {externalHop ? (
+                                          <span
+                                            className="cg-hop-external"
+                                            title="外部直链节点没有 Agent，仅作链路出口"
+                                          >
+                                            未托管
+                                          </span>
+                                        ) : (
+                                          <span className={offline ? 'is-red' : 'is-lime'}>
+                                            {offline ? 'Agent 离线' : 'Agent 在线'}
+                                          </span>
+                                        )}
+                                        {h.traffic ? (
+                                          <span>
+                                            ↑ {humanizeBytes(h.traffic.effective_up)} · ↓{' '}
+                                            {humanizeBytes(h.traffic.effective_down)}
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                    </div>
+                                  </HopStack>
                                 </div>
                               )
                             })}
