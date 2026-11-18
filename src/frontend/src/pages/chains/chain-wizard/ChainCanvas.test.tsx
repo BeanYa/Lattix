@@ -75,11 +75,38 @@ describe('canvas orchestration entry', () => {
     const entry = host.querySelector('.cw-node-orch') as HTMLElement
     expect(entry).toBeTruthy()
     expect(entry.getAttribute('aria-label')).toBe('自动编排：HK')
+    expect(entry.hasAttribute('disabled')).toBe(false)
     await act(async () => entry.dispatchEvent(new MouseEvent('click', { bubbles: true })))
     expect(calls).toEqual([1])
   })
 
-  it('新建链路不传入入口回调时卡片上没有编排入口', async () => {
+  it('新建链路：入口保留但禁用，并说明保存后可配置', async () => {
+    const calls: number[] = []
+    function LockedHarness() {
+      controller = useChainCanvas({ servers })
+      return (
+        <ChainCanvas
+          controller={controller}
+          probesByServer={new Map()}
+          probeTitle={null}
+          linkColor="var(--panel-line-2)"
+          onEditOrchestration={(serverId) => calls.push(serverId)}
+          orchestrationLocked
+        />
+      )
+    }
+    await act(async () => root.render(<LockedHarness />))
+    await act(async () => controller.addNode(1, 200, 200))
+    const entry = host.querySelector('.cw-node-orch') as HTMLElement
+    expect(entry).toBeTruthy()
+    expect(entry.hasAttribute('disabled')).toBe(true)
+    expect(entry.getAttribute('title')).toBe('保存链路后可配置自动编排')
+    await act(async () => entry.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(calls).toEqual([])
+  })
+
+  it('没有编排回调时不渲染入口', async () => {
+    await act(async () => root.render(<Harness />))
     await act(async () => controller.addNode(1, 200, 200))
     expect(host.querySelector('.cw-node-orch')).toBeNull()
   })

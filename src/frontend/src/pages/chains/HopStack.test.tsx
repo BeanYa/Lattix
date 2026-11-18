@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, expect, it } from 'vitest'
 import type { ChainOrchestration } from '@/lib/types'
 import { HopStack } from './HopStack'
 
@@ -45,39 +45,44 @@ const orchestration: ChainOrchestration = {
   ],
 }
 
-it('前卡显示原服务器，active 标记编排已触发', async () => {
-  const onEdit = vi.fn()
+it('启用了编排的跳：堆叠展示原服务器与备选，点击展开收起', async () => {
   await act(async () => {
-    root.render(<HopStack orchestration={orchestration} hopAlias="A1" onEdit={onEdit} />)
+    root.render(<HopStack orchestration={orchestration} hopAlias="A1" />)
   })
   const text = container.textContent ?? ''
   expect(text).toContain('A1')
   expect(text).toContain('原服务器')
   expect(text).toContain('编排已触发')
   expect(text).toContain('当前运行：A2')
-  const front = container.querySelector('.cg-hop-stack-card.is-front') as HTMLElement
-  await act(async () => front.click())
-  expect(onEdit).toHaveBeenCalledTimes(1)
+  // 只读展示：详情页不提供编排编辑入口。
+  expect(container.querySelector('[role="dialog"]')).toBeNull()
+  const stack = container.querySelector('.cg-hop-stack') as HTMLElement
+  expect(stack.getAttribute('aria-expanded')).toBe('false')
+  await act(async () => stack.click())
+  expect(stack.classList.contains('is-expanded')).toBe(true)
 })
 
-it('黄点切换展开态，无编排时仍显示入口', async () => {
-  await act(async () => {
-    root.render(<HopStack orchestration={orchestration} hopAlias="A1" />)
-  })
-  const dot = container.querySelector('.cg-hop-stack-dot') as HTMLElement
-  expect(dot.getAttribute('aria-expanded')).toBe('false')
-  await act(async () => dot.click())
-  expect(container.querySelector('.cg-hop-stack')?.classList.contains('is-expanded')).toBe(true)
-
+it('普通链路（未配置编排）保持原样：不渲染堆叠', async () => {
   await act(async () => {
     root.render(<HopStack hopAlias="A1" />)
   })
-  // 未配置编排：只有黄点入口，文案是「配置编排」（浮出显示），不能声称已自动编排。
-  const bare = container.querySelector('.cg-hop-stack.is-bare') as HTMLElement
-  expect(bare).toBeTruthy()
-  expect(bare.textContent).toContain('配置编排')
-  expect(bare.textContent).not.toContain('自动编排')
-  expect((bare.querySelector('.cg-hop-stack-dot') as HTMLElement).getAttribute('title')).toBe(
-    '配置自动编排',
-  )
+  expect(container.querySelector('.cg-hop-stack')).toBeNull()
+})
+
+it('图里只有根服务器：等同未配置，不渲染', async () => {
+  await act(async () => {
+    root.render(
+      <HopStack
+        orchestration={{
+          root_server_id: 1,
+          active_server_id: 1,
+          triggered: false,
+          nodes: [orchestration.nodes[0]],
+          edges: [],
+        }}
+        hopAlias="A1"
+      />,
+    )
+  })
+  expect(container.querySelector('.cg-hop-stack')).toBeNull()
 })

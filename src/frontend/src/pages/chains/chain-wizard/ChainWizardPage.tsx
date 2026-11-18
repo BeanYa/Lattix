@@ -313,7 +313,8 @@ export function ChainWizardPage() {
               probeTitle={probeTitle}
               linkColor={linkColor}
               orchestrationFor={editingId ? orchestrationFor : undefined}
-              onEditOrchestration={editingId ? editOrchestration : undefined}
+              onEditOrchestration={editOrchestration}
+              orchestrationLocked={!editingId}
             />
             <ChainValidationSummary
               pathCount={canvas.validation.paths.length}

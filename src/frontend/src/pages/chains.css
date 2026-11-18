@@ -1392,6 +1392,7 @@
   line-height: 1.45;
 }
 
+/* 只读堆叠：未配置编排的跳不渲染（沿用原样式），编辑入口在链路编辑器画布上。 */
 .cg-hop-stack {
   position: relative;
   display: flex;
@@ -1399,6 +1400,12 @@
   gap: 8px;
   padding-top: 32px;
   margin-bottom: 10px;
+  cursor: pointer;
+  border-radius: 10px;
+}
+.cg-hop-stack:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 .cg-hop-stack-cards {
   position: relative;
@@ -1446,33 +1453,13 @@
   border-color: color-mix(in oklab, var(--primary) 55%, var(--border));
   color: var(--foreground);
 }
-.cg-hop-stack-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: #f5b301;
-  box-shadow: 0 0 0 3px color-mix(in oklab, #f5b301 22%, transparent);
-  border: 0;
-  cursor: pointer;
-  flex: none;
-}
 .cg-hop-stack-badge,
-.cg-hop-stack-more,
-.cg-hop-stack-hint {
+.cg-hop-stack-more {
   font-size: 11px;
   color: var(--muted-foreground);
 }
 .cg-hop-stack-badge {
   color: var(--primary);
-}
-.cg-hop-stack.is-bare .cg-hop-stack-hint {
-  opacity: 0;
-  transform: translateX(-3px);
-}
-.cg-hop-seg:hover .cg-hop-stack.is-bare .cg-hop-stack-hint,
-.cg-hop-stack.is-bare:focus-within .cg-hop-stack-hint {
-  opacity: 1;
-  transform: none;
 }
 .cg-hop-stack.is-expanded .cg-hop-stack-card {
   pointer-events: auto;
@@ -1484,10 +1471,5 @@
 @media (prefers-reduced-motion: no-preference) {
   .cg-hop-stack-card {
     transition: transform 160ms ease;
-  }
-  .cg-hop-stack.is-bare .cg-hop-stack-hint {
-    transition:
-      opacity 140ms ease,
-      transform 140ms ease;
   }
 }

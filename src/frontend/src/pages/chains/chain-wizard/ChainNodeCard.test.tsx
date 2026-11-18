@@ -186,9 +186,42 @@ it('卡片上方的自动编排入口：有图时显示备选数，点击打开�
     />
   )
   try {
-    // 新建链路还没有跳位：不传入就不渲染入口。
+    // 没有编排回调（例如编排画布内部复用卡片）时不渲染入口。
     await act(async () => root.render(card({})))
     expect(host.querySelector('.cw-node-orch')).toBeNull()
+
+    // 新建链路还没有跳位：入口保留但禁用，并提示保存后可配置。
+    await act(async () =>
+      root.render(
+        <ChainNodeCard
+          node={{ id: 'o1', serverId: 3, x: 0, y: 0, port: '', address: '' }}
+          server={server}
+          role="entry"
+          portEditable
+          hasIssue={false}
+          isConnecting={false}
+          portEditing={false}
+          outgoingConnected
+          probeRows={[]}
+          probeTitle={null}
+          toWorld={(x, y) => ({ x, y })}
+          onMove={() => {}}
+          onExitPortClick={() => {}}
+          onEntryPortClick={() => {}}
+          onRemove={() => {}}
+          onPortChange={() => {}}
+          onPortEditToggle={() => {}}
+          onAddressChange={() => {}}
+          onOrchestration={() => (opened += 1)}
+          orchestrationLocked
+        />,
+      ),
+    )
+    const locked = host.querySelector('.cw-node-orch') as HTMLButtonElement
+    expect(locked).toBeTruthy()
+    expect(locked.disabled).toBe(true)
+    expect(locked.getAttribute('title')).toBe('保存链路后可配置自动编排')
+    opened = 0
 
     await act(async () =>
       root.render(card({ orchestration, onOrchestration: () => (opened += 1) })),

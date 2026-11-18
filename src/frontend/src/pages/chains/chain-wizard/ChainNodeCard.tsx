@@ -59,6 +59,7 @@ export function ChainNodeCard({
   probeTitle,
   orchestration,
   onOrchestration,
+  orchestrationLocked = false,
   toWorld,
   onExitPortClick,
   onEntryPortClick,
@@ -88,8 +89,10 @@ export function ChainNodeCard({
   probeTitle: string | null
   /** 该跳的自动编排图：有图时入口高亮并显示备选数量（编辑既有链路才有）。 */
   orchestration?: ChainOrchestration
-  /** 提供时在卡片上方浮动「自动编排」入口；新建链路尚无跳位，不传即不渲染。 */
+  /** 提供时在卡片上方浮动「自动编排」入口。 */
   onOrchestration?: () => void
+  /** 新建链路尚无跳位：入口保留但禁用，保存后才能配置。 */
+  orchestrationLocked?: boolean
   toWorld: (clientX: number, clientY: number) => { x: number; y: number }
   onExitPortClick: () => void
   onEntryPortClick: () => void
@@ -147,9 +150,21 @@ export function ChainNodeCard({
       {onOrchestration ? (
         <button
           type="button"
-          className={cn('cw-node-orch', orchestration && 'is-configured')}
+          className={cn(
+            'cw-node-orch',
+            orchestration && 'is-configured',
+            orchestrationLocked && 'is-locked',
+          )}
           aria-label={`自动编排：${server.alias}`}
-          title={orchestration ? '编辑该跳自动编排' : '为该跳配置自动编排'}
+          aria-disabled={orchestrationLocked || undefined}
+          disabled={orchestrationLocked}
+          title={
+            orchestrationLocked
+              ? '保存链路后可配置自动编排'
+              : orchestration
+                ? '编辑该跳自动编排'
+                : '为该跳配置自动编排'
+          }
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation()

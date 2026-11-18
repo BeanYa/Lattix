@@ -857,9 +857,6 @@ export default function Chains() {
                                   <HopStack
                                     orchestration={h.orchestration}
                                     hopAlias={h.server_alias}
-                                    chain={c}
-                                    hop={h}
-                                    onChanged={() => void load()}
                                   />
                                   <div className="cg-hop">
                                     <span className="cg-hop-head">

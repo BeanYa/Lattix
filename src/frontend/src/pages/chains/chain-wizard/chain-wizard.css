@@ -364,6 +364,14 @@
   border-radius: 999px;
   background: #f5b301;
 }
+.cw-node-orch.is-locked {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.cw-node-orch.is-locked:hover {
+  color: var(--panel-ink-3);
+  border-color: var(--panel-edge-strong);
+}
 .cw-node-orch.is-configured {
   color: var(--panel-ink-1);
   border-color: color-mix(in oklab, #f5b301 55%, var(--panel-edge-strong));

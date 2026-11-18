@@ -26,14 +26,17 @@ export function ChainCanvas({
   linkColor,
   orchestrationFor,
   onEditOrchestration,
+  orchestrationLocked = false,
 }: {
   controller: ChainCanvasController
   probesByServer: Map<number, CatalogProbeRow[]>
   probeTitle: string | null
   linkColor: string
-  /** 编辑既有链路时按服务器查该跳的编排图；新建链路不传，卡片不显示编排入口。 */
+  /** 编辑既有链路时按服务器查该跳的编排图。 */
   orchestrationFor?: (serverId: number) => ChainOrchestration | undefined
   onEditOrchestration?: (serverId: number) => void
+  /** 新建链路还没有跳位：入口保留但禁用（保存后可配置）。 */
+  orchestrationLocked?: boolean
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const panRef = useRef<{ pointerId: number; last: Point; distance: number } | null>(null)
@@ -426,6 +429,7 @@ export function ChainCanvas({
               onOrchestration={
                 onEditOrchestration ? () => onEditOrchestration(node.serverId) : undefined
               }
+              orchestrationLocked={orchestrationLocked}
               toWorld={toWorld}
               onExitPortClick={() => controller.exitPortClick(node.id)}
               onEntryPortClick={() => controller.entryPortClick(node.id)}
