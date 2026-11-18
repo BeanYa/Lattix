@@ -410,3 +410,16 @@ func reconcileChainHopGraphsTx(tx *sql.Tx, chainID int64, hops []ChainRevisionHo
 	}
 	return nil
 }
+// TouchChainHopGraphSwitch 记录某跳最近一次自动切换时刻（冷却窗口）。
+func (s *Store) TouchChainHopGraphSwitch(ctx context.Context, chainID int64, seq int, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE chain_hop_graphs SET last_switch_at=?, updated_at=CURRENT_TIMESTAMP
+		WHERE chain_id=? AND seq=?`, at.UTC(), chainID, seq)
+	return err
+}
+
+// ResetChainHopGraphLastSwitch 清空某跳的切换冷却（测试/管理员重试用）。
+func (s *Store) ResetChainHopGraphLastSwitch(ctx context.Context, chainID int64, seq int) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE chain_hop_graphs SET last_switch_at=NULL WHERE chain_id=? AND seq=?`, chainID, seq)
+	return err
+}
+

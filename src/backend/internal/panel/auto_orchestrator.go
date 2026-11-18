@@ -398,7 +398,42 @@ func (o *AutoOrchestrator) isCandidateHealthy(
 }
 
 // EvaluateChain 评估单条链路的健康状态与回切条件，并在需要时自动切换到最佳候选节点。
+// EvaluateChain 对有编排图的链走图求值；没有图的链保留旧线性逻辑（Task 6 移除）。
 func (o *AutoOrchestrator) EvaluateChain(ctx context.Context, chainID int64) error {
+	chain, err := o.s.st.ChainByID(ctx, chainID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if (chain.Status != store.ChainStatusActive && chain.Status != store.ChainStatusDegraded) ||
+		chain.DesiredRevisionID != 0 {
+		return nil
+	}
+	graphs, err := o.s.st.ChainHopGraphs(ctx, chainID)
+	if err != nil {
+		return err
+	}
+	if len(graphs) == 0 {
+		return o.evaluateChainLegacy(ctx, chainID)
+	}
+	hops, err := o.s.st.ChainHops(ctx, chainID)
+	if err != nil || len(hops) == 0 {
+		return err
+	}
+	published, err := o.s.st.PublishedChainRevision(ctx, chainID)
+	if err != nil || published == nil {
+		return nil
+	}
+	snap, err := o.loadSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	return o.evaluateChainGraphs(ctx, chain, hops, *published, snap, graphs)
+}
+
+func (o *AutoOrchestrator) evaluateChainLegacy(ctx context.Context, chainID int64) error {
 	chain, err := o.s.st.ChainByID(ctx, chainID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
