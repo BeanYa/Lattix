@@ -423,7 +423,7 @@ export function ChainCanvas({
               toWorld={toWorld}
               onExitPortClick={() => controller.exitPortClick(node.id)}
               onEntryPortClick={() => controller.entryPortClick(node.id)}
-              onRemove={() => controller.removeNode(node.id)}
+              onRemove={() => controller.requestRemoveNode(node.id)}
               onPortChange={(port) => controller.setNodePort(node.id, port)}
               onPortEditToggle={() =>
                 controller.setPortEditingId(controller.portEditingId === node.id ? null : node.id)

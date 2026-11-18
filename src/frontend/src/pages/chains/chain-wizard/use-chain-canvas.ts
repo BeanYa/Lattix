@@ -15,7 +15,16 @@ import { canvasReducer, createCanvasState } from './chain-canvas-state'
 import type { CanvasViewport } from './canvas-viewport'
 
 /** 图状态机与相机互相独立；所有拓扑变更只经过 reducer。 */
-export function useChainCanvas({ servers }: { servers: Server[] }) {
+export function useChainCanvas({
+  servers,
+  orchestratedServerIds,
+  confirmRemoveOrchestration,
+}: {
+  servers: Server[]
+  /** 已启用编排的跳服务器：删除对应画布节点前提醒会一并删除编排配置。 */
+  orchestratedServerIds?: Set<number>
+  confirmRemoveOrchestration?: (alias: string) => Promise<boolean>
+}) {
   const [state, dispatch] = useReducer(canvasReducer, undefined, createCanvasState)
   const [viewport, setViewport] = useState<CanvasViewport>({ x: 0, y: 0, zoom: 1 })
   const [viewportSize, setViewportSize] = useState({ width: 960, height: 600 })
@@ -65,6 +74,22 @@ export function useChainCanvas({ servers }: { servers: Server[] }) {
       setFitRevision((revision) => revision + 1)
     },
     [state.nodes.length, addNode],
+  )
+  // 删除节点：若该跳已启用自动编排，先提示「编排配置将一并删除」。
+  const requestRemoveNode = useCallback(
+    (id: string) => {
+      const node = state.nodes.find((item) => item.id === id)
+      if (!node) return
+      const alias = serverById.get(node.serverId)?.alias ?? `#${node.serverId}`
+      if (orchestratedServerIds?.has(node.serverId) && confirmRemoveOrchestration) {
+        void confirmRemoveOrchestration(alias).then((ok) => {
+          if (ok) dispatch({ type: 'remove', id })
+        })
+        return
+      }
+      dispatch({ type: 'remove', id })
+    },
+    [state.nodes, serverById, orchestratedServerIds, confirmRemoveOrchestration],
   )
   const removeNode = useCallback((id: string) => dispatch({ type: 'remove', id }), [])
   const moveNode = useCallback(
@@ -150,6 +175,7 @@ export function useChainCanvas({ servers }: { servers: Server[] }) {
     addNode,
     addVisibleNode,
     removeNode,
+    requestRemoveNode,
     moveNode,
     moveTerminal,
     setNodePort,

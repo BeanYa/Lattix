@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'wouter'
 import { ArrowLeftIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { api } from '@/lib/api'
+import { useAppDialog } from '@/lib/app-dialog'
 import { useOperationProgress } from '@/lib/operation-progress-context'
 import { cn } from '@/lib/utils'
 import type { CatalogProbeRow, CatalogProbeStats, Chain, Server, XrayNode } from '@/lib/types'
@@ -32,6 +33,7 @@ export function ChainWizardPage() {
   const editingId = editMatch ? Number(editMatch[1]) : null
 
   const { showOperation } = useOperationProgress()
+  const { confirm } = useAppDialog()
   const [chains, setChains] = useState<Chain[]>([])
   const [nodes, setNodes] = useState<XrayNode[]>([])
   const [servers, setServers] = useState<Server[]>([])
@@ -91,7 +93,26 @@ export function ChainWizardPage() {
     }
   }, [])
 
-  const canvas = useChainCanvas({ servers })
+  // 已启用自动编排的跳服务器（编辑模式）：删除画布节点前提示编排配置一并删除。
+  const orchestratedServerIds = useMemo(() => {
+    const ids = new Set<number>()
+    if (!editingId) return ids
+    const chain = chains.find((candidate) => candidate.id === editingId)
+    for (const hop of chain?.hops ?? []) {
+      if (hop.orchestration && hop.orchestration.nodes.length > 0) ids.add(hop.server_id)
+    }
+    return ids
+  }, [chains, editingId])
+  const confirmRemoveOrchestration = useCallback(
+    async (alias: string) =>
+      confirm({
+        title: '删除已启用自动编排的节点',
+        description: `「${alias}」已启用自动编排，删除该节点会一并删除它的编排配置。`,
+        confirmLabel: '删除并移除编排',
+      }),
+    [confirm],
+  )
+  const canvas = useChainCanvas({ servers, orchestratedServerIds, confirmRemoveOrchestration })
   const chainForm = useChainForm({
     chains,
     servers,
