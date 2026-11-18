@@ -3,13 +3,13 @@ import type { ChainOrchestration } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { buildHopStack, hopStackTotal } from './hop-stack'
 
-/** 最多叠 3 张备选卡（含前卡共 4 张），其余用 +N 汇总。 */
-const MAX_BACKS = 3
+/** 最多叠 2 张备选卡（前面是跳位原卡），其余用 +N 汇总。 */
+const MAX_BACKS = 2
 
 /**
  * 链路详情里的跳位堆叠（只读）：前卡就是跳位本身的服务器卡片（children），
- * 备选用同样的卡片造型叠在它后面（右上偏移），不另外画一套小方块。
- * 没有备选的跳不包层，保持普通链路的原样式。
+ * 备选是同款的服务器卡片——同样的卡片表面、同样的头行——依次向右上偏移叠在
+ * 后面，露出一条可读的卡头。没有备选的跳不包层，保持普通链路的原样式。
  * 详情/概览只做信息查询，编排的编辑入口在链路编辑器画布的卡片上。
  */
 export function HopStack({
@@ -29,11 +29,23 @@ export function HopStack({
       {backs.map((item, index) => (
         <div
           key={item.node.id}
-          className={cn('cg-hop-stack-back', item.active && 'is-active')}
+          className={cn('cg-hop', 'cg-hop-stack-back', item.active && 'is-active')}
           style={{ '--i': index + 1 } as CSSProperties}
+          title={
+            item.node.listen_port
+              ? `备选 · 端口 ${item.node.listen_port} · ${item.node.online ? '在线' : '离线'}`
+              : `备选 · ${item.node.online ? '在线' : '离线'}`
+          }
           aria-hidden
         >
-          <span>{item.node.alias || `#${item.node.server_id}`}</span>
+          <span className="cg-hop-head">
+            <span className="cg-hop-num">B{index + 1}</span>
+            <span className={cn('cg-hop-dot', item.node.online ? 'is-lime' : 'is-red')} />
+            <span className="cg-hop-role">备选</span>
+            <strong className="cg-hop-name is-inline">
+              {item.node.alias || `#${item.node.server_id}`}
+            </strong>
+          </span>
         </div>
       ))}
       <div className="cg-hop-stack-front">{children}</div>

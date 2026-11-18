@@ -51,13 +51,15 @@ it('有备选：前卡仍是跳位卡片，备选叠在其后', async () => {
   await act(async () => {
     root.render(<HopStack orchestration={orchestration}>{front}</HopStack>)
   })
-  // 前卡就是原卡片本身，不额外复制一份。
-  const fronts = container.querySelectorAll('.cg-hop')
-  expect(fronts).toHaveLength(1)
-  expect(container.querySelector('.cg-hop-stack-front .cg-hop')).toBeTruthy()
+  // 前卡就是原卡片本身，不额外复制一份（备选卡也是 .cg-hop，但只在前卡位置有一张）。
+  expect(container.querySelectorAll('.cg-hop-stack-front .cg-hop')).toHaveLength(1)
+  expect(container.querySelectorAll('.cg-hop')).toHaveLength(2)
+  // 备选也是同款服务器卡片（复用 .cg-hop 表面），卡头可读地露出。
   const backs = [...container.querySelectorAll('.cg-hop-stack-back')]
   expect(backs).toHaveLength(1)
-  expect(backs[0].textContent).toBe('A2')
+  expect(backs[0].classList.contains('cg-hop')).toBe(true)
+  expect(backs[0].textContent).toContain('备选')
+  expect(backs[0].textContent).toContain('A2')
   // 备选正在运行：标注当前运行节点。
   expect(container.textContent).toContain('当前运行：A2')
 })
