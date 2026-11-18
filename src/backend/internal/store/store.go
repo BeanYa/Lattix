@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"strings"
@@ -171,6 +172,9 @@ CREATE TABLE IF NOT EXISTS commands (
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+-- 终态命令按保留期清理（ping/测速命令占线上库 40% 体积，实测 10.9 万行 / 94MB）：
+-- 该索引让 DeleteTerminalCommands 走 (status, created_at) 范围扫描而不是全表扫。
+CREATE INDEX IF NOT EXISTS idx_commands_status_created ON commands(status, created_at);
 
 -- 每台服务器仅保留最新一次原子测试任务与最终报告。进度是易失的，
 -- 由 Panel 进程内存维护；generation 决定迟到结果是否可覆盖。
@@ -646,6 +650,11 @@ CREATE TABLE IF NOT EXISTS traffic_stats_bucket (
 );
 CREATE INDEX IF NOT EXISTS idx_traffic_stats_bucket_ts ON traffic_stats_bucket(bucket_ts);
 CREATE INDEX IF NOT EXISTS idx_traffic_stats_bucket_dim ON traffic_stats_bucket(dim_type, dim_id, bucket_ts);
+-- 全网口径（只有 dim_type 过滤、没有 dim_id）的窗口聚合：概览页"昨日同进度"与
+-- "上月尾部"扫描的是该维度全部行，旧索引会退化成按维度全扫（实测 13 天窗口 59ms）。
+-- 覆盖索引把 up/down 带进索引，实测 59ms → 3.7ms（+23MB）。
+CREATE INDEX IF NOT EXISTS idx_traffic_stats_bucket_fleet
+    ON traffic_stats_bucket(dim_type, bucket_ts, up, down);
 CREATE TABLE IF NOT EXISTS traffic_stats_daily (
     server_id  INTEGER NOT NULL REFERENCES servers(id),
     dim_type   TEXT    NOT NULL,
@@ -867,28 +876,140 @@ func (s *Store) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }
 
+// sqliteReadPoolSize 是文件库的连接上限。WAL 下读不阻塞写、写不阻塞读，
+// 但 SQLite 仍只允许一个写者；连接池只需覆盖并发读（HTTP handler/编排评估/
+// 遥测落库），写事务继续由 busy_timeout 串行排队。
+const sqliteReadPoolSize = 8
+
 // Open 打开 SQLite 数据库并确保表结构存在。
 func Open(path string) (*Store, error) {
 	if err := secureDatabaseFile(path); err != nil {
 		return nil, err
 	}
-	// 并发设置（§2）：单连接 + busy_timeout，避免 HTTP handler/遥测/Flush 并发写时偶发 database is locked。
+	// 并发设置（§2）：busy_timeout 兜住并发写；文件库启用 WAL，读不再被写事务
+	// 阻塞。单连接 + 回滚日志会让一次遥测事务期间的所有面板读排队，而编排器
+	// （0.1.48）每 2s 的整机群快照读会与面板请求互相挤占。
 	dsn := path
 	sep := "?"
 	if strings.Contains(dsn, "?") {
 		sep = "&"
 	}
-	dsn += sep + "_pragma=busy_timeout(5000)"
+	// _txlock=immediate：显式事务一开始就拿写锁，避免 WAL 下「先读后写」的
+	// 事务在升级写锁时直接返回 SQLITE_BUSY（busy_timeout 不覆盖这种升级）。
+	dsn += sep + "_pragma=busy_timeout(5000)&_txlock=immediate"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	db.SetMaxOpenConns(1)
+	// 内存库必须单连接：每条连接都是一个独立的内存数据库。
+	_, file, err := sqliteFilePath(path)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	if file {
+		db.SetMaxOpenConns(sqliteReadPoolSize)
+		db.SetMaxIdleConns(sqliteReadPoolSize)
+		// journal_mode 是数据库文件属性，一次设置长期生效。开启失败（只读挂载、
+		// 不支持共享内存的文件系统等）不得阻断启动：退回原有回滚日志语义，
+		// 功能不变，只是读会被写阻塞；此时多连接只会互相抢锁，退回单连接。
+		if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+			log.Printf("store: enable wal failed, falling back to rollback journal: %v", err)
+			db.SetMaxOpenConns(1)
+			db.SetMaxIdleConns(1)
+		}
+	} else {
+		db.SetMaxOpenConns(1)
+	}
 	if err := initializeSchema(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init/migrate schema: %w", err)
 	}
+	// 查询计划统计只影响性能，采集失败不阻断启动（下次启动会重试）。
+	if err := ensurePlannerStats(context.Background(), db); err != nil {
+		log.Printf("store: ensure planner stats: %v", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// plannerStatsTables 是决定面板查询计划的大表。
+var plannerStatsTables = []string{"traffic_stats_bucket", "commands"}
+
+// ensurePlannerStats 在为文件库首次打开且缺少统计时执行一次 ANALYZE。
+// 没有 sqlite_stat1 时 SQLite 只能按默认猜测选索引，实测会把
+// "WHERE dim_type=? AND bucket_ts BETWEEN ?" 选成按维度扫描（82ms，ANALYZE 后 1.4ms）。
+func ensurePlannerStats(ctx context.Context, db *sql.DB) error {
+	missing, err := plannerStatsMissing(ctx, db)
+	if err != nil {
+		return err
+	}
+	if !missing {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, "ANALYZE"); err != nil {
+		return fmt.Errorf("analyze: %w", err)
+	}
+	return nil
+}
+
+// plannerStatsMissing 报告是否缺少查询优化统计（缺 sqlite_stat1 或大表无统计行）。
+func plannerStatsMissing(ctx context.Context, db *sql.DB) (bool, error) {
+	var hasTable int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sqlite_stat1'").Scan(&hasTable); err != nil {
+		return false, err
+	}
+	if hasTable == 0 {
+		return true, nil
+	}
+	for _, table := range plannerStatsTables {
+		if !validSQLiteIdentifier(table) {
+			return false, fmt.Errorf("planner stats: invalid table name %q", table)
+		}
+		// 空表没有可采样的行，ANALYZE 也不会写入统计，跳过以免每次启动重跑。
+		var present int
+		if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM "+table+")").Scan(&present); err != nil {
+			return false, err
+		}
+		if present == 0 {
+			continue
+		}
+		// 任一索引缺统计行 → 需要重新 ANALYZE：新增索引后计划会继续用旧索引。
+		var missing int
+		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master m
+			WHERE m.type='index' AND m.tbl_name=?
+			  AND NOT EXISTS (SELECT 1 FROM sqlite_stat1 s WHERE s.tbl=? AND s.idx=m.name)`, table, table).Scan(&missing); err != nil {
+			return false, err
+		}
+		if missing > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (s *Store) AnalyzeTables(ctx context.Context, tables ...string) error {
+	for _, table := range tables {
+		if !validSQLiteIdentifier(table) {
+			return fmt.Errorf("analyze: invalid table name %q", table)
+		}
+		if _, err := s.db.ExecContext(ctx, "ANALYZE "+table); err != nil {
+			return fmt.Errorf("analyze %s: %w", table, err)
+		}
+	}
+	return nil
+}
+
+func validSQLiteIdentifier(name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, r := range name {
+		if !(r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+			return false
+		}
+	}
+	return true
 }
 
 // secureDatabaseFile ensures credentials and private keys stored in SQLite are

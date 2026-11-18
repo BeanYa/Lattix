@@ -27,7 +27,10 @@ import (
 // v33: 链路跳位备选池与自动编排（未发布，v34 取代，因此不建表）。
 // v34: 链路跳位编排图——新增 chain_hop_graphs/nodes/edges、chain_orchestration_states；
 // 保留 server_pair_watch / chain_failover_events。v33 的两张表从未发布，无需迁移。
-const schemaVersion = 34
+// v35: 保留期与查询计划——新增 idx_commands_status_created（终态命令分批清理）与
+// idx_traffic_stats_bucket_fleet（全网维度窗口聚合的覆盖索引），随 Schema 建索引，
+// 存量库首次启动时补建（空表无数据成本，线上 87 万桶约 1s）。
+const schemaVersion = 35
 
 type columnMigration struct {
 	name       string
