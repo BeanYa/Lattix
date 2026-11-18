@@ -28,6 +28,7 @@ import { chainStatusStyle, hopStatusStyle, type CgStatusStyle } from '@/lib/stat
 import { useTimezone } from '@/lib/timezone'
 import { usePolling } from '@/lib/use-polling'
 import { cn } from '@/lib/utils'
+import { HopStack } from './chains/HopStack'
 import type {
   CatalogProbeRegion,
   Chain,
@@ -886,6 +887,10 @@ export default function Chains() {
                                       flowing={c.status === 'active' && !offline}
                                     />
                                   ) : null}
+                                  <HopStack
+                                    orchestration={h.orchestration}
+                                    hopAlias={h.server_alias}
+                                  />
                                   <div className="cg-hop">
                                     <span className="cg-hop-head">
                                       <span className="cg-hop-num">
