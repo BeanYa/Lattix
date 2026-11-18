@@ -106,6 +106,9 @@ export default function Chains() {
   const [error, setError] = useState('')
   // 轮询错误单独存放：刷新成功即可自动清除，不覆盖操作类错误横幅。
   const [loadError, setLoadError] = useState('')
+  const orchestrationErrors = chains
+    .filter((chain) => chain.orchestration_error)
+    .map((chain) => ({ name: chain.name, error: chain.orchestration_error as string }))
   const [retrying, setRetrying] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<ChainFilter>('all')
@@ -413,6 +416,13 @@ export default function Chains() {
       />
 
       {(error || loadError) && <Notice tone="danger">{error || loadError}</Notice>}
+      {orchestrationErrors.length > 0 ? (
+        <Notice tone="danger">
+          自动编排已暂停：
+          {orchestrationErrors.map((item) => `「${item.name}」${item.error}`).join('；')}
+          。修改并保存该跳编排后会自动恢复。
+        </Notice>
+      ) : null}
 
       <Tabs value={tab} onValueChange={(value) => value && setTab(value as ChainTab)}>
         <TabsList>
