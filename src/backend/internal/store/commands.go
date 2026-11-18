@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 )
 
 // 命令状态（§4）：queued → sent → acked | failed。
@@ -258,3 +260,52 @@ func (s *Store) DeadLetterCommand(ctx context.Context, id int64, reason string) 
 	n, err := res.RowsAffected()
 	return n > 0, err
 }
+
+// commandDeleteBatch 是单次 DELETE 的行数上限：保留期清理分批提交，
+// 避免一次删除 10 万行时长时间持有 SQLite 的写锁（WAL 下写仍独占）。
+const commandDeleteBatch = 2000
+
+// DeleteTerminalCommands 删除 created_at 早于 cutoff 的终态命令，最多 max 行。
+// queued/sent 是离线补发队列，永不清理；终态命令只是操作日志。
+// types 非空时只清理这些命令类型（探测类命令单独用更短的保留期）。
+func (s *Store) DeleteTerminalCommands(ctx context.Context, cutoff time.Time, max int, types ...string) (int64, error) {
+	if max <= 0 {
+		max = commandDeleteBatch
+	}
+	// 类型过滤拼进子查询：占位符绑定参数，不接受字符串拼接。
+	typeClause := ""
+	args := []any{CommandStatusAcked, CommandStatusFailed, CommandStatusAbandoned}
+	if len(types) > 0 {
+		placeholders := make([]string, 0, len(types))
+		for _, typ := range types {
+			placeholders = append(placeholders, "?")
+			args = append(args, typ)
+		}
+		typeClause = " AND type IN (" + strings.Join(placeholders, ", ") + ")"
+	}
+	args = append(args, cutoff.UTC().Format(sqliteTimestampLayout), max)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM commands WHERE id IN (
+		SELECT id FROM commands
+		WHERE status IN (?, ?, ?)`+typeClause+` AND created_at < ?
+		ORDER BY id LIMIT ?)`, args...)
+	if err != nil {
+		return 0, fmt.Errorf("delete terminal commands: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// CountTerminalCommands 返回 created_at 早于 cutoff 的终态命令数（运营可见性/测试用）。
+func (s *Store) CountTerminalCommands(ctx context.Context, cutoff time.Time) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM commands
+		WHERE status IN (?, ?, ?) AND created_at < ?`,
+		CommandStatusAcked, CommandStatusFailed, CommandStatusAbandoned,
+		cutoff.UTC().Format(sqliteTimestampLayout)).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count terminal commands: %w", err)
+	}
+	return n, nil
+}
+
+// sqliteTimestampLayout 与 CURRENT_TIMESTAMP 的落库格式一致（UTC，秒级）。
+const sqliteTimestampLayout = "2006-01-02 15:04:05"

@@ -297,6 +297,13 @@ func (s *Server) registerCoreTasks() {
 		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(time.Hour) },
 		Run:     s.cleanupMetricHistory,
 	})
+	// 终态命令保留期清理（§4 commands 同时是离线队列与操作日志）：queued/sent
+	// 永不删除，终态行按 commandRetention 分批清理。线上库终态命令曾占整库 40%。
+	s.scheduler.Register(scheduler.ScheduledTask{
+		Name: "commands.retention", RunOnStart: true, Timeout: 2 * time.Minute,
+		Trigger: func(context.Context) scheduler.TaskTrigger { return scheduler.IntervalTrigger(time.Hour) },
+		Run:     s.cleanupCommands,
+	})
 	// 服务器间延迟测速（§链路统计）：5 分钟一轮，启动即先测一轮；
 	// 链路发布成功由 dispatcher 内部立即追加触发。
 	latencyProbeInterval := latencyProbeRoundInterval()
