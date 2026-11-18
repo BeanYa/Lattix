@@ -2,7 +2,9 @@ package panel
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"lattix/backend/internal/store"
@@ -383,3 +385,166 @@ func validateHopOrchestration(ctx context.Context, st *store.Store, chain *store
 	}
 	return nil
 }
+
+// chainHopOrchestrationDTO 是跳位编排图的 API 表示。
+type chainHopOrchestrationNodeDTO struct {
+	ID            int64  `json:"id"`
+	Kind          string `json:"kind"`
+	ServerID      int64  `json:"server_id,omitempty"`
+	Address       string `json:"address,omitempty"`
+	ListenPort    int    `json:"listen_port,omitempty"`
+	Subject       string `json:"subject,omitempty"`
+	Action        string `json:"action,omitempty"`
+	Priority      int    `json:"priority"`
+	IsRoot        bool   `json:"is_root,omitempty"`
+	Active        bool   `json:"active,omitempty"`
+	OwnerServerID int64  `json:"owner_server_id,omitempty"`
+	Alias         string `json:"alias,omitempty"`
+	CountryCode   string `json:"country_code,omitempty"`
+	Location      string `json:"location,omitempty"`
+	KindOfServer  string `json:"kind_of_server,omitempty"`
+	Online        bool   `json:"online"`
+	Banned        bool   `json:"banned"`
+}
+
+type chainHopOrchestrationEdgeDTO struct {
+	From int64 `json:"from"`
+	To   int64 `json:"to"`
+}
+
+type chainHopOrchestrationDTO struct {
+	RootServerID   int64                          `json:"root_server_id"`
+	ActiveServerID int64                          `json:"active_server_id"`
+	Triggered      bool                           `json:"triggered"`
+	Nodes          []chainHopOrchestrationNodeDTO `json:"nodes"`
+	Edges          []chainHopOrchestrationEdgeDTO `json:"edges"`
+}
+
+func (s *Server) buildHopOrchestrationDTO(ctx context.Context, hop store.ChainHop, graph *store.ChainHopGraph, bans map[int64]store.ServerBanWatch) *chainHopOrchestrationDTO {
+	if graph == nil || len(graph.Nodes) == 0 {
+		return nil
+	}
+	byID := make(map[int64]int, len(graph.Nodes))
+	for i, node := range graph.Nodes {
+		byID[node.ID] = i
+	}
+	owners := make(map[int64]int64)
+	for _, edge := range graph.Edges {
+		from, okFrom := byID[edge.FromNode]
+		to, okTo := byID[edge.ToNode]
+		if okFrom && okTo && graph.Nodes[from].Kind == store.HopGraphKindServer && graph.Nodes[to].Kind == store.HopGraphKindTrigger {
+			owners[edge.ToNode] = graph.Nodes[from].ServerID
+		}
+	}
+	var rootID int64
+	for _, node := range graph.Nodes {
+		if node.IsRoot {
+			rootID = node.ServerID
+		}
+	}
+	out := &chainHopOrchestrationDTO{
+		RootServerID: rootID, ActiveServerID: hop.ServerID, Triggered: hop.ServerID != rootID,
+		Nodes: make([]chainHopOrchestrationNodeDTO, 0, len(graph.Nodes)),
+		Edges: make([]chainHopOrchestrationEdgeDTO, 0, len(graph.Edges)),
+	}
+	for _, node := range graph.Nodes {
+		dto := chainHopOrchestrationNodeDTO{
+			ID: node.ID, Kind: node.Kind, ServerID: node.ServerID,
+			Address: node.Address, ListenPort: node.ListenPort,
+			Subject: node.Subject, Action: node.Action, Priority: node.Priority,
+			IsRoot: node.IsRoot, OwnerServerID: owners[node.ID],
+		}
+		if node.Kind == store.HopGraphKindServer {
+			dto.Active = node.ServerID == hop.ServerID
+			if srv, err := s.st.ServerByID(ctx, node.ServerID); err == nil {
+				dto.Alias = srv.Alias
+				dto.CountryCode = srv.CountryCode
+				dto.Location = srv.Location
+				dto.KindOfServer = srv.Kind
+				dto.Online = s.req.IsOnline(node.ServerID)
+			}
+			if bw, ok := bans[node.ServerID]; ok && bw.State == store.BanStateBanned {
+				dto.Banned = true
+			}
+		}
+		out.Nodes = append(out.Nodes, dto)
+	}
+	for _, edge := range graph.Edges {
+		out.Edges = append(out.Edges, chainHopOrchestrationEdgeDTO{From: edge.FromNode, To: edge.ToNode})
+	}
+	return out
+}
+
+// handleSaveHopOrchestration 保存一个跳位的编排图（整图替换；空图 = 删除编排）。
+func (s *Server) handleSaveHopOrchestration(w http.ResponseWriter, r *http.Request) {
+	var req hopOrchestrationSaveRequest
+	if err := readJSON(r, &req); err != nil || req.ChainID <= 0 || req.Seq < 0 {
+		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	chain, err := s.st.ChainByID(r.Context(), req.ChainID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "链不存在")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if chain.DesiredRevisionID != 0 || chain.Status == store.ChainStatusApplying {
+		writeError(w, http.StatusBadRequest, "链路有在途修订，暂不能修改自动编排")
+		return
+	}
+	hops, err := s.st.ChainHops(r.Context(), req.ChainID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if req.Seq >= len(hops) {
+		writeError(w, http.StatusBadRequest, "跳位不存在")
+		return
+	}
+	graph, err := buildGraphFromRequest(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateHopOrchestration(r.Context(), s.st, chain, hops, req.Seq, graph); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if _, err := s.st.ReplaceChainHopGraph(r.Context(), req.ChainID, req.Seq, graph.Nodes, graph.Edges); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// 当前运行节点的地址/端口写回工作跳（详情/向导/后续切换共用同一份值）。
+	for _, node := range graph.Nodes {
+		if node.Kind != store.HopGraphKindServer || node.ServerID != hops[req.Seq].ServerID {
+			continue
+		}
+		if err := s.st.SetChainHopAddress(r.Context(), hops[req.Seq].ID, node.Address); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err := s.st.SetChainHopForwardPort(r.Context(), hops[req.Seq].ID, node.ListenPort); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		break
+	}
+	s.audit(r, "chain.hop_orchestration_save", nil, nil, map[string]any{
+		"chain_id": req.ChainID, "seq": req.Seq, "nodes": len(graph.Nodes), "edges": len(graph.Edges),
+	})
+	updated, err := s.st.ChainByID(r.Context(), req.ChainID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	dto, err := s.toChainDTO(r, *updated)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, dto)
+}
+

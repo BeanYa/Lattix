@@ -1013,23 +1013,43 @@ func (s *Server) handleSwitchChainHop(w http.ResponseWriter, r *http.Request) {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	candidates, err := s.st.ChainHopCandidates(r.Context(), req.ChainID)
-	if err != nil {
+	var matched *store.ChainHopCandidate
+	if graph, err := s.st.ChainHopGraph(r.Context(), req.ChainID, req.Seq); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	var matched *store.ChainHopCandidate
-	for i := range candidates {
-		if candidates[i].Seq == req.Seq && candidates[i].ServerID == req.ServerID {
-			matched = &candidates[i]
-			break
+	} else if graph != nil {
+		for i := range graph.Nodes {
+			node := graph.Nodes[i]
+			if node.Kind == store.HopGraphKindServer && node.ServerID == req.ServerID {
+				matched = &store.ChainHopCandidate{
+					ChainID: req.ChainID, Seq: req.Seq, ServerID: node.ServerID,
+					Address: node.Address, ListenPort: node.ListenPort,
+				}
+				break
+			}
 		}
-	}
-	if matched == nil {
-		matched = &store.ChainHopCandidate{
-			ChainID:  req.ChainID,
-			Seq:      req.Seq,
-			ServerID: req.ServerID,
+		if matched == nil {
+			writeError(w, http.StatusBadRequest, "目标服务器不在该跳的编排图中")
+			return
+		}
+	} else {
+		candidates, err := s.st.ChainHopCandidates(r.Context(), req.ChainID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		for i := range candidates {
+			if candidates[i].Seq == req.Seq && candidates[i].ServerID == req.ServerID {
+				matched = &candidates[i]
+				break
+			}
+		}
+		if matched == nil {
+			matched = &store.ChainHopCandidate{
+				ChainID:  req.ChainID,
+				Seq:      req.Seq,
+				ServerID: req.ServerID,
+			}
 		}
 	}
 	reasonDetail := req.Reason

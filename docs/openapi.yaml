@@ -492,6 +492,17 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/ChainSwitchHopRequest'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/chain/hop-orchestration/save:
+    post:
+      operationId: chainHopOrchestrationSave
+      description: |
+        保存一个跳位的自动编排图（整图替换；空节点=删除该跳编排）。服务端校验
+        DAG/回切环/触发唯一性/优先级/当前服务器在图中；链路有在途修订时拒绝。
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {$ref: '#/components/requestBodies/RPCBody'}
+      responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
   /api/user/list:
     get:
       operationId: userList

@@ -64,10 +64,11 @@ type chainHopDTO struct {
 	PortalPublicKey    string                 `json:"portal_public_key,omitempty"`
 	TunnelUUID         string                 `json:"tunnel_uuid,omitempty"`
 	Traffic            *chainTrafficDTO       `json:"traffic,omitempty"`
-	Candidates         []chainHopCandidateDTO `json:"candidates,omitempty"`
-	ActivePriority     int                    `json:"active_priority"`
-	PrimaryServerID    int64                  `json:"primary_server_id,omitempty"`
-	PrimaryServerAlias string                 `json:"primary_server_alias,omitempty"`
+	Candidates         []chainHopCandidateDTO      `json:"candidates,omitempty"`
+	ActivePriority     int                         `json:"active_priority"`
+	PrimaryServerID    int64                       `json:"primary_server_id,omitempty"`
+	PrimaryServerAlias string                      `json:"primary_server_alias,omitempty"`
+	Orchestration      *chainHopOrchestrationDTO   `json:"orchestration,omitempty"`
 }
 
 type chainTrafficDTO struct {
@@ -199,6 +200,8 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 	for _, cand := range candidates {
 		candsBySeq[cand.Seq] = append(candsBySeq[cand.Seq], cand)
 	}
+	graphs, _ := s.st.ChainHopGraphs(r.Context(), c.ID)
+	banWatches, _ := s.st.ServerBanWatchMap(r.Context())
 	for _, h := range hops {
 		dto := chainHopDTO{
 			ID:              h.ID,
@@ -219,6 +222,10 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 		}
 		if srv, err := s.st.ServerByID(r.Context(), h.ServerID); err == nil {
 			dto.ServerAlias = srv.Alias
+		}
+		if graph, ok := graphs[h.Seq]; ok {
+			graphCopy := graph
+			dto.Orchestration = s.buildHopOrchestrationDTO(r.Context(), h, &graphCopy, banWatches)
 		}
 		if seqCands := candsBySeq[h.Seq]; len(seqCands) > 0 {
 			dto.Candidates = make([]chainHopCandidateDTO, 0, len(seqCands))
