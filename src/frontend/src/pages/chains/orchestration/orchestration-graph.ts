@@ -34,8 +34,8 @@ export interface EditorState {
 
 export const MAX_SERVERS = 8
 export const MAX_TRIGGERS = 16
-export const CARD_X = 260
-export const CARD_Y = 150
+export const CARD_X = 200
+export const CARD_Y = 132
 
 export function createEditorState(input: {
   chainId: number
@@ -244,12 +244,27 @@ export function autoLayout(state: EditorState): EditorState {
     list.push(edge.to)
     outgoing.set(edge.from, list)
   }
+  // 根放在第二列，左边一列留给「原节点恢复」触发器（添加入口在根左侧）。
+  const COLUMN = CARD_X
   const positions = new Map<string, { x: number; y: number }>()
-  positions.set(root.key, { x: 0, y: 0 })
-  const queue: { key: string; level: number; row: number }[] = [{ key: root.key, level: 0, row: 0 }]
+  positions.set(root.key, { x: COLUMN, y: 0 })
+  const queue: { key: string; level: number }[] = [{ key: root.key, level: 0 }]
   const seen = new Set<string>([root.key])
+  // 没有来源的触发器（原节点恢复）从根左侧起步，并作为布局起点。
+  let recoveryRow = 0
+  for (const node of state.nodes) {
+    if (node.kind !== 'trigger') continue
+    const incoming = state.edges.filter((edge) => edge.to === node.key)
+    if (incoming.length > 0 || node.subject !== 'root') continue
+    positions.set(node.key, { x: 0, y: recoveryRow * CARD_Y })
+    seen.add(node.key)
+    queue.push({ key: node.key, level: 0 })
+    recoveryRow += 1
+  }
+  // 同一层的行号必须全局递增，否则不同父节点的子节点会叠在同一格。
+  const levelRows = new Map<number, number>()
   while (queue.length > 0) {
-    const current = queue.shift() as { key: string; level: number; row: number }
+    const current = queue.shift() as { key: string; level: number }
     const nextKeys = (outgoing.get(current.key) ?? []).slice().sort((a, b) => {
       const left = byKey.get(a)
       const right = byKey.get(b)
@@ -261,19 +276,20 @@ export function autoLayout(state: EditorState): EditorState {
       if (lp.typeRank !== rp.typeRank) return lp.typeRank - rp.typeRank
       return state.nodes.indexOf(left) - state.nodes.indexOf(right)
     })
-    let row = 0
+    const level = current.level + 1
     for (const key of nextKeys) {
       if (seen.has(key)) continue
       seen.add(key)
-      const level = current.level + 1
-      positions.set(key, { x: level * CARD_X, y: row * CARD_Y })
-      queue.push({ key, level, row })
-      row += 1
+      const row = levelRows.get(level) ?? 0
+      levelRows.set(level, row + 1)
+      positions.set(key, { x: (level + 1) * COLUMN, y: row * CARD_Y })
+      queue.push({ key, level })
     }
   }
   const remaining = state.nodes.filter((node) => !positions.has(node.key))
+  const baseRow = Math.max(0, ...Array.from(levelRows.values()))
   remaining.forEach((node, index) => {
-    positions.set(node.key, { x: CARD_X, y: (index + 2) * CARD_Y })
+    positions.set(node.key, { x: COLUMN * 2, y: (baseRow + index + 1) * CARD_Y })
   })
   return {
     ...state,

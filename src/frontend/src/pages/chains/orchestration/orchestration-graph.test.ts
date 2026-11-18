@@ -124,8 +124,27 @@ describe('orchestration editor model', () => {
     state = connect(state, root.key, trigger.key)
     state = connect(state, trigger.key, backup.key)
     const positioned = state.nodes
-    expect(positioned.find((node) => node.key === root.key)?.x).toBe(0)
-    expect(positioned.find((node) => node.key === trigger.key)?.x).toBe(260)
-    expect(positioned.find((node) => node.key === backup.key)?.x).toBe(520)
+    expect(positioned.find((node) => node.key === root.key)?.x).toBe(200)
+    expect(positioned.find((node) => node.key === trigger.key)?.x).toBe(400)
+    expect(positioned.find((node) => node.key === backup.key)?.x).toBe(600)
+  })
+
+  it('同一层的不同父节点子节点不会重叠', () => {
+    let state = createEditorState({ chainId: 1, seq: 0, activeServerId: 7 })
+    state = addServer(state, 8)
+    state = addServer(state, 9)
+    state = addTrigger(state, { subject: 'self', action: 'ban_suspected' })
+    state = addTrigger(state, { subject: 'next', action: 'segment_timeout' })
+    const root = state.nodes[0]
+    const [t1, t2] = state.nodes.filter((node) => node.kind === 'trigger')
+    const [a, b] = state.nodes.filter((node) => node.kind === 'server' && !node.isRoot)
+    state = connect(state, root.key, t1.key)
+    state = connect(state, t1.key, a.key)
+    state = connect(state, root.key, t2.key)
+    state = connect(state, t2.key, b.key)
+    const posA = state.nodes.find((node) => node.key === a.key)!
+    const posB = state.nodes.find((node) => node.key === b.key)!
+    expect(posA.x).toBe(posB.x)
+    expect(posA.y).not.toBe(posB.y)
   })
 })

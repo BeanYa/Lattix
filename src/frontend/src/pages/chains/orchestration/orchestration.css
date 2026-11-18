@@ -116,7 +116,7 @@
 }
 .orch-canvas {
   position: relative;
-  min-width: 1040px;
+  min-width: 900px;
   min-height: 640px;
   border-radius: 14px;
   background-image: radial-gradient(

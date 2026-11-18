@@ -1395,37 +1395,39 @@
 .cg-hop-stack {
   position: relative;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 8px;
-  min-height: 34px;
-  margin-bottom: 6px;
+  padding-top: 32px;
+  margin-bottom: 10px;
 }
 .cg-hop-stack-cards {
   position: relative;
-  padding-top: 18px;
-  min-width: 180px;
+  width: 240px;
+  height: 30px;
 }
 .cg-hop-stack-card {
   position: absolute;
-  left: calc(var(--i, 0) * 12px);
-  top: calc(18px - var(--i, 0) * 10px);
+  left: 0;
+  top: 0;
+  z-index: calc(20 - var(--i, 0));
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 220px;
-  padding: 5px 10px;
+  max-width: 210px;
+  padding: 4px 9px;
   border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
-  border-radius: 10px;
-  background: color-mix(in oklab, var(--card) 92%, transparent);
+  border-radius: 9px;
+  background: var(--card);
   color: var(--muted-foreground);
   font-size: 11px;
   white-space: nowrap;
+  overflow: hidden;
   pointer-events: none;
+  transform: translate(calc(var(--i, 0) * 16px), calc(var(--i, 0) * -15px));
 }
 .cg-hop-stack-card.is-front {
-  position: relative;
-  left: 0;
-  top: 0;
+  transform: none;
+  z-index: 30;
   pointer-events: auto;
   cursor: pointer;
   color: var(--foreground);
@@ -1465,6 +1467,10 @@
 }
 .cg-hop-stack.is-expanded .cg-hop-stack-card {
   pointer-events: auto;
+  transform: translate(calc(var(--i, 0) * 30px), calc(var(--i, 0) * -26px));
+}
+.cg-hop-stack.is-expanded {
+  padding-top: 46px;
 }
 @media (prefers-reduced-motion: no-preference) {
   .cg-hop-stack-card {

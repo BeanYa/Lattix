@@ -21,8 +21,8 @@ import {
 } from './orchestration-graph'
 import './orchestration.css'
 
-const NODE_W = 220
-const TRIGGER_W = 180
+const NODE_W = 186
+const TRIGGER_W = 168
 const NODE_H = 92
 
 function nodeCenter(node: EditorNode) {
