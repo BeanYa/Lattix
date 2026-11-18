@@ -58,10 +58,13 @@ type AutoOrchestrator struct {
 	offlineSince   map[int64]time.Time
 	quotaExhausted map[int64]bool
 	exhaustAlertAt map[string]time.Time
+
+	workers    *chainWorkerManager
+	workerTick time.Duration
 }
 
 func newAutoOrchestrator(s *Server) *AutoOrchestrator {
-	return &AutoOrchestrator{
+	o := &AutoOrchestrator{
 		s:              s,
 		events:         make(chan HealthEvent, 256),
 		coalesceWindow: defaultOrchestratorCoalesceWindow,
@@ -69,7 +72,10 @@ func newAutoOrchestrator(s *Server) *AutoOrchestrator {
 		offlineSince:   make(map[int64]time.Time),
 		quotaExhausted: make(map[int64]bool),
 		exhaustAlertAt: make(map[string]time.Time),
+		workerTick:     2 * time.Second,
 	}
+	o.workers = newChainWorkerManager(o)
+	return o
 }
 
 // emit 非阻塞向编排事件总线投递一条健康信号（队列满时由周期巡检兜底，绝不阻塞主路径）。
@@ -208,6 +214,10 @@ func (o *AutoOrchestrator) OnTelemetryMetrics(ctx context.Context, serverID int6
 
 // Run 启动单协程防抖协调 Worker：合并短时间内的突发事件并定期巡检离线超时与冷却期回切。
 func (o *AutoOrchestrator) Run(ctx context.Context) {
+	if o.workers != nil {
+		o.workers.Start(ctx)
+	}
+	o.EvaluateAll(ctx)
 	ticker := time.NewTicker(o.sweepInterval)
 	defer ticker.Stop()
 
@@ -244,19 +254,67 @@ func (o *AutoOrchestrator) EvaluateAll(ctx context.Context) {
 	if o == nil || o.s == nil {
 		return
 	}
+	graphChains, err := o.s.st.ChainIDsWithHopGraphs(ctx)
+	if err != nil {
+		log.Printf("auto_orchestrator: list graph chains: %v", err)
+		return
+	}
+	graphSet := make(map[int64]bool, len(graphChains))
+	for _, chainID := range graphChains {
+		graphSet[chainID] = true
+		if o.workers != nil && o.workers.Ensure(chainID) {
+			o.workers.Wake(chainID)
+		}
+	}
 	policies, err := o.s.st.ChainAutoPolicyMap(ctx)
 	if err != nil {
 		log.Printf("auto_orchestrator: list policies: %v", err)
 		return
 	}
 	for chainID, policy := range policies {
-		if !policy.Enabled {
+		if !policy.Enabled || graphSet[chainID] {
 			continue
 		}
 		if err := o.EvaluateChain(ctx, chainID); err != nil {
 			log.Printf("auto_orchestrator: evaluate chain %d: %v", chainID, err)
 		}
 	}
+}
+
+// 供保存/删除等路径协调 worker 生命周期。
+func (o *AutoOrchestrator) EnsureChainWorker(chainID int64) {
+	if o == nil || o.workers == nil {
+		return
+	}
+	o.workers.Ensure(chainID)
+}
+
+func (o *AutoOrchestrator) ResumeChain(chainID int64) {
+	if o == nil || o.workers == nil {
+		return
+	}
+	o.workers.Resume(chainID)
+}
+
+func (o *AutoOrchestrator) PauseChain(chainID int64) {
+	if o == nil || o.workers == nil {
+		return
+	}
+	o.workers.Pause(chainID)
+}
+
+func (o *AutoOrchestrator) StopChain(chainID int64) {
+	if o == nil || o.workers == nil {
+		return
+	}
+	o.workers.Stop(chainID)
+}
+
+func (o *AutoOrchestrator) WaitChainSettled(ctx context.Context, chainID int64, timeout time.Duration) error {
+	if o == nil || o.workers == nil {
+		return nil
+	}
+	return o.workers.WaitSettled(ctx, chainID, timeout)
 }
 
 // orchestratorSnapshot 聚合单次评估所需的全局服务器健康上下文。

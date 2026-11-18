@@ -882,6 +882,13 @@ CREATE TABLE IF NOT EXISTS chain_hop_graph_edges (
 CREATE INDEX IF NOT EXISTS idx_chain_hop_graph_edges
     ON chain_hop_graph_edges(chain_id, seq);
 
+-- 编排 worker 的失败现场（暂停提示）。保存图/编辑链路后清空。
+CREATE TABLE IF NOT EXISTS chain_orchestration_states (
+    chain_id   INTEGER PRIMARY KEY REFERENCES chains(id),
+    error      TEXT NOT NULL DEFAULT '',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 `
 
 // Store 封装 SQLite 数据访问。

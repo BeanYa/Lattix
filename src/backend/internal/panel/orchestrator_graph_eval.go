@@ -171,10 +171,6 @@ func (o *AutoOrchestrator) evaluateChainGraphs(ctx context.Context, chain *store
 		if !ok || len(graph.Nodes) == 0 {
 			continue
 		}
-		if graph.LastSwitchAt != nil && graph.CooldownSec > 0 &&
-			time.Since(*graph.LastSwitchAt) < time.Duration(graph.CooldownSec)*time.Second {
-			continue
-		}
 		byID := make(map[int64]store.ChainHopGraphNode, len(graph.Nodes))
 		for _, node := range graph.Nodes {
 			byID[node.ID] = node
@@ -206,7 +202,19 @@ func (o *AutoOrchestrator) evaluateChainGraphs(ctx context.Context, chain *store
 				targetByTrigger[from.ID] = to
 			}
 		}
-		if current == nil || root.ServerID == 0 {
+		if current == nil {
+			return fmt.Errorf("第 %d 跳：当前运行的服务器不在编排图中，暂停编排", seq+1)
+		}
+		if root.ServerID == 0 {
+			return fmt.Errorf("第 %d 跳：编排图缺少根服务器，暂停编排", seq+1)
+		}
+		for _, node := range graph.Nodes {
+			if node.Kind == store.HopGraphKindServer && node.ServerID != hop.ServerID && used[node.ServerID] {
+				return fmt.Errorf("第 %d 跳：编排图中的服务器已被其他跳使用，暂停编排", seq+1)
+			}
+		}
+		if graph.LastSwitchAt != nil && graph.CooldownSec > 0 &&
+			time.Since(*graph.LastSwitchAt) < time.Duration(graph.CooldownSec)*time.Second {
 			continue
 		}
 		otherUsed := make(map[int64]bool, len(used))

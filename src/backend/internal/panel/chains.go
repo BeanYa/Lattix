@@ -115,6 +115,7 @@ type chainDTO struct {
 	EntryConfig         *shared.VirtualConfig   `json:"entry_config,omitempty"`     // 入口协议区块配置回填（P4，前端编辑回填用）
 	AutoPolicy          *store.ChainAutoPolicy  `json:"auto_policy,omitempty"`
 	FailoverEvents      []chainFailoverEventDTO `json:"failover_events,omitempty"`
+	OrchestrationError  string                  `json:"orchestration_error,omitempty"`
 }
 
 // toChainDTO 组装链 DTO（跳按 seq 升序：首位入口，末位出口）。
@@ -128,6 +129,9 @@ func (s *Server) toChainDTO(r *http.Request, c store.Chain) (chainDTO, error) {
 		EndpointID:          c.EndpointID,
 		PublishedRevisionID: c.PublishedRevisionID, DesiredRevisionID: c.DesiredRevisionID,
 		Hops: []chainHopDTO{}, RevisionTasks: []chainRevisionTaskDTO{}}
+	if message, err := s.st.ChainOrchestrationError(r.Context(), c.ID); err == nil {
+		out.OrchestrationError = message
+	}
 	revisionID := c.PublishedRevisionID
 	if c.DesiredRevisionID != 0 {
 		revisionID = c.DesiredRevisionID

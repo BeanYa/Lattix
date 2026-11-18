@@ -372,6 +372,9 @@ func (s *Store) DeleteChain(ctx context.Context, id int64, fromStatus ...string)
 	if err := deleteChainHopGraphsForChainTx(tx, id); err != nil {
 		return fmt.Errorf("delete chain: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_orchestration_states WHERE chain_id=?`, id); err != nil {
+		return fmt.Errorf("delete chain: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_hops WHERE chain_id=?`, id); err != nil {
 		return fmt.Errorf("delete chain: %w", err)
 	}

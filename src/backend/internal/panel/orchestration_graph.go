@@ -532,6 +532,16 @@ func (s *Server) handleSaveHopOrchestration(w http.ResponseWriter, r *http.Reque
 		}
 		break
 	}
+	_ = s.st.SetChainOrchestrationError(r.Context(), req.ChainID, "")
+	if s.orchestrator != nil {
+		if len(graph.Nodes) == 0 {
+			s.orchestrator.StopChain(req.ChainID)
+		} else {
+			s.orchestrator.EnsureChainWorker(req.ChainID)
+		}
+		s.orchestrator.ResumeChain(req.ChainID)
+		s.orchestrator.NotifyChainUpdated(req.ChainID)
+	}
 	s.audit(r, "chain.hop_orchestration_save", nil, nil, map[string]any{
 		"chain_id": req.ChainID, "seq": req.Seq, "nodes": len(graph.Nodes), "edges": len(graph.Edges),
 	})

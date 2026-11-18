@@ -423,3 +423,43 @@ func (s *Store) ResetChainHopGraphLastSwitch(ctx context.Context, chainID int64,
 	return err
 }
 
+// SetChainOrchestrationError 记录/清空某链的编排失败现场（worker failed）。
+func (s *Store) SetChainOrchestrationError(ctx context.Context, chainID int64, message string) error {
+	if message == "" {
+		_, err := s.db.ExecContext(ctx, `DELETE FROM chain_orchestration_states WHERE chain_id=?`, chainID)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO chain_orchestration_states (chain_id, error, updated_at)
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(chain_id) DO UPDATE SET error=excluded.error, updated_at=CURRENT_TIMESTAMP`, chainID, message)
+	return err
+}
+
+// ChainOrchestrationError 读取某链的编排失败现场；空串表示正常。
+func (s *Store) ChainOrchestrationError(ctx context.Context, chainID int64) (string, error) {
+	var message string
+	err := s.db.QueryRowContext(ctx, `SELECT error FROM chain_orchestration_states WHERE chain_id=?`, chainID).Scan(&message)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return message, err
+}
+
+// ChainIDsWithHopGraphs 返回所有含编排图的链（worker 只为这些链创建）。
+func (s *Store) ChainIDsWithHopGraphs(ctx context.Context) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT chain_id FROM chain_hop_graphs ORDER BY chain_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
