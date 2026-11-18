@@ -1,18 +1,34 @@
 import { useState, type CSSProperties, type KeyboardEvent } from 'react'
-import type { ChainOrchestration } from '@/lib/types'
+import { createPortal } from 'react-dom'
+import type { Chain, ChainHop, ChainOrchestration } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { buildHopStack, hopStackTotal } from './hop-stack'
+import { OrchestrationEditor } from './orchestration/OrchestrationEditor'
 
 export function HopStack({
   orchestration,
   hopAlias,
+  chain,
+  hop,
   onEdit,
+  onChanged,
 }: {
   orchestration?: ChainOrchestration
   hopAlias: string
+  chain?: Chain
+  hop?: ChainHop
   onEdit?: () => void
+  onChanged?: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
+  const [editorOpen, setEditorOpen] = useState(false)
+  const openEditor = () => {
+    if (onEdit) {
+      onEdit()
+      return
+    }
+    if (chain && hop) setEditorOpen(true)
+  }
   const stack = buildHopStack(orchestration)
   const total = hopStackTotal(orchestration)
   const active = stack.find((item) => item.active)
@@ -24,7 +40,7 @@ export function HopStack({
           type="button"
           className="cg-hop-stack-dot"
           aria-label="配置自动编排"
-          onClick={onEdit}
+          onClick={openEditor}
         />
         <span className="cg-hop-stack-hint">自动编排</span>
       </div>
@@ -35,7 +51,7 @@ export function HopStack({
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
-      onEdit?.()
+      openEditor()
     }
   }
   return (
@@ -56,7 +72,7 @@ export function HopStack({
           role="button"
           tabIndex={0}
           aria-label="编辑该跳自动编排"
-          onClick={onEdit}
+          onClick={openEditor}
           onKeyDown={onKeyDown}
         >
           <span>{root.node.alias || hopAlias}</span>
@@ -76,6 +92,20 @@ export function HopStack({
           当前运行：{active.node.alias || `#${active.node.server_id}`}
         </span>
       ) : null}
+      {editorOpen && chain && hop
+        ? createPortal(
+            <OrchestrationEditor
+              chain={chain}
+              hop={hop}
+              onClose={() => setEditorOpen(false)}
+              onSaved={() => {
+                setEditorOpen(false)
+                onChanged?.()
+              }}
+            />,
+            document.body,
+          )
+        : null}
     </div>
   )
 }
