@@ -188,4 +188,19 @@ describe('orchestration editor model', () => {
     expect(outgoing).toHaveLength(1)
     expect(outgoing[0].to).toBe(second.key)
   })
+
+  it('触发器入边唯一：上游改连时替换原来源', () => {
+    let state = createEditorState({ chainId: 1, seq: 0, activeServerId: 7 })
+    state = addServer(state, 8)
+    state = addTrigger(state, { subject: 'self', action: 'ban_suspected' })
+    const root = state.nodes[0]
+    const spare = state.nodes[1]
+    const trigger = state.nodes.find((node) => node.kind === 'trigger')!
+    state = connect(state, root.key, trigger.key)
+    expect(state.edges.filter((edge) => edge.to === trigger.key)).toHaveLength(1)
+    const next = connect(state, spare.key, trigger.key)
+    const after = next.edges.filter((edge) => edge.to === trigger.key)
+    expect(after).toHaveLength(1)
+    expect(after[0].from).toBe(spare.key)
+  })
 })

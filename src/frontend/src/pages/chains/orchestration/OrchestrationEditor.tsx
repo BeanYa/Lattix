@@ -233,13 +233,7 @@ export function OrchestrationEditor({
                       onClick={() => addTriggerNode(trigger.subject, trigger.action)}
                     >
                       <strong>{trigger.label}</strong>
-                      <span>
-                        {trigger.subject === 'root'
-                          ? '当前不在根且根恢复健康时切回（默认最高优先级）'
-                          : trigger.subject === 'self'
-                            ? '本机三网测速封禁'
-                            : '相邻跳连续探测超时'}
-                      </span>
+                      <span>{trigger.desc}</span>
                     </button>
                   )
                 })}

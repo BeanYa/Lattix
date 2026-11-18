@@ -35,9 +35,20 @@ export interface EditorState {
 
 export const MAX_SERVERS = 8
 export const MAX_TRIGGERS = 16
-// 与链路画布同源：列间距/行间距由链路卡片尺寸推导，保证卡片不重叠。
+// 与链路画布同源：列可复用链路卡片尺寸；触发器是紧凑「条件胶囊」，只占名称/说明/优先级三行。
+export const TRIGGER_W = 228
+export const TRIGGER_H = 86
 export const CARD_X = CARD_W + 72
 export const CARD_Y = CARD_H + 32
+export const CARD_GAP = 32
+export const TRIGGER_GAP = 22
+
+/** 画布中节点的占用尺寸（布局与避障共用）。 */
+export function nodeSize(kind: EditorNode['kind']): { width: number; height: number } {
+  return kind === 'server'
+    ? { width: CARD_W, height: CARD_H }
+    : { width: TRIGGER_W, height: TRIGGER_H }
+}
 
 export function createEditorState(input: {
   chainId: number
@@ -179,11 +190,12 @@ export function connect(state: EditorState, from: string, to: string): EditorSta
   if (!source || !target || from === to) return state
   if (source.kind === target.kind) return state
   if (state.edges.some((edge) => edge.from === from && edge.to === to)) return state
+  let edges = state.edges
   if (source.kind === 'server' && target.kind === 'trigger') {
     if (target.subject === 'root') return state
-    if (state.edges.some((edge) => edge.to === target.key)) return state
+    // 触发器入边同样唯一：换上游服务器时替换原入边（重指来源）。
+    edges = edges.filter((edge) => edge.to !== target.key)
   }
-  let edges = state.edges
   if (source.kind === 'trigger' && target.kind === 'server') {
     if (source.subject === 'root') {
       const root = state.nodes.find((node) => node.kind === 'server' && node.isRoot)
@@ -248,25 +260,27 @@ export function autoLayout(state: EditorState): EditorState {
     list.push(edge.to)
     outgoing.set(edge.from, list)
   }
-  // 根放在第二列，左边一列留给「原节点恢复」触发器（添加入口在根左侧）。
-  const COLUMN = CARD_X
   const positions = new Map<string, { x: number; y: number }>()
-  positions.set(root.key, { x: COLUMN, y: 0 })
-  const queue: { key: string; level: number }[] = [{ key: root.key, level: 0 }]
+  // 各列纵向游标：服务器用卡片行距，触发器用紧凑行距，互不挤占。
+  const cursor = new Map<number, number>()
+  const step = (kind: EditorNode['kind']) =>
+    nodeSize(kind).height + (kind === 'trigger' ? TRIGGER_GAP : CARD_GAP)
+  const place = (node: EditorNode, column: number) => {
+    const y = cursor.get(column) ?? 0
+    cursor.set(column, y + step(node.kind))
+    positions.set(node.key, { x: column * CARD_X, y })
+  }
+  // 第 0 列留给「原节点恢复」触发器，根固定在第 1 列。
+  place(root, 1)
+  const queue: { key: string; level: number }[] = [{ key: root.key, level: 1 }]
   const seen = new Set<string>([root.key])
-  // 没有来源的触发器（原节点恢复）从根左侧起步，并作为布局起点。
-  let recoveryRow = 0
   for (const node of state.nodes) {
-    if (node.kind !== 'trigger') continue
-    const incoming = state.edges.filter((edge) => edge.to === node.key)
-    if (incoming.length > 0 || node.subject !== 'root') continue
-    positions.set(node.key, { x: 0, y: recoveryRow * CARD_Y })
+    if (node.kind !== 'trigger' || node.subject !== 'root') continue
+    if (state.edges.some((edge) => edge.to === node.key)) continue
+    place(node, 0)
     seen.add(node.key)
     queue.push({ key: node.key, level: 0 })
-    recoveryRow += 1
   }
-  // 同一层的行号必须全局递增，否则不同父节点的子节点会叠在同一格。
-  const levelRows = new Map<number, number>()
   while (queue.length > 0) {
     const current = queue.shift() as { key: string; level: number }
     const nextKeys = (outgoing.get(current.key) ?? []).slice().sort((a, b) => {
@@ -280,33 +294,27 @@ export function autoLayout(state: EditorState): EditorState {
       if (lp.typeRank !== rp.typeRank) return lp.typeRank - rp.typeRank
       return state.nodes.indexOf(left) - state.nodes.indexOf(right)
     })
-    const level = current.level + 1
     for (const key of nextKeys) {
       if (seen.has(key)) continue
       seen.add(key)
-      const row = levelRows.get(level) ?? 0
-      levelRows.set(level, row + 1)
-      positions.set(key, { x: (level + 1) * COLUMN, y: row * CARD_Y })
+      const node = byKey.get(key)
+      if (!node) continue
+      const level = current.level + 1
+      place(node, level)
       queue.push({ key, level })
     }
   }
-  // 尚未接入图的节点（新添加、待连线）排到最后一列右侧，而不是散落在画布远处。
-  const remaining = state.nodes.filter((node) => !positions.has(node.key))
-  if (remaining.length > 0) {
-    const maxLevel = Math.max(0, ...Array.from(levelRows.keys()))
-    const column = maxLevel + 2
-    let row = levelRows.get(column) ?? 0
-    remaining.forEach((node) => {
-      positions.set(node.key, { x: column * COLUMN, y: row * CARD_Y })
-      row += 1
-    })
+  // 尚未接入图的节点排到最后一列右侧，方便继续连线。
+  const loose = state.nodes.filter((node) => !positions.has(node.key))
+  if (loose.length > 0) {
+    const column = Math.max(0, ...Array.from(cursor.keys())) + 1
+    loose.forEach((node) => place(node, column))
   }
   return {
     ...state,
     nodes: state.nodes.map((node) => ({ ...node, ...(positions.get(node.key) ?? {}) })),
   }
 }
-
 export function validateGraph(state: EditorState): string[] {
   const errors: string[] = []
   const servers = state.nodes.filter((node) => node.kind === 'server')
@@ -427,12 +435,17 @@ export function toSavePayload(state: EditorState): HopOrchestrationSaveRequest {
   }
 }
 
-export const TRIGGERS: { label: string; subject: TriggerSubject; action: TriggerAction }[] = [
-  { label: '原节点恢复', subject: 'root', action: 'recovered' },
-  { label: '疑似被 ban（本机）', subject: 'self', action: 'ban_suspected' },
-  { label: '被 ban（本机）', subject: 'self', action: 'ban_banned' },
-  { label: '上一跳超时', subject: 'prev', action: 'segment_timeout' },
-  { label: '下一跳超时', subject: 'next', action: 'segment_timeout' },
+export const TRIGGERS: {
+  label: string
+  desc: string
+  subject: TriggerSubject
+  action: TriggerAction
+}[] = [
+  { label: '原节点恢复', desc: '当前不在根且根恢复健康', subject: 'root', action: 'recovered' },
+  { label: '疑似被 ban', desc: '本机三网连续 5 轮封禁', subject: 'self', action: 'ban_suspected' },
+  { label: '被 ban', desc: '本机三网连续 10 轮封禁', subject: 'self', action: 'ban_banned' },
+  { label: '上一跳超时', desc: '相邻跳连续探测超时', subject: 'prev', action: 'segment_timeout' },
+  { label: '下一跳超时', desc: '相邻跳连续探测超时', subject: 'next', action: 'segment_timeout' },
 ]
 
 export function triggerLabel(node: Pick<EditorNode, 'subject' | 'action'>): string {
@@ -440,6 +453,21 @@ export function triggerLabel(node: Pick<EditorNode, 'subject' | 'action'>): stri
     (item) => item.subject === node.subject && item.action === node.action,
   )
   return found?.label ?? '触发器'
+}
+
+export function triggerDesc(node: Pick<EditorNode, 'subject' | 'action'>): string {
+  const found = TRIGGERS.find(
+    (item) => item.subject === node.subject && item.action === node.action,
+  )
+  return found?.desc ?? ''
+}
+
+/** 触发器来源徽章：本机 / 上一跳 / 下一跳 / 恢复。 */
+export function triggerSource(node: Pick<EditorNode, 'subject'>): string {
+  if (node.subject === 'root') return '恢复'
+  if (node.subject === 'prev') return '上一跳'
+  if (node.subject === 'next') return '下一跳'
+  return '本机'
 }
 
 export function moveNode(state: EditorState, key: string, x: number, y: number): EditorState {

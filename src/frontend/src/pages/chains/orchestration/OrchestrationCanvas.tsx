@@ -7,7 +7,6 @@ import {
   CARD_H,
   CARD_W,
   ENTRY_PORT_OFFSET_Y,
-  PORT_R,
   type CanvasNode,
 } from '../chain-wizard/chain-canvas'
 import { routeCanvasEdge } from '../chain-wizard/canvas-edge-routing'
@@ -19,13 +18,9 @@ import {
   type Point,
 } from '../chain-wizard/canvas-viewport'
 import type { EditorNode, EditorState } from './orchestration-graph'
-import { triggerLabel } from './orchestration-graph'
+import { TRIGGER_H, TRIGGER_W, triggerDesc, triggerLabel } from './orchestration-graph'
 
 type HopRole = 'entry' | 'middle' | 'exit'
-
-// 触发器与服务器卡片同尺寸：同列对齐、端口圆点落在同一条基线上。
-const TRIGGER_W = CARD_W
-const TRIGGER_H = CARD_H
 
 function serverAnchor(node: EditorNode, output: boolean) {
   return output
@@ -33,10 +28,11 @@ function serverAnchor(node: EditorNode, output: boolean) {
     : { x: node.x, y: node.y + ENTRY_PORT_OFFSET_Y }
 }
 
+// 触发器是紧凑「条件胶囊」：端口落在胶囊垂直中线。
 function triggerAnchor(node: EditorNode, output: boolean) {
   return output
-    ? { x: node.x + TRIGGER_W, y: node.y + CARD_BODY_H / 2 }
-    : { x: node.x, y: node.y + CARD_BODY_H / 2 }
+    ? { x: node.x + TRIGGER_W, y: node.y + TRIGGER_H / 2 }
+    : { x: node.x, y: node.y + TRIGGER_H / 2 }
 }
 
 export function OrchestrationCanvas({
@@ -274,94 +270,57 @@ export function OrchestrationCanvas({
           .map((node) => (
             <div
               key={node.key}
-              className={cn(
-                'cw-node',
-                'is-middle',
-                'orch-trigger',
-                selected === node.key && 'is-selected',
-              )}
-              style={
-                {
-                  left: node.x,
-                  top: node.y,
-                  '--cw-card-w': `${TRIGGER_W}px`,
-                  '--cw-card-h': `${TRIGGER_H}px`,
-                  '--cw-body-h': `${CARD_BODY_H}px`,
-                  '--cw-address-h': '24px',
-                  '--cw-entry-y': `${CARD_BODY_H / 2}px`,
-                  '--cw-exit-y': `${CARD_BODY_H / 2}px`,
-                  '--cw-port-r': `${PORT_R}px`,
-                } as React.CSSProperties
-              }
+              className={cn('orch-cond', selected === node.key && 'is-selected')}
+              style={{ left: node.x, top: node.y, width: TRIGGER_W, height: TRIGGER_H }}
               onPointerDown={(event) => event.stopPropagation()}
             >
-              <div className="cw-node-card orch-trigger-card">
-                <div className="cw-node-body">
-                  <div className="cw-node-head">
-                    <span className="orch-trigger-dot" aria-hidden="true" />
-                    <span className="cw-node-alias" title={triggerLabel(node)}>
-                      {triggerLabel(node)}
-                    </span>
-                    <span className="cw-node-role is-middle">
-                      {node.subject === 'root'
-                        ? '恢复'
-                        : node.subject === 'self'
-                          ? '本机'
-                          : node.subject === 'prev'
-                            ? '上一跳'
-                            : '下一跳'}
-                    </span>
-                    <button
-                      type="button"
-                      className="cw-node-remove"
-                      aria-label={`移除触发器 ${triggerLabel(node)}`}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        onRemove(node.key)
-                      }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                  <div className="cw-node-meta">
-                    <span>
-                      {node.subject === 'root' ? '当前不在根且根已恢复' : '触发后切换到下游服务器'}
-                    </span>
-                  </div>
-                </div>
-                <div className="cw-node-config">
-                  <div className="orch-trigger-priority-row">
-                    <span className="cw-node-port-label">优先级</span>
-                    <input
-                      className="orch-trigger-priority-input"
-                      value={node.priority}
-                      inputMode="numeric"
-                      aria-label="触发器优先级"
-                      onChange={(event) => onPriority(node.key, event.target.value)}
-                    />
-                  </div>
-                </div>
+              <div className="orch-cond-head">
+                <span className="orch-cond-dot" aria-hidden="true" />
+                <span className="orch-cond-name" title={triggerLabel(node)}>
+                  {triggerLabel(node)}
+                </span>
                 <button
                   type="button"
-                  className={cn('cw-port', 'cw-port-entry', connecting && 'is-target')}
-                  aria-label="触发器入口"
-                  title={connecting ? '点击完成连线' : '上游服务器出口连到此处'}
+                  className="orch-cond-remove"
+                  aria-label={`移除触发器 ${triggerLabel(node)}`}
                   onClick={(event) => {
                     event.stopPropagation()
-                    onCompleteConnect(node.key)
+                    onRemove(node.key)
                   }}
-                />
-                <button
-                  type="button"
-                  className="cw-port cw-port-exit"
-                  aria-label="触发器出口"
-                  title="从此外口连到下游服务器入口"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onStartConnect(node.key)
-                  }}
-                />
+                >
+                  ×
+                </button>
               </div>
+              <p className="orch-cond-desc">{triggerDesc(node)}</p>
+              <label className="orch-cond-priority">
+                <span>优先级</span>
+                <input
+                  value={node.priority}
+                  inputMode="numeric"
+                  aria-label="触发器优先级"
+                  onChange={(event) => onPriority(node.key, event.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className={cn('orch-port', 'is-entry', connecting && 'is-target')}
+                aria-label="触发器入口"
+                title="上游服务器出口连到此处"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onCompleteConnect(node.key)
+                }}
+              />
+              <button
+                type="button"
+                className="orch-port is-exit"
+                aria-label="触发器出口"
+                title="从此外口连到下游服务器入口"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onStartConnect(node.key)
+                }}
+              />
             </div>
           ))}
       </div>
