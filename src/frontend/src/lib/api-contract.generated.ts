@@ -2191,6 +2191,34 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * @description 编排图节点。kind=server 需 server_id（可选 address/listen_port 覆盖）；
+         *     kind=trigger 需 subject/action（0-9999 的 priority，0=自动）。
+         *     节点以 server→trigger→server 交替连线，唯一允许的环是经触发器回到根。
+         */
+        HopOrchestrationNodeInput: {
+            /** @enum {string} */
+            kind: "server" | "trigger";
+            server_id?: number;
+            is_root?: boolean;
+            address?: string;
+            listen_port?: number;
+            /** @enum {string} */
+            subject?: "self" | "prev" | "next" | "root";
+            /** @enum {string} */
+            action?: "ban_suspected" | "ban_banned" | "segment_timeout" | "recovered";
+            priority?: number;
+        };
+        /** @description 整图替换某跳的编排图；nodes/edges 为空表示删除该跳编排。边用 nodes 下标。 */
+        HopOrchestrationSaveRequest: {
+            chain_id: number;
+            seq: number;
+            nodes?: components["schemas"]["HopOrchestrationNodeInput"][];
+            edges?: {
+                from: number;
+                to: number;
+            }[];
+        };
         /** @description Manual hop switch. Reuses the differential revision planner (make-before-break) and records a manual_switch failover audit event. */
         ChainSwitchHopRequest: {
             chain_id: number;
@@ -3234,7 +3262,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: components["requestBodies"]["RPCBody"];
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HopOrchestrationSaveRequest"];
+            };
+        };
         responses: {
             200: components["responses"]["RPCResponse"];
             default: components["responses"]["ProtocolErrorResponse"];
