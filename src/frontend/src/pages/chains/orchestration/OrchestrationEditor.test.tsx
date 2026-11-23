@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppDialogProvider } from '@/components/AppDialogProvider'
+import { api } from '@/lib/api'
 import type { Chain, ChainHop, Server } from '@/lib/types'
 import { OrchestrationEditor } from './OrchestrationEditor'
 
@@ -178,6 +179,7 @@ let host: HTMLDivElement
 let root: ReturnType<typeof createRoot>
 
 beforeEach(() => {
+  vi.spyOn(api, 'chains').mockImplementation(() => new Promise(() => {}))
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
@@ -186,9 +188,107 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   host.remove()
+  vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('OrchestrationEditor', () => {
+  it('打开时获取最新运行状态，并在后续切换时刷新画布且保留草稿', async () => {
+    vi.useFakeTimers()
+    const original = makeChain(true)
+    original.hop.server_id = 1
+    original.hop.server_alias = 'JP-Root'
+    original.hop.orchestration!.active_server_id = 1
+    original.hop.orchestration!.triggered = false
+    original.hop.orchestration!.nodes = original.hop.orchestration!.nodes.map((node) => ({
+      ...node,
+      active: node.kind === 'server' && node.server_id === 1,
+    }))
+    const switched = makeChain(true)
+    vi.mocked(api.chains)
+      .mockResolvedValueOnce([switched.chain])
+      .mockResolvedValue([original.chain])
+    await act(async () =>
+      root.render(
+        <OrchestrationEditor
+          chain={original.chain}
+          hop={original.hop}
+          servers={servers}
+          onClose={() => {}}
+          onSaved={() => {}}
+        />,
+      ),
+    )
+    expect(host.querySelector('.orch-head-meta')?.textContent).toContain('当前使用：SG-Backup')
+    expect([...host.querySelectorAll('.cw-node-role')].map((el) => el.textContent)).toContain(
+      '备选 · 当前',
+    )
+
+    const suspected = [...host.querySelectorAll<HTMLButtonElement>('.orch-trigger-item')].find(
+      (button) => button.textContent?.includes('疑似被 ban'),
+    )!
+    await act(async () => suspected.click())
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+
+    expect(host.querySelector('.orch-head-meta')?.textContent).toContain('当前使用：JP-Root')
+    expect([...host.querySelectorAll('.cw-node-role')].map((el) => el.textContent)).toContain(
+      '根 · 当前',
+    )
+    expect(host.querySelectorAll('.orch-cond')).toHaveLength(2)
+  })
+
+  it('容灾切换后同步当前节点标记并保留未保存的编排修改', async () => {
+    const switched = makeChain(true)
+    const originalHop: ChainHop = {
+      ...switched.hop,
+      server_id: 1,
+      server_alias: 'JP-Root',
+      orchestration: {
+        ...switched.hop.orchestration!,
+        active_server_id: 1,
+        triggered: false,
+        nodes: switched.hop.orchestration!.nodes.map((node) => ({
+          ...node,
+          active: node.kind === 'server' && node.server_id === 1,
+        })),
+      },
+    }
+    const renderEditor = async (chain: Chain, hop: ChainHop) => {
+      await act(async () =>
+        root.render(
+          <OrchestrationEditor
+            chain={chain}
+            hop={hop}
+            servers={servers}
+            onClose={() => {}}
+            onSaved={() => {}}
+          />,
+        ),
+      )
+    }
+    await renderEditor(
+      { ...switched.chain, hops: [originalHop, switched.chain.hops[1]] },
+      originalHop,
+    )
+    const suspected = [...host.querySelectorAll<HTMLButtonElement>('.orch-trigger-item')].find(
+      (button) => button.textContent?.includes('疑似被 ban'),
+    )!
+    await act(async () => suspected.click())
+    expect(host.querySelectorAll('.orch-cond')).toHaveLength(2)
+
+    await renderEditor(switched.chain, switched.hop)
+
+    expect(host.querySelector('.orch-head-meta')?.textContent).toContain('当前使用：SG-Backup')
+    const roles = [...host.querySelectorAll('.cw-node-role')].map((el) => el.textContent)
+    expect(roles).toContain('根服务器')
+    expect(roles).toContain('备选 · 当前')
+    expect(roles).not.toContain('根 · 当前')
+    expect(host.querySelectorAll('.orch-cond')).toHaveLength(2)
+    expect(host.querySelector('[aria-label="移除节点 SG-Backup"]')).toBeNull()
+  })
+
   it('展示真实原服务器与当前使用服务器、支持直连端口编辑与备份卡标签', async () => {
     const { chain, hop } = makeChain(true)
     await act(async () =>

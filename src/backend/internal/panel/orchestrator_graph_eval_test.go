@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -154,4 +155,49 @@ func TestGraphOrchestratorCooldownSkips(t *testing.T) {
 	if len(hops) == 0 || hops[0].ServerID != a1 {
 		t.Fatalf("cooldown should skip, got %+v", hops)
 	}
+}
+
+func TestGraphOrchestratorBannedSwitchDTO(t *testing.T) {
+	srv, st, _, chainID, a1, a2, _, _ := setupAutoTestChain(t)
+	ctx := context.Background()
+	_, err := st.ReplaceChainHopGraph(ctx, chainID, 0, []store.ChainHopGraphNode{
+		{Kind: store.HopGraphKindServer, ServerID: a1, IsRoot: true, ListenPort: 10443},
+		{Kind: store.HopGraphKindTrigger, Subject: store.TriggerSubjectSelf, Action: store.TriggerActionBanBanned},
+		{Kind: store.HopGraphKindServer, ServerID: a2, ListenPort: 443},
+		{Kind: store.HopGraphKindTrigger, Subject: store.TriggerSubjectRoot, Action: store.TriggerActionRecovered, Priority: 1},
+	}, []store.ChainHopGraphEdge{{FromNode: 0, ToNode: 1}, {FromNode: 1, ToNode: 2}, {FromNode: 3, ToNode: 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertServerBanWatch(ctx, store.ServerBanWatch{ServerID: a1, LossStreak: 12, State: store.BanStateBanned, UpdatedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Orchestrator().EvaluateChain(ctx, chainID); err != nil {
+		t.Fatal(err)
+	}
+	check := func() {
+		chain, err := st.ChainByID(ctx, chainID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dto, err := srv.toChainDTO(httptest.NewRequest("GET", "/api/chain/list", nil), *chain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		orch := dto.Hops[0].Orchestration
+		if dto.Hops[0].ServerID != a2 || orch.ActiveServerID != a2 || !orch.Triggered {
+			t.Fatalf("hop=%+v orchestration=%+v", dto.Hops[0], orch)
+		}
+		for _, n := range orch.Nodes {
+			if n.Kind == store.HopGraphKindServer && n.Active != (n.ServerID == a2) {
+				t.Fatalf("wrong active node: %+v", n)
+			}
+		}
+		if len(dto.FailoverEvents) != 1 || dto.FailoverEvents[0].ToServerID != a2 {
+			t.Fatalf("events: %+v", dto.FailoverEvents)
+		}
+	}
+	check()
+	publishDesired(t, st, chainID)
+	check()
 }

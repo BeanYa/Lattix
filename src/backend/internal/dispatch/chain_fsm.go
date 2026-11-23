@@ -146,18 +146,26 @@ func (f *chainFSM) Transition(ctx context.Context, chainID int64, to, detail str
 func (f *chainFSM) transitionFrom(ctx context.Context, chain *store.Chain, to, detail string) error {
 	chainID := chain.ID
 	from := chain.Status
-	if from == to {
+	if from == to && (to != store.ChainStatusActive || chain.Error == "") {
 		return nil // 幂等，不触发副作用
 	}
 	if !validChainTransition(from, to) {
 		log.Printf("chain_fsm: chain %d: illegal transition %s → %s (detail: %s)", chainID, from, to, detail)
 		return fmt.Errorf("chain_fsm: illegal transition %s → %s", from, to)
 	}
-	if err := f.d.st.SetChainStatus(ctx, chainID, to, detail, from); err != nil {
+	statusDetail := detail
+	if to == store.ChainStatusActive {
+		// 正常运行态不携带错误；转换原因保留在日志与副作用上下文中。
+		statusDetail = ""
+	}
+	if err := f.d.st.SetChainStatus(ctx, chainID, to, statusDetail, from); err != nil {
 		if errors.Is(err, store.ErrChainStatusChanged) {
 			return fmt.Errorf("chain_fsm: chain %d: %w (expected %s)", chainID, err, from)
 		}
 		return fmt.Errorf("chain_fsm: chain %d persist %s: %w", chainID, to, err)
+	}
+	if from == to {
+		return nil // 仅清除历史残留说明，不重复触发进入状态副作用。
 	}
 	log.Printf("chain_fsm: chain %d: %s → %s (%s)", chainID, from, to, detail)
 	f.onEnter(ctx, chain, to, detail)
@@ -246,6 +254,15 @@ func (f *chainFSM) Evaluate(ctx context.Context, chainID int64) {
 		}
 	}
 
+	// 健康 active 链也清除旧版本写入 error 的清理说明。
+	if chain.Status == store.ChainStatusActive && chain.Error != "" {
+		for _, hop := range hops {
+			if hop.Status != store.HopStatusActive {
+				return
+			}
+		}
+		_ = f.transitionFrom(ctx, chain, store.ChainStatusActive, "")
+	}
 	// 全部条件满足：若当前 degraded 则恢复 active。
 	if chain.Status == store.ChainStatusDegraded {
 		for i := range hops {

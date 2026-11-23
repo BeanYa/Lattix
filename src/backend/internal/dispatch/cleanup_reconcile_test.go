@@ -154,6 +154,10 @@ func TestCleanupOfflineTargetDoesNotBlockChain(t *testing.T) {
 	if got := f.chainStatus(t); got != store.ChainStatusActive {
 		t.Fatalf("chain status after ack = %s, want active", got)
 	}
+	chain, err := f.st.ChainByID(ctx, f.chainID)
+	if err != nil || chain.Error != "" {
+		t.Fatalf("healthy chain must clear cleanup status detail, chain=%+v err=%v", chain, err)
+	}
 }
 
 // TestCleanupPendingHealsWhenTargetGoesOffline 覆盖“链已卡在 cleanup_pending，目标服务器随后离线”：
@@ -344,6 +348,23 @@ func TestStaleCleanupPendingWithoutCleanupTasksRestores(t *testing.T) {
 	f.d.ReconcileChainCleanups(ctx)
 	if got := f.chainStatus(t); got != store.ChainStatusActive {
 		t.Fatalf("chain status = %s, want active", got)
+	}
+}
+
+func TestReconcileClearsStaleCleanupDetailOnHealthyActiveChain(t *testing.T) {
+	ctx := context.Background()
+	f := newCleanupFixture(t, true, false)
+	if err := f.st.SetChainHopStatus(ctx, f.hopID, store.HopStatusActive, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.st.SetChainStatus(ctx, f.chainID, store.ChainStatusActive,
+		"清理任务不再阻塞（已结束或暂不可投递）"); err != nil {
+		t.Fatal(err)
+	}
+	f.d.ReconcileChainCleanups(ctx)
+	chain, err := f.st.ChainByID(ctx, f.chainID)
+	if err != nil || chain.Status != store.ChainStatusActive || chain.Error != "" {
+		t.Fatalf("healthy active chain must clear stale detail, chain=%+v err=%v", chain, err)
 	}
 }
 

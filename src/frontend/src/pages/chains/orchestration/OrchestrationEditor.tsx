@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import type { CatalogProbeRow, Chain, ChainHop, Server } from '@/lib/types'
 import { api } from '@/lib/api'
+import { usePolling } from '@/lib/use-polling'
 import { AppDialogContext } from '@/lib/app-dialog'
 import { isServerOnline } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
@@ -110,8 +111,8 @@ function initialHopPort(chain: Chain, hop: ChainHop): string {
 }
 
 export function OrchestrationEditor({
-  chain,
-  hop,
+  chain: chainProp,
+  hop: hopProp,
   servers: serversProp,
   probesByServer: probesProp,
   probeTitle = null,
@@ -127,6 +128,33 @@ export function OrchestrationEditor({
   onSaved: (updated: Chain) => void
 }) {
   const dialog = useContext(AppDialogContext)
+  const [chain, setChain] = useState(chainProp)
+  const [runtimeError, setRuntimeError] = useState('')
+  const runtimeRequest = useRef(0)
+  const hop = chain.hops.find((item) => item.seq === hopProp.seq) ?? hopProp
+
+  useEffect(() => setChain(chainProp), [chainProp])
+  const loadRuntime = useCallback(
+    async (silent: boolean, signal?: AbortSignal) => {
+      const request = ++runtimeRequest.current
+      try {
+        const chains = await api.chains({ display: silent ? 'silent' : 'foreground', signal })
+        if (signal?.aborted || request !== runtimeRequest.current) return
+        const latest = chains.find((item) => item.id === chainProp.id)
+        if (!latest || !latest.hops.some((item) => item.seq === hopProp.seq)) {
+          throw new Error('链路或跳位已不存在，请关闭编辑器并刷新链路')
+        }
+        setChain(latest)
+        setRuntimeError('')
+      } catch (err) {
+        if (signal?.aborted || request !== runtimeRequest.current) return
+        setRuntimeError(err instanceof Error ? err.message : '运行状态刷新失败')
+      }
+    },
+    [chainProp.id, hopProp.seq],
+  )
+  usePolling(loadRuntime, runtimeRequest)
+
   const initialState = useMemo(
     () =>
       createEditorState({
@@ -142,6 +170,14 @@ export function OrchestrationEditor({
   const initialFingerprint = useMemo(() => stateFingerprint(initialState), [initialState])
 
   const [state, setState] = useState<EditorState>(() => initialState)
+  // 运行节点由服务端推进；只同步当前标记，保留用户尚未保存的图和布局。
+  useEffect(() => {
+    setState((current) =>
+      current.activeServerId === hop.server_id
+        ? current
+        : { ...current, activeServerId: hop.server_id },
+    )
+  }, [hop.server_id])
   const [fetchedServers, setFetchedServers] = useState<Server[]>([])
   const [tab, setTab] = useState<'trigger' | 'server'>('trigger')
   const [serverQuery, setServerQuery] = useState('')
@@ -705,10 +741,10 @@ export function OrchestrationEditor({
 
         <footer className="orch-foot">
           <div className="orch-errors" role="status">
-            {error ? (
+            {error || runtimeError ? (
               <p className="is-error">
                 <TriangleAlertIcon aria-hidden="true" />
-                <span>{error}</span>
+                <span>{error || runtimeError}</span>
               </p>
             ) : null}
             {issues.length > 0 ? (
@@ -723,7 +759,7 @@ export function OrchestrationEditor({
                   <li className="is-more">另有 {issues.length - 3} 项待处理问题</li>
                 ) : null}
               </ul>
-            ) : !error ? (
+            ) : !error && !runtimeError ? (
               <p className="is-ok">
                 <CheckCircle2Icon aria-hidden="true" />
                 <span>
