@@ -357,9 +357,26 @@ export function ChainWizardPage() {
             <OrchestrationEditor
               chain={editChain}
               hop={orchestrationHop}
+              servers={servers}
+              probesByServer={probesByServer}
+              probeTitle={probeTitle}
               onClose={() => setOrchestrationHop(null)}
-              onSaved={() => {
+              onSaved={(updatedChain) => {
                 setOrchestrationHop(null)
+                setChains((current) =>
+                  current.map((item) => (item.id === updatedChain.id ? updatedChain : item)),
+                )
+                const savedHop = updatedChain.hops.find((h) => h.seq === orchestrationHop.seq)
+                if (savedHop) {
+                  const canvasNode = canvas.nodes.find((n) => n.serverId === savedHop.server_id)
+                  if (canvasNode) {
+                    canvas.setNodeAddress(canvasNode.id, savedHop.address ?? '')
+                    if (savedHop.seq === 0) {
+                      const entryPort = savedHop.forward_port || updatedChain.entry_port
+                      canvas.setNodePort(canvasNode.id, entryPort > 0 ? String(entryPort) : '')
+                    }
+                  }
+                }
                 refreshChains()
               }}
             />,

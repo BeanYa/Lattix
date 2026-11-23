@@ -1,319 +1,698 @@
+/* 跳位自动编排编辑器：与链路向导画布同源，采用 Lattix 液态玻璃令牌与实色弹层。 */
+
 .orch-overlay {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  /* 高于 AppShell dock(z-40) 与卡片编排入口(z-40)，低于 SelectContent / DialogContent(z-50)。 */
+  z-index: 45;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background: color-mix(in oklab, var(--background) 72%, transparent);
+  background: var(--panel-scrim);
   backdrop-filter: blur(6px);
 }
+
 .orch-panel {
   display: flex;
   flex-direction: column;
-  width: min(1320px, 97vw);
-  height: min(840px, 94vh);
+  width: min(1360px, 97vw);
+  height: min(860px, 94vh);
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  background: var(--card);
+  border: 1px solid var(--panel-edge-strong);
+  border-radius: var(--radius-lg);
+  background: var(--panel-dialog);
+  color: var(--panel-ink);
+  box-shadow: var(--panel-shadow-overlay);
 }
+
+/* ---------- 顶部栏 ---------- */
+
 .orch-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border);
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--panel-rule);
+  background: var(--panel-dialog);
 }
-.orch-head h2 {
-  margin: 0;
-  font-size: 18px;
+
+.orch-head-copy {
+  min-width: 0;
 }
-.orch-head p {
-  margin: 4px 0 0;
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
-.orch-head-actions {
+
+.orch-head-title {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
+
+.orch-head-title h2 {
+  margin: 0;
+  color: var(--panel-ink);
+  font-family: var(--font-title);
+  font-size: 18px;
+  font-weight: 750;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+}
+
+.orch-head-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border: 1px solid var(--panel-rule-strong);
+  border-radius: var(--radius-pill);
+  background: var(--panel-inset);
+  color: var(--panel-ink-2);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.orch-head-pill.is-triggered {
+  border-color: color-mix(in srgb, var(--panel-signal) 45%, transparent);
+  background: var(--panel-signal-soft);
+  color: var(--panel-signal);
+}
+
+.orch-head-pill.is-warn {
+  border-color: color-mix(in srgb, var(--panel-warning) 48%, transparent);
+  background: var(--panel-warning-soft);
+  color: var(--panel-warning);
+}
+
+.orch-head-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 0;
+  color: var(--panel-ink-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.orch-head-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+/* ---------- 主体分栏 ---------- */
+
 .orch-body {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
+  grid-template-columns: 280px minmax(0, 1fr);
   flex: 1;
   min-height: 0;
 }
+
 .orch-side {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: 1px solid var(--border);
+  padding: 10px;
+  gap: 8px;
+  border-right: 1px solid var(--panel-rule);
+  background: var(--panel-dialog);
 }
+
 .orch-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  padding: 8px;
-  gap: 6px;
+  padding: 3px;
+  gap: 4px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-sm);
+  background: var(--panel-inset);
 }
+
 .orch-tabs button {
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--muted-foreground);
-  font-size: 12px;
+  color: var(--panel-ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
   cursor: pointer;
+  transition:
+    background-color var(--duration-1) var(--ease-standard),
+    color var(--duration-1) var(--ease-standard),
+    border-color var(--duration-1) var(--ease-standard);
 }
+
+.orch-tabs button:hover:not(.is-active) {
+  color: var(--panel-ink);
+}
+
 .orch-tabs button.is-active {
-  color: var(--foreground);
-  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
-  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  color: var(--panel-ink);
+  border-color: color-mix(in srgb, var(--panel-signal) 45%, var(--panel-rule));
+  background: var(--panel-popover);
 }
+
+.orch-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--panel-signal-soft);
+  color: var(--panel-signal);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.orch-side-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+}
+
+.orch-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--panel-ink-3);
+}
+
+.orch-search svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.orch-side-hint {
+  margin: 0;
+  color: var(--panel-ink-3);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .orch-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  overflow: auto;
-  padding: 8px;
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 2px 4px 0;
 }
+
 .orch-list-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
+  gap: 5px;
+  width: 100%;
+  padding: 9px 10px;
   text-align: left;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: transparent;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-sm);
+  background: var(--panel-popover);
+  color: var(--panel-ink);
   cursor: pointer;
+  transition:
+    border-color var(--duration-1) var(--ease-standard),
+    background-color var(--duration-1) var(--ease-standard);
 }
-.orch-list-item:hover:not(:disabled) {
-  border-color: color-mix(in oklab, var(--primary) 45%, var(--border));
-}
-.orch-list-item:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-.orch-list-item strong {
-  font-size: 12px;
-}
-.orch-list-item span {
-  color: var(--muted-foreground);
-  font-size: 11px;
-  line-height: 1.35;
-}
-.orch-empty {
-  padding: 12px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-}
-/* 画布：复用链路编辑器的世界层/连线样式（.cw-world/.cw-wires/.cw-wire）。 */
-.orch-canvas {
-  position: relative;
-  overflow: hidden;
+
+.orch-list-item[draggable='true'] {
   cursor: grab;
-  background: var(--panel-canvas, var(--background));
 }
-.orch-canvas:active {
+
+.orch-list-item[draggable='true']:active {
   cursor: grabbing;
 }
-.orch-canvas-bg {
-  position: absolute;
-  inset: 0;
-  background-image: radial-gradient(
-    circle,
-    color-mix(in oklab, var(--border) 65%, transparent) 1px,
-    transparent 1px
-  );
-  background-size: 18px 18px;
+
+.orch-list-item:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--panel-signal) 55%, var(--panel-rule));
 }
-/* 触发器是紧凑「条件胶囊」：只承载 名称 / 说明 / 优先级 三项，
-   尺寸远小于服务器卡片，视觉上从属于服务器（黄点 = 编排语义）。 */
+
+.orch-list-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.orch-list-item-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.orch-list-item-head strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--panel-ink);
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.orch-list-item-desc {
+  color: var(--panel-ink-2);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.orch-server-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--panel-ink-2);
+  font-size: 11px;
+}
+
+.orch-server-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.orch-server-dot.is-online {
+  background: var(--panel-status-ok);
+}
+
+.orch-server-dot.is-offline {
+  background: var(--panel-ink-3);
+}
+
+.orch-server-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+  color: var(--panel-ink-2);
+  flex-shrink: 0;
+}
+
+.orch-list-item:hover:not(:disabled) .orch-server-add {
+  background: var(--panel-signal-soft);
+  color: var(--panel-signal);
+}
+
+.orch-server-add svg {
+  width: 13px;
+  height: 13px;
+}
+
+.orch-server-reason {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border: 1px solid var(--panel-rule);
+  border-radius: var(--radius-xs);
+  background: var(--panel-inset);
+  color: var(--panel-ink-2);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.orch-empty {
+  margin: 0;
+  padding: 16px 8px;
+  color: var(--panel-ink-3);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* ---------- 编排画布（复用 .cw-world/.cw-wires/.cw-wire/.cw-view-controls） ---------- */
+
+.orch-canvas {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background-color: var(--panel-inset);
+  background-image: radial-gradient(circle at 1px 1px, var(--panel-rule) 1px, transparent 0);
+  cursor: grab;
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
+.orch-canvas.is-panning {
+  cursor: grabbing;
+}
+
+.orch-canvas:focus-visible {
+  outline: 2px solid var(--panel-focus);
+  outline-offset: -2px;
+}
+
+.orch-view-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--panel-rule);
+}
+
+/* ---------- 连线 ---------- */
+
+.orch-wire-forward {
+  stroke: var(--panel-signal);
+}
+
+.orch-wire-return {
+  stroke: var(--panel-status-ok);
+}
+
+.orch-wire-group:hover .cw-wire,
+.orch-wire-group:focus-within .cw-wire {
+  stroke: var(--panel-status-failed);
+}
+
+/* ---------- 触发器条件胶囊（图标与标签双通道语义） ---------- */
+
+.orch-cond,
+.orch-trigger-item {
+  --orch-tone: var(--panel-signal);
+  --orch-tone-soft: var(--panel-signal-soft);
+}
+
+.orch-cond[data-tone='ok'],
+.orch-trigger-item[data-tone='ok'] {
+  --orch-tone: var(--panel-status-ok);
+  --orch-tone-soft: var(--panel-status-ok-soft);
+}
+
+.orch-cond[data-tone='warn'],
+.orch-trigger-item[data-tone='warn'] {
+  --orch-tone: var(--panel-warning);
+  --orch-tone-soft: var(--panel-warning-soft);
+}
+
+.orch-cond[data-tone='danger'],
+.orch-trigger-item[data-tone='danger'] {
+  --orch-tone: var(--panel-danger);
+  --orch-tone-soft: var(--panel-danger-soft);
+}
+
 .orch-cond {
-  --orch-signal: var(--panel-signal, #f5b301);
   position: absolute;
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 6px;
-  padding: 8px 11px;
-  border: 1px solid var(--panel-edge-strong, var(--border));
-  border-radius: 12px;
-  background: var(--panel-popover, var(--card));
-  box-shadow: var(--panel-shadow-card, 0 1px 3px rgba(0, 0, 0, 0.22));
-  cursor: pointer;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-edge-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel-popover);
+  box-shadow: var(--panel-shadow-card);
+  cursor: grab;
   user-select: none;
+  touch-action: none;
   transition:
-    border-color var(--duration-1, 120ms) var(--ease-standard, ease),
-    box-shadow var(--duration-1, 120ms) var(--ease-standard, ease);
+    border-color var(--duration-1) var(--ease-standard),
+    box-shadow var(--duration-1) var(--ease-standard);
 }
+
+.orch-cond.is-dragging {
+  cursor: grabbing;
+}
+
 .orch-cond:hover {
-  border-color: color-mix(
-    in oklab,
-    var(--orch-signal) 55%,
-    var(--panel-edge-strong, var(--border))
-  );
-  box-shadow: 0 2px 6px color-mix(in oklab, #000 26%, transparent);
+  border-color: color-mix(in srgb, var(--orch-tone) 55%, var(--panel-edge-strong));
 }
-.orch-cond.is-selected {
-  border-color: var(--orch-signal);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--orch-signal) 22%, transparent);
+
+.orch-cond.is-issue {
+  border-color: var(--panel-status-failed);
 }
+
 .orch-cond-head {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
-.orch-cond-dot {
-  width: 7px;
-  height: 7px;
+
+.orch-cond-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
   flex: none;
-  border-radius: 999px;
-  background: var(--orch-signal);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--orch-signal) 16%, transparent);
+  border-radius: var(--radius-xs);
+  background: var(--orch-tone-soft);
+  color: var(--orch-tone);
 }
+
+.orch-cond-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
 .orch-cond-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  color: var(--foreground);
-  font-size: 12.5px;
-  font-weight: 600;
+  color: var(--panel-ink);
+  font-size: 13px;
+  font-weight: 700;
   line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.orch-cond-remove {
+
+.orch-cond-tag {
   flex: none;
-  width: 16px;
-  height: 16px;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--orch-tone) 38%, transparent);
+  border-radius: var(--radius-xs);
+  background: var(--orch-tone-soft);
+  color: var(--orch-tone);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.orch-cond-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: transparent;
-  color: var(--muted-foreground);
-  font-size: 13px;
-  line-height: 1;
+  color: var(--panel-ink-3);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--duration-1, 120ms) linear;
 }
-.orch-cond:hover .orch-cond-remove,
-.orch-cond:focus-within .orch-cond-remove {
-  opacity: 1;
+
+.orch-cond-remove svg {
+  width: 12px;
+  height: 12px;
 }
+
 .orch-cond-remove:hover {
-  background: color-mix(in oklab, var(--destructive) 18%, transparent);
-  color: var(--destructive);
+  background: var(--panel-status-failed-soft);
+  color: var(--panel-status-failed);
 }
+
 .orch-cond-desc {
   margin: 0;
   overflow: hidden;
-  color: var(--muted-foreground);
-  font-size: 10.5px;
+  color: var(--panel-ink-2);
+  font-size: 11px;
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 .orch-cond-priority {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  color: var(--muted-foreground);
-  font-size: 10.5px;
+  color: var(--panel-ink-2);
+  font-size: 11px;
   line-height: 1;
 }
+
 .orch-cond-priority input {
   flex: none;
-  width: 46px;
-  max-width: 46px;
-  height: 22px;
+  width: 60px;
+  height: 24px;
   min-height: 0;
-  padding: 0 6px;
+  padding: 0 7px;
   border: 1px solid var(--panel-rule);
-  border-radius: 6px;
-  background: var(--background);
-  color: var(--foreground);
-  font-size: 11px;
+  border-radius: var(--radius-xs);
+  background: var(--panel-inset);
+  color: var(--panel-ink);
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+
 .orch-cond-priority input:focus-visible {
-  outline: 2px solid var(--orch-signal);
+  outline: 2px solid var(--panel-focus);
   outline-offset: 1px;
 }
-/* 触发器端口：比服务器卡片端口更小的圆点，落在外框垂直中线。 */
+
+/* 触发器端口：与服务器卡片端口同尺寸(18px)与同语意，居中骑在胶囊左右边。 */
 .orch-port {
   position: absolute;
-  width: 13px;
-  height: 13px;
+  top: 50%;
+  width: 18px;
+  height: 18px;
   padding: 0;
-  border: 2px solid var(--panel-ink-2, #4a4a4a);
+  border: 2px solid var(--panel-ink-2);
   border-radius: 50%;
-  background: var(--panel-popover, var(--card));
+  background: var(--panel-popover);
   cursor: pointer;
   z-index: 2;
+  transform: translateY(-50%);
   transition:
-    border-color var(--duration-1, 120ms) var(--ease-standard, ease),
-    box-shadow var(--duration-1, 120ms) var(--ease-standard, ease),
-    transform var(--duration-1, 120ms) var(--ease-standard, ease);
+    border-color var(--duration-1) var(--ease-standard),
+    box-shadow var(--duration-1) var(--ease-standard),
+    transform var(--duration-1) var(--ease-standard);
 }
+
 .orch-port.is-entry {
-  left: -6px;
-  top: 50%;
-  transform: translateY(-50%);
+  left: -10px;
 }
+
 .orch-port.is-exit {
-  right: -6px;
-  top: 50%;
-  transform: translateY(-50%);
+  right: -10px;
 }
+
+.orch-port.is-entry.is-connected {
+  border-color: var(--panel-signal);
+}
+
+.orch-port.is-exit.is-connected {
+  border-color: var(--panel-signal);
+  background: var(--panel-signal);
+  box-shadow: 0 0 0 3px var(--panel-signal-soft);
+}
+
 .orch-port:hover,
-.orch-port.is-target {
-  border-color: var(--orch-signal);
+.orch-port.is-target,
+.orch-port.is-connecting {
+  border-color: var(--panel-signal);
 }
-.orch-port.is-target {
-  box-shadow: 0 0 0 4px color-mix(in oklab, var(--orch-signal) 24%, transparent);
+
+.orch-port.is-target,
+.orch-port.is-connecting {
+  box-shadow: 0 0 0 4px var(--panel-signal-soft);
   transform: translateY(-50%) scale(1.15);
 }
+
+.orch-port:focus-visible,
+.orch-cond-remove:focus-visible {
+  outline: 2px solid var(--panel-focus);
+  outline-offset: 2px;
+}
+
+/* ---------- 页脚校验条 ---------- */
+
 .orch-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding: 10px 20px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--panel-rule);
+  background: var(--panel-dialog);
 }
+
 .orch-errors {
-  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
 }
-.orch-errors ul {
+
+.orch-errors p {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
-  padding-left: 16px;
-  color: var(--destructive);
 }
+
+.orch-errors ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.orch-errors li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--panel-status-failed);
+}
+
+.orch-errors li.is-more {
+  color: var(--panel-ink-2);
+}
+
+.orch-errors svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
 .orch-errors .is-ok {
-  color: var(--muted-foreground);
+  color: var(--panel-status-ok);
 }
+
 .orch-errors .is-error {
-  color: var(--destructive);
+  color: var(--panel-status-failed);
 }
+
 .orch-hint {
-  color: var(--muted-foreground);
-  font-size: 11px;
+  flex-shrink: 0;
+  color: var(--panel-ink-3);
+  font-size: 11.5px;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .orch-tabs button,
+  .orch-list-item,
+  .orch-cond,
+  .orch-port {
+    transition: none;
+  }
+}
+
 @media (max-width: 900px) {
   .orch-body {
     grid-template-columns: 1fr;
   }
   .orch-side {
     border-right: 0;
-    border-bottom: 1px solid var(--border);
-    max-height: 170px;
+    border-bottom: 1px solid var(--panel-rule);
+    max-height: 200px;
+  }
+  .orch-foot {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

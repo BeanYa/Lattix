@@ -1,5 +1,12 @@
-import type { ChainOrchestration, HopOrchestrationSaveRequest } from '@/lib/types'
-import { CARD_H, CARD_W } from '../chain-wizard/chain-canvas'
+import type { ChainOrchestration, HopOrchestrationSaveRequest, Server } from '@/lib/types'
+import {
+  CARD_H,
+  CARD_W,
+  inboundCapable,
+  isExternalServer,
+  isUsableExternalServer,
+  portInServerRanges,
+} from '../chain-wizard/chain-canvas'
 
 export type TriggerSubject = 'self' | 'prev' | 'next' | 'root'
 export type TriggerAction = 'ban_suspected' | 'ban_banned' | 'segment_timeout' | 'recovered'
@@ -33,15 +40,29 @@ export interface EditorState {
   nextKey: number
 }
 
+export interface ValidationContext {
+  seq?: number
+  totalHops?: number
+  hopRole?: 'entry' | 'middle' | 'exit'
+  primaryIsExternal?: boolean
+  serverMap?: Map<number, Server>
+  blockedServerIds?: Set<number>
+}
+
+export interface GraphIssue {
+  message: string
+  nodeKeys?: string[]
+}
+
 export const MAX_SERVERS = 8
 export const MAX_TRIGGERS = 16
-// 与链路画布同源：列可复用链路卡片尺寸；触发器是紧凑「条件胶囊」，只占名称/说明/优先级三行。
 export const TRIGGER_W = 228
-export const TRIGGER_H = 86
-export const CARD_X = CARD_W + 72
-export const CARD_Y = CARD_H + 32
+export const TRIGGER_H = 104
+export const COL_GAP = 80
 export const CARD_GAP = 32
-export const TRIGGER_GAP = 22
+export const TRIGGER_GAP = 20
+export const CARD_X = CARD_W + COL_GAP
+export const CARD_Y = CARD_H + CARD_GAP
 
 /** 画布中节点的占用尺寸（布局与避障共用）。 */
 export function nodeSize(kind: EditorNode['kind']): { width: number; height: number } {
@@ -55,10 +76,12 @@ export function createEditorState(input: {
   seq: number
   activeServerId: number
   orchestration?: ChainOrchestration
+  initialAddress?: string
+  initialListenPort?: string
 }): EditorState {
-  const { chainId, seq, activeServerId, orchestration } = input
+  const { chainId, seq, activeServerId, orchestration, initialAddress, initialListenPort } = input
   if (!orchestration || orchestration.nodes.length === 0) {
-    return {
+    return autoLayout({
       chainId,
       seq,
       activeServerId,
@@ -68,8 +91,8 @@ export function createEditorState(input: {
           key: 's0',
           kind: 'server',
           serverId: activeServerId,
-          address: '',
-          listenPort: '',
+          address: initialAddress ?? '',
+          listenPort: initialListenPort ?? '',
           priority: '',
           isRoot: true,
           x: 0,
@@ -78,7 +101,7 @@ export function createEditorState(input: {
       ],
       edges: [],
       nextKey: 1,
-    }
+    })
   }
   const keyById = new Map<number, string>()
   const nodes: EditorNode[] = orchestration.nodes.map((node) => {
@@ -92,7 +115,7 @@ export function createEditorState(input: {
       listenPort: node.listen_port ? String(node.listen_port) : '',
       subject: node.subject as TriggerSubject | undefined,
       action: node.action as TriggerAction | undefined,
-      priority: String(node.priority ?? 0),
+      priority: node.priority > 0 ? String(node.priority) : '',
       isRoot: node.is_root,
       x: 0,
       y: 0,
@@ -117,10 +140,52 @@ export function createEditorState(input: {
 }
 
 function newNodeKey(state: EditorState, prefix: string): string {
-  return `${prefix}${state.nextKey}`
+  const used = new Set(state.nodes.map((node) => node.key))
+  let index = state.nextKey
+  while (used.has(`${prefix}${index}`)) index += 1
+  return `${prefix}${index}`
 }
 
-export function addServer(state: EditorState, serverId: number): EditorState {
+function overlapsExisting(
+  nodes: EditorNode[],
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  margin = 16,
+): boolean {
+  return nodes.some((node) => {
+    const size = nodeSize(node.kind)
+    return !(
+      x + width + margin <= node.x ||
+      node.x + size.width + margin <= x ||
+      y + height + margin <= node.y ||
+      node.y + size.height + margin <= y
+    )
+  })
+}
+
+function findNonOverlappingPoint(
+  nodes: EditorNode[],
+  width: number,
+  height: number,
+  startX: number,
+  startY: number,
+  stepY: number,
+): { x: number; y: number } {
+  let y = startY
+  for (let i = 0; i < 32; i += 1) {
+    if (!overlapsExisting(nodes, startX, y, width, height)) return { x: startX, y }
+    y += stepY
+  }
+  return { x: startX, y: startY }
+}
+
+export function addServer(
+  state: EditorState,
+  serverId: number,
+  point?: { x: number; y: number },
+): EditorState {
   if (
     !serverId ||
     state.nodes.some((node) => node.kind === 'server' && node.serverId === serverId)
@@ -129,6 +194,24 @@ export function addServer(state: EditorState, serverId: number): EditorState {
   }
   if (state.nodes.filter((node) => node.kind === 'server').length >= MAX_SERVERS) return state
   const key = newNodeKey(state, 's')
+  let pos: { x: number; y: number }
+  if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+    pos = { x: Math.round(point.x - CARD_W / 2), y: Math.round(point.y - CARD_H / 2) }
+  } else {
+    const root = state.nodes.find((node) => node.kind === 'server' && node.isRoot)
+    const triggers = state.nodes.filter(
+      (node) => node.kind === 'trigger' && node.subject !== 'root',
+    )
+    const baseRight =
+      triggers.length > 0
+        ? Math.max(...triggers.map((node) => node.x + TRIGGER_W))
+        : root
+          ? root.x + CARD_W
+          : 0
+    const startX = Math.round(baseRight + COL_GAP)
+    const startY = root ? root.y : -CARD_H / 2
+    pos = findNonOverlappingPoint(state.nodes, CARD_W, CARD_H, startX, startY, CARD_H + CARD_GAP)
+  }
   const node: EditorNode = {
     key,
     kind: 'server',
@@ -136,10 +219,10 @@ export function addServer(state: EditorState, serverId: number): EditorState {
     address: '',
     listenPort: '',
     priority: '',
-    x: 0,
-    y: 0,
+    x: pos.x,
+    y: pos.y,
   }
-  return autoLayout({ ...state, nodes: [...state.nodes, node], nextKey: state.nextKey + 1 })
+  return { ...state, nodes: [...state.nodes, node], nextKey: state.nextKey + 1 }
 }
 
 export function removeNode(state: EditorState, key: string): EditorState {
@@ -147,11 +230,11 @@ export function removeNode(state: EditorState, key: string): EditorState {
   if (!node) return state
   if (node.kind === 'server' && (node.isRoot || node.serverId === state.activeServerId))
     return state
-  return autoLayout({
+  return {
     ...state,
     nodes: state.nodes.filter((item) => item.key !== key),
     edges: state.edges.filter((edge) => edge.from !== key && edge.to !== key),
-  })
+  }
 }
 
 export function addTrigger(
@@ -161,56 +244,142 @@ export function addTrigger(
     action: TriggerAction
     priority?: string
   },
+  point?: { x: number; y: number },
 ): EditorState {
   if (state.nodes.filter((node) => node.kind === 'trigger').length >= MAX_TRIGGERS) return state
   const key = newNodeKey(state, 't')
+  const root = state.nodes.find((item) => item.kind === 'server' && item.isRoot)
+  let pos: { x: number; y: number }
+  if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+    pos = { x: Math.round(point.x - TRIGGER_W / 2), y: Math.round(point.y - TRIGGER_H / 2) }
+  } else if (trigger.subject === 'root' && root) {
+    const startX = Math.round(root.x - TRIGGER_W - COL_GAP)
+    const startY = Math.round(root.y + (CARD_H - TRIGGER_H) / 2)
+    pos = findNonOverlappingPoint(
+      state.nodes,
+      TRIGGER_W,
+      TRIGGER_H,
+      startX,
+      startY,
+      TRIGGER_H + TRIGGER_GAP,
+    )
+  } else {
+    const startX = root ? Math.round(root.x + CARD_W + COL_GAP) : 0
+    const startY = root ? Math.round(root.y + (CARD_H - TRIGGER_H) / 2) : -TRIGGER_H / 2
+    pos = findNonOverlappingPoint(
+      state.nodes,
+      TRIGGER_W,
+      TRIGGER_H,
+      startX,
+      startY,
+      TRIGGER_H + TRIGGER_GAP,
+    )
+  }
   const node: EditorNode = {
     key,
     kind: 'trigger',
     subject: trigger.subject,
     action: trigger.action,
-    priority: trigger.priority ?? (trigger.subject === 'root' ? '1' : '0'),
+    priority: trigger.priority ?? (trigger.subject === 'root' ? '1' : ''),
     address: '',
     listenPort: '',
-    x: 0,
-    y: 0,
+    x: pos.x,
+    y: pos.y,
   }
   let edges = state.edges
-  const root = state.nodes.find((item) => item.kind === 'server' && item.isRoot)
   if (trigger.subject === 'root' && root) {
     // 原节点恢复：添加即连到根入口。
     edges = [...edges, { from: key, to: root.key }]
   }
-  return autoLayout({ ...state, nodes: [...state.nodes, node], edges, nextKey: state.nextKey + 1 })
+  return { ...state, nodes: [...state.nodes, node], edges, nextKey: state.nextKey + 1 }
 }
 
-export function connect(state: EditorState, from: string, to: string): EditorState {
+/** 校验两节点是否允许连线（与画布高亮和提示共用单一判定）。 */
+export function canConnect(
+  state: EditorState,
+  from: string,
+  to: string,
+  context?: Pick<ValidationContext, 'serverMap'>,
+): { ok: boolean; reason?: string } {
   const source = state.nodes.find((node) => node.key === from)
   const target = state.nodes.find((node) => node.key === to)
-  if (!source || !target || from === to) return state
-  if (source.kind === target.kind) return state
-  if (state.edges.some((edge) => edge.from === from && edge.to === to)) return state
+  if (!source || !target) return { ok: false, reason: '节点不存在' }
+  if (from === to) return { ok: false, reason: '不能连接到节点自身' }
+  if (source.kind === target.kind) {
+    return {
+      ok: false,
+      reason: source.kind === 'server' ? '服务器只能连到触发器入口' : '触发器只能连到服务器入口',
+    }
+  }
+  if (state.edges.some((edge) => edge.from === from && edge.to === to)) {
+    return { ok: false, reason: '连线已存在' }
+  }
+  if (source.kind === 'server' && target.kind === 'trigger') {
+    if (target.subject === 'root') {
+      return { ok: false, reason: '原节点恢复触发器由面板全局检测，不能连接来源服务器' }
+    }
+    if (state.edges.some((edge) => edge.from === target.key && edge.to === source.key)) {
+      return { ok: false, reason: '触发器不能指向自己的所属服务器' }
+    }
+    const server = source.serverId ? context?.serverMap?.get(source.serverId) : undefined
+    if (target.subject === 'self' && server && (isExternalServer(server) || server.non_direct)) {
+      return { ok: false, reason: '外部直链/非直连服务器没有三网封禁观察' }
+    }
+    const duplicate = state.edges.some((edge) => {
+      if (edge.from !== source.key || edge.to === target.key) return false
+      const peer = state.nodes.find((node) => node.key === edge.to)
+      return (
+        peer?.kind === 'trigger' && peer.subject === target.subject && peer.action === target.action
+      )
+    })
+    if (duplicate) {
+      return { ok: false, reason: '同一服务器同一触发条件只能配置一个触发器' }
+    }
+    return { ok: true }
+  }
+  // trigger -> server
+  if (source.subject === 'root' && !target.isRoot) {
+    return { ok: false, reason: '原节点恢复触发器只能连接根服务器' }
+  }
+  if (state.edges.some((edge) => edge.from === target.key && edge.to === source.key)) {
+    return { ok: false, reason: '触发器不能指向自己的所属服务器' }
+  }
+  return { ok: true }
+}
+
+export function connect(
+  state: EditorState,
+  from: string,
+  to: string,
+  context?: Pick<ValidationContext, 'serverMap'>,
+): EditorState {
+  const check = canConnect(state, from, to, context)
+  if (!check.ok) return state
+  const source = state.nodes.find((node) => node.key === from)!
+  const target = state.nodes.find((node) => node.key === to)!
   let edges = state.edges
   if (source.kind === 'server' && target.kind === 'trigger') {
-    if (target.subject === 'root') return state
-    // 触发器入边同样唯一：换上游服务器时替换原入边（重指来源）。
+    // 触发器入边唯一：换上游服务器时替换原入边（重指来源）。
     edges = edges.filter((edge) => edge.to !== target.key)
   }
   if (source.kind === 'trigger' && target.kind === 'server') {
-    if (source.subject === 'root') {
-      const root = state.nodes.find((node) => node.kind === 'server' && node.isRoot)
-      if (!root || target.key !== root.key) return state
-    }
-    // 触发器出边唯一：改连到新的服务器时替换原出边（重指目标），而不是拒绝操作。
+    // 触发器出边唯一：改连到新的服务器时替换原出边（重指目标）。
     edges = edges.filter((edge) => edge.from !== source.key)
   }
-  return autoLayout({ ...state, edges: [...edges, { from, to }] })
+  return { ...state, edges: [...edges, { from, to }] }
 }
 
 export function disconnect(state: EditorState, from: string, to: string): EditorState {
+  return removeEdge(state, from, to)
+}
+
+export function clearGraph(state: EditorState): EditorState {
+  const root = state.nodes.find((node) => node.kind === 'server' && node.isRoot)
+  if (!root) return state
   return autoLayout({
     ...state,
-    edges: state.edges.filter((edge) => !(edge.from === from && edge.to === to)),
+    nodes: [root],
+    edges: [],
   })
 }
 
@@ -249,7 +418,7 @@ function priorityRank(node: EditorNode) {
   return { explicit, priority: explicit ? parsed : 0, typeRank }
 }
 
-/** 自动布局：根在左，BFS 按触发器优先级展开。 */
+/** 自动布局：根在左，BFS 按触发器优先级展开，各列紧贴对齐且纵向以 y=0 居中。 */
 export function autoLayout(state: EditorState): EditorState {
   const root = state.nodes.find((node) => node.kind === 'server' && node.isRoot)
   if (!root) return state
@@ -260,27 +429,26 @@ export function autoLayout(state: EditorState): EditorState {
     list.push(edge.to)
     outgoing.set(edge.from, list)
   }
-  const positions = new Map<string, { x: number; y: number }>()
-  // 各列纵向游标：服务器用卡片行距，触发器用紧凑行距，互不挤占。
-  const cursor = new Map<number, number>()
-  const step = (kind: EditorNode['kind']) =>
-    nodeSize(kind).height + (kind === 'trigger' ? TRIGGER_GAP : CARD_GAP)
-  const place = (node: EditorNode, column: number) => {
-    const y = cursor.get(column) ?? 0
-    cursor.set(column, y + step(node.kind))
-    positions.set(node.key, { x: column * CARD_X, y })
+
+  const columns = new Map<number, EditorNode[]>()
+  const assignColumn = (node: EditorNode, col: number) => {
+    const list = columns.get(col) ?? []
+    list.push(node)
+    columns.set(col, list)
   }
-  // 第 0 列留给「原节点恢复」触发器，根固定在第 1 列。
-  place(root, 1)
+
+  assignColumn(root, 1)
   const queue: { key: string; level: number }[] = [{ key: root.key, level: 1 }]
   const seen = new Set<string>([root.key])
+
   for (const node of state.nodes) {
     if (node.kind !== 'trigger' || node.subject !== 'root') continue
     if (state.edges.some((edge) => edge.to === node.key)) continue
-    place(node, 0)
+    assignColumn(node, 0)
     seen.add(node.key)
     queue.push({ key: node.key, level: 0 })
   }
+
   while (queue.length > 0) {
     const current = queue.shift() as { key: string; level: number }
     const nextKeys = (outgoing.get(current.key) ?? []).slice().sort((a, b) => {
@@ -300,33 +468,137 @@ export function autoLayout(state: EditorState): EditorState {
       const node = byKey.get(key)
       if (!node) continue
       const level = current.level + 1
-      place(node, level)
+      assignColumn(node, level)
       queue.push({ key, level })
     }
   }
+
   // 尚未接入图的节点排到最后一列右侧，方便继续连线。
-  const loose = state.nodes.filter((node) => !positions.has(node.key))
+  const loose = state.nodes.filter((node) => !seen.has(node.key))
   if (loose.length > 0) {
-    const column = Math.max(0, ...Array.from(cursor.keys())) + 1
-    loose.forEach((node) => place(node, column))
+    const nextCol = Math.max(0, ...Array.from(columns.keys())) + 1
+    loose.forEach((node) => assignColumn(node, nextCol))
   }
+
+  const positions = new Map<string, { x: number; y: number }>()
+  const sortedCols = Array.from(columns.keys()).sort((a, b) => a - b)
+  let cursorX = 0
+  for (const col of sortedCols) {
+    const colNodes = columns.get(col) ?? []
+    if (colNodes.length === 0) continue
+    const colWidth = Math.max(...colNodes.map((node) => nodeSize(node.kind).width))
+    const gaps = colNodes
+      .slice(0, -1)
+      .map((node) => (node.kind === 'trigger' ? TRIGGER_GAP : CARD_GAP))
+    const totalHeight =
+      colNodes.reduce((sum, node) => sum + nodeSize(node.kind).height, 0) +
+      gaps.reduce((sum, g) => sum + g, 0)
+    let cursorY = -Math.round(totalHeight / 2)
+    colNodes.forEach((node, index) => {
+      const size = nodeSize(node.kind)
+      positions.set(node.key, {
+        x: Math.round(cursorX + (colWidth - size.width) / 2),
+        y: Math.round(cursorY),
+      })
+      cursorY += size.height + (gaps[index] ?? 0)
+    })
+    cursorX += colWidth + COL_GAP
+  }
+
   return {
     ...state,
     nodes: state.nodes.map((node) => ({ ...node, ...(positions.get(node.key) ?? {}) })),
   }
 }
-export function validateGraph(state: EditorState): string[] {
-  const errors: string[] = []
+
+function serverAddressSet(server: Server): Set<string> {
+  const list =
+    server.addresses.length > 0
+      ? server.addresses
+      : [server.address, server.learned_addr].filter(Boolean)
+  return new Set(list)
+}
+
+export function serverEligibility(
+  server: Server,
+  state: EditorState,
+  context: Pick<ValidationContext, 'hopRole' | 'primaryIsExternal' | 'blockedServerIds'>,
+): { eligible: boolean; reason?: string } {
+  if (state.nodes.some((node) => node.kind === 'server' && node.serverId === server.id)) {
+    return { eligible: false, reason: '已在图中' }
+  }
+  if (context.blockedServerIds?.has(server.id)) {
+    return { eligible: false, reason: '其他跳已用' }
+  }
+  if (context.hopRole === 'exit') {
+    const primaryExt = Boolean(context.primaryIsExternal)
+    if (primaryExt !== isExternalServer(server)) {
+      return { eligible: false, reason: primaryExt ? '需外部直链' : '需托管节点' }
+    }
+    if (isExternalServer(server) && !isUsableExternalServer(server)) {
+      return { eligible: false, reason: '直链未配置' }
+    }
+    return { eligible: true }
+  }
+  if (isExternalServer(server)) {
+    return { eligible: false, reason: '仅可作出口' }
+  }
+  if (!inboundCapable(server)) {
+    return { eligible: false, reason: '无入站能力' }
+  }
+  return { eligible: true }
+}
+
+/** 校验编排图并返回带定位节点键的问题列表（供画布高亮与页脚展示）。 */
+export function validateGraphIssues(state: EditorState, context?: ValidationContext): GraphIssue[] {
+  const issues: GraphIssue[] = []
   const servers = state.nodes.filter((node) => node.kind === 'server')
   const triggers = state.nodes.filter((node) => node.kind === 'trigger')
-  if (servers.length > MAX_SERVERS) errors.push(`服务器不能超过 ${MAX_SERVERS} 台`)
-  if (triggers.length > MAX_TRIGGERS) errors.push(`触发器不能超过 ${MAX_TRIGGERS} 个`)
-  if (state.nodes.length === 0) return errors
-  const root = servers.find((node) => node.isRoot)
-  if (!root) errors.push('缺少根服务器')
-  if (servers.length > 0 && !servers.some((node) => node.serverId === state.activeServerId)) {
-    errors.push('当前运行的服务器必须保留在编排图中')
+
+  if (servers.length > MAX_SERVERS) {
+    issues.push({ message: `服务器不能超过 ${MAX_SERVERS} 台` })
   }
+  if (triggers.length > MAX_TRIGGERS) {
+    issues.push({ message: `触发器不能超过 ${MAX_TRIGGERS} 个` })
+  }
+  if (state.nodes.length === 0) return issues
+  // 只有根节点且无触发器无连线 = 清空该跳编排（即使当前已切换到替补也允许清空）。
+  if (
+    servers.length === 1 &&
+    servers[0].isRoot &&
+    triggers.length === 0 &&
+    state.edges.length === 0
+  ) {
+    return issues
+  }
+
+  const root = servers.find((node) => node.isRoot)
+  if (!root) {
+    issues.push({ message: '缺少根服务器' })
+  }
+  if (servers.length > 0 && !servers.some((node) => node.serverId === state.activeServerId)) {
+    issues.push({ message: '当前运行的服务器必须保留在编排图中' })
+  }
+
+  // 重复服务器检查
+  const seenServerIds = new Map<number, string[]>()
+  for (const server of servers) {
+    if (!server.serverId) continue
+    seenServerIds.set(server.serverId, [...(seenServerIds.get(server.serverId) ?? []), server.key])
+  }
+  for (const [, keys] of seenServerIds) {
+    if (keys.length > 1) {
+      issues.push({ message: '同一服务器在编排图中重复', nodeKeys: keys })
+    }
+  }
+
+  if (state.edges.length === 0) {
+    issues.push({
+      message: '编排图至少需要一条连线',
+      nodeKeys: state.nodes.filter((node) => !node.isRoot).map((node) => node.key),
+    })
+  }
+
   const byKey = new Map(state.nodes.map((node) => [node.key, node]))
   const out = new Map<string, string[]>()
   const incoming = new Map<string, string[]>()
@@ -335,38 +607,162 @@ export function validateGraph(state: EditorState): string[] {
     out.set(edge.from, [...(out.get(edge.from) ?? []), edge.to])
     incoming.set(edge.to, [...(incoming.get(edge.to) ?? []), edge.from])
   }
+
+  const hasServerMap = Boolean(context?.serverMap && context.serverMap.size > 0)
   const triggerKeys = new Set<string>()
+  let recoveryCount = 0
+
   for (const trigger of triggers) {
-    const priority = Number(trigger.priority)
-    if (!Number.isInteger(priority) || priority < 0 || priority > 9999) {
-      errors.push('触发器优先级须在 0-9999')
+    const rawPriority = trigger.priority.trim()
+    if (rawPriority !== '') {
+      const parsed = Number(rawPriority)
+      if (!/^\d+$/.test(rawPriority) || !Number.isInteger(parsed) || parsed < 0 || parsed > 9999) {
+        issues.push({ message: '触发器优先级须在 0-9999', nodeKeys: [trigger.key] })
+      }
     }
+
     const ins = incoming.get(trigger.key) ?? []
     const outs = out.get(trigger.key) ?? []
+
     if (trigger.subject === 'root') {
-      if (ins.length !== 0) errors.push('原节点恢复触发器不能有来源服务器')
+      recoveryCount += 1
+      if (recoveryCount > 1) {
+        issues.push({ message: '原节点恢复触发器最多一个', nodeKeys: [trigger.key] })
+      }
+      if (ins.length !== 0) {
+        issues.push({ message: '原节点恢复触发器不能有来源服务器', nodeKeys: [trigger.key] })
+      }
       if (!root || outs.length !== 1 || outs[0] !== root.key) {
-        errors.push('原节点恢复触发器只能连接根服务器')
+        issues.push({ message: '原节点恢复触发器只能连接根服务器', nodeKeys: [trigger.key] })
       }
-    } else {
-      if (ins.length !== 1) errors.push('触发器必须且只能连接一个所属服务器')
-      if (outs.length !== 1) errors.push('触发器只能连接一个目标服务器')
-      if (ins.length === 1 && outs.length === 1 && ins[0] === outs[0]) {
-        errors.push('触发器不能指向自己的所属服务器')
+      continue
+    }
+
+    if (ins.length !== 1) {
+      issues.push({ message: '触发器必须且只能连接一个所属服务器', nodeKeys: [trigger.key] })
+    }
+    if (outs.length !== 1) {
+      issues.push({ message: '触发器只能连接一个目标服务器', nodeKeys: [trigger.key] })
+    }
+    if (ins.length === 1 && outs.length === 1 && ins[0] === outs[0]) {
+      issues.push({ message: '触发器不能指向自己的所属服务器', nodeKeys: [trigger.key] })
+    }
+    if (trigger.subject === 'prev' && context?.seq === 0) {
+      issues.push({ message: '入口跳没有上一跳超时触发器', nodeKeys: [trigger.key] })
+    }
+    if (
+      trigger.subject === 'next' &&
+      context?.seq !== undefined &&
+      context?.totalHops !== undefined &&
+      context.seq === context.totalHops - 1
+    ) {
+      issues.push({ message: '出口跳没有下一跳超时触发器', nodeKeys: [trigger.key] })
+    }
+    if (ins.length === 1) {
+      const owner = byKey.get(ins[0])
+      const condKey = `${owner?.serverId}|${trigger.subject}|${trigger.action}`
+      if (triggerKeys.has(condKey)) {
+        issues.push({
+          message: '同一服务器同一触发条件只能配置一个触发器',
+          nodeKeys: [trigger.key],
+        })
       }
-      if (ins.length === 1) {
-        const owner = byKey.get(ins[0])
-        const key = `${owner?.serverId}| ${trigger.subject}| ${trigger.action}`
-        if (triggerKeys.has(key)) errors.push('同一服务器同一触发条件只能配置一个触发器')
-        triggerKeys.add(key)
+      triggerKeys.add(condKey)
+      if (trigger.subject === 'self' && hasServerMap && owner?.serverId) {
+        const ownerSrv = context?.serverMap?.get(owner.serverId)
+        if (ownerSrv && (isExternalServer(ownerSrv) || ownerSrv.non_direct)) {
+          issues.push({
+            message: '外部直链/非直连服务器没有三网封禁观察',
+            nodeKeys: [trigger.key, owner.key],
+          })
+        }
       }
     }
   }
+
   for (const server of servers) {
     if (!server.isRoot && (incoming.get(server.key) ?? []).length === 0) {
-      errors.push('存在没有来源触发器的服务器')
+      issues.push({ message: '存在没有来源触发器的服务器', nodeKeys: [server.key] })
+    }
+    if (server.serverId && context?.blockedServerIds?.has(server.serverId)) {
+      const alias = context.serverMap?.get(server.serverId)?.alias ?? `#${server.serverId}`
+      issues.push({
+        message: `服务器 ${alias} 已被同链其他跳使用`,
+        nodeKeys: [server.key],
+      })
+    }
+
+    const rawPort = server.listenPort.trim()
+    let parsedPort = 0
+    let validPortNumber = true
+    if (rawPort !== '') {
+      if (!/^\d+$/.test(rawPort)) {
+        validPortNumber = false
+      } else {
+        parsedPort = Number(rawPort)
+        if (!Number.isInteger(parsedPort) || parsedPort < 0 || parsedPort > 65535) {
+          validPortNumber = false
+        }
+      }
+      if (!validPortNumber) {
+        issues.push({ message: '端口须为 1-65535（0 或留空为自动）', nodeKeys: [server.key] })
+      }
+    }
+
+    if (hasServerMap && server.serverId) {
+      const srv = context?.serverMap?.get(server.serverId)
+      if (!srv) {
+        issues.push({ message: `服务器 #${server.serverId} 不存在`, nodeKeys: [server.key] })
+        continue
+      }
+      if (context?.hopRole === 'exit') {
+        if (
+          context.primaryIsExternal !== undefined &&
+          isExternalServer(srv) !== context.primaryIsExternal
+        ) {
+          issues.push({
+            message: `出口备选 ${srv.alias} 须与主出口同为托管或同为外部直链`,
+            nodeKeys: [server.key],
+          })
+        } else if (isExternalServer(srv) && !isUsableExternalServer(srv)) {
+          issues.push({
+            message: `外部直链服务器 ${srv.alias} 缺少地址或端口配置`,
+            nodeKeys: [server.key],
+          })
+        }
+      } else if (context?.hopRole) {
+        if (isExternalServer(srv)) {
+          issues.push({
+            message: `外部直链服务器 ${srv.alias} 不能作为入口/中转备选`,
+            nodeKeys: [server.key],
+          })
+        } else if (!inboundCapable(srv)) {
+          issues.push({
+            message: `服务器 ${srv.alias} 无入站能力，不能作为入口/中转备选`,
+            nodeKeys: [server.key],
+          })
+        }
+      }
+      if (server.address && !serverAddressSet(srv).has(server.address)) {
+        issues.push({
+          message: `服务器 ${srv.alias} 不存在公网地址 ${server.address}`,
+          nodeKeys: [server.key],
+        })
+      }
+      if (
+        validPortNumber &&
+        parsedPort > 0 &&
+        srv.allowed_ports.length > 0 &&
+        !portInServerRanges(srv, parsedPort)
+      ) {
+        issues.push({
+          message: `端口 ${parsedPort} 不在服务器 ${srv.alias} 可用段内`,
+          nodeKeys: [server.key],
+        })
+      }
     }
   }
+
   // 连通性：根 + 恢复触发器出发。
   const queue = root ? [root.key] : []
   const seen = new Set(queue)
@@ -385,28 +781,46 @@ export function validateGraph(state: EditorState): string[] {
       }
     }
   }
-  if (seen.size !== state.nodes.length) errors.push('存在从根不可达的节点')
+  if (seen.size !== state.nodes.length) {
+    const unreachable = state.nodes.filter((node) => !seen.has(node.key)).map((node) => node.key)
+    issues.push({ message: '存在从根不可达的节点', nodeKeys: unreachable })
+  }
+
   // 去掉指向根的边后必须无环。
   const color = new Map<string, number>()
+  const cycleKeys: string[] = []
   const walk = (key: string): boolean => {
     const value = color.get(key) ?? 0
-    if (value === 1) return false
+    if (value === 1) {
+      cycleKeys.push(key)
+      return false
+    }
     if (value === 2) return true
     color.set(key, 1)
     for (const next of out.get(key) ?? []) {
       if (root && next === root.key) continue
-      if (!walk(next)) return false
+      if (!walk(next)) {
+        cycleKeys.push(key)
+        return false
+      }
     }
     color.set(key, 2)
     return true
   }
   for (const node of state.nodes) {
     if (!walk(node.key)) {
-      errors.push('不允许出现非根环（只允许经触发器回到根）')
+      issues.push({
+        message: '不允许出现非根环（只允许经触发器回到根）',
+        nodeKeys: [...new Set(cycleKeys)],
+      })
       break
     }
   }
-  return errors
+  return issues
+}
+
+export function validateGraph(state: EditorState, context?: ValidationContext): string[] {
+  return validateGraphIssues(state, context).map((issue) => issue.message)
 }
 
 export function toSavePayload(state: EditorState): HopOrchestrationSaveRequest {
@@ -471,6 +885,7 @@ export function triggerSource(node: Pick<EditorNode, 'subject'>): string {
 }
 
 export function moveNode(state: EditorState, key: string, x: number, y: number): EditorState {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return state
   return {
     ...state,
     nodes: state.nodes.map((node) => (node.key === key ? { ...node, x, y } : node)),
