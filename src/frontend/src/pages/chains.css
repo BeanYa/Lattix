@@ -1407,6 +1407,11 @@
 .cg-hop-stack-deck {
   position: relative;
 }
+@media (min-width: 768px) {
+  .cg-hop-stack {
+    width: calc(236px + var(--cg-stack-depth, 0) * 8px);
+  }
+}
 .cg-hop-stack .cg-hop {
   background: var(--panel-popover);
 }

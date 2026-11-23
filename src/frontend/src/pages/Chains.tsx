@@ -877,6 +877,13 @@ export default function Chains() {
                                         <span className="cg-hop-role">
                                           {roleLabel[h.role]} · {hst.label}
                                         </span>
+                                        {h.orchestration ? (
+                                          <span className="cg-hop-standby-badge">
+                                            {h.server_id === h.orchestration.root_server_id
+                                              ? '主选'
+                                              : '备选'}
+                                          </span>
+                                        ) : null}
                                       </span>
                                       <strong className="cg-hop-name">{h.server_alias}</strong>
                                       <span className="cg-hop-meta">

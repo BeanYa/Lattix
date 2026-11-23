@@ -7,7 +7,7 @@ export interface HopStackServer {
   active: boolean
 }
 
-/** 详情页堆叠顺序：根服务器固定在前，其余服务器按编排图 BFS（触发器数组顺序）去重。 */
+/** 当前运行服务器在前，根与其他候选按编排图 BFS 顺序去重放在后方。 */
 export function buildHopStack(orchestration?: ChainOrchestration | null): HopStackServer[] {
   if (!orchestration) return []
   const byId = new Map(orchestration.nodes.map((node) => [node.id, node]))
@@ -37,7 +37,9 @@ export function buildHopStack(orchestration?: ChainOrchestration | null): HopSta
     }
   }
   const activeId = orchestration.active_server_id
-  return ordered.slice(0, MAX_STACK_CARDS).map((node) => ({
+  const active = ordered.find((node) => node.server_id === activeId)
+  const stack = active ? [active, ...ordered.filter((node) => node !== active)] : ordered
+  return stack.slice(0, MAX_STACK_CARDS).map((node) => ({
     node,
     active: node.server_id === activeId,
   }))

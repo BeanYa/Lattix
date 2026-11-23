@@ -53,11 +53,32 @@ function graph(): ChainOrchestration {
 }
 
 describe('buildHopStack', () => {
-  it('根在前，其余按 BFS 去重', () => {
+  it('当前运行的备用服务器在前，根与其余候选按 BFS 去重放在后方', () => {
     const stack = buildHopStack(graph())
+    expect(stack.map((item) => item.node.server_id)).toEqual([2, 1, 3])
+    expect(stack[0].active).toBe(true)
+    expect(stack.slice(1).every((item) => !item.active)).toBe(true)
+  })
+
+  it('回切根服务器后，根恢复前卡且备用服务器仅在后方出现', () => {
+    const data = graph()
+    data.active_server_id = 1
+    data.triggered = false
+    const stack = buildHopStack(data)
     expect(stack.map((item) => item.node.server_id)).toEqual([1, 2, 3])
-    expect(stack[0].active).toBe(false)
-    expect(stack[1].active).toBe(true)
+    expect(stack[0].active).toBe(true)
+  })
+
+  it('当前节点在 BFS 第四位之后时，仍保留在前卡并在截断前去重', () => {
+    const data = graph()
+    for (let i = 0; i < 4; i++) {
+      data.nodes.push(server(100 + i, 10 + i), trigger(150 + i, 'self', 'ban_banned'))
+      data.edges.push({ from: 10, to: 150 + i }, { from: 150 + i, to: 100 + i })
+    }
+    data.active_server_id = 13
+    const stack = buildHopStack(data)
+    expect(stack.map((item) => item.node.server_id)).toEqual([13, 1, 2, 10])
+    expect(stack[0].active).toBe(true)
   })
 
   it('最多返回 4 张并统计总数', () => {

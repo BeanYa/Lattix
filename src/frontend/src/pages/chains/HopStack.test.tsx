@@ -45,9 +45,9 @@ const orchestration: ChainOrchestration = {
   ],
 }
 
-const front = <div className="cg-hop">Evoxt KL 原服务器卡片</div>
+const front = <div className="cg-hop">A2 当前服务器卡片</div>
 
-it('有备选：前卡仍是跳位卡片，备选叠在其后', async () => {
+it('容灾后前卡使用当前跳位信息，后层展示被替换的根服务器', async () => {
   await act(async () => {
     root.render(<HopStack orchestration={orchestration}>{front}</HopStack>)
   })
@@ -58,10 +58,38 @@ it('有备选：前卡仍是跳位卡片，备选叠在其后', async () => {
   const backs = [...container.querySelectorAll('.cg-hop-stack-back')]
   expect(backs).toHaveLength(1)
   expect(backs[0].classList.contains('cg-hop')).toBe(true)
-  expect(backs[0].textContent).toContain('备选')
-  expect(backs[0].textContent).toContain('A2')
+  expect(backs[0].querySelector('.cg-hop-standby-badge')?.textContent).toBe('主选')
+  expect(backs[0].textContent).toContain('A1')
+  expect(backs[0].textContent).not.toContain('A2')
+  expect(container.querySelector('.cg-hop-stack-front')?.textContent).toContain('A2')
   // 备选正在运行：标注当前运行节点。
   expect(container.textContent).toContain('当前运行：A2')
+})
+
+it('根服务器运行时后方仅展示备用服务器，且后层拥有服务器信息', async () => {
+  await act(async () => {
+    root.render(
+      <HopStack
+        orchestration={{
+          ...orchestration,
+          active_server_id: 1,
+          triggered: false,
+          nodes: orchestration.nodes.map((node) =>
+            node.server_id === 2 ? { ...node, address: '203.0.113.2', listen_port: 443 } : node,
+          ),
+        }}
+      >
+        <div className="cg-hop">A1 当前服务器卡片</div>
+      </HopStack>,
+    )
+  })
+  const back = container.querySelector('.cg-hop-stack-back')!
+  expect(back.textContent).toContain('备选')
+  expect(back.querySelector('.cg-hop-standby-badge')?.textContent).toBe('备选')
+  expect(back.textContent).toContain('A2')
+  expect(back.textContent).toContain('端口 443')
+  expect(back.textContent).toContain('203.0.113.2')
+  expect(back.textContent).toContain('Agent 在线')
 })
 
 it('未配置编排的跳保持原样：不包堆叠层', async () => {

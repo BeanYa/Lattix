@@ -3,7 +3,7 @@ import type { ChainOrchestration } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { buildHopStack, hopStackTotal } from './hop-stack'
 
-/** 最多叠 2 张备选卡（前面是跳位原卡），其余用 +N 汇总。 */
+/** 最多叠 2 张未运行的服务器卡，前面是当前跳位卡，其余用 +N 汇总。 */
 const MAX_BACKS = 2
 
 /**
@@ -30,22 +30,36 @@ export function HopStack({
         {backs.map((item, index) => (
           <div
             key={item.node.id}
-            className={cn('cg-hop', 'cg-hop-stack-back', item.active && 'is-active')}
+            className="cg-hop cg-hop-stack-back"
             style={{ '--i': index + 1 } as CSSProperties}
             title={
               item.node.listen_port
-                ? `备选 · 端口 ${item.node.listen_port} · ${item.node.online ? '在线' : '离线'}`
-                : `备选 · ${item.node.online ? '在线' : '离线'}`
+                ? `${item.node.is_root ? '主选' : '备选'} · 端口 ${item.node.listen_port}`
+                : item.node.is_root
+                  ? '主选'
+                  : '备选'
             }
             aria-hidden
           >
             <span className="cg-hop-head">
-              <span className="cg-hop-num">B{index + 1}</span>
+              <span className="cg-hop-num">{item.node.is_root ? 'R' : `B${index + 1}`}</span>
               <span className={cn('cg-hop-dot', item.node.online ? 'is-lime' : 'is-red')} />
-              <span className="cg-hop-role">备选</span>
               <strong className="cg-hop-name is-inline">
                 {item.node.alias || `#${item.node.server_id}`}
               </strong>
+              <span className="cg-hop-standby-badge">{item.node.is_root ? '主选' : '备选'}</span>
+            </span>
+            <span className="cg-hop-meta">
+              {item.node.address ? <span>{item.node.address}</span> : null}
+              {item.node.listen_port ? <span>端口 {item.node.listen_port}</span> : null}
+              {item.node.kind_of_server === 'external' ? (
+                <span className="cg-hop-external">未托管</span>
+              ) : (
+                <span className={item.node.online ? 'is-lime' : 'is-red'}>
+                  {item.node.online ? 'Agent 在线' : 'Agent 离线'}
+                </span>
+              )}
+              {item.node.banned ? <span className="is-red">被 ban</span> : null}
             </span>
           </div>
         ))}
