@@ -104,21 +104,24 @@ export function ServerEditDialog({
                 <div className="sv-inline-warning">
                   <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
                   <span>
-                    转为外部直链将断开面板控制并吊销 Agent 凭证（不会远程卸载目标机 Xray）；当前受影响链路将标记为「转换失败」并在订阅中下线。
+                    转为外部直链将断开面板控制并吊销 Agent 凭证（不会远程卸载目标机
+                    Xray）；当前受影响链路将标记为「转换失败」并在订阅中下线。
                   </span>
                 </div>
               ) : currentServerType === 'external' ? (
                 <div className="sv-inline-note">
                   <CableIcon className="mt-0.5 size-3.5 shrink-0" />
                   <span>
-                    转为托管服务器后将生成新的 Agent 安装命令；引用该节点的链路将自动尝试重编排，无法适配的链路将在链路页标记为「转换失败」。
+                    转为托管服务器后将生成新的 Agent
+                    安装命令；引用该节点的链路将自动尝试重编排，无法适配的链路将在链路页标记为「转换失败」。
                   </span>
                 </div>
               ) : (
                 <div className="sv-inline-note">
                   <CableIcon className="mt-0.5 size-3.5 shrink-0" />
                   <span>
-                    切换服务器类型或调整 NAT 可用端口后，系统将自动对受影响链路执行 TryExchange 切换端口与传输；无法自动适配的链路将在链路页标记为「转换失败」。
+                    切换服务器类型或调整 NAT 可用端口后，系统将自动对受影响链路执行 TryExchange
+                    切换端口与传输；无法自动适配的链路将在链路页标记为「转换失败」。
                   </span>
                 </div>
               )

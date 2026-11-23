@@ -223,8 +223,7 @@ describe('ServerEditDialog', () => {
       citySuggestions: [],
       addCandidates: [],
       addAddress: () => {},
-      setServerType: (serverType: ServerTypeChoice) =>
-        setForm((cur) => ({ ...cur, serverType })),
+      setServerType: (serverType: ServerTypeChoice) => setForm((cur) => ({ ...cur, serverType })),
       setCountry: (countryCode: string) => setForm((cur) => ({ ...cur, countryCode })),
       setExternalLink: () => {},
       setExternalExit: () => {},

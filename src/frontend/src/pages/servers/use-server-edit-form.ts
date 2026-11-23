@@ -20,10 +20,7 @@ import {
   type ServerTypeChoice,
 } from './server-form-utils'
 
-import {
-  defaultExternalExitForm,
-  externalExitFormFromServer,
-} from './external-exit-form'
+import { defaultExternalExitForm, externalExitFormFromServer } from './external-exit-form'
 
 export type { ServerEditFormState }
 

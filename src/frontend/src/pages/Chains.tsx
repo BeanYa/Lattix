@@ -743,7 +743,9 @@ export default function Chains() {
                         </span>
                         <div className="cg-chain-actions">
                           {c.status !== 'exchange_failed' &&
-                          (c.status === 'failed' || c.status === 'active_failed' || hasFailedHop) ? (
+                          (c.status === 'failed' ||
+                            c.status === 'active_failed' ||
+                            hasFailedHop) ? (
                             <Button
                               variant="outline"
                               size="sm"

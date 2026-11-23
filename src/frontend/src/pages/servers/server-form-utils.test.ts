@@ -364,7 +364,10 @@ describe('buildServerEditPayload', () => {
 
   it('builds NAT payload with parsed port ranges and enforces public address', () => {
     expect(
-      buildServerEditPayload({ id: 12 }, editState({ serverType: 'nat', defaultAddr: '', addresses: [] })),
+      buildServerEditPayload(
+        { id: 12 },
+        editState({ serverType: 'nat', defaultAddr: '', addresses: [] }),
+      ),
     ).toEqual({
       error: 'NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）',
     })
@@ -409,6 +412,10 @@ describe('buildServerEditPayload', () => {
     expect(res.body.country_code).toBe('')
     expect(res.body.machine_type).toBeUndefined()
     expect(res.body.external_link).toBe(LINK)
-    expect(res.body.external_exit).toMatchObject({ protocol: 'vless', address: 'example.com', port: 443 })
+    expect(res.body.external_exit).toMatchObject({
+      protocol: 'vless',
+      address: 'example.com',
+      port: 443,
+    })
   })
 })
