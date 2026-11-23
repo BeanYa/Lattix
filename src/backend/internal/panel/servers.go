@@ -662,17 +662,26 @@ func (s *Server) handleRotateToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleUpdateServer 处理 PATCH /api/servers/{id}：管理员修改公网地址（§4/§9）与
-// NAT 可用端口段（§21）。地址一经写入不再被 session.open 覆盖；置空则下次 session.open 按 RemoteAddr
-// 重新自动学习（NAT 类型禁止置空）。机器类型建后不允许互转；端口段收窄时校验
-// 该 server 存量节点 realized 端口与链跳端口不越界，越界 400。
+type serverUpdateResponse struct {
+	serverDTO
+	BootstrapToken  string             `json:"bootstrap_token,omitempty"`
+	InstallCommand  string             `json:"install_command,omitempty"`
+	InstallInsecure bool               `json:"install_insecure,omitempty"`
+	Exchange        *serverExchangeDTO `json:"exchange,omitempty"`
+}
+
+// handleUpdateServer 处理 POST /api/server/update：管理员修改服务器信息、公网地址（§4/§9）、
+// NAT 可用端口段（§21）及服务器类型（direct/nat/external 互转）。
+// 地址一经写入不再被 session.open 覆盖；置空则下次 session.open 按 RemoteAddr 重新自动学习（NAT 禁止置空）。
+// 当类型或可用端口段变化时，对受影响链路自动执行 TryExchange，无法自动适配的链路标记为转换失败。
 func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ServerID       int64                  `json:"server_id"`
 		Alias          *string                `json:"alias"` // 省略 = 不变
 		Address        string                 `json:"address"`
 		Addresses      *[]string              `json:"addresses"`     // 省略 = 仅维护默认地址（旧语义）；数组 = 整体替换地址列表（§9）
-		MachineType    string                 `json:"machine_type"`  // 不允许互转：带不同值 → 400
+		Kind           string                 `json:"kind"`          // 省略 = 不变；managed|external 互转
+		MachineType    string                 `json:"machine_type"`  // 省略 = 不变（external→managed 默认 direct）；direct|nat 互转
 		AllowedPorts   *[]shared.PortRange    `json:"allowed_ports"` // 省略 = 不变；显式 null/数组 = 整体替换
 		Tags           *[]string              `json:"tags"`          // 省略 = 不变；数组 = 整体替换
 		CountryCode    *string                `json:"country_code"`  // 省略 = 不变
@@ -702,10 +711,41 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if req.MachineType != "" && req.MachineType != srv.MachineType {
-		writeError(w, http.StatusBadRequest, "机器类型建后不允许互转")
+	oldKind := srv.Kind
+	if oldKind == "" {
+		oldKind = store.ServerKindManaged
+	}
+	targetKind := strings.TrimSpace(req.Kind)
+	if targetKind == "" {
+		targetKind = oldKind
+	}
+	if targetKind != store.ServerKindManaged && targetKind != store.ServerKindExternal {
+		writeError(w, http.StatusBadRequest, "kind 须为 managed 或 external")
 		return
 	}
+	oldMachineType := srv.MachineType
+	if oldMachineType == "" {
+		oldMachineType = store.MachineTypeDirect
+	}
+	targetMachineType := strings.TrimSpace(req.MachineType)
+	if targetKind == store.ServerKindExternal {
+		targetMachineType = store.MachineTypeNAT
+	} else {
+		if targetMachineType == "" {
+			if oldKind == store.ServerKindExternal {
+				targetMachineType = store.MachineTypeDirect
+			} else {
+				targetMachineType = oldMachineType
+			}
+		}
+		if targetMachineType != store.MachineTypeDirect && targetMachineType != store.MachineTypeNAT {
+			writeError(w, http.StatusBadRequest, "machine_type 须为 direct 或 nat")
+			return
+		}
+	}
+	kindChanged := oldKind != targetKind
+	machineTypeChanged := oldKind == store.ServerKindManaged && targetKind == store.ServerKindManaged && oldMachineType != targetMachineType
+
 	if req.Billing != nil {
 		if _, err := validateBillingInput(r.Context(), s.st, *req.Billing, s.billingDefaultDate(r.Context())); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -719,16 +759,22 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.CustomSettings != nil && req.CustomSettings.XrayVersion != nil {
+		if targetKind == store.ServerKindExternal {
+			writeError(w, http.StatusBadRequest, "未托管外部直链节点不支持设置 xray 版本覆盖")
+			return
+		}
 		if err := req.CustomSettings.Validate(); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
+
+	beforeSrv := *srv
 	beforeDTO := s.toServerDTO(*srv)
 	alias := srv.Alias
 	if req.Alias != nil {
 		alias = strings.TrimSpace(*req.Alias)
-		if alias == "" && !srv.IsExternal() {
+		if alias == "" && targetKind != store.ServerKindExternal {
 			writeError(w, http.StatusBadRequest, "alias 不能为空")
 			return
 		}
@@ -737,11 +783,12 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// 未托管外部直链节点：协议参数可手动修改（external_exit）或重新解析链接，
-	// 地址由配置派生，实例内不允许改机器类型/端口段；协议参数变更且被链路引用时拒绝
-	//（已发布修订已冻结旧规格，避免静默分叉）。
-	if srv.IsExternal() {
+
+	var externalLinkToSave, externalConfigToSave, externalAddressToSave string
+	externalExitChanged := false
+	if targetKind == store.ServerKindExternal {
 		var newExit *shared.ExternalExit
+		parsedName := ""
 		switch {
 		case req.ExternalExit != nil:
 			exit := normalizeExternalExit(*req.ExternalExit)
@@ -751,7 +798,7 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 			}
 			newExit = &exit
 		case req.ExternalLink != nil && strings.TrimSpace(*req.ExternalLink) != "":
-			exit, _, parseErr := external.Parse(strings.TrimSpace(*req.ExternalLink))
+			exit, name, parseErr := external.Parse(strings.TrimSpace(*req.ExternalLink))
 			if parseErr != nil {
 				writeError(w, http.StatusBadRequest, parseErr.Error())
 				return
@@ -762,6 +809,10 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			newExit = &exit
+			parsedName = strings.TrimSpace(name)
+		case kindChanged:
+			exit := shared.ExternalExit{Protocol: shared.ProtocolHTTP}
+			newExit = &exit
 		}
 		if newExit != nil {
 			raw, marshalErr := json.Marshal(*newExit)
@@ -769,28 +820,34 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, marshalErr.Error())
 				return
 			}
-			if string(raw) != srv.ExternalConfig {
-				chains, chainErr := s.st.ChainsReferencingServer(r.Context(), id)
-				if chainErr != nil {
-					writeError(w, http.StatusInternalServerError, chainErr.Error())
-					return
-				}
-				if len(chains) > 0 {
-					writeError(w, http.StatusConflict,
-						fmt.Sprintf("该外部节点正被 %d 条链路引用，修改协议参数前请先调整或删除这些链路", len(chains)))
-					return
+			if kindChanged || string(raw) != srv.ExternalConfig {
+				if !kindChanged {
+					chains, chainErr := s.st.ChainsReferencingServer(r.Context(), id)
+					if chainErr != nil {
+						writeError(w, http.StatusInternalServerError, chainErr.Error())
+						return
+					}
+					if len(chains) > 0 {
+						writeError(w, http.StatusConflict,
+							fmt.Sprintf("该外部节点正被 %d 条链路引用，修改协议参数前请先调整或删除这些链路", len(chains)))
+						return
+					}
 				}
 				link := ""
 				if req.ExternalLink != nil {
 					link = strings.TrimSpace(*req.ExternalLink)
 				}
-				if err := s.st.UpdateServerExternalLink(r.Context(), id, link, string(raw), newExit.Address); err != nil {
-					writeError(w, http.StatusInternalServerError, err.Error())
-					return
-				}
+				externalLinkToSave = link
+				externalConfigToSave = string(raw)
+				externalAddressToSave = newExit.Address
+				externalExitChanged = true
 			}
 			if alias == "" {
-				alias = externalExitAlias(*newExit)
+				if parsedName != "" {
+					alias = parsedName
+				} else {
+					alias = externalExitAlias(*newExit)
+				}
 			}
 		} else if alias == "" {
 			if current := srv.ParseExternalExit(); current != nil {
@@ -804,21 +861,23 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.Address = ""
-	} else if req.ExternalLink != nil || req.ExternalExit != nil {
+	} else if (req.ExternalLink != nil && strings.TrimSpace(*req.ExternalLink) != "") || req.ExternalExit != nil {
 		writeError(w, http.StatusBadRequest, "托管服务器不支持外部直链")
 		return
 	}
-	if srv.MachineType == store.MachineTypeNAT && req.Address == "" && !srv.IsExternal() {
+
+	if targetKind == store.ServerKindManaged && targetMachineType == store.MachineTypeNAT && req.Address == "" {
 		writeError(w, http.StatusBadRequest, "NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）")
 		return
 	}
+
 	countryCode, location := srv.CountryCode, srv.Location
 	if req.CountryCode != nil || req.Location != nil {
 		if req.CountryCode == nil || req.Location == nil {
 			writeError(w, http.StatusBadRequest, "country_code 与 location 须同时提供")
 			return
 		}
-		if srv.IsExternal() {
+		if targetKind == store.ServerKindExternal {
 			countryCode, location, err = normalizeServerGeographyOptional(*req.CountryCode, *req.Location)
 		} else {
 			countryCode, location, err = normalizeServerGeography(*req.CountryCode, *req.Location)
@@ -827,33 +886,97 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-	}
-	if req.AllowedPorts != nil {
-		if err := shared.ValidatePortRanges(*req.AllowedPorts); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		if err := s.checkPortsShrink(r, id, *req.AllowedPorts); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		allowedJSON, err := marshalPortRanges(*req.AllowedPorts)
+	} else if kindChanged && targetKind == store.ServerKindManaged {
+		countryCode, location, err = normalizeServerGeography(countryCode, location)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if err := s.st.UpdateServerAllowedPorts(r.Context(), id, allowedJSON); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
+
+	allowedJSON := ""
+	portsChanged := false
+	if targetKind == store.ServerKindManaged && targetMachineType == store.MachineTypeNAT {
+		if kindChanged {
+			allowedJSON = ""
+		} else {
+			allowedJSON = srv.AllowedPorts
+		}
+		if req.AllowedPorts != nil {
+			if err := shared.ValidatePortRanges(*req.AllowedPorts); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			allowedJSON, err = marshalPortRanges(*req.AllowedPorts)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+		portsChanged = allowedJSON != srv.AllowedPorts
+	} else if targetKind == store.ServerKindManaged && targetMachineType == store.MachineTypeDirect {
+		allowedJSON = ""
+		portsChanged = srv.AllowedPorts != ""
+	}
+
+	var tagsJSON *string
 	if req.Tags != nil {
-		tagsJSON, err := encodeServerTags(*req.Tags)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+		encoded, tagErr := encodeServerTags(*req.Tags)
+		if tagErr != nil {
+			writeError(w, http.StatusBadRequest, tagErr.Error())
 			return
 		}
-		if err := s.st.UpdateServerTags(r.Context(), id, tagsJSON); err != nil {
+		tagsJSON = &encoded
+	}
+
+	bootstrapToken := ""
+	if kindChanged {
+		panelID, pidErr := s.st.PanelInstanceID(r.Context())
+		if pidErr != nil {
+			writeError(w, http.StatusInternalServerError, pidErr.Error())
+			return
+		}
+		cred, credErr := shared.NewCredential(panelID, srv.CredentialEpoch+1)
+		if credErr != nil {
+			writeError(w, http.StatusInternalServerError, credErr.Error())
+			return
+		}
+		if targetKind == store.ServerKindExternal {
+			if err := s.st.ConvertServerToExternal(r.Context(), id, cred, srv.CredentialEpoch+1,
+				externalLinkToSave, externalConfigToSave, externalAddressToSave); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			if forgetter, ok := s.req.(interface {
+				ForgetAgent(int64, int, string)
+			}); ok {
+				forgetter.ForgetAgent(id, 4001, "server converted to external")
+			}
+		} else {
+			if err := s.st.ConvertServerToManaged(r.Context(), id, cred, srv.CredentialEpoch+1,
+				targetMachineType, allowedJSON); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			bootstrapToken = cred
+		}
+	} else {
+		if targetKind == store.ServerKindExternal && externalExitChanged {
+			if err := s.st.UpdateServerExternalLink(r.Context(), id, externalLinkToSave, externalConfigToSave, externalAddressToSave); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+		if targetKind == store.ServerKindManaged && (machineTypeChanged || portsChanged) {
+			if err := s.st.UpdateServerMachineType(r.Context(), id, targetMachineType, allowedJSON); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+	}
+
+	if tagsJSON != nil {
+		if err := s.st.UpdateServerTags(r.Context(), id, *tagsJSON); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -862,17 +985,17 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if srv.IsExternal() {
-		// 外部节点地址恒为链接 host（上方的链接更新已写回），不接受手工地址编辑。
-	} else if req.Addresses != nil {
-		// 地址列表整体替换（§9）：默认地址须属于列表；旧调用（省略 addresses）保持原语义。
-		if err := s.st.UpdateServerAddresses(r.Context(), id, *req.Addresses, req.Address); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+	if targetKind == store.ServerKindManaged {
+		if req.Addresses != nil {
+			// 地址列表整体替换（§9）：默认地址须属于列表；旧调用（省略 addresses）保持原语义。
+			if err := s.st.UpdateServerAddresses(r.Context(), id, *req.Addresses, req.Address); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		} else if err := s.st.UpdateServerAddress(r.Context(), id, req.Address); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-	} else if err := s.st.UpdateServerAddress(r.Context(), id, req.Address); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
 	}
 	if err := s.st.UpdateServerGeography(r.Context(), id, countryCode, location); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -885,7 +1008,7 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	settingsChanged := false
-	if req.CustomSettings != nil {
+	if targetKind == store.ServerKindManaged && req.CustomSettings != nil {
 		var custom *shared.ServerSettings
 		if req.CustomSettings.XrayVersion != nil {
 			custom = req.CustomSettings
@@ -906,8 +1029,10 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if settingsChanged {
-		if _, revision, err := s.st.EffectiveServerSettings(r.Context(), id); err == nil {
-			s.disp.NotifyServerSettingsChanged(r.Context(), id, revision)
+		if s.disp != nil {
+			if _, revision, err := s.st.EffectiveServerSettings(r.Context(), id); err == nil {
+				s.disp.NotifyServerSettingsChanged(r.Context(), id, revision)
+			}
 		}
 		sid := id
 		after := map[string]any{}
@@ -918,6 +1043,13 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 		}
 		s.audit(r, "server.settings.updated", &sid, nil, after)
 	}
+
+	var exchange *serverExchangeDTO
+	if kindChanged || machineTypeChanged || portsChanged {
+		ex := s.tryExchangeChainsForServer(r.Context(), &beforeSrv, srv)
+		exchange = &ex
+	}
+
 	sid := id
 	afterDTO, err := s.toServerDTOWithPlans(r.Context(), *srv)
 	if err != nil {
@@ -926,14 +1058,19 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 	}
 	changes := changedValues(
 		map[string]any{
-			"alias": beforeDTO.Alias, "address": beforeDTO.Address, "allowed_ports": beforeDTO.AllowedPorts,
+			"alias": beforeDTO.Alias, "kind": beforeDTO.Kind, "machine_type": beforeDTO.MachineType,
+			"address": beforeDTO.Address, "allowed_ports": beforeDTO.AllowedPorts,
 			"tags": beforeDTO.Tags, "country_code": beforeDTO.CountryCode, "location": beforeDTO.Location,
 		},
 		map[string]any{
-			"alias": afterDTO.Alias, "address": afterDTO.Address, "allowed_ports": afterDTO.AllowedPorts,
+			"alias": afterDTO.Alias, "kind": afterDTO.Kind, "machine_type": afterDTO.MachineType,
+			"address": afterDTO.Address, "allowed_ports": afterDTO.AllowedPorts,
 			"tags": afterDTO.Tags, "country_code": afterDTO.CountryCode, "location": afterDTO.Location,
 		},
 	)
+	if exchange != nil {
+		changes["exchange"] = exchange
+	}
 	if len(changes) > 0 {
 		s.audit(r, "server.updated", &sid, nil, changes)
 		if s.subscriptions != nil && subscriptionRelevantServerChange(changes) {
@@ -942,11 +1079,22 @@ func (s *Server) handleUpdateServer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, afterDTO)
+
+	resp := serverUpdateResponse{
+		serverDTO: afterDTO,
+		Exchange:  exchange,
+	}
+	if bootstrapToken != "" {
+		base := s.panelBase(r)
+		resp.BootstrapToken = bootstrapToken
+		resp.InstallCommand = s.installCommand(base, bootstrapToken, effectiveXrayVersion(s, srv.ID))
+		resp.InstallInsecure = installInsecure(base)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func subscriptionRelevantServerChange(changes map[string]any) bool {
-	for _, key := range []string{"alias", "address", "tags", "country_code", "location"} {
+	for _, key := range []string{"alias", "address", "tags", "country_code", "location", "kind", "machine_type", "allowed_ports"} {
 		if _, ok := changes[key]; ok {
 			return true
 		}

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { ApiError, api, errorMessage } from '@/lib/api'
 import { loadCities, loadCountries, type CountryOption } from '@/lib/geography'
 import { formatPortRange } from '@/lib/ports'
-import type { PortRange, Server } from '@/lib/types'
+import type { Server, UpdateServerResponse } from '@/lib/types'
 
 import {
   addInterval,
@@ -11,43 +11,25 @@ import {
   aliasAfterParse,
   applyExternalLinkError,
   applyExternalLinkPreview,
-  billingPayload,
+  buildServerEditPayload,
   editExternalLink,
   initialExternalLink,
   localDate,
-  parsePortRows,
-  trafficPayload,
-  type BillingFormState,
-  type ExternalLinkState,
-  type TrafficFormState,
+  serverTypeOf,
+  type ServerEditFormState,
+  type ServerTypeChoice,
 } from './server-form-utils'
 
 import {
   defaultExternalExitForm,
-  externalExitFormError,
   externalExitFormFromServer,
-  externalExitFormPayload,
 } from './external-exit-form'
 
-export interface ServerEditFormState {
-  alias: string
-  addresses: string[]
-  defaultAddr: string
-  addrInput: string
-  portRows: string[]
-  tags: string[]
-  countryCode: string
-  location: string
-  nonDirect: boolean
-  billing: BillingFormState
-  traffic: TrafficFormState
-  xrayOverride: string
-  xrayVersions: string[]
-  external: ExternalLinkState
-}
+export type { ServerEditFormState }
 
 function initialServerEditForm(): ServerEditFormState {
   return {
+    serverType: 'direct',
     alias: '',
     addresses: [],
     defaultAddr: '',
@@ -84,11 +66,15 @@ function initialServerEditForm(): ServerEditFormState {
 
 /**
  * 编辑服务器对话框的表单状态与提交逻辑。
- * 原为服务器页内一组扁平 useState，拆分时装订为单一表单状态对象；
- * 打开对话框时由 openEdit 按目标服务器整体回填。未托管外部直链节点（kind=external）
- * 只维护链接与资料，保存走 updateServerExternal；被链路引用时的链接变更由后端 409 兜底。
+ * 支持独立 IP / NAT / 外部直链三类互转，提交统一走 api.updateServer。
  */
-export function useServerEditForm({ reload }: { reload: () => void }) {
+export function useServerEditForm({
+  reload,
+  onUpdated,
+}: {
+  reload: () => void
+  onUpdated?: (res: UpdateServerResponse) => void
+}) {
   const [target, setTarget] = useState<Server | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -106,6 +92,24 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
       .then(setCountryOptions)
       .catch(() => setCountryOptions([]))
   }, [target])
+
+  const targetId = target?.id ?? null
+  const needXrayVersions = targetId !== null && form.serverType !== 'external'
+  useEffect(() => {
+    if (!needXrayVersions) return
+    let active = true
+    api
+      .releaseVersions('xray')
+      .then((versions) => {
+        if (active) {
+          setForm((current) => ({ ...current, xrayVersions: versions.versions }))
+        }
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [targetId, needXrayVersions])
 
   useEffect(() => {
     if (!form.countryCode) {
@@ -185,20 +189,30 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
     }
   }
 
+  const setServerType = (serverType: ServerTypeChoice) => {
+    setError('')
+    setLinkConflict(false)
+    patch({ serverType })
+  }
+
   const openEdit = (s: Server) => {
     setTarget(s)
-    // 地址列表回填：优先 server.addresses，空则回退默认/学习地址（去重保序）。
+    const serverType = serverTypeOf(s)
+    // 外部直链节点的 server.address 保存的是外部出口域名/IP，不应预填成托管服务器公网地址候选。
     const initialAddrs =
-      s.addresses.length > 0
-        ? s.addresses
-        : [...new Set([s.address, s.learned_addr].filter(Boolean))]
+      s.kind === 'external'
+        ? []
+        : s.addresses.length > 0
+          ? s.addresses
+          : [...new Set([s.address, s.learned_addr].filter(Boolean))]
     const divisor = ['JPY', 'KRW', 'ISK'].includes(s.billing.currency) ? 1 : 100
     const quota = s.traffic_plan.quota_bytes
     const quotaUnit: 'GB' | 'TB' = quota !== null && quota >= 1e12 ? 'TB' : 'GB'
     setForm({
+      serverType,
       alias: s.alias,
       addresses: initialAddrs,
-      defaultAddr: s.address,
+      defaultAddr: s.kind === 'external' ? '' : s.address,
       addrInput: '',
       portRows: s.allowed_ports.length > 0 ? s.allowed_ports.map(formatPortRange) : [''],
       tags: s.tags,
@@ -231,53 +245,11 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
           ? initialExternalLink(s.external_link ?? '', externalExitFormFromServer(s))
           : initialExternalLink('', defaultExternalExitForm()),
     })
-    if (s.kind !== 'external') {
-      api
-        .releaseVersions('xray')
-        .then((versions) => patch({ xrayVersions: versions.versions }))
-        .catch(() => {})
-    }
     setError('')
     setLinkConflict(false)
   }
 
   const closeEdit = () => setTarget(null)
-
-  // 未托管外部直链节点：提交协议表单（地址由规格派生），没有 Agent 字段；
-  // 协议参数变更且被链路引用时由后端 409 拒绝。
-  const saveExternal = async (s: Server, alias: string) => {
-    const exitError = externalExitFormError(form.external.exit)
-    if (exitError) {
-      setError(exitError)
-      return
-    }
-    setSaving(true)
-    try {
-      await api.updateServerExternal(
-        s.id,
-        alias,
-        form.tags,
-        form.countryCode,
-        form.location.trim(),
-        billingPayload(form.billing),
-        trafficPayload(form.traffic),
-        form.nonDirect,
-        externalExitFormPayload(form.external.exit),
-        form.external.link.trim(),
-      )
-      setTarget(null)
-      reload()
-    } catch (err) {
-      // 被链路引用时的链接变更由后端 409 拒绝：原样展示服务端消息并提示处理方式。
-      // 后端把 HTTP 409 映射为 RPC 业务码 CONFLICT（信封走 HTTP 200），两种形态都识别。
-      setError(errorMessage(err))
-      setLinkConflict(
-        err instanceof ApiError && (err.code === 'CONFLICT' || err.httpStatus === 409),
-      )
-    } finally {
-      setSaving(false)
-    }
-  }
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
@@ -286,78 +258,23 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
     }
     setError('')
     setLinkConflict(false)
-    // 未托管节点没有必填项：别名留空由后端按地址派生，国家/地区可空。
-    if (target.kind === 'external') {
-      await saveExternal(target, form.alias.trim())
+    const built = buildServerEditPayload(target, form)
+    if ('error' in built) {
+      setError(built.error)
       return
-    }
-    const finalAlias = form.alias.trim()
-    if (!finalAlias) {
-      setError('名称不能为空')
-      return
-    }
-    if (!form.countryCode) {
-      setError('国家/地区不能为空')
-      return
-    }
-    // 默认地址 = 列表中选中的条目；列表非空时提交 addresses 整体替换。
-    const finalAddress = form.defaultAddr
-    const isNat = target.machine_type === 'nat'
-    if (isNat && !finalAddress) {
-      setError('NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）')
-      return
-    }
-    const nextAddresses = form.addresses.length > 0 ? form.addresses : undefined
-    if (nextAddresses && !nextAddresses.includes(finalAddress)) {
-      setError('默认地址必须是地址列表中的一项')
-      return
-    }
-    let ranges: PortRange[] = []
-    const nextTags = form.tags
-    if (isNat) {
-      const parsed = parsePortRows(form.portRows)
-      if ('error' in parsed) {
-        setError(parsed.error)
-        return
-      }
-      ranges = parsed.ranges
     }
     setSaving(true)
     try {
-      if (isNat) {
-        await api.updateServerPorts(
-          target.id,
-          finalAlias,
-          finalAddress,
-          ranges,
-          nextTags,
-          form.countryCode,
-          form.location.trim(),
-          billingPayload(form.billing),
-          trafficPayload(form.traffic),
-          form.xrayOverride ? { xray_version: form.xrayOverride } : {},
-          nextAddresses,
-          form.nonDirect,
-        )
-      } else {
-        await api.updateServerAddress(
-          target.id,
-          finalAlias,
-          finalAddress,
-          nextTags,
-          form.countryCode,
-          form.location.trim(),
-          billingPayload(form.billing),
-          trafficPayload(form.traffic),
-          form.xrayOverride ? { xray_version: form.xrayOverride } : {},
-          nextAddresses,
-          form.nonDirect,
-        )
-      }
+      const res = await api.updateServer(built.body)
       setTarget(null)
+      onUpdated?.(res)
       reload()
     } catch (err) {
+      // 外部直链协议变更被链路引用等冲突场景由后端 409/CONFLICT 返回：原样展示服务端消息。
       setError(errorMessage(err))
+      setLinkConflict(
+        err instanceof ApiError && (err.code === 'CONFLICT' || err.httpStatus === 409),
+      )
     } finally {
       setSaving(false)
     }
@@ -374,6 +291,7 @@ export function useServerEditForm({ reload }: { reload: () => void }) {
     citySuggestions,
     addCandidates,
     addAddress,
+    setServerType,
     setCountry,
     setExternalLink,
     setExternalExit,

@@ -587,7 +587,7 @@ func (d *Dispatcher) reconcilePublishedEndpoints(ctx context.Context, previous, 
 	var firstErr error
 	if previous != nil && previous.Snapshot.EndpointID != 0 &&
 		previous.Snapshot.EndpointID != revision.Snapshot.EndpointID {
-		if err := d.ReconcileSharedEndpoint(ctx, previous.Snapshot.EndpointID); err != nil {
+		if err := d.reconcileOrCleanupReplacedEndpoint(ctx, previous.Snapshot.EndpointID); err != nil {
 			firstErr = err
 		}
 	}
@@ -599,7 +599,7 @@ func (d *Dispatcher) reconcilePublishedEndpoints(ctx context.Context, previous, 
 	// hy2 出口共享监听（P4）：与入口端点同模式 reconcile（0 跳过、新旧去重）。
 	if previous != nil && previous.Snapshot.ServiceEndpointID != 0 &&
 		previous.Snapshot.ServiceEndpointID != revision.Snapshot.ServiceEndpointID {
-		if err := d.ReconcileSharedEndpoint(ctx, previous.Snapshot.ServiceEndpointID); err != nil && firstErr == nil {
+		if err := d.reconcileOrCleanupReplacedEndpoint(ctx, previous.Snapshot.ServiceEndpointID); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -610,6 +610,55 @@ func (d *Dispatcher) reconcilePublishedEndpoints(ctx context.Context, previous, 
 		}
 	}
 	return firstErr
+}
+
+// reconcileOrCleanupReplacedEndpoint 处理修订发布后被替换掉的旧共享端点：
+// 若旧端点因服务器转为受限 NAT/仅出口档而越界且不再被任何链引用，直接删行并下发移除，
+// 避免在 Agent 上继续保留越界端口监听；其余场景沿用常规 ReconcileSharedEndpoint。
+func (d *Dispatcher) reconcileOrCleanupReplacedEndpoint(ctx context.Context, oldID int64) error {
+	ep, err := d.st.SharedEndpointByID(ctx, oldID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	srv, err := d.st.ServerByID(ctx, ep.ServerID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if srv.IsExternal() {
+		return nil
+	}
+	staleOrOutOfRange := false
+	if srv.MachineType == store.MachineTypeNAT {
+		if ranges, parseErr := shared.ParsePortRanges(srv.AllowedPorts); parseErr == nil && len(ranges) > 0 &&
+			ep.Port > 0 && !shared.InListenRanges(ranges, ep.Port) {
+			staleOrOutOfRange = true
+		} else if parseErr == nil && len(ranges) == 0 && ep.Protocol == shared.ProtocolHysteria2 {
+			var cfg struct {
+				PortHop string `json:"port_hop"`
+			}
+			if json.Unmarshal(ep.ConfigTemplate, &cfg) == nil && cfg.PortHop != "" {
+				staleOrOutOfRange = true
+			}
+		}
+	}
+	if staleOrOutOfRange {
+		deleted, delErr := d.st.DeleteSharedEndpointIfUnused(ctx, oldID)
+		if delErr != nil {
+			return delErr
+		}
+		if deleted {
+			_, err := d.Enqueue(ctx, ep.ServerID, shared.TypeRemoveSharedEndpoint,
+				shared.RemoveSharedEndpointPayload{EndpointID: oldID})
+			return err
+		}
+	}
+	return d.ReconcileSharedEndpoint(ctx, oldID)
 }
 
 // maybePublishReadyRevision 自愈发布窗口竞态（评审 P2-8）：链已 active 且 desired
@@ -809,7 +858,8 @@ func (d *Dispatcher) enqueueCleanupTasks(ctx context.Context, current *store.Cha
 // enqueueCleanupTask 入队单条 pending 清理任务（remove_node / remove_chain_hop）。
 // 目标服务器已删除时直接废弃任务：既无投递目标，也不应再参与链状态推导。
 func (d *Dispatcher) enqueueCleanupTask(ctx context.Context, revision *store.ChainRevision, task store.ChainRevisionTask) {
-	if _, err := d.st.ServerByID(ctx, task.ServerID); err != nil {
+	srv, err := d.st.ServerByID(ctx, task.ServerID)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			d.abandonCleanupTask(ctx, task, "服务器已删除")
 		} else {
@@ -818,7 +868,10 @@ func (d *Dispatcher) enqueueCleanupTask(ctx context.Context, revision *store.Cha
 		}
 		return
 	}
-	var err error
+	if srv.IsExternal() {
+		d.abandonCleanupTask(ctx, task, "服务器已转为外部直链节点")
+		return
+	}
 	if task.Kind == RevisionPieceService {
 		_, err = d.enqueueRevisionTask(ctx, task.ServerID, shared.TypeRemoveNode,
 			shared.RemoveNodePayload{NodeID: task.HopID}, revision.ID, task.TaskKey)
@@ -907,10 +960,14 @@ func (d *Dispatcher) cleanupTaskBlocks(ctx context.Context, task store.ChainRevi
 	case store.RevisionTaskAcked, store.RevisionTaskFailed, store.RevisionTaskAbandoned:
 		return false
 	}
-	if _, err := d.st.ServerByID(ctx, task.ServerID); err != nil {
+	srv, err := d.st.ServerByID(ctx, task.ServerID)
+	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
 			log.Printf("dispatch: cleanup task %d server %d: %v", task.ID, task.ServerID, err)
 		}
+		return false
+	}
+	if srv.IsExternal() {
 		return false
 	}
 	if !d.req.IsOnline(task.ServerID) {

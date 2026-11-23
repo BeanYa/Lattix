@@ -13,14 +13,19 @@ import {
   applyExternalLinkError,
   applyExternalLinkPreview,
   buildServerCreatePayload,
+  buildServerEditPayload,
+  defaultBilling,
+  defaultTraffic,
   editExternalLink,
   externalExitTarget,
   externalTransportSummary,
   initialExternalLink,
   initialServerCreateForm,
+  serverTypeOf,
   switchServerType,
   type ExternalLinkState,
   type ServerCreateFormState,
+  type ServerEditFormState,
 } from './server-form-utils'
 
 const LINK = 'vless://uuid@example.com:443?security=reality&pbk=PBK&sid=abcd#东京 01'
@@ -305,5 +310,105 @@ describe('external display helpers', () => {
       'ws · tls',
     )
     expect(externalTransportSummary({ protocol: 'socks' })).toBe('TCP')
+  })
+})
+
+function editState(overrides: Partial<ServerEditFormState> = {}): ServerEditFormState {
+  return {
+    serverType: 'direct',
+    alias: 'edge-01',
+    addresses: ['1.2.3.4'],
+    defaultAddr: '1.2.3.4',
+    addrInput: '',
+    portRows: [''],
+    tags: ['cn2'],
+    countryCode: 'HK',
+    location: 'Hong Kong',
+    nonDirect: false,
+    billing: defaultBilling(),
+    traffic: defaultTraffic(),
+    xrayOverride: '',
+    xrayVersions: ['latest'],
+    external: initialExternalLink(),
+    ...overrides,
+  }
+}
+
+describe('serverTypeOf', () => {
+  it('maps kind and machine_type to the 3-way server type choice', () => {
+    expect(serverTypeOf({ kind: 'managed', machine_type: 'direct' })).toBe('direct')
+    expect(serverTypeOf({ kind: 'managed', machine_type: 'nat' })).toBe('nat')
+    expect(serverTypeOf({ kind: 'external', machine_type: 'nat' })).toBe('external')
+  })
+})
+
+describe('buildServerEditPayload', () => {
+  it('builds managed direct payload with custom settings and omitted allowed_ports', () => {
+    const res = buildServerEditPayload(
+      { id: 12 },
+      editState({ serverType: 'direct', xrayOverride: 'v1.8.24' }),
+    )
+    if (!('body' in res)) throw new Error('expected body')
+    expect(res.body).toMatchObject({
+      server_id: 12,
+      kind: 'managed',
+      machine_type: 'direct',
+      alias: 'edge-01',
+      address: '1.2.3.4',
+      addresses: ['1.2.3.4'],
+      country_code: 'HK',
+      custom_settings: { xray_version: 'v1.8.24' },
+    })
+    expect(res.body.allowed_ports).toBeUndefined()
+  })
+
+  it('builds NAT payload with parsed port ranges and enforces public address', () => {
+    expect(
+      buildServerEditPayload({ id: 12 }, editState({ serverType: 'nat', defaultAddr: '', addresses: [] })),
+    ).toEqual({
+      error: 'NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）',
+    })
+    const res = buildServerEditPayload(
+      { id: 12 },
+      editState({ serverType: 'nat', portRows: ['20001-20010:10001-10010'] }),
+    )
+    if (!('body' in res)) throw new Error('expected body')
+    expect(res.body.kind).toBe('managed')
+    expect(res.body.machine_type).toBe('nat')
+    expect(res.body.allowed_ports).toEqual([
+      { pub_start: 20001, pub_end: 20010, listen_start: 10001, listen_end: 10010 },
+    ])
+  })
+
+  it('builds external payload without requiring alias or country_code and validates ports', () => {
+    expect(
+      buildServerEditPayload(
+        { id: 12 },
+        editState({
+          serverType: 'external',
+          external: {
+            ...initialExternalLink(),
+            exit: { ...defaultExternalExitForm(), port: '99999' },
+          },
+        }),
+      ),
+    ).toEqual({ error: '端口须为 1-65535' })
+
+    const res = buildServerEditPayload(
+      { id: 12 },
+      editState({
+        serverType: 'external',
+        alias: ' ',
+        countryCode: '',
+        external: parsedLink(),
+      }),
+    )
+    if (!('body' in res)) throw new Error('expected body')
+    expect(res.body.kind).toBe('external')
+    expect(res.body.alias).toBe('')
+    expect(res.body.country_code).toBe('')
+    expect(res.body.machine_type).toBeUndefined()
+    expect(res.body.external_link).toBe(LINK)
+    expect(res.body.external_exit).toMatchObject({ protocol: 'vless', address: 'example.com', port: 443 })
   })
 })

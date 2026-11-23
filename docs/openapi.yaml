@@ -155,6 +155,11 @@ paths:
   /api/server/update:
     post:
       operationId: serverUpdate
+      description: |
+        更新服务器信息与公网地址，并支持 direct / nat / external 三种服务器类型及 NAT 可用端口段的互相转换。
+        当 kind=external→managed 时返回 bootstrap_token、install_command 与 install_insecure。
+        当类型或可用端口段变化时，对受影响链路自动执行 TryExchange，并在响应中返回 exchange 汇总；
+        无法自动适配的链路会转换到 exchange_failed（「转换失败」）。
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -1298,6 +1303,15 @@ components:
       properties:
         server_id: {type: integer, minimum: 1}
         next_renewal_on: {type: string, format: date, description: Must be later than today in the panel timezone.}
+    PortRange:
+      type: object
+      additionalProperties: false
+      required: [pub_start, pub_end]
+      properties:
+        pub_start: {type: integer, minimum: 1, maximum: 65535}
+        pub_end: {type: integer, minimum: 1, maximum: 65535}
+        listen_start: {type: integer, minimum: 1, maximum: 65535}
+        listen_end: {type: integer, minimum: 1, maximum: 65535}
     ServerUpdateRequest:
       type: object
       description: Panel-editable server fields. Only the declared fields are validated here; extra fields follow existing RPC semantics.
@@ -1313,6 +1327,18 @@ components:
           type: array
           items: {type: string}
           description: Optional full replacement of the public address list. Omitted keeps legacy semantics (only address is maintained). When provided, address must be a member.
+        kind:
+          type: string
+          enum: [managed, external]
+          description: Switch between managed Agent server and unmanaged external exit.
+        machine_type:
+          type: string
+          enum: [direct, nat]
+          description: Switch between direct IP and NAT (only applicable when kind resolves to managed).
+        allowed_ports:
+          type: [array, 'null']
+          items: {$ref: '#/components/schemas/PortRange'}
+          description: Optional full replacement of NAT available port ranges (omitted keeps existing ranges; empty/null converts NAT to exit-only or direct).
         tags:
           type: array
           items: {type: string}

@@ -36,6 +36,7 @@ const CHAIN_STATUS_LABEL: Record<ChainStatus, string> = {
   degraded: '降级',
   failed: '失败',
   waiting_for_agent: '等待 Agent',
+  exchange_failed: '转换失败',
   active_unconfirmed: '待确认',
   active_failed: '生效失败',
   cleanup_pending: '清理中',
@@ -82,6 +83,7 @@ function chainTone(status: ChainStatus) {
     status === 'degraded' ||
     status === 'failed' ||
     status === 'active_failed' ||
+    status === 'exchange_failed' ||
     status === 'invalid'
   ) {
     return 'bad'

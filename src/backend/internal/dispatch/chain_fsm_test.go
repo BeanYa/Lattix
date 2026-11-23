@@ -407,3 +407,100 @@ func TestEntityStateWriteGuards(t *testing.T) {
 		t.Fatalf("revision waiting_for_agent→active error = %v, want ErrStateTransition", err)
 	}
 }
+
+// TestChainExchangeFailedTransitionsAndStability 校验 exchange_failed 转换边、Evaluate 保持、
+// 取消 desired_revision_id、以及通过编辑拓扑恢复到 applying 的状态机闭环。
+func TestChainExchangeFailedTransitionsAndStability(t *testing.T) {
+	ctx := context.Background()
+	st, d, chainID, serverID := newFSMFixture(t)
+	defer st.Close()
+
+	// 1. 合法与非法转换边校验
+	for _, edge := range []struct{ from, to string }{
+		{store.ChainStatusPending, store.ChainStatusExchangeFailed},
+		{store.ChainStatusApplying, store.ChainStatusExchangeFailed},
+		{store.ChainStatusActive, store.ChainStatusExchangeFailed},
+		{store.ChainStatusWaitingForAgent, store.ChainStatusExchangeFailed},
+		{store.ChainStatusExchangeFailed, store.ChainStatusApplying},
+		{store.ChainStatusExchangeFailed, store.ChainStatusInvalid},
+		{store.ChainStatusExchangeFailed, store.ChainStatusDeleted},
+	} {
+		if !validChainTransition(edge.from, edge.to) {
+			t.Errorf("缺少转换边 %s → %s", edge.from, edge.to)
+		}
+	}
+	if validChainTransition(store.ChainStatusExchangeFailed, store.ChainStatusActive) {
+		t.Error("exchange_failed → active 不应直接放行（须经 applying 重新发布）")
+	}
+
+	// 2. active + desired_revision + active hop：MarkExchangeFailed 撤销修订并保留 hops
+	hops, err := st.ChainHops(ctx, chainID)
+	if err != nil || len(hops) == 0 {
+		t.Fatalf("ChainHops err=%v len=%d", err, len(hops))
+	}
+	if err := st.SetChainHopStatus(ctx, hops[0].ID, store.HopStatusActive, ""); err != nil {
+		t.Fatal(err)
+	}
+	pubRev, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{
+		Name:            "c-pub",
+		ServiceServerID: serverID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PublishChainRevision(ctx, pubRev.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	desiredRev, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{
+		Name:            "c-next",
+		ServiceServerID: serverID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetChainStatus(ctx, chainID, store.ChainStatusApplying, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	const failReason = "服务器转为外部直链，原链路需重新编排"
+	if err := d.fsm.MarkExchangeFailed(ctx, chainID, serverID, failReason); err != nil {
+		t.Fatalf("MarkExchangeFailed: %v", err)
+	}
+	_ = desiredRev
+	chain, err := st.ChainByID(ctx, chainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chain.Status != store.ChainStatusExchangeFailed {
+		t.Fatalf("chain.Status = %s, want %s", chain.Status, store.ChainStatusExchangeFailed)
+	}
+	if chain.DesiredRevisionID != 0 {
+		t.Fatalf("chain.DesiredRevisionID = %d, want 0", chain.DesiredRevisionID)
+	}
+	if chain.Error != failReason {
+		t.Fatalf("chain.Error = %q, want %q", chain.Error, failReason)
+	}
+
+	// 3. Evaluate 在 exchange_failed 状态下应保持稳定，不得被覆盖为 active/degraded
+	d.fsm.Evaluate(ctx, chainID)
+	chain, _ = st.ChainByID(ctx, chainID)
+	if chain.Status != store.ChainStatusExchangeFailed {
+		t.Fatalf("Evaluate 后链状态 = %s, want保持 %s", chain.Status, store.ChainStatusExchangeFailed)
+	}
+
+	// 4. 通过 EditChainTopology 从 exchange_failed 恢复到 applying
+	recoverRev, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{
+		Name:            "c-recover",
+		ServiceServerID: serverID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.EditChainTopology(ctx, recoverRev, shared.ProtocolVLESS, nil, false); err != nil {
+		t.Fatalf("EditChainTopology recover from exchange_failed: %v", err)
+	}
+	chain, _ = st.ChainByID(ctx, chainID)
+	if chain.Status != store.ChainStatusApplying {
+		t.Fatalf("恢复后链状态 = %s, want %s", chain.Status, store.ChainStatusApplying)
+	}
+}

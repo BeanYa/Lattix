@@ -18,6 +18,7 @@ export const chainStatusStyle: Record<ChainStatus, CgStatusStyle> = {
   pending: { label: '部署中', cg: 'is-blue', loading: true },
   degraded: { label: '降级', cg: 'is-red', loading: false },
   waiting_for_agent: { label: '等待 Agent', cg: 'is-blue', loading: true },
+  exchange_failed: { label: '转换失败', cg: 'is-red', loading: false },
   active_unconfirmed: { label: '已强制发布', cg: 'is-muted', loading: false },
   active_failed: { label: '发布后失败', cg: 'is-red', loading: false },
   cleanup_pending: { label: '等待清理', cg: 'is-blue', loading: false },

@@ -30,6 +30,7 @@ function hasChainIssue(chain: Chain): boolean {
   return (
     chain.status === 'failed' ||
     chain.status === 'active_failed' ||
+    chain.status === 'exchange_failed' ||
     chain.status === 'degraded' ||
     chain.hops.some((hop) => hop.status === 'failed')
   )

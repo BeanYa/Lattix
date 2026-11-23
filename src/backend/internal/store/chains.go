@@ -24,6 +24,7 @@ const (
 	ChainStatusActiveUnconfirmed = "active_unconfirmed"
 	ChainStatusActiveFailed      = "active_failed"
 	ChainStatusCleanupPending    = "cleanup_pending"
+	ChainStatusExchangeFailed    = "exchange_failed"
 	ChainStatusInvalid           = "invalid"
 	ChainStatusDeleted           = "deleted"
 )

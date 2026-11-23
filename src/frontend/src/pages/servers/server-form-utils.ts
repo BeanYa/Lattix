@@ -8,6 +8,7 @@ import type {
   PortRange,
   Server,
   ServerKind,
+  ServerUpdateRequest,
   TrafficAccountingMode,
   TrafficPlanInput,
 } from '@/lib/types'
@@ -41,8 +42,39 @@ export interface TrafficFormState {
   resetUnit: IntervalUnit
 }
 
-// 添加服务器对话框的服务器类型三选一：外部直链（未托管）不属于机器类型。
+// 添加/编辑服务器对话框的服务器类型三选一：外部直链（未托管）不属于机器类型。
 export type ServerTypeChoice = MachineType | 'external'
+
+export const SERVER_TYPES: ReadonlyArray<readonly [ServerTypeChoice, string]> = [
+  ['direct', '独立 IP'],
+  ['nat', 'NAT'],
+  ['external', '外部直链'],
+]
+
+export function serverTypeOf(server: Pick<Server, 'kind' | 'machine_type'>): ServerTypeChoice {
+  if (server.kind === 'external') {
+    return 'external'
+  }
+  return server.machine_type === 'nat' ? 'nat' : 'direct'
+}
+
+export interface ServerEditFormState {
+  serverType: ServerTypeChoice
+  alias: string
+  addresses: string[]
+  defaultAddr: string
+  addrInput: string
+  portRows: string[]
+  tags: string[]
+  countryCode: string
+  location: string
+  nonDirect: boolean
+  billing: BillingFormState
+  traffic: TrafficFormState
+  xrayOverride: string
+  xrayVersions: string[]
+  external: ExternalLinkState
+}
 
 // 外部直链输入与协议表单状态（添加/编辑服务器共用）：分享链接只用于「解析 →
 // 自动填写」，协议参数本身才是提交来源，因此链接改动不会清空已填参数。
@@ -150,6 +182,9 @@ export function trafficPayload(value: TrafficFormState): TrafficPlanInput {
 
 // 内置公网地址候选（§9）：拨入学习地址 + agent 上报的网卡非回环地址，去重。
 export function addrCandidates(s: Server): string[] {
+  if (s.kind === 'external') {
+    return []
+  }
   return [...new Set([s.learned_addr, ...s.nic_addresses].filter(Boolean))]
 }
 
@@ -325,6 +360,82 @@ export function buildServerCreatePayload(
       return parsed
     }
     body.allowed_ports = parsed.ranges
+  }
+  return { body }
+}
+
+/** 组装编辑/转换服务器的提交载荷（纯函数）：按目标类型校验并输出 ServerUpdateRequest。 */
+export function buildServerEditPayload(
+  target: Pick<Server, 'id'>,
+  state: ServerEditFormState,
+): { body: ServerUpdateRequest } | { error: string } {
+  if (state.serverType === 'external') {
+    const exitError = externalExitFormError(state.external.exit)
+    if (exitError) {
+      return { error: exitError }
+    }
+    const body: ServerUpdateRequest = {
+      server_id: target.id,
+      kind: 'external',
+      alias: state.alias.trim(),
+      external_exit: externalExitFormPayload(state.external.exit),
+      tags: state.tags,
+      country_code: state.countryCode,
+      location: state.location.trim(),
+      billing: billingPayload(state.billing),
+      traffic_plan: trafficPayload(state.traffic),
+      non_direct: state.nonDirect,
+    }
+    const link = state.external.link.trim()
+    if (link) {
+      body.external_link = link
+    }
+    return { body }
+  }
+
+  const finalAlias = state.alias.trim()
+  if (!finalAlias) {
+    return { error: '名称不能为空' }
+  }
+  if (!state.countryCode) {
+    return { error: '国家/地区不能为空' }
+  }
+  const finalAddress = state.defaultAddr
+  const isNat = state.serverType === 'nat'
+  if (isNat && !finalAddress) {
+    return { error: 'NAT 服务器必须填写公网地址（共享 IP 由 IDC 提供）' }
+  }
+  const nextAddresses = state.addresses.length > 0 ? state.addresses : undefined
+  if (nextAddresses && !nextAddresses.includes(finalAddress)) {
+    return { error: '默认地址必须是地址列表中的一项' }
+  }
+  let ranges: PortRange[] | undefined
+  if (isNat) {
+    const parsed = parsePortRows(state.portRows)
+    if ('error' in parsed) {
+      return parsed
+    }
+    ranges = parsed.ranges
+  }
+  const body: ServerUpdateRequest = {
+    server_id: target.id,
+    kind: 'managed',
+    machine_type: state.serverType,
+    alias: finalAlias,
+    address: finalAddress,
+    tags: state.tags,
+    country_code: state.countryCode,
+    location: state.location.trim(),
+    billing: billingPayload(state.billing),
+    traffic_plan: trafficPayload(state.traffic),
+    custom_settings: state.xrayOverride ? { xray_version: state.xrayOverride } : {},
+    non_direct: state.nonDirect,
+  }
+  if (nextAddresses !== undefined) {
+    body.addresses = nextAddresses
+  }
+  if (ranges !== undefined) {
+    body.allowed_ports = ranges
   }
   return { body }
 }

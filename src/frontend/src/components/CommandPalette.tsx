@@ -132,7 +132,9 @@ function chainItems(chains: Chain[], query: string): PaletteItem[] {
             ? 'ok'
             : chain.status === 'degraded'
               ? 'degraded'
-              : chain.status === 'failed' || chain.status === 'active_failed'
+              : chain.status === 'failed' ||
+                  chain.status === 'active_failed' ||
+                  chain.status === 'exchange_failed'
                 ? 'failed'
                 : 'neutral',
       },

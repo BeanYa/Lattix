@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"lattix/shared"
 )
 
 const (
@@ -147,6 +149,161 @@ func (s *Store) EnsureProtocolSharedEndpoint(ctx context.Context, serverID int64
 	}
 	endpoint, err := s.SharedEndpointByID(ctx, id)
 	return endpoint, true, err
+}
+
+// EnsureSharedEndpointInRanges 类似 EnsureSharedEndpoint，但复用已有端口时要求其落在 ranges 内
+// （空 ranges = 不限制）；当原端点端口因服务器转为受限 NAT 而越界时新建 port=0 端点以重分配端口。
+func (s *Store) EnsureSharedEndpointInRanges(ctx context.Context, serverID int64, protocol string,
+	profileHash string, config json.RawMessage, ranges []shared.PortRange) (*SharedEndpoint, bool, error) {
+	if serverID <= 0 || profileHash == "" || !json.Valid(config) {
+		return nil, false, fmt.Errorf("invalid shared endpoint")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+endpointCols+`
+		FROM shared_endpoints WHERE server_id=? AND profile_hash=? AND protocol=? ORDER BY
+		CASE status WHEN 'active' THEN 0 WHEN 'applying' THEN 1 ELSE 2 END, id`,
+		serverID, profileHash, protocol)
+	if err != nil {
+		return nil, false, err
+	}
+	var match *SharedEndpoint
+	for rows.Next() {
+		ep, err := scanEndpoint(rows)
+		if err != nil {
+			rows.Close()
+			return nil, false, err
+		}
+		if ep.Port == 0 || len(ranges) == 0 || shared.InListenRanges(ranges, ep.Port) {
+			match = ep
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, false, err
+	}
+	rows.Close()
+	if match != nil {
+		return match, false, nil
+	}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO shared_endpoints
+		(server_id, protocol, port, profile_hash, config_template) VALUES (?, ?, 0, ?, ?)`,
+		serverID, protocol, profileHash, string(config))
+	if err != nil {
+		return nil, false, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return nil, false, err
+	}
+	endpoint, err := s.SharedEndpointByID(ctx, id)
+	return endpoint, true, err
+}
+
+// EnsureProtocolSharedEndpointInRanges 类似 EnsureProtocolSharedEndpoint，但校验既有同协议端点的
+// 端口与 hy2 跳跃段是否满足当前范围与入站/跳跃能力；不兼容时新建 port=0 端点。
+func (s *Store) EnsureProtocolSharedEndpointInRanges(ctx context.Context, serverID int64, protocol string,
+	config json.RawMessage, ranges []shared.PortRange, allowPortHop bool) (*SharedEndpoint, bool, error) {
+	if serverID <= 0 || protocol == "" || !json.Valid(config) {
+		return nil, false, fmt.Errorf("invalid protocol shared endpoint")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+endpointCols+`
+		FROM shared_endpoints WHERE server_id=? AND protocol=? AND status IN ('pending','applying','active')
+		ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'applying' THEN 1 ELSE 2 END, id`,
+		serverID, protocol)
+	if err != nil {
+		return nil, false, err
+	}
+	var match *SharedEndpoint
+	for rows.Next() {
+		ep, err := scanEndpoint(rows)
+		if err != nil {
+			rows.Close()
+			return nil, false, err
+		}
+		if ep.Port > 0 && len(ranges) > 0 && !shared.InListenRanges(ranges, ep.Port) {
+			continue
+		}
+		var cfg struct {
+			PortHop string `json:"port_hop"`
+		}
+		_ = json.Unmarshal(ep.ConfigTemplate, &cfg)
+		if cfg.PortHop != "" {
+			if !allowPortHop {
+				continue
+			}
+			if len(ranges) > 0 {
+				start, end, parseErr := shared.ParsePortHop(cfg.PortHop)
+				if parseErr != nil || !shared.SpanInListenRanges(ranges, start, end) {
+					continue
+				}
+			}
+		}
+		match = ep
+		break
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, false, err
+	}
+	rows.Close()
+	if match != nil {
+		return match, false, nil
+	}
+	result, err := s.db.ExecContext(ctx, `INSERT INTO shared_endpoints
+		(server_id, protocol, port, profile_hash, config_template) VALUES (?, ?, 0, ?, ?)`,
+		serverID, protocol, protocol, string(config))
+	if err != nil {
+		return nil, false, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return nil, false, err
+	}
+	endpoint, err := s.SharedEndpointByID(ctx, id)
+	return endpoint, true, err
+}
+
+// DeleteSharedEndpointIfUnused 在确认没有任何未删链或当前/已发布修订仍引用该共享端点时，
+// 清除其流量汇总并删除端点行，防止已废弃的越界监听留在 Agent 或占用统计中。
+func (s *Store) DeleteSharedEndpointIfUnused(ctx context.Context, id int64) (bool, error) {
+	if id <= 0 {
+		return false, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var refs int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM chains c
+		WHERE c.deleted_at IS NULL AND (
+			c.endpoint_id = ? OR c.service_endpoint_id = ?
+			OR EXISTS (
+				SELECT 1 FROM chain_revisions r
+				WHERE (r.id = c.published_revision_id OR r.id = c.desired_revision_id)
+				AND (json_extract(r.snapshot, '$.endpoint_id') = ? OR json_extract(r.snapshot, '$.service_endpoint_id') = ?)
+			)
+		)`, id, id, id, id).Scan(&refs); err != nil {
+		return false, err
+	}
+	if refs > 0 {
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM endpoint_traffic_totals WHERE endpoint_id=?`, id); err != nil {
+		return false, err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM shared_endpoints WHERE id=?`, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // SetSharedEndpointApplying 端点进入 applying（部署命令已下发/在途）。

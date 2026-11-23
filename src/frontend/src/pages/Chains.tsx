@@ -354,6 +354,7 @@ export default function Chains() {
         if (
           entry.chain.status === 'failed' ||
           entry.chain.status === 'active_failed' ||
+          entry.chain.status === 'exchange_failed' ||
           entry.chain.status === 'degraded' ||
           entry.chain.hops.some((h) => h.status === 'failed')
         ) {
@@ -383,6 +384,7 @@ export default function Chains() {
       const hasIssue =
         c.status === 'failed' ||
         c.status === 'active_failed' ||
+        c.status === 'exchange_failed' ||
         c.status === 'degraded' ||
         c.hops.some((h) => h.status === 'failed')
       if (filter === 'active' && c.status !== 'active') return false
@@ -723,6 +725,11 @@ export default function Chains() {
                             </span>
                           )
                         ) : null}
+                        {c.status === 'exchange_failed' ? (
+                          <span className="cg-chain-note is-red">
+                            服务器类型转换失败，请编辑调整或删除
+                          </span>
+                        ) : null}
                         {c.revision_forced ? (
                           <span className="cg-chain-note is-blue">
                             订阅已发布，配置等待 Agent 确认
@@ -735,7 +742,8 @@ export default function Chains() {
                           创建于 {formatDateTime(c.created_at, timezone)}
                         </span>
                         <div className="cg-chain-actions">
-                          {c.status === 'failed' || c.status === 'active_failed' || hasFailedHop ? (
+                          {c.status !== 'exchange_failed' &&
+                          (c.status === 'failed' || c.status === 'active_failed' || hasFailedHop) ? (
                             <Button
                               variant="outline"
                               size="sm"
@@ -792,6 +800,7 @@ export default function Chains() {
                               c.desired_revision_id !== 0 &&
                               c.status !== 'failed' &&
                               c.status !== 'active_failed' &&
+                              c.status !== 'exchange_failed' &&
                               // 等待 Agent 的编辑可再次编辑取代（无在途命令，废弃安全）
                               c.status !== 'waiting_for_agent'
                             }

@@ -163,17 +163,21 @@ function buildServerItem(
   }
 }
 
-/** 链路 → 队列项；处理 failed / active_failed / degraded / waiting_for_agent。 */
+/** 链路 → 队列项；处理 failed / active_failed / exchange_failed / degraded / waiting_for_agent。 */
 function buildChainItem(chain: Chain, users: SubUser[] | null): BoardItem | null {
   if (
     chain.status !== 'failed' &&
     chain.status !== 'active_failed' &&
+    chain.status !== 'exchange_failed' &&
     chain.status !== 'degraded' &&
     chain.status !== 'waiting_for_agent'
   ) {
     return null
   }
-  const isCritical = chain.status === 'failed' || chain.status === 'active_failed'
+  const isCritical =
+    chain.status === 'failed' ||
+    chain.status === 'active_failed' ||
+    chain.status === 'exchange_failed'
   const severity: BoardSeverity = isCritical ? 'critical' : 'warning'
   const since = chainSince(chain)
   const href = `/network/chains/${chain.id}`
@@ -190,11 +194,14 @@ function buildChainItem(chain: Chain, users: SubUser[] | null): BoardItem | null
     impact = `影响 ${userSet.size} 位用户 · ${chain.hops.length} 跳`
   }
   const failedHop = chain.hops.find((h) => h.status === 'failed')
-  const reason = isCritical
-    ? `链路异常：${chain.error || (failedHop ? `跳点 ${failedHop.server_alias} 部署失败` : '发布失败，请检查失败跳')}`
-    : chain.status === 'waiting_for_agent'
-      ? `等待 Agent：${chain.error || '目标服务器离线，新配置已在队列中等待下发'}`
-      : `链路降级：${chain.error || '部分跳点 Agent 离线，已发布 revision 仍保持生效'}`
+  const reason =
+    chain.status === 'exchange_failed'
+      ? `转换失败：${chain.error || '服务器类型或可用端口变更后自动适配失败，请编辑调整或删除链路'}`
+      : isCritical
+        ? `链路异常：${chain.error || (failedHop ? `跳点 ${failedHop.server_alias} 部署失败` : '发布失败，请检查失败跳')}`
+        : chain.status === 'waiting_for_agent'
+          ? `等待 Agent：${chain.error || '目标服务器离线，新配置已在队列中等待下发'}`
+          : `链路降级：${chain.error || '部分跳点 Agent 离线，已发布 revision 仍保持生效'}`
 
   return {
     id: `chain-${chain.id}`,

@@ -854,10 +854,11 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "链路不存在")
 		return
 	}
-	// 部署失败（failed/active_failed）的链允许编辑后重新编排（§21）；等待 Agent
-	//（waiting_for_agent）的链允许再编辑取代等待中的 revision——该状态尚未下发任何
+	// 部署失败（failed/active_failed/exchange_failed）的链允许编辑后重新编排（§21）；
+	// 等待 Agent（waiting_for_agent）的链允许再编辑取代等待中的 revision——该状态尚未下发任何
 	// 命令（编排暂停），废弃安全（§21.1）；applying/active_unconfirmed 仍拒绝并发编辑。
-	failed := chain.Status == store.ChainStatusFailed || chain.Status == store.ChainStatusActiveFailed
+	failed := chain.Status == store.ChainStatusFailed || chain.Status == store.ChainStatusActiveFailed ||
+		chain.Status == store.ChainStatusExchangeFailed
 	waitingForAgent := chain.Status == store.ChainStatusWaitingForAgent
 	if chain.DesiredRevisionID != 0 && !failed && !waitingForAgent {
 		writeError(w, http.StatusConflict, "链路已有部署中的编辑")
@@ -880,6 +881,13 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		if revision, desiredErr := s.st.DesiredChainRevision(r.Context(), chain.ID); desiredErr == nil {
 			failedRevision = revision
 			current = revision
+		} else if current == nil && chain.Status == store.ChainStatusExchangeFailed {
+			if revision, latestErr := s.st.LatestChainRevision(r.Context(), chain.ID); latestErr == nil {
+				failedRevision = revision
+				current = revision
+			}
+		}
+		if current != nil {
 			if hops, hopErr := s.st.ChainHops(r.Context(), chain.ID); hopErr == nil {
 				byID := make(map[int64]store.ChainHop, len(hops))
 				for _, hop := range hops {
@@ -1684,7 +1692,14 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	managedServer := func(serverID int64) bool {
+		srv, err := s.st.ServerByID(r.Context(), serverID)
+		return err == nil && !srv.IsExternal()
+	}
 	for _, piece := range pieces {
+		if !managedServer(piece.ServerID) {
+			continue
+		}
 		if _, err := s.disp.Enqueue(r.Context(), piece.ServerID, shared.TypeRemoveChainHop,
 			shared.RemoveChainHopPayload{HopID: piece.HopID, Kind: piece.Kind}); err != nil {
 			o.Fail(err)
@@ -1693,13 +1708,15 @@ func (s *Server) handleDeleteChain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, h := range hops {
-		// 出口业务节点走现有删除流程（remove_node + 删行，§6）。
+		// 出口业务节点走现有删除流程（remove_node + 删行，§6）；已转为外部节点的服务器跳过下发命令。
 		if h.Role == store.HopRoleExit && h.NodeID != 0 {
-			if _, err := s.disp.Enqueue(r.Context(), h.ServerID, shared.TypeRemoveNode,
-				shared.RemoveNodePayload{NodeID: h.NodeID}); err != nil {
-				o.Fail(err)
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
+			if managedServer(h.ServerID) {
+				if _, err := s.disp.Enqueue(r.Context(), h.ServerID, shared.TypeRemoveNode,
+					shared.RemoveNodePayload{NodeID: h.NodeID}); err != nil {
+					o.Fail(err)
+					writeError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
 			}
 			if err := s.st.DeleteNode(r.Context(), h.NodeID); err != nil {
 				o.Fail(err)

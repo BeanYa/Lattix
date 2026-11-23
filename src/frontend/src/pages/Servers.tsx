@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { AlertTriangleIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react'
+import { Link } from 'wouter'
 
 import { CopyButton } from '@/components/CopyButton'
 import { Notice, Page, PageHeader } from '@/components/PagePrimitives'
@@ -44,6 +45,7 @@ import type {
   ReleaseVersions,
   RebuildXrayResult,
   Server,
+  ServerExchangeSummary,
   ServerMetricSeries,
 } from '@/lib/types'
 
@@ -58,6 +60,10 @@ export default function Servers() {
   const [probes, setProbes] = useState<CatalogProbeStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [exchangeNotice, setExchangeNotice] = useState<{
+    serverAlias: string
+    summary: ServerExchangeSummary
+  } | null>(null)
   const [providers, setProviders] = useState<Provider[]>([])
   const [providerManagerOpen, setProviderManagerOpen] = useState(false)
   const [providerEditID, setProviderEditID] = useState<number | null>(null)
@@ -213,7 +219,23 @@ export default function Servers() {
     },
     reload: load,
   })
-  const editForm = useServerEditForm({ reload: load })
+  const editForm = useServerEditForm({
+    reload: load,
+    onUpdated: (res) => {
+      if (res.install_command) {
+        setCmdView({
+          title: `服务器「${res.alias}」已转为托管节点，请在目标机器上执行安装命令`,
+          command: res.install_command,
+          insecure: Boolean(res.install_insecure),
+        })
+      }
+      if (res.exchange && res.exchange.total > 0) {
+        setExchangeNotice({ serverAlias: res.alias, summary: res.exchange })
+      } else {
+        setExchangeNotice(null)
+      }
+    },
+  })
 
   // 未安装（从未上线）→ 重新获取安装命令；已安装 → 凭证刷新（旧凭证立即失效）。
   const onRotateToken = async (s: Server) => {
@@ -492,6 +514,54 @@ export default function Servers() {
       {error && (
         <Notice tone="danger" title="加载失败">
           {error}
+        </Notice>
+      )}
+
+      {exchangeNotice && (
+        <Notice
+          tone={exchangeNotice.summary.failed > 0 ? 'warning' : 'success'}
+          title={
+            exchangeNotice.summary.failed > 0
+              ? `「${exchangeNotice.serverAlias}」变更已保存，部分链路自动转换失败`
+              : `「${exchangeNotice.serverAlias}」变更已保存，受影响链路已执行 TryExchange`
+          }
+          actions={
+            <>
+              {exchangeNotice.summary.failed > 0 ? (
+                <Link href="/network/chains" className="cg-button is-sm is-primary">
+                  前往链路页处理
+                </Link>
+              ) : null}
+              <button
+                type="button"
+                className="cg-button is-sm"
+                onClick={() => setExchangeNotice(null)}
+              >
+                关闭
+              </button>
+            </>
+          }
+        >
+          <p>
+            受影响链路共 {exchangeNotice.summary.total} 条：已自动适配{' '}
+            {exchangeNotice.summary.exchanged} 条
+            {exchangeNotice.summary.waiting > 0
+              ? `，等待 Agent 上线 ${exchangeNotice.summary.waiting} 条`
+              : ''}
+            {exchangeNotice.summary.failed > 0
+              ? `，转换失败 ${exchangeNotice.summary.failed} 条（已从订阅下线，请前往链路页编辑或删除）`
+              : ''}
+            。
+          </p>
+          {exchangeNotice.summary.failed_chains.length > 0 ? (
+            <ul className="mt-1 list-disc pl-5 text-xs">
+              {exchangeNotice.summary.failed_chains.map((item) => (
+                <li key={item.chain_id}>
+                  <strong>{item.name}</strong>：{item.error}
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </Notice>
       )}
 

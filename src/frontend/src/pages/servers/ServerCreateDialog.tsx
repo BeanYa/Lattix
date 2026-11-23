@@ -16,14 +16,8 @@ import { cn } from '@/lib/utils'
 
 import { BillingTrafficFields, PortRowsEditor } from './server-form-fields'
 import { ExternalExitFields } from './ExternalExitFields'
-import type { ServerTypeChoice } from './server-form-utils'
+import { SERVER_TYPES } from './server-form-utils'
 import type { ServerCreateFormController } from './use-server-create-form'
-
-const SERVER_TYPES: ReadonlyArray<readonly [ServerTypeChoice, string]> = [
-  ['direct', '独立 IP'],
-  ['nat', 'NAT'],
-  ['external', '外部直链'],
-]
 
 /** 添加服务器对话框（视图）；状态与提交逻辑在 useServerCreateForm。 */
 export function ServerCreateDialog({

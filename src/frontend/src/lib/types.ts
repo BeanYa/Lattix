@@ -438,6 +438,46 @@ export interface CreateServerResponse {
   install_insecure: boolean
 }
 
+export interface ServerExchangeFailure {
+  chain_id: number
+  name: string
+  error: string
+}
+
+export interface ServerExchangeSummary {
+  total: number
+  exchanged: number
+  waiting: number
+  failed: number
+  failed_chains: ServerExchangeFailure[]
+}
+
+export interface ServerUpdateRequest {
+  server_id: number
+  alias?: string
+  kind?: ServerKind
+  machine_type?: MachineType
+  address?: string
+  addresses?: string[]
+  allowed_ports?: PortRange[] | null
+  tags?: string[]
+  country_code?: string
+  location?: string
+  non_direct?: boolean
+  external_link?: string
+  external_exit?: ExternalExit
+  billing?: BillingInput
+  traffic_plan?: TrafficPlanInput
+  custom_settings?: ServerSettings
+}
+
+export interface UpdateServerResponse extends Server {
+  bootstrap_token?: string
+  install_command?: string
+  install_insecure?: boolean
+  exchange?: ServerExchangeSummary
+}
+
 export type NodeStatus = 'pending' | 'applying' | 'active' | 'failed'
 
 export interface RealizedConfig {
@@ -536,6 +576,7 @@ export type ChainStatus =
   | 'degraded'
   | 'failed'
   | 'waiting_for_agent'
+  | 'exchange_failed'
   | 'active_unconfirmed'
   | 'active_failed'
   | 'cleanup_pending'

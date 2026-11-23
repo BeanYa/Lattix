@@ -375,6 +375,17 @@ func (s *Store) PublishedChainRevision(ctx context.Context, chainID int64) (*Cha
 	return revision, err
 }
 
+// LatestChainRevision 返回该链最近一条修订（exchange_failed 尚无已发布修订时的兜底编辑基线）。
+func (s *Store) LatestChainRevision(ctx context.Context, chainID int64) (*ChainRevision, error) {
+	revision, err := scanRevision(s.db.QueryRowContext(ctx, `SELECT id, chain_id, revision_no, status, forced,
+		snapshot, error, created_at, published_at FROM chain_revisions
+		WHERE chain_id=? ORDER BY revision_no DESC, id DESC LIMIT 1`, chainID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return revision, err
+}
+
 func (s *Store) ChainDeploymentRevisions(ctx context.Context, chainID int64) ([]ChainRevision, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT r.id, r.chain_id, r.revision_no, r.status, r.forced,
 		r.snapshot, r.error, r.created_at, r.published_at FROM chain_revisions r
@@ -486,6 +497,51 @@ func (s *Store) InvalidateChainForServerDeletion(ctx context.Context, chainID, s
 	if _, err := tx.ExecContext(ctx, `UPDATE chain_hop_identities
 		SET archived_at=COALESCE(archived_at, CURRENT_TIMESTAMP) WHERE chain_id=?`, chainID); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+// MarkChainExchangeFailed 服务器类型转换无法自动适配链路时将链标记为 exchange_failed：
+// 废弃未完成的 desired_revision 与在途任务/命令，但保留 chain_hops 供管理员在链路页查看与编辑。
+func (s *Store) MarkChainExchangeFailed(ctx context.Context, chainID int64, reason string, fromStatus ...string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE commands SET status=?, error=?, updated_at=CURRENT_TIMESTAMP
+		WHERE id IN (SELECT command_id FROM chain_revision_tasks WHERE revision_id =
+			(SELECT desired_revision_id FROM chains WHERE id=?)) AND status IN (?, ?)`,
+		CommandStatusAbandoned, reason, chainID, CommandStatusQueued, CommandStatusSent); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chain_revision_tasks SET status=?, error=?, updated_at=CURRENT_TIMESTAMP
+		WHERE revision_id = (SELECT desired_revision_id FROM chains WHERE id=?) AND status IN (?, ?)`,
+		RevisionTaskAbandoned, reason, chainID, RevisionTaskPending, RevisionTaskQueued); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE chain_revisions SET status=?, error=?
+		WHERE chain_id=? AND id=(SELECT desired_revision_id FROM chains WHERE id=?)`,
+		RevisionStatusCancelled, reason, chainID, chainID); err != nil {
+		return err
+	}
+	chainQuery := `UPDATE chains SET status=?, error=?, desired_revision_id=0,
+		updated_at=CURRENT_TIMESTAMP WHERE id=?`
+	chainArgs := []any{ChainStatusExchangeFailed, reason, chainID}
+	if len(fromStatus) > 0 {
+		chainQuery += ` AND status=?`
+		chainArgs = append(chainArgs, fromStatus[0])
+	}
+	result, err := tx.ExecContext(ctx, chainQuery, chainArgs...)
+	if err != nil {
+		return err
+	}
+	if len(fromStatus) > 0 {
+		if n, nerr := result.RowsAffected(); nerr != nil {
+			return nerr
+		} else if n == 0 {
+			return fmt.Errorf("%w: chain %d not in status %s", ErrChainStatusChanged, chainID, fromStatus[0])
+		}
 	}
 	return tx.Commit()
 }

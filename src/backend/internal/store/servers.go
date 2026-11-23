@@ -23,7 +23,7 @@ var ErrStateTransition = errors.New("store: state transition not allowed")
 var ErrChainStatusChanged = errors.New("store: chain status changed concurrently")
 
 // 机器类型（§21 NAT 两档）：direct = 独立 IP；nat = NAT（allowed_ports 非空 = 受限直连，
-// 留空 = 仅出口档）。建后不允许互转。
+// 留空 = 仅出口档）。
 const (
 	MachineTypeDirect = "direct"
 	MachineTypeNAT    = "nat"
@@ -496,6 +496,92 @@ func (s *Store) UpdateServerAllowedPorts(ctx context.Context, id int64, allowedP
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE servers SET allowed_ports = ? WHERE id = ?`, allowedPorts, id)
 	return err
+}
+
+// UpdateServerMachineType 更新托管服务器的机器类型（direct|nat）与可用端口段。
+func (s *Store) UpdateServerMachineType(ctx context.Context, id int64, machineType, allowedPorts string) error {
+	if machineType == MachineTypeDirect {
+		allowedPorts = ""
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE servers SET machine_type = ?, allowed_ports = ? WHERE id = ?`, machineType, allowedPorts, id)
+	return err
+}
+
+// ConvertServerToExternal 将托管服务器转换为未托管外部直链节点：
+// 吊销并轮换凭证 epoch、清空托管运行时状态与 Ban 观察、废弃在途/排队命令。
+func (s *Store) ConvertServerToExternal(ctx context.Context, id int64, newToken string, epoch int64, externalLink, externalConfig, address string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	addresses := ""
+	addressMode := AddressModeManual
+	if address != "" {
+		if raw, mErr := json.Marshal([]string{address}); mErr == nil {
+			addresses = string(raw)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE servers SET
+		kind = ?, machine_type = ?, allowed_ports = '',
+		external_link = ?, external_config = ?,
+		address = ?, addresses = ?, address_mode = ?,
+		token = ?, credential_epoch = ?, credential_committed = 0,
+		credential_pending_token = '', credential_exchange_id = '',
+		config_drift = 0, last_seen_at = NULL,
+		last_connected_at = NULL, last_disconnected_at = NULL, last_reconnected_at = NULL,
+		reconnect_count = 0, last_disconnect_reason = '',
+		xray_version = NULL, agent_version = NULL,
+		learned_addr = '', nic_addresses = '',
+		panel_latency_ms = NULL, panel_probed_at = NULL,
+		custom_settings = '',
+		agent_settings_revision = 0, agent_settings_error = '', agent_settings_reported_at = NULL,
+		server_settings_revision = 0, server_settings_error = '', server_settings_reported_at = NULL
+		WHERE id = ?`,
+		ServerKindExternal, MachineTypeNAT, externalLink, externalConfig,
+		address, addresses, addressMode, newToken, epoch, id); err != nil {
+		return fmt.Errorf("convert server to external: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM server_ban_watch WHERE server_id = ?`, id); err != nil {
+		return fmt.Errorf("clear server ban watch: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE commands SET status = ?, error = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE server_id = ? AND status IN (?, ?)`,
+		CommandStatusAbandoned, "服务器已转为外部直链节点", id, CommandStatusQueued, CommandStatusSent); err != nil {
+		return fmt.Errorf("abandon pending commands on server conversion: %w", err)
+	}
+	return tx.Commit()
+}
+
+// ConvertServerToManaged 将未托管外部直链节点转换为托管服务器（direct 或 nat）：
+// 清空外部配置与面板探测延迟，并写入新的 bootstrap 凭证等待安装接入。
+func (s *Store) ConvertServerToManaged(ctx context.Context, id int64, newBootstrapToken string, epoch int64, machineType, allowedPorts string) error {
+	if machineType == MachineTypeDirect {
+		allowedPorts = ""
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE servers SET
+		kind = ?, machine_type = ?, allowed_ports = ?,
+		external_link = '', external_config = '',
+		panel_latency_ms = NULL, panel_probed_at = NULL,
+		token = ?, credential_epoch = ?, credential_committed = 0,
+		credential_pending_token = '', credential_exchange_id = '',
+		last_seen_at = NULL,
+		last_connected_at = NULL, last_disconnected_at = NULL, last_reconnected_at = NULL,
+		reconnect_count = 0, last_disconnect_reason = '',
+		config_drift = 0, xray_version = NULL, agent_version = NULL,
+		agent_settings_revision = 0, agent_settings_error = '', agent_settings_reported_at = NULL,
+		server_settings_revision = 0, server_settings_error = '', server_settings_reported_at = NULL
+		WHERE id = ?`,
+		ServerKindManaged, machineType, allowedPorts, newBootstrapToken, epoch, id); err != nil {
+		return fmt.Errorf("convert server to managed: %w", err)
+	}
+	return tx.Commit()
 }
 
 // UpdateServerPeerProbe 记录面板到该服务器的 TCP 连通延迟（外部直链节点用：

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const catalogChain = `c.deleted_at IS NULL AND c.status NOT IN ('invalid', 'deleted')`
+const catalogChain = `c.deleted_at IS NULL AND c.status NOT IN ('invalid', 'deleted', 'exchange_failed')`
 const activeCatalogUser = `u.expired=0 AND u.disabled=0 AND u.quota_exhausted=0
 	AND (u.expires_at IS NULL OR u.expires_at>?)
 	AND (u.effective_at IS NULL OR u.effective_at<=?)`

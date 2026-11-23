@@ -35,6 +35,9 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 		if err != nil {
 			return err
 		}
+		if server.IsExternal() {
+			return nil
+		}
 		if server.MachineType == "nat" {
 			payload.PortCandidates = listenCandidatesOf(server)
 		}
@@ -42,7 +45,9 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 		// 端到端链由上一跳直拨出口跳；单跳链客户端直接连本监听，取唯一跳。
 		listenFamily := ""
 		for _, chain := range chains {
-			if chain.PublishedRevisionID == 0 {
+			if chain.PublishedRevisionID == 0 ||
+				chain.Status == store.ChainStatusInvalid || chain.Status == store.ChainStatusDeleted ||
+				chain.Status == store.ChainStatusExchangeFailed {
 				continue
 			}
 			revision, err := d.st.PublishedChainRevision(ctx, chain.ID)
@@ -62,6 +67,10 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 			return err
 		}
 		for _, chain := range chains {
+			if chain.Status == store.ChainStatusInvalid || chain.Status == store.ChainStatusDeleted ||
+				chain.Status == store.ChainStatusExchangeFailed {
+				continue
+			}
 			if chain.EndpointID != 0 && chain.ServiceUUID != "" {
 				payload.Clients = append(payload.Clients, shared.ClientCredential{
 					ID: chain.ServiceUUID, Email: "tunnel:" + chain.ServiceUUID})
@@ -100,6 +109,9 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 	if err != nil {
 		return err
 	}
+	if server.IsExternal() {
+		return nil
+	}
 	if server.MachineType == "nat" {
 		payload.PortCandidates = listenCandidatesOf(server)
 	}
@@ -108,7 +120,8 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 	listenFamily := ""
 	for _, chain := range chains {
 		if chain.PublishedRevisionID == 0 ||
-			chain.Status == store.ChainStatusInvalid || chain.Status == store.ChainStatusDeleted {
+			chain.Status == store.ChainStatusInvalid || chain.Status == store.ChainStatusDeleted ||
+			chain.Status == store.ChainStatusExchangeFailed {
 			continue
 		}
 		revision, err := d.st.PublishedChainRevision(ctx, chain.ID)

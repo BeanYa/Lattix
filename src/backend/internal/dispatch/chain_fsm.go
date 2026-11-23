@@ -32,9 +32,10 @@ import (
 // 未列出的转换为非法，Transition 将拒绝并记录日志。
 var chainTransitions = map[string]map[string]bool{
 	store.ChainStatusPending: {
-		store.ChainStatusApplying: true,
-		store.ChainStatusInvalid:  true,
-		store.ChainStatusDeleted:  true,
+		store.ChainStatusApplying:       true,
+		store.ChainStatusExchangeFailed: true,
+		store.ChainStatusInvalid:        true,
+		store.ChainStatusDeleted:        true,
 	},
 	store.ChainStatusApplying: {
 		store.ChainStatusActive:            true,
@@ -42,6 +43,7 @@ var chainTransitions = map[string]map[string]bool{
 		store.ChainStatusFailed:            true,
 		store.ChainStatusActiveFailed:      true, // 已发布链编辑失败（published_revision_id 仍在）
 		store.ChainStatusWaitingForAgent:   true, // 编辑所需 Agent 离线
+		store.ChainStatusExchangeFailed:    true,
 		store.ChainStatusInvalid:           true,
 		store.ChainStatusDeleted:           true,
 	},
@@ -50,34 +52,39 @@ var chainTransitions = map[string]map[string]bool{
 		store.ChainStatusActiveFailed:   true,
 		store.ChainStatusCleanupPending: true,
 		store.ChainStatusApplying:       true, // 编辑
+		store.ChainStatusExchangeFailed: true,
 		store.ChainStatusInvalid:        true,
 		store.ChainStatusDeleted:        true,
 	},
 	store.ChainStatusDegraded: {
-		store.ChainStatusActive:       true,
-		store.ChainStatusActiveFailed: true,
-		store.ChainStatusApplying:     true, // 编辑
-		store.ChainStatusInvalid:      true,
-		store.ChainStatusDeleted:      true,
+		store.ChainStatusActive:         true,
+		store.ChainStatusActiveFailed:   true,
+		store.ChainStatusApplying:       true, // 编辑
+		store.ChainStatusExchangeFailed: true,
+		store.ChainStatusInvalid:        true,
+		store.ChainStatusDeleted:        true,
 	},
 	store.ChainStatusFailed: {
 		store.ChainStatusApplying:          true, // 重试
 		store.ChainStatusActiveUnconfirmed: true, // 强制发布失败编辑
+		store.ChainStatusExchangeFailed:    true,
 		store.ChainStatusInvalid:           true,
 		store.ChainStatusDeleted:           true,
 	},
 	store.ChainStatusActiveUnconfirmed: {
-		store.ChainStatusActive:       true, // agent 确认
-		store.ChainStatusApplying:     true, // 重试
-		store.ChainStatusFailed:       true,
-		store.ChainStatusActiveFailed: true, // 强制发布后的任务失败（PublishedRevisionID 已置）
-		store.ChainStatusInvalid:      true,
-		store.ChainStatusDeleted:      true,
+		store.ChainStatusActive:         true, // agent 确认
+		store.ChainStatusApplying:       true, // 重试
+		store.ChainStatusFailed:         true,
+		store.ChainStatusActiveFailed:   true, // 强制发布后的任务失败（PublishedRevisionID 已置）
+		store.ChainStatusExchangeFailed: true,
+		store.ChainStatusInvalid:        true,
+		store.ChainStatusDeleted:        true,
 	},
 	store.ChainStatusActiveFailed: {
 		store.ChainStatusApplying:          true, // 重试
 		store.ChainStatusActive:            true, // 重新评估恢复
 		store.ChainStatusActiveUnconfirmed: true, // 强制发布
+		store.ChainStatusExchangeFailed:    true,
 		store.ChainStatusInvalid:           true,
 		store.ChainStatusDeleted:           true,
 	},
@@ -86,15 +93,22 @@ var chainTransitions = map[string]map[string]bool{
 		store.ChainStatusActiveUnconfirmed: true, // 强制发布
 		store.ChainStatusFailed:            true,
 		store.ChainStatusActiveFailed:      true, // 等待期间在途命令失败回执（已发布链编辑）
+		store.ChainStatusExchangeFailed:    true,
 		store.ChainStatusInvalid:           true,
 		store.ChainStatusDeleted:           true,
 	},
 	store.ChainStatusCleanupPending: {
-		store.ChainStatusActive:   true, // 清理完成恢复（运行时健康）
-		store.ChainStatusDegraded: true, // 运行时不健康优先可见（跳离线/端点未生效），清理在后台继续
-		store.ChainStatusApplying: true, // 编辑
-		store.ChainStatusDeleted:  true,
-		store.ChainStatusInvalid:  true,
+		store.ChainStatusActive:         true, // 清理完成恢复（运行时健康）
+		store.ChainStatusDegraded:       true, // 运行时不健康优先可见（跳离线/端点未生效），清理在后台继续
+		store.ChainStatusApplying:       true, // 编辑
+		store.ChainStatusExchangeFailed: true,
+		store.ChainStatusDeleted:        true,
+		store.ChainStatusInvalid:        true,
+	},
+	store.ChainStatusExchangeFailed: {
+		store.ChainStatusApplying: true, // 管理员编辑修复链路
+		store.ChainStatusInvalid:  true, // 服务器删除
+		store.ChainStatusDeleted:  true, // 管理员删除链路
 	},
 	store.ChainStatusInvalid: {
 		store.ChainStatusApplying: true, // 替换缺失 hop 重新发布（编辑）
@@ -307,6 +321,32 @@ func (f *chainFSM) InvalidateForServerDeletion(ctx context.Context, chainID, ser
 	return nil
 }
 
+// MarkExchangeFailed 服务器类型转换无法自动适配链路时将链标记为 exchange_failed：
+// 校验转换合法性 → 事务性废弃在途任务并保留 chain_hops → 撤出订阅与共享端点路由 → 记录操作日志。
+func (f *chainFSM) MarkExchangeFailed(ctx context.Context, chainID, serverID int64, reason string) error {
+	chain, err := f.d.st.ChainByID(ctx, chainID)
+	if err != nil {
+		return fmt.Errorf("chain_fsm: chain %d: %w", chainID, err)
+	}
+	if !validChainTransition(chain.Status, store.ChainStatusExchangeFailed) {
+		log.Printf("chain_fsm: chain %d: illegal exchange_failed transition from %s", chainID, chain.Status)
+		return fmt.Errorf("chain_fsm: illegal exchange_failed transition from %s", chain.Status)
+	}
+	if err := f.d.st.MarkChainExchangeFailed(ctx, chainID, reason, chain.Status); err != nil {
+		if errors.Is(err, store.ErrChainStatusChanged) {
+			return fmt.Errorf("chain_fsm: chain %d: %w (expected %s)", chainID, err, chain.Status)
+		}
+		return fmt.Errorf("chain_fsm: chain %d mark exchange_failed: %w", chainID, err)
+	}
+	log.Printf("chain_fsm: chain %d: %s → exchange_failed (server %d: %s)", chainID, chain.Status, serverID, reason)
+	f.onEnter(ctx, chain, store.ChainStatusExchangeFailed, reason)
+	f.d.recordOperation(logging.OperationEvent{
+		Severity: logging.SeverityWarning, Category: logging.CategoryChain, Action: "chain.exchange_failed",
+		ServerID: &serverID, Detail: map[string]any{"chain_id": chainID, "reason": reason},
+	})
+	return nil
+}
+
 // ResumeChainsByServer 恢复指定服务器上处于编排中的链（Agent 重连后调用）：
 // applying/waiting_for_agent/active_unconfirmed 状态的链重新推进编排。
 // 与 ResumeChains（启动时全量恢复）互补，覆盖运行时 Agent 重连场景。
@@ -352,10 +392,22 @@ func (f *chainFSM) ResumeChainsByServer(ctx context.Context, serverID int64) {
 // 注意：详细的失败日志/告警由调用方（failChain）处理，此处仅做轻量级通用副作用。
 func (f *chainFSM) onEnter(ctx context.Context, chain *store.Chain, state, detail string) {
 	switch state {
-	case store.ChainStatusInvalid:
+	case store.ChainStatusInvalid, store.ChainStatusExchangeFailed:
 		if f.d.events.OnChainPublished != nil {
 			if err := f.d.events.OnChainPublished(ctx, chain.ID); err != nil {
-				log.Printf("chain_fsm: enqueue subscriptions for invalid chain %d: %v", chain.ID, err)
+				log.Printf("chain_fsm: enqueue subscriptions for %s chain %d: %v", state, chain.ID, err)
+			}
+		}
+		if state == store.ChainStatusExchangeFailed {
+			if chain.EndpointID != 0 {
+				if err := f.d.ReconcileSharedEndpoint(ctx, chain.EndpointID); err != nil {
+					log.Printf("chain_fsm: reconcile shared endpoint %d for exchange_failed chain %d: %v", chain.EndpointID, chain.ID, err)
+				}
+			}
+			if chain.ServiceEndpointID != 0 && chain.ServiceEndpointID != chain.EndpointID {
+				if err := f.d.ReconcileSharedEndpoint(ctx, chain.ServiceEndpointID); err != nil {
+					log.Printf("chain_fsm: reconcile service endpoint %d for exchange_failed chain %d: %v", chain.ServiceEndpointID, chain.ID, err)
+				}
 			}
 		}
 	case store.ChainStatusApplying:

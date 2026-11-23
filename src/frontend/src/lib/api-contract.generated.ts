@@ -300,6 +300,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /**
+         * @description 更新服务器信息与公网地址，并支持 direct / nat / external 三种服务器类型及 NAT 可用端口段的互相转换。
+         *     当 kind=external→managed 时返回 bootstrap_token、install_command 与 install_insecure。
+         *     当类型或可用端口段变化时，对受影响链路自动执行 TryExchange，并在响应中返回 exchange 汇总；
+         *     无法自动适配的链路会转换到 exchange_failed（「转换失败」）。
+         */
         post: operations["serverUpdate"];
         delete?: never;
         options?: never;
@@ -2121,6 +2127,12 @@ export interface components {
              */
             next_renewal_on: string;
         };
+        PortRange: {
+            pub_start: number;
+            pub_end: number;
+            listen_start?: number;
+            listen_end?: number;
+        };
         /** @description Panel-editable server fields. Only the declared fields are validated here; extra fields follow existing RPC semantics. */
         ServerUpdateRequest: {
             server_id: number;
@@ -2130,6 +2142,18 @@ export interface components {
             address?: string;
             /** @description Optional full replacement of the public address list. Omitted keeps legacy semantics (only address is maintained). When provided, address must be a member. */
             addresses?: string[];
+            /**
+             * @description Switch between managed Agent server and unmanaged external exit.
+             * @enum {string}
+             */
+            kind?: "managed" | "external";
+            /**
+             * @description Switch between direct IP and NAT (only applicable when kind resolves to managed).
+             * @enum {string}
+             */
+            machine_type?: "direct" | "nat";
+            /** @description Optional full replacement of NAT available port ranges (omitted keeps existing ranges; empty/null converts NAT to exit-only or direct). */
+            allowed_ports?: components["schemas"]["PortRange"][] | null;
             tags?: string[];
             country_code?: string;
             location?: string;

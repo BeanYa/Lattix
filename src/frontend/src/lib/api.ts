@@ -50,7 +50,9 @@ import type {
   ServerTestCatalogStatus,
   ServerTestCategory,
   ServerTestTask,
+  ServerUpdateRequest,
   SubSettings,
+  UpdateServerResponse,
   SubscriptionDefaultConfig,
   SubscriptionRoutingProfile,
   SubscriptionPreview,
@@ -170,6 +172,8 @@ export const api = {
   // 未托管外部直链节点：创建/编辑前的链接解析预览（不落库）。
   parseExternalLink: (link: string) =>
     requester.post<ParseExternalLinkResponse>('/api/server/parse-link', { link }),
+  updateServer: (body: ServerUpdateRequest) =>
+    requester.post<UpdateServerResponse>('/api/server/update', body),
   // 未托管外部直链节点的编辑提交：协议参数为提交来源（external_exit），分享链接可选
   //（用于溯源/再次解析）；地址由规格派生，其余资料与托管服务器共用。
   updateServerExternal: (
@@ -184,7 +188,7 @@ export const api = {
     externalExit: ExternalExit,
     externalLink?: string,
   ) =>
-    requester.post<Server>('/api/server/update', {
+    requester.post<UpdateServerResponse>('/api/server/update', {
       server_id: serverId,
       alias: alias.trim(),
       external_exit: externalExit,
@@ -243,7 +247,7 @@ export const api = {
     addresses?: string[],
     nonDirect?: boolean,
   ) =>
-    requester.post<Server>('/api/server/update', {
+    requester.post<UpdateServerResponse>('/api/server/update', {
       server_id: serverId,
       alias: alias.trim(),
       address: address.trim(),
@@ -270,7 +274,7 @@ export const api = {
     addresses?: string[],
     nonDirect?: boolean,
   ) =>
-    requester.post<Server>('/api/server/update', {
+    requester.post<UpdateServerResponse>('/api/server/update', {
       server_id: serverId,
       alias: alias.trim(),
       address: address.trim(),

@@ -620,6 +620,9 @@ func (d *Dispatcher) AuthenticateToken(ctx context.Context, token string) (ws.Au
 	if err != nil {
 		return ws.AuthResult{}, err
 	}
+	if srv.IsExternal() {
+		return ws.AuthResult{}, ws.ErrAuthentication
+	}
 	credential, err := shared.ParseCredential(token)
 	if err != nil {
 		return ws.AuthResult{}, ws.ErrAuthentication

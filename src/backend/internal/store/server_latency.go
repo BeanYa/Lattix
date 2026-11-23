@@ -125,13 +125,13 @@ func (s *Store) PublishedLatencyEdges(ctx context.Context) ([]ServerLatencyEdge,
 	for i := range servers {
 		byID[servers[i].ID] = &servers[i]
 	}
-	// 仅展开仍在跑的已发布链路：invalid（如服务器删除后级联失效）与 deleted 链的
-	// published_revision_id 作为历史保留，但其快照不再是生效拓扑——继续展开会把
-	// 已删除服务器当作测速目标（与订阅目录 catalogChain 口径一致）。
+	// 仅展开仍在跑的已发布链路：invalid（如服务器删除后级联失效）、exchange_failed（类型转换失败）
+	// 与 deleted 链的 published_revision_id 作为历史保留，但其快照不再是生效拓扑——继续展开会
+	// 把失效链路当作测速目标（与订阅目录 catalogChain 口径一致）。
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id, r.snapshot FROM chains c
 		JOIN chain_revisions r ON r.id=c.published_revision_id
-		WHERE c.deleted_at IS NULL AND c.status NOT IN (?, ?) AND c.published_revision_id != 0
-		ORDER BY c.id`, ChainStatusInvalid, ChainStatusDeleted)
+		WHERE c.deleted_at IS NULL AND c.status NOT IN (?, ?, ?) AND c.published_revision_id != 0
+		ORDER BY c.id`, ChainStatusInvalid, ChainStatusDeleted, ChainStatusExchangeFailed)
 	if err != nil {
 		return nil, fmt.Errorf("query published chains: %w", err)
 	}

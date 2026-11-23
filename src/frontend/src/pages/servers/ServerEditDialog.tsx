@@ -23,10 +23,11 @@ import {
 } from '@/components/ui/select'
 import { addressFamily } from '@/lib/address'
 import type { Provider } from '@/lib/types'
+import { cn } from '@/lib/utils'
 
 import { BillingTrafficFields, PortRowsEditor } from './server-form-fields'
 import { ExternalExitFields } from './ExternalExitFields'
-import { addrCandidates } from './server-form-utils'
+import { SERVER_TYPES, addrCandidates, serverTypeOf } from './server-form-utils'
 import type { ServerEditFormController } from './use-server-edit-form'
 
 /** 编辑服务器对话框（视图）；状态与提交逻辑在 useServerEditForm。 */
@@ -50,6 +51,7 @@ export function ServerEditDialog({
     citySuggestions,
     addCandidates,
     addAddress,
+    setServerType,
     setCountry,
     setExternalLink,
     setExternalExit,
@@ -57,7 +59,10 @@ export function ServerEditDialog({
     closeEdit,
     onSubmit,
   } = controller
-  const external = target?.kind === 'external'
+  const currentServerType = target ? serverTypeOf(target) : 'direct'
+  const external = form.serverType === 'external'
+  const isNat = form.serverType === 'nat'
+  const typeChanged = target !== null && form.serverType !== currentServerType
   return (
     <Dialog open={target !== null} onOpenChange={(next) => !next && closeEdit()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
@@ -65,13 +70,60 @@ export function ServerEditDialog({
           <DialogTitle>编辑服务器</DialogTitle>
           <DialogDescription>
             {external
-              ? `修改「${target?.alias}」的外部协议参数与资料。协议参数变更且被链路引用时会被拒绝，请先调整引用链路。`
-              : target?.machine_type === 'nat'
-                ? `修改「${target?.alias}」的公网地址与可用端口段（NAT 类型地址必填；端口段收窄时存量节点/链跳端口不得越界）。机器类型建后不可互转。`
-                : `修改「${target?.alias}」的公网地址，订阅中节点地址随之更新。内置地址来自 agent 上报的网卡地址与拨入学习地址；自定义留空则下次 agent 连接时按拨入地址重新自动学习。`}
+              ? `修改「${target?.alias}」的服务器类型、外部直链协议参数与资料。`
+              : `修改「${target?.alias}」的服务器类型、公网地址、可用端口段与配置；类型或可用端口变化时，受影响链路将自动执行 TryExchange。`}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label id="edit-server-type-label">服务器类型</Label>
+            <div
+              role="radiogroup"
+              aria-labelledby="edit-server-type-label"
+              className="grid grid-cols-3 gap-2"
+            >
+              {SERVER_TYPES.map(([value, label]) => (
+                <label
+                  key={value}
+                  className={cn('sv-radio-card', form.serverType === value && 'is-active')}
+                >
+                  <input
+                    type="radio"
+                    name="edit-server-type"
+                    value={value}
+                    checked={form.serverType === value}
+                    onChange={() => setServerType(value)}
+                    className="sr-only"
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            {typeChanged ? (
+              form.serverType === 'external' ? (
+                <div className="sv-inline-warning">
+                  <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    转为外部直链将断开面板控制并吊销 Agent 凭证（不会远程卸载目标机 Xray）；当前受影响链路将标记为「转换失败」并在订阅中下线。
+                  </span>
+                </div>
+              ) : currentServerType === 'external' ? (
+                <div className="sv-inline-note">
+                  <CableIcon className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    转为托管服务器后将生成新的 Agent 安装命令；引用该节点的链路将自动尝试重编排，无法适配的链路将在链路页标记为「转换失败」。
+                  </span>
+                </div>
+              ) : (
+                <div className="sv-inline-note">
+                  <CableIcon className="mt-0.5 size-3.5 shrink-0" />
+                  <span>
+                    切换服务器类型或调整 NAT 可用端口后，系统将自动对受影响链路执行 TryExchange 切换端口与传输；无法自动适配的链路将在链路页标记为「转换失败」。
+                  </span>
+                </div>
+              )
+            ) : null}
+          </div>
           <div className="space-y-2">
             <Label htmlFor="editAlias">名称</Label>
             <Input
@@ -159,7 +211,7 @@ export function ServerEditDialog({
           </label>
           {external ? null : (
             <div className="space-y-2">
-              <Label>公网地址{target?.machine_type === 'nat' ? '（必填）' : ''}</Label>
+              <Label>公网地址{isNat ? '（必填）' : ''}</Label>
               {form.addresses.length > 0 ? (
                 <div className="space-y-1.5">
                   {form.addresses.map((addr) => {
@@ -282,7 +334,7 @@ export function ServerEditDialog({
               </Select>
             </div>
           )}
-          {external ? null : target?.machine_type === 'nat' ? (
+          {isNat ? (
             <div className="space-y-2">
               <Label>可用端口</Label>
               <PortRowsEditor rows={form.portRows} onChange={(portRows) => patch({ portRows })} />
@@ -312,8 +364,8 @@ export function ServerEditDialog({
               type="submit"
               disabled={
                 saving ||
-                !form.alias.trim() ||
-                (!external && target?.machine_type === 'nat' && !form.defaultAddr)
+                (!external && (!form.alias.trim() || !form.countryCode)) ||
+                (isNat && !form.defaultAddr)
               }
             >
               {saving ? '保存中…' : '保存'}
