@@ -10,6 +10,9 @@ import {
   INTERNET_R,
   entryPortPoint,
   exitPortPoint,
+  inboundCapable,
+  isExternalServer,
+  isUsableExternalServer,
 } from './chain-canvas'
 import { fitViewport, panViewport, screenToWorld, zoomAt, type Point } from './canvas-viewport'
 import { routeCanvasEdge } from './canvas-edge-routing'
@@ -214,13 +217,21 @@ export function ChainCanvas({
         ),
       )
   }
-  const name = (id: string) =>
-    id === INGRESS_NODE_ID
-      ? '入网流量'
-      : id === INTERNET_NODE_ID
-        ? 'Internet'
-        : (controller.serverById.get(nodes.find((n) => n.id === id)?.serverId ?? -1)?.alias ??
-          '服务器')
+  const name = (id: string) => {
+    if (id === INGRESS_NODE_ID) return '入网流量'
+    if (id === INTERNET_NODE_ID) return 'Internet'
+    const serverId = nodes.find((n) => n.id === id)?.serverId
+    return (
+      controller.serverById.get(serverId ?? -1)?.alias ??
+      (serverId !== undefined ? `已删除服务器 #${serverId}` : '服务器')
+    )
+  }
+  const usedServerIds = useMemo(() => new Set(nodes.map((node) => node.serverId)), [nodes])
+  const availableServers = useMemo(
+    () =>
+      [...controller.serverById.values()].filter((candidate) => !usedServerIds.has(candidate.id)),
+    [controller.serverById, usedServerIds],
+  )
 
   return (
     <div
@@ -401,6 +412,7 @@ export function ChainCanvas({
           onPortClick={() => controller.exitPortClick(INGRESS_NODE_ID)}
         />
         {nodes.map((node) => {
+          const server = controller.serverById.get(node.serverId)
           const role = controller.roleOf(node.id)
           const roles = controller.rolesOf(node.id)
           const portRole = controller.portRoleOf(node.id)
@@ -408,11 +420,19 @@ export function ChainCanvas({
             [roles.entry && '入口', roles.middle && '中转', roles.exit && '出口']
               .filter(Boolean)
               .join('·') || '未接入'
+          const replacementServers = !server
+            ? availableServers.filter((candidate) => {
+                if (roles.entry || roles.middle) {
+                  return !isExternalServer(candidate) && inboundCapable(candidate)
+                }
+                return isExternalServer(candidate) ? isUsableExternalServer(candidate) : true
+              })
+            : undefined
           return (
             <ChainNodeCard
               key={node.id}
               node={node}
-              server={controller.serverById.get(node.serverId)}
+              server={server}
               role={role}
               roleLabel={roleLabel}
               portEditable={portRole.editable}
@@ -430,6 +450,10 @@ export function ChainCanvas({
                 onEditOrchestration ? () => onEditOrchestration(node.serverId) : undefined
               }
               orchestrationLocked={orchestrationLocked}
+              replacementServers={replacementServers}
+              onReplaceServer={
+                !server ? (newServerId) => controller.replaceNode(node.id, newServerId) : undefined
+              }
               toWorld={toWorld}
               onExitPortClick={() => controller.exitPortClick(node.id)}
               onEntryPortClick={() => controller.entryPortClick(node.id)}

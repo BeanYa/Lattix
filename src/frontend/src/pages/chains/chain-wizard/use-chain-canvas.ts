@@ -92,6 +92,12 @@ export function useChainCanvas({
     [state.nodes, serverById, orchestratedServerIds, confirmRemoveOrchestration],
   )
   const removeNode = useCallback((id: string) => dispatch({ type: 'remove', id }), [])
+  const replaceNode = useCallback(
+    (id: string, serverId: number) => {
+      if (serverById.has(serverId)) dispatch({ type: 'replace', id, serverId })
+    },
+    [serverById],
+  )
   const moveNode = useCallback(
     (id: string, x: number, y: number) => dispatch({ type: 'move', id, point: { x, y } }),
     [],
@@ -175,6 +181,7 @@ export function useChainCanvas({
     addNode,
     addVisibleNode,
     removeNode,
+    replaceNode,
     requestRemoveNode,
     moveNode,
     moveTerminal,

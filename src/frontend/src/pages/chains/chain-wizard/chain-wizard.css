@@ -350,8 +350,8 @@
   cursor: pointer;
 }
 .cw-node-orch:hover {
-  color: var(--panel-ink-1);
-  border-color: color-mix(in oklab, #f5b301 45%, var(--panel-edge-strong));
+  color: var(--panel-ink);
+  border-color: color-mix(in oklab, var(--panel-warning) 55%, var(--panel-edge-strong));
 }
 /* 画布会缩放：胶囊视觉尺寸随缩放变小，这里补一圈透明命中区，保证好点。 */
 .cw-node-orch::after {
@@ -368,7 +368,7 @@
   height: 7px;
   flex: none;
   border-radius: 999px;
-  background: #f5b301;
+  background: var(--panel-warning);
 }
 .cw-node-orch.is-locked {
   cursor: not-allowed;
@@ -379,11 +379,11 @@
   border-color: var(--panel-edge-strong);
 }
 .cw-node-orch.is-configured {
-  color: var(--panel-ink-1);
-  border-color: color-mix(in oklab, #f5b301 55%, var(--panel-edge-strong));
+  color: var(--panel-ink);
+  border-color: color-mix(in oklab, var(--panel-warning) 60%, var(--panel-edge-strong));
 }
 .cw-node-orch.is-configured .cw-node-orch-dot {
-  box-shadow: 0 0 0 3px color-mix(in oklab, #f5b301 22%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--panel-warning) 24%, transparent);
 }
 
 .cw-node-card {
@@ -434,8 +434,81 @@
   cursor: grabbing;
 }
 
+.cw-node.is-active .cw-node-card {
+  border-color: color-mix(in srgb, var(--panel-signal) 58%, var(--panel-edge-strong));
+}
+
 .cw-node.is-issue .cw-node-card {
   border-color: var(--panel-status-failed);
+}
+
+.cw-node.is-missing .cw-node-card {
+  border-style: dashed;
+}
+
+.cw-node-missing-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--panel-status-failed);
+}
+
+.cw-node-missing-copy {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--panel-ink-2);
+}
+
+.cw-node-missing-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.cw-node-missing-remove {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--panel-status-failed) 45%, transparent);
+  border-radius: var(--radius-xs);
+  background: var(--panel-status-failed-soft);
+  color: var(--panel-status-failed);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color var(--duration-1) var(--ease-standard);
+}
+
+.cw-node-missing-remove:hover {
+  background: color-mix(in srgb, var(--panel-status-failed) 22%, transparent);
+}
+
+.cw-node-missing-remove:focus-visible {
+  outline: 2px solid var(--panel-focus);
+  outline-offset: 2px;
+}
+
+.cw-node-missing-port {
+  margin-left: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--panel-ink-3);
+}
+
+.cw-node-replace-row {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  padding: 0 14px;
+  min-width: 0;
+}
+
+.cw-node-replace-trigger {
+  width: 100%;
+  height: 30px;
+  font-size: 12px;
+  background: var(--panel-inset);
 }
 
 .cw-node.is-warning .cw-node-card {
@@ -699,6 +772,12 @@
   border-color: var(--panel-signal);
 }
 
+.cw-port-exit.is-connecting {
+  border-color: var(--panel-signal);
+  box-shadow: 0 0 0 4px var(--panel-signal-soft);
+  transform: scale(1.12);
+}
+
 /* 入口圆点骑左边缘，与端口行居中对齐。 */
 .cw-port-entry {
   left: calc(-1 * var(--cw-port-r) - 1px);
@@ -776,6 +855,13 @@
   padding: 4px 8px;
   font-size: 11px;
   color: var(--panel-ink-3);
+}
+
+/* 缩放画布中，下拉弹层按内容自撑开，避免缩小时把 IPv6 地址或提示语裁切。 */
+.cw-node-select-content {
+  width: max-content;
+  min-width: max(var(--anchor-width, 0px), 11rem);
+  max-width: 22rem;
 }
 
 .cw-port.is-target {

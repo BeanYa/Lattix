@@ -30,6 +30,7 @@ export interface CanvasState {
 export type CanvasAction =
   | { type: 'add'; serverId: number; point: Point }
   | { type: 'remove'; id: string }
+  | { type: 'replace'; id: string; serverId: number }
   | { type: 'move'; id: string; point: Point }
   | { type: 'terminal-move'; id: string; point: Point }
   | { type: 'port'; id: string; value: string }
@@ -121,6 +122,20 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
           ? state.edges.filter((e) => e.from !== action.id && e.to !== action.id)
           : createCanvasState().edges,
         connecting: state.connecting?.from === action.id ? null : state.connecting,
+        portEditingId: state.portEditingId === action.id ? null : state.portEditingId,
+        connectionError: '',
+      }
+    }
+    case 'replace': {
+      if (!state.nodes.some((n) => n.id === action.id)) return state
+      if (state.nodes.some((n) => n.id !== action.id && n.serverId === action.serverId)) {
+        return state
+      }
+      return {
+        ...state,
+        nodes: state.nodes.map((n) =>
+          n.id === action.id ? { ...n, serverId: action.serverId, address: '' } : n,
+        ),
         portEditingId: state.portEditingId === action.id ? null : state.portEditingId,
         connectionError: '',
       }
@@ -246,13 +261,24 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
     case 'reset':
       return createCanvasState()
     case 'prefill': {
+      const base = createCanvasState()
+      const hasNodes = action.nodes.length > 0
+      const minLeft = hasNodes ? Math.min(...action.nodes.map((n) => n.x)) : 0
+      const maxRight = hasNodes ? Math.max(...action.nodes.map((n) => n.x + CARD_W)) : 0
+      const midY = hasNodes
+        ? Math.round(
+            action.nodes.reduce((sum, n) => sum + n.y + CARD_H / 2, 0) / action.nodes.length,
+          )
+        : 0
       const imported: CanvasState = {
-        ...createCanvasState(),
+        ...base,
         nodes: action.nodes.map((n) => ({
           ...n,
           candidates: n.candidates ? [...n.candidates] : [],
         })),
         edges: [],
+        ingressPos: hasNodes ? { x: minLeft - 96 - INTERNET_R, y: midY } : base.ingressPos,
+        internetPos: hasNodes ? { x: maxRight + 96 + INTERNET_R, y: midY } : base.internetPos,
         nextNodeId:
           Math.max(0, ...action.nodes.map((n) => Number(n.id.replace(/^n/, '')) || 0)) + 1,
       }
@@ -261,7 +287,7 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
         if (imported.edges.some((e) => e.from === edge.from && e.to === edge.to)) continue
         if (!connectionError(imported, edge.from, edge.to)) imported.edges.push({ ...edge })
       }
-      if (!imported.nodes.length) imported.edges = createCanvasState().edges
+      if (!imported.nodes.length) imported.edges = base.edges
       return imported
     }
   }

@@ -88,3 +88,19 @@ it('falls back to the traffic row when the server has no probe samples', async (
   expect(container.querySelector('.cw-probe-row')).toBeNull()
   expect(container.querySelector('.cw-node-traffic')).toBeTruthy()
 })
+
+it('rounds fractional byte rates cleanly in the traffic fallback row', async () => {
+  const withMetrics = {
+    ...server,
+    metrics: {
+      network_rx_bps: 322.51513758036526,
+      network_tx_bps: 444.9426499146418,
+    },
+  } as unknown as Server
+  await act(async () =>
+    root.render(<ServerProbeMini server={withMetrics} probeRows={[]} probeTitle={null} />),
+  )
+  const text = container.querySelector('.cw-node-traffic')?.textContent ?? ''
+  expect(text).toContain('↓ 323 B/s')
+  expect(text).toContain('↑ 445 B/s')
+})

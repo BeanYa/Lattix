@@ -3,7 +3,7 @@ import {
   probeRoundTone,
   probeStripRounds,
 } from '@/components/server-probe-strip'
-import { humanizeBytes } from '@/lib/format'
+import { formatByteRate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type { CatalogProbeRow, Server } from '@/lib/types'
 
@@ -22,18 +22,8 @@ export function ServerProbeMini({
   if (probeRows.length === 0) {
     return (
       <div className="cw-node-traffic" aria-label="上下行速率">
-        <span>
-          ↓{' '}
-          {server.metrics?.network_rx_bps != null
-            ? `${humanizeBytes(server.metrics.network_rx_bps)}/s`
-            : '—'}
-        </span>
-        <span>
-          ↑{' '}
-          {server.metrics?.network_tx_bps != null
-            ? `${humanizeBytes(server.metrics.network_tx_bps)}/s`
-            : '—'}
-        </span>
+        <span>↓ {formatByteRate(server.metrics?.network_rx_bps ?? null)}</span>
+        <span>↑ {formatByteRate(server.metrics?.network_tx_bps ?? null)}</span>
       </div>
     )
   }

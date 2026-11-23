@@ -199,19 +199,32 @@ func (s *Server) toChainDTOWith(r *http.Request, c store.Chain, cc *chainDTOCont
 			out.EntryShared = count >= 2
 		}
 	}
-	if len(hops) == 0 && c.PublishedRevisionID != 0 {
-		if revision, err := s.st.PublishedChainRevision(r.Context(), c.ID); err == nil {
-			for seq, hop := range revision.Snapshot.Hops {
+	if (len(hops) == 0 || c.Status == store.ChainStatusInvalid) && c.PublishedRevisionID != 0 {
+		if revision, err := s.st.PublishedChainRevision(r.Context(), c.ID); err == nil && len(revision.Snapshot.Hops) > len(hops) {
+			bySeq := make(map[int]store.ChainHop, len(hops))
+			for _, h := range hops {
+				bySeq[h.Seq] = h
+			}
+			merged := make([]store.ChainHop, 0, len(revision.Snapshot.Hops))
+			for seq, snapHop := range revision.Snapshot.Hops {
+				if existing, ok := bySeq[seq]; ok {
+					merged = append(merged, existing)
+					continue
+				}
 				nodeID := int64(0)
 				if seq == len(revision.Snapshot.Hops)-1 {
 					nodeID = revision.Snapshot.ServiceNodeID
 				}
-				hops = append(hops, store.ChainHop{ID: hop.HopID, ChainID: c.ID, Seq: seq,
-					ServerID: hop.ServerID, Role: hop.Role, NodeID: nodeID, ForwardPort: hop.ForwardPort,
-					Address:    hop.Address,
-					PortalPort: hop.PortalPort, PortalPublicKey: hop.PortalPublicKey,
-					PortalServerName: hop.PortalServerName, TunnelUUID: hop.TunnelUUID})
+				merged = append(merged, store.ChainHop{
+					ID: snapHop.HopID, ChainID: c.ID, Seq: seq,
+					ServerID: snapHop.ServerID, Role: snapHop.Role, NodeID: nodeID,
+					Status: store.HopStatusFailed, Error: "服务器已删除",
+					ForwardPort: snapHop.ForwardPort, Address: snapHop.Address,
+					PortalPort: snapHop.PortalPort, PortalPublicKey: snapHop.PortalPublicKey,
+					PortalServerName: snapHop.PortalServerName, TunnelUUID: snapHop.TunnelUUID,
+				})
 			}
+			hops = merged
 		}
 	}
 	totals, err := s.st.ChainTrafficTotals(r.Context(), c.ID)

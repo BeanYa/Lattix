@@ -393,6 +393,95 @@ func TestEditChainStillBlockedWhileApplying(t *testing.T) {
 	}
 }
 
+func TestChainDTOPreservesDeletedMiddleHopForInvalidChain(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	server := func(alias, token string) int64 {
+		id, err := st.CreateServer(ctx, store.ServerDraft{
+			Alias: alias, Address: alias + ".example.com",
+			BootstrapToken: token, MachineType: store.MachineTypeDirect, CountryCode: "US",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	aID, bID, cID := server("a", "token-a"), server("b", "token-b"), server("c", "token-c")
+	port := 3000
+	nodeRequest := createNodeRequest{
+		Name: "chain", ServerID: cID, Protocol: shared.ProtocolVLESS,
+		Port: &port, ShortID: "0123456789abcdef", Dest: "dl.google.com:443",
+		ServerNames: []string{"dl.google.com"}, Fingerprint: shared.FingerprintChrome,
+		Network: shared.NetworkTCP, Flow: shared.FlowVision,
+	}
+	if err := nodeRequest.normalize(); err != nil {
+		t.Fatal(err)
+	}
+	config, _ := json.Marshal(buildVirtualConfig(nodeRequest))
+	nodeID, _ := st.InsertNode(ctx, "chain", cID, shared.ProtocolVLESS, &port, config)
+	realized, _ := json.Marshal(shared.RealizedConfig{
+		Port: port, PublicKey: "public-key", ShortID: nodeRequest.ShortID,
+		ServerName: "dl.google.com", Network: shared.NetworkTCP,
+		Flow: shared.FlowVision, Fingerprint: shared.FingerprintChrome,
+	})
+	_ = st.SetNodeActive(ctx, nodeID, realized)
+	chainID, _ := st.InsertChain(ctx, "chain")
+	aHop, _ := st.InsertChainHop(ctx, chainID, 0, aID, store.HopRoleEntry, 0, 1000, "")
+	bHop, _ := st.InsertChainHop(ctx, chainID, 1, bID, store.HopRoleMiddle, 0, 2000, "")
+	cHop, _ := st.InsertChainHop(ctx, chainID, 2, cID, store.HopRoleExit, nodeID, port, "")
+	_ = st.SetChainServiceNode(ctx, chainID, nodeID)
+	for _, hopID := range []int64{aHop, bHop, cHop} {
+		_ = st.SetChainHopStatus(ctx, hopID, store.HopStatusActive, "")
+	}
+	revision, err := st.CreateChainRevision(ctx, chainID, store.ChainRevisionSnapshot{
+		Name: "chain", ServiceNodeID: nodeID, ServiceServerID: cID,
+		ServiceConfig: config, ServiceRealized: realized, TrafficMultiplierMilli: 1000,
+		Hops: []store.ChainRevisionHop{
+			{HopID: aHop, ServerID: aID, Role: store.HopRoleEntry, Transport: "direct", ForwardPort: 1000},
+			{HopID: bHop, ServerID: bID, Role: store.HopRoleMiddle, Transport: "direct", ForwardPort: 2000},
+			{HopID: cHop, ServerID: cID, Role: store.HopRoleExit, ForwardPort: port},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PublishChainRevision(ctx, revision.ID, false); err != nil {
+		t.Fatal(err)
+	}
+
+	requester := &chainEditRequester{online: map[int64]bool{aID: true, cID: true}}
+	dispatcher := dispatch.New(st, requester, dispatch.Options{}, dispatch.Events{})
+	serverAPI := &Server{st: st, disp: dispatcher, req: requester}
+	if err := dispatcher.ChainFSM().InvalidateForServerDeletion(ctx, chainID, bID, "服务器已删除"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteServerCascade(ctx, bID); err != nil {
+		t.Fatal(err)
+	}
+
+	chain, err := st.ChainByID(ctx, chainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dto, err := serverAPI.toChainDTO(httptest.NewRequest("GET", "/api/chain/list", nil), *chain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dto.Hops) != 3 {
+		t.Fatalf("len(dto.Hops) = %d, want 3 (%+v)", len(dto.Hops), dto.Hops)
+	}
+	if dto.Hops[0].ServerID != aID || dto.Hops[1].ServerID != bID || dto.Hops[2].ServerID != cID {
+		t.Fatalf("unexpected hops order: %+v", dto.Hops)
+	}
+	if dto.Hops[1].ServerAlias != "" || dto.Hops[1].Status != store.HopStatusFailed || dto.Hops[1].Error != "服务器已删除" {
+		t.Fatalf("unexpected deleted hop dto: %+v", dto.Hops[1])
+	}
+}
+
 func formatID(value int64) string {
 	raw, _ := json.Marshal(value)
 	return string(raw)

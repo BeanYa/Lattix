@@ -238,3 +238,77 @@ it('卡片上方的自动编排入口：有图时显示备选数，点击打开�
     host.remove()
   }
 })
+
+it('服务器已被删除时仍渲染完整缺省卡片、端口与移除/替换操作', async () => {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  const candidates = [
+    {
+      id: 9,
+      alias: 'SG-Replace',
+      country_code: 'SG',
+      machine_type: 'direct',
+      addresses: ['203.0.113.9'],
+      allowed_ports: [],
+    } as unknown as Server,
+  ]
+  let removed = 0
+  let replacedWith: number | null = null
+  try {
+    await act(async () =>
+      root.render(
+        <ChainNodeCard
+          node={{ id: 'm1', serverId: 99, x: 0, y: 0, port: '8443', address: '' }}
+          server={undefined}
+          role="middle"
+          portEditable={false}
+          hasIssue
+          isConnecting={false}
+          portEditing={false}
+          outgoingConnected
+          incomingConnected
+          probeRows={[]}
+          probeTitle={null}
+          replacementServers={candidates}
+          onReplaceServer={(id) => (replacedWith = id)}
+          toWorld={(x, y) => ({ x, y })}
+          onMove={() => {}}
+          onExitPortClick={() => {}}
+          onEntryPortClick={() => {}}
+          onRemove={() => (removed += 1)}
+          onPortChange={() => {}}
+          onPortEditToggle={() => {}}
+          onAddressChange={() => {}}
+        />,
+      ),
+    )
+    const missingCard = host.querySelector('.cw-node.is-missing') as HTMLElement
+    expect(missingCard).toBeTruthy()
+    expect(missingCard.textContent).toContain('已删除服务器 #99')
+    expect(missingCard.textContent).toContain('原端口 8443')
+    expect(host.querySelector('[aria-label="入口端口：#99"]')).toBeTruthy()
+    expect(host.querySelector('[aria-label="出口端口：#99"]')).toBeTruthy()
+    expect(host.querySelector('.cw-node-orch')).toBeNull()
+
+    await act(async () =>
+      (host.querySelector('.cw-node-missing-remove') as HTMLButtonElement).click(),
+    )
+    expect(removed).toBe(1)
+
+    await act(async () =>
+      host
+        .querySelector('[aria-label="替换已删除服务器：#99"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true })),
+    )
+    const option = [...document.querySelectorAll('[role="option"]')].find((el) =>
+      el.textContent?.includes('SG-Replace'),
+    )!
+    expect(option).toBeTruthy()
+    await act(async () => option.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(replacedWith).toBe(9)
+  } finally {
+    await act(async () => root.unmount())
+    host.remove()
+  }
+})

@@ -306,4 +306,56 @@ describe('rebuilt topology canvas interactions', () => {
     await act(async () => controller.cancelConnect())
     expect(host.querySelector('[role="alert"]')).toBeNull()
   })
+
+  it('回填含已删除服务器的链路时渲染缺失卡，支持原地替换保留连线或直接移除节点', async () => {
+    await act(async () => {
+      controller.prefill(
+        [
+          { id: 'n1', serverId: 1, x: 100, y: 200, port: '443', address: '' },
+          { id: 'n2', serverId: 999, x: 460, y: 200, port: '', address: '' },
+        ],
+        [
+          { from: INGRESS_NODE_ID, to: 'n1' },
+          { from: 'n1', to: 'n2' },
+          { from: 'n2', to: INTERNET_NODE_ID },
+        ],
+      )
+    })
+    expect(host.querySelector('.cw-node.is-missing')?.textContent).toContain('已删除服务器 #999')
+    expect(host.querySelector('[aria-label="断开连线：HK → 已删除服务器 #999"]')).toBeTruthy()
+    expect(controller.validation.issues.some((i) => i.code === 'server_missing')).toBe(true)
+
+    // 原地替换成 SG (id=2)，连线保持完整且校验转绿
+    await act(async () =>
+      host
+        .querySelector('[aria-label="替换已删除服务器：#999"]')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true })),
+    )
+    const option = [...document.querySelectorAll('[role="option"]')].find((el) =>
+      el.textContent?.includes('SG'),
+    )!
+    await act(async () => option.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(host.querySelector('.cw-node.is-missing')).toBeNull()
+    expect(host.querySelector('[aria-label="断开连线：HK → SG"]')).toBeTruthy()
+    expect(host.querySelector('[aria-label="断开连线：SG → Internet"]')).toBeTruthy()
+    expect(controller.validation.valid).toBe(true)
+
+    // 再次回填缺失节点并测试直接移除：节点和前后连线一并清除
+    await act(async () => {
+      controller.prefill(
+        [
+          { id: 'n1', serverId: 1, x: 100, y: 200, port: '443', address: '' },
+          { id: 'n2', serverId: 999, x: 460, y: 200, port: '', address: '' },
+        ],
+        [
+          { from: INGRESS_NODE_ID, to: 'n1' },
+          { from: 'n1', to: 'n2' },
+          { from: 'n2', to: INTERNET_NODE_ID },
+        ],
+      )
+    })
+    await click('移除节点 #999')
+    expect(controller.nodes).toHaveLength(1)
+    expect(controller.edges).toEqual([{ from: INGRESS_NODE_ID, to: 'n1' }])
+  })
 })

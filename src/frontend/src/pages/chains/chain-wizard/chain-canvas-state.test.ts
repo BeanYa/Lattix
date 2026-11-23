@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { INGRESS_NODE_ID, INTERNET_NODE_ID, MAX_CANVAS_NODES } from './chain-canvas'
+import {
+  CARD_H,
+  CARD_W,
+  INGRESS_NODE_ID,
+  INGRESS_POS,
+  INTERNET_NODE_ID,
+  INTERNET_POS,
+  INTERNET_R,
+  MAX_CANVAS_NODES,
+} from './chain-canvas'
 import { canvasReducer, createCanvasState, type CanvasState } from './chain-canvas-state'
 
 function add(state: CanvasState, serverId: number) {
@@ -170,5 +179,48 @@ describe('explicit canvas connection state', () => {
       }).ingressPos,
     ).toEqual({ x: -80, y: -60 })
     expect(canvasReducer(state, { type: 'move', id: 'n1', point: { x: NaN, y: 3 } })).toBe(state)
+  })
+  it('原地替换节点服务器时保留坐标、端口与全部连线，并拒绝重复服务器', () => {
+    let state = connect(connect(pair(), 'n1', 'n2'), 'n2', INTERNET_NODE_ID)
+    state = canvasReducer(state, { type: 'address', id: 'n1', value: '203.0.113.10' })
+    state = canvasReducer(state, { type: 'port', id: 'n1', value: '8443' })
+    const replaced = canvasReducer(state, { type: 'replace', id: 'n1', serverId: 9 })
+    expect(replaced.nodes[0]).toMatchObject({
+      id: 'n1',
+      serverId: 9,
+      x: 350 - 132,
+      y: 200 - 100,
+      address: '',
+      port: '8443',
+    })
+    expect(replaced.edges).toEqual(state.edges)
+    // 不允许替换成画布中已存在的其他服务器
+    const duplicate = canvasReducer(replaced, { type: 'replace', id: 'n1', serverId: 2 })
+    expect(duplicate).toBe(replaced)
+  })
+  it('prefill 多跳拓扑时自动把入网流量和 Internet 放到首末节点两侧不遮挡卡片', () => {
+    const prefilled = canvasReducer(createCanvasState(), {
+      type: 'prefill',
+      nodes: [
+        { id: 'n1', serverId: 1, x: 240, y: 240, port: '8443', address: '' },
+        { id: 'n2', serverId: 2, x: 600, y: 240, port: '', address: '' },
+        { id: 'n3', serverId: 3, x: 960, y: 240, port: '443', address: '' },
+      ],
+      edges: [
+        { from: INGRESS_NODE_ID, to: 'n1' },
+        { from: 'n1', to: 'n2' },
+        { from: 'n2', to: 'n3' },
+        { from: 'n3', to: INTERNET_NODE_ID },
+      ],
+    })
+    const midY = 240 + CARD_H / 2
+    expect(prefilled.ingressPos.x + INTERNET_R).toBeLessThan(240)
+    expect(prefilled.internetPos.x - INTERNET_R).toBeGreaterThan(960 + CARD_W)
+    expect(prefilled.ingressPos.y).toBe(midY)
+    expect(prefilled.internetPos.y).toBe(midY)
+
+    const empty = canvasReducer(prefilled, { type: 'prefill', nodes: [], edges: [] })
+    expect(empty.ingressPos).toEqual(INGRESS_POS)
+    expect(empty.internetPos).toEqual(INTERNET_POS)
   })
 })
