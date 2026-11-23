@@ -109,16 +109,20 @@ func main() {
 		tests:              testManager,
 		queue:              commandQueue,
 		probes:             newProbeRunner(),
+		upgrades:           newAgentUpgradeTracker(),
 	}
 	connectionPath := filepath.Join(filepath.Dir(*statePath), "connection.json")
 	// 连接状态机（state.ConnState*）：进程内跟踪当前状态并校验每次写入的转换，
 	// connection.json 的状态序列保持严谨（connecting → online → backoff → connecting …，
 	// 显式拒绝 → auth_rejected 终态）。
 	currentConnState := state.ConnStateConnecting
+	var connectionStatusMu sync.Mutex
 	saveConnectionStatus := func(connected bool, stateName string, connectionErr error) {
+		connectionStatusMu.Lock()
+		defer connectionStatusMu.Unlock()
 		if !state.ValidConnectionTransition(currentConnState, stateName) {
 			log.Printf("connection state: illegal transition %s → %s (kept %s)", currentConnState, stateName, currentConnState)
-			stateName = currentConnState
+			return
 		}
 		currentConnState = stateName
 		message := ""
@@ -129,7 +133,7 @@ func main() {
 			}
 		}
 		if err := state.SaveConnectionStatus(connectionPath, state.ConnectionStatus{
-			Connected: connected, State: currentConnState, Panel: *panel, ServerID: st.ServerID,
+			Connected: connected, State: currentConnState, Panel: *panel, ServerID: st.ConnectionServerID(),
 			AgentVersion: version, PID: os.Getpid(), ChangedAt: time.Now().UTC(), LastError: message,
 		}); err != nil {
 			log.Printf("save connection status: %v", err)
@@ -231,6 +235,7 @@ type agentContext struct {
 	tests              *servertest.Manager
 	queue              *persistentCommandQueue
 	probes             *probeRunner
+	upgrades           *agentUpgradeTracker
 }
 
 // run 建立连接并完成首连认证，返回本次换发/确认的 token 与断开原因；到达 online
@@ -358,6 +363,16 @@ func run(panel, token string, saveConnectionStatus func(connected bool, stateNam
 	if err := markSessionReady(sc, conn, opened.SessionID, ctx.panel, ctx.statePath, ctx.st, latency); err != nil {
 		return newToken, err
 	}
+	saveConnectionStatus(true, state.ConnStateOnline, nil)
+	upgradeAttachment, err := ctx.upgrades.attach(sc, saveConnectionStatus)
+	if err != nil {
+		return newToken, fmt.Errorf("report agent lifecycle: %w", err)
+	}
+	defer func() {
+		// Unblock any current lifecycle writer before waiting for its attachment lock.
+		_ = conn.Close()
+		ctx.upgrades.detach(upgradeAttachment)
+	}()
 	ctx.tests.Attach(func(envelope shared.Envelope) error { return sc.writeJSON(envelope) })
 	defer ctx.tests.Detach()
 	queueAttachment := ctx.queue.Attach(func(envelope shared.Envelope) {
@@ -367,7 +382,6 @@ func run(panel, token string, saveConnectionStatus func(connected bool, stateNam
 		handle(sc, envelope, latency, &direct)
 	})
 	defer ctx.queue.Detach(queueAttachment)
-	saveConnectionStatus(true, state.ConnStateOnline, nil)
 	agentSync := ctx.agentSettingsSync()
 	serverSync := ctx.serverSettingsSync()
 	agentSync.send(sc)
@@ -890,13 +904,9 @@ func handle(sc *safeConn, env shared.Envelope, latency *latencyTracker, ctx *age
 			return
 		}
 		log.Printf("agent.upgrade request_id=%s version=%s force=%v", env.RequestID, p.Version, p.Force)
-		upgraded, err := selfupdate.Apply(p.Version, p.ReleaseBase, version, githubRepo, p.Force)
-		replyResult(sc, env, resultOf(0, nil), err)
-		if err != nil || !upgraded {
-			return // 失败或已是目标版本（幂等），无需重启
-		}
-		log.Printf("upgrade_agent: 二进制已替换，退出等待 systemd 拉起")
-		go exitAfter(time.Second)
+		performAgentUpgrade(ctx.upgrades, env, func() (bool, error) {
+			return selfupdate.Apply(p.Version, p.ReleaseBase, version, githubRepo, p.Force)
+		}, func() { go exitAfter(time.Second) })
 
 	case shared.TypeUninstall:
 		// 先回执再自毁：panel 删除服务器时下发（§10）。

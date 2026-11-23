@@ -236,7 +236,7 @@ func TestWSSchemaEnvelopeContract(t *testing.T) {
 	}
 	types := []string{
 		TypeSessionOpen, TypeSessionReady, TypeCredentialCommit,
-		TypeLifecycleChanged, TypeSettingsSync, TypeSettingsChanged,
+		TypeLifecycleChanged, TypeAgentLifecycleChanged, TypeSettingsSync, TypeSettingsChanged,
 		TypeServerSettingsSync, TypeServerSettingsChanged,
 		TypeApplyNode, TypeRemoveNode, TypeAddUser, TypeRemoveUser,
 		TypeUninstall, TypeUpgradeXray, TypeUpgradeAgent,
@@ -539,4 +539,11 @@ func TestWSSchemaCleanupContract(t *testing.T) {
 	ctx = "xray.cleanup response data"
 	resp := dataRule(t, schema, KindResponse, TypeCleanupXray, "")
 	assertWireCovered(t, ctx, resp, wireFields(t, CleanupXrayResult{}))
+}
+
+func TestWSAgentLifecycleContract(t *testing.T) {
+	schema := loadWSSchema(t)
+	rule := dataRule(t, schema, KindEvent, TypeAgentLifecycleChanged, "")
+	assertClosed(t, "agent lifecycle", rule)
+	assertEnum(t, "agent lifecycle state", propertyOf(t, "agent lifecycle", rule, "state"), []string{ConnectionStateOnline, ConnectionStateUpdating})
 }

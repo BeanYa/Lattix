@@ -160,6 +160,19 @@
   "allOf": [
     {
       "if": {
+        "properties": {"kind": {"const": "event"}, "type": {"const": "agent.lifecycle.changed"}},
+        "required": ["kind", "type"]
+      },
+      "then": {
+        "properties": {"data": {
+          "type": "object", "additionalProperties": false,
+          "required": ["state"],
+          "properties": {"state": {"enum": ["online", "updating"]}}
+        }}
+      }
+    },
+    {
+      "if": {
         "properties": {"kind": {"const": "request"}, "type": {"const": "shared-endpoint.apply"}},
         "required": ["kind", "type"]
       },

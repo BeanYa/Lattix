@@ -12,6 +12,7 @@ const (
 	ConnectionStateConnecting     = "connecting"
 	ConnectionStateReconnecting   = "reconnecting"
 	ConnectionStateOnline         = "online"
+	ConnectionStateUpdating       = "updating"
 	ConnectionStateOffline        = "offline"
 	ConnectionStateAuthRejected   = "auth_rejected"
 	// ConnectionStateExternal 是未托管外部直链节点的连接态（无 Agent，不参与连接管理）。
@@ -84,4 +85,10 @@ type CredentialCommitPayload struct {
 
 type LifecycleChangedPayload struct {
 	PanelState PanelLifecycleSnapshot `json:"panel_state"`
+}
+
+// AgentLifecyclePayload reports a locally accepted upgrade. Transport
+// availability remains separate from the displayed maintenance state.
+type AgentLifecyclePayload struct {
+	State string `json:"state"`
 }

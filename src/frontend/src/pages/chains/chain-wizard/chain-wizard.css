@@ -1778,3 +1778,7 @@
   font-size: 12px;
   color: var(--panel-ink-2);
 }
+
+.cw-node-state.is-updating {
+  background: var(--panel-status-progress);
+}

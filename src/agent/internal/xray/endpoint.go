@@ -1,8 +1,12 @@
 package xray
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"reflect"
+	"strings"
 
 	"lattix/agent/internal/state"
 	"lattix/shared"
@@ -123,6 +127,25 @@ func (m *Manager) ApplySharedEndpoint(p shared.ApplySharedEndpointPayload) (*sha
 	cur, err := m.loadConfig()
 	if err != nil {
 		return nil, err
+	}
+	// Replays preserve the live process only when both the last successfully
+	// applied piece and the on-disk config match. A post-commit/pre-restart
+	// failure leaves an older piece and must still restart Xray on retry.
+	if prev != nil && prev.PortHop == rec.PortHop &&
+		sharedEndpointConfigMatches(applyChainPiece(fullConfig{}, *prev), rec) &&
+		!m.drifted && m.runner.IsRunning(context.Background()) {
+		// Read the actual file: loadConfig can return a synthesized recovery config.
+		var disk fullConfig
+		if raw, err := os.ReadFile(m.configPath); err == nil && json.Unmarshal(raw, &disk) == nil && sharedEndpointConfigMatches(disk, rec) {
+			// Preserve existing DNAT while converging missing/stale rules for hy2.
+			if config.Protocol == shared.ProtocolHysteria2 && !m.udpHopDNATMatches(shared.SharedEndpointTag(p.EndpointID), config.PortHop, realized.Port) {
+				if err := m.ensureUdpHopDNAT(shared.SharedEndpointTag(p.EndpointID), config.PortHop, realized.Port); err != nil {
+					return nil, err
+				}
+			}
+			m.upsertChainPiece(rec)
+			return realized, nil
+		}
 	}
 	if err := m.commitConfig(applyChainPiece(cur, rec)); err != nil {
 		return nil, err
@@ -436,4 +459,39 @@ func endpointPrivateKey(inbound json.RawMessage) string {
 	}
 	_ = json.Unmarshal(inbound, &value)
 	return value.StreamSettings.RealitySettings.PrivateKey
+}
+
+// Compare only this endpoint's fragments. Other endpoints can be interleaved
+// in the arrays; a no-op must not reorder their routing rules or listeners.
+func sharedEndpointConfigMatches(cur fullConfig, rec state.ChainPiece) bool {
+	project := func(fc fullConfig) []any {
+		parts := make([]any, 0)
+		appendJSON := func(raw json.RawMessage) {
+			var v any
+			if json.Unmarshal(raw, &v) == nil {
+				parts = append(parts, v)
+			}
+		}
+		tag := shared.SharedEndpointTag(rec.HopID)
+		tags := map[string]bool{tag: true}
+		outTags := map[string]bool{}
+		for _, raw := range fc.inbounds() {
+			if inboundTag(raw) == tag {
+				appendJSON(raw)
+			}
+		}
+		for _, raw := range fc.outbounds() {
+			if strings.HasPrefix(inboundTag(raw), sharedEndpointRoutePrefix(rec.HopID)) {
+				outTags[inboundTag(raw)] = true
+				appendJSON(raw)
+			}
+		}
+		for _, raw := range fc.routingRules() {
+			if ruleReferences(raw, tags, outTags) {
+				appendJSON(raw)
+			}
+		}
+		return parts
+	}
+	return reflect.DeepEqual(project(cur), project(applyChainPiece(fullConfig{}, rec)))
 }

@@ -504,3 +504,81 @@ func TestChainExchangeFailedTransitionsAndStability(t *testing.T) {
 		t.Fatalf("恢复后链状态 = %s, want %s", chain.Status, store.ChainStatusApplying)
 	}
 }
+
+type maintenanceRequester struct {
+	*fakeRequester
+	updating bool
+}
+
+func (r *maintenanceRequester) IsUpdating(int64) bool { return r.updating }
+
+func TestChainHealthPreservesActiveDuringPlannedAgentUpdate(t *testing.T) {
+	ctx := context.Background()
+	st, d, chainID, serverID := newFSMFixture(t)
+	defer st.Close()
+	if err := st.SetChainStatus(ctx, chainID, store.ChainStatusActive, ""); err != nil {
+		t.Fatal(err)
+	}
+	r := &maintenanceRequester{fakeRequester: &fakeRequester{online: map[int64]bool{serverID: false}}, updating: true}
+	d.req = r
+	d.fsm.Evaluate(ctx, chainID)
+	chain, _ := st.ChainByID(ctx, chainID)
+	if chain.Status != store.ChainStatusActive {
+		t.Fatalf("planned maintenance degraded chain: %s", chain.Status)
+	}
+	r.updating = false
+	d.fsm.Evaluate(ctx, chainID)
+	chain, _ = st.ChainByID(ctx, chainID)
+	if chain.Status != store.ChainStatusDegraded {
+		t.Fatalf("expired maintenance failed to degrade: %s", chain.Status)
+	}
+}
+
+func TestChainHealthDefersRealizedEndpointReplayWhileUpdating(t *testing.T) {
+	for _, scenario := range []string{"realized replay", "new endpoint", "failed endpoint"} {
+		t.Run(scenario, func(t *testing.T) {
+			ctx := context.Background()
+			st, d, _, serverID := newFSMFixture(t)
+			defer st.Close()
+			config := json.RawMessage(`{"protocol":"vless","template":{}}`)
+			ep, _, err := st.EnsureSharedEndpoint(ctx, serverID, shared.ProtocolVLESS, 8443, "maintenance", config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dep := createDirectSharedChain(t, st, serverID, ep.ID, "maintenance")
+			if scenario != "new endpoint" {
+				if err := st.SetSharedEndpointActive(ctx, ep.ID, json.RawMessage(`{"port":8443}`)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := st.SetSharedEndpointApplying(ctx, ep.ID); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "failed endpoint" {
+				if err := st.SetSharedEndpointFailed(ctx, ep.ID, "real deployment error"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := st.SetChainStatus(ctx, dep.ChainID, store.ChainStatusActive, ""); err != nil {
+				t.Fatal(err)
+			}
+			r := &maintenanceRequester{fakeRequester: &fakeRequester{online: map[int64]bool{serverID: true}}, updating: true}
+			d.req = r
+			d.fsm.Evaluate(ctx, dep.ChainID)
+			chain, _ := st.ChainByID(ctx, dep.ChainID)
+			want := store.ChainStatusDegraded
+			if scenario == "realized replay" {
+				want = store.ChainStatusActive
+			}
+			if chain.Status != want {
+				t.Fatalf("chain status=%s, want %s", chain.Status, want)
+			}
+			r.updating = false
+			d.fsm.Evaluate(ctx, dep.ChainID)
+			chain, _ = st.ChainByID(ctx, dep.ChainID)
+			if chain.Status != store.ChainStatusDegraded {
+				t.Fatal("maintenance end must resume endpoint health judgement")
+			}
+		})
+	}
+}

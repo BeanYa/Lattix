@@ -15,7 +15,7 @@ import type { CatalogProbeRow, Chain, ChainHop, Server } from '@/lib/types'
 import { api } from '@/lib/api'
 import { usePolling } from '@/lib/use-polling'
 import { AppDialogContext } from '@/lib/app-dialog'
-import { isServerOnline } from '@/lib/server-state'
+import { isServerOnline, isServerUpdating, serverConnectionLabel } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
 import { CountryFlag } from '@/components/CountryFlag'
 import { Button } from '@/components/ui/button'
@@ -682,11 +682,20 @@ export function OrchestrationEditor({
                         </div>
                         <div className="orch-server-meta">
                           <i
-                            className={cn('orch-server-dot', online ? 'is-online' : 'is-offline')}
+                            className={cn(
+                              'orch-server-dot',
+                              isServerUpdating(server)
+                                ? 'is-updating'
+                                : online
+                                  ? 'is-online'
+                                  : 'is-offline',
+                            )}
                           />
                           <span>
                             {server.location || server.country_code || '未填写地区'} ·{' '}
-                            {external ? '外部直链' : '托管'}
+                            {external
+                              ? '外部直链'
+                              : `托管 · ${serverConnectionLabel(server.connection_state)}`}
                           </span>
                         </div>
                         {external ? (

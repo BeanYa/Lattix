@@ -19,7 +19,8 @@ import (
 // 转换表：
 //
 //	connecting → online | backoff | auth_rejected
-//	online     → connecting | backoff | auth_rejected（connecting = 断开后立即重拨）
+//	online     → updating | connecting | backoff | auth_rejected（connecting = 断开后立即重拨）
+//	updating   → online | connecting | backoff | auth_rejected
 //	backoff    → connecting | auth_rejected
 //	auth_rejected →（进程内终态）
 //
@@ -28,6 +29,7 @@ import (
 const (
 	ConnStateConnecting   = "connecting"
 	ConnStateOnline       = "online"
+	ConnStateUpdating     = "updating"
 	ConnStateBackoff      = "backoff"
 	ConnStateAuthRejected = "auth_rejected"
 )
@@ -38,7 +40,14 @@ var connectionTransitions = map[string]map[string]bool{
 		ConnStateBackoff:      true,
 		ConnStateAuthRejected: true,
 	},
+	ConnStateUpdating: {
+		ConnStateOnline:       true,
+		ConnStateConnecting:   true,
+		ConnStateBackoff:      true,
+		ConnStateAuthRejected: true,
+	},
 	ConnStateOnline: {
+		ConnStateUpdating:     true,
 		ConnStateConnecting:   true, // 断开后立即重拨（无退避路径）
 		ConnStateBackoff:      true,
 		ConnStateAuthRejected: true,
@@ -65,7 +74,7 @@ func ValidConnectionTransition(from, to string) bool {
 // ConnectionStatus is a credential-free runtime snapshot consumed by latx-ag.
 type ConnectionStatus struct {
 	Connected    bool      `json:"connected"`
-	State        string    `json:"state,omitempty"` // connecting|online|backoff|auth_rejected
+	State        string    `json:"state,omitempty"` // connecting|online|updating|backoff|auth_rejected
 	Panel        string    `json:"panel"`
 	ServerID     int64     `json:"server_id,omitempty"`
 	AgentVersion string    `json:"agent_version"`
@@ -158,6 +167,14 @@ func (s *State) Reset() {
 	s.PanelObservation = nil
 	s.AuthRejected = false
 	s.ChainPieces = nil
+}
+
+// ConnectionServerID is safe while the session loop commits credentials and
+// the command executor concurrently publishes upgrade connection status.
+func (s *State) ConnectionServerID() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ServerID
 }
 
 func SaveConnectionStatus(path string, status ConnectionStatus) error {

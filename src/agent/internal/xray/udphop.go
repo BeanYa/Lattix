@@ -97,3 +97,31 @@ func ruleComment(rule string) string {
 	}
 	return ""
 }
+
+// udpHopDNATMatches checks only rules owned by this listener. Replays should
+// leave healthy UDP forwarding intact, but repair missing firewall rules.
+func (m *Manager) udpHopDNATMatches(tag, portHop string, listenPort int) bool {
+	var owned []string
+	for _, rule := range strings.Split(listIPTablesRules("nat", "PREROUTING"), "\n") {
+		if ruleComment(rule) == "lattix:"+tag {
+			owned = append(owned, rule)
+		}
+	}
+	if portHop == "" {
+		return len(owned) == 0
+	}
+	start, end, err := shared.ParsePortHop(portHop)
+	if err != nil || len(owned) != 1 {
+		return false
+	}
+	fields := strings.Fields(owned[0])
+	value := func(key string) string {
+		for i, f := range fields {
+			if f == key && i+1 < len(fields) {
+				return strings.Trim(fields[i+1], "\"")
+			}
+		}
+		return ""
+	}
+	return value("-p") == "udp" && value("--dport") == fmt.Sprintf("%d:%d", start, end) && value("-j") == "REDIRECT" && value("--to-ports") == fmt.Sprint(listenPort)
+}

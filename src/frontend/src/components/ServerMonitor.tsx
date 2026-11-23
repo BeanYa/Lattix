@@ -196,13 +196,19 @@ function ServerActions({
             </DropdownMenuItem>
           ) : null}
           {agentActions ? (
-            <DropdownMenuItem onClick={() => onUpgrade(server, 'xray')}>
+            <DropdownMenuItem
+              disabled={server.connection_state === 'updating'}
+              onClick={() => onUpgrade(server, 'xray')}
+            >
               <RefreshCwIcon />
               升级 Xray
             </DropdownMenuItem>
           ) : null}
           {agentActions ? (
-            <DropdownMenuItem onClick={() => onUpgrade(server, 'agent')}>
+            <DropdownMenuItem
+              disabled={server.connection_state === 'updating'}
+              onClick={() => onUpgrade(server, 'agent')}
+            >
               <ServerCogIcon />
               升级 Agent
             </DropdownMenuItem>
@@ -657,8 +663,11 @@ function ServerCard({
 }) {
   const metrics = server.metrics
   const online = isServerOnline(server)
+  const updating = server.connection_state === 'updating'
   const transitioning =
-    server.connection_state === 'connecting' || server.connection_state === 'reconnecting'
+    updating ||
+    server.connection_state === 'connecting' ||
+    server.connection_state === 'reconnecting'
   const families = new Set(server.addresses.map((addr) => addressFamily(addr)))
   const renewalDays =
     server.billing.enabled && server.billing.next_renewal_on
@@ -688,7 +697,11 @@ function ServerCard({
     ) : null
   return (
     <article
-      className={cn('sv-card', selected && 'is-selected', !online && !external && 'is-offline')}
+      className={cn(
+        'sv-card',
+        selected && 'is-selected',
+        !online && !external && !updating && 'is-offline',
+      )}
       data-state={selected ? 'selected' : undefined}
       aria-selected={selected}
       onClick={onSelect}
@@ -731,6 +744,7 @@ function ServerCard({
         </span>
       </header>
       <div className="sv-card-badges">
+        {updating ? <span className="sv-flag is-warn">更新中</span> : null}
         {external ? <span className="sv-flag is-external">外部直链</span> : null}
         <span className="sv-flag">{server.location || server.country_code || '未设置地区'}</span>
         {families.has('ipv4') ? <span className="sv-flag is-v4">V4</span> : null}
@@ -1101,19 +1115,25 @@ function DetailDialog({
   const billing = server?.billing
   const banFlag = server ? serverBanFlag(server) : null
   const external = server?.kind === 'external'
+  const updating = server?.connection_state === 'updating'
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sv-detail flex max-h-[88vh] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
         <header className="sv-detail-head">
           <div className="sv-detail-head-row">
-            <span
-              className={cn('sv-state-dot', online && 'is-online')}
-              title={server ? serverConnectionLabel(server.connection_state) : undefined}
-            />
+            {updating ? (
+              <LoaderCircleIcon className="sv-spin sv-card-conn" aria-label="更新中" />
+            ) : (
+              <span
+                className={cn('sv-state-dot', online && 'is-online')}
+                title={server ? serverConnectionLabel(server.connection_state) : undefined}
+              />
+            )}
             {server ? <CountryFlag code={server.country_code} /> : null}
             <DialogTitle className="sv-detail-title">{server?.alias ?? '服务器详情'}</DialogTitle>
             {server ? (
               <span className="sv-detail-badges">
+                {updating ? <span className="sv-flag is-warn">更新中</span> : null}
                 {external ? <span className="sv-flag is-external">外部直链</span> : null}
                 <span className="sv-flag">
                   {server.location || server.country_code || '未设置地区'}
@@ -1508,7 +1528,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
   const [selectedID, setSelectedID] = useState<number | null>(urlSelId)
   const [detailServerID, setDetailServerID] = useState<number | null>(null)
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<'all' | 'online' | 'offline' | 'drift'>('all')
+  const [filter, setFilter] = useState<'all' | 'online' | 'updating' | 'offline' | 'drift'>('all')
 
   useEffect(() => {
     if (urlSelId !== null) setSelectedID(urlSelId)
@@ -1548,7 +1568,10 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
     [props.servers],
   )
   const onlineCount = managedServers.filter((server) => isServerOnline(server)).length
-  const offlineCount = managedServers.filter((server) => !isServerOnline(server)).length
+  const updatingCount = managedServers.filter(
+    (server) => server.connection_state === 'updating',
+  ).length
+  const offlineCount = managedServers.length - onlineCount - updatingCount
   const driftCount = managedServers.filter((server) => server.config_drift).length
 
   const filteredServers = useMemo(() => {
@@ -1556,7 +1579,8 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
     return managedServers.filter((server) => {
       const online = isServerOnline(server)
       if (filter === 'online' && !online) return false
-      if (filter === 'offline' && online) return false
+      if (filter === 'updating' && server.connection_state !== 'updating') return false
+      if (filter === 'offline' && (online || server.connection_state === 'updating')) return false
       if (filter === 'drift' && !server.config_drift) return false
       if (q) {
         const hay = [
@@ -1657,6 +1681,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
           <span className="sv-board-title">服务器读数</span>
           <span className="sv-board-meta">
             {onlineCount} 在线 / {managedServers.length} 台
+            {updatingCount > 0 ? ` · ${updatingCount} 更新中` : null}
           </span>
         </header>
         <div className="sv-board-toolbar">
@@ -1676,6 +1701,7 @@ export function ServerMonitorGrid(props: ServerMonitorProps) {
               [
                 { id: 'all', label: '全部', count: managedServers.length },
                 { id: 'online', label: '在线', count: onlineCount },
+                { id: 'updating', label: '更新中', count: updatingCount },
                 { id: 'offline', label: '离线/异常', count: offlineCount },
                 { id: 'drift', label: '配置漂移', count: driftCount },
               ] as const

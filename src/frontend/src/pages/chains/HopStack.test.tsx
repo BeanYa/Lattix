@@ -119,3 +119,22 @@ it('图里只有根服务器：等同未配置，不包堆叠层', async () => {
   })
   expect(container.querySelector('.cg-hop-stack')).toBeNull()
 })
+
+it('备选服务器升级时显示更新中而不是离线', async () => {
+  await act(async () => {
+    root.render(
+      <HopStack
+        orchestration={{
+          ...orchestration,
+          nodes: orchestration.nodes.map((node) => ({ ...node, online: false })),
+        }}
+        servers={[{ id: 1, connection_state: 'updating' } as import('@/lib/types').Server]}
+      >
+        {front}
+      </HopStack>,
+    )
+  })
+  const back = container.querySelector('.cg-hop-stack-back')
+  expect(back?.textContent).toContain('Agent 更新中')
+  expect(back?.textContent).not.toContain('Agent 离线')
+})

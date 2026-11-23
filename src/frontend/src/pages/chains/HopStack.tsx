@@ -1,5 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react'
-import type { ChainOrchestration } from '@/lib/types'
+import { isServerUpdating } from '@/lib/server-state'
+import type { ChainOrchestration, Server } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { buildHopStack, hopStackTotal } from './hop-stack'
 
@@ -14,11 +15,14 @@ const MAX_BACKS = 2
  */
 export function HopStack({
   orchestration,
+  servers = [],
   children,
 }: {
   orchestration?: ChainOrchestration
+  servers?: Pick<Server, 'id' | 'connection_state'>[]
   children: ReactNode
 }) {
+  const updatingIDs = new Set(servers.filter(isServerUpdating).map((server) => server.id))
   const stack = buildHopStack(orchestration)
   const backs = stack.slice(1, 1 + MAX_BACKS)
   const active = stack.find((item) => item.active)
@@ -43,7 +47,16 @@ export function HopStack({
           >
             <span className="cg-hop-head">
               <span className="cg-hop-num">{item.node.is_root ? 'R' : `B${index + 1}`}</span>
-              <span className={cn('cg-hop-dot', item.node.online ? 'is-lime' : 'is-red')} />
+              <span
+                className={cn(
+                  'cg-hop-dot',
+                  updatingIDs.has(item.node.server_id ?? 0)
+                    ? 'is-blue'
+                    : item.node.online
+                      ? 'is-lime'
+                      : 'is-red',
+                )}
+              />
               <strong className="cg-hop-name is-inline">
                 {item.node.alias || `#${item.node.server_id}`}
               </strong>
@@ -55,8 +68,20 @@ export function HopStack({
               {item.node.kind_of_server === 'external' ? (
                 <span className="cg-hop-external">未托管</span>
               ) : (
-                <span className={item.node.online ? 'is-lime' : 'is-red'}>
-                  {item.node.online ? 'Agent 在线' : 'Agent 离线'}
+                <span
+                  className={
+                    updatingIDs.has(item.node.server_id ?? 0)
+                      ? 'is-blue'
+                      : item.node.online
+                        ? 'is-lime'
+                        : 'is-red'
+                  }
+                >
+                  {updatingIDs.has(item.node.server_id ?? 0)
+                    ? 'Agent 更新中'
+                    : item.node.online
+                      ? 'Agent 在线'
+                      : 'Agent 离线'}
                 </span>
               )}
               {item.node.banned ? <span className="is-red">被 ban</span> : null}

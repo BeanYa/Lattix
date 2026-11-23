@@ -696,3 +696,7 @@
     align-items: flex-start;
   }
 }
+
+.orch-server-dot.is-updating {
+  background: var(--panel-status-progress);
+}

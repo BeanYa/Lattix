@@ -50,7 +50,8 @@ type Hub struct {
 	// 被新连接顶替的旧连接注销不触发，session 重连不重复报，§19 告警挂点）。
 	OnDisconnect func(serverID int64)
 
-	pongTimeout time.Duration
+	pongTimeout   time.Duration
+	updateTimeout time.Duration
 
 	mu       sync.RWMutex
 	conns    map[int64]*agentConn
@@ -61,9 +62,10 @@ type Hub struct {
 
 func NewHub() *Hub {
 	return &Hub{
-		conns:       make(map[int64]*agentConn),
-		states:      make(map[int64]ConnectionSnapshot),
-		pongTimeout: pongTimeoutDefault,
+		conns:         make(map[int64]*agentConn),
+		states:        make(map[int64]ConnectionSnapshot),
+		pongTimeout:   pongTimeoutDefault,
+		updateTimeout: 10 * time.Minute,
 	}
 }
 
@@ -72,10 +74,11 @@ type LifecycleProvider interface {
 }
 
 type ConnectionSnapshot struct {
-	State       string    `json:"state"`
-	SessionID   string    `json:"session_id,omitempty"`
-	SessionKind string    `json:"session_kind,omitempty"`
-	ChangedAt   time.Time `json:"changed_at"`
+	State          string    `json:"state"`
+	SessionID      string    `json:"session_id,omitempty"`
+	SessionKind    string    `json:"session_kind,omitempty"`
+	ChangedAt      time.Time `json:"changed_at"`
+	updateDeadline time.Time
 }
 
 // connectionTransitions 定义面板侧 Agent 连接状态的合法转换（设计文档 §2）。
@@ -99,7 +102,13 @@ var connectionTransitions = map[string]map[string]bool{
 		shared.ConnectionStateOffline:      true,
 		shared.ConnectionStateAuthRejected: true,
 	},
+	shared.ConnectionStateUpdating: {
+		shared.ConnectionStateOnline:       true,
+		shared.ConnectionStateOffline:      true,
+		shared.ConnectionStateAuthRejected: true,
+	},
 	shared.ConnectionStateOnline: {
+		shared.ConnectionStateUpdating:     true,
 		shared.ConnectionStateConnecting:   true,
 		shared.ConnectionStateReconnecting: true,
 		shared.ConnectionStateOnline:       true, // 新连接顶替旧连接
@@ -152,6 +161,10 @@ func (h *Hub) ConnectionState(serverID int64, everConnected bool) ConnectionSnap
 func (h *Hub) setConnectionState(serverID int64, state, sessionID, sessionKind string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if prev := h.states[serverID]; prev.State == shared.ConnectionStateUpdating && time.Now().Before(prev.updateDeadline) &&
+		(state == shared.ConnectionStateConnecting || state == shared.ConnectionStateReconnecting) {
+		return
+	}
 	if prev, ok := h.states[serverID]; ok && !validConnectionTransition(prev.State, state) {
 		log.Printf("ws: server %d: illegal connection state transition %s → %s (ignored)", serverID, prev.State, state)
 		return
@@ -167,6 +180,9 @@ func (h *Hub) setDisconnectedIfIdle(serverID int64, state string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if _, online := h.conns[serverID]; online {
+		return
+	}
+	if prev := h.states[serverID]; prev.State == shared.ConnectionStateUpdating && time.Now().Before(prev.updateDeadline) {
 		return
 	}
 	if prev, ok := h.states[serverID]; ok && !validConnectionTransition(prev.State, state) {
@@ -304,12 +320,24 @@ func (h *Hub) register(c *agentConn) (becameOnline, accepted bool) {
 	if wasOnline && old != c {
 		old.close()
 	}
+	previous := h.states[c.serverID]
 	h.conns[c.serverID] = c
 	h.states[c.serverID] = ConnectionSnapshot{
 		State: shared.ConnectionStateOnline, SessionID: c.sessionID,
 		SessionKind: c.sessionKind, ChangedAt: time.Now().UTC(),
 	}
+	var pendingUpdate ConnectionSnapshot
+	if previous.State == shared.ConnectionStateUpdating && time.Now().Before(previous.updateDeadline) {
+		previous.SessionID, previous.SessionKind = c.sessionID, c.sessionKind
+		h.states[c.serverID] = previous
+		pendingUpdate = previous
+	}
 	h.mu.Unlock()
+	if !pendingUpdate.updateDeadline.IsZero() {
+		// A reconnect is not an upgrade completion. The Agent explicitly reports
+		// its current process state, while this original bounded deadline remains.
+		time.AfterFunc(time.Until(pendingUpdate.updateDeadline), func() { h.expireAgentUpdate(c.serverID, pendingUpdate) })
+	}
 	return !wasOnline, true
 }
 
@@ -332,9 +360,13 @@ func (h *Hub) unregister(c *agentConn) {
 	transition := h.conns[c.serverID] == c
 	if transition {
 		delete(h.conns, c.serverID)
-		h.states[c.serverID] = ConnectionSnapshot{
-			State: shared.ConnectionStateOffline, SessionKind: c.sessionKind,
-			ChangedAt: time.Now().UTC(),
+		snapshot := h.states[c.serverID]
+		if snapshot.State == shared.ConnectionStateUpdating && time.Now().Before(snapshot.updateDeadline) {
+			transition = false // Upgrade timer will report an actual failed recovery.
+		} else if snapshot.State != shared.ConnectionStateAuthRejected {
+			h.states[c.serverID] = ConnectionSnapshot{
+				State: shared.ConnectionStateOffline, SessionKind: c.sessionKind, ChangedAt: time.Now().UTC(),
+			}
 		}
 	}
 	h.mu.Unlock()

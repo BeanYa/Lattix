@@ -75,7 +75,7 @@ func TestHandshakeAuthenticationErrorIsStructuredRPCResponse(t *testing.T) {
 }
 
 // 慢 handler 不得阻塞读循环：第一条消息处理阻塞期间，读循环仍须读取后续消息
-//（lifecycle ack 快速路径在读循环内完成）；handler 放行后按序消费积压消息。
+// （lifecycle ack 快速路径在读循环内完成）；handler 放行后按序消费积压消息。
 func TestSlowHandlerDoesNotBlockReadLoop(t *testing.T) {
 	h := NewHub()
 	h.Auth = stubAuthenticator{}
@@ -216,6 +216,10 @@ func dialTestAgent(t *testing.T, h *Hub) *websocket.Conn {
 		t.Fatalf("session.ready code = %s", readyResponse.Code)
 	}
 	waitForCondition(t, func() bool { return h.IsOnline(7) })
+	// A fresh Agent process confirms its local lifecycle after session.ready.
+	id := shared.NewMessageID()
+	writeTestEnvelope(t, client, shared.Envelope{Kind: shared.KindEvent, Type: shared.TypeAgentLifecycleChanged, RequestID: id, TraceID: id, Data: json.RawMessage(`{"state":"online"}`)})
+	waitForCondition(t, func() bool { return h.ConnectionState(7, true).State == shared.ConnectionStateOnline })
 	return client
 }
 

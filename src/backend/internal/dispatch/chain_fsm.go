@@ -206,6 +206,9 @@ func (f *chainFSM) Evaluate(ctx context.Context, chainID int64) {
 			continue
 		}
 		if !f.d.req.IsOnline(hops[i].ServerID) {
+			if observer, ok := f.d.req.(interface{ IsUpdating(int64) bool }); ok && observer.IsUpdating(hops[i].ServerID) {
+				continue // Planned control-plane restart does not imply a data-plane fault.
+			}
 			detail := fmt.Sprintf("跳 %d（%s，server %d）离线", hops[i].ID, hops[i].Role, hops[i].ServerID)
 			if runtimeDegradable {
 				f.degrade(ctx, chain, hops[i].ServerID, detail)
@@ -218,6 +221,14 @@ func (f *chainFSM) Evaluate(ctx context.Context, chainID int64) {
 	if chain.EndpointID != 0 {
 		endpoint, err := f.d.st.SharedEndpointByID(ctx, chain.EndpointID)
 		if err != nil || endpoint.Status != store.EndpointStatusActive {
+			// An already realized listener continues serving while its replay waits
+			// behind the priority Agent upgrade. Other-hop outages were checked above;
+			// failed and never-realized endpoints still follow ordinary health rules.
+			if endpoint != nil && endpoint.Status == store.EndpointStatusApplying && len(endpoint.RealizedConfig) != 0 {
+				if observer, ok := f.d.req.(interface{ IsUpdating(int64) bool }); ok && observer.IsUpdating(endpoint.ServerID) {
+					return
+				}
+			}
 			// cleanup_pending 下的端点重部署窗口（applying）视为部署中，不据此降级：
 			// 否则每次发布/每 60s reconcile 都会 cleanup_pending→degraded→active 抖动并刷
 			// 操作日志。部署失败会转 failed（此时降级），回执丢失由 ReconcileStaleEndpoints 重试。

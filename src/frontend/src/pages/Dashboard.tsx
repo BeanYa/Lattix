@@ -22,7 +22,7 @@ import { Notice } from '@/components/PagePrimitives'
 import { api, errorMessage } from '@/lib/api'
 import { DEMO_CHAINS, DEMO_DASHBOARD_STATS, DEMO_SERVERS } from '@/lib/dashboard-demo'
 import { formatByteRate, humanizeBytes } from '@/lib/format'
-import { isServerOnline, serverConnectionLabel } from '@/lib/server-state'
+import { isServerOnline, isServerUpdating, serverConnectionLabel } from '@/lib/server-state'
 import type { Chain, ChainHop, ChainStatus, DashboardStats, NodeStatus, Server } from '@/lib/types'
 import { usePolling } from '@/lib/use-polling'
 import { cn } from '@/lib/utils'
@@ -92,6 +92,7 @@ function chainTone(status: ChainStatus) {
 }
 
 function serverTone(server: Server) {
+  if (isServerUpdating(server)) return 'warn'
   if (!isServerOnline(server)) return 'bad'
   if (server.config_drift || server.agent_settings_status === 'failed') return 'warn'
   return 'ok'
@@ -271,7 +272,9 @@ export default function Dashboard() {
     null
 
   const onlineServers = displayServers.filter(isServerOnline)
-  const offlineCount = displayServers.length - onlineServers.length
+  const offlineCount = displayServers.filter(
+    (server) => !isServerOnline(server) && !isServerUpdating(server),
+  ).length
   const driftCount = displayServers.filter((server) => server.config_drift).length
   const totalTxBps = onlineServers.reduce(
     (sum, server) => sum + (server.metrics?.network_tx_bps ?? 0),
@@ -306,7 +309,7 @@ export default function Dashboard() {
       events.push({
         key: `server-offline-${server.id}`,
         category: 'runtime',
-        tone: 'bad',
+        tone: isServerUpdating(server) ? 'warn' : 'bad',
         title: `${server.alias} ${serverConnectionLabel(server.connection_state)}`,
         detail: `${server.country_code || '--'} · ${server.location || '位置待补充'}`,
         href: '/servers',

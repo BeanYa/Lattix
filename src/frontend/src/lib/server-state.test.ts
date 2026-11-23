@@ -68,6 +68,7 @@ describe('serverConnectionLabel', () => {
     expect(serverConnectionLabel('connecting')).toBe('连接中')
     expect(serverConnectionLabel('reconnecting')).toBe('重连中')
     expect(serverConnectionLabel('online')).toBe('在线')
+    expect(serverConnectionLabel('updating')).toBe('更新中')
     expect(serverConnectionLabel('offline')).toBe('离线')
     expect(serverConnectionLabel('auth_rejected')).toBe('凭据被拒绝')
   })
@@ -85,4 +86,13 @@ describe('supportsAgentActions', () => {
   it('is false for unmanaged external links without an agent', () => {
     expect(supportsAgentActions({ kind: 'external' })).toBe(false)
   })
+})
+
+it('identifies updating without treating maintenance as transport online', async () => {
+  const { isServerUpdating } = await import('./server-state')
+  const updating = serverWith({ connection_state: 'updating' })
+  expect(isServerUpdating(updating)).toBe(true)
+  expect(isServerOnline(updating)).toBe(false)
+  expect(isServerUpdating(serverWith({ connection_state: 'offline' }))).toBe(false)
+  expect(isServerUpdating(undefined)).toBe(false)
 })

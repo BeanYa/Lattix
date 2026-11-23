@@ -296,6 +296,8 @@ func TestApplySharedEndpointRestartFailureReportsDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A changed desired document requires a restart; unchanged replays preserve Xray.
+	payload.Clients = []shared.ClientCredential{{ID: "changed-user", Email: "changed-user"}}
 	mgr.runner = &failingRestartRunner{}
 	_, err = mgr.ApplySharedEndpoint(payload)
 	if err == nil {

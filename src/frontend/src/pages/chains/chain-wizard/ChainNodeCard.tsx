@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { addressFamily } from '@/lib/address'
-import { isServerOnline } from '@/lib/server-state'
+import { isServerOnline, isServerUpdating, serverConnectionLabel } from '@/lib/server-state'
 import { cn } from '@/lib/utils'
 import type { CatalogProbeRow, ChainOrchestration, Server } from '@/lib/types'
 
@@ -358,8 +358,15 @@ export function ChainNodeCard({
             ) : null}
           </div>
           <div className="cw-node-meta">
-            <i className={cn('cw-node-state', online ? 'is-online' : 'is-offline')} />
+            <i
+              title={serverConnectionLabel(server.connection_state)}
+              className={cn(
+                'cw-node-state',
+                isServerUpdating(server) ? 'is-updating' : online ? 'is-online' : 'is-offline',
+              )}
+            />
             <span>{server.location || server.country_code || '未设置地区'}</span>
+            {isServerUpdating(server) ? <em>更新中</em> : null}
             {!external && !inboundCapable(server) ? (
               <em className="cw-node-exitonly">仅出口</em>
             ) : null}

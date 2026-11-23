@@ -49,6 +49,7 @@ export type ServerConnectionState =
   | 'connecting'
   | 'reconnecting'
   | 'online'
+  | 'updating'
   | 'offline'
   | 'auth_rejected'
   | 'external'

@@ -75,6 +75,7 @@ const (
 	TypeSessionReady          = "agent.session.ready"
 	TypeCredentialCommit      = "agent.credential.commit"
 	TypeLifecycleChanged      = "panel.lifecycle.changed"
+	TypeAgentLifecycleChanged = "agent.lifecycle.changed"
 	TypeSettingsSync          = "agent.settings.sync"
 	TypeSettingsChanged       = "agent.settings.changed"
 	TypeServerSettingsSync    = "server.settings.sync"

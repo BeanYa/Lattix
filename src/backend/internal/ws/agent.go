@@ -235,6 +235,10 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			env.Code == shared.CodeOK && c.resolveLifecycleAck(env.RequestID) {
 			continue
 		}
+		if env.Kind == shared.KindEvent && env.Type == shared.TypeAgentLifecycleChanged {
+			h.acceptAgentLifecycle(c, env)
+			continue
+		}
 		// 业务信封只投递到处理队列，由 handlerPump 顺序消费（回执落库等慢处理
 		// 不阻塞读取与续期）；队列满按慢连接策略断开（同 Send，重连后补发）。
 		select {

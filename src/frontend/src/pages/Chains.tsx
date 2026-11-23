@@ -22,7 +22,12 @@ import { api, errorMessage } from '@/lib/api'
 import { useAppDialog } from '@/lib/app-dialog'
 import { formatDateTime, humanizeBytes } from '@/lib/format'
 import { useOperationProgress } from '@/lib/operation-progress-context'
-import { isServerBanned, isServerOnline } from '@/lib/server-state'
+import {
+  isServerBanned,
+  isServerOnline,
+  isServerUpdating,
+  serverConnectionLabel,
+} from '@/lib/server-state'
 import { chainStatusStyle, hopStatusStyle, type CgStatusStyle } from '@/lib/status'
 import { useTimezone } from '@/lib/timezone'
 import { usePolling } from '@/lib/use-polling'
@@ -623,7 +628,11 @@ export default function Chains() {
                             <span
                               className={cn(
                                 'cg-hop-dot',
-                                server && isServerOnline(server) ? 'is-lime' : 'is-red',
+                                isServerUpdating(server)
+                                  ? 'is-blue'
+                                  : server && isServerOnline(server)
+                                    ? 'is-lime'
+                                    : 'is-red',
                               )}
                             />
                             <div className="cg-chain-direct-copy">
@@ -636,13 +645,17 @@ export default function Chains() {
                             <span
                               className={cn(
                                 'cg-status',
-                                server ? (isServerOnline(server) ? 'is-ok' : 'is-red') : 'is-muted',
+                                server
+                                  ? isServerUpdating(server)
+                                    ? 'is-warn'
+                                    : isServerOnline(server)
+                                      ? 'is-ok'
+                                      : 'is-red'
+                                  : 'is-muted',
                               )}
                             >
                               {server
-                                ? isServerOnline(server)
-                                  ? 'Agent 在线'
-                                  : 'Agent 离线'
+                                ? `Agent ${serverConnectionLabel(server.connection_state)}`
                                 : 'Agent 未知'}
                             </span>
                           </div>
@@ -721,7 +734,14 @@ export default function Chains() {
                             </span>
                           ) : (
                             <span className="cg-chain-note is-red">
-                              Agent 离线，已发布链路仍保留
+                              {c.hops.some((hop) =>
+                                isServerUpdating(
+                                  servers.find((server) => server.id === hop.server_id),
+                                ),
+                              )
+                                ? 'Agent 更新中'
+                                : 'Agent 离线'}
+                              ，已发布链路仍保留
                             </span>
                           )
                         ) : null}
@@ -830,7 +850,9 @@ export default function Chains() {
                               const externalHop =
                                 h.role === 'exit' &&
                                 (h.node_id === 0 || hopServer?.kind === 'external')
-                              const offline = !externalHop && !serverOnline(h.server_id)
+                              const updating = isServerUpdating(hopServer)
+                              const offline =
+                                !externalHop && !updating && !serverOnline(h.server_id)
                               const exitNode =
                                 h.role === 'exit'
                                   ? nodes.find((n) => n.id === h.node_id)
@@ -865,14 +887,17 @@ export default function Chains() {
                                       flowing={c.status === 'active' && !offline}
                                     />
                                   ) : null}
-                                  <HopStack orchestration={h.orchestration}>
+                                  <HopStack orchestration={h.orchestration} servers={servers}>
                                     <div className="cg-hop">
                                       <span className="cg-hop-head">
                                         <span className="cg-hop-num">
                                           {String(i + 1).padStart(2, '0')}
                                         </span>
                                         <span
-                                          className={cn('cg-hop-dot', offline ? 'is-red' : hst.cg)}
+                                          className={cn(
+                                            'cg-hop-dot',
+                                            updating ? 'is-blue' : offline ? 'is-red' : hst.cg,
+                                          )}
                                         />
                                         <span className="cg-hop-role">
                                           {roleLabel[h.role]} · {hst.label}
@@ -900,8 +925,14 @@ export default function Chains() {
                                             未托管
                                           </span>
                                         ) : (
-                                          <span className={offline ? 'is-red' : 'is-lime'}>
-                                            {offline ? 'Agent 离线' : 'Agent 在线'}
+                                          <span
+                                            className={
+                                              updating ? 'is-blue' : offline ? 'is-red' : 'is-lime'
+                                            }
+                                          >
+                                            {hopServer
+                                              ? `Agent ${serverConnectionLabel(hopServer.connection_state)}`
+                                              : 'Agent 未知'}
                                           </span>
                                         )}
                                         {h.traffic ? (
