@@ -1,10 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type {
-  CatalogProbeRow,
-  OrchestrationTemplate,
-  OrchestrationTemplateImpact,
-  Server,
-} from '@/lib/types'
+import type { CatalogProbeRow, OrchestrationTemplate, Server } from '@/lib/types'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { OrchestrationTemplateEditor } from './OrchestrationTemplateEditor'
@@ -26,7 +21,7 @@ export function OrchestrationTemplates({
   const [editor, setEditor] = useState<{ template?: OrchestrationTemplate } | null>(null)
   const [deleting, setDeleting] = useState<{
     template: OrchestrationTemplate
-    impacts: OrchestrationTemplateImpact[]
+    impacts: { chain_id: number; chain_name: string; seq: number }[]
   } | null>(null)
   const [busy, setBusy] = useState(false)
   const request = useRef(0)
@@ -63,14 +58,13 @@ export function OrchestrationTemplates({
     setBusy(true)
     setError('')
     try {
-      const preview = await api.previewOrchestrationTemplate({
-        id: template.id,
-        revision: template.revision,
-        name: template.name,
-        nodes: template.nodes,
-        edges: template.edges,
-      })
-      setDeleting({ template, impacts: preview.affected_chains })
+      const chains = await api.chains()
+      const impacts = chains.flatMap((chain) =>
+        chain.hops
+          .filter((hop) => hop.orchestration?.template_id === template.id)
+          .map((hop) => ({ chain_id: chain.id, chain_name: chain.name, seq: hop.seq })),
+      )
+      setDeleting({ template, impacts })
     } catch (err) {
       setError(err instanceof Error ? err.message : '无法获取关联链路，请刷新后重试')
     } finally {

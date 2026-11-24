@@ -682,21 +682,6 @@
   }
 }
 
-@media (max-width: 900px) {
-  .orch-body {
-    grid-template-columns: 1fr;
-  }
-  .orch-side {
-    border-right: 0;
-    border-bottom: 1px solid var(--panel-rule);
-    max-height: 200px;
-  }
-  .orch-foot {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-}
-
 .orch-server-dot.is-updating {
   background: var(--panel-status-progress);
 }
@@ -833,7 +818,75 @@
   border: 1px solid var(--panel-rule);
   border-radius: 8px;
 }
+@media (max-width: 900px) {
+  .orch-head {
+    flex-direction: column;
+    align-items: stretch;
+    flex-shrink: 0;
+    gap: 12px;
+  }
+  .orch-head-copy,
+  .orch-head-actions {
+    width: 100%;
+    min-width: 0;
+  }
+  .orch-head-actions {
+    flex-wrap: wrap;
+    flex-shrink: 1;
+  }
+  .orch-template-actions {
+    flex: 1 0 100%;
+    width: 100%;
+  }
+  .orch-template-actions label:not(.orch-inline-check) {
+    flex: 1 1 180px;
+    min-width: 0;
+  }
+  .orch-template-actions input:not([type='checkbox']) {
+    width: 100%;
+    max-width: 100%;
+  }
+  .orch-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 160px minmax(220px, 1fr);
+    min-height: 380px;
+  }
+  .orch-side {
+    border-right: 0;
+    border-bottom: 1px solid var(--panel-rule);
+    max-height: none;
+    overflow: hidden;
+  }
+  .orch-foot {
+    flex-direction: column;
+    align-items: flex-start;
+    flex-shrink: 0;
+    gap: 8px;
+  }
+  .orch-root-prompt {
+    left: 16px;
+    top: 176px;
+    max-width: calc(100% - 32px);
+  }
+  .orch-hint {
+    overflow-wrap: anywhere;
+  }
+}
+
 @media (max-width: 760px) {
+  .orch-overlay {
+    padding: 12px;
+  }
+  .orch-panel {
+    width: 100%;
+    height: calc(100dvh - 24px);
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+  }
+  .orch-head,
+  .orch-foot {
+    padding: 12px;
+  }
   .orch-template-library {
     padding: 14px;
   }
@@ -845,7 +898,7 @@
   }
   .orch-root-prompt {
     left: 16px;
-    top: 12px;
+    top: 176px;
     max-width: calc(100% - 32px);
   }
   .orch-impact-card {
