@@ -18,6 +18,9 @@ import type {
   CreateChainRequest,
   EditChainRequest,
   HopOrchestrationSaveRequest,
+  OrchestrationTemplate,
+  OrchestrationTemplateImpact,
+  OrchestrationTemplateSaveRequest,
   ExternalChain,
   ExternalExit,
   ExternalSubscription,
@@ -311,6 +314,21 @@ export const api = {
 
   chains: (options?: RequestOptions) =>
     requester.get<Chain[]>('/api/chain/list', undefined, options),
+  orchestrationTemplates: (options?: RequestOptions) =>
+    requester.get<OrchestrationTemplate[]>(
+      '/api/chain/orchestration-template/list',
+      undefined,
+      options,
+    ),
+  previewOrchestrationTemplate: (body: OrchestrationTemplateSaveRequest) =>
+    requester.post<{ affected_chains: OrchestrationTemplateImpact[] }>(
+      '/api/chain/orchestration-template/preview',
+      body,
+    ),
+  saveOrchestrationTemplate: (body: OrchestrationTemplateSaveRequest) =>
+    requester.post<OrchestrationTemplate>('/api/chain/orchestration-template/save', body),
+  deleteOrchestrationTemplate: (id: number) =>
+    requester.post<void>('/api/chain/orchestration-template/delete', { id }),
   createChain: (body: CreateChainRequest) =>
     requester.postObserved<Chain>('/api/chain/create', body),
   editChain: (body: EditChainRequest) => requester.postObserved<Chain>('/api/chain/edit', body),

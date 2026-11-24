@@ -512,6 +512,90 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/HopOrchestrationSaveRequest'}
       responses: {'200': {$ref: '#/components/responses/RPCResponse'}, default: {$ref: '#/components/responses/ProtocolErrorResponse'}}
+  /api/chain/orchestration-template/list:
+    get:
+      operationId: orchestrationTemplateList
+      responses:
+        '200':
+          description: RPC result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/RPCEnvelope'}
+                  - type: object
+                    properties:
+                      data: {type: array, items: {$ref: '#/components/schemas/OrchestrationTemplate'}}
+        default: {$ref: '#/components/responses/ProtocolErrorResponse'}
+  /api/chain/orchestration-template/preview:
+    post:
+      operationId: orchestrationTemplatePreview
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OrchestrationTemplateSaveRequest'}
+      responses:
+        '200':
+          description: RPC result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/RPCEnvelope'}
+                  - type: object
+                    properties:
+                      data: {type: object, required: [affected_chains], properties: {affected_chains: {type: array, items: {$ref: '#/components/schemas/OrchestrationTemplateImpact'}}}}
+        default: {$ref: '#/components/responses/ProtocolErrorResponse'}
+  /api/chain/orchestration-template/save:
+    post:
+      operationId: orchestrationTemplateSave
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OrchestrationTemplateSaveRequest'}
+      responses:
+        '200':
+          description: RPC result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/RPCEnvelope'}
+                  - type: object
+                    properties:
+                      data: {$ref: '#/components/schemas/OrchestrationTemplate'}
+        default: {$ref: '#/components/responses/ProtocolErrorResponse'}
+  /api/chain/orchestration-template/delete:
+    post:
+      operationId: orchestrationTemplateDelete
+      parameters:
+        - {$ref: '#/components/parameters/CSRFToken'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OrchestrationTemplateDeleteRequest'}
+      responses:
+        '200':
+          description: RPC result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/RPCEnvelope'}
+                  - type: object
+                    properties:
+                      data: {type: 'null'}
+        default: {$ref: '#/components/responses/ProtocolErrorResponse'}
   /api/user/list:
     get:
       operationId: userList
@@ -1375,6 +1459,10 @@ components:
       additionalProperties: true
       required: [name]
       properties:
+        orchestrations:
+          type: array
+          description: Optional per-hop writes. An empty list clears all graphs. An empty graph clears its hop.
+          items: {$ref: '#/components/schemas/OrchestrationDraft'}
         name: {type: string}
         hops:
           type: array
@@ -1399,6 +1487,10 @@ components:
       additionalProperties: true
       required: [chain_id, name, hops]
       properties:
+        orchestrations:
+          type: array
+          description: Optional per-hop writes. An empty list clears all graphs. An empty graph clears its hop.
+          items: {$ref: '#/components/schemas/OrchestrationDraft'}
         chain_id: {type: integer, minimum: 1}
         name: {type: string}
         hops:
@@ -1413,6 +1505,69 @@ components:
           additionalProperties: true
           description: Optional entry protocol block (P4). Same semantics as ChainCreateRequest.entry_node; omitted keeps the end-to-end topology.
         traffic_multiplier: {type: string}
+    OrchestrationGraph:
+      type: object
+      required: [nodes, edges]
+      properties:
+        nodes: {type: array, items: {$ref: '#/components/schemas/HopOrchestrationNodeInput'}}
+        edges:
+          type: array
+          items:
+            type: object
+            required: [from, to]
+            properties:
+              from: {type: integer, minimum: 0}
+              to: {type: integer, minimum: 0}
+    OrchestrationParamOverride:
+      type: object
+      required: [server_id]
+      properties:
+        server_id: {type: integer, minimum: 1}
+        address: {type: string, description: Omit to inherit. An empty string selects the default server address.}
+        listen_port: {type: integer, minimum: 0, maximum: 65535, description: Omit to inherit. Zero explicitly selects automatic allocation.}
+    OrchestrationDraft:
+      allOf:
+        - {$ref: '#/components/schemas/OrchestrationGraph'}
+        - type: object
+          required: [seq]
+          properties:
+            seq: {type: integer, minimum: 0}
+            template_id: {type: integer, minimum: 1}
+            template_revision: {type: integer, minimum: 1}
+            overrides: {type: array, items: {$ref: '#/components/schemas/OrchestrationParamOverride'}}
+    OrchestrationTemplateSaveRequest:
+      allOf:
+        - {$ref: '#/components/schemas/OrchestrationGraph'}
+        - type: object
+          required: [name]
+          properties:
+            id: {type: integer, minimum: 1}
+            name: {type: string, minLength: 1}
+            revision: {type: integer, minimum: 1, description: Required when editing an existing template.}
+    OrchestrationTemplate:
+      allOf:
+        - {$ref: '#/components/schemas/OrchestrationTemplateSaveRequest'}
+        - type: object
+          required: [id, revision, usage_count, created_at, updated_at]
+          properties:
+            id: {type: integer}
+            revision: {type: integer}
+            usage_count: {type: integer, description: Number of distinct linked chains.}
+            created_at: {type: string, format: date-time}
+            updated_at: {type: string, format: date-time}
+    OrchestrationTemplateDeleteRequest:
+      type: object
+      required: [id]
+      properties:
+        id: {type: integer, minimum: 1}
+    OrchestrationTemplateImpact:
+      type: object
+      required: [chain_id, chain_name, seq, redeploy]
+      properties:
+        chain_id: {type: integer}
+        chain_name: {type: string}
+        seq: {type: integer}
+        redeploy: {type: boolean}
     HopOrchestrationNodeInput:
       type: object
       description: |
@@ -1426,7 +1581,7 @@ components:
         server_id: {type: integer, minimum: 1}
         is_root: {type: boolean}
         address: {type: string}
-        listen_port: {type: integer, minimum: 1, maximum: 65535}
+        listen_port: {type: integer, minimum: 0, maximum: 65535}
         subject: {type: string, enum: [self, prev, next, root]}
         action:
           type: string

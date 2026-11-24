@@ -17,21 +17,8 @@ const (
 )
 
 // hopOrchestrationNodeInput / edgeInput 是保存接口的请求形状。
-type hopOrchestrationNodeInput struct {
-	Kind       string `json:"kind"`
-	ServerID   int64  `json:"server_id,omitempty"`
-	IsRoot     bool   `json:"is_root,omitempty"`
-	Address    string `json:"address,omitempty"`
-	ListenPort int    `json:"listen_port,omitempty"`
-	Subject    string `json:"subject,omitempty"`
-	Action     string `json:"action,omitempty"`
-	Priority   int    `json:"priority,omitempty"`
-}
-
-type hopOrchestrationEdgeInput struct {
-	From int `json:"from"`
-	To   int `json:"to"`
-}
+type hopOrchestrationNodeInput = store.OrchestrationNodeInput
+type hopOrchestrationEdgeInput = store.OrchestrationEdgeInput
 
 type hopOrchestrationSaveRequest struct {
 	ChainID int64                       `json:"chain_id"`
@@ -93,10 +80,36 @@ func validTriggerCombo(subject, action string) bool {
 
 // validateHopOrchestration 校验一张待保存的编排图（spec §4）。边的 FromNode/ToNode 是 nodes 下标。
 func validateHopOrchestration(ctx context.Context, st *store.Store, chain *store.Chain, hops []store.ChainHop, seq int, graph store.ChainHopGraph) error {
+	graphs, err := st.ChainHopGraphs(ctx, chain.ID)
+	if err != nil {
+		return err
+	}
+	expected := int64(0)
+	if seq >= 0 && seq < len(hops) {
+		expected = hops[seq].ServerID
+	}
+	if root := graphRoot(graphs[seq]); root != 0 {
+		expected = root
+	}
+	return validateOrchestrationGraph(ctx, st, hops, seq, graph, expected, graphs)
+}
+
+func graphRoot(graph store.ChainHopGraph) int64 {
+	for _, n := range graph.Nodes {
+		if n.IsRoot && n.Kind == store.HopGraphKindServer {
+			return n.ServerID
+		}
+	}
+	return 0
+}
+
+// A nil topology validates a reusable template. Boundary and role checks apply
+// when the same graph is resolved against a concrete chain.
+func validateOrchestrationGraph(ctx context.Context, st *store.Store, hops []store.ChainHop, seq int, graph store.ChainHopGraph, expectedRoot int64, graphs map[int]store.ChainHopGraph) error {
 	prefix := func(format string, args ...any) error {
 		return fmt.Errorf("第 %d 跳："+format, append([]any{seq + 1}, args...)...)
 	}
-	if seq < 0 || seq >= len(hops) {
+	if hops != nil && (seq < 0 || seq >= len(hops)) {
 		return prefix("跳位不存在")
 	}
 	if len(graph.Nodes) == 0 {
@@ -105,7 +118,7 @@ func validateHopOrchestration(ctx context.Context, st *store.Store, chain *store
 		}
 		return nil
 	}
-	if len(graph.Edges) == 0 {
+	if len(graph.Edges) == 0 && len(graph.Nodes) != 1 {
 		return prefix("编排图至少需要一条连线")
 	}
 
@@ -119,6 +132,9 @@ func validateHopOrchestration(ctx context.Context, st *store.Store, chain *store
 			}
 			servers = append(servers, i)
 		case store.HopGraphKindTrigger:
+			if node.IsRoot || node.ServerID != 0 || node.ListenPort != 0 || node.Address != "" {
+				return prefix("触发器不能包含服务器参数")
+			}
 			if !validTriggerCombo(node.Subject, node.Action) {
 				return prefix("触发器类型无效（%s/%s）", node.Subject, node.Action)
 			}
@@ -142,8 +158,24 @@ func validateHopOrchestration(ctx context.Context, st *store.Store, chain *store
 	seenEdges := make(map[pair]bool, len(graph.Edges))
 	out := make([][]int, len(graph.Nodes))
 	in := make([][]int, len(graph.Nodes))
+	// Stored edges reference node IDs. Draft edges reference node indexes.
+	var nodeIndexes map[int64]int
+	if graph.Nodes[0].ID != 0 {
+		nodeIndexes = make(map[int64]int, len(graph.Nodes))
+		for i, node := range graph.Nodes {
+			nodeIndexes[node.ID] = i
+		}
+	}
 	for _, edge := range graph.Edges {
 		from, to := int(edge.FromNode), int(edge.ToNode)
+		if nodeIndexes != nil {
+			var fromOK, toOK bool
+			from, fromOK = nodeIndexes[edge.FromNode]
+			to, toOK = nodeIndexes[edge.ToNode]
+			if !fromOK || !toOK {
+				return prefix("连线节点不存在")
+			}
+		}
 		if from < 0 || from >= len(graph.Nodes) || to < 0 || to >= len(graph.Nodes) {
 			return prefix("连线下标越界")
 		}
@@ -176,20 +208,7 @@ func validateHopOrchestration(ctx context.Context, st *store.Store, chain *store
 	if root < 0 {
 		return prefix("缺少根服务器")
 	}
-	existing, err := st.ChainHopGraph(ctx, chain.ID, seq)
-	if err != nil {
-		return err
-	}
-	expectedRoot := hops[seq].ServerID
-	if existing != nil {
-		for _, node := range existing.Nodes {
-			if node.IsRoot {
-				expectedRoot = node.ServerID
-				break
-			}
-		}
-	}
-	if graph.Nodes[root].ServerID != expectedRoot {
+	if expectedRoot != 0 && graph.Nodes[root].ServerID != expectedRoot {
 		return prefix("根服务器必须是该跳原服务器（#%d）", expectedRoot)
 	}
 
@@ -201,7 +220,7 @@ func validateHopOrchestration(ctx context.Context, st *store.Store, chain *store
 			return prefix("同一服务器在编排图中重复")
 		}
 		serverSeen[graph.Nodes[i].ServerID] = true
-		if graph.Nodes[i].ServerID == hops[seq].ServerID {
+		if hops == nil || graph.Nodes[i].ServerID == hops[seq].ServerID {
 			currentFound = true
 		}
 	}
@@ -243,10 +262,10 @@ func validateHopOrchestration(ctx context.Context, st *store.Store, chain *store
 			return prefix("同一服务器同一触发条件只能配置一个触发器")
 		}
 		triggerKeys[key] = true
-		if node.Subject == store.TriggerSubjectPrev && seq == 0 {
+		if hops != nil && node.Subject == store.TriggerSubjectPrev && seq == 0 {
 			return prefix("入口跳没有上一跳超时触发器")
 		}
-		if node.Subject == store.TriggerSubjectNext && seq == len(hops)-1 {
+		if hops != nil && node.Subject == store.TriggerSubjectNext && seq == len(hops)-1 {
 			return prefix("出口跳没有下一跳超时触发器")
 		}
 		if node.Subject == store.TriggerSubjectSelf {
@@ -268,24 +287,25 @@ func validateHopOrchestration(ctx context.Context, st *store.Store, chain *store
 		}
 	}
 	otherGraphServers := make(map[int64]bool)
-	if allGraphs, err := st.ChainHopGraphs(ctx, chain.ID); err == nil {
-		for graphSeq, other := range allGraphs {
-			if graphSeq == seq {
-				continue
-			}
-			for _, node := range other.Nodes {
-				if node.Kind == store.HopGraphKindServer {
-					otherGraphServers[node.ServerID] = true
-				}
+	for graphSeq, other := range graphs {
+		if graphSeq == seq {
+			continue
+		}
+		for _, node := range other.Nodes {
+			if node.Kind == store.HopGraphKindServer {
+				otherGraphServers[node.ServerID] = true
 			}
 		}
-	} else {
-		return err
 	}
-	currentHopServer, err := st.ServerByID(ctx, hops[seq].ServerID)
-	if err != nil {
-		return prefix("当前跳服务器不存在")
+	var currentHopServer *store.Server
+	if hops != nil {
+		var err error
+		currentHopServer, err = st.ServerByID(ctx, hops[seq].ServerID)
+		if err != nil {
+			return prefix("当前跳服务器不存在")
+		}
 	}
+
 	for _, i := range servers {
 		node := graph.Nodes[i]
 		if i != root && len(in[i]) == 0 {
@@ -298,23 +318,25 @@ func validateHopOrchestration(ctx context.Context, st *store.Store, chain *store
 		if err != nil {
 			return prefix("服务器 #%d 不存在", node.ServerID)
 		}
-		isExit := hops[seq].Role == store.HopRoleExit
-		if isExit {
-			if srv.IsExternal() != currentHopServer.IsExternal() {
-				return prefix("出口备选须与主出口同为托管或同为外部直链")
-			}
-			if srv.IsExternal() {
-				exit := srv.ParseExternalExit()
-				if exit == nil || exit.Validate() != nil {
-					return prefix("外部直链服务器 %s 的出口配置不可用", srv.Alias)
+		if hops != nil {
+			isExit := hops[seq].Role == store.HopRoleExit
+			if isExit {
+				if srv.IsExternal() != currentHopServer.IsExternal() {
+					return prefix("出口备选须与主出口同为托管或同为外部直链")
 				}
-			}
-		} else {
-			if srv.IsExternal() {
-				return prefix("外部直链服务器不能作为入口/中转备选")
-			}
-			if !inboundCapable(srv) {
-				return prefix("服务器 %s 无入站能力", srv.Alias)
+				if srv.IsExternal() {
+					exit := srv.ParseExternalExit()
+					if exit == nil || exit.Validate() != nil {
+						return prefix("外部直链服务器 %s 的出口配置不可用", srv.Alias)
+					}
+				}
+			} else {
+				if srv.IsExternal() {
+					return prefix("外部直链服务器不能作为入口/中转备选")
+				}
+				if !inboundCapable(srv) {
+					return prefix("服务器 %s 无入站能力", srv.Alias)
+				}
 			}
 		}
 		if node.Address != "" && !store.ServerAddressSet(srv)[node.Address] {
@@ -413,6 +435,8 @@ type chainHopOrchestrationEdgeDTO struct {
 }
 
 type chainHopOrchestrationDTO struct {
+	*store.OrchestrationBinding
+	SyncPending    bool                           `json:"template_sync_pending,omitempty"`
 	RootServerID   int64                          `json:"root_server_id"`
 	ActiveServerID int64                          `json:"active_server_id"`
 	Triggered      bool                           `json:"triggered"`
@@ -443,7 +467,7 @@ func (s *Server) buildHopOrchestrationDTO(hop store.ChainHop, graph *store.Chain
 		}
 	}
 	out := &chainHopOrchestrationDTO{
-		RootServerID: rootID, ActiveServerID: hop.ServerID, Triggered: hop.ServerID != rootID,
+		OrchestrationBinding: graph.Binding, SyncPending: graph.SyncPending, RootServerID: rootID, ActiveServerID: hop.ServerID, Triggered: hop.ServerID != rootID,
 		Nodes: make([]chainHopOrchestrationNodeDTO, 0, len(graph.Nodes)),
 		Edges: make([]chainHopOrchestrationEdgeDTO, 0, len(graph.Edges)),
 	}
@@ -482,6 +506,8 @@ func (s *Server) handleSaveHopOrchestration(w http.ResponseWriter, r *http.Reque
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	s.orchestrationMu.Lock()
+	defer s.orchestrationMu.Unlock()
 	chain, err := s.st.ChainByID(r.Context(), req.ChainID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -511,6 +537,13 @@ func (s *Server) handleSaveHopOrchestration(w http.ResponseWriter, r *http.Reque
 	}
 	if err := validateHopOrchestration(r.Context(), s.st, chain, hops, req.Seq, graph); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if current, err := s.st.ChainHopGraph(r.Context(), chain.ID, req.Seq); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	} else if current != nil && (current.Binding != nil || current.SyncPending) {
+		writeError(w, http.StatusConflict, "请在链路编辑器中编辑关联参数或另存为独立副本")
 		return
 	}
 	if _, err := s.st.ReplaceChainHopGraph(r.Context(), req.ChainID, req.Seq, graph.Nodes, graph.Edges); err != nil {

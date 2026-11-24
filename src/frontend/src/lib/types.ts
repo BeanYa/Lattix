@@ -625,6 +625,11 @@ export interface OrchestrationEdge {
 }
 
 export interface ChainOrchestration {
+  template_id?: number
+  template_name?: string
+  template_revision?: number
+  overrides?: OrchestrationParamOverride[]
+  template_sync_pending?: boolean
   root_server_id: number
   active_server_id: number
   triggered: boolean
@@ -641,6 +646,45 @@ export interface HopOrchestrationNodeInput {
   subject?: 'self' | 'prev' | 'next' | 'root'
   action?: 'ban_suspected' | 'ban_banned' | 'segment_timeout' | 'recovered'
   priority?: number
+}
+
+export interface OrchestrationGraph {
+  nodes: HopOrchestrationNodeInput[]
+  edges: OrchestrationEdge[]
+}
+
+export interface OrchestrationParamOverride {
+  server_id: number
+  address?: string
+  listen_port?: number
+}
+
+export interface OrchestrationDraft extends OrchestrationGraph {
+  template_id?: number
+  template_revision?: number
+  overrides?: OrchestrationParamOverride[]
+}
+
+export interface OrchestrationTemplate extends OrchestrationGraph {
+  id: number
+  name: string
+  revision: number
+  usage_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface OrchestrationTemplateImpact {
+  chain_id: number
+  chain_name: string
+  seq: number
+  redeploy: boolean
+}
+
+export interface OrchestrationTemplateSaveRequest extends OrchestrationGraph {
+  id?: number
+  name: string
+  revision?: number
 }
 
 export interface HopOrchestrationSaveRequest {
@@ -760,6 +804,7 @@ export interface ChainHopInput {
 }
 
 export interface CreateChainRequest {
+  orchestrations?: (OrchestrationDraft & { seq: number })[]
   name: string
   hops?: ChainHopInput[]
   entry: ChainHopInput
@@ -772,6 +817,7 @@ export interface CreateChainRequest {
 }
 
 export interface EditChainRequest {
+  orchestrations?: (OrchestrationDraft & { seq: number })[]
   chain_id: number
   name: string
   hops: ChainHopInput[]

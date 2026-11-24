@@ -858,6 +858,31 @@ CREATE TABLE IF NOT EXISTS chain_hop_graph_edges (
 CREATE INDEX IF NOT EXISTS idx_chain_hop_graph_edges
     ON chain_hop_graph_edges(chain_id, seq);
 
+CREATE TABLE IF NOT EXISTS orchestration_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    graph_json TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS orchestration_bindings (
+    chain_id INTEGER NOT NULL, seq INTEGER NOT NULL,
+    template_id INTEGER NOT NULL REFERENCES orchestration_templates(id),
+    template_revision INTEGER NOT NULL, overrides TEXT NOT NULL,
+    PRIMARY KEY(chain_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_orchestration_template_usage ON orchestration_bindings(template_id);
+-- Survives detachment/deletion of the source template. Publishing the matching
+-- chain revision acknowledges this work alongside the published snapshot.
+CREATE TABLE IF NOT EXISTS orchestration_sync (
+    chain_id INTEGER NOT NULL, seq INTEGER NOT NULL,
+    target_revision INTEGER NOT NULL,
+    deployment_id INTEGER NOT NULL DEFAULT 0,
+    base_address TEXT NOT NULL, base_port INTEGER NOT NULL,
+    PRIMARY KEY(chain_id, seq)
+);
+
 -- 编排 worker 的失败现场（暂停提示）。保存图/编辑链路后清空。
 CREATE TABLE IF NOT EXISTS chain_orchestration_states (
     chain_id   INTEGER PRIMARY KEY REFERENCES chains(id),

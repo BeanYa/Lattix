@@ -74,6 +74,7 @@ type Server struct {
 	reqLog           *logging.RequestLog
 	observes         *progress.Registry // 旁路操作进度观察（nil = 关闭）
 	startedAt        time.Time
+	orchestrationMu  sync.RWMutex // Template publication excludes graph edits and worker evaluations.
 	runtimeMu        sync.Mutex
 	lastCPU          runtimeCPUSample
 	banWatchLastEval time.Time         // Ban 观察上轮评估时刻（仅 server.ban-watch 任务读写，调度器保证不重叠）
@@ -491,6 +492,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRPC(mux, http.MethodPost, "/api/chain/switch-hop",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"chain_id", "seq", "server_id"}},
 		s.handleSwitchChainHop)
+	s.registerRPC(mux, http.MethodGet, "/api/chain/orchestration-template/list", read, s.handleListOrchestrationTemplates)
+	s.registerRPC(mux, http.MethodPost, "/api/chain/orchestration-template/preview", write, s.handlePreviewOrchestrationTemplate)
+	s.registerRPC(mux, http.MethodPost, "/api/chain/orchestration-template/save", write, s.handleSaveOrchestrationTemplate)
+	s.registerRPC(mux, http.MethodPost, "/api/chain/orchestration-template/delete", write, s.handleDeleteOrchestrationTemplate)
 	s.registerRPC(mux, http.MethodPost, "/api/chain/hop-orchestration/save",
 		rpcRouteOptions{Auth: true, CSRF: true, Idempotent: true, SafeBodyFields: []string{"chain_id", "seq"}},
 		s.handleSaveHopOrchestration)

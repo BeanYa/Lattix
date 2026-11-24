@@ -72,7 +72,18 @@ type ChainRevisionSnapshot struct {
 	TopologyEdit bool `json:"topology_edit,omitempty"`
 }
 
+// RevisionEdit is consumed by ReplaceWorkingChainTopology. A new revision,
+// all planned tasks, the working topology and its graphs commit together.
+type RevisionEdit struct {
+	Tasks               []ChainRevisionTask
+	GraphWrites         []HopGraphWrite
+	SyncSeq             *int
+	ExpectedDesiredID   int64
+	ExpectedPublishedID int64
+}
+
 type ChainRevision struct {
+	Edit        *RevisionEdit `json:"-"`
 	ID          int64
 	ChainID     int64
 	RevisionNo  int
@@ -108,6 +119,7 @@ type InitialChainHop struct {
 }
 
 type InitialChainDeployment struct {
+	GraphWrites            []HopGraphWrite
 	Name                   string
 	ServiceServerID        int64
 	ServiceProtocol        string
@@ -285,6 +297,10 @@ func (s *Store) CreateInitialChainDeployment(
 		}
 	}
 
+	if err := writeHopGraphsTx(ctx, tx, out.ChainID, input.GraphWrites); err != nil {
+		return out, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return out, fmt.Errorf("commit initial chain deployment: %w", err)
 	}
@@ -309,22 +325,30 @@ func (s *Store) CreateChainRevision(ctx context.Context, chainID int64, snapshot
 		return nil, err
 	}
 	defer tx.Rollback()
-	var next int
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision_no),0)+1 FROM chain_revisions WHERE chain_id=?`, chainID).Scan(&next); err != nil {
-		return nil, err
-	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO chain_revisions (chain_id, revision_no, snapshot) VALUES (?, ?, ?)`, chainID, next, string(raw))
+	id, err := insertChainRevisionTx(ctx, tx, chainID, raw)
 	if err != nil {
-		return nil, err
-	}
-	id, _ := res.LastInsertId()
-	if _, err := tx.ExecContext(ctx, `UPDATE chains SET desired_revision_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, id, chainID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return s.ChainRevisionByID(ctx, id)
+}
+
+func insertChainRevisionTx(ctx context.Context, tx *sql.Tx, chainID int64, raw []byte) (int64, error) {
+	var next int
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision_no),0)+1 FROM chain_revisions WHERE chain_id=?`, chainID).Scan(&next); err != nil {
+		return 0, err
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO chain_revisions (chain_id, revision_no, snapshot) VALUES (?, ?, ?)`, chainID, next, string(raw))
+	if err != nil {
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
+	if _, err := tx.ExecContext(ctx, `UPDATE chains SET desired_revision_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, id, chainID); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func scanRevision(row interface{ Scan(...any) error }) (*ChainRevision, error) {
@@ -897,6 +921,14 @@ func (s *Store) PublishChainRevision(ctx context.Context, revisionID int64, forc
 			return fmt.Errorf("%w: chain %d not in status %s", ErrChainStatusChanged, revision.ChainID, fromStatus[0])
 		}
 	}
+	if !forced {
+		if _, err := tx.ExecContext(ctx, `UPDATE orchestration_bindings AS b SET template_revision=p.target_revision FROM orchestration_sync AS p WHERE p.deployment_id=? AND p.chain_id=b.chain_id AND p.seq=b.seq`, revisionID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM orchestration_sync WHERE deployment_id=?`, revisionID); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -918,9 +950,46 @@ func (s *Store) ReplaceWorkingChainTopology(ctx context.Context, revision *Chain
 		return err
 	}
 	defer tx.Rollback()
+	if edit := revision.Edit; edit != nil {
+		var ok bool
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(desired_revision_id,0)=? AND COALESCE(published_revision_id,0)=? FROM chains WHERE id=?`, edit.ExpectedDesiredID, edit.ExpectedPublishedID, revision.ChainID).Scan(&ok); err != nil {
+			return err
+		}
+		if !ok {
+			return ErrChainStatusChanged
+		}
+		raw, err := json.Marshal(revision.Snapshot)
+		if err != nil {
+			return err
+		}
+		id, err := insertChainRevisionTx(ctx, tx, revision.ChainID, raw)
+		if err != nil {
+			return err
+		}
+		revision.ID = id
+		for _, task := range edit.Tasks {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO chain_revision_tasks(revision_id,task_key,phase,action,kind,hop_id,server_id,status) VALUES(?,?,?,?,?,?,?,?)`, id, task.TaskKey, task.Phase, task.Action, task.Kind, task.HopID, task.ServerID, RevisionTaskPending); err != nil {
+				return err
+			}
+		}
+		if edit.SyncSeq != nil {
+			res, err := tx.ExecContext(ctx, `UPDATE orchestration_sync SET deployment_id=? WHERE chain_id=? AND seq=?`, id, revision.ChainID, *edit.SyncSeq)
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n != 1 {
+				return ErrTemplateConflict
+			}
+		}
+	}
 	if revision.Snapshot.TopologyEdit {
 		if err := reconcileChainHopGraphsTx(tx, revision.ChainID, revision.Snapshot.Hops); err != nil {
 			return fmt.Errorf("reconcile hop graphs: %w", err)
+		}
+	}
+	if revision.Edit != nil {
+		if err := writeHopGraphsTx(ctx, tx, revision.ChainID, revision.Edit.GraphWrites); err != nil {
+			return err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM chain_hops WHERE chain_id=?`, revision.ChainID); err != nil {

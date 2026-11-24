@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -212,6 +213,14 @@ func (w *chainWorker) step(ctx context.Context) {
 	if err != nil || len(graphs) == 0 {
 		w.setState(workerStopped)
 		return
+	}
+	if chain.Status == store.ChainStatusFailed || chain.Status == store.ChainStatusActiveFailed {
+		for _, g := range graphs {
+			if g.SyncPending {
+				w.fail(ctx, fmt.Errorf("模板同步部署失败：%s", chain.Error))
+				return
+			}
+		}
 	}
 	if chain.DesiredRevisionID != 0 || chain.Status == store.ChainStatusApplying {
 		w.setState(workerDeploying)

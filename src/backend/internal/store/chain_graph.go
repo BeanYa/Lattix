@@ -29,6 +29,8 @@ const (
 type ChainHopGraph struct {
 	ChainID      int64
 	Seq          int
+	Binding      *OrchestrationBinding
+	SyncPending  bool
 	CooldownSec  int
 	LastSwitchAt *time.Time
 	Nodes        []ChainHopGraphNode
@@ -86,18 +88,31 @@ func (s *Store) ReplaceChainHopGraph(ctx context.Context, chainID int64, seq int
 		return nil, err
 	}
 	defer tx.Rollback()
+	if err := replaceChainHopGraphTx(ctx, tx, chainID, seq, nodes, edges); err != nil {
+		return nil, err
+	}
+	if err := clearOrchestrationBindingTx(ctx, tx, chainID, seq); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return s.ChainHopGraph(ctx, chainID, seq)
+}
+
+func replaceChainHopGraphTx(ctx context.Context, tx *sql.Tx, chainID int64, seq int, nodes []ChainHopGraphNode, edges []ChainHopGraphEdge) error {
 	if len(nodes) == 0 {
 		if err := deleteChainHopGraphTx(tx, chainID, seq); err != nil {
-			return nil, err
+			return err
 		}
-		return nil, tx.Commit()
+		return nil
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO chain_hop_graphs (chain_id, seq) VALUES (?, ?)
 		ON CONFLICT(chain_id, seq) DO UPDATE SET updated_at=CURRENT_TIMESTAMP`, chainID, seq); err != nil {
-		return nil, fmt.Errorf("upsert hop graph: %w", err)
+		return fmt.Errorf("upsert hop graph: %w", err)
 	}
 	if err := deleteChainHopGraphRowsTx(tx, chainID, seq); err != nil {
-		return nil, err
+		return err
 	}
 	ids := make([]int64, len(nodes))
 	for i, n := range nodes {
@@ -111,28 +126,25 @@ func (s *Store) ReplaceChainHopGraph(ctx context.Context, chainID int64, seq int
 			chainID, seq, n.Kind, serverID, n.Address, n.ListenPort,
 			nullableString(n.Subject), nullableString(n.Action), n.Priority, boolInt(n.IsRoot), i)
 		if err != nil {
-			return nil, fmt.Errorf("insert hop graph node: %w", err)
+			return fmt.Errorf("insert hop graph node: %w", err)
 		}
 		id, err := res.LastInsertId()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		ids[i] = id
 	}
 	for _, e := range edges {
 		if e.FromNode < 0 || e.FromNode >= int64(len(nodes)) || e.ToNode < 0 || e.ToNode >= int64(len(nodes)) {
-			return nil, fmt.Errorf("hop graph edge out of range: %d -> %d", e.FromNode, e.ToNode)
+			return fmt.Errorf("hop graph edge out of range: %d -> %d", e.FromNode, e.ToNode)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO chain_hop_graph_edges
 			(chain_id, seq, from_node, to_node) VALUES (?, ?, ?, ?)`,
 			chainID, seq, ids[int(e.FromNode)], ids[int(e.ToNode)]); err != nil {
-			return nil, fmt.Errorf("insert hop graph edge: %w", err)
+			return fmt.Errorf("insert hop graph edge: %w", err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return s.ChainHopGraph(ctx, chainID, seq)
+	return nil
 }
 
 // ChainHopGraph 读取单个跳位的编排图；不存在返回 (nil, nil)。
@@ -223,7 +235,11 @@ func (s *Store) ChainHopGraphs(ctx context.Context, chainID int64) (map[int]Chai
 		g.Edges = append(g.Edges, e)
 		out[seq] = g
 	}
-	return out, edgeRows.Err()
+	if err := edgeRows.Err(); err != nil {
+		return nil, err
+	}
+	edgeRows.Close()
+	return out, s.loadOrchestrationBindings(ctx, chainID, out)
 }
 
 // DeleteChainHopGraph 删除一个跳位的编排图。
@@ -250,6 +266,9 @@ func deleteChainHopGraphRowsTx(tx *sql.Tx, chainID int64, seq int) error {
 }
 
 func deleteChainHopGraphTx(tx *sql.Tx, chainID int64, seq int) error {
+	if err := clearOrchestrationBindingTx(context.Background(), tx, chainID, seq); err != nil {
+		return err
+	}
 	if err := deleteChainHopGraphRowsTx(tx, chainID, seq); err != nil {
 		return err
 	}
@@ -260,6 +279,11 @@ func deleteChainHopGraphTx(tx *sql.Tx, chainID int64, seq int) error {
 }
 
 func deleteChainHopGraphsForChainTx(tx *sql.Tx, chainID int64) error {
+	for _, table := range []string{"orchestration_bindings", "orchestration_sync"} {
+		if _, err := tx.Exec("DELETE FROM "+table+" WHERE chain_id=?", chainID); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec(`DELETE FROM chain_hop_graph_edges WHERE chain_id=?`, chainID); err != nil {
 		return fmt.Errorf("delete chain hop graph edges: %w", err)
 	}
@@ -341,7 +365,12 @@ func reconcileChainHopGraphsTx(tx *sql.Tx, chainID int64, hops []ChainRevisionHo
 		root    int64
 		servers []int64
 	}
-	rows, err := tx.Query(`SELECT seq FROM chain_hop_graphs WHERE chain_id=? ORDER BY seq`, chainID)
+	// Bound and pending graphs are reconciled by explicit graph writes. Their
+	// source parameters are independent of the working hop's realized ports.
+	rows, err := tx.Query(`SELECT g.seq FROM chain_hop_graphs g
+		LEFT JOIN orchestration_bindings b USING(chain_id,seq)
+		LEFT JOIN orchestration_sync p USING(chain_id,seq)
+		WHERE g.chain_id=? AND b.seq IS NULL AND p.seq IS NULL ORDER BY g.seq`, chainID)
 	if err != nil {
 		return err
 	}

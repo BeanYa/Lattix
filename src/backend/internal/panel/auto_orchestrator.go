@@ -446,6 +446,8 @@ func (o *AutoOrchestrator) isCandidateHealthy(
 // EvaluateChain 评估单条链路的健康状态与回切条件，并在需要时自动切换到最佳候选节点。
 // EvaluateChain 对有编排图的链走图求值；没有图的链保留旧线性逻辑（Task 6 移除）。
 func (o *AutoOrchestrator) EvaluateChain(ctx context.Context, chainID int64) error {
+	o.s.orchestrationMu.RLock()
+	defer o.s.orchestrationMu.RUnlock()
 	chain, err := o.s.st.ChainByID(ctx, chainID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -471,6 +473,27 @@ func (o *AutoOrchestrator) EvaluateChain(ctx context.Context, chainID int64) err
 	published, err := o.s.st.PublishedChainRevision(ctx, chainID)
 	if err != nil || published == nil {
 		return nil
+	}
+	// Planned upgrades keep the agent's existing data plane alive. Resume
+	// evaluation (including pending template deployments) after reconnection.
+	if observer, ok := o.s.req.(interface{ IsUpdating(int64) bool }); ok {
+		for _, h := range hops {
+			if observer.IsUpdating(h.ServerID) {
+				return nil
+			}
+		}
+	}
+	for seq, h := range hops {
+		g := graphs[seq]
+		if !g.SyncPending {
+			continue
+		}
+		n, ok := activeGraphNode(g, h.ServerID)
+		if !ok {
+			return fmt.Errorf("第 %d 跳：待同步编排缺少当前服务器", seq+1)
+		}
+		_, err := o.s.configureChainHop(ctx, chainID, seq, store.HopSwitchTarget{ServerID: n.ServerID, ListenPort: n.ListenPort, Address: n.Address}, "", "", true)
+		return err
 	}
 	snap, err := o.loadSnapshot(ctx)
 	if err != nil {
@@ -515,6 +538,10 @@ func (s *Server) switchChainHop(
 	reasonCode string,
 	reasonDetail string,
 ) (*store.ChainRevision, error) {
+	return s.configureChainHop(ctx, chainID, seq, target, reasonCode, reasonDetail, false)
+}
+
+func (s *Server) configureChainHop(ctx context.Context, chainID int64, seq int, target store.HopSwitchTarget, reasonCode, reasonDetail string, templateSync bool) (*store.ChainRevision, error) {
 	chain, err := s.st.ChainByID(ctx, chainID)
 	if err != nil {
 		return nil, err
@@ -533,7 +560,7 @@ func (s *Server) switchChainHop(
 		return nil, fmt.Errorf("跳位序号 %d 越界", seq)
 	}
 	fromServerID := current.Snapshot.Hops[seq].ServerID
-	if fromServerID == target.ServerID {
+	if fromServerID == target.ServerID && !templateSync {
 		return current, nil
 	}
 
@@ -588,7 +615,7 @@ func (s *Server) switchChainHop(
 			return nil, fmt.Errorf("解析出口配置失败: %w", err)
 		}
 		// 如果替换的是末跳（出口）且候选指定了监听端口，更新出口端口。
-		if seq == hopCount-1 && target.ListenPort > 0 && current.Snapshot.ServiceEndpointID == 0 &&
+		if seq == hopCount-1 && (target.ListenPort > 0 || templateSync) && current.Snapshot.ServiceEndpointID == 0 &&
 			!(hopCount == 1 && current.Snapshot.EndpointID != 0) {
 			vc.Port = target.ListenPort
 		}
@@ -601,7 +628,7 @@ func (s *Server) switchChainHop(
 		serviceUUID = ""
 	}
 	entryPort := 0
-	if seq == 0 && target.ListenPort > 0 {
+	if seq == 0 && (target.ListenPort > 0 || templateSync) {
 		entryPort = target.ListenPort
 	} else if current.Snapshot.EndpointID != 0 {
 		if ep, err := s.st.SharedEndpointByID(ctx, current.Snapshot.EndpointID); err == nil {
@@ -709,6 +736,9 @@ func (s *Server) switchChainHop(
 				hop.ForwardPort = entryPort
 			}
 		}
+		if i == seq && hop.Role == store.HopRoleMiddle {
+			hop.ForwardPort = target.ListenPort
+		}
 		hop.Address = addresses[i]
 		desiredHops = append(desiredHops, hop)
 	}
@@ -776,31 +806,10 @@ func (s *Server) switchChainHop(
 		desired.ServiceRealized = append(json.RawMessage(nil), current.Snapshot.ServiceRealized...)
 	}
 
-	revision, err := s.st.CreateChainRevision(ctx, chain.ID, desired)
-	if err != nil {
-		return nil, err
+	revision := plannedChainRevision(chain, current, desired, plan)
+	if templateSync {
+		revision.Edit.SyncSeq = &seq
 	}
-	for _, piece := range plan.Apply {
-		_, _ = s.st.AddRevisionTask(ctx, store.ChainRevisionTask{
-			RevisionID: revision.ID, TaskKey: piece.Key, Phase: "apply", Action: "apply",
-			Kind: piece.Kind, HopID: piece.HopID, ServerID: piece.ServerID,
-		})
-	}
-	for _, piece := range plan.Cleanup {
-		_, _ = s.st.AddRevisionTask(ctx, store.ChainRevisionTask{
-			RevisionID: revision.ID, TaskKey: "cleanup/" + piece.Key, Phase: "cleanup", Action: "remove",
-			Kind: piece.Kind, HopID: piece.HopID, ServerID: piece.ServerID,
-		})
-	}
-	if externalExit == nil && current.Snapshot.ServiceServerID != desired.ServiceServerID {
-		_, _ = s.st.AddRevisionTask(ctx, store.ChainRevisionTask{
-			RevisionID: revision.ID,
-			TaskKey:    fmt.Sprintf("cleanup/service/%d", desired.ServiceNodeID),
-			Phase:      "cleanup", Action: "remove", Kind: dispatch.RevisionPieceService,
-			HopID: desired.ServiceNodeID, ServerID: current.Snapshot.ServiceServerID,
-		})
-	}
-
 	var nodePort *int
 	if vc.Port != 0 {
 		val := vc.Port
@@ -824,6 +833,9 @@ func (s *Server) switchChainHop(
 		return nil, err
 	}
 
+	if templateSync {
+		return revision, nil
+	}
 	now := time.Now().UTC()
 	_ = s.st.TouchChainHopGraphSwitch(ctx, chain.ID, seq, now)
 	_, _ = s.st.RecordChainFailoverEvent(ctx, store.ChainFailoverEvent{
@@ -876,6 +888,8 @@ type chainSwitchHopRequest struct {
 // handleSwitchChainHop 处理 POST /api/chain/switch-hop：管理员手动从某跳的候选池中
 // 指定一台服务器立即切换（或切回主节点）。
 func (s *Server) handleSwitchChainHop(w http.ResponseWriter, r *http.Request) {
+	s.orchestrationMu.Lock()
+	defer s.orchestrationMu.Unlock()
 	var req chainSwitchHopRequest
 	if err := readJSON(r, &req); err != nil || req.ChainID <= 0 || req.ServerID <= 0 || req.Seq < 0 {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -900,6 +914,10 @@ func (s *Server) handleSwitchChainHop(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "目标服务器不在该跳的编排图中")
 			return
 		}
+	}
+	if matched == nil {
+		writeError(w, http.StatusBadRequest, "目标服务器不在该跳的编排图中")
+		return
 	}
 	reasonDetail := req.Reason
 	if reasonDetail == "" {

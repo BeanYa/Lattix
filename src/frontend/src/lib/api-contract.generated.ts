@@ -929,6 +929,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chain/orchestration-template/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["orchestrationTemplateList"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chain/orchestration-template/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["orchestrationTemplatePreview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chain/orchestration-template/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["orchestrationTemplateSave"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chain/orchestration-template/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["orchestrationTemplateDelete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/list": {
         parameters: {
             query?: never;
@@ -2181,6 +2245,8 @@ export interface components {
         };
         /** @description Ordered hop topology (entry / 0-2 middle / exit) plus the exit-side service node form. Only hop references are validated here; the node form follows the existing RPC semantics. */
         ChainCreateRequest: {
+            /** @description Optional per-hop writes. An empty list clears all graphs. An empty graph clears its hop. */
+            orchestrations?: components["schemas"]["OrchestrationDraft"][];
             name: string;
             hops?: components["schemas"]["ChainHopRef"][];
             entry?: components["schemas"]["ChainHopRef"];
@@ -2200,6 +2266,8 @@ export interface components {
         };
         /** @description Same hop semantics as ChainCreateRequest; creates a desired revision for the target chain. */
         ChainEditRequest: {
+            /** @description Optional per-hop writes. An empty list clears all graphs. An empty graph clears its hop. */
+            orchestrations?: components["schemas"]["OrchestrationDraft"][];
             chain_id: number;
             name: string;
             hops: components["schemas"]["ChainHopRef"][];
@@ -2214,6 +2282,51 @@ export interface components {
             traffic_multiplier?: string;
         } & {
             [key: string]: unknown;
+        };
+        OrchestrationGraph: {
+            nodes: components["schemas"]["HopOrchestrationNodeInput"][];
+            edges: {
+                from: number;
+                to: number;
+            }[];
+        };
+        OrchestrationParamOverride: {
+            server_id: number;
+            /** @description Omit to inherit. An empty string selects the default server address. */
+            address?: string;
+            /** @description Omit to inherit. Zero explicitly selects automatic allocation. */
+            listen_port?: number;
+        };
+        OrchestrationDraft: components["schemas"]["OrchestrationGraph"] & {
+            seq: number;
+            template_id?: number;
+            template_revision?: number;
+            overrides?: components["schemas"]["OrchestrationParamOverride"][];
+        };
+        OrchestrationTemplateSaveRequest: components["schemas"]["OrchestrationGraph"] & {
+            id?: number;
+            name: string;
+            /** @description Required when editing an existing template. */
+            revision?: number;
+        };
+        OrchestrationTemplate: components["schemas"]["OrchestrationTemplateSaveRequest"] & {
+            id: number;
+            revision: number;
+            /** @description Number of distinct linked chains. */
+            usage_count: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        OrchestrationTemplateDeleteRequest: {
+            id: number;
+        };
+        OrchestrationTemplateImpact: {
+            chain_id: number;
+            chain_name: string;
+            seq: number;
+            redeploy: boolean;
         };
         /**
          * @description 编排图节点。kind=server 需 server_id（可选 address/listen_port 覆盖）；
@@ -3293,6 +3406,127 @@ export interface operations {
         };
         responses: {
             200: components["responses"]["RPCResponse"];
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    orchestrationTemplateList: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description RPC result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RPCEnvelope"] & {
+                        data?: components["schemas"]["OrchestrationTemplate"][];
+                    };
+                };
+            };
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    orchestrationTemplatePreview: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrchestrationTemplateSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description RPC result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RPCEnvelope"] & {
+                        data?: {
+                            affected_chains: components["schemas"]["OrchestrationTemplateImpact"][];
+                        };
+                    };
+                };
+            };
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    orchestrationTemplateSave: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrchestrationTemplateSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description RPC result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RPCEnvelope"] & {
+                        data?: components["schemas"]["OrchestrationTemplate"];
+                    };
+                };
+            };
+            default: components["responses"]["ProtocolErrorResponse"];
+        };
+    };
+    orchestrationTemplateDelete: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Session-bound token returned by `/api/auth/login` and `/api/auth/me`. */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+                /** @description Client-generated key scoped to the authenticated operator and RPC route. */
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrchestrationTemplateDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description RPC result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RPCEnvelope"] & {
+                        data?: null;
+                    };
+                };
+            };
             default: components["responses"]["ProtocolErrorResponse"];
         };
     };
@@ -4398,6 +4632,10 @@ export const rpcOperations = {
   chainDelete: { method: 'POST', path: '/api/chain/delete' },
   chainSwitchHop: { method: 'POST', path: '/api/chain/switch-hop' },
   chainHopOrchestrationSave: { method: 'POST', path: '/api/chain/hop-orchestration/save' },
+  orchestrationTemplateList: { method: 'GET', path: '/api/chain/orchestration-template/list' },
+  orchestrationTemplatePreview: { method: 'POST', path: '/api/chain/orchestration-template/preview' },
+  orchestrationTemplateSave: { method: 'POST', path: '/api/chain/orchestration-template/save' },
+  orchestrationTemplateDelete: { method: 'POST', path: '/api/chain/orchestration-template/delete' },
   userList: { method: 'GET', path: '/api/user/list' },
   userCreate: { method: 'POST', path: '/api/user/create' },
   userUpdate: { method: 'POST', path: '/api/user/update' },

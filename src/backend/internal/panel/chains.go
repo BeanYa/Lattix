@@ -326,15 +326,16 @@ type chainHopCandidateInput struct {
 // createChainRequest 是链路构图的提交（§10/§21）：依次入口 / 中间跳（0-2）/ 出口，
 // 出口携带业务节点的协议表单（复用建节点请求），入口端口可空 = 自动。
 type createChainRequest struct {
-	Name              string             `json:"name"`
-	Hops              []chainHopRef      `json:"hops,omitempty"`
-	Entry             chainHopRef        `json:"entry"`
-	Middle            []chainHopRef      `json:"middle"` // 0-2 个
-	Exit              chainHopRef        `json:"exit"`
-	EntryPort         *int               `json:"entry_port"`           // 留空 = 自动；须在入口机可用段内
-	Node              createNodeRequest  `json:"node"`                 // 出口业务节点表单（server_id 忽略，取 exit.server_id）
-	EntryNode         *createNodeRequest `json:"entry_node,omitempty"` // 入口协议区块（P4；nil=端到端现状，v1 仅 vless+reality）
-	TrafficMultiplier string             `json:"traffic_multiplier"`
+	Orchestrations    []orchestrationDraft `json:"orchestrations,omitempty"`
+	Name              string               `json:"name"`
+	Hops              []chainHopRef        `json:"hops,omitempty"`
+	Entry             chainHopRef          `json:"entry"`
+	Middle            []chainHopRef        `json:"middle"` // 0-2 个
+	Exit              chainHopRef          `json:"exit"`
+	EntryPort         *int                 `json:"entry_port"`           // 留空 = 自动；须在入口机可用段内
+	Node              createNodeRequest    `json:"node"`                 // 出口业务节点表单（server_id 忽略，取 exit.server_id）
+	EntryNode         *createNodeRequest   `json:"entry_node,omitempty"` // 入口协议区块（P4；nil=端到端现状，v1 仅 vless+reality）
+	TrafficMultiplier string               `json:"traffic_multiplier"`
 }
 
 type chainHopRef struct {
@@ -343,18 +344,21 @@ type chainHopRef struct {
 }
 
 type editChainRequest struct {
-	ChainID           int64              `json:"chain_id"`
-	Name              string             `json:"name"`
-	Hops              []chainHopRef      `json:"hops"`
-	EntryPort         *int               `json:"entry_port"`
-	Node              createNodeRequest  `json:"node"`
-	EntryNode         *createNodeRequest `json:"entry_node,omitempty"` // 入口协议区块（P4；nil=端到端现状）
-	TrafficMultiplier string             `json:"traffic_multiplier"`
+	Orchestrations    []orchestrationDraft `json:"orchestrations,omitempty"`
+	ChainID           int64                `json:"chain_id"`
+	Name              string               `json:"name"`
+	Hops              []chainHopRef        `json:"hops"`
+	EntryPort         *int                 `json:"entry_port"`
+	Node              createNodeRequest    `json:"node"`
+	EntryNode         *createNodeRequest   `json:"entry_node,omitempty"` // 入口协议区块（P4；nil=端到端现状）
+	TrafficMultiplier string               `json:"traffic_multiplier"`
 }
 
 // handleCreateChain 处理 POST /api/chains：构图校验 → 落库出口业务节点（pending）+
 // chains/chain_hops 行 → 触发编排（§21.1：出口先就绪，逐跳向外，入口最后生效）。
 func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
+	s.orchestrationMu.Lock()
+	defer s.orchestrationMu.Unlock()
 	var req createChainRequest
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -374,6 +378,12 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "链路须包含 1-4 台服务器")
 		return
 	}
+	graphWrites, activeGraph, err := s.prepareChainGraphs(r.Context(), 0, refs, req.Orchestrations)
+	if err != nil {
+		templateError(w, err)
+		return
+	}
+	applyGraphPorts(activeGraph, len(refs), &req.EntryPort, &req.Node)
 	// 逐跳加载服务器并校验（先于出口节点表单：外部直链出口没有节点表单）：
 	// 同 server 不重复（O(n) 查重即环检测）；入口与中间跳必须有入站能力
 	// （direct 或 allowed_ports 非空，§21）；未托管外部直链节点只能作最后一跳。
@@ -580,6 +590,10 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if err := s.checkMiddleGraphPortConflicts(r.Context(), activeGraph, len(servers), req.Node.Protocol, 0); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	o := s.observeStart(r, "chain.create", "创建链路", chainNodeObserveStages)
 	defer o.Close()
@@ -679,6 +693,9 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			role = store.HopRoleExit
 		}
 		hopForwardPort := 0
+		if n, ok := activeGraph[i]; ok && role == store.HopRoleMiddle {
+			hopForwardPort = n.ListenPort
+		}
 		if (role == store.HopRoleEntry || len(servers) == 1) && endpointID == 0 {
 			hopForwardPort = entryPort
 		}
@@ -731,7 +748,7 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		serviceExternal = externalExit
 	}
 	deployment, err := s.st.CreateInitialChainDeployment(r.Context(), store.InitialChainDeployment{
-		Name: req.Name, ServiceServerID: exitSrv.ID, ServiceProtocol: serviceProtocol,
+		GraphWrites: graphWrites, Name: req.Name, ServiceServerID: exitSrv.ID, ServiceProtocol: serviceProtocol,
 		ServicePort: servicePort, ServiceConfig: serviceConfig, EndpointID: endpointID,
 		ServiceEndpointID: serviceEndpointID, ServiceUUID: serviceUUID,
 		TrafficMultiplierMilli: trafficMultiplierMilli, Hops: initialHops,
@@ -844,6 +861,8 @@ func adoptEntryProtocol(req *createNodeRequest, config shared.VirtualConfig) {
 }
 
 func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
+	s.orchestrationMu.Lock()
+	defer s.orchestrationMu.Unlock()
 	var req editChainRequest
 	if err := readJSON(r, &req); err != nil {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
@@ -917,6 +936,12 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	graphWrites, activeGraph, err := s.prepareChainGraphs(r.Context(), chain.ID, req.Hops, req.Orchestrations)
+	if err != nil {
+		templateError(w, err)
+		return
+	}
+	applyGraphPorts(activeGraph, len(req.Hops), &req.EntryPort, &req.Node)
 	servers := make([]*store.Server, 0, len(req.Hops))
 	seen := map[int64]bool{}
 	for i, ref := range req.Hops {
@@ -1123,6 +1148,10 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if err := s.checkMiddleGraphPortConflicts(r.Context(), activeGraph, len(servers), req.Node.Protocol, chain.ID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	vc := buildVirtualConfig(req.Node)
 	endpointID := int64(0)
 	serviceUUID := current.Snapshot.ServiceUUID
@@ -1229,6 +1258,9 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		} else if i == 0 {
 			hop.Role = store.HopRoleEntry
 		}
+		if n, ok := activeGraph[i]; ok && (i == 0 || hop.Role == store.HopRoleMiddle) {
+			hop.ForwardPort = n.ListenPort
+		}
 		if i == 0 && req.EntryPort != nil && endpointID == 0 {
 			hop.ForwardPort = *req.EntryPort
 		}
@@ -1328,27 +1360,9 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	if !serviceChanged {
 		desired.ServiceRealized = append(json.RawMessage(nil), current.Snapshot.ServiceRealized...)
 	}
-	revision, err := s.st.CreateChainRevision(r.Context(), chain.ID, desired)
-	if err != nil {
-		o.Fail(err)
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	for _, piece := range plan.Apply {
-		_, _ = s.st.AddRevisionTask(r.Context(), store.ChainRevisionTask{RevisionID: revision.ID,
-			TaskKey: piece.Key, Phase: "apply", Action: "apply", Kind: piece.Kind,
-			HopID: piece.HopID, ServerID: piece.ServerID})
-	}
-	for _, piece := range plan.Cleanup {
-		_, _ = s.st.AddRevisionTask(r.Context(), store.ChainRevisionTask{RevisionID: revision.ID,
-			TaskKey: "cleanup/" + piece.Key, Phase: "cleanup", Action: "remove", Kind: piece.Kind,
-			HopID: piece.HopID, ServerID: piece.ServerID})
-	}
-	if externalExit == nil && current.Snapshot.ServiceServerID != desired.ServiceServerID {
-		_, _ = s.st.AddRevisionTask(r.Context(), store.ChainRevisionTask{RevisionID: revision.ID,
-			TaskKey: fmt.Sprintf("cleanup/service/%d", desired.ServiceNodeID), Phase: "cleanup", Action: "remove",
-			Kind: dispatch.RevisionPieceService, HopID: desired.ServiceNodeID, ServerID: current.Snapshot.ServiceServerID})
-	}
+	revision := plannedChainRevision(chain, current, desired, plan)
+	revision.Edit.GraphWrites = graphWrites
+	revision.Snapshot.TopologyEdit = req.Orchestrations != nil
 	var nodePort *int
 	if vc.Port != 0 {
 		value := vc.Port
@@ -1615,6 +1629,9 @@ func (s *Server) handleRetryChain(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if s.orchestrator != nil {
+		s.orchestrator.ResumeChain(id)
 	}
 	o.Report("db", 100, "失败任务已复位")
 	o.Report("publish", 100, "重发命令已下发")
