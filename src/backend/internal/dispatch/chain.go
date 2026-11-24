@@ -539,6 +539,10 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 	}
 	previous, _ := d.st.PublishedChainRevision(ctx, chainID)
 	if err := d.st.PublishChainRevision(ctx, revision.ID, false, store.ChainStatusActive); err != nil {
+		if errors.Is(err, store.ErrEntryEndpointUnconfirmed) {
+			d.recoverEntryEndpointTask(ctx, revision.ID)
+			return
+		}
 		if errors.Is(err, store.ErrChainStatusChanged) {
 			// 发布窗口内链状态被并发改写（Evaluate 降级等）：revision 已置 active 但
 			// 尚未发布。链恢复 active 后由 maybePublishReadyRevision 补发（评审 P2-8）。

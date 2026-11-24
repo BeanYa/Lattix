@@ -623,6 +623,16 @@ func (s *Store) updateChainRevisionCAS(ctx context.Context, revisionID int64, st
 	for _, state := range from {
 		args = append(args, state)
 	}
+	// An active snapshot can still be awaiting publication (or confirmation
+	// after force-publish). Only the still-desired revision may fail here;
+	// a late receipt cannot rewrite a confirmed published revision.
+	if status == RevisionStatusFailed || status == RevisionStatusActiveFailed {
+		query = `UPDATE chain_revisions SET ` + setClause + ` WHERE id=? AND (status IN (` + placeholders + `)
+			OR (status=? AND EXISTS(SELECT 1 FROM chains
+			WHERE desired_revision_id=chain_revisions.id AND (chain_revisions.forced=1
+			OR (chain_revisions.published_at IS NULL AND published_revision_id<>chain_revisions.id)))))`
+		args = append(args, RevisionStatusActive)
+	}
 	result, err := s.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
@@ -711,8 +721,8 @@ func (s *Store) RevisionTasks(ctx context.Context, revisionID int64) ([]ChainRev
 
 func (s *Store) EntryEndpointRevisionTask(ctx context.Context, revisionID int64) (ChainRevisionTask, error) {
 	task := ChainRevisionTask{RevisionID: revisionID, TaskKey: RevisionPieceEntry, Kind: RevisionPieceEntry}
-	err := s.db.QueryRowContext(ctx, `SELECT id,status,command_id,error FROM chain_revision_tasks WHERE revision_id=? AND task_key=?`, revisionID, task.TaskKey).
-		Scan(&task.ID, &task.Status, &task.CommandID, &task.Error)
+	err := s.db.QueryRowContext(ctx, `SELECT id,status,command_id,error,hop_id FROM chain_revision_tasks WHERE revision_id=? AND task_key=?`, revisionID, task.TaskKey).
+		Scan(&task.ID, &task.Status, &task.CommandID, &task.Error, &task.HopID)
 	if errors.Is(err, sql.ErrNoRows) {
 		err = ErrNotFound
 	}
@@ -783,14 +793,20 @@ func (s *Store) RevisionTaskByCommandID(ctx context.Context, commandID int64) (*
 
 // SetRevisionTaskResult 回写任务终态（acked/failed）。仅 pending/queued 可转入：
 // abandoned 任务（编辑取代/删除级联）不得被迟到回执或死信回写翻回。
-func (s *Store) SetRevisionTaskResult(ctx context.Context, taskID int64, success bool, errorMessage string) error {
+// An optional command ID also prevents a late receipt from completing a retried task.
+func (s *Store) SetRevisionTaskResult(ctx context.Context, taskID int64, success bool, errorMessage string, commandID ...int64) error {
 	status := RevisionTaskAcked
 	if !success {
 		status = RevisionTaskFailed
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE chain_revision_tasks SET status=?, error=?, updated_at=CURRENT_TIMESTAMP
-		WHERE id=? AND status IN (?, ?)`,
-		status, errorMessage, taskID, RevisionTaskPending, RevisionTaskQueued)
+	query := `UPDATE chain_revision_tasks SET status=?, error=?, updated_at=CURRENT_TIMESTAMP
+		WHERE id=? AND status IN (?, ?)`
+	args := []any{status, errorMessage, taskID, RevisionTaskPending, RevisionTaskQueued}
+	if len(commandID) > 0 {
+		query += ` AND command_id=?`
+		args = append(args, commandID[0])
+	}
+	result, err := s.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}
@@ -867,6 +883,8 @@ func (s *Store) ResetFailedRevisionTasks(ctx context.Context, revisionID int64) 
 	return err
 }
 
+var ErrEntryEndpointUnconfirmed = errors.New("store: entry endpoint confirmation is no longer current")
+
 // PublishChainRevision 发布 revision 并在同一事务内更新链状态（普通发布 → active，
 // 强制发布 → active_unconfirmed）。可选 fromStatus 参数开启 CAS 守卫：链必须仍处于
 // 调用方（链状态机）已校验的状态，否则整体回滚并返回 ErrChainStatusChanged。
@@ -888,14 +906,29 @@ func (s *Store) PublishChainRevision(ctx context.Context, revisionID int64, forc
 	defer tx.Rollback()
 	if !forced && revision.Snapshot.AwaitEntryEndpoint {
 		var ready bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM chain_revision_tasks
-			WHERE revision_id=? AND task_key=? AND status=?)
-			AND EXISTS(SELECT 1 FROM shared_endpoints WHERE id=? AND COALESCE(json_extract(realized_config,'$.port'),0)>0)`,
-			revisionID, RevisionPieceEntry, RevisionTaskAcked, revision.Snapshot.EndpointID).Scan(&ready); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM chain_revision_tasks AS task
+			JOIN shared_endpoints AS ep ON ep.id=?
+			WHERE task.revision_id=? AND task.task_key=? AND task.status=?
+			AND task.command_id>0 AND ep.last_apply_result_id=task.command_id
+			AND ep.status=? AND COALESCE(json_extract(ep.realized_config,'$.port'),0)>0)`,
+			revision.Snapshot.EndpointID, revisionID, RevisionPieceEntry, RevisionTaskAcked, EndpointStatusActive).Scan(&ready); err != nil {
 			return err
 		}
 		if !ready {
-			return fmt.Errorf("revision %d entry endpoint %d has not been realized", revisionID, revision.Snapshot.EndpointID)
+			detail := fmt.Sprintf("%s: revision %d endpoint %d", ErrEntryEndpointUnconfirmed, revisionID, revision.Snapshot.EndpointID)
+			// Retain the desired revision and sync reservation, but durably make
+			// a superseded acknowledgement retryable. The chain FSM consumes
+			// this failure now or in ResumeChains after an interruption.
+			if _, err := tx.ExecContext(ctx, `UPDATE chain_revision_tasks SET status=?, error=?, updated_at=CURRENT_TIMESTAMP
+				WHERE revision_id=? AND task_key=? AND status=? AND EXISTS(
+				SELECT 1 FROM chains WHERE desired_revision_id=?)`,
+				RevisionTaskFailed, detail, revisionID, RevisionPieceEntry, RevisionTaskAcked, revisionID); err != nil {
+				return err
+			}
+			if err := tx.Commit(); err != nil {
+				return err
+			}
+			return fmt.Errorf("%w: revision %d endpoint %d", ErrEntryEndpointUnconfirmed, revisionID, revision.Snapshot.EndpointID)
 		}
 	}
 	revisionFrom := revisionStatusFromSet(status)

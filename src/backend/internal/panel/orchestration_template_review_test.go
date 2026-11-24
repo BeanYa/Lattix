@@ -1,13 +1,16 @@
 package panel
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"lattix/backend/internal/dispatch"
 	"lattix/backend/internal/store"
 	"lattix/shared"
 )
@@ -314,6 +317,133 @@ func TestTemplateSyncOrdersSharedEntryReceipts(t *testing.T) {
 				}
 			} else if endpoint.Status != store.EndpointStatusActive || endpoint.Error != "" || graph.SyncPending || graph.Binding.Revision != changed.Revision || latest.PublishedRevisionID != desired.ID {
 				t.Fatalf("tracked success was invalidated: endpoint=%s %q, pending=%t, binding=%d, published=%d want %d", endpoint.Status, endpoint.Error, graph.SyncPending, graph.Binding.Revision, latest.PublishedRevisionID, desired.ID)
+			}
+		})
+	}
+}
+
+// The endpoint callback runs after its receipt transaction and before the
+// tracked handler advances the chain. Inject a newer outcome at that exact
+// boundary, without scheduling or sleeps.
+func TestTemplateSyncRejectsSupersededEntryConfirmation(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		failure string
+		restart bool
+	}{
+		{name: "failure between receipt and publication", failure: "newer ordinary apply failed"},
+		{name: "untracked success between receipt and publication"},
+		{name: "restart after publication rejection", failure: "newer ordinary apply failed", restart: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			failure := test.failure
+			s, st, _, ids := setupOrchestrationHandler(t)
+			ctx := t.Context()
+			r := templateForTest(ids["A1"], ids["A2"])
+			tpl := saveTemplateForTest(t, s, r)
+			id := createReviewChain(t, s, createChainRequest{Name: "publication race",
+				Hops: []chainHopRef{{ServerID: ids["A1"]}}, Node: createNodeRequest{Protocol: shared.ProtocolVLESS},
+				Orchestrations: []orchestrationDraft{{TemplateID: tpl.ID}}})
+			original, err := st.ChainByID(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			respondReviewEndpoint(t, s, original.EndpointID, 4421, "")
+			r.ID, r.Revision, r.Nodes[0].ListenPort = tpl.ID, tpl.Revision, 4433
+			changed := saveTemplateForTest(t, s, r)
+			w := chainWorker{chainID: id, o: newAutoOrchestrator(s), state: workerIdle}
+			w.step(ctx)
+			desired, err := st.DesiredChainRevision(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tracked, _ := reviewEndpointApply(t, s, desired.Snapshot.EndpointID)
+			if err := s.disp.ReconcileSharedEndpoint(ctx, desired.Snapshot.EndpointID); err != nil {
+				t.Fatal(err)
+			}
+			newer, _ := reviewEndpointApply(t, s, desired.Snapshot.EndpointID)
+			if newer.ID <= tracked.ID {
+				t.Fatal("missing newer ordinary command")
+			}
+			injected := false
+			if test.restart {
+				// Stop immediately after the guard commits its rejected task,
+				// before the dispatcher's chain FSM handles that rejection.
+				if _, err := st.MarkCommandAcked(ctx, tracked.ID); err != nil {
+					t.Fatal(err)
+				}
+				if _, _, err := st.ApplySharedEndpointResult(ctx, desired.Snapshot.EndpointID, tracked.ID, true, "", json.RawMessage(`{"port":4433}`)); err != nil {
+					t.Fatal(err)
+				}
+				respondReviewEndpointCommand(t, s, newer, desired.Snapshot.EndpointID, 4433, failure)
+				if err := st.UpdateChainRevision(ctx, desired.ID, store.RevisionStatusActive, "", desired.Snapshot); err != nil {
+					t.Fatal(err)
+				}
+				if err := st.SetChainStatus(ctx, id, store.ChainStatusActive, ""); err != nil {
+					t.Fatal(err)
+				}
+				if err := st.PublishChainRevision(ctx, desired.ID, false, store.ChainStatusActive); !errors.Is(err, store.ErrEntryEndpointUnconfirmed) {
+					t.Fatalf("publication guard: %v", err)
+				}
+				injected = true
+				s.disp = dispatch.New(st, s.req, dispatch.Options{}, dispatch.Events{})
+			} else {
+				s.disp = dispatch.New(st, s.req, dispatch.Options{}, dispatch.Events{
+					OnEndpointPublished: func(context.Context, int64) error {
+						if !injected {
+							injected = true
+							task, err := st.EntryEndpointRevisionTask(ctx, desired.ID)
+							if err != nil || task.Status != store.RevisionTaskAcked {
+								t.Fatalf("receipt did not atomically acknowledge task: %+v %v", task, err)
+							}
+							respondReviewEndpointCommand(t, s, newer, desired.Snapshot.EndpointID, 4433, failure)
+						}
+						return nil
+					},
+				})
+				respondReviewEndpointCommand(t, s, tracked, desired.Snapshot.EndpointID, 4433, "")
+			}
+			graph, err := st.ChainHopGraph(ctx, id, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			latest, err := st.ChainByID(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			endpoint, err := st.SharedEndpointByID(ctx, desired.Snapshot.EndpointID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantStatus := store.EndpointStatusActive
+			if failure != "" {
+				wantStatus = store.EndpointStatusFailed
+			}
+			if !injected || !graph.SyncPending || graph.Binding.Revision != tpl.Revision || latest.PublishedRevisionID != original.PublishedRevisionID || endpoint.LastApplyResultID != newer.ID || endpoint.Status != wantStatus {
+				t.Fatalf("superseded confirmation published: chain=%s published=%d pending=%t binding=%d endpoint=%s receipt=%d", latest.Status, latest.PublishedRevisionID, graph.SyncPending, graph.Binding.Revision, endpoint.Status, endpoint.LastApplyResultID)
+			}
+			// Startup recovery and the normal retry action must both remain usable.
+			if err := s.disp.ResumeChains(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.disp.RetryChain(ctx, id); err != nil {
+				t.Fatalf("rejected confirmation cannot retry: %v", err)
+			}
+			retry, _ := reviewEndpointApply(t, s, desired.Snapshot.EndpointID)
+			if retry.ID <= newer.ID {
+				t.Fatal("retry reused obsolete command")
+			}
+			respondReviewEndpointCommand(t, s, retry, desired.Snapshot.EndpointID, 4433, "")
+			graph, err = st.ChainHopGraph(ctx, id, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			latest, err = st.ChainByID(ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if graph.SyncPending || graph.Binding.Revision != changed.Revision || latest.PublishedRevisionID != desired.ID {
+				t.Fatalf("retry did not publish matching confirmation: chain=%+v graph=%+v", latest, graph)
 			}
 		})
 	}

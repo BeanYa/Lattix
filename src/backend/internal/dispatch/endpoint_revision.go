@@ -74,7 +74,18 @@ func (d *Dispatcher) confirmedEntryPayload(ctx context.Context, revisionID int64
 
 func (d *Dispatcher) recoverEntryEndpointTask(ctx context.Context, revisionID int64) {
 	task, err := d.st.EntryEndpointRevisionTask(ctx, revisionID)
-	if err != nil || task.Status != store.RevisionTaskQueued {
+	if err != nil {
+		return
+	}
+	if task.Status == store.RevisionTaskFailed {
+		// Includes a crash after the publication transaction rejected an
+		// obsolete confirmation but before the chain FSM saw the failure.
+		if hop, err := d.st.ChainHopByID(ctx, task.HopID); err == nil {
+			d.failHop(ctx, hop, task.Error)
+		}
+		return
+	}
+	if task.Status != store.RevisionTaskQueued {
 		return
 	}
 	cmd, err := d.st.CommandByID(ctx, task.CommandID)
@@ -87,7 +98,7 @@ func (d *Dispatcher) recoverEntryEndpointTask(ctx context.Context, revisionID in
 	case store.CommandStatusAcked:
 		_, err = d.st.ResetQueuedRevisionTask(ctx, task.ID, cmd.ID)
 	case store.CommandStatusFailed:
-		err = d.st.SetRevisionTaskResult(ctx, task.ID, false, cmd.Error)
+		err = d.st.SetRevisionTaskResult(ctx, task.ID, false, cmd.Error, cmd.ID)
 	}
 	if err != nil {
 		log.Printf("dispatch: recover revision %d entry endpoint result: %v", revisionID, err)
@@ -108,15 +119,13 @@ func (d *Dispatcher) applyEntryEndpointResult(ctx context.Context, cmd *store.Co
 		result.RealizedConfig.Port <= 0 || (requested.Config.Port != 0 && requested.Config.Port != result.RealizedConfig.Port)) {
 		success, detail = false, "共享入口回执没有确认本次部署的监听端口"
 	}
-	ep, applied, err := d.efsm.ApplyResult(ctx, revision.Snapshot.EndpointID, cmd.ID, result.RealizedConfig, success, detail)
-	if err != nil {
-		success, detail = false, err.Error()
-	} else if success && !applied && ep.Status != store.EndpointStatusActive {
-		success, detail = false, fmt.Sprintf("共享入口已有更新的部署结果（%s）：%s", ep.Status, ep.Error)
-	}
-	if err := d.st.SetRevisionTaskResult(ctx, task.ID, success, detail); err != nil {
-		log.Printf("dispatch: revision %d entry endpoint result: %v", revision.ID, err)
-		return
+	if _, _, err := d.efsm.ApplyResult(ctx, revision.Snapshot.EndpointID, cmd.ID, result.RealizedConfig, success, detail); err != nil {
+		// No endpoint receipt committed. Fail only the task still owned by
+		// this command; a retry may already have replaced its command ID.
+		if taskErr := d.st.SetRevisionTaskResult(ctx, task.ID, false, err.Error(), cmd.ID); taskErr != nil {
+			log.Printf("dispatch: revision %d entry endpoint result: %v (task: %v)", revision.ID, err, taskErr)
+			return
+		}
 	}
 	d.advanceChain(ctx, revision.ChainID)
 }

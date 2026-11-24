@@ -356,7 +356,9 @@ func (s *Store) SetSharedEndpointActive(ctx context.Context, id int64, realized 
 
 // ApplySharedEndpointResult applies only outcomes newer than the last accepted
 // command. A successful newer command can supersede an earlier failed apply.
-// The watermark and endpoint state change commit together.
+// The watermark, endpoint state, and any command-owned entry revision task
+// commit together. Stale results still finish their own task without rewriting
+// the endpoint or a replacement retry command.
 func (s *Store) ApplySharedEndpointResult(ctx context.Context, id, commandID int64, success bool, detail string, realized json.RawMessage) (*SharedEndpoint, bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -367,24 +369,41 @@ func (s *Store) ApplySharedEndpointResult(ctx context.Context, id, commandID int
 	if err != nil {
 		return nil, false, err
 	}
-	if commandID <= ep.LastApplyResultID {
-		return ep, false, nil
+	applied := commandID > ep.LastApplyResultID
+	if applied {
+		if success {
+			err = setSharedEndpointActiveTx(ctx, tx, ep, realized)
+		} else {
+			_, err = tx.ExecContext(ctx, `UPDATE shared_endpoints SET status=?, error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, EndpointStatusFailed, detail, id)
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE shared_endpoints SET last_apply_result_id=? WHERE id=?`, commandID, id); err != nil {
+			return nil, false, err
+		}
 	}
-	if success {
-		err = setSharedEndpointActiveTx(ctx, tx, ep, realized)
-	} else {
-		_, err = tx.ExecContext(ctx, `UPDATE shared_endpoints SET status=?, error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, EndpointStatusFailed, detail, id)
+	// A tracked entry confirmation and its endpoint outcome are one receipt.
+	// Correlate by command ID so an old receipt cannot finish a retried task.
+	// Even a newer ordinary success cannot confirm this revision's route.
+	if success && !applied && (ep.LastApplyResultID != commandID || ep.Status != EndpointStatusActive) {
+		success = false
+		detail = fmt.Sprintf("共享入口已有更新的部署结果（%s）：%s", ep.Status, ep.Error)
 	}
-	if err != nil {
-		return nil, false, err
+	taskStatus := RevisionTaskAcked
+	taskDetail := ""
+	if !success {
+		taskStatus, taskDetail = RevisionTaskFailed, detail
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE shared_endpoints SET last_apply_result_id=? WHERE id=?`, commandID, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE chain_revision_tasks SET status=?, error=?, updated_at=CURRENT_TIMESTAMP
+		WHERE command_id=? AND kind=? AND status IN (?, ?)`,
+		taskStatus, taskDetail, commandID, RevisionPieceEntry, RevisionTaskPending, RevisionTaskQueued); err != nil {
 		return nil, false, err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, false, err
 	}
-	return ep, true, nil
+	return ep, applied, nil
 }
 
 func setSharedEndpointActiveTx(ctx context.Context, tx *sql.Tx, ep *SharedEndpoint, realized json.RawMessage) error {
