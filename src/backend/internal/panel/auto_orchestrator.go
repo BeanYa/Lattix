@@ -542,6 +542,8 @@ func (s *Server) switchChainHop(
 }
 
 func (s *Server) configureChainHop(ctx context.Context, chainID int64, seq int, target store.HopSwitchTarget, reasonCode, reasonDetail string, templateSync bool) (*store.ChainRevision, error) {
+	s.hopChangeMu.Lock()
+	defer s.hopChangeMu.Unlock()
 	chain, err := s.st.ChainByID(ctx, chainID)
 	if err != nil {
 		return nil, err
@@ -646,6 +648,44 @@ func (s *Server) configureChainHop(ctx context.Context, chainID int64, seq int, 
 			entryPort = current.Snapshot.Hops[0].ForwardPort
 		}
 	}
+	port := target.ListenPort
+	sharedEntry := seq == 0 && current.Snapshot.EndpointID != 0
+	if seq == 0 {
+		port = entryPort
+	}
+	portHop := vc.PortHop
+	if seq == hopCount-1 || current.Snapshot.Hops[seq].Transport == "hy2" {
+		portHop = ""
+	}
+	if seq < hopCount-1 && !sharedEntry && current.Snapshot.EndpointID == 0 && port == 0 && portHop != "" {
+		port, _, _ = shared.ParsePortHop(portHop)
+		if seq == 0 {
+			entryPort = port
+		}
+	}
+	sharedHy2Exit := seq == hopCount-1 && current.Snapshot.ServiceEndpointID != 0 && vc.Protocol == shared.ProtocolHysteria2
+	claimed := false
+	if sharedHy2Exit && port > 0 {
+		ep, err := s.st.ProtocolSharedEndpoint(ctx, servers[seq].ID, shared.ProtocolHysteria2)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
+		if ep != nil {
+			if err := matchGraphSharedExitPort(ep, port); err != nil {
+				return nil, err
+			}
+			claimed = true
+		}
+	}
+	if !claimed {
+		claim, err := orchestrationListener(servers[seq], vc.Protocol, portHop, port, sharedEntry)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.checkOrchestrationListener(ctx, servers[seq].ID, chain.ID, claim, nil); err != nil {
+			return nil, err
+		}
+	}
 
 	if current.Snapshot.EndpointID != 0 {
 		if serviceUUID == "" && externalExit == nil {
@@ -689,7 +729,9 @@ func (s *Server) configureChainHop(ctx context.Context, chainID int64, seq int, 
 	serviceEndpointID := current.Snapshot.ServiceEndpointID
 	if externalExit == nil && vc.Protocol == shared.ProtocolHysteria2 && current.Snapshot.ServiceEndpointID != 0 {
 		if seq == hopCount-1 {
-			endpointJSON, _ := json.Marshal(vc)
+			endpointConfig := vc
+			endpointConfig.Port = target.ListenPort
+			endpointJSON, _ := json.Marshal(endpointConfig)
 			svcEp, _, err := s.st.EnsureProtocolSharedEndpoint(ctx, exitSrv.ID,
 				shared.ProtocolHysteria2, target.ListenPort, endpointJSON)
 			if err != nil {
@@ -737,7 +779,7 @@ func (s *Server) configureChainHop(ctx context.Context, chainID int64, seq int, 
 			}
 		}
 		if i == seq && hop.Role == store.HopRoleMiddle {
-			hop.ForwardPort = target.ListenPort
+			hop.ForwardPort = port
 		}
 		hop.Address = addresses[i]
 		desiredHops = append(desiredHops, hop)
@@ -777,6 +819,7 @@ func (s *Server) configureChainHop(ctx context.Context, chainID int64, seq int, 
 		ServiceServerID:        exitSrv.ID,
 		ServiceConfig:          serviceConfig,
 		EndpointID:             endpointID,
+		AwaitEntryEndpoint:     templateSync && endpointID != 0 && endpointID != current.Snapshot.EndpointID,
 		ServiceEndpointID:      serviceEndpointID,
 		ServiceUUID:            serviceUUID,
 		TrafficMultiplierMilli: current.Snapshot.TrafficMultiplierMilli,
@@ -819,7 +862,7 @@ func (s *Server) configureChainHop(ctx context.Context, chainID int64, seq int, 
 		return nil, err
 	}
 
-	offline := false
+	offline := desired.AwaitEntryEndpoint && !s.req.IsOnline(servers[0].ID)
 	for _, piece := range plan.Apply {
 		if !s.req.IsOnline(piece.ServerID) {
 			offline = true
@@ -909,10 +952,6 @@ func (s *Server) handleSwitchChainHop(w http.ResponseWriter, r *http.Request) {
 				}
 				break
 			}
-		}
-		if matched == nil {
-			writeError(w, http.StatusBadRequest, "目标服务器不在该跳的编排图中")
-			return
 		}
 	}
 	if matched == nil {

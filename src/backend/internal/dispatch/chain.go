@@ -82,12 +82,16 @@ func (d *Dispatcher) RetryChain(ctx context.Context, chainID int64) error {
 	if chain.Status != store.ChainStatusFailed && chain.Status != store.ChainStatusActiveFailed {
 		return fmt.Errorf("仅 failed 状态的链可重试（当前 %s）", chain.Status)
 	}
+	var awaitingEntry int64
 	if revision, err := d.st.DesiredChainRevision(ctx, chainID); err == nil {
 		if err := d.st.ResetFailedRevisionTasks(ctx, revision.ID); err != nil {
 			return err
 		}
 		if err := d.st.SetChainRevisionStatus(ctx, revision.ID, store.RevisionStatusApplying, ""); err != nil {
 			return err
+		}
+		if revision.Snapshot.AwaitEntryEndpoint {
+			awaitingEntry = revision.Snapshot.EndpointID
 		}
 	}
 	hops, err := d.st.ChainHops(ctx, chainID)
@@ -103,6 +107,17 @@ func (d *Dispatcher) RetryChain(ctx context.Context, chainID int64) error {
 	}
 	if err := d.fsm.Transition(ctx, chainID, store.ChainStatusApplying, "重试编排"); err != nil {
 		return err
+	}
+	if awaitingEntry != 0 {
+		ep, err := d.st.SharedEndpointByID(ctx, awaitingEntry)
+		if err != nil {
+			return err
+		}
+		if ep.Status == store.EndpointStatusFailed {
+			if err := d.ReconcileSharedEndpoint(ctx, awaitingEntry); err != nil {
+				return err
+			}
+		}
 	}
 	d.advanceChain(context.Background(), chainID)
 	return nil
@@ -134,6 +149,9 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		serviceEndpointID = revision.Snapshot.ServiceEndpointID
 		snap := revision.Snapshot
 		snapshot = &snap
+	}
+	if snapshot != nil && snapshot.AwaitEntryEndpoint && !d.entryListenerReady(ctx, endpointID, &hops[0]) {
+		return
 	}
 	pieces, err := d.chainPieces(ctx, chainID, revisionID)
 	if err != nil {
@@ -371,7 +389,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	// hy2 段治理与末段拨号参数（P4 §3.2）：快照 ServiceConfig 的 port_hop 决定逐跳保留
 	// 段长；跳 transport 取自 revision 快照（chain_hops 表不存 transport 列）。
 	hopTransports := map[int64]string{}
-	hopSpanLen := 0
+	portHop := ""
 	hopSpanStart := 0
 	serviceUUID := ""
 	if snapshot != nil {
@@ -383,8 +401,8 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 			PortHop string `json:"port_hop"`
 		}
 		if err := json.Unmarshal(snapshot.ServiceConfig, &svcVirtual); err == nil && svcVirtual.PortHop != "" {
-			if start, end, err := shared.ParsePortHop(svcVirtual.PortHop); err == nil {
-				hopSpanLen = end - start + 1
+			if start, _, err := shared.ParsePortHop(svcVirtual.PortHop); err == nil {
+				portHop = svcVirtual.PortHop
 				hopSpanStart = start
 			}
 		}
@@ -422,8 +440,8 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		}
 		// hy2 端到端跳跃段（P4 §3.2）：出口 port_hop 非空时，各跳保留段
 		// [forward_port, forward_port+段长-1]（全跳同段，逐端口 1:1；段终点随 spec 下发）。
-		if hopSpanLen > 0 && transport != "hy2" {
-			spec.HopPortEnd = hop.ForwardPort + hopSpanLen - 1
+		if transport != "hy2" {
+			spec.HopPortEnd = shared.ForwardPortHopEnd(spec.Port, portHop)
 		}
 		// 入口终结末段（transport="hy2"）：本跳 xray 以 hy2 outbound 直拨出口（UDP），
 		// 不再生成 freedom 直连；拨号参数 = 出口公网地址 + realized + 派生 tunnel 口令。
@@ -465,7 +483,7 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 				// hy2 端到端跳跃段（评审 #1）：agent 段内附加 inbound 按 TargetPort 同号
 				// 换算目标端口，而出口 DNAT 只覆盖段——末段目标须为段起点，否则段内
 				// 仅起点端口可通（入口终结末段与端点 route 路径无此换算，不受影响）。
-				if hopSpanLen > 0 && transport != "hy2" {
+				if portHop != "" && transport != "hy2" {
 					spec.TargetPort = publicPortOf(servers[next.ServerID], hopSpanStart)
 				}
 			}
@@ -506,6 +524,27 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	log.Printf("dispatch: chain %d active（%d 跳）", chainID, len(hops))
 	d.publishDesiredRevision(ctx, chainID, hops, exitNode)
 	d.fsm.Evaluate(ctx, chainID)
+}
+
+func (d *Dispatcher) entryListenerReady(ctx context.Context, endpointID int64, hop *store.ChainHop) bool {
+	ep, err := d.st.SharedEndpointByID(ctx, endpointID)
+	if err != nil {
+		log.Printf("dispatch: chain %d entry endpoint %d: %v", hop.ChainID, endpointID, err)
+		return false
+	}
+	var realized shared.RealizedConfig
+	if ep.Status != store.EndpointStatusFailed && json.Unmarshal(ep.RealizedConfig, &realized) == nil && realized.Port > 0 {
+		return true
+	}
+	switch ep.Status {
+	case store.EndpointStatusFailed:
+		d.failHop(ctx, hop, fmt.Sprintf("共享入口（endpoint %d）部署失败: %s", endpointID, ep.Error))
+	case store.EndpointStatusPending:
+		if err := d.ReconcileSharedEndpoint(ctx, endpointID); err != nil {
+			log.Printf("dispatch: chain %d provision entry endpoint %d: %v", hop.ChainID, endpointID, err)
+		}
+	}
+	return false
 }
 
 // forwardPipeLayers 返回 forward 管道的监听层：外部直链出口恒 tcp（外部协议均为

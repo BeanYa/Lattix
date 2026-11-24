@@ -501,31 +501,20 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// hy2 端口跳跃（spec §2/§3.2）：先对出口机做分配/显式段校验（复用 Task 3 助手）；
-	// 端到端（无入口区块）时逐跳校验段整体落在各跳 NAT 段内且与各跳既有占用无冲突。
+	var graphHy2Endpoint *store.SharedEndpoint
 	if req.Node.Protocol == shared.ProtocolHysteria2 {
-		if err := s.resolveHy2PortHop(r.Context(), &req.Node, exitSrv, 0, 0); err != nil {
+		graphHy2Endpoint, err = s.prepareGraphHy2Endpoint(r.Context(), &req.Node, exitSrv.ID, activeGraph, len(servers)-1)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if req.Node.PortHop != "" && req.EntryNode == nil {
-			start, end, _ := shared.ParsePortHop(req.Node.PortHop)
-			for _, hopSrv := range servers[:len(servers)-1] {
-				ranges, err := shared.ParsePortRanges(hopSrv.AllowedPorts)
-				if err != nil {
-					writeError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-				if len(ranges) > 0 && !shared.SpanInListenRanges(ranges, start, end) {
-					writeError(w, http.StatusBadRequest,
-						fmt.Sprintf("端口跳跃段 %s 不在服务器 %s 可用段内", req.Node.PortHop, hopSrv.Alias))
-					return
-				}
-				if err := s.checkPortConflict(r.Context(), hopSrv.ID, req.Node.Protocol, start, end, 0); err != nil {
-					writeError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-			}
+		ownEndpointID := int64(0)
+		if graphHy2Endpoint != nil {
+			ownEndpointID = graphHy2Endpoint.ID
+		}
+		if err := s.resolveHy2PortHop(r.Context(), &req.Node, exitSrv, 0, ownEndpointID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 	}
 	nameServers := make([]nameTemplateServer, 0, len(servers))
@@ -568,7 +557,8 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	// 入口监听是 dokodemo 管道（层随出口协议：ss 为 tcp,udp，hy2 为 udp，其余 tcp）；
 	// vless 出口或勾选入口协议区块时入口走共享端点合并，跳过前置校验。
 	entryShared := req.Node.Protocol == shared.ProtocolVLESS || req.EntryNode != nil
-	if entryPort > 0 && !entryShared {
+	sharedHy2Exit := graphHy2Endpoint != nil && activeGraph[len(servers)-1].ListenPort > 0
+	if entryPort > 0 && !entryShared && !(len(servers) == 1 && sharedHy2Exit) {
 		if err := s.checkPortConflict(r.Context(), entrySrv.ID, req.Node.Protocol, entryPort, 0, 0); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -583,14 +573,14 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 		// 单跳 vless 的节点端口即入口端口（上方已别名），由共享端点合并接管、编排后不实际
 		// 监听；冲突判定已由入口校验按 protocol != vless 门控，此处跳过避免重复误判。
 		singleHopShared := len(servers) == 1 && req.Node.Protocol == shared.ProtocolVLESS
-		if !singleHopShared {
+		if !singleHopShared && !sharedHy2Exit {
 			if err := s.checkPortConflict(r.Context(), exitSrv.ID, req.Node.Protocol, *req.Node.Port, 0, 0); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 		}
 	}
-	if err := s.checkMiddleGraphPortConflicts(r.Context(), activeGraph, len(servers), req.Node.Protocol, 0); err != nil {
+	if err := s.checkChainForwardListeners(r.Context(), servers, req.Node, req.EntryPort, entryShared, req.EntryNode != nil, activeGraph, graphWrites, 0); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1073,31 +1063,20 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// hy2 端口跳跃（spec §2/§3.2，镜像创建路径）：先对出口机做分配/显式段校验；
-	// 端到端（无入口区块）时逐跳校验段整体落在各跳 NAT 段内且与各跳既有占用无冲突。
+	var graphHy2Endpoint *store.SharedEndpoint
 	if req.Node.Protocol == shared.ProtocolHysteria2 {
-		if err := s.resolveHy2PortHop(r.Context(), &req.Node, servers[len(servers)-1], req.ChainID, current.Snapshot.ServiceEndpointID); err != nil {
+		graphHy2Endpoint, err = s.prepareGraphHy2Endpoint(r.Context(), &req.Node, exitSrv.ID, activeGraph, len(servers)-1)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if req.Node.PortHop != "" && req.EntryNode == nil {
-			start, end, _ := shared.ParsePortHop(req.Node.PortHop)
-			for _, hopSrv := range servers[:len(servers)-1] {
-				ranges, err := shared.ParsePortRanges(hopSrv.AllowedPorts)
-				if err != nil {
-					writeError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-				if len(ranges) > 0 && !shared.SpanInListenRanges(ranges, start, end) {
-					writeError(w, http.StatusBadRequest,
-						fmt.Sprintf("端口跳跃段 %s 不在服务器 %s 可用段内", req.Node.PortHop, hopSrv.Alias))
-					return
-				}
-				if err := s.checkPortConflict(r.Context(), hopSrv.ID, req.Node.Protocol, start, end, req.ChainID); err != nil {
-					writeError(w, http.StatusBadRequest, err.Error())
-					return
-				}
-			}
+		ownEndpointID := current.Snapshot.ServiceEndpointID
+		if graphHy2Endpoint != nil {
+			ownEndpointID = graphHy2Endpoint.ID
+		}
+		if err := s.resolveHy2PortHop(r.Context(), &req.Node, exitSrv, req.ChainID, ownEndpointID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 	}
 	nameServers := make([]nameTemplateServer, 0, len(servers))
@@ -1122,13 +1101,14 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	// 必须照常做冲突校验。外部直链出口链恒有入口端点。
 	entryShared := (externalExit != nil || req.Node.Protocol == shared.ProtocolVLESS || req.EntryNode != nil) &&
 		current.Snapshot.EndpointID != 0
+	sharedHy2Exit := graphHy2Endpoint != nil && activeGraph[len(servers)-1].ListenPort > 0
 	if req.EntryPort != nil {
 		if *req.EntryPort < 1 || *req.EntryPort > 65535 || checkPortInRanges(servers[0], *req.EntryPort) != nil {
 			writeError(w, http.StatusBadRequest, "入口端口不在可用范围内")
 			return
 		}
 		// 入口走共享端点合并时跳过前置校验；excludeChainID 排除本链既有占用。
-		if !entryShared {
+		if !entryShared && !(len(servers) == 1 && sharedHy2Exit) {
 			if err := s.checkPortConflict(r.Context(), servers[0].ID, req.Node.Protocol, *req.EntryPort, 0, req.ChainID); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
@@ -1142,13 +1122,13 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	// 单跳 vless 且实际挂共享端点时节点端口即入口端口（上方已别名），由共享端点合并
 	// 接管、编排后不实际监听；冲突判定已由入口校验门控，此处跳过避免重复误判。
 	singleHopShared := len(servers) == 1 && entryShared
-	if req.Node.Port != nil && !singleHopShared {
+	if req.Node.Port != nil && !singleHopShared && !sharedHy2Exit {
 		if err := s.checkPortConflict(r.Context(), servers[len(servers)-1].ID, req.Node.Protocol, *req.Node.Port, 0, req.ChainID); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
-	if err := s.checkMiddleGraphPortConflicts(r.Context(), activeGraph, len(servers), req.Node.Protocol, chain.ID); err != nil {
+	if err := s.checkChainForwardListeners(r.Context(), servers, req.Node, req.EntryPort, entryShared, req.EntryNode != nil, activeGraph, graphWrites, chain.ID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1362,7 +1342,6 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 	}
 	revision := plannedChainRevision(chain, current, desired, plan)
 	revision.Edit.GraphWrites = graphWrites
-	revision.Snapshot.TopologyEdit = req.Orchestrations != nil
 	var nodePort *int
 	if vc.Port != 0 {
 		value := vc.Port

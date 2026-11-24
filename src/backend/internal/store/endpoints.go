@@ -127,14 +127,11 @@ func (s *Store) EnsureProtocolSharedEndpoint(ctx context.Context, serverID int64
 	if serverID <= 0 || protocol == "" || !json.Valid(config) {
 		return nil, false, fmt.Errorf("invalid protocol shared endpoint")
 	}
-	existing, err := scanEndpoint(s.db.QueryRowContext(ctx, `SELECT `+endpointCols+`
-		FROM shared_endpoints WHERE server_id=? AND protocol=? AND status IN ('pending','applying','active')
-		ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'applying' THEN 1 ELSE 2 END, id LIMIT 1`,
-		serverID, protocol))
+	existing, err := s.ProtocolSharedEndpoint(ctx, serverID, protocol)
 	if err == nil {
 		return existing, false, nil
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if !errors.Is(err, ErrNotFound) {
 		return nil, false, err
 	}
 	result, err := s.db.ExecContext(ctx, `INSERT INTO shared_endpoints
@@ -149,6 +146,18 @@ func (s *Store) EnsureProtocolSharedEndpoint(ctx context.Context, serverID int64
 	}
 	endpoint, err := s.SharedEndpointByID(ctx, id)
 	return endpoint, true, err
+}
+
+// ProtocolSharedEndpoint selects the listener that EnsureProtocolSharedEndpoint
+// reuses, so a caller can validate a requested graph before provisioning.
+func (s *Store) ProtocolSharedEndpoint(ctx context.Context, serverID int64, protocol string) (*SharedEndpoint, error) {
+	ep, err := scanEndpoint(s.db.QueryRowContext(ctx, `SELECT `+endpointCols+`
+		FROM shared_endpoints WHERE server_id=? AND protocol=? AND status IN ('pending','applying','active')
+		ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'applying' THEN 1 ELSE 2 END, id LIMIT 1`, serverID, protocol))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return ep, err
 }
 
 // EnsureSharedEndpointInRanges 类似 EnsureSharedEndpoint，但复用已有端口时要求其落在 ranges 内
@@ -680,6 +689,27 @@ func (s *Store) ChainIDsByEndpoint(ctx context.Context, endpointID int64) ([]int
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id FROM chains WHERE endpoint_id=? AND status IN (?, ?, ?)`,
 		endpointID, ChainStatusActive, ChainStatusDegraded, ChainStatusCleanupPending)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// ChainsAwaitingEntryEndpoint finds desired revisions that must realize this
+// listener before publishing their topology and acknowledging template sync.
+func (s *Store) ChainsAwaitingEntryEndpoint(ctx context.Context, endpointID int64) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id FROM chains c JOIN chain_revisions r ON r.id=c.desired_revision_id
+		WHERE c.status IN (?, ?) AND json_extract(r.snapshot,'$.await_entry_endpoint')=1
+		AND json_extract(r.snapshot,'$.endpoint_id')=?`, ChainStatusApplying, ChainStatusActiveUnconfirmed, endpointID)
 	if err != nil {
 		return nil, err
 	}

@@ -2,6 +2,8 @@ package panel
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"lattix/backend/internal/store"
@@ -62,6 +64,151 @@ func (s *Server) checkPortConflict(ctx context.Context, serverID int64, protocol
 		return err
 	}
 	return findPortConflict(occupants, protocol, port, portEnd, excludeChainID)
+}
+
+func orchestrationListener(srv *store.Server, protocol, portHop string, port int, sharedEntry bool) (store.PortOccupant, error) {
+	claim := store.PortOccupant{Port: port, Protocol: protocol, Source: "chain_forward"}
+	if sharedEntry {
+		claim.Protocol, claim.Source, portHop = shared.ProtocolVLESS, "endpoint", ""
+	}
+	claim.Layers = shared.PortLayers(claim.Protocol)
+	if port <= 0 {
+		return claim, nil
+	}
+	if srv.IsExternal() {
+		return claim, fmt.Errorf("外部直链出口的监听端口由外部协议配置决定")
+	}
+	claim.PortEnd = shared.ForwardPortHopEnd(port, portHop)
+	if claim.PortEnd == 0 {
+		return claim, checkPortInRanges(srv, port)
+	}
+	ranges, err := shared.ParsePortRanges(srv.AllowedPorts)
+	if err != nil {
+		return claim, err
+	}
+	if claim.PortEnd > 65535 || (len(ranges) > 0 && !shared.SpanInListenRanges(ranges, port, claim.PortEnd)) {
+		return claim, fmt.Errorf("端口跳跃段 %d-%d 不在服务器 %s 可用段内", port, claim.PortEnd, srv.Alias)
+	}
+	return claim, nil
+}
+
+func (s *Server) checkOrchestrationListener(ctx context.Context, serverID, chainID int64, claim store.PortOccupant, planned []store.PortOccupant) error {
+	if claim.Port <= 0 {
+		return nil
+	}
+	occupants, err := s.st.PortOccupants(ctx, serverID)
+	if err != nil {
+		return err
+	}
+	occupied := append(occupants, planned...)
+	if claim.Source == "endpoint" {
+		checked := occupied[:0]
+		for _, p := range occupied {
+			if p.Source == "endpoint" && p.Port == claim.Port && p.PortEnd == 0 {
+				if p.Protocol != claim.Protocol {
+					return fmt.Errorf("端口 %d 已有不兼容的共享监听（%s）", p.Port, p.Protocol)
+				}
+				continue
+			}
+			checked = append(checked, p)
+		}
+		occupied = checked
+	}
+	return findPortConflict(occupied, claim.Protocol, claim.Port, claim.PortEnd, chainID)
+}
+
+func (s *Server) checkChainForwardListeners(ctx context.Context, servers []*store.Server, node createNodeRequest, entryPort *int, entryShared, entryProtocol bool, active map[int]store.ChainHopGraphNode, writes []store.HopGraphWrite, chainID int64) error {
+	graphs := make(map[int]store.ChainHopGraph, len(writes))
+	for _, w := range writes {
+		graphs[w.Graph.Seq] = w.Graph
+	}
+	for seq, srv := range servers[:len(servers)-1] {
+		n, hasGraph := active[seq]
+		sharedListener := seq == 0 && entryShared
+		portHop := node.PortHop
+		if sharedListener || node.Protocol != shared.ProtocolHysteria2 || (entryProtocol && seq == len(servers)-2 && inboundCapable(servers[len(servers)-1])) {
+			portHop = ""
+		}
+		if err := s.checkCandidateForwardSpans(ctx, graphs[seq], srv.ID, portHop); err != nil {
+			return fmt.Errorf("第 %d 跳：%w", seq+1, err)
+		}
+		if !hasGraph && (sharedListener || entryProtocol || portHop == "") {
+			continue // Legacy fixed entry and exit ports are checked separately.
+		}
+		port := n.ListenPort
+		if !hasGraph && seq == 0 && entryPort != nil {
+			port = *entryPort
+		}
+		if port == 0 && !entryProtocol && !sharedListener && portHop != "" {
+			port, _, _ = shared.ParsePortHop(portHop)
+		}
+		claim, err := orchestrationListener(srv, node.Protocol, portHop, port, sharedListener)
+		if err == nil {
+			err = s.checkOrchestrationListener(ctx, srv.ID, chainID, claim, nil)
+		}
+		if err != nil {
+			return fmt.Errorf("第 %d 跳：%w", seq+1, err)
+		}
+	}
+	if len(servers) == 1 && entryShared && active[0].ListenPort > 0 {
+		claim, err := orchestrationListener(servers[0], node.Protocol, "", active[0].ListenPort, true)
+		if err != nil {
+			return err
+		}
+		return s.checkOrchestrationListener(ctx, servers[0].ID, chainID, claim, nil)
+	}
+	return nil
+}
+
+func (s *Server) checkCandidateForwardSpans(ctx context.Context, graph store.ChainHopGraph, activeServerID int64, portHop string) error {
+	if portHop == "" {
+		return nil
+	}
+	for _, n := range graph.Nodes {
+		if n.Kind != store.HopGraphKindServer || n.ServerID == activeServerID || n.ListenPort <= 0 {
+			continue
+		}
+		srv, err := s.st.ServerByID(ctx, n.ServerID)
+		if err != nil {
+			return err
+		}
+		if _, err := orchestrationListener(srv, shared.ProtocolHysteria2, portHop, n.ListenPort, false); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) prepareGraphHy2Endpoint(ctx context.Context, node *createNodeRequest, serverID int64, active map[int]store.ChainHopGraphNode, exitSeq int) (*store.SharedEndpoint, error) {
+	if len(active) == 0 {
+		return nil, nil
+	}
+	ep, err := s.st.ProtocolSharedEndpoint(ctx, serverID, shared.ProtocolHysteria2)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := matchGraphSharedExitPort(ep, active[exitSeq].ListenPort); err != nil {
+		return nil, err
+	}
+	var config shared.VirtualConfig
+	if err := json.Unmarshal(ep.ConfigTemplate, &config); err != nil {
+		return nil, err
+	}
+	node.PortHop = config.PortHop
+	if node.PortHop == "" {
+		node.PortHop = "off"
+	}
+	return ep, nil
+}
+
+func matchGraphSharedExitPort(endpoint *store.SharedEndpoint, port int) error {
+	if port > 0 && endpoint.Port != port {
+		return fmt.Errorf("共享出口监听使用端口 %d，无法单独改为 %d", endpoint.Port, port)
+	}
+	return nil
 }
 
 // allocUDPPortHop 在候选空间内分配连续 length 个空闲 udp 端口（hy2 跳跃段自动分配）：

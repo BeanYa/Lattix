@@ -329,6 +329,9 @@ func validateOrchestrationGraph(ctx context.Context, st *store.Store, hops []sto
 					if exit == nil || exit.Validate() != nil {
 						return prefix("外部直链服务器 %s 的出口配置不可用", srv.Alias)
 					}
+					if node.ListenPort > 0 {
+						return prefix("外部直链出口的监听端口由外部协议配置决定")
+					}
 				}
 			} else {
 				if srv.IsExternal() {

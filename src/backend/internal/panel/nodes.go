@@ -369,6 +369,10 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Serialize managed port validation through the insert with template saves
+	// and chain deployments so their pending listeners cannot race this claim.
+	s.orchestrationMu.Lock()
+	defer s.orchestrationMu.Unlock()
 	// hy2 端口跳跃：自动分配 / 显式段 NAT+冲突校验（spec §2/§3.2）。
 	if err := s.resolveHy2PortHop(r.Context(), &req, srv, 0, 0); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

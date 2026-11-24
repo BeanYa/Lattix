@@ -156,6 +156,19 @@ func (s *Server) prepareChainGraphs(ctx context.Context, chainID int64, refs []c
 		effective[d.Seq] = g
 		writes = append(writes, store.HopGraphWrite{Graph: g, Binding: binding})
 	}
+	if drafts != nil {
+		for seq, g := range existing {
+			if seen[seq] || g.Binding != nil || g.SyncPending {
+				continue
+			}
+			// Preserve independent graphs on compatible hops, including when a
+			// candidate is active. Only clear slots invalidated by the topology.
+			if err := validateOrchestrationGraph(ctx, s.st, hops, seq, g, graphRoot(g), nil); err != nil {
+				delete(effective, seq)
+				writes = append(writes, store.HopGraphWrite{Graph: store.ChainHopGraph{ChainID: chainID, Seq: seq}})
+			}
+		}
+	}
 	for _, w := range writes {
 		g := w.Graph
 		seq := g.Seq
@@ -209,18 +222,6 @@ func applyGraphPorts(active map[int]store.ChainHopGraphNode, count int, entry **
 			node.Port = &n.ListenPort
 		}
 	}
-}
-
-func (s *Server) checkMiddleGraphPortConflicts(ctx context.Context, active map[int]store.ChainHopGraphNode, count int, protocol string, chainID int64) error {
-	for seq := 1; seq < count-1; seq++ {
-		n := active[seq]
-		if n.ListenPort > 0 {
-			if err := s.checkPortConflict(ctx, n.ServerID, protocol, n.ListenPort, 0, chainID); err != nil {
-				return fmt.Errorf("第 %d 跳：%w", seq+1, err)
-			}
-		}
-	}
-	return nil
 }
 
 func (s *Server) templatePlan(ctx context.Context, r templateRequest) (store.OrchestrationTemplate, []store.TemplatePropagation, []orchestrationImpact, error) {
@@ -312,12 +313,27 @@ func (s *Server) planTemplateUse(ctx context.Context, c *store.Chain, use store.
 	id := hops[use.Seq].ServerID
 	before, _ := activeGraphNode(old, id)
 	after, _ := activeGraphNode(g, id)
+	rev, err := s.st.PublishedChainRevision(ctx, c.ID)
+	if err != nil {
+		return u, err
+	}
+	var vc shared.VirtualConfig
+	if err := json.Unmarshal(rev.Snapshot.ServiceConfig, &vc); err != nil {
+		return u, err
+	}
+	portHop := vc.PortHop
+	if use.Seq == len(hops)-1 || (use.Seq == 0 && rev.Snapshot.EndpointID != 0) || rev.Snapshot.Hops[use.Seq].Transport == "hy2" {
+		portHop = ""
+	}
+	if err := s.checkCandidateForwardSpans(ctx, g, id, portHop); err != nil {
+		return u, err
+	}
 	if use.BasePort != nil && use.BaseAddress != nil {
 		before.ListenPort = *use.BasePort
 		before.Address = *use.BaseAddress
 	}
-	if before.ListenPort != after.ListenPort && after.ListenPort > 0 {
-		if err := s.reserveTemplatePort(ctx, c, use.Seq, len(hops), after, plannedPorts); err != nil {
+	if before.ListenPort != after.ListenPort {
+		if err := s.reserveTemplatePort(ctx, c, rev.Snapshot, use.Seq, vc.Protocol, portHop, after, plannedPorts); err != nil {
 			return u, err
 		}
 	}
@@ -326,51 +342,35 @@ func (s *Server) planTemplateUse(ctx context.Context, c *store.Chain, use store.
 
 // Validate both existing listeners and ports claimed by other instances in
 // this proposed update. Compatible entry endpoints may share their listener.
-func (s *Server) reserveTemplatePort(ctx context.Context, c *store.Chain, seq, count int, node store.ChainHopGraphNode, planned map[int64][]store.PortOccupant) error {
-	rev, err := s.st.PublishedChainRevision(ctx, c.ID)
-	if err != nil {
-		return err
-	}
-	var vc shared.VirtualConfig
-	if err := json.Unmarshal(rev.Snapshot.ServiceConfig, &vc); err != nil {
-		return err
-	}
-	sharedListener := false
-	if seq == 0 && rev.Snapshot.EndpointID != 0 {
-		vc.Protocol = shared.ProtocolVLESS
-		sharedListener = true
-	} else if seq == count-1 && rev.Snapshot.ServiceEndpointID != 0 {
-		ep, err := s.st.SharedEndpointByID(ctx, rev.Snapshot.ServiceEndpointID)
+func (s *Server) reserveTemplatePort(ctx context.Context, c *store.Chain, snapshot store.ChainRevisionSnapshot, seq int, protocol, portHop string, node store.ChainHopGraphNode, planned map[int64][]store.PortOccupant) error {
+	sharedEntry := seq == 0 && snapshot.EndpointID != 0
+	if !sharedEntry && seq == len(snapshot.Hops)-1 && snapshot.ServiceEndpointID != 0 {
+		ep, err := s.st.SharedEndpointByID(ctx, snapshot.ServiceEndpointID)
 		if err != nil {
 			return err
 		}
-		if ep.Port != node.ListenPort {
-			return fmt.Errorf("共享出口监听使用端口 %d，无法单独改为 %d", ep.Port, node.ListenPort)
-		}
-		sharedListener = true
-	} else if seq == count-1 && rev.Snapshot.ServiceExternal != nil {
-		return errors.New("外部直链出口的监听端口由外部协议配置决定")
+		return matchGraphSharedExitPort(ep, node.ListenPort)
 	}
-	occupants, err := s.st.PortOccupants(ctx, node.ServerID)
+	srv, err := s.st.ServerByID(ctx, node.ServerID)
 	if err != nil {
 		return err
 	}
-	occupied := append(occupants, planned[node.ServerID]...)
-	checked := occupied[:0]
-	for _, p := range occupied {
-		if sharedListener && p.Source == "endpoint" && p.Protocol == vc.Protocol && p.Port == node.ListenPort && p.PortEnd == 0 {
-			continue
-		}
-		checked = append(checked, p)
+	port := node.ListenPort
+	if port == 0 && snapshot.EndpointID == 0 && portHop != "" {
+		port, _, _ = shared.ParsePortHop(portHop)
 	}
-	if err := findPortConflict(checked, vc.Protocol, node.ListenPort, 0, c.ID); err != nil {
+	if port == 0 {
+		return nil
+	}
+	claim, err := orchestrationListener(srv, protocol, portHop, port, sharedEntry)
+	if err != nil {
 		return err
 	}
-	source := "chain_forward"
-	if sharedListener {
-		source = "endpoint"
+	if err := s.checkOrchestrationListener(ctx, node.ServerID, c.ID, claim, planned[node.ServerID]); err != nil {
+		return err
 	}
-	planned[node.ServerID] = append(planned[node.ServerID], store.PortOccupant{Source: source, ChainID: c.ID, Port: node.ListenPort, Protocol: vc.Protocol, Layers: shared.PortLayers(vc.Protocol), RefName: c.Name})
+	claim.ChainID, claim.RefName = c.ID, c.Name
+	planned[node.ServerID] = append(planned[node.ServerID], claim)
 	return nil
 }
 

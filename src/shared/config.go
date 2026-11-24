@@ -342,3 +342,16 @@ func ParsePortHop(s string) (start, end int, err error) {
 }
 
 func FormatPortHop(start, end int) string { return fmt.Sprintf("%d-%d", start, end) }
+
+// ForwardPortHopEnd shifts the service's hop interval to a fixed forwarding
+// port. Zero means the forward listener does not reserve a span.
+func ForwardPortHopEnd(port int, portHop string) int {
+	if port <= 0 || portHop == "" {
+		return 0
+	}
+	start, end, err := ParsePortHop(portHop)
+	if err != nil {
+		return 0
+	}
+	return port + end - start
+}

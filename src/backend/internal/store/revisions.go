@@ -56,7 +56,8 @@ type ChainRevisionSnapshot struct {
 	ServiceNodeID          int64              `json:"service_node_id"`
 	ServiceServerID        int64              `json:"service_server_id"`
 	EndpointID             int64              `json:"endpoint_id,omitempty"`
-	ServiceEndpointID      int64              `json:"service_endpoint_id,omitempty"` // hy2 出口侧共享监听（P4）
+	AwaitEntryEndpoint     bool               `json:"await_entry_endpoint,omitempty"` // Template sync waits for a newly selected entry listener.
+	ServiceEndpointID      int64              `json:"service_endpoint_id,omitempty"`  // hy2 出口侧共享监听（P4）
 	ServiceUUID            string             `json:"service_uuid,omitempty"`
 	ServiceConfig          json.RawMessage    `json:"service_config"`
 	ServiceRealized        json.RawMessage    `json:"service_realized,omitempty"`
@@ -873,6 +874,15 @@ func (s *Store) PublishChainRevision(ctx context.Context, revisionID int64, forc
 		return err
 	}
 	defer tx.Rollback()
+	if !forced && revision.Snapshot.AwaitEntryEndpoint {
+		var ready bool
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(realized_config,'$.port'),0)>0 FROM shared_endpoints WHERE id=?`, revision.Snapshot.EndpointID).Scan(&ready); err != nil {
+			return err
+		}
+		if !ready {
+			return fmt.Errorf("revision %d entry endpoint %d has not been realized", revisionID, revision.Snapshot.EndpointID)
+		}
+	}
 	revisionFrom := revisionStatusFromSet(status)
 	revisionQuery := `UPDATE chain_revisions SET status=?, forced=?, published_at=CURRENT_TIMESTAMP WHERE id=?`
 	revisionArgs := []any{status, forced, revisionID}

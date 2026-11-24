@@ -74,7 +74,8 @@ type Server struct {
 	reqLog           *logging.RequestLog
 	observes         *progress.Registry // 旁路操作进度观察（nil = 关闭）
 	startedAt        time.Time
-	orchestrationMu  sync.RWMutex // Template publication excludes graph edits and worker evaluations.
+	orchestrationMu  sync.RWMutex // Serializes template, graph, and node listener claims against worker evaluations.
+	hopChangeMu      sync.Mutex   // Serializes listener claims among concurrent chain workers.
 	runtimeMu        sync.Mutex
 	lastCPU          runtimeCPUSample
 	banWatchLastEval time.Time         // Ban 观察上轮评估时刻（仅 server.ban-watch 任务读写，调度器保证不重叠）

@@ -108,6 +108,13 @@ func (f *endpointFSM) Transition(ctx context.Context, endpointID int64, to, deta
 func (f *endpointFSM) onEnter(ctx context.Context, ep *store.SharedEndpoint, to string) {
 	switch to {
 	case store.EndpointStatusActive, store.EndpointStatusFailed:
+		chains, err := f.d.st.ChainsAwaitingEntryEndpoint(ctx, ep.ID)
+		if err != nil {
+			log.Printf("endpoint_fsm: endpoint %d awaiting chains: %v", ep.ID, err)
+		}
+		for _, id := range chains {
+			f.d.advanceChain(ctx, id)
+		}
 		// 端点生效/失败 → 重算使用该端点的链（degraded ↔ active，同步链路页状态）
 		// 并触发受影响用户的订阅重建（同步订阅警告内容）。
 		if chainIDs, err := f.d.st.ChainIDsByEndpoint(ctx, ep.ID); err != nil {
