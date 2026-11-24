@@ -63,7 +63,12 @@ func templateForTest(root, backup int64) templateRequest {
 }
 func createBoundChain(t *testing.T, s *Server, ids map[string]int64, tpl store.OrchestrationTemplate, overrides ...store.ParamOverride) int64 {
 	t.Helper()
-	_, env := postCreateChain(t, s, createChainRequest{Name: "bound", Hops: []chainHopRef{{ServerID: ids["A1"]}, {ServerID: ids["B1"]}}, Node: createNodeRequest{Protocol: "trojan"}, Orchestrations: []orchestrationDraft{{Seq: 0, TemplateID: tpl.ID, TemplateRevision: tpl.Revision, Overrides: overrides}}})
+	return createBoundChainWithProtocol(t, s, ids, tpl, shared.ProtocolTrojan, overrides...)
+}
+
+func createBoundChainWithProtocol(t *testing.T, s *Server, ids map[string]int64, tpl store.OrchestrationTemplate, protocol string, overrides ...store.ParamOverride) int64 {
+	t.Helper()
+	_, env := postCreateChain(t, s, createChainRequest{Name: "bound", Hops: []chainHopRef{{ServerID: ids["A1"]}, {ServerID: ids["B1"]}}, Node: createNodeRequest{Protocol: protocol}, Orchestrations: []orchestrationDraft{{Seq: 0, TemplateID: tpl.ID, TemplateRevision: tpl.Revision, Overrides: overrides}}})
 	if env.Code != "OK" {
 		t.Fatalf("bind: %+v", env)
 	}
@@ -285,6 +290,68 @@ func TestTemplatePortCollisionRejectsAllBindings(t *testing.T) {
 		g, _ := st.ChainHopGraph(t.Context(), id, 0)
 		if g.Nodes[0].ListenPort != 0 || g.SyncPending {
 			t.Fatalf("partial propagation: %+v", g)
+		}
+	}
+}
+
+func TestTemplatePortCollisionWithPendingSync(t *testing.T) {
+	s, st, _, ids := setupOrchestrationHandler(t)
+	ctx := t.Context()
+	first := templateForTest(ids["A1"], ids["A2"])
+	first.Name, first.Nodes[0].ListenPort = "First template", 0
+	a := saveTemplateForTest(t, s, first)
+	firstChain := createBoundChain(t, s, ids, a)
+	second := templateForTest(ids["A1"], ids["A2"])
+	second.Name, second.Nodes[0].ListenPort = "Second template", 0
+	b := saveTemplateForTest(t, s, second)
+	secondChain := createBoundChain(t, s, ids, b)
+
+	s.req = &templateUpgradeRequester{fakeAutoRequester: s.req.(*fakeAutoRequester), updating: ids["A1"]}
+	first.ID, first.Revision, first.Nodes[0].ListenPort = a.ID, a.Revision, 4433
+	updated := saveTemplateForTest(t, s, first)
+	w := chainWorker{chainID: firstChain, o: newAutoOrchestrator(s), state: workerIdle}
+	w.step(ctx)
+	chain, err := st.ChainByID(ctx, firstChain)
+	if err != nil || chain.DesiredRevisionID != 0 {
+		t.Fatalf("planned Agent update did not defer deployment: %+v, %v", chain, err)
+	}
+	second.ID, second.Revision, second.Nodes[0].ListenPort = b.ID, b.Revision, 4433
+	if rejected := callTemplateHandler(t, s.handleSaveOrchestrationTemplate, second); rejected.Code != "INVALID_ARGUMENT" || !strings.Contains(rejected.Message, "4433") {
+		t.Fatalf("second template claimed a pending listener: %+v", rejected)
+	}
+	firstGraph, err := st.ChainHopGraph(ctx, firstChain, 0)
+	if err != nil || firstGraph == nil || !firstGraph.SyncPending || firstGraph.Nodes[0].ListenPort != 4433 || firstGraph.Binding == nil || firstGraph.Binding.Revision != updated.Revision-1 {
+		t.Fatalf("first reservation changed: %+v, %v", firstGraph, err)
+	}
+	secondGraph, err := st.ChainHopGraph(ctx, secondChain, 0)
+	if err != nil || secondGraph == nil || secondGraph.SyncPending || secondGraph.Nodes[0].ListenPort != 0 || secondGraph.Binding == nil || secondGraph.Binding.Revision != b.Revision {
+		t.Fatalf("rejected save changed its binding: %+v, %v", secondGraph, err)
+	}
+	stored, err := st.OrchestrationTemplate(ctx, b.ID)
+	if err != nil || stored.Revision != b.Revision {
+		t.Fatalf("rejected save changed its template revision: %+v, %v", stored, err)
+	}
+}
+
+func TestTemplatePortSharingWithPendingEntrySync(t *testing.T) {
+	s, st, _, ids := setupOrchestrationHandler(t)
+	r := templateForTest(ids["A1"], ids["A2"])
+	r.Nodes[0].ListenPort = 0
+	first := saveTemplateForTest(t, s, r)
+	r.Name = "Second template"
+	second := saveTemplateForTest(t, s, r)
+	a := createBoundChainWithProtocol(t, s, ids, first, shared.ProtocolVLESS)
+	b := createBoundChainWithProtocol(t, s, ids, second, shared.ProtocolVLESS)
+	s.req = &templateUpgradeRequester{fakeAutoRequester: s.req.(*fakeAutoRequester), updating: ids["A1"]}
+	for _, tpl := range []store.OrchestrationTemplate{first, second} {
+		r.ID, r.Revision, r.Name = tpl.ID, tpl.Revision, tpl.Name
+		r.Nodes[0].ListenPort = 4433
+		saveTemplateForTest(t, s, r)
+	}
+	for _, id := range []int64{a, b} {
+		g, err := st.ChainHopGraph(t.Context(), id, 0)
+		if err != nil || g == nil || !g.SyncPending || g.Nodes[0].ListenPort != 4433 {
+			t.Fatalf("compatible entry reservation: %+v, %v", g, err)
 		}
 	}
 }

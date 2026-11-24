@@ -87,7 +87,7 @@ func (s *Store) PortOccupants(ctx context.Context, serverID int64) ([]PortOccupa
 		e := hopExpr(col)
 		return fmt.Sprintf(`CAST(substr(%s, instr(%s, '-') + 1) AS INTEGER)`, e, e)
 	}
-	appendSpan := func(query string, args ...any) error {
+	appendDetailedRows := func(query string, args ...any) error {
 		rows, err := s.db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return err
@@ -95,26 +95,25 @@ func (s *Store) PortOccupants(ctx context.Context, serverID int64) ([]PortOccupa
 		defer rows.Close()
 		for rows.Next() {
 			var o PortOccupant
-			o.Layers = "udp"
-			o.Protocol = shared.ProtocolHysteria2
-			if err := rows.Scan(&o.Port, &o.PortEnd, &o.ChainID, &o.RefName, &o.Source); err != nil {
+			if err := rows.Scan(&o.Port, &o.PortEnd, &o.ChainID, &o.RefName, &o.Source, &o.Protocol); err != nil {
 				return err
 			}
+			o.Layers = shared.PortLayers(o.Protocol)
 			out = append(out, o)
 		}
 		return rows.Err()
 	}
-	if err := appendSpan(fmt.Sprintf(`SELECT %s, %s,
+	if err := appendDetailedRows(fmt.Sprintf(`SELECT %s, %s,
 		COALESCE((SELECT c.id FROM chains c WHERE c.service_node_id=n.id AND c.deleted_at IS NULL),0),
-		n.name, 'node' FROM nodes n
+		n.name, 'node', n.protocol FROM nodes n
 		WHERE n.server_id=? AND n.protocol='hysteria' AND %s <> ''`,
 		hopStart("n.config_template"), hopEnd("n.config_template"), hopExpr("n.config_template")), serverID); err != nil {
 		return nil, fmt.Errorf("query hy2 node hop spans: %w", err)
 	}
-	if err := appendSpan(fmt.Sprintf(`SELECT %s, %s,
+	if err := appendDetailedRows(fmt.Sprintf(`SELECT %s, %s,
 		COALESCE((SELECT c.id FROM chains c WHERE c.service_endpoint_id=e.id AND c.deleted_at IS NULL
 			ORDER BY c.id LIMIT 1),0),
-		'shared-endpoint #' || e.id, 'endpoint'
+		'shared-endpoint #' || e.id, 'endpoint', e.protocol
 		FROM shared_endpoints e WHERE e.server_id=? AND e.protocol='hysteria'
 		AND e.status IN ('pending','applying','active') AND %s <> ''`,
 		hopStart("e.config_template"), hopEnd("e.config_template"), hopExpr("e.config_template")), serverID); err != nil {
@@ -122,13 +121,28 @@ func (s *Store) PortOccupants(ctx context.Context, serverID int64) ([]PortOccupa
 	}
 	// hy2 链逐跳转发保留段（端到端跳跃）：段 = [forward_port, forward_port + 段长 - 1]，
 	// 段长从出口节点 config_template 的 port_hop 解析；port_hop 空 = 单端口现状（不产段行）。
-	if err := appendSpan(fmt.Sprintf(`SELECT h.forward_port,
-		h.forward_port + %s - %s, c.id, c.name, 'chain_forward'
+	if err := appendDetailedRows(fmt.Sprintf(`SELECT h.forward_port,
+		h.forward_port + %s - %s, c.id, c.name, 'chain_forward', n.protocol
 		FROM chain_hops h JOIN chains c ON c.id=h.chain_id AND c.deleted_at IS NULL
 		JOIN nodes n ON n.id=c.service_node_id
 		WHERE h.server_id=? AND h.forward_port>0 AND n.protocol='hysteria' AND %s <> ''`,
 		hopEnd("n.config_template"), hopStart("n.config_template"), hopExpr("n.config_template")), serverID); err != nil {
 		return nil, fmt.Errorf("query hy2 chain hop spans: %w", err)
+	}
+
+	// A saved template can claim its next listener before the worker is able
+	// to create the deployment. Count the durable target during that window.
+	if err := appendDetailedRows(`SELECT g.listen_port, 0, c.id, c.name,
+		CASE WHEN (h.seq=0 AND c.endpoint_id<>0) OR (h.role='exit' AND c.service_endpoint_id<>0)
+			THEN 'endpoint' ELSE 'chain_forward' END,
+		CASE WHEN h.seq=0 AND c.endpoint_id<>0 THEN 'vless' ELSE COALESCE(n.protocol,'vless') END
+		FROM orchestration_sync p
+		JOIN chains c ON c.id=p.chain_id AND c.deleted_at IS NULL
+		JOIN chain_hops h ON h.chain_id=p.chain_id AND h.seq=p.seq
+		JOIN chain_hop_graph_nodes g ON g.chain_id=p.chain_id AND g.seq=p.seq AND g.server_id=h.server_id AND g.kind='server'
+		LEFT JOIN nodes n ON n.id=c.service_node_id
+		WHERE h.server_id=? AND g.listen_port>0 AND g.listen_port<>p.base_port`, serverID); err != nil {
+		return nil, fmt.Errorf("query pending orchestration ports: %w", err)
 	}
 	return out, nil
 }
