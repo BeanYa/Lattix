@@ -3,9 +3,10 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
-import type { Chain, ChainHop, Server } from '@/lib/types'
+import type { Chain, ChainHop, OrchestrationTemplate, Server } from '@/lib/types'
 import { OrchestrationTemplateEditor } from './OrchestrationTemplateEditor'
 import { DraftOrchestrationEditor } from './DraftOrchestrationEditor'
+import { draftOrchestrationDTO } from './orchestration-draft'
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const server = {
   id: 1,
@@ -441,4 +442,121 @@ it('defers reset for a newer materialized binding until current defaults arrive,
     nodes: [{ kind: 'server', server_id: 1, is_root: true, listen_port: 9443, address: '' }],
     overrides: [{ server_id: 1, address: '' }],
   })
+})
+
+it('refreshes an open shared canvas and its validation immediately while retaining an entered override', async () => {
+  const catalogServers = [
+    server,
+    { ...server, id: 2, alias: 'Backup' },
+    { ...server, id: 3, alias: 'Later' },
+  ]
+  const template: OrchestrationTemplate = {
+    id: 7,
+    revision: 2,
+    name: 'Shared',
+    usage_count: 1,
+    created_at: '',
+    updated_at: '',
+    nodes: [
+      { kind: 'server', server_id: 1, is_root: true, listen_port: 8443 },
+      { kind: 'trigger', subject: 'self', action: 'ban_banned' },
+      { kind: 'server', server_id: 2, listen_port: 7000 },
+    ],
+    edges: [
+      { from: 0, to: 1 },
+      { from: 1, to: 2 },
+    ],
+  }
+  const value = {
+    template_id: 7,
+    template_revision: 2,
+    nodes: template.nodes,
+    edges: template.edges,
+    overrides: [{ server_id: 1, address: '' }],
+  }
+  const hop = {
+    seq: 0,
+    server_id: 1,
+    server_alias: 'Root',
+    role: 'entry',
+    forward_port: 8443,
+    address: '',
+  } as ChainHop
+  const chain = {
+    id: 0,
+    name: 'Draft',
+    hops: [hop],
+    entry_port: 8443,
+    desired_revision_id: 0,
+  } as Chain
+  const apply = vi.fn()
+  const render = (catalog: OrchestrationTemplate) =>
+    root.render(
+      <DraftOrchestrationEditor
+        chain={chain}
+        hop={hop}
+        value={value}
+        templates={[catalog]}
+        servers={catalogServers}
+        onClose={() => {}}
+        onApply={apply}
+      />,
+    )
+  await act(async () => render(template))
+  await act(async () => button('7000').click())
+  const port = document.body.querySelector<HTMLInputElement>('[aria-label="入口端口数值：Backup"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(port, '0')
+    port.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(document.body.querySelector('[aria-label="入口端口数值：Backup"]')).toBe(port)
+  expect(port.value).toBe('0')
+  const newer: OrchestrationTemplate = {
+    ...template,
+    revision: 3,
+    nodes: [
+      { ...template.nodes[0], listen_port: 9443 },
+      ...template.nodes.slice(1),
+      { kind: 'trigger', subject: 'self', action: 'ban_banned' },
+      { kind: 'server', server_id: 3, listen_port: 70000 },
+    ],
+    edges: [...template.edges, { from: 2, to: 3 }, { from: 3, to: 4 }],
+  }
+  await act(async () => render(newer))
+  // No Reset or other local action: the authoritative defaults and new graph
+  // must appear and be validated as soon as this catalog revision is delivered.
+  expect(document.body.querySelectorAll('.cw-node')).toHaveLength(3)
+  expect(
+    [...document.body.querySelectorAll('.cw-node-port-value')].map((node) => node.textContent),
+  ).toEqual(['9443', '0', '70000'])
+  expect(document.body.textContent).toContain('端口须为 1-65535')
+  expect(button('应用编排').disabled).toBe(true)
+  expect(apply).not.toHaveBeenCalled()
+  const valid = {
+    ...newer,
+    revision: 4,
+    nodes: newer.nodes.map((node) =>
+      node.server_id === 3 ? { ...node, listen_port: 7443 } : node,
+    ),
+  }
+  await act(async () => render(valid))
+  expect(
+    [...document.body.querySelectorAll('.cw-node-port-value')].map((node) => node.textContent),
+  ).toEqual(['9443', '0', '7443'])
+  expect(button('应用编排').disabled).toBe(false)
+  await act(async () => button('应用编排').click())
+  const applied = apply.mock.lastCall?.[0]
+  expect(applied).toMatchObject({
+    template_revision: 4,
+    edges: valid.edges,
+    overrides: [
+      { server_id: 1, address: '' },
+      { server_id: 2, listen_port: 0 },
+    ],
+  })
+  const dto = draftOrchestrationDTO(applied, catalogServers, 1)
+  expect(
+    dto.nodes.filter((node) => node.kind === 'server').map((node) => node.listen_port),
+  ).toEqual([9443, 0, 7443])
+  expect(dto.edges).toEqual(valid.edges)
 })

@@ -70,6 +70,17 @@ export function DraftOrchestrationEditor({
       ? catalogTemplate
       : undefined
   const resolved = resolveOrchestrationDraft(draft, template)
+  // A shared source change must replace the core's isolated initial state.
+  // Overrides stay in this wrapper and are deliberately excluded from this key
+  // so ordinary parameter entry preserves the active input and local canvas.
+  const sharedSource = draft.template_id
+    ? JSON.stringify({
+        template_id: draft.template_id,
+        template_revision: template?.revision ?? draft.template_revision,
+        nodes: (template ?? draft).nodes,
+        edges: (template ?? draft).edges,
+      })
+    : 'independent'
   const initialState = useMemo(
     () =>
       createEditorState({
@@ -98,7 +109,7 @@ export function DraftOrchestrationEditor({
     )
   return (
     <OrchestrationEditorCore
-      key={revision}
+      key={`${revision}:${sharedSource}`}
       chain={chain}
       hop={hop}
       servers={servers}
