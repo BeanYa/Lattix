@@ -76,6 +76,9 @@ function TriggerIcon({ subject, action }: Pick<EditorNode, 'subject' | 'action'>
 export function OrchestrationCanvas({
   state,
   hopRole,
+  templateMode = false,
+  structureLocked = false,
+  parametersEditable = false,
   serverMap,
   probesByServer,
   probeTitle,
@@ -101,6 +104,9 @@ export function OrchestrationCanvas({
   onAddress,
 }: {
   state: EditorState
+  templateMode?: boolean
+  structureLocked?: boolean
+  parametersEditable?: boolean
   hopRole: HopRole
   serverMap: Map<number, Server>
   probesByServer: Map<number, CatalogProbeRow[]>
@@ -480,7 +486,7 @@ export function OrchestrationCanvas({
               port: node.listenPort,
               address: node.address,
             }
-            const active = node.serverId === state.activeServerId
+            const active = !templateMode && node.serverId === state.activeServerId
             const targetOk = Boolean(
               connecting && canConnect(state, connecting.from, node.key, validationContext).ok,
             )
@@ -491,20 +497,24 @@ export function OrchestrationCanvas({
                 server={server}
                 role={node.isRoot || active ? 'entry' : 'middle'}
                 roleLabel={
-                  node.isRoot
-                    ? active
-                      ? '根 · 当前'
-                      : '根服务器'
-                    : active
-                      ? '备选 · 当前'
+                  templateMode
+                    ? node.isRoot
+                      ? '主选'
                       : '备选'
+                    : node.isRoot
+                      ? active
+                        ? '根 · 当前'
+                        : '根服务器'
+                      : active
+                        ? '备选 · 当前'
+                        : '备选'
                 }
-                portEditable={hopRole === 'entry' || hopRole === 'exit'}
+                portEditable={parametersEditable || hopRole === 'entry' || hopRole === 'exit'}
                 portLabel={
                   hopRole === 'entry' ? '入口端口' : hopRole === 'exit' ? '出口端口' : undefined
                 }
                 portLayout="symmetric"
-                removable={!node.isRoot && !active}
+                removable={!structureLocked && !node.isRoot && !active}
                 hasIssue={issueNodeKeys.has(node.key)}
                 isActive={active}
                 isConnecting={targetOk}
@@ -522,6 +532,7 @@ export function OrchestrationCanvas({
                 onPortEditToggle={() =>
                   onPortEditToggle(portEditingKey === node.key ? null : node.key)
                 }
+                addressPlaceholder={templateMode ? '地址在链路实例中填写' : undefined}
                 onAddressChange={(value) => onAddress(node.key, value)}
                 onMove={(x, y) => onMove(node.key, x, y)}
               />
@@ -552,6 +563,7 @@ export function OrchestrationCanvas({
                 toWorld={toWorld}
                 onMove={(x, y) => onMove(node.key, x, y)}
                 onRemove={() => onRemoveNode(node.key)}
+                structureLocked={structureLocked}
                 onPriority={(value) => onPriority(node.key, value)}
                 onEntryPortClick={() => onCompleteConnect(node.key)}
                 onExitPortClick={() => onStartConnect(node.key)}
@@ -609,6 +621,7 @@ export function OrchestrationCanvas({
 
 function OrchestrationTriggerCard({
   node,
+  structureLocked = false,
   hasIssue,
   incomingConnected,
   outgoingConnected,
@@ -622,6 +635,7 @@ function OrchestrationTriggerCard({
   onExitPortClick,
 }: {
   node: EditorNode
+  structureLocked?: boolean
   hasIssue: boolean
   incomingConnected: boolean
   outgoingConnected: boolean
@@ -656,6 +670,7 @@ function OrchestrationTriggerCard({
         <button
           type="button"
           className="orch-cond-remove"
+          disabled={structureLocked}
           aria-label={`移除触发器 ${label}`}
           onClick={(event) => {
             event.stopPropagation()
@@ -675,6 +690,7 @@ function OrchestrationTriggerCard({
           value={node.priority}
           placeholder="自动"
           inputMode="numeric"
+          disabled={structureLocked}
           aria-label="触发器优先级"
           title="留空或 0 为自动排序；1-9999 越小越优先"
           onChange={(event) => onPriority(event.target.value)}

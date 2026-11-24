@@ -1,3 +1,4 @@
+import { OrchestrationTemplates } from './chains/orchestration/OrchestrationTemplates'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useSearch } from 'wouter'
 import {
@@ -997,6 +998,8 @@ export default function Chains() {
           )}
         </section>
       )}
+
+      <OrchestrationTemplates />
 
       <TrafficHistoryDialog controller={traffic} />
       <ShareLinkDialog controller={share} />

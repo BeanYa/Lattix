@@ -41,6 +41,7 @@ export interface EditorState {
 }
 
 export interface ValidationContext {
+  validateRootParameters?: boolean
   seq?: number
   totalHops?: number
   hopRole?: 'entry' | 'middle' | 'exit'
@@ -567,7 +568,8 @@ export function validateGraphIssues(state: EditorState, context?: ValidationCont
     servers.length === 1 &&
     servers[0].isRoot &&
     triggers.length === 0 &&
-    state.edges.length === 0
+    state.edges.length === 0 &&
+    !context?.validateRootParameters
   ) {
     return issues
   }
@@ -592,7 +594,10 @@ export function validateGraphIssues(state: EditorState, context?: ValidationCont
     }
   }
 
-  if (state.edges.length === 0) {
+  if (
+    state.edges.length === 0 &&
+    !(servers.length === 1 && servers[0].isRoot && triggers.length === 0)
+  ) {
     issues.push({
       message: '编排图至少需要一条连线',
       nodeKeys: state.nodes.filter((node) => !node.isRoot).map((node) => node.key),

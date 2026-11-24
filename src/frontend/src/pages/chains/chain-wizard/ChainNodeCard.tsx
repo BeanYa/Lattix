@@ -74,6 +74,7 @@ export function ChainNodeCard({
   onPortChange,
   onPortEditToggle,
   onAddressChange,
+  addressPlaceholder,
   onMove,
 }: {
   node: CanvasNode
@@ -117,6 +118,7 @@ export function ChainNodeCard({
   onRemove: () => void
   onPortChange: (port: string) => void
   onPortEditToggle: () => void
+  addressPlaceholder?: string
   onAddressChange: (address: string) => void
   onMove: (x: number, y: number) => void
 }) {
@@ -391,7 +393,11 @@ export function ChainNodeCard({
         </div>
         <div className="cw-node-config">
           <div className="cw-node-address-row">
-            <NodeAddressSelect server={server} value={node.address} onChange={onAddressChange} />
+            {addressPlaceholder ? (
+              <span className="cw-node-address is-empty">{addressPlaceholder}</span>
+            ) : (
+              <NodeAddressSelect server={server} value={node.address} onChange={onAddressChange} />
+            )}
           </div>
           {external || portEditable ? (
             <div className="cw-node-port-row">

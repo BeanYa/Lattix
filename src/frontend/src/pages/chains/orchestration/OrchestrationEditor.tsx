@@ -1,3 +1,5 @@
+import { createPortal } from 'react-dom'
+import type { ReactNode } from 'react'
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeftIcon,
@@ -110,7 +112,7 @@ function initialHopPort(chain: Chain, hop: ChainHop): string {
   return ''
 }
 
-export function OrchestrationEditor({
+export function OrchestrationEditorCore({
   chain: chainProp,
   hop: hopProp,
   servers: serversProp,
@@ -118,6 +120,8 @@ export function OrchestrationEditor({
   probeTitle = null,
   onClose,
   onSaved,
+  config,
+  runtimeError = '',
 }: {
   chain: Chain
   hop: ChainHop
@@ -126,37 +130,25 @@ export function OrchestrationEditor({
   probeTitle?: string | null
   onClose: () => void
   onSaved: (updated: Chain) => void
+  runtimeError?: string
+  config?: {
+    initialState: EditorState
+    title: string
+    saveLabel: string
+    onApply: (state: EditorState) => void | Promise<void>
+    actions?: ReactNode
+    templateMode?: boolean
+    structureLocked?: boolean
+    extraDirty?: boolean
+    onParameterChange?: (serverId: number, field: 'address' | 'listen_port', value: string) => void
+  }
 }) {
   const dialog = useContext(AppDialogContext)
-  const [chain, setChain] = useState(chainProp)
-  const [runtimeError, setRuntimeError] = useState('')
-  const runtimeRequest = useRef(0)
-  const hop = chain.hops.find((item) => item.seq === hopProp.seq) ?? hopProp
-
-  useEffect(() => setChain(chainProp), [chainProp])
-  const loadRuntime = useCallback(
-    async (silent: boolean, signal?: AbortSignal) => {
-      const request = ++runtimeRequest.current
-      try {
-        const chains = await api.chains({ display: silent ? 'silent' : 'foreground', signal })
-        if (signal?.aborted || request !== runtimeRequest.current) return
-        const latest = chains.find((item) => item.id === chainProp.id)
-        if (!latest || !latest.hops.some((item) => item.seq === hopProp.seq)) {
-          throw new Error('链路或跳位已不存在，请关闭编辑器并刷新链路')
-        }
-        setChain(latest)
-        setRuntimeError('')
-      } catch (err) {
-        if (signal?.aborted || request !== runtimeRequest.current) return
-        setRuntimeError(err instanceof Error ? err.message : '运行状态刷新失败')
-      }
-    },
-    [chainProp.id, hopProp.seq],
-  )
-  usePolling(loadRuntime, runtimeRequest)
-
+  const chain = chainProp
+  const hop = hopProp
   const initialState = useMemo(
     () =>
+      config?.initialState ??
       createEditorState({
         chainId: chain.id,
         seq: hop.seq,
@@ -165,8 +157,17 @@ export function OrchestrationEditor({
         initialAddress: hop.address ?? '',
         initialListenPort: initialHopPort(chain, hop),
       }),
-    [chain, hop],
+    [chain, hop, config?.initialState],
   )
+  const initialConfigFingerprint = useRef(stateFingerprint(initialState))
+  const panelRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    panelRef.current?.focus()
+    return () => {
+      if (previous?.isConnected) previous.focus()
+    }
+  }, [])
   const initialFingerprint = useMemo(() => stateFingerprint(initialState), [initialState])
 
   const [state, setState] = useState<EditorState>(() => initialState)
@@ -231,16 +232,27 @@ export function OrchestrationEditor({
     return rootSrv ? isExternalServer(rootSrv) : false
   }, [hop.role, chain.service_external, serverMap, state.rootServerId])
 
+  const draftMode = Boolean(config)
   const validationContext = useMemo<ValidationContext>(
     () => ({
-      seq: hop.seq,
-      totalHops: chain.hops.length,
-      hopRole: hop.role,
+      validateRootParameters: draftMode,
+      seq: config?.templateMode ? undefined : hop.seq,
+      totalHops: config?.templateMode ? undefined : chain.hops.length,
+      hopRole: config?.templateMode ? undefined : hop.role,
+      primaryIsExternal,
+      serverMap,
+      blockedServerIds: config?.templateMode ? undefined : blockedServerIds,
+    }),
+    [
+      hop.seq,
+      hop.role,
+      chain.hops.length,
       primaryIsExternal,
       serverMap,
       blockedServerIds,
-    }),
-    [hop.seq, hop.role, chain.hops.length, primaryIsExternal, serverMap, blockedServerIds],
+      config?.templateMode,
+      draftMode,
+    ],
   )
 
   const issues = useMemo(
@@ -256,8 +268,10 @@ export function OrchestrationEditor({
   }, [issues])
 
   const isDirty = useMemo(
-    () => stateFingerprint(state) !== initialFingerprint,
-    [state, initialFingerprint],
+    () =>
+      Boolean(config?.extraDirty) ||
+      stateFingerprint(state) !== (config ? initialConfigFingerprint.current : initialFingerprint),
+    [state, initialFingerprint, config],
   )
 
   const requestClose = useCallback(async () => {
@@ -311,7 +325,7 @@ export function OrchestrationEditor({
 
   const lastSeq = chain.hops.length - 1
   const hasRecovery = state.nodes.some((node) => node.subject === 'root')
-  const chainDeploying = chain.desired_revision_id !== 0 || chain.status === 'applying'
+  const chainDeploying = !config && (chain.desired_revision_id !== 0 || chain.status === 'applying')
 
   const serverItems = useMemo(() => {
     const keyword = serverQuery.trim().toLowerCase()
@@ -326,9 +340,12 @@ export function OrchestrationEditor({
       .map((server) => ({
         server,
         eligibility: serverEligibility(server, state, {
-          hopRole: hop.role,
-          primaryIsExternal,
-          blockedServerIds,
+          hopRole: config?.templateMode ? 'exit' : hop.role,
+          primaryIsExternal:
+            config?.templateMode && !state.nodes.length
+              ? isExternalServer(server)
+              : primaryIsExternal,
+          blockedServerIds: config?.templateMode ? undefined : blockedServerIds,
         }),
       }))
       .sort((a, b) => {
@@ -337,7 +354,15 @@ export function OrchestrationEditor({
         }
         return a.server.alias.localeCompare(b.server.alias)
       })
-  }, [servers, serverQuery, state, hop.role, primaryIsExternal, blockedServerIds])
+  }, [
+    servers,
+    serverQuery,
+    state,
+    hop.role,
+    primaryIsExternal,
+    blockedServerIds,
+    config?.templateMode,
+  ])
 
   const eligibleServerCount = useMemo(
     () => serverItems.filter((item) => item.eligibility.eligible).length,
@@ -365,30 +390,48 @@ export function OrchestrationEditor({
   )
 
   const addServerNode = (serverId: number, point?: { x: number; y: number }) => {
+    if (config?.structureLocked) return
     const target = serverMap.get(serverId)
     if (target) {
       const eligibility = serverEligibility(target, state, {
-        hopRole: hop.role,
-        primaryIsExternal,
-        blockedServerIds,
+        hopRole: config?.templateMode ? 'exit' : hop.role,
+        primaryIsExternal:
+          config?.templateMode && !state.nodes.length && target
+            ? isExternalServer(target)
+            : primaryIsExternal,
+        blockedServerIds: config?.templateMode ? undefined : blockedServerIds,
       })
       if (!eligibility.eligible) {
         setError(`无法添加 ${target.alias}：${eligibility.reason}`)
         return
       }
     }
-    const next = addServer(state, serverId, point)
+    const next =
+      config?.templateMode && state.nodes.length === 0
+        ? createEditorState({
+            chainId: 0,
+            seq: 0,
+            activeServerId: serverId,
+            initialAddress: '',
+            initialListenPort: '0',
+          })
+        : addServer(state, serverId, point)
     if (next === state) {
       setError('无法添加该服务器（重复或已达上限）')
       return
     }
     setError('')
     setState(next)
+    if (state.nodes.length === 0) setFitRevision((n) => n + 1)
   }
 
   const triggerAvailability = (subject: TriggerSubject): { disabled: boolean; reason?: string } => {
-    if (subject === 'prev' && hop.seq === 0) return { disabled: true, reason: '入口跳无上一跳' }
-    if (subject === 'next' && hop.seq === lastSeq) {
+    if (config?.structureLocked) return { disabled: true, reason: '共享结构只读' }
+    if (config?.templateMode && state.nodes.length === 0)
+      return { disabled: true, reason: '请先选择根服务器' }
+    if (!config?.templateMode && subject === 'prev' && hop.seq === 0)
+      return { disabled: true, reason: '入口跳无上一跳' }
+    if (!config?.templateMode && subject === 'next' && hop.seq === lastSeq) {
       return { disabled: true, reason: '出口跳无下一跳' }
     }
     if (subject === 'root' && hasRecovery) return { disabled: true, reason: '已添加（限 1 个）' }
@@ -418,6 +461,7 @@ export function OrchestrationEditor({
   }
 
   const startConnect = (key: string) => {
+    if (config?.structureLocked) return
     setPortEditingKey(null)
     setConnectionError('')
     setError('')
@@ -437,6 +481,7 @@ export function OrchestrationEditor({
   }, [])
 
   const completeConnect = (key: string) => {
+    if (config?.structureLocked) return
     if (!connecting) return
     if (connecting.from === key) {
       setConnecting(null)
@@ -461,6 +506,7 @@ export function OrchestrationEditor({
   }
 
   const handleRemoveNode = (key: string) => {
+    if (config?.structureLocked) return
     const next = removeNode(state, key)
     if (next === state) {
       setError('根服务器与当前使用的服务器不能删除')
@@ -474,12 +520,14 @@ export function OrchestrationEditor({
   }
 
   const handleRemoveEdge = (from: string, to: string) => {
+    if (config?.structureLocked) return
     setError('')
     setConnectionError('')
     setState((current) => removeEdge(current, from, to))
   }
 
   const handleClearGraph = () => {
+    if (config?.structureLocked) return
     setError('')
     setConnectionError('')
     setConnecting(null)
@@ -498,8 +546,11 @@ export function OrchestrationEditor({
     setSaving(true)
     setError('')
     try {
-      const updated = await api.saveHopOrchestration(toSavePayload(state))
-      onSaved(updated.data)
+      if (config) await config.onApply(state)
+      else {
+        const updated = await api.saveHopOrchestration(toSavePayload(state))
+        onSaved(updated.data)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败')
     } finally {
@@ -511,7 +562,7 @@ export function OrchestrationEditor({
   const triggerCount = state.nodes.filter((node) => node.kind === 'trigger').length
   const hasOrchestrationContent = serverCount > 1 || triggerCount > 0 || state.edges.length > 0
 
-  return (
+  return createPortal(
     <div
       className="orch-overlay"
       role="presentation"
@@ -519,29 +570,69 @@ export function OrchestrationEditor({
         if (event.target === event.currentTarget) void requestClose()
       }}
     >
-      <div className="orch-panel" role="dialog" aria-modal="true" aria-label="自动编排编辑器">
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        className="orch-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label={config?.title ?? '自动编排编辑器'}
+        onKeyDown={(event) => {
+          if (event.key !== 'Tab') return
+          const scope = panelRef.current?.querySelector('[role="alertdialog"]') ?? panelRef.current
+          const controls = Array.from(
+            scope?.querySelectorAll<HTMLElement>(
+              'button:not(:disabled),input:not(:disabled),select:not(:disabled),summary,[tabindex="0"]',
+            ) ?? [],
+          )
+          const first = controls[0],
+            last = controls.at(-1)
+          if (!first) {
+            event.preventDefault()
+            return
+          }
+          if (
+            !scope?.contains(document.activeElement) ||
+            document.activeElement === scope ||
+            (event.shiftKey && document.activeElement === first)
+          ) {
+            event.preventDefault()
+            ;(event.shiftKey ? last : first)?.focus()
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault()
+            first.focus()
+          }
+        }}
+      >
         <header className="orch-head">
           <div className="orch-head-copy">
             <div className="orch-head-title">
-              <h2>自动编排 · 第 {hop.seq + 1} 跳</h2>
-              <span className="orch-head-pill">{HOP_ROLE_TEXT[hop.role]}</span>
-              {hop.orchestration?.triggered ? (
+              <h2>{config?.title ?? `自动编排 · 第 ${hop.seq + 1} 跳`}</h2>
+              {!config?.templateMode ? (
+                <span className="orch-head-pill">{HOP_ROLE_TEXT[hop.role]}</span>
+              ) : null}
+              {!config && hop.orchestration?.triggered ? (
                 <span className="orch-head-pill is-triggered">编排已触发</span>
               ) : null}
               {chainDeploying ? (
                 <span className="orch-head-pill is-warn">链路部署中，暂不可保存</span>
               ) : null}
             </div>
-            <p className="orch-head-meta">
-              <span>{chain.name}</span>
-              <span>·</span>
-              <span>原服务器：{rootAlias}</span>
-              <span>·</span>
-              <span>当前使用：{activeAlias}</span>
-            </p>
+            {!config?.templateMode ? (
+              <p className="orch-head-meta">
+                <span>{chain.name}</span>
+                <span>·</span>
+                <span>原服务器：{rootAlias}</span>
+                <span>·</span>
+                <span>当前使用：{activeAlias}</span>
+              </p>
+            ) : (
+              <p className="orch-head-meta">地址在链路实例中填写 · 端口 0 为自动分配</p>
+            )}
           </div>
           <div className="orch-head-actions">
-            {hasOrchestrationContent ? (
+            {config?.actions}
+            {hasOrchestrationContent && !config?.structureLocked ? (
               <Button
                 type="button"
                 variant="ghost"
@@ -558,7 +649,12 @@ export function OrchestrationEditor({
             </Button>
             <Button
               type="button"
-              disabled={saving || issues.length > 0 || chainDeploying}
+              disabled={
+                saving ||
+                issues.length > 0 ||
+                chainDeploying ||
+                Boolean(config?.templateMode && !state.nodes.length)
+              }
               title={
                 chainDeploying
                   ? '链路有在途修订，暂不能保存自动编排'
@@ -568,7 +664,7 @@ export function OrchestrationEditor({
               }
               onClick={() => void save()}
             >
-              {saving ? '保存中…' : '保存编排'}
+              {saving ? '保存中…' : (config?.saveLabel ?? '保存编排')}
             </Button>
           </div>
         </header>
@@ -661,8 +757,8 @@ export function OrchestrationEditor({
                         key={server.id}
                         type="button"
                         className="orch-list-item orch-server-item"
-                        disabled={!eligibility.eligible}
-                        draggable={eligibility.eligible}
+                        disabled={!eligibility.eligible || config?.structureLocked}
+                        draggable={eligibility.eligible && !config?.structureLocked}
                         onDragStart={(event) => {
                           event.dataTransfer.setData(ORCH_SERVER_DND_MIME, String(server.id))
                           event.dataTransfer.effectAllowed = 'copy'
@@ -719,8 +815,16 @@ export function OrchestrationEditor({
             )}
           </aside>
 
+          {config?.templateMode && !state.nodes.length ? (
+            <p className="orch-root-prompt" role="status">
+              选择根服务器：在「备选服务器」中点击或拖入服务器开始编排
+            </p>
+          ) : null}
           <OrchestrationCanvas
             state={state}
+            templateMode={config?.templateMode}
+            structureLocked={config?.structureLocked}
+            parametersEditable={Boolean(config)}
             hopRole={hop.role}
             serverMap={serverMap}
             probesByServer={probesByServer}
@@ -741,10 +845,21 @@ export function OrchestrationEditor({
             onDropServer={(serverId, point) => addServerNode(serverId, point)}
             onDropTrigger={(subject, action, point) => addTriggerNode(subject, action, point)}
             onAutoLayout={handleAutoLayout}
-            onPriority={(key, value) => setState((current) => setPriority(current, key, value))}
-            onPort={(key, value) => setState((current) => setServerListenPort(current, key, value))}
+            onPriority={(key, value) => {
+              if (!config?.structureLocked) setState((current) => setPriority(current, key, value))
+            }}
+            onPort={(key, value) => {
+              const node = state.nodes.find((item) => item.key === key)
+              if (node?.serverId) config?.onParameterChange?.(node.serverId, 'listen_port', value)
+              setState((current) => setServerListenPort(current, key, value))
+            }}
             onPortEditToggle={setPortEditingKey}
-            onAddress={(key, value) => setState((current) => setServerAddress(current, key, value))}
+            onAddress={(key, value) => {
+              if (config?.templateMode) return
+              const node = state.nodes.find((item) => item.key === key)
+              if (node?.serverId) config?.onParameterChange?.(node.serverId, 'address', value)
+              setState((current) => setServerAddress(current, key, value))
+            }}
           />
         </div>
 
@@ -784,6 +899,48 @@ export function OrchestrationEditor({
           </span>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
+}
+
+export function OrchestrationEditor(props: {
+  chain: Chain
+  hop: ChainHop
+  servers?: Server[]
+  probesByServer?: Map<number, CatalogProbeRow[]>
+  probeTitle?: string | null
+  onClose: () => void
+  onSaved: (updated: Chain) => void
+}) {
+  const chainProp = props.chain
+  const hopProp = props.hop
+  const [chain, setChain] = useState(chainProp)
+  const [runtimeError, setRuntimeError] = useState('')
+  const runtimeRequest = useRef(0)
+  const hop = chain.hops.find((item) => item.seq === hopProp.seq) ?? hopProp
+
+  useEffect(() => setChain(chainProp), [chainProp])
+  const loadRuntime = useCallback(
+    async (silent: boolean, signal?: AbortSignal) => {
+      const request = ++runtimeRequest.current
+      try {
+        const chains = await api.chains({ display: silent ? 'silent' : 'foreground', signal })
+        if (signal?.aborted || request !== runtimeRequest.current) return
+        const latest = chains.find((item) => item.id === chainProp.id)
+        if (!latest || !latest.hops.some((item) => item.seq === hopProp.seq)) {
+          throw new Error('链路或跳位已不存在，请关闭编辑器并刷新链路')
+        }
+        setChain(latest)
+        setRuntimeError('')
+      } catch (err) {
+        if (signal?.aborted || request !== runtimeRequest.current) return
+        setRuntimeError(err instanceof Error ? err.message : '运行状态刷新失败')
+      }
+    },
+    [chainProp.id, hopProp.seq],
+  )
+  usePolling(loadRuntime, runtimeRequest)
+
+  return <OrchestrationEditorCore {...props} chain={chain} hop={hop} runtimeError={runtimeError} />
 }

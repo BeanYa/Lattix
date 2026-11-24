@@ -219,24 +219,28 @@ describe('OrchestrationEditor', () => {
         />,
       ),
     )
-    expect(host.querySelector('.orch-head-meta')?.textContent).toContain('当前使用：SG-Backup')
-    expect([...host.querySelectorAll('.cw-node-role')].map((el) => el.textContent)).toContain(
-      '备选 · 当前',
+    expect(document.body.querySelector('.orch-head-meta')?.textContent).toContain(
+      '当前使用：SG-Backup',
     )
+    expect(
+      [...document.body.querySelectorAll('.cw-node-role')].map((el) => el.textContent),
+    ).toContain('备选 · 当前')
 
-    const suspected = [...host.querySelectorAll<HTMLButtonElement>('.orch-trigger-item')].find(
-      (button) => button.textContent?.includes('疑似被 ban'),
-    )!
+    const suspected = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('.orch-trigger-item'),
+    ].find((button) => button.textContent?.includes('疑似被 ban'))!
     await act(async () => suspected.click())
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5000)
     })
 
-    expect(host.querySelector('.orch-head-meta')?.textContent).toContain('当前使用：JP-Root')
-    expect([...host.querySelectorAll('.cw-node-role')].map((el) => el.textContent)).toContain(
-      '根 · 当前',
+    expect(document.body.querySelector('.orch-head-meta')?.textContent).toContain(
+      '当前使用：JP-Root',
     )
-    expect(host.querySelectorAll('.orch-cond')).toHaveLength(2)
+    expect(
+      [...document.body.querySelectorAll('.cw-node-role')].map((el) => el.textContent),
+    ).toContain('根 · 当前')
+    expect(document.body.querySelectorAll('.orch-cond')).toHaveLength(2)
   })
 
   it('容灾切换后同步当前节点标记并保留未保存的编排修改', async () => {
@@ -272,21 +276,23 @@ describe('OrchestrationEditor', () => {
       { ...switched.chain, hops: [originalHop, switched.chain.hops[1]] },
       originalHop,
     )
-    const suspected = [...host.querySelectorAll<HTMLButtonElement>('.orch-trigger-item')].find(
-      (button) => button.textContent?.includes('疑似被 ban'),
-    )!
+    const suspected = [
+      ...document.body.querySelectorAll<HTMLButtonElement>('.orch-trigger-item'),
+    ].find((button) => button.textContent?.includes('疑似被 ban'))!
     await act(async () => suspected.click())
-    expect(host.querySelectorAll('.orch-cond')).toHaveLength(2)
+    expect(document.body.querySelectorAll('.orch-cond')).toHaveLength(2)
 
     await renderEditor(switched.chain, switched.hop)
 
-    expect(host.querySelector('.orch-head-meta')?.textContent).toContain('当前使用：SG-Backup')
-    const roles = [...host.querySelectorAll('.cw-node-role')].map((el) => el.textContent)
+    expect(document.body.querySelector('.orch-head-meta')?.textContent).toContain(
+      '当前使用：SG-Backup',
+    )
+    const roles = [...document.body.querySelectorAll('.cw-node-role')].map((el) => el.textContent)
     expect(roles).toContain('根服务器')
     expect(roles).toContain('备选 · 当前')
     expect(roles).not.toContain('根 · 当前')
-    expect(host.querySelectorAll('.orch-cond')).toHaveLength(2)
-    expect(host.querySelector('[aria-label="移除节点 SG-Backup"]')).toBeNull()
+    expect(document.body.querySelectorAll('.orch-cond')).toHaveLength(2)
+    expect(document.body.querySelector('[aria-label="移除节点 SG-Backup"]')).toBeNull()
   })
 
   it('展示真实原服务器与当前使用服务器、支持直连端口编辑与备份卡标签', async () => {
@@ -304,27 +310,29 @@ describe('OrchestrationEditor', () => {
     )
 
     // 标题副文案区分原服务器与当前使用
-    const metaText = host.querySelector('.orch-head-meta')?.textContent ?? ''
+    const metaText = document.body.querySelector('.orch-head-meta')?.textContent ?? ''
     expect(metaText).toContain('原服务器：JP-Root')
     expect(metaText).toContain('当前使用：SG-Backup')
-    expect(host.querySelector('.orch-head-pill.is-triggered')?.textContent).toBe('编排已触发')
+    expect(document.body.querySelector('.orch-head-pill.is-triggered')?.textContent).toBe(
+      '编排已触发',
+    )
 
     // 根与当前服务器不渲染删除按钮
-    expect(host.querySelector('[aria-label="移除节点 JP-Root"]')).toBeNull()
-    expect(host.querySelector('[aria-label="移除节点 SG-Backup"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="移除节点 JP-Root"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="移除节点 SG-Backup"]')).toBeNull()
 
     // 备选服务器显示「备选 · 当前」而非「入口」
-    const roles = [...host.querySelectorAll('.cw-node-role')].map((el) => el.textContent)
+    const roles = [...document.body.querySelectorAll('.cw-node-role')].map((el) => el.textContent)
     expect(roles).toContain('根服务器')
     expect(roles).toContain('备选 · 当前')
 
     // 点击直连服务器端口按钮展开数字输入并可修改
-    const portBtn = [...host.querySelectorAll('.cw-node-port-value')].find(
+    const portBtn = [...document.body.querySelectorAll('.cw-node-port-value')].find(
       (el) => el.textContent === '8443',
     ) as HTMLButtonElement
     expect(portBtn).toBeTruthy()
     await act(async () => portBtn.click())
-    const portInput = host.querySelector(
+    const portInput = document.body.querySelector(
       'input[aria-label="入口端口数值：JP-Root"]',
     ) as HTMLInputElement
     expect(portInput).toBeTruthy()
@@ -346,34 +354,36 @@ describe('OrchestrationEditor', () => {
     )
 
     // 添加「原节点恢复」与「疑似被 ban」
-    const recoveryBtn = [...host.querySelectorAll('.orch-trigger-item')].find((el) =>
+    const recoveryBtn = [...document.body.querySelectorAll('.orch-trigger-item')].find((el) =>
       el.textContent?.includes('原节点恢复'),
     ) as HTMLButtonElement
-    const suspectedBtn = [...host.querySelectorAll('.orch-trigger-item')].find((el) =>
+    const suspectedBtn = [...document.body.querySelectorAll('.orch-trigger-item')].find((el) =>
       el.textContent?.includes('疑似被 ban'),
     ) as HTMLButtonElement
     await act(async () => recoveryBtn.click())
     await act(async () => suspectedBtn.click())
 
     // 原节点恢复只有出口圆点，不渲染入口圆点
-    expect(host.querySelector('[aria-label="触发器入口：原节点恢复"]')).toBeNull()
-    expect(host.querySelector('[aria-label="触发器出口：原节点恢复"]')).toBeTruthy()
+    expect(document.body.querySelector('[aria-label="触发器入口：原节点恢复"]')).toBeNull()
+    expect(document.body.querySelector('[aria-label="触发器出口：原节点恢复"]')).toBeTruthy()
 
     // 点击 JP-Root 出口圆点进入连线模式
-    const rootExit = host.querySelector('[aria-label="出口端口：JP-Root"]') as HTMLButtonElement
+    const rootExit = document.body.querySelector(
+      '[aria-label="出口端口：JP-Root"]',
+    ) as HTMLButtonElement
     await act(async () => rootExit.click())
-    expect(host.querySelector('.cw-connect-hint')?.textContent).toContain('JP-Root')
+    expect(document.body.querySelector('.cw-connect-hint')?.textContent).toContain('JP-Root')
 
     // 仅未连接来源的合法触发器入口高亮为 is-target，服务器入口不高亮
-    const suspectedEntry = host.querySelector('[aria-label="触发器入口：疑似被 ban"]')!
-    const rootEntry = host.querySelector('[aria-label="入口端口：JP-Root"]')!
+    const suspectedEntry = document.body.querySelector('[aria-label="触发器入口：疑似被 ban"]')!
+    const rootEntry = document.body.querySelector('[aria-label="入口端口：JP-Root"]')!
     expect(suspectedEntry.classList.contains('is-target')).toBe(true)
     expect(rootEntry.classList.contains('is-target')).toBe(false)
 
     // 连线样式与链路编辑器一致：不渲染额外箭头 marker 或预览线末端圆点
-    expect(host.querySelectorAll('.cw-wires marker')).toHaveLength(0)
-    expect(host.querySelectorAll('.orch-rubber-cursor')).toHaveLength(0)
-    for (const wire of host.querySelectorAll('.cw-wires .cw-wire')) {
+    expect(document.body.querySelectorAll('.cw-wires marker')).toHaveLength(0)
+    expect(document.body.querySelectorAll('.orch-rubber-cursor')).toHaveLength(0)
+    for (const wire of document.body.querySelectorAll('.cw-wires .cw-wire')) {
       expect(wire.getAttribute('marker-end')).toBeNull()
     }
 
@@ -381,7 +391,7 @@ describe('OrchestrationEditor', () => {
     await act(async () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
-    expect(host.querySelector('.cw-connect-hint')).toBeNull()
+    expect(document.body.querySelector('.cw-connect-hint')).toBeNull()
     expect(onClose).not.toHaveBeenCalled()
   })
 
@@ -417,28 +427,30 @@ describe('OrchestrationEditor', () => {
     )
 
     // 新增一个尚无来源的「疑似被 ban」触发器
-    const suspectedBtn = [...host.querySelectorAll('.orch-trigger-item')].find((el) =>
+    const suspectedBtn = [...document.body.querySelectorAll('.orch-trigger-item')].find((el) =>
       el.textContent?.includes('疑似被 ban'),
     ) as HTMLButtonElement
     await act(async () => suspectedBtn.click())
 
     // 切换到备选服务器 tab 并添加 TW-Spare
-    const serverTab = [...host.querySelectorAll('[role="tab"]')].find((el) =>
+    const serverTab = [...document.body.querySelectorAll('[role="tab"]')].find((el) =>
       el.textContent?.includes('备选服务器'),
     ) as HTMLButtonElement
     await act(async () => serverTab.click())
-    const twItem = [...host.querySelectorAll('.orch-server-item')].find((el) =>
+    const twItem = [...document.body.querySelectorAll('.orch-server-item')].find((el) =>
       el.textContent?.includes('TW-Spare'),
     ) as HTMLButtonElement
     await act(async () => twItem.click())
 
     // 从 TW-Spare 发起连线：已有来源的「被 ban」不高亮 is-target，未连来源的「疑似被 ban」高亮 is-target
-    const twExit = host.querySelector('[aria-label="出口端口：TW-Spare"]') as HTMLButtonElement
+    const twExit = document.body.querySelector(
+      '[aria-label="出口端口：TW-Spare"]',
+    ) as HTMLButtonElement
     await act(async () => twExit.click())
-    const ownedBanEntry = host.querySelector(
+    const ownedBanEntry = document.body.querySelector(
       '[aria-label="触发器入口：被 ban"]',
     ) as HTMLButtonElement
-    const freshSuspectedEntry = host.querySelector(
+    const freshSuspectedEntry = document.body.querySelector(
       '[aria-label="触发器入口：疑似被 ban"]',
     ) as HTMLButtonElement
     expect(ownedBanEntry.classList.contains('is-target')).toBe(false)
@@ -446,11 +458,11 @@ describe('OrchestrationEditor', () => {
 
     // 点击「被 ban」入口依然可以把它的来源改连到 TW-Spare
     await act(async () => ownedBanEntry.click())
-    expect(host.querySelector('[aria-label="断开连线：TW-Spare → 被 ban"]')).toBeTruthy()
-    expect(host.querySelector('[aria-label="断开连线：JP-Root → 被 ban"]')).toBeNull()
-    expect(host.querySelectorAll('.cw-wires marker')).toHaveLength(0)
-    expect(host.querySelectorAll('.orch-rubber-cursor')).toHaveLength(0)
-    for (const wire of host.querySelectorAll('.cw-wires .cw-wire')) {
+    expect(document.body.querySelector('[aria-label="断开连线：TW-Spare → 被 ban"]')).toBeTruthy()
+    expect(document.body.querySelector('[aria-label="断开连线：JP-Root → 被 ban"]')).toBeNull()
+    expect(document.body.querySelectorAll('.cw-wires marker')).toHaveLength(0)
+    expect(document.body.querySelectorAll('.orch-rubber-cursor')).toHaveLength(0)
+    for (const wire of document.body.querySelectorAll('.cw-wires .cw-wire')) {
       expect(wire.getAttribute('marker-end')).toBeNull()
     }
   })
@@ -470,21 +482,21 @@ describe('OrchestrationEditor', () => {
     )
 
     // 添加触发器并确认它绑定了拖动（onPointerDown 不会抛错）
-    const suspectedBtn = [...host.querySelectorAll('.orch-trigger-item')].find((el) =>
+    const suspectedBtn = [...document.body.querySelectorAll('.orch-trigger-item')].find((el) =>
       el.textContent?.includes('疑似被 ban'),
     ) as HTMLButtonElement
     await act(async () => suspectedBtn.click())
-    const condCard = host.querySelector('.orch-cond') as HTMLDivElement
+    const condCard = document.body.querySelector('.orch-cond') as HTMLDivElement
     expect(condCard).toBeTruthy()
     expect(condCard.getAttribute('data-tone')).toBe('warn')
 
     // 切换到备选服务器 tab
-    const serverTab = [...host.querySelectorAll('[role="tab"]')].find((el) =>
+    const serverTab = [...document.body.querySelectorAll('[role="tab"]')].find((el) =>
       el.textContent?.includes('备选服务器'),
     ) as HTMLButtonElement
     await act(async () => serverTab.click())
 
-    const items = [...host.querySelectorAll('.orch-server-item')] as HTMLButtonElement[]
+    const items = [...document.body.querySelectorAll('.orch-server-item')] as HTMLButtonElement[]
     const sgItem = items.find((el) => el.textContent?.includes('SG-Backup'))!
     const usItem = items.find((el) => el.textContent?.includes('US-OtherHop'))!
     const extItem = items.find((el) => el.textContent?.includes('SOCKS-External'))!
@@ -496,7 +508,7 @@ describe('OrchestrationEditor', () => {
 
     // 添加 SG-Backup 到画布
     await act(async () => sgItem.click())
-    expect(host.querySelector('[aria-label="入口端口：SG-Backup"]')).toBeTruthy()
+    expect(document.body.querySelector('[aria-label="入口端口：SG-Backup"]')).toBeTruthy()
   })
 
   it('有未保存修改时点击取消弹出二次确认框', async () => {
@@ -516,12 +528,12 @@ describe('OrchestrationEditor', () => {
       ),
     )
 
-    const suspectedBtn = [...host.querySelectorAll('.orch-trigger-item')].find((el) =>
+    const suspectedBtn = [...document.body.querySelectorAll('.orch-trigger-item')].find((el) =>
       el.textContent?.includes('疑似被 ban'),
     ) as HTMLButtonElement
     await act(async () => suspectedBtn.click())
 
-    const cancelBtn = [...host.querySelectorAll('button')].find(
+    const cancelBtn = [...document.body.querySelectorAll('button')].find(
       (el) => el.textContent === '取消',
     ) as HTMLButtonElement
     await act(async () => cancelBtn.click())
