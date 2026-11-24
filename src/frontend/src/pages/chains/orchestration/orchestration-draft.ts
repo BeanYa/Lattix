@@ -68,16 +68,30 @@ export function draftFromHop(hop: ChainHop): OrchestrationDraft {
   }
 }
 
+/** Keep the newest known template base; overrides are resolved separately. */
+export function synchronizeOrchestrationDraft(
+  draft: OrchestrationDraft,
+  template?: OrchestrationTemplate,
+): OrchestrationDraft {
+  if (
+    draft.template_id &&
+    template?.id === draft.template_id &&
+    template.revision >= (draft.template_revision ?? 0)
+  ) {
+    return { ...draftFromTemplate(template), overrides: clone(draft.overrides ?? []) }
+  }
+  return clone(draft)
+}
+
 export function resolveOrchestrationDraft(
   draft: OrchestrationDraft,
   template?: OrchestrationTemplate,
 ): OrchestrationGraph {
-  const source = draft.template_id && template?.id === draft.template_id ? template : draft
+  const source = synchronizeOrchestrationDraft(draft, template)
   return {
     nodes: source.nodes.map((node) => {
       const result = clone(node)
       if (node.kind === 'server') {
-        if (source === template) result.address = ''
         const override = draft.template_id
           ? draft.overrides?.find((item) => item.server_id === node.server_id)
           : undefined
@@ -128,14 +142,14 @@ export function draftOrchestrationDTO(
   activeServerId: number,
   template?: OrchestrationTemplate,
 ): ChainOrchestration {
-  const graph = resolveOrchestrationDraft(draft, template)
+  const current = synchronizeOrchestrationDraft(draft, template)
+  const graph = resolveOrchestrationDraft(current)
   const root =
     graph.nodes.find((node) => node.kind === 'server' && node.is_root)?.server_id ?? activeServerId
   return {
     ...graph,
     template_id: draft.template_id,
-    template_revision:
-      template?.id === draft.template_id ? template?.revision : draft.template_revision,
+    template_revision: current.template_revision,
     overrides: clone(draft.overrides ?? []),
     root_server_id: root,
     active_server_id: activeServerId,

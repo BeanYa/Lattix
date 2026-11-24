@@ -371,3 +371,74 @@ it('turns a user-entered automatic port into a real override and restores templa
   expect(apply.mock.lastCall![0].overrides).toEqual([])
   expect(apply.mock.lastCall![0].nodes[0].listen_port).toBe(8443)
 })
+
+it('defers reset for a newer materialized binding until current defaults arrive, then retains those defaults across an older response', async () => {
+  const template = {
+    id: 7,
+    revision: 1,
+    name: 'Shared',
+    usage_count: 1,
+    created_at: '',
+    updated_at: '',
+    nodes: [
+      { kind: 'server' as const, server_id: 1, is_root: true, address: '', listen_port: 8443 },
+    ],
+    edges: [],
+  }
+  const value = {
+    template_id: 7,
+    template_revision: 2,
+    nodes: [{ ...template.nodes[0], listen_port: 0 }],
+    edges: [],
+    overrides: [{ server_id: 1, address: '', listen_port: 0 }],
+  }
+  const hop = {
+    seq: 0,
+    server_id: 1,
+    server_alias: 'Root',
+    role: 'entry',
+    forward_port: 0,
+    address: '',
+  } as ChainHop
+  const chain = {
+    id: 0,
+    name: 'Draft',
+    hops: [hop],
+    entry_port: 0,
+    desired_revision_id: 0,
+  } as Chain
+  const apply = vi.fn()
+  const refresh = vi.fn()
+  const render = (catalog: (typeof template)[]) =>
+    root.render(
+      <DraftOrchestrationEditor
+        chain={chain}
+        hop={hop}
+        value={value}
+        templates={catalog}
+        servers={[server]}
+        onClose={() => {}}
+        onApply={apply}
+        onTemplatesChanged={refresh}
+      />,
+    )
+  await act(async () => render([template]))
+  expect(button('恢复端口继承').disabled).toBe(true)
+  await act(async () => button('刷新模板列表').click())
+  expect(refresh).toHaveBeenCalledOnce()
+  expect(button('恢复地址继承').disabled).toBe(true)
+  expect(button('恢复端口继承').title).toContain('最新模板默认值尚未就绪')
+  const current = { ...template, revision: 2, nodes: [{ ...template.nodes[0], listen_port: 9443 }] }
+  await act(async () => render([current]))
+  expect(button('恢复端口继承').disabled).toBe(false)
+  await act(async () => button('恢复端口继承').click())
+  expect(document.body.querySelector('.cw-node-port-value')?.textContent).toBe('9443')
+  await act(async () => render([template]))
+  expect(document.body.querySelector('.cw-node-port-value')?.textContent).toBe('9443')
+  await act(async () => button('应用编排').click())
+  expect(apply.mock.lastCall?.[0]).toMatchObject({
+    template_revision: 2,
+    nodes: [{ kind: 'server', server_id: 1, is_root: true, listen_port: 9443, address: '' }],
+    overrides: [{ server_id: 1, address: '' }],
+  })
+})

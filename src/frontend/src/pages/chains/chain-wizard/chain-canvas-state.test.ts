@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { resolveOrchestrationDraft } from '../orchestration/orchestration-draft'
 import {
   CARD_H,
   CARD_W,
@@ -347,7 +348,6 @@ it('refreshes inherited defaults without turning a runtime allocated port into a
         port: '42123',
         address: '',
         orchestration: draft,
-        originalSeq: 0,
       },
     ],
     edges: [
@@ -374,7 +374,6 @@ it('refreshes inherited defaults without turning a runtime allocated port into a
     templates: [{ ...template, revision: 3, nodes: [{ ...template.nodes[0], listen_port: 9443 }] }],
   })
   expect(state.nodes[0].port).toBe('9443')
-  expect(state.nodes[0].originalSeq).toBe(0)
 })
 
 it('retains explicit candidate overrides when intentionally replacing a shared template on the same root', () => {
@@ -408,7 +407,10 @@ it('retains explicit candidate overrides when intentionally replacing a shared t
   expect(state.nodes[0].orchestration?.overrides).toEqual([
     { server_id: 2, listen_port: 0, address: '' },
   ])
-  expect(state.nodes[0].orchestration?.nodes[2]).toMatchObject({ listen_port: 0, address: '' })
+  expect(resolveOrchestrationDraft(state.nodes[0].orchestration!).nodes[2]).toMatchObject({
+    listen_port: 0,
+    address: '',
+  })
 })
 
 it('rejects a replacement template that omits the active candidate and keeps the original draft', () => {
@@ -450,4 +452,148 @@ it('rejects a replacement template that omits the active candidate and keeps the
   })
   expect(result.connectionError).toContain('当前运行')
   expect(result.nodes).toEqual(state.nodes)
+})
+
+it.each([
+  { port: '9443', address: '203.0.113.2', expectedPort: 9443 },
+  { port: '', address: '', expectedPort: 0 },
+])(
+  'retains explicit main-card provenance through independent apply then template attachment: $port/$address',
+  ({ port, address, expectedPort }) => {
+    let state = add(createCanvasState(), 1)
+    state = canvasReducer(state, { type: 'port', id: 'n1', value: port })
+    state = canvasReducer(state, { type: 'address', id: 'n1', value: address })
+    state = canvasReducer(state, {
+      type: 'orchestration',
+      id: 'n1',
+      draft: {
+        nodes: [
+          { kind: 'server', server_id: 1, is_root: true, listen_port: expectedPort, address },
+          { kind: 'trigger', subject: 'self', action: 'ban_banned' },
+          { kind: 'server', server_id: 2 },
+        ],
+        edges: [
+          { from: 0, to: 1 },
+          { from: 1, to: 2 },
+        ],
+      },
+    })
+    expect(state.nodes[0].parameterOverrides).toEqual({ listen_port: expectedPort, address })
+    state = canvasReducer(state, {
+      type: 'template',
+      replaceId: 'n1',
+      point: { x: 1, y: 1 },
+      draft: {
+        template_id: 8,
+        template_revision: 1,
+        nodes: [{ kind: 'server', server_id: 1, is_root: true, listen_port: 8443 }],
+        edges: [],
+        overrides: [],
+      },
+    })
+    expect(state.nodes[0].orchestration?.overrides).toEqual([
+      { server_id: 1, listen_port: expectedPort, address },
+    ])
+    expect(state.nodes[0]).toMatchObject({ port, address })
+  },
+)
+
+it('never replaces a newer applied draft snapshot with an older delayed catalog response', () => {
+  const current = {
+    template_id: 8,
+    template_revision: 2,
+    nodes: [
+      { kind: 'server' as const, server_id: 1, is_root: true, listen_port: 9443, address: '' },
+    ],
+    edges: [],
+    overrides: [],
+  }
+  let state = canvasReducer(add(createCanvasState(), 1), {
+    type: 'orchestration',
+    id: 'n1',
+    draft: current,
+  })
+  state = canvasReducer(state, {
+    type: 'templates-refresh',
+    templates: [
+      {
+        id: 8,
+        revision: 1,
+        name: 'Old catalog',
+        usage_count: 0,
+        created_at: '',
+        updated_at: '',
+        nodes: [{ ...current.nodes[0], listen_port: 8443 }],
+        edges: [],
+      },
+    ],
+  })
+  expect(state.nodes[0].orchestration?.template_revision).toBe(2)
+  expect(state.nodes[0].port).toBe('9443')
+})
+
+it('updates recorded explicit field values from a subsequent independent-dialog apply before template attachment', () => {
+  let state = add(createCanvasState(), 1)
+  state = canvasReducer(state, { type: 'port', id: 'n1', value: '9443' })
+  state = canvasReducer(state, { type: 'address', id: 'n1', value: '203.0.113.1' })
+  state = canvasReducer(state, {
+    type: 'orchestration',
+    id: 'n1',
+    draft: {
+      nodes: [
+        { kind: 'server', server_id: 1, is_root: true, listen_port: 9553, address: '203.0.113.2' },
+      ],
+      edges: [],
+    },
+  })
+  expect(state.nodes[0].parameterOverrides).toEqual({ listen_port: 9553, address: '203.0.113.2' })
+  state = canvasReducer(state, {
+    type: 'template',
+    replaceId: 'n1',
+    point: { x: 1, y: 1 },
+    draft: {
+      template_id: 8,
+      template_revision: 1,
+      nodes: [{ kind: 'server', server_id: 1, is_root: true, listen_port: 8443 }],
+      edges: [],
+    },
+  })
+  expect(state.nodes[0].orchestration?.overrides).toEqual([
+    { server_id: 1, listen_port: 9553, address: '203.0.113.2' },
+  ])
+  expect(state.nodes[0]).toMatchObject({ port: '9553', address: '203.0.113.2' })
+})
+
+it('does not turn an unchanged runtime allocation into explicit provenance on independent apply', () => {
+  let state = canvasReducer(createCanvasState(), {
+    type: 'prefill',
+    nodes: [{ id: 'n1', serverId: 1, x: 1, y: 1, port: '42123', address: '' }],
+    edges: [
+      { from: INGRESS_NODE_ID, to: 'n1' },
+      { from: 'n1', to: INTERNET_NODE_ID },
+    ],
+  })
+  state = canvasReducer(state, {
+    type: 'orchestration',
+    id: 'n1',
+    draft: {
+      nodes: [{ kind: 'server', server_id: 1, is_root: true, listen_port: 42123, address: '' }],
+      edges: [],
+    },
+  })
+  expect(state.nodes[0].parameterOverrides).toBeUndefined()
+  state = canvasReducer(state, {
+    type: 'template',
+    replaceId: 'n1',
+    point: { x: 1, y: 1 },
+    draft: {
+      template_id: 8,
+      template_revision: 1,
+      nodes: [{ kind: 'server', server_id: 1, is_root: true, listen_port: 8443 }],
+      edges: [],
+      overrides: [],
+    },
+  })
+  expect(state.nodes[0].orchestration?.overrides).toEqual([])
+  expect(state.nodes[0].port).toBe('8443')
 })

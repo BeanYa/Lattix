@@ -342,7 +342,10 @@ export function ChainCanvas({
         )
           return
         event.preventDefault()
-        event.dataTransfer.dropEffect = controller.canAddMore ? 'copy' : 'none'
+        event.dataTransfer.dropEffect =
+          controller.canAddMore || Array.from(event.dataTransfer.types).includes(TEMPLATE_MIME)
+            ? 'copy'
+            : 'none'
       }}
       onDrop={(event) => {
         const templateId = Array.from(event.dataTransfer.types ?? []).includes(TEMPLATE_MIME)

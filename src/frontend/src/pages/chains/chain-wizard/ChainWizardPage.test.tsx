@@ -110,3 +110,52 @@ it('requires explicit replacement confirmation for repeated template roots and r
   expect(host.querySelectorAll('.cw-node')).toHaveLength(1)
   expect(host.querySelector('.cw-node-orch')?.textContent).toContain('自动编排')
 })
+
+it('keeps a shared save revision through a delayed older catalog response, reattachment and submission', async () => {
+  const saved = { ...template, revision: 2, nodes: [{ ...template.nodes[0], listen_port: 9443 }] }
+  let respond!: (value: OrchestrationTemplate[]) => void
+  vi.mocked(api.orchestrationTemplates).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        respond = resolve
+      }),
+  )
+  vi.spyOn(api, 'previewOrchestrationTemplate').mockResolvedValue({ affected_chains: [] })
+  vi.spyOn(api, 'saveOrchestrationTemplate').mockResolvedValue(saved)
+  await act(async () => button('编排模板').click())
+  const add = () =>
+    (host.querySelector('[aria-label="添加模板 Shared auto 到画布"]') as HTMLElement).click()
+  await act(async () => add())
+  await act(async () => (host.querySelector('.cw-node-orch') as HTMLElement).click())
+  await act(async () => button('编辑共享模板').click())
+  await act(async () =>
+    (document.body.querySelector('.orch-overlay .cw-node-port-value') as HTMLElement).click(),
+  )
+  const port = document.body.querySelector<HTMLInputElement>(
+    '[aria-label="入口端口数值：Server 1"]',
+  )!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(port, '9443')
+    port.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () => button('保存模板').click())
+  await act(async () => button('确认影响并保存').click())
+  await act(async () => button('应用编排').click())
+  expect(host.querySelector('.cw-node-port-value')?.textContent).toBe('9443')
+  await act(async () => respond([template]))
+  expect(host.querySelector('.cw-node-port-value')?.textContent).toBe('9443')
+  await act(async () => add())
+  expect(host.querySelector('.cw-node-port-value')?.textContent).toBe('9443')
+  await act(async () => button('下一步').click())
+  await act(async () =>
+    host
+      .querySelector('form')!
+      .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })),
+  )
+  const body = vi.mocked(api.createChain).mock.calls[0][0]
+  expect(body.orchestrations?.[0]).toMatchObject({
+    template_revision: 2,
+    nodes: [{ kind: 'server', server_id: 1, is_root: true, address: '', listen_port: 9443 }],
+  })
+  expect(body.entry_port).toBe(9443)
+})

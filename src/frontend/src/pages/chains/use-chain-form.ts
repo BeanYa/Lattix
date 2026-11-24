@@ -1,5 +1,8 @@
-import { resolveOrchestrationDraft } from './orchestration/orchestration-draft'
-import { validatePathOrchestrations } from './chain-wizard/chain-canvas'
+import {
+  resolveOrchestrationDraft,
+  synchronizeOrchestrationDraft,
+} from './orchestration/orchestration-draft'
+import { validatePathOrchestrations } from './chain-wizard/canvas-orchestration'
 import { useState, type FormEvent } from 'react'
 
 import { api, errorMessage } from '@/lib/api'
@@ -775,13 +778,12 @@ export function useChainForm({
         : { server_id: node.serverId }
     const orchestrations = path.flatMap((node, seq) => {
       if (!node.orchestration) return []
-      const draft = node.orchestration
-      const template = templates.find((t) => t.id === draft.template_id)
+      const template = templates.find((t) => t.id === node.orchestration?.template_id)
+      const draft = synchronizeOrchestrationDraft(node.orchestration, template)
       return [
         {
           ...structuredClone(draft),
-          ...resolveOrchestrationDraft(draft, template),
-          ...(template ? { template_revision: template.revision } : {}),
+          ...resolveOrchestrationDraft(draft),
           seq,
         },
       ]

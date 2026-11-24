@@ -1,7 +1,7 @@
 import type { FormEvent } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { Chain, Server, VirtualConfig } from '@/lib/types'
+import type { Chain, OrchestrationTemplate, Server, VirtualConfig } from '@/lib/types'
 
 import {
   EMPTY_FORM_TOPOLOGY,
@@ -80,6 +80,7 @@ function setup(
   topology: ChainFormTopology = directTopology(),
   servers: Server[] = [],
   paths?: CanvasNode[][],
+  templates: OrchestrationTemplate[] = [],
 ) {
   h.states.length = 0
   h.createChain.mockClear()
@@ -93,6 +94,7 @@ function setup(
       servers,
       topology,
       paths: resolvedPaths,
+      templates,
       onError: () => {},
       onSaved: () => {},
       showOperation: () => {},
@@ -647,7 +649,6 @@ describe('editing graph locations', () => {
   })
   it('sends a moved graph at its final slot plus a clear at its original slot', async () => {
     const moved = canvasNode('2')
-    moved.originalSeq = 1
     moved.orchestration = {
       nodes: [{ kind: 'server', server_id: 2, is_root: true, listen_port: 0 }],
       edges: [],
@@ -708,4 +709,30 @@ describe('editing graph locations', () => {
     await t.submit()
     expect(h.createChain.mock.calls[0][0]).not.toHaveProperty('orchestrations')
   })
+})
+
+it('validates and serializes a newer prefilled binding snapshot instead of an older catalog graph', async () => {
+  const node = canvasNode('1', '9443')
+  node.orchestration = {
+    template_id: 8,
+    template_revision: 2,
+    nodes: [{ kind: 'server', server_id: 1, is_root: true, listen_port: 9443, address: '' }],
+    edges: [],
+    overrides: [],
+  }
+  const oldCatalog: OrchestrationTemplate = {
+    id: 8,
+    revision: 1,
+    name: 'Old',
+    usage_count: 0,
+    created_at: '',
+    updated_at: '',
+    nodes: [{ kind: 'server', server_id: 1, is_root: true, listen_port: 70000 }],
+    edges: [],
+  }
+  const t = setup(directTopology(), [managedServer(1)], [[node]], [oldCatalog])
+  await t.submit()
+  expect(t.controller.createError).toBe('')
+  expect(h.createChain).toHaveBeenCalledOnce()
+  expect(h.createChain.mock.calls[0][0].orchestrations).toEqual([{ ...node.orchestration, seq: 0 }])
 })

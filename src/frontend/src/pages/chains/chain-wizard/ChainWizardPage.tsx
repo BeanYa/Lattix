@@ -123,11 +123,22 @@ export function ChainWizardPage() {
       }),
     [confirm],
   )
-  const refreshTemplates = useCallback(() => {
+  const refreshTemplates = useCallback((saved?: OrchestrationTemplate) => {
+    if (saved)
+      setTemplates((current) => {
+        const existing = current.find((item) => item.id === saved.id)
+        if (existing && existing.revision > saved.revision) return current
+        return [...current.filter((item) => item.id !== saved.id), saved]
+      })
     api
       .orchestrationTemplates()
       .then((value) => {
-        setTemplates(value)
+        setTemplates((current) =>
+          value.map((item) => {
+            const known = current.find((candidate) => candidate.id === item.id)
+            return known && known.revision > item.revision ? known : item
+          }),
+        )
         setTemplateError('')
       })
       .catch((error) => setTemplateError(String(error)))

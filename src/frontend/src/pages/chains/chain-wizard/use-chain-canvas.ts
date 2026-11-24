@@ -11,8 +11,8 @@ import {
   type CanvasNode,
   type CanvasValidation,
   nodeServerIds,
-  validatePathOrchestrations,
 } from './chain-canvas'
+import { validatePathOrchestrations } from './canvas-orchestration'
 import { draftFromTemplate } from '../orchestration/orchestration-draft'
 import { canvasReducer, createCanvasState } from './chain-canvas-state'
 import type { CanvasViewport } from './canvas-viewport'

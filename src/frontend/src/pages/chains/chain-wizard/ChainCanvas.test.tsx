@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Server } from '@/lib/types'
-import { INGRESS_NODE_ID, INTERNET_NODE_ID } from './chain-canvas'
+import { INGRESS_NODE_ID, INTERNET_NODE_ID, MAX_CANVAS_NODES } from './chain-canvas'
 import { ChainCanvas } from './ChainCanvas'
 import { useChainCanvas, type ChainCanvasController } from './use-chain-canvas'
 
@@ -405,4 +405,76 @@ it('drops a template graph at current world coordinates after panning and zoomin
     port: '8443',
     orchestration: { template_id: 8, template_revision: 1 },
   })
+})
+
+it('accepts native template dragging at capacity so an existing root can be confirmed and replaced', async () => {
+  const templateCatalog = [
+    {
+      id: 8,
+      revision: 1,
+      name: 'HK',
+      usage_count: 0,
+      created_at: '',
+      updated_at: '',
+      nodes: [{ kind: 'server' as const, server_id: 1, is_root: true, listen_port: 8443 }],
+      edges: [],
+    },
+  ]
+  let confirmations = 0
+  function CapacityHarness() {
+    controller = useChainCanvas({
+      servers,
+      templates: templateCatalog,
+      confirmReplaceOrchestration: async () => {
+        confirmations++
+        return true
+      },
+    })
+    return (
+      <ChainCanvas
+        controller={controller}
+        probesByServer={new Map()}
+        probeTitle={null}
+        linkColor="var(--panel-line-2)"
+      />
+    )
+  }
+  await act(async () => root.render(<CapacityHarness />))
+  await act(async () =>
+    controller.prefill(
+      Array.from({ length: MAX_CANVAS_NODES }, (_, index) => ({
+        id: `n${index + 1}`,
+        serverId: index + 1,
+        port: '',
+        address: '',
+        x: index * 300,
+        y: 100,
+      })),
+      [
+        { from: INGRESS_NODE_ID, to: 'n1' },
+        { from: 'n1', to: INTERNET_NODE_ID },
+      ],
+    ),
+  )
+  expect(controller.canAddMore).toBe(false)
+  const transfer = {
+    types: ['text/x-lattix-orchestration-template'],
+    dropEffect: 'none',
+    getData: () => '8',
+  }
+  const over = new Event('dragover', { bubbles: true, cancelable: true })
+  Object.defineProperty(over, 'dataTransfer', { value: transfer })
+  await act(async () => host.querySelector('.cw-canvas')!.dispatchEvent(over))
+  expect(transfer.dropEffect).toBe('copy')
+  expect(over.defaultPrevented).toBe(true)
+  const drop = new Event('drop', { bubbles: true, cancelable: true })
+  Object.defineProperties(drop, {
+    dataTransfer: { value: transfer },
+    clientX: { value: 400 },
+    clientY: { value: 300 },
+  })
+  await act(async () => host.querySelector('.cw-canvas')!.dispatchEvent(drop))
+  expect(confirmations).toBe(1)
+  expect(controller.nodes).toHaveLength(MAX_CANVAS_NODES)
+  expect(controller.nodes[0].orchestration?.template_id).toBe(8)
 })

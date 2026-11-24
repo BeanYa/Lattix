@@ -87,3 +87,18 @@ describe('orchestration drafts', () => {
     expect(dto.nodes[2].active).toBe(true)
   })
 })
+
+it('uses the newer draft snapshot for resolution, DTO revision and detach when the catalog is older', () => {
+  const newer = {
+    ...draftFromTemplate(template),
+    template_revision: 3,
+    nodes: [
+      { kind: 'server' as const, server_id: 1, is_root: true, listen_port: 9443, address: '' },
+    ],
+    edges: [],
+  }
+  expect(resolveOrchestrationDraft(newer, template).nodes).toHaveLength(1)
+  expect(resolveOrchestrationDraft(newer, template).nodes[0].listen_port).toBe(9443)
+  expect(draftOrchestrationDTO(newer, [], 1, template).template_revision).toBe(3)
+  expect(detachOrchestrationDraft(newer, template).nodes[0].listen_port).toBe(9443)
+})

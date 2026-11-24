@@ -1,5 +1,9 @@
 import type { OrchestrationDraft, OrchestrationTemplate } from '@/lib/types'
-import { resolveOrchestrationDraft, setDraftOverride } from '../orchestration/orchestration-draft'
+import {
+  resolveOrchestrationDraft,
+  setDraftOverride,
+  synchronizeOrchestrationDraft,
+} from '../orchestration/orchestration-draft'
 import {
   CARD_H,
   CARD_W,
@@ -93,15 +97,26 @@ function connectionError(state: CanvasState, from: string, to: string): string {
 
 /** Apply resolved parameters to the actual active server, retaining root/candidate identity. */
 function withDraft(node: CanvasNode, draft: OrchestrationDraft): CanvasNode {
-  const value = { ...structuredClone(draft), ...resolveOrchestrationDraft(draft) }
-  const active = value.nodes.find((n) => n.kind === 'server' && n.server_id === node.serverId)
+  const value = synchronizeOrchestrationDraft(draft)
+  const active = resolveOrchestrationDraft(value).nodes.find(
+    (n) => n.kind === 'server' && n.server_id === node.serverId,
+  )
   return {
     ...node,
     orchestration: value,
     candidates: [],
     parameterOverrides: value.template_id
       ? value.overrides?.find((o) => o.server_id === node.serverId)
-      : undefined,
+      : node.parameterOverrides
+        ? {
+            ...(node.parameterOverrides.address !== undefined
+              ? { address: active?.address ?? '' }
+              : {}),
+            ...(node.parameterOverrides.listen_port !== undefined
+              ? { listen_port: active?.listen_port ?? 0 }
+              : {}),
+          }
+        : undefined,
     address: active?.address ?? '',
     port: active?.listen_port ? String(active.listen_port) : '',
   }
@@ -152,7 +167,14 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
         next = canvasReducer(state, { type: 'add', serverId: root, point: action.point })
       const target = existing ?? next.nodes.find((n) => !state.nodes.some((old) => old.id === n.id))
       if (!target) return state
-      let draft = structuredClone(action.draft)
+      const previous = target.orchestration
+      let draft = structuredClone(
+        previous &&
+          previous.template_id === action.draft.template_id &&
+          (previous.template_revision ?? 0) > (action.draft.template_revision ?? 0)
+          ? previous
+          : action.draft,
+      )
       if (draft.template_id) {
         const serverIds = new Set(
           draft.nodes.filter((n) => n.kind === 'server').map((n) => n.server_id),
@@ -168,8 +190,7 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
       }
       if (draft.template_id && target.parameterOverrides)
         draft = setDraftOverride(draft, target.serverId, target.parameterOverrides)
-      const resolved = { ...draft, ...resolveOrchestrationDraft(draft) }
-      const result = canvasReducer(next, { type: 'orchestration', id: target.id, draft: resolved })
+      const result = canvasReducer(next, { type: 'orchestration', id: target.id, draft })
       return result.connectionError ? { ...state, connectionError: result.connectionError } : result
     }
     case 'orchestration': {
@@ -197,11 +218,7 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
           const draft = node.orchestration
           const template = action.templates.find((t) => t.id === draft?.template_id)
           if (!draft || !template) return node
-          return withDraft(node, {
-            ...draft,
-            ...resolveOrchestrationDraft(draft, template),
-            template_revision: template.revision,
-          })
+          return withDraft(node, synchronizeOrchestrationDraft(draft, template))
         }),
       }
     case 'add': {

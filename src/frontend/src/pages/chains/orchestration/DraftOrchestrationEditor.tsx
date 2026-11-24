@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type {
   CatalogProbeRow,
   Chain,
@@ -19,6 +19,7 @@ import {
   resetDraftOverride,
   resolveOrchestrationDraft,
   setDraftOverride,
+  synchronizeOrchestrationDraft,
 } from './orchestration-draft'
 
 export function DraftOrchestrationEditor({
@@ -42,16 +43,32 @@ export function DraftOrchestrationEditor({
   probeTitle?: string | null
   onClose: () => void
   onApply: (value: OrchestrationDraft) => void
-  onTemplatesChanged?: () => void
+  onTemplatesChanged?: (saved?: OrchestrationTemplate) => void
 }) {
   const [draft, setDraft] = useState(() => structuredClone(value ?? draftFromHop(hop)))
   const [revision, setRevision] = useState(0)
   const [editingTemplate, setEditingTemplate] = useState(false)
   const [updatedTemplate, setUpdatedTemplate] = useState<OrchestrationTemplate>()
+  const catalogTemplate = templates.reduce<OrchestrationTemplate | undefined>(
+    (latest, item) =>
+      item.id === draft.template_id && (!latest || item.revision > latest.revision) ? item : latest,
+    updatedTemplate?.id === draft.template_id ? updatedTemplate : undefined,
+  )
+  useEffect(() => {
+    if (
+      catalogTemplate &&
+      (!updatedTemplate ||
+        catalogTemplate.id !== updatedTemplate.id ||
+        catalogTemplate.revision > updatedTemplate.revision)
+    )
+      setUpdatedTemplate(catalogTemplate)
+  }, [catalogTemplate, updatedTemplate])
+  // A persisted hop snapshot is materialized, so its inherited defaults are
+  // unknowable until a catalog at least as new as the binding is available.
   const template =
-    updatedTemplate?.id === draft.template_id
-      ? updatedTemplate
-      : templates.find((item) => item.id === draft.template_id)
+    catalogTemplate && catalogTemplate.revision >= (draft.template_revision ?? 0)
+      ? catalogTemplate
+      : undefined
   const resolved = resolveOrchestrationDraft(draft, template)
   const initialState = useMemo(
     () =>
@@ -75,7 +92,7 @@ export function DraftOrchestrationEditor({
           setUpdatedTemplate(saved)
           setEditingTemplate(false)
           setRevision((n) => n + 1)
-          onTemplatesChanged?.()
+          onTemplatesChanged?.(saved)
         }}
       />
     )
@@ -100,7 +117,14 @@ export function DraftOrchestrationEditor({
         actions: draft.template_id ? (
           <div className="orch-template-actions">
             {!template ? (
-              <p role="alert">模板不可用；保留当前关联与参数，请刷新模板列表后重试。</p>
+              <div role="alert">
+                <p>最新模板默认值尚未就绪；保留当前关联与参数，请刷新模板列表后重试。</p>
+                {onTemplatesChanged ? (
+                  <Button variant="outline" onClick={() => onTemplatesChanged()}>
+                    刷新模板列表
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
             <Button variant="outline" disabled={!template} onClick={() => setEditingTemplate(true)}>
               编辑共享模板
@@ -131,11 +155,18 @@ export function DraftOrchestrationEditor({
                       {(['address', 'listen_port'] as const).map((field) => (
                         <span key={field}>
                           {field === 'address' ? '地址' : '端口'}：
-                          {override?.[field] === undefined ? '继承模板' : '已覆盖'}
+                          {override?.[field] === undefined
+                            ? template
+                              ? '继承模板'
+                              : '等待最新模板默认值'
+                            : '已覆盖'}
                           <Button
                             size="sm"
                             variant="ghost"
-                            disabled={override?.[field] === undefined}
+                            disabled={!template || override?.[field] === undefined}
+                            title={
+                              !template ? '最新模板默认值尚未就绪，请刷新后恢复继承' : undefined
+                            }
                             onClick={() => {
                               setDraft((current) =>
                                 resetDraftOverride(current, node.server_id!, field),
@@ -164,12 +195,7 @@ export function DraftOrchestrationEditor({
             )
         },
         onApply: (state) => {
-          if (draft.template_id)
-            onApply({
-              ...structuredClone(draft),
-              ...graphFromEditorState(state),
-              template_revision: template?.revision ?? draft.template_revision,
-            })
+          if (draft.template_id) onApply(synchronizeOrchestrationDraft(draft, template))
           else onApply(graphFromEditorState(state))
         },
       }}
