@@ -36,6 +36,7 @@ const (
 	RevisionPieceForward = "forward"
 	RevisionPiecePortal  = "portal"
 	RevisionPieceBridge  = "bridge"
+	RevisionPieceEntry   = "entry_endpoint"
 )
 
 type ChainRevisionHop struct {
@@ -57,7 +58,8 @@ type ChainRevisionSnapshot struct {
 	ServiceServerID        int64              `json:"service_server_id"`
 	EndpointID             int64              `json:"endpoint_id,omitempty"`
 	AwaitEntryEndpoint     bool               `json:"await_entry_endpoint,omitempty"` // Template sync waits for a newly selected entry listener.
-	ServiceEndpointID      int64              `json:"service_endpoint_id,omitempty"`  // hy2 出口侧共享监听（P4）
+	EntryEndpointStaged    bool               `json:"entry_endpoint_staged,omitempty"`
+	ServiceEndpointID      int64              `json:"service_endpoint_id,omitempty"` // hy2 出口侧共享监听（P4）
 	ServiceUUID            string             `json:"service_uuid,omitempty"`
 	ServiceConfig          json.RawMessage    `json:"service_config"`
 	ServiceRealized        json.RawMessage    `json:"service_realized,omitempty"`
@@ -707,6 +709,16 @@ func (s *Store) RevisionTasks(ctx context.Context, revisionID int64) ([]ChainRev
 	return out, rows.Err()
 }
 
+func (s *Store) EntryEndpointRevisionTask(ctx context.Context, revisionID int64) (ChainRevisionTask, error) {
+	task := ChainRevisionTask{RevisionID: revisionID, TaskKey: RevisionPieceEntry, Kind: RevisionPieceEntry}
+	err := s.db.QueryRowContext(ctx, `SELECT id,status,command_id,error FROM chain_revision_tasks WHERE revision_id=? AND task_key=?`, revisionID, task.TaskKey).
+		Scan(&task.ID, &task.Status, &task.CommandID, &task.Error)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = ErrNotFound
+	}
+	return task, err
+}
+
 func (s *Store) LinkRevisionTaskCommand(ctx context.Context, taskID, commandID int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE chain_revision_tasks SET command_id=?, status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		commandID, RevisionTaskQueued, taskID)
@@ -876,7 +888,10 @@ func (s *Store) PublishChainRevision(ctx context.Context, revisionID int64, forc
 	defer tx.Rollback()
 	if !forced && revision.Snapshot.AwaitEntryEndpoint {
 		var ready bool
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(json_extract(realized_config,'$.port'),0)>0 FROM shared_endpoints WHERE id=?`, revision.Snapshot.EndpointID).Scan(&ready); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM chain_revision_tasks
+			WHERE revision_id=? AND task_key=? AND status=?)
+			AND EXISTS(SELECT 1 FROM shared_endpoints WHERE id=? AND COALESCE(json_extract(realized_config,'$.port'),0)>0)`,
+			revisionID, RevisionPieceEntry, RevisionTaskAcked, revision.Snapshot.EndpointID).Scan(&ready); err != nil {
 			return err
 		}
 		if !ready {

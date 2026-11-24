@@ -117,7 +117,30 @@ func (s *Server) checkOrchestrationListener(ctx context.Context, serverID, chain
 	return findPortConflict(occupied, claim.Protocol, claim.Port, claim.PortEnd, chainID)
 }
 
-func (s *Server) checkChainForwardListeners(ctx context.Context, servers []*store.Server, node createNodeRequest, entryPort *int, entryShared, entryProtocol bool, active map[int]store.ChainHopGraphNode, writes []store.HopGraphWrite, chainID int64) error {
+func chainForwardPorts(servers []*store.Server, node createNodeRequest, entryPort *int, entryShared, entryProtocol bool, active map[int]store.ChainHopGraphNode, retained map[int64]store.ChainRevisionHop) []int {
+	ports := make([]int, len(servers)-1)
+	for seq, srv := range servers[:len(ports)] {
+		port := retained[srv.ID].ForwardPort
+		if n, ok := active[seq]; ok {
+			port = n.ListenPort
+		}
+		if seq == 0 {
+			if entryShared {
+				continue
+			}
+			if entryPort != nil {
+				port = *entryPort
+			}
+		}
+		if port == 0 && !entryProtocol && node.Protocol == shared.ProtocolHysteria2 && node.PortHop != "" {
+			port, _, _ = shared.ParsePortHop(node.PortHop)
+		}
+		ports[seq] = port
+	}
+	return ports
+}
+
+func (s *Server) checkChainForwardListeners(ctx context.Context, servers []*store.Server, node createNodeRequest, ports []int, entryShared, entryProtocol bool, active map[int]store.ChainHopGraphNode, writes []store.HopGraphWrite, chainID int64) error {
 	graphs := make(map[int]store.ChainHopGraph, len(writes))
 	for _, w := range writes {
 		graphs[w.Graph.Seq] = w.Graph
@@ -132,15 +155,12 @@ func (s *Server) checkChainForwardListeners(ctx context.Context, servers []*stor
 		if err := s.checkCandidateForwardSpans(ctx, graphs[seq], srv.ID, portHop); err != nil {
 			return fmt.Errorf("第 %d 跳：%w", seq+1, err)
 		}
-		if !hasGraph && (sharedListener || entryProtocol || portHop == "") {
+		if !hasGraph && (sharedListener || portHop == "") {
 			continue // Legacy fixed entry and exit ports are checked separately.
 		}
-		port := n.ListenPort
-		if !hasGraph && seq == 0 && entryPort != nil {
-			port = *entryPort
-		}
-		if port == 0 && !entryProtocol && !sharedListener && portHop != "" {
-			port, _, _ = shared.ParsePortHop(portHop)
+		port := ports[seq]
+		if sharedListener {
+			port = n.ListenPort
 		}
 		claim, err := orchestrationListener(srv, node.Protocol, portHop, port, sharedListener)
 		if err == nil {
@@ -180,9 +200,6 @@ func (s *Server) checkCandidateForwardSpans(ctx context.Context, graph store.Cha
 }
 
 func (s *Server) prepareGraphHy2Endpoint(ctx context.Context, node *createNodeRequest, serverID int64, active map[int]store.ChainHopGraphNode, exitSeq int) (*store.SharedEndpoint, error) {
-	if len(active) == 0 {
-		return nil, nil
-	}
 	ep, err := s.st.ProtocolSharedEndpoint(ctx, serverID, shared.ProtocolHysteria2)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil

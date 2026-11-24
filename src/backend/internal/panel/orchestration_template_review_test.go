@@ -52,7 +52,7 @@ func createReviewChain(t *testing.T, s *Server, req createChainRequest) int64 {
 	return dto.ID
 }
 
-func respondReviewEndpoint(t *testing.T, s *Server, endpointID int64, port int, failure string) {
+func reviewEndpointApply(t *testing.T, s *Server, endpointID int64) (store.Command, shared.ApplySharedEndpointPayload) {
 	t.Helper()
 	commands, err := s.st.CommandsByType(t.Context(), shared.TypeApplySharedEndpoint)
 	if err != nil {
@@ -67,33 +67,56 @@ func respondReviewEndpoint(t *testing.T, s *Server, endpointID int64, port int, 
 		if apply.EndpointID != endpointID || (c.Status != store.CommandStatusQueued && c.Status != store.CommandStatusSent) {
 			continue
 		}
-		code := shared.CodeOK
-		response := shared.ApplyResultPayload{EndpointID: endpointID, RealizedConfig: &shared.RealizedConfig{Port: port}}
-		if failure != "" {
-			code = shared.CodeInternalError
-			response.RealizedConfig = nil
-		}
-		data, err := json.Marshal(response)
-		if err != nil {
-			t.Fatal(err)
-		}
-		s.disp.HandleMessage(c.ServerID, shared.Envelope{Kind: shared.KindResponse, Type: c.Type, RequestID: c.RequestID, TraceID: c.TraceID, Code: code, Message: failure, Data: data})
-		return
+		return c, apply
 	}
 	t.Fatalf("no outstanding apply command for endpoint %d", endpointID)
+	return store.Command{}, shared.ApplySharedEndpointPayload{}
+}
+
+func respondReviewEndpoint(t *testing.T, s *Server, endpointID int64, port int, failure string) {
+	t.Helper()
+	c, _ := reviewEndpointApply(t, s, endpointID)
+	respondReviewEndpointCommand(t, s, c, endpointID, port, failure)
+}
+
+func respondReviewEndpointCommand(t *testing.T, s *Server, c store.Command, endpointID int64, port int, failure string) {
+	t.Helper()
+	code := shared.CodeOK
+	response := shared.ApplyResultPayload{EndpointID: endpointID, RealizedConfig: &shared.RealizedConfig{Port: port}}
+	if failure != "" {
+		code = shared.CodeInternalError
+		response.RealizedConfig = nil
+	}
+	data, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.disp.HandleMessage(c.ServerID, shared.Envelope{Kind: shared.KindResponse, Type: c.Type, RequestID: c.RequestID, TraceID: c.TraceID, Code: code, Message: failure, Data: data})
 }
 
 func TestTemplateSyncWaitsForSharedEntryRealization(t *testing.T) {
 	s, st, _, ids := setupOrchestrationHandler(t)
 	ctx := t.Context()
+	ipv6 := "2001:db8::10"
+	if err := st.UpdateServerAddresses(ctx, ids["A1"], []string{"203.0.113.1", ipv6}, "203.0.113.1"); err != nil {
+		t.Fatal(err)
+	}
 	r := templateForTest(ids["A1"], ids["A2"])
 	tpl := saveTemplateForTest(t, s, r)
 	id := createReviewChain(t, s, createChainRequest{
 		Name: "vless", Hops: []chainHopRef{{ServerID: ids["A1"]}}, Node: createNodeRequest{Protocol: shared.ProtocolVLESS},
-		Orchestrations: []orchestrationDraft{{TemplateID: tpl.ID}},
+		Orchestrations: []orchestrationDraft{{TemplateID: tpl.ID, Overrides: []store.ParamOverride{{ServerID: ids["A1"], Address: &ipv6}}}},
 	})
 	chain, _ := st.ChainByID(ctx, id)
 	respondReviewEndpoint(t, s, chain.EndpointID, 4421, "")
+	user, err := st.InsertUser(ctx, "entry user", "00000000-0000-4000-8000-000000000001", "entry-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignments, _, err := st.SetUserChains(ctx, user, []int64{id})
+	if err != nil || len(assignments) != 1 {
+		t.Fatalf("assigned user: %+v %v", assignments, err)
+	}
 	r.ID, r.Revision, r.Nodes[0].ListenPort = tpl.ID, tpl.Revision, 4433
 	changed := saveTemplateForTest(t, s, r)
 	w := chainWorker{chainID: id, o: newAutoOrchestrator(s), state: workerIdle}
@@ -113,7 +136,32 @@ func TestTemplateSyncWaitsForSharedEntryRealization(t *testing.T) {
 	if err != nil || desired.Snapshot.EndpointID == chain.EndpointID {
 		t.Fatalf("missing planned entry listener: %+v, %v", desired, err)
 	}
-	respondReviewEndpoint(t, s, desired.Snapshot.EndpointID, 4433, "entry bind failed")
+	assertDesired := func() store.Command {
+		t.Helper()
+		cmd, payload := reviewEndpointApply(t, s, desired.Snapshot.EndpointID)
+		var template struct{ Listen string }
+		if err := json.Unmarshal(payload.Config.Template, &template); err != nil {
+			t.Fatal(err)
+		}
+		if template.Listen != "::" || payload.Config.Port != 4433 || len(payload.Clients) != 1 || payload.Clients[0].ID != assignments[0].AccessUUID || len(payload.Routes) != 1 || payload.Routes[0].ChainID != id || !payload.Routes[0].Direct || len(payload.Routes[0].Users) != 1 || payload.Routes[0].Users[0] != assignments[0].Identity() {
+			t.Fatalf("apply omitted the desired IPv6 listener, clients, or route: %+v", payload)
+		}
+		return cmd
+	}
+	intended := assertDesired()
+	if err := s.disp.ReconcileSharedEndpoint(ctx, desired.Snapshot.EndpointID); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := reviewEndpointApply(t, s, desired.Snapshot.EndpointID)
+	if other.ID == intended.ID {
+		t.Fatal("missing untracked endpoint apply")
+	}
+	respondReviewEndpointCommand(t, s, other, desired.Snapshot.EndpointID, 4433, "")
+	latest, _ := st.ChainByID(ctx, id)
+	if !readGraph().SyncPending || latest.PublishedRevisionID != chain.PublishedRevisionID {
+		t.Fatalf("untracked endpoint response published the revision: %+v", latest)
+	}
+	respondReviewEndpointCommand(t, s, intended, desired.Snapshot.EndpointID, 4433, "entry bind failed")
 	w.step(ctx)
 	message, err := st.ChainOrchestrationError(ctx, id)
 	if g := readGraph(); !g.SyncPending || g.Binding.Revision != tpl.Revision || w.stateOf() != workerFailed || err != nil || !strings.Contains(message, "entry bind failed") {
@@ -122,13 +170,89 @@ func TestTemplateSyncWaitsForSharedEntryRealization(t *testing.T) {
 	if err := s.disp.RetryChain(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	respondReviewEndpoint(t, s, desired.Snapshot.EndpointID, 4433, "")
+	retry := assertDesired()
+	// A restart between command and endpoint persistence must replay the
+	// desired apply without accepting the command status alone.
+	if marked, err := st.MarkCommandAcked(ctx, retry.ID); err != nil || !marked {
+		t.Fatalf("simulate interrupted endpoint response: %v %v", marked, err)
+	}
+	if err := s.disp.ResumeChains(ctx); err != nil {
+		t.Fatal(err)
+	}
+	replayed := assertDesired()
+	if replayed.ID == retry.ID || !readGraph().SyncPending {
+		t.Fatalf("interrupted apply was not replayed: command %d after %d", replayed.ID, retry.ID)
+	}
+	respondReviewEndpointCommand(t, s, replayed, desired.Snapshot.EndpointID, 4433, "")
 	if g := readGraph(); g.SyncPending || g.Binding.Revision != changed.Revision {
 		t.Fatalf("matching deployment did not acknowledge endpoint: %+v", g)
 	}
 	chain, _ = st.ChainByID(ctx, id)
 	if chain.PublishedRevisionID != desired.ID {
 		t.Fatalf("endpoint acknowledged without matching publication: %+v", chain)
+	}
+	commands, err := st.CommandsByType(ctx, shared.TypeApplySharedEndpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range commands {
+		var apply shared.ApplySharedEndpointPayload
+		if err := json.Unmarshal(command.Data, &apply); err != nil {
+			t.Fatal(err)
+		}
+		if command.ID > replayed.ID && apply.EndpointID == desired.Snapshot.EndpointID {
+			t.Fatalf("publication enqueued a redundant desired apply: %+v", command)
+		}
+	}
+}
+
+func TestChainEditValidatesRetainedHy2ForwardSpan(t *testing.T) {
+	s, st, _, ids := setupOrchestrationHandler(t)
+	ctx := t.Context()
+	middle, err := st.CreateServer(ctx, store.ServerDraft{
+		Alias: "NAT middle", Address: "nat.example.com", BootstrapToken: "middle-edit-span", CountryCode: "JP",
+		MachineType: store.MachineTypeNAT, AllowedPorts: `[{"pub_start":45000,"pub_end":45007},{"pub_start":46000,"pub_end":46015}]`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.req.(*fakeAutoRequester).online[middle] = true
+	hops := []chainHopRef{{ServerID: ids["A1"]}, {ServerID: middle}, {ServerID: ids["B1"]}}
+	id := createReviewChain(t, s, createChainRequest{Name: "narrow middle", Hops: hops,
+		Node:           createNodeRequest{Protocol: shared.ProtocolHysteria2, PortHop: "44000-44007"},
+		Orchestrations: []orchestrationDraft{{Seq: 1, OrchestrationGraph: rootOnlyGraph(middle, 45000)}}})
+	publishTestEdit(t, s, id)
+	hops[2].ServerID = ids["B2"]
+	edit := editChainRequest{ChainID: id, Name: "wider span", Hops: hops, Node: createNodeRequest{Protocol: shared.ProtocolHysteria2, PortHop: "46000-46015"}}
+	if env := callTemplateHandler(t, s.handleEditChain, edit); env.Code != shared.CodeInvalidArgument || !strings.Contains(env.Message, "45000-45015") {
+		t.Fatalf("edit accepted the wrong retained middle span: %s %s", env.Code, env.Message)
+	}
+	if endpoints, err := st.SharedEndpointsByServer(ctx, ids["B2"]); err != nil || len(endpoints) != 0 {
+		t.Fatalf("rejected edit provisioned the new exit: %+v %v", endpoints, err)
+	}
+}
+
+func TestHy2CandidateExitRejectsPendingListenerWithinInheritedSpan(t *testing.T) {
+	s, st, _, ids := setupOrchestrationHandler(t)
+	ctx := t.Context()
+	r := templateRequest{Name: "span reservation", OrchestrationGraph: rootOnlyGraph(ids["B2"], 0)}
+	tpl := saveTemplateForTest(t, s, r)
+	waiting := createReviewChain(t, s, createChainRequest{Name: "span reservation", Hops: []chainHopRef{{ServerID: ids["A1"]}, {ServerID: ids["B2"]}, {ServerID: ids["A2"]}},
+		Node: createNodeRequest{Protocol: shared.ProtocolHysteria2, PortHop: "44100-44107"}, Orchestrations: []orchestrationDraft{{Seq: 1, TemplateID: tpl.ID}}})
+	publishTestEdit(t, s, waiting)
+	r.ID, r.Revision, r.Nodes[0].ListenPort = tpl.ID, tpl.Revision, 44003
+	saveTemplateForTest(t, s, r)
+	g := templateForTest(ids["B1"], ids["B2"]).OrchestrationGraph
+	g.Nodes[0].ListenPort = 0
+	g.Nodes[2].ListenPort = 45000
+	id := createReviewChain(t, s, createChainRequest{Name: "candidate hy2 exit", Hops: []chainHopRef{{ServerID: ids["A1"]}, {ServerID: ids["B1"]}},
+		Node: createNodeRequest{Protocol: shared.ProtocolHysteria2, PortHop: "44000-44007"}, Orchestrations: []orchestrationDraft{{Seq: 1, OrchestrationGraph: g}}})
+	publishTestEdit(t, s, id)
+	if env := callTemplateHandler(t, s.handleSwitchChainHop, chainSwitchHopRequest{ChainID: id, Seq: 1, ServerID: ids["B2"]}); env.Code != shared.CodeInvalidArgument || !strings.Contains(env.Message, "44003") {
+		t.Fatalf("candidate exit claimed the pending span: %s %s", env.Code, env.Message)
+	}
+	if endpoints, err := st.SharedEndpointsByServer(ctx, ids["B2"]); err != nil || len(endpoints) != 0 {
+		t.Fatalf("rejected switch provisioned a listening endpoint: %+v %v", endpoints, err)
 	}
 }
 

@@ -98,6 +98,7 @@ type Dispatcher struct {
 
 	endpointRetryMu   sync.Mutex
 	endpointRetriedAt map[int64]time.Time // 端点自动重试退避：key endpointID → 上次自动补发时间
+	endpointApplyMu   sync.Mutex          // Preserve command order across concurrent full endpoint reconciliations.
 
 	// xray.cleanup / xray.rebuild 的同步回执（requestID → chan），每类命令一份注册表（各自独立锁）。
 	cleanupWaiters *syncWaiters[shared.CleanupXrayResult]
@@ -410,6 +411,16 @@ func uninstallRetryDelay(attempt int) time.Duration {
 
 func (d *Dispatcher) enqueueRevisionTask(ctx context.Context, serverID int64, typ string, payload any,
 	revisionID int64, taskKey string) (int64, error) {
+	id, err := d.queueRevisionTask(ctx, serverID, typ, payload, revisionID, taskKey)
+	if err != nil {
+		return 0, err
+	}
+	d.Flush(ctx, serverID)
+	return id, nil
+}
+
+func (d *Dispatcher) queueRevisionTask(ctx context.Context, serverID int64, typ string, payload any,
+	revisionID int64, taskKey string) (int64, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return 0, fmt.Errorf("marshal payload: %w", err)
@@ -419,12 +430,7 @@ func (d *Dispatcher) enqueueRevisionTask(ctx context.Context, serverID int64, ty
 	if traceID == "" {
 		traceID = shared.NewMessageID()
 	}
-	id, err := d.st.EnqueueRevisionTaskCommand(ctx, requestID, traceID, serverID, typ, raw, revisionID, taskKey)
-	if err != nil {
-		return 0, err
-	}
-	d.Flush(ctx, serverID)
-	return id, nil
+	return d.st.EnqueueRevisionTaskCommand(ctx, requestID, traceID, serverID, typ, raw, revisionID, taskKey)
 }
 
 // ErrPanelNotActive 表示面板处于 startup/faulted，业务命令暂缓下发
@@ -1347,6 +1353,13 @@ func (d *Dispatcher) applyCommandOutcome(serverID int64, cmd *store.Command, p s
 		h.takeover(d, serverID, cmd, env, success, errorMessage)
 		return
 	}
+	if cmd.Type == shared.TypeApplySharedEndpoint {
+		if revision, task := d.entryEndpointByCommand(ctx, cmd.ID); task != nil {
+			d.recordCommandOutcome(ctx, serverID, cmd, p, env, success, errorMessage)
+			d.applyEntryEndpointResult(ctx, cmd, revision, task, p, success, errorMessage)
+			return
+		}
+	}
 	d.syncRevisionTaskResult(ctx, cmd.ID)
 	d.recordCommandOutcome(ctx, serverID, cmd, p, env, success, errorMessage)
 	if h, ok := commandHandlers[cmd.Type]; ok && h.respond != nil {
@@ -1359,18 +1372,8 @@ func (d *Dispatcher) applyCommandOutcome(serverID int64, cmd *store.Command, p s
 		return
 	}
 	if p.EndpointID != 0 {
-		if success {
-			d.clearEndpointRetry(p.EndpointID)
-			realized, _ := json.Marshal(p.RealizedConfig)
-			// 端点状态机：active 副作用（链重算 + 订阅重建）在 onEnter 分派。
-			if err := d.efsm.Transition(ctx, p.EndpointID, store.EndpointStatusActive, "部署回执确认", realized); err != nil {
-				log.Printf("dispatch: shared endpoint %d active: %v", p.EndpointID, err)
-			}
-		} else {
-			// 端点状态机：failed 副作用（链重算 + 订阅重建）在 onEnter 分派。
-			if err := d.efsm.Transition(ctx, p.EndpointID, store.EndpointStatusFailed, errorMessage, nil); err != nil {
-				log.Printf("dispatch: shared endpoint %d failed: %v", p.EndpointID, err)
-			}
+		if err := d.applyEndpointResult(ctx, p.EndpointID, p.RealizedConfig, success, errorMessage); err != nil {
+			log.Printf("dispatch: shared endpoint %d: %v", p.EndpointID, err)
 		}
 		return
 	}
@@ -1537,6 +1540,9 @@ func init() {
 				if json.Unmarshal(cmd.Data, &p) == nil && p.EndpointID != 0 {
 					_ = d.efsm.Transition(ctx, p.EndpointID, store.EndpointStatusFailed,
 						fmt.Sprintf("command %d dead-lettered after %d attempts", cmd.ID, cmd.Attempts), nil)
+				}
+				if revision, _ := d.entryEndpointByCommand(ctx, cmd.ID); revision != nil {
+					d.advanceChain(ctx, revision.ChainID)
 				}
 			},
 			endpointID: func(cmd store.Command) (int64, bool) {

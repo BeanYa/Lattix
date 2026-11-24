@@ -368,8 +368,8 @@ func (s *Store) SetSharedEndpointActive(ctx context.Context, id int64, realized 
 	}
 	realized = mergeEndpointRealized(realized, json.RawMessage(prevRealized))
 	result, err := tx.ExecContext(ctx, `UPDATE shared_endpoints SET port=?, realized_config=?, status=?,
-		error='', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN (?, ?)`,
-		value.Port, string(realized), EndpointStatusActive, id, EndpointStatusPending, EndpointStatusApplying)
+		error='', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN (?, ?, ?)`,
+		value.Port, string(realized), EndpointStatusActive, id, EndpointStatusPending, EndpointStatusApplying, EndpointStatusActive)
 	if err != nil {
 		return err
 	}
@@ -704,25 +704,26 @@ func (s *Store) ChainIDsByEndpoint(ctx context.Context, endpointID int64) ([]int
 	return ids, rows.Err()
 }
 
-// ChainsAwaitingEntryEndpoint finds desired revisions that must realize this
-// listener before publishing their topology and acknowledging template sync.
-func (s *Store) ChainsAwaitingEntryEndpoint(ctx context.Context, endpointID int64) ([]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id FROM chains c JOIN chain_revisions r ON r.id=c.desired_revision_id
-		WHERE c.status IN (?, ?) AND json_extract(r.snapshot,'$.await_entry_endpoint')=1
-		AND json_extract(r.snapshot,'$.endpoint_id')=?`, ChainStatusApplying, ChainStatusActiveUnconfirmed, endpointID)
+// StagedEntryEndpointRevisions returns the desired routes whose downstream
+// components are ready, while their published routes still serve the old endpoint.
+func (s *Store) StagedEntryEndpointRevisions(ctx context.Context, endpointID int64) (map[int64]*ChainRevision, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id,r.chain_id,r.revision_no,r.status,r.forced,r.snapshot,r.error,r.created_at,r.published_at
+		FROM chains c JOIN chain_revisions r ON r.id=c.desired_revision_id
+		WHERE c.status IN (?, ?, ?, ?) AND json_extract(r.snapshot,'$.entry_endpoint_staged')=1
+		AND json_extract(r.snapshot,'$.endpoint_id')=?`, ChainStatusApplying, ChainStatusActiveUnconfirmed, ChainStatusActive, ChainStatusDegraded, endpointID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var ids []int64
+	revisions := map[int64]*ChainRevision{}
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		r, err := scanRevision(rows)
+		if err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		revisions[r.ChainID] = r
 	}
-	return ids, rows.Err()
+	return revisions, rows.Err()
 }
 
 // EndpointChainCount 返回引用端点的未删链数量（entry_shared 聚合用；

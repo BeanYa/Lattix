@@ -665,7 +665,7 @@ func (s *Server) configureChainHop(ctx context.Context, chainID int64, seq int, 
 	}
 	sharedHy2Exit := seq == hopCount-1 && current.Snapshot.ServiceEndpointID != 0 && vc.Protocol == shared.ProtocolHysteria2
 	claimed := false
-	if sharedHy2Exit && port > 0 {
+	if sharedHy2Exit {
 		ep, err := s.st.ProtocolSharedEndpoint(ctx, servers[seq].ID, shared.ProtocolHysteria2)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			return nil, err
@@ -675,6 +675,13 @@ func (s *Server) configureChainHop(ctx context.Context, chainID int64, seq int, 
 				return nil, err
 			}
 			claimed = true
+		} else if vc.PortHop != "" {
+			// The Hysteria outlet's base listener and its DNAT interval are
+			// separate claims. Check the inherited interval on the new host.
+			endpointRequest := createNodeRequest{Protocol: vc.Protocol, PortHop: vc.PortHop}
+			if err := s.resolveHy2PortHop(ctx, &endpointRequest, servers[seq], chain.ID, 0); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if !claimed {
@@ -850,6 +857,12 @@ func (s *Server) configureChainHop(ctx context.Context, chainID int64, seq int, 
 	}
 
 	revision := plannedChainRevision(chain, current, desired, plan)
+	if desired.AwaitEntryEndpoint {
+		revision.Edit.Tasks = append(revision.Edit.Tasks, store.ChainRevisionTask{
+			TaskKey: store.RevisionPieceEntry, Kind: store.RevisionPieceEntry, Phase: "apply", Action: "apply",
+			HopID: desiredHops[0].HopID, ServerID: servers[0].ID,
+		})
+	}
 	if templateSync {
 		revision.Edit.SyncSeq = &seq
 	}

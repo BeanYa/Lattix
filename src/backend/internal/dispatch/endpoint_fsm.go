@@ -74,7 +74,7 @@ func (f *endpointFSM) Transition(ctx context.Context, endpointID int64, to, deta
 		return fmt.Errorf("endpoint_fsm: endpoint %d: %w", endpointID, err)
 	}
 	from := ep.Status
-	if from == to {
+	if from == to && to != store.EndpointStatusActive {
 		return nil // 幂等，不触发副作用
 	}
 	if !validEndpointTransition(from, to) {
@@ -99,8 +99,10 @@ func (f *endpointFSM) Transition(ctx context.Context, endpointID int64, to, deta
 		}
 		return fmt.Errorf("endpoint_fsm: endpoint %d persist %s: %w", endpointID, to, err)
 	}
-	log.Printf("endpoint_fsm: endpoint %d: %s → %s (%s)", endpointID, from, to, detail)
-	f.onEnter(ctx, ep, to)
+	if from != to {
+		log.Printf("endpoint_fsm: endpoint %d: %s → %s (%s)", endpointID, from, to, detail)
+		f.onEnter(ctx, ep, to)
+	}
 	return nil
 }
 
@@ -108,13 +110,6 @@ func (f *endpointFSM) Transition(ctx context.Context, endpointID int64, to, deta
 func (f *endpointFSM) onEnter(ctx context.Context, ep *store.SharedEndpoint, to string) {
 	switch to {
 	case store.EndpointStatusActive, store.EndpointStatusFailed:
-		chains, err := f.d.st.ChainsAwaitingEntryEndpoint(ctx, ep.ID)
-		if err != nil {
-			log.Printf("endpoint_fsm: endpoint %d awaiting chains: %v", ep.ID, err)
-		}
-		for _, id := range chains {
-			f.d.advanceChain(ctx, id)
-		}
 		// 端点生效/失败 → 重算使用该端点的链（degraded ↔ active，同步链路页状态）
 		// 并触发受影响用户的订阅重建（同步订阅警告内容）。
 		if chainIDs, err := f.d.st.ChainIDsByEndpoint(ctx, ep.ID); err != nil {

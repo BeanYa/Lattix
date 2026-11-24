@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 )
 
@@ -48,9 +49,16 @@ func (s *Store) CatalogUserChainAssignments(ctx context.Context, userID int64) (
 	return s.catalogChainAssignments(ctx, ` AND u.id=?`, userID)
 }
 
-func (s *Store) CatalogEndpointAssignments(ctx context.Context, endpointID int64, now time.Time) ([]UserChainAssignment, error) {
-	return s.catalogChainAssignments(ctx, ` AND json_extract(r.snapshot,'$.endpoint_id')=? AND `+activeCatalogUser,
-		endpointID, now.Unix(), now.Unix())
+func (s *Store) CatalogEndpointAssignments(ctx context.Context, endpointID int64, now time.Time, stagedChainIDs ...int64) ([]UserChainAssignment, error) {
+	predicate := ` AND (json_extract(r.snapshot,'$.endpoint_id')=?`
+	args := []any{endpointID}
+	if len(stagedChainIDs) > 0 {
+		predicate += ` OR c.id IN (?` + strings.Repeat(",?", len(stagedChainIDs)-1) + `)`
+		for _, id := range stagedChainIDs {
+			args = append(args, id)
+		}
+	}
+	return s.catalogChainAssignments(ctx, predicate+`) AND `+activeCatalogUser, append(args, now.Unix(), now.Unix())...)
 }
 
 func (s *Store) CatalogServiceEndpointUsers(ctx context.Context, endpointID int64, now time.Time) ([]string, error) {

@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,18 @@ import (
 // makes assignment add/remove and chain publication naturally idempotent and
 // keeps the number of Xray routing rules proportional to chains, not users.
 func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int64) error {
+	return d.reconcileSharedEndpoint(ctx, endpointID, 0, nil)
+}
+
+func (d *Dispatcher) reconcileSharedEndpoint(ctx context.Context, endpointID, revisionID int64, realizedPayload json.RawMessage) error {
+	d.endpointApplyMu.Lock()
+	var flushServer int64
+	defer func() {
+		d.endpointApplyMu.Unlock()
+		if flushServer != 0 {
+			d.Flush(ctx, flushServer)
+		}
+	}()
 	endpoint, err := d.st.SharedEndpointByID(ctx, endpointID)
 	if err != nil {
 		return err
@@ -87,10 +100,26 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 		if err := d.efsm.Transition(ctx, endpointID, store.EndpointStatusApplying, "下发端点部署命令", nil); err != nil {
 			return err
 		}
-		_, err = d.Enqueue(ctx, endpoint.ServerID, shared.TypeApplySharedEndpoint, payload)
+		_, err = d.enqueueCommand(ctx, endpoint.ServerID, shared.TypeApplySharedEndpoint, payload)
+		if err == nil {
+			flushServer = endpoint.ServerID
+		}
 		return err
 	}
-	assignments, err := d.st.CatalogEndpointAssignments(ctx, endpointID, time.Now())
+	staged, err := d.st.StagedEntryEndpointRevisions(ctx, endpointID)
+	if err != nil {
+		return err
+	}
+	stagedIDs := make([]int64, 0, len(staged))
+	tracked := revisionID == 0
+	for id, rev := range staged {
+		stagedIDs = append(stagedIDs, id)
+		tracked = tracked || rev.ID == revisionID
+	}
+	if !tracked {
+		return fmt.Errorf("revision %d is no longer staged for entry endpoint %d", revisionID, endpointID)
+	}
+	assignments, err := d.st.CatalogEndpointAssignments(ctx, endpointID, time.Now(), stagedIDs...)
 	if err != nil {
 		return err
 	}
@@ -124,8 +153,14 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 			chain.Status == store.ChainStatusExchangeFailed {
 			continue
 		}
-		revision, err := d.st.PublishedChainRevision(ctx, chain.ID)
-		if err != nil || revision.Snapshot.EndpointID != endpointID || len(revision.Snapshot.Hops) == 0 {
+		revision := staged[chain.ID]
+		if revision == nil {
+			revision, err = d.st.PublishedChainRevision(ctx, chain.ID)
+			if err != nil {
+				continue
+			}
+		}
+		if revision.Snapshot.EndpointID != endpointID || len(revision.Snapshot.Hops) == 0 {
 			continue
 		}
 		if d.endpointHopAddressFamily(ctx, revision.Snapshot.Hops[0]) == shared.AddressFamilyIPv6 {
@@ -192,13 +227,29 @@ func (d *Dispatcher) ReconcileSharedEndpoint(ctx context.Context, endpointID int
 	if payload.Config, err = withEndpointListenFamily(payload.Config, listenFamily); err != nil {
 		return err
 	}
+	if len(realizedPayload) > 0 {
+		current, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(current, realizedPayload) {
+			return nil
+		}
+	}
 	// 建链即部署监听：即使 routes/clients 为空也下发 apply（端口 + Reality 密钥即刻生效）。
 	// 用户分配仅做增量用户添加，不再是部署前提。
 	// 端点状态机入口：pending/failed/applying/active → applying（重试/重部署/幂等自愈）。
 	if err := d.efsm.Transition(ctx, endpointID, store.EndpointStatusApplying, "下发端点部署命令", nil); err != nil {
 		return err
 	}
-	_, err = d.Enqueue(ctx, endpoint.ServerID, shared.TypeApplySharedEndpoint, payload)
+	if revisionID == 0 {
+		_, err = d.enqueueCommand(ctx, endpoint.ServerID, shared.TypeApplySharedEndpoint, payload)
+	} else {
+		_, err = d.queueRevisionTask(ctx, endpoint.ServerID, shared.TypeApplySharedEndpoint, payload, revisionID, store.RevisionPieceEntry)
+	}
+	if err == nil {
+		flushServer = endpoint.ServerID
+	}
 	return err
 }
 

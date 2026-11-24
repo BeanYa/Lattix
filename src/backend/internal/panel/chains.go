@@ -503,10 +503,12 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 	}
 	var graphHy2Endpoint *store.SharedEndpoint
 	if req.Node.Protocol == shared.ProtocolHysteria2 {
-		graphHy2Endpoint, err = s.prepareGraphHy2Endpoint(r.Context(), &req.Node, exitSrv.ID, activeGraph, len(servers)-1)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
+		if len(activeGraph) > 0 {
+			graphHy2Endpoint, err = s.prepareGraphHy2Endpoint(r.Context(), &req.Node, exitSrv.ID, activeGraph, len(servers)-1)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
 		}
 		ownEndpointID := int64(0)
 		if graphHy2Endpoint != nil {
@@ -580,7 +582,8 @@ func (s *Server) handleCreateChain(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := s.checkChainForwardListeners(r.Context(), servers, req.Node, req.EntryPort, entryShared, req.EntryNode != nil, activeGraph, graphWrites, 0); err != nil {
+	ports := chainForwardPorts(servers, req.Node, req.EntryPort, entryShared, req.EntryNode != nil, activeGraph, nil)
+	if err := s.checkChainForwardListeners(r.Context(), servers, req.Node, ports, entryShared, req.EntryNode != nil, activeGraph, graphWrites, 0); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1063,12 +1066,22 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	oldByServer := make(map[int64]store.ChainRevisionHop, len(current.Snapshot.Hops))
+	for _, hop := range current.Snapshot.Hops {
+		oldByServer[hop.ServerID] = hop
+	}
+	hasFixedForward := len(activeGraph) > 0
+	for _, srv := range servers[:len(servers)-1] {
+		hasFixedForward = hasFixedForward || oldByServer[srv.ID].ForwardPort > 0
+	}
 	var graphHy2Endpoint *store.SharedEndpoint
 	if req.Node.Protocol == shared.ProtocolHysteria2 {
-		graphHy2Endpoint, err = s.prepareGraphHy2Endpoint(r.Context(), &req.Node, exitSrv.ID, activeGraph, len(servers)-1)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
+		if hasFixedForward {
+			graphHy2Endpoint, err = s.prepareGraphHy2Endpoint(r.Context(), &req.Node, exitSrv.ID, activeGraph, len(servers)-1)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
 		}
 		ownEndpointID := current.Snapshot.ServiceEndpointID
 		if graphHy2Endpoint != nil {
@@ -1128,7 +1141,8 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := s.checkChainForwardListeners(r.Context(), servers, req.Node, req.EntryPort, entryShared, req.EntryNode != nil, activeGraph, graphWrites, chain.ID); err != nil {
+	ports := chainForwardPorts(servers, req.Node, req.EntryPort, entryShared, req.EntryNode != nil, activeGraph, oldByServer)
+	if err := s.checkChainForwardListeners(r.Context(), servers, req.Node, ports, entryShared, req.EntryNode != nil, activeGraph, graphWrites, chain.ID); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1217,9 +1231,9 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	oldByServer := map[int64]store.ChainRevisionHop{}
-	for _, hop := range current.Snapshot.Hops {
-		oldByServer[hop.ServerID] = hop
+	if !hasFixedForward {
+		// Legacy automatic forwarding keeps the outlet profile selected at provisioning.
+		ports = chainForwardPorts(servers, req.Node, req.EntryPort, endpointID != 0, req.EntryNode != nil, activeGraph, oldByServer)
 	}
 	desiredHops := make([]store.ChainRevisionHop, 0, len(servers))
 	for i, server := range servers {
@@ -1238,22 +1252,15 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		} else if i == 0 {
 			hop.Role = store.HopRoleEntry
 		}
-		if n, ok := activeGraph[i]; ok && (i == 0 || hop.Role == store.HopRoleMiddle) {
-			hop.ForwardPort = n.ListenPort
-		}
-		if i == 0 && req.EntryPort != nil && endpointID == 0 {
-			hop.ForwardPort = *req.EntryPort
-		}
-		if i == 0 && endpointID != 0 {
-			hop.ForwardPort = 0
-		}
-		// hy2 端到端跳跃段（评审 #3，镜像创建路径）：非用户指定的入口/中间跳绑定段起点，
-		// 收敛旧链（快照 forward_port=0 自动端口）到"全跳同段"；经
-		// ReplaceWorkingChainTopology 回写 chain_hops 后由 dispatch 按绑定端口下发。
-		if hop.ForwardPort == 0 && req.EntryNode == nil && req.Node.Protocol == shared.ProtocolHysteria2 &&
-			req.Node.PortHop != "" && hop.Role != store.HopRoleExit {
-			if start, _, err := shared.ParsePortHop(req.Node.PortHop); err == nil {
-				hop.ForwardPort = start
+		if i < len(ports) {
+			hop.ForwardPort = ports[i]
+		} else if i == 0 {
+			if endpointID != 0 {
+				hop.ForwardPort = 0
+			} else if req.EntryPort != nil {
+				hop.ForwardPort = *req.EntryPort
+			} else if n, ok := activeGraph[i]; ok {
+				hop.ForwardPort = n.ListenPort
 			}
 		}
 		hop.Address = req.Hops[i].Address // 地址引用以本次编辑提交为准（§9）

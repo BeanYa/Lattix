@@ -54,6 +54,7 @@ func (d *Dispatcher) ResumeChains(ctx context.Context) error {
 		if chain.DesiredRevisionID == 0 {
 			continue
 		}
+		d.recoverEntryEndpointTask(ctx, chain.DesiredRevisionID)
 		switch chain.Status {
 		case store.ChainStatusApplying, store.ChainStatusActiveUnconfirmed:
 			d.advanceChain(ctx, chain.ID)
@@ -82,16 +83,12 @@ func (d *Dispatcher) RetryChain(ctx context.Context, chainID int64) error {
 	if chain.Status != store.ChainStatusFailed && chain.Status != store.ChainStatusActiveFailed {
 		return fmt.Errorf("仅 failed 状态的链可重试（当前 %s）", chain.Status)
 	}
-	var awaitingEntry int64
 	if revision, err := d.st.DesiredChainRevision(ctx, chainID); err == nil {
 		if err := d.st.ResetFailedRevisionTasks(ctx, revision.ID); err != nil {
 			return err
 		}
 		if err := d.st.SetChainRevisionStatus(ctx, revision.ID, store.RevisionStatusApplying, ""); err != nil {
 			return err
-		}
-		if revision.Snapshot.AwaitEntryEndpoint {
-			awaitingEntry = revision.Snapshot.EndpointID
 		}
 	}
 	hops, err := d.st.ChainHops(ctx, chainID)
@@ -107,17 +104,6 @@ func (d *Dispatcher) RetryChain(ctx context.Context, chainID int64) error {
 	}
 	if err := d.fsm.Transition(ctx, chainID, store.ChainStatusApplying, "重试编排"); err != nil {
 		return err
-	}
-	if awaitingEntry != 0 {
-		ep, err := d.st.SharedEndpointByID(ctx, awaitingEntry)
-		if err != nil {
-			return err
-		}
-		if ep.Status == store.EndpointStatusFailed {
-			if err := d.ReconcileSharedEndpoint(ctx, awaitingEntry); err != nil {
-				return err
-			}
-		}
 	}
 	d.advanceChain(context.Background(), chainID)
 	return nil
@@ -149,9 +135,6 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		serviceEndpointID = revision.Snapshot.ServiceEndpointID
 		snap := revision.Snapshot
 		snapshot = &snap
-	}
-	if snapshot != nil && snapshot.AwaitEntryEndpoint && !d.entryListenerReady(ctx, endpointID, &hops[0]) {
-		return
 	}
 	pieces, err := d.chainPieces(ctx, chainID, revisionID)
 	if err != nil {
@@ -241,6 +224,9 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	// 提前绑定指针会把 pending/空 realized 的旧对象写进 revision，端点路由随之缺 outbound）。
 	exitNode = node
 	if endpointID != 0 && len(hops) == 1 {
+		if !d.confirmRevisionEntryEndpoint(ctx, revisionID, snapshot, hops, node) {
+			return
+		}
 		if hops[0].Status != store.HopStatusActive {
 			if err := d.st.SetChainHopStatus(ctx, hops[0].ID, store.HopStatusActive, ""); err != nil {
 				return
@@ -508,6 +494,9 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 		return
 	}
 
+	if !d.confirmRevisionEntryEndpoint(ctx, revisionID, snapshot, hops, exitNode) {
+		return
+	}
 	// 阶段 5：全部 piece 完成 → 跳 active → 链 active（随后按在线性推导是否 degraded）。
 	for i := range hops {
 		if hops[i].Status != store.HopStatusActive {
@@ -524,27 +513,6 @@ func (d *Dispatcher) advanceChain(ctx context.Context, chainID int64) {
 	log.Printf("dispatch: chain %d active（%d 跳）", chainID, len(hops))
 	d.publishDesiredRevision(ctx, chainID, hops, exitNode)
 	d.fsm.Evaluate(ctx, chainID)
-}
-
-func (d *Dispatcher) entryListenerReady(ctx context.Context, endpointID int64, hop *store.ChainHop) bool {
-	ep, err := d.st.SharedEndpointByID(ctx, endpointID)
-	if err != nil {
-		log.Printf("dispatch: chain %d entry endpoint %d: %v", hop.ChainID, endpointID, err)
-		return false
-	}
-	var realized shared.RealizedConfig
-	if ep.Status != store.EndpointStatusFailed && json.Unmarshal(ep.RealizedConfig, &realized) == nil && realized.Port > 0 {
-		return true
-	}
-	switch ep.Status {
-	case store.EndpointStatusFailed:
-		d.failHop(ctx, hop, fmt.Sprintf("共享入口（endpoint %d）部署失败: %s", endpointID, ep.Error))
-	case store.EndpointStatusPending:
-		if err := d.ReconcileSharedEndpoint(ctx, endpointID); err != nil {
-			log.Printf("dispatch: chain %d provision entry endpoint %d: %v", hop.ChainID, endpointID, err)
-		}
-	}
-	return false
 }
 
 // forwardPipeLayers 返回 forward 管道的监听层：外部直链出口恒 tcp（外部协议均为
@@ -589,7 +557,7 @@ func (d *Dispatcher) publishDesiredRevision(ctx context.Context, chainID int64, 
 		}
 	}
 	d.cleanupPublishedRevision(ctx, previous, revision)
-	if err := d.reconcilePublishedEndpoints(ctx, previous, revision); err != nil {
+	if err := d.reconcilePublishedEndpoints(ctx, previous, revision, revision.Snapshot.AwaitEntryEndpoint); err != nil {
 		log.Printf("dispatch: chain %d reconcile shared endpoint: %v", chainID, err)
 	}
 	if revision.Snapshot.EndpointID != 0 {
@@ -622,7 +590,7 @@ func mergeSnapshotHopFields(snapshot *store.ChainRevisionSnapshot, hops []store.
 // reconcilePublishedEndpoints 发布后按快照引用变化 reconcile 共享端点：旧端点不再被引用
 // 时回收、新端点置 applying。新旧端点都会尝试 reconcile，返回首个原始错误
 // （不包装，调用方决定记日志还是中断流程）。
-func (d *Dispatcher) reconcilePublishedEndpoints(ctx context.Context, previous, revision *store.ChainRevision) error {
+func (d *Dispatcher) reconcilePublishedEndpoints(ctx context.Context, previous, revision *store.ChainRevision, entryApplied bool) error {
 	var firstErr error
 	if previous != nil && previous.Snapshot.EndpointID != 0 &&
 		previous.Snapshot.EndpointID != revision.Snapshot.EndpointID {
@@ -631,7 +599,11 @@ func (d *Dispatcher) reconcilePublishedEndpoints(ctx context.Context, previous, 
 		}
 	}
 	if revision.Snapshot.EndpointID != 0 {
-		if err := d.ReconcileSharedEndpoint(ctx, revision.Snapshot.EndpointID); err != nil && firstErr == nil {
+		var realizedPayload json.RawMessage
+		if entryApplied {
+			realizedPayload = d.confirmedEntryPayload(ctx, revision.ID)
+		}
+		if err := d.reconcileSharedEndpoint(ctx, revision.Snapshot.EndpointID, 0, realizedPayload); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -822,7 +794,7 @@ func (d *Dispatcher) finishForcedPublish(ctx context.Context, chainID int64, cha
 		}
 	}
 	d.cleanupPublishedRevision(ctx, previous, revision)
-	if err := d.reconcilePublishedEndpoints(ctx, previous, revision); err != nil {
+	if err := d.reconcilePublishedEndpoints(ctx, previous, revision, false); err != nil {
 		return err
 	}
 	d.advanceChain(context.Background(), chainID)
