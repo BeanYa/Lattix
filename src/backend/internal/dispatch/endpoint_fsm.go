@@ -2,16 +2,17 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 
 	"lattix/backend/internal/store"
+	"lattix/shared"
 )
 
 // 共享端点状态机（§21 共享入口）：集中管理端点状态转换合法性、CAS 持久化与副作用分派。
-// 与链状态机（chainFSM）同构：所有端点状态变更经 Transition 入口，store 层 WHERE 守卫
-// 与转换表双重断言。
+// 常规转换经过 Transition，部署回执经过 ApplyResult；两条路径共用进入状态的副作用。
 //
 // 状态机：
 //
@@ -100,10 +101,42 @@ func (f *endpointFSM) Transition(ctx context.Context, endpointID int64, to, deta
 		return fmt.Errorf("endpoint_fsm: endpoint %d persist %s: %w", endpointID, to, err)
 	}
 	if from != to {
-		log.Printf("endpoint_fsm: endpoint %d: %s → %s (%s)", endpointID, from, to, detail)
-		f.onEnter(ctx, ep, to)
+		f.finishTransition(ctx, ep, to, detail)
 	}
 	return nil
+}
+
+// ApplyResult orders endpoint outcomes by their original apply command. A
+// newer apply already entered applying when queued, even if an intervening
+// older receipt changed the endpoint status before this response arrived.
+func (f *endpointFSM) ApplyResult(ctx context.Context, endpointID, commandID int64, config *shared.RealizedConfig, success bool, detail string) (*store.SharedEndpoint, bool, error) {
+	var realized json.RawMessage
+	to := store.EndpointStatusFailed
+	if success {
+		data, err := json.Marshal(config)
+		if err != nil {
+			return nil, false, err
+		}
+		realized = data
+		to = store.EndpointStatusActive
+		detail = "部署回执确认"
+	}
+	ep, applied, err := f.d.st.ApplySharedEndpointResult(ctx, endpointID, commandID, success, detail, realized)
+	if err != nil || !applied {
+		return ep, applied, err
+	}
+	if success {
+		f.d.clearEndpointRetry(endpointID)
+	}
+	if ep.Status != to {
+		f.finishTransition(ctx, ep, to, detail)
+	}
+	return ep, true, nil
+}
+
+func (f *endpointFSM) finishTransition(ctx context.Context, ep *store.SharedEndpoint, to, detail string) {
+	log.Printf("endpoint_fsm: endpoint %d: %s → %s (%s)", ep.ID, ep.Status, to, detail)
+	f.onEnter(ctx, ep, to)
 }
 
 // onEnter 状态进入副作用分派。仅在 Transition 成功持久化后调用。

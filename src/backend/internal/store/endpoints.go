@@ -24,28 +24,29 @@ const (
 var ErrEndpointConflict = errors.New("shared endpoint port conflicts with an incompatible managed listener")
 
 type SharedEndpoint struct {
-	ID             int64
-	ServerID       int64
-	Protocol       string
-	Port           int
-	ProfileHash    string
-	ConfigTemplate json.RawMessage
-	RealizedConfig json.RawMessage
-	Status         string
-	Error          string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                int64
+	ServerID          int64
+	Protocol          string
+	Port              int
+	ProfileHash       string
+	ConfigTemplate    json.RawMessage
+	RealizedConfig    json.RawMessage
+	LastApplyResultID int64
+	Status            string
+	Error             string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 const endpointCols = `id, server_id, protocol, port, profile_hash, config_template,
-	realized_config, status, error, created_at, updated_at`
+	realized_config, last_apply_result_id, status, error, created_at, updated_at`
 
 func scanEndpoint(row interface{ Scan(...any) error }) (*SharedEndpoint, error) {
 	var endpoint SharedEndpoint
 	var template string
 	var realized sql.NullString
 	if err := row.Scan(&endpoint.ID, &endpoint.ServerID, &endpoint.Protocol, &endpoint.Port,
-		&endpoint.ProfileHash, &template, &realized, &endpoint.Status, &endpoint.Error,
+		&endpoint.ProfileHash, &template, &realized, &endpoint.LastApplyResultID, &endpoint.Status, &endpoint.Error,
 		&endpoint.CreatedAt, &endpoint.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -335,24 +336,67 @@ func (s *Store) SetSharedEndpointApplying(ctx context.Context, id int64) error {
 }
 
 func (s *Store) SetSharedEndpointActive(ctx context.Context, id int64, realized json.RawMessage) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	ep, err := scanEndpoint(tx.QueryRowContext(ctx, `SELECT `+endpointCols+` FROM shared_endpoints WHERE id=?`, id))
+	if err != nil {
+		return err
+	}
+	if ep.Status != EndpointStatusPending && ep.Status != EndpointStatusApplying && ep.Status != EndpointStatusActive {
+		return fmt.Errorf("%w: endpoint %d cannot transition to active", ErrStateTransition, id)
+	}
+	if err := setSharedEndpointActiveTx(ctx, tx, ep, realized); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// ApplySharedEndpointResult applies only outcomes newer than the last accepted
+// command. A successful newer command can supersede an earlier failed apply.
+// The watermark and endpoint state change commit together.
+func (s *Store) ApplySharedEndpointResult(ctx context.Context, id, commandID int64, success bool, detail string, realized json.RawMessage) (*SharedEndpoint, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	defer tx.Rollback()
+	ep, err := scanEndpoint(tx.QueryRowContext(ctx, `SELECT `+endpointCols+` FROM shared_endpoints WHERE id=?`, id))
+	if err != nil {
+		return nil, false, err
+	}
+	if commandID <= ep.LastApplyResultID {
+		return ep, false, nil
+	}
+	if success {
+		err = setSharedEndpointActiveTx(ctx, tx, ep, realized)
+	} else {
+		_, err = tx.ExecContext(ctx, `UPDATE shared_endpoints SET status=?, error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, EndpointStatusFailed, detail, id)
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE shared_endpoints SET last_apply_result_id=? WHERE id=?`, commandID, id); err != nil {
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	return ep, true, nil
+}
+
+func setSharedEndpointActiveTx(ctx context.Context, tx *sql.Tx, ep *SharedEndpoint, realized json.RawMessage) error {
 	var value struct {
 		Port int `json:"port"`
 	}
 	if err := json.Unmarshal(realized, &value); err != nil || value.Port <= 0 {
 		return fmt.Errorf("invalid shared endpoint realized config")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var serverID int64
-	if err := tx.QueryRowContext(ctx, `SELECT server_id FROM shared_endpoints WHERE id=?`, id).Scan(&serverID); err != nil {
-		return err
-	}
 	var conflictID int64
-	err = tx.QueryRowContext(ctx, `SELECT id FROM shared_endpoints
-		WHERE server_id=? AND port=? AND id<>? LIMIT 1`, serverID, value.Port, id).Scan(&conflictID)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM shared_endpoints
+		WHERE server_id=? AND port=? AND id<>? LIMIT 1`, ep.ServerID, value.Port, ep.ID).Scan(&conflictID)
 	if err == nil {
 		return fmt.Errorf("%w: endpoint %d already owns port %d", ErrEndpointConflict, conflictID, value.Port)
 	}
@@ -361,24 +405,10 @@ func (s *Store) SetSharedEndpointActive(ctx context.Context, id int64, realized 
 	}
 	// 保留合并（P2 遗留清理）：新一轮 realized 未携带 encryption（非 Encryption 模板重发
 	// 或旧 agent 回写）时沿用库中已生效值，避免清空订阅依赖的 encryption 字段。
-	var prevRealized string
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COALESCE(realized_config,'') FROM shared_endpoints WHERE id=?`, id).Scan(&prevRealized); err != nil {
-		return err
-	}
-	realized = mergeEndpointRealized(realized, json.RawMessage(prevRealized))
-	result, err := tx.ExecContext(ctx, `UPDATE shared_endpoints SET port=?, realized_config=?, status=?,
-		error='', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status IN (?, ?, ?)`,
-		value.Port, string(realized), EndpointStatusActive, id, EndpointStatusPending, EndpointStatusApplying, EndpointStatusActive)
-	if err != nil {
-		return err
-	}
-	if n, nerr := result.RowsAffected(); nerr != nil {
-		return nerr
-	} else if n == 0 {
-		return fmt.Errorf("%w: endpoint %d cannot transition to active", ErrStateTransition, id)
-	}
-	return tx.Commit()
+	realized = mergeEndpointRealized(realized, ep.RealizedConfig)
+	_, err = tx.ExecContext(ctx, `UPDATE shared_endpoints SET port=?, realized_config=?, status=?,
+		error='', updated_at=CURRENT_TIMESTAMP WHERE id=?`, value.Port, string(realized), EndpointStatusActive, ep.ID)
+	return err
 }
 
 // mergeEndpointRealized 回写端点 realized 时保留既有 encryption：新值为空且旧值非空则沿用。

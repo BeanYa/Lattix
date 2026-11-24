@@ -1372,7 +1372,12 @@ func (d *Dispatcher) applyCommandOutcome(serverID int64, cmd *store.Command, p s
 		return
 	}
 	if p.EndpointID != 0 {
-		if err := d.applyEndpointResult(ctx, p.EndpointID, p.RealizedConfig, success, errorMessage); err != nil {
+		endpointID, ok := commandEndpointID(*cmd)
+		if !ok || endpointID != p.EndpointID {
+			log.Printf("dispatch: command %d endpoint response correlation mismatch", cmd.ID)
+			return
+		}
+		if _, _, err := d.efsm.ApplyResult(ctx, endpointID, cmd.ID, p.RealizedConfig, success, errorMessage); err != nil {
 			log.Printf("dispatch: shared endpoint %d: %v", p.EndpointID, err)
 		}
 		return
@@ -1538,8 +1543,10 @@ func init() {
 			deadLetter: func(d *Dispatcher, ctx context.Context, _ int64, cmd store.Command) {
 				var p shared.ApplySharedEndpointPayload
 				if json.Unmarshal(cmd.Data, &p) == nil && p.EndpointID != 0 {
-					_ = d.efsm.Transition(ctx, p.EndpointID, store.EndpointStatusFailed,
-						fmt.Sprintf("command %d dead-lettered after %d attempts", cmd.ID, cmd.Attempts), nil)
+					if _, _, err := d.efsm.ApplyResult(ctx, p.EndpointID, cmd.ID, nil, false,
+						fmt.Sprintf("command %d dead-lettered after %d attempts", cmd.ID, cmd.Attempts)); err != nil {
+						log.Printf("dispatch: dead-letter endpoint command %d: %v", cmd.ID, err)
+					}
 				}
 				if revision, _ := d.entryEndpointByCommand(ctx, cmd.ID); revision != nil {
 					d.advanceChain(ctx, revision.ChainID)

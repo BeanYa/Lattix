@@ -31,7 +31,8 @@ import (
 // idx_traffic_stats_bucket_fleet（全网维度窗口聚合的覆盖索引），随 Schema 建索引，
 // 存量库首次启动时补建（空表无数据成本，线上 87 万桶约 1s）。
 // v36: versioned orchestration templates, bindings and durable synchronization.
-const schemaVersion = 36
+// v37: shared endpoints persist the command ID of their latest apply result.
+const schemaVersion = 37
 
 type columnMigration struct {
 	name       string
@@ -205,6 +206,9 @@ func migrateSchema(tx *sql.Tx) error {
 		},
 		"server_test_tasks": {
 			{"source", "TEXT NOT NULL DEFAULT 'manual'"},
+		},
+		"shared_endpoints": {
+			{"last_apply_result_id", "INTEGER NOT NULL DEFAULT 0"},
 		},
 		"subscription_snapshots": {
 			{"warnings", "TEXT NOT NULL DEFAULT ''"},

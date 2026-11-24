@@ -103,26 +103,20 @@ func (d *Dispatcher) entryEndpointByCommand(ctx context.Context, commandID int64
 }
 
 func (d *Dispatcher) applyEntryEndpointResult(ctx context.Context, cmd *store.Command, revision *store.ChainRevision, task *store.ChainRevisionTask, result shared.ApplyResultPayload, success bool, detail string) {
-	var applied shared.ApplySharedEndpointPayload
-	if success && (json.Unmarshal(cmd.Data, &applied) != nil || result.EndpointID != revision.Snapshot.EndpointID || result.RealizedConfig == nil ||
-		result.RealizedConfig.Port <= 0 || (applied.Config.Port != 0 && applied.Config.Port != result.RealizedConfig.Port)) {
+	var requested shared.ApplySharedEndpointPayload
+	if success && (json.Unmarshal(cmd.Data, &requested) != nil || result.EndpointID != revision.Snapshot.EndpointID || result.RealizedConfig == nil ||
+		result.RealizedConfig.Port <= 0 || (requested.Config.Port != 0 && requested.Config.Port != result.RealizedConfig.Port)) {
 		success, detail = false, "共享入口回执没有确认本次部署的监听端口"
 	}
-	if err := d.applyEndpointResult(ctx, revision.Snapshot.EndpointID, result.RealizedConfig, success, detail); err != nil {
+	ep, applied, err := d.efsm.ApplyResult(ctx, revision.Snapshot.EndpointID, cmd.ID, result.RealizedConfig, success, detail)
+	if err != nil {
 		success, detail = false, err.Error()
+	} else if success && !applied && ep.Status != store.EndpointStatusActive {
+		success, detail = false, fmt.Sprintf("共享入口已有更新的部署结果（%s）：%s", ep.Status, ep.Error)
 	}
 	if err := d.st.SetRevisionTaskResult(ctx, task.ID, success, detail); err != nil {
 		log.Printf("dispatch: revision %d entry endpoint result: %v", revision.ID, err)
 		return
 	}
 	d.advanceChain(ctx, revision.ChainID)
-}
-
-func (d *Dispatcher) applyEndpointResult(ctx context.Context, id int64, config *shared.RealizedConfig, success bool, detail string) error {
-	if !success {
-		return d.efsm.Transition(ctx, id, store.EndpointStatusFailed, detail, nil)
-	}
-	d.clearEndpointRetry(id)
-	realized, _ := json.Marshal(config)
-	return d.efsm.Transition(ctx, id, store.EndpointStatusActive, "部署回执确认", realized)
 }

@@ -206,6 +206,119 @@ func TestTemplateSyncWaitsForSharedEntryRealization(t *testing.T) {
 	}
 }
 
+func TestTemplateSyncOrdersSharedEntryReceipts(t *testing.T) {
+	for _, test := range []struct {
+		name          string
+		olderFirst    bool
+		trackedFailed bool
+		newerFailed   bool
+	}{
+		{name: "ordinary failure before tracked success", olderFirst: true},
+		{name: "late ordinary failure after tracked success"},
+		{name: "late ordinary success after tracked failure", trackedFailed: true},
+		{name: "late tracked success after newer ordinary failure", newerFailed: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, st, _, ids := setupOrchestrationHandler(t)
+			ctx := t.Context()
+			r := templateForTest(ids["A1"], ids["A2"])
+			tpl := saveTemplateForTest(t, s, r)
+			vless := createNodeRequest{Protocol: shared.ProtocolVLESS}
+			hops := []chainHopRef{{ServerID: ids["A1"]}}
+			moving := createReviewChain(t, s, createChainRequest{Name: "moving chain", Hops: hops, Node: vless,
+				Orchestrations: []orchestrationDraft{{TemplateID: tpl.ID}}})
+			original, err := st.ChainByID(ctx, moving)
+			if err != nil {
+				t.Fatal(err)
+			}
+			respondReviewEndpoint(t, s, original.EndpointID, 4421, "")
+			port := 4433
+			oldEndpoint, err := st.SharedEndpointByID(ctx, original.EndpointID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config shared.VirtualConfig
+			if err := json.Unmarshal(oldEndpoint.ConfigTemplate, &config); err != nil {
+				t.Fatal(err)
+			}
+			config.Port = port
+			raw, err := json.Marshal(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target, _, err := st.EnsureSharedEndpoint(ctx, ids["A1"], shared.ProtocolVLESS, port, oldEndpoint.ProfileHash, raw)
+			if err != nil || target.ID == original.EndpointID {
+				t.Fatalf("missing reusable endpoint: %+v %v", target, err)
+			}
+			if err := s.disp.ReconcileSharedEndpoint(ctx, target.ID); err != nil {
+				t.Fatal(err)
+			}
+			older, _ := reviewEndpointApply(t, s, target.ID)
+			r.ID, r.Revision, r.Nodes[0].ListenPort = tpl.ID, tpl.Revision, port
+			changed := saveTemplateForTest(t, s, r)
+			w := chainWorker{chainID: moving, o: newAutoOrchestrator(s), state: workerIdle}
+			w.step(ctx)
+			desired, err := st.DesiredChainRevision(ctx, moving)
+			if err != nil || desired.Snapshot.EndpointID != target.ID {
+				t.Fatalf("sync did not reuse endpoint: %+v %v", desired, err)
+			}
+			tracked, _ := reviewEndpointApply(t, s, target.ID)
+			task, err := st.EntryEndpointRevisionTask(ctx, desired.ID)
+			if err != nil || tracked.ID <= older.ID || task.CommandID != tracked.ID {
+				t.Fatalf("expected newer tracked apply: older=%d, tracked=%d, task=%+v, err=%v", older.ID, tracked.ID, task, err)
+			}
+			if test.olderFirst {
+				respondReviewEndpointCommand(t, s, older, target.ID, port, "ordinary apply failed")
+			}
+			wantFailure := ""
+			lastApply := tracked.ID
+			if test.newerFailed {
+				if err := s.disp.ReconcileSharedEndpoint(ctx, target.ID); err != nil {
+					t.Fatal(err)
+				}
+				newer, _ := reviewEndpointApply(t, s, target.ID)
+				if newer.ID <= tracked.ID {
+					t.Fatalf("expected ordinary apply newer than tracked command %d", tracked.ID)
+				}
+				wantFailure, lastApply = "newer ordinary apply failed", newer.ID
+				respondReviewEndpointCommand(t, s, newer, target.ID, port, wantFailure)
+				respondReviewEndpointCommand(t, s, tracked, target.ID, port, "")
+			} else if test.trackedFailed {
+				wantFailure = "tracked apply failed"
+				respondReviewEndpointCommand(t, s, tracked, target.ID, port, "tracked apply failed")
+				respondReviewEndpointCommand(t, s, older, target.ID, port, "")
+			} else {
+				respondReviewEndpointCommand(t, s, tracked, target.ID, port, "")
+				if !test.olderFirst {
+					respondReviewEndpointCommand(t, s, older, target.ID, port, "ordinary apply failed")
+				}
+			}
+			endpoint, err := st.SharedEndpointByID(ctx, target.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if endpoint.LastApplyResultID != lastApply {
+				t.Fatalf("stored endpoint outcome %d, want %d", endpoint.LastApplyResultID, lastApply)
+			}
+			graph, err := st.ChainHopGraph(ctx, moving, 0)
+			if err != nil || graph == nil || graph.Binding == nil {
+				t.Fatalf("missing binding: %+v %v", graph, err)
+			}
+			latest, err := st.ChainByID(ctx, moving)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if wantFailure != "" {
+				if endpoint.Status != store.EndpointStatusFailed || endpoint.Error != wantFailure || !graph.SyncPending || graph.Binding.Revision != tpl.Revision || latest.PublishedRevisionID != original.PublishedRevisionID {
+					t.Fatalf("stale success changed newer failure: endpoint=%s %q, pending=%t, binding=%d, published=%d", endpoint.Status, endpoint.Error, graph.SyncPending, graph.Binding.Revision, latest.PublishedRevisionID)
+				}
+			} else if endpoint.Status != store.EndpointStatusActive || endpoint.Error != "" || graph.SyncPending || graph.Binding.Revision != changed.Revision || latest.PublishedRevisionID != desired.ID {
+				t.Fatalf("tracked success was invalidated: endpoint=%s %q, pending=%t, binding=%d, published=%d want %d", endpoint.Status, endpoint.Error, graph.SyncPending, graph.Binding.Revision, latest.PublishedRevisionID, desired.ID)
+			}
+		})
+	}
+}
+
 func TestChainEditValidatesRetainedHy2ForwardSpan(t *testing.T) {
 	s, st, _, ids := setupOrchestrationHandler(t)
 	ctx := t.Context()

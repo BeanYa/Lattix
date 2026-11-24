@@ -259,6 +259,7 @@ CREATE TABLE IF NOT EXISTS shared_endpoints (
     profile_hash    TEXT    NOT NULL,
     config_template TEXT    NOT NULL,
     realized_config TEXT,
+    last_apply_result_id INTEGER NOT NULL DEFAULT 0,
     status          TEXT    NOT NULL DEFAULT 'pending',
     error           TEXT    NOT NULL DEFAULT '',
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
