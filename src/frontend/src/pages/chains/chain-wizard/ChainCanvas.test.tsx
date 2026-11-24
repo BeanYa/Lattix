@@ -359,3 +359,50 @@ describe('rebuilt topology canvas interactions', () => {
     expect(controller.edges).toEqual([{ from: INGRESS_NODE_ID, to: 'n1' }])
   })
 })
+
+it('drops a template graph at current world coordinates after panning and zooming', async () => {
+  function TemplateHarness() {
+    controller = useChainCanvas({ servers, templates: templateCatalog })
+    return (
+      <ChainCanvas
+        controller={controller}
+        probesByServer={new Map()}
+        probeTitle={null}
+        linkColor="var(--panel-line-2)"
+      />
+    )
+  }
+  const template = {
+    id: 8,
+    revision: 1,
+    name: 'HK auto',
+    usage_count: 0,
+    created_at: '',
+    updated_at: '',
+    nodes: [{ kind: 'server' as const, server_id: 1, is_root: true, listen_port: 8443 }],
+    edges: [],
+  }
+  const templateCatalog = [template]
+  // A stable catalog reference models the fetched page catalog.
+  await act(async () => root.render(<TemplateHarness />))
+  await act(async () => controller.setViewport({ x: 100, y: 50, zoom: 0.5 }))
+  const event = new Event('drop', { bubbles: true, cancelable: true })
+  Object.defineProperties(event, {
+    clientX: { value: 400 },
+    clientY: { value: 300 },
+    dataTransfer: {
+      value: {
+        types: ['text/x-lattix-orchestration-template'],
+        getData: (mime: string) => (mime === 'text/x-lattix-orchestration-template' ? '8' : ''),
+      },
+    },
+  })
+  await act(async () => host.querySelector('.cw-canvas')!.dispatchEvent(event))
+  expect(controller.nodes[0]).toMatchObject({
+    x: 468,
+    y: 400,
+    serverId: 1,
+    port: '8443',
+    orchestration: { template_id: 8, template_revision: 1 },
+  })
+})

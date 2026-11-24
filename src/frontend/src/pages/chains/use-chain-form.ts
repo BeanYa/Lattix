@@ -1,3 +1,5 @@
+import { resolveOrchestrationDraft } from './orchestration/orchestration-draft'
+import { validatePathOrchestrations } from './chain-wizard/chain-canvas'
 import { useState, type FormEvent } from 'react'
 
 import { api, errorMessage } from '@/lib/api'
@@ -11,6 +13,7 @@ import type {
   EditChainRequest,
   ExternalExit,
   Server,
+  OrchestrationTemplate,
   XrayNode,
 } from '@/lib/types'
 
@@ -402,6 +405,7 @@ interface ChainPayload {
   exit: ChainHopInput
   node: CreateNodeRequest
   entry_port?: number
+  orchestrations?: CreateChainRequest['orchestrations']
   entry_node?: EditChainRequest['entry_node']
 }
 
@@ -414,6 +418,7 @@ export function useChainForm({
   servers,
   topology,
   paths,
+  templates = [],
   onError,
   onSaved,
   showOperation,
@@ -424,11 +429,13 @@ export function useChainForm({
   topology: ChainFormTopology
   /** 画布校验枚举出的全部合法链路：每条简单路径创建一条链路。 */
   paths: CanvasNode[][]
+  templates?: OrchestrationTemplate[]
   onError: (message: string) => void
   onSaved: () => void
   showOperation: (opts: { observeId: string }) => void
 }) {
   const [editingChainId, setEditingChainId] = useState<number | null>(null)
+  const [originalGraphSeqs, setOriginalGraphSeqs] = useState<number[]>([])
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState('')
   const [form, setForm] = useState<ChainFormState>(initialChainForm)
@@ -554,6 +561,7 @@ export function useChainForm({
 
   const beginCreate = () => {
     setEditingChainId(null)
+    setOriginalGraphSeqs([])
     setForm(initialChainForm)
     setCreateError('')
     setEntryBlockLocked(false)
@@ -562,6 +570,9 @@ export function useChainForm({
   /** 进入编辑：解析结果由向导页经 parseChainEdit 预先取得（顺带回填画布）。 */
   const beginEdit = (chain: Chain, parsed: ChainEditParse) => {
     setEditingChainId(chain.id)
+    setOriginalGraphSeqs(
+      chain.hops.filter((hop) => hop.orchestration?.nodes.length).map((hop) => hop.seq),
+    )
     // 无入口端点的存量链锁定入口区块勾选（v1 不支持编辑新增；取消勾选不受影响）。
     setEntryBlockLocked(chain.endpoint_id === 0)
     setForm({ ...initialChainForm, ...parsed.details })
@@ -757,12 +768,30 @@ export function useChainForm({
       entryNode = entryBlockPayload()
     }
     // 逐跳地址：空串 = 跟随服务器默认地址，提交时不携带 address 字段。
-    // 自动编排改由「跳位编排图」维护（/api/chain/hop-orchestration/save），不再随建链/编辑提交。
+    // Draft graphs and bindings are submitted in the same topology transaction.
     const mkHop = (node: CanvasNode): ChainHopInput =>
       node.address
         ? { server_id: node.serverId, address: node.address }
         : { server_id: node.serverId }
+    const orchestrations = path.flatMap((node, seq) => {
+      if (!node.orchestration) return []
+      const draft = node.orchestration
+      const template = templates.find((t) => t.id === draft.template_id)
+      return [
+        {
+          ...structuredClone(draft),
+          ...resolveOrchestrationDraft(draft, template),
+          ...(template ? { template_revision: template.revision } : {}),
+          seq,
+        },
+      ]
+    })
+    // Original locations must be explicitly cleared when a hop disappears or moves.
+    for (const seq of originalGraphSeqs)
+      if (!orchestrations.some((draft) => draft.seq === seq))
+        orchestrations.push({ seq, nodes: [], edges: [] })
     return {
+      ...(orchestrations.length ? { orchestrations } : {}),
       hops: path.map(mkHop),
       entry: mkHop(first),
       middle: path.slice(1, -1).map(mkHop),
@@ -817,6 +846,11 @@ export function useChainForm({
         }
       }
     }
+    const orchestrationErrors = validatePathOrchestrations(paths, servers, templates)
+    if (orchestrationErrors.length) {
+      setCreateError(orchestrationErrors.join('；'))
+      return
+    }
     // 出口节点表单只对托管出口链路生效：先做一次性校验，避免创建到一半才失败。
     const hasManagedExit = paths.some((path) => {
       const exitNode = path[path.length - 1]
@@ -853,6 +887,7 @@ export function useChainForm({
             node: payload.node,
             traffic_multiplier: form.trafficMultiplier,
           }
+          if (payload.orchestrations) body.orchestrations = payload.orchestrations
           if (payload.entry_port !== undefined) body.entry_port = payload.entry_port
           if (payload.entry_node) body.entry_node = payload.entry_node
           const { observeId } = await api.editChain(body)
@@ -867,6 +902,7 @@ export function useChainForm({
             node: payload.node,
             traffic_multiplier: form.trafficMultiplier,
           }
+          if (payload.orchestrations) body.orchestrations = payload.orchestrations
           if (payload.entry_port !== undefined) body.entry_port = payload.entry_port
           if (payload.entry_node) body.entry_node = payload.entry_node
           const { observeId } = await api.createChain(body)

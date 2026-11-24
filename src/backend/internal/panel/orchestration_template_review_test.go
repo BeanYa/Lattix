@@ -672,3 +672,60 @@ func TestNodeCreateWaitsForTemplatePortClaim(t *testing.T) {
 		t.Fatalf("node creation missed persisted claim: %+v", env)
 	}
 }
+
+func TestEditReordersCandidateActiveGraph(t *testing.T) {
+	for _, linked := range []bool{false, true} {
+		name := "independent"
+		if linked {
+			name = "shared"
+		}
+		t.Run(name, func(t *testing.T) {
+			s, st, _, ids := setupOrchestrationHandler(t)
+			tpl := saveTemplateForTest(t, s, templateForTest(ids["A1"], ids["A2"]))
+			draft := orchestrationDraft{Seq: 0, OrchestrationGraph: tpl.OrchestrationGraph}
+			if linked {
+				draft.TemplateID, draft.TemplateRevision = tpl.ID, tpl.Revision
+			}
+			id := createReviewChain(t, s, createChainRequest{Name: name, Hops: []chainHopRef{{ServerID: ids["A1"]}, {ServerID: ids["B1"]}}, Node: createNodeRequest{Protocol: shared.ProtocolTrojan}, Orchestrations: []orchestrationDraft{draft}})
+			publishTestEdit(t, s, id)
+			if _, err := s.switchChainHop(t.Context(), id, 0, store.HopSwitchTarget{ServerID: ids["A2"], ListenPort: 7000}, store.FailoverReasonManualSwitch, "test"); err != nil {
+				t.Fatal(err)
+			}
+			publishTestEdit(t, s, id)
+			draft.Seq = 1
+			env := callTemplateHandler(t, s.handleEditChain, editChainRequest{ChainID: id, Name: name, Hops: []chainHopRef{{ServerID: ids["B1"]}, {ServerID: ids["A2"]}}, Node: createNodeRequest{Protocol: shared.ProtocolTrojan}, Orchestrations: []orchestrationDraft{{Seq: 0}, draft}})
+			if env.Code != shared.CodeAccepted {
+				t.Fatalf("moving active candidate: %+v", env)
+			}
+			publishTestEdit(t, s, id)
+			hops, err := st.ChainHops(t.Context(), id)
+			if err != nil || len(hops) != 2 || hops[1].ServerID != ids["A2"] {
+				t.Fatalf("active candidate lost: %+v, %v", hops, err)
+			}
+			g, err := st.ChainHopGraph(t.Context(), id, 1)
+			if err != nil || g == nil || graphRoot(*g) != ids["A1"] || (g.Binding != nil) != linked {
+				t.Fatalf("root or binding lost: %+v, %v", g, err)
+			}
+			old, err := st.ChainHopGraph(t.Context(), id, 0)
+			if err != nil || old != nil && len(old.Nodes) != 0 {
+				t.Fatalf("old location not cleared: %+v, %v", old, err)
+			}
+		})
+	}
+}
+
+func TestEditRejectsUnrelatedRootCandidateAdoption(t *testing.T) {
+	s, st, _, ids := setupOrchestrationHandler(t)
+	id := createReviewChain(t, s, createChainRequest{Name: "original", Hops: []chainHopRef{{ServerID: ids["A1"]}, {ServerID: ids["B1"]}}, Node: createNodeRequest{Protocol: shared.ProtocolTrojan}, Orchestrations: []orchestrationDraft{{Seq: 0, OrchestrationGraph: templateForTest(ids["A1"], ids["A2"]).OrchestrationGraph}}})
+	publishTestEdit(t, s, id)
+	// B2 has never been the root of A2's existing hop.
+	wrong := templateForTest(ids["B2"], ids["A2"]).OrchestrationGraph
+	env := callTemplateHandler(t, s.handleEditChain, editChainRequest{ChainID: id, Name: "wrong root", Hops: []chainHopRef{{ServerID: ids["B1"]}, {ServerID: ids["A2"]}}, Node: createNodeRequest{Protocol: shared.ProtocolTrojan}, Orchestrations: []orchestrationDraft{{Seq: 0}, {Seq: 1, OrchestrationGraph: wrong}}})
+	if env.Code == shared.CodeAccepted || env.Code == shared.CodeOK {
+		t.Fatalf("adopted unrelated root: %+v", env)
+	}
+	hops, err := st.ChainHops(t.Context(), id)
+	if err != nil || hops[0].ServerID != ids["A1"] || hops[1].ServerID != ids["B1"] {
+		t.Fatalf("failed edit changed topology: %+v, %v", hops, err)
+	}
+}

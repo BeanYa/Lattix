@@ -1,3 +1,5 @@
+import type { OrchestrationDraft, OrchestrationTemplate } from '@/lib/types'
+import { resolveOrchestrationDraft, setDraftOverride } from '../orchestration/orchestration-draft'
 import {
   CARD_H,
   CARD_W,
@@ -8,6 +10,7 @@ import {
   INTERNET_R,
   MAX_CANVAS_NODES,
   exitPortPoint,
+  orchestrationOverlap,
   type CanvasNode,
   type CanvasEdge,
 } from './chain-canvas'
@@ -29,6 +32,9 @@ export interface CanvasState {
 }
 export type CanvasAction =
   | { type: 'add'; serverId: number; point: Point }
+  | { type: 'template'; draft: OrchestrationDraft; point: Point; replaceId?: string }
+  | { type: 'orchestration'; id: string; draft: OrchestrationDraft }
+  | { type: 'templates-refresh'; templates: OrchestrationTemplate[] }
   | { type: 'remove'; id: string }
   | { type: 'replace'; id: string; serverId: number }
   | { type: 'move'; id: string; point: Point }
@@ -85,9 +91,119 @@ function connectionError(state: CanvasState, from: string, to: string): string {
   return ''
 }
 
+/** Apply resolved parameters to the actual active server, retaining root/candidate identity. */
+function withDraft(node: CanvasNode, draft: OrchestrationDraft): CanvasNode {
+  const value = { ...structuredClone(draft), ...resolveOrchestrationDraft(draft) }
+  const active = value.nodes.find((n) => n.kind === 'server' && n.server_id === node.serverId)
+  return {
+    ...node,
+    orchestration: value,
+    candidates: [],
+    parameterOverrides: value.template_id
+      ? value.overrides?.find((o) => o.server_id === node.serverId)
+      : undefined,
+    address: active?.address ?? '',
+    port: active?.listen_port ? String(active.listen_port) : '',
+  }
+}
+function editParameter(
+  node: CanvasNode,
+  field: 'address' | 'listen_port',
+  value: string,
+): CanvasNode {
+  const patch = field === 'address' ? { address: value } : { listen_port: Number(value) || 0 }
+  const draft = node.orchestration
+  return {
+    ...node,
+    ...(field === 'address' ? { address: value } : { port: value }),
+    parameterOverrides: { ...node.parameterOverrides, ...patch },
+    ...(draft
+      ? {
+          orchestration: draft.template_id
+            ? setDraftOverride(draft, node.serverId, patch)
+            : {
+                ...draft,
+                nodes: draft.nodes.map((n) =>
+                  n.kind === 'server' && n.server_id === node.serverId ? { ...n, ...patch } : n,
+                ),
+              },
+        }
+      : {}),
+  }
+}
+
 /** 图编辑的唯一写入口。预览与已提交边分离，取消/失败不修改任何边。 */
 export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasState {
   switch (action.type) {
+    case 'template': {
+      const root = action.draft.nodes.find((n) => n.kind === 'server' && n.is_root)?.server_id
+      if (!root) return { ...state, connectionError: '模板缺少主选服务器，请先编辑模板' }
+      const existing = state.nodes.find(
+        (n) =>
+          n.serverId === root ||
+          n.orchestration?.nodes.some(
+            (g) => g.kind === 'server' && g.is_root && g.server_id === root,
+          ),
+      )
+      if (existing && action.replaceId !== existing.id)
+        return { ...state, connectionError: '主选服务器已存在，请确认替换该跳编排' }
+      let next = state
+      if (!existing)
+        next = canvasReducer(state, { type: 'add', serverId: root, point: action.point })
+      const target = existing ?? next.nodes.find((n) => !state.nodes.some((old) => old.id === n.id))
+      if (!target) return state
+      let draft = structuredClone(action.draft)
+      if (draft.template_id) {
+        const serverIds = new Set(
+          draft.nodes.filter((n) => n.kind === 'server').map((n) => n.server_id),
+        )
+        for (const override of target.orchestration?.overrides ?? []) {
+          if (
+            target.orchestration?.template_id === draft.template_id ||
+            serverIds.has(override.server_id)
+          ) {
+            draft = setDraftOverride(draft, override.server_id, override)
+          }
+        }
+      }
+      if (draft.template_id && target.parameterOverrides)
+        draft = setDraftOverride(draft, target.serverId, target.parameterOverrides)
+      const resolved = { ...draft, ...resolveOrchestrationDraft(draft) }
+      const result = canvasReducer(next, { type: 'orchestration', id: target.id, draft: resolved })
+      return result.connectionError ? { ...state, connectionError: result.connectionError } : result
+    }
+    case 'orchestration': {
+      const target = state.nodes.find((n) => n.id === action.id)
+      if (
+        target &&
+        action.draft.nodes.length &&
+        !action.draft.nodes.some((n) => n.kind === 'server' && n.server_id === target.serverId)
+      ) {
+        return {
+          ...state,
+          connectionError:
+            '当前运行的服务器必须保留在编排图中，请选择包含它的模板或先切回主选服务器',
+        }
+      }
+      const nodes = state.nodes.map((n) => (n.id === action.id ? withDraft(n, action.draft) : n))
+      const error = orchestrationOverlap(nodes, state.edges)
+      if (error) return { ...state, connectionError: error }
+      return { ...state, nodes, connectionError: '' }
+    }
+    case 'templates-refresh':
+      return {
+        ...state,
+        nodes: state.nodes.map((node) => {
+          const draft = node.orchestration
+          const template = action.templates.find((t) => t.id === draft?.template_id)
+          if (!draft || !template) return node
+          return withDraft(node, {
+            ...draft,
+            ...resolveOrchestrationDraft(draft, template),
+            template_revision: template.revision,
+          })
+        }),
+      }
     case 'add': {
       if (state.nodes.length >= MAX_CANVAS_NODES || !finite(action.point)) return state
       const id = `n${state.nextNodeId}`
@@ -134,7 +250,16 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
       return {
         ...state,
         nodes: state.nodes.map((n) =>
-          n.id === action.id ? { ...n, serverId: action.serverId, address: '' } : n,
+          n.id === action.id
+            ? {
+                ...n,
+                serverId: action.serverId,
+                address: '',
+                orchestration: undefined,
+                candidates: [],
+                parameterOverrides: undefined,
+              }
+            : n,
         ),
         portEditingId: state.portEditingId === action.id ? null : state.portEditingId,
         connectionError: '',
@@ -156,12 +281,16 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
     case 'port':
       return {
         ...state,
-        nodes: state.nodes.map((n) => (n.id === action.id ? { ...n, port: action.value } : n)),
+        nodes: state.nodes.map((n) =>
+          n.id === action.id ? editParameter(n, 'listen_port', action.value) : n,
+        ),
       }
     case 'address':
       return {
         ...state,
-        nodes: state.nodes.map((n) => (n.id === action.id ? { ...n, address: action.value } : n)),
+        nodes: state.nodes.map((n) =>
+          n.id === action.id ? editParameter(n, 'address', action.value) : n,
+        ),
       }
     case 'port-edit':
       return { ...state, portEditingId: action.id }
@@ -242,12 +371,10 @@ export function canvasReducer(state: CanvasState, action: CanvasAction): CanvasS
         action.to === INTERNET_NODE_ID
           ? state.edges
           : state.edges.filter((edge) => !(edge.from === from && edge.to === INTERNET_NODE_ID))
-      return {
-        ...state,
-        connecting: null,
-        connectionError: '',
-        edges: [...kept, { from, to: action.to }],
-      }
+      const edges = [...kept, { from, to: action.to }]
+      const overlap = orchestrationOverlap(state.nodes, edges)
+      if (overlap) return { ...state, connectionError: overlap }
+      return { ...state, connecting: null, connectionError: '', edges }
     }
     case 'connect-cancel':
       return { ...state, connecting: null, connectionError: '' }

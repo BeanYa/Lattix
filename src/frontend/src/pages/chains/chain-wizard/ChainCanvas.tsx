@@ -21,6 +21,7 @@ import { ChainNodeCard } from './ChainNodeCard'
 import type { ChainCanvasController } from './use-chain-canvas'
 
 const DND_MIME = 'text/x-lattix-server'
+const TEMPLATE_MIME = 'text/x-lattix-orchestration-template'
 
 export function ChainCanvas({
   controller,
@@ -334,11 +335,25 @@ export function ChainCanvas({
         }
       }}
       onDragOver={(event) => {
-        if (!Array.from(event.dataTransfer.types).includes(DND_MIME)) return
+        if (
+          !Array.from(event.dataTransfer.types).some(
+            (type) => type === DND_MIME || type === TEMPLATE_MIME,
+          )
+        )
+          return
         event.preventDefault()
         event.dataTransfer.dropEffect = controller.canAddMore ? 'copy' : 'none'
       }}
       onDrop={(event) => {
+        const templateId = Array.from(event.dataTransfer.types ?? []).includes(TEMPLATE_MIME)
+          ? event.dataTransfer.getData(TEMPLATE_MIME)
+          : ''
+        if (templateId) {
+          event.preventDefault()
+          const point = toWorld(event.clientX, event.clientY)
+          void controller.addTemplate(Number(templateId), point.x, point.y)
+          return
+        }
         const raw = event.dataTransfer.getData(DND_MIME)
         if (!raw) return
         event.preventDefault()

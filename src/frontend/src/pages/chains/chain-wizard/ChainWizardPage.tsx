@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useLocation } from 'wouter'
 import { ArrowLeftIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react'
 
@@ -13,14 +12,15 @@ import type {
   CatalogProbeRow,
   CatalogProbeStats,
   Chain,
-  ChainHop,
+  OrchestrationTemplate,
   Server,
   XrayNode,
 } from '@/lib/types'
 
-import { OrchestrationEditor } from '../orchestration/OrchestrationEditor'
+import { DraftOrchestrationEditor } from '../orchestration/DraftOrchestrationEditor'
+import { draftOrchestrationDTO } from '../orchestration/orchestration-draft'
 import { parseChainEdit, useChainForm } from '../use-chain-form'
-import { prefillCanvas } from './chain-canvas'
+import { canvasPathHops, prefillCanvas } from './chain-canvas'
 import { CanvasServerPanel } from './CanvasServerPanel'
 import { ChainCanvas } from './ChainCanvas'
 import { ChainDetailsStep } from './ChainDetailsStep'
@@ -45,6 +45,8 @@ export function ChainWizardPage() {
   const { confirm } = useAppDialog()
   const [chains, setChains] = useState<Chain[]>([])
   const [nodes, setNodes] = useState<XrayNode[]>([])
+  const [templates, setTemplates] = useState<OrchestrationTemplate[]>([])
+  const [templateError, setTemplateError] = useState('')
   const [servers, setServers] = useState<Server[]>([])
   const [panelShort, setPanelShort] = useState('')
   const [probes, setProbes] = useState<CatalogProbeStats | null>(null)
@@ -121,40 +123,92 @@ export function ChainWizardPage() {
       }),
     [confirm],
   )
-  // 编辑模式：画布卡片上方的自动编排入口。跳位按服务器 ID 定位（编辑只维护一条链路）。
+  const refreshTemplates = useCallback(() => {
+    api
+      .orchestrationTemplates()
+      .then((value) => {
+        setTemplates(value)
+        setTemplateError('')
+      })
+      .catch((error) => setTemplateError(String(error)))
+  }, [])
+  useEffect(() => {
+    refreshTemplates()
+  }, [refreshTemplates])
   const editChain = useMemo(
-    () => (editingId ? (chains.find((candidate) => candidate.id === editingId) ?? null) : null),
+    () => (editingId ? (chains.find((chain) => chain.id === editingId) ?? null) : null),
     [chains, editingId],
   )
-  const hopByServerId = useMemo(() => {
-    const map = new Map<number, ChainHop>()
-    for (const hop of editChain?.hops ?? []) map.set(hop.server_id, hop)
-    return map
-  }, [editChain])
-  const [orchestrationHop, setOrchestrationHop] = useState<ChainHop | null>(null)
+  const [orchestrationNodeId, setOrchestrationNodeId] = useState<string | null>(null)
+  const confirmReplaceOrchestration = useCallback(
+    async (alias: string) =>
+      confirm({
+        title: '替换该跳编排',
+        description: `「${alias}」已在画布中。应用模板将替换该跳的编排图；已明确设置的实例参数将保留。`,
+        confirmLabel: '替换编排',
+      }),
+    [confirm],
+  )
+  const canvas = useChainCanvas({
+    servers,
+    templates,
+    orchestratedServerIds,
+    confirmRemoveOrchestration,
+    confirmReplaceOrchestration,
+  })
   const orchestrationFor = useCallback(
-    (serverId: number) => hopByServerId.get(serverId)?.orchestration,
-    [hopByServerId],
+    (serverId: number) => {
+      const node = canvas.nodes.find((n) => n.serverId === serverId)
+      return node?.orchestration
+        ? draftOrchestrationDTO(
+            node.orchestration,
+            servers,
+            node.serverId,
+            templates.find((t) => t.id === node.orchestration?.template_id),
+          )
+        : undefined
+    },
+    [canvas.nodes, servers, templates],
   )
   const editOrchestration = useCallback(
     (serverId: number) => {
-      const hop = hopByServerId.get(serverId)
-      if (hop) setOrchestrationHop(hop)
+      setOrchestrationNodeId(canvas.nodes.find((n) => n.serverId === serverId)?.id ?? null)
     },
-    [hopByServerId],
+    [canvas.nodes],
   )
-  const refreshChains = useCallback(() => {
-    api
-      .chains()
-      .then(setChains)
-      .catch(() => undefined)
-  }, [])
-  const canvas = useChainCanvas({ servers, orchestratedServerIds, confirmRemoveOrchestration })
+  const orchestrationNode = canvas.nodes.find((node) => node.id === orchestrationNodeId)
+  const editorPath = orchestrationNode
+    ? (canvas.paths.find((path) => path.some((node) => node.id === orchestrationNode.id)) ?? [
+        orchestrationNode,
+      ])
+    : []
+  const editorHops = canvasPathHops(editorPath, servers, templates)
+  const editorHop = editorHops.find((hop) => hop.server_id === orchestrationNode?.serverId)
+  const editorChain: Chain = {
+    ...(editChain ?? {
+      id: 0,
+      name: '未保存链路',
+      status: 'pending',
+      error: '',
+      created_at: '',
+      service_node_id: 0,
+      endpoint_id: 0,
+      entry_port: 0,
+      traffic_multiplier: '1.000',
+      published_revision_id: 0,
+      desired_revision_id: 0,
+      revision_forced: false,
+      revision_tasks: [],
+    }),
+    hops: editorHops,
+    service_external: servers.find((s) => s.id === editorPath.at(-1)?.serverId)?.external_exit,
+  }
   const chainForm = useChainForm({
     chains,
     servers,
     topology: canvas.formTopology,
     paths: canvas.validation.paths,
+    templates,
     onError: setBootError,
     onSaved: () => navigate('/network/chains'),
     showOperation,
@@ -282,6 +336,11 @@ export function ChainWizardPage() {
         <div className="cw-layout">
           <CanvasServerPanel
             servers={servers}
+            templates={templates}
+            templateError={templateError}
+            onAddTemplate={(id) => {
+              void canvas.addTemplate(id)
+            }}
             emptyCanvas={canvas.nodes.length === 0}
             probesByServer={probesByServer}
             probeTitle={probeTitle}
@@ -312,9 +371,8 @@ export function ChainWizardPage() {
               probesByServer={probesByServer}
               probeTitle={probeTitle}
               linkColor={linkColor}
-              orchestrationFor={editingId ? orchestrationFor : undefined}
+              orchestrationFor={orchestrationFor}
               onEditOrchestration={editOrchestration}
-              orchestrationLocked={!editingId}
             />
             <ChainValidationSummary
               pathCount={canvas.validation.paths.length}
@@ -352,37 +410,26 @@ export function ChainWizardPage() {
           serverById={canvas.serverById}
         />
       )}
-      {orchestrationHop && editChain
-        ? createPortal(
-            <OrchestrationEditor
-              chain={editChain}
-              hop={orchestrationHop}
-              servers={servers}
-              probesByServer={probesByServer}
-              probeTitle={probeTitle}
-              onClose={() => setOrchestrationHop(null)}
-              onSaved={(updatedChain) => {
-                setOrchestrationHop(null)
-                setChains((current) =>
-                  current.map((item) => (item.id === updatedChain.id ? updatedChain : item)),
-                )
-                const savedHop = updatedChain.hops.find((h) => h.seq === orchestrationHop.seq)
-                if (savedHop) {
-                  const canvasNode = canvas.nodes.find((n) => n.serverId === savedHop.server_id)
-                  if (canvasNode) {
-                    canvas.setNodeAddress(canvasNode.id, savedHop.address ?? '')
-                    if (savedHop.seq === 0) {
-                      const entryPort = savedHop.forward_port || updatedChain.entry_port
-                      canvas.setNodePort(canvasNode.id, entryPort > 0 ? String(entryPort) : '')
-                    }
-                  }
-                }
-                refreshChains()
-              }}
-            />,
-            document.body,
-          )
-        : null}
+      {orchestrationNode && editorHop ? (
+        <DraftOrchestrationEditor
+          key={orchestrationNode.id}
+          chain={editorChain}
+          hop={editorHop}
+          value={orchestrationNode.orchestration}
+          templates={templates}
+          servers={servers}
+          probesByServer={probesByServer}
+          probeTitle={probeTitle}
+          onTemplatesChanged={refreshTemplates}
+          onClose={() => setOrchestrationNodeId(null)}
+          onApply={(draft) => {
+            const error = canvas.applyOrchestration(orchestrationNode.id, draft)
+            // The shared editor catches apply errors and displays them inside the dialog.
+            if (error) throw new Error(error)
+            setOrchestrationNodeId(null)
+          }}
+        />
+      ) : null}
     </Page>
   )
 }

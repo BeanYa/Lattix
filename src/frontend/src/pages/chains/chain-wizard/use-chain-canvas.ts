@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useReducer, useRef, useState } from 'react'
-import type { Server } from '@/lib/types'
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import type { OrchestrationDraft, OrchestrationTemplate, Server } from '@/lib/types'
 import {
   CARD_H,
   CARD_W,
@@ -10,22 +10,34 @@ import {
   type CanvasEdge,
   type CanvasNode,
   type CanvasValidation,
+  nodeServerIds,
+  validatePathOrchestrations,
 } from './chain-canvas'
+import { draftFromTemplate } from '../orchestration/orchestration-draft'
 import { canvasReducer, createCanvasState } from './chain-canvas-state'
 import type { CanvasViewport } from './canvas-viewport'
+
+const EMPTY_TEMPLATES: OrchestrationTemplate[] = []
 
 /** 图状态机与相机互相独立；所有拓扑变更只经过 reducer。 */
 export function useChainCanvas({
   servers,
+  templates = EMPTY_TEMPLATES,
+  confirmReplaceOrchestration,
   orchestratedServerIds,
   confirmRemoveOrchestration,
 }: {
   servers: Server[]
+  templates?: OrchestrationTemplate[]
+  confirmReplaceOrchestration?: (alias: string) => Promise<boolean>
   /** 已启用编排的跳服务器：删除对应画布节点前提醒会一并删除编排配置。 */
   orchestratedServerIds?: Set<number>
   confirmRemoveOrchestration?: (alias: string) => Promise<boolean>
 }) {
   const [state, dispatch] = useReducer(canvasReducer, undefined, createCanvasState)
+  useEffect(() => {
+    if (templates.length) dispatch({ type: 'templates-refresh', templates })
+  }, [templates])
   const [viewport, setViewport] = useState<CanvasViewport>({ x: 0, y: 0, zoom: 1 })
   const [viewportSize, setViewportSize] = useState({ width: 960, height: 600 })
   const [fitRevision, setFitRevision] = useState(0)
@@ -35,14 +47,21 @@ export function useChainCanvas({
     () => analyzeCanvasGraph(state.nodes, state.edges, serverById),
     [state.nodes, state.edges, serverById],
   )
+  const draftErrors = useMemo(
+    () => validatePathOrchestrations(analysis.paths, servers, templates),
+    [analysis.paths, servers, templates],
+  )
   const validation = useMemo<CanvasValidation>(
     () => ({
-      valid: analysis.valid,
-      issues: analysis.errors,
+      valid: analysis.valid && draftErrors.length === 0,
+      issues: [
+        ...analysis.errors,
+        ...draftErrors.map((message) => ({ code: 'invalid_edge' as const, message })),
+      ],
       warnings: analysis.warnings,
       paths: analysis.paths,
     }),
-    [analysis],
+    [analysis, draftErrors],
   )
   // 名称模板/端口提示等仍以第一条合法链路为基准（多链共享名称基准）。
   const formTopology = useMemo(
@@ -81,7 +100,10 @@ export function useChainCanvas({
       const node = state.nodes.find((item) => item.id === id)
       if (!node) return
       const alias = serverById.get(node.serverId)?.alias ?? `#${node.serverId}`
-      if (orchestratedServerIds?.has(node.serverId) && confirmRemoveOrchestration) {
+      if (
+        (node.orchestration?.nodes.length || orchestratedServerIds?.has(node.serverId)) &&
+        confirmRemoveOrchestration
+      ) {
         void confirmRemoveOrchestration(alias).then((ok) => {
           if (ok) dispatch({ type: 'remove', id })
         })
@@ -90,6 +112,48 @@ export function useChainCanvas({
       dispatch({ type: 'remove', id })
     },
     [state.nodes, serverById, orchestratedServerIds, confirmRemoveOrchestration],
+  )
+  const applyOrchestration = useCallback(
+    (id: string, draft: OrchestrationDraft) => {
+      const action = { type: 'orchestration' as const, id, draft }
+      const next = canvasReducer(state, action)
+      dispatch(action)
+      return next.connectionError
+    },
+    [state],
+  )
+  const addTemplate = useCallback(
+    async (templateId: number, x?: number, y?: number) => {
+      const template = templates.find((t) => t.id === templateId)
+      if (!template) return
+      const root = template.nodes.find((n) => n.kind === 'server' && n.is_root)?.server_id
+      const existing = state.nodes.find(
+        (n) =>
+          n.serverId === root ||
+          n.orchestration?.nodes.some(
+            (g) => g.kind === 'server' && g.is_root && g.server_id === root,
+          ),
+      )
+      if (
+        existing &&
+        !(await confirmReplaceOrchestration?.(
+          serverById.get(existing.serverId)?.alias ?? `#${root}`,
+        ))
+      )
+        return
+      const index = state.nodes.length
+      dispatch({
+        type: 'template',
+        draft: draftFromTemplate(template),
+        replaceId: existing?.id,
+        point: {
+          x: x ?? 170 + (index % 3) * (CARD_W + 66),
+          y: y ?? 150 + Math.floor(index / 3) * (CARD_H + 70),
+        },
+      })
+      if (x === undefined) setFitRevision((n) => n + 1)
+    },
+    [templates, state.nodes, serverById, confirmReplaceOrchestration],
   )
   const removeNode = useCallback((id: string) => dispatch({ type: 'remove', id }), [])
   const replaceNode = useCallback(
@@ -146,10 +210,14 @@ export function useChainCanvas({
     dispatch({ type: 'reset' })
     setFitRevision((n) => n + 1)
   }, [])
-  const prefill = useCallback((nodes: CanvasNode[], edges: CanvasEdge[]) => {
-    dispatch({ type: 'prefill', nodes, edges })
-    setFitRevision((n) => n + 1)
-  }, [])
+  const prefill = useCallback(
+    (nodes: CanvasNode[], edges: CanvasEdge[]) => {
+      dispatch({ type: 'prefill', nodes, edges })
+      if (templates.length) dispatch({ type: 'templates-refresh', templates })
+      setFitRevision((n) => n + 1)
+    },
+    [templates],
+  )
   return {
     ...state,
     serverById,
@@ -166,11 +234,7 @@ export function useChainCanvas({
     fitAppliedRevision,
     canAddMore: state.nodes.length < MAX_CANVAS_NODES,
     usedCount: (serverId: number) =>
-      state.nodes.filter(
-        (node) =>
-          node.serverId === serverId ||
-          (node.candidates ?? []).some((c) => c.serverId === serverId),
-      ).length,
+      state.nodes.filter((node) => nodeServerIds(node).includes(serverId)).length,
     outgoingTargetOf: (id: string) => state.edges.find((edge) => edge.from === id)?.to,
     incomingFromOf: (id: string) => state.edges.find((edge) => edge.to === id)?.from,
     roleOf: (id: string) => nodeRole(state.nodes, state.edges, id),
@@ -178,6 +242,8 @@ export function useChainCanvas({
     portRoleOf: (id: string) =>
       analysis.portRoles.get(id) ?? { entry: false, exit: false, editable: false, label: '' },
     paths: analysis.paths,
+    addTemplate,
+    applyOrchestration,
     addNode,
     addVisibleNode,
     removeNode,

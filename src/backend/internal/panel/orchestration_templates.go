@@ -93,6 +93,19 @@ func (s *Server) prepareChainGraphs(ctx context.Context, chainID int64, refs []c
 	if err != nil {
 		return nil, nil, err
 	}
+	// Moving a persisted hop must retain its active candidate and original root.
+	// Only an actual previous hop can establish this identity; create requests
+	// and unrelated graphs cannot adopt arbitrary candidate/root pairs.
+	originalHops := map[int]store.ChainHop{}
+	if len(existing) > 0 {
+		previous, err := s.st.ChainHops(ctx, chainID)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, hop := range previous {
+			originalHops[hop.Seq] = hop
+		}
+	}
 	effective := make(map[int]store.ChainHopGraph, len(existing))
 	hops := make([]store.ChainHop, len(refs))
 	for seq, ref := range refs {
@@ -177,9 +190,18 @@ func (s *Server) prepareChainGraphs(ctx context.Context, chainID int64, refs []c
 		}
 		expected := refs[seq].ServerID
 		// A chain running on a candidate retains its original root.
-		if old := existing[seq]; expected != graphRoot(g) && graphRoot(old) == graphRoot(g) {
-			if _, ok := activeGraphNode(old, expected); ok {
-				expected = graphRoot(old)
+		if expected != graphRoot(g) {
+			for originalSeq, old := range existing {
+				if graphRoot(old) != graphRoot(g) {
+					continue
+				}
+				if originalSeq != seq && originalHops[originalSeq].ServerID != expected {
+					continue
+				}
+				if _, ok := activeGraphNode(old, expected); ok {
+					expected = graphRoot(old)
+					break
+				}
 			}
 		}
 		if err := validateOrchestrationGraph(ctx, s.st, hops, seq, g, expected, effective); err != nil {

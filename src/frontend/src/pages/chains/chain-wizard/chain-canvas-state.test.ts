@@ -224,3 +224,230 @@ describe('explicit canvas connection state', () => {
     expect(empty.internetPos).toEqual(INTERNET_POS)
   })
 })
+
+describe('local orchestration drafts', () => {
+  const draft = {
+    template_id: 7,
+    template_revision: 1,
+    nodes: [
+      { kind: 'server' as const, server_id: 1, is_root: true, address: '', listen_port: 8443 },
+    ],
+    edges: [],
+    overrides: [],
+  }
+  it('adds a template with metadata, retains it on move, and clears it on replacement/removal', () => {
+    const state = canvasReducer(createCanvasState(), {
+      type: 'template',
+      draft,
+      point: { x: 300, y: 200 },
+    })
+    expect(state.nodes[0]).toMatchObject({ serverId: 1, port: '8443', orchestration: draft })
+    const moved = canvasReducer(state, { type: 'move', id: 'n1', point: { x: 50, y: 60 } })
+    expect(moved.nodes[0].orchestration).toEqual(draft)
+    expect(
+      canvasReducer(moved, { type: 'replace', id: 'n1', serverId: 2 }).nodes[0].orchestration,
+    ).toBeUndefined()
+    expect(canvasReducer(moved, { type: 'remove', id: 'n1' }).nodes).toEqual([])
+  })
+  it('records explicit blank/zero main edits and refreshes only inherited fields', () => {
+    let state = canvasReducer(createCanvasState(), {
+      type: 'template',
+      draft,
+      point: { x: 300, y: 200 },
+    })
+    state = canvasReducer(state, { type: 'port', id: 'n1', value: '' })
+    state = canvasReducer(state, { type: 'address', id: 'n1', value: '' })
+    expect(state.nodes[0].orchestration?.overrides).toEqual([
+      { server_id: 1, listen_port: 0, address: '' },
+    ])
+    const template = {
+      ...draft,
+      id: 7,
+      revision: 2,
+      name: 'Updated',
+      usage_count: 0,
+      created_at: '',
+      updated_at: '',
+      nodes: [{ ...draft.nodes[0], listen_port: 9443 }],
+    }
+    state = canvasReducer(state, { type: 'templates-refresh', templates: [template] })
+    expect(state.nodes[0].port).toBe('')
+    expect(state.nodes[0].orchestration?.template_revision).toBe(2)
+    expect(state.nodes[0].orchestration?.overrides).toEqual([
+      { server_id: 1, listen_port: 0, address: '' },
+    ])
+  })
+  it('never silently replaces an existing root on template add', () => {
+    const state = add(createCanvasState(), 1)
+    const result = canvasReducer(state, { type: 'template', draft, point: { x: 300, y: 200 } })
+    expect(result.nodes).toEqual(state.nodes)
+    expect(result.connectionError).toContain('确认')
+  })
+})
+
+describe('candidate conflicts on actual chain paths', () => {
+  const graph = (root: number, candidate: number) => ({
+    nodes: [
+      { kind: 'server' as const, server_id: root, is_root: true },
+      { kind: 'trigger' as const, subject: 'self' as const, action: 'ban_banned' as const },
+      { kind: 'server' as const, server_id: candidate },
+    ],
+    edges: [
+      { from: 0, to: 1 },
+      { from: 1, to: 2 },
+    ],
+  })
+  it('allows candidate reuse on separate branches, rejects a new path containing both groups without losing drafts', () => {
+    let state = add(pair(), 3)
+    state = canvasReducer(state, { type: 'orchestration', id: 'n2', draft: graph(2, 4) })
+    state = canvasReducer(state, { type: 'orchestration', id: 'n3', draft: graph(3, 4) })
+    state = connect(
+      connect(connect(connect(state, 'n1', 'n2'), 'n1', 'n3'), 'n2', INTERNET_NODE_ID),
+      'n3',
+      INTERNET_NODE_ID,
+    )
+    expect(state.connectionError).toBe('')
+    const rejected = connect(state, 'n2', 'n3')
+    expect(rejected.connectionError).toContain('多个跳位')
+    expect(rejected.edges).toEqual(state.edges)
+    expect(rejected.nodes).toEqual(state.nodes)
+  })
+  it('applying an overlapping template is atomic and preserves the existing local graph', () => {
+    const state = connect(connect(pair(), 'n1', 'n2'), 'n2', INTERNET_NODE_ID)
+    const rejected = canvasReducer(state, {
+      type: 'template',
+      replaceId: 'n1',
+      point: { x: 1, y: 1 },
+      draft: graph(1, 2),
+    })
+    expect(rejected.connectionError).toContain('重复备选')
+    expect(rejected.nodes).toEqual(state.nodes)
+    expect(rejected.edges).toEqual(state.edges)
+  })
+})
+
+it('refreshes inherited defaults without turning a runtime allocated port into an explicit override', () => {
+  const draft = {
+    template_id: 7,
+    template_revision: 1,
+    nodes: [
+      { kind: 'server' as const, server_id: 1, is_root: true, address: '', listen_port: 42123 },
+    ],
+    edges: [],
+    overrides: [],
+  }
+  let state = canvasReducer(createCanvasState(), {
+    type: 'prefill',
+    nodes: [
+      {
+        id: 'n1',
+        serverId: 1,
+        x: 1,
+        y: 2,
+        port: '42123',
+        address: '',
+        orchestration: draft,
+        originalSeq: 0,
+      },
+    ],
+    edges: [
+      { from: INGRESS_NODE_ID, to: 'n1' },
+      { from: 'n1', to: INTERNET_NODE_ID },
+    ],
+  })
+  const template = {
+    id: 7,
+    revision: 2,
+    name: 'Updated',
+    usage_count: 1,
+    created_at: '',
+    updated_at: '',
+    nodes: [{ ...draft.nodes[0], listen_port: 0 }],
+    edges: [],
+  }
+  state = canvasReducer(state, { type: 'templates-refresh', templates: [template] })
+  expect(state.nodes[0].port).toBe('')
+  expect(state.nodes[0].orchestration?.overrides).toEqual([])
+  expect(state.nodes[0].parameterOverrides).toBeUndefined()
+  state = canvasReducer(state, {
+    type: 'templates-refresh',
+    templates: [{ ...template, revision: 3, nodes: [{ ...template.nodes[0], listen_port: 9443 }] }],
+  })
+  expect(state.nodes[0].port).toBe('9443')
+  expect(state.nodes[0].originalSeq).toBe(0)
+})
+
+it('retains explicit candidate overrides when intentionally replacing a shared template on the same root', () => {
+  const nodes = [
+    { kind: 'server' as const, server_id: 1, is_root: true, listen_port: 8443 },
+    { kind: 'trigger' as const, subject: 'self' as const, action: 'ban_banned' as const },
+    { kind: 'server' as const, server_id: 2, listen_port: 7000 },
+  ]
+  const edges = [
+    { from: 0, to: 1 },
+    { from: 1, to: 2 },
+  ]
+  const original = {
+    template_id: 7,
+    template_revision: 1,
+    nodes,
+    edges,
+    overrides: [{ server_id: 2, listen_port: 0, address: '' }],
+  }
+  let state = canvasReducer(createCanvasState(), {
+    type: 'template',
+    draft: original,
+    point: { x: 300, y: 200 },
+  })
+  state = canvasReducer(state, {
+    type: 'template',
+    replaceId: 'n1',
+    draft: { template_id: 8, template_revision: 1, nodes, edges, overrides: [] },
+    point: { x: 300, y: 200 },
+  })
+  expect(state.nodes[0].orchestration?.overrides).toEqual([
+    { server_id: 2, listen_port: 0, address: '' },
+  ])
+  expect(state.nodes[0].orchestration?.nodes[2]).toMatchObject({ listen_port: 0, address: '' })
+})
+
+it('rejects a replacement template that omits the active candidate and keeps the original draft', () => {
+  const original = {
+    template_id: 7,
+    template_revision: 1,
+    nodes: [
+      { kind: 'server' as const, server_id: 1, is_root: true },
+      { kind: 'trigger' as const, subject: 'self' as const, action: 'ban_banned' as const },
+      { kind: 'server' as const, server_id: 2 },
+    ],
+    edges: [
+      { from: 0, to: 1 },
+      { from: 1, to: 2 },
+    ],
+    overrides: [],
+  }
+  const state = canvasReducer(createCanvasState(), {
+    type: 'prefill',
+    nodes: [
+      { id: 'n1', serverId: 2, x: 100, y: 100, port: '', address: '', orchestration: original },
+    ],
+    edges: [
+      { from: INGRESS_NODE_ID, to: 'n1' },
+      { from: 'n1', to: INTERNET_NODE_ID },
+    ],
+  })
+  const result = canvasReducer(state, {
+    type: 'template',
+    replaceId: 'n1',
+    point: { x: 100, y: 100 },
+    draft: {
+      template_id: 8,
+      template_revision: 1,
+      nodes: [original.nodes[0]],
+      edges: [],
+      overrides: [],
+    },
+  })
+  expect(result.connectionError).toContain('当前运行')
+  expect(result.nodes).toEqual(state.nodes)
+})

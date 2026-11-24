@@ -130,3 +130,54 @@ it('拖动服务器使用完整画布节点作为预览，光标在卡片中心'
   expect(dragImage!.querySelector('.cw-port-exit')).toBeTruthy()
   expect(anchor).toEqual([144, 112]) // 264×200 卡片 + 12px 端口/阴影留白
 })
+
+it('offers searchable template cards with click and template MIME drag alternatives', async () => {
+  const added: number[] = []
+  await act(async () =>
+    root.render(
+      <CanvasServerPanel
+        servers={[server]}
+        probesByServer={new Map()}
+        probeTitle={null}
+        usedCount={() => 0}
+        canAddMore
+        onAdd={() => {}}
+        emptyCanvas
+        templates={[
+          {
+            id: 8,
+            revision: 1,
+            name: 'HK recovery',
+            usage_count: 2,
+            created_at: '',
+            updated_at: '',
+            nodes: [{ kind: 'server', is_root: true, server_id: 1, listen_port: 0 }],
+            edges: [],
+          },
+        ]}
+        onAddTemplate={(id) => added.push(id)}
+      />,
+    ),
+  )
+  const tab = container.querySelector(
+    '[role="tab"][aria-controls="cw-template-list"]',
+  ) as HTMLElement
+  expect(tab).toBeTruthy()
+  await act(async () => tab.click())
+  expect(container.textContent).toContain('HK recovery')
+  expect(container.textContent).toContain('2 个引用')
+  const add = container.querySelector('[aria-label="添加模板 HK recovery 到画布"]') as HTMLElement
+  await act(async () => add.click())
+  expect(added).toEqual([8])
+  const data: Record<string, string> = {}
+  const drag = new Event('dragstart', { bubbles: true })
+  Object.defineProperty(drag, 'dataTransfer', {
+    value: {
+      setData: (key: string, value: string) => {
+        data[key] = value
+      },
+    },
+  })
+  container.querySelector('.cw-template-item')?.dispatchEvent(drag)
+  expect(data['text/x-lattix-orchestration-template']).toBe('8')
+})

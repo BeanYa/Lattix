@@ -584,3 +584,128 @@ describe('useChainForm 多链提交', () => {
     expect(t.controller.createError).toBe('编辑模式仅支持单条链路，多路径请新建链路')
   })
 })
+
+describe('transactional orchestration payloads', () => {
+  it('serializes independent graphs at each final branch path seq without sharing arrays', async () => {
+    const node = canvasNode('2')
+    node.orchestration = {
+      nodes: [{ kind: 'server', server_id: 2, is_root: true, listen_port: 0, address: '' }],
+      edges: [],
+    }
+    const test = setup(directTopology(), [], [[node], [canvasNode('1'), node]])
+    await test.submit()
+    const first = h.createChain.mock.calls[0][0].orchestrations as Array<Record<string, unknown>>
+    const second = h.createChain.mock.calls[1][0].orchestrations as Array<Record<string, unknown>>
+    expect(first).toEqual([{ ...node.orchestration, seq: 0 }])
+    expect(second).toEqual([{ ...node.orchestration, seq: 1 }])
+    expect(first[0].nodes).not.toBe(second[0].nodes)
+  })
+  it('retains shared binding and explicit zero/empty overrides in creation request', async () => {
+    const node = canvasNode('1')
+    node.orchestration = {
+      template_id: 5,
+      template_revision: 3,
+      nodes: [{ kind: 'server', server_id: 1, is_root: true, address: '', listen_port: 0 }],
+      edges: [],
+      overrides: [{ server_id: 1, address: '', listen_port: 0 }],
+    }
+    const test = setup(directTopology(), [], [[node]])
+    await test.submit()
+    expect(h.createChain.mock.calls[0][0].orchestrations).toEqual([
+      { ...node.orchestration, seq: 0 },
+    ])
+  })
+})
+
+describe('editing graph locations', () => {
+  it('explicitly clears removed original slots even beyond the final path length', async () => {
+    const t = setup(directTopology(), [], [[canvasNode('1')]])
+    const chain = relayChain(hy2ServiceConfig())
+    chain.hops[1].seq = 1
+    chain.hops[1].orchestration = {
+      nodes: [
+        {
+          id: 9,
+          kind: 'server',
+          server_id: 2,
+          is_root: true,
+          listen_port: 4444,
+          priority: 0,
+          active: true,
+          online: true,
+          banned: false,
+        },
+      ],
+      edges: [],
+      root_server_id: 2,
+      active_server_id: 2,
+      triggered: false,
+    }
+    beginEditAct(t, chain)
+    await t.submit()
+    expect(h.editChain.mock.calls[0][0].orchestrations).toEqual([{ seq: 1, nodes: [], edges: [] }])
+  })
+  it('sends a moved graph at its final slot plus a clear at its original slot', async () => {
+    const moved = canvasNode('2')
+    moved.originalSeq = 1
+    moved.orchestration = {
+      nodes: [{ kind: 'server', server_id: 2, is_root: true, listen_port: 0 }],
+      edges: [],
+    }
+    const t = setup(relayTopology('2', '1'), [], [[moved, canvasNode('1')]])
+    const chain = relayChain(hy2ServiceConfig())
+    chain.hops[1].seq = 1
+    chain.hops[1].orchestration = {
+      nodes: [
+        {
+          id: 9,
+          kind: 'server',
+          server_id: 2,
+          is_root: true,
+          listen_port: 0,
+          priority: 0,
+          active: true,
+          online: true,
+          banned: false,
+        },
+      ],
+      edges: [],
+      root_server_id: 2,
+      active_server_id: 2,
+      triggered: false,
+    }
+    beginEditAct(t, chain)
+    await t.submit()
+    expect(h.editChain.mock.calls[0][0].orchestrations).toEqual([
+      { ...moved.orchestration, seq: 0 },
+      { seq: 1, nodes: [], edges: [] },
+    ])
+  })
+  it('validates every path before any request, including candidate overlap on a later branch', async () => {
+    const node = canvasNode('1')
+    node.orchestration = {
+      nodes: [
+        { kind: 'server', server_id: 1, is_root: true },
+        { kind: 'trigger', subject: 'self', action: 'ban_banned' },
+        { kind: 'server', server_id: 2 },
+      ],
+      edges: [
+        { from: 0, to: 1 },
+        { from: 1, to: 2 },
+      ],
+    }
+    const t = setup(
+      directTopology(),
+      [managedServer(1), managedServer(2)],
+      [[node], [node, canvasNode('2')]],
+    )
+    await t.submit()
+    expect(h.createChain).not.toHaveBeenCalled()
+    expect(t.controller.createError).toContain('链路 2')
+  })
+  it('leaves the legacy request shape without an orchestration field', async () => {
+    const t = setup()
+    await t.submit()
+    expect(h.createChain.mock.calls[0][0]).not.toHaveProperty('orchestrations')
+  })
+})

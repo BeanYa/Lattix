@@ -1,4 +1,18 @@
-import type { Chain, PortRange, Server } from '@/lib/types'
+import type {
+  Chain,
+  ChainHop,
+  OrchestrationDraft,
+  OrchestrationTemplate,
+  PortRange,
+  Server,
+} from '@/lib/types'
+
+import {
+  draftFromHop,
+  draftOrchestrationDTO,
+  resolveOrchestrationDraft,
+} from '../orchestration/orchestration-draft'
+import { createEditorState, validateGraph } from '../orchestration/orchestration-graph'
 
 // 链路拓扑画布（两步向导第一步）的纯函数层：节点/边模型、路径推导、有效性校验、
 // 与现有 CreateChainRequest/EditChainRequest 拓扑字段的双向映射、几何常量。
@@ -42,6 +56,11 @@ export interface CanvasNode {
   address: string
   /** 该跳管理员手动挑选的备选服务器序列（按优先级升序）。 */
   candidates?: CanvasNodeCandidate[]
+  orchestration?: OrchestrationDraft
+  /** Persisted location, independent of the current path order. */
+  originalSeq?: number
+  /** Only explicit user edits; runtime allocated ports must never become overrides. */
+  parameterOverrides?: { address?: string; listen_port?: number }
 }
 
 /** from 的出口端口 → to 的入口端口；to 为 INTERNET_NODE_ID 表示最终跳通向 Internet。 */
@@ -861,6 +880,8 @@ export function prefillCanvas(
               : exitPort
             : '',
       address: hop.address ?? '',
+      originalSeq: hop.seq,
+      ...(hop.orchestration?.nodes.length ? { orchestration: draftFromHop(hop) } : {}),
     }
   })
   const edges: CanvasEdge[] = nodes.length ? [{ from: INGRESS_NODE_ID, to: nodes[0].id }] : []
@@ -871,4 +892,124 @@ export function prefillCanvas(
     edges.push({ from: nodes[nodes.length - 1].id, to: INTERNET_NODE_ID })
   }
   return { nodes, edges }
+}
+
+/** Current path DTOs, also used for unsaved chains and draft editor validation. */
+export function canvasPathHops(
+  path: CanvasNode[],
+  servers: Server[],
+  templates: OrchestrationTemplate[] = [],
+): ChainHop[] {
+  return path.map((node, seq) => ({
+    id: 0,
+    seq,
+    server_id: node.serverId,
+    server_alias:
+      servers.find((server) => server.id === node.serverId)?.alias ?? `#${node.serverId}`,
+    role: path.length === 1 || seq === path.length - 1 ? 'exit' : seq === 0 ? 'entry' : 'middle',
+    address: node.address,
+    node_id: 0,
+    status: 'pending',
+    error: '',
+    forward_port: Number(node.port) || 0,
+    portal_port: 0,
+    ...(node.orchestration
+      ? {
+          orchestration: draftOrchestrationDTO(
+            node.orchestration,
+            servers,
+            node.serverId,
+            templates.find((t) => t.id === node.orchestration?.template_id),
+          ),
+        }
+      : {}),
+  }))
+}
+
+export function nodeServerIds(node: CanvasNode, templates: OrchestrationTemplate[] = []): number[] {
+  const graph = node.orchestration
+    ? resolveOrchestrationDraft(
+        node.orchestration,
+        templates.find((t) => t.id === node.orchestration?.template_id),
+      )
+    : undefined
+  return [
+    ...new Set([
+      node.serverId,
+      ...(graph?.nodes
+        .filter((n) => n.kind === 'server')
+        .flatMap((n) => (n.server_id ? [n.server_id] : [])) ?? []),
+      ...(node.candidates ?? []).map((c) => c.serverId),
+    ]),
+  ]
+}
+
+/** Check only complete resulting chains: candidates on separate branches may overlap. */
+export function orchestrationOverlap(nodes: CanvasNode[], edges: CanvasEdge[]): string {
+  const byId = new Map(nodes.map((n) => [n.id, n]))
+  const visit = (id: string, path: CanvasNode[]): string => {
+    if (id === INTERNET_NODE_ID) {
+      const seen = new Set<number>()
+      for (const node of path)
+        for (const serverId of nodeServerIds(node)) {
+          if (seen.has(serverId))
+            return `服务器 #${serverId} 同时出现在同一链路的多个跳位或备选编排中，请移除重复备选或断开连线`
+          seen.add(serverId)
+        }
+      return ''
+    }
+    const node = byId.get(id)
+    if (!node || path.some((n) => n.id === id) || path.length >= MAX_HOPS) return ''
+    for (const edge of edges.filter((e) => e.from === id)) {
+      const error = visit(edge.to, [...path, node])
+      if (error) return error
+    }
+    return ''
+  }
+  for (const edge of edges.filter((e) => e.from === INGRESS_NODE_ID)) {
+    const error = visit(edge.to, [])
+    if (error) return error
+  }
+  return ''
+}
+
+/** Validate every final hop role, before any request is sent. */
+export function validatePathOrchestrations(
+  paths: CanvasNode[][],
+  servers: Server[],
+  templates: OrchestrationTemplate[] = [],
+): string[] {
+  const serverMap = new Map(servers.map((s) => [s.id, s]))
+  const errors: string[] = []
+  paths.forEach((path, pathIndex) =>
+    path.forEach((node, seq) => {
+      const draft = node.orchestration
+      if (!draft) return
+      const template = templates.find((t) => t.id === draft.template_id)
+      const graph = resolveOrchestrationDraft(draft, template)
+      const blockedServerIds = new Set(
+        path.filter((n) => n.id !== node.id).flatMap((n) => nodeServerIds(n, templates)),
+      )
+      const state = createEditorState({
+        chainId: 0,
+        seq,
+        activeServerId: node.serverId,
+        orchestration: draftOrchestrationDTO({ ...draft, ...graph }, servers, node.serverId),
+      })
+      for (const error of validateGraph(state, {
+        validateRootParameters: true,
+        seq,
+        totalHops: path.length,
+        hopRole:
+          path.length === 1 || seq === path.length - 1 ? 'exit' : seq === 0 ? 'entry' : 'middle',
+        primaryIsExternal: serverMap.get(state.rootServerId)
+          ? isExternalServer(serverMap.get(state.rootServerId)!)
+          : undefined,
+        serverMap,
+        blockedServerIds,
+      }))
+        errors.push(`链路 ${pathIndex + 1} 第 ${seq + 1} 跳：${error}`)
+    }),
+  )
+  return errors
 }
