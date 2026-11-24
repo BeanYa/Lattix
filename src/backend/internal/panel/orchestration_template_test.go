@@ -46,6 +46,9 @@ func callTemplateHandler(t *testing.T, handler http.HandlerFunc, body any) handl
 }
 func saveTemplateForTest(t *testing.T, s *Server, req templateRequest) store.OrchestrationTemplate {
 	t.Helper()
+	if req.ID != 0 {
+		req.PreviewProof = previewProofForTest(t, s, req)
+	}
 	env := callTemplateHandler(t, s.handleSaveOrchestrationTemplate, req)
 	if env.Code != "OK" {
 		t.Fatalf("save template: %+v", env)
@@ -195,7 +198,9 @@ func TestTemplatePropagationAndDurableWorker(t *testing.T) {
 	if ga.SyncPending || ga.Binding.Revision != tpl.Revision {
 		t.Fatalf("candidate-only deployment: %+v", ga)
 	}
-	if env := callTemplateHandler(t, s.handleDeleteOrchestrationTemplate, map[string]any{"id": tpl.ID}); env.Code != "OK" {
+	deletion := map[string]any{"id": tpl.ID, "revision": tpl.Revision, "operation": "delete"}
+	deletion["preview_proof"] = previewProofForTest(t, s, deletion)
+	if env := callTemplateHandler(t, s.handleDeleteOrchestrationTemplate, deletion); env.Code != "OK" {
 		t.Fatalf("delete: %+v", env)
 	}
 	gb, _ = st.ChainHopGraph(ctx, b, 0)

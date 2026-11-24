@@ -628,6 +628,7 @@ export interface ChainOrchestration {
   template_id?: number
   template_name?: string
   template_revision?: number
+  template_source_revision?: number
   overrides?: OrchestrationParamOverride[]
   template_sync_pending?: boolean
   root_server_id: number
@@ -681,10 +682,23 @@ export interface OrchestrationTemplateImpact {
   redeploy: boolean
 }
 
+export interface OrchestrationTemplatePreview {
+  revision: number
+  preview_proof: string
+  affected_chains: OrchestrationTemplateImpact[]
+}
+
+export interface OrchestrationTemplateDeleteRequest {
+  id: number
+  revision: number
+  preview_proof: string
+}
+
 export interface OrchestrationTemplateSaveRequest extends OrchestrationGraph {
   id?: number
   name: string
   revision?: number
+  preview_proof?: string
 }
 
 export interface HopOrchestrationSaveRequest {

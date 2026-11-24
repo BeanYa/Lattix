@@ -954,6 +954,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description Preview a save, or pass operation=delete and id to preview detach without update validation. Returns a proof of the revision and affected hop operations. */
         post: operations["orchestrationTemplatePreview"];
         delete?: never;
         options?: never;
@@ -970,6 +971,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description Existing templates require revision and preview_proof from a successful save preview. Missing or changed proof returns CONFLICT before mutation; re-preview and explicitly confirm again. */
         post: operations["orchestrationTemplateSave"];
         delete?: never;
         options?: never;
@@ -986,6 +988,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description Requires the revision and preview_proof from a delete preview. Detaches materialized graphs even if linked chains are applying or the source graph is invalid. A changed revision or affected hop set returns CONFLICT before mutation. */
         post: operations["orchestrationTemplateDelete"];
         delete?: never;
         options?: never;
@@ -2300,14 +2303,39 @@ export interface components {
         OrchestrationDraft: components["schemas"]["OrchestrationGraph"] & {
             seq: number;
             template_id?: number;
+            /** @description Source revision of the submitted graph. For hop DTOs use template_source_revision rather than the last acknowledged template_revision. */
             template_revision?: number;
             overrides?: components["schemas"]["OrchestrationParamOverride"][];
+        };
+        /** @description Flattened into each linked hop orchestration DTO. Source and acknowledged revisions differ while synchronization is pending. */
+        OrchestrationBinding: {
+            template_id: number;
+            template_name: string;
+            /** @description Last acknowledged template revision. */
+            template_revision: number;
+            /** @description Revision of the materialized graph; pending target revision or acknowledged revision when settled. */
+            template_source_revision: number;
+            overrides: components["schemas"]["OrchestrationParamOverride"][];
+            template_sync_pending?: boolean;
+        };
+        OrchestrationTemplatePreviewRequest: components["schemas"]["OrchestrationTemplateSaveRequest"] | {
+            id: number;
+            /** @enum {string} */
+            operation: "delete";
+        };
+        OrchestrationTemplatePreview: {
+            revision: number;
+            /** @description Opaque concurrency checksum of the requested operation and current impacts. Not an authorization token. */
+            preview_proof: string;
+            affected_chains: components["schemas"]["OrchestrationTemplateImpact"][];
         };
         OrchestrationTemplateSaveRequest: components["schemas"]["OrchestrationGraph"] & {
             id?: number;
             name: string;
             /** @description Required when editing an existing template. */
             revision?: number;
+            /** @description Required for existing-template save; obtain from save preview. Omit for create and preview. */
+            preview_proof?: string;
         };
         OrchestrationTemplate: components["schemas"]["OrchestrationTemplateSaveRequest"] & {
             id: number;
@@ -2321,6 +2349,8 @@ export interface components {
         };
         OrchestrationTemplateDeleteRequest: {
             id: number;
+            revision: number;
+            preview_proof: string;
         };
         OrchestrationTemplateImpact: {
             chain_id: number;
@@ -3446,7 +3476,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["OrchestrationTemplateSaveRequest"];
+                "application/json": components["schemas"]["OrchestrationTemplatePreviewRequest"];
             };
         };
         responses: {
@@ -3457,9 +3487,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RPCEnvelope"] & {
-                        data?: {
-                            affected_chains: components["schemas"]["OrchestrationTemplateImpact"][];
-                        };
+                        data?: components["schemas"]["OrchestrationTemplatePreview"];
                     };
                 };
             };

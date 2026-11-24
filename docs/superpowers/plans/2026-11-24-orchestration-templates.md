@@ -38,11 +38,11 @@
 - `OrchestrationTemplate extends OrchestrationGraph`: `{id:number;name:string;revision:number;usage_count:number;created_at:string;updated_at:string}`.
 - `OrchestrationTemplateImpact`: `{chain_id:number;chain_name:string;seq:number;redeploy:boolean}`.
 - `CreateChainRequest` and `EditChainRequest`: optional `orchestrations: Array<OrchestrationDraft & {seq:number}>`.
-- `ChainOrchestration`: optional `template_id`, `template_name`, `template_revision`, `overrides`, `template_sync_pending` in addition to existing runtime fields.
+- `ChainOrchestration`: optional `template_id`, `template_name`, acknowledged `template_revision`, materialized `template_source_revision`, `overrides`, `template_sync_pending` in addition to existing runtime fields.
 - `api.orchestrationTemplates(options?) -> Promise<OrchestrationTemplate[]>`: GET `/api/chain/orchestration-template/list`.
-- `api.previewOrchestrationTemplate(body) -> Promise<{affected_chains:OrchestrationTemplateImpact[]}>`: POST `/api/chain/orchestration-template/preview`.
-- `api.saveOrchestrationTemplate(body) -> Promise<OrchestrationTemplate>`: POST `/api/chain/orchestration-template/save`. Body is graph + `{id?:number;name:string;revision?:number}`. Require current revision for edits, return conflict for stale saves.
-- `api.deleteOrchestrationTemplate(id:number) -> Promise<void>`: POST `/api/chain/orchestration-template/delete` with `{id}`. Atomically materialize bound instances before deletion; preview usage in UI first.
+- `api.previewOrchestrationTemplate(body) -> Promise<{revision:number;preview_proof:string;affected_chains:OrchestrationTemplateImpact[]}>`: POST `/api/chain/orchestration-template/preview`.
+- `api.saveOrchestrationTemplate(body) -> Promise<OrchestrationTemplate>`: POST `/api/chain/orchestration-template/save`. Body is graph + `{id?:number;name:string;revision?:number;preview_proof?:string}`. Existing-template saves require both the frozen edit revision and a save-preview proof; return conflict before mutation if either is stale or missing.
+- `api.deleteOrchestrationTemplate({id,revision,preview_proof}) -> Promise<void>`: POST `/api/chain/orchestration-template/delete` with the revision and proof returned by `preview({id,operation:"delete"})`. Atomically detach existing materialized graphs; deletion preview bypasses graph/update readiness validation.
 
 **Implementation:**
 - [ ] Write focused failing store/handler tests for shared propagation, explicit port0/address"" overrides, detach then edit, stale revision, template deletion preserving graph, and rejection without partial writes.

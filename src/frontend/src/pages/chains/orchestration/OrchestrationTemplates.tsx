@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CatalogProbeRow, OrchestrationTemplate, Server } from '@/lib/types'
 import { api } from '@/lib/api'
+import { RequestError } from '@/lib/requester'
 import { Button } from '@/components/ui/button'
 import { OrchestrationTemplateEditor } from './OrchestrationTemplateEditor'
 import './orchestration.css'
@@ -21,6 +22,8 @@ export function OrchestrationTemplates({
   const [editor, setEditor] = useState<{ template?: OrchestrationTemplate } | null>(null)
   const [deleting, setDeleting] = useState<{
     template: OrchestrationTemplate
+    revision: number
+    proof: string
     impacts: { chain_id: number; chain_name: string; seq: number }[]
   } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -58,13 +61,16 @@ export function OrchestrationTemplates({
     setBusy(true)
     setError('')
     try {
-      const chains = await api.chains()
-      const impacts = chains.flatMap((chain) =>
-        chain.hops
-          .filter((hop) => hop.orchestration?.template_id === template.id)
-          .map((hop) => ({ chain_id: chain.id, chain_name: chain.name, seq: hop.seq })),
-      )
-      setDeleting({ template, impacts })
+      const preview = await api.previewOrchestrationTemplate({
+        id: template.id,
+        operation: 'delete',
+      })
+      setDeleting({
+        template,
+        revision: preview.revision,
+        proof: preview.preview_proof,
+        impacts: preview.affected_chains,
+      })
     } catch (err) {
       setError(err instanceof Error ? err.message : '无法获取关联链路，请刷新后重试')
     } finally {
@@ -76,10 +82,32 @@ export function OrchestrationTemplates({
     setBusy(true)
     setError('')
     try {
-      await api.deleteOrchestrationTemplate(deleting.template.id)
+      await api.deleteOrchestrationTemplate({
+        id: deleting.template.id,
+        revision: deleting.revision,
+        preview_proof: deleting.proof,
+      })
       setDeleting(null)
       await load()
     } catch (err) {
+      if (err instanceof RequestError && err.code === 'CONFLICT') {
+        try {
+          const preview = await api.previewOrchestrationTemplate({
+            id: deleting.template.id,
+            operation: 'delete',
+          })
+          setDeleting({
+            ...deleting,
+            revision: preview.revision,
+            proof: preview.preview_proof,
+            impacts: preview.affected_chains,
+          })
+          setError('分离范围或模板版本已变化，请检查更新后的关联跳位并再次确认。')
+          return
+        } catch {
+          setDeleting(null)
+        }
+      }
       setError(err instanceof Error ? err.message : '删除失败，请刷新后重试')
     } finally {
       setBusy(false)
@@ -96,7 +124,7 @@ export function OrchestrationTemplates({
           新建模板
         </Button>
       </div>
-      {error ? (
+      {error && !deleting ? (
         <p className="orch-library-error" role="alert">
           {error}{' '}
           <Button size="sm" variant="outline" onClick={() => void load()}>
@@ -172,6 +200,7 @@ export function OrchestrationTemplates({
       {deleting ? (
         <div className="orch-library-confirm" role="alertdialog" aria-label="确认删除模板">
           <h3>删除「{deleting.template.name}」？</h3>
+          {error ? <p role="alert">{error}</p> : null}
           <p>
             以下 {deleting.impacts.length}{' '}
             个关联跳位将先分离为独立副本，保留当前完整编排与实例参数：

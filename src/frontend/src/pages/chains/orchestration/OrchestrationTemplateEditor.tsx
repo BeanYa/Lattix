@@ -9,6 +9,7 @@ import type {
   Server,
 } from '@/lib/types'
 import { api } from '@/lib/api'
+import { RequestError } from '@/lib/requester'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { OrchestrationEditorCore } from './OrchestrationEditor'
@@ -20,7 +21,7 @@ import {
 } from './orchestration-draft'
 
 export function OrchestrationTemplateEditor({
-  template,
+  template: templateProp,
   servers,
   probesByServer,
   probeTitle,
@@ -34,6 +35,8 @@ export function OrchestrationTemplateEditor({
   onClose: () => void
   onSaved: (template: OrchestrationTemplate) => void
 }) {
+  // Freeze graph, name and CAS revision together for this editor session.
+  const [template] = useState(() => (templateProp ? structuredClone(templateProp) : undefined))
   const [name, setName] = useState(template?.name ?? '')
   const [saveAsNew, setSaveAsNew] = useState(false)
   const [pending, setPending] = useState<{
@@ -88,6 +91,20 @@ export function OrchestrationTemplateEditor({
     try {
       onSaved(await api.saveOrchestrationTemplate(pending.body))
     } catch (err) {
+      if (err instanceof RequestError && err.code === 'CONFLICT') {
+        try {
+          const refreshed = await api.previewOrchestrationTemplate(pending.body)
+          setPending({
+            body: { ...pending.body, preview_proof: refreshed.preview_proof },
+            impacts: refreshed.affected_chains,
+          })
+          setError('影响范围已变化，请检查更新后的关联跳位并再次确认。')
+          return
+        } catch {
+          // Keep the isolated structural edit and its original CAS revision.
+          setPending(null)
+        }
+      }
       setError(
         err instanceof Error ? err.message : '保存失败，请重试；若模板版本已变化，请关闭后重新打开',
       )
@@ -180,7 +197,10 @@ export function OrchestrationTemplateEditor({
           }
           if (body.id) {
             const preview = await api.previewOrchestrationTemplate(body)
-            setPending({ body, impacts: preview.affected_chains })
+            setPending({
+              body: { ...body, preview_proof: preview.preview_proof },
+              impacts: preview.affected_chains,
+            })
           } else onSaved(await api.saveOrchestrationTemplate(body))
         },
       }}

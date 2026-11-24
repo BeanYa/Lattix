@@ -120,7 +120,11 @@ it('keeps a shared save revision through a delayed older catalog response, reatt
         respond = resolve
       }),
   )
-  vi.spyOn(api, 'previewOrchestrationTemplate').mockResolvedValue({ affected_chains: [] })
+  vi.spyOn(api, 'previewOrchestrationTemplate').mockResolvedValue({
+    affected_chains: [],
+    preview_proof: 'proof',
+    revision: 1,
+  })
   vi.spyOn(api, 'saveOrchestrationTemplate').mockResolvedValue(saved)
   await act(async () => button('编排模板').click())
   const add = () =>

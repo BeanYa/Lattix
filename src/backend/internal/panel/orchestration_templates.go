@@ -2,6 +2,7 @@ package panel
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,9 +23,11 @@ type orchestrationDraft struct {
 }
 type templateRequest struct {
 	store.OrchestrationGraph
-	ID       int64  `json:"id,omitempty"`
-	Revision int    `json:"revision,omitempty"`
-	Name     string `json:"name"`
+	ID           int64  `json:"id,omitempty"`
+	Revision     int    `json:"revision,omitempty"`
+	Name         string `json:"name"`
+	Operation    string `json:"operation,omitempty"`
+	PreviewProof string `json:"preview_proof,omitempty"`
 }
 type orchestrationImpact struct {
 	ChainID   int64  `json:"chain_id"`
@@ -413,6 +416,43 @@ func (s *Server) handleListOrchestrationTemplates(w http.ResponseWriter, r *http
 	}
 	writeJSON(w, http.StatusOK, templates)
 }
+
+// The proof is a deterministic concurrency checksum, not an authorization token.
+// The existing authenticated RPC and idempotency middleware still own authorization.
+func templatePreviewProof(t store.OrchestrationTemplate, operation string, impacts []orchestrationImpact) string {
+	raw, _ := json.Marshal(struct {
+		ID        int64
+		Revision  int
+		Name      string
+		Graph     store.OrchestrationGraph
+		Operation string
+		Impacts   []orchestrationImpact
+	}{t.ID, t.Revision, t.Name, t.OrchestrationGraph, operation, impacts})
+	return fmt.Sprintf("%x", sha256.Sum256(raw))
+}
+
+// Deletion only detaches the already materialized graphs. It deliberately does
+// not run update validation: applying chains and invalid source graphs may detach.
+func (s *Server) templateDeletePlan(ctx context.Context, id int64) (store.OrchestrationTemplate, []store.TemplateUse, []orchestrationImpact, error) {
+	t, err := s.st.OrchestrationTemplate(ctx, id)
+	if err != nil {
+		return t, nil, nil, err
+	}
+	uses, err := s.st.TemplateUses(ctx, id)
+	if err != nil {
+		return t, nil, nil, err
+	}
+	impacts := []orchestrationImpact{}
+	for _, use := range uses {
+		chain, err := s.st.ChainByID(ctx, use.ChainID)
+		if err != nil {
+			return t, nil, nil, err
+		}
+		impacts = append(impacts, orchestrationImpact{ChainID: use.ChainID, ChainName: chain.Name, Seq: use.Seq})
+	}
+	return t, uses, impacts, nil
+}
+
 func (s *Server) handlePreviewOrchestrationTemplate(w http.ResponseWriter, r *http.Request) {
 	s.templateChange(w, r, true)
 }
@@ -427,13 +467,34 @@ func (s *Server) templateChange(w http.ResponseWriter, r *http.Request, preview 
 	}
 	s.orchestrationMu.Lock()
 	defer s.orchestrationMu.Unlock()
+	if req.Operation != "" && req.Operation != "delete" {
+		writeError(w, http.StatusBadRequest, "invalid operation")
+		return
+	}
+	if req.Operation == "delete" {
+		if !preview {
+			writeError(w, http.StatusBadRequest, "use delete endpoint")
+			return
+		}
+		t, _, impacts, err := s.templateDeletePlan(r.Context(), req.ID)
+		if err != nil {
+			templateError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"revision": t.Revision, "affected_chains": impacts, "preview_proof": templatePreviewProof(t, "delete", impacts)})
+		return
+	}
 	t, updates, impacts, err := s.templatePlan(r.Context(), req)
 	if err != nil {
 		templateError(w, err)
 		return
 	}
 	if preview {
-		writeJSON(w, http.StatusOK, map[string]any{"affected_chains": impacts})
+		writeJSON(w, http.StatusOK, map[string]any{"revision": t.Revision, "affected_chains": impacts, "preview_proof": templatePreviewProof(t, "save", impacts)})
+		return
+	}
+	if t.ID != 0 && req.PreviewProof != templatePreviewProof(t, "save", impacts) {
+		writeError(w, http.StatusConflict, "模板影响已变化或尚未确认，请重新预览受影响链路后确认")
 		return
 	}
 	t, err = s.st.SaveOrchestrationTemplate(r.Context(), t, updates)
@@ -450,16 +511,23 @@ func (s *Server) templateChange(w http.ResponseWriter, r *http.Request, preview 
 	writeJSON(w, http.StatusOK, t)
 }
 func (s *Server) handleDeleteOrchestrationTemplate(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ID int64 `json:"id"`
-	}
+	var req templateRequest
 	if err := readJSON(r, &req); err != nil || req.ID <= 0 {
 		writeProtocolError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	s.orchestrationMu.Lock()
 	defer s.orchestrationMu.Unlock()
-	if err := s.st.DeleteOrchestrationTemplate(r.Context(), req.ID); err != nil {
+	t, uses, impacts, err := s.templateDeletePlan(r.Context(), req.ID)
+	if err != nil {
+		templateError(w, err)
+		return
+	}
+	if req.Revision != t.Revision || req.PreviewProof != templatePreviewProof(t, "delete", impacts) {
+		writeError(w, http.StatusConflict, "模板或分离范围已变化或尚未确认，请重新预览关联链路后确认")
+		return
+	}
+	if err := s.st.DeleteOrchestrationTemplate(r.Context(), req.ID, store.TemplateDeleteExpectation{Revision: t.Revision, Uses: uses}); err != nil {
 		templateError(w, err)
 		return
 	}

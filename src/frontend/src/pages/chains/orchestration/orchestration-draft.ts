@@ -61,7 +61,7 @@ export function draftFromHop(hop: ChainHop): OrchestrationDraft {
     ...(graph.template_id
       ? {
           template_id: graph.template_id,
-          template_revision: graph.template_revision,
+          template_revision: graph.template_source_revision ?? graph.template_revision,
           overrides: clone(graph.overrides ?? []),
         }
       : {}),
@@ -150,6 +150,7 @@ export function draftOrchestrationDTO(
     ...graph,
     template_id: draft.template_id,
     template_revision: current.template_revision,
+    template_source_revision: current.template_revision,
     overrides: clone(draft.overrides ?? []),
     root_server_id: root,
     active_server_id: activeServerId,

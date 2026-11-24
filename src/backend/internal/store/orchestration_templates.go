@@ -44,10 +44,11 @@ type ParamOverride struct {
 	ListenPort *int    `json:"listen_port,omitempty"`
 }
 type OrchestrationBinding struct {
-	TemplateID   int64           `json:"template_id"`
-	TemplateName string          `json:"template_name"`
-	Revision     int             `json:"template_revision"`
-	Overrides    []ParamOverride `json:"overrides"`
+	TemplateID     int64           `json:"template_id"`
+	TemplateName   string          `json:"template_name"`
+	Revision       int             `json:"template_revision"`
+	SourceRevision int             `json:"template_source_revision"`
+	Overrides      []ParamOverride `json:"overrides"`
 }
 type HopGraphWrite struct {
 	Graph   ChainHopGraph
@@ -129,7 +130,7 @@ func writeHopGraphsTx(ctx context.Context, tx *sql.Tx, chainID int64, writes []H
 	return nil
 }
 func (s *Store) loadOrchestrationBindings(ctx context.Context, chainID int64, graphs map[int]ChainHopGraph) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT g.seq,COALESCE(t.id,0),COALESCE(t.name,''),COALESCE(b.template_revision,0),COALESCE(b.overrides,'[]'),p.seq IS NOT NULL
+	rows, err := s.db.QueryContext(ctx, `SELECT g.seq,COALESCE(t.id,0),COALESCE(t.name,''),COALESCE(b.template_revision,0),COALESCE(b.overrides,'[]'),p.seq IS NOT NULL,COALESCE(p.target_revision,b.template_revision,0)
  FROM chain_hop_graphs g LEFT JOIN orchestration_bindings b USING(chain_id,seq)
  LEFT JOIN orchestration_templates t ON t.id=b.template_id LEFT JOIN orchestration_sync p USING(chain_id,seq) WHERE g.chain_id=?`, chainID)
 	if err != nil {
@@ -141,7 +142,7 @@ func (s *Store) loadOrchestrationBindings(ctx context.Context, chainID int64, gr
 		var b OrchestrationBinding
 		var raw string
 		var pending bool
-		if err := rows.Scan(&seq, &b.TemplateID, &b.TemplateName, &b.Revision, &raw, &pending); err != nil {
+		if err := rows.Scan(&seq, &b.TemplateID, &b.TemplateName, &b.Revision, &raw, &pending, &b.SourceRevision); err != nil {
 			return err
 		}
 		g, ok := graphs[seq]
@@ -244,12 +245,34 @@ func (s *Store) SaveOrchestrationTemplate(ctx context.Context, t OrchestrationTe
 	}
 	return s.OrchestrationTemplate(ctx, t.ID)
 }
-func (s *Store) DeleteOrchestrationTemplate(ctx context.Context, id int64) error {
+
+type TemplateDeleteExpectation struct {
+	Revision int
+	Uses     []TemplateUse
+}
+
+func (s *Store) DeleteOrchestrationTemplate(ctx context.Context, id int64, expected TemplateDeleteExpectation) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	var revision, count int
+	if err := tx.QueryRowContext(ctx, `SELECT revision,(SELECT COUNT(*) FROM orchestration_bindings WHERE template_id=?) FROM orchestration_templates WHERE id=?`, id, id).Scan(&revision, &count); err != nil {
+		return err
+	}
+	if revision != expected.Revision || count != len(expected.Uses) {
+		return ErrTemplateConflict
+	}
+	for _, use := range expected.Uses {
+		var present bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM orchestration_bindings WHERE template_id=? AND chain_id=? AND seq=?)`, id, use.ChainID, use.Seq).Scan(&present); err != nil {
+			return err
+		}
+		if !present {
+			return ErrTemplateConflict
+		}
+	}
 	// Each runtime graph already contains its resolved values.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM orchestration_bindings WHERE template_id=?`, id); err != nil {
 		return err

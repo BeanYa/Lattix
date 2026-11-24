@@ -3,10 +3,11 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { api } from '@/lib/api'
+import { RequestError } from '@/lib/requester'
 import type { Chain, ChainHop, OrchestrationTemplate, Server } from '@/lib/types'
 import { OrchestrationTemplateEditor } from './OrchestrationTemplateEditor'
 import { DraftOrchestrationEditor } from './DraftOrchestrationEditor'
-import { draftOrchestrationDTO } from './orchestration-draft'
+import { draftFromHop, draftOrchestrationDTO } from './orchestration-draft'
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 const server = {
   id: 1,
@@ -240,6 +241,8 @@ it('previews concrete shared impacts before saving, keeps errors visible and nev
     updated_at: '',
   } as const
   const preview = vi.spyOn(api, 'previewOrchestrationTemplate').mockResolvedValue({
+    preview_proof: 'proof',
+    revision: 3,
     affected_chains: [{ chain_id: 9, chain_name: 'Live Chain', seq: 1, redeploy: true }],
   })
   const save = vi
@@ -559,4 +562,182 @@ it('refreshes an open shared canvas and its validation immediately while retaini
     dto.nodes.filter((node) => node.kind === 'server').map((node) => node.listen_port),
   ).toEqual([9443, 0, 7443])
   expect(dto.edges).toEqual(valid.edges)
+})
+
+it('freezes the structural edit revision when a v2 catalog arrives during v1 editing', async () => {
+  const v1: OrchestrationTemplate = {
+    id: 7,
+    name: 'Shared',
+    revision: 1,
+    usage_count: 1,
+    created_at: '',
+    updated_at: '',
+    nodes: [{ kind: 'server', server_id: 1, is_root: true, listen_port: 8443 }],
+    edges: [],
+  }
+  const preview = vi
+    .spyOn(api, 'previewOrchestrationTemplate')
+    .mockRejectedValue(new Error('模板或关联链路已变化，请刷新后重试'))
+  const render = (template: OrchestrationTemplate) =>
+    root.render(
+      <OrchestrationTemplateEditor
+        template={template}
+        servers={[server]}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+  await act(async () => render(v1))
+  const name = document.body.querySelector<HTMLInputElement>('[aria-label="模板名称"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, 'My edit')
+    name.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await act(async () =>
+    render({
+      ...v1,
+      revision: 2,
+      name: 'Other editor',
+      nodes: [...v1.nodes, { kind: 'server', server_id: 2, listen_port: 7000 }],
+    }),
+  )
+  await act(async () => button('保存模板').click())
+  expect(preview).toHaveBeenCalledWith(
+    expect.objectContaining({
+      revision: 1,
+      name: 'My edit',
+      nodes: [expect.objectContaining({ server_id: 1 })],
+    }),
+  )
+  expect(document.body.textContent).toContain('模板或关联链路已变化')
+  expect(name.value).toBe('My edit')
+  expect(document.body.querySelectorAll('.cw-node')).toHaveLength(1)
+})
+
+it('uses pending v2 materialization with ack v1 and stale catalog through apply, reset gating and detach', async () => {
+  const v1: OrchestrationTemplate = {
+    id: 7,
+    name: 'Shared',
+    revision: 1,
+    usage_count: 1,
+    created_at: '',
+    updated_at: '',
+    nodes: [{ kind: 'server', server_id: 1, is_root: true, listen_port: 8443 }],
+    edges: [],
+  }
+  const v2 = {
+    ...v1,
+    revision: 2,
+    nodes: [
+      { ...v1.nodes[0], listen_port: 9443 },
+      { kind: 'trigger' as const, subject: 'self' as const, action: 'ban_banned' as const },
+      { kind: 'server' as const, server_id: 2, listen_port: 7000 },
+    ],
+    edges: [
+      { from: 0, to: 1 },
+      { from: 1, to: 2 },
+    ],
+  }
+  const materialized = draftOrchestrationDTO(
+    {
+      ...v2,
+      template_id: 7,
+      template_revision: 2,
+      overrides: [{ server_id: 1, address: '', listen_port: 0 }],
+    },
+    [server],
+    1,
+  )
+  const hop = {
+    seq: 0,
+    server_id: 1,
+    role: 'entry',
+    forward_port: 0,
+    address: '',
+    orchestration: {
+      ...materialized,
+      template_revision: 1,
+      template_source_revision: 2,
+      template_sync_pending: true,
+    },
+  } as ChainHop
+  const apply = vi.fn()
+  await act(async () =>
+    root.render(
+      <DraftOrchestrationEditor
+        chain={{ id: 9, name: 'Pending', hops: [hop] } as Chain}
+        hop={hop}
+        templates={[v1]}
+        servers={[server, { ...server, id: 2, alias: 'Backup' }]}
+        onClose={() => {}}
+        onApply={apply}
+      />,
+    ),
+  )
+  expect(draftFromHop(hop).template_revision).toBe(2)
+  expect(button('恢复端口继承').disabled).toBe(true)
+  expect(button('恢复地址继承').disabled).toBe(true)
+  expect(document.body.querySelectorAll('.cw-node')).toHaveLength(2)
+  await act(async () => button('应用编排').click())
+  expect(apply.mock.lastCall?.[0]).toMatchObject({
+    template_revision: 2,
+    overrides: [{ server_id: 1, address: '', listen_port: 0 }],
+  })
+  await act(async () => button('另存为独立副本').click())
+  await act(async () => button('应用编排').click())
+  expect(apply.mock.lastCall?.[0].template_id).toBeUndefined()
+  expect(apply.mock.lastCall?.[0].nodes).toHaveLength(3)
+  expect(apply.mock.lastCall?.[0].nodes[0]).toMatchObject({ address: '', listen_port: 0 })
+  expect(apply.mock.lastCall?.[0].nodes[2].listen_port).toBe(7000)
+})
+
+it('refreshes changed save impacts while retaining the edited graph and requires confirmation again', async () => {
+  const template: OrchestrationTemplate = {
+    id: 7,
+    name: 'Shared',
+    revision: 1,
+    usage_count: 0,
+    created_at: '',
+    updated_at: '',
+    nodes: [{ kind: 'server', server_id: 1, is_root: true, listen_port: 8443 }],
+    edges: [],
+  }
+  const preview = vi
+    .spyOn(api, 'previewOrchestrationTemplate')
+    .mockResolvedValueOnce({ revision: 1, preview_proof: 'old', affected_chains: [] })
+    .mockResolvedValue({
+      revision: 1,
+      preview_proof: 'new',
+      affected_chains: [{ chain_id: 22, chain_name: 'New binding', seq: 0, redeploy: true }],
+    })
+  const save = vi
+    .spyOn(api, 'saveOrchestrationTemplate')
+    .mockRejectedValueOnce(
+      new RequestError({ kind: 'business', code: 'CONFLICT', message: '范围已变化' }),
+    )
+    .mockResolvedValue(template)
+  await act(async () =>
+    root.render(
+      <OrchestrationTemplateEditor
+        template={template}
+        servers={[server]}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    ),
+  )
+  await act(async () => button('保存模板').click())
+  await act(async () => button('确认影响并保存').click())
+  expect(preview).toHaveBeenCalledTimes(2)
+  expect(save).toHaveBeenCalledTimes(1)
+  expect(document.body.querySelector('[role="alertdialog"]')?.textContent).toContain('New binding')
+  expect(document.body.textContent).toContain('再次确认')
+  await act(async () => button('确认影响并保存').click())
+  expect(save).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      revision: 1,
+      preview_proof: 'new',
+      nodes: [expect.objectContaining({ listen_port: 8443 })],
+    }),
+  )
 })

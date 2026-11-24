@@ -866,6 +866,18 @@ func (s *Server) handleEditChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "链路不存在")
 		return
 	}
+	// Do not supersede a template revision without its durable listener gate.
+	graphs, err := s.st.ChainHopGraphs(r.Context(), chain.ID)
+	if err != nil {
+		templateError(w, err)
+		return
+	}
+	for _, graph := range graphs {
+		if graph.SyncPending {
+			writeError(w, http.StatusConflict, "模板同步尚未完成；请等待 Agent 恢复或重试链路部署，确认同步成功后再编辑链路")
+			return
+		}
+	}
 	// 部署失败（failed/active_failed/exchange_failed）的链允许编辑后重新编排（§21）；
 	// 等待 Agent（waiting_for_agent）的链允许再编辑取代等待中的 revision——该状态尚未下发任何
 	// 命令（编排暂停），废弃安全（§21.1）；applying/active_unconfirmed 仍拒绝并发编辑。

@@ -19,7 +19,8 @@ import type {
   EditChainRequest,
   HopOrchestrationSaveRequest,
   OrchestrationTemplate,
-  OrchestrationTemplateImpact,
+  OrchestrationTemplatePreview,
+  OrchestrationTemplateDeleteRequest,
   OrchestrationTemplateSaveRequest,
   ExternalChain,
   ExternalExit,
@@ -320,15 +321,14 @@ export const api = {
       undefined,
       options,
     ),
-  previewOrchestrationTemplate: (body: OrchestrationTemplateSaveRequest) =>
-    requester.post<{ affected_chains: OrchestrationTemplateImpact[] }>(
-      '/api/chain/orchestration-template/preview',
-      body,
-    ),
+  previewOrchestrationTemplate: (
+    body: OrchestrationTemplateSaveRequest | { id: number; operation: 'delete' },
+  ) =>
+    requester.post<OrchestrationTemplatePreview>('/api/chain/orchestration-template/preview', body),
   saveOrchestrationTemplate: (body: OrchestrationTemplateSaveRequest) =>
     requester.post<OrchestrationTemplate>('/api/chain/orchestration-template/save', body),
-  deleteOrchestrationTemplate: (id: number) =>
-    requester.post<void>('/api/chain/orchestration-template/delete', { id }),
+  deleteOrchestrationTemplate: (body: OrchestrationTemplateDeleteRequest) =>
+    requester.post<void>('/api/chain/orchestration-template/delete', body),
   createChain: (body: CreateChainRequest) =>
     requester.postObserved<Chain>('/api/chain/create', body),
   editChain: (body: EditChainRequest) => requester.postObserved<Chain>('/api/chain/edit', body),

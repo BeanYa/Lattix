@@ -530,6 +530,7 @@ paths:
   /api/chain/orchestration-template/preview:
     post:
       operationId: orchestrationTemplatePreview
+      description: Preview a save, or pass operation=delete and id to preview detach without update validation. Returns a proof of the revision and affected hop operations.
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -537,7 +538,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/OrchestrationTemplateSaveRequest'}
+            schema: {$ref: '#/components/schemas/OrchestrationTemplatePreviewRequest'}
       responses:
         '200':
           description: RPC result
@@ -548,11 +549,12 @@ paths:
                   - {$ref: '#/components/schemas/RPCEnvelope'}
                   - type: object
                     properties:
-                      data: {type: object, required: [affected_chains], properties: {affected_chains: {type: array, items: {$ref: '#/components/schemas/OrchestrationTemplateImpact'}}}}
+                      data: {$ref: '#/components/schemas/OrchestrationTemplatePreview'}
         default: {$ref: '#/components/responses/ProtocolErrorResponse'}
   /api/chain/orchestration-template/save:
     post:
       operationId: orchestrationTemplateSave
+      description: Existing templates require revision and preview_proof from a successful save preview. Missing or changed proof returns CONFLICT before mutation; re-preview and explicitly confirm again.
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -576,6 +578,7 @@ paths:
   /api/chain/orchestration-template/delete:
     post:
       operationId: orchestrationTemplateDelete
+      description: Requires the revision and preview_proof from a delete preview. Detaches materialized graphs even if linked chains are applying or the source graph is invalid. A changed revision or affected hop set returns CONFLICT before mutation.
       parameters:
         - {$ref: '#/components/parameters/CSRFToken'}
         - {$ref: '#/components/parameters/IdempotencyKey'}
@@ -1533,8 +1536,34 @@ components:
           properties:
             seq: {type: integer, minimum: 0}
             template_id: {type: integer, minimum: 1}
-            template_revision: {type: integer, minimum: 1}
+            template_revision: {type: integer, minimum: 1, description: Source revision of the submitted graph. For hop DTOs use template_source_revision rather than the last acknowledged template_revision.}
             overrides: {type: array, items: {$ref: '#/components/schemas/OrchestrationParamOverride'}}
+    OrchestrationBinding:
+      type: object
+      description: Flattened into each linked hop orchestration DTO. Source and acknowledged revisions differ while synchronization is pending.
+      required: [template_id, template_name, template_revision, template_source_revision, overrides]
+      properties:
+        template_id: {type: integer, minimum: 1}
+        template_name: {type: string}
+        template_revision: {type: integer, minimum: 1, description: Last acknowledged template revision.}
+        template_source_revision: {type: integer, minimum: 1, description: Revision of the materialized graph; pending target revision or acknowledged revision when settled.}
+        overrides: {type: array, items: {$ref: '#/components/schemas/OrchestrationParamOverride'}}
+        template_sync_pending: {type: boolean}
+    OrchestrationTemplatePreviewRequest:
+      oneOf:
+        - {$ref: '#/components/schemas/OrchestrationTemplateSaveRequest'}
+        - type: object
+          required: [id, operation]
+          properties:
+            id: {type: integer, minimum: 1}
+            operation: {type: string, enum: [delete]}
+    OrchestrationTemplatePreview:
+      type: object
+      required: [revision, preview_proof, affected_chains]
+      properties:
+        revision: {type: integer, minimum: 0}
+        preview_proof: {type: string, description: Opaque concurrency checksum of the requested operation and current impacts. Not an authorization token.}
+        affected_chains: {type: array, items: {$ref: '#/components/schemas/OrchestrationTemplateImpact'}}
     OrchestrationTemplateSaveRequest:
       allOf:
         - {$ref: '#/components/schemas/OrchestrationGraph'}
@@ -1544,6 +1573,7 @@ components:
             id: {type: integer, minimum: 1}
             name: {type: string, minLength: 1}
             revision: {type: integer, minimum: 1, description: Required when editing an existing template.}
+            preview_proof: {type: string, description: Required for existing-template save; obtain from save preview. Omit for create and preview.}
     OrchestrationTemplate:
       allOf:
         - {$ref: '#/components/schemas/OrchestrationTemplateSaveRequest'}
@@ -1557,9 +1587,11 @@ components:
             updated_at: {type: string, format: date-time}
     OrchestrationTemplateDeleteRequest:
       type: object
-      required: [id]
+      required: [id, revision, preview_proof]
       properties:
         id: {type: integer, minimum: 1}
+        revision: {type: integer, minimum: 1}
+        preview_proof: {type: string, minLength: 1}
     OrchestrationTemplateImpact:
       type: object
       required: [chain_id, chain_name, seq, redeploy]
