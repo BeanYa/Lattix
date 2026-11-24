@@ -819,6 +819,11 @@
   border-radius: 8px;
 }
 @media (max-width: 900px) {
+  .orch-panel {
+    height: min(860px, calc(100dvh - 40px));
+    max-height: calc(100dvh - 40px);
+    overflow-y: auto;
+  }
   .orch-head {
     flex-direction: column;
     align-items: stretch;
