@@ -73,7 +73,9 @@ func (s *Service) Create(ctx context.Context, name, rawURL, userAgent string,
 	}
 }
 
-// Update 仅更新订阅设置，不触发同步。
+// Update 更新订阅设置；URL 变更时立即重新同步（与 Create 行为对齐，
+// 失败保留记录并回填 LastError）。新地址与其他订阅冲突时拒绝，
+// 避免落到数据库 url 唯一约束的原始报错。
 func (s *Service) Update(ctx context.Context, id int64, name, rawURL, userAgent string,
 	skipCertVerify, autoUpdate bool, intervalHours int) (store.ExternalSubscription, error) {
 	if err := validateSubscriptionURL(rawURL); err != nil {
@@ -86,6 +88,12 @@ func (s *Service) Update(ctx context.Context, id int64, name, rawURL, userAgent 
 	if err != nil {
 		return store.ExternalSubscription{}, err
 	}
+	if other, err := s.st.ExternalSubscriptionByURL(ctx, rawURL); err == nil && other.ID != id {
+		return store.ExternalSubscription{}, errors.New("订阅地址已被其他订阅使用")
+	} else if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return store.ExternalSubscription{}, err
+	}
+	urlChanged := sub.URL != rawURL
 	sub.Name = strings.TrimSpace(name)
 	sub.URL = rawURL
 	sub.UserAgent = strings.TrimSpace(userAgent)
@@ -94,6 +102,9 @@ func (s *Service) Update(ctx context.Context, id int64, name, rawURL, userAgent 
 	sub.UpdateIntervalHours = normalizeInterval(intervalHours)
 	if err := s.st.UpdateExternalSubscription(ctx, sub); err != nil {
 		return store.ExternalSubscription{}, fmt.Errorf("update external subscription: %w", err)
+	}
+	if urlChanged {
+		return s.Sync(ctx, id)
 	}
 	return s.st.ExternalSubscriptionByID(ctx, id)
 }
@@ -159,24 +170,43 @@ func (s *Service) fetchAndParse(ctx context.Context, sub store.ExternalSubscript
 	if userAgent == "" {
 		userAgent = defaultUserAgent
 	}
-	result, err := files.GetWithOptions(ctx, sub.URL, maxSubscriptionBytes,
-		requester.FileRequestOptions{UserAgent: userAgent})
+	fetch := func(ua string) (requester.FileFetchResult, error) {
+		return files.GetWithOptions(ctx, sub.URL, maxSubscriptionBytes,
+			requester.FileRequestOptions{UserAgent: ua})
+	}
+	result, err := fetch(userAgent)
 	if err != nil {
 		return sub, syncResult{}, err
 	}
 	upload, download, total, expire := parseTrafficUserinfo(result.Header.Get("subscription-userinfo"))
-	if total == 0 && !strings.Contains(strings.ToLower(userAgent), "clash") {
-		if retry, retryErr := files.GetWithOptions(ctx, sub.URL, maxSubscriptionBytes,
-			requester.FileRequestOptions{UserAgent: defaultUserAgent}); retryErr == nil {
-			if retryUpload, retryDownload, retryTotal, retryExpire := parseTrafficUserinfo(
-				retry.Header.Get("subscription-userinfo")); retryTotal > 0 {
+	nodes, format, parseErr := ParseSubscription([]byte(result.Body))
+	// 机场常按 UA 放行并切换返回格式，也偶发返回限流/维护页。解析失败时
+	// 换默认 clash UA 重拉一次再解析；流量头缺失且 UA 非 clash 的既有
+	// 兜底合并进同一次重拉。
+	if (parseErr != nil || (total == 0 && !strings.Contains(strings.ToLower(userAgent), "clash"))) &&
+		userAgent != defaultUserAgent {
+		if retry, retryErr := fetch(defaultUserAgent); retryErr == nil {
+			retryUpload, retryDownload, retryTotal, retryExpire := parseTrafficUserinfo(
+				retry.Header.Get("subscription-userinfo"))
+			if parseErr != nil {
+				if retryNodes, retryFormat, retryParseErr := ParseSubscription([]byte(retry.Body)); retryParseErr == nil {
+					// 换 UA 拉到了可解析内容：整体采用重试结果
+					result, nodes, format = retry, retryNodes, retryFormat
+					if total == 0 && retryTotal > 0 {
+						upload, download, total, expire = retryUpload, retryDownload, retryTotal, retryExpire
+					}
+					parseErr = nil
+				} else {
+					parseErr = fmt.Errorf("%s（改用 UA %s 拉取仍失败：%s）", parseErr, defaultUserAgent, retryParseErr)
+				}
+			} else if total == 0 && retryTotal > 0 {
+				// 解析成功仅缺流量头：沿用既有兜底，只取流量信息
 				upload, download, total, expire = retryUpload, retryDownload, retryTotal, retryExpire
 			}
 		}
 	}
-	nodes, format, err := ParseSubscription([]byte(result.Body))
-	if err != nil {
-		return sub, syncResult{}, err
+	if parseErr != nil {
+		return sub, syncResult{}, fmt.Errorf("%w（已收到响应：%s）", parseErr, describeReceived(result))
 	}
 	chains := make([]store.ExternalChain, 0, len(nodes))
 	seen := make(map[string]bool)
@@ -240,6 +270,28 @@ func normalizeInterval(hours int) int {
 func configSHA256(config []byte) string {
 	sum := sha256.Sum256(config)
 	return hex.EncodeToString(sum[:])
+}
+
+// describeReceived 概括解析失败时实际收到的响应（类型/长度/内容前缀），
+// 便于区分机场返回的 HTML 公告页、限流页与空 proxies。前缀会进入
+// last_error 与创建报错，属于管理员自配订阅的可见数据，压缩为单行并截断。
+func describeReceived(result requester.FileFetchResult) string {
+	contentType := result.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "未知"
+	}
+	return fmt.Sprintf("Content-Type=%s，%d 字节，前缀 %q",
+		contentType, len(result.Body), sanitizeBodyPrefix(result.Body, 160))
+}
+
+// sanitizeBodyPrefix 压缩空白为单空格并按 rune 截断。
+func sanitizeBodyPrefix(body string, limit int) string {
+	joined := strings.Join(strings.Fields(body), " ")
+	runes := []rune(joined)
+	if len(runes) > limit {
+		return string(runes[:limit]) + "…"
+	}
+	return joined
 }
 
 // validateSubscriptionURL 仅允许 https，并拒绝 localhost、内网与保留段地址

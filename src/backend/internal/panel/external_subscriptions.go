@@ -79,10 +79,23 @@ func (s *Server) handleUpdateExternalSubscription(w http.ResponseWriter, r *http
 	if req.UpdateIntervalHours == 0 {
 		req.UpdateIntervalHours = 24
 	}
-	o := s.observeStart(r, "external_subscription.update", "更新外部订阅",
-		[]progress.Stage{
+	// URL 变化时 Service.Update 会立即同步新地址，提前声明拉取/解析阶段
+	// 供进度观察；仅改设置时保持原有单阶段。
+	urlChanged := false
+	if existing, err := s.st.ExternalSubscriptionByID(r.Context(), req.ID); err == nil {
+		urlChanged = existing.URL != strings.TrimSpace(req.URL)
+	}
+	stages := []progress.Stage{
+		{Key: "db", Label: "写入数据库"},
+	}
+	if urlChanged {
+		stages = []progress.Stage{
+			{Key: "fetch", Label: "拉取远程订阅"},
+			{Key: "parse", Label: "解析节点"},
 			{Key: "db", Label: "写入数据库"},
-		})
+		}
+	}
+	o := s.observeStart(r, "external_subscription.update", "更新外部订阅", stages)
 	defer o.Close()
 	sub, err := s.extSubs.Update(r.Context(), req.ID, req.Name, strings.TrimSpace(req.URL),
 		req.UserAgent, req.SkipCertVerify, req.AutoUpdate, req.UpdateIntervalHours)
@@ -94,6 +107,10 @@ func (s *Server) handleUpdateExternalSubscription(w http.ResponseWriter, r *http
 		}
 		writeError(w, status, err.Error())
 		return
+	}
+	if urlChanged {
+		o.Report("fetch", 100, "拉取完成")
+		o.Report("parse", 100, "解析完成")
 	}
 	o.Report("db", 100, "订阅已更新")
 	s.republishExternalSubUsers(r.Context(), []int64{sub.ID})

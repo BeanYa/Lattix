@@ -138,3 +138,72 @@ func TestExternalSubscriptionCreateValidation(t *testing.T) {
 		t.Fatalf("code = %q", got.Code)
 	}
 }
+
+func TestExternalSubscriptionUpdateURLChangeAndDuplicate(t *testing.T) {
+	server, _ := newExternalSubscriptionTestServer(t)
+
+	create := func(name, url string) store.ExternalSubscription {
+		rec := httptest.NewRecorder()
+		server.handleCreateExternalSubscription(rec, httptest.NewRequest(http.MethodPost,
+			"/api/external-subscription/create", strings.NewReader(fmt.Sprintf(
+				`{"name":%q,"url":%q,"auto_update":true,"update_interval_hours":12}`, name, url))))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("create %s status = %d body = %s", name, rec.Code, rec.Body.String())
+		}
+		var created struct {
+			Code string                     `json:"code"`
+			Data store.ExternalSubscription `json:"data"`
+		}
+		if err := json.NewDecoder(rec.Body).Decode(&created); err != nil {
+			t.Fatal(err)
+		}
+		if created.Code != "OK" {
+			t.Fatalf("create %s = %+v", name, created)
+		}
+		return created.Data
+	}
+	a := create("机场A", "https://sub.example.com/a?token=1")
+	b := create("机场B", "https://sub.example.com/b?token=2")
+
+	// 把 B 的地址改成 A 的：友好拒绝且 B 不变
+	rec := httptest.NewRecorder()
+	server.handleUpdateExternalSubscription(rec, httptest.NewRequest(http.MethodPost,
+		"/api/external-subscription/update", strings.NewReader(fmt.Sprintf(
+			`{"id":%d,"name":"机场B","url":%q,"auto_update":true,"update_interval_hours":12}`, b.ID, a.URL))))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("duplicate update status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var dup struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&dup); err != nil {
+		t.Fatal(err)
+	}
+	if dup.Code == "OK" || !strings.Contains(dup.Message, "已被其他订阅使用") {
+		t.Fatalf("duplicate = %+v", dup)
+	}
+	got, err := server.st.ExternalSubscriptionByID(context.Background(), b.ID)
+	if err != nil || got.URL != b.URL {
+		t.Fatalf("b changed: %+v err %v", got, err)
+	}
+
+	// 改 A 的地址为全新地址：立即同步成功（桩对任意请求返回有效节点）
+	rec = httptest.NewRecorder()
+	server.handleUpdateExternalSubscription(rec, httptest.NewRequest(http.MethodPost,
+		"/api/external-subscription/update", strings.NewReader(fmt.Sprintf(
+			`{"id":%d,"name":"机场A2","url":"https://sub.example.com/new?token=3","auto_update":true,"update_interval_hours":12}`, a.ID))))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("url-change update status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var updated struct {
+		Code string                     `json:"code"`
+		Data store.ExternalSubscription `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Code != "OK" || updated.Data.Name != "机场A2" || updated.Data.NodeCount != 1 || updated.Data.LastError != "" {
+		t.Fatalf("updated = %+v", updated)
+	}
+}

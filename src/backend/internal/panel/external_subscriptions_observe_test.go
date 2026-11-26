@@ -91,6 +91,21 @@ func TestUpdateExternalSubscriptionCarriesObserveID(t *testing.T) {
 	if rec.Code != http.StatusOK || env.Code != shared.CodeOK {
 		t.Fatalf("update status = %d code = %q body = %s", rec.Code, env.Code, rec.Body.String())
 	}
+	// URL 变化会立即同步新地址，阶段与 create 一致
+	assertSubObserveDone(t, srv, env, "external_subscription.update",
+		[]string{"fetch", "parse", "db"})
+}
+
+func TestUpdateExternalSubscriptionNoURLChangeObserveStages(t *testing.T) {
+	ctx := context.Background()
+	srv := subObserveServer(t)
+	id := seedExternalSub(t, srv, ctx)
+	env, rec := postGroupObserve(t, srv, srv.handleUpdateExternalSubscription,
+		`{"id":`+itoa(id)+`,"name":"仅改名","url":"https://sub.example.com/a?token=1","update_interval_hours":12}`)
+	if rec.Code != http.StatusOK || env.Code != shared.CodeOK {
+		t.Fatalf("update status = %d code = %q body = %s", rec.Code, env.Code, rec.Body.String())
+	}
+	// URL 未变（仅改名）不触发同步，保持单阶段
 	assertSubObserveDone(t, srv, env, "external_subscription.update",
 		[]string{"db"})
 }

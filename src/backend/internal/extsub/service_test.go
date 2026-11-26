@@ -233,3 +233,141 @@ func TestUpdateRejectsBadURL(t *testing.T) {
 		t.Fatalf("update err = %v", err)
 	}
 }
+
+func TestUpdateDuplicateURLRejected(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte(testLink))
+	}))
+	defer srv.Close()
+
+	svc := newTestServiceTo(t, srv.Listener.Addr().String())
+	ctx := context.Background()
+	a, err := svc.Create(ctx, "A", "https://sub.example.com/a?token=1", "", false, true, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := svc.Create(ctx, "B", "https://sub.example.com/b?token=2", "", false, true, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Update(ctx, b.ID, "B2", a.URL, "", false, true, 24); err == nil || !strings.Contains(err.Error(), "已被其他订阅使用") {
+		t.Fatalf("update err = %v", err)
+	}
+	got, err := svc.st.ExternalSubscriptionByID(ctx, b.ID)
+	if err != nil || got.Name != "B" || got.URL != b.URL {
+		t.Fatalf("b changed: %+v err %v", got, err)
+	}
+	// 改回自身 URL 属于合法编辑，不应报重复
+	if _, err := svc.Update(ctx, b.ID, "B3", b.URL, "", false, true, 24); err != nil {
+		t.Fatalf("self-url update err = %v", err)
+	}
+}
+
+func TestUpdateURLChangeResyncs(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		link := testLink // Tokyo @ example.com
+		if r.URL.Path == "/new" {
+			link = "vless://11111111-2222-3333-4444-555555555555@example.org:8443?type=tcp#Osaka"
+		}
+		w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(link))))
+	}))
+	defer srv.Close()
+
+	svc := newTestServiceTo(t, srv.Listener.Addr().String())
+	ctx := context.Background()
+	sub, err := svc.Create(ctx, "A", "https://sub.example.com/old", "", false, true, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := svc.Update(ctx, sub.ID, "A2", "https://sub.example.com/new", "", false, true, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.LastError != "" || updated.LastSyncAt == nil {
+		t.Fatalf("updated = %+v", updated)
+	}
+	chains, err := svc.st.ListExternalChains(ctx, sub.ID)
+	if err != nil || len(chains) != 1 {
+		t.Fatalf("chains = %+v err %v", chains, err)
+	}
+	if chains[0].Name != "Osaka" || chains[0].Server != "example.org" {
+		t.Fatalf("chain = %+v", chains[0])
+	}
+}
+
+func TestUpdateNoResyncWhenURLUnchanged(t *testing.T) {
+	hits := 0
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.Write([]byte(testLink))
+	}))
+	defer srv.Close()
+
+	svc := newTestServiceTo(t, srv.Listener.Addr().String())
+	ctx := context.Background()
+	sub, err := svc.Create(ctx, "A", "https://sub.example.com/a?token=1", "", false, true, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits != 1 {
+		t.Fatalf("hits after create = %d", hits)
+	}
+	if _, err := svc.Update(ctx, sub.ID, "改名", sub.URL, "", false, true, 24); err != nil {
+		t.Fatal(err)
+	}
+	if hits != 1 {
+		t.Fatalf("hits after rename-only update = %d, want unchanged", hits)
+	}
+}
+
+func TestParseFailureFallsBackToDefaultUA(t *testing.T) {
+	var uas []string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ua := r.Header.Get("User-Agent")
+		uas = append(uas, ua)
+		if strings.Contains(strings.ToLower(ua), "clash") {
+			w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(testLink))))
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte("<!DOCTYPE html><html><body>maintain</body></html>"))
+	}))
+	defer srv.Close()
+
+	svc := newTestServiceTo(t, srv.Listener.Addr().String())
+	ctx := context.Background()
+	sub, err := svc.Create(ctx, "机场", "https://sub.example.com/a?token=1", "WeirdClient/1.0", false, true, 24)
+	if err != nil {
+		t.Fatalf("create should succeed via default-UA fallback: %v", err)
+	}
+	if sub.NodeCount != 1 || sub.LastError != "" {
+		t.Fatalf("sub = %+v", sub)
+	}
+	if len(uas) != 2 || !strings.Contains(uas[1], "clash.meta") {
+		t.Fatalf("uas = %v, want custom then default", uas)
+	}
+}
+
+func TestParseErrorCarriesDiagnostics(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Write([]byte("<!DOCTYPE html>\n<html>\n<body>no service</body></html>"))
+	}))
+	defer srv.Close()
+
+	svc := newTestServiceTo(t, srv.Listener.Addr().String())
+	ctx := context.Background()
+	sub, err := svc.Create(ctx, "机场", "https://sub.example.com/a?token=1", "WeirdClient/1.0", false, true, 24)
+	if err == nil {
+		t.Fatalf("want parse failure, got sub = %+v", sub)
+	}
+	for _, want := range []string{"no supported nodes found", "Content-Type=text/html", "<!DOCTYPE html>"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err missing %q: %v", want, err)
+		}
+	}
+	got, getErr := svc.st.ExternalSubscriptionByID(ctx, sub.ID)
+	if getErr != nil || got.LastError == "" {
+		t.Fatalf("record kept without error = %+v getErr %v", got, getErr)
+	}
+}
