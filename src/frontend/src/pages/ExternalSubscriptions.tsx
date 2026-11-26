@@ -1,12 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import {
-  EyeIcon,
-  GlobeIcon,
-  PencilIcon,
-  PlusIcon,
-  RefreshCwIcon,
-  Trash2Icon,
-} from 'lucide-react'
+import { EyeIcon, GlobeIcon, PencilIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
 
 import { EmptyState, LoadingState, Notice, Page, PageHeader } from '@/components/PagePrimitives'
 import { Button } from '@/components/ui/button'
