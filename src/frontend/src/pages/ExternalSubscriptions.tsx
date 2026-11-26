@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   EyeIcon,
-  FileCode2Icon,
   GlobeIcon,
+  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   Trash2Icon,
@@ -45,6 +45,7 @@ import type { ExternalChain, ExternalSubscription } from '@/lib/types'
 import './external-subscriptions.css'
 
 // 订阅商通常按客户端 User-Agent 放行，不同服务商认可名单不同。
+// 不提供 sing-box 预设：机场会按该 UA 返回解析器不支持的 sing-box JSON 配置。
 const UA_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'default', label: '默认（clash.meta/v2.0.0）' },
   { value: 'clash.meta/v2.0.0', label: 'clash.meta/v2.0.0' },
@@ -52,7 +53,6 @@ const UA_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'Clash for Windows/0.20.39', label: 'Clash for Windows/0.20.39' },
   { value: 'clash-verge/v2.1.2', label: 'clash-verge/v2.1.2' },
   { value: 'mihomo/1.18.10', label: 'mihomo/1.18.10' },
-  { value: 'sing-box/1.11.0', label: 'sing-box/1.11.0' },
   { value: 'v2rayNG/1.8.16', label: 'v2rayNG/1.8.16' },
   { value: 'Shadowrocket/2.1.48', label: 'Shadowrocket/2.1.48' },
   { value: 'Stash/2.6.1', label: 'Stash/2.6.1' },
@@ -295,11 +295,12 @@ export default function ExternalSubscriptions() {
                   </button>
                   <button
                     type="button"
-                    className="cg-icon-button"
-                    title="编辑"
+                    className="cg-button"
+                    title="编辑订阅"
                     onClick={() => beginEdit(sub)}
                   >
-                    <FileCode2Icon />
+                    <PencilIcon />
+                    编辑
                   </button>
                   <button
                     type="button"

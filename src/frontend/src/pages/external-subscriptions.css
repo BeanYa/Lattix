@@ -103,16 +103,6 @@
   font-size: 13px;
 }
 
-.extsub-mod-actions .cg-icon-button {
-  width: 24px;
-  height: 24px;
-}
-
-.extsub-mod-actions .cg-icon-button svg {
-  width: 13px;
-  height: 13px;
-}
-
 .extsub-danger {
   border-color: color-mix(in srgb, var(--panel-danger) 46%, var(--panel-rule));
   color: var(--panel-danger);
